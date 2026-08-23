@@ -5,6 +5,7 @@ import {
   CodexError,
   fetchCodexResponses,
   getCodexResponseAffinityOutcome,
+  getCodexRoutingProbe,
   markCodexResponseCompleted,
   resetCodexAuthCacheForTest,
 } from "../src/codex.ts";
@@ -35,6 +36,8 @@ const versionstamp = (version: number): string => String(version).padStart(20, "
 class AffinityKv {
   readonly values = new Map<string, StoredValue>();
   expireIns: number[] = [];
+  affinitySetGate: Promise<void> | null = null;
+  onAffinitySet: (() => void) | null = null;
 
   put(key: Deno.KvKey, value: unknown, expireIn?: number): void {
     const encoded = keyOf(key);
@@ -60,11 +63,16 @@ class AffinityKv {
     } as Deno.KvEntryMaybe<T>);
   }
 
-  set(key: Deno.KvKey, value: unknown, options?: { expireIn?: number }): Promise<Deno.KvCommitResult> {
+  async set(key: Deno.KvKey, value: unknown, options?: { expireIn?: number }): Promise<Deno.KvCommitResult> {
+    const isAffinityKey = CODEX_ACCOUNT_AFFINITY_KV_PREFIX.every((part, index) => key[index] === part);
+    if (isAffinityKey) {
+      this.onAffinitySet?.();
+      await this.affinitySetGate;
+    }
     if (options?.expireIn !== undefined) this.expireIns.push(options.expireIn);
     this.put(key, value, options?.expireIn);
     const stored = this.values.get(keyOf(key))!;
-    return Promise.resolve({ ok: true, versionstamp: versionstamp(stored.version) });
+    return { ok: true, versionstamp: versionstamp(stored.version) };
   }
 
   atomic(): Deno.AtomicOperation {
@@ -418,5 +426,63 @@ Deno.test("Codex account-affinity never bypasses an existing quota or banked-res
     assert.equal(fenced.status, 200);
     assert.equal(getCodexResponseAffinityOutcome(fenced), "remapped");
     assert.deepEqual(accountIds, ["account-one", "account-two"]);
+  });
+});
+
+Deno.test("completed half-open probes clear routing before slow affinity persistence", async () => {
+  await withFixture(async ({ kv, advance }) => {
+    const one = auth("one");
+    installPool(kv, pool(one));
+    const initial = await selectCodexRoutingAccounts(pool(one), [one], nowMs, "gpt-5.6-luna");
+    assert.equal(initial.kind, "eligible");
+    if (initial.kind !== "eligible") return;
+    await markCodexQuotaBlocked(
+      initial.accounts[0]!,
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": new Date(nowMs + 1_000).toUTCString() },
+      }),
+      nowMs,
+    );
+    advance(1_001);
+
+    let inferenceCalls = 0;
+    globalThis.fetch = () => {
+      inferenceCalls += 1;
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    };
+
+    let signalAffinitySet!: () => void;
+    const affinitySetEntered = new Promise<void>((resolve) => {
+      signalAffinitySet = resolve;
+    });
+    let releaseAffinitySet!: () => void;
+    kv.affinitySetGate = new Promise<void>((resolve) => {
+      releaseAffinitySet = resolve;
+    });
+    kv.onAffinitySet = signalAffinitySet;
+
+    let completion: Promise<void> | null = null;
+    try {
+      const recovered = await fetchCodexResponses(cacheableBody(), {
+        cacheScope: "api-key:slow-affinity-principal",
+      });
+      assert.equal(recovered.status, 200);
+      assert.ok(getCodexRoutingProbe(recovered));
+
+      completion = markCodexResponseCompleted(recovered);
+      await affinitySetEntered;
+
+      const concurrent = await fetchCodexResponses(cacheableBody(), {
+        cacheScope: "api-key:slow-affinity-principal",
+      });
+      assert.equal(concurrent.status, 200);
+      assert.equal(inferenceCalls, 2);
+    } finally {
+      releaseAffinitySet();
+      await completion;
+      kv.affinitySetGate = null;
+      kv.onAffinitySet = null;
+    }
   });
 });

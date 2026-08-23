@@ -466,6 +466,9 @@ export const releaseCodexResponseProbe = async (response: Response): Promise<voi
 export const markCodexResponseCompleted = async (response: Response): Promise<void> => {
   const terminal = beginCodexResponseTerminalOutcome(response);
   if (!terminal) return;
+  if (terminal.probe) {
+    await completeCodexProbeTransition(markCodexSuccess(terminal.probe));
+  }
   if (response.ok && terminal.affinityDispatch) {
     await recordCodexAccountAffinity(
       terminal.affinityDispatch.identity,
@@ -481,8 +484,6 @@ export const markCodexResponseCompleted = async (response: Response): Promise<vo
       codexProviderRequestId(response),
     ).catch(() => {});
   }
-  if (!terminal.probe) return;
-  await completeCodexProbeTransition(markCodexSuccess(terminal.probe));
 };
 
 /** A trustworthy failure after 2xx headers degrades health without treating cancellation or incompletion as failure. */

@@ -433,7 +433,10 @@ export const recordPromptCacheAnalytics = async (
   const markerKey = dimensionMarkerKey(bucketStartAtMs, cohort);
   const bucketCardinalityKey = cardinalityKey(bucketStartAtMs);
 
-  for (let attempt = 0; attempt < 4; attempt += 1) {
+  // Each failed admission CAS means this cohort was admitted concurrently or
+  // another cohort advanced the shared cardinality row. One extra read after
+  // the maximum number of conflicts must therefore observe this marker or cap.
+  for (let attempt = 0; attempt <= PROMPT_CACHE_ANALYTICS_MAX_COHORTS_PER_BUCKET; attempt += 1) {
     try {
       const [marker, cardinality] = await kv.getMany<[boolean, number]>([markerKey, bucketCardinalityKey]);
       if (marker.value === true) {
@@ -528,7 +531,7 @@ const legacyStorageBucketStart = (key: Deno.KvKey): number | null => {
   return safeCounter(bucketStartAtMs) ? bucketStartAtMs : null;
 };
 
-/** Removes only V2 entries at or beyond the eight-day retention boundary. */
+/** Removes V2 and legacy V1 entries at the eight-day boundary without scanning fresh buckets. */
 export const prunePromptCacheAnalytics = async (
   options: Pick<PromptCacheAnalyticsOptions, "kv" | "now"> = {},
 ): Promise<PromptCacheAnalyticsPruneResult> => {
@@ -546,13 +549,17 @@ export const prunePromptCacheAnalytics = async (
     deleted += current.length;
   };
   try {
+    const endAtExclusive = cutoffBucketStartAtMs + 1;
     for (
       const [prefix, bucketStart] of [
-        [PROMPT_CACHE_ANALYTICS_KV_PREFIX, storageBucketStart],
+        [aggregatePrefix, storageBucketStart],
+        [dimensionPrefix, storageBucketStart],
+        [overflowPrefix, storageBucketStart],
+        [metaPrefix, storageBucketStart],
         [LEGACY_PROMPT_CACHE_ANALYTICS_V1_KV_PREFIX, legacyStorageBucketStart],
       ] as const
     ) {
-      for await (const entry of kv.list({ prefix })) {
+      for await (const entry of kv.list({ prefix, end: [...prefix, endAtExclusive] })) {
         const bucketStartAtMs = bucketStart(entry.key);
         if (bucketStartAtMs === null || bucketStartAtMs > cutoffBucketStartAtMs) continue;
         batch.push(entry.key);

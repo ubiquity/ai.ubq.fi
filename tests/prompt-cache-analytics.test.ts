@@ -25,6 +25,30 @@ if (typeof Deno.KvU64 !== "function") {
 const RELEASE = "0123456789abcdef0123456789abcdef01234567";
 const NOW_MS = 1_800_000_000_000;
 const LEGACY_V1_PREFIX = ["uos_ai", "prompt_cache_analytics", "v1"] as const;
+const V2_PRUNABLE_NAMESPACES = ["all", "dimension", "overflow", "meta"] as const;
+
+class ListSelectorCountingKv extends CountingKv {
+  readonly listSelectors: Deno.KvListSelector[] = [];
+  readonly listedKeys: Deno.KvKey[] = [];
+
+  override list<T = unknown>(selector: Deno.KvListSelector, options?: Deno.KvListOptions): Deno.KvListIterator<T> {
+    this.listSelectors.push(structuredClone(selector));
+    const source = super.list<T>(selector, options);
+    const prefix = "prefix" in selector ? selector.prefix : [];
+    const endBucket = "end" in selector ? selector.end[prefix.length] : null;
+    const listedKeys = this.listedKeys;
+    const iterator = (async function* (): AsyncGenerator<Deno.KvEntry<T>> {
+      for await (const entry of source) {
+        const bucket = entry.key[prefix.length];
+        if (typeof endBucket === "number" && typeof bucket === "number" && bucket >= endBucket) continue;
+        listedKeys.push(structuredClone(entry.key));
+        yield entry;
+      }
+    })() as unknown as Deno.KvListIterator<T>;
+    Object.defineProperty(iterator, "cursor", { get: () => source.cursor });
+    return iterator;
+  }
+}
 
 const event = (overrides: Partial<Parameters<typeof recordPromptCacheAnalytics>[0]> = {}) => ({
   provider: "chatgpt_codex",
@@ -363,6 +387,34 @@ Deno.test("prompt-cache analytics preserves concurrent counters and admits its f
   );
 });
 
+Deno.test("prompt-cache analytics preserves concurrent samples across new-cohort admission conflicts", async () => {
+  const kv = new CountingKv();
+  const modes = ["implicit", "explicit", "legacy_retention"] as const;
+  const cohorts = Array.from({ length: 12 }, (_, index) =>
+    event({
+      model: null,
+      route: index % 2 === 0 ? "responses" : "chat.completions",
+      promptCacheKeyPresent: Math.floor(index / 2) % 2 === 0,
+      promptCacheMode: modes[Math.floor(index / 4)],
+    }));
+
+  const results = await Promise.all(cohorts.map((cohort) => recordPromptCacheAnalytics(cohort, options(kv))));
+  assert.ok(
+    kv.commands.some((command) => command.command === "atomic.commit" && command.atomicResult === "conflict"),
+  );
+  assert.ok(results.every((result) => result.status === "recorded" && result.reason === "recorded"));
+
+  const aggregate = await readPromptCacheAnalytics(options(kv));
+  assert.equal(aggregate.buckets[0]?.sample_count, cohorts.length);
+  const grouped = await readPromptCacheAnalytics({ ...options(kv), groupBy: ["route", "mode"] });
+  assert.equal(grouped.cardinality_limited, false);
+  assert.equal(grouped.truncated, false);
+  assert.equal(
+    grouped.buckets.reduce((sampleCount, bucket) => sampleCount + bucket.sample_count, 0),
+    cohorts.length,
+  );
+});
+
 Deno.test("prompt-cache analytics caps cohort cardinality while retaining aggregate evidence", async () => {
   const kv = new CountingKv();
   for (let index = 0; index < PROMPT_CACHE_ANALYTICS_MAX_COHORTS_PER_BUCKET; index += 1) {
@@ -459,14 +511,19 @@ Deno.test("prompt-cache analytics caps grouped response cardinality and marks th
   assert.equal(view.buckets.length, PROMPT_CACHE_ANALYTICS_MAX_RESPONSE_BUCKETS);
 });
 
-Deno.test("prompt-cache analytics isolates v1 reads and prunes stale v1 and v2 entries", async () => {
-  const kv = new CountingKv();
+Deno.test("prompt-cache analytics isolates v1 reads and prunes stale v1 and v2 entries with bounded scans", async () => {
+  const kv = new ListSelectorCountingKv();
   const expiredBucket = NOW_MS - PROMPT_CACHE_ANALYTICS_RETENTION_MS;
   const freshBucket = NOW_MS;
   kv.seed([...LEGACY_V1_PREFIX, freshBucket, "input_tokens"], new Deno.KvU64(777n));
   kv.seed([...LEGACY_V1_PREFIX, freshBucket, "cached_input_tokens"], new Deno.KvU64(777n));
   kv.seed([...LEGACY_V1_PREFIX, freshBucket, "sample_count"], new Deno.KvU64(1n));
   assert.deepEqual((await readPromptCacheAnalytics(options(kv))).buckets, []);
+  kv.listSelectors.length = 0;
+  kv.listedKeys.length = 0;
+  for (const namespace of V2_PRUNABLE_NAMESPACES) {
+    kv.seed([...PROMPT_CACHE_ANALYTICS_KV_PREFIX, namespace, freshBucket, "fresh-fixture"], new Deno.KvU64(1n));
+  }
 
   await recordPromptCacheAnalytics(event({ model: "gpt-expired" }), options(kv, expiredBucket));
   kv.seed(
@@ -477,12 +534,25 @@ Deno.test("prompt-cache analytics isolates v1 reads and prunes stale v1 and v2 e
   const pruned = await prunePromptCacheAnalytics({ kv: kv as unknown as Deno.Kv, now: () => NOW_MS });
   assert.equal(pruned.status, "pruned");
   assert.ok(pruned.deleted > 1);
+  assert.deepEqual(kv.listSelectors, [
+    ...V2_PRUNABLE_NAMESPACES.map((namespace) => {
+      const prefix = [...PROMPT_CACHE_ANALYTICS_KV_PREFIX, namespace];
+      return { prefix, end: [...prefix, expiredBucket + 1] };
+    }),
+    { prefix: [...LEGACY_V1_PREFIX], end: [...LEGACY_V1_PREFIX, expiredBucket + 1] },
+  ]);
+  assert.equal(kv.listedKeys.some((key) => key.includes(freshBucket)), false);
+  assert.equal(kv.listedKeys.some((key) => key.includes(expiredBucket)), true);
 
   const remainingKeys = [...kv.entries.values()].map((entry) => JSON.stringify(entry.key));
   assert.equal(remainingKeys.some((key) => key.includes(String(expiredBucket))), false);
   assert.equal(remainingKeys.some((key) => key.includes('"v1"')), true);
   assert.ok(remainingKeys.every((key) => !key.includes('"v1"') || key.includes(String(freshBucket))));
   assert.ok(remainingKeys.every((key) => !key.includes('"v2"') || !key.includes(String(expiredBucket))));
+  assert.equal(
+    remainingKeys.filter((key) => key.includes('"v2"') && key.includes(String(freshBucket))).length,
+    V2_PRUNABLE_NAMESPACES.length,
+  );
   assert.equal(PROMPT_CACHE_ANALYTICS_KV_PREFIX.at(-1), "v2");
   assert.ok((await readPromptCacheAnalytics(options(kv))).buckets.length === 0);
   assert.equal(kv.entries.has(JSON.stringify(promptCacheAnalyticsCounterKey(expiredBucket, "sample_count"))), false);
