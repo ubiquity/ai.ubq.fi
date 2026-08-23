@@ -637,7 +637,7 @@
       },
       "ImageEditMultipartRequest": {
         "type": "object",
-        "description": "An OpenAI Images edit request using up to sixteen binary uploads under image, image[], or both field names.",
+        "description": "An OpenAI Images edit request using up to sixteen binary uploads under image, image[], or both field names. Each source image and optional mask must be non-empty and smaller than 50 MiB; together they must total no more than 50 MiB.",
         "required": ["prompt"],
         "properties": {
           "model": {

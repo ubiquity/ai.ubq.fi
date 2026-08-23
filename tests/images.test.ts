@@ -422,6 +422,22 @@ Deno.test("multipart edits validate file limits before reading file bytes", asyn
     assert.equal(oversizedResponse.status, 400);
     assert.equal(arrayBufferReads, 0);
 
+    const aggregateTooLarge = new FormData();
+    aggregateTooLarge.append("prompt", "aggregate too large");
+    aggregateTooLarge.append("image", new File(["first"], "first.png", { type: "image/png" }));
+    aggregateTooLarge.append("image", new File(["second"], "second.png", { type: "image/png" }));
+    const aggregateTooLargeRequest = new Request("http://127.0.0.1/v1/images/edits", {
+      method: "POST",
+      body: aggregateTooLarge,
+    });
+    const aggregateTooLargeResponse = await withFileGuards(
+      aggregateTooLargeRequest,
+      26 * 1_024 * 1_024,
+    );
+    assert.equal(aggregateTooLargeResponse.status, 400);
+    assert.equal((await aggregateTooLargeResponse.json()).error?.param, "image");
+    assert.equal(arrayBufferReads, 0);
+
     const excessiveFanout = new FormData();
     excessiveFanout.append("prompt", "excessive fanout");
     excessiveFanout.append("n", "10");
