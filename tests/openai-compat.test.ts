@@ -11722,6 +11722,20 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
     max_completion_tokens: 2048,
     stream: false,
   } as const;
+  const refusalBody = {
+    model: "gpt-oss-120b",
+    messages: [{ role: "user", content: "Request content that the model must refuse." }],
+    reasoning_effort: "medium",
+    stream: false,
+  } as const;
+  const completionWithMessage = (id: string, message: Record<string, unknown>): Record<string, unknown> => ({
+    id,
+    object: "chat.completion",
+    created: 1_728_000_006,
+    model: "gpt-oss-120b",
+    choices: [{ index: 0, message, finish_reason: "stop" }],
+    usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
+  });
 
   Deno.env.set(envKey, fakeApiKey);
   try {
@@ -11947,6 +11961,117 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       } finally {
         console.error = originalError;
       }
+    });
+
+    await t.step("preserves provider-native refusals in buffered Chat responses", async () => {
+      const response = await withFetchMock(
+        () =>
+          new Response(
+            JSON.stringify(
+              completionWithMessage("chatcmpl_cerebras_refusal_buffered", {
+                role: "assistant",
+                content: "I cannot provide those instructions.",
+                refusal: "The request conflicts with safety policy.",
+              }),
+            ),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        () => handleChatCompletions(request(refusalBody)),
+      );
+
+      assert.equal(response.status, 200);
+      const payload = await response.json() as {
+        choices?: Array<{ message?: Record<string, unknown> }>;
+      };
+      assert.deepEqual(payload.choices?.[0]?.message, {
+        role: "assistant",
+        content: "I cannot provide those instructions.",
+        refusal: "The request conflicts with safety policy.",
+      });
+    });
+
+    await t.step("emits provider-native refusals in downgraded Chat streams", async () => {
+      const response = await withFetchMock(
+        () =>
+          new Response(
+            JSON.stringify(
+              completionWithMessage("chatcmpl_cerebras_refusal_stream", {
+                role: "assistant",
+                content: null,
+                refusal: "I cannot help with that.",
+              }),
+            ),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        () => handleChatCompletions(request({ ...refusalBody, stream: true })),
+      );
+
+      assert.equal(response.status, 200);
+      const streamText = await response.text();
+      const firstDataLine = streamText.split("\n").find((line) => line.startsWith("data: {"));
+      assert.ok(firstDataLine);
+      const firstEvent = JSON.parse(firstDataLine.slice("data: ".length)) as {
+        choices?: Array<{ delta?: Record<string, unknown> }>;
+      };
+      assert.deepEqual(firstEvent.choices?.[0]?.delta, {
+        role: "assistant",
+        refusal: "I cannot help with that.",
+      });
+      assert.match(streamText, /data: \[DONE\]/);
+    });
+
+    await t.step("rejects non-string provider-native refusals", async () => {
+      const response = await withFetchMock(
+        () =>
+          new Response(
+            JSON.stringify(
+              completionWithMessage("chatcmpl_cerebras_invalid_refusal", {
+                role: "assistant",
+                content: null,
+                refusal: { reason: "policy" },
+              }),
+            ),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        () => handleChatCompletions(request(refusalBody)),
+      );
+
+      assert.equal(response.status, 502);
+      assert.equal(response.headers.get("x-uos-upstream"), "cerebras");
+      assert.equal(
+        (await response.json() as { error?: { code?: string } }).error?.code,
+        "cerebras_upstream_invalid_response",
+      );
+    });
+
+    await t.step("counts a refusal-only completion as semantic output", async () => {
+      const response = await withFetchMock(
+        () =>
+          new Response(
+            JSON.stringify(
+              completionWithMessage("chatcmpl_cerebras_refusal_only", {
+                role: "assistant",
+                content: null,
+                refusal: "I cannot comply.",
+              }),
+            ),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        () => handleChatCompletions(request(refusalBody)),
+      );
+
+      assert.equal(response.status, 200);
+      const payload = await response.json() as {
+        choices?: Array<{ message?: Record<string, unknown> }>;
+      };
+      assert.deepEqual(payload.choices?.[0]?.message, {
+        role: "assistant",
+        content: null,
+        refusal: "I cannot comply.",
+      });
+      const telemetry = getResponseTelemetry(response);
+      assert.equal(telemetry?.semanticOutputObserved, true);
+      assert.equal(telemetry?.completed, true);
     });
 
     await t.step("keeps reading a valid buffered body past the error-body deadline", async () => {

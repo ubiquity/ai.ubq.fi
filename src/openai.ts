@@ -1977,6 +1977,17 @@ const cerebrasResponseHeaders = (
 
 const GPT_OSS_STREAM_DOWNGRADED_WARNING = "gpt_oss_stream_downgraded";
 
+const cerebrasChatCompletionHasSemanticOutput = (completion: Record<string, unknown>): boolean =>
+  Array.isArray(completion.choices) && completion.choices.some((choice) => {
+    if (!isRecord(choice) || Array.isArray(choice) || !isRecord(choice.message) || Array.isArray(choice.message)) {
+      return false;
+    }
+    const message = choice.message;
+    return (typeof message.content === "string" && message.content.length > 0) ||
+      (typeof message.refusal === "string" && message.refusal.length > 0) ||
+      (Array.isArray(message.tool_calls) && message.tool_calls.length > 0);
+  });
+
 const streamCerebrasChatCompletion = (
   completion: Record<string, unknown>,
   includeUsage: boolean,
@@ -1997,6 +2008,7 @@ const streamCerebrasChatCompletion = (
     const message = isRecord(value.message) && !Array.isArray(value.message) ? value.message : {};
     const delta: Record<string, unknown> = { role: "assistant" };
     if (typeof message.content === "string") delta.content = message.content;
+    if (typeof message.refusal === "string" && message.refusal) delta.refusal = message.refusal;
 
     if (Array.isArray(message.tool_calls)) {
       delta.tool_calls = message.tool_calls.flatMap((toolCall, toolCallIndex) => {
@@ -8461,6 +8473,7 @@ const handleCerebrasChatCompletions = async (
     );
   }
 
+  if (cerebrasChatCompletionHasSemanticOutput(normalized.value)) markChatSemanticOutput(usageContext);
   providerRequestId ??= normalizeCerebrasProviderRequestId(normalized.value.id);
   if (usageContext?.responseTelemetry) usageContext.responseTelemetry.providerRequestId = providerRequestId;
   const usage = extractChatUsageTokens(normalized.value.usage);

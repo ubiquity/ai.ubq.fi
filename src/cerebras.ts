@@ -369,6 +369,10 @@ const normalizeChoice = (
   if (!(message.content === undefined || message.content === null || typeof message.content === "string")) {
     return { ok: false, message: `Upstream choice ${index} has unsupported message content.` };
   }
+  if (!(message.refusal === undefined || message.refusal === null || typeof message.refusal === "string")) {
+    return { ok: false, message: `Upstream choice ${index} has an invalid refusal.` };
+  }
+  const refusal = typeof message.refusal === "string" ? message.refusal : "";
 
   let toolCalls: Record<string, unknown>[] | undefined;
   if (message.tool_calls !== undefined) {
@@ -382,7 +386,7 @@ const normalizeChoice = (
       toolCalls.push(normalized.value);
     }
   }
-  if (message.content === undefined && !toolCalls?.length) {
+  if (message.content === undefined && !toolCalls?.length && !refusal) {
     return { ok: false, message: `Upstream choice ${index} has neither content nor a tool call.` };
   }
 
@@ -392,8 +396,9 @@ const normalizeChoice = (
   }
   const normalizedMessage: Record<string, unknown> = {
     role: "assistant",
-    content: message.content ?? (toolCalls?.length ? null : ""),
+    content: message.content ?? (toolCalls?.length || refusal ? null : ""),
   };
+  if (refusal) normalizedMessage.refusal = refusal;
   if (toolCalls?.length) normalizedMessage.tool_calls = toolCalls;
   return {
     ok: true,
