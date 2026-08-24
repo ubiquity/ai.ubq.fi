@@ -113,4 +113,73 @@ Deno.test("admin cache analytics UI exposes bounded grouping, capped cohorts, an
   assert.doesNotMatch(adminScript, /Fifteen-minute buckets are retained for seven days\./);
   assert.match(adminScript, /cache: "no-store"/);
   assert.match(adminScript, /Authorization: `Bearer \$\{token\}`/);
+  assert.match(adminScript, /loadPromptCacheAnalytics\(\{ supersede: true \}\)/);
+});
+
+Deno.test("admin cache analytics selector supersedes a pending request without rendering stale data", async () => {
+  const start = adminScript.indexOf("const loadPromptCacheAnalytics = async");
+  const end = adminScript.indexOf("\n\npromptCacheAnalyticsGroupBy.addEventListener", start);
+  assert.ok(start >= 0 && end > start);
+  const loaderSource = adminScript.slice(start, end);
+  const deferred = [Promise.withResolvers<Response>(), Promise.withResolvers<Response>()];
+  const requestedUrls: string[] = [];
+  const renderedGroups: string[][] = [];
+  const groupBy = { value: "provider" };
+  const buildLoader = new Function(
+    "dependencies",
+    `"use strict";
+const {
+  getAdminToken,
+  adminAccessState,
+  hasAdminCredential,
+  promptCacheAnalyticsPanel,
+  promptCacheAnalyticsGroupBy,
+  PROMPT_CACHE_ANALYTICS_GROUPS,
+  promptCacheAnalyticsState,
+  fetch,
+  apiUrl,
+  renderPromptCacheAnalytics,
+} = dependencies;
+let promptCacheAnalyticsLoading = false;
+let promptCacheAnalyticsLoadId = 0;
+${loaderSource}
+return loadPromptCacheAnalytics;`,
+  ) as (dependencies: Record<string, unknown>) => (
+    options?: { supersede?: boolean },
+  ) => Promise<boolean>;
+  const load = buildLoader({
+    getAdminToken: () => "test-token",
+    adminAccessState: { isAdmin: true },
+    hasAdminCredential: () => true,
+    promptCacheAnalyticsPanel: { hidden: true },
+    promptCacheAnalyticsGroupBy: groupBy,
+    PROMPT_CACHE_ANALYTICS_GROUPS: [["provider"], ["route"]],
+    promptCacheAnalyticsState: {
+      textContent: "",
+      removeAttribute: () => undefined,
+    },
+    fetch: (input: string) => {
+      requestedUrls.push(input);
+      return deferred[requestedUrls.length - 1]!.promise;
+    },
+    apiUrl: (path: string) => path,
+    renderPromptCacheAnalytics: (payload: { group_by?: string[] }) => {
+      renderedGroups.push(payload.group_by ?? []);
+    },
+  });
+
+  const providerRequest = load();
+  groupBy.value = "route";
+  const routeRequest = load({ supersede: true });
+  assert.equal(requestedUrls.length, 2);
+  assert.match(requestedUrls[0]!, /group_by=provider/u);
+  assert.match(requestedUrls[1]!, /group_by=route/u);
+
+  deferred[1]!.resolve(Response.json({ status: "ready", group_by: ["route"], buckets: [] }));
+  assert.equal(await routeRequest, true);
+  assert.deepEqual(renderedGroups, [["route"]]);
+
+  deferred[0]!.resolve(Response.json({ status: "ready", group_by: ["provider"], buckets: [] }));
+  assert.equal(await providerRequest, false);
+  assert.deepEqual(renderedGroups, [["route"]]);
 });

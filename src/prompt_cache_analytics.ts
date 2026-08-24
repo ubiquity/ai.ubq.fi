@@ -11,6 +11,8 @@ export const PROMPT_CACHE_ANALYTICS_KV_PREFIX = ["uos_ai", "prompt_cache_analyti
 const LEGACY_PROMPT_CACHE_ANALYTICS_V1_KV_PREFIX = ["uos_ai", "prompt_cache_analytics", "v1"] as const;
 export const PROMPT_CACHE_ANALYTICS_BUCKET_MS = 15 * 60_000;
 export const PROMPT_CACHE_ANALYTICS_WINDOW_MS = 7 * 24 * 60 * 60_000;
+export const PROMPT_CACHE_ANALYTICS_WINDOW_BUCKETS = PROMPT_CACHE_ANALYTICS_WINDOW_MS /
+  PROMPT_CACHE_ANALYTICS_BUCKET_MS;
 export const PROMPT_CACHE_ANALYTICS_RETENTION_MS = 8 * 24 * 60 * 60_000;
 export const PROMPT_CACHE_ANALYTICS_MAX_COHORTS_PER_BUCKET = 32;
 export const PROMPT_CACHE_ANALYTICS_MAX_GROUP_BY = 2;
@@ -798,13 +800,16 @@ export const readPromptCacheAnalytics = async (
     throw new PromptCacheAnalyticsQueryError("group_by must contain distinct approved dimensions only");
   }
   const window = viewWindow(options.now ?? Date.now);
+  const maxBuckets = groupBy.length === 0
+    ? PROMPT_CACHE_ANALYTICS_WINDOW_BUCKETS
+    : PROMPT_CACHE_ANALYTICS_MAX_RESPONSE_BUCKETS;
   const unavailable = (): PromptCacheAnalyticsView => ({
     status: "unavailable",
     bucket_ms: PROMPT_CACHE_ANALYTICS_BUCKET_MS,
     window_start_at_ms: window.windowStartAtMs,
     window_end_at_ms: window.windowEndAtMs,
     group_by: groupBy,
-    max_buckets: PROMPT_CACHE_ANALYTICS_MAX_RESPONSE_BUCKETS,
+    max_buckets: maxBuckets,
     cardinality_limited: false,
     truncated: false,
     buckets: [],
@@ -879,16 +884,16 @@ export const readPromptCacheAnalytics = async (
         left.bucket_start_at_ms - right.bucket_start_at_ms ||
         JSON.stringify(left.group ?? {}).localeCompare(JSON.stringify(right.group ?? {}))
       );
-    const responseTruncated = projected.length > PROMPT_CACHE_ANALYTICS_MAX_RESPONSE_BUCKETS;
+    const responseTruncated = projected.length > maxBuckets;
     const truncated = responseTruncated || cardinalityLimited;
-    const buckets = responseTruncated ? projected.slice(-PROMPT_CACHE_ANALYTICS_MAX_RESPONSE_BUCKETS) : projected;
+    const buckets = responseTruncated ? projected.slice(-maxBuckets) : projected;
     return {
       status: "ready",
       bucket_ms: PROMPT_CACHE_ANALYTICS_BUCKET_MS,
       window_start_at_ms: window.windowStartAtMs,
       window_end_at_ms: window.windowEndAtMs,
       group_by: groupBy,
-      max_buckets: PROMPT_CACHE_ANALYTICS_MAX_RESPONSE_BUCKETS,
+      max_buckets: maxBuckets,
       cardinality_limited: cardinalityLimited,
       truncated,
       buckets,

@@ -2653,8 +2653,8 @@ const renderPromptCacheAnalytics = (snapshot) => {
   }
 };
 
-const loadPromptCacheAnalytics = async () => {
-  if (promptCacheAnalyticsLoading) return false;
+const loadPromptCacheAnalytics = async ({ supersede = false } = {}) => {
+  if (promptCacheAnalyticsLoading && !supersede) return false;
   const token = getAdminToken();
   if (!adminAccessState.isAdmin || !hasAdminCredential()) {
     promptCacheAnalyticsPanel.hidden = true;
@@ -2689,7 +2689,7 @@ const loadPromptCacheAnalytics = async () => {
 };
 
 promptCacheAnalyticsGroupBy.addEventListener("change", () => {
-  if (currentAdminView === "providers") void loadPromptCacheAnalytics();
+  if (currentAdminView === "providers") void loadPromptCacheAnalytics({ supersede: true });
 });
 
 const scheduleProviderCapacityChartResize = () => {

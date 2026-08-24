@@ -7,6 +7,7 @@ import {
   PROMPT_CACHE_ANALYTICS_MAX_COHORTS_PER_BUCKET,
   PROMPT_CACHE_ANALYTICS_MAX_RESPONSE_BUCKETS,
   PROMPT_CACHE_ANALYTICS_RETENTION_MS,
+  PROMPT_CACHE_ANALYTICS_WINDOW_BUCKETS,
   type PromptCacheAnalyticsBucket,
   promptCacheAnalyticsCounterKey,
   PromptCacheAnalyticsQueryError,
@@ -509,6 +510,30 @@ Deno.test("prompt-cache analytics caps grouped response cardinality and marks th
   assert.equal(view.truncated, true);
   assert.equal(view.max_buckets, PROMPT_CACHE_ANALYTICS_MAX_RESPONSE_BUCKETS);
   assert.equal(view.buckets.length, PROMPT_CACHE_ANALYTICS_MAX_RESPONSE_BUCKETS);
+});
+
+Deno.test("prompt-cache analytics returns the complete ungrouped seven-day window", async () => {
+  const kv = new CountingKv();
+  for (let offset = 0; offset <= PROMPT_CACHE_ANALYTICS_WINDOW_BUCKETS; offset += 1) {
+    kv.seed(
+      promptCacheAnalyticsCounterKey(NOW_MS - offset * PROMPT_CACHE_ANALYTICS_BUCKET_MS, "sample_count"),
+      new Deno.KvU64(1n),
+    );
+  }
+
+  const view = await readPromptCacheAnalytics(options(kv));
+  assert.deepEqual(view.group_by, []);
+  assert.equal(view.max_buckets, PROMPT_CACHE_ANALYTICS_WINDOW_BUCKETS);
+  assert.equal(view.truncated, false);
+  assert.deepEqual(
+    view.buckets.map((bucket) => bucket.bucket_start_at_ms),
+    Array.from(
+      { length: PROMPT_CACHE_ANALYTICS_WINDOW_BUCKETS },
+      (_, index) =>
+        NOW_MS -
+        (PROMPT_CACHE_ANALYTICS_WINDOW_BUCKETS - 1 - index) * PROMPT_CACHE_ANALYTICS_BUCKET_MS,
+    ),
+  );
 });
 
 Deno.test("prompt-cache analytics isolates v1 reads and prunes stale v1 and v2 entries with bounded scans", async () => {
