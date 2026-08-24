@@ -1081,6 +1081,7 @@ Deno.test("credentialed CORS reflects only exact trusted relay origins", async (
     assert.equal(response.status, 204, audienceOrigin);
     assert.equal(response.headers.get("access-control-allow-origin"), audienceOrigin);
     assert.equal(response.headers.get("access-control-allow-credentials"), "true");
+    assert.equal(response.headers.get("vary"), "Origin");
   }
 
   const fallbackOrigin = "https://agent-worker-4d2p9cx7m1ab.ubiquity-os.deno.net";

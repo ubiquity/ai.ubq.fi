@@ -38,10 +38,15 @@ const AUTH_RELAY_TIMEOUT_MS = 120_000;
 const API_KEY_REQUEST_LOGS_LIMIT = 20;
 const API_KEY_REQUEST_LOGS_TTL_MS = 10_000;
 
+const fetchWithCredentials = (input, init = {}) => {
+  const headers = new Headers(init.headers);
+  return globalThis.fetch(input, { ...init, headers, credentials: "include" });
+};
+
 const fetch = (input, init = {}) => {
   const headers = new Headers(init.headers);
-  if (!getAdminToken()) headers.delete("Authorization");
-  return globalThis.fetch(input, { ...init, headers, credentials: "include" });
+  if (!getAdminToken() || (isRemoteRelayOrigin() && relaySessionActive)) headers.delete("Authorization");
+  return fetchWithCredentials(input, { ...init, headers });
 };
 
 const readStorageJson = (key) => {
@@ -609,9 +614,9 @@ const signInAdminWithPasskey = async () => {
   if (!isAuthRelayMode && isRemoteRelayOrigin()) {
     const relay = await requestRemotePasskeySession();
     if (relay.handle) setPasskeyHandleValue(relay.handle);
-    relaySessionActive = true;
-    const authenticated = await testAdminToken();
-    if (!authenticated) {
+    relaySessionActive = false;
+    const authenticated = await testAdminToken({ allowBearerFallback: false });
+    if (!authenticated || !relaySessionActive) {
       relaySessionActive = false;
       throw new Error("The ai.ubq.fi sign-in session was not established.");
     }
@@ -658,7 +663,9 @@ const runPasskeyLogin = async ({ automatic = false } = {}) => {
 
 const getRegistrationAdminToken = () => {
   const token = getAdminToken();
-  if (token || !isRemoteRelayOrigin()) return token;
+  if (!isRemoteRelayOrigin()) return token;
+  if (relaySessionActive) return "";
+  if (token) return token;
   throw new Error("Register a passkey from the ai.ubq.fi admin page.");
 };
 
@@ -1736,7 +1743,9 @@ const capacityChartInferredRateLimitResetMarkers = (history, displayWindow, down
       const currentSource = current.sources?.find((source) => source?.source === "codex" && source.slot === slot);
       if (
         !previousSource || !currentSource || previousSource.state === "unavailable" ||
-        currentSource.state === "unavailable"
+        currentSource.state === "unavailable" ||
+        !/^[a-f0-9]{64}$/.test(previousSource.account_cohort_id ?? "") ||
+        previousSource.account_cohort_id !== currentSource.account_cohort_id
       ) continue;
       for (const window of ["primary", "secondary"]) {
         const previousWindow = previousSource.windows?.[window];
@@ -6718,7 +6727,7 @@ const computeExpiresAtMs = (preset) => {
   }
 };
 
-const testAdminToken = async () => {
+const testAdminToken = async ({ allowBearerFallback = true } = {}) => {
   const token = getAdminToken();
   if (!token && !relaySessionActive && !isRemoteRelayOrigin()) {
     setAuthBadge("bad", "Missing token");
@@ -6730,12 +6739,25 @@ const testAdminToken = async () => {
 
   setAuthBadge("unknown", "Checking...");
   try {
-    const headers = token ? { Authorization: `Bearer ${token}` } : {};
-    const res = await fetch(apiUrl("/uos/auth"), {
-      headers,
-      cache: "no-store",
-    });
-    const data = await res.json().catch(() => null);
+    const requestAuth = async (headers) => {
+      const res = await fetchWithCredentials(apiUrl("/uos/auth"), {
+        headers,
+        cache: "no-store",
+      });
+      return { res, data: await res.json().catch(() => null) };
+    };
+    let authResult;
+    if (isRemoteRelayOrigin()) {
+      authResult = await requestAuth({});
+      relaySessionActive = authResult.res.ok && authResult.data?.auth?.is_admin === true &&
+        authResult.data?.auth?.method?.kind === "passkey_session";
+      if (!relaySessionActive && token && allowBearerFallback) {
+        authResult = await requestAuth({ Authorization: `Bearer ${token}` });
+      }
+    } else {
+      authResult = await requestAuth(token ? { Authorization: `Bearer ${token}` } : {});
+    }
+    const { res, data } = authResult;
     if (!res.ok) {
       setAuthBadge("bad", data?.error?.message ?? "Unauthorized");
       setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
@@ -7603,7 +7625,11 @@ passkeyRegisterBtn.addEventListener("click", async () => {
       baseUrl: passkeyBaseUrl,
     });
     if (result.handle) setPasskeyHandleValue(result.handle);
-    applySignedInToken(result.token, { deviceRegistered: true });
+    if (isRemoteRelayOrigin() && relaySessionActive) {
+      setSignedInState(true, { canRegisterPasskey: true, deviceRegistered: true });
+    } else {
+      applySignedInToken(result.token, { deviceRegistered: true });
+    }
     setPasskeyStatus("ok", "Passkey registered");
     postAuthRelayResult(result);
   } catch (error) {
@@ -7619,7 +7645,7 @@ signOutBtn.addEventListener("click", async () => {
   signOutBtn.disabled = true;
   try {
     await signOut({
-      token,
+      token: isRemoteRelayOrigin() && relaySessionActive ? "" : token,
       baseUrl: resolveBaseUrl(),
       corsOrigin: isRemoteRelayOrigin() ? globalThis.location.origin : "",
     });

@@ -60,7 +60,16 @@ export const withCors = (response: Response, req?: Request): Response => {
   headers.set("x-uos-deployment-id", runtimeDeploymentId());
   if (!headers.has("x-uos-request-id")) headers.set("x-uos-request-id", crypto.randomUUID());
   for (const [key, value] of Object.entries(corsHeaders(req))) {
-    headers.set(key, value);
+    if (key.toLowerCase() !== "vary") {
+      headers.set(key, value);
+      continue;
+    }
+    const varyTokens = new Map<string, string>();
+    for (const token of `${headers.get("Vary") ?? ""},${value}`.split(",")) {
+      const normalized = token.trim();
+      if (normalized) varyTokens.set(normalized.toLowerCase(), normalized);
+    }
+    headers.set("Vary", varyTokens.has("*") ? "*" : [...varyTokens.values()].join(", "));
   }
   return new Response(response.body, {
     status: response.status,

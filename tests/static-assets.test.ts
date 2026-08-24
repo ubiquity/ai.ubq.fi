@@ -113,7 +113,25 @@ Deno.test("admin provider view places capacity history before current providers"
   assert.match(adminScript, /Authorization: `Bearer \$\{token\}`/);
   assert.match(adminScript, /auth\.js\?v=passkey-relay-20260823-v5/);
   assert.match(adminScript, /credentials: "include"/);
-  assert.match(adminScript, /if \(!getAdminToken\(\)\) headers\.delete\("Authorization"\)/);
+  assert.match(
+    adminScript,
+    /if \(!getAdminToken\(\) \|\| \(isRemoteRelayOrigin\(\) && relaySessionActive\)\) headers\.delete\("Authorization"\)/,
+  );
+  const cookieFirstIndex = adminScript.indexOf("authResult = await requestAuth({});");
+  const bearerFallbackIndex = adminScript.indexOf(
+    "authResult = await requestAuth({ Authorization: `Bearer ${token}` });",
+  );
+  assert.ok(cookieFirstIndex >= 0);
+  assert.ok(bearerFallbackIndex > cookieFirstIndex);
+  assert.match(
+    adminScript,
+    /relaySessionActive = false;\s+const authenticated = await testAdminToken\(\{ allowBearerFallback: false \}\)/,
+  );
+  assert.match(adminScript, /testAdminToken\(\{ allowBearerFallback: false \}\)/);
+  assert.match(adminScript, /authResult\.data\?\.auth\?\.method\?\.kind === "passkey_session"/);
+  assert.match(adminScript, /if \(relaySessionActive\) return ""/);
+  assert.match(adminScript, /token: isRemoteRelayOrigin\(\) && relaySessionActive \? "" : token/);
+  assert.match(adminScript, /if \(isRemoteRelayOrigin\(\) && relaySessionActive\) \{/);
   assert.match(adminScript, /authenticated: true/);
   assert.doesNotMatch(adminScript, /token: result\.token/);
   assert.doesNotMatch(adminScript, /applySignedInToken\(relay\.token/);
@@ -356,6 +374,19 @@ Deno.test("homepage content negotiation serves server-rendered HTML, Markdown, a
   assert.equal(unacceptable.status, 406);
   assert.equal(unacceptable.headers.get("content-type"), "application/json");
   assert.equal((await unacceptable.json()).error.code, "not_acceptable");
+});
+
+Deno.test("credentialed root responses retain content-negotiation Vary tokens", async () => {
+  const response = await handler(
+    new Request("https://ai.ubq.fi/", {
+      headers: {
+        Accept: "text/html",
+        Origin: "https://agent-worker-4d2p9cx7m1ab.ubiquity-os.deno.net",
+      },
+    }),
+  );
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("vary"), "Accept, Accept-Encoding, Origin");
 });
 
 Deno.test("JSON root advertises autonomous agent discovery documents", async () => {
