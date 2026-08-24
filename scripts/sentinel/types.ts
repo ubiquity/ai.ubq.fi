@@ -11,7 +11,7 @@ export type SentinelInterval = Readonly<{
 export type TriageSeverity = "P0" | "P1" | "P2" | "P3";
 
 export type TriageEvidence = Readonly<{
-  source: "deno_log" | "replay_manifest" | "repository";
+  source: "deno_log" | "replay_manifest" | "repository" | "github_issue";
   reference: string;
   detail: string;
 }>;
@@ -161,7 +161,8 @@ export const isTriageReport = (value: unknown): value is TriageReport => {
       typeof finding.affected_surface === "string" && Array.isArray(finding.evidence) &&
       finding.evidence.length > 0 && finding.evidence.every((evidence) =>
         isRecord(evidence) &&
-        (evidence.source === "deno_log" || evidence.source === "replay_manifest" || evidence.source === "repository") &&
+        (evidence.source === "deno_log" || evidence.source === "replay_manifest" || evidence.source === "repository" ||
+          evidence.source === "github_issue") &&
         typeof evidence.reference === "string" && typeof evidence.detail === "string"
       ) && typeof finding.proposed_correction === "string" &&
       isStringArray(finding.validation_requirements) && typeof finding.actionable === "boolean";
@@ -266,7 +267,7 @@ export const TRIAGE_OUTPUT_SCHEMA = {
               additionalProperties: false,
               required: ["source", "reference", "detail"],
               properties: {
-                source: { type: "string", enum: ["deno_log", "replay_manifest", "repository"] },
+                source: { type: "string", enum: ["deno_log", "replay_manifest", "repository", "github_issue"] },
                 reference: { type: "string" },
                 detail: { type: "string" },
               },

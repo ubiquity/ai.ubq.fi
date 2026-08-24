@@ -5,7 +5,12 @@ import {
   normalizeRevisionStatus,
   type SentinelFetch,
 } from "../scripts/sentinel/deploy.ts";
-import { GitHubActionsClient, type GitHubFetch, MAX_ARTIFACT_METADATA_PAGES } from "../scripts/sentinel/github.ts";
+import {
+  GitHubActionsClient,
+  type GitHubFetch,
+  MAX_ARTIFACT_METADATA_PAGES,
+  MAX_ISSUE_METADATA_PAGES,
+} from "../scripts/sentinel/github.ts";
 
 const OLD_SHA = "1".repeat(40);
 const NEW_SHA = "2".repeat(40);
@@ -16,6 +21,10 @@ const GITHUB_TOKEN = "github-test-token";
 Deno.test("GitHub artifact pagination covers ninety days of five-minute Sentinel runs", () => {
   assert.ok(MAX_ARTIFACT_METADATA_PAGES >= 521);
   assert.ok(MAX_ARTIFACT_METADATA_PAGES <= 600);
+});
+
+Deno.test("GitHub issue pagination has a bounded metadata budget", () => {
+  assert.equal(MAX_ISSUE_METADATA_PAGES, 10);
 });
 
 interface SeenRequest {
@@ -623,6 +632,195 @@ const assertGitHubApiRequest = (request: SeenRequest, pathname: string, method =
   assert.equal(request.headers.get("Authorization"), `Bearer ${GITHUB_TOKEN}`);
   assert.equal(request.headers.get("X-GitHub-Api-Version"), "2026-03-10");
 };
+
+const githubIssue = (
+  number: number,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> => ({
+  id: 1_000 + number,
+  node_id: `I_kwDOIssue${number}`,
+  number,
+  state: "open",
+  title: `Issue ${number}`,
+  body: "Acceptance:\n- Fix it.\n\nFiles:\n- src/openai.ts\n",
+  html_url: `https://github.com/ubiquity/ai.ubq.fi/issues/${number}`,
+  user: { login: "octocat" },
+  author_association: "MEMBER",
+  labels: [{ name: "Priority: 2 (Medium)" }, { name: "Time: <2 Hours" }],
+  assignees: [],
+  locked: false,
+  comments: 0,
+  created_at: "2026-08-21T12:00:00Z",
+  updated_at: "2026-08-21T12:01:00Z",
+  ...overrides,
+});
+
+Deno.test("GitHub issue intake paginates open issues and excludes pull requests", async () => {
+  const firstPage = Array.from(
+    { length: 100 },
+    (_, index) => githubIssue(index + 1, index === 50 ? { pull_request: { url: "https://github.test/pull/51" } } : {}),
+  );
+  const fake = queuedFetch([
+    (request) => {
+      assertGitHubApiRequest(request, "/repos/ubiquity/ai.ubq.fi/issues");
+      assert.equal(request.url.searchParams.get("state"), "open");
+      assert.equal(request.url.searchParams.get("sort"), "created");
+      assert.equal(request.url.searchParams.get("direction"), "asc");
+      assert.equal(request.url.searchParams.get("per_page"), "100");
+      assert.equal(request.url.searchParams.get("page"), "1");
+      return json(firstPage);
+    },
+    (request) => {
+      assertGitHubApiRequest(request, "/repos/ubiquity/ai.ubq.fi/issues");
+      assert.equal(request.url.searchParams.get("page"), "2");
+      return json([githubIssue(101, { body: null, labels: ["Priority: 2 (Medium)", "Time: <2 Hours"] })]);
+    },
+  ]);
+
+  const issues = await githubClient(fake.fetcher).listOpenIssues();
+  assert.equal(issues.length, 100);
+  assert.equal(issues.some((issue) => issue.number === 51), false);
+  assert.equal(issues.find((issue) => issue.number === 101)?.body, "");
+  fake.assertDrained();
+});
+
+Deno.test("GitHub issue detail and relationships use exact repository resources", async () => {
+  const fake = queuedFetch([
+    (request) => {
+      assertGitHubApiRequest(request, "/repos/ubiquity/ai.ubq.fi/issues/113");
+      return json(githubIssue(113));
+    },
+    (request) => {
+      assertGitHubApiRequest(request, "/repos/ubiquity/ai.ubq.fi/issues/113/sub_issues");
+      assert.equal(request.url.searchParams.get("per_page"), "1");
+      assert.equal(request.url.searchParams.get("page"), "1");
+      return json([]);
+    },
+    (request) => {
+      assertGitHubApiRequest(request, "/graphql", "POST");
+      assert.equal(request.headers.get("Content-Type"), "application/json");
+      const body = JSON.parse(String(request.body));
+      assert.deepEqual(body.variables, { owner: "ubiquity", name: "ai.ubq.fi", number: 113 });
+      assert.match(body.query, /parent \{ number \}/u);
+      assert.match(body.query, /blockedBy\(first: 1\)/u);
+      return json({
+        data: {
+          repository: {
+            issue: {
+              parent: null,
+              blockedBy: { totalCount: 0 },
+              blocking: { totalCount: 0 },
+            },
+          },
+        },
+      });
+    },
+  ]);
+
+  const client = githubClient(fake.fetcher);
+  const issue = await client.getIssue(113);
+  const relations = await client.getIssueRelations(113);
+  assert.equal(issue.number, 113);
+  assert.equal(issue.authorLogin, "octocat");
+  assert.deepEqual(relations, {
+    parentIssueNumber: null,
+    subIssueCount: 0,
+    blockedByCount: 0,
+    blockingCount: 0,
+  });
+  fake.assertDrained();
+});
+
+Deno.test("GitHub repository permission lookup accepts only canonical calculated values", async () => {
+  const fake = queuedFetch([
+    (request) => {
+      assertGitHubApiRequest(request, "/repos/ubiquity/ai.ubq.fi/collaborators/octocat/permission");
+      return json({ permission: "admin" });
+    },
+    () => json({ permission: "write" }),
+    () => json({ permission: "read" }),
+    (request) => {
+      assertGitHubApiRequest(request, "/repos/ubiquity/ai.ubq.fi/collaborators/former-member/permission");
+      return json({ message: "Not Found" }, 404);
+    },
+    () => json({ permission: "maintain" }),
+  ]);
+  const client = githubClient(fake.fetcher);
+  assert.equal(await client.getRepositoryPermission("octocat"), "admin");
+  assert.equal(await client.getRepositoryPermission("writer"), "write");
+  assert.equal(await client.getRepositoryPermission("reader"), "read");
+  assert.equal(await client.getRepositoryPermission("former-member"), "none");
+  await assert.rejects(() => client.getRepositoryPermission("malformed"), /incomplete payload/);
+  fake.assertDrained();
+});
+
+Deno.test("GitHub issue relationships retain a non-null parent issue number", async () => {
+  const fake = queuedFetch([
+    () => json([]),
+    () =>
+      json({
+        data: {
+          repository: {
+            issue: {
+              parent: { number: 77 },
+              blockedBy: { totalCount: 0 },
+              blocking: { totalCount: 0 },
+            },
+          },
+        },
+      }),
+  ]);
+  assert.deepEqual(await githubClient(fake.fetcher).getIssueRelations(113), {
+    parentIssueNumber: 77,
+    subIssueCount: 0,
+    blockedByCount: 0,
+    blockingCount: 0,
+  });
+  fake.assertDrained();
+});
+
+Deno.test("GitHub issue intake rejects malformed API records and relationship payloads", async () => {
+  const malformedIssue = queuedFetch([() => json([githubIssue(1, { updated_at: "invalid" })])]);
+  await assert.rejects(
+    () => githubClient(malformedIssue.fetcher).listOpenIssues(),
+    /incomplete issue/,
+  );
+
+  const malformedRelations = queuedFetch([
+    () => json([]),
+    () => json({ data: { repository: { issue: { parent: null, blockedBy: {}, blocking: { totalCount: 0 } } } } }),
+  ]);
+  await assert.rejects(
+    () => githubClient(malformedRelations.fetcher).getIssueRelations(1),
+    /incomplete payload/,
+  );
+
+  const missingParent = queuedFetch([
+    () => json([]),
+    () => json({ data: { repository: { issue: { blockedBy: { totalCount: 0 }, blocking: { totalCount: 0 } } } } }),
+  ]);
+  await assert.rejects(
+    () => githubClient(missingParent.fetcher).getIssueRelations(1),
+    /incomplete payload/,
+  );
+
+  const partialGraphQl = queuedFetch([
+    () => json([]),
+    () =>
+      json({
+        data: {
+          repository: {
+            issue: { parent: null, blockedBy: { totalCount: 0 }, blocking: { totalCount: 0 } },
+          },
+        },
+        errors: [{ message: "parent lookup failed" }],
+      }),
+  ]);
+  await assert.rejects(
+    () => githubClient(partialGraphQl.fetcher).getIssueRelations(1),
+    /incomplete payload/,
+  );
+});
 
 Deno.test("GitHub current-run lookup exposes the stable workflow creation timestamp", async () => {
   const fake = queuedFetch([
