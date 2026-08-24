@@ -76,7 +76,8 @@ export const readBoundedResponseBody = async (
     cancellationStarted = true;
     try {
       const cancellation = reader.cancel(options.cancellationReason ?? "Bounded upstream body read incomplete");
-      void cancellation.catch(() => {}).finally(releaseReader);
+      releaseReader();
+      void cancellation.catch(() => {});
     } catch {
       releaseReader();
     }

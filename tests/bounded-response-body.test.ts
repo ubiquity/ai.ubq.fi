@@ -122,3 +122,22 @@ Deno.test("bounded response body releases an incomplete reader exactly once", as
   assert.equal(cancellations, 1);
   assert.equal(releases, 1);
 });
+
+Deno.test("bounded response body releases the reader when cancellation never settles", async () => {
+  let releases = 0;
+  let cancellations = 0;
+  const reader = {
+    read: () => Promise.resolve({ done: false, value: new Uint8Array(2) }),
+    cancel: () => {
+      cancellations += 1;
+      return new Promise<void>(() => {});
+    },
+    releaseLock: () => releases += 1,
+  };
+  const response = { body: { getReader: () => reader } } as unknown as Response;
+
+  const result = await readBoundedResponseBody(response, { maxBytes: 1 });
+  assert.equal(result.complete, false);
+  assert.equal(cancellations, 1);
+  assert.equal(releases, 1);
+});
