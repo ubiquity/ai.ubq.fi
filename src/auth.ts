@@ -721,6 +721,10 @@ export const authenticateClient = async (req: Request): Promise<AuthenticateClie
     });
     return { ok: false, response: githubResult.response };
   }
+  if (githubCandidate) {
+    logClientAuth({ ok: false, method: "github_token", status: 401, reason: "missing_repo_headers" });
+    return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
+  }
 
   if (looksLikeUosApiKey(token)) {
     const result = await authenticateApiKeyToken(token, { kv });
@@ -913,6 +917,10 @@ export const authenticateAdmin = async (req: Request): Promise<AdminAuthResult> 
       token_shape: tokenShape,
       ...entry,
     });
+  if (token && looksLikeGitHubToken(token) && !config.adminTokens.has(token)) {
+    logAdminAuth({ ok: false, method: "github_token", status: 401, reason: "unattested_github_token" });
+    return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
+  }
   const passkeySession = await getPasskeySessionForRequest(req);
   if (passkeySession) {
     if (!isPasskeyUserAdmin(passkeySession.user)) {

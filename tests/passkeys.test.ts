@@ -345,6 +345,80 @@ Deno.test("passkey session authenticates as client and admin", async () => {
   assert.equal(sessionBody.user.credential_count, 1);
 });
 
+Deno.test("unattested GitHub client tokens do not reach Deno verification", async () => {
+  kvStore.clear();
+  const originalFetch = globalThis.fetch;
+  const requests: Array<{ url: string; authorization: string | null; cookie: string | null }> = [];
+  const token = "github_pat_unattested_client_test";
+
+  globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const headers = new Headers(init?.headers);
+    requests.push({
+      url: String(input),
+      authorization: headers.get("authorization"),
+      cookie: headers.get("cookie"),
+    });
+    return Promise.resolve(
+      String(input).startsWith("https://api.deno.com/")
+        ? new Response("{}", { status: 401 })
+        : new Response("<title>Overview | ai-ubq-fi-test | Deploy</title>", { status: 200 }),
+    );
+  };
+
+  try {
+    await withEnv({
+      DENO_DEPLOY_APP_SLUG: "ai-ubq-fi-test",
+      DENO_DEPLOY_ORG_SLUG: "ubiquity-dao",
+    }, async () => {
+      const result = await authenticateClient(
+        new Request("https://ai.ubq.fi/v1/models", { headers: { Authorization: `Bearer ${token}` } }),
+      );
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.response.status, 401);
+      assert.deepEqual(requests, []);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("unattested GitHub admin tokens do not reach Deno verification", async () => {
+  kvStore.clear();
+  const originalFetch = globalThis.fetch;
+  const requests: Array<{ url: string; authorization: string | null; cookie: string | null }> = [];
+  const token = "ghp_unattested_admin_test";
+
+  globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const headers = new Headers(init?.headers);
+    requests.push({
+      url: String(input),
+      authorization: headers.get("authorization"),
+      cookie: headers.get("cookie"),
+    });
+    return Promise.resolve(
+      String(input).startsWith("https://api.deno.com/")
+        ? new Response("{}", { status: 401 })
+        : new Response("<title>Overview | ai-ubq-fi-test | Deploy</title>", { status: 200 }),
+    );
+  };
+
+  try {
+    await withEnv({
+      DENO_DEPLOY_APP_SLUG: "ai-ubq-fi-test",
+      DENO_DEPLOY_ORG_SLUG: "ubiquity-dao",
+    }, async () => {
+      const result = await authenticateAdmin(
+        new Request("https://ai.ubq.fi/uos/auth", { headers: { Authorization: `Bearer ${token}` } }),
+      );
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.response.status, 401);
+      assert.deepEqual(requests, []);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 Deno.test("admin passkey sessions cannot read the super-admin Stage 0 diagnostic", async () => {
   kvStore.clear();
   const { token } = seedPasskeySession();
