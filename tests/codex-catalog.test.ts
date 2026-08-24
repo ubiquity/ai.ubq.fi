@@ -1027,6 +1027,52 @@ Deno.test("codex catalog: model picker receives the complete unique union of pai
   }
 });
 
+Deno.test("codex catalog: cold provider caches cannot publish the incomplete Codex-only catalog", async () => {
+  seedBaseState("0.200.0");
+  resetMeteredModelsCacheForTest();
+  resetSurplusModelsCacheForTest();
+  const originalFetch = globalThis.fetch;
+  const originalMeteredKey = Deno.env.get("METERED_API_KEY");
+  const originalSurplusKey = Deno.env.get("SURPLUS_API_KEY");
+  Deno.env.set("METERED_API_KEY", "metered-cold-catalog-test-key");
+  Deno.env.set("SURPLUS_API_KEY", "surplus-cold-catalog-test-key");
+  setMeteredModelsFetchForTest(() =>
+    Promise.resolve(Response.json({
+      data: [{ id: "cold-openlux-model", owned_by: "openlux", supported_endpoint_types: ["openai-response"] }],
+    }))
+  );
+  globalThis.fetch = (input) => {
+    const url = String(input);
+    if (url === "https://api.surplusintelligence.ai/v1/models") {
+      return Promise.resolve(Response.json({ data: [{ id: "deepseek-v4-flash", provider: "surplus" }] }));
+    }
+    const version = new URL(url).searchParams.get("client_version") ?? "missing";
+    return Promise.resolve(new Response(catalogBody(version), { headers: { "Content-Type": "application/json" } }));
+  };
+
+  try {
+    const response = await handleCodexCatalogModels(request("0.203.0"), "0.203.0");
+    assert.equal(response.status, 200);
+    const payload = await response.json() as { models: Array<Record<string, unknown>> };
+    const slugs = payload.models.map((model) => model.slug);
+    assert.equal(slugs.includes("cold-openlux-model"), true);
+    const deepseek = payload.models.find((model) => model.slug === "deepseek-v4-flash");
+    assert.deepEqual(
+      (deepseek?.supported_reasoning_levels as Array<{ effort: string }>).map((level) => level.effort),
+      ["none", "low", "high", "max"],
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    setMeteredModelsFetchForTest(null);
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    if (originalMeteredKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredKey);
+    if (originalSurplusKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
+    else Deno.env.set("SURPLUS_API_KEY", originalSurplusKey);
+  }
+});
+
 Deno.test("paid-provider model caches ignore out-of-order Metered refreshes", async () => {
   resetMeteredModelsCacheForTest();
   const originalMeteredKey = Deno.env.get("METERED_API_KEY");

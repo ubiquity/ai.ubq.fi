@@ -643,15 +643,19 @@ const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheS
     "x-uos-upstream": "chatgpt_codex",
     "x-uos-cache": cacheState,
   });
-  const [metered, surplus] = await Promise.all([
+  const [cachedMetered, cachedSurplus] = await Promise.all([
     fetchMeteredModels({ cachedOnly: true }),
     fetchSurplusModels({ cachedOnly: true }),
   ]);
+  const [metered, surplus] = await Promise.all([
+    cachedMetered ?? fetchMeteredModels(),
+    cachedSurplus ?? fetchSurplusModels(),
+  ]);
   const nowMs = Date.now();
-  if (!metered || nowMs - metered.updated_at_ms >= METERED_MODELS_CACHE_TTL_MS) {
+  if (metered && nowMs - metered.updated_at_ms >= METERED_MODELS_CACHE_TTL_MS) {
     void fetchMeteredModels().catch(() => {});
   }
-  if (!surplus || nowMs - surplus.updated_at_ms >= SURPLUS_MODELS_CACHE_TTL_MS) {
+  if (surplus && nowMs - surplus.updated_at_ms >= SURPLUS_MODELS_CACHE_TTL_MS) {
     void fetchSurplusModels().catch(() => {});
   }
   const paidModels = uniqueResponsesModels([...(metered?.models ?? []), ...(surplus?.models ?? [])]);
