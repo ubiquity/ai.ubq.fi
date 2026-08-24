@@ -1,4 +1,4 @@
-import { reasoningLevelsForRecentModel } from "./model-reasoning-levels.js";
+import { getRecentModelReasoning } from "./reasoning-select.js";
 
 const summary = document.querySelector("[data-source-summary]");
 const list = document.querySelector("[data-model-list]");
@@ -33,7 +33,7 @@ const reasoningFor = (model) => {
       defaultLevel: model.default_reasoning_effort ?? null,
     };
   }
-  return reasoningLevelsForRecentModel(model.id);
+  return getRecentModelReasoning(model.id);
 };
 
 let catalog = [];
