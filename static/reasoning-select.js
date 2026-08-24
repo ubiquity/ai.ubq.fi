@@ -9,7 +9,7 @@ export const REASONING_NONE_VALUE = "none";
 // - Anthropic effort: https://platform.claude.com/docs/en/build-with-claude/effort
 // - DeepSeek V4 + Qwen 3.8 provider behavior:
 //   https://qwenlm.github.io/qwen-code-docs/en/users/configuration/model-providers/
-// - Z.AI GLM: https://docs.z.ai/guides/llm/glm-5.3
+// - Z.AI GLM: https://docs.z.ai/guides/capabilities/thinking-mode
 // - Gemini thinking: https://ai.google.dev/gemini-api/docs/thinking
 // - xAI reasoning: https://docs.x.ai/developers/model-capabilities/text/reasoning
 const RECENT_MODEL_REASONING_RULES = [
@@ -58,8 +58,8 @@ const RECENT_MODEL_REASONING_RULES = [
   {
     modelClass: "glm-5.1",
     pattern: /(?:^|\/)glm-5\.1(?:$|-)/i,
-    levels: ["none", "minimal", "low", "medium", "high", "xhigh"],
-    defaultLevel: null,
+    levels: ["none", "thinking"],
+    defaultLevel: "thinking",
   },
   {
     modelClass: "kimi-k3",
