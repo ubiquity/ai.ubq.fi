@@ -240,6 +240,19 @@ const baseSseChunks = () => [
   }\n\n`,
 ];
 
+const authoritativeCodexQuotaResponse = (headers?: HeadersInit): Response => {
+  const responseHeaders = new Headers(headers);
+  responseHeaders.set("Content-Type", "application/json");
+  responseHeaders.set(
+    "Retry-After",
+    new Date((Math.floor(Date.now() / 1_000) + 60) * 1_000).toUTCString(),
+  );
+  return new Response(
+    JSON.stringify({ error: { message: "Primary limited", type: "usage_limit_reached" } }),
+    { status: 429, headers: responseHeaders },
+  );
+};
+
 const responsesRequest = (
   body: Record<string, unknown> = {},
   signal?: AbortSignal,
@@ -266,6 +279,9 @@ const seedPaidFallbackKey = (
     v3SettledMicrocredits?: number;
   } = {},
 ): void => {
+  kvStore.delete(keyToString(CODEX_ACCOUNT_ROUTING_KV_KEY));
+  resetCodexAccountRoutingForTest();
+  resetCodexAuthCacheForTest();
   const now = Date.now();
   const windowMs = 60_000;
   const windowResetAtMs = now + windowMs;
@@ -3413,7 +3429,7 @@ Deno.test("openai: reasoning progress releases streaming headers before semantic
     }
 
     kvStore.set(debugKey, {
-      scenario: "codex_429",
+      scenario: "normal",
       expires_at_ms: null,
       updated_at_ms: Date.now(),
     });
@@ -3427,6 +3443,9 @@ Deno.test("openai: reasoning progress releases streaming headers before semantic
         let releaseSemantic: (() => void) | null = null;
         const response = await withFetchMock(
           (url) => {
+            if (url === "https://chatgpt.com/backend-api/codex/responses") {
+              return authoritativeCodexQuotaResponse();
+            }
             if (url !== "https://api.openlux.ai/v1/responses") {
               throw new Error(`Unexpected provider during Metered reasoning progress: ${url}`);
             }
@@ -3628,10 +3647,7 @@ Deno.test("openai: paid-provider reasoning progress releases only streaming requ
               await withFetchMock(
                 (url) => {
                   if (url === "https://chatgpt.com/backend-api/codex/responses") {
-                    return new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
-                      status: 429,
-                      headers: { "Content-Type": "application/json", "Retry-After": "60" },
-                    });
+                    return authoritativeCodexQuotaResponse();
                   }
                   if (
                     url ===
@@ -4262,6 +4278,114 @@ Deno.test("openai: upstream fetch logs redact provider error payloads", async ()
       code: "codex_upstream_unreachable",
     });
     assert.equal(JSON.stringify(args).includes(secret), false);
+  }
+});
+
+Deno.test("openai: a generic post-reset 429 does not authorize paid fallback", async () => {
+  const previousMeteredKey = Deno.env.get("METERED_API_KEY");
+  const keyId = "fallback-post-reset-generic-429";
+  const requestId = "request-post-reset-generic-429";
+  const providerCalls: string[] = [];
+  let codexCalls = 0;
+  let meteredCalls = 0;
+  const provider: CodexUsageResetProvider = {
+    contract: {
+      idempotency: { callerSupplied: true, retentionMs: 86_400_000 },
+      lookup: { byIdempotencyKey: true, byProviderReceiptId: true },
+      verification: { independentlyVerifiable: true },
+      receiptIdsSafeToPersistAndLog: false,
+      supportedResetTypes: ["codex_rate_limits"],
+    },
+    readInventory: () => {
+      providerCalls.push("inventory");
+      return Promise.resolve({
+        availableCount: 1,
+        observedAtMs: Date.now(),
+        credits: [{ id: "fixture-credit", status: "available", resetType: "codex_rate_limits", expiresAtMs: null }],
+      });
+    },
+    redeem: () => {
+      providerCalls.push("redeem");
+      return Promise.resolve({ kind: "completed", providerReceiptId: "post-reset-generic-receipt" } as const);
+    },
+    lookup: () => {
+      providerCalls.push("lookup");
+      return Promise.resolve({ kind: "completed", providerReceiptId: "post-reset-generic-receipt" } as const);
+    },
+    verifyApplied: () => {
+      providerCalls.push("verify");
+      return Promise.resolve(true);
+    },
+  };
+
+  Deno.env.set("METERED_API_KEY", "metered-test-key");
+  resetMeteredModelsCacheForTest();
+  await fetchMeteredModels({
+    force: true,
+    fetcher: () =>
+      Promise.resolve(Response.json({
+        data: [{ id: DEFAULT_TEST_MODEL, supported_endpoint_types: ["openai-response"] }],
+      })),
+  });
+  seedPaidFallbackKey(keyId);
+
+  try {
+    const response = await withFetchMock(
+      (url) => {
+        if (url === "https://chatgpt.com/backend-api/codex/responses") {
+          codexCalls += 1;
+          if (codexCalls === 1) return authoritativeCodexQuotaResponse();
+          return new Response(JSON.stringify({ error: { message: "Still limited" } }), {
+            status: 429,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url === "https://api.openlux.ai/v1/responses") {
+          meteredCalls += 1;
+          return sseResponse(baseSseChunks());
+        }
+        throw new Error(`Unexpected upstream dispatch in post-reset fallback test: ${url}`);
+      },
+      async () => {
+        clearBankedResetRecords();
+        setCodexBankedResetOptionsForTest({
+          config: liveBankedResetFixtureConfig(),
+          provider,
+          kv: kvStub,
+          now: () => Date.now(),
+          newOwnerToken: () => "post-reset-generic-owner",
+        });
+        try {
+          return await handleResponses(responsesRequest(), {
+            keyId,
+            kernelRepo: null,
+            kernelOrg: null,
+            paidFallbackEnabled: true,
+            requestId,
+            startedAtMs: Date.now(),
+          });
+        } finally {
+          setCodexBankedResetOptionsForTest(null);
+          clearBankedResetRecords();
+        }
+      },
+    );
+
+    assert.equal(response.status, 429);
+    assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
+    assert.equal(codexCalls, 2);
+    assert.equal(meteredCalls, 0);
+    assert.deepEqual(providerCalls, ["inventory", "redeem", "verify"]);
+  } finally {
+    setCodexBankedResetOptionsForTest(null);
+    clearBankedResetRecords();
+    kvStore.delete(keyToString(["ubq_ai", "api_keys", "id", keyId]));
+    kvStore.delete(keyToString(["ubq_ai", "api_keys", "hash", `hash-${keyId}`]));
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    resetMeteredModelsCacheForTest();
+    if (previousMeteredKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", previousMeteredKey);
   }
 });
 
@@ -4924,10 +5048,7 @@ Deno.test("openai: tool-bearing paid fallback skips Surplus without capability e
           meteredCalls += 1;
           return sseResponse(baseSseChunks());
         }
-        return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
-          status: 429,
-          headers: { "Content-Type": "application/json" },
-        });
+        return authoritativeCodexQuotaResponse();
       },
       () =>
         handleResponses(
@@ -5168,10 +5289,7 @@ Deno.test("openai: inter-provider abort and quota rejection retain the respondin
           abortMeteredCalls += 1;
           return sseResponse(baseSseChunks());
         }
-        return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
-          status: 429,
-          headers: { "Content-Type": "application/json" },
-        });
+        return authoritativeCodexQuotaResponse();
       },
       () =>
         handleResponses(
@@ -5218,10 +5336,7 @@ Deno.test("openai: inter-provider abort and quota rejection retain the respondin
           quotaMeteredCalls += 1;
           return sseResponse(baseSseChunks());
         }
-        return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
-          status: 429,
-          headers: { "Content-Type": "application/json" },
-        });
+        return authoritativeCodexQuotaResponse();
       },
       () =>
         handleResponses(
@@ -5275,10 +5390,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
       const response = await withFetchMock(
         () => {
           calls += 1;
-          return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
-            status: 429,
-            headers: { "Content-Type": "application/json" },
-          });
+          return authoritativeCodexQuotaResponse();
         },
         () =>
           handleResponses(
@@ -5298,7 +5410,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
           ),
       );
       assert.equal(response.status, 429);
-      assert.equal(calls, 2);
+      assert.equal(calls, 1);
       const stored = kvStore.get(keyToString(["ubq_ai", "api_keys", "id", keyId])) as {
         paid_fallback_reservation_request_id?: string | null;
       };
@@ -5327,10 +5439,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
         const response = await withFetchMock(
           () => {
             calls += 1;
-            return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
-              status: 429,
-              headers: { "Content-Type": "application/json" },
-            });
+            return authoritativeCodexQuotaResponse();
           },
           () =>
             handleResponses(
@@ -5349,12 +5458,11 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
             ),
         );
         assert.equal(response.status, 429, testCase.id);
-        assert.equal(calls, 2);
+        assert.equal(calls, 1);
         assert.deepEqual(await response.json(), {
           error: {
             message: "Primary limited",
-            type: "rate_limit_error",
-            code: "upstream_error",
+            type: "usage_limit_reached",
           },
         });
       }
@@ -5377,13 +5485,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
         const response = await withFetchMock(
           () => {
             calls += 1;
-            return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
-              status: 429,
-              headers: {
-                "Content-Type": "application/json",
-                "Retry-After": "0",
-              },
-            });
+            return authoritativeCodexQuotaResponse();
           },
           () =>
             handleResponses(
@@ -5402,9 +5504,8 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
             ),
         );
         assert.equal(response.status, 429);
-        assert.equal(response.headers.get("Retry-After"), "0");
-        assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
-        assert.equal(calls, 2);
+        assert.match(response.headers.get("Retry-After") ?? "", / GMT$/);
+        assert.equal(calls, 1);
       } finally {
         atomicCommitFailure = null;
       }
@@ -5634,12 +5735,8 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
               },
             });
           }
-          return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
-            status: 429,
-            headers: {
-              "Content-Type": "application/json",
-              "x-uos-warning": "codex_quota_temporarily_exceeded",
-            },
+          return authoritativeCodexQuotaResponse({
+            "x-uos-warning": "codex_quota_temporarily_exceeded",
           });
         },
         () =>
@@ -5678,14 +5775,12 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
       assert.equal(response.headers.get("x-uos-upstream"), "metered");
       assert.equal(response.headers.get("x-uos-warning"), null);
       assert.equal(getResponseTelemetry(response)?.quotaUsedPercent, 0);
-      assert.equal(getResponseTelemetry(response)?.fallbackReason, "primary_429");
+      assert.equal(getResponseTelemetry(response)?.fallbackReason, "primary_quota_blocked");
       assert.deepEqual(urls, [
-        "https://chatgpt.com/backend-api/codex/responses",
         "https://chatgpt.com/backend-api/codex/responses",
         "https://api.openlux.ai/v1/responses",
       ]);
-      assert.equal(bodies.length, 3);
-      assert.deepEqual(bodies[1], bodies[0]);
+      assert.equal(bodies.length, 2);
       assert.equal(bodies[0].prompt_cache_key, "fallback-cache-key");
       assert.equal("max_output_tokens" in bodies[0], false);
       assert.equal("prompt_cache_options" in bodies[0], false);
@@ -5693,14 +5788,14 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
       const codexInput = bodies[0].input as Array<Record<string, unknown>>;
       const codexContent = codexInput[0]?.content as Array<Record<string, unknown>>;
       assert.equal("prompt_cache_breakpoint" in codexContent[0]!, false);
-      assert.equal(bodies[2].max_output_tokens, 64);
-      assert.equal(bodies[2].prompt_cache_key, "fallback-cache-key");
-      assert.deepEqual(bodies[2].prompt_cache_options, { mode: "explicit", ttl: "30m" });
-      assert.equal(bodies[2].prompt_cache_retention, "24h");
-      const meteredInput = bodies[2].input as Array<Record<string, unknown>>;
+      assert.equal(bodies[1].max_output_tokens, 64);
+      assert.equal(bodies[1].prompt_cache_key, "fallback-cache-key");
+      assert.deepEqual(bodies[1].prompt_cache_options, { mode: "explicit", ttl: "30m" });
+      assert.equal(bodies[1].prompt_cache_retention, "24h");
+      const meteredInput = bodies[1].input as Array<Record<string, unknown>>;
       const meteredContent = meteredInput[0]?.content as Array<Record<string, unknown>>;
       assert.deepEqual(meteredContent[0]?.prompt_cache_breakpoint, { mode: "explicit" });
-      assert.deepEqual(bodies[2].reasoning, { effort: "max" });
+      assert.deepEqual(bodies[1].reasoning, { effort: "max" });
 
       const recordedAnalyticsEvents: Parameters<typeof recordPromptCacheAnalytics>[0][] = [];
       await withTerminalRequestLog(response, {
@@ -5742,7 +5837,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
           route: "responses",
           promptCacheKeyPresent: true,
           promptCacheMode: "explicit",
-          fallbackReason: "primary_429",
+          fallbackReason: "primary_quota_blocked",
         },
       );
       assert.equal("affinityOutcome" in recordedAnalyticsEvent, false);
@@ -5788,10 +5883,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                 headers: { "Content-Type": "application/json" },
               });
             }
-            return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
-              status: 429,
-              headers: { "Content-Type": "application/json" },
-            });
+            return authoritativeCodexQuotaResponse();
           },
           async () => {
             const response = await handleResponses(
@@ -5836,10 +5928,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
               },
             });
           }
-          return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
-            status: 429,
-            headers: { "Content-Type": "application/json" },
-          });
+          return authoritativeCodexQuotaResponse();
         },
         () =>
           handleChatCompletions(
@@ -5863,7 +5952,6 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
       assert.equal(response.status, 200);
       assert.equal(response.headers.get("x-uos-upstream"), "metered");
       assert.deepEqual(urls, [
-        "https://chatgpt.com/backend-api/codex/responses",
         "https://chatgpt.com/backend-api/codex/responses",
         "https://api.openlux.ai/v1/responses",
       ]);
@@ -5933,10 +6021,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                   headers: { "Content-Type": "application/json" },
                 });
               }
-              return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
-                status: 429,
-                headers: { "Content-Type": "application/json" },
-              });
+              return authoritativeCodexQuotaResponse();
             },
             async () => {
               const context = {
@@ -6016,10 +6101,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
               throw new TypeError("network connection reset before response headers");
             }
             codexRequestHeaders.push(headers);
-            return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
-              status: 429,
-              headers: { "Content-Type": "application/json" },
-            });
+            return authoritativeCodexQuotaResponse();
           },
           async () => {
             const context = {
@@ -6158,10 +6240,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                 return sseResponse(baseSseChunks());
               }
               codexRequestHeaders.push(headers);
-              return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
-                status: 429,
-                headers: { "Content-Type": "application/json" },
-              });
+              return authoritativeCodexQuotaResponse();
             },
             async () => {
               const response = routeCase.route === "responses"
@@ -6494,10 +6573,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
               controller.abort(new DOMException("gateway deadline exceeded", "TimeoutError"));
               throw controller.signal.reason;
             }
-            return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
-              status: 429,
-              headers: { "Content-Type": "application/json" },
-            });
+            return authoritativeCodexQuotaResponse();
           },
           async () => {
             const context = {
@@ -6574,10 +6650,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                 },
               });
             }
-            return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
-              status: 429,
-              headers: { "Content-Type": "application/json" },
-            });
+            return authoritativeCodexQuotaResponse();
           },
           async () => {
             const context = {
@@ -6669,10 +6742,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                   },
                 });
               }
-              return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
-                status: 429,
-                headers: { "Content-Type": "application/json" },
-              });
+              return authoritativeCodexQuotaResponse();
             },
             async () => {
               const context = {
@@ -6764,10 +6834,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                 },
               });
             }
-            return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
-              status: 429,
-              headers: { "Content-Type": "application/json" },
-            });
+            return authoritativeCodexQuotaResponse();
           },
           async () => {
             const context = {
@@ -6856,10 +6923,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                 },
               );
             }
-            return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
-              status: 429,
-              headers: { "Content-Type": "application/json" },
-            });
+            return authoritativeCodexQuotaResponse();
           },
           async () => {
             const pending = route === "responses"
@@ -6934,10 +6998,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
               const response = await withFetchMock(
                 (url) => {
                   if (provider === "metered" && url !== "https://api.openlux.ai/v1/responses") {
-                    return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
-                      status: 429,
-                      headers: { "Content-Type": "application/json" },
-                    });
+                    return authoritativeCodexQuotaResponse();
                   }
                   return new Response(
                     sseResponse([
@@ -7440,10 +7501,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
               },
             });
           }
-          return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
-            status: 429,
-            headers: { "Content-Type": "application/json" },
-          });
+          return authoritativeCodexQuotaResponse();
         },
         async () => {
           const response = await handleChatCompletions(
@@ -7574,10 +7632,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                 });
               }
               codexCalls += 1;
-              return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
-                status: 429,
-                headers: { "Content-Type": "application/json" },
-              });
+              return authoritativeCodexQuotaResponse();
             },
             () =>
               testCase.route === "chat.completions"
@@ -7621,7 +7676,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
           assert.equal(response.headers.get("Retry-After"), testCase.retryAfter);
           assert.equal(response.headers.get("X-Metered-Diagnostic"), null);
           assert.deepEqual(await response.json(), { error: testCase.expectedError });
-          assert.equal(codexCalls, 2);
+          assert.equal(codexCalls, 1);
           assert.equal(meteredCalls, 1);
           const failed = await waitForPaidFallbackTerminal(keyId, requestId, "failed");
           assert.equal(failed.terminal_state, "failed");
@@ -7654,10 +7709,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                 },
               });
             }
-            return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
-              status: 429,
-              headers: { "Content-Type": "application/json" },
-            });
+            return authoritativeCodexQuotaResponse();
           },
           () =>
             handleResponses(
@@ -7733,10 +7785,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                   { status: 200, headers: { "Content-Type": "application/json" } },
                 );
               }
-              return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
-                status: 429,
-                headers: { "Content-Type": "application/json" },
-              });
+              return authoritativeCodexQuotaResponse();
             },
             async () => {
               const context = {
@@ -7826,10 +7875,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                 { status: 200, headers: { "Content-Type": "application/json" } },
               );
             }
-            return new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
-              status: 429,
-              headers: { "Content-Type": "application/json" },
-            });
+            return authoritativeCodexQuotaResponse();
           },
           () =>
             handleResponses(
@@ -7858,6 +7904,9 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
   } finally {
     atomicCommitFailure = null;
     exposePaidFallbackLedgerEntries = false;
+    kvStore.delete(keyToString(CODEX_ACCOUNT_ROUTING_KV_KEY));
+    resetCodexAccountRoutingForTest();
+    resetCodexAuthCacheForTest();
     if (originalApiKey === undefined) Deno.env.delete("METERED_API_KEY");
     else Deno.env.set("METERED_API_KEY", originalApiKey);
   }

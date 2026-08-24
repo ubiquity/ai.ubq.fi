@@ -1765,7 +1765,7 @@ const fetchCodexResponseWithAuth = async (
   serializedBody: string,
   baseHeaders: Headers,
   signal?: AbortSignal,
-  beforeDispatch?: () => Promise<ApiKeyProviderDispatch | void>,
+  beforeTransport?: () => Promise<void>,
   onDispatch?: () => void,
 ): Promise<Response> => {
   const headers = new Headers(baseHeaders);
@@ -1778,15 +1778,10 @@ const fetchCodexResponseWithAuth = async (
   );
   const transportSignal = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
   try {
-    // This is intentionally immediately adjacent to the actual provider
-    // transport: request-quota reservations commit on dispatch, not on
-    // validation, routing, or a later retry outcome.
-    const dispatch = beforeDispatch ? await beforeDispatch() : undefined;
+    await beforeTransport?.();
     if (transportSignal.aborted) {
-      await dispatch?.cancelBeforeTransport();
       throw transportSignal.reason ?? new DOMException("The request was aborted.", "AbortError");
     }
-    dispatch?.markTransportStarted();
     onDispatch?.();
     return await fetch(url, {
       method: "POST",
@@ -1884,6 +1879,52 @@ type FetchCodexResponsesOptions = Readonly<{
   /** Opaque, authenticated agent lane hash. Omit only for internal tests and experiments. */
   admissionCallerLaneHash?: string | null;
 }>;
+
+type CodexProviderDispatchCoordinator = Readonly<{
+  claim: () => Promise<void>;
+  markTransportStarted: () => void;
+  cancelBeforeTransport: () => Promise<void>;
+}>;
+
+const createCodexProviderDispatchCoordinator = (
+  beforeDispatch: FetchCodexResponsesOptions["beforeDispatch"],
+): CodexProviderDispatchCoordinator => {
+  type DispatchGeneration = {
+    claim: Promise<ApiKeyProviderDispatch | void>;
+    dispatch: ApiKeyProviderDispatch | void;
+    transportStarted: boolean;
+    cancellation: Promise<void> | null;
+  };
+  let current: DispatchGeneration | null = null;
+  return {
+    claim: () => {
+      if (!current || current.transportStarted) {
+        const generation: DispatchGeneration = {
+          claim: Promise.resolve(),
+          dispatch: undefined,
+          transportStarted: false,
+          cancellation: null,
+        };
+        generation.claim = (beforeDispatch?.() ?? Promise.resolve()).then((dispatch) => {
+          generation.dispatch = dispatch;
+          return dispatch;
+        });
+        current = generation;
+      }
+      return current.claim.then(() => {});
+    },
+    markTransportStarted: () => {
+      if (!current || current.transportStarted) return;
+      current.dispatch?.markTransportStarted();
+      current.transportStarted = true;
+    },
+    cancelBeforeTransport: () => {
+      if (!current || current.transportStarted || !current.dispatch) return Promise.resolve();
+      current.cancellation ??= current.dispatch.cancelBeforeTransport();
+      return current.cancellation;
+    },
+  };
+};
 
 type PreparedCodexSubscriptionRequest = Readonly<{
   affinityIdentity: CodexAccountAffinityIdentity | null;
@@ -2112,6 +2153,7 @@ const waitForCodexRetry = async (
 const fetchPreparedCodexResponses = async (
   prepared: PreparedCodexSubscriptionRequest,
   options: FetchCodexResponsesOptions,
+  providerDispatch: CodexProviderDispatchCoordinator,
 ): Promise<Response> => {
   if (codexProbeTransitionsInFlight.size) {
     await Promise.allSettled([...codexProbeTransitionsInFlight]);
@@ -2594,6 +2636,11 @@ const fetchPreparedCodexResponses = async (
     attemptNumber += 1;
     let admission: CodexResponseAdmission | null = null;
     try {
+      // API-key quota and Codex admission must use one resource order. If
+      // different concurrent requests win the two resources, every request
+      // can fail without dispatching. Retain each quota claim across sibling
+      // attempts until transport starts, then track retries independently.
+      await providerDispatch.claim();
       if (admissionCallerLaneHash) {
         const decision = await acquireCodexAdmission(
           {
@@ -2617,19 +2664,9 @@ const fetchPreparedCodexResponses = async (
         serializedBody,
         baseHeaders,
         transportSignal,
-        beforeTransport
-          ? async () => {
-            const dispatch = await options.beforeDispatch?.();
-            try {
-              await beforeTransport();
-            } catch (error) {
-              await dispatch?.cancelBeforeTransport();
-              throw error;
-            }
-            return dispatch;
-          }
-          : options.beforeDispatch,
+        beforeTransport,
         () => {
+          providerDispatch.markTransportStarted();
           reportCodexResponseTiming(options.timing?.onDispatch);
         },
       );
@@ -2881,7 +2918,15 @@ const fetchPreparedCodexResponses = async (
     if (retried.status === 429) {
       // This is the one permitted post-reset inference attempt. Preserve a
       // replayable normal 429 and never feed it back into reset selection.
-      retried = (await markCodexRecoveryProbeQuotaBlocked(retryCandidate.routing, retried)).response;
+      const disposition = await markCodexRecoveryProbeQuotaBlocked(retryCandidate.routing, retried);
+      retried = disposition.response;
+      if (
+        !disposition.usageLimitReached || disposition.retryAtMs === null ||
+        !disposition.resetDeadlineIsStable
+      ) {
+        nonAuthoritative429Seen = true;
+        bankedResetCandidates.clear();
+      }
       setCodexResponseAffinityDispatch(retried, prepared.affinityIdentity, retryCandidate.routing, affinity);
     } else if (!retried.ok) {
       await releaseCodexRoutingProbe(retryCandidate.routing);
@@ -3298,12 +3343,15 @@ export const fetchCodexResponses = async (
   options: FetchCodexResponsesOptions = {},
 ): Promise<Response> => {
   const prepared = await prepareCodexSubscriptionRequest(body, options.cacheScope ?? null);
+  const providerDispatch = createCodexProviderDispatchCoordinator(options.beforeDispatch);
   try {
-    const response = await fetchPreparedCodexResponses(prepared, options);
+    const response = await fetchPreparedCodexResponses(prepared, options, providerDispatch);
     return finalizeCodexResponseAffinity(withCodexWarnings(response, prepared.warnings));
   } catch (error) {
     if (error instanceof CodexAdmissionBusyError) return codexAdmissionBusyResponse();
     throw error;
+  } finally {
+    await providerDispatch.cancelBeforeTransport();
   }
 };
 

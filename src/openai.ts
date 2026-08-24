@@ -226,9 +226,7 @@ const codexAdmissionPrincipal = (context: UsageContext | undefined): string => {
 type UpstreamProvider = "cerebras" | "chatgpt_codex" | "removed_provider" | "metered" | "surplus";
 const supportsReasoningProgressRelease = (provider: UpstreamProvider): boolean =>
   provider === "chatgpt_codex" || provider === "surplus" || provider === "metered";
-export type InferenceFallbackReason =
-  | "primary_429"
-  | "primary_quota_blocked";
+export type InferenceFallbackReason = "primary_quota_blocked";
 export type UsageTelemetryStatus = "missing" | "partial" | "reported" | "invalid";
 export type PromptCacheMode = "implicit" | "explicit" | "legacy_retention" | "unspecified";
 export type AffinityOutcome =

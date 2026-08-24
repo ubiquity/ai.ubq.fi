@@ -504,6 +504,18 @@ const sse = (
     { status: 200, headers: { "Content-Type": "text/event-stream" } },
   );
 
+const authoritativeCodexQuotaResponse = (): Response =>
+  new Response(
+    JSON.stringify({ error: { message: "Primary limited", type: "usage_limit_reached" } }),
+    {
+      status: 429,
+      headers: {
+        "Content-Type": "application/json",
+        "Retry-After": new Date((Math.floor(Date.now() / 1_000) + 60) * 1_000).toUTCString(),
+      },
+    },
+  );
+
 const deferred = <T>() => {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (reason?: unknown) => void;
@@ -830,12 +842,10 @@ Deno.test("V3 limit-one concurrency dispatches once and backpressures caller-lan
     return sse();
   };
   try {
-    const firstPending = handler(request(token));
-    await waitFor(() => fetchCalls === 1, "first bounded provider dispatch");
-    const contenders = Array.from({ length: concurrency - 1 }, () => handler(request(token)));
-    const contenderResponses = await Promise.all(contenders);
+    const pending = Array.from({ length: concurrency }, () => handler(request(token)));
+    await waitFor(() => fetchCalls > 0, "first provider dispatch");
     releaseUpstreams();
-    const responses = [await firstPending, ...contenderResponses];
+    const responses = await Promise.all(pending);
     assert.equal(responses.filter((response) => response.status === 200).length, 1);
     const quotaResponses = responses.filter((response) => response.status === 429);
     const busyResponses = responses.filter((response) => response.status === 503);
@@ -2540,12 +2550,7 @@ Deno.test("first bounded paid fallback response exposes settled spend and consum
       return Promise.resolve(new Response(response.body, { status: 200, headers }));
     }
     primaryAccountIds.push(request.headers.get("chatgpt-account-id") ?? "");
-    return Promise.resolve(
-      new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
-        status: 429,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
+    return Promise.resolve(authoritativeCodexQuotaResponse());
   };
   try {
     kv.resetCounts();
@@ -2558,9 +2563,9 @@ Deno.test("first bounded paid fallback response exposes settled spend and consum
     );
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("x-codex-primary-used-percent"), "0");
-    assert.equal(calls, 4);
-    assert.deepEqual(primaryAccountIds, ["acct-1", "acct-2", "acct-1"]);
-    // Three Codex 429s plus metered still belong to one routed inference. The
+    assert.equal(calls, 3);
+    assert.deepEqual(primaryAccountIds, ["acct-1", "acct-2"]);
+    // Two authoritative Codex quota responses plus Metered still belong to one routed inference. The
     // V3 request is committed before the first transport and not incremented
     // again by retries or fallback.
     assert.equal(usageWindow(policy).committed_requests, 1);
@@ -2673,12 +2678,7 @@ Deno.test("paid fallback releases its dispatch intent when metered quota admissi
       meteredCalls += 1;
       return Promise.reject(new Error("Metered transport must not start"));
     }
-    return Promise.resolve(
-      new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
-        status: 429,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
+    return Promise.resolve(authoritativeCodexQuotaResponse());
   };
   try {
     const response = await handleResponses(
@@ -2820,12 +2820,7 @@ Deno.test("paid fallback terminal telemetry records Metered lifecycle", async ()
     if (url === "https://api.openlux.ai/v1/responses") {
       return new Promise<Response>((resolve) => setTimeout(() => resolve(sse()), 30));
     }
-    return Promise.resolve(
-      new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
-        status: 429,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
+    return Promise.resolve(authoritativeCodexQuotaResponse());
   };
   console.info = (...args: unknown[]) => logs.push(args);
   try {
@@ -2836,7 +2831,7 @@ Deno.test("paid fallback terminal telemetry records Metered lifecycle", async ()
     assert.equal(terminalLogs.length, 1);
     const terminal = JSON.parse(String(terminalLogs[0]?.[1])) as Record<string, unknown>;
     assert.equal(terminal.provider, "metered");
-    assert.equal(terminal.fallback_reason, "primary_429");
+    assert.equal(terminal.fallback_reason, "primary_quota_blocked");
     assert.equal(terminal.stream_terminal_type, "response.completed");
     assert.equal(terminal.request_id, response.headers.get("x-uos-request-id"));
     const firstCodexHeadersMs = requiredTerminalTiming(terminal, "first_codex_headers_ms");
@@ -2896,12 +2891,7 @@ Deno.test("paid fallback cancellation telemetry records a cancelled Metered life
         ),
       );
     }
-    return Promise.resolve(
-      new Response(JSON.stringify({ error: { message: "Primary limited" } }), {
-        status: 429,
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
+    return Promise.resolve(authoritativeCodexQuotaResponse());
   };
   console.info = (...args: unknown[]) => logs.push(args);
   try {
@@ -2930,7 +2920,7 @@ Deno.test("paid fallback cancellation telemetry records a cancelled Metered life
     assert.equal(terminalLogs.length, 1);
     const terminal = JSON.parse(String(terminalLogs[0]?.[1])) as Record<string, unknown>;
     assert.equal(terminal.provider, "metered");
-    assert.equal(terminal.fallback_reason, "primary_429");
+    assert.equal(terminal.fallback_reason, "primary_quota_blocked");
     assert.equal(terminal.stream_terminal_type, "cancelled");
     assert.equal(terminal.delivery_outcome, "interrupted");
     assert.equal(delivery.signal.aborted, true);
