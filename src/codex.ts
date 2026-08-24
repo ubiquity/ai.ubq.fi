@@ -446,7 +446,10 @@ const beginCodexResponseTerminalOutcome = (
 const releaseCodexResponseAdmission = async (admission: CodexResponseAdmission | null): Promise<void> => {
   if (!admission) return;
   clearCodexAdmissionWatchdog(admission);
-  await releaseCodexAdmission(admission.lease);
+  for (const retryDelayMs of [0, 25, 100] as const) {
+    if (retryDelayMs > 0) await delay(retryDelayMs);
+    if (await releaseCodexAdmission(admission.lease)) return;
+  }
 };
 
 const beginTrackedCodexAdmissionRelease = (

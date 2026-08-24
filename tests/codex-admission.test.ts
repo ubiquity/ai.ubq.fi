@@ -170,9 +170,78 @@ Deno.test("Codex admission release is token-fenced against replacement leases", 
   assert.equal(replacement.kind, "acquired");
   if (first.kind !== "acquired" || replacement.kind !== "acquired") return;
 
-  assert.equal(await releaseCodexAdmission(first.lease), false);
+  assert.equal(await releaseCodexAdmission(first.lease), true);
   assert.equal((await admission(kv, caller, "account-b", { now: () => nowMs })).kind, "caller_busy");
   assert.equal(await releaseCodexAdmission(replacement.lease), true);
+});
+
+Deno.test("terminal cleanup retries a transient admission release read failure", async () => {
+  const kv = new CountingKv();
+  const caller = "10".padStart(64, "0");
+  const first = await admission(kv, caller);
+  assert.equal(first.kind, "acquired");
+  if (first.kind !== "acquired") return;
+
+  const originalGetMany = kv.getMany.bind(kv);
+  let getManyCalls = 0;
+  Object.defineProperty(kv, "getMany", {
+    configurable: true,
+    value: (<T extends readonly unknown[]>(
+      keys: readonly Deno.KvKey[],
+      options?: Readonly<{ consistency?: "strong" | "eventual" }>,
+    ) => {
+      getManyCalls += 1;
+      if (getManyCalls === 1) return Promise.reject(new Error("transient release read failure"));
+      return originalGetMany<T>(keys, options);
+    }) as typeof kv.getMany,
+  });
+
+  const response = new Response("stream", { status: 200 });
+  setCodexResponseAdmissionForTest(response, first.lease);
+  await releaseCodexResponseProbe(response);
+
+  assert.equal(getManyCalls, 2);
+  assert.equal(kv.entries.size, 0);
+  const reacquired = await admission(kv, caller);
+  assert.equal(reacquired.kind, "acquired");
+  if (reacquired.kind === "acquired") await releaseCodexAdmission(reacquired.lease);
+});
+
+Deno.test("terminal cleanup retries after admission release CAS exhaustion", async () => {
+  const kv = new CountingKv();
+  const caller = "11".padStart(64, "0");
+  const first = await admission(kv, caller);
+  assert.equal(first.kind, "acquired");
+  if (first.kind !== "acquired") return;
+
+  const originalAtomic = kv.atomic.bind(kv);
+  let commitAttempts = 0;
+  Object.defineProperty(kv, "atomic", {
+    configurable: true,
+    value: (): Deno.AtomicOperation => {
+      const operation = originalAtomic();
+      const originalCommit = operation.commit.bind(operation);
+      Object.defineProperty(operation, "commit", {
+        configurable: true,
+        value: (): Promise<Deno.KvCommitResult | Deno.KvCommitError> => {
+          commitAttempts += 1;
+          if (commitAttempts <= 4) return Promise.resolve({ ok: false } as Deno.KvCommitError);
+          return originalCommit();
+        },
+      });
+      return operation;
+    },
+  });
+
+  const response = new Response("stream", { status: 200 });
+  setCodexResponseAdmissionForTest(response, first.lease);
+  await releaseCodexResponseProbe(response);
+
+  assert.equal(commitAttempts, 5);
+  assert.equal(kv.entries.size, 0);
+  const reacquired = await admission(kv, caller);
+  assert.equal(reacquired.kind, "acquired");
+  if (reacquired.kind === "acquired") await releaseCodexAdmission(reacquired.lease);
 });
 
 Deno.test("Codex admission renews active work and abandoned leases expire", async () => {

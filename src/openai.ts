@@ -196,6 +196,8 @@ type UsageContext = Readonly<{
   kernelOrg: { owner: string } | null;
   paidFallbackEnabled?: boolean;
   idempotencyPrincipal?: string | null;
+  /** Credential-scoped identity used only for Codex admission fairness. */
+  codexAdmissionPrincipal?: string | null;
   /** Private discriminator for independent server-generated subrequests. */
   codexAdmissionLaneDiscriminator?: string | null;
   /** Internal buffered callers may wait for Codex lease release before returning. */
@@ -214,7 +216,8 @@ type UsageContext = Readonly<{
 }>;
 
 const codexAdmissionPrincipal = (context: UsageContext | undefined): string => {
-  const principal = context?.idempotencyPrincipal || context?.keyId || crypto.randomUUID();
+  const principal = context?.codexAdmissionPrincipal || context?.idempotencyPrincipal || context?.keyId ||
+    crypto.randomUUID();
   const discriminator = context?.codexAdmissionLaneDiscriminator?.trim();
   return discriminator ? `${principal}\u0000internal-subrequest\u0000${discriminator}` : principal;
 };
@@ -381,6 +384,7 @@ const withResponseTelemetryContext = (
   kernelOrg: context?.kernelOrg ?? null,
   paidFallbackEnabled: context?.paidFallbackEnabled,
   idempotencyPrincipal: context?.idempotencyPrincipal,
+  codexAdmissionPrincipal: context?.codexAdmissionPrincipal,
   codexAdmissionLaneDiscriminator: context?.codexAdmissionLaneDiscriminator,
   awaitCodexAdmissionRelease: context?.awaitCodexAdmissionRelease,
   requestId: context?.requestId,

@@ -394,20 +394,21 @@ export const renewCodexAdmission = async (
 };
 
 const releaseLocalAdmission = (lease: CodexAdmissionLease): boolean => {
-  let released = false;
   const encodedSlot = encodedKey(lease.slotKey);
   if (localSlots.get(encodedSlot)?.token === lease.token) {
     localSlots.delete(encodedSlot);
-    released = true;
   }
   const encodedCaller = encodedKey(lease.callerKey);
   if (localCallers.get(encodedCaller)?.token === lease.token) {
     localCallers.delete(encodedCaller);
-    released = true;
   }
-  return released;
+  return true;
 };
 
+/**
+ * Returns true once this token no longer owns either record. False means the
+ * distributed release could not be settled and may be retried safely.
+ */
 export const releaseCodexAdmission = async (
   lease: CodexAdmissionLease,
   dependencies: Readonly<{ kvTimeoutMs?: number; signal?: AbortSignal }> = {},
@@ -429,7 +430,7 @@ export const releaseCodexAdmission = async (
       );
       const callerMatches = parseAdmissionRecord(callerEntry.value)?.token === lease.token;
       const slotMatches = parseAdmissionRecord(slotEntry.value)?.token === lease.token;
-      if (!callerMatches && !slotMatches) return false;
+      if (!callerMatches && !slotMatches) return true;
       let operation = kv.atomic();
       if (callerMatches) operation = operation.check(callerEntry).delete(lease.callerKey);
       if (slotMatches) operation = operation.check(slotEntry).delete(lease.slotKey);
