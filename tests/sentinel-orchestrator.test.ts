@@ -45,7 +45,7 @@ import {
   zeroUnselectedReplayBodies,
 } from "../scripts/sentinel/main.ts";
 import { CodexInvocationError } from "../scripts/sentinel/codex.ts";
-import type { GitHubIssue, GitHubIssueRelations } from "../scripts/sentinel/github.ts";
+import type { GitHubIssue, GitHubIssueRelations, GitHubRepositoryPermission } from "../scripts/sentinel/github.ts";
 import {
   applyGitHubIssueJobDisposition,
   blockingIssueReviewFindings,
@@ -991,11 +991,14 @@ const noIssueRelations: GitHubIssueRelations = {
   subIssueCount: 0,
   blockedByCount: 0,
   blockingCount: 0,
+  latestBodyEdit: null,
+  latestTitleEdit: null,
 };
 
 const githubIssueSource = (
   issues: readonly GitHubIssue[],
   relations: Readonly<Record<number, GitHubIssueRelations>> = {},
+  permissions: Readonly<Record<string, GitHubRepositoryPermission>> = {},
 ): GitHubIssueJobSource => {
   const byNumber = new Map(issues.map((issue) => [issue.number, issue]));
   return {
@@ -1006,7 +1009,7 @@ const githubIssueSource = (
       return Promise.resolve(issue);
     },
     getIssueRelations: (number) => Promise.resolve(relations[number] ?? noIssueRelations),
-    getRepositoryPermission: () => Promise.resolve("admin"),
+    getRepositoryPermission: (login) => Promise.resolve(permissions[login] ?? "admin"),
   };
 };
 
@@ -1135,9 +1138,22 @@ Deno.test("GitHub issue selection has a fixed relationship-inspection budget", a
   assert.equal(permissionRequests, MAX_ISSUE_JOB_CANDIDATES);
 });
 
-Deno.test("GitHub issue authority is bound to the author login and rechecked", async () => {
+Deno.test("GitHub issue authority binds and rechecks the author and latest content editors", async () => {
   const issue = sentinelGitHubIssue({ authorAssociation: "MEMBER" });
-  const writable = githubIssueSource([issue]);
+  const editedRelations: GitHubIssueRelations = {
+    ...noIssueRelations,
+    latestBodyEdit: { editorLogin: "body-writer", editedAt: "2026-08-23T19:07:00Z" },
+    latestTitleEdit: {
+      editorLogin: "title-writer",
+      editedAt: "2026-08-23T19:07:10Z",
+      title: issue.title,
+    },
+  };
+  const writable = githubIssueSource([issue], { [issue.number]: editedRelations }, {
+    "0x4007": "admin",
+    "body-writer": "write",
+    "title-writer": "admin",
+  });
   const selected = await selectNextGitHubIssueJob(
     writable,
     "ubiquity/ai.ubq.fi",
@@ -1145,6 +1161,7 @@ Deno.test("GitHub issue authority is bound to the author login and rechecked", a
   );
   assert.ok(selected);
   assert.equal(selected.authorLogin, "0x4007");
+  assert.deepEqual(selected.relations, editedRelations);
 
   const revoked: GitHubIssueJobSource = {
     ...writable,
@@ -1152,12 +1169,50 @@ Deno.test("GitHub issue authority is bound to the author login and rechecked", a
   };
   assert.equal(await getCurrentGitHubIssueJob(revoked, "ubiquity/ai.ubq.fi", issue.number), null);
 
+  const untrustedBodyEditor = githubIssueSource([issue], { [issue.number]: editedRelations }, {
+    "0x4007": "admin",
+    "body-writer": "read",
+    "title-writer": "admin",
+  });
+  assert.equal(await getCurrentGitHubIssueJob(untrustedBodyEditor, "ubiquity/ai.ubq.fi", issue.number), null);
+
+  const untrustedTitleEditor = githubIssueSource([issue], { [issue.number]: editedRelations }, {
+    "0x4007": "admin",
+    "body-writer": "write",
+    "title-writer": "read",
+  });
+  assert.equal(await getCurrentGitHubIssueJob(untrustedTitleEditor, "ubiquity/ai.ubq.fi", issue.number), null);
+
+  const wrongCurrentTitle = await getCurrentGitHubIssueJob(
+    githubIssueSource([issue], {
+      [issue.number]: {
+        ...editedRelations,
+        latestTitleEdit: { ...editedRelations.latestTitleEdit!, title: "Stale title" },
+      },
+    }),
+    "ubiquity/ai.ubq.fi",
+    issue.number,
+  );
+  assert.equal(wrongCurrentTitle, null);
+
   const renamed = await getCurrentGitHubIssueJob(
     githubIssueSource([{ ...issue, authorLogin: "different-writer" }]),
     "ubiquity/ai.ubq.fi",
     issue.number,
   );
   assert.equal(githubIssueJobsMatch(selected, renamed), false);
+
+  const differentEditor = await getCurrentGitHubIssueJob(
+    githubIssueSource([issue], {
+      [issue.number]: {
+        ...editedRelations,
+        latestBodyEdit: { editorLogin: "other-writer", editedAt: "2026-08-23T19:07:00Z" },
+      },
+    }),
+    "ubiquity/ai.ubq.fi",
+    issue.number,
+  );
+  assert.equal(githubIssueJobsMatch(selected, differentEditor), false);
 });
 
 Deno.test("GitHub issue ledger prevents unchanged retries and permits an edited snapshot", async () => {

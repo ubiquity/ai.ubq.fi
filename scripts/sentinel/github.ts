@@ -46,6 +46,19 @@ export interface GitHubIssueRelations {
   readonly subIssueCount: number;
   readonly blockedByCount: number;
   readonly blockingCount: number;
+  readonly latestBodyEdit:
+    | Readonly<{
+      editorLogin: string;
+      editedAt: string;
+    }>
+    | null;
+  readonly latestTitleEdit:
+    | Readonly<{
+      editorLogin: string;
+      editedAt: string;
+      title: string;
+    }>
+    | null;
 }
 
 export type GitHubRepositoryPermission = "none" | "read" | "write" | "admin";
@@ -441,7 +454,7 @@ export class GitHubActionsClient {
       redirect: "manual",
       body: JSON.stringify({
         query:
-          "query SentinelIssueRelations($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { issue(number: $number) { parent { number } blockedBy(first: 1) { totalCount } blocking(first: 1) { totalCount } } } }",
+          "query SentinelIssueRelations($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { issue(number: $number) { editor { login } lastEditedAt timelineItems(last: 1, itemTypes: [RENAMED_TITLE_EVENT]) { totalCount nodes { ... on RenamedTitleEvent { createdAt actor { login } currentTitle } } } parent { number } blockedBy(first: 1) { totalCount } blocking(first: 1) { totalCount } } } }",
         variables: { owner, name, number: issueNumber },
       }),
     }, `Read GitHub issue ${issueNumber} dependencies`);
@@ -459,21 +472,44 @@ export class GitHubActionsClient {
     const blockedBy = asRecord(issue?.blockedBy);
     const blocking = asRecord(issue?.blocking);
     const parent = asRecord(issue?.parent);
+    const bodyEditor = asRecord(issue?.editor);
+    const bodyEditorLogin = issue?.editor === null ? null : nonEmptyString(bodyEditor?.login);
+    const bodyEditedAt = issue?.lastEditedAt === null ? null : isoTimestamp(issue?.lastEditedAt);
+    const timelineItems = asRecord(issue?.timelineItems);
+    const titleEditCount = nonNegativeInteger(timelineItems?.totalCount);
+    const titleEditNodes = timelineItems?.nodes;
     const parentIssueNumber = issue?.parent === null ? null : integer(parent?.number);
     const blockedByCount = nonNegativeInteger(blockedBy?.totalCount);
     const blockingCount = nonNegativeInteger(blocking?.totalCount);
     if (
-      !issue || !Object.hasOwn(issue, "parent") ||
+      !issue || !Object.hasOwn(issue, "editor") || !Object.hasOwn(issue, "lastEditedAt") ||
+      !Object.hasOwn(issue, "parent") ||
       (issue.parent !== null && parentIssueNumber === null) ||
-      blockedByCount === null || blockingCount === null
+      (bodyEditorLogin === null) !== (bodyEditedAt === null) ||
+      blockedByCount === null || blockingCount === null || titleEditCount === null || !Array.isArray(titleEditNodes) ||
+      (titleEditCount === 0 ? titleEditNodes.length !== 0 : titleEditNodes.length !== 1)
     ) {
       throw new Error(`Read GitHub issue ${issueNumber} dependencies returned an incomplete payload`);
+    }
+    let latestTitleEdit: GitHubIssueRelations["latestTitleEdit"] = null;
+    if (titleEditCount > 0) {
+      const titleEdit = asRecord(titleEditNodes[0]);
+      const actor = asRecord(titleEdit?.actor);
+      const editorLogin = nonEmptyString(actor?.login);
+      const editedAt = isoTimestamp(titleEdit?.createdAt);
+      const title = nonEmptyString(titleEdit?.currentTitle);
+      if (!editorLogin || !editedAt || !title) {
+        throw new Error(`Read GitHub issue ${issueNumber} dependencies returned an incomplete payload`);
+      }
+      latestTitleEdit = { editorLogin, editedAt, title };
     }
     return {
       parentIssueNumber,
       subIssueCount: subIssues.length,
       blockedByCount,
       blockingCount,
+      latestBodyEdit: bodyEditorLogin && bodyEditedAt ? { editorLogin: bodyEditorLogin, editedAt: bodyEditedAt } : null,
+      latestTitleEdit,
     };
   }
 

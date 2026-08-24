@@ -701,12 +701,25 @@ Deno.test("GitHub issue detail and relationships use exact repository resources"
       assert.equal(request.headers.get("Content-Type"), "application/json");
       const body = JSON.parse(String(request.body));
       assert.deepEqual(body.variables, { owner: "ubiquity", name: "ai.ubq.fi", number: 113 });
+      assert.match(body.query, /editor \{ login \}/u);
+      assert.match(body.query, /lastEditedAt/u);
+      assert.match(body.query, /RENAMED_TITLE_EVENT/u);
       assert.match(body.query, /parent \{ number \}/u);
       assert.match(body.query, /blockedBy\(first: 1\)/u);
       return json({
         data: {
           repository: {
             issue: {
+              editor: { login: "body-writer" },
+              lastEditedAt: "2026-08-21T12:00:30Z",
+              timelineItems: {
+                totalCount: 2,
+                nodes: [{
+                  createdAt: "2026-08-21T12:00:45Z",
+                  actor: { login: "title-writer" },
+                  currentTitle: "Issue 113",
+                }],
+              },
               parent: null,
               blockedBy: { totalCount: 0 },
               blocking: { totalCount: 0 },
@@ -727,6 +740,12 @@ Deno.test("GitHub issue detail and relationships use exact repository resources"
     subIssueCount: 0,
     blockedByCount: 0,
     blockingCount: 0,
+    latestBodyEdit: { editorLogin: "body-writer", editedAt: "2026-08-21T12:00:30Z" },
+    latestTitleEdit: {
+      editorLogin: "title-writer",
+      editedAt: "2026-08-21T12:00:45Z",
+      title: "Issue 113",
+    },
   });
   fake.assertDrained();
 });
@@ -762,6 +781,9 @@ Deno.test("GitHub issue relationships retain a non-null parent issue number", as
         data: {
           repository: {
             issue: {
+              editor: null,
+              lastEditedAt: null,
+              timelineItems: { totalCount: 0, nodes: [] },
               parent: { number: 77 },
               blockedBy: { totalCount: 0 },
               blocking: { totalCount: 0 },
@@ -775,6 +797,8 @@ Deno.test("GitHub issue relationships retain a non-null parent issue number", as
     subIssueCount: 0,
     blockedByCount: 0,
     blockingCount: 0,
+    latestBodyEdit: null,
+    latestTitleEdit: null,
   });
   fake.assertDrained();
 });
@@ -788,7 +812,21 @@ Deno.test("GitHub issue intake rejects malformed API records and relationship pa
 
   const malformedRelations = queuedFetch([
     () => json([]),
-    () => json({ data: { repository: { issue: { parent: null, blockedBy: {}, blocking: { totalCount: 0 } } } } }),
+    () =>
+      json({
+        data: {
+          repository: {
+            issue: {
+              editor: null,
+              lastEditedAt: null,
+              timelineItems: { totalCount: 0, nodes: [] },
+              parent: null,
+              blockedBy: {},
+              blocking: { totalCount: 0 },
+            },
+          },
+        },
+      }),
   ]);
   await assert.rejects(
     () => githubClient(malformedRelations.fetcher).getIssueRelations(1),
@@ -797,7 +835,20 @@ Deno.test("GitHub issue intake rejects malformed API records and relationship pa
 
   const missingParent = queuedFetch([
     () => json([]),
-    () => json({ data: { repository: { issue: { blockedBy: { totalCount: 0 }, blocking: { totalCount: 0 } } } } }),
+    () =>
+      json({
+        data: {
+          repository: {
+            issue: {
+              editor: null,
+              lastEditedAt: null,
+              timelineItems: { totalCount: 0, nodes: [] },
+              blockedBy: { totalCount: 0 },
+              blocking: { totalCount: 0 },
+            },
+          },
+        },
+      }),
   ]);
   await assert.rejects(
     () => githubClient(missingParent.fetcher).getIssueRelations(1),
@@ -810,7 +861,14 @@ Deno.test("GitHub issue intake rejects malformed API records and relationship pa
       json({
         data: {
           repository: {
-            issue: { parent: null, blockedBy: { totalCount: 0 }, blocking: { totalCount: 0 } },
+            issue: {
+              editor: null,
+              lastEditedAt: null,
+              timelineItems: { totalCount: 0, nodes: [] },
+              parent: null,
+              blockedBy: { totalCount: 0 },
+              blocking: { totalCount: 0 },
+            },
           },
         },
         errors: [{ message: "parent lookup failed" }],
@@ -818,6 +876,52 @@ Deno.test("GitHub issue intake rejects malformed API records and relationship pa
   ]);
   await assert.rejects(
     () => githubClient(partialGraphQl.fetcher).getIssueRelations(1),
+    /incomplete payload/,
+  );
+
+  const mismatchedBodyEdit = queuedFetch([
+    () => json([]),
+    () =>
+      json({
+        data: {
+          repository: {
+            issue: {
+              editor: { login: "writer" },
+              lastEditedAt: null,
+              timelineItems: { totalCount: 0, nodes: [] },
+              parent: null,
+              blockedBy: { totalCount: 0 },
+              blocking: { totalCount: 0 },
+            },
+          },
+        },
+      }),
+  ]);
+  await assert.rejects(
+    () => githubClient(mismatchedBodyEdit.fetcher).getIssueRelations(1),
+    /incomplete payload/,
+  );
+
+  const missingLatestTitleEdit = queuedFetch([
+    () => json([]),
+    () =>
+      json({
+        data: {
+          repository: {
+            issue: {
+              editor: null,
+              lastEditedAt: null,
+              timelineItems: { totalCount: 1, nodes: [] },
+              parent: null,
+              blockedBy: { totalCount: 0 },
+              blocking: { totalCount: 0 },
+            },
+          },
+        },
+      }),
+  ]);
+  await assert.rejects(
+    () => githubClient(missingLatestTitleEdit.fetcher).getIssueRelations(1),
     /incomplete payload/,
   );
 });

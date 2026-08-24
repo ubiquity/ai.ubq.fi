@@ -207,20 +207,45 @@ const issueJobLabels = (
   return { labels: canonicalLabels, priority, priorityLabel, timeLabel };
 };
 
-const baseIssueEligible = (issue: GitHubIssue, authorPermission: GitHubRepositoryPermission): boolean =>
+const issueAuthorityLogins = (
+  issue: GitHubIssue,
+  relations: GitHubIssueRelations,
+): readonly string[] | null => {
+  const bodyEdit = relations.latestBodyEdit;
+  const titleEdit = relations.latestTitleEdit;
+  for (const edit of [bodyEdit, titleEdit]) {
+    if (
+      edit !== null &&
+      (edit.editorLogin.trim() !== edit.editorLogin || edit.editorLogin.length === 0 ||
+        !validTimestamp(edit.editedAt) || Date.parse(edit.editedAt) < Date.parse(issue.createdAt) ||
+        Date.parse(edit.editedAt) > Date.parse(issue.updatedAt))
+    ) return null;
+  }
+  if (titleEdit !== null && titleEdit.title !== issue.title) return null;
+  return [
+    ...new Set([
+      issue.authorLogin,
+      ...(bodyEdit === null ? [] : [bodyEdit.editorLogin]),
+      ...(titleEdit === null ? [] : [titleEdit.editorLogin]),
+    ]),
+  ].sort();
+};
+
+const baseIssueEligible = (issue: GitHubIssue, authorityPermission: GitHubRepositoryPermission): boolean =>
   issue.state === "open" && !issue.isPullRequest && !issue.locked && issue.assignees.length === 0 &&
   issue.comments === 0 && issue.title.length <= 256 &&
-  (authorPermission === "write" || authorPermission === "admin");
+  (authorityPermission === "write" || authorityPermission === "admin");
 
 export const createGitHubIssueJob = async (
   repository: string,
   issue: GitHubIssue,
   relations: GitHubIssueRelations,
-  authorPermission: GitHubRepositoryPermission,
+  authorityPermission: GitHubRepositoryPermission,
 ): Promise<GitHubIssueJob | null> => {
   validatedRepository(repository);
   if (
-    !baseIssueEligible(issue, authorPermission) || relations.parentIssueNumber !== null ||
+    !baseIssueEligible(issue, authorityPermission) || issueAuthorityLogins(issue, relations) === null ||
+    relations.parentIssueNumber !== null ||
     relations.subIssueCount !== 0 || relations.blockedByCount !== 0 ||
     relations.blockingCount !== 0 || !validTimestamp(issue.createdAt) || !validTimestamp(issue.updatedAt) ||
     Date.parse(issue.updatedAt) < Date.parse(issue.createdAt) || !validIssueUrl(issue.htmlUrl, repository, issue.number)
@@ -283,6 +308,29 @@ const issueJobOrder = (left: GitHubIssueJob, right: GitHubIssueJob): number =>
 export const githubIssueJobsMatch = (expected: GitHubIssueJob, actual: GitHubIssueJob | null): boolean =>
   actual !== null && expected.repository === actual.repository && expected.issueId === actual.issueId &&
   expected.nodeId === actual.nodeId && expected.number === actual.number && expected.fingerprint === actual.fingerprint;
+
+const githubIssueJobSourceSnapshotsMatch = (expected: GitHubIssueJob, actual: GitHubIssueJob): boolean =>
+  expected.repository === actual.repository && expected.issueId === actual.issueId &&
+  expected.nodeId === actual.nodeId &&
+  expected.number === actual.number && expected.htmlUrl === actual.htmlUrl && expected.title === actual.title &&
+  expected.bodySha256 === actual.bodySha256 && expected.priority === actual.priority &&
+  expected.priorityLabel === actual.priorityLabel && expected.timeLabel === actual.timeLabel &&
+  expected.authorLogin === actual.authorLogin && expected.authorAssociation === actual.authorAssociation &&
+  expected.createdAt === actual.createdAt && expected.updatedAt === actual.updatedAt &&
+  JSON.stringify(expected.labels) === JSON.stringify(actual.labels) &&
+  JSON.stringify(expected.files) === JSON.stringify(actual.files) &&
+  JSON.stringify(expected.acceptance) === JSON.stringify(actual.acceptance);
+
+const issueAuthorityPermission = async (
+  source: GitHubIssueJobSource,
+  issue: GitHubIssue,
+  relations: GitHubIssueRelations,
+): Promise<GitHubRepositoryPermission> => {
+  const logins = issueAuthorityLogins(issue, relations);
+  if (logins === null) return "none";
+  const permissions = await Promise.all(logins.map((login) => source.getRepositoryPermission(login)));
+  return permissions.every((permission) => permission === "write" || permission === "admin") ? "write" : "none";
+};
 
 export const renderGitHubIssueJobHint = (job: GitHubIssueJob | null): string =>
   `${
@@ -352,11 +400,9 @@ export const getCurrentGitHubIssueJob = async (
   issueNumber: number,
 ): Promise<GitHubIssueJob | null> => {
   const issue = await source.getIssue(issueNumber);
-  const [relations, authorPermission] = await Promise.all([
-    source.getIssueRelations(issueNumber),
-    source.getRepositoryPermission(issue.authorLogin),
-  ]);
-  return await createGitHubIssueJob(repository, issue, relations, authorPermission);
+  const relations = await source.getIssueRelations(issueNumber);
+  const authorityPermission = await issueAuthorityPermission(source, issue, relations);
+  return await createGitHubIssueJob(repository, issue, relations, authorityPermission);
 };
 
 export const selectNextGitHubIssueJob = async (
@@ -373,14 +419,10 @@ export const selectNextGitHubIssueJob = async (
       subIssueCount: 0,
       blockedByCount: 0,
       blockingCount: 0,
+      latestBodyEdit: null,
+      latestTitleEdit: null,
     }, "write");
-    if (
-      !job ||
-      ledger.some((entry) =>
-        entry.issueId === job.issueId && entry.nodeId === job.nodeId && entry.number === job.number &&
-        entry.fingerprint === job.fingerprint
-      )
-    ) continue;
+    if (!job) continue;
     candidates.push(job);
   }
   candidates.sort(issueJobOrder);
@@ -392,15 +434,19 @@ export const selectNextGitHubIssueJob = async (
     if (current.id !== candidate.issueId || current.nodeId !== candidate.nodeId) {
       throw new Error(`GitHub issue ${candidate.number} identity changed during selection`);
     }
-    const [relations, authorPermission] = await Promise.all([
-      source.getIssueRelations(candidate.number),
-      source.getRepositoryPermission(current.authorLogin),
-    ]);
-    const job = await createGitHubIssueJob(repository, current, relations, authorPermission);
+    const relations = await source.getIssueRelations(candidate.number);
+    const authorityPermission = await issueAuthorityPermission(source, current, relations);
+    const job = await createGitHubIssueJob(repository, current, relations, authorityPermission);
     if (!job) continue;
-    if (!githubIssueJobsMatch(candidate, job)) {
+    if (!githubIssueJobSourceSnapshotsMatch(candidate, job)) {
       throw new Error(`GitHub issue ${candidate.number} snapshot changed during selection`);
     }
+    if (
+      ledger.some((entry) =>
+        entry.issueId === job.issueId && entry.nodeId === job.nodeId && entry.number === job.number &&
+        entry.fingerprint === job.fingerprint
+      )
+    ) continue;
     return job;
   }
   return null;
