@@ -1,3 +1,5 @@
+import { reasoningLevelsForRecentModel } from "./model-reasoning-levels.js";
+
 const summary = document.querySelector("[data-source-summary]");
 const list = document.querySelector("[data-model-list]");
 const count = document.querySelector("[data-model-count]");
@@ -9,21 +11,6 @@ if (!summary || !list || !count || !(search instanceof HTMLInputElement)) {
 
 const providerNames = { codex: "Codex", openlux: "Metered 2", surplus: "Metered 1" };
 const reasoningOrder = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
-
-// Recent provider models can be discovered without Codex's rich capability
-// envelope. Keep narrowly verified fallbacks here until the provider catalog
-// exposes reasoning metadata directly. The six-month audit is scoped to models
-// released on or after 2026-02-24.
-const recentReasoningFallbacks = [
-  {
-    test: (id) => id === "gpt-5.6-sol",
-    levels: ["low", "medium", "high", "xhigh", "max"],
-  },
-  ...["low", "medium", "high", "xhigh", "max"].map((level) => ({
-    test: (id) => id === `gpt-5.6-sol-${level}`,
-    levels: [level],
-  })),
-];
 
 const normalizeReasoningLevels = (value) => {
   if (!Array.isArray(value)) return [];
@@ -37,10 +24,16 @@ const normalizeReasoningLevels = (value) => {
   });
 };
 
-const reasoningLevelsFor = (model) => {
+const reasoningFor = (model) => {
   const advertised = normalizeReasoningLevels(model.supported_reasoning_levels);
-  if (advertised.length) return advertised;
-  return recentReasoningFallbacks.find((entry) => entry.test(model.id))?.levels ?? [];
+  if (advertised.length) {
+    return {
+      modelClass: model.model_class ?? null,
+      levels: advertised,
+      defaultLevel: model.default_reasoning_effort ?? null,
+    };
+  }
+  return reasoningLevelsForRecentModel(model.id);
 };
 
 let catalog = [];
@@ -48,10 +41,11 @@ let catalog = [];
 const render = () => {
   const query = search.value.trim().toLowerCase();
   const visible = catalog.filter((model) => {
-    const reasoningLevels = reasoningLevelsFor(model);
+    const reasoning = reasoningFor(model);
     return !query || model.id.toLowerCase().includes(query) ||
       model.providers.some((provider) => providerNames[provider.id].toLowerCase().includes(query)) ||
-      reasoningLevels.some((level) => level.includes(query));
+      reasoning?.modelClass?.includes(query) ||
+      reasoning?.levels.some((level) => level.includes(query));
   });
   count.textContent = `${visible.length} model${visible.length === 1 ? "" : "s"}`;
   list.replaceChildren(...visible.map((model) => {
@@ -69,12 +63,14 @@ const render = () => {
     }
     article.append(heading, providers);
 
-    const reasoningLevels = reasoningLevelsFor(model);
-    if (reasoningLevels.length) {
-      const reasoning = document.createElement("div");
-      reasoning.dataset.reasoningLevels = "";
-      reasoning.textContent = `Reasoning: ${reasoningLevels.join(", ")}`;
-      article.append(reasoning);
+    const reasoning = reasoningFor(model);
+    if (reasoning?.levels.length) {
+      const levels = document.createElement("div");
+      levels.dataset.reasoningLevels = "";
+      const classLabel = reasoning.modelClass ? `${reasoning.modelClass}: ` : "";
+      levels.textContent = `Reasoning · ${classLabel}${reasoning.levels.join(", ")}`;
+      if (reasoning.defaultLevel) levels.title = `Default: ${reasoning.defaultLevel}`;
+      article.append(levels);
     }
     return article;
   }));
