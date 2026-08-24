@@ -58,6 +58,7 @@ Deno.test("recent model reasoning resolves provider aliases by model class", () 
     ["gpt-5.6-terra", "gpt-5.6", ["none", "low", "medium", "high", "xhigh", "max"]],
     ["claude-sonnet-5-20260801", "claude-5", ["low", "medium", "high", "xhigh", "max"]],
     ["claude-opus-4.8", "claude-opus-4.8", ["low", "medium", "high", "xhigh", "max"]],
+    ["claude-opus-4.7", "claude-opus-4.7", ["low", "medium", "high", "xhigh", "max"]],
     ["deepseek-v4-flash", "deepseek-v4", ["none", "high", "max"]],
     ["deepseek-v4-pro", "deepseek-v4", ["none", "high", "max"]],
     ["glm-5.3", "glm-5.3", ["low", "high", "max"]],
