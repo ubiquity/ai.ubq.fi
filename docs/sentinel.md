@@ -13,9 +13,10 @@ The `Provider Sentinel` Actions workflow has three modes:
   exact candidate SHA to `p-ai-ubq-fi`. It does not push `development` or promote production. A manual run selected on
   any other ref is skipped.
 - `hourly`: the top-of-hour schedule archives an overlapping 80-minute window of raw logs and encrypted failed-request
-  captures. If the native-review backlog has an eligible open P2/P3 item, it selects exactly one item and sends it
-  directly to implementation without a triage-model call. Otherwise it returns before Codex authentication, replay
-  decryption, or any agent call. Automatic LLM triage is incident-only.
+  captures. It first selects one eligible open P2/P3 item from the native-review backlog. If that backlog has no
+  eligible item, it can select one bounded GitHub issue. It sends the selected item directly to implementation without a
+  triage-model call. If neither source has work, it returns before Codex authentication, replay decryption, or any agent
+  call. Automatic LLM triage is incident-only.
 - `incident`: an accepted gateway or provider failure writes a durable Deno KV incident before dispatching this workflow
   through the dedicated Ubiquity Sentinel GitHub App. A Codex catalog upstream 5xx or transport failure also writes an
   incident, including when a cached, rotated, or paid catalog masks the failure from the client. One repair is active at
@@ -59,6 +60,30 @@ findings remain nonblocking and are merged into the backlog. If `development` ad
 cycle archives evidence and defers the new backlog state to the next hour. Empty replay sets skip the replay-evaluation
 model call.
 
+GitHub issue selection is a read-only fallback when the native-review backlog has no eligible entry. Sentinel excludes
+pull requests and accepts only an open issue whose author currently has calculated `write` or `admin` permission for the
+repository. The issue must be unlocked, unassigned, and have no comments, parent, sub-issues, or dependency
+relationships. It must have exactly one `Priority: 2 (Medium)` or `Priority: 3 (High)` label, exactly one time label of
+two hours or less, a bounded `Acceptance:` list, and a bounded `Files:` list. Every file must be a repository-relative
+path that the Sentinel implementation policy permits. High sorts before Medium, then by creation time and issue number.
+High becomes review severity P2 and Medium becomes P3. Issue text and metadata are untrusted input and cannot expand the
+declared file scope or change Sentinel policy.
+
+Selection records an immutable digest of the issue body and complete issue snapshot, including the author login.
+Sentinel reads the exact issue, its relationships, and the author's current repository permission again before candidate
+creation, before a preview branch push, and before a development push. A changed or ineligible snapshot stops that
+attempt. The workflow binds both an exact selected snapshot and an empty selection from its prerequisite preflight to
+the later orchestrator; selection drift is deferred to another run. The selector inspects at most 32 ordered candidate
+relationships per run and fails closed at that bound. Terminal `resolved` and `manual_required` snapshots are recorded
+in the protected `docs/sentinel-issue-jobs.md` ledger. `resolved` means that the implementation has a matching scoped
+candidate diff; it is not production acceptance. The encrypted `github-issue-production-outcome.json` exists only after
+production has settled by keeping the candidate through monitoring or rolling it back. The Actions summary identifies
+the selected issue number without exposing its title or body. An unchanged open issue is not selected again. A later
+issue edit creates a new snapshot that can become eligible. A manual result uses a ledger-only development commit and
+never starts a deployment. Sentinel uses `issues: read` and the `GITHUB_TOKEN`'s always-available Metadata read
+permission; it does not assign, label, comment on, or close an issue. The workflow concurrency group serializes Sentinel
+runs but does not claim work against a human or another automation system.
+
 The workflow supports public, private, and internal repository visibility. It fails before checkout or raw-log capture
 unless `SENTINEL_ARTIFACT_KEY` is present and decodes to exactly 32 bytes. After the cycle, it scans every prospective
 artifact path for credentials, encrypts raw logs and durable reports with AES-256-GCM, reads the persisted ciphertext
@@ -83,14 +108,15 @@ Add these Actions secrets:
 The workflow also requires existing secrets `DENO_DEPLOY_TOKEN` and `PREVIEW_UOS_AI_USER_TOKEN`. The deployment workflow
 installs the preview credential only on `p-ai-ubq-fi`, and replay uses that same credential to replace authorization.
 Production secret synchronization selects only `UBIQUITY_AI_USER_TOKEN`; an absent production token fails the deployment
-instead of falling through to the preview token. `GITHUB_TOKEN` comes from the workflow and has `actions: write` and
-`contents: write` permissions. Checkout does not persist it in Git configuration; the trusted orchestrator passes a
-process-local Git HTTP authorization header only to explicit fetch and push commands without writing the token into the
-checkout. The selected real Codex auth remains only in the parent orchestrator and its loopback relay. Agent
-`CODEX_HOME` directories contain a synthetic non-secret auth document. The outer Bubblewrap sandbox hides host runner
-files and PIDs and mounts only system files, the repository, the selected checkout, and the synthetic home. Neither real
-nor synthetic auth is placed under `.sentinel/`, logged, prompted, or uploaded. Workflow secrets are scoped to the
-orchestration and final artifact-scan steps, not dependency installation or artifact upload actions.
+instead of falling through to the preview token. `GITHUB_TOKEN` comes from the workflow and has `actions: write`,
+`contents: write`, and `issues: read` permissions. Checkout does not persist it in Git configuration; the trusted
+orchestrator passes a process-local Git HTTP authorization header only to explicit fetch and push commands without
+writing the token into the checkout. The selected real Codex auth remains only in the parent orchestrator and its
+loopback relay. Agent `CODEX_HOME` directories contain a synthetic non-secret auth document. The outer Bubblewrap
+sandbox hides host runner files and PIDs and mounts only system files, the repository, the selected checkout, and the
+synthetic home. Neither real nor synthetic auth is placed under `.sentinel/`, logged, prompted, or uploaded. Workflow
+secrets are scoped to the orchestration and final artifact-scan steps, not dependency installation or artifact upload
+actions.
 
 Complete raw Deno log captures are given to triage without field sanitization, filtering, or summarization. Raw logs and
 durable reports are then compressed and encrypted into one authenticated ciphertext envelope before Actions receives

@@ -257,9 +257,25 @@ Deno.test({
     assert(workflow.includes("inputs.sentinel_mode == 'hourly'"), "Maintainers must be able to start an hourly run");
     assert(workflow.includes("preview|hourly)"), "Manual hourly runs must select the hourly orchestrator mode");
     assert(workflow.includes("selectNextReviewBacklogEntry"), "Hourly runs must preflight eligible backlog work");
+    assert(workflow.includes("selectNextGitHubIssueJob"), "Hourly runs must preflight eligible GitHub issue work");
+    assert(
+      workflow.includes("renderGitHubIssueJobHint(issueJob)"),
+      "Hourly preflight must persist both selected and empty GitHub issue hints",
+    );
+    assert(
+      orchestrator.includes("githubIssueJobMatchesHint(issueJobHint, selectedIssueJob)") &&
+        orchestrator.includes("hourly_deferred_github_issue_changed"),
+      "Hourly runtime must defer when the bound GitHub issue selection changes",
+    );
+    assert(/^\s+issues: read$/mu.test(workflow), "GitHub issue intake must use read-only issue permission");
+    assert(!/^\s+issues: write$/mu.test(workflow), "Provider Sentinel must not mutate GitHub issues");
     assert(
       workflow.includes("git show origin/development:docs/sentinel-review-backlog.md"),
       "Hourly agent setup must inspect the current development backlog",
+    );
+    assert(
+      workflow.includes("git show origin/development:docs/sentinel-issue-jobs.md"),
+      "Hourly agent setup must inspect the current issue-job ledger",
     );
     assert(
       workflow.includes('echo "SENTINEL_BACKLOG_HINT_SHA=$hint_sha" >> "$GITHUB_ENV"'),
@@ -283,6 +299,38 @@ Deno.test({
     for (const forbidden of ["pushTemporaryCandidate", "dispatchAndResolveRevision", "dispatchSerializedPromotion"]) {
       assert(!manualLane.includes(forbidden), `Manual backlog completion must not call ${forbidden}`);
     }
+    const issueManualStart = orchestrator.indexOf('if (selectedIssueState.disposition === "manual_required")');
+    const issueManualEnd = orchestrator.indexOf("if (!await hasChanges(checkout))", issueManualStart);
+    assert(
+      issueManualStart >= 0 && issueManualEnd > issueManualStart,
+      "Manual GitHub issue completion must have a bounded early-return lane",
+    );
+    const issueManualLane = orchestrator.slice(issueManualStart, issueManualEnd);
+    assert(
+      issueManualLane.includes("HEAD:${SENTINEL_POLICY.developmentRef}"),
+      "Manual GitHub issue completion must persist its trusted ledger change",
+    );
+    for (const forbidden of ["pushTemporaryCandidate", "dispatchAndResolveRevision", "dispatchSerializedPromotion"]) {
+      assert(!issueManualLane.includes(forbidden), `Manual GitHub issue completion must not call ${forbidden}`);
+    }
+    assert(
+      !workflow.includes("github_issue_title") && !workflow.includes("github_issue_body"),
+      "Untrusted GitHub issue text must not enter workflow environment or summary fields",
+    );
+    assert(
+      workflow.includes('echo "- Selected GitHub issue: #$selected_issue"'),
+      "The public cycle summary must identify a selected GitHub issue by its validated numeric identifier",
+    );
+    assert(
+      workflow.includes("github-issue-production-outcome.json"),
+      "The public cycle summary must distinguish the final GitHub issue production outcome from implementation status",
+    );
+    assert(
+      orchestrator.includes("github-issue-production-outcome.json") &&
+        orchestrator.includes('writeGitHubIssueProductionOutcome("kept", production.revision)') &&
+        orchestrator.includes('writeGitHubIssueProductionOutcome("rolled_back", productionRevision)'),
+      "GitHub issue evidence must record the final production outcome after the implementation disposition",
+    );
     assert(
       orchestrator.includes("const gitEnvironment = gitNetworkEnvironment(githubToken)"),
       "Manual backlog pushes must use the non-recursive workflow GITHUB_TOKEN",

@@ -22,6 +22,34 @@ export interface GitHubArtifact {
   readonly expiresAt: string | null;
 }
 
+export interface GitHubIssue {
+  readonly id: number;
+  readonly nodeId: string;
+  readonly number: number;
+  readonly state: "open" | "closed";
+  readonly title: string;
+  readonly body: string;
+  readonly htmlUrl: string;
+  readonly authorLogin: string;
+  readonly authorAssociation: string;
+  readonly labels: readonly string[];
+  readonly assignees: readonly string[];
+  readonly locked: boolean;
+  readonly comments: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly isPullRequest: boolean;
+}
+
+export interface GitHubIssueRelations {
+  readonly parentIssueNumber: number | null;
+  readonly subIssueCount: number;
+  readonly blockedByCount: number;
+  readonly blockingCount: number;
+}
+
+export type GitHubRepositoryPermission = "none" | "read" | "write" | "admin";
+
 export interface GitHubClientOptions {
   readonly repository: string;
   readonly token: string;
@@ -59,6 +87,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
 // Ninety days of one evidence artifact and one optional replay bundle at the
 // five-minute schedule needs up to 521 pages before deployment artifacts.
 export const MAX_ARTIFACT_METADATA_PAGES = 600;
+export const MAX_ISSUE_METADATA_PAGES = 10;
 const DEFAULT_ARTIFACT_DOWNLOAD_LIMIT_BYTES = 256 * 1024 * 1024;
 const FULL_GIT_SHA = /^[0-9a-f]{40}$/;
 
@@ -73,6 +102,14 @@ const nonEmptyString = (value: unknown): string | null =>
 
 const integer = (value: unknown): number | null =>
   typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
+
+const nonNegativeInteger = (value: unknown): number | null =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+
+const isoTimestamp = (value: unknown): string | null => {
+  const timestamp = nonEmptyString(value);
+  return timestamp !== null && Number.isFinite(Date.parse(timestamp)) ? timestamp : null;
+};
 
 const parseWorkflowRun = (value: unknown): GitHubWorkflowRun => {
   const record = asRecord(value);
@@ -116,6 +153,67 @@ const parseArtifact = (value: unknown): GitHubArtifact => {
     expired: record.expired === true,
     createdAt,
     expiresAt: nonEmptyString(record.expires_at),
+  };
+};
+
+const parseIssue = (value: unknown): GitHubIssue => {
+  const record = asRecord(value);
+  if (!record) throw new Error("GitHub returned an invalid issue");
+  const id = integer(record.id);
+  const nodeId = nonEmptyString(record.node_id);
+  const number = integer(record.number);
+  const state = record.state === "open" || record.state === "closed" ? record.state : null;
+  const title = nonEmptyString(record.title);
+  const body = record.body === null || record.body === undefined
+    ? ""
+    : typeof record.body === "string"
+    ? record.body
+    : null;
+  const htmlUrl = nonEmptyString(record.html_url);
+  const author = asRecord(record.user);
+  const authorLogin = nonEmptyString(author?.login);
+  const authorAssociation = nonEmptyString(record.author_association);
+  const comments = nonNegativeInteger(record.comments);
+  const createdAt = isoTimestamp(record.created_at);
+  const updatedAt = isoTimestamp(record.updated_at);
+  if (
+    !id || !nodeId || !number || !state || !title || body === null || !htmlUrl || !authorLogin ||
+    !authorAssociation ||
+    comments === null || !createdAt || !updatedAt || !Array.isArray(record.labels) ||
+    !Array.isArray(record.assignees) ||
+    typeof record.locked !== "boolean"
+  ) {
+    throw new Error("GitHub returned an incomplete issue");
+  }
+  const labels = record.labels.map((value) => {
+    const label = asRecord(value);
+    const name = typeof value === "string" ? nonEmptyString(value) : nonEmptyString(label?.name);
+    if (!name) throw new Error("GitHub returned an issue with an invalid label");
+    return name;
+  });
+  const assignees = record.assignees.map((value) => {
+    const assignee = asRecord(value);
+    const login = nonEmptyString(assignee?.login);
+    if (!login) throw new Error("GitHub returned an issue with an invalid assignee");
+    return login;
+  });
+  return {
+    id,
+    nodeId,
+    number,
+    state,
+    title,
+    body,
+    htmlUrl,
+    authorLogin,
+    authorAssociation,
+    labels,
+    assignees,
+    locked: record.locked,
+    comments,
+    createdAt,
+    updatedAt,
+    isPullRequest: record.pull_request !== undefined && record.pull_request !== null,
   };
 };
 
@@ -249,6 +347,134 @@ export class GitHubActionsClient {
       `Get workflow run ${runId}`,
     );
     return parseWorkflowRun(await this.#json(response, `Get workflow run ${runId}`));
+  }
+
+  async listOpenIssues(): Promise<readonly GitHubIssue[]> {
+    const issues: GitHubIssue[] = [];
+    for (let page = 1;; page += 1) {
+      if (page > MAX_ISSUE_METADATA_PAGES) {
+        throw new Error("GitHub issue metadata exceeded the Sentinel page limit");
+      }
+      const url = this.#url(`repos/${this.#repository}/issues`);
+      url.searchParams.set("state", "open");
+      url.searchParams.set("sort", "created");
+      url.searchParams.set("direction", "asc");
+      url.searchParams.set("per_page", "100");
+      url.searchParams.set("page", String(page));
+      const response = await this.#request(url, {
+        method: "GET",
+        headers: this.#headers(),
+        redirect: "manual",
+      }, "List open repository issues");
+      const payload = await this.#json(response, "List open repository issues");
+      if (!Array.isArray(payload)) throw new Error("List open repository issues returned a non-array payload");
+      const pageIssues = payload.map(parseIssue);
+      issues.push(...pageIssues.filter((issue) => !issue.isPullRequest && issue.state === "open"));
+      if (pageIssues.length < 100) break;
+    }
+    return issues;
+  }
+
+  async getIssue(issueNumber: number): Promise<GitHubIssue> {
+    if (!Number.isSafeInteger(issueNumber) || issueNumber <= 0) {
+      throw new Error("GitHub issue number must be positive");
+    }
+    const response = await this.#request(
+      this.#url(`repos/${this.#repository}/issues/${issueNumber}`),
+      {
+        method: "GET",
+        headers: this.#headers(),
+        redirect: "manual",
+      },
+      `Get GitHub issue ${issueNumber}`,
+    );
+    const issue = parseIssue(await this.#json(response, `Get GitHub issue ${issueNumber}`));
+    if (issue.number !== issueNumber || issue.isPullRequest) {
+      throw new Error(`GitHub issue ${issueNumber} did not resolve to the requested issue`);
+    }
+    return issue;
+  }
+
+  async getRepositoryPermission(username: string): Promise<GitHubRepositoryPermission> {
+    if (username.trim() === "" || username.trim() !== username || username.length > 256) {
+      throw new Error("GitHub repository permission username is invalid");
+    }
+    const response = await this.#request(
+      this.#url(`repos/${this.#repository}/collaborators/${encodeURIComponent(username)}/permission`),
+      {
+        method: "GET",
+        headers: this.#headers(),
+        redirect: "manual",
+      },
+      `Get GitHub repository permission for ${username}`,
+    );
+    if (response.status === 404) return "none";
+    const payload = asRecord(await this.#json(response, `Get GitHub repository permission for ${username}`));
+    const permission = payload?.permission;
+    if (permission !== "none" && permission !== "read" && permission !== "write" && permission !== "admin") {
+      throw new Error(`Get GitHub repository permission for ${username} returned an incomplete payload`);
+    }
+    return permission;
+  }
+
+  async getIssueRelations(issueNumber: number): Promise<GitHubIssueRelations> {
+    if (!Number.isSafeInteger(issueNumber) || issueNumber <= 0) {
+      throw new Error("GitHub issue number must be positive");
+    }
+    const subIssuesUrl = this.#url(`repos/${this.#repository}/issues/${issueNumber}/sub_issues`);
+    subIssuesUrl.searchParams.set("per_page", "1");
+    subIssuesUrl.searchParams.set("page", "1");
+    const subIssuesResponse = await this.#request(subIssuesUrl, {
+      method: "GET",
+      headers: this.#headers(),
+      redirect: "manual",
+    }, `List GitHub issue ${issueNumber} sub-issues`);
+    const subIssues = await this.#json(subIssuesResponse, `List GitHub issue ${issueNumber} sub-issues`);
+    if (!Array.isArray(subIssues)) {
+      throw new Error(`List GitHub issue ${issueNumber} sub-issues returned a non-array payload`);
+    }
+
+    const [owner, name] = this.#repository.split("/");
+    const graphResponse = await this.#request(this.#url("graphql"), {
+      method: "POST",
+      headers: this.#headers(true),
+      redirect: "manual",
+      body: JSON.stringify({
+        query:
+          "query SentinelIssueRelations($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { issue(number: $number) { parent { number } blockedBy(first: 1) { totalCount } blocking(first: 1) { totalCount } } } }",
+        variables: { owner, name, number: issueNumber },
+      }),
+    }, `Read GitHub issue ${issueNumber} dependencies`);
+    const graphPayload = asRecord(await this.#json(graphResponse, `Read GitHub issue ${issueNumber} dependencies`));
+    const graphErrors = graphPayload?.errors;
+    if (
+      !graphPayload ||
+      (Object.hasOwn(graphPayload, "errors") && (!Array.isArray(graphErrors) || graphErrors.length > 0))
+    ) {
+      throw new Error(`Read GitHub issue ${issueNumber} dependencies returned an incomplete payload`);
+    }
+    const data = asRecord(graphPayload?.data);
+    const repository = asRecord(data?.repository);
+    const issue = asRecord(repository?.issue);
+    const blockedBy = asRecord(issue?.blockedBy);
+    const blocking = asRecord(issue?.blocking);
+    const parent = asRecord(issue?.parent);
+    const parentIssueNumber = issue?.parent === null ? null : integer(parent?.number);
+    const blockedByCount = nonNegativeInteger(blockedBy?.totalCount);
+    const blockingCount = nonNegativeInteger(blocking?.totalCount);
+    if (
+      !issue || !Object.hasOwn(issue, "parent") ||
+      (issue.parent !== null && parentIssueNumber === null) ||
+      blockedByCount === null || blockingCount === null
+    ) {
+      throw new Error(`Read GitHub issue ${issueNumber} dependencies returned an incomplete payload`);
+    }
+    return {
+      parentIssueNumber,
+      subIssueCount: subIssues.length,
+      blockedByCount,
+      blockingCount,
+    };
   }
 
   async waitForWorkflow(options: WaitForWorkflowOptions): Promise<GitHubWorkflowRun> {
