@@ -597,8 +597,15 @@ const meteredCodexModelRecord = (
   description: model.description,
   owned_by: model.owned_by,
   supported_endpoint_types: [...model.supported_endpoint_types],
-  supported_reasoning_levels: [{ effort: "none", description: "No reasoning" }],
-  default_reasoning_level: "none",
+  supported_reasoning_levels: /^deepseek-v4-flash(?:-0731|:web)?$/.test(model.id)
+    ? [
+      { effort: "none", description: "Disable optional reasoning" },
+      { effort: "low", description: "Reasoning effort: low" },
+      { effort: "high", description: "Reasoning effort: high" },
+      { effort: "max", description: "Maximum reasoning depth" },
+    ]
+    : [{ effort: "none", description: "No reasoning" }],
+  default_reasoning_level: /^deepseek-v4-flash(?:-0731|:web)?$/.test(model.id) ? "high" : "none",
   shell_type: "shell_command",
   visibility: "list",
   supported_in_api: true,

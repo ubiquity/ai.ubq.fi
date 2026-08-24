@@ -971,6 +971,9 @@ Deno.test("codex catalog: model picker receives the complete unique union of pai
         data: [
           { id: "shared-paid-model", provider: "surplus" },
           { id: "surplus-only-model", provider: "surplus" },
+          { id: "deepseek-v4-flash", provider: "surplus" },
+          { id: "deepseek-v4-flash-0731", provider: "surplus" },
+          { id: "deepseek-v4-flash:web", provider: "surplus" },
         ],
       })),
   });
@@ -989,6 +992,9 @@ Deno.test("codex catalog: model picker receives the complete unique union of pai
       "shared-paid-model",
       "openlux-only-model",
       "surplus-only-model",
+      "deepseek-v4-flash",
+      "deepseek-v4-flash-0731",
+      "deepseek-v4-flash:web",
     ]);
     assert.equal(new Set(slugs).size, slugs.length);
     assert.equal(payload.models.find((model) => model.slug === "shared-paid-model")?.visibility, "list");
@@ -996,6 +1002,19 @@ Deno.test("codex catalog: model picker receives the complete unique union of pai
       payload.models.find((model) => model.slug === "surplus-only-model")?.supported_reasoning_levels,
       [{ effort: "none", description: "No reasoning" }],
     );
+    for (const slug of ["deepseek-v4-flash", "deepseek-v4-flash-0731", "deepseek-v4-flash:web"]) {
+      const model = payload.models.find((candidate) => candidate.slug === slug);
+      assert.deepEqual(
+        model?.supported_reasoning_levels,
+        [
+          { effort: "none", description: "Disable optional reasoning" },
+          { effort: "low", description: "Reasoning effort: low" },
+          { effort: "high", description: "Reasoning effort: high" },
+          { effort: "max", description: "Maximum reasoning depth" },
+        ],
+      );
+      assert.equal(model?.default_reasoning_level, "high");
+    }
     assert.equal(slugs.includes("chat-only-model"), false);
   } finally {
     globalThis.fetch = originalFetch;
