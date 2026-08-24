@@ -2762,8 +2762,9 @@ Deno.test("handler: authenticated legacy v1 embeddings is a generic 404 without 
   assert.equal(quotaAfter.reserved_requests, 0);
 });
 
-Deno.test("handler: idempotency principals survive allowlist token rotation and preserve account scopes", async () => {
-  const { resolveIdempotencyPrincipal } = await import("../src/handler.ts");
+Deno.test("handler: admission isolates bearer tokens while idempotency preserves account scopes", async () => {
+  const { resolveCodexAdmissionPrincipal, resolveIdempotencyPrincipal } = await import("../src/handler.ts");
+  const { deriveCodexAdmissionCallerLaneHash } = await import("../src/codex_admission.ts");
 
   for (
     const kind of [
@@ -2783,6 +2784,34 @@ Deno.test("handler: idempotency principals survive allowlist token rotation and 
     assert.equal(first, `auth-method:${kind}`);
     assert.equal(rotated, first);
     assert.equal(first.includes("rotating-secret"), false);
+
+    const firstAdmission = await resolveCodexAdmissionPrincipal({
+      token: "first-rotating-secret",
+      method: { kind },
+    });
+    const rotatedAdmission = await resolveCodexAdmissionPrincipal({
+      token: "second-rotating-secret",
+      method: { kind },
+    });
+    assert.match(firstAdmission, /^bearer-sha256:[a-f0-9]{64}$/);
+    assert.notEqual(rotatedAdmission, firstAdmission);
+    assert.equal(firstAdmission.includes("rotating-secret"), false);
+    assert.equal(
+      firstAdmission,
+      await resolveCodexAdmissionPrincipal({
+        token: "first-rotating-secret",
+        method: { kind },
+      }),
+    );
+    const firstLane = await deriveCodexAdmissionCallerLaneHash(firstAdmission, null, null);
+    assert.equal(
+      firstLane,
+      await deriveCodexAdmissionCallerLaneHash(firstAdmission, null, null),
+    );
+    assert.notEqual(
+      firstLane,
+      await deriveCodexAdmissionCallerLaneHash(rotatedAdmission, null, null),
+    );
   }
 
   assert.equal(

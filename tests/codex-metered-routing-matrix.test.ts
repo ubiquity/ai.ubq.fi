@@ -72,6 +72,15 @@ class MemoryKv {
     } as Deno.KvEntryMaybe<T>);
   }
 
+  getMany<T extends readonly unknown[]>(
+    keys: readonly Deno.KvKey[],
+    options?: { consistency?: Deno.KvConsistencyLevel },
+  ): Promise<{ [K in keyof T]: Deno.KvEntryMaybe<T[K]> }> {
+    return Promise.all(keys.map((key) => this.get(key, options))) as Promise<
+      { [K in keyof T]: Deno.KvEntryMaybe<T[K]> }
+    >;
+  }
+
   set(
     key: Deno.KvKey,
     value: unknown,
@@ -405,6 +414,8 @@ const runCase = async (
       }),
       {
         keyId: KEY_ID,
+        // Admission identity must not alter the explicit account ordering.
+        idempotencyPrincipal: "matrix-0",
         kernelRepo: null,
         kernelOrg: null,
         requestId: `routing-matrix-${sequence}-${first.name}-${second.name}`,
@@ -413,29 +424,26 @@ const runCase = async (
     );
 
     const reachesSecond = isFallbackOutcome(first) || isTransportOutcome(first);
-    // Codex may try its sibling account after 401/403/429 or a transient
-    // transport failure. Paid fallback still requires an authoritative 429
-    // from the whole attempted cohort. Any transport ambiguity wins over
-    // otherwise fallback-eligible responses and must fail closed.
-    const terminalCodexOutcome = isTransportOutcome(first) && isFallbackOutcome(second)
+    // Transport failures release request-scoped admission and try a sibling,
+    // but win over an auth/generic-429 cohort so they can never admit paid
+    // fallback. Every 429 in this matrix is deliberately non-authoritative.
+    const completesGeneric429Retry = isFallbackOutcome(first) && isFallbackOutcome(second) &&
+      (is429(first) || is429(second));
+    const terminalCodexOutcome = completesGeneric429Retry
+      ? (is429(first) ? first : second)
+      : isTransportOutcome(first) && isFallbackOutcome(second)
       ? first
       : reachesSecond
       ? second
       : first;
-    const selectsMetered = isFallbackOutcome(first) && isFallbackOutcome(second) &&
-      (is429(first) || is429(second));
-    const expectedStatus = selectsMetered
-      ? 200
-      : is401(terminalCodexOutcome)
-      ? 503
-      : directStatus(terminalCodexOutcome);
+    const expectedStatus = is401(terminalCodexOutcome) ? 503 : directStatus(terminalCodexOutcome);
     assert.equal(response.status, expectedStatus, `${label}: final status`);
     assert.equal(
       response.headers.get("x-uos-upstream"),
-      selectsMetered ? "metered" : "chatgpt_codex",
+      "chatgpt_codex",
       `${label}: selected upstream`,
     );
-    assert.equal(run.meteredCalls, selectsMetered ? 1 : 0, `${label}: Metered call count`);
+    assert.equal(run.meteredCalls, 0, `${label}: generic 429 must not reach Metered`);
     assert.equal(
       run.codexCalls["account-two"] > 0,
       reachesSecond,
@@ -454,7 +462,7 @@ const runCase = async (
 
     const expectedBaseCalls = 1 + (is401(first) ? 1 : 0) +
       (reachesSecond ? 1 + (is401(second) ? 1 : 0) : 0);
-    const expectsGlobal429Retry = selectsMetered && (is429(first) || is429(second));
+    const expectsGlobal429Retry = completesGeneric429Retry;
     assert.equal(
       run.codexCalls["account-one"] + run.codexCalls["account-two"],
       expectedBaseCalls + (expectsGlobal429Retry ? 1 : 0),
@@ -463,7 +471,7 @@ const runCase = async (
     const retries = retryLogs(run.infoLogs);
     assert.equal(retries.length, expectsGlobal429Retry ? 1 : 0, `${label}: global 429 retry count`);
     if (expectsGlobal429Retry) {
-      assert.equal(retries[0]?.delay_ms, 0, `${label}: generic 429 retry must be immediate`);
+      assert.equal(retries[0]?.delay_ms, 0, `${label}: generic 429 recheck must be immediate`);
     }
     await response.arrayBuffer();
     await drainBackgroundTasks();

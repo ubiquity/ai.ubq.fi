@@ -1,5 +1,6 @@
 import {
   buildCodexRequest,
+  CODEX_ADMISSION_BUSY_ERROR_CODE,
   CODEX_AUTH_REAUTH_MESSAGE,
   CODEX_AUTH_REAUTH_WARNING,
   CODEX_QUOTA_BLOCKED_ERROR_CODE,
@@ -9,6 +10,7 @@ import {
   fetchCodexResponses,
   getCodexModelsSnapshotDefaultModel,
   getCodexResponseAccountCohortId,
+  getCodexResponseAdmissionSignal,
   getCodexResponseAffinityOutcome,
   getCodexResponseSlot,
   getCodexRoutingError,
@@ -17,7 +19,10 @@ import {
   markCodexResponseCompleted,
   markCodexResponseUpstreamError,
   releaseCodexResponseProbe,
+  renewCodexResponseAdmission,
+  waitForCodexResponseAdmissionRelease,
 } from "./codex.ts";
+import { CODEX_ADMISSION_ACCOUNT_LIMIT, deriveCodexAdmissionCallerLaneHash } from "./codex_admission.ts";
 import {
   CEREBRAS_GPT_OSS_120B_MODEL,
   CerebrasError,
@@ -192,6 +197,12 @@ type UsageContext = Readonly<{
   kernelOrg: { owner: string } | null;
   paidFallbackEnabled?: boolean;
   idempotencyPrincipal?: string | null;
+  /** Credential-scoped identity used only for Codex admission fairness. */
+  codexAdmissionPrincipal?: string | null;
+  /** Private discriminator for independent server-generated subrequests. */
+  codexAdmissionLaneDiscriminator?: string | null;
+  /** Internal buffered callers may wait for Codex lease release before returning. */
+  awaitCodexAdmissionRelease?: boolean;
   requestId?: string;
   startedAtMs?: number;
   startedAtMonotonicMs?: number;
@@ -204,6 +215,13 @@ type UsageContext = Readonly<{
   /** Test seam for proving one terminal usage observation per response. */
   onTerminalUsage?: (usage: UsageTokens | null, completed: boolean) => void;
 }>;
+
+const codexAdmissionPrincipal = (context: UsageContext | undefined): string => {
+  const principal = context?.codexAdmissionPrincipal || context?.idempotencyPrincipal || context?.keyId ||
+    crypto.randomUUID();
+  const discriminator = context?.codexAdmissionLaneDiscriminator?.trim();
+  return discriminator ? `${principal}\u0000internal-subrequest\u0000${discriminator}` : principal;
+};
 
 type UpstreamProvider = "cerebras" | "chatgpt_codex" | "removed_provider" | "metered" | "surplus";
 const supportsReasoningProgressRelease = (provider: UpstreamProvider): boolean =>
@@ -375,6 +393,9 @@ const withResponseTelemetryContext = (
   kernelOrg: context?.kernelOrg ?? null,
   paidFallbackEnabled: context?.paidFallbackEnabled,
   idempotencyPrincipal: context?.idempotencyPrincipal,
+  codexAdmissionPrincipal: context?.codexAdmissionPrincipal,
+  codexAdmissionLaneDiscriminator: context?.codexAdmissionLaneDiscriminator,
+  awaitCodexAdmissionRelease: context?.awaitCodexAdmissionRelease,
   requestId: context?.requestId,
   startedAtMs: context?.startedAtMs,
   startedAtMonotonicMs: context?.startedAtMonotonicMs,
@@ -1211,8 +1232,18 @@ const prepareResponsesAttempt = async (
     deadline.clear();
     return fail("missing_body");
   }
-  const iterator = readResponsesStream(response.body, deadline.signal, {
+  const admissionSignal = provider === "chatgpt_codex" ? getCodexResponseAdmissionSignal(response) : null;
+  const streamSignal = admissionSignal ? AbortSignal.any([deadline.signal, admissionSignal]) : deadline.signal;
+  const iterator = readResponsesStream(response.body, streamSignal, {
     firstEventTimeoutMs: Math.ceil(deadline.remainingMs()),
+    ...(admissionSignal
+      ? {
+        onActivity: async () => {
+          if (await renewCodexResponseAdmission(response)) return;
+          throw admissionSignal.reason ?? new Error("Codex admission lease renewal failed.");
+        },
+      }
+      : {}),
   });
   let preparedStream: PreparedResponsesStream | null = null;
   try {
@@ -1262,6 +1293,7 @@ const prepareResponsesAttempt = async (
     while (options.requireEligibleModel && (!selectedModel || !responseId) && !discoveredTerminal) {
       const next = await iterator.next();
       if (next.done || !next.value) break;
+      recordResponsesEventTelemetry(options.usageContext, next.value);
       bufferedChars = appendResponsesPrecommitEvent(prepared.buffered, next.value, bufferedChars);
       const candidateResponseId = responseIdFromEvents([next.value]);
       if (candidateResponseId && responseId && candidateResponseId !== responseId) {
@@ -1382,6 +1414,7 @@ const fetchAndPreparePrimaryResponses = async (
     clientWantsStream: boolean;
     usageContext?: UsageContext;
     clientVersion?: string | null;
+    codexAdmissionCallerLaneHash?: string | null;
     requestSignal: AbortSignal;
     downstreamSignal: AbortSignal;
     warnings: readonly string[];
@@ -1402,6 +1435,7 @@ const fetchAndPreparePrimaryResponses = async (
       reasoning: options.reasoning,
       usageContext: options.usageContext,
       clientVersion: options.clientVersion,
+      codexAdmissionCallerLaneHash: options.codexAdmissionCallerLaneHash,
       signal: deadline.signal,
       fallbackSignal: options.fallbackSignal,
     });
@@ -1613,6 +1647,7 @@ const collectBufferedResponses = async (
     warningModel?: string | null;
     usageContext?: UsageContext;
     onTerminal?: (event: ResponsesStreamEvent) => void;
+    onEvent?: (event: ResponsesStreamEvent) => void;
     validateEvent?: (event: ResponsesStreamEvent) => void;
     onFailure?: (error: unknown, details?: OwnedResponsesStreamFailureDetails) => Response | void;
   }> = {},
@@ -1625,7 +1660,10 @@ const collectBufferedResponses = async (
         responseId: attempt.responseId,
         warning: { model: options.warningModel! },
         validateEvent: options.validateEvent,
-        onEvent: (event) => recordResponsesEventTelemetry(options.usageContext, event),
+        onEvent: (event) => {
+          recordResponsesEventTelemetry(options.usageContext, event);
+          options.onEvent?.(event);
+        },
         onFailure: (error, details) => {
           void options.onFailure?.(error, details);
         },
@@ -1636,11 +1674,13 @@ const collectBufferedResponses = async (
       for (const event of attempt.prepared.buffered) {
         options.validateEvent?.(event);
         recordResponsesEventTelemetry(options.usageContext, event);
+        options.onEvent?.(event);
         yield event;
       }
       for await (const event of attempt.prepared.iterator) {
         options.validateEvent?.(event);
         recordResponsesEventTelemetry(options.usageContext, event);
+        options.onEvent?.(event);
         yield event;
       }
     })();
@@ -2390,6 +2430,7 @@ const fetchResponsesWithPaidFallback = async (
     usageContext?: UsageContext;
     clientVersion?: string | null;
     signal?: AbortSignal;
+    codexAdmissionCallerLaneHash?: string | null;
     fallbackSignal?: AbortSignal;
   }>,
 ): Promise<RoutedResponsesUpstream> => {
@@ -2589,6 +2630,7 @@ const fetchResponsesWithPaidFallback = async (
         },
         beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("chatgpt_codex") ?? Promise.resolve(),
         bankedReset: codexBankedResetOptionsForTest ?? undefined,
+        admissionCallerLaneHash: options.codexAdmissionCallerLaneHash,
       });
     } catch (error) {
       if (!(error instanceof CodexError) || error.status !== 401) throw error;
@@ -2606,7 +2648,8 @@ const fetchResponsesWithPaidFallback = async (
   }
   const routingError = getCodexRoutingError(primary);
   const gatewayResponse = routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE ||
-    routingError === CODEX_UPSTREAM_DEGRADED_ERROR_CODE;
+    routingError === CODEX_UPSTREAM_DEGRADED_ERROR_CODE ||
+    routingError === CODEX_ADMISSION_BUSY_ERROR_CODE;
   if (authReauthenticationPrimary) {
     primary = new Response(primary.body, {
       status: 503,
@@ -2617,10 +2660,11 @@ const fetchResponsesWithPaidFallback = async (
   const keyId = options.usageContext?.keyId;
   const requestId = options.usageContext?.requestId;
   const createdAtMs = options.usageContext?.startedAtMs;
-  // Only Codex 429 quota or capacity responses can admit paid fallback.
-  // Compatibility, authentication, and authorization failures fail closed.
-  const fallbackReason: InferenceFallbackReason | null = primaryStatus === 429
-    ? routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE ? "primary_quota_blocked" : "primary_429"
+  // Only a complete, authoritative Codex quota/capacity classification may
+  // admit paid fallback. Generic 429 responses remain request-local.
+  const fallbackReason: InferenceFallbackReason | null = primaryStatus === 429 &&
+      routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE
+    ? "primary_quota_blocked"
     : null;
   if (telemetry) telemetry.fallbackReason = fallbackReason;
   if (
@@ -8646,6 +8690,11 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
   ];
   applyPassthroughToCodexRequest(codexBody, rawRecord, passthroughKeys);
   codexBody.store = false;
+  const codexAdmissionCallerLaneHash = await deriveCodexAdmissionCallerLaneHash(
+    codexAdmissionPrincipal(usageContext),
+    null,
+    rawRecord.prompt_cache_key,
+  );
 
   const stream = parsedStream.value;
   const reasoningLabel = resolveReasoningLabelFromEffort(reasoningEffort.value, defaultReasoningLabel);
@@ -8680,6 +8729,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
       reasoning: reasoningLabel,
       usageContext,
       clientVersion: modelMetadata.snapshot?.client_version,
+      codexAdmissionCallerLaneHash,
       signal: requestInferenceSignal,
     });
   } catch (error) {
@@ -8749,8 +8799,23 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
   }
 
   let preflight: PreflightedResponsesStream;
+  const admissionSignal = routed.provider === "chatgpt_codex" ? getCodexResponseAdmissionSignal(upstream) : null;
+  const upstreamSignal = admissionSignal
+    ? AbortSignal.any([requestInferenceSignal, admissionSignal])
+    : requestInferenceSignal;
   try {
-    const firstEvent = await preflightResponsesStream(upstream.body, requestInferenceSignal);
+    const firstEvent = await preflightResponsesStream(
+      upstream.body,
+      upstreamSignal,
+      admissionSignal
+        ? {
+          onActivity: async () => {
+            if (await renewCodexResponseAdmission(upstream)) return;
+            throw admissionSignal.reason ?? new Error("Codex admission lease renewal failed.");
+          },
+        }
+        : {},
+    );
     recordFirstSseEvent(usageContext);
     const replay = (async function* (): ResponsesStreamIterator {
       try {
@@ -8892,6 +8957,11 @@ const handleResponsesInternal = async (
       );
     }
   }
+  const codexAdmissionCallerLaneHash = await deriveCodexAdmissionCallerLaneHash(
+    codexAdmissionPrincipal(usageContext),
+    rawRecord.client_metadata,
+    rawRecord.prompt_cache_key,
+  );
   const warnings = buildIgnoredWarnings(
     rawRecord,
     new Set([
@@ -9180,6 +9250,7 @@ const handleResponsesInternal = async (
           clientWantsStream,
           usageContext,
           clientVersion: modelMetadata.snapshot?.client_version,
+          codexAdmissionCallerLaneHash,
           requestSignal: requestInferenceSignal,
           downstreamSignal,
           warnings,
@@ -9239,6 +9310,10 @@ const handleResponsesInternal = async (
             return failed.response;
           }
           if (routed.gatewayResponse && !isEligibleResponsesAttemptStatus(failed.response)) {
+            if (globalProbe) void releaseGlobalRemovedProviderProbe(globalProbe).catch(() => {});
+            return failed.response;
+          }
+          if (getCodexRoutingError(failed.response) === CODEX_ADMISSION_BUSY_ERROR_CODE) {
             if (globalProbe) void releaseGlobalRemovedProviderProbe(globalProbe).catch(() => {});
             return failed.response;
           }
@@ -9344,6 +9419,7 @@ const handleResponsesInternal = async (
             clientWantsStream,
             usageContext,
             clientVersion: modelMetadata.snapshot?.client_version,
+            codexAdmissionCallerLaneHash,
             requestSignal: requestInferenceSignal,
             downstreamSignal,
             warnings,
@@ -9620,6 +9696,9 @@ const handleResponsesInternal = async (
         }
       },
     });
+    if (usageContext?.awaitCodexAdmissionRelease && routed?.provider === "chatgpt_codex") {
+      await waitForCodexResponseAdmissionRelease(routed.response).catch(() => {});
+    }
     return withUosWarning(response, clientWarnings);
   }
 
@@ -10394,7 +10473,14 @@ const imageCallUsageContext = (
   // The translated request targets a hidden text host model. Reusing its paid
   // roster would authorize and settle the requested image under the wrong
   // model, so image calls remain Codex-only until image billing is explicit.
-  return { ...context, requestId, paidFallbackEnabled: false, onTerminalUsage: undefined };
+  return {
+    ...context,
+    requestId,
+    paidFallbackEnabled: false,
+    codexAdmissionLaneDiscriminator: `${context.requestId ?? crypto.randomUUID()}:image:${kind}:${index + 1}`,
+    awaitCodexAdmissionRelease: true,
+    onTerminalUsage: undefined,
+  };
 };
 
 const usageTokensFromTelemetry = (state: ResponseTelemetryState): UsageTokens | null =>
@@ -10513,7 +10599,7 @@ export const handleImages = async (
     firstFailure = failure;
     fanoutAbort?.abort(new DOMException("A sibling image generation call failed.", "AbortError"));
   };
-  const childPromises = Array.from({ length: count }, async (_, index) => {
+  const runChild = async (index: number): Promise<Response> => {
     // This is an internal JSON rewrite, not a proxy hop. In particular, an
     // outer Images Idempotency-Key cannot identify several independent child
     // generations, and client forwarding/authentication headers do not
@@ -10545,8 +10631,24 @@ export const handleImages = async (
     } finally {
       fanoutDispatch?.settled(index);
     }
-  });
-  const settledUpstreams = await Promise.allSettled(childPromises);
+  };
+  const settledUpstreams: PromiseSettledResult<Response>[] = [];
+  let nextChildIndex = 0;
+  // Never let one translated Images request exceed the physical-account
+  // admission ceiling by itself. Later batches start only after earlier
+  // leases have reached a terminal path and released their slots.
+  while (nextChildIndex < count && firstFailure === undefined) {
+    const batchEnd = Math.min(count, nextChildIndex + CODEX_ADMISSION_ACCOUNT_LIMIT);
+    const indexes = Array.from(
+      { length: batchEnd - nextChildIndex },
+      (_, offset) => nextChildIndex + offset,
+    );
+    settledUpstreams.push(...await Promise.allSettled(indexes.map(runChild)));
+    nextChildIndex = batchEnd;
+  }
+  // The shared paid-dispatch coordinator waits for every logical child. Mark
+  // calls that never started after a sibling failure as settled before cancel.
+  for (let index = nextChildIndex; index < count; index += 1) fanoutDispatch?.settled(index);
   const failure = firstFailure;
   if (failure !== undefined) {
     await fanoutDispatch?.cancelBeforeTransport().catch(() => {});

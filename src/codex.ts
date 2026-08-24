@@ -50,6 +50,17 @@ import {
   recordCodexAccountAffinity,
 } from "./codex_account_affinity.ts";
 import { getKv } from "./kv.ts";
+import {
+  acquireCodexAdmission,
+  CODEX_ADMISSION_LEASE_MS,
+  CODEX_ADMISSION_LEASE_SAFETY_MARGIN_MS,
+  CODEX_ADMISSION_RENEW_AFTER_MS,
+  CODEX_ADMISSION_RETRY_AFTER_SECONDS,
+  type CodexAdmissionLease,
+  releaseCodexAdmission,
+  renewCodexAdmission,
+  resetCodexAdmissionForTest,
+} from "./codex_admission.ts";
 import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
 import { readBoundedResponseBody } from "./bounded_response_body.ts";
 import { BUFFERED_INFERENCE_DEADLINE_MS } from "./inference_deadline.ts";
@@ -71,6 +82,7 @@ const CODEX_ORIGINATOR = "codex_cli_rs";
 const CODEX_CLIENT_VERSION = "0.100.0";
 export const CODEX_QUOTA_BLOCKED_ERROR_CODE = "codex_quota_blocked";
 export const CODEX_UPSTREAM_DEGRADED_ERROR_CODE = "codex_upstream_degraded";
+export const CODEX_ADMISSION_BUSY_ERROR_CODE = "codex_admission_busy";
 export const CODEX_AUTH_REAUTH_WARNING = "codex_auth_reauthentication_required";
 export const CODEX_AUTH_REAUTH_MESSAGE =
   "The gateway's Codex auth.json needs re-authentication. Upload a fresh auth.json and retry.";
@@ -307,12 +319,67 @@ let authCacheGeneration = 0;
 let authPoolEntryInFlight: Promise<CodexAuthPoolEntry> | null = null;
 const refreshesInFlight = new Map<string, Promise<CodexAuthState>>();
 const codexProbeByResponse = new WeakMap<Response, RoutingAccount>();
+type CodexResponseAdmission = {
+  lease: CodexAdmissionLease;
+  abortController: AbortController;
+  expiryTimer: ReturnType<typeof setTimeout> | null;
+  safetyMarginMs: number;
+};
+let codexAdmissionByResponse = new WeakMap<Response, CodexResponseAdmission>();
+let codexAdmissionRenewalByResponse = new WeakMap<Response, Promise<boolean>>();
+let codexAdmissionReleaseByResponse = new WeakMap<Response, Promise<void>>();
+type CodexDeferredAdmissionRelease = {
+  admission: CodexResponseAdmission;
+  timer: ReturnType<typeof setTimeout> | null;
+};
+const CODEX_DEFERRED_ADMISSION_RELEASE_RETRY_MS = 250;
+const codexDeferredAdmissionReleases = new Map<string, CodexDeferredAdmissionRelease>();
 const codexSlotByResponse = new WeakMap<Response, number>();
 const codexAccountIdByResponse = new WeakMap<Response, string>();
 const codexAccountAffinityDispatchByResponse = new WeakMap<Response, CodexAccountAffinityDispatch>();
 const codexAccountAffinityOutcomeByResponse = new WeakMap<Response, CodexAccountAffinityOutcome>();
 const codexTerminalOutcomeByResponse = new WeakSet<Response>();
 const codexProbeTransitionsInFlight = new Set<Promise<void>>();
+
+const codexAdmissionLeaseError = (): DOMException =>
+  new DOMException("Codex admission lease ownership expired or could not be renewed.", "CodexAdmissionLeaseError");
+
+const isCodexAdmissionLeaseError = (value: unknown): boolean =>
+  value instanceof Error && value.name === "CodexAdmissionLeaseError";
+
+const clearCodexAdmissionWatchdog = (admission: CodexResponseAdmission): void => {
+  if (admission.expiryTimer === null) return;
+  clearTimeout(admission.expiryTimer);
+  admission.expiryTimer = null;
+};
+
+const armCodexAdmissionWatchdog = (admission: CodexResponseAdmission): void => {
+  clearCodexAdmissionWatchdog(admission);
+  const delayMs = Math.max(
+    0,
+    admission.lease.expiresAtMs - Date.now() - admission.safetyMarginMs,
+  );
+  const timer = setTimeout(() => {
+    admission.expiryTimer = null;
+    if (!admission.abortController.signal.aborted) admission.abortController.abort(codexAdmissionLeaseError());
+  }, delayMs);
+  admission.expiryTimer = timer;
+  Deno.unrefTimer(timer);
+};
+
+const createCodexResponseAdmission = (
+  lease: CodexAdmissionLease,
+  safetyMarginMs = CODEX_ADMISSION_LEASE_SAFETY_MARGIN_MS,
+): CodexResponseAdmission => {
+  const admission: CodexResponseAdmission = {
+    lease,
+    abortController: new AbortController(),
+    expiryTimer: null,
+    safetyMarginMs,
+  };
+  armCodexAdmissionWatchdog(admission);
+  return admission;
+};
 
 const setCodexResponseAccountTelemetry = (
   response: Response,
@@ -355,6 +422,8 @@ const withCodexWarnings = (response: Response, warnings: readonly string[]): Res
   if (routingError) codexRoutingErrors.set(decorated, routingError);
   const probe = codexProbeByResponse.get(response);
   if (probe) codexProbeByResponse.set(decorated, probe);
+  const admission = codexAdmissionByResponse.get(response);
+  if (admission) codexAdmissionByResponse.set(decorated, admission);
   const slot = codexSlotByResponse.get(response);
   if (slot !== undefined) codexSlotByResponse.set(decorated, slot);
   const accountId = codexAccountIdByResponse.get(response);
@@ -423,16 +492,138 @@ const beginCodexResponseTerminalOutcome = (
   | Readonly<{
     accountId: string | null;
     affinityDispatch: CodexAccountAffinityDispatch | null;
+    admission: CodexResponseAdmission | null;
     probe: RoutingAccount | null;
   }>
   | null => {
   if (codexTerminalOutcomeByResponse.has(response)) return null;
   codexTerminalOutcomeByResponse.add(response);
+  const admission = codexAdmissionByResponse.get(response) ?? null;
+  codexAdmissionByResponse.delete(response);
+  codexAdmissionRenewalByResponse.delete(response);
+  if (admission) clearCodexAdmissionWatchdog(admission);
   return {
     accountId: codexAccountIdByResponse.get(response) ?? null,
     affinityDispatch: codexAccountAffinityDispatchByResponse.get(response) ?? null,
+    admission,
     probe: takeCodexResponseProbe(response),
   };
+};
+
+const clearDeferredCodexAdmissionRelease = (token: string): void => {
+  const deferred = codexDeferredAdmissionReleases.get(token);
+  if (!deferred) return;
+  if (deferred.timer !== null) clearTimeout(deferred.timer);
+  codexDeferredAdmissionReleases.delete(token);
+};
+
+const scheduleDeferredCodexAdmissionRelease = (admission: CodexResponseAdmission): void => {
+  const token = admission.lease.token;
+  if (codexDeferredAdmissionReleases.has(token) || admission.lease.expiresAtMs <= Date.now()) return;
+  const deferred: CodexDeferredAdmissionRelease = { admission, timer: null };
+  const schedule = (): void => {
+    if (codexDeferredAdmissionReleases.get(token) !== deferred) return;
+    const remainingMs = admission.lease.expiresAtMs - Date.now();
+    if (remainingMs <= 0) {
+      codexDeferredAdmissionReleases.delete(token);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      deferred.timer = null;
+      if (codexDeferredAdmissionReleases.get(token) !== deferred) return;
+      if (await releaseCodexAdmission(admission.lease)) {
+        codexDeferredAdmissionReleases.delete(token);
+        return;
+      }
+      schedule();
+    }, Math.min(CODEX_DEFERRED_ADMISSION_RELEASE_RETRY_MS, remainingMs));
+    deferred.timer = timer;
+    Deno.unrefTimer(timer);
+  };
+  codexDeferredAdmissionReleases.set(token, deferred);
+  schedule();
+};
+
+const releaseCodexResponseAdmission = async (admission: CodexResponseAdmission | null): Promise<void> => {
+  if (!admission) return;
+  clearCodexAdmissionWatchdog(admission);
+  for (const retryDelayMs of [0, 25, 100] as const) {
+    if (retryDelayMs > 0) await delay(retryDelayMs);
+    if (await releaseCodexAdmission(admission.lease)) {
+      clearDeferredCodexAdmissionRelease(admission.lease.token);
+      return;
+    }
+  }
+  scheduleDeferredCodexAdmissionRelease(admission);
+};
+
+const beginTrackedCodexAdmissionRelease = (
+  response: Response,
+  admission: CodexResponseAdmission | null,
+): Promise<void> => {
+  const release = releaseCodexResponseAdmission(admission);
+  codexAdmissionReleaseByResponse.set(response, release);
+  return release;
+};
+
+/** Internal batch handoff: wait only for the bounded admission release, not routing telemetry. */
+export const waitForCodexResponseAdmissionRelease = (response: Response): Promise<void> =>
+  codexAdmissionReleaseByResponse.get(response) ?? Promise.resolve();
+
+/** The reader combines this with its own deadline so lease loss stops raw stream activity. */
+export const getCodexResponseAdmissionSignal = (response: Response): AbortSignal | null =>
+  codexAdmissionByResponse.get(response)?.abortController.signal ?? null;
+
+/** Renews a live admission lease after any raw upstream activity. */
+export const renewCodexResponseAdmission = (response: Response): Promise<boolean> => {
+  const admission = codexAdmissionByResponse.get(response);
+  if (
+    !admission || admission.abortController.signal.aborted ||
+    codexTerminalOutcomeByResponse.has(response)
+  ) return Promise.resolve(false);
+  if (
+    admission.lease.expiresAtMs - Date.now() >
+      CODEX_ADMISSION_LEASE_MS - CODEX_ADMISSION_RENEW_AFTER_MS
+  ) return Promise.resolve(true);
+  const inFlight = codexAdmissionRenewalByResponse.get(response);
+  if (inFlight) return inFlight;
+
+  const tracked = (async () => {
+    const current = codexAdmissionByResponse.get(response);
+    if (!current || codexTerminalOutcomeByResponse.has(response)) return false;
+    if (current.lease.expiresAtMs > admission.lease.expiresAtMs) return true;
+    const renewed = await renewCodexAdmission(current.lease);
+    if (codexTerminalOutcomeByResponse.has(response)) return false;
+    if (renewed) {
+      current.lease = renewed;
+      armCodexAdmissionWatchdog(current);
+      return true;
+    }
+    // Continuing after a due renewal fails could let a live stream outlast
+    // its distributed slot. Fail closed before another caller can take over.
+    clearCodexAdmissionWatchdog(current);
+    current.abortController.abort(codexAdmissionLeaseError());
+    return false;
+  })();
+  const clearTrackedRenewal = (): void => {
+    if (codexAdmissionRenewalByResponse.get(response) === tracked) {
+      codexAdmissionRenewalByResponse.delete(response);
+    }
+  };
+  codexAdmissionRenewalByResponse.set(response, tracked);
+  void tracked.then(clearTrackedRenewal, clearTrackedRenewal);
+  return tracked;
+};
+
+/** Test seam for renewal ownership and coalescing. */
+export const setCodexResponseAdmissionForTest = (
+  response: Response,
+  lease: CodexAdmissionLease,
+  safetyMarginMs = CODEX_ADMISSION_LEASE_SAFETY_MARGIN_MS,
+): AbortSignal => {
+  const admission = createCodexResponseAdmission(lease, safetyMarginMs);
+  codexAdmissionByResponse.set(response, admission);
+  return admission.abortController.signal;
 };
 
 const completeCodexProbeTransition = async (transition: Promise<void>): Promise<void> => {
@@ -457,23 +648,29 @@ const codexProviderRequestId = (response: Response): string | null =>
  */
 export const releaseCodexResponseProbe = async (response: Response): Promise<void> => {
   const terminal = beginCodexResponseTerminalOutcome(response);
-  if (!terminal?.probe) return;
-  await completeCodexProbeTransition(releaseCodexRoutingProbe(terminal.probe));
+  if (!terminal) return;
+  const admissionRelease = beginTrackedCodexAdmissionRelease(response, terminal.admission);
+  await Promise.all([
+    admissionRelease,
+    terminal.probe ? completeCodexProbeTransition(releaseCodexRoutingProbe(terminal.probe)) : Promise.resolve(),
+  ]);
 };
 
 /** Only a validated upstream `response.completed` event may clear the recovery probe. */
 export const markCodexResponseCompleted = async (response: Response): Promise<void> => {
   const terminal = beginCodexResponseTerminalOutcome(response);
   if (!terminal) return;
-  if (terminal.probe) {
-    await completeCodexProbeTransition(markCodexSuccess(terminal.probe));
-  }
-  if (response.ok && terminal.affinityDispatch) {
-    await recordCodexAccountAffinity(
-      terminal.affinityDispatch.identity,
-      terminal.affinityDispatch.accountCohortHash,
-    );
-  }
+  const admissionRelease = beginTrackedCodexAdmissionRelease(response, terminal.admission);
+  await Promise.all([
+    admissionRelease,
+    terminal.probe ? completeCodexProbeTransition(markCodexSuccess(terminal.probe)) : Promise.resolve(),
+    response.ok && terminal.affinityDispatch
+      ? recordCodexAccountAffinity(
+        terminal.affinityDispatch.identity,
+        terminal.affinityDispatch.accountCohortHash,
+      )
+      : Promise.resolve(),
+  ]);
   if (terminal.accountId !== null) {
     void recordCodexProviderHealth(
       terminal.accountId,
@@ -489,7 +686,8 @@ export const markCodexResponseCompleted = async (response: Response): Promise<vo
 export const markCodexResponseUpstreamError = async (response: Response): Promise<void> => {
   const terminal = beginCodexResponseTerminalOutcome(response);
   if (!terminal) return;
-  if (response.ok && terminal.accountId !== null) {
+  const admissionFailure = isCodexAdmissionLeaseError(terminal.admission?.abortController.signal.reason);
+  if (response.ok && terminal.accountId !== null && !admissionFailure) {
     void recordCodexProviderHealth(
       terminal.accountId,
       "upstream_error",
@@ -498,8 +696,11 @@ export const markCodexResponseUpstreamError = async (response: Response): Promis
       codexProviderRequestId(response),
     ).catch(() => {});
   }
-  if (!terminal.probe) return;
-  await completeCodexProbeTransition(releaseCodexRoutingProbe(terminal.probe));
+  const admissionRelease = beginTrackedCodexAdmissionRelease(response, terminal.admission);
+  await Promise.all([
+    admissionRelease,
+    terminal.probe ? completeCodexProbeTransition(releaseCodexRoutingProbe(terminal.probe)) : Promise.resolve(),
+  ]);
 };
 
 export const cacheCodexAuthPool = (pool: CodexAuthPoolState): void => {
@@ -515,6 +716,14 @@ export const resetCodexAuthCacheForTest = (): void => {
   authPoolEntryInFlight = null;
   refreshesInFlight.clear();
   codexProbeTransitionsInFlight.clear();
+  codexAdmissionByResponse = new WeakMap();
+  codexAdmissionRenewalByResponse = new WeakMap();
+  codexAdmissionReleaseByResponse = new WeakMap();
+  for (const deferred of codexDeferredAdmissionReleases.values()) {
+    if (deferred.timer !== null) clearTimeout(deferred.timer);
+  }
+  codexDeferredAdmissionReleases.clear();
+  resetCodexAdmissionForTest();
   resetCodexAccountRoutingForTest();
 };
 
@@ -1633,7 +1842,10 @@ const routingErrorResponse = (
     }),
     { status, headers },
   );
-  if (code === CODEX_QUOTA_BLOCKED_ERROR_CODE || code === CODEX_UPSTREAM_DEGRADED_ERROR_CODE) {
+  if (
+    code === CODEX_QUOTA_BLOCKED_ERROR_CODE || code === CODEX_UPSTREAM_DEGRADED_ERROR_CODE ||
+    code === CODEX_ADMISSION_BUSY_ERROR_CODE
+  ) {
     codexRoutingErrors.set(response, code);
   }
   return response;
@@ -1645,6 +1857,14 @@ const upstreamTimeoutCircuitResponse = (retryAtMs: number | null): Response =>
     "Codex upstream is temporarily unavailable after response-header timeouts; retry later.",
     CODEX_UPSTREAM_DEGRADED_ERROR_CODE,
     retryAtMs,
+  );
+
+const codexAdmissionBusyResponse = (): Response =>
+  routingErrorResponse(
+    503,
+    "Codex subscription capacity is busy; retry this agent lane shortly.",
+    CODEX_ADMISSION_BUSY_ERROR_CODE,
+    Date.now() + CODEX_ADMISSION_RETRY_AFTER_SECONDS * 1_000,
   );
 
 type CodexResponseTimingHooks = Readonly<{
@@ -1661,6 +1881,8 @@ type FetchCodexResponsesOptions = Readonly<{
   retrySleep?: (milliseconds: number) => Promise<void>;
   beforeDispatch?: () => Promise<ApiKeyProviderDispatch | void>;
   bankedReset?: CodexBankedResetOptions;
+  /** Opaque, authenticated agent lane hash. Omit only for internal tests and experiments. */
+  admissionCallerLaneHash?: string | null;
 }>;
 
 type PreparedCodexSubscriptionRequest = Readonly<{
@@ -1767,6 +1989,16 @@ const prepareCodexSubscriptionRequest = async (
 
 type CodexAttemptPhase = "initial" | "post_refresh" | "two_second_retry" | "post_retry_refresh" | "post_banked_reset";
 
+class CodexAdmissionBusyError extends Error {
+  readonly reason: "account_busy" | "caller_busy" | "unavailable";
+
+  constructor(reason: "account_busy" | "caller_busy" | "unavailable") {
+    super("Codex subscription admission is busy.");
+    this.name = "CodexAdmissionBusyError";
+    this.reason = reason;
+  }
+}
+
 type CodexBankedResetOptions = Readonly<{
   /** Test seam; normal traffic creates an account-bound upstream adapter only for a live reset candidate. */
   config?: CodexBankedResetConfig;
@@ -1816,6 +2048,10 @@ const codexErrorClass = (error: unknown): string => {
   }
   return error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network_failure";
 };
+
+const isCodexSiblingTransportFailure = (error: unknown): error is CodexError =>
+  error instanceof CodexError &&
+  (error.code === "gateway_timeout" || error.code === "codex_upstream_unreachable");
 
 const logCodexRouting = (
   event:
@@ -1882,6 +2118,8 @@ const fetchPreparedCodexResponses = async (
   }
   const body = prepared.body;
   const requestedModel = isRecord(body) ? getString(body.model) : null;
+  const requestedQuotaClass = codexQuotaClassForModel(requestedModel);
+  const admissionCallerLaneHash = options.admissionCallerLaneHash?.trim() || null;
   let poolEntry = await getAuthPoolEntry();
   let selected = await selectCodexRoutingAccounts(
     poolEntry.pool,
@@ -1960,6 +2198,7 @@ const fetchPreparedCodexResponses = async (
   let lastError: unknown = null;
   let transportFailure: CodexError | null = null;
   let authWarning: string | null = null;
+  let admissionBusySeen = false;
   let authFailure: CodexError | null = null;
   let probeUnavailable = false;
   let probeUnavailableCircuit: CodexProbeCircuit | null = null;
@@ -1978,6 +2217,7 @@ const fetchPreparedCodexResponses = async (
       | null;
   } = { candidate: null };
   const bankedResetCandidates = new Map<number, CodexBankedResetCandidate>();
+  let nonAuthoritative429Seen = false;
 
   const noteCodexAuthFailure = (error: unknown): void => {
     authWarning ??= codexAuthWarningForError(error) ?? CODEX_AUTH_REAUTH_WARNING;
@@ -2352,13 +2592,31 @@ const fetchPreparedCodexResponses = async (
     beforeTransport?: () => Promise<void>,
   ): Promise<Response> => {
     attemptNumber += 1;
+    let admission: CodexResponseAdmission | null = null;
     try {
+      if (admissionCallerLaneHash) {
+        const decision = await acquireCodexAdmission(
+          {
+            accountIdHash: routing.accountIdHash,
+            quotaClass: requestedQuotaClass,
+            callerLaneHash: admissionCallerLaneHash,
+          },
+          { signal: options.signal },
+        );
+        if (decision.kind !== "acquired") throw new CodexAdmissionBusyError(decision.kind);
+        admission = createCodexResponseAdmission(decision.lease);
+      }
+      const transportSignal = admission
+        ? options.signal
+          ? AbortSignal.any([options.signal, admission.abortController.signal])
+          : admission.abortController.signal
+        : options.signal;
       const response = await fetchCodexResponseWithAuth(
         auth,
         url,
         serializedBody,
         baseHeaders,
-        options.signal,
+        transportSignal,
         beforeTransport
           ? async () => {
             const dispatch = await options.beforeDispatch?.();
@@ -2375,6 +2633,10 @@ const fetchPreparedCodexResponses = async (
           reportCodexResponseTiming(options.timing?.onDispatch);
         },
       );
+      if (admission) {
+        if (response.ok) codexAdmissionByResponse.set(response, admission);
+        else await releaseCodexResponseAdmission(admission);
+      }
       setCodexResponseAccountTelemetry(response, routing.slot + 1, auth.account_id);
       setCodexResponseAffinityDispatch(response, prepared.affinityIdentity, routing, affinity);
       reportCodexResponseTiming(options.timing?.onHeaders);
@@ -2392,17 +2654,20 @@ const fetchPreparedCodexResponses = async (
       const signalReason = options.signal?.reason;
       const clientCancelled = options.signal?.aborted === true &&
         !(signalReason instanceof Error && signalReason.name === "TimeoutError");
+      const admissionLeaseFailed = isCodexAdmissionLeaseError(admission?.abortController.signal.reason);
+      const siblingTransportFailure = isCodexSiblingTransportFailure(error);
       if (
+        !(error instanceof CodexAdmissionBusyError) &&
         !(error instanceof CodexBankedResetRetryFenceError) &&
         !(error instanceof ApiKeyQuotaDispatchError) &&
+        !siblingTransportFailure &&
+        !admissionLeaseFailed &&
         !clientCancelled
       ) {
         void recordCodexThrownHealth(accountEntry.auth.account_id, error);
       }
-      if (error instanceof CodexError && error.code === "gateway_timeout") {
-        // The timeout is request-local. Release any quota-recovery lease so a
-        // later request starts with Codex instead of inheriting this stall.
-        await releaseCodexRoutingProbe(routing);
+      if (admission) {
+        await releaseCodexResponseAdmission(admission);
       }
       logCodexRouting("codex_attempt", {
         request_id: options.requestId ?? null,
@@ -2410,7 +2675,11 @@ const fetchPreparedCodexResponses = async (
         slot: routing.slot + 1,
         phase,
         status: error instanceof CodexError ? error.status : null,
-        status_class: error instanceof CodexBankedResetRetryFenceError ? "banked_reset_fenced" : codexErrorClass(error),
+        status_class: error instanceof CodexAdmissionBusyError
+          ? `admission_${error.reason}`
+          : error instanceof CodexBankedResetRetryFenceError
+          ? "banked_reset_fenced"
+          : codexErrorClass(error),
       });
       throw error;
     }
@@ -2460,10 +2729,13 @@ const fetchPreparedCodexResponses = async (
     response: Response,
   ): Promise<Response> => {
     const disposition = await markCodexQuotaBlocked(routing, response);
+    const authoritativeQuotaEvidence = disposition.usageLimitReached && disposition.retryAtMs !== null &&
+      disposition.resetDeadlineIsStable;
     let candidateOutcome: "captured" | "ineligible" | "routing_fence_unavailable" = "ineligible";
-    if (disposition.usageLimitReached && disposition.retryAtMs !== null && disposition.resetDeadlineIsStable) {
+    if (authoritativeQuotaEvidence) {
       candidateOutcome = await captureBankedResetCandidate(accountEntry, routing, auth, disposition);
     } else {
+      nonAuthoritative429Seen = true;
       // A later ordinary/ambiguous 429 means this request did not establish
       // that every failed account is genuinely quota-exhausted. Do not spend
       // a reset based on an older candidate in the same failover pass.
@@ -2503,6 +2775,13 @@ const fetchPreparedCodexResponses = async (
       }
     }
     return disposition.response;
+  };
+
+  const authorizePaidFallbackForCompleteQuotaEvidence = (response: Response): Response => {
+    if (response.status === 429 && !nonAuthoritative429Seen && bankedResetCandidates.size > 0) {
+      codexRoutingErrors.set(response, CODEX_QUOTA_BLOCKED_ERROR_CODE);
+    }
+    return response;
   };
 
   type EvaluatedBlockedReset = NonNullable<Awaited<ReturnType<typeof evaluateBlockedCohortBankedReset>>>;
@@ -2799,6 +3078,12 @@ const fetchPreparedCodexResponses = async (
       return decorateAuthWarning(response);
     } catch (error) {
       lastError = error;
+      if (error instanceof CodexAdmissionBusyError) {
+        await releaseCodexRoutingProbe(routing);
+        if (error.reason === "caller_busy") throw error;
+        admissionBusySeen = true;
+        continue;
+      }
       // A deterministic OAuth rejection is attributable to this credential
       // even when it happens before the first inference fetch. Quarantine it
       // and let an eligible sibling serve the request; transient refresh
@@ -2808,15 +3093,9 @@ const fetchPreparedCodexResponses = async (
         noteCodexAuthFailure(error);
         continue;
       }
-      if (
-        error instanceof CodexError &&
-        (error.code === "gateway_timeout" || error.code === "codex_upstream_unreachable")
-      ) {
+      if (isCodexSiblingTransportFailure(error)) {
         transportFailure = error;
         await releaseCodexRoutingProbe(routing);
-        // A transport failure from a later eligible sibling supersedes an
-        // earlier auth/quota response. Keeping that stale response could turn
-        // an ambiguous cohort into paid fallback or a misleading auth error.
         if (lastResponse) {
           cancelResponseBody(lastResponse);
           lastResponse = null;
@@ -2827,7 +3106,7 @@ const fetchPreparedCodexResponses = async (
         continue;
       }
       await releaseCodexRoutingProbe(routing);
-      // Transport failures, aborts, and deadlines remain request-local.
+      // Other request-local failures never open a shared provider gate.
       if (lastResponse) cancelResponseBody(lastResponse);
       throw error;
     }
@@ -2836,6 +3115,13 @@ const fetchPreparedCodexResponses = async (
   if (transportFailure) {
     if (lastResponse) cancelResponseBody(lastResponse);
     throw transportFailure;
+  }
+
+  // Busy subscription capacity outranks a sibling quota response. Local
+  // contention is not authority to spend on Surplus or OpenLux.
+  if (admissionBusySeen) {
+    if (lastResponse) cancelResponseBody(lastResponse);
+    throw new CodexAdmissionBusyError("account_busy");
   }
 
   if (probeUnavailableCircuit === "upstream_timeout") {
@@ -2927,7 +3213,9 @@ const fetchPreparedCodexResponses = async (
         "two_second_retry",
       );
     } catch (error) {
-      await releaseCodexRoutingProbe(retryRouting);
+      if (!(error instanceof CodexError && error.code === "gateway_timeout")) {
+        await releaseCodexRoutingProbe(retryRouting);
+      }
       throw error;
     }
     if (responseIsCodexAuthFailure(retryAuth, response)) {
@@ -2950,7 +3238,9 @@ const fetchPreparedCodexResponses = async (
             noteCodexAuthFailure(error);
             return authFailureResponse(error);
           }
-          await releaseCodexRoutingProbe(retryRouting);
+          if (!(error instanceof CodexError && error.code === "gateway_timeout")) {
+            await releaseCodexRoutingProbe(retryRouting);
+          }
           throw error;
         }
         if (responseIsCodexAuthFailure(retryAuth, response)) {
@@ -2965,6 +3255,7 @@ const fetchPreparedCodexResponses = async (
       if (disposition.usageLimitReached && disposition.retryAtMs !== null && disposition.resetDeadlineIsStable) {
         await captureBankedResetCandidate(retryCandidate.accountEntry, retryRouting, retryAuth, disposition);
       } else {
+        nonAuthoritative429Seen = true;
         // The ordinary bounded retry gave a non-qualifying answer. It is not
         // evidence that a banked reset is safe to spend.
         bankedResetCandidates.clear();
@@ -2985,9 +3276,11 @@ const fetchPreparedCodexResponses = async (
     // inference request. A captured exhaustion observation from before that
     // retry is no longer a reason to spend a reset or issue another request.
     if (response.ok) return decorateAuthWarning(response);
-    return decorateAuthWarning(await redeemAndRetryOnce(response));
+    return decorateAuthWarning(authorizePaidFallbackForCompleteQuotaEvidence(await redeemAndRetryOnce(response)));
   }
-  if (lastResponse) return decorateAuthWarning(await redeemAndRetryOnce(lastResponse));
+  if (lastResponse) {
+    return decorateAuthWarning(authorizePaidFallbackForCompleteQuotaEvidence(await redeemAndRetryOnce(lastResponse)));
+  }
   if (authFailure) return authFailureResponse(authFailure);
   if (lastError instanceof CodexError && lastError.status === 401) return authFailureResponse(lastError);
   if (probeUnavailable) {
@@ -3005,8 +3298,13 @@ export const fetchCodexResponses = async (
   options: FetchCodexResponsesOptions = {},
 ): Promise<Response> => {
   const prepared = await prepareCodexSubscriptionRequest(body, options.cacheScope ?? null);
-  const response = await fetchPreparedCodexResponses(prepared, options);
-  return finalizeCodexResponseAffinity(withCodexWarnings(response, prepared.warnings));
+  try {
+    const response = await fetchPreparedCodexResponses(prepared, options);
+    return finalizeCodexResponseAffinity(withCodexWarnings(response, prepared.warnings));
+  } catch (error) {
+    if (error instanceof CodexAdmissionBusyError) return codexAdmissionBusyResponse();
+    throw error;
+  }
 };
 
 export const fetchCodexModels = async (

@@ -185,7 +185,6 @@ const readPasskeyJson = async (
   req: Request,
   options: Readonly<{ allowEmpty?: boolean }> = {},
 ): Promise<Record<string, unknown> | Response> => {
-  if (options.allowEmpty && !req.body) return {};
   const result = await readJsonBodyWithLimit(req, PASSKEY_MAX_REQUEST_BODY_BYTES);
   if (!result.ok) {
     if (options.allowEmpty && result.kind === "empty") return {};
