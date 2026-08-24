@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import handler from "../src/handler.ts";
 import { corsHeaders } from "../src/http.ts";
 import { handleRoot, handleStaticAsset, hasStaticAsset } from "../src/static.ts";
+import readmeText from "../README.md" with { type: "text" };
 import adminHtml from "../static/admin.html" with { type: "text" };
 import aboutHtml from "../static/about.html" with { type: "text" };
 import adminScript from "../static/admin.js" with { type: "text" };
@@ -14,6 +15,7 @@ import indexHtml from "../static/index.html" with { type: "text" };
 import llmsText from "../static/llms.txt" with { type: "text" };
 import llmsFullText from "../static/docs/llms-agents.md" with { type: "text" };
 import modelsHtml from "../static/models.html" with { type: "text" };
+import modelsScript from "../static/models.js" with { type: "text" };
 import openApiText from "../static/openapi.json" with { type: "text" };
 import privacyHtml from "../static/privacy.html" with { type: "text" };
 import styleCss from "../static/style.css" with { type: "text" };
@@ -39,6 +41,47 @@ Deno.test("public models page is registered", () => {
   assert.equal(hasStaticAsset("/models"), true);
   assert.equal(hasStaticAsset("/models.html"), true);
   assert.match(modelsHtml, /<script type="module" src="\/models\.js\?v=20260824-recent-reasoning-v2"><\/script>/);
+});
+
+Deno.test("published guidance documents endpoint-specific output caps and repository-local auth uploads", () => {
+  for (const publishedText of [readmeText, llmsFullText]) {
+    assert.match(publishedText, /`max_completion_tokens` is the OpenAI Chat Completions cap/);
+    assert.match(publishedText, /`max_output_tokens` is the OpenAI Responses cap/);
+    assert.match(
+      publishedText,
+      /Chat Completions to Codex[\s\S]*translated to the Codex Responses field `max_output_tokens`/,
+    );
+    assert.match(
+      publishedText,
+      /Responses to Codex[\s\S]*`max_output_tokens` is forwarded as `max_output_tokens`/,
+    );
+    assert.match(
+      publishedText,
+      /Chat Completions to Cerebras \(`gpt-oss-120b`\)[\s\S]*forwarded unchanged/,
+    );
+    assert.match(
+      publishedText,
+      /Paid fallback \(Metered or Surplus\)[\s\S]*Chat `max_completion_tokens` arrives as `max_output_tokens`/,
+    );
+    assert.match(publishedText, /Do not swap these fields between endpoints/);
+  }
+
+  assert.doesNotMatch(readmeText, /cd lib\/ai\.ubq\.fi/);
+  assert.match(readmeText, /git rev-parse --show-toplevel/);
+  assert.match(llmsFullText, /scripts\/upload-codex-auth\.ts/);
+  assert.match(
+    llmsFullText,
+    /deno task upload:auth --url https:\/\/ai\.ubq\.fi --auth-json ~\/\.codex\/auth\.json/,
+  );
+});
+
+Deno.test("models page labels provider counts as catalog entries, not inference availability", () => {
+  assert.match(modelsHtml, /Cataloged text models and the providers that list them/);
+  assert.match(modelsHtml, /does not guarantee\s+inference availability or remaining quota/);
+  assert.doesNotMatch(modelsHtml, /Live upstream catalog/);
+  assert.match(modelsScript, /cataloged model/);
+  assert.match(modelsScript, /cataloged models/);
+  assert.doesNotMatch(modelsScript, /available models/);
 });
 
 Deno.test("public brand logos are inline and inherit the page foreground", async () => {

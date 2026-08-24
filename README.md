@@ -277,7 +277,8 @@ Notes:
 Run from this repo:
 
 ```bash
-cd lib/ai.ubq.fi
+# Run from an existing ai.ubq.fi checkout (the directory containing deno.json).
+cd "$(git rev-parse --show-toplevel)"
 export UOS_AI_TOKEN="..."
 deno task ubq-ai chat --system "You are a helpful assistant." "Tell me a short joke."
 ```
@@ -287,7 +288,7 @@ Client commands also accept an admin token (`DENO_DEPLOY_TOKEN`) when `UOS_AI_TO
 Install on your machine:
 
 ```bash
-cd lib/ai.ubq.fi
+cd "$(git rev-parse --show-toplevel)"
 deno install -g --allow-env --allow-net --allow-read -n ubq-ai scripts/ubq-ai.ts
 ```
 
@@ -389,6 +390,22 @@ ubq-ai admin keys list | jq
 - `UOS_API_KEY_DEFAULT_USAGE_LIMIT` (optional): Default usage limit for new API keys in requests/week. Defaults to `50`.
 - `UOS_API_KEY_DEFAULT_EXPIRY_DAYS` (optional): Default expiration for new API keys in days. Defaults to `90`.
 
+## Output-token caps by endpoint and provider
+
+`max_completion_tokens` is the OpenAI Chat Completions cap; `max_output_tokens` is the OpenAI Responses cap. Both are
+positive-integer output caps, not quota or health indicators. Their transport behavior depends on the selected route:
+
+| Request and provider                          | Gateway/upstream behavior                                                                                                                                 |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Chat Completions to Codex                     | `max_completion_tokens` is translated to the Codex Responses field `max_output_tokens`.                                                                   |
+| Responses to Codex                            | `max_output_tokens` is forwarded as `max_output_tokens`.                                                                                                  |
+| Chat Completions to Cerebras (`gpt-oss-120b`) | `max_completion_tokens` is forwarded unchanged to Cerebras.                                                                                               |
+| Paid fallback (Metered or Surplus)            | The provider uses its Responses API, so Chat `max_completion_tokens` arrives as `max_output_tokens`, and Responses `max_output_tokens` remains unchanged. |
+
+Do not swap these fields between endpoints: Chat Completions accepts `max_completion_tokens`, while Responses accepts
+`max_output_tokens`. The paid-fallback cap limits generated output; it does not report the provider's remaining paid
+capacity.
+
 ## Chat Completions provider contract
 
 `gpt-oss-120b` is sent to Cerebras as a non-streaming Chat Completions request. Its standard `temperature` and
@@ -426,9 +443,10 @@ previously cached versioned catalogs. Future Codex versions are fetched dynamica
 Treat `auth.json` as a secret (it contains refresh tokens). Use the repo helper CLI:
 
 ```bash
-cd lib/ai.ubq.fi
+# Run from an existing ai.ubq.fi checkout (the directory containing deno.json and scripts/upload-codex-auth.ts).
+cd "$(git rev-parse --show-toplevel)"
 export DENO_DEPLOY_TOKEN="..."
-deno task upload:auth --url https://ai.ubq.fi
+deno task upload:auth --url https://ai.ubq.fi --auth-json ~/.codex/auth.json
 deno task upload:auth --url https://ai.ubq.fi --auth-json /secure/path/to/second-account-auth.json
 ```
 
@@ -462,7 +480,7 @@ Usage Limits:
 Create (token only):
 
 ```bash
-cd lib/ai.ubq.fi
+cd "$(git rev-parse --show-toplevel)"
 export DENO_DEPLOY_TOKEN="..."
 deno task ubq-ai admin keys create "example key"
 ```
