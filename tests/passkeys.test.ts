@@ -419,6 +419,41 @@ Deno.test("unattested GitHub admin tokens do not reach Deno verification", async
   }
 });
 
+Deno.test("admin passkey cookies take precedence over retained GitHub bearer tokens", async () => {
+  kvStore.clear();
+  const { token: passkeyToken } = seedPasskeySession("uos_ai_session_cookie_precedence");
+  const originalFetch = globalThis.fetch;
+  const requests: Array<{ url: string; authorization: string | null; cookie: string | null }> = [];
+  globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const headers = new Headers(init?.headers);
+    requests.push({
+      url: String(input),
+      authorization: headers.get("authorization"),
+      cookie: headers.get("cookie"),
+    });
+    return Promise.resolve(new Response("{}", { status: 401 }));
+  };
+
+  try {
+    const result = await authenticateAdmin(
+      new Request("https://ai.ubq.fi/uos/auth", {
+        headers: {
+          Authorization: "Bearer ghp_retained_browser_token",
+          Cookie: PASSKEY_RELAY_COOKIE_NAME + "=" + encodeURIComponent(passkeyToken),
+        },
+      }),
+    );
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.equal(result.method.kind, "passkey_session");
+      assert.equal(result.is_super_admin, false);
+    }
+    assert.deepEqual(requests, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 Deno.test("admin passkey sessions cannot read the super-admin Stage 0 diagnostic", async () => {
   kvStore.clear();
   const { token } = seedPasskeySession();

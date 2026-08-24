@@ -917,11 +917,14 @@ export const authenticateAdmin = async (req: Request): Promise<AdminAuthResult> 
       token_shape: tokenShape,
       ...entry,
     });
-  if (token && looksLikeGitHubToken(token) && !config.adminTokens.has(token)) {
-    logAdminAuth({ ok: false, method: "github_token", status: 401, reason: "unattested_github_token" });
-    return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
+  let passkeySession = await getPasskeySessionForRequest(req);
+  if (!passkeySession && token && looksLikeGitHubToken(token) && req.headers.has("cookie")) {
+    const cookieHeaders = new Headers(req.headers);
+    cookieHeaders.delete("authorization");
+    passkeySession = await getPasskeySessionForRequest(
+      new Request(req.url, { method: req.method, headers: cookieHeaders }),
+    );
   }
-  const passkeySession = await getPasskeySessionForRequest(req);
   if (passkeySession) {
     if (!isPasskeyUserAdmin(passkeySession.user)) {
       logAdminAuth({ ok: false, method: "passkey_session", status: 403, reason: "passkey_user_not_admin" });
@@ -940,6 +943,10 @@ export const authenticateAdmin = async (req: Request): Promise<AdminAuthResult> 
         credential_count: passkeySession.user.credential_ids.length,
       },
     };
+  }
+  if (token && looksLikeGitHubToken(token) && !config.adminTokens.has(token)) {
+    logAdminAuth({ ok: false, method: "github_token", status: 401, reason: "unattested_github_token" });
+    return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
   }
 
   if (!token) {
