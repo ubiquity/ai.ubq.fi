@@ -142,14 +142,14 @@ export const shouldSignalSentinelProviderDegradation = (
 ): boolean =>
   input.status >= 200 && input.status < 400 && input.completed && input.removedProviderTriggerClass !== null;
 
-export const resolveIdempotencyPrincipal = async (
-  authResult: Readonly<{
-    token: string | null;
-    method:
-      | Readonly<{ kind: "kv_api_key"; key_id: string }>
-      | Exclude<AuthenticatedClientResult["method"], { kind: "kv_api_key" }>;
-  }>,
-): Promise<string> => {
+type PrincipalAuthResult = Readonly<{
+  token: string | null;
+  method:
+    | Readonly<{ kind: "kv_api_key"; key_id: string }>
+    | Exclude<AuthenticatedClientResult["method"], { kind: "kv_api_key" }>;
+}>;
+
+export const resolveIdempotencyPrincipal = async (authResult: PrincipalAuthResult): Promise<string> => {
   switch (authResult.method.kind) {
     case "kv_api_key":
       return `api-key:${authResult.method.key_id}`;
@@ -163,6 +163,20 @@ export const resolveIdempotencyPrincipal = async (
       return `auth-method:${authResult.method.kind}`;
     case "disabled":
       return authResult.token ? `bearer-sha256:${await sha256Hex(authResult.token)}` : "local-auth-disabled";
+  }
+};
+
+/** Keep durable idempotency stable while isolating bearer credentials for Codex admission. */
+export const resolveCodexAdmissionPrincipal = async (authResult: PrincipalAuthResult): Promise<string> => {
+  switch (authResult.method.kind) {
+    case "auth_tokens_allowlist":
+    case "admin_allowlist":
+    case "deno_deploy_token":
+      return authResult.token
+        ? `bearer-sha256:${await sha256Hex(authResult.token)}`
+        : `auth-method:${authResult.method.kind}`;
+    default:
+      return await resolveIdempotencyPrincipal(authResult);
   }
 };
 
@@ -1079,7 +1093,10 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     // and paid fallback use the policy that actually reserved this request.
     usagePolicy = admission.reservation.policy;
   }
-  const idempotencyPrincipal = await resolveIdempotencyPrincipal(authResult);
+  const [idempotencyPrincipal, codexAdmissionPrincipal] = await Promise.all([
+    resolveIdempotencyPrincipal(authResult),
+    resolveCodexAdmissionPrincipal(authResult),
+  ]);
   let kernelRepo = authResult.method.kind === "github_token"
     ? { owner: authResult.method.owner, repo: authResult.method.repo }
     : null;
@@ -1122,6 +1139,7 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     kernelOrg,
     paidFallbackEnabled: usagePolicy?.paid_fallback_enabled === true,
     idempotencyPrincipal,
+    codexAdmissionPrincipal,
     requestId,
     startedAtMs: requestStartedAtMs,
     startedAtMonotonicMs: requestStartedAtMonotonicMs,

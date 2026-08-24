@@ -47,9 +47,12 @@ class CountingKv {
   sumCommitDelayMs = 0;
   apiKeyV3DispatchCommitGate: Promise<void> | null = null;
   onApiKeyV3DispatchCommit: (() => void) | null = null;
+  codexAdmissionReleaseCommitGate: Promise<void> | null = null;
+  onCodexAdmissionReleaseCommit: (() => void) | null = null;
   retries = 0;
   listCalls = 0;
   readonly readKeys: Deno.KvKey[] = [];
+  readonly writeKeys: Deno.KvKey[] = [];
 
   private versionstamp(key: Deno.KvKey): string | null {
     const encoded = encodeKey(key);
@@ -92,9 +95,12 @@ class CountingKv {
     this.sumCommitDelayMs = 0;
     this.apiKeyV3DispatchCommitGate = null;
     this.onApiKeyV3DispatchCommit = null;
+    this.codexAdmissionReleaseCommitGate = null;
+    this.onCodexAdmissionReleaseCommit = null;
     this.retries = 0;
     this.listCalls = 0;
     this.readKeys.length = 0;
+    this.writeKeys.length = 0;
   }
 
   async get<T>(key: Deno.KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<Deno.KvEntryMaybe<T>> {
@@ -128,15 +134,44 @@ class CountingKv {
     } as Deno.KvEntryMaybe<T>;
   }
 
+  getMany<T extends readonly unknown[]>(
+    keys: readonly Deno.KvKey[],
+    _options?: { consistency?: "strong" | "eventual" },
+  ): Promise<{ [K in keyof T]: Deno.KvEntryMaybe<T[K]> }> {
+    if (
+      this.failApiKeyV3Reads &&
+      keys.some((key) => key[0] === "uos_ai" && key[1] === "api_key_usage" && key[2] === "v3")
+    ) {
+      return Promise.reject(new Error("injected API-key V3 ledger read failure"));
+    }
+    this.reads += 1;
+    this.readKeys.push(...keys);
+    const entries = keys.map((key) => {
+      const value = this.values.get(encodeKey(key));
+      const bytes = value === undefined ? 0 : new TextEncoder().encode(
+        JSON.stringify(value, (_, item) => typeof item === "bigint" ? item.toString() : item),
+      ).length;
+      this.readUnits += Math.max(1, Math.ceil(bytes / 4096));
+      return {
+        key,
+        value: value ?? null,
+        versionstamp: this.versionstamp(key),
+      };
+    });
+    return Promise.resolve(entries as { [K in keyof T]: Deno.KvEntryMaybe<T[K]> });
+  }
+
   set(key: Deno.KvKey, value: unknown): Promise<Deno.KvCommitResult> {
     this.write(key, value);
     this.writes += 1;
+    this.writeKeys.push(key);
     return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" });
   }
 
   delete(key: Deno.KvKey): Promise<void> {
     this.remove(key);
     this.writes += 1;
+    this.writeKeys.push(key);
     return Promise.resolve();
   }
 
@@ -235,6 +270,13 @@ class CountingKv {
           this.onApiKeyV3DispatchCommit?.();
           if (this.apiKeyV3DispatchCommitGate) await this.apiKeyV3DispatchCommitGate;
         }
+        const codexAdmissionRelease = mutations.some((mutation) =>
+          mutation.kind === "delete" && mutation.key[0] === "uos_ai" && mutation.key[1] === "codex_admission"
+        );
+        if (codexAdmissionRelease) {
+          this.onCodexAdmissionReleaseCommit?.();
+          if (this.codexAdmissionReleaseCommitGate) await this.codexAdmissionReleaseCommitGate;
+        }
         for (const mutation of mutations) {
           const encoded = encodeKey(mutation.key);
           if (mutation.kind === "delete") this.remove(mutation.key);
@@ -245,6 +287,7 @@ class CountingKv {
             this.sums += 1;
           }
           this.writes += 1;
+          this.writeKeys.push(mutation.key);
         }
         return { ok: true, versionstamp: "00000000000000000001" };
       },
@@ -254,7 +297,10 @@ class CountingKv {
 }
 
 const kv = new CountingKv();
-(Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kv as unknown as Deno.Kv);
+Object.defineProperty(Deno, "openKv", {
+  value: () => Promise.resolve(kv as unknown as Deno.Kv),
+  configurable: true,
+});
 
 const { default: handler } = await import("../src/handler.ts");
 const { createRequestDeliveryLifecycle } = await import("../src/serve_handler.ts");
@@ -295,7 +341,10 @@ const {
   RUNTIME_CONFIG_V2_KEY,
   resetRuntimeConfigCacheForTest,
 } = await import("../src/runtime_config.ts");
-const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
+const {
+  CODEX_ADMISSION_BUSY_ERROR_CODE,
+  resetCodexAuthCacheForTest,
+} = await import("../src/codex.ts");
 const { fetchMeteredModels, resetMeteredModelsCacheForTest } = await import("../src/metered.ts");
 const { resetSurplusModelsCacheForTest } = await import("../src/surplus.ts");
 const {
@@ -766,7 +815,7 @@ Deno.test("V3 cancellation during the Codex dispatch commit releases quota befor
   }
 });
 
-Deno.test("V3 limit-one concurrent admission dispatches once and rejects seven requests", async () => {
+Deno.test("V3 limit-one concurrency dispatches once and backpressures caller-lane contenders", async () => {
   const { token, policy } = await prepareApiKeyInference("b", "concurrent-bounded", 1);
   const concurrency = 8;
   let fetchCalls = 0;
@@ -792,7 +841,13 @@ Deno.test("V3 limit-one concurrent admission dispatches once and rejects seven r
 
     const responses = await Promise.all(pending);
     assert.equal(responses.filter((response) => response.status === 200).length, 1);
-    assert.equal(responses.filter((response) => response.status === 429).length, 7);
+    const quotaResponses = responses.filter((response) => response.status === 429);
+    const busyResponses = responses.filter((response) => response.status === 503);
+    assert.equal(quotaResponses.length + busyResponses.length, 7);
+    for (const response of busyResponses) {
+      const payload = await response.clone().json() as { error?: { code?: string } };
+      assert.equal(payload.error?.code, CODEX_ADMISSION_BUSY_ERROR_CODE);
+    }
     assert.equal(fetchCalls, 1, "over-limit reservations must not reach a provider");
     assert.deepEqual(usageWindow(policy), {
       committed_requests: 1,
@@ -1236,6 +1291,7 @@ Deno.test("provider dispatch commits API-key V3 while kernel completion writes o
 
   const upstream = { controller: null as ReadableStreamDefaultController<Uint8Array> | null };
   const originalFetch = globalThis.fetch;
+  let releaseAdmissionCommits = (): void => {};
   globalThis.fetch = () =>
     Promise.resolve(
       new Response(
@@ -1283,6 +1339,13 @@ Deno.test("provider dispatch commits API-key V3 while kernel completion writes o
     assert.equal(kernelWindow?.reserved_requests, 0);
 
     let imageFetches = 0;
+    let admissionReleaseAttempts = 0;
+    kv.codexAdmissionReleaseCommitGate = new Promise<void>((resolve) => {
+      releaseAdmissionCommits = resolve;
+    });
+    kv.onCodexAdmissionReleaseCommit = () => {
+      admissionReleaseAttempts += 1;
+    };
     globalThis.fetch = () => {
       imageFetches += 1;
       return Promise.resolve(
@@ -1306,7 +1369,7 @@ Deno.test("provider dispatch commits API-key V3 while kernel completion writes o
         ),
       );
     };
-    const imageResponse = await handler(
+    const pendingImageResponse = handler(
       new Request("https://ai.ubq.fi/v1/images/generations", {
         method: "POST",
         headers: {
@@ -1314,16 +1377,23 @@ Deno.test("provider dispatch commits API-key V3 while kernel completion writes o
           "Content-Type": "application/json",
           "X-Ubiquity-Kernel-Token": kernelToken,
         },
-        body: JSON.stringify({ prompt: "two telemetry regression images", n: 2, user: "kernel-image-user" }),
+        body: JSON.stringify({ prompt: "five telemetry regression images", n: 5, user: "kernel-image-user" }),
       }),
     );
+    await waitFor(() => admissionReleaseAttempts === 4, "first image admission batch release");
+    assert.equal(imageFetches, 4, "the fifth child must wait for a first-batch admission release");
+    releaseAdmissionCommits();
+    const imageResponse = await pendingImageResponse;
     assert.equal(imageResponse.status, 200);
     assert.deepEqual((await imageResponse.json()).data, [
       { b64_json: "SU1BR0U=" },
       { b64_json: "SU1BR0U=" },
+      { b64_json: "SU1BR0U=" },
+      { b64_json: "SU1BR0U=" },
+      { b64_json: "SU1BR0U=" },
     ]);
     assert.equal(imageResponse.headers.get("x-uos-warning"), "user_ignored");
-    assert.equal(imageFetches, 2);
+    assert.equal(imageFetches, 5);
     assert.equal(usageWindow(policy).committed_requests, 2);
     const kernelWindowAfterImage = kv.values.get(encodeKey(orgWindowKey)) as {
       usage_requests?: number;
@@ -1332,6 +1402,9 @@ Deno.test("provider dispatch commits API-key V3 while kernel completion writes o
     assert.equal(kernelWindowAfterImage?.usage_requests, 2);
     assert.equal(kernelWindowAfterImage?.reserved_requests, 0);
   } finally {
+    releaseAdmissionCommits();
+    kv.codexAdmissionReleaseCommitGate = null;
+    kv.onCodexAdmissionReleaseCommit = null;
     globalThis.fetch = originalFetch;
   }
 });
@@ -1933,13 +2006,18 @@ Deno.test("KV budget: warm kernel inference writes no ordinary usage aggregates"
     assert.equal((await handleResponses(kernelRequest(), kernelContext)).status, 200);
     kv.resetCounts();
     assert.equal((await handleResponses(kernelRequest(), kernelContext)).status, 200);
-    // A warm request may read debug-routing and RemovedProvider circuit control
-    // state, but it must not read or write ordinary usage data.
-    assert.equal(kv.writes, 0);
+    // A warm request owns and releases one caller record plus one account-slot
+    // record. Those four admission mutations are mandatory correctness work;
+    // it must not write ordinary usage aggregates.
+    assert.equal(kv.writes, 4);
+    assert.ok(
+      kv.writeKeys.every((key) => key[0] === "uos_ai" && key[1] === "codex_admission" && key[2] === "v1"),
+    );
     assert.ok(
       kv.readKeys.every((key) =>
         JSON.stringify(key) === JSON.stringify(["uos_ai", "debug_routing", "v1"]) ||
-        JSON.stringify(key) === JSON.stringify(["uos_ai", "removed_provider_failover", "circuit", "v1"])
+        JSON.stringify(key) === JSON.stringify(["uos_ai", "removed_provider_failover", "circuit", "v1"]) ||
+        (key[0] === "uos_ai" && key[1] === "codex_admission" && key[2] === "v1")
       ),
     );
   } finally {

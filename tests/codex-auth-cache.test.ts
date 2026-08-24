@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { CODEX_BANKED_RESET_LEASE_MS, type CodexBankedResetConfig } from "../src/codex_banked_reset.ts";
 import { PROVIDER_CAPACITY_SNAPSHOT_KEY } from "../src/provider_capacity_contract.ts";
+import { setKvForTest } from "../src/kv.ts";
+import { codexAdmissionSlotKey } from "../src/codex_admission.ts";
 import type { CodexUsageResetProvider } from "../src/codex_banked_reset_provider.ts";
 import type { CodexAuthPoolState, CodexAuthState } from "../src/types.ts";
 
@@ -43,6 +45,17 @@ class AuthKv {
     const gate = this.nextReadGate;
     this.nextReadGate = null;
     return (gate ?? Promise.resolve()).then(() => ({ key, value, versionstamp }));
+  }
+
+  getMany<T extends readonly unknown[]>(
+    keys: readonly Deno.KvKey[],
+    options?: { consistency?: "strong" | "eventual" },
+  ): Promise<{ [K in keyof T]: Deno.KvEntryMaybe<T[K]> }> {
+    return Promise.all(keys.map((key) => this.get(key, options))) as Promise<
+      {
+        [K in keyof T]: Deno.KvEntryMaybe<T[K]>;
+      }
+    >;
   }
 
   set(key: Deno.KvKey, value: unknown): Promise<Deno.KvCommitResult> {
@@ -140,12 +153,13 @@ const pool = (...accounts: CodexAuthState[]): CodexAuthPoolState => ({
 });
 
 const kv = new AuthKv(pool(auth("old")));
-(Deno as unknown as { openKv: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kv as unknown as Deno.Kv);
+setKvForTest(kv as unknown as Deno.Kv);
 
 const { config } = await import("../src/config.ts");
 
 const {
   cacheCodexAuthPool,
+  CODEX_ADMISSION_BUSY_ERROR_CODE,
   CODEX_AUTH_CACHE_TTL_MS,
   CODEX_AUTH_REAUTH_WARNING,
   CodexError,
@@ -182,6 +196,159 @@ Deno.test("Codex auth account ordering rotates from the selected account", () =>
     "account-two",
     "account-one",
   ]);
+});
+
+Deno.test("100 Codex agent lanes stay inside per-account bulkheads", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const activeByAccount = new Map<string, number>();
+  const maxByAccount = new Map<string, number>();
+  const providerCallsByAccount = new Map<string, number>();
+  let busyResponses = 0;
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"), auth("two"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+
+  globalThis.fetch = async (_input, init) => {
+    const accountId = new Headers(init?.headers).get("ChatGPT-Account-ID") ?? "missing";
+    const active = (activeByAccount.get(accountId) ?? 0) + 1;
+    activeByAccount.set(accountId, active);
+    maxByAccount.set(accountId, Math.max(maxByAccount.get(accountId) ?? 0, active));
+    providerCallsByAccount.set(accountId, (providerCallsByAccount.get(accountId) ?? 0) + 1);
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    activeByAccount.set(accountId, Math.max(0, (activeByAccount.get(accountId) ?? 1) - 1));
+    return new Response('data: {"type":"response.created","response":{"id":"response_bulkhead"}}\n\n', {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    });
+  };
+
+  try {
+    await Promise.all(
+      Array.from({ length: 100 }, async (_, index) => {
+        const callerLaneHash = `${index.toString(16).padStart(8, "0")}${"0".repeat(56)}`;
+        for (let attempt = 0; attempt < 1_000; attempt += 1) {
+          const response = await fetchCodexResponses(
+            { model: "gpt-5.6-luna", input: `agent-${index}` },
+            { admissionCallerLaneHash: callerLaneHash, requestId: `agent-${index}-${attempt}` },
+          );
+          if (response.status === 503) {
+            const payload = await response.json() as { error?: { code?: string } };
+            assert.equal(payload.error?.code, CODEX_ADMISSION_BUSY_ERROR_CODE);
+            assert.equal(response.headers.get("Retry-After"), "1");
+            busyResponses += 1;
+            await new Promise((resolve) => setTimeout(resolve, 1));
+            continue;
+          }
+          assert.equal(response.status, 200);
+          await new Promise((resolve) => setTimeout(resolve, 2));
+          await markCodexResponseCompleted(response);
+          return;
+        }
+        assert.fail(`agent ${index} did not acquire subscription capacity`);
+      }),
+    );
+
+    assert.ok(busyResponses > 0);
+    assert.ok((providerCallsByAccount.get("account-one") ?? 0) > 0);
+    assert.ok((providerCallsByAccount.get("account-two") ?? 0) > 0);
+    assert.ok(
+      (maxByAccount.get("account-one") ?? 0) <= 4,
+      `account-one max=${maxByAccount.get("account-one") ?? 0}`,
+    );
+    assert.ok(
+      (maxByAccount.get("account-two") ?? 0) <= 4,
+      `account-two max=${maxByAccount.get("account-two") ?? 0}`,
+    );
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("a KV outage fails admission closed before provider transport", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalOpenKv = Object.getOwnPropertyDescriptor(Deno, "openKv");
+  let providerCalls = 0;
+  Date.now = () => fixedStartMs;
+  kv.auth = pool(auth("one"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  cacheCodexAuthPool(kv.auth);
+  Object.defineProperty(Deno, "openKv", { value: undefined, configurable: true });
+  setKvForTest(null);
+  globalThis.fetch = () => {
+    providerCalls += 1;
+    throw new Error("KV-unavailable admission must not dispatch provider transport");
+  };
+
+  try {
+    const response = await fetchCodexResponses(
+      { model: "gpt-5.6-luna", input: "wait for KV" },
+      { admissionCallerLaneHash: "a".repeat(64) },
+    );
+    assert.equal(response.status, 503);
+    assert.equal((await response.json() as { error?: { code?: string } }).error?.code, CODEX_ADMISSION_BUSY_ERROR_CODE);
+    assert.equal(providerCalls, 0);
+  } finally {
+    if (originalOpenKv) Object.defineProperty(Deno, "openKv", originalOpenKv);
+    setKvForTest(kv as unknown as Deno.Kv);
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+  }
+});
+
+Deno.test("malformed admission state on one account does not hide a healthy sibling", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const providerAccounts: string[] = [];
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"), auth("two"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  const selected = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts);
+  assert.equal(selected.kind, "eligible");
+  if (selected.kind !== "eligible") return;
+  const firstAccount = selected.accounts.find((account) => account.auth.account_id === "account-one");
+  assert.ok(firstAccount);
+  kv.extra.set(JSON.stringify(codexAdmissionSlotKey(firstAccount.accountIdHash, 0)), {
+    value: { v: 999 },
+    version: 1,
+  });
+  globalThis.fetch = (_input, init) => {
+    providerAccounts.push(new Headers(init?.headers).get("ChatGPT-Account-ID") ?? "missing");
+    return Promise.resolve(new Response("{}", { status: 200 }));
+  };
+
+  try {
+    const response = await fetchCodexResponses(
+      { model: "gpt-5.6-luna", input: "use the healthy sibling" },
+      { admissionCallerLaneHash: "0".repeat(64) },
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(providerAccounts, ["account-two"]);
+    await markCodexResponseCompleted(response);
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
 });
 
 Deno.test("Codex responses use the native prompt-cache wire contract and stable keyed sessions", async () => {
@@ -420,7 +587,7 @@ Deno.test("Codex responses try the second account after 403", async () => {
   }
 });
 
-Deno.test("Codex responses try the second account after a transient transport failure", async () => {
+Deno.test("Codex responses never replay an ambiguous transport failure on a sibling", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -440,9 +607,11 @@ Deno.test("Codex responses try the second account after a transient transport fa
   };
 
   try {
-    const response = await fetchCodexResponses({ input: "timeout-failover" });
-    assert.equal(response.status, 200);
-    assert.deepEqual(accountIds, ["account-one", "account-two"]);
+    await assert.rejects(
+      () => fetchCodexResponses({ input: "timeout-no-replay" }),
+      (error: unknown) => error instanceof CodexError && error.code === "gateway_timeout" && error.status === 504,
+    );
+    assert.deepEqual(accountIds, ["account-one"]);
   } finally {
     resetCodexAuthCacheForTest();
     globalThis.fetch = originalFetch;
@@ -1136,7 +1305,7 @@ Deno.test("a malformed successful refresh is transient and does not quarantine t
   }
 });
 
-Deno.test("direct half-open probes release quota leases after every failure", async (t) => {
+Deno.test("direct failures release quota probes and timeouts do not gate the next request", async (t) => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -1214,7 +1383,7 @@ Deno.test("direct half-open probes release quota leases after every failure", as
   }
 });
 
-Deno.test("cache-scope dispatch timeouts remain request-local", async () => {
+Deno.test("cache-scope dispatch timeouts remain request-scoped", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -1250,6 +1419,8 @@ Deno.test("cache-scope dispatch timeouts remain request-local", async () => {
     resetCodexAccountRoutingForTest();
     const selected = await selectCodexRoutingAccounts(kv.auth, [kv.auth.accounts[0]!], fixedStartMs);
     assert.equal(selected.kind, "eligible");
+    if (selected.kind !== "eligible") return;
+    assert.equal(selected.accounts[0]?.probeRequired, false);
     assert.equal(inferenceCalls, 1);
   } finally {
     resetCodexAuthCacheForTest();
@@ -1260,7 +1431,7 @@ Deno.test("cache-scope dispatch timeouts remain request-local", async () => {
   }
 });
 
-Deno.test("a losing legacy timeout-probe claim does not block transport", async () => {
+Deno.test("a legacy timeout probe cannot block provider transport", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -1353,7 +1524,7 @@ Deno.test("a timeout probe that returns quota retags its bounded retry as quota"
   }
 });
 
-Deno.test("a timeout during bounded retry refresh releases the routing lease", async () => {
+Deno.test("a timeout during bounded retry refresh preserves only the quota fence", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -1402,7 +1573,7 @@ Deno.test("a timeout during bounded retry refresh releases the routing lease", a
     );
     resetCodexAccountRoutingForTest();
     const selected = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, fixedStartMs);
-    assert.equal(selected.kind, "eligible");
+    assert.equal(selected.kind, "quota_blocked");
     assert.equal(inferenceCalls, 3);
     assert.equal(refreshCalls, 1);
   } finally {
@@ -2708,7 +2879,7 @@ Deno.test("a sibling blocked during partial preflight is not dispatched from the
   }
 });
 
-Deno.test("a legacy sibling timeout fence during partial preflight is ignored", async () => {
+Deno.test("a sibling legacy timeout during partial preflight does not gate fallback", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;

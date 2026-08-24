@@ -6,7 +6,7 @@ export const MAX_ACCEPTED_JSON_BODY_BYTES = 32 * 1_024 * 1_024;
 
 export type JsonBodyReadResult =
   | Readonly<{ ok: true; value: unknown }>
-  | Readonly<{ ok: false; kind: "invalid" | "too_large" }>;
+  | Readonly<{ ok: false; kind: "empty" | "invalid" | "too_large" }>;
 
 class RequestBodyTooLargeError extends Error {
   constructor() {
@@ -90,6 +90,7 @@ export const readJsonBodyWithLimit = async (
   let captured = false;
   try {
     bytes = await readBoundedRequestBody(req, maxBytes);
+    if (bytes.byteLength === 0) return { ok: false, kind: "empty" };
     const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
     // Replay capture has its own fixed 32 MiB storage contract even when a
     // route permits a larger JSON body for protocol-specific payloads.

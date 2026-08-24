@@ -72,6 +72,15 @@ class MemoryKv {
     } as Deno.KvEntryMaybe<T>);
   }
 
+  getMany<T extends readonly unknown[]>(
+    keys: readonly Deno.KvKey[],
+    options?: { consistency?: Deno.KvConsistencyLevel },
+  ): Promise<{ [K in keyof T]: Deno.KvEntryMaybe<T[K]> }> {
+    return Promise.all(keys.map((key) => this.get(key, options))) as Promise<
+      { [K in keyof T]: Deno.KvEntryMaybe<T[K]> }
+    >;
+  }
+
   set(
     key: Deno.KvKey,
     value: unknown,
@@ -172,8 +181,6 @@ const encoder = new TextEncoder();
 
 const isFallbackOutcome = (outcome: Outcome): boolean =>
   outcome.kind === "http" && ACCOUNT_FALLBACK_STATUSES.has(outcome.status);
-
-const isTransportOutcome = (outcome: Outcome): boolean => outcome.kind === "timeout" || outcome.kind === "network";
 
 const is401 = (outcome: Outcome): boolean => outcome.kind === "http" && outcome.status === 401;
 const is429 = (outcome: Outcome): boolean => outcome.kind === "http" && outcome.status === 429;
@@ -405,6 +412,9 @@ const runCase = async (
       }),
       {
         keyId: KEY_ID,
+        // This stable principal hashes to account-one first, preserving the
+        // matrix's explicit first-account/second-account outcome ordering.
+        idempotencyPrincipal: "matrix-0",
         kernelRepo: null,
         kernelOrg: null,
         requestId: `routing-matrix-${sequence}-${first.name}-${second.name}`,
@@ -412,17 +422,13 @@ const runCase = async (
       },
     );
 
-    const reachesSecond = isFallbackOutcome(first) || isTransportOutcome(first);
-    // Codex may try its sibling account after 401/403/429 or a transient
-    // transport failure. Paid fallback still requires an authoritative 429
-    // from the whole attempted cohort. Any transport ambiguity wins over
-    // otherwise fallback-eligible responses and must fail closed.
-    const terminalCodexOutcome = isTransportOutcome(first) && isFallbackOutcome(second)
-      ? first
-      : reachesSecond
-      ? second
-      : first;
-    const selectsMetered = isFallbackOutcome(first) && isFallbackOutcome(second) &&
+    const reachesSecond = isFallbackOutcome(first);
+    // Codex may try its sibling account only after authoritative 401/403/429
+    // responses. A transport failure is an ambiguous POST and must never be
+    // replayed. Paid fallback still requires an authoritative 429 from the
+    // reached account cohort.
+    const terminalCodexOutcome = reachesSecond ? second : first;
+    const selectsMetered = reachesSecond && isFallbackOutcome(second) &&
       (is429(first) || is429(second));
     const expectedStatus = selectsMetered
       ? 200

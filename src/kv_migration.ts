@@ -1197,6 +1197,9 @@ const inspectKernelQuotaV2 = async (kv: Deno.Kv): Promise<KernelQuotaV2Inventory
     inspectReservation(KERNEL_REPO_RESERVATION_V2_PREFIX, "repo"),
     inspectReservation(KERNEL_ORG_RESERVATION_V2_PREFIX, "org"),
   ]);
+  for (const reference of reservedByWindow.keys()) {
+    if (!windows.has(reference)) errors.push(`kernel quota V2 active reservation has no window: ${reference}`);
+  }
   for (const [reference, { window, hasReservationAggregate }] of windows) {
     if (hasReservationAggregate && window.reserved_requests !== (reservedByWindow.get(reference) ?? 0)) {
       errors.push(`kernel quota V2 reserved aggregate is inconsistent: ${reference}`);

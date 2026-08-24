@@ -183,6 +183,30 @@ Deno.test("Responses preflight surfaces immediate failures before a stream respo
   assert.equal(eof.kind, "premature_eof");
 });
 
+Deno.test("Responses activity observes comments and partial frames before parsed events", async () => {
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(bytes(": keepalive\n\n"));
+      controller.enqueue(bytes('data: {"type":"response.output_text.delta",'));
+      controller.enqueue(bytes('"delta":"x"}\n\n'));
+      controller.enqueue(bytes('data: {"type":"response.completed","response":{"status":"completed"}}\n\n'));
+      controller.close();
+    },
+  });
+  let activityCount = 0;
+  const events = [];
+  for await (
+    const event of readResponsesStream(source, undefined, {
+      onActivity: () => {
+        activityCount += 1;
+      },
+    })
+  ) events.push(event);
+
+  assert.equal(activityCount, 4);
+  assert.deepEqual(events.map((event) => event.type), ["response.output_text.delta", "response.completed"]);
+});
+
 Deno.test("Responses parser wraps reader exceptions and releases its lock", async () => {
   const source = new ReadableStream<Uint8Array>({
     pull(controller) {
