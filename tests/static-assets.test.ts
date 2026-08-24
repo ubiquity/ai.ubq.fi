@@ -376,6 +376,38 @@ Deno.test("homepage content negotiation serves server-rendered HTML, Markdown, a
   assert.equal((await unacceptable.json()).error.code, "not_acceptable");
 });
 
+Deno.test("public HEAD routes preserve GET metadata without a response body", async () => {
+  const routes = [
+    ["/", { Accept: "text/html" }],
+    ["/index.html", {}],
+    ["/style.css", {}],
+    ["/docs/llms-agents.md", {}],
+    ["/openapi.json", {}],
+  ] as const;
+
+  for (const [path, headers] of routes) {
+    const getResponse = await handler(new Request("https://ai.ubq.fi" + path, { headers }));
+    const headResponse = await handler(
+      new Request("https://ai.ubq.fi" + path, { method: "HEAD", headers }),
+    );
+
+    assert.equal(headResponse.status, getResponse.status, path);
+    assert.deepEqual(
+      [...headResponse.headers].filter(([name]) => name !== "x-uos-request-id"),
+      [...getResponse.headers].filter(([name]) => name !== "x-uos-request-id"),
+      path,
+    );
+    assert.equal(await headResponse.text(), "", path);
+  }
+});
+
+Deno.test("unknown public HEAD routes remain 404", async () => {
+  const response = await handler(new Request("https://ai.ubq.fi/not-a-real-public-route", { method: "HEAD" }));
+
+  assert.equal(response.status, 404);
+  assert.equal(await response.text(), "");
+});
+
 Deno.test("credentialed root responses retain content-negotiation Vary tokens", async () => {
   const response = await handler(
     new Request("https://ai.ubq.fi/", {

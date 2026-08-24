@@ -46,7 +46,7 @@ export const corsHeaders = (req?: Request): HeadersInit => {
     "Access-Control-Allow-Origin": canUseCredentials ? requestOrigin! : configuredOrigin,
     "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
     "Access-Control-Allow-Headers":
-      "Authorization,Content-Type,If-None-Match,OpenAI-Beta,OpenAI-Organization,OpenAI-Project,X-GitHub-Owner,X-GitHub-Repo,X-GitHub-Installation-Id,X-Ubiquity-Kernel-Token",
+      "Authorization,Content-Type,Idempotency-Key,If-None-Match,OpenAI-Beta,OpenAI-Organization,OpenAI-Project,X-GitHub-Owner,X-GitHub-Repo,X-GitHub-Installation-Id,X-Ubiquity-Kernel-Token",
     // Allow browser clients to read quota state, gateway warnings, cache validators, and backoff hints.
     "Access-Control-Expose-Headers": EXPOSED_RESPONSE_HEADERS.join(","),
     "Access-Control-Max-Age": "86400",
@@ -77,6 +77,13 @@ export const withCors = (response: Response, req?: Request): Response => {
     headers,
   });
 };
+
+export const withoutBody = (response: Response): Response =>
+  new Response(null, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
 
 export const json = (
   status: number,

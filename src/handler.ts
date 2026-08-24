@@ -46,7 +46,7 @@ import {
 } from "./api_key_policy.ts";
 import { runtimeDeploymentId, runtimeGitSha } from "./config.ts";
 import { handleHealth, handleHealthProviders, handleHealthUpstream } from "./health.ts";
-import { corsHeaders, notFound, openaiError, withCors as withCorsHeaders } from "./http.ts";
+import { corsHeaders, notFound, openaiError, withCors as withCorsHeaders, withoutBody } from "./http.ts";
 import { type KernelQuotaReservation, reserveEffectiveKernelUsageLimit } from "./kernel_usage.ts";
 import {
   getResponseAccountCohortId,
@@ -770,24 +770,21 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
   const url = new URL(req.url);
   const path = normalizePath(url.pathname);
 
-  if (req.method === "GET" && (path === "/" || path === "/index.html")) {
-    return withCors(await handleRoot(req));
+  if ((req.method === "GET" || req.method === "HEAD") && (path === "/" || path === "/index.html")) {
+    const rootResponse = await handleRoot(req);
+    return withCors(req.method === "HEAD" ? withoutBody(rootResponse) : rootResponse);
   }
 
-  if (req.method === "GET") {
+  if (req.method === "GET" || req.method === "HEAD") {
     const staticResponse = await handleStaticAsset(path);
-    if (staticResponse) return withCors(staticResponse);
+    if (staticResponse) return withCors(req.method === "HEAD" ? withoutBody(staticResponse) : staticResponse);
   }
 
   if ((req.method === "GET" || req.method === "HEAD") && path === "/health") {
     const health = await handleHealth();
     // Keep HEAD semantically equivalent to public GET liveness while correctly
     // omitting the body.
-    return withCors(
-      req.method === "HEAD"
-        ? new Response(null, { status: health.status, statusText: health.statusText, headers: health.headers })
-        : health,
-    );
+    return withCors(req.method === "HEAD" ? withoutBody(health) : health);
   }
 
   if (req.method === "GET" && path === "/health/providers") {
@@ -1069,7 +1066,8 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
   const isUosEmbeddingPath = path === "/uos/embeddings" || path === "/uos/embedding-jobs" ||
     path.startsWith("/uos/embedding-jobs/");
   if (!path.startsWith("/v1/") && !isUosEmbeddingPath) {
-    return withCors(notFound());
+    const response = notFound();
+    return withCors(req.method === "HEAD" ? withoutBody(response) : response);
   }
 
   const terminalRoute = terminalRouteForRequest(req.method, path);
@@ -1343,5 +1341,6 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     return await finishTerminalResponse(response, "responses", true, true);
   }
 
-  return withCors(openaiError(404, "Not found", "not_found"));
+  const response = openaiError(404, "Not found", "not_found");
+  return withCors(req.method === "HEAD" ? withoutBody(response) : response);
 }

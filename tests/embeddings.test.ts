@@ -2572,6 +2572,26 @@ Deno.test("handler: /uos/embeddings reaches authentication instead of the 404 gu
   assert.notEqual(response.status, 404);
 });
 
+Deno.test("handler: embeddings preflight permits browser idempotency keys", async () => {
+  const { default: handler } = await import("../src/handler.ts");
+  const response = await handler(
+    new Request("https://ai.ubq.fi/uos/embeddings", {
+      method: "OPTIONS",
+      headers: {
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-type,idempotency-key",
+      },
+    }),
+  );
+
+  assert.equal(response.status, 204);
+  assert.match(response.headers.get("access-control-allow-methods") ?? "", /POST/);
+  const allowedHeaders = (response.headers.get("access-control-allow-headers") ?? "")
+    .split(",")
+    .map((header) => header.trim().toLowerCase());
+  assert.ok(allowedHeaders.includes("idempotency-key"));
+});
+
 Deno.test("handler: an exhausted key still serves local embeddings paths but blocks a dispatch", async () => {
   const { handleAdminApiKeysCreate } = await import("../src/admin.ts");
   const { default: handler } = await import("../src/handler.ts");
