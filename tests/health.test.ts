@@ -64,7 +64,7 @@ const {
 );
 const { default: handler } = await import("../src/handler.ts");
 const { config } = await import("../src/config.ts");
-const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
+const { getJwtExpMs, resetCodexAuthCacheForTest } = await import("../src/codex.ts");
 const {
   getCerebrasProviderHealth,
   getCodexProviderHealth,
@@ -101,6 +101,14 @@ const makeAuthPool = (...accounts: ReturnType<typeof makeAuthEntry>[]) => ({
 });
 
 const CODEX_AUTH_KEY: Deno.KvKey = ["ubq_ai", "codex_auth"];
+
+Deno.test("getJwtExpMs ignores non-string, empty, and malformed tokens", () => {
+  for (
+    const token of [undefined, null, 42, {}, "", "not-a-jwt", "header.%%%.", "header.e30.signature.extra"] as unknown[]
+  ) {
+    assert.doesNotThrow(() => assert.equal(getJwtExpMs(token), null));
+  }
+});
 
 Deno.test("passive provider health returns every Codex slot without contacting upstream", async () => {
   kvStore.clear();
@@ -436,6 +444,45 @@ Deno.test("active upstream health retains detailed failure diagnostics", async (
       "chatgpt_codex",
     );
     assert.equal((upstreamPayload.probes as { codex?: { status?: number } } | undefined)?.codex?.status, 503);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("active upstream health bounds malformed Codex auth metadata", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = () => {
+    throw new Error("malformed auth health must not contact upstream");
+  };
+  const malformedRecords: unknown[] = [
+    { tokens: { access_token: "legacy-access-token", refresh_token: "legacy-refresh-token" } },
+    {
+      accounts: [{
+        access_token: "partial-access-token",
+        refresh_token: "partial-refresh-token",
+        account_id: "partial-account",
+      }],
+      updated_at_ms: Date.now(),
+    },
+  ];
+
+  try {
+    for (const record of malformedRecords) {
+      kvStore.clear();
+      kvStore.set(keyToString(CODEX_AUTH_KEY), record);
+
+      const response = await handleHealthUpstream();
+      const text = await response.text();
+      const payload = JSON.parse(text) as {
+        status?: unknown;
+        probes?: { codex?: { status?: unknown } };
+      };
+
+      assert.equal(response.status, 503);
+      assert.equal(payload.status, 503);
+      assert.equal(payload.probes?.codex?.status, 503);
+      assert.ok(text.length < 2_048);
+    }
   } finally {
     globalThis.fetch = originalFetch;
   }
