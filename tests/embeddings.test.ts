@@ -2586,6 +2586,7 @@ Deno.test("handler: embeddings preflight permits browser idempotency keys", asyn
 
   assert.equal(response.status, 204);
   assert.match(response.headers.get("access-control-allow-methods") ?? "", /POST/);
+  assert.match(response.headers.get("access-control-allow-methods") ?? "", /HEAD/);
   const allowedHeaders = (response.headers.get("access-control-allow-headers") ?? "")
     .split(",")
     .map((header) => header.trim().toLowerCase());

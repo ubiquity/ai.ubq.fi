@@ -44,7 +44,7 @@ export const corsHeaders = (req?: Request): HeadersInit => {
     (configuredOrigin === "*" || configuredOrigin === requestOrigin);
   return {
     "Access-Control-Allow-Origin": canUseCredentials ? requestOrigin! : configuredOrigin,
-    "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+    "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,HEAD,OPTIONS",
     "Access-Control-Allow-Headers":
       "Authorization,Content-Type,Idempotency-Key,If-None-Match,OpenAI-Beta,OpenAI-Organization,OpenAI-Project,X-GitHub-Owner,X-GitHub-Repo,X-GitHub-Installation-Id,X-Ubiquity-Kernel-Token",
     // Allow browser clients to read quota state, gateway warnings, cache validators, and backoff hints.
