@@ -27,20 +27,20 @@ const RECENT_MODEL_REASONING_RULES = [
   },
   {
     modelClass: "claude-opus-4.8",
-    pattern: /(?:^|\/)claude-opus-4\.8(?:$|-)/i,
+    pattern: /(?:^|\/)claude-opus-4[.-]8(?:$|-)/i,
     levels: ["low", "medium", "high", "xhigh", "max"],
     defaultLevel: "high",
   },
   {
     modelClass: "claude-opus-4.7",
-    pattern: /(?:^|\/)claude-opus-4\.7(?:$|-)/i,
+    pattern: /(?:^|\/)claude-opus-4[.-]7(?:$|-)/i,
     levels: ["low", "medium", "high", "xhigh", "max"],
     defaultLevel: "high",
   },
   {
     modelClass: "deepseek-v4",
     pattern: /(?:^|\/)deepseek-v4(?:$|-)/i,
-    levels: ["none", "high", "max"],
+    levels: ["none", "low", "high", "max"],
     defaultLevel: "high",
   },
   {
@@ -51,9 +51,15 @@ const RECENT_MODEL_REASONING_RULES = [
   },
   {
     modelClass: "glm-5.2",
-    pattern: /(?:^|\/)glm-5\.2(?:$|-)/i,
+    pattern: /(?:^|\/)glm-5\.2(?:$|[-:])/i,
     levels: ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
     defaultLevel: null,
+  },
+  {
+    modelClass: "glm-5.1-non-thinking",
+    pattern: /(?:^|\/)glm-5\.1-non-thinking(?:$|[-:])/i,
+    levels: ["none"],
+    defaultLevel: "none",
   },
   {
     modelClass: "glm-5.1",
@@ -81,7 +87,7 @@ const RECENT_MODEL_REASONING_RULES = [
   },
   {
     modelClass: "gemini-3.5-flash",
-    pattern: /(?:^|\/)gemini-3\.5-flash(?:$|-)/i,
+    pattern: /(?:^|\/)gemini-3[.-]5-flash(?:$|-)/i,
     levels: ["minimal", "low", "medium", "high"],
     defaultLevel: null,
   },
@@ -129,13 +135,13 @@ const RECENT_MODEL_REASONING_RULES = [
   },
   {
     modelClass: "qwen3.8-max",
-    pattern: /(?:^|\/)qwen3\.8-max(?:$|-)/i,
+    pattern: /(?:^|\/)qwen-?3[.-]8-max(?:$|-)/i,
     levels: ["none", "low", "medium", "high", "xhigh", "max"],
     defaultLevel: null,
   },
   {
     modelClass: "qwen3.8",
-    pattern: /(?:^|\/)qwen3\.8(?:$|-)/i,
+    pattern: /(?:^|\/)qwen-?3[.-]8(?:$|-)/i,
     levels: ["none", "thinking"],
     defaultLevel: null,
   },

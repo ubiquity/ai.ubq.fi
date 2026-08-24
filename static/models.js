@@ -1,4 +1,4 @@
-import { getRecentModelReasoning } from "./reasoning-select.js";
+import { getRecentModelReasoning } from "./reasoning-select.js?v=20260824-recent-reasoning-v2";
 
 const summary = document.querySelector("[data-source-summary]");
 const list = document.querySelector("[data-model-list]");
