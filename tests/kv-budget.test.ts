@@ -823,20 +823,15 @@ Deno.test("V3 limit-one concurrency dispatches once and backpressures caller-lan
   const upstreamGate = new Promise<void>((resolve) => {
     releaseUpstreams = resolve;
   });
-  let resolveFirstDispatch: () => void = () => {};
-  const firstDispatch = new Promise<void>((resolve) => {
-    resolveFirstDispatch = resolve;
-  });
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => {
     fetchCalls += 1;
-    resolveFirstDispatch();
     await upstreamGate;
     return sse();
   };
   try {
     const pending = Array.from({ length: concurrency }, () => handler(request(token)));
-    await firstDispatch;
+    await waitFor(() => fetchCalls > 0, "first provider dispatch");
     releaseUpstreams();
 
     const responses = await Promise.all(pending);

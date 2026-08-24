@@ -278,6 +278,9 @@ Deno.test("a KV outage fails admission closed before provider transport", async 
   const originalNow = Date.now;
   const originalOpenKv = Object.getOwnPropertyDescriptor(Deno, "openKv");
   let providerCalls = 0;
+  let beforeDispatchCalls = 0;
+  let transportStarts = 0;
+  let cancellations = 0;
   Date.now = () => fixedStartMs;
   kv.auth = pool(auth("one"));
   kv.extra.clear();
@@ -294,11 +297,28 @@ Deno.test("a KV outage fails admission closed before provider transport", async 
   try {
     const response = await fetchCodexResponses(
       { model: "gpt-5.6-luna", input: "wait for KV" },
-      { admissionCallerLaneHash: "a".repeat(64) },
+      {
+        admissionCallerLaneHash: "a".repeat(64),
+        beforeDispatch: () => {
+          beforeDispatchCalls += 1;
+          return Promise.resolve({
+            markTransportStarted: () => {
+              transportStarts += 1;
+            },
+            cancelBeforeTransport: () => {
+              cancellations += 1;
+              return Promise.resolve();
+            },
+          });
+        },
+      },
     );
     assert.equal(response.status, 503);
     assert.equal((await response.json() as { error?: { code?: string } }).error?.code, CODEX_ADMISSION_BUSY_ERROR_CODE);
     assert.equal(providerCalls, 0);
+    assert.equal(beforeDispatchCalls, 1);
+    assert.equal(transportStarts, 0);
+    assert.equal(cancellations, 1);
   } finally {
     if (originalOpenKv) Object.defineProperty(Deno, "openKv", originalOpenKv);
     setKvForTest(kv as unknown as Deno.Kv);
@@ -314,6 +334,9 @@ Deno.test("malformed admission state on one account does not hide a healthy sibl
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
   const providerAccounts: string[] = [];
+  let beforeDispatchCalls = 0;
+  let transportStarts = 0;
+  let cancellations = 0;
   Date.now = () => fixedStartMs;
   (config as { isDeploy: boolean }).isDeploy = true;
   kv.auth = pool(auth("one"), auth("two"));
@@ -337,10 +360,27 @@ Deno.test("malformed admission state on one account does not hide a healthy sibl
   try {
     const response = await fetchCodexResponses(
       { model: "gpt-5.6-luna", input: "use the healthy sibling" },
-      { admissionCallerLaneHash: "0".repeat(64) },
+      {
+        admissionCallerLaneHash: "0".repeat(64),
+        beforeDispatch: () => {
+          beforeDispatchCalls += 1;
+          return Promise.resolve({
+            markTransportStarted: () => {
+              transportStarts += 1;
+            },
+            cancelBeforeTransport: () => {
+              cancellations += 1;
+              return Promise.resolve();
+            },
+          });
+        },
+      },
     );
     assert.equal(response.status, 200);
     assert.deepEqual(providerAccounts, ["account-two"]);
+    assert.equal(beforeDispatchCalls, 1);
+    assert.equal(transportStarts, 1);
+    assert.equal(cancellations, 0);
     await markCodexResponseCompleted(response);
   } finally {
     resetCodexAuthCacheForTest();
@@ -2630,6 +2670,8 @@ Deno.test("an auth rotation inside the final dispatch hook fences off a post-res
   const originalDeployFlag = config.isDeploy;
   let inferenceCalls = 0;
   let beforeDispatchCalls = 0;
+  const startedDispatchGenerations: number[] = [];
+  const cancelledDispatchGenerations: number[] = [];
   Date.now = () => fixedStartMs;
   (config as { isDeploy: boolean }).isDeploy = true;
   kv.auth = pool(auth("one"));
@@ -2653,6 +2695,7 @@ Deno.test("an auth rotation inside the final dispatch hook fences off a post-res
       {
         beforeDispatch: () => {
           beforeDispatchCalls += 1;
+          const dispatchGeneration = beforeDispatchCalls;
           if (beforeDispatchCalls === 2) {
             // This occurs after the verified record and routing repair, but
             // before the post-reset transport can mark itself started.
@@ -2663,7 +2706,15 @@ Deno.test("an auth rotation inside the final dispatch hook fences off a post-res
             });
             kv.authVersion += 1;
           }
-          return Promise.resolve();
+          return Promise.resolve({
+            markTransportStarted: () => {
+              startedDispatchGenerations.push(dispatchGeneration);
+            },
+            cancelBeforeTransport: () => {
+              cancelledDispatchGenerations.push(dispatchGeneration);
+              return Promise.resolve();
+            },
+          });
         },
         bankedReset: {
           config: liveBankedResetConfig(),
@@ -2677,6 +2728,8 @@ Deno.test("an auth rotation inside the final dispatch hook fences off a post-res
     assert.equal(response.status, 429);
     assert.equal(beforeDispatchCalls, 2);
     assert.equal(inferenceCalls, 1, "the rotated second attempt must not reach upstream transport");
+    assert.deepEqual(startedDispatchGenerations, [1]);
+    assert.deepEqual(cancelledDispatchGenerations, [2]);
     assert.deepEqual(reset.calls, ["inventory", "redeem", "verify"]);
   } finally {
     resetCodexAuthCacheForTest();
