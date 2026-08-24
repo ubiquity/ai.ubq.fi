@@ -47,6 +47,22 @@ For app integrations, name the client credential `UOS_AI_TOKEN` or another gatew
 
 The gateway never forwards your client token upstream. It uses Codex CLI auth configured on the server.
 
+### Admin: upload Codex auth.json
+
+An administrator can validate and store a fresh `auth.json` in the server's two-account Codex pool. Treat this file as a
+secret because it contains refresh tokens. Run the helper from this repository, whose root is the directory containing
+`deno.json`:
+
+```bash
+cd "$(git rev-parse --show-toplevel)"
+export DENO_DEPLOY_TOKEN="..."
+deno task upload:auth --url https://ai.ubq.fi
+deno task upload:auth --url https://ai.ubq.fi --auth-json /secure/path/to/second-account-auth.json
+```
+
+Uploading an existing account rotates it; uploading a second account fills the other pool slot. A third distinct account
+is rejected.
+
 ### GitHub token headers (kernel auth)
 
 When using a GitHub token for any `/v1/*` route, include:
@@ -238,6 +254,7 @@ Optional (defaulted by the gateway):
 - `model` (defaults to the configured model).
 - `stream` (defaults to `false`).
 - `reasoning_effort` (defaults to the configured reasoning effort).
+- `max_completion_tokens` (positive integer output cap for Chat Completions).
 
 Supported message content:
 
@@ -315,6 +332,7 @@ Optional fields:
 - `instructions` (string).
 - `reasoning` (object).
 - `stream` (defaults to `false`).
+- `max_output_tokens` (output cap for Responses).
 
 `reasoning` object fields:
 
@@ -337,6 +355,23 @@ curl -sS https://ai.ubq.fi/v1/responses \
 
 When `stream` is `false`, the gateway buffers the upstream stream and returns the final `response` object. When `stream`
 is `true`, the upstream SSE stream is passed through.
+
+## Completion token caps
+
+Token limits depend on the endpoint and selected provider; the gateway does not ignore every token-cap field:
+
+- Chat Completions clients send `max_completion_tokens`. Codex-backed Chat requests translate it to upstream
+  `max_output_tokens`; `max_output_tokens` itself is not a Chat Completions alias.
+- Responses clients and the native Codex CLI Responses contract send `max_output_tokens`, which the gateway forwards to
+  Codex unchanged. `max_completion_tokens` is not a Responses alias.
+- Cerebras `gpt-oss-120b` is a Chat Completions route, so `max_completion_tokens` is forwarded to Cerebras unchanged,
+  rather than being converted to `max_output_tokens`.
+- Paid fallback receives the canonical Responses body with `max_output_tokens` for either public endpoint, so OpenLux
+  (Metered 2) or Surplus Intelligence (Metered 1) receives the requested cap.
+
+The cap controls generated output when the upstream honors it; it is not a quota or inference-health signal. The legacy
+Chat `max_tokens` field is accepted only for compatibility on the Codex-backed path, is not forwarded there, and emits
+`max_output_tokens_ignored`.
 
 ## Embeddings
 
@@ -459,7 +494,6 @@ upstream request metadata instead of forwarding client-supplied session identifi
 and will produce warnings when that transport handles the request:
 
 - `temperature` -> `temperature_ignored`
-- `max_tokens`, `max_completion_tokens`, `max_output_tokens` -> `max_output_tokens_ignored`
 - `moderation` -> `moderation_ignored`
 
 Any other accepted-but-unused key will emit a `<key>_ignored` warning.

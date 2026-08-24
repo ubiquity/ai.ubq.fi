@@ -37,6 +37,7 @@ const reasoningFor = (model) => {
 };
 
 let catalog = [];
+const catalogCountLabel = (value) => `${value} cataloged model${value === 1 ? "" : "s"}`;
 
 const render = () => {
   const query = search.value.trim().toLowerCase();
@@ -47,7 +48,7 @@ const render = () => {
       reasoning?.modelClass?.includes(query) ||
       reasoning?.levels.some((level) => level.includes(query));
   });
-  count.textContent = `${visible.length} model${visible.length === 1 ? "" : "s"}`;
+  count.textContent = `${visible.length} cataloged model${visible.length === 1 ? "" : "s"}`;
   list.replaceChildren(...visible.map((model) => {
     const article = document.createElement("article");
     const heading = document.createElement("h2");
@@ -90,8 +91,8 @@ try {
       const total = document.createElement("strong");
       const state = document.createElement("span");
       name.textContent = providerNames[id] ?? id;
-      total.textContent = String(source.count ?? 0);
-      state.textContent = source.status === "available" ? "available models" : "catalog unavailable";
+      total.textContent = catalogCountLabel(source.count ?? 0);
+      state.textContent = source.status === "available" ? "catalog snapshot loaded" : "catalog unavailable";
       article.dataset.state = source.status ?? "unavailable";
       article.append(name, total, state);
       return article;

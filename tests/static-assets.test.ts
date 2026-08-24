@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import handler from "../src/handler.ts";
 import { corsHeaders } from "../src/http.ts";
 import { handleRoot, handleStaticAsset, hasStaticAsset } from "../src/static.ts";
+import readmeText from "../README.md" with { type: "text" };
 import adminHtml from "../static/admin.html" with { type: "text" };
 import aboutHtml from "../static/about.html" with { type: "text" };
 import adminScript from "../static/admin.js" with { type: "text" };
@@ -14,6 +15,7 @@ import indexHtml from "../static/index.html" with { type: "text" };
 import llmsText from "../static/llms.txt" with { type: "text" };
 import llmsFullText from "../static/docs/llms-agents.md" with { type: "text" };
 import modelsHtml from "../static/models.html" with { type: "text" };
+import modelsScript from "../static/models.js" with { type: "text" };
 import openApiText from "../static/openapi.json" with { type: "text" };
 import privacyHtml from "../static/privacy.html" with { type: "text" };
 import styleCss from "../static/style.css" with { type: "text" };
@@ -39,6 +41,31 @@ Deno.test("public models page is registered", () => {
   assert.equal(hasStaticAsset("/models"), true);
   assert.equal(hasStaticAsset("/models.html"), true);
   assert.match(modelsHtml, /<script type="module" src="\/models\.js\?v=20260824-recent-reasoning-v2"><\/script>/);
+});
+
+Deno.test("published setup and token-cap guidance matches endpoint/provider contracts", () => {
+  for (const publishedText of [readmeText, llmsFullText]) {
+    assert.doesNotMatch(publishedText, /cd lib\/ai\.ubq\.fi/);
+    assert.match(publishedText, /cd "\$\(git rev-parse --show-toplevel\)"/);
+    assert.match(publishedText, /Chat Completions[\s\S]*max_completion_tokens/);
+    assert.match(publishedText, /Responses[\s\S]*max_output_tokens/);
+    assert.match(publishedText, /Codex CLI[\s\S]*max_output_tokens/);
+    assert.match(publishedText, /Cerebras[\s\S]*max_completion_tokens[\s\S]*unchanged/);
+    assert.match(publishedText, /paid fallback[\s\S]*max_output_tokens/i);
+    assert.doesNotMatch(
+      publishedText,
+      /`max_tokens`, `max_completion_tokens`, `max_output_tokens` -> `max_output_tokens_ignored`/,
+    );
+  }
+});
+
+Deno.test("models page labels catalog membership rather than live availability", () => {
+  assert.match(modelsHtml, /Catalog snapshots/);
+  assert.match(modelsHtml, /latest catalog snapshots/);
+  assert.doesNotMatch(modelsHtml, /Live upstream catalog|Models available through/);
+  assert.match(modelsScript, /cataloged model/);
+  assert.match(modelsScript, /catalog snapshot loaded/);
+  assert.doesNotMatch(modelsScript, /available models/);
 });
 
 Deno.test("public brand logos are inline and inherit the page foreground", async () => {

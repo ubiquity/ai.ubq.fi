@@ -277,7 +277,7 @@ Notes:
 Run from this repo:
 
 ```bash
-cd lib/ai.ubq.fi
+cd "$(git rev-parse --show-toplevel)"
 export UOS_AI_TOKEN="..."
 deno task ubq-ai chat --system "You are a helpful assistant." "Tell me a short joke."
 ```
@@ -287,7 +287,7 @@ Client commands also accept an admin token (`DENO_DEPLOY_TOKEN`) when `UOS_AI_TO
 Install on your machine:
 
 ```bash
-cd lib/ai.ubq.fi
+cd "$(git rev-parse --show-toplevel)"
 deno install -g --allow-env --allow-net --allow-read -n ubq-ai scripts/ubq-ai.ts
 ```
 
@@ -400,6 +400,23 @@ translates `max_completion_tokens` to the upstream Responses `max_output_tokens`
 `temperature`; the gateway intentionally omits it and returns `x-uos-warning: temperature_ignored` rather than silently
 treating it as a cost or behavior control.
 
+### Completion token caps
+
+The token-cap field follows the endpoint's official OpenAI contract and is not universally ignored:
+
+- Chat Completions clients send `max_completion_tokens`. Codex-backed Chat requests translate it to upstream
+  `max_output_tokens`; `max_output_tokens` itself is not a Chat Completions alias. The legacy `max_tokens` field is
+  accepted for compatibility on the Codex-backed path but is not forwarded and produces `max_output_tokens_ignored`.
+- Responses clients, including the native Codex CLI wire contract, send `max_output_tokens`, which is forwarded to Codex
+  as `max_output_tokens`. `max_completion_tokens` is not a Responses alias.
+- Cerebras `gpt-oss-120b` uses Chat Completions, so its `max_completion_tokens` value is sent to Cerebras unchanged; it
+  is not converted to `max_output_tokens`.
+- A paid fallback receives the canonical Responses body with `max_output_tokens` for both Chat and Responses requests,
+  so the selected OpenLux (Metered 2) or Surplus Intelligence (Metered 1) provider receives the requested cap.
+
+These fields limit generated output when the selected upstream honors them; they do not report quota or guarantee a
+provider's maximum context or output window.
+
 When a provider supplies an opaque request ID, the gateway preserves its bounded, header-safe value as
 `x-uos-provider-request-id` and in terminal response telemetry as `providerRequestId` / `provider_request_id`. It is a
 support-correlation value only, never a credential or provider response body.
@@ -426,7 +443,8 @@ previously cached versioned catalogs. Future Codex versions are fetched dynamica
 Treat `auth.json` as a secret (it contains refresh tokens). Use the repo helper CLI:
 
 ```bash
-cd lib/ai.ubq.fi
+# Run from this repository (the directory containing deno.json).
+cd "$(git rev-parse --show-toplevel)"
 export DENO_DEPLOY_TOKEN="..."
 deno task upload:auth --url https://ai.ubq.fi
 deno task upload:auth --url https://ai.ubq.fi --auth-json /secure/path/to/second-account-auth.json
@@ -462,7 +480,7 @@ Usage Limits:
 Create (token only):
 
 ```bash
-cd lib/ai.ubq.fi
+cd "$(git rev-parse --show-toplevel)"
 export DENO_DEPLOY_TOKEN="..."
 deno task ubq-ai admin keys create "example key"
 ```
