@@ -974,6 +974,7 @@ Deno.test("codex catalog: model picker receives the complete unique union of pai
           { id: "deepseek-v4-flash", provider: "surplus" },
           { id: "deepseek-v4-flash-0731", provider: "surplus" },
           { id: "deepseek-v4-flash:web", provider: "surplus" },
+          { id: "minimax-m2.7", provider: "surplus" },
         ],
       })),
   });
@@ -995,6 +996,7 @@ Deno.test("codex catalog: model picker receives the complete unique union of pai
       "deepseek-v4-flash",
       "deepseek-v4-flash-0731",
       "deepseek-v4-flash:web",
+      "minimax-m2.7",
     ]);
     assert.equal(new Set(slugs).size, slugs.length);
     assert.equal(payload.models.find((model) => model.slug === "shared-paid-model")?.visibility, "list");
@@ -1014,7 +1016,14 @@ Deno.test("codex catalog: model picker receives the complete unique union of pai
         ],
       );
       assert.equal(model?.default_reasoning_level, "high");
+      assert.equal(model?.context_window, 1_000_000);
+      assert.equal(model?.max_context_window, 1_000_000);
+      assert.equal(model?.auto_compact_token_limit, 850_000);
+      assert.equal(model?.effective_context_window_percent, 95);
     }
+    const minimax = payload.models.find((model) => model.slug === "minimax-m2.7");
+    assert.equal(minimax?.context_window, 204_800);
+    assert.equal(minimax?.auto_compact_token_limit, 154_800);
     assert.equal(slugs.includes("chat-only-model"), false);
   } finally {
     globalThis.fetch = originalFetch;

@@ -53,6 +53,7 @@ import {
 } from "./inference_deadline.ts";
 import { getKv } from "./kv.ts";
 import { loadRuntimeConfig } from "./runtime_config.ts";
+import { recentModelContextFor } from "./recent_model_context.ts";
 import { CHAT_COMPLETIONS_REQUEST_KEYS, RESPONSES_REQUEST_KEYS } from "./openai_schema.ts";
 import { captureRawBodyOnce, discardRawBodyObserverOnce, readJsonBody } from "./request.ts";
 import {
@@ -5449,6 +5450,12 @@ const normalizeModelCapabilitiesEntry = (value: unknown): Record<string, unknown
   if (!id) return null;
   const reasoning = getCodexModelReasoning(value);
   const promptCache = normalizePromptCacheCapabilities(value.prompt_cache);
+  const fallbackContext = recentModelContextFor(id);
+  const contextWindow = normalizeTokenCount(value.context_window) ?? fallbackContext?.context_window_tokens ?? null;
+  const maxContextWindow = normalizeTokenCount(value.max_context_window) ??
+    fallbackContext?.max_context_window_tokens ?? contextWindow;
+  const autoCompactTokenLimit = normalizeTokenCount(value.auto_compact_token_limit) ??
+    fallbackContext?.auto_compact_token_limit_tokens ?? null;
   return {
     id,
     object: "uos.model_capabilities",
@@ -5459,9 +5466,16 @@ const normalizeModelCapabilitiesEntry = (value: unknown): Record<string, unknown
     supported_reasoning_levels: reasoning.levels,
     default_reasoning_effort: reasoning.defaultLevel,
     reasoning_effort_wire_map: Object.fromEntries(reasoning.wireEfforts),
-    context_window_tokens: normalizeTokenCount(value.context_window),
-    max_context_window_tokens: normalizeTokenCount(value.max_context_window),
-    auto_compact_token_limit_tokens: normalizeTokenCount(value.auto_compact_token_limit),
+    context_window_tokens: contextWindow,
+    max_context_window_tokens: maxContextWindow,
+    auto_compact_token_limit_tokens: autoCompactTokenLimit,
+    ...(fallbackContext
+      ? {
+        model_class: fallbackContext.model_class,
+        effective_context_window_percent: normalizeTokenCount(value.effective_context_window_percent) ??
+          fallbackContext.effective_context_window_percent,
+      }
+      : {}),
     ...(promptCache !== null ? { prompt_cache: promptCache } : {}),
   };
 };
@@ -7189,6 +7203,16 @@ type PublicModelProvider = Readonly<{
   supported_endpoints: readonly string[];
 }>;
 
+type PublicModelCatalogEntry = {
+  id: string;
+  providers: PublicModelProvider[];
+  model_class?: string;
+  context_window_tokens?: number;
+  max_context_window_tokens?: number;
+  auto_compact_token_limit_tokens?: number;
+  effective_context_window_percent?: number;
+};
+
 export const handlePublicModelCatalog = async (): Promise<Response> => {
   const snapshot = await loadCodexModelsSnapshot();
   const normalized = snapshot && Array.isArray(snapshot.models) && snapshot.models.length > 0
@@ -7206,12 +7230,28 @@ export const handlePublicModelCatalog = async (): Promise<Response> => {
     if (id) otherProviderModelIds.add(id);
   }
   for (const model of surplusModels) otherProviderModelIds.add(model.id);
-  const models = new Map<string, { id: string; providers: PublicModelProvider[] }>();
+  const models = new Map<string, PublicModelCatalogEntry>();
   const includedOpenLuxModelIds = new Set<string>();
   const add = (id: string, provider: PublicModelProvider): void => {
     const existing = models.get(id);
-    if (existing) existing.providers.push(provider);
-    else models.set(id, { id, providers: [provider] });
+    if (existing) {
+      existing.providers.push(provider);
+      return;
+    }
+    const context = recentModelContextFor(id);
+    models.set(id, {
+      id,
+      providers: [provider],
+      ...(context
+        ? {
+          model_class: context.model_class,
+          context_window_tokens: context.context_window_tokens,
+          max_context_window_tokens: context.max_context_window_tokens,
+          auto_compact_token_limit_tokens: context.auto_compact_token_limit_tokens,
+          effective_context_window_percent: context.effective_context_window_percent,
+        }
+        : {}),
+    });
   };
 
   for (const model of codexModels) {
@@ -7296,6 +7336,7 @@ export const handleModelCapabilities = async (): Promise<Response> => {
         ...(model.supported_endpoint_types.includes("openai-response") ? ["/v1/responses"] : []),
         ...(model.supported_endpoint_types.includes("openai") ? ["/v1/chat/completions"] : []),
       ];
+      const context = recentModelContextFor(model.id);
       data.push({
         id: model.id,
         object: "uos.model_capabilities",
@@ -7306,9 +7347,15 @@ export const handleModelCapabilities = async (): Promise<Response> => {
         supported_reasoning_levels: ["none"],
         default_reasoning_effort: "none",
         reasoning_effort_wire_map: {},
-        context_window_tokens: null,
-        max_context_window_tokens: null,
-        auto_compact_token_limit_tokens: null,
+        context_window_tokens: context?.context_window_tokens ?? null,
+        max_context_window_tokens: context?.max_context_window_tokens ?? null,
+        auto_compact_token_limit_tokens: context?.auto_compact_token_limit_tokens ?? null,
+        ...(context
+          ? {
+            model_class: context.model_class,
+            effective_context_window_percent: context.effective_context_window_percent,
+          }
+          : {}),
       });
     }
   }
