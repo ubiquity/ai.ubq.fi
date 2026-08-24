@@ -10448,9 +10448,13 @@ export const createImageFanoutDispatchCoordinator = (
           settled(callIndex);
           providerDispatch?.markTransportStarted();
         },
-        cancelBeforeTransport: async () => {
+        cancelBeforeTransport: () => {
           settled(callIndex);
-          await cancelBeforeTransport();
+          // A child owns only its settlement signal. Waiting for every logical
+          // child here deadlocks when a first-batch failure prevents a later
+          // batch from starting. The outer Images handler owns the one shared
+          // cancellation after it marks those unstarted calls settled.
+          return Promise.resolve();
         },
       };
     },

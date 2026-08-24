@@ -973,7 +973,7 @@ Deno.test("fan-out dispatch coordination never refunds after a sibling transport
   assert.equal(cancellations, 0);
 });
 
-Deno.test("fan-out dispatch coordination refunds one pre-transport cancellation once", async () => {
+Deno.test("fan-out child cancellations settle locally before the outer refund", async () => {
   let admissionCalls = 0;
   let transportStarts = 0;
   let cancellations = 0;
@@ -1000,6 +1000,9 @@ Deno.test("fan-out dispatch coordination refunds one pre-transport cancellation 
   assert.ok(first);
   assert.ok(second);
   await Promise.all([first.cancelBeforeTransport(), second.cancelBeforeTransport()]);
+  assert.equal(cancellations, 0);
+  await coordinator.cancelBeforeTransport();
+  await coordinator.cancelBeforeTransport();
   assert.equal(transportStarts, 0);
   assert.equal(cancellations, 1);
 });

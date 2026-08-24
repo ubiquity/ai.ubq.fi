@@ -345,6 +345,7 @@ const {
   CODEX_ADMISSION_BUSY_ERROR_CODE,
   resetCodexAuthCacheForTest,
 } = await import("../src/codex.ts");
+const { codexAdmissionSlotKey } = await import("../src/codex_admission.ts");
 const { fetchMeteredModels, resetMeteredModelsCacheForTest } = await import("../src/metered.ts");
 const { resetSurplusModelsCacheForTest } = await import("../src/surplus.ts");
 const {
@@ -862,6 +863,71 @@ Deno.test("V3 limit-one concurrency dispatches once and backpressures caller-lan
     });
   } finally {
     releaseUpstreams();
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("Images n=5 refunds a quota claim when its first batch is admission busy", async () => {
+  const { token, policy } = await prepareApiKeyInference("7", "images-five-admission-busy", 1);
+  const accountIdHash = await sha256Hex("uos_ai\0codex_routing_account\0acct-1");
+  const acquiredAtMs = Date.now();
+  const occupiedSlotKeys = Array.from({ length: 4 }, (_, slot) => codexAdmissionSlotKey(accountIdHash, slot));
+  for (const [slot, slotKey] of occupiedSlotKeys.entries()) {
+    kv.values.set(encodeKey(slotKey), {
+      v: 1,
+      token: `occupied-slot-${slot}`,
+      account_id_hash: accountIdHash,
+      quota_class: "standard",
+      caller_lane_hash: `${slot + 1}`.padStart(64, "0"),
+      slot,
+      acquired_at_ms: acquiredAtMs,
+      expires_at_ms: acquiredAtMs + 60_000,
+    });
+  }
+  kv.resetCounts();
+
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = () => {
+    fetchCalls += 1;
+    return Promise.resolve(sse());
+  };
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const pending = handler(
+      new Request("https://ai.ubq.fi/v1/images/generations", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: "five admission-busy images", n: 5 }),
+      }),
+    );
+    const outcome = await Promise.race([
+      pending.then((response) => ({ kind: "response" as const, response })),
+      new Promise<{ kind: "timeout" }>((resolve) => {
+        timeout = setTimeout(() => resolve({ kind: "timeout" }), 1_000);
+      }),
+    ]);
+    assert.notEqual(outcome.kind, "timeout", "the first batch must not wait for the unstarted fifth child");
+    if (outcome.kind !== "response") return;
+
+    assert.equal(outcome.response.status, 503);
+    const payload = await outcome.response.json() as { error?: { code?: string } };
+    assert.equal(payload.error?.code, CODEX_ADMISSION_BUSY_ERROR_CODE);
+    assert.equal(fetchCalls, 0, "no child, including the fifth, may reach provider transport");
+    const callerLaneReads = new Set(
+      kv.readKeys
+        .filter((key) => key[0] === "uos_ai" && key[1] === "codex_admission" && key.includes("caller"))
+        .map(encodeKey),
+    );
+    assert.equal(callerLaneReads.size, 4, "the fifth child must remain outside the failed first batch");
+    assert.deepEqual(usageWindow(policy), {
+      committed_requests: 0,
+      reserved_requests: 0,
+      window_reset_at_ms: policy.usage_reset_at_ms,
+    });
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+    for (const slotKey of occupiedSlotKeys) kv.values.delete(encodeKey(slotKey));
     globalThis.fetch = originalFetch;
   }
 });
