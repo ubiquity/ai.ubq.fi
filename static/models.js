@@ -11,6 +11,7 @@ if (!summary || !list || !count || !(search instanceof HTMLInputElement)) {
 
 const providerNames = { codex: "Codex", openlux: "Metered 2", surplus: "Metered 1" };
 const reasoningOrder = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
+const tokenNumber = new Intl.NumberFormat("en-US");
 
 const normalizeReasoningLevels = (value) => {
   if (!Array.isArray(value)) return [];
@@ -36,16 +37,27 @@ const reasoningFor = (model) => {
   return getRecentModelReasoning(model.id);
 };
 
+const positiveTokenCount = (value) =>
+  typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
+
 let catalog = [];
 
 const render = () => {
   const query = search.value.trim().toLowerCase();
   const visible = catalog.filter((model) => {
     const reasoning = reasoningFor(model);
+    const contextSearch = [
+      model.model_class,
+      model.context_window_tokens,
+      model.max_context_window_tokens,
+      model.auto_compact_token_limit_tokens,
+      model.context_window_tokens ? "context compact compression" : "",
+    ].filter((value) => value !== null && value !== undefined).join(" ").toLowerCase();
     return !query || model.id.toLowerCase().includes(query) ||
       model.providers.some((provider) => providerNames[provider.id].toLowerCase().includes(query)) ||
       reasoning?.modelClass?.includes(query) ||
-      reasoning?.levels.some((level) => level.includes(query));
+      reasoning?.levels.some((level) => level.includes(query)) ||
+      contextSearch.includes(query);
   });
   count.textContent = `${visible.length} model${visible.length === 1 ? "" : "s"}`;
   list.replaceChildren(...visible.map((model) => {
@@ -71,6 +83,27 @@ const render = () => {
       levels.textContent = `Reasoning · ${classLabel}${reasoning.levels.join(", ")}`;
       if (reasoning.defaultLevel) levels.title = `Default: ${reasoning.defaultLevel}`;
       article.append(levels);
+    }
+
+    const contextWindow = positiveTokenCount(model.context_window_tokens);
+    const maxContextWindow = positiveTokenCount(model.max_context_window_tokens);
+    const autoCompact = positiveTokenCount(model.auto_compact_token_limit_tokens);
+    if (contextWindow) {
+      const context = document.createElement("div");
+      context.dataset.contextWindow = "";
+      const maxSuffix = maxContextWindow && maxContextWindow !== contextWindow
+        ? ` / ${tokenNumber.format(maxContextWindow)} max`
+        : "";
+      context.textContent = `Context · ${tokenNumber.format(contextWindow)} tokens${maxSuffix}`;
+      if (model.model_class) context.title = `Model class: ${model.model_class}`;
+      article.append(context);
+    }
+    if (autoCompact) {
+      const compact = document.createElement("div");
+      compact.dataset.autoCompact = "";
+      compact.textContent = `Auto-compact · ${tokenNumber.format(autoCompact)} tokens`;
+      compact.title = "Summarize older conversation state before the physical context window fills";
+      article.append(compact);
     }
     return article;
   }));
