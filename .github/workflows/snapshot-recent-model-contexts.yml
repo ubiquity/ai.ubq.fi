@@ -1,0 +1,44 @@
+name: Snapshot Recent Model Contexts
+
+on:
+  push:
+    branches:
+      - feature/recent-model-reasoning-levels
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  snapshot:
+    if: ${{ !contains(github.event.head_commit.message || '', '[context snapshot]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
+        with:
+          deno-version: 2.9.5
+      - name: Snapshot current provider limits
+        env:
+          UOS_AI_TOKEN: ${{ secrets.UBIQUITY_AI_USER_TOKEN }}
+          OPENLUX_API_KEY: ${{ secrets.OPENLUX_API_KEY }}
+          METERED_API_KEY: ${{ secrets.METERED_API_KEY }}
+        run: deno run --allow-env=UOS_AI_TOKEN,OPENLUX_API_KEY,METERED_API_KEY --allow-net=ai.ubq.fi,api.openlux.ai,api.surplusintelligence.ai --allow-read=static --allow-write=static,docs scripts/snapshot-recent-model-contexts.ts
+      - name: Format generated files
+        run: deno fmt static/reasoning-select.js static/models.js docs/recent-model-context-audit.md
+      - name: Commit snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "No snapshot changes."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add static/reasoning-select.js static/models.js docs/recent-model-context-audit.md
+          git commit -m "chore(models): refresh context limits [context snapshot]"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
