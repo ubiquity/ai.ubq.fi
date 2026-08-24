@@ -1,39 +1,24 @@
 name: Context Catalog Audit
 
 on:
+  pull_request:
   push:
     branches:
       - feature/recent-model-context-windows
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   catalog:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: feature/recent-model-context-windows
       - name: Fetch live public catalog
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p docs
           curl --fail --silent --show-error \
             -H 'Accept: application/json' \
             https://ai.ubq.fi/uos/models/catalog \
-            > docs/live-context-catalog.json
-          jq -r '.data[] | [.id, (.created // 0), ([.providers[].id] | join(","))] | @tsv' \
-            docs/live-context-catalog.json \
-            > docs/live-context-catalog.tsv
-      - name: Commit audit snapshot
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add docs/live-context-catalog.json docs/live-context-catalog.tsv
-          git commit -m 'chore: capture live model catalog' || exit 0
-          git push origin HEAD:feature/recent-model-context-windows
+            > catalog.json
+          jq -r '.data[] | [.id, (.created // 0), ([.providers[].id] | join(","))] | @tsv' catalog.json
