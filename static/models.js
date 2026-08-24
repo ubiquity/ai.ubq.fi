@@ -1,3 +1,5 @@
+import { getRecentModelReasoning } from "./reasoning-select.js?v=20260824-recent-reasoning-v2";
+
 const summary = document.querySelector("[data-source-summary]");
 const list = document.querySelector("[data-model-list]");
 const count = document.querySelector("[data-model-count]");
@@ -8,14 +10,43 @@ if (!summary || !list || !count || !(search instanceof HTMLInputElement)) {
 }
 
 const providerNames = { codex: "Codex", openlux: "Metered 2", surplus: "Metered 1" };
+const reasoningOrder = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
+
+const normalizeReasoningLevels = (value) => {
+  if (!Array.isArray(value)) return [];
+  const levels = value
+    .map((entry) => typeof entry === "string" ? entry : entry?.effort)
+    .filter((entry) => typeof entry === "string" && entry.length > 0);
+  return [...new Set(levels)].sort((a, b) => {
+    const aIndex = reasoningOrder.indexOf(a);
+    const bIndex = reasoningOrder.indexOf(b);
+    return (aIndex < 0 ? reasoningOrder.length : aIndex) - (bIndex < 0 ? reasoningOrder.length : bIndex);
+  });
+};
+
+const reasoningFor = (model) => {
+  const advertised = normalizeReasoningLevels(model.supported_reasoning_levels);
+  if (advertised.length) {
+    return {
+      modelClass: model.model_class ?? null,
+      levels: advertised,
+      defaultLevel: model.default_reasoning_effort ?? null,
+    };
+  }
+  return getRecentModelReasoning(model.id);
+};
+
 let catalog = [];
 
 const render = () => {
   const query = search.value.trim().toLowerCase();
-  const visible = catalog.filter((model) =>
-    !query || model.id.toLowerCase().includes(query) ||
-    model.providers.some((provider) => providerNames[provider.id].toLowerCase().includes(query))
-  );
+  const visible = catalog.filter((model) => {
+    const reasoning = reasoningFor(model);
+    return !query || model.id.toLowerCase().includes(query) ||
+      model.providers.some((provider) => providerNames[provider.id].toLowerCase().includes(query)) ||
+      reasoning?.modelClass?.includes(query) ||
+      reasoning?.levels.some((level) => level.includes(query));
+  });
   count.textContent = `${visible.length} model${visible.length === 1 ? "" : "s"}`;
   list.replaceChildren(...visible.map((model) => {
     const article = document.createElement("article");
@@ -31,6 +62,16 @@ const render = () => {
       providers.append(badge);
     }
     article.append(heading, providers);
+
+    const reasoning = reasoningFor(model);
+    if (reasoning?.levels.length) {
+      const levels = document.createElement("div");
+      levels.dataset.reasoningLevels = "";
+      const classLabel = reasoning.modelClass ? `${reasoning.modelClass}: ` : "";
+      levels.textContent = `Reasoning · ${classLabel}${reasoning.levels.join(", ")}`;
+      if (reasoning.defaultLevel) levels.title = `Default: ${reasoning.defaultLevel}`;
+      article.append(levels);
+    }
     return article;
   }));
 };

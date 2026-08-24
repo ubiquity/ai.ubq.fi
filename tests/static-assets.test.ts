@@ -38,6 +38,7 @@ Deno.test("static assets register frontend module dependencies", () => {
 Deno.test("public models page is registered", () => {
   assert.equal(hasStaticAsset("/models"), true);
   assert.equal(hasStaticAsset("/models.html"), true);
+  assert.match(modelsHtml, /<script type="module" src="\/models\.js\?v=20260824-recent-reasoning-v2"><\/script>/);
 });
 
 Deno.test("public brand logos are inline and inherit the page foreground", async () => {
