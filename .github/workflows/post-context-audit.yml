@@ -1,0 +1,33 @@
+name: Publish Context Audit
+
+on:
+  push:
+    branches:
+      - feature/recent-model-reasoning-levels
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+      - name: Post generated audit to PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr comment 126 --body-file docs/recent-model-context-audit.md
+      - name: Remove one-shot workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/post-context-audit.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A .github/workflows
+          git commit -m "chore(models): remove audit publisher [context snapshot]"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
