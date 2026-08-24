@@ -17,8 +17,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error \
+          if ! curl --fail --silent --show-error \
+            -A 'Mozilla/5.0 (compatible; ai.ubq.fi catalog audit)' \
             -H 'Accept: application/json' \
             https://ai.ubq.fi/uos/models/catalog \
-            > catalog.json
-          jq -r '.data[] | [.id, (.created // 0), ([.providers[].id] | join(","))] | @tsv' catalog.json
+            > catalog.json; then
+            curl --fail --silent --show-error \
+              https://r.jina.ai/http://ai.ubq.fi/uos/models/catalog \
+              > catalog.json
+          fi
+          cat catalog.json
