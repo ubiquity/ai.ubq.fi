@@ -1,0 +1,23 @@
+name: Context Catalog Audit
+
+on:
+  push:
+    branches:
+      - feature/recent-model-context-windows
+
+permissions:
+  contents: read
+
+jobs:
+  catalog:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch live public catalog
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error \
+            -H 'Accept: application/json' \
+            https://ai.ubq.fi/uos/models/catalog \
+            > catalog.json
+          jq -r '.data[] | [.id, (.created // 0), ([.providers[].id] | join(","))] | @tsv' catalog.json
