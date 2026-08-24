@@ -10113,7 +10113,8 @@ Deno.test("openai: cache token usage reaches Chat clients and internal telemetry
       firstProviderHeadersMs: null,
       firstCodexDispatchMs: null,
       firstCodexHeadersMs: null,
-      firstSseEventMs: null,
+      firstUpstreamSseEventMs: null,
+      firstSemanticCommitmentMs: null,
       streamTerminalMs: null,
       attemptedProviders: ["chatgpt_codex"],
       removedProviderTriggerClass: null,
@@ -12394,11 +12395,24 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
         () =>
           handleChatCompletions(
             request({ ...canonicalBody, stream: true, stream_options: { include_usage: true } }),
+            {
+              keyId: null,
+              kernelRepo: null,
+              kernelOrg: null,
+              requestId: "cerebras-buffered-stream-telemetry",
+              startedAtMs: Date.now(),
+              startedAtMonotonicMs: performance.now(),
+            },
           ),
       );
       assert.equal(streamResponse.status, 200);
       assert.equal(streamResponse.headers.get("Content-Type"), "text/event-stream");
       assert.equal(streamResponse.headers.get("x-uos-warning"), "gpt_oss_stream_downgraded");
+      const telemetry = getResponseTelemetry(streamResponse);
+      assert.ok(telemetry);
+      assert.equal(telemetry.firstUpstreamSseEventMs, null);
+      assert.equal(typeof telemetry.firstSemanticCommitmentMs, "number");
+      assert.equal(typeof telemetry.streamTerminalMs, "number");
       const streamText = await streamResponse.text();
       assert.match(streamText, /"object":"chat\.completion\.chunk"/);
       assert.match(streamText, /"content":"Ready"/);
@@ -12748,12 +12762,64 @@ Deno.test("openai: precommit telemetry records response.created before a malform
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping", stream: true }),
         }),
+        {
+          keyId: null,
+          kernelRepo: null,
+          kernelOrg: null,
+          requestId: "responses-precommit-telemetry",
+          startedAtMs: Date.now(),
+          startedAtMonotonicMs: performance.now(),
+        },
       ),
   );
   assert.equal(response.status, 502);
-  assert.equal(getResponseTelemetry(response)?.failureKind, "malformed_event");
-  assert.equal(getResponseTelemetry(response)?.responseCreatedObserved, true);
-  assert.equal(getResponseTelemetry(response)?.syntheticTerminalType, null);
+  const telemetry = getResponseTelemetry(response);
+  assert.ok(telemetry);
+  assert.equal(telemetry.failureKind, "malformed_event");
+  assert.equal(telemetry.responseCreatedObserved, true);
+  assert.equal(telemetry.syntheticTerminalType, null);
+  assert.equal(typeof telemetry.firstUpstreamSseEventMs, "number");
+  assert.equal(telemetry.firstSemanticCommitmentMs, null);
+  assert.equal(typeof telemetry.streamTerminalMs, "number");
+  assert.ok(telemetry.firstUpstreamSseEventMs! <= telemetry.streamTerminalMs!);
+});
+
+Deno.test("openai: Chat precommit telemetry separates upstream arrival from semantic commitment", async () => {
+  const response = await withFetchMock(
+    () =>
+      sseResponse([
+        `data: ${JSON.stringify({ type: "response.created", response: { id: "chat_precommit_malformed" } })}\n\n`,
+        'data: {"type":\n\n',
+      ]),
+    () =>
+      handleChatCompletions(
+        new Request("https://ai.ubq.fi/v1/chat/completions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: DEFAULT_TEST_MODEL,
+            messages: [{ role: "user", content: "ping" }],
+            stream: true,
+          }),
+        }),
+        {
+          keyId: null,
+          kernelRepo: null,
+          kernelOrg: null,
+          requestId: "chat-precommit-telemetry",
+          startedAtMs: Date.now(),
+          startedAtMonotonicMs: performance.now(),
+        },
+      ),
+  );
+  assert.equal(response.status, 502);
+  const telemetry = getResponseTelemetry(response);
+  assert.ok(telemetry);
+  assert.equal(telemetry.failureKind, "malformed_event");
+  assert.equal(typeof telemetry.firstUpstreamSseEventMs, "number");
+  assert.equal(telemetry.firstSemanticCommitmentMs, null);
+  assert.equal(typeof telemetry.streamTerminalMs, "number");
+  assert.ok(telemetry.firstUpstreamSseEventMs! <= telemetry.streamTerminalMs!);
 });
 
 Deno.test("openai: streamed Responses force the SSE content type", async () => {

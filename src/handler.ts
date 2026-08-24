@@ -267,7 +267,7 @@ const logTerminalRequest = async (
   const telemetry = getResponseTelemetry(input.telemetryResponse ?? input.response);
   const accountCohortId = getResponseAccountCohortId(input.telemetryResponse ?? input.response);
   const latencyMs = Math.max(0, Math.round(performance.now() - input.startedAtMonotonicMs));
-  const downstreamDrainMs = telemetry?.stream === true && telemetry.firstSseEventMs !== null &&
+  const downstreamDrainMs = telemetry?.stream === true && telemetry.firstSemanticCommitmentMs !== null &&
       telemetry.streamTerminalMs !== null && input.downstreamDrainedAtMonotonicMs !== undefined
     ? Math.max(
       0,
@@ -284,7 +284,8 @@ const logTerminalRequest = async (
     first_provider_headers_ms: telemetry?.firstProviderHeadersMs ?? null,
     first_codex_dispatch_ms: telemetry?.firstCodexDispatchMs ?? null,
     first_codex_headers_ms: telemetry?.firstCodexHeadersMs ?? null,
-    first_sse_event_ms: telemetry?.firstSseEventMs ?? null,
+    first_upstream_sse_event_ms: telemetry?.firstUpstreamSseEventMs ?? null,
+    first_semantic_commitment_ms: telemetry?.firstSemanticCommitmentMs ?? null,
     stream_terminal_ms: telemetry?.streamTerminalMs ?? null,
     downstream_drain_ms: downstreamDrainMs,
     delivery_outcome: input.deliveryOutcome,

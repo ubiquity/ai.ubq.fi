@@ -269,7 +269,8 @@ export type ResponseTelemetry = Readonly<{
   firstProviderHeadersMs: number | null;
   firstCodexDispatchMs: number | null;
   firstCodexHeadersMs: number | null;
-  firstSseEventMs: number | null;
+  firstUpstreamSseEventMs: number | null;
+  firstSemanticCommitmentMs: number | null;
   streamTerminalMs: number | null;
   attemptedProviders: readonly string[];
   removedProviderTriggerClass: string | null;
@@ -323,7 +324,8 @@ type ResponseTelemetryState = {
   firstProviderHeadersMs: number | null;
   firstCodexDispatchMs: number | null;
   firstCodexHeadersMs: number | null;
-  firstSseEventMs: number | null;
+  firstUpstreamSseEventMs: number | null;
+  firstSemanticCommitmentMs: number | null;
   streamTerminalMs: number | null;
   attemptedProviders: string[];
   removedProviderTriggerClass: string | null;
@@ -370,7 +372,8 @@ const createResponseTelemetryState = (): ResponseTelemetryState => ({
   firstProviderHeadersMs: null,
   firstCodexDispatchMs: null,
   firstCodexHeadersMs: null,
-  firstSseEventMs: null,
+  firstUpstreamSseEventMs: null,
+  firstSemanticCommitmentMs: null,
   streamTerminalMs: null,
   attemptedProviders: [],
   removedProviderTriggerClass: null,
@@ -496,7 +499,8 @@ const aggregateResponseTelemetry = (
       | "firstProviderHeadersMs"
       | "firstCodexDispatchMs"
       | "firstCodexHeadersMs"
-      | "firstSseEventMs",
+      | "firstUpstreamSseEventMs"
+      | "firstSemanticCommitmentMs",
   ): number | null => {
     const values = states.map((state) => state[key]).filter((value): value is number => value !== null);
     return values.length > 0 ? Math.min(...values) : null;
@@ -505,7 +509,8 @@ const aggregateResponseTelemetry = (
   aggregate.firstProviderHeadersMs = earliestTiming("firstProviderHeadersMs");
   aggregate.firstCodexDispatchMs = earliestTiming("firstCodexDispatchMs");
   aggregate.firstCodexHeadersMs = earliestTiming("firstCodexHeadersMs");
-  aggregate.firstSseEventMs = earliestTiming("firstSseEventMs");
+  aggregate.firstUpstreamSseEventMs = earliestTiming("firstUpstreamSseEventMs");
+  aggregate.firstSemanticCommitmentMs = earliestTiming("firstSemanticCommitmentMs");
   const terminalTimes = states.map((state) => state.streamTerminalMs).filter((value): value is number =>
     value !== null
   );
@@ -571,7 +576,8 @@ export const getResponseTelemetry = (response: Response): ResponseTelemetry | nu
     firstProviderHeadersMs: state.firstProviderHeadersMs,
     firstCodexDispatchMs: state.firstCodexDispatchMs,
     firstCodexHeadersMs: state.firstCodexHeadersMs,
-    firstSseEventMs: state.firstSseEventMs,
+    firstUpstreamSseEventMs: state.firstUpstreamSseEventMs,
+    firstSemanticCommitmentMs: state.firstSemanticCommitmentMs,
     streamTerminalMs: state.streamTerminalMs,
     attemptedProviders: [...state.attemptedProviders],
     removedProviderTriggerClass: state.removedProviderTriggerClass,
@@ -607,7 +613,8 @@ type ResponseTelemetryTimingField =
   | "firstProviderHeadersMs"
   | "firstCodexDispatchMs"
   | "firstCodexHeadersMs"
-  | "firstSseEventMs"
+  | "firstUpstreamSseEventMs"
+  | "firstSemanticCommitmentMs"
   | "streamTerminalMs";
 
 // Timings are elapsed from handler ingress using a monotonic clock. They are
@@ -675,8 +682,12 @@ const persistFailedRemovedProviderAttempt = (
   return persistRemovedProviderFields(context);
 };
 
-const recordFirstSseEvent = (context: UsageContext | undefined): void => {
-  recordResponseTiming(context, "firstSseEventMs");
+const recordFirstUpstreamSseEvent = (context: UsageContext | undefined): void => {
+  recordResponseTiming(context, "firstUpstreamSseEventMs");
+};
+
+const recordFirstSemanticCommitment = (context: UsageContext | undefined): void => {
+  recordResponseTiming(context, "firstSemanticCommitmentMs");
 };
 
 const recordStreamTerminal = (context: UsageContext | undefined): void => {
@@ -748,7 +759,17 @@ const runWithResponseTelemetry = async (
   run: (context: UsageContext) => Promise<Response>,
 ): Promise<Response> => {
   const state = createResponseTelemetryState();
-  const response = await run(withResponseTelemetryContext(context, state));
+  const telemetryContext = withResponseTelemetryContext(context, state);
+  const response = await run(telemetryContext);
+  // Attempt-level terminal types can be abandoned during failover. Record a
+  // precommit terminal time only after the handler has selected the final
+  // response, and only when an upstream SSE event was actually observed.
+  if (
+    state.firstUpstreamSseEventMs !== null && state.firstSemanticCommitmentMs === null &&
+    state.streamTerminalType !== null && state.streamTerminalMs === null
+  ) {
+    recordStreamTerminal(telemetryContext);
+  }
   return attachResponseTelemetry(response, state);
 };
 
@@ -979,7 +1000,7 @@ const recordStreamTerminalType = (
   const telemetry = context?.responseTelemetry;
   if (!telemetry) return;
   telemetry.streamTerminalType = terminalType;
-  if (telemetry.firstSseEventMs !== null) recordStreamTerminal(context);
+  if (telemetry.firstSemanticCommitmentMs !== null) recordStreamTerminal(context);
 };
 
 const classifyStreamFailure = (
@@ -1246,7 +1267,10 @@ const prepareResponsesAttempt = async (
   let preparedStream: PreparedResponsesStream | null = null;
   try {
     const prepared = await prepareResponsesStreamForCommit(iterator, {
-      onEvent: (event) => recordResponsesEventTelemetry(options.usageContext, event),
+      onEvent: (event) => {
+        recordFirstUpstreamSseEvent(options.usageContext);
+        recordResponsesEventTelemetry(options.usageContext, event);
+      },
       releaseOnProgress: options.releaseOnProgress,
     });
     preparedStream = prepared;
@@ -1710,7 +1734,6 @@ const collectBufferedResponses = async (
   };
   try {
     for await (const event of initial) {
-      recordFirstSseEvent(options.usageContext);
       const ev = event.value;
       const eventResponseId = responseIdFromEvents([event]);
       if (eventResponseId && responseId && eventResponseId !== responseId) {
@@ -8520,7 +8543,7 @@ const handleCerebrasChatCompletions = async (
   if (usageContext?.responseTelemetry) usageContext.responseTelemetry.providerRequestId = providerRequestId;
   const usage = extractChatUsageTokens(normalized.value.usage);
   await recordCompletionUsage(usageContext, usage);
-  if (clientWantsStream) recordFirstSseEvent(usageContext);
+  if (clientWantsStream) recordFirstSemanticCommitment(usageContext);
   recordStreamTerminalType(usageContext, "response.completed");
   recordCerebrasResponseHealth(upstream.status, providerRequestId);
   const responseHeaders = cerebrasResponseHeaders(
@@ -8814,7 +8837,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
         }
         : {},
     );
-    recordFirstSseEvent(usageContext);
+    recordFirstUpstreamSseEvent(usageContext);
     const replay = (async function* (): ResponsesStreamIterator {
       try {
         yield firstEvent.first;
@@ -8867,6 +8890,7 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
     await recordErrorUsage(usageContext);
     return streamPreflightFailureResponse(terminalType, routed.provider, [...warnings, ...providerWarnings]);
   }
+  recordFirstSemanticCommitment(usageContext);
   const response = stream
     ? streamChatCompletions(
       preflight,
@@ -9671,6 +9695,11 @@ const handleResponsesInternal = async (
     }
   };
 
+  // Preflight has established either semantic ownership or a valid terminal,
+  // so this is the content-free release boundary. Parser callbacks record the
+  // earlier first upstream SSE event independently.
+  recordFirstSemanticCommitment(usageContext);
+
   // Preflight can already contain a terminal. Record its provider outcome
   // before returning a body that a client may cancel without consuming.
   if (ready.prepared.terminal) onTerminal(ready.prepared.terminal);
@@ -9700,7 +9729,6 @@ const handleResponsesInternal = async (
     return withUosWarning(response, clientWarnings);
   }
 
-  recordFirstSseEvent(usageContext);
   const body = createOwnedResponsesStream({
     initial: ready.prepared.buffered,
     iterator: ready.prepared.iterator,
@@ -9833,6 +9861,14 @@ const IMAGE_MODERATION_LEVELS = new Set(["low", "auto"]);
 const IMAGE_INPUT_FIDELITIES = new Set(["low", "high"]);
 const IMAGE_TEXT_ENCODER = new TextEncoder();
 
+// Internal test seam for image translation tests. It avoids requiring the
+// test runner to grant environment access for a deployment-only override.
+let imageBaseModelForTest: string | null = null;
+
+export const setImageBaseModelForTest = (model: string | null): void => {
+  imageBaseModelForTest = model;
+};
+
 const IMAGE_SHARED_REQUEST_KEYS = [
   "model",
   "prompt",
@@ -9881,6 +9917,7 @@ type ImageHandlerOptions = Readonly<{
 
 /** Resolve the text model that hosts the image tool. */
 export const resolveImageBaseModel = async (): Promise<string | null> => {
+  if (imageBaseModelForTest !== null) return imageBaseModelForTest;
   let configured: string | null = null;
   try {
     const raw = Deno.env.get(IMAGE_BASE_MODEL_ENV)?.trim();
