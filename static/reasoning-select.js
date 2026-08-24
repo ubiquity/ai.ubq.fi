@@ -32,6 +32,12 @@ const RECENT_MODEL_REASONING_RULES = [
     defaultLevel: "high",
   },
   {
+    modelClass: "claude-opus-4.7",
+    pattern: /(?:^|\/)claude-opus-4\.7(?:$|-)/i,
+    levels: ["low", "medium", "high", "xhigh", "max"],
+    defaultLevel: "high",
+  },
+  {
     modelClass: "deepseek-v4",
     pattern: /(?:^|\/)deepseek-v4(?:$|-)/i,
     levels: ["none", "high", "max"],
@@ -145,9 +151,7 @@ export const getRecentModelReasoning = (modelId) => {
   const id = typeof modelId === "string" ? modelId.trim() : "";
   if (!id) return null;
   const rule = RECENT_MODEL_REASONING_RULES.find(({ pattern }) => pattern.test(id));
-  return rule
-    ? { modelClass: rule.modelClass, levels: [...rule.levels], defaultLevel: rule.defaultLevel }
-    : null;
+  return rule ? { modelClass: rule.modelClass, levels: [...rule.levels], defaultLevel: rule.defaultLevel } : null;
 };
 
 const getTrimmedString = (value) => (typeof value === "string" ? value.trim() : "");
