@@ -1329,3 +1329,45 @@ Deno.test("passkey user handlers list and toggle admin", async () => {
   const afterBody = await listAfter.json();
   assert.equal(afterBody.data[0].is_admin, true);
 });
+Deno.test("unattested GitHub tokens never reach Deno verification", async () => {
+  kvStore.clear();
+  const originalFetch = globalThis.fetch;
+  const requested: Array<{ url: string; authorization: string | null; cookie: string | null }> = [];
+  const token = "ghp_unattested_github_token_1234567890abcdefghijklmnopqrstuvwxyz";
+
+  globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const headers = new Headers(init?.headers);
+    requested.push({
+      url: String(input),
+      authorization: headers.get("authorization"),
+      cookie: headers.get("cookie"),
+    });
+    return Promise.resolve(new Response("{}", { status: 200 }));
+  };
+
+  try {
+    await withEnv({
+      DENO_DEPLOY_APP_SLUG: "ai-ubq-fi",
+      DENO_DEPLOY_ORG_SLUG: "ubiquity-dao",
+      DENO_DEPLOYMENT_ID: "deployment-test",
+    }, async () => {
+      const req = new Request("https://ai.ubq.fi/uos/auth", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      const clientAuth = await authenticateClient(req);
+      assert.equal(clientAuth.ok, false);
+      if (!clientAuth.ok) assert.equal(clientAuth.response.status, 401);
+
+      const adminAuth = await authenticateAdmin(req);
+      assert.equal(adminAuth.ok, false);
+      if (!adminAuth.ok) assert.equal(adminAuth.response.status, 401);
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  assert.equal(requested.length, 0);
+  assert.equal(requested.some(({ authorization }) => authorization === `Bearer ${token}`), false);
+  assert.equal(requested.some(({ cookie }) => cookie?.includes(`token=${token}`) ?? false), false);
+});

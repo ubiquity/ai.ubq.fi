@@ -526,10 +526,16 @@ const authenticateGitHubToken = async (
   token: string,
 ): Promise<{ ok: true; method: ClientAuthMethod } | { ok: false; response: Response } | null> => {
   if (!looksLikeGitHubToken(token)) return null;
+  // An explicitly configured admin token remains an allowlisted credential,
+  // even if its value happens to use a GitHub token prefix. Let the normal
+  // admin-token check handle it without attempting GitHub attestation.
+  if (config.adminTokens.has(token)) return null;
 
   const repoHeaders = getGitHubRepoHeaders(req);
   const kernelToken = (req.headers.get("X-Ubiquity-Kernel-Token") ?? "").trim();
-  if (!repoHeaders && !kernelToken) return null;
+  if (!repoHeaders && !kernelToken) {
+    return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
+  }
 
   const attestation = await verifyKernelAttestation(req, {
     token,
@@ -887,6 +893,10 @@ const checkAdminToken = async (token: string): Promise<CheckAdminTokenResult> =>
     return { ok: true, kind: "admin_allowlist" };
   }
 
+  // GitHub credentials must be handled by the attested GitHub path. Never
+  // treat an unattested GitHub credential as a candidate Deno Deploy token.
+  if (looksLikeGitHubToken(token)) return { ok: false, response: null };
+
   if (!looksLikeDenoDeployToken(token)) return { ok: false, response: null };
 
   const verified = await verifyDenoDeployTokenCached(token);
@@ -936,6 +946,11 @@ export const authenticateAdmin = async (req: Request): Promise<AdminAuthResult> 
 
   if (!token) {
     logAdminAuth({ ok: false, method: "missing", status: 401, reason: "missing_token" });
+    return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
+  }
+
+  if (looksLikeGitHubToken(token) && !config.adminTokens.has(token)) {
+    logAdminAuth({ ok: false, method: "github_token", status: 401, reason: "missing_github_attestation" });
     return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
   }
 
