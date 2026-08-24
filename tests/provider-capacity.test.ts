@@ -14,6 +14,7 @@ import {
   PROVIDER_CAPACITY_HISTORY_KEY_PREFIX,
   PROVIDER_CAPACITY_HISTORY_RETENTION_MS,
   PROVIDER_CAPACITY_LEASE_KEY,
+  PROVIDER_CAPACITY_RATE_LIMIT_RESET_MIN_GAIN_PERCENTAGE_POINTS,
   PROVIDER_CAPACITY_SNAPSHOT_KEY,
   PROVIDER_CAPACITY_SOURCE_STALE_MS,
   type ProviderCapacityCodexSource,
@@ -25,6 +26,7 @@ import { PROMPT_CACHE_ANALYTICS_BUCKET_MS, promptCacheAnalyticsCounterKey } from
 import {
   listProviderCapacityDowntimeEvents,
   PROVIDER_CAPACITY_DOWNTIME_EVENT_KV_PREFIX,
+  PROVIDER_CAPACITY_RATE_LIMIT_RESET_EVENT_KV_PREFIX,
   PROVIDER_CAPACITY_RESET_EVENT_KV_PREFIX,
   recordProviderCapacityDowntimeEvent,
 } from "../src/provider_capacity_events.ts";
@@ -153,17 +155,22 @@ const seed = (): void => {
   Deno.env.set("METERED_API_KEY", "metered-api-key");
 };
 
-const codexUsageBody = (primaryUsed: number, secondaryUsed: number) => ({
+const codexUsageBody = (
+  primaryUsed: number,
+  secondaryUsed: number,
+  primaryResetAt = 1_800_010_000,
+  secondaryResetAt = 1_800_020_000,
+) => ({
   rate_limit: {
     primary_window: {
       limit_window_seconds: 10_800,
       used_percent: primaryUsed,
-      reset_at: 1_800_010_000,
+      reset_at: primaryResetAt,
     },
     secondary_window: {
       limit_window_seconds: 86_400,
       used_percent: secondaryUsed,
-      reset_at: 1_800_020_000,
+      reset_at: secondaryResetAt,
     },
   },
   private_account_field: "must-not-escape",
@@ -211,6 +218,7 @@ const createFetcher = (
   codexSparkResetAt = 1_800_011_000,
   failureStatus = 503,
   codexSparkForAccount: ((account: string | null) => boolean) | null = null,
+  codexResetAt: ((account: string | null) => readonly [number, number]) | null = null,
 ) =>
 (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   const headers = new Headers(init?.headers);
@@ -237,11 +245,14 @@ const createFetcher = (
     return Promise.resolve(new Response("upstream-secret-body", { status: failureStatus }));
   }
   const used = codexUsage?.(account) ?? (account === "account-one" ? [12.5, 38] : [67, 81.25]);
+  const resetAt = codexResetAt?.(account);
   const includeCodexSpark = codexSparkForAccount ? codexSparkForAccount(account) : codexSpark;
   return Promise.resolve(
     new Response(
       JSON.stringify(
-        includeCodexSpark ? codexSparkUsageBody(used[0], used[1], codexSparkResetAt) : codexUsageBody(used[0], used[1]),
+        includeCodexSpark
+          ? codexSparkUsageBody(used[0], used[1], codexSparkResetAt)
+          : codexUsageBody(used[0], used[1], resetAt?.[0], resetAt?.[1]),
       ),
       {
         status: 200,
@@ -371,7 +382,12 @@ Deno.test("sampler mirrors a reported Spark limit to an available sibling for th
   );
 });
 
-const historySource = (slot: 1 | 2, sampledAtMs: number, state: "available" | "unavailable" = "available") => ({
+const historySource = (
+  slot: 1 | 2,
+  sampledAtMs: number,
+  state: "available" | "unavailable" = "available",
+  options: Readonly<{ primaryUsed?: number; primaryResetAtMs?: number }> = {},
+) => ({
   source: "codex" as const,
   label: `Codex account ${slot}`,
   slot,
@@ -382,8 +398,8 @@ const historySource = (slot: 1 | 2, sampledAtMs: number, state: "available" | "u
     ? {
       primary: {
         limit_window_seconds: 10_800,
-        used_percent: slot === 1 ? 20 : 40,
-        reset_at_ms: sampledAtMs + 10_800_000,
+        used_percent: options.primaryUsed ?? (slot === 1 ? 20 : 40),
+        reset_at_ms: options.primaryResetAtMs ?? sampledAtMs + 10_800_000,
       },
       secondary: {
         limit_window_seconds: 86_400,
@@ -498,6 +514,178 @@ Deno.test("sampler preserves an exhaustion point when a reset refills the same b
   assert.equal(refilled.history[1]?.sources[0]?.windows.primary?.used_percent, 0);
 });
 
+Deno.test("sampler records a substantial rate-limit reset and preserves both same-bucket samples", async () => {
+  seed();
+  let phase = 0;
+  const fetcher = createFetcher(
+    [],
+    null,
+    {},
+    (account) => account === "account-one" ? (phase === 0 ? [80, 35] : [20, 35]) : [45, 55],
+    false,
+    1_800_011_000,
+    503,
+    null,
+    (account) =>
+      account === "account-one"
+        ? (phase === 0 ? [1_800_010_000, 1_800_020_000] : [1_800_020_000, 1_800_020_000])
+        : [1_800_010_000, 1_800_020_000],
+  );
+
+  await refreshProviderCapacity({ kv: kvStub, fetcher, now: () => nowMs });
+  phase = 1;
+  const reset = await refreshProviderCapacity({
+    kv: kvStub,
+    fetcher,
+    now: () => nowMs + 1_000,
+  });
+
+  assert.deepEqual(reset.history.map((point) => point.sampled_at_ms), [nowMs, nowMs + 1_000]);
+  assert.equal(reset.history[0]?.sources[0]?.windows.primary?.used_percent, 80);
+  assert.equal(reset.history[1]?.sources[0]?.windows.primary?.used_percent, 20);
+  assert.deepEqual(reset.rate_limit_reset_events, [{
+    v: 1,
+    event_id: "openai-1-primary-1800000000000-1800000001000",
+    provider: "openai",
+    slot: 1,
+    window: "primary",
+    observed_at_ms: nowMs + 1_000,
+    previous_sampled_at_ms: nowMs,
+    previous_reset_at_ms: 1_800_010_000_000,
+    reset_at_ms: 1_800_020_000_000,
+    previous_used_percent: 80,
+    current_used_percent: 20,
+    capacity_gain_percentage_points: 60,
+  }]);
+
+  const persisted = await getPersistedProviderCapacityView({ kv: kvStub, now: () => nowMs + 1_000 });
+  assert.deepEqual(persisted.rate_limit_reset_events, reset.rate_limit_reset_events);
+  const eventKeys = [...kvStore.keys()]
+    .map((key) => JSON.parse(key) as Deno.KvKey)
+    .filter((key) => PROVIDER_CAPACITY_RATE_LIMIT_RESET_EVENT_KV_PREFIX.every((part, index) => key[index] === part));
+  assert.equal(eventKeys.length, 1);
+});
+
+Deno.test("sampler detects a reset when the healthy sample follows a 401 outage", async () => {
+  seed();
+  let phase = 0;
+  const calls: Array<{ account: string | null; authorization: string | null; url: string }> = [];
+  const baseFetcher = createFetcher(
+    calls,
+    null,
+    {},
+    (account) => account === "account-one" ? (phase === 2 ? [10, 35] : [80, 35]) : [45, 55],
+    false,
+    1_800_011_000,
+    503,
+    null,
+    (account) =>
+      account === "account-one"
+        ? (phase === 2 ? [1_800_020_000, 1_800_020_000] : [1_800_010_000, 1_800_020_000])
+        : [1_800_010_000, 1_800_020_000],
+  );
+  const fetcher = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const account = new Headers(init?.headers).get("ChatGPT-Account-ID");
+    if (phase === 1 && account === "account-one") {
+      calls.push({ account, authorization: new Headers(init?.headers).get("Authorization"), url: String(input) });
+      return Promise.resolve(new Response("unauthorized", { status: 401 }));
+    }
+    return baseFetcher(input, init);
+  };
+
+  await refreshProviderCapacity({ kv: kvStub, fetcher, now: () => nowMs });
+  // Exercise the migration path: snapshots written before the recovery marker
+  // existed still have enough retained history to identify the prior quota.
+  kvStore.remove(["uos_ai", "provider_capacity", "v1", "last_available", 1]);
+  kvStore.remove(["uos_ai", "provider_capacity", "v1", "last_available", 2]);
+  phase = 1;
+  const outageAtMs = nowMs + PROVIDER_CAPACITY_HISTORY_BUCKET_MS;
+  const outage = await refreshProviderCapacity({ kv: kvStub, fetcher, now: () => outageAtMs });
+  assert.deepEqual(outage.rate_limit_reset_events, []);
+  assert.equal(outage.history[1]?.sources[0]?.state, "unavailable");
+  assert.equal(outage.history[1]?.sources[0]?.failure_status, 401);
+  const secondOutageAtMs = nowMs + 2 * PROVIDER_CAPACITY_HISTORY_BUCKET_MS;
+  const secondOutage = await refreshProviderCapacity({ kv: kvStub, fetcher, now: () => secondOutageAtMs });
+  assert.deepEqual(secondOutage.rate_limit_reset_events, []);
+  assert.equal(secondOutage.history[2]?.sources[0]?.state, "unavailable");
+  assert.equal(secondOutage.history[2]?.sources[0]?.failure_status, 401);
+
+  phase = 2;
+  const recoveredAtMs = nowMs + 3 * PROVIDER_CAPACITY_HISTORY_BUCKET_MS;
+  const recovered = await refreshProviderCapacity({ kv: kvStub, fetcher, now: () => recoveredAtMs });
+  assert.deepEqual(recovered.rate_limit_reset_events, [{
+    v: 1,
+    event_id: `openai-1-primary-${nowMs}-${recoveredAtMs}`,
+    provider: "openai",
+    slot: 1,
+    window: "primary",
+    observed_at_ms: recoveredAtMs,
+    previous_sampled_at_ms: nowMs,
+    previous_reset_at_ms: 1_800_010_000_000,
+    reset_at_ms: 1_800_020_000_000,
+    previous_used_percent: 80,
+    current_used_percent: 10,
+    capacity_gain_percentage_points: 70,
+  }]);
+  assert.deepEqual(
+    recovered.history.map((point) => [point.sampled_at_ms, point.sources[0]?.state]),
+    [
+      [nowMs, "available"],
+      [outageAtMs, "unavailable"],
+      [secondOutageAtMs, "unavailable"],
+      [recoveredAtMs, "available"],
+    ],
+  );
+});
+
+Deno.test("sampler does not record a capacity gain when the reset timer does not advance", async () => {
+  seed();
+  let phase = 0;
+  const fetcher = createFetcher(
+    [],
+    null,
+    {},
+    (account) => account === "account-one" ? (phase === 0 ? [80, 35] : [20, 35]) : [45, 55],
+    false,
+    1_800_011_000,
+    503,
+    null,
+    () => [1_800_010_000, 1_800_020_000],
+  );
+
+  await refreshProviderCapacity({ kv: kvStub, fetcher, now: () => nowMs });
+  phase = 1;
+  const changed = await refreshProviderCapacity({ kv: kvStub, fetcher, now: () => nowMs + 1_000 });
+
+  assert.deepEqual(changed.rate_limit_reset_events, []);
+});
+
+Deno.test("sampler does not record a timer advance below the substantial-gain threshold", async () => {
+  seed();
+  let phase = 0;
+  const belowThreshold = PROVIDER_CAPACITY_RATE_LIMIT_RESET_MIN_GAIN_PERCENTAGE_POINTS - 1;
+  const fetcher = createFetcher(
+    [],
+    null,
+    {},
+    (account) => account === "account-one" ? (phase === 0 ? [60, 35] : [60 - belowThreshold, 35]) : [45, 55],
+    false,
+    1_800_011_000,
+    503,
+    null,
+    (account) =>
+      account === "account-one"
+        ? (phase === 0 ? [1_800_010_000, 1_800_020_000] : [1_800_020_000, 1_800_020_000])
+        : [1_800_010_000, 1_800_020_000],
+  );
+
+  await refreshProviderCapacity({ kv: kvStub, fetcher, now: () => nowMs });
+  phase = 1;
+  const changed = await refreshProviderCapacity({ kv: kvStub, fetcher, now: () => nowMs + 1_000 });
+
+  assert.deepEqual(changed.rate_limit_reset_events, []);
+});
+
 Deno.test("persisted history keeps seven days and filters older buckets", async () => {
   seed();
   const currentBucket = Math.floor(nowMs / PROVIDER_CAPACITY_HISTORY_BUCKET_MS) * PROVIDER_CAPACITY_HISTORY_BUCKET_MS;
@@ -511,6 +699,52 @@ Deno.test("persisted history keeps seven days and filters older buckets", async 
   assert.equal(view.cache_state, "unavailable");
   assert.deepEqual(view.history.map((point) => point.bucket_start_at_ms), [retainedBucket, currentBucket]);
   assert.equal(view.history[0]?.sources[1]?.windows.secondary?.limit_window_seconds, 86_400);
+});
+
+Deno.test("persisted history backfills a reset across an unavailable outage", async () => {
+  seed();
+  const beforeMs = nowMs - 3 * PROVIDER_CAPACITY_HISTORY_BUCKET_MS;
+  const outageMs = nowMs - 2 * PROVIDER_CAPACITY_HISTORY_BUCKET_MS;
+  const recoveredMs = nowMs - PROVIDER_CAPACITY_HISTORY_BUCKET_MS;
+  const putPoint = (
+    sampledAtMs: number,
+    state: "available" | "unavailable",
+    primaryUsed: readonly [number, number],
+    primaryResetAtMs: readonly [number, number],
+  ): void => {
+    const bucketStartAtMs = Math.floor(sampledAtMs / PROVIDER_CAPACITY_HISTORY_BUCKET_MS) *
+      PROVIDER_CAPACITY_HISTORY_BUCKET_MS;
+    kvStore.put(providerCapacityHistoryKey(bucketStartAtMs), {
+      bucket_start_at_ms: bucketStartAtMs,
+      sampled_at_ms: sampledAtMs,
+      sources: [
+        historySource(1, sampledAtMs, state, {
+          primaryUsed: primaryUsed[0],
+          primaryResetAtMs: primaryResetAtMs[0],
+        }),
+        historySource(2, sampledAtMs, state, {
+          primaryUsed: primaryUsed[1],
+          primaryResetAtMs: primaryResetAtMs[1],
+        }),
+      ],
+    });
+  };
+  putPoint(beforeMs, "available", [53, 51], [1_787_011_235_000, 1_787_012_131_000]);
+  putPoint(outageMs, "unavailable", [0, 0], [0, 0]);
+  putPoint(recoveredMs, "available", [1, 2], [1_787_197_026_000, 1_787_197_532_000]);
+
+  const view = await getPersistedProviderCapacityView({ kv: kvStub, now: () => nowMs });
+  assert.deepEqual(
+    view.rate_limit_reset_events.map((event) => [event.slot, event.window, event.capacity_gain_percentage_points]),
+    [
+      [1, "primary", 52],
+      [2, "primary", 49],
+    ],
+  );
+  assert.equal(
+    [...kvStore.keys()].filter((key) => key.includes("rate_limit_reset_event")).length,
+    2,
+  );
 });
 
 Deno.test("capacity view backfills recent verified reset events from the redacted redemption ledger", async () => {

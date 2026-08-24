@@ -8,8 +8,12 @@ import {
 } from "./codex_account_routing.ts";
 import {
   listProviderCapacityDowntimeEvents,
+  listProviderCapacityRateLimitResetEvents,
   listProviderCapacityResetEvents,
+  PROVIDER_CAPACITY_RESET_EVENT_RETENTION_MS,
   type ProviderCapacityDowntimeEvent,
+  type ProviderCapacityRateLimitResetEvent,
+  providerCapacityRateLimitResetEventKey,
   type ProviderCapacityResetEvent,
 } from "./provider_capacity_events.ts";
 import { readPromptCacheAnalytics } from "./prompt_cache_analytics.ts";
@@ -24,6 +28,7 @@ import { isRecord } from "./utils.ts";
 export { PROVIDER_CAPACITY_SNAPSHOT_KEY } from "./provider_capacity_contract.ts";
 export const PROVIDER_CAPACITY_LEASE_KEY = ["uos_ai", "provider_capacity", "v1", "lease"] as const;
 export const PROVIDER_CAPACITY_HISTORY_KEY_PREFIX = ["uos_ai", "provider_capacity", "v1", "history"] as const;
+const PROVIDER_CAPACITY_LAST_AVAILABLE_KEY_PREFIX = ["uos_ai", "provider_capacity", "v1", "last_available"] as const;
 export const PROVIDER_CAPACITY_HISTORY_BUCKET_MS = 15 * 60_000;
 export const PROVIDER_CAPACITY_HISTORY_RETENTION_MS = 7 * 24 * 60 * 60_000;
 // Keep this name for callers that used the old snapshot retention constant.
@@ -33,6 +38,7 @@ export const PROVIDER_CAPACITY_LEASE_MS = 10_000;
 export const PROVIDER_CAPACITY_COLD_WAIT_MS = 2_000;
 export const PROVIDER_CAPACITY_SOURCE_STALE_MS = 30 * 60_000;
 export const PROVIDER_CAPACITY_CODEX_TIMEOUT_MS = 8_000;
+export const PROVIDER_CAPACITY_RATE_LIMIT_RESET_MIN_GAIN_PERCENTAGE_POINTS = 25;
 
 const ADDITIONAL_WINDOW_UNANCHORED_TOLERANCE_MS = 60_000;
 const CODEX_SPARK_LIMIT_NAME = "GPT-5.3-Codex-Spark";
@@ -123,6 +129,7 @@ export type ProviderCapacityView = Readonly<
     cache_state: ProviderCapacityViewState;
     history: readonly ProviderCapacityHistoryPoint[];
     reset_events: readonly ProviderCapacityResetEvent[];
+    rate_limit_reset_events: readonly ProviderCapacityRateLimitResetEvent[];
     downtime_events: readonly ProviderCapacityDowntimeEvent[];
   }
 >;
@@ -146,6 +153,15 @@ type CapacityLease = Readonly<{
 }>;
 
 type StoredHistoryPoint = ProviderCapacityHistoryPoint;
+type StoredRateLimitObservation = Readonly<{
+  sampled_at_ms: number;
+  source: ProviderCapacityCodexSource;
+}>;
+
+const providerCapacityLastAvailableKey = (slot: 1 | 2): Deno.KvKey => [
+  ...PROVIDER_CAPACITY_LAST_AVAILABLE_KEY_PREFIX,
+  slot,
+];
 
 const capacityState = (value: unknown): CapacityState | null =>
   value === "available" || value === "stale" || value === "unavailable" ? value : null;
@@ -786,6 +802,7 @@ const toCapacityView = (
   requestedState: Exclude<ProviderCapacityViewState, "unavailable">,
   history: readonly ProviderCapacityHistoryPoint[],
   resetEvents: readonly ProviderCapacityResetEvent[],
+  rateLimitResetEvents: readonly ProviderCapacityRateLimitResetEvent[],
   downtimeEvents: readonly ProviderCapacityDowntimeEvent[],
   nowMs: number,
 ): ProviderCapacityView => {
@@ -803,6 +820,7 @@ const toCapacityView = (
     cache_state: stale ? "stale" : requestedState,
     history,
     reset_events: resetEvents,
+    rate_limit_reset_events: rateLimitResetEvents,
     downtime_events: downtimeEvents,
   };
 };
@@ -821,12 +839,14 @@ const unavailableView = (
   snapshotAtMs: number,
   history: readonly ProviderCapacityHistoryPoint[],
   resetEvents: readonly ProviderCapacityResetEvent[],
+  rateLimitResetEvents: readonly ProviderCapacityRateLimitResetEvent[],
   downtimeEvents: readonly ProviderCapacityDowntimeEvent[],
 ): ProviderCapacityView => ({
   ...unavailableSnapshot(snapshotAtMs),
   cache_state: "unavailable",
   history,
   reset_events: resetEvents,
+  rate_limit_reset_events: rateLimitResetEvents,
   downtime_events: downtimeEvents,
 });
 
@@ -892,24 +912,237 @@ const codexResetTransitionObserved = (
   return false;
 };
 
+const codexAvailabilityTransitionObserved = (
+  previous: ProviderCapacityHistoryPoint | null,
+  current: ProviderCapacityHistoryPoint,
+): boolean => {
+  if (!previous || previous.sampled_at_ms >= current.sampled_at_ms) return false;
+  for (const slot of [1, 2] as const) {
+    const previousSource = previous.sources.find(
+      (source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === slot,
+    );
+    const currentSource = current.sources.find(
+      (source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === slot,
+    );
+    if (
+      previousSource && currentSource &&
+      (previousSource.state === "unavailable") !== (currentSource.state === "unavailable")
+    ) return true;
+  }
+  return false;
+};
+
+const readStoredRateLimitObservation = (value: unknown): StoredRateLimitObservation | null => {
+  if (!isRecord(value) || !isSafeTimestamp(value.sampled_at_ms)) return null;
+  const source = readStoredCodexSource(value.source, value.sampled_at_ms);
+  return source?.state === "available" ? { sampled_at_ms: value.sampled_at_ms, source } : null;
+};
+
+const latestAvailableRateLimitObservation = (
+  history: readonly ProviderCapacityHistoryPoint[],
+  slot: 1 | 2,
+  beforeSampledAtMs: number,
+): StoredRateLimitObservation | null => {
+  const observations = history.flatMap((point) => {
+    if (point.sampled_at_ms >= beforeSampledAtMs) return [];
+    const source = point.sources.find(
+      (candidate): candidate is ProviderCapacityCodexSource =>
+        candidate.source === "codex" && candidate.slot === slot && candidate.state !== "unavailable",
+    );
+    return source ? [{ sampled_at_ms: point.sampled_at_ms, source }] : [];
+  });
+  return observations.sort((left, right) => right.sampled_at_ms - left.sampled_at_ms)[0] ?? null;
+};
+
+const observedRateLimitResetEvents = (
+  previous: ProviderCapacitySnapshot | null,
+  current: ProviderCapacitySnapshot,
+  lastAvailableObservations: readonly StoredRateLimitObservation[] = [],
+): ProviderCapacityRateLimitResetEvent[] => {
+  if (previous && previous.snapshot_at_ms >= current.snapshot_at_ms) return [];
+  const events: ProviderCapacityRateLimitResetEvent[] = [];
+  for (const slot of [1, 2] as const) {
+    const currentSource = current.sources.find(
+      (source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === slot,
+    );
+    if (!currentSource || currentSource.state === "unavailable") continue;
+    const previousSource = previous?.sources.find(
+      (source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === slot,
+    );
+    const previousObservation = previous && previousSource && previousSource.state !== "unavailable"
+      ? { sampled_at_ms: previous.snapshot_at_ms, source: previousSource }
+      : lastAvailableObservations.find((observation) =>
+        observation.source.slot === slot && observation.sampled_at_ms < current.snapshot_at_ms
+      ) ?? null;
+    if (!previousObservation) continue;
+    for (const window of ["primary", "secondary"] as const) {
+      const previousWindow = previousObservation.source.windows[window];
+      const currentWindow = currentSource.windows[window];
+      if (
+        typeof previousWindow?.used_percent !== "number" || typeof currentWindow?.used_percent !== "number" ||
+        typeof previousWindow.reset_at_ms !== "number" || typeof currentWindow.reset_at_ms !== "number" ||
+        currentWindow.reset_at_ms <= previousWindow.reset_at_ms
+      ) continue;
+      const capacityGain = previousWindow.used_percent - currentWindow.used_percent;
+      if (capacityGain < PROVIDER_CAPACITY_RATE_LIMIT_RESET_MIN_GAIN_PERCENTAGE_POINTS) continue;
+      events.push({
+        v: 1,
+        event_id: `openai-${slot}-${window}-${previousObservation.sampled_at_ms}-${current.snapshot_at_ms}`,
+        provider: "openai",
+        slot,
+        window,
+        observed_at_ms: current.snapshot_at_ms,
+        previous_sampled_at_ms: previousObservation.sampled_at_ms,
+        previous_reset_at_ms: previousWindow.reset_at_ms,
+        reset_at_ms: currentWindow.reset_at_ms,
+        previous_used_percent: previousWindow.used_percent,
+        current_used_percent: currentWindow.used_percent,
+        capacity_gain_percentage_points: capacityGain,
+      });
+    }
+  }
+  return events;
+};
+
+const observedHistoricalRateLimitResetEvents = (
+  history: readonly ProviderCapacityHistoryPoint[],
+): ProviderCapacityRateLimitResetEvent[] => {
+  const events: ProviderCapacityRateLimitResetEvent[] = [];
+  const sortedHistory = [...history].sort((left, right) => left.sampled_at_ms - right.sampled_at_ms);
+  for (const slot of [1, 2] as const) {
+    let previousAvailable: StoredRateLimitObservation | null = null;
+    let outageObserved = false;
+    for (const point of sortedHistory) {
+      const source = point.sources.find(
+        (candidate): candidate is ProviderCapacityCodexSource =>
+          candidate.source === "codex" && candidate.slot === slot,
+      );
+      if (!source || source.state === "unavailable") {
+        if (previousAvailable) outageObserved = true;
+        continue;
+      }
+      if (previousAvailable && outageObserved) {
+        for (const window of ["primary", "secondary"] as const) {
+          const previousWindow = previousAvailable.source.windows[window];
+          const currentWindow = source.windows[window];
+          if (
+            typeof previousWindow?.used_percent !== "number" || typeof currentWindow?.used_percent !== "number" ||
+            typeof previousWindow.reset_at_ms !== "number" || typeof currentWindow.reset_at_ms !== "number" ||
+            currentWindow.reset_at_ms <= previousWindow.reset_at_ms
+          ) continue;
+          const capacityGain = previousWindow.used_percent - currentWindow.used_percent;
+          if (capacityGain < PROVIDER_CAPACITY_RATE_LIMIT_RESET_MIN_GAIN_PERCENTAGE_POINTS) continue;
+          events.push({
+            v: 1,
+            event_id: `openai-${slot}-${window}-${previousAvailable.sampled_at_ms}-${point.sampled_at_ms}`,
+            provider: "openai",
+            slot,
+            window,
+            observed_at_ms: point.sampled_at_ms,
+            previous_sampled_at_ms: previousAvailable.sampled_at_ms,
+            previous_reset_at_ms: previousWindow.reset_at_ms,
+            reset_at_ms: currentWindow.reset_at_ms,
+            previous_used_percent: previousWindow.used_percent,
+            current_used_percent: currentWindow.used_percent,
+            capacity_gain_percentage_points: capacityGain,
+          });
+        }
+      }
+      previousAvailable = source.state === "available"
+        ? { sampled_at_ms: point.sampled_at_ms, source }
+        : previousAvailable;
+      outageObserved = false;
+    }
+  }
+  return events;
+};
+
+const mergeHistoricalRateLimitResetEvents = async (
+  kv: Deno.Kv,
+  history: readonly ProviderCapacityHistoryPoint[],
+  events: readonly ProviderCapacityRateLimitResetEvent[],
+): Promise<readonly ProviderCapacityRateLimitResetEvent[]> => {
+  const merged = new Map(events.map((event) => [event.event_id, event]));
+  for (const event of observedHistoricalRateLimitResetEvents(history)) {
+    if (merged.has(event.event_id)) continue;
+    try {
+      await kv.set(providerCapacityRateLimitResetEventKey(event.event_id), event, {
+        expireIn: PROVIDER_CAPACITY_RESET_EVENT_RETENTION_MS,
+      });
+    } catch {
+      // The view can still show a validated inference if a best-effort marker write fails.
+    }
+    merged.set(event.event_id, event);
+  }
+  return [...merged.values()].sort((left, right) =>
+    left.observed_at_ms - right.observed_at_ms || left.event_id.localeCompare(right.event_id)
+  );
+};
+
 const persistCapacitySnapshot = async (
   kv: Deno.Kv,
   leaseEntry: Deno.KvEntryMaybe<CapacityLease>,
   snapshot: ProviderCapacitySnapshot,
 ): Promise<boolean> => {
   const history = historyPointForSnapshot(snapshot);
+  let previousSnapshot: ProviderCapacitySnapshot | null = null;
   let previousHistory: ProviderCapacityHistoryPoint | null = null;
+  let lastAvailableObservations: StoredRateLimitObservation[] = [];
   try {
-    previousHistory = readStoredHistoryPoint(
-      (await kv.get<unknown>(providerCapacityHistoryKey(history.bucket_start_at_ms))).value,
-    );
+    const [storedSnapshot, storedHistory, ...storedObservations] = await Promise.all([
+      kv.get<unknown>(PROVIDER_CAPACITY_SNAPSHOT_KEY, { consistency: "strong" }),
+      kv.get<unknown>(providerCapacityHistoryKey(history.bucket_start_at_ms), { consistency: "strong" }),
+      ...([1, 2] as const).map((slot) =>
+        kv.get<unknown>(providerCapacityLastAvailableKey(slot), { consistency: "strong" })
+      ),
+    ]);
+    previousSnapshot = readStoredSnapshot(storedSnapshot.value);
+    previousHistory = readStoredHistoryPoint(storedHistory.value);
+    lastAvailableObservations = storedObservations.flatMap((entry) => {
+      const observation = readStoredRateLimitObservation(entry.value);
+      return observation ? [observation] : [];
+    });
   } catch {
     // A missing prior point should not prevent the live snapshot from being stored.
   }
-  const preserveTransition = codexResetTransitionObserved(previousHistory, history);
+  const recoverySlots = snapshot.sources.flatMap((source) => {
+    if (source.source !== "codex" || source.state === "unavailable") return [];
+    const previousSource = previousSnapshot?.sources.find(
+      (candidate): candidate is ProviderCapacityCodexSource =>
+        candidate.source === "codex" && candidate.slot === source.slot,
+    );
+    return previousSource?.state === "unavailable" &&
+        !lastAvailableObservations.some((observation) => observation.source.slot === source.slot)
+      ? [source.slot]
+      : [];
+  });
+  if (recoverySlots.length > 0) {
+    const retainedHistory = await readCapacityHistory(kv, snapshot.snapshot_at_ms).catch(() => []);
+    for (const slot of recoverySlots) {
+      const observation = latestAvailableRateLimitObservation(retainedHistory, slot, snapshot.snapshot_at_ms);
+      if (observation) lastAvailableObservations.push(observation);
+    }
+  }
+  const rateLimitResetEvents = observedRateLimitResetEvents(previousSnapshot, snapshot, lastAvailableObservations);
+  const preserveTransition = rateLimitResetEvents.length > 0 ||
+    codexResetTransitionObserved(previousHistory, history) ||
+    codexAvailabilityTransitionObserved(previousHistory, history);
   let operation = kv.atomic()
     .check(leaseEntry)
     .set(PROVIDER_CAPACITY_SNAPSHOT_KEY, snapshot, { expireIn: PROVIDER_CAPACITY_SNAPSHOT_RETENTION_MS });
+  for (const event of rateLimitResetEvents) {
+    operation = operation.set(providerCapacityRateLimitResetEventKey(event.event_id), event, {
+      expireIn: PROVIDER_CAPACITY_RESET_EVENT_RETENTION_MS,
+    });
+  }
+  for (const source of snapshot.sources) {
+    if (source.source !== "codex" || source.state !== "available") continue;
+    operation = operation.set(
+      providerCapacityLastAvailableKey(source.slot),
+      { sampled_at_ms: snapshot.snapshot_at_ms, source },
+      { expireIn: PROVIDER_CAPACITY_RESET_EVENT_RETENTION_MS },
+    );
+  }
   if (preserveTransition && previousHistory) {
     operation = operation.set(
       providerCapacityHistoryTransitionKey(history.bucket_start_at_ms, previousHistory.sampled_at_ms),
@@ -953,16 +1186,18 @@ export const getPersistedProviderCapacityView = async (
 ): Promise<ProviderCapacityView> => {
   const nowMs = safeNow(options.now ?? Date.now);
   const kv = options.kv === undefined ? await getKv() : options.kv;
-  if (!kv) return unavailableView(nowMs, [], [], []);
-  const [snapshot, history, resetEvents, downtimeEvents] = await Promise.all([
+  if (!kv) return unavailableView(nowMs, [], [], [], []);
+  const [snapshot, history, resetEvents, rateLimitResetEvents, downtimeEvents] = await Promise.all([
     readCapacitySnapshot(kv),
     readCapacityHistory(kv, nowMs),
     listProviderCapacityResetEvents({ kv, now: () => nowMs }),
+    listProviderCapacityRateLimitResetEvents({ kv, now: () => nowMs }),
     listProviderCapacityDowntimeEvents({ kv, now: () => nowMs }),
   ]);
+  const mergedRateLimitResetEvents = await mergeHistoricalRateLimitResetEvents(kv, history, rateLimitResetEvents);
   return snapshot
-    ? toCapacityView(snapshot, "persisted", history, resetEvents, downtimeEvents, nowMs)
-    : unavailableView(nowMs, history, resetEvents, downtimeEvents);
+    ? toCapacityView(snapshot, "persisted", history, resetEvents, mergedRateLimitResetEvents, downtimeEvents, nowMs)
+    : unavailableView(nowMs, history, resetEvents, mergedRateLimitResetEvents, downtimeEvents);
 };
 
 export const refreshProviderCapacity = async (
@@ -972,15 +1207,17 @@ export const refreshProviderCapacity = async (
   const kv = options.kv === undefined ? await getKv() : options.kv;
   if (!kv) {
     const snapshot = await captureProviderCapacitySnapshot(options, nowMs, null);
-    return toCapacityView(snapshot, "live", [historyPointForSnapshot(snapshot)], [], [], nowMs);
+    return toCapacityView(snapshot, "live", [historyPointForSnapshot(snapshot)], [], [], [], nowMs);
   }
 
-  const [cached, historyBefore, resetEventsBefore, downtimeEventsBefore] = await Promise.all([
-    readCapacitySnapshot(kv),
-    readCapacityHistory(kv, nowMs),
-    listProviderCapacityResetEvents({ kv, now: () => nowMs }),
-    listProviderCapacityDowntimeEvents({ kv, now: () => nowMs }),
-  ]);
+  const [cached, historyBefore, resetEventsBefore, rateLimitResetEventsBefore, downtimeEventsBefore] = await Promise
+    .all([
+      readCapacitySnapshot(kv),
+      readCapacityHistory(kv, nowMs),
+      listProviderCapacityResetEvents({ kv, now: () => nowMs }),
+      listProviderCapacityRateLimitResetEvents({ kv, now: () => nowMs }),
+      listProviderCapacityDowntimeEvents({ kv, now: () => nowMs }),
+    ]);
   const owner = (options.createLeaseOwner ?? (() => crypto.randomUUID()))();
   const lease = await acquireCapacityLease(kv, owner, nowMs).catch(() => ({
     acquired: false,
@@ -991,12 +1228,16 @@ export const refreshProviderCapacity = async (
     const snapshot = coalesced ?? cached;
     const history = await readCapacityHistory(kv, nowMs).catch(() => historyBefore);
     const resetEvents = await listProviderCapacityResetEvents({ kv, now: () => nowMs }).catch(() => resetEventsBefore);
+    const rateLimitResetEvents = await listProviderCapacityRateLimitResetEvents({ kv, now: () => nowMs }).catch(() =>
+      rateLimitResetEventsBefore
+    );
     const downtimeEvents = await listProviderCapacityDowntimeEvents({ kv, now: () => nowMs }).catch(() =>
       downtimeEventsBefore
     );
+    const mergedRateLimitResetEvents = await mergeHistoricalRateLimitResetEvents(kv, history, rateLimitResetEvents);
     return snapshot
-      ? toCapacityView(snapshot, "persisted", history, resetEvents, downtimeEvents, nowMs)
-      : unavailableView(nowMs, history, resetEvents, downtimeEvents);
+      ? toCapacityView(snapshot, "persisted", history, resetEvents, mergedRateLimitResetEvents, downtimeEvents, nowMs)
+      : unavailableView(nowMs, history, resetEvents, mergedRateLimitResetEvents, downtimeEvents);
   }
 
   try {
@@ -1004,14 +1245,19 @@ export const refreshProviderCapacity = async (
     const persisted = await persistCapacitySnapshot(kv, lease.entry, snapshot).catch(() => false);
     const history = await readCapacityHistory(kv, nowMs).catch(() => historyBefore);
     const resetEvents = await listProviderCapacityResetEvents({ kv, now: () => nowMs }).catch(() => resetEventsBefore);
+    const rateLimitResetEvents = await listProviderCapacityRateLimitResetEvents({ kv, now: () => nowMs }).catch(() =>
+      rateLimitResetEventsBefore
+    );
     const downtimeEvents = await listProviderCapacityDowntimeEvents({ kv, now: () => nowMs }).catch(() =>
       downtimeEventsBefore
     );
+    const mergedRateLimitResetEvents = await mergeHistoricalRateLimitResetEvents(kv, history, rateLimitResetEvents);
     return toCapacityView(
       snapshot,
       "live",
       persisted ? history : mergeHistoryPoints(history, historyPointForSnapshot(snapshot)),
       resetEvents,
+      mergedRateLimitResetEvents,
       downtimeEvents,
       nowMs,
     );
@@ -1078,7 +1324,7 @@ export const handleProviderCapacity = async (
   } catch {
     return json(
       200,
-      { ...unavailableView(Date.now(), [], [], []), prompt_cache: await promptCache },
+      { ...unavailableView(Date.now(), [], [], [], []), prompt_cache: await promptCache },
       { "Cache-Control": "no-store" },
     );
   }
