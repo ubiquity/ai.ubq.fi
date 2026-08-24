@@ -62,7 +62,11 @@ Deno.test("recent model reasoning resolves provider aliases by model class", () 
     ["deepseek-v4-flash", "deepseek-v4", ["none", "high", "max"]],
     ["deepseek-v4-pro", "deepseek-v4", ["none", "high", "max"]],
     ["glm-5.3", "glm-5.3", ["low", "high", "max"]],
-    ["glm-5.2-fast-preview", "glm-5.2", ["none", "minimal", "low", "medium", "high", "xhigh", "max"]],
+    [
+      "glm-5.2-fast-preview",
+      "glm-5.2",
+      ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+    ],
     ["glm-5.1", "glm-5.1", ["none", "thinking"]],
     ["kimi-k3", "kimi-k3", ["low", "high", "max"]],
     ["gemini-3.7-flash-preview", "gemini-3.7-flash", ["low", "medium", "high"]],
