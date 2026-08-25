@@ -423,9 +423,24 @@ jobs:
                 exit 1
                 ;;
             esac
-            repository="${GITHUB_REPOSITORY:-}"
-            if ! [[ "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
-              echo "Provider Sentinel repository identity is invalid." >&2
+            workflow_repository="${GITHUB_REPOSITORY:-}"
+            if ! [[ "$workflow_repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+              echo "Provider Sentinel workflow repository identity is invalid." >&2
+              exit 1
+            fi
+            remote_url="$("$REAL_GIT" remote get-url origin)"
+            case "$remote_url" in
+              https://github.com/*)
+                repository="${remote_url#https://github.com/}"
+                repository="${repository%.git}"
+                ;;
+              *)
+                echo "Provider Sentinel origin URL is not the expected GitHub HTTPS remote." >&2
+                exit 1
+                ;;
+            esac
+            if ! [[ "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || [ "$repository" != "$workflow_repository" ]; then
+              echo "Provider Sentinel origin repository does not match the trusted workflow repository." >&2
               exit 1
             fi
             run_id="$(jq -r '.run_id // empty' "$repository_root/.sentinel/reports/cycle.json")"
