@@ -244,9 +244,7 @@ export const renderIssuePullRequestBody = (
     `- Native review reports: ${
       nativeReviewReports.length ? nativeReviewReports.map((name) => `\`${name}\``).join(", ") : "none"
     }`,
-    `- Replay reports: ${
-      replayReports.length ? replayReports.map((name) => `\`${name}\``).join(", ") : "none"
-    }`,
+    `- Replay reports: ${replayReports.length ? replayReports.map((name) => `\`${name}\``).join(", ") : "none"}`,
     "",
     "Production deployment, monitoring, and final issue disposition are appended as a PR comment after the cycle settles.",
     "",
