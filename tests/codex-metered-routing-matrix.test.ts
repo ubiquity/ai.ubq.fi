@@ -182,8 +182,6 @@ const encoder = new TextEncoder();
 const isFallbackOutcome = (outcome: Outcome): boolean =>
   outcome.kind === "http" && ACCOUNT_FALLBACK_STATUSES.has(outcome.status);
 
-const isTransportOutcome = (outcome: Outcome): boolean => outcome.kind === "timeout" || outcome.kind === "network";
-
 const is401 = (outcome: Outcome): boolean => outcome.kind === "http" && outcome.status === 401;
 const is429 = (outcome: Outcome): boolean => outcome.kind === "http" && outcome.status === 429;
 
@@ -423,16 +421,14 @@ const runCase = async (
       },
     );
 
-    const reachesSecond = isFallbackOutcome(first) || isTransportOutcome(first);
-    // Transport failures release request-scoped admission and try a sibling,
-    // but win over an auth/generic-429 cohort so they can never admit paid
-    // fallback. Every 429 in this matrix is deliberately non-authoritative.
+    const reachesSecond = isFallbackOutcome(first);
+    // Ambiguous transport failures are terminal and must not replay the
+    // inference on a sibling account. Every 429 in this matrix is deliberately
+    // non-authoritative.
     const completesGeneric429Retry = isFallbackOutcome(first) && isFallbackOutcome(second) &&
       (is429(first) || is429(second));
     const terminalCodexOutcome = completesGeneric429Retry
       ? (is429(first) ? first : second)
-      : isTransportOutcome(first) && isFallbackOutcome(second)
-      ? first
       : reachesSecond
       ? second
       : first;

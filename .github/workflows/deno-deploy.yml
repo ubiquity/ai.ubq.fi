@@ -151,24 +151,16 @@ jobs:
             echo "- Source archive SHA-256: \`${actual_digest}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  production-approval:
-    if: github.ref == 'refs/heads/development'
-    runs-on: ubuntu-latest
-    environment: production
-    steps:
-      - run: echo "Production deployment approved."
-
   configure-secrets:
     needs:
       - validate
       - verify-artifact
-      - production-approval
     if: >-
       always() &&
       needs.validate.result == 'success' &&
       needs.verify-artifact.result == 'success' &&
       (
-        (github.ref == 'refs/heads/development' && needs.production-approval.result == 'success') ||
+        github.ref == 'refs/heads/development' ||
         (
           github.ref != 'refs/heads/development' &&
           github.event_name == 'workflow_dispatch' &&
@@ -306,7 +298,6 @@ jobs:
     needs:
       - validate
       - verify-artifact
-      - production-approval
       - configure-secrets
     if: >-
       always() &&
@@ -314,7 +305,7 @@ jobs:
       needs.verify-artifact.result == 'success' &&
       needs.configure-secrets.result == 'success' &&
       (
-        (github.ref == 'refs/heads/development' && needs.production-approval.result == 'success') ||
+        github.ref == 'refs/heads/development' ||
         (
           github.ref != 'refs/heads/development' &&
           github.event_name == 'workflow_dispatch' &&
@@ -357,7 +348,6 @@ jobs:
     needs:
       - validate
       - verify-artifact
-      - production-approval
       - configure-secrets
       - capture-deployment-baseline
     if: >-
@@ -368,7 +358,7 @@ jobs:
       needs.configure-secrets.result == 'success' &&
       needs.capture-deployment-baseline.result == 'success' &&
       (
-        (github.ref == 'refs/heads/development' && needs.production-approval.result == 'success') ||
+        github.ref == 'refs/heads/development' ||
         (
           github.ref != 'refs/heads/development' &&
           github.event_name == 'workflow_dispatch' &&

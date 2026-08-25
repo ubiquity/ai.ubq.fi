@@ -7,8 +7,6 @@ import {
   getCodexResponseAffinityOutcome,
   getCodexRoutingProbe,
   markCodexResponseCompleted,
-  markCodexResponseUpstreamError,
-  releaseCodexResponseProbe,
   resetCodexAuthCacheForTest,
 } from "../src/codex.ts";
 import {
@@ -390,7 +388,6 @@ Deno.test("Codex account-affinity does not turn transient failures into quota, r
     assert.deepEqual(accountIds, [
       "account-one",
       "account-one",
-      "account-two",
       "account-one",
       "account-one",
       "account-two",
@@ -399,7 +396,7 @@ Deno.test("Codex account-affinity does not turn transient failures into quota, r
   });
 });
 
-Deno.test("Codex account-affinity remaps a sibling transport success only after its validated terminal", async () => {
+Deno.test("Codex account-affinity does not replay an ambiguous sibling transport", async () => {
   await withFixture(async ({ kv }) => {
     const one = auth("one");
     const two = auth("two");
@@ -425,22 +422,16 @@ Deno.test("Codex account-affinity remaps a sibling transport success only after 
     assert.ok(priorCohort);
 
     failPreferredTransport = true;
-    const remapped = await fetchCodexResponses(cacheableBody(), { cacheScope });
-    assert.equal(remapped.status, 200);
-    assert.equal(getCodexResponseAffinityOutcome(remapped), "remapped");
-    assert.equal(
-      await readCodexAccountAffinity(identity),
-      priorCohort,
-      "headers alone must not persist the sibling account",
+    await assert.rejects(
+      () => fetchCodexResponses(cacheableBody(), { cacheScope }),
+      (error: unknown) => error instanceof CodexError && error.code === "codex_upstream_unreachable",
     );
-
-    await markCodexResponseCompleted(remapped);
-    assert.notEqual(await readCodexAccountAffinity(identity), priorCohort);
+    assert.equal(await readCodexAccountAffinity(identity), priorCohort);
     failPreferredTransport = false;
     accountIds.length = 0;
     const preferredSibling = await fetchCodexResponses(cacheableBody(), { cacheScope });
     assert.equal(getCodexResponseAffinityOutcome(preferredSibling), "preferred");
-    assert.deepEqual(accountIds, [two.account_id]);
+    assert.deepEqual(accountIds, [one.account_id]);
   });
 });
 
@@ -472,7 +463,7 @@ Deno.test("Codex account-affinity keeps the prior account after all sibling tran
       () => fetchCodexResponses(cacheableBody(), { cacheScope }),
       (error: unknown) => error instanceof CodexError && error.code === "codex_upstream_unreachable",
     );
-    assert.deepEqual(accountIds, [one.account_id, two.account_id]);
+    assert.deepEqual(accountIds, [one.account_id]);
     assert.equal(await readCodexAccountAffinity(identity), priorCohort);
 
     failEveryTransport = false;
@@ -534,15 +525,17 @@ Deno.test("Codex account-affinity ignores 5xx, progress cancellation, and empty 
     assert.equal(await readCodexAccountAffinity(identity), priorCohort);
 
     responseMode = "remapped_progress";
-    const cancelled = await fetchCodexResponses(cacheableBody(), { cacheScope });
-    assert.equal(getCodexResponseAffinityOutcome(cancelled), "remapped");
-    await releaseCodexResponseProbe(cancelled);
+    await assert.rejects(
+      () => fetchCodexResponses(cacheableBody(), { cacheScope }),
+      (error: unknown) => error instanceof CodexError && error.code === "codex_upstream_unreachable",
+    );
     assert.equal(await readCodexAccountAffinity(identity), priorCohort);
 
     responseMode = "remapped_empty";
-    const empty = await fetchCodexResponses(cacheableBody(), { cacheScope });
-    assert.equal(getCodexResponseAffinityOutcome(empty), "remapped");
-    await markCodexResponseUpstreamError(empty);
+    await assert.rejects(
+      () => fetchCodexResponses(cacheableBody(), { cacheScope }),
+      (error: unknown) => error instanceof CodexError && error.code === "codex_upstream_unreachable",
+    );
     assert.equal(await readCodexAccountAffinity(identity), priorCohort);
   });
 });

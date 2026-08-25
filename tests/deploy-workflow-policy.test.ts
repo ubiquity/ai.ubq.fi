@@ -13,3 +13,16 @@ Deno.test("deployment workflow validates pull requests without deploying them", 
   assert.match(deployJob, /github\.event_name != 'pull_request'/u);
   assert.doesNotMatch(deployJob, /github\.event_name == 'pull_request'/u);
 });
+
+Deno.test("development pushes deploy and promote without a manual production gate", () => {
+  assert.doesNotMatch(deploymentWorkflow, /production-approval/u);
+  assert.match(deploymentWorkflow, /branches:\n[ ]{6}- development/u);
+  assert.match(
+    deploymentWorkflow,
+    /github\.ref == 'refs\/heads\/development' \|\|/u,
+  );
+  assert.match(
+    deploymentWorkflow,
+    /https:\/\/api\.deno\.com\/v2\/revisions\/\$\{revision_id\}\/promote/u,
+  );
+});
