@@ -162,6 +162,28 @@ Deno.test("fetchSurplusResponses maps Codex developer messages to Surplus system
   ]);
 });
 
+Deno.test("fetchSurplusResponses completes sparse Surplus text streams for Codex", async () => {
+  const sparse = [
+    { type: "response.created", response: { id: "resp_test", status: "in_progress" } },
+    { type: "response.output_text.delta", output_index: 0, content_index: 0, delta: "hello" },
+    { type: "response.completed", response: { id: "resp_test", status: "completed" } },
+  ].map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
+
+  const result = await fetchSurplusResponses(
+    { model: "deepseek-v4-flash", input: "hello", stream: true },
+    {
+      apiKey: "test-key",
+      fetcher: () => Promise.resolve(new Response(sparse, { headers: { "Content-Type": "text/event-stream" } })),
+    },
+  );
+  const output = await result.response.text();
+
+  assert.match(output, /"type":"response.output_text.done"/);
+  assert.match(output, /"type":"response.output_item.done"/);
+  assert.match(output, /"output":\[\{"type":"message","role":"assistant"/);
+  assert.match(output, /"text":"hello"/);
+});
+
 Deno.test("fetchSurplusResponses runs the quota hook immediately before transport", async () => {
   const events: string[] = [];
   const fetcher: SurplusFetch = (_input, init) => {

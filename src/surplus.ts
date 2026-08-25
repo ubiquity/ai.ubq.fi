@@ -1,5 +1,6 @@
 import { STREAM_FIRST_EVENT_DEADLINE_MS } from "./inference_deadline.ts";
 import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
+import { readResponsesStream } from "./responses_stream.ts";
 
 export const SURPLUS_BASE_URL = "https://api.surplusintelligence.ai";
 export const SURPLUS_API_KEY_ENV = "SURPLUS_API_KEY";
@@ -370,6 +371,78 @@ const responseRequestId = (response: Response): string | null =>
       response.headers.get("X-Oneapi-Request-Id"),
   );
 
+const encodeResponsesEvent = (value: JsonRecord): Uint8Array =>
+  new TextEncoder().encode(`event: ${String(value.type)}\ndata: ${JSON.stringify(value)}\n\n`);
+
+const normalizeSurplusResponsesStream = (response: Response): Response => {
+  if (!response.body || !response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
+    return response;
+  }
+  const source = readResponsesStream(response.body);
+  const textParts = new Map<string, string>();
+  const doneTextParts = new Set<string>();
+  let sawMessageDone = false;
+  const partKey = (value: JsonRecord): string =>
+    `${String(value.output_index ?? 0)}:${String(value.content_index ?? 0)}`;
+  const iterator = (async function* () {
+    for await (const event of source) {
+      const value = event.value;
+      if (event.type === "response.output_text.delta") {
+        const key = partKey(value);
+        textParts.set(key, `${textParts.get(key) ?? ""}${typeof value.delta === "string" ? value.delta : ""}`);
+      } else if (event.type === "response.output_text.done") {
+        doneTextParts.add(partKey(value));
+      } else if (event.type === "response.output_item.done" && isRecord(value.item) && value.item.type === "message") {
+        sawMessageDone = true;
+      }
+
+      if (event.type !== "response.completed") {
+        yield encodeResponsesEvent(value);
+        continue;
+      }
+
+      const orderedParts = [...textParts.entries()].sort(([left], [right]) => left.localeCompare(right));
+      for (const [key, text] of orderedParts) {
+        if (doneTextParts.has(key)) continue;
+        const [outputIndex, contentIndex] = key.split(":").map(Number);
+        yield encodeResponsesEvent({
+          type: "response.output_text.done",
+          output_index: outputIndex,
+          content_index: contentIndex,
+          text,
+        });
+      }
+      const text = orderedParts.map(([, part]) => part).join("");
+      const message = {
+        type: "message",
+        role: "assistant",
+        status: "completed",
+        content: [{ type: "output_text", text, annotations: [] }],
+      };
+      if (text && !sawMessageDone) {
+        yield encodeResponsesEvent({ type: "response.output_item.done", output_index: 0, item: message });
+      }
+      const completed = isRecord(value.response)
+        ? { ...value, response: { ...value.response, ...(text ? { output: [message] } : {}) } }
+        : value;
+      yield encodeResponsesEvent(completed);
+    }
+  })();
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        const next = await iterator.next();
+        if (next.done) controller.close();
+        else controller.enqueue(next.value);
+      },
+      async cancel(reason) {
+        await iterator.return(reason);
+      },
+    }),
+    { status: response.status, statusText: response.statusText, headers: response.headers },
+  );
+};
+
 const toSurplusResponsesBody = (
   body: JsonRecord,
   supportsParallelToolCalls: boolean | undefined,
@@ -468,5 +541,5 @@ export const fetchSurplusResponses = async (
     clearTimeout(headersTimer);
   }
 
-  return { response, request_id: responseRequestId(response) };
+  return { response: normalizeSurplusResponsesStream(response), request_id: responseRequestId(response) };
 };
