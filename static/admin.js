@@ -233,6 +233,7 @@ let capacityChartResizeFrame = 0;
 let capacityChartScrollState = null;
 let latestProviderHealth = null;
 let errorsLoading = false;
+let errorsLoadId = 0;
 let errorsLoadedAt = 0;
 const apiKeyRequestLogCache = new Map();
 const apiKeyRequestLogPromises = new Map();
@@ -6461,6 +6462,15 @@ const setErrorsMessage = (message) => {
   errorsList.appendChild(element);
 };
 
+const invalidateAdminErrors = (message) => {
+  errorsLoadId += 1;
+  errorsLoading = false;
+  errorsLoadedAt = 0;
+  setBadge(errorsBadge, "unknown", "Not loaded");
+  errorsUpdated.textContent = "";
+  setErrorsMessage(message);
+};
+
 const renderAdminErrors = (records) => {
   errorsList.textContent = "";
   if (!records.length) {
@@ -6494,6 +6504,7 @@ const renderAdminErrors = (records) => {
 
 const loadAdminErrors = async () => {
   if (errorsLoading) return;
+  const loadId = ++errorsLoadId;
   errorsLoading = true;
   setBadge(errorsBadge, "unknown", "Loading");
   try {
@@ -6503,6 +6514,7 @@ const loadAdminErrors = async () => {
       cache: "no-store",
     });
     const data = await res.json().catch(() => null);
+    if (loadId !== errorsLoadId) return;
     if (!res.ok) throw new Error(data?.error?.message || "Error history is unavailable");
     const records = Array.isArray(data?.data) ? data.data : [];
     renderAdminErrors(records);
@@ -6510,10 +6522,11 @@ const loadAdminErrors = async () => {
     setBadge(errorsBadge, records.length ? "bad" : "ok", `${records.length} errors`);
     errorsUpdated.textContent = `Updated ${formatDate(errorsLoadedAt)}`;
   } catch (error) {
+    if (loadId !== errorsLoadId) return;
     setBadge(errorsBadge, "bad", "Unavailable");
     setErrorsMessage(error?.message || "Error history is unavailable");
   } finally {
-    errorsLoading = false;
+    if (loadId === errorsLoadId) errorsLoading = false;
   }
 };
 
@@ -7608,6 +7621,7 @@ tokenInput.addEventListener("input", () => {
     localDevelopmentAutoAuth = false;
   }
   persistTokenIfEnabled();
+  invalidateAdminErrors("Sign in to load gateway errors.");
   keysLoadedAt = 0;
   passkeyUsersLoadedAt = 0;
   defaultsLoaded = false;
@@ -7792,6 +7806,7 @@ baseSelect.addEventListener("change", () => {
   setCreateBadge("unknown", "Idle");
   setKeysBadge("unknown", "Not loaded");
   setPasskeyUsersBadge("unknown", "Not loaded");
+  invalidateAdminErrors("Target changed. Sign in to load gateway errors.");
   setDefaultsBadge("unknown", "Idle");
   setKernelListBadge("unknown", "Not loaded");
   setKernelNewBadge("unknown", "Idle");
@@ -7874,6 +7889,7 @@ viewTabKernel.addEventListener("click", () => setAdminView("kernel", { hashMode:
 viewTabPubkeys.addEventListener("click", () => setAdminView("pubkeys", { hashMode: "push", focusAuth: true }));
 viewTabDefaults.addEventListener("click", () => setAdminView("defaults", { hashMode: "push", focusAuth: true }));
 viewTabProviders.addEventListener("click", () => setAdminView("providers", { hashMode: "push", focusAuth: true }));
+viewTabErrors.addEventListener("click", () => setAdminView("errors", { hashMode: "push", focusAuth: true }));
 
 globalThis.setInterval(() => {
   if (currentAdminView !== "providers" || document.visibilityState !== "visible") return;

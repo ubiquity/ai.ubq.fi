@@ -140,7 +140,7 @@ Deno.test("admin provider view places capacity history before current providers"
 
   assert.match(adminHtml, /Provider analytics/);
   assert.match(adminHtml, /Fifteen-minute capacity, cached-input, and cache-write history/);
-  assert.match(adminHtml, /admin\.js\?v=gateway-hardening-analytics-v2-passkey-relay-20260823/);
+  assert.match(adminHtml, /admin\.js\?v=gateway-errors-20260825-v2/);
   assert.doesNotMatch(adminHtml, /removed_provider-failover|debug-routing/);
   assert.doesNotMatch(adminScript, /RemovedProviderFailover|refresh=live/);
   assert.match(adminScript, /fetch\(apiUrl\("\/admin\/providers\/capacity"\)/);
@@ -182,6 +182,17 @@ Deno.test("admin provider view places capacity history before current providers"
   assert.match(adminScript, /!adminAccessState\.isAdmin \|\| !hasAdminCredential\(\)/);
   assert.match(authScript, /relay_session !== true/);
   assert.match(authScript, /credentials: init\?\.credentials \?\? "include"/);
+});
+
+Deno.test("admin error tab opens its view", () => {
+  assert.match(
+    adminScript,
+    /viewTabErrors\.addEventListener\("click", \(\) => setAdminView\("errors", \{ hashMode: "push", focusAuth: true \}\)\)/,
+  );
+  assert.match(adminScript, /const loadId = \+\+errorsLoadId/);
+  assert.match(adminScript, /if \(loadId !== errorsLoadId\) return/);
+  assert.match(adminScript, /invalidateAdminErrors\("Sign in to load gateway errors\."\)/);
+  assert.match(adminScript, /invalidateAdminErrors\("Target changed\. Sign in to load gateway errors\."\)/);
 });
 
 Deno.test("static assets register autonomous agent discovery documents", () => {
