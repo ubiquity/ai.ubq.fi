@@ -84,7 +84,7 @@ export const classifyKvKey = (key: Deno.KvKey): KvMeasurementClassification => {
   }
   if (
     joined.includes("api_key_usage") || joined.includes("api_keys") || joined.includes("runtime_config") ||
-    joined.includes("codex_auth") || joined.includes("codex_admission") || joined.includes("kernel") ||
+    joined.includes("codex_auth") || joined.includes("kernel") ||
     joined.includes("idempotency")
   ) {
     return "mandatory_correctness";
