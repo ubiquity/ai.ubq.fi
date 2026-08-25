@@ -46,13 +46,16 @@ const render = () => {
   const query = search.value.trim().toLowerCase();
   const visible = catalog.filter((model) => {
     const reasoning = reasoningFor(model);
+    const contextWindow = positiveTokenCount(model.context_window_tokens);
+    const maxContextWindow = positiveTokenCount(model.max_context_window_tokens);
+    const autoCompact = positiveTokenCount(model.auto_compact_token_limit_tokens);
     const contextSearch = [
       model.model_class,
-      model.context_window_tokens,
-      model.max_context_window_tokens,
-      model.auto_compact_token_limit_tokens,
-      model.context_window_tokens ? "context compact compression" : "",
-    ].filter((value) => value !== null && value !== undefined).join(" ").toLowerCase();
+      contextWindow && tokenNumber.format(contextWindow),
+      maxContextWindow && tokenNumber.format(maxContextWindow),
+      autoCompact && tokenNumber.format(autoCompact),
+      contextWindow ? "context compact compression" : "",
+    ].filter(Boolean).join(" ").toLowerCase();
     return !query || model.id.toLowerCase().includes(query) ||
       model.providers.some((provider) => providerNames[provider.id].toLowerCase().includes(query)) ||
       reasoning?.modelClass?.includes(query) ||
