@@ -193,6 +193,12 @@ Deno.test("admin error tab opens its view", () => {
   assert.match(adminScript, /if \(loadId !== errorsLoadId\) return/);
   assert.match(adminScript, /invalidateAdminErrors\("Sign in to load gateway errors\."\)/);
   assert.match(adminScript, /invalidateAdminErrors\("Target changed\. Sign in to load gateway errors\."\)/);
+  assert.match(adminScript, /const adminErrorSummary = \(record\) =>/);
+  assert.match(adminScript, /All eligible Codex accounts were busy/);
+  assert.match(adminScript, /adminErrorDeliveryLabel\(record\.delivery_outcome\)/);
+  assert.match(adminScript, /formatAdminErrorLatency\(record\.latency_ms\)/);
+  assert.doesNotMatch(adminScript, /appendMetaItem\(details, "Request"/);
+  assert.doesNotMatch(adminScript, /appendMetaItem\(details, "Revision"/);
 });
 
 Deno.test("provider analytics graph reports inference 5xx buckets", () => {

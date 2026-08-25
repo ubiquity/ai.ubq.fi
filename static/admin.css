@@ -1122,6 +1122,26 @@ body[data-page="admin"] [data-view="users"] [data-key-list] {
   gap: 10px;
 }
 
+body[data-page="admin"] [data-key="gateway-error"] {
+  gap: 8px;
+  padding: 12px 14px 12px 20px;
+  background: rgba(255, 255, 255, 0.045);
+  box-shadow: none;
+}
+
+body[data-page="admin"] [data-key="gateway-error"] [data-error-summary] {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+body[data-page="admin"] [data-key="gateway-error"] [data-meta="usage"] {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px 12px;
+}
+
 body[data-page="admin"] [data-key="passkey-user"] [data-key-controls] {
   align-items: center;
 }

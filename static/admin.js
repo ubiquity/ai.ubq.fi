@@ -160,53 +160,6 @@ const providerCapacityUpdated = mustGet("provider-capacity-updated");
 const providerCapacityChart = mustGet("provider-capacity-chart");
 const providerCapacityList = mustGet("provider-capacity-list");
 
-const PROMPT_CACHE_ANALYTICS_GROUPS = [
-  ["key_presence", "Keyed / unkeyed"],
-  ["provider", "Provider"],
-  ["model", "Model cohort"],
-  ["route", "Route"],
-  ["mode", "Cache mode"],
-  ["fallback", "Fallback class"],
-];
-const promptCacheAnalyticsPanel = document.createElement("section");
-promptCacheAnalyticsPanel.dataset.promptCacheAnalytics = "";
-promptCacheAnalyticsPanel.hidden = true;
-const promptCacheAnalyticsHeader = document.createElement("header");
-const promptCacheAnalyticsTitle = document.createElement("h3");
-promptCacheAnalyticsTitle.textContent = "Prompt-cache analytics";
-const promptCacheAnalyticsControl = document.createElement("label");
-promptCacheAnalyticsControl.dataset.field = "";
-const promptCacheAnalyticsControlLabel = document.createElement("span");
-promptCacheAnalyticsControlLabel.dataset.label = "";
-promptCacheAnalyticsControlLabel.textContent = "Group by";
-const promptCacheAnalyticsGroupBy = document.createElement("select");
-promptCacheAnalyticsGroupBy.id = "prompt-cache-analytics-group-by";
-for (const [value, label] of PROMPT_CACHE_ANALYTICS_GROUPS) {
-  const option = document.createElement("option");
-  option.value = value;
-  option.textContent = label;
-  promptCacheAnalyticsGroupBy.appendChild(option);
-}
-promptCacheAnalyticsControl.append(promptCacheAnalyticsControlLabel, promptCacheAnalyticsGroupBy);
-promptCacheAnalyticsHeader.append(promptCacheAnalyticsTitle, promptCacheAnalyticsControl);
-const promptCacheAnalyticsState = document.createElement("p");
-promptCacheAnalyticsState.dataset.muted = "";
-promptCacheAnalyticsState.setAttribute("aria-live", "polite");
-const promptCacheAnalyticsList = document.createElement("div");
-promptCacheAnalyticsList.dataset.promptCacheAnalyticsList = "";
-promptCacheAnalyticsList.setAttribute("role", "list");
-const promptCacheAnalyticsRetention = document.createElement("p");
-promptCacheAnalyticsRetention.dataset.muted = "";
-promptCacheAnalyticsRetention.textContent =
-  "This view shows the trailing seven days. Storage retains fifteen-minute buckets for eight days to keep the window complete. Raw cache keys and request identifiers are not shown.";
-promptCacheAnalyticsPanel.append(
-  promptCacheAnalyticsHeader,
-  promptCacheAnalyticsState,
-  promptCacheAnalyticsList,
-  promptCacheAnalyticsRetention,
-);
-providerCapacityChart.after(promptCacheAnalyticsPanel);
-
 let currentKeyView = "active";
 let currentAdminView = "loading";
 let pendingAdminView = null;
@@ -225,9 +178,6 @@ let providersLoadId = 0;
 let providersLoadedAt = 0;
 let providerCapacityLoading = false;
 let providerCapacityLoadedForOpen = false;
-let promptCacheAnalyticsLoading = false;
-let promptCacheAnalyticsLoadedForOpen = false;
-let promptCacheAnalyticsLoadId = 0;
 let latestProviderCapacityChartState = null;
 let capacityChartResizeFrame = 0;
 let capacityChartScrollState = null;
@@ -2574,169 +2524,6 @@ const loadProviderCapacity = async () => {
     providerCapacityLoading = false;
   }
 };
-
-const promptCacheAnalyticsPercent = (value) =>
-  typeof value === "number" && Number.isFinite(value) && value >= 0
-    ? `${quotaPercentFormatter.format(value)}%`
-    : "Not reported";
-
-const promptCacheAnalyticsNumber = (value) =>
-  typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? formatNumber(value) : "Not reported";
-
-const promptCacheAnalyticsRatio = (value) =>
-  typeof value === "number" && Number.isFinite(value) && value >= 0 ? String(value) : "Not calculable";
-
-const promptCacheAnalyticsProviderLabels = Object.freeze({
-  chatgpt_codex: "Codex",
-  surplus: "Metered 1",
-  metered: "Metered 2",
-});
-
-const promptCacheAnalyticsGroupLabel = (group) => {
-  if (!group || typeof group !== "object") return "All cache-eligible traffic";
-  if (group.cardinality_limited === true) return "Cohort detail capped";
-  const labels = [];
-  if (typeof group.provider === "string") {
-    labels.push(promptCacheAnalyticsProviderLabels[group.provider] ?? group.provider);
-  }
-  if (typeof group.model_hash === "string") {
-    labels.push(
-      group.model_hash === "unknown" ? "Model cohort unknown" : `Model cohort ${group.model_hash.slice(0, 12)}`,
-    );
-  }
-  if (typeof group.route === "string") labels.push(group.route);
-  if (typeof group.prompt_cache_key_present === "boolean") {
-    labels.push(group.prompt_cache_key_present ? "Keyed" : "Unkeyed");
-  }
-  if (typeof group.mode === "string") labels.push(group.mode);
-  if (typeof group.fallback === "string") labels.push(group.fallback);
-  return labels.length ? labels.join(" · ") : "All cache-eligible traffic";
-};
-
-const promptCacheAnalyticsGroupIdentity = (group) => {
-  try {
-    return JSON.stringify(group && typeof group === "object" ? group : {});
-  } catch {
-    return "{}";
-  }
-};
-
-const renderPromptCacheAnalytics = (snapshot) => {
-  promptCacheAnalyticsPanel.hidden = false;
-  promptCacheAnalyticsList.replaceChildren();
-  promptCacheAnalyticsState.removeAttribute("data-prompt-cache-analytics-unavailable");
-  if (snapshot?.status !== "ready") {
-    promptCacheAnalyticsState.setAttribute("data-prompt-cache-analytics-unavailable", "");
-    promptCacheAnalyticsState.textContent = "Cache analytics unavailable. Cache-hit values are not shown as zero.";
-    return;
-  }
-
-  const latestByGroup = new Map();
-  for (const bucket of Array.isArray(snapshot.buckets) ? snapshot.buckets : []) {
-    const bucketStartAtMs = bucket?.bucket_start_at_ms;
-    if (typeof bucketStartAtMs !== "number" || !Number.isFinite(bucketStartAtMs)) continue;
-    const identity = promptCacheAnalyticsGroupIdentity(bucket.group);
-    const existing = latestByGroup.get(identity);
-    if (!existing || bucketStartAtMs > existing.bucket_start_at_ms) latestByGroup.set(identity, bucket);
-  }
-  const rows = [...latestByGroup.values()].sort((left, right) =>
-    promptCacheAnalyticsGroupLabel(left.group).localeCompare(promptCacheAnalyticsGroupLabel(right.group))
-  );
-  if (!rows.length) {
-    promptCacheAnalyticsState.textContent =
-      "No retained cache-token history yet. Zero is shown only after usage telemetry reports a real zero.";
-    return;
-  }
-
-  const cappedCohortVisible = rows.some((bucket) => bucket?.group?.cardinality_limited === true);
-  const cardinalityLimited = snapshot.cardinality_limited === true || cappedCohortVisible;
-  const truncated = snapshot.truncated === true;
-  promptCacheAnalyticsState.textContent = cardinalityLimited
-    ? cappedCohortVisible
-      ? "Cohort detail reached the per-bucket cap. Cardinality-limited samples are included in the capped cohort row."
-      : "Cohort detail reached the per-bucket cap. The current response does not include the capped cohort row."
-    : truncated
-    ? `Showing the newest ${rows.length} grouped buckets within the response limit.`
-    : `Latest bucket for ${rows.length} cache cohort${rows.length === 1 ? "" : "s"}.`;
-  for (const bucket of rows) {
-    const row = document.createElement("article");
-    row.dataset.promptCacheAnalyticsRow = "";
-    row.setAttribute("role", "listitem");
-    const header = document.createElement("header");
-    const title = document.createElement("h4");
-    title.textContent = promptCacheAnalyticsGroupLabel(bucket.group);
-    const observed = document.createElement("span");
-    observed.dataset.muted = "";
-    observed.textContent = formatCapacityTimestamp(bucket.bucket_start_at_ms);
-    header.append(title, observed);
-    const facts = document.createElement("dl");
-    facts.dataset.capacityFacts = "";
-    appendProviderFact(facts, "Token hit rate", promptCacheAnalyticsPercent(bucket.token_hit_percentage));
-    appendProviderFact(facts, "Request hit rate", promptCacheAnalyticsPercent(bucket.request_hit_percentage));
-    appendProviderFact(
-      facts,
-      "Telemetry coverage",
-      promptCacheAnalyticsPercent(bucket.usage_telemetry_coverage_percentage),
-    );
-    appendProviderFact(facts, "Samples", promptCacheAnalyticsNumber(bucket.sample_count));
-    appendProviderFact(facts, "Cached input", promptCacheAnalyticsNumber(bucket.cached_input_tokens));
-    appendProviderFact(facts, "Cache reads per write", promptCacheAnalyticsRatio(bucket.cache_reads_per_write));
-    if (
-      typeof bucket.dimension_cardinality_limited_sample_count === "number" &&
-      bucket.dimension_cardinality_limited_sample_count > 0
-    ) {
-      appendProviderFact(
-        facts,
-        "Cardinality-limited samples",
-        promptCacheAnalyticsNumber(bucket.dimension_cardinality_limited_sample_count),
-      );
-    }
-    if (typeof bucket.group?.prompt_cache_key_present === "boolean") {
-      appendProviderFact(facts, "Cache key", bucket.group.prompt_cache_key_present ? "Keyed" : "Unkeyed");
-    }
-    row.append(header, facts);
-    promptCacheAnalyticsList.appendChild(row);
-  }
-};
-
-const loadPromptCacheAnalytics = async ({ supersede = false } = {}) => {
-  if (promptCacheAnalyticsLoading && !supersede) return false;
-  const token = getAdminToken();
-  if (!adminAccessState.isAdmin || !hasAdminCredential()) {
-    promptCacheAnalyticsPanel.hidden = true;
-    return false;
-  }
-  const groupBy = promptCacheAnalyticsGroupBy.value;
-  if (!PROMPT_CACHE_ANALYTICS_GROUPS.some(([value]) => value === groupBy)) return false;
-  const loadId = ++promptCacheAnalyticsLoadId;
-  promptCacheAnalyticsLoading = true;
-  promptCacheAnalyticsPanel.hidden = false;
-  promptCacheAnalyticsState.removeAttribute("data-prompt-cache-analytics-unavailable");
-  promptCacheAnalyticsState.textContent = "Loading cache analytics…";
-  try {
-    const response = await fetch(apiUrl(`/admin/prompt-cache-analytics?group_by=${encodeURIComponent(groupBy)}`), {
-      cache: "no-store",
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const payload = await response.json().catch(() => null);
-    if (loadId !== promptCacheAnalyticsLoadId) return false;
-    if (!response.ok || !payload) {
-      renderPromptCacheAnalytics({ status: "unavailable", buckets: [] });
-      return false;
-    }
-    renderPromptCacheAnalytics(payload);
-    return payload.status === "ready";
-  } catch {
-    if (loadId === promptCacheAnalyticsLoadId) renderPromptCacheAnalytics({ status: "unavailable", buckets: [] });
-    return false;
-  } finally {
-    if (loadId === promptCacheAnalyticsLoadId) promptCacheAnalyticsLoading = false;
-  }
-};
-
-promptCacheAnalyticsGroupBy.addEventListener("change", () => {
-  if (currentAdminView === "providers") void loadPromptCacheAnalytics({ supersede: true });
-});
 
 const scheduleProviderCapacityChartResize = () => {
   if (capacityChartResizeFrame) return;
@@ -6500,6 +6287,112 @@ const setErrorsMessage = (message) => {
   errorsList.appendChild(element);
 };
 
+const adminErrorKind = (record) => typeof record?.failure_kind === "string" ? record.failure_kind.trim() : "";
+
+const adminErrorReadable = (value, fallback = "unknown failure") => {
+  if (typeof value !== "string" || !value.trim()) return fallback;
+  return value.trim()
+    .replace(/^http_(\d{3})$/u, "HTTP $1")
+    .replace(/[:_]+/gu, " ")
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+};
+
+const ADMIN_ERROR_TITLES = Object.freeze({
+  codex_admission_busy: "Codex capacity busy",
+  empty_upstream_completion: "Empty upstream response",
+  gateway_stream_read_error: "Gateway stream read failure",
+  stream_read_error: "Response stream read failure",
+  read_error: "Response stream read failure",
+  premature_eof: "Upstream stream ended early",
+  missing_sse_terminal: "Missing stream terminal",
+  inactivity_timeout: "Upstream inactivity timeout",
+  provider_internal_deadline: "Provider deadline exceeded",
+  gateway_timeout: "Gateway timeout",
+  codex_auth_missing: "Codex credentials missing",
+  codex_auth_invalid: "Codex credentials rejected",
+  codex_auth_refresh_failed: "Codex credential refresh failed",
+  codex_auth_refresh_unreachable: "Codex credential refresh unreachable",
+  codex_upstream_unreachable: "Codex upstream unreachable",
+  server_error: "Provider server error",
+  upstream_error: "Upstream error",
+  invalid_request_error: "Invalid request",
+  request_cancelled: "Request cancelled",
+});
+
+const ADMIN_ERROR_PROVIDER_LABELS = Object.freeze({
+  chatgpt_codex: "Codex",
+  surplus: "Metered 1",
+  metered: "Metered 2",
+  gateway: "Gateway",
+});
+
+const adminErrorProviderLabel = (value) => {
+  if (typeof value !== "string" || !value.trim()) return "Gateway";
+  return ADMIN_ERROR_PROVIDER_LABELS[value.trim()] ?? adminErrorReadable(value, "Unknown provider");
+};
+
+const adminErrorTitle = (record) => {
+  const kind = adminErrorKind(record);
+  if (ADMIN_ERROR_TITLES[kind]) return ADMIN_ERROR_TITLES[kind];
+  if (/^http_\d{3}$/u.test(kind)) return `${adminErrorReadable(kind)} failure`;
+  return adminErrorReadable(
+    kind,
+    typeof record?.terminal_type === "string" ? adminErrorReadable(record.terminal_type) : "Gateway failure",
+  );
+};
+
+const adminErrorSummary = (record) => {
+  const kind = adminErrorKind(record).toLowerCase();
+  const status = typeof record?.status === "number" && Number.isFinite(record.status) ? record.status : 0;
+  const title = adminErrorTitle(record);
+  if (kind === "codex_admission_busy") {
+    return "All eligible Codex accounts were busy. Retry after capacity frees up or use the fallback route.";
+  }
+  if (kind === "request_cancelled" || record?.terminal_type === "cancelled") {
+    return "The client cancelled the request. No gateway action is needed unless cancellations are unexpected.";
+  }
+  if (kind.includes("auth")) {
+    return "Provider credentials were missing or rejected. Refresh the provider auth pool before retrying.";
+  }
+  if (status === 429 || kind.includes("quota") || kind.includes("rate_limit")) {
+    return "Provider capacity or quota blocked this request. Wait for reset or use fallback capacity.";
+  }
+  if (kind.includes("timeout") || kind.includes("deadline")) {
+    return "The upstream exceeded its time budget. Retry, then inspect provider latency if it repeats.";
+  }
+  if (kind.includes("unreachable") || kind.includes("network")) {
+    return "The provider could not be reached. Check provider health and the network path, then retry.";
+  }
+  if (kind.includes("empty_upstream")) {
+    return "The upstream ended without usable output. Retry and inspect the upstream response if it repeats.";
+  }
+  if (kind.includes("eof") || kind.includes("terminal") || kind.includes("stream") || kind.includes("read_error")) {
+    return "The response stream ended before a usable terminal. Retry and inspect upstream stream health.";
+  }
+  if (status >= 500 || kind.includes("server_error") || kind.includes("upstream_error")) {
+    return "The gateway or provider returned a server failure. Retry and inspect provider status if it repeats.";
+  }
+  if (status >= 400 && status < 500) {
+    return "The gateway rejected the request. Check the route, model, and request parameters before retrying.";
+  }
+  return `${title}. Retry the request and inspect provider health if it repeats.`;
+};
+
+const adminErrorDeliveryLabel = (value) => {
+  if (value === "delivered") return "Failure returned to client";
+  if (value === "interrupted") return "Client disconnected";
+  if (value === "unobserved") return "Delivery not observed";
+  return "Delivery unknown";
+};
+
+const formatAdminErrorLatency = (value) => {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "Not reported";
+  const milliseconds = Math.round(value);
+  if (milliseconds < 1_000) return `${milliseconds} ms`;
+  const seconds = milliseconds / 1_000;
+  return `${seconds >= 10 ? Math.round(seconds) : seconds.toFixed(1)} s`;
+};
+
 const invalidateAdminErrors = (message) => {
   errorsLoadId += 1;
   errorsLoading = false;
@@ -6521,21 +6414,23 @@ const renderAdminErrors = (records) => {
     row.setAttribute("role", "listitem");
     const header = document.createElement("header");
     const title = document.createElement("strong");
-    title.textContent = record.failure_kind || `HTTP ${record.status}`;
+    title.textContent = adminErrorTitle(record);
     const timestamp = document.createElement("span");
     timestamp.dataset.muted = "";
     timestamp.textContent = formatDate(record.created_at_ms);
     header.append(title, timestamp);
+    const summary = document.createElement("p");
+    summary.dataset.errorSummary = "";
+    summary.textContent = adminErrorSummary(record);
     const details = document.createElement("div");
     details.dataset.meta = "usage";
     appendMetaItem(details, "Status", String(record.status), { state: "bad" });
     appendMetaItem(details, "Route", record.route || "unknown");
-    appendMetaItem(details, "Provider", record.provider || "gateway");
-    appendMetaItem(details, "Model", record.model || "—");
-    appendMetaItem(details, "Terminal", record.terminal_type || "error");
-    appendMetaItem(details, "Request", record.request_id || "—", { mono: true });
-    appendMetaItem(details, "Revision", record.deno_revision || "—", { mono: true });
-    row.append(header, details);
+    appendMetaItem(details, "Provider", adminErrorProviderLabel(record.provider));
+    if (record.model) appendMetaItem(details, "Model", record.model);
+    appendMetaItem(details, "Outcome", adminErrorDeliveryLabel(record.delivery_outcome));
+    appendMetaItem(details, "Latency", formatAdminErrorLatency(record.latency_ms));
+    row.append(header, summary, details);
     errorsList.appendChild(row);
   });
 };
@@ -6738,15 +6633,8 @@ const loadAdminView = (view) => {
         if (!loaded) providerCapacityLoadedForOpen = false;
       });
     }
-    if (!promptCacheAnalyticsLoadedForOpen) {
-      promptCacheAnalyticsLoadedForOpen = true;
-      void loadPromptCacheAnalytics().then((loaded) => {
-        if (!loaded) promptCacheAnalyticsLoadedForOpen = false;
-      });
-    }
   } else {
     providerCapacityLoadedForOpen = false;
-    promptCacheAnalyticsLoadedForOpen = false;
   }
   if (view === "errors" && (!errorsLoadedAt || Date.now() - errorsLoadedAt >= 10_000)) {
     void loadAdminErrors();
@@ -7671,16 +7559,9 @@ tokenInput.addEventListener("input", () => {
   providersLoading = false;
   providersLoadedAt = 0;
   providerCapacityLoadedForOpen = false;
-  promptCacheAnalyticsLoadId += 1;
-  promptCacheAnalyticsLoading = false;
-  promptCacheAnalyticsLoadedForOpen = false;
   latestProviderCapacityChartState = null;
   latestProviderHealth = null;
   providerCapacityChart.replaceChildren();
-  promptCacheAnalyticsPanel.hidden = true;
-  promptCacheAnalyticsList.replaceChildren();
-  promptCacheAnalyticsState.removeAttribute("data-prompt-cache-analytics-unavailable");
-  promptCacheAnalyticsState.textContent = "Waiting for an authenticated admin session.";
   clearApiKeyRequestLogCaches();
   if (!hasAdminCredential()) {
     setAuthBadge("bad", "Missing token");
