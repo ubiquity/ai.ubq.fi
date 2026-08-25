@@ -20,9 +20,13 @@ jobs:
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
         with:
           deno-version: 2.9.5
-      - name: Format and validate
+      - name: Merge current base, format, and validate
         run: |
           set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch origin development
+          git merge --no-edit origin/development
           deno fmt \
             tests/sentinel-issue-delivery.test.ts \
             scripts/sentinel/issue-pr-pre-push.ts \
@@ -35,8 +39,6 @@ jobs:
       - name: Commit formatted files and self-remove
         run: |
           set -euo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           rm -f .github/workflows/pr127-format-final.yml
           git add -A \
             .github/workflows/pr127-format-final.yml \
@@ -45,5 +47,4 @@ jobs:
             scripts/sentinel/issue-delivery.ts \
             scripts/sentinel/issue-delivery-reconcile.ts
           git commit -m 'style(sentinel): satisfy Deno formatting gate'
-          git pull --rebase origin feature/recent-model-context-windows
           git push origin HEAD:feature/recent-model-context-windows
