@@ -423,17 +423,11 @@ jobs:
                 exit 1
                 ;;
             esac
-            remote_url="$("$REAL_GIT" remote get-url origin)"
-            case "$remote_url" in
-              https://github.com/*.git)
-                repository="${remote_url#https://github.com/}"
-                repository="${repository%.git}"
-                ;;
-              *)
-                echo "Provider Sentinel origin URL is not the expected GitHub HTTPS remote." >&2
-                exit 1
-                ;;
-            esac
+            repository="${GITHUB_REPOSITORY:-}"
+            if ! [[ "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+              echo "Provider Sentinel repository identity is invalid." >&2
+              exit 1
+            fi
             run_id="$(jq -r '.run_id // empty' "$repository_root/.sentinel/reports/cycle.json")"
             if ! [[ "$run_id" =~ ^[1-9][0-9]*$ ]]; then
               echo "Provider Sentinel cycle has no GitHub workflow run ID." >&2
