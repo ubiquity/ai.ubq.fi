@@ -378,7 +378,8 @@ const normalizeSurplusResponsesStream = (response: Response): Response => {
   if (!response.body || !response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
     return response;
   }
-  const source = readResponsesStream(response.body);
+  const consumerAbort = new AbortController();
+  const source = readResponsesStream(response.body, consumerAbort.signal);
   const textParts = new Map<string, string>();
   const doneTextParts = new Set<string>();
   let sawMessageDone = false;
@@ -436,7 +437,8 @@ const normalizeSurplusResponsesStream = (response: Response): Response => {
         else controller.enqueue(next.value);
       },
       async cancel(reason) {
-        await iterator.return(reason);
+        consumerAbort.abort(reason);
+        await iterator.return(reason).catch(() => {});
       },
     }),
     { status: response.status, statusText: response.statusText, headers: response.headers },
