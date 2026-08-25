@@ -26,3 +26,26 @@ Deno.test("development pushes deploy and promote without a manual production gat
     /https:\/\/api\.deno\.com\/v2\/revisions\/\$\{revision_id\}\/promote/u,
   );
 });
+
+Deno.test("deployment attestation ignores failed builder retry revisions", () => {
+  assert.match(
+    deploymentWorkflow,
+    /select\(\.status != "failed"\)/u,
+  );
+  assert.match(
+    deploymentWorkflow,
+    /More than one non-failed revision appeared after the baseline/u,
+  );
+  assert.match(
+    deploymentWorkflow,
+    /post-baseline non-failed revision set changed before promotion/u,
+  );
+  assert.doesNotMatch(
+    deploymentWorkflow,
+    /More than one revision appeared after the baseline/u,
+  );
+  assert.doesNotMatch(
+    deploymentWorkflow,
+    /select\(\.status == "succeeded"\)/u,
+  );
+});

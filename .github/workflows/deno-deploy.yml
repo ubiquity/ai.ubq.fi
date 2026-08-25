@@ -490,10 +490,14 @@ jobs:
                 >/dev/null || fail "Deno returned an invalid revision list for ${TARGET_PROJECT}."
               mapfile -t candidate_ids < <(
                 printf '%s' "$revisions" | jq -r --argjson baseline "$BASELINE_REVISION_IDS" '
-                  .[] | .id as $id | select(($baseline | index($id)) == null) | $id
+                  .[] |
+                  .id as $id |
+                  select(($baseline | index($id)) == null) |
+                  select(.status != "failed") |
+                  $id
                 '
               )
-              [ "${#candidate_ids[@]}" -le 1 ] || fail "More than one revision appeared after the Sentinel baseline."
+              [ "${#candidate_ids[@]}" -le 1 ] || fail "More than one non-failed revision appeared after the Sentinel baseline."
               if [ "${#candidate_ids[@]}" -eq 1 ]; then
                 candidate_id="${candidate_ids[0]}"
                 candidate_status="$(printf '%s' "$revisions" | jq -r --arg id "$candidate_id" \
@@ -516,10 +520,14 @@ jobs:
             "https://api.deno.com/v2/apps/${TARGET_PROJECT}/revisions?limit=50")"
           mapfile -t final_candidate_ids < <(
             printf '%s' "$revisions" | jq -r --argjson baseline "$BASELINE_REVISION_IDS" '
-              .[] | .id as $id | select(($baseline | index($id)) == null) | $id
+              .[] |
+              .id as $id |
+              select(($baseline | index($id)) == null) |
+              select(.status != "failed") |
+              $id
             '
           )
-          [ "${#final_candidate_ids[@]}" -eq 1 ] || fail "The post-baseline revision set changed before attestation."
+          [ "${#final_candidate_ids[@]}" -eq 1 ] || fail "The post-baseline non-failed revision set changed before attestation."
           [ "${final_candidate_ids[0]}" = "$revision_id" ] || fail "The candidate revision identity changed."
 
           revision="$(curl --fail-with-body -sS --max-time 30 \
@@ -651,11 +659,12 @@ jobs:
                   .[] |
                   .id as $id |
                   select(($baseline | index($id)) == null) |
+                  select(.status != "failed") |
                   $id
                 '
               )
               if [ "${#candidate_ids[@]}" -gt 1 ]; then
-                fail "More than one revision appeared after the baseline; refusing an ambiguous promotion."
+                fail "More than one non-failed revision appeared after the baseline; refusing an ambiguous promotion."
               fi
               if [ "${#candidate_ids[@]}" -eq 1 ]; then
                 candidate_id="${candidate_ids[0]}"
@@ -686,11 +695,12 @@ jobs:
               .[] |
               .id as $id |
               select(($baseline | index($id)) == null) |
+              select(.status != "failed") |
               $id
             '
           )
           if [ "${#final_candidate_ids[@]}" -ne 1 ]; then
-            fail "The post-baseline revision set changed before promotion; refusing to overwrite another deployment."
+            fail "The post-baseline non-failed revision set changed before promotion; refusing to overwrite another deployment."
           fi
           [ "${final_candidate_ids[0]}" = "$revision_id" ] ||
             fail "The post-baseline revision identity changed before promotion."
