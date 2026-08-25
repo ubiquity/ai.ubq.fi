@@ -837,7 +837,7 @@ Deno.test("timeout blocks take precedence over quota blocks in a mixed unavailab
   }
 });
 
-Deno.test("fetchCodexResponses uses the sibling account on the request after a timeout", async () => {
+Deno.test("fetchCodexResponses does not replay a dispatched timeout on a sibling account", async () => {
   const kv = new RoutingKv();
   const originalFetch = globalThis.fetch;
   const now = Date.now();
@@ -869,10 +869,10 @@ Deno.test("fetchCodexResponses uses the sibling account on the request after a t
     );
     resetCodexAccountRoutingForTest();
 
-    const response = await fetchCodexResponses({ model: "gpt-5-routing", input: "next request" });
-    assert.equal(response.status, 200);
-    assert.deepEqual(calls, ["one", "two"]);
-    await response.arrayBuffer();
+    const selected = await selectCodexRoutingAccounts(authPool, authPool.accounts, now);
+    assert.equal(selected.kind, "eligible");
+    assert.deepEqual(calls, ["one"]);
+    if (selected.kind === "eligible") assert.deepEqual(selected.accounts.map((account) => account.slot), [1]);
   } finally {
     globalThis.fetch = originalFetch;
     setKvForTest(null);

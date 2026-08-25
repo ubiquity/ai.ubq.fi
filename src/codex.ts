@@ -1871,6 +1871,10 @@ const fetchPreparedCodexResponses = async (
   let probeUnavailable = false;
   let probeUnavailableCircuit: CodexProbeCircuit | null = null;
   let attemptNumber = 0;
+  // Set by the current attempt's dispatch hook so the account loop can
+  // distinguish an ambiguous post-dispatch outcome from a failure that was
+  // fenced before any provider request could start.
+  let attemptTransportStarted = false;
   const refreshedSlots = new Set<number>();
   const retryState: {
     candidate:
@@ -2260,6 +2264,7 @@ const fetchPreparedCodexResponses = async (
   ): Promise<Response> => {
     attemptNumber += 1;
     let transportStarted = false;
+    attemptTransportStarted = false;
     try {
       const response = await fetchCodexResponseWithAuth(
         auth,
@@ -2281,6 +2286,7 @@ const fetchPreparedCodexResponses = async (
           : options.beforeDispatch,
         () => {
           transportStarted = true;
+          attemptTransportStarted = true;
           reportCodexResponseTiming(options.timing?.onDispatch);
         },
       );
@@ -2717,8 +2723,17 @@ const fetchPreparedCodexResponses = async (
         error instanceof CodexError &&
         (error.code === "gateway_timeout" || error.code === "codex_upstream_unreachable")
       ) {
-        await releaseCodexRoutingProbe(routing);
-        continue;
+        if (!attemptTransportStarted) {
+          await releaseCodexRoutingProbe(routing);
+          continue;
+        }
+        // Once dispatch started, the provider may have received the request.
+        // Replaying it on a sibling account could duplicate side effects. A
+        // dispatched timeout has already opened its circuit in fetchAttempt;
+        // retain that circuit and surface the original error.
+        if (error.code !== "gateway_timeout") await releaseCodexRoutingProbe(routing);
+        if (lastResponse) cancelResponseBody(lastResponse);
+        throw error;
       }
       if (!(error instanceof CodexError && error.code === "gateway_timeout")) {
         await releaseCodexRoutingProbe(routing);
