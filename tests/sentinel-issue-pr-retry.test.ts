@@ -1,8 +1,5 @@
 import assert from "node:assert/strict";
-import {
-  matchingIssueDeliveryPullRequests,
-  type PullRequest,
-} from "../scripts/sentinel/issue-pr-pre-push.ts";
+import { matchingIssueDeliveryPullRequests, type PullRequest } from "../scripts/sentinel/issue-pr-pre-push.ts";
 
 const marker = "<!-- provider-sentinel:issue-pr:v1 issue=112 fingerprint=" + "a".repeat(64) + " -->";
 
