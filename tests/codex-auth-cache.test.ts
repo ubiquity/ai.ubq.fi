@@ -430,19 +430,58 @@ Deno.test("Codex responses try the second account after a transient transport fa
   kv.auth = pool(auth("one"), auth("two"));
   kv.extra.clear();
   resetCodexAuthCacheForTest();
+  let beforeDispatchCalls = 0;
   globalThis.fetch = (input, init) => {
     const request = new Request(input, init);
     accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
-    if (accountIds.length === 1) {
-      return Promise.reject(new DOMException("upstream socket closed", "TimeoutError"));
-    }
     return Promise.resolve(new Response("{}", { status: 200 }));
   };
 
   try {
-    const response = await fetchCodexResponses({ input: "timeout-failover" });
+    const response = await fetchCodexResponses(
+      { input: "timeout-failover" },
+      {
+        beforeDispatch: () => {
+          beforeDispatchCalls += 1;
+          if (beforeDispatchCalls === 1) throw new TypeError("upstream socket closed before dispatch");
+          return Promise.resolve();
+        },
+      },
+    );
     assert.equal(response.status, 200);
-    assert.deepEqual(accountIds, ["account-one", "account-two"]);
+    assert.deepEqual(accountIds, ["account-two"]);
+    assert.equal(beforeDispatchCalls, 2);
+  } finally {
+    resetCodexAuthCacheForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("Codex responses do not replay a post-dispatch unreachable transport", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const accountIds: string[] = [];
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"), auth("two"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  globalThis.fetch = (input, init) => {
+    const request = new Request(input, init);
+    accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
+    return Promise.reject(new TypeError("upstream socket closed after dispatch"));
+  };
+
+  try {
+    await assert.rejects(
+      () => fetchCodexResponses({ input: "no-replay-after-dispatch" }),
+      (error: unknown) =>
+        error instanceof CodexError && error.code === "codex_upstream_unreachable" && error.status === 502,
+    );
+    assert.deepEqual(accountIds, ["account-one"]);
   } finally {
     resetCodexAuthCacheForTest();
     globalThis.fetch = originalFetch;
