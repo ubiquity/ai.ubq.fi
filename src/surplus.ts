@@ -375,8 +375,17 @@ const toSurplusResponsesBody = (
   supportsParallelToolCalls: boolean | undefined,
 ): JsonRecord => {
   let forwardedBody = body;
+  if (Array.isArray(body.input)) {
+    const originalInput = body.input;
+    const input = originalInput.map((item) =>
+      isRecord(item) && item.type === "message" && item.role === "developer" ? { ...item, role: "system" } : item
+    );
+    if (input.some((item, index) => item !== originalInput[index])) {
+      forwardedBody = { ...body, input };
+    }
+  }
   if (supportsParallelToolCalls === false && "parallel_tool_calls" in body) {
-    forwardedBody = { ...body };
+    if (forwardedBody === body) forwardedBody = { ...body };
     delete forwardedBody.parallel_tool_calls;
   }
   if (!isRecord(forwardedBody.reasoning) || forwardedBody.reasoning.effort !== "ultra") {

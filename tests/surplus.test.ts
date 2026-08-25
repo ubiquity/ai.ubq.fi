@@ -135,6 +135,33 @@ Deno.test("fetchSurplusResponses translates Codex ultra reasoning to the upstrea
   });
 });
 
+Deno.test("fetchSurplusResponses maps Codex developer messages to Surplus system messages", async () => {
+  let forwardedInput: unknown;
+
+  await fetchSurplusResponses(
+    {
+      model: "deepseek-v4-flash",
+      input: [
+        { type: "message", role: "developer", content: [{ type: "input_text", text: "Be concise." }] },
+        { type: "message", role: "user", content: [{ type: "input_text", text: "Reply." }] },
+      ],
+      stream: true,
+    },
+    {
+      apiKey: "test-key",
+      fetcher: (_input, init) => {
+        forwardedInput = (JSON.parse(String(init?.body)) as Record<string, unknown>).input;
+        return Promise.resolve(new Response(null, { status: 200 }));
+      },
+    },
+  );
+
+  assert.deepEqual(forwardedInput, [
+    { type: "message", role: "system", content: [{ type: "input_text", text: "Be concise." }] },
+    { type: "message", role: "user", content: [{ type: "input_text", text: "Reply." }] },
+  ]);
+});
+
 Deno.test("fetchSurplusResponses runs the quota hook immediately before transport", async () => {
   const events: string[] = [];
   const fetcher: SurplusFetch = (_input, init) => {
