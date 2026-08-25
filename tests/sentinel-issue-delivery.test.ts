@@ -120,20 +120,26 @@ Deno.test("pre-push parsing isolates exactly one development update", () => {
 });
 
 Deno.test("the issue PR gate permits only the exact one-parent fail-safe revert", () => {
-  assert.equal(isIssueDeliveryFailSafeRevert({
-    selection,
-    cycle,
-    pullRequest,
-    pushedSha: "d".repeat(40),
-    parentSha: "c".repeat(40),
-  }), true);
-  assert.equal(isIssueDeliveryFailSafeRevert({
-    selection,
-    cycle,
-    pullRequest,
-    pushedSha: "d".repeat(40),
-    parentSha: "e".repeat(40),
-  }), false);
+  assert.equal(
+    isIssueDeliveryFailSafeRevert({
+      selection,
+      cycle,
+      pullRequest,
+      pushedSha: "d".repeat(40),
+      parentSha: "c".repeat(40),
+    }),
+    true,
+  );
+  assert.equal(
+    isIssueDeliveryFailSafeRevert({
+      selection,
+      cycle,
+      pullRequest,
+      pushedSha: "d".repeat(40),
+      parentSha: "e".repeat(40),
+    }),
+    false,
+  );
 });
 
 Deno.test("one immutable issue snapshot renders one non-closing PR with bounded evidence", () => {
