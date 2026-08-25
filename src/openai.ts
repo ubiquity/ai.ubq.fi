@@ -226,7 +226,7 @@ const codexAdmissionPrincipal = (context: UsageContext | undefined): string => {
 type UpstreamProvider = "cerebras" | "chatgpt_codex" | "removed_provider" | "metered" | "surplus";
 const supportsReasoningProgressRelease = (provider: UpstreamProvider): boolean =>
   provider === "chatgpt_codex" || provider === "surplus" || provider === "metered";
-export type InferenceFallbackReason = "primary_quota_blocked";
+export type InferenceFallbackReason = "primary_quota_blocked" | "dynamic_paid_model";
 export type UsageTelemetryStatus = "missing" | "partial" | "reported" | "invalid";
 export type PromptCacheMode = "implicit" | "explicit" | "legacy_retention" | "unspecified";
 export type AffinityOutcome =
@@ -2264,6 +2264,72 @@ const logPaidProviderSelected = (
   }
 };
 
+const logPaidProviderAdmissionRejected = (
+  requestId: string,
+  model: string,
+  reason: string,
+): void => {
+  try {
+    console.warn(
+      "[ai.ubq.fi] paid_provider_admission_rejected",
+      JSON.stringify({ request_id: requestId, model, reason }),
+    );
+  } catch {
+    // Routing telemetry must never alter provider selection.
+  }
+};
+
+const paidProviderAdmissionError = (reason: string): Response => {
+  switch (reason) {
+    case "disabled":
+      return openaiError(
+        403,
+        "Paid-provider routing is disabled for this API key.",
+        "paid_fallback_disabled",
+      );
+    case "limit_exceeded":
+      return openaiError(
+        429,
+        "The API key's paid-provider limit is exhausted.",
+        "paid_fallback_limit_exceeded",
+      );
+    case "provider_unconfigured":
+      return openaiError(
+        503,
+        "No paid provider is configured for this model.",
+        "paid_provider_unconfigured",
+        { type: "server_error" },
+      );
+    case "model_not_priced":
+      return openaiError(
+        403,
+        "This model is not admitted by the API key's paid-provider policy.",
+        "paid_model_not_admitted",
+      );
+    case "reconciliation_pending":
+      return openaiError(
+        503,
+        "Paid-provider billing reconciliation is pending.",
+        "paid_fallback_reconciliation_pending",
+        { type: "server_error" },
+      );
+    case "concurrent_update":
+      return openaiError(
+        503,
+        "Paid-provider admission changed concurrently; retry the request.",
+        "paid_fallback_concurrent_update",
+        { type: "server_error" },
+      );
+    default:
+      return openaiError(
+        503,
+        "Paid-provider admission is unavailable.",
+        "paid_fallback_invalid_policy",
+        { type: "server_error" },
+      );
+  }
+};
+
 const canAttemptPaidFallback = (context: UsageContext | undefined): boolean =>
   context?.paidFallbackEnabled === true &&
   Boolean(context?.keyId && context.requestId && context.startedAtMs !== undefined) &&
@@ -2547,6 +2613,7 @@ const fetchResponsesWithPaidFallback = async (
   const routingState = (): Readonly<{
     surplusBilling: SurplusBillingPricing | null;
     paidProviders: readonly ("metered" | "surplus")[];
+    paidModelKnown: boolean;
     meteredOnly: boolean;
   }> => {
     const meteredModelSupportsRoute =
@@ -2579,18 +2646,22 @@ const fetchResponsesWithPaidFallback = async (
     // only when its own catalog proves that the exact model is routable.
     const meteredCanServe = Boolean(readMeteredApiKey()) &&
       (meteredCatalog === null ? codexModelKnown : meteredModelSupportsRoute);
-    // Surplus catalog entries currently prove only text endpoint support. Do
-    // not send tool-bearing Codex work there until the catalog carries an
-    // explicit tool/function-call capability that this router can verify.
-    const surplusCanServe = !requestUsesTools && Boolean(readSurplusApiKey()) && surplusModelSupportsRoute &&
-      surplusBilling !== null;
+    // Tool-bearing work needs explicit capability evidence from the exact
+    // Surplus model record. Missing or partial metadata remains fail-closed.
+    const surplusCanServe = (!requestUsesTools || surplusModel?.supports_tools === true) &&
+      Boolean(readSurplusApiKey()) && surplusModelSupportsRoute && surplusBilling !== null;
     // The paid tiers have a fixed cost order for every model. Provider
     // availability may remove a tier, but it must never reverse the order.
     const preferredPaidProviders: readonly ("metered" | "surplus")[] = ["surplus", "metered"];
     const paidProviders = preferredPaidProviders.filter((provider) =>
       provider === "surplus" ? surplusCanServe : meteredCanServe
     );
-    return { surplusBilling, paidProviders, meteredOnly: paidProviders.length > 0 && !codexModelKnown };
+    return {
+      surplusBilling,
+      paidProviders,
+      paidModelKnown: meteredModelSupportsRoute || surplusModelSupportsRoute,
+      meteredOnly: paidProviders.length > 0 && !codexModelKnown,
+    };
   };
   const refreshStalePaidCatalogsInBackground = (): void => {
     if (meteredCatalog !== null && meteredCatalogNeedsRefresh()) {
@@ -2600,24 +2671,85 @@ const fetchResponsesWithPaidFallback = async (
       void fetchSurplusModels().catch(() => {});
     }
   };
-  if (!codexModelKnown && (meteredCatalog === null || surplusCatalog === null)) {
+  if (!codexModelKnown && (meteredCatalogNeedsRefresh() || surplusCatalogNeedsRefresh())) {
     [meteredCatalog, surplusCatalog] = await Promise.all([
-      meteredCatalog === null ? fetchMeteredModels({ signal: options.signal }) : Promise.resolve(meteredCatalog),
-      surplusCatalog === null ? fetchSurplusModels({ signal: options.signal }) : Promise.resolve(surplusCatalog),
+      meteredCatalogNeedsRefresh()
+        ? fetchMeteredModels({ force: true, signal: options.signal })
+        : Promise.resolve(meteredCatalog),
+      surplusCatalogNeedsRefresh()
+        ? fetchSurplusModels({ force: true, signal: options.signal })
+        : Promise.resolve(surplusCatalog),
     ]);
   }
-  let { surplusBilling, paidProviders, meteredOnly } = routingState();
+  let { surplusBilling, paidProviders, paidModelKnown, meteredOnly } = routingState();
   if (paidProviders.length) refreshStalePaidCatalogsInBackground();
-  const meteredOnlyPrimary = meteredOnly
+  const rejectDirectPaidAdmission = (
+    provider: "metered" | "surplus",
+    errorReason: string,
+    logReason = errorReason,
+  ): RoutedResponsesUpstream => {
+    if (telemetry) telemetry.provider = "gateway";
+    logPaidProviderAdmissionRejected(
+      options.usageContext?.requestId ?? "unknown",
+      options.model,
+      logReason,
+    );
+    return {
+      response: paidProviderAdmissionError(errorReason),
+      provider,
+      paidFallback: null,
+      gatewayResponse: true,
+      fallbackReason: "dynamic_paid_model",
+    };
+  };
+  const surplusModelSupportsRoute =
+    surplusCatalog?.models.some((model) =>
+      model.id === options.model && model.supported_endpoint_types.includes(endpointType)
+    ) === true;
+  const catalogPaidProvider: "metered" | "surplus" = surplusModelSupportsRoute ? "surplus" : "metered";
+  if (!codexModelKnown && paidModelKnown && paidProviders.length === 0) {
+    if (options.usageContext?.paidFallbackEnabled === false) {
+      return rejectDirectPaidAdmission(catalogPaidProvider, "disabled");
+    }
+    const surplusModelWithoutToolProof = requestUsesTools && surplusModelSupportsRoute &&
+      Boolean(readSurplusApiKey()) && surplusBilling !== null &&
+      surplusCatalog?.models.some((model) => model.id === options.model && model.supports_tools !== true) === true;
+    if (surplusModelWithoutToolProof) {
+      if (telemetry) {
+        telemetry.provider = "gateway";
+        telemetry.fallbackReason = "dynamic_paid_model";
+      }
+      logPaidProviderAdmissionRejected(
+        options.usageContext?.requestId ?? "unknown",
+        options.model,
+        "tool_capability_unverified",
+      );
+      return {
+        response: openaiError(
+          400,
+          `Model '${options.model}' does not support tool calling through the configured providers.`,
+          "model_tool_calling_unsupported",
+          { param: "tools" },
+        ),
+        provider: "surplus",
+        paidFallback: null,
+        gatewayResponse: true,
+        fallbackReason: "dynamic_paid_model",
+      };
+    }
+    return rejectDirectPaidAdmission(catalogPaidProvider, "provider_unconfigured");
+  }
+  const directPaidProvider = meteredOnly ? paidProviders[0] : null;
+  const directPaidPrimary = directPaidProvider
     ? openaiError(
-      429,
-      "This dynamic paid model is not in the configured paid-fallback roster.",
-      CODEX_QUOTA_BLOCKED_ERROR_CODE,
-      { headers: { "x-uos-upstream": "chatgpt_codex" } },
+      503,
+      "Paid-provider routing did not reach the selected upstream.",
+      "paid_provider_not_dispatched",
+      { type: "server_error" },
     )
     : null;
-  if (telemetry) telemetry.provider = "chatgpt_codex";
-  recordAttemptedProvider(options.usageContext, "chatgpt_codex");
+  if (telemetry) telemetry.provider = directPaidProvider ?? "chatgpt_codex";
+  if (!directPaidProvider) recordAttemptedProvider(options.usageContext, "chatgpt_codex");
   let primary: Response;
   const debugScenario = (await loadDebugRoutingConfig()).scenario;
   const forcedStatus = debugScenario === "metered_first" || debugScenario === "codex_429"
@@ -2627,8 +2759,8 @@ const fetchResponsesWithPaidFallback = async (
     : debugScenario === "codex_401"
     ? 401
     : null;
-  if (meteredOnlyPrimary) {
-    primary = meteredOnlyPrimary;
+  if (directPaidPrimary) {
+    primary = directPaidPrimary;
   } else if (forcedStatus !== null) {
     primary = openaiError(
       forcedStatus,
@@ -2668,7 +2800,7 @@ const fetchResponsesWithPaidFallback = async (
     telemetry.providerRequestId = providerRequestIdFromResponse(primary);
   }
   const routingError = getCodexRoutingError(primary);
-  const gatewayResponse = routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE ||
+  const gatewayResponse = directPaidProvider !== null || routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE ||
     routingError === CODEX_UPSTREAM_DEGRADED_ERROR_CODE ||
     routingError === CODEX_ADMISSION_BUSY_ERROR_CODE;
   if (authReauthenticationPrimary) {
@@ -2683,11 +2815,15 @@ const fetchResponsesWithPaidFallback = async (
   const createdAtMs = options.usageContext?.startedAtMs;
   // Only a complete, authoritative Codex quota/capacity classification may
   // admit paid fallback. Generic 429 responses remain request-local.
-  const fallbackReason: InferenceFallbackReason | null = primaryStatus === 429 &&
-      routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE
+  const fallbackReason: InferenceFallbackReason | null = directPaidProvider
+    ? "dynamic_paid_model"
+    : primaryStatus === 429 && routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE
     ? "primary_quota_blocked"
     : null;
   if (telemetry) telemetry.fallbackReason = fallbackReason;
+  if (directPaidProvider && options.usageContext?.paidFallbackEnabled === false) {
+    return rejectDirectPaidAdmission(directPaidProvider, "disabled");
+  }
   if (
     !fallbackReason ||
     options.usageContext?.paidFallbackEnabled === false ||
@@ -2695,6 +2831,9 @@ const fetchResponsesWithPaidFallback = async (
     !requestId ||
     createdAtMs === undefined
   ) {
+    if (directPaidProvider) {
+      return rejectDirectPaidAdmission(directPaidProvider, "invalid_policy", "invalid_context");
+    }
     return {
       response: primary,
       provider: "chatgpt_codex",
@@ -2752,6 +2891,9 @@ const fetchResponsesWithPaidFallback = async (
     decision = await reservePaidFallback(reservationInput);
   } catch (error) {
     warnPaidFallbackBookkeepingFailure("admission", error);
+    if (directPaidProvider) {
+      return rejectDirectPaidAdmission(directPaidProvider, "invalid_policy", "admission_error");
+    }
     return {
       response: primary,
       provider: "chatgpt_codex",
@@ -2761,6 +2903,9 @@ const fetchResponsesWithPaidFallback = async (
     };
   }
   if (decision.kind === "skip") {
+    if (directPaidProvider) {
+      return rejectDirectPaidAdmission(directPaidProvider, decision.reason);
+    }
     return {
       response: primary,
       provider: "chatgpt_codex",
@@ -2770,6 +2915,9 @@ const fetchResponsesWithPaidFallback = async (
     };
   }
   if (decision.kind === "blocked") {
+    if (directPaidProvider) {
+      return rejectDirectPaidAdmission(directPaidProvider, decision.reason);
+    }
     return {
       response: primary,
       provider: "chatgpt_codex",
@@ -2855,9 +3003,13 @@ const fetchResponsesWithPaidFallback = async (
       const candidate = provider === "surplus"
         ? await fetchSurplusResponses(body, {
           signal: fallbackSignal,
+          supportsParallelToolCalls: surplusCatalog?.models.find((model) =>
+            model.id === options.model
+          )?.supports_parallel_tool_calls === true,
           beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("surplus") ?? Promise.resolve(),
           onDispatch: () => {
             transportStarted = true;
+            recordFirstProviderDispatch(options.usageContext);
           },
         })
         : await fetchMeteredResponses(body, {
@@ -2865,8 +3017,10 @@ const fetchResponsesWithPaidFallback = async (
           beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("metered") ?? Promise.resolve(),
           onDispatch: () => {
             transportStarted = true;
+            recordFirstProviderDispatch(options.usageContext);
           },
         });
+      recordFirstProviderHeaders(options.usageContext);
       await recordPaidProviderResponseHealth(provider, candidate.response.status, candidate.request_id);
       if (
         providerIndex < paidProviders.length - 1 &&

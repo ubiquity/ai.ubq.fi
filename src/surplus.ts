@@ -15,6 +15,8 @@ export type SurplusModel = Readonly<{
   created: number;
   owned_by: string;
   supported_endpoint_types: readonly string[];
+  supports_tools?: true;
+  supports_parallel_tool_calls?: true;
   description?: string;
   input_price_per_token?: number;
   output_price_per_token?: number;
@@ -60,6 +62,7 @@ export type SurplusAuthenticatedFetchOptions = Readonly<{
   apiKey?: string | null;
   fetcher?: SurplusFetch;
   signal?: AbortSignal;
+  supportsParallelToolCalls?: boolean;
   beforeDispatch?: () => Promise<ApiKeyProviderDispatch | void>;
   onDispatch?: () => void;
 }>;
@@ -88,6 +91,29 @@ const nonNegativeNumber = (value: unknown): number | null => {
   if (typeof value !== "string" || !value.trim()) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+};
+
+const readStringSet = (value: unknown): ReadonlySet<string> =>
+  new Set(
+    Array.isArray(value)
+      ? value
+        .filter((entry): entry is string => typeof entry === "string")
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+      : [],
+  );
+
+const readModelCapabilities = (
+  value: JsonRecord,
+): Readonly<{ supports_tools?: true; supports_parallel_tool_calls?: true }> => {
+  const parameters = readStringSet(value.supported_parameters);
+  const features = readStringSet(value.supported_features);
+  return {
+    ...(parameters.has("tools") && parameters.has("tool_choice") && features.has("tools")
+      ? { supports_tools: true as const }
+      : {}),
+    ...(parameters.has("parallel_tool_calls") ? { supports_parallel_tool_calls: true as const } : {}),
+  };
 };
 
 const readTextModalities = (value: unknown): {
@@ -183,6 +209,7 @@ const readSurplusModel = (value: unknown): SurplusModel | null => {
     created,
     owned_by: ownedBy,
     supported_endpoint_types: ["openai", "openai-response"],
+    ...readModelCapabilities(value),
     ...(description ? { description } : {}),
     ...readPricing(value),
   };
@@ -343,11 +370,21 @@ const responseRequestId = (response: Response): string | null =>
       response.headers.get("X-Oneapi-Request-Id"),
   );
 
-const toSurplusResponsesBody = (body: JsonRecord): JsonRecord => {
-  if (!isRecord(body.reasoning) || body.reasoning.effort !== "ultra") return body;
+const toSurplusResponsesBody = (
+  body: JsonRecord,
+  supportsParallelToolCalls: boolean | undefined,
+): JsonRecord => {
+  let forwardedBody = body;
+  if (supportsParallelToolCalls === false && "parallel_tool_calls" in body) {
+    forwardedBody = { ...body };
+    delete forwardedBody.parallel_tool_calls;
+  }
+  if (!isRecord(forwardedBody.reasoning) || forwardedBody.reasoning.effort !== "ultra") {
+    return forwardedBody;
+  }
   return {
-    ...body,
-    reasoning: { ...body.reasoning, effort: "max" },
+    ...forwardedBody,
+    reasoning: { ...forwardedBody.reasoning, effort: "max" },
   };
 };
 
@@ -365,7 +402,7 @@ export const fetchSurplusResponses = async (
 
   let encodedBody: string;
   try {
-    encodedBody = JSON.stringify(toSurplusResponsesBody(body));
+    encodedBody = JSON.stringify(toSurplusResponsesBody(body, options.supportsParallelToolCalls));
   } catch {
     throw new SurplusError(
       "Surplus Responses requests must use a JSON-serializable body.",

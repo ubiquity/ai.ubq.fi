@@ -25,6 +25,8 @@ Deno.test("fetchSurplusModels preserves exact IDs and exposes text-capable route
           created: 1_735_000_000,
           provider: "openai",
           architecture: { modality: "text->text" },
+          supported_parameters: ["reasoning", "tools", "tool_choice", "parallel_tool_calls"],
+          supported_features: ["streaming", "tools", "reasoning"],
           pricing: {
             prompt: "0.000001",
             completion: "0.000003",
@@ -44,6 +46,8 @@ Deno.test("fetchSurplusModels preserves exact IDs and exposes text-capable route
           id: "claude-opus-5",
           provider: "anthropic",
           architecture: { input_modalities: ["text"], output_modalities: ["text"] },
+          supported_parameters: ["tools"],
+          supported_features: ["tools"],
           description: "test model",
         },
       ],
@@ -61,19 +65,24 @@ Deno.test("fetchSurplusModels preserves exact IDs and exposes text-capable route
   assert.equal(snapshot?.models[0].input_price_per_token, 0.000001);
   assert.equal(snapshot?.models[0].cache_read_price_per_token, 0.0000001);
   assert.equal(snapshot?.models[0].cache_write_price_per_token, 0.000002);
+  assert.equal(snapshot?.models[0].supports_tools, true);
+  assert.equal(snapshot?.models[0].supports_parallel_tool_calls, true);
   assert.deepEqual(snapshot?.models[0].supported_endpoint_types, ["openai", "openai-response"]);
   assert.equal(snapshot?.models[1].description, "test model");
+  assert.equal(snapshot?.models[1].supports_tools, undefined);
+  assert.equal(snapshot?.models[1].supports_parallel_tool_calls, undefined);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, "https://api.surplusintelligence.ai/v1/models");
   assert.equal(new Headers(calls[0].init?.headers).get("Accept"), "application/json");
   assert.equal(new Headers(calls[0].init?.headers).has("Authorization"), false);
 });
 
-Deno.test("fetchSurplusResponses forwards the canonical body and provider request ID", async () => {
+Deno.test("fetchSurplusResponses omits unsupported parallel-tool control and returns the request ID", async () => {
   const body = {
     model: "claude-opus-5",
     input: [{ role: "user", content: [{ type: "input_text", text: "hello" }] }],
     stream: true,
+    parallel_tool_calls: true,
   };
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   const fetcher: SurplusFetch = (input, init) => {
@@ -89,12 +98,17 @@ Deno.test("fetchSurplusResponses forwards the canonical body and provider reques
   const result = await fetchSurplusResponses(body, {
     apiKey: "inf_test",
     fetcher,
+    supportsParallelToolCalls: false,
   });
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, "https://api.surplusintelligence.ai/v1/responses");
   assert.equal(calls[0].init?.method, "POST");
-  assert.deepEqual(JSON.parse(String(calls[0].init?.body)), body);
+  assert.deepEqual(JSON.parse(String(calls[0].init?.body)), {
+    model: "claude-opus-5",
+    input: [{ role: "user", content: [{ type: "input_text", text: "hello" }] }],
+    stream: true,
+  });
   const headers = new Headers(calls[0].init?.headers);
   assert.equal(headers.get("Authorization"), "Bearer inf_test");
   assert.equal(headers.get("Accept"), "text/event-stream");

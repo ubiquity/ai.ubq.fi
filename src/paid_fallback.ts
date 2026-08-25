@@ -264,7 +264,8 @@ export const reservePaidFallback = async (
     allowUnrosteredModel?: boolean;
     reason:
       | "primary_429"
-      | "primary_quota_blocked";
+      | "primary_quota_blocked"
+      | "dynamic_paid_model";
   }>,
 ): Promise<PaidFallbackReservationDecision> => {
   const kv = await getKv();

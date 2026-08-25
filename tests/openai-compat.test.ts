@@ -140,11 +140,14 @@ const {
 } = await import("../src/openai.ts");
 const {
   fetchMeteredModels,
+  METERED_MODELS_CACHE_TTL_MS,
   resetMeteredModelsCacheForTest,
+  setMeteredModelsFetchForTest,
 } = await import("../src/metered.ts");
 const {
   fetchSurplusModels,
   resetSurplusModelsCacheForTest,
+  SURPLUS_MODELS_CACHE_TTL_MS,
 } = await import("../src/surplus.ts");
 const { ApiKeyQuotaDispatchError } = await import("../src/api_key_policy.ts");
 const { withCors } = await import("../src/http.ts");
@@ -5003,6 +5006,250 @@ Deno.test("openai: temporary free GLM cut uses only Surplus without paid fallbac
     else Deno.env.set("SURPLUS_API_KEY", originalSurplusApiKey);
     if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
     else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
+  }
+});
+
+Deno.test("openai: DeepSeek Flash tool requests route directly to catalog-proven Surplus", async () => {
+  const model = "deepseek-v4-flash";
+  const keyId = "dynamic-deepseek-surplus-tools";
+  const requestId = `request-${keyId}`;
+  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
+  const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
+  const originalDateNow = Date.now;
+  let nowMs = originalDateNow();
+  Date.now = () => nowMs;
+  Deno.env.set("METERED_API_KEY", "metered-test-key");
+  Deno.env.set("SURPLUS_API_KEY", "surplus-test-key");
+  resetMeteredModelsCacheForTest();
+  resetSurplusModelsCacheForTest();
+  seedPaidFallbackKey(keyId, {
+    limitMicrocredits: -1,
+    modelIds: [DEFAULT_TEST_MODEL],
+  });
+  const tools = [{
+    type: "function",
+    name: "inspect_workspace",
+    description: "Inspect the workspace before continuing.",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    strict: false,
+  }];
+
+  try {
+    // The explicit inference request must refresh stale non-null catalogs
+    // before it decides that this paid-only model belongs on Codex.
+    await fetchMeteredModels({
+      force: true,
+      fetcher: () =>
+        Promise.resolve(Response.json({
+          data: [{
+            id: "previous-metered-model",
+            supported_endpoint_types: ["openai-response"],
+          }],
+        })),
+    });
+    await fetchSurplusModels({
+      apiKey: "surplus-test-key",
+      force: true,
+      fetcher: () =>
+        Promise.resolve(Response.json({
+          data: [{
+            id: "previous-surplus-model",
+            provider: "Surplus",
+            pricing: { prompt: 0.000001, completion: 0.000003 },
+          }],
+        })),
+    });
+    nowMs += Math.max(METERED_MODELS_CACHE_TTL_MS, SURPLUS_MODELS_CACHE_TTL_MS) + 1;
+    setMeteredModelsFetchForTest((input, init) => globalThis.fetch(input, init));
+
+    let meteredCatalogCalls = 0;
+    let surplusCatalogCalls = 0;
+    let codexCalls = 0;
+    let surplusCalls = 0;
+    let forwardedBody: Record<string, unknown> | null = null;
+    const response = await withFetchMock(
+      (url, bodyText) => {
+        if (url === "https://api.openlux.ai/v1/models") {
+          meteredCatalogCalls += 1;
+          return Response.json({
+            data: [{
+              id: "previous-metered-model",
+              supported_endpoint_types: ["openai-response"],
+            }],
+          });
+        }
+        if (url === "https://api.surplusintelligence.ai/v1/models") {
+          surplusCatalogCalls += 1;
+          return Response.json({
+            data: [{
+              id: model,
+              provider: "DeepSeek",
+              supported_parameters: ["tools", "tool_choice", "reasoning"],
+              supported_features: ["streaming", "tools", "reasoning"],
+              pricing: { prompt: 0.000001, completion: 0.000003 },
+            }],
+          });
+        }
+        if (url === "https://chatgpt.com/backend-api/codex/responses") {
+          codexCalls += 1;
+          throw new Error("dynamic DeepSeek requests must not reach Codex");
+        }
+        if (url === "https://api.surplusintelligence.ai/v1/responses") {
+          surplusCalls += 1;
+          forwardedBody = JSON.parse(String(bodyText)) as Record<string, unknown>;
+          return sseResponse(baseSseChunks());
+        }
+        throw new Error(`Unexpected upstream request in DeepSeek direct-routing test: ${url}`);
+      },
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model,
+              input: "inspect the workspace",
+              tools,
+              tool_choice: "auto",
+              parallel_tool_calls: true,
+              reasoning: { effort: "max" },
+              stream: true,
+            }),
+          }),
+          {
+            keyId,
+            kernelRepo: null,
+            kernelOrg: null,
+            paidFallbackEnabled: true,
+            requestId,
+            startedAtMs: Date.now(),
+            startedAtMonotonicMs: performance.now(),
+          },
+        ),
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-uos-upstream"), "surplus");
+    assert.equal(meteredCatalogCalls, 1);
+    assert.equal(surplusCatalogCalls, 1);
+    assert.equal(codexCalls, 0);
+    assert.equal(surplusCalls, 1);
+    assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, ["surplus"]);
+    assert.equal(getResponseTelemetry(response)?.fallbackReason, "dynamic_paid_model");
+    assert.equal(typeof getResponseTelemetry(response)?.firstProviderDispatchMs, "number");
+    assert.equal(typeof getResponseTelemetry(response)?.firstProviderHeadersMs, "number");
+    assert.equal(getResponseTelemetry(response)?.firstCodexDispatchMs, null);
+    assert.equal(getResponseTelemetry(response)?.firstCodexHeadersMs, null);
+    assert.deepEqual(forwardedBody, {
+      model,
+      input: [{
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "inspect the workspace" }],
+      }],
+      store: false,
+      stream: true,
+      reasoning: { effort: "max" },
+      tools,
+      tool_choice: "auto",
+    });
+    await response.text();
+    const stored = await waitForPaidFallbackTerminal(keyId, requestId, "completed");
+    assert.equal(stored.provider, "surplus");
+  } finally {
+    Date.now = originalDateNow;
+    kvStore.delete(keyToString(["ubq_ai", "api_keys", "id", keyId]));
+    kvStore.delete(keyToString(["ubq_ai", "api_keys", "hash", `hash-${keyId}`]));
+    resetMeteredModelsCacheForTest();
+    setMeteredModelsFetchForTest(null);
+    resetSurplusModelsCacheForTest();
+    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
+    if (originalSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
+    else Deno.env.set("SURPLUS_API_KEY", originalSurplusApiKey);
+  }
+});
+
+Deno.test("openai: dynamic tool requests reject unverified Surplus capability before transport", async () => {
+  const model = "deepseek-v4-flash";
+  const keyId = "dynamic-deepseek-unverified-tools";
+  const requestId = `request-${keyId}`;
+  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
+  const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
+  Deno.env.delete("METERED_API_KEY");
+  Deno.env.set("SURPLUS_API_KEY", "surplus-test-key");
+  resetMeteredModelsCacheForTest();
+  resetSurplusModelsCacheForTest();
+  seedPaidFallbackKey(keyId, { limitMicrocredits: -1 });
+
+  try {
+    await fetchSurplusModels({
+      apiKey: "surplus-test-key",
+      force: true,
+      fetcher: () =>
+        Promise.resolve(Response.json({
+          data: [{
+            id: model,
+            provider: "DeepSeek",
+            supported_parameters: ["tools"],
+            supported_features: ["tools"],
+            pricing: { prompt: 0.000001, completion: 0.000003 },
+          }],
+        })),
+    });
+
+    let upstreamCalls = 0;
+    const response = await withFetchMock(
+      (url) => {
+        upstreamCalls += 1;
+        throw new Error(`Unverified dynamic tool request must not reach an upstream: ${url}`);
+      },
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model,
+              input: "inspect the workspace",
+              tools: [{
+                type: "function",
+                name: "inspect_workspace",
+                description: "Inspect the workspace before continuing.",
+                parameters: { type: "object", properties: {}, additionalProperties: false },
+              }],
+              reasoning: { effort: "max" },
+              stream: true,
+            }),
+          }),
+          {
+            keyId,
+            kernelRepo: null,
+            kernelOrg: null,
+            paidFallbackEnabled: true,
+            requestId,
+            startedAtMs: Date.now(),
+          },
+        ),
+    );
+
+    assert.equal(response.status, 400);
+    const payload = await response.json() as { error?: { code?: string; param?: string } };
+    assert.equal(payload.error?.code, "model_tool_calling_unsupported");
+    assert.equal(payload.error?.param, "tools");
+    assert.equal(upstreamCalls, 0);
+    assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, []);
+    assert.equal(getResponseTelemetry(response)?.fallbackReason, "dynamic_paid_model");
+    assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null);
+  } finally {
+    kvStore.delete(keyToString(["ubq_ai", "api_keys", "id", keyId]));
+    kvStore.delete(keyToString(["ubq_ai", "api_keys", "hash", `hash-${keyId}`]));
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
+    if (originalSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
+    else Deno.env.set("SURPLUS_API_KEY", originalSurplusApiKey);
   }
 });
 
