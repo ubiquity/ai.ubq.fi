@@ -34,14 +34,17 @@ const requiredEnvironment = (name: string): string => {
 const readJson = async (path: string): Promise<unknown> => JSON.parse(await Deno.readTextFile(path));
 
 const git = async (args: readonly string[]): Promise<string> => {
-  const result = await new Deno.Command("git", {
+  const executable = Deno.env.get("SENTINEL_REAL_GIT")?.trim() || "git";
+  const result = await new Deno.Command(executable, {
     args: [...args],
     stdout: "piped",
     stderr: "piped",
   }).output();
   if (!result.success) {
     const stderr = new TextDecoder().decode(result.stderr).trim();
-    throw new Error(`Git command failed: git ${args.join(" ")}${stderr ? `: ${stderr.slice(0, 500)}` : ""}`);
+    throw new Error(
+      `Git command failed: ${executable} ${args.join(" ")}${stderr ? `: ${stderr.slice(0, 500)}` : ""}`,
+    );
   }
   return new TextDecoder().decode(result.stdout).trim();
 };
@@ -65,7 +68,9 @@ const githubRequest = async (
   });
   const text = await response.text();
   if (!response.ok) {
-    throw new Error(`GitHub API ${init.method ?? "GET"} ${path} failed with HTTP ${response.status}: ${text.slice(0, 500)}`);
+    throw new Error(
+      `GitHub API ${init.method ?? "GET"} ${path} failed with HTTP ${response.status}: ${text.slice(0, 500)}`,
+    );
   }
   return text.length === 0 ? null : JSON.parse(text);
 };
@@ -89,7 +94,9 @@ const parsePullRequest = (value: unknown): PullRequest => {
     typeof head.ref !== "string" || !SAFE_BRANCH.test(head.ref) ||
     typeof head.sha !== "string" || !FULL_SHA.test(head.sha) ||
     typeof base.ref !== "string" || !SAFE_BRANCH.test(base.ref)
-  ) throw new Error("GitHub returned an invalid pull request");
+  ) {
+    throw new Error("GitHub returned an invalid pull request");
+  }
   return {
     number: pull.number as number,
     htmlUrl: pull.html_url,
@@ -121,7 +128,9 @@ const ensureRemoteCandidateBranch = async (branch: string, candidateSha: string)
   const remote = await git(["ls-remote", "--heads", "origin", `refs/heads/${branch}`]);
   const remoteSha = remote.length === 0 ? null : remote.split(/\s+/u)[0] ?? null;
   if (remoteSha === candidateSha) return;
-  if (remoteSha !== null && !FULL_SHA.test(remoteSha)) throw new Error("Remote Sentinel candidate branch has an invalid SHA");
+  if (remoteSha !== null && !FULL_SHA.test(remoteSha)) {
+    throw new Error("Remote Sentinel candidate branch has an invalid SHA");
+  }
   await git(["push", "--no-verify", "origin", `HEAD:refs/heads/${branch}`]);
   const confirmed = await git(["ls-remote", "--heads", "origin", `refs/heads/${branch}`]);
   if ((confirmed.split(/\s+/u)[0] ?? null) !== candidateSha) {
@@ -157,6 +166,17 @@ const optionalPreviewEvidence = async (
   };
 };
 
+export const matchingIssueDeliveryPullRequests = (
+  pulls: readonly PullRequest[],
+  marker: string,
+  candidateSha: string,
+  candidateBranch: string,
+): PullRequest[] =>
+  pulls.filter((pull) =>
+    pull.body.includes(marker) && pull.headSha === candidateSha && pull.headRef === candidateBranch &&
+    pull.baseRef === "development"
+  );
+
 export const ensureIssuePullRequestForDevelopmentPush = async (input: Readonly<{
   repositoryRoot: string;
   prePushInput: string;
@@ -184,13 +204,15 @@ export const ensureIssuePullRequestForDevelopmentPush = async (input: Readonly<{
     const pullValue = await readJson(`${reportsDir}/github-issue-pull-request.json`);
     const pullRecord = parseGitHubIssuePullRequestRecord(pullValue);
     const parentSha = await git(["rev-parse", `${update.localSha}^`]);
-    if (!isIssueDeliveryFailSafeRevert({
-      selection,
-      cycle,
-      pullRequest: pullRecord,
-      pushedSha: update.localSha,
-      parentSha,
-    })) {
+    if (
+      !isIssueDeliveryFailSafeRevert({
+        selection,
+        cycle,
+        pullRequest: pullRecord,
+        pushedSha: update.localSha,
+        parentSha,
+      })
+    ) {
       throw new Error("Sentinel development push does not match the issue candidate or its fail-safe revert");
     }
     return pullRecord;
@@ -198,8 +220,15 @@ export const ensureIssuePullRequestForDevelopmentPush = async (input: Readonly<{
   await ensureRemoteCandidateBranch(cycle.temporary_branch, update.localSha);
 
   const marker = issuePullRequestMarker(selection);
-  const existing = (await listPullRequests(input.token, input.repository)).filter((pull) => pull.body.includes(marker));
-  if (existing.length > 1) throw new Error("More than one pull request exists for the immutable Sentinel issue snapshot");
+  const existing = matchingIssueDeliveryPullRequests(
+    await listPullRequests(input.token, input.repository),
+    marker,
+    update.localSha,
+    cycle.temporary_branch,
+  );
+  if (existing.length > 1) {
+    throw new Error("More than one pull request exists for the concrete Sentinel issue delivery attempt");
+  }
 
   const preview = await optionalPreviewEvidence(reportsDir);
   const workflowRunUrl = `${input.serverUrl}/${input.repository}/actions/runs/${input.workflowRunId}`;
@@ -221,31 +250,36 @@ export const ensureIssuePullRequestForDevelopmentPush = async (input: Readonly<{
   if (existing.length === 1) {
     pull = existing[0]!;
     reused = true;
-    if (
-      pull.state !== "open" || pull.mergedAt !== null || pull.headRef !== cycle.temporary_branch ||
-      pull.headSha !== update.localSha || pull.baseRef !== "development"
-    ) throw new Error("Existing Sentinel issue pull request does not match the exact candidate");
-    pull = parsePullRequest(await githubRequest(input.token, input.repository, `/pulls/${pull.number}`, {
-      method: "PATCH",
-      body: JSON.stringify({ body }),
-    }));
-  } else {
-    pull = parsePullRequest(await githubRequest(input.token, input.repository, "/pulls", {
-      method: "POST",
-      body: JSON.stringify({
-        title: `fix(issue #${selection.issue_number}): Provider Sentinel deliverable`,
-        body,
-        head: cycle.temporary_branch,
-        base: "development",
-        draft: false,
-        maintainer_can_modify: false,
+    if (pull.state !== "open" || pull.mergedAt !== null) {
+      throw new Error("Existing Sentinel delivery-attempt pull request is no longer open");
+    }
+    pull = parsePullRequest(
+      await githubRequest(input.token, input.repository, `/pulls/${pull.number}`, {
+        method: "PATCH",
+        body: JSON.stringify({ body }),
       }),
-    }));
+    );
+  } else {
+    pull = parsePullRequest(
+      await githubRequest(input.token, input.repository, "/pulls", {
+        method: "POST",
+        body: JSON.stringify({
+          title: `fix(issue #${selection.issue_number}): Provider Sentinel deliverable`,
+          body,
+          head: cycle.temporary_branch,
+          base: "development",
+          draft: false,
+          maintainer_can_modify: false,
+        }),
+      }),
+    );
   }
   if (
     pull.state !== "open" || pull.mergedAt !== null || pull.headRef !== cycle.temporary_branch ||
     pull.headSha !== update.localSha || pull.baseRef !== "development" || !pull.body.includes(marker)
-  ) throw new Error("Sentinel issue pull request failed its post-creation identity check");
+  ) {
+    throw new Error("Sentinel issue pull request failed its post-creation identity check");
+  }
 
   const record: GitHubIssuePullRequestRecord = {
     schema_version: 1,
