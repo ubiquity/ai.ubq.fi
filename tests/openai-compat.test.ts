@@ -5170,6 +5170,111 @@ Deno.test("openai: DeepSeek Flash tool requests route directly to catalog-proven
   }
 });
 
+Deno.test("openai: direct paid admission failures do not enter RemovedProvider recovery", async (t) => {
+  const model = "deepseek-admission-stop";
+  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
+  const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
+  const debugKey = keyToString(DEBUG_ROUTING_KEY);
+  const previousDebugRouting = kvStore.get(debugKey);
+  let removedProviderCalls = 0;
+
+  Deno.env.set("METERED_API_KEY", "metered-discovery-key");
+  Deno.env.delete("SURPLUS_API_KEY");
+  resetMeteredModelsCacheForTest();
+  resetSurplusModelsCacheForTest();
+  await fetchMeteredModels({
+    force: true,
+    fetcher: () =>
+      Promise.resolve(Response.json({
+        data: [{ id: model, supported_endpoint_types: ["openai-response"] }],
+      })),
+  });
+  Deno.env.delete("METERED_API_KEY");
+  setRemovedProviderApiKeyForTest("removed-provider-test-key");
+  setRemovedProviderTestAdapterForTest({
+    fetchResponses: async (_body, options) => {
+      removedProviderCalls += 1;
+      await options.beforeDispatch?.();
+      options.timing?.onDispatch?.();
+      options.timing?.onHeaders?.();
+      return { response: sseResponse(baseSseChunks()) };
+    },
+    modelFromEvent: () => DEFAULT_TEST_MODEL,
+    isEligibleModel: (candidate) => candidate === DEFAULT_TEST_MODEL,
+  });
+  kvStore.set(debugKey, {
+    scenario: "normal",
+    expires_at_ms: Date.now() + 60_000,
+    updated_at_ms: Date.now(),
+  });
+  resetDebugRoutingCacheForTest();
+
+  try {
+    await t.step("an admission 503 returns without RemovedProvider dispatch", async () => {
+      const response = await withFetchMock(
+        () => {
+          throw new Error("direct paid admission must not start upstream transport");
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model, input: "do not recover admission failures" }),
+            }),
+            {
+              keyId: "direct-paid-admission-key",
+              kernelRepo: null,
+              kernelOrg: null,
+              paidFallbackEnabled: true,
+              requestId: "direct-paid-admission-request",
+              startedAtMs: Date.now(),
+            },
+          ),
+      );
+
+      assert.equal(response.status, 503);
+      assert.equal((await response.json() as { error?: { code?: string } }).error?.code, "paid_provider_unconfigured");
+      assert.equal(removedProviderCalls, 0);
+    });
+
+    await t.step("ordinary eligible upstream failures still enter RemovedProvider recovery", async () => {
+      const response = await withFetchMock(
+        () =>
+          new Response(JSON.stringify({ error: { message: "Codex primary failed" } }), {
+            status: 503,
+            headers: { "Content-Type": "application/json" },
+          }),
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "recover ordinary upstream failures" }),
+            }),
+          ),
+      );
+
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("x-uos-upstream"), "removed_provider");
+      assert.equal(removedProviderCalls, 1);
+      await response.text();
+    });
+  } finally {
+    setRemovedProviderTestAdapterForTest(null);
+    setRemovedProviderApiKeyForTest(undefined);
+    if (previousDebugRouting === undefined) kvStore.delete(debugKey);
+    else kvStore.set(debugKey, previousDebugRouting);
+    resetDebugRoutingCacheForTest();
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
+    if (originalSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
+    else Deno.env.set("SURPLUS_API_KEY", originalSurplusApiKey);
+  }
+});
+
 Deno.test("openai: dynamic tool requests reject unverified Surplus capability before transport", async () => {
   const model = "deepseek-v4-flash";
   const keyId = "dynamic-deepseek-unverified-tools";
