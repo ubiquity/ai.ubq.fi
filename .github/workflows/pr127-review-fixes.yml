@@ -1,0 +1,372 @@
+name: Apply PR 127 Review Fixes
+
+on:
+  push:
+    branches:
+      - feature/recent-model-context-windows
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: feature/recent-model-context-windows
+          fetch-depth: 0
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: 2.9.5
+      - name: Apply Codex and CodeRabbit findings
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require("node:fs");
+
+          const replaceOnce = (path, before, after, label) => {
+            const source = fs.readFileSync(path, "utf8");
+            if (source.includes(after)) return;
+            if (!source.includes(before)) throw new Error(`Missing patch anchor: ${label}`);
+            fs.writeFileSync(path, source.replace(before, after));
+          };
+
+          replaceOnce(
+            "src/recent_model_context.ts",
+            `export type RecentModelContext = Readonly<{
+            model_class: string;
+            context_window_tokens: number;
+            max_context_window_tokens: number;
+            auto_compact_token_limit_tokens: number;
+            effective_context_window_percent: number;
+          }>;
+          `,
+            `export type RecentModelContext = Readonly<{
+            model_class: string;
+            context_window_tokens: number;
+            max_context_window_tokens: number;
+            auto_compact_token_limit_tokens: number;
+            effective_context_window_percent: number;
+          }>;
+
+          export type RecentModelContextOverrides = Readonly<{
+            context_window_tokens?: number | null;
+            max_context_window_tokens?: number | null;
+            auto_compact_token_limit_tokens?: number | null;
+            effective_context_window_percent?: number | null;
+          }>;
+          `,
+            "context override type",
+          );
+
+          replaceOnce(
+            "src/recent_model_context.ts",
+            `export const recentModelContextFor = (modelId: string): RecentModelContext | null => {
+            const normalized = modelId.trim().toLowerCase().split("/").at(-1) ?? "";
+            if (!normalized) return null;
+            const rule = RECENT_MODEL_CONTEXT_RULES.find((candidate) => candidate.pattern.test(normalized));
+            if (!rule) return null;
+            return {
+              model_class: rule.model_class,
+              context_window_tokens: rule.context_window_tokens,
+              max_context_window_tokens: rule.context_window_tokens,
+              auto_compact_token_limit_tokens: deriveAutoCompactTokenLimit(rule.context_window_tokens),
+              effective_context_window_percent: CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT,
+            };
+          };
+          `,
+            `const positiveSafeInteger = (value: number | null | undefined): number | null =>
+            typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
+
+          const resolvedAutoCompactTokenLimit = (
+            contextWindowTokens: number,
+            configuredLimit: number | null | undefined,
+          ): number => {
+            const configured = positiveSafeInteger(configuredLimit);
+            if (configured !== null && configured <= contextWindowTokens) return configured;
+            if (contextWindowTokens > CONTEXT_COMPACTION_RESERVED_TOKENS) {
+              return deriveAutoCompactTokenLimit(contextWindowTokens);
+            }
+            return Math.max(1, Math.min(contextWindowTokens - 1, Math.floor(contextWindowTokens * 0.85)));
+          };
+
+          export const recentModelContextFor = (
+            modelId: string,
+            overrides: RecentModelContextOverrides = {},
+          ): RecentModelContext | null => {
+            const normalized = modelId.trim().toLowerCase().split("/").at(-1) ?? "";
+            if (!normalized) return null;
+            const rule = RECENT_MODEL_CONTEXT_RULES.find((candidate) => candidate.pattern.test(normalized));
+            if (!rule) return null;
+
+            const nativeContextWindow = positiveSafeInteger(overrides.context_window_tokens);
+            const nativeMaxContextWindow = positiveSafeInteger(overrides.max_context_window_tokens);
+            const contextWindow = nativeContextWindow ?? nativeMaxContextWindow ?? rule.context_window_tokens;
+            const maxContextWindow = Math.max(contextWindow, nativeMaxContextWindow ?? contextWindow);
+            const effectiveContextWindowPercent =
+              typeof overrides.effective_context_window_percent === "number" &&
+                Number.isSafeInteger(overrides.effective_context_window_percent) &&
+                overrides.effective_context_window_percent >= 1 &&
+                overrides.effective_context_window_percent <= 100
+                ? overrides.effective_context_window_percent
+                : CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT;
+
+            return {
+              model_class: rule.model_class,
+              context_window_tokens: contextWindow,
+              max_context_window_tokens: maxContextWindow,
+              auto_compact_token_limit_tokens: resolvedAutoCompactTokenLimit(
+                contextWindow,
+                overrides.auto_compact_token_limit_tokens,
+              ),
+              effective_context_window_percent: effectiveContextWindowPercent,
+            };
+          };
+          `,
+            "native context resolver",
+          );
+
+          replaceOnce(
+            "src/openai.ts",
+            `  const fallbackContext = recentModelContextFor(id);
+            const contextWindow = normalizeTokenCount(value.context_window) ?? fallbackContext?.context_window_tokens ?? null;
+            const maxContextWindow = normalizeTokenCount(value.max_context_window) ??
+              fallbackContext?.max_context_window_tokens ?? contextWindow;
+            const autoCompactTokenLimit = normalizeTokenCount(value.auto_compact_token_limit) ??
+              fallbackContext?.auto_compact_token_limit_tokens ?? null;
+          `,
+            `  const nativeContextWindow = normalizeTokenCount(value.context_window);
+            const nativeMaxContextWindow = normalizeTokenCount(value.max_context_window);
+            const nativeAutoCompactTokenLimit = normalizeTokenCount(value.auto_compact_token_limit);
+            const resolvedContext = recentModelContextFor(id, {
+              context_window_tokens: nativeContextWindow,
+              max_context_window_tokens: nativeMaxContextWindow,
+              auto_compact_token_limit_tokens: nativeAutoCompactTokenLimit,
+              effective_context_window_percent: normalizeTokenCount(value.effective_context_window_percent),
+            });
+            const contextWindow = resolvedContext?.context_window_tokens ?? nativeContextWindow;
+            const maxContextWindow = resolvedContext?.max_context_window_tokens ??
+              nativeMaxContextWindow ?? contextWindow;
+            const autoCompactTokenLimit = resolvedContext?.auto_compact_token_limit_tokens ??
+              (nativeAutoCompactTokenLimit !== null &&
+                  (contextWindow === null || nativeAutoCompactTokenLimit <= contextWindow)
+                ? nativeAutoCompactTokenLimit
+                : null);
+          `,
+            "capability context resolution",
+          );
+
+          replaceOnce(
+            "src/openai.ts",
+            `    ...(fallbackContext
+              ? {
+                model_class: fallbackContext.model_class,
+                effective_context_window_percent: normalizeTokenCount(value.effective_context_window_percent) ??
+                  fallbackContext.effective_context_window_percent,
+              }
+              : {}),
+          `,
+            `    ...(resolvedContext
+              ? {
+                model_class: resolvedContext.model_class,
+                effective_context_window_percent: resolvedContext.effective_context_window_percent,
+              }
+              : {}),
+          `,
+            "capability context metadata",
+          );
+
+          replaceOnce(
+            "src/openai.ts",
+            `  const codexModels = normalized?.data ?? [];
+            const surplusModels = surplus?.models ?? [];
+          `,
+            `  const codexModels = normalized?.data ?? [];
+            const codexModelRecords = new Map<string, Record<string, unknown>>();
+            for (const candidate of snapshot?.models ?? []) {
+              if (!isRecord(candidate)) continue;
+              const id = modelIdFromSnapshotRecord(candidate);
+              if (id) codexModelRecords.set(id, candidate);
+            }
+            const surplusModels = surplus?.models ?? [];
+          `,
+            "raw Codex model lookup",
+          );
+
+          replaceOnce(
+            "src/openai.ts",
+            `  const add = (id: string, provider: PublicModelProvider): void => {
+            const existing = models.get(id);
+            if (existing) {
+              existing.providers.push(provider);
+              return;
+            }
+            const context = recentModelContextFor(id);
+            models.set(id, {
+              id,
+              providers: [provider],
+              ...(context
+                ? {
+                  model_class: context.model_class,
+                  context_window_tokens: context.context_window_tokens,
+                  max_context_window_tokens: context.max_context_window_tokens,
+                  auto_compact_token_limit_tokens: context.auto_compact_token_limit_tokens,
+                  effective_context_window_percent: context.effective_context_window_percent,
+                }
+                : {}),
+            });
+          };
+          `,
+            `  const add = (
+            id: string,
+            provider: PublicModelProvider,
+            nativeModel: Record<string, unknown> | null = null,
+          ): void => {
+            const existing = models.get(id);
+            if (existing) {
+              existing.providers.push(provider);
+              return;
+            }
+
+            const nativeContextWindow = normalizeTokenCount(nativeModel?.context_window);
+            const nativeMaxContextWindow = normalizeTokenCount(nativeModel?.max_context_window);
+            const nativeAutoCompactTokenLimit = normalizeTokenCount(nativeModel?.auto_compact_token_limit);
+            const nativeEffectiveContextWindowPercent = normalizeTokenCount(nativeModel?.effective_context_window_percent);
+            const resolvedContext = recentModelContextFor(id, {
+              context_window_tokens: nativeContextWindow,
+              max_context_window_tokens: nativeMaxContextWindow,
+              auto_compact_token_limit_tokens: nativeAutoCompactTokenLimit,
+              effective_context_window_percent: nativeEffectiveContextWindowPercent,
+            });
+            const contextWindow = resolvedContext?.context_window_tokens ?? nativeContextWindow;
+            const maxContextWindow = resolvedContext?.max_context_window_tokens ??
+              (nativeMaxContextWindow !== null && contextWindow !== null
+                ? Math.max(nativeMaxContextWindow, contextWindow)
+                : nativeMaxContextWindow ?? contextWindow);
+            const autoCompactTokenLimit = resolvedContext?.auto_compact_token_limit_tokens ??
+              (nativeAutoCompactTokenLimit !== null &&
+                  (contextWindow === null || nativeAutoCompactTokenLimit <= contextWindow)
+                ? nativeAutoCompactTokenLimit
+                : null);
+            const effectiveContextWindowPercent = resolvedContext?.effective_context_window_percent ??
+              (nativeEffectiveContextWindowPercent !== null && nativeEffectiveContextWindowPercent <= 100
+                ? nativeEffectiveContextWindowPercent
+                : null);
+
+            models.set(id, {
+              id,
+              providers: [provider],
+              ...(resolvedContext ? { model_class: resolvedContext.model_class } : {}),
+              ...(contextWindow === null ? {} : { context_window_tokens: contextWindow }),
+              ...(maxContextWindow === null ? {} : { max_context_window_tokens: maxContextWindow }),
+              ...(autoCompactTokenLimit === null ? {} : { auto_compact_token_limit_tokens: autoCompactTokenLimit }),
+              ...(effectiveContextWindowPercent === null
+                ? {}
+                : { effective_context_window_percent: effectiveContextWindowPercent }),
+            });
+          };
+          `,
+            "public catalog context resolution",
+          );
+
+          replaceOnce(
+            "src/openai.ts",
+            `    add(id, {
+              id: "codex",
+              owned_by: getString(model.owned_by) ?? "openai",
+              supported_endpoints: ["/v1/responses", "/v1/chat/completions"],
+            });
+          `,
+            `    add(id, {
+              id: "codex",
+              owned_by: getString(model.owned_by) ?? "openai",
+              supported_endpoints: ["/v1/responses", "/v1/chat/completions"],
+            }, codexModelRecords.get(id) ?? null);
+          `,
+            "public catalog native record",
+          );
+
+          replaceOnce(
+            "static/models.js",
+            `    const reasoning = reasoningFor(model);
+            const contextSearch = [
+              model.model_class,
+              model.context_window_tokens,
+              model.max_context_window_tokens,
+              model.auto_compact_token_limit_tokens,
+              model.context_window_tokens ? "context compact compression" : "",
+            ].filter((value) => value !== null && value !== undefined).join(" ").toLowerCase();
+          `,
+            `    const reasoning = reasoningFor(model);
+            const contextWindow = positiveTokenCount(model.context_window_tokens);
+            const maxContextWindow = positiveTokenCount(model.max_context_window_tokens);
+            const autoCompact = positiveTokenCount(model.auto_compact_token_limit_tokens);
+            const contextSearch = [
+              model.model_class,
+              contextWindow,
+              contextWindow && tokenNumber.format(contextWindow),
+              maxContextWindow,
+              maxContextWindow && tokenNumber.format(maxContextWindow),
+              autoCompact,
+              autoCompact && tokenNumber.format(autoCompact),
+              contextWindow ? "context compact compression" : "",
+            ].filter(Boolean).join(" ").toLowerCase();
+          `,
+            "formatted context search",
+          );
+
+          const testPath = "tests/recent-model-context.test.ts";
+          const testSource = fs.readFileSync(testPath, "utf8");
+          const marker = `Deno.test("native context metadata takes precedence over class fallbacks"`;
+          if (!testSource.includes(marker)) {
+            fs.appendFileSync(testPath, `
+
+          Deno.test("native context metadata takes precedence over class fallbacks", () => {
+            const resolved = recentModelContextFor("gpt-5.6-terra", {
+              context_window_tokens: 272_000,
+              max_context_window_tokens: 1_000_000,
+              auto_compact_token_limit_tokens: null,
+              effective_context_window_percent: 95,
+            });
+            assert.equal(resolved?.context_window_tokens, 272_000);
+            assert.equal(resolved?.max_context_window_tokens, 1_000_000);
+            assert.equal(resolved?.auto_compact_token_limit_tokens, 222_000);
+            assert.equal(resolved?.effective_context_window_percent, 95);
+          });
+
+          Deno.test("native auto-compaction thresholds are preserved only within the active window", () => {
+            const valid = recentModelContextFor("gpt-5.6-terra", {
+              context_window_tokens: 272_000,
+              auto_compact_token_limit_tokens: 200_000,
+            });
+            assert.equal(valid?.auto_compact_token_limit_tokens, 200_000);
+
+            const oversized = recentModelContextFor("gpt-5.6-terra", {
+              context_window_tokens: 272_000,
+              auto_compact_token_limit_tokens: 892_500,
+            });
+            assert.equal(oversized?.auto_compact_token_limit_tokens, 222_000);
+          });
+          `);
+          }
+          NODE
+      - name: Format and run focused tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno fmt src/openai.ts src/recent_model_context.ts static/models.js tests/recent-model-context.test.ts
+          deno test --frozen tests/recent-model-context.test.ts
+          deno check --frozen src/openai.ts
+      - name: Commit fixes and remove this one-shot workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/pr127-review-fixes.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m 'fix(models): preserve native context metadata'
+          git push origin HEAD:feature/recent-model-context-windows
