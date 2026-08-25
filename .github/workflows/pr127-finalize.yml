@@ -1,0 +1,139 @@
+name: Finalize PR 127
+
+on:
+  push:
+    branches:
+      - feature/recent-model-context-windows
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: feature/recent-model-context-windows
+          fetch-depth: 0
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
+        with:
+          deno-version: 2.9.5
+      - name: Preserve native catalog context and format base drift
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = 'src/openai.ts';
+          let source = fs.readFileSync(path, 'utf8');
+
+          const codexModelsBefore = `  const codexModels = normalized?.data ?? [];
+            const surplusModels = surplus?.models ?? [];`;
+          const codexModelsAfter = `  const codexModels = normalized?.data ?? [];
+            const codexModelRecords = new Map<string, Record<string, unknown>>();
+            for (const candidate of snapshot?.models ?? []) {
+              if (!isRecord(candidate)) continue;
+              const id = modelIdFromSnapshotRecord(candidate);
+              if (id) codexModelRecords.set(id, candidate);
+            }
+            const surplusModels = surplus?.models ?? [];`;
+          if (!source.includes(codexModelsAfter)) {
+            if (!source.includes(codexModelsBefore)) throw new Error('codex raw-record anchor missing');
+            source = source.replace(codexModelsBefore, codexModelsAfter);
+          }
+
+          const addStart = source.indexOf('  const add = (id: string, provider: PublicModelProvider): void => {');
+          const addEndMarker = '\n\n  for (const model of codexModels) {';
+          const addEnd = source.indexOf(addEndMarker, addStart);
+          if (addStart < 0 || addEnd < 0) throw new Error('catalog add block missing');
+          const addAfter = `  const add = (
+            id: string,
+            provider: PublicModelProvider,
+            nativeModel: Record<string, unknown> | null = null,
+          ): void => {
+            const existing = models.get(id);
+            if (existing) {
+              existing.providers.push(provider);
+              return;
+            }
+            const nativeContextWindow = normalizeTokenCount(nativeModel?.context_window);
+            const nativeMaxContextWindow = normalizeTokenCount(nativeModel?.max_context_window);
+            const nativeAutoCompactTokenLimit = normalizeTokenCount(nativeModel?.auto_compact_token_limit);
+            const nativeEffectiveContextWindowPercent = normalizeTokenCount(nativeModel?.effective_context_window_percent);
+            const resolvedContext = recentModelContextFor(id, {
+              context_window_tokens: nativeContextWindow,
+              max_context_window_tokens: nativeMaxContextWindow,
+              auto_compact_token_limit_tokens: nativeAutoCompactTokenLimit,
+              effective_context_window_percent: nativeEffectiveContextWindowPercent,
+            });
+            const contextWindow = resolvedContext?.context_window_tokens ?? nativeContextWindow;
+            const maxContextWindow = resolvedContext?.max_context_window_tokens ??
+              (nativeMaxContextWindow !== null && contextWindow !== null
+                ? Math.max(nativeMaxContextWindow, contextWindow)
+                : nativeMaxContextWindow ?? contextWindow);
+            const autoCompactTokenLimit = resolvedContext?.auto_compact_token_limit_tokens ??
+              (nativeAutoCompactTokenLimit !== null &&
+                  (contextWindow === null || nativeAutoCompactTokenLimit <= contextWindow)
+                ? nativeAutoCompactTokenLimit
+                : null);
+            const effectiveContextWindowPercent = resolvedContext?.effective_context_window_percent ??
+              (nativeEffectiveContextWindowPercent !== null && nativeEffectiveContextWindowPercent <= 100
+                ? nativeEffectiveContextWindowPercent
+                : null);
+            models.set(id, {
+              id,
+              providers: [provider],
+              ...(resolvedContext ? { model_class: resolvedContext.model_class } : {}),
+              ...(contextWindow === null ? {} : { context_window_tokens: contextWindow }),
+              ...(maxContextWindow === null ? {} : { max_context_window_tokens: maxContextWindow }),
+              ...(autoCompactTokenLimit === null ? {} : { auto_compact_token_limit_tokens: autoCompactTokenLimit }),
+              ...(effectiveContextWindowPercent === null
+                ? {}
+                : { effective_context_window_percent: effectiveContextWindowPercent }),
+            });
+          };`;
+          source = source.slice(0, addStart) + addAfter + source.slice(addEnd);
+
+          const codexAddBefore = `    add(id, {
+              id: "codex",
+              owned_by: getString(model.owned_by) ?? "openai",
+              supported_endpoints: ["/v1/responses", "/v1/chat/completions"],
+            });`;
+          const codexAddAfter = `    add(id, {
+              id: "codex",
+              owned_by: getString(model.owned_by) ?? "openai",
+              supported_endpoints: ["/v1/responses", "/v1/chat/completions"],
+            }, codexModelRecords.get(id) ?? null);`;
+          if (!source.includes(codexAddAfter)) {
+            if (!source.includes(codexAddBefore)) throw new Error('codex add call anchor missing');
+            source = source.replace(codexAddBefore, codexAddAfter);
+          }
+          fs.writeFileSync(path, source);
+          NODE
+
+          deno fmt \
+            src/openai.ts \
+            src/recent_model_context.ts \
+            tests/recent-model-context.test.ts \
+            tests/sentinel-issue-delivery.test.ts \
+            scripts/sentinel/issue-pr-pre-push.ts \
+            scripts/sentinel/issue-delivery.ts \
+            scripts/sentinel/issue-delivery-reconcile.ts
+          deno fmt --check
+          deno lint
+          deno task build
+          deno task test
+      - name: Commit finalization
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/openai.ts src/recent_model_context.ts tests/recent-model-context.test.ts \
+            tests/sentinel-issue-delivery.test.ts scripts/sentinel/issue-pr-pre-push.ts \
+            scripts/sentinel/issue-delivery.ts scripts/sentinel/issue-delivery-reconcile.ts
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'fix(models): preserve native catalog context metadata'
+          git push origin HEAD:feature/recent-model-context-windows
