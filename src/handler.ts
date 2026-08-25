@@ -27,6 +27,7 @@ import {
   handleAdminKvMigrationValidate,
   handleAdminPromptCacheAnalytics,
 } from "./admin.ts";
+import { handleAdminErrors, recordAdminError } from "./admin_error_log.ts";
 import { handleAgentMessagesList, handleAgentMessagesPost } from "./agent_messages.ts";
 import {
   authenticateAdmin,
@@ -256,6 +257,7 @@ const logTerminalRequest = async (
     sentinelReplayInput?: AcceptedSentinelReplayInput | null;
     persistSentinelReplay?: typeof persistSentinelReplayFromEnvironment;
     recordSentinelDegradation?: typeof recordSentinelProviderDegradationFromEnvironment;
+    recordAdminError?: typeof recordAdminError;
     streamReadFailure?: boolean;
     suppressSentinelReplay?: boolean;
     resolveClientBodyObservation?: () =>
@@ -381,7 +383,23 @@ const logTerminalRequest = async (
       })
       ? (input.recordSentinelDegradation ?? recordSentinelProviderDegradationFromEnvironment)(Date.now())
       : Promise.resolve();
-    await Promise.all([telemetryWrite, cacheAnalyticsWrite, replayWrite, degradationWrite]);
+    const adminErrorWrite = (input.recordAdminError ?? recordAdminError)({
+      request_id: terminal.request_id,
+      route: terminal.route,
+      status: terminal.status,
+      provider: terminal.provider,
+      model: terminal.model,
+      reasoning: terminal.reasoning,
+      stream: terminal.stream,
+      terminal_type: clientObservation.terminal_type,
+      failure_kind: clientObservation.failure_kind,
+      delivery_outcome: terminal.delivery_outcome,
+      created_at_ms: Date.now(),
+      latency_ms: terminal.latency_ms,
+      git_sha: terminal.git_sha,
+      deno_revision: terminal.deno_revision,
+    });
+    await Promise.all([telemetryWrite, cacheAnalyticsWrite, replayWrite, degradationWrite, adminErrorWrite]);
   } finally {
     zeroSentinelReplayInput(input.sentinelReplayInput);
   }
@@ -427,6 +445,7 @@ export const withTerminalRequestLog = (
     sentinelReplayInput?: AcceptedSentinelReplayInput | null;
     persistSentinelReplay?: typeof persistSentinelReplayFromEnvironment;
     recordSentinelDegradation?: typeof recordSentinelProviderDegradationFromEnvironment;
+    recordAdminError?: typeof recordAdminError;
     waitUntil?: SentinelBackgroundTaskRegistrar;
   }>,
 ): Promise<Response> => {
@@ -902,6 +921,12 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     const authError = await requireSuperAdminAuth(req);
     if (authError) return withCors(authError);
     return withCors(await handleAdminSentinelReplayCaptures(req));
+  }
+
+  if (req.method === "GET" && path === "/admin/errors") {
+    const authError = await requireAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminErrors(req));
   }
 
   if (req.method === "POST" && path === "/admin/sentinel/incidents/ack") {

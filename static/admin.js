@@ -140,6 +140,7 @@ const viewTabKernel = mustGet("view-tab-kernel");
 const viewTabPubkeys = mustGet("view-tab-pubkeys");
 const viewTabDefaults = mustGet("view-tab-defaults");
 const viewTabProviders = mustGet("view-tab-providers");
+const viewTabErrors = mustGet("view-tab-errors");
 
 const viewLoading = mustGet("view-loading");
 const viewKeys = mustGet("view-keys");
@@ -148,6 +149,11 @@ const viewKernel = mustGet("view-kernel");
 const viewPubkeys = mustGet("view-pubkeys");
 const viewDefaults = mustGet("view-defaults");
 const viewProviders = mustGet("view-providers");
+const viewErrors = mustGet("view-errors");
+
+const errorsBadge = mustGet("errors-badge");
+const errorsUpdated = mustGet("errors-updated");
+const errorsList = mustGet("errors-list");
 
 const providerCapacityBadge = mustGet("provider-capacity-badge");
 const providerCapacityUpdated = mustGet("provider-capacity-updated");
@@ -226,6 +232,8 @@ let latestProviderCapacityChartState = null;
 let capacityChartResizeFrame = 0;
 let capacityChartScrollState = null;
 let latestProviderHealth = null;
+let errorsLoading = false;
+let errorsLoadedAt = 0;
 const apiKeyRequestLogCache = new Map();
 const apiKeyRequestLogPromises = new Map();
 const API_KEY_REQUEST_LOG_STATUS_OK = "OK";
@@ -6365,6 +6373,7 @@ const VIEW_HASHES = {
   pubkeys: "pubkeys",
   defaults: "defaults",
   providers: "providers",
+  errors: "errors",
 };
 const VIEW_REQUIREMENTS = {
   keys: "admin",
@@ -6373,6 +6382,7 @@ const VIEW_REQUIREMENTS = {
   pubkeys: "admin",
   defaults: "admin",
   providers: "admin",
+  errors: "admin",
 };
 const VIEW_HASH_ALIASES = new Map([
   ["loading", "loading"],
@@ -6392,6 +6402,8 @@ const VIEW_HASH_ALIASES = new Map([
   ["view-defaults", "defaults"],
   ["providers", "providers"],
   ["view-providers", "providers"],
+  ["errors", "errors"],
+  ["view-errors", "errors"],
   ["auth", "session"],
   ["session", "session"],
   ["view-session", "session"],
@@ -6427,6 +6439,7 @@ const viewTabs = {
   pubkeys: viewTabPubkeys,
   defaults: viewTabDefaults,
   providers: viewTabProviders,
+  errors: viewTabErrors,
 };
 
 const viewSections = {
@@ -6437,6 +6450,71 @@ const viewSections = {
   pubkeys: viewPubkeys,
   defaults: viewDefaults,
   providers: viewProviders,
+  errors: viewErrors,
+};
+
+const setErrorsMessage = (message) => {
+  errorsList.textContent = "";
+  const element = document.createElement("p");
+  element.dataset.empty = "errors";
+  element.textContent = message;
+  errorsList.appendChild(element);
+};
+
+const renderAdminErrors = (records) => {
+  errorsList.textContent = "";
+  if (!records.length) {
+    setErrorsMessage("No errors recorded in the last seven days.");
+    return;
+  }
+  records.forEach((record) => {
+    const row = document.createElement("article");
+    row.dataset.key = "gateway-error";
+    row.setAttribute("role", "listitem");
+    const header = document.createElement("header");
+    const title = document.createElement("strong");
+    title.textContent = record.failure_kind || `HTTP ${record.status}`;
+    const timestamp = document.createElement("span");
+    timestamp.dataset.muted = "";
+    timestamp.textContent = formatDate(record.created_at_ms);
+    header.append(title, timestamp);
+    const details = document.createElement("div");
+    details.dataset.meta = "usage";
+    appendMetaItem(details, "Status", String(record.status), { state: "bad" });
+    appendMetaItem(details, "Route", record.route || "unknown");
+    appendMetaItem(details, "Provider", record.provider || "gateway");
+    appendMetaItem(details, "Model", record.model || "—");
+    appendMetaItem(details, "Terminal", record.terminal_type || "error");
+    appendMetaItem(details, "Request", record.request_id || "—", { mono: true });
+    appendMetaItem(details, "Revision", record.deno_revision || "—", { mono: true });
+    row.append(header, details);
+    errorsList.appendChild(row);
+  });
+};
+
+const loadAdminErrors = async () => {
+  if (errorsLoading) return;
+  errorsLoading = true;
+  setBadge(errorsBadge, "unknown", "Loading");
+  try {
+    const token = getAdminToken();
+    const res = await fetch(apiUrl("/admin/errors?limit=200"), {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      cache: "no-store",
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(data?.error?.message || "Error history is unavailable");
+    const records = Array.isArray(data?.data) ? data.data : [];
+    renderAdminErrors(records);
+    errorsLoadedAt = Date.now();
+    setBadge(errorsBadge, records.length ? "bad" : "ok", `${records.length} errors`);
+    errorsUpdated.textContent = `Updated ${formatDate(errorsLoadedAt)}`;
+  } catch (error) {
+    setBadge(errorsBadge, "bad", "Unavailable");
+    setErrorsMessage(error?.message || "Error history is unavailable");
+  } finally {
+    errorsLoading = false;
+  }
 };
 
 const getHashView = () => {
@@ -6618,6 +6696,9 @@ const loadAdminView = (view) => {
   } else {
     providerCapacityLoadedForOpen = false;
     promptCacheAnalyticsLoadedForOpen = false;
+  }
+  if (view === "errors" && (!errorsLoadedAt || Date.now() - errorsLoadedAt >= 10_000)) {
+    void loadAdminErrors();
   }
 };
 
@@ -7468,6 +7549,8 @@ setSignedInState(false);
 setCreateBadge("unknown", "Idle");
 setKeysBadge("unknown", "Not loaded");
 setPasskeyUsersBadge("unknown", "Not loaded");
+setBadge(errorsBadge, "unknown", "Not loaded");
+setErrorsMessage("Sign in to load gateway errors.");
 setDefaultsBadge("unknown", "Idle");
 clearMeteredQuotaDiagnostics();
 setMeteredQuotaBadge("unknown", "Idle");

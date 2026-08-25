@@ -62,6 +62,9 @@
             >
               Providers
             </button>
+            <button id="view-tab-errors" type="button" role="tab" aria-controls="view-errors" aria-selected="false">
+              Errors
+            </button>
           </div>
         </section>
 
@@ -589,6 +592,29 @@
                 aria-label="Provider capacity history"
               ></div>
               <div id="provider-capacity-list" data-capacity-list role="list"></div>
+            </div>
+          </article>
+        </section>
+
+        <section
+          id="view-errors"
+          data-view="errors"
+          data-layout="grid"
+          role="tabpanel"
+          aria-labelledby="view-tab-errors"
+          hidden
+        >
+          <article data-card aria-labelledby="card-errors">
+            <header>
+              <h2 id="card-errors">Gateway errors</h2>
+              <p>Every failed inference terminal observed by the gateway, retained for seven days.</p>
+            </header>
+            <div data-card-body>
+              <div data-provider-heading>
+                <span id="errors-badge" data-badge data-state="unknown">Not loaded</span>
+                <span id="errors-updated" data-muted>Waiting for history</span>
+              </div>
+              <div id="errors-list" data-key-list role="list" aria-live="polite"></div>
             </div>
           </article>
         </section>

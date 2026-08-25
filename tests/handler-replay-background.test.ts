@@ -6,6 +6,7 @@ type ReplayInput = NonNullable<TerminalLogInput["sentinelReplayInput"]>;
 type ReplayPersistence = NonNullable<TerminalLogInput["persistSentinelReplay"]>;
 type RecordTelemetry = NonNullable<TerminalLogInput["recordTelemetry"]>;
 type RecordAnalytics = NonNullable<TerminalLogInput["recordCacheAnalytics"]>;
+type RecordAdminError = NonNullable<TerminalLogInput["recordAdminError"]>;
 
 const acceptedInput = (): ReplayInput => ({
   endpoint: "/v1/responses",
@@ -34,6 +35,40 @@ const ignoredAnalytics: RecordAnalytics = () =>
     reason: "unknown_release" as const,
     bucket_start_at_ms: null,
   });
+
+Deno.test("terminal logging reports admission busy failures to the admin error ledger", async () => {
+  const recorded: Parameters<RecordAdminError>[0][] = [];
+  const response = await withTerminalRequestLog(
+    new Response(
+      JSON.stringify({
+        error: {
+          message: "All Codex accounts are busy",
+          type: "server_error",
+          code: "codex_admission_busy",
+        },
+      }),
+      { status: 503, headers: { "Content-Type": "application/json" } },
+    ),
+    {
+      route: "responses",
+      startedAtMonotonicMs: performance.now(),
+      requestId: "admission-busy-admin-error",
+      recordTelemetry: ignoredTelemetry,
+      recordCacheAnalytics: ignoredAnalytics,
+      recordAdminError: (error) => {
+        recorded.push(error);
+        return Promise.resolve();
+      },
+    },
+  );
+
+  assert.equal(response.status, 503);
+  assert.equal(recorded.length, 1);
+  assert.equal(recorded[0].request_id, "admission-busy-admin-error");
+  assert.equal(recorded[0].status, 503);
+  assert.equal(recorded[0].terminal_type, "http.error");
+  assert.equal(recorded[0].failure_kind, "codex_admission_busy");
+});
 
 type TestGlobals = typeof globalThis & {
   EdgeRuntime?: Readonly<{ waitUntil?: (task: Promise<unknown>) => void }>;
