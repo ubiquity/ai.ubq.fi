@@ -161,6 +161,21 @@ export const selectDevelopmentPush = (updates: readonly GitPushUpdate[]): GitPus
   return matches[0] ?? null;
 };
 
+export const isIssueDeliveryFailSafeRevert = (input: Readonly<{
+  selection: GitHubIssueSelectionReport;
+  cycle: SentinelCycleReport;
+  pullRequest: GitHubIssuePullRequestRecord;
+  pushedSha: string;
+  parentSha: string;
+}>): boolean =>
+  input.cycle.candidate_sha !== null && input.cycle.temporary_branch !== null &&
+  input.pushedSha !== input.cycle.candidate_sha && input.parentSha === input.cycle.candidate_sha &&
+  input.pullRequest.issue_number === input.selection.issue_number &&
+  input.pullRequest.fingerprint === input.selection.fingerprint &&
+  input.pullRequest.head_branch === input.cycle.temporary_branch &&
+  input.pullRequest.head_sha === input.cycle.candidate_sha &&
+  input.pullRequest.base_branch === "development";
+
 export const issuePullRequestMarker = (selection: GitHubIssueSelectionReport): string =>
   `<!-- provider-sentinel:issue-pr:v1 issue=${selection.issue_number} fingerprint=${selection.fingerprint} -->`;
 
