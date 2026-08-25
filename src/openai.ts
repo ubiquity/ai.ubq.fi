@@ -782,6 +782,8 @@ type RoutedResponsesUpstream = Readonly<{
   paidFallbackProviderRequestId?: string | null;
   gatewayResponse: boolean;
   fallbackReason: InferenceFallbackReason | null;
+  /** A direct-paid admission rejection must not enter provider recovery. */
+  admissionFailure?: boolean;
   /** Record stream health even though this free route has no paid reservation. */
   providerHealthOnly?: boolean;
 }>;
@@ -2700,6 +2702,7 @@ const fetchResponsesWithPaidFallback = async (
       paidFallback: null,
       gatewayResponse: true,
       fallbackReason: "dynamic_paid_model",
+      admissionFailure: true,
     };
   };
   const surplusModelSupportsRoute =
@@ -9482,6 +9485,10 @@ const handleResponsesInternal = async (
               : null;
             recordTerminalUsage(usageContext, terminalUsage, false);
             await finalizeAbandonedPrimaryAttempt(routed, lifecycle, { failureTrigger: failed.trigger });
+            if (globalProbe) void releaseGlobalRemovedProviderProbe(globalProbe).catch(() => {});
+            return failed.response;
+          }
+          if (routed.admissionFailure) {
             if (globalProbe) void releaseGlobalRemovedProviderProbe(globalProbe).catch(() => {});
             return failed.response;
           }
