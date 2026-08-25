@@ -1,6 +1,7 @@
 import {
   buildCodexRequest,
   CODEX_ADMISSION_BUSY_ERROR_CODE,
+  CODEX_ADMISSION_UNAVAILABLE_ERROR_CODE,
   CODEX_AUTH_REAUTH_MESSAGE,
   CODEX_AUTH_REAUTH_WARNING,
   CODEX_QUOTA_BLOCKED_ERROR_CODE,
@@ -2804,9 +2805,15 @@ const fetchResponsesWithPaidFallback = async (
     telemetry.providerRequestId = providerRequestIdFromResponse(primary);
   }
   const routingError = getCodexRoutingError(primary);
+  const codexAdmissionFailureKind = routingError === CODEX_ADMISSION_UNAVAILABLE_ERROR_CODE
+    ? CODEX_ADMISSION_UNAVAILABLE_ERROR_CODE
+    : routingError === CODEX_ADMISSION_BUSY_ERROR_CODE
+    ? CODEX_ADMISSION_BUSY_ERROR_CODE
+    : null;
+  if (telemetry && codexAdmissionFailureKind !== null) telemetry.failureKind = codexAdmissionFailureKind;
   const gatewayResponse = directPaidProvider !== null || routingError === CODEX_QUOTA_BLOCKED_ERROR_CODE ||
     routingError === CODEX_UPSTREAM_DEGRADED_ERROR_CODE ||
-    routingError === CODEX_ADMISSION_BUSY_ERROR_CODE;
+    codexAdmissionFailureKind !== null;
   if (authReauthenticationPrimary) {
     primary = new Response(primary.body, {
       status: 503,
@@ -9552,7 +9559,11 @@ const handleResponsesInternal = async (
             if (globalProbe) void releaseGlobalRemovedProviderProbe(globalProbe).catch(() => {});
             return failed.response;
           }
-          if (getCodexRoutingError(failed.response) === CODEX_ADMISSION_BUSY_ERROR_CODE) {
+          const codexAdmissionFailure = getCodexRoutingError(failed.response);
+          if (
+            codexAdmissionFailure === CODEX_ADMISSION_BUSY_ERROR_CODE ||
+            codexAdmissionFailure === CODEX_ADMISSION_UNAVAILABLE_ERROR_CODE
+          ) {
             if (globalProbe) void releaseGlobalRemovedProviderProbe(globalProbe).catch(() => {});
             return failed.response;
           }

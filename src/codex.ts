@@ -83,6 +83,8 @@ const CODEX_CLIENT_VERSION = "0.100.0";
 export const CODEX_QUOTA_BLOCKED_ERROR_CODE = "codex_quota_blocked";
 export const CODEX_UPSTREAM_DEGRADED_ERROR_CODE = "codex_upstream_degraded";
 export const CODEX_ADMISSION_BUSY_ERROR_CODE = "codex_admission_busy";
+/** Internal routing classification; the OpenAI error body remains admission_busy. */
+export const CODEX_ADMISSION_UNAVAILABLE_ERROR_CODE = "codex_admission_unavailable";
 export const CODEX_AUTH_REAUTH_WARNING = "codex_auth_reauthentication_required";
 export const CODEX_AUTH_REAUTH_MESSAGE =
   "The gateway's Codex auth.json needs re-authentication. Upload a fresh auth.json and retry.";
@@ -1855,13 +1857,16 @@ const upstreamTimeoutCircuitResponse = (retryAtMs: number | null): Response =>
     retryAtMs,
   );
 
-const codexAdmissionBusyResponse = (): Response =>
-  routingErrorResponse(
+const codexAdmissionBusyResponse = (reason: CodexAdmissionBusyError["reason"] = "account_busy"): Response => {
+  const response = routingErrorResponse(
     503,
     "Codex subscription capacity is busy; retry this agent lane shortly.",
     CODEX_ADMISSION_BUSY_ERROR_CODE,
     Date.now() + CODEX_ADMISSION_RETRY_AFTER_SECONDS * 1_000,
   );
+  if (reason === "unavailable") codexRoutingErrors.set(response, CODEX_ADMISSION_UNAVAILABLE_ERROR_CODE);
+  return response;
+};
 
 type CodexResponseTimingHooks = Readonly<{
   onDispatch?: () => void;
@@ -2242,6 +2247,7 @@ const fetchPreparedCodexResponses = async (
   let transportFailure: CodexError | null = null;
   let authWarning: string | null = null;
   let admissionBusySeen = false;
+  let admissionUnavailableSeen = false;
   let authFailure: CodexError | null = null;
   let probeUnavailable = false;
   let probeUnavailableCircuit: CodexProbeCircuit | null = null;
@@ -3130,6 +3136,7 @@ const fetchPreparedCodexResponses = async (
       if (error instanceof CodexAdmissionBusyError) {
         await releaseCodexRoutingProbe(routing);
         if (error.reason === "caller_busy") throw error;
+        if (error.reason === "unavailable") admissionUnavailableSeen = true;
         admissionBusySeen = true;
         continue;
       }
@@ -3169,6 +3176,11 @@ const fetchPreparedCodexResponses = async (
   if (transportFailure) {
     if (lastResponse) cancelResponseBody(lastResponse);
     throw transportFailure;
+  }
+
+  if (admissionUnavailableSeen) {
+    if (lastResponse) cancelResponseBody(lastResponse);
+    throw new CodexAdmissionBusyError("unavailable");
   }
 
   // Busy subscription capacity outranks a sibling quota response. Local
@@ -3357,7 +3369,7 @@ export const fetchCodexResponses = async (
     const response = await fetchPreparedCodexResponses(prepared, options, providerDispatch);
     return finalizeCodexResponseAffinity(withCodexWarnings(response, prepared.warnings));
   } catch (error) {
-    if (error instanceof CodexAdmissionBusyError) return codexAdmissionBusyResponse();
+    if (error instanceof CodexAdmissionBusyError) return codexAdmissionBusyResponse(error.reason);
     throw error;
   } finally {
     await providerDispatch.cancelBeforeTransport();

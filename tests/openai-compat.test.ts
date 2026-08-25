@@ -10,7 +10,12 @@ import { sha256Base64Url, sha256Hex } from "../src/utils.ts";
 import { readPromptCacheAnalytics, recordPromptCacheAnalytics } from "../src/prompt_cache_analytics.ts";
 import { CountingKv } from "./helpers/counting_kv.ts";
 import { setKvForTest } from "../src/kv.ts";
-import { acquireCodexAdmission, type CodexAdmissionLease, releaseCodexAdmission } from "../src/codex_admission.ts";
+import {
+  acquireCodexAdmission,
+  type CodexAdmissionLease,
+  deriveCodexAdmissionCallerLaneHash,
+  releaseCodexAdmission,
+} from "../src/codex_admission.ts";
 
 if (typeof Deno.KvU64 !== "function") {
   (Deno as unknown as { KvU64: typeof Deno.KvU64 }).KvU64 = class {
@@ -162,6 +167,7 @@ const {
   CODEX_AUTH_REAUTH_MESSAGE,
   CODEX_AUTH_REAUTH_WARNING,
   CODEX_ADMISSION_BUSY_ERROR_CODE,
+  CODEX_ADMISSION_UNAVAILABLE_ERROR_CODE,
   resetCodexAuthCacheForTest,
 } = await import("../src/codex.ts");
 const {
@@ -269,6 +275,31 @@ const responsesRequest = (
 
 const parseResponsesSseValues = (value: string): Record<string, unknown>[] =>
   [...value.matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
+const assertSingleAdmissionTerminal = async (
+  response: Response,
+  requestId: string,
+  expectedFailureKind: string,
+): Promise<void> => {
+  const originalInfo = console.info;
+  const terminals: unknown[][] = [];
+  console.info = (...args: unknown[]) => {
+    if (args[0] === "[ai.ubq.fi] request_terminal") terminals.push(args);
+  };
+  try {
+    await withTerminalRequestLog(response, {
+      route: "responses",
+      startedAtMonotonicMs: performance.now(),
+      requestId,
+    });
+  } finally {
+    console.info = originalInfo;
+  }
+  assert.equal(terminals.length, 1);
+  const terminal = JSON.parse(String(terminals[0]?.[1])) as Record<string, unknown>;
+  assert.equal(terminal.request_id, requestId);
+  assert.equal(terminal.failure_kind, expectedFailureKind);
+  assert.equal(terminal.fallback_reason, null);
+};
 
 const seedPaidFallbackKey = (
   id: string,
@@ -932,12 +963,127 @@ Deno.test("openai: subscription admission busy never enters a paid provider", as
       },
     );
     assert.equal(response.status, 503);
+    await assertSingleAdmissionTerminal(response, "account-admission-busy", CODEX_ADMISSION_BUSY_ERROR_CODE);
     assert.equal(response.headers.get("Retry-After"), "1");
     assert.equal((await response.json() as { error?: { code?: string } }).error?.code, CODEX_ADMISSION_BUSY_ERROR_CODE);
     assert.equal(transportCalls, 0);
     assert.equal(removedProviderCalls, 0);
   } finally {
     await Promise.all(leases.map((lease) => releaseCodexAdmission(lease)));
+    setRemovedProviderTestAdapterForTest(null);
+    setRemovedProviderApiKeyForTest(undefined);
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+  }
+});
+
+Deno.test("openai: caller admission busy is terminal telemetry", async () => {
+  let lease: CodexAdmissionLease | null = null;
+  let transportCalls = 0;
+  const principal = "caller-admission-test-principal";
+  const clientMetadata = { thread_id: "caller-busy-agent", session_id: "shared-session" };
+  const context = {
+    keyId: null,
+    kernelRepo: null,
+    kernelOrg: null,
+    codexAdmissionPrincipal: principal,
+    requestId: "caller-admission",
+    startedAtMs: Date.now(),
+  };
+
+  try {
+    const response = await withFetchMock(
+      () => {
+        transportCalls += 1;
+        throw new Error("caller admission busy must not dispatch provider transport");
+      },
+      async () => {
+        const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
+        const selected = await selectCodexRoutingAccounts(
+          authPool,
+          authPool.accounts,
+          Date.now(),
+          DEFAULT_TEST_MODEL,
+        );
+        assert.equal(selected.kind, "eligible");
+        if (selected.kind !== "eligible") throw new Error("expected eligible caller admission fixture account");
+        const callerLaneHash = await deriveCodexAdmissionCallerLaneHash(principal, clientMetadata, null);
+        const decision = await acquireCodexAdmission({
+          accountIdHash: selected.accounts[0]!.accountIdHash,
+          quotaClass: "standard",
+          callerLaneHash,
+        });
+        assert.equal(decision.kind, "acquired");
+        if (decision.kind !== "acquired") throw new Error("expected caller admission fixture lease");
+        lease = decision.lease;
+        return await handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "caller busy", client_metadata: clientMetadata }),
+          }),
+          context,
+        );
+      },
+    );
+    await assertSingleAdmissionTerminal(response, "caller-admission", CODEX_ADMISSION_BUSY_ERROR_CODE);
+    assert.equal(response.status, 503);
+    assert.equal((await response.json() as { error?: { code?: string } }).error?.code, CODEX_ADMISSION_BUSY_ERROR_CODE);
+    assert.equal(transportCalls, 0);
+  } finally {
+    if (lease) await releaseCodexAdmission(lease);
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+  }
+});
+
+Deno.test("openai: unavailable admission is terminal telemetry without paid fallback", async () => {
+  let transportCalls = 0;
+  let removedProviderCalls = 0;
+  const context = {
+    keyId: null,
+    kernelRepo: null,
+    kernelOrg: null,
+    codexAdmissionPrincipal: "unavailable-admission-test-principal",
+    requestId: "unavailable-admission",
+    startedAtMs: Date.now(),
+  };
+  setRemovedProviderApiKeyForTest("removed-provider-must-not-run");
+  setRemovedProviderTestAdapterForTest({
+    fetchResponses: () => {
+      removedProviderCalls += 1;
+      throw new Error("unavailable admission must not enter RemovedProvider");
+    },
+    modelFromEvent: () => null,
+    isEligibleModel: () => true,
+  });
+  atomicCommitFailure = (ops) =>
+    ops.some((op) => op.key[0] === "uos_ai" && op.key[1] === "codex_admission")
+      ? new Error("injected admission storage failure")
+      : null;
+  try {
+    const response = await withFetchMock(
+      () => {
+        transportCalls += 1;
+        throw new Error("unavailable admission must not dispatch provider transport");
+      },
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "admission unavailable" }),
+          }),
+          context,
+        ),
+    );
+    await assertSingleAdmissionTerminal(response, "unavailable-admission", CODEX_ADMISSION_UNAVAILABLE_ERROR_CODE);
+    assert.equal(response.status, 503);
+    assert.equal((await response.json() as { error?: { code?: string } }).error?.code, CODEX_ADMISSION_BUSY_ERROR_CODE);
+    assert.equal(transportCalls, 0);
+    assert.equal(removedProviderCalls, 0);
+  } finally {
+    atomicCommitFailure = null;
     setRemovedProviderTestAdapterForTest(null);
     setRemovedProviderApiKeyForTest(undefined);
     resetCodexAuthCacheForTest();
