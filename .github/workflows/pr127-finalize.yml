@@ -28,92 +28,6 @@ jobs:
           const fs = require('node:fs');
 
           {
-            const path = 'src/openai.ts';
-            let source = fs.readFileSync(path, 'utf8');
-
-            const codexModelsBefore = '  const codexModels = normalized?.data ?? [];\n  const surplusModels = surplus?.models ?? [];';
-            const codexModelsAfter = `  const codexModels = normalized?.data ?? [];
-            const codexModelRecords = new Map<string, Record<string, unknown>>();
-            for (const candidate of snapshot?.models ?? []) {
-              if (!isRecord(candidate)) continue;
-              const id = modelIdFromSnapshotRecord(candidate);
-              if (id) codexModelRecords.set(id, candidate);
-            }
-            const surplusModels = surplus?.models ?? [];`;
-            if (!source.includes('const codexModelRecords = new Map<string, Record<string, unknown>>();')) {
-              if (!source.includes(codexModelsBefore)) throw new Error('raw Codex record anchor missing');
-              source = source.replace(codexModelsBefore, codexModelsAfter);
-            }
-
-            const addStartNeedle = '  const add = (id: string, provider: PublicModelProvider): void => {';
-            if (source.includes(addStartNeedle)) {
-              const addStart = source.indexOf(addStartNeedle);
-              const addEnd = source.indexOf('\n\n  for (const model of codexModels) {', addStart);
-              if (addEnd < 0) throw new Error('catalog add block end missing');
-              const addAfter = `  const add = (
-              id: string,
-              provider: PublicModelProvider,
-              nativeModel: Record<string, unknown> | null = null,
-            ): void => {
-              const existing = models.get(id);
-              if (existing) {
-                existing.providers.push(provider);
-                return;
-              }
-              const nativeContextWindow = normalizeTokenCount(nativeModel?.context_window);
-              const nativeMaxContextWindow = normalizeTokenCount(nativeModel?.max_context_window);
-              const nativeAutoCompactTokenLimit = normalizeTokenCount(nativeModel?.auto_compact_token_limit);
-              const nativeEffectiveContextWindowPercent = normalizeTokenCount(nativeModel?.effective_context_window_percent);
-              const resolvedContext = recentModelContextFor(id, {
-                context_window_tokens: nativeContextWindow,
-                max_context_window_tokens: nativeMaxContextWindow,
-                auto_compact_token_limit_tokens: nativeAutoCompactTokenLimit,
-                effective_context_window_percent: nativeEffectiveContextWindowPercent,
-              });
-              const contextWindow = resolvedContext?.context_window_tokens ?? nativeContextWindow;
-              const maxContextWindow = resolvedContext?.max_context_window_tokens ??
-                (nativeMaxContextWindow !== null && contextWindow !== null
-                  ? Math.max(nativeMaxContextWindow, contextWindow)
-                  : nativeMaxContextWindow ?? contextWindow);
-              const autoCompactTokenLimit = resolvedContext?.auto_compact_token_limit_tokens ??
-                (nativeAutoCompactTokenLimit !== null &&
-                    (contextWindow === null || nativeAutoCompactTokenLimit <= contextWindow)
-                  ? nativeAutoCompactTokenLimit
-                  : null);
-              const effectiveContextWindowPercent = resolvedContext?.effective_context_window_percent ??
-                (nativeEffectiveContextWindowPercent !== null && nativeEffectiveContextWindowPercent <= 100
-                  ? nativeEffectiveContextWindowPercent
-                  : null);
-              models.set(id, {
-                id,
-                providers: [provider],
-                ...(resolvedContext ? { model_class: resolvedContext.model_class } : {}),
-                ...(contextWindow === null ? {} : { context_window_tokens: contextWindow }),
-                ...(maxContextWindow === null ? {} : { max_context_window_tokens: maxContextWindow }),
-                ...(autoCompactTokenLimit === null ? {} : { auto_compact_token_limit_tokens: autoCompactTokenLimit }),
-                ...(effectiveContextWindowPercent === null ? {} : { effective_context_window_percent: effectiveContextWindowPercent }),
-              });
-            };`;
-              source = source.slice(0, addStart) + addAfter + source.slice(addEnd);
-            }
-
-            if (!source.includes('}, codexModelRecords.get(id) ?? null);')) {
-              const loopStart = source.indexOf('  for (const model of codexModels) {');
-              const nextLoop = source.indexOf('  for (const model of metered?.models ?? []) {', loopStart);
-              if (loopStart < 0 || nextLoop < 0) throw new Error('Codex catalog loop missing');
-              const loop = source.slice(loopStart, nextLoop);
-              const patchedLoop = loop.replace(
-                '      supported_endpoints: ["/v1/responses", "/v1/chat/completions"],\n    });',
-                '      supported_endpoints: ["/v1/responses", "/v1/chat/completions"],\n    }, codexModelRecords.get(id) ?? null);',
-              );
-              if (patchedLoop === loop) throw new Error('Codex add call not patched');
-              source = source.slice(0, loopStart) + patchedLoop + source.slice(nextLoop);
-            }
-
-            fs.writeFileSync(path, source);
-          }
-
-          {
             const path = 'src/codex_models.ts';
             let source = fs.readFileSync(path, 'utf8');
             const before = 'for (const key of ["context_window", "max_context_window", "auto_compact_token_limit"]) {';
@@ -128,26 +42,20 @@ jobs:
           {
             const path = 'static/models.js';
             let source = fs.readFileSync(path, 'utf8');
-            const before = `    const contextSearch = [
-              model.model_class,
-              model.context_window_tokens,
-              model.max_context_window_tokens,
-              model.auto_compact_token_limit_tokens,
-              model.context_window_tokens ? "context compact compression" : "",
-            ].filter((value) => value !== null && value !== undefined).join(" ").toLowerCase();`;
-            const after = `    const contextWindow = positiveTokenCount(model.context_window_tokens);
-            const maxContextWindow = positiveTokenCount(model.max_context_window_tokens);
-            const autoCompact = positiveTokenCount(model.auto_compact_token_limit_tokens);
-            const contextSearch = [
-              model.model_class,
-              contextWindow && tokenNumber.format(contextWindow),
-              maxContextWindow && tokenNumber.format(maxContextWindow),
-              autoCompact && tokenNumber.format(autoCompact),
-              contextWindow ? "context compact compression" : "",
-            ].filter(Boolean).join(" ").toLowerCase();`;
-            if (!source.includes(after)) {
-              if (!source.includes(before)) throw new Error('model catalog search anchor missing');
-              source = source.replace(before, after);
+            if (!source.includes('const contextWindow = positiveTokenCount(model.context_window_tokens);')) {
+              const pattern = /    const contextSearch = \[\n      model\.model_class,\n      model\.context_window_tokens,\n      model\.max_context_window_tokens,\n      model\.auto_compact_token_limit_tokens,\n      model\.context_window_tokens \? "context compact compression" : "",\n    \]\.filter\(\(value\) => value !== null && value !== undefined\)\.join\(" "\)\.toLowerCase\(\);/;
+              const after = `    const contextWindow = positiveTokenCount(model.context_window_tokens);
+              const maxContextWindow = positiveTokenCount(model.max_context_window_tokens);
+              const autoCompact = positiveTokenCount(model.auto_compact_token_limit_tokens);
+              const contextSearch = [
+                model.model_class,
+                contextWindow && tokenNumber.format(contextWindow),
+                maxContextWindow && tokenNumber.format(maxContextWindow),
+                autoCompact && tokenNumber.format(autoCompact),
+                contextWindow ? "context compact compression" : "",
+              ].filter(Boolean).join(" ").toLowerCase();`;
+              if (!pattern.test(source)) throw new Error('model catalog search anchor missing');
+              source = source.replace(pattern, after);
             }
             fs.writeFileSync(path, source);
           }
@@ -155,12 +63,10 @@ jobs:
           {
             const path = 'tests/recent-model-context.test.ts';
             let source = fs.readFileSync(path, 'utf8');
-            const importNeedle = 'import {\n  CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT,';
             if (!source.includes('normalizeCodexModelsPayload')) {
-              if (!source.includes(importNeedle)) throw new Error('test import anchor missing');
               source = source.replace(
-                importNeedle,
-                'import { normalizeCodexModelsPayload } from "../src/codex_models.ts";\n\n' + importNeedle,
+                'import assert from "node:assert/strict";\n',
+                'import assert from "node:assert/strict";\n\nimport { normalizeCodexModelsPayload } from "../src/codex_models.ts";\n',
               );
               source += `\nDeno.test("Codex snapshot normalization preserves native effective context percentage", () => {\n  const snapshot = normalizeCodexModelsPayload({\n    models: [{\n      slug: "gpt-5.6-terra",\n      context_window: 272_000,\n      max_context_window: 1_000_000,\n      auto_compact_token_limit: null,\n      effective_context_window_percent: 91,\n    }],\n  });\n  assert.equal(snapshot?.models[0]?.effective_context_window_percent, 91);\n});\n`;
             }
@@ -168,16 +74,7 @@ jobs:
           }
           NODE
 
-          deno fmt \
-            src/openai.ts \
-            src/codex_models.ts \
-            src/recent_model_context.ts \
-            static/models.js \
-            tests/recent-model-context.test.ts \
-            tests/sentinel-issue-delivery.test.ts \
-            scripts/sentinel/issue-pr-pre-push.ts \
-            scripts/sentinel/issue-delivery.ts \
-            scripts/sentinel/issue-delivery-reconcile.ts
+          deno fmt src/codex_models.ts static/models.js tests/recent-model-context.test.ts
           deno fmt --check
           deno lint
           deno task build
@@ -189,18 +86,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           rm -f .github/workflows/pr127-finalize.yml
-          git add -A \
-            .github/workflows/pr127-finalize.yml \
-            src/openai.ts \
-            src/codex_models.ts \
-            src/recent_model_context.ts \
-            static/models.js \
-            tests/recent-model-context.test.ts \
-            tests/sentinel-issue-delivery.test.ts \
-            scripts/sentinel/issue-pr-pre-push.ts \
-            scripts/sentinel/issue-delivery.ts \
-            scripts/sentinel/issue-delivery-reconcile.ts
-          if git diff --cached --quiet; then exit 0; fi
+          git add -A .github/workflows/pr127-finalize.yml src/codex_models.ts static/models.js tests/recent-model-context.test.ts
           git commit -m 'fix(models): close final review findings'
           git pull --rebase origin feature/recent-model-context-windows
           git push origin HEAD:feature/recent-model-context-windows
