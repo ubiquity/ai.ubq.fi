@@ -66,3 +66,30 @@ Deno.test("auto-compaction uses the earlier 85 percent or 50k-reserve boundary",
   assert.equal(deriveAutoCompactTokenLimit(204_800), 154_800);
   assert.throws(() => deriveAutoCompactTokenLimit(50_000), RangeError);
 });
+
+Deno.test("native context metadata takes precedence over class fallbacks", () => {
+  const resolved = recentModelContextFor("gpt-5.6-terra", {
+    context_window_tokens: 272_000,
+    max_context_window_tokens: 1_000_000,
+    auto_compact_token_limit_tokens: null,
+    effective_context_window_percent: 95,
+  });
+  assert.equal(resolved?.context_window_tokens, 272_000);
+  assert.equal(resolved?.max_context_window_tokens, 1_000_000);
+  assert.equal(resolved?.auto_compact_token_limit_tokens, 222_000);
+  assert.equal(resolved?.effective_context_window_percent, 95);
+});
+
+Deno.test("native auto-compaction thresholds stay within the active window", () => {
+  const valid = recentModelContextFor("gpt-5.6-terra", {
+    context_window_tokens: 272_000,
+    auto_compact_token_limit_tokens: 200_000,
+  });
+  assert.equal(valid?.auto_compact_token_limit_tokens, 200_000);
+
+  const oversized = recentModelContextFor("gpt-5.6-terra", {
+    context_window_tokens: 272_000,
+    auto_compact_token_limit_tokens: 892_500,
+  });
+  assert.equal(oversized?.auto_compact_token_limit_tokens, 222_000);
+});
