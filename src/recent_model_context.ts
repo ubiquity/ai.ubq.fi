@@ -10,6 +10,13 @@ export type RecentModelContext = Readonly<{
   effective_context_window_percent: number;
 }>;
 
+export type RecentModelContextOverrides = Readonly<{
+  context_window_tokens?: number | null;
+  max_context_window_tokens?: number | null;
+  auto_compact_token_limit_tokens?: number | null;
+  effective_context_window_percent?: number | null;
+}>;
+
 type RecentModelContextRule = Readonly<{
   model_class: string;
   pattern: RegExp;
@@ -163,16 +170,50 @@ const RECENT_MODEL_CONTEXT_RULES: readonly RecentModelContextRule[] = [
   },
 ];
 
-export const recentModelContextFor = (modelId: string): RecentModelContext | null => {
+const positiveSafeInteger = (value: number | null | undefined): number | null =>
+  typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
+
+const resolvedAutoCompactTokenLimit = (
+  contextWindowTokens: number,
+  configuredLimit: number | null | undefined,
+): number => {
+  const configured = positiveSafeInteger(configuredLimit);
+  if (configured !== null && configured <= contextWindowTokens) return configured;
+  if (contextWindowTokens > CONTEXT_COMPACTION_RESERVED_TOKENS) {
+    return deriveAutoCompactTokenLimit(contextWindowTokens);
+  }
+  return Math.max(1, Math.min(contextWindowTokens - 1, Math.floor(contextWindowTokens * 0.85)));
+};
+
+export const recentModelContextFor = (
+  modelId: string,
+  overrides: RecentModelContextOverrides = {},
+): RecentModelContext | null => {
   const normalized = modelId.trim().toLowerCase().split("/").at(-1) ?? "";
   if (!normalized) return null;
   const rule = RECENT_MODEL_CONTEXT_RULES.find((candidate) => candidate.pattern.test(normalized));
   if (!rule) return null;
+
+  const nativeContextWindow = positiveSafeInteger(overrides.context_window_tokens);
+  const nativeMaxContextWindow = positiveSafeInteger(overrides.max_context_window_tokens);
+  const contextWindow = nativeContextWindow ?? nativeMaxContextWindow ?? rule.context_window_tokens;
+  const maxContextWindow = Math.max(contextWindow, nativeMaxContextWindow ?? contextWindow);
+  const effectiveContextWindowPercent =
+    typeof overrides.effective_context_window_percent === "number" &&
+      Number.isSafeInteger(overrides.effective_context_window_percent) &&
+      overrides.effective_context_window_percent >= 1 &&
+      overrides.effective_context_window_percent <= 100
+      ? overrides.effective_context_window_percent
+      : CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT;
+
   return {
     model_class: rule.model_class,
-    context_window_tokens: rule.context_window_tokens,
-    max_context_window_tokens: rule.context_window_tokens,
-    auto_compact_token_limit_tokens: deriveAutoCompactTokenLimit(rule.context_window_tokens),
-    effective_context_window_percent: CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT,
+    context_window_tokens: contextWindow,
+    max_context_window_tokens: maxContextWindow,
+    auto_compact_token_limit_tokens: resolvedAutoCompactTokenLimit(
+      contextWindow,
+      overrides.auto_compact_token_limit_tokens,
+    ),
+    effective_context_window_percent: effectiveContextWindowPercent,
   };
 };
