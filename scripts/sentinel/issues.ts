@@ -27,7 +27,7 @@ export type GitHubIssueJob = Readonly<{
   fingerprint: string;
   priority: "P2" | "P3";
   priorityLabel: "Priority: 2 (Medium)" | "Priority: 3 (High)";
-  timeLabel: "Time: <15 Minutes" | "Time: <1 Hour" | "Time: <2 Hours";
+  timeLabel: string;
   labels: readonly string[];
   files: readonly string[];
   acceptance: readonly string[];
@@ -75,11 +75,9 @@ const ISSUE_QUEUE_RANK = new Map<GitHubIssueJob["priorityLabel"], number>([
   ["Priority: 3 (High)", 0],
   ["Priority: 2 (Medium)", 1],
 ]);
-const TIME_LABELS = new Set<GitHubIssueJob["timeLabel"]>([
-  "Time: <15 Minutes",
-  "Time: <1 Hour",
-  "Time: <2 Hours",
-]);
+export const MAX_GITHUB_ISSUE_TIME_ESTIMATE_MINUTES = 24 * 60;
+const DEFAULT_GITHUB_ISSUE_TIME_ESTIMATE_MINUTES = 2 * 60;
+const TIME_LABEL_PATTERN = /^Time: <([1-9][0-9]*) (Minute|Minutes|Hour|Hours|Day|Days)$/u;
 const FILE_LOCATION_PATTERN = /^([A-Za-z0-9_.@/+\-]+)(?::\d+(?:-\d+)?(?::\d+)?)?$/u;
 const FULL_SHA = /^[0-9a-f]{40}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
@@ -148,6 +146,19 @@ const validIssueUrl = (value: string, repository: string, issueNumber: number): 
   }
 };
 
+export const parseGitHubIssueTimeLabel = (label: string): number | null => {
+  const match = label.match(TIME_LABEL_PATTERN);
+  if (!match) return null;
+  const value = Number(match[1]);
+  const unit = match[2]!;
+  if (!Number.isSafeInteger(value) || value <= 0) return null;
+  const singular = unit === "Minute" || unit === "Hour" || unit === "Day";
+  if ((value === 1) !== singular) return null;
+  const multiplier = unit === "Minute" || unit === "Minutes" ? 1 : unit === "Hour" || unit === "Hours" ? 60 : 1_440;
+  const minutes = value * multiplier;
+  return Number.isSafeInteger(minutes) && minutes <= MAX_GITHUB_ISSUE_TIME_ESTIMATE_MINUTES ? minutes : null;
+};
+
 type ParsedIssueBody = Readonly<{ acceptance: readonly string[]; files: readonly string[] }>;
 
 export const parseGitHubIssueJobBody = (body: string): ParsedIssueBody | null => {
@@ -187,23 +198,29 @@ export const parseGitHubIssueJobBody = (body: string): ParsedIssueBody | null =>
 
 const issueJobLabels = (
   labels: readonly string[],
+  maximumTimeEstimateMinutes: number,
 ):
   | Readonly<{
     labels: readonly string[];
     priority: GitHubIssueJob["priority"];
     priorityLabel: GitHubIssueJob["priorityLabel"];
-    timeLabel: GitHubIssueJob["timeLabel"];
+    timeLabel: string;
   }>
   | null => {
+  if (
+    !Number.isSafeInteger(maximumTimeEstimateMinutes) || maximumTimeEstimateMinutes <= 0 ||
+    maximumTimeEstimateMinutes > MAX_GITHUB_ISSUE_TIME_ESTIMATE_MINUTES
+  ) throw new Error("GitHub issue time-estimate policy is invalid");
   const canonicalLabels = sortedUnique(labels);
   if (!canonicalLabels) return null;
   const priorityLabels = canonicalLabels.filter((label) => label.startsWith("Priority: "));
   const timeLabels = canonicalLabels.filter((label) => label.startsWith("Time: "));
   if (priorityLabels.length !== 1 || timeLabels.length !== 1) return null;
   const priorityLabel = priorityLabels[0] as GitHubIssueJob["priorityLabel"];
-  const timeLabel = timeLabels[0] as GitHubIssueJob["timeLabel"];
+  const timeLabel = timeLabels[0]!;
   const priority = PRIORITY_LABELS.get(priorityLabel);
-  if (!priority || !TIME_LABELS.has(timeLabel)) return null;
+  const timeEstimateMinutes = parseGitHubIssueTimeLabel(timeLabel);
+  if (!priority || timeEstimateMinutes === null || timeEstimateMinutes > maximumTimeEstimateMinutes) return null;
   return { labels: canonicalLabels, priority, priorityLabel, timeLabel };
 };
 
@@ -241,6 +258,7 @@ export const createGitHubIssueJob = async (
   issue: GitHubIssue,
   relations: GitHubIssueRelations,
   authorityPermission: GitHubRepositoryPermission,
+  maximumTimeEstimateMinutes = DEFAULT_GITHUB_ISSUE_TIME_ESTIMATE_MINUTES,
 ): Promise<GitHubIssueJob | null> => {
   validatedRepository(repository);
   if (
@@ -251,7 +269,7 @@ export const createGitHubIssueJob = async (
     Date.parse(issue.updatedAt) < Date.parse(issue.createdAt) || !validIssueUrl(issue.htmlUrl, repository, issue.number)
   ) return null;
   const parsedBody = parseGitHubIssueJobBody(issue.body);
-  const parsedLabels = issueJobLabels(issue.labels);
+  const parsedLabels = issueJobLabels(issue.labels, maximumTimeEstimateMinutes);
   if (!parsedBody || !parsedLabels) return null;
   const bodySha256 = await sha256(issue.body);
   const fingerprint = await sha256(JSON.stringify({
@@ -402,7 +420,13 @@ export const getCurrentGitHubIssueJob = async (
   const issue = await source.getIssue(issueNumber);
   const relations = await source.getIssueRelations(issueNumber);
   const authorityPermission = await issueAuthorityPermission(source, issue, relations);
-  return await createGitHubIssueJob(repository, issue, relations, authorityPermission);
+  return await createGitHubIssueJob(
+    repository,
+    issue,
+    relations,
+    authorityPermission,
+    MAX_GITHUB_ISSUE_TIME_ESTIMATE_MINUTES,
+  );
 };
 
 export const selectNextGitHubIssueJob = async (
@@ -414,14 +438,20 @@ export const selectNextGitHubIssueJob = async (
   const listed = await source.listOpenIssues();
   const candidates: GitHubIssueJob[] = [];
   for (const candidate of listed) {
-    const job = await createGitHubIssueJob(repository, candidate, {
-      parentIssueNumber: null,
-      subIssueCount: 0,
-      blockedByCount: 0,
-      blockingCount: 0,
-      latestBodyEdit: null,
-      latestTitleEdit: null,
-    }, "write");
+    const job = await createGitHubIssueJob(
+      repository,
+      candidate,
+      {
+        parentIssueNumber: null,
+        subIssueCount: 0,
+        blockedByCount: 0,
+        blockingCount: 0,
+        latestBodyEdit: null,
+        latestTitleEdit: null,
+      },
+      "write",
+      MAX_GITHUB_ISSUE_TIME_ESTIMATE_MINUTES,
+    );
     if (!job) continue;
     candidates.push(job);
   }
@@ -436,7 +466,13 @@ export const selectNextGitHubIssueJob = async (
     }
     const relations = await source.getIssueRelations(candidate.number);
     const authorityPermission = await issueAuthorityPermission(source, current, relations);
-    const job = await createGitHubIssueJob(repository, current, relations, authorityPermission);
+    const job = await createGitHubIssueJob(
+      repository,
+      current,
+      relations,
+      authorityPermission,
+      MAX_GITHUB_ISSUE_TIME_ESTIMATE_MINUTES,
+    );
     if (!job) continue;
     if (!githubIssueJobSourceSnapshotsMatch(candidate, job)) {
       throw new Error(`GitHub issue ${candidate.number} snapshot changed during selection`);
@@ -593,8 +629,9 @@ export const renderGitHubIssueJobLedger = (entries: readonly GitHubIssueJobLedge
   const markdown = [
     "# Sentinel Issue Job Ledger",
     "",
-    "Terminal Sentinel results for immutable GitHub issue snapshots are tracked here. Editing an open issue creates a new",
-    "snapshot that can become eligible again. The Sentinel does not assign, label, comment on, or close issues.",
+    "Terminal Sentinel results for immutable GitHub issue snapshots are tracked here. Each selected snapshot is delivered",
+    "through exactly one pull request. A verified production keep closes the unchanged issue with supporting evidence;",
+    "manual-required, failed, and rolled-back results remain open.",
     "",
     ...table,
     "",
