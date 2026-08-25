@@ -168,20 +168,6 @@ export const resolveIdempotencyPrincipal = async (authResult: PrincipalAuthResul
   }
 };
 
-/** Keep durable idempotency stable while isolating bearer credentials for Codex admission. */
-export const resolveCodexAdmissionPrincipal = async (authResult: PrincipalAuthResult): Promise<string> => {
-  switch (authResult.method.kind) {
-    case "auth_tokens_allowlist":
-    case "admin_allowlist":
-    case "deno_deploy_token":
-      return authResult.token
-        ? `bearer-sha256:${await sha256Hex(authResult.token)}`
-        : `auth-method:${authResult.method.kind}`;
-    default:
-      return await resolveIdempotencyPrincipal(authResult);
-  }
-};
-
 const normalizePath = (path: string): string => {
   if (path === "/") return path;
   return path.replace(/\/+$/, "");
@@ -1129,10 +1115,7 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     // and paid fallback use the policy that actually reserved this request.
     usagePolicy = admission.reservation.policy;
   }
-  const [idempotencyPrincipal, codexAdmissionPrincipal] = await Promise.all([
-    resolveIdempotencyPrincipal(authResult),
-    resolveCodexAdmissionPrincipal(authResult),
-  ]);
+  const idempotencyPrincipal = await resolveIdempotencyPrincipal(authResult);
   let kernelRepo = authResult.method.kind === "github_token"
     ? { owner: authResult.method.owner, repo: authResult.method.repo }
     : null;
@@ -1175,7 +1158,6 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     kernelOrg,
     paidFallbackEnabled: usagePolicy?.paid_fallback_enabled === true,
     idempotencyPrincipal,
-    codexAdmissionPrincipal,
     requestId,
     startedAtMs: requestStartedAtMs,
     startedAtMonotonicMs: requestStartedAtMonotonicMs,

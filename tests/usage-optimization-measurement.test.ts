@@ -134,7 +134,6 @@ Deno.test("usage optimization fixture records per-auth KV commands, atomic commi
     const { sha256Base64Url } = await import("../src/utils.ts");
     const { RUNTIME_CONFIG_V2_KEY, resetRuntimeConfigCacheForTest } = await import("../src/runtime_config.ts");
     const {
-      CODEX_ADMISSION_BUSY_ERROR_CODE,
       CODEX_AUTH_POOL_KV_KEY,
       fetchCodexResponses,
       resetCodexAuthCacheForTest,
@@ -328,12 +327,7 @@ Deno.test("usage optimization fixture records per-auth KV commands, atomic commi
     );
     assert.equal(concurrentResponses.filter((response) => response.status === 200).length, 1);
     const quotaResponses = concurrentResponses.filter((response) => response.status === 429);
-    const busyResponses = concurrentResponses.filter((response) => response.status === 503);
-    assert.equal(quotaResponses.length + busyResponses.length, 7);
-    for (const response of busyResponses) {
-      const payload = await response.clone().json() as { error?: { code?: string } };
-      assert.equal(payload.error?.code, CODEX_ADMISSION_BUSY_ERROR_CODE);
-    }
+    assert.equal(quotaResponses.length, 7);
     assert.equal(fetchCalls, 1, "over-limit concurrent admissions must not reach the upstream");
 
     assert.equal(queuedReplies.length, 0, "every planned upstream response must be consumed");
@@ -377,8 +371,8 @@ Deno.test("usage optimization fixture records per-auth KV commands, atomic commi
     assert.equal(retry.serialized_request_bytes, bytes(JSON.stringify(retryBody)) * 2);
     assert.equal(
       disconnect.atomic_commits,
-      4,
-      "a post-dispatch disconnect must retain V3 dispatch plus Codex admission ownership and release",
+      2,
+      "a post-dispatch disconnect must retain the V3 reservation and dispatch commits",
     );
     assert.ok(concurrent.atomic_commits >= 2, "concurrent admission must retain the winning reservation and dispatch");
     assert.equal(

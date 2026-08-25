@@ -10,7 +10,6 @@ import { sha256Base64Url, sha256Hex } from "../src/utils.ts";
 import { readPromptCacheAnalytics, recordPromptCacheAnalytics } from "../src/prompt_cache_analytics.ts";
 import { CountingKv } from "./helpers/counting_kv.ts";
 import { setKvForTest } from "../src/kv.ts";
-import { acquireCodexAdmission, type CodexAdmissionLease, releaseCodexAdmission } from "../src/codex_admission.ts";
 
 if (typeof Deno.KvU64 !== "function") {
   (Deno as unknown as { KvU64: typeof Deno.KvU64 }).KvU64 = class {
@@ -161,7 +160,6 @@ const {
 const {
   CODEX_AUTH_REAUTH_MESSAGE,
   CODEX_AUTH_REAUTH_WARNING,
-  CODEX_ADMISSION_BUSY_ERROR_CODE,
   resetCodexAuthCacheForTest,
 } = await import("../src/codex.ts");
 const {
@@ -874,75 +872,6 @@ Deno.test("openai: legacy timeout circuits do not short-circuit later requests",
   assert.equal(inferenceCalls, 1);
   assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
   await response.text();
-});
-
-Deno.test("openai: subscription admission busy never enters a paid provider", async () => {
-  const leases: CodexAdmissionLease[] = [];
-  let removedProviderCalls = 0;
-  let transportCalls = 0;
-
-  setRemovedProviderApiKeyForTest("removed-provider-must-not-run");
-  setRemovedProviderTestAdapterForTest({
-    fetchResponses: () => {
-      removedProviderCalls += 1;
-      throw new Error("admission busy must not enter RemovedProvider");
-    },
-    modelFromEvent: () => null,
-    isEligibleModel: () => true,
-  });
-  try {
-    const response = await withFetchMock(
-      () => {
-        transportCalls += 1;
-        throw new Error("admission busy must not dispatch any provider transport");
-      },
-      async () => {
-        const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
-        const selected = await selectCodexRoutingAccounts(
-          authPool,
-          authPool.accounts,
-          Date.now(),
-          DEFAULT_TEST_MODEL,
-        );
-        assert.equal(selected.kind, "eligible");
-        if (selected.kind !== "eligible") throw new Error("expected eligible admission fixture accounts");
-        for (const account of selected.accounts) {
-          for (let index = 0; index < 4; index += 1) {
-            const fixtureId = `busy-fixture-${account.accountIdHash}-${index}`;
-            const decision = await acquireCodexAdmission({
-              accountIdHash: account.accountIdHash,
-              quotaClass: "standard",
-              callerLaneHash: await sha256Hex(fixtureId),
-            });
-            assert.equal(decision.kind, "acquired");
-            if (decision.kind === "acquired") leases.push(decision.lease);
-          }
-        }
-        return await handleResponses(
-          new Request("https://ai.ubq.fi/v1/responses", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              model: DEFAULT_TEST_MODEL,
-              input: "wait for subscription capacity",
-              client_metadata: { thread_id: "busy-agent", session_id: "shared-session" },
-            }),
-          }),
-        );
-      },
-    );
-    assert.equal(response.status, 503);
-    assert.equal(response.headers.get("Retry-After"), "1");
-    assert.equal((await response.json() as { error?: { code?: string } }).error?.code, CODEX_ADMISSION_BUSY_ERROR_CODE);
-    assert.equal(transportCalls, 0);
-    assert.equal(removedProviderCalls, 0);
-  } finally {
-    await Promise.all(leases.map((lease) => releaseCodexAdmission(lease)));
-    setRemovedProviderTestAdapterForTest(null);
-    setRemovedProviderApiKeyForTest(undefined);
-    resetCodexAuthCacheForTest();
-    resetCodexAccountRoutingForTest();
-  }
 });
 
 Deno.test("openai: a post-reset 429 is returned once without a successful stream", async (t) => {

@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { CODEX_BANKED_RESET_LEASE_MS, type CodexBankedResetConfig } from "../src/codex_banked_reset.ts";
 import { PROVIDER_CAPACITY_SNAPSHOT_KEY } from "../src/provider_capacity_contract.ts";
 import { setKvForTest } from "../src/kv.ts";
-import { codexAdmissionSlotKey } from "../src/codex_admission.ts";
 import { deriveCodexAccountAffinityIdentity, recordCodexAccountAffinity } from "../src/codex_account_affinity.ts";
 import type { CodexUsageResetProvider } from "../src/codex_banked_reset_provider.ts";
 import type { CodexAuthPoolState, CodexAuthState } from "../src/types.ts";
@@ -160,7 +159,6 @@ const { config } = await import("../src/config.ts");
 
 const {
   cacheCodexAuthPool,
-  CODEX_ADMISSION_BUSY_ERROR_CODE,
   CODEX_AUTH_CACHE_TTL_MS,
   CODEX_AUTH_REAUTH_WARNING,
   CodexError,
@@ -199,7 +197,7 @@ Deno.test("Codex auth account ordering rotates from the selected account", () =>
   ]);
 });
 
-Deno.test("caller admission lanes never reorder subscription accounts", async () => {
+Deno.test("repeated requests preserve subscription account order", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -216,10 +214,10 @@ Deno.test("caller admission lanes never reorder subscription accounts", async ()
   };
 
   try {
-    for (const callerLaneHash of ["0".repeat(64), "f".repeat(64)]) {
+    for (const _ of [0, 1]) {
       const response = await fetchCodexResponses(
         { model: "gpt-5.6-luna", input: "stable routing order" },
-        { admissionCallerLaneHash: callerLaneHash },
+        {},
       );
       assert.equal(response.status, 200);
       await markCodexResponseCompleted(response);
@@ -271,7 +269,7 @@ Deno.test("successful account affinity is persisted only after terminal completi
   try {
     const response = await fetchCodexResponses(
       { input: "terminal affinity", prompt_cache_key: promptCacheKey },
-      { cacheScope, admissionCallerLaneHash: "30".padStart(64, "0") },
+      { cacheScope },
     );
     assert.equal(response.status, 200);
     assert.deepEqual(kv.extra.get(JSON.stringify(identity.kvKey)), originalAffinity);
@@ -290,82 +288,7 @@ Deno.test("successful account affinity is persisted only after terminal completi
   }
 });
 
-Deno.test("100 Codex agent lanes stay inside per-account bulkheads", async () => {
-  const originalFetch = globalThis.fetch;
-  const originalNow = Date.now;
-  const originalDeployFlag = config.isDeploy;
-  const activeByAccount = new Map<string, number>();
-  const maxByAccount = new Map<string, number>();
-  const providerCallsByAccount = new Map<string, number>();
-  let busyResponses = 0;
-  Date.now = () => fixedStartMs;
-  (config as { isDeploy: boolean }).isDeploy = true;
-  kv.auth = pool(auth("one"), auth("two"));
-  kv.extra.clear();
-  resetCodexAuthCacheForTest();
-  resetCodexAccountRoutingForTest();
-
-  globalThis.fetch = async (_input, init) => {
-    const accountId = new Headers(init?.headers).get("ChatGPT-Account-ID") ?? "missing";
-    const active = (activeByAccount.get(accountId) ?? 0) + 1;
-    activeByAccount.set(accountId, active);
-    maxByAccount.set(accountId, Math.max(maxByAccount.get(accountId) ?? 0, active));
-    providerCallsByAccount.set(accountId, (providerCallsByAccount.get(accountId) ?? 0) + 1);
-    await new Promise((resolve) => setTimeout(resolve, 2));
-    activeByAccount.set(accountId, Math.max(0, (activeByAccount.get(accountId) ?? 1) - 1));
-    return new Response('data: {"type":"response.created","response":{"id":"response_bulkhead"}}\n\n', {
-      status: 200,
-      headers: { "Content-Type": "text/event-stream" },
-    });
-  };
-
-  try {
-    await Promise.all(
-      Array.from({ length: 100 }, async (_, index) => {
-        const callerLaneHash = `${index.toString(16).padStart(8, "0")}${"0".repeat(56)}`;
-        for (let attempt = 0; attempt < 1_000; attempt += 1) {
-          const response = await fetchCodexResponses(
-            { model: "gpt-5.6-luna", input: `agent-${index}` },
-            { admissionCallerLaneHash: callerLaneHash, requestId: `agent-${index}-${attempt}` },
-          );
-          if (response.status === 503) {
-            const payload = await response.json() as { error?: { code?: string } };
-            assert.equal(payload.error?.code, CODEX_ADMISSION_BUSY_ERROR_CODE);
-            assert.equal(response.headers.get("Retry-After"), "1");
-            busyResponses += 1;
-            await new Promise((resolve) => setTimeout(resolve, 1));
-            continue;
-          }
-          assert.equal(response.status, 200);
-          await new Promise((resolve) => setTimeout(resolve, 2));
-          await markCodexResponseCompleted(response);
-          return;
-        }
-        assert.fail(`agent ${index} did not acquire subscription capacity`);
-      }),
-    );
-
-    assert.ok(busyResponses > 0);
-    assert.ok((providerCallsByAccount.get("account-one") ?? 0) > 0);
-    assert.ok((providerCallsByAccount.get("account-two") ?? 0) > 0);
-    assert.ok(
-      (maxByAccount.get("account-one") ?? 0) <= 4,
-      `account-one max=${maxByAccount.get("account-one") ?? 0}`,
-    );
-    assert.ok(
-      (maxByAccount.get("account-two") ?? 0) <= 4,
-      `account-two max=${maxByAccount.get("account-two") ?? 0}`,
-    );
-  } finally {
-    resetCodexAuthCacheForTest();
-    resetCodexAccountRoutingForTest();
-    globalThis.fetch = originalFetch;
-    Date.now = originalNow;
-    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
-  }
-});
-
-Deno.test("a pre-operation KV outage uses the isolate-local admission backend", async () => {
+Deno.test("a pre-operation KV outage does not block upstream dispatch", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalOpenKv = Object.getOwnPropertyDescriptor(Deno, "openKv");
@@ -390,7 +313,6 @@ Deno.test("a pre-operation KV outage uses the isolate-local admission backend", 
     const response = await fetchCodexResponses(
       { model: "gpt-5.6-luna", input: "wait for KV" },
       {
-        admissionCallerLaneHash: "a".repeat(64),
         beforeDispatch: () => {
           beforeDispatchCalls += 1;
           return Promise.resolve({
@@ -421,59 +343,34 @@ Deno.test("a pre-operation KV outage uses the isolate-local admission backend", 
   }
 });
 
-Deno.test("malformed admission state on one account does not hide a healthy sibling", async () => {
+Deno.test("concurrent Codex requests dispatch without gateway admission rejection", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
-  const providerAccounts: string[] = [];
-  let beforeDispatchCalls = 0;
-  let transportStarts = 0;
-  let cancellations = 0;
+  let providerCalls = 0;
   Date.now = () => fixedStartMs;
   (config as { isDeploy: boolean }).isDeploy = true;
   kv.auth = pool(auth("one"), auth("two"));
   kv.extra.clear();
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
-  const selected = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts);
-  assert.equal(selected.kind, "eligible");
-  if (selected.kind !== "eligible") return;
-  const firstAccount = selected.accounts.find((account) => account.auth.account_id === "account-one");
-  assert.ok(firstAccount);
-  kv.extra.set(JSON.stringify(codexAdmissionSlotKey(firstAccount.accountIdHash, 0)), {
-    value: { v: 999 },
-    version: 1,
-  });
-  globalThis.fetch = (_input, init) => {
-    providerAccounts.push(new Headers(init?.headers).get("ChatGPT-Account-ID") ?? "missing");
-    return Promise.resolve(new Response("{}", { status: 200 }));
+
+  globalThis.fetch = async () => {
+    providerCalls += 1;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
   };
 
   try {
-    const response = await fetchCodexResponses(
-      { model: "gpt-5.6-luna", input: "use the healthy sibling" },
-      {
-        admissionCallerLaneHash: "0".repeat(64),
-        beforeDispatch: () => {
-          beforeDispatchCalls += 1;
-          return Promise.resolve({
-            markTransportStarted: () => {
-              transportStarts += 1;
-            },
-            cancelBeforeTransport: () => {
-              cancellations += 1;
-              return Promise.resolve();
-            },
-          });
-        },
-      },
+    const responses = await Promise.all(
+      Array.from(
+        { length: 8 },
+        (_, index) => fetchCodexResponses({ model: "gpt-5.6-luna", input: `agent-${index}` }),
+      ),
     );
-    assert.equal(response.status, 200);
-    assert.deepEqual(providerAccounts, ["account-two"]);
-    assert.equal(beforeDispatchCalls, 1);
-    assert.equal(transportStarts, 1);
-    assert.equal(cancellations, 0);
-    await markCodexResponseCompleted(response);
+    assert.equal(providerCalls, 8);
+    assert.deepEqual(responses.map((response) => response.status), Array(8).fill(200));
+    await Promise.all(responses.map(markCodexResponseCompleted));
   } finally {
     resetCodexAuthCacheForTest();
     resetCodexAccountRoutingForTest();
@@ -743,19 +640,11 @@ Deno.test("Codex responses do not replay a dispatched transport failure", async 
       () =>
         fetchCodexResponses(
           { input: "timeout-sibling-retry" },
-          { admissionCallerLaneHash: "31".padStart(64, "0") },
+          {},
         ),
       (error: unknown) => error instanceof CodexError && error.code === "gateway_timeout",
     );
     assert.deepEqual(accountIds, ["account-one"]);
-    const admissionKeys = (): string[] =>
-      [...kv.extra.keys()].filter((encoded) => {
-        const key = JSON.parse(encoded) as Deno.KvKey;
-        return key[0] === "uos_ai" && key[1] === "codex_admission";
-      });
-    assert.equal(admissionKeys().length, 0, "failed dispatch must release its admission lease");
-
-    assert.deepEqual(admissionKeys(), []);
   } finally {
     resetCodexAuthCacheForTest();
     globalThis.fetch = originalFetch;
@@ -764,7 +653,7 @@ Deno.test("Codex responses do not replay a dispatched transport failure", async 
   }
 });
 
-Deno.test("all sibling transport failures clean admission without changing affinity or provider health", async () => {
+Deno.test("transport failures preserve affinity and provider health", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -798,7 +687,7 @@ Deno.test("all sibling transport failures clean admission without changing affin
       () =>
         fetchCodexResponses(
           { input: "all siblings fail", prompt_cache_key: promptCacheKey },
-          { cacheScope, admissionCallerLaneHash: "32".padStart(64, "0") },
+          { cacheScope },
         ),
       (error: unknown) => error instanceof CodexError && error.code === "gateway_timeout" && error.status === 504,
     );
@@ -806,7 +695,6 @@ Deno.test("all sibling transport failures clean admission without changing affin
     assert.deepEqual(kv.extra.get(JSON.stringify(identity.kvKey)), affinityBefore);
     for (const encoded of kv.extra.keys()) {
       const key = JSON.parse(encoded) as Deno.KvKey;
-      assert.notEqual(key[1], "codex_admission", `admission lease remained at ${encoded}`);
       assert.notEqual(key[1], "provider_health", `transport failure mutated provider health at ${encoded}`);
     }
   } finally {
@@ -818,7 +706,7 @@ Deno.test("all sibling transport failures clean admission without changing affin
   }
 });
 
-Deno.test("post-dispatch client cancellation releases Codex admission", async () => {
+Deno.test("post-dispatch client cancellation stops Codex transport", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -843,7 +731,6 @@ Deno.test("post-dispatch client cancellation releases Codex admission", async ()
     const pending = fetchCodexResponses(
       { input: "cancel after dispatch" },
       {
-        admissionCallerLaneHash: "33".padStart(64, "0"),
         signal: requestAbort.signal,
       },
     );
@@ -853,10 +740,6 @@ Deno.test("post-dispatch client cancellation releases Codex admission", async ()
       () => pending,
       (error: unknown) => error instanceof Error && error.name === "AbortError",
     );
-    for (const encoded of kv.extra.keys()) {
-      const key = JSON.parse(encoded) as Deno.KvKey;
-      assert.notEqual(key[1], "codex_admission", `admission lease remained at ${encoded}`);
-    }
   } finally {
     resetCodexAuthCacheForTest();
     globalThis.fetch = originalFetch;

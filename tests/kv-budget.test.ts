@@ -47,8 +47,6 @@ class CountingKv {
   sumCommitDelayMs = 0;
   apiKeyV3DispatchCommitGate: Promise<void> | null = null;
   onApiKeyV3DispatchCommit: (() => void) | null = null;
-  codexAdmissionReleaseCommitGate: Promise<void> | null = null;
-  onCodexAdmissionReleaseCommit: (() => void) | null = null;
   retries = 0;
   listCalls = 0;
   readonly readKeys: Deno.KvKey[] = [];
@@ -95,8 +93,6 @@ class CountingKv {
     this.sumCommitDelayMs = 0;
     this.apiKeyV3DispatchCommitGate = null;
     this.onApiKeyV3DispatchCommit = null;
-    this.codexAdmissionReleaseCommitGate = null;
-    this.onCodexAdmissionReleaseCommit = null;
     this.retries = 0;
     this.listCalls = 0;
     this.readKeys.length = 0;
@@ -270,13 +266,6 @@ class CountingKv {
           this.onApiKeyV3DispatchCommit?.();
           if (this.apiKeyV3DispatchCommitGate) await this.apiKeyV3DispatchCommitGate;
         }
-        const codexAdmissionRelease = mutations.some((mutation) =>
-          mutation.kind === "delete" && mutation.key[0] === "uos_ai" && mutation.key[1] === "codex_admission"
-        );
-        if (codexAdmissionRelease) {
-          this.onCodexAdmissionReleaseCommit?.();
-          if (this.codexAdmissionReleaseCommitGate) await this.codexAdmissionReleaseCommitGate;
-        }
         for (const mutation of mutations) {
           const encoded = encodeKey(mutation.key);
           if (mutation.kind === "delete") this.remove(mutation.key);
@@ -342,10 +331,8 @@ const {
   resetRuntimeConfigCacheForTest,
 } = await import("../src/runtime_config.ts");
 const {
-  CODEX_ADMISSION_BUSY_ERROR_CODE,
   resetCodexAuthCacheForTest,
 } = await import("../src/codex.ts");
-const { codexAdmissionSlotKey } = await import("../src/codex_admission.ts");
 const { fetchMeteredModels, resetMeteredModelsCacheForTest } = await import("../src/metered.ts");
 const { resetSurplusModelsCacheForTest } = await import("../src/surplus.ts");
 const {
@@ -829,110 +816,6 @@ Deno.test("V3 cancellation during the Codex dispatch commit releases quota befor
   }
 });
 
-Deno.test("V3 limit-one concurrency dispatches once and backpressures caller-lane contenders", async () => {
-  const { token, policy } = await prepareApiKeyInference("b", "concurrent-bounded", 1);
-  const concurrency = 8;
-  let fetchCalls = 0;
-  let releaseUpstreams: () => void = () => {};
-  const upstreamGate = new Promise<void>((resolve) => {
-    releaseUpstreams = resolve;
-  });
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => {
-    fetchCalls += 1;
-    await upstreamGate;
-    return sse();
-  };
-  try {
-    const pending = Array.from({ length: concurrency }, () => handler(request(token)));
-    await waitFor(() => fetchCalls > 0, "first provider dispatch");
-    releaseUpstreams();
-    const responses = await Promise.all(pending);
-    assert.equal(responses.filter((response) => response.status === 200).length, 1);
-    const quotaResponses = responses.filter((response) => response.status === 429);
-    const busyResponses = responses.filter((response) => response.status === 503);
-    assert.equal(quotaResponses.length + busyResponses.length, 7);
-    for (const response of busyResponses) {
-      const payload = await response.clone().json() as { error?: { code?: string } };
-      assert.equal(payload.error?.code, CODEX_ADMISSION_BUSY_ERROR_CODE);
-    }
-    assert.equal(fetchCalls, 1, "over-limit reservations must not reach a provider");
-    assert.deepEqual(usageWindow(policy), {
-      committed_requests: 1,
-      reserved_requests: 0,
-      window_reset_at_ms: policy.usage_reset_at_ms,
-    });
-  } finally {
-    releaseUpstreams();
-    globalThis.fetch = originalFetch;
-  }
-});
-
-Deno.test("Images n=5 refunds a quota claim when its first batch is admission busy", async () => {
-  const { token, policy } = await prepareApiKeyInference("7", "images-five-admission-busy", 1);
-  const accountIdHash = await sha256Hex("uos_ai\0codex_routing_account\0acct-1");
-  const acquiredAtMs = Date.now();
-  const occupiedSlotKeys = Array.from({ length: 4 }, (_, slot) => codexAdmissionSlotKey(accountIdHash, slot));
-  for (const [slot, slotKey] of occupiedSlotKeys.entries()) {
-    kv.values.set(encodeKey(slotKey), {
-      v: 1,
-      token: `occupied-slot-${slot}`,
-      account_id_hash: accountIdHash,
-      quota_class: "standard",
-      caller_lane_hash: `${slot + 1}`.padStart(64, "0"),
-      slot,
-      acquired_at_ms: acquiredAtMs,
-      expires_at_ms: acquiredAtMs + 60_000,
-    });
-  }
-  kv.resetCounts();
-
-  const originalFetch = globalThis.fetch;
-  let fetchCalls = 0;
-  globalThis.fetch = () => {
-    fetchCalls += 1;
-    return Promise.resolve(sse());
-  };
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  try {
-    const pending = handler(
-      new Request("https://ai.ubq.fi/v1/images/generations", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: "five admission-busy images", n: 5 }),
-      }),
-    );
-    const outcome = await Promise.race([
-      pending.then((response) => ({ kind: "response" as const, response })),
-      new Promise<{ kind: "timeout" }>((resolve) => {
-        timeout = setTimeout(() => resolve({ kind: "timeout" }), 1_000);
-      }),
-    ]);
-    assert.notEqual(outcome.kind, "timeout", "the first batch must not wait for the unstarted fifth child");
-    if (outcome.kind !== "response") return;
-
-    assert.equal(outcome.response.status, 503);
-    const payload = await outcome.response.json() as { error?: { code?: string } };
-    assert.equal(payload.error?.code, CODEX_ADMISSION_BUSY_ERROR_CODE);
-    assert.equal(fetchCalls, 0, "no child, including the fifth, may reach provider transport");
-    const callerLaneReads = new Set(
-      kv.readKeys
-        .filter((key) => key[0] === "uos_ai" && key[1] === "codex_admission" && key.includes("caller"))
-        .map(encodeKey),
-    );
-    assert.equal(callerLaneReads.size, 4, "the fifth child must remain outside the failed first batch");
-    assert.deepEqual(usageWindow(policy), {
-      committed_requests: 0,
-      reserved_requests: 0,
-      window_reset_at_ms: policy.usage_reset_at_ms,
-    });
-  } finally {
-    if (timeout !== undefined) clearTimeout(timeout);
-    for (const slotKey of occupiedSlotKeys) kv.values.delete(encodeKey(slotKey));
-    globalThis.fetch = originalFetch;
-  }
-});
-
 Deno.test("V3 admission reclaims expired reservations and preserves dispatch identity", async () => {
   const { policy } = await prepareApiKeyInference("c", "expired-lease", 1);
   const expiredRequestId = "expired-request";
@@ -1364,7 +1247,6 @@ Deno.test("provider dispatch commits API-key V3 while kernel completion writes o
 
   const upstream = { controller: null as ReadableStreamDefaultController<Uint8Array> | null };
   const originalFetch = globalThis.fetch;
-  let releaseAdmissionCommits = (): void => {};
   globalThis.fetch = () =>
     Promise.resolve(
       new Response(
@@ -1412,13 +1294,6 @@ Deno.test("provider dispatch commits API-key V3 while kernel completion writes o
     assert.equal(kernelWindow?.reserved_requests, 0);
 
     let imageFetches = 0;
-    let admissionReleaseAttempts = 0;
-    kv.codexAdmissionReleaseCommitGate = new Promise<void>((resolve) => {
-      releaseAdmissionCommits = resolve;
-    });
-    kv.onCodexAdmissionReleaseCommit = () => {
-      admissionReleaseAttempts += 1;
-    };
     globalThis.fetch = () => {
       imageFetches += 1;
       return Promise.resolve(
@@ -1453,9 +1328,6 @@ Deno.test("provider dispatch commits API-key V3 while kernel completion writes o
         body: JSON.stringify({ prompt: "five telemetry regression images", n: 5, user: "kernel-image-user" }),
       }),
     );
-    await waitFor(() => admissionReleaseAttempts === 4, "first image admission batch release");
-    assert.equal(imageFetches, 4, "the fifth child must wait for a first-batch admission release");
-    releaseAdmissionCommits();
     const imageResponse = await pendingImageResponse;
     assert.equal(imageResponse.status, 200);
     assert.deepEqual((await imageResponse.json()).data, [
@@ -1475,9 +1347,6 @@ Deno.test("provider dispatch commits API-key V3 while kernel completion writes o
     assert.equal(kernelWindowAfterImage?.usage_requests, 2);
     assert.equal(kernelWindowAfterImage?.reserved_requests, 0);
   } finally {
-    releaseAdmissionCommits();
-    kv.codexAdmissionReleaseCommitGate = null;
-    kv.onCodexAdmissionReleaseCommit = null;
     globalThis.fetch = originalFetch;
   }
 });
@@ -2079,18 +1948,11 @@ Deno.test("KV budget: warm kernel inference writes no ordinary usage aggregates"
     assert.equal((await handleResponses(kernelRequest(), kernelContext)).status, 200);
     kv.resetCounts();
     assert.equal((await handleResponses(kernelRequest(), kernelContext)).status, 200);
-    // A warm request owns and releases one caller record plus one account-slot
-    // record. Those four admission mutations are mandatory correctness work;
-    // it must not write ordinary usage aggregates.
-    assert.equal(kv.writes, 4);
-    assert.ok(
-      kv.writeKeys.every((key) => key[0] === "uos_ai" && key[1] === "codex_admission" && key[2] === "v1"),
-    );
+    assert.equal(kv.writes, 0);
     assert.ok(
       kv.readKeys.every((key) =>
         JSON.stringify(key) === JSON.stringify(["uos_ai", "debug_routing", "v1"]) ||
-        JSON.stringify(key) === JSON.stringify(["uos_ai", "removed_provider_failover", "circuit", "v1"]) ||
-        (key[0] === "uos_ai" && key[1] === "codex_admission" && key[2] === "v1")
+        JSON.stringify(key) === JSON.stringify(["uos_ai", "removed_provider_failover", "circuit", "v1"])
       ),
     );
   } finally {
