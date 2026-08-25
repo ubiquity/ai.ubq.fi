@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 
+import { normalizeCodexModelsPayload } from "../src/codex_models.ts";
+
 import {
   CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT,
   deriveAutoCompactTokenLimit,
@@ -92,4 +94,17 @@ Deno.test("native auto-compaction thresholds stay within the active window", () 
     auto_compact_token_limit_tokens: 892_500,
   });
   assert.equal(oversized?.auto_compact_token_limit_tokens, 222_000);
+});
+
+Deno.test("Codex snapshot normalization preserves native effective context percentage", () => {
+  const snapshot = normalizeCodexModelsPayload({
+    models: [{
+      slug: "gpt-5.6-terra",
+      context_window: 272_000,
+      max_context_window: 1_000_000,
+      auto_compact_token_limit: null,
+      effective_context_window_percent: 91,
+    }],
+  });
+  assert.equal(snapshot?.models[0]?.effective_context_window_percent, 91);
 });

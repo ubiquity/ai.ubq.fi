@@ -592,7 +592,14 @@ export const normalizeCodexModelsPayload = (
     const visibility = getString(item.visibility);
     if (visibility) normalized.visibility = visibility;
     if (typeof item.supported_in_api === "boolean") normalized.supported_in_api = item.supported_in_api;
-    for (const key of ["context_window", "max_context_window", "auto_compact_token_limit"]) {
+    for (
+      const key of [
+        "context_window",
+        "max_context_window",
+        "auto_compact_token_limit",
+        "effective_context_window_percent",
+      ]
+    ) {
       if (item[key] === null) normalized[key] = null;
       else {
         const count = normalizeNonNegativeInteger(item[key]);
