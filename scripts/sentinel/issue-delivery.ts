@@ -94,7 +94,8 @@ export const parseSentinelCycleReport = (value: unknown): SentinelCycleReport =>
   if (
     !cycle || cycle.schema_version !== 1 || typeof cycle.run_id !== "string" || cycle.run_id.length === 0 ||
     cycle.run_id.length > 200 ||
-    (cycle.candidate_sha !== null && (typeof cycle.candidate_sha !== "string" || !FULL_SHA.test(cycle.candidate_sha))) ||
+    (cycle.candidate_sha !== null &&
+      (typeof cycle.candidate_sha !== "string" || !FULL_SHA.test(cycle.candidate_sha))) ||
     (cycle.temporary_branch !== null &&
       (typeof cycle.temporary_branch !== "string" || !SAFE_BRANCH.test(cycle.temporary_branch))) ||
     typeof cycle.status !== "string" || cycle.status.length === 0 || cycle.status.length > 80 ||
@@ -161,13 +162,15 @@ export const selectDevelopmentPush = (updates: readonly GitPushUpdate[]): GitPus
   return matches[0] ?? null;
 };
 
-export const isIssueDeliveryFailSafeRevert = (input: Readonly<{
-  selection: GitHubIssueSelectionReport;
-  cycle: SentinelCycleReport;
-  pullRequest: GitHubIssuePullRequestRecord;
-  pushedSha: string;
-  parentSha: string;
-}>): boolean =>
+export const isIssueDeliveryFailSafeRevert = (
+  input: Readonly<{
+    selection: GitHubIssueSelectionReport;
+    cycle: SentinelCycleReport;
+    pullRequest: GitHubIssuePullRequestRecord;
+    pushedSha: string;
+    parentSha: string;
+  }>,
+): boolean =>
   input.cycle.candidate_sha !== null && input.cycle.temporary_branch !== null &&
   input.pushedSha !== input.cycle.candidate_sha && input.parentSha === input.cycle.candidate_sha &&
   input.pullRequest.issue_number === input.selection.issue_number &&
@@ -182,18 +185,20 @@ export const issuePullRequestMarker = (selection: GitHubIssueSelectionReport): s
 export const issueEvidenceMarker = (selection: GitHubIssueSelectionReport): string =>
   `<!-- provider-sentinel:issue-evidence:v1 issue=${selection.issue_number} fingerprint=${selection.fingerprint} -->`;
 
-export const renderIssuePullRequestBody = (input: Readonly<{
-  repository: string;
-  selection: GitHubIssueSelectionReport;
-  cycle: SentinelCycleReport;
-  candidateSha: string;
-  workflowRunUrl: string;
-  validationReports: readonly string[];
-  nativeReviewReports: readonly string[];
-  replayReports: readonly string[];
-  previewRevision: string | null;
-  previewWorkflowRunId: number | null;
-}>): string => {
+export const renderIssuePullRequestBody = (
+  input: Readonly<{
+    repository: string;
+    selection: GitHubIssueSelectionReport;
+    cycle: SentinelCycleReport;
+    candidateSha: string;
+    workflowRunUrl: string;
+    validationReports: readonly string[];
+    nativeReviewReports: readonly string[];
+    replayReports: readonly string[];
+    previewRevision: string | null;
+    previewWorkflowRunId: number | null;
+  }>,
+): string => {
   if (!SAFE_REPOSITORY.test(input.repository) || !FULL_SHA.test(input.candidateSha)) {
     throw new Error("Sentinel pull-request evidence identity is invalid");
   }
@@ -233,8 +238,12 @@ export const renderIssuePullRequestBody = (input: Readonly<{
     `- Encrypted evidence artifact: \`${input.cycle.evidence_artifact_name ?? "assigned after run initialization"}\``,
     `- Preview revision: ${input.previewRevision ? `\`${input.previewRevision}\`` : "not applicable"}`,
     `- Preview deployment workflow run: ${input.previewWorkflowRunId ?? "not applicable"}`,
-    `- Validation reports: ${validationReports.length ? validationReports.map((name) => `\`${name}\``).join(", ") : "none"}`,
-    `- Native review reports: ${nativeReviewReports.length ? nativeReviewReports.map((name) => `\`${name}\``).join(", ") : "none"}`,
+    `- Validation reports: ${
+      validationReports.length ? validationReports.map((name) => `\`${name}\``).join(", ") : "none"
+    }`,
+    `- Native review reports: ${
+      nativeReviewReports.length ? nativeReviewReports.map((name) => `\`${name}\``).join(", ") : "none"
+    }`,
     `- Replay reports: ${replayReports.length ? replayReports.map((name) => `\`${name}\``).join(", ") : "none"}`,
     "",
     "Production deployment, monitoring, and final issue disposition are appended as a PR comment after the cycle settles.",
@@ -242,14 +251,16 @@ export const renderIssuePullRequestBody = (input: Readonly<{
   ].join("\n");
 };
 
-export const evaluateIssueCompletionAction = (input: Readonly<{
-  hasSelection: boolean;
-  workflowFailed: boolean;
-  disposition: IssueDeliveryDisposition | null;
-  outcome: IssueProductionOutcome | null;
-  pullRequestMerged: boolean;
-  issueSnapshotMatches: boolean;
-}>): IssueCompletionAction => {
+export const evaluateIssueCompletionAction = (
+  input: Readonly<{
+    hasSelection: boolean;
+    workflowFailed: boolean;
+    disposition: IssueDeliveryDisposition | null;
+    outcome: IssueProductionOutcome | null;
+    pullRequestMerged: boolean;
+    issueSnapshotMatches: boolean;
+  }>,
+): IssueCompletionAction => {
   if (!input.hasSelection) return "no_issue_delivery";
   if (input.workflowFailed) return "leave_open_failed";
   if (input.disposition === "manual_required") return "leave_open_manual_required";
@@ -261,20 +272,25 @@ export const evaluateIssueCompletionAction = (input: Readonly<{
   return "leave_open_failed";
 };
 
-export const renderIssueDeliveryEvidence = (input: Readonly<{
-  repository: string;
-  selection: GitHubIssueSelectionReport;
-  pullRequest: GitHubIssuePullRequestRecord;
-  workflowRunUrl: string;
-  action: IssueCompletionAction;
-  cycleStatus: string;
-  candidateSha: string;
-  productionRevision: string | null;
-  deploymentWorkflowRunId: number | null;
-  promotionWorkflowRunId: number | null;
-  monitoringDecision: "keep" | "rollback" | null;
-}>): string => {
-  if (!SAFE_REPOSITORY.test(input.repository) || !SAFE_URL.test(input.workflowRunUrl) || !FULL_SHA.test(input.candidateSha)) {
+export const renderIssueDeliveryEvidence = (
+  input: Readonly<{
+    repository: string;
+    selection: GitHubIssueSelectionReport;
+    pullRequest: GitHubIssuePullRequestRecord;
+    workflowRunUrl: string;
+    action: IssueCompletionAction;
+    cycleStatus: string;
+    candidateSha: string;
+    productionRevision: string | null;
+    deploymentWorkflowRunId: number | null;
+    promotionWorkflowRunId: number | null;
+    monitoringDecision: "keep" | "rollback" | null;
+  }>,
+): string => {
+  if (
+    !SAFE_REPOSITORY.test(input.repository) || !SAFE_URL.test(input.workflowRunUrl) ||
+    !FULL_SHA.test(input.candidateSha)
+  ) {
     throw new Error("Sentinel final evidence identity is invalid");
   }
   if (
