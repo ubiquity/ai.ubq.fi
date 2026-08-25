@@ -719,7 +719,7 @@ Deno.test("Codex responses try the second account after 403", async () => {
   }
 });
 
-Deno.test("Codex responses release a failed transport lease before trying the eligible sibling", async () => {
+Deno.test("Codex responses do not replay a dispatched transport failure", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
@@ -739,19 +739,22 @@ Deno.test("Codex responses release a failed transport lease before trying the el
   };
 
   try {
-    const response = await fetchCodexResponses(
-      { input: "timeout-sibling-retry" },
-      { admissionCallerLaneHash: "31".padStart(64, "0") },
+    await assert.rejects(
+      () =>
+        fetchCodexResponses(
+          { input: "timeout-sibling-retry" },
+          { admissionCallerLaneHash: "31".padStart(64, "0") },
+        ),
+      (error: unknown) => error instanceof CodexError && error.code === "gateway_timeout",
     );
-    assert.equal(response.status, 200);
-    assert.deepEqual(accountIds, ["account-one", "account-two"]);
+    assert.deepEqual(accountIds, ["account-one"]);
     const admissionKeys = (): string[] =>
       [...kv.extra.keys()].filter((encoded) => {
         const key = JSON.parse(encoded) as Deno.KvKey;
         return key[0] === "uos_ai" && key[1] === "codex_admission";
       });
-    assert.equal(admissionKeys().length, 2, "only the successful sibling lease may remain live");
-    await markCodexResponseCompleted(response);
+    assert.equal(admissionKeys().length, 0, "failed dispatch must release its admission lease");
+
     assert.deepEqual(admissionKeys(), []);
   } finally {
     resetCodexAuthCacheForTest();
@@ -799,7 +802,7 @@ Deno.test("all sibling transport failures clean admission without changing affin
         ),
       (error: unknown) => error instanceof CodexError && error.code === "gateway_timeout" && error.status === 504,
     );
-    assert.deepEqual(accountIds, ["account-one", "account-two"]);
+    assert.deepEqual(accountIds, ["account-one"]);
     assert.deepEqual(kv.extra.get(JSON.stringify(identity.kvKey)), affinityBefore);
     for (const encoded of kv.extra.keys()) {
       const key = JSON.parse(encoded) as Deno.KvKey;
@@ -1613,8 +1616,13 @@ Deno.test("direct failures release quota probes and timeouts do not gate the nex
         }
 
         const second = await fetchCodexResponses({ input: `${testCase.name}-second` });
-        assert.equal(second.status, 200);
-        assert.equal(codexCalls, 2);
+        if (testCase.timeout) {
+          assert.equal(second.status, 429);
+          assert.equal(codexCalls, 1);
+        } else {
+          assert.equal(second.status, 200);
+          assert.equal(codexCalls, 2);
+        }
       });
     }
   } finally {

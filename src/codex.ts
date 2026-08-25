@@ -2246,6 +2246,7 @@ const fetchPreparedCodexResponses = async (
   let probeUnavailable = false;
   let probeUnavailableCircuit: CodexProbeCircuit | null = null;
   let attemptNumber = 0;
+  let attemptTransportStarted = false;
   const refreshedSlots = new Set<number>();
   const retryState: {
     candidate:
@@ -2635,6 +2636,7 @@ const fetchPreparedCodexResponses = async (
     beforeTransport?: () => Promise<void>,
   ): Promise<Response> => {
     attemptNumber += 1;
+    attemptTransportStarted = false;
     let admission: CodexResponseAdmission | null = null;
     try {
       // API-key quota and Codex admission must use one resource order. If
@@ -2668,6 +2670,7 @@ const fetchPreparedCodexResponses = async (
         beforeTransport,
         () => {
           providerDispatch.markTransportStarted();
+          attemptTransportStarted = true;
           reportCodexResponseTiming(options.timing?.onDispatch);
         },
       );
@@ -3140,6 +3143,11 @@ const fetchPreparedCodexResponses = async (
         continue;
       }
       if (isCodexSiblingTransportFailure(error)) {
+        if (attemptTransportStarted) {
+          if (error.code !== "gateway_timeout") await releaseCodexRoutingProbe(routing);
+          if (lastResponse) cancelResponseBody(lastResponse);
+          throw error;
+        }
         transportFailure = error;
         await releaseCodexRoutingProbe(routing);
         if (lastResponse) {
