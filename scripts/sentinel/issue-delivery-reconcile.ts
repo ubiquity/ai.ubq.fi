@@ -1,9 +1,5 @@
 import { GitHubActionsClient } from "./github.ts";
-import {
-  getCurrentGitHubIssueJob,
-  parseGitHubIssueJobLedger,
-  renderGitHubIssueJobLedger,
-} from "./issues.ts";
+import { getCurrentGitHubIssueJob, parseGitHubIssueJobLedger, renderGitHubIssueJobLedger } from "./issues.ts";
 import {
   evaluateIssueCompletionAction,
   type GitHubIssuePullRequestRecord,
@@ -218,11 +214,13 @@ const parseDisposition = (value: unknown): "resolved" | "manual_required" | null
     : null;
 };
 
-const parseOutcome = (value: unknown): Readonly<{
-  outcome: "kept" | "rolled_back";
-  candidateSha: string;
-  candidateRevision: string | null;
-}> | null => {
+const parseOutcome = (value: unknown):
+  | Readonly<{
+    outcome: "kept" | "rolled_back";
+    candidateSha: string;
+    candidateRevision: string | null;
+  }>
+  | null => {
   if (value === null) return null;
   const outcome = record(value);
   if (
@@ -242,11 +240,13 @@ const parseOutcome = (value: unknown): Readonly<{
 
 const productionWorkflowEvidence = async (
   reportsDir: string,
-): Promise<Readonly<{
-  deploymentRunId: number | null;
-  promotionRunId: number | null;
-  monitoringDecision: "keep" | "rollback" | null;
-}>> => {
+): Promise<
+  Readonly<{
+    deploymentRunId: number | null;
+    promotionRunId: number | null;
+    monitoringDecision: "keep" | "rollback" | null;
+  }>
+> => {
   const workflow = record(await optionalJson(`${reportsDir}/production-deployment-workflow.json`));
   const decision = record(await optionalJson(`${reportsDir}/production-decision.json`));
   return {
@@ -258,9 +258,7 @@ const productionWorkflowEvidence = async (
         (workflow!.promotion_workflow_run_id as number) > 0
       ? workflow!.promotion_workflow_run_id as number
       : null,
-    monitoringDecision: decision?.decision === "keep" || decision?.decision === "rollback"
-      ? decision.decision
-      : null,
+    monitoringDecision: decision?.decision === "keep" || decision?.decision === "rollback" ? decision.decision : null,
   };
 };
 
@@ -303,9 +301,7 @@ const removeRolledBackLedgerEntry = async (
     Uint8Array.from(atob(normalized), (character) => character.charCodeAt(0)),
   );
   const entries = parseGitHubIssueJobLedger(markdown);
-  const retained = entries.filter((entry) =>
-    !(entry.number === issueNumber && entry.fingerprint === fingerprint)
-  );
+  const retained = entries.filter((entry) => !(entry.number === issueNumber && entry.fingerprint === fingerprint));
   if (retained.length === entries.length) return;
   const content = bytesToBase64(new TextEncoder().encode(renderGitHubIssueJobLedger(retained)));
   await githubRequest(token, repository, "/contents/docs/sentinel-issue-jobs.md", {
@@ -333,28 +329,36 @@ const writeReconciliationReport = async (
 ): Promise<void> => {
   await Deno.writeTextFile(
     `${reportsDir}/github-issue-reconciliation.json`,
-    `${JSON.stringify({
-      schema_version: 1,
-      issue_number: input.issueNumber,
-      fingerprint: input.fingerprint,
-      pull_request_number: input.pullRequestNumber,
-      pull_request_merged: input.pullRequestMerged,
-      action: input.action,
-      issue_snapshot_matches: input.issueSnapshotMatches,
-      durable_completion_evidence_reused: input.durableCompletionEvidenceReused,
-    }, null, 2)}\n`,
+    `${
+      JSON.stringify(
+        {
+          schema_version: 1,
+          issue_number: input.issueNumber,
+          fingerprint: input.fingerprint,
+          pull_request_number: input.pullRequestNumber,
+          pull_request_merged: input.pullRequestMerged,
+          action: input.action,
+          issue_snapshot_matches: input.issueSnapshotMatches,
+          durable_completion_evidence_reused: input.durableCompletionEvidenceReused,
+        },
+        null,
+        2,
+      )
+    }\n`,
     { mode: 0o600 },
   );
 };
 
-export const reconcileGitHubIssueDelivery = async (input: Readonly<{
-  repositoryRoot: string;
-  token: string;
-  repository: string;
-  workflowRunId: string;
-  serverUrl: string;
-  workflowFailed: boolean;
-}>): Promise<void> => {
+export const reconcileGitHubIssueDelivery = async (
+  input: Readonly<{
+    repositoryRoot: string;
+    token: string;
+    repository: string;
+    workflowRunId: string;
+    serverUrl: string;
+    workflowFailed: boolean;
+  }>,
+): Promise<void> => {
   const reportsDir = `${input.repositoryRoot}/.sentinel/reports`;
   const selectionValue = await optionalJson(`${reportsDir}/github-issue-selection.json`);
   if (selectionValue === null) return;
