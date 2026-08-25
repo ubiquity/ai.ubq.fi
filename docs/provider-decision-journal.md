@@ -94,3 +94,21 @@ responses.
 - `deno task test` passed with 1,085 tests, 300 test steps, 12 ignored tests, and no failures; the measurement task also
   passed.
 - No commit, push, deployment, or live production acceptance was performed.
+
+## 2026-08-25 — Publish Codex admission-control removal for review
+
+### Status
+
+- Implementation commit: `6a5724047c033a0b33b241b0c42860d4efafdd9b`.
+- Branch: `fix/remove-codex-admission-control`.
+- Push: complete.
+- Pull request: [#132](https://github.com/ubiquity/ai.ubq.fi/pull/132), targeting `development`.
+- Local Codex review: complete with no actionable defects.
+- Pull-request checks and hosted review: pending at the time of this entry.
+- Deployment: not performed or authorized.
+- Live acceptance: not performed.
+
+### Decision state
+
+The publication state above supersedes only the earlier implementation-status snapshot. The decision and removal scope
+remain unchanged.
