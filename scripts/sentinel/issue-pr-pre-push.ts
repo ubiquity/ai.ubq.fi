@@ -14,7 +14,7 @@ const API_VERSION = "2022-11-28";
 const FULL_SHA = /^[0-9a-f]{40}$/u;
 const SAFE_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/u;
 
-type PullRequest = Readonly<{
+export type PullRequest = Readonly<{
   number: number;
   htmlUrl: string;
   state: "open" | "closed";
@@ -177,14 +177,16 @@ export const matchingIssueDeliveryPullRequests = (
     pull.baseRef === "development"
   );
 
-export const ensureIssuePullRequestForDevelopmentPush = async (input: Readonly<{
-  repositoryRoot: string;
-  prePushInput: string;
-  token: string;
-  repository: string;
-  workflowRunId: string;
-  serverUrl: string;
-}>): Promise<GitHubIssuePullRequestRecord | null> => {
+export const ensureIssuePullRequestForDevelopmentPush = async (
+  input: Readonly<{
+    repositoryRoot: string;
+    prePushInput: string;
+    token: string;
+    repository: string;
+    workflowRunId: string;
+    serverUrl: string;
+  }>,
+): Promise<GitHubIssuePullRequestRecord | null> => {
   const update = selectDevelopmentPush(parseGitPushUpdates(input.prePushInput));
   if (!update) return null;
   const reportsDir = `${input.repositoryRoot}/.sentinel/reports`;
