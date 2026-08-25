@@ -5,6 +5,7 @@ export const ADMIN_ERROR_LOG_PREFIX = ["uos_ai", "admin_error_log", "v1"] as con
 export const ADMIN_ERROR_LOG_TTL_MS = 7 * 24 * 60 * 60_000;
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;
+export const ADMIN_ERROR_BUCKET_MS = 15 * 60_000;
 
 export type AdminErrorLogRecord = Readonly<{
   version: 1;
@@ -95,6 +96,22 @@ export const listAdminErrors = async (
   return records;
 };
 
+export const listAdminFiveXxBuckets = async (
+  kvOverride?: Deno.Kv | null,
+): Promise<Array<{ bucket_start_at_ms: number; count: number }>> => {
+  const kv = kvOverride === undefined ? await getKv() : kvOverride;
+  if (!kv) return [];
+  const counts = new Map<number, number>();
+  for await (const entry of kv.list<AdminErrorLogRecord>({ prefix: ADMIN_ERROR_LOG_PREFIX })) {
+    if (!isAdminErrorLogRecord(entry.value) || entry.value.status < 500 || entry.value.status > 599) continue;
+    const bucketStartAtMs = Math.floor(entry.value.created_at_ms / ADMIN_ERROR_BUCKET_MS) * ADMIN_ERROR_BUCKET_MS;
+    counts.set(bucketStartAtMs, (counts.get(bucketStartAtMs) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([bucket_start_at_ms, count]) => ({ bucket_start_at_ms, count }));
+};
+
 export const handleAdminErrors = async (req: Request): Promise<Response> => {
   const rawLimit = new URL(req.url).searchParams.get("limit");
   const limit = rawLimit === null ? DEFAULT_LIMIT : Number(rawLimit);
@@ -103,5 +120,9 @@ export const handleAdminErrors = async (req: Request): Promise<Response> => {
   }
   const kv = await getKv();
   if (!kv) return openaiError(503, "Error history storage is unavailable", "server_error");
-  return json(200, { object: "list", data: await listAdminErrors(limit, kv) });
+  const [data, fiveXxBuckets] = await Promise.all([
+    listAdminErrors(limit, kv),
+    listAdminFiveXxBuckets(kv),
+  ]);
+  return json(200, { object: "list", data, five_xx_buckets: fiveXxBuckets });
 };

@@ -451,6 +451,11 @@ body[data-page="admin"] [data-capacity-legend-item="openai-downtime"] [data-capa
   border-top-width: 3px;
 }
 
+body[data-page="admin"] [data-capacity-legend-item="inference-5xx"] [data-capacity-legend-swatch] {
+  border-top-color: #ff453a;
+  border-top-style: dotted;
+}
+
 body[data-page="admin"] [data-capacity-legend-item="rate-limit-reset"] [data-capacity-legend-swatch] {
   height: 10px;
   border: 0;
@@ -598,6 +603,20 @@ body[data-page="admin"] [data-capacity-downtime="openai"] {
   stroke-width: 3;
   vector-effect: non-scaling-stroke;
   pointer-events: none;
+}
+
+body[data-page="admin"] [data-capacity-inference-5xx] line {
+  stroke: rgba(255, 69, 58, 0.62);
+  stroke-dasharray: 2 4;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+body[data-page="admin"] [data-capacity-inference-5xx] circle {
+  fill: #ff453a;
+  stroke: rgba(255, 255, 255, 0.85);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
 }
 
 body[data-page="admin"] [data-capacity-trend="optimal-spend"] {

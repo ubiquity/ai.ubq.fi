@@ -140,7 +140,7 @@ Deno.test("admin provider view places capacity history before current providers"
 
   assert.match(adminHtml, /Provider analytics/);
   assert.match(adminHtml, /Fifteen-minute capacity, cached-input, and cache-write history/);
-  assert.match(adminHtml, /admin\.js\?v=gateway-errors-20260825-v2/);
+  assert.match(adminHtml, /admin\.js\?v=gateway-errors-20260825-v3/);
   assert.doesNotMatch(adminHtml, /removed_provider-failover|debug-routing/);
   assert.doesNotMatch(adminScript, /RemovedProviderFailover|refresh=live/);
   assert.match(adminScript, /fetch\(apiUrl\("\/admin\/providers\/capacity"\)/);
@@ -193,6 +193,13 @@ Deno.test("admin error tab opens its view", () => {
   assert.match(adminScript, /if \(loadId !== errorsLoadId\) return/);
   assert.match(adminScript, /invalidateAdminErrors\("Sign in to load gateway errors\."\)/);
   assert.match(adminScript, /invalidateAdminErrors\("Target changed\. Sign in to load gateway errors\."\)/);
+});
+
+Deno.test("provider analytics graph reports inference 5xx buckets", () => {
+  assert.match(adminScript, /label: "Inference 5xx"/);
+  assert.match(adminScript, /five_xx_buckets/);
+  assert.match(adminScript, /marker\.dataset\.capacityInference5xx/);
+  assert.match(adminScript, /inference 5xx error/);
 });
 
 Deno.test("static assets register autonomous agent discovery documents", () => {

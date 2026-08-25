@@ -1988,7 +1988,7 @@ const capacityChartOptimalSpendCoordinates = (activeWindow, resetMarkers, displa
   return segments;
 };
 
-const renderProviderCapacityChart = (snapshot, sources) => {
+const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
   rememberCapacityChartScroll();
   const history = Array.isArray(snapshot?.history) ? snapshot.history : [];
   const nowMs = Date.now();
@@ -2021,6 +2021,7 @@ const renderProviderCapacityChart = (snapshot, sources) => {
       ...CAPACITY_CHART_SERIES,
       { key: "rate-limit-reset", label: "OpenAI rate-limit reset" },
       { key: "openai-downtime", label: "OpenAI downtime" },
+      { key: "inference-5xx", label: "Inference 5xx" },
       { key: "optimal-spend", label: "Optimal token spend" },
     ]
   ) {
@@ -2204,6 +2205,33 @@ const renderProviderCapacityChart = (snapshot, sources) => {
       } percentage points of capacity gained`,
     );
     marker.append(background, stripes, centerLine);
+    svg.appendChild(marker);
+  }
+
+  const visibleFiveXxBuckets = (Array.isArray(fiveXxBuckets) ? fiveXxBuckets : []).filter((bucket) =>
+    Number.isFinite(bucket?.bucket_start_at_ms) && Number.isSafeInteger(bucket?.count) && bucket.count > 0 &&
+    bucket.bucket_start_at_ms >= chartWindow.startAtMs && bucket.bucket_start_at_ms <= chartWindow.resetAtMs
+  );
+  for (const bucket of visibleFiveXxBuckets) {
+    const markerX = capacityChartMarkerX(bucket.bucket_start_at_ms, chartWindow, plot);
+    const marker = capacityChartSvgElement("g");
+    marker.dataset.capacityInference5xx = String(bucket.bucket_start_at_ms);
+    marker.setAttribute(
+      "aria-label",
+      `${bucket.count} inference 5xx error${bucket.count === 1 ? "" : "s"} at ${
+        formatCapacityTimestamp(bucket.bucket_start_at_ms)
+      }`,
+    );
+    const line = capacityChartSvgElement("line", {
+      x1: markerX,
+      y1: plot.top,
+      x2: markerX,
+      y2: plot.top + plot.height,
+    });
+    const dot = capacityChartSvgElement("circle", { cx: markerX, cy: plot.top + 7, r: Math.min(7, 3 + bucket.count) });
+    const tooltip = capacityChartSvgElement("title");
+    tooltip.textContent = marker.getAttribute("aria-label");
+    marker.append(tooltip, line, dot);
     svg.appendChild(marker);
   }
 
@@ -2448,6 +2476,8 @@ const renderProviderCapacityChart = (snapshot, sources) => {
   const downtimeSuffix = downtimeBridgeCount
     ? ` · ${downtimeBridgeCount} OpenAI downtime bridge${downtimeBridgeCount === 1 ? "" : "s"}`
     : "";
+  const fiveXxCount = visibleFiveXxBuckets.reduce((total, bucket) => total + bucket.count, 0);
+  const fiveXxSuffix = ` · ${fiveXxCount} inference 5xx error${fiveXxCount === 1 ? "" : "s"}`;
   const latestCacheBucket = promptCacheBuckets.at(-1);
   const latestCacheWrite = latestCacheBucket?.cacheWriteInputTokens === null
     ? "cache writes unavailable"
@@ -2466,15 +2496,15 @@ const renderProviderCapacityChart = (snapshot, sources) => {
       formatCapacityTimestamp(samples[samples.length - 1].sampled_at_ms)
     } · ${samples.length} sample${
       samples.length === 1 ? "" : "s"
-    }${resetSuffix}${rateLimitResetSuffix}${downtimeSuffix}${cacheSuffix}${staleSuffix}`
-    : `No retained capacity samples yet · trailing seven-day window${resetSuffix}${rateLimitResetSuffix}${downtimeSuffix}${cacheSuffix}${staleSuffix}`;
+    }${resetSuffix}${rateLimitResetSuffix}${downtimeSuffix}${fiveXxSuffix}${cacheSuffix}${staleSuffix}`
+    : `No retained capacity samples yet · trailing seven-day window${resetSuffix}${rateLimitResetSuffix}${downtimeSuffix}${fiveXxSuffix}${cacheSuffix}${staleSuffix}`;
   figure.appendChild(caption);
   providerCapacityChart.replaceChildren(figure);
   restoreCapacityChartScroll(chartScroll, chartWindow, plot);
   updateCapacityChartScrollControls(chartScroll, olderButton, newerButton);
 };
 
-const renderProviderCapacity = (snapshot) => {
+const renderProviderCapacity = (snapshot, fiveXxBuckets = []) => {
   const rawSources = Array.isArray(snapshot?.sources) ? snapshot.sources : [];
   const sourceForSlot = (slot) =>
     rawSources.find((source) => source?.source === "codex" && source.slot === slot) ??
@@ -2484,8 +2514,8 @@ const renderProviderCapacity = (snapshot) => {
     sourceForSlot(2),
     rawSources.find((source) => source?.source === "metered") ?? unavailableCapacitySource("metered"),
   ];
-  latestProviderCapacityChartState = { snapshot, sources };
-  renderProviderCapacityChart(snapshot, sources);
+  latestProviderCapacityChartState = { snapshot, sources, fiveXxBuckets };
+  renderProviderCapacityChart(snapshot, sources, fiveXxBuckets);
   renderProviderCapacityList(sources);
 
   const unavailableCount = sources.filter((source) => source.state === "unavailable").length;
@@ -2517,17 +2547,24 @@ const loadProviderCapacity = async () => {
   providerCapacityLoading = true;
   setBadge(providerCapacityBadge, "unknown", "Loading capacity");
   try {
-    const response = await fetch(apiUrl("/admin/providers/capacity"), {
-      cache: "no-store",
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const payload = await response.json().catch(() => null);
+    const headers = { Authorization: `Bearer ${token}` };
+    const [response, errorsResponse] = await Promise.all([
+      fetch(apiUrl("/admin/providers/capacity"), { cache: "no-store", headers }),
+      fetch(apiUrl("/admin/errors?limit=1"), { cache: "no-store", headers }),
+    ]);
+    const [payload, errorsPayload] = await Promise.all([
+      response.json().catch(() => null),
+      errorsResponse.json().catch(() => null),
+    ]);
     if (!response.ok || !payload) {
       setBadge(providerCapacityBadge, "bad", payload?.error?.message ?? "Capacity unavailable");
       providerCapacityUpdated.textContent = "Snapshot unavailable";
       return false;
     }
-    renderProviderCapacity(payload);
+    renderProviderCapacity(
+      payload,
+      errorsResponse.ok && Array.isArray(errorsPayload?.five_xx_buckets) ? errorsPayload.five_xx_buckets : [],
+    );
     return true;
   } catch {
     setBadge(providerCapacityBadge, "bad", "Offline");
@@ -2709,6 +2746,7 @@ const scheduleProviderCapacityChartResize = () => {
     renderProviderCapacityChart(
       latestProviderCapacityChartState.snapshot,
       latestProviderCapacityChartState.sources,
+      latestProviderCapacityChartState.fiveXxBuckets,
     );
   });
 };
