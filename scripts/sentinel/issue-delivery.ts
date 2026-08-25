@@ -147,7 +147,7 @@ export const parseGitPushUpdates = (value: string): GitPushUpdate[] => {
     if (parts.length !== 4) throw new Error("Git pre-push input has an invalid shape");
     const [localRef, localSha, remoteRef, remoteSha] = parts as [string, string, string, string];
     if (
-      !localRef.startsWith("refs/") || !remoteRef.startsWith("refs/") ||
+      (localRef !== "HEAD" && !localRef.startsWith("refs/")) || !remoteRef.startsWith("refs/") ||
       !FULL_SHA.test(localSha) || !FULL_SHA.test(remoteSha)
     ) throw new Error("Git pre-push input has invalid refs or SHAs");
     updates.push({ localRef, localSha, remoteRef, remoteSha });
