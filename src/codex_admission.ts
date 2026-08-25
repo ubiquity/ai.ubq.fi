@@ -235,6 +235,19 @@ const compensateLateAdmissionCommit = (
   }).catch(() => {});
 };
 
+const deleteMalformedAdmissionRecord = async (
+  kv: Deno.Kv,
+  key: Deno.KvKey,
+  entry: Deno.KvEntryMaybe<unknown>,
+  signal: AbortSignal,
+): Promise<boolean> => {
+  const commit = await awaitAdmissionOperation(
+    kv.atomic().check(entry).delete(key).commit(),
+    signal,
+  );
+  return commit.ok;
+};
+
 const acquireLocalAdmission = (
   input: Readonly<{
     accountIdHash: string;
@@ -305,14 +318,26 @@ export const acquireCodexAdmission = async (
   const callerKey = codexAdmissionCallerKey(input.callerLaneHash);
   const firstSlot = slotStart(input.callerLaneHash, accountLimit);
   try {
+    let malformedRepairUsed = false;
+    const repairMalformedAdmissionRecord = async (
+      key: Deno.KvKey,
+      entry: Deno.KvEntryMaybe<unknown>,
+    ): Promise<boolean> => {
+      if (malformedRepairUsed) return false;
+      malformedRepairUsed = true;
+      return await deleteMalformedAdmissionRecord(kv, key, entry, deadline.signal);
+    };
+
     const tryAcquireDistributed = async (): Promise<CodexAdmissionDecision> => {
-      for (let attempt = 0; attempt < CODEX_ADMISSION_MAX_CAS_ATTEMPTS; attempt += 1) {
+      attempts: for (let attempt = 0; attempt < CODEX_ADMISSION_MAX_CAS_ATTEMPTS; attempt += 1) {
         const callerEntry = await awaitAdmissionOperation(
           kv.get<CodexAdmissionRecord>(callerKey, { consistency: "strong" }),
           deadline.signal,
         );
         if (callerEntry.value !== null) {
-          return parseAdmissionRecord(callerEntry.value) ? { kind: "caller_busy" } : { kind: "unavailable" };
+          if (parseAdmissionRecord(callerEntry.value)) return { kind: "caller_busy" };
+          if (!await repairMalformedAdmissionRecord(callerKey, callerEntry)) return { kind: "unavailable" };
+          continue attempts;
         }
 
         let sawConflict = false;
@@ -324,7 +349,10 @@ export const acquireCodexAdmission = async (
             deadline.signal,
           );
           if (slotEntry.value !== null) {
-            if (!parseAdmissionRecord(slotEntry.value)) return { kind: "unavailable" };
+            if (!parseAdmissionRecord(slotEntry.value)) {
+              if (!await repairMalformedAdmissionRecord(slotKey, slotEntry)) return { kind: "unavailable" };
+              continue attempts;
+            }
             // Deno KV TTL is the cross-isolate expiry authority. A caller clock
             // must never overwrite a valid record that the server still holds.
             continue;

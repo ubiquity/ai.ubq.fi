@@ -6,6 +6,7 @@ import {
   CODEX_ADMISSION_LEASE_SAFETY_MARGIN_MS,
   CODEX_ADMISSION_RENEW_AFTER_MS,
   codexAdmissionCallerKey,
+  codexAdmissionSlotKey,
   deriveCodexAdmissionCallerLaneHash,
   releaseCodexAdmission,
   renewCodexAdmission,
@@ -504,9 +505,124 @@ Deno.test("the response admission watchdog aborts before an unrenewed lease expi
   await releaseCodexResponseProbe(response);
 });
 
-Deno.test("malformed distributed admission state fails closed", async () => {
+Deno.test("malformed caller admission state is CAS-cleaned and retried", async () => {
   const kv = new CountingKv();
   const caller = "7".padStart(64, "0");
-  kv.seed(codexAdmissionCallerKey(caller), { v: 999 });
-  assert.equal((await admission(kv, caller)).kind, "unavailable");
+  const callerKey = codexAdmissionCallerKey(caller);
+  kv.seed(callerKey, { v: 999 });
+
+  const decision = await admission(kv, caller);
+  assert.equal(decision.kind, "acquired");
+  const repair = kv.commands.find((command) => command.command === "atomic.commit" && command.atomicChecks === 1);
+  assert.ok(repair);
+  assert.deepEqual(repair.keys, [callerKey, callerKey]);
+  assert.equal(
+    (kv.entries.get(JSON.stringify(callerKey))?.value as { v?: number } | undefined)?.v,
+    1,
+  );
+  if (decision.kind === "acquired") await releaseCodexAdmission(decision.lease);
+});
+
+Deno.test("malformed slot admission state is CAS-cleaned and retried", async () => {
+  const kv = new CountingKv();
+  const caller = "0".padStart(64, "0");
+  const slotKey = codexAdmissionSlotKey("account-a", 0);
+  kv.seed(slotKey, { v: 999 });
+
+  const decision = await admission(kv, caller, "account-a", { accountLimit: 1 });
+  assert.equal(decision.kind, "acquired");
+  const repair = kv.commands.find((command) => command.command === "atomic.commit" && command.atomicChecks === 1);
+  assert.ok(repair);
+  assert.deepEqual(repair.keys, [slotKey, slotKey]);
+  assert.equal(
+    (kv.entries.get(JSON.stringify(slotKey))?.value as { v?: number } | undefined)?.v,
+    1,
+  );
+  if (decision.kind === "acquired") await releaseCodexAdmission(decision.lease);
+});
+
+Deno.test("malformed admission repair fails closed when the exact key changes", async () => {
+  const kv = new CountingKv();
+  const caller = "8".padStart(64, "0");
+  const callerKey = codexAdmissionCallerKey(caller);
+  const replacement = {
+    v: 1,
+    token: "replacement-token",
+    account_id_hash: "account-a",
+    quota_class: "standard",
+    caller_lane_hash: caller,
+    slot: 0,
+    acquired_at_ms: 1_000,
+    expires_at_ms: 2_000,
+  };
+  kv.seed(callerKey, { v: 999 });
+
+  const originalAtomic = kv.atomic.bind(kv);
+  let commitCalls = 0;
+  Object.defineProperty(kv, "atomic", {
+    configurable: true,
+    value: (): Deno.AtomicOperation => {
+      const operation = originalAtomic();
+      const originalCommit = operation.commit.bind(operation);
+      Object.defineProperty(operation, "commit", {
+        configurable: true,
+        value: (): Promise<Deno.KvCommitResult | Deno.KvCommitError> => {
+          commitCalls += 1;
+          if (commitCalls === 1) kv.seed(callerKey, replacement);
+          return originalCommit();
+        },
+      });
+      return operation;
+    },
+  });
+
+  const decision = await admission(kv, caller);
+  assert.equal(decision.kind, "unavailable");
+  assert.deepEqual(kv.entries.get(JSON.stringify(callerKey))?.value, replacement);
+  assert.equal(kv.entries.size, 1);
+});
+
+Deno.test("malformed admission repair fails closed when its CAS acknowledgement times out", async () => {
+  const kv = new CountingKv();
+  const caller = "9".padStart(64, "0");
+  const callerKey = codexAdmissionCallerKey(caller);
+  const malformed = { v: 999 };
+  kv.seed(callerKey, malformed);
+
+  const originalAtomic = kv.atomic.bind(kv);
+  Object.defineProperty(kv, "atomic", {
+    configurable: true,
+    value: (): Deno.AtomicOperation => {
+      const operation = originalAtomic();
+      Object.defineProperty(operation, "commit", {
+        configurable: true,
+        value: (): Promise<Deno.KvCommitResult | Deno.KvCommitError> => new Promise(() => {}),
+      });
+      return operation;
+    },
+  });
+
+  const startedAtMs = performance.now();
+  const decision = await admission(kv, caller, "account-a", { kvTimeoutMs: 5 });
+  assert.equal(decision.kind, "unavailable");
+  assert.ok(performance.now() - startedAtMs < 500, "malformed repair must stay within its deadline");
+  assert.deepEqual(kv.entries.get(JSON.stringify(callerKey))?.value, malformed);
+});
+
+Deno.test("malformed admission repair fails closed when KV rejects the delete", async () => {
+  const kv = new CountingKv();
+  const caller = "a".padStart(64, "0");
+  const callerKey = codexAdmissionCallerKey(caller);
+  const malformed = { v: 999 };
+  kv.seed(callerKey, malformed);
+  Object.defineProperty(kv, "atomic", {
+    configurable: true,
+    value: (): Deno.AtomicOperation => {
+      throw new Error("KV unavailable");
+    },
+  });
+
+  const decision = await admission(kv, caller);
+  assert.equal(decision.kind, "unavailable");
+  assert.deepEqual(kv.entries.get(JSON.stringify(callerKey))?.value, malformed);
 });
