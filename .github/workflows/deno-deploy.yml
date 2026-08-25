@@ -370,7 +370,7 @@ jobs:
       contents: read
       issues: write
       pull-requests: write
-    uses: ubiquity/deno-deploy-workflow/.github/workflows/deno-deploy-reusable.yml@520619663fd7df3f43f7f29b38f1f2844019df1b
+    uses: ubiquity/deno-deploy-workflow/.github/workflows/deno-deploy-reusable.yml@091927036712d54a020a3240b5b2fa492f78a94b
     with:
       project: ${{ github.ref == 'refs/heads/development' && 'ai-ubq-fi' || 'p-ai-ubq-fi' }}
       # Sentinel build-only dispatches deliberately select preview mode in the
