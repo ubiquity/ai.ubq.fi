@@ -47,7 +47,8 @@ concurrency:
 permissions:
   actions: write
   contents: write
-  issues: read
+  issues: write
+  pull-requests: write
 
 jobs:
   sentinel:
@@ -361,7 +362,110 @@ jobs:
             --allow-run=codex \
             tests/sentinel-codex-cli-integration.test.ts
 
+      - name: Install issue-delivery development-push gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          real_git="$(command -v git)"
+          wrapper_dir="$RUNNER_TEMP/sentinel-git-wrapper"
+          mkdir -p "$wrapper_dir"
+          {
+            printf '#!/usr/bin/env bash\nset -euo pipefail\nREAL_GIT=%q\n' "$real_git"
+            cat <<'EOF'
+          if [ "${SENTINEL_GIT_WRAPPER_BYPASS:-}" = "1" ]; then
+            exec "$REAL_GIT" "$@"
+          fi
+          is_push=false
+          development_spec=""
+          for argument in "$@"; do
+            if [ "$argument" = "push" ]; then
+              is_push=true
+            fi
+            case "$argument" in
+              *:refs/heads/development) development_spec="$argument" ;;
+            esac
+          done
+          if [ "$is_push" = "true" ] && [ -n "$development_spec" ]; then
+            probe="$(pwd -P)"
+            repository_root=""
+            while [ "$probe" != "/" ]; do
+              if [ -f "$probe/.sentinel/reports/cycle.json" ]; then
+                repository_root="$probe"
+                break
+              fi
+              probe="$(dirname "$probe")"
+            done
+            if [ -z "$repository_root" ]; then
+              echo "Provider Sentinel development push has no cycle report root." >&2
+              exit 1
+            fi
+            local_ref="${development_spec%%:*}"
+            local_sha="$("$REAL_GIT" rev-parse "$local_ref")"
+            remote_sha="$("$REAL_GIT" ls-remote --heads origin refs/heads/development | awk '{print $1}')"
+            if ! [[ "$local_sha" =~ ^[0-9a-f]{40}$ ]] || ! [[ "$remote_sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "Provider Sentinel development push has invalid local or remote identity." >&2
+              exit 1
+            fi
+            authorization="${GIT_CONFIG_VALUE_0:-}"
+            case "$authorization" in
+              "AUTHORIZATION: basic "*) ;;
+              *)
+                echo "Provider Sentinel development push is missing trusted GitHub authorization." >&2
+                exit 1
+                ;;
+            esac
+            basic="${authorization#AUTHORIZATION: basic }"
+            decoded="$(printf '%s' "$basic" | base64 --decode)"
+            case "$decoded" in
+              x-access-token:*) token="${decoded#x-access-token:}" ;;
+              *)
+                echo "Provider Sentinel development push authorization is invalid." >&2
+                exit 1
+                ;;
+            esac
+            remote_url="$("$REAL_GIT" remote get-url origin)"
+            case "$remote_url" in
+              https://github.com/*.git)
+                repository="${remote_url#https://github.com/}"
+                repository="${repository%.git}"
+                ;;
+              *)
+                echo "Provider Sentinel origin URL is not the expected GitHub HTTPS remote." >&2
+                exit 1
+                ;;
+            esac
+            run_id="$(jq -r '.run_id // empty' "$repository_root/.sentinel/reports/cycle.json")"
+            if ! [[ "$run_id" =~ ^[1-9][0-9]*$ ]]; then
+              echo "Provider Sentinel cycle has no GitHub workflow run ID." >&2
+              exit 1
+            fi
+            printf '%s %s refs/heads/development %s\n' "$local_ref" "$local_sha" "$remote_sha" | \
+              SENTINEL_GIT_WRAPPER_BYPASS=1 \
+              SENTINEL_REAL_GIT="$REAL_GIT" \
+              GITHUB_WORKSPACE="$repository_root" \
+              GITHUB_TOKEN="$token" \
+              GITHUB_REPOSITORY="$repository" \
+              GITHUB_RUN_ID="$run_id" \
+              GITHUB_SERVER_URL="https://github.com" \
+              deno run \
+                --cached-only \
+                --frozen \
+                --lock="$repository_root/deno.lock" \
+                --allow-env \
+                --allow-net=api.github.com \
+                --allow-read="$repository_root/.sentinel/reports" \
+                --allow-write="$repository_root/.sentinel/reports" \
+                --allow-run="$REAL_GIT" \
+                "$repository_root/scripts/sentinel/issue-pr-pre-push.ts"
+          fi
+          exec "$REAL_GIT" "$@"
+          EOF
+          } > "$wrapper_dir/git"
+          chmod 700 "$wrapper_dir/git"
+          echo "$wrapper_dir" >> "$GITHUB_PATH"
+
       - name: Run Provider Sentinel
+        id: sentinel-run
         shell: bash
         env:
           DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
@@ -383,6 +487,24 @@ jobs:
             --allow-run \
             scripts/sentinel/main.ts \
             --mode "$SENTINEL_MODE"
+
+      - name: Reconcile GitHub issue delivery
+        if: always() && env.SENTINEL_ARTIFACT_POLICY_ACTIVE == 'true'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SENTINEL_WORKFLOW_OUTCOME: ${{ steps.sentinel-run.outcome }}
+        run: |
+          set -euo pipefail
+          deno run \
+            --cached-only \
+            --frozen \
+            --lock=deno.lock \
+            --allow-env=GITHUB_TOKEN,GITHUB_REPOSITORY,GITHUB_RUN_ID,GITHUB_SERVER_URL,SENTINEL_WORKFLOW_OUTCOME \
+            --allow-net=api.github.com \
+            --allow-read=.sentinel/reports \
+            --allow-write=.sentinel/reports \
+            scripts/sentinel/issue-delivery-reconcile.ts
 
       - name: Reject credential files from artifact paths
         if: always() && env.SENTINEL_ARTIFACT_POLICY_ACTIVE == 'true'
