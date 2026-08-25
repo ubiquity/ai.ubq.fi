@@ -29,26 +29,26 @@ jobs:
           const path = 'src/openai.ts';
           let source = fs.readFileSync(path, 'utf8');
 
-          const codexModelsBefore = `  const codexModels = normalized?.data ?? [];
-            const surplusModels = surplus?.models ?? [];`;
+          const codexModelsBefore = '  const codexModels = normalized?.data ?? [];\n  const surplusModels = surplus?.models ?? [];';
           const codexModelsAfter = `  const codexModels = normalized?.data ?? [];
-            const codexModelRecords = new Map<string, Record<string, unknown>>();
-            for (const candidate of snapshot?.models ?? []) {
-              if (!isRecord(candidate)) continue;
-              const id = modelIdFromSnapshotRecord(candidate);
-              if (id) codexModelRecords.set(id, candidate);
-            }
-            const surplusModels = surplus?.models ?? [];`;
-          if (!source.includes(codexModelsAfter)) {
-            if (!source.includes(codexModelsBefore)) throw new Error('codex raw-record anchor missing');
+          const codexModelRecords = new Map<string, Record<string, unknown>>();
+          for (const candidate of snapshot?.models ?? []) {
+            if (!isRecord(candidate)) continue;
+            const id = modelIdFromSnapshotRecord(candidate);
+            if (id) codexModelRecords.set(id, candidate);
+          }
+          const surplusModels = surplus?.models ?? [];`;
+          if (!source.includes('const codexModelRecords = new Map<string, Record<string, unknown>>();')) {
+            if (!source.includes(codexModelsBefore)) throw new Error('raw Codex record anchor missing');
             source = source.replace(codexModelsBefore, codexModelsAfter);
           }
 
-          const addStart = source.indexOf('  const add = (id: string, provider: PublicModelProvider): void => {');
-          const addEndMarker = '\n\n  for (const model of codexModels) {';
-          const addEnd = source.indexOf(addEndMarker, addStart);
-          if (addStart < 0 || addEnd < 0) throw new Error('catalog add block missing');
-          const addAfter = `  const add = (
+          const addStartNeedle = '  const add = (id: string, provider: PublicModelProvider): void => {';
+          if (source.includes(addStartNeedle)) {
+            const addStart = source.indexOf(addStartNeedle);
+            const addEnd = source.indexOf('\n\n  for (const model of codexModels) {', addStart);
+            if (addEnd < 0) throw new Error('catalog add block end missing');
+            const addAfter = `  const add = (
             id: string,
             provider: PublicModelProvider,
             nativeModel: Record<string, unknown> | null = null,
@@ -89,27 +89,25 @@ jobs:
               ...(contextWindow === null ? {} : { context_window_tokens: contextWindow }),
               ...(maxContextWindow === null ? {} : { max_context_window_tokens: maxContextWindow }),
               ...(autoCompactTokenLimit === null ? {} : { auto_compact_token_limit_tokens: autoCompactTokenLimit }),
-              ...(effectiveContextWindowPercent === null
-                ? {}
-                : { effective_context_window_percent: effectiveContextWindowPercent }),
+              ...(effectiveContextWindowPercent === null ? {} : { effective_context_window_percent: effectiveContextWindowPercent }),
             });
           };`;
-          source = source.slice(0, addStart) + addAfter + source.slice(addEnd);
-
-          const codexAddBefore = `    add(id, {
-              id: "codex",
-              owned_by: getString(model.owned_by) ?? "openai",
-              supported_endpoints: ["/v1/responses", "/v1/chat/completions"],
-            });`;
-          const codexAddAfter = `    add(id, {
-              id: "codex",
-              owned_by: getString(model.owned_by) ?? "openai",
-              supported_endpoints: ["/v1/responses", "/v1/chat/completions"],
-            }, codexModelRecords.get(id) ?? null);`;
-          if (!source.includes(codexAddAfter)) {
-            if (!source.includes(codexAddBefore)) throw new Error('codex add call anchor missing');
-            source = source.replace(codexAddBefore, codexAddAfter);
+            source = source.slice(0, addStart) + addAfter + source.slice(addEnd);
           }
+
+          if (!source.includes('}, codexModelRecords.get(id) ?? null);')) {
+            const loopStart = source.indexOf('  for (const model of codexModels) {');
+            const nextLoop = source.indexOf('  for (const model of metered?.models ?? []) {', loopStart);
+            if (loopStart < 0 || nextLoop < 0) throw new Error('Codex catalog loop missing');
+            const loop = source.slice(loopStart, nextLoop);
+            const patchedLoop = loop.replace(
+              '      supported_endpoints: ["/v1/responses", "/v1/chat/completions"],\n    });',
+              '      supported_endpoints: ["/v1/responses", "/v1/chat/completions"],\n    }, codexModelRecords.get(id) ?? null);',
+            );
+            if (patchedLoop === loop) throw new Error('Codex add call not patched');
+            source = source.slice(0, loopStart) + patchedLoop + source.slice(nextLoop);
+          }
+
           fs.writeFileSync(path, source);
           NODE
 
