@@ -782,8 +782,8 @@ type RoutedResponsesUpstream = Readonly<{
   paidFallbackProviderRequestId?: string | null;
   gatewayResponse: boolean;
   fallbackReason: InferenceFallbackReason | null;
-  /** A direct-paid admission rejection must not enter provider recovery. */
-  admissionFailure?: boolean;
+  /** Local admission decisions are terminal and must not enter legacy recovery. */
+  allowRemovedProviderRecovery?: false;
   /** Record stream health even though this free route has no paid reservation. */
   providerHealthOnly?: boolean;
 }>;
@@ -2675,12 +2675,8 @@ const fetchResponsesWithPaidFallback = async (
   };
   if (!codexModelKnown && (meteredCatalogNeedsRefresh() || surplusCatalogNeedsRefresh())) {
     [meteredCatalog, surplusCatalog] = await Promise.all([
-      meteredCatalogNeedsRefresh()
-        ? fetchMeteredModels({ force: true, signal: options.signal })
-        : Promise.resolve(meteredCatalog),
-      surplusCatalogNeedsRefresh()
-        ? fetchSurplusModels({ force: true, signal: options.signal })
-        : Promise.resolve(surplusCatalog),
+      meteredCatalogNeedsRefresh() ? fetchMeteredModels({ signal: options.signal }) : Promise.resolve(meteredCatalog),
+      surplusCatalogNeedsRefresh() ? fetchSurplusModels({ signal: options.signal }) : Promise.resolve(surplusCatalog),
     ]);
   }
   let { surplusBilling, paidProviders, paidModelKnown, meteredOnly } = routingState();
@@ -2690,7 +2686,10 @@ const fetchResponsesWithPaidFallback = async (
     errorReason: string,
     logReason = errorReason,
   ): RoutedResponsesUpstream => {
-    if (telemetry) telemetry.provider = "gateway";
+    if (telemetry) {
+      telemetry.provider = "gateway";
+      telemetry.fallbackReason = "dynamic_paid_model";
+    }
     logPaidProviderAdmissionRejected(
       options.usageContext?.requestId ?? "unknown",
       options.model,
@@ -2702,7 +2701,7 @@ const fetchResponsesWithPaidFallback = async (
       paidFallback: null,
       gatewayResponse: true,
       fallbackReason: "dynamic_paid_model",
-      admissionFailure: true,
+      allowRemovedProviderRecovery: false,
     };
   };
   const surplusModelSupportsRoute =
@@ -2738,6 +2737,7 @@ const fetchResponsesWithPaidFallback = async (
         paidFallback: null,
         gatewayResponse: true,
         fallbackReason: "dynamic_paid_model",
+        allowRemovedProviderRecovery: false,
       };
     }
     return rejectDirectPaidAdmission(catalogPaidProvider, "provider_unconfigured");
@@ -9488,7 +9488,7 @@ const handleResponsesInternal = async (
             if (globalProbe) void releaseGlobalRemovedProviderProbe(globalProbe).catch(() => {});
             return failed.response;
           }
-          if (routed.admissionFailure) {
+          if (routed.allowRemovedProviderRecovery === false) {
             if (globalProbe) void releaseGlobalRemovedProviderProbe(globalProbe).catch(() => {});
             return failed.response;
           }

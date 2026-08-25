@@ -5170,26 +5170,19 @@ Deno.test("openai: DeepSeek Flash tool requests route directly to catalog-proven
   }
 });
 
-Deno.test("openai: direct paid admission failures do not enter RemovedProvider recovery", async (t) => {
-  const model = "deepseek-admission-stop";
+Deno.test("openai: direct paid admission failures do not enter removed-provider recovery", async () => {
+  const model = "deepseek-v4-flash";
+  const keyId = "dynamic-deepseek-admission-stop";
+  const requestId = `request-${keyId}`;
   const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
   const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
-  const debugKey = keyToString(DEBUG_ROUTING_KEY);
-  const previousDebugRouting = kvStore.get(debugKey);
-  let removedProviderCalls = 0;
-
-  Deno.env.set("METERED_API_KEY", "metered-discovery-key");
-  Deno.env.delete("SURPLUS_API_KEY");
+  Deno.env.delete("METERED_API_KEY");
+  Deno.env.set("SURPLUS_API_KEY", "surplus-test-key");
   resetMeteredModelsCacheForTest();
   resetSurplusModelsCacheForTest();
-  await fetchMeteredModels({
-    force: true,
-    fetcher: () =>
-      Promise.resolve(Response.json({
-        data: [{ id: model, supported_endpoint_types: ["openai-response"] }],
-      })),
-  });
-  Deno.env.delete("METERED_API_KEY");
+  seedPaidFallbackKey(keyId, { limitMicrocredits: -1 });
+
+  let removedProviderCalls = 0;
   setRemovedProviderApiKeyForTest("removed-provider-test-key");
   setRemovedProviderTestAdapterForTest({
     fetchResponses: async (_body, options) => {
@@ -5199,74 +5192,150 @@ Deno.test("openai: direct paid admission failures do not enter RemovedProvider r
       options.timing?.onHeaders?.();
       return { response: sseResponse(baseSseChunks()) };
     },
-    modelFromEvent: () => DEFAULT_TEST_MODEL,
-    isEligibleModel: (candidate) => candidate === DEFAULT_TEST_MODEL,
+    modelFromEvent: () => model,
+    isEligibleModel: (candidate) => candidate === model,
   });
-  kvStore.set(debugKey, {
-    scenario: "normal",
-    expires_at_ms: Date.now() + 60_000,
-    updated_at_ms: Date.now(),
-  });
-  resetDebugRoutingCacheForTest();
 
   try {
-    await t.step("an admission 503 returns without RemovedProvider dispatch", async () => {
-      const response = await withFetchMock(
-        () => {
-          throw new Error("direct paid admission must not start upstream transport");
-        },
-        () =>
-          handleResponses(
-            new Request("https://ai.ubq.fi/v1/responses", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ model, input: "do not recover admission failures" }),
-            }),
-            {
-              keyId: "direct-paid-admission-key",
-              kernelRepo: null,
-              kernelOrg: null,
-              paidFallbackEnabled: true,
-              requestId: "direct-paid-admission-request",
-              startedAtMs: Date.now(),
-            },
-          ),
-      );
-
-      assert.equal(response.status, 503);
-      assert.equal((await response.json() as { error?: { code?: string } }).error?.code, "paid_provider_unconfigured");
-      assert.equal(removedProviderCalls, 0);
+    // Endpoint support without complete pricing proves that the model is paid
+    // only, but it must fail admission before any provider transport.
+    await fetchSurplusModels({
+      apiKey: "surplus-test-key",
+      force: true,
+      fetcher: () =>
+        Promise.resolve(Response.json({
+          data: [{ id: model, provider: "DeepSeek" }],
+        })),
     });
 
-    await t.step("ordinary eligible upstream failures still enter RemovedProvider recovery", async () => {
-      const response = await withFetchMock(
-        () =>
-          new Response(JSON.stringify({ error: { message: "Codex primary failed" } }), {
-            status: 503,
+    let upstreamCalls = 0;
+    const response = await withFetchMock(
+      (url) => {
+        upstreamCalls += 1;
+        throw new Error(`Admission failure must not reach an upstream: ${url}`);
+      },
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
             headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model, input: "do not recover", stream: true }),
           }),
-        () =>
-          handleResponses(
-            new Request("https://ai.ubq.fi/v1/responses", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "recover ordinary upstream failures" }),
-            }),
-          ),
-      );
+          {
+            keyId,
+            kernelRepo: null,
+            kernelOrg: null,
+            paidFallbackEnabled: true,
+            requestId,
+            startedAtMs: Date.now(),
+          },
+        ),
+    );
 
-      assert.equal(response.status, 200);
-      assert.equal(response.headers.get("x-uos-upstream"), "removed_provider");
-      assert.equal(removedProviderCalls, 1);
-      await response.text();
-    });
+    assert.equal(response.status, 503);
+    const payload = await response.json() as { error?: { code?: string } };
+    assert.equal(payload.error?.code, "paid_provider_unconfigured");
+    assert.equal(upstreamCalls, 0);
+    assert.equal(removedProviderCalls, 0);
+    assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, []);
+    assert.equal(getResponseTelemetry(response)?.fallbackReason, "dynamic_paid_model");
+    assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null);
   } finally {
     setRemovedProviderTestAdapterForTest(null);
     setRemovedProviderApiKeyForTest(undefined);
-    if (previousDebugRouting === undefined) kvStore.delete(debugKey);
-    else kvStore.set(debugKey, previousDebugRouting);
-    resetDebugRoutingCacheForTest();
+    kvStore.delete(keyToString(["ubq_ai", "api_keys", "id", keyId]));
+    kvStore.delete(keyToString(["ubq_ai", "api_keys", "hash", `hash-${keyId}`]));
     resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
+    if (originalSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
+    else Deno.env.set("SURPLUS_API_KEY", originalSurplusApiKey);
+  }
+});
+
+Deno.test("openai: unknown paid-model routing honors catalog refresh backoff", async () => {
+  const model = "deepseek-v4-flash";
+  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
+  const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
+  const originalDateNow = Date.now;
+  let nowMs = originalDateNow();
+  Date.now = () => nowMs;
+  Deno.env.set("METERED_API_KEY", "metered-test-key");
+  Deno.env.set("SURPLUS_API_KEY", "surplus-test-key");
+  resetMeteredModelsCacheForTest();
+  resetSurplusModelsCacheForTest();
+
+  try {
+    await fetchMeteredModels({
+      force: true,
+      fetcher: () =>
+        Promise.resolve(Response.json({
+          data: [{ id: "previous-metered-model", supported_endpoint_types: ["openai-response"] }],
+        })),
+    });
+    await fetchSurplusModels({
+      apiKey: "surplus-test-key",
+      force: true,
+      fetcher: () =>
+        Promise.resolve(Response.json({
+          data: [{
+            id: model,
+            provider: "DeepSeek",
+            pricing: { prompt: 0.000001, completion: 0.000003 },
+          }],
+        })),
+    });
+    nowMs += Math.max(METERED_MODELS_CACHE_TTL_MS, SURPLUS_MODELS_CACHE_TTL_MS) + 1;
+    setMeteredModelsFetchForTest((input, init) => globalThis.fetch(input, init));
+
+    let meteredCatalogCalls = 0;
+    let surplusCatalogCalls = 0;
+    let inferenceCalls = 0;
+    await withFetchMock(
+      (url) => {
+        if (url === "https://api.openlux.ai/v1/models") {
+          meteredCatalogCalls += 1;
+          return new Response("catalog unavailable", { status: 503 });
+        }
+        if (url === "https://api.surplusintelligence.ai/v1/models") {
+          surplusCatalogCalls += 1;
+          return new Response("catalog unavailable", { status: 503 });
+        }
+        inferenceCalls += 1;
+        throw new Error(`Disabled direct routing must not reach inference: ${url}`);
+      },
+      async () => {
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const response = await handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model, input: "respect discovery backoff" }),
+            }),
+            {
+              keyId: `catalog-backoff-${attempt}`,
+              kernelRepo: null,
+              kernelOrg: null,
+              paidFallbackEnabled: false,
+              requestId: `request-catalog-backoff-${attempt}`,
+              startedAtMs: Date.now(),
+            },
+          );
+          assert.equal(response.status, 403);
+          const payload = await response.json() as { error?: { code?: string } };
+          assert.equal(payload.error?.code, "paid_fallback_disabled");
+        }
+      },
+    );
+
+    assert.equal(meteredCatalogCalls, 1);
+    assert.equal(surplusCatalogCalls, 1);
+    assert.equal(inferenceCalls, 0);
+  } finally {
+    Date.now = originalDateNow;
+    resetMeteredModelsCacheForTest();
+    setMeteredModelsFetchForTest(null);
     resetSurplusModelsCacheForTest();
     if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
     else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
