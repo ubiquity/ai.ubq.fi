@@ -92,10 +92,10 @@ Deno.test("the production issue selector accepts a canonical estimate through on
     latestTitleEdit: null,
   };
   const source = {
-    listOpenIssues: async () => [issue],
-    getIssue: async () => issue,
-    getIssueRelations: async () => relations,
-    getRepositoryPermission: async () => "write" as const,
+    listOpenIssues: () => Promise.resolve([issue]),
+    getIssue: () => Promise.resolve(issue),
+    getIssueRelations: () => Promise.resolve(relations),
+    getRepositoryPermission: () => Promise.resolve("write" as const),
   };
   const selected = await selectNextGitHubIssueJob(
     source,
