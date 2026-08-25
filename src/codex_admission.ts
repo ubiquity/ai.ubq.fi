@@ -11,8 +11,10 @@ export const CODEX_ADMISSION_LEASE_MS = CODEX_ADMISSION_RENEW_AFTER_MS +
   STREAM_INACTIVITY_DEADLINE_MS + CODEX_ADMISSION_LEASE_SAFETY_MARGIN_MS;
 export const CODEX_ADMISSION_RETRY_AFTER_SECONDS = 1;
 export const CODEX_ADMISSION_KV_TIMEOUT_MS = 2_000;
+export const CODEX_ADMISSION_RECOVERY_TIMEOUT_MS = 250;
 const CODEX_ADMISSION_LOCAL_ACCOUNT_LIMIT = 1;
 const CODEX_ADMISSION_MAX_CAS_ATTEMPTS = 4;
+const CODEX_ADMISSION_MAX_RECOVERY_ATTEMPTS = 1;
 const CODEX_ADMISSION_WAIT_MS = 50;
 
 type CodexAdmissionRecord = Readonly<{
@@ -235,6 +237,47 @@ const compensateLateAdmissionCommit = (
   }).catch(() => {});
 };
 
+/**
+ * Resolves one ambiguous distributed acquire before another lease may be
+ * attempted. A retry is allowed only after the commit is known not to have
+ * applied or its token-fenced records have been removed.
+ */
+const settleAmbiguousAdmissionCommit = async (
+  commit: Promise<Readonly<{ ok: boolean }>>,
+  lease: CodexAdmissionLease,
+  signal: AbortSignal | undefined,
+): Promise<boolean> => {
+  const recoveryDeadline = createAdmissionDeadline(signal, CODEX_ADMISSION_RECOVERY_TIMEOUT_MS);
+  try {
+    let result: Readonly<{ ok: boolean }>;
+    try {
+      result = await awaitAdmissionOperation(commit, recoveryDeadline.signal);
+    } catch {
+      if (recoveryDeadline.signal.aborted) {
+        compensateLateAdmissionCommit(commit, lease);
+        return false;
+      }
+      // A settled commit error is still an unknown external outcome. A
+      // token-fenced read/release proves that this acquire no longer owns
+      // either record before the caller is allowed to retry.
+      const released = await releaseCodexAdmission(lease, {
+        signal: recoveryDeadline.signal,
+        kvTimeoutMs: CODEX_ADMISSION_RECOVERY_TIMEOUT_MS,
+      });
+      if (!released) void releaseCodexAdmission(lease).catch(() => {});
+      return released;
+    }
+    if (!result.ok) return true;
+    const released = await releaseCodexAdmission(lease, {
+      signal: recoveryDeadline.signal,
+      kvTimeoutMs: CODEX_ADMISSION_RECOVERY_TIMEOUT_MS,
+    });
+    if (!released) void releaseCodexAdmission(lease).catch(() => {});
+    return released;
+  } finally {
+    recoveryDeadline.clear();
+  }
+};
 const acquireLocalAdmission = (
   input: Readonly<{
     accountIdHash: string;
@@ -304,12 +347,18 @@ export const acquireCodexAdmission = async (
 
   const callerKey = codexAdmissionCallerKey(input.callerLaneHash);
   const firstSlot = slotStart(input.callerLaneHash, accountLimit);
+  type DistributedAdmissionDecision = CodexAdmissionDecision | Readonly<{ kind: "retry_after_recovery" }>;
+  let activeDeadline = deadline;
+  let recoveryAttempts = 0;
   try {
-    const tryAcquireDistributed = async (): Promise<CodexAdmissionDecision> => {
+    const tryAcquireDistributed = async (
+      operationDeadline: AdmissionDeadline,
+      allowAmbiguousRecovery: boolean,
+    ): Promise<DistributedAdmissionDecision> => {
       for (let attempt = 0; attempt < CODEX_ADMISSION_MAX_CAS_ATTEMPTS; attempt += 1) {
         const callerEntry = await awaitAdmissionOperation(
           kv.get<CodexAdmissionRecord>(callerKey, { consistency: "strong" }),
-          deadline.signal,
+          operationDeadline.signal,
         );
         if (callerEntry.value !== null) {
           return parseAdmissionRecord(callerEntry.value) ? { kind: "caller_busy" } : { kind: "unavailable" };
@@ -321,7 +370,7 @@ export const acquireCodexAdmission = async (
           const slotKey = codexAdmissionSlotKey(input.accountIdHash, slot);
           const slotEntry = await awaitAdmissionOperation(
             kv.get<CodexAdmissionRecord>(slotKey, { consistency: "strong" }),
-            deadline.signal,
+            operationDeadline.signal,
           );
           if (slotEntry.value !== null) {
             if (!parseAdmissionRecord(slotEntry.value)) return { kind: "unavailable" };
@@ -339,9 +388,12 @@ export const acquireCodexAdmission = async (
             .commit();
           let commit: Deno.KvCommitResult | Deno.KvCommitError;
           try {
-            commit = await awaitAdmissionOperation(commitPromise, deadline.signal);
+            commit = await awaitAdmissionOperation(commitPromise, operationDeadline.signal);
           } catch (error) {
-            compensateLateAdmissionCommit(commitPromise, leaseFor("kv", record, kv));
+            const lease = leaseFor("kv", record, kv);
+            if (allowAmbiguousRecovery && await settleAmbiguousAdmissionCommit(commitPromise, lease, dependencies.signal)) {
+              return { kind: "retry_after_recovery" };
+            }
             throw error;
           }
           if (commit.ok) return { kind: "acquired", lease: leaseFor("kv", record, kv) };
@@ -353,24 +405,49 @@ export const acquireCodexAdmission = async (
       return { kind: "account_busy" };
     };
 
-    let decision = await tryAcquireDistributed();
-    if (isBusyAdmissionDecision(decision)) {
+    while (true) {
+      let decision = await tryAcquireDistributed(
+        activeDeadline,
+        recoveryAttempts < CODEX_ADMISSION_MAX_RECOVERY_ATTEMPTS,
+      );
+      if (decision.kind === "retry_after_recovery") {
+        recoveryAttempts += 1;
+        activeDeadline.clear();
+        activeDeadline = createAdmissionDeadline(
+          dependencies.signal,
+          dependencies.kvTimeoutMs ?? CODEX_ADMISSION_KV_TIMEOUT_MS,
+        );
+        continue;
+      }
+      if (!isBusyAdmissionDecision(decision)) return decision;
       try {
-        await waitForAdmissionRecheck(deadline.signal);
+        await waitForAdmissionRecheck(activeDeadline.signal);
       } catch (error) {
         if (dependencies.signal?.aborted) throw dependencies.signal.reason ?? error;
         return decision;
       }
-      decision = await tryAcquireDistributed();
+      decision = await tryAcquireDistributed(
+        activeDeadline,
+        recoveryAttempts < CODEX_ADMISSION_MAX_RECOVERY_ATTEMPTS,
+      );
+      if (decision.kind === "retry_after_recovery") {
+        recoveryAttempts += 1;
+        activeDeadline.clear();
+        activeDeadline = createAdmissionDeadline(
+          dependencies.signal,
+          dependencies.kvTimeoutMs ?? CODEX_ADMISSION_KV_TIMEOUT_MS,
+        );
+        continue;
+      }
+      return decision;
     }
-    return decision;
   } catch (error) {
     if (dependencies.signal?.aborted) throw dependencies.signal.reason ?? error;
     // A failed distributed transaction may have an unknown external cause.
     // Do not create a second isolate-local lease after attempting KV writes.
     return { kind: "unavailable" };
   } finally {
-    deadline.clear();
+    activeDeadline.clear();
   }
 };
 

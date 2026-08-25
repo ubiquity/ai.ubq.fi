@@ -83,6 +83,7 @@ const CODEX_CLIENT_VERSION = "0.100.0";
 export const CODEX_QUOTA_BLOCKED_ERROR_CODE = "codex_quota_blocked";
 export const CODEX_UPSTREAM_DEGRADED_ERROR_CODE = "codex_upstream_degraded";
 export const CODEX_ADMISSION_BUSY_ERROR_CODE = "codex_admission_busy";
+export const CODEX_ADMISSION_UNAVAILABLE_ERROR_CODE = "codex_admission_unavailable";
 export const CODEX_AUTH_REAUTH_WARNING = "codex_auth_reauthentication_required";
 export const CODEX_AUTH_REAUTH_MESSAGE =
   "The gateway's Codex auth.json needs re-authentication. Upload a fresh auth.json and retry.";
@@ -1840,7 +1841,7 @@ const routingErrorResponse = (
   );
   if (
     code === CODEX_QUOTA_BLOCKED_ERROR_CODE || code === CODEX_UPSTREAM_DEGRADED_ERROR_CODE ||
-    code === CODEX_ADMISSION_BUSY_ERROR_CODE
+    code === CODEX_ADMISSION_BUSY_ERROR_CODE || code === CODEX_ADMISSION_UNAVAILABLE_ERROR_CODE
   ) {
     codexRoutingErrors.set(response, code);
   }
@@ -1860,6 +1861,14 @@ const codexAdmissionBusyResponse = (): Response =>
     503,
     "Codex subscription capacity is busy; retry this agent lane shortly.",
     CODEX_ADMISSION_BUSY_ERROR_CODE,
+    Date.now() + CODEX_ADMISSION_RETRY_AFTER_SECONDS * 1_000,
+  );
+
+const codexAdmissionUnavailableResponse = (): Response =>
+  routingErrorResponse(
+    503,
+    "Codex subscription admission is temporarily unavailable; retry this agent lane shortly.",
+    CODEX_ADMISSION_UNAVAILABLE_ERROR_CODE,
     Date.now() + CODEX_ADMISSION_RETRY_AFTER_SECONDS * 1_000,
   );
 
@@ -2032,12 +2041,19 @@ const prepareCodexSubscriptionRequest = async (
 type CodexAttemptPhase = "initial" | "post_refresh" | "two_second_retry" | "post_retry_refresh" | "post_banked_reset";
 
 class CodexAdmissionBusyError extends Error {
-  readonly reason: "account_busy" | "caller_busy" | "unavailable";
+  readonly reason: "account_busy" | "caller_busy";
 
-  constructor(reason: "account_busy" | "caller_busy" | "unavailable") {
+  constructor(reason: "account_busy" | "caller_busy") {
     super("Codex subscription admission is busy.");
     this.name = "CodexAdmissionBusyError";
     this.reason = reason;
+  }
+}
+
+class CodexAdmissionUnavailableError extends Error {
+  constructor() {
+    super("Codex subscription admission is temporarily unavailable.");
+    this.name = "CodexAdmissionUnavailableError";
   }
 }
 
@@ -2653,6 +2669,7 @@ const fetchPreparedCodexResponses = async (
           },
           { signal: options.signal },
         );
+        if (decision.kind === "unavailable") throw new CodexAdmissionUnavailableError();
         if (decision.kind !== "acquired") throw new CodexAdmissionBusyError(decision.kind);
         admission = createCodexResponseAdmission(decision.lease);
       }
@@ -2699,6 +2716,7 @@ const fetchPreparedCodexResponses = async (
       const siblingTransportFailure = isCodexSiblingTransportFailure(error);
       if (
         !(error instanceof CodexAdmissionBusyError) &&
+        !(error instanceof CodexAdmissionUnavailableError) &&
         !(error instanceof CodexBankedResetRetryFenceError) &&
         !(error instanceof ApiKeyQuotaDispatchError) &&
         !siblingTransportFailure &&
@@ -2718,6 +2736,8 @@ const fetchPreparedCodexResponses = async (
         status: error instanceof CodexError ? error.status : null,
         status_class: error instanceof CodexAdmissionBusyError
           ? `admission_${error.reason}`
+          : error instanceof CodexAdmissionUnavailableError
+          ? "admission_unavailable"
           : error instanceof CodexBankedResetRetryFenceError
           ? "banked_reset_fenced"
           : codexErrorClass(error),
@@ -3127,6 +3147,10 @@ const fetchPreparedCodexResponses = async (
       return decorateAuthWarning(response);
     } catch (error) {
       lastError = error;
+      if (error instanceof CodexAdmissionUnavailableError) {
+        await releaseCodexRoutingProbe(routing);
+        throw error;
+      }
       if (error instanceof CodexAdmissionBusyError) {
         await releaseCodexRoutingProbe(routing);
         if (error.reason === "caller_busy") throw error;
@@ -3358,6 +3382,7 @@ export const fetchCodexResponses = async (
     return finalizeCodexResponseAffinity(withCodexWarnings(response, prepared.warnings));
   } catch (error) {
     if (error instanceof CodexAdmissionBusyError) return codexAdmissionBusyResponse();
+    if (error instanceof CodexAdmissionUnavailableError) return codexAdmissionUnavailableResponse();
     throw error;
   } finally {
     await providerDispatch.cancelBeforeTransport();
