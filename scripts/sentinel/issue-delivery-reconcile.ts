@@ -13,6 +13,7 @@ import {
 const API_VERSION = "2022-11-28";
 const FULL_SHA = /^[0-9a-f]{40}$/u;
 const SAFE_REVISION = /^[A-Za-z0-9_-]{1,200}$/u;
+const COMPLETED_EVIDENCE_TEXT = "Delivered and verified in production; issue closed as completed.";
 
 type PullRequest = Readonly<{
   number: number;
@@ -24,6 +25,11 @@ type PullRequest = Readonly<{
 }>;
 
 type Comment = Readonly<{ id: number; body: string }>;
+
+type IssueState = Readonly<{
+  state: "open" | "closed";
+  stateReason: string | null;
+}>;
 
 const requiredEnvironment = (name: string): string => {
   const value = Deno.env.get(name)?.trim();
@@ -81,7 +87,9 @@ const parsePullRequest = (value: unknown): PullRequest => {
     (pull.merged_at !== null && typeof pull.merged_at !== "string") || !head || !base ||
     typeof head.ref !== "string" || typeof head.sha !== "string" || !FULL_SHA.test(head.sha) ||
     typeof base.ref !== "string"
-  ) throw new Error("GitHub returned an invalid pull request during issue reconciliation");
+  ) {
+    throw new Error("GitHub returned an invalid pull request during issue reconciliation");
+  }
   return {
     number: pull.number as number,
     state: pull.state,
@@ -98,15 +106,21 @@ const waitForPullRequestSettlement = async (
   expected: GitHubIssuePullRequestRecord,
 ): Promise<PullRequest> => {
   for (let attempt = 0; attempt < 30; attempt++) {
-    const pull = parsePullRequest(await githubRequest(token, repository, `/pulls/${expected.pull_request_number}`));
+    const pull = parsePullRequest(
+      await githubRequest(token, repository, `/pulls/${expected.pull_request_number}`),
+    );
     if (
       pull.number !== expected.pull_request_number || pull.headRef !== expected.head_branch ||
       pull.headSha !== expected.head_sha || pull.baseRef !== expected.base_branch
-    ) throw new Error("Sentinel issue pull request changed identity before reconciliation");
+    ) {
+      throw new Error("Sentinel issue pull request changed identity before reconciliation");
+    }
     if (pull.state === "closed" && pull.mergedAt !== null) return pull;
     if (attempt < 29) await new Promise((resolve) => setTimeout(resolve, 2_000));
   }
-  return parsePullRequest(await githubRequest(token, repository, `/pulls/${expected.pull_request_number}`));
+  return parsePullRequest(
+    await githubRequest(token, repository, `/pulls/${expected.pull_request_number}`),
+  );
 };
 
 const listComments = async (
@@ -116,12 +130,17 @@ const listComments = async (
 ): Promise<Comment[]> => {
   const comments: Comment[] = [];
   for (let page = 1; page <= 10; page++) {
-    const value = await githubRequest(token, repository, `/issues/${issueNumber}/comments?per_page=100&page=${page}`);
+    const value = await githubRequest(
+      token,
+      repository,
+      `/issues/${issueNumber}/comments?per_page=100&page=${page}`,
+    );
     if (!Array.isArray(value)) throw new Error("GitHub issue-comment listing is invalid");
     for (const item of value) {
       const comment = record(item);
       if (
-        !comment || !Number.isSafeInteger(comment.id) || (comment.id as number) <= 0 || typeof comment.body !== "string"
+        !comment || !Number.isSafeInteger(comment.id) || (comment.id as number) <= 0 ||
+        typeof comment.body !== "string"
       ) {
         throw new Error("GitHub returned an invalid issue comment");
       }
@@ -156,6 +175,37 @@ const upsertComment = async (
   }
 };
 
+const getIssueState = async (
+  token: string,
+  repository: string,
+  issueNumber: number,
+): Promise<IssueState> => {
+  const value = record(await githubRequest(token, repository, `/issues/${issueNumber}`));
+  if (
+    !value || (value.state !== "open" && value.state !== "closed") ||
+    (value.state_reason !== null && typeof value.state_reason !== "string")
+  ) {
+    throw new Error("GitHub returned an invalid issue state");
+  }
+  return {
+    state: value.state,
+    stateReason: value.state_reason as string | null,
+  };
+};
+
+const completionEvidence = async (
+  token: string,
+  repository: string,
+  issueNumber: number,
+  marker: string,
+): Promise<string | null> => {
+  const matching = (await listComments(token, repository, issueNumber)).filter((comment) =>
+    comment.body.includes(marker) && comment.body.includes(COMPLETED_EVIDENCE_TEXT)
+  );
+  if (matching.length > 1) throw new Error("Sentinel completion evidence is duplicated");
+  return matching[0]?.body ?? null;
+};
+
 const parseDisposition = (value: unknown): "resolved" | "manual_required" | null => {
   if (value === null) return null;
   const disposition = record(value);
@@ -178,7 +228,9 @@ const parseOutcome = (value: unknown):
     typeof outcome.candidate_sha !== "string" || !FULL_SHA.test(outcome.candidate_sha) ||
     (outcome.candidate_revision !== null &&
       (typeof outcome.candidate_revision !== "string" || !SAFE_REVISION.test(outcome.candidate_revision)))
-  ) return null;
+  ) {
+    return null;
+  }
   return {
     outcome: outcome.outcome,
     candidateSha: outcome.candidate_sha,
@@ -186,7 +238,9 @@ const parseOutcome = (value: unknown):
   };
 };
 
-const productionWorkflowEvidence = async (reportsDir: string): Promise<
+const productionWorkflowEvidence = async (
+  reportsDir: string,
+): Promise<
   Readonly<{
     deploymentRunId: number | null;
     promotionRunId: number | null;
@@ -261,6 +315,40 @@ const removeRolledBackLedgerEntry = async (
   });
 };
 
+const writeReconciliationReport = async (
+  reportsDir: string,
+  input: Readonly<{
+    issueNumber: number;
+    fingerprint: string;
+    pullRequestNumber: number;
+    pullRequestMerged: boolean;
+    action: string;
+    issueSnapshotMatches: boolean;
+    durableCompletionEvidenceReused: boolean;
+  }>,
+): Promise<void> => {
+  await Deno.writeTextFile(
+    `${reportsDir}/github-issue-reconciliation.json`,
+    `${
+      JSON.stringify(
+        {
+          schema_version: 1,
+          issue_number: input.issueNumber,
+          fingerprint: input.fingerprint,
+          pull_request_number: input.pullRequestNumber,
+          pull_request_merged: input.pullRequestMerged,
+          action: input.action,
+          issue_snapshot_matches: input.issueSnapshotMatches,
+          durable_completion_evidence_reused: input.durableCompletionEvidenceReused,
+        },
+        null,
+        2,
+      )
+    }\n`,
+    { mode: 0o600 },
+  );
+};
+
 export const reconcileGitHubIssueDelivery = async (
   input: Readonly<{
     repositoryRoot: string;
@@ -282,9 +370,50 @@ export const reconcileGitHubIssueDelivery = async (
     throw new Error("A completed Sentinel issue cycle has no pull-request delivery record");
   }
   const pullRecord = parseGitHubIssuePullRequestRecord(pullValue);
-  if (pullRecord.issue_number !== selection.issue_number || pullRecord.fingerprint !== selection.fingerprint) {
+  if (
+    pullRecord.issue_number !== selection.issue_number ||
+    pullRecord.fingerprint !== selection.fingerprint
+  ) {
     throw new Error("Sentinel issue pull-request record does not match the selected issue snapshot");
   }
+
+  const marker = issueEvidenceMarker(selection);
+  const durableEvidence = await completionEvidence(
+    input.token,
+    input.repository,
+    selection.issue_number,
+    marker,
+  );
+  if (durableEvidence !== null) {
+    const issueState = await getIssueState(
+      input.token,
+      input.repository,
+      selection.issue_number,
+    );
+    if (issueState.state === "open") {
+      await closeIssue(input.token, input.repository, selection.issue_number);
+    } else if (issueState.stateReason !== "completed") {
+      throw new Error("Sentinel completion evidence exists on an issue closed for a different reason");
+    }
+    await upsertComment(
+      input.token,
+      input.repository,
+      pullRecord.pull_request_number,
+      marker,
+      durableEvidence,
+    );
+    await writeReconciliationReport(reportsDir, {
+      issueNumber: selection.issue_number,
+      fingerprint: selection.fingerprint,
+      pullRequestNumber: pullRecord.pull_request_number,
+      pullRequestMerged: true,
+      action: "close_completed",
+      issueSnapshotMatches: true,
+      durableCompletionEvidenceReused: true,
+    });
+    return;
+  }
+
   const pull = await waitForPullRequestSettlement(input.token, input.repository, pullRecord);
   const pullMerged = pull.state === "closed" && pull.mergedAt !== null;
   const disposition = parseDisposition(await optionalJson(`${reportsDir}/github-issue-disposition.json`));
@@ -294,7 +423,10 @@ export const reconcileGitHubIssueDelivery = async (
   }
 
   let issueSnapshotMatches = false;
-  if (!input.workflowFailed && disposition === "resolved" && outcome?.outcome === "kept" && pullMerged) {
+  if (
+    !input.workflowFailed && disposition === "resolved" && outcome?.outcome === "kept" &&
+    pullMerged
+  ) {
     const current = await getCurrentGitHubIssueJob(
       new GitHubActionsClient({ repository: input.repository, token: input.token }),
       input.repository,
@@ -332,41 +464,37 @@ export const reconcileGitHubIssueDelivery = async (
     input.token,
     input.repository,
     pullRecord.pull_request_number,
-    issueEvidenceMarker(selection),
+    marker,
     evidence,
   );
   if (action === "close_completed") {
-    await closeIssue(input.token, input.repository, selection.issue_number);
+    // The issue evidence is the durable retry checkpoint. Persist it before the irreversible close.
     await upsertComment(
       input.token,
       input.repository,
       selection.issue_number,
-      issueEvidenceMarker(selection),
+      marker,
       evidence,
     );
+    await closeIssue(input.token, input.repository, selection.issue_number);
   } else if (action === "leave_open_rolled_back") {
-    await removeRolledBackLedgerEntry(input.token, input.repository, selection.issue_number, selection.fingerprint);
+    await removeRolledBackLedgerEntry(
+      input.token,
+      input.repository,
+      selection.issue_number,
+      selection.fingerprint,
+    );
   }
 
-  await Deno.writeTextFile(
-    `${reportsDir}/github-issue-reconciliation.json`,
-    `${
-      JSON.stringify(
-        {
-          schema_version: 1,
-          issue_number: selection.issue_number,
-          fingerprint: selection.fingerprint,
-          pull_request_number: pullRecord.pull_request_number,
-          pull_request_merged: pullMerged,
-          action,
-          issue_snapshot_matches: issueSnapshotMatches,
-        },
-        null,
-        2,
-      )
-    }\n`,
-    { mode: 0o600 },
-  );
+  await writeReconciliationReport(reportsDir, {
+    issueNumber: selection.issue_number,
+    fingerprint: selection.fingerprint,
+    pullRequestNumber: pullRecord.pull_request_number,
+    pullRequestMerged: pullMerged,
+    action,
+    issueSnapshotMatches,
+    durableCompletionEvidenceReused: false,
+  });
 };
 
 if (import.meta.main) {
@@ -378,6 +506,7 @@ if (import.meta.main) {
     repository: requiredEnvironment("GITHUB_REPOSITORY"),
     workflowRunId: requiredEnvironment("GITHUB_RUN_ID"),
     serverUrl: Deno.env.get("GITHUB_SERVER_URL")?.trim() || "https://github.com",
-    workflowFailed: workflowOutcome === "failure" || workflowOutcome === "cancelled" || workflowOutcome === "timed_out",
+    workflowFailed: workflowOutcome === "failure" || workflowOutcome === "cancelled" ||
+      workflowOutcome === "timed_out",
   });
 }

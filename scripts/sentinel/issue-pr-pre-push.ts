@@ -14,7 +14,7 @@ const API_VERSION = "2022-11-28";
 const FULL_SHA = /^[0-9a-f]{40}$/u;
 const SAFE_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/u;
 
-type PullRequest = Readonly<{
+export type PullRequest = Readonly<{
   number: number;
   htmlUrl: string;
   state: "open" | "closed";
@@ -34,14 +34,17 @@ const requiredEnvironment = (name: string): string => {
 const readJson = async (path: string): Promise<unknown> => JSON.parse(await Deno.readTextFile(path));
 
 const git = async (args: readonly string[]): Promise<string> => {
-  const result = await new Deno.Command("git", {
+  const executable = Deno.env.get("SENTINEL_REAL_GIT")?.trim() || "git";
+  const result = await new Deno.Command(executable, {
     args: [...args],
     stdout: "piped",
     stderr: "piped",
   }).output();
   if (!result.success) {
     const stderr = new TextDecoder().decode(result.stderr).trim();
-    throw new Error(`Git command failed: git ${args.join(" ")}${stderr ? `: ${stderr.slice(0, 500)}` : ""}`);
+    throw new Error(
+      `Git command failed: ${executable} ${args.join(" ")}${stderr ? `: ${stderr.slice(0, 500)}` : ""}`,
+    );
   }
   return new TextDecoder().decode(result.stdout).trim();
 };
@@ -91,7 +94,9 @@ const parsePullRequest = (value: unknown): PullRequest => {
     typeof head.ref !== "string" || !SAFE_BRANCH.test(head.ref) ||
     typeof head.sha !== "string" || !FULL_SHA.test(head.sha) ||
     typeof base.ref !== "string" || !SAFE_BRANCH.test(base.ref)
-  ) throw new Error("GitHub returned an invalid pull request");
+  ) {
+    throw new Error("GitHub returned an invalid pull request");
+  }
   return {
     number: pull.number as number,
     htmlUrl: pull.html_url,
@@ -161,6 +166,17 @@ const optionalPreviewEvidence = async (
   };
 };
 
+export const matchingIssueDeliveryPullRequests = (
+  pulls: readonly PullRequest[],
+  marker: string,
+  candidateSha: string,
+  candidateBranch: string,
+): PullRequest[] =>
+  pulls.filter((pull) =>
+    pull.body.includes(marker) && pull.headSha === candidateSha && pull.headRef === candidateBranch &&
+    pull.baseRef === "development"
+  );
+
 export const ensureIssuePullRequestForDevelopmentPush = async (
   input: Readonly<{
     repositoryRoot: string;
@@ -206,9 +222,14 @@ export const ensureIssuePullRequestForDevelopmentPush = async (
   await ensureRemoteCandidateBranch(cycle.temporary_branch, update.localSha);
 
   const marker = issuePullRequestMarker(selection);
-  const existing = (await listPullRequests(input.token, input.repository)).filter((pull) => pull.body.includes(marker));
+  const existing = matchingIssueDeliveryPullRequests(
+    await listPullRequests(input.token, input.repository),
+    marker,
+    update.localSha,
+    cycle.temporary_branch,
+  );
   if (existing.length > 1) {
-    throw new Error("More than one pull request exists for the immutable Sentinel issue snapshot");
+    throw new Error("More than one pull request exists for the concrete Sentinel issue delivery attempt");
   }
 
   const preview = await optionalPreviewEvidence(reportsDir);
@@ -231,10 +252,9 @@ export const ensureIssuePullRequestForDevelopmentPush = async (
   if (existing.length === 1) {
     pull = existing[0]!;
     reused = true;
-    if (
-      pull.state !== "open" || pull.mergedAt !== null || pull.headRef !== cycle.temporary_branch ||
-      pull.headSha !== update.localSha || pull.baseRef !== "development"
-    ) throw new Error("Existing Sentinel issue pull request does not match the exact candidate");
+    if (pull.state !== "open" || pull.mergedAt !== null) {
+      throw new Error("Existing Sentinel delivery-attempt pull request is no longer open");
+    }
     pull = parsePullRequest(
       await githubRequest(input.token, input.repository, `/pulls/${pull.number}`, {
         method: "PATCH",
@@ -259,7 +279,9 @@ export const ensureIssuePullRequestForDevelopmentPush = async (
   if (
     pull.state !== "open" || pull.mergedAt !== null || pull.headRef !== cycle.temporary_branch ||
     pull.headSha !== update.localSha || pull.baseRef !== "development" || !pull.body.includes(marker)
-  ) throw new Error("Sentinel issue pull request failed its post-creation identity check");
+  ) {
+    throw new Error("Sentinel issue pull request failed its post-creation identity check");
+  }
 
   const record: GitHubIssuePullRequestRecord = {
     schema_version: 1,
