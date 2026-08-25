@@ -198,13 +198,12 @@ export const recentModelContextFor = (
   const nativeMaxContextWindow = positiveSafeInteger(overrides.max_context_window_tokens);
   const contextWindow = nativeContextWindow ?? nativeMaxContextWindow ?? rule.context_window_tokens;
   const maxContextWindow = Math.max(contextWindow, nativeMaxContextWindow ?? contextWindow);
-  const effectiveContextWindowPercent =
-    typeof overrides.effective_context_window_percent === "number" &&
+  const effectiveContextWindowPercent = typeof overrides.effective_context_window_percent === "number" &&
       Number.isSafeInteger(overrides.effective_context_window_percent) &&
       overrides.effective_context_window_percent >= 1 &&
       overrides.effective_context_window_percent <= 100
-      ? overrides.effective_context_window_percent
-      : CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT;
+    ? overrides.effective_context_window_percent
+    : CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT;
 
   return {
     model_class: rule.model_class,

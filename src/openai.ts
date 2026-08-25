@@ -5450,12 +5450,22 @@ const normalizeModelCapabilitiesEntry = (value: unknown): Record<string, unknown
   if (!id) return null;
   const reasoning = getCodexModelReasoning(value);
   const promptCache = normalizePromptCacheCapabilities(value.prompt_cache);
-  const fallbackContext = recentModelContextFor(id);
-  const contextWindow = normalizeTokenCount(value.context_window) ?? fallbackContext?.context_window_tokens ?? null;
-  const maxContextWindow = normalizeTokenCount(value.max_context_window) ??
-    fallbackContext?.max_context_window_tokens ?? contextWindow;
-  const autoCompactTokenLimit = normalizeTokenCount(value.auto_compact_token_limit) ??
-    fallbackContext?.auto_compact_token_limit_tokens ?? null;
+  const nativeContextWindow = normalizeTokenCount(value.context_window);
+  const nativeMaxContextWindow = normalizeTokenCount(value.max_context_window);
+  const nativeAutoCompactTokenLimit = normalizeTokenCount(value.auto_compact_token_limit);
+  const resolvedContext = recentModelContextFor(id, {
+    context_window_tokens: nativeContextWindow,
+    max_context_window_tokens: nativeMaxContextWindow,
+    auto_compact_token_limit_tokens: nativeAutoCompactTokenLimit,
+    effective_context_window_percent: normalizeTokenCount(value.effective_context_window_percent),
+  });
+  const contextWindow = resolvedContext?.context_window_tokens ?? nativeContextWindow;
+  const maxContextWindow = resolvedContext?.max_context_window_tokens ?? nativeMaxContextWindow ?? contextWindow;
+  const autoCompactTokenLimit = resolvedContext?.auto_compact_token_limit_tokens ??
+    (nativeAutoCompactTokenLimit !== null &&
+        (contextWindow === null || nativeAutoCompactTokenLimit <= contextWindow)
+      ? nativeAutoCompactTokenLimit
+      : null);
   return {
     id,
     object: "uos.model_capabilities",
@@ -5469,11 +5479,10 @@ const normalizeModelCapabilitiesEntry = (value: unknown): Record<string, unknown
     context_window_tokens: contextWindow,
     max_context_window_tokens: maxContextWindow,
     auto_compact_token_limit_tokens: autoCompactTokenLimit,
-    ...(fallbackContext
+    ...(resolvedContext
       ? {
-        model_class: fallbackContext.model_class,
-        effective_context_window_percent: normalizeTokenCount(value.effective_context_window_percent) ??
-          fallbackContext.effective_context_window_percent,
+        model_class: resolvedContext.model_class,
+        effective_context_window_percent: resolvedContext.effective_context_window_percent,
       }
       : {}),
     ...(promptCache !== null ? { prompt_cache: promptCache } : {}),
