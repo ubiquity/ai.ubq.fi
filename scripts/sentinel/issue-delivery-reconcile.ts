@@ -1,9 +1,5 @@
 import { GitHubActionsClient } from "./github.ts";
-import {
-  getCurrentGitHubIssueJob,
-  parseGitHubIssueJobLedger,
-  renderGitHubIssueJobLedger,
-} from "./issues.ts";
+import { getCurrentGitHubIssueJob, parseGitHubIssueJobLedger, renderGitHubIssueJobLedger } from "./issues.ts";
 import {
   evaluateIssueCompletionAction,
   type GitHubIssuePullRequestRecord,
@@ -68,7 +64,9 @@ const githubRequest = async (
   });
   const text = await response.text();
   if (!response.ok) {
-    throw new Error(`GitHub API ${init.method ?? "GET"} ${path} failed with HTTP ${response.status}: ${text.slice(0, 500)}`);
+    throw new Error(
+      `GitHub API ${init.method ?? "GET"} ${path} failed with HTTP ${response.status}: ${text.slice(0, 500)}`,
+    );
   }
   return text.length === 0 ? null : JSON.parse(text);
 };
@@ -122,7 +120,9 @@ const listComments = async (
     if (!Array.isArray(value)) throw new Error("GitHub issue-comment listing is invalid");
     for (const item of value) {
       const comment = record(item);
-      if (!comment || !Number.isSafeInteger(comment.id) || (comment.id as number) <= 0 || typeof comment.body !== "string") {
+      if (
+        !comment || !Number.isSafeInteger(comment.id) || (comment.id as number) <= 0 || typeof comment.body !== "string"
+      ) {
         throw new Error("GitHub returned an invalid issue comment");
       }
       comments.push({ id: comment.id as number, body: comment.body });
@@ -139,7 +139,9 @@ const upsertComment = async (
   marker: string,
   body: string,
 ): Promise<void> => {
-  const matching = (await listComments(token, repository, issueNumber)).filter((comment) => comment.body.includes(marker));
+  const matching = (await listComments(token, repository, issueNumber)).filter((comment) =>
+    comment.body.includes(marker)
+  );
   if (matching.length > 1) throw new Error("Sentinel evidence has more than one matching GitHub comment");
   if (matching.length === 1) {
     await githubRequest(token, repository, `/issues/comments/${matching[0]!.id}`, {
@@ -162,11 +164,13 @@ const parseDisposition = (value: unknown): "resolved" | "manual_required" | null
     : null;
 };
 
-const parseOutcome = (value: unknown): Readonly<{
-  outcome: "kept" | "rolled_back";
-  candidateSha: string;
-  candidateRevision: string | null;
-}> | null => {
+const parseOutcome = (value: unknown):
+  | Readonly<{
+    outcome: "kept" | "rolled_back";
+    candidateSha: string;
+    candidateRevision: string | null;
+  }>
+  | null => {
   if (value === null) return null;
   const outcome = record(value);
   if (
@@ -182,11 +186,13 @@ const parseOutcome = (value: unknown): Readonly<{
   };
 };
 
-const productionWorkflowEvidence = async (reportsDir: string): Promise<Readonly<{
-  deploymentRunId: number | null;
-  promotionRunId: number | null;
-  monitoringDecision: "keep" | "rollback" | null;
-}>> => {
+const productionWorkflowEvidence = async (reportsDir: string): Promise<
+  Readonly<{
+    deploymentRunId: number | null;
+    promotionRunId: number | null;
+    monitoringDecision: "keep" | "rollback" | null;
+  }>
+> => {
   const workflow = record(await optionalJson(`${reportsDir}/production-deployment-workflow.json`));
   const decision = record(await optionalJson(`${reportsDir}/production-decision.json`));
   return {
@@ -198,17 +204,17 @@ const productionWorkflowEvidence = async (reportsDir: string): Promise<Readonly<
         (workflow!.promotion_workflow_run_id as number) > 0
       ? workflow!.promotion_workflow_run_id as number
       : null,
-    monitoringDecision: decision?.decision === "keep" || decision?.decision === "rollback"
-      ? decision.decision
-      : null,
+    monitoringDecision: decision?.decision === "keep" || decision?.decision === "rollback" ? decision.decision : null,
   };
 };
 
 const closeIssue = async (token: string, repository: string, issueNumber: number): Promise<void> => {
-  const value = record(await githubRequest(token, repository, `/issues/${issueNumber}`, {
-    method: "PATCH",
-    body: JSON.stringify({ state: "closed", state_reason: "completed" }),
-  }));
+  const value = record(
+    await githubRequest(token, repository, `/issues/${issueNumber}`, {
+      method: "PATCH",
+      body: JSON.stringify({ state: "closed", state_reason: "completed" }),
+    }),
+  );
   if (value?.state !== "closed" || value.state_reason !== "completed") {
     throw new Error("GitHub issue did not close as completed");
   }
@@ -230,8 +236,10 @@ const removeRolledBackLedgerEntry = async (
 ): Promise<void> => {
   const path = "/contents/docs/sentinel-issue-jobs.md?ref=development";
   const value = record(await githubRequest(token, repository, path));
-  if (!value || typeof value.sha !== "string" || !FULL_SHA.test(value.sha) ||
-    typeof value.content !== "string" || value.encoding !== "base64") {
+  if (
+    !value || typeof value.sha !== "string" || !FULL_SHA.test(value.sha) ||
+    typeof value.content !== "string" || value.encoding !== "base64"
+  ) {
     throw new Error("GitHub returned an invalid Sentinel issue ledger blob");
   }
   const normalized = value.content.replaceAll("\n", "");
@@ -253,14 +261,16 @@ const removeRolledBackLedgerEntry = async (
   });
 };
 
-export const reconcileGitHubIssueDelivery = async (input: Readonly<{
-  repositoryRoot: string;
-  token: string;
-  repository: string;
-  workflowRunId: string;
-  serverUrl: string;
-  workflowFailed: boolean;
-}>): Promise<void> => {
+export const reconcileGitHubIssueDelivery = async (
+  input: Readonly<{
+    repositoryRoot: string;
+    token: string;
+    repository: string;
+    workflowRunId: string;
+    serverUrl: string;
+    workflowFailed: boolean;
+  }>,
+): Promise<void> => {
   const reportsDir = `${input.repositoryRoot}/.sentinel/reports`;
   const selectionValue = await optionalJson(`${reportsDir}/github-issue-selection.json`);
   if (selectionValue === null) return;
@@ -327,22 +337,34 @@ export const reconcileGitHubIssueDelivery = async (input: Readonly<{
   );
   if (action === "close_completed") {
     await closeIssue(input.token, input.repository, selection.issue_number);
-    await upsertComment(input.token, input.repository, selection.issue_number, issueEvidenceMarker(selection), evidence);
+    await upsertComment(
+      input.token,
+      input.repository,
+      selection.issue_number,
+      issueEvidenceMarker(selection),
+      evidence,
+    );
   } else if (action === "leave_open_rolled_back") {
     await removeRolledBackLedgerEntry(input.token, input.repository, selection.issue_number, selection.fingerprint);
   }
 
   await Deno.writeTextFile(
     `${reportsDir}/github-issue-reconciliation.json`,
-    `${JSON.stringify({
-      schema_version: 1,
-      issue_number: selection.issue_number,
-      fingerprint: selection.fingerprint,
-      pull_request_number: pullRecord.pull_request_number,
-      pull_request_merged: pullMerged,
-      action,
-      issue_snapshot_matches: issueSnapshotMatches,
-    }, null, 2)}\n`,
+    `${
+      JSON.stringify(
+        {
+          schema_version: 1,
+          issue_number: selection.issue_number,
+          fingerprint: selection.fingerprint,
+          pull_request_number: pullRecord.pull_request_number,
+          pull_request_merged: pullMerged,
+          action,
+          issue_snapshot_matches: issueSnapshotMatches,
+        },
+        null,
+        2,
+      )
+    }\n`,
     { mode: 0o600 },
   );
 };
