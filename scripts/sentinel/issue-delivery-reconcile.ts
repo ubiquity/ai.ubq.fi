@@ -21,7 +21,9 @@ type PullRequest = Readonly<{
   mergedAt: string | null;
   headRef: string;
   headSha: string;
+  headRepository: string;
   baseRef: string;
+  baseRepository: string;
 }>;
 
 type Comment = Readonly<{ id: number; body: string }>;
@@ -86,7 +88,8 @@ const parsePullRequest = (value: unknown): PullRequest => {
     (pull.state !== "open" && pull.state !== "closed") ||
     (pull.merged_at !== null && typeof pull.merged_at !== "string") || !head || !base ||
     typeof head.ref !== "string" || typeof head.sha !== "string" || !FULL_SHA.test(head.sha) ||
-    typeof base.ref !== "string"
+    typeof base.ref !== "string" || typeof head.repo?.full_name !== "string" ||
+    typeof base.repo?.full_name !== "string"
   ) {
     throw new Error("GitHub returned an invalid pull request during issue reconciliation");
   }
@@ -96,7 +99,9 @@ const parsePullRequest = (value: unknown): PullRequest => {
     mergedAt: pull.merged_at as string | null,
     headRef: head.ref,
     headSha: head.sha,
+    headRepository: head.repo.full_name,
     baseRef: base.ref,
+    baseRepository: base.repo.full_name,
   };
 };
 
@@ -111,7 +116,8 @@ const waitForPullRequestSettlement = async (
     );
     if (
       pull.number !== expected.pull_request_number || pull.headRef !== expected.head_branch ||
-      pull.headSha !== expected.head_sha || pull.baseRef !== expected.base_branch
+      pull.headSha !== expected.head_sha || pull.baseRef !== expected.base_branch ||
+      pull.headRepository !== repository || pull.baseRepository !== repository
     ) {
       throw new Error("Sentinel issue pull request changed identity before reconciliation");
     }
@@ -385,33 +391,8 @@ export const reconcileGitHubIssueDelivery = async (
     marker,
   );
   if (durableEvidence !== null) {
-    const issueState = await getIssueState(
-      input.token,
-      input.repository,
-      selection.issue_number,
-    );
-    if (issueState.state === "open") {
-      await closeIssue(input.token, input.repository, selection.issue_number);
-    } else if (issueState.stateReason !== "completed") {
-      throw new Error("Sentinel completion evidence exists on an issue closed for a different reason");
-    }
-    await upsertComment(
-      input.token,
-      input.repository,
-      pullRecord.pull_request_number,
-      marker,
-      durableEvidence,
-    );
-    await writeReconciliationReport(reportsDir, {
-      issueNumber: selection.issue_number,
-      fingerprint: selection.fingerprint,
-      pullRequestNumber: pullRecord.pull_request_number,
-      pullRequestMerged: true,
-      action: "close_completed",
-      issueSnapshotMatches: true,
-      durableCompletionEvidenceReused: true,
-    });
-    return;
+    // Comment text is untrusted and may have been copied by an attacker. Reconcile
+    // the live PR, outcome, disposition, and issue snapshot before reusing it.
   }
 
   const pull = await waitForPullRequestSettlement(input.token, input.repository, pullRecord);
@@ -444,6 +425,10 @@ export const reconcileGitHubIssueDelivery = async (
     pullRequestMerged: pullMerged,
     issueSnapshotMatches,
   });
+  const issueState = await getIssueState(input.token, input.repository, selection.issue_number);
+  if (action === "close_completed" && issueState.state === "closed" && issueState.stateReason !== "completed") {
+    throw new Error("Sentinel completion evidence exists on an issue closed for a different reason");
+  }
   const workflowEvidence = await productionWorkflowEvidence(reportsDir);
   const workflowRunUrl = `${input.serverUrl}/${input.repository}/actions/runs/${input.workflowRunId}`;
   const evidence = renderIssueDeliveryEvidence({

@@ -22,7 +22,9 @@ export type PullRequest = Readonly<{
   body: string;
   headRef: string;
   headSha: string;
+  headRepository?: string;
   baseRef: string;
+  baseRepository?: string;
 }>;
 
 const requiredEnvironment = (name: string): string => {
@@ -85,6 +87,12 @@ const parsePullRequest = (value: unknown): PullRequest => {
   const base = pull?.base && typeof pull.base === "object" && !Array.isArray(pull.base)
     ? pull.base as Record<string, unknown>
     : null;
+  const headRepo = head?.repo && typeof head.repo === "object" && !Array.isArray(head.repo)
+    ? head.repo as Record<string, unknown>
+    : null;
+  const baseRepo = base?.repo && typeof base.repo === "object" && !Array.isArray(base.repo)
+    ? base.repo as Record<string, unknown>
+    : null;
   if (
     !pull || !Number.isSafeInteger(pull.number) || (pull.number as number) <= 0 ||
     typeof pull.html_url !== "string" || !/^https:\/\/github\.com\//u.test(pull.html_url) ||
@@ -93,7 +101,8 @@ const parsePullRequest = (value: unknown): PullRequest => {
     (pull.body !== null && typeof pull.body !== "string") || !head || !base ||
     typeof head.ref !== "string" || !SAFE_BRANCH.test(head.ref) ||
     typeof head.sha !== "string" || !FULL_SHA.test(head.sha) ||
-    typeof base.ref !== "string" || !SAFE_BRANCH.test(base.ref)
+    typeof base.ref !== "string" || !SAFE_BRANCH.test(base.ref) ||
+    typeof headRepo?.full_name !== "string" || typeof baseRepo?.full_name !== "string"
   ) {
     throw new Error("GitHub returned an invalid pull request");
   }
@@ -105,7 +114,9 @@ const parsePullRequest = (value: unknown): PullRequest => {
     body: (pull.body as string | null) ?? "",
     headRef: head.ref,
     headSha: head.sha,
+    headRepository: headRepo.full_name,
     baseRef: base.ref,
+    baseRepository: baseRepo.full_name,
   };
 };
 
@@ -171,10 +182,12 @@ export const matchingIssueDeliveryPullRequests = (
   marker: string,
   candidateSha: string,
   candidateBranch: string,
+  repository?: string,
 ): PullRequest[] =>
   pulls.filter((pull) =>
     pull.body.includes(marker) && pull.headSha === candidateSha && pull.headRef === candidateBranch &&
-    pull.baseRef === "development"
+    pull.baseRef === "development" &&
+    (repository === undefined || (pull.headRepository === repository && pull.baseRepository === repository))
   );
 
 export const ensureIssuePullRequestForDevelopmentPush = async (
@@ -227,6 +240,7 @@ export const ensureIssuePullRequestForDevelopmentPush = async (
     marker,
     update.localSha,
     cycle.temporary_branch,
+    input.repository,
   );
   if (existing.length > 1) {
     throw new Error("More than one pull request exists for the concrete Sentinel issue delivery attempt");
@@ -278,7 +292,8 @@ export const ensureIssuePullRequestForDevelopmentPush = async (
   }
   if (
     pull.state !== "open" || pull.mergedAt !== null || pull.headRef !== cycle.temporary_branch ||
-    pull.headSha !== update.localSha || pull.baseRef !== "development" || !pull.body.includes(marker)
+    pull.headSha !== update.localSha || pull.baseRef !== "development" ||
+    pull.headRepository !== input.repository || pull.baseRepository !== input.repository || !pull.body.includes(marker)
   ) {
     throw new Error("Sentinel issue pull request failed its post-creation identity check");
   }
