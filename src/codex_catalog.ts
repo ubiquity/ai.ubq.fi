@@ -30,6 +30,7 @@ import { getString, isRecord, sha256Hex } from "./utils.ts";
 import { fetchMeteredModels, METERED_MODELS_CACHE_TTL_MS } from "./metered.ts";
 import { recordSentinelProviderDegradationFromEnvironment } from "./sentinel_incident_outbox.ts";
 import { fetchSurplusModels, SURPLUS_MODELS_CACHE_TTL_MS } from "./surplus.ts";
+import { recentModelContextFor } from "./recent_model_context.ts";
 
 export const CODEX_CATALOG_FRESH_MS = 5 * 60_000;
 export const CODEX_CATALOG_RETENTION_MS = 24 * 60 * 60_000;
@@ -591,36 +592,48 @@ const meteredCodexModelRecord = (
     owned_by: string;
     supported_endpoint_types: readonly string[];
   }>,
-) => ({
-  slug: model.id,
-  display_name: model.id,
-  description: model.description,
-  owned_by: model.owned_by,
-  supported_endpoint_types: [...model.supported_endpoint_types],
-  supported_reasoning_levels: /^deepseek-v4-flash(?:-0731|:web)?$/.test(model.id)
-    ? [
-      { effort: "none", description: "Disable optional reasoning" },
-      { effort: "low", description: "Reasoning effort: low" },
-      { effort: "high", description: "Reasoning effort: high" },
-      { effort: "max", description: "Maximum reasoning depth" },
-    ]
-    : [{ effort: "none", description: "No reasoning" }],
-  default_reasoning_level: /^deepseek-v4-flash(?:-0731|:web)?$/.test(model.id) ? "high" : "none",
-  shell_type: "shell_command",
-  visibility: "list",
-  supported_in_api: true,
-  priority: 1000,
-  availability_nux: null,
-  upgrade: null,
-  base_instructions: "",
-  support_verbosity: false,
-  default_verbosity: null,
-  apply_patch_tool_type: null,
-  web_search_tool_type: "text",
-  truncation_policy: { mode: "tokens", limit: 10000 },
-  supports_parallel_tool_calls: false,
-  experimental_supported_tools: [],
-});
+) => {
+  const context = recentModelContextFor(model.id);
+  return {
+    slug: model.id,
+    display_name: model.id,
+    description: model.description,
+    owned_by: model.owned_by,
+    supported_endpoint_types: [...model.supported_endpoint_types],
+    supported_reasoning_levels: /^deepseek-v4-flash(?:-0731|:web)?$/.test(model.id)
+      ? [
+        { effort: "none", description: "Disable optional reasoning" },
+        { effort: "low", description: "Reasoning effort: low" },
+        { effort: "high", description: "Reasoning effort: high" },
+        { effort: "max", description: "Maximum reasoning depth" },
+      ]
+      : [{ effort: "none", description: "No reasoning" }],
+    default_reasoning_level: /^deepseek-v4-flash(?:-0731|:web)?$/.test(model.id) ? "high" : "none",
+    ...(context
+      ? {
+        model_class: context.model_class,
+        context_window: context.context_window_tokens,
+        max_context_window: context.max_context_window_tokens,
+        auto_compact_token_limit: context.auto_compact_token_limit_tokens,
+        effective_context_window_percent: context.effective_context_window_percent,
+      }
+      : {}),
+    shell_type: "shell_command",
+    visibility: "list",
+    supported_in_api: true,
+    priority: 1000,
+    availability_nux: null,
+    upgrade: null,
+    base_instructions: "",
+    support_verbosity: false,
+    default_verbosity: null,
+    apply_patch_tool_type: null,
+    web_search_tool_type: "text",
+    truncation_policy: { mode: "tokens", limit: 10000 },
+    supports_parallel_tool_calls: false,
+    experimental_supported_tools: [],
+  };
+};
 
 const uniqueResponsesModels = <
   T extends Readonly<{
