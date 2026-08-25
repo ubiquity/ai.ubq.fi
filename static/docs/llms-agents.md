@@ -47,6 +47,19 @@ For app integrations, name the client credential `UOS_AI_TOKEN` or another gatew
 
 The gateway never forwards your client token upstream. It uses Codex CLI auth configured on the server.
 
+Administrators can upload a fresh Codex `auth.json` through the repository helper. Run these commands from an existing
+`ai.ubq.fi` checkout (the directory containing `deno.json` and `scripts/upload-codex-auth.ts`):
+
+```bash
+cd "$(git rev-parse --show-toplevel)"
+export DENO_DEPLOY_TOKEN="..."
+deno task upload:auth --url https://ai.ubq.fi --auth-json ~/.codex/auth.json
+deno task upload:auth --url https://ai.ubq.fi --auth-json /secure/path/to/second-account-auth.json
+```
+
+Treat `auth.json` as a secret because it contains refresh tokens. The helper sends it only to the authenticated admin
+route; never put its contents in a client request or commit it.
+
 ### GitHub token headers (kernel auth)
 
 When using a GitHub token for any `/v1/*` route, include:
@@ -420,6 +433,22 @@ no-model requests fail with `503` instead of fetching a live fallback catalog.
 `GET /uos/models/capabilities` is the endpoint to inspect reasoning support and token-window limits programmatically.
 `/v1/models` remains OpenAI-compatible and does not include gateway metadata.
 
+## Output-token caps by endpoint and provider
+
+`max_completion_tokens` is the OpenAI Chat Completions cap; `max_output_tokens` is the OpenAI Responses cap. Both are
+positive-integer output caps, not quota or health indicators. Their transport behavior depends on the selected route:
+
+| Request and provider                          | Gateway/upstream behavior                                                                                                                                 |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Chat Completions to Codex                     | `max_completion_tokens` is translated to the Codex Responses field `max_output_tokens`.                                                                   |
+| Responses to Codex                            | `max_output_tokens` is forwarded as `max_output_tokens`.                                                                                                  |
+| Chat Completions to Cerebras (`gpt-oss-120b`) | `max_completion_tokens` is forwarded unchanged to Cerebras.                                                                                               |
+| Paid fallback (Metered or Surplus)            | The provider uses its Responses API, so Chat `max_completion_tokens` arrives as `max_output_tokens`, and Responses `max_output_tokens` remains unchanged. |
+
+Do not swap these fields between endpoints: Chat Completions accepts `max_completion_tokens`, while Responses accepts
+`max_output_tokens`. The paid-fallback cap limits generated output; it does not report the provider's remaining paid
+capacity.
+
 ## Ignored parameters and warnings
 
 Requests accept a broad set of OpenAI-compatible keys, but unknown top-level keys are rejected with
@@ -459,7 +488,7 @@ upstream request metadata instead of forwarding client-supplied session identifi
 and will produce warnings when that transport handles the request:
 
 - `temperature` -> `temperature_ignored`
-- `max_tokens`, `max_completion_tokens`, `max_output_tokens` -> `max_output_tokens_ignored`
+- `max_tokens` -> `max_output_tokens_ignored` (the endpoint-specific output-cap fields above are handled separately)
 - `moderation` -> `moderation_ignored`
 
 Any other accepted-but-unused key will emit a `<key>_ignored` warning.

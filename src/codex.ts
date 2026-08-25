@@ -223,15 +223,16 @@ export const upsertCodexAuthAccount = (
   return { accounts, updated_at_ms: Date.now() };
 };
 
-export const getJwtExpMs = (token: string): number | null => {
-  const parts = token.split(".");
-  if (parts.length < 2) return null;
+export const getJwtExpMs = (token: unknown): number | null => {
+  if (typeof token !== "string") return null;
+  const parts = token.trim().split(".");
+  if (parts.length !== 3 || parts[1].length === 0) return null;
   const payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
   const padded = payload + "=".repeat((4 - (payload.length % 4)) % 4);
   try {
     const decoded = decodeBase64ToString(padded);
-    const parsed = JSON.parse(decoded);
-    const exp = typeof parsed?.exp === "number" ? parsed.exp : null;
+    const parsed: unknown = JSON.parse(decoded);
+    const exp = isRecord(parsed) && typeof parsed.exp === "number" && Number.isFinite(parsed.exp) ? parsed.exp : null;
     return exp ? exp * 1000 : null;
   } catch {
     return null;
