@@ -672,7 +672,7 @@ Deno.test("backfill folds pre-existing settled rows into rollups and applies the
 
   const requestKey = paidFallbackRequestV3Key(keyId, "bf-1");
   const requestEntry = await memoryKv.get<PaidFallbackRequestV3>(requestKey);
-  assert.equal(requestEntry.value?.rollup_backfilled_at_ms, now);
+  assert.equal(requestEntry.value?.usage_rollup_at_ms, now);
   assert.ok(memoryKv.expiration(requestKey) !== null, "backfilled row must carry the one-year TTL");
 
   // Re-running must not double count.
@@ -681,6 +681,30 @@ Deno.test("backfill folds pre-existing settled rows into rollups and applies the
   const after = await listPaidFallbackUsageRollups(kv, { sinceMs: now - 30 * DAY_MS, nowMs: now });
   assert.equal(after[0]?.request_count, 1);
   assert.equal(after[0]?.quota_sum, 60);
+});
+
+Deno.test("settlement marks the row so a later backfill never double counts", async () => {
+  await withMeteredEnv(async () => {
+    seedKeyRecord();
+    const now = Date.now();
+    const reservation = await reserve("qp-live-then-backfill", now);
+    await settleSurplus(reservation);
+
+    const row = (await memoryKv.get<PaidFallbackRequestV3>(
+      paidFallbackRequestV3Key(keyId, reservation.request_id),
+    )).value;
+    assert.ok(row, "settled row must exist");
+    assert.equal(row.usage_rollup_at_ms, row.settled_at_ms, "settled rows carry the rollup marker");
+
+    const backfill = await backfillPaidFallbackUsageRollups(kv, { nowMs: now });
+    assert.equal(backfill.processed, 0, "live-settled rows must not be re-folded");
+    assert.equal(backfill.rollups_written, 0);
+
+    const rollups = await listPaidFallbackUsageRollups(kv, { sinceMs: now - 30 * DAY_MS, nowMs: now });
+    assert.equal(rollups.length, 1);
+    assert.equal(rollups[0]?.request_count, 1);
+    assert.equal(rollups[0]?.quota_sum, 86);
+  });
 });
 
 Deno.test("backfill is resumable with a limit and skips pending rows for rollups", async () => {

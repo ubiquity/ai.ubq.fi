@@ -991,6 +991,9 @@ const settlePaidFallbackRequestV3 = async (
       last_reconciliation_at_ms: now,
       settled_at_ms: request.settled_at_ms ?? now,
       updated_at_ms: now,
+      // The settlement write just folded this usage into the hourly rollup;
+      // mark it so a later backfill run cannot double-count it.
+      ...(model && provider ? { usage_rollup_at_ms: now } : {}),
     }, { expireIn: requestRowExpireIn(request, now) }).delete(pendingKey);
     if (model && provider) {
       atomic = atomic.check(rollupEntry).set(rollupKey, nextRollup);
@@ -1079,10 +1082,10 @@ export type PaidFallbackRollupBackfillResult = Readonly<{
  * that predate the TTL, because every request-row write now re-applies an
  * anchored expiry and these rows will not be rewritten by normal traffic.
  *
- * Idempotency: rows carry `rollup_backfilled_at_ms` written in the same atomic
- * as the rollup merge, so an interrupted or repeated run can never double
- * count already-backed-up settlements. Run with a `limit` and re-run until
- * `truncated` is false.
+ * Idempotency: rows carry `usage_rollup_at_ms` set by the settlement write for
+ * new traffic and by this backfill for historical rows, so a run can never
+ * double-count usage already folded into a rollup. Run with a `limit` and
+ * re-run until `truncated` is false.
  */
 export const backfillPaidFallbackUsageRollups = async (
   kv: Deno.Kv,
@@ -1105,7 +1108,7 @@ export const backfillPaidFallbackUsageRollups = async (
     const requestEntry = await kv.get<PaidFallbackRequestV3>(requestKey, { consistency: "strong" });
     const request = requestEntry.value;
     if (!request) continue;
-    if (typeof request.rollup_backfilled_at_ms === "number") continue;
+    if (typeof request.usage_rollup_at_ms === "number") continue;
     if (budget <= 0) return { scanned, processed, rollups_written: rollupsWritten, truncated: true };
     budget -= 1;
 
@@ -1135,9 +1138,15 @@ export const backfillPaidFallbackUsageRollups = async (
         updated_at_ms: nowMs,
       })
       : null;
+    // The rollup marker is set only when a rollup was actually written; a
+    // pending row is TTL-refreshed but left unmarked so a later live
+    // settlement owns its rollup content.
+    const nextRow = nextRollup
+      ? { ...request, updated_at_ms: nowMs, usage_rollup_at_ms: nowMs }
+      : { ...request, updated_at_ms: nowMs };
     let atomic = kv.atomic()
       .check(requestEntry)
-      .set(requestKey, { ...request, updated_at_ms: nowMs, rollup_backfilled_at_ms: nowMs }, {
+      .set(requestKey, nextRow, {
         expireIn: requestRowExpireIn(request, nowMs),
       });
     if (nextRollup && rollupKey && rollupEntry) {

@@ -59,8 +59,9 @@ computes estimates but flags them for the UI.
 
 `POST /admin/providers/quota-projection/backfill?limit=N` folds already-settled V3 rows (which predate this feature and
 never passed through the settlement hook) into rollups and applies the anchored raw-row TTL to pre-existing rows. It is
-idempotent and resumable: rows carry `rollup_backfilled_at_ms` written in the same atomic as the merge, and the `limit`
-budgets rows needing work, not already-backfilled ones. Repeat until `truncated` is false.
+idempotent and resumable: rows carry `usage_rollup_at_ms` set by the settlement write for live traffic and by this
+backfill for historical rows, so a run can never double-count usage already folded into a rollup. The `limit` budgets
+rows needing work, not already-backfilled ones. Repeat until `truncated` is false.
 
 The balance samples, rollups and request rows are registered in `kv_migration.ts` `DURABLE_PREFIXES` so KV export and
 import preserve them.
