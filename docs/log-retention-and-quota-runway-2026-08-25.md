@@ -39,13 +39,15 @@ balance sample per refresh; at most one sample per hour bucket is kept.
 
 ## Quota-runway projection
 
-`GET /admin/providers/quota-projection` (admin auth) returns:
+`GET /admin/providers/quota-projection?window_days=7|30|90` (admin auth, default 30) returns:
 
+- `window_days` — the requested consumption window; the rollup scan is bounded to it so the 30-second admin poll never
+  pulls the full 90-day history.
 - `quota` — normalized Metered quota view (wallet balance, baseline, remaining percent, totals in token-usage mode,
   refill facts).
-- `models[]` — per model-provider, per window (7/30/90 days): request count, quota sum, average quota per request, quota
+- `models[]` — per model-provider, for the requested window: request count, quota sum, average quota per request, quota
   per hour, token and spend sums.
-- `estimates[]` — per window: requests remaining, run-time remaining, estimated exhaustion timestamp, and
+- `estimates[]` — for the requested window: requests remaining, run-time remaining, estimated exhaustion timestamp, and
   percent-of-balance / percent-of-baseline knocked per request.
 - `balance_history` — trailing seven days of hourly balance samples.
 

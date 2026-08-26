@@ -2720,11 +2720,13 @@ const renderQuotaProjection = (payload) => {
     }
   }
   const bucketCount = balanceHistory.length;
+  const windowDays = typeof payload?.window_days === "number" ? payload.window_days : 30;
+  const windowLabel = `${windowDays}-day`;
   quotaRunwayNote.textContent = bucketCount
     ? `${
       formatNumber(bucketCount)
-    } hourly balance samples in the trailing seven days · estimates use 7/30/90-day consumption windows · raw request rows retain one year; hourly model rollups are retained indefinitely.`
-    : "Estimates use 7/30/90-day consumption windows · raw request rows retain one year; hourly model rollups are retained indefinitely.";
+    } hourly balance samples in the trailing seven days · estimates use the ${windowLabel} consumption window · raw request rows retain one year; hourly model rollups are retained indefinitely.`
+    : `Estimates use the ${windowLabel} consumption window · raw request rows retain one year; hourly model rollups are retained indefinitely.`;
   renderQuotaProjectionRows(payload);
 };
 

@@ -2199,25 +2199,34 @@ export const handleAdminKernelUsageDelete = async (req: Request): Promise<Respon
   return json(200, { ok: true, scope, repo: { owner, repo }, deleted: true });
 };
 
-const QUOTA_PROJECTION_RAW_LOG_WINDOW_MS = 90 * 24 * 60 * 60 * 1_000;
 const QUOTA_PROJECTION_BALANCE_HISTORY_MS = 7 * 24 * 60 * 60 * 1_000;
+const QUOTA_PROJECTION_ALLOWED_WINDOWS = new Set([7, 30, 90] as const);
+const QUOTA_PROJECTION_DEFAULT_WINDOW_DAYS = 30 as const;
 
 /**
  * Admin quota-runway view: per-model consumption from retained rollups plus
  * exhaustion estimates against the current Metered balance. Reads only the
- * compact stores; never scans raw request rows.
+ * compact stores; never scans raw request rows. The `window_days` parameter
+ * bounds the rollup scan (default 30): the UI poll is cheap and does not pull
+ * the full 90-day rollup history on every refresh.
  */
 export const handleAdminProvidersQuotaProjection = async (
-  _request: Request = new Request("https://ai.ubq.fi/admin/providers/quota-projection"),
+  request: Request = new Request("https://ai.ubq.fi/admin/providers/quota-projection"),
 ): Promise<Response> => {
   const kv = await getKv();
   const nowMs = Date.now();
+  const rawWindowDays = Number.parseInt(
+    new URL(request.url).searchParams.get("window_days") ?? "",
+    10,
+  );
+  const windowDays = Number.isInteger(rawWindowDays) &&
+      QUOTA_PROJECTION_ALLOWED_WINDOWS.has(rawWindowDays as 7 | 30 | 90)
+    ? rawWindowDays as 7 | 30 | 90
+    : QUOTA_PROJECTION_DEFAULT_WINDOW_DAYS;
+  const windowMs = windowDays * 24 * 60 * 60 * 1_000;
   const [snapshot, rollups, balanceHistory] = await Promise.all([
     getConfiguredMeteredQuotaSnapshot({ kv }).catch(() => null),
-    kv
-      ? listPaidFallbackUsageRollups(kv, { sinceMs: nowMs - QUOTA_PROJECTION_RAW_LOG_WINDOW_MS, nowMs })
-        .catch(() => [])
-      : Promise.resolve([]),
+    kv ? listPaidFallbackUsageRollups(kv, { sinceMs: nowMs - windowMs, nowMs }).catch(() => []) : Promise.resolve([]),
     kv
       ? readMeteredQuotaBalanceHistory(kv, { sinceMs: nowMs - QUOTA_PROJECTION_BALANCE_HISTORY_MS, nowMs })
         .catch(() => [])
@@ -2228,14 +2237,15 @@ export const handleAdminProvidersQuotaProjection = async (
   const models = usage.map((entry) => ({
     model: entry.model,
     provider: entry.provider,
-    usage: entry.windows,
-    estimates: projectPaidFallbackRunway(entry, quota, nowMs),
+    usage: entry.windows.filter((window) => window.window_days === windowDays),
+    estimates: projectPaidFallbackRunway(entry, quota, nowMs).filter((estimate) => estimate.window_days === windowDays),
   }));
   return json(200, {
     snapshot_at_ms: nowMs,
+    window_days: windowDays,
     retention: {
       rollup_bucket_ms: PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS,
-      rollup_window_ms: QUOTA_PROJECTION_RAW_LOG_WINDOW_MS,
+      rollup_window_ms: windowMs,
       balance_history_window_ms: QUOTA_PROJECTION_BALANCE_HISTORY_MS,
     },
     quota,
