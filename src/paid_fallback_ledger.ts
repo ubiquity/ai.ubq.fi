@@ -100,6 +100,10 @@ export const paidFallbackBackfillCursorV3Key = (): Deno.KvKey => [
   ...PREFIX,
   "rollup_backfill_cursor",
 ];
+export const paidFallbackBackfillWindowCursorV3Key = (): Deno.KvKey => [
+  ...PREFIX,
+  "rollup_backfill_window_cursor",
+];
 export const paidFallbackDeletionGuardV3Key = (keyId: string): Deno.KvKey => [
   ...PREFIX,
   "deletion_guard",
@@ -1283,16 +1287,59 @@ export const backfillPaidFallbackUsageRollups = async (
     }
     return { scanned, processed, rollups_written: rollupsWritten, failed: failedRows, truncated: true };
   }
-  // Existing window rows never pass through the live writes that apply the
-  // anchored expiry (imports restore them without TTL too). Rewrite the
-  // window prefix in place; the rewrite is idempotent so a re-run is safe.
-  let windowsRewritten = 0;
-  for await (
-    const entry of kv.list<PaidFallbackWindowV3>({ prefix: paidFallbackWindowV3GlobalPrefix })
-  ) {
-    if (windowsRewritten >= scanBudget) break;
-    const window = entry.value;
-    if (!isPaidFallbackWindowV3(window)) continue;
+  // Full sweep complete: drop the resume cursor.
+  await kv.atomic().delete(cursorKey).commit().catch(() => {});
+  return { scanned, processed, rollups_written: rollupsWritten, failed: 0, truncated: false };
+};
+
+export type PaidFallbackWindowTtlBackfillResult = Readonly<{
+  scanned: number;
+  rewritten: number;
+  truncated: boolean;
+}>;
+
+/**
+ * Resumable sweep that applies the anchored one-year window TTL to existing
+ * window rows. Window writes in live paths already carry the expiry; rows
+ * written before this feature or restored by KV import do not, so they must
+ * be rewritten in place. The rewrite is idempotent and each run bounds the
+ * work, persisting its own cursor so repeated invocations complete the whole
+ * prefix.
+ */
+export const backfillPaidFallbackWindowTtls = async (
+  kv: Deno.Kv,
+  options: Readonly<{ limit?: number; nowMs?: number }> = {},
+): Promise<PaidFallbackWindowTtlBackfillResult> => {
+  const limit = Math.max(1, Math.min(10_000, Math.trunc(options.limit ?? 5_000)));
+  const nowMs = Math.trunc(options.nowMs ?? Date.now());
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new Error("Paid fallback window TTL clock is invalid");
+  const cursorKey = paidFallbackBackfillWindowCursorV3Key();
+  let resumeKey: Deno.KvKey | null = null;
+  const cursorEntry = await kv.get<{ request_key: unknown }>(cursorKey).catch(() => null);
+  if (cursorEntry?.value && Array.isArray(cursorEntry.value.request_key)) {
+    resumeKey = cursorEntry.value.request_key as Deno.KvKey;
+  }
+  let scanned = 0;
+  let rewritten = 0;
+  let lastRewrittenKey: Deno.KvKey | null = null;
+  const selector: Deno.KvListSelector = resumeKey
+    ? { prefix: paidFallbackWindowV3GlobalPrefix, start: resumeKey }
+    : { prefix: paidFallbackWindowV3GlobalPrefix };
+  let skippingResumeRow = resumeKey !== null;
+  for await (const entry of kv.list<PaidFallbackWindowV3>(selector)) {
+    scanned += 1;
+    // `start` is inclusive; skip the cursor row itself so a resumed run is
+    // not forced to rewrite it and then trip the batch limit again.
+    if (
+      skippingResumeRow && resumeKey &&
+      entry.key.length === resumeKey.length &&
+      entry.key.every((part, index) => part === resumeKey![index])
+    ) {
+      skippingResumeRow = false;
+      continue;
+    }
+    const window = isPaidFallbackWindowV3(entry.value) ? entry.value : null;
+    if (!window) continue;
     const windowEntry = await kv.get<PaidFallbackWindowV3>(entry.key, { consistency: "strong" });
     if (!isPaidFallbackWindowV3(windowEntry.value)) continue;
     try {
@@ -1300,14 +1347,36 @@ export const backfillPaidFallbackUsageRollups = async (
         .check(windowEntry)
         .set(entry.key, windowEntry.value, { expireIn: windowExpireIn(windowEntry.value, nowMs) })
         .commit();
-      if (committed.ok) windowsRewritten += 1;
+      if (committed.ok) {
+        lastRewrittenKey = entry.key;
+        rewritten += 1;
+      }
     } catch {
       // Best effort: a concurrent writer owns the window.
     }
+    if (rewritten >= limit && lastRewrittenKey) {
+      // Probe for rows beyond this batch before reporting truncation, so the
+      // final batch is never reported as incomplete.
+      let hasMore = false;
+      let cursorRowSeen = false;
+      for await (
+        const _probe of kv.list<unknown>({ prefix: paidFallbackWindowV3GlobalPrefix, start: lastRewrittenKey })
+      ) {
+        if (cursorRowSeen) {
+          hasMore = true;
+          break;
+        }
+        cursorRowSeen = true;
+      }
+      if (hasMore) {
+        await kv.atomic().set(cursorKey, { request_key: lastRewrittenKey }).commit().catch(() => {});
+        return { scanned, rewritten, truncated: true };
+      }
+      break;
+    }
   }
-  // Full sweep complete: drop the resume cursor.
   await kv.atomic().delete(cursorKey).commit().catch(() => {});
-  return { scanned, processed, rollups_written: rollupsWritten, failed: 0, truncated: false };
+  return { scanned, rewritten, truncated: false };
 };
 
 export const reconcilePaidFallbackV3 = async (

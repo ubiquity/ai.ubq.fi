@@ -71,6 +71,7 @@ import {
 } from "./paid_fallback.ts";
 import {
   backfillPaidFallbackUsageRollups,
+  backfillPaidFallbackWindowTtls,
   deletePaidFallbackStateV3,
   getPaidFallbackProviderUsageV3,
   getPaidFallbackWindowProjectionV3,
@@ -2282,8 +2283,13 @@ export const handleAdminProvidersQuotaProjectionBackfill = async (
   const limitRaw = Number.parseInt(new URL(request.url).searchParams.get("limit") ?? "", 10);
   const limit = Number.isInteger(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 10_000) : 5_000;
   try {
-    const result = await backfillPaidFallbackUsageRollups(kv, { limit });
-    return json(200, { ...result, completed: !result.truncated });
+    const requests = await backfillPaidFallbackUsageRollups(kv, { limit });
+    const windows = await backfillPaidFallbackWindowTtls(kv, { limit });
+    return json(200, {
+      requests,
+      windows,
+      completed: !requests.truncated && !windows.truncated,
+    });
   } catch (error) {
     return openaiError(
       500,

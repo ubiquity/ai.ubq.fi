@@ -197,9 +197,12 @@ const {
 } = await import("../src/paid_fallback.ts");
 const {
   backfillPaidFallbackUsageRollups,
+  backfillPaidFallbackWindowTtls,
   PAID_FALLBACK_REQUEST_LOG_RETENTION_MS,
   paidFallbackBackfillCursorV3Key,
+  paidFallbackBackfillWindowCursorV3Key,
   paidFallbackRequestV3Key,
+  paidFallbackWindowV3Key,
 } = await import("../src/paid_fallback_ledger.ts");
 const {
   listPaidFallbackUsageRollups,
@@ -219,6 +222,7 @@ denoWithKv.openKv = originalOpenKv;
 
 type ApiKeyRecord = import("../src/types.ts").ApiKeyRecord;
 type PaidFallbackRequestV3 = import("../src/types.ts").PaidFallbackRequestV3;
+type PaidFallbackWindowV3 = import("../src/types.ts").PaidFallbackWindowV3;
 type MeteredQuotaSnapshot = import("../src/metered_quota.ts").MeteredQuotaSnapshot;
 
 const keyId = "quota-projection-key";
@@ -773,6 +777,34 @@ Deno.test("backfill scan budget trips before the deadline and keeps forward prog
   assert.equal(second.rollups_written, 1);
   const rollups = await listPaidFallbackUsageRollups(kv, { sinceMs: now - 30 * DAY_MS, nowMs: now });
   assert.equal(rollups.reduce((sum, rollup) => sum + rollup.request_count, 0), 1);
+});
+
+Deno.test("window TTL backfill is resumable across batches", async () => {
+  seedKeyRecord();
+  const now = Date.now();
+  const windowRow = (resetAtMs: number): PaidFallbackWindowV3 => ({
+    v: 3,
+    key_id: keyId,
+    policy_version: "60000:123",
+    window_reset_at_ms: resetAtMs,
+    limit_microcredits: 5_000_000,
+    settled_microcredits: 100,
+    reserved_microcredits: 0,
+    pending_count: 0,
+    updated_at_ms: now,
+  });
+  await memoryKv.set(paidFallbackWindowV3Key(keyId, now - 2 * DAY_MS), windowRow(now - 2 * DAY_MS));
+  await memoryKv.set(paidFallbackWindowV3Key(keyId, now + DAY_MS), windowRow(now + DAY_MS));
+  const partial = await backfillPaidFallbackWindowTtls(kv, { limit: 1, nowMs: now });
+  assert.equal(partial.rewritten, 1);
+  assert.equal(partial.truncated, true);
+  assert.ok((await memoryKv.get(paidFallbackBackfillWindowCursorV3Key())).value !== null);
+  const remainder = await backfillPaidFallbackWindowTtls(kv, { limit: 1, nowMs: now });
+  assert.equal(remainder.rewritten, 1);
+  assert.equal(remainder.truncated, false);
+  assert.equal((await memoryKv.get(paidFallbackBackfillWindowCursorV3Key())).value, null);
+  assert.ok(memoryKv.expiration(paidFallbackWindowV3Key(keyId, now - 2 * DAY_MS)) !== null);
+  assert.ok(memoryKv.expiration(paidFallbackWindowV3Key(keyId, now + DAY_MS)) !== null);
 });
 
 Deno.test("backfill retries a row whose shard CAS failed instead of advancing past it", async () => {
