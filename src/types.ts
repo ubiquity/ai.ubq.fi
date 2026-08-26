@@ -253,6 +253,8 @@ export type PaidFallbackRequestV3 = Readonly<{
   settled_at_ms: number | null;
   created_at_ms: number;
   updated_at_ms: number;
+  /** Set by the one-time rollup backfill so re-runs never double count. */
+  rollup_backfilled_at_ms?: number | null;
 }>;
 
 export type KernelAuthUsageRecord = Readonly<{

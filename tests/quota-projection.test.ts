@@ -190,6 +190,7 @@ const {
   reservePaidFallback,
 } = await import("../src/paid_fallback.ts");
 const {
+  backfillPaidFallbackUsageRollups,
   PAID_FALLBACK_REQUEST_LOG_RETENTION_MS,
   paidFallbackRequestV3Key,
 } = await import("../src/paid_fallback_ledger.ts");
@@ -573,8 +574,35 @@ Deno.test("token-usage and unlimited quota modes do not fabricate estimates", ()
   const tokenQuota = meteredQuotaRunwayView(tokenSnapshotFull);
   const tokenEstimates = projectPaidFallbackRunway(entry[0]!, tokenQuota, now);
   const token30 = tokenEstimates.find((estimate) => estimate.window_days === 30)!;
-  // Available 600 quota units remain at 60 quota per 2 requests → 20 requests.
-  assert.equal(token30.requests_remaining, 20);
+  // total_available is the remaining inventory ("Available tokens"), so the
+  // balance is 1000 quota units at 30 quota per request → 33 requests.
+  // Subtracting total_used again would double-count consumption.
+  assert.equal(token30.requests_remaining, 33);
+  assert.equal(token30.stale_balance, false);
+
+  const staleQuota = meteredQuotaRunwayView({ ...tokenSnapshotFull, cache_state: "stale" });
+  const staleEstimates = projectPaidFallbackRunway(entry[0]!, staleQuota, now);
+  assert.equal(staleEstimates.find((estimate) => estimate.window_days === 30)?.stale_balance, true);
+
+  // Surplus has its own billing and no monitored quota; never project it
+  // against the OpenLux balance.
+  const surplusSeries = groupPaidFallbackUsageRollups([{
+    v: 1,
+    bucket_start_at_ms: now - HOUR_MS,
+    model: "gpt-5.6-sol",
+    provider: "surplus",
+    request_count: 2,
+    quota_sum: 60,
+    input_tokens: 100,
+    cached_input_tokens: 0,
+    output_tokens: 20,
+    spend_microcredits: 30,
+    first_request_at_ms: now - HOUR_MS + 1,
+    last_request_at_ms: now - 1,
+    updated_at_ms: now - 1,
+  }]);
+  const surplusUsage = summarizePaidFallbackUsage(surplusSeries, now);
+  assert.equal(projectPaidFallbackRunway(surplusUsage[0]!, tokenQuota, now).length, 0);
 
   const unlimitedSnapshotFull: MeteredQuotaSnapshot = {
     ...tokenSnapshotFull,
@@ -594,3 +622,87 @@ Deno.test("token-usage and unlimited quota modes do not fabricate estimates", ()
 function dayMs(): number {
   return 24 * 60 * 60 * 1_000;
 }
+
+const settledRequestRow = (requestId: string, createdAtMs: number): PaidFallbackRequestV3 => ({
+  v: 3,
+  key_id: keyId,
+  request_id: requestId,
+  policy_version: "60000:123",
+  route: "responses",
+  path: "/v1/responses",
+  model: "gpt-5.6-sol",
+  stream: true,
+  reasoning: "high",
+  window_reset_at_ms: createdAtMs + 60_000,
+  reserved_microcredits: 300,
+  quota_per_credit: 1,
+  provider: "metered",
+  provider_request_id: null,
+  provider_quota: 60,
+  input_tokens: 90,
+  cached_input_tokens: null,
+  output_tokens: 10,
+  dispatch_state: "dispatched",
+  terminal_state: "completed",
+  spend_microcredits: 60,
+  billing_state: "settled",
+  reconciliation_attempts: 1,
+  last_reconciliation_at_ms: createdAtMs + 1_000,
+  dispatched_at_ms: createdAtMs + 500,
+  terminal_at_ms: createdAtMs + 1_000,
+  settled_at_ms: createdAtMs + 1_000,
+  created_at_ms: createdAtMs,
+  updated_at_ms: createdAtMs + 1_000,
+});
+
+Deno.test("backfill folds pre-existing settled rows into rollups and applies the TTL once", async () => {
+  seedKeyRecord();
+  const now = Date.now();
+  await memoryKv.set(paidFallbackRequestV3Key(keyId, "bf-1"), settledRequestRow("bf-1", now - 2 * HOUR_MS));
+  const first = await backfillPaidFallbackUsageRollups(kv, { nowMs: now });
+  assert.equal(first.scanned, 1);
+  assert.equal(first.processed, 1);
+  assert.equal(first.rollups_written, 1);
+  assert.equal(first.truncated, false);
+
+  const rollups = await listPaidFallbackUsageRollups(kv, { sinceMs: now - 30 * DAY_MS, nowMs: now });
+  assert.equal(rollups.length, 1);
+  assert.equal(rollups[0]?.request_count, 1);
+  assert.equal(rollups[0]?.quota_sum, 60);
+
+  const requestKey = paidFallbackRequestV3Key(keyId, "bf-1");
+  const requestEntry = await memoryKv.get<PaidFallbackRequestV3>(requestKey);
+  assert.equal(requestEntry.value?.rollup_backfilled_at_ms, now);
+  assert.ok(memoryKv.expiration(requestKey) !== null, "backfilled row must carry the one-year TTL");
+
+  // Re-running must not double count.
+  const second = await backfillPaidFallbackUsageRollups(kv, { nowMs: now });
+  assert.equal(second.processed, 0);
+  const after = await listPaidFallbackUsageRollups(kv, { sinceMs: now - 30 * DAY_MS, nowMs: now });
+  assert.equal(after[0]?.request_count, 1);
+  assert.equal(after[0]?.quota_sum, 60);
+});
+
+Deno.test("backfill is resumable with a limit and skips pending rows for rollups", async () => {
+  seedKeyRecord();
+  const now = Date.now();
+  await memoryKv.set(paidFallbackRequestV3Key(keyId, "bf-a"), settledRequestRow("bf-a", now - 2 * HOUR_MS));
+  await memoryKv.set(paidFallbackRequestV3Key(keyId, "bf-b"), {
+    ...settledRequestRow("bf-b", now - HOUR_MS),
+    billing_state: "pending",
+    spend_microcredits: null,
+    provider_quota: null,
+  });
+  const partial = await backfillPaidFallbackUsageRollups(kv, { limit: 1, nowMs: now });
+  assert.equal(partial.scanned, 2); // the already-backfilled row is skipped for free
+  assert.equal(partial.processed, 1);
+  assert.equal(partial.truncated, true);
+  const remainder = await backfillPaidFallbackUsageRollups(kv, { limit: 1, nowMs: now });
+  assert.equal(remainder.truncated, false);
+  assert.equal(remainder.rollups_written, 0); // the pending row contributes no rollup
+
+  const rollups = await listPaidFallbackUsageRollups(kv, { sinceMs: now - 30 * DAY_MS, nowMs: now });
+  assert.equal(rollups.length, 1);
+  assert.equal(rollups[0]?.request_count, 1);
+  assert.equal(rollups[0]?.quota_sum, 60);
+});

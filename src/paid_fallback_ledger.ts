@@ -51,6 +51,7 @@ export const paidFallbackPendingV3Key = (keyId: string, requestId: string): Deno
 ];
 const paidFallbackWindowV3Prefix = (keyId: string): Deno.KvKey => [...PREFIX, "window", keyId];
 const paidFallbackRequestV3Prefix = (keyId: string): Deno.KvKey => [...PREFIX, "request", keyId];
+export const paidFallbackRequestV3GlobalPrefix: Deno.KvKey = [...PREFIX, "request"];
 const paidFallbackPendingV3Prefix = (keyId: string): Deno.KvKey => [...PREFIX, "pending", keyId];
 const paidFallbackPendingV3GlobalPrefix: Deno.KvKey = [...PREFIX, "pending"];
 export const paidFallbackReconciliationGateV3Key = (): Deno.KvKey => [
@@ -1057,6 +1058,97 @@ export const settlePaidFallbackUsageV3 = async (
     "surplus_reservation",
   );
   return result.settled;
+};
+
+export type PaidFallbackRollupBackfillResult = Readonly<{
+  scanned: number;
+  /** Rows this run applied (TTL rewrite and/or rollup merge) successfully. */
+  processed: number;
+  rollups_written: number;
+  /** True when the scan stopped at `limit` rows and a further run is needed. */
+  truncated: boolean;
+}>;
+
+/**
+ * One-time backfill that folds already-settled V3 rows into usage rollups and
+ * applies the one-year raw-row TTL to pre-existing rows.
+ *
+ * Rollups are new with this feature: rows settled before deployment never
+ * passed through the settlement hook, so without this pass the admin
+ * projection would silently start from an empty history. It also fixes rows
+ * that predate the TTL, because every request-row write now re-applies an
+ * anchored expiry and these rows will not be rewritten by normal traffic.
+ *
+ * Idempotency: rows carry `rollup_backfilled_at_ms` written in the same atomic
+ * as the rollup merge, so an interrupted or repeated run can never double
+ * count already-backed-up settlements. Run with a `limit` and re-run until
+ * `truncated` is false.
+ */
+export const backfillPaidFallbackUsageRollups = async (
+  kv: Deno.Kv,
+  options: Readonly<{ limit?: number; nowMs?: number }> = {},
+): Promise<PaidFallbackRollupBackfillResult> => {
+  const limit = Math.max(1, Math.min(10_000, Math.trunc(options.limit ?? 5_000)));
+  const nowMs = Math.trunc(options.nowMs ?? Date.now());
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new Error("Paid fallback backfill clock is invalid");
+  // The budget bounds rows that need work, not rows already backfilled, so a
+  // resumed run skips markers cheaply and continues where it stopped.
+  let budget = limit;
+  let scanned = 0;
+  let processed = 0;
+  let rollupsWritten = 0;
+  for await (
+    const entry of kv.list<PaidFallbackRequestV3>({ prefix: paidFallbackRequestV3GlobalPrefix })
+  ) {
+    scanned += 1;
+    const requestKey = entry.key;
+    const requestEntry = await kv.get<PaidFallbackRequestV3>(requestKey, { consistency: "strong" });
+    const request = requestEntry.value;
+    if (!request) continue;
+    if (typeof request.rollup_backfilled_at_ms === "number") continue;
+    if (budget <= 0) return { scanned, processed, rollups_written: rollupsWritten, truncated: true };
+    budget -= 1;
+
+    const settled = request.billing_state === "settled" &&
+      request.provider_quota !== null &&
+      request.spend_microcredits !== null;
+    const model = request.model.trim();
+    const provider = request.provider ?? "metered";
+    const bucketStartAtMs = Math.floor(request.created_at_ms / PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS) *
+      PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS;
+    const rollupKey = paidFallbackUsageRollupKey(bucketStartAtMs, model, provider);
+    const rollupEntry = settled && model
+      ? await kv.get<PaidFallbackUsageRollup>(rollupKey, { consistency: "strong" })
+      : null;
+    const existingRollup = isPaidFallbackUsageRollup(rollupEntry?.value) ? rollupEntry.value : null;
+    const nextRollup = settled && model
+      ? mergePaidFallbackUsageRollup(existingRollup, {
+        bucket_start_at_ms: bucketStartAtMs,
+        model,
+        provider,
+        quota: request.provider_quota,
+        input_tokens: request.input_tokens ?? 0,
+        cached_input_tokens: request.cached_input_tokens ?? null,
+        output_tokens: request.output_tokens ?? 0,
+        spend_microcredits: request.spend_microcredits ?? 0,
+        request_created_at_ms: request.created_at_ms,
+        updated_at_ms: nowMs,
+      })
+      : null;
+    let atomic = kv.atomic()
+      .check(requestEntry)
+      .set(requestKey, { ...request, updated_at_ms: nowMs, rollup_backfilled_at_ms: nowMs }, {
+        expireIn: requestRowExpireIn(request, nowMs),
+      });
+    if (nextRollup && rollupKey && rollupEntry) {
+      atomic = atomic.check(rollupEntry).set(rollupKey, nextRollup);
+    }
+    if ((await atomic.commit()).ok) {
+      processed += 1;
+      if (nextRollup) rollupsWritten += 1;
+    }
+  }
+  return { scanned, processed, rollups_written: rollupsWritten, truncated: false };
 };
 
 export const reconcilePaidFallbackV3 = async (

@@ -190,6 +190,8 @@ export const summarizePaidFallbackUsage = (
 export type PaidFallbackRunwayEstimate = Readonly<{
   window_days: QuotaProjectionWindowDays;
   unlimited: boolean;
+  /** True when the balance snapshot is older than the freshness window. */
+  stale_balance: boolean;
   requests_remaining: number | null;
   time_remaining_ms: number | null;
   exhausted_at_ms: number | null;
@@ -202,38 +204,47 @@ const positiveFinite = (value: number | null | undefined): value is number =>
 
 /**
  * Balance the projection is drawn against. Wallet mode uses the live wallet
- * balance; token-usage mode uses the reported available-minus-used total when
- * the provider publishes an inventory; otherwise there is no authoritative
- * balance and estimates are unknown rather than fabricated.
+ * balance. Token-usage mode reports `total_available` as the remaining
+ * inventory ("Available tokens"), so it is used directly — subtracting
+ * `total_used` would double-count consumption. Otherwise there is no
+ * authoritative balance and estimates are unknown rather than fabricated.
  */
 const runwayBalance = (quota: MeteredQuotaRunwayView): number | null => {
   if (quota.unlimited_quota) return null;
   if (quota.balance_quota !== null) return Math.max(0, quota.balance_quota);
-  if (quota.total_available !== null && quota.total_used !== null) {
-    return Math.max(0, quota.total_available - quota.total_used);
-  }
+  if (quota.total_available !== null) return Math.max(0, quota.total_available);
   return null;
 };
 
 const runwayBaseline = (quota: MeteredQuotaRunwayView): number | null => {
   if (quota.unlimited_quota) return null;
   if (quota.baseline_quota !== null) return Math.max(0, quota.baseline_quota);
-  return quota.total_available ?? null;
+  return quota.total_granted !== null && quota.total_granted > 0 ? quota.total_granted : null;
 };
 
+/**
+ * Projections are only meaningful for the provider whose balance is being
+ * monitored. `METERED_API_KEY` monitors the OpenLux account, which serves
+ * `provider: "metered"` rows; Surplus Intelligence has its own billing with
+ * no quota snapshot in this gateway. Returning no estimate for other
+ * providers avoids reporting Surplus history against the OpenLux balance.
+ */
 export const projectPaidFallbackRunway = (
   usage: PaidFallbackModelUsage,
   quota: MeteredQuotaRunwayView,
   nowMs: number,
 ): PaidFallbackRunwayEstimate[] => {
+  if (usage.provider !== "metered") return [];
   const balanceQuota = runwayBalance(quota);
   const baselineQuota = runwayBaseline(quota);
   const unlimited = quota.unlimited_quota === true;
+  const staleBalance = quota.cache_state === "stale";
   return usage.windows.map((window) => {
     if (unlimited) {
       return {
         window_days: window.window_days,
         unlimited: true,
+        stale_balance: staleBalance,
         requests_remaining: null,
         time_remaining_ms: null,
         exhausted_at_ms: null,
@@ -252,6 +263,7 @@ export const projectPaidFallbackRunway = (
     return {
       window_days: window.window_days,
       unlimited: false,
+      stale_balance: staleBalance,
       requests_remaining: requestsRemaining,
       time_remaining_ms: timeRemainingMs,
       exhausted_at_ms: timeRemainingMs !== null ? nowMs + timeRemainingMs : null,

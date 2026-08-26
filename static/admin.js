@@ -2635,7 +2635,9 @@ const renderQuotaProjectionRows = (payload) => {
       } quota avg/request`
       : "No settled usage in the trailing 30 days";
     const projection = document.createElement("p");
-    if (estimate?.unlimited === true) {
+    if (!estimate) {
+      projection.textContent = "No exhaustion estimate — quota is not monitored for this provider";
+    } else if (estimate?.unlimited === true) {
       projection.textContent = "Unlimited quota — no exhaustion estimate";
     } else if (estimate?.requests_remaining === null || estimate?.requests_remaining === undefined) {
       projection.textContent = "Exhaustion estimate unknown (no quota balance or usage rate)";
@@ -2651,6 +2653,7 @@ const renderQuotaProjectionRows = (payload) => {
       if (typeof knocked === "number") {
         parts.push(`${quotaPercentFormatter.format(knocked)}% of balance per request`);
       }
+      if (estimate.stale_balance === true) parts.push("stale balance snapshot");
       projection.textContent = parts.join(" · ");
     }
     details.append(history, projection);
@@ -2686,8 +2689,8 @@ const renderQuotaProjection = (payload) => {
     const remainingPercent = quota.remaining_percent;
     const balanceText = typeof balanceCredits === "number"
       ? `Balance ${formatNumber(balanceCredits)} credits`
-      : typeof quota.total_available === "number" && typeof quota.total_used === "number"
-      ? `Usage ${formatNumber(quota.total_used)} of ${formatNumber(quota.total_available)}`
+      : typeof quota.total_available === "number"
+      ? `Available ${formatNumber(quota.total_available)} tokens`
       : "Balance unavailable";
     setBadge(
       quotaRunwayBadge,

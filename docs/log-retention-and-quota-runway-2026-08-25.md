@@ -46,16 +46,30 @@ balance sample per refresh; at most one sample per hour bucket is kept.
 - `quota` — normalized Metered quota view (wallet balance, baseline, remaining percent, totals in token-usage mode,
   refill facts).
 - `models[]` — per model-provider, for the requested window: request count, quota sum, average quota per request, quota
-  per hour, token and spend sums.
-- `estimates[]` — for the requested window: requests remaining, run-time remaining, estimated exhaustion timestamp, and
-  percent-of-balance / percent-of-baseline knocked per request.
+  per hour, token and spend sums, plus `quota_source` (only `metered` is monitored).
+- `estimates[]` — for the requested window: requests remaining, run-time remaining, estimated exhaustion timestamp,
+  percent-of-balance / percent-of-baseline knocked per request, and `stale_balance` when the quota snapshot is stale.
+  Surplus rows always get an empty estimates array: `METERED_API_KEY` monitors only the OpenLux account, so projecting
+  Surplus history against it would be wrong.
 - `balance_history` — trailing seven days of hourly balance samples.
+
+Token-usage mode treats `total_available` as the remaining inventory (the gateway UI labels it "Available tokens"); it
+is used directly and never has `total_used` subtracted from it. A stale quota snapshot (`cache_state: "stale"`) still
+computes estimates but flags them for the UI.
+
+`POST /admin/providers/quota-projection/backfill?limit=N` folds already-settled V3 rows (which predate this feature and
+never passed through the settlement hook) into rollups and applies the anchored raw-row TTL to pre-existing rows. It is
+idempotent and resumable: rows carry `rollup_backfilled_at_ms` written in the same atomic as the merge, and the `limit`
+budgets rows needing work, not already-backfilled ones. Repeat until `truncated` is false.
+
+The balance samples, rollups and request rows are registered in `kv_migration.ts` `DURABLE_PREFIXES` so KV export and
+import preserve them.
 
 The math is deliberately conservative: run-time is `remaining balance / quota
 per hour` (from the same window), requests
 remaining is `balance / average
-quota per request`, and the UI states that refill is not assumed. In token-usage mode
-the balance is `total_available - total_used`; unlimited quota yields no exhaustion estimate rather than a fake one.
+quota per request`, and the UI states that refill is not assumed. Unlimited quota yields
+no exhaustion estimate rather than a fake one.
 
 The admin providers view renders this in a "Quota runway" card below the capacity chart (static/admin.html,
 static/admin.js, static/admin.css).

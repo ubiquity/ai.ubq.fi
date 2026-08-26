@@ -635,8 +635,9 @@ const balanceSampleFromState = (
 
 /**
  * Upserts one hourly balance sample. Best-effort: a failure must never fail
- * a quota refresh, and at most one sample is kept per hour bucket. Reader is
- * readMeteredQuotaBalanceHistory.
+ * a quota refresh. Keeps the newest observation in each hour bucket so a
+ * later refresh never leaves the hour's oldest balance on the run-down curve.
+ * Reader is readMeteredQuotaBalanceHistory.
  */
 export const writeMeteredQuotaBalanceSample = async (
   kv: Deno.Kv,
@@ -649,7 +650,7 @@ export const writeMeteredQuotaBalanceSample = async (
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const entry = await kv.get<MeteredQuotaBalanceSample>(key, { consistency: "strong" });
     const existing = isMeteredQuotaBalanceSample(entry.value) ? entry.value : null;
-    if (existing && existing.observed_at_ms >= sample.bucket_start_at_ms) return;
+    if (existing && existing.observed_at_ms >= sample.observed_at_ms) return;
     const committed = await kv.atomic().check(entry).set(key, sample).commit();
     if (committed.ok) return;
   }

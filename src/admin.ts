@@ -70,6 +70,7 @@ import {
   paidFallbackHashFields,
 } from "./paid_fallback.ts";
 import {
+  backfillPaidFallbackUsageRollups,
   deletePaidFallbackStateV3,
   getPaidFallbackProviderUsageV3,
   getPaidFallbackWindowProjectionV3,
@@ -2237,6 +2238,7 @@ export const handleAdminProvidersQuotaProjection = async (
   const models = usage.map((entry) => ({
     model: entry.model,
     provider: entry.provider,
+    quota_source: entry.provider === "metered" ? "metered" : null,
     usage: entry.windows.filter((window) => window.window_days === windowDays),
     estimates: projectPaidFallbackRunway(entry, quota, nowMs).filter((estimate) => estimate.window_days === windowDays),
   }));
@@ -2252,4 +2254,29 @@ export const handleAdminProvidersQuotaProjection = async (
     models,
     balance_history: balanceHistory,
   }, { "Cache-Control": "no-store" });
+};
+
+/**
+ * Admin-triggered one-time backfill of settled V3 rows into usage rollups,
+ * including the anchored raw-row TTL for rows that predate it. Run with a
+ * `limit` and repeat until `truncated` is false; the run is idempotent and
+ * resumable.
+ */
+export const handleAdminProvidersQuotaProjectionBackfill = async (
+  request: Request = new Request("https://ai.ubq.fi/admin/providers/quota-projection/backfill"),
+): Promise<Response> => {
+  const kv = await getKv();
+  if (!kv) return openaiError(503, "KV is unavailable", "server_error");
+  const limitRaw = Number.parseInt(new URL(request.url).searchParams.get("limit") ?? "", 10);
+  const limit = Number.isInteger(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 10_000) : 5_000;
+  try {
+    const result = await backfillPaidFallbackUsageRollups(kv, { limit });
+    return json(200, { ...result, completed: !result.truncated });
+  } catch (error) {
+    return openaiError(
+      500,
+      error instanceof Error ? error.message : "Paid fallback rollup backfill failed",
+      "server_error",
+    );
+  }
 };
