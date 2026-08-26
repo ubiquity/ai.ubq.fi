@@ -13,6 +13,7 @@ import {
   PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS,
   type PaidFallbackUsageRollup,
   paidFallbackUsageRollupKey,
+  paidFallbackUsageRollupShard,
 } from "./paid_fallback_rollups.ts";
 
 const PREFIX = ["uos_ai", "paid_fallback", "v3"] as const;
@@ -30,6 +31,13 @@ export const PAID_FALLBACK_REQUEST_LOG_RETENTION_MS = 365 * 24 * 60 * 60_000;
 
 const requestRowExpireIn = (row: PaidFallbackRequestV3, nowMs: number): number =>
   Math.max(1, row.created_at_ms + PAID_FALLBACK_REQUEST_LOG_RETENTION_MS - nowMs);
+
+/**
+ * Window rows expire one year after their reset so they never outlive the
+ * request rows that validate them; the per-request detail is gone by then.
+ */
+const windowExpireIn = (window: PaidFallbackWindowV3, nowMs: number): number =>
+  Math.max(1, window.window_reset_at_ms + PAID_FALLBACK_REQUEST_LOG_RETENTION_MS - nowMs);
 
 export const paidFallbackWindowV3Key = (keyId: string, resetAtMs: number): Deno.KvKey => [
   ...PREFIX,
@@ -62,6 +70,10 @@ export const paidFallbackReconciliationLeaseV3Key = (keyId: string): Deno.KvKey 
   ...PREFIX,
   "reconciliation_lease",
   keyId,
+];
+export const paidFallbackBackfillCursorV3Key = (): Deno.KvKey => [
+  ...PREFIX,
+  "rollup_backfill_cursor",
 ];
 export const paidFallbackDeletionGuardV3Key = (keyId: string): Deno.KvKey => [
   ...PREFIX,
@@ -548,7 +560,8 @@ export const admitPaidFallbackV3 = async (
       if (!policyChanged) return { kind: "blocked", reason: "limit_exceeded" };
       let atomic = kv.atomic().check(windowEntry).check(deletionGuardEntry);
       if (input.policyCheck) atomic = atomic.check(input.policyCheck);
-      const transition = await atomic.set(windowKey, transitioned).commit();
+      const transition = await atomic.set(windowKey, transitioned, { expireIn: windowExpireIn(transitioned, now) })
+        .commit();
       if (transition.ok) return { kind: "blocked", reason: "limit_exceeded" };
       continue;
     }
@@ -607,7 +620,7 @@ export const admitPaidFallbackV3 = async (
         reserved_microcredits: transitioned.reserved_microcredits + reservation,
         pending_count: transitioned.pending_count + 1,
         updated_at_ms: now,
-      });
+      }, { expireIn: windowExpireIn(transitioned, now) });
     }
     const commit = await atomic.commit();
     if (commit.ok) {
@@ -763,7 +776,7 @@ const releasePaidFallbackBeforeDispatchV3 = async (
         ),
         pending_count: Math.max(0, windowEntry.value.pending_count - 1),
         updated_at_ms: now,
-      });
+      }, { expireIn: windowExpireIn(windowEntry.value, now) });
     }
     if ((await atomic.commit()).ok) return;
   }
@@ -959,11 +972,17 @@ const settlePaidFallbackRequestV3 = async (
     const provider = request.provider ?? (correlation === "surplus_reservation" ? "surplus" : "metered");
     const bucketStartAtMs = Math.floor(request.created_at_ms / PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS) *
       PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS;
-    const rollupKey = paidFallbackUsageRollupKey(bucketStartAtMs, model, provider);
+    const rollupKey = paidFallbackUsageRollupKey(
+      bucketStartAtMs,
+      model,
+      provider,
+      paidFallbackUsageRollupShard(request.request_id),
+    );
     const rollupEntry = await kv.get<PaidFallbackUsageRollup>(rollupKey, { consistency: "strong" });
     const existingRollup = isPaidFallbackUsageRollup(rollupEntry.value) ? rollupEntry.value : null;
     const nextRollup = mergePaidFallbackUsageRollup(existingRollup, {
       bucket_start_at_ms: bucketStartAtMs,
+      request_id: request.request_id,
       model,
       provider,
       quota: providerLog.quota,
@@ -1012,7 +1031,7 @@ const settlePaidFallbackRequestV3 = async (
         ),
         pending_count: Math.max(0, windowEntry.value.pending_count - 1),
         updated_at_ms: now,
-      });
+      }, { expireIn: windowExpireIn(windowEntry.value, now) });
     }
     if ((await atomic.commit()).ok) return { settled: true, retry_delay_ms: null };
   }
@@ -1085,7 +1104,9 @@ export type PaidFallbackRollupBackfillResult = Readonly<{
  * Idempotency: rows carry `usage_rollup_at_ms` set by the settlement write for
  * new traffic and by this backfill for historical rows, so a run can never
  * double-count usage already folded into a rollup. Run with a `limit` and
- * re-run until `truncated` is false.
+ * re-run until `truncated` is false; a persisted cursor resumes the next run
+ * after the last visited row so repeated batches stay O(remaining) rather
+ * than re-walking every already-processed row.
  */
 export const backfillPaidFallbackUsageRollups = async (
   kv: Deno.Kv,
@@ -1100,9 +1121,20 @@ export const backfillPaidFallbackUsageRollups = async (
   let scanned = 0;
   let processed = 0;
   let rollupsWritten = 0;
+  const cursorKey = paidFallbackBackfillCursorV3Key();
+  let resumeKey: Deno.KvKey | null = null;
+  const cursorEntry = await kv.get<{ request_key: unknown }>(cursorKey).catch(() => null);
+  if (cursorEntry?.value && Array.isArray(cursorEntry.value.request_key)) {
+    resumeKey = cursorEntry.value.request_key as Deno.KvKey;
+  }
+  let lastVisitedKey: Deno.KvKey | null = null;
+  const selector: Deno.KvListSelector = resumeKey
+    ? { prefix: paidFallbackRequestV3GlobalPrefix, start: resumeKey }
+    : { prefix: paidFallbackRequestV3GlobalPrefix };
   for await (
-    const entry of kv.list<PaidFallbackRequestV3>({ prefix: paidFallbackRequestV3GlobalPrefix })
+    const entry of kv.list<PaidFallbackRequestV3>(selector)
   ) {
+    lastVisitedKey = entry.key;
     scanned += 1;
     const requestKey = entry.key;
     const requestEntry = await kv.get<PaidFallbackRequestV3>(requestKey, { consistency: "strong" });
@@ -1123,7 +1155,12 @@ export const backfillPaidFallbackUsageRollups = async (
       }
       continue;
     }
-    if (budget <= 0) return { scanned, processed, rollups_written: rollupsWritten, truncated: true };
+    if (budget <= 0) {
+      // Persist the resume cursor so the next run starts after this row
+      // instead of revisiting every already-processed row.
+      await kv.atomic().set(cursorKey, { request_key: lastVisitedKey }).commit().catch(() => {});
+      return { scanned, processed, rollups_written: rollupsWritten, truncated: true };
+    }
     budget -= 1;
 
     const settled = request.billing_state === "settled" &&
@@ -1133,7 +1170,12 @@ export const backfillPaidFallbackUsageRollups = async (
     const provider = request.provider ?? "metered";
     const bucketStartAtMs = Math.floor(request.created_at_ms / PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS) *
       PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS;
-    const rollupKey = paidFallbackUsageRollupKey(bucketStartAtMs, model, provider);
+    const rollupKey = paidFallbackUsageRollupKey(
+      bucketStartAtMs,
+      model,
+      provider,
+      paidFallbackUsageRollupShard(request.request_id),
+    );
     const rollupEntry = settled && model
       ? await kv.get<PaidFallbackUsageRollup>(rollupKey, { consistency: "strong" })
       : null;
@@ -1141,6 +1183,7 @@ export const backfillPaidFallbackUsageRollups = async (
     const nextRollup = settled && model
       ? mergePaidFallbackUsageRollup(existingRollup, {
         bucket_start_at_ms: bucketStartAtMs,
+        request_id: request.request_id,
         model,
         provider,
         quota: request.provider_quota,
@@ -1172,6 +1215,8 @@ export const backfillPaidFallbackUsageRollups = async (
       if (nextRollup) rollupsWritten += 1;
     }
   }
+  // Full sweep complete: drop the resume cursor.
+  await kv.atomic().delete(cursorKey).commit().catch(() => {});
   return { scanned, processed, rollups_written: rollupsWritten, truncated: false };
 };
 

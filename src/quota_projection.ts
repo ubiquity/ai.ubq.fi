@@ -139,7 +139,9 @@ const summarizeWindow = (
   windowDays: QuotaProjectionWindowDays,
   nowMs: number,
 ): PaidFallbackModelUsageWindow => {
-  const windowStartMs = nowMs - windowDays * DAY_MS;
+  // Floor to the hour boundary so the window includes the bucket that
+  // contains its start (hourly bucket-level precision is documented).
+  const windowStartMs = Math.floor((nowMs - windowDays * DAY_MS) / HOUR_MS) * HOUR_MS;
   const inWindow = buckets.filter((bucket) => bucket.bucket_start_at_ms >= windowStartMs);
   const requestCount = inWindow.reduce((sum, bucket) => sum + bucket.request_count, 0);
   const quotaSum = inWindow.reduce((sum, bucket) => sum + bucket.quota_sum, 0);
@@ -151,7 +153,8 @@ const summarizeWindow = (
   const windowHours = windowDays * 24;
   return {
     window_days: windowDays,
-    bucket_count: inWindow.length,
+    // Shards of the same hour count once.
+    bucket_count: new Set(inWindow.map((bucket) => bucket.bucket_start_at_ms)).size,
     request_count: requestCount,
     quota_sum: quotaSum,
     spend_microcredits: inWindow.reduce((sum, bucket) => sum + bucket.spend_microcredits, 0),

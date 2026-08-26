@@ -213,6 +213,10 @@ const TRANSIENT_PREFIXES: Array<{ group: string; prefix: Deno.KvKey }> = [
   { group: "passkey_sessions", prefix: ["uos_ai", "auth", "sessions"] },
   { group: "embeddings_rate", prefix: ["embeddings", "v1", "rate"] },
   { group: "embeddings_jobs", prefix: ["embeddings", "jobs"] },
+  {
+    group: "paid_fallback_v3_backfill_cursor",
+    prefix: ["uos_ai", "paid_fallback", "v3", "rollup_backfill_cursor"],
+  },
 ];
 
 const EMBEDDINGS_CACHE_PREFIXES: Array<{ group: string; prefix: Deno.KvKey }> = [
@@ -535,6 +539,7 @@ const inspectPaidFallbackV3 = async (
   kv: Deno.Kv,
   knownKeyIds: ReadonlySet<string>,
   unlimitedKeyIds: ReadonlySet<string>,
+  nowMs = Date.now(),
 ): Promise<PaidFallbackV3Inventory> => {
   const errors: string[] = [];
   const windows = new Map<string, PaidFallbackWindowV3>();
@@ -672,6 +677,10 @@ const inspectPaidFallbackV3 = async (
   }
 
   for (const [reference, window] of windows) {
+    // Raw request rows expire one year after creation (tiered retention); a
+    // window whose reset is beyond that horizon can no longer be validated
+    // from rows and is out of scope for consistency checks.
+    if (window.window_reset_at_ms + PAID_FALLBACK_REQUEST_LOG_RETENTION_MS <= nowMs) continue;
     const outstanding = [...requests.values()].filter((request) =>
       request.key_id === window.key_id &&
       request.window_reset_at_ms === window.window_reset_at_ms &&

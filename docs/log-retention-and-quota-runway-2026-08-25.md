@@ -64,7 +64,12 @@ backfill for historical rows, so a run can never double-count usage already fold
 rows needing work, not already-backfilled ones. Repeat until `truncated` is false.
 
 The balance samples, rollups and request rows are registered in `kv_migration.ts` `DURABLE_PREFIXES` so KV export and
-import preserve them.
+import preserve them. Window rows expire one year after their reset (matching the raw-row horizon), and migration
+validation skips window consistency checks beyond that horizon instead of reporting aged-out history as corrupt.
+
+Rollup keys are sharded by request id (16 shards) so concurrent settlements of the same model/provider never contend on
+one KV key inside the settlement atomic; readers sum all shards. Windows and rates are hour-bucket precise: the selected
+window includes the bucket that contains its start, and the rate divides by the full window, idle hours included.
 
 The math is deliberately conservative: run-time is `remaining balance / quota
 per hour` (from the same window), requests

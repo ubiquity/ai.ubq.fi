@@ -9,10 +9,31 @@ import { isRecord } from "./utils.ts";
  * estimates survive row expiry. Every settled request contributes exactly one
  * rollup update, so the sums here are authoritative for the settled traffic
  * of the paid fallback provider.
+ *
+ * The hourly key is sharded by request id so concurrent settlements of the
+ * same model/provider never contend on one KV key inside the settlement
+ * atomic; readers sum all shards when aggregating.
  */
 export const PAID_FALLBACK_USAGE_ROLLUP_PREFIX = ["uos_ai", "paid_fallback", "v3", "usage_rollup"] as const;
 export const PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS = 60 * 60 * 1_000;
+export const PAID_FALLBACK_USAGE_ROLLUP_SHARD_COUNT = 16;
 const MAX_ROLLUP_CAS_ATTEMPTS = 8;
+
+const FNV_PRIME = 0x01000193;
+
+/**
+ * Deterministic shard for a request id: spreads concurrent settlements of one
+ * model/provider across PAID_FALLBACK_USAGE_ROLLUP_SHARD_COUNT keys while
+ * keeping every settlement of the same request on one key.
+ */
+export const paidFallbackUsageRollupShard = (requestId: string): number => {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < requestId.length; index += 1) {
+    hash ^= requestId.charCodeAt(index);
+    hash = Math.imul(hash, FNV_PRIME) >>> 0;
+  }
+  return hash % PAID_FALLBACK_USAGE_ROLLUP_SHARD_COUNT;
+};
 
 export type PaidFallbackUsageRollup = Readonly<{
   v: 1;
@@ -34,6 +55,7 @@ export type PaidFallbackUsageRollupInput = Readonly<{
   bucket_start_at_ms: number;
   model: string;
   provider: string;
+  request_id: string;
   quota: number;
   input_tokens: number;
   cached_input_tokens: number | null;
@@ -72,7 +94,8 @@ export const paidFallbackUsageRollupKey = (
   bucketStartAtMs: number,
   model: string,
   provider: string,
-): Deno.KvKey => [...PAID_FALLBACK_USAGE_ROLLUP_PREFIX, bucketStartAtMs, model, provider];
+  shard: number,
+): Deno.KvKey => [...PAID_FALLBACK_USAGE_ROLLUP_PREFIX, bucketStartAtMs, model, provider, shard];
 
 /**
  * Merges one settled request into an existing/hour bucket. Pure so tests can
@@ -119,7 +142,12 @@ export const addPaidFallbackUsageRollup = async (
   if (!model || !provider) return;
   const bucketStartAtMs = Math.trunc(input.bucket_start_at_ms);
   if (!safeInteger(bucketStartAtMs, 0)) return;
-  const key = paidFallbackUsageRollupKey(bucketStartAtMs, model, provider);
+  const key = paidFallbackUsageRollupKey(
+    bucketStartAtMs,
+    model,
+    provider,
+    paidFallbackUsageRollupShard(input.request_id),
+  );
   for (let attempt = 0; attempt < MAX_ROLLUP_CAS_ATTEMPTS; attempt += 1) {
     const entry = await kv.get<PaidFallbackUsageRollup>(key, { consistency: "strong" });
     const existing = isPaidFallbackUsageRollup(entry.value) ? entry.value : null;
@@ -136,7 +164,13 @@ export const listPaidFallbackUsageRollups = async (
 ): Promise<PaidFallbackUsageRollup[]> => {
   if (!kv) return [];
   const entries: PaidFallbackUsageRollup[] = [];
-  const start: Deno.KvKey = [...PAID_FALLBACK_USAGE_ROLLUP_PREFIX, Math.max(0, Math.trunc(options.sinceMs))];
+  // Floor the scan start to the hour boundary so the bucket that contains the
+  // window start is never excluded (bucket-level precision is documented).
+  const start: Deno.KvKey = [
+    ...PAID_FALLBACK_USAGE_ROLLUP_PREFIX,
+    Math.floor(Math.max(0, Math.trunc(options.sinceMs)) / PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS) *
+    PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS,
+  ];
   const end: Deno.KvKey = [
     ...PAID_FALLBACK_USAGE_ROLLUP_PREFIX,
     Math.trunc(options.nowMs) + PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS,

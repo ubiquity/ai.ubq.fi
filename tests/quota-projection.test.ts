@@ -192,6 +192,7 @@ const {
 const {
   backfillPaidFallbackUsageRollups,
   PAID_FALLBACK_REQUEST_LOG_RETENTION_MS,
+  paidFallbackBackfillCursorV3Key,
   paidFallbackRequestV3Key,
 } = await import("../src/paid_fallback_ledger.ts");
 const {
@@ -357,7 +358,7 @@ Deno.test("settlement writes an hourly rollup and retains the raw row for one ye
   });
 });
 
-Deno.test("two requests in one hour bucket accumulate in one rollup row", async () => {
+Deno.test("two requests in one hour bucket accumulate across rollup shards", async () => {
   await withMeteredEnv(async () => {
     seedKeyRecord();
     const now = Date.now();
@@ -368,10 +369,12 @@ Deno.test("two requests in one hour bucket accumulate in one rollup row", async 
     await settleSurplus(second);
 
     const rollups = await listPaidFallbackUsageRollups(kv, { sinceMs: now - 30 * DAY_MS, nowMs: now });
-    assert.equal(rollups.length, 1);
-    assert.equal(rollups[0]?.request_count, 2);
-    assert.equal(rollups[0]?.quota_sum, 172);
-    assert.equal(rollups[0]?.spend_microcredits, 344);
+    const totalRequests = rollups.reduce((sum, rollup) => sum + rollup.request_count, 0);
+    const totalQuota = rollups.reduce((sum, rollup) => sum + rollup.quota_sum, 0);
+    const totalSpend = rollups.reduce((sum, rollup) => sum + rollup.spend_microcredits, 0);
+    assert.equal(totalRequests, 2);
+    assert.equal(totalQuota, 172);
+    assert.equal(totalSpend, 344);
   });
 });
 
@@ -380,8 +383,8 @@ Deno.test("rollup listing respects the requested time range", async () => {
     seedKeyRecord();
     const now = Date.now();
     const hourStart = Math.floor(now / HOUR_MS) * HOUR_MS;
-    const oldBucketKey = paidFallbackUsageRollupKey(hourStart - 2 * HOUR_MS, "gpt-5.6-sol", "metered");
-    const freshBucketKey = paidFallbackUsageRollupKey(hourStart, "gpt-5.6-sol", "metered");
+    const oldBucketKey = paidFallbackUsageRollupKey(hourStart - 2 * HOUR_MS, "gpt-5.6-sol", "metered", 3);
+    const freshBucketKey = paidFallbackUsageRollupKey(hourStart, "gpt-5.6-sol", "metered", 3);
     const sample: PaidFallbackUsageRollup = {
       v: 1,
       bucket_start_at_ms: 0,
@@ -411,6 +414,7 @@ Deno.test("merge sums counters and tracks first/last request times", () => {
     bucket_start_at_ms: 1_000,
     model: "gpt-5.6-sol",
     provider: "metered",
+    request_id: "merge-req-1",
     quota: 30,
     input_tokens: 10,
     cached_input_tokens: null,
@@ -723,10 +727,12 @@ Deno.test("backfill is resumable with a limit and marks non-billable rows", asyn
   assert.equal(partial.processed, 1);
   assert.equal(partial.rollups_written, 1);
   assert.equal(partial.truncated, true);
+  assert.ok((await memoryKv.get(paidFallbackBackfillCursorV3Key())).value !== null, "resume cursor persisted");
   const remainder = await backfillPaidFallbackUsageRollups(kv, { limit: 1, nowMs: now });
   assert.equal(remainder.truncated, false);
   assert.equal(remainder.rollups_written, 0); // the non-billable row contributes no rollup
   assert.equal(remainder.processed, 1); // but it is marked so bounded runs advance
+  assert.equal((await memoryKv.get(paidFallbackBackfillCursorV3Key())).value, null, "cursor cleared on completion");
 
   // Non-billable rows must never consume the budget twice.
   const complete = await backfillPaidFallbackUsageRollups(kv, { limit: 1, nowMs: now });
