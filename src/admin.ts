@@ -2227,14 +2227,16 @@ export const handleAdminProvidersQuotaProjection = async (
   const windowMs = windowDays * 24 * 60 * 60 * 1_000;
   const [snapshot, rollups, balanceHistory] = await Promise.all([
     getConfiguredMeteredQuotaSnapshot({ kv }).catch(() => null),
-    kv ? listPaidFallbackUsageRollups(kv, { sinceMs: nowMs - windowMs, nowMs }).catch(() => []) : Promise.resolve([]),
+    kv
+      ? listPaidFallbackUsageRollups(kv, { sinceMs: nowMs - windowMs, nowMs }).catch(() => null)
+      : Promise.resolve(null),
     kv
       ? readMeteredQuotaBalanceHistory(kv, { sinceMs: nowMs - QUOTA_PROJECTION_BALANCE_HISTORY_MS, nowMs })
-        .catch(() => [])
-      : Promise.resolve([]),
+        .catch(() => null)
+      : Promise.resolve(null),
   ]);
   const quota = meteredQuotaRunwayView(snapshot);
-  const usage = summarizePaidFallbackUsage(groupPaidFallbackUsageRollups(rollups), nowMs);
+  const usage = summarizePaidFallbackUsage(groupPaidFallbackUsageRollups(rollups ?? []), nowMs);
   const models = usage.map((entry) => ({
     model: entry.model,
     provider: entry.provider,
@@ -2252,7 +2254,11 @@ export const handleAdminProvidersQuotaProjection = async (
     },
     quota,
     models,
-    balance_history: balanceHistory,
+    // A failed scan must not masquerade as zero history: operators need to
+    // distinguish "nothing settled" from "history could not be read".
+    rollup_scan: rollups === null ? "unavailable" : "ok",
+    balance_history_scan: balanceHistory === null ? "unavailable" : "ok",
+    balance_history: balanceHistory ?? [],
   }, { "Cache-Control": "no-store" });
 };
 

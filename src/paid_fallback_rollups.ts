@@ -132,10 +132,9 @@ export const addPaidFallbackUsageRollup = async (
 
 export const listPaidFallbackUsageRollups = async (
   kv: Deno.Kv | null,
-  options: Readonly<{ sinceMs: number; nowMs: number; limit?: number }>,
+  options: Readonly<{ sinceMs: number; nowMs: number }>,
 ): Promise<PaidFallbackUsageRollup[]> => {
   if (!kv) return [];
-  const limit = Math.max(1, Math.min(100_000, Math.trunc(options.limit ?? 100_000)));
   const entries: PaidFallbackUsageRollup[] = [];
   const start: Deno.KvKey = [...PAID_FALLBACK_USAGE_ROLLUP_PREFIX, Math.max(0, Math.trunc(options.sinceMs))];
   const end: Deno.KvKey = [
@@ -143,9 +142,7 @@ export const listPaidFallbackUsageRollups = async (
     Math.trunc(options.nowMs) + PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS,
   ];
   for await (
-    const entry of kv.list<PaidFallbackUsageRollup>({ prefix: PAID_FALLBACK_USAGE_ROLLUP_PREFIX, start, end }, {
-      limit,
-    })
+    const entry of kv.list<PaidFallbackUsageRollup>({ prefix: PAID_FALLBACK_USAGE_ROLLUP_PREFIX, start, end })
   ) {
     const rollup = isPaidFallbackUsageRollup(entry.value) ? entry.value : null;
     if (rollup) entries.push(rollup);

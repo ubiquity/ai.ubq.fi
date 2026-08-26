@@ -471,7 +471,9 @@ Deno.test("summarize and project offer per-window rates and exhaustion estimates
   assert.equal(sevenDay.request_count, 4);
   assert.equal(sevenDay.quota_sum, 240);
   assert.equal(sevenDay.avg_quota_per_request, 60);
-  assert.ok(sevenDay.quota_per_hour !== null && sevenDay.quota_per_hour > 0);
+  // The rate covers the whole window including idle hours: 240 quota over
+  // 168 hours, not over the 4 hours that happened to have traffic.
+  assert.ok(sevenDay.quota_per_hour !== null && Math.abs(sevenDay.quota_per_hour - 240 / 168) < 1e-9);
 
   const walletSnapshot = {
     state: {
@@ -707,7 +709,7 @@ Deno.test("settlement marks the row so a later backfill never double counts", as
   });
 });
 
-Deno.test("backfill is resumable with a limit and skips pending rows for rollups", async () => {
+Deno.test("backfill is resumable with a limit and marks non-billable rows", async () => {
   seedKeyRecord();
   const now = Date.now();
   await memoryKv.set(paidFallbackRequestV3Key(keyId, "bf-a"), settledRequestRow("bf-a", now - 2 * HOUR_MS));
@@ -718,12 +720,18 @@ Deno.test("backfill is resumable with a limit and skips pending rows for rollups
     provider_quota: null,
   });
   const partial = await backfillPaidFallbackUsageRollups(kv, { limit: 1, nowMs: now });
-  assert.equal(partial.scanned, 2); // the already-backfilled row is skipped for free
   assert.equal(partial.processed, 1);
+  assert.equal(partial.rollups_written, 1);
   assert.equal(partial.truncated, true);
   const remainder = await backfillPaidFallbackUsageRollups(kv, { limit: 1, nowMs: now });
   assert.equal(remainder.truncated, false);
-  assert.equal(remainder.rollups_written, 0); // the pending row contributes no rollup
+  assert.equal(remainder.rollups_written, 0); // the non-billable row contributes no rollup
+  assert.equal(remainder.processed, 1); // but it is marked so bounded runs advance
+
+  // Non-billable rows must never consume the budget twice.
+  const complete = await backfillPaidFallbackUsageRollups(kv, { limit: 1, nowMs: now });
+  assert.equal(complete.truncated, false);
+  assert.equal(complete.processed, 0);
 
   const rollups = await listPaidFallbackUsageRollups(kv, { sinceMs: now - 30 * DAY_MS, nowMs: now });
   assert.equal(rollups.length, 1);

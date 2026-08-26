@@ -1108,7 +1108,21 @@ export const backfillPaidFallbackUsageRollups = async (
     const requestEntry = await kv.get<PaidFallbackRequestV3>(requestKey, { consistency: "strong" });
     const request = requestEntry.value;
     if (!request) continue;
-    if (typeof request.usage_rollup_at_ms === "number") continue;
+    if (typeof request.usage_rollup_at_ms === "number") {
+      // A previously processed row can lose its TTL (for example after a KV
+      // export/import restores values without expiry). Re-apply the anchored
+      // retention without touching the rollup or the row value; marked rows
+      // never consume the run budget.
+      try {
+        await kv.atomic()
+          .check(requestEntry)
+          .set(requestKey, request, { expireIn: requestRowExpireIn(request, nowMs) })
+          .commit();
+      } catch {
+        // Best effort: a concurrent writer owns the row.
+      }
+      continue;
+    }
     if (budget <= 0) return { scanned, processed, rollups_written: rollupsWritten, truncated: true };
     budget -= 1;
 
@@ -1138,12 +1152,13 @@ export const backfillPaidFallbackUsageRollups = async (
         updated_at_ms: nowMs,
       })
       : null;
-    // The rollup marker is set only when a rollup was actually written; a
-    // pending row is TTL-refreshed but left unmarked so a later live
-    // settlement owns its rollup content.
-    const nextRow = nextRollup
-      ? { ...request, updated_at_ms: nowMs, usage_rollup_at_ms: nowMs }
-      : { ...request, updated_at_ms: nowMs };
+    // Every processed row is marked, including non-billable rows, so a
+    // bounded run always advances past them instead of consuming its budget
+    // on the same rows forever. This is safe for pending/unresolved rows:
+    // the live settlement path unconditionally folds and re-marks a row
+    // whenever it actually settles, so marking one early can never suppress a
+    // rollup.
+    const nextRow = { ...request, updated_at_ms: nowMs, usage_rollup_at_ms: nowMs };
     let atomic = kv.atomic()
       .check(requestEntry)
       .set(requestKey, nextRow, {

@@ -2603,13 +2603,15 @@ const quotaProjectionEstimate = (entry, windowDays = 30) => {
   return { estimate, usage };
 };
 
-const renderQuotaProjectionRows = (payload) => {
+const renderQuotaProjectionRows = (payload, historyUnavailable) => {
   const models = Array.isArray(payload?.models) ? payload.models : [];
   quotaRunwayList.replaceChildren();
   if (!models.length) {
     const empty = document.createElement("p");
     empty.dataset.empty = "quota-runway";
-    empty.textContent = "No settled paid-fallback usage in the retained window yet. Rows appear after requests settle.";
+    empty.textContent = historyUnavailable
+      ? "Paid-fallback usage history could not be read — check KV availability."
+      : "No settled paid-fallback usage in the retained window yet. Rows appear after requests settle.";
     quotaRunwayList.appendChild(empty);
     return;
   }
@@ -2692,9 +2694,14 @@ const renderQuotaProjection = (payload) => {
       : typeof quota.total_available === "number"
       ? `Available ${formatNumber(quota.total_available)} tokens`
       : "Balance unavailable";
+    const healthyBalance = typeof balanceCredits === "number"
+      ? balanceCredits > 0
+      : typeof quota.total_available === "number"
+      ? quota.total_available > 0
+      : false;
     setBadge(
       quotaRunwayBadge,
-      typeof balanceCredits === "number" && balanceCredits > 0 ? "ok" : "bad",
+      healthyBalance ? "ok" : "bad",
       balanceText,
     );
     const updatedParts = [];
@@ -2725,12 +2732,19 @@ const renderQuotaProjection = (payload) => {
   const bucketCount = balanceHistory.length;
   const windowDays = typeof payload?.window_days === "number" ? payload.window_days : 30;
   const windowLabel = `${windowDays}-day`;
-  quotaRunwayNote.textContent = bucketCount
-    ? `${
+  const historyUnavailable = payload?.rollup_scan !== "ok";
+  if (historyUnavailable) {
+    quotaRunwayNote.textContent =
+      "Paid-fallback usage history could not be read — totals and exhaustion estimates are unavailable until KV reads recover.";
+  } else if (bucketCount) {
+    quotaRunwayNote.textContent = `${
       formatNumber(bucketCount)
-    } hourly balance samples in the trailing seven days · estimates use the ${windowLabel} consumption window · raw request rows retain one year; hourly model rollups are retained indefinitely.`
-    : `Estimates use the ${windowLabel} consumption window · raw request rows retain one year; hourly model rollups are retained indefinitely.`;
-  renderQuotaProjectionRows(payload);
+    } hourly balance samples in the trailing seven days · estimates use the ${windowLabel} consumption window · raw request rows retain one year; hourly model rollups are retained indefinitely.`;
+  } else {
+    quotaRunwayNote.textContent =
+      `Estimates use the ${windowLabel} consumption window · raw request rows retain one year; hourly model rollups are retained indefinitely.`;
+  }
+  renderQuotaProjectionRows(payload, historyUnavailable);
 };
 
 const loadQuotaProjection = async () => {

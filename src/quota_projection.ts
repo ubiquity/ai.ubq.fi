@@ -145,10 +145,10 @@ const summarizeWindow = (
   const quotaSum = inWindow.reduce((sum, bucket) => sum + bucket.quota_sum, 0);
   const firstBucket = inWindow.length ? inWindow[0]?.bucket_start_at_ms ?? null : null;
   const lastBucket = inWindow.length ? inWindow[inWindow.length - 1]?.bucket_start_at_ms ?? null : null;
-  const elapsedHours = Math.max(
-    1,
-    Math.round((nowMs - Math.max(windowStartMs, firstBucket ?? windowStartMs)) / HOUR_MS),
-  );
+  // The rate covers the entire selected window, idle hours included: a model
+  // used once in the final day of a 30-day window is one request per 30 days,
+  // not a daily rate. Labeling it otherwise would overstate the runway.
+  const windowHours = windowDays * 24;
   return {
     window_days: windowDays,
     bucket_count: inWindow.length,
@@ -159,7 +159,7 @@ const summarizeWindow = (
     cached_input_tokens: inWindow.reduce((sum, bucket) => sum + bucket.cached_input_tokens, 0),
     output_tokens: inWindow.reduce((sum, bucket) => sum + bucket.output_tokens, 0),
     avg_quota_per_request: requestCount > 0 ? quotaSum / requestCount : null,
-    quota_per_hour: elapsedHours > 0 ? quotaSum / elapsedHours : null,
+    quota_per_hour: windowHours > 0 ? quotaSum / windowHours : null,
     first_bucket_start_at_ms: firstBucket,
     last_bucket_start_at_ms: lastBucket,
   };
