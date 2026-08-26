@@ -6,6 +6,7 @@ import type {
   PaidFallbackRequestV3,
   PaidFallbackWindowV3,
 } from "./types.ts";
+import { isRecord } from "./utils.ts";
 import { fetchMeteredTokenLogs, type MeteredTokenLogEntry } from "./metered.ts";
 import {
   isPaidFallbackUsageRollup,
@@ -32,12 +33,35 @@ export const PAID_FALLBACK_REQUEST_LOG_RETENTION_MS = 365 * 24 * 60 * 60_000;
 export const requestRowExpireIn = (row: PaidFallbackRequestV3, nowMs: number): number =>
   Math.max(1, row.created_at_ms + PAID_FALLBACK_REQUEST_LOG_RETENTION_MS - nowMs);
 
+const isSafeUsageCount = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+
+const isPositiveSafeInteger = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+
+const isApiKeyId = (value: unknown): value is string =>
+  typeof value === "string" && value.length > 0 && value.length <= 200;
+
 /**
  * Window rows expire one year after their reset so they never outlive the
  * request rows that validate them; the per-request detail is gone by then.
  */
 const windowExpireIn = (window: PaidFallbackWindowV3, nowMs: number): number =>
   Math.max(1, window.window_reset_at_ms + PAID_FALLBACK_REQUEST_LOG_RETENTION_MS - nowMs);
+
+export const isPaidFallbackWindowV3 = (value: unknown): value is PaidFallbackWindowV3 => {
+  if (!isRecord(value)) return false;
+  return value.v === 3 &&
+    isApiKeyId(value.key_id) &&
+    typeof value.policy_version === "string" &&
+    value.policy_version.length > 0 &&
+    isPositiveSafeInteger(value.window_reset_at_ms) &&
+    (value.limit_microcredits === -1 || isPositiveSafeInteger(value.limit_microcredits)) &&
+    isSafeUsageCount(value.settled_microcredits) &&
+    isSafeUsageCount(value.reserved_microcredits) &&
+    isSafeUsageCount(value.pending_count) &&
+    isPositiveSafeInteger(value.updated_at_ms);
+};
 
 export const paidFallbackWindowV3Key = (keyId: string, resetAtMs: number): Deno.KvKey => [
   ...PREFIX,
@@ -60,6 +84,7 @@ export const paidFallbackPendingV3Key = (keyId: string, requestId: string): Deno
 const paidFallbackWindowV3Prefix = (keyId: string): Deno.KvKey => [...PREFIX, "window", keyId];
 const paidFallbackRequestV3Prefix = (keyId: string): Deno.KvKey => [...PREFIX, "request", keyId];
 export const paidFallbackRequestV3GlobalPrefix: Deno.KvKey = [...PREFIX, "request"];
+const paidFallbackWindowV3GlobalPrefix: Deno.KvKey = [...PREFIX, "window"];
 const paidFallbackPendingV3Prefix = (keyId: string): Deno.KvKey => [...PREFIX, "pending", keyId];
 const paidFallbackPendingV3GlobalPrefix: Deno.KvKey = [...PREFIX, "pending"];
 export const paidFallbackReconciliationGateV3Key = (): Deno.KvKey => [
@@ -1242,19 +1267,43 @@ export const backfillPaidFallbackUsageRollups = async (
       processed += 1;
       if (nextRollup) rollupsWritten += 1;
     } else {
-      // A concurrent writer touched this row or its rollup shard. Do not let
-      // the cursor advance past it: a re-run must retry this history.
+      // A concurrent writer touched this row or its rollup shard. Stop the
+      // sweep immediately so the persisted cursor stays before this row: a
+      // later success must never let the cursor skip a missing rollup.
       failedRows += 1;
+      break;
     }
   }
   if (failedRows > 0) {
     // Keep the cursor at the last committed row so the next run resumes
-    // before the failed rows instead of dropping them from the backfill.
+    // before the failed row instead of dropping it from the backfill.
     const cursorKeyValue = lastVisitedKey ?? resumeKey;
     if (cursorKeyValue) {
       await kv.atomic().set(cursorKey, { request_key: cursorKeyValue }).commit().catch(() => {});
     }
     return { scanned, processed, rollups_written: rollupsWritten, failed: failedRows, truncated: true };
+  }
+  // Existing window rows never pass through the live writes that apply the
+  // anchored expiry (imports restore them without TTL too). Rewrite the
+  // window prefix in place; the rewrite is idempotent so a re-run is safe.
+  let windowsRewritten = 0;
+  for await (
+    const entry of kv.list<PaidFallbackWindowV3>({ prefix: paidFallbackWindowV3GlobalPrefix })
+  ) {
+    if (windowsRewritten >= scanBudget) break;
+    const window = entry.value;
+    if (!isPaidFallbackWindowV3(window)) continue;
+    const windowEntry = await kv.get<PaidFallbackWindowV3>(entry.key, { consistency: "strong" });
+    if (!isPaidFallbackWindowV3(windowEntry.value)) continue;
+    try {
+      const committed = await kv.atomic()
+        .check(windowEntry)
+        .set(entry.key, windowEntry.value, { expireIn: windowExpireIn(windowEntry.value, nowMs) })
+        .commit();
+      if (committed.ok) windowsRewritten += 1;
+    } catch {
+      // Best effort: a concurrent writer owns the window.
+    }
   }
   // Full sweep complete: drop the resume cursor.
   await kv.atomic().delete(cursorKey).commit().catch(() => {});

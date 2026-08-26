@@ -47,6 +47,7 @@ import type {
 } from "./types.ts";
 import { hasStrictPaidFallbackKeyPolicy, hasStrictPaidFallbackPolicy } from "./paid_fallback.ts";
 import {
+  isPaidFallbackWindowV3,
   PAID_FALLBACK_REQUEST_LOG_RETENTION_MS,
   recomputePaidFallbackReconciliationGateV3,
   requestRowExpireIn,
@@ -470,20 +471,6 @@ const apiKeyHashPolicyMatches = (record: ApiKeyRecord, hashRecord: ApiKeyHashRec
   record.paid_fallback_spent_microcredits === hashRecord.paid_fallback_spent_microcredits &&
   record.paid_fallback_reserved_microcredits === hashRecord.paid_fallback_reserved_microcredits &&
   record.paid_fallback_reservation_request_id === hashRecord.paid_fallback_reservation_request_id;
-
-const isPaidFallbackWindowV3 = (value: unknown): value is PaidFallbackWindowV3 => {
-  if (!isRecord(value)) return false;
-  return value.v === 3 &&
-    isApiKeyId(value.key_id) &&
-    typeof value.policy_version === "string" &&
-    value.policy_version.length > 0 &&
-    isPositiveSafeInteger(value.window_reset_at_ms) &&
-    (value.limit_microcredits === -1 || isPositiveSafeInteger(value.limit_microcredits)) &&
-    isSafeUsageCount(value.settled_microcredits) &&
-    isSafeUsageCount(value.reserved_microcredits) &&
-    isSafeUsageCount(value.pending_count) &&
-    isPositiveSafeInteger(value.updated_at_ms);
-};
 
 const isPaidFallbackRequestV3 = (value: unknown): value is PaidFallbackRequestV3 => {
   if (!isRecord(value)) return false;

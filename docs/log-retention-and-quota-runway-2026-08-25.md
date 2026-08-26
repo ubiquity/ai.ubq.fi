@@ -65,7 +65,11 @@ rows needing work, not already-backfilled ones. Repeat until `truncated` is fals
 
 The balance samples, rollups and request rows are registered in `kv_migration.ts` `DURABLE_PREFIXES` so KV export and
 import preserve them. Window rows expire one year after their reset (matching the raw-row horizon), and migration
-validation skips window consistency checks beyond that horizon instead of reporting aged-out history as corrupt.
+validation skips window consistency checks beyond that horizon instead of reporting aged-out history as corrupt. The
+backfill also rewrites the window prefix with the anchored TTL for rows that predate it.
+
+The Metered balance history is namespaced by a non-secret fingerprint of the configured OpenLux credentials, so rotating
+`METERED_API_KEY` starts a fresh curve for the new account instead of mixing accounts in one run-down series.
 
 Rollup keys are sharded by request id (16 shards) so concurrent settlements of the same model/provider never contend on
 one KV key inside the settlement atomic; readers sum all shards. Windows and rates are hour-bucket precise: the selected

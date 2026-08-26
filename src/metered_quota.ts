@@ -1,5 +1,5 @@
 import { getKv } from "./kv.ts";
-import { isRecord } from "./utils.ts";
+import { isRecord, sha256Hex } from "./utils.ts";
 import { METERED_BASE_URL, type MeteredFetch } from "./metered.ts";
 
 export const METERED_QUOTA_FRESH_MS = 5 * 60_000;
@@ -173,6 +173,23 @@ export const readMeteredAccountCredentials = (): MeteredAccountCredentials | nul
   parseCredentials({
     apiKey: getEnv(METERED_API_KEY_ENV) ?? "",
   });
+
+/**
+ * Non-secret fingerprint of the configured OpenLux account. The balance
+ * history is namespaced by it so switching METERED_API_KEY starts a fresh
+ * curve per account instead of corrupting the retained run-down history.
+ */
+export const meterQuotaAccountFingerprint = async (
+  credentials: MeteredAccountCredentials | null,
+): Promise<string | null> => {
+  const parsed = parseCredentials(credentials ?? { apiKey: "" });
+  if (!parsed) return null;
+  try {
+    return (await sha256Hex(parsed.apiKey)).slice(0, 16);
+  } catch {
+    return null;
+  }
+};
 
 const authenticatedHeaders = (credentials: MeteredAccountCredentials): Headers => {
   const headers = new Headers({
@@ -528,9 +545,11 @@ export const getMeteredQuotaSnapshot = async (
       .delete(METERED_QUOTA_REFRESH_LEASE_KEY)
       .commit();
     if (committed.ok) {
-      await writeMeteredQuotaBalanceSample(kv, state, observation.observed_at_ms).catch((error) => {
-        console.warn("[ai.ubq.fi] Metered quota balance history write failed:", error);
-      });
+      const accountFingerprint = await meterQuotaAccountFingerprint(credentials).catch(() => null);
+      await writeMeteredQuotaBalanceSample(kv, state, observation.observed_at_ms, accountFingerprint)
+        .catch((error) => {
+          console.warn("[ai.ubq.fi] Metered quota balance history write failed:", error);
+        });
       return toSnapshot(state, "refreshed");
     }
     const replacement = await loadRetainedState(kv, Date.now()).catch(() => null);
@@ -643,10 +662,15 @@ export const writeMeteredQuotaBalanceSample = async (
   kv: Deno.Kv,
   state: MeteredQuotaState,
   observedAtMs: number,
+  accountFingerprint: string | null,
 ): Promise<void> => {
   const sample = balanceSampleFromState(state, observedAtMs);
-  if (!sample) return;
-  const key = [...METERED_QUOTA_BALANCE_HISTORY_PREFIX, sample.bucket_start_at_ms] as const;
+  if (!sample || !accountFingerprint) return;
+  const key = [
+    ...METERED_QUOTA_BALANCE_HISTORY_PREFIX,
+    accountFingerprint,
+    sample.bucket_start_at_ms,
+  ] as const;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const entry = await kv.get<MeteredQuotaBalanceSample>(key, { consistency: "strong" });
     const existing = isMeteredQuotaBalanceSample(entry.value) ? entry.value : null;
@@ -659,18 +683,16 @@ export const writeMeteredQuotaBalanceSample = async (
 
 export const readMeteredQuotaBalanceHistory = async (
   kv: Deno.Kv | null,
-  options: Readonly<{ sinceMs: number; nowMs: number; limit?: number }>,
+  options: Readonly<{ sinceMs: number; nowMs: number; accountFingerprint: string | null; limit?: number }>,
 ): Promise<MeteredQuotaBalanceSample[]> => {
-  if (!kv) return [];
+  if (!kv || !options.accountFingerprint) return [];
   const limit = Math.max(1, Math.min(10_000, Math.trunc(options.limit ?? 10_000)));
   const samples: MeteredQuotaBalanceSample[] = [];
-  const start: Deno.KvKey = [...METERED_QUOTA_BALANCE_HISTORY_PREFIX, Math.max(0, Math.trunc(options.sinceMs))];
-  const end: Deno.KvKey = [
-    ...METERED_QUOTA_BALANCE_HISTORY_PREFIX,
-    Math.trunc(options.nowMs) + METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS,
-  ];
+  const prefix: Deno.KvKey = [...METERED_QUOTA_BALANCE_HISTORY_PREFIX, options.accountFingerprint];
+  const start: Deno.KvKey = [...prefix, Math.max(0, Math.trunc(options.sinceMs))];
+  const end: Deno.KvKey = [...prefix, Math.trunc(options.nowMs) + METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS];
   for await (
-    const entry of kv.list<MeteredQuotaBalanceSample>({ prefix: METERED_QUOTA_BALANCE_HISTORY_PREFIX, start, end }, {
+    const entry of kv.list<MeteredQuotaBalanceSample>({ prefix, start, end }, {
       limit,
     })
   ) {

@@ -142,6 +142,8 @@ import { MeteredError } from "./metered.ts";
 import {
   getConfiguredMeteredQuotaSnapshot,
   getMeteredQuotaDiagnostics,
+  meterQuotaAccountFingerprint,
+  readMeteredAccountCredentials,
   readMeteredQuotaBalanceHistory,
 } from "./metered_quota.ts";
 import { listPaidFallbackUsageRollups, PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS } from "./paid_fallback_rollups.ts";
@@ -2225,14 +2227,18 @@ export const handleAdminProvidersQuotaProjection = async (
     ? rawWindowDays as 7 | 30 | 90
     : QUOTA_PROJECTION_DEFAULT_WINDOW_DAYS;
   const windowMs = windowDays * 24 * 60 * 60 * 1_000;
+  const accountFingerprint = await meterQuotaAccountFingerprint(readMeteredAccountCredentials()).catch(() => null);
   const [snapshot, rollups, balanceHistory] = await Promise.all([
     getConfiguredMeteredQuotaSnapshot({ kv }).catch(() => null),
     kv
       ? listPaidFallbackUsageRollups(kv, { sinceMs: nowMs - windowMs, nowMs }).catch(() => null)
       : Promise.resolve(null),
     kv
-      ? readMeteredQuotaBalanceHistory(kv, { sinceMs: nowMs - QUOTA_PROJECTION_BALANCE_HISTORY_MS, nowMs })
-        .catch(() => null)
+      ? readMeteredQuotaBalanceHistory(kv, {
+        sinceMs: nowMs - QUOTA_PROJECTION_BALANCE_HISTORY_MS,
+        nowMs,
+        accountFingerprint,
+      }).catch(() => null)
       : Promise.resolve(null),
   ]);
   const quota = meteredQuotaRunwayView(snapshot);

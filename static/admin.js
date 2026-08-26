@@ -2734,9 +2734,13 @@ const renderQuotaProjection = (payload) => {
   const windowDays = typeof payload?.window_days === "number" ? payload.window_days : 30;
   const windowLabel = `${windowDays}-day`;
   const historyUnavailable = payload?.rollup_scan !== "ok";
+  const balanceUnavailable = payload?.balance_history_scan !== "ok";
   if (historyUnavailable) {
     quotaRunwayNote.textContent =
       "Paid-fallback usage history could not be read — totals and exhaustion estimates are unavailable until KV reads recover.";
+  } else if (balanceUnavailable) {
+    quotaRunwayNote.textContent =
+      "Balance history could not be read — the run-down curve is unavailable until KV reads recover.";
   } else if (bucketCount) {
     quotaRunwayNote.textContent = `${
       formatNumber(bucketCount)
