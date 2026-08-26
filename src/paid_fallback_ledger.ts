@@ -7,12 +7,29 @@ import type {
   PaidFallbackWindowV3,
 } from "./types.ts";
 import { fetchMeteredTokenLogs, type MeteredTokenLogEntry } from "./metered.ts";
+import {
+  isPaidFallbackUsageRollup,
+  mergePaidFallbackUsageRollup,
+  PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS,
+  type PaidFallbackUsageRollup,
+  paidFallbackUsageRollupKey,
+} from "./paid_fallback_rollups.ts";
 
 const PREFIX = ["uos_ai", "paid_fallback", "v3"] as const;
 const MAX_CAS_ATTEMPTS = 128;
 const RETRY_DELAYS_MS = [5_000, 30_000, 120_000, 600_000, 3_600_000, 21_600_000] as const;
 const UNRESOLVED_AFTER_MS = 24 * 60 * 60_000;
 const RECONCILIATION_LEASE_MS = 60_000;
+
+/**
+ * Raw paid-fallback request rows are retained for one year from request
+ * creation, then expire. Research that needs older data reads the compact
+ * per-hour usage rollups (paid_fallback_rollups.ts), which never expire.
+ */
+export const PAID_FALLBACK_REQUEST_LOG_RETENTION_MS = 365 * 24 * 60 * 60_000;
+
+const requestRowExpireIn = (row: PaidFallbackRequestV3, nowMs: number): number =>
+  Math.max(1, row.created_at_ms + PAID_FALLBACK_REQUEST_LOG_RETENTION_MS - nowMs);
 
 export const paidFallbackWindowV3Key = (keyId: string, resetAtMs: number): Deno.KvKey => [
   ...PREFIX,
@@ -570,7 +587,7 @@ export const admitPaidFallbackV3 = async (
       : null;
     let atomic = kv.atomic().check(requestEntry).check(deletionGuardEntry);
     if (input.policyCheck) atomic = atomic.check(input.policyCheck);
-    atomic = atomic.set(requestKey, request).set(
+    atomic = atomic.set(requestKey, request, { expireIn: requestRowExpireIn(request, now) }).set(
       pendingKey,
       {
         created_at_ms: now,
@@ -683,7 +700,7 @@ export const updatePaidFallbackRequestV3 = async (
         : current.dispatched_at_ms,
       terminal_at_ms: terminalState !== "pending" && current.terminal_at_ms === null ? now : current.terminal_at_ms,
       updated_at_ms: now,
-    });
+    }, { expireIn: requestRowExpireIn(current, now) });
     if (gateEntry) {
       atomic = atomic.check(gateEntry);
       if (dispatchBoundary || paidFallbackReconciliationGateNeedsArm(gateEntry, now)) {
@@ -730,7 +747,7 @@ const releasePaidFallbackBeforeDispatchV3 = async (
       billing_state: "not_billed",
       terminal_at_ms: requestEntry.value.terminal_at_ms ?? now,
       updated_at_ms: now,
-    }).delete(pendingKey);
+    }, { expireIn: requestRowExpireIn(requestEntry.value, now) }).delete(pendingKey);
     atomic = atomic.check(gateEntry);
     // Deleting a pending marker must version-bump the gate even when it is
     // already due; otherwise an overlapping recompute can publish a stale
@@ -871,7 +888,7 @@ const deferPaidFallbackReconciliationV3 = async (
         last_reconciliation_at_ms: now,
         billing_state: unresolved ? "unresolved" : request.billing_state,
         updated_at_ms: now,
-      })
+      }, { expireIn: requestRowExpireIn(request, now) })
       .set(
         pendingKey,
         {
@@ -937,6 +954,25 @@ const settlePaidFallbackRequestV3 = async (
     const windowEntry = await kv.get<PaidFallbackWindowV3>(windowKey, { consistency: "strong" });
     const dispatchedAtMs = request.dispatched_at_ms ??
       Math.max(request.created_at_ms, providerLog.created_at * 1_000);
+    const model = request.model.trim();
+    const provider = request.provider ?? (correlation === "surplus_reservation" ? "surplus" : "metered");
+    const bucketStartAtMs = Math.floor(request.created_at_ms / PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS) *
+      PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS;
+    const rollupKey = paidFallbackUsageRollupKey(bucketStartAtMs, model, provider);
+    const rollupEntry = await kv.get<PaidFallbackUsageRollup>(rollupKey, { consistency: "strong" });
+    const existingRollup = isPaidFallbackUsageRollup(rollupEntry.value) ? rollupEntry.value : null;
+    const nextRollup = mergePaidFallbackUsageRollup(existingRollup, {
+      bucket_start_at_ms: bucketStartAtMs,
+      model,
+      provider,
+      quota: providerLog.quota,
+      input_tokens: providerLog.prompt_tokens,
+      cached_input_tokens: providerLog.cached_prompt_tokens ?? null,
+      output_tokens: providerLog.completion_tokens,
+      spend_microcredits: spend,
+      request_created_at_ms: request.created_at_ms,
+      updated_at_ms: now,
+    });
     let atomic = kv.atomic().check(requestEntry).check(pendingEntry).set(requestKey, {
       ...request,
       provider_quota: providerLog.quota,
@@ -954,7 +990,10 @@ const settlePaidFallbackRequestV3 = async (
       last_reconciliation_at_ms: now,
       settled_at_ms: request.settled_at_ms ?? now,
       updated_at_ms: now,
-    }).delete(pendingKey);
+    }, { expireIn: requestRowExpireIn(request, now) }).delete(pendingKey);
+    if (model && provider) {
+      atomic = atomic.check(rollupEntry).set(rollupKey, nextRollup);
+    }
     atomic = atomic.check(gateEntry);
     // Settlement removes billable work. Keep the gate due and version it so a
     // concurrent recompute cannot resurrect this marker's stale future time.

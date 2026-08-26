@@ -26,6 +26,7 @@ import {
   handleAdminKvMigrationImport,
   handleAdminKvMigrationValidate,
   handleAdminPromptCacheAnalytics,
+  handleAdminProvidersQuotaProjection,
 } from "./admin.ts";
 import { handleAdminErrors, recordAdminError } from "./admin_error_log.ts";
 import { handleAgentMessagesList, handleAgentMessagesPost } from "./agent_messages.ts";
@@ -949,6 +950,12 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     const authError = await requireAdminAuth(req);
     if (authError) return withCors(authError);
     return withCors(await handleProviderCapacity(req));
+  }
+
+  if (req.method === "GET" && path === "/admin/providers/quota-projection") {
+    const authError = await requireAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminProvidersQuotaProjection(req));
   }
 
   if (req.method === "GET" && path === "/admin/prompt-cache-analytics") {

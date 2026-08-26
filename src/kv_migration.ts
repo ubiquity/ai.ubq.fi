@@ -46,7 +46,10 @@ import type {
   PaidFallbackWindowV3,
 } from "./types.ts";
 import { hasStrictPaidFallbackKeyPolicy, hasStrictPaidFallbackPolicy } from "./paid_fallback.ts";
-import { recomputePaidFallbackReconciliationGateV3 } from "./paid_fallback_ledger.ts";
+import {
+  PAID_FALLBACK_REQUEST_LOG_RETENTION_MS,
+  recomputePaidFallbackReconciliationGateV3,
+} from "./paid_fallback_ledger.ts";
 import { isRecord } from "./utils.ts";
 
 export type KvMigrationProfile = "local" | "prod";
@@ -1678,7 +1681,12 @@ const projectLegacyPaidFallbackV3 = async (
     let atomic = kv.atomic().check(requestEntry).check(pendingEntry);
     let needsCommit = false;
     if (!existingRequest) {
-      atomic = atomic.set(requestKey, request);
+      // Migrated rows inherit the one-year raw-row retention anchored to
+      // their original creation time, so a re-run of this migration cannot
+      // resurrect rows that have already aged out of the retention window.
+      atomic = atomic.set(requestKey, request, {
+        expireIn: Math.max(1, request.created_at_ms + PAID_FALLBACK_REQUEST_LOG_RETENTION_MS - nowMs),
+      });
       projected += 1;
       needsCommit = true;
     }

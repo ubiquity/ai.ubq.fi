@@ -594,6 +594,25 @@
               <div id="provider-capacity-list" data-capacity-list role="list"></div>
             </div>
           </article>
+
+          <article data-card aria-labelledby="card-quota-runway">
+            <header>
+              <h2 id="card-quota-runway">Quota runway</h2>
+              <p>
+                Per-model paid-fallback consumption with an estimate of how long the current quota balance lasts,
+                from retained hourly usage rollups.
+              </p>
+            </header>
+            <div data-card-body>
+              <div data-provider-heading>
+                <span id="quota-runway-badge" data-badge data-state="unknown">Not loaded</span>
+                <span id="quota-runway-updated" data-muted>Waiting for projection</span>
+              </div>
+              <div id="quota-runway-summary" data-quota-runway-summary role="status"></div>
+              <div id="quota-runway-list" data-quota-runway-list role="list"></div>
+              <p id="quota-runway-note" data-muted></p>
+            </div>
+          </article>
         </section>
 
         <section

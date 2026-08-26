@@ -1,0 +1,596 @@
+import assert from "node:assert/strict";
+import type { PaidFallbackUsageRollup } from "../src/paid_fallback_rollups.ts";
+
+type StoredEntry = {
+  key: Deno.KvKey;
+  value: unknown;
+  versionstamp: string;
+  expiresAtMs: number | null;
+};
+
+const encodeKey = (key: Deno.KvKey): string => JSON.stringify(key);
+const clone = <T>(value: T): T => structuredClone(value);
+
+const compareKeyPart = (left: Deno.KvKeyPart, right: Deno.KvKeyPart): number => {
+  if (left === right) return 0;
+  if (typeof left === "number" && typeof right === "number") return left - right;
+  const leftText = String(left);
+  const rightText = String(right);
+  return leftText < rightText ? -1 : 1;
+};
+
+const compareKeys = (left: Deno.KvKey, right: Deno.KvKey): number => {
+  const length = Math.max(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    if (index >= left.length) return -1;
+    if (index >= right.length) return 1;
+    const comparison = compareKeyPart(left[index], right[index]);
+    if (comparison !== 0) return comparison;
+  }
+  return 0;
+};
+
+const startsWithKey = (key: Deno.KvKey, prefix: Deno.KvKey): boolean =>
+  prefix.every((part, index) => key[index] === part);
+
+class MemoryKv {
+  readonly entries = new Map<string, StoredEntry>();
+  #version = 0;
+
+  #nextVersionstamp(): string {
+    this.#version += 1;
+    return String(this.#version).padStart(20, "0");
+  }
+
+  #purgeExpired(): void {
+    const now = Date.now();
+    for (const [encodedKey, entry] of this.entries) {
+      if (entry.expiresAtMs !== null && entry.expiresAtMs <= now) {
+        this.entries.delete(encodedKey);
+      }
+    }
+  }
+
+  #write(
+    key: Deno.KvKey,
+    value: unknown,
+    options: { expireIn?: number } | undefined,
+    versionstamp: string,
+  ): void {
+    const expireIn = options?.expireIn;
+    const expiresAtMs = typeof expireIn === "number" ? Date.now() + Math.max(0, expireIn) : null;
+    this.entries.set(encodeKey(key), {
+      key: clone(key),
+      value: clone(value),
+      versionstamp,
+      expiresAtMs,
+    });
+  }
+
+  versionstamp(key: Deno.KvKey): string | null {
+    this.#purgeExpired();
+    return this.entries.get(encodeKey(key))?.versionstamp ?? null;
+  }
+
+  expiration(key: Deno.KvKey): number | null {
+    this.#purgeExpired();
+    return this.entries.get(encodeKey(key))?.expiresAtMs ?? null;
+  }
+
+  get<T = unknown>(
+    key: Deno.KvKey,
+    _options?: Readonly<{ consistency?: "strong" | "eventual" }>,
+  ): Promise<Deno.KvEntryMaybe<T>> {
+    this.#purgeExpired();
+    const entry = this.entries.get(encodeKey(key));
+    return Promise.resolve({
+      key: clone(key),
+      value: entry ? clone(entry.value) as T : null,
+      versionstamp: entry?.versionstamp ?? null,
+    } as Deno.KvEntryMaybe<T>);
+  }
+
+  set(
+    key: Deno.KvKey,
+    value: unknown,
+    options?: { expireIn?: number },
+  ): Promise<Deno.KvCommitResult> {
+    const versionstamp = this.#nextVersionstamp();
+    this.#write(key, value, options, versionstamp);
+    return Promise.resolve({ ok: true, versionstamp });
+  }
+
+  delete(key: Deno.KvKey): Promise<void> {
+    this.entries.delete(encodeKey(key));
+    this.#nextVersionstamp();
+    return Promise.resolve();
+  }
+
+  list<T = unknown>(
+    selector: Deno.KvListSelector,
+    options: Deno.KvListOptions = {},
+  ): Deno.KvListIterator<T> {
+    this.#purgeExpired();
+    let entries = [...this.entries.values()]
+      .filter((entry) => {
+        const prefix = "prefix" in selector ? selector.prefix : [];
+        if (!startsWithKey(entry.key, prefix)) return false;
+        if ("start" in selector && selector.start && compareKeys(entry.key, selector.start) < 0) return false;
+        if ("end" in selector && selector.end && compareKeys(entry.key, selector.end) >= 0) return false;
+        return true;
+      })
+      .sort((left, right) => compareKeys(left.key, right.key));
+    if (options.reverse) entries = entries.reverse();
+    if (typeof options.limit === "number") entries = entries.slice(0, options.limit);
+    const iterator = (async function* (): AsyncGenerator<Deno.KvEntry<T>> {
+      for (const entry of entries) {
+        yield {
+          key: clone(entry.key),
+          value: clone(entry.value) as T,
+          versionstamp: entry.versionstamp,
+        };
+      }
+    })() as unknown as Deno.KvListIterator<T>;
+    Object.defineProperty(iterator, "cursor", { get: () => "" });
+    return iterator;
+  }
+
+  atomic(): Deno.AtomicOperation {
+    const checks: Array<{ key: Deno.KvKey; versionstamp: string | null }> = [];
+    const mutations: Array<
+      | { kind: "set"; key: Deno.KvKey; value: unknown; options?: { expireIn?: number } }
+      | { kind: "delete"; key: Deno.KvKey }
+    > = [];
+    const operation = {
+      check: (entry: { key: Deno.KvKey; versionstamp: string | null }) => {
+        checks.push({ key: clone(entry.key), versionstamp: entry.versionstamp });
+        return operation;
+      },
+      set: (key: Deno.KvKey, value: unknown, options?: { expireIn?: number }) => {
+        mutations.push({ kind: "set", key: clone(key), value: clone(value), options });
+        return operation;
+      },
+      delete: (key: Deno.KvKey) => {
+        mutations.push({ kind: "delete", key: clone(key) });
+        return operation;
+      },
+      commit: (): Promise<Deno.KvCommitResult | Deno.KvCommitError> => {
+        this.#purgeExpired();
+        if (checks.some((check) => this.versionstamp(check.key) !== check.versionstamp)) {
+          return Promise.resolve({ ok: false });
+        }
+        const versionstamp = this.#nextVersionstamp();
+        for (const mutation of mutations) {
+          if (mutation.kind === "delete") {
+            this.entries.delete(encodeKey(mutation.key));
+          } else {
+            this.#write(mutation.key, mutation.value, mutation.options, versionstamp);
+          }
+        }
+        return Promise.resolve({ ok: true, versionstamp });
+      },
+    };
+    return operation as unknown as Deno.AtomicOperation;
+  }
+
+  close(): void {}
+}
+
+const memoryKv = new MemoryKv();
+const kv = memoryKv as unknown as Deno.Kv;
+const denoWithKv = Deno as unknown as { openKv?: () => Promise<Deno.Kv> };
+const originalOpenKv = denoWithKv.openKv;
+denoWithKv.openKv = () => Promise.resolve(kv);
+
+const { apiKeyHashKey, apiKeyIdKey } = await import("../src/api_keys.ts");
+const {
+  recordMeteredTerminal,
+  recordMeteredUpstreamResponse,
+  recordSurplusUsage,
+  reservePaidFallback,
+} = await import("../src/paid_fallback.ts");
+const {
+  PAID_FALLBACK_REQUEST_LOG_RETENTION_MS,
+  paidFallbackRequestV3Key,
+} = await import("../src/paid_fallback_ledger.ts");
+const {
+  listPaidFallbackUsageRollups,
+  mergePaidFallbackUsageRollup,
+  paidFallbackUsageRollupKey,
+} = await import("../src/paid_fallback_rollups.ts");
+const {
+  groupPaidFallbackUsageRollups,
+  meteredQuotaRunwayView,
+  projectPaidFallbackRunway,
+  summarizePaidFallbackUsage,
+} = await import("../src/quota_projection.ts");
+const { getKv } = await import("../src/kv.ts");
+await getKv();
+
+denoWithKv.openKv = originalOpenKv;
+
+type ApiKeyRecord = import("../src/types.ts").ApiKeyRecord;
+type PaidFallbackRequestV3 = import("../src/types.ts").PaidFallbackRequestV3;
+type MeteredQuotaSnapshot = import("../src/metered_quota.ts").MeteredQuotaSnapshot;
+
+const keyId = "quota-projection-key";
+const keyHash = "quota-projection-hash";
+const DAY_MS = 24 * 60 * 60 * 1_000;
+
+const seedKeyRecord = (): void => {
+  const now = Date.now();
+  const record: ApiKeyRecord = {
+    id: keyId,
+    name: "Quota projection",
+    prefix: "u_qp",
+    hash: keyHash,
+    created_at_ms: now - 60_000,
+    expires_at_ms: -1,
+    revoked_at_ms: null,
+    usage_limit_requests: 100,
+    usage_requests: 0,
+    usage_reset_at_ms: now + 60_000,
+    window_ms: 60_000,
+    usage_quota_version: 3,
+    paid_fallback_enabled: true,
+    paid_fallback_limit_microcredits: 5_000_000,
+    paid_fallback_spent_microcredits: 0,
+    paid_fallback_reserved_microcredits: 0,
+    paid_fallback_reservation_request_id: null,
+    paid_fallback_model_ids: ["gpt-5.6-sol"],
+    paid_fallback_quota_per_credit: 500_000,
+    paid_fallback_max_exposure_microcredits: { "gpt-5.6-sol": 250_000 },
+    paid_fallback_pricing_checked_at_ms: now - 30_000,
+  };
+  memoryKv.entries.clear();
+  memoryKv.set(apiKeyIdKey(keyId), record);
+  memoryKv.set(apiKeyHashKey(keyHash), {
+    id: record.id,
+    expires_at_ms: record.expires_at_ms,
+    revoked_at_ms: record.revoked_at_ms,
+    usage_limit_requests: record.usage_limit_requests,
+    usage_requests: record.usage_requests,
+    usage_reset_at_ms: record.usage_reset_at_ms,
+    window_ms: record.window_ms,
+    usage_quota_version: record.usage_quota_version,
+    paid_fallback_enabled: record.paid_fallback_enabled,
+    paid_fallback_limit_microcredits: record.paid_fallback_limit_microcredits,
+    paid_fallback_spent_microcredits: record.paid_fallback_spent_microcredits,
+    paid_fallback_reserved_microcredits: record.paid_fallback_reserved_microcredits,
+    paid_fallback_reservation_request_id: record.paid_fallback_reservation_request_id,
+  });
+};
+
+const reservationInput = (requestId: string, createdAtMs: number) => ({
+  keyId,
+  requestId,
+  createdAtMs,
+  model: "gpt-5.6-sol",
+  route: "responses",
+  path: "/v1/responses",
+  stream: true,
+  reasoning: "high",
+  reason: "primary_429",
+} as const);
+
+const reserve = async (requestId: string, createdAtMs: number) => {
+  const decision = await reservePaidFallback(reservationInput(requestId, createdAtMs));
+  assert.equal(decision.kind, "reserved");
+  if (decision.kind !== "reserved") throw new Error("expected paid fallback reservation");
+  return decision.reservation;
+};
+
+const settleSurplus = async (reservation: Awaited<ReturnType<typeof reserve>>): Promise<void> => {
+  await recordMeteredUpstreamResponse(
+    reservation,
+    new Response(null, { status: 200 }),
+    null,
+    "surplus",
+  );
+  await recordMeteredTerminal(reservation, "completed", "surplus");
+  await recordSurplusUsage(
+    reservation,
+    `surplus:${reservation.request_id}`,
+    "gpt-5.6-sol",
+    { input_tokens: 100, cached_input_tokens: 20, cache_write_input_tokens: 30, output_tokens: 10 },
+    {
+      input_price_per_token: 0.000001,
+      cache_read_price_per_token: 0.0000001,
+      cache_write_price_per_token: 0.000002,
+      output_price_per_token: 0.000003,
+    },
+  );
+};
+
+const withMeteredEnv = async (run: () => Promise<void>): Promise<void> => {
+  const originalEnvGet = Deno.env.get;
+  Deno.env.get = (name: string): string | undefined =>
+    name === "METERED_API_KEY" ? "test-metered-key" : originalEnvGet.call(Deno.env, name);
+  try {
+    await run();
+  } finally {
+    Deno.env.get = originalEnvGet;
+  }
+};
+
+const HOUR_MS = 60 * 60 * 1_000;
+
+Deno.test("settlement writes an hourly rollup and retains the raw row for one year", async () => {
+  await withMeteredEnv(async () => {
+    seedKeyRecord();
+    const now = Date.now();
+    const reservation = await reserve("qp-settled-a", now);
+    await settleSurplus(reservation);
+
+    const rollups = await listPaidFallbackUsageRollups(kv, { sinceMs: now - 30 * DAY_MS, nowMs: now });
+    assert.equal(rollups.length, 1);
+    const rollup = rollups[0]!;
+    assert.equal(rollup.model, "gpt-5.6-sol");
+    assert.equal(rollup.provider, "surplus");
+    assert.equal(rollup.request_count, 1);
+    assert.equal(rollup.quota_sum, 86); // surplus usage charge, see settlement calc
+    assert.equal(rollup.spend_microcredits, 172);
+    assert.equal(rollup.input_tokens, 100);
+    assert.equal(rollup.cached_input_tokens, 20);
+    assert.equal(rollup.output_tokens, 10);
+    assert.equal(
+      rollup.bucket_start_at_ms,
+      Math.floor(reservation.created_at_ms / HOUR_MS) * HOUR_MS,
+    );
+
+    // Raw row carries a one-year TTL anchored at creation.
+    const requestKey = paidFallbackRequestV3Key(keyId, reservation.request_id);
+    const expiresAtMs = memoryKv.expiration(requestKey);
+    assert.ok(expiresAtMs !== null, "raw request row must carry a TTL");
+    assert.ok(
+      Math.abs(expiresAtMs - (reservation.created_at_ms + PAID_FALLBACK_REQUEST_LOG_RETENTION_MS)) < 5_000,
+      `expiry ${expiresAtMs} should be ~creation + one year`,
+    );
+
+    // Replaying settlement must not double count the rollup.
+    await settleSurplus(reservation);
+    const afterReplay = await listPaidFallbackUsageRollups(kv, { sinceMs: now - 30 * DAY_MS, nowMs: now });
+    assert.equal(afterReplay.length, 1);
+    assert.equal(afterReplay[0]?.request_count, 1);
+    assert.equal(afterReplay[0]?.quota_sum, 86);
+  });
+});
+
+Deno.test("two requests in one hour bucket accumulate in one rollup row", async () => {
+  await withMeteredEnv(async () => {
+    seedKeyRecord();
+    const now = Date.now();
+    const bucketStart = Math.floor(now / HOUR_MS) * HOUR_MS;
+    const first = await reserve("qp-merge-a", bucketStart + 1_000);
+    const second = await reserve("qp-merge-b", bucketStart + 2_000);
+    await settleSurplus(first);
+    await settleSurplus(second);
+
+    const rollups = await listPaidFallbackUsageRollups(kv, { sinceMs: now - 30 * DAY_MS, nowMs: now });
+    assert.equal(rollups.length, 1);
+    assert.equal(rollups[0]?.request_count, 2);
+    assert.equal(rollups[0]?.quota_sum, 172);
+    assert.equal(rollups[0]?.spend_microcredits, 344);
+  });
+});
+
+Deno.test("rollup listing respects the requested time range", async () => {
+  await withMeteredEnv(async () => {
+    seedKeyRecord();
+    const now = Date.now();
+    const hourStart = Math.floor(now / HOUR_MS) * HOUR_MS;
+    const oldBucketKey = paidFallbackUsageRollupKey(hourStart - 2 * HOUR_MS, "gpt-5.6-sol", "metered");
+    const freshBucketKey = paidFallbackUsageRollupKey(hourStart, "gpt-5.6-sol", "metered");
+    const sample: PaidFallbackUsageRollup = {
+      v: 1,
+      bucket_start_at_ms: 0,
+      model: "gpt-5.6-sol",
+      provider: "metered",
+      request_count: 1,
+      quota_sum: 50,
+      input_tokens: 100,
+      cached_input_tokens: 0,
+      output_tokens: 10,
+      spend_microcredits: 25,
+      first_request_at_ms: 0,
+      last_request_at_ms: 0,
+      updated_at_ms: now,
+    };
+    await memoryKv.set(oldBucketKey, { ...sample, bucket_start_at_ms: hourStart - 2 * HOUR_MS });
+    await memoryKv.set(freshBucketKey, { ...sample, bucket_start_at_ms: hourStart });
+
+    const retained = await listPaidFallbackUsageRollups(kv, { sinceMs: hourStart - HOUR_MS, nowMs: now + HOUR_MS });
+    assert.equal(retained.length, 1);
+    assert.equal(retained[0]?.bucket_start_at_ms, hourStart);
+  });
+});
+
+Deno.test("merge sums counters and tracks first/last request times", () => {
+  const base = {
+    bucket_start_at_ms: 1_000,
+    model: "gpt-5.6-sol",
+    provider: "metered",
+    quota: 30,
+    input_tokens: 10,
+    cached_input_tokens: null,
+    output_tokens: 5,
+    spend_microcredits: 15,
+    request_created_at_ms: 5_000,
+    updated_at_ms: 6_000,
+  } as const;
+  const first = mergePaidFallbackUsageRollup(null, base);
+  assert.equal(first.request_count, 1);
+  assert.equal(first.quota_sum, 30);
+  assert.equal(first.first_request_at_ms, 5_000);
+  assert.equal(first.last_request_at_ms, 5_000);
+  const second = mergePaidFallbackUsageRollup(first, {
+    ...base,
+    quota: 20,
+    input_tokens: 40,
+    cached_input_tokens: 7,
+    spend_microcredits: 10,
+    request_created_at_ms: 4_000,
+    updated_at_ms: 7_000,
+  });
+  assert.equal(second.request_count, 2);
+  assert.equal(second.quota_sum, 50);
+  assert.equal(second.cached_input_tokens, 7);
+  assert.equal(second.first_request_at_ms, 4_000);
+  assert.equal(second.last_request_at_ms, 5_000);
+});
+
+Deno.test("summarize and project offer per-window rates and exhaustion estimates", () => {
+  const now = 1_000_000_000_000;
+  const hour = HOUR_MS;
+  const bucket = (startAtMs: number, quotaSum: number): PaidFallbackUsageRollup => ({
+    v: 1,
+    bucket_start_at_ms: startAtMs,
+    model: "gpt-5.6-sol",
+    provider: "metered",
+    request_count: 1,
+    quota_sum: quotaSum,
+    input_tokens: 100,
+    cached_input_tokens: 10,
+    output_tokens: 20,
+    spend_microcredits: Math.round(quotaSum / 2),
+    first_request_at_ms: startAtMs + 1,
+    last_request_at_ms: startAtMs + hour - 1,
+    updated_at_ms: startAtMs + hour - 1,
+  });
+  const series = groupPaidFallbackUsageRollups([
+    bucket(now - 30 * hour, 60),
+    bucket(now - 29 * hour, 60),
+    bucket(now - 2 * hour, 60),
+    bucket(now - 1 * hour, 60),
+  ]);
+  const usage = summarizePaidFallbackUsage(series, now);
+  assert.equal(usage.length, 1);
+  const windows = usage[0]!.windows;
+  const sevenDay = windows[0]!;
+  assert.equal(sevenDay.request_count, 4);
+  assert.equal(sevenDay.quota_sum, 240);
+  assert.equal(sevenDay.avg_quota_per_request, 60);
+  assert.ok(sevenDay.quota_per_hour !== null && sevenDay.quota_per_hour > 0);
+
+  const walletSnapshot = {
+    state: {
+      current_balance_quota: 600,
+      post_refill_baseline_quota: 3_000,
+      last_observed_used_quota: 0,
+      quota_per_credit: 2,
+      observed_at_ms: now - 1_000,
+      cycle_started_at_ms: now - 2 * dayMs(),
+      confidence: "refill_observed",
+      last_known_debits_quota: 0,
+      last_inferred_credit_quota: 0,
+      last_credit_at_ms: null,
+      latest_refill_id: "refill-1",
+      latest_refill_amount_credits: 1_500,
+      latest_refill_completed_at_ms: now - 2 * dayMs(),
+    },
+    cache_state: "fresh",
+    balance_credits: 300,
+    baseline_credits: 1_500,
+    last_inferred_credit_credits: null,
+    remaining_percent: 20,
+    used_percent: 80,
+    unlimited_quota: false,
+    total_available: null,
+    total_granted: null,
+    total_used: null,
+  } satisfies MeteredQuotaSnapshot;
+  const quota = meteredQuotaRunwayView(walletSnapshot);
+  assert.equal(quota.available, true);
+  assert.equal(quota.balance_quota, 600);
+  const estimates = projectPaidFallbackRunway(usage[0]!, quota, now);
+  const thirtyDay = estimates.find((estimate) => estimate.window_days === 30);
+  assert.ok(thirtyDay);
+  assert.equal(thirtyDay.unlimited, false);
+  assert.equal(thirtyDay.requests_remaining, 10); // 600 / 60
+  assert.ok(thirtyDay.time_remaining_ms !== null && thirtyDay.time_remaining_ms > 0);
+  assert.equal(thirtyDay.percent_per_request_vs_balance, 10); // 60/600*100
+  assert.equal(thirtyDay.percent_per_request_vs_baseline, 2); // 60/3000*100
+});
+
+Deno.test("token-usage and unlimited quota modes do not fabricate estimates", () => {
+  const now = 1_000_000_000_000;
+  const entry = summarizePaidFallbackUsage(
+    groupPaidFallbackUsageRollups([{
+      v: 1,
+      bucket_start_at_ms: now - HOUR_MS,
+      model: "gpt-5.6-sol",
+      provider: "metered",
+      request_count: 2,
+      quota_sum: 60,
+      input_tokens: 100,
+      cached_input_tokens: 0,
+      output_tokens: 20,
+      spend_microcredits: 30,
+      first_request_at_ms: now - HOUR_MS + 1,
+      last_request_at_ms: now - 1,
+      updated_at_ms: now - 1,
+    }]),
+    now,
+  );
+  const tokenSnapshot = {
+    unlimited_quota: false,
+    total_available: 1_000,
+    total_granted: 1_000,
+    total_used: 400,
+  } as const;
+  const tokenState = {
+    current_balance_quota: 0,
+    post_refill_baseline_quota: 0,
+    last_observed_used_quota: 0,
+    quota_per_credit: 1,
+    observed_at_ms: now,
+    cycle_started_at_ms: now,
+    confidence: "provisional",
+    last_known_debits_quota: 0,
+    last_inferred_credit_quota: 0,
+    last_credit_at_ms: null,
+    latest_refill_id: null,
+    latest_refill_amount_credits: null,
+    latest_refill_completed_at_ms: null,
+    unlimited_quota: tokenSnapshot.unlimited_quota,
+    total_available: tokenSnapshot.total_available,
+    total_granted: tokenSnapshot.total_granted,
+    total_used: tokenSnapshot.total_used,
+  } as const;
+  const tokenSnapshotFull: MeteredQuotaSnapshot = {
+    state: tokenState,
+    cache_state: "fresh",
+    balance_credits: null,
+    baseline_credits: null,
+    last_inferred_credit_credits: null,
+    remaining_percent: null,
+    used_percent: null,
+    unlimited_quota: tokenSnapshot.unlimited_quota,
+    total_available: tokenSnapshot.total_available,
+    total_granted: tokenSnapshot.total_granted,
+    total_used: tokenSnapshot.total_used,
+  };
+  const tokenQuota = meteredQuotaRunwayView(tokenSnapshotFull);
+  const tokenEstimates = projectPaidFallbackRunway(entry[0]!, tokenQuota, now);
+  const token30 = tokenEstimates.find((estimate) => estimate.window_days === 30)!;
+  // Available 600 quota units remain at 60 quota per 2 requests → 20 requests.
+  assert.equal(token30.requests_remaining, 20);
+
+  const unlimitedSnapshotFull: MeteredQuotaSnapshot = {
+    ...tokenSnapshotFull,
+    state: { ...tokenState, unlimited_quota: true },
+    unlimited_quota: true,
+  };
+  const unlimitedQuota = meteredQuotaRunwayView(unlimitedSnapshotFull);
+  const unlimitedEstimates = projectPaidFallbackRunway(entry[0]!, unlimitedQuota, now);
+  assert.equal(unlimitedEstimates[0]?.unlimited, true);
+  assert.equal(unlimitedEstimates[0]?.requests_remaining, null);
+
+  const unconfigured = meteredQuotaRunwayView(null);
+  assert.equal(unconfigured.available, false);
+  assert.equal(unconfigured.balance_quota, null);
+});
+
+function dayMs(): number {
+  return 24 * 60 * 60 * 1_000;
+}
