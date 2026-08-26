@@ -253,6 +253,12 @@ export type PaidFallbackRequestV3 = Readonly<{
   settled_at_ms: number | null;
   created_at_ms: number;
   updated_at_ms: number;
+  /**
+   * Set when this row's usage was folded into the hourly rollup, either by the
+   * settlement write or by the one-time backfill. Prevents a later backfill
+   * run from double-counting settle-path rows.
+   */
+  usage_rollup_at_ms?: number | null;
 }>;
 
 export type KernelAuthUsageRecord = Readonly<{

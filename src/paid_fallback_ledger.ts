@@ -6,13 +6,62 @@ import type {
   PaidFallbackRequestV3,
   PaidFallbackWindowV3,
 } from "./types.ts";
+import { isRecord } from "./utils.ts";
 import { fetchMeteredTokenLogs, type MeteredTokenLogEntry } from "./metered.ts";
+import {
+  isPaidFallbackUsageRollup,
+  mergePaidFallbackUsageRollup,
+  PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS,
+  type PaidFallbackUsageRollup,
+  paidFallbackUsageRollupKey,
+  paidFallbackUsageRollupShard,
+} from "./paid_fallback_rollups.ts";
 
 const PREFIX = ["uos_ai", "paid_fallback", "v3"] as const;
 const MAX_CAS_ATTEMPTS = 128;
 const RETRY_DELAYS_MS = [5_000, 30_000, 120_000, 600_000, 3_600_000, 21_600_000] as const;
 const UNRESOLVED_AFTER_MS = 24 * 60 * 60_000;
 const RECONCILIATION_LEASE_MS = 60_000;
+
+/**
+ * Raw paid-fallback request rows are retained for one year from request
+ * creation, then expire. Research that needs older data reads the compact
+ * per-hour usage rollups (paid_fallback_rollups.ts), which never expire.
+ */
+export const PAID_FALLBACK_REQUEST_LOG_RETENTION_MS = 365 * 24 * 60 * 60_000;
+
+export const requestRowExpireIn = (row: PaidFallbackRequestV3, nowMs: number): number =>
+  Math.max(1, row.created_at_ms + PAID_FALLBACK_REQUEST_LOG_RETENTION_MS - nowMs);
+
+const isSafeUsageCount = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+
+const isPositiveSafeInteger = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+
+const isApiKeyId = (value: unknown): value is string =>
+  typeof value === "string" && value.length > 0 && value.length <= 200;
+
+/**
+ * Window rows expire one year after their reset so they never outlive the
+ * request rows that validate them; the per-request detail is gone by then.
+ */
+const windowExpireIn = (window: PaidFallbackWindowV3, nowMs: number): number =>
+  Math.max(1, window.window_reset_at_ms + PAID_FALLBACK_REQUEST_LOG_RETENTION_MS - nowMs);
+
+export const isPaidFallbackWindowV3 = (value: unknown): value is PaidFallbackWindowV3 => {
+  if (!isRecord(value)) return false;
+  return value.v === 3 &&
+    isApiKeyId(value.key_id) &&
+    typeof value.policy_version === "string" &&
+    value.policy_version.length > 0 &&
+    isPositiveSafeInteger(value.window_reset_at_ms) &&
+    (value.limit_microcredits === -1 || isPositiveSafeInteger(value.limit_microcredits)) &&
+    isSafeUsageCount(value.settled_microcredits) &&
+    isSafeUsageCount(value.reserved_microcredits) &&
+    isSafeUsageCount(value.pending_count) &&
+    isPositiveSafeInteger(value.updated_at_ms);
+};
 
 export const paidFallbackWindowV3Key = (keyId: string, resetAtMs: number): Deno.KvKey => [
   ...PREFIX,
@@ -34,6 +83,8 @@ export const paidFallbackPendingV3Key = (keyId: string, requestId: string): Deno
 ];
 const paidFallbackWindowV3Prefix = (keyId: string): Deno.KvKey => [...PREFIX, "window", keyId];
 const paidFallbackRequestV3Prefix = (keyId: string): Deno.KvKey => [...PREFIX, "request", keyId];
+export const paidFallbackRequestV3GlobalPrefix: Deno.KvKey = [...PREFIX, "request"];
+const paidFallbackWindowV3GlobalPrefix: Deno.KvKey = [...PREFIX, "window"];
 const paidFallbackPendingV3Prefix = (keyId: string): Deno.KvKey => [...PREFIX, "pending", keyId];
 const paidFallbackPendingV3GlobalPrefix: Deno.KvKey = [...PREFIX, "pending"];
 export const paidFallbackReconciliationGateV3Key = (): Deno.KvKey => [
@@ -44,6 +95,14 @@ export const paidFallbackReconciliationLeaseV3Key = (keyId: string): Deno.KvKey 
   ...PREFIX,
   "reconciliation_lease",
   keyId,
+];
+export const paidFallbackBackfillCursorV3Key = (): Deno.KvKey => [
+  ...PREFIX,
+  "rollup_backfill_cursor",
+];
+export const paidFallbackBackfillWindowCursorV3Key = (): Deno.KvKey => [
+  ...PREFIX,
+  "rollup_backfill_window_cursor",
 ];
 export const paidFallbackDeletionGuardV3Key = (keyId: string): Deno.KvKey => [
   ...PREFIX,
@@ -530,7 +589,8 @@ export const admitPaidFallbackV3 = async (
       if (!policyChanged) return { kind: "blocked", reason: "limit_exceeded" };
       let atomic = kv.atomic().check(windowEntry).check(deletionGuardEntry);
       if (input.policyCheck) atomic = atomic.check(input.policyCheck);
-      const transition = await atomic.set(windowKey, transitioned).commit();
+      const transition = await atomic.set(windowKey, transitioned, { expireIn: windowExpireIn(transitioned, now) })
+        .commit();
       if (transition.ok) return { kind: "blocked", reason: "limit_exceeded" };
       continue;
     }
@@ -570,7 +630,7 @@ export const admitPaidFallbackV3 = async (
       : null;
     let atomic = kv.atomic().check(requestEntry).check(deletionGuardEntry);
     if (input.policyCheck) atomic = atomic.check(input.policyCheck);
-    atomic = atomic.set(requestKey, request).set(
+    atomic = atomic.set(requestKey, request, { expireIn: requestRowExpireIn(request, now) }).set(
       pendingKey,
       {
         created_at_ms: now,
@@ -589,7 +649,7 @@ export const admitPaidFallbackV3 = async (
         reserved_microcredits: transitioned.reserved_microcredits + reservation,
         pending_count: transitioned.pending_count + 1,
         updated_at_ms: now,
-      });
+      }, { expireIn: windowExpireIn(transitioned, now) });
     }
     const commit = await atomic.commit();
     if (commit.ok) {
@@ -683,7 +743,7 @@ export const updatePaidFallbackRequestV3 = async (
         : current.dispatched_at_ms,
       terminal_at_ms: terminalState !== "pending" && current.terminal_at_ms === null ? now : current.terminal_at_ms,
       updated_at_ms: now,
-    });
+    }, { expireIn: requestRowExpireIn(current, now) });
     if (gateEntry) {
       atomic = atomic.check(gateEntry);
       if (dispatchBoundary || paidFallbackReconciliationGateNeedsArm(gateEntry, now)) {
@@ -730,7 +790,7 @@ const releasePaidFallbackBeforeDispatchV3 = async (
       billing_state: "not_billed",
       terminal_at_ms: requestEntry.value.terminal_at_ms ?? now,
       updated_at_ms: now,
-    }).delete(pendingKey);
+    }, { expireIn: requestRowExpireIn(requestEntry.value, now) }).delete(pendingKey);
     atomic = atomic.check(gateEntry);
     // Deleting a pending marker must version-bump the gate even when it is
     // already due; otherwise an overlapping recompute can publish a stale
@@ -745,7 +805,7 @@ const releasePaidFallbackBeforeDispatchV3 = async (
         ),
         pending_count: Math.max(0, windowEntry.value.pending_count - 1),
         updated_at_ms: now,
-      });
+      }, { expireIn: windowExpireIn(windowEntry.value, now) });
     }
     if ((await atomic.commit()).ok) return;
   }
@@ -871,7 +931,7 @@ const deferPaidFallbackReconciliationV3 = async (
         last_reconciliation_at_ms: now,
         billing_state: unresolved ? "unresolved" : request.billing_state,
         updated_at_ms: now,
-      })
+      }, { expireIn: requestRowExpireIn(request, now) })
       .set(
         pendingKey,
         {
@@ -937,6 +997,31 @@ const settlePaidFallbackRequestV3 = async (
     const windowEntry = await kv.get<PaidFallbackWindowV3>(windowKey, { consistency: "strong" });
     const dispatchedAtMs = request.dispatched_at_ms ??
       Math.max(request.created_at_ms, providerLog.created_at * 1_000);
+    const model = request.model.trim();
+    const provider = request.provider ?? (correlation === "surplus_reservation" ? "surplus" : "metered");
+    const bucketStartAtMs = Math.floor(request.created_at_ms / PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS) *
+      PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS;
+    const rollupKey = paidFallbackUsageRollupKey(
+      bucketStartAtMs,
+      model,
+      provider,
+      paidFallbackUsageRollupShard(request.request_id),
+    );
+    const rollupEntry = await kv.get<PaidFallbackUsageRollup>(rollupKey, { consistency: "strong" });
+    const existingRollup = isPaidFallbackUsageRollup(rollupEntry.value) ? rollupEntry.value : null;
+    const nextRollup = mergePaidFallbackUsageRollup(existingRollup, {
+      bucket_start_at_ms: bucketStartAtMs,
+      request_id: request.request_id,
+      model,
+      provider,
+      quota: providerLog.quota,
+      input_tokens: providerLog.prompt_tokens,
+      cached_input_tokens: providerLog.cached_prompt_tokens ?? null,
+      output_tokens: providerLog.completion_tokens,
+      spend_microcredits: spend,
+      request_created_at_ms: request.created_at_ms,
+      updated_at_ms: now,
+    });
     let atomic = kv.atomic().check(requestEntry).check(pendingEntry).set(requestKey, {
       ...request,
       provider_quota: providerLog.quota,
@@ -954,7 +1039,13 @@ const settlePaidFallbackRequestV3 = async (
       last_reconciliation_at_ms: now,
       settled_at_ms: request.settled_at_ms ?? now,
       updated_at_ms: now,
-    }).delete(pendingKey);
+      // The settlement write just folded this usage into the hourly rollup;
+      // mark it so a later backfill run cannot double-count it.
+      ...(model && provider ? { usage_rollup_at_ms: now } : {}),
+    }, { expireIn: requestRowExpireIn(request, now) }).delete(pendingKey);
+    if (model && provider) {
+      atomic = atomic.check(rollupEntry).set(rollupKey, nextRollup);
+    }
     atomic = atomic.check(gateEntry);
     // Settlement removes billable work. Keep the gate due and version it so a
     // concurrent recompute cannot resurrect this marker's stale future time.
@@ -969,7 +1060,7 @@ const settlePaidFallbackRequestV3 = async (
         ),
         pending_count: Math.max(0, windowEntry.value.pending_count - 1),
         updated_at_ms: now,
-      });
+      }, { expireIn: windowExpireIn(windowEntry.value, now) });
     }
     if ((await atomic.commit()).ok) return { settled: true, retry_delay_ms: null };
   }
@@ -1018,6 +1109,274 @@ export const settlePaidFallbackUsageV3 = async (
     "surplus_reservation",
   );
   return result.settled;
+};
+
+export type PaidFallbackRollupBackfillResult = Readonly<{
+  scanned: number;
+  /** Rows this run applied (TTL rewrite and/or rollup merge) successfully. */
+  processed: number;
+  rollups_written: number;
+  /**
+   * Rows whose CAS commit failed (for example a live settlement updated the
+   * same shard in between). The cursor is kept before them so a re-run
+   * retries instead of losing the history.
+   */
+  failed: number;
+  /** True when the scan stopped at `limit` rows and a further run is needed. */
+  truncated: boolean;
+}>;
+
+/**
+ * One-time backfill that folds already-settled V3 rows into usage rollups and
+ * applies the one-year raw-row TTL to pre-existing rows.
+ *
+ * Rollups are new with this feature: rows settled before deployment never
+ * passed through the settlement hook, so without this pass the admin
+ * projection would silently start from an empty history. It also fixes rows
+ * that predate the TTL, because every request-row write now re-applies an
+ * anchored expiry and these rows will not be rewritten by normal traffic.
+ *
+ * Idempotency: rows carry `usage_rollup_at_ms` set by the settlement write for
+ * new traffic and by this backfill for historical rows, so a run can never
+ * double-count usage already folded into a rollup. Run with a `limit` and
+ * re-run until `truncated` is false; a persisted cursor resumes the next run
+ * at the last committed row (the list `start` is inclusive) so repeated
+ * batches stay O(remaining) rather than re-walking every already-processed
+ * row. The walk itself is also scan-bounded so an invocation cannot exceed
+ * its deadline without persisting forward progress.
+ */
+export const backfillPaidFallbackUsageRollups = async (
+  kv: Deno.Kv,
+  options: Readonly<{ limit?: number; nowMs?: number }> = {},
+): Promise<PaidFallbackRollupBackfillResult> => {
+  const limit = Math.max(1, Math.min(10_000, Math.trunc(options.limit ?? 5_000)));
+  const nowMs = Math.trunc(options.nowMs ?? Date.now());
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new Error("Paid fallback backfill clock is invalid");
+  // The budget bounds mutating work; the scan budget bounds the walk itself
+  // (marked rows skip the write budget but still cost a get and a TTL rewrite)
+  // so a resumed run cannot exceed its deadline without advancing the cursor.
+  const scanBudget = limit * 10;
+  let budget = limit;
+  let scanned = 0;
+  let processed = 0;
+  let rollupsWritten = 0;
+  let failedRows = 0;
+  const cursorKey = paidFallbackBackfillCursorV3Key();
+  let resumeKey: Deno.KvKey | null = null;
+  const cursorEntry = await kv.get<{ request_key: unknown }>(cursorKey).catch(() => null);
+  if (cursorEntry?.value && Array.isArray(cursorEntry.value.request_key)) {
+    resumeKey = cursorEntry.value.request_key as Deno.KvKey;
+  }
+  // Cursor tracks the last row whose work committed or was a marked-skip. A
+  // failed row must never be skipped by the cursor, so it only advances on
+  // success.
+  let lastVisitedKey: Deno.KvKey | null = null;
+  let scanRemaining = scanBudget;
+  const selector: Deno.KvListSelector = resumeKey
+    ? { prefix: paidFallbackRequestV3GlobalPrefix, start: resumeKey }
+    : { prefix: paidFallbackRequestV3GlobalPrefix };
+  for await (
+    const entry of kv.list<PaidFallbackRequestV3>(selector)
+  ) {
+    const requestKey = entry.key;
+    scanned += 1;
+    if (scanRemaining <= 0) {
+      // Persist the resume cursor: `start` is inclusive, so the next run
+      // restarts at this row instead of re-walking the whole prefix.
+      if (lastVisitedKey) {
+        await kv.atomic().set(cursorKey, { request_key: lastVisitedKey }).commit().catch(() => {});
+      }
+      return { scanned, processed, rollups_written: rollupsWritten, failed: failedRows, truncated: true };
+    }
+    scanRemaining -= 1;
+    const requestEntry = await kv.get<PaidFallbackRequestV3>(requestKey, { consistency: "strong" });
+    const request = requestEntry.value;
+    if (!request) continue;
+    if (typeof request.usage_rollup_at_ms === "number") {
+      // A previously processed row can lose its TTL (for example after a KV
+      // export/import restores values without expiry). Re-apply the anchored
+      // retention without touching the rollup or the row value; marked rows
+      // never consume the run budget.
+      try {
+        await kv.atomic()
+          .check(requestEntry)
+          .set(requestKey, request, { expireIn: requestRowExpireIn(request, nowMs) })
+          .commit();
+      } catch {
+        // Best effort: a concurrent writer owns the row.
+      }
+      lastVisitedKey = requestKey;
+      continue;
+    }
+    if (budget <= 0) {
+      // Persist the resume cursor. `start` is inclusive, so the next run
+      // restarts at this row instead of revisiting every processed row.
+      const cursorKeyValue = lastVisitedKey ?? resumeKey;
+      if (cursorKeyValue) {
+        await kv.atomic().set(cursorKey, { request_key: cursorKeyValue }).commit().catch(() => {});
+      }
+      return { scanned, processed, rollups_written: rollupsWritten, failed: failedRows, truncated: true };
+    }
+    budget -= 1;
+
+    const settled = request.billing_state === "settled" &&
+      request.provider_quota !== null &&
+      request.spend_microcredits !== null;
+    const model = request.model.trim();
+    const provider = request.provider ?? "metered";
+    const bucketStartAtMs = Math.floor(request.created_at_ms / PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS) *
+      PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS;
+    const rollupKey = paidFallbackUsageRollupKey(
+      bucketStartAtMs,
+      model,
+      provider,
+      paidFallbackUsageRollupShard(request.request_id),
+    );
+    const rollupEntry = settled && model
+      ? await kv.get<PaidFallbackUsageRollup>(rollupKey, { consistency: "strong" })
+      : null;
+    const existingRollup = isPaidFallbackUsageRollup(rollupEntry?.value) ? rollupEntry.value : null;
+    const nextRollup = settled && model
+      ? mergePaidFallbackUsageRollup(existingRollup, {
+        bucket_start_at_ms: bucketStartAtMs,
+        request_id: request.request_id,
+        model,
+        provider,
+        quota: request.provider_quota,
+        input_tokens: request.input_tokens ?? 0,
+        cached_input_tokens: request.cached_input_tokens ?? null,
+        output_tokens: request.output_tokens ?? 0,
+        spend_microcredits: request.spend_microcredits ?? 0,
+        request_created_at_ms: request.created_at_ms,
+        updated_at_ms: nowMs,
+      })
+      : null;
+    // Every processed row is marked, including non-billable rows, so a
+    // bounded run always advances past them instead of consuming its budget
+    // on the same rows forever. This is safe for pending/unresolved rows:
+    // the live settlement path unconditionally folds and re-marks a row
+    // whenever it actually settles, so marking one early can never suppress a
+    // rollup.
+    const nextRow = { ...request, updated_at_ms: nowMs, usage_rollup_at_ms: nowMs };
+    let atomic = kv.atomic()
+      .check(requestEntry)
+      .set(requestKey, nextRow, {
+        expireIn: requestRowExpireIn(request, nowMs),
+      });
+    if (nextRollup && rollupKey && rollupEntry) {
+      atomic = atomic.check(rollupEntry).set(rollupKey, nextRollup);
+    }
+    if ((await atomic.commit()).ok) {
+      lastVisitedKey = requestKey;
+      processed += 1;
+      if (nextRollup) rollupsWritten += 1;
+    } else {
+      // A concurrent writer touched this row or its rollup shard. Stop the
+      // sweep immediately so the persisted cursor stays before this row: a
+      // later success must never let the cursor skip a missing rollup.
+      failedRows += 1;
+      break;
+    }
+  }
+  if (failedRows > 0) {
+    // Keep the cursor at the last committed row so the next run resumes
+    // before the failed row instead of dropping it from the backfill.
+    const cursorKeyValue = lastVisitedKey ?? resumeKey;
+    if (cursorKeyValue) {
+      await kv.atomic().set(cursorKey, { request_key: cursorKeyValue }).commit().catch(() => {});
+    }
+    return { scanned, processed, rollups_written: rollupsWritten, failed: failedRows, truncated: true };
+  }
+  // Full sweep complete: drop the resume cursor.
+  await kv.atomic().delete(cursorKey).commit().catch(() => {});
+  return { scanned, processed, rollups_written: rollupsWritten, failed: 0, truncated: false };
+};
+
+export type PaidFallbackWindowTtlBackfillResult = Readonly<{
+  scanned: number;
+  rewritten: number;
+  truncated: boolean;
+}>;
+
+/**
+ * Resumable sweep that applies the anchored one-year window TTL to existing
+ * window rows. Window writes in live paths already carry the expiry; rows
+ * written before this feature or restored by KV import do not, so they must
+ * be rewritten in place. The rewrite is idempotent and each run bounds the
+ * work, persisting its own cursor so repeated invocations complete the whole
+ * prefix.
+ */
+export const backfillPaidFallbackWindowTtls = async (
+  kv: Deno.Kv,
+  options: Readonly<{ limit?: number; nowMs?: number }> = {},
+): Promise<PaidFallbackWindowTtlBackfillResult> => {
+  const limit = Math.max(1, Math.min(10_000, Math.trunc(options.limit ?? 5_000)));
+  const nowMs = Math.trunc(options.nowMs ?? Date.now());
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new Error("Paid fallback window TTL clock is invalid");
+  const cursorKey = paidFallbackBackfillWindowCursorV3Key();
+  let resumeKey: Deno.KvKey | null = null;
+  const cursorEntry = await kv.get<{ request_key: unknown }>(cursorKey).catch(() => null);
+  if (cursorEntry?.value && Array.isArray(cursorEntry.value.request_key)) {
+    resumeKey = cursorEntry.value.request_key as Deno.KvKey;
+  }
+  let scanned = 0;
+  let rewritten = 0;
+  let lastRewrittenKey: Deno.KvKey | null = null;
+  const selector: Deno.KvListSelector = resumeKey
+    ? { prefix: paidFallbackWindowV3GlobalPrefix, start: resumeKey }
+    : { prefix: paidFallbackWindowV3GlobalPrefix };
+  let skippingResumeRow = resumeKey !== null;
+  for await (const entry of kv.list<PaidFallbackWindowV3>(selector)) {
+    scanned += 1;
+    // `start` is inclusive; skip the cursor row itself so a resumed run is
+    // not forced to rewrite it and then trip the batch limit again.
+    if (
+      skippingResumeRow && resumeKey &&
+      entry.key.length === resumeKey.length &&
+      entry.key.every((part, index) => part === resumeKey![index])
+    ) {
+      skippingResumeRow = false;
+      continue;
+    }
+    const window = isPaidFallbackWindowV3(entry.value) ? entry.value : null;
+    if (!window) continue;
+    const windowEntry = await kv.get<PaidFallbackWindowV3>(entry.key, { consistency: "strong" });
+    if (!isPaidFallbackWindowV3(windowEntry.value)) continue;
+    try {
+      const committed = await kv.atomic()
+        .check(windowEntry)
+        .set(entry.key, windowEntry.value, { expireIn: windowExpireIn(windowEntry.value, nowMs) })
+        .commit();
+      if (committed.ok) {
+        lastRewrittenKey = entry.key;
+        rewritten += 1;
+      }
+    } catch {
+      // Best effort: a concurrent writer owns the window.
+    }
+    if (rewritten >= limit && lastRewrittenKey) {
+      // Probe for rows beyond this batch before reporting truncation, so the
+      // final batch is never reported as incomplete.
+      let hasMore = false;
+      let cursorRowSeen = false;
+      for await (
+        const _probe of kv.list<unknown>({ prefix: paidFallbackWindowV3GlobalPrefix, start: lastRewrittenKey })
+      ) {
+        if (cursorRowSeen) {
+          hasMore = true;
+          break;
+        }
+        cursorRowSeen = true;
+      }
+      if (hasMore) {
+        await kv.atomic().set(cursorKey, { request_key: lastRewrittenKey }).commit().catch(() => {});
+        return { scanned, rewritten, truncated: true };
+      }
+      break;
+    }
+  }
+  await kv.atomic().delete(cursorKey).commit().catch(() => {});
+  return { scanned, rewritten, truncated: false };
 };
 
 export const reconcilePaidFallbackV3 = async (

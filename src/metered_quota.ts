@@ -1,5 +1,5 @@
 import { getKv } from "./kv.ts";
-import { isRecord } from "./utils.ts";
+import { isRecord, sha256Hex } from "./utils.ts";
 import { METERED_BASE_URL, type MeteredFetch } from "./metered.ts";
 
 export const METERED_QUOTA_FRESH_MS = 5 * 60_000;
@@ -13,6 +13,8 @@ export const METERED_API_KEY_ENV = "METERED_API_KEY";
 export const METERED_QUOTA_STATE_KEY = ["uos_ai", "metered_quota", "v1", "state"] as const;
 export const METERED_QUOTA_REFRESH_LEASE_KEY = ["uos_ai", "metered_quota", "v1", "refresh_lease"] as const;
 export const METERED_QUOTA_INVALIDATION_KEY = ["uos_ai", "metered_quota", "v1", "invalidation"] as const;
+export const METERED_QUOTA_BALANCE_HISTORY_PREFIX = ["uos_ai", "metered_quota", "v1", "balance_history"] as const;
+export const METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS = 60 * 60 * 1_000;
 
 const METERED_TOKEN_USAGE_URL = `${METERED_BASE_URL}/api/usage/token/`;
 
@@ -61,6 +63,25 @@ export type MeteredQuotaState = Readonly<{
 }>;
 
 export type MeteredQuotaCacheState = "fresh" | "refreshed" | "stale" | "wait";
+
+/**
+ * One hourly snapshot of the Metered quota balance. Unlike the single state
+ * key (24h retention) this remains available for the admin quota-runway view
+ * long enough to draw the balance run-down curve at a tiny byte cost.
+ */
+export type MeteredQuotaBalanceSample = Readonly<{
+  v: 1;
+  bucket_start_at_ms: number;
+  observed_at_ms: number;
+  balance_quota: number;
+  baseline_quota: number;
+  quota_per_credit: number;
+  remaining_percent: number | null;
+  unlimited_quota?: boolean;
+  total_available?: number | null;
+  total_granted?: number | null;
+  total_used?: number | null;
+}>;
 
 export type MeteredQuotaSnapshot = Readonly<{
   state: MeteredQuotaState;
@@ -152,6 +173,23 @@ export const readMeteredAccountCredentials = (): MeteredAccountCredentials | nul
   parseCredentials({
     apiKey: getEnv(METERED_API_KEY_ENV) ?? "",
   });
+
+/**
+ * Non-secret fingerprint of the configured OpenLux account. The balance
+ * history is namespaced by it so switching METERED_API_KEY starts a fresh
+ * curve per account instead of corrupting the retained run-down history.
+ */
+export const meterQuotaAccountFingerprint = async (
+  credentials: MeteredAccountCredentials | null,
+): Promise<string | null> => {
+  const parsed = parseCredentials(credentials ?? { apiKey: "" });
+  if (!parsed) return null;
+  try {
+    return (await sha256Hex(parsed.apiKey)).slice(0, 16);
+  } catch {
+    return null;
+  }
+};
 
 const authenticatedHeaders = (credentials: MeteredAccountCredentials): Headers => {
   const headers = new Headers({
@@ -506,7 +544,14 @@ export const getMeteredQuotaSnapshot = async (
       .delete(METERED_QUOTA_INVALIDATION_KEY)
       .delete(METERED_QUOTA_REFRESH_LEASE_KEY)
       .commit();
-    if (committed.ok) return toSnapshot(state, "refreshed");
+    if (committed.ok) {
+      const accountFingerprint = await meterQuotaAccountFingerprint(credentials).catch(() => null);
+      await writeMeteredQuotaBalanceSample(kv, state, observation.observed_at_ms, accountFingerprint)
+        .catch((error) => {
+          console.warn("[ai.ubq.fi] Metered quota balance history write failed:", error);
+        });
+      return toSnapshot(state, "refreshed");
+    }
     const replacement = await loadRetainedState(kv, Date.now()).catch(() => null);
     return replacement?.value ? toSnapshot(replacement.value, "stale") : cached ? toSnapshot(cached, "stale") : null;
   } catch (error) {
@@ -558,6 +603,103 @@ export const invalidateMeteredQuotaSnapshot = async (
     )
     .commit();
   if (!committed.ok) throw new Error("Deno KV could not invalidate the Metered quota snapshot");
+};
+
+const isMeteredQuotaBalanceSample = (value: unknown): value is MeteredQuotaBalanceSample => {
+  if (!isRecord(value)) return false;
+  return value.v === 1 &&
+    isNonNegativeSafeInteger(value.bucket_start_at_ms) &&
+    isNonNegativeSafeInteger(value.observed_at_ms) &&
+    isSafeInteger(value.balance_quota) &&
+    isSafeInteger(value.baseline_quota) &&
+    isPositiveSafeInteger(value.quota_per_credit) &&
+    (value.remaining_percent === null || isNonNegativeFiniteNumber(value.remaining_percent)) &&
+    (value.unlimited_quota === undefined || typeof value.unlimited_quota === "boolean") &&
+    (value.total_available === undefined || value.total_available === null || isSafeInteger(value.total_available)) &&
+    (value.total_granted === undefined || value.total_granted === null || isSafeInteger(value.total_granted)) &&
+    (value.total_used === undefined || value.total_used === null || isSafeInteger(value.total_used));
+};
+
+const balanceSampleFromState = (
+  state: MeteredQuotaState,
+  observedAtMs: number,
+): MeteredQuotaBalanceSample | null => {
+  if (!isNonNegativeSafeInteger(observedAtMs)) return null;
+  const tokenUsage = state.unlimited_quota !== undefined || state.total_available !== undefined ||
+    state.total_granted !== undefined || state.total_used !== undefined;
+  const remainingPercent = tokenUsage
+    ? null
+    : state.post_refill_baseline_quota > 0
+    ? Math.min(100, Math.max(0, state.current_balance_quota / state.post_refill_baseline_quota * 100))
+    : null;
+  return {
+    v: 1,
+    bucket_start_at_ms: Math.floor(observedAtMs / METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS) *
+      METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS,
+    observed_at_ms: observedAtMs,
+    balance_quota: state.current_balance_quota,
+    baseline_quota: state.post_refill_baseline_quota,
+    quota_per_credit: state.quota_per_credit,
+    remaining_percent: remainingPercent,
+    ...(tokenUsage
+      ? {
+        unlimited_quota: state.unlimited_quota === true,
+        total_available: state.total_available ?? null,
+        total_granted: state.total_granted ?? null,
+        total_used: state.total_used ?? null,
+      }
+      : {}),
+  };
+};
+
+/**
+ * Upserts one hourly balance sample. Best-effort: a failure must never fail
+ * a quota refresh. Keeps the newest observation in each hour bucket so a
+ * later refresh never leaves the hour's oldest balance on the run-down curve.
+ * Reader is readMeteredQuotaBalanceHistory.
+ */
+export const writeMeteredQuotaBalanceSample = async (
+  kv: Deno.Kv,
+  state: MeteredQuotaState,
+  observedAtMs: number,
+  accountFingerprint: string | null,
+): Promise<void> => {
+  const sample = balanceSampleFromState(state, observedAtMs);
+  if (!sample || !accountFingerprint) return;
+  const key = [
+    ...METERED_QUOTA_BALANCE_HISTORY_PREFIX,
+    accountFingerprint,
+    sample.bucket_start_at_ms,
+  ] as const;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const entry = await kv.get<MeteredQuotaBalanceSample>(key, { consistency: "strong" });
+    const existing = isMeteredQuotaBalanceSample(entry.value) ? entry.value : null;
+    if (existing && existing.observed_at_ms >= sample.observed_at_ms) return;
+    const committed = await kv.atomic().check(entry).set(key, sample).commit();
+    if (committed.ok) return;
+  }
+  throw new Error("Metered quota balance history changed concurrently.");
+};
+
+export const readMeteredQuotaBalanceHistory = async (
+  kv: Deno.Kv | null,
+  options: Readonly<{ sinceMs: number; nowMs: number; accountFingerprint: string | null; limit?: number }>,
+): Promise<MeteredQuotaBalanceSample[]> => {
+  if (!kv || !options.accountFingerprint) return [];
+  const limit = Math.max(1, Math.min(10_000, Math.trunc(options.limit ?? 10_000)));
+  const samples: MeteredQuotaBalanceSample[] = [];
+  const prefix: Deno.KvKey = [...METERED_QUOTA_BALANCE_HISTORY_PREFIX, options.accountFingerprint];
+  const start: Deno.KvKey = [...prefix, Math.max(0, Math.trunc(options.sinceMs))];
+  const end: Deno.KvKey = [...prefix, Math.trunc(options.nowMs) + METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS];
+  for await (
+    const entry of kv.list<MeteredQuotaBalanceSample>({ prefix, start, end }, {
+      limit,
+    })
+  ) {
+    const sample = isMeteredQuotaBalanceSample(entry.value) ? entry.value : null;
+    if (sample) samples.push(sample);
+  }
+  return samples.sort((left, right) => left.bucket_start_at_ms - right.bucket_start_at_ms);
 };
 
 export const getConfiguredMeteredQuotaSnapshot = async (

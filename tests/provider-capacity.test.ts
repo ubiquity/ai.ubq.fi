@@ -1265,8 +1265,10 @@ Deno.test("cron sampler persists capacity without building the discarded admin p
       0,
       "the cron sampler must not enumerate history or reset-event projection prefixes",
     );
+    // The quota refresh inside a sample also appends at most one hourly
+    // balance-history read plus one upsert, hence the 22-command ceiling.
     assert.ok(
-      samplerBudget.commands <= 20,
+      samplerBudget.commands <= 22,
       `cron sampler budget unexpectedly grew to ${samplerBudget.commands} KV commands`,
     );
     assert.notEqual((await samplerKv.get(PROVIDER_CAPACITY_SNAPSHOT_KEY)).value, null);

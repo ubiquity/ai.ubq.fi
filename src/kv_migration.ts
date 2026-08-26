@@ -46,7 +46,12 @@ import type {
   PaidFallbackWindowV3,
 } from "./types.ts";
 import { hasStrictPaidFallbackKeyPolicy, hasStrictPaidFallbackPolicy } from "./paid_fallback.ts";
-import { recomputePaidFallbackReconciliationGateV3 } from "./paid_fallback_ledger.ts";
+import {
+  isPaidFallbackWindowV3,
+  PAID_FALLBACK_REQUEST_LOG_RETENTION_MS,
+  recomputePaidFallbackReconciliationGateV3,
+  requestRowExpireIn,
+} from "./paid_fallback_ledger.ts";
 import { isRecord } from "./utils.ts";
 
 export type KvMigrationProfile = "local" | "prod";
@@ -139,6 +144,14 @@ const DURABLE_PREFIXES: Array<{ group: string; prefix: Deno.KvKey }> = [
   { group: "paid_fallback_ledger", prefix: ["uos_ai", "paid_fallback", "ledger"] },
   { group: "paid_fallback_v3_windows", prefix: ["uos_ai", "paid_fallback", "v3", "window"] },
   { group: "paid_fallback_v3_requests", prefix: ["uos_ai", "paid_fallback", "v3", "request"] },
+  {
+    group: "paid_fallback_v3_usage_rollups",
+    prefix: ["uos_ai", "paid_fallback", "v3", "usage_rollup"],
+  },
+  {
+    group: "metered_quota_balance_history",
+    prefix: ["uos_ai", "metered_quota", "v1", "balance_history"],
+  },
   { group: "paid_fallback_v3_pending", prefix: ["uos_ai", "paid_fallback", "v3", "pending"] },
   {
     group: "paid_fallback_v3_reconciliation_leases",
@@ -202,6 +215,14 @@ const TRANSIENT_PREFIXES: Array<{ group: string; prefix: Deno.KvKey }> = [
   { group: "passkey_sessions", prefix: ["uos_ai", "auth", "sessions"] },
   { group: "embeddings_rate", prefix: ["embeddings", "v1", "rate"] },
   { group: "embeddings_jobs", prefix: ["embeddings", "jobs"] },
+  {
+    group: "paid_fallback_v3_backfill_cursor",
+    prefix: ["uos_ai", "paid_fallback", "v3", "rollup_backfill_cursor"],
+  },
+  {
+    group: "paid_fallback_v3_backfill_window_cursor",
+    prefix: ["uos_ai", "paid_fallback", "v3", "rollup_backfill_window_cursor"],
+  },
 ];
 
 const EMBEDDINGS_CACHE_PREFIXES: Array<{ group: string; prefix: Deno.KvKey }> = [
@@ -359,6 +380,10 @@ const PAID_FALLBACK_DELETION_GUARD_V3_PREFIX = [...PAID_FALLBACK_V3_PREFIX, "del
 const isRoutableApiKeyPrefix = (value: unknown): boolean => typeof value === "string" && /^u_[0-9a-f]{10}$/.test(value);
 const isSafeUsageCount = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+
+// Larger than any supported API-key window preset (1m/1h/1d/1w), so exact
+// window reconstruction stops before its earliest rows can age out.
+const PAID_FALLBACK_VALIDATION_SLACK_MS = 32 * 24 * 60 * 60 * 1_000;
 const isApiKeyId = (value: unknown): value is string =>
   typeof value === "string" && value === value.trim() && value.length > 0 && value.length <= 200;
 const isApiKeyHash = (value: unknown): value is string =>
@@ -455,20 +480,6 @@ const apiKeyHashPolicyMatches = (record: ApiKeyRecord, hashRecord: ApiKeyHashRec
   record.paid_fallback_reserved_microcredits === hashRecord.paid_fallback_reserved_microcredits &&
   record.paid_fallback_reservation_request_id === hashRecord.paid_fallback_reservation_request_id;
 
-const isPaidFallbackWindowV3 = (value: unknown): value is PaidFallbackWindowV3 => {
-  if (!isRecord(value)) return false;
-  return value.v === 3 &&
-    isApiKeyId(value.key_id) &&
-    typeof value.policy_version === "string" &&
-    value.policy_version.length > 0 &&
-    isPositiveSafeInteger(value.window_reset_at_ms) &&
-    (value.limit_microcredits === -1 || isPositiveSafeInteger(value.limit_microcredits)) &&
-    isSafeUsageCount(value.settled_microcredits) &&
-    isSafeUsageCount(value.reserved_microcredits) &&
-    isSafeUsageCount(value.pending_count) &&
-    isPositiveSafeInteger(value.updated_at_ms);
-};
-
 const isPaidFallbackRequestV3 = (value: unknown): value is PaidFallbackRequestV3 => {
   if (!isRecord(value)) return false;
   return value.v === 3 &&
@@ -524,6 +535,7 @@ const inspectPaidFallbackV3 = async (
   kv: Deno.Kv,
   knownKeyIds: ReadonlySet<string>,
   unlimitedKeyIds: ReadonlySet<string>,
+  nowMs = Date.now(),
 ): Promise<PaidFallbackV3Inventory> => {
   const errors: string[] = [];
   const windows = new Map<string, PaidFallbackWindowV3>();
@@ -661,6 +673,15 @@ const inspectPaidFallbackV3 = async (
   }
 
   for (const [reference, window] of windows) {
+    // Raw request rows expire one year after their individual creation times,
+    // so a window's earliest rows can age out up to one window length before
+    // `reset + retention`. Stop exact reconstruction with a conservative
+    // slack (larger than any supported window preset) instead of reporting a
+    // healthy window as inconsistent once its rows start disappearing.
+    if (
+      window.window_reset_at_ms + PAID_FALLBACK_REQUEST_LOG_RETENTION_MS - PAID_FALLBACK_VALIDATION_SLACK_MS <=
+        nowMs
+    ) continue;
     const outstanding = [...requests.values()].filter((request) =>
       request.key_id === window.key_id &&
       request.window_reset_at_ms === window.window_reset_at_ms &&
@@ -1678,7 +1699,10 @@ const projectLegacyPaidFallbackV3 = async (
     let atomic = kv.atomic().check(requestEntry).check(pendingEntry);
     let needsCommit = false;
     if (!existingRequest) {
-      atomic = atomic.set(requestKey, request);
+      // Migrated rows inherit the one-year raw-row retention anchored to
+      // their original creation time, so a re-run of this migration cannot
+      // resurrect rows that have already aged out of the retention window.
+      atomic = atomic.set(requestKey, request, { expireIn: requestRowExpireIn(request, nowMs) });
       projected += 1;
       needsCommit = true;
     }

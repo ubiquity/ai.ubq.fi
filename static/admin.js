@@ -160,6 +160,12 @@ const providerCapacityUpdated = mustGet("provider-capacity-updated");
 const providerCapacityChart = mustGet("provider-capacity-chart");
 const providerCapacityList = mustGet("provider-capacity-list");
 
+const quotaRunwayBadge = mustGet("quota-runway-badge");
+const quotaRunwayUpdated = mustGet("quota-runway-updated");
+const quotaRunwaySummary = mustGet("quota-runway-summary");
+const quotaRunwayList = mustGet("quota-runway-list");
+const quotaRunwayNote = mustGet("quota-runway-note");
+
 const PROMPT_CACHE_ANALYTICS_GROUPS = [
   ["key_presence", "Keyed / unkeyed"],
   ["provider", "Provider"],
@@ -225,6 +231,9 @@ let providersLoadId = 0;
 let providersLoadedAt = 0;
 let providerCapacityLoading = false;
 let providerCapacityLoadedForOpen = false;
+let quotaProjectionLoading = false;
+let quotaProjectionLoadedForOpen = false;
+let quotaProjectionLoadId = 0;
 let promptCacheAnalyticsLoading = false;
 let promptCacheAnalyticsLoadedForOpen = false;
 let promptCacheAnalyticsLoadId = 0;
@@ -2572,6 +2581,215 @@ const loadProviderCapacity = async () => {
     return false;
   } finally {
     providerCapacityLoading = false;
+  }
+};
+
+const quotaProjectionProviderLabel = (provider) =>
+  provider === "surplus" ? "Surplus" : provider === "metered" ? "Metered" : String(provider ?? "unknown");
+
+const quotaProjectionDuration = (ms) => {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "unknown";
+  const minutes = Math.max(0, Math.trunc(ms / 60_000));
+  if (minutes < 60) return `${formatNumber(minutes)}m`;
+  const hours = Math.trunc(minutes / 60);
+  const days = Math.trunc(hours / 24);
+  if (days >= 365) return `${Math.round(days / 365 * 10) / 10}y`;
+  if (days >= 1) return `${formatNumber(days)}d ${hours % 24}h`;
+  return `${formatNumber(hours)}h ${minutes % 60}m`;
+};
+
+const quotaProjectionEstimate = (entry, windowDays = 30) => {
+  const estimate = (entry?.estimates ?? []).find((candidate) => candidate?.window_days === windowDays);
+  const usage = (entry?.usage ?? []).find((candidate) => candidate?.window_days === windowDays);
+  return { estimate, usage };
+};
+
+const renderQuotaProjectionRows = (payload, historyUnavailable) => {
+  const models = Array.isArray(payload?.models) ? payload.models : [];
+  quotaRunwayList.replaceChildren();
+  if (!models.length) {
+    const empty = document.createElement("p");
+    empty.dataset.empty = "quota-runway";
+    empty.textContent = historyUnavailable
+      ? "Paid-fallback usage history could not be read — check KV availability."
+      : "No settled paid-fallback usage in the retained window yet. Rows appear after requests settle.";
+    quotaRunwayList.appendChild(empty);
+    return;
+  }
+  for (const entry of models) {
+    const { estimate, usage } = quotaProjectionEstimate(entry, 30);
+    const row = document.createElement("div");
+    row.dataset.quotaRunwayRow = "";
+    const heading = document.createElement("div");
+    heading.dataset.quotaRunwayHeading = "";
+    const model = document.createElement("strong");
+    model.textContent = String(entry.model ?? "unknown");
+    const provider = document.createElement("span");
+    provider.dataset.muted = "";
+    provider.textContent = quotaProjectionProviderLabel(entry.provider);
+    heading.append(model, provider);
+    const details = document.createElement("div");
+    details.dataset.quotaRunwayDetails = "";
+    const history = document.createElement("p");
+    history.dataset.muted = "";
+    history.textContent = usage?.request_count
+      ? `30d: ${formatNumber(usage.request_count)} requests · ${
+        formatDecimal(usage.avg_quota_per_request)
+      } quota avg/request`
+      : "No settled usage in the trailing 30 days";
+    const projection = document.createElement("p");
+    if (!estimate) {
+      projection.textContent = "No exhaustion estimate — quota is not monitored for this provider";
+    } else if (estimate?.unlimited === true) {
+      projection.textContent = "Unlimited quota — no exhaustion estimate";
+    } else if (estimate?.requests_remaining === null || estimate?.requests_remaining === undefined) {
+      projection.textContent = "Exhaustion estimate unknown (no quota balance or usage rate)";
+    } else {
+      const parts = [`~${formatNumber(estimate.requests_remaining)} requests left`];
+      if (typeof estimate.time_remaining_ms === "number") {
+        parts.push(`~${quotaProjectionDuration(estimate.time_remaining_ms)} run-time left`);
+        if (typeof estimate.exhausted_at_ms === "number") {
+          parts.push(`exhausts ${formatDate(estimate.exhausted_at_ms)}`);
+        }
+      }
+      const knocked = estimate.percent_per_request_vs_balance;
+      if (typeof knocked === "number") {
+        parts.push(`${quotaPercentFormatter.format(knocked)}% of balance per request`);
+      }
+      if (estimate.stale_balance === true) parts.push("stale balance snapshot");
+      projection.textContent = parts.join(" · ");
+    }
+    details.append(history, projection);
+    row.append(heading, details);
+    quotaRunwayList.appendChild(row);
+  }
+};
+
+const renderQuotaProjection = (payload) => {
+  const quota = payload?.quota ?? {};
+  const balanceHistory = Array.isArray(payload?.balance_history) ? payload.balance_history : [];
+  quotaRunwaySummary.replaceChildren();
+  quotaRunwayNote.textContent = "";
+  if (!quota.available) {
+    setBadge(quotaRunwayBadge, "bad", "Quota not monitored");
+    quotaRunwayUpdated.textContent = "Consumption history only";
+    const summary = document.createElement("p");
+    summary.dataset.muted = "";
+    summary.textContent =
+      "Metered quota monitoring is not configured or has no snapshot. Per-model consumption history is still reported below.";
+    quotaRunwaySummary.appendChild(summary);
+  } else if (quota.unlimited_quota === true) {
+    setBadge(quotaRunwayBadge, "ok", "Unlimited quota");
+    quotaRunwayUpdated.textContent = "No exhaustion estimate";
+    const summary = document.createElement("p");
+    summary.dataset.muted = "";
+    summary.textContent =
+      "The Metered report is unlimited or only publishes totals; balance-based run-time estimates are unavailable.";
+    quotaRunwaySummary.appendChild(summary);
+  } else {
+    const balanceCredits = quota.balance_credits;
+    const baselineCredits = quota.baseline_credits;
+    const remainingPercent = quota.remaining_percent;
+    const balanceText = typeof balanceCredits === "number"
+      ? `Balance ${formatNumber(balanceCredits)} credits`
+      : typeof quota.total_available === "number"
+      ? `Available ${formatNumber(quota.total_available)} tokens`
+      : "Balance unavailable";
+    const healthyBalance = typeof balanceCredits === "number"
+      ? balanceCredits > 0
+      : typeof quota.total_available === "number"
+      ? quota.total_available > 0
+      : false;
+    setBadge(
+      quotaRunwayBadge,
+      healthyBalance ? "ok" : "bad",
+      balanceText,
+    );
+    const updatedParts = [];
+    if (typeof remainingPercent === "number") {
+      updatedParts.push(`${quotaPercentFormatter.format(remainingPercent)} of baseline left`);
+    }
+    if (typeof baselineCredits === "number" && baselineCredits !== 0) {
+      updatedParts.push(`baseline ${formatNumber(baselineCredits)} credits`);
+    }
+    if (typeof quota.observed_at_ms === "number") updatedParts.push(`observed ${formatDate(quota.observed_at_ms)}`);
+    quotaRunwayUpdated.textContent = updatedParts.join(" · ") || "Waiting for projection";
+    const refill = [];
+    if (typeof quota.latest_refill_amount_credits === "number") {
+      refill.push(`last refill ${formatNumber(quota.latest_refill_amount_credits)} credits`);
+    }
+    if (typeof quota.last_credit_at_ms === "number") refill.push(`at ${formatDate(quota.last_credit_at_ms)}`);
+    if (refill.length) {
+      const summary = document.createElement("p");
+      summary.dataset.muted = "";
+      summary.textContent = `${refill.join(" ")}. Estimates assume no further refill;${
+        typeof quota.cycle_started_at_ms === "number"
+          ? ` current cycle began ${formatDate(quota.cycle_started_at_ms)}.`
+          : ""
+      }`;
+      quotaRunwaySummary.appendChild(summary);
+    }
+  }
+  const bucketCount = balanceHistory.length;
+  const windowDays = typeof payload?.window_days === "number" ? payload.window_days : 30;
+  const windowLabel = `${windowDays}-day`;
+  const historyUnavailable = payload?.rollup_scan !== "ok";
+  const balanceUnavailable = payload?.balance_history_scan !== "ok";
+  if (historyUnavailable) {
+    quotaRunwayNote.textContent =
+      "Paid-fallback usage history could not be read — totals and exhaustion estimates are unavailable until KV reads recover.";
+  } else if (balanceUnavailable) {
+    quotaRunwayNote.textContent =
+      "Balance history could not be read — the run-down curve is unavailable until KV reads recover.";
+  } else if (bucketCount) {
+    quotaRunwayNote.textContent = `${
+      formatNumber(bucketCount)
+    } hourly balance samples in the trailing seven days · estimates use the ${windowLabel} consumption window · raw request rows retain one year; hourly model rollups are retained indefinitely.`;
+  } else {
+    quotaRunwayNote.textContent =
+      `Estimates use the ${windowLabel} consumption window · raw request rows retain one year; hourly model rollups are retained indefinitely.`;
+  }
+  renderQuotaProjectionRows(payload, historyUnavailable);
+};
+
+const loadQuotaProjection = async () => {
+  if (quotaProjectionLoading) return false;
+  const token = getAdminToken();
+  if (!adminAccessState.isAdmin || !hasAdminCredential()) {
+    setBadge(quotaRunwayBadge, "bad", "Sign in required");
+    return false;
+  }
+  // Fence the render against token or API-base target changes while this
+  // request is in flight, so a switched session can never display another
+  // gateway's balance and usage.
+  const loadId = ++quotaProjectionLoadId;
+  const signature = `${token}\u0000${resolveBaseUrl()}`;
+  quotaProjectionLoading = true;
+  setBadge(quotaRunwayBadge, "unknown", "Loading projection");
+  try {
+    const response = await fetch(apiUrl("/admin/providers/quota-projection"), {
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const payload = await response.json().catch(() => null);
+    if (
+      loadId !== quotaProjectionLoadId ||
+      signature !== `${getAdminToken()}\u0000${resolveBaseUrl()}`
+    ) return false;
+    if (!response.ok || !payload) {
+      setBadge(quotaRunwayBadge, "bad", payload?.error?.message ?? "Projection unavailable");
+      quotaRunwayUpdated.textContent = "Projection unavailable";
+      return false;
+    }
+    renderQuotaProjection(payload);
+    return true;
+  } catch {
+    if (loadId !== quotaProjectionLoadId) return false;
+    setBadge(quotaRunwayBadge, "bad", "Offline");
+    quotaRunwayUpdated.textContent = "Projection unavailable";
+    return false;
+  } finally {
+    if (loadId === quotaProjectionLoadId) quotaProjectionLoading = false;
   }
 };
 
@@ -6738,6 +6956,12 @@ const loadAdminView = (view) => {
         if (!loaded) providerCapacityLoadedForOpen = false;
       });
     }
+    if (!quotaProjectionLoadedForOpen) {
+      quotaProjectionLoadedForOpen = true;
+      void loadQuotaProjection().then((loaded) => {
+        if (!loaded) quotaProjectionLoadedForOpen = false;
+      });
+    }
     if (!promptCacheAnalyticsLoadedForOpen) {
       promptCacheAnalyticsLoadedForOpen = true;
       void loadPromptCacheAnalytics().then((loaded) => {
@@ -6746,6 +6970,7 @@ const loadAdminView = (view) => {
     }
   } else {
     providerCapacityLoadedForOpen = false;
+    quotaProjectionLoadedForOpen = false;
     promptCacheAnalyticsLoadedForOpen = false;
   }
   if (view === "errors" && (!errorsLoadedAt || Date.now() - errorsLoadedAt >= 10_000)) {
@@ -7671,6 +7896,15 @@ tokenInput.addEventListener("input", () => {
   providersLoading = false;
   providersLoadedAt = 0;
   providerCapacityLoadedForOpen = false;
+  quotaProjectionLoadedForOpen = false;
+  quotaProjectionLoading = false;
+  quotaProjectionLoadId += 1;
+  quotaRunwayBadge.setAttribute("data-state", "unknown");
+  quotaRunwayBadge.textContent = "Not loaded";
+  quotaRunwayUpdated.textContent = "Waiting for projection";
+  quotaRunwaySummary.replaceChildren();
+  quotaRunwayList.replaceChildren();
+  quotaRunwayNote.textContent = "";
   promptCacheAnalyticsLoadId += 1;
   promptCacheAnalyticsLoading = false;
   promptCacheAnalyticsLoadedForOpen = false;
@@ -7876,6 +8110,15 @@ baseSelect.addEventListener("change", () => {
   providersLoading = false;
   providersLoadedAt = 0;
   providerCapacityLoadedForOpen = false;
+  quotaProjectionLoadedForOpen = false;
+  quotaProjectionLoading = false;
+  quotaProjectionLoadId += 1;
+  quotaRunwayBadge.setAttribute("data-state", "unknown");
+  quotaRunwayBadge.textContent = "Not loaded";
+  quotaRunwayUpdated.textContent = "Waiting for projection";
+  quotaRunwaySummary.replaceChildren();
+  quotaRunwayList.replaceChildren();
+  quotaRunwayNote.textContent = "";
   latestProviderCapacityChartState = null;
   latestProviderHealth = null;
   providerCapacityChart.replaceChildren();
@@ -7933,6 +8176,7 @@ globalThis.setInterval(() => {
   if (currentAdminView !== "providers" || document.visibilityState !== "visible") return;
   void loadProviders();
   void loadProviderCapacity();
+  void loadQuotaProjection();
 }, 30_000);
 
 createKeyBtn.addEventListener("click", () => {

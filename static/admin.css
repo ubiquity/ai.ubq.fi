@@ -1298,3 +1298,47 @@ body[data-page="admin"] [data-view="kernel"] details[data-usage][open] {
     grid-template-columns: 1fr;
   }
 }
+
+body[data-page="admin"] [data-quota-runway-summary] {
+  margin: 0 0 10px;
+}
+
+body[data-page="admin"] [data-quota-runway-summary] p {
+  margin: 0;
+}
+
+body[data-page="admin"] [data-quota-runway-list] {
+  display: grid;
+  gap: 8px;
+}
+
+body[data-page="admin"] [data-quota-runway-row] {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+body[data-page="admin"] [data-quota-runway-row] [data-quota-runway-heading] {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+body[data-page="admin"] [data-quota-runway-row] [data-quota-runway-heading] [data-muted] {
+  font-size: 11px;
+}
+
+body[data-page="admin"] [data-quota-runway-row] [data-quota-runway-details] {
+  text-align: right;
+  min-width: 0;
+}
+
+body[data-page="admin"] [data-quota-runway-row] [data-quota-runway-details] p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}

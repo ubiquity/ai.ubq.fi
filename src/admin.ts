@@ -70,6 +70,8 @@ import {
   paidFallbackHashFields,
 } from "./paid_fallback.ts";
 import {
+  backfillPaidFallbackUsageRollups,
+  backfillPaidFallbackWindowTtls,
   deletePaidFallbackStateV3,
   getPaidFallbackProviderUsageV3,
   getPaidFallbackWindowProjectionV3,
@@ -138,7 +140,20 @@ import type {
   CodexAuthState,
 } from "./types.ts";
 import { MeteredError } from "./metered.ts";
-import { getMeteredQuotaDiagnostics } from "./metered_quota.ts";
+import {
+  getConfiguredMeteredQuotaSnapshot,
+  getMeteredQuotaDiagnostics,
+  meterQuotaAccountFingerprint,
+  readMeteredAccountCredentials,
+  readMeteredQuotaBalanceHistory,
+} from "./metered_quota.ts";
+import { listPaidFallbackUsageRollups, PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS } from "./paid_fallback_rollups.ts";
+import {
+  groupPaidFallbackUsageRollups,
+  meteredQuotaRunwayView,
+  projectPaidFallbackRunway,
+  summarizePaidFallbackUsage,
+} from "./quota_projection.ts";
 import {
   DEBUG_ROUTING_MAX_DURATION_MS,
   type DebugRoutingScenario,
@@ -2186,4 +2201,100 @@ export const handleAdminKernelUsageDelete = async (req: Request): Promise<Respon
   }
 
   return json(200, { ok: true, scope, repo: { owner, repo }, deleted: true });
+};
+
+const QUOTA_PROJECTION_BALANCE_HISTORY_MS = 7 * 24 * 60 * 60 * 1_000;
+const QUOTA_PROJECTION_ALLOWED_WINDOWS = new Set([7, 30, 90] as const);
+const QUOTA_PROJECTION_DEFAULT_WINDOW_DAYS = 30 as const;
+
+/**
+ * Admin quota-runway view: per-model consumption from retained rollups plus
+ * exhaustion estimates against the current Metered balance. Reads only the
+ * compact stores; never scans raw request rows. The `window_days` parameter
+ * bounds the rollup scan (default 30): the UI poll is cheap and does not pull
+ * the full 90-day rollup history on every refresh.
+ */
+export const handleAdminProvidersQuotaProjection = async (
+  request: Request = new Request("https://ai.ubq.fi/admin/providers/quota-projection"),
+): Promise<Response> => {
+  const kv = await getKv();
+  const nowMs = Date.now();
+  const rawWindowDays = Number.parseInt(
+    new URL(request.url).searchParams.get("window_days") ?? "",
+    10,
+  );
+  const windowDays = Number.isInteger(rawWindowDays) &&
+      QUOTA_PROJECTION_ALLOWED_WINDOWS.has(rawWindowDays as 7 | 30 | 90)
+    ? rawWindowDays as 7 | 30 | 90
+    : QUOTA_PROJECTION_DEFAULT_WINDOW_DAYS;
+  const windowMs = windowDays * 24 * 60 * 60 * 1_000;
+  const accountFingerprint = await meterQuotaAccountFingerprint(readMeteredAccountCredentials()).catch(() => null);
+  const [snapshot, rollups, balanceHistory] = await Promise.all([
+    getConfiguredMeteredQuotaSnapshot({ kv }).catch(() => null),
+    kv
+      ? listPaidFallbackUsageRollups(kv, { sinceMs: nowMs - windowMs, nowMs }).catch(() => null)
+      : Promise.resolve(null),
+    kv
+      ? readMeteredQuotaBalanceHistory(kv, {
+        sinceMs: nowMs - QUOTA_PROJECTION_BALANCE_HISTORY_MS,
+        nowMs,
+        accountFingerprint,
+      }).catch(() => null)
+      : Promise.resolve(null),
+  ]);
+  const quota = meteredQuotaRunwayView(snapshot);
+  const usage = summarizePaidFallbackUsage(groupPaidFallbackUsageRollups(rollups ?? []), nowMs);
+  const models = usage.map((entry) => ({
+    model: entry.model,
+    provider: entry.provider,
+    quota_source: entry.provider === "metered" ? "metered" : null,
+    usage: entry.windows.filter((window) => window.window_days === windowDays),
+    estimates: projectPaidFallbackRunway(entry, quota, nowMs).filter((estimate) => estimate.window_days === windowDays),
+  }));
+  return json(200, {
+    snapshot_at_ms: nowMs,
+    window_days: windowDays,
+    retention: {
+      rollup_bucket_ms: PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS,
+      rollup_window_ms: windowMs,
+      balance_history_window_ms: QUOTA_PROJECTION_BALANCE_HISTORY_MS,
+    },
+    quota,
+    models,
+    // A failed scan must not masquerade as zero history: operators need to
+    // distinguish "nothing settled" from "history could not be read".
+    rollup_scan: rollups === null ? "unavailable" : "ok",
+    balance_history_scan: balanceHistory === null ? "unavailable" : "ok",
+    balance_history: balanceHistory ?? [],
+  }, { "Cache-Control": "no-store" });
+};
+
+/**
+ * Admin-triggered one-time backfill of settled V3 rows into usage rollups,
+ * including the anchored raw-row TTL for rows that predate it. Run with a
+ * `limit` and repeat until `truncated` is false; the run is idempotent and
+ * resumable.
+ */
+export const handleAdminProvidersQuotaProjectionBackfill = async (
+  request: Request = new Request("https://ai.ubq.fi/admin/providers/quota-projection/backfill"),
+): Promise<Response> => {
+  const kv = await getKv();
+  if (!kv) return openaiError(503, "KV is unavailable", "server_error");
+  const limitRaw = Number.parseInt(new URL(request.url).searchParams.get("limit") ?? "", 10);
+  const limit = Number.isInteger(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 10_000) : 5_000;
+  try {
+    const requests = await backfillPaidFallbackUsageRollups(kv, { limit });
+    const windows = await backfillPaidFallbackWindowTtls(kv, { limit });
+    return json(200, {
+      requests,
+      windows,
+      completed: !requests.truncated && !windows.truncated,
+    });
+  } catch (error) {
+    return openaiError(
+      500,
+      error instanceof Error ? error.message : "Paid fallback rollup backfill failed",
+      "server_error",
+    );
+  }
 };
