@@ -29,7 +29,7 @@ const RECONCILIATION_LEASE_MS = 60_000;
  */
 export const PAID_FALLBACK_REQUEST_LOG_RETENTION_MS = 365 * 24 * 60 * 60_000;
 
-const requestRowExpireIn = (row: PaidFallbackRequestV3, nowMs: number): number =>
+export const requestRowExpireIn = (row: PaidFallbackRequestV3, nowMs: number): number =>
   Math.max(1, row.created_at_ms + PAID_FALLBACK_REQUEST_LOG_RETENTION_MS - nowMs);
 
 /**
@@ -1111,8 +1111,10 @@ export type PaidFallbackRollupBackfillResult = Readonly<{
  * new traffic and by this backfill for historical rows, so a run can never
  * double-count usage already folded into a rollup. Run with a `limit` and
  * re-run until `truncated` is false; a persisted cursor resumes the next run
- * after the last visited row so repeated batches stay O(remaining) rather
- * than re-walking every already-processed row.
+ * at the last committed row (the list `start` is inclusive) so repeated
+ * batches stay O(remaining) rather than re-walking every already-processed
+ * row. The walk itself is also scan-bounded so an invocation cannot exceed
+ * its deadline without persisting forward progress.
  */
 export const backfillPaidFallbackUsageRollups = async (
   kv: Deno.Kv,
@@ -1121,8 +1123,10 @@ export const backfillPaidFallbackUsageRollups = async (
   const limit = Math.max(1, Math.min(10_000, Math.trunc(options.limit ?? 5_000)));
   const nowMs = Math.trunc(options.nowMs ?? Date.now());
   if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new Error("Paid fallback backfill clock is invalid");
-  // The budget bounds rows that need work, not rows already backfilled, so a
-  // resumed run skips markers cheaply and continues where it stopped.
+  // The budget bounds mutating work; the scan budget bounds the walk itself
+  // (marked rows skip the write budget but still cost a get and a TTL rewrite)
+  // so a resumed run cannot exceed its deadline without advancing the cursor.
+  const scanBudget = limit * 10;
   let budget = limit;
   let scanned = 0;
   let processed = 0;
@@ -1134,17 +1138,28 @@ export const backfillPaidFallbackUsageRollups = async (
   if (cursorEntry?.value && Array.isArray(cursorEntry.value.request_key)) {
     resumeKey = cursorEntry.value.request_key as Deno.KvKey;
   }
-  // Cursor tracks the last row whose work COMMITTED. A failed row must never
-  // be skipped by the cursor, so it only advances on success.
-  let lastCommittedKey: Deno.KvKey | null = null;
+  // Cursor tracks the last row whose work committed or was a marked-skip. A
+  // failed row must never be skipped by the cursor, so it only advances on
+  // success.
+  let lastVisitedKey: Deno.KvKey | null = null;
+  let scanRemaining = scanBudget;
   const selector: Deno.KvListSelector = resumeKey
     ? { prefix: paidFallbackRequestV3GlobalPrefix, start: resumeKey }
     : { prefix: paidFallbackRequestV3GlobalPrefix };
   for await (
     const entry of kv.list<PaidFallbackRequestV3>(selector)
   ) {
-    scanned += 1;
     const requestKey = entry.key;
+    scanned += 1;
+    if (scanRemaining <= 0) {
+      // Persist the resume cursor: `start` is inclusive, so the next run
+      // restarts at this row instead of re-walking the whole prefix.
+      if (lastVisitedKey) {
+        await kv.atomic().set(cursorKey, { request_key: lastVisitedKey }).commit().catch(() => {});
+      }
+      return { scanned, processed, rollups_written: rollupsWritten, failed: failedRows, truncated: true };
+    }
+    scanRemaining -= 1;
     const requestEntry = await kv.get<PaidFallbackRequestV3>(requestKey, { consistency: "strong" });
     const request = requestEntry.value;
     if (!request) continue;
@@ -1161,13 +1176,13 @@ export const backfillPaidFallbackUsageRollups = async (
       } catch {
         // Best effort: a concurrent writer owns the row.
       }
-      lastCommittedKey = requestKey;
+      lastVisitedKey = requestKey;
       continue;
     }
     if (budget <= 0) {
-      // Persist the resume cursor so the next run starts after this row
-      // instead of revisiting every already-processed row.
-      const cursorKeyValue = lastCommittedKey ?? resumeKey;
+      // Persist the resume cursor. `start` is inclusive, so the next run
+      // restarts at this row instead of revisiting every processed row.
+      const cursorKeyValue = lastVisitedKey ?? resumeKey;
       if (cursorKeyValue) {
         await kv.atomic().set(cursorKey, { request_key: cursorKeyValue }).commit().catch(() => {});
       }
@@ -1223,7 +1238,7 @@ export const backfillPaidFallbackUsageRollups = async (
       atomic = atomic.check(rollupEntry).set(rollupKey, nextRollup);
     }
     if ((await atomic.commit()).ok) {
-      lastCommittedKey = requestKey;
+      lastVisitedKey = requestKey;
       processed += 1;
       if (nextRollup) rollupsWritten += 1;
     } else {
@@ -1235,7 +1250,7 @@ export const backfillPaidFallbackUsageRollups = async (
   if (failedRows > 0) {
     // Keep the cursor at the last committed row so the next run resumes
     // before the failed rows instead of dropping them from the backfill.
-    const cursorKeyValue = lastCommittedKey ?? resumeKey;
+    const cursorKeyValue = lastVisitedKey ?? resumeKey;
     if (cursorKeyValue) {
       await kv.atomic().set(cursorKey, { request_key: cursorKeyValue }).commit().catch(() => {});
     }

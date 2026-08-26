@@ -751,6 +751,30 @@ Deno.test("backfill is resumable with a limit and marks non-billable rows", asyn
   assert.equal(rollups[0]?.quota_sum, 60);
 });
 
+Deno.test("backfill scan budget trips before the deadline and keeps forward progress", async () => {
+  seedKeyRecord();
+  const now = Date.now();
+  // Ten marked rows precede one unmarked row; with limit=1 the scan budget
+  // (limit*10) trips before the unmarked row on the first pass.
+  for (let index = 0; index < 10; index += 1) {
+    await memoryKv.set(paidFallbackRequestV3Key(keyId, `bf-m${index}`), {
+      ...settledRequestRow(`bf-m${index}`, now - 30 * HOUR_MS),
+      usage_rollup_at_ms: now,
+    });
+  }
+  await memoryKv.set(paidFallbackRequestV3Key(keyId, "bf-z"), settledRequestRow("bf-z", now - 2 * HOUR_MS));
+  const first = await backfillPaidFallbackUsageRollups(kv, { limit: 1, nowMs: now });
+  assert.equal(first.truncated, true);
+  assert.equal(first.processed, 0);
+  assert.ok((await memoryKv.get(paidFallbackBackfillCursorV3Key())).value !== null);
+  const second = await backfillPaidFallbackUsageRollups(kv, { limit: 1, nowMs: now });
+  assert.equal(second.truncated, false);
+  assert.equal(second.processed, 1);
+  assert.equal(second.rollups_written, 1);
+  const rollups = await listPaidFallbackUsageRollups(kv, { sinceMs: now - 30 * DAY_MS, nowMs: now });
+  assert.equal(rollups.reduce((sum, rollup) => sum + rollup.request_count, 0), 1);
+});
+
 Deno.test("backfill retries a row whose shard CAS failed instead of advancing past it", async () => {
   seedKeyRecord();
   const now = Date.now();
