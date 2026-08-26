@@ -36,6 +36,8 @@ const startsWithKey = (key: Deno.KvKey, prefix: Deno.KvKey): boolean =>
 class MemoryKv {
   readonly entries = new Map<string, StoredEntry>();
   #version = 0;
+  /** When set, the next atomic commit fails once (simulated CAS conflict). */
+  atomicConflictOnce = false;
 
   #nextVersionstamp(): string {
     this.#version += 1;
@@ -156,6 +158,10 @@ class MemoryKv {
       },
       commit: (): Promise<Deno.KvCommitResult | Deno.KvCommitError> => {
         this.#purgeExpired();
+        if (this.atomicConflictOnce) {
+          this.atomicConflictOnce = false;
+          return Promise.resolve({ ok: false });
+        }
         if (checks.some((check) => this.versionstamp(check.key) !== check.versionstamp)) {
           return Promise.resolve({ ok: false });
         }
@@ -743,4 +749,25 @@ Deno.test("backfill is resumable with a limit and marks non-billable rows", asyn
   assert.equal(rollups.length, 1);
   assert.equal(rollups[0]?.request_count, 1);
   assert.equal(rollups[0]?.quota_sum, 60);
+});
+
+Deno.test("backfill retries a row whose shard CAS failed instead of advancing past it", async () => {
+  seedKeyRecord();
+  const now = Date.now();
+  await memoryKv.set(paidFallbackRequestV3Key(keyId, "bf-x"), settledRequestRow("bf-x", now - 2 * HOUR_MS));
+  memoryKv.atomicConflictOnce = true;
+  const conflicted = await backfillPaidFallbackUsageRollups(kv, { nowMs: now });
+  assert.equal(conflicted.failed, 1);
+  assert.equal(conflicted.processed, 0);
+  assert.equal(conflicted.truncated, true);
+
+  const retried = await backfillPaidFallbackUsageRollups(kv, { nowMs: now });
+  assert.equal(retried.failed, 0);
+  assert.equal(retried.processed, 1);
+  assert.equal(retried.rollups_written, 1);
+  assert.equal(retried.truncated, false);
+
+  const rollups = await listPaidFallbackUsageRollups(kv, { sinceMs: now - 30 * DAY_MS, nowMs: now });
+  assert.equal(rollups.reduce((sum, rollup) => sum + rollup.request_count, 0), 1);
+  assert.equal(rollups.reduce((sum, rollup) => sum + rollup.quota_sum, 0), 60);
 });

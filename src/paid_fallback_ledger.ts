@@ -1087,6 +1087,12 @@ export type PaidFallbackRollupBackfillResult = Readonly<{
   /** Rows this run applied (TTL rewrite and/or rollup merge) successfully. */
   processed: number;
   rollups_written: number;
+  /**
+   * Rows whose CAS commit failed (for example a live settlement updated the
+   * same shard in between). The cursor is kept before them so a re-run
+   * retries instead of losing the history.
+   */
+  failed: number;
   /** True when the scan stopped at `limit` rows and a further run is needed. */
   truncated: boolean;
 }>;
@@ -1121,20 +1127,22 @@ export const backfillPaidFallbackUsageRollups = async (
   let scanned = 0;
   let processed = 0;
   let rollupsWritten = 0;
+  let failedRows = 0;
   const cursorKey = paidFallbackBackfillCursorV3Key();
   let resumeKey: Deno.KvKey | null = null;
   const cursorEntry = await kv.get<{ request_key: unknown }>(cursorKey).catch(() => null);
   if (cursorEntry?.value && Array.isArray(cursorEntry.value.request_key)) {
     resumeKey = cursorEntry.value.request_key as Deno.KvKey;
   }
-  let lastVisitedKey: Deno.KvKey | null = null;
+  // Cursor tracks the last row whose work COMMITTED. A failed row must never
+  // be skipped by the cursor, so it only advances on success.
+  let lastCommittedKey: Deno.KvKey | null = null;
   const selector: Deno.KvListSelector = resumeKey
     ? { prefix: paidFallbackRequestV3GlobalPrefix, start: resumeKey }
     : { prefix: paidFallbackRequestV3GlobalPrefix };
   for await (
     const entry of kv.list<PaidFallbackRequestV3>(selector)
   ) {
-    lastVisitedKey = entry.key;
     scanned += 1;
     const requestKey = entry.key;
     const requestEntry = await kv.get<PaidFallbackRequestV3>(requestKey, { consistency: "strong" });
@@ -1153,13 +1161,17 @@ export const backfillPaidFallbackUsageRollups = async (
       } catch {
         // Best effort: a concurrent writer owns the row.
       }
+      lastCommittedKey = requestKey;
       continue;
     }
     if (budget <= 0) {
       // Persist the resume cursor so the next run starts after this row
       // instead of revisiting every already-processed row.
-      await kv.atomic().set(cursorKey, { request_key: lastVisitedKey }).commit().catch(() => {});
-      return { scanned, processed, rollups_written: rollupsWritten, truncated: true };
+      const cursorKeyValue = lastCommittedKey ?? resumeKey;
+      if (cursorKeyValue) {
+        await kv.atomic().set(cursorKey, { request_key: cursorKeyValue }).commit().catch(() => {});
+      }
+      return { scanned, processed, rollups_written: rollupsWritten, failed: failedRows, truncated: true };
     }
     budget -= 1;
 
@@ -1211,13 +1223,27 @@ export const backfillPaidFallbackUsageRollups = async (
       atomic = atomic.check(rollupEntry).set(rollupKey, nextRollup);
     }
     if ((await atomic.commit()).ok) {
+      lastCommittedKey = requestKey;
       processed += 1;
       if (nextRollup) rollupsWritten += 1;
+    } else {
+      // A concurrent writer touched this row or its rollup shard. Do not let
+      // the cursor advance past it: a re-run must retry this history.
+      failedRows += 1;
     }
+  }
+  if (failedRows > 0) {
+    // Keep the cursor at the last committed row so the next run resumes
+    // before the failed rows instead of dropping them from the backfill.
+    const cursorKeyValue = lastCommittedKey ?? resumeKey;
+    if (cursorKeyValue) {
+      await kv.atomic().set(cursorKey, { request_key: cursorKeyValue }).commit().catch(() => {});
+    }
+    return { scanned, processed, rollups_written: rollupsWritten, failed: failedRows, truncated: true };
   }
   // Full sweep complete: drop the resume cursor.
   await kv.atomic().delete(cursorKey).commit().catch(() => {});
-  return { scanned, processed, rollups_written: rollupsWritten, truncated: false };
+  return { scanned, processed, rollups_written: rollupsWritten, failed: 0, truncated: false };
 };
 
 export const reconcilePaidFallbackV3 = async (

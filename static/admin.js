@@ -233,6 +233,7 @@ let providerCapacityLoading = false;
 let providerCapacityLoadedForOpen = false;
 let quotaProjectionLoading = false;
 let quotaProjectionLoadedForOpen = false;
+let quotaProjectionLoadId = 0;
 let promptCacheAnalyticsLoading = false;
 let promptCacheAnalyticsLoadedForOpen = false;
 let promptCacheAnalyticsLoadId = 0;
@@ -2754,6 +2755,11 @@ const loadQuotaProjection = async () => {
     setBadge(quotaRunwayBadge, "bad", "Sign in required");
     return false;
   }
+  // Fence the render against token or API-base target changes while this
+  // request is in flight, so a switched session can never display another
+  // gateway's balance and usage.
+  const loadId = ++quotaProjectionLoadId;
+  const signature = `${token}\u0000${resolveBaseUrl()}`;
   quotaProjectionLoading = true;
   setBadge(quotaRunwayBadge, "unknown", "Loading projection");
   try {
@@ -2762,6 +2768,10 @@ const loadQuotaProjection = async () => {
       headers: { Authorization: `Bearer ${token}` },
     });
     const payload = await response.json().catch(() => null);
+    if (
+      loadId !== quotaProjectionLoadId ||
+      signature !== `${getAdminToken()}\u0000${resolveBaseUrl()}`
+    ) return false;
     if (!response.ok || !payload) {
       setBadge(quotaRunwayBadge, "bad", payload?.error?.message ?? "Projection unavailable");
       quotaRunwayUpdated.textContent = "Projection unavailable";
@@ -2770,11 +2780,12 @@ const loadQuotaProjection = async () => {
     renderQuotaProjection(payload);
     return true;
   } catch {
+    if (loadId !== quotaProjectionLoadId) return false;
     setBadge(quotaRunwayBadge, "bad", "Offline");
     quotaRunwayUpdated.textContent = "Projection unavailable";
     return false;
   } finally {
-    quotaProjectionLoading = false;
+    if (loadId === quotaProjectionLoadId) quotaProjectionLoading = false;
   }
 };
 
@@ -7881,6 +7892,15 @@ tokenInput.addEventListener("input", () => {
   providersLoading = false;
   providersLoadedAt = 0;
   providerCapacityLoadedForOpen = false;
+  quotaProjectionLoadedForOpen = false;
+  quotaProjectionLoading = false;
+  quotaProjectionLoadId += 1;
+  quotaRunwayBadge.setAttribute("data-state", "unknown");
+  quotaRunwayBadge.textContent = "Not loaded";
+  quotaRunwayUpdated.textContent = "Waiting for projection";
+  quotaRunwaySummary.replaceChildren();
+  quotaRunwayList.replaceChildren();
+  quotaRunwayNote.textContent = "";
   promptCacheAnalyticsLoadId += 1;
   promptCacheAnalyticsLoading = false;
   promptCacheAnalyticsLoadedForOpen = false;
@@ -8086,6 +8106,15 @@ baseSelect.addEventListener("change", () => {
   providersLoading = false;
   providersLoadedAt = 0;
   providerCapacityLoadedForOpen = false;
+  quotaProjectionLoadedForOpen = false;
+  quotaProjectionLoading = false;
+  quotaProjectionLoadId += 1;
+  quotaRunwayBadge.setAttribute("data-state", "unknown");
+  quotaRunwayBadge.textContent = "Not loaded";
+  quotaRunwayUpdated.textContent = "Waiting for projection";
+  quotaRunwaySummary.replaceChildren();
+  quotaRunwayList.replaceChildren();
+  quotaRunwayNote.textContent = "";
   latestProviderCapacityChartState = null;
   latestProviderHealth = null;
   providerCapacityChart.replaceChildren();
