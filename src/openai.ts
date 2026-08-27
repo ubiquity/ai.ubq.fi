@@ -8570,6 +8570,47 @@ const cerebrasTerminalTypeForError = (error: unknown, downstreamSignal: AbortSig
   return "error";
 };
 
+type CerebrasFailureKind =
+  | "upstream_http_error"
+  | "upstream_unreachable"
+  | "incomplete_response"
+  | "invalid_json"
+  | "invalid_completion_schema"
+  | "deadline"
+  | "cancellation"
+  | "api_key_quota_reservation_unavailable"
+  | "cerebras_api_key_missing"
+  | "cerebras_request_invalid";
+
+const recordCerebrasFailureKind = (
+  context: UsageContext | undefined,
+  failureKind: CerebrasFailureKind,
+): void => {
+  if (context?.responseTelemetry) context.responseTelemetry.failureKind = failureKind;
+};
+
+const cerebrasTransportFailureKind = (
+  error: unknown,
+  terminalType: ResponseStreamTerminalType,
+): CerebrasFailureKind => {
+  if (terminalType === "cancelled") return "cancellation";
+  if (terminalType === "deadline") return "deadline";
+  if (error instanceof ApiKeyQuotaDispatchError) return "api_key_quota_reservation_unavailable";
+  if (error instanceof CerebrasError) {
+    switch (error.code) {
+      case "cerebras_api_key_missing":
+        return "cerebras_api_key_missing";
+      case "cerebras_request_invalid":
+        return "cerebras_request_invalid";
+      case "cerebras_upstream_unreachable":
+        return "upstream_unreachable";
+      case "gateway_timeout":
+        return "deadline";
+    }
+  }
+  return "upstream_unreachable";
+};
+
 /**
  * The GPT-OSS route is deliberately separate from the Codex Responses bridge.
  * It forwards the official Chat Completions body unchanged (apart from the
@@ -8648,6 +8689,7 @@ const handleCerebrasChatCompletions = async (
     });
   } catch (error) {
     const terminalType = cerebrasTerminalTypeForError(error, downstreamSignal);
+    recordCerebrasFailureKind(usageContext, cerebrasTransportFailureKind(error, terminalType));
     recordStreamTerminalType(usageContext, terminalType);
     if (terminalType !== "cancelled") void recordCerebrasProviderHealth("upstream_error", null);
     await recordErrorUsage(usageContext);
@@ -8661,6 +8703,7 @@ const handleCerebrasChatCompletions = async (
 
   if (!upstream.ok) {
     recordCerebrasResponseHealth(upstream.status, providerRequestId);
+    recordCerebrasFailureKind(usageContext, "upstream_http_error");
     recordStreamTerminalType(usageContext, "response.failed");
     await recordErrorUsage(usageContext);
     return toCerebrasUpstreamErrorResponse(upstream);
@@ -8677,6 +8720,10 @@ const handleCerebrasChatCompletions = async (
   });
   if (!captured.complete) {
     const terminalType = downstreamSignal.aborted ? "cancelled" : requestSignal.aborted ? "deadline" : "error";
+    recordCerebrasFailureKind(
+      usageContext,
+      terminalType === "cancelled" ? "cancellation" : terminalType === "deadline" ? "deadline" : "incomplete_response",
+    );
     recordStreamTerminalType(usageContext, terminalType);
     if (terminalType !== "cancelled") {
       void recordCerebrasProviderHealth("upstream_error", null, Date.now, providerRequestId);
@@ -8705,6 +8752,7 @@ const handleCerebrasChatCompletions = async (
     payload = JSON.parse(new TextDecoder().decode(captured.bytes)) as unknown;
   } catch {
     recordStreamTerminalType(usageContext, "error");
+    recordCerebrasFailureKind(usageContext, "invalid_json");
     void recordCerebrasProviderHealth("upstream_error", upstream.status, Date.now, providerRequestId);
     await recordErrorUsage(usageContext);
     return openaiError(
@@ -8717,6 +8765,7 @@ const handleCerebrasChatCompletions = async (
   const normalized = normalizeCerebrasChatCompletion(payload, CEREBRAS_GPT_OSS_120B_MODEL);
   if (!normalized.ok) {
     recordStreamTerminalType(usageContext, "error");
+    recordCerebrasFailureKind(usageContext, "invalid_completion_schema");
     void recordCerebrasProviderHealth("upstream_error", upstream.status, Date.now, providerRequestId);
     await recordErrorUsage(usageContext);
     return openaiError(
