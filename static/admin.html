@@ -10,8 +10,8 @@
     />
     <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
     <link rel="icon" href="/favicon.png" type="image/png" sizes="256x256" />
-    <link rel="stylesheet" href="/style.css" />
-    <link rel="stylesheet" href="/admin.css" />
+    <link rel="stylesheet" href="/style.css?v=public-console-20260827-v1" />
+    <link rel="stylesheet" href="/admin.css?v=admin-polish-20260827-v3" />
   </head>
   <body data-page="admin" data-role="admin" data-auth-widget="collapsed" data-auth-scope="none">
     <div data-shell>
@@ -30,14 +30,21 @@
         </div>
         <nav data-actions aria-label="Primary">
           <a data-button href="/docs">Docs</a>
-          <a data-button href="/chat">Chat playground</a>
-          <a data-button data-variant="primary" aria-current="page" href="/admin">Admin</a>
+          <a data-button href="/chat">Chat</a>
+          <a data-button aria-current="page" href="/admin">Admin</a>
         </nav>
       </header>
 
       <main>
         <section data-hero>
-          <div data-tabs role="tablist" aria-label="Admin views">
+          <div data-admin-heading>
+            <div>
+              <span data-admin-eyebrow>Operations</span>
+              <h1>Admin console</h1>
+              <p>Manage gateway access, defaults, provider health, and incident history.</p>
+            </div>
+          </div>
+          <div data-tabs role="tablist" aria-label="Admin sections">
             <button id="view-tab-keys" type="button" role="tab" aria-controls="view-keys" aria-selected="true">
               API keys
             </button>
@@ -77,11 +84,23 @@
         >
           <article data-card aria-labelledby="admin-loading-title">
             <header>
-              <h2 id="admin-loading-title">Admin loading</h2>
+              <span data-admin-eyebrow>Restricted access</span>
+              <h2 id="admin-loading-title">Sign in to manage the gateway</h2>
               <p id="admin-loading-summary">Sign in to prepare the admin views.</p>
             </header>
             <div data-card-body>
-              <div data-loading-grid>
+              <div id="admin-auth-gate" data-auth-gate>
+                <button id="admin-auth-gate-open" type="button" data-variant="primary">
+                  <svg data-material-icon viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path
+                      d="M7 14a5 5 0 1 1 4.9-6H22v4h-2v3h-3v3h-4.1A5 5 0 0 1 7 14Zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"
+                    />
+                  </svg>
+                  <span>Open secure sign-in</span>
+                </button>
+                <p>Use a passkey, or open the fallback token options for local administration.</p>
+              </div>
+              <div id="admin-loading-grid" data-loading-grid hidden>
                 <div data-loading-item>
                   <span data-auth-label>Session</span>
                   <span id="loading-auth-status" data-badge data-state="unknown">Not checked</span>
@@ -154,6 +173,7 @@
           <article data-card data-span="half" aria-labelledby="card-create-key">
             <header>
               <h2 id="card-create-key">Create API key</h2>
+              <p>Issue a gateway credential with an expiry and request limit.</p>
             </header>
             <div data-card-body>
               <label data-field>
@@ -176,10 +196,17 @@
                 <input id="key-usage-limit" type="number" inputmode="numeric" placeholder="50" value="50" />
               </label>
               <label data-field>
-                <span data-label>Window (ms)</span>
-                <input id="key-usage-window" type="number" inputmode="numeric" placeholder="604800000" />
+                <span data-label>Rate-limit window</span>
+                <input
+                  id="key-usage-window"
+                  type="number"
+                  inputmode="numeric"
+                  placeholder="604800000"
+                  aria-describedby="key-window-help"
+                />
+                <small id="key-window-help" data-field-help>Milliseconds</small>
               </label>
-              <div data-layout="row">
+              <div data-layout="row" data-preset-control aria-label="Rate-limit window presets">
                 <button id="key-window-1m" type="button">1m</button>
                 <button id="key-window-1h" type="button">1h</button>
                 <button id="key-window-1d" type="button">1d</button>
@@ -224,33 +251,53 @@
                   id="create-key"
                   type="button"
                   data-variant="primary"
-                  data-icon-button
-                  aria-label="Create API key"
-                  title="Create API key"
                 >
                   <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                    <circle cx="12" cy="12" r="8" />
                     <line x1="12" y1="8" x2="12" y2="16" />
                     <line x1="8" y1="12" x2="16" y2="12" />
                   </svg>
+                  <span>Create key</span>
                 </button>
-                <span id="create-badge" data-badge data-state="unknown">Idle</span>
+                <span id="create-badge" data-badge data-state="unknown" role="status" aria-live="polite">Idle</span>
               </div>
               <pre id="create-result" data-code hidden></pre>
             </div>
           </article>
 
           <article data-card aria-labelledby="card-keys">
-            <header>
-              <h2 id="card-keys">API keys</h2>
+            <header data-card-heading>
+              <div>
+                <h2 id="card-keys">API keys</h2>
+                <p>Review, edit, revoke, or restore issued credentials.</p>
+              </div>
+              <span id="keys-badge" data-badge data-state="unknown" role="status" aria-live="polite">
+                Not loaded
+              </span>
             </header>
             <div data-card-body>
               <div data-tabs role="tablist" aria-label="API keys view">
-                <button id="keys-tab-active" type="button" role="tab" aria-selected="true">Active</button>
-                <button id="keys-tab-revoked" type="button" role="tab" aria-selected="false">Revoked</button>
-                <button id="keys-tab-all" type="button" role="tab" aria-selected="false">All</button>
+                <button
+                  id="keys-tab-active"
+                  type="button"
+                  role="tab"
+                  aria-controls="keys-list"
+                  aria-selected="true"
+                >
+                  Active
+                </button>
+                <button
+                  id="keys-tab-revoked"
+                  type="button"
+                  role="tab"
+                  aria-controls="keys-list"
+                  aria-selected="false"
+                >
+                  Revoked
+                </button>
+                <button id="keys-tab-all" type="button" role="tab" aria-controls="keys-list" aria-selected="false">
+                  All
+                </button>
               </div>
-              <span id="keys-badge" data-badge data-state="unknown">Not loaded</span>
               <div id="keys-list" data-key-list role="list"></div>
             </div>
           </article>
@@ -590,7 +637,12 @@
                 data-capacity-chart
                 role="group"
                 aria-label="Provider capacity history"
+                aria-describedby="provider-capacity-chart-help"
               ></div>
+              <p id="provider-capacity-chart-help" data-chart-help>
+                Red diamonds mark 15-minute buckets containing failed inference responses (HTTP 5xx). Focus a marker
+                for its count and timestamp.
+              </p>
               <div id="provider-capacity-list" data-capacity-list role="list"></div>
             </div>
           </article>
@@ -749,9 +801,10 @@
               d="M251.5-451.5Q240-463 240-480t11.5-28.5Q263-520 280-520t28.5 11.5Q320-497 320-480t-11.5 28.5Q297-440 280-440t-28.5-11.5ZM280-292q-78 0-133-55T92-480q0-78 55-133t133-55q60 0 108 33.5t68 86.5h373l68 68-112 110-65-49-70 51-67-44H456q-20 52-68 86t-108 34Zm0-28q60 0 101.5-36t52.5-84h158l57 38 72-51 63 47 74-74-40-40H434q-11-48-52.5-84T280-640q-66 0-113 47t-47 113q0 66 47 113t113 47Z"
             />
           </svg>
+          <span id="auth-widget-toggle-label">Session</span>
         </button>
       </section>
     </div>
-    <script type="module" src="/admin.js?v=gateway-errors-20260825-v3"></script>
+    <script type="module" src="/admin.js?v=admin-polish-20260827-v3"></script>
   </body>
 </html>

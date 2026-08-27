@@ -1,10 +1,11 @@
 body[data-page="models"] [data-shell] {
-  max-width: 1440px;
+  max-width: 1600px;
 }
 
-body[data-page="models"] [data-models-logo] {
-  width: 28px;
-  height: 28px;
+body[data-page="models"] main {
+  width: 100%;
+  max-width: 1440px;
+  margin-inline: auto;
 }
 
 body[data-page="models"] main,
@@ -15,7 +16,7 @@ body[data-page="models"] [data-models-hero] {
 
 body[data-page="models"] [data-eyebrow] {
   margin: 0;
-  color: #8abfff;
+  color: var(--muted);
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.12em;
@@ -24,8 +25,7 @@ body[data-page="models"] [data-eyebrow] {
 
 body[data-page="models"] h1 {
   margin: 0;
-  font-size: clamp(36px, 7vw, 72px);
-  letter-spacing: -0.045em;
+  font-size: clamp(28px, 3vw, 38px);
 }
 
 body[data-page="models"] [data-lead],
@@ -43,6 +43,7 @@ body[data-page="models"] [data-source-summary] {
 
 body[data-page="models"] [data-source-summary] article,
 body[data-page="models"] [data-model-list] article {
+  border: 1px solid rgba(255, 255, 255, 0.075);
   background: var(--surface);
   box-shadow: var(--shadow-soft);
 }
@@ -87,15 +88,17 @@ body[data-page="models"] [data-catalog-controls] label {
 body[data-page="models"] [data-model-search] {
   width: min(100%, 520px);
   padding: 12px 14px;
-  border: 0;
-  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 10px;
   color: var(--text);
-  background: var(--surface-2);
+  background: rgba(255, 255, 255, 0.055);
 }
 
 body[data-page="models"] [data-model-search]:focus {
-  outline: 2px solid #0a84ff;
-  outline-offset: 2px;
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.075);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.12);
 }
 
 body[data-page="models"] [data-model-list] {
@@ -130,10 +133,18 @@ body[data-page="models"] [data-providers] {
 
 body[data-page="models"] [data-provider] {
   padding: 4px 8px;
-  border-radius: 999px;
-  color: #cfe5ff;
-  background: rgba(10, 132, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 7px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.055);
   font-size: 11px;
+}
+
+body[data-page="models"] [data-reasoning-levels],
+body[data-page="models"] [data-context-window],
+body[data-page="models"] [data-auto-compact] {
+  color: var(--muted-2);
+  font-size: 12px;
 }
 
 @media (max-width: 680px) {
