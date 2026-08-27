@@ -77,39 +77,66 @@ export const isAdminErrorLogRecord = (value: unknown): value is AdminErrorLogRec
     (value.deno_revision === null || typeof value.deno_revision === "string");
 };
 
-export const listAdminErrors = async (
+// These deployments let partial-body framing override an authoritative
+// downstream cancellation. The retained rows cannot otherwise be separated
+// from genuine premature EOFs, so limit suppression to the affected code.
+const LEGACY_INTERRUPTED_MISSING_SSE_TERMINAL_GIT_SHAS = new Set([
+  "4d2928f47f3ba3ad66b8c15e6323bcccd0a39390",
+  "0d795e28e42be63bbd7f0d4ce44d8ea0f6ab9d4a",
+  "149ef399a52373ba09d75cfd00d5e5139564dcdf",
+  "8532ec7ee1fc5a6a9bb44fe2a3703527b8d78952",
+  "35fb0782c01309a85ea08f5a6a48f8de62a1f29f",
+  "c18a4e091c09c7a9e04588a8fe745c696deaf6d2",
+  "214957fe322c8cff6ad20ddea55dcf9576273107",
+  "50c06cd8e93fe3b34a9699d31f1f8998f632fbe6",
+  "64f4ba5a21e476386f95c8474bd76b037e6afc4f",
+  "7fb508a076e9edf04c6e4087a19ad6e25452dc6b",
+  "c9bcf7d5937cf137bc34d8656187d3f20e9f8b4d",
+  "9d3b7d0eb8a1c57079d298b17d50d25f74dd39d9",
+  "542df9ef4560ca9c090925a5a1b24a141a584867",
+  "ce37210d58746a2ed3aec34c38b370f7060639e1",
+  "f9dec6c3b6270813be7b4a957221f7130c37a52b",
+]);
+
+const isLegacyInterruptedMissingSseTerminal = (record: AdminErrorLogRecord): boolean =>
+  record.status === 200 && record.stream === true && record.terminal_type === "error" &&
+  record.failure_kind === "missing_sse_terminal" && record.delivery_outcome === "interrupted" &&
+  record.git_sha !== null && LEGACY_INTERRUPTED_MISSING_SSE_TERMINAL_GIT_SHAS.has(record.git_sha);
+
+export type AdminErrorHistory = Readonly<{
+  data: AdminErrorLogRecord[];
+  five_xx_buckets: Array<{ bucket_start_at_ms: number; count: number }>;
+}>;
+
+export const listAdminErrorHistory = async (
   limit = DEFAULT_LIMIT,
   kvOverride?: Deno.Kv | null,
-): Promise<AdminErrorLogRecord[]> => {
+): Promise<AdminErrorHistory> => {
   const kv = kvOverride === undefined ? await getKv() : kvOverride;
-  if (!kv) return [];
+  if (!kv) return { data: [], five_xx_buckets: [] };
   const boundedLimit = Math.max(1, Math.min(MAX_LIMIT, Math.trunc(limit)));
-  const records: AdminErrorLogRecord[] = [];
+  const data: AdminErrorLogRecord[] = [];
+  const fiveXxCounts = new Map<number, number>();
   for await (
     const entry of kv.list<AdminErrorLogRecord>({ prefix: ADMIN_ERROR_LOG_PREFIX }, {
       reverse: true,
-      limit: boundedLimit,
+      batchSize: MAX_LIMIT,
     })
   ) {
-    if (isAdminErrorLogRecord(entry.value)) records.push(entry.value);
+    if (!isAdminErrorLogRecord(entry.value)) continue;
+    const record = entry.value;
+    if (record.status >= 500 && record.status <= 599) {
+      const bucketStartAtMs = Math.floor(record.created_at_ms / ADMIN_ERROR_BUCKET_MS) * ADMIN_ERROR_BUCKET_MS;
+      fiveXxCounts.set(bucketStartAtMs, (fiveXxCounts.get(bucketStartAtMs) ?? 0) + 1);
+    }
+    if (data.length < boundedLimit && !isLegacyInterruptedMissingSseTerminal(record)) data.push(record);
   }
-  return records;
-};
-
-export const listAdminFiveXxBuckets = async (
-  kvOverride?: Deno.Kv | null,
-): Promise<Array<{ bucket_start_at_ms: number; count: number }>> => {
-  const kv = kvOverride === undefined ? await getKv() : kvOverride;
-  if (!kv) return [];
-  const counts = new Map<number, number>();
-  for await (const entry of kv.list<AdminErrorLogRecord>({ prefix: ADMIN_ERROR_LOG_PREFIX })) {
-    if (!isAdminErrorLogRecord(entry.value) || entry.value.status < 500 || entry.value.status > 599) continue;
-    const bucketStartAtMs = Math.floor(entry.value.created_at_ms / ADMIN_ERROR_BUCKET_MS) * ADMIN_ERROR_BUCKET_MS;
-    counts.set(bucketStartAtMs, (counts.get(bucketStartAtMs) ?? 0) + 1);
-  }
-  return [...counts.entries()]
-    .sort(([left], [right]) => left - right)
-    .map(([bucket_start_at_ms, count]) => ({ bucket_start_at_ms, count }));
+  return {
+    data,
+    five_xx_buckets: [...fiveXxCounts.entries()]
+      .sort(([left], [right]) => left - right)
+      .map(([bucket_start_at_ms, count]) => ({ bucket_start_at_ms, count })),
+  };
 };
 
 export const handleAdminErrors = async (req: Request): Promise<Response> => {
@@ -120,9 +147,5 @@ export const handleAdminErrors = async (req: Request): Promise<Response> => {
   }
   const kv = await getKv();
   if (!kv) return openaiError(503, "Error history storage is unavailable", "server_error");
-  const [data, fiveXxBuckets] = await Promise.all([
-    listAdminErrors(limit, kv),
-    listAdminFiveXxBuckets(kv),
-  ]);
-  return json(200, { object: "list", data, five_xx_buckets: fiveXxBuckets });
+  return json(200, { object: "list", ...await listAdminErrorHistory(limit, kv) });
 };

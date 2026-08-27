@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import {
   ADMIN_ERROR_BUCKET_MS,
   ADMIN_ERROR_LOG_PREFIX,
-  listAdminFiveXxBuckets,
+  listAdminErrorHistory,
   recordAdminError,
 } from "../src/admin_error_log.ts";
 
@@ -52,6 +52,91 @@ Deno.test("admin error ledger excludes successful completed requests", async () 
   assert.equal(kv.writes.length, 0);
 });
 
+Deno.test("admin error history hides only affected cancellations and collects analytics in one scan", async () => {
+  const records = [
+    terminal({
+      request_id: "legacy-cancellation",
+      status: 200,
+      terminal_type: "error",
+      failure_kind: "missing_sse_terminal",
+      delivery_outcome: "interrupted",
+      git_sha: "ce37210d58746a2ed3aec34c38b370f7060639e1",
+    }),
+    terminal({
+      request_id: "post-fix-premature-eof",
+      status: 200,
+      terminal_type: "error",
+      failure_kind: "missing_sse_terminal",
+      delivery_outcome: "interrupted",
+      git_sha: "post-fix-sha",
+    }),
+    terminal({
+      request_id: "stream-read-error",
+      status: 200,
+      terminal_type: "error",
+      failure_kind: "stream_read_error",
+      delivery_outcome: "delivered",
+    }),
+    terminal({ request_id: "http-error", status: 503, created_at_ms: ADMIN_ERROR_BUCKET_MS + 1 }),
+    terminal({ request_id: "older-http-error", status: 500, created_at_ms: ADMIN_ERROR_BUCKET_MS * 2 + 1 }),
+  ].map((value) => ({ value: { ...value, version: 1 } }));
+  let listCalls = 0;
+  let listOptions: Deno.KvListOptions | undefined;
+  const kv = {
+    list: (_selector: Deno.KvListSelector, options?: Deno.KvListOptions) => ({
+      async *[Symbol.asyncIterator]() {
+        listCalls += 1;
+        listOptions = options;
+        yield* records;
+      },
+    }),
+  };
+
+  const history = await listAdminErrorHistory(3, kv as unknown as Deno.Kv);
+  assert.deepEqual(history.data.map((record) => record.request_id), [
+    "post-fix-premature-eof",
+    "stream-read-error",
+    "http-error",
+  ]);
+  assert.deepEqual(history.five_xx_buckets, [
+    { bucket_start_at_ms: ADMIN_ERROR_BUCKET_MS, count: 1 },
+    { bucket_start_at_ms: ADMIN_ERROR_BUCKET_MS * 2, count: 1 },
+  ]);
+  assert.equal(listCalls, 1);
+  assert.deepEqual(listOptions, { reverse: true, batchSize: 500 });
+});
+
+Deno.test("admin error history preserves records outside the exact legacy cancellation signature", async () => {
+  const records = [
+    terminal({
+      request_id: "server-missing-terminal",
+      status: 500,
+      terminal_type: "error",
+      failure_kind: "missing_sse_terminal",
+      delivery_outcome: "interrupted",
+    }),
+    terminal({
+      request_id: "delivered-missing-terminal",
+      status: 200,
+      terminal_type: "error",
+      failure_kind: "missing_sse_terminal",
+      delivery_outcome: "delivered",
+    }),
+  ].map((value) => ({ value: { ...value, version: 1 } }));
+  const kv = {
+    list: () => ({
+      async *[Symbol.asyncIterator]() {
+        yield* records;
+      },
+    }),
+  };
+
+  assert.deepEqual(
+    (await listAdminErrorHistory(2, kv as unknown as Deno.Kv)).data.map((record) => record.request_id),
+    ["server-missing-terminal", "delivered-missing-terminal"],
+  );
+});
+
 Deno.test("admin error analytics counts every inference 5xx in fifteen-minute buckets", async () => {
   const records = [
     terminal({ request_id: "one", status: 500, created_at_ms: ADMIN_ERROR_BUCKET_MS + 1 }),
@@ -67,7 +152,7 @@ Deno.test("admin error analytics counts every inference 5xx in fifteen-minute bu
     }),
   };
 
-  assert.deepEqual(await listAdminFiveXxBuckets(kv as unknown as Deno.Kv), [
+  assert.deepEqual((await listAdminErrorHistory(1, kv as unknown as Deno.Kv)).five_xx_buckets, [
     { bucket_start_at_ms: ADMIN_ERROR_BUCKET_MS, count: 2 },
     { bucket_start_at_ms: ADMIN_ERROR_BUCKET_MS * 2, count: 1 },
   ]);
