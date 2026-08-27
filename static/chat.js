@@ -22,9 +22,10 @@ import {
   appendChatMessageStats,
   createChatMessageElement,
   parseChatSseEvent,
+  readChatCompletionMessageText,
   setChatMessageContent,
   splitChatSseEvents,
-} from "./chat-stats.js?v=20260827-response-stats-v1";
+} from "./chat-stats.js?v=20260827-response-stats-v2";
 import { bindForegroundRefresh } from "./foreground-refresh.js";
 
 const STORAGE_KEYS = {
@@ -785,10 +786,10 @@ const sendPrompt = async () => {
 
     if (!res.headers.get("content-type")?.includes("text/event-stream")) {
       const data = await res.json().catch(() => null);
-      const content = data?.choices?.[0]?.message?.content;
-      if (typeof content === "string" && content.length > 0) {
-        setChatMessageContent(assistantEl, content);
-        conversation.push({ role: "assistant", content });
+      const messageText = readChatCompletionMessageText(data);
+      if (messageText !== null) {
+        setChatMessageContent(assistantEl, messageText);
+        conversation.push({ role: "assistant", content: messageText });
       } else {
         setChatMessageContent(assistantEl, JSON.stringify(data, null, 2));
       }

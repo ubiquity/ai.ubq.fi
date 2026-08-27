@@ -565,8 +565,8 @@ export const resolveSentinelClientFailureObservation = (
     status: internal.status,
     stream: body ? body.stream : internal.stream ?? false,
     completed: body ? body.completed : internal.completed,
-    terminal_type: body ? body.terminal_type : fallbackTerminal,
-    failure_kind: body ? body.failure_kind : fallbackFailureKind,
+    terminal_type: cancelled ? fallbackTerminal : body ? body.terminal_type : fallbackTerminal,
+    failure_kind: cancelled ? fallbackFailureKind : body ? body.failure_kind : fallbackFailureKind,
     framing_valid: body?.framing_valid ?? internal.stream !== true,
     provider_route: internal.provider_route,
   };

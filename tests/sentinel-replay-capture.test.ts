@@ -1050,7 +1050,8 @@ Deno.test("client observation gives SSE failures precedence and recognizes buffe
 
   const missingTerminal = createSentinelSseInspector();
   missingTerminal.push(new TextEncoder().encode('data: {"type":"response.output_text.delta","delta":"x"}\n\n'));
-  assert.deepEqual(missingTerminal.finish(), {
+  const missingTerminalObservation = missingTerminal.finish();
+  assert.deepEqual(missingTerminalObservation, {
     stream: true,
     completed: false,
     terminal_type: null,
@@ -1066,6 +1067,32 @@ Deno.test("client observation gives SSE failures precedence and recognizes buffe
     failure_kind: "stream_read_error",
     framing_valid: false,
   });
+  const cancelled = failedObservation({
+    status: 200,
+    stream: true,
+    completed: false,
+    terminal_type: "cancelled",
+    failure_kind: null,
+  });
+  assert.deepEqual(resolveSentinelClientFailureObservation(cancelled, missingTerminalObservation), {
+    status: 200,
+    stream: true,
+    completed: false,
+    terminal_type: "cancelled",
+    failure_kind: null,
+    framing_valid: false,
+    provider_route: "chatgpt_codex",
+  });
+  const prematureEof = failedObservation({
+    status: 200,
+    stream: true,
+    completed: false,
+    terminal_type: "eof",
+    failure_kind: "premature_eof",
+  });
+  const prematureEofClient = resolveSentinelClientFailureObservation(prematureEof, missingTerminalObservation);
+  assert.equal(prematureEofClient.failure_kind, "missing_sse_terminal");
+  assert.equal(shouldPersistSentinelReplay(prematureEof, prematureEofClient), true);
   assert.deepEqual(
     resolveSentinelClientFailureObservation(
       failedObservation({
