@@ -26,6 +26,41 @@ import {
   completionEvidenceSnapshotMatches,
   mergeDeliveryPullRequest,
 } from "../scripts/sentinel/issue-delivery-reconcile.ts";
+import type { GitHubIssueComment } from "../scripts/sentinel/github.ts";
+
+const inertIssueComments = (count: number): readonly GitHubIssueComment[] =>
+  Array.from({ length: count }, (_, index) => ({
+    id: 50_000 + index,
+    authorLogin: "ubiquity-os[bot]",
+    authorType: "Bot",
+    body: `> [!WARNING]
+> You are not allowed to set labels.
+
+<!-- UbiquityOS - updateLabels - ${
+      "a".repeat(64)
+    } - @0x4007 - https://console.deno.com/ubiquity-os/daemon-pricing/observability/logs?start=2026-08-26T23%3A32%3A29Z&end=2026-08-26T23%3A34%3A29Z&tz=Etc%2FUTC
+{
+  "caller": "updateLabels"
+}
+-->
+`,
+    createdAt: "2026-08-26T23:33:29Z",
+    updatedAt: "2026-08-26T23:33:29Z",
+  }));
+
+const completionEvidenceComment: GitHubIssueComment = {
+  id: 90_001,
+  authorLogin: "github-actions[bot]",
+  authorType: "Bot",
+  body: "<!-- provider-sentinel:issue-evidence:v1 -->",
+  createdAt: "2026-08-25T00:01:00Z",
+  updatedAt: "2026-08-25T00:01:00Z",
+};
+
+const completionEvidenceIdentity = {
+  id: completionEvidenceComment.id,
+  updatedAt: completionEvidenceComment.updatedAt,
+};
 
 const selection = parseGitHubIssueSelectionReport({
   schema_version: 1,
@@ -105,6 +140,7 @@ Deno.test("the production issue selector accepts a canonical estimate through on
   const source = {
     listOpenIssues: () => Promise.resolve([issue]),
     getIssue: () => Promise.resolve(issue),
+    listIssueComments: () => Promise.resolve([]),
     getIssueRelations: () => Promise.resolve(relations),
     getRepositoryPermission: () => Promise.resolve("write" as const),
   };
@@ -143,9 +179,11 @@ Deno.test("durable completion evidence never closes a changed issue snapshot", a
     latestBodyEdit: null,
     latestTitleEdit: null,
   };
+  let comments = inertIssueComments(originalIssue.comments);
   const source = {
     listOpenIssues: () => Promise.resolve([originalIssue]),
     getIssue: () => Promise.resolve(originalIssue),
+    listIssueComments: () => Promise.resolve(comments),
     getIssueRelations: () => Promise.resolve(relations),
     getRepositoryPermission: () => Promise.resolve("write" as const),
   };
@@ -167,7 +205,7 @@ Deno.test("durable completion evidence never closes a changed issue snapshot", a
     files: selected.files,
     updated_at: selected.updatedAt,
   });
-  const evidenceUpdatedAt = "2026-08-25T00:01:00Z";
+  comments = [...comments, completionEvidenceComment];
   const evidenceOnlyIssue = { ...originalIssue, comments: 4, updatedAt: "2026-08-25T00:01:01Z" };
   assert.equal(
     await completionEvidenceSnapshotMatches(
@@ -175,7 +213,7 @@ Deno.test("durable completion evidence never closes a changed issue snapshot", a
       "ubiquity/ai.ubq.fi",
       retrySelection,
       evidenceOnlyIssue,
-      evidenceUpdatedAt,
+      completionEvidenceIdentity,
     ),
     true,
   );
@@ -185,7 +223,7 @@ Deno.test("durable completion evidence never closes a changed issue snapshot", a
       "ubiquity/ai.ubq.fi",
       retrySelection,
       { ...evidenceOnlyIssue, body: `${evidenceOnlyIssue.body}\nChanged after completion evidence.\n` },
-      evidenceUpdatedAt,
+      completionEvidenceIdentity,
     ),
     false,
   );
@@ -195,7 +233,7 @@ Deno.test("durable completion evidence never closes a changed issue snapshot", a
       "ubiquity/ai.ubq.fi",
       retrySelection,
       { ...evidenceOnlyIssue, comments: 5 },
-      evidenceUpdatedAt,
+      completionEvidenceIdentity,
     ),
     false,
   );
@@ -257,6 +295,19 @@ Deno.test("normal delivery revalidates the snapshot after completion evidence be
   const source: GitHubIssueJobSource = {
     listOpenIssues: () => Promise.resolve([changedAfterEvidence]),
     getIssue: () => Promise.resolve(changedAfterEvidence),
+    listIssueComments: () =>
+      Promise.resolve([
+        ...inertIssueComments(originalIssue.comments),
+        completionEvidenceComment,
+        {
+          id: 90_002,
+          authorLogin: "human-reviewer",
+          authorType: "User",
+          body: "Changed after completion evidence.",
+          createdAt: "2026-08-25T00:01:01Z",
+          updatedAt: "2026-08-25T00:01:01Z",
+        },
+      ]),
     getIssueRelations: () => Promise.resolve(relations),
     getRepositoryPermission: () => Promise.resolve("admin"),
   };
@@ -267,7 +318,88 @@ Deno.test("normal delivery revalidates the snapshot after completion evidence be
         source,
         "ubiquity/ai.ubq.fi",
         selectionReport,
-        "2026-08-25T00:01:00Z",
+        completionEvidenceIdentity,
+        () => {
+          closed = true;
+          return Promise.resolve();
+        },
+      ),
+    /no longer matches the open issue snapshot/,
+  );
+  assert.equal(closed, false);
+});
+
+Deno.test("issue closure rejects an edit during asynchronous snapshot validation", async () => {
+  const originalIssue = {
+    id: 2,
+    nodeId: "I_kwDOQoe6nc8AAAABN7Test",
+    number: 2,
+    state: "open" as const,
+    title: "Bounded durable issue",
+    body: "Implement the bounded change.\n\nAcceptance:\n- The change is complete.\n\nFiles:\n- src/http.ts\n",
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/2",
+    authorLogin: "0x4007",
+    authorAssociation: "MEMBER",
+    labels: ["Priority: 2 (Medium)", "Time: <1 Day"],
+    assignees: [],
+    locked: false,
+    comments: 3,
+    createdAt: "2026-08-25T00:00:00Z",
+    updatedAt: "2026-08-25T00:00:01Z",
+    isPullRequest: false,
+  };
+  const relations = {
+    parentIssueNumber: null,
+    subIssueCount: 0,
+    blockedByCount: 0,
+    blockingCount: 0,
+    latestBodyEdit: null,
+    latestTitleEdit: null,
+  };
+  const selected = await createGitHubIssueJob(
+    "ubiquity/ai.ubq.fi",
+    originalIssue,
+    relations,
+    "admin",
+    1_440,
+  );
+  assert.ok(selected);
+  const selectionReport = parseGitHubIssueSelectionReport({
+    schema_version: 1,
+    issue_id: selected.issueId,
+    issue_number: selected.number,
+    fingerprint: selected.fingerprint,
+    body_sha256: selected.bodySha256,
+    comments: selected.comments,
+    priority: selected.priority,
+    time_label: selected.timeLabel,
+    files: selected.files,
+    updated_at: selected.updatedAt,
+  });
+  let liveIssue = { ...originalIssue, comments: 4, updatedAt: "2026-08-25T00:01:01Z" };
+  const source: GitHubIssueJobSource = {
+    listOpenIssues: () => Promise.resolve([liveIssue]),
+    getIssue: () => Promise.resolve(liveIssue),
+    listIssueComments: () =>
+      Promise.resolve([...inertIssueComments(originalIssue.comments), completionEvidenceComment]),
+    getIssueRelations: () => {
+      liveIssue = {
+        ...liveIssue,
+        body: `${liveIssue.body}\nHuman edit during validation.\n`,
+        updatedAt: "2026-08-25T00:01:02Z",
+      };
+      return Promise.resolve(relations);
+    },
+    getRepositoryPermission: () => Promise.resolve("admin"),
+  };
+  let closed = false;
+  await assert.rejects(
+    () =>
+      closeIssueAfterCompletionEvidenceRevalidation(
+        source,
+        "ubiquity/ai.ubq.fi",
+        selectionReport,
+        completionEvidenceIdentity,
         () => {
           closed = true;
           return Promise.resolve();

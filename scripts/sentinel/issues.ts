@@ -1,4 +1,4 @@
-import type { GitHubIssue, GitHubIssueRelations, GitHubRepositoryPermission } from "./github.ts";
+import type { GitHubIssue, GitHubIssueComment, GitHubIssueRelations, GitHubRepositoryPermission } from "./github.ts";
 import { isSentinelProtectedImplementationPath, SENTINEL_POLICY } from "./policy.ts";
 import type {
   NativeReviewFinding,
@@ -11,6 +11,7 @@ import type {
 export interface GitHubIssueJobSource {
   listOpenIssues(): Promise<readonly GitHubIssue[]>;
   getIssue(issueNumber: number): Promise<GitHubIssue>;
+  listIssueComments(issueNumber: number): Promise<readonly GitHubIssueComment[]>;
   getIssueRelations(issueNumber: number): Promise<GitHubIssueRelations>;
   getRepositoryPermission(username: string): Promise<GitHubRepositoryPermission>;
 }
@@ -87,6 +88,7 @@ const MAX_ISSUE_BODY_BYTES = 32 * 1_024;
 const MAX_ISSUE_FILES = 32;
 const MAX_ACCEPTANCE_ITEMS = 32;
 const MAX_GITHUB_ISSUE_COMMENTS = 998;
+const MAX_IGNORABLE_ISSUE_COMMENTS = 8;
 const MAX_LEDGER_BYTES = 256 * 1_024;
 const MAX_LEDGER_ENTRIES = 512;
 const MAX_LEDGER_LINE_LENGTH = 4_096;
@@ -125,6 +127,33 @@ const sha256 = async (value: string): Promise<string> => {
 
 const validTimestamp = (value: string): boolean =>
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/u.test(value) && Number.isFinite(Date.parse(value));
+
+const UBIQUITY_OS_LABEL_DENIAL_COMMENT =
+  /^> \[!WARNING\]\n> You are not allowed to set labels\.\n\n<!-- UbiquityOS - updateLabels - [0-9a-f]{64} - @[A-Za-z0-9-]+ - https:\/\/console\.deno\.com\/ubiquity-os\/daemon-pricing\/observability\/logs\?start=\d{4}-\d{2}-\d{2}T\d{2}%3A\d{2}%3A\d{2}Z&end=\d{4}-\d{2}-\d{2}T\d{2}%3A\d{2}%3A\d{2}Z&tz=Etc%2FUTC\n\{\n[ ]{2}"caller": "updateLabels"\n\}\n-->\n$/u;
+
+export const isSentinelInertIssueComment = (comment: GitHubIssueComment): boolean =>
+  Number.isSafeInteger(comment.id) && comment.id > 0 &&
+  comment.authorLogin === "ubiquity-os[bot]" && comment.authorType === "Bot" &&
+  validTimestamp(comment.createdAt) && validTimestamp(comment.updatedAt) &&
+  comment.updatedAt === comment.createdAt && UBIQUITY_OS_LABEL_DENIAL_COMMENT.test(comment.body);
+
+const issueCommentsAreOnlyInertNotices = async (
+  source: GitHubIssueJobSource,
+  issue: GitHubIssue,
+): Promise<boolean> => {
+  if (issue.comments === 0) return true;
+  if (issue.comments > MAX_IGNORABLE_ISSUE_COMMENTS) return false;
+  const comments = await source.listIssueComments(issue.number);
+  if (comments.length !== issue.comments) {
+    throw new Error(`GitHub issue ${issue.number} comment count changed during inspection`);
+  }
+  const ids = new Set<number>();
+  for (const comment of comments) {
+    if (ids.has(comment.id) || !isSentinelInertIssueComment(comment)) return false;
+    ids.add(comment.id);
+  }
+  return true;
+};
 
 const sortedUnique = (values: readonly string[]): string[] | null => {
   if (values.some((value) => value.trim() !== value || value.length === 0)) return null;
@@ -423,6 +452,7 @@ export const getCurrentGitHubIssueJob = async (
   issueNumber: number,
 ): Promise<GitHubIssueJob | null> => {
   const issue = await source.getIssue(issueNumber);
+  if (!await issueCommentsAreOnlyInertNotices(source, issue)) return null;
   const relations = await source.getIssueRelations(issueNumber);
   const authorityPermission = await issueAuthorityPermission(source, issue, relations);
   return await createGitHubIssueJob(
@@ -469,6 +499,7 @@ export const selectNextGitHubIssueJob = async (
     if (current.id !== candidate.issueId || current.nodeId !== candidate.nodeId) {
       throw new Error(`GitHub issue ${candidate.number} identity changed during selection`);
     }
+    if (!await issueCommentsAreOnlyInertNotices(source, current)) continue;
     const relations = await source.getIssueRelations(candidate.number);
     const authorityPermission = await issueAuthorityPermission(source, current, relations);
     const job = await createGitHubIssueJob(

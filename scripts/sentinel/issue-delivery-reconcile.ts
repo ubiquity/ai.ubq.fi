@@ -2,6 +2,7 @@ import { GitHubActionsClient, type GitHubIssue } from "./github.ts";
 import {
   getCurrentGitHubIssueJob,
   type GitHubIssueJobSource,
+  isSentinelInertIssueComment,
   parseGitHubIssueJobLedger,
   renderGitHubIssueJobLedger,
 } from "./issues.ts";
@@ -33,6 +34,7 @@ type PullRequest = Readonly<{
 }>;
 
 type Comment = Readonly<{ id: number; body: string; updatedAt: string }>;
+type CompletionEvidenceIdentity = Readonly<{ id: number; updatedAt: string }>;
 
 type IssueState = Readonly<{
   state: "open" | "closed";
@@ -276,14 +278,24 @@ const completionEvidence = async (
   return matching[0] ?? null;
 };
 
+const githubIssueSnapshotsMatch = (expected: GitHubIssue, actual: GitHubIssue): boolean =>
+  expected.id === actual.id && expected.nodeId === actual.nodeId && expected.number === actual.number &&
+  expected.state === actual.state && expected.title === actual.title && expected.body === actual.body &&
+  expected.htmlUrl === actual.htmlUrl && expected.authorLogin === actual.authorLogin &&
+  expected.authorAssociation === actual.authorAssociation && expected.locked === actual.locked &&
+  expected.comments === actual.comments && expected.createdAt === actual.createdAt &&
+  expected.updatedAt === actual.updatedAt && expected.isPullRequest === actual.isPullRequest &&
+  JSON.stringify(expected.labels) === JSON.stringify(actual.labels) &&
+  JSON.stringify(expected.assignees) === JSON.stringify(actual.assignees);
+
 export const completionEvidenceSnapshotMatches = async (
   source: GitHubIssueJobSource,
   repository: string,
   selection: GitHubIssueSelectionReport,
   issue: GitHubIssue,
-  evidenceUpdatedAt: string,
+  evidence: CompletionEvidenceIdentity,
 ): Promise<boolean> => {
-  const evidenceUpdatedMs = Date.parse(evidenceUpdatedAt);
+  const evidenceUpdatedMs = Date.parse(evidence.updatedAt);
   const issueUpdatedMs = Date.parse(issue.updatedAt);
   if (selection.comments === Number.MAX_SAFE_INTEGER) return false;
   const commentsWithCompletionEvidence = selection.comments + 1;
@@ -292,6 +304,14 @@ export const completionEvidenceSnapshotMatches = async (
     issue.comments !== commentsWithCompletionEvidence ||
     !Number.isFinite(evidenceUpdatedMs) || !Number.isFinite(issueUpdatedMs) ||
     issueUpdatedMs < evidenceUpdatedMs || issueUpdatedMs - evidenceUpdatedMs > MAX_COMMENT_TIMESTAMP_PROPAGATION_MS
+  ) return false;
+  const comments = await source.listIssueComments(issue.number);
+  if (comments.length !== issue.comments) return false;
+  const completionComments = comments.filter((comment) => comment.id === evidence.id);
+  const originalComments = comments.filter((comment) => comment.id !== evidence.id);
+  if (
+    completionComments.length !== 1 || completionComments[0]!.updatedAt !== evidence.updatedAt ||
+    originalComments.length !== selection.comments || !originalComments.every(isSentinelInertIssueComment)
   ) return false;
   const normalizedIssue: GitHubIssue = {
     ...issue,
@@ -302,6 +322,10 @@ export const completionEvidenceSnapshotMatches = async (
     listOpenIssues: () => source.listOpenIssues(),
     getIssue: (issueNumber) =>
       issueNumber === selection.issue_number ? Promise.resolve(normalizedIssue) : source.getIssue(issueNumber),
+    listIssueComments: (issueNumber) =>
+      issueNumber === selection.issue_number
+        ? Promise.resolve(originalComments)
+        : source.listIssueComments(issueNumber),
     getIssueRelations: (issueNumber) => source.getIssueRelations(issueNumber),
     getRepositoryPermission: (username) => source.getRepositoryPermission(username),
   };
@@ -319,7 +343,7 @@ export const closeIssueAfterCompletionEvidenceRevalidation = async (
   source: GitHubIssueJobSource,
   repository: string,
   selection: GitHubIssueSelectionReport,
-  evidenceUpdatedAt: string,
+  evidence: CompletionEvidenceIdentity,
   close: () => Promise<void>,
 ): Promise<void> => {
   const issue = await source.getIssue(selection.issue_number);
@@ -329,9 +353,13 @@ export const closeIssueAfterCompletionEvidenceRevalidation = async (
       repository,
       selection,
       issue,
-      evidenceUpdatedAt,
+      evidence,
     )
   ) {
+    throw new Error("Sentinel completion evidence no longer matches the open issue snapshot");
+  }
+  const finalIssue = await source.getIssue(selection.issue_number);
+  if (!githubIssueSnapshotsMatch(issue, finalIssue)) {
     throw new Error("Sentinel completion evidence no longer matches the open issue snapshot");
   }
   await close();
@@ -527,7 +555,7 @@ export const reconcileGitHubIssueDelivery = async (
           input.repository,
           selection,
           issue,
-          durableEvidence.updatedAt,
+          durableEvidence,
         )
       ) {
         throw new Error("Sentinel completion evidence no longer matches the open issue snapshot");
@@ -540,8 +568,13 @@ export const reconcileGitHubIssueDelivery = async (
     // immediately before the irreversible close.
     issue = await source.getIssue(selection.issue_number);
     if (issue.state === "open") {
-      await requireMatchingOpenSnapshot();
-      await closeIssue(input.token, input.repository, selection.issue_number);
+      await closeIssueAfterCompletionEvidenceRevalidation(
+        source,
+        input.repository,
+        selection,
+        durableEvidence,
+        () => closeIssue(input.token, input.repository, selection.issue_number),
+      );
     } else {
       const issueState = await getIssueState(
         input.token,
@@ -659,7 +692,7 @@ export const reconcileGitHubIssueDelivery = async (
       new GitHubActionsClient({ repository: input.repository, token: input.token }),
       input.repository,
       selection,
-      durableEvidence.updatedAt,
+      durableEvidence,
       () => closeIssue(input.token, input.repository, selection.issue_number),
     );
   } else if (action === "leave_open_rolled_back") {

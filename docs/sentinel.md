@@ -67,12 +67,14 @@ GitHub issue selection is a read-only fallback when the native-review backlog ha
 pull requests and accepts only an open issue whose author and latest body or title editors currently have calculated
 `write` or `admin` permission for the repository. The issue must be unlocked and unassigned. It must have exactly one
 supported priority label, `Priority: 3 (High)` or `Priority: 2 (Medium)`, and exactly one `Time: <N Unit` label using
-`Minute`, `Minutes`, `Hour`, `Hours`, `Day`, or `Days`, with an estimate no greater than one day. Existing comments do
-not block selection and never become agent input; their count remains part of the immutable snapshot. The issue must
-have no parent, sub-issue, blocked-by, or blocking relationships. It needs a bounded `Acceptance:` list and a bounded
-`Files:` list. Every file must be a repository-relative path that the Sentinel implementation policy permits. High
-priority sorts before Medium, then by creation time and issue number. High becomes review severity P2 and Medium becomes
-P3. Issue text and metadata are untrusted input and cannot expand the declared file scope or change Sentinel policy.
+`Minute`, `Minutes`, `Hour`, `Hours`, `Day`, or `Days`, with an estimate no greater than one day. Human or unrecognized
+comments block selection. Sentinel permits at most eight exact, unedited UbiquityOS label-denial bot notices; it
+inspects those bounded comments only to classify the fixed notice and never includes them in agent input. Their count
+remains part of the immutable snapshot. The issue must have no parent, sub-issue, blocked-by, or blocking relationships.
+It needs a bounded `Acceptance:` list and a bounded `Files:` list. Every file must be a repository-relative path that
+the Sentinel implementation policy permits. High priority sorts before Medium, then by creation time and issue number.
+High becomes review severity P2 and Medium becomes P3. Issue text and metadata are untrusted input and cannot expand the
+declared file scope or change Sentinel policy.
 
 Selection records an immutable digest of the issue body and complete issue snapshot, including the author login and the
 latest body-edit and title-edit actors, timestamps, and current title. Sentinel reads the exact issue, its

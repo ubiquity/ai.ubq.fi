@@ -47,7 +47,12 @@ import {
   zeroUnselectedReplayBodies,
 } from "../scripts/sentinel/main.ts";
 import { CodexInvocationError } from "../scripts/sentinel/codex.ts";
-import type { GitHubIssue, GitHubIssueRelations, GitHubRepositoryPermission } from "../scripts/sentinel/github.ts";
+import type {
+  GitHubIssue,
+  GitHubIssueComment,
+  GitHubIssueRelations,
+  GitHubRepositoryPermission,
+} from "../scripts/sentinel/github.ts";
 import {
   applyGitHubIssueJobDisposition,
   blockingIssueReviewFindings,
@@ -1014,6 +1019,26 @@ const noIssueRelations: GitHubIssueRelations = {
   latestTitleEdit: null,
 };
 
+const inertIssueComments = (count: number): readonly GitHubIssueComment[] =>
+  Array.from({ length: count }, (_, index) => ({
+    id: 50_000 + index,
+    authorLogin: "ubiquity-os[bot]",
+    authorType: "Bot",
+    body: `> [!WARNING]
+> You are not allowed to set labels.
+
+<!-- UbiquityOS - updateLabels - ${
+      "a".repeat(64)
+    } - @0x4007 - https://console.deno.com/ubiquity-os/daemon-pricing/observability/logs?start=2026-08-26T23%3A32%3A29Z&end=2026-08-26T23%3A34%3A29Z&tz=Etc%2FUTC
+{
+  "caller": "updateLabels"
+}
+-->
+`,
+    createdAt: "2026-08-26T23:33:29Z",
+    updatedAt: "2026-08-26T23:33:29Z",
+  }));
+
 const githubIssueSource = (
   issues: readonly GitHubIssue[],
   relations: Readonly<Record<number, GitHubIssueRelations>> = {},
@@ -1027,6 +1052,7 @@ const githubIssueSource = (
       if (!issue) throw new Error(`Missing issue ${number}`);
       return Promise.resolve(issue);
     },
+    listIssueComments: (number) => Promise.resolve(inertIssueComments(byNumber.get(number)?.comments ?? 0)),
     getIssueRelations: (number) => Promise.resolve(relations[number] ?? noIssueRelations),
     getRepositoryPermission: (login) => Promise.resolve(permissions[login] ?? "admin"),
   };
@@ -1152,12 +1178,41 @@ Deno.test("GitHub issue selection rejects a comment-count race", async () => {
   const source: GitHubIssueJobSource = {
     listOpenIssues: () => Promise.resolve([listed]),
     getIssue: () => Promise.resolve({ ...listed, comments: 4 }),
+    listIssueComments: () => Promise.resolve(inertIssueComments(4)),
     getIssueRelations: () => Promise.resolve(noIssueRelations),
     getRepositoryPermission: () => Promise.resolve("admin"),
   };
   await assert.rejects(
     () => selectNextGitHubIssueJob(source, "ubiquity/ai.ubq.fi", renderGitHubIssueJobLedger([])),
     /snapshot changed during selection/,
+  );
+});
+
+Deno.test("GitHub issue selection rejects human comments while accepting fixed bot notices", async () => {
+  const issue = sentinelGitHubIssue({ comments: 1 });
+  const source: GitHubIssueJobSource = {
+    ...githubIssueSource([issue]),
+    listIssueComments: () =>
+      Promise.resolve([{
+        id: 70_001,
+        authorLogin: "human-reviewer",
+        authorType: "User",
+        body: "I am working on this issue.",
+        createdAt: "2026-08-26T23:33:29Z",
+        updatedAt: "2026-08-26T23:33:29Z",
+      }]),
+  };
+  assert.equal(
+    await selectNextGitHubIssueJob(source, "ubiquity/ai.ubq.fi", renderGitHubIssueJobLedger([])),
+    null,
+  );
+  assert.equal(
+    (await selectNextGitHubIssueJob(
+      githubIssueSource([issue]),
+      "ubiquity/ai.ubq.fi",
+      renderGitHubIssueJobLedger([]),
+    ))?.comments,
+    1,
   );
 });
 
@@ -1181,6 +1236,7 @@ Deno.test("GitHub issue selection has a fixed relationship-inspection budget", a
       detailRequests += 1;
       return Promise.resolve(issues.find((issue) => issue.number === number)!);
     },
+    listIssueComments: () => Promise.resolve([]),
     getIssueRelations: () => {
       relationRequests += 1;
       return Promise.resolve({ ...noIssueRelations, subIssueCount: 1 });

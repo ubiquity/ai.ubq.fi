@@ -750,6 +750,34 @@ Deno.test("GitHub issue detail and relationships use exact repository resources"
   fake.assertDrained();
 });
 
+Deno.test("GitHub issue comment intake is bounded to the exact issue resource", async () => {
+  const fake = queuedFetch([
+    (request) => {
+      assertGitHubApiRequest(request, "/repos/ubiquity/ai.ubq.fi/issues/142/comments");
+      assert.equal(request.url.searchParams.get("per_page"), "100");
+      assert.equal(request.url.searchParams.get("page"), "1");
+      return json([{
+        id: 54_323_347_30,
+        user: { login: "ubiquity-os[bot]", type: "Bot" },
+        body: "> [!WARNING]\n> You are not allowed to set labels.\n",
+        created_at: "2026-08-26T23:33:29Z",
+        updated_at: "2026-08-26T23:33:29Z",
+      }]);
+    },
+  ]);
+
+  const comments = await githubClient(fake.fetcher).listIssueComments(142);
+  assert.deepEqual(comments, [{
+    id: 54_323_347_30,
+    authorLogin: "ubiquity-os[bot]",
+    authorType: "Bot",
+    body: "> [!WARNING]\n> You are not allowed to set labels.\n",
+    createdAt: "2026-08-26T23:33:29Z",
+    updatedAt: "2026-08-26T23:33:29Z",
+  }]);
+  fake.assertDrained();
+});
+
 Deno.test("GitHub repository permission lookup accepts only canonical calculated values", async () => {
   const fake = queuedFetch([
     (request) => {
