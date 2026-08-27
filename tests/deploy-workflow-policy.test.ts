@@ -31,6 +31,14 @@ Deno.test("development pushes deploy and promote without a manual production gat
   );
 });
 
+Deno.test("reusable deployment pins the proven Deno CLI version", () => {
+  const deployJob = deploymentWorkflow.match(
+    /^[ ]{2}deploy:\n([\s\S]*?)(?=^[ ]{2}attest-sentinel-candidate:)/mu,
+  )?.[1];
+  assert.ok(deployJob, "deploy job must remain present");
+  assert.match(deployJob, /^[ ]{6}deno_version: 2\.9\.5$/mu);
+});
+
 Deno.test("deployment attestation ignores failed builder retry revisions", () => {
   assert.match(
     deploymentWorkflow,
