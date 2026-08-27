@@ -18,16 +18,6 @@ import {
   markCodexResponseUpstreamError,
   releaseCodexResponseProbe,
 } from "./codex.ts";
-import {
-  CEREBRAS_GPT_OSS_120B_MODEL,
-  CerebrasError,
-  fetchCerebrasChatCompletions,
-  getCerebrasProviderRequestId,
-  normalizeCerebrasChatCompletion,
-  normalizeCerebrasProviderRequestId,
-  readCerebrasApiKey,
-} from "./cerebras.ts";
-import { CEREBRAS_RATE_LIMIT_HEADERS } from "./cerebras_rate_limits.ts";
 import { getCatalogClientVersion, handleCodexCatalogModels } from "./codex_catalog.ts";
 import {
   CODEX_CHATGPT_PROMPT_CACHE_PROVIDER,
@@ -101,11 +91,7 @@ import {
   reservePaidFallback,
   type SurplusBillingPricing,
 } from "./paid_fallback.ts";
-import {
-  recordCerebrasProviderHealth,
-  recordMeteredProviderHealth,
-  recordSurplusProviderHealth,
-} from "./provider_health.ts";
+import { recordMeteredProviderHealth, recordSurplusProviderHealth } from "./provider_health.ts";
 import { getString, isRecord, sha256Hex } from "./utils.ts";
 import type {
   ChatCompletionRequest,
@@ -200,13 +186,13 @@ type UsageContext = Readonly<{
   responseTelemetry?: ResponseTelemetryState;
   /** Commits an admitted API-key reservation exactly once before transport. */
   beforeProviderDispatch?: (
-    provider: "cerebras" | "chatgpt_codex" | "removed_provider" | "metered" | "surplus" | "voyage",
+    provider: "chatgpt_codex" | "removed_provider" | "metered" | "surplus" | "voyage",
   ) => Promise<ApiKeyProviderDispatch | void>;
   /** Test seam for proving one terminal usage observation per response. */
   onTerminalUsage?: (usage: UsageTokens | null, completed: boolean) => void;
 }>;
 
-type UpstreamProvider = "cerebras" | "chatgpt_codex" | "removed_provider" | "metered" | "surplus";
+type UpstreamProvider = "chatgpt_codex" | "removed_provider" | "metered" | "surplus";
 const supportsReasoningProgressRelease = (provider: UpstreamProvider): boolean =>
   provider === "chatgpt_codex" || provider === "surplus" || provider === "metered";
 export type InferenceFallbackReason = "primary_quota_blocked" | "dynamic_paid_model";
@@ -903,22 +889,6 @@ const countExplicitPromptCacheBreakpoints = (input: readonly ResponseInputItem[]
 
 const promptCacheKeyPresent = (rawRecord: Record<string, unknown>): boolean =>
   typeof rawRecord.prompt_cache_key === "string" && rawRecord.prompt_cache_key.trim().length > 0;
-
-const extractChatUsageTokens = (value: unknown): UsageTokens | null => {
-  if (!isRecord(value) || Array.isArray(value)) return null;
-  const inputTokens = normalizeTokenCount(value.prompt_tokens);
-  const outputTokens = normalizeTokenCount(value.completion_tokens);
-  const totalTokens = normalizeTokenCount(value.total_tokens);
-  if (inputTokens === null || outputTokens === null || totalTokens === null) return null;
-  return {
-    inputTokens,
-    cachedInputTokens: 0,
-    cacheWriteInputTokens: null,
-    outputTokens,
-    totalTokens,
-    status: "reported",
-  };
-};
 
 const recordRequestUsage = (
   context: UsageContext | undefined,
@@ -1970,121 +1940,6 @@ const toPreHeaderErrorResponse = (
   return toCodexErrorResponse(error, provider);
 };
 
-const toCerebrasErrorResponse = (error: unknown): Response => {
-  let response: Response;
-  if (error instanceof ApiKeyQuotaDispatchError) {
-    response = openaiError(error.status, error.message, error.code, {
-      type: error.errorType,
-      headers: error.headers,
-    });
-  } else if (error instanceof CerebrasError) {
-    response = openaiError(error.status, error.message, error.code, {
-      type: error.status >= 500 ? "server_error" : "invalid_request_error",
-    });
-  } else if (error instanceof Error && error.name === "TimeoutError") {
-    response = openaiError(504, "Upstream request exceeded the gateway deadline.", "gateway_timeout", {
-      type: "server_error",
-    });
-  } else if (error instanceof Error && error.name === "AbortError") {
-    response = openaiError(499, "Request was cancelled.", "request_cancelled", { type: "server_error" });
-  } else {
-    // The adapter deliberately converts provider transport errors to a safe
-    // CerebrasError. Keep this fallback content-free as a final guard.
-    response = openaiError(502, "Upstream request could not be completed.", "cerebras_upstream_unreachable", {
-      type: "server_error",
-    });
-  }
-  return withUpstreamProviderHeader(response, "cerebras");
-};
-
-const cerebrasResponseHeaders = (
-  providerRequestId: string | null,
-  warning?: string,
-): Record<string, string> => ({
-  "x-uos-upstream": "cerebras",
-  ...(providerRequestId ? { "x-uos-provider-request-id": providerRequestId } : {}),
-  ...(warning ? { "x-uos-warning": warning } : {}),
-});
-
-const GPT_OSS_STREAM_DOWNGRADED_WARNING = "gpt_oss_stream_downgraded";
-
-const cerebrasChatCompletionHasSemanticOutput = (completion: Record<string, unknown>): boolean =>
-  Array.isArray(completion.choices) && completion.choices.some((choice) => {
-    if (!isRecord(choice) || Array.isArray(choice) || !isRecord(choice.message) || Array.isArray(choice.message)) {
-      return false;
-    }
-    const message = choice.message;
-    return (typeof message.content === "string" && message.content.length > 0) ||
-      (typeof message.refusal === "string" && message.refusal.length > 0) ||
-      (Array.isArray(message.tool_calls) && message.tool_calls.length > 0);
-  });
-
-const streamCerebrasChatCompletion = (
-  completion: Record<string, unknown>,
-  includeUsage: boolean,
-  headers: HeadersInit,
-): Response => {
-  const id = getString(completion.id) ?? `chatcmpl_${crypto.randomUUID().replace(/-/g, "")}`;
-  const created = typeof completion.created === "number" ? completion.created : Math.floor(Date.now() / 1000);
-  const model = getString(completion.model) ?? CEREBRAS_GPT_OSS_120B_MODEL;
-  const choices = Array.isArray(completion.choices) ? completion.choices : [];
-  const events: string[] = [];
-  const appendEvent = (value: Record<string, unknown>): void => {
-    events.push(`data: ${JSON.stringify(value)}\n\n`);
-  };
-
-  for (const [choiceIndex, value] of choices.entries()) {
-    if (!isRecord(value) || Array.isArray(value)) continue;
-    const index = typeof value.index === "number" ? value.index : choiceIndex;
-    const message = isRecord(value.message) && !Array.isArray(value.message) ? value.message : {};
-    const delta: Record<string, unknown> = { role: "assistant" };
-    if (typeof message.content === "string") delta.content = message.content;
-    if (typeof message.refusal === "string" && message.refusal) delta.refusal = message.refusal;
-
-    if (Array.isArray(message.tool_calls)) {
-      delta.tool_calls = message.tool_calls.flatMap((toolCall, toolCallIndex) => {
-        if (!isRecord(toolCall) || Array.isArray(toolCall)) return [];
-        const fn = isRecord(toolCall.function) && !Array.isArray(toolCall.function) ? toolCall.function : null;
-        if (!fn) return [];
-        return [{
-          index: toolCallIndex,
-          id: toolCall.id,
-          type: "function",
-          function: {
-            name: fn.name,
-            arguments: fn.arguments,
-          },
-        }];
-      });
-    }
-
-    appendEvent({
-      id,
-      object: "chat.completion.chunk",
-      created,
-      model,
-      choices: [{ index, delta, finish_reason: null }],
-    });
-    appendEvent({
-      id,
-      object: "chat.completion.chunk",
-      created,
-      model,
-      choices: [{ index, delta: {}, finish_reason: getString(value.finish_reason) ?? "stop" }],
-    });
-  }
-
-  if (includeUsage && completion.usage !== undefined) {
-    appendEvent({ id, object: "chat.completion.chunk", created, model, choices: [], usage: completion.usage });
-  }
-  events.push("data: [DONE]\n\n");
-
-  const responseHeaders = new Headers(headers);
-  responseHeaders.set("Content-Type", "text/event-stream");
-  responseHeaders.set("Cache-Control", "no-cache");
-  return new Response(events.join(""), { status: 200, headers: responseHeaders });
-};
-
 type UpstreamErrorDetails = Readonly<{
   message: string;
   type?: string;
@@ -2180,31 +2035,6 @@ const cancelResponseBody = (response: Response): void => {
   } catch {
     // The response may already be closed.
   }
-};
-
-// Cerebras responses can contain provider-specific diagnostics. Preserve the
-// HTTP semantics clients need, but never reflect that body through the gateway
-// (and do not leave its stream open while returning the normalized error).
-const toCerebrasUpstreamErrorResponse = (upstream: Response): Response => {
-  cancelResponseBody(upstream);
-  const headers = cerebrasResponseHeaders(getCerebrasProviderRequestId(upstream));
-  const retryAfter = upstream.headers.get("Retry-After");
-  if (retryAfter) headers["Retry-After"] = retryAfter;
-  if (upstream.status === 429) {
-    for (const header of CEREBRAS_RATE_LIMIT_HEADERS) {
-      const value = upstream.headers.get(header);
-      if (value !== null) headers[header] = value;
-    }
-  }
-  return openaiError(
-    upstream.status,
-    "Cerebras upstream returned an error.",
-    "cerebras_upstream_error",
-    {
-      type: upstream.status === 408 ? "server_error" : upstreamStatusToErrorType(upstream.status),
-      headers,
-    },
-  );
 };
 
 const warnPaidFallbackBookkeepingFailure = (operation: string, error: unknown): void => {
@@ -5527,44 +5357,6 @@ const normalizeModelList = (payload: unknown): { object: "list"; data: Record<st
   return null;
 };
 
-const configuredCerebrasModel = (): Record<string, unknown> | null =>
-  readCerebrasApiKey()
-    ? {
-      id: CEREBRAS_GPT_OSS_120B_MODEL,
-      object: "model",
-      created: 0,
-      owned_by: "cerebras",
-    }
-    : null;
-
-const configuredCerebrasModelCapabilities = (): Record<string, unknown> | null =>
-  readCerebrasApiKey()
-    ? {
-      id: CEREBRAS_GPT_OSS_120B_MODEL,
-      object: "uos.model_capabilities",
-      owned_by: "cerebras",
-      display_name: "GPT-OSS 120B",
-      upstream_provider: "cerebras",
-      supported_endpoints: ["/v1/chat/completions"],
-      supported_reasoning_levels: ["low", "medium", "high"],
-      default_reasoning_effort: "medium",
-      reasoning_effort_wire_map: {},
-      context_window_tokens: null,
-      max_context_window_tokens: null,
-      auto_compact_token_limit_tokens: null,
-    }
-    : null;
-
-const withConfiguredCerebrasModel = (
-  models: readonly Record<string, unknown>[],
-): Record<string, unknown>[] => {
-  const cerebras = configuredCerebrasModel();
-  if (!cerebras || models.some((model) => model.id === CEREBRAS_GPT_OSS_120B_MODEL)) {
-    return [...models];
-  }
-  return [...models, cerebras];
-};
-
 const normalizeModelCapabilitiesEntry = (value: unknown): Record<string, unknown> | null => {
   if (!isRecord(value)) return null;
   const id = modelIdFromSnapshotRecord(value);
@@ -7303,7 +7095,7 @@ export const handleModels = async (req?: Request): Promise<Response> => {
   const normalized = snapshot && Array.isArray(snapshot.models) && snapshot.models.length > 0
     ? normalizeModelList(snapshot)
     : null;
-  const data = withConfiguredCerebrasModel(normalized?.data ?? []);
+  const data = normalized?.data ?? [];
   const [metered, surplus] = await Promise.all([
     fetchMeteredModels(),
     fetchSurplusModels(),
@@ -7446,10 +7238,6 @@ export const handleModelCapabilities = async (): Promise<Response> => {
   const data = snapshot && Array.isArray(snapshot.models) && snapshot.models.length > 0
     ? snapshot.models.map(normalizeModelCapabilitiesEntry).filter(Boolean) as Record<string, unknown>[]
     : [];
-  const cerebras = configuredCerebrasModelCapabilities();
-  if (cerebras && !data.some((model) => model.id === CEREBRAS_GPT_OSS_120B_MODEL)) {
-    data.push(cerebras);
-  }
   const [metered, surplus] = await Promise.all([
     fetchMeteredModels(),
     fetchSurplusModels(),
@@ -8541,207 +8329,6 @@ export const handleEmbeddingsJobGet = async (
     async (context) => withVoyageUpstreamHeader(await handleEmbeddingsJobGetInternal(req, authToken, jobId, context)),
   );
 
-const recordCerebrasResponseHealth = (status: number, providerRequestId: string | null): void => {
-  if (status === 401 || status === 403) {
-    void recordCerebrasProviderHealth("auth_invalid", status, Date.now, providerRequestId);
-    return;
-  }
-  if (status === 429) {
-    void recordCerebrasProviderHealth("quota_exhausted", status, Date.now, providerRequestId);
-    return;
-  }
-  if (status >= 500) {
-    void recordCerebrasProviderHealth("upstream_error", status, Date.now, providerRequestId);
-    return;
-  }
-  if (status >= 400) {
-    void recordCerebrasProviderHealth("reachable", status, Date.now, providerRequestId);
-    return;
-  }
-  void recordCerebrasProviderHealth("success", status, Date.now, providerRequestId);
-};
-
-const cerebrasTerminalTypeForError = (error: unknown, downstreamSignal: AbortSignal): ResponseStreamTerminalType => {
-  if (downstreamSignal.aborted) return "cancelled";
-  if (error instanceof CerebrasError && error.status === 504) return "deadline";
-  if (error instanceof Error && error.name === "TimeoutError") return "deadline";
-  if (error instanceof Error && error.name === "AbortError") return "cancelled";
-  return "error";
-};
-
-/**
- * The GPT-OSS route is deliberately separate from the Codex Responses bridge.
- * It forwards the official Chat Completions body unchanged (apart from the
- * canonical model and explicit non-streaming flag) and never races or falls
- * back to another provider.
- */
-const handleCerebrasChatCompletions = async (
-  req: Request,
-  rawRecord: Record<string, unknown>,
-  modelRaw: string,
-  usageContext?: UsageContext,
-): Promise<Response> => {
-  const messages = rawRecord.messages;
-  if (!Array.isArray(messages)) return openaiError(400, "messages must be an array", "invalid_request_error");
-  if (messages.length === 0) return openaiError(400, "messages must be a non-empty array", "invalid_request_error");
-  if (messages.some((message) => !isRecord(message) || Array.isArray(message))) {
-    return openaiError(400, "messages must contain objects", "invalid_request_error", { param: "messages" });
-  }
-
-  const reasoningEffort = parseReasoningEffortField(rawRecord.reasoning_effort, "reasoning_effort");
-  if (!reasoningEffort.ok) {
-    return openaiError(400, reasoningEffort.message, "invalid_request_error", { param: "reasoning_effort" });
-  }
-  if (reasoningEffort.value === "none") {
-    return openaiError(
-      400,
-      "reasoning_effort 'none' is not supported for gpt-oss-120b. Use low, medium, or high.",
-      "invalid_request_error",
-      { param: "reasoning_effort" },
-    );
-  }
-  const parsedStream = parseStreamField(rawRecord.stream);
-  if (!parsedStream.ok) {
-    return openaiError(400, parsedStream.message, "invalid_request_error", { param: "stream" });
-  }
-  const streamOptions = parseChatStreamOptions(rawRecord.stream_options);
-  if (!streamOptions.ok) {
-    return openaiError(400, streamOptions.message, "invalid_request_error", { param: "stream_options" });
-  }
-  const clientWantsStream = parsedStream.value;
-
-  // Preserve the official nested Chat tools/tool_choice contract. In
-  // particular, do not run the Codex-specific flattening that follows this
-  // early branch in handleChatCompletionsInternal.
-  const reasoning = reasoningEffort.value ?? DEFAULT_REASONING_EFFORT;
-  const cerebrasBody: Record<string, unknown> = {
-    ...rawRecord,
-    model: CEREBRAS_GPT_OSS_120B_MODEL,
-    reasoning_effort: reasoning,
-    stream: false,
-  };
-  delete cerebrasBody.stream_options;
-  if (usageContext?.responseTelemetry) {
-    usageContext.responseTelemetry.provider = "cerebras";
-    usageContext.responseTelemetry.reasoning = reasoning;
-  }
-  await recordRequestUsage(usageContext, {
-    model: modelRaw,
-    route: "chat.completions",
-    stream: clientWantsStream,
-    reasoning,
-  });
-
-  const downstreamSignal = downstreamSignalFor(req, usageContext);
-  const requestSignal = inferenceSignal(req, usageContext);
-  let upstream: Response;
-  try {
-    upstream = await fetchCerebrasChatCompletions(cerebrasBody, {
-      signal: requestSignal,
-      beforeDispatch: () => usageContext?.beforeProviderDispatch?.("cerebras") ?? Promise.resolve(),
-      onDispatch: () => recordFirstProviderDispatch(usageContext),
-      onHeaders: () => recordFirstProviderHeaders(usageContext),
-    });
-  } catch (error) {
-    const terminalType = cerebrasTerminalTypeForError(error, downstreamSignal);
-    recordStreamTerminalType(usageContext, terminalType);
-    if (terminalType !== "cancelled") void recordCerebrasProviderHealth("upstream_error", null);
-    await recordErrorUsage(usageContext);
-    // Do not log the caught value: an upstream implementation can attach raw
-    // response text or request configuration to an Error instance.
-    return toCerebrasErrorResponse(error);
-  }
-
-  let providerRequestId = getCerebrasProviderRequestId(upstream);
-  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.providerRequestId = providerRequestId;
-
-  if (!upstream.ok) {
-    recordCerebrasResponseHealth(upstream.status, providerRequestId);
-    recordStreamTerminalType(usageContext, "response.failed");
-    await recordErrorUsage(usageContext);
-    return toCerebrasUpstreamErrorResponse(upstream);
-  }
-
-  const captured = await readBoundedResponseBody(upstream, {
-    signal: requestSignal,
-    maxBytes: 128 * 1024,
-    // Successful buffered inference uses the request-level edge deadline, not
-    // the one-second error-body default. `requestSignal` still caps the whole
-    // request from dispatch through body completion.
-    timeoutMs: BUFFERED_INFERENCE_DEADLINE_MS,
-    cancellationReason: "Cerebras Chat Completions response was incomplete",
-  });
-  if (!captured.complete) {
-    const terminalType = downstreamSignal.aborted ? "cancelled" : requestSignal.aborted ? "deadline" : "error";
-    recordStreamTerminalType(usageContext, terminalType);
-    if (terminalType !== "cancelled") {
-      void recordCerebrasProviderHealth("upstream_error", null, Date.now, providerRequestId);
-    }
-    await recordErrorUsage(usageContext);
-    if (terminalType === "cancelled") {
-      return openaiError(
-        499,
-        "Request was cancelled.",
-        "request_cancelled",
-        { type: "server_error", headers: cerebrasResponseHeaders(providerRequestId) },
-      );
-    }
-    return openaiError(
-      terminalType === "deadline" ? 504 : 502,
-      terminalType === "deadline"
-        ? "Upstream request exceeded the gateway deadline."
-        : "Upstream returned an incomplete response.",
-      terminalType === "deadline" ? "gateway_timeout" : "cerebras_upstream_invalid_response",
-      { type: "server_error", headers: cerebrasResponseHeaders(providerRequestId) },
-    );
-  }
-
-  let payload: unknown;
-  try {
-    payload = JSON.parse(new TextDecoder().decode(captured.bytes)) as unknown;
-  } catch {
-    recordStreamTerminalType(usageContext, "error");
-    void recordCerebrasProviderHealth("upstream_error", upstream.status, Date.now, providerRequestId);
-    await recordErrorUsage(usageContext);
-    return openaiError(
-      502,
-      "Upstream returned an invalid Chat Completions response.",
-      "cerebras_upstream_invalid_response",
-      { type: "server_error", headers: cerebrasResponseHeaders(providerRequestId) },
-    );
-  }
-  const normalized = normalizeCerebrasChatCompletion(payload, CEREBRAS_GPT_OSS_120B_MODEL);
-  if (!normalized.ok) {
-    recordStreamTerminalType(usageContext, "error");
-    void recordCerebrasProviderHealth("upstream_error", upstream.status, Date.now, providerRequestId);
-    await recordErrorUsage(usageContext);
-    return openaiError(
-      502,
-      "Upstream returned an invalid Chat Completions response.",
-      "cerebras_upstream_invalid_response",
-      { type: "server_error", headers: cerebrasResponseHeaders(providerRequestId) },
-    );
-  }
-
-  if (cerebrasChatCompletionHasSemanticOutput(normalized.value)) markChatSemanticOutput(usageContext);
-  providerRequestId ??= normalizeCerebrasProviderRequestId(normalized.value.id);
-  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.providerRequestId = providerRequestId;
-  const usage = extractChatUsageTokens(normalized.value.usage);
-  await recordCompletionUsage(usageContext, usage);
-  if (clientWantsStream) recordFirstSemanticCommitment(usageContext);
-  recordStreamTerminalType(usageContext, "response.completed");
-  recordCerebrasResponseHealth(upstream.status, providerRequestId);
-  const responseHeaders = cerebrasResponseHeaders(
-    providerRequestId,
-    clientWantsStream ? GPT_OSS_STREAM_DOWNGRADED_WARNING : undefined,
-  );
-  if (clientWantsStream) {
-    recordStreamTerminal(usageContext);
-    return streamCerebrasChatCompletion(normalized.value, streamOptions.includeUsage, responseHeaders);
-  }
-  return json(200, normalized.value, responseHeaders);
-};
-
 const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageContext): Promise<Response> => {
   const body = (await readJsonBody(req)) as ChatCompletionRequest | null;
   if (!body || !isRecord(body)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
@@ -8796,9 +8383,6 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
   const maxCompletionTokens = parseMaxCompletionTokensField(rawRecord.max_completion_tokens);
   if (!maxCompletionTokens.ok) {
     return openaiError(400, maxCompletionTokens.message, "invalid_request_error", { param: "max_completion_tokens" });
-  }
-  if (model.toLowerCase() === CEREBRAS_GPT_OSS_120B_MODEL) {
-    return await handleCerebrasChatCompletions(req, rawRecord, modelRaw, usageContext);
   }
   const modelMetadata = await getCodexModelMetadata(model, "chat.completions");
   const modelAvailabilityError = validateCodexModelAvailable(modelRaw, "chat.completions", modelMetadata);
@@ -9189,14 +8773,6 @@ const handleResponsesInternal = async (
   }
   const model = normalizeModelForCodex(modelRaw);
   if (usageContext?.responseTelemetry) usageContext.responseTelemetry.model = modelRaw;
-  if (model.toLowerCase() === CEREBRAS_GPT_OSS_120B_MODEL) {
-    return openaiError(
-      400,
-      "gpt-oss-120b is available only on /v1/chat/completions.",
-      "unsupported_model",
-      { param: "model" },
-    );
-  }
   const modelMetadata = await getCodexModelMetadata(model, "responses");
   const modelAvailabilityError = validateCodexModelAvailable(modelRaw, "responses", modelMetadata);
   if (modelAvailabilityError) return modelAvailabilityError;
