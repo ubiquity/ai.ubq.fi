@@ -9,6 +9,7 @@ import adminHtml from "../static/admin.html" with { type: "text" };
 import aboutHtml from "../static/about.html" with { type: "text" };
 import adminScript from "../static/admin.js" with { type: "text" };
 import authScript from "../static/auth.js" with { type: "text" };
+import chatCss from "../static/chat.css" with { type: "text" };
 import chatHtml from "../static/chat.html" with { type: "text" };
 import chatScript from "../static/chat.js" with { type: "text" };
 import companyLogoSvg from "../static/company-logo.svg" with { type: "text" };
@@ -42,8 +43,26 @@ Deno.test("static assets register frontend module dependencies", () => {
   ) {
     assert.equal(hasStaticAsset(path), true, `${path} should be registered`);
   }
-  assert.match(chatHtml, /<script type="module" src="\/chat\.js\?v=20260827-response-stats-v2"><\/script>/);
-  assert.match(chatScript, /from "\.\/chat-stats\.js\?v=20260827-response-stats-v2";/);
+  assert.match(chatHtml, /<script type="module" src="\/chat\.js\?v=20260827-response-stats-v4"><\/script>/);
+  assert.match(chatScript, /from "\.\/chat-stats\.js\?v=20260827-response-stats-v4";/);
+});
+
+Deno.test("chat response stats use one conversation bar below the composer", () => {
+  assert.equal((chatHtml.match(/\bdata-chat-stats\b/g) ?? []).length, 1);
+  assert.match(
+    chatHtml,
+    /<\/form>\s*<div data-chat-stats role="status" aria-live="polite" aria-atomic="true" hidden><\/div>/,
+  );
+  assert.doesNotMatch(chatHtml, /data-message-stats/);
+  assert.doesNotMatch(chatScript, /appendChatMessageStats|data-message-stats/);
+  assert.match(chatScript, /recordCompletedChatResponse\(chatStats, sample\)/);
+  assert.match(chatScript, /decodeMs: firstTokenAt === null \? undefined : completedAt - firstTokenAt/);
+  assert.match(chatScript, /decodeTokens: readChatCompletionDecodeTokens\(responseUsage, reasoningEffort\)/);
+  assert.match(chatScript, /if \(!assistantText\.trim\(\)\) \{[\s\S]*?return;[\s\S]*?recordAndRenderChatStats\(/);
+  assert.doesNotMatch(chatScript, /firstStreamEventAt/);
+  assert.match(chatCss, /\[data-chat-stats\]\s*\{[^}]*overflow-wrap:\s*anywhere;[^}]*white-space:\s*normal;/s);
+  assert.doesNotMatch(chatCss, /\[data-chat-stats\]\s*\{[^}]*(?:overflow:\s*hidden|white-space:\s*nowrap)/s);
+  assert.doesNotMatch(chatCss, /\[data-message-stats\]/);
 });
 
 Deno.test("public models page is registered", () => {
@@ -53,7 +72,7 @@ Deno.test("public models page is registered", () => {
 });
 
 Deno.test("public console pages share versioned styles, canonical navigation, and accurate active states", () => {
-  const assetVersion = "public-console-20260827-v3";
+  const assetVersion = "public-console-20260827-v5";
   const canonicalLinks = [
     { href: "/models", label: "Models" },
     { href: "/developers", label: "Developers" },
@@ -133,6 +152,8 @@ Deno.test("public console pages share versioned styles, canonical navigation, an
       `${page.name} should mark only its matching canonical destination as current`,
     );
   }
+
+  assert.match(adminHtml, new RegExp(`/style\\.css\\?v=${assetVersion}`));
 });
 
 Deno.test("public console styles retain the bordered neutral admin surface without decorative Models blue", () => {

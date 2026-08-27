@@ -11,9 +11,9 @@ export const readChatCompletionMessageText = (value) => {
   if (!message || typeof message !== "object" || Array.isArray(message)) return null;
 
   const content = typeof message.content === "string" ? message.content : "";
-  if (content.length > 0) return content;
+  if (content.trim().length > 0) return content;
   const refusal = typeof message.refusal === "string" ? message.refusal : "";
-  return refusal.length > 0 ? refusal : null;
+  return refusal.trim().length > 0 ? refusal : null;
 };
 
 export const readChatCompletionUsage = (value) => {
@@ -38,6 +38,87 @@ export const readChatCompletionUsage = (value) => {
     cachedInputTokens: cachedInputTokens !== null && cachedInputTokens <= inputTokens ? cachedInputTokens : null,
     cacheWriteInputTokens: cacheWriteInputTokens ?? 0,
   };
+};
+
+export const readChatCompletionDecodeTokens = (value, reasoningEffort) => {
+  const usage = readChatCompletionUsage(value);
+  if (!usage) return null;
+
+  const details = value.completion_tokens_details;
+  if (details && typeof details === "object" && !Array.isArray(details) && "reasoning_tokens" in details) {
+    const reasoningTokens = getNonNegativeInteger(details.reasoning_tokens);
+    if (reasoningTokens === null || reasoningTokens > usage.outputTokens) return null;
+    return usage.outputTokens - reasoningTokens;
+  }
+
+  const effort = typeof reasoningEffort === "string" ? reasoningEffort.trim().toLowerCase() : "";
+  return effort === "none" ? usage.outputTokens : null;
+};
+
+const EMPTY_CHAT_STATS = Object.freeze({
+  turns: 0,
+  steps: 0,
+  llmMsTotal: 0,
+  llmSamples: 0,
+  toolMsTotal: 0,
+  toolSamples: 0,
+  ttftMsTotal: 0,
+  ttftSamples: 0,
+  throughputOutputTokens: 0,
+  throughputDecodeMs: 0,
+  throughputSamples: 0,
+  inputTokens: 0,
+  outputTokens: 0,
+  cachedInputTokens: 0,
+  usageSamples: 0,
+  cacheSamples: 0,
+});
+
+export const resetChatStatsAccumulator = (stats = {}) => Object.assign(stats, EMPTY_CHAT_STATS);
+
+export const createChatStatsAccumulator = () => resetChatStatsAccumulator({});
+
+export const recordCompletedChatResponse = (stats, sample = {}) => {
+  if (!stats || typeof stats !== "object" || Array.isArray(stats)) return false;
+
+  const llmMs = getNonNegativeNumber(sample.llmMs);
+  if (llmMs === null) return false;
+
+  stats.turns += 1;
+  stats.steps += 1;
+  stats.llmMsTotal += llmMs;
+  stats.llmSamples += 1;
+
+  const toolMs = getNonNegativeNumber(sample.toolMs);
+  if (toolMs !== null) {
+    stats.toolMsTotal += toolMs;
+    stats.toolSamples += 1;
+  }
+
+  const ttftMs = getNonNegativeNumber(sample.ttftMs);
+  if (ttftMs !== null) {
+    stats.ttftMsTotal += ttftMs;
+    stats.ttftSamples += 1;
+  }
+
+  const usage = readChatCompletionUsage(sample.usage);
+  if (!usage) return true;
+
+  stats.inputTokens += usage.inputTokens;
+  stats.outputTokens += usage.outputTokens;
+  stats.usageSamples += 1;
+  const decodeMs = getNonNegativeNumber(sample.decodeMs);
+  const decodeTokens = getNonNegativeInteger(sample.decodeTokens);
+  if (decodeMs !== null && decodeMs > 0 && decodeTokens !== null && decodeTokens <= usage.outputTokens) {
+    stats.throughputOutputTokens += decodeTokens;
+    stats.throughputDecodeMs += decodeMs;
+    stats.throughputSamples += 1;
+  }
+  if (usage.cachedInputTokens !== null) {
+    stats.cachedInputTokens += usage.cachedInputTokens;
+    stats.cacheSamples += 1;
+  }
+  return true;
 };
 
 export const formatChatTokens = (tokens) => {
@@ -114,40 +195,65 @@ export const formatCacheHitPercent = (cacheReadTokens, inputTokens) => {
   return `99.${"9".repeat(decimalPlaces - 1)}${10 - roundedLoss}`;
 };
 
+const formatAverageDuration = (total, samples) => {
+  const totalValue = getNonNegativeNumber(total);
+  const sampleCount = getNonNegativeInteger(samples);
+  if (totalValue === null || sampleCount === null || sampleCount === 0) return null;
+  return formatChatDuration(totalValue / sampleCount);
+};
+
 export const formatChatStatsLine = (stats = {}) => {
   const groups = [];
-  const turns = getNonNegativeInteger(stats.turns) ?? 1;
-  const steps = getNonNegativeInteger(stats.steps) ?? 1;
+  const turns = getNonNegativeInteger(stats.turns);
+  const steps = getNonNegativeInteger(stats.steps);
+  if (turns === null || steps === null || turns === 0) return "";
   if (steps > 0) groups.push(`${turns} turns · ${steps} steps`);
 
   const durations = [];
-  const llmDuration = formatChatDuration(stats.llmMs);
-  if (llmDuration !== null) durations.push(`LLM ${llmDuration}`);
-  const toolDuration = formatChatDuration(stats.toolMs);
-  if (toolDuration !== null) durations.push(`Tool call ${toolDuration}`);
+  const llmDuration = formatAverageDuration(stats.llmMsTotal, stats.llmSamples);
+  if (llmDuration !== null) durations.push(`LLM avg ${llmDuration}`);
+  const toolDuration = formatAverageDuration(stats.toolMsTotal, stats.toolSamples);
+  if (toolDuration !== null) durations.push(`Tool call avg ${toolDuration}`);
   if (durations.length > 0) groups.push(durations.join(" · "));
 
-  const usage = readChatCompletionUsage(stats.usage);
   const speeds = [];
-  const ttftDuration = formatChatDuration(stats.ttftMs);
+  const ttftDuration = formatAverageDuration(stats.ttftMsTotal, stats.ttftSamples);
   if (ttftDuration !== null) speeds.push(`TTFT avg ${ttftDuration}`);
-  const decodeMs = getNonNegativeNumber(stats.decodeMs);
-  const decodeTokens = getNonNegativeInteger(stats.decodeTokens);
-  if (decodeTokens !== null && decodeMs !== null && decodeMs > 0) {
-    const throughput = formatTokensPerSecond(decodeTokens / (decodeMs / 1_000));
+  const throughputMs = getNonNegativeNumber(stats.throughputDecodeMs);
+  const throughputTokens = getNonNegativeInteger(stats.throughputOutputTokens);
+  const throughputSamples = getNonNegativeInteger(stats.throughputSamples);
+  const usageSamples = getNonNegativeInteger(stats.usageSamples);
+  const hasCompleteUsage = usageSamples !== null && usageSamples === turns;
+  if (
+    hasCompleteUsage && throughputSamples === turns && throughputTokens !== null && throughputMs !== null &&
+    throughputMs > 0
+  ) {
+    const throughput = formatTokensPerSecond(throughputTokens / (throughputMs / 1_000));
     if (throughput !== null) speeds.push(`${throughput} tok/s`);
   }
   if (speeds.length > 0) groups.push(speeds.join(" · "));
 
-  if (usage) {
-    const cacheHit = formatCacheHitPercent(usage.cachedInputTokens, usage.inputTokens);
+  const cacheSamples = getNonNegativeInteger(stats.cacheSamples);
+  const inputTokens = getNonNegativeInteger(stats.inputTokens);
+  const outputTokens = getNonNegativeInteger(stats.outputTokens);
+  const cachedInputTokens = getNonNegativeInteger(stats.cachedInputTokens);
+  if (hasCompleteUsage && inputTokens !== null && outputTokens !== null) {
+    const cacheHit = cacheSamples === usageSamples ? formatCacheHitPercent(cachedInputTokens, inputTokens) : null;
     if (cacheHit !== null) groups.push(`Cache hit ${cacheHit}%`);
-    const input = formatChatTokens(usage.inputTokens);
-    const output = formatChatTokens(usage.outputTokens);
+    const input = formatChatTokens(inputTokens);
+    const output = formatChatTokens(outputTokens);
     if (input !== null && output !== null) groups.push(`Input ${input} tok · Output ${output} tok`);
   }
 
   return groups.join(" | ");
+};
+
+export const renderChatStats = (element, stats) => {
+  const line = formatChatStatsLine(stats);
+  element.textContent = line;
+  element.title = line;
+  element.hidden = !line;
+  return line;
 };
 
 export const splitChatSseEvents = (buffer, flush = false) => {
@@ -250,17 +356,4 @@ export const setChatMessageContent = (message, text) => {
   const content = message.querySelector("[data-message-content]");
   if (!content) throw new Error("Chat message content is missing.");
   content.textContent = text;
-};
-
-export const appendChatMessageStats = (message, stats) => {
-  const line = formatChatStatsLine(stats);
-  if (!line) return null;
-  const existing = message.querySelector("[data-message-stats]");
-  if (existing) existing.remove();
-  const footer = message.ownerDocument.createElement("div");
-  footer.dataset.messageStats = "";
-  footer.textContent = line;
-  footer.title = line;
-  message.appendChild(footer);
-  return footer;
 };
