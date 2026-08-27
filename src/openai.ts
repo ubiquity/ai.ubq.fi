@@ -676,6 +676,7 @@ const recordStreamTerminal = (context: UsageContext | undefined): void => {
 
 const CHAT_RESPONSE_EVENT_KINDS = new Set([
   "response.created",
+  "response.in_progress",
   "response.output_text.delta",
   "response.output_text.done",
   "response.refusal.delta",
@@ -8639,7 +8640,10 @@ const handleCerebrasChatCompletions = async (
     upstream = await fetchCerebrasChatCompletions(cerebrasBody, {
       signal: requestSignal,
       beforeDispatch: () => usageContext?.beforeProviderDispatch?.("cerebras") ?? Promise.resolve(),
-      onDispatch: () => recordFirstProviderDispatch(usageContext),
+      onDispatch: () => {
+        recordAttemptedProvider(usageContext, "cerebras");
+        recordFirstProviderDispatch(usageContext);
+      },
       onHeaders: () => recordFirstProviderHeaders(usageContext),
     });
   } catch (error) {
