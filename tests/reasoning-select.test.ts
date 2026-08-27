@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   getReasoningEffortForChatRequest,
   getRecentModelReasoning,
+  modelSupportsReasoningNone,
   updateReasoningSelectForModel,
 } from "../static/reasoning-select.js";
 
@@ -136,6 +137,31 @@ Deno.test("reasoning select preserves none when model levels omit it", () => {
       ["medium", "medium"],
       ["high", "high"],
       ["xhigh", "xhigh"],
+    ]);
+  });
+});
+
+Deno.test("reasoning select resets none for Cerebras GPT-OSS", () => {
+  withFakeDocument(() => {
+    const select = createSelect();
+    const model = {
+      id: "gpt-oss-120b",
+      upstream_provider: "cerebras",
+      default_reasoning_effort: "medium",
+      supported_reasoning_levels: ["low", "medium", "high"],
+    };
+    const selected = updateReasoningSelectForModel(select, model, "none", {
+      includeNone: modelSupportsReasoningNone(model.id),
+    });
+
+    assert.equal(modelSupportsReasoningNone(model.id), false);
+    assert.equal(selected, "");
+    assert.equal(select.disabled, false);
+    assert.deepEqual(select.options.map((option) => [option.value, option.textContent]), [
+      ["", "Default"],
+      ["low", "low"],
+      ["medium", "medium"],
+      ["high", "high"],
     ]);
   });
 });

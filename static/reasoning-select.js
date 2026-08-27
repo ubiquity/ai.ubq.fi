@@ -1,5 +1,12 @@
 export const REASONING_NONE_VALUE = "none";
 
+const REASONING_NONE_UNSUPPORTED_MODELS = new Set(["gpt-oss-120b"]);
+
+export const modelSupportsReasoningNone = (modelId) => {
+  const id = typeof modelId === "string" ? modelId.trim().toLowerCase() : "";
+  return !REASONING_NONE_UNSUPPORTED_MODELS.has(id);
+};
+
 // Curated model-native reasoning controls for model classes released in the
 // six months ending 2026-08-24. The rules intentionally match classes and
 // aliases rather than individual provider IDs.
@@ -278,6 +285,10 @@ export const updateReasoningSelectForModel = (select, model, preferred, options 
   const trimmedPreferred = getTrimmedString(preferred);
   const includeNone = options.includeNone !== false;
   const selectOptions = { ...options, includeNone };
+
+  if (!includeNone && isReasoningNoneSelection(trimmedPreferred, noneValue)) {
+    return setReasoningOptions(select, rawLevels.length ? rawLevels : levels, "", selectOptions);
+  }
 
   if (includeNone && isReasoningNoneSelection(trimmedPreferred, noneValue)) {
     return setReasoningOptions(select, rawLevels, noneValue, selectOptions);

@@ -12685,6 +12685,27 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       assert.equal(cerebrasCalls, 0);
     });
 
+    await t.step("rejects none reasoning locally without provider dispatch", async () => {
+      let cerebrasCalls = 0;
+      const response = await withFetchMock(
+        (url) => {
+          if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
+          return new Response("{}", { status: 200 });
+        },
+        () => handleChatCompletions(request({ ...canonicalBody, reasoning_effort: "none" })),
+      );
+
+      assert.equal(response.status, 400);
+      const payload = await response.json() as {
+        error?: { code?: string; message?: string; param?: string; type?: string };
+      };
+      assert.equal(payload.error?.type, "invalid_request_error");
+      assert.equal(payload.error?.code, "invalid_request_error");
+      assert.equal(payload.error?.param, "reasoning_effort");
+      assert.match(payload.error?.message ?? "", /none.*low.*medium.*high/i);
+      assert.equal(cerebrasCalls, 0);
+    });
+
     await t.step("defaults omitted reasoning to medium without converting native Chat fields", async () => {
       const { reasoning_effort: _reasoningEffort, ...withoutReasoning } = canonicalBody;
       const upstreamBodies: Record<string, unknown>[] = [];

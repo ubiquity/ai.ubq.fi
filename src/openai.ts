@@ -8592,6 +8592,14 @@ const handleCerebrasChatCompletions = async (
   if (!reasoningEffort.ok) {
     return openaiError(400, reasoningEffort.message, "invalid_request_error", { param: "reasoning_effort" });
   }
+  if (reasoningEffort.value === "none") {
+    return openaiError(
+      400,
+      "reasoning_effort 'none' is not supported for gpt-oss-120b. Use low, medium, or high.",
+      "invalid_request_error",
+      { param: "reasoning_effort" },
+    );
+  }
   const parsedStream = parseStreamField(rawRecord.stream);
   if (!parsedStream.ok) {
     return openaiError(400, parsedStream.message, "invalid_request_error", { param: "stream" });
