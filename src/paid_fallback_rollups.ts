@@ -175,9 +175,9 @@ export const listPaidFallbackUsageRollups = async (
     ...PAID_FALLBACK_USAGE_ROLLUP_PREFIX,
     Math.trunc(options.nowMs) + PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS,
   ];
-  for await (
-    const entry of kv.list<PaidFallbackUsageRollup>({ prefix: PAID_FALLBACK_USAGE_ROLLUP_PREFIX, start, end })
-  ) {
+  // Deno KV rejects selectors that combine a prefix with both range bounds.
+  // These bounds already include the complete rollup namespace.
+  for await (const entry of kv.list<PaidFallbackUsageRollup>({ start, end })) {
     const rollup = isPaidFallbackUsageRollup(entry.value) ? entry.value : null;
     if (rollup) entries.push(rollup);
   }
