@@ -58,6 +58,7 @@ const appServerResult = (
 ): CodexAuthAppServerResult => ({
   code: overrides.code ?? 0,
   rpcSucceeded: overrides.rpcSucceeded ?? true,
+  managedAccountAvailable: overrides.managedAccountAvailable ?? (overrides.rpcSucceeded ?? true),
   outputExceeded: overrides.outputExceeded ?? false,
   timedOut: overrides.timedOut ?? false,
   stdoutBytes: overrides.stdoutBytes ?? 0,
@@ -310,10 +311,67 @@ Deno.test("app-server waits for initialize before the exact initialized and refr
     { method: "account/read", id: 1, params: { refreshToken: true } },
   ]);
   assert.equal(outcome.rpcSucceeded, true);
+  assert.equal(outcome.managedAccountAvailable, true);
   assert.equal(outcome.code, 0);
   assert.equal(scripted.spawnedRequests[0], candidate);
   assert.deepEqual(scripted.killSignals, []);
   assert.equal(scripted.timerCleared, true);
+});
+
+Deno.test("app-server accepts an unavailable account as a successful account/read RPC", async () => {
+  const scripted = scriptedRuntime({
+    onMessage(message, emitJson) {
+      if (message.method === "initialize") emitJson(initializeResult());
+      if (message.method === "account/read") {
+        emitJson({ id: 1, result: { account: null, requiresOpenaiAuth: true } });
+      }
+    },
+  });
+  const outcome = await runCodexAuthAppServerWithRuntime(request(), scripted.runtime);
+  assert.equal(outcome.rpcSucceeded, true);
+  assert.equal(outcome.managedAccountAvailable, false);
+});
+
+Deno.test("app-server accepts known unmanaged account providers without reporting managed auth", async () => {
+  for (
+    const account of [
+      { type: "apiKey" },
+      { type: "amazonBedrock", usesCodexManagedCredentials: false },
+    ]
+  ) {
+    const scripted = scriptedRuntime({
+      onMessage(message, emitJson) {
+        if (message.method === "initialize") emitJson(initializeResult());
+        if (message.method === "account/read") {
+          emitJson({ id: 1, result: { account, requiresOpenaiAuth: false } });
+        }
+      },
+    });
+    const outcome = await runCodexAuthAppServerWithRuntime(request(), scripted.runtime);
+    assert.equal(outcome.rpcSucceeded, true, account.type);
+    assert.equal(outcome.managedAccountAvailable, false, account.type);
+  }
+});
+
+Deno.test("app-server rejects malformed accounts and unknown providers", async () => {
+  const malformedResults = [
+    { account: { type: "unknown" }, requiresOpenaiAuth: true },
+    { account: { type: "chatgpt", email: null, planType: 7 }, requiresOpenaiAuth: true },
+    { account: { type: "amazonBedrock", usesCodexManagedCredentials: "false" }, requiresOpenaiAuth: false },
+    { account: null, requiresOpenaiAuth: null },
+    { requiresOpenaiAuth: true },
+  ];
+  for (const result of malformedResults) {
+    const scripted = scriptedRuntime({
+      onMessage(message, emitJson) {
+        if (message.method === "initialize") emitJson(initializeResult());
+        if (message.method === "account/read") emitJson({ id: 1, result });
+      },
+    });
+    const outcome = await runCodexAuthAppServerWithRuntime(request(), scripted.runtime);
+    assert.equal(outcome.rpcSucceeded, false);
+    assert.equal(outcome.managedAccountAvailable, false);
+  }
 });
 
 Deno.test("app-server rejects an initialize response for another Codex home", async () => {
@@ -413,6 +471,7 @@ Deno.test("an access JWT with exactly 30 minutes remaining invokes explicit refr
   assert.equal(disposition.due, true);
   assert.equal(disposition.invoked, true);
   assert.equal(disposition.rpcSucceeded, true);
+  assert.equal(disposition.managedAccountAvailable, true);
   assert.equal(disposition.duplicateAccountSkipped, false);
   assert.equal(disposition.stateChanged, true);
   assert.equal(disposition.readyForMaintenanceWindow, true);
@@ -663,6 +722,7 @@ Deno.test("auth maintenance skips a fresh ready file", async () => {
   assert.equal(skipped.due, false);
   assert.equal(skipped.invoked, false);
   assert.equal(skipped.rpcSucceeded, false);
+  assert.equal(skipped.managedAccountAvailable, false);
   assert.equal(skipped.duplicateAccountSkipped, false);
   assert.equal(skipped.readyForMaintenanceWindow, true);
   assert.equal(calls, 0);
@@ -732,6 +792,7 @@ Deno.test("duplicate accounts select one canonical slot and leave the other byte
     assert.equal(invoked.duplicateAccountSkipped, false, candidate.name);
     assert.equal(skipped.invoked, false, candidate.name);
     assert.equal(skipped.rpcSucceeded, false, candidate.name);
+    assert.equal(skipped.managedAccountAvailable, false, candidate.name);
     assert.equal(skipped.duplicateAccountSkipped, true, candidate.name);
     assert.equal(skipped.commandCode, null, candidate.name);
     assert.equal(files.get(durablePaths[1]), candidate.slot1, candidate.name);

@@ -26,6 +26,7 @@ export type CodexAuthMaintenanceDisposition = Readonly<{
   due: boolean;
   invoked: boolean;
   rpcSucceeded: boolean;
+  managedAccountAvailable: boolean;
   duplicateAccountSkipped: boolean;
   commandCode: number | null;
   timedOut: boolean;
@@ -85,6 +86,7 @@ export type CodexAuthAppServerRequest = Readonly<{
 export type CodexAuthAppServerResult = Readonly<{
   code: number;
   rpcSucceeded: boolean;
+  managedAccountAvailable: boolean;
   outputExceeded: boolean;
   timedOut: boolean;
   stdoutBytes: number;
@@ -199,11 +201,20 @@ const isInitializeResult = (value: unknown, codexHome: string): boolean =>
   typeof value.platformFamily === "string" &&
   typeof value.platformOs === "string";
 
-const isManagedChatGptAccountResult = (value: unknown): boolean => {
-  if (!isRecord(value) || value.requiresOpenaiAuth !== true || !isRecord(value.account)) return false;
-  return value.account.type === "chatgpt" &&
-    (typeof value.account.email === "string" || value.account.email === null) &&
-    typeof value.account.planType === "string";
+const inspectGetAccountResponse = (value: unknown): Readonly<{ managedAccountAvailable: boolean }> | null => {
+  if (!isRecord(value) || typeof value.requiresOpenaiAuth !== "boolean" || !("account" in value)) return null;
+  if (value.account === null) return { managedAccountAvailable: false };
+  if (!isRecord(value.account)) return null;
+  if (value.account.type === "apiKey") return { managedAccountAvailable: false };
+  if (value.account.type === "amazonBedrock") {
+    return typeof value.account.usesCodexManagedCredentials === "boolean" ? { managedAccountAvailable: false } : null;
+  }
+  if (
+    value.account.type !== "chatgpt" ||
+    !(typeof value.account.email === "string" || value.account.email === null) ||
+    typeof value.account.planType !== "string"
+  ) return null;
+  return { managedAccountAvailable: value.requiresOpenaiAuth };
 };
 
 const validateTrailingAppServerLine = (line: string): void => {
@@ -279,6 +290,7 @@ export const runCodexAuthAppServerWithRuntime = async (
   const writer = child.stdin.getWriter();
   const send = (message: unknown): Promise<void> => writer.write(TEXT_ENCODER.encode(`${JSON.stringify(message)}\n`));
   let rpcSucceeded = false;
+  let managedAccountAvailable = false;
   let protocolFailure = false;
   try {
     try {
@@ -308,7 +320,12 @@ export const runCodexAuthAppServerWithRuntime = async (
       rpcSucceeded = await waitForAppServerResponse(
         stdout,
         ACCOUNT_READ_REQUEST_ID,
-        isManagedChatGptAccountResult,
+        (result) => {
+          const inspected = inspectGetAccountResponse(result);
+          if (inspected === null) return false;
+          managedAccountAvailable = inspected.managedAccountAvailable;
+          return true;
+        },
       );
     } catch {
       protocolFailure = true;
@@ -341,6 +358,7 @@ export const runCodexAuthAppServerWithRuntime = async (
     return {
       code: status.code,
       rpcSucceeded: rpcSucceeded && !protocolFailure,
+      managedAccountAvailable: rpcSucceeded && !protocolFailure && managedAccountAvailable,
       outputExceeded,
       timedOut,
       stdoutBytes,
@@ -438,6 +456,7 @@ export const maintainCodexAuthSlot = async (
       due: false,
       invoked: false,
       rpcSucceeded: false,
+      managedAccountAvailable: false,
       duplicateAccountSkipped: false,
       commandCode: null,
       timedOut: false,
@@ -500,6 +519,7 @@ export const maintainCodexAuthSlot = async (
       due: true,
       invoked: true,
       rpcSucceeded: command.rpcSucceeded,
+      managedAccountAvailable: command.managedAccountAvailable,
       duplicateAccountSkipped: false,
       commandCode: command.code,
       timedOut: command.timedOut,
@@ -566,6 +586,7 @@ export const maintainCodexAuthSlots = async (
         due: codexAuthMaintenanceDue(auth, nowMs),
         invoked: false,
         rpcSucceeded: false,
+        managedAccountAvailable: false,
         duplicateAccountSkipped: true,
         commandCode: null,
         timedOut: false,

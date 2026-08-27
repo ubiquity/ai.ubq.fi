@@ -343,6 +343,7 @@ jobs:
               (.invoked | type) == "boolean" and
               (.duplicateAccountSkipped | type) == "boolean" and
               (.rpcSucceeded | type) == "boolean" and
+              (.managedAccountAvailable | type) == "boolean" and
               (
                 .commandCode == null or
                 (
@@ -371,6 +372,7 @@ jobs:
               .slots | sort_by(.slot)[] |
               "- Slot \(.slot): due=\(.due); invoked=\(.invoked); " +
               "duplicate_account_skipped=\(.duplicateAccountSkipped); rpc_succeeded=\(.rpcSucceeded); " +
+              "managed_account_available=\(.managedAccountAvailable); " +
               "command_code=\(.commandCode // "none"); timed_out=\(.timedOut); " +
               "output_exceeded=\(.outputExceeded); stdout_bytes=\(.stdoutBytes); " +
               "stderr_bytes=\(.stderrBytes); state_changed=\(.stateChanged); " +

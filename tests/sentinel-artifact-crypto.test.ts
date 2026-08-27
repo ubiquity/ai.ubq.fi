@@ -267,6 +267,7 @@ Deno.test({
         ".invoked",
         ".duplicateAccountSkipped",
         ".rpcSucceeded",
+        ".managedAccountAvailable",
         ".commandCode",
         ".timedOut",
         ".outputExceeded",
