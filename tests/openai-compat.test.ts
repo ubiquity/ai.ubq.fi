@@ -9406,6 +9406,7 @@ Deno.test("openai: empty Chat terminal diagnostics are bounded and content-free"
         new Response(
           sseResponse([
             `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_empty_log" } })}\n\n`,
+            `data: ${JSON.stringify({ type: "response.in_progress", response: { id: "resp_empty_log" } })}\n\n`,
             `data: ${JSON.stringify({ type: unknownEventType, output: secretEventPayload })}\n\n`,
             `data: ${
               JSON.stringify({
@@ -9462,7 +9463,12 @@ Deno.test("openai: empty Chat terminal diagnostics are bounded and content-free"
     assert.equal(terminal.provider_request_id, "provider-empty-log");
     assert.equal(terminal.output_token_allowance, 2048);
     assert.equal(terminal.semantic_output_observed, false);
-    assert.deepEqual(terminal.upstream_event_kinds, ["response.created", "unrecognized", "response.completed"]);
+    assert.deepEqual(terminal.upstream_event_kinds, [
+      "response.created",
+      "response.in_progress",
+      "unrecognized",
+      "response.completed",
+    ]);
     assert.equal(terminal.stream_terminal_type, "error");
     assert.equal(terminal.failure_kind, "empty_upstream_completion");
     assert.equal(terminal.input_tokens, 10);
@@ -12520,6 +12526,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
         assert.equal(telemetry?.outputTokens, 7);
         assert.equal(telemetry?.completed, true);
         assert.equal(telemetry?.stream, false);
+        assert.deepEqual(telemetry?.attemptedProviders, ["cerebras"]);
         assert.equal(typeof telemetry?.firstProviderDispatchMs, "number");
         assert.equal(typeof telemetry?.firstProviderHeadersMs, "number");
         const logText = JSON.stringify(logs);
@@ -12692,7 +12699,18 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
           if (url === "https://api.cerebras.ai/v1/chat/completions") cerebrasCalls += 1;
           return new Response("{}", { status: 200 });
         },
-        () => handleChatCompletions(request({ ...canonicalBody, reasoning_effort: "none" })),
+        () =>
+          handleChatCompletions(
+            request({ ...canonicalBody, reasoning_effort: "none" }),
+            {
+              keyId: null,
+              kernelRepo: null,
+              kernelOrg: null,
+              requestId: "cerebras-none-validation",
+              startedAtMs: Date.now(),
+              startedAtMonotonicMs: performance.now(),
+            },
+          ),
       );
 
       assert.equal(response.status, 400);
@@ -12704,6 +12722,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       assert.equal(payload.error?.param, "reasoning_effort");
       assert.match(payload.error?.message ?? "", /none.*low.*medium.*high/i);
       assert.equal(cerebrasCalls, 0);
+      assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, []);
     });
 
     await t.step("defaults omitted reasoning to medium without converting native Chat fields", async () => {
@@ -12881,11 +12900,20 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
                 },
               );
             },
-            () => handleChatCompletions(request(canonicalBody)),
+            () =>
+              handleChatCompletions(request(canonicalBody), {
+                keyId: null,
+                kernelRepo: null,
+                kernelOrg: null,
+                requestId: `cerebras-error-${testCase.status}`,
+                startedAtMs: Date.now(),
+                startedAtMonotonicMs: performance.now(),
+              }),
           );
           assert.equal(response.status, testCase.status);
           assert.equal(response.headers.get("x-uos-upstream"), "cerebras");
           assert.equal(response.headers.get("x-uos-provider-request-id"), `cerebras-error-${testCase.status}`);
+          assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, ["cerebras"]);
           assert.equal(response.headers.get("Retry-After"), testCase.status === 429 ? "17" : null);
           for (const [header, value] of Object.entries(cerebrasRateLimitHeaders)) {
             assert.equal(
