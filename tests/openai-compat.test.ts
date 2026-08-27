@@ -9463,7 +9463,12 @@ Deno.test("openai: empty Chat terminal diagnostics are bounded and content-free"
     assert.equal(terminal.provider_request_id, "provider-empty-log");
     assert.equal(terminal.output_token_allowance, 2048);
     assert.equal(terminal.semantic_output_observed, false);
-    assert.deepEqual(terminal.upstream_event_kinds, ["response.created", "unrecognized", "response.completed"]);
+    assert.deepEqual(terminal.upstream_event_kinds, [
+      "response.created",
+      "response.in_progress",
+      "unrecognized",
+      "response.completed",
+    ]);
     assert.equal(terminal.stream_terminal_type, "error");
     assert.equal(terminal.failure_kind, "empty_upstream_completion");
     assert.equal(terminal.input_tokens, 10);
