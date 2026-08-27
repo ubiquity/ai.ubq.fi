@@ -64,6 +64,7 @@ import {
   type GitHubIssueJobSource,
   githubIssueJobTriageReport,
   issueReviewBacklogFindings,
+  MAX_ISSUE_JOB_DETAIL_COMMENT_INSPECTIONS,
   MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS,
   parseGitHubIssueJobBody,
   parseGitHubIssueJobHint,
@@ -1263,7 +1264,7 @@ Deno.test("GitHub issue selection does not let disallowed comments consume relat
       number,
       title: `Commented candidate ${number}`,
       htmlUrl: `https://github.com/ubiquity/ai.ubq.fi/issues/${number}`,
-      comments: index % 2 === 0 ? 9 : 1,
+      comments: 1,
     });
   });
   const selectedIssue = sentinelGitHubIssue({
@@ -1275,12 +1276,18 @@ Deno.test("GitHub issue selection does not let disallowed comments consume relat
   });
   const issues = [...disallowed, selectedIssue];
   const byNumber = new Map(issues.map((issue) => [issue.number, issue]));
+  let detailRequests = 0;
+  let commentRequests = 0;
   let relationRequests = 0;
   let permissionRequests = 0;
   const source: GitHubIssueJobSource = {
     listOpenIssues: () => Promise.resolve(issues),
-    getIssue: (number) => Promise.resolve(byNumber.get(number)!),
+    getIssue: (number) => {
+      detailRequests += 1;
+      return Promise.resolve(byNumber.get(number)!);
+    },
     listIssueComments: (number) => {
+      commentRequests += 1;
       const issue = byNumber.get(number)!;
       return Promise.resolve(
         issue.comments === 1
@@ -1308,8 +1315,66 @@ Deno.test("GitHub issue selection does not let disallowed comments consume relat
     (await selectNextGitHubIssueJob(source, "ubiquity/ai.ubq.fi", renderGitHubIssueJobLedger([])))?.number,
     selectedIssue.number,
   );
+  assert.equal(detailRequests, MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS + 1);
+  assert.equal(commentRequests, MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS);
   assert.equal(relationRequests, 1);
   assert.equal(permissionRequests, 1);
+});
+
+Deno.test("GitHub issue selection has a fixed detail-and-comment inspection budget", async () => {
+  const rejected = Array.from({ length: MAX_ISSUE_JOB_DETAIL_COMMENT_INSPECTIONS }, (_, index) => {
+    const number = 300 + index;
+    return sentinelGitHubIssue({
+      id: 30_000 + number,
+      nodeId: `I_kwDOIssue${number}`,
+      number,
+      title: `Commented candidate ${number}`,
+      htmlUrl: `https://github.com/ubiquity/ai.ubq.fi/issues/${number}`,
+      comments: 1,
+    });
+  });
+  const selectedIssue = sentinelGitHubIssue({
+    id: 40_999,
+    nodeId: "I_kwDOIssue1999",
+    number: 1_999,
+    title: "Eligible issue beyond the detail budget",
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/1999",
+  });
+  const issues = [...rejected, selectedIssue];
+  const byNumber = new Map(issues.map((issue) => [issue.number, issue]));
+  let detailRequests = 0;
+  let commentRequests = 0;
+  let relationRequests = 0;
+  const source: GitHubIssueJobSource = {
+    listOpenIssues: () => Promise.resolve(issues),
+    getIssue: (number) => {
+      detailRequests += 1;
+      return Promise.resolve(byNumber.get(number)!);
+    },
+    listIssueComments: (number) => {
+      commentRequests += 1;
+      return Promise.resolve([{
+        id: 90_000 + number,
+        authorLogin: "human-reviewer",
+        authorType: "User",
+        body: "This issue is already being discussed.",
+        createdAt: "2026-08-26T23:33:29Z",
+        updatedAt: "2026-08-26T23:33:29Z",
+      }]);
+    },
+    getIssueRelations: () => {
+      relationRequests += 1;
+      return Promise.resolve(noIssueRelations);
+    },
+    getRepositoryPermission: () => Promise.resolve("admin"),
+  };
+  await assert.rejects(
+    () => selectNextGitHubIssueJob(source, "ubiquity/ai.ubq.fi", renderGitHubIssueJobLedger([])),
+    /detail-and-comment inspection limit/,
+  );
+  assert.equal(detailRequests, MAX_ISSUE_JOB_DETAIL_COMMENT_INSPECTIONS);
+  assert.equal(commentRequests, MAX_ISSUE_JOB_DETAIL_COMMENT_INSPECTIONS);
+  assert.equal(relationRequests, 0);
 });
 
 Deno.test("GitHub issue selection has a fixed relationship-inspection budget", async () => {

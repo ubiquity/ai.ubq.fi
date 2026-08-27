@@ -94,6 +94,7 @@ const MAX_LEDGER_ENTRIES = 512;
 const MAX_LEDGER_LINE_LENGTH = 4_096;
 const MAX_ISSUE_JOB_HINT_BYTES = 1_024;
 export const MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS = 32;
+export const MAX_ISSUE_JOB_DETAIL_COMMENT_INSPECTIONS = 33;
 export const GITHUB_ISSUE_JOB_HINT_FILENAME = "sentinel-github-issue-job-hint.json";
 const LEDGER_HEADERS = Object.freeze([
   "Issue",
@@ -493,8 +494,13 @@ export const selectNextGitHubIssueJob = async (
     candidates.push(job);
   }
   candidates.sort(issueJobOrder);
+  let detailCommentInspections = 0;
   let relationshipInspections = 0;
   for (const candidate of candidates) {
+    if (detailCommentInspections >= MAX_ISSUE_JOB_DETAIL_COMMENT_INSPECTIONS) {
+      throw new Error("GitHub issue selection exceeded the Sentinel detail-and-comment inspection limit");
+    }
+    detailCommentInspections += 1;
     const current = await source.getIssue(candidate.number);
     if (current.id !== candidate.issueId || current.nodeId !== candidate.nodeId) {
       throw new Error(`GitHub issue ${candidate.number} identity changed during selection`);
