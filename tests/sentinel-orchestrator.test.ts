@@ -15,6 +15,7 @@ import {
   evaluateSentinelTriageGate,
   IMPLEMENTATION_CONTINUATION_MS,
   IMPLEMENTATION_INITIAL_MS,
+  implementationFailureDisposition,
   implementationPrompt,
   isObserveOnlyMode,
   MAX_MATCHING_REPLAY_ARCHIVE_BYTES,
@@ -345,6 +346,23 @@ Deno.test("stage heartbeat emits safe progress and always cancels its timer", as
     })
   );
   assert.deepEqual(cleared, [17, 23]);
+});
+
+Deno.test("sentinel capacity failures on selected maintenance work require manual classification", () => {
+  const capacityFailures = ["accounts_unavailable", "invocation_timeout", "command_failed", "runtime_failure"];
+  const integrityFailure = new CodexInvocationError("secret_in_output", { exitCode: 42 });
+  for (const failure of capacityFailures) {
+    const capacityError = new CodexInvocationError(failure as never, { exitCode: 1 });
+    assert.equal(implementationFailureDisposition("github_issue", capacityError), "manual_required");
+    assert.equal(implementationFailureDisposition("review_backlog", capacityError), "manual_required");
+  }
+  assert.equal(implementationFailureDisposition("github_issue", integrityFailure), "crash");
+  assert.equal(implementationFailureDisposition("review_backlog", integrityFailure), "crash");
+  assert.equal(implementationFailureDisposition("triage", new CodexInvocationError("accounts_unavailable")), "crash");
+  assert.equal(implementationFailureDisposition("triage", new Error("plain failure")), "crash");
+  assert.equal(implementationFailureDisposition("github_issue", new Error("plain failure")), "crash");
+  const capacityError = new CodexInvocationError("accounts_unavailable");
+  assert.equal(implementationFailureDisposition("github_issue", capacityError), "manual_required");
 });
 
 Deno.test("sentinel schedule windows overlap hourly and incident runs", () => {

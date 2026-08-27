@@ -16,6 +16,7 @@ import {
   type CodexAuthSlotSecrets,
   CodexAuthValidationError,
   type CodexUsageFetch,
+  isTransientCodexUsageFailure,
   parseCodexAuthJsonB64,
   parseCodexUsageHeadroom,
   selectCodexAccountForInvocation,
@@ -470,6 +471,7 @@ Deno.test("selection handles one invalid account, both exhausted accounts, and d
     },
     now: () => nowMs,
     createTimeoutSignal: timeoutSignal,
+    probeRetry: { delaysMs: [0, 0], sleep: () => Promise.resolve() },
   });
   assert.equal(oneProbeUnavailable.kind, "selected");
   if (oneProbeUnavailable.kind === "selected") assert.equal(oneProbeUnavailable.slot, 2);
@@ -539,6 +541,92 @@ Deno.test("malformed usage, redirects, and expiring credentials cannot be select
   assert.equal(malformed.kind, "unavailable");
   assert.ok(
     malformed.probes.every((probe) => probe.kind === "unavailable" && probe.failure === "invalid_usage_document"),
+  );
+});
+
+Deno.test("transient usage probe failures are retried and can recover within the bounded attempts", async () => {
+  const callsByAccount = new Map<string, number>();
+  const observedDelays: number[] = [];
+  const selected = await selectCodexAccountForInvocation({
+    slots,
+    model: "gpt-5.6-sol",
+    minimumValidityMs: 1_000,
+    fetcher: (_input, init) => {
+      const account = accountFrom(init)!;
+      const calls = (callsByAccount.get(account) ?? 0) + 1;
+      callsByAccount.set(account, calls);
+      if (calls === 1) return Promise.resolve(new Response(null, { status: 503 }));
+      if (calls === 2) return Promise.reject(new TypeError("upstream reset"));
+      return Promise.resolve(usageResponse(usage(10)));
+    },
+    now: () => nowMs,
+    createTimeoutSignal: timeoutSignal,
+    probeRetry: {
+      delaysMs: [1, 1],
+      sleep: (delayMs) => {
+        observedDelays.push(delayMs);
+        return Promise.resolve();
+      },
+    },
+  });
+  assert.equal(selected.kind, "selected");
+  assert.deepEqual(callsByAccount, new Map([[slot1.account, 3], [slot2.account, 3]]));
+  assert.deepEqual(observedDelays, [1, 1, 1, 1]);
+});
+
+Deno.test("authoritative usage failures are never retried", async () => {
+  let calls = 0;
+  const exhausted = await selectCodexAccountForInvocation({
+    slots,
+    model: "gpt-5.6-sol",
+    minimumValidityMs: 1_000,
+    fetcher: () => {
+      calls++;
+      return Promise.resolve(usageResponse(usage(100, 90)));
+    },
+    now: () => nowMs,
+    createTimeoutSignal: timeoutSignal,
+  });
+  assert.equal(exhausted.kind, "unavailable");
+  assert.equal(calls, 2);
+  assert.deepEqual(exhausted.probes.map((probe) => probe.kind === "unavailable" ? probe.failure : null), [
+    "quota_exhausted",
+    "quota_exhausted",
+  ]);
+});
+
+Deno.test("persistent transient failures report the final probe after bounded retries", async () => {
+  let calls = 0;
+  const result = await selectCodexAccountForInvocation({
+    slots: { slot1B64: slot1.encoded, slot2B64: "invalid value" },
+    model: "gpt-5.6-sol",
+    minimumValidityMs: 1_000,
+    fetcher: () => {
+      calls++;
+      return Promise.resolve(new Response(null, { status: 429 }));
+    },
+    now: () => nowMs,
+    createTimeoutSignal: timeoutSignal,
+    probeRetry: {
+      attempts: 3,
+      delaysMs: [0, 0],
+      sleep: (delayMs) => {
+        assert.equal(delayMs, 0);
+        return Promise.resolve();
+      },
+    },
+  });
+  assert.equal(result.kind, "unavailable");
+  assert.equal(calls, 3);
+  assert.deepEqual(result.probes.map((probe) => probe.kind === "unavailable" ? probe.failure : null), [
+    "http_error",
+    "invalid_base64",
+  ]);
+  assert.ok(isTransientCodexUsageFailure(result.probes[0]!));
+  assert.equal(isTransientCodexUsageFailure(result.probes[1]!), false);
+  assert.equal(
+    isTransientCodexUsageFailure({ kind: "available", slot: 1, headroomPercent: 50, observedAtMs: nowMs }),
+    false,
   );
 });
 

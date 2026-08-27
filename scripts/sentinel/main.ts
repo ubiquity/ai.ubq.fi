@@ -1,5 +1,6 @@
 import {
   CodexInvocationError,
+  type CodexInvocationFailureCode,
   type CodexInvocationResult,
   runNativeCodexReview,
   runStructuredCodexAgent,
@@ -410,6 +411,48 @@ const safeErrorSummary = (error: unknown): Record<string, unknown> => ({
     }
     : {}),
 });
+
+/**
+ * Codex failures that indicate capacity or environment problems rather than an
+ * agent integrity violation. A bounded implementation budget that expires or an
+ * account that cannot be selected is a capacity outcome: the selected
+ * maintenance item is recorded as manual_required instead of crashing the
+ * cycle and retrying the same unbounded work every hour.
+ */
+const CODEX_CAPACITY_FAILURES: ReadonlySet<CodexInvocationFailureCode> = new Set([
+  "accounts_unavailable",
+  "invocation_timeout",
+  "command_failed",
+  "runtime_failure",
+]);
+
+export type ImplementationFailureDisposition = "manual_required" | "crash";
+
+export const implementationFailureDisposition = (
+  source: "triage" | "review_backlog" | "github_issue" | null,
+  error: unknown,
+): ImplementationFailureDisposition => {
+  if (
+    (source === "github_issue" || source === "review_backlog") &&
+    error instanceof CodexInvocationError &&
+    CODEX_CAPACITY_FAILURES.has(error.failure)
+  ) {
+    return "manual_required";
+  }
+  return "crash";
+};
+
+/**
+ * Discards every uncommitted candidate change after a failed implementation
+ * attempt. The failed attempt is preserved separately as encrypted evidence
+ * before this runs; manual-required completion requires a pristine candidate
+ * whose only remaining change is the trusted ledger or backlog file.
+ */
+const discardCandidateChanges = async (checkout: string, baseSha: string): Promise<void> => {
+  ensureFullSha(baseSha, "Candidate discard base SHA");
+  await runTrustedGit({ args: ["reset", "--hard", baseSha], cwd: checkout });
+  await runTrustedGit({ args: ["clean", "-fdx"], cwd: checkout });
+};
 
 export const runWithSingleTimeoutContinuation = async <T>(
   invoke: (attempt: 1 | 2) => Promise<T>,
@@ -2407,7 +2450,26 @@ const run = async (): Promise<void> => {
     }
   } catch (error) {
     await preserveFailedImplementation(error, "implementation", beforeAgentSha);
-    throw error;
+    if (implementationFailureDisposition(workSelection.source, error) !== "manual_required") {
+      throw error;
+    }
+    await discardCandidateChanges(checkout, baseSha);
+    const failedDisposition: FindingDisposition = Object.freeze({
+      finding_id: workSelection.source === "github_issue"
+        ? issueJobFindingId(workSelection.issueJob!)
+        : `review-backlog:${workSelection.backlogEntry!.fingerprint}`,
+      status: "blocked",
+      summary: "The bounded implementation invocations could not complete; this item requires manual work.",
+      changed_files: [],
+      validation: [],
+    });
+    if (workSelection.source === "github_issue") {
+      if (!workSelection.issueJob) throw new Error("GitHub issue implementation failure is missing its job");
+      await writeSelectedIssueDisposition(failedDisposition, "manual_required", "failed_implementation");
+    } else {
+      if (!workSelection.backlogEntry) throw new Error("Sentinel backlog implementation failure is missing its entry");
+      await writeSelectedBacklogDisposition(failedDisposition, "manual_required", "failed_implementation");
+    }
   }
 
   if (selectedBacklogState.disposition === "manual_required") {
