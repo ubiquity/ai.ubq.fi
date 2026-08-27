@@ -268,6 +268,10 @@ Deno.test({
       "Hourly runtime must defer when the bound GitHub issue selection changes",
     );
     assert(
+      orchestrator.includes("GITHUB_REPOSITORY: repository"),
+      "Sentinel git network environment must carry the repository identity for the push gate",
+    );
+    assert(
       /^\s+issues: write$/mu.test(workflow),
       "Sentinel must be able to post evidence and close delivered GitHub issues",
     );

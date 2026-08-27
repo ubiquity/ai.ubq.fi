@@ -545,7 +545,8 @@ export const withStageHeartbeat = async <T>(
 const gitText = async (cwd: string, args: readonly string[]): Promise<string> =>
   textDecoder.decode((await runTrustedGit({ args, cwd })).stdout).trim();
 
-const gitNetworkEnvironment = (token: string): Readonly<Record<string, string>> => ({
+const gitNetworkEnvironment = (token: string, repository: string): Readonly<Record<string, string>> => ({
+  GITHUB_REPOSITORY: repository,
   GIT_CONFIG_COUNT: "1",
   GIT_CONFIG_KEY_0: "http.https://github.com/.extraheader",
   GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${btoa(`x-access-token:${token}`)}`,
@@ -1811,7 +1812,7 @@ const run = async (): Promise<void> => {
   const githubToken = requiredEnvironment("GITHUB_TOKEN");
   const repository = requiredEnvironment("GITHUB_REPOSITORY");
   const github = new GitHubActionsClient({ repository, token: githubToken });
-  const gitEnvironment = gitNetworkEnvironment(githubToken);
+  const gitEnvironment = gitNetworkEnvironment(githubToken, repository);
 
   let workflowRunCreatedAt: string | null = null;
   if (githubRunIdValue !== undefined) {
