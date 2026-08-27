@@ -18,6 +18,7 @@ import {
   type CodexUsageFetch,
   isTransientCodexUsageFailure,
   parseCodexAuthJsonB64,
+  parseCodexAuthJsonB64ForMaintenance,
   parseCodexUsageHeadroom,
   selectCodexAccountForInvocation,
 } from "../scripts/sentinel/quota.ts";
@@ -195,6 +196,10 @@ Deno.test("auth parsing requires a complete document and rejects tokens inside t
     );
   }
   const expiring = authSecret(1, nowMs + 60_000);
+  assert.equal(
+    parseCodexAuthJsonB64ForMaintenance(expiring.encoded, 1).tokens.refresh_token,
+    expiring.refresh,
+  );
   assert.throws(
     () => parseCodexAuthJsonB64(expiring.encoded, 1, { nowMs, minimumValidityMs: 60_000 }),
     (error) => error instanceof CodexAuthValidationError && error.code === "access_token_expiring",
@@ -694,11 +699,15 @@ Deno.test("structured execution uses fixed policy, relay-only auth, a private ho
   assert.ok(captured.args.includes("features.apps=false"));
   assert.equal(
     runtimeAuth,
-    syntheticCodexAuthJson(parseCodexAuthJsonB64(slot1.encoded, 1, {
+    syntheticCodexAuthJson(
+      parseCodexAuthJsonB64(slot1.encoded, 1, {
+        nowMs,
+        minimumValidityMs: 1_000 + 5 * 60_000,
+      }),
       nowMs,
-      minimumValidityMs: 1_000 + 5 * 60_000,
-    })),
+    ),
   );
+  assert.equal(JSON.parse(runtimeAuth).last_refresh, new Date(nowMs).toISOString());
   assert.equal(runtimeAuth.includes(slot1.access), false);
   assert.equal(runtimeAuth.includes(slot1.refresh), false);
   assert.equal(runtimeAuth.includes(slot1.account), false);
@@ -793,6 +802,35 @@ Deno.test("Codex auth mutation is fail-closed", async () => {
         },
       }),
     (error) => error instanceof CodexInvocationError && error.failure === "auth_mutated",
+  );
+  assert.equal(filesystem.removed.length, 1);
+});
+
+Deno.test("a relayed upstream 401 requests parent-owned refresh before synthetic auth mutation", async () => {
+  const filesystem = new MemoryFilesystem();
+  await assert.rejects(
+    () =>
+      runStructuredCodexAgent({
+        role: "implementation",
+        checkoutPath: "/checkout",
+        prompt: "Implement.",
+        outputSchemaPath: "/checkout/schema.json",
+        authSlots: slots,
+        expectedMaximumRuntimeMs: 1_000,
+      }, {
+        ...commonDependencies(filesystem, healthyFetcher()),
+        authRelayFactory: () =>
+          Promise.resolve({
+            baseUrl: "http://127.0.0.1:41771/backend-api",
+            authenticationRejected: () => true,
+            close: () => Promise.resolve(),
+          }),
+        commandRunner: (request) => {
+          filesystem.files.set(`${request.env.CODEX_HOME}/auth.json`, "{}");
+          return Promise.resolve(codexCommandResult({ code: 1 }));
+        },
+      }),
+    (error) => error instanceof CodexInvocationError && error.failure === "auth_refresh_required",
   );
   assert.equal(filesystem.removed.length, 1);
 });

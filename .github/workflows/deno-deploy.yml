@@ -6,6 +6,8 @@ on:
     branches:
       - development
   pull_request:
+    paths-ignore:
+      - docs/sentinel-issue-jobs.md
   workflow_dispatch:
     inputs:
       deploy_preview:

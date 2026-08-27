@@ -10,6 +10,7 @@ export const SENTINEL_INCIDENT_CAPTURE_REF_PREFIX = [
 ] as const;
 export const SENTINEL_INCIDENT_EVENT_PREFIX = ["uos_ai", "sentinel_incident", "v1", "event"] as const;
 export const SENTINEL_INCIDENT_ACK_PREFIX = ["uos_ai", "sentinel_incident", "v1", "ack"] as const;
+export const SENTINEL_INCIDENT_DEFER_PREFIX = ["uos_ai", "sentinel_incident", "v1", "defer"] as const;
 export const SENTINEL_INCIDENT_DEAD_PREFIX = ["uos_ai", "sentinel_incident", "v1", "dead"] as const;
 export const SENTINEL_INCIDENT_TTL_MS = 48 * 60 * 60 * 1_000;
 
@@ -25,6 +26,7 @@ const CAPTURE_RECOVERY_MS = 5 * 60_000;
 const WORKFLOW_POLL_MS = 5 * 60_000;
 const WORKFLOW_ACK_GRACE_MS = 5 * 60_000;
 const MAX_WORKFLOW_ATTEMPTS = 3;
+export const MAX_SENTINEL_INFRASTRUCTURE_DEFERRALS = 12;
 const MAX_CAS_ATTEMPTS = 8;
 const MAX_EVENTS_PER_RECONCILE = 32;
 const INCIDENT_ID = /^provider-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -47,7 +49,13 @@ export type SentinelIncidentBatch = Readonly<{
   workflow_run_url: string | null;
   success_observed_at_ms: number | null;
   ack_nonce: string;
+  /** Missing on pre-deferral v1 records and treated as zero. */
+  infrastructure_deferrals?: number;
 }>;
+
+export type SentinelIncidentDeferralReason =
+  | "codex_auth_preflight_failed"
+  | "sentinel_infrastructure_preflight_failed";
 
 export type SentinelIncidentControl = Readonly<{
   version: 1;
@@ -105,6 +113,13 @@ export class SentinelIncidentClaimConflict extends Error {
   }
 }
 
+export class SentinelIncidentDeferConflict extends Error {
+  constructor() {
+    super("sentinel_incident_defer_conflict");
+    this.name = "SentinelIncidentDeferConflict";
+  }
+}
+
 const safeEnvironment: EnvironmentReader = {
   get(name) {
     try {
@@ -118,10 +133,16 @@ const safeEnvironment: EnvironmentReader = {
 const positiveInteger = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 
+const nonNegativeInteger = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+
 const nullablePositiveInteger = (value: unknown): value is number | null => value === null || positiveInteger(value);
 
 export const isSentinelIncidentId = (value: unknown): value is string =>
   typeof value === "string" && INCIDENT_ID.test(value);
+
+export const isSentinelIncidentDeferralReason = (value: unknown): value is SentinelIncidentDeferralReason =>
+  value === "codex_auth_preflight_failed" || value === "sentinel_infrastructure_preflight_failed";
 
 const isWorkflowRunUrl = (value: unknown, runId: number | null): value is string | null => {
   if (value === null) return runId === null;
@@ -136,6 +157,9 @@ export const isSentinelIncidentBatch = (value: unknown): value is SentinelIncide
     !positiveInteger(value.first_observed_at_ms) || !positiveInteger(value.latest_observed_at_ms) ||
     value.latest_observed_at_ms < value.first_observed_at_ms || !positiveInteger(value.failure_count) ||
     !positiveInteger(value.attempt) || value.attempt > MAX_WORKFLOW_ATTEMPTS ||
+    (value.infrastructure_deferrals !== undefined &&
+      (!nonNegativeInteger(value.infrastructure_deferrals) ||
+        value.infrastructure_deferrals > MAX_SENTINEL_INFRASTRUCTURE_DEFERRALS)) ||
     !positiveInteger(value.next_action_at_ms) ||
     !nullablePositiveInteger(value.lease_expires_at_ms) || !nullablePositiveInteger(value.workflow_run_id) ||
     !nullablePositiveInteger(value.success_observed_at_ms) ||
@@ -223,6 +247,7 @@ const newBatch = (
     workflow_run_url: null,
     success_observed_at_ms: null,
     ack_nonce: ackNonce,
+    infrastructure_deferrals: 0,
   };
 };
 
@@ -378,6 +403,7 @@ const batchFromFailureEvent = (
     workflow_run_url: null,
     success_observed_at_ms: null,
     ack_nonce: ackNonce,
+    infrastructure_deferrals: 0,
   };
 };
 
@@ -777,6 +803,18 @@ const updateActive = async (
 
 const dispatchBackoffMs = (attempt: number): number => Math.min(15 * 60_000, 60_000 * 2 ** Math.max(0, attempt - 1));
 
+const infrastructureDeferralBackoffMs = (deferral: number): number =>
+  Math.min(60 * 60_000, 5 * 60_000 * 2 ** Math.max(0, deferral - 1));
+
+const rotatedAckNonce = (previous: string, randomAckNonce: () => string): string => {
+  for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
+    const candidate = randomAckNonce();
+    if (!ACK_NONCE.test(candidate)) throw new Error("Sentinel incident ACK nonce is invalid");
+    if (candidate !== previous) return candidate;
+  }
+  throw new Error("Sentinel incident ACK nonce did not rotate");
+};
+
 const claimDispatch = async (
   kv: Deno.Kv,
   now: number,
@@ -839,7 +877,11 @@ const failConfirmedWorkflow = async (
     const entry = await controlEntry(kv);
     const control = entry.value;
     const active = control?.active;
-    if (!control || !active || active.id !== batch.id || active.attempt !== batch.attempt) return "stale";
+    if (
+      !control || !active || active.id !== batch.id || active.attempt !== batch.attempt ||
+      active.state !== "dispatched" || active.workflow_run_id !== batch.workflow_run_id ||
+      active.ack_nonce !== batch.ack_nonce
+    ) return "stale";
     const operation = kv.atomic().check({ key: SENTINEL_INCIDENT_CONTROL_KEY, versionstamp: entry.versionstamp });
     if (active.attempt < MAX_WORKFLOW_ATTEMPTS) {
       const ackNonce = randomAckNonce();
@@ -999,6 +1041,12 @@ type SentinelIncidentWorkflowIdentity = Readonly<{
   ackNonce: string;
 }>;
 
+type SentinelIncidentDeferralIdentity =
+  & SentinelIncidentWorkflowIdentity
+  & Readonly<{
+    reason: SentinelIncidentDeferralReason;
+  }>;
+
 const validateWorkflowIdentity = (input: SentinelIncidentWorkflowIdentity, now: number): void => {
   if (
     !isSentinelIncidentId(input.incidentId) || !positiveInteger(input.attempt) ||
@@ -1039,6 +1087,99 @@ export const claimSentinelIncidentWorkflowRun = async (
     if (committed.ok) return "claimed";
   }
   throw new Error("Sentinel incident workflow claim conflicted repeatedly");
+};
+
+export const deferSentinelIncident = async (
+  kv: Deno.Kv,
+  input: SentinelIncidentDeferralIdentity,
+  now = Date.now(),
+  dependencies: Pick<SentinelIncidentDependencies, "randomAckNonce"> = {},
+): Promise<"deferred" | "dead_letter"> => {
+  validateWorkflowIdentity(input, now);
+  if (!isSentinelIncidentDeferralReason(input.reason)) {
+    throw new Error("Sentinel incident deferral reason is invalid");
+  }
+  const receiptKey = [
+    ...SENTINEL_INCIDENT_DEFER_PREFIX,
+    input.incidentId,
+    input.attempt,
+    input.workflowRunId,
+  ] as const;
+  const randomAckNonce = dependencies.randomAckNonce ?? defaultAckNonce;
+  for (let casAttempt = 0; casAttempt < MAX_CAS_ATTEMPTS; casAttempt += 1) {
+    const [receipt, entry] = await Promise.all([
+      kv.get(receiptKey),
+      controlEntry(kv),
+    ]);
+    if (receipt.value !== null) {
+      if (
+        !isRecord(receipt.value) || receipt.value.version !== 1 ||
+        receipt.value.incident_id !== input.incidentId || receipt.value.attempt !== input.attempt ||
+        receipt.value.workflow_run_id !== input.workflowRunId || receipt.value.ack_nonce !== input.ackNonce ||
+        receipt.value.reason !== input.reason ||
+        (receipt.value.disposition !== "deferred" && receipt.value.disposition !== "dead_letter")
+      ) throw new SentinelIncidentDeferConflict();
+      return receipt.value.disposition;
+    }
+    const control = entry.value;
+    const active = control?.active;
+    if (
+      !control || !active || active.id !== input.incidentId || active.attempt !== input.attempt ||
+      active.state !== "dispatched" || active.workflow_run_id !== input.workflowRunId ||
+      active.ack_nonce !== input.ackNonce
+    ) throw new SentinelIncidentDeferConflict();
+
+    const infrastructureDeferrals = (active.infrastructure_deferrals ?? 0) + 1;
+    const disposition = infrastructureDeferrals >= MAX_SENTINEL_INFRASTRUCTURE_DEFERRALS ? "dead_letter" : "deferred";
+    const receiptValue = {
+      version: 1,
+      incident_id: input.incidentId,
+      attempt: input.attempt,
+      workflow_run_id: input.workflowRunId,
+      ack_nonce: input.ackNonce,
+      reason: input.reason,
+      disposition,
+      infrastructure_deferrals: infrastructureDeferrals,
+      recorded_at_ms: now,
+    } as const;
+    let operation = kv.atomic()
+      .check({ key: SENTINEL_INCIDENT_CONTROL_KEY, versionstamp: entry.versionstamp })
+      .check({ key: receiptKey, versionstamp: receipt.versionstamp })
+      .set(receiptKey, receiptValue, { expireIn: SENTINEL_INCIDENT_TTL_MS });
+    if (disposition === "deferred") {
+      const queued: SentinelIncidentBatch = {
+        ...active,
+        state: "queued",
+        next_action_at_ms: now + infrastructureDeferralBackoffMs(infrastructureDeferrals),
+        lease_expires_at_ms: null,
+        workflow_run_id: null,
+        workflow_run_url: null,
+        success_observed_at_ms: null,
+        ack_nonce: rotatedAckNonce(active.ack_nonce, randomAckNonce),
+        infrastructure_deferrals: infrastructureDeferrals,
+      };
+      operation = operation.set(
+        SENTINEL_INCIDENT_CONTROL_KEY,
+        { ...control, active: queued, updated_at_ms: now },
+        { expireIn: SENTINEL_INCIDENT_TTL_MS },
+      );
+    } else {
+      operation = operation
+        .set(SENTINEL_INCIDENT_CONTROL_KEY, promotePending(control, now), { expireIn: SENTINEL_INCIDENT_TTL_MS })
+        .set([...SENTINEL_INCIDENT_DEAD_PREFIX, active.id], {
+          version: 1,
+          incident_id: active.id,
+          attempt: active.attempt,
+          workflow_run_id: active.workflow_run_id,
+          conclusion: "infrastructure_deferrals_exhausted",
+          infrastructure_deferrals: infrastructureDeferrals,
+          recorded_at_ms: now,
+        }, { expireIn: SENTINEL_INCIDENT_TTL_MS });
+    }
+    const committed = await operation.commit();
+    if (committed.ok) return disposition;
+  }
+  throw new Error("Sentinel incident deferral conflicted repeatedly");
 };
 
 export const acknowledgeSentinelIncident = async (

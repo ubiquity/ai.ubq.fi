@@ -408,6 +408,20 @@ const safeErrorSummary = (error: unknown): Record<string, unknown> => ({
       codex_duration_ms: error.durationMs,
       codex_output_exceeded: error.outputExceeded,
       codex_timed_out: error.timedOut,
+      codex_probes: error.probes?.map((probe) =>
+        probe.kind === "available"
+          ? {
+            slot: probe.slot,
+            kind: probe.kind,
+            headroom_percent: probe.headroomPercent,
+          }
+          : {
+            slot: probe.slot,
+            kind: probe.kind,
+            failure: probe.failure,
+            status: probe.status,
+          }
+      ) ?? null,
     }
     : {}),
 });
@@ -730,13 +744,56 @@ const parseStructuredResult = <T>(
   return value;
 };
 
-const authSlotsFromEnvironment = () => ({
-  slot1B64: optionalEnvironment("SENTINEL_CODEX_AUTH_SLOT_1_B64"),
-  slot2B64: optionalEnvironment("SENTINEL_CODEX_AUTH_SLOT_2_B64"),
-});
+const AUTH_STATE_DOCUMENT_MAX_BYTES = 1024 * 1024;
 
-const requiredAuthSlotsFromEnvironment = (): ReturnType<typeof authSlotsFromEnvironment> => {
-  const authSlots = authSlotsFromEnvironment();
+const encodeStandardBase64 = (bytes: Uint8Array): string => {
+  let binary = "";
+  for (let offset = 0; offset < bytes.byteLength; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary);
+};
+
+const authSlotsFromPrivateState = async (): Promise<
+  Readonly<{
+    slot1B64?: string;
+    slot2B64?: string;
+  }>
+> => {
+  const stateDirectory = requiredEnvironment("SENTINEL_CODEX_AUTH_STATE_DIR");
+  const runnerTemp = requiredEnvironment("RUNNER_TEMP");
+  const expectedDirectory = `${runnerTemp}/sentinel-codex-auth-state`;
+  if (!runnerTemp.startsWith("/") || stateDirectory !== expectedDirectory) {
+    throw new Error("Sentinel Codex auth state directory is not the expected private runner path");
+  }
+  const readSlot = async (slot: 1 | 2): Promise<string | undefined> => {
+    const path = `${stateDirectory}/slots/${slot}/auth.json`;
+    let stat: Deno.FileInfo;
+    try {
+      stat = await Deno.lstat(path);
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) return undefined;
+      throw error;
+    }
+    if (!stat.isFile || stat.isSymlink || stat.size <= 0 || stat.size > AUTH_STATE_DOCUMENT_MAX_BYTES) {
+      throw new Error(`Sentinel Codex auth slot ${slot} state is invalid`);
+    }
+    const bytes = await Deno.readFile(path);
+    try {
+      if (bytes.byteLength !== stat.size) {
+        throw new Error(`Sentinel Codex auth slot ${slot} changed while it was being read`);
+      }
+      return encodeStandardBase64(bytes);
+    } finally {
+      bytes.fill(0);
+    }
+  };
+  const [slot1B64, slot2B64] = await Promise.all([readSlot(1), readSlot(2)]);
+  return { slot1B64, slot2B64 };
+};
+
+const requiredAuthSlotsFromPrivateState = async (): Promise<Awaited<ReturnType<typeof authSlotsFromPrivateState>>> => {
+  const authSlots = await authSlotsFromPrivateState();
   if (!authSlots.slot1B64 && !authSlots.slot2B64) {
     throw new Error("At least one Sentinel Codex auth slot is required");
   }
@@ -1861,7 +1918,7 @@ const run = async (): Promise<void> => {
 
   const rawLogPath = `${rawLogsDir}/triage-${runId}.jsonl`;
   if (observeOnly) {
-    const authSlots = requiredAuthSlotsFromEnvironment();
+    const authSlots = await requiredAuthSlotsFromPrivateState();
     const triageSchemaPath = `${reportsDir}/triage.schema.json`;
     await writeJson(triageSchemaPath, TRIAGE_OUTPUT_SCHEMA);
     await runObserveCycle(state.interval, {
@@ -2042,7 +2099,7 @@ const run = async (): Promise<void> => {
     return;
   }
 
-  const authSlots = requiredAuthSlotsFromEnvironment();
+  const authSlots = await requiredAuthSlotsFromPrivateState();
   const previewCredential = requiredEnvironment("PREVIEW_UOS_AI_USER_TOKEN");
   const replayKey = requiredEnvironment("SENTINEL_REPLAY_KEY");
   const runnerTemp = requiredEnvironment("RUNNER_TEMP");

@@ -90,6 +90,7 @@ export type CodexInvocationDependencies =
 
 export type CodexAuthRelay = Readonly<{
   baseUrl: string;
+  authenticationRejected?(): boolean;
   close(): Promise<void>;
 }>;
 
@@ -131,6 +132,7 @@ export type CodexInvocationFailureCode =
   | "invocation_timeout"
   | "output_limit_exceeded"
   | "secret_in_output"
+  | "auth_refresh_required"
   | "auth_mutated"
   | "last_message_missing"
   | "native_review_missing"
@@ -480,7 +482,11 @@ const secretValues = (auth: CodexAuthDocument): readonly string[] => {
 
 const base64Url = (value: string): string => btoa(value).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
 
-export const syntheticCodexAuthJson = (auth: CodexAuthDocument): string => {
+export const syntheticCodexAuthJson = (
+  auth: CodexAuthDocument,
+  nowMs = Date.now(),
+): string => {
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new TypeError("Synthetic auth clock is invalid");
   const expiresAtSeconds = Math.floor(auth.accessTokenExpiresAtMs / 1_000);
   const accessToken = `${base64Url(JSON.stringify({ alg: "none", typ: "JWT" }))}.${
     base64Url(JSON.stringify({
@@ -499,7 +505,11 @@ export const syntheticCodexAuthJson = (auth: CodexAuthDocument): string => {
       refresh_token: "sentinel-relay-refresh-token",
       account_id: "sentinel-relay-account",
     },
-    last_refresh: auth.lastRefresh,
+    // A stale timestamp makes Codex attempt to rotate the deliberately fake
+    // refresh token. Real auth rotation is owned by the workflow's isolated
+    // credential-maintenance lane; agent processes only receive this freshly
+    // timestamped synthetic relay credential.
+    last_refresh: new Date(nowMs).toISOString(),
   });
 };
 
@@ -519,6 +529,7 @@ export const createCodexAuthRelayFactory = (
 ): CodexAuthRelayFactory =>
 async (auth) => {
   const relayPrefix = `/sentinel-${crypto.randomUUID()}/backend-api`;
+  let authenticationRejected = false;
   const server = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: () => undefined }, async (request) => {
     const requestUrl = new URL(request.url);
     if (
@@ -550,6 +561,14 @@ async (auth) => {
       upstream.body?.cancel().catch(() => undefined);
       return new Response("Authentication relay rejected a redirect", { status: 502 });
     }
+    if (upstream.status === 401) {
+      authenticationRejected = true;
+      upstream.body?.cancel().catch(() => undefined);
+      return new Response("Sentinel credential refresh is required", {
+        status: 401,
+        headers: { "Cache-Control": "no-store" },
+      });
+    }
     const responseHeaders = new Headers(upstream.headers);
     responseHeaders.delete("set-cookie");
     responseHeaders.delete("location");
@@ -567,6 +586,7 @@ async (auth) => {
   }
   return Object.freeze({
     baseUrl: `http://127.0.0.1:${address.port}${relayPrefix}`,
+    authenticationRejected: () => authenticationRejected,
     async close() {
       await server.shutdown();
     },
@@ -758,7 +778,10 @@ const invokePrivately = async (
     await filesystem.chmod(codexHome, 0o700);
     const authPath = `${codexHome}/auth.json`;
     const lastMessagePath = `${codexHome}/last-message.json`;
-    const runtimeAuthJson = syntheticCodexAuthJson(selection.auth);
+    const runtimeAuthJson = syntheticCodexAuthJson(
+      selection.auth,
+      dependencies.now?.() ?? Date.now(),
+    );
     await filesystem.writePrivateTextFile(authPath, runtimeAuthJson);
     await filesystem.chmod(authPath, 0o600);
     authRelay = await authRelayFactory(selection.auth);
@@ -776,6 +799,13 @@ const invokePrivately = async (
       timeoutMs: options.expectedMaximumRuntimeMs,
     });
     const currentAuth = await filesystem.readTextFile(authPath).catch(() => null);
+    if (authRelay.authenticationRejected?.()) {
+      throw new CodexInvocationError("auth_refresh_required", {
+        slot: selection.slot,
+        probes: selection.probes,
+        commandResult,
+      });
+    }
     if (currentAuth !== runtimeAuthJson) {
       throw new CodexInvocationError("auth_mutated", {
         slot: selection.slot,

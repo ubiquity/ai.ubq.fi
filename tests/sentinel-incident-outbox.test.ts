@@ -6,20 +6,28 @@ import {
   completeSentinelIncidentFailureEvent,
   createSentinelGitHubAppJwt,
   createSentinelIncidentFailureEvent,
+  deferSentinelIncident,
   isSentinelIncidentControl,
   isSentinelProductionRuntime,
+  MAX_SENTINEL_INFRASTRUCTURE_DEFERRALS,
   reconcileSentinelIncidentOutbox,
   reconcileSentinelIncidentOutboxFromEnvironment,
   recordSentinelIncidentFailure,
   recordSentinelProviderDegradation,
   SENTINEL_INCIDENT_CAPTURE_REF_PREFIX,
   SENTINEL_INCIDENT_CONTROL_KEY,
+  SENTINEL_INCIDENT_DEAD_PREFIX,
   SentinelIncidentAckConflict,
   SentinelIncidentClaimConflict,
   type SentinelIncidentControl,
+  SentinelIncidentDeferConflict,
 } from "../src/sentinel_incident_outbox.ts";
 import { base64UrlDecode } from "../src/utils.ts";
-import { handleAdminSentinelIncidentAck, handleAdminSentinelIncidentClaim } from "../src/sentinel_incident_admin.ts";
+import {
+  handleAdminSentinelIncidentAck,
+  handleAdminSentinelIncidentClaim,
+  handleAdminSentinelIncidentDefer,
+} from "../src/sentinel_incident_admin.ts";
 import { CountingKv } from "./helpers/counting_kv.ts";
 
 const concatBytes = (...parts: readonly Uint8Array[]): Uint8Array => {
@@ -112,16 +120,25 @@ const decodeJsonPart = (value: string): Record<string, unknown> =>
 
 const githubFetcher = (
   requests: Request[],
-  options: Readonly<{ dispatchStatus?: number; runConclusion?: string | null }> = {},
+  options: Readonly<{
+    dispatchStatus?: number;
+    runConclusion?: string | null;
+    runId?: number;
+    tokenExpiresAt?: number;
+  }> = {},
 ): typeof fetch =>
 async (input, init) => {
   const request = new Request(input, init);
   requests.push(request.clone());
   await request.clone().arrayBuffer();
   const url = new URL(request.url);
+  const runId = options.runId ?? 12345;
   if (url.pathname.endsWith("/access_tokens")) {
     return Response.json(
-      { token: `ghs_${"x".repeat(600)}`, expires_at: new Date(NOW + 3_600_000).toISOString() },
+      {
+        token: `ghs_${"x".repeat(600)}`,
+        expires_at: new Date(options.tokenExpiresAt ?? NOW + 3_600_000).toISOString(),
+      },
       {
         status: 201,
       },
@@ -131,18 +148,18 @@ async (input, init) => {
     const status = options.dispatchStatus ?? 200;
     return status === 200
       ? Response.json({
-        workflow_run_id: 12345,
-        run_url: "https://api.github.com/repos/ubiquity/ai.ubq.fi/actions/runs/12345",
-        html_url: "https://github.com/ubiquity/ai.ubq.fi/actions/runs/12345",
+        workflow_run_id: runId,
+        run_url: `https://api.github.com/repos/ubiquity/ai.ubq.fi/actions/runs/${runId}`,
+        html_url: `https://github.com/ubiquity/ai.ubq.fi/actions/runs/${runId}`,
       })
       : new Response("private-response-marker", { status });
   }
-  if (url.pathname.endsWith("/actions/runs/12345")) {
+  if (url.pathname.endsWith(`/actions/runs/${runId}`)) {
     return Response.json({
-      id: 12345,
+      id: runId,
       status: "completed",
       conclusion: options.runConclusion ?? "failure",
-      html_url: "https://github.com/ubiquity/ai.ubq.fi/actions/runs/12345",
+      html_url: `https://github.com/ubiquity/ai.ubq.fi/actions/runs/${runId}`,
       head_sha: "a".repeat(40),
     });
   }
@@ -154,6 +171,18 @@ const readControl = async (kv: CountingKv): Promise<SentinelIncidentControl> => 
   assert.ok(isSentinelIncidentControl(value));
   return value;
 };
+
+Deno.test("pre-deferral v1 incident batches remain readable as zero infrastructure deferrals", async () => {
+  const kv = new CountingKv();
+  await recordSentinelIncidentFailure(kv as unknown as Deno.Kv, NOW, {
+    randomUuid: () => UUID_ONE,
+    randomAckNonce: () => ACK_ONE,
+  });
+  const control = await readControl(kv);
+  const legacyActive = { ...control.active } as Record<string, unknown>;
+  delete legacyActive.infrastructure_deferrals;
+  assert.equal(isSentinelIncidentControl({ ...control, active: legacyActive }), true);
+});
 
 Deno.test("sentinel GitHub App JWT supports GitHub PKCS#1 keys and has verifiable fixed claims", async () => {
   for (const value of [pkcs8Pem, pkcs1Pem, pkcs1Pem.replaceAll("\n", "\\n")]) {
@@ -311,6 +340,160 @@ Deno.test("sentinel outbox retains ambiguous delivery and advances only confirme
   const control = await readControl(kv);
   assert.equal(control.active?.attempt, 2);
   assert.equal(control.active?.state, "queued");
+});
+
+Deno.test("authenticated auth preflight deferral preserves the repair attempt and fences the stale run", async () => {
+  const kv = new CountingKv();
+  const incident = await recordSentinelIncidentFailure(kv as unknown as Deno.Kv, NOW, {
+    randomUuid: () => UUID_ONE,
+    randomAckNonce: () => ACK_ONE,
+  });
+  await reconcileSentinelIncidentOutbox(kv as unknown as Deno.Kv, pkcs8Pem, {
+    now: () => NOW,
+    fetcher: githubFetcher([]),
+    createTimeoutSignal: () => new AbortController().signal,
+  });
+
+  const deferral = {
+    incidentId: incident.incidentId,
+    attempt: 1,
+    workflowRunId: 12345,
+    ackNonce: ACK_ONE,
+    reason: "codex_auth_preflight_failed" as const,
+  };
+  let deferred = false;
+  const completedRunFetcher = githubFetcher([], { runConclusion: "failure" });
+  const racingFetcher: typeof fetch = async (input, init) => {
+    const request = new Request(input, init);
+    if (!deferred && new URL(request.url).pathname.endsWith("/actions/runs/12345")) {
+      assert.equal(
+        await deferSentinelIncident(kv as unknown as Deno.Kv, deferral, NOW + 5 * 60_000 + 1, {
+          randomAckNonce: () => ACK_TWO,
+        }),
+        "deferred",
+      );
+      deferred = true;
+    }
+    return await completedRunFetcher(input, init);
+  };
+  const stalePoll = await reconcileSentinelIncidentOutbox(kv as unknown as Deno.Kv, pkcs8Pem, {
+    now: () => NOW + 5 * 60_000,
+    fetcher: racingFetcher,
+    createTimeoutSignal: () => new AbortController().signal,
+  });
+  assert.equal(stalePoll.status, "waiting");
+  let control = await readControl(kv);
+  assert.equal(control.active?.attempt, 1);
+  assert.equal(control.active?.state, "queued");
+  assert.equal(control.active?.workflow_run_id, null);
+  assert.equal(control.active?.ack_nonce, ACK_TWO);
+  assert.equal(control.active?.infrastructure_deferrals, 1);
+  assert.equal(
+    await deferSentinelIncident(kv as unknown as Deno.Kv, deferral, NOW + 5 * 60_000 + 2),
+    "deferred",
+  );
+  for (
+    const invalid of [
+      { ackNonce: "C".repeat(43) },
+      { workflowRunId: 99999 },
+    ]
+  ) {
+    await assert.rejects(
+      () =>
+        deferSentinelIncident(kv as unknown as Deno.Kv, {
+          ...deferral,
+          ...invalid,
+        }, NOW + 5 * 60_000 + 3),
+      SentinelIncidentDeferConflict,
+    );
+  }
+
+  const redeliveryRequests: Request[] = [];
+  const redelivered = await reconcileSentinelIncidentOutbox(kv as unknown as Deno.Kv, pkcs8Pem, {
+    now: () => control.active!.next_action_at_ms,
+    fetcher: githubFetcher(redeliveryRequests, { runId: 12346, tokenExpiresAt: NOW + 24 * 60 * 60_000 }),
+    createTimeoutSignal: () => new AbortController().signal,
+  });
+  assert.equal(redelivered.status, "dispatched");
+  assert.equal(redelivered.attempt, 1);
+  const dispatchBody = await redeliveryRequests.at(-1)!.json();
+  assert.equal(dispatchBody.inputs.incident_attempt, "1");
+  assert.equal(dispatchBody.inputs.incident_ack_nonce, ACK_TWO);
+  control = await readControl(kv);
+  assert.equal(control.active?.workflow_run_id, 12346);
+});
+
+Deno.test("infrastructure deferrals use a separate bounded budget before dead-lettering", async () => {
+  const kv = new CountingKv();
+  const incident = await recordSentinelIncidentFailure(kv as unknown as Deno.Kv, NOW, {
+    randomUuid: () => UUID_ONE,
+    randomAckNonce: () => ACK_ONE,
+  });
+  let now = NOW;
+  for (let index = 1; index <= MAX_SENTINEL_INFRASTRUCTURE_DEFERRALS; index += 1) {
+    const runId = 20_000 + index;
+    const dispatched = await reconcileSentinelIncidentOutbox(kv as unknown as Deno.Kv, pkcs8Pem, {
+      now: () => now,
+      fetcher: githubFetcher([], { runId, tokenExpiresAt: NOW + 48 * 60 * 60_000 }),
+      createTimeoutSignal: () => new AbortController().signal,
+    });
+    assert.equal(dispatched.status, "dispatched");
+    const active = (await readControl(kv)).active!;
+    assert.equal(active.attempt, 1);
+    assert.equal(active.workflow_run_id, runId);
+    const nextNonce = String.fromCharCode(65 + index).repeat(43);
+    const disposition = await deferSentinelIncident(
+      kv as unknown as Deno.Kv,
+      {
+        incidentId: incident.incidentId,
+        attempt: 1,
+        workflowRunId: runId,
+        ackNonce: active.ack_nonce,
+        reason: "codex_auth_preflight_failed",
+      },
+      now + 1,
+      { randomAckNonce: () => nextNonce },
+    );
+    assert.equal(
+      disposition,
+      index === MAX_SENTINEL_INFRASTRUCTURE_DEFERRALS ? "dead_letter" : "deferred",
+    );
+    if (disposition === "dead_letter") {
+      assert.equal(
+        await deferSentinelIncident(
+          kv as unknown as Deno.Kv,
+          {
+            incidentId: incident.incidentId,
+            attempt: 1,
+            workflowRunId: runId,
+            ackNonce: active.ack_nonce,
+            reason: "codex_auth_preflight_failed",
+          },
+          now + 2,
+        ),
+        "dead_letter",
+      );
+    }
+    const control = await readControl(kv);
+    if (index < MAX_SENTINEL_INFRASTRUCTURE_DEFERRALS) {
+      assert.equal(control.active?.attempt, 1);
+      assert.equal(control.active?.infrastructure_deferrals, index);
+      assert.ok(control.active!.next_action_at_ms > now + 1);
+      now = control.active!.next_action_at_ms;
+    } else {
+      assert.equal(control.active, null);
+    }
+  }
+  const dead = await kv.get([...SENTINEL_INCIDENT_DEAD_PREFIX, incident.incidentId]);
+  assert.deepEqual(dead.value, {
+    version: 1,
+    incident_id: incident.incidentId,
+    attempt: 1,
+    workflow_run_id: 20_000 + MAX_SENTINEL_INFRASTRUCTURE_DEFERRALS,
+    conclusion: "infrastructure_deferrals_exhausted",
+    infrastructure_deferrals: MAX_SENTINEL_INFRASTRUCTURE_DEFERRALS,
+    recorded_at_ms: now + 1,
+  });
 });
 
 Deno.test("an accepted ambiguous dispatch is claimed once before repair work starts", async () => {
@@ -603,7 +786,7 @@ Deno.test("sentinel production gate requires the exact managed production timeli
   }
 });
 
-Deno.test("sentinel incident ACK endpoint is production-only and accepts one strict authenticated payload", async () => {
+Deno.test("sentinel incident workflow endpoints are production-only and accept strict authenticated payloads", async () => {
   const body = {
     incident_id: `provider-${UUID_ONE}`,
     attempt: 1,
@@ -664,6 +847,74 @@ Deno.test("sentinel incident ACK endpoint is production-only and accepts one str
     workflowRunId: 12345,
     ackNonce: ACK_ONE,
   });
+  let deferred: unknown = null;
+  const deferBody = { ...body, reason: "codex_auth_preflight_failed" };
+  const acceptedDeferral = await handleAdminSentinelIncidentDefer(
+    new Request("https://ai.ubq.fi/admin/sentinel/incidents/defer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(deferBody),
+    }),
+    {
+      isProduction: () => true,
+      getKv: () => Promise.resolve({} as Deno.Kv),
+      defer: (_kv, input) => {
+        deferred = input;
+        return Promise.resolve("deferred");
+      },
+    },
+  );
+  assert.equal(acceptedDeferral.status, 204);
+  assert.equal(acceptedDeferral.headers.get("X-Sentinel-Incident-Disposition"), "deferred");
+  assert.deepEqual(deferred, {
+    incidentId: body.incident_id,
+    attempt: 1,
+    workflowRunId: 12345,
+    ackNonce: ACK_ONE,
+    reason: "codex_auth_preflight_failed",
+  });
+  const deadLetterDeferral = await handleAdminSentinelIncidentDefer(
+    new Request("https://ai.ubq.fi/admin/sentinel/incidents/defer", {
+      method: "POST",
+      body: JSON.stringify({ ...body, reason: "sentinel_infrastructure_preflight_failed" }),
+    }),
+    {
+      isProduction: () => true,
+      getKv: () => Promise.resolve({} as Deno.Kv),
+      defer: () => Promise.resolve("dead_letter"),
+    },
+  );
+  assert.equal(deadLetterDeferral.status, 204);
+  assert.equal(deadLetterDeferral.headers.get("X-Sentinel-Incident-Disposition"), "dead_letter");
+  const invalidDeferral = await handleAdminSentinelIncidentDefer(
+    new Request("https://ai.ubq.fi/admin/sentinel/incidents/defer", {
+      method: "POST",
+      body: JSON.stringify({ ...deferBody, reason: "workflow_failed" }),
+    }),
+    { isProduction: () => true },
+  );
+  assert.equal(invalidDeferral.status, 400);
+  const staleDeferral = await handleAdminSentinelIncidentDefer(
+    new Request("https://ai.ubq.fi/admin/sentinel/incidents/defer", {
+      method: "POST",
+      body: JSON.stringify(deferBody),
+    }),
+    {
+      isProduction: () => true,
+      getKv: () => Promise.resolve({} as Deno.Kv),
+      defer: () => Promise.reject(new SentinelIncidentDeferConflict()),
+    },
+  );
+  assert.equal(staleDeferral.status, 409);
+
+  const { default: routedHandler } = await import("../src/handler.ts");
+  const unauthenticatedDeferral = await routedHandler(
+    new Request("https://ai.ubq.fi/admin/sentinel/incidents/defer", {
+      method: "POST",
+      body: JSON.stringify(deferBody),
+    }),
+  );
+  assert.equal(unauthenticatedDeferral.status, 401);
   const invalid = await handleAdminSentinelIncidentAck(
     new Request("https://ai.ubq.fi/admin/sentinel/incidents/ack", {
       method: "POST",

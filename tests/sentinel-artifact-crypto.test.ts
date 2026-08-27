@@ -225,6 +225,93 @@ Deno.test({
 });
 
 Deno.test({
+  name: "Sentinel durably refreshes exclusive Codex auth before every work selection",
+  ignore: fileSystemTestsUnavailable,
+  async fn() {
+    const workflow = await Deno.readTextFile(".github/workflows/provider-sentinel.yml");
+    const orchestrator = await Deno.readTextFile("scripts/sentinel/main.ts");
+    const maintenance = await Deno.readTextFile("scripts/sentinel/auth-maintenance.ts");
+    const authState = await Deno.readTextFile("scripts/sentinel/auth-state.ts");
+    assert(workflow.includes("SENTINEL_CODEX_AUTH_STATE_KEY"), "Auth state must use its own encryption key");
+    assert(
+      workflow.includes("SENTINEL_CODEX_AUTH_GENERATION"),
+      "Auth state reseeding must use an explicit generation",
+    );
+    assert(
+      !workflow.includes("secrets.SENTINEL_CODEX_AUTH_SLOT_1_B64 || secrets.CODEX_AUTH_JSON_B64"),
+      "Sentinel auth must never share the gateway auth seed",
+    );
+    const restore = workflow.indexOf("Restore or bootstrap encrypted Codex auth state");
+    const maintain = workflow.indexOf("Let pinned Codex maintain its auth files");
+    const seal = workflow.indexOf("Seal refreshed Codex auth state");
+    const upload = workflow.indexOf("Upload encrypted Codex auth state");
+    const readiness = workflow.indexOf("Probe Codex auth readiness");
+    const workSelection = workflow.indexOf("Select agent work");
+    assert(
+      restore >= 0 && restore < maintain && maintain < seal && seal < upload && upload < readiness &&
+        readiness < workSelection,
+      "Durable auth persistence and readiness must precede even a quiet hourly work selection",
+    );
+    assert(
+      workflow.includes("steps.auth-state-upload.outcome == 'success'") &&
+        workflow.includes("Enforce durable Codex auth readiness") &&
+        /Probe Codex auth readiness[\s\S]*?--allow-write="\$RUNNER_TEMP"[\s\S]*?auth-state\.ts[\s\S]*?probe/u
+          .test(workflow),
+      "The workflow must gate agents on a successful auth-state upload and readiness probe",
+    );
+    assert(
+      authState.includes("Deno.makeTempDir({") && authState.includes("dir: runnerTemp"),
+      "Artifact-backed auth restore must unpack only inside the authorized private runner directory",
+    );
+    assert(
+      workflow.includes("$RUNNER_TEMP/sentinel-codex-auth-state") &&
+        !workflow.includes(".sentinel/sentinel-codex-auth-state"),
+      "Plaintext auth state must remain outside every evidence path",
+    );
+    const classifyDeferral = workflow.indexOf("Classify incident infrastructure deferral");
+    const runSentinel = workflow.indexOf("Run Provider Sentinel");
+    const deferIncident = workflow.indexOf("Defer incident after infrastructure failure");
+    const acknowledgeIncident = workflow.indexOf("Acknowledge completed incident");
+    const deferralStep = workflow.slice(deferIncident, acknowledgeIncident);
+    assert(
+      runSentinel >= 0 && runSentinel < classifyDeferral && classifyDeferral < deferIncident &&
+        deferIncident < acknowledgeIncident,
+      "Incident infrastructure deferral must classify the exact run and precede acknowledgement",
+    );
+    for (
+      const required of [
+        "inputs.sentinel_mode == 'incident'",
+        "steps.incident-claim.outcome == 'success'",
+        "steps.sentinel-run.outcome == 'skipped'",
+        "steps.sentinel-run.outcome == 'success' && failure()",
+        "codex_auth_preflight_failed",
+        "sentinel_infrastructure_preflight_failed",
+        '--arg workflow_run_id "$GITHUB_RUN_ID"',
+        '--arg ack_nonce "$SENTINEL_INCIDENT_ACK_NONCE"',
+        'if [ "$curl_status" = "0" ] && [ "$status" = "204" ]',
+        "for request_attempt in 1 2 3",
+        '[[ "$status" =~ ^5[0-9][0-9]$ ]]',
+        "x-sentinel-incident-disposition",
+        "dead_letter)",
+        "/admin/sentinel/incidents/defer",
+      ]
+    ) {
+      assert(deferralStep.includes(required), `Incident deferral is missing its exact ${required} contract`);
+    }
+    assert(
+      orchestrator.includes('requiredEnvironment("SENTINEL_CODEX_AUTH_STATE_DIR")') &&
+        !orchestrator.includes('optionalEnvironment("SENTINEL_CODEX_AUTH_SLOT_1_B64")'),
+      "The orchestrator must read only the prepared private files",
+    );
+    assert(
+      maintenance.includes("--ignore-user-config") && maintenance.includes("--skip-git-repo-check") &&
+        maintenance.includes("Always re-read the complete file"),
+      "Pinned Codex must own rotation in a fixed empty workspace and preserve its complete rewrite",
+    );
+  },
+});
+
+Deno.test({
   name: "Sentinel uses failure events with durable retry and no resident watchdog",
   ignore: fileSystemTestsUnavailable,
   async fn() {

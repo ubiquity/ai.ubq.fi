@@ -206,13 +206,16 @@ const parseLastRefresh = (value: unknown): string | null => {
     : null;
 };
 
-export const parseCodexAuthJsonB64 = (
+/**
+ * Parses a complete file-backed ChatGPT auth document without requiring its
+ * current access token to be invocation-ready. This is only for the trusted
+ * credential-maintenance lane, which must be able to restore an expired access
+ * JWT so the pinned Codex CLI can perform its own refresh.
+ */
+export const parseCodexAuthJsonB64ForMaintenance = (
   encoded: string | undefined,
   slot: CodexAuthSlot,
-  options: Readonly<{ nowMs: number; minimumValidityMs: number }>,
 ): CodexAuthDocument => {
-  const minimumValidityMs = assertMinimumValidity(options.minimumValidityMs);
-  if (!Number.isSafeInteger(options.nowMs) || options.nowMs < 0) throw new TypeError("nowMs is invalid.");
   if (encoded === undefined || encoded === "") throw new CodexAuthValidationError(slot, "not_configured");
 
   const bytes = decodeStandardBase64(encoded, slot);
@@ -241,10 +244,6 @@ export const parseCodexAuthJsonB64 = (
     throw new CodexAuthValidationError(slot, "invalid_document");
   }
   const accessTokenExpiresAtMs = accessTokenExpiryMs(accessToken, slot);
-  const requiredUntilMs = options.nowMs + minimumValidityMs;
-  if (!Number.isSafeInteger(requiredUntilMs) || accessTokenExpiresAtMs <= requiredUntilMs) {
-    throw new CodexAuthValidationError(slot, "access_token_expiring");
-  }
 
   return {
     slot,
@@ -259,6 +258,21 @@ export const parseCodexAuthJsonB64 = (
     lastRefresh,
     accessTokenExpiresAtMs,
   };
+};
+
+export const parseCodexAuthJsonB64 = (
+  encoded: string | undefined,
+  slot: CodexAuthSlot,
+  options: Readonly<{ nowMs: number; minimumValidityMs: number }>,
+): CodexAuthDocument => {
+  const minimumValidityMs = assertMinimumValidity(options.minimumValidityMs);
+  if (!Number.isSafeInteger(options.nowMs) || options.nowMs < 0) throw new TypeError("nowMs is invalid.");
+  const auth = parseCodexAuthJsonB64ForMaintenance(encoded, slot);
+  const requiredUntilMs = options.nowMs + minimumValidityMs;
+  if (!Number.isSafeInteger(requiredUntilMs) || auth.accessTokenExpiresAtMs <= requiredUntilMs) {
+    throw new CodexAuthValidationError(slot, "access_token_expiring");
+  }
+  return auth;
 };
 
 type UsageWindow = Readonly<{ usedPercent: number }>;

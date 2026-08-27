@@ -9,10 +9,20 @@ import {
   renderIssuePullRequestBody,
   selectDevelopmentPush,
 } from "./issue-delivery.ts";
+import {
+  GitHubActionsClient,
+  type GitHubWorkflowDispatch,
+  type GitHubWorkflowRun,
+  type WaitForWorkflowOptions,
+} from "./github.ts";
+import { SENTINEL_POLICY } from "./policy.ts";
 
 const API_VERSION = "2022-11-28";
 const FULL_SHA = /^[0-9a-f]{40}$/u;
 const SAFE_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/u;
+const SAFE_REVISION = /^[A-Za-z0-9_-]{1,200}$/u;
+const SENTINEL_DEPLOYMENT_CORRELATION =
+  /^sentinel-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
 export type PullRequest = Readonly<{
   number: number;
@@ -25,6 +35,31 @@ export type PullRequest = Readonly<{
   baseRef: string;
 }>;
 
+export type CandidatePreviewEvidence = Readonly<{
+  gitSha: string;
+  revision: string;
+  workflowRunId: number;
+}>;
+
+export type CandidateWorkflowValidationRecord = Readonly<{
+  schema_version: 1;
+  source: "preview" | "build_only";
+  git_sha: string;
+  head_branch: string;
+  workflow_run_id: number;
+  correlation_id: string;
+  display_title: string;
+}>;
+
+type CandidateWorkflowValidationClient = Readonly<{
+  dispatchWorkflow: (
+    workflow: string,
+    ref: string,
+    inputs?: Readonly<Record<string, string | boolean>>,
+  ) => Promise<GitHubWorkflowDispatch>;
+  waitForWorkflow: (options: WaitForWorkflowOptions) => Promise<GitHubWorkflowRun>;
+}>;
+
 const requiredEnvironment = (name: string): string => {
   const value = Deno.env.get(name)?.trim();
   if (!value) throw new Error(`${name} is required for Sentinel issue PR delivery`);
@@ -32,6 +67,15 @@ const requiredEnvironment = (name: string): string => {
 };
 
 const readJson = async (path: string): Promise<unknown> => JSON.parse(await Deno.readTextFile(path));
+
+const optionalJson = async (path: string): Promise<unknown | null> => {
+  try {
+    return await readJson(path);
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return null;
+    throw error;
+  }
+};
 
 const git = async (args: readonly string[]): Promise<string> => {
   const executable = Deno.env.get("SENTINEL_REAL_GIT")?.trim() || "git";
@@ -146,23 +190,184 @@ const reportNames = async (reportsDir: string, pattern: RegExp): Promise<string[
   return names.sort();
 };
 
-const optionalPreviewEvidence = async (
-  reportsDir: string,
-): Promise<Readonly<{ revision: string | null; workflowRunId: number | null }>> => {
-  const names = await reportNames(reportsDir, /^preview-deployment-round-[1-3]\.json$/u);
-  const latest = names.at(-1);
-  if (!latest) return { revision: null, workflowRunId: null };
-  const value = await readJson(`${reportsDir}/${latest}`);
+export const parseCandidatePreviewEvidence = (
+  value: unknown,
+  candidateSha: string,
+): CandidatePreviewEvidence => {
   const report = typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
+  if (
+    !FULL_SHA.test(candidateSha) || report?.git_sha !== candidateSha ||
+    typeof report.revision !== "string" || !SAFE_REVISION.test(report.revision) ||
+    !Number.isSafeInteger(report.workflow_run_id) || (report.workflow_run_id as number) <= 0
+  ) {
+    throw new Error("Sentinel preview evidence does not match the exact issue candidate");
+  }
   return {
-    revision: typeof report?.revision === "string" && /^[A-Za-z0-9_-]{1,200}$/u.test(report.revision)
-      ? report.revision
-      : null,
-    workflowRunId: Number.isSafeInteger(report?.workflow_run_id) && (report!.workflow_run_id as number) > 0
-      ? report!.workflow_run_id as number
-      : null,
+    gitSha: candidateSha,
+    revision: report.revision,
+    workflowRunId: report.workflow_run_id as number,
+  };
+};
+
+const optionalPreviewEvidence = async (
+  reportsDir: string,
+  candidateSha: string,
+): Promise<CandidatePreviewEvidence | null> => {
+  const names = await reportNames(reportsDir, /^preview-deployment-round-[1-3]\.json$/u);
+  const latest = names.at(-1);
+  return latest ? parseCandidatePreviewEvidence(await readJson(`${reportsDir}/${latest}`), candidateSha) : null;
+};
+
+export const parseIssueCandidateDisposition = (
+  value: unknown,
+  expected: Readonly<{ issueNumber: number; fingerprint: string }>,
+): "resolved" | "manual_required" => {
+  const report = typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+  if (
+    report?.schema_version !== 1 || report.issue_number !== expected.issueNumber ||
+    report.fingerprint !== expected.fingerprint ||
+    (report.disposition !== "resolved" && report.disposition !== "manual_required")
+  ) {
+    throw new Error("Sentinel GitHub issue disposition does not match the exact selection");
+  }
+  return report.disposition;
+};
+
+export const parseCandidateWorkflowValidationRecord = (
+  value: unknown,
+  expected: Readonly<{ candidateSha: string; candidateBranch: string }>,
+): CandidateWorkflowValidationRecord => {
+  const report = typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+  const correlationId = typeof report?.correlation_id === "string" ? report.correlation_id : "";
+  const displayTitle = typeof report?.display_title === "string" ? report.display_title : "";
+  if (
+    !FULL_SHA.test(expected.candidateSha) || !SAFE_BRANCH.test(expected.candidateBranch) ||
+    report?.schema_version !== 1 || report.source !== "build_only" ||
+    report.git_sha !== expected.candidateSha || report.head_branch !== expected.candidateBranch ||
+    !Number.isSafeInteger(report.workflow_run_id) || (report.workflow_run_id as number) <= 0 ||
+    !SENTINEL_DEPLOYMENT_CORRELATION.test(correlationId) ||
+    displayTitle !== `Deno Deploy ${correlationId}`
+  ) {
+    throw new Error("Sentinel candidate workflow validation does not match the exact candidate");
+  }
+  return {
+    schema_version: 1,
+    source: "build_only",
+    git_sha: expected.candidateSha,
+    head_branch: expected.candidateBranch,
+    workflow_run_id: report.workflow_run_id as number,
+    correlation_id: correlationId,
+    display_title: displayTitle,
+  };
+};
+
+const requireExactSuccessfulRun = (
+  run: GitHubWorkflowRun,
+  expected: Readonly<{ runId: number; candidateSha: string; displayTitle?: string }>,
+): void => {
+  if (run.id !== expected.runId) throw new Error("Sentinel candidate validation returned the wrong workflow run ID");
+  if (run.headSha !== expected.candidateSha) {
+    throw new Error(`Workflow run ${run.id} has the wrong candidate head SHA`);
+  }
+  if (expected.displayTitle !== undefined && run.displayTitle !== expected.displayTitle) {
+    throw new Error(`Workflow run ${run.id} has the wrong candidate validation correlation`);
+  }
+  if (run.status !== "completed" || run.conclusion !== "success") {
+    throw new Error(`Workflow run ${run.id} did not complete successfully`);
+  }
+};
+
+export const ensureCandidateWorkflowValidation = async (
+  input: Readonly<{
+    client: CandidateWorkflowValidationClient;
+    candidateSha: string;
+    candidateBranch: string;
+    disposition: "resolved" | "manual_required";
+    preview: CandidatePreviewEvidence | null;
+    existingBuildValidation: CandidateWorkflowValidationRecord | null;
+    createCorrelationId?: () => string;
+  }>,
+): Promise<CandidateWorkflowValidationRecord> => {
+  if (!FULL_SHA.test(input.candidateSha) || !SAFE_BRANCH.test(input.candidateBranch)) {
+    throw new Error("Sentinel candidate workflow validation identity is invalid");
+  }
+  if (input.preview !== null) {
+    if (input.preview.gitSha !== input.candidateSha) {
+      throw new Error("Sentinel preview evidence has the wrong candidate SHA");
+    }
+    const run = await input.client.waitForWorkflow({
+      runId: input.preview.workflowRunId,
+      headSha: input.candidateSha,
+    });
+    requireExactSuccessfulRun(run, { runId: input.preview.workflowRunId, candidateSha: input.candidateSha });
+    const correlationId = run.displayTitle.startsWith("Deno Deploy ")
+      ? run.displayTitle.slice("Deno Deploy ".length)
+      : "";
+    if (!SENTINEL_DEPLOYMENT_CORRELATION.test(correlationId)) {
+      throw new Error(`Workflow run ${run.id} has an invalid Sentinel deployment correlation`);
+    }
+    return {
+      schema_version: 1,
+      source: "preview",
+      git_sha: input.candidateSha,
+      head_branch: input.candidateBranch,
+      workflow_run_id: run.id,
+      correlation_id: correlationId,
+      display_title: run.displayTitle,
+    };
+  }
+  if (input.disposition === "resolved") {
+    throw new Error("Resolved Sentinel issue candidates require exact preview workflow evidence");
+  }
+  if (input.existingBuildValidation !== null) {
+    const evidence = input.existingBuildValidation;
+    const run = await input.client.waitForWorkflow({
+      runId: evidence.workflow_run_id,
+      headSha: input.candidateSha,
+      displayTitle: evidence.display_title,
+    });
+    requireExactSuccessfulRun(run, {
+      runId: evidence.workflow_run_id,
+      candidateSha: input.candidateSha,
+      displayTitle: evidence.display_title,
+    });
+    return evidence;
+  }
+
+  const correlationId = input.createCorrelationId?.() ?? `sentinel-${crypto.randomUUID()}`;
+  if (!SENTINEL_DEPLOYMENT_CORRELATION.test(correlationId)) {
+    throw new Error("Sentinel candidate workflow validation correlation is invalid");
+  }
+  const displayTitle = `Deno Deploy ${correlationId}`;
+  const dispatch = await input.client.dispatchWorkflow(
+    SENTINEL_POLICY.github.deploymentWorkflow,
+    input.candidateBranch,
+    {
+      deploy_preview: false,
+      sentinel_build_only: true,
+      sentinel_correlation_id: correlationId,
+    },
+  );
+  const run = await input.client.waitForWorkflow({
+    runId: dispatch.runId,
+    headSha: input.candidateSha,
+    displayTitle,
+  });
+  requireExactSuccessfulRun(run, { runId: dispatch.runId, candidateSha: input.candidateSha, displayTitle });
+  return {
+    schema_version: 1,
+    source: "build_only",
+    git_sha: input.candidateSha,
+    head_branch: input.candidateBranch,
+    workflow_run_id: dispatch.runId,
+    correlation_id: correlationId,
+    display_title: displayTitle,
   };
 };
 
@@ -232,7 +437,11 @@ export const ensureIssuePullRequestForDevelopmentPush = async (
     throw new Error("More than one pull request exists for the concrete Sentinel issue delivery attempt");
   }
 
-  const preview = await optionalPreviewEvidence(reportsDir);
+  const disposition = parseIssueCandidateDisposition(
+    await readJson(`${reportsDir}/github-issue-disposition.json`),
+    { issueNumber: selection.issue_number, fingerprint: selection.fingerprint },
+  );
+  const preview = await optionalPreviewEvidence(reportsDir, update.localSha);
   const workflowRunUrl = `${input.serverUrl}/${input.repository}/actions/runs/${input.workflowRunId}`;
   const body = renderIssuePullRequestBody({
     repository: input.repository,
@@ -243,8 +452,8 @@ export const ensureIssuePullRequestForDevelopmentPush = async (
     validationReports: await reportNames(reportsDir, /^validation-(?:round-[1-3]|manual-github-issue)\.json$/u),
     nativeReviewReports: await reportNames(reportsDir, /^native-review-round-[1-3]\.json$/u),
     replayReports: await reportNames(reportsDir, /^replay-round-[1-3]\.json$/u),
-    previewRevision: preview.revision,
-    previewWorkflowRunId: preview.workflowRunId,
+    previewRevision: preview?.revision ?? null,
+    previewWorkflowRunId: preview?.workflowRunId ?? null,
   });
 
   let pull: PullRequest;
@@ -300,7 +509,33 @@ export const ensureIssuePullRequestForDevelopmentPush = async (
     `${JSON.stringify(record, null, 2)}\n`,
     { mode: 0o600 },
   );
-  console.log(`[sentinel] issue_pull_request=#${pull.number} issue=#${selection.issue_number} reused=${reused}`);
+
+  const existingValidationValue = disposition === "manual_required" && preview === null
+    ? await optionalJson(`${reportsDir}/candidate-workflow-validation.json`)
+    : null;
+  const existingBuildValidation = existingValidationValue === null
+    ? null
+    : parseCandidateWorkflowValidationRecord(existingValidationValue, {
+      candidateSha: update.localSha,
+      candidateBranch: cycle.temporary_branch,
+    });
+  const validation = await ensureCandidateWorkflowValidation({
+    client: new GitHubActionsClient({ repository: input.repository, token: input.token }),
+    candidateSha: update.localSha,
+    candidateBranch: cycle.temporary_branch,
+    disposition,
+    preview,
+    existingBuildValidation,
+  });
+  await Deno.writeTextFile(
+    `${reportsDir}/candidate-workflow-validation.json`,
+    `${JSON.stringify(validation, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+  console.log(
+    `[sentinel] issue_pull_request=#${pull.number} issue=#${selection.issue_number} reused=${reused} ` +
+      `validation_run=${validation.workflow_run_id} validation_source=${validation.source}`,
+  );
   return record;
 };
 
