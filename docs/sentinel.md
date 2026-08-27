@@ -62,12 +62,14 @@ model call.
 
 GitHub issue selection is a read-only fallback when the native-review backlog has no eligible entry. Sentinel excludes
 pull requests and accepts only an open issue whose author and latest body or title editors currently have calculated
-`write` or `admin` permission for the repository. The issue must be unlocked, unassigned, and have no comments, parent,
-sub-issues, or dependency relationships. It must have exactly one `Priority: 2 (Medium)` or `Priority: 3 (High)` label,
-exactly one time label of two hours or less, a bounded `Acceptance:` list, and a bounded `Files:` list. Every file must
-be a repository-relative path that the Sentinel implementation policy permits. High sorts before Medium, then by
-creation time and issue number. High becomes review severity P2 and Medium becomes P3. Issue text and metadata are
-untrusted input and cannot expand the declared file scope or change Sentinel policy.
+`write` or `admin` permission for the repository. The issue must be unlocked and unassigned. It must have exactly one
+`Priority:` label and exactly one `Time:` label in the canonical `Priority: <N> (<name>)` and `Time: <N <unit>>` forms;
+any priority level and any duration are accepted, including `Regression`, `Normal`, `Urgent`, `Emergency`, and
+week-scale estimates, and no time-estimate cap applies. It needs a bounded `Acceptance:` list and a bounded `Files:`
+list. Every file must be a repository-relative path that the Sentinel implementation policy permits. Urgency sorts first
+(emergency, regression, urgent, high, then medium and normal), then by creation time and issue number. Urgent priority
+labels become review severity P2 and the remainder become P3. Issue text and metadata are untrusted input and cannot
+expand the declared file scope or change Sentinel policy.
 
 Selection records an immutable digest of the issue body and complete issue snapshot, including the author login and the
 latest body-edit and title-edit actors, timestamps, and current title. Sentinel reads the exact issue, its
@@ -75,16 +77,22 @@ relationships, and every content authority's current repository permission again
 preview branch push, and before a development push. A changed, mismatched, or ineligible snapshot stops that attempt.
 The workflow binds both an exact selected snapshot and an empty selection from its prerequisite preflight to the later
 orchestrator; selection drift is deferred to another run. The selector inspects at most 32 ordered candidate
-relationships per run and fails closed at that bound. Terminal `resolved` and `manual_required` snapshots are recorded
-in the protected `docs/sentinel-issue-jobs.md` ledger. `resolved` means that the implementation has a matching scoped
-candidate diff; it is not production acceptance. The encrypted `github-issue-production-outcome.json` exists only after
-production has settled by keeping the candidate through monitoring or rolling it back. The Actions summary identifies
-the selected issue number without exposing its title or body. An unchanged open issue is not selected again. A later
-issue edit creates a new snapshot that can become eligible only while its latest editor remains a current writer or
-administrator. A manual result uses a ledger-only development commit and never starts a deployment. Sentinel uses
-`issues: read` and the `GITHUB_TOKEN`'s always-available Metadata read permission; it does not assign, label, comment
-on, or close an issue. The workflow concurrency group serializes Sentinel runs but does not claim work against a human
-or another automation system.
+relationships per run and fails closed at that bound. A selected item whose bounded implementation budget expires, or
+whose Codex accounts cannot be selected, is recorded as a terminal `manual_required` snapshot instead of being retired
+every hour: the candidate change set is preserved only as encrypted evidence and never enters `development`. Terminal
+`resolved` and `manual_required` snapshots are recorded in the protected `docs/sentinel-issue-jobs.md` ledger.
+`resolved` means that the implementation has a matching scoped candidate diff; it is not production acceptance. The
+encrypted `github-issue-production-outcome.json` exists only after production has settled by keeping the candidate
+through monitoring or rolling it back. The Actions summary identifies the selected issue number without exposing its
+title or body. An unchanged open issue is not selected again. A later issue edit creates a new snapshot that can become
+eligible only while its latest editor remains a current writer or administrator. A manual result uses a ledger-only
+development commit and never starts a deployment. Sentinel opens exactly one delivery pull request per selected snapshot
+and links the issue there as evidence. After a verified production keep it merges that pull request and closes the
+unchanged issue with supporting evidence; a refused or protected merge is accepted only when the comparison proves the
+candidate head is already contained in `development` (the state production runs), otherwise the delivery stays open.
+Manual-required, failed, and rolled-back results stay open. The workflow token carries `issues: write` and
+`pull-requests: write`, but Sentinel never assigns, labels, or comments during selection. The workflow concurrency group
+serializes Sentinel runs but does not claim work against a human or another automation system.
 
 The workflow supports public, private, and internal repository visibility. It fails before checkout or raw-log capture
 unless `SENTINEL_ARTIFACT_KEY` is present and decodes to exactly 32 bytes. After the cycle, it scans every prospective

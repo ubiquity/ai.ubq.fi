@@ -267,8 +267,14 @@ Deno.test({
         orchestrator.includes("hourly_deferred_github_issue_changed"),
       "Hourly runtime must defer when the bound GitHub issue selection changes",
     );
-    assert(/^\s+issues: read$/mu.test(workflow), "GitHub issue intake must use read-only issue permission");
-    assert(!/^\s+issues: write$/mu.test(workflow), "Provider Sentinel must not mutate GitHub issues");
+    assert(
+      /^\s+issues: write$/mu.test(workflow),
+      "Sentinel must be able to post evidence and close delivered GitHub issues",
+    );
+    assert(
+      /^\s+pull-requests: write$/mu.test(workflow),
+      "Sentinel must be able to open and merge delivery pull requests",
+    );
     assert(
       workflow.includes("git show origin/development:docs/sentinel-review-backlog.md"),
       "Hourly agent setup must inspect the current development backlog",

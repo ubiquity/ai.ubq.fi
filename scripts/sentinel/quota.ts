@@ -2,6 +2,8 @@ export const CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 export const CODEX_USAGE_TIMEOUT_MS = 8_000;
 export const CODEX_USAGE_MAX_RESPONSE_BYTES = 1_048_576;
 export const CODEX_TOKEN_EXPIRY_SAFETY_MS = 5 * 60_000;
+export const CODEX_USAGE_TRANSIENT_RETRY_ATTEMPTS = 3;
+export const CODEX_USAGE_TRANSIENT_RETRY_DELAYS_MS = Object.freeze([250, 1_000]) as readonly number[];
 
 export type CodexAuthSlot = 1 | 2;
 
@@ -106,6 +108,13 @@ export type CodexUsageProbeDependencies = Readonly<{
   timeoutMs?: number;
   maxResponseBytes?: number;
   createTimeoutSignal?: (timeoutMs: number) => AbortSignal;
+  probeRetry?: CodexUsageProbeRetry;
+}>;
+
+export type CodexUsageProbeRetry = Readonly<{
+  attempts?: number;
+  delaysMs?: readonly number[];
+  sleep?: (delayMs: number) => Promise<void>;
 }>;
 
 export type SelectCodexAccountOptions =
@@ -343,6 +352,23 @@ const unavailableProbe = (
   status: number | null = null,
 ): CodexUsageProbe => ({ kind: "unavailable", slot, failure, status, observedAtMs });
 
+/**
+ * True only for probe failures that can reasonably be transient: a timeout, a
+ * network or read error, an oversized response, or HTTP rate limiting and
+ * upstream server errors. Authoritative signals (quota exhaustion, expired or
+ * invalid credentials, malformed usage documents, redirects) are never
+ * classified as transient, so they are never retried and never treated as
+ * recoverable capacity.
+ */
+export const isTransientCodexUsageFailure = (probe: CodexUsageProbe): boolean => {
+  if (probe.kind === "available") return false;
+  if (probe.failure === "timeout" || probe.failure === "network_error" || probe.failure === "response_too_large") {
+    return true;
+  }
+  return probe.failure === "http_error" && probe.status !== null &&
+    (probe.status === 429 || probe.status >= 500);
+};
+
 export const probeCodexUsage = async (
   auth: CodexAuthDocument,
   model: string | null,
@@ -464,11 +490,31 @@ export const selectCodexAccountForInvocation = async (
     maxResponseBytes: options.maxResponseBytes,
     createTimeoutSignal: options.createTimeoutSignal,
   };
+  const retry = options.probeRetry ?? {};
+  const retryAttempts = retry.attempts ?? CODEX_USAGE_TRANSIENT_RETRY_ATTEMPTS;
+  if (!Number.isSafeInteger(retryAttempts) || retryAttempts < 1 || retryAttempts > 10) {
+    throw new TypeError("probeRetry.attempts must be a positive integer no greater than 10");
+  }
+  const retryDelaysMs = retry.delaysMs ?? CODEX_USAGE_TRANSIENT_RETRY_DELAYS_MS;
+  for (const delay of retryDelaysMs) {
+    if (!Number.isSafeInteger(delay) || delay < 0) {
+      throw new TypeError("probeRetry.delaysMs must be non-negative integers");
+    }
+  }
+  const retrySleep = retry.sleep ??
+    ((delayMs: number) => new Promise<void>((resolve) => globalThis.setTimeout(resolve, delayMs)));
+  const probeWithRetry = async (auth: CodexAuthDocument): Promise<CodexUsageProbe> => {
+    let probe = await probeCodexUsage(auth, options.model, dependencies);
+    for (let attempt = 1; attempt < retryAttempts && isTransientCodexUsageFailure(probe); attempt++) {
+      const delay = retryDelaysMs.length === 0 ? 0 : retryDelaysMs[Math.min(attempt - 1, retryDelaysMs.length - 1)]!;
+      if (delay > 0) await retrySleep(delay);
+      probe = await probeCodexUsage(auth, options.model, dependencies);
+    }
+    return probe;
+  };
   const probes = await Promise.all(([1, 2] as const).map((slot) => {
     const auth = authBySlot[slot - 1];
-    return auth
-      ? probeCodexUsage(auth, options.model, dependencies)
-      : Promise.resolve(invalidAuthProbe(slot, authFailures[slot - 1], nowMs));
+    return auth ? probeWithRetry(auth) : Promise.resolve(invalidAuthProbe(slot, authFailures[slot - 1], nowMs));
   })) as [CodexUsageProbe, CodexUsageProbe];
 
   const candidates = probes
