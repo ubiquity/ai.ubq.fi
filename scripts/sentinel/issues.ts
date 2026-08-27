@@ -1,4 +1,4 @@
-import type { GitHubIssue, GitHubIssueRelations, GitHubRepositoryPermission } from "./github.ts";
+import type { GitHubIssue, GitHubIssueComment, GitHubIssueRelations, GitHubRepositoryPermission } from "./github.ts";
 import { isSentinelProtectedImplementationPath, SENTINEL_POLICY } from "./policy.ts";
 import type {
   NativeReviewFinding,
@@ -11,6 +11,7 @@ import type {
 export interface GitHubIssueJobSource {
   listOpenIssues(): Promise<readonly GitHubIssue[]>;
   getIssue(issueNumber: number): Promise<GitHubIssue>;
+  listIssueComments(issueNumber: number): Promise<readonly GitHubIssueComment[]>;
   getIssueRelations(issueNumber: number): Promise<GitHubIssueRelations>;
   getRepositoryPermission(username: string): Promise<GitHubRepositoryPermission>;
 }
@@ -85,6 +86,7 @@ const NODE_ID = /^[A-Za-z0-9_=-]{4,160}$/u;
 const MAX_ISSUE_BODY_BYTES = 32 * 1_024;
 const MAX_ISSUE_FILES = 32;
 const MAX_ACCEPTANCE_ITEMS = 32;
+const MAX_IGNORABLE_ISSUE_COMMENTS = 8;
 const MAX_LEDGER_BYTES = 256 * 1_024;
 const MAX_LEDGER_ENTRIES = 512;
 const MAX_LEDGER_LINE_LENGTH = 4_096;
@@ -122,6 +124,32 @@ const sha256 = async (value: string): Promise<string> => {
 
 const validTimestamp = (value: string): boolean =>
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/u.test(value) && Number.isFinite(Date.parse(value));
+
+const UBIQUITY_OS_LABEL_DENIAL_COMMENT =
+  /^> \[!WARNING\]\n> You are not allowed to set labels\.\n\n<!-- UbiquityOS - updateLabels - [0-9a-f]{64} - @[A-Za-z0-9-]+ - https:\/\/console\.deno\.com\/ubiquity-os\/daemon-pricing\/observability\/logs\?start=\d{4}-\d{2}-\d{2}T\d{2}%3A\d{2}%3A\d{2}Z&end=\d{4}-\d{2}-\d{2}T\d{2}%3A\d{2}%3A\d{2}Z&tz=Etc%2FUTC\n\{\n[ ]{2}"caller": "updateLabels"\n\}\n-->\n$/u;
+
+export const isSentinelInertIssueComment = (comment: GitHubIssueComment): boolean =>
+  Number.isSafeInteger(comment.id) && comment.id > 0 &&
+  comment.authorLogin === "ubiquity-os[bot]" && comment.authorType === "Bot" &&
+  validTimestamp(comment.createdAt) && validTimestamp(comment.updatedAt) &&
+  Date.parse(comment.updatedAt) >= Date.parse(comment.createdAt) && UBIQUITY_OS_LABEL_DENIAL_COMMENT.test(comment.body);
+
+const normalizeInertIssueComments = async (
+  source: GitHubIssueJobSource,
+  issue: GitHubIssue,
+): Promise<GitHubIssue | null> => {
+  if (!Number.isSafeInteger(issue.comments) || issue.comments < 0) return null;
+  if (issue.comments === 0) return issue;
+  if (issue.comments > MAX_IGNORABLE_ISSUE_COMMENTS) return null;
+  const comments = await source.listIssueComments(issue.number);
+  const ids = new Set<number>();
+  if (comments.length !== issue.comments) return null;
+  for (const comment of comments) {
+    if (ids.has(comment.id) || !isSentinelInertIssueComment(comment)) return null;
+    ids.add(comment.id);
+  }
+  return { ...issue, comments: 0 };
+};
 
 const sortedUnique = (values: readonly string[]): string[] | null => {
   if (values.some((value) => value.trim() !== value || value.length === 0)) return null;
@@ -418,11 +446,13 @@ export const getCurrentGitHubIssueJob = async (
   issueNumber: number,
 ): Promise<GitHubIssueJob | null> => {
   const issue = await source.getIssue(issueNumber);
+  const normalizedIssue = await normalizeInertIssueComments(source, issue);
+  if (normalizedIssue === null) return null;
   const relations = await source.getIssueRelations(issueNumber);
-  const authorityPermission = await issueAuthorityPermission(source, issue, relations);
+  const authorityPermission = await issueAuthorityPermission(source, normalizedIssue, relations);
   return await createGitHubIssueJob(
     repository,
-    issue,
+    normalizedIssue,
     relations,
     authorityPermission,
     MAX_GITHUB_ISSUE_TIME_ESTIMATE_MINUTES,
@@ -438,9 +468,10 @@ export const selectNextGitHubIssueJob = async (
   const listed = await source.listOpenIssues();
   const candidates: GitHubIssueJob[] = [];
   for (const candidate of listed) {
+    const candidateWithoutComments = { ...candidate, comments: 0 };
     const job = await createGitHubIssueJob(
       repository,
-      candidate,
+      candidateWithoutComments,
       {
         parentIssueNumber: null,
         subIssueCount: 0,
@@ -453,6 +484,7 @@ export const selectNextGitHubIssueJob = async (
       MAX_GITHUB_ISSUE_TIME_ESTIMATE_MINUTES,
     );
     if (!job) continue;
+    if (await normalizeInertIssueComments(source, candidate) === null) continue;
     candidates.push(job);
   }
   candidates.sort(issueJobOrder);
@@ -464,11 +496,13 @@ export const selectNextGitHubIssueJob = async (
     if (current.id !== candidate.issueId || current.nodeId !== candidate.nodeId) {
       throw new Error(`GitHub issue ${candidate.number} identity changed during selection`);
     }
+    const normalizedCurrent = await normalizeInertIssueComments(source, current);
+    if (normalizedCurrent === null) continue;
     const relations = await source.getIssueRelations(candidate.number);
-    const authorityPermission = await issueAuthorityPermission(source, current, relations);
+    const authorityPermission = await issueAuthorityPermission(source, normalizedCurrent, relations);
     const job = await createGitHubIssueJob(
       repository,
-      current,
+      normalizedCurrent,
       relations,
       authorityPermission,
       MAX_GITHUB_ISSUE_TIME_ESTIMATE_MINUTES,
@@ -629,11 +663,10 @@ export const renderGitHubIssueJobLedger = (entries: readonly GitHubIssueJobLedge
   const markdown = [
     "# Sentinel Issue Job Ledger",
     "",
-    "Terminal Sentinel results for immutable GitHub issue snapshots are tracked here. Each selected snapshot is",
-    "delivered through exactly one pull request that links the issue as evidence. After a verified production keep,",
-    "Sentinel merges the delivery pull request and closes the unchanged issue with supporting evidence; a pull request",
-    "already carried by the development push is accepted after a containment check. Manual-required, failed, and",
-    "rolled-back results remain open.",
+    "Terminal Sentinel results for immutable GitHub issue snapshots are tracked here. Each selected snapshot is delivered",
+    "through exactly one pull request that links the issue as evidence. After a verified production keep, Sentinel merges the",
+    "delivery pull request and closes the unchanged issue with supporting evidence; a pull request already carried by the",
+    "development push is accepted after a containment check. Manual-required, failed, and rolled-back results remain open.",
     "",
     ...table,
     "",

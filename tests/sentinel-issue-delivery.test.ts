@@ -101,6 +101,7 @@ Deno.test("the production issue selector accepts a canonical estimate through on
   const source = {
     listOpenIssues: () => Promise.resolve([issue]),
     getIssue: () => Promise.resolve(issue),
+    listIssueComments: () => Promise.resolve([]),
     getIssueRelations: () => Promise.resolve(relations),
     getRepositoryPermission: () => Promise.resolve("write" as const),
   };
@@ -142,6 +143,15 @@ Deno.test("durable completion evidence never closes a changed issue snapshot", a
   const source = {
     listOpenIssues: () => Promise.resolve([originalIssue]),
     getIssue: () => Promise.resolve(originalIssue),
+    listIssueComments: () =>
+      Promise.resolve([{
+        id: 1,
+        authorLogin: "sentinel[bot]",
+        authorType: "Bot",
+        body: "<!-- provider-sentinel:issue-evidence:v1 -->",
+        createdAt: "2026-08-25T00:01:00Z",
+        updatedAt: "2026-08-25T00:01:00Z",
+      }]),
     getIssueRelations: () => Promise.resolve(relations),
     getRepositoryPermission: () => Promise.resolve("write" as const),
   };
@@ -170,6 +180,50 @@ Deno.test("durable completion evidence never closes a changed issue snapshot", a
       "ubiquity/ai.ubq.fi",
       retrySelection,
       evidenceOnlyIssue,
+      evidenceUpdatedAt,
+    ),
+    true,
+  );
+  const inertComment = (id: number) => ({
+    id,
+    authorLogin: "ubiquity-os[bot]",
+    authorType: "Bot",
+    body: `> [!WARNING]
+> You are not allowed to set labels.
+
+<!-- UbiquityOS - updateLabels - ${
+      "a".repeat(64)
+    } - @0x4007 - https://console.deno.com/ubiquity-os/daemon-pricing/observability/logs?start=2026-08-26T23%3A32%3A29Z&end=2026-08-26T23%3A34%3A29Z&tz=Etc%2FUTC
+{
+  "caller": "updateLabels"
+}
+-->
+`,
+    createdAt: "2026-08-26T23:33:29Z",
+    updatedAt: "2026-08-26T23:33:29Z",
+  });
+  const sourceWithInertComments = {
+    ...source,
+    listIssueComments: () =>
+      Promise.resolve([
+        inertComment(2),
+        inertComment(3),
+        {
+          id: 1,
+          authorLogin: "sentinel[bot]",
+          authorType: "Bot",
+          body: "<!-- provider-sentinel:issue-evidence:v1 -->",
+          createdAt: "2026-08-25T00:01:00Z",
+          updatedAt: "2026-08-25T00:01:00Z",
+        },
+      ]),
+  };
+  assert.equal(
+    await completionEvidenceSnapshotMatches(
+      sourceWithInertComments,
+      "ubiquity/ai.ubq.fi",
+      retrySelection,
+      { ...evidenceOnlyIssue, comments: 3 },
       evidenceUpdatedAt,
     ),
     true,

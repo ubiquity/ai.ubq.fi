@@ -2,6 +2,7 @@ import { GitHubActionsClient, type GitHubIssue } from "./github.ts";
 import {
   getCurrentGitHubIssueJob,
   type GitHubIssueJobSource,
+  isSentinelInertIssueComment,
   parseGitHubIssueJobLedger,
   renderGitHubIssueJobLedger,
 } from "./issues.ts";
@@ -286,10 +287,13 @@ export const completionEvidenceSnapshotMatches = async (
   const evidenceUpdatedMs = Date.parse(evidenceUpdatedAt);
   const issueUpdatedMs = Date.parse(issue.updatedAt);
   if (
-    issue.state !== "open" || issue.number !== selection.issue_number || issue.comments !== 1 ||
+    issue.state !== "open" || issue.number !== selection.issue_number ||
     !Number.isFinite(evidenceUpdatedMs) || !Number.isFinite(issueUpdatedMs) ||
     issueUpdatedMs < evidenceUpdatedMs || issueUpdatedMs - evidenceUpdatedMs > MAX_COMMENT_TIMESTAMP_PROPAGATION_MS
   ) return false;
+  const comments = await source.listIssueComments(issue.number);
+  const inertCommentCount = comments.filter(isSentinelInertIssueComment).length;
+  if (comments.length !== issue.comments || comments.length !== inertCommentCount + 1) return false;
   const normalizedIssue: GitHubIssue = {
     ...issue,
     comments: 0,
@@ -299,6 +303,7 @@ export const completionEvidenceSnapshotMatches = async (
     listOpenIssues: () => source.listOpenIssues(),
     getIssue: (issueNumber) =>
       issueNumber === selection.issue_number ? Promise.resolve(normalizedIssue) : source.getIssue(issueNumber),
+    listIssueComments: (issueNumber) => source.listIssueComments(issueNumber),
     getIssueRelations: (issueNumber) => source.getIssueRelations(issueNumber),
     getRepositoryPermission: (username) => source.getRepositoryPermission(username),
   };

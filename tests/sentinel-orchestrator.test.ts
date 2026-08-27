@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import issueJobLedger from "../docs/sentinel-issue-jobs.md" with { type: "text" };
 import {
   isAutonomousMode,
   isSentinelProtectedImplementationPath,
@@ -46,7 +47,12 @@ import {
   zeroUnselectedReplayBodies,
 } from "../scripts/sentinel/main.ts";
 import { CodexInvocationError } from "../scripts/sentinel/codex.ts";
-import type { GitHubIssue, GitHubIssueRelations, GitHubRepositoryPermission } from "../scripts/sentinel/github.ts";
+import type {
+  GitHubIssue,
+  GitHubIssueComment,
+  GitHubIssueRelations,
+  GitHubRepositoryPermission,
+} from "../scripts/sentinel/github.ts";
 import {
   applyGitHubIssueJobDisposition,
   blockingIssueReviewFindings,
@@ -1013,10 +1019,30 @@ const noIssueRelations: GitHubIssueRelations = {
   latestTitleEdit: null,
 };
 
+const inertIssueComment = (id: number): GitHubIssueComment => ({
+  id,
+  authorLogin: "ubiquity-os[bot]",
+  authorType: "Bot",
+  body: `> [!WARNING]
+> You are not allowed to set labels.
+
+<!-- UbiquityOS - updateLabels - ${
+    "a".repeat(64)
+  } - @0x4007 - https://console.deno.com/ubiquity-os/daemon-pricing/observability/logs?start=2026-08-26T23%3A32%3A29Z&end=2026-08-26T23%3A34%3A29Z&tz=Etc%2FUTC
+{
+  "caller": "updateLabels"
+}
+-->
+`,
+  createdAt: "2026-08-26T23:33:29Z",
+  updatedAt: "2026-08-26T23:33:29Z",
+});
+
 const githubIssueSource = (
   issues: readonly GitHubIssue[],
   relations: Readonly<Record<number, GitHubIssueRelations>> = {},
   permissions: Readonly<Record<string, GitHubRepositoryPermission>> = {},
+  comments: Readonly<Record<number, readonly GitHubIssueComment[]>> = {},
 ): GitHubIssueJobSource => {
   const byNumber = new Map(issues.map((issue) => [issue.number, issue]));
   return {
@@ -1026,6 +1052,7 @@ const githubIssueSource = (
       if (!issue) throw new Error(`Missing issue ${number}`);
       return Promise.resolve(issue);
     },
+    listIssueComments: (number) => Promise.resolve(comments[number] ?? []),
     getIssueRelations: (number) => Promise.resolve(relations[number] ?? noIssueRelations),
     getRepositoryPermission: (login) => Promise.resolve(permissions[login] ?? "admin"),
   };
@@ -1066,6 +1093,39 @@ Deno.test("GitHub issue jobs require a small trusted unclaimed repository-only s
       ...noIssueRelations,
       parentIssueNumber: 1,
     }, "admin"),
+    null,
+  );
+});
+
+Deno.test("GitHub issue selection ignores only bounded UbiquityOS label-denial comments", async () => {
+  const issue = sentinelGitHubIssue({ comments: 2 });
+  const inertComments = [inertIssueComment(1), inertIssueComment(2)];
+  const trustedSource = githubIssueSource([], {}, {}, { [issue.number]: inertComments });
+  const source = {
+    ...trustedSource,
+    listOpenIssues: () => Promise.resolve([issue]),
+    getIssue: () => Promise.resolve(issue),
+  } satisfies GitHubIssueJobSource;
+  const selected = await selectNextGitHubIssueJob(
+    source,
+    "ubiquity/ai.ubq.fi",
+    renderGitHubIssueJobLedger([]),
+  );
+  assert.equal(selected?.number, issue.number);
+  assert.equal(
+    (await getCurrentGitHubIssueJob(source, "ubiquity/ai.ubq.fi", issue.number))?.fingerprint,
+    selected?.fingerprint,
+  );
+
+  const humanComment: GitHubIssueComment = {
+    ...inertIssueComment(3),
+    authorLogin: "maintainer",
+    authorType: "User",
+    body: "Please also change the scope.",
+  };
+  const humanSource = githubIssueSource([issue], {}, {}, { [issue.number]: [inertIssueComment(1), humanComment] });
+  assert.equal(
+    await selectNextGitHubIssueJob(humanSource, "ubiquity/ai.ubq.fi", renderGitHubIssueJobLedger([])),
     null,
   );
 });
@@ -1138,6 +1198,7 @@ Deno.test("GitHub issue selection has a fixed relationship-inspection budget", a
       detailRequests += 1;
       return Promise.resolve(issues.find((issue) => issue.number === number)!);
     },
+    listIssueComments: () => Promise.resolve([]),
     getIssueRelations: () => {
       relationRequests += 1;
       return Promise.resolve({ ...noIssueRelations, subIssueCount: 1 });
@@ -1265,6 +1326,13 @@ Deno.test("GitHub issue ledger prevents unchanged retries and permits an edited 
   assert.equal(
     (await selectNextGitHubIssueJob(githubIssueSource([edited]), "ubiquity/ai.ubq.fi", ledger))?.number,
     113,
+  );
+});
+
+Deno.test("the checked-in GitHub issue ledger is canonical", () => {
+  assert.equal(
+    renderGitHubIssueJobLedger(parseGitHubIssueJobLedger(issueJobLedger)),
+    issueJobLedger,
   );
 });
 

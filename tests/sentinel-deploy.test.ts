@@ -750,6 +750,33 @@ Deno.test("GitHub issue detail and relationships use exact repository resources"
   fake.assertDrained();
 });
 
+Deno.test("GitHub issue comments preserve their immutable authors and bodies", async () => {
+  const fake = queuedFetch([
+    (request) => {
+      assertGitHubApiRequest(request, "/repos/ubiquity/ai.ubq.fi/issues/113/comments");
+      assert.equal(request.url.searchParams.get("per_page"), "100");
+      assert.equal(request.url.searchParams.get("page"), "1");
+      return json([{
+        id: 4_321,
+        user: { login: "ubiquity-os[bot]", type: "Bot" },
+        body: "Known automated note.",
+        created_at: "2026-08-21T12:00:00Z",
+        updated_at: "2026-08-21T12:00:01Z",
+      }]);
+    },
+  ]);
+
+  assert.deepEqual(await githubClient(fake.fetcher).listIssueComments(113), [{
+    id: 4_321,
+    authorLogin: "ubiquity-os[bot]",
+    authorType: "Bot",
+    body: "Known automated note.",
+    createdAt: "2026-08-21T12:00:00Z",
+    updatedAt: "2026-08-21T12:00:01Z",
+  }]);
+  fake.assertDrained();
+});
+
 Deno.test("GitHub repository permission lookup accepts only canonical calculated values", async () => {
   const fake = queuedFetch([
     (request) => {
