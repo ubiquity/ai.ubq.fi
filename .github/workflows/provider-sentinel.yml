@@ -447,7 +447,7 @@ jobs:
                 --lock="$repository_root/deno.lock" \
                 --allow-env \
                 --allow-net=api.github.com \
-                --allow-read="$repository_root/.sentinel/reports" \
+                --allow-read="$repository_root" \
                 --allow-write="$repository_root/.sentinel/reports" \
                 --allow-run="$REAL_GIT" \
                 "$repository_root/scripts/sentinel/issue-pr-pre-push.ts"
