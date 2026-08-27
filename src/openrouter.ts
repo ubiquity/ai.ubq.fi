@@ -223,12 +223,72 @@ export const openRouterTaskTypeFromResponse = (value: unknown): string | null =>
   return null;
 };
 
+const stripOpenRouterOutputLogprobs = (item: unknown): unknown => {
+  if (!isRecord(item) || Array.isArray(item) || item.type !== "message" || item.role !== "assistant") return item;
+  if (!Array.isArray(item.content)) return item;
+  let changed = false;
+  const content = item.content.map((part) => {
+    if (!isRecord(part) || Array.isArray(part) || part.type !== "output_text" || part.logprobs === undefined) {
+      return part;
+    }
+    changed = true;
+    const sanitized = { ...part };
+    delete sanitized.logprobs;
+    return sanitized;
+  });
+  return changed ? { ...item, content } : item;
+};
+
+const stripOpenRouterOutputLogprobsFromItems = (value: unknown): unknown => {
+  if (!Array.isArray(value)) return value;
+  let changed = false;
+  const items = value.map((item) => {
+    const sanitized = stripOpenRouterOutputLogprobs(item);
+    changed ||= sanitized !== item;
+    return sanitized;
+  });
+  return changed ? items : value;
+};
+
+/** Removes OpenRouter-only response fields that cannot be replayed as Responses input. */
 export const stripOpenRouterMetadata = (value: Record<string, unknown>): Record<string, unknown> => {
-  if (!isRecord(value.response) || Array.isArray(value.response)) return value;
-  if (!Object.prototype.hasOwnProperty.call(value.response, "openrouter_metadata")) return value;
-  const response = { ...value.response };
-  delete response.openrouter_metadata;
-  return { ...value, response };
+  let changed = false;
+  const next: Record<string, unknown> = { ...value };
+
+  if (isRecord(value.item) && !Array.isArray(value.item)) {
+    const item = stripOpenRouterOutputLogprobs(value.item);
+    if (item !== value.item) {
+      next.item = item;
+      changed = true;
+    }
+  }
+  if (Array.isArray(value.output)) {
+    const output = stripOpenRouterOutputLogprobsFromItems(value.output);
+    if (output !== value.output) {
+      next.output = output;
+      changed = true;
+    }
+  }
+  if (isRecord(value.response) && !Array.isArray(value.response)) {
+    const response = { ...value.response };
+    let responseChanged = false;
+    if (Object.prototype.hasOwnProperty.call(response, "openrouter_metadata")) {
+      delete response.openrouter_metadata;
+      responseChanged = true;
+    }
+    if (Array.isArray(response.output)) {
+      const output = stripOpenRouterOutputLogprobsFromItems(response.output);
+      if (output !== response.output) {
+        response.output = output;
+        responseChanged = true;
+      }
+    }
+    if (responseChanged) {
+      next.response = response;
+      changed = true;
+    }
+  }
+  return changed ? next : value;
 };
 
 export const fetchOpenRouterResponses = async (
