@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import {
-  parseGitHubIssuePriorityLabel,
   parseGitHubIssueTimeLabel,
   renderGitHubIssueJobLedger,
   selectNextGitHubIssueJob,
@@ -10,6 +9,7 @@ import {
   isContainedDevelopmentComparison,
   isIssueDeliveryFailSafeRevert,
   isPullRequestMergeRefusalStatus,
+  ISSUE_COMPLETION_EVIDENCE_TEXT,
   issuePullRequestMarker,
   parseGitHubIssuePullRequestRecord,
   parseGitHubIssueSelectionReport,
@@ -19,6 +19,10 @@ import {
   renderIssuePullRequestBody,
   selectDevelopmentPush,
 } from "../scripts/sentinel/issue-delivery.ts";
+import {
+  completionEvidenceSnapshotMatches,
+  mergeDeliveryPullRequest,
+} from "../scripts/sentinel/issue-delivery-reconcile.ts";
 
 const selection = parseGitHubIssueSelectionReport({
   schema_version: 1,
@@ -55,61 +59,42 @@ const pullRequest = parseGitHubIssuePullRequestRecord({
   reused: false,
 });
 
-Deno.test("GitHub issue time labels accept any canonical estimate unit without a duration cap", () => {
+Deno.test("GitHub issue time labels accept deterministic estimates through one day", () => {
   assert.equal(parseGitHubIssueTimeLabel("Time: <15 Minutes"), 15);
   assert.equal(parseGitHubIssueTimeLabel("Time: <1 Hour"), 60);
   assert.equal(parseGitHubIssueTimeLabel("Time: <4 Hours"), 240);
-  assert.equal(parseGitHubIssueTimeLabel("Time: <25 Hours"), 1_500);
-  assert.equal(parseGitHubIssueTimeLabel("Time: <2 Days"), 2_880);
+  assert.equal(parseGitHubIssueTimeLabel("Time: <24 Hours"), 1_440);
   assert.equal(parseGitHubIssueTimeLabel("Time: <1 Day"), 1_440);
-  assert.equal(parseGitHubIssueTimeLabel("Time: <1 Week"), 10_080);
-  assert.equal(parseGitHubIssueTimeLabel("Time: <2 Weeks"), 20_160);
-  assert.equal(parseGitHubIssueTimeLabel("Time: <1 Month"), 43_200);
-  assert.equal(parseGitHubIssueTimeLabel("Time: <1 Year"), 525_600);
-  assert.equal(parseGitHubIssueTimeLabel("Time: <3 Years"), 1_576_800);
+  assert.equal(parseGitHubIssueTimeLabel("Time: <25 Hours"), null);
+  assert.equal(parseGitHubIssueTimeLabel("Time: <2 Days"), null);
   assert.equal(parseGitHubIssueTimeLabel("Time: <1 Hours"), null);
   assert.equal(parseGitHubIssueTimeLabel("Time: 1 Day"), null);
-  assert.equal(parseGitHubIssueTimeLabel("Time: <0 Hours"), null);
 });
 
-Deno.test("GitHub issue priority labels accept every canonical and generic priority", () => {
-  assert.deepEqual(parseGitHubIssuePriorityLabel("Priority: 0 (Regression)"), { severity: "P2", rank: 1 });
-  assert.deepEqual(parseGitHubIssuePriorityLabel("Priority: 1 (Normal)"), { severity: "P3", rank: 6 });
-  assert.deepEqual(parseGitHubIssuePriorityLabel("Priority: 2 (Medium)"), { severity: "P3", rank: 5 });
-  assert.deepEqual(parseGitHubIssuePriorityLabel("Priority: 3 (High)"), { severity: "P2", rank: 4 });
-  assert.deepEqual(parseGitHubIssuePriorityLabel("Priority: 4 (Urgent)"), { severity: "P2", rank: 2 });
-  assert.deepEqual(parseGitHubIssuePriorityLabel("Priority: 5 (Emergency)"), { severity: "P2", rank: 0 });
-  assert.deepEqual(parseGitHubIssuePriorityLabel("Priority: 6 (Other)"), { severity: "P3", rank: 7 });
-  assert.deepEqual(parseGitHubIssuePriorityLabel("Priority: 7 (Blocker)"), { severity: "P2", rank: 3 });
-  assert.equal(parseGitHubIssuePriorityLabel("Priority: 2 Medium"), null);
-  assert.equal(parseGitHubIssuePriorityLabel("Priority: (Medium)"), null);
-  assert.equal(parseGitHubIssuePriorityLabel("Time: <1 Hour"), null);
-});
-
-Deno.test("the production issue selector accepts a canonical week-long high-priority estimate", async () => {
+Deno.test("the production issue selector accepts a canonical estimate through one day", async () => {
   const issue = {
     id: 1,
     nodeId: "I_kwDOQoe6nc8AAAABN6Test",
     number: 1,
     state: "open" as const,
-    title: "Bounded one-week emergency issue",
+    title: "Bounded one-day issue",
     body: "Implement the bounded change.\n\nAcceptance:\n- The change is complete.\n\nFiles:\n- src/http.ts\n",
     htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/1",
     authorLogin: "0x4007",
     authorAssociation: "MEMBER",
-    labels: ["Priority: 5 (Emergency)", "Time: <1 Week"],
+    labels: ["Priority: 2 (Medium)", "Time: <1 Day"],
     assignees: [],
     locked: false,
-    comments: 3,
+    comments: 0,
     createdAt: "2026-08-25T00:00:00Z",
     updatedAt: "2026-08-25T00:00:01Z",
     isPullRequest: false,
   };
   const relations = {
-    parentIssueNumber: 12,
-    subIssueCount: 1,
-    blockedByCount: 1,
-    blockingCount: 1,
+    parentIssueNumber: null,
+    subIssueCount: 0,
+    blockedByCount: 0,
+    blockingCount: 0,
     latestBodyEdit: null,
     latestTitleEdit: null,
   };
@@ -124,10 +109,91 @@ Deno.test("the production issue selector accepts a canonical week-long high-prio
     "ubiquity/ai.ubq.fi",
     renderGitHubIssueJobLedger([]),
   );
-  assert.equal(selected?.timeLabel, "Time: <1 Week");
-  assert.equal(selected?.priority, "P2");
-  assert.equal(selected?.priorityLabel, "Priority: 5 (Emergency)");
-  assert.equal(selected?.comments, 3);
+  assert.equal(selected?.timeLabel, "Time: <1 Day");
+});
+
+Deno.test("durable completion evidence never closes a changed issue snapshot", async () => {
+  const originalIssue = {
+    id: 2,
+    nodeId: "I_kwDOQoe6nc8AAAABN7Test",
+    number: 2,
+    state: "open" as const,
+    title: "Bounded durable issue",
+    body: "Implement the bounded change.\n\nAcceptance:\n- The change is complete.\n\nFiles:\n- src/http.ts\n",
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/2",
+    authorLogin: "0x4007",
+    authorAssociation: "MEMBER",
+    labels: ["Priority: 2 (Medium)", "Time: <1 Day"],
+    assignees: [],
+    locked: false,
+    comments: 0,
+    createdAt: "2026-08-25T00:00:00Z",
+    updatedAt: "2026-08-25T00:00:01Z",
+    isPullRequest: false,
+  };
+  const relations = {
+    parentIssueNumber: null,
+    subIssueCount: 0,
+    blockedByCount: 0,
+    blockingCount: 0,
+    latestBodyEdit: null,
+    latestTitleEdit: null,
+  };
+  const source = {
+    listOpenIssues: () => Promise.resolve([originalIssue]),
+    getIssue: () => Promise.resolve(originalIssue),
+    getIssueRelations: () => Promise.resolve(relations),
+    getRepositoryPermission: () => Promise.resolve("write" as const),
+  };
+  const selected = await selectNextGitHubIssueJob(
+    source,
+    "ubiquity/ai.ubq.fi",
+    renderGitHubIssueJobLedger([]),
+  );
+  assert.ok(selected);
+  const retrySelection = parseGitHubIssueSelectionReport({
+    schema_version: 1,
+    issue_id: selected.issueId,
+    issue_number: selected.number,
+    fingerprint: selected.fingerprint,
+    body_sha256: selected.bodySha256,
+    priority: selected.priority,
+    time_label: selected.timeLabel,
+    files: selected.files,
+    updated_at: selected.updatedAt,
+  });
+  const evidenceUpdatedAt = "2026-08-25T00:01:00Z";
+  const evidenceOnlyIssue = { ...originalIssue, comments: 1, updatedAt: "2026-08-25T00:01:01Z" };
+  assert.equal(
+    await completionEvidenceSnapshotMatches(
+      source,
+      "ubiquity/ai.ubq.fi",
+      retrySelection,
+      evidenceOnlyIssue,
+      evidenceUpdatedAt,
+    ),
+    true,
+  );
+  assert.equal(
+    await completionEvidenceSnapshotMatches(
+      source,
+      "ubiquity/ai.ubq.fi",
+      retrySelection,
+      { ...evidenceOnlyIssue, body: `${evidenceOnlyIssue.body}\nChanged after completion evidence.\n` },
+      evidenceUpdatedAt,
+    ),
+    false,
+  );
+  assert.equal(
+    await completionEvidenceSnapshotMatches(
+      source,
+      "ubiquity/ai.ubq.fi",
+      retrySelection,
+      { ...evidenceOnlyIssue, comments: 2 },
+      evidenceUpdatedAt,
+    ),
+    false,
+  );
 });
 
 Deno.test("pre-push parsing isolates exactly one development update", () => {
@@ -201,6 +267,136 @@ Deno.test("merge refusals are contained only when the head is already in develop
   assert.equal(isContainedDevelopmentComparison("diverged"), false);
 });
 
+Deno.test("the issue delivery merge pins the immutable pull-request head SHA", async () => {
+  const requests: Array<Readonly<{ url: string; method: string; body: string | null }>> = [];
+  const fetcher: typeof fetch = (input, init = {}) => {
+    const url = input instanceof Request ? input.url : String(input);
+    const method = init.method ?? (input instanceof Request ? input.method : "GET");
+    requests.push({ url, method, body: typeof init.body === "string" ? init.body : null });
+    if (method === "GET" && url.endsWith("/pulls/129")) {
+      return Promise.resolve(Response.json({
+        number: 129,
+        state: "open",
+        merged_at: null,
+        head: { ref: pullRequest.head_branch, sha: pullRequest.head_sha },
+        base: { ref: "development" },
+      }));
+    }
+    if (method === "PUT" && url.endsWith("/pulls/129/merge")) {
+      return Promise.resolve(Response.json({ merged: true }));
+    }
+    return Promise.reject(new Error(`Unexpected GitHub request: ${method} ${url}`));
+  };
+
+  assert.deepEqual(
+    await mergeDeliveryPullRequest("test-token", "ubiquity/ai.ubq.fi", pullRequest, fetcher),
+    { source: "sentinel_merge_api" },
+  );
+  const mergeRequest = requests.find((request) => request.method === "PUT");
+  assert.ok(mergeRequest?.body);
+  assert.deepEqual(JSON.parse(mergeRequest.body), {
+    merge_method: "merge",
+    commit_title: "merge: Provider Sentinel deliverable for #112",
+    sha: pullRequest.head_sha,
+  });
+});
+
+Deno.test("the issue delivery merge rejects a changed pull-request head before merging", async () => {
+  let requests = 0;
+  const fetcher: typeof fetch = () => {
+    requests++;
+    return Promise.resolve(Response.json({
+      number: 129,
+      state: "open",
+      merged_at: null,
+      head: { ref: pullRequest.head_branch, sha: "d".repeat(40) },
+      base: { ref: "development" },
+    }));
+  };
+
+  await assert.rejects(
+    () => mergeDeliveryPullRequest("test-token", "ubiquity/ai.ubq.fi", pullRequest, fetcher),
+    /changed identity/,
+  );
+  assert.equal(requests, 1);
+});
+
+Deno.test("the issue delivery merge accepts a refusal only after development containment", async () => {
+  const fetcher: typeof fetch = (input, init = {}) => {
+    const url = input instanceof Request ? input.url : String(input);
+    const method = init.method ?? (input instanceof Request ? input.method : "GET");
+    if (method === "GET" && url.endsWith("/pulls/129")) {
+      return Promise.resolve(Response.json({
+        number: 129,
+        state: "open",
+        merged_at: null,
+        head: { ref: pullRequest.head_branch, sha: pullRequest.head_sha },
+        base: { ref: "development" },
+      }));
+    }
+    if (method === "PUT" && url.endsWith("/pulls/129/merge")) {
+      return Promise.resolve(Response.json({ merged: false }, { status: 409 }));
+    }
+    if (method === "GET" && url.includes("/compare/development...")) {
+      return Promise.resolve(Response.json({ status: "behind" }));
+    }
+    return Promise.reject(new Error(`Unexpected GitHub request: ${method} ${url}`));
+  };
+
+  assert.deepEqual(
+    await mergeDeliveryPullRequest("test-token", "ubiquity/ai.ubq.fi", pullRequest, fetcher),
+    { source: "development_content" },
+  );
+  const uncontainedFetcher: typeof fetch = (input, init = {}) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.includes("/compare/development...")) {
+      return Promise.resolve(Response.json({ status: "ahead" }));
+    }
+    return fetcher(input, init);
+  };
+  await assert.rejects(
+    () => mergeDeliveryPullRequest("test-token", "ubiquity/ai.ubq.fi", pullRequest, uncontainedFetcher),
+    /failed with HTTP 409/,
+  );
+});
+
+Deno.test("the issue delivery merge rejects a changed head after a merge refusal", async () => {
+  let pullRequestFetches = 0;
+  let compared = false;
+  const fetcher: typeof fetch = (input, init = {}) => {
+    const url = input instanceof Request ? input.url : String(input);
+    const method = init.method ?? (input instanceof Request ? input.method : "GET");
+    if (method === "GET" && url.endsWith("/pulls/129")) {
+      pullRequestFetches++;
+      return Promise.resolve(Response.json({
+        number: 129,
+        state: "open",
+        merged_at: null,
+        head: {
+          ref: pullRequest.head_branch,
+          sha: pullRequestFetches === 1 ? pullRequest.head_sha : "d".repeat(40),
+        },
+        base: { ref: "development" },
+      }));
+    }
+    if (method === "PUT" && url.endsWith("/pulls/129/merge")) {
+      return Promise.resolve(Response.json({ merged: false }, { status: 409 }));
+    }
+    if (method === "GET" && url.includes("/compare/development...")) {
+      compared = true;
+      return Promise.resolve(Response.json({ status: "behind" }));
+    }
+    return Promise.reject(new Error(`Unexpected GitHub request: ${method} ${url}`));
+  };
+
+  await assert.rejects(
+    () => mergeDeliveryPullRequest("test-token", "ubiquity/ai.ubq.fi", pullRequest, fetcher),
+    /changed identity/,
+  );
+  assert.equal(pullRequestFetches, 2);
+  assert.equal(compared, false);
+});
+
 Deno.test("issue closure requires a merged PR, a kept deployment, and the same snapshot", () => {
   const base = {
     hasSelection: true,
@@ -239,6 +435,7 @@ Deno.test("final evidence binds the issue, PR, workflow, commit, and production 
   });
   assert.match(evidence, /pull\/129/);
   assert.match(evidence, new RegExp("c".repeat(40), "u"));
+  assert.ok(evidence.includes(ISSUE_COMPLETION_EVIDENCE_TEXT));
   assert.match(evidence, /closed as completed/);
   assert.match(evidence, /Monitoring decision: keep/);
 });

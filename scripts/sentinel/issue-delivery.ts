@@ -4,6 +4,9 @@ const SAFE_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/u;
 const SAFE_REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const SAFE_URL = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/(?:pull|actions\/runs)\/[1-9][0-9]*$/u;
 
+export const ISSUE_COMPLETION_EVIDENCE_TEXT =
+  "Delivered, merged, and verified in production; issue closed as completed.";
+
 export type GitHubIssueSelectionReport = Readonly<{
   schema_version: 1;
   issue_id: number;
@@ -318,7 +321,7 @@ export const renderIssueDeliveryEvidence = (
     input.pullRequest.head_sha !== input.candidateSha
   ) throw new Error("Sentinel final evidence does not match the issue pull request");
   const result = input.action === "close_completed"
-    ? "Delivered, merged, and verified in production; issue closed as completed."
+    ? ISSUE_COMPLETION_EVIDENCE_TEXT
     : input.action === "leave_open_manual_required"
     ? "No autonomous deliverable was accepted; issue remains open for manual work."
     : input.action === "leave_open_rolled_back"
