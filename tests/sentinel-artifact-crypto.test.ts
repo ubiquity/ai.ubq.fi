@@ -259,6 +259,62 @@ Deno.test({
           .test(workflow),
       "The workflow must gate agents on a successful auth-state upload and readiness probe",
     );
+    const maskMaintained = workflow.indexOf("Mask maintained Codex auth state");
+    const maintenanceDiagnostics = workflow.slice(maintain, maskMaintained);
+    for (
+      const safeField of [
+        ".due",
+        ".invoked",
+        ".commandCode",
+        ".timedOut",
+        ".outputExceeded",
+        ".stdoutBytes",
+        ".stderrBytes",
+        ".stateChanged",
+        ".readyForMaintenanceWindow",
+      ]
+    ) {
+      assert(
+        maintenanceDiagnostics.includes(safeField),
+        `Auth maintenance summary is missing safe disposition field ${safeField}`,
+      );
+    }
+    assert(
+      maintenanceDiagnostics.includes('echo "### Codex auth maintenance"') &&
+        maintenanceDiagnostics.includes('>> "$GITHUB_STEP_SUMMARY"'),
+      "Auth maintenance must publish its validated categorical and numeric dispositions",
+    );
+    for (const forbidden of ["auth.json", "id_token", "access_token", "refresh_token", "account_id", "sha256"]) {
+      assert(
+        !maintenanceDiagnostics.includes(forbidden),
+        `Auth maintenance diagnostics must not expose ${forbidden}`,
+      );
+    }
+    const authPreflight = workflow.indexOf("Enforce durable Codex auth readiness");
+    const authDiagnostics = workflow.slice(authPreflight, workSelection);
+    for (
+      const safeOutput of [
+        "steps.auth-state-readiness.outputs.auth_usable",
+        "steps.auth-state-readiness.outputs.selected_slot",
+        "steps.auth-state-readiness.outputs.slot_1_code",
+        "steps.auth-state-readiness.outputs.slot_1_http_status",
+        "steps.auth-state-readiness.outputs.slot_1_headroom_percent",
+        "steps.auth-state-readiness.outputs.slot_2_code",
+        "steps.auth-state-readiness.outputs.slot_2_http_status",
+        "steps.auth-state-readiness.outputs.slot_2_headroom_percent",
+      ]
+    ) {
+      assert(authDiagnostics.includes(safeOutput), `Auth gate is missing safe probe output ${safeOutput}`);
+    }
+    assert(
+      authDiagnostics.includes("safe_probe_code()") &&
+        authDiagnostics.includes("### Codex auth durability preflight") &&
+        authDiagnostics.includes("Probe slot 1: code=") &&
+        authDiagnostics.includes("Probe slot 2: code=") &&
+        authDiagnostics.includes("::error::Sentinel Codex auth probe failed:") &&
+        authDiagnostics.includes('if [ "$failed" = "true" ]'),
+      "The failing auth gate must publish allowlisted per-slot diagnostics before agent work",
+    );
     assert(
       authState.includes("Deno.makeTempDir({") && authState.includes("dir: runnerTemp"),
       "Artifact-backed auth restore must unpack only inside the authorized private runner directory",

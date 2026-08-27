@@ -323,7 +323,47 @@ jobs:
             --allow-run=codex \
             scripts/sentinel/auth-maintenance.ts \
             maintain > "$result_path"
-          test "$(jq -r '.schema_version' "$result_path")" = "1"
+          jq -e '
+            .schema_version == 1 and
+            (.slots | type == "array" and length >= 1 and length <= 2) and
+            ([.slots[].slot] | length == (unique | length)) and
+            all(.slots[];
+              (.slot == 1 or .slot == 2) and
+              (.due | type) == "boolean" and
+              (.invoked | type) == "boolean" and
+              (
+                .commandCode == null or
+                (
+                  (.commandCode | type) == "number" and
+                  (.commandCode | floor) == .commandCode and
+                  .commandCode >= 0 and
+                  .commandCode <= 255
+                )
+              ) and
+              (.timedOut | type) == "boolean" and
+              (.outputExceeded | type) == "boolean" and
+              (.stdoutBytes | type) == "number" and
+              (.stdoutBytes | floor) == .stdoutBytes and
+              .stdoutBytes >= 0 and
+              (.stderrBytes | type) == "number" and
+              (.stderrBytes | floor) == .stderrBytes and
+              .stderrBytes >= 0 and
+              (.stateChanged | type) == "boolean" and
+              (.readyForMaintenanceWindow | type) == "boolean"
+            )
+          ' "$result_path" > /dev/null
+          {
+            echo "### Codex auth maintenance"
+            echo
+            jq -r '
+              .slots | sort_by(.slot)[] |
+              "- Slot \(.slot): due=\(.due); invoked=\(.invoked); " +
+              "command_code=\(.commandCode // "none"); timed_out=\(.timedOut); " +
+              "output_exceeded=\(.outputExceeded); stdout_bytes=\(.stdoutBytes); " +
+              "stderr_bytes=\(.stderrBytes); state_changed=\(.stateChanged); " +
+              "ready_for_maintenance_window=\(.readyForMaintenanceWindow)"
+            ' "$result_path"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Mask maintained Codex auth state
         id: auth-state-mask-maintained
@@ -421,8 +461,64 @@ jobs:
           SEAL_OUTCOME: ${{ steps.auth-state-seal.outcome }}
           UPLOAD_OUTCOME: ${{ steps.auth-state-upload.outcome }}
           READINESS_OUTCOME: ${{ steps.auth-state-readiness.outcome }}
+          AUTH_USABLE: ${{ steps.auth-state-readiness.outputs.auth_usable }}
+          SELECTED_SLOT: ${{ steps.auth-state-readiness.outputs.selected_slot }}
+          SLOT_1_CODE: ${{ steps.auth-state-readiness.outputs.slot_1_code }}
+          SLOT_1_HTTP_STATUS: ${{ steps.auth-state-readiness.outputs.slot_1_http_status }}
+          SLOT_1_HEADROOM_PERCENT: ${{ steps.auth-state-readiness.outputs.slot_1_headroom_percent }}
+          SLOT_2_CODE: ${{ steps.auth-state-readiness.outputs.slot_2_code }}
+          SLOT_2_HTTP_STATUS: ${{ steps.auth-state-readiness.outputs.slot_2_http_status }}
+          SLOT_2_HEADROOM_PERCENT: ${{ steps.auth-state-readiness.outputs.slot_2_headroom_percent }}
         run: |
           set -euo pipefail
+          safe_outcome() {
+            case "$1" in
+              success|failure|cancelled|skipped) printf '%s' "$1" ;;
+              *) printf 'unavailable' ;;
+            esac
+          }
+          safe_boolean() {
+            case "$1" in
+              true|false) printf '%s' "$1" ;;
+              *) printf 'unavailable' ;;
+            esac
+          }
+          safe_selected_slot() {
+            case "$1" in
+              1|2|none) printf '%s' "$1" ;;
+              *) printf 'unavailable' ;;
+            esac
+          }
+          safe_probe_code() {
+            case "$1" in
+              available|not_configured|invalid_base64|invalid_utf8|invalid_json|invalid_document|invalid_access_token|access_token_expiring|timeout|network_error|redirect_rejected|http_error|response_too_large|invalid_response_json|invalid_usage_document|quota_exhausted|ready|missing|account_identity_changed) printf '%s' "$1" ;;
+              *) printf 'unavailable' ;;
+            esac
+          }
+          safe_http_status() {
+            if [ "$1" = "none" ] || [[ "$1" =~ ^[1-5][0-9][0-9]$ ]]; then
+              printf '%s' "$1"
+            else
+              printf 'unavailable'
+            fi
+          }
+          safe_headroom() {
+            if [ "$1" = "none" ] || [[ "$1" =~ ^[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?$ ]]; then
+              printf '%s' "$1"
+            else
+              printf 'unavailable'
+            fi
+          }
+
+          auth_usable="$(safe_boolean "$AUTH_USABLE")"
+          selected_slot="$(safe_selected_slot "$SELECTED_SLOT")"
+          slot_1_code="$(safe_probe_code "$SLOT_1_CODE")"
+          slot_1_http_status="$(safe_http_status "$SLOT_1_HTTP_STATUS")"
+          slot_1_headroom_percent="$(safe_headroom "$SLOT_1_HEADROOM_PERCENT")"
+          slot_2_code="$(safe_probe_code "$SLOT_2_CODE")"
+          slot_2_http_status="$(safe_http_status "$SLOT_2_HTTP_STATUS")"
+          slot_2_headroom_percent="$(safe_headroom "$SLOT_2_HEADROOM_PERCENT")"
+
           failed=false
           for outcome in \
             "$PREPARE_OUTCOME" \
@@ -442,8 +538,43 @@ jobs:
           elif [ "$NEEDS_MAINTENANCE" != "false" ]; then
             failed=true
           fi
+          for diagnostic in \
+            "$auth_usable" \
+            "$selected_slot" \
+            "$slot_1_code" \
+            "$slot_1_http_status" \
+            "$slot_1_headroom_percent" \
+            "$slot_2_code" \
+            "$slot_2_http_status" \
+            "$slot_2_headroom_percent"; do
+            if [ "$diagnostic" = "unavailable" ]; then
+              failed=true
+            fi
+          done
+          if [ "$READINESS_OUTCOME" = "success" ] && \
+            { [ "$auth_usable" != "true" ] || [ "$selected_slot" = "none" ]; }; then
+            failed=true
+          fi
+          {
+            echo "### Codex auth durability preflight"
+            echo
+            echo "- Prepare: $(safe_outcome "$PREPARE_OUTCOME")"
+            echo "- Mask restored state: $(safe_outcome "$MASK_RESTORED_OUTCOME")"
+            echo "- Maintenance required: $(safe_boolean "$NEEDS_MAINTENANCE")"
+            echo "- Maintenance install: $(safe_outcome "$INSTALL_OUTCOME")"
+            echo "- Maintenance run: $(safe_outcome "$MAINTENANCE_OUTCOME")"
+            echo "- Mask maintained state: $(safe_outcome "$MASK_MAINTAINED_OUTCOME")"
+            echo "- Seal: $(safe_outcome "$SEAL_OUTCOME")"
+            echo "- Upload: $(safe_outcome "$UPLOAD_OUTCOME")"
+            echo "- Readiness probe: $(safe_outcome "$READINESS_OUTCOME")"
+            echo "- Probe usable: $auth_usable"
+            echo "- Probe selected slot: $selected_slot"
+            echo "- Probe slot 1: code=$slot_1_code; HTTP status=$slot_1_http_status; headroom percent=$slot_1_headroom_percent"
+            echo "- Probe slot 2: code=$slot_2_code; HTTP status=$slot_2_http_status; headroom percent=$slot_2_headroom_percent"
+          } >> "$GITHUB_STEP_SUMMARY"
           if [ "$failed" = "true" ]; then
-            echo "::error::Sentinel Codex auth state was not durably persisted and proven ready."
+            echo "::error::Sentinel Codex auth durability failed: prepare=$(safe_outcome "$PREPARE_OUTCOME"), mask_restored=$(safe_outcome "$MASK_RESTORED_OUTCOME"), needs_maintenance=$(safe_boolean "$NEEDS_MAINTENANCE"), install=$(safe_outcome "$INSTALL_OUTCOME"), maintenance=$(safe_outcome "$MAINTENANCE_OUTCOME"), mask_maintained=$(safe_outcome "$MASK_MAINTAINED_OUTCOME"), seal=$(safe_outcome "$SEAL_OUTCOME"), upload=$(safe_outcome "$UPLOAD_OUTCOME"), readiness=$(safe_outcome "$READINESS_OUTCOME")."
+            echo "::error::Sentinel Codex auth probe failed: usable=$auth_usable, selected_slot=$selected_slot, slot_1_code=$slot_1_code, slot_1_http_status=$slot_1_http_status, slot_1_headroom_percent=$slot_1_headroom_percent, slot_2_code=$slot_2_code, slot_2_http_status=$slot_2_http_status, slot_2_headroom_percent=$slot_2_headroom_percent."
             exit 1
           fi
           echo "Codex auth state was restored, durably sealed, and passively probed." >> "$GITHUB_STEP_SUMMARY"
