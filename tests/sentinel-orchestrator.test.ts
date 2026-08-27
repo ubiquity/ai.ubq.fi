@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import issueJobLedger from "../docs/sentinel-issue-jobs.md" with { type: "text" };
 import {
   isAutonomousMode,
   isSentinelProtectedImplementationPath,
@@ -46,7 +47,12 @@ import {
   zeroUnselectedReplayBodies,
 } from "../scripts/sentinel/main.ts";
 import { CodexInvocationError } from "../scripts/sentinel/codex.ts";
-import type { GitHubIssue, GitHubIssueRelations, GitHubRepositoryPermission } from "../scripts/sentinel/github.ts";
+import type {
+  GitHubIssue,
+  GitHubIssueComment,
+  GitHubIssueRelations,
+  GitHubRepositoryPermission,
+} from "../scripts/sentinel/github.ts";
 import {
   applyGitHubIssueJobDisposition,
   blockingIssueReviewFindings,
@@ -58,7 +64,8 @@ import {
   type GitHubIssueJobSource,
   githubIssueJobTriageReport,
   issueReviewBacklogFindings,
-  MAX_ISSUE_JOB_CANDIDATES,
+  MAX_ISSUE_JOB_DETAIL_COMMENT_INSPECTIONS,
+  MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS,
   parseGitHubIssueJobBody,
   parseGitHubIssueJobHint,
   parseGitHubIssueJobLedger,
@@ -1013,6 +1020,26 @@ const noIssueRelations: GitHubIssueRelations = {
   latestTitleEdit: null,
 };
 
+const inertIssueComments = (count: number): readonly GitHubIssueComment[] =>
+  Array.from({ length: count }, (_, index) => ({
+    id: 50_000 + index,
+    authorLogin: "ubiquity-os[bot]",
+    authorType: "Bot",
+    body: `> [!WARNING]
+> You are not allowed to set labels.
+
+<!-- UbiquityOS - updateLabels - ${
+      "a".repeat(64)
+    } - @0x4007 - https://console.deno.com/ubiquity-os/daemon-pricing/observability/logs?start=2026-08-26T23%3A32%3A29Z&end=2026-08-26T23%3A34%3A29Z&tz=Etc%2FUTC
+{
+  "caller": "updateLabels"
+}
+-->
+`,
+    createdAt: "2026-08-26T23:33:29Z",
+    updatedAt: "2026-08-26T23:33:29Z",
+  }));
+
 const githubIssueSource = (
   issues: readonly GitHubIssue[],
   relations: Readonly<Record<number, GitHubIssueRelations>> = {},
@@ -1026,6 +1053,7 @@ const githubIssueSource = (
       if (!issue) throw new Error(`Missing issue ${number}`);
       return Promise.resolve(issue);
     },
+    listIssueComments: (number) => Promise.resolve(inertIssueComments(byNumber.get(number)?.comments ?? 0)),
     getIssueRelations: (number) => Promise.resolve(relations[number] ?? noIssueRelations),
     getRepositoryPermission: (login) => Promise.resolve(permissions[login] ?? "admin"),
   };
@@ -1040,7 +1068,6 @@ Deno.test("GitHub issue jobs require a small trusted unclaimed repository-only s
     const issue of [
       sentinelGitHubIssue({ assignees: ["worker"] }),
       sentinelGitHubIssue({ locked: true }),
-      sentinelGitHubIssue({ comments: 1 }),
       sentinelGitHubIssue({ labels: ["Priority: 2 (Medium)", "Time: <4 Hours"] }),
       sentinelGitHubIssue({ body: githubIssueBody(["deno.json"]) }),
       sentinelGitHubIssue({ body: githubIssueBody(["../outside.ts"]) }),
@@ -1048,6 +1075,35 @@ Deno.test("GitHub issue jobs require a small trusted unclaimed repository-only s
   ) assert.equal(await createGitHubIssueJob("ubiquity/ai.ubq.fi", issue, noIssueRelations, "admin"), null);
   assert.ok(await createGitHubIssueJob("ubiquity/ai.ubq.fi", sentinelGitHubIssue(), noIssueRelations, "write"));
   assert.ok(await createGitHubIssueJob("ubiquity/ai.ubq.fi", sentinelGitHubIssue(), noIssueRelations, "admin"));
+  const commented = await createGitHubIssueJob(
+    "ubiquity/ai.ubq.fi",
+    sentinelGitHubIssue({ comments: 3 }),
+    noIssueRelations,
+    "admin",
+  );
+  assert.equal(commented?.comments, 3);
+  assert.equal(
+    (await createGitHubIssueJob(
+      "ubiquity/ai.ubq.fi",
+      sentinelGitHubIssue({ comments: 998 }),
+      noIssueRelations,
+      "admin",
+    ))?.comments,
+    998,
+  );
+  assert.equal(
+    await createGitHubIssueJob(
+      "ubiquity/ai.ubq.fi",
+      sentinelGitHubIssue({ comments: 999 }),
+      noIssueRelations,
+      "admin",
+    ),
+    null,
+  );
+  assert.notEqual(
+    commented?.fingerprint,
+    (await createGitHubIssueJob("ubiquity/ai.ubq.fi", sentinelGitHubIssue(), noIssueRelations, "admin"))?.fingerprint,
+  );
   for (const permission of ["none", "read"] as const) {
     assert.equal(
       await createGitHubIssueJob("ubiquity/ai.ubq.fi", sentinelGitHubIssue(), noIssueRelations, permission),
@@ -1118,8 +1174,211 @@ Deno.test("GitHub issue selection is deterministic, snapshot-bound, and becomes 
   assert.equal(githubIssueJobMatchesHint(selectedHint, changed), false);
 });
 
+Deno.test("GitHub issue selection rejects a comment-count race", async () => {
+  const listed = sentinelGitHubIssue({ comments: 3 });
+  const source: GitHubIssueJobSource = {
+    listOpenIssues: () => Promise.resolve([listed]),
+    getIssue: () => Promise.resolve({ ...listed, comments: 4 }),
+    listIssueComments: () => Promise.resolve(inertIssueComments(4)),
+    getIssueRelations: () => Promise.resolve(noIssueRelations),
+    getRepositoryPermission: () => Promise.resolve("admin"),
+  };
+  await assert.rejects(
+    () => selectNextGitHubIssueJob(source, "ubiquity/ai.ubq.fi", renderGitHubIssueJobLedger([])),
+    /snapshot changed during selection/,
+  );
+});
+
+Deno.test("GitHub issue selection rejects human comments while accepting fixed bot notices", async () => {
+  const issue = sentinelGitHubIssue({ comments: 1 });
+  const source: GitHubIssueJobSource = {
+    ...githubIssueSource([issue]),
+    listIssueComments: () =>
+      Promise.resolve([{
+        id: 70_001,
+        authorLogin: "human-reviewer",
+        authorType: "User",
+        body: "I am working on this issue.",
+        createdAt: "2026-08-26T23:33:29Z",
+        updatedAt: "2026-08-26T23:33:29Z",
+      }]),
+  };
+  assert.equal(
+    await selectNextGitHubIssueJob(source, "ubiquity/ai.ubq.fi", renderGitHubIssueJobLedger([])),
+    null,
+  );
+  const laterIssue = sentinelGitHubIssue({
+    id: 10_114,
+    nodeId: "I_kwDOIssue114",
+    number: 114,
+    title: "Later eligible issue",
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/114",
+    createdAt: "2026-08-23T19:06:04Z",
+    updatedAt: "2026-08-23T19:07:28Z",
+  });
+  const issues = [issue, laterIssue];
+  const byNumber = new Map(issues.map((candidate) => [candidate.number, candidate]));
+  const unknownAuthorSource: GitHubIssueJobSource = {
+    listOpenIssues: () => Promise.resolve(issues),
+    getIssue: (number) => Promise.resolve(byNumber.get(number)!),
+    listIssueComments: (number) =>
+      Promise.resolve(
+        number === issue.number
+          ? [{
+            id: 70_002,
+            authorLogin: null,
+            authorType: null,
+            body: null,
+            createdAt: "2026-08-26T23:33:29Z",
+            updatedAt: "2026-08-26T23:33:29Z",
+          }]
+          : [],
+      ),
+    getIssueRelations: () => Promise.resolve(noIssueRelations),
+    getRepositoryPermission: () => Promise.resolve("admin"),
+  };
+  assert.equal(
+    (await selectNextGitHubIssueJob(
+      unknownAuthorSource,
+      "ubiquity/ai.ubq.fi",
+      renderGitHubIssueJobLedger([]),
+    ))?.number,
+    laterIssue.number,
+  );
+  assert.equal(
+    (await selectNextGitHubIssueJob(
+      githubIssueSource([issue]),
+      "ubiquity/ai.ubq.fi",
+      renderGitHubIssueJobLedger([]),
+    ))?.comments,
+    1,
+  );
+});
+
+Deno.test("GitHub issue selection does not let disallowed comments consume relationship budget", async () => {
+  const disallowed = Array.from({ length: MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS }, (_, index) => {
+    const number = 200 + index;
+    return sentinelGitHubIssue({
+      id: 20_000 + number,
+      nodeId: `I_kwDOIssue${number}`,
+      number,
+      title: `Commented candidate ${number}`,
+      htmlUrl: `https://github.com/ubiquity/ai.ubq.fi/issues/${number}`,
+      comments: 1,
+    });
+  });
+  const selectedIssue = sentinelGitHubIssue({
+    id: 20_999,
+    nodeId: "I_kwDOIssue999",
+    number: 999,
+    title: "Eligible issue after commented candidates",
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/999",
+  });
+  const issues = [...disallowed, selectedIssue];
+  const byNumber = new Map(issues.map((issue) => [issue.number, issue]));
+  let detailRequests = 0;
+  let commentRequests = 0;
+  let relationRequests = 0;
+  let permissionRequests = 0;
+  const source: GitHubIssueJobSource = {
+    listOpenIssues: () => Promise.resolve(issues),
+    getIssue: (number) => {
+      detailRequests += 1;
+      return Promise.resolve(byNumber.get(number)!);
+    },
+    listIssueComments: (number) => {
+      commentRequests += 1;
+      const issue = byNumber.get(number)!;
+      return Promise.resolve(
+        issue.comments === 1
+          ? [{
+            id: 80_000 + number,
+            authorLogin: "human-reviewer",
+            authorType: "User",
+            body: "This issue is already being discussed.",
+            createdAt: "2026-08-26T23:33:29Z",
+            updatedAt: "2026-08-26T23:33:29Z",
+          }]
+          : [],
+      );
+    },
+    getIssueRelations: () => {
+      relationRequests += 1;
+      return Promise.resolve(noIssueRelations);
+    },
+    getRepositoryPermission: () => {
+      permissionRequests += 1;
+      return Promise.resolve("admin");
+    },
+  };
+  assert.equal(
+    (await selectNextGitHubIssueJob(source, "ubiquity/ai.ubq.fi", renderGitHubIssueJobLedger([])))?.number,
+    selectedIssue.number,
+  );
+  assert.equal(detailRequests, MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS + 1);
+  assert.equal(commentRequests, MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS);
+  assert.equal(relationRequests, 1);
+  assert.equal(permissionRequests, 1);
+});
+
+Deno.test("GitHub issue selection has a fixed detail-and-comment inspection budget", async () => {
+  const rejected = Array.from({ length: MAX_ISSUE_JOB_DETAIL_COMMENT_INSPECTIONS }, (_, index) => {
+    const number = 300 + index;
+    return sentinelGitHubIssue({
+      id: 30_000 + number,
+      nodeId: `I_kwDOIssue${number}`,
+      number,
+      title: `Commented candidate ${number}`,
+      htmlUrl: `https://github.com/ubiquity/ai.ubq.fi/issues/${number}`,
+      comments: 1,
+    });
+  });
+  const selectedIssue = sentinelGitHubIssue({
+    id: 40_999,
+    nodeId: "I_kwDOIssue1999",
+    number: 1_999,
+    title: "Eligible issue beyond the detail budget",
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/1999",
+  });
+  const issues = [...rejected, selectedIssue];
+  const byNumber = new Map(issues.map((issue) => [issue.number, issue]));
+  let detailRequests = 0;
+  let commentRequests = 0;
+  let relationRequests = 0;
+  const source: GitHubIssueJobSource = {
+    listOpenIssues: () => Promise.resolve(issues),
+    getIssue: (number) => {
+      detailRequests += 1;
+      return Promise.resolve(byNumber.get(number)!);
+    },
+    listIssueComments: (number) => {
+      commentRequests += 1;
+      return Promise.resolve([{
+        id: 90_000 + number,
+        authorLogin: "human-reviewer",
+        authorType: "User",
+        body: "This issue is already being discussed.",
+        createdAt: "2026-08-26T23:33:29Z",
+        updatedAt: "2026-08-26T23:33:29Z",
+      }]);
+    },
+    getIssueRelations: () => {
+      relationRequests += 1;
+      return Promise.resolve(noIssueRelations);
+    },
+    getRepositoryPermission: () => Promise.resolve("admin"),
+  };
+  await assert.rejects(
+    () => selectNextGitHubIssueJob(source, "ubiquity/ai.ubq.fi", renderGitHubIssueJobLedger([])),
+    /detail-and-comment inspection limit/,
+  );
+  assert.equal(detailRequests, MAX_ISSUE_JOB_DETAIL_COMMENT_INSPECTIONS);
+  assert.equal(commentRequests, MAX_ISSUE_JOB_DETAIL_COMMENT_INSPECTIONS);
+  assert.equal(relationRequests, 0);
+});
+
 Deno.test("GitHub issue selection has a fixed relationship-inspection budget", async () => {
-  const issues = Array.from({ length: MAX_ISSUE_JOB_CANDIDATES + 1 }, (_, index) => {
+  const issues = Array.from({ length: MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS + 1 }, (_, index) => {
     const number = 200 + index;
     return sentinelGitHubIssue({
       id: 20_000 + number,
@@ -1138,6 +1397,7 @@ Deno.test("GitHub issue selection has a fixed relationship-inspection budget", a
       detailRequests += 1;
       return Promise.resolve(issues.find((issue) => issue.number === number)!);
     },
+    listIssueComments: () => Promise.resolve([]),
     getIssueRelations: () => {
       relationRequests += 1;
       return Promise.resolve({ ...noIssueRelations, subIssueCount: 1 });
@@ -1149,11 +1409,11 @@ Deno.test("GitHub issue selection has a fixed relationship-inspection budget", a
   };
   await assert.rejects(
     () => selectNextGitHubIssueJob(source, "ubiquity/ai.ubq.fi", renderGitHubIssueJobLedger([])),
-    /candidate inspection limit/,
+    /relationship-inspection limit/,
   );
-  assert.equal(detailRequests, MAX_ISSUE_JOB_CANDIDATES);
-  assert.equal(relationRequests, MAX_ISSUE_JOB_CANDIDATES);
-  assert.equal(permissionRequests, MAX_ISSUE_JOB_CANDIDATES);
+  assert.equal(detailRequests, MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS + 1);
+  assert.equal(relationRequests, MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS);
+  assert.equal(permissionRequests, MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS);
 });
 
 Deno.test("GitHub issue authority binds and rechecks the author and latest content editors", async () => {
@@ -1234,7 +1494,7 @@ Deno.test("GitHub issue authority binds and rechecks the author and latest conte
 });
 
 Deno.test("GitHub issue ledger prevents unchanged retries and permits an edited snapshot", async () => {
-  const issue = sentinelGitHubIssue();
+  const issue = sentinelGitHubIssue({ comments: 3 });
   const source = githubIssueSource([issue]);
   const selected = await selectNextGitHubIssueJob(source, "ubiquity/ai.ubq.fi", renderGitHubIssueJobLedger([]));
   assert.ok(selected);
@@ -1246,6 +1506,7 @@ Deno.test("GitHub issue ledger prevents unchanged retries and permits an edited 
     "manual_required",
   );
   assert.equal(parseGitHubIssueJobLedger(ledger)[0]?.number, 113);
+  assert.equal(parseGitHubIssueJobLedger(ledger)[0]?.comments, 3);
   assert.equal(await selectNextGitHubIssueJob(source, "ubiquity/ai.ubq.fi", ledger), null);
   assert.throws(
     () =>
@@ -1258,13 +1519,26 @@ Deno.test("GitHub issue ledger prevents unchanged retries and permits an edited 
       ),
     /already has a terminal/,
   );
+  const commented = { ...issue, comments: 4, updatedAt: "2026-08-23T20:30:00Z" };
+  assert.equal(
+    await selectNextGitHubIssueJob(githubIssueSource([commented]), "ubiquity/ai.ubq.fi", ledger),
+    null,
+  );
   const edited = sentinelGitHubIssue({
     body: githubIssueBody(["src/http.ts"]),
+    comments: 4,
     updatedAt: "2026-08-23T21:00:00Z",
   });
   assert.equal(
     (await selectNextGitHubIssueJob(githubIssueSource([edited]), "ubiquity/ai.ubq.fi", ledger))?.number,
     113,
+  );
+});
+
+Deno.test("the checked-in GitHub issue ledger is canonical", () => {
+  assert.deepEqual(
+    renderGitHubIssueJobLedger(parseGitHubIssueJobLedger(issueJobLedger)),
+    issueJobLedger,
   );
 });
 

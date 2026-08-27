@@ -41,6 +41,15 @@ export interface GitHubIssue {
   readonly isPullRequest: boolean;
 }
 
+export interface GitHubIssueComment {
+  readonly id: number;
+  readonly authorLogin: string | null;
+  readonly authorType: string | null;
+  readonly body: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
 export interface GitHubIssueRelations {
   readonly parentIssueNumber: number | null;
   readonly subIssueCount: number;
@@ -231,6 +240,24 @@ const parseIssue = (value: unknown): GitHubIssue => {
   };
 };
 
+const parseIssueComment = (value: unknown): GitHubIssueComment => {
+  const comment = asRecord(value);
+  const author = asRecord(comment?.user);
+  const authorIsUnknown = comment?.user === null;
+  const id = integer(comment?.id);
+  const authorLogin = nonEmptyString(author?.login);
+  const authorType = nonEmptyString(author?.type);
+  const body = typeof comment?.body === "string" ? comment.body : null;
+  const createdAt = isoTimestamp(comment?.created_at);
+  const updatedAt = isoTimestamp(comment?.updated_at);
+  if (
+    !comment || !id || (!authorIsUnknown && (!authorLogin || !authorType)) || !createdAt || !updatedAt
+  ) {
+    throw new Error("GitHub returned an incomplete issue comment");
+  }
+  return { id, authorLogin, authorType, body, createdAt, updatedAt };
+};
+
 export class GitHubActionsClient {
   readonly #repository: string;
   readonly #token: string;
@@ -407,6 +434,33 @@ export class GitHubActionsClient {
       throw new Error(`GitHub issue ${issueNumber} did not resolve to the requested issue`);
     }
     return issue;
+  }
+
+  async listIssueComments(issueNumber: number): Promise<readonly GitHubIssueComment[]> {
+    if (!Number.isSafeInteger(issueNumber) || issueNumber <= 0) {
+      throw new Error("GitHub issue number must be positive");
+    }
+    const comments: GitHubIssueComment[] = [];
+    for (let page = 1;; page += 1) {
+      if (page > MAX_ISSUE_METADATA_PAGES) {
+        throw new Error("GitHub issue comments exceeded the Sentinel page limit");
+      }
+      const url = this.#url(`repos/${this.#repository}/issues/${issueNumber}/comments`);
+      url.searchParams.set("per_page", "100");
+      url.searchParams.set("page", String(page));
+      const response = await this.#request(url, {
+        method: "GET",
+        headers: this.#headers(),
+        redirect: "manual",
+      }, `List GitHub issue ${issueNumber} comments`);
+      const payload = await this.#json(response, `List GitHub issue ${issueNumber} comments`);
+      if (!Array.isArray(payload)) {
+        throw new Error(`List GitHub issue ${issueNumber} comments returned a non-array payload`);
+      }
+      const pageComments = payload.map(parseIssueComment);
+      comments.push(...pageComments);
+      if (pageComments.length < 100) return comments;
+    }
   }
 
   async getRepositoryPermission(username: string): Promise<GitHubRepositoryPermission> {

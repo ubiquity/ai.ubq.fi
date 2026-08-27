@@ -13,6 +13,7 @@ export type GitHubIssueSelectionReport = Readonly<{
   issue_number: number;
   fingerprint: string;
   body_sha256: string;
+  comments: number;
   priority: "P2" | "P3";
   time_label: string;
   files: readonly string[];
@@ -62,6 +63,7 @@ const record = (value: unknown): Record<string, unknown> | null =>
   typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
 
 const positiveInteger = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) > 0;
+const nonNegativeInteger = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
 const isoTimestamp = (value: unknown): value is string =>
   typeof value === "string" && Number.isFinite(Date.parse(value)) && /^\d{4}-\d{2}-\d{2}T/u.test(value);
 
@@ -71,7 +73,8 @@ export const parseGitHubIssueSelectionReport = (value: unknown): GitHubIssueSele
     !selection || selection.schema_version !== 1 || !positiveInteger(selection.issue_id) ||
     !positiveInteger(selection.issue_number) || typeof selection.fingerprint !== "string" ||
     !SHA256.test(selection.fingerprint) || typeof selection.body_sha256 !== "string" ||
-    !SHA256.test(selection.body_sha256) || (selection.priority !== "P2" && selection.priority !== "P3") ||
+    !SHA256.test(selection.body_sha256) || !nonNegativeInteger(selection.comments) ||
+    (selection.priority !== "P2" && selection.priority !== "P3") ||
     typeof selection.time_label !== "string" || selection.time_label.length === 0 || selection.time_label.length > 80 ||
     !Array.isArray(selection.files) || selection.files.length === 0 || selection.files.length > 32 ||
     !selection.files.every((path) =>
@@ -85,6 +88,7 @@ export const parseGitHubIssueSelectionReport = (value: unknown): GitHubIssueSele
     issue_number: selection.issue_number,
     fingerprint: selection.fingerprint,
     body_sha256: selection.body_sha256,
+    comments: selection.comments,
     priority: selection.priority,
     time_label: selection.time_label,
     files: [...selection.files] as string[],
