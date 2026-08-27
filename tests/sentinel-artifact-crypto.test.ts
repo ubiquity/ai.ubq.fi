@@ -346,7 +346,7 @@ Deno.test({
       "GitHub issue evidence must record the final production outcome after the implementation disposition",
     );
     assert(
-      orchestrator.includes("const gitEnvironment = gitNetworkEnvironment(githubToken)"),
+      orchestrator.includes("const gitEnvironment = gitNetworkEnvironment(githubToken, repository)"),
       "Manual backlog pushes must use the non-recursive workflow GITHUB_TOKEN",
     );
     assert(
