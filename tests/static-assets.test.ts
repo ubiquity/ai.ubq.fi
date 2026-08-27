@@ -10,6 +10,7 @@ import aboutHtml from "../static/about.html" with { type: "text" };
 import adminScript from "../static/admin.js" with { type: "text" };
 import authScript from "../static/auth.js" with { type: "text" };
 import chatHtml from "../static/chat.html" with { type: "text" };
+import chatScript from "../static/chat.js" with { type: "text" };
 import companyLogoSvg from "../static/company-logo.svg" with { type: "text" };
 import contactHtml from "../static/contact.html" with { type: "text" };
 import developersHtml from "../static/developers.html" with { type: "text" };
@@ -41,6 +42,8 @@ Deno.test("static assets register frontend module dependencies", () => {
   ) {
     assert.equal(hasStaticAsset(path), true, `${path} should be registered`);
   }
+  assert.match(chatHtml, /<script type="module" src="\/chat\.js\?v=20260827-response-stats-v2"><\/script>/);
+  assert.match(chatScript, /from "\.\/chat-stats\.js\?v=20260827-response-stats-v2";/);
 });
 
 Deno.test("public models page is registered", () => {
@@ -50,7 +53,7 @@ Deno.test("public models page is registered", () => {
 });
 
 Deno.test("public console pages share versioned styles, canonical navigation, and accurate active states", () => {
-  const assetVersion = "public-console-20260827-v2";
+  const assetVersion = "public-console-20260827-v3";
   const canonicalLinks = [
     { href: "/models", label: "Models" },
     { href: "/developers", label: "Developers" },
