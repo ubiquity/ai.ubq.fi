@@ -33,7 +33,7 @@ export type GitHubIssueJob = Readonly<{
   acceptance: readonly string[];
   authorLogin: string;
   authorAssociation: string;
-  comments: 0;
+  comments: number;
   createdAt: string;
   updatedAt: string;
   relations: GitHubIssueRelations;
@@ -60,6 +60,7 @@ export type GitHubIssueJobLedgerEntry = Readonly<{
   number: number;
   fingerprint: string;
   bodySha256: string;
+  comments: number;
   sourceUpdatedAt: string;
   recordedAt: string;
   baseSha: string;
@@ -85,6 +86,7 @@ const NODE_ID = /^[A-Za-z0-9_=-]{4,160}$/u;
 const MAX_ISSUE_BODY_BYTES = 32 * 1_024;
 const MAX_ISSUE_FILES = 32;
 const MAX_ACCEPTANCE_ITEMS = 32;
+const MAX_GITHUB_ISSUE_COMMENTS = 998;
 const MAX_LEDGER_BYTES = 256 * 1_024;
 const MAX_LEDGER_ENTRIES = 512;
 const MAX_LEDGER_LINE_LENGTH = 4_096;
@@ -97,6 +99,7 @@ const LEDGER_HEADERS = Object.freeze([
   "Node ID",
   "Fingerprint",
   "Body SHA-256",
+  "Comments",
   "Source updated",
   "Recorded",
   "Base SHA",
@@ -250,7 +253,8 @@ const issueAuthorityLogins = (
 
 const baseIssueEligible = (issue: GitHubIssue, authorityPermission: GitHubRepositoryPermission): boolean =>
   issue.state === "open" && !issue.isPullRequest && !issue.locked && issue.assignees.length === 0 &&
-  issue.comments === 0 && issue.title.length <= 256 &&
+  issue.title.length <= 256 && Number.isSafeInteger(issue.comments) && issue.comments >= 0 &&
+  issue.comments <= MAX_GITHUB_ISSUE_COMMENTS &&
   (authorityPermission === "write" || authorityPermission === "admin");
 
 export const createGitHubIssueJob = async (
@@ -312,7 +316,7 @@ export const createGitHubIssueJob = async (
     acceptance: parsedBody.acceptance,
     authorLogin: issue.authorLogin,
     authorAssociation: issue.authorAssociation,
-    comments: 0,
+    comments: issue.comments,
     createdAt: issue.createdAt,
     updatedAt: issue.updatedAt,
     relations,
@@ -334,7 +338,8 @@ const githubIssueJobSourceSnapshotsMatch = (expected: GitHubIssueJob, actual: Gi
   expected.bodySha256 === actual.bodySha256 && expected.priority === actual.priority &&
   expected.priorityLabel === actual.priorityLabel && expected.timeLabel === actual.timeLabel &&
   expected.authorLogin === actual.authorLogin && expected.authorAssociation === actual.authorAssociation &&
-  expected.createdAt === actual.createdAt && expected.updatedAt === actual.updatedAt &&
+  expected.comments === actual.comments && expected.createdAt === actual.createdAt &&
+  expected.updatedAt === actual.updatedAt &&
   JSON.stringify(expected.labels) === JSON.stringify(actual.labels) &&
   JSON.stringify(expected.files) === JSON.stringify(actual.files) &&
   JSON.stringify(expected.acceptance) === JSON.stringify(actual.acceptance);
@@ -477,12 +482,29 @@ export const selectNextGitHubIssueJob = async (
     if (!githubIssueJobSourceSnapshotsMatch(candidate, job)) {
       throw new Error(`GitHub issue ${candidate.number} snapshot changed during selection`);
     }
-    if (
-      ledger.some((entry) =>
-        entry.issueId === job.issueId && entry.nodeId === job.nodeId && entry.number === job.number &&
-        entry.fingerprint === job.fingerprint
+    let hasTerminalDisposition = false;
+    for (
+      const entry of ledger.filter((entry) =>
+        entry.issueId === job.issueId && entry.nodeId === job.nodeId && entry.number === job.number
       )
-    ) continue;
+    ) {
+      if (entry.fingerprint === job.fingerprint) {
+        hasTerminalDisposition = true;
+        break;
+      }
+      const normalizedJob = await createGitHubIssueJob(
+        repository,
+        { ...current, comments: entry.comments, updatedAt: entry.sourceUpdatedAt },
+        relations,
+        authorityPermission,
+        MAX_GITHUB_ISSUE_TIME_ESTIMATE_MINUTES,
+      );
+      if (normalizedJob?.fingerprint === entry.fingerprint) {
+        hasTerminalDisposition = true;
+        break;
+      }
+    }
+    if (hasTerminalDisposition) continue;
     return job;
   }
   return null;
@@ -607,6 +629,7 @@ export const renderGitHubIssueJobLedger = (entries: readonly GitHubIssueJobLedge
     `\`${entry.nodeId}\``,
     `\`${entry.fingerprint}\``,
     `\`${entry.bodySha256}\``,
+    String(entry.comments),
     entry.sourceUpdatedAt,
     entry.recordedAt,
     `\`${entry.baseSha}\``,
@@ -629,11 +652,10 @@ export const renderGitHubIssueJobLedger = (entries: readonly GitHubIssueJobLedge
   const markdown = [
     "# Sentinel Issue Job Ledger",
     "",
-    "Terminal Sentinel results for immutable GitHub issue snapshots are tracked here. Each selected snapshot is",
-    "delivered through exactly one pull request that links the issue as evidence. After a verified production keep,",
-    "Sentinel merges the delivery pull request and closes the unchanged issue with supporting evidence; a pull request",
-    "already carried by the development push is accepted after a containment check. Manual-required, failed, and",
-    "rolled-back results remain open.",
+    "Terminal Sentinel results for immutable GitHub issue snapshots are tracked here. Each selected snapshot is delivered",
+    "through exactly one pull request that links the issue as evidence. After a verified production keep, Sentinel merges the",
+    "delivery pull request and closes the unchanged issue with supporting evidence; a pull request already carried by the",
+    "development push is accepted after a containment check. Manual-required, failed, and rolled-back results remain open.",
     "",
     ...table,
     "",
@@ -667,15 +689,17 @@ export const parseGitHubIssueJobLedger = (markdown: string): GitHubIssueJobLedge
     const nodeId = /^`[^`]+`$/u.test(cells[2]!) ? cells[2]!.slice(1, -1) : "";
     const fingerprint = /^`[0-9a-f]{64}`$/u.test(cells[3]!) ? cells[3]!.slice(1, -1) : "";
     const bodySha256 = /^`[0-9a-f]{64}`$/u.test(cells[4]!) ? cells[4]!.slice(1, -1) : "";
-    const sourceUpdatedAt = cells[5]!;
-    const recordedAt = cells[6]!;
-    const baseSha = /^`[0-9a-f]{40}`$/u.test(cells[7]!) ? cells[7]!.slice(1, -1) : "";
-    const title = decodeCell(cells[8]!);
-    const disposition = cells[9] as GitHubIssueJobDisposition;
+    const comments = /^(?:0|[1-9][0-9]*)$/u.test(cells[5]!) ? Number(cells[5]) : Number.NaN;
+    const sourceUpdatedAt = cells[6]!;
+    const recordedAt = cells[7]!;
+    const baseSha = /^`[0-9a-f]{40}`$/u.test(cells[8]!) ? cells[8]!.slice(1, -1) : "";
+    const title = decodeCell(cells[9]!);
+    const disposition = cells[10] as GitHubIssueJobDisposition;
     const identity = `${issueId}:${number}:${fingerprint}`;
     if (
       !Number.isSafeInteger(number) || number <= 0 || !Number.isSafeInteger(issueId) || issueId <= 0 ||
       !NODE_ID.test(nodeId) || !SHA256.test(fingerprint) || !SHA256.test(bodySha256) ||
+      !Number.isSafeInteger(comments) || comments < 0 ||
       !validTimestamp(sourceUpdatedAt) || !validTimestamp(recordedAt) || !FULL_SHA.test(baseSha) ||
       title.trim().length === 0 || title.length > 512 ||
       (disposition !== "resolved" && disposition !== "manual_required") || identities.has(identity)
@@ -687,6 +711,7 @@ export const parseGitHubIssueJobLedger = (markdown: string): GitHubIssueJobLedge
       number,
       fingerprint,
       bodySha256,
+      comments,
       sourceUpdatedAt,
       recordedAt,
       baseSha,
@@ -724,6 +749,7 @@ export const applyGitHubIssueJobDisposition = (
     number: job.number,
     fingerprint: job.fingerprint,
     bodySha256: job.bodySha256,
+    comments: job.comments,
     sourceUpdatedAt: job.updatedAt,
     recordedAt: observedAt.toISOString(),
     baseSha,

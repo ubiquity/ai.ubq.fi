@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import {
+  createGitHubIssueJob,
+  type GitHubIssueJobSource,
   parseGitHubIssueTimeLabel,
   renderGitHubIssueJobLedger,
   selectNextGitHubIssueJob,
@@ -20,6 +22,7 @@ import {
   selectDevelopmentPush,
 } from "../scripts/sentinel/issue-delivery.ts";
 import {
+  closeIssueAfterCompletionEvidenceRevalidation,
   completionEvidenceSnapshotMatches,
   mergeDeliveryPullRequest,
 } from "../scripts/sentinel/issue-delivery-reconcile.ts";
@@ -30,6 +33,7 @@ const selection = parseGitHubIssueSelectionReport({
   issue_number: 112,
   fingerprint: "a".repeat(64),
   body_sha256: "b".repeat(64),
+  comments: 0,
   priority: "P3",
   time_label: "Time: <1 Day",
   files: ["src/admin.ts", "tests/admin-auth.test.ts"],
@@ -126,7 +130,7 @@ Deno.test("durable completion evidence never closes a changed issue snapshot", a
     labels: ["Priority: 2 (Medium)", "Time: <1 Day"],
     assignees: [],
     locked: false,
-    comments: 0,
+    comments: 3,
     createdAt: "2026-08-25T00:00:00Z",
     updatedAt: "2026-08-25T00:00:01Z",
     isPullRequest: false,
@@ -157,13 +161,14 @@ Deno.test("durable completion evidence never closes a changed issue snapshot", a
     issue_number: selected.number,
     fingerprint: selected.fingerprint,
     body_sha256: selected.bodySha256,
+    comments: selected.comments,
     priority: selected.priority,
     time_label: selected.timeLabel,
     files: selected.files,
     updated_at: selected.updatedAt,
   });
   const evidenceUpdatedAt = "2026-08-25T00:01:00Z";
-  const evidenceOnlyIssue = { ...originalIssue, comments: 1, updatedAt: "2026-08-25T00:01:01Z" };
+  const evidenceOnlyIssue = { ...originalIssue, comments: 4, updatedAt: "2026-08-25T00:01:01Z" };
   assert.equal(
     await completionEvidenceSnapshotMatches(
       source,
@@ -189,11 +194,112 @@ Deno.test("durable completion evidence never closes a changed issue snapshot", a
       source,
       "ubiquity/ai.ubq.fi",
       retrySelection,
-      { ...evidenceOnlyIssue, comments: 2 },
+      { ...evidenceOnlyIssue, comments: 5 },
       evidenceUpdatedAt,
     ),
     false,
   );
+});
+
+Deno.test("normal delivery revalidates the snapshot after completion evidence before closing", async () => {
+  const originalIssue = {
+    id: 2,
+    nodeId: "I_kwDOQoe6nc8AAAABN7Test",
+    number: 2,
+    state: "open" as const,
+    title: "Bounded durable issue",
+    body: "Implement the bounded change.\n\nAcceptance:\n- The change is complete.\n\nFiles:\n- src/http.ts\n",
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/2",
+    authorLogin: "0x4007",
+    authorAssociation: "MEMBER",
+    labels: ["Priority: 2 (Medium)", "Time: <1 Day"],
+    assignees: [],
+    locked: false,
+    comments: 3,
+    createdAt: "2026-08-25T00:00:00Z",
+    updatedAt: "2026-08-25T00:00:01Z",
+    isPullRequest: false,
+  };
+  const relations = {
+    parentIssueNumber: null,
+    subIssueCount: 0,
+    blockedByCount: 0,
+    blockingCount: 0,
+    latestBodyEdit: null,
+    latestTitleEdit: null,
+  };
+  const selected = await createGitHubIssueJob(
+    "ubiquity/ai.ubq.fi",
+    originalIssue,
+    relations,
+    "admin",
+    1_440,
+  );
+  assert.ok(selected);
+  const selectionReport = parseGitHubIssueSelectionReport({
+    schema_version: 1,
+    issue_id: selected.issueId,
+    issue_number: selected.number,
+    fingerprint: selected.fingerprint,
+    body_sha256: selected.bodySha256,
+    comments: selected.comments,
+    priority: selected.priority,
+    time_label: selected.timeLabel,
+    files: selected.files,
+    updated_at: selected.updatedAt,
+  });
+  const changedAfterEvidence = {
+    ...originalIssue,
+    body: `${originalIssue.body}\nChanged after the initial snapshot check.\n`,
+    comments: 5,
+    updatedAt: "2026-08-25T00:01:01Z",
+  };
+  const source: GitHubIssueJobSource = {
+    listOpenIssues: () => Promise.resolve([changedAfterEvidence]),
+    getIssue: () => Promise.resolve(changedAfterEvidence),
+    getIssueRelations: () => Promise.resolve(relations),
+    getRepositoryPermission: () => Promise.resolve("admin"),
+  };
+  let closed = false;
+  await assert.rejects(
+    () =>
+      closeIssueAfterCompletionEvidenceRevalidation(
+        source,
+        "ubiquity/ai.ubq.fi",
+        selectionReport,
+        "2026-08-25T00:01:00Z",
+        () => {
+          closed = true;
+          return Promise.resolve();
+        },
+      ),
+    /no longer matches the open issue snapshot/,
+  );
+  assert.equal(closed, false);
+});
+
+Deno.test("GitHub issue selection reports require a safe nonnegative comment count", () => {
+  const rawSelection = {
+    schema_version: 1,
+    issue_id: 5228586364,
+    issue_number: 112,
+    fingerprint: "a".repeat(64),
+    body_sha256: "b".repeat(64),
+    comments: 3,
+    priority: "P3",
+    time_label: "Time: <1 Day",
+    files: ["src/admin.ts"],
+    updated_at: "2026-08-23T19:07:26Z",
+  };
+  assert.equal(parseGitHubIssueSelectionReport(rawSelection).comments, 3);
+  for (const comments of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(
+      () => parseGitHubIssueSelectionReport({ ...rawSelection, comments }),
+      /selection report is invalid/,
+    );
+  }
+  const { comments: _comments, ...missingComments } = rawSelection;
+  assert.throws(() => parseGitHubIssueSelectionReport(missingComments), /selection report is invalid/);
 });
 
 Deno.test("pre-push parsing isolates exactly one development update", () => {

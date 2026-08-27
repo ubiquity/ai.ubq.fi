@@ -2160,6 +2160,7 @@ const run = async (): Promise<void> => {
       issue_number: workSelection.issueJob.number,
       fingerprint: workSelection.issueJob.fingerprint,
       body_sha256: workSelection.issueJob.bodySha256,
+      comments: workSelection.issueJob.comments,
       priority: workSelection.issueJob.priority,
       time_label: workSelection.issueJob.timeLabel,
       files: workSelection.issueJob.files,

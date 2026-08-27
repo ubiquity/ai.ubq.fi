@@ -285,14 +285,17 @@ export const completionEvidenceSnapshotMatches = async (
 ): Promise<boolean> => {
   const evidenceUpdatedMs = Date.parse(evidenceUpdatedAt);
   const issueUpdatedMs = Date.parse(issue.updatedAt);
+  if (selection.comments === Number.MAX_SAFE_INTEGER) return false;
+  const commentsWithCompletionEvidence = selection.comments + 1;
   if (
-    issue.state !== "open" || issue.number !== selection.issue_number || issue.comments !== 1 ||
+    issue.state !== "open" || issue.number !== selection.issue_number ||
+    issue.comments !== commentsWithCompletionEvidence ||
     !Number.isFinite(evidenceUpdatedMs) || !Number.isFinite(issueUpdatedMs) ||
     issueUpdatedMs < evidenceUpdatedMs || issueUpdatedMs - evidenceUpdatedMs > MAX_COMMENT_TIMESTAMP_PROPAGATION_MS
   ) return false;
   const normalizedIssue: GitHubIssue = {
     ...issue,
-    comments: 0,
+    comments: selection.comments,
     updatedAt: selection.updated_at,
   };
   const normalizedSource: GitHubIssueJobSource = {
@@ -310,6 +313,28 @@ export const completionEvidenceSnapshotMatches = async (
   return current !== null && current.issueId === selection.issue_id &&
     current.fingerprint === selection.fingerprint && current.bodySha256 === selection.body_sha256 &&
     current.updatedAt === selection.updated_at;
+};
+
+export const closeIssueAfterCompletionEvidenceRevalidation = async (
+  source: GitHubIssueJobSource,
+  repository: string,
+  selection: GitHubIssueSelectionReport,
+  evidenceUpdatedAt: string,
+  close: () => Promise<void>,
+): Promise<void> => {
+  const issue = await source.getIssue(selection.issue_number);
+  if (
+    !await completionEvidenceSnapshotMatches(
+      source,
+      repository,
+      selection,
+      issue,
+      evidenceUpdatedAt,
+    )
+  ) {
+    throw new Error("Sentinel completion evidence no longer matches the open issue snapshot");
+  }
+  await close();
 };
 
 const parseDisposition = (value: unknown): "resolved" | "manual_required" | null => {
@@ -621,7 +646,22 @@ export const reconcileGitHubIssueDelivery = async (
       marker,
       evidence,
     );
-    await closeIssue(input.token, input.repository, selection.issue_number);
+    const durableEvidence = await completionEvidence(
+      input.token,
+      input.repository,
+      selection.issue_number,
+      marker,
+    );
+    if (durableEvidence === null) {
+      throw new Error("Sentinel completion evidence was not durable before issue closure");
+    }
+    await closeIssueAfterCompletionEvidenceRevalidation(
+      new GitHubActionsClient({ repository: input.repository, token: input.token }),
+      input.repository,
+      selection,
+      durableEvidence.updatedAt,
+      () => closeIssue(input.token, input.repository, selection.issue_number),
+    );
   } else if (action === "leave_open_rolled_back") {
     await removeRolledBackLedgerEntry(
       input.token,
