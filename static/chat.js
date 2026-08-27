@@ -19,13 +19,17 @@ import {
   updateReasoningSelectForModel,
 } from "./reasoning-select.js?v=20260827-cerebras-none-v1";
 import {
-  appendChatMessageStats,
   createChatMessageElement,
+  createChatStatsAccumulator,
   parseChatSseEvent,
+  readChatCompletionDecodeTokens,
   readChatCompletionMessageText,
+  recordCompletedChatResponse,
+  renderChatStats,
+  resetChatStatsAccumulator,
   setChatMessageContent,
   splitChatSseEvents,
-} from "./chat-stats.js?v=20260827-response-stats-v2";
+} from "./chat-stats.js?v=20260827-response-stats-v4";
 import { bindForegroundRefresh } from "./foreground-refresh.js";
 
 const STORAGE_KEYS = {
@@ -78,6 +82,8 @@ const stopBtn = mustGet("stop");
 const chatForm = mustGet("chat-form");
 const promptInput = mustGet("prompt");
 const sendBtn = mustGet("send");
+const chatStatsEl = document.querySelector("[data-chat-stats]");
+if (!chatStatsEl) throw new Error("Missing element: [data-chat-stats]");
 const panels = Array.from(document.querySelectorAll("details[data-chat-panel][data-panel-key]"));
 
 const DEFAULT_MODEL = "";
@@ -687,12 +693,19 @@ const setBusy = (busy) => {
 
 let abortController = null;
 let conversation = [];
+const chatStats = createChatStatsAccumulator();
+
+const recordAndRenderChatStats = (sample) => {
+  if (recordCompletedChatResponse(chatStats, sample)) renderChatStats(chatStatsEl, chatStats);
+};
 
 resetChatBtn.addEventListener("click", () => {
   if (abortController) abortController.abort();
   abortController = null;
   conversation = [];
   messagesEl.textContent = "";
+  resetChatStatsAccumulator(chatStats);
+  renderChatStats(chatStatsEl, chatStats);
   setBusy(false);
   promptInput.focus();
 });
@@ -790,15 +803,13 @@ const sendPrompt = async () => {
       if (messageText !== null) {
         setChatMessageContent(assistantEl, messageText);
         conversation.push({ role: "assistant", content: messageText });
+        recordAndRenderChatStats({
+          llmMs: performance.now() - requestStartedAt,
+          usage: data?.usage,
+        });
       } else {
         setChatMessageContent(assistantEl, JSON.stringify(data, null, 2));
       }
-      appendChatMessageStats(assistantEl, {
-        turns: 1,
-        steps: 1,
-        llmMs: performance.now() - requestStartedAt,
-        usage: data?.usage,
-      });
       messagesEl.scrollTop = messagesEl.scrollHeight;
       return;
     }
@@ -807,11 +818,13 @@ const sendPrompt = async () => {
     let firstTokenAt = null;
     let responseUsage = null;
     let streamCompleted = false;
+    let streamCompletedAt = null;
     let streamFailure = "";
     await streamSse(res, (rawEvent) => {
       const event = parseChatSseEvent(rawEvent);
       if (event.kind === "done") {
         streamCompleted = true;
+        streamCompletedAt ??= performance.now();
         return;
       }
       if (event.kind === "invalid") {
@@ -839,12 +852,19 @@ const sendPrompt = async () => {
       return;
     }
 
-    if (assistantText.trim()) conversation.push({ role: "assistant", content: assistantText });
-    const completedAt = performance.now();
-    appendChatMessageStats(assistantEl, {
-      turns: 1,
-      steps: 1,
+    if (!assistantText.trim()) {
+      assistantEl.dataset.message = "error";
+      setChatMessageContent(assistantEl, "The response stream completed with no assistant output.");
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      return;
+    }
+
+    conversation.push({ role: "assistant", content: assistantText });
+    const completedAt = streamCompletedAt ?? performance.now();
+    recordAndRenderChatStats({
       llmMs: completedAt - requestStartedAt,
+      decodeMs: firstTokenAt === null ? undefined : completedAt - firstTokenAt,
+      decodeTokens: readChatCompletionDecodeTokens(responseUsage, reasoningEffort),
       ttftMs: firstTokenAt === null ? undefined : firstTokenAt - requestStartedAt,
       usage: responseUsage,
     });

@@ -1,16 +1,20 @@
 import assert from "node:assert/strict";
 
 import {
-  appendChatMessageStats,
   createChatMessageElement,
+  createChatStatsAccumulator,
   formatCacheHitPercent,
   formatChatDuration,
   formatChatStatsLine,
   formatChatTokens,
   parseChatCompletionStreamEvent,
   parseChatSseEvent,
+  readChatCompletionDecodeTokens,
   readChatCompletionMessageText,
   readChatCompletionUsage,
+  recordCompletedChatResponse,
+  renderChatStats,
+  resetChatStatsAccumulator,
   setChatMessageContent,
   splitChatSseEvents,
 } from "../static/chat-stats.js";
@@ -20,6 +24,7 @@ class FakeElement {
   readonly children: FakeElement[] = [];
   readonly ownerDocument: FakeDocument;
   parentElement: FakeElement | null = null;
+  hidden = true;
   textContent = "";
   title = "";
 
@@ -54,27 +59,43 @@ class FakeDocument {
   }
 }
 
-Deno.test("chat stats format the DeepSeek Harness reference line", () => {
-  const line = formatChatStatsLine({
-    turns: 1,
-    steps: 2,
-    llmMs: 3_300,
-    toolMs: 100,
-    ttftMs: 1_100,
-    decodeMs: 170 / 158 * 1_000,
-    decodeTokens: 170,
-    usage: {
-      prompt_tokens: 15_800,
-      completion_tokens: 170,
-      total_tokens: 15_970,
-      prompt_tokens_details: { cached_tokens: 7_742 },
-    },
-  });
+Deno.test("chat stats aggregate completed responses with weighted averages", () => {
+  const stats = createChatStatsAccumulator();
+  assert.equal(
+    recordCompletedChatResponse(stats, {
+      llmMs: 1_000,
+      decodeMs: 500,
+      decodeTokens: 10,
+      ttftMs: 100,
+      usage: {
+        prompt_tokens: 100,
+        completion_tokens: 10,
+        total_tokens: 110,
+        prompt_tokens_details: { cached_tokens: 25 },
+      },
+    }),
+    true,
+  );
+  assert.equal(
+    recordCompletedChatResponse(stats, {
+      llmMs: 3_000,
+      decodeMs: 1_500,
+      decodeTokens: 90,
+      ttftMs: 900,
+      usage: {
+        prompt_tokens: 900,
+        completion_tokens: 90,
+        total_tokens: 990,
+        prompt_tokens_details: { cached_tokens: 675 },
+      },
+    }),
+    true,
+  );
 
   assert.equal(
-    line,
-    "1 turns · 2 steps | LLM 3.3s · Tool call 0.1s | TTFT avg 1.1s · 158 tok/s | " +
-      "Cache hit 49% | Input 15.8K tok · Output 170 tok",
+    formatChatStatsLine(stats),
+    "2 turns · 2 steps | LLM avg 2s | TTFT avg 0.5s · 50 tok/s | " +
+      "Cache hit 70% | Input 1K tok · Output 100 tok",
   );
 });
 
@@ -92,11 +113,29 @@ Deno.test("chat message text preserves non-streaming refusals", () => {
     "Normal response",
   );
   assert.equal(readChatCompletionMessageText({ choices: [{ message: { content: null } }] }), null);
+  assert.equal(readChatCompletionMessageText({ choices: [{ message: { content: "  \n" } }] }), null);
+});
+
+Deno.test("chat stats align decode tokens with visible streamed output", () => {
+  const usage = {
+    prompt_tokens: 100,
+    completion_tokens: 90,
+    completion_tokens_details: { reasoning_tokens: 80 },
+  };
+  assert.equal(readChatCompletionDecodeTokens(usage, "high"), 10);
+  assert.equal(readChatCompletionDecodeTokens({ prompt_tokens: 100, completion_tokens: 90 }, "high"), null);
+  assert.equal(readChatCompletionDecodeTokens({ prompt_tokens: 100, completion_tokens: 90 }, "none"), 90);
+  assert.equal(
+    readChatCompletionDecodeTokens({ ...usage, completion_tokens_details: { reasoning_tokens: 91 } }, "high"),
+    null,
+  );
 });
 
 Deno.test("chat stats omit metrics that the browser cannot measure", () => {
-  const line = formatChatStatsLine({ turns: 1, steps: 1, llmMs: 900 });
-  assert.equal(line, "1 turns · 1 steps | LLM 0.9s");
+  const stats = createChatStatsAccumulator();
+  recordCompletedChatResponse(stats, { llmMs: 900 });
+  const line = formatChatStatsLine(stats);
+  assert.equal(line, "1 turns · 1 steps | LLM avg 0.9s");
   assert.doesNotMatch(line, /Tool call|TTFT|tok\/s|Cache hit|Input|Output|NaN|Infinity/);
 });
 
@@ -115,29 +154,71 @@ Deno.test("chat stats keep cache-write details out of the OpenAI prompt total", 
       cacheWriteInputTokens: 20,
     },
   );
-  assert.match(
-    formatChatStatsLine({
-      usage: {
-        prompt_tokens: 100,
-        completion_tokens: 25,
-        total_tokens: 125,
-        prompt_tokens_details: { cached_tokens: 40, cache_write_tokens: 20 },
-      },
-    }),
-    /Cache hit 40% \| Input 100 tok · Output 25 tok$/,
-  );
+  const stats = createChatStatsAccumulator();
+  recordCompletedChatResponse(stats, {
+    llmMs: 1_000,
+    usage: {
+      prompt_tokens: 100,
+      completion_tokens: 25,
+      total_tokens: 125,
+      prompt_tokens_details: { cached_tokens: 40, cache_write_tokens: 20 },
+    },
+  });
+  assert.match(formatChatStatsLine(stats), /Cache hit 40% \| Input 100 tok · Output 25 tok$/);
 });
 
-Deno.test("chat stats omit throughput without an interval-aligned token count", () => {
+Deno.test("chat stats omit throughput without measured tokens or elapsed LLM time", () => {
+  const withoutUsage = createChatStatsAccumulator();
+  recordCompletedChatResponse(withoutUsage, { llmMs: 1_000, decodeMs: 500 });
+  assert.doesNotMatch(formatChatStatsLine(withoutUsage), /tok\/s/);
+
+  const withoutElapsedTime = createChatStatsAccumulator();
+  recordCompletedChatResponse(withoutElapsedTime, {
+    llmMs: 1_000,
+    decodeMs: 0,
+    decodeTokens: 90,
+    usage: { prompt_tokens: 100, completion_tokens: 90, total_tokens: 190 },
+  });
+  assert.doesNotMatch(formatChatStatsLine(withoutElapsedTime), /tok\/s/);
+
+  const withoutDecodeInterval = createChatStatsAccumulator();
+  recordCompletedChatResponse(withoutDecodeInterval, {
+    llmMs: 1_000,
+    usage: { prompt_tokens: 100, completion_tokens: 90, total_tokens: 190 },
+  });
+  assert.doesNotMatch(formatChatStatsLine(withoutDecodeInterval), /tok\/s/);
+});
+
+Deno.test("chat stats omit token aggregates until every completed response reports usage", () => {
+  const stats = createChatStatsAccumulator();
+  recordCompletedChatResponse(stats, {
+    llmMs: 1_000,
+    usage: {
+      prompt_tokens: 100,
+      completion_tokens: 10,
+      prompt_tokens_details: { cached_tokens: 50 },
+    },
+  });
+  recordCompletedChatResponse(stats, { llmMs: 3_000 });
+
+  const line = formatChatStatsLine(stats);
+  assert.equal(line, "2 turns · 2 steps | LLM avg 2s");
+  assert.doesNotMatch(line, /tok\/s|Cache hit|Input|Output/);
+});
+
+Deno.test("chat stats omit throughput unless every completed response has measurable timing", () => {
+  const stats = createChatStatsAccumulator();
   const usage = {
     prompt_tokens: 100,
-    completion_tokens: 90,
-    total_tokens: 190,
-    completion_tokens_details: { reasoning_tokens: 80 },
+    completion_tokens: 10,
+    prompt_tokens_details: { cached_tokens: 50 },
   };
+  recordCompletedChatResponse(stats, { llmMs: 1_000, decodeMs: 500, usage });
+  recordCompletedChatResponse(stats, { llmMs: 1_000, decodeMs: 0, decodeTokens: 10, usage });
 
-  assert.doesNotMatch(formatChatStatsLine({ decodeMs: 1_000, usage }), /tok\/s/);
-  assert.match(formatChatStatsLine({ decodeMs: 1_000, decodeTokens: 10, usage }), /10 tok\/s/);
+  const line = formatChatStatsLine(stats);
+  assert.doesNotMatch(line, /tok\/s/);
+  assert.match(line, /Cache hit 50% \| Input 200 tok · Output 20 tok$/);
 });
 
 Deno.test("chat stats keep partial cache ratios below 100 percent", () => {
@@ -155,17 +236,39 @@ Deno.test("chat stats use compact token and duration formatting", () => {
   assert.equal(formatChatDuration(162_000), "2m42s");
 });
 
-Deno.test("chat message content updates preserve an appended stats footer", () => {
+Deno.test("chat message content never contains a stats footer", () => {
   const documentRef = new FakeDocument();
   const message = createChatMessageElement(documentRef, "assistant", "First token");
-  const footer = appendChatMessageStats(message, { turns: 1, steps: 1, llmMs: 1_200 });
-  assert.ok(footer);
 
   setChatMessageContent(message, "Complete streamed response");
 
   assert.equal(message.querySelector("[data-message-content]")?.textContent, "Complete streamed response");
-  assert.equal(message.querySelector("[data-message-stats]")?.textContent, "1 turns · 1 steps | LLM 1.2s");
-  assert.equal(message.children.length, 2);
+  assert.equal(message.querySelector("[data-message-stats]"), null);
+  assert.equal(message.children.length, 1);
+});
+
+Deno.test("chat stats reset clears and hides the single bar", () => {
+  const stats = createChatStatsAccumulator();
+  recordCompletedChatResponse(stats, { llmMs: 1_200 });
+  const bar = new FakeElement(new FakeDocument());
+
+  assert.equal(renderChatStats(bar, stats), "1 turns · 1 steps | LLM avg 1.2s");
+  assert.equal(bar.hidden, false);
+
+  resetChatStatsAccumulator(stats);
+  assert.equal(renderChatStats(bar, stats), "");
+  assert.equal(bar.textContent, "");
+  assert.equal(bar.title, "");
+  assert.equal(bar.hidden, true);
+});
+
+Deno.test("chat stats reject incomplete response samples without changing averages", () => {
+  const stats = createChatStatsAccumulator();
+  recordCompletedChatResponse(stats, { llmMs: 1_000, ttftMs: 250 });
+  const completedStats = structuredClone(stats);
+
+  assert.equal(recordCompletedChatResponse(stats, {}), false);
+  assert.deepEqual(stats, completedStats);
 });
 
 Deno.test("chat stream events preserve refusals, usage, completion, and failures", () => {
