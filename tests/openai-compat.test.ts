@@ -12516,6 +12516,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
         const telemetry = getResponseTelemetry(response);
         assert.equal(telemetry?.provider, "cerebras");
         assert.equal(telemetry?.providerRequestId, "cerebras-header-request-1");
+        assert.deepEqual(telemetry?.attemptedProviders, ["cerebras"]);
         assert.equal(telemetry?.inputTokens, 13);
         assert.equal(telemetry?.outputTokens, 7);
         assert.equal(telemetry?.completed, true);
@@ -12898,6 +12899,9 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
           assert.equal(payload.error?.type, testCase.expectedType);
           assert.equal(payload.error?.code, "cerebras_upstream_error");
           assert.doesNotMatch(payload.error?.message ?? "", /provider-body-must-not-be-logged-or-relayed/);
+          const telemetry = getResponseTelemetry(response);
+          assert.deepEqual(telemetry?.attemptedProviders, ["cerebras"]);
+          assert.equal(telemetry?.failureKind, "cerebras_upstream_http_error");
           const logText = JSON.stringify(logs);
           assert.doesNotMatch(logText, /provider-body-must-not-be-logged-or-relayed/);
           assert.doesNotMatch(logText, /cerebras-test-key/);
@@ -12905,6 +12909,36 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
           console.error = originalError;
         }
       }
+    });
+
+    await t.step("classifies Cerebras transport and JSON failures", async () => {
+      const fetchFailure = await withFetchMock(
+        () => {
+          throw new Error("cerebras transport fixture");
+        },
+        () => handleChatCompletions(request(canonicalBody)),
+      );
+      assert.equal(fetchFailure.status, 502);
+      assert.equal(
+        (await fetchFailure.json() as { error?: { code?: string } }).error?.code,
+        "cerebras_upstream_unreachable",
+      );
+      const fetchTelemetry = getResponseTelemetry(fetchFailure);
+      assert.deepEqual(fetchTelemetry?.attemptedProviders, ["cerebras"]);
+      assert.equal(fetchTelemetry?.failureKind, "cerebras_fetch_error");
+
+      const invalidJsonResponse = await withFetchMock(
+        () => new Response("{", { status: 200, headers: { "Content-Type": "application/json" } }),
+        () => handleChatCompletions(request(canonicalBody)),
+      );
+      assert.equal(invalidJsonResponse.status, 502);
+      assert.equal(
+        (await invalidJsonResponse.json() as { error?: { code?: string } }).error?.code,
+        "cerebras_upstream_invalid_response",
+      );
+      const invalidJsonTelemetry = getResponseTelemetry(invalidJsonResponse);
+      assert.deepEqual(invalidJsonTelemetry?.attemptedProviders, ["cerebras"]);
+      assert.equal(invalidJsonTelemetry?.failureKind, "cerebras_invalid_json");
     });
 
     await t.step("rejects malformed tool-call output without reflecting provider content", async () => {
@@ -12942,6 +12976,9 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       const payload = await response.json() as { error?: { code?: string; message?: string } };
       assert.equal(payload.error?.code, "cerebras_upstream_invalid_response");
       assert.doesNotMatch(payload.error?.message ?? "", /provider-body-must-not-be-relayed/);
+      const telemetry = getResponseTelemetry(response);
+      assert.deepEqual(telemetry?.attemptedProviders, ["cerebras"]);
+      assert.equal(telemetry?.failureKind, "cerebras_invalid_response");
     });
 
     await t.step("rejects missing or rewritten native tool-call fields", async () => {
@@ -13014,6 +13051,8 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
         assert.equal(timeoutResponse.status, 504);
         assert.equal(timeoutResponse.headers.get("x-uos-upstream"), "cerebras");
         assert.equal((await timeoutResponse.json() as { error?: { code?: string } }).error?.code, "gateway_timeout");
+        assert.deepEqual(getResponseTelemetry(timeoutResponse)?.attemptedProviders, ["cerebras"]);
+        assert.equal(getResponseTelemetry(timeoutResponse)?.failureKind, "gateway_timeout");
       } finally {
         setCerebrasFetchTimeoutMsForTest(null);
       }
@@ -13093,6 +13132,9 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       assert.equal(response.headers.get("x-uos-upstream"), "cerebras");
       assert.equal(response.headers.get("x-uos-provider-request-id"), "cerebras-body-cancel-request");
       assert.equal((await response.json() as { error?: { code?: string } }).error?.code, "request_cancelled");
+      const telemetry = getResponseTelemetry(response);
+      assert.deepEqual(telemetry?.attemptedProviders, ["cerebras"]);
+      assert.equal(telemetry?.failureKind, "request_cancelled");
       assert.equal(upstreamCancelled, true);
     });
   } finally {

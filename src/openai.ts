@@ -8569,6 +8569,29 @@ const cerebrasTerminalTypeForError = (error: unknown, downstreamSignal: AbortSig
   return "error";
 };
 
+type CerebrasFailureKind =
+  | "cerebras_fetch_error"
+  | "cerebras_upstream_http_error"
+  | "cerebras_incomplete_body"
+  | "cerebras_invalid_json"
+  | "cerebras_invalid_response"
+  | "gateway_timeout"
+  | "request_cancelled";
+
+const recordCerebrasFailureKind = (
+  usageContext: UsageContext | undefined,
+  failureKind: CerebrasFailureKind,
+): void => {
+  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.failureKind = failureKind;
+};
+
+const cerebrasTransportFailureKind = (terminalType: ResponseStreamTerminalType): CerebrasFailureKind =>
+  terminalType === "cancelled"
+    ? "request_cancelled"
+    : terminalType === "deadline"
+    ? "gateway_timeout"
+    : "cerebras_fetch_error";
+
 /**
  * The GPT-OSS route is deliberately separate from the Codex Responses bridge.
  * It forwards the official Chat Completions body unchanged (apart from the
@@ -8639,11 +8662,15 @@ const handleCerebrasChatCompletions = async (
     upstream = await fetchCerebrasChatCompletions(cerebrasBody, {
       signal: requestSignal,
       beforeDispatch: () => usageContext?.beforeProviderDispatch?.("cerebras") ?? Promise.resolve(),
-      onDispatch: () => recordFirstProviderDispatch(usageContext),
+      onDispatch: () => {
+        recordAttemptedProvider(usageContext, "cerebras");
+        recordFirstProviderDispatch(usageContext);
+      },
       onHeaders: () => recordFirstProviderHeaders(usageContext),
     });
   } catch (error) {
     const terminalType = cerebrasTerminalTypeForError(error, downstreamSignal);
+    recordCerebrasFailureKind(usageContext, cerebrasTransportFailureKind(terminalType));
     recordStreamTerminalType(usageContext, terminalType);
     if (terminalType !== "cancelled") void recordCerebrasProviderHealth("upstream_error", null);
     await recordErrorUsage(usageContext);
@@ -8656,6 +8683,7 @@ const handleCerebrasChatCompletions = async (
   if (usageContext?.responseTelemetry) usageContext.responseTelemetry.providerRequestId = providerRequestId;
 
   if (!upstream.ok) {
+    recordCerebrasFailureKind(usageContext, "cerebras_upstream_http_error");
     recordCerebrasResponseHealth(upstream.status, providerRequestId);
     recordStreamTerminalType(usageContext, "response.failed");
     await recordErrorUsage(usageContext);
@@ -8673,6 +8701,10 @@ const handleCerebrasChatCompletions = async (
   });
   if (!captured.complete) {
     const terminalType = downstreamSignal.aborted ? "cancelled" : requestSignal.aborted ? "deadline" : "error";
+    recordCerebrasFailureKind(
+      usageContext,
+      terminalType === "error" ? "cerebras_incomplete_body" : cerebrasTransportFailureKind(terminalType),
+    );
     recordStreamTerminalType(usageContext, terminalType);
     if (terminalType !== "cancelled") {
       void recordCerebrasProviderHealth("upstream_error", null, Date.now, providerRequestId);
@@ -8700,6 +8732,7 @@ const handleCerebrasChatCompletions = async (
   try {
     payload = JSON.parse(new TextDecoder().decode(captured.bytes)) as unknown;
   } catch {
+    recordCerebrasFailureKind(usageContext, "cerebras_invalid_json");
     recordStreamTerminalType(usageContext, "error");
     void recordCerebrasProviderHealth("upstream_error", upstream.status, Date.now, providerRequestId);
     await recordErrorUsage(usageContext);
@@ -8712,6 +8745,7 @@ const handleCerebrasChatCompletions = async (
   }
   const normalized = normalizeCerebrasChatCompletion(payload, CEREBRAS_GPT_OSS_120B_MODEL);
   if (!normalized.ok) {
+    recordCerebrasFailureKind(usageContext, "cerebras_invalid_response");
     recordStreamTerminalType(usageContext, "error");
     void recordCerebrasProviderHealth("upstream_error", upstream.status, Date.now, providerRequestId);
     await recordErrorUsage(usageContext);
