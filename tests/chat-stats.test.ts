@@ -9,6 +9,7 @@ import {
   formatChatTokens,
   parseChatCompletionStreamEvent,
   parseChatSseEvent,
+  readChatCompletionMessageText,
   readChatCompletionUsage,
   setChatMessageContent,
   splitChatSseEvents,
@@ -75,6 +76,22 @@ Deno.test("chat stats format the DeepSeek Harness reference line", () => {
     "1 turns · 2 steps | LLM 3.3s · Tool call 0.1s | TTFT avg 1.1s · 158 tok/s | " +
       "Cache hit 49% | Input 15.8K tok · Output 170 tok",
   );
+});
+
+Deno.test("chat message text preserves non-streaming refusals", () => {
+  assert.equal(
+    readChatCompletionMessageText({
+      choices: [{ message: { role: "assistant", content: null, refusal: "I cannot help with that." } }],
+    }),
+    "I cannot help with that.",
+  );
+  assert.equal(
+    readChatCompletionMessageText({
+      choices: [{ message: { role: "assistant", content: "Normal response", refusal: "Ignored fallback" } }],
+    }),
+    "Normal response",
+  );
+  assert.equal(readChatCompletionMessageText({ choices: [{ message: { content: null } }] }), null);
 });
 
 Deno.test("chat stats omit metrics that the browser cannot measure", () => {

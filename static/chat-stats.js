@@ -4,6 +4,18 @@ const getNonNegativeInteger = (value) =>
 const getNonNegativeNumber = (value) =>
   typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 
+export const readChatCompletionMessageText = (value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const choices = Array.isArray(value.choices) ? value.choices : [];
+  const message = choices[0]?.message;
+  if (!message || typeof message !== "object" || Array.isArray(message)) return null;
+
+  const content = typeof message.content === "string" ? message.content : "";
+  if (content.length > 0) return content;
+  const refusal = typeof message.refusal === "string" ? message.refusal : "";
+  return refusal.length > 0 ? refusal : null;
+};
+
 export const readChatCompletionUsage = (value) => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
 
