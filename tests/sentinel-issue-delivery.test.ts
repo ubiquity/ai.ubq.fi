@@ -20,6 +20,7 @@ import {
   selectDevelopmentPush,
 } from "../scripts/sentinel/issue-delivery.ts";
 import {
+  closeIssueAfterCompletionEvidenceSnapshotCheck,
   completionEvidenceSnapshotMatches,
   mergeDeliveryPullRequest,
 } from "../scripts/sentinel/issue-delivery-reconcile.ts";
@@ -111,6 +112,83 @@ Deno.test("the production issue selector accepts a canonical estimate through on
     renderGitHubIssueJobLedger([]),
   );
   assert.equal(selected?.timeLabel, "Time: <1 Day");
+});
+
+Deno.test("GitHub issue selection bounds comment inspection before the first eligible job", async () => {
+  let issueLookups = 0;
+  let commentLookups = 0;
+  const inertComment = {
+    id: 1,
+    authorLogin: "ubiquity-os[bot]",
+    authorType: "Bot",
+    body: `> [!WARNING]
+> You are not allowed to set labels.
+
+<!-- UbiquityOS - updateLabels - ${
+      "a".repeat(64)
+    } - @0x4007 - https://console.deno.com/ubiquity-os/daemon-pricing/observability/logs?start=2026-08-26T23%3A32%3A29Z&end=2026-08-26T23%3A34%3A29Z&tz=Etc%2FUTC
+{
+  "caller": "updateLabels"
+}
+-->
+`,
+    createdAt: "2026-08-26T23:33:29Z",
+    updatedAt: "2026-08-26T23:33:29Z",
+  };
+  const issues = Array.from({ length: 33 }, (_, index) => {
+    const number = index + 1;
+    return {
+      id: number,
+      nodeId: `I_kwDOQoe6nc8candidate${number}`,
+      number,
+      state: "open" as const,
+      title: `Bounded candidate ${number}`,
+      body: "Implement the bounded change.\n\nAcceptance:\n- The change is complete.\n\nFiles:\n- src/http.ts\n",
+      htmlUrl: `https://github.com/ubiquity/ai.ubq.fi/issues/${number}`,
+      authorLogin: "0x4007",
+      authorAssociation: "MEMBER",
+      labels: ["Priority: 2 (Medium)", "Time: <1 Day"],
+      assignees: [],
+      locked: false,
+      comments: 1,
+      createdAt: "2026-08-25T00:00:00Z",
+      updatedAt: "2026-08-25T00:00:01Z",
+      isPullRequest: false,
+    };
+  });
+  const relations = {
+    parentIssueNumber: null,
+    subIssueCount: 0,
+    blockedByCount: 0,
+    blockingCount: 0,
+    latestBodyEdit: null,
+    latestTitleEdit: null,
+  };
+  const source = {
+    listOpenIssues: () => Promise.resolve(issues),
+    getIssue: (issueNumber: number) => {
+      issueLookups++;
+      const issue = issues.find((candidate) => candidate.number === issueNumber);
+      if (!issue) return Promise.reject(new Error(`Unexpected issue ${issueNumber}`));
+      return Promise.resolve(issue);
+    },
+    listIssueComments: () => {
+      commentLookups++;
+      return Promise.resolve([inertComment]);
+    },
+    getIssueRelations: () => Promise.resolve(relations),
+    getRepositoryPermission: () => Promise.resolve("write" as const),
+  };
+
+  const selected = await selectNextGitHubIssueJob(
+    source,
+    "ubiquity/ai.ubq.fi",
+    renderGitHubIssueJobLedger([]),
+  );
+
+  assert.ok(selected);
+  assert.equal(issueLookups, 1);
+  assert.equal(commentLookups, 1);
 });
 
 Deno.test("durable completion evidence never closes a changed issue snapshot", async () => {
@@ -248,6 +326,29 @@ Deno.test("durable completion evidence never closes a changed issue snapshot", a
     ),
     false,
   );
+  let closed = false;
+  const changedAfterEvidenceSource = {
+    ...source,
+    getIssue: () =>
+      Promise.resolve({
+        ...evidenceOnlyIssue,
+        body: `${evidenceOnlyIssue.body}\nChanged after completion evidence.\n`,
+      }),
+  };
+  assert.equal(
+    await closeIssueAfterCompletionEvidenceSnapshotCheck({
+      source: changedAfterEvidenceSource,
+      repository: "ubiquity/ai.ubq.fi",
+      selection: retrySelection,
+      evidenceUpdatedAt,
+      close: () => {
+        closed = true;
+        return Promise.resolve();
+      },
+    }),
+    false,
+  );
+  assert.equal(closed, false);
 });
 
 Deno.test("pre-push parsing isolates exactly one development update", () => {

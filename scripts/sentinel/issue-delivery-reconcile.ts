@@ -317,6 +317,29 @@ export const completionEvidenceSnapshotMatches = async (
     current.updatedAt === selection.updated_at;
 };
 
+export const closeIssueAfterCompletionEvidenceSnapshotCheck = async (
+  input: Readonly<{
+    source: GitHubIssueJobSource;
+    repository: string;
+    selection: GitHubIssueSelectionReport;
+    evidenceUpdatedAt: string;
+    close: () => Promise<void>;
+  }>,
+): Promise<boolean> => {
+  const issue = await input.source.getIssue(input.selection.issue_number);
+  if (
+    !await completionEvidenceSnapshotMatches(
+      input.source,
+      input.repository,
+      input.selection,
+      issue,
+      input.evidenceUpdatedAt,
+    )
+  ) return false;
+  await input.close();
+  return true;
+};
+
 const parseDisposition = (value: unknown): "resolved" | "manual_required" | null => {
   if (value === null) return null;
   const disposition = record(value);
@@ -618,7 +641,8 @@ export const reconcileGitHubIssueDelivery = async (
     evidence,
   );
   if (action === "close_completed") {
-    // The issue evidence is the durable retry checkpoint. Persist it before the irreversible close.
+    // The issue evidence is the durable retry checkpoint. Persist it, then re-fetch and validate the
+    // snapshot before the irreversible close because the issue may have changed during the comment write.
     await upsertComment(
       input.token,
       input.repository,
@@ -626,7 +650,27 @@ export const reconcileGitHubIssueDelivery = async (
       marker,
       evidence,
     );
-    await closeIssue(input.token, input.repository, selection.issue_number);
+    const source = new GitHubActionsClient({ repository: input.repository, token: input.token });
+    const durableEvidence = await completionEvidence(
+      input.token,
+      input.repository,
+      selection.issue_number,
+      marker,
+    );
+    if (durableEvidence === null) {
+      throw new Error("Sentinel completion evidence did not persist before issue closure");
+    }
+    if (
+      !await closeIssueAfterCompletionEvidenceSnapshotCheck({
+        source,
+        repository: input.repository,
+        selection,
+        evidenceUpdatedAt: durableEvidence.updatedAt,
+        close: () => closeIssue(input.token, input.repository, selection.issue_number),
+      })
+    ) {
+      throw new Error("Sentinel completion evidence no longer matches the open issue snapshot");
+    }
   } else if (action === "leave_open_rolled_back") {
     await removeRolledBackLedgerEntry(
       input.token,

@@ -484,7 +484,6 @@ export const selectNextGitHubIssueJob = async (
       MAX_GITHUB_ISSUE_TIME_ESTIMATE_MINUTES,
     );
     if (!job) continue;
-    if (await normalizeInertIssueComments(source, candidate) === null) continue;
     candidates.push(job);
   }
   candidates.sort(issueJobOrder);
