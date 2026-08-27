@@ -265,6 +265,8 @@ Deno.test({
       const safeField of [
         ".due",
         ".invoked",
+        ".duplicateAccountSkipped",
+        ".rpcSucceeded",
         ".commandCode",
         ".timedOut",
         ".outputExceeded",
@@ -281,8 +283,8 @@ Deno.test({
     }
     assert(
       maintenanceDiagnostics.includes('echo "### Codex auth maintenance"') &&
-        maintenanceDiagnostics.includes('>> "$GITHUB_STEP_SUMMARY"'),
-      "Auth maintenance must publish its validated categorical and numeric dispositions",
+        maintenanceDiagnostics.includes('| tee -a "$GITHUB_STEP_SUMMARY"'),
+      "Auth maintenance must log and publish its validated categorical and numeric dispositions",
     );
     for (const forbidden of ["auth.json", "id_token", "access_token", "refresh_token", "account_id", "sha256"]) {
       assert(
@@ -360,9 +362,18 @@ Deno.test({
       "The orchestrator must read only the prepared private files",
     );
     assert(
-      maintenance.includes("--ignore-user-config") && maintenance.includes("--skip-git-repo-check") &&
-        maintenance.includes("Always re-read the complete file"),
-      "Pinned Codex must own rotation in a fixed empty workspace and preserve its complete rewrite",
+      maintenance.includes('"app-server"') &&
+        maintenance.includes(`'cli_auth_credentials_store="file"'`) &&
+        maintenance.includes('await send({ method: "initialized" });') &&
+        maintenance.includes('method: "account/read"') &&
+        maintenance.includes("params: { refreshToken: true }") &&
+        maintenance.includes("CODEX_HOME: stage.directory") &&
+        maintenance.includes("after.tokens.id_token !== before.tokens.id_token") &&
+        maintenance.includes('requiredExecutableEnvironment("SENTINEL_CODEX_AUTH_EXECUTABLE")') &&
+        workflow.includes('resolveFromCodex.resolve("@openai/codex-linux-x64/package.json")') &&
+        workflow.includes("vendor/x86_64-unknown-linux-musl/bin/codex") &&
+        workflow.includes('--allow-run="$SENTINEL_CODEX_AUTH_EXECUTABLE"'),
+      "Pinned native Codex must explicitly refresh staged file auth and preserve its complete rewrite",
     );
   },
 });
