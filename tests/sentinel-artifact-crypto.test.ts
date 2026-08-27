@@ -276,6 +276,10 @@ Deno.test({
       "Sentinel must be able to open and merge delivery pull requests",
     );
     assert(
+      workflow.includes('--allow-read="$repository_root"'),
+      "The issue-delivery push gate must read the workspace root (Deno.realPath)",
+    );
+    assert(
       workflow.includes("git show origin/development:docs/sentinel-review-backlog.md"),
       "Hourly agent setup must inspect the current development backlog",
     );

@@ -145,7 +145,10 @@ export const runCommand = async (
 export const runChecked = async (input: Parameters<typeof runCommand>[0]): Promise<CommandResult> => {
   const result = await runCommand(input);
   if (result.code !== 0) {
-    throw new Error(`${input.command} failed with exit code ${result.code}`);
+    const stderr = new TextDecoder().decode(result.stderr).trim();
+    throw new Error(
+      `${input.command} failed with exit code ${result.code}${stderr.length > 0 ? `: ${stderr.slice(0, 500)}` : ""}`,
+    );
   }
   return result;
 };
