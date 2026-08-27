@@ -615,6 +615,20 @@ already exported. The `/admin` page fills that token automatically on `http://lo
 auto-fills it for `https://ai.ubq.fi`. Export `DENO_DEPLOY_TOKEN` before starting the task when you need a different
 credential, then paste that credential into the fallback-token field.
 
+To disable admin authentication explicitly for local UI development, pass the server flag through the dev task:
+
+```bash
+deno task dev --disable-admin-auth
+```
+
+The flag grants super-admin access only when the server's actual TCP listener and the request URL are both loopback.
+Startup fails if the listener is public, the runtime is Deno Deploy, the flag is duplicated, or an unknown server
+argument is supplied. The equivalent direct command must place the application flag after the entry point:
+
+```bash
+deno serve --host 127.0.0.1 --allow-env --allow-net --allow-read --unstable-kv serve.ts --disable-admin-auth
+```
+
 ## Deno KV migration
 
 Use the KV migration helper to inspect a Deno 1/Classic KV database, export it, map it into a local Deno 2 KV, and

@@ -1,6 +1,8 @@
 /// <reference lib="deno.ns" />
 
 import { getKv } from "./src/kv.ts";
+import { config } from "./src/config.ts";
+import { configureAdminAuthForListener, parseServeRuntimeOptions } from "./src/local_admin_auth.ts";
 import { reconcileDuePaidFallbacksV3 } from "./src/paid_fallback_ledger.ts";
 import { prunePromptCacheAnalytics } from "./src/prompt_cache_analytics.ts";
 import { sampleProviderCapacityForCron } from "./src/provider_capacity.ts";
@@ -70,4 +72,21 @@ Deno.cron("deliver pending Provider Sentinel incidents", "* * * * *", async () =
 
 const fetch = createServeHandler();
 
-export default { fetch };
+const runtimeOptions = parseServeRuntimeOptions(Deno.args, { isDeploy: config.isDeploy });
+
+const server: Deno.ServeDefaultExport = runtimeOptions.disableAdminAuth
+  ? {
+    fetch,
+    onListen(address) {
+      configureAdminAuthForListener(runtimeOptions, address);
+      const netAddress = address as Deno.NetAddr;
+      const hostname = netAddress.hostname.includes(":") ? `[${netAddress.hostname}]` : netAddress.hostname;
+      console.log(`Listening on http://${hostname}:${netAddress.port}/`);
+      console.warn(
+        "[ai.ubq.fi] WARNING: admin authentication is disabled for this loopback development server.",
+      );
+    },
+  }
+  : { fetch };
+
+export default server;

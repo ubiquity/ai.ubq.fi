@@ -4,16 +4,20 @@ import handler from "../src/handler.ts";
 import { corsHeaders } from "../src/http.ts";
 import { handleRoot, handleStaticAsset, hasStaticAsset } from "../src/static.ts";
 import readmeText from "../README.md" with { type: "text" };
+import adminCss from "../static/admin.css" with { type: "text" };
 import adminHtml from "../static/admin.html" with { type: "text" };
 import aboutHtml from "../static/about.html" with { type: "text" };
 import adminScript from "../static/admin.js" with { type: "text" };
 import authScript from "../static/auth.js" with { type: "text" };
+import chatHtml from "../static/chat.html" with { type: "text" };
 import companyLogoSvg from "../static/company-logo.svg" with { type: "text" };
 import contactHtml from "../static/contact.html" with { type: "text" };
 import developersHtml from "../static/developers.html" with { type: "text" };
+import docsHtml from "../static/docs.html" with { type: "text" };
 import indexHtml from "../static/index.html" with { type: "text" };
 import llmsText from "../static/llms.txt" with { type: "text" };
 import llmsFullText from "../static/docs/llms-agents.md" with { type: "text" };
+import modelsCss from "../static/models.css" with { type: "text" };
 import modelsHtml from "../static/models.html" with { type: "text" };
 import modelsScript from "../static/models.js" with { type: "text" };
 import openApiText from "../static/openapi.json" with { type: "text" };
@@ -24,6 +28,7 @@ Deno.test("static assets register frontend module dependencies", () => {
   for (
     const path of [
       "/admin.js",
+      "/admin.css",
       "/auth.js",
       "/auth-relay.js",
       "/foreground-refresh.js",
@@ -41,6 +46,140 @@ Deno.test("public models page is registered", () => {
   assert.equal(hasStaticAsset("/models"), true);
   assert.equal(hasStaticAsset("/models.html"), true);
   assert.match(modelsHtml, /<script type="module" src="\/models\.js\?v=20260824-recent-reasoning-v2"><\/script>/);
+});
+
+Deno.test("public console pages share versioned styles, canonical navigation, and accurate active states", () => {
+  const assetVersion = "public-console-20260827-v1";
+  const canonicalLinks = [
+    { href: "/models", label: "Models" },
+    { href: "/developers", label: "Developers" },
+    { href: "/docs", label: "Docs" },
+    { href: "/chat", label: "Chat" },
+    { href: "/admin", label: "Admin" },
+  ];
+  const pages = [
+    { name: "index", html: indexHtml, pageCss: "home.css", activeHref: null },
+    { name: "docs", html: docsHtml, pageCss: "docs.css", activeHref: "/docs" },
+    { name: "developers", html: developersHtml, pageCss: "docs.css", activeHref: "/developers" },
+    { name: "models", html: modelsHtml, pageCss: "models.css", activeHref: "/models" },
+    { name: "chat", html: chatHtml, pageCss: "chat.css", activeHref: "/chat" },
+    { name: "about", html: aboutHtml, pageCss: "docs.css", activeHref: null },
+    { name: "contact", html: contactHtml, pageCss: "docs.css", activeHref: null },
+    { name: "privacy", html: privacyHtml, pageCss: "docs.css", activeHref: null },
+  ];
+
+  for (const page of pages) {
+    const stylesheetHrefs = [...page.html.matchAll(/<link\b(?=[^>]*\brel="stylesheet")[^>]*\bhref="([^"]+)"[^>]*>/g)]
+      .map((match) => match[1]);
+    assert.deepEqual(
+      stylesheetHrefs,
+      [`/style.css?v=${assetVersion}`, `/${page.pageCss}?v=${assetVersion}`],
+      `${page.name} should load only the release-matched shared and page styles`,
+    );
+    for (const href of stylesheetHrefs) {
+      assert.equal(hasStaticAsset(new URL(href, "https://ai.ubq.fi").pathname), true, `${href} should be registered`);
+    }
+
+    assert.equal(
+      (page.html.match(/<header\b[^>]*\bdata-shared-header\b[^>]*>/g) ?? []).length,
+      1,
+      `${page.name} should have one shared header`,
+    );
+    assert.equal(
+      (page.html.match(/<nav\b[^>]*\bdata-actions\b[^>]*>/g) ?? []).length,
+      1,
+      `${page.name} should have one actions navigation`,
+    );
+    const primaryNavMatches = [
+      ...page.html.matchAll(
+        /<nav\b(?=[^>]*\bdata-actions\b)(?=[^>]*\baria-label="Primary")[^>]*>([\s\S]*?)<\/nav>/g,
+      ),
+    ];
+    assert.equal(primaryNavMatches.length, 1, `${page.name} should have one actions primary navigation`);
+    const primaryNav = primaryNavMatches[0]?.[1] ?? "";
+    assert.doesNotMatch(
+      primaryNav,
+      /<a\b[^>]*\bdata-variant="primary"/,
+      `${page.name} primary navigation must derive its active treatment from aria-current`,
+    );
+
+    const links = [...primaryNav.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/g)].map((match) => ({
+      attributes: match[1] ?? "",
+      href: match[1]?.match(/\bhref="([^"]+)"/)?.[1] ?? "",
+      label: (match[2] ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
+    }));
+    assert.deepEqual(
+      links.map(({ href, label }) => ({ href, label })),
+      canonicalLinks,
+      `${page.name} should preserve the canonical primary navigation order and labels`,
+    );
+    for (const link of links) {
+      assert.match(link.attributes, /\bdata-button\b/, `${page.name} ${link.label} should use the shared nav control`);
+    }
+
+    const currentLinks = links.filter((link) => /\baria-current="page"/.test(link.attributes));
+    assert.equal(
+      (primaryNav.match(/\baria-current=/g) ?? []).length,
+      page.activeHref === null ? 0 : 1,
+      `${page.name} should not expose an alternate or duplicate primary current state`,
+    );
+    assert.deepEqual(
+      currentLinks.map(({ href }) => href),
+      page.activeHref === null ? [] : [page.activeHref],
+      `${page.name} should mark only its matching canonical destination as current`,
+    );
+  }
+});
+
+Deno.test("public console styles retain the bordered neutral admin surface without decorative Models blue", () => {
+  const ruleBodies = (css: string, selector: string): string[] => {
+    const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return [...css.matchAll(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`, "g"))].map((match) => match[1] ?? "");
+  };
+  const ruleBodyContaining = (css: string, selector: string, declaration: string): string => {
+    const body = ruleBodies(css, selector).find((candidate) => candidate.includes(declaration));
+    assert.ok(body, `${selector} should have a CSS rule containing ${declaration}`);
+    return body;
+  };
+
+  const headerRule = ruleBodyContaining(styleCss, "header[data-shared-header]", "backdrop-filter");
+  assert.match(headerRule, /border:\s*1px solid rgba\(255,\s*255,\s*255,\s*0\.07\)/);
+  assert.match(headerRule, /background:\s*rgba\(15,\s*18,\s*22,\s*0\.82\)/);
+  assert.match(headerRule, /backdrop-filter:\s*blur\(18px\)/);
+
+  const navControlRule = ruleBodyContaining(styleCss, "[data-actions] a[data-button]", "min-height");
+  assert.match(navControlRule, /min-height:\s*32px/);
+  assert.match(navControlRule, /padding:\s*5px 10px/);
+  assert.match(navControlRule, /border-radius:\s*7px/);
+  assert.match(navControlRule, /background:\s*transparent/);
+  assert.match(navControlRule, /color:\s*var\(--muted\)/);
+
+  const activeNavRule = ruleBodyContaining(styleCss, '[data-actions] a[aria-current="page"]', "background");
+  assert.match(activeNavRule, /background:\s*rgba\(255,\s*255,\s*255,\s*0\.1\)/);
+  assert.match(activeNavRule, /color:\s*var\(--text\)/);
+
+  const cssColorLiterals = modelsCss.match(/#[\da-f]{3,8}\b|rgba?\([^)]*\)/gi) ?? [];
+  const colorChannels = (literal: string): [number, number, number] | null => {
+    if (literal.startsWith("#")) {
+      const hex = literal.slice(1);
+      const rgb = hex.length === 3 || hex.length === 4
+        ? hex.slice(0, 3).split("").map((channel) => channel.repeat(2)).join("")
+        : hex.slice(0, 6);
+      if (rgb.length !== 6) return null;
+      return [0, 2, 4].map((offset) => Number.parseInt(rgb.slice(offset, offset + 2), 16)) as [number, number, number];
+    }
+    const match = literal.match(
+      /^rgba?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)/i,
+    );
+    return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
+  };
+  const decorativeBlues = cssColorLiterals.filter((literal) => {
+    const channels = colorChannels(literal);
+    if (!channels) return false;
+    const [red, green, blue] = channels;
+    return blue - red >= 24 && blue - green >= 12;
+  });
+  assert.deepEqual(decorativeBlues, [], "models.css should use neutral shared-console colors");
 });
 
 Deno.test("published guidance documents endpoint-specific output caps and repository-local auth uploads", () => {
@@ -140,7 +279,8 @@ Deno.test("admin provider view places capacity history before current providers"
 
   assert.match(adminHtml, /Provider analytics/);
   assert.match(adminHtml, /Fifteen-minute capacity, cached-input, and cache-write history/);
-  assert.match(adminHtml, /admin\.js\?v=gateway-errors-20260825-v3/);
+  assert.match(adminHtml, /admin\.css\?v=admin-polish-20260827-v3/);
+  assert.match(adminHtml, /admin\.js\?v=admin-polish-20260827-v3/);
   assert.doesNotMatch(adminHtml, /removed_provider-failover|debug-routing/);
   assert.doesNotMatch(adminScript, /RemovedProviderFailover|refresh=live/);
   assert.match(adminScript, /fetch\(apiUrl\("\/admin\/providers\/capacity"\)/);
@@ -195,11 +335,47 @@ Deno.test("admin error tab opens its view", () => {
   assert.match(adminScript, /invalidateAdminErrors\("Target changed\. Sign in to load gateway errors\."\)/);
 });
 
+Deno.test("admin boot probes server auth mode without requiring a browser token", () => {
+  assert.doesNotMatch(adminScript, /if \(!token && !relaySessionActive && !isRemoteRelayOrigin\(\)\)/);
+  assert.match(adminScript, /requestAuth\(token \? \{ Authorization: `Bearer \$\{token\}` \} : \{\}\)/);
+  assert.match(adminScript, /resetAdminPrefetchState\("Checking admin session\.\.\."\)/);
+});
+
+Deno.test("expanded auth widget keeps its mobile toggle right-aligned", () => {
+  assert.match(
+    adminCss,
+    /\[data-auth-widget\]\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/,
+  );
+  assert.match(
+    adminCss,
+    /#auth-widget-toggle\s*\{[^}]*grid-column:\s*1;[^}]*justify-self:\s*end/,
+  );
+  assert.match(adminCss, /#auth-widget-panel\s*\{[^}]*grid-column:\s*1/);
+});
+
 Deno.test("provider analytics graph reports inference 5xx buckets", () => {
-  assert.match(adminScript, /label: "Inference 5xx"/);
+  assert.match(adminScript, /label: "Failed inference responses \(HTTP 5xx\)"/);
   assert.match(adminScript, /five_xx_buckets/);
-  assert.match(adminScript, /marker\.dataset\.capacityInference5xx/);
-  assert.match(adminScript, /inference 5xx error/);
+  assert.match(adminScript, /marker\.dataset\.capacityInferenceError/);
+  assert.doesNotMatch(adminScript, /marker\.dataset\.capacityInference5xx/);
+  assert.match(adminCss, /\[data-capacity-inference-error\] path/);
+  assert.match(adminCss, /\[data-capacity-legend-item="inference-error"\]/);
+  assert.match(adminScript, /15-minute bucket starting/);
+  assert.match(adminScript, /Failed inference buckets/);
+  assert.match(adminHtml, /Red diamonds mark 15-minute buckets containing failed inference responses \(HTTP 5xx\)/);
+});
+
+Deno.test("provider analytics graph preserves its SVG text aspect ratio", () => {
+  assert.match(adminScript, /preserveAspectRatio: "xMinYMin meet"/);
+  assert.match(adminScript, /viewBox: `0 0 \$\{width\} \$\{height\}`,[\s\S]*?width,[\s\S]*?height,/);
+  assert.match(
+    adminCss,
+    /\[data-capacity-chart-svg\]\s*\{[\s\S]*?height:\s*var\(--capacity-chart-height-px, 180px\)/,
+  );
+  assert.doesNotMatch(
+    adminCss,
+    /\[data-capacity-chart-svg\]\s*\{[^}]*height:\s*clamp\(/,
+  );
 });
 
 Deno.test("static assets register autonomous agent discovery documents", () => {

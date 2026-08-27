@@ -1,45 +1,40 @@
 body[data-page="chat"] {
-  background-color: #0a0c11;
-  background-image:
-    radial-gradient(900px 600px at 15% 10%, rgba(255, 255, 255, 0.06), transparent 60%),
-    radial-gradient(900px 700px at 85% 90%, rgba(255, 255, 255, 0.04), transparent 60%);
   overflow: hidden;
 }
 
 body[data-page="chat"] [data-chat-shell] {
   display: grid;
   grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
-  grid-template-areas: "sidebar main";
-  min-height: 100vh;
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    "header header"
+    "sidebar main";
+  gap: 14px;
+  width: 100%;
+  max-width: 1600px;
+  height: 100vh;
+  margin: 0 auto;
+  padding: calc(22px + env(safe-area-inset-top)) clamp(20px, 3vw, 44px)
+    calc(22px + env(safe-area-inset-bottom));
+}
+
+body[data-page="chat"] header[data-shared-header] {
+  grid-area: header;
 }
 
 body[data-page="chat"] [data-chat-sidebar] {
   grid-area: sidebar;
   display: grid;
-  grid-template-rows: auto auto 1fr;
-  gap: 16px;
-  padding: calc(20px + env(safe-area-inset-top)) 18px calc(18px + env(safe-area-inset-bottom));
-  background: rgba(12, 14, 19, 0.96);
-  box-shadow: 30px 0 60px rgba(0, 0, 0, 0.5);
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 14px;
+  min-height: 0;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 16px;
+  background: rgba(16, 19, 23, 0.9);
+  box-shadow: var(--shadow-soft);
   overflow: auto;
   animation: chat-enter 0.45s ease both;
-}
-
-body[data-page="chat"] [data-chat-sidebar-header] {
-  display: grid;
-  gap: 12px;
-}
-
-body[data-page="chat"] [data-chat-nav] {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-body[data-page="chat"] [data-chat-nav] a[data-button] {
-  background: rgba(255, 255, 255, 0.06);
-  font-size: 12px;
-  padding: 6px 10px;
 }
 
 body[data-page="chat"] [data-chat-sidebar-actions] {
@@ -55,8 +50,9 @@ body[data-page="chat"] [data-chat-sidebar-body] {
 }
 
 body[data-page="chat"] [data-chat-panel] {
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.032);
   padding: 12px;
   display: grid;
   gap: 10px;
@@ -158,8 +154,8 @@ body[data-page="chat"] [data-chat-main] {
   display: grid;
   grid-template-rows: auto 1fr auto;
   gap: 16px;
-  min-height: 100vh;
-  padding: calc(24px + env(safe-area-inset-top)) 32px calc(24px + env(safe-area-inset-bottom));
+  min-height: 0;
+  padding: 4px 0 0;
   animation: chat-enter 0.45s ease both;
   animation-delay: 60ms;
 }
@@ -184,8 +180,9 @@ body[data-page="chat"] [data-chat-subtitle] {
 body[data-page="chat"] [data-messages] {
   min-height: 0;
   padding: 18px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 16px;
+  background: rgba(16, 19, 23, 0.9);
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -252,8 +249,9 @@ body[data-page="chat"] [data-chat-compose] {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   padding: 12px;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 14px;
+  background: rgba(16, 19, 23, 0.9);
   box-shadow: var(--shadow-soft);
 }
 
@@ -294,7 +292,7 @@ body[data-page="chat"] button[data-icon-button] {
 body[data-page="chat"] [data-chat-sidebar] input,
 body[data-page="chat"] [data-chat-sidebar] textarea,
 body[data-page="chat"] [data-chat-sidebar] select {
-  background-color: rgba(255, 255, 255, 0.08);
+  background-color: rgba(255, 255, 255, 0.055);
 }
 
 @keyframes chat-rise {
@@ -327,19 +325,22 @@ body[data-page="chat"] [data-chat-sidebar] select {
   body[data-page="chat"] [data-chat-shell] {
     grid-template-columns: 1fr;
     grid-template-areas:
+      "header"
       "main"
       "sidebar";
+    height: auto;
+    min-height: 100vh;
+    padding: calc(14px + env(safe-area-inset-top)) 12px calc(24px + env(safe-area-inset-bottom));
   }
 
   body[data-page="chat"] [data-chat-main] {
     min-height: auto;
-    padding: calc(20px + env(safe-area-inset-top)) 16px 20px;
+    padding: 4px 0 0;
   }
 
   body[data-page="chat"] [data-chat-sidebar] {
     min-height: auto;
-    padding: 20px 16px calc(24px + env(safe-area-inset-bottom));
-    box-shadow: none;
+    padding: 16px;
   }
 
   body[data-page="chat"] [data-chat-topbar] {
