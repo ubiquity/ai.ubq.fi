@@ -415,8 +415,9 @@ Notes:
 - Reasoning tier strings come from each model's uploaded Codex CLI metadata; inspect `/uos/models/capabilities` instead
   of relying on a hard-coded tier list.
 - Use `reasoning_effort: "none"` (chat completions) or `reasoning: { "effort": "none" }` (responses) to disable
-  reasoning. `none` is always available even when the uploaded catalog omits it, and the gateway preserves it verbatim
-  at the Codex upstream boundary.
+  reasoning on Codex models. `none` remains available there even when the uploaded catalog omits it, and the gateway
+  preserves it verbatim at the Codex upstream boundary. Cerebras `gpt-oss-120b` supports only `low`, `medium`, and
+  `high`; omit the field to use its `medium` default.
 - Other non-empty tier strings pass through to Codex upstream without gateway validation unless the stored catalog
   provides a wire translation. If upstream rejects one, inspect `/uos/models/capabilities` and retry with a tier
   advertised for that model.
@@ -424,7 +425,8 @@ Notes:
   generically and otherwise passes the selected effort through unchanged. For the current Codex catalog this maps the
   `ultra` orchestration preset to upstream effort `max`. Automatic multi-agent delegation is performed by Codex clients
   and is not provided by this stateless API gateway.
-- In the browser chat playground, `Default` omits `reasoning_effort`; `None` always sends `reasoning_effort: "none"`.
+- In the browser chat playground, `Default` omits `reasoning_effort`; `None` sends `reasoning_effort: "none"` for models
+  that support it. Cerebras `gpt-oss-120b` does not show the `None` option.
 
 Defaults can be managed via `/admin/defaults` (admin auth required). When no model is explicitly configured, the gateway
 uses the first model in the current Codex model snapshot. If neither a configured default nor a snapshot is available,

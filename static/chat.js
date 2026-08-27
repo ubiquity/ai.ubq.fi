@@ -13,9 +13,18 @@ import {
 } from "./auth.js";
 import {
   getReasoningEffortForChatRequest,
+  isReasoningNoneSelection,
+  modelSupportsReasoningNone,
   setReasoningPlaceholder as setSharedReasoningPlaceholder,
   updateReasoningSelectForModel,
-} from "./reasoning-select.js?v=20260713-none-ultra";
+} from "./reasoning-select.js?v=20260827-cerebras-none-v1";
+import {
+  appendChatMessageStats,
+  createChatMessageElement,
+  parseChatSseEvent,
+  setChatMessageContent,
+  splitChatSseEvents,
+} from "./chat-stats.js?v=20260827-response-stats-v1";
 import { bindForegroundRefresh } from "./foreground-refresh.js";
 
 const STORAGE_KEYS = {
@@ -257,7 +266,12 @@ const setModelOptions = (models, preferred, fallbackModel = "") => {
 
 const updateReasoningForModel = (modelId, preferred) => {
   const model = modelCatalog.get(modelId);
-  return updateReasoningSelectForModel(reasoningSelect, model, preferred);
+  const includeNone = modelSupportsReasoningNone(modelId);
+  const selected = updateReasoningSelectForModel(reasoningSelect, model, preferred, { includeNone });
+  if (!includeNone && isReasoningNoneSelection(preferred)) {
+    storage.remove(STORAGE_KEYS.reasoningEffort);
+  }
+  return selected;
 };
 
 const resetModelCatalog = (label = "Authenticate to load models") => {
@@ -655,9 +669,7 @@ streamInput.addEventListener("change", () => {
 });
 
 const appendMessage = (role, text) => {
-  const el = document.createElement("div");
-  el.dataset.message = role;
-  el.textContent = text;
+  const el = createChatMessageElement(document, role, text);
   messagesEl.appendChild(el);
   messagesEl.scrollTop = messagesEl.scrollHeight;
   return el;
@@ -701,22 +713,14 @@ const streamSse = async (response, onEvent) => {
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
 
-    for (;;) {
-      const boundary = buffer.indexOf("\n\n");
-      if (boundary < 0) break;
-      const rawEvent = buffer.slice(0, boundary);
-      buffer = buffer.slice(boundary + 2);
-      onEvent(rawEvent);
-    }
+    const framed = splitChatSseEvents(buffer);
+    buffer = framed.remaining;
+    for (const rawEvent of framed.events) onEvent(rawEvent);
   }
 
-  if (buffer.trim()) onEvent(buffer);
-};
-
-const extractAssistantDelta = (payload) => {
-  const delta = payload?.choices?.[0]?.delta;
-  if (typeof delta?.content === "string") return delta.content;
-  return "";
+  buffer += decoder.decode();
+  const framed = splitChatSseEvents(buffer, true);
+  for (const rawEvent of framed.events) onEvent(rawEvent);
 };
 
 const sendPrompt = async () => {
@@ -748,6 +752,7 @@ const sendPrompt = async () => {
 
   const reasoningEffort = getReasoningEffortForChatRequest(reasoningSelect.value);
   if (reasoningEffort) payload.reasoning_effort = reasoningEffort;
+  if (payload.stream) payload.stream_options = { include_usage: true };
   if (!payload.model) delete payload.model;
 
   const assistantEl = appendMessage("assistant", "");
@@ -755,6 +760,7 @@ const sendPrompt = async () => {
 
   abortController = new AbortController();
   const backendBase = getActiveBackendBase();
+  const requestStartedAt = performance.now();
   try {
     const res = await fetch(buildBackendUrl("/v1/chat/completions", backendBase), {
       method: "POST",
@@ -770,9 +776,9 @@ const sendPrompt = async () => {
       const errorPayload = await res.json().catch(() => null);
       assistantEl.dataset.message = "error";
       if (res.status === 401) {
-        assistantEl.textContent = buildBackendAwareMessage(backendBase, "Auth failed for this chat request.");
+        setChatMessageContent(assistantEl, buildBackendAwareMessage(backendBase, "Auth failed for this chat request."));
       } else {
-        assistantEl.textContent = errorPayload?.error?.message ?? `${res.status} ${res.statusText}`;
+        setChatMessageContent(assistantEl, errorPayload?.error?.message ?? `${res.status} ${res.statusText}`);
       }
       return;
     }
@@ -781,47 +787,75 @@ const sendPrompt = async () => {
       const data = await res.json().catch(() => null);
       const content = data?.choices?.[0]?.message?.content;
       if (typeof content === "string" && content.length > 0) {
-        assistantEl.textContent = content;
+        setChatMessageContent(assistantEl, content);
         conversation.push({ role: "assistant", content });
       } else {
-        assistantEl.textContent = JSON.stringify(data, null, 2);
+        setChatMessageContent(assistantEl, JSON.stringify(data, null, 2));
       }
+      appendChatMessageStats(assistantEl, {
+        turns: 1,
+        steps: 1,
+        llmMs: performance.now() - requestStartedAt,
+        usage: data?.usage,
+      });
+      messagesEl.scrollTop = messagesEl.scrollHeight;
       return;
     }
 
     let assistantText = "";
+    let firstTokenAt = null;
+    let responseUsage = null;
+    let streamCompleted = false;
+    let streamFailure = "";
     await streamSse(res, (rawEvent) => {
-      const dataLines = rawEvent
-        .split("\n")
-        .map((line) => line.trimEnd())
-        .filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice("data:".length).trimStart());
-
-      const dataText = dataLines.join("\n").trim();
-      if (!dataText) return;
-      if (dataText === "[DONE]") return;
-
-      try {
-        const payload = JSON.parse(dataText);
-        const delta = extractAssistantDelta(payload);
-        if (!delta) return;
-        assistantText += delta;
-        assistantEl.textContent = assistantText;
-        messagesEl.scrollTop = messagesEl.scrollHeight;
-      } catch {
-        // ignore invalid chunks
+      const event = parseChatSseEvent(rawEvent);
+      if (event.kind === "done") {
+        streamCompleted = true;
+        return;
       }
+      if (event.kind === "invalid") {
+        streamFailure ||= "The response stream returned an invalid event.";
+        return;
+      }
+      if (event.kind === "error") {
+        streamFailure ||= event.message;
+        return;
+      }
+      if (event.kind !== "event") return;
+      if (event.usage !== undefined) responseUsage = event.usage;
+      if (!event.delta) return;
+      if (firstTokenAt === null) firstTokenAt = performance.now();
+      assistantText += event.delta;
+      setChatMessageContent(assistantEl, assistantText);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
     });
 
+    if (streamFailure || !streamCompleted) {
+      assistantEl.dataset.message = "error";
+      const message = streamFailure || "The response stream ended before completion.";
+      setChatMessageContent(assistantEl, assistantText.trim() ? `${assistantText}\n\n[${message}]` : message);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      return;
+    }
+
     if (assistantText.trim()) conversation.push({ role: "assistant", content: assistantText });
+    const completedAt = performance.now();
+    appendChatMessageStats(assistantEl, {
+      turns: 1,
+      steps: 1,
+      llmMs: completedAt - requestStartedAt,
+      ttftMs: firstTokenAt === null ? undefined : firstTokenAt - requestStartedAt,
+      usage: responseUsage,
+    });
+    messagesEl.scrollTop = messagesEl.scrollHeight;
   } catch (error) {
     if (error?.name === "AbortError") {
       assistantEl.dataset.message = "system";
-      assistantEl.textContent = "[stopped]";
+      setChatMessageContent(assistantEl, "[stopped]");
       return;
     }
     assistantEl.dataset.message = "error";
-    assistantEl.textContent = "Request failed.";
+    setChatMessageContent(assistantEl, "Request failed.");
   } finally {
     abortController = null;
     setBusy(false);

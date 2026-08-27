@@ -31,6 +31,7 @@ Deno.test("static assets register frontend module dependencies", () => {
       "/admin.css",
       "/auth.js",
       "/auth-relay.js",
+      "/chat-stats.js",
       "/foreground-refresh.js",
       "/network.js",
       "/models.js",
@@ -49,7 +50,7 @@ Deno.test("public models page is registered", () => {
 });
 
 Deno.test("public console pages share versioned styles, canonical navigation, and accurate active states", () => {
-  const assetVersion = "public-console-20260827-v1";
+  const assetVersion = "public-console-20260827-v2";
   const canonicalLinks = [
     { href: "/models", label: "Models" },
     { href: "/developers", label: "Developers" },

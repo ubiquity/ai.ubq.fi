@@ -206,11 +206,25 @@ body[data-page="chat"] [data-message] {
   padding: 12px 14px;
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.06);
+  display: grid;
+  gap: 8px;
   font-size: 14px;
   line-height: 1.6;
-  white-space: pre-wrap;
   word-break: break-word;
   animation: chat-rise 0.25s ease both;
+}
+
+body[data-page="chat"] [data-message-content] {
+  white-space: pre-wrap;
+}
+
+body[data-page="chat"] [data-message-stats] {
+  min-width: 0;
+  color: var(--muted-2);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 18px;
+  white-space: normal;
 }
 
 body[data-page="chat"] [data-message="user"] {
