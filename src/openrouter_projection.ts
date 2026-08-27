@@ -23,6 +23,17 @@ const LEGACY_FAILOVER_WARNING_PATTERN = new RegExp(`^${LEGACY_FAILOVER_WARNING_B
 const CURRENT_FAILOVER_WARNING_PATTERN = new RegExp(`^${CURRENT_FAILOVER_WARNING_BODY}$`);
 const LEGACY_FAILOVER_WARNING_REPEAT_PATTERN = new RegExp(`^(?:${LEGACY_FAILOVER_WARNING_BODY})+$`);
 const CURRENT_FAILOVER_WARNING_REPEAT_PATTERN = new RegExp(`^(?:${CURRENT_FAILOVER_WARNING_BODY})+$`);
+const FAILOVER_WARNING_SHAPES = [
+  {
+    prefix: "⚠ Failover active: this response is from `openrouter:",
+    suffix: "` because the Codex upstream was unavailable.",
+  },
+  {
+    prefix: "⚠ Failover active: your request was rerouted to `openrouter:",
+    suffix: "` because the primary Codex service was unavailable.",
+  },
+] as const;
+const MAX_FAILOVER_WARNING_PREFIX_LENGTH = 1_024;
 
 export const isFailoverWarningText = (value: unknown): value is string =>
   typeof value === "string" &&
@@ -30,6 +41,19 @@ export const isFailoverWarningText = (value: unknown): value is string =>
     CURRENT_FAILOVER_WARNING_PATTERN.test(value) || LEGACY_FAILOVER_WARNING_PATTERN.test(value) ||
     CURRENT_FAILOVER_WARNING_REPEAT_PATTERN.test(value) || LEGACY_FAILOVER_WARNING_REPEAT_PATTERN.test(value)
   );
+
+const isFailoverWarningPrefix = (value: string): boolean => {
+  if (value.length > MAX_FAILOVER_WARNING_PREFIX_LENGTH) return false;
+  return FAILOVER_WARNING_SHAPES.some(({ prefix, suffix }) => {
+    if (value.length <= prefix.length) return prefix.startsWith(value);
+    if (!value.startsWith(prefix)) return false;
+    const remainder = value.slice(prefix.length);
+    const closingQuote = remainder.indexOf("`");
+    if (closingQuote < 0) return true;
+    if (closingQuote === 0) return false;
+    return suffix.startsWith(remainder.slice(closingQuote + 1));
+  });
+};
 
 const messageText = (value: Record<string, unknown>): string | null => {
   if (typeof value.content === "string") return value.content;
@@ -411,13 +435,16 @@ const outputValue = (value: Record<string, unknown>, param: string): unknown => 
     if (!isRecord(item) || Array.isArray(item) || typeof item.type !== "string") {
       throw new OpenRouterProjectionError(`${param}.output[${index}] is invalid`, `${param}.output[${index}]`);
     }
-    if (item.type !== "input_text" && item.type !== "output_text") {
+    if (
+      item.type !== "input_text" && item.type !== "output_text" && item.type !== "input_image" &&
+      item.type !== "input_file"
+    ) {
       throw new OpenRouterProjectionError(
         `${param}.output[${index}].type is not supported`,
         `${param}.output[${index}].type`,
       );
     }
-    if (typeof item.text !== "string") {
+    if ((item.type === "input_text" || item.type === "output_text") && typeof item.text !== "string") {
       throw new OpenRouterProjectionError(
         `${param}.output[${index}].text must be a string`,
         `${param}.output[${index}].text`,
@@ -543,13 +570,24 @@ const projectCall = (
   item: Record<string, unknown>,
   registry: OpenRouterProjectionRegistry,
   param: string,
-): { value: Record<string, unknown>; entry: OpenRouterToolProjection } => {
+): { value: Record<string, unknown>; entry: OpenRouterToolProjection | null } => {
   const type = getString(item.type);
   if (type === "function_call") {
     const name = fieldString(item, "name", param);
-    const entry = findOriginal(registry, "function", name, param);
     const id = callId(item, param);
-    parseArguments(item.arguments, entry, param);
+    if (typeof item.arguments !== "string") {
+      throw new OpenRouterProjectionError(`${param}.arguments must be a JSON string`, `${param}.arguments`);
+    }
+    const entry = registry.byOriginalKey.get(originalKey("function", name)) ?? null;
+    if (!entry) {
+      if (registry.entries.some((candidate) => candidate.originalName === name)) {
+        throw new OpenRouterProjectionError(
+          `${param}.name does not match the advertised function tool kind`,
+          `${param}.name`,
+        );
+      }
+      return { value: copyJson(item), entry: null };
+    }
     return {
       value: { type: "function_call", name: entry.projectedName, arguments: item.arguments, call_id: id },
       entry,
@@ -600,7 +638,17 @@ const projectOutput = (
   const type = getString(item.type);
   const id = callId(item, param);
   const entry = calls.get(id);
-  if (!entry) throw new OpenRouterProjectionError(`${param} has no matching call`, `${param}.call_id`);
+  if (!entry) {
+    if (type !== "function_call_output" && type !== "custom_tool_call_output") {
+      throw new OpenRouterProjectionError(`${param}.type is not a supported tool output`, `${param}.type`);
+    }
+    if (usedOutputs.has(id)) {
+      throw new OpenRouterProjectionError(`${param} duplicates call_id ${id}`, `${param}.call_id`);
+    }
+    const output = outputValue(item, param);
+    usedOutputs.add(id);
+    return type === "custom_tool_call_output" ? { type: "function_call_output", call_id: id, output } : copyJson(item);
+  }
   if (usedOutputs.has(id)) throw new OpenRouterProjectionError(`${param} duplicates call_id ${id}`, `${param}.call_id`);
   const isCustom = type === "custom_tool_call_output";
   if (type !== "function_call_output" && !isCustom) {
@@ -624,6 +672,7 @@ const projectInput = (
   if (!Array.isArray(value)) throw new OpenRouterProjectionError("input must be a string or an array", "input");
   const output: Record<string, unknown>[] = [];
   const calls = new Map<string, OpenRouterToolProjection>();
+  const seenCalls = new Set<string>();
   const usedOutputs = new Set<string>();
   for (const [index, raw] of value.entries()) {
     const param = `input[${index}]`;
@@ -643,13 +692,15 @@ const projectInput = (
     }
     if (type === "function_call" || type === "custom_tool_call" || type === "local_shell_call") {
       const projected = projectCall(raw, registry, param);
-      if (calls.has(projected.value.call_id as string)) {
+      const projectedCallId = projected.value.call_id as string;
+      if (seenCalls.has(projectedCallId)) {
         throw new OpenRouterProjectionError(
-          `${param} duplicates call_id ${String(projected.value.call_id)}`,
+          `${param} duplicates call_id ${String(projectedCallId)}`,
           `${param}.call_id`,
         );
       }
-      calls.set(projected.value.call_id as string, projected.entry);
+      seenCalls.add(projectedCallId);
+      if (projected.entry) calls.set(projectedCallId, projected.entry);
       output.push(projected.value);
       continue;
     }
@@ -667,10 +718,13 @@ const projectToolChoice = (value: unknown, registry: OpenRouterProjectionRegistr
   if (!isRecord(value) || Array.isArray(value)) {
     throw new OpenRouterProjectionError("tool_choice must be a string or object", "tool_choice");
   }
-  if (value.type !== "function") return copyJson(value);
+  const type = getString(value.type);
+  if (type !== "function" && type !== "custom") return copyJson(value);
   const name = getString(value.name)?.trim();
   if (!name) throw new OpenRouterProjectionError("tool_choice.name must be a non-empty string", "tool_choice.name");
-  const matches = registry.entries.filter((candidate) => candidate.originalName === name);
+  const matches = registry.entries.filter((candidate) =>
+    candidate.originalName === name && candidate.originalType === type
+  );
   if (!matches.length) {
     throw new OpenRouterProjectionError(`tool_choice references unknown tool ${name}`, "tool_choice.name");
   }
@@ -678,7 +732,7 @@ const projectToolChoice = (value: unknown, registry: OpenRouterProjectionRegistr
     throw new OpenRouterProjectionError(`tool_choice references an ambiguous tool ${name}`, "tool_choice.name");
   }
   const entry = matches[0]!;
-  return { ...copyJson(value), name: entry.projectedName };
+  return { type: "function", name: entry.projectedName };
 };
 
 export const buildOpenRouterRequestProjection = (canonical: Record<string, unknown>): OpenRouterRequestProjection => {
@@ -812,7 +866,6 @@ const decodeLocalShell = (value: unknown): Record<string, unknown> => {
 const reverseArguments = (state: CallState, argumentsText: string): Record<string, unknown> => {
   if (!state.entry) return failProjection("OpenRouter tool call name was not advertised.");
   const entry = state.entry;
-  const decoded = parseArguments(argumentsText, entry, "response.output_item");
   const id = state.callId;
   if (!id) return failProjection("OpenRouter tool call omitted call_id.");
   if (entry.originalType === "function") {
@@ -825,6 +878,7 @@ const reverseArguments = (state: CallState, argumentsText: string): Record<strin
       call_id: id,
     };
   }
+  const decoded = parseArguments(argumentsText, entry, "response.output_item");
   if (entry.originalType === "custom") {
     if (!isRecord(decoded) || typeof decoded.input !== "string") {
       return failProjection("OpenRouter custom-tool wrapper input is invalid.");
@@ -864,7 +918,6 @@ const reverseDirectNativeItem = (
     if (item.type !== "function_call" || item.name !== entry.originalName) {
       failProjection("OpenRouter native function call does not match the advertised tool.");
     }
-    parseArguments(item.arguments, entry, "response.output_item");
     return copyJson(item);
   }
   return failProjection("OpenRouter emitted an unsupported native local-shell call.");
@@ -894,29 +947,250 @@ const removeWarningEchoFromOutput = (output: unknown): unknown[] | null => {
   );
 };
 
-const stripWarningEcho = (event: ResponsesStreamEvent): ResponsesStreamEvent | null => {
-  const value = event.value;
-  if (event.type === "response.output_text.delta" || event.type === "response.output_text.done") {
-    const text = event.type.endsWith("delta") ? value.delta : value.text;
-    if (isFailoverWarningText(text)) return null;
-  }
-  if (event.type === "response.output_item.done" && isRecord(value.item) && !Array.isArray(value.item)) {
-    if (isGatewayFailoverWarningItem(value.item)) return null;
-  }
-  if (event.type === "response.output_item.added" && isRecord(value.item) && !Array.isArray(value.item)) {
-    if (isGatewayFailoverWarningItem(value.item)) return null;
-  }
-  const next: Record<string, unknown> = { ...value };
-  const output = removeWarningEchoFromOutput(value.output);
-  if (output) next.output = output;
-  if (isRecord(value.response) && !Array.isArray(value.response)) {
-    const response = { ...value.response };
-    const responseOutput = removeWarningEchoFromOutput(response.output);
-    if (responseOutput) response.output = responseOutput;
-    next.response = response;
-  }
-  return eventFromValue(next);
+type WarningEchoCandidate = {
+  aliases: Set<string>;
+  buffered: ResponsesStreamEvent[];
+  text: string;
 };
+
+type WarningEchoFilterState = {
+  aliases: Map<string, WarningEchoCandidate>;
+  pending: Set<WarningEchoCandidate>;
+  suppressed: Set<string>;
+};
+
+const warningEchoKeys = (
+  value: Record<string, unknown>,
+  item?: Record<string, unknown>,
+): string[] => {
+  const keys: string[] = [];
+  const itemId = getString(item?.id)?.trim() || getString(value.item_id)?.trim();
+  if (itemId) keys.push(`item:${itemId}`);
+  const index = outputIndex(value);
+  if (index !== null) keys.push(`index:${index}`);
+  return keys;
+};
+
+const warningCandidateFor = (
+  state: WarningEchoFilterState,
+  keys: readonly string[],
+): WarningEchoCandidate | null => {
+  for (const key of keys) {
+    const candidate = state.aliases.get(key);
+    if (candidate) return candidate;
+  }
+  return null;
+};
+
+const bindWarningEchoAliases = (
+  state: WarningEchoFilterState,
+  candidate: WarningEchoCandidate,
+  keys: readonly string[],
+): void => {
+  for (const key of keys) {
+    candidate.aliases.add(key);
+    state.aliases.set(key, candidate);
+  }
+};
+
+const createWarningEchoCandidate = (
+  state: WarningEchoFilterState,
+  keys: readonly string[],
+): WarningEchoCandidate => {
+  const candidate: WarningEchoCandidate = { aliases: new Set(), buffered: [], text: "" };
+  state.pending.add(candidate);
+  bindWarningEchoAliases(state, candidate, keys);
+  return candidate;
+};
+
+const discardWarningEchoCandidate = (
+  state: WarningEchoFilterState,
+  candidate: WarningEchoCandidate,
+): void => {
+  state.pending.delete(candidate);
+  for (const key of candidate.aliases) {
+    state.suppressed.add(key);
+    if (state.aliases.get(key) === candidate) state.aliases.delete(key);
+  }
+};
+
+const flushWarningEchoCandidate = (
+  state: WarningEchoFilterState,
+  candidate: WarningEchoCandidate,
+): ResponsesStreamEvent[] => {
+  state.pending.delete(candidate);
+  for (const key of candidate.aliases) {
+    if (state.aliases.get(key) === candidate) state.aliases.delete(key);
+  }
+  return candidate.buffered;
+};
+
+const warningTextUpdate = (
+  event: ResponsesStreamEvent,
+): Readonly<{ text: string; replace: boolean }> | null => {
+  if (event.type === "response.output_text.delta" && typeof event.value.delta === "string") {
+    return { text: event.value.delta, replace: false };
+  }
+  if (event.type === "response.output_text.done" && typeof event.value.text === "string") {
+    return { text: event.value.text, replace: true };
+  }
+  if (event.type === "response.content_part.done" && isRecord(event.value.part)) {
+    const text = getString(event.value.part.text);
+    if (text !== null) return { text, replace: true };
+  }
+  return null;
+};
+
+const applyWarningTextUpdate = (
+  candidate: WarningEchoCandidate,
+  update: Readonly<{ text: string; replace: boolean }> | null,
+): void => {
+  if (!update) return;
+  candidate.text = update.replace ? update.text : candidate.text + update.text;
+};
+
+const isAssistantMessageItem = (value: unknown): value is Record<string, unknown> =>
+  isRecord(value) && !Array.isArray(value) && value.type === "message" && value.role === "assistant";
+
+const filterWarningEchoes = (iterator: ResponsesStreamIterator): ResponsesStreamIterator =>
+  (async function* () {
+    const state: WarningEchoFilterState = { aliases: new Map(), pending: new Set(), suppressed: new Set() };
+    const suppressKeys = (keys: readonly string[]): void => {
+      for (const key of keys) state.suppressed.add(key);
+    };
+
+    const resolveOutput = (output: unknown): ResponsesStreamEvent[] => {
+      if (!Array.isArray(output)) return [];
+      const flushed: ResponsesStreamEvent[] = [];
+      for (const [index, raw] of output.entries()) {
+        if (!isRecord(raw) || Array.isArray(raw)) continue;
+        const item = raw;
+        const keys = warningEchoKeys({ output_index: index }, item);
+        const candidate = warningCandidateFor(state, keys);
+        if (isGatewayFailoverWarningItem(item)) {
+          if (candidate) discardWarningEchoCandidate(state, candidate);
+          else suppressKeys(keys);
+          continue;
+        }
+        if (!candidate) continue;
+        bindWarningEchoAliases(state, candidate, keys);
+        const text = messageText(item);
+        if (text !== null) candidate.text = text;
+        if (isFailoverWarningText(candidate.text)) discardWarningEchoCandidate(state, candidate);
+        else flushed.push(...flushWarningEchoCandidate(state, candidate));
+      }
+      return flushed;
+    };
+
+    const resolvePendingAtTerminal = (): ResponsesStreamEvent[] => {
+      const flushed: ResponsesStreamEvent[] = [];
+      for (const candidate of [...state.pending]) {
+        if (isFailoverWarningText(candidate.text)) discardWarningEchoCandidate(state, candidate);
+        else flushed.push(...flushWarningEchoCandidate(state, candidate));
+      }
+      return flushed;
+    };
+
+    for await (const sourceEvent of iterator) {
+      const value = sourceEvent.value;
+      const item = isRecord(value.item) && !Array.isArray(value.item) ? value.item : undefined;
+      const keys = warningEchoKeys(value, item);
+      if (keys.some((key) => state.suppressed.has(key))) continue;
+
+      if (sourceEvent.type === "response.output_item.added" && isAssistantMessageItem(item)) {
+        if (isGatewayFailoverWarningItem(item)) {
+          suppressKeys(keys);
+          continue;
+        }
+        const candidate = warningCandidateFor(state, keys) ?? createWarningEchoCandidate(state, keys);
+        candidate.buffered.push(sourceEvent);
+        const text = messageText(item);
+        if (text !== null) candidate.text = text;
+        if (isFailoverWarningText(candidate.text)) discardWarningEchoCandidate(state, candidate);
+        else if (text !== null) {
+          for (const buffered of flushWarningEchoCandidate(state, candidate)) yield buffered;
+        }
+        continue;
+      }
+
+      if (sourceEvent.type === "response.content_part.added") {
+        const candidate = warningCandidateFor(state, keys);
+        if (candidate) {
+          candidate.buffered.push(sourceEvent);
+          continue;
+        }
+        if (keys.length) {
+          createWarningEchoCandidate(state, keys).buffered.push(sourceEvent);
+          continue;
+        }
+      }
+
+      const textUpdate = warningTextUpdate(sourceEvent);
+      if (
+        sourceEvent.type === "response.output_text.delta" || sourceEvent.type === "response.output_text.done" ||
+        sourceEvent.type === "response.content_part.done"
+      ) {
+        const candidate = warningCandidateFor(state, keys);
+        if (candidate) {
+          candidate.buffered.push(sourceEvent);
+          applyWarningTextUpdate(candidate, textUpdate);
+          if (isFailoverWarningText(candidate.text)) discardWarningEchoCandidate(state, candidate);
+          else if (textUpdate?.replace || !isFailoverWarningPrefix(candidate.text)) {
+            for (const buffered of flushWarningEchoCandidate(state, candidate)) yield buffered;
+          }
+          continue;
+        }
+        if (textUpdate && isFailoverWarningText(textUpdate.text)) {
+          suppressKeys(keys);
+          continue;
+        }
+      }
+
+      if (sourceEvent.type === "response.output_item.done" && isAssistantMessageItem(item)) {
+        const candidate = warningCandidateFor(state, keys);
+        if (candidate) {
+          candidate.buffered.push(sourceEvent);
+          const text = messageText(item);
+          if (text !== null) candidate.text = text;
+          if (isFailoverWarningText(candidate.text)) discardWarningEchoCandidate(state, candidate);
+          else {
+            for (const buffered of flushWarningEchoCandidate(state, candidate)) yield buffered;
+          }
+          continue;
+        }
+        if (isGatewayFailoverWarningItem(item)) {
+          suppressKeys(keys);
+          continue;
+        }
+      }
+
+      if (sourceEvent.type === "response.output" || sourceEvent.terminal) {
+        const flushed = [
+          ...resolveOutput(value.output),
+          ...(isRecord(value.response) && !Array.isArray(value.response) ? resolveOutput(value.response.output) : []),
+          ...(sourceEvent.terminal ? resolvePendingAtTerminal() : []),
+        ];
+        for (const buffered of flushed) yield buffered;
+        const next: Record<string, unknown> = { ...value };
+        const output = removeWarningEchoFromOutput(value.output);
+        if (output) next.output = output;
+        if (isRecord(value.response) && !Array.isArray(value.response)) {
+          const response = { ...value.response };
+          const responseOutput = removeWarningEchoFromOutput(response.output);
+          if (responseOutput) response.output = responseOutput;
+          next.response = response;
+        }
+        yield eventFromValue(next);
+        continue;
+      }
+
+      yield sourceEvent;
+    }
+
+    for (const candidate of resolvePendingAtTerminal()) {
+      yield candidate;
+    }
+  })() as ResponsesStreamIterator;
 
 export const projectOpenRouterResponsesIterator = (
   iterator: ResponsesStreamIterator,
@@ -1106,9 +1380,7 @@ export const projectOpenRouterResponsesIterator = (
       });
     };
 
-    for await (const sourceEvent of iterator) {
-      const event = stripWarningEcho(sourceEvent);
-      if (!event) continue;
+    for await (const event of filterWarningEchoes(iterator)) {
       const value = event.value;
       if (event.type === "response.output_item.added" && isRecord(value.item) && !Array.isArray(value.item)) {
         const item = value.item;
@@ -1132,7 +1404,9 @@ export const projectOpenRouterResponsesIterator = (
         const state = getState(value);
         rememberArguments(state, value.arguments, true);
         if (!state.entry) continue;
-        parseArguments(state.completeArguments!, state.entry, "response.function_call_arguments.done");
+        if (state.entry.originalType !== "function") {
+          parseArguments(state.completeArguments!, state.entry, "response.function_call_arguments.done");
+        }
         if (state.entry.originalType === "function") {
           yield event;
         } else if (state.entry.originalType === "custom") {

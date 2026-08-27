@@ -89,6 +89,17 @@ Deno.test("tool projection is deterministic, collision-free, and preserves compa
   assert.ok(names.every((name) => name.length <= 64 && /^[A-Za-z0-9_-]+$/.test(name)));
 });
 
+Deno.test("explicit custom tool choices use the projected function name", () => {
+  const projection = buildOpenRouterRequestProjection({
+    input: "hello",
+    stream: true,
+    tools: [customTool],
+    tool_choice: { type: "custom", name: "exec" },
+  });
+  const projectedName = projection.tools![0]!.name;
+  assert.deepEqual(projection.toolChoice, { type: "function", name: projectedName });
+});
+
 Deno.test("Codex additional_tools namespaces flatten into the request-scoped registry", () => {
   const projection = buildOpenRouterRequestProjection({
     input: [{
@@ -150,7 +161,7 @@ Deno.test("malformed, orphaned, and kind-mismatched continuation items fail befo
   const base = { stream: true, tools: [customTool] };
   for (
     const input of [
-      [{ type: "custom_tool_call_output", call_id: "missing", output: "x" }],
+      [{ type: "unsupported_tool_output", call_id: "missing", output: "x" }],
       [{ type: "function_call", call_id: "call_1", name: "exec", arguments: "{}" }],
       [{ type: "unknown_call", call_id: "call_1" }],
     ]
@@ -163,6 +174,61 @@ Deno.test("malformed, orphaned, and kind-mismatched continuation items fail befo
         (error as Error & { status?: number; code?: string }).code === "openrouter_translation_invalid",
     );
   }
+});
+
+Deno.test("standalone prior tool outputs remain valid continuation items", () => {
+  const input = [
+    { type: "function_call_output", call_id: "prior_function", output: "done" },
+    { type: "custom_tool_call_output", call_id: "prior_custom", output: "done" },
+  ];
+  const projection = buildOpenRouterRequestProjection({ input, stream: true });
+  assert.deepEqual(projection.input, [
+    input[0],
+    { type: "function_call_output", call_id: "prior_custom", output: "done" },
+  ]);
+});
+
+Deno.test("historical standard function calls preserve opaque arguments and media outputs", () => {
+  const input = [
+    {
+      type: "function_call",
+      id: "prior_item",
+      status: "completed",
+      call_id: "prior_function",
+      name: "legacy_function",
+      arguments: "opaque non-JSON arguments",
+    },
+    {
+      type: "function_call_output",
+      call_id: "prior_function",
+      output: [
+        { type: "input_image", image_url: "https://example.test/tool-result.png", detail: "high" },
+        { type: "input_file", file_id: "file_tool_result", filename: "result.txt" },
+      ],
+    },
+  ];
+  const projection = buildOpenRouterRequestProjection({ input, stream: true });
+  assert.deepEqual(projection.input, input);
+});
+
+Deno.test("projected standard function calls retain opaque arguments", () => {
+  const projection = buildOpenRouterRequestProjection({
+    input: [{
+      type: "function_call",
+      call_id: "prior_function",
+      name: "unsafe function name",
+      arguments: "opaque non-JSON arguments",
+    }],
+    stream: true,
+    tools: [{
+      type: "function",
+      name: "unsafe function name",
+      parameters: { type: "object", required: ["required"] },
+    }],
+  });
+  const projected = (projection.input as readonly Record<string, unknown>[])[0]!;
+  assert.equal(projected.name, projection.tools![0]!.name);
+  assert.equal(projected.arguments, "opaque non-JSON arguments");
 });
 
 Deno.test("parallel projected custom calls reverse-project with isolated arguments and one terminal", async () => {
@@ -483,4 +549,137 @@ Deno.test("synthetic warning history is removed, user quotes remain, and provide
   ));
   assert.equal(JSON.stringify(values).includes(warning), false);
   assert.equal(values.filter((item) => item.terminal).length, 1);
+});
+
+Deno.test("fragmented warning echo events are buffered and removed across the item lifecycle", async () => {
+  const warning =
+    "⚠ Failover active: your request was rerouted to `openrouter:fixture/model` because the primary Codex service was unavailable.";
+  const firstChunk = warning.slice(0, 24);
+  const secondChunk = warning.slice(firstChunk.length);
+  const values = await collect(projectOpenRouterResponsesIterator(
+    iterator([
+      event({ type: "response.created", response: { id: "resp_fragmented_warning" } }),
+      event({
+        type: "response.output_item.added",
+        response_id: "resp_fragmented_warning",
+        output_index: 0,
+        item: { id: "msg_fragmented_warning", type: "message", status: "in_progress", role: "assistant", content: [] },
+      }),
+      event({
+        type: "response.content_part.added",
+        response_id: "resp_fragmented_warning",
+        item_id: "msg_fragmented_warning",
+        output_index: 0,
+        content_index: 0,
+        part: { type: "output_text", text: "", annotations: [] },
+      }),
+      event({
+        type: "response.output_text.delta",
+        response_id: "resp_fragmented_warning",
+        item_id: "msg_fragmented_warning",
+        output_index: 0,
+        content_index: 0,
+        delta: firstChunk,
+      }),
+      event({
+        type: "response.output_text.delta",
+        response_id: "resp_fragmented_warning",
+        item_id: "msg_fragmented_warning",
+        output_index: 0,
+        content_index: 0,
+        delta: secondChunk,
+      }),
+      event({
+        type: "response.output_text.done",
+        response_id: "resp_fragmented_warning",
+        item_id: "msg_fragmented_warning",
+        output_index: 0,
+        content_index: 0,
+        text: warning,
+      }),
+      event({
+        type: "response.content_part.done",
+        response_id: "resp_fragmented_warning",
+        item_id: "msg_fragmented_warning",
+        output_index: 0,
+        content_index: 0,
+        part: { type: "output_text", text: warning, annotations: [] },
+      }),
+      event({
+        type: "response.output_item.done",
+        response_id: "resp_fragmented_warning",
+        output_index: 0,
+        item: {
+          id: "msg_fragmented_warning",
+          type: "message",
+          status: "completed",
+          role: "assistant",
+          content: [{ type: "output_text", text: warning, annotations: [] }],
+        },
+      }),
+      event({
+        type: "response.completed",
+        response: {
+          id: "resp_fragmented_warning",
+          status: "completed",
+          output: [{
+            id: "msg_fragmented_warning",
+            type: "message",
+            status: "completed",
+            role: "assistant",
+            content: [{ type: "output_text", text: warning, annotations: [] }],
+          }],
+        },
+      }),
+    ]),
+    buildOpenRouterRequestProjection({ input: "hello", stream: true }).registry,
+  ));
+  assert.equal(JSON.stringify(values).includes(warning), false);
+  assert.deepEqual(values.map((item) => item.type), ["response.created", "response.completed"]);
+  assert.equal(values.filter((item) => item.terminal).length, 1);
+});
+
+Deno.test("ordinary streamed text is not buffered by warning-echo filtering", async () => {
+  const projected = projectOpenRouterResponsesIterator(
+    iterator([
+      event({ type: "response.created", response: { id: "resp_text" } }),
+      event({
+        type: "response.output_item.added",
+        response_id: "resp_text",
+        output_index: 0,
+        item: { id: "msg_text", type: "message", status: "in_progress", role: "assistant", content: [] },
+      }),
+      event({
+        type: "response.content_part.added",
+        response_id: "resp_text",
+        item_id: "msg_text",
+        output_index: 0,
+        content_index: 0,
+        part: { type: "output_text", text: "", annotations: [] },
+      }),
+      event({
+        type: "response.output_text.delta",
+        response_id: "resp_text",
+        item_id: "msg_text",
+        output_index: 0,
+        content_index: 0,
+        delta: "hello",
+      }),
+      event({ type: "response.completed", response: { id: "resp_text", output: [] } }),
+    ]),
+    buildOpenRouterRequestProjection({ input: "hello", stream: true }).registry,
+  );
+  const first = await projected.next();
+  assert.equal(first.done, false);
+  assert.equal(first.value?.type, "response.created");
+  const second = await projected.next();
+  assert.equal(second.done, false);
+  assert.equal(second.value?.type, "response.output_item.added");
+  const third = await projected.next();
+  assert.equal(third.done, false);
+  assert.equal(third.value?.type, "response.content_part.added");
+  const fourth = await projected.next();
+  assert.equal(fourth.done, false);
+  assert.equal(fourth.value?.type, "response.output_text.delta");
+  assert.equal(fourth.value?.value.delta, "hello");
 });

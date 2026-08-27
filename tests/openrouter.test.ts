@@ -38,7 +38,7 @@ Deno.test("OpenRouter request translation applies the fixed Auto policy and stri
     cost_tier: "max",
     excluded_models: [...OPENROUTER_EXCLUDED_MODELS],
   }]);
-  assert.deepEqual(translated.reasoning, { effort: "max" });
+  assert.deepEqual(translated.reasoning, { effort: "max", summary: "auto" });
   const translatedTools = translated.tools as Array<Record<string, unknown>>;
   const projectedName = translatedTools[0]?.name;
   assert.equal(typeof projectedName, "string");
@@ -73,7 +73,7 @@ Deno.test("OpenRouter request translation applies the fixed Auto policy and stri
   assert.equal("store" in translated, false);
   assert.equal("include" in translated, false);
   assert.equal("parallel_tool_calls" in translated, false);
-  assert.equal("text" in translated, false);
+  assert.deepEqual(translated.text, { format: { type: "text" } });
   assert.ok(typeof sessionId === "string");
   assert.doesNotMatch(sessionId, /raw-session|key-1/);
   assert.equal(await deriveOpenRouterSessionId(null, { session_id: "raw-session" }), null);
@@ -103,6 +103,16 @@ Deno.test("OpenRouter request translation accepts nullable metadata", () => {
   assert.equal(translated.max_tool_calls, null);
   assert.equal(translated.temperature, null);
   assert.equal(translated.top_p, null);
+});
+
+Deno.test("OpenRouter request translation preserves reasoning controls without effort", () => {
+  const translated = buildOpenRouterResponsesRequest({
+    input: "hello",
+    reasoning: { summary: "auto" },
+    stream: true,
+  });
+
+  assert.deepEqual(translated.reasoning, { summary: "auto" });
 });
 
 Deno.test("OpenRouter selected-model validation rejects disallowed publishers and token families", () => {

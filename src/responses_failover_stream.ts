@@ -25,7 +25,7 @@ const reasoningTypes = new Set([
   "response.reasoning_text.delta",
   "response.reasoning_text.done",
 ]);
-const executableToolTypes = new Set(["function_call", "custom_tool_call"]);
+const executableToolTypes = new Set(["function_call", "custom_tool_call", "local_shell_call"]);
 const hostedToolTypes = new Set([
   "code_interpreter_call",
   "computer_call",
@@ -62,6 +62,12 @@ const semanticKindFromOutput = (
       if (
         typeof item.call_id === "string" && item.call_id.trim() && typeof item.name === "string" &&
         item.name.trim() && typeof item.input === "string"
+      ) return "tool_call";
+    }
+    if (item.type === "local_shell_call") {
+      if (
+        typeof item.call_id === "string" && item.call_id.trim() && isRecord(item.action) &&
+        !Array.isArray(item.action) && item.action.type === "exec"
       ) return "tool_call";
     }
     if (
@@ -141,10 +147,14 @@ export const responsesEventSemanticKind = (
     const itemType = getString(item.type) ?? "";
     if (event.type === "response.output_item.done" && executableToolTypes.has(itemType)) {
       const callId = getString(item.call_id)?.trim();
-      const name = getString(item.name)?.trim();
-      if (!callId || !name) return null;
-      if (itemType === "function_call") return typeof item.arguments === "string" ? "tool_call" : null;
-      return typeof item.input === "string" ? "tool_call" : null;
+      if (!callId) return null;
+      if (itemType === "function_call" || itemType === "custom_tool_call") {
+        const name = getString(item.name)?.trim();
+        if (!name) return null;
+        if (itemType === "function_call") return typeof item.arguments === "string" ? "tool_call" : null;
+        return typeof item.input === "string" ? "tool_call" : null;
+      }
+      return isRecord(item.action) && !Array.isArray(item.action) && item.action.type === "exec" ? "tool_call" : null;
     }
     if (hostedToolTypes.has(itemType)) return semanticKindFromOutput([item]);
     if (event.type === "response.output_item.added") return null;

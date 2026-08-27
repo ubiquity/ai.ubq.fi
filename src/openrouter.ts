@@ -175,8 +175,8 @@ const validateRequestValue = (key: string, value: unknown): void => {
 const normalizeOpenRouterReasoning = (value: unknown): unknown => {
   if (!isRecord(value) || Array.isArray(value)) return value;
   const effort = typeof value.effort === "string" ? value.effort : null;
-  if (!effort) return undefined;
-  return { effort: effort === "ultra" ? "max" : effort };
+  if (!effort) return { ...value };
+  return { ...value, effort: effort === "ultra" ? "max" : effort };
 };
 
 export const buildOpenRouterResponsesRequest = (
@@ -220,7 +220,6 @@ export const buildOpenRouterResponsesRequestWithProjection = (
   // forwarding them would make the entire route ineligible before dispatch.
   delete translated.include;
   delete translated.parallel_tool_calls;
-  delete translated.text;
   translated.provider = { require_parameters: true };
   translated.model = OPENROUTER_AUTO_MODEL;
   translated.plugins = [{

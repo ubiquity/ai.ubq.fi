@@ -53,6 +53,30 @@ Deno.test("Responses semantic detector commits on text, reasoning, and completed
     })),
     "tool_call",
   );
+  assert.equal(
+    responsesEventSemanticKind(event({
+      type: "response.output_item.done",
+      item: {
+        type: "local_shell_call",
+        call_id: "call_shell",
+        action: { type: "exec", command: ["pwd"] },
+      },
+    })),
+    "tool_call",
+  );
+  assert.equal(
+    responsesEventSemanticKind(event({
+      type: "response.completed",
+      response: {
+        output: [{
+          type: "local_shell_call",
+          call_id: "call_shell",
+          action: { type: "exec", command: ["pwd"] },
+        }],
+      },
+    })),
+    "tool_call",
+  );
   assert.equal(responsesEventSemanticKind(event({ type: "response.refusal.delta", delta: "blocked" })), "text");
   assert.equal(
     responsesEventSemanticKind(event({ type: "response.refusal.done", refusal: "I cannot help with that." })),
