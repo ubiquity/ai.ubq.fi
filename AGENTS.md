@@ -31,3 +31,17 @@
   with HTTP 403 and cannot be bypassed by a path-specific WAF skip rule. Record an identified Cloudflare 403 as a CI
   warning after the exact managed Deno route passes; do not misclassify it as an old Deno revision, weaken bot
   protection globally, report dashboard work as necessary, or wait through repeated identical probes.
+
+## Repository Completion and Checkout Handoff
+
+- Do not leave completed or accepted work only in a worktree, local branch, or unpushed commit. Commit and push every
+  completed task branch, integrate it into `development` through the normal pull request and review workflow using an
+  ancestry-preserving merge commit, and push the resulting `development` state.
+- Immediately before declaring a task complete, fetch `origin/development`, prove every accepted task-created tip is an
+  ancestor of the refreshed `origin/development`, and prove local `development` matches `origin/development`.
+- Leave the repository-root checkout clean, on `development`, and fast-forwarded to `origin/development`. If another
+  writer actively owns that checkout, preserve its state and coordinate until its completed work is integrated; never
+  switch or overwrite an active or dirty checkout to satisfy this handoff rule.
+- Preserve unfinished work in its existing owned branch or worktree and report its owner and next action. Do not merge
+  unknown or incomplete work, discard dirty state, or describe accepted work as complete while it remains outside the
+  `development` Git graph.
