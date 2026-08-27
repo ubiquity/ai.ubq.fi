@@ -1,8 +1,9 @@
 # Sentinel Issue Job Ledger
 
 Terminal Sentinel results for immutable GitHub issue snapshots are tracked here. Each selected snapshot is delivered
-through exactly one pull request. A verified production keep closes the unchanged issue with supporting evidence;
-manual-required, failed, and rolled-back results remain open.
+through exactly one pull request that links the issue as evidence. After a verified production keep, Sentinel merges the
+delivery pull request and closes the unchanged issue with supporting evidence; a pull request already carried by the
+development push is accepted after a containment check. Manual-required, failed, and rolled-back results remain open.
 
 | Issue | REST ID    | Node ID                    | Fingerprint                                                        | Body SHA-256                                                       | Source updated       | Recorded                 | Base SHA                                   | Title                                                                  | Disposition     |
 | ----- | ---------- | -------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------ | -------------------- | ------------------------ | ------------------------------------------ | ---------------------------------------------------------------------- | --------------- |

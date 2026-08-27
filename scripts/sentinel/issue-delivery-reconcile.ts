@@ -1,8 +1,17 @@
-import { GitHubActionsClient } from "./github.ts";
-import { getCurrentGitHubIssueJob, parseGitHubIssueJobLedger, renderGitHubIssueJobLedger } from "./issues.ts";
+import { GitHubActionsClient, type GitHubIssue } from "./github.ts";
+import {
+  getCurrentGitHubIssueJob,
+  type GitHubIssueJobSource,
+  parseGitHubIssueJobLedger,
+  renderGitHubIssueJobLedger,
+} from "./issues.ts";
 import {
   evaluateIssueCompletionAction,
   type GitHubIssuePullRequestRecord,
+  type GitHubIssueSelectionReport,
+  isContainedDevelopmentComparison,
+  isPullRequestMergeRefusalStatus,
+  ISSUE_COMPLETION_EVIDENCE_TEXT,
   issueEvidenceMarker,
   parseGitHubIssuePullRequestRecord,
   parseGitHubIssueSelectionReport,
@@ -13,7 +22,6 @@ import {
 const API_VERSION = "2022-11-28";
 const FULL_SHA = /^[0-9a-f]{40}$/u;
 const SAFE_REVISION = /^[A-Za-z0-9_-]{1,200}$/u;
-const COMPLETED_EVIDENCE_TEXT = "Delivered and verified in production; issue closed as completed.";
 
 type PullRequest = Readonly<{
   number: number;
@@ -24,12 +32,15 @@ type PullRequest = Readonly<{
   baseRef: string;
 }>;
 
-type Comment = Readonly<{ id: number; body: string }>;
+type Comment = Readonly<{ id: number; body: string; updatedAt: string }>;
 
 type IssueState = Readonly<{
   state: "open" | "closed";
   stateReason: string | null;
 }>;
+
+type PullRequestMergeSource = "sentinel_merge_api" | "development_content" | "already_merged" | null;
+const MAX_COMMENT_TIMESTAMP_PROPAGATION_MS = 5_000;
 
 const requiredEnvironment = (name: string): string => {
   const value = Deno.env.get(name)?.trim();
@@ -51,13 +62,14 @@ const optionalJson = async (path: string): Promise<unknown | null> => {
 const record = (value: unknown): Record<string, unknown> | null =>
   typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
 
-const githubRequest = async (
+const githubRequestRaw = async (
   token: string,
   repository: string,
   path: string,
   init: RequestInit = {},
-): Promise<unknown> => {
-  const response = await fetch(`https://api.github.com/repos/${repository}${path}`, {
+  fetcher: typeof fetch = fetch,
+): Promise<Readonly<{ status: number; payload: unknown }>> => {
+  const response = await fetcher(`https://api.github.com/repos/${repository}${path}`, {
     ...init,
     headers: {
       Accept: "application/vnd.github+json",
@@ -69,12 +81,34 @@ const githubRequest = async (
     signal: AbortSignal.timeout(30_000),
   });
   const text = await response.text();
-  if (!response.ok) {
+  let payload: unknown = null;
+  if (text.length > 0) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = null;
+    }
+  }
+  return { status: response.status, payload };
+};
+
+const githubRequest = async (
+  token: string,
+  repository: string,
+  path: string,
+  init: RequestInit = {},
+  fetcher: typeof fetch = fetch,
+): Promise<unknown> => {
+  const { status, payload } = await githubRequestRaw(token, repository, path, init, fetcher);
+  if (status < 200 || status >= 300) {
+    const formatted = typeof payload === "string" ? payload : JSON.stringify(payload);
     throw new Error(
-      `GitHub API ${init.method ?? "GET"} ${path} failed with HTTP ${response.status}: ${text.slice(0, 500)}`,
+      `GitHub API ${init.method ?? "GET"} ${path} failed with HTTP ${status}: ${
+        formatted === "null" ? "" : formatted.slice(0, 500)
+      }`,
     );
   }
-  return text.length === 0 ? null : JSON.parse(text);
+  return payload;
 };
 
 const parsePullRequest = (value: unknown): PullRequest => {
@@ -100,26 +134,61 @@ const parsePullRequest = (value: unknown): PullRequest => {
   };
 };
 
-const waitForPullRequestSettlement = async (
+const fetchIssuePullRequest = async (
   token: string,
   repository: string,
   expected: GitHubIssuePullRequestRecord,
+  fetcher: typeof fetch,
 ): Promise<PullRequest> => {
-  for (let attempt = 0; attempt < 30; attempt++) {
-    const pull = parsePullRequest(
-      await githubRequest(token, repository, `/pulls/${expected.pull_request_number}`),
-    );
-    if (
-      pull.number !== expected.pull_request_number || pull.headRef !== expected.head_branch ||
-      pull.headSha !== expected.head_sha || pull.baseRef !== expected.base_branch
-    ) {
-      throw new Error("Sentinel issue pull request changed identity before reconciliation");
-    }
-    if (pull.state === "closed" && pull.mergedAt !== null) return pull;
-    if (attempt < 29) await new Promise((resolve) => setTimeout(resolve, 2_000));
+  const pull = parsePullRequest(
+    await githubRequest(token, repository, `/pulls/${expected.pull_request_number}`, {}, fetcher),
+  );
+  if (
+    pull.number !== expected.pull_request_number || pull.headRef !== expected.head_branch ||
+    pull.headSha !== expected.head_sha || pull.baseRef !== expected.base_branch
+  ) {
+    throw new Error("Sentinel issue pull request changed identity before reconciliation");
   }
-  return parsePullRequest(
-    await githubRequest(token, repository, `/pulls/${expected.pull_request_number}`),
+  return pull;
+};
+
+export const mergeDeliveryPullRequest = async (
+  token: string,
+  repository: string,
+  expected: GitHubIssuePullRequestRecord,
+  fetcher: typeof fetch = fetch,
+): Promise<Readonly<{ source: "sentinel_merge_api" | "development_content" | "already_merged" }>> => {
+  const pull = await fetchIssuePullRequest(token, repository, expected, fetcher);
+  if (pull.state === "closed" && pull.mergedAt !== null) return { source: "already_merged" };
+  const response = await githubRequestRaw(token, repository, `/pulls/${expected.pull_request_number}/merge`, {
+    method: "PUT",
+    body: JSON.stringify({
+      merge_method: "merge",
+      commit_title: `merge: Provider Sentinel deliverable for #${expected.issue_number}`,
+      sha: expected.head_sha,
+    }),
+  }, fetcher);
+  const mergedPayload = record(response.payload);
+  if (response.status === 200 && mergedPayload?.merged === true) return { source: "sentinel_merge_api" };
+  if (isPullRequestMergeRefusalStatus(response.status)) {
+    // A refusal can race with a force-push or other head update after the
+    // initial identity check. Revalidate before treating the recorded head as
+    // already delivered through development.
+    await fetchIssuePullRequest(token, repository, expected, fetcher);
+    // The candidate commits were pushed directly to development, so the head
+    // may already be contained in the base. GitHub can refuse the API merge in
+    // that state (or under branch protection); the comparison decides whether
+    // the delivery is genuinely already integrated.
+    const comparison = record(
+      await githubRequest(token, repository, `/compare/development...${expected.head_sha}`, {}, fetcher),
+    );
+    const compareStatus = typeof comparison?.status === "string" ? comparison.status : null;
+    if (compareStatus !== null && isContainedDevelopmentComparison(compareStatus)) {
+      return { source: "development_content" };
+    }
+  }
+  throw new Error(
+    `Sentinel merge of pull request #${expected.pull_request_number} failed with HTTP ${response.status}`,
   );
 };
 
@@ -140,11 +209,12 @@ const listComments = async (
       const comment = record(item);
       if (
         !comment || !Number.isSafeInteger(comment.id) || (comment.id as number) <= 0 ||
-        typeof comment.body !== "string"
+        typeof comment.body !== "string" || typeof comment.updated_at !== "string" ||
+        !Number.isFinite(Date.parse(comment.updated_at))
       ) {
         throw new Error("GitHub returned an invalid issue comment");
       }
-      comments.push({ id: comment.id as number, body: comment.body });
+      comments.push({ id: comment.id as number, body: comment.body, updatedAt: comment.updated_at });
     }
     if (value.length < 100) return comments;
   }
@@ -198,12 +268,48 @@ const completionEvidence = async (
   repository: string,
   issueNumber: number,
   marker: string,
-): Promise<string | null> => {
+): Promise<Comment | null> => {
   const matching = (await listComments(token, repository, issueNumber)).filter((comment) =>
-    comment.body.includes(marker) && comment.body.includes(COMPLETED_EVIDENCE_TEXT)
+    comment.body.includes(marker) && comment.body.includes(ISSUE_COMPLETION_EVIDENCE_TEXT)
   );
   if (matching.length > 1) throw new Error("Sentinel completion evidence is duplicated");
-  return matching[0]?.body ?? null;
+  return matching[0] ?? null;
+};
+
+export const completionEvidenceSnapshotMatches = async (
+  source: GitHubIssueJobSource,
+  repository: string,
+  selection: GitHubIssueSelectionReport,
+  issue: GitHubIssue,
+  evidenceUpdatedAt: string,
+): Promise<boolean> => {
+  const evidenceUpdatedMs = Date.parse(evidenceUpdatedAt);
+  const issueUpdatedMs = Date.parse(issue.updatedAt);
+  if (
+    issue.state !== "open" || issue.number !== selection.issue_number || issue.comments !== 1 ||
+    !Number.isFinite(evidenceUpdatedMs) || !Number.isFinite(issueUpdatedMs) ||
+    issueUpdatedMs < evidenceUpdatedMs || issueUpdatedMs - evidenceUpdatedMs > MAX_COMMENT_TIMESTAMP_PROPAGATION_MS
+  ) return false;
+  const normalizedIssue: GitHubIssue = {
+    ...issue,
+    comments: 0,
+    updatedAt: selection.updated_at,
+  };
+  const normalizedSource: GitHubIssueJobSource = {
+    listOpenIssues: () => source.listOpenIssues(),
+    getIssue: (issueNumber) =>
+      issueNumber === selection.issue_number ? Promise.resolve(normalizedIssue) : source.getIssue(issueNumber),
+    getIssueRelations: (issueNumber) => source.getIssueRelations(issueNumber),
+    getRepositoryPermission: (username) => source.getRepositoryPermission(username),
+  };
+  const current = await getCurrentGitHubIssueJob(
+    normalizedSource,
+    repository,
+    selection.issue_number,
+  );
+  return current !== null && current.issueId === selection.issue_id &&
+    current.fingerprint === selection.fingerprint && current.bodySha256 === selection.body_sha256 &&
+    current.updatedAt === selection.updated_at;
 };
 
 const parseDisposition = (value: unknown): "resolved" | "manual_required" | null => {
@@ -322,6 +428,7 @@ const writeReconciliationReport = async (
     fingerprint: string;
     pullRequestNumber: number;
     pullRequestMerged: boolean;
+    mergeSource: PullRequestMergeSource;
     action: string;
     issueSnapshotMatches: boolean;
     durableCompletionEvidenceReused: boolean;
@@ -337,6 +444,7 @@ const writeReconciliationReport = async (
           fingerprint: input.fingerprint,
           pull_request_number: input.pullRequestNumber,
           pull_request_merged: input.pullRequestMerged,
+          merge_source: input.mergeSource,
           action: input.action,
           issue_snapshot_matches: input.issueSnapshotMatches,
           durable_completion_evidence_reused: input.durableCompletionEvidenceReused,
@@ -385,28 +493,53 @@ export const reconcileGitHubIssueDelivery = async (
     marker,
   );
   if (durableEvidence !== null) {
-    const issueState = await getIssueState(
-      input.token,
-      input.repository,
-      selection.issue_number,
-    );
-    if (issueState.state === "open") {
+    const source = new GitHubActionsClient({ repository: input.repository, token: input.token });
+    let issue = await source.getIssue(selection.issue_number);
+    const requireMatchingOpenSnapshot = async (): Promise<void> => {
+      if (
+        !await completionEvidenceSnapshotMatches(
+          source,
+          input.repository,
+          selection,
+          issue,
+          durableEvidence.updatedAt,
+        )
+      ) {
+        throw new Error("Sentinel completion evidence no longer matches the open issue snapshot");
+      }
+    };
+    if (issue.state === "open") await requireMatchingOpenSnapshot();
+    const merge = await mergeDeliveryPullRequest(input.token, input.repository, pullRecord);
+    // The merge can take long enough for the issue body, metadata, comments,
+    // or relationships to change. Fetch and validate the full snapshot again
+    // immediately before the irreversible close.
+    issue = await source.getIssue(selection.issue_number);
+    if (issue.state === "open") {
+      await requireMatchingOpenSnapshot();
       await closeIssue(input.token, input.repository, selection.issue_number);
-    } else if (issueState.stateReason !== "completed") {
-      throw new Error("Sentinel completion evidence exists on an issue closed for a different reason");
+    } else {
+      const issueState = await getIssueState(
+        input.token,
+        input.repository,
+        selection.issue_number,
+      );
+      if (issueState.stateReason !== "completed") {
+        throw new Error("Sentinel completion evidence exists on an issue closed for a different reason");
+      }
     }
     await upsertComment(
       input.token,
       input.repository,
       pullRecord.pull_request_number,
       marker,
-      durableEvidence,
+      durableEvidence.body,
     );
     await writeReconciliationReport(reportsDir, {
       issueNumber: selection.issue_number,
       fingerprint: selection.fingerprint,
       pullRequestNumber: pullRecord.pull_request_number,
       pullRequestMerged: true,
+      mergeSource: merge.source,
       action: "close_completed",
       issueSnapshotMatches: true,
       durableCompletionEvidenceReused: true,
@@ -414,12 +547,24 @@ export const reconcileGitHubIssueDelivery = async (
     return;
   }
 
-  const pull = await waitForPullRequestSettlement(input.token, input.repository, pullRecord);
-  const pullMerged = pull.state === "closed" && pull.mergedAt !== null;
   const disposition = parseDisposition(await optionalJson(`${reportsDir}/github-issue-disposition.json`));
   const outcome = parseOutcome(await optionalJson(`${reportsDir}/github-issue-production-outcome.json`));
   if (outcome && outcome.candidateSha !== pullRecord.head_sha) {
     throw new Error("Sentinel production outcome does not match the issue pull-request head");
+  }
+
+  let pullMerged = false;
+  let mergeSource: PullRequestMergeSource = null;
+  if (!input.workflowFailed && disposition === "resolved" && outcome?.outcome === "kept") {
+    try {
+      const merge = await mergeDeliveryPullRequest(input.token, input.repository, pullRecord);
+      pullMerged = true;
+      mergeSource = merge.source;
+    } catch (error) {
+      // A kept delivery whose pull request cannot be merged stays open with
+      // evidence; the snapshot-based recheck below leaves the issue open too.
+      console.warn(`[sentinel] issue_pull_request_merge=#${pullRecord.pull_request_number} failed`, error);
+    }
   }
 
   let issueSnapshotMatches = false;
@@ -491,6 +636,7 @@ export const reconcileGitHubIssueDelivery = async (
     fingerprint: selection.fingerprint,
     pullRequestNumber: pullRecord.pull_request_number,
     pullRequestMerged: pullMerged,
+    mergeSource,
     action,
     issueSnapshotMatches,
     durableCompletionEvidenceReused: false,
