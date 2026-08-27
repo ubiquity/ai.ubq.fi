@@ -6,6 +6,8 @@ on:
     branches:
       - development
   pull_request:
+    paths-ignore:
+      - docs/sentinel-issue-jobs.md
   workflow_dispatch:
     inputs:
       deploy_preview:
@@ -396,6 +398,7 @@ jobs:
           github.ref_name
         }}
       deploy_platform: deno2
+      deno_version: 2.9.5
       entrypoint: serve.ts
       artifact_name: ai-ubq-fi-source-${{ github.sha }}
       artifact_run_id: ${{ github.run_id }}

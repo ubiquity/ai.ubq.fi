@@ -11,7 +11,7 @@ on:
         description: Run an hourly backlog cycle, supervised preview, or App-authenticated production incident
         required: true
         type: choice
-        default: preview
+        default: hourly
         options:
           - hourly
           - preview
@@ -178,6 +178,7 @@ jobs:
           echo "Sentinel mode: $mode" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Claim incident workflow run
+        id: incident-claim
         if: github.event_name == 'workflow_dispatch' && inputs.sentinel_mode == 'incident'
         shell: bash
         env:
@@ -222,6 +223,8 @@ jobs:
           mkdir -p "$deno_dir"
           chmod 700 "$deno_dir"
           echo "DENO_DIR=$deno_dir" >> "$GITHUB_ENV"
+          echo "SENTINEL_CODEX_AUTH_STATE_DIR=$RUNNER_TEMP/sentinel-codex-auth-state" >> "$GITHUB_ENV"
+          echo "SENTINEL_CODEX_AUTH_STATE_ENVELOPE=$RUNNER_TEMP/sentinel-codex-auth-envelope/sentinel-codex-auth-state-v1.json" >> "$GITHUB_ENV"
 
       - name: Check out full repository history
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -233,6 +236,363 @@ jobs:
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: 2.9.5
+
+      - name: Restore or bootstrap encrypted Codex auth state
+        id: auth-state-prepare
+        continue-on-error: true
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SENTINEL_CODEX_AUTH_GENERATION: ${{ vars.SENTINEL_CODEX_AUTH_GENERATION }}
+          SENTINEL_CODEX_AUTH_STATE_KEY: ${{ secrets.SENTINEL_CODEX_AUTH_STATE_KEY }}
+          SENTINEL_CODEX_AUTH_SLOT_1_B64: ${{ secrets.SENTINEL_CODEX_AUTH_SLOT_1_B64 }}
+          SENTINEL_CODEX_AUTH_SLOT_2_B64: ${{ secrets.SENTINEL_CODEX_AUTH_SLOT_2_B64 }}
+        run: |
+          set -euo pipefail
+          deno run \
+            --frozen \
+            --lock=deno.lock \
+            --allow-env \
+            --allow-net \
+            --allow-read="$RUNNER_TEMP" \
+            --allow-write="$RUNNER_TEMP" \
+            --allow-run=unzip \
+            scripts/sentinel/auth-state.ts \
+            prepare \
+            "$SENTINEL_CODEX_AUTH_STATE_DIR"
+
+      - name: Mask restored Codex auth state
+        id: auth-state-mask-restored
+        if: always() && steps.auth-state-prepare.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          auth_files=("$SENTINEL_CODEX_AUTH_STATE_DIR"/slots/*/auth.json)
+          if [ "${#auth_files[@]}" -lt 1 ]; then
+            echo "::error::Restored Codex auth state contains no slots."
+            exit 1
+          fi
+          for auth_file in "${auth_files[@]}"; do
+            encoded="$(base64 --wrap=0 "$auth_file")"
+            echo "::add-mask::$encoded"
+            unset encoded
+            while IFS= read -r secret_value; do
+              if [ -n "$secret_value" ]; then
+                echo "::add-mask::$secret_value"
+              fi
+            done < <(
+              jq -er \
+                '.tokens | [.id_token, .access_token, .refresh_token, .account_id] | .[] | select(type == "string" and length > 0)' \
+                "$auth_file"
+            )
+          done
+
+      - name: Install pinned Codex CLI for auth maintenance
+        id: auth-maintenance-install
+        if: >-
+          always() &&
+          steps.auth-state-prepare.outcome == 'success' &&
+          steps.auth-state-prepare.outputs.needs_maintenance == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --global --ignore-scripts --no-audit --no-fund @openai/codex@0.149.0
+          test "$(codex --version)" = "codex-cli 0.149.0"
+          codex_package_root="$(npm root --global)/@openai/codex"
+          platform_package_json="$(node -e '
+            const { createRequire } = require("node:module");
+            const resolveFromCodex = createRequire(process.argv[1] + "/package.json");
+            process.stdout.write(resolveFromCodex.resolve("@openai/codex-linux-x64/package.json"));
+          ' "$codex_package_root")"
+          native_codex="$(dirname "$platform_package_json")/vendor/x86_64-unknown-linux-musl/bin/codex"
+          test -x "$native_codex"
+          test "$("$native_codex" --version)" = "codex-cli 0.149.0"
+          echo "SENTINEL_CODEX_AUTH_EXECUTABLE=$native_codex" >> "$GITHUB_ENV"
+
+      - name: Let pinned Codex maintain its auth files
+        id: auth-maintenance
+        if: >-
+          always() &&
+          steps.auth-state-prepare.outcome == 'success' &&
+          steps.auth-state-prepare.outputs.needs_maintenance == 'true' &&
+          steps.auth-maintenance-install.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          result_path="$RUNNER_TEMP/sentinel-codex-auth-maintenance-result.json"
+          deno run \
+            --frozen \
+            --lock=deno.lock \
+            --allow-env=PATH,RUNNER_TEMP,SENTINEL_CODEX_AUTH_EXECUTABLE,SENTINEL_CODEX_AUTH_STATE_DIR \
+            --allow-read="$RUNNER_TEMP" \
+            --allow-write="$RUNNER_TEMP" \
+            --allow-run="$SENTINEL_CODEX_AUTH_EXECUTABLE" \
+            scripts/sentinel/auth-maintenance.ts \
+            maintain > "$result_path"
+          jq -e '
+            .schema_version == 1 and
+            (.slots | type == "array" and length >= 1 and length <= 2) and
+            ([.slots[].slot] | length == (unique | length)) and
+            all(.slots[];
+              (.slot == 1 or .slot == 2) and
+              (.due | type) == "boolean" and
+              (.invoked | type) == "boolean" and
+              (.duplicateAccountSkipped | type) == "boolean" and
+              (.rpcSucceeded | type) == "boolean" and
+              (.managedAccountAvailable | type) == "boolean" and
+              (
+                .commandCode == null or
+                (
+                  (.commandCode | type) == "number" and
+                  (.commandCode | floor) == .commandCode and
+                  .commandCode >= 0 and
+                  .commandCode <= 255
+                )
+              ) and
+              (.timedOut | type) == "boolean" and
+              (.outputExceeded | type) == "boolean" and
+              (.stdoutBytes | type) == "number" and
+              (.stdoutBytes | floor) == .stdoutBytes and
+              .stdoutBytes >= 0 and
+              (.stderrBytes | type) == "number" and
+              (.stderrBytes | floor) == .stderrBytes and
+              .stderrBytes >= 0 and
+              (.stateChanged | type) == "boolean" and
+              (.readyForMaintenanceWindow | type) == "boolean"
+            )
+          ' "$result_path" > /dev/null
+          {
+            echo "### Codex auth maintenance"
+            echo
+            jq -r '
+              .slots | sort_by(.slot)[] |
+              "- Slot \(.slot): due=\(.due); invoked=\(.invoked); " +
+              "duplicate_account_skipped=\(.duplicateAccountSkipped); rpc_succeeded=\(.rpcSucceeded); " +
+              "managed_account_available=\(.managedAccountAvailable); " +
+              "command_code=\(.commandCode // "none"); timed_out=\(.timedOut); " +
+              "output_exceeded=\(.outputExceeded); stdout_bytes=\(.stdoutBytes); " +
+              "stderr_bytes=\(.stderrBytes); state_changed=\(.stateChanged); " +
+              "ready_for_maintenance_window=\(.readyForMaintenanceWindow)"
+            ' "$result_path"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Mask maintained Codex auth state
+        id: auth-state-mask-maintained
+        if: always() && steps.auth-state-prepare.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          auth_files=("$SENTINEL_CODEX_AUTH_STATE_DIR"/slots/*/auth.json)
+          if [ "${#auth_files[@]}" -lt 1 ]; then
+            echo "::error::Maintained Codex auth state contains no slots."
+            exit 1
+          fi
+          for auth_file in "${auth_files[@]}"; do
+            encoded="$(base64 --wrap=0 "$auth_file")"
+            echo "::add-mask::$encoded"
+            unset encoded
+            while IFS= read -r secret_value; do
+              if [ -n "$secret_value" ]; then
+                echo "::add-mask::$secret_value"
+              fi
+            done < <(
+              jq -er \
+                '.tokens | [.id_token, .access_token, .refresh_token, .account_id] | .[] | select(type == "string" and length > 0)' \
+                "$auth_file"
+            )
+          done
+
+      - name: Seal refreshed Codex auth state
+        id: auth-state-seal
+        if: always() && steps.auth-state-prepare.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        env:
+          SENTINEL_CODEX_AUTH_GENERATION: ${{ vars.SENTINEL_CODEX_AUTH_GENERATION }}
+          SENTINEL_CODEX_AUTH_STATE_KEY: ${{ secrets.SENTINEL_CODEX_AUTH_STATE_KEY }}
+        run: |
+          set -euo pipefail
+          envelope_directory="$(dirname "$SENTINEL_CODEX_AUTH_STATE_ENVELOPE")"
+          mkdir -p "$envelope_directory"
+          chmod 700 "$envelope_directory"
+          deno run \
+            --frozen \
+            --lock=deno.lock \
+            --allow-env \
+            --allow-read="$RUNNER_TEMP" \
+            --allow-write="$RUNNER_TEMP" \
+            scripts/sentinel/auth-state.ts \
+            seal \
+            "$SENTINEL_CODEX_AUTH_STATE_DIR" \
+            "$SENTINEL_CODEX_AUTH_STATE_ENVELOPE"
+
+      - name: Upload encrypted Codex auth state
+        id: auth-state-upload
+        if: always() && steps.auth-state-seal.outcome == 'success'
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.auth-state-seal.outputs.artifact_name }}
+          path: ${{ env.SENTINEL_CODEX_AUTH_STATE_ENVELOPE }}
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 90
+
+      - name: Probe Codex auth readiness
+        id: auth-state-readiness
+        if: always() && steps.auth-state-upload.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno run \
+            --frozen \
+            --lock=deno.lock \
+            --allow-env \
+            --allow-net=chatgpt.com \
+            --allow-read="$RUNNER_TEMP" \
+            --allow-write="$RUNNER_TEMP" \
+            scripts/sentinel/auth-state.ts \
+            probe \
+            "$SENTINEL_CODEX_AUTH_STATE_DIR"
+
+      - name: Enforce durable Codex auth readiness
+        id: auth-preflight
+        if: always()
+        shell: bash
+        env:
+          PREPARE_OUTCOME: ${{ steps.auth-state-prepare.outcome }}
+          MASK_RESTORED_OUTCOME: ${{ steps.auth-state-mask-restored.outcome }}
+          NEEDS_MAINTENANCE: ${{ steps.auth-state-prepare.outputs.needs_maintenance }}
+          INSTALL_OUTCOME: ${{ steps.auth-maintenance-install.outcome }}
+          MAINTENANCE_OUTCOME: ${{ steps.auth-maintenance.outcome }}
+          MASK_MAINTAINED_OUTCOME: ${{ steps.auth-state-mask-maintained.outcome }}
+          SEAL_OUTCOME: ${{ steps.auth-state-seal.outcome }}
+          UPLOAD_OUTCOME: ${{ steps.auth-state-upload.outcome }}
+          READINESS_OUTCOME: ${{ steps.auth-state-readiness.outcome }}
+          AUTH_USABLE: ${{ steps.auth-state-readiness.outputs.auth_usable }}
+          SELECTED_SLOT: ${{ steps.auth-state-readiness.outputs.selected_slot }}
+          SLOT_1_CODE: ${{ steps.auth-state-readiness.outputs.slot_1_code }}
+          SLOT_1_HTTP_STATUS: ${{ steps.auth-state-readiness.outputs.slot_1_http_status }}
+          SLOT_1_HEADROOM_PERCENT: ${{ steps.auth-state-readiness.outputs.slot_1_headroom_percent }}
+          SLOT_2_CODE: ${{ steps.auth-state-readiness.outputs.slot_2_code }}
+          SLOT_2_HTTP_STATUS: ${{ steps.auth-state-readiness.outputs.slot_2_http_status }}
+          SLOT_2_HEADROOM_PERCENT: ${{ steps.auth-state-readiness.outputs.slot_2_headroom_percent }}
+        run: |
+          set -euo pipefail
+          safe_outcome() {
+            case "$1" in
+              success|failure|cancelled|skipped) printf '%s' "$1" ;;
+              *) printf 'unavailable' ;;
+            esac
+          }
+          safe_boolean() {
+            case "$1" in
+              true|false) printf '%s' "$1" ;;
+              *) printf 'unavailable' ;;
+            esac
+          }
+          safe_selected_slot() {
+            case "$1" in
+              1|2|none) printf '%s' "$1" ;;
+              *) printf 'unavailable' ;;
+            esac
+          }
+          safe_probe_code() {
+            case "$1" in
+              available|not_configured|invalid_base64|invalid_utf8|invalid_json|invalid_document|invalid_access_token|access_token_expiring|timeout|network_error|redirect_rejected|http_error|response_too_large|invalid_response_json|invalid_usage_document|quota_exhausted|ready|missing|account_identity_changed) printf '%s' "$1" ;;
+              *) printf 'unavailable' ;;
+            esac
+          }
+          safe_http_status() {
+            if [ "$1" = "none" ] || [[ "$1" =~ ^[1-5][0-9][0-9]$ ]]; then
+              printf '%s' "$1"
+            else
+              printf 'unavailable'
+            fi
+          }
+          safe_headroom() {
+            if [ "$1" = "none" ] || [[ "$1" =~ ^[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?$ ]]; then
+              printf '%s' "$1"
+            else
+              printf 'unavailable'
+            fi
+          }
+
+          auth_usable="$(safe_boolean "$AUTH_USABLE")"
+          selected_slot="$(safe_selected_slot "$SELECTED_SLOT")"
+          slot_1_code="$(safe_probe_code "$SLOT_1_CODE")"
+          slot_1_http_status="$(safe_http_status "$SLOT_1_HTTP_STATUS")"
+          slot_1_headroom_percent="$(safe_headroom "$SLOT_1_HEADROOM_PERCENT")"
+          slot_2_code="$(safe_probe_code "$SLOT_2_CODE")"
+          slot_2_http_status="$(safe_http_status "$SLOT_2_HTTP_STATUS")"
+          slot_2_headroom_percent="$(safe_headroom "$SLOT_2_HEADROOM_PERCENT")"
+
+          failed=false
+          for outcome in \
+            "$PREPARE_OUTCOME" \
+            "$MASK_RESTORED_OUTCOME" \
+            "$MASK_MAINTAINED_OUTCOME" \
+            "$SEAL_OUTCOME" \
+            "$UPLOAD_OUTCOME" \
+            "$READINESS_OUTCOME"; do
+            if [ "$outcome" != "success" ]; then
+              failed=true
+            fi
+          done
+          if [ "$NEEDS_MAINTENANCE" = "true" ]; then
+            if [ "$INSTALL_OUTCOME" != "success" ] || [ "$MAINTENANCE_OUTCOME" != "success" ]; then
+              failed=true
+            fi
+          elif [ "$NEEDS_MAINTENANCE" != "false" ]; then
+            failed=true
+          fi
+          for diagnostic in \
+            "$auth_usable" \
+            "$selected_slot" \
+            "$slot_1_code" \
+            "$slot_1_http_status" \
+            "$slot_1_headroom_percent" \
+            "$slot_2_code" \
+            "$slot_2_http_status" \
+            "$slot_2_headroom_percent"; do
+            if [ "$diagnostic" = "unavailable" ]; then
+              failed=true
+            fi
+          done
+          if [ "$READINESS_OUTCOME" = "success" ] && \
+            { [ "$auth_usable" != "true" ] || [ "$selected_slot" = "none" ]; }; then
+            failed=true
+          fi
+          {
+            echo "### Codex auth durability preflight"
+            echo
+            echo "- Prepare: $(safe_outcome "$PREPARE_OUTCOME")"
+            echo "- Mask restored state: $(safe_outcome "$MASK_RESTORED_OUTCOME")"
+            echo "- Maintenance required: $(safe_boolean "$NEEDS_MAINTENANCE")"
+            echo "- Maintenance install: $(safe_outcome "$INSTALL_OUTCOME")"
+            echo "- Maintenance run: $(safe_outcome "$MAINTENANCE_OUTCOME")"
+            echo "- Mask maintained state: $(safe_outcome "$MASK_MAINTAINED_OUTCOME")"
+            echo "- Seal: $(safe_outcome "$SEAL_OUTCOME")"
+            echo "- Upload: $(safe_outcome "$UPLOAD_OUTCOME")"
+            echo "- Readiness probe: $(safe_outcome "$READINESS_OUTCOME")"
+            echo "- Probe usable: $auth_usable"
+            echo "- Probe selected slot: $selected_slot"
+            echo "- Probe slot 1: code=$slot_1_code; HTTP status=$slot_1_http_status; headroom percent=$slot_1_headroom_percent"
+            echo "- Probe slot 2: code=$slot_2_code; HTTP status=$slot_2_http_status; headroom percent=$slot_2_headroom_percent"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$failed" = "true" ]; then
+            echo "::error::Sentinel Codex auth durability failed: prepare=$(safe_outcome "$PREPARE_OUTCOME"), mask_restored=$(safe_outcome "$MASK_RESTORED_OUTCOME"), needs_maintenance=$(safe_boolean "$NEEDS_MAINTENANCE"), install=$(safe_outcome "$INSTALL_OUTCOME"), maintenance=$(safe_outcome "$MAINTENANCE_OUTCOME"), mask_maintained=$(safe_outcome "$MASK_MAINTAINED_OUTCOME"), seal=$(safe_outcome "$SEAL_OUTCOME"), upload=$(safe_outcome "$UPLOAD_OUTCOME"), readiness=$(safe_outcome "$READINESS_OUTCOME")."
+            echo "::error::Sentinel Codex auth probe failed: usable=$auth_usable, selected_slot=$selected_slot, slot_1_code=$slot_1_code, slot_1_http_status=$slot_1_http_status, slot_1_headroom_percent=$slot_1_headroom_percent, slot_2_code=$slot_2_code, slot_2_http_status=$slot_2_http_status, slot_2_headroom_percent=$slot_2_headroom_percent."
+            exit 1
+          fi
+          echo "Codex auth state was restored, durably sealed, and passively probed." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Select agent work
         id: agent-work
@@ -464,8 +824,6 @@ jobs:
         env:
           DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
           PREVIEW_UOS_AI_USER_TOKEN: ${{ secrets.PREVIEW_UOS_AI_USER_TOKEN }}
-          SENTINEL_CODEX_AUTH_SLOT_1_B64: ${{ secrets.SENTINEL_CODEX_AUTH_SLOT_1_B64 || secrets.CODEX_AUTH_JSON_B64 }}
-          SENTINEL_CODEX_AUTH_SLOT_2_B64: ${{ secrets.SENTINEL_CODEX_AUTH_SLOT_2_B64 }}
           SENTINEL_REPLAY_KEY: ${{ secrets.SENTINEL_REPLAY_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -481,6 +839,33 @@ jobs:
             --allow-run \
             scripts/sentinel/main.ts \
             --mode "$SENTINEL_MODE"
+
+      - name: Classify incident infrastructure deferral
+        id: incident-deferral-classification
+        if: >-
+          always() &&
+          github.event_name == 'workflow_dispatch' &&
+          inputs.sentinel_mode == 'incident' &&
+          steps.incident-claim.outcome == 'success'
+        shell: bash
+        env:
+          AUTH_PREFLIGHT_OUTCOME: ${{ steps.auth-preflight.outcome }}
+          SENTINEL_RUN_OUTCOME: ${{ steps.sentinel-run.outcome }}
+        run: |
+          set -euo pipefail
+          reason=""
+          if [ "$SENTINEL_RUN_OUTCOME" = "skipped" ]; then
+            if [ "$AUTH_PREFLIGHT_OUTCOME" = "failure" ]; then
+              reason="codex_auth_preflight_failed"
+            else
+              reason="sentinel_infrastructure_preflight_failed"
+            fi
+          elif [ "$SENTINEL_RUN_OUTCOME" = "failure" ] && \
+            [ -f .sentinel/reports/failure.json ] && \
+            [ "$(jq -r '.codex_failure // empty' .sentinel/reports/failure.json)" = "auth_refresh_required" ]; then
+            reason="codex_auth_preflight_failed"
+          fi
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
 
       - name: Reconcile GitHub issue delivery
         if: always() && env.SENTINEL_ARTIFACT_POLICY_ACTIVE == 'true'
@@ -506,9 +891,8 @@ jobs:
         env:
           DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
           PREVIEW_UOS_AI_USER_TOKEN: ${{ secrets.PREVIEW_UOS_AI_USER_TOKEN }}
-          SENTINEL_CODEX_AUTH_SLOT_1_B64: ${{ secrets.SENTINEL_CODEX_AUTH_SLOT_1_B64 || secrets.CODEX_AUTH_JSON_B64 }}
-          SENTINEL_CODEX_AUTH_SLOT_2_B64: ${{ secrets.SENTINEL_CODEX_AUTH_SLOT_2_B64 }}
           SENTINEL_ARTIFACT_KEY: ${{ secrets.SENTINEL_ARTIFACT_KEY }}
+          SENTINEL_CODEX_AUTH_STATE_KEY: ${{ secrets.SENTINEL_CODEX_AUTH_STATE_KEY }}
           SENTINEL_REPLAY_KEY: ${{ secrets.SENTINEL_REPLAY_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -527,9 +911,8 @@ jobs:
           for secret_name in \
             DENO_DEPLOY_TOKEN \
             PREVIEW_UOS_AI_USER_TOKEN \
-            SENTINEL_CODEX_AUTH_SLOT_1_B64 \
-            SENTINEL_CODEX_AUTH_SLOT_2_B64 \
             SENTINEL_ARTIFACT_KEY \
+            SENTINEL_CODEX_AUTH_STATE_KEY \
             SENTINEL_REPLAY_KEY \
             GITHUB_TOKEN; do
             secret_value="${!secret_name:-}"
@@ -555,7 +938,50 @@ jobs:
               rm -f "$pattern_file"
             fi
           done
+          shopt -s nullglob
+          for auth_file in "$SENTINEL_CODEX_AUTH_STATE_DIR"/slots/*/auth.json; do
+            pattern_file="$(mktemp "$RUNNER_TEMP/sentinel-auth-state-pattern.XXXXXX")"
+            chmod 600 "$pattern_file"
+            {
+              base64 --wrap=0 "$auth_file"
+              echo
+              jq -er \
+                '.tokens | [.id_token, .access_token, .refresh_token, .account_id] | .[] | select(type == "string" and length > 0)' \
+                "$auth_file"
+            } > "$pattern_file"
+            if grep \
+              --recursive \
+              --fixed-strings \
+              --quiet \
+              --file "$pattern_file" \
+              .sentinel/raw-logs \
+              .sentinel/replay-cases \
+              .sentinel/replay-index \
+              .sentinel/reports 2>/dev/null; then
+              : > "$pattern_file"
+              rm -f "$pattern_file"
+              echo "::error::Codex auth material exists in a Sentinel artifact path."
+              exit 1
+            fi
+            : > "$pattern_file"
+            rm -f "$pattern_file"
+          done
           echo "SENTINEL_PLAINTEXT_SAFE=true" >> "$GITHUB_ENV"
+
+      - name: Remove plaintext Codex auth state
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          for target in \
+            "$RUNNER_TEMP/sentinel-codex-auth-state" \
+            "$RUNNER_TEMP/sentinel-codex-auth-envelope" \
+            "$RUNNER_TEMP/sentinel-codex-auth-maintenance-workspace"; do
+            if [ -e "$target" ]; then
+              find "$target" -type f -exec sh -c ': > "$1"' _ {} \;
+              rm -rf -- "$target"
+            fi
+          done
 
       - name: Publish supervised cycle summary
         if: always() && env.SENTINEL_PLAINTEXT_SAFE == 'true'
@@ -669,6 +1095,101 @@ jobs:
           if-no-files-found: error
           include-hidden-files: true
           retention-days: 90
+
+      - name: Defer incident after infrastructure failure
+        if: >-
+          always() &&
+          github.event_name == 'workflow_dispatch' &&
+          inputs.sentinel_mode == 'incident' &&
+          steps.incident-claim.outcome == 'success' &&
+          (
+            steps.sentinel-run.outcome == 'skipped' ||
+            steps.incident-deferral-classification.outputs.reason != '' ||
+            (steps.sentinel-run.outcome == 'success' && failure())
+          )
+        shell: bash
+        env:
+          CLASSIFIED_REASON: ${{ steps.incident-deferral-classification.outputs.reason }}
+          DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
+          SENTINEL_INCIDENT_ID: ${{ inputs.incident_id }}
+          SENTINEL_INCIDENT_ATTEMPT: ${{ inputs.incident_attempt }}
+          SENTINEL_INCIDENT_ACK_NONCE: ${{ inputs.incident_ack_nonce }}
+        run: |
+          set -euo pipefail
+          deferral_reason="${CLASSIFIED_REASON:-sentinel_infrastructure_preflight_failed}"
+          case "$deferral_reason" in
+            codex_auth_preflight_failed|sentinel_infrastructure_preflight_failed) ;;
+            *)
+              echo "::error::Incident infrastructure deferral reason is invalid."
+              exit 1
+              ;;
+          esac
+          response_file="$RUNNER_TEMP/sentinel-defer-response"
+          response_headers="$RUNNER_TEMP/sentinel-defer-headers"
+          request_body="$(
+            jq -cn \
+              --arg incident_id "$SENTINEL_INCIDENT_ID" \
+              --arg attempt "$SENTINEL_INCIDENT_ATTEMPT" \
+              --arg workflow_run_id "$GITHUB_RUN_ID" \
+              --arg ack_nonce "$SENTINEL_INCIDENT_ACK_NONCE" \
+              --arg reason "$deferral_reason" \
+              '{
+                incident_id: $incident_id,
+                attempt: ($attempt | tonumber),
+                workflow_run_id: ($workflow_run_id | tonumber),
+                ack_nonce: $ack_nonce,
+                reason: $reason
+              }'
+          )"
+          for request_attempt in 1 2 3; do
+            set +e
+            status="$(
+              curl \
+                --silent \
+                --show-error \
+                --max-time 20 \
+                --dump-header "$response_headers" \
+                --output "$response_file" \
+                --write-out '%{http_code}' \
+                --request POST \
+                --header "Authorization: Bearer $DENO_DEPLOY_TOKEN" \
+                --header "Content-Type: application/json" \
+                --data "$request_body" \
+                https://ai-ubq-fi.ubiquity-dao.deno.net/admin/sentinel/incidents/defer
+            )"
+            curl_status=$?
+            set -e
+            if [ "$curl_status" = "0" ] && [ "$status" = "204" ]; then
+              disposition="$(
+                tr -d '\r' < "$response_headers" | \
+                  awk -F': ' 'tolower($1) == "x-sentinel-incident-disposition" { value=$2 } END { print value }'
+              )"
+              case "$disposition" in
+                deferred)
+                  echo "Incident infrastructure failure was durably deferred without consuming its repair attempt." >> "$GITHUB_STEP_SUMMARY"
+                  exit 0
+                  ;;
+                dead_letter)
+                  echo "::error::Incident exhausted its infrastructure deferral budget and was dead-lettered."
+                  exit 1
+                  ;;
+                *)
+                  echo "::error::Incident deferral returned an invalid disposition."
+                  exit 1
+                  ;;
+              esac
+            fi
+            if [ "$request_attempt" -lt 3 ] && {
+              [ "$curl_status" != "0" ] || [[ "$status" =~ ^5[0-9][0-9]$ ]];
+            }; then
+              sleep "$request_attempt"
+              continue
+            fi
+            echo "::error::Incident infrastructure deferral failed (curl=$curl_status HTTP=$status)."
+            exit 1
+          done
+          echo "::error::Incident infrastructure deferral exhausted its request retry bound."
+          exit 1
 
       - name: Acknowledge completed incident
         if: success() && env.SENTINEL_MODE == 'incident'

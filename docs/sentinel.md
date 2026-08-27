@@ -9,6 +9,9 @@ deployment, or promotion policy in `scripts/sentinel/`.
 
 The `Provider Sentinel` Actions workflow has three modes:
 
+Manual workflow dispatch defaults to `hourly`, so the standard **Run workflow** action selects backlog or GitHub issue
+work. Select `preview` explicitly only for a supervised failure-replay cycle.
+
 - `preview`: a manual `workflow_dispatch` run on the trusted `development` ref. It is supervised and may deploy only the
   exact candidate SHA to `p-ai-ubq-fi`. It does not push `development` or promote production. A manual run selected on
   any other ref is skipped.
@@ -114,6 +117,26 @@ Add these Actions secrets:
 - `SENTINEL_GITHUB_APP_PRIVATE_KEY`: the private key for App ID `4682172`, installed only on this repository with
   Actions write and Metadata read. The deployment workflow sends it through one Deno v2 app patch as a secret limited to
   the production context. It never enters the general deploy environment file or a preview timeline.
+
+The managed-`auth.json` slots are a temporary compatibility path, not the durable authentication design for this public
+repository. OpenAI's [Codex CI/CD auth guidance](https://learn.chatgpt.com/docs/auth/ci-cd-auth) limits that pattern to
+trusted private automation and explicitly excludes public or open-source repositories. While the compatibility path
+remains, each slot must come from a distinct ChatGPT account and an isolated, file-backed `CODEX_HOME` that is not used
+by another machine or workflow after seeding. Managed ChatGPT refresh tokens are a single-writer credential: a local
+Codex process that continues using the copied file can rotate the refresh token first and strand Sentinel with an old
+copy.
+
+When either slot can no longer refresh, create fresh seeds instead of restoring an older artifact. Replace both slot
+secrets first, then change `SENTINEL_CODEX_AUTH_GENERATION` to a new, never-used label. Changing the generation last is
+the atomic cutover: the next serialized Sentinel run ignores encrypted artifacts from the old generation, bootstraps
+from the new secrets, and persists only the refreshed files it receives from Codex. Never paste an auth document into an
+issue, pull request, workflow input, or chat.
+
+The supported migration target is
+[Codex workload identity federation](https://learn.chatgpt.com/docs/enterprise/workload-identity) with GitHub Actions
+OIDC. It requires a managed ChatGPT workspace, workspace-admin configuration, and beta enablement. Workload identity
+writes no `auth.json`, so the Sentinel auth-state, quota-selection, and relay contracts must be migrated deliberately
+before the compatibility secrets can be removed.
 
 The workflow also requires existing secrets `DENO_DEPLOY_TOKEN` and `PREVIEW_UOS_AI_USER_TOKEN`. The deployment workflow
 installs the preview credential only on `p-ai-ubq-fi`, and replay uses that same credential to replace authorization.

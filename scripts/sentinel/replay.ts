@@ -14,8 +14,16 @@ type Fetch = typeof fetch;
 
 export const SENTINEL_MAX_ENCRYPTED_REPLAY_PAGE_BYTES = 48 * 1_024 * 1_024;
 export const SENTINEL_MAX_ENCRYPTED_REPLAY_TOTAL_BYTES = 128 * 1_024 * 1_024;
-export const SENTINEL_MAX_REPLAY_EXPORT_PAGES = 256;
+export const SENTINEL_MAX_REPLAY_EXPORT_PAGES = 1_024;
+export const SENTINEL_REPLAY_EXPORT_DEADLINE_MS = 10 * 60 * 1_000;
+export const SENTINEL_REPLAY_EXPORT_MAX_RETRIES = 3;
 export const SENTINEL_MAX_REPLAY_RESPONSE_BYTES = 16 * 1_024 * 1_024;
+
+const SENTINEL_REPLAY_EXPORT_REQUEST_TIMEOUT_MS = 20_000;
+const SENTINEL_REPLAY_EXPORT_RETRY_DELAY_MS = 250;
+
+const defaultSleep = (milliseconds: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 class BoundedResponseError extends Error {
   constructor(readonly reason: "invalid_content_length" | "response_too_large") {
@@ -87,6 +95,16 @@ const readBoundedResponse = async (
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 
+const replayExportDeadlineError = (): Error => new Error("Sentinel replay export exceeded the overall deadline");
+
+const isReplayExportTimeout = (error: unknown, signal: AbortSignal): boolean =>
+  signal.aborted ||
+  (error instanceof DOMException && (error.name === "AbortError" || error.name === "TimeoutError")) ||
+  (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"));
+
+const isReplayExportNetworkError = (error: unknown): boolean =>
+  error instanceof TypeError || (error instanceof DOMException && error.name === "NetworkError");
+
 const INFERENCE_ONLY_REPLAY_PATHS = new Set([
   "/v1/chat/completions",
   "/v1/responses",
@@ -112,6 +130,9 @@ export const fetchEncryptedReplayCaptures = async (
     beforeMs: number;
     incidentId?: string;
     fetchImpl?: Fetch;
+    now?: () => number;
+    sleep?: (milliseconds: number) => Promise<void>;
+    createTimeoutSignal?: (milliseconds: number) => AbortSignal;
   }>,
 ): Promise<ExportedSentinelReplayCapture[]> => {
   if (!input.adminToken) throw new Error("Sentinel replay export credential is missing");
@@ -123,7 +144,71 @@ export const fetchEncryptedReplayCaptures = async (
     throw new Error("Replay export incident ID is invalid");
   }
   const fetchImpl = input.fetchImpl ?? fetch;
+  const now = input.now ?? Date.now;
+  const sleep = input.sleep ?? defaultSleep;
+  const createTimeoutSignal = input.createTimeoutSignal ?? AbortSignal.timeout;
   const base = new URL(input.baseUrl);
+  const deadlineAt = now() + SENTINEL_REPLAY_EXPORT_DEADLINE_MS;
+  const remainingDeadlineMs = (): number => {
+    const remaining = deadlineAt - now();
+    if (remaining <= 0) throw replayExportDeadlineError();
+    return Math.ceil(remaining);
+  };
+  const retry = async (attempt: number, error: Error): Promise<void> => {
+    const remaining = remainingDeadlineMs();
+    if (attempt >= SENTINEL_REPLAY_EXPORT_MAX_RETRIES) throw error;
+    const delay = Math.min(SENTINEL_REPLAY_EXPORT_RETRY_DELAY_MS * (2 ** attempt), remaining);
+    await sleep(delay);
+    remainingDeadlineMs();
+  };
+  const fetchPage = async (url: URL): Promise<Uint8Array<ArrayBuffer>> => {
+    for (let attempt = 0; attempt <= SENTINEL_REPLAY_EXPORT_MAX_RETRIES; attempt++) {
+      const signal = createTimeoutSignal(
+        Math.min(SENTINEL_REPLAY_EXPORT_REQUEST_TIMEOUT_MS, remainingDeadlineMs()),
+      );
+      let response: Response;
+      try {
+        response = await fetchImpl(url, {
+          method: "GET",
+          redirect: "manual",
+          headers: { Authorization: `Bearer ${input.adminToken}`, Accept: "application/json" },
+          signal,
+        });
+      } catch (error) {
+        if (!isReplayExportTimeout(error, signal) && !isReplayExportNetworkError(error)) throw error;
+        await retry(attempt, new Error("Sentinel replay export request failed", { cause: error }));
+        continue;
+      }
+      try {
+        remainingDeadlineMs();
+      } catch (error) {
+        await response.body?.cancel().catch(() => {});
+        throw error;
+      }
+      if (response.redirected || (response.status >= 300 && response.status < 400)) {
+        await response.body?.cancel().catch(() => {});
+        throw new Error(`Sentinel replay export rejected an HTTP redirect (${response.status})`);
+      }
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => {});
+        const failure = new Error(`Sentinel replay export failed with HTTP ${response.status}`);
+        if (response.status !== 429 && (response.status < 500 || response.status > 599)) throw failure;
+        await retry(attempt, failure);
+        continue;
+      }
+      let pageBytes: Uint8Array<ArrayBuffer>;
+      try {
+        pageBytes = await readBoundedResponse(response, SENTINEL_MAX_ENCRYPTED_REPLAY_PAGE_BYTES);
+      } catch (error) {
+        if (error instanceof BoundedResponseError) throw error;
+        await retry(attempt, new Error("Sentinel replay export response read failed", { cause: error }));
+        continue;
+      }
+      remainingDeadlineMs();
+      return pageBytes;
+    }
+    throw new Error("Sentinel replay export retry bound is invalid");
+  };
   const captures: ExportedSentinelReplayCapture[] = [];
   let cursor: string | null = null;
   let totalBytes = 0;
@@ -137,21 +222,7 @@ export const fetchEncryptedReplayCaptures = async (
     url.searchParams.set("limit", "1");
     if (input.incidentId) url.searchParams.set("incident_id", input.incidentId);
     if (cursor) url.searchParams.set("cursor", cursor);
-    const response = await fetchImpl(url, {
-      method: "GET",
-      redirect: "error",
-      headers: { Authorization: `Bearer ${input.adminToken}`, Accept: "application/json" },
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!response.ok) {
-      await response.body?.cancel().catch(() => {});
-      throw new Error(`Sentinel replay export failed with HTTP ${response.status}`);
-    }
-    const pageBytes = await readBoundedResponse(response, SENTINEL_MAX_ENCRYPTED_REPLAY_PAGE_BYTES);
-    totalBytes += pageBytes.byteLength;
-    if (totalBytes > SENTINEL_MAX_ENCRYPTED_REPLAY_TOTAL_BYTES) {
-      throw new Error("Sentinel replay export exceeded the aggregate byte limit");
-    }
+    const pageBytes = await fetchPage(url);
     let parsed: unknown;
     try {
       parsed = JSON.parse(new TextDecoder().decode(pageBytes));
@@ -171,6 +242,7 @@ export const fetchEncryptedReplayCaptures = async (
     if (parsed.cursor !== null && parsed.data.length !== 1) {
       throw new Error("Sentinel replay export returned an empty continuation page");
     }
+    let acceptedManifestKey: readonly [number, string, string] | null = null;
     for (const capture of parsed.data) {
       if (
         !input.incidentId &&
@@ -196,13 +268,21 @@ export const fetchEncryptedReplayCaptures = async (
       if (observedFingerprints.has(capture.manifest.fingerprint)) {
         throw new Error("Sentinel replay export repeated a capture fingerprint");
       }
-      observedFingerprints.add(capture.manifest.fingerprint);
-      previousManifestKey = currentKey;
+      acceptedManifestKey = currentKey;
     }
+    if (parsed.cursor !== null && observedCursors.has(parsed.cursor)) {
+      throw new Error("Sentinel replay export cursor repeated");
+    }
+    remainingDeadlineMs();
+    if (pageBytes.byteLength > SENTINEL_MAX_ENCRYPTED_REPLAY_TOTAL_BYTES - totalBytes) {
+      throw new Error("Sentinel replay export exceeded the aggregate byte limit");
+    }
+    totalBytes += pageBytes.byteLength;
+    for (const capture of parsed.data) observedFingerprints.add(capture.manifest.fingerprint);
+    previousManifestKey = acceptedManifestKey ?? previousManifestKey;
     captures.push(...parsed.data);
     cursor = parsed.cursor;
     if (!cursor) return captures;
-    if (observedCursors.has(cursor)) throw new Error("Sentinel replay export cursor repeated");
     observedCursors.add(cursor);
   }
   throw new Error("Sentinel replay export exceeded the page limit");

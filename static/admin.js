@@ -98,8 +98,13 @@ const basePreview = mustGet("base-preview");
 const authWidget = mustGet("view-session");
 const authWidgetPanel = mustGet("auth-widget-panel");
 const authWidgetToggle = mustGet("auth-widget-toggle");
+const authWidgetToggleLabel = mustGet("auth-widget-toggle-label");
 const authWidgetClose = mustGet("auth-widget-close");
+const loadingTitle = mustGet("admin-loading-title");
 const loadingSummary = mustGet("admin-loading-summary");
+const loadingGrid = mustGet("admin-loading-grid");
+const authGate = mustGet("admin-auth-gate");
+const authGateOpen = mustGet("admin-auth-gate-open");
 const loadingAuthStatus = mustGet("loading-auth-status");
 const loadingKeysStatus = mustGet("loading-keys-status");
 const loadingUsersStatus = mustGet("loading-users-status");
@@ -166,53 +171,6 @@ const quotaRunwaySummary = mustGet("quota-runway-summary");
 const quotaRunwayList = mustGet("quota-runway-list");
 const quotaRunwayNote = mustGet("quota-runway-note");
 
-const PROMPT_CACHE_ANALYTICS_GROUPS = [
-  ["key_presence", "Keyed / unkeyed"],
-  ["provider", "Provider"],
-  ["model", "Model cohort"],
-  ["route", "Route"],
-  ["mode", "Cache mode"],
-  ["fallback", "Fallback class"],
-];
-const promptCacheAnalyticsPanel = document.createElement("section");
-promptCacheAnalyticsPanel.dataset.promptCacheAnalytics = "";
-promptCacheAnalyticsPanel.hidden = true;
-const promptCacheAnalyticsHeader = document.createElement("header");
-const promptCacheAnalyticsTitle = document.createElement("h3");
-promptCacheAnalyticsTitle.textContent = "Prompt-cache analytics";
-const promptCacheAnalyticsControl = document.createElement("label");
-promptCacheAnalyticsControl.dataset.field = "";
-const promptCacheAnalyticsControlLabel = document.createElement("span");
-promptCacheAnalyticsControlLabel.dataset.label = "";
-promptCacheAnalyticsControlLabel.textContent = "Group by";
-const promptCacheAnalyticsGroupBy = document.createElement("select");
-promptCacheAnalyticsGroupBy.id = "prompt-cache-analytics-group-by";
-for (const [value, label] of PROMPT_CACHE_ANALYTICS_GROUPS) {
-  const option = document.createElement("option");
-  option.value = value;
-  option.textContent = label;
-  promptCacheAnalyticsGroupBy.appendChild(option);
-}
-promptCacheAnalyticsControl.append(promptCacheAnalyticsControlLabel, promptCacheAnalyticsGroupBy);
-promptCacheAnalyticsHeader.append(promptCacheAnalyticsTitle, promptCacheAnalyticsControl);
-const promptCacheAnalyticsState = document.createElement("p");
-promptCacheAnalyticsState.dataset.muted = "";
-promptCacheAnalyticsState.setAttribute("aria-live", "polite");
-const promptCacheAnalyticsList = document.createElement("div");
-promptCacheAnalyticsList.dataset.promptCacheAnalyticsList = "";
-promptCacheAnalyticsList.setAttribute("role", "list");
-const promptCacheAnalyticsRetention = document.createElement("p");
-promptCacheAnalyticsRetention.dataset.muted = "";
-promptCacheAnalyticsRetention.textContent =
-  "This view shows the trailing seven days. Storage retains fifteen-minute buckets for eight days to keep the window complete. Raw cache keys and request identifiers are not shown.";
-promptCacheAnalyticsPanel.append(
-  promptCacheAnalyticsHeader,
-  promptCacheAnalyticsState,
-  promptCacheAnalyticsList,
-  promptCacheAnalyticsRetention,
-);
-providerCapacityChart.after(promptCacheAnalyticsPanel);
-
 let currentKeyView = "active";
 let currentAdminView = "loading";
 let pendingAdminView = null;
@@ -234,9 +192,6 @@ let providerCapacityLoadedForOpen = false;
 let quotaProjectionLoading = false;
 let quotaProjectionLoadedForOpen = false;
 let quotaProjectionLoadId = 0;
-let promptCacheAnalyticsLoading = false;
-let promptCacheAnalyticsLoadedForOpen = false;
-let promptCacheAnalyticsLoadId = 0;
 let latestProviderCapacityChartState = null;
 let capacityChartResizeFrame = 0;
 let capacityChartScrollState = null;
@@ -391,6 +346,13 @@ const updateLoadingAuthStatus = () => {
   setLoadingStatus("auth", "bad", "Sign in");
 };
 
+const syncLoadingGate = () => {
+  const preparing = adminAccessState.isAdmin || (!adminAccessState.checked && hasAdminCredential());
+  authGate.hidden = preparing;
+  loadingGrid.hidden = !preparing;
+  loadingTitle.textContent = preparing ? "Preparing admin console" : "Sign in to manage the gateway";
+};
+
 const resetLoadingPrefetchStatuses = (text = "Waiting") => {
   ["keys", "users", "kernel", "queue", "pubkeys", "defaults", "upstream", "providers"].forEach((key) => {
     setLoadingStatus(key, "unknown", text);
@@ -409,6 +371,7 @@ const setAuthWidgetOpen = (open, options = {}) => {
   authWidgetToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
   authWidgetToggle.setAttribute("aria-label", expanded ? "Collapse authentication" : "Open authentication");
   authWidgetToggle.dataset.tooltip = expanded ? "Collapse authentication" : "Open authentication";
+  authWidgetToggleLabel.textContent = expanded ? "Close" : "Session";
   if (expanded && options.focus) {
     globalThis.requestAnimationFrame(() => authWidgetPanel.focus({ preventScroll: true }));
   }
@@ -1146,8 +1109,8 @@ const unavailableCapacitySource = (source, slot = null) =>
 const CAPACITY_CHART_SVG_NS = "http://www.w3.org/2000/svg";
 const CAPACITY_CHART_MIN_DAYS = 7;
 const CAPACITY_CHART_MAX_DAYS = 14;
-const CAPACITY_CHART_MIN_WIDTH_PX = 1280;
-const CAPACITY_CHART_PIXELS_PER_DAY = 180;
+const CAPACITY_CHART_MIN_WIDTH_PX = 980;
+const CAPACITY_CHART_PIXELS_PER_DAY = 150;
 const CAPACITY_CHART_DAY_MS = 24 * 60 * 60 * 1_000;
 const CAPACITY_CHART_HOUR_MS = 60 * 60 * 1_000;
 const CAPACITY_CHART_MINUTE_MS = 60 * 1_000;
@@ -2017,9 +1980,15 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
   const figure = document.createElement("figure");
   figure.dataset.capacityChartFigure = "";
   figure.style.setProperty("--capacity-chart-height-px", `${height}px`);
+  const chartHeader = document.createElement("div");
+  chartHeader.dataset.capacityChartHeader = "";
   const title = document.createElement("h3");
   title.textContent = "Capacity and prompt cache history";
-  figure.appendChild(title);
+  const range = document.createElement("span");
+  range.dataset.capacityChartRange = "";
+  range.textContent = "Trailing 7 days · 15-minute buckets";
+  chartHeader.append(title, range);
+  figure.appendChild(chartHeader);
 
   const legend = document.createElement("div");
   legend.dataset.capacityChartLegend = "";
@@ -2030,7 +1999,7 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
       ...CAPACITY_CHART_SERIES,
       { key: "rate-limit-reset", label: "OpenAI rate-limit reset" },
       { key: "openai-downtime", label: "OpenAI downtime" },
-      { key: "inference-5xx", label: "Inference 5xx" },
+      { key: "inference-error", label: "Failed inference responses (HTTP 5xx)" },
       { key: "optimal-spend", label: "Optimal token spend" },
     ]
   ) {
@@ -2046,13 +2015,19 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
     legend.appendChild(item);
   }
   figure.appendChild(legend);
+  const legendNote = document.createElement("p");
+  legendNote.dataset.capacityChartLegendNote = "";
+  legendNote.textContent = "Error markers identify 15-minute buckets; use the event list for counts and timestamps.";
+  figure.appendChild(legendNote);
 
   const svg = capacityChartSvgElement("svg", {
     viewBox: `0 0 ${width} ${height}`,
-    preserveAspectRatio: "none",
+    width,
+    height,
+    preserveAspectRatio: "xMinYMin meet",
     role: "img",
     "aria-label":
-      "Codex and Metered 2 provider capacity lines and cached input percentage bars over the trailing seven days, including rate-limit resets",
+      "Codex and Metered 2 provider capacity lines and cached input percentage bars over the trailing seven days, including rate-limit resets, provider downtime, and failed inference response markers",
     focusable: "false",
   });
   svg.dataset.capacityChartSvg = "";
@@ -2221,27 +2196,43 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
     Number.isFinite(bucket?.bucket_start_at_ms) && Number.isSafeInteger(bucket?.count) && bucket.count > 0 &&
     bucket.bucket_start_at_ms >= chartWindow.startAtMs && bucket.bucket_start_at_ms <= chartWindow.resetAtMs
   );
+  const fiveXxMarkerElements = new Map();
   for (const bucket of visibleFiveXxBuckets) {
     const markerX = capacityChartMarkerX(bucket.bucket_start_at_ms, chartWindow, plot);
     const marker = capacityChartSvgElement("g");
-    marker.dataset.capacityInference5xx = String(bucket.bucket_start_at_ms);
+    marker.dataset.capacityInferenceError = String(bucket.bucket_start_at_ms);
+    marker.setAttribute("role", "img");
+    marker.setAttribute("tabindex", "0");
     marker.setAttribute(
       "aria-label",
-      `${bucket.count} inference 5xx error${bucket.count === 1 ? "" : "s"} at ${
-        formatCapacityTimestamp(bucket.bucket_start_at_ms)
-      }`,
+      `${bucket.count} failed inference response${
+        bucket.count === 1 ? "" : "s"
+      } (HTTP 5xx) during the 15-minute bucket starting ${formatCapacityTimestamp(bucket.bucket_start_at_ms)}`,
     );
     const line = capacityChartSvgElement("line", {
       x1: markerX,
-      y1: plot.top,
+      y1: plot.top - 4,
       x2: markerX,
       y2: plot.top + plot.height,
+      stroke: "#ff625f",
+      "stroke-opacity": 0.72,
+      "stroke-dasharray": "2 5",
+      "stroke-width": 1.5,
     });
-    const dot = capacityChartSvgElement("circle", { cx: markerX, cy: plot.top + 7, r: Math.min(7, 3 + bucket.count) });
+    const markerY = plot.top - 10;
+    const diamond = capacityChartSvgElement("path", {
+      d: `M ${markerX} ${markerY - 5} L ${markerX + 5} ${markerY} L ${markerX} ${markerY + 5} L ${
+        markerX - 5
+      } ${markerY} Z`,
+      fill: "#ff625f",
+      stroke: "#fff4f3",
+      "stroke-width": 1,
+    });
     const tooltip = capacityChartSvgElement("title");
     tooltip.textContent = marker.getAttribute("aria-label");
-    marker.append(tooltip, line, dot);
+    marker.append(tooltip, line, diamond);
     svg.appendChild(marker);
+    fiveXxMarkerElements.set(String(bucket.bucket_start_at_ms), marker);
   }
 
   for (const remaining of [100, 75, 50, 25, 0]) {
@@ -2428,6 +2419,50 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
   chartPane.append(chartScroll, chartScrollControls);
   chartBody.append(chartPane, renderCapacitySpendSummary(pacing, activeUsageWindow));
   figure.appendChild(chartBody);
+  if (visibleFiveXxBuckets.length) {
+    const errorSummary = document.createElement("div");
+    errorSummary.dataset.capacityErrorSummary = "";
+    const errorSummaryHeader = document.createElement("div");
+    errorSummaryHeader.dataset.capacityEventHeader = "";
+    const errorSummaryTitle = document.createElement("strong");
+    errorSummaryTitle.textContent = "Failed inference buckets";
+    const errorCount = visibleFiveXxBuckets.reduce((total, bucket) => total + bucket.count, 0);
+    const errorSummaryMeta = document.createElement("span");
+    errorSummaryMeta.textContent = `${errorCount} failed response${
+      errorCount === 1 ? "" : "s"
+    } in ${visibleFiveXxBuckets.length} bucket${visibleFiveXxBuckets.length === 1 ? "" : "s"}`;
+    errorSummaryHeader.append(errorSummaryTitle, errorSummaryMeta);
+    const errorNavigation = document.createElement("div");
+    errorNavigation.dataset.capacityErrorNavigation = "";
+    errorNavigation.setAttribute("role", "group");
+    errorNavigation.setAttribute("aria-label", "Recent failed inference response buckets");
+    const recentBuckets = [...visibleFiveXxBuckets]
+      .sort((left, right) => right.bucket_start_at_ms - left.bucket_start_at_ms)
+      .slice(0, 12);
+    for (const bucket of recentBuckets) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.capacityErrorBucket = String(bucket.bucket_start_at_ms);
+      button.textContent = `${formatCapacityTimestamp(bucket.bucket_start_at_ms)} · ${bucket.count} failed`;
+      button.setAttribute(
+        "aria-label",
+        `${bucket.count} failed inference response${bucket.count === 1 ? "" : "s"}, 15-minute bucket starting ${
+          formatCapacityTimestamp(bucket.bucket_start_at_ms)
+        }. Move the chart to this marker.`,
+      );
+      button.addEventListener("click", () => {
+        const markerX = capacityChartMarkerX(bucket.bucket_start_at_ms, chartWindow, plot);
+        chartScroll.scrollTo({
+          left: Math.max(0, markerX - chartScroll.clientWidth / 2),
+          behavior: capacityChartScrollBehavior(),
+        });
+        fiveXxMarkerElements.get(String(bucket.bucket_start_at_ms))?.focus({ preventScroll: true });
+      });
+      errorNavigation.appendChild(button);
+    }
+    errorSummary.append(errorSummaryHeader, errorNavigation);
+    figure.appendChild(errorSummary);
+  }
   if (rateLimitResetMarkers.length) {
     const navigation = document.createElement("nav");
     navigation.dataset.capacityResetNavigation = "";
@@ -2486,7 +2521,9 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
     ? ` · ${downtimeBridgeCount} OpenAI downtime bridge${downtimeBridgeCount === 1 ? "" : "s"}`
     : "";
   const fiveXxCount = visibleFiveXxBuckets.reduce((total, bucket) => total + bucket.count, 0);
-  const fiveXxSuffix = ` · ${fiveXxCount} inference 5xx error${fiveXxCount === 1 ? "" : "s"}`;
+  const fiveXxSuffix = fiveXxCount
+    ? ` · ${fiveXxCount} failed inference response${fiveXxCount === 1 ? "" : "s"} (HTTP 5xx)`
+    : "";
   const latestCacheBucket = promptCacheBuckets.at(-1);
   const latestCacheWrite = latestCacheBucket?.cacheWriteInputTokens === null
     ? "cache writes unavailable"
@@ -2793,169 +2830,6 @@ const loadQuotaProjection = async () => {
   }
 };
 
-const promptCacheAnalyticsPercent = (value) =>
-  typeof value === "number" && Number.isFinite(value) && value >= 0
-    ? `${quotaPercentFormatter.format(value)}%`
-    : "Not reported";
-
-const promptCacheAnalyticsNumber = (value) =>
-  typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? formatNumber(value) : "Not reported";
-
-const promptCacheAnalyticsRatio = (value) =>
-  typeof value === "number" && Number.isFinite(value) && value >= 0 ? String(value) : "Not calculable";
-
-const promptCacheAnalyticsProviderLabels = Object.freeze({
-  chatgpt_codex: "Codex",
-  surplus: "Metered 1",
-  metered: "Metered 2",
-});
-
-const promptCacheAnalyticsGroupLabel = (group) => {
-  if (!group || typeof group !== "object") return "All cache-eligible traffic";
-  if (group.cardinality_limited === true) return "Cohort detail capped";
-  const labels = [];
-  if (typeof group.provider === "string") {
-    labels.push(promptCacheAnalyticsProviderLabels[group.provider] ?? group.provider);
-  }
-  if (typeof group.model_hash === "string") {
-    labels.push(
-      group.model_hash === "unknown" ? "Model cohort unknown" : `Model cohort ${group.model_hash.slice(0, 12)}`,
-    );
-  }
-  if (typeof group.route === "string") labels.push(group.route);
-  if (typeof group.prompt_cache_key_present === "boolean") {
-    labels.push(group.prompt_cache_key_present ? "Keyed" : "Unkeyed");
-  }
-  if (typeof group.mode === "string") labels.push(group.mode);
-  if (typeof group.fallback === "string") labels.push(group.fallback);
-  return labels.length ? labels.join(" · ") : "All cache-eligible traffic";
-};
-
-const promptCacheAnalyticsGroupIdentity = (group) => {
-  try {
-    return JSON.stringify(group && typeof group === "object" ? group : {});
-  } catch {
-    return "{}";
-  }
-};
-
-const renderPromptCacheAnalytics = (snapshot) => {
-  promptCacheAnalyticsPanel.hidden = false;
-  promptCacheAnalyticsList.replaceChildren();
-  promptCacheAnalyticsState.removeAttribute("data-prompt-cache-analytics-unavailable");
-  if (snapshot?.status !== "ready") {
-    promptCacheAnalyticsState.setAttribute("data-prompt-cache-analytics-unavailable", "");
-    promptCacheAnalyticsState.textContent = "Cache analytics unavailable. Cache-hit values are not shown as zero.";
-    return;
-  }
-
-  const latestByGroup = new Map();
-  for (const bucket of Array.isArray(snapshot.buckets) ? snapshot.buckets : []) {
-    const bucketStartAtMs = bucket?.bucket_start_at_ms;
-    if (typeof bucketStartAtMs !== "number" || !Number.isFinite(bucketStartAtMs)) continue;
-    const identity = promptCacheAnalyticsGroupIdentity(bucket.group);
-    const existing = latestByGroup.get(identity);
-    if (!existing || bucketStartAtMs > existing.bucket_start_at_ms) latestByGroup.set(identity, bucket);
-  }
-  const rows = [...latestByGroup.values()].sort((left, right) =>
-    promptCacheAnalyticsGroupLabel(left.group).localeCompare(promptCacheAnalyticsGroupLabel(right.group))
-  );
-  if (!rows.length) {
-    promptCacheAnalyticsState.textContent =
-      "No retained cache-token history yet. Zero is shown only after usage telemetry reports a real zero.";
-    return;
-  }
-
-  const cappedCohortVisible = rows.some((bucket) => bucket?.group?.cardinality_limited === true);
-  const cardinalityLimited = snapshot.cardinality_limited === true || cappedCohortVisible;
-  const truncated = snapshot.truncated === true;
-  promptCacheAnalyticsState.textContent = cardinalityLimited
-    ? cappedCohortVisible
-      ? "Cohort detail reached the per-bucket cap. Cardinality-limited samples are included in the capped cohort row."
-      : "Cohort detail reached the per-bucket cap. The current response does not include the capped cohort row."
-    : truncated
-    ? `Showing the newest ${rows.length} grouped buckets within the response limit.`
-    : `Latest bucket for ${rows.length} cache cohort${rows.length === 1 ? "" : "s"}.`;
-  for (const bucket of rows) {
-    const row = document.createElement("article");
-    row.dataset.promptCacheAnalyticsRow = "";
-    row.setAttribute("role", "listitem");
-    const header = document.createElement("header");
-    const title = document.createElement("h4");
-    title.textContent = promptCacheAnalyticsGroupLabel(bucket.group);
-    const observed = document.createElement("span");
-    observed.dataset.muted = "";
-    observed.textContent = formatCapacityTimestamp(bucket.bucket_start_at_ms);
-    header.append(title, observed);
-    const facts = document.createElement("dl");
-    facts.dataset.capacityFacts = "";
-    appendProviderFact(facts, "Token hit rate", promptCacheAnalyticsPercent(bucket.token_hit_percentage));
-    appendProviderFact(facts, "Request hit rate", promptCacheAnalyticsPercent(bucket.request_hit_percentage));
-    appendProviderFact(
-      facts,
-      "Telemetry coverage",
-      promptCacheAnalyticsPercent(bucket.usage_telemetry_coverage_percentage),
-    );
-    appendProviderFact(facts, "Samples", promptCacheAnalyticsNumber(bucket.sample_count));
-    appendProviderFact(facts, "Cached input", promptCacheAnalyticsNumber(bucket.cached_input_tokens));
-    appendProviderFact(facts, "Cache reads per write", promptCacheAnalyticsRatio(bucket.cache_reads_per_write));
-    if (
-      typeof bucket.dimension_cardinality_limited_sample_count === "number" &&
-      bucket.dimension_cardinality_limited_sample_count > 0
-    ) {
-      appendProviderFact(
-        facts,
-        "Cardinality-limited samples",
-        promptCacheAnalyticsNumber(bucket.dimension_cardinality_limited_sample_count),
-      );
-    }
-    if (typeof bucket.group?.prompt_cache_key_present === "boolean") {
-      appendProviderFact(facts, "Cache key", bucket.group.prompt_cache_key_present ? "Keyed" : "Unkeyed");
-    }
-    row.append(header, facts);
-    promptCacheAnalyticsList.appendChild(row);
-  }
-};
-
-const loadPromptCacheAnalytics = async ({ supersede = false } = {}) => {
-  if (promptCacheAnalyticsLoading && !supersede) return false;
-  const token = getAdminToken();
-  if (!adminAccessState.isAdmin || !hasAdminCredential()) {
-    promptCacheAnalyticsPanel.hidden = true;
-    return false;
-  }
-  const groupBy = promptCacheAnalyticsGroupBy.value;
-  if (!PROMPT_CACHE_ANALYTICS_GROUPS.some(([value]) => value === groupBy)) return false;
-  const loadId = ++promptCacheAnalyticsLoadId;
-  promptCacheAnalyticsLoading = true;
-  promptCacheAnalyticsPanel.hidden = false;
-  promptCacheAnalyticsState.removeAttribute("data-prompt-cache-analytics-unavailable");
-  promptCacheAnalyticsState.textContent = "Loading cache analytics…";
-  try {
-    const response = await fetch(apiUrl(`/admin/prompt-cache-analytics?group_by=${encodeURIComponent(groupBy)}`), {
-      cache: "no-store",
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const payload = await response.json().catch(() => null);
-    if (loadId !== promptCacheAnalyticsLoadId) return false;
-    if (!response.ok || !payload) {
-      renderPromptCacheAnalytics({ status: "unavailable", buckets: [] });
-      return false;
-    }
-    renderPromptCacheAnalytics(payload);
-    return payload.status === "ready";
-  } catch {
-    if (loadId === promptCacheAnalyticsLoadId) renderPromptCacheAnalytics({ status: "unavailable", buckets: [] });
-    return false;
-  } finally {
-    if (loadId === promptCacheAnalyticsLoadId) promptCacheAnalyticsLoading = false;
-  }
-};
-
-promptCacheAnalyticsGroupBy.addEventListener("change", () => {
-  if (currentAdminView === "providers") void loadPromptCacheAnalytics({ supersede: true });
-});
-
 const scheduleProviderCapacityChartResize = () => {
   if (capacityChartResizeFrame) return;
   capacityChartResizeFrame = globalThis.requestAnimationFrame(() => {
@@ -3058,6 +2932,7 @@ const formatAuthMethodLabel = (method) => {
     kv_api_key: "API key",
     github_token: "GitHub token",
     passkey_session: "Passkey",
+    disabled: "Auth disabled",
   };
   return lookup[method] ?? method.replace(/_/g, " ");
 };
@@ -3132,14 +3007,24 @@ const applyIconButton = (button, name, label) => {
   button.appendChild(buildIconSvg(name));
 };
 
+const applyActionButton = (button, name, label) => {
+  delete button.dataset.iconButton;
+  button.removeAttribute("title");
+  button.setAttribute("aria-label", label);
+  button.textContent = "";
+  const text = document.createElement("span");
+  text.textContent = label;
+  button.append(buildIconSvg(name), text);
+};
+
 const KERNEL_ACTIVITY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const KERNEL_NEAR_LIMIT_RATIO = 0.8;
 const DEFAULT_API_KEY_WINDOW_MS = 604800000;
 const DEFAULT_KERNEL_POLICY_LIMIT = -1;
 const DEFAULT_KERNEL_POLICY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
-applyIconButton(kernelNewSaveBtn, "save", "Save rate limit");
-applyIconButton(kernelPubKeyCreateBtn, "plus", "Add kernel attestation key");
+applyActionButton(kernelNewSaveBtn, "save", "Save rate limit");
+applyActionButton(kernelPubKeyCreateBtn, "plus", "Add attestation key");
 
 const setKernelListMessage = (text) => {
   kernelList.textContent = "";
@@ -3739,7 +3624,7 @@ const ensureKernelPolicyQueueLoaded = async () => {
 
 const setKernelNewPanelOpen = (open) => {
   kernelNewPanel.hidden = !open;
-  applyIconButton(kernelNewToggle, open ? "close" : "plus", open ? "Close new rate limit" : "New rate limit");
+  applyActionButton(kernelNewToggle, open ? "close" : "plus", open ? "Close form" : "New rate limit");
   if (!open) {
     resetKernelNewForm();
   }
@@ -6680,13 +6565,45 @@ const setTabState = (tab, selected, enabled = true) => {
   tab.setAttribute("aria-selected", selected ? "true" : "false");
   tab.setAttribute("aria-disabled", enabled ? "false" : "true");
   tab.disabled = !enabled;
-  tab.tabIndex = enabled ? 0 : -1;
+  tab.tabIndex = enabled && selected ? 0 : -1;
   if (!enabled) {
     const label = tab.id === "view-tab-users" ? "Super admin required" : "Admin sign-in required";
     tab.title = label;
   } else {
     tab.removeAttribute("title");
   }
+};
+
+const revealTabInList = (tab) => {
+  const tablist = tab?.closest('[role="tablist"]');
+  if (!tablist) return;
+  globalThis.requestAnimationFrame(() => {
+    const targetLeft = tab.offsetLeft - (tablist.clientWidth - tab.offsetWidth) / 2;
+    tablist.scrollTo({
+      left: Math.max(0, targetLeft),
+      behavior: "auto",
+    });
+  });
+};
+
+const bindTablistKeyboard = (tablist) => {
+  if (!tablist) return;
+  tablist.addEventListener("keydown", (event) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    const tabs = [...tablist.querySelectorAll('[role="tab"]:not(:disabled)')];
+    if (!tabs.length) return;
+    const currentIndex = Math.max(0, tabs.indexOf(document.activeElement));
+    const nextIndex = event.key === "Home"
+      ? 0
+      : event.key === "End"
+      ? tabs.length - 1
+      : event.key === "ArrowRight"
+      ? (currentIndex + 1) % tabs.length
+      : (currentIndex - 1 + tabs.length) % tabs.length;
+    event.preventDefault();
+    tabs[nextIndex].focus();
+    tabs[nextIndex].click();
+  });
 };
 
 const viewTabs = {
@@ -6920,6 +6837,10 @@ const updateViewAccess = () => {
   Object.entries(viewTabs).forEach(([key, tab]) => {
     setTabState(tab, key === currentAdminView, canAccessView(key));
   });
+  if (!Object.keys(viewTabs).some((key) => key === currentAdminView && canAccessView(key))) {
+    const firstAvailableTab = Object.entries(viewTabs).find(([key]) => canAccessView(key))?.[1];
+    if (firstAvailableTab) firstAvailableTab.tabIndex = 0;
+  }
 };
 
 const syncVisibleAdminView = () => {
@@ -6962,16 +6883,9 @@ const loadAdminView = (view) => {
         if (!loaded) quotaProjectionLoadedForOpen = false;
       });
     }
-    if (!promptCacheAnalyticsLoadedForOpen) {
-      promptCacheAnalyticsLoadedForOpen = true;
-      void loadPromptCacheAnalytics().then((loaded) => {
-        if (!loaded) promptCacheAnalyticsLoadedForOpen = false;
-      });
-    }
   } else {
     providerCapacityLoadedForOpen = false;
     quotaProjectionLoadedForOpen = false;
-    promptCacheAnalyticsLoadedForOpen = false;
   }
   if (view === "errors" && (!errorsLoadedAt || Date.now() - errorsLoadedAt >= 10_000)) {
     void loadAdminErrors();
@@ -6990,13 +6904,14 @@ const setAdminAccessState = (next) => {
     ? "admin"
     : "none";
   updateLoadingAuthStatus();
+  syncLoadingGate();
   updateViewAccess();
   let prefetchPromise = null;
   if (adminAccessState.isAdmin) {
     closeAutoOpenedAuthWidget();
     prefetchPromise = startAdminPrefetch();
   } else if (adminAccessState.checked) {
-    openAuthWidgetForAuth();
+    closeAutoOpenedAuthWidget();
   }
   if (pendingAdminView && canAccessView(pendingAdminView)) {
     const view = pendingAdminView;
@@ -7045,6 +6960,7 @@ const setAdminView = (view, options = {}) => {
   pendingAdminView = null;
   syncVisibleAdminView();
   updateViewAccess();
+  if (viewTabs[nextView]) revealTabInList(viewTabs[nextView]);
   storage.set(STORAGE_KEYS.view, nextView);
   syncAdminHash(nextView, options.hashMode);
   loadAdminView(nextView);
@@ -7086,14 +7002,6 @@ const computeExpiresAtMs = (preset) => {
 
 const testAdminToken = async ({ allowBearerFallback = true } = {}) => {
   const token = getAdminToken();
-  if (!token && !relaySessionActive && !isRemoteRelayOrigin()) {
-    setAuthBadge("bad", "Missing token");
-    setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
-    setSignedInState(false);
-    tokenInput.focus();
-    return false;
-  }
-
   setAuthBadge("unknown", "Checking...");
   try {
     const requestAuth = async (headers) => {
@@ -7146,13 +7054,6 @@ const testAdminToken = async ({ allowBearerFallback = true } = {}) => {
 };
 
 const scheduleTokenCheck = debounce(() => {
-  if (!getAdminToken() && !relaySessionActive && !isRemoteRelayOrigin()) {
-    setAuthBadge("bad", "Missing token");
-    setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
-    setSignedInState(false);
-    clearApiKeyRequestLogCaches();
-    return;
-  }
   void testAdminToken();
 }, 500);
 
@@ -7847,19 +7748,12 @@ setKernelNewPanelOpen(false);
 resetKernelPubKeyForm();
 const initialHashView = getHashView();
 if (initialHashView === "session") setAuthWidgetOpen(true);
-const hasInitialAdminCredential = Boolean(getAdminToken()) || isRemoteRelayOrigin();
-resetAdminPrefetchState(
-  hasInitialAdminCredential ? "Checking admin session..." : "Sign in to prepare the admin views.",
-);
+resetAdminPrefetchState("Checking admin session...");
 setAdminView(ADMIN_VIEW_DEFAULT, { allowInaccessible: true });
 if (initialHashView && initialHashView !== "session") setAdminView(initialHashView, { focusAuth: false });
-if (hasInitialAdminCredential) {
-  setAuthBadge("unknown", "Checking...");
-  scheduleTokenCheck();
-} else {
-  setAuthBadge("bad", "Missing token");
-  setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
-}
+setAuthBadge("unknown", "Checking...");
+setAdminAccessState({ checked: false, isAdmin: false, isSuperAdmin: false });
+scheduleTokenCheck();
 
 bindForegroundRefresh(() => {
   if (currentAdminView !== "defaults" || !adminAccessState.isAdmin || !hasAdminCredential()) return;
@@ -7868,6 +7762,10 @@ bindForegroundRefresh(() => {
 
 authWidgetToggle.addEventListener("click", () => {
   setAuthWidgetOpen(authWidgetPanel.hidden, { focus: authWidgetPanel.hidden });
+});
+
+authGateOpen.addEventListener("click", () => {
+  setAuthWidgetOpen(true, { focus: true });
 });
 
 authWidgetClose.addEventListener("click", () => {
@@ -7905,16 +7803,9 @@ tokenInput.addEventListener("input", () => {
   quotaRunwaySummary.replaceChildren();
   quotaRunwayList.replaceChildren();
   quotaRunwayNote.textContent = "";
-  promptCacheAnalyticsLoadId += 1;
-  promptCacheAnalyticsLoading = false;
-  promptCacheAnalyticsLoadedForOpen = false;
   latestProviderCapacityChartState = null;
   latestProviderHealth = null;
   providerCapacityChart.replaceChildren();
-  promptCacheAnalyticsPanel.hidden = true;
-  promptCacheAnalyticsList.replaceChildren();
-  promptCacheAnalyticsState.removeAttribute("data-prompt-cache-analytics-unavailable");
-  promptCacheAnalyticsState.textContent = "Waiting for an authenticated admin session.";
   clearApiKeyRequestLogCaches();
   if (!hasAdminCredential()) {
     setAuthBadge("bad", "Missing token");
@@ -8171,6 +8062,8 @@ viewTabPubkeys.addEventListener("click", () => setAdminView("pubkeys", { hashMod
 viewTabDefaults.addEventListener("click", () => setAdminView("defaults", { hashMode: "push", focusAuth: true }));
 viewTabProviders.addEventListener("click", () => setAdminView("providers", { hashMode: "push", focusAuth: true }));
 viewTabErrors.addEventListener("click", () => setAdminView("errors", { hashMode: "push", focusAuth: true }));
+bindTablistKeyboard(viewTabKeys.closest('[role="tablist"]'));
+bindTablistKeyboard(keysTabActive.closest('[role="tablist"]'));
 
 globalThis.setInterval(() => {
   if (currentAdminView !== "providers" || document.visibilityState !== "visible") return;

@@ -1,7 +1,11 @@
 body[data-page="docs"] [data-shell] {
+  max-width: 1600px;
+}
+
+body[data-page="docs"] main {
+  width: 100%;
   max-width: 1200px;
-  padding: calc(24px + env(safe-area-inset-top)) 28px calc(64px + env(safe-area-inset-bottom));
-  gap: 22px;
+  margin-inline: auto;
 }
 
 body[data-page="docs"] [data-docs-hero] {
@@ -72,10 +76,6 @@ body[data-page="docs"] [data-docs-content] a:hover {
   text-decoration-color: rgba(255, 255, 255, 0.6);
 }
 
-body[data-page="docs"] [data-docs-content] pre[data-code] {
-  background: rgba(255, 255, 255, 0.06);
-}
-
 body[data-page="docs"] [data-docs-sidebar] {
   position: sticky;
   top: 24px;
@@ -136,11 +136,5 @@ body[data-page="docs"] [data-docs-toc] a[data-level="4"] {
 
   body[data-page="docs"] [data-docs-sidebar] {
     position: static;
-  }
-}
-
-@media (max-width: 720px) {
-  body[data-page="docs"] [data-shell] {
-    padding: calc(24px + env(safe-area-inset-top)) 16px calc(48px + env(safe-area-inset-bottom));
   }
 }

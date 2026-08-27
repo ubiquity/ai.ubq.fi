@@ -6,6 +6,7 @@ import {
   decodeSentinelReplayKey,
   decryptExportedSentinelReplay,
   discardSentinelReplayCaptureCandidate,
+  type ExportedSentinelReplayCapture,
   inspectSentinelBufferedResponse,
   inspectSentinelBufferedResponseBody,
   isExportedSentinelReplayCapture,
@@ -42,8 +43,11 @@ import {
   fetchEncryptedReplayCaptures,
   replayOneCase,
   SENTINEL_MAX_ENCRYPTED_REPLAY_PAGE_BYTES,
+  SENTINEL_MAX_ENCRYPTED_REPLAY_TOTAL_BYTES,
   SENTINEL_MAX_REPLAY_EXPORT_PAGES,
   SENTINEL_MAX_REPLAY_RESPONSE_BYTES,
+  SENTINEL_REPLAY_EXPORT_DEADLINE_MS,
+  SENTINEL_REPLAY_EXPORT_MAX_RETRIES,
 } from "../scripts/sentinel/replay.ts";
 import type { ReplayCase } from "../scripts/sentinel/types.ts";
 import { CountingKv } from "./helpers/counting_kv.ts";
@@ -89,6 +93,42 @@ const failedClientObservation = (
   framing_valid: true,
   provider_route: "chatgpt_codex",
   ...overrides,
+});
+
+const replayExportFixture = async (captureId: string): Promise<ExportedSentinelReplayCapture> => {
+  const kv = new CountingKv();
+  await persistEncryptedSentinelReplay(acceptedInput(), failedObservation(), {
+    kv: kv as unknown as Deno.Kv,
+    keyBytes,
+    now: () => 1_777_000_000_000,
+    randomUuid: () => captureId,
+  });
+  const [fixture] = (await listEncryptedSentinelReplays(kv as unknown as Deno.Kv, {
+    afterMs: 0,
+    beforeMs: Number.MAX_SAFE_INTEGER - 1,
+  })).captures;
+  assert.ok(fixture);
+  return fixture;
+};
+
+const indexedReplayExportCapture = (
+  fixture: ExportedSentinelReplayCapture,
+  index: number,
+): ExportedSentinelReplayCapture => ({
+  ...fixture,
+  manifest: {
+    ...fixture.manifest,
+    capture_id: `pagination-${index}`,
+    fingerprint: index.toString(16).padStart(64, "0"),
+    captured_at_ms: fixture.manifest.captured_at_ms + index,
+    expires_at_ms: fixture.manifest.captured_at_ms + index + SENTINEL_REPLAY_TTL_MS,
+  },
+});
+
+const replayExportTestDependencies = Object.freeze({
+  now: () => 0,
+  sleep: (_milliseconds: number) => Promise.resolve(),
+  createTimeoutSignal: (_milliseconds: number) => new AbortController().signal,
 });
 
 Deno.test("sentinel replay captures exact accepted bytes while excluding credentials", async () => {
@@ -1564,50 +1604,31 @@ Deno.test("replay export and preview reads enforce declared and streamed byte li
   assert.equal(readErrorResult.comparison.framing_matches_original, true);
 });
 
-Deno.test("replay export pagination rejects repeated cursors and stops at the fixed page bound", async () => {
-  const kv = new CountingKv();
-  await persistEncryptedSentinelReplay(acceptedInput(), failedObservation(), {
-    kv: kv as unknown as Deno.Kv,
-    keyBytes,
-    now: () => 1_777_000_000_000,
-    randomUuid: () => "pagination-fixture",
-  });
-  const [fixture] = (await listEncryptedSentinelReplays(kv as unknown as Deno.Kv, {
+Deno.test("replay export paginates beyond 256 captures and stops at the raised finite bound", async () => {
+  const fixture = await replayExportFixture("pagination-fixture");
+  const successfulPageCount = 257;
+  let successfulCalls = 0;
+  const captures = await fetchEncryptedReplayCaptures({
+    baseUrl: "https://preview.example",
+    adminToken: "admin-fixture",
     afterMs: 0,
-    beforeMs: Number.MAX_SAFE_INTEGER - 1,
-  })).captures;
-  assert.ok(fixture);
-  const pageCapture = (index: number) => ({
-    ...fixture,
-    manifest: {
-      ...fixture.manifest,
-      capture_id: `pagination-${index}`,
-      fingerprint: index.toString(16).padStart(64, "0"),
-      captured_at_ms: fixture.manifest.captured_at_ms + index,
-      expires_at_ms: fixture.manifest.captured_at_ms + index + SENTINEL_REPLAY_TTL_MS,
-    },
+    beforeMs: 2_000_000_000_000,
+    fetchImpl: ((input: URL | Request | string) => {
+      const index = successfulCalls++;
+      const url = input instanceof Request ? new URL(input.url) : new URL(String(input));
+      assert.equal(url.searchParams.get("limit"), "1");
+      assert.equal(url.searchParams.get("cursor"), index === 0 ? null : `cursor_${index - 1}`);
+      if (index === successfulPageCount) return Promise.resolve(Response.json({ data: [], cursor: null }));
+      return Promise.resolve(Response.json({
+        data: [indexedReplayExportCapture(fixture, index)],
+        cursor: `cursor_${index}`,
+      }));
+    }) as typeof fetch,
+    ...replayExportTestDependencies,
   });
-
-  let repeatedCalls = 0;
-  await assert.rejects(
-    () =>
-      fetchEncryptedReplayCaptures({
-        baseUrl: "https://preview.example",
-        adminToken: "admin-fixture",
-        afterMs: 0,
-        beforeMs: 2_000_000_000_000,
-        fetchImpl: ((input: URL | Request | string) => {
-          const index = repeatedCalls++;
-          const url = input instanceof Request ? new URL(input.url) : new URL(String(input));
-          assert.equal(url.searchParams.get("cursor"), index === 0 ? null : "repeated_cursor==");
-          return Promise.resolve(
-            Response.json({ data: [pageCapture(index)], cursor: "repeated_cursor==" }),
-          );
-        }) as typeof fetch,
-      }),
-    /cursor repeated/,
-  );
-  assert.equal(repeatedCalls, 2);
+  assert.equal(captures.length, successfulPageCount);
+  assert.equal(successfulCalls, successfulPageCount + 1);
+  assert.equal(SENTINEL_MAX_REPLAY_EXPORT_PAGES, 1_024);
 
   let boundedCalls = 0;
   await assert.rejects(
@@ -1619,14 +1640,388 @@ Deno.test("replay export pagination rejects repeated cursors and stops at the fi
         beforeMs: 2_000_000_000_000,
         fetchImpl: (() => {
           const index = boundedCalls++;
-          return Promise.resolve(
-            Response.json({ data: [pageCapture(index)], cursor: `cursor_${index}` }),
-          );
+          return Promise.resolve(Response.json({
+            data: [indexedReplayExportCapture(fixture, index)],
+            cursor: `cursor_${index}`,
+          }));
         }) as typeof fetch,
+        ...replayExportTestDependencies,
       }),
     /page limit/,
   );
   assert.equal(boundedCalls, SENTINEL_MAX_REPLAY_EXPORT_PAGES);
+});
+
+Deno.test("replay export retries only transient failures at the same cursor with fresh signals", async () => {
+  const fixture = await replayExportFixture("retry-fixture");
+  const transientFailures: ReadonlyArray<
+    Readonly<{
+      name: string;
+      response: () => Promise<Response>;
+    }>
+  > = [
+    {
+      name: "timeout",
+      response: () => Promise.reject(new DOMException("request timed out", "TimeoutError")),
+    },
+    {
+      name: "network",
+      response: () => Promise.reject(new TypeError("connection reset")),
+    },
+    {
+      name: "read",
+      response: () =>
+        Promise.resolve(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.error(new Error("socket closed while reading"));
+              },
+            }),
+          ),
+        ),
+    },
+    {
+      name: "HTTP 429",
+      response: () => Promise.resolve(new Response(null, { status: 429 })),
+    },
+    {
+      name: "HTTP 5xx",
+      response: () => Promise.resolve(new Response(null, { status: 503 })),
+    },
+  ];
+
+  for (const testCase of transientFailures) {
+    let calls = 0;
+    let sleeps = 0;
+    const cursors: Array<string | null> = [];
+    const createdSignals: AbortSignal[] = [];
+    const captures = await fetchEncryptedReplayCaptures({
+      baseUrl: "https://preview.example",
+      adminToken: "admin-fixture",
+      afterMs: 0,
+      beforeMs: 2_000_000_000_000,
+      fetchImpl: ((input: URL | Request | string, init?: RequestInit) => {
+        const call = calls++;
+        const url = input instanceof Request ? new URL(input.url) : new URL(String(input));
+        cursors.push(url.searchParams.get("cursor"));
+        assert.equal(init?.redirect, "manual", testCase.name);
+        assert.equal(init?.signal, createdSignals.at(-1), testCase.name);
+        if (call === 0) {
+          return Promise.resolve(Response.json({
+            data: [indexedReplayExportCapture(fixture, 0)],
+            cursor: "stable_cursor==",
+          }));
+        }
+        if (call === 1) return testCase.response();
+        return Promise.resolve(Response.json({
+          data: [indexedReplayExportCapture(fixture, 1)],
+          cursor: null,
+        }));
+      }) as typeof fetch,
+      now: () => 0,
+      sleep: () => {
+        sleeps += 1;
+        return Promise.resolve();
+      },
+      createTimeoutSignal: (milliseconds) => {
+        assert.ok(milliseconds > 0 && milliseconds <= 20_000, testCase.name);
+        const signal = new AbortController().signal;
+        createdSignals.push(signal);
+        return signal;
+      },
+    });
+    assert.equal(captures.length, 2, testCase.name);
+    assert.equal(calls, 3, testCase.name);
+    assert.equal(sleeps, 1, testCase.name);
+    assert.deepEqual(cursors, [null, "stable_cursor==", "stable_cursor=="], testCase.name);
+    assert.equal(new Set(createdSignals).size, 3, testCase.name);
+  }
+
+  let exhaustedCalls = 0;
+  let exhaustedSleeps = 0;
+  await assert.rejects(
+    () =>
+      fetchEncryptedReplayCaptures({
+        baseUrl: "https://preview.example",
+        adminToken: "admin-fixture",
+        afterMs: 0,
+        beforeMs: 2_000_000_000_000,
+        fetchImpl: (() => {
+          exhaustedCalls += 1;
+          return Promise.reject(new TypeError("network remains unavailable"));
+        }) as typeof fetch,
+        now: () => 0,
+        sleep: () => {
+          exhaustedSleeps += 1;
+          return Promise.resolve();
+        },
+        createTimeoutSignal: () => new AbortController().signal,
+      }),
+    /request failed/,
+  );
+  assert.equal(exhaustedCalls, SENTINEL_REPLAY_EXPORT_MAX_RETRIES + 1);
+  assert.equal(exhaustedSleeps, SENTINEL_REPLAY_EXPORT_MAX_RETRIES);
+});
+
+Deno.test("replay export applies one overall deadline across requests and retry sleeps", async () => {
+  let nowMs = 0;
+  let calls = 0;
+  const sleeps: number[] = [];
+  const signalTimeouts: number[] = [];
+  await assert.rejects(
+    () =>
+      fetchEncryptedReplayCaptures({
+        baseUrl: "https://preview.example",
+        adminToken: "admin-fixture",
+        afterMs: 0,
+        beforeMs: 2_000_000_000_000,
+        fetchImpl: (() => {
+          calls += 1;
+          return Promise.resolve(new Response(null, { status: 503 }));
+        }) as typeof fetch,
+        now: () => nowMs,
+        sleep: (milliseconds) => {
+          sleeps.push(milliseconds);
+          nowMs = SENTINEL_REPLAY_EXPORT_DEADLINE_MS;
+          return Promise.resolve();
+        },
+        createTimeoutSignal: (milliseconds) => {
+          signalTimeouts.push(milliseconds);
+          return new AbortController().signal;
+        },
+      }),
+    /overall deadline/,
+  );
+  assert.equal(calls, 1);
+  assert.equal(sleeps.length, 1);
+  assert.deepEqual(signalTimeouts, [20_000]);
+});
+
+Deno.test("replay export never retries redirects, non-429 4xx, or invalid pages", async () => {
+  const immediateFailures: ReadonlyArray<
+    Readonly<{
+      name: string;
+      response: () => Response;
+      error: RegExp;
+    }>
+  > = [
+    {
+      name: "redirect",
+      response: () => new Response(null, { status: 307, headers: { Location: "https://elsewhere.example" } }),
+      error: /redirect/,
+    },
+    { name: "HTTP 400", response: () => new Response(null, { status: 400 }), error: /HTTP 400/ },
+    { name: "HTTP 408", response: () => new Response(null, { status: 408 }), error: /HTTP 408/ },
+    { name: "HTTP 451", response: () => new Response(null, { status: 451 }), error: /HTTP 451/ },
+    { name: "invalid JSON", response: () => new Response("{"), error: /invalid JSON/ },
+    {
+      name: "invalid encrypted page",
+      response: () => Response.json({ data: [{ invalid: true }], cursor: null }),
+      error: /invalid encrypted page/,
+    },
+    {
+      name: "invalid content length",
+      response: () => new Response("{}", { headers: { "Content-Length": "invalid" } }),
+      error: /Content-Length is invalid/,
+    },
+    {
+      name: "oversized page",
+      response: () =>
+        new Response(null, {
+          headers: { "Content-Length": String(SENTINEL_MAX_ENCRYPTED_REPLAY_PAGE_BYTES + 1) },
+        }),
+      error: /size limit/,
+    },
+  ];
+
+  for (const testCase of immediateFailures) {
+    let calls = 0;
+    let sleeps = 0;
+    await assert.rejects(
+      () =>
+        fetchEncryptedReplayCaptures({
+          baseUrl: "https://preview.example",
+          adminToken: "admin-fixture",
+          afterMs: 0,
+          beforeMs: 2_000_000_000_000,
+          fetchImpl: ((_input: URL | Request | string, init?: RequestInit) => {
+            calls += 1;
+            assert.equal(init?.redirect, "manual", testCase.name);
+            return Promise.resolve(testCase.response());
+          }) as typeof fetch,
+          now: () => 0,
+          sleep: () => {
+            sleeps += 1;
+            return Promise.resolve();
+          },
+          createTimeoutSignal: () => new AbortController().signal,
+        }),
+      testCase.error,
+    );
+    assert.equal(calls, 1, testCase.name);
+    assert.equal(sleeps, 0, testCase.name);
+  }
+});
+
+Deno.test("replay export rejects cursor, duplicate, and ordering faults without retrying", async () => {
+  const fixture = await replayExportFixture("fault-fixture");
+  const faults: ReadonlyArray<
+    Readonly<{
+      name: string;
+      secondCapture: ExportedSentinelReplayCapture;
+      secondCursor: string | null;
+      error: RegExp;
+    }>
+  > = [
+    {
+      name: "repeated cursor",
+      secondCapture: indexedReplayExportCapture(fixture, 1),
+      secondCursor: "first_cursor==",
+      error: /cursor repeated/,
+    },
+    {
+      name: "duplicate fingerprint",
+      secondCapture: {
+        ...indexedReplayExportCapture(fixture, 1),
+        manifest: {
+          ...indexedReplayExportCapture(fixture, 1).manifest,
+          fingerprint: indexedReplayExportCapture(fixture, 0).manifest.fingerprint,
+        },
+      },
+      secondCursor: null,
+      error: /repeated a capture fingerprint/,
+    },
+    {
+      name: "ordering fault",
+      secondCapture: indexedReplayExportCapture(fixture, 0),
+      secondCursor: null,
+      error: /not strictly ordered/,
+    },
+  ];
+
+  for (const testCase of faults) {
+    let calls = 0;
+    let sleeps = 0;
+    await assert.rejects(
+      () =>
+        fetchEncryptedReplayCaptures({
+          baseUrl: "https://preview.example",
+          adminToken: "admin-fixture",
+          afterMs: 0,
+          beforeMs: 2_000_000_000_000,
+          fetchImpl: (() => {
+            const call = calls++;
+            return Promise.resolve(Response.json({
+              data: [
+                call === 0
+                  ? indexedReplayExportCapture(fixture, testCase.name === "ordering fault" ? 1 : 0)
+                  : testCase.secondCapture,
+              ],
+              cursor: call === 0 ? "first_cursor==" : testCase.secondCursor,
+            }));
+          }) as typeof fetch,
+          now: () => 0,
+          sleep: () => {
+            sleeps += 1;
+            return Promise.resolve();
+          },
+          createTimeoutSignal: () => new AbortController().signal,
+        }),
+      testCase.error,
+    );
+    assert.equal(calls, 2, testCase.name);
+    assert.equal(sleeps, 0, testCase.name);
+  }
+});
+
+Deno.test("replay export counts only complete accepted pages and enforces the aggregate byte bound", async () => {
+  const fixture = await replayExportFixture("aggregate-fixture");
+  const pageBytes = Math.floor(SENTINEL_MAX_ENCRYPTED_REPLAY_TOTAL_BYTES / 3);
+  assert.ok(pageBytes < SENTINEL_MAX_ENCRYPTED_REPLAY_PAGE_BYTES);
+  const whitespace = new Uint8Array(1_024 * 1_024).fill(32);
+  const encoder = new TextEncoder();
+  const paddedResponse = (value: unknown): Response => {
+    const json = encoder.encode(JSON.stringify(value));
+    assert.ok(json.byteLength < pageBytes);
+    let emitted = 0;
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (emitted === 0) {
+            emitted += json.byteLength;
+            controller.enqueue(json);
+            return;
+          }
+          const remaining = pageBytes - emitted;
+          if (remaining === 0) {
+            controller.close();
+            return;
+          }
+          const chunk = remaining < whitespace.byteLength ? whitespace.subarray(0, remaining) : whitespace;
+          emitted += chunk.byteLength;
+          controller.enqueue(chunk);
+        },
+      }),
+      { headers: { "Content-Length": String(pageBytes) } },
+    );
+  };
+
+  let calls = 0;
+  let sleeps = 0;
+  const cursors: Array<string | null> = [];
+  await assert.rejects(
+    () =>
+      fetchEncryptedReplayCaptures({
+        baseUrl: "https://preview.example",
+        adminToken: "admin-fixture",
+        afterMs: 0,
+        beforeMs: 2_000_000_000_000,
+        fetchImpl: ((input: URL | Request | string) => {
+          const call = calls++;
+          const url = input instanceof Request ? new URL(input.url) : new URL(String(input));
+          cursors.push(url.searchParams.get("cursor"));
+          if (call === 2) {
+            let emitted = false;
+            return Promise.resolve(
+              new Response(
+                new ReadableStream<Uint8Array>({
+                  pull(controller) {
+                    if (!emitted) {
+                      emitted = true;
+                      controller.enqueue(new Uint8Array(1_024).fill(32));
+                      return;
+                    }
+                    controller.error(new Error("aggregate fixture interrupted"));
+                  },
+                }),
+              ),
+            );
+          }
+          const index = call < 2 ? call : call - 1;
+          if (call === 4) {
+            return Promise.resolve(Response.json({
+              data: [indexedReplayExportCapture(fixture, index)],
+              cursor: null,
+            }));
+          }
+          return Promise.resolve(paddedResponse({
+            data: [indexedReplayExportCapture(fixture, index)],
+            cursor: `cursor_${index}`,
+          }));
+        }) as typeof fetch,
+        now: () => 0,
+        sleep: () => {
+          sleeps += 1;
+          return Promise.resolve();
+        },
+        createTimeoutSignal: () => new AbortController().signal,
+      }),
+    /aggregate byte limit/,
+  );
+  assert.equal(calls, 5);
+  assert.equal(sleeps, 1);
+  assert.deepEqual(cursors, [null, "cursor_0", "cursor_1", "cursor_1", "cursor_2"]);
 });
 
 Deno.test("replay export accepts only manifests inside the fixed log interval", async () => {

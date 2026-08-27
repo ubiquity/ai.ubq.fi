@@ -1212,3 +1212,60 @@ Deno.test("GitHub repository artifacts paginate and filter expired or older encr
   assert.deepEqual(artifacts.map((artifact) => artifact.id), [100, 200]);
   fake.assertDrained();
 });
+
+Deno.test("GitHub repository artifact listing can retain expired state for fail-closed restore", async () => {
+  const fake = queuedFetch([
+    (request) => {
+      assertGitHubApiRequest(request, "/repos/ubiquity/ai.ubq.fi/actions/artifacts");
+      return json({
+        total_count: 2,
+        artifacts: [{
+          id: 301,
+          name: "sentinel-codex-auth-state-v1-generation-r10-a1",
+          size_in_bytes: 10,
+          expired: true,
+          created_at: "2026-08-21T00:00:00Z",
+          expires_at: "2026-08-22T00:00:00Z",
+        }, {
+          id: 300,
+          name: "sentinel-codex-auth-state-v1-generation-r9-a1",
+          size_in_bytes: 10,
+          expired: false,
+          created_at: "2026-08-20T00:00:00Z",
+          expires_at: "2026-11-18T00:00:00Z",
+        }],
+      });
+    },
+  ]);
+
+  const artifacts = await githubClient(fake.fetcher).listRepositoryArtifacts({ includeExpired: true });
+  assert.deepEqual(artifacts.map((artifact) => ({ id: artifact.id, expired: artifact.expired })), [
+    { id: 301, expired: true },
+    { id: 300, expired: false },
+  ]);
+  fake.assertDrained();
+});
+
+Deno.test("GitHub repository artifact listing rejects malformed expiration metadata", async () => {
+  for (const expired of [undefined, null, "false", 0]) {
+    const fake = queuedFetch([
+      () =>
+        json({
+          total_count: 1,
+          artifacts: [{
+            id: 401,
+            name: "sentinel-codex-auth-state-v1-generation-r11-a1",
+            size_in_bytes: 10,
+            ...(expired === undefined ? {} : { expired }),
+            created_at: "2026-08-21T00:00:00Z",
+            expires_at: "2026-11-19T00:00:00Z",
+          }],
+        }),
+    ]);
+    await assert.rejects(
+      () => githubClient(fake.fetcher).listRepositoryArtifacts({ includeExpired: true }),
+      /incomplete artifact/,
+    );
+    fake.assertDrained();
+  }
+});

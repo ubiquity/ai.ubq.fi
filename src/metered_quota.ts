@@ -691,8 +691,10 @@ export const readMeteredQuotaBalanceHistory = async (
   const prefix: Deno.KvKey = [...METERED_QUOTA_BALANCE_HISTORY_PREFIX, options.accountFingerprint];
   const start: Deno.KvKey = [...prefix, Math.max(0, Math.trunc(options.sinceMs))];
   const end: Deno.KvKey = [...prefix, Math.trunc(options.nowMs) + METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS];
+  // Deno KV rejects selectors that combine a prefix with both range bounds.
+  // These bounds already include the complete account-specific namespace.
   for await (
-    const entry of kv.list<MeteredQuotaBalanceSample>({ prefix, start, end }, {
+    const entry of kv.list<MeteredQuotaBalanceSample>({ start, end }, {
       limit,
     })
   ) {

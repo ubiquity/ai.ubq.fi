@@ -112,6 +112,9 @@ class MemoryKv {
     selector: Deno.KvListSelector,
     options: Deno.KvListOptions = {},
   ): Deno.KvListIterator<T> {
+    if ("prefix" in selector && "start" in selector && "end" in selector) {
+      throw new TypeError("Selector can not specify both 'start' and 'end' key when specifying 'prefix'");
+    }
     this.#purgeExpired();
     let entries = [...this.entries.values()]
       .filter((entry) => {
@@ -209,6 +212,10 @@ const {
   mergePaidFallbackUsageRollup,
   paidFallbackUsageRollupKey,
 } = await import("../src/paid_fallback_rollups.ts");
+const {
+  METERED_QUOTA_BALANCE_HISTORY_PREFIX,
+  readMeteredQuotaBalanceHistory,
+} = await import("../src/metered_quota.ts");
 const {
   groupPaidFallbackUsageRollups,
   meteredQuotaRunwayView,
@@ -417,6 +424,38 @@ Deno.test("rollup listing respects the requested time range", async () => {
     assert.equal(retained.length, 1);
     assert.equal(retained[0]?.bucket_start_at_ms, hourStart);
   });
+});
+
+Deno.test("balance history listing uses a valid bounded KV range selector", async () => {
+  memoryKv.entries.clear();
+  const fingerprint = "quota-projection-account";
+  const now = Date.now();
+  const hourStart = Math.floor(now / HOUR_MS) * HOUR_MS;
+  const sample = (bucketStartAtMs: number) => ({
+    v: 1 as const,
+    bucket_start_at_ms: bucketStartAtMs,
+    observed_at_ms: bucketStartAtMs + 1_000,
+    balance_quota: 1_000,
+    baseline_quota: 2_000,
+    quota_per_credit: 1,
+    remaining_percent: 50,
+  });
+  await memoryKv.set(
+    [...METERED_QUOTA_BALANCE_HISTORY_PREFIX, fingerprint, hourStart - 2 * HOUR_MS],
+    sample(hourStart - 2 * HOUR_MS),
+  );
+  await memoryKv.set(
+    [...METERED_QUOTA_BALANCE_HISTORY_PREFIX, fingerprint, hourStart],
+    sample(hourStart),
+  );
+
+  const retained = await readMeteredQuotaBalanceHistory(kv, {
+    accountFingerprint: fingerprint,
+    sinceMs: hourStart - HOUR_MS,
+    nowMs: now,
+  });
+  assert.equal(retained.length, 1);
+  assert.equal(retained[0]?.bucket_start_at_ms, hourStart);
 });
 
 Deno.test("merge sums counters and tracks first/last request times", () => {

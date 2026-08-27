@@ -5,6 +5,10 @@ import deploymentWorkflow from "../.github/workflows/deno-deploy.yml" with { typ
 Deno.test("deployment workflow validates pull requests without deploying them", () => {
   assert.match(deploymentWorkflow, /^permissions:\n[ ]{2}contents: read$/mu);
   assert.match(deploymentWorkflow, /^[ ]{2}pull_request:$/mu);
+  assert.match(
+    deploymentWorkflow,
+    /^[ ]{2}pull_request:\n[ ]{4}paths-ignore:\n[ ]{6}- docs\/sentinel-issue-jobs\.md$/mu,
+  );
 
   const deployJob = deploymentWorkflow.match(
     /^[ ]{2}deploy:\n([\s\S]*?)(?=^[ ]{2}attest-sentinel-candidate:)/mu,
@@ -25,6 +29,14 @@ Deno.test("development pushes deploy and promote without a manual production gat
     deploymentWorkflow,
     /https:\/\/api\.deno\.com\/v2\/revisions\/\$\{revision_id\}\/promote/u,
   );
+});
+
+Deno.test("reusable deployment pins the proven Deno CLI version", () => {
+  const deployJob = deploymentWorkflow.match(
+    /^[ ]{2}deploy:\n([\s\S]*?)(?=^[ ]{2}attest-sentinel-candidate:)/mu,
+  )?.[1];
+  assert.ok(deployJob, "deploy job must remain present");
+  assert.match(deployJob, /^[ ]{6}deno_version: 2\.9\.5$/mu);
 });
 
 Deno.test("deployment attestation ignores failed builder retry revisions", () => {

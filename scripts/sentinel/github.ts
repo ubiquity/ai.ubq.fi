@@ -91,6 +91,7 @@ export interface GitHubWorkflowDispatch {
 export interface ListRepositoryArtifactsOptions {
   readonly name?: string;
   readonly createdAfterMs?: number;
+  readonly includeExpired?: boolean;
 }
 
 const DEFAULT_GITHUB_API_BASE_URL = "https://api.github.com/";
@@ -156,14 +157,14 @@ const parseArtifact = (value: unknown): GitHubArtifact => {
     ? record.size_in_bytes
     : null;
   const createdAt = nonEmptyString(record.created_at);
-  if (!id || !name || sizeInBytes === null || !createdAt) {
+  if (!id || !name || sizeInBytes === null || !createdAt || typeof record.expired !== "boolean") {
     throw new Error("GitHub returned an incomplete artifact");
   }
   return {
     id,
     name,
     sizeInBytes,
-    expired: record.expired === true,
+    expired: record.expired,
     createdAt,
     expiresAt: nonEmptyString(record.expires_at),
   };
@@ -634,7 +635,7 @@ export class GitHubActionsClient {
       }
       const pageArtifacts = payload.artifacts.map(parseArtifact);
       artifacts.push(...pageArtifacts.filter((artifact) =>
-        !artifact.expired &&
+        (options.includeExpired === true || !artifact.expired) &&
         (options.name === undefined || artifact.name === options.name) &&
         (options.createdAfterMs === undefined || Date.parse(artifact.createdAt) >= options.createdAfterMs)
       ));

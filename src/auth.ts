@@ -6,6 +6,7 @@ import { getBearerToken } from "./http.ts";
 import { resolveKernelQuotaPolicyState } from "./kernel_usage.ts";
 import { recordKernelPolicyQueue } from "./kernel_policy_queue.ts";
 import { getKv } from "./kv.ts";
+import { isAdminAuthDisabledForRequest } from "./local_admin_auth.ts";
 import { getPasskeySessionForRequest, isPasskeyUserAdmin } from "./passkeys.ts";
 import { getString, isRecord, sha256Base64Url, sha256Hex } from "./utils.ts";
 import type { ApiKeyRecord } from "./types.ts";
@@ -513,6 +514,7 @@ type CheckAdminTokenResult =
   | { ok: false; response: Response | null };
 
 type AdminAuthMethod =
+  | { kind: "disabled" }
   | { kind: "admin_allowlist" }
   | { kind: "deno_deploy_token" }
   | { kind: "passkey_session"; user_id: string; handle: string; is_admin: boolean; credential_count: number };
@@ -604,11 +606,11 @@ const getRequestPath = (req: Request): string => {
   }
 };
 
-const isLocalDevelopmentRequest = (req: Request): boolean => {
+const isLocalClientAuthDisabledRequest = (req: Request): boolean => {
   if (config.isDeploy) return false;
   try {
     const hostname = new URL(req.url).hostname.toLowerCase();
-    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
   } catch {
     return false;
   }
@@ -650,7 +652,7 @@ const logAuthDecision = (req: Request, entry: AuthLogEntry): void => {
 
 export const authenticateClient = async (req: Request): Promise<AuthenticateClientResult> => {
   const kv = await getKv();
-  const localAuthDisabled = isLocalDevelopmentRequest(req);
+  const localAuthDisabled = isLocalClientAuthDisabledRequest(req);
   const token = getBearerToken(req);
   const tokenPresent = Boolean(token);
   const tokenShape = token ? classifyToken(token) : null;
@@ -905,14 +907,6 @@ const checkAdminToken = async (token: string): Promise<CheckAdminTokenResult> =>
 };
 
 export const authenticateAdmin = async (req: Request): Promise<AdminAuthResult> => {
-  if (isLocalDevelopmentRequest(req)) {
-    return {
-      ok: true,
-      token: getBearerToken(req) ?? "local-dev-admin",
-      is_super_admin: true,
-      method: { kind: "admin_allowlist" },
-    };
-  }
   const token = getBearerToken(req);
   const tokenPresent = Boolean(token);
   const tokenShape = token ? classifyToken(token) : null;
@@ -923,6 +917,15 @@ export const authenticateAdmin = async (req: Request): Promise<AdminAuthResult> 
       token_shape: tokenShape,
       ...entry,
     });
+  if (isAdminAuthDisabledForRequest(req)) {
+    logAdminAuth({ ok: true, method: "disabled" });
+    return {
+      ok: true,
+      token: token ?? "local-dev-admin",
+      is_super_admin: true,
+      method: { kind: "disabled" },
+    };
+  }
   const passkeySession = await getPasskeySessionForRequest(req);
   if (passkeySession) {
     if (!isPasskeyUserAdmin(passkeySession.user)) {
@@ -994,8 +997,8 @@ export const handleV1Auth = async (req: Request): Promise<Response> => {
   if (!authResult.ok) return authResult.response;
 
   const kv = await getKv();
-  const localAuthDisabled = isLocalDevelopmentRequest(req);
-  const mode = localAuthDisabled
+  const localClientAuthDisabled = isLocalClientAuthDisabledRequest(req);
+  const mode = localClientAuthDisabled
     ? "disabled"
     : config.isDeploy && config.authTokens.size === 0 && !kv
     ? "misconfigured"
@@ -1018,28 +1021,35 @@ export const handleV1Auth = async (req: Request): Promise<Response> => {
       sha256_12: null,
     };
 
-  const method: Record<string, unknown> = { kind: authResult.method.kind };
-  const isAdmin = localAuthDisabled || authResult.method.kind === "admin_allowlist" ||
-    authResult.method.kind === "deno_deploy_token" ||
-    (authResult.method.kind === "passkey_session" && authResult.method.is_admin);
-  const isSuperAdmin = localAuthDisabled || authResult.method.kind === "admin_allowlist" ||
-    authResult.method.kind === "deno_deploy_token";
+  // Local client auth remains disabled for the development inference surface,
+  // but admin access is resolved independently. This keeps localhost from
+  // implicitly becoming an admin while still recognizing an explicit admin
+  // credential when the CLI bypass is off.
+  const localAdminAuth = localClientAuthDisabled ? await authenticateAdmin(req) : null;
+  const reportingMethod = localAdminAuth?.ok ? localAdminAuth.method : authResult.method;
+  const method: Record<string, unknown> = { kind: reportingMethod.kind };
+  const isAdmin = localAdminAuth?.ok === true || reportingMethod.kind === "admin_allowlist" ||
+    reportingMethod.kind === "deno_deploy_token" ||
+    (reportingMethod.kind === "passkey_session" && reportingMethod.is_admin);
+  const isSuperAdmin = localAdminAuth?.ok
+    ? localAdminAuth.is_super_admin
+    : reportingMethod.kind === "admin_allowlist" || reportingMethod.kind === "deno_deploy_token";
 
-  if (authResult.method.kind === "github_token") {
-    method.repo = { owner: authResult.method.owner, repo: authResult.method.repo };
-    method.state_id = authResult.method.state_id;
-    method.limit_scope = authResult.method.limit_scope;
+  if (reportingMethod.kind === "github_token") {
+    method.repo = { owner: reportingMethod.owner, repo: reportingMethod.repo };
+    method.state_id = reportingMethod.state_id;
+    method.limit_scope = reportingMethod.limit_scope;
   }
 
-  if (authResult.method.kind === "kv_api_key") {
-    const id = authResult.method.key_id;
+  if (reportingMethod.kind === "kv_api_key") {
+    const id = reportingMethod.key_id;
     let key: Record<string, unknown> = { id };
     if (kv) {
       const entry = await kv.get<ApiKeyRecord>(apiKeyIdKey(id));
       if (entry.value) {
         let usageRequests: number;
         try {
-          usageRequests = await getApiKeyUsageV3(authResult.method.policy, kv);
+          usageRequests = await getApiKeyUsageV3(reportingMethod.policy, kv);
         } catch (error) {
           console.warn("[ai.ubq.fi] Failed to read API key quota usage for /uos/auth:", error);
           return openaiError(503, "API key quota ledger is unavailable", "server_error", { type: "server_error" });
@@ -1051,22 +1061,22 @@ export const handleV1Auth = async (req: Request): Promise<Response> => {
           created_at_ms: entry.value.created_at_ms,
           expires_at_ms: coerceApiKeyExpiresAtMs(entry.value),
           revoked_at_ms: entry.value.revoked_at_ms,
-          usage_limit_requests: authResult.method.policy.usage_limit_requests,
+          usage_limit_requests: reportingMethod.policy.usage_limit_requests,
           usage_requests: usageRequests,
-          usage_reset_at_ms: authResult.method.policy.usage_reset_at_ms,
-          window_ms: authResult.method.policy.window_ms,
+          usage_reset_at_ms: reportingMethod.policy.usage_reset_at_ms,
+          window_ms: reportingMethod.policy.window_ms,
         };
       }
     }
     method.key = key;
   }
 
-  if (authResult.method.kind === "passkey_session") {
+  if (reportingMethod.kind === "passkey_session") {
     method.user = {
-      id: authResult.method.user_id,
-      handle: authResult.method.handle,
-      is_admin: authResult.method.is_admin,
-      credential_count: authResult.method.credential_count,
+      id: reportingMethod.user_id,
+      handle: reportingMethod.handle,
+      is_admin: reportingMethod.is_admin,
+      credential_count: reportingMethod.credential_count,
     };
   }
 
