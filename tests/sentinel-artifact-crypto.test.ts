@@ -406,6 +406,14 @@ Deno.test({
     ) {
       assert(workflow.includes(input), `Sentinel workflow is missing ${input}`);
     }
+    const sentinelModeInput = workflow.slice(
+      workflow.indexOf("      sentinel_mode:"),
+      workflow.indexOf("      incident_id:"),
+    );
+    assert(
+      sentinelModeInput.includes("        default: hourly"),
+      "A standard manual dispatch must run the autonomous hourly work cycle",
+    );
     assert(workflow.includes("github.actor_id == '319834869'"), "Incident mode must require the Sentinel App actor");
     assert(workflow.includes('- cron: "0 * * * *"'), "Sentinel archival must run hourly");
     assert(workflow.includes("mode=hourly"), "Scheduled runs must use hourly mode");

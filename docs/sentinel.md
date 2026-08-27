@@ -9,6 +9,9 @@ deployment, or promotion policy in `scripts/sentinel/`.
 
 The `Provider Sentinel` Actions workflow has three modes:
 
+Manual workflow dispatch defaults to `hourly`, so the standard **Run workflow** action selects backlog or GitHub issue
+work. Select `preview` explicitly only for a supervised failure-replay cycle.
+
 - `preview`: a manual `workflow_dispatch` run on the trusted `development` ref. It is supervised and may deploy only the
   exact candidate SHA to `p-ai-ubq-fi`. It does not push `development` or promote production. A manual run selected on
   any other ref is skipped.

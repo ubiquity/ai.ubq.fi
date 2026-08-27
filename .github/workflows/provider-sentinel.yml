@@ -11,7 +11,7 @@ on:
         description: Run an hourly backlog cycle, supervised preview, or App-authenticated production incident
         required: true
         type: choice
-        default: preview
+        default: hourly
         options:
           - hourly
           - preview
