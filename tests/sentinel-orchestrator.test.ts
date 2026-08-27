@@ -64,7 +64,7 @@ import {
   type GitHubIssueJobSource,
   githubIssueJobTriageReport,
   issueReviewBacklogFindings,
-  MAX_ISSUE_JOB_CANDIDATES,
+  MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS,
   parseGitHubIssueJobBody,
   parseGitHubIssueJobHint,
   parseGitHubIssueJobLedger,
@@ -1206,6 +1206,44 @@ Deno.test("GitHub issue selection rejects human comments while accepting fixed b
     await selectNextGitHubIssueJob(source, "ubiquity/ai.ubq.fi", renderGitHubIssueJobLedger([])),
     null,
   );
+  const laterIssue = sentinelGitHubIssue({
+    id: 10_114,
+    nodeId: "I_kwDOIssue114",
+    number: 114,
+    title: "Later eligible issue",
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/114",
+    createdAt: "2026-08-23T19:06:04Z",
+    updatedAt: "2026-08-23T19:07:28Z",
+  });
+  const issues = [issue, laterIssue];
+  const byNumber = new Map(issues.map((candidate) => [candidate.number, candidate]));
+  const unknownAuthorSource: GitHubIssueJobSource = {
+    listOpenIssues: () => Promise.resolve(issues),
+    getIssue: (number) => Promise.resolve(byNumber.get(number)!),
+    listIssueComments: (number) =>
+      Promise.resolve(
+        number === issue.number
+          ? [{
+            id: 70_002,
+            authorLogin: null,
+            authorType: null,
+            body: null,
+            createdAt: "2026-08-26T23:33:29Z",
+            updatedAt: "2026-08-26T23:33:29Z",
+          }]
+          : [],
+      ),
+    getIssueRelations: () => Promise.resolve(noIssueRelations),
+    getRepositoryPermission: () => Promise.resolve("admin"),
+  };
+  assert.equal(
+    (await selectNextGitHubIssueJob(
+      unknownAuthorSource,
+      "ubiquity/ai.ubq.fi",
+      renderGitHubIssueJobLedger([]),
+    ))?.number,
+    laterIssue.number,
+  );
   assert.equal(
     (await selectNextGitHubIssueJob(
       githubIssueSource([issue]),
@@ -1216,8 +1254,66 @@ Deno.test("GitHub issue selection rejects human comments while accepting fixed b
   );
 });
 
+Deno.test("GitHub issue selection does not let disallowed comments consume relationship budget", async () => {
+  const disallowed = Array.from({ length: MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS }, (_, index) => {
+    const number = 200 + index;
+    return sentinelGitHubIssue({
+      id: 20_000 + number,
+      nodeId: `I_kwDOIssue${number}`,
+      number,
+      title: `Commented candidate ${number}`,
+      htmlUrl: `https://github.com/ubiquity/ai.ubq.fi/issues/${number}`,
+      comments: index % 2 === 0 ? 9 : 1,
+    });
+  });
+  const selectedIssue = sentinelGitHubIssue({
+    id: 20_999,
+    nodeId: "I_kwDOIssue999",
+    number: 999,
+    title: "Eligible issue after commented candidates",
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/999",
+  });
+  const issues = [...disallowed, selectedIssue];
+  const byNumber = new Map(issues.map((issue) => [issue.number, issue]));
+  let relationRequests = 0;
+  let permissionRequests = 0;
+  const source: GitHubIssueJobSource = {
+    listOpenIssues: () => Promise.resolve(issues),
+    getIssue: (number) => Promise.resolve(byNumber.get(number)!),
+    listIssueComments: (number) => {
+      const issue = byNumber.get(number)!;
+      return Promise.resolve(
+        issue.comments === 1
+          ? [{
+            id: 80_000 + number,
+            authorLogin: "human-reviewer",
+            authorType: "User",
+            body: "This issue is already being discussed.",
+            createdAt: "2026-08-26T23:33:29Z",
+            updatedAt: "2026-08-26T23:33:29Z",
+          }]
+          : [],
+      );
+    },
+    getIssueRelations: () => {
+      relationRequests += 1;
+      return Promise.resolve(noIssueRelations);
+    },
+    getRepositoryPermission: () => {
+      permissionRequests += 1;
+      return Promise.resolve("admin");
+    },
+  };
+  assert.equal(
+    (await selectNextGitHubIssueJob(source, "ubiquity/ai.ubq.fi", renderGitHubIssueJobLedger([])))?.number,
+    selectedIssue.number,
+  );
+  assert.equal(relationRequests, 1);
+  assert.equal(permissionRequests, 1);
+});
+
 Deno.test("GitHub issue selection has a fixed relationship-inspection budget", async () => {
-  const issues = Array.from({ length: MAX_ISSUE_JOB_CANDIDATES + 1 }, (_, index) => {
+  const issues = Array.from({ length: MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS + 1 }, (_, index) => {
     const number = 200 + index;
     return sentinelGitHubIssue({
       id: 20_000 + number,
@@ -1248,11 +1344,11 @@ Deno.test("GitHub issue selection has a fixed relationship-inspection budget", a
   };
   await assert.rejects(
     () => selectNextGitHubIssueJob(source, "ubiquity/ai.ubq.fi", renderGitHubIssueJobLedger([])),
-    /candidate inspection limit/,
+    /relationship-inspection limit/,
   );
-  assert.equal(detailRequests, MAX_ISSUE_JOB_CANDIDATES);
-  assert.equal(relationRequests, MAX_ISSUE_JOB_CANDIDATES);
-  assert.equal(permissionRequests, MAX_ISSUE_JOB_CANDIDATES);
+  assert.equal(detailRequests, MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS + 1);
+  assert.equal(relationRequests, MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS);
+  assert.equal(permissionRequests, MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS);
 });
 
 Deno.test("GitHub issue authority binds and rechecks the author and latest content editors", async () => {

@@ -762,6 +762,11 @@ Deno.test("GitHub issue comment intake is bounded to the exact issue resource", 
         body: "> [!WARNING]\n> You are not allowed to set labels.\n",
         created_at: "2026-08-26T23:33:29Z",
         updated_at: "2026-08-26T23:33:29Z",
+      }, {
+        id: 54_323_347_31,
+        user: null,
+        created_at: "2026-08-26T23:34:29Z",
+        updated_at: "2026-08-26T23:34:29Z",
       }]);
     },
   ]);
@@ -774,6 +779,13 @@ Deno.test("GitHub issue comment intake is bounded to the exact issue resource", 
     body: "> [!WARNING]\n> You are not allowed to set labels.\n",
     createdAt: "2026-08-26T23:33:29Z",
     updatedAt: "2026-08-26T23:33:29Z",
+  }, {
+    id: 54_323_347_31,
+    authorLogin: null,
+    authorType: null,
+    body: null,
+    createdAt: "2026-08-26T23:34:29Z",
+    updatedAt: "2026-08-26T23:34:29Z",
   }]);
   fake.assertDrained();
 });

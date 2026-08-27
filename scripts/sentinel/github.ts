@@ -43,9 +43,9 @@ export interface GitHubIssue {
 
 export interface GitHubIssueComment {
   readonly id: number;
-  readonly authorLogin: string;
-  readonly authorType: string;
-  readonly body: string;
+  readonly authorLogin: string | null;
+  readonly authorType: string | null;
+  readonly body: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
@@ -243,13 +243,16 @@ const parseIssue = (value: unknown): GitHubIssue => {
 const parseIssueComment = (value: unknown): GitHubIssueComment => {
   const comment = asRecord(value);
   const author = asRecord(comment?.user);
+  const authorIsUnknown = comment?.user === null;
   const id = integer(comment?.id);
   const authorLogin = nonEmptyString(author?.login);
   const authorType = nonEmptyString(author?.type);
-  const body = comment?.body;
+  const body = typeof comment?.body === "string" ? comment.body : null;
   const createdAt = isoTimestamp(comment?.created_at);
   const updatedAt = isoTimestamp(comment?.updated_at);
-  if (!comment || !id || !authorLogin || !authorType || typeof body !== "string" || !createdAt || !updatedAt) {
+  if (
+    !comment || !id || (!authorIsUnknown && (!authorLogin || !authorType)) || !createdAt || !updatedAt
+  ) {
     throw new Error("GitHub returned an incomplete issue comment");
   }
   return { id, authorLogin, authorType, body, createdAt, updatedAt };

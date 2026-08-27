@@ -93,7 +93,7 @@ const MAX_LEDGER_BYTES = 256 * 1_024;
 const MAX_LEDGER_ENTRIES = 512;
 const MAX_LEDGER_LINE_LENGTH = 4_096;
 const MAX_ISSUE_JOB_HINT_BYTES = 1_024;
-export const MAX_ISSUE_JOB_CANDIDATES = 32;
+export const MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS = 32;
 export const GITHUB_ISSUE_JOB_HINT_FILENAME = "sentinel-github-issue-job-hint.json";
 const LEDGER_HEADERS = Object.freeze([
   "Issue",
@@ -135,7 +135,8 @@ export const isSentinelInertIssueComment = (comment: GitHubIssueComment): boolea
   Number.isSafeInteger(comment.id) && comment.id > 0 &&
   comment.authorLogin === "ubiquity-os[bot]" && comment.authorType === "Bot" &&
   validTimestamp(comment.createdAt) && validTimestamp(comment.updatedAt) &&
-  comment.updatedAt === comment.createdAt && UBIQUITY_OS_LABEL_DENIAL_COMMENT.test(comment.body);
+  comment.updatedAt === comment.createdAt && typeof comment.body === "string" &&
+  UBIQUITY_OS_LABEL_DENIAL_COMMENT.test(comment.body);
 
 const issueCommentsAreOnlyInertNotices = async (
   source: GitHubIssueJobSource,
@@ -473,6 +474,7 @@ export const selectNextGitHubIssueJob = async (
   const listed = await source.listOpenIssues();
   const candidates: GitHubIssueJob[] = [];
   for (const candidate of listed) {
+    if (candidate.comments > MAX_IGNORABLE_ISSUE_COMMENTS) continue;
     const job = await createGitHubIssueJob(
       repository,
       candidate,
@@ -491,15 +493,17 @@ export const selectNextGitHubIssueJob = async (
     candidates.push(job);
   }
   candidates.sort(issueJobOrder);
-  for (const [index, candidate] of candidates.entries()) {
-    if (index >= MAX_ISSUE_JOB_CANDIDATES) {
-      throw new Error("GitHub issue selection exceeded the Sentinel candidate inspection limit");
-    }
+  let relationshipInspections = 0;
+  for (const candidate of candidates) {
     const current = await source.getIssue(candidate.number);
     if (current.id !== candidate.issueId || current.nodeId !== candidate.nodeId) {
       throw new Error(`GitHub issue ${candidate.number} identity changed during selection`);
     }
     if (!await issueCommentsAreOnlyInertNotices(source, current)) continue;
+    if (relationshipInspections >= MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS) {
+      throw new Error("GitHub issue selection exceeded the Sentinel relationship-inspection limit");
+    }
+    relationshipInspections += 1;
     const relations = await source.getIssueRelations(candidate.number);
     const authorityPermission = await issueAuthorityPermission(source, current, relations);
     const job = await createGitHubIssueJob(
