@@ -216,10 +216,11 @@ export const renderIssuePullRequestBody = (
     "",
     `## Provider Sentinel deliverable for #${input.selection.issue_number}`,
     "",
-    "This pull request is the single delivery record for the selected immutable GitHub issue snapshot. It intentionally does not use a closing keyword; the issue closes only after a verified production keep.",
+    "This pull request is the single delivery record for the selected immutable GitHub issue snapshot. It intentionally does not use a closing keyword; Sentinel merges this pull request and closes the issue only after a verified production keep.",
     "",
-    "### Immutable selection",
+    "### Linked issue evidence",
     "",
+    `- Issue: [#${input.selection.issue_number}](https://github.com/${input.repository}/issues/${input.selection.issue_number})`,
     `- Issue fingerprint: \`${input.selection.fingerprint}\``,
     `- Issue body SHA-256: \`${input.selection.body_sha256}\``,
     `- Source updated: ${input.selection.updated_at}`,
@@ -272,6 +273,24 @@ export const evaluateIssueCompletionAction = (
   return "leave_open_failed";
 };
 
+/**
+ * Pull-request merge responses that may indicate the head is already included
+ * in the base branch, a merge already in progress, or a branch-protection
+ * denial. Sentinel verifies the comparison before treating any of these as an
+ * already-integrated delivery; every other status is a hard failure.
+ */
+export const isPullRequestMergeRefusalStatus = (status: number): boolean =>
+  status === 403 || status === 405 || status === 409 || status === 422;
+
+/**
+ * The compare endpoint reports the head's state relative to the base. For a
+ * `development...head` comparison, `behind` and `identical` both mean the head
+ * commit is already contained in `development` (the state Sentinel pushes and
+ * deploys), so an API merge refusal is only a formality.
+ */
+export const isContainedDevelopmentComparison = (status: string): boolean =>
+  status === "behind" || status === "identical";
+
 export const renderIssueDeliveryEvidence = (
   input: Readonly<{
     repository: string;
@@ -299,7 +318,7 @@ export const renderIssueDeliveryEvidence = (
     input.pullRequest.head_sha !== input.candidateSha
   ) throw new Error("Sentinel final evidence does not match the issue pull request");
   const result = input.action === "close_completed"
-    ? "Delivered and verified in production; issue closed as completed."
+    ? "Delivered, merged, and verified in production; issue closed as completed."
     : input.action === "leave_open_manual_required"
     ? "No autonomous deliverable was accepted; issue remains open for manual work."
     : input.action === "leave_open_rolled_back"

@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import {
+  parseGitHubIssuePriorityLabel,
   parseGitHubIssueTimeLabel,
   renderGitHubIssueJobLedger,
   selectNextGitHubIssueJob,
 } from "../scripts/sentinel/issues.ts";
 import {
   evaluateIssueCompletionAction,
+  isContainedDevelopmentComparison,
   isIssueDeliveryFailSafeRevert,
+  isPullRequestMergeRefusalStatus,
   issuePullRequestMarker,
   parseGitHubIssuePullRequestRecord,
   parseGitHubIssueSelectionReport,
@@ -52,42 +55,61 @@ const pullRequest = parseGitHubIssuePullRequestRecord({
   reused: false,
 });
 
-Deno.test("GitHub issue time labels accept deterministic estimates through one day", () => {
+Deno.test("GitHub issue time labels accept any canonical estimate unit without a duration cap", () => {
   assert.equal(parseGitHubIssueTimeLabel("Time: <15 Minutes"), 15);
   assert.equal(parseGitHubIssueTimeLabel("Time: <1 Hour"), 60);
   assert.equal(parseGitHubIssueTimeLabel("Time: <4 Hours"), 240);
-  assert.equal(parseGitHubIssueTimeLabel("Time: <24 Hours"), 1_440);
+  assert.equal(parseGitHubIssueTimeLabel("Time: <25 Hours"), 1_500);
+  assert.equal(parseGitHubIssueTimeLabel("Time: <2 Days"), 2_880);
   assert.equal(parseGitHubIssueTimeLabel("Time: <1 Day"), 1_440);
-  assert.equal(parseGitHubIssueTimeLabel("Time: <25 Hours"), null);
-  assert.equal(parseGitHubIssueTimeLabel("Time: <2 Days"), null);
+  assert.equal(parseGitHubIssueTimeLabel("Time: <1 Week"), 10_080);
+  assert.equal(parseGitHubIssueTimeLabel("Time: <2 Weeks"), 20_160);
+  assert.equal(parseGitHubIssueTimeLabel("Time: <1 Month"), 43_200);
+  assert.equal(parseGitHubIssueTimeLabel("Time: <1 Year"), 525_600);
+  assert.equal(parseGitHubIssueTimeLabel("Time: <3 Years"), 1_576_800);
   assert.equal(parseGitHubIssueTimeLabel("Time: <1 Hours"), null);
   assert.equal(parseGitHubIssueTimeLabel("Time: 1 Day"), null);
+  assert.equal(parseGitHubIssueTimeLabel("Time: <0 Hours"), null);
 });
 
-Deno.test("the production issue selector accepts a canonical estimate through one day", async () => {
+Deno.test("GitHub issue priority labels accept every canonical and generic priority", () => {
+  assert.deepEqual(parseGitHubIssuePriorityLabel("Priority: 0 (Regression)"), { severity: "P2", rank: 1 });
+  assert.deepEqual(parseGitHubIssuePriorityLabel("Priority: 1 (Normal)"), { severity: "P3", rank: 6 });
+  assert.deepEqual(parseGitHubIssuePriorityLabel("Priority: 2 (Medium)"), { severity: "P3", rank: 5 });
+  assert.deepEqual(parseGitHubIssuePriorityLabel("Priority: 3 (High)"), { severity: "P2", rank: 4 });
+  assert.deepEqual(parseGitHubIssuePriorityLabel("Priority: 4 (Urgent)"), { severity: "P2", rank: 2 });
+  assert.deepEqual(parseGitHubIssuePriorityLabel("Priority: 5 (Emergency)"), { severity: "P2", rank: 0 });
+  assert.deepEqual(parseGitHubIssuePriorityLabel("Priority: 6 (Other)"), { severity: "P3", rank: 7 });
+  assert.deepEqual(parseGitHubIssuePriorityLabel("Priority: 7 (Blocker)"), { severity: "P2", rank: 3 });
+  assert.equal(parseGitHubIssuePriorityLabel("Priority: 2 Medium"), null);
+  assert.equal(parseGitHubIssuePriorityLabel("Priority: (Medium)"), null);
+  assert.equal(parseGitHubIssuePriorityLabel("Time: <1 Hour"), null);
+});
+
+Deno.test("the production issue selector accepts a canonical week-long high-priority estimate", async () => {
   const issue = {
     id: 1,
     nodeId: "I_kwDOQoe6nc8AAAABN6Test",
     number: 1,
     state: "open" as const,
-    title: "Bounded one-day issue",
+    title: "Bounded one-week emergency issue",
     body: "Implement the bounded change.\n\nAcceptance:\n- The change is complete.\n\nFiles:\n- src/http.ts\n",
     htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/1",
     authorLogin: "0x4007",
     authorAssociation: "MEMBER",
-    labels: ["Priority: 2 (Medium)", "Time: <1 Day"],
+    labels: ["Priority: 5 (Emergency)", "Time: <1 Week"],
     assignees: [],
     locked: false,
-    comments: 0,
+    comments: 3,
     createdAt: "2026-08-25T00:00:00Z",
     updatedAt: "2026-08-25T00:00:01Z",
     isPullRequest: false,
   };
   const relations = {
-    parentIssueNumber: null,
-    subIssueCount: 0,
-    blockedByCount: 0,
-    blockingCount: 0,
+    parentIssueNumber: 12,
+    subIssueCount: 1,
+    blockedByCount: 1,
+    blockingCount: 1,
     latestBodyEdit: null,
     latestTitleEdit: null,
   };
@@ -102,7 +124,10 @@ Deno.test("the production issue selector accepts a canonical estimate through on
     "ubiquity/ai.ubq.fi",
     renderGitHubIssueJobLedger([]),
   );
-  assert.equal(selected?.timeLabel, "Time: <1 Day");
+  assert.equal(selected?.timeLabel, "Time: <1 Week");
+  assert.equal(selected?.priority, "P2");
+  assert.equal(selected?.priorityLabel, "Priority: 5 (Emergency)");
+  assert.equal(selected?.comments, 3);
 });
 
 Deno.test("pre-push parsing isolates exactly one development update", () => {
@@ -142,7 +167,7 @@ Deno.test("the issue PR gate permits only the exact one-parent fail-safe revert"
   );
 });
 
-Deno.test("one immutable issue snapshot renders one non-closing PR with bounded evidence", () => {
+Deno.test("the delivery pull request links the issue as evidence without a closing keyword", () => {
   const body = renderIssuePullRequestBody({
     repository: "ubiquity/ai.ubq.fi",
     selection,
@@ -157,8 +182,23 @@ Deno.test("one immutable issue snapshot renders one non-closing PR with bounded 
   });
   assert.equal(body.match(/provider-sentinel:issue-pr:v1/gu)?.length, 1);
   assert.match(body, /single delivery record/);
+  assert.match(body, /\[#112\]\(https:\/\/github\.com\/ubiquity\/ai\.ubq\.fi\/issues\/112\)/u);
+  assert.match(body, /Sentinel merges this pull request and closes the issue/u);
   assert.match(body, /validation-round-1\.json/);
   assert.doesNotMatch(body, /(?:close[sd]?|fixe[sd]?)\s+#112/iu);
+});
+
+Deno.test("merge refusals are contained only when the head is already in development", () => {
+  assert.equal(isPullRequestMergeRefusalStatus(403), true);
+  assert.equal(isPullRequestMergeRefusalStatus(405), true);
+  assert.equal(isPullRequestMergeRefusalStatus(409), true);
+  assert.equal(isPullRequestMergeRefusalStatus(422), true);
+  assert.equal(isPullRequestMergeRefusalStatus(200), false);
+  assert.equal(isPullRequestMergeRefusalStatus(404), false);
+  assert.equal(isContainedDevelopmentComparison("behind"), true);
+  assert.equal(isContainedDevelopmentComparison("identical"), true);
+  assert.equal(isContainedDevelopmentComparison("ahead"), false);
+  assert.equal(isContainedDevelopmentComparison("diverged"), false);
 });
 
 Deno.test("issue closure requires a merged PR, a kept deployment, and the same snapshot", () => {
