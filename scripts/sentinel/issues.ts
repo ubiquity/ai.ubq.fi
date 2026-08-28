@@ -53,6 +53,33 @@ export type GitHubIssueJobCheckpoint = Readonly<{
   baseSha: string;
 }>;
 
+/**
+ * A model report is metadata only. Keep the Git-derived paths on a mismatch
+ * so the caller can checkpoint the candidate before it records the failure.
+ */
+export class SentinelChangedFilesMismatchError extends Error {
+  readonly actualChangedFiles: readonly string[];
+  readonly reportedChangedFiles: readonly string[];
+  readonly source: "github_issue" | "review_backlog";
+
+  constructor(
+    message: string,
+    actualChangedFiles: readonly string[],
+    reportedChangedFiles: readonly string[],
+    source: "github_issue" | "review_backlog",
+  ) {
+    super(message);
+    this.name = "SentinelChangedFilesMismatchError";
+    this.actualChangedFiles = Object.freeze([...actualChangedFiles]);
+    this.reportedChangedFiles = Object.freeze([...reportedChangedFiles]);
+    this.source = source;
+  }
+}
+
+export const isSentinelChangedFilesMismatchError = (
+  error: unknown,
+): error is SentinelChangedFilesMismatchError => error instanceof SentinelChangedFilesMismatchError;
+
 export type GitHubIssueJobSelection = Readonly<{
   job: GitHubIssueJob;
   checkpoint: GitHubIssueJobCheckpoint | null;
@@ -781,7 +808,12 @@ export const evaluateGitHubIssueJobImplementation = (
     !actual || !reported || actual.length !== reported.length ||
     !actual.every((path, index) => path === reported[index])
   ) {
-    throw new Error("GitHub issue implementation report changed_files does not match the candidate diff");
+    throw new SentinelChangedFilesMismatchError(
+      "GitHub issue implementation report changed_files does not match the candidate diff",
+      actual ?? [...actualChangedPaths],
+      reported ?? [...reportedChangedPaths],
+      "github_issue",
+    );
   }
   if (actual.some((path) => !job.files.includes(path))) {
     throw new Error("GitHub issue implementation changed a path outside the declared Files scope");

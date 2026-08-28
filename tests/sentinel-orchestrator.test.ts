@@ -9,12 +9,14 @@ import {
   agentCheckoutPath,
   assertRetainedReplayArtifactBudget,
   candidateRevertDiffArguments,
+  createSentinelCandidateRecoveryRecord,
   deduplicateRetainedReplayCaptures,
   durableProductionDecision,
   evaluateReviewBacklogImplementation,
   evaluateRollbackPreflight,
   evaluateSentinelTriageGate,
   failedCycleBranchDisposition,
+  finalizeSentinelCandidate,
   GITHUB_ISSUE_IMPLEMENTATION_CONTINUATION_MS,
   IMPLEMENTATION_CONTINUATION_MS,
   IMPLEMENTATION_INITIAL_MS,
@@ -86,6 +88,7 @@ import {
   requireResolvedGitHubIssueJobImplementation,
   selectNextGitHubIssueJob,
   selectNextGitHubIssueJobSelection,
+  SentinelChangedFilesMismatchError,
 } from "../scripts/sentinel/issues.ts";
 import {
   inspectSse,
@@ -2304,6 +2307,92 @@ Deno.test("GitHub issue implementation stays inside declared Files and blocks in
   assert.throws(
     () => blockingIssueReviewFindings({ ...review, parse_status: "unparseable", findings: [] }, job.files),
     /not parseable/,
+  );
+});
+
+Deno.test("changed_files mismatch retains the Git checkpoint as a durable validation failure", async () => {
+  const job = await createGitHubIssueJob("ubiquity/ai.ubq.fi", sentinelGitHubIssue(), noIssueRelations, "admin");
+  assert.ok(job);
+  assert.throws(
+    () => evaluateGitHubIssueJobImplementation(job, "implemented", ["src/http.ts"], ["src/other.ts"]),
+    (error) => {
+      assert.ok(error instanceof SentinelChangedFilesMismatchError);
+      assert.deepEqual(error.actualChangedFiles, ["src/http.ts"]);
+      assert.deepEqual(error.reportedChangedFiles, ["src/other.ts"]);
+      assert.equal(error.source, "github_issue");
+      return true;
+    },
+  );
+
+  const finalized = finalizeSentinelCandidate({
+    repository: "ubiquity/ai.ubq.fi",
+    sourceKind: "github_issue",
+    sourceId: String(job.number),
+    sourceRevision: job.fingerprint,
+    candidateGeneration: 1,
+    runId: "33197180235",
+    attempt: 1,
+    leaseToken: "33197180235-1",
+    baseSha: "b".repeat(40),
+    candidateBranch: "sentinel/candidate-33197180235-1",
+    candidateSha: "c".repeat(40),
+    treeSha: "d".repeat(40),
+    changedFiles: ["src/http.ts"],
+    reportedChangedFiles: ["src/other.ts"],
+    failureFingerprint: "e".repeat(64),
+    createdAt: "2026-08-28T18:00:00.000Z",
+    updatedAt: "2026-08-28T18:01:00.000Z",
+  });
+  assert.equal(finalized.reportMatches, false);
+  assert.deepEqual(finalized.untrackedChangedFiles, []);
+  assert.equal(finalized.record.phase, "validation_failed");
+  assert.equal(finalized.record.disposition, "active");
+  assert.equal(finalized.record.reason, "report_diff_mismatch");
+  assert.equal(finalized.record.candidate_branch, "sentinel/candidate-33197180235-1");
+  assert.equal(finalized.record.candidate_sha, "c".repeat(40));
+  assert.deepEqual(finalized.record.changed_files, ["src/http.ts"]);
+  assert.equal(finalized.record.tree_sha, "d".repeat(40));
+  assert.deepEqual(finalized.record, finalized.recoveryRecord);
+  assert.deepEqual(
+    createSentinelCandidateRecoveryRecord({
+      repository: "ubiquity/ai.ubq.fi",
+      sourceKind: "github_issue",
+      sourceId: String(job.number),
+      sourceRevision: job.fingerprint,
+      candidateGeneration: 1,
+      runId: "33197180235",
+      attempt: 1,
+      leaseToken: "33197180235-1",
+      baseSha: "b".repeat(40),
+      candidateBranch: "sentinel/candidate-33197180235-1",
+      candidateSha: "c".repeat(40),
+      treeSha: "d".repeat(40),
+      changedFiles: ["src/http.ts"],
+      reportedChangedFiles: ["src/other.ts"],
+      failureFingerprint: "e".repeat(64),
+      createdAt: "2026-08-28T18:00:00.000Z",
+      updatedAt: "2026-08-28T18:01:00.000Z",
+    }),
+    finalized.record,
+  );
+  assert.throws(
+    () =>
+      finalizeSentinelCandidate({
+        repository: "ubiquity/ai.ubq.fi",
+        sourceKind: "github_issue",
+        sourceId: String(job.number),
+        sourceRevision: job.fingerprint,
+        candidateGeneration: 1,
+        runId: "33197180235",
+        attempt: 1,
+        leaseToken: "33197180235-1",
+        baseSha: "b".repeat(40),
+        candidateBranch: "sentinel/candidate-33197180235-1",
+        candidateSha: "c".repeat(40),
+        changedFiles: ["src/http.ts"],
+        untrackedChangedFiles: ["tmp/untracked.ts"],
+      }),
+    /untracked changed files/,
   );
 });
 
