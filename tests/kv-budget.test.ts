@@ -292,6 +292,12 @@ Object.defineProperty(Deno, "openKv", {
 });
 
 const { default: handler } = await import("../src/handler.ts");
+const { authenticateClient } = await import("../src/auth.ts");
+const {
+  PASSKEY_RELAY_COOKIE_NAME,
+  passkeySessionKey,
+  passkeyUserKey,
+} = await import("../src/passkeys.ts");
 const { createRequestDeliveryLifecycle } = await import("../src/serve_handler.ts");
 const { handleResponses, setImageBaseModelForTest } = await import("../src/openai.ts");
 const {
@@ -601,6 +607,136 @@ const withKernelTestToken = async (
   headers.set("X-Ubiquity-Kernel-Token", await makeKernelTestToken(apiToken, owner, repo));
   return new Request(request, { headers });
 };
+
+Deno.test("GitHub quota lookup failures do not fall back to relay passkey cookies", async () => {
+  kv.values.clear();
+  kv.resetCounts();
+  await seedKernelTestPublicKey();
+  const now = Date.now();
+  const owner = "relay-fallback-org";
+  const repo = "relay-fallback-repo";
+  const githubToken = "ghp_relay_fallback_quota_1234567890abcdefghijklmnopqrstuvwxyz";
+  const passkeyToken = "uos_ai_session_quota_failure_fallback";
+  const passkeyUser = {
+    id: "quota-failure-passkey-user",
+    handle: "quota-failure-passkey-user",
+    is_admin: true,
+    credential_ids: ["quota-failure-credential"],
+    created_at_ms: now,
+    updated_at_ms: now,
+  };
+  kv.values.set(encodeKey(passkeyUserKey(passkeyUser.id)), passkeyUser);
+  kv.values.set(encodeKey(passkeySessionKey(passkeyToken)), {
+    token: passkeyToken,
+    user_id: passkeyUser.id,
+    created_at_ms: now,
+    expires_at_ms: now + 60_000,
+  });
+
+  const request = () =>
+    withKernelTestToken(
+      new Request("https://ai.ubq.fi/uos/auth", {
+        headers: {
+          Authorization: `Bearer ${githubToken}`,
+          Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${passkeyToken}`,
+          "X-GitHub-Owner": owner,
+          "X-GitHub-Repo": repo,
+        },
+      }),
+      githubToken,
+      owner,
+      repo,
+    );
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = () => Promise.resolve(new Response(null, { status: 200 }));
+  try {
+    const initial = await authenticateClient(await request());
+    assert.equal(initial.ok, true);
+    if (initial.ok) assert.equal(initial.method.kind, "github_token");
+
+    kv.failKernelQuotaReads = true;
+    const unavailable = await authenticateClient(await request());
+    assert.equal(unavailable.ok, false);
+    if (!unavailable.ok) assert.equal(unavailable.response.status, 503);
+  } finally {
+    kv.failKernelQuotaReads = false;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("GitHub HTTP verification failures do not fall back to relay passkey cookies", async () => {
+  kv.values.clear();
+  kv.resetCounts();
+  await seedKernelTestPublicKey();
+  const now = Date.now();
+  const owner = "relay-http-fallback-org";
+  const repo = "relay-http-fallback-repo";
+  const passkeyToken = "uos_ai_session_github_http_failure_fallback";
+  const passkeyUser = {
+    id: "github-http-failure-passkey-user",
+    handle: "github-http-failure-passkey-user",
+    is_admin: true,
+    credential_ids: ["github-http-failure-credential"],
+    created_at_ms: now,
+    updated_at_ms: now,
+  };
+  kv.values.set(encodeKey(passkeyUserKey(passkeyUser.id)), passkeyUser);
+  kv.values.set(encodeKey(passkeySessionKey(passkeyToken)), {
+    token: passkeyToken,
+    user_id: passkeyUser.id,
+    created_at_ms: now,
+    expires_at_ms: now + 60_000,
+  });
+
+  let githubResponse = new Response(null, { status: 401 });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = () => Promise.resolve(githubResponse);
+  try {
+    const authenticate = async (suffix: string) => {
+      const githubToken = `ghp_relay_http_${suffix}_1234567890abcdefghijklmnopqrstuvwxyz`;
+      return await authenticateClient(
+        await withKernelTestToken(
+          new Request("https://ai.ubq.fi/uos/auth", {
+            headers: {
+              Authorization: `Bearer ${githubToken}`,
+              Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${passkeyToken}`,
+              "X-GitHub-Owner": owner,
+              "X-GitHub-Repo": repo,
+            },
+          }),
+          githubToken,
+          owner,
+          repo,
+        ),
+      );
+    };
+
+    const rejected = await authenticate("rejected");
+    assert.equal(rejected.ok, true);
+    if (rejected.ok) assert.equal(rejected.method.kind, "passkey_session");
+
+    const unavailableResponses = [
+      new Response(null, { status: 408 }),
+      new Response(null, { status: 429 }),
+      new Response(null, { status: 403 }),
+      new Response(null, { status: 500 }),
+      new Response(null, { status: 502 }),
+      new Response(null, { status: 503 }),
+      new Response(null, {
+        status: 403,
+        headers: { "x-ratelimit-remaining": "0" },
+      }),
+    ];
+    for (const [index, response] of unavailableResponses.entries()) {
+      githubResponse = response;
+      const unavailable = await authenticate(`unavailable_${index}`);
+      assert.equal(unavailable.ok, false, `GitHub status ${response.status}`);
+      if (!unavailable.ok) assert.equal(unavailable.response.status, 502, `GitHub status ${response.status}`);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 
 const seedKernelDefaultLimit = (limit: number, windowMs = 60_000): void => {
   kv.values.set(encodeKey(DEFAULT_KERNEL_POLICY_LIMIT_KEY), limit);

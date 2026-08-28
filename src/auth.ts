@@ -475,7 +475,15 @@ export const getKernelAttestationContext = async (
   return { owner: attestation.payload.owner, repo: attestation.payload.repo };
 };
 
-const verifyGitHubTokenRepoAccess = async (token: string, owner: string, repo: string): Promise<boolean> => {
+type GitHubTokenRepoAccessResult =
+  | { ok: true }
+  | { ok: false; reason: "rejected" | "upstream_unavailable" };
+
+const verifyGitHubTokenRepoAccess = async (
+  token: string,
+  owner: string,
+  repo: string,
+): Promise<GitHubTokenRepoAccessResult> => {
   const res = await fetch(`${GITHUB_API_BASE_URL}/repos/${owner}/${repo}`, {
     method: "GET",
     headers: {
@@ -487,13 +495,19 @@ const verifyGitHubTokenRepoAccess = async (token: string, owner: string, repo: s
     redirect: "manual",
   });
 
+  const status = res.status;
+
   try {
     await res.body?.cancel();
   } catch {
     // ignore
   }
 
-  return res.ok;
+  if (res.ok) return { ok: true };
+  if (status === 401 || status === 404) {
+    return { ok: false, reason: "rejected" };
+  }
+  return { ok: false, reason: "upstream_unavailable" };
 };
 
 type ClientAuthMethod =
@@ -563,9 +577,12 @@ const authenticateGitHubToken = async (
   }
 
   try {
-    const hasAccess = await verifyGitHubTokenRepoAccess(token, owner, repo);
-    if (!hasAccess) {
+    const access = await verifyGitHubTokenRepoAccess(token, owner, repo);
+    if (!access.ok && access.reason === "rejected") {
       return { ok: false, response: openaiError(401, "Invalid GitHub token for repo", "invalid_auth_for_repo") };
+    }
+    if (!access.ok) {
+      return { ok: false, response: openaiError(502, "Failed to verify GitHub token", "bad_gateway") };
     }
 
     githubTokenCache.set(cacheKey, Date.now() + GITHUB_TOKEN_CACHE_TTL_MS);
@@ -650,6 +667,14 @@ const logAuthDecision = (req: Request, entry: AuthLogEntry): void => {
   console.warn("[ai.ubq.fi] auth", line);
 };
 
+const getPasskeyCookieSessionForRequest = (req: Request) => {
+  const passkeyHeaders = new Headers(req.headers);
+  passkeyHeaders.delete("authorization");
+  return getPasskeySessionForRequest(
+    new Request(req.url, { headers: passkeyHeaders }),
+  );
+};
+
 export const authenticateClient = async (req: Request): Promise<AuthenticateClientResult> => {
   const kv = await getKv();
   const localAuthDisabled = isLocalClientAuthDisabledRequest(req);
@@ -716,11 +741,30 @@ export const authenticateClient = async (req: Request): Promise<AuthenticateClie
   }
 
   const githubResult = await authenticateGitHubToken(req, token);
-  if (githubResult) {
-    if (githubResult.ok) {
-      logClientAuth({ ok: true, method: "github_token" });
-      return { ok: true, token, method: githubResult.method };
+  if (githubResult?.ok) {
+    logClientAuth({ ok: true, method: "github_token" });
+    return { ok: true, token, method: githubResult.method };
+  }
+
+  if (githubResult && !githubResult.ok && githubResult.response.status === 401 && req.headers.has("cookie")) {
+    const passkeySession = await getPasskeyCookieSessionForRequest(req);
+    if (passkeySession) {
+      logClientAuth({ ok: true, method: "passkey_session" });
+      return {
+        ok: true,
+        token: passkeySession.token,
+        method: {
+          kind: "passkey_session",
+          user_id: passkeySession.user.id,
+          handle: passkeySession.user.handle,
+          is_admin: isPasskeyUserAdmin(passkeySession.user),
+          credential_count: passkeySession.user.credential_ids.length,
+        },
+      };
     }
+  }
+
+  if (githubResult) {
     logClientAuth({
       ok: false,
       method: "github_token",
@@ -926,7 +970,14 @@ export const authenticateAdmin = async (req: Request): Promise<AdminAuthResult> 
       method: { kind: "disabled" },
     };
   }
-  const passkeySession = await getPasskeySessionForRequest(req);
+  let passkeySession = await getPasskeySessionForRequest(req);
+  if (
+    !passkeySession && token && looksLikeGitHubToken(token) && !config.adminTokens.has(token) &&
+    !config.authTokens.has(token) &&
+    req.headers.has("cookie")
+  ) {
+    passkeySession = await getPasskeyCookieSessionForRequest(req);
+  }
   if (passkeySession) {
     if (!isPasskeyUserAdmin(passkeySession.user)) {
       logAdminAuth({ ok: false, method: "passkey_session", status: 403, reason: "passkey_user_not_admin" });

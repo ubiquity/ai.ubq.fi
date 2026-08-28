@@ -121,6 +121,7 @@ const {
   updatePasskeyCredentialSignCount,
 } = await import("../src/passkeys.ts");
 const { authenticateAdmin, authenticateClient, handleV1Auth, requireAdminAuth } = await import("../src/auth.ts");
+const { config } = await import("../src/config.ts");
 const { METERED_QUOTA_FRESH_MS, METERED_QUOTA_STATE_KEY } = await import("../src/metered_quota.ts");
 
 const withEnv = async (updates: Record<string, string | null>, fn: () => Promise<void>): Promise<void> => {
@@ -1370,4 +1371,289 @@ Deno.test("unattested GitHub tokens never reach Deno verification", async () => 
   assert.equal(requested.length, 0);
   assert.equal(requested.some(({ authorization }) => authorization === `Bearer ${token}`), false);
   assert.equal(requested.some(({ cookie }) => cookie?.includes(`token=${token}`) ?? false), false);
+});
+
+Deno.test("relay passkey cookies survive an unattested GitHub bearer on /uos/auth", async () => {
+  kvStore.clear();
+  const audienceOrigin = "https://agent-worker-4d2p9cx7m1ab.ubiquity-os.deno.net";
+  const { token: passkeyToken, user } = seedPasskeySession("uos_ai_session_cookie_precedence", { audienceOrigin });
+  const githubToken = "ghp_unattested_browser_token_1234567890abcdefghijklmnopqrstuvwxyz";
+  const originalFetch = globalThis.fetch;
+  const requests: string[] = [];
+  globalThis.fetch = (input: RequestInfo | URL): Promise<Response> => {
+    requests.push(String(input));
+    return Promise.resolve(new Response("{}", { status: 401 }));
+  };
+
+  try {
+    const request = (withStaleRepoHeaders = false) =>
+      new Request("https://ai.ubq.fi/uos/auth", {
+        headers: {
+          Authorization: `Bearer ${githubToken}`,
+          Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(passkeyToken)}`,
+          Origin: audienceOrigin,
+          ...(withStaleRepoHeaders ? { "X-GitHub-Owner": "ubiquity", "X-GitHub-Repo": "ai.ubq.fi" } : {}),
+        },
+      });
+
+    const adminResult = await authenticateAdmin(request());
+    assert.equal(adminResult.ok, true);
+    if (adminResult.ok) {
+      assert.equal(adminResult.method.kind, "passkey_session");
+      assert.equal(adminResult.is_super_admin, false);
+      assert.equal(adminResult.token, passkeyToken);
+    }
+
+    const { default: handler } = await import("../src/handler.ts");
+    const response = await handler(request());
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.auth.method.kind, "passkey_session");
+    assert.equal(body.auth.method.user.handle, user.handle);
+    assert.equal(body.auth.is_admin, true);
+    assert.equal(body.auth.is_super_admin, false);
+    const staleHeadersResponse = await handler(request(true));
+    assert.equal(staleHeadersResponse.status, 200);
+    const staleHeadersBody = await staleHeadersResponse.json();
+    assert.equal(staleHeadersBody.auth.method.kind, "passkey_session");
+    assert.deepEqual(requests, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("relay passkey cookie fallback accepts raw forbidden Request methods", async () => {
+  kvStore.clear();
+  const { token: passkeyToken } = seedPasskeySession("uos_ai_session_raw_method_fallback");
+  const githubToken = "ghp_raw_method_fallback_1234567890abcdefghijklmnopqrstuvwxyz";
+  const abort = new AbortController();
+  let port = 0;
+  const server = Deno.serve(
+    {
+      hostname: "127.0.0.1",
+      port: 0,
+      signal: abort.signal,
+      onListen: (address) => {
+        port = address.port;
+      },
+    },
+    async (request) => {
+      const result = await authenticateClient(request);
+      return new Response(result.ok ? result.method.kind : String(result.response.status), {
+        status: result.ok ? 200 : result.response.status,
+      });
+    },
+  );
+
+  assert.notEqual(port, 0);
+  const connection = await Deno.connect({ hostname: "127.0.0.1", port });
+  try {
+    const rawRequest = [
+      "TRACE /v1/models HTTP/1.1",
+      "Host: ai.ubq.fi",
+      `Authorization: Bearer ${githubToken}`,
+      `Cookie: ${PASSKEY_RELAY_COOKIE_NAME}=${passkeyToken}`,
+      "Connection: close",
+      "",
+      "",
+    ].join("\r\n");
+    await connection.write(new TextEncoder().encode(rawRequest));
+    const chunks: Uint8Array[] = [];
+    for (;;) {
+      const chunk = new Uint8Array(1024);
+      const size = await connection.read(chunk);
+      if (size === null) break;
+      chunks.push(chunk.slice(0, size));
+    }
+    const length = chunks.reduce((total, chunk) => total + chunk.length, 0);
+    const responseBytes = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of chunks) {
+      responseBytes.set(chunk, offset);
+      offset += chunk.length;
+    }
+    const response = new TextDecoder().decode(responseBytes);
+    assert.match(response, /^HTTP\/1\.1 200 /);
+    assert.match(response, /passkey_session$/);
+  } finally {
+    connection.close();
+    abort.abort();
+    await server.finished.catch(() => {});
+  }
+});
+
+Deno.test("allowlisted GitHub client bearers keep precedence over passkey cookies", async () => {
+  kvStore.clear();
+  const { token: passkeyToken } = seedPasskeySession("uos_ai_session_client_cookie");
+  const githubToken = "ghp_allowlisted_client_token_1234567890abcdefghijklmnopqrstuvwxyz";
+  const authTokens = config.authTokens as Set<string>;
+  authTokens.add(githubToken);
+  try {
+    const response = await handleV1Auth(
+      new Request("https://ai.ubq.fi/uos/auth", {
+        headers: {
+          Authorization: `Bearer ${githubToken}`,
+          Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(passkeyToken)}`,
+        },
+      }),
+    );
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.auth.method.kind, "auth_tokens_allowlist");
+    assert.equal(body.auth.token.shape, "github_prefix");
+  } finally {
+    authTokens.delete(githubToken);
+  }
+});
+
+Deno.test("allowlisted GitHub admin bearers keep precedence over passkey cookies on /uos/auth", async () => {
+  kvStore.clear();
+  const { token: passkeyToken } = seedPasskeySession("uos_ai_session_non_admin_cookie", { isAdmin: false });
+  const githubToken = "ghp_allowlisted_admin_token_1234567890abcdefghijklmnopqrstuvwxyz";
+  const adminTokens = config.adminTokens as Set<string>;
+  adminTokens.add(githubToken);
+  try {
+    const response = await handleV1Auth(
+      new Request("https://ai.ubq.fi/uos/auth", {
+        headers: {
+          Authorization: `Bearer ${githubToken}`,
+          Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(passkeyToken)}`,
+        },
+      }),
+    );
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.auth.method.kind, "admin_allowlist");
+    assert.equal(body.auth.is_admin, true);
+    assert.equal(body.auth.is_super_admin, true);
+    assert.equal(body.auth.token.shape, "github_prefix");
+  } finally {
+    adminTokens.delete(githubToken);
+  }
+});
+
+Deno.test("passkey lifecycle handlers prefer a relay cookie over a stale GitHub bearer", async () => {
+  kvStore.clear();
+  const audienceOrigin = "https://agent-worker-4d2p9cx7m1ab.ubiquity-os.deno.net";
+  const { token, user } = seedPasskeySession("uos_ai_session_lifecycle_cookie", { audienceOrigin });
+  const githubToken = "ghp_stale_lifecycle_token_1234567890abcdefghijklmnopqrstuvwxyz";
+  const { default: handler } = await import("../src/handler.ts");
+  const headers = {
+    Authorization: `Bearer ${githubToken}`,
+    Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(token)}`,
+    Origin: audienceOrigin,
+  };
+
+  const sessionResponse = await handler(
+    new Request("https://ai.ubq.fi/api/auth/session", { headers }),
+  );
+  assert.equal(sessionResponse.status, 200);
+  const sessionBody = await sessionResponse.json();
+  assert.equal(sessionBody.user.id, user.id);
+
+  const registerResponse = await handler(
+    new Request("https://ai.ubq.fi/api/auth/register/start", {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ handle: user.handle }),
+    }),
+  );
+  assert.equal(registerResponse.status, 200);
+  const registerBody = await registerResponse.json();
+  const encodedUserId = btoa(user.id).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  assert.equal(registerBody.publicKey.user.id, encodedUserId);
+  assert.equal(registerBody.publicKey.user.name, user.handle);
+
+  const logoutResponse = await handler(
+    new Request("https://ai.ubq.fi/api/auth/logout", { method: "POST", headers }),
+  );
+  assert.equal(logoutResponse.status, 204);
+  assert.equal((await kvStub.get(passkeySessionKey(token))).value, null);
+});
+
+Deno.test("passkey lifecycle handlers preserve configured bearer precedence", async () => {
+  for (const configuredKind of ["client", "admin"] as const) {
+    kvStore.clear();
+    const audienceOrigin = "https://agent-worker-4d2p9cx7m1ab.ubiquity-os.deno.net";
+    const { token: passkeyToken } = seedPasskeySession(`uos_ai_session_${configuredKind}_lifecycle_cookie`, {
+      audienceOrigin,
+    });
+    const configuredToken = `ghp_configured_${configuredKind}_lifecycle_1234567890abcdefghijklmnopqrstuvwxyz`;
+    const configuredTokens = configuredKind === "client"
+      ? config.authTokens as Set<string>
+      : config.adminTokens as Set<string>;
+    configuredTokens.add(configuredToken);
+    try {
+      const { default: handler } = await import("../src/handler.ts");
+      const headers = {
+        Authorization: `Bearer ${configuredToken}`,
+        Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(passkeyToken)}`,
+        Origin: audienceOrigin,
+      };
+      const registrationHandle = `configured-${configuredKind}-registration`;
+      const registerResponse = await handler(
+        new Request("https://ai.ubq.fi/api/auth/register/start", {
+          method: "POST",
+          headers: { ...headers, "Content-Type": "application/json" },
+          body: JSON.stringify({ handle: registrationHandle }),
+        }),
+      );
+      assert.equal(registerResponse.status, configuredKind === "client" ? 401 : 200, configuredKind);
+      if (configuredKind === "admin") {
+        const registerBody = await registerResponse.json();
+        assert.equal(registerBody.publicKey.user.name, registrationHandle);
+      }
+
+      const sessionResponse = await handler(
+        new Request("https://ai.ubq.fi/api/auth/session", { headers }),
+      );
+      assert.equal(sessionResponse.status, 401, configuredKind);
+
+      const logoutResponse = await handler(
+        new Request("https://ai.ubq.fi/api/auth/logout", { method: "POST", headers }),
+      );
+      assert.equal(logoutResponse.status, 204, configuredKind);
+      assert.notEqual((await kvStub.get(passkeySessionKey(passkeyToken))).value, null, configuredKind);
+    } finally {
+      configuredTokens.delete(configuredToken);
+    }
+  }
+});
+
+Deno.test("passkey logout preserves valid bearer precedence over a relay cookie", async () => {
+  kvStore.clear();
+  const audienceOrigin = "https://agent-worker-4d2p9cx7m1ab.ubiquity-os.deno.net";
+  const { token: bearerToken } = seedPasskeySession("uos_ai_session_bearer_precedence");
+  const { token: cookieToken } = seedPasskeySession("uos_ai_session_cookie_secondary", { audienceOrigin });
+  const { default: handler } = await import("../src/handler.ts");
+  const response = await handler(
+    new Request("https://ai.ubq.fi/api/auth/logout", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${bearerToken}`,
+        Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(cookieToken)}`,
+        Origin: audienceOrigin,
+      },
+    }),
+  );
+
+  assert.equal(response.status, 204);
+  assert.equal((await kvStub.get(passkeySessionKey(bearerToken))).value, null);
+  assert.notEqual((await kvStub.get(passkeySessionKey(cookieToken))).value, null);
+});
+
+Deno.test("authenticated passkey token overrides remain bound to their relay audience", async () => {
+  kvStore.clear();
+  const audienceOrigin = "https://agent-worker-4d2p9cx7m1ab.ubiquity-os.deno.net";
+  const { token } = seedPasskeySession("uos_ai_session_override_audience", { audienceOrigin });
+  const response = await handlePasskeyRegisterStart(
+    new Request("https://ai.ubq.fi/api/auth/register/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Origin: "https://evil.example" },
+      body: "{}",
+    }),
+    { authenticatedPasskeyToken: token },
+  );
+
+  assert.equal(response.status, 401);
 });

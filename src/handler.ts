@@ -813,7 +813,12 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
   if (req.method === "POST" && path === "/api/auth/register/start") {
     const auth = await authenticateAdmin(req);
     if (!auth.ok) return withCors(auth.response);
-    return withCors(await handlePasskeyRegisterStart(req, { defaultIsAdmin: auth.is_super_admin }));
+    return withCors(
+      await handlePasskeyRegisterStart(req, {
+        defaultIsAdmin: auth.is_super_admin,
+        authenticatedPasskeyToken: auth.method.kind === "passkey_session" ? auth.token : undefined,
+      }),
+    );
   }
 
   if (req.method === "POST" && path === "/api/auth/register/finish") {
@@ -829,11 +834,25 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
   }
 
   if (req.method === "GET" && path === "/api/auth/session") {
-    return withCors(await handlePasskeySession(req));
+    const auth = req.headers.has("authorization") && req.headers.has("cookie") ? await authenticateClient(req) : null;
+    return withCors(
+      await handlePasskeySession(req, {
+        authenticatedPasskeyToken: auth?.ok && auth.method.kind === "passkey_session"
+          ? auth.token ?? undefined
+          : undefined,
+      }),
+    );
   }
 
   if (req.method === "POST" && path === "/api/auth/logout") {
-    return withCors(await handlePasskeyLogout(req));
+    const auth = req.headers.has("authorization") && req.headers.has("cookie") ? await authenticateClient(req) : null;
+    return withCors(
+      await handlePasskeyLogout(req, {
+        authenticatedPasskeyToken: auth?.ok && auth.method.kind === "passkey_session"
+          ? auth.token ?? undefined
+          : undefined,
+      }),
+    );
   }
 
   if (req.method === "GET" && path === "/admin/passkey-users") {

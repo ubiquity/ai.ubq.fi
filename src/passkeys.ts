@@ -389,15 +389,20 @@ const getRequestAudienceOrigin = (req: Request): string | null => {
   return parseTrustedAuthRelayOrigin(new URL(req.url).searchParams.get("cors_origin"));
 };
 
-export const getPasskeySessionForRequest = async (req: Request): Promise<PasskeySession | null> => {
-  const session = await getPasskeySessionFromRequest(req);
+export const getPasskeySessionForRequest = async (
+  req: Request,
+  authenticatedPasskeyToken?: string,
+): Promise<PasskeySession | null> => {
+  const session = authenticatedPasskeyToken
+    ? await getPasskeySession(authenticatedPasskeyToken)
+    : await getPasskeySessionFromRequest(req);
   if (!session?.session.audience_origin) return session;
   return getRequestAudienceOrigin(req) === session.session.audience_origin ? session : null;
 };
 
 export const handlePasskeyRegisterStart = async (
   req: Request,
-  options: { defaultIsAdmin?: boolean } = {},
+  options: { defaultIsAdmin?: boolean; authenticatedPasskeyToken?: string } = {},
 ): Promise<Response> => {
   const raw = await readPasskeyJson(req);
   if (raw instanceof Response) return raw;
@@ -405,8 +410,11 @@ export const handlePasskeyRegisterStart = async (
   if (kvOrError instanceof Response) return kvOrError;
   const kv = kvOrError;
 
-  const token = getBearerToken(req) ?? "";
-  const existingSession = token ? await getPasskeySessionForRequest(req) : null;
+  const token = options.authenticatedPasskeyToken ?? getBearerToken(req) ?? "";
+  const existingSession = token ? await getPasskeySessionForRequest(req, options.authenticatedPasskeyToken) : null;
+  if (options.authenticatedPasskeyToken && !existingSession) {
+    return openaiError(401, "Unauthorized", "invalid_api_key");
+  }
   const requestedHandle = normalizePasskeyHandle(raw.handle);
   const tokenHandle = token ? await buildPasskeyHandle(token) : "";
   const requestedUser = requestedHandle ? await getUserByHandle(kv, requestedHandle) : null;
@@ -661,8 +669,11 @@ export const handlePasskeyLoginFinish = async (req: Request): Promise<Response> 
   }
 };
 
-export const handlePasskeySession = async (req: Request): Promise<Response> => {
-  const session = await getPasskeySessionForRequest(req);
+export const handlePasskeySession = async (
+  req: Request,
+  options: { authenticatedPasskeyToken?: string } = {},
+): Promise<Response> => {
+  const session = await getPasskeySessionForRequest(req, options.authenticatedPasskeyToken);
   if (!session) return openaiError(401, "Unauthorized", "invalid_api_key");
   return json(
     200,
@@ -682,14 +693,14 @@ export const handlePasskeySession = async (req: Request): Promise<Response> => {
   );
 };
 
-export const handlePasskeyLogout = async (req: Request): Promise<Response> => {
-  const token = getBearerToken(req) ?? getCookieValue(req, PASSKEY_RELAY_COOKIE_NAME);
-  if (token) {
-    const session = await getPasskeySessionForRequest(req);
-    if (session) {
-      const kv = await getKv();
-      if (kv) await kv.delete(passkeySessionKey(token));
-    }
+export const handlePasskeyLogout = async (
+  req: Request,
+  options: { authenticatedPasskeyToken?: string } = {},
+): Promise<Response> => {
+  const session = await getPasskeySessionForRequest(req, options.authenticatedPasskeyToken);
+  if (session) {
+    const kv = await getKv();
+    if (kv) await kv.delete(passkeySessionKey(session.token));
   }
   return new Response(null, {
     status: 204,
