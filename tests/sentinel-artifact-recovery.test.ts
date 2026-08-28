@@ -5,10 +5,12 @@ import {
   createOrReuseSentinelRecoveryDraftPullRequest,
   isSentinelArtifactRecoveryEligible,
   legacyArtifactNeedsManualDisposition,
+  legacyArtifactTerminalDisposition,
   manualRecoveryRecordForLegacyArtifact,
   recoverSentinelArtifactCandidate,
   selectSentinelRecoveryArtifacts,
   sentinelRecoveryCandidateBranch,
+  terminalRecoveryRecordForLegacyArtifact,
 } from "../scripts/sentinel/artifact-recovery.ts";
 import type { GitHubArtifact } from "../scripts/sentinel/github.ts";
 import type { SentinelRecoveryRecordV1 } from "../scripts/sentinel/recovery.ts";
@@ -316,6 +318,32 @@ Deno.test("terminal report-only cycles are not reclassified from a later workflo
       legacyArtifactNeedsManualDisposition(files, { status: "completed", conclusion: "failure" }),
       false,
     );
+  } finally {
+    for (const file of files) file.bytes.fill(0);
+  }
+});
+
+Deno.test("authenticated terminal legacy evidence maps to a durable terminal record", () => {
+  const files = [
+    {
+      path: "reports/github-issue-disposition.json",
+      bytes: new TextEncoder().encode('{"disposition":"manual_required"}'),
+    },
+  ];
+  try {
+    assert.equal(legacyArtifactTerminalDisposition(files), "manual_required");
+    const record = terminalRecoveryRecordForLegacyArtifact(
+      "ubiquity/ai.ubq.fi",
+      makeArtifact(9697049137, "2026-08-28T18:25:53.000Z", {
+        workflowRunId: 33197180235,
+        workflowRunHeadSha: "a".repeat(40),
+      }),
+      `sha256:${"a".repeat(64)}`,
+      "manual_required",
+    );
+    assert.equal(record?.phase, "manual_required");
+    assert.equal(record?.disposition, "manual_required");
+    assert.deepEqual(record?.artifact_ids, [9697049137]);
   } finally {
     for (const file of files) file.bytes.fill(0);
   }
