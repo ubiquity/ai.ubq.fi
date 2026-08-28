@@ -46,6 +46,7 @@ import {
   sentinelRevisionControlInputs,
   sentinelTemporaryCandidateBranch,
   shouldDeferHourlyBacklogWork,
+  terminalTemporaryCandidateBranches,
   TRIAGE_INCIDENT_MS,
   triageExpectedMaximumRuntimeMs,
   triagePrompt,
@@ -454,6 +455,26 @@ Deno.test("Sentinel workflow reruns use distinct candidate branches", () => {
   assert.equal(sentinelTemporaryCandidateBranch("123456789", 2), "sentinel/candidate-123456789-2");
   assert.throws(() => sentinelTemporaryCandidateBranch("123456789", 0), /run identity/);
   assert.throws(() => sentinelTemporaryCandidateBranch("local-run", 1), /run identity/);
+});
+
+Deno.test("terminal Sentinel cleanup removes a superseded retry checkpoint", () => {
+  const checkpoint = {
+    branch: "sentinel/candidate-123456789-1",
+    sha: "b".repeat(40),
+    baseSha: "a".repeat(40),
+  };
+  assert.deepEqual(
+    terminalTemporaryCandidateBranches("sentinel/candidate-123456790-1", checkpoint),
+    [checkpoint.branch, "sentinel/candidate-123456790-1"],
+  );
+  assert.deepEqual(
+    terminalTemporaryCandidateBranches(checkpoint.branch, checkpoint),
+    [checkpoint.branch],
+  );
+  assert.deepEqual(
+    terminalTemporaryCandidateBranches("sentinel/candidate-123456790-1", null),
+    ["sentinel/candidate-123456790-1"],
+  );
 });
 
 Deno.test("retryable issue failure preserves, discards, cools down, and advances the queue", async () => {

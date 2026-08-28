@@ -2212,6 +2212,26 @@ const cleanupIntegratedTemporaryBranch = async (
   }
 };
 
+export const terminalTemporaryCandidateBranches = (
+  branch: string,
+  retryCheckpoint: GitHubIssueJobCheckpoint | null,
+): readonly string[] =>
+  retryCheckpoint && retryCheckpoint.branch !== branch ? [retryCheckpoint.branch, branch] : [branch];
+
+const cleanupIntegratedTemporaryBranches = async (
+  checkout: string,
+  branches: readonly string[],
+  gitEnvironment: Readonly<Record<string, string>>,
+): Promise<"removed" | "retained_not_integrated" | "retained_cleanup_failed"> => {
+  let disposition: "removed" | "retained_not_integrated" = "removed";
+  for (const branch of branches) {
+    const branchDisposition = await cleanupIntegratedTemporaryBranch(checkout, branch, gitEnvironment);
+    if (branchDisposition === "retained_cleanup_failed") return branchDisposition;
+    if (branchDisposition === "retained_not_integrated") disposition = branchDisposition;
+  }
+  return disposition;
+};
+
 export const candidateRevertDiffArguments = (
   baseSha: string,
   candidateSha: string,
@@ -4210,7 +4230,11 @@ const run = async (): Promise<void> => {
       );
       await writeGitHubIssueProductionOutcome("kept", production.revision);
       productionSettled = true;
-      const disposition = await cleanupIntegratedTemporaryBranch(checkout, branch, gitEnvironment);
+      const disposition = await cleanupIntegratedTemporaryBranches(
+        checkout,
+        terminalTemporaryCandidateBranches(branch, retryCheckpoint),
+        gitEnvironment,
+      );
       await updateState("complete", { status: "kept", branch_disposition: disposition });
       for (const replayCase of applicableCases) replayCase.body.fill(0);
       return;
@@ -4221,7 +4245,11 @@ const run = async (): Promise<void> => {
       durableProductionDecision(decision, candidateIdentity, previousIdentity),
     );
     await rollbackToPrevious("monitoring_agent_decision");
-    const disposition = await cleanupIntegratedTemporaryBranch(checkout, branch, gitEnvironment);
+    const disposition = await cleanupIntegratedTemporaryBranches(
+      checkout,
+      terminalTemporaryCandidateBranches(branch, retryCheckpoint),
+      gitEnvironment,
+    );
     await updateState("complete", { status: "rolled_back", branch_disposition: disposition });
   } catch (error) {
     if (!productionSettled && developmentPushAttempted) {
