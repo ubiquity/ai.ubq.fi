@@ -411,7 +411,7 @@ Deno.test({
     const jobStart = workflow.indexOf("\n  artifact-recovery:");
     assert.notEqual(jobStart, -1);
     const job = workflow.slice(jobStart);
-    assert.match(job, /\n\s{4}needs: sentinel\n/u);
+    assert.match(job, /\n\s{4}needs: converge\n/u);
     assert.match(job, /always\(\)/u);
     assert.match(job, /SENTINEL_ARTIFACT_KEY: \$\{\{ secrets\.SENTINEL_ARTIFACT_KEY \}\}/u);
     assert.match(job, /scripts\/sentinel\/artifact-recovery\.ts/u);

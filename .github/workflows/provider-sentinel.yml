@@ -2225,7 +2225,7 @@ jobs:
             '
 
   artifact-recovery:
-    needs: sentinel
+    needs: converge
     if: >-
       always() &&
       vars.SENTINEL_AUTONOMY_ENABLED == 'true' &&
