@@ -302,6 +302,57 @@ Deno.test("Codex authentication relay bounds a silent response stream", async ()
   }
 });
 
+Deno.test("Codex authentication relay cancellation does not wait for an upstream cancellation", async () => {
+  const auth = parseCodexAuthJsonB64(slot1.encoded, 1, { nowMs, minimumValidityMs: 1 });
+  const upstreamCancellationStarted = Promise.withResolvers<void>();
+  const completeUpstreamCancellation = Promise.withResolvers<void>();
+  const relay = await createCodexAuthRelayFactory(
+    () =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode("data: ready\\n\\n"));
+            },
+            cancel() {
+              upstreamCancellationStarted.resolve();
+              return completeUpstreamCancellation.promise;
+            },
+          }),
+          { headers: { "Content-Type": "text/event-stream" } },
+        ),
+      ),
+    { streamIdleTimeoutMs: 1_000 },
+  )(auth);
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  try {
+    const response = await fetch(`${relay.baseUrl}/codex/responses`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: '{"model":"gpt-5.6-luna"}',
+    });
+    reader = response.body?.getReader() ?? null;
+    assert.ok(reader);
+    assert.equal((await reader.read()).done, false);
+    await Promise.race([
+      reader.cancel(),
+      new Promise<never>((_resolve, reject) =>
+        setTimeout(() => reject(new Error("relay cancellation did not settle")), 500)
+      ),
+    ]);
+    await Promise.race([
+      upstreamCancellationStarted.promise,
+      new Promise<never>((_resolve, reject) =>
+        setTimeout(() => reject(new Error("relay did not cancel the upstream stream")), 500)
+      ),
+    ]);
+  } finally {
+    completeUpstreamCancellation.resolve();
+    await reader?.cancel().catch(() => undefined);
+    await relay.close();
+  }
+});
+
 Deno.test("Codex bubblewrap exposes only system files, the repository, and the selected private home", () => {
   const args = codexBubblewrapArguments({
     executable: "codex",

@@ -593,16 +593,18 @@ const relayStreamWithIdleTimeout = (
       // The reader can already be released by a concurrent cancellation.
     }
   };
-  const cancelReader = async (reason: unknown) => {
+  const cancelReader = (reason: unknown) => {
     const activeReader = reader;
     if (activeReader === null) return;
+    let cancellation: Promise<void>;
     try {
-      await activeReader.cancel(reason);
+      cancellation = activeReader.cancel(reason);
     } catch {
-      // The downstream stream still closes even when the upstream rejects cancellation.
-    } finally {
       releaseReader(activeReader);
+      return;
     }
+    releaseReader(activeReader);
+    void cancellation.catch(() => undefined).finally(() => releaseReader(activeReader));
   };
   const close = () => {
     closed = true;
@@ -612,7 +614,7 @@ const relayStreamWithIdleTimeout = (
   const onRequestAbort = () => {
     if (closed) return;
     close();
-    void cancelReader(requestSignal.reason);
+    cancelReader(requestSignal.reason);
   };
   const resetTimer = () => {
     stopTimer();
@@ -621,7 +623,7 @@ const relayStreamWithIdleTimeout = (
       if (closed || idleTimedOut) return;
       idleTimedOut = true;
       onIdleTimeout();
-      void cancelReader(new DOMException("Sentinel relay stream idle timeout", "TimeoutError"));
+      cancelReader(new DOMException("Sentinel relay stream idle timeout", "TimeoutError"));
     }, timeoutMs);
   };
   return new ReadableStream<Uint8Array>({
@@ -670,10 +672,10 @@ const relayStreamWithIdleTimeout = (
         else controller.error(error);
       }
     },
-    async cancel(reason) {
+    cancel(reason) {
       if (closed) return;
       close();
-      await cancelReader(reason);
+      cancelReader(reason);
     },
   });
 };
