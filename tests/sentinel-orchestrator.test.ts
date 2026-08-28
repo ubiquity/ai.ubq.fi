@@ -123,6 +123,17 @@ import {
   type TriageReport,
 } from "../scripts/sentinel/types.ts";
 import {
+  applySentinelRetryPolicyToRecovery,
+  classifySentinelFailure,
+  computeSentinelRetryBackoffMs,
+  createFreshSentinelRecoveryRecord,
+  createSentinelRetryAttempt,
+  evaluateSentinelRetryPolicy,
+  SENTINEL_RETRY_CIRCUIT_THRESHOLD,
+  SENTINEL_RETRY_MAX_DELAY_MS,
+  stableSentinelFailureFingerprint,
+} from "../scripts/sentinel/retry.ts";
+import {
   computeSentinelInterval,
   deduplicateEvents,
   eventDedupeKey,
@@ -2395,6 +2406,223 @@ Deno.test("changed_files mismatch retains the Git checkpoint as a durable valida
       }),
     /untracked changed files/,
   );
+});
+
+Deno.test("Sentinel retry fingerprints ignore run volatility but bind source and generation", async () => {
+  const identity = {
+    repository: "ubiquity/ai.ubq.fi",
+    source_kind: "github_issue" as const,
+    source_id: "136",
+    source_revision: "issue-revision-a",
+    candidate_generation: 2,
+  };
+  const first = await stableSentinelFailureFingerprint({
+    identity,
+    failure_class: "transient_transport",
+    code: "invocation_timeout",
+    phase: "implementation",
+    signature: "stream idle timeout",
+  });
+  const second = await stableSentinelFailureFingerprint({
+    identity,
+    failure_class: "transient_transport",
+    code: "invocation_timeout",
+    phase: "implementation",
+    signature: "  stream   idle timeout\r\n",
+  });
+  assert.equal(first, second);
+  assert.match(first, /^[0-9a-f]{64}$/u);
+  assert.notEqual(
+    first,
+    await stableSentinelFailureFingerprint({
+      identity: { ...identity, source_revision: "issue-revision-b" },
+      failure_class: "transient_transport",
+      code: "invocation_timeout",
+      phase: "implementation",
+      signature: "stream idle timeout",
+    }),
+  );
+  assert.notEqual(
+    first,
+    await stableSentinelFailureFingerprint({
+      identity: { ...identity, candidate_generation: 3 },
+      failure_class: "transient_transport",
+      code: "invocation_timeout",
+      phase: "implementation",
+      signature: "stream idle timeout",
+    }),
+  );
+});
+
+Deno.test("Sentinel retry classification separates capacity, transport, and invalid reports", () => {
+  assert.deepEqual(classifySentinelFailure(new CodexInvocationError("accounts_unavailable")), {
+    failure_class: "capacity_quota",
+    code: "accounts_unavailable",
+    phase: null,
+    signature: "accounts_unavailable",
+    retryable: true,
+    validation_repairable: false,
+  });
+  assert.equal(
+    classifySentinelFailure(new CodexInvocationError("invocation_timeout")).failure_class,
+    "transient_transport",
+  );
+  assert.equal(
+    classifySentinelFailure(new CodexInvocationError("last_message_missing")).failure_class,
+    "invalid_implementation_report",
+  );
+  assert.equal(classifySentinelFailure(new Error("unknown failure")).retryable, false);
+});
+
+Deno.test("Sentinel retry backoff is exponential, jittered, and bounded", () => {
+  assert.equal(
+    computeSentinelRetryBackoffMs({ attempt: 1, base_delay_ms: 100, max_delay_ms: 500, jitter_ratio: 0 }),
+    100,
+  );
+  assert.equal(
+    computeSentinelRetryBackoffMs({ attempt: 2, base_delay_ms: 100, max_delay_ms: 500, jitter_ratio: 0 }),
+    200,
+  );
+  assert.equal(
+    computeSentinelRetryBackoffMs({ attempt: 20, base_delay_ms: 100, max_delay_ms: 500, jitter_ratio: 0 }),
+    500,
+  );
+  assert.equal(
+    computeSentinelRetryBackoffMs({
+      attempt: 1,
+      base_delay_ms: 100,
+      max_delay_ms: 500,
+      jitter_ratio: 0.2,
+      random: () => 0,
+    }),
+    80,
+  );
+  assert.ok(
+    computeSentinelRetryBackoffMs({ attempt: 20, max_delay_ms: SENTINEL_RETRY_MAX_DELAY_MS, random: () => 0.99 }) <=
+      SENTINEL_RETRY_MAX_DELAY_MS,
+  );
+});
+
+Deno.test("Sentinel retry circuit breaker and validation repair are source-revision aware", async () => {
+  const identity = {
+    repository: "ubiquity/ai.ubq.fi",
+    source_kind: "github_issue" as const,
+    source_id: "136",
+    source_revision: "issue-revision-a",
+    candidate_generation: 1,
+  };
+  const fingerprint = "a".repeat(64);
+  const history = [1, 2].map((attempt) =>
+    createSentinelRetryAttempt({
+      identity,
+      attempt,
+      failure_class: "transient_transport",
+      failure_fingerprint: fingerprint,
+      observed_at: `2026-08-28T18:0${attempt}:00.000Z`,
+    })
+  );
+  const circuit = await evaluateSentinelRetryPolicy({
+    identity,
+    history,
+    failure: { failure_class: "transient_transport", failure_fingerprint: fingerprint },
+    now: "2026-08-28T18:03:00.000Z",
+    random: () => 0.5,
+  });
+  assert.equal(circuit.decision.disposition, "manual_required");
+  assert.equal(circuit.decision.circuit_open, true);
+  assert.equal(circuit.decision.identical_failure_count, SENTINEL_RETRY_CIRCUIT_THRESHOLD);
+
+  const changed = await evaluateSentinelRetryPolicy({
+    identity,
+    history: [
+      ...history,
+      createSentinelRetryAttempt({
+        identity,
+        attempt: 3,
+        failure_class: "transient_transport",
+        failure_fingerprint: fingerprint,
+        observed_at: "2026-08-28T18:03:00.000Z",
+      }),
+    ],
+    failure: {
+      failure_class: "transient_transport",
+      failure_fingerprint: fingerprint,
+      source_revision: "issue-revision-b",
+    },
+    now: "2026-08-28T18:04:00.000Z",
+    random: () => 0.5,
+  });
+  assert.equal(changed.decision.disposition, "fresh_generation");
+  assert.equal(changed.decision.circuit_open, false);
+  assert.equal(changed.decision.candidate_generation, 2);
+
+  const validation = await evaluateSentinelRetryPolicy({
+    identity,
+    history: [],
+    failure: { failure_class: "validation_failure", failure_fingerprint: "b".repeat(64) },
+    now: "2026-08-28T18:05:00.000Z",
+    random: () => 0.5,
+  });
+  assert.equal(validation.decision.disposition, "retry_wait");
+  assert.equal(validation.decision.validation_repair_allowed, true);
+  const repeatedValidation = await evaluateSentinelRetryPolicy({
+    identity,
+    history: validation.history,
+    failure: { failure_class: "validation_failure", failure_fingerprint: "c".repeat(64) },
+    now: "2026-08-28T18:06:00.000Z",
+    random: () => 0.5,
+  });
+  assert.equal(repeatedValidation.decision.disposition, "manual_required");
+  assert.equal(repeatedValidation.decision.circuit_open, false);
+  assert.match(repeatedValidation.decision.reason, /one validation repair/u);
+});
+
+Deno.test("Sentinel retry preserves the durable checkpoint and monotonic state version", async () => {
+  const checkpoint = createSentinelCandidateRecoveryRecord({
+    repository: "ubiquity/ai.ubq.fi",
+    sourceKind: "github_issue",
+    sourceId: "136",
+    sourceRevision: "issue-revision-a",
+    candidateGeneration: 4,
+    runId: "33197180235",
+    attempt: 7,
+    leaseToken: "33197180235-7",
+    baseSha: "b".repeat(40),
+    candidateBranch: "sentinel/candidate-github_issue-136-issue-revision-a-g4",
+    candidateSha: "c".repeat(40),
+    treeSha: "d".repeat(40),
+    changedFiles: ["src/http.ts"],
+    createdAt: "2026-08-28T18:00:00.000Z",
+    updatedAt: "2026-08-28T18:01:00.000Z",
+  });
+  const applied = await applySentinelRetryPolicyToRecovery({
+    record: { ...checkpoint, state_version: 9 },
+    history: [],
+    failure: { failure_class: "validation_failure", failure_fingerprint: "e".repeat(64) },
+    now: "2026-08-28T18:02:00.000Z",
+    random: () => 0.5,
+  });
+  assert.equal(applied.after.phase, "retry_wait");
+  assert.equal(applied.after.state_version, 10);
+  assert.equal(applied.after.identity.candidate_generation, 4);
+  assert.equal(applied.after.candidate_branch, checkpoint.candidate_branch);
+  assert.equal(applied.after.candidate_sha, checkpoint.candidate_sha);
+  assert.equal(applied.after.base_sha, checkpoint.base_sha);
+  assert.equal(applied.after.failure_fingerprint, "e".repeat(64));
+
+  const fresh = createFreshSentinelRecoveryRecord({
+    record: applied.after,
+    source_revision: "issue-revision-b",
+    run_id: "33197180236",
+    lease_token: "33197180236-1",
+    now: "2026-08-28T18:03:00.000Z",
+  });
+  assert.equal(fresh.phase, "claimed");
+  assert.equal(fresh.identity.candidate_generation, 5);
+  assert.equal(fresh.identity.source_revision, "issue-revision-b");
+  assert.equal(fresh.state_version, 11);
+  assert.equal(fresh.candidate_sha, null);
+  assert.equal(fresh.predecessor !== null, true);
 });
 
 Deno.test("a clean durable checkpoint remains eligible for review with its exact SHA", () => {
