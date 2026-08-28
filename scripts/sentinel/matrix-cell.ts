@@ -144,7 +144,7 @@ const fingerprintPath = async (path: string, depth = 0): Promise<string> => {
   if (!information.isDirectory) throw new MatrixCellSafetyError("Git control paths must be files or directories");
   const entries: Array<readonly [string, string]> = [];
   for await (const entry of Deno.readDir(path)) {
-    if (++entries.length > MAX_CONTROL_ENTRIES) {
+    if (entries.length >= MAX_CONTROL_ENTRIES) {
       throw new MatrixCellSafetyError("Git control directory exceeded its entry bound");
     }
     entries.push([entry.name, await fingerprintPath(`${path}/${entry.name}`, depth + 1)]);

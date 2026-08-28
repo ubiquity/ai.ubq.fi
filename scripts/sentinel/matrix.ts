@@ -1072,7 +1072,8 @@ export function assertMatrixCellReportV1(
     const cell = plan.cells.find((candidate) => candidate.cell_id === cellId);
     if (!cell) throw new Error(`Matrix cell report references unknown cell ${cellId}`);
     if (branch !== cell.branch) throw new Error("Matrix cell report branch differs from its plan");
-    if (!sameStrings(changedPaths, [...changedPaths].sort(compareStrings))) {
+    const rawChangedPaths = value.changed_paths as readonly string[];
+    if (!sameStrings(rawChangedPaths, [...rawChangedPaths].sort(compareStrings))) {
       throw new Error("changed_paths are not canonical");
     }
     if (changedPaths.some((path) => !cell.allowed_paths.some((allowed) => matrixPathsOverlap(path, allowed)))) {

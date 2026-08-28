@@ -4818,6 +4818,7 @@ const run = async (): Promise<void> => {
         `fix: Provider Sentinel matrix ${runId}-${githubRunAttempt}`,
       );
       if (!merge.merged || !merge.sha) throw new Error(`Matrix pull request was not merged: ${merge.message}`);
+      developmentPushAttempted = true;
       await runTrustedGit({
         args: ["fetch", "--no-tags", "origin", "development"],
         cwd: checkout,
@@ -4834,7 +4835,6 @@ const run = async (): Promise<void> => {
       if (mergeParents.length !== 2 || mergeParents[0] !== baseSha || mergeParents[1] !== integratedHeadSha) {
         throw new Error("Matrix pull request merge is not the exact immutable-base merge commit");
       }
-      developmentPushAttempted = true;
       const requiredAncestors = [
         integratedHeadSha,
         ...matrixCycleReport.accepted_ancestry.map((item) => item.cell_head_sha),

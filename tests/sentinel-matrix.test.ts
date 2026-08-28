@@ -194,6 +194,21 @@ Deno.test("matrix cell report is bound to plan identity and digest", async () =>
   );
 });
 
+Deno.test("matrix cell reports reject non-canonical changed path order", async () => {
+  const plan = await buildMatrixPlan({
+    run_id: "56",
+    run_attempt: 1,
+    base_sha: baseSha,
+    evidence_digests: [],
+    findings: [finding("one", "1".repeat(64), ["src/a.ts", "src/b.ts"])],
+  });
+  const report = await reportFor(plan);
+  assert.throws(
+    () => assertMatrixCellReportV1({ ...report, changed_paths: ["src/b.ts", "src/a.ts"] }, plan),
+    /changed_paths are not canonical/,
+  );
+});
+
 Deno.test("integration and cycle contracts require complete decisions and ancestry", async () => {
   const plan = await buildMatrixPlan({
     run_id: "66",
