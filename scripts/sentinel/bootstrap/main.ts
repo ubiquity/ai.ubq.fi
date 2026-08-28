@@ -135,7 +135,7 @@ const observeManagedRelease = async (fetcher: typeof fetch): Promise<Readonly<{ 
   return { sha: release.git_sha, revision: release.deployment_id };
 };
 
-const synchronizeObservedRelease = async (
+export const synchronizeObservedRelease = async (
   state: GitHubSentinelBootstrapState,
   observed: Readonly<{ sha: string; revision: string }>,
   now: string,
@@ -201,15 +201,19 @@ const synchronizeObservedRelease = async (
     }
     return current.release;
   }
-  if (current.release.candidate_sha !== null || current.activation === null) {
+  if (current.activation === null) {
     throw new Error("Managed Sentinel release changed before the prior candidate was reconciled");
   }
   const generation = current.activation.generation + 1;
+  const supersededCandidate = current.release.candidate_sha;
   const next = parseBootstrapReleaseRecord({
     schema_version: 1,
     stable_sha: current.release.stable_sha,
     candidate_sha: observed.sha,
-    acceptance_evidence: [`health:${observed.revision}`],
+    acceptance_evidence: [
+      `health:${observed.revision}`,
+      ...(supersededCandidate === null ? [] : [`bootstrap:superseded:${supersededCandidate}`]),
+    ],
     activated_at: now,
     rollback_reason: null,
     generation,
@@ -218,9 +222,11 @@ const synchronizeObservedRelease = async (
     schema_version: 1,
     active_sha: observed.sha,
     generation,
-    fenced_generations: current.activation.fenced_generations,
+    fenced_generations: supersededCandidate === null
+      ? current.activation.fenced_generations
+      : [...current.activation.fenced_generations, current.activation.generation].slice(-64),
     updated_at: now,
-    reason: "managed_health_observed",
+    reason: supersededCandidate === null ? "managed_health_observed" : "managed_candidate_superseded",
   });
   await state.replaceRelease(next, activation);
   return next;
