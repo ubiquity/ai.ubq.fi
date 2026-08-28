@@ -70,6 +70,7 @@ import {
   issueReviewBacklogFindings,
   MAX_ISSUE_JOB_DETAIL_COMMENT_INSPECTIONS,
   MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS,
+  MAX_OWNER_BACKLOG_PERMISSION_PREFLIGHTS,
   parseGitHubIssueJobBody,
   parseGitHubIssueJobHint,
   parseGitHubIssueJobLedger,
@@ -1299,6 +1300,15 @@ Deno.test("unlabelled administrator backlog proposals use a bounded source-only 
   assert.equal(
     await createGitHubIssueJob(
       "ubiquity/ai.ubq.fi",
+      { ...issue, body: ownerBacklogIssueBody([]) },
+      noIssueRelations,
+      "admin",
+    ),
+    null,
+  );
+  assert.equal(
+    await createGitHubIssueJob(
+      "ubiquity/ai.ubq.fi",
       { ...issue, labels: ["Priority: 2 (Medium)"] },
       noIssueRelations,
       "admin",
@@ -1369,6 +1379,38 @@ Deno.test("unlabelled fallback candidates require an administrator before the bo
     selectedIssue.number,
   );
   assert.equal(detailRequests, 1);
+});
+
+Deno.test("unlabelled fallback permission preflight has a fixed budget", async () => {
+  const issues = Array.from({ length: MAX_OWNER_BACKLOG_PERMISSION_PREFLIGHTS + 10 }, (_, index) => {
+    const number = 400 + index;
+    return sentinelGitHubIssue({
+      id: 40_000 + number,
+      nodeId: `I_kwDOIssue${number}`,
+      number,
+      title: `Untrusted owner backlog ${number}`,
+      body: ownerBacklogIssueBody(),
+      htmlUrl: `https://github.com/ubiquity/ai.ubq.fi/issues/${number}`,
+      authorLogin: `write-user-${number}`,
+      labels: [],
+    });
+  });
+  let permissionRequests = 0;
+  const source: GitHubIssueJobSource = {
+    listOpenIssues: () => Promise.resolve(issues),
+    getIssue: () => Promise.reject(new Error("untrusted candidates must not reach detail inspection")),
+    listIssueComments: () => Promise.resolve([]),
+    getIssueRelations: () => Promise.resolve(noIssueRelations),
+    getRepositoryPermission: () => {
+      permissionRequests += 1;
+      return Promise.resolve("write" as const);
+    },
+  };
+  assert.equal(
+    await selectNextGitHubIssueJob(source, "ubiquity/ai.ubq.fi", renderGitHubIssueJobLedger([])),
+    null,
+  );
+  assert.equal(permissionRequests, MAX_OWNER_BACKLOG_PERMISSION_PREFLIGHTS);
 });
 
 Deno.test("GitHub issue selection is deterministic, snapshot-bound, and becomes triage work", async () => {

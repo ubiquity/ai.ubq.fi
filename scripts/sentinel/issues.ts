@@ -98,6 +98,7 @@ const MAX_LEDGER_LINE_LENGTH = 4_096;
 const MAX_ISSUE_JOB_HINT_BYTES = 1_024;
 export const MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS = 32;
 export const MAX_ISSUE_JOB_DETAIL_COMMENT_INSPECTIONS = 33;
+export const MAX_OWNER_BACKLOG_PERMISSION_PREFLIGHTS = 64;
 export const GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS = 6 * 60 * 60 * 1_000;
 export const GITHUB_ISSUE_JOB_HINT_FILENAME = "sentinel-github-issue-job-hint.json";
 const LEDGER_HEADERS = Object.freeze([
@@ -230,7 +231,7 @@ export const parseGitHubIssueJobBody = (body: string): ParsedIssueBody | null =>
     files.push(path);
   }
   const canonicalFiles = sortedUnique(files);
-  if (!canonicalFiles) return null;
+  if (!canonicalFiles || canonicalFiles.length === 0) return null;
   return { acceptance, files: canonicalFiles };
 };
 
@@ -253,7 +254,7 @@ const parseOwnerBacklogIssueBody = (body: string): ParsedIssueBody | null => {
     if (path.startsWith("src/")) files.push(path);
   }
   const canonicalFiles = sortedUnique(files);
-  if (!canonicalFiles) return null;
+  if (!canonicalFiles || canonicalFiles.length === 0) return null;
   return {
     acceptance: ["Implement the owner-authored proposal within the extracted source-file scope."],
     files: canonicalFiles,
@@ -529,12 +530,21 @@ export const selectNextGitHubIssueJob = async (
   const ledger = parseGitHubIssueJobLedger(ledgerMarkdown);
   const listed = await source.listOpenIssues();
   const candidates: GitHubIssueJob[] = [];
+  const ownerBacklogAuthorPermissions = new Map<string, GitHubRepositoryPermission>();
+  let ownerBacklogPermissionPreflights = 0;
   for (const candidate of listed) {
     if (candidate.comments > MAX_IGNORABLE_ISSUE_COMMENTS) continue;
     let preliminaryPermission: GitHubRepositoryPermission = "write";
     if (candidate.labels.length === 0 && parseOwnerBacklogIssueBody(candidate.body) !== null) {
       // Do not let an untrusted unlabelled issue consume the bounded detail loop.
-      if (await source.getRepositoryPermission(candidate.authorLogin) !== "admin") continue;
+      let authorPermission = ownerBacklogAuthorPermissions.get(candidate.authorLogin);
+      if (authorPermission === undefined) {
+        if (ownerBacklogPermissionPreflights >= MAX_OWNER_BACKLOG_PERMISSION_PREFLIGHTS) continue;
+        authorPermission = await source.getRepositoryPermission(candidate.authorLogin);
+        ownerBacklogAuthorPermissions.set(candidate.authorLogin, authorPermission);
+        ownerBacklogPermissionPreflights += 1;
+      }
+      if (authorPermission !== "admin") continue;
       preliminaryPermission = "admin";
     }
     const job = await createGitHubIssueJob(
