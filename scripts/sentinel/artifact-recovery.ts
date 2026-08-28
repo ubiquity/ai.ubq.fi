@@ -1060,7 +1060,7 @@ export const legacyArtifactNeedsManualDisposition = (
   files: readonly SentinelArtifactFile[],
   workflowRun?: Readonly<Pick<GitHubWorkflowRun, "status" | "conclusion">>,
 ): boolean =>
-  files.filter((file) => CANDIDATE_MANIFEST.test(file.path)).length === 1 &&
+  files.some((file) => file.path.startsWith("reports/")) &&
   !terminalArtifactRecord(files) &&
   workflowRun?.status === "completed" &&
   typeof workflowRun.conclusion === "string" &&
@@ -1209,10 +1209,15 @@ const workflowRunForArtifact = async (
   github: GitHubActionsClient,
 ): Promise<Readonly<Pick<GitHubWorkflowRun, "status" | "conclusion">> | undefined> => {
   const cycle = parseArtifactJson(files, "reports/cycle.json");
-  const cycleRunId = typeof cycle?.run_id === "string" && /^[1-9][0-9]*$/u.test(cycle.run_id)
-    ? Number(cycle.run_id)
-    : null;
-  const runId = cycleRunId ?? artifact.workflowRunId;
+  const status = typeof cycle?.status === "string" ? cycle.status : null;
+  if (
+    status !== null && INCOMPLETE_FAILURE_STATUSES.has(status) ||
+    explicitIncompleteFailureEvidence(parseArtifactJson(files, "reports/failure.json")) ||
+    cycle !== null && terminalRecordState(cycle) || terminalArtifactRecord(files)
+  ) {
+    return undefined;
+  }
+  const runId = artifact.workflowRunId;
   if (!positiveSafeInteger(runId)) return undefined;
   const run = await github.getWorkflowRun(runId);
   return { status: run.status, conclusion: run.conclusion };
