@@ -448,6 +448,32 @@ const errorEventAfterCommit = (sequenceNumber: number): ResponsesStreamEvent => 
   return event;
 };
 
+const responseErrorFromUpstreamEvent = (event: ResponsesStreamEvent): Record<string, unknown> => {
+  const source = isRecord(event.value.error) && !Array.isArray(event.value.error) ? event.value.error : event.value;
+  const code = source.code === null ? null : getString(source.code)?.trim() || "server_error";
+  const message = getString(source.message)?.trim() || "The upstream stream ended unexpectedly.";
+  return { code, message };
+};
+
+const responseFailedEventFromUpstreamError = (
+  event: ResponsesStreamEvent,
+  responseId: string,
+  sequenceNumber: number,
+  output: readonly Record<string, unknown>[],
+  responseTemplate: Readonly<Record<string, unknown>>,
+): ResponsesStreamEvent => responseEventFromValue({
+  type: "response.failed",
+  sequence_number: sequenceNumber,
+  response: {
+    ...responseTemplate,
+    id: responseId,
+    object: getString(responseTemplate.object) ?? "response",
+    status: "failed",
+    error: responseErrorFromUpstreamEvent(event),
+    output: [...output],
+  },
+});
+
 const EMPTY_UPSTREAM_COMPLETION_MESSAGE = "Upstream response completed with no translated semantic output.";
 
 const emptyCompletionEventAfterCommit = (sequenceNumber: number): ResponsesStreamEvent => {
@@ -469,6 +495,8 @@ type OwnedResponsesStreamOptions = Readonly<{
   initial: readonly ResponsesStreamEvent[];
   iterator: ResponsesStreamIterator;
   responseId: string | null;
+  /** Codex CLI accepts terminal failures through response.failed, not flat error events. */
+  codexCompatibility?: boolean;
   warning?: Readonly<{ model: string }>;
   signal?: AbortSignal;
   downstreamSignal?: AbortSignal;
@@ -721,6 +749,25 @@ export const createOwnedResponsesStream = (
       sequenceNumber = value + 1;
     }
   };
+  const sequenceNumberForRewrite = (event: ResponsesStreamEvent): number => {
+    const value = event.value.sequence_number;
+    if (
+      typeof value === "number" && Number.isSafeInteger(value) && value >= 0 && value < Number.MAX_SAFE_INTEGER &&
+      value + 1 === sequenceNumber
+    ) return value;
+    return sequenceNumber++;
+  };
+  const clientVisibleEvent = (event: ResponsesStreamEvent): ResponsesStreamEvent => {
+    if (!options.codexCompatibility || !semanticCommitmentObserved || event.type !== "error") return event;
+    const upstreamEvent = originalUpstreamEvents.get(event) ?? event;
+    return responseFailedEventFromUpstreamError(
+      upstreamEvent,
+      responseId ?? `resp_${crypto.randomUUID().replace(/-/g, "")}`,
+      sequenceNumberForRewrite(event),
+      failureOutput(),
+      responseTemplate,
+    );
+  };
 
   const nextVisible = async (): Promise<ResponsesStreamEvent | null> => {
     if (queue.length) return queue.shift()!;
@@ -784,7 +831,10 @@ export const createOwnedResponsesStream = (
           return;
         }
         terminalEmitted = event.terminal;
-        controller.enqueue(encoder.encode(event.raw));
+        const visibleEvent = clientVisibleEvent(event);
+        controller.enqueue(encoder.encode(visibleEvent.raw));
+        // Observability receives the provider event, while the client may
+        // receive a compatibility-only terminal framing rewrite.
         invoke(() => options.onEvent?.(event));
         if (event.terminal) {
           closed = true;
