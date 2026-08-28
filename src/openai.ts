@@ -43,7 +43,6 @@ import {
   createInferenceSignal,
   createStreamFirstEventDeadline,
   createStreamSemanticDeadline,
-  STREAM_FAILOVER_RESERVE_MS,
   type StreamDeadline,
 } from "./inference_deadline.ts";
 import { getKv } from "./kv.ts";
@@ -9490,10 +9489,10 @@ const handleResponsesInternal = async (
     if (route === "codex") {
       try {
         const remainingMs = preHeaderDeadline.remainingMs();
-        const failoverReserveMs = Math.min(STREAM_FAILOVER_RESERVE_MS, remainingMs / 2);
-        const primaryBudgetMs = apiKey || paidFallbackAvailable
-          ? Math.max(0, remainingMs - failoverReserveMs)
-          : remainingMs;
+        // Codex owns the complete first-event window. If it returns an
+        // authoritative quota/capacity response, the shared pre-header
+        // deadline bounds the paid fallback to whatever time remains.
+        const primaryBudgetMs = remainingMs;
         const result = await fetchAndPreparePrimaryResponses(codexBody, {
           model,
           reasoning: reasoningLabel,

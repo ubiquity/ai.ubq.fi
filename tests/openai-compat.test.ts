@@ -3979,6 +3979,7 @@ Deno.test("openai: transient Codex stalls never advance to paid fallback", async
       seedPaidFallbackKey(keyId);
       let codexCalls = 0;
       let meteredCalls = 0;
+      let firstCodexAbortElapsedMs: number | null = null;
       await withFetchMock(
         (url, _bodyText, init) => {
           if (url === "https://api.openlux.ai/v1/responses") {
@@ -3987,10 +3988,17 @@ Deno.test("openai: transient Codex stalls never advance to paid fallback", async
           }
           codexCalls += 1;
           if (codexCalls === 1) {
+            const firstCodexStartedAt = performance.now();
             return new Promise<Response>((_resolve, reject) => {
               const signal = init?.signal;
               if (!signal) return reject(new Error("Codex timeout fixture did not receive a signal"));
-              const rejectWithReason = () => reject(signal.reason);
+              let settled = false;
+              const rejectWithReason = () => {
+                if (settled) return;
+                settled = true;
+                firstCodexAbortElapsedMs = performance.now() - firstCodexStartedAt;
+                reject(signal.reason);
+              };
               if (signal.aborted) rejectWithReason();
               else signal.addEventListener("abort", rejectWithReason, { once: true });
             });
@@ -4007,6 +4015,12 @@ Deno.test("openai: transient Codex stalls never advance to paid fallback", async
             startedAtMs: Date.now(),
           });
           assert.equal(first.status, 504);
+          const abortElapsedMs = firstCodexAbortElapsedMs;
+          assert.ok(abortElapsedMs !== null);
+          assert.ok(
+            abortElapsedMs >= 120,
+            "Codex was aborted before its configured first-event budget: " + abortElapsedMs + "ms",
+          );
           assert.equal(first.headers.get("x-uos-upstream"), "chatgpt_codex");
           assert.equal(getResponseTelemetry(first)?.fallbackReason, null);
           assert.equal(getStoredPaidFallbackRequest(keyId, firstRequestId), null);
