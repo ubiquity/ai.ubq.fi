@@ -269,7 +269,7 @@ Deno.test("a newly deployed release supersedes and fences an unaccepted candidat
   assert.equal(persistedActivation.reason, "managed_candidate_superseded");
 });
 
-Deno.test("a pending rollback intent blocks candidate supersession", async () => {
+Deno.test("a pending rollback intent preserves its release identity until side effects complete", async () => {
   const currentRelease = release();
   const activation = initialSentinelBootstrapActivation(currentRelease, currentRelease.activated_at);
   let writes = 0;
@@ -287,15 +287,12 @@ Deno.test("a pending rollback intent blocks candidate supersession", async () =>
       return Promise.resolve();
     },
   };
-  await assert.rejects(
-    () =>
-      synchronizeObservedRelease(
-        state as never,
-        { sha: "4".repeat(40), revision: "revision-next" },
-        "2026-08-28T18:30:00.000Z",
-      ),
-    /rollback effects remain pending/,
+  const unchanged = await synchronizeObservedRelease(
+    state as never,
+    { sha: "4".repeat(40), revision: "revision-next" },
+    "2026-08-28T18:30:00.000Z",
   );
+  assert.equal(unchanged, currentRelease);
   assert.equal(writes, 0);
 });
 

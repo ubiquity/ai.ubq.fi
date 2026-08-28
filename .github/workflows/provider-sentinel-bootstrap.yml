@@ -39,7 +39,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          expected="b2693bb05208df52dd5b27f9234b8587d5d8361850131f14fc5f196e2aefff7f"
+          expected="c46bcd27e30172d3f3bb26a2b4e1f3d782124d578fcde94e199921bc26a8939c"
           actual="$(find scripts/sentinel/bootstrap -maxdepth 1 -type f -name '*.ts' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
           if [ "$actual" != "$expected" ]; then
             echo "::error::Protected bootstrap module digest mismatch."

@@ -154,6 +154,10 @@ export const synchronizeObservedRelease = async (
     await state.replaceRelease(initial);
     return initial;
   }
+  // Preserve the release/activation identities that own a durable rollback
+  // intent. The controller must finish those side effects before observation
+  // can advance or normalize either record.
+  if (current.rollback_intent !== null) return current.release;
   if (current.release.candidate_sha === observed.sha) {
     const currentGenerationHasFailure = current.signals.some((signal) =>
       signal.generation === current.release!.generation
@@ -203,9 +207,6 @@ export const synchronizeObservedRelease = async (
   }
   if (current.activation === null) {
     throw new Error("Managed Sentinel release changed before the prior candidate was reconciled");
-  }
-  if (current.release.candidate_sha !== null && current.rollback_intent !== null) {
-    throw new Error("Managed Sentinel release changed while prior rollback effects remain pending");
   }
   const generation = current.activation.generation + 1;
   const supersededCandidate = current.release.candidate_sha;
