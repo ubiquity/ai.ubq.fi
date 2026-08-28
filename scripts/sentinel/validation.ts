@@ -289,6 +289,7 @@ export const CANDIDATE_DENO_CHECK_ARGS = Object.freeze(
     "scripts/sentinel/encrypt-artifacts.ts",
     "scripts/sentinel/main.ts",
     "scripts/sentinel/revision-control.ts",
+    "scripts/sentinel/scrub-artifacts.ts",
   ] as const,
 );
 

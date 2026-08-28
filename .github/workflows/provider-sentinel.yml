@@ -1111,7 +1111,7 @@ jobs:
             echo "- Evidence artifact: encrypted AES-256-GCM ciphertext only"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Encrypt and scrub Sentinel evidence
+      - name: Encrypt and verify Sentinel evidence
         if: always() && env.SENTINEL_PLAINTEXT_SAFE == 'true'
         shell: bash
         env:
@@ -1122,16 +1122,13 @@ jobs:
           deno run \
             --allow-env=GITHUB_ACTIONS,SENTINEL_ARTIFACT_KEY \
             --allow-read=.sentinel/raw-logs,.sentinel/reports,.sentinel/encrypted \
-            --allow-write=.sentinel \
+            --allow-write=.sentinel/encrypted \
             scripts/sentinel/encrypt-artifacts.ts
-          test ! -e .sentinel/raw-logs
-          test ! -e .sentinel/reports
-          test ! -e .sentinel/candidate-worktree
-          test ! -e .sentinel/private
           test -f .sentinel/encrypted/sentinel-evidence-v1.json
           echo "SENTINEL_ARTIFACTS_SAFE=true" >> "$GITHUB_ENV"
 
       - name: Upload encrypted Sentinel evidence
+        id: sentinel-evidence-upload
         if: >-
           always() &&
           env.SENTINEL_ARTIFACTS_SAFE == 'true'
@@ -1142,6 +1139,24 @@ jobs:
           if-no-files-found: error
           include-hidden-files: true
           retention-days: 90
+
+      - name: Scrub Sentinel plaintext after evidence upload
+        if: >-
+          always() &&
+          env.SENTINEL_ARTIFACTS_SAFE == 'true' &&
+          steps.sentinel-evidence-upload.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno run \
+            --allow-env=GITHUB_ACTIONS \
+            --allow-read=.sentinel/raw-logs,.sentinel/reports,.sentinel/candidate-worktree,.sentinel/private \
+            --allow-write=.sentinel/raw-logs,.sentinel/reports,.sentinel/candidate-worktree,.sentinel/private \
+            scripts/sentinel/scrub-artifacts.ts
+          test ! -e .sentinel/raw-logs
+          test ! -e .sentinel/reports
+          test ! -e .sentinel/candidate-worktree
+          test ! -e .sentinel/private
 
       - name: Upload encrypted replay bundle
         if: >-

@@ -3,7 +3,7 @@ import {
   decryptSentinelArtifact,
   encryptSentinelArtifact,
 } from "../scripts/sentinel/artifact-crypto.ts";
-import { encryptAndScrubGeneratedEvidence } from "../scripts/sentinel/encrypt-artifacts.ts";
+import { encryptAndVerifyGeneratedEvidence, scrubGeneratedEvidence } from "../scripts/sentinel/encrypt-artifacts.ts";
 
 const requiredFileSystemPermissions = await Promise.all([
   Deno.permissions.query({ name: "read" }),
@@ -94,10 +94,14 @@ Deno.test({
       await Deno.writeTextFile(`${root}/raw-logs/deno.jsonl`, "new evidence");
       const output = `${root}/encrypted/sentinel-evidence-v1.json`;
       await Deno.writeFile(output, existing);
-      await assertRejects(() => encryptAndScrubGeneratedEvidence(root, key));
+      await assertRejects(() => encryptAndVerifyGeneratedEvidence(root, key));
       assert(
         equalBytes(await Deno.readFile(output), existing),
         "Pre-existing artifact was changed or removed",
+      );
+      assert(
+        await Deno.readTextFile(`${root}/raw-logs/deno.jsonl`) === "new evidence",
+        "Rejected encryption removed plaintext evidence",
       );
     } finally {
       key.fill(0);
@@ -125,7 +129,7 @@ Deno.test("Sentinel artifact key requires exactly 32 standard-base64 bytes", () 
 });
 
 Deno.test({
-  name: "Sentinel encryption verifies the bundle before scrubbing generated plaintext",
+  name: "Sentinel scrubs generated plaintext only after verified encryption is available for upload",
   ignore: fileSystemTestsUnavailable,
   async fn() {
     const root = await Deno.makeTempDir({ prefix: "sentinel-artifact-test-" });
@@ -142,12 +146,12 @@ Deno.test({
       await Deno.writeFile(`${root}/raw-logs/deno.jsonl`, raw);
       await Deno.writeFile(`${root}/reports/triage.json`, report);
       await Deno.writeFile(`${root}/reports/failed-implementation-candidate/files/0000.bin`, candidatePayload);
-      const result = await encryptAndScrubGeneratedEvidence(root, key);
+      const result = await encryptAndVerifyGeneratedEvidence(root, key);
       assert(result.fileCount === 3, "Unexpected encrypted file count");
-      await assertRejects(() => Deno.stat(`${root}/raw-logs`));
-      await assertRejects(() => Deno.stat(`${root}/reports`));
-      await assertRejects(() => Deno.stat(`${root}/candidate-worktree`));
-      await assertRejects(() => Deno.stat(`${root}/private`));
+      await Deno.stat(`${root}/raw-logs`);
+      await Deno.stat(`${root}/reports`);
+      await Deno.stat(`${root}/candidate-worktree`);
+      await Deno.stat(`${root}/private`);
       const encrypted = await Deno.readFile(result.outputPath);
       const decrypted = await decryptSentinelArtifact(encrypted, key);
       assert(
@@ -166,6 +170,12 @@ Deno.test({
       );
       assert(equalBytes(decrypted[2]!.bytes, report), "Report bytes differ");
       for (const file of decrypted) file.bytes.fill(0);
+      await scrubGeneratedEvidence(root);
+      await assertRejects(() => Deno.stat(`${root}/raw-logs`));
+      await assertRejects(() => Deno.stat(`${root}/reports`));
+      await assertRejects(() => Deno.stat(`${root}/candidate-worktree`));
+      await assertRejects(() => Deno.stat(`${root}/private`));
+      await Deno.stat(result.outputPath);
       encrypted.fill(0);
       raw.fill(0);
       report.fill(0);
@@ -202,6 +212,20 @@ Deno.test({
       !/Upload encrypted Sentinel evidence[\s\S]*?path:\s*\|[\s\S]*?\.sentinel\/(?:raw-logs|reports)/u
         .test(workflow),
       "Evidence upload must never use a plaintext directory",
+    );
+    const encryptionPosition = workflow.indexOf("- name: Encrypt and verify Sentinel evidence");
+    const uploadPosition = workflow.indexOf("- name: Upload encrypted Sentinel evidence");
+    const scrubPosition = workflow.indexOf("- name: Scrub Sentinel plaintext after evidence upload");
+    assert(
+      encryptionPosition >= 0 && uploadPosition > encryptionPosition && scrubPosition > uploadPosition,
+      "Verified ciphertext must upload before generated Sentinel plaintext is scrubbed",
+    );
+    const scrubStep = workflow.slice(scrubPosition, workflow.indexOf("\n      - name:", scrubPosition + 1));
+    assert(
+      workflow.slice(uploadPosition, scrubPosition).includes("id: sentinel-evidence-upload") &&
+        scrubStep.includes("steps.sentinel-evidence-upload.outcome == 'success'") &&
+        scrubStep.includes("scripts/sentinel/scrub-artifacts.ts"),
+      "Plaintext scrubbing must require a successful durable evidence upload",
     );
   },
 });
@@ -487,13 +511,27 @@ Deno.test({
       nonRuntimeLane.includes("runDocumentationValidation({") && !nonRuntimeLane.includes("runCandidateValidation({"),
       "Non-runtime backlog completion must use scoped documentation validation instead of the runtime suite",
     );
-    assert(
-      nonRuntimeLane.includes("pushTemporaryCandidate(checkout, branch, gitEnvironment)"),
-      "Non-runtime backlog completion must retain its exact candidate before the development push",
-    );
-    for (const forbidden of ["dispatchAndResolveRevision", "dispatchSerializedPromotion"]) {
+    for (
+      const forbidden of ["pushTemporaryCandidate", "dispatchAndResolveRevision", "dispatchSerializedPromotion"]
+    ) {
       assert(!nonRuntimeLane.includes(forbidden), `Non-runtime backlog completion must not call ${forbidden}`);
     }
+    const historyGate = nonRuntimeLane.indexOf("if (currentHead !== baseSha)");
+    const gitControlGate = nonRuntimeLane.indexOf("await assertGitControlStateUnchanged(gitControlState)");
+    const sensitiveValueGate = nonRuntimeLane.indexOf("await assertImplementationFilesExcludeValues(");
+    const gitleaksGate = nonRuntimeLane.indexOf("await scanCandidateWithGitleaks({");
+    const snapshotPermit = nonRuntimeLane.indexOf("snapshotAllowed = true");
+    const snapshotCapture = nonRuntimeLane.indexOf("await captureFailedCandidateSnapshot(");
+    assert(
+      historyGate >= 0 && gitControlGate > historyGate && sensitiveValueGate > gitControlGate &&
+        gitleaksGate > sensitiveValueGate && snapshotPermit > gitleaksGate && snapshotCapture > snapshotPermit,
+      "Non-runtime backlog failure evidence must pass history, Git-control, sensitive-value, and Gitleaks gates before snapshotting",
+    );
+    assert(
+      nonRuntimeLane.includes("preserved: false") &&
+        nonRuntimeLane.includes("safe candidate snapshot could not be preserved"),
+      "Unsafe or failed non-runtime snapshots must not claim durable preservation",
+    );
     const validationCommandStart = validation.indexOf("const runValidationCommand = async");
     const validationCommandEnd = validation.indexOf("export const runCandidateValidation", validationCommandStart);
     const validationCommand = validation.slice(validationCommandStart, validationCommandEnd);
@@ -643,6 +681,15 @@ Deno.test({
       "Retry deferral must synchronize nullable checkpoint state before discard and durable reports",
     );
     const checkpointPublishStart = orchestrator.indexOf("const publishGitHubIssueRetryCheckpoint = async");
+    const failedPreservationStart = orchestrator.indexOf("const preserveFailedImplementation = async");
+    const failedPreservationLane = orchestrator.slice(failedPreservationStart, checkpointPublishStart);
+    assert(
+      failedPreservationStart >= 0 && checkpointPublishStart > failedPreservationStart &&
+        failedPreservationLane.includes("candidate could not be preserved safely") &&
+        !failedPreservationLane.includes("pushTemporaryCandidate") &&
+        !failedPreservationLane.includes("commitChanges("),
+      "Failed implementation evidence must block discard when preservation fails and must never publish unvalidated refs",
+    );
     const checkpointPublishEnd = orchestrator.indexOf(
       "const deferGitHubIssueImplementationFailure = async",
       checkpointPublishStart,
@@ -752,7 +799,11 @@ Deno.test({
     );
     for (
       const [startNeedle, endNeedle, stage] of [
-        ["const nativeReviewStage = `native_review_", "    const rawReview =", "native_review_"],
+        [
+          "const nativeReviewStage = `native_review_",
+          "    const requiredBacklogFingerprint =",
+          "native_review_",
+        ],
         ["const stage = `implementation_review_fix_", "      continue;", "implementation_review_fix_"],
         ["const stage = `implementation_validation_fix_", "      continue;", "implementation_validation_fix_"],
         ["const replayEvaluationStage = `replay_evaluation_", "    break;", "replay_evaluation_"],
@@ -768,6 +819,16 @@ Deno.test({
         `${stage} infrastructure failures must enter the durable GitHub issue retry path`,
       );
     }
+    const validationStart = orchestrator.indexOf("const validationStage = `validation_");
+    const validationEnd = orchestrator.indexOf("await updateState(`preview_deploy_", validationStart);
+    const validationLane = orchestrator.slice(validationStart, validationEnd);
+    assert(
+      validationStart >= 0 && validationEnd > validationStart &&
+        validationLane.includes("await preserveFailedImplementation(error, validationStage, candidateSha)") &&
+        validationLane.indexOf("await preserveFailedImplementation(error, validationStage, candidateSha)") <
+          validationLane.indexOf("throw error;"),
+      "Terminal candidate validation failures must preserve safe encrypted evidence before failing",
+    );
     const retryPreviewStart = orchestrator.indexOf("const restoreGitHubIssuePreviewBeforeRetry = async");
     const retryPreviewEnd = orchestrator.indexOf("while (true)", retryPreviewStart);
     const retryPreviewLane = orchestrator.slice(retryPreviewStart, retryPreviewEnd);
