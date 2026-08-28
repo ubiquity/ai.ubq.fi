@@ -4,6 +4,10 @@ const SAFE_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/u;
 const CHECKPOINT_BRANCH = /^sentinel\/candidate-[1-9][0-9]*(?:-[1-9][0-9]*)?$/u;
 const SAFE_REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const SAFE_URL = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/(?:pull|actions\/runs)\/[1-9][0-9]*$/u;
+const WORKFLOW_RUN_ID = /^[1-9][0-9]*$/u;
+
+const currentWorkflowCandidateBranch = (branch: string, runId: string, runAttempt: number): boolean =>
+  CHECKPOINT_BRANCH.test(branch) && branch === `sentinel/candidate-${runId}-${runAttempt}`;
 
 export const ISSUE_COMPLETION_EVIDENCE_TEXT =
   "Delivered, merged, and verified in production; issue closed as completed.";
@@ -55,10 +59,39 @@ export type GitHubIssueRetryPendingReport = Readonly<{
   retry_checkpoint: GitHubIssueRetryCheckpointReport | null;
 }>;
 
+export type GitHubIssueManualRequiredRetainedCheckpointReport = Readonly<{
+  schema_version: 1;
+  issue_id: number;
+  issue_number: number;
+  fingerprint: string;
+  phase: "retry_checkpoint_resume_failed";
+  implementation_status: "blocked";
+  disposition: "manual_required";
+  retry_checkpoint: GitHubIssueRetryCheckpointReport;
+}>;
+
 export type GitHubIssueRetryCheckpointReport = Readonly<{
   branch: string;
   sha: string;
   base_sha: string;
+}>;
+
+/**
+ * A manual checkpoint preserves an unsafe candidate for a human. It has the
+ * same immutable Git identity shape as a retry checkpoint, but it is never a
+ * signal to resume or redeliver the candidate automatically.
+ */
+export type GitHubIssueManualCheckpointReport = GitHubIssueRetryCheckpointReport;
+
+export type GitHubIssueManualRequiredReport = Readonly<{
+  schema_version: 1;
+  issue_id: number;
+  issue_number: number;
+  fingerprint: string;
+  phase: "native_review_exhausted";
+  implementation_status: "blocked";
+  disposition: "manual_required";
+  retry_checkpoint: GitHubIssueManualCheckpointReport;
 }>;
 
 export type SentinelRetryPendingCycleReport = Readonly<{
@@ -78,6 +111,37 @@ export type SentinelRetryPendingCycleReport = Readonly<{
     | "remote_retained_atomic_push_in_flight"
     | "atomic_retry_push_requires_reconciliation";
   retry_checkpoint: GitHubIssueRetryCheckpointReport | null;
+}>;
+
+export type SentinelManualRequiredRetainedCheckpointCycleReport = Readonly<{
+  schema_version: 1;
+  run_id: string;
+  started_at: string;
+  base_development_sha: string;
+  candidate_sha: string;
+  temporary_branch: string;
+  status: "running" | "no_change";
+  stage: "pushing_manual_github_issue" | "complete";
+  branch_disposition: "runner_local_pending_review" | "development_docs_only_issue_manual_required";
+  retry_checkpoint: GitHubIssueRetryCheckpointReport;
+}>;
+
+export type SentinelManualRequiredCycleReport = Readonly<{
+  schema_version: 1;
+  run_id: string;
+  started_at: string;
+  base_development_sha: string;
+  candidate_sha: string;
+  temporary_branch: string;
+  status: "running" | "no_change" | "failed";
+  stage: "pushing_manual_required_github_issue" | "complete" | "failed";
+  branch_disposition:
+    | "runner_local_manual_atomic_push_in_flight"
+    | "remote_retained_manual_atomic_push_in_flight"
+    | "atomic_manual_push_accepted_unverified"
+    | "remote_retained_issue_manual_required"
+    | "atomic_manual_push_requires_reconciliation";
+  retry_checkpoint: GitHubIssueManualCheckpointReport;
 }>;
 
 export type GitPushUpdate = Readonly<{
@@ -104,7 +168,10 @@ const nonNegativeInteger = (value: unknown): value is number => Number.isSafeInt
 const isoTimestamp = (value: unknown): value is string =>
   typeof value === "string" && Number.isFinite(Date.parse(value)) && /^\d{4}-\d{2}-\d{2}T/u.test(value);
 
-const parseRetryCheckpoint = (value: unknown): GitHubIssueRetryCheckpointReport | null => {
+const parseCheckpoint = (
+  value: unknown,
+  label: "manual" | "retry",
+): GitHubIssueRetryCheckpointReport | null => {
   if (value === null) return null;
   const checkpoint = record(value);
   if (
@@ -113,9 +180,15 @@ const parseRetryCheckpoint = (value: unknown): GitHubIssueRetryCheckpointReport 
     typeof checkpoint.sha !== "string" || !FULL_SHA.test(checkpoint.sha) ||
     typeof checkpoint.base_sha !== "string" || !FULL_SHA.test(checkpoint.base_sha) ||
     checkpoint.sha === checkpoint.base_sha
-  ) throw new Error("Sentinel retry checkpoint report is invalid");
+  ) throw new Error(`Sentinel ${label} checkpoint report is invalid`);
   return { branch: checkpoint.branch, sha: checkpoint.sha, base_sha: checkpoint.base_sha };
 };
+
+const parseRetryCheckpoint = (value: unknown): GitHubIssueRetryCheckpointReport | null =>
+  parseCheckpoint(value, "retry");
+
+const parseManualCheckpoint = (value: unknown): GitHubIssueManualCheckpointReport | null =>
+  parseCheckpoint(value, "manual");
 
 export const parseGitHubIssueSelectionReport = (value: unknown): GitHubIssueSelectionReport => {
   const selection = record(value);
@@ -174,6 +247,78 @@ export const parseGitHubIssueRetryPendingReport = (
   };
 };
 
+export const parseGitHubIssueManualRequiredRetainedCheckpointReport = (
+  value: unknown,
+  expected: Readonly<{ issueId: number; issueNumber: number; fingerprint: string }>,
+): GitHubIssueManualRequiredRetainedCheckpointReport => {
+  const report = record(value);
+  if (
+    !positiveInteger(expected.issueId) || !positiveInteger(expected.issueNumber) ||
+    !SHA256.test(expected.fingerprint) || report?.schema_version !== 1 ||
+    report.issue_id !== expected.issueId || report.issue_number !== expected.issueNumber ||
+    report.fingerprint !== expected.fingerprint || report.phase !== "retry_checkpoint_resume_failed" ||
+    report.implementation_status !== "blocked" || report.disposition !== "manual_required"
+  ) {
+    throw new Error("Sentinel retained-checkpoint manual disposition does not match the exact issue selection");
+  }
+  const retryCheckpoint = parseRetryCheckpoint(report.retry_checkpoint);
+  if (retryCheckpoint === null) {
+    throw new Error("Sentinel retained-checkpoint manual disposition has no durable retry checkpoint");
+  }
+  return {
+    schema_version: 1,
+    issue_id: expected.issueId,
+    issue_number: expected.issueNumber,
+    fingerprint: expected.fingerprint,
+    phase: "retry_checkpoint_resume_failed",
+    implementation_status: "blocked",
+    disposition: "manual_required",
+    retry_checkpoint: retryCheckpoint,
+  };
+};
+
+export const parseGitHubIssueManualRequiredReport = (
+  value: unknown,
+  expected: Readonly<{ issueId: number; issueNumber: number; fingerprint: string }>,
+): GitHubIssueManualRequiredReport => {
+  const report = record(value);
+  const expectedKeys = [
+    "schema_version",
+    "issue_id",
+    "issue_number",
+    "fingerprint",
+    "phase",
+    "implementation_status",
+    "disposition",
+    "retry_checkpoint",
+  ].sort();
+  if (
+    !positiveInteger(expected.issueId) || !positiveInteger(expected.issueNumber) ||
+    !SHA256.test(expected.fingerprint) || !report ||
+    JSON.stringify(Object.keys(report).sort()) !== JSON.stringify(expectedKeys) ||
+    report.schema_version !== 1 || report.issue_id !== expected.issueId ||
+    report.issue_number !== expected.issueNumber || report.fingerprint !== expected.fingerprint ||
+    report.phase !== "native_review_exhausted" || report.implementation_status !== "blocked" ||
+    report.disposition !== "manual_required"
+  ) {
+    throw new Error("Sentinel manual-checkpoint disposition does not match the exact issue selection");
+  }
+  const checkpoint = parseManualCheckpoint(report.retry_checkpoint);
+  if (checkpoint === null) {
+    throw new Error("Sentinel manual-checkpoint disposition requires an immutable candidate");
+  }
+  return {
+    schema_version: 1,
+    issue_id: expected.issueId,
+    issue_number: expected.issueNumber,
+    fingerprint: expected.fingerprint,
+    phase: "native_review_exhausted",
+    implementation_status: "blocked",
+    disposition: "manual_required",
+    retry_checkpoint: checkpoint,
+  };
+};
+
 export const parseSentinelRetryPendingCycleReport = (
   value: unknown,
   expected: Readonly<{
@@ -222,6 +367,95 @@ export const parseSentinelRetryPendingCycleReport = (
     stage: expected.stage,
     branch_disposition: cycle.branch_disposition as SentinelRetryPendingCycleReport["branch_disposition"],
     retry_checkpoint: retryCheckpoint,
+  };
+};
+
+export const parseSentinelManualRequiredRetainedCheckpointCycleReport = (
+  value: unknown,
+  expected: Readonly<{
+    runId: string;
+    status: SentinelManualRequiredRetainedCheckpointCycleReport["status"];
+    stage: SentinelManualRequiredRetainedCheckpointCycleReport["stage"];
+    branchDisposition: SentinelManualRequiredRetainedCheckpointCycleReport["branch_disposition"];
+  }>,
+): SentinelManualRequiredRetainedCheckpointCycleReport => {
+  const cycle = record(value);
+  if (
+    expected.runId.length === 0 || expected.runId.length > 200 ||
+    !cycle || cycle.schema_version !== 1 || cycle.run_id !== expected.runId ||
+    typeof cycle.started_at !== "string" || !isoTimestamp(cycle.started_at) ||
+    typeof cycle.base_development_sha !== "string" || !FULL_SHA.test(cycle.base_development_sha) ||
+    typeof cycle.candidate_sha !== "string" || !FULL_SHA.test(cycle.candidate_sha) ||
+    cycle.candidate_sha === cycle.base_development_sha ||
+    typeof cycle.temporary_branch !== "string" || !CHECKPOINT_BRANCH.test(cycle.temporary_branch) ||
+    cycle.status !== expected.status || cycle.stage !== expected.stage ||
+    cycle.branch_disposition !== expected.branchDisposition
+  ) {
+    throw new Error("Sentinel retained-checkpoint manual cycle report is invalid");
+  }
+  const retryCheckpoint = parseRetryCheckpoint(cycle.retry_checkpoint);
+  if (retryCheckpoint === null || retryCheckpoint.branch === cycle.temporary_branch) {
+    throw new Error("Sentinel retained-checkpoint manual cycle is not bound to a prior attempt");
+  }
+  return {
+    schema_version: 1,
+    run_id: expected.runId,
+    started_at: cycle.started_at,
+    base_development_sha: cycle.base_development_sha,
+    candidate_sha: cycle.candidate_sha,
+    temporary_branch: cycle.temporary_branch,
+    status: expected.status,
+    stage: expected.stage,
+    branch_disposition: expected.branchDisposition,
+    retry_checkpoint: retryCheckpoint,
+  };
+};
+
+export const parseSentinelManualRequiredCycleReport = (
+  value: unknown,
+  expected: Readonly<{
+    runId: string;
+    runAttempt: number;
+    stage: SentinelManualRequiredCycleReport["stage"];
+    status: SentinelManualRequiredCycleReport["status"];
+    branchDispositions: readonly SentinelManualRequiredCycleReport["branch_disposition"][];
+  }>,
+): SentinelManualRequiredCycleReport => {
+  const cycle = record(value);
+  if (
+    !WORKFLOW_RUN_ID.test(expected.runId) || !positiveInteger(expected.runAttempt) ||
+    !cycle || cycle.schema_version !== 1 || cycle.run_id !== expected.runId ||
+    typeof cycle.started_at !== "string" || !isoTimestamp(cycle.started_at) ||
+    typeof cycle.base_development_sha !== "string" || !FULL_SHA.test(cycle.base_development_sha) ||
+    typeof cycle.candidate_sha !== "string" || !FULL_SHA.test(cycle.candidate_sha) ||
+    typeof cycle.temporary_branch !== "string" ||
+    !currentWorkflowCandidateBranch(cycle.temporary_branch, expected.runId, expected.runAttempt) ||
+    cycle.status !== expected.status || cycle.stage !== expected.stage ||
+    expected.branchDispositions.length === 0 ||
+    !expected.branchDispositions.includes(
+      cycle.branch_disposition as SentinelManualRequiredCycleReport["branch_disposition"],
+    )
+  ) {
+    throw new Error("Sentinel manual-checkpoint cycle report is invalid");
+  }
+  const checkpoint = parseManualCheckpoint(cycle.retry_checkpoint);
+  if (
+    checkpoint === null || checkpoint.branch !== cycle.temporary_branch ||
+    checkpoint.base_sha !== cycle.base_development_sha || checkpoint.sha === cycle.candidate_sha
+  ) {
+    throw new Error("Sentinel manual-checkpoint cycle does not match its immutable candidate");
+  }
+  return {
+    schema_version: 1,
+    run_id: expected.runId,
+    started_at: cycle.started_at,
+    base_development_sha: cycle.base_development_sha,
+    candidate_sha: cycle.candidate_sha,
+    temporary_branch: cycle.temporary_branch,
+    status: expected.status,
+    stage: expected.stage,
+    branch_disposition: cycle.branch_disposition as SentinelManualRequiredCycleReport["branch_disposition"],
+    retry_checkpoint: checkpoint,
   };
 };
 
@@ -334,6 +568,20 @@ export const selectRetryCheckpointPush = (
     matches[0]!.localSha !== checkpoint.sha
   ) {
     throw new Error("Sentinel retry-pending push has no exact checkpoint update");
+  }
+  return matches[0]!;
+};
+
+export const selectManualCheckpointPush = (
+  updates: readonly GitPushUpdate[],
+  checkpoint: GitHubIssueManualCheckpointReport,
+): GitPushUpdate => {
+  const matches = updates.filter((update) => update.remoteRef === `refs/heads/${checkpoint.branch}`);
+  if (
+    matches.length !== 1 || matches[0]!.localRef !== checkpoint.sha ||
+    matches[0]!.localSha !== checkpoint.sha
+  ) {
+    throw new Error("Sentinel manual-checkpoint push has no exact candidate update");
   }
   return matches[0]!;
 };

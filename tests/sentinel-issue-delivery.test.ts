@@ -28,9 +28,12 @@ import {
   completionEvidenceSnapshotMatches,
   mergeDeliveryPullRequest,
   readGitHubCommitRefSha,
+  requireCurrentOpenManualIssueSnapshot,
+  validateManualRequiredRetainedCheckpointReconciliation,
+  validateNativeReviewExhaustedManualCheckpointReconciliation,
   validateRetryPendingIssueReconciliation,
 } from "../scripts/sentinel/issue-delivery-reconcile.ts";
-import type { GitHubIssueComment } from "../scripts/sentinel/github.ts";
+import type { GitHubIssue, GitHubIssueComment } from "../scripts/sentinel/github.ts";
 
 const inertIssueComments = (count: number): readonly GitHubIssueComment[] =>
   Array.from({ length: count }, (_, index) => ({
@@ -141,6 +144,106 @@ const retryPendingLedger = renderGitHubIssueJobLedger([{
   disposition: "retry_pending",
 }]);
 
+const manualSnapshotIssue: GitHubIssue = {
+  id: 5228586365,
+  nodeId: "I_kwDOQoe6nc8AAAABN6XlfB",
+  number: 113,
+  state: "open" as const,
+  title: "Bounded manual checkpoint issue",
+  body: "Implement the bounded change.\n\nAcceptance:\n- The change is complete.\n\nFiles:\n- src/admin.ts\n",
+  htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/113",
+  authorLogin: "0x4007",
+  authorAssociation: "MEMBER",
+  labels: ["Priority: 2 (Medium)", "Time: <1 Day"],
+  assignees: [],
+  locked: false,
+  comments: 0,
+  createdAt: "2026-08-28T00:00:00Z",
+  updatedAt: "2026-08-28T00:00:01Z",
+  isPullRequest: false,
+};
+
+const manualSnapshotRelations = {
+  parentIssueNumber: null,
+  subIssueCount: 0,
+  blockedByCount: 0,
+  blockingCount: 0,
+  latestBodyEdit: null,
+  latestTitleEdit: null,
+};
+
+const manualSnapshotSelection = async () => {
+  const job = await createGitHubIssueJob(
+    "ubiquity/ai.ubq.fi",
+    manualSnapshotIssue,
+    manualSnapshotRelations,
+    "admin",
+    1_440,
+  );
+  assert.ok(job);
+  return parseGitHubIssueSelectionReport({
+    schema_version: 1,
+    issue_id: job.issueId,
+    issue_number: job.number,
+    fingerprint: job.fingerprint,
+    body_sha256: job.bodySha256,
+    comments: job.comments,
+    priority: job.priority,
+    time_label: job.timeLabel,
+    files: job.files,
+    updated_at: job.updatedAt,
+  });
+};
+
+const manualSnapshotFetcher = (
+  issue: GitHubIssue,
+): typeof fetch =>
+(input) => {
+  const url = new URL(input instanceof Request ? input.url : String(input));
+  if (url.pathname === `/repos/ubiquity/ai.ubq.fi/issues/${issue.number}`) {
+    return Promise.resolve(Response.json({
+      id: issue.id,
+      node_id: issue.nodeId,
+      number: issue.number,
+      state: issue.state,
+      title: issue.title,
+      body: issue.body,
+      html_url: issue.htmlUrl,
+      user: { login: issue.authorLogin },
+      author_association: issue.authorAssociation,
+      labels: issue.labels.map((name) => ({ name })),
+      assignees: issue.assignees,
+      locked: issue.locked,
+      comments: issue.comments,
+      created_at: issue.createdAt,
+      updated_at: issue.updatedAt,
+    }));
+  }
+  if (url.pathname === `/repos/ubiquity/ai.ubq.fi/issues/${issue.number}/sub_issues`) {
+    return Promise.resolve(Response.json([]));
+  }
+  if (url.pathname === "/graphql") {
+    return Promise.resolve(Response.json({
+      data: {
+        repository: {
+          issue: {
+            editor: null,
+            lastEditedAt: null,
+            timelineItems: { totalCount: 0, nodes: [] },
+            parent: null,
+            blockedBy: { totalCount: 0 },
+            blocking: { totalCount: 0 },
+          },
+        },
+      },
+    }));
+  }
+  if (url.pathname === `/repos/ubiquity/ai.ubq.fi/collaborators/${issue.authorLogin}/permission`) {
+    return Promise.resolve(Response.json({ permission: "admin" }));
+  }
+  return Promise.reject(new Error(`Unexpected GitHub request: ${url}`));
+};
+
 Deno.test("GitHub issue time labels accept deterministic estimates through one day", () => {
   assert.equal(parseGitHubIssueTimeLabel("Time: <15 Minutes"), 15);
   assert.equal(parseGitHubIssueTimeLabel("Time: <1 Hour"), 60);
@@ -193,6 +296,44 @@ Deno.test("the production issue selector accepts a canonical estimate through on
     renderGitHubIssueJobLedger([]),
   );
   assert.equal(selected?.timeLabel, "Time: <1 Day");
+});
+
+Deno.test("both manual reconciliation paths require the original open issue snapshot", async () => {
+  const selected = await manualSnapshotSelection();
+  const matchingInput = {
+    token: "test-token",
+    repository: "ubiquity/ai.ubq.fi",
+    selection: selected,
+  };
+
+  await requireCurrentOpenManualIssueSnapshot({
+    ...matchingInput,
+    fetcher: manualSnapshotFetcher(manualSnapshotIssue),
+  });
+
+  for (
+    const changedIssue of [
+      {
+        ...manualSnapshotIssue,
+        state: "closed" as const,
+        updatedAt: "2026-08-28T00:01:00Z",
+      },
+      {
+        ...manualSnapshotIssue,
+        title: "Changed bounded manual checkpoint issue",
+        updatedAt: "2026-08-28T00:01:00Z",
+      },
+    ]
+  ) {
+    await assert.rejects(
+      () =>
+        requireCurrentOpenManualIssueSnapshot({
+          ...matchingInput,
+          fetcher: manualSnapshotFetcher(changedIssue),
+        }),
+      /issue snapshot changed or is no longer open/u,
+    );
+  }
 });
 
 Deno.test("retry-pending reconciliation validates a durable no-delivery receipt", () => {
@@ -478,6 +619,161 @@ Deno.test("failed atomic retry reconciliation requires exact durable remote refs
         checkpointSha: resumedCheckpoint.sha,
       },
     })
+  );
+});
+
+Deno.test("native review exhaustion reconciliation requires the exact atomic manual receipt", () => {
+  const checkpoint = {
+    branch: "sentinel/candidate-123456789-2",
+    sha: "f".repeat(40),
+    base_sha: "d".repeat(40),
+  };
+  const disposition = {
+    schema_version: 1,
+    issue_id: selection.issue_id,
+    issue_number: selection.issue_number,
+    fingerprint: selection.fingerprint,
+    phase: "native_review_exhausted",
+    implementation_status: "blocked",
+    disposition: "manual_required",
+    retry_checkpoint: checkpoint,
+  };
+  const cycle = {
+    schema_version: 1,
+    run_id: "123456789",
+    started_at: "2026-08-28T00:00:00Z",
+    base_development_sha: checkpoint.base_sha,
+    candidate_sha: "e".repeat(40),
+    temporary_branch: checkpoint.branch,
+    status: "no_change",
+    stage: "complete",
+    branch_disposition: "remote_retained_issue_manual_required",
+    retry_checkpoint: checkpoint,
+  };
+  const manualLedger = (recordedAt = "2026-08-28T00:01:00Z") =>
+    renderGitHubIssueJobLedger([{
+      ...parseGitHubIssueJobLedger(retryPendingLedger)[0]!,
+      recordedAt,
+      baseSha: checkpoint.base_sha,
+      checkpoint: { branch: checkpoint.branch, sha: checkpoint.sha, baseSha: checkpoint.base_sha },
+      disposition: "manual_required",
+    }]);
+  const input: Parameters<typeof validateNativeReviewExhaustedManualCheckpointReconciliation>[0] = {
+    workflowRunId: cycle.run_id,
+    workflowRunAttempt: 2,
+    workflowFailed: false,
+    selection,
+    cycleValue: cycle,
+    dispositionValue: disposition,
+    pullRequestReportPresent: false,
+    productionOutcomeReportPresent: false,
+    developmentLedgerMarkdown: manualLedger(),
+    remoteRefs: {
+      developmentSha: cycle.candidate_sha,
+      checkpointSha: checkpoint.sha,
+    },
+  };
+
+  assert.doesNotThrow(() => validateNativeReviewExhaustedManualCheckpointReconciliation(input));
+  assert.doesNotThrow(() =>
+    validateNativeReviewExhaustedManualCheckpointReconciliation({
+      ...input,
+      workflowFailed: true,
+      cycleValue: {
+        ...cycle,
+        status: "failed",
+        stage: "failed",
+        branch_disposition: "atomic_manual_push_requires_reconciliation",
+      },
+    })
+  );
+
+  for (
+    const [overrides, pattern] of [
+      [{ remoteRefs: { ...input.remoteRefs, developmentSha: "1".repeat(40) } }, /exact durable remote refs/u],
+      [{ remoteRefs: { ...input.remoteRefs, checkpointSha: "1".repeat(40) } }, /exact durable remote refs/u],
+      [{ remoteRefs: { developmentSha: "", checkpointSha: "" } }, /exact durable remote refs/u],
+      [{ developmentLedgerMarkdown: manualLedger("2026-08-27T23:59:59Z") }, /exact durable ledger row/u],
+      [{ pullRequestReportPresent: true }, /cannot contain delivery or production records/u],
+      [{ productionOutcomeReportPresent: true }, /cannot contain delivery or production records/u],
+      [{ workflowRunAttempt: 3 }, /manual-checkpoint cycle report is invalid/u],
+      [{
+        cycleValue: {
+          ...cycle,
+          temporary_branch: "sentinel/candidate-123456789-3",
+          retry_checkpoint: { ...checkpoint, branch: "sentinel/candidate-123456789-3" },
+        },
+      }, /manual-checkpoint cycle report is invalid/u],
+      [{ workflowFailed: true }, /manual-checkpoint cycle report is invalid/u],
+    ] as const
+  ) {
+    assert.throws(
+      () => validateNativeReviewExhaustedManualCheckpointReconciliation({ ...input, ...overrides }),
+      pattern,
+    );
+  }
+});
+
+Deno.test("retained checkpoint manual reconciliation stays docs-only and exact", () => {
+  const checkpoint = {
+    branch: "sentinel/candidate-123456700-1",
+    sha: "f".repeat(40),
+    base_sha: "c".repeat(40),
+  };
+  const disposition = {
+    schema_version: 1,
+    issue_id: selection.issue_id,
+    issue_number: selection.issue_number,
+    fingerprint: selection.fingerprint,
+    phase: "retry_checkpoint_resume_failed",
+    implementation_status: "blocked",
+    disposition: "manual_required",
+    retry_checkpoint: checkpoint,
+  };
+  const cycle = {
+    schema_version: 1,
+    run_id: "123456789",
+    started_at: "2026-08-28T00:00:00Z",
+    base_development_sha: "d".repeat(40),
+    candidate_sha: "e".repeat(40),
+    temporary_branch: "sentinel/candidate-123456789-2",
+    status: "no_change",
+    stage: "complete",
+    branch_disposition: "development_docs_only_issue_manual_required",
+    retry_checkpoint: checkpoint,
+  };
+  const input: Parameters<typeof validateManualRequiredRetainedCheckpointReconciliation>[0] = {
+    workflowRunId: cycle.run_id,
+    selection,
+    cycleValue: cycle,
+    dispositionValue: disposition,
+    pullRequestReportPresent: false,
+    productionOutcomeReportPresent: false,
+    developmentLedgerMarkdown: renderGitHubIssueJobLedger([{
+      ...parseGitHubIssueJobLedger(retryPendingLedger)[0]!,
+      recordedAt: "2026-08-28T00:01:00Z",
+      baseSha: checkpoint.base_sha,
+      checkpoint: { branch: checkpoint.branch, sha: checkpoint.sha, baseSha: checkpoint.base_sha },
+      disposition: "manual_required",
+    }]),
+    remoteRefs: {
+      developmentSha: cycle.candidate_sha,
+      checkpointSha: checkpoint.sha,
+    },
+  };
+
+  assert.doesNotThrow(() => validateManualRequiredRetainedCheckpointReconciliation(input));
+  assert.throws(
+    () => validateManualRequiredRetainedCheckpointReconciliation({ ...input, pullRequestReportPresent: true }),
+    /cannot contain delivery or production records/u,
+  );
+  assert.throws(
+    () =>
+      validateManualRequiredRetainedCheckpointReconciliation({
+        ...input,
+        remoteRefs: { ...input.remoteRefs, checkpointSha: "1".repeat(40) },
+      }),
+    /exact durable remote refs/u,
   );
 });
 

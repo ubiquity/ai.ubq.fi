@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import type { GitHubActionsClient, GitHubArtifact } from "../scripts/sentinel/github.ts";
 import {
   aggregateCandidateChangedPaths,
+  assertGitHubIssueManualCheckpointCodeTreeEquivalent,
   captureFailedCandidateSnapshot,
   loadMatchingRetainedCaptures,
   prepareImmutableTemporaryCheckpoint,
@@ -13,8 +14,15 @@ import {
   RetryCheckpointResumeError,
   retryCheckpointResumeFailureDisposition,
   reviewBacklogAffectedPathChangedAtSelectedBase,
+  sentinelTemporaryCandidateBranch,
   writeReplayArtifactMetadata,
 } from "../scripts/sentinel/main.ts";
+import {
+  applyGitHubIssueJobDisposition,
+  type GitHubIssueJob,
+  parseGitHubIssueJobLedger,
+  renderGitHubIssueJobLedger,
+} from "../scripts/sentinel/issues.ts";
 import { captureRawDenoLogs, persistCandidateValidationFailure } from "../scripts/sentinel/validation.ts";
 import { type ExportedSentinelReplayCapture, SENTINEL_REPLAY_TTL_MS } from "../src/sentinel_replay_capture.ts";
 
@@ -556,6 +564,296 @@ Deno.test({
         (await git(["ls-remote", "--heads", "origin", "refs/heads/development"])).split("\t")[0],
         advancedDevelopmentSha,
       );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "native-review exhaustion atomically retains an exact manual candidate or makes no false remote claim",
+  ignore: requiredPermissions.some((permission) => permission.state !== "granted"),
+  async fn() {
+    const root = await Deno.makeTempDir({ prefix: "sentinel-manual-checkpoint-publish-" });
+    const remote = `${root}/remote.git`;
+    const checkout = `${root}/checkout`;
+    const git = async (cwd: string, args: string[]): Promise<string> => {
+      const output = await new Deno.Command("git", {
+        args,
+        cwd,
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      if (!output.success) throw new Error(new TextDecoder().decode(output.stderr));
+      return new TextDecoder().decode(output.stdout).trim();
+    };
+    const manualIssue = (number: number, fingerprintCharacter: string): GitHubIssueJob => ({
+      repository: "ubiquity/ai.ubq.fi",
+      issueId: 5_000_000_000 + number,
+      nodeId: `I_kwDOQoe6nc8AAAABN6X${number}`,
+      number,
+      htmlUrl: `https://github.com/ubiquity/ai.ubq.fi/issues/${number}`,
+      title: `Retain reviewed issue ${number}`,
+      body: "Retain the exact declared candidate after review exhaustion.",
+      bodySha256: "b".repeat(64),
+      fingerprint: fingerprintCharacter.repeat(64),
+      priority: "P2",
+      priorityLabel: "Priority: 3 (High)",
+      timeLabel: "Time: <1 Hour",
+      intake: "owner_backlog",
+      labels: ["Priority: 3 (High)", "Time: <1 Hour"],
+      files: ["src/declared.ts", "src/declared-new.ts"],
+      acceptance: ["The candidate remains available for manual review."],
+      authorLogin: "0x4007",
+      authorAssociation: "MEMBER",
+      comments: 0,
+      createdAt: "2026-08-28T00:00:00Z",
+      updatedAt: "2026-08-28T00:00:00Z",
+      relations: {
+        parentIssueNumber: null,
+        subIssueCount: 0,
+        blockedByCount: 0,
+        blockingCount: 0,
+        latestBodyEdit: null,
+        latestTitleEdit: null,
+      },
+    });
+    const remoteSha = async (ref: string): Promise<string | null> => {
+      const result = await git(checkout, ["ls-remote", "--heads", "origin", ref]);
+      return result.length === 0 ? null : result.split("\t")[0]!;
+    };
+    try {
+      const baseLedger = renderGitHubIssueJobLedger([]);
+      await Deno.mkdir(`${checkout}/src`, { recursive: true });
+      await Deno.mkdir(`${checkout}/docs`, { recursive: true });
+      await new Deno.Command("git", { args: ["init", "--bare", remote] }).output();
+      await git(checkout, ["init", "-b", "development"]);
+      await git(checkout, ["config", "user.name", "Sentinel Test"]);
+      await git(checkout, ["config", "user.email", "sentinel@example.invalid"]);
+      await Deno.writeTextFile(`${checkout}/src/declared.ts`, "export const selected = 'base';\n");
+      await Deno.writeTextFile(`${checkout}/docs/sentinel-issue-jobs.md`, baseLedger);
+      await Deno.writeTextFile(`${checkout}/docs/sentinel-review-backlog.md`, "# Sentinel review backlog\n\n");
+      await git(checkout, ["add", "src", "docs"]);
+      await git(checkout, ["commit", "-m", "base"]);
+      const baseSha = await git(checkout, ["rev-parse", "HEAD"]);
+      await git(checkout, ["remote", "add", "origin", remote]);
+      await git(checkout, ["push", "origin", "development"]);
+
+      const branch = sentinelTemporaryCandidateBranch("33177664067", 1);
+      assert.equal(branch, "sentinel/candidate-33177664067-1");
+      await git(checkout, ["switch", "-c", branch]);
+      await Deno.writeTextFile(`${checkout}/src/declared.ts`, "export const selected = 'reviewed';\n");
+      await Deno.writeTextFile(`${checkout}/src/declared-new.ts`, "export const reviewOnly = true;\n");
+      await Deno.writeTextFile(`${checkout}/docs/sentinel-issue-jobs.md`, `${baseLedger}\nreview-only ledger state\n`);
+      await Deno.writeTextFile(`${checkout}/docs/sentinel-review-backlog.md`, "review-only backlog state\n");
+      await git(checkout, ["add", "src", "docs"]);
+      await git(checkout, ["commit", "-m", "reviewed candidate"]);
+      const reviewedCandidateSha = await git(checkout, ["rev-parse", "HEAD"]);
+
+      await git(checkout, [
+        "restore",
+        "--source",
+        baseSha,
+        "--staged",
+        "--worktree",
+        "--",
+        "docs/sentinel-issue-jobs.md",
+        "docs/sentinel-review-backlog.md",
+      ]);
+      await git(checkout, ["commit", "-m", "restore trusted controls for manual checkpoint"]);
+      const checkpointSha = await git(checkout, ["rev-parse", "HEAD"]);
+      assert.deepEqual(
+        await assertGitHubIssueManualCheckpointCodeTreeEquivalent({
+          checkout,
+          baseSha,
+          reviewedCandidateSha,
+          checkpointSha,
+          allowedPaths: manualIssue(136, "c").files,
+        }),
+        {
+          reviewedCodePaths: ["src/declared-new.ts", "src/declared.ts"],
+          checkpointCodePaths: ["src/declared-new.ts", "src/declared.ts"],
+        },
+      );
+      assert.equal(
+        await git(checkout, [
+          "ls-tree",
+          reviewedCandidateSha,
+          "--",
+          "src/declared.ts",
+          "src/declared-new.ts",
+        ]),
+        await git(checkout, [
+          "ls-tree",
+          checkpointSha,
+          "--",
+          "src/declared.ts",
+          "src/declared-new.ts",
+        ]),
+      );
+      assert.equal(
+        await git(checkout, ["show", `${checkpointSha}:docs/sentinel-issue-jobs.md`]),
+        await git(checkout, ["show", `${baseSha}:docs/sentinel-issue-jobs.md`]),
+      );
+      assert.equal(
+        await git(checkout, ["show", `${checkpointSha}:docs/sentinel-review-backlog.md`]),
+        await git(checkout, ["show", `${baseSha}:docs/sentinel-review-backlog.md`]),
+      );
+      assert.equal(await remoteSha(`refs/heads/${branch}`), null);
+
+      await git(checkout, ["switch", "development"]);
+      await git(checkout, ["reset", "--hard", baseSha]);
+      const checkpoint = { branch, sha: checkpointSha, baseSha };
+      const issue = manualIssue(136, "c");
+      const manualLedger = applyGitHubIssueJobDisposition(
+        baseLedger,
+        issue,
+        baseSha,
+        new Date("2026-08-28T00:30:00Z"),
+        "manual_required",
+        checkpoint,
+      );
+      assert.deepEqual(
+        parseGitHubIssueJobLedger(manualLedger).map((entry) => ({
+          number: entry.number,
+          disposition: entry.disposition,
+          checkpoint: entry.checkpoint,
+        })),
+        [{ number: 136, disposition: "manual_required", checkpoint }],
+      );
+      await Deno.writeTextFile(`${checkout}/docs/sentinel-issue-jobs.md`, manualLedger);
+      await git(checkout, ["add", "docs/sentinel-issue-jobs.md"]);
+      await git(checkout, ["commit", "-m", "record manual review requirement"]);
+      const dispositionSha = await git(checkout, ["rev-parse", "HEAD"]);
+      assert.equal(
+        await git(checkout, ["rev-list", "--parents", "-n", "1", dispositionSha]),
+        `${dispositionSha} ${baseSha}`,
+      );
+      assert.deepEqual(
+        (await git(checkout, ["diff-tree", "--no-commit-id", "--name-only", "-r", dispositionSha]))
+          .split("\n")
+          .filter(Boolean),
+        ["docs/sentinel-issue-jobs.md"],
+      );
+
+      const preReceiveLog = `${root}/pre-receive-updates`;
+      await Deno.writeTextFile(
+        `${remote}/hooks/pre-receive`,
+        '#!/bin/sh\nif [ -n "$SENTINEL_TEST_PRE_RECEIVE_LOG" ]; then cat > "$SENTINEL_TEST_PRE_RECEIVE_LOG"; else cat > /dev/null; fi\n',
+      );
+      await Deno.chmod(`${remote}/hooks/pre-receive`, 0o700);
+      let atomicPushStartingCalls = 0;
+      let atomicPushAcceptedCalls = 0;
+      await pushRetryPendingRefsAtomically({
+        checkout,
+        developmentSha: dispositionSha,
+        checkpoint,
+        expectedRemoteCheckpointSha: null,
+        gitEnvironment: { SENTINEL_TEST_PRE_RECEIVE_LOG: preReceiveLog },
+        onAtomicPushStarting: () => {
+          atomicPushStartingCalls += 1;
+          return Promise.resolve();
+        },
+        onAtomicPushAcceptedUnverified: () => {
+          atomicPushAcceptedCalls += 1;
+          return Promise.resolve();
+        },
+      });
+      assert.equal(atomicPushStartingCalls, 1);
+      assert.equal(atomicPushAcceptedCalls, 1);
+      assert.equal(await remoteSha("refs/heads/development"), dispositionSha);
+      assert.equal(await remoteSha(`refs/heads/${branch}`), checkpointSha);
+      const publishedUpdates = new Map(
+        (await Deno.readTextFile(preReceiveLog)).trim().split("\n").map((line) => {
+          const [oldSha, newSha, ref] = line.split(" ");
+          return [ref!, { oldSha: oldSha!, newSha: newSha! }];
+        }),
+      );
+      assert.equal(publishedUpdates.size, 2);
+      assert.deepEqual(publishedUpdates.get("refs/heads/development"), { oldSha: baseSha, newSha: dispositionSha });
+      assert.deepEqual(publishedUpdates.get(`refs/heads/${branch}`), { oldSha: "0".repeat(40), newSha: checkpointSha });
+
+      const racedBranch = sentinelTemporaryCandidateBranch("33177664067", 2);
+      await git(checkout, ["switch", "-c", racedBranch, "development"]);
+      await Deno.writeTextFile(`${checkout}/src/declared.ts`, "export const selected = 'raced review';\n");
+      await Deno.writeTextFile(`${checkout}/src/declared-new.ts`, "export const reviewOnly = 'raced';\n");
+      await Deno.writeTextFile(`${checkout}/docs/sentinel-issue-jobs.md`, "transient candidate ledger state\n");
+      await Deno.writeTextFile(`${checkout}/docs/sentinel-review-backlog.md`, "transient candidate backlog state\n");
+      await git(checkout, ["add", "src", "docs"]);
+      await git(checkout, ["commit", "-m", "second reviewed candidate"]);
+      const racedReviewedCandidateSha = await git(checkout, ["rev-parse", "HEAD"]);
+      await git(checkout, [
+        "restore",
+        "--source",
+        dispositionSha,
+        "--staged",
+        "--worktree",
+        "--",
+        "docs/sentinel-issue-jobs.md",
+        "docs/sentinel-review-backlog.md",
+      ]);
+      await git(checkout, ["commit", "-m", "restore trusted controls for raced manual checkpoint"]);
+      const racedCheckpointSha = await git(checkout, ["rev-parse", "HEAD"]);
+      await assertGitHubIssueManualCheckpointCodeTreeEquivalent({
+        checkout,
+        baseSha: dispositionSha,
+        reviewedCandidateSha: racedReviewedCandidateSha,
+        checkpointSha: racedCheckpointSha,
+        allowedPaths: manualIssue(137, "d").files,
+      });
+
+      await git(checkout, ["switch", "development"]);
+      const racedCheckpoint = { branch: racedBranch, sha: racedCheckpointSha, baseSha: dispositionSha };
+      const racedLedger = applyGitHubIssueJobDisposition(
+        await Deno.readTextFile(`${checkout}/docs/sentinel-issue-jobs.md`),
+        manualIssue(137, "d"),
+        dispositionSha,
+        new Date("2026-08-28T00:40:00Z"),
+        "manual_required",
+        racedCheckpoint,
+      );
+      await Deno.writeTextFile(`${checkout}/docs/sentinel-issue-jobs.md`, racedLedger);
+      await git(checkout, ["add", "docs/sentinel-issue-jobs.md"]);
+      await git(checkout, ["commit", "-m", "record raced manual review requirement"]);
+      const racedDispositionSha = await git(checkout, ["rev-parse", "HEAD"]);
+
+      const competing = `${root}/competing`;
+      await new Deno.Command("git", { args: ["clone", "--branch", "development", remote, competing] }).output();
+      await git(competing, ["config", "user.name", "Sentinel Race Test"]);
+      await git(competing, ["config", "user.email", "sentinel-race@example.invalid"]);
+      let remoteAdvancedSha: string | null = null;
+      let remoteRetained = false;
+      let racedAtomicPushAccepted = false;
+      await assert.rejects(
+        () =>
+          pushRetryPendingRefsAtomically({
+            checkout,
+            developmentSha: racedDispositionSha,
+            checkpoint: racedCheckpoint,
+            expectedRemoteCheckpointSha: null,
+            gitEnvironment: { SENTINEL_TEST_PRE_RECEIVE_LOG: preReceiveLog },
+            onAtomicPushStarting: async () => {
+              await Deno.writeTextFile(`${competing}/competing.txt`, "remote development advanced\n");
+              await git(competing, ["add", "competing.txt"]);
+              await git(competing, ["commit", "-m", "advance development during sentinel atomic push"]);
+              remoteAdvancedSha = await git(competing, ["rev-parse", "HEAD"]);
+              await git(competing, ["push", "origin", "HEAD:refs/heads/development"]);
+            },
+            onAtomicPushAcceptedUnverified: () => {
+              racedAtomicPushAccepted = true;
+              return Promise.resolve();
+            },
+          }).then(() => {
+            remoteRetained = true;
+          }),
+        /atomic push failed|git failed with/u,
+      );
+      assert.notEqual(remoteAdvancedSha, null);
+      assert.equal(remoteRetained, false);
+      assert.equal(racedAtomicPushAccepted, false);
+      assert.equal(await remoteSha(`refs/heads/${racedBranch}`), null);
+      assert.equal(await remoteSha("refs/heads/development"), remoteAdvancedSha);
+      assert.notEqual(await remoteSha("refs/heads/development"), racedDispositionSha);
     } finally {
       await Deno.remove(root, { recursive: true });
     }

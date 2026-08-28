@@ -418,6 +418,7 @@ Deno.test({
     const workflow = await Deno.readTextFile(".github/workflows/provider-sentinel.yml");
     const orchestrator = await Deno.readTextFile("scripts/sentinel/main.ts");
     const validation = await Deno.readTextFile("scripts/sentinel/validation.ts");
+    const issueDelivery = await Deno.readTextFile("scripts/sentinel/issue-delivery.ts");
     const issuePushGate = await Deno.readTextFile("scripts/sentinel/issue-pr-pre-push.ts");
     const issueReconciliation = await Deno.readTextFile("scripts/sentinel/issue-delivery-reconcile.ts");
     const server = await Deno.readTextFile("serve.ts");
@@ -625,6 +626,89 @@ Deno.test({
         !retryReconciliationLane.includes("upsertComment("),
       "Retry-pending reconciliation must keep the issue open without a PR or evidence comment",
     );
+    const manualPushStart = issuePushGate.indexOf(
+      'dispositionRecord.phase === "native_review_exhausted"',
+    );
+    const manualPushEnd = issuePushGate.indexOf(
+      "if (!cycle.temporary_branch || !cycle.temporary_branch.startsWith",
+      manualPushStart,
+    );
+    assert(
+      manualPushStart >= 0 && manualPushEnd > manualPushStart,
+      "Native-review exhaustion must have a bounded no-delivery push lane",
+    );
+    const manualPushLane = issuePushGate.slice(manualPushStart, manualPushEnd);
+    assert(
+      manualPushLane.includes("validateManualRequiredDevelopmentPush({") &&
+        manualPushLane.includes("workflowRunAttempt: input.workflowRunAttempt") &&
+        manualPushLane.includes("return null"),
+      "Native-review exhaustion must validate the exact run-attempt checkpoint before returning without delivery",
+    );
+    for (
+      const forbidden of [
+        "ensureRemoteCandidateBranch",
+        "listPullRequests",
+        "githubRequest",
+        "ensureCandidateWorkflowValidation",
+      ]
+    ) {
+      assert(!manualPushLane.includes(forbidden), `Manual checkpoint push must not call ${forbidden}`);
+    }
+    const manualReconciliationStart = issueReconciliation.indexOf(
+      'dispositionRecord.phase === "native_review_exhausted"',
+    );
+    const manualReconciliationEnd = issueReconciliation.indexOf(
+      "const pullValue = await optionalJson",
+      manualReconciliationStart,
+    );
+    assert(
+      manualReconciliationStart >= 0 && manualReconciliationEnd > manualReconciliationStart,
+      "Native-review exhaustion must have a bounded no-delivery reconciliation lane",
+    );
+    const manualReconciliationLane = issueReconciliation.slice(
+      manualReconciliationStart,
+      manualReconciliationEnd,
+    );
+    assert(
+      manualReconciliationLane.includes("validateNativeReviewExhaustedManualCheckpointReconciliation({") &&
+        manualReconciliationLane.includes("workflowRunAttempt: input.workflowRunAttempt") &&
+        manualReconciliationLane.includes("return") &&
+        !manualReconciliationLane.includes("closeIssue(") &&
+        !manualReconciliationLane.includes("mergeDeliveryPullRequest(") &&
+        !manualReconciliationLane.includes("upsertComment("),
+      "Native-review exhaustion reconciliation must retain the exact run attempt and leave the issue open",
+    );
+    const manualCycleParserStart = issueDelivery.indexOf("export const parseSentinelManualRequiredCycleReport =");
+    const manualCycleParserEnd = issueDelivery.indexOf(
+      "export const validateRetryPendingCheckpointPhaseBinding",
+      manualCycleParserStart,
+    );
+    const manualCycleParserLane = issueDelivery.slice(manualCycleParserStart, manualCycleParserEnd);
+    assert(
+      manualCycleParserStart >= 0 && manualCycleParserEnd > manualCycleParserStart &&
+        manualCycleParserLane.includes("runAttempt: number;") &&
+        manualCycleParserLane.includes(
+          "currentWorkflowCandidateBranch(cycle.temporary_branch, expected.runId, expected.runAttempt)",
+        ),
+      "Manual checkpoint cycles must bind their candidate branch to the exact workflow run attempt",
+    );
+    const issuePushWorkflowStart = workflow.indexOf("- name: Install issue-delivery development-push gate");
+    const issuePushWorkflowEnd = workflow.indexOf("\n      - name:", issuePushWorkflowStart + 1);
+    const issuePushWorkflowLane = workflow.slice(issuePushWorkflowStart, issuePushWorkflowEnd);
+    assert(
+      issuePushWorkflowStart >= 0 && issuePushWorkflowEnd > issuePushWorkflowStart &&
+        issuePushWorkflowLane.includes('GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT"') &&
+        issuePushWorkflowLane.includes('"$repository_root/scripts/sentinel/issue-pr-pre-push.ts"'),
+      "The isolated issue push gate must forward GITHUB_RUN_ATTEMPT to validate manual checkpoints",
+    );
+    const reconcileWorkflowStart = workflow.indexOf("- name: Reconcile GitHub issue delivery");
+    const reconcileWorkflowEnd = workflow.indexOf("\n      - name:", reconcileWorkflowStart + 1);
+    const reconcileWorkflowLane = workflow.slice(reconcileWorkflowStart, reconcileWorkflowEnd);
+    assert(
+      reconcileWorkflowStart >= 0 && reconcileWorkflowEnd > reconcileWorkflowStart &&
+        /--allow-env=[^\r\n]*\bGITHUB_RUN_ATTEMPT\b/u.test(reconcileWorkflowLane),
+      "GitHub issue reconciliation must receive GITHUB_RUN_ATTEMPT through its environment allowlist",
+    );
     assert(
       !workflow.includes("github_issue_title") && !workflow.includes("github_issue_body"),
       "Untrusted GitHub issue text must not enter workflow environment or summary fields",
@@ -665,7 +749,7 @@ Deno.test({
     const preservePosition = retryDeferLane.indexOf("await preserveFailedImplementation");
     const rollbackPosition = retryDeferLane.indexOf("await beforeDiscard?.()");
     const checkpointPosition = retryDeferLane.indexOf(
-      "await publishGitHubIssueRetryCheckpoint(stage, preInvocationSha)",
+      "await prepareGitHubIssueCandidateCheckpoint(",
     );
     const checkpointStatePosition = retryDeferLane.indexOf("retryCheckpoint = checkpoint");
     const discardPosition = retryDeferLane.indexOf("await discardCandidateChanges");
@@ -680,7 +764,7 @@ Deno.test({
         checkpointStatePosition < dispositionPosition,
       "Retry deferral must synchronize nullable checkpoint state before discard and durable reports",
     );
-    const checkpointPublishStart = orchestrator.indexOf("const publishGitHubIssueRetryCheckpoint = async");
+    const checkpointPublishStart = orchestrator.indexOf("const prepareGitHubIssueCandidateCheckpoint = async");
     const failedPreservationStart = orchestrator.indexOf("const preserveFailedImplementation = async");
     const failedPreservationLane = orchestrator.slice(failedPreservationStart, checkpointPublishStart);
     assert(
@@ -717,19 +801,19 @@ Deno.test({
         checkpointPublishLane.includes("scanCandidateWithGitleaks({") &&
         checkpointPublishLane.includes("await commitChanges(") &&
         checkpointPublishLane.includes("assertGitHistoryExcludesValues") &&
-        checkpointPublishLane.includes("lastPushedCandidateSha,") &&
+        retryDeferLane.includes("lastPushedCandidateSha,") &&
+        checkpointPublishLane.includes("expectedRemoteSha,") &&
         checkpointPublishLane.includes("prepareImmutableTemporaryCheckpoint(") &&
         !checkpointPublishLane.includes('"push",') &&
-        issueCompletionLane.includes("github-issue-retry-retained-candidate.json") &&
-        issueCompletionLane.includes("head_sha: retryCheckpoint.sha"),
+        issueCompletionLane.includes('github-issue-${retryPending ? "retry" : "manual"}-retained-candidate.json') &&
+        issueCompletionLane.includes("head_sha: retainedCheckpoint.sha"),
       "Retry evidence must validate and prepare the aggregate candidate before atomic publication records its remote SHA",
     );
     assert(
       checkpointPublishLane.indexOf("const preparedSha = await prepareImmutableTemporaryCheckpoint") >= 0 &&
-        checkpointPublishLane.indexOf("retryCheckpoint = checkpoint") >
-          checkpointPublishLane.indexOf("const preparedSha = await prepareImmutableTemporaryCheckpoint") &&
+        checkpointStatePosition > checkpointPosition &&
         !checkpointPublishLane.includes("pushRetryPendingRefsAtomically("),
-      "A retry checkpoint must remain runner-local until its ledger commit is ready for atomic publication",
+      "An issue-candidate checkpoint must remain runner-local until its ledger commit is ready for atomic publication",
     );
     const issueRevalidationPosition = checkpointPublishLane.indexOf(
       "const checkpointIssueJob = await getCurrentGitHubIssueJob",
@@ -765,14 +849,20 @@ Deno.test({
         remoteVerificationPosition > acceptedUnverifiedPosition &&
         issueCompletionLane.includes('"runner_local_atomic_push_in_flight"') &&
         issueCompletionLane.includes("onAtomicPushStarting: () =>") &&
-        issueCompletionLane.includes("branch_disposition: checkpoint.branch === branch") &&
+        issueCompletionLane.includes("branch_disposition: retryPending") &&
         issueCompletionLane.includes('"remote_retained_atomic_push_in_flight"') &&
-        issueCompletionLane.includes('branch_disposition: "atomic_retry_push_accepted_unverified"') &&
-        issueCompletionLane.includes('branch_disposition: "remote_retained_issue_retry_pending"') &&
+        issueCompletionLane.includes('"atomic_retry_push_accepted_unverified"') &&
+        issueCompletionLane.includes('"remote_retained_issue_retry_pending"') &&
+        issueCompletionLane.includes('"runner_local_manual_atomic_push_in_flight"') &&
+        issueCompletionLane.includes('"atomic_manual_push_accepted_unverified"') &&
+        issueCompletionLane.includes('"remote_retained_issue_manual_required"') &&
         orchestrator.includes('state.branch_disposition === "atomic_retry_push_accepted_unverified"') &&
         orchestrator.includes('state.branch_disposition === "runner_local_atomic_push_in_flight"') &&
         orchestrator.includes('state.branch_disposition === "remote_retained_atomic_push_in_flight"') &&
-        orchestrator.includes('"atomic_retry_push_requires_reconciliation"'),
+        orchestrator.includes('"atomic_retry_push_requires_reconciliation"') &&
+        orchestrator.includes('state.branch_disposition === "atomic_manual_push_accepted_unverified"') &&
+        orchestrator.includes('state.branch_disposition === "runner_local_manual_atomic_push_in_flight"') &&
+        orchestrator.includes('"atomic_manual_push_requires_reconciliation"'),
       "Every checkpoint atomic push must enter a durable in-flight state and remain unverified until both remote refs match",
     );
     assert(
@@ -797,6 +887,84 @@ Deno.test({
         orchestrator.includes('state.stage === "validated_retry_pending_atomic_push"'),
       "A failed retry-ledger push must preserve the already-pushed candidate branch disposition",
     );
+    const nativeReviewBlockerStart = orchestrator.indexOf(
+      "if (blockers.length && !canStartReviewRound(reviewRound))",
+    );
+    const nativeReviewBlockerEnd = orchestrator.indexOf(
+      "if (backlogFindings.length)",
+      nativeReviewBlockerStart,
+    );
+    const nativeReviewBlockerLane = orchestrator.slice(nativeReviewBlockerStart, nativeReviewBlockerEnd);
+    const nativeReviewTerminalizerPosition = nativeReviewBlockerLane.indexOf(
+      "await terminalizeGitHubIssueNativeReviewExhaustion(candidateSha, blockers)",
+    );
+    const nativeReviewTerminalReturnPosition = nativeReviewBlockerLane.indexOf(
+      "return;",
+      nativeReviewTerminalizerPosition,
+    );
+    const backlogRecordPosition = orchestrator.indexOf(
+      "mergeReviewBacklog(currentBacklog, backlogFindings, candidateSha, new Date())",
+      nativeReviewBlockerEnd,
+    );
+    const previewPushPosition = orchestrator.indexOf(
+      "const pushedCandidateSha = await pushTemporaryCandidate",
+      nativeReviewBlockerEnd,
+    );
+    const previewDeploymentPosition = orchestrator.indexOf(
+      "const preview = await dispatchAndResolveRevision({",
+      nativeReviewBlockerEnd,
+    );
+    assert(
+      nativeReviewBlockerStart >= 0 && nativeReviewBlockerEnd > nativeReviewBlockerStart &&
+        nativeReviewTerminalizerPosition >= 0 &&
+        nativeReviewTerminalReturnPosition > nativeReviewTerminalizerPosition &&
+        backlogRecordPosition > nativeReviewBlockerEnd && previewPushPosition > nativeReviewBlockerEnd &&
+        previewDeploymentPosition > nativeReviewBlockerEnd,
+      "Round-three GitHub issue blockers must return through manual terminalization before backlog recording or preview deployment",
+    );
+    const manualTerminalizerStart = orchestrator.indexOf(
+      "const terminalizeGitHubIssueNativeReviewExhaustion = async",
+    );
+    const manualTerminalizerEnd = orchestrator.indexOf(
+      "if (workSelection.issueJob && retryCheckpoint)",
+      manualTerminalizerStart,
+    );
+    const manualTerminalizerLane = orchestrator.slice(manualTerminalizerStart, manualTerminalizerEnd);
+    const manualCheckpointPreparationPosition = manualTerminalizerLane.indexOf(
+      "await prepareGitHubIssueCandidateCheckpoint(",
+    );
+    const manualCheckpointStatePosition = manualTerminalizerLane.indexOf("manualCheckpoint = checkpoint");
+    const manualCheckpointResetPosition = manualTerminalizerLane.indexOf(
+      "await discardCandidateChanges(checkout, baseSha)",
+    );
+    const manualLedgerDispositionPosition = manualTerminalizerLane.indexOf(
+      "await writeSelectedIssueDisposition(",
+    );
+    const manualCompletionPosition = manualTerminalizerLane.indexOf(
+      "await completeNonRuntimeGitHubIssueDisposition()",
+    );
+    assert(
+      manualTerminalizerStart >= 0 && manualTerminalizerEnd > manualTerminalizerStart &&
+        manualCheckpointPreparationPosition >= 0 &&
+        manualCheckpointStatePosition > manualCheckpointPreparationPosition &&
+        manualCheckpointResetPosition > manualCheckpointStatePosition &&
+        manualLedgerDispositionPosition > manualCheckpointResetPosition &&
+        manualCompletionPosition > manualLedgerDispositionPosition &&
+        manualTerminalizerLane.includes('branch_disposition: "runner_local_manual_checkpoint_ready"') &&
+        manualTerminalizerLane.includes('"manual_required",') &&
+        orchestrator.includes("const branch = sentinelTemporaryCandidateBranch(runId, githubRunAttempt)"),
+      "Round-three terminalization must retain the current run-attempt checkpoint before the manual ledger disposition",
+    );
+    for (
+      const forbidden of [
+        "mergeReviewBacklog(",
+        "pushTemporaryCandidate(",
+        "dispatchAndResolveRevision(",
+        "dispatchSerializedPromotion(",
+      ]
+    ) {
+      assert(!manualTerminalizerLane.includes(forbidden), `Manual terminalization must not call ${forbidden}`);
+    }
     for (
       const [startNeedle, endNeedle, stage] of [
         [

@@ -5,6 +5,8 @@ import {
   parseCandidatePreviewEvidence,
   parseCandidateWorkflowValidationRecord,
   parseIssueCandidateDisposition,
+  validateManualRequiredDevelopmentPush,
+  validateManualRequiredRetainedCheckpointDevelopmentPush,
   validateRetryPendingDevelopmentPush,
 } from "../scripts/sentinel/issue-pr-pre-push.ts";
 import { parseGitHubIssueSelectionReport } from "../scripts/sentinel/issue-delivery.ts";
@@ -533,6 +535,169 @@ Deno.test("retry-pending development pushes are exact docs-only commits with no 
         ]),
       }),
     /timestamp backwards/,
+  );
+});
+
+Deno.test("manual review exhaustion publishes only an atomic ledger checkpoint", () => {
+  const checkpoint = {
+    branch: retryCycle.temporary_branch,
+    sha: CANDIDATE_SHA,
+    base_sha: BASE_SHA,
+  };
+  const disposition = {
+    schema_version: 1,
+    issue_id: retrySelection.issue_id,
+    issue_number: retrySelection.issue_number,
+    fingerprint: retrySelection.fingerprint,
+    phase: "native_review_exhausted",
+    implementation_status: "blocked",
+    disposition: "manual_required",
+    retry_checkpoint: checkpoint,
+  };
+  const cycle = {
+    schema_version: 1,
+    run_id: retryCycle.run_id,
+    started_at: retryCycle.started_at,
+    base_development_sha: BASE_SHA,
+    candidate_sha: RETRY_SHA,
+    temporary_branch: checkpoint.branch,
+    status: "running",
+    stage: "pushing_manual_required_github_issue",
+    branch_disposition: "runner_local_manual_atomic_push_in_flight",
+    retry_checkpoint: checkpoint,
+  };
+  const manualRow = retryRow({
+    checkpoint: { branch: checkpoint.branch, sha: checkpoint.sha, baseSha: checkpoint.base_sha },
+    disposition: "manual_required",
+  });
+  const input: Parameters<typeof validateManualRequiredDevelopmentPush>[0] = {
+    workflowRunId: retryCycle.run_id,
+    workflowRunAttempt: 2,
+    updates: [developmentUpdate, checkpointUpdate(checkpoint)],
+    atomicPush: true,
+    checkpointLeaseSha: ZERO_SHA,
+    selection: retrySelection,
+    cycleValue: cycle,
+    dispositionValue: disposition,
+    commitParents: [BASE_SHA],
+    changedPaths: ["docs/sentinel-issue-jobs.md"],
+    parentLedgerMarkdown: renderGitHubIssueJobLedger([]),
+    pushedLedgerMarkdown: renderGitHubIssueJobLedger([manualRow]),
+  };
+  assert.doesNotThrow(() => validateManualRequiredDevelopmentPush(input));
+  for (
+    const [overrides, pattern] of [
+      [{ atomicPush: false }, /atomic two-ref push/u],
+      [{ checkpointLeaseSha: null }, /zero lease/u],
+      [{ checkpointLeaseSha: "1".repeat(40) }, /zero lease/u],
+      [{
+        updates: [developmentUpdate, checkpointUpdate(checkpoint, "1".repeat(40))],
+        checkpointLeaseSha: "1".repeat(40),
+      }, /zero lease/u],
+      [{ updates: [developmentUpdate] }, /atomic two-ref push/u],
+      [
+        { updates: [developmentUpdate, checkpointUpdate(checkpoint), checkpointUpdate(checkpoint)] },
+        /atomic two-ref push/u,
+      ],
+      [{ commitParents: [BASE_SHA, "c".repeat(40)] }, /one-parent commit/u],
+      [{ changedPaths: ["docs/sentinel-issue-jobs.md", "src/admin.ts"] }, /only the issue-job ledger/u],
+      [
+        { pushedLedgerMarkdown: renderGitHubIssueJobLedger([retryRow({ disposition: "manual_required" })]) },
+        /manual ledger row/u,
+      ],
+      [
+        { cycleValue: { ...cycle, retry_checkpoint: { ...checkpoint, sha: "1".repeat(40) } } },
+        /exact checkpoint receipt/u,
+      ],
+      [{
+        cycleValue: {
+          ...cycle,
+          temporary_branch: "sentinel/candidate-987654321-2",
+          retry_checkpoint: { ...checkpoint, branch: "sentinel/candidate-987654321-2" },
+        },
+      }, /cycle report is invalid/u],
+      [{
+        cycleValue: {
+          ...cycle,
+          temporary_branch: "sentinel/candidate-123456789",
+          retry_checkpoint: { ...checkpoint, branch: "sentinel/candidate-123456789" },
+        },
+      }, /cycle report is invalid/u],
+      [{
+        cycleValue: {
+          ...cycle,
+          temporary_branch: "sentinel/candidate-123456789-1",
+          retry_checkpoint: { ...checkpoint, branch: "sentinel/candidate-123456789-1" },
+        },
+      }, /cycle report is invalid/u],
+    ] as const
+  ) {
+    assert.throws(
+      () => validateManualRequiredDevelopmentPush({ ...input, ...overrides }),
+      pattern,
+    );
+  }
+});
+
+Deno.test("a failed checkpoint resume remains a separate docs-only manual path", () => {
+  const checkpoint = {
+    branch: "sentinel/candidate-123456700-1",
+    sha: "4".repeat(40),
+    base_sha: "c".repeat(40),
+  };
+  const disposition = {
+    schema_version: 1,
+    issue_id: retrySelection.issue_id,
+    issue_number: retrySelection.issue_number,
+    fingerprint: retrySelection.fingerprint,
+    phase: "retry_checkpoint_resume_failed",
+    implementation_status: "blocked",
+    disposition: "manual_required",
+    retry_checkpoint: checkpoint,
+  };
+  const cycle = {
+    schema_version: 1,
+    run_id: retryCycle.run_id,
+    started_at: retryCycle.started_at,
+    base_development_sha: BASE_SHA,
+    candidate_sha: RETRY_SHA,
+    temporary_branch: retryCycle.temporary_branch,
+    status: "running",
+    stage: "pushing_manual_github_issue",
+    branch_disposition: "runner_local_pending_review",
+    retry_checkpoint: checkpoint,
+  };
+  const input: Parameters<typeof validateManualRequiredRetainedCheckpointDevelopmentPush>[0] = {
+    workflowRunId: retryCycle.run_id,
+    updates: [developmentUpdate],
+    atomicPush: false,
+    checkpointLeaseSha: null,
+    selection: retrySelection,
+    cycleValue: cycle,
+    dispositionValue: disposition,
+    commitParents: [BASE_SHA],
+    changedPaths: ["docs/sentinel-issue-jobs.md"],
+    parentLedgerMarkdown: renderGitHubIssueJobLedger([]),
+    pushedLedgerMarkdown: renderGitHubIssueJobLedger([retryRow({
+      baseSha: checkpoint.base_sha,
+      checkpoint: { branch: checkpoint.branch, sha: checkpoint.sha, baseSha: checkpoint.base_sha },
+      disposition: "manual_required",
+    })]),
+  };
+  assert.doesNotThrow(() => validateManualRequiredRetainedCheckpointDevelopmentPush(input));
+  assert.throws(
+    () => validateManualRequiredRetainedCheckpointDevelopmentPush({ ...input, atomicPush: true }),
+    /docs-only development update/u,
+  );
+  assert.throws(
+    () =>
+      validateManualRequiredRetainedCheckpointDevelopmentPush({
+        ...input,
+        updates: [developmentUpdate, checkpointUpdate(checkpoint, checkpoint.sha)],
+        atomicPush: true,
+        checkpointLeaseSha: checkpoint.sha,
+      }),
+    /docs-only development update/u,
   );
 });
 
