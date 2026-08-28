@@ -1284,6 +1284,16 @@ Deno.test("unlabelled administrator backlog proposals use a bounded source-only 
   assert.deepEqual(selected.acceptance, [
     "Implement the owner-authored proposal within the extracted source-file scope.",
   ]);
+  const repeatedCitation = await createGitHubIssueJob(
+    "ubiquity/ai.ubq.fi",
+    {
+      ...issue,
+      body: ownerBacklogIssueBody(["src/paid_fallback_ledger.ts:10", "src/paid_fallback_ledger.ts:20"]),
+    },
+    noIssueRelations,
+    "admin",
+  );
+  assert.deepEqual(repeatedCitation?.files, ["src/paid_fallback_ledger.ts"]);
   const mixedScope = await createGitHubIssueJob(
     "ubiquity/ai.ubq.fi",
     {

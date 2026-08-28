@@ -253,7 +253,7 @@ const parseOwnerBacklogIssueBody = (body: string): ParsedIssueBody | null => {
     if (isSentinelProtectedImplementationPath(path)) return null;
     if (path.startsWith("src/")) files.push(path);
   }
-  const canonicalFiles = sortedUnique(files);
+  const canonicalFiles = sortedUnique([...new Set(files)]);
   if (!canonicalFiles || canonicalFiles.length === 0 || canonicalFiles.length > MAX_ISSUE_FILES) return null;
   return {
     acceptance: ["Implement the owner-authored proposal within the extracted source-file scope."],
