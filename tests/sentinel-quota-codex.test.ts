@@ -718,7 +718,7 @@ Deno.test("structured execution uses fixed policy, relay-only auth, a private ho
   assert.deepEqual(filesystem.removed, [home]);
 });
 
-Deno.test("implementation execution uses Sol at medium effort in the writable sandbox", async () => {
+Deno.test("implementation execution uses the owner-controlled Luna model in the writable sandbox", async () => {
   const filesystem = new MemoryFilesystem();
   let command: CodexCommandRequest | null = null;
   await runStructuredCodexAgent({
@@ -740,10 +740,10 @@ Deno.test("implementation execution uses Sol at medium effort in the writable sa
   assert.ok(command);
   const captured = command as CodexCommandRequest;
   assert.equal(captured.workspaceWritable, true);
-  assert.ok(captured.args.includes("gpt-5.6-sol"));
-  assert.equal(captured.args.includes("gpt-5.6-luna"), false);
-  assert.ok(captured.args.includes('model_reasoning_effort="medium"'));
-  assert.equal(captured.args.includes('model_reasoning_effort="max"'), false);
+  assert.ok(captured.args.includes("gpt-5.6-luna"));
+  assert.equal(captured.args.includes("gpt-5.6-sol"), false);
+  assert.ok(captured.args.includes('model_reasoning_effort="max"'));
+  assert.equal(captured.args.includes('model_reasoning_effort="medium"'), false);
   assert.ok(captured.args.includes("workspace-write"));
 });
 
