@@ -1,3 +1,4 @@
+import { acquirePromptCacheKvCooldown } from "./prompt_cache_kv_cooldown.ts";
 import { getKv } from "./kv.ts";
 import { RELEASE_GIT_SHA } from "./release.ts";
 import { sha256Hex } from "./utils.ts";
@@ -34,6 +35,9 @@ export type PromptCacheTelemetryGateOptions = Readonly<{
   kv?: Deno.Kv | null;
   /** Defaults to the immutable source identity baked into this artifact. */
   release?: string;
+  /** Optional deterministic seams for the in-process best-effort KV cooldown. */
+  now?: () => number;
+  random?: () => number;
 }>;
 
 export type PromptCacheTelemetryRecordResult = Readonly<{
@@ -340,8 +344,19 @@ export const recordPromptCacheTelemetry = async (
     return recordResult("unavailable", "kv_unavailable", { release, provider, route });
   }
 
+  const cooldown = acquirePromptCacheKvCooldown(options.kv, options);
+  if (!cooldown.admitted) {
+    return recordResult("unavailable", "kv_unavailable", {
+      release,
+      provider,
+      route,
+      modelHash: hashedModel,
+    });
+  }
+
   const kv = await resolveKv(options);
   if (!kv) {
+    cooldown.fail();
     return recordResult("unavailable", "kv_unavailable", {
       release,
       provider,
@@ -363,12 +378,15 @@ export const recordPromptCacheTelemetry = async (
     }
     const committed = await operation.commit();
     if (!committed.ok) {
+      cooldown.fail();
       return recordResult("unavailable", "kv_unavailable", { release, provider, route, modelHash: hashedModel });
     }
   } catch {
+    cooldown.fail();
     return recordResult("unavailable", "kv_unavailable", { release, provider, route, modelHash: hashedModel });
   }
 
+  cooldown.succeed();
   return recordResult("recorded", "recorded", { release, provider, route, modelHash: hashedModel });
 };
 

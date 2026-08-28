@@ -705,6 +705,22 @@ const CHAT_RESPONSE_EVENT_KINDS = new Set([
 
 const boundedResponseEventKind = (type: string): string => CHAT_RESPONSE_EVENT_KINDS.has(type) ? type : "unrecognized";
 
+const boundedUpstreamFailureValue = (value: unknown): string | null =>
+  typeof value === "string" && /^[A-Za-z0-9_.:-]{1,128}$/u.test(value.trim()) ? value.trim() : null;
+
+const upstreamFailureKindFromEvent = (event: ResponsesStreamEvent): string => {
+  const response = isRecord(event.value.response) && !Array.isArray(event.value.response) ? event.value.response : null;
+  const nestedError = event.type === "response.failed" && response && isRecord(response.error)
+    ? response.error
+    : isRecord(event.value.error)
+    ? event.value.error
+    : null;
+  return boundedUpstreamFailureValue(nestedError?.code) ??
+    boundedUpstreamFailureValue(nestedError?.type) ??
+    boundedUpstreamFailureValue(event.value.code) ??
+    "upstream_error_event";
+};
+
 const recordResponsesEventTelemetry = (
   context: UsageContext | undefined,
   event: ResponsesStreamEvent,
@@ -722,7 +738,11 @@ const recordResponsesEventTelemetry = (
       telemetry.failureKind = `response_incomplete:${reason}`;
     }
   }
-  if (isSyntheticResponsesFailureEvent(event)) {
+  const syntheticFailure = isSyntheticResponsesFailureEvent(event);
+  if (!syntheticFailure && (event.type === "response.failed" || event.type === "error")) {
+    telemetry.failureKind = upstreamFailureKindFromEvent(event);
+  }
+  if (syntheticFailure) {
     telemetry.syntheticTerminalType = event.type === "response.failed" || event.type === "error" ? event.type : null;
   }
 };
