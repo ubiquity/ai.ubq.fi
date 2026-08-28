@@ -567,12 +567,5 @@
   ],
   "retry_history": [],
   "retry_decisions": [],
-  "leases": [
-    {
-      "identity_key": "[\"ubiquity/ai.ubq.fi\",\"triage\",\"33172749264\",\"2c10596a7a7818b94f728a06f4636ea5d73ef3bd\",1]",
-      "owner": "33215145922",
-      "token": "33215145922:9257deb6-7387-40e8-98f7-daf5e0bfa6ff",
-      "expires_at": "2026-08-28T22:13:13.096Z"
-    }
-  ]
+  "leases": []
 }
