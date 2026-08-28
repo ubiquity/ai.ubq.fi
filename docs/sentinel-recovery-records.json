@@ -314,6 +314,43 @@
       "identity": {
         "repository": "ubiquity/ai.ubq.fi",
         "source_kind": "triage",
+        "source_id": "32858457833",
+        "source_revision": "91cc138c67435ee23c2ef3100fb19f2c4ae389cb",
+        "candidate_generation": 1
+      },
+      "run_id": "32858457833",
+      "attempt": 1,
+      "lease_token": "artifact-9570009947",
+      "base_sha": "91cc138c67435ee23c2ef3100fb19f2c4ae389cb",
+      "phase": "checkpoint_durable",
+      "disposition": "active",
+      "state_version": 2,
+      "created_at": "2026-08-25T14:49:42.837Z",
+      "updated_at": "2026-08-28T23:13:49.364Z",
+      "candidate_branch": "sentinel/candidate-triage-32858457833-91cc138c67435ee23c2ef3100fb19f2c-g1-b52709e4edaee0bf",
+      "candidate_sha": "31b45a8358dbe445d97e429a0e9f04285464e133",
+      "changed_files": [
+        "src/api_key_policy.ts",
+        "src/kv.ts"
+      ],
+      "tree_sha": "da957755d39045543c496f5847d4a3b5d6e4e4a7",
+      "failure_class": null,
+      "failure_fingerprint": null,
+      "artifact_ids": [
+        9570009947
+      ],
+      "artifact_digests": [
+        "sha256:fe8968f8b17ddec8c08bced7f5fc09b7a3ea085ef5d4bbe4cc31206d2f687824"
+      ],
+      "reason": "encrypted candidate recovered into a quarantined checkpoint",
+      "next_action": "validate the checkpoint and request human review",
+      "predecessor": null
+    },
+    {
+      "schema_version": 1,
+      "identity": {
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_kind": "triage",
         "source_id": "32864835724",
         "source_revision": "a64a108080d143e1b455b93c13ecf29e707c64e4",
         "candidate_generation": 1
