@@ -179,6 +179,26 @@ const synchronizeObservedRelease = async (
     return current.release;
   }
   if (current.release.stable_sha === observed.sha) {
+    if (
+      current.release.candidate_sha !== null && current.activation !== null &&
+      current.activation.active_sha === current.release.stable_sha &&
+      current.activation.generation > current.release.generation
+    ) {
+      const rolledBack = parseBootstrapReleaseRecord({
+        ...current.release,
+        candidate_sha: null,
+        acceptance_evidence: [
+          ...current.release.acceptance_evidence,
+          `health:${observed.revision}`,
+          "bootstrap:rollback-confirmed",
+        ].slice(-8),
+        activated_at: now,
+        rollback_reason: "authoritative_failure_rollback",
+        generation: current.activation.generation,
+      });
+      await state.replaceRelease(rolledBack);
+      return rolledBack;
+    }
     return current.release;
   }
   if (current.release.candidate_sha !== null || current.activation === null) {

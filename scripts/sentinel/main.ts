@@ -1650,7 +1650,7 @@ export const assertGitHubIssueManualCheckpointCodeTreeEquivalent = async (
     baseSha: string;
     reviewedCandidateSha: string;
     checkpointSha: string;
-    allowedPaths: readonly string[];
+    allowedPaths?: readonly string[];
   }>,
 ): Promise<Readonly<{ reviewedCodePaths: readonly string[]; checkpointCodePaths: readonly string[] }>> => {
   ensureFullSha(input.baseSha, "Manual checkpoint base SHA");
@@ -1984,7 +1984,7 @@ export const prepareResumedGitHubIssueCandidate = async (
     candidateBranch: string;
     developmentSha: string;
     checkpoint: GitHubIssueJobCheckpoint;
-    allowedPaths: readonly string[];
+    allowedPaths?: readonly string[];
     gitEnvironment: Readonly<Record<string, string>>;
   }>,
 ): Promise<string> => {
@@ -2009,7 +2009,6 @@ export const prepareResumedGitHubIssueCandidate = async (
   if (
     !validTemporaryCandidateBranch(input.candidateBranch) ||
     !validTemporaryCandidateBranch(input.checkpoint.branch) ||
-    input.candidateBranch === input.checkpoint.branch ||
     input.checkpoint.sha === input.checkpoint.baseSha
   ) throw integrityFailure("Sentinel retry checkpoint identity is invalid");
   const currentBranch = await runResumeOperation(
@@ -2111,10 +2110,12 @@ export const prepareResumedGitHubIssueCandidate = async (
       "Sentinel retry checkpoint scope inspection failed",
     )).stdout,
   ).sort();
-  const allowed = new Set(input.allowedPaths);
+  const allowed = input.allowedPaths === undefined ? null : new Set(input.allowedPaths);
   if (
     checkpointPaths.length === 0 || new Set(checkpointPaths).size !== checkpointPaths.length ||
-    checkpointPaths.some((path) => !allowed.has(path) || isSentinelProtectedImplementationPath(path))
+    checkpointPaths.some((path) =>
+      (allowed !== null && !allowed.has(path)) || isSentinelProtectedImplementationPath(path)
+    )
   ) throw integrityFailure("Sentinel retry checkpoint changed an unsafe or out-of-scope path");
   const merge = await runResumeOperation(
     () =>
@@ -2164,10 +2165,10 @@ export const prepareResumedGitHubIssueCandidate = async (
   ].sort();
   if (
     aggregatePaths.length === 0 || aggregatePaths.some((path) =>
-      !allowed.has(path) ||
+      (allowed !== null && !allowed.has(path)) ||
       isSentinelProtectedImplementationPath(path)
     )
-  ) throw integrityFailure("Sentinel resumed candidate drifted outside the declared issue scope");
+  ) throw integrityFailure("Sentinel resumed candidate drifted outside its allowed scope");
   return resumedSha;
 };
 
@@ -3145,6 +3146,22 @@ const run = async (): Promise<void> => {
       throw new Error("Candidate issue-job ledger does not match the exact fetched development base");
     }
     parseGitHubIssueJobLedger(candidateLedger);
+  }
+  if (
+    currentRecoveryRecord && retryIsDue && workSelection.source !== "github_issue" &&
+    currentRecoveryRecord.candidate_branch !== null && currentRecoveryRecord.candidate_sha !== null
+  ) {
+    await prepareResumedGitHubIssueCandidate({
+      checkout,
+      candidateBranch: branch,
+      developmentSha: baseSha,
+      checkpoint: {
+        branch: currentRecoveryRecord.candidate_branch,
+        sha: currentRecoveryRecord.candidate_sha,
+        baseSha: currentRecoveryRecord.base_sha,
+      },
+      gitEnvironment,
+    });
   }
   const selectedBacklogAffectedPath = workSelection.backlogEntry
     ? reviewBacklogLocationPath(workSelection.backlogEntry.location)
