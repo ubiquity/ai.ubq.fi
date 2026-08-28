@@ -1056,6 +1056,16 @@ export const isSentinelArtifactRecoveryEligible = (
       INCOMPLETE_FAILURE_MARKERS.has(workflowRun.conclusion);
 };
 
+export const legacyArtifactNeedsManualDisposition = (
+  files: readonly SentinelArtifactFile[],
+  workflowRun?: Readonly<Pick<GitHubWorkflowRun, "status" | "conclusion">>,
+): boolean =>
+  files.filter((file) => CANDIDATE_MANIFEST.test(file.path)).length === 1 &&
+  !terminalArtifactRecord(files) &&
+  workflowRun?.status === "completed" &&
+  typeof workflowRun.conclusion === "string" &&
+  INCOMPLETE_FAILURE_MARKERS.has(workflowRun.conclusion);
+
 const textField = (value: unknown, maximumBytes = 512): string | null =>
   typeof value === "string" && value.length > 0 && new TextEncoder().encode(value).byteLength <= maximumBytes &&
     !containsAsciiControl(value)
@@ -1195,16 +1205,14 @@ export const selectSentinelRecoveryArtifacts = (
 
 const workflowRunForArtifact = async (
   files: readonly SentinelArtifactFile[],
+  artifact: GitHubArtifact,
   github: GitHubActionsClient,
 ): Promise<Readonly<Pick<GitHubWorkflowRun, "status" | "conclusion">> | undefined> => {
   const cycle = parseArtifactJson(files, "reports/cycle.json");
-  if (
-    cycle?.status !== "running" || explicitIncompleteFailureEvidence(parseArtifactJson(files, "reports/failure.json"))
-  ) {
-    return undefined;
-  }
-  if (typeof cycle.run_id !== "string" || !/^[1-9][0-9]*$/u.test(cycle.run_id)) return undefined;
-  const runId = Number(cycle.run_id);
+  const cycleRunId = typeof cycle?.run_id === "string" && /^[1-9][0-9]*$/u.test(cycle.run_id)
+    ? Number(cycle.run_id)
+    : null;
+  const runId = cycleRunId ?? artifact.workflowRunId;
   if (!positiveSafeInteger(runId)) return undefined;
   const run = await github.getWorkflowRun(runId);
   return { status: run.status, conclusion: run.conclusion };
@@ -1324,10 +1332,13 @@ export const recoverSentinelArtifactsInActions = async (
         encrypted = await unzipEnvelope(envelopeZip, privateRoot);
         encryptedDigest = await artifactDigest(encrypted);
         decrypted = await decryptSentinelArtifact(encrypted, keyBytes);
-        const workflowRun = await workflowRunForArtifact(decrypted, github);
+        const workflowRun = await workflowRunForArtifact(decrypted, artifact, github);
         const artifactRecord = recordFromArtifact(decrypted, artifact, encryptedDigest, workflowRun);
         if (!artifactRecord) {
-          const legacyRecord = isSentinelArtifactRecoveryEligible(decrypted, workflowRun)
+          const legacyRecord = (
+              isSentinelArtifactRecoveryEligible(decrypted, workflowRun) ||
+              legacyArtifactNeedsManualDisposition(decrypted, workflowRun)
+            )
             ? manualRecoveryRecordForLegacyArtifact(input.repository, artifact, encryptedDigest)
             : null;
           if (legacyRecord) {

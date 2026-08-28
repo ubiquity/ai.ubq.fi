@@ -21,6 +21,10 @@ Deno.test("Provider Sentinel retains its outer serialized, non-cancelling concur
   assert(!/^\s+queue:/mu.test(workflow), "GitHub Actions does not support a concurrency queue key");
 });
 
+Deno.test("Provider Sentinel uses Deno eval without unsupported permission flags", () => {
+  assert.doesNotMatch(workflow, /deno eval[^'\n]*--allow-/u);
+});
+
 Deno.test("Provider Sentinel has explicit prepare, bounded repair, and convergence job contracts", () => {
   assert.doesNotMatch(workflow, /^\s+sentinel:/mu);
   assert.match(workflow, /^\s{2}prepare:/mu);
