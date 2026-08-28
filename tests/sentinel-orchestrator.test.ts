@@ -9,6 +9,7 @@ import {
   agentCheckoutPath,
   assertRetainedReplayArtifactBudget,
   candidateRevertDiffArguments,
+  candidateShaForReview,
   createSentinelCandidateRecoveryRecord,
   deduplicateRetainedReplayCaptures,
   durableProductionDecision,
@@ -2393,6 +2394,16 @@ Deno.test("changed_files mismatch retains the Git checkpoint as a durable valida
         untrackedChangedFiles: ["tmp/untracked.ts"],
       }),
     /untracked changed files/,
+  );
+});
+
+Deno.test("a clean durable checkpoint remains eligible for review with its exact SHA", () => {
+  const checkpointSha = "c".repeat(40);
+  assert.equal(candidateShaForReview(checkpointSha, ["src/http.ts"]), checkpointSha);
+  assert.equal(candidateShaForReview(checkpointSha, []), null);
+  assert.throws(
+    () => candidateShaForReview("not-a-sha", ["src/http.ts"]),
+    /full Git SHA/,
   );
 });
 

@@ -804,6 +804,14 @@ export const finalizeSentinelCandidate = (
 
 export const finalizeSentinelCandidateCheckpoint = finalizeSentinelCandidate;
 
+export const candidateShaForReview = (
+  headSha: string,
+  aggregateChangedPaths: readonly string[],
+): string | null => {
+  if (aggregateChangedPaths.length === 0) return null;
+  return ensureFullSha(headSha, "Review candidate SHA");
+};
+
 export type ImmutableFileEvidence = Readonly<{ path: string; byte_count: number; sha256: string }>;
 
 export type ObservationReport = Readonly<{
@@ -4068,7 +4076,16 @@ const run = async (): Promise<void> => {
     return;
   }
 
-  if (!await hasChanges(checkout)) {
+  const aggregateCandidatePaths = workSelection.source === "github_issue"
+    ? await selectedIssueAggregatePaths()
+    : workSelection.source === "review_backlog"
+    ? await selectedBacklogAggregatePaths()
+    : [...await aggregateCandidateChangedPaths(checkout, baseSha)].sort();
+  const checkpointCandidateSha = candidateShaForReview(
+    await gitText(checkout, ["rev-parse", "HEAD"]),
+    aggregateCandidatePaths,
+  );
+  if (checkpointCandidateSha === null) {
     if (
       triage.findings.some((finding) =>
         finding.actionable &&
@@ -4144,7 +4161,10 @@ const run = async (): Promise<void> => {
       );
     }
     reviewRound += 1;
-    let candidateSha = await commitChanges(checkout, `fix: Provider Sentinel repair round ${reviewRound}`);
+    let candidateSha = ensureFullSha(await gitText(checkout, ["rev-parse", "HEAD"]), "Review candidate SHA");
+    if (await hasChanges(checkout)) {
+      candidateSha = await commitChanges(checkout, `fix: Provider Sentinel repair round ${reviewRound}`);
+    }
     const nativeReviewStage = `native_review_${reviewRound}`;
     await updateState(nativeReviewStage, { candidate_sha: candidateSha });
     let reviewResult: CodexInvocationResult;
@@ -4257,7 +4277,7 @@ const run = async (): Promise<void> => {
         } else {
           assertActionableFindingsResolved(triage, implementationReport);
         }
-        if (!await hasChanges(checkout)) {
+        if (implementationInvocationSha === preFixSha) {
           throw new Error("Implementation agent did not correct blocking review findings");
         }
       } catch (error) {
@@ -4373,7 +4393,7 @@ const run = async (): Promise<void> => {
         } else {
           assertActionableFindingsResolved(triage, implementationReport);
         }
-        if (!await hasChanges(checkout)) {
+        if (implementationInvocationSha === preValidationFixSha) {
           throw new Error("Implementation agent did not correct the validation failure");
         }
       } catch (repairError) {
@@ -4539,7 +4559,7 @@ const run = async (): Promise<void> => {
         assertActionableFindingsResolved(triage, implementationReport);
       }
       assertReplayEvaluation(implementationReport, replayResults);
-      if (await hasChanges(checkout)) continue;
+      if (implementationInvocationSha !== preReplayEvaluationSha) continue;
     } catch (error) {
       const mismatch = isSentinelChangedFilesMismatchError(error);
       const checkpoint = await checkpointDirtyCandidate(
