@@ -976,6 +976,20 @@ export const authenticateAdmin = async (req: Request): Promise<AdminAuthResult> 
     !config.authTokens.has(token) &&
     req.headers.has("cookie")
   ) {
+    const githubResult = await authenticateGitHubToken(req, token);
+    if (githubResult?.ok) {
+      logAdminAuth({ ok: false, method: "github_token", status: 401, reason: "github_token_not_admin" });
+      return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
+    }
+    if (githubResult && githubResult.response.status !== 401) {
+      logAdminAuth({
+        ok: false,
+        method: "github_token",
+        status: githubResult.response.status,
+        reason: "github_token_verification_failed",
+      });
+      return { ok: false, response: githubResult.response };
+    }
     passkeySession = await getPasskeyCookieSessionForRequest(req);
   }
   if (passkeySession) {

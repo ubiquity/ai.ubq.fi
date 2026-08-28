@@ -292,7 +292,7 @@ Object.defineProperty(Deno, "openKv", {
 });
 
 const { default: handler } = await import("../src/handler.ts");
-const { authenticateClient } = await import("../src/auth.ts");
+const { authenticateAdmin, authenticateClient } = await import("../src/auth.ts");
 const {
   PASSKEY_RELAY_COOKIE_NAME,
   passkeySessionKey,
@@ -692,28 +692,35 @@ Deno.test("GitHub HTTP verification failures do not fall back to relay passkey c
   const originalFetch = globalThis.fetch;
   globalThis.fetch = () => Promise.resolve(githubResponse);
   try {
-    const authenticate = async (suffix: string) => {
+    const request = async (suffix: string) => {
       const githubToken = `ghp_relay_http_${suffix}_1234567890abcdefghijklmnopqrstuvwxyz`;
-      return await authenticateClient(
-        await withKernelTestToken(
-          new Request("https://ai.ubq.fi/uos/auth", {
-            headers: {
-              Authorization: `Bearer ${githubToken}`,
-              Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${passkeyToken}`,
-              "X-GitHub-Owner": owner,
-              "X-GitHub-Repo": repo,
-            },
-          }),
-          githubToken,
-          owner,
-          repo,
-        ),
+      return await withKernelTestToken(
+        new Request("https://ai.ubq.fi/uos/auth", {
+          headers: {
+            Authorization: `Bearer ${githubToken}`,
+            Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${passkeyToken}`,
+            "X-GitHub-Owner": owner,
+            "X-GitHub-Repo": repo,
+          },
+        }),
+        githubToken,
+        owner,
+        repo,
       );
     };
 
-    const rejected = await authenticate("rejected");
+    const rejected = await authenticateClient(await request("rejected"));
     assert.equal(rejected.ok, true);
     if (rejected.ok) assert.equal(rejected.method.kind, "passkey_session");
+
+    const adminRejected = await authenticateAdmin(await request("admin_rejected"));
+    assert.equal(adminRejected.ok, true);
+    if (adminRejected.ok) assert.equal(adminRejected.method.kind, "passkey_session");
+
+    githubResponse = new Response(null, { status: 200 });
+    const adminValid = await authenticateAdmin(await request("admin_valid"));
+    assert.equal(adminValid.ok, false);
+    if (!adminValid.ok) assert.equal(adminValid.response.status, 401);
 
     const unavailableResponses = [
       new Response(null, { status: 408 }),
@@ -729,9 +736,15 @@ Deno.test("GitHub HTTP verification failures do not fall back to relay passkey c
     ];
     for (const [index, response] of unavailableResponses.entries()) {
       githubResponse = response;
-      const unavailable = await authenticate(`unavailable_${index}`);
+      const unavailable = await authenticateClient(await request(`unavailable_${index}`));
       assert.equal(unavailable.ok, false, `GitHub status ${response.status}`);
       if (!unavailable.ok) assert.equal(unavailable.response.status, 502, `GitHub status ${response.status}`);
+
+      const adminUnavailable = await authenticateAdmin(await request(`admin_unavailable_${index}`));
+      assert.equal(adminUnavailable.ok, false, `Admin GitHub status ${response.status}`);
+      if (!adminUnavailable.ok) {
+        assert.equal(adminUnavailable.response.status, 502, `Admin GitHub status ${response.status}`);
+      }
     }
   } finally {
     globalThis.fetch = originalFetch;
