@@ -4,6 +4,7 @@ import {
   buildSentinelRecoveryDraftPullRequest,
   createOrReuseSentinelRecoveryDraftPullRequest,
   isSentinelArtifactRecoveryEligible,
+  legacyArtifactHasTerminalReport,
   legacyArtifactNeedsManualDisposition,
   legacyArtifactTerminalDisposition,
   manualRecoveryRecordForLegacyArtifact,
@@ -358,6 +359,7 @@ Deno.test("unrecognized authenticated terminal legacy evidence fails closed to m
   ];
   try {
     assert.equal(legacyArtifactTerminalDisposition(files), null);
+    assert.equal(legacyArtifactHasTerminalReport(files), true);
     assert.equal(legacyArtifactNeedsManualDisposition(files), false);
   } finally {
     for (const file of files) file.bytes.fill(0);
