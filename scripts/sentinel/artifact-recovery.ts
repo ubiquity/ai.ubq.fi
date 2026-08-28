@@ -1069,6 +1069,7 @@ export const legacyArtifactNeedsManualDisposition = (
     INCOMPLETE_FAILURE_MARKERS.has(workflowRun.conclusion);
   return files.some((file) => file.path.startsWith("reports/")) &&
     !terminalArtifactRecord(files) &&
+    (status === null || !TERMINAL_CYCLE_STATUSES.has(status)) &&
     (ciphertextProvesFailure || owningRunProvesFailure);
 };
 
@@ -1346,21 +1347,28 @@ export const recoverSentinelArtifactsInActions = async (
         const workflowRun = await workflowRunForArtifact(decrypted, artifact, github);
         const artifactRecord = recordFromArtifact(decrypted, artifact, encryptedDigest, workflowRun);
         if (!artifactRecord) {
-          const legacyRecord = (
+          let legacyRecord = (
               isSentinelArtifactRecoveryEligible(decrypted, workflowRun) ||
               legacyArtifactNeedsManualDisposition(decrypted, workflowRun)
             )
             ? manualRecoveryRecordForLegacyArtifact(input.repository, artifact, encryptedDigest)
             : null;
           if (legacyRecord) {
-            recoverySnapshot = await writeGitHubSentinelRecoveryLedger({
-              token: input.token,
-              repository: input.repository,
-              fetcher: stateFetcher,
-              snapshot: recoverySnapshot,
-              ledger: upsertSentinelRecoveryRecord(recoverySnapshot.ledger, legacyRecord, null),
-              message: `chore(sentinel): classify legacy artifact ${artifact.id}`,
-            });
+            const existingLegacyRecord = recoverySnapshot.ledger.records.find((candidate) =>
+              sentinelRecoveryIdentityKey(candidate.identity) === sentinelRecoveryIdentityKey(legacyRecord!.identity)
+            ) ?? null;
+            if (existingLegacyRecord) {
+              legacyRecord = existingLegacyRecord;
+            } else {
+              recoverySnapshot = await writeGitHubSentinelRecoveryLedger({
+                token: input.token,
+                repository: input.repository,
+                fetcher: stateFetcher,
+                snapshot: recoverySnapshot,
+                ledger: upsertSentinelRecoveryRecord(recoverySnapshot.ledger, legacyRecord, null),
+                message: `chore(sentinel): classify legacy artifact ${artifact.id}`,
+              });
+            }
           }
           results.push({
             schema_version: SENTINEL_ARTIFACT_RECOVERY_SCHEMA_VERSION,

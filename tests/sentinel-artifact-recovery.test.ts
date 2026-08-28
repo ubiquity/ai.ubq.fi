@@ -307,6 +307,20 @@ Deno.test("report-only ciphertext can prove legacy failure without a workflow lo
   }
 });
 
+Deno.test("terminal report-only cycles are not reclassified from a later workflow failure", () => {
+  const files = [
+    { path: "reports/cycle.json", bytes: new TextEncoder().encode('{"schema_version":1,"status":"no_change"}') },
+  ];
+  try {
+    assert.equal(
+      legacyArtifactNeedsManualDisposition(files, { status: "completed", conclusion: "failure" }),
+      false,
+    );
+  } finally {
+    for (const file of files) file.bytes.fill(0);
+  }
+});
+
 Deno.test({
   name: "encrypted candidate recovery creates one deterministic quarantined commit and draft PR request",
   ignore: unavailable,
