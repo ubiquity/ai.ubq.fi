@@ -4,6 +4,7 @@ import {
   buildSentinelRecoveryDraftPullRequest,
   createOrReuseSentinelRecoveryDraftPullRequest,
   isSentinelArtifactRecoveryEligible,
+  legacyArtifactNeedsManualDisposition,
   manualRecoveryRecordForLegacyArtifact,
   recoverSentinelArtifactCandidate,
   selectSentinelRecoveryArtifacts,
@@ -258,6 +259,23 @@ Deno.test("authenticated legacy candidate evidence receives a durable manual dis
   assert.equal(record.identity.source_id, "33197180235");
   assert.equal(record.identity.source_revision, headSha);
   assert.match(record.next_action ?? "", /repository owner/u);
+});
+
+Deno.test("failed legacy candidate evidence remains classifiable when its cycle schema is incomplete", () => {
+  const files = makeEligibilityEvidence("legacy_unknown");
+  try {
+    assert.equal(isSentinelArtifactRecoveryEligible(files), false);
+    assert.equal(
+      legacyArtifactNeedsManualDisposition(files, { status: "completed", conclusion: "failure" }),
+      true,
+    );
+    assert.equal(
+      legacyArtifactNeedsManualDisposition(files, { status: "completed", conclusion: "success" }),
+      false,
+    );
+  } finally {
+    for (const file of files) file.bytes.fill(0);
+  }
 });
 
 Deno.test({

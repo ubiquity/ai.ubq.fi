@@ -393,7 +393,7 @@ jobs:
           set -euo pipefail
           envelope="$(find "$RUNNER_TEMP/sentinel-matrix-plan" -type f -name sentinel-evidence-v1.json -print -quit)"
           test -n "$envelope"
-          deno eval --frozen --lock=deno.lock --allow-env=RUNNER_TEMP,SENTINEL_ARTIFACT_KEY,CELL_ID,CELL_BASE_SHA,CELL_BRANCH --allow-read="$RUNNER_TEMP" --allow-write="$RUNNER_TEMP" '
+          deno eval --frozen --lock=deno.lock '
             import { decodeSentinelArtifactKey, decryptSentinelArtifact } from "./scripts/sentinel/artifact-crypto.ts";
             import { parseMatrixPlanV1 } from "./scripts/sentinel/matrix.ts";
             const root = Deno.env.get("RUNNER_TEMP")!;
@@ -442,7 +442,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          deno eval --frozen --lock=deno.lock --allow-env --allow-net --allow-read --allow-write --allow-run '
+          deno eval --frozen --lock=deno.lock '
             import { IMPLEMENTATION_OUTPUT_SCHEMA, isTriageReport } from "./scripts/sentinel/types.ts";
             import { parseMatrixPlanV1 } from "./scripts/sentinel/matrix.ts";
             import { runMatrixCell } from "./scripts/sentinel/matrix-cell.ts";
@@ -826,7 +826,7 @@ jobs:
           set -euo pipefail
           test -n "$SENTINEL_ARTIFACT_KEY"
           mkdir -p .sentinel/reports/matrix
-          deno eval --frozen --lock=deno.lock --allow-env=RUNNER_TEMP,SENTINEL_ARTIFACT_KEY,EXPECTED_RUN_ID,EXPECTED_RUN_ATTEMPT,EXPECTED_BASE_SHA,EXPECTED_PLAN_DIGEST --allow-read="$RUNNER_TEMP" --allow-write=.sentinel/reports '
+          deno eval --frozen --lock=deno.lock '
             import { decodeSentinelArtifactKey, decryptSentinelArtifact } from "./scripts/sentinel/artifact-crypto.ts";
             import { parseMatrixPlanV1, validateMatrixCellReportV1, canonicalMatrixJson } from "./scripts/sentinel/matrix.ts";
             import { isTriageReport } from "./scripts/sentinel/types.ts";
