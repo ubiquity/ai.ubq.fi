@@ -168,7 +168,7 @@ Deno.test({
   name: "artifact selection keeps the newest bounded evidence window",
   ignore: unavailable,
   fn() {
-    const artifacts = Array.from({ length: 65 }, (_, index) =>
+    const artifacts = Array.from({ length: 129 }, (_, index) =>
       makeArtifact(
         10_000 + index,
         new Date(Date.UTC(2026, 7, 28, 18, index)).toISOString(),
@@ -180,10 +180,10 @@ Deno.test({
       }),
     );
     const selected = selectSentinelRecoveryArtifacts(artifacts);
-    assert.equal(selected.length, 64);
+    assert.equal(selected.length, 128);
     assert.deepEqual(
       selected.map((artifact) => artifact.id),
-      Array.from({ length: 64 }, (_, index) => 10_064 - index),
+      Array.from({ length: 128 }, (_, index) => 10_128 - index),
     );
   },
 });
