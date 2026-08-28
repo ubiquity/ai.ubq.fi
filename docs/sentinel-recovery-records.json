@@ -868,6 +868,40 @@
       "identity": {
         "repository": "ubiquity/ai.ubq.fi",
         "source_kind": "triage",
+        "source_id": "33034345618",
+        "source_revision": "9e424bf8ca1498e2f1e516231516c16599da201a",
+        "candidate_generation": 1
+      },
+      "run_id": "33034345618",
+      "attempt": 1,
+      "lease_token": "artifact-9631472128",
+      "base_sha": "9e424bf8ca1498e2f1e516231516c16599da201a",
+      "phase": "manual_required",
+      "disposition": "manual_required",
+      "state_version": 1,
+      "created_at": "2026-08-27T02:49:12Z",
+      "updated_at": "2026-08-27T02:49:12Z",
+      "candidate_branch": null,
+      "candidate_sha": null,
+      "changed_files": [],
+      "tree_sha": null,
+      "failure_class": "artifact_invalid",
+      "failure_fingerprint": "55bc5dbef0251da9e3fc78433946ac2188ef18201a2a69f35336e3d5630ca2cd",
+      "artifact_ids": [
+        9631472128
+      ],
+      "artifact_digests": [
+        "sha256:55bc5dbef0251da9e3fc78433946ac2188ef18201a2a69f35336e3d5630ca2cd"
+      ],
+      "reason": "authenticated legacy evidence contains a terminal disposition",
+      "next_action": "a repository owner must inspect the encrypted artifact and its exact workflow base",
+      "predecessor": null
+    },
+    {
+      "schema_version": 1,
+      "identity": {
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_kind": "triage",
         "source_id": "33034657764",
         "source_revision": "f38bfd2ea1c9f22cf594983816aba732be06692f",
         "candidate_generation": 1
