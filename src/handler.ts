@@ -50,6 +50,7 @@ import {
 import { runtimeDeploymentId, runtimeGitSha } from "./config.ts";
 import { handleHealth, handleHealthProviders, handleHealthUpstream } from "./health.ts";
 import { corsHeaders, notFound, openaiError, withCors as withCorsHeaders, withoutBody } from "./http.ts";
+import { STREAM_INACTIVITY_DEADLINE_MS } from "./inference_deadline.ts";
 import { type KernelQuotaReservation, reserveEffectiveKernelUsageLimit } from "./kernel_usage.ts";
 import {
   getResponseAccountCohortId,
@@ -251,6 +252,7 @@ const logTerminalRequest = async (
     recordSentinelDegradation?: typeof recordSentinelProviderDegradationFromEnvironment;
     recordAdminError?: typeof recordAdminError;
     streamReadFailure?: boolean;
+    streamLifecycleTimeout?: boolean;
     suppressSentinelReplay?: boolean;
     resolveClientBodyObservation?: () =>
       | SentinelClientBodyObservation
@@ -259,6 +261,14 @@ const logTerminalRequest = async (
   }>,
 ): Promise<void> => {
   const telemetry = getResponseTelemetry(input.telemetryResponse ?? input.response);
+  const lifecycleTimedOut = input.streamLifecycleTimeout === true &&
+    !(input.response.ok && telemetry?.completed === true);
+  const streamTerminalType = input.streamReadFailure
+    ? telemetry?.streamTerminalType ?? (lifecycleTimedOut ? "deadline" : "error")
+    : telemetry?.streamTerminalType ?? (lifecycleTimedOut ? "deadline" : null);
+  const failureKind = input.streamReadFailure
+    ? telemetry?.failureKind ?? (lifecycleTimedOut ? "stream_lifecycle_timeout" : "gateway_stream_read_error")
+    : telemetry?.failureKind ?? (lifecycleTimedOut ? "stream_lifecycle_timeout" : null);
   const accountCohortId = getResponseAccountCohortId(input.telemetryResponse ?? input.response);
   const latencyMs = Math.max(0, Math.round(performance.now() - input.startedAtMonotonicMs));
   const downstreamDrainMs = telemetry?.stream === true && telemetry.firstSemanticCommitmentMs !== null &&
@@ -304,12 +314,8 @@ const logTerminalRequest = async (
     semantic_output_observed: telemetry?.semanticOutputObserved ?? null,
     upstream_event_kinds: telemetry?.upstreamEventKinds ?? [],
     stream: input.streamReadFailure ? telemetry?.stream ?? true : telemetry?.stream ?? null,
-    stream_terminal_type: input.streamReadFailure
-      ? telemetry?.streamTerminalType ?? "error"
-      : telemetry?.streamTerminalType ?? null,
-    failure_kind: input.streamReadFailure
-      ? telemetry?.failureKind ?? "gateway_stream_read_error"
-      : telemetry?.failureKind ?? null,
+    stream_terminal_type: streamTerminalType,
+    failure_kind: failureKind,
     response_created_observed: telemetry?.responseCreatedObserved ?? false,
     synthetic_terminal_type: telemetry?.syntheticTerminalType ?? null,
     attempted_providers: telemetry?.attemptedProviders ?? [],
@@ -439,6 +445,8 @@ export const withTerminalRequestLog = (
     recordSentinelDegradation?: typeof recordSentinelProviderDegradationFromEnvironment;
     recordAdminError?: typeof recordAdminError;
     waitUntil?: SentinelBackgroundTaskRegistrar;
+    /** Test seam for exercising the bounded SSE lifecycle watchdog. */
+    streamLifecycleDeadlineMs?: number;
   }>,
 ): Promise<Response> => {
   const contentType = response.headers.get("Content-Type")?.toLowerCase() ?? "";
@@ -526,12 +534,21 @@ export const withTerminalRequestLog = (
   let terminalFinalization: Promise<void> | null = null;
   let terminalIntent: Readonly<{ outcome: "completed" | "incomplete"; reason?: string }> | null = null;
   let terminalSettled = false;
+  let lifecycleWatchdogTimer: ReturnType<typeof setTimeout> | null = null;
+  let lifecycleWatchdogTriggered = false;
+  const clearLifecycleWatchdog = (): void => {
+    if (lifecycleWatchdogTimer === null) return;
+    clearTimeout(lifecycleWatchdogTimer);
+    lifecycleWatchdogTimer = null;
+  };
   const log = (
     downstreamDrainedAtMonotonicMs?: number,
     deliveryOutcome: DeliveryOutcome = "unobserved",
     streamReadFailure = false,
     suppressSentinelReplay = false,
+    streamLifecycleTimeout = false,
   ): Promise<void> => {
+    clearLifecycleWatchdog();
     if (terminalLog) return terminalLog;
     terminalLog = logTerminalRequest({
       ...input,
@@ -542,6 +559,7 @@ export const withTerminalRequestLog = (
       downstreamDrainedAtMonotonicMs,
       deliveryOutcome,
       streamReadFailure,
+      streamLifecycleTimeout,
       suppressSentinelReplay: suppressSentinelReplay || replayFinalization !== null,
       resolveClientBodyObservation: async () => clientBodyObservation ?? await bufferedObservation,
     }).catch(() => {
@@ -550,10 +568,20 @@ export const withTerminalRequestLog = (
     });
     return terminalLog;
   };
+  let observedDeliveryOutcome: DeliveryOutcome = "unobserved";
+  let deliveryDidSettle = input.deliveryCompleted === undefined;
   const deliveryOutcome = input.deliveryCompleted
     ? input.deliveryCompleted.then(
-      () => input.deliverySignal?.aborted ? "interrupted" as const : "delivered" as const,
-      () => "interrupted" as const,
+      () => {
+        deliveryDidSettle = true;
+        observedDeliveryOutcome = input.deliverySignal?.aborted ? "interrupted" : "delivered";
+        return observedDeliveryOutcome;
+      },
+      () => {
+        deliveryDidSettle = true;
+        observedDeliveryOutcome = "interrupted";
+        return observedDeliveryOutcome;
+      },
     )
     : null;
   const finalizeTerminal = (outcome: "completed" | "incomplete", reason?: string): Promise<void> => {
@@ -617,6 +645,16 @@ export const withTerminalRequestLog = (
   }
 
   const reader = response.body.getReader();
+  let upstreamReaderCancelStarted = false;
+  const cancelUpstreamReader = (reason: unknown): void => {
+    if (upstreamReaderCancelStarted) return;
+    upstreamReaderCancelStarted = true;
+    try {
+      void reader.cancel(reason).catch(() => {});
+    } catch {
+      // The reader may already have released its lock or be closed.
+    }
+  };
   const sseInspector = createSentinelSseInspector();
   let sseInspectionFailed = false;
   const inspectSseChunk = (value: Uint8Array): void => {
@@ -638,12 +676,14 @@ export const withTerminalRequestLog = (
   let downstreamDrainedAtMonotonicMs: number | undefined;
   let settleBody: ((outcome: BodyOutcome) => void) | null = null;
   let bodyDidSettle = false;
+  let bodyOutcomeValue: BodyOutcome | null = null;
   let downstreamCancelled = false;
   const bodyOutcome = deliveryOutcome
     ? new Promise<BodyOutcome>((resolve) => {
       settleBody = (outcome) => {
         if (bodyDidSettle) return;
         bodyDidSettle = true;
+        bodyOutcomeValue = outcome;
         resolve(outcome);
       };
     })
@@ -658,6 +698,34 @@ export const withTerminalRequestLog = (
       )
     );
   }
+  const lifecycleWatchdogReason = new DOMException(
+    "The SSE response lifecycle exceeded the gateway deadline.",
+    "TimeoutError",
+  );
+  const triggerLifecycleWatchdog = (): void => {
+    if (lifecycleWatchdogTriggered || terminalLog || (bodyDidSettle && deliveryDidSettle)) return;
+    lifecycleWatchdogTriggered = true;
+    lifecycleWatchdogTimer = null;
+    const downstreamAborted = downstreamCancelled || input.deliverySignal?.aborted === true;
+    const telemetry = getResponseTelemetry(input.telemetryResponse ?? response);
+    const applicationCompleted = response.ok && telemetry?.completed === true;
+    if (!downstreamAborted && !applicationCompleted) clientBodyObservation = finishSseInspection("read_error");
+    if (downstreamAborted) zeroSentinelReplayInput(input.sentinelReplayInput);
+    cancelUpstreamReader(downstreamAborted ? input.deliverySignal?.reason : lifecycleWatchdogReason);
+    void finalizeFromTelemetry(downstreamAborted ? "downstream_cancelled" : "stream_lifecycle_timeout");
+    void log(
+      undefined,
+      downstreamAborted ? "interrupted" : observedDeliveryOutcome,
+      bodyOutcomeValue === "failed" || (!downstreamAborted && !applicationCompleted),
+      downstreamAborted,
+      !downstreamAborted && !applicationCompleted,
+    );
+  };
+  const configuredLifecycleDeadlineMs = input.streamLifecycleDeadlineMs ?? STREAM_INACTIVITY_DEADLINE_MS;
+  const lifecycleDeadlineMs = Number.isFinite(configuredLifecycleDeadlineMs) && configuredLifecycleDeadlineMs >= 0
+    ? configuredLifecycleDeadlineMs
+    : STREAM_INACTIVITY_DEADLINE_MS;
+  lifecycleWatchdogTimer = setTimeout(triggerLifecycleWatchdog, lifecycleDeadlineMs);
   const body = new ReadableStream<Uint8Array>({
     async pull(controller) {
       let result: ReadableStreamReadResult<Uint8Array>;
@@ -676,6 +744,15 @@ export const withTerminalRequestLog = (
           // The downstream may have cancelled while the provider read failed.
         }
         settleBody?.(downstreamAborted ? "interrupted" : "failed");
+        return;
+      }
+      if (lifecycleWatchdogTriggered) {
+        try {
+          controller.error(lifecycleWatchdogReason);
+        } catch {
+          // The downstream may have cancelled while the lifecycle timed out.
+        }
+        settleBody?.("failed");
         return;
       }
       if (result.done) {
@@ -721,7 +798,7 @@ export const withTerminalRequestLog = (
         controller.enqueue(result.value);
       } catch {
         downstreamCancelled = true;
-        void reader.cancel().catch(() => {});
+        cancelUpstreamReader("downstream_enqueue_failed");
         void finalizeFromTelemetry("downstream_enqueue_failed");
         zeroSentinelReplayInput(input.sentinelReplayInput);
         if (!deliveryOutcome) await log(undefined, "interrupted", false, true);
@@ -732,7 +809,7 @@ export const withTerminalRequestLog = (
       // Cancellation must not await a concurrently pending provider pull;
       // that pull observes the cancellation and performs layered cleanup.
       downstreamCancelled = true;
-      void reader.cancel(reason).catch(() => {});
+      cancelUpstreamReader(reason);
       void finalizeFromTelemetry("downstream_cancelled");
       zeroSentinelReplayInput(input.sentinelReplayInput);
       if (!deliveryOutcome) void log(undefined, "interrupted", false, true);
