@@ -531,8 +531,9 @@ Deno.test({
     );
     const retryPushLane = issuePushGate.slice(retryPushStart, retryPushEnd);
     assert(
-      retryPushLane.includes("requireExactRemoteCandidateBranch(") && retryPushLane.includes("return null"),
-      "Retry-pending issue pushes must verify any retained checkpoint ref and have no delivery record",
+      retryPushLane.includes("validateRetryPendingDevelopmentPush({") && retryPushLane.includes("return null") &&
+        !retryPushLane.includes("requireExactRemoteCandidateBranch("),
+      "Retry-pending issue pushes must validate their exact atomic ref set and have no delivery record",
     );
     for (
       const forbidden of [
@@ -613,7 +614,7 @@ Deno.test({
     assert(
       preservePosition >= 0 && rollbackPosition > preservePosition && checkpointPosition > rollbackPosition &&
         discardPosition > checkpointPosition,
-      "Retry deferral must preserve evidence, restore preview state, publish a checkpoint, and only then discard local changes",
+      "Retry deferral must preserve evidence, restore preview state, prepare a checkpoint, and only then discard local changes",
     );
     assert(
       checkpointStatePosition > checkpointPosition && checkpointStatePosition < discardPosition &&
@@ -639,6 +640,7 @@ Deno.test({
     assert(
       orchestrator.includes("captureFailedCandidateSnapshot(checkout, snapshotDirectory, baseSha)") &&
         orchestrator.includes("let retryCheckpoint = selectedIssueCheckpoint") &&
+        orchestrator.includes("let retryCheckpointExpectedRemoteSha = selectedIssueCheckpoint?.sha ?? null") &&
         orchestrator.includes("let lastPushedCandidateSha: string | null = null") &&
         orchestrator.includes("lastPushedCandidateSha = pushedCandidateSha") &&
         checkpointPublishLane.includes("selectedIssueAggregatePaths()") &&
@@ -648,28 +650,59 @@ Deno.test({
         checkpointPublishLane.includes("await commitChanges(") &&
         checkpointPublishLane.includes("assertGitHistoryExcludesValues") &&
         checkpointPublishLane.includes("lastPushedCandidateSha,") &&
-        retryDeferLane.includes("head_sha: checkpoint.sha") &&
-        !retryDeferLane.includes("head_sha: preInvocationSha"),
-      "Retry evidence must validate and publish the aggregate candidate before recording the exact remote SHA",
+        checkpointPublishLane.includes("prepareImmutableTemporaryCheckpoint(") &&
+        !checkpointPublishLane.includes('"push",') &&
+        issueCompletionLane.includes("github-issue-retry-retained-candidate.json") &&
+        issueCompletionLane.includes("head_sha: retryCheckpoint.sha"),
+      "Retry evidence must validate and prepare the aggregate candidate before atomic publication records its remote SHA",
     );
     assert(
-      checkpointPublishLane.indexOf("const pushedSha = await pushImmutableTemporaryCheckpoint") >= 0 &&
+      checkpointPublishLane.indexOf("const preparedSha = await prepareImmutableTemporaryCheckpoint") >= 0 &&
         checkpointPublishLane.indexOf("retryCheckpoint = checkpoint") >
-          checkpointPublishLane.indexOf("const pushedSha = await pushImmutableTemporaryCheckpoint"),
-      "A retry checkpoint SHA must become retained only after its exact remote push succeeds",
+          checkpointPublishLane.indexOf("const preparedSha = await prepareImmutableTemporaryCheckpoint") &&
+        !checkpointPublishLane.includes("pushRetryPendingRefsAtomically("),
+      "A retry checkpoint must remain runner-local until its ledger commit is ready for atomic publication",
     );
     const issueRevalidationPosition = checkpointPublishLane.indexOf(
       "const checkpointIssueJob = await getCurrentGitHubIssueJob",
     );
     const checkpointPushPosition = checkpointPublishLane.indexOf(
-      "const pushedSha = await pushImmutableTemporaryCheckpoint",
+      "const preparedSha = await prepareImmutableTemporaryCheckpoint",
     );
     assert(
       issueRevalidationPosition > checkpointPublishLane.indexOf("await assertGitHistoryExcludesValues") &&
         checkpointPublishLane.indexOf("githubIssueJobsMatch(workSelection.issueJob, checkpointIssueJob)") >
           issueRevalidationPosition &&
         checkpointPushPosition > issueRevalidationPosition,
-      "Retry checkpoint publication must revalidate the exact GitHub issue immediately before the remote push",
+      "Retry checkpoint preparation must revalidate the exact GitHub issue before retaining the local object",
+    );
+    assert(
+      issueCompletionLane.includes("await pushRetryPendingRefsAtomically({") &&
+        orchestrator.includes('"--atomic",') &&
+        orchestrator.includes("`--force-with-lease=refs/heads/${input.checkpoint.branch}:") &&
+        orchestrator.includes("`${input.checkpoint.sha}:refs/heads/${input.checkpoint.branch}`") &&
+        workflow.includes('SENTINEL_GIT_PUSH_ATOMIC="$atomic_push"') &&
+        workflow.includes('SENTINEL_GIT_CHECKPOINT_LEASE_SHA="$normalized_checkpoint_lease_sha"'),
+      "Checkpoint retries must publish development and the raw checkpoint SHA in one atomic lease-protected push",
+    );
+    const atomicPushStart = orchestrator.indexOf("export const pushRetryPendingRefsAtomically = async");
+    const atomicPushEnd = orchestrator.indexOf("export const prepareResumedGitHubIssueCandidate", atomicPushStart);
+    const atomicPushLane = orchestrator.slice(atomicPushStart, atomicPushEnd);
+    const startingPosition = atomicPushLane.indexOf("await input.onAtomicPushStarting?.()");
+    const atomicGitPosition = atomicPushLane.indexOf("await runTrustedGit({");
+    const acceptedUnverifiedPosition = atomicPushLane.indexOf("await input.onAtomicPushAcceptedUnverified?.()");
+    const remoteVerificationPosition = atomicPushLane.indexOf("const [remoteDevelopment, remoteCheckpoint]");
+    assert(
+      startingPosition >= 0 && atomicGitPosition > startingPosition && acceptedUnverifiedPosition > atomicGitPosition &&
+        remoteVerificationPosition > acceptedUnverifiedPosition &&
+        issueCompletionLane.includes('branch_disposition: "runner_local_atomic_push_in_flight"') &&
+        !issueCompletionLane.includes("...(checkpoint.branch === branch") &&
+        issueCompletionLane.includes('branch_disposition: "atomic_retry_push_accepted_unverified"') &&
+        issueCompletionLane.includes('branch_disposition: "remote_retained_issue_retry_pending"') &&
+        orchestrator.includes('state.branch_disposition === "atomic_retry_push_accepted_unverified"') &&
+        orchestrator.includes('state.branch_disposition === "runner_local_atomic_push_in_flight"') &&
+        orchestrator.includes('"atomic_retry_push_requires_reconciliation"'),
+      "Every atomic retry push must enter an in-flight state and remain explicitly unverified until both remote refs match",
     );
     assert(
       checkpointPublishLane.includes("await restoreIssueRetryAggregateIfEmpty(") &&

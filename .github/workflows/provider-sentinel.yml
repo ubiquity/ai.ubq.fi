@@ -739,16 +739,44 @@ jobs:
             exec "$REAL_GIT" "$@"
           fi
           is_push=false
-          development_spec=""
+          atomic_push=0
+          development_specs=()
+          candidate_specs=()
+          push_specs=()
+          checkpoint_lease_ref=""
+          checkpoint_lease_sha=""
+          checkpoint_lease_count=0
+          zero_sha="0000000000000000000000000000000000000000"
           for argument in "$@"; do
             if [ "$argument" = "push" ]; then
               is_push=true
             fi
+            if [ "$argument" = "--atomic" ]; then
+              atomic_push=1
+            fi
             case "$argument" in
-              *:refs/heads/development) development_spec="$argument" ;;
+              --force-with-lease=refs/heads/sentinel/candidate-*:* )
+                checkpoint_lease_count=$((checkpoint_lease_count + 1))
+                lease_spec="${argument#--force-with-lease=}"
+                checkpoint_lease_ref="${lease_spec%%:*}"
+                checkpoint_lease_sha="${lease_spec#*:}"
+                ;;
+              *:refs/heads/development)
+                development_specs+=("$argument")
+                push_specs+=("$argument")
+                ;;
+              *:refs/heads/sentinel/candidate-*)
+                candidate_specs+=("$argument")
+                push_specs+=("$argument")
+                ;;
+              *:refs/*) push_specs+=("$argument") ;;
             esac
           done
-          if [ "$is_push" = "true" ] && [ -n "$development_spec" ]; then
+          if [ "$is_push" = "true" ] && [ "${#development_specs[@]}" -gt 0 ]; then
+            if [ "${#development_specs[@]}" -ne 1 ] || [ "${#candidate_specs[@]}" -gt 1 ]; then
+              echo "Provider Sentinel push has ambiguous development or candidate refspecs." >&2
+              exit 1
+            fi
             probe="$(pwd -P)"
             repository_root=""
             while [ "$probe" != "/" ]; do
@@ -762,11 +790,20 @@ jobs:
               echo "Provider Sentinel development push has no cycle report root." >&2
               exit 1
             fi
-            local_ref="${development_spec%%:*}"
-            local_sha="$("$REAL_GIT" rev-parse "$local_ref")"
-            remote_sha="$("$REAL_GIT" ls-remote --heads origin refs/heads/development | awk '{print $1}')"
-            if ! [[ "$local_sha" =~ ^[0-9a-f]{40}$ ]] || ! [[ "$remote_sha" =~ ^[0-9a-f]{40}$ ]]; then
-              echo "Provider Sentinel development push has invalid local or remote identity." >&2
+            normalized_checkpoint_lease_sha=""
+            if [ "${#candidate_specs[@]}" -eq 1 ]; then
+              candidate_remote_ref="${candidate_specs[0]#*:}"
+              if [ "$checkpoint_lease_count" -ne 1 ] || [ "$checkpoint_lease_ref" != "$candidate_remote_ref" ]; then
+                echo "Provider Sentinel checkpoint push has no exact force-with-lease ref." >&2
+                exit 1
+              fi
+              normalized_checkpoint_lease_sha="${checkpoint_lease_sha:-$zero_sha}"
+              if ! [[ "$normalized_checkpoint_lease_sha" =~ ^[0-9a-f]{40}$ ]]; then
+                echo "Provider Sentinel checkpoint lease has an invalid SHA." >&2
+                exit 1
+              fi
+            elif [ "$checkpoint_lease_count" -ne 0 ]; then
+              echo "Provider Sentinel checkpoint lease has no candidate refspec." >&2
               exit 1
             fi
             authorization="${GIT_CONFIG_VALUE_0:-}"
@@ -796,8 +833,30 @@ jobs:
               echo "Provider Sentinel cycle has no GitHub workflow run ID." >&2
               exit 1
             fi
-            printf '%s %s refs/heads/development %s\n' "$local_ref" "$local_sha" "$remote_sha" | \
+            {
+              for push_spec in "${push_specs[@]}"; do
+                local_ref="${push_spec%%:*}"
+                remote_ref="${push_spec#*:}"
+                local_sha="$("$REAL_GIT" rev-parse --verify "${local_ref}^{commit}")"
+                remote_output="$("$REAL_GIT" ls-remote origin "$remote_ref")"
+                if [ "$(printf '%s\n' "$remote_output" | sed '/^$/d' | wc -l | tr -d ' ')" -gt 1 ]; then
+                  echo "Provider Sentinel push found an ambiguous remote ref." >&2
+                  exit 1
+                fi
+                remote_sha="$(printf '%s\n' "$remote_output" | awk 'NF { print $1 }')"
+                if [ -z "$remote_sha" ] && [ "$remote_ref" != "refs/heads/development" ]; then
+                  remote_sha="$zero_sha"
+                fi
+                if ! [[ "$local_sha" =~ ^[0-9a-f]{40}$ ]] || ! [[ "$remote_sha" =~ ^[0-9a-f]{40}$ ]]; then
+                  echo "Provider Sentinel push has invalid local or remote identity." >&2
+                  exit 1
+                fi
+                printf '%s %s %s %s\n' "$local_ref" "$local_sha" "$remote_ref" "$remote_sha"
+              done
+            } | \
               SENTINEL_GIT_WRAPPER_BYPASS=1 \
+              SENTINEL_GIT_PUSH_ATOMIC="$atomic_push" \
+              SENTINEL_GIT_CHECKPOINT_LEASE_SHA="$normalized_checkpoint_lease_sha" \
               SENTINEL_REAL_GIT="$REAL_GIT" \
               GITHUB_WORKSPACE="$repository_root" \
               GITHUB_TOKEN="$token" \

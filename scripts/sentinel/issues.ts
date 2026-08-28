@@ -692,7 +692,7 @@ export const selectNextGitHubIssueJobSelection = async (
         selectionBlocked = true;
         break;
       }
-      if (entry.fingerprint === job.fingerprint) checkpoint = entry.checkpoint;
+      checkpoint = entry.checkpoint;
       // A due active retry that normalized to the current snapshot wins over
       // older terminal entries retained only for manual checkpoint recovery.
       break;
@@ -710,23 +710,6 @@ export const selectNextGitHubIssueJob = async (
   observedAt = new Date(),
 ): Promise<GitHubIssueJob | null> =>
   (await selectNextGitHubIssueJobSelection(source, repository, ledgerMarkdown, observedAt))?.job ?? null;
-
-export const retryCheckpointForGitHubIssueJob = (
-  ledgerMarkdown: string,
-  job: GitHubIssueJob,
-  observedAt = new Date(),
-): GitHubIssueJobCheckpoint | null => {
-  if (!Number.isFinite(observedAt.getTime())) throw new Error("GitHub issue selection timestamp is invalid");
-  const entry = parseGitHubIssueJobLedger(ledgerMarkdown).find((candidate) =>
-    candidate.issueId === job.issueId && candidate.nodeId === job.nodeId && candidate.number === job.number &&
-    candidate.fingerprint === job.fingerprint
-  );
-  if (
-    !entry || entry.disposition !== "retry_pending" ||
-    observedAt.getTime() < Date.parse(entry.recordedAt) + GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS
-  ) return null;
-  return entry.checkpoint;
-};
 
 export const githubIssueJobTriageReport = (
   job: GitHubIssueJob,
@@ -880,11 +863,11 @@ export const renderGitHubIssueJobLedger = (entries: readonly GitHubIssueJobLedge
     "",
     "Sentinel results for immutable GitHub issue snapshots are tracked here. A retry-pending snapshot waits six hours before",
     "it is eligible again so later issues can advance. A retry checkpoint names an immutable remote candidate that Sentinel",
-    "may resume only for the exact unchanged snapshot. A superseded checkpoint remains auditable as nonblocking",
-    "checkpoint_retained evidence. Terminal snapshots are delivered through exactly one pull request that links the issue as",
-    "evidence. After a verified production keep, Sentinel merges the delivery pull request and closes the unchanged issue",
-    "with supporting evidence; a pull request already carried by the development push is accepted after a containment check.",
-    "Manual-required, failed, and rolled-back results remain open.",
+    "may resume when the snapshot matches after accepted inert UbiquityOS notices are normalized. A superseded checkpoint",
+    "remains auditable as nonblocking checkpoint_retained evidence. Terminal snapshots are delivered through exactly one pull",
+    "request that links the issue as evidence. After a verified production keep, Sentinel merges the delivery pull request",
+    "and closes the unchanged issue with supporting evidence; a pull request already carried by the development push is",
+    "accepted after a containment check. Manual-required, failed, and rolled-back results remain open.",
     "",
     ...table,
     "",

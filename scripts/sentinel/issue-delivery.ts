@@ -72,6 +72,7 @@ export type SentinelRetryPendingCycleReport = Readonly<{
   stage: "pushing_retry_pending_github_issue" | "complete";
   branch_disposition:
     | "runner_local_pending_review"
+    | "runner_local_atomic_push_in_flight"
     | "development_docs_only_issue_retry_pending"
     | "remote_retained_issue_retry_pending";
   retry_checkpoint: GitHubIssueRetryCheckpointReport | null;
@@ -198,7 +199,11 @@ export const parseSentinelRetryPendingCycleReport = (
   }
   const retryCheckpoint = parseRetryCheckpoint(cycle.retry_checkpoint);
   if (
-    (cycle.branch_disposition === "remote_retained_issue_retry_pending") !== (retryCheckpoint !== null)
+    retryCheckpoint === null
+      ? cycle.branch_disposition === "remote_retained_issue_retry_pending"
+      : cycle.branch_disposition !== "runner_local_pending_review" &&
+        cycle.branch_disposition !== "runner_local_atomic_push_in_flight" &&
+        cycle.branch_disposition !== "remote_retained_issue_retry_pending"
   ) throw new Error("Sentinel retry-pending cycle checkpoint does not match its branch disposition");
   return {
     schema_version: 1,
@@ -295,7 +300,8 @@ export const parseGitPushUpdates = (value: string): GitPushUpdate[] => {
     if (parts.length !== 4) throw new Error("Git pre-push input has an invalid shape");
     const [localRef, localSha, remoteRef, remoteSha] = parts as [string, string, string, string];
     if (
-      (localRef !== "HEAD" && !localRef.startsWith("refs/")) || !remoteRef.startsWith("refs/") ||
+      (localRef !== "HEAD" && !localRef.startsWith("refs/") && !FULL_SHA.test(localRef)) ||
+      !remoteRef.startsWith("refs/") ||
       !FULL_SHA.test(localSha) || !FULL_SHA.test(remoteSha)
     ) throw new Error("Git pre-push input has invalid refs or SHAs");
     updates.push({ localRef, localSha, remoteRef, remoteSha });
@@ -307,6 +313,20 @@ export const selectDevelopmentPush = (updates: readonly GitPushUpdate[]): GitPus
   const matches = updates.filter((update) => update.remoteRef === "refs/heads/development");
   if (matches.length > 1) throw new Error("Sentinel attempted multiple development updates in one push");
   return matches[0] ?? null;
+};
+
+export const selectRetryCheckpointPush = (
+  updates: readonly GitPushUpdate[],
+  checkpoint: GitHubIssueRetryCheckpointReport,
+): GitPushUpdate => {
+  const matches = updates.filter((update) => update.remoteRef === `refs/heads/${checkpoint.branch}`);
+  if (
+    matches.length !== 1 || matches[0]!.localRef !== checkpoint.sha ||
+    matches[0]!.localSha !== checkpoint.sha
+  ) {
+    throw new Error("Sentinel retry-pending push has no exact checkpoint update");
+  }
+  return matches[0]!;
 };
 
 export const isIssueDeliveryFailSafeRevert = (

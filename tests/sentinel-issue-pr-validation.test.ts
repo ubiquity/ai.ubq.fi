@@ -18,6 +18,24 @@ const CORRELATION_ID = "sentinel-123e4567-e89b-42d3-a456-426614174000";
 const DISPLAY_TITLE = `Deno Deploy ${CORRELATION_ID}`;
 const BASE_SHA = "d".repeat(40);
 const RETRY_SHA = "e".repeat(40);
+const ZERO_SHA = "0".repeat(40);
+
+const developmentUpdate = {
+  localRef: "HEAD",
+  localSha: RETRY_SHA,
+  remoteRef: "refs/heads/development",
+  remoteSha: BASE_SHA,
+};
+
+const checkpointUpdate = (
+  checkpoint: Readonly<{ branch: string; sha: string }>,
+  remoteSha = ZERO_SHA,
+) => ({
+  localRef: checkpoint.sha,
+  localSha: checkpoint.sha,
+  remoteRef: `refs/heads/${checkpoint.branch}`,
+  remoteSha,
+});
 
 const retrySelection = parseGitHubIssueSelectionReport({
   schema_version: 1,
@@ -162,12 +180,9 @@ Deno.test("issue candidate evidence parsers bind disposition, preview, and retry
 Deno.test("retry-pending development pushes are exact docs-only commits with no delivery candidate", () => {
   const baseInput: Parameters<typeof validateRetryPendingDevelopmentPush>[0] = {
     workflowRunId: "123456789",
-    update: {
-      localRef: "HEAD",
-      localSha: RETRY_SHA,
-      remoteRef: "refs/heads/development",
-      remoteSha: BASE_SHA,
-    },
+    updates: [developmentUpdate],
+    atomicPush: false,
+    checkpointLeaseSha: null,
     selection: retrySelection,
     cycleValue: retryCycle,
     dispositionValue: retryDisposition,
@@ -185,9 +200,11 @@ Deno.test("retry-pending development pushes are exact docs-only commits with no 
   };
   const checkpointInput: Parameters<typeof validateRetryPendingDevelopmentPush>[0] = {
     ...baseInput,
+    updates: [developmentUpdate, checkpointUpdate(checkpoint)],
+    atomicPush: true,
+    checkpointLeaseSha: ZERO_SHA,
     cycleValue: {
       ...retryCycle,
-      branch_disposition: "remote_retained_issue_retry_pending",
       retry_checkpoint: checkpoint,
     },
     dispositionValue: { ...retryDisposition, retry_checkpoint: checkpoint },
@@ -196,6 +213,57 @@ Deno.test("retry-pending development pushes are exact docs-only commits with no 
     })]),
   };
   assert.doesNotThrow(() => validateRetryPendingDevelopmentPush(checkpointInput));
+  assert.doesNotThrow(() =>
+    validateRetryPendingDevelopmentPush({
+      ...checkpointInput,
+      cycleValue: {
+        ...checkpointInput.cycleValue as Record<string, unknown>,
+        branch_disposition: "runner_local_atomic_push_in_flight",
+      },
+    })
+  );
+  const checkpointPushMismatches: Array<
+    readonly [Partial<Parameters<typeof validateRetryPendingDevelopmentPush>[0]>, RegExp]
+  > = [
+    [{ atomicPush: false }, /atomic two-ref push/u],
+    [{ checkpointLeaseSha: null }, /exact force-with-lease/u],
+    [{ checkpointLeaseSha: "2".repeat(40) }, /exact force-with-lease/u],
+    [{ updates: [developmentUpdate] }, /atomic two-ref push/u],
+    [
+      { updates: [developmentUpdate, checkpointUpdate(checkpoint), checkpointUpdate(checkpoint)] },
+      /atomic two-ref push/u,
+    ],
+    [{
+      updates: [
+        developmentUpdate,
+        { ...checkpointUpdate(checkpoint), remoteRef: "refs/heads/sentinel/candidate-123456780" },
+      ],
+    }, /exact checkpoint update/u],
+    [{
+      updates: [
+        developmentUpdate,
+        { ...checkpointUpdate(checkpoint), localRef: "2".repeat(40), localSha: "2".repeat(40) },
+      ],
+    }, /exact checkpoint update/u],
+    [{
+      updates: [
+        developmentUpdate,
+        checkpointUpdate(checkpoint),
+        {
+          localRef: "HEAD",
+          localSha: RETRY_SHA,
+          remoteRef: "refs/heads/unexpected",
+          remoteSha: ZERO_SHA,
+        },
+      ],
+    }, /atomic two-ref push/u],
+  ];
+  for (const [overrides, pattern] of checkpointPushMismatches) {
+    assert.throws(
+      () => validateRetryPendingDevelopmentPush({ ...checkpointInput, ...overrides }),
+      pattern,
+    );
+  }
 
   const priorRunCheckpoint = {
     branch: "sentinel/candidate-123456700-1",
@@ -205,6 +273,9 @@ Deno.test("retry-pending development pushes are exact docs-only commits with no 
   assert.doesNotThrow(() =>
     validateRetryPendingDevelopmentPush({
       ...baseInput,
+      updates: [developmentUpdate, checkpointUpdate(priorRunCheckpoint, priorRunCheckpoint.sha)],
+      atomicPush: true,
+      checkpointLeaseSha: priorRunCheckpoint.sha,
       cycleValue: {
         ...retryCycle,
         branch_disposition: "remote_retained_issue_retry_pending",
@@ -229,6 +300,9 @@ Deno.test("retry-pending development pushes are exact docs-only commits with no 
     () =>
       validateRetryPendingDevelopmentPush({
         ...baseInput,
+        updates: [developmentUpdate, checkpointUpdate(priorRunCheckpoint, priorRunCheckpoint.sha)],
+        atomicPush: true,
+        checkpointLeaseSha: priorRunCheckpoint.sha,
         cycleValue: {
           ...retryCycle,
           branch_disposition: "remote_retained_issue_retry_pending",

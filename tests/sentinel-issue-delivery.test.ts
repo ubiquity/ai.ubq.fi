@@ -18,6 +18,7 @@ import {
   parseGitHubIssueSelectionReport,
   parseGitPushUpdates,
   parseSentinelCycleReport,
+  parseSentinelRetryPendingCycleReport,
   renderIssueDeliveryEvidence,
   renderIssuePullRequestBody,
   selectDevelopmentPush,
@@ -675,14 +676,93 @@ Deno.test("GitHub issue selection reports require a safe nonnegative comment cou
 Deno.test("pre-push parsing isolates exactly one development update", () => {
   const zero = "0".repeat(40);
   const updates = parseGitPushUpdates([
-    `refs/heads/sentinel/candidate-123 ${"c".repeat(40)} refs/heads/sentinel/candidate-123 ${zero}`,
+    `${"c".repeat(40)} ${"c".repeat(40)} refs/heads/sentinel/candidate-123 ${zero}`,
     `HEAD ${"c".repeat(40)} refs/heads/development ${"d".repeat(40)}`,
     "",
   ].join("\n"));
+  assert.equal(updates[0]?.localRef, "c".repeat(40));
   assert.equal(selectDevelopmentPush(updates)?.localSha, "c".repeat(40));
   assert.throws(
     () => selectDevelopmentPush([...updates, updates[1]!]),
     /multiple development updates/,
+  );
+});
+
+Deno.test("retry-pending cycle parsing distinguishes local checkpoint preparation from remote retention", () => {
+  const checkpoint = {
+    branch: "sentinel/candidate-123456789-1",
+    sha: "c".repeat(40),
+    base_sha: "d".repeat(40),
+  };
+  const cycle = {
+    schema_version: 1,
+    run_id: "123456789",
+    started_at: "2026-08-28T08:00:00Z",
+    base_development_sha: checkpoint.base_sha,
+    candidate_sha: "e".repeat(40),
+    temporary_branch: checkpoint.branch,
+    status: "running",
+    stage: "pushing_retry_pending_github_issue",
+    branch_disposition: "runner_local_pending_review",
+    retry_checkpoint: checkpoint,
+  };
+  assert.equal(
+    parseSentinelRetryPendingCycleReport(cycle, {
+      runId: cycle.run_id,
+      status: "running",
+      stage: "pushing_retry_pending_github_issue",
+      branchDispositions: [
+        "runner_local_pending_review",
+        "runner_local_atomic_push_in_flight",
+        "remote_retained_issue_retry_pending",
+      ],
+    }).branch_disposition,
+    "runner_local_pending_review",
+  );
+  assert.equal(
+    parseSentinelRetryPendingCycleReport({
+      ...cycle,
+      branch_disposition: "runner_local_atomic_push_in_flight",
+    }, {
+      runId: cycle.run_id,
+      status: "running",
+      stage: "pushing_retry_pending_github_issue",
+      branchDispositions: [
+        "runner_local_pending_review",
+        "runner_local_atomic_push_in_flight",
+        "remote_retained_issue_retry_pending",
+      ],
+    }).branch_disposition,
+    "runner_local_atomic_push_in_flight",
+  );
+  assert.equal(
+    parseSentinelRetryPendingCycleReport({
+      ...cycle,
+      branch_disposition: "remote_retained_issue_retry_pending",
+    }, {
+      runId: cycle.run_id,
+      status: "running",
+      stage: "pushing_retry_pending_github_issue",
+      branchDispositions: [
+        "runner_local_pending_review",
+        "runner_local_atomic_push_in_flight",
+        "remote_retained_issue_retry_pending",
+      ],
+    }).branch_disposition,
+    "remote_retained_issue_retry_pending",
+  );
+  assert.throws(
+    () =>
+      parseSentinelRetryPendingCycleReport({
+        ...cycle,
+        branch_disposition: "development_docs_only_issue_retry_pending",
+      }, {
+        runId: cycle.run_id,
+        status: "running",
+        stage: "pushing_retry_pending_github_issue",
+        branchDispositions: ["development_docs_only_issue_retry_pending"],
+      }),
+    /checkpoint does not match its branch disposition/u,
   );
 });
 

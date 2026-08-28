@@ -80,7 +80,6 @@ import {
   renderGitHubIssueJobHint,
   renderGitHubIssueJobLedger,
   requireResolvedGitHubIssueJobImplementation,
-  retryCheckpointForGitHubIssueJob,
   selectNextGitHubIssueJob,
   selectNextGitHubIssueJobSelection,
 } from "../scripts/sentinel/issues.ts";
@@ -490,7 +489,6 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
   );
   assert.equal(dueSelection?.job.fingerprint, selected.fingerprint);
   assert.deepEqual(dueSelection?.checkpoint, checkpoint);
-  assert.deepEqual(retryCheckpointForGitHubIssueJob(pendingLedger, selected, dueAt), checkpoint);
   const checkpointHint = parseGitHubIssueJobHint(renderGitHubIssueJobHint(selected, checkpoint));
   assert.equal(githubIssueJobMatchesHint(checkpointHint, selected, checkpoint), true);
   assert.equal(githubIssueJobMatchesHint(checkpointHint, selected, null), false);
@@ -506,32 +504,35 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
   );
   assert.equal(normalizedSelection?.job.number, selected.number);
   assert.notEqual(normalizedSelection?.job.fingerprint, selected.fingerprint);
-  assert.equal(normalizedSelection?.checkpoint, null);
-  assert.equal(retryCheckpointForGitHubIssueJob(pendingLedger, normalizedSelection!.job, dueAt), null);
-  const normalizedHint = parseGitHubIssueJobHint(renderGitHubIssueJobHint(normalizedSelection!.job));
-  assert.equal(githubIssueJobMatchesHint(normalizedHint, normalizedSelection!.job, null), true);
+  assert.deepEqual(normalizedSelection?.checkpoint, checkpoint);
+  const normalizedHint = parseGitHubIssueJobHint(
+    renderGitHubIssueJobHint(normalizedSelection!.job, normalizedSelection!.checkpoint),
+  );
+  assert.equal(githubIssueJobMatchesHint(normalizedHint, normalizedSelection!.job, checkpoint), true);
   const normalizedRetryAt = new Date(dueAt.getTime() + 1_000);
   const normalizedRetryLedger = applyGitHubIssueJobDisposition(
     pendingLedger,
     normalizedSelection!.job,
-    "f".repeat(40),
+    checkpoint.baseSha,
     normalizedRetryAt,
     "retry_pending",
+    checkpoint,
   );
   const normalizedRetryEntries = parseGitHubIssueJobLedger(normalizedRetryLedger);
   assert.equal(normalizedRetryEntries[0]?.disposition, "checkpoint_retained");
   assert.deepEqual(normalizedRetryEntries[0]?.checkpoint, checkpoint);
-  assert.equal(
-    (
-      await selectNextGitHubIssueJobSelection(
-        githubIssueSource([issueWithLaterInertComment, secondIssue]),
-        "ubiquity/ai.ubq.fi",
-        normalizedRetryLedger,
-        new Date(normalizedRetryAt.getTime() + GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS),
-      )
-    )?.job.fingerprint,
-    normalizedSelection!.job.fingerprint,
+  assert.deepEqual(
+    normalizedRetryEntries.find((entry) => entry.disposition === "retry_pending")?.checkpoint,
+    checkpoint,
   );
+  const normalizedRetrySelection = await selectNextGitHubIssueJobSelection(
+    githubIssueSource([issueWithLaterInertComment, secondIssue]),
+    "ubiquity/ai.ubq.fi",
+    normalizedRetryLedger,
+    new Date(normalizedRetryAt.getTime() + GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS),
+  );
+  assert.equal(normalizedRetrySelection?.job.fingerprint, normalizedSelection!.job.fingerprint);
+  assert.deepEqual(normalizedRetrySelection?.checkpoint, checkpoint);
   const issueWithSecondLaterInertComment = sentinelGitHubIssue({
     comments: firstIssue.comments + 2,
     updatedAt: "2026-08-23T22:00:00Z",
@@ -544,7 +545,7 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
   );
   assert.equal(twiceNormalizedSelection?.job.number, selected.number);
   assert.notEqual(twiceNormalizedSelection?.job.fingerprint, normalizedSelection!.job.fingerprint);
-  assert.equal(twiceNormalizedSelection?.checkpoint, null);
+  assert.deepEqual(twiceNormalizedSelection?.checkpoint, checkpoint);
   const changedIssue = sentinelGitHubIssue({
     title: "Changed issue snapshot with separate retry work",
     updatedAt: "2026-08-24T01:00:00Z",

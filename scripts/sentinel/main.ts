@@ -24,7 +24,6 @@ import {
   parseGitHubIssueJobHint,
   parseGitHubIssueJobLedger,
   requireResolvedGitHubIssueJobImplementation,
-  retryCheckpointForGitHubIssueJob,
   selectNextGitHubIssueJobSelection,
 } from "./issues.ts";
 import { isSentinelProtectedImplementationPath, SENTINEL_POLICY, type SentinelMode } from "./policy.ts";
@@ -1538,19 +1537,25 @@ const pushTemporaryCandidate = async (
   return localSha;
 };
 
-export const pushImmutableTemporaryCheckpoint = async (
+export const prepareImmutableTemporaryCheckpoint = async (
   checkout: string,
   branch: string,
+  checkpointSha: string,
   gitEnvironment: Readonly<Record<string, string>>,
   expectedRemoteSha: string | null,
 ): Promise<string> => {
   if (!validTemporaryCandidateBranch(branch)) throw new Error("Sentinel checkpoint branch is invalid");
+  ensureFullSha(checkpointSha, "Local checkpoint SHA");
   if (expectedRemoteSha !== null) ensureFullSha(expectedRemoteSha, "Expected remote checkpoint SHA");
   const remoteBeforePush = await remoteTemporaryCandidateSha(checkout, branch, gitEnvironment);
   if (remoteBeforePush !== expectedRemoteSha) {
     throw new Error("Sentinel checkpoint branch does not match the exact previously pushed SHA");
   }
-  const localSha = ensureFullSha(await gitText(checkout, ["rev-parse", "HEAD"]), "Local checkpoint SHA");
+  const localSha = ensureFullSha(
+    await gitText(checkout, ["rev-parse", `${checkpointSha}^{commit}`]),
+    "Local checkpoint commit SHA",
+  );
+  if (localSha !== checkpointSha) throw new Error("Sentinel checkpoint object does not match its recorded SHA");
   if (expectedRemoteSha !== null) {
     const ancestry = await runTrustedGitUnchecked({
       args: ["merge-base", "--is-ancestor", expectedRemoteSha, localSha],
@@ -1560,22 +1565,55 @@ export const pushImmutableTemporaryCheckpoint = async (
       throw new Error("Sentinel checkpoint does not descend from the exact previously pushed SHA");
     }
   }
-  if (remoteBeforePush === localSha) return localSha;
+  return localSha;
+};
+
+export const pushRetryPendingRefsAtomically = async (
+  input: Readonly<{
+    checkout: string;
+    developmentSha: string;
+    checkpoint: GitHubIssueJobCheckpoint;
+    expectedRemoteCheckpointSha: string | null;
+    gitEnvironment: Readonly<Record<string, string>>;
+    onAtomicPushStarting?: () => Promise<void>;
+    onAtomicPushAcceptedUnverified?: () => Promise<void>;
+  }>,
+): Promise<void> => {
+  ensureFullSha(input.developmentSha, "Retry-pending development SHA");
+  const localHead = ensureFullSha(await gitText(input.checkout, ["rev-parse", "HEAD"]), "Retry-pending local HEAD");
+  if (localHead !== input.developmentSha) {
+    throw new Error("Retry-pending development push does not match the exact local HEAD");
+  }
+  await prepareImmutableTemporaryCheckpoint(
+    input.checkout,
+    input.checkpoint.branch,
+    input.checkpoint.sha,
+    input.gitEnvironment,
+    input.expectedRemoteCheckpointSha,
+  );
+  await input.onAtomicPushStarting?.();
   await runTrustedGit({
     args: [
       "push",
-      // The lease is create-only before the first preview push and otherwise
+      "--atomic",
+      // The lease is create-only for a new checkpoint ref and otherwise
       // advances only the exact candidate SHA already verified by this run.
-      `--force-with-lease=refs/heads/${branch}:${expectedRemoteSha ?? ""}`,
+      `--force-with-lease=refs/heads/${input.checkpoint.branch}:${input.expectedRemoteCheckpointSha ?? ""}`,
       "origin",
-      `HEAD:refs/heads/${branch}`,
+      `HEAD:${SENTINEL_POLICY.developmentRef}`,
+      `${input.checkpoint.sha}:refs/heads/${input.checkpoint.branch}`,
     ],
-    cwd: checkout,
-    env: gitEnvironment,
+    cwd: input.checkout,
+    env: input.gitEnvironment,
   });
-  const remoteSha = await remoteTemporaryCandidateSha(checkout, branch, gitEnvironment);
-  if (remoteSha !== localSha) throw new Error("Sentinel checkpoint push did not publish the exact local SHA");
-  return localSha;
+  await input.onAtomicPushAcceptedUnverified?.();
+  const [remoteDevelopment, remoteCheckpoint] = await Promise.all([
+    fetchDevelopmentBase(input.checkout, input.gitEnvironment),
+    remoteTemporaryCandidateSha(input.checkout, input.checkpoint.branch, input.gitEnvironment),
+  ]);
+  if (remoteDevelopment !== input.developmentSha || remoteCheckpoint !== input.checkpoint.sha) {
+    throw new Error("Atomic retry-pending push did not publish both exact refs");
+  }
 };
 
 export const prepareResumedGitHubIssueCandidate = async (
@@ -2405,17 +2443,9 @@ const run = async (): Promise<void> => {
       const hourlyRunnerTemp = optionalEnvironment("RUNNER_TEMP");
       const issueJobHint = hourlyRunnerTemp ? await readGitHubIssueJobHint(hourlyRunnerTemp) : null;
       if (issueJobHint?.selection) {
-        selectedIssueJob = await getCurrentGitHubIssueJob(
-          github,
-          repository,
-          issueJobHint.selection.issue_number,
-        );
-        if (selectedIssueJob) {
-          selectedIssueCheckpoint = retryCheckpointForGitHubIssueJob(
-            issueJobLedgerMarkdown,
-            selectedIssueJob,
-          );
-        }
+        const selection = await selectNextGitHubIssueJobSelection(github, repository, issueJobLedgerMarkdown);
+        selectedIssueJob = selection?.job ?? null;
+        selectedIssueCheckpoint = selection?.checkpoint ?? null;
       } else if (issueJobHint === null && hintedDevelopmentSha === undefined) {
         const selection = await selectNextGitHubIssueJobSelection(github, repository, issueJobLedgerMarkdown);
         selectedIssueJob = selection?.job ?? null;
@@ -2752,6 +2782,7 @@ const run = async (): Promise<void> => {
     continueToRuntimeValidation: workSelection.issueJob === null,
   };
   let retryCheckpoint = selectedIssueCheckpoint;
+  let retryCheckpointExpectedRemoteSha = selectedIssueCheckpoint?.sha ?? null;
   let lastPushedCandidateSha: string | null = null;
   const selectedIssueReportDisposition = (report: ImplementationReport): FindingDisposition => {
     if (!workSelection.issueJob) throw new Error("No GitHub issue job was selected");
@@ -2907,20 +2938,22 @@ const run = async (): Promise<void> => {
     await assertGitHistoryExcludesValues({ cwd: checkout, sensitiveValues });
     const checkpointIssueJob = await getCurrentGitHubIssueJob(github, repository, workSelection.issueJob.number);
     if (!githubIssueJobsMatch(workSelection.issueJob, checkpointIssueJob)) {
-      throw new Error("The selected GitHub issue changed before retry checkpoint push");
+      throw new Error("The selected GitHub issue changed before retry checkpoint preparation");
     }
-    const pushedSha = await pushImmutableTemporaryCheckpoint(
+    const preparedSha = await prepareImmutableTemporaryCheckpoint(
       checkout,
       branch,
+      checkpointSha,
       gitEnvironment,
       lastPushedCandidateSha,
     );
-    if (pushedSha !== checkpointSha) throw new Error("GitHub issue retry checkpoint push changed SHA");
+    if (preparedSha !== checkpointSha) throw new Error("GitHub issue retry checkpoint preparation changed SHA");
     const checkpoint = Object.freeze({ branch, sha: checkpointSha, baseSha });
     retryCheckpoint = checkpoint;
-    await updateState("publishing_retry_checkpoint", {
+    retryCheckpointExpectedRemoteSha = lastPushedCandidateSha;
+    await updateState("preparing_retry_checkpoint", {
       candidate_sha: checkpointSha,
-      branch_disposition: "remote_retained_pending_decision",
+      branch_disposition: "runner_local_pending_review",
       retry_checkpoint: { branch, sha: checkpointSha, base_sha: baseSha },
     });
     return checkpoint;
@@ -2955,18 +2988,6 @@ const run = async (): Promise<void> => {
       "failed_implementation",
       checkpoint,
     );
-    if (checkpoint !== null) {
-      await writeJson(`${reportsDir}/github-issue-retry-retained-candidate.json`, {
-        schema_version: 1,
-        issue_id: workSelection.issueJob.issueId,
-        issue_number: workSelection.issueJob.number,
-        fingerprint: workSelection.issueJob.fingerprint,
-        failed_stage: stage,
-        head_branch: checkpoint.branch,
-        head_sha: checkpoint.sha,
-        base_sha: checkpoint.baseSha,
-      });
-    }
     return true;
   };
   const completeNonRuntimeGitHubIssueDisposition = async (): Promise<void> => {
@@ -3024,17 +3045,80 @@ const run = async (): Promise<void> => {
         }
         : null,
       ...(retryPending && retryCheckpoint !== null
-        ? { branch_disposition: "remote_retained_issue_retry_pending" }
+        ? {
+          branch_disposition: retryCheckpoint.branch === branch
+            ? "runner_local_pending_review"
+            : "remote_retained_issue_retry_pending",
+        }
         : {}),
     });
-    await runTrustedGit({
-      args: ["push", "origin", `HEAD:${SENTINEL_POLICY.developmentRef}`],
-      cwd: checkout,
-      env: gitEnvironment,
-    });
+    if (retryPending && retryCheckpoint !== null) {
+      const checkpoint = retryCheckpoint;
+      await pushRetryPendingRefsAtomically({
+        checkout,
+        developmentSha: dispositionSha,
+        checkpoint,
+        expectedRemoteCheckpointSha: retryCheckpointExpectedRemoteSha,
+        gitEnvironment,
+        onAtomicPushStarting: () =>
+          updateState("pushing_retry_pending_github_issue", {
+            candidate_sha: dispositionSha,
+            branch_disposition: "runner_local_atomic_push_in_flight",
+            retry_checkpoint: {
+              branch: checkpoint.branch,
+              sha: checkpoint.sha,
+              base_sha: checkpoint.baseSha,
+            },
+          }),
+        onAtomicPushAcceptedUnverified: () =>
+          updateState("verifying_retry_pending_atomic_push", {
+            candidate_sha: dispositionSha,
+            branch_disposition: "atomic_retry_push_accepted_unverified",
+            retry_checkpoint: {
+              branch: checkpoint.branch,
+              sha: checkpoint.sha,
+              base_sha: checkpoint.baseSha,
+            },
+          }),
+      });
+      await updateState("validated_retry_pending_atomic_push", {
+        candidate_sha: dispositionSha,
+        branch_disposition: "remote_retained_issue_retry_pending",
+        retry_checkpoint: {
+          branch: checkpoint.branch,
+          sha: checkpoint.sha,
+          base_sha: checkpoint.baseSha,
+        },
+      });
+    } else {
+      await runTrustedGit({
+        args: ["push", "origin", `HEAD:${SENTINEL_POLICY.developmentRef}`],
+        cwd: checkout,
+        env: gitEnvironment,
+      });
+    }
     const pushedDevelopment = await fetchDevelopmentBase(checkout, gitEnvironment);
     if (pushedDevelopment !== dispositionSha) {
       throw new Error("GitHub issue disposition did not become the exact development tip");
+    }
+    if (retryPending && retryCheckpoint !== null) {
+      const pushedCheckpoint = await remoteTemporaryCandidateSha(
+        checkout,
+        retryCheckpoint.branch,
+        gitEnvironment,
+      );
+      if (pushedCheckpoint !== retryCheckpoint.sha) {
+        throw new Error("GitHub issue retry checkpoint did not become the exact remote candidate tip");
+      }
+      await writeJson(`${reportsDir}/github-issue-retry-retained-candidate.json`, {
+        schema_version: 1,
+        issue_id: workSelection.issueJob.issueId,
+        issue_number: workSelection.issueJob.number,
+        fingerprint: workSelection.issueJob.fingerprint,
+        head_branch: retryCheckpoint.branch,
+        head_sha: retryCheckpoint.sha,
+        base_sha: retryCheckpoint.baseSha,
+      });
     }
     await updateState("complete", {
       status: "no_change",
@@ -4145,6 +4229,9 @@ if (import.meta.main) {
         state.branch_disposition = state.branch_disposition === "remote_retained_pending_decision" ||
             state.branch_disposition === "remote_retained_issue_retry_pending"
           ? "remote_retained_after_failed_cycle"
+          : state.branch_disposition === "runner_local_atomic_push_in_flight" ||
+              state.branch_disposition === "atomic_retry_push_accepted_unverified"
+          ? "atomic_retry_push_requires_reconciliation"
           : state.temporary_branch
           ? "runner_local_after_failed_cycle"
           : "not_created_failed_cycle";

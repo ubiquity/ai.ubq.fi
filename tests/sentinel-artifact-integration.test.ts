@@ -4,8 +4,9 @@ import {
   aggregateCandidateChangedPaths,
   captureFailedCandidateSnapshot,
   loadMatchingRetainedCaptures,
+  prepareImmutableTemporaryCheckpoint,
   prepareResumedGitHubIssueCandidate,
-  pushImmutableTemporaryCheckpoint,
+  pushRetryPendingRefsAtomically,
   replayIndexArtifactName,
   requireResolvedReviewBacklogImplementation,
   restoreIssueRetryAggregateIfEmpty,
@@ -13,7 +14,6 @@ import {
   retryCheckpointResumeFailureDisposition,
   writeReplayArtifactMetadata,
 } from "../scripts/sentinel/main.ts";
-import { requireExactRemoteCandidateBranch } from "../scripts/sentinel/issue-pr-pre-push.ts";
 import { captureRawDenoLogs, persistCandidateValidationFailure } from "../scripts/sentinel/validation.ts";
 import { type ExportedSentinelReplayCapture, SENTINEL_REPLAY_TTL_MS } from "../src/sentinel_replay_capture.ts";
 
@@ -271,13 +271,18 @@ Deno.test({
       assert.equal(await Deno.readTextFile(`${checkout}/allowed.txt`), "checkpoint\n");
       assert.equal(await git(checkout, ["status", "--porcelain=v1"]), "");
       assert.equal(
-        await pushImmutableTemporaryCheckpoint(checkout, "sentinel/candidate-101-2", {}, null),
+        await prepareImmutableTemporaryCheckpoint(
+          checkout,
+          "sentinel/candidate-101-2",
+          resumedSha,
+          {},
+          null,
+        ),
         resumedSha,
       );
       assert.equal(
-        (await git(checkout, ["ls-remote", "--heads", "origin", "refs/heads/sentinel/candidate-101-2"]))
-          .split("\t")[0],
-        resumedSha,
+        await git(checkout, ["ls-remote", "--heads", "origin", "refs/heads/sentinel/candidate-101-2"]),
+        "",
       );
 
       await git(checkout, ["switch", "-c", "sentinel/candidate-107", resumedSha]);
@@ -392,7 +397,7 @@ Deno.test({
 });
 
 Deno.test({
-  name: "retry checkpoint publication creates one immutable remote ref",
+  name: "retry checkpoint publication atomically updates development and its durable candidate ref",
   ignore: requiredPermissions.some((permission) => permission.state !== "granted"),
   async fn() {
     const root = await Deno.makeTempDir({ prefix: "sentinel-checkpoint-publish-" });
@@ -426,71 +431,116 @@ Deno.test({
       await git(["add", "allowed.txt"]);
       await git(["commit", "-m", "checkpoint"]);
       const checkpointSha = await git(["rev-parse", "HEAD"]);
-      await git(["push", "origin", `${baseSha}:refs/heads/sentinel/candidate-201`]);
-      await assert.rejects(
-        () => pushImmutableTemporaryCheckpoint(checkout, "sentinel/candidate-201", {}, null),
-        /does not match the exact previously pushed SHA/,
-      );
-      await assert.rejects(
-        () => pushImmutableTemporaryCheckpoint(checkout, "sentinel/candidate-201", {}, "f".repeat(40)),
-        /does not match the exact previously pushed SHA/,
-      );
-      assert.equal(
-        (await git(["ls-remote", "--heads", "origin", "refs/heads/sentinel/candidate-201"]))
-          .split("\t")[0],
-        baseSha,
-      );
-      assert.equal(
-        await pushImmutableTemporaryCheckpoint(checkout, "sentinel/candidate-201", {}, baseSha),
-        checkpointSha,
-      );
+      await git(["switch", "development"]);
+      await Deno.writeTextFile(`${checkout}/ledger.txt`, "retry pending\n");
+      await git(["add", "ledger.txt"]);
+      await git(["commit", "-m", "record retry ledger"]);
+      const dispositionSha = await git(["rev-parse", "HEAD"]);
+      await pushRetryPendingRefsAtomically({
+        checkout,
+        developmentSha: dispositionSha,
+        checkpoint: { branch: "sentinel/candidate-201", sha: checkpointSha, baseSha },
+        expectedRemoteCheckpointSha: null,
+        gitEnvironment: {},
+      });
       assert.equal(
         (await git(["ls-remote", "--heads", "origin", "refs/heads/sentinel/candidate-201"]))
           .split("\t")[0],
         checkpointSha,
       );
       assert.equal(
-        await pushImmutableTemporaryCheckpoint(checkout, "sentinel/candidate-201", {}, checkpointSha),
-        checkpointSha,
-      );
-      await requireExactRemoteCandidateBranch(checkout, "sentinel/candidate-201", checkpointSha);
-      await git(["push", "--force", "origin", `${baseSha}:refs/heads/sentinel/candidate-201`]);
-      await assert.rejects(
-        () => requireExactRemoteCandidateBranch(checkout, "sentinel/candidate-201", checkpointSha),
-        /does not match its recorded SHA/,
-      );
-      assert.equal(
-        (await git(["ls-remote", "--heads", "origin", "refs/heads/sentinel/candidate-201"]))
+        (await git(["ls-remote", "--heads", "origin", "refs/heads/development"]))
           .split("\t")[0],
-        baseSha,
+        dispositionSha,
       );
-      await git(["push", "--force", "origin", `${checkpointSha}:refs/heads/sentinel/candidate-201`]);
-      await requireExactRemoteCandidateBranch(checkout, "sentinel/candidate-201", checkpointSha);
 
       await git(["switch", "-c", "sentinel/candidate-202"]);
-      assert.equal(
-        await pushImmutableTemporaryCheckpoint(checkout, "sentinel/candidate-202", {}, null),
-        checkpointSha,
+      await Deno.writeTextFile(`${checkout}/allowed.txt`, "second checkpoint\n");
+      await git(["add", "allowed.txt"]);
+      await git(["commit", "-m", "second checkpoint"]);
+      const racedCheckpointSha = await git(["rev-parse", "HEAD"]);
+      await git(["switch", "development"]);
+      await Deno.writeTextFile(`${checkout}/ledger.txt`, "local retry pending\n");
+      await git(["add", "ledger.txt"]);
+      await git(["commit", "-m", "local retry ledger"]);
+      const racedDispositionSha = await git(["rev-parse", "HEAD"]);
+
+      const competing = `${root}/competing`;
+      await new Deno.Command("git", { args: ["clone", "--branch", "development", remote, competing] }).output();
+      const competingGit = async (args: string[]): Promise<string> => {
+        const output = await new Deno.Command("git", {
+          args,
+          cwd: competing,
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        if (!output.success) throw new Error(new TextDecoder().decode(output.stderr));
+        return new TextDecoder().decode(output.stdout).trim();
+      };
+      await competingGit(["config", "user.name", "Sentinel Race Test"]);
+      await competingGit(["config", "user.email", "sentinel-race@example.invalid"]);
+      await Deno.writeTextFile(`${competing}/remote.txt`, "development advanced\n");
+      await competingGit(["add", "remote.txt"]);
+      await competingGit(["commit", "-m", "advance development"]);
+      const advancedDevelopmentSha = await competingGit(["rev-parse", "HEAD"]);
+      await competingGit(["push", "origin", "HEAD:refs/heads/development"]);
+      await assert.rejects(
+        () =>
+          pushRetryPendingRefsAtomically({
+            checkout,
+            developmentSha: racedDispositionSha,
+            checkpoint: { branch: "sentinel/candidate-202", sha: racedCheckpointSha, baseSha: dispositionSha },
+            expectedRemoteCheckpointSha: null,
+            gitEnvironment: {},
+          }),
+        /atomic push failed|git failed with/u,
       );
       assert.equal(
-        (await git(["ls-remote", "--heads", "origin", "refs/heads/sentinel/candidate-202"]))
-          .split("\t")[0],
-        checkpointSha,
+        await git(["ls-remote", "--heads", "origin", "refs/heads/sentinel/candidate-202"]),
+        "",
+      );
+      assert.equal(
+        (await git(["ls-remote", "--heads", "origin", "refs/heads/development"])).split("\t")[0],
+        advancedDevelopmentSha,
       );
 
-      await git(["push", "origin", `${checkpointSha}:refs/heads/sentinel/candidate-203`]);
-      await git(["switch", "-c", "divergent-checkpoint", baseSha]);
-      await Deno.writeTextFile(`${checkout}/allowed.txt`, "divergent\n");
+      await git(["fetch", "origin", "development"]);
+      await git(["reset", "--hard", "origin/development"]);
+      await git(["switch", "-c", "sentinel/candidate-203"]);
+      await Deno.writeTextFile(`${checkout}/allowed.txt`, "third checkpoint\n");
       await git(["add", "allowed.txt"]);
-      await git(["commit", "-m", "divergent checkpoint"]);
+      await git(["commit", "-m", "third checkpoint"]);
+      const leasedCheckpointSha = await git(["rev-parse", "HEAD"]);
+      await git(["push", "origin", `${advancedDevelopmentSha}:refs/heads/sentinel/candidate-203`]);
+      await git(["switch", "development"]);
+      await git(["reset", "--hard", "origin/development"]);
+      await Deno.writeTextFile(`${checkout}/ledger.txt`, "lease mismatch retry\n");
+      await git(["add", "ledger.txt"]);
+      await git(["commit", "-m", "lease mismatch ledger"]);
+      const leasedDispositionSha = await git(["rev-parse", "HEAD"]);
       await assert.rejects(
-        () => pushImmutableTemporaryCheckpoint(checkout, "sentinel/candidate-203", {}, checkpointSha),
-        /does not descend from the exact previously pushed SHA/,
+        () =>
+          pushRetryPendingRefsAtomically({
+            checkout,
+            developmentSha: leasedDispositionSha,
+            checkpoint: {
+              branch: "sentinel/candidate-203",
+              sha: leasedCheckpointSha,
+              baseSha: advancedDevelopmentSha,
+            },
+            expectedRemoteCheckpointSha: null,
+            gitEnvironment: {},
+          }),
+        /does not match the exact previously pushed SHA/u,
       );
       assert.equal(
         (await git(["ls-remote", "--heads", "origin", "refs/heads/sentinel/candidate-203"]))
           .split("\t")[0],
-        checkpointSha,
+        advancedDevelopmentSha,
+      );
+      assert.equal(
+        (await git(["ls-remote", "--heads", "origin", "refs/heads/development"])).split("\t")[0],
+        advancedDevelopmentSha,
       );
     } finally {
       await Deno.remove(root, { recursive: true });

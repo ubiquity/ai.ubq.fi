@@ -2,11 +2,11 @@
 
 Sentinel results for immutable GitHub issue snapshots are tracked here. A retry-pending snapshot waits six hours before
 it is eligible again so later issues can advance. A retry checkpoint names an immutable remote candidate that Sentinel
-may resume only for the exact unchanged snapshot. A superseded checkpoint remains auditable as nonblocking
-checkpoint_retained evidence. Terminal snapshots are delivered through exactly one pull request that links the issue as
-evidence. After a verified production keep, Sentinel merges the delivery pull request and closes the unchanged issue
-with supporting evidence; a pull request already carried by the development push is accepted after a containment check.
-Manual-required, failed, and rolled-back results remain open.
+may resume when the snapshot matches after accepted inert UbiquityOS notices are normalized. A superseded checkpoint
+remains auditable as nonblocking checkpoint_retained evidence. Terminal snapshots are delivered through exactly one pull
+request that links the issue as evidence. After a verified production keep, Sentinel merges the delivery pull request
+and closes the unchanged issue with supporting evidence; a pull request already carried by the development push is
+accepted after a containment check. Manual-required, failed, and rolled-back results remain open.
 
 | Issue | REST ID    | Node ID                    | Fingerprint                                                        | Body SHA-256                                                       | Comments | Source updated       | Recorded                 | Base SHA                                   | Checkpoint branch | Checkpoint SHA | Title                                                                                                       | Disposition     |
 | ----- | ---------- | -------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------ | -------- | -------------------- | ------------------------ | ------------------------------------------ | ----------------- | -------------- | ----------------------------------------------------------------------------------------------------------- | --------------- |
