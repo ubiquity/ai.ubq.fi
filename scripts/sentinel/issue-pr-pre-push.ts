@@ -353,7 +353,12 @@ export const validateRetryPendingDevelopmentPush = (
   ) {
     throw new Error("Sentinel retry-pending push moved the retry timestamp backwards");
   }
-  const parentUnrelated = parentEntries.filter((entry) => !priorPending.includes(entry));
+  const replacedSelectedRetained = parentEntries.filter((entry) =>
+    entry.disposition === "checkpoint_retained" && retryLedgerEntryMatchesSelection(entry, input.selection)
+  );
+  const parentUnrelated = parentEntries.filter((entry) =>
+    !priorPending.includes(entry) && !replacedSelectedRetained.includes(entry)
+  );
   const pushedUnrelated = pushedEntries.filter((entry) => entry !== pushedMatches[0]);
   const retainedPriorCheckpoints = priorPending
     .filter((entry) => entry.fingerprint !== input.selection.fingerprint && entry.checkpoint !== null)

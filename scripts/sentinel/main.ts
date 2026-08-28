@@ -3060,16 +3060,18 @@ const run = async (): Promise<void> => {
         checkpoint,
         expectedRemoteCheckpointSha: retryCheckpointExpectedRemoteSha,
         gitEnvironment,
-        onAtomicPushStarting: () =>
-          updateState("pushing_retry_pending_github_issue", {
-            candidate_sha: dispositionSha,
-            branch_disposition: "runner_local_atomic_push_in_flight",
-            retry_checkpoint: {
-              branch: checkpoint.branch,
-              sha: checkpoint.sha,
-              base_sha: checkpoint.baseSha,
-            },
-          }),
+        onAtomicPushStarting: checkpoint.branch === branch
+          ? () =>
+            updateState("pushing_retry_pending_github_issue", {
+              candidate_sha: dispositionSha,
+              branch_disposition: "runner_local_atomic_push_in_flight",
+              retry_checkpoint: {
+                branch: checkpoint.branch,
+                sha: checkpoint.sha,
+                base_sha: checkpoint.baseSha,
+              },
+            })
+          : undefined,
         onAtomicPushAcceptedUnverified: () =>
           updateState("verifying_retry_pending_atomic_push", {
             candidate_sha: dispositionSha,

@@ -296,31 +296,33 @@ Deno.test("retry-pending development pushes are exact docs-only commits with no 
       })]),
     })
   );
-  assert.doesNotThrow(() =>
-    validateRetryPendingDevelopmentPush({
-      ...baseInput,
-      updates: [developmentUpdate, checkpointUpdate(priorRunCheckpoint, priorRunCheckpoint.sha)],
-      atomicPush: true,
-      checkpointLeaseSha: priorRunCheckpoint.sha,
-      cycleValue: {
-        ...retryCycle,
-        branch_disposition: "runner_local_atomic_push_in_flight",
-        retry_checkpoint: priorRunCheckpoint,
-      },
-      dispositionValue: {
-        ...retryDisposition,
-        phase: "retry_checkpoint_resume_transient",
-        retry_checkpoint: priorRunCheckpoint,
-      },
-      pushedLedgerMarkdown: renderGitHubIssueJobLedger([retryRow({
-        baseSha: priorRunCheckpoint.base_sha,
-        checkpoint: {
-          branch: priorRunCheckpoint.branch,
-          sha: priorRunCheckpoint.sha,
-          baseSha: priorRunCheckpoint.base_sha,
+  assert.throws(
+    () =>
+      validateRetryPendingDevelopmentPush({
+        ...baseInput,
+        updates: [developmentUpdate, checkpointUpdate(priorRunCheckpoint, priorRunCheckpoint.sha)],
+        atomicPush: true,
+        checkpointLeaseSha: priorRunCheckpoint.sha,
+        cycleValue: {
+          ...retryCycle,
+          branch_disposition: "runner_local_atomic_push_in_flight",
+          retry_checkpoint: priorRunCheckpoint,
         },
-      })]),
-    })
+        dispositionValue: {
+          ...retryDisposition,
+          phase: "retry_checkpoint_resume_transient",
+          retry_checkpoint: priorRunCheckpoint,
+        },
+        pushedLedgerMarkdown: renderGitHubIssueJobLedger([retryRow({
+          baseSha: priorRunCheckpoint.base_sha,
+          checkpoint: {
+            branch: priorRunCheckpoint.branch,
+            sha: priorRunCheckpoint.sha,
+            baseSha: priorRunCheckpoint.base_sha,
+          },
+        })]),
+      }),
+    /prior attempt/,
   );
   assert.throws(
     () =>
@@ -455,6 +457,22 @@ Deno.test("retry-pending development pushes are exact docs-only commits with no 
         { ...retainedCheckpointPending, disposition: "checkpoint_retained" },
         retryRow(),
       ]),
+    })
+  );
+  const retainedSelectedCheckpoint = {
+    ...retryRow({
+      checkpoint: {
+        branch: "sentinel/candidate-123456701",
+        sha: "6".repeat(40),
+        baseSha: BASE_SHA,
+      },
+    }),
+    disposition: "checkpoint_retained" as const,
+  };
+  assert.doesNotThrow(() =>
+    validateRetryPendingDevelopmentPush({
+      ...baseInput,
+      parentLedgerMarkdown: renderGitHubIssueJobLedger([retainedSelectedCheckpoint]),
     })
   );
 

@@ -235,8 +235,7 @@ export const validateRetryPendingCheckpointPhaseBinding = (
   }
   if (
     checkpoint === null ||
-    (cycle.branch_disposition !== "runner_local_atomic_push_in_flight" &&
-      cycle.branch_disposition !== "remote_retained_issue_retry_pending") ||
+    cycle.branch_disposition !== "remote_retained_issue_retry_pending" ||
     checkpoint.branch === cycle.temporary_branch
   ) {
     throw new Error("Sentinel transient retry checkpoint is not bound to a prior attempt");

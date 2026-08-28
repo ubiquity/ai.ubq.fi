@@ -696,13 +696,13 @@ Deno.test({
       startingPosition >= 0 && atomicGitPosition > startingPosition && acceptedUnverifiedPosition > atomicGitPosition &&
         remoteVerificationPosition > acceptedUnverifiedPosition &&
         issueCompletionLane.includes('branch_disposition: "runner_local_atomic_push_in_flight"') &&
-        !issueCompletionLane.includes("...(checkpoint.branch === branch") &&
+        issueCompletionLane.includes("onAtomicPushStarting: checkpoint.branch === branch") &&
         issueCompletionLane.includes('branch_disposition: "atomic_retry_push_accepted_unverified"') &&
         issueCompletionLane.includes('branch_disposition: "remote_retained_issue_retry_pending"') &&
         orchestrator.includes('state.branch_disposition === "atomic_retry_push_accepted_unverified"') &&
         orchestrator.includes('state.branch_disposition === "runner_local_atomic_push_in_flight"') &&
         orchestrator.includes('"atomic_retry_push_requires_reconciliation"'),
-      "Every atomic retry push must enter an in-flight state and remain explicitly unverified until both remote refs match",
+      "Fresh checkpoint atomic pushes must enter an in-flight state and every atomic push must remain unverified until both remote refs match",
     );
     assert(
       checkpointPublishLane.includes("await restoreIssueRetryAggregateIfEmpty(") &&
