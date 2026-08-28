@@ -251,6 +251,57 @@ Deno.test("Codex authentication relay keeps real credentials in the parent and r
   assert.equal(calls[0]?.body, '{"model":"gpt-5.6-sol"}');
 });
 
+Deno.test("Codex authentication relay bounds a silent response stream", async () => {
+  const auth = parseCodexAuthJsonB64(slot1.encoded, 1, { nowMs, minimumValidityMs: 1 });
+  let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+  const relay = await createCodexAuthRelayFactory(
+    () =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode(": keepalive\n\n"));
+              keepaliveTimer = setInterval(() => {
+                controller.enqueue(new TextEncoder().encode(": keepalive\n\n"));
+              }, 2);
+            },
+            cancel() {
+              if (keepaliveTimer !== null) clearInterval(keepaliveTimer);
+              keepaliveTimer = null;
+            },
+          }),
+          { headers: { "Content-Type": "text/event-stream" } },
+        ),
+      ),
+    { streamIdleTimeoutMs: 20 },
+  )(auth);
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  try {
+    const response = await fetch(`${relay.baseUrl}/codex/responses`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: '{"model":"gpt-5.6-luna"}',
+    });
+    reader = response.body?.getReader() ?? null;
+    assert.ok(reader);
+    assert.equal((await reader.read()).done, false);
+    await Promise.race([
+      (async () => {
+        while (true) {
+          const next = await reader.read().catch(() => ({ done: true }));
+          if (next.done) return;
+        }
+      })(),
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("relay did not time out")), 500)),
+    ]);
+    assert.equal(relay.streamIdleTimedOut?.(), true);
+  } finally {
+    await reader?.cancel().catch(() => undefined);
+    if (keepaliveTimer !== null) clearInterval(keepaliveTimer);
+    await relay.close();
+  }
+});
+
 Deno.test("Codex bubblewrap exposes only system files, the repository, and the selected private home", () => {
   const args = codexBubblewrapArguments({
     executable: "codex",
@@ -744,6 +795,8 @@ Deno.test("implementation execution uses the owner-controlled Luna model in the 
   assert.equal(captured.args.includes("gpt-5.6-sol"), false);
   assert.ok(captured.args.includes('model_reasoning_effort="max"'));
   assert.equal(captured.args.includes('model_reasoning_effort="medium"'), false);
+  assert.ok(captured.args.includes("model_providers.sentinel_relay.stream_max_retries=1"));
+  assert.ok(captured.args.includes("model_providers.sentinel_relay.stream_idle_timeout_ms=300000"));
   assert.ok(captured.args.includes("workspace-write"));
 });
 
@@ -912,6 +965,32 @@ Deno.test("Codex invocation timeout is fail-closed and closes the authentication
     },
   );
   assert.equal(relayClosed, true);
+  assert.equal(filesystem.removed.length, 1);
+});
+
+Deno.test("a relay-detected idle stream preserves the final implementation continuation", async () => {
+  const filesystem = new MemoryFilesystem();
+  await assert.rejects(
+    () =>
+      runStructuredCodexAgent({
+        role: "implementation",
+        checkoutPath: "/checkout",
+        prompt: "Implement.",
+        outputSchemaPath: "/checkout/schema.json",
+        authSlots: slots,
+        expectedMaximumRuntimeMs: 1_000,
+      }, {
+        ...commonDependencies(filesystem, healthyFetcher()),
+        authRelayFactory: () =>
+          Promise.resolve({
+            baseUrl: "http://127.0.0.1:41771/backend-api",
+            streamIdleTimedOut: () => true,
+            close: () => Promise.resolve(),
+          }),
+        commandRunner: () => Promise.resolve(codexCommandResult({ code: 1, durationMs: 600_000 })),
+      }),
+    (error) => error instanceof CodexInvocationError && error.failure === "invocation_timeout",
+  );
   assert.equal(filesystem.removed.length, 1);
 });
 

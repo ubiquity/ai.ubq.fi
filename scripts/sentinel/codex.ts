@@ -12,6 +12,10 @@ import {
 export const CODEX_COMMAND_OUTPUT_LIMIT_BYTES = 8 * 1_024 * 1_024;
 export const CODEX_EXPECTED_INVOCATION_MS = 45 * 60_000;
 export const CODEX_MAX_PROMPT_BYTES = 8 * 1_024 * 1_024;
+// The pinned CLI defaults to five reconnects. A silent stream then consumes a
+// whole 20-minute Sentinel invocation before the outer continuation can run.
+export const SENTINEL_RELAY_STREAM_MAX_RETRIES = 1;
+export const SENTINEL_RELAY_STREAM_IDLE_TIMEOUT_MS = 5 * 60_000;
 const CODEX_ROLLOUT_AGGREGATE_LIMIT_BYTES = 64 * 1_024 * 1_024;
 const CODEX_ROLLOUT_FILE_LIMIT_BYTES = CODEX_ROLLOUT_AGGREGATE_LIMIT_BYTES;
 const CODEX_ROLLOUT_MAX_FILES = 4;
@@ -91,6 +95,7 @@ export type CodexInvocationDependencies =
 export type CodexAuthRelay = Readonly<{
   baseUrl: string;
   authenticationRejected?(): boolean;
+  streamIdleTimedOut?(): boolean;
   close(): Promise<void>;
 }>;
 
@@ -524,12 +529,168 @@ const RELAY_REQUEST_HEADER_DENYLIST = Object.freeze([
   "x-api-key",
 ]);
 
+const relaySseEventActivity = (onEvent: () => void): (chunk: Uint8Array) => void => {
+  const decoder = new TextDecoder();
+  let atStreamStart = true;
+  let previousWasCarriageReturn = false;
+  let lineHasContent = false;
+  let linePrefix = "";
+  let eventHasData = false;
+  const finishLine = () => {
+    if (!lineHasContent) {
+      if (eventHasData) onEvent();
+      eventHasData = false;
+    } else if (linePrefix === "data" || linePrefix === "data:") {
+      eventHasData = true;
+    }
+    lineHasContent = false;
+    linePrefix = "";
+  };
+  return (chunk) => {
+    for (const character of decoder.decode(chunk, { stream: true })) {
+      if (previousWasCarriageReturn) {
+        previousWasCarriageReturn = false;
+        if (character === "\n") continue;
+      }
+      if (character === "\r") {
+        finishLine();
+        previousWasCarriageReturn = true;
+        continue;
+      }
+      if (character === "\n") {
+        finishLine();
+        continue;
+      }
+      if (atStreamStart && character === "\uFEFF") continue;
+      atStreamStart = false;
+      lineHasContent = true;
+      if (linePrefix.length < 5) linePrefix += character;
+    }
+  };
+};
+
+const relayStreamWithIdleTimeout = (
+  body: ReadableStream<Uint8Array>,
+  requestSignal: AbortSignal,
+  timeoutMs: number,
+  onIdleTimeout: () => void,
+): ReadableStream<Uint8Array> => {
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  let closed = false;
+  let idleTimedOut = false;
+  let observeSseEvent: ((chunk: Uint8Array) => void) | null = null;
+  const stopTimer = () => {
+    if (timeout === null) return;
+    clearTimeout(timeout);
+    timeout = null;
+  };
+  const releaseReader = (activeReader: ReadableStreamDefaultReader<Uint8Array>) => {
+    if (reader === activeReader) reader = null;
+    try {
+      activeReader.releaseLock();
+    } catch {
+      // The reader can already be released by a concurrent cancellation.
+    }
+  };
+  const cancelReader = async (reason: unknown) => {
+    const activeReader = reader;
+    if (activeReader === null) return;
+    try {
+      await activeReader.cancel(reason);
+    } catch {
+      // The downstream stream still closes even when the upstream rejects cancellation.
+    } finally {
+      releaseReader(activeReader);
+    }
+  };
+  const close = () => {
+    closed = true;
+    stopTimer();
+    requestSignal.removeEventListener("abort", onRequestAbort);
+  };
+  const onRequestAbort = () => {
+    if (closed) return;
+    close();
+    void cancelReader(requestSignal.reason);
+  };
+  const resetTimer = () => {
+    stopTimer();
+    timeout = setTimeout(() => {
+      timeout = null;
+      if (closed || idleTimedOut) return;
+      idleTimedOut = true;
+      onIdleTimeout();
+      void cancelReader(new DOMException("Sentinel relay stream idle timeout", "TimeoutError"));
+    }, timeoutMs);
+  };
+  return new ReadableStream<Uint8Array>({
+    start() {
+      reader = body.getReader();
+      requestSignal.addEventListener("abort", onRequestAbort, { once: true });
+      if (requestSignal.aborted) {
+        onRequestAbort();
+        return;
+      }
+      resetTimer();
+      observeSseEvent = relaySseEventActivity(resetTimer);
+    },
+    async pull(controller) {
+      if (closed) return;
+      const activeReader = reader;
+      if (activeReader === null) {
+        if (idleTimedOut) {
+          close();
+          controller.close();
+        }
+        return;
+      }
+      try {
+        const next = await activeReader.read();
+        if (closed) {
+          releaseReader(activeReader);
+          return;
+        }
+        if (idleTimedOut || next.done) {
+          close();
+          releaseReader(activeReader);
+          controller.close();
+          return;
+        }
+        observeSseEvent?.(next.value);
+        controller.enqueue(next.value);
+      } catch (error) {
+        if (closed) {
+          releaseReader(activeReader);
+          return;
+        }
+        close();
+        releaseReader(activeReader);
+        if (idleTimedOut) controller.close();
+        else controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      if (closed) return;
+      close();
+      await cancelReader(reason);
+    },
+  });
+};
+
 export const createCodexAuthRelayFactory = (
   upstreamFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
+  options: Readonly<{ streamIdleTimeoutMs?: number }> = {},
 ): CodexAuthRelayFactory =>
 async (auth) => {
   const relayPrefix = `/sentinel-${crypto.randomUUID()}/backend-api`;
+  const streamIdleTimeoutMs = positiveInteger(
+    options.streamIdleTimeoutMs ?? SENTINEL_RELAY_STREAM_IDLE_TIMEOUT_MS,
+    "streamIdleTimeoutMs",
+  );
   let authenticationRejected = false;
+  let lastStreamSequence = 0;
+  let lastStreamIdleTimedOut = false;
   const server = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: () => undefined }, async (request) => {
     const requestUrl = new URL(request.url);
     if (
@@ -573,7 +734,22 @@ async (auth) => {
     responseHeaders.delete("set-cookie");
     responseHeaders.delete("location");
     responseHeaders.set("Cache-Control", "no-store");
-    return new Response(upstream.body, {
+    const tracksResponseStream = request.method === "POST" &&
+      requestUrl.pathname.endsWith("/responses") &&
+      upstream.status >= 200 &&
+      upstream.status < 300 &&
+      upstream.body !== null;
+    const streamSequence = tracksResponseStream ? ++lastStreamSequence : null;
+    if (streamSequence !== null) lastStreamIdleTimedOut = false;
+    const body = streamSequence === null || upstream.body === null ? upstream.body : relayStreamWithIdleTimeout(
+      upstream.body,
+      request.signal,
+      streamIdleTimeoutMs,
+      () => {
+        if (streamSequence === lastStreamSequence) lastStreamIdleTimedOut = true;
+      },
+    );
+    return new Response(body, {
       status: upstream.status,
       statusText: upstream.statusText,
       headers: responseHeaders,
@@ -587,6 +763,7 @@ async (auth) => {
   return Object.freeze({
     baseUrl: `http://127.0.0.1:${address.port}${relayPrefix}`,
     authenticationRejected: () => authenticationRejected,
+    streamIdleTimedOut: () => lastStreamIdleTimedOut,
     async close() {
       await server.shutdown();
     },
@@ -609,6 +786,10 @@ const sentinelRelayConfigArgs = (relayBaseUrl: string): readonly string[] => [
   `model_providers.sentinel_relay.base_url=${JSON.stringify(`${relayBaseUrl}/codex`)}`,
   "-c",
   'model_providers.sentinel_relay.wire_api="responses"',
+  "-c",
+  `model_providers.sentinel_relay.stream_max_retries=${SENTINEL_RELAY_STREAM_MAX_RETRIES}`,
+  "-c",
+  `model_providers.sentinel_relay.stream_idle_timeout_ms=${SENTINEL_RELAY_STREAM_IDLE_TIMEOUT_MS}`,
   "-c",
   "model_providers.sentinel_relay.requires_openai_auth=true",
   "-c",
@@ -813,7 +994,7 @@ const invokePrivately = async (
         commandResult,
       });
     }
-    if (commandResult.timedOut) {
+    if (commandResult.timedOut || authRelay.streamIdleTimedOut?.()) {
       throw new CodexInvocationError("invocation_timeout", {
         slot: selection.slot,
         probes: selection.probes,
