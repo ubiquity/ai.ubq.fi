@@ -1309,6 +1309,18 @@ Deno.test("unlabelled administrator backlog proposals use a bounded source-only 
   assert.equal(
     await createGitHubIssueJob(
       "ubiquity/ai.ubq.fi",
+      {
+        ...issue,
+        body: ownerBacklogIssueBody(Array.from({ length: 33 }, (_, index) => `src/owner-backlog-${index}.ts`)),
+      },
+      noIssueRelations,
+      "admin",
+    ),
+    null,
+  );
+  assert.equal(
+    await createGitHubIssueJob(
+      "ubiquity/ai.ubq.fi",
       { ...issue, labels: ["Priority: 2 (Medium)"] },
       noIssueRelations,
       "admin",
