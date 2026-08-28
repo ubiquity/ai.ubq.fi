@@ -144,7 +144,6 @@ import {
   getConfiguredMeteredQuotaSnapshot,
   getMeteredQuotaDiagnostics,
   METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS,
-  METERED_QUOTA_BALANCE_HISTORY_DAILY_BUCKET_MS,
   meterQuotaAccountFingerprint,
   normalizeMeteredQuotaBalanceWindowDays,
   readMeteredAccountCredentials,
@@ -2236,9 +2235,14 @@ export const handleAdminProvidersQuotaProjection = async (
   );
   const windowMs = windowDays * 24 * 60 * 60 * 1_000;
   const balanceWindowMs = balanceWindowDays * 24 * 60 * 60 * 1_000;
-  const balanceHistoryBucketMs = balanceWindowDays === 365
-    ? METERED_QUOTA_BALANCE_HISTORY_DAILY_BUCKET_MS
-    : METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS;
+  // Keep the complete requested range while bounding every response to 365
+  // points. Seven days remains hourly; longer ranges use the smallest whole-
+  // hour UTC bucket that can represent the range within the response cap.
+  const balanceHistoryBucketMs = Math.max(
+    METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS,
+    Math.ceil(balanceWindowDays * 24 / QUOTA_PROJECTION_MAX_BALANCE_SAMPLES) *
+      METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS,
+  );
   const accountFingerprint = await meterQuotaAccountFingerprint(readMeteredAccountCredentials()).catch(() => null);
   const [snapshot, rollups, sourceBalanceHistory] = await Promise.all([
     getConfiguredMeteredQuotaSnapshot({ kv }).catch(() => null),
@@ -2254,15 +2258,11 @@ export const handleAdminProvidersQuotaProjection = async (
       : Promise.resolve(null),
   ]);
   const quota = meteredQuotaRunwayView(snapshot);
-  const balanceHistory = sourceBalanceHistory === null
-    ? null
-    : balanceWindowDays === 365
-    ? resampleMeteredQuotaBalanceHistory(
-      sourceBalanceHistory,
-      METERED_QUOTA_BALANCE_HISTORY_DAILY_BUCKET_MS,
-      QUOTA_PROJECTION_MAX_BALANCE_SAMPLES,
-    )
-    : sourceBalanceHistory.slice(-QUOTA_PROJECTION_MAX_BALANCE_SAMPLES);
+  const balanceHistory = sourceBalanceHistory === null ? null : resampleMeteredQuotaBalanceHistory(
+    sourceBalanceHistory,
+    balanceHistoryBucketMs,
+    QUOTA_PROJECTION_MAX_BALANCE_SAMPLES,
+  );
   const usage = summarizePaidFallbackUsage(groupPaidFallbackUsageRollups(rollups ?? []), nowMs);
   const models = usage.map((entry) => ({
     model: entry.model,
