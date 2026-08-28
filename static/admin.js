@@ -2770,6 +2770,18 @@ const renderQuotaProjection = (payload) => {
   const bucketCount = balanceHistory.length;
   const windowDays = typeof payload?.window_days === "number" ? payload.window_days : 30;
   const windowLabel = `${windowDays}-day`;
+  const balanceWindowDays = typeof payload?.balance_window_days === "number" ? payload.balance_window_days : null;
+  const balanceBucketMs = payload?.retention?.balance_history_bucket_ms;
+  const balanceBucketLabel = balanceBucketMs === 24 * 60 * 60_000
+    ? "daily"
+    : balanceBucketMs === 60 * 60_000
+    ? "hourly"
+    : typeof balanceBucketMs === "number"
+    ? `${quotaProjectionDuration(balanceBucketMs)}-bucket`
+    : "";
+  const balanceWindowLabel = balanceWindowDays === null
+    ? "the returned window"
+    : `the trailing ${balanceWindowDays} days`;
   const historyUnavailable = payload?.rollup_scan !== "ok";
   const balanceUnavailable = payload?.balance_history_scan !== "ok";
   if (historyUnavailable) {
@@ -2779,9 +2791,9 @@ const renderQuotaProjection = (payload) => {
     quotaRunwayNote.textContent =
       "Balance history could not be read — the run-down curve is unavailable until KV reads recover.";
   } else if (bucketCount) {
-    quotaRunwayNote.textContent = `${
-      formatNumber(bucketCount)
-    } hourly balance samples in the trailing seven days · estimates use the ${windowLabel} consumption window · raw request rows retain one year; hourly model rollups are retained indefinitely.`;
+    quotaRunwayNote.textContent = `${formatNumber(bucketCount)} ${
+      balanceBucketLabel ? `${balanceBucketLabel} ` : ""
+    }balance samples in ${balanceWindowLabel} · estimates use the ${windowLabel} consumption window · raw request rows retain one year; hourly model rollups are retained indefinitely.`;
   } else {
     quotaRunwayNote.textContent =
       `Estimates use the ${windowLabel} consumption window · raw request rows retain one year; hourly model rollups are retained indefinitely.`;
@@ -2804,7 +2816,7 @@ const loadQuotaProjection = async () => {
   quotaProjectionLoading = true;
   setBadge(quotaRunwayBadge, "unknown", "Loading projection");
   try {
-    const response = await fetch(apiUrl("/admin/providers/quota-projection"), {
+    const response = await fetch(apiUrl("/admin/providers/quota-projection?window_days=30&balance_window_days=365"), {
       cache: "no-store",
       headers: { Authorization: `Bearer ${token}` },
     });

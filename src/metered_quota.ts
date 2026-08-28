@@ -15,6 +15,16 @@ export const METERED_QUOTA_REFRESH_LEASE_KEY = ["uos_ai", "metered_quota", "v1",
 export const METERED_QUOTA_INVALIDATION_KEY = ["uos_ai", "metered_quota", "v1", "invalidation"] as const;
 export const METERED_QUOTA_BALANCE_HISTORY_PREFIX = ["uos_ai", "metered_quota", "v1", "balance_history"] as const;
 export const METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS = 60 * 60 * 1_000;
+export const METERED_QUOTA_BALANCE_HISTORY_DAILY_BUCKET_MS = 24 * METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS;
+export const METERED_QUOTA_BALANCE_WINDOW_DAYS = [7, 30, 90, 365] as const;
+export type MeteredQuotaBalanceWindowDays = (typeof METERED_QUOTA_BALANCE_WINDOW_DAYS)[number];
+
+export const normalizeMeteredQuotaBalanceWindowDays = (value: string | null): MeteredQuotaBalanceWindowDays => {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && METERED_QUOTA_BALANCE_WINDOW_DAYS.some((days) => days === parsed)
+    ? parsed as MeteredQuotaBalanceWindowDays
+    : 7;
+};
 
 const METERED_TOKEN_USAGE_URL = `${METERED_BASE_URL}/api/usage/token/`;
 
@@ -688,9 +698,18 @@ export const readMeteredQuotaBalanceHistory = async (
   if (!kv || !options.accountFingerprint) return [];
   const limit = Math.max(1, Math.min(10_000, Math.trunc(options.limit ?? 10_000)));
   const samples: MeteredQuotaBalanceSample[] = [];
+  const sinceMs = Math.max(0, Math.trunc(options.sinceMs));
+  const nowMs = Math.max(sinceMs, Math.trunc(options.nowMs));
   const prefix: Deno.KvKey = [...METERED_QUOTA_BALANCE_HISTORY_PREFIX, options.accountFingerprint];
-  const start: Deno.KvKey = [...prefix, Math.max(0, Math.trunc(options.sinceMs))];
-  const end: Deno.KvKey = [...prefix, Math.trunc(options.nowMs) + METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS];
+  const start: Deno.KvKey = [
+    ...prefix,
+    Math.floor(sinceMs / METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS) * METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS,
+  ];
+  const end: Deno.KvKey = [
+    ...prefix,
+    Math.floor(nowMs / METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS) * METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS +
+    METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS,
+  ];
   // Deno KV rejects selectors that combine a prefix with both range bounds.
   // These bounds already include the complete account-specific namespace.
   for await (
@@ -699,9 +718,36 @@ export const readMeteredQuotaBalanceHistory = async (
     })
   ) {
     const sample = isMeteredQuotaBalanceSample(entry.value) ? entry.value : null;
-    if (sample) samples.push(sample);
+    if (sample && sample.observed_at_ms >= sinceMs && sample.observed_at_ms <= nowMs) samples.push(sample);
   }
   return samples.sort((left, right) => left.bucket_start_at_ms - right.bucket_start_at_ms);
+};
+
+/**
+ * Deterministically keeps the newest observation in each UTC bucket. The
+ * returned bucket timestamp describes the resampled series rather than the
+ * source hour, while observed_at_ms retains the exact observation time.
+ */
+export const resampleMeteredQuotaBalanceHistory = (
+  samples: readonly MeteredQuotaBalanceSample[],
+  bucketMs: number,
+  limit: number,
+): MeteredQuotaBalanceSample[] => {
+  if (!Number.isSafeInteger(bucketMs) || bucketMs <= 0 || !Number.isSafeInteger(limit) || limit <= 0) return [];
+  const buckets = new Map<number, MeteredQuotaBalanceSample>();
+  for (const sample of samples) {
+    const bucketStartAtMs = Math.floor(sample.observed_at_ms / bucketMs) * bucketMs;
+    const existing = buckets.get(bucketStartAtMs);
+    if (
+      !existing || sample.observed_at_ms > existing.observed_at_ms ||
+      (sample.observed_at_ms === existing.observed_at_ms && sample.bucket_start_at_ms > existing.bucket_start_at_ms)
+    ) {
+      buckets.set(bucketStartAtMs, { ...sample, bucket_start_at_ms: bucketStartAtMs });
+    }
+  }
+  return [...buckets.values()]
+    .sort((left, right) => left.bucket_start_at_ms - right.bucket_start_at_ms)
+    .slice(-limit);
 };
 
 export const getConfiguredMeteredQuotaSnapshot = async (

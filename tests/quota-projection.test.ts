@@ -213,8 +213,11 @@ const {
   paidFallbackUsageRollupKey,
 } = await import("../src/paid_fallback_rollups.ts");
 const {
+  METERED_QUOTA_BALANCE_HISTORY_DAILY_BUCKET_MS,
   METERED_QUOTA_BALANCE_HISTORY_PREFIX,
+  normalizeMeteredQuotaBalanceWindowDays,
   readMeteredQuotaBalanceHistory,
+  resampleMeteredQuotaBalanceHistory,
 } = await import("../src/metered_quota.ts");
 const {
   groupPaidFallbackUsageRollups,
@@ -431,10 +434,10 @@ Deno.test("balance history listing uses a valid bounded KV range selector", asyn
   const fingerprint = "quota-projection-account";
   const now = Date.now();
   const hourStart = Math.floor(now / HOUR_MS) * HOUR_MS;
-  const sample = (bucketStartAtMs: number) => ({
+  const sample = (bucketStartAtMs: number, observedAtMs = bucketStartAtMs + 1_000) => ({
     v: 1 as const,
     bucket_start_at_ms: bucketStartAtMs,
-    observed_at_ms: bucketStartAtMs + 1_000,
+    observed_at_ms: observedAtMs,
     balance_quota: 1_000,
     baseline_quota: 2_000,
     quota_per_credit: 1,
@@ -445,17 +448,75 @@ Deno.test("balance history listing uses a valid bounded KV range selector", asyn
     sample(hourStart - 2 * HOUR_MS),
   );
   await memoryKv.set(
+    [...METERED_QUOTA_BALANCE_HISTORY_PREFIX, fingerprint, hourStart - HOUR_MS],
+    sample(hourStart - HOUR_MS, hourStart - HOUR_MS + 45 * 60_000),
+  );
+  await memoryKv.set(
     [...METERED_QUOTA_BALANCE_HISTORY_PREFIX, fingerprint, hourStart],
     sample(hourStart),
   );
 
   const retained = await readMeteredQuotaBalanceHistory(kv, {
     accountFingerprint: fingerprint,
-    sinceMs: hourStart - HOUR_MS,
+    sinceMs: hourStart - HOUR_MS + 30 * 60_000,
     nowMs: now,
   });
-  assert.equal(retained.length, 1);
-  assert.equal(retained[0]?.bucket_start_at_ms, hourStart);
+  assert.equal(retained.length, 2);
+  assert.equal(retained[0]?.bucket_start_at_ms, hourStart - HOUR_MS);
+  assert.equal(retained[1]?.bucket_start_at_ms, hourStart);
+});
+
+Deno.test("365-day balance history is deterministically resampled to UTC days", () => {
+  const dayStart = Math.floor(Date.now() / DAY_MS) * DAY_MS;
+  const sample = (bucketStartAtMs: number, observedAtMs: number, balanceQuota: number) => ({
+    v: 1 as const,
+    bucket_start_at_ms: bucketStartAtMs,
+    observed_at_ms: observedAtMs,
+    balance_quota: balanceQuota,
+    baseline_quota: 2_000,
+    quota_per_credit: 1,
+    remaining_percent: 50,
+  });
+  const source = [
+    sample(dayStart - DAY_MS, dayStart - DAY_MS + HOUR_MS, 1_200),
+    sample(dayStart + HOUR_MS, dayStart + HOUR_MS + 1, 1_100),
+    sample(dayStart + 2 * HOUR_MS, dayStart + 2 * HOUR_MS + 1, 1_000),
+  ];
+  const resampled = resampleMeteredQuotaBalanceHistory(
+    source,
+    METERED_QUOTA_BALANCE_HISTORY_DAILY_BUCKET_MS,
+    365,
+  );
+  assert.equal(resampled.length, 2);
+  assert.equal(resampled[0]?.bucket_start_at_ms, dayStart - DAY_MS);
+  assert.equal(resampled[1]?.bucket_start_at_ms, dayStart);
+  assert.equal(resampled[1]?.balance_quota, 1_000);
+
+  const bucketMs = 25 * HOUR_MS;
+  const rangeStart = 30 * 60_000;
+  const rangeEnd = rangeStart + 365 * DAY_MS;
+  const oversized = Array.from(
+    { length: 365 * 24 + 1 },
+    (_, index) => sample(rangeStart + index * HOUR_MS, rangeStart + index * HOUR_MS, index),
+  );
+  const capped = resampleMeteredQuotaBalanceHistory(
+    oversized,
+    bucketMs,
+    365,
+  );
+  assert.ok(capped.length <= 365);
+  assert.equal(capped[0]?.observed_at_ms, rangeStart + 24 * HOUR_MS);
+  assert.equal(capped.at(-1)?.observed_at_ms, rangeEnd);
+});
+
+Deno.test("balance window accepts supported values and defaults invalid input to seven days", () => {
+  assert.equal(normalizeMeteredQuotaBalanceWindowDays(null), 7);
+  for (const invalid of ["", "invalid", "0", "8", "7.5", "7days"]) {
+    assert.equal(normalizeMeteredQuotaBalanceWindowDays(invalid), 7);
+  }
+  for (const accepted of [7, 30, 90, 365] as const) {
+    assert.equal(normalizeMeteredQuotaBalanceWindowDays(String(accepted)), accepted);
+  }
 });
 
 Deno.test("merge sums counters and tracks first/last request times", () => {
