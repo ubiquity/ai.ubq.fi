@@ -467,19 +467,25 @@ Deno.test({
       workflow.includes("installing agent prerequisites conservatively"),
       "Backlog hint failures must fail toward installing the agent",
     );
-    const manualStart = orchestrator.indexOf('if (selectedBacklogState.disposition === "manual_required")');
-    const manualEnd = orchestrator.indexOf("if (!await hasChanges(checkout))", manualStart);
-    assert(
-      manualStart >= 0 && manualEnd > manualStart,
-      "Manual backlog completion must have a bounded early-return lane",
+    const nonRuntimeStart = orchestrator.indexOf(
+      "if (selectedBacklogState.disposition !== null && !selectedBacklogState.continueToRuntimeValidation)",
     );
-    const manualLane = orchestrator.slice(manualStart, manualEnd);
+    const nonRuntimeEnd = orchestrator.indexOf("if (!await hasChanges(checkout))", nonRuntimeStart);
     assert(
-      manualLane.includes("HEAD:${SENTINEL_POLICY.developmentRef}"),
-      "Manual backlog completion must persist its trusted documentation change",
+      nonRuntimeStart >= 0 && nonRuntimeEnd > nonRuntimeStart,
+      "Non-runtime backlog completion must have a bounded early-return lane",
+    );
+    const nonRuntimeLane = orchestrator.slice(nonRuntimeStart, nonRuntimeEnd);
+    assert(
+      nonRuntimeLane.includes("HEAD:${SENTINEL_POLICY.developmentRef}"),
+      "Non-runtime backlog completion must persist its trusted documentation change",
+    );
+    assert(
+      nonRuntimeLane.includes("runDocumentationValidation({") && !nonRuntimeLane.includes("runCandidateValidation({"),
+      "Non-runtime backlog completion must use scoped documentation validation instead of the runtime suite",
     );
     for (const forbidden of ["pushTemporaryCandidate", "dispatchAndResolveRevision", "dispatchSerializedPromotion"]) {
-      assert(!manualLane.includes(forbidden), `Manual backlog completion must not call ${forbidden}`);
+      assert(!nonRuntimeLane.includes(forbidden), `Non-runtime backlog completion must not call ${forbidden}`);
     }
     const issueCompletionStart = orchestrator.indexOf(
       "const completeNonRuntimeGitHubIssueDisposition = async",

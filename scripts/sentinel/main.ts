@@ -71,6 +71,7 @@ import {
   hashProtectedFiles,
   runCandidateValidation,
   runChecked,
+  runDocumentationValidation,
   runTrustedGit,
   runTrustedGitUnchecked,
   scanCandidateWithGitleaks,
@@ -302,6 +303,9 @@ export const evaluateReviewBacklogImplementation = (
       throw new Error("Backlog implementation diff does not include the selected finding's affected path");
     }
     return { disposition: "resolved", continueToRuntimeValidation: true };
+  }
+  if (status === "already_fixed" && actual.length === 0) {
+    return { disposition: "resolved", continueToRuntimeValidation: false };
   }
   if (actual.length > 0) {
     throw new Error(`Backlog implementation status ${status} cannot retain candidate code changes`);
@@ -3298,49 +3302,57 @@ const run = async (): Promise<void> => {
     }
   }
 
-  if (selectedBacklogState.disposition === "manual_required") {
-    if (selectedBacklogState.continueToRuntimeValidation) {
-      throw new Error("Manual-required backlog work cannot continue to runtime deployment");
-    }
+  if (selectedBacklogState.disposition !== null && !selectedBacklogState.continueToRuntimeValidation) {
+    const manualRequired = selectedBacklogState.disposition === "manual_required";
     const changedPaths = [...await implementationAgentChangedPaths(checkout)].sort();
     if (
       changedPaths.length !== 1 || changedPaths[0] !== SENTINEL_POLICY.paths.reviewBacklog
     ) {
-      throw new Error("Manual-required backlog completion must change only the trusted backlog file");
+      throw new Error("Non-runtime backlog completion must change only the trusted backlog file");
     }
-    const manualBacklogPath = `${checkout}/${SENTINEL_POLICY.paths.reviewBacklog}`;
-    parseReviewBacklog(await Deno.readTextFile(manualBacklogPath));
-    await updateState("validating_manual_backlog");
+    const backlogPath = `${checkout}/${SENTINEL_POLICY.paths.reviewBacklog}`;
+    parseReviewBacklog(await Deno.readTextFile(backlogPath));
+    await updateState(manualRequired ? "validating_manual_backlog" : "validating_already_fixed_backlog");
     await scanCandidateWithGitleaks({
       cwd: checkout,
-      reportPath: `${reportsDir}/secret-scan-manual-backlog.json`,
+      reportPath: `${reportsDir}/secret-scan-${manualRequired ? "manual" : "already-fixed"}-backlog.json`,
     });
-    await runCandidateValidation({
+    await runDocumentationValidation({
       cwd: checkout,
-      reportPath: `${reportsDir}/validation-manual-backlog.json`,
+      reportPath: `${reportsDir}/validation-${manualRequired ? "manual" : "already-fixed"}-backlog.json`,
       privateDir,
       denoDirectory,
+      files: [SENTINEL_POLICY.paths.reviewBacklog],
     });
     await assertGitControlStateUnchanged(gitControlState);
-    const manualSha = await commitChanges(checkout, "docs: classify Sentinel backlog item for manual review");
+    const backlogSha = await commitChanges(
+      checkout,
+      manualRequired
+        ? "docs: classify Sentinel backlog item for manual review"
+        : "docs: record already-fixed Sentinel backlog item",
+    );
     await assertGitHistoryExcludesValues({ cwd: checkout, sensitiveValues });
     const remoteDevelopment = await fetchDevelopmentBase(checkout, gitEnvironment);
     if (remoteDevelopment !== baseSha) {
-      throw new Error("origin/development advanced before manual backlog classification could be pushed");
+      throw new Error("origin/development advanced before non-runtime backlog classification could be pushed");
     }
-    await updateState("pushing_manual_backlog", { candidate_sha: manualSha });
+    await updateState(manualRequired ? "pushing_manual_backlog" : "pushing_already_fixed_backlog", {
+      candidate_sha: backlogSha,
+    });
     await runTrustedGit({
       args: ["push", "origin", `HEAD:${SENTINEL_POLICY.developmentRef}`],
       cwd: checkout,
       env: gitEnvironment,
     });
     const pushedDevelopment = await fetchDevelopmentBase(checkout, gitEnvironment);
-    if (pushedDevelopment !== manualSha) {
-      throw new Error("Manual backlog classification did not become the exact development tip");
+    if (pushedDevelopment !== backlogSha) {
+      throw new Error("Non-runtime backlog classification did not become the exact development tip");
     }
     await updateState("complete", {
       status: "no_change",
-      branch_disposition: "development_docs_only_manual_required",
+      branch_disposition: manualRequired
+        ? "development_docs_only_manual_required"
+        : "development_docs_only_backlog_already_fixed",
     });
     for (const replayCase of applicableCases) replayCase.body.fill(0);
     return;

@@ -2278,12 +2278,16 @@ Deno.test("backlog implementation decisions reject no-code resolution and report
     ),
     { disposition: "resolved", continueToRuntimeValidation: true },
   );
-  for (const status of ["implemented", "already_fixed", "blocked", "not_actionable"] as const) {
+  for (const status of ["implemented", "blocked", "not_actionable"] as const) {
     assert.deepEqual(evaluateReviewBacklogImplementation(status, [], []), {
       disposition: "manual_required",
       continueToRuntimeValidation: false,
     });
   }
+  assert.deepEqual(evaluateReviewBacklogImplementation("already_fixed", [], []), {
+    disposition: "resolved",
+    continueToRuntimeValidation: false,
+  });
   assert.throws(
     () => evaluateReviewBacklogImplementation("implemented", ["src/handler.ts"], []),
     /does not match/,

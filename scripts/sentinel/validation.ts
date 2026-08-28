@@ -511,6 +511,53 @@ export const runCandidateValidation = async (
   if (failure !== null) throw failure;
 };
 
+export const runDocumentationValidation = async (
+  input: Readonly<{
+    cwd: string;
+    reportPath: string;
+    privateDir: string;
+    denoDirectory: string;
+    files: readonly string[];
+  }>,
+): Promise<void> => {
+  if (!input.denoDirectory.startsWith("/") || !input.privateDir.startsWith("/")) {
+    throw new Error("Documentation validation paths must be absolute");
+  }
+  const files = [...new Set(input.files)].sort();
+  if (
+    files.length === 0 ||
+    files.some((file) => !/^[A-Za-z0-9][A-Za-z0-9._/-]*\.md$/.test(file) || file.split("/").includes(".."))
+  ) {
+    throw new Error("Documentation validation files are invalid");
+  }
+  const report: Array<Record<string, unknown>> = [];
+  const sandboxHome = await Deno.makeTempDir({ dir: input.privateDir, prefix: "validation-home-" });
+  await Deno.chmod(sandboxHome, 0o700);
+  let failure: unknown = null;
+  try {
+    await runValidationCommand(
+      input.cwd,
+      "format_check",
+      "deno",
+      ["fmt", "--check", ...files],
+      sandboxHome,
+      input.denoDirectory,
+      input.reportPath,
+      report,
+    );
+  } catch (error) {
+    failure = error;
+  } finally {
+    await Deno.writeTextFile(
+      input.reportPath,
+      `${JSON.stringify({ files, commands: report, passed: failure === null }, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+    await Deno.remove(sandboxHome, { recursive: true }).catch(() => undefined);
+  }
+  if (failure !== null) throw failure;
+};
+
 export const scanCandidateWithGitleaks = async (
   input: Readonly<{
     cwd: string;
