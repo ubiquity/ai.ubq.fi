@@ -222,6 +222,17 @@ Deno.test("retry-pending development pushes are exact docs-only commits with no 
       },
     })
   );
+  assert.throws(
+    () =>
+      validateRetryPendingDevelopmentPush({
+        ...checkpointInput,
+        cycleValue: {
+          ...checkpointInput.cycleValue as Record<string, unknown>,
+          branch_disposition: "remote_retained_atomic_push_in_flight",
+        },
+      }),
+    /new retry checkpoint must remain local until the atomic push/u,
+  );
   const checkpointPushMismatches: Array<
     readonly [Partial<Parameters<typeof validateRetryPendingDevelopmentPush>[0]>, RegExp]
   > = [
@@ -278,7 +289,7 @@ Deno.test("retry-pending development pushes are exact docs-only commits with no 
       checkpointLeaseSha: priorRunCheckpoint.sha,
       cycleValue: {
         ...retryCycle,
-        branch_disposition: "remote_retained_issue_retry_pending",
+        branch_disposition: "remote_retained_atomic_push_in_flight",
         retry_checkpoint: priorRunCheckpoint,
       },
       dispositionValue: {

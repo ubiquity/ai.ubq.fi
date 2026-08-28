@@ -865,6 +865,7 @@ Deno.test("retry-pending cycle parsing distinguishes local checkpoint preparatio
         "runner_local_pending_review",
         "runner_local_atomic_push_in_flight",
         "remote_retained_issue_retry_pending",
+        "remote_retained_atomic_push_in_flight",
       ],
     }).branch_disposition,
     "runner_local_pending_review",
@@ -881,6 +882,7 @@ Deno.test("retry-pending cycle parsing distinguishes local checkpoint preparatio
         "runner_local_pending_review",
         "runner_local_atomic_push_in_flight",
         "remote_retained_issue_retry_pending",
+        "remote_retained_atomic_push_in_flight",
       ],
     }).branch_disposition,
     "runner_local_atomic_push_in_flight",
@@ -897,9 +899,27 @@ Deno.test("retry-pending cycle parsing distinguishes local checkpoint preparatio
         "runner_local_pending_review",
         "runner_local_atomic_push_in_flight",
         "remote_retained_issue_retry_pending",
+        "remote_retained_atomic_push_in_flight",
       ],
     }).branch_disposition,
     "remote_retained_issue_retry_pending",
+  );
+  assert.equal(
+    parseSentinelRetryPendingCycleReport({
+      ...cycle,
+      branch_disposition: "remote_retained_atomic_push_in_flight",
+    }, {
+      runId: cycle.run_id,
+      status: "running",
+      stage: "pushing_retry_pending_github_issue",
+      branchDispositions: [
+        "runner_local_pending_review",
+        "runner_local_atomic_push_in_flight",
+        "remote_retained_issue_retry_pending",
+        "remote_retained_atomic_push_in_flight",
+      ],
+    }).branch_disposition,
+    "remote_retained_atomic_push_in_flight",
   );
   assert.throws(
     () =>

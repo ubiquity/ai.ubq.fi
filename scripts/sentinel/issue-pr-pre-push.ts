@@ -285,6 +285,7 @@ export const validateRetryPendingDevelopmentPush = (
       "runner_local_pending_review",
       "runner_local_atomic_push_in_flight",
       "remote_retained_issue_retry_pending",
+      "remote_retained_atomic_push_in_flight",
     ],
   });
   if (

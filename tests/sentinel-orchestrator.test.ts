@@ -222,6 +222,14 @@ Deno.test("post-validation atomic retry failures remain reconcilable", () => {
     }),
     "atomic_retry_push_requires_reconciliation",
   );
+  assert.equal(
+    failedCycleBranchDisposition({
+      stage: "pushing_retry_pending_github_issue",
+      branch_disposition: "remote_retained_atomic_push_in_flight",
+      temporary_branch: "sentinel/candidate-123456789",
+    }),
+    "atomic_retry_push_requires_reconciliation",
+  );
 });
 
 Deno.test("implementation scope protects Sentinel and nested Codex instruction surfaces", () => {

@@ -695,14 +695,17 @@ Deno.test({
     assert(
       startingPosition >= 0 && atomicGitPosition > startingPosition && acceptedUnverifiedPosition > atomicGitPosition &&
         remoteVerificationPosition > acceptedUnverifiedPosition &&
-        issueCompletionLane.includes('branch_disposition: "runner_local_atomic_push_in_flight"') &&
-        issueCompletionLane.includes("onAtomicPushStarting: checkpoint.branch === branch") &&
+        issueCompletionLane.includes('"runner_local_atomic_push_in_flight"') &&
+        issueCompletionLane.includes("onAtomicPushStarting: () =>") &&
+        issueCompletionLane.includes("branch_disposition: checkpoint.branch === branch") &&
+        issueCompletionLane.includes('"remote_retained_atomic_push_in_flight"') &&
         issueCompletionLane.includes('branch_disposition: "atomic_retry_push_accepted_unverified"') &&
         issueCompletionLane.includes('branch_disposition: "remote_retained_issue_retry_pending"') &&
         orchestrator.includes('state.branch_disposition === "atomic_retry_push_accepted_unverified"') &&
         orchestrator.includes('state.branch_disposition === "runner_local_atomic_push_in_flight"') &&
+        orchestrator.includes('state.branch_disposition === "remote_retained_atomic_push_in_flight"') &&
         orchestrator.includes('"atomic_retry_push_requires_reconciliation"'),
-      "Fresh checkpoint atomic pushes must enter an in-flight state and every atomic push must remain unverified until both remote refs match",
+      "Every checkpoint atomic push must enter a durable in-flight state and remain unverified until both remote refs match",
     );
     assert(
       checkpointPublishLane.includes("await restoreIssueRetryAggregateIfEmpty(") &&

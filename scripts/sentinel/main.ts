@@ -152,6 +152,7 @@ export const failedCycleBranchDisposition = (
 ): string => {
   if (
     state.branch_disposition === "runner_local_atomic_push_in_flight" ||
+    state.branch_disposition === "remote_retained_atomic_push_in_flight" ||
     state.branch_disposition === "atomic_retry_push_accepted_unverified" ||
     (state.stage === "validated_retry_pending_atomic_push" &&
       state.branch_disposition === "remote_retained_issue_retry_pending")
@@ -3084,18 +3085,18 @@ const run = async (): Promise<void> => {
         checkpoint,
         expectedRemoteCheckpointSha: retryCheckpointExpectedRemoteSha,
         gitEnvironment,
-        onAtomicPushStarting: checkpoint.branch === branch
-          ? () =>
-            updateState("pushing_retry_pending_github_issue", {
-              candidate_sha: dispositionSha,
-              branch_disposition: "runner_local_atomic_push_in_flight",
-              retry_checkpoint: {
-                branch: checkpoint.branch,
-                sha: checkpoint.sha,
-                base_sha: checkpoint.baseSha,
-              },
-            })
-          : undefined,
+        onAtomicPushStarting: () =>
+          updateState("pushing_retry_pending_github_issue", {
+            candidate_sha: dispositionSha,
+            branch_disposition: checkpoint.branch === branch
+              ? "runner_local_atomic_push_in_flight"
+              : "remote_retained_atomic_push_in_flight",
+            retry_checkpoint: {
+              branch: checkpoint.branch,
+              sha: checkpoint.sha,
+              base_sha: checkpoint.baseSha,
+            },
+          }),
         onAtomicPushAcceptedUnverified: () =>
           updateState("verifying_retry_pending_atomic_push", {
             candidate_sha: dispositionSha,

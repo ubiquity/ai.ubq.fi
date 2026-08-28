@@ -75,6 +75,7 @@ export type SentinelRetryPendingCycleReport = Readonly<{
     | "runner_local_atomic_push_in_flight"
     | "development_docs_only_issue_retry_pending"
     | "remote_retained_issue_retry_pending"
+    | "remote_retained_atomic_push_in_flight"
     | "atomic_retry_push_requires_reconciliation";
   retry_checkpoint: GitHubIssueRetryCheckpointReport | null;
 }>;
@@ -202,10 +203,12 @@ export const parseSentinelRetryPendingCycleReport = (
   if (
     retryCheckpoint === null
       ? cycle.branch_disposition === "remote_retained_issue_retry_pending" ||
+        cycle.branch_disposition === "remote_retained_atomic_push_in_flight" ||
         cycle.branch_disposition === "atomic_retry_push_requires_reconciliation"
       : cycle.branch_disposition !== "runner_local_pending_review" &&
         cycle.branch_disposition !== "runner_local_atomic_push_in_flight" &&
         cycle.branch_disposition !== "remote_retained_issue_retry_pending" &&
+        cycle.branch_disposition !== "remote_retained_atomic_push_in_flight" &&
         cycle.branch_disposition !== "atomic_retry_push_requires_reconciliation"
   ) throw new Error("Sentinel retry-pending cycle checkpoint does not match its branch disposition");
   return {
@@ -239,6 +242,7 @@ export const validateRetryPendingCheckpointPhaseBinding = (
   if (
     checkpoint === null ||
     (cycle.branch_disposition !== "remote_retained_issue_retry_pending" &&
+      cycle.branch_disposition !== "remote_retained_atomic_push_in_flight" &&
       cycle.branch_disposition !== "atomic_retry_push_requires_reconciliation") ||
     checkpoint.branch === cycle.temporary_branch
   ) {
