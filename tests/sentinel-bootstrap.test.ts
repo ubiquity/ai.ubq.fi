@@ -269,6 +269,36 @@ Deno.test("a newly deployed release supersedes and fences an unaccepted candidat
   assert.equal(persistedActivation.reason, "managed_candidate_superseded");
 });
 
+Deno.test("a pending rollback intent blocks candidate supersession", async () => {
+  const currentRelease = release();
+  const activation = initialSentinelBootstrapActivation(currentRelease, currentRelease.activated_at);
+  let writes = 0;
+  const state = {
+    readDocument: () => ({
+      schema_version: 1 as const,
+      release: currentRelease,
+      signals: [],
+      activation,
+      rollback_intent: {} as SentinelBootstrapRollbackIntentV1,
+      constraints: [],
+    }),
+    replaceRelease: () => {
+      writes += 1;
+      return Promise.resolve();
+    },
+  };
+  await assert.rejects(
+    () =>
+      synchronizeObservedRelease(
+        state as never,
+        { sha: "4".repeat(40), revision: "revision-next" },
+        "2026-08-28T18:30:00.000Z",
+      ),
+    /rollback effects remain pending/,
+  );
+  assert.equal(writes, 0);
+});
+
 Deno.test("controller performs one fenced rollback and deduplicates its constraint and recovery dispatch", async () => {
   const store = new FakeBootstrapStateStore();
   store.pointer = initialSentinelBootstrapActivation(release(), "2026-08-28T18:00:00.000Z");

@@ -204,6 +204,9 @@ export const synchronizeObservedRelease = async (
   if (current.activation === null) {
     throw new Error("Managed Sentinel release changed before the prior candidate was reconciled");
   }
+  if (current.release.candidate_sha !== null && current.rollback_intent !== null) {
+    throw new Error("Managed Sentinel release changed while prior rollback effects remain pending");
+  }
   const generation = current.activation.generation + 1;
   const supersededCandidate = current.release.candidate_sha;
   const next = parseBootstrapReleaseRecord({
