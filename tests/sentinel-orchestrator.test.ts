@@ -213,6 +213,10 @@ Deno.test("implementation scope protects Sentinel and nested Codex instruction s
   assert.equal(isSentinelProtectedImplementationPath("src/openai.ts"), false);
 });
 
+Deno.test("Sentinel implementation policy fixes the owner-controlled model to Luna", () => {
+  assert.deepEqual(SENTINEL_POLICY.implementation, { model: "gpt-5.6-luna", reasoning: "max" });
+});
+
 Deno.test("implementation prompt tells agents to block protected repairs before editing", () => {
   const prompt = implementationPrompt(
     {
