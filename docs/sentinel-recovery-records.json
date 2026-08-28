@@ -40,6 +40,48 @@
       "identity": {
         "repository": "ubiquity/ai.ubq.fi",
         "source_kind": "triage",
+        "source_id": "33150853164",
+        "source_revision": "67c1b4c400c6c8679cf31a3e0d12464dad3558f3",
+        "candidate_generation": 1
+      },
+      "run_id": "33150853164",
+      "attempt": 1,
+      "lease_token": "artifact-9679388653",
+      "base_sha": "67c1b4c400c6c8679cf31a3e0d12464dad3558f3",
+      "phase": "checkpoint_durable",
+      "disposition": "active",
+      "state_version": 2,
+      "created_at": "2026-08-28T07:53:39.478Z",
+      "updated_at": "2026-08-28T21:56:26.683Z",
+      "candidate_branch": "sentinel/candidate-triage-33150853164-67c1b4c400c6c8679cf31a3e0d12464d-g1-d02e8f638ae685a1",
+      "candidate_sha": "c7f2a262e3832f5105ea5c87d4b6edcb45f78cfd",
+      "changed_files": [
+        "src/openai.ts",
+        "src/prompt_cache_analytics.ts",
+        "src/prompt_cache_kv_cooldown.ts",
+        "src/prompt_cache_telemetry_gate.ts",
+        "tests/openai-compat.test.ts",
+        "tests/prompt-cache-cooldown.test.ts",
+        "tests/prompt-cache-cooldown.test.ts.orig"
+      ],
+      "tree_sha": "6c60195836c2c26d0a367836180a373d10abe8c6",
+      "failure_class": null,
+      "failure_fingerprint": null,
+      "artifact_ids": [
+        9679388653
+      ],
+      "artifact_digests": [
+        "sha256:1a177a4db982878af588a7f7244e06ea61b3d2bb466dad77203f913e3a2f6e64"
+      ],
+      "reason": "encrypted candidate recovered into a quarantined checkpoint",
+      "next_action": "validate the checkpoint and request human review",
+      "predecessor": null
+    },
+    {
+      "schema_version": 1,
+      "identity": {
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_kind": "triage",
         "source_id": "33155813353",
         "source_revision": "1228987e24c8c899668decc56f0fa4af4610b696",
         "candidate_generation": 1
