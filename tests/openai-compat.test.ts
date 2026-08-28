@@ -9415,6 +9415,51 @@ Deno.test("openai: empty Chat terminal diagnostics are bounded and content-free"
           sseResponse([
             `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_empty_log" } })}\n\n`,
             `data: ${JSON.stringify({ type: "response.in_progress", response: { id: "resp_empty_log" } })}\n\n`,
+            `data: ${
+              JSON.stringify({
+                type: "response.reasoning_summary_text.delta",
+                summary_index: 0,
+                delta: "private reasoning summary",
+              })
+            }\n\n`,
+            `data: ${
+              JSON.stringify({
+                type: "response.reasoning_summary_text.done",
+                summary_index: 0,
+                text: "private reasoning summary",
+              })
+            }\n\n`,
+            `data: ${
+              JSON.stringify({ type: "response.reasoning_text.delta", content_index: 0, delta: "private reasoning" })
+            }\n\n`,
+            `data: ${
+              JSON.stringify({ type: "response.reasoning_text.done", content_index: 0, text: "private reasoning" })
+            }\n\n`,
+            `data: ${JSON.stringify({ type: "response.reasoning_summary_part.added", summary_index: 0 })}\n\n`,
+            `data: ${JSON.stringify({ type: "response.reasoning_summary_part.done", summary_index: 0 })}\n\n`,
+            `data: ${
+              JSON.stringify({
+                type: "response.content_part.added",
+                item_id: "msg_empty_log",
+                content_index: 0,
+                part: { type: "output_text", text: "" },
+              })
+            }\n\n`,
+            `data: ${
+              JSON.stringify({
+                type: "response.content_part.done",
+                item_id: "msg_empty_log",
+                content_index: 0,
+                part: { type: "output_text", text: "" },
+              })
+            }\n\n`,
+            `data: ${
+              JSON.stringify({
+                type: "response.custom_tool_call_input.delta",
+                item_id: "tool_empty_log",
+                delta: "private tool input",
+              })
+            }\n\n`,
             `data: ${JSON.stringify({ type: unknownEventType, output: secretEventPayload })}\n\n`,
             `data: ${
               JSON.stringify({
@@ -9474,6 +9519,15 @@ Deno.test("openai: empty Chat terminal diagnostics are bounded and content-free"
     assert.deepEqual(terminal.upstream_event_kinds, [
       "response.created",
       "response.in_progress",
+      "response.reasoning_summary_text.delta",
+      "response.reasoning_summary_text.done",
+      "response.reasoning_text.delta",
+      "response.reasoning_text.done",
+      "response.reasoning_summary_part.added",
+      "response.reasoning_summary_part.done",
+      "response.content_part.added",
+      "response.content_part.done",
+      "response.custom_tool_call_input.delta",
       "unrecognized",
       "response.completed",
     ]);
