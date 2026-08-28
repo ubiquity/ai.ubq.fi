@@ -6,6 +6,40 @@
       "identity": {
         "repository": "ubiquity/ai.ubq.fi",
         "source_kind": "github_issue",
+        "source_id": "5228586364",
+        "source_revision": "197c4f822ab9f73ceb2ffadbc74803e48e39ededf7bf98dd56c7e7731c0b2442",
+        "candidate_generation": 1
+      },
+      "run_id": "33030077136",
+      "attempt": 1,
+      "lease_token": "artifact-9629902344",
+      "base_sha": "f3f541928576baefb72a8a7ff2ec9ea2beae450c",
+      "phase": "rejected",
+      "disposition": "rejected",
+      "state_version": 2,
+      "created_at": "2026-08-27T01:27:09.971Z",
+      "updated_at": "2026-08-28T23:12:49.660Z",
+      "candidate_branch": null,
+      "candidate_sha": null,
+      "changed_files": [],
+      "tree_sha": null,
+      "failure_class": "no_candidate_diff",
+      "failure_fingerprint": "2452a7cbf29eb3572041f9e943c603d0ba6b5c8bae7dd7e493719137b4ccbb5f",
+      "artifact_ids": [
+        9629902344
+      ],
+      "artifact_digests": [
+        "sha256:6d04cc5208cfd09c9e258b2b390943a4046d4fae255af2e71c9ad694d7409296"
+      ],
+      "reason": "no_candidate_diff",
+      "next_action": null,
+      "predecessor": null
+    },
+    {
+      "schema_version": 1,
+      "identity": {
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_kind": "github_issue",
         "source_id": "5262330948",
         "source_revision": "d31042ca00e5615b3fec348d0b239399714712b52caffda1d7d3483057fda39e",
         "candidate_generation": 1
