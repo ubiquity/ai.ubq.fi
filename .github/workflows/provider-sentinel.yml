@@ -1311,3 +1311,60 @@ jobs:
                 throw new Error(`Incident acknowledgement failed with HTTP ${response.status}`);
               }
             '
+
+  artifact-recovery:
+    needs: sentinel
+    if: >-
+      always() &&
+      vars.SENTINEL_AUTONOMY_ENABLED == 'true' &&
+      (
+        github.event_name == 'schedule' ||
+        (
+          github.event_name == 'workflow_dispatch' &&
+          (inputs.sentinel_mode == 'hourly' || inputs.sentinel_mode == 'incident')
+        )
+      )
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Check out full repository history for artifact recovery
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Deno for artifact recovery
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: 2.9.5
+
+      - name: Cache artifact recovery dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno cache \
+            --frozen \
+            --lock=deno.lock \
+            scripts/sentinel/artifact-recovery.ts
+
+      - name: Recover encrypted Sentinel artifacts into draft-only candidates
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SENTINEL_ARTIFACT_KEY: ${{ secrets.SENTINEL_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          deno run \
+            --cached-only \
+            --frozen \
+            --lock=deno.lock \
+            --allow-env=GITHUB_ACTIONS,GITHUB_REPOSITORY,GITHUB_TOKEN,SENTINEL_ARTIFACT_KEY \
+            --allow-net \
+            --allow-read \
+            --allow-write \
+            --allow-run=git,unzip \
+            scripts/sentinel/artifact-recovery.ts
