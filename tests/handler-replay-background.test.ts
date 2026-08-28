@@ -36,6 +36,110 @@ const ignoredAnalytics: RecordAnalytics = () =>
     bucket_start_at_ms: null,
   });
 
+Deno.test("SSE lifecycle watchdog cancels a hanging upstream and settles quota once", async () => {
+  const delivery = Promise.withResolvers<void>();
+  const upstreamReadStarted = Promise.withResolvers<void>();
+  const terminalObserved = Promise.withResolvers<void>();
+  const settlements: { outcome: string; reason?: string }[] = [];
+  const terminalErrors: Parameters<RecordAdminError>[0][] = [];
+  let upstreamCancelled = 0;
+  const upstream = new ReadableStream<Uint8Array>({
+    pull() {
+      upstreamReadStarted.resolve();
+      return new Promise<void>(() => {});
+    },
+    cancel() {
+      upstreamCancelled += 1;
+    },
+  });
+  const response = await withTerminalRequestLog(
+    new Response(upstream, { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+    {
+      route: "responses",
+      startedAtMonotonicMs: performance.now(),
+      requestId: "lifecycle-watchdog-hanging-body",
+      onTerminal: (outcome, reason) => {
+        settlements.push({ outcome, reason });
+      },
+      deliveryCompleted: delivery.promise,
+      deliverySignal: new AbortController().signal,
+      streamLifecycleDeadlineMs: 25,
+      recordTelemetry: ignoredTelemetry,
+      recordCacheAnalytics: ignoredAnalytics,
+      recordAdminError: (error) => {
+        terminalErrors.push(error);
+        terminalObserved.resolve();
+        return Promise.resolve();
+      },
+    },
+  );
+  const reader = response.body!.getReader();
+  const pendingRead = reader.read();
+  await upstreamReadStarted.promise;
+  await Promise.race([
+    terminalObserved.promise,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("lifecycle watchdog did not fire")), 500)),
+  ]);
+  assert.equal(upstreamCancelled, 1);
+  assert.deepEqual(settlements, [{ outcome: "incomplete", reason: "stream_lifecycle_timeout" }]);
+  assert.equal(terminalErrors.length, 1);
+  assert.equal(terminalErrors[0]?.terminal_type, "deadline");
+  assert.equal(terminalErrors[0]?.failure_kind, "stream_lifecycle_timeout");
+  await reader.cancel("test cleanup").catch(() => {});
+  await pendingRead.catch(() => {});
+  delivery.resolve();
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  assert.equal(terminalErrors.length, 1);
+  assert.equal(settlements.length, 1);
+});
+
+Deno.test("SSE lifecycle watchdog preserves terminal bytes before stalled delivery finalization", async () => {
+  const delivery = Promise.withResolvers<void>();
+  const terminalObserved = Promise.withResolvers<void>();
+  const settlements: { outcome: string; reason?: string }[] = [];
+  const terminalErrors: Parameters<RecordAdminError>[0][] = [];
+  const terminalFrame = 'data: {"type":"response.completed","response":{"status":"completed"}}\n\n';
+  const response = await withTerminalRequestLog(
+    new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(terminalFrame));
+          controller.close();
+        },
+      }),
+      { status: 200, headers: { "Content-Type": "text/event-stream" } },
+    ),
+    {
+      route: "responses",
+      startedAtMonotonicMs: performance.now(),
+      requestId: "lifecycle-watchdog-stalled-delivery",
+      onTerminal: (outcome, reason) => {
+        settlements.push({ outcome, reason });
+      },
+      deliveryCompleted: delivery.promise,
+      deliverySignal: new AbortController().signal,
+      streamLifecycleDeadlineMs: 25,
+      recordTelemetry: ignoredTelemetry,
+      recordCacheAnalytics: ignoredAnalytics,
+      recordAdminError: (error) => {
+        terminalErrors.push(error);
+        terminalObserved.resolve();
+        return Promise.resolve();
+      },
+    },
+  );
+  const bodyStartedAt = performance.now();
+  assert.equal(await response.text(), terminalFrame);
+  assert.ok(performance.now() - bodyStartedAt < 250, "normal stream bytes were delayed by the watchdog");
+  assert.equal(terminalErrors.length, 0);
+  await terminalObserved.promise;
+  assert.equal(terminalErrors.length, 1);
+  assert.equal(settlements.length, 1);
+  delivery.resolve();
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  assert.equal(terminalErrors.length, 1);
+  assert.equal(settlements.length, 1);
+});
 Deno.test("terminal logging reports admission busy failures to the admin error ledger", async () => {
   const recorded: Parameters<RecordAdminError>[0][] = [];
   const response = await withTerminalRequestLog(
