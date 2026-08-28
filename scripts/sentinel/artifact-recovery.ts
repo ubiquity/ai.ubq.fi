@@ -1093,6 +1093,10 @@ export const legacyArtifactTerminalDisposition = (
   return null;
 };
 
+export const legacyArtifactHasTerminalReport = (files: readonly SentinelArtifactFile[]): boolean =>
+  files.some((file) => TERMINAL_RECORD_REPORT_PATH.test(file.path)) ||
+  files.some((file) => file.path === TERMINAL_OUTCOME_REPORT_PATH || file.path === MANUAL_CHECKPOINT_REPORT_PATH);
+
 const textField = (value: unknown, maximumBytes = 512): string | null =>
   typeof value === "string" && value.length > 0 && new TextEncoder().encode(value).byteLength <= maximumBytes &&
     !containsAsciiControl(value)
@@ -1387,7 +1391,9 @@ export const recoverSentinelArtifactsInActions = async (
         const artifactRecord = recordFromArtifact(decrypted, artifact, encryptedDigest, workflowRun);
         if (!artifactRecord) {
           const terminalDisposition = legacyArtifactTerminalDisposition(decrypted) ??
-            (terminalArtifactRecord(decrypted) ? "manual_required" : null);
+            (legacyArtifactHasTerminalReport(decrypted) || terminalArtifactRecord(decrypted)
+              ? "manual_required"
+              : null);
           let legacyRecord = terminalDisposition !== null
             ? terminalRecoveryRecordForLegacyArtifact(
               input.repository,
