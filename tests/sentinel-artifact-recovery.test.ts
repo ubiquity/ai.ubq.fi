@@ -296,6 +296,17 @@ Deno.test("failed authenticated legacy reports without a candidate still receive
   }
 });
 
+Deno.test("report-only ciphertext can prove legacy failure without a workflow lookup", () => {
+  const files = [
+    { path: "reports/cycle.json", bytes: new TextEncoder().encode('{"schema_version":1,"status":"failed"}') },
+  ];
+  try {
+    assert.equal(legacyArtifactNeedsManualDisposition(files), true);
+  } finally {
+    for (const file of files) file.bytes.fill(0);
+  }
+});
+
 Deno.test({
   name: "encrypted candidate recovery creates one deterministic quarantined commit and draft PR request",
   ignore: unavailable,

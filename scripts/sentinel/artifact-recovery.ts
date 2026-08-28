@@ -1059,12 +1059,18 @@ export const isSentinelArtifactRecoveryEligible = (
 export const legacyArtifactNeedsManualDisposition = (
   files: readonly SentinelArtifactFile[],
   workflowRun?: Readonly<Pick<GitHubWorkflowRun, "status" | "conclusion">>,
-): boolean =>
-  files.some((file) => file.path.startsWith("reports/")) &&
-  !terminalArtifactRecord(files) &&
-  workflowRun?.status === "completed" &&
-  typeof workflowRun.conclusion === "string" &&
-  INCOMPLETE_FAILURE_MARKERS.has(workflowRun.conclusion);
+): boolean => {
+  const cycle = parseArtifactJson(files, "reports/cycle.json");
+  const status = typeof cycle?.status === "string" ? cycle.status : null;
+  const ciphertextProvesFailure = status !== null && INCOMPLETE_FAILURE_STATUSES.has(status) ||
+    explicitIncompleteFailureEvidence(parseArtifactJson(files, "reports/failure.json"));
+  const owningRunProvesFailure = workflowRun?.status === "completed" &&
+    typeof workflowRun.conclusion === "string" &&
+    INCOMPLETE_FAILURE_MARKERS.has(workflowRun.conclusion);
+  return files.some((file) => file.path.startsWith("reports/")) &&
+    !terminalArtifactRecord(files) &&
+    (ciphertextProvesFailure || owningRunProvesFailure);
+};
 
 const textField = (value: unknown, maximumBytes = 512): string | null =>
   typeof value === "string" && value.length > 0 && new TextEncoder().encode(value).byteLength <= maximumBytes &&
