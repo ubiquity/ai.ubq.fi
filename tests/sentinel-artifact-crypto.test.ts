@@ -393,6 +393,7 @@ Deno.test({
     assert(!watchdogExists, "The resident watchdog workflow must be removed");
     const workflow = await Deno.readTextFile(".github/workflows/provider-sentinel.yml");
     const orchestrator = await Deno.readTextFile("scripts/sentinel/main.ts");
+    const validation = await Deno.readTextFile("scripts/sentinel/validation.ts");
     const issuePushGate = await Deno.readTextFile("scripts/sentinel/issue-pr-pre-push.ts");
     const issueReconciliation = await Deno.readTextFile("scripts/sentinel/issue-delivery-reconcile.ts");
     const server = await Deno.readTextFile("serve.ts");
@@ -467,20 +468,34 @@ Deno.test({
       workflow.includes("installing agent prerequisites conservatively"),
       "Backlog hint failures must fail toward installing the agent",
     );
-    const manualStart = orchestrator.indexOf('if (selectedBacklogState.disposition === "manual_required")');
+    const manualStart = orchestrator.indexOf("const docsOnlyDisposition = selectedBacklogState.disposition");
     const manualEnd = orchestrator.indexOf("if (!await hasChanges(checkout))", manualStart);
     assert(
       manualStart >= 0 && manualEnd > manualStart,
-      "Manual backlog completion must have a bounded early-return lane",
+      "Non-runtime backlog completion must have a bounded early-return lane",
     );
     const manualLane = orchestrator.slice(manualStart, manualEnd);
     assert(
-      manualLane.includes("HEAD:${SENTINEL_POLICY.developmentRef}"),
-      "Manual backlog completion must persist its trusted documentation change",
+      manualLane.includes("HEAD:${SENTINEL_POLICY.developmentRef}") &&
+        manualLane.includes('"development_docs_only_review_backlog_resolved"') &&
+        manualLane.includes('"development_docs_only_manual_required"'),
+      "Non-runtime backlog completion must persist either trusted documentation disposition",
     );
-    for (const forbidden of ["pushTemporaryCandidate", "dispatchAndResolveRevision", "dispatchSerializedPromotion"]) {
-      assert(!manualLane.includes(forbidden), `Manual backlog completion must not call ${forbidden}`);
+    assert(
+      manualLane.includes("pushTemporaryCandidate(checkout, branch, gitEnvironment)"),
+      "Non-runtime backlog completion must retain its exact candidate before the development push",
+    );
+    for (const forbidden of ["dispatchAndResolveRevision", "dispatchSerializedPromotion"]) {
+      assert(!manualLane.includes(forbidden), `Non-runtime backlog completion must not call ${forbidden}`);
     }
+    const validationCommandStart = validation.indexOf("const runValidationCommand = async");
+    const validationCommandEnd = validation.indexOf("export const runCandidateValidation", validationCommandStart);
+    const validationCommand = validation.slice(validationCommandStart, validationCommandEnd);
+    assert(
+      validationCommand.includes('"--unshare-net"') &&
+        validationCommand.includes('SENTINEL_GIT_WRAPPER_BYPASS: "1"'),
+      "Network-isolated candidate validation must bypass only the workflow Git wrapper used by local fixtures",
+    );
     const issueCompletionStart = orchestrator.indexOf(
       "const completeNonRuntimeGitHubIssueDisposition = async",
     );

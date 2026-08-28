@@ -32,6 +32,7 @@ import {
   previewCompletionForDecision,
   replayIndexArtifactMayMatch,
   replayIndexArtifactName,
+  requireResolvedReviewBacklogImplementation,
   requiresReplayEvaluation,
   resolveCycleAnchorMs,
   RetryCheckpointResumeError,
@@ -2268,7 +2269,7 @@ Deno.test("review backlog parsing is strict and round-trips renderer escapes", (
   );
 });
 
-Deno.test("backlog implementation decisions reject no-code resolution and report mismatches", () => {
+Deno.test("backlog implementation decisions reconcile already-fixed work and reject report mismatches", () => {
   assert.deepEqual(
     evaluateReviewBacklogImplementation(
       "implemented",
@@ -2278,7 +2279,11 @@ Deno.test("backlog implementation decisions reject no-code resolution and report
     ),
     { disposition: "resolved", continueToRuntimeValidation: true },
   );
-  for (const status of ["implemented", "already_fixed", "blocked", "not_actionable"] as const) {
+  assert.deepEqual(evaluateReviewBacklogImplementation("already_fixed", [], []), {
+    disposition: "resolved",
+    continueToRuntimeValidation: false,
+  });
+  for (const status of ["implemented", "blocked", "not_actionable"] as const) {
     assert.deepEqual(evaluateReviewBacklogImplementation(status, [], []), {
       disposition: "manual_required",
       continueToRuntimeValidation: false,
@@ -2291,6 +2296,14 @@ Deno.test("backlog implementation decisions reject no-code resolution and report
   assert.throws(
     () => evaluateReviewBacklogImplementation("blocked", ["src/handler.ts"], ["src/handler.ts"]),
     /cannot retain/,
+  );
+  assert.throws(
+    () => evaluateReviewBacklogImplementation("already_fixed", ["src/handler.ts"], ["src/handler.ts"]),
+    /cannot retain/,
+  );
+  assert.throws(
+    () => requireResolvedReviewBacklogImplementation("already_fixed", [], [], "src/handler.ts"),
+    /does not retain/,
   );
   assert.throws(
     () => evaluateReviewBacklogImplementation("implemented", ["README.md"], ["README.md"], "src/handler.ts"),

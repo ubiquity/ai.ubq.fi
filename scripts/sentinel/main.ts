@@ -303,6 +303,9 @@ export const evaluateReviewBacklogImplementation = (
     }
     return { disposition: "resolved", continueToRuntimeValidation: true };
   }
+  if (status === "already_fixed" && actual.length === 0) {
+    return { disposition: "resolved", continueToRuntimeValidation: false };
+  }
   if (actual.length > 0) {
     throw new Error(`Backlog implementation status ${status} cannot retain candidate code changes`);
   }
@@ -2912,6 +2915,7 @@ const run = async (): Promise<void> => {
   ): Promise<void> => {
     if (!/^[a-z0-9_-]+$/u.test(stage)) throw new Error("Failed implementation stage label is invalid");
     let preservation: Record<string, unknown>;
+    let preservationError: unknown = null;
     try {
       await assertAgentDidNotCommitOrSwitch(checkout, preInvocationSha, branch, gitControlState);
       await assertImplementationAgentScope(checkout);
@@ -2923,17 +2927,39 @@ const run = async (): Promise<void> => {
       });
       const snapshotDirectory = `${reportsDir}/failed-${stage}-candidate`;
       await captureFailedCandidateSnapshot(checkout, snapshotDirectory, baseSha);
+      const aggregatePaths = [...await aggregateCandidateChangedPaths(checkout, baseSha)].sort();
+      let retainedCandidate: Readonly<{ branch: string; sha: string }> | null = null;
+      if (workSelection.source !== "github_issue" && aggregatePaths.length > 0) {
+        const checkpointSha = await commitChanges(checkout, `fix: retain failed Sentinel candidate after ${stage}`);
+        await assertGitHistoryExcludesValues({ cwd: checkout, sensitiveValues });
+        const retainedSha = await pushTemporaryCandidate(checkout, branch, gitEnvironment);
+        if (retainedSha !== checkpointSha) throw new Error("Failed candidate checkpoint push changed SHA");
+        lastPushedCandidateSha = retainedSha;
+        retainedCandidate = { branch, sha: retainedSha };
+        await updateState(`retaining_failed_${stage}`, {
+          candidate_sha: retainedSha,
+          branch_disposition: "remote_retained_pending_decision",
+        });
+      }
       preservation = {
         preserved: true,
         location: `reports/failed-${stage}-candidate/manifest.json in encrypted evidence artifact`,
+        retained_candidate: retainedCandidate,
       };
-    } catch (preservationError) {
-      preservation = { preserved: false, ...safeErrorSummary(preservationError) };
+    } catch (caught) {
+      preservationError = caught;
+      preservation = { preserved: false, ...safeErrorSummary(caught) };
     }
     await writeJson(`${reportsDir}/failed-${stage}-preservation.json`, {
       ...safeErrorSummary(error),
       candidate: preservation,
     });
+    if (preservationError !== null) {
+      throw new AggregateError(
+        [error, preservationError],
+        "Sentinel implementation failed and its candidate could not be preserved",
+      );
+    }
   };
   const publishGitHubIssueRetryCheckpoint = async (
     stage: string,
@@ -3298,49 +3324,83 @@ const run = async (): Promise<void> => {
     }
   }
 
-  if (selectedBacklogState.disposition === "manual_required") {
-    if (selectedBacklogState.continueToRuntimeValidation) {
-      throw new Error("Manual-required backlog work cannot continue to runtime deployment");
-    }
+  if (
+    selectedBacklogState.disposition === "manual_required" ||
+    (selectedBacklogState.disposition === "resolved" && !selectedBacklogState.continueToRuntimeValidation)
+  ) {
+    const docsOnlyDisposition = selectedBacklogState.disposition;
     const changedPaths = [...await implementationAgentChangedPaths(checkout)].sort();
     if (
       changedPaths.length !== 1 || changedPaths[0] !== SENTINEL_POLICY.paths.reviewBacklog
     ) {
-      throw new Error("Manual-required backlog completion must change only the trusted backlog file");
+      throw new Error("Non-runtime backlog completion must change only the trusted backlog file");
     }
-    const manualBacklogPath = `${checkout}/${SENTINEL_POLICY.paths.reviewBacklog}`;
-    parseReviewBacklog(await Deno.readTextFile(manualBacklogPath));
-    await updateState("validating_manual_backlog");
-    await scanCandidateWithGitleaks({
-      cwd: checkout,
-      reportPath: `${reportsDir}/secret-scan-manual-backlog.json`,
-    });
-    await runCandidateValidation({
-      cwd: checkout,
-      reportPath: `${reportsDir}/validation-manual-backlog.json`,
-      privateDir,
-      denoDirectory,
-    });
-    await assertGitControlStateUnchanged(gitControlState);
-    const manualSha = await commitChanges(checkout, "docs: classify Sentinel backlog item for manual review");
+    const backlogPath = `${checkout}/${SENTINEL_POLICY.paths.reviewBacklog}`;
+    parseReviewBacklog(await Deno.readTextFile(backlogPath));
+    const validationStage = docsOnlyDisposition === "resolved"
+      ? "validating_resolved_backlog"
+      : "validating_manual_backlog";
+    await updateState(validationStage);
+    try {
+      await scanCandidateWithGitleaks({
+        cwd: checkout,
+        reportPath: `${reportsDir}/secret-scan-${docsOnlyDisposition}-backlog.json`,
+      });
+      await runChecked({
+        command: "deno",
+        args: ["fmt", "--check", SENTINEL_POLICY.paths.reviewBacklog],
+        cwd: checkout,
+      });
+      await runTrustedGit({
+        args: ["diff", "--check", baseSha, "--", SENTINEL_POLICY.paths.reviewBacklog],
+        cwd: checkout,
+      });
+      await assertGitControlStateUnchanged(gitControlState);
+    } catch (error) {
+      const snapshotDirectory = `${reportsDir}/failed-${docsOnlyDisposition}-backlog-candidate`;
+      await captureFailedCandidateSnapshot(checkout, snapshotDirectory, baseSha);
+      await writeJson(`${reportsDir}/failed-${docsOnlyDisposition}-backlog-preservation.json`, {
+        ...safeErrorSummary(error),
+        candidate: {
+          preserved: true,
+          location:
+            `reports/failed-${docsOnlyDisposition}-backlog-candidate/manifest.json in encrypted evidence artifact`,
+        },
+      });
+      throw error;
+    }
+    const docsOnlySha = await commitChanges(
+      checkout,
+      docsOnlyDisposition === "resolved"
+        ? "docs: resolve already-fixed Sentinel backlog item"
+        : "docs: classify Sentinel backlog item for manual review",
+    );
     await assertGitHistoryExcludesValues({ cwd: checkout, sensitiveValues });
+    const retainedSha = await pushTemporaryCandidate(checkout, branch, gitEnvironment);
+    if (retainedSha !== docsOnlySha) throw new Error("Backlog checkpoint push changed SHA");
+    lastPushedCandidateSha = retainedSha;
+    await updateState(`pushing_${docsOnlyDisposition}_backlog`, {
+      candidate_sha: docsOnlySha,
+      branch_disposition: "remote_retained_pending_decision",
+    });
     const remoteDevelopment = await fetchDevelopmentBase(checkout, gitEnvironment);
     if (remoteDevelopment !== baseSha) {
-      throw new Error("origin/development advanced before manual backlog classification could be pushed");
+      throw new Error("origin/development advanced before the backlog disposition could be pushed");
     }
-    await updateState("pushing_manual_backlog", { candidate_sha: manualSha });
     await runTrustedGit({
       args: ["push", "origin", `HEAD:${SENTINEL_POLICY.developmentRef}`],
       cwd: checkout,
       env: gitEnvironment,
     });
     const pushedDevelopment = await fetchDevelopmentBase(checkout, gitEnvironment);
-    if (pushedDevelopment !== manualSha) {
-      throw new Error("Manual backlog classification did not become the exact development tip");
+    if (pushedDevelopment !== docsOnlySha) {
+      throw new Error("Backlog disposition did not become the exact development tip");
     }
     await updateState("complete", {
       status: "no_change",
-      branch_disposition: "development_docs_only_manual_required",
+      branch_disposition: docsOnlyDisposition === "resolved"
+        ? "development_docs_only_review_backlog_resolved"
+        : "development_docs_only_manual_required",
     });
     for (const replayCase of applicableCases) replayCase.body.fill(0);
     return;
