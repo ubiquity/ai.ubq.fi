@@ -27,7 +27,7 @@ export type SentinelAgentPolicy = Readonly<{
 
 export const SENTINEL_AGENT_POLICIES: Readonly<Record<SentinelAgentRole, SentinelAgentPolicy>> = Object.freeze({
   triage: Object.freeze({ model: "gpt-5.6-sol", reasoningEffort: "medium", sandbox: "read-only" }),
-  implementation: Object.freeze({ model: "gpt-5.6-sol", reasoningEffort: "medium", sandbox: "workspace-write" }),
+  implementation: Object.freeze({ model: "gpt-5.6-luna", reasoningEffort: "max", sandbox: "workspace-write" }),
   monitoring: Object.freeze({ model: "gpt-5.6-sol", reasoningEffort: "medium", sandbox: "read-only" }),
 });
 

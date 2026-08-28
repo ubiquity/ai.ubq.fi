@@ -18,6 +18,10 @@
 - Use this fixed inference waterfall, in cost order: eligible Codex subscription capacity first, Surplus Intelligence
   second, and OpenLux last. Advance to the next paid tier only after an authoritative quota or capacity signal; do not
   treat a transient timeout, stalled stream, network or read error, or upstream 5xx as quota exhaustion.
+- Treat the Provider Sentinel implementation-agent model as an owner-controlled invariant. Only `gpt-5.6-luna` is
+  allowed. Agents must not change or substitute this model, or weaken the policy, instructions, or tests that enforce
+  it. A failed, timed-out, or exhausted Luna attempt must remain a failure, retry, or blocked outcome; it never
+  authorizes a model change.
 - Treat `deno deploy --prod` as a build and production-timeline operation, not as proof that the stable route moved. A
   dashboard promotion creates a persistent production pin that a later deployment does not replace automatically.
 - For every stable Deno deployment, capture the pre-deploy revision IDs, identify exactly one new succeeded revision,
