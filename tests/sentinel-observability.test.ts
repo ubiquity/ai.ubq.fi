@@ -85,6 +85,10 @@ Deno.test({
     ) {
       assert.match(workflow, new RegExp(field.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")));
     }
+    assert.match(
+      workflow,
+      /- name: Reconcile durable recovery records[\s\S]*scripts\/sentinel\/recovery-controller\.ts/u,
+    );
     assert.doesNotMatch(workflow, /github_issue_(?:title|body)/u);
   },
 });

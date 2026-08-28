@@ -12,6 +12,11 @@ import {
   renderSentinelRecoveryLedger,
   upsertSentinelRecoveryRecord,
 } from "../scripts/sentinel/recovery-ledger.ts";
+import {
+  readGitHubSentinelRecoveryLedger,
+  writeGitHubSentinelRecoveryLedger,
+} from "../scripts/sentinel/recovery-github-store.ts";
+import { runSentinelRecoveryPass } from "../scripts/sentinel/recovery-controller.ts";
 
 const record = (overrides: Record<string, unknown> = {}) => ({
   schema_version: 1,
@@ -131,4 +136,80 @@ Deno.test("recovery ledger provides bounded create, CAS, lease, and non-terminal
     2,
   );
   assert.throws(() => upsertSentinelRecoveryRecord(updated, running, 1), /compare-and-swap/u);
+});
+
+Deno.test("GitHub recovery state uses a separate fast-forward-only ref", async () => {
+  const base = "a".repeat(40);
+  const baseTree = "b".repeat(40);
+  const blob = "c".repeat(40);
+  const nextTree = "d".repeat(40);
+  const nextCommit = "e".repeat(40);
+  const ledgerText = renderSentinelRecoveryLedger(emptySentinelRecoveryLedger());
+  const encoded = btoa(ledgerText);
+  const requests: Array<{ url: string; init: RequestInit }> = [];
+  const responses = [
+    new Response("not found", { status: 404 }),
+    Response.json({ object: { sha: base } }),
+    Response.json({ tree: { sha: baseTree } }),
+    Response.json({ encoding: "base64", content: encoded }),
+    Response.json({ sha: blob }),
+    Response.json({ sha: nextTree }),
+    Response.json({ sha: nextCommit }),
+    Response.json({ ref: "refs/heads/sentinel/recovery-state", object: { sha: nextCommit } }),
+  ];
+  const fetcher: typeof fetch = (url, init = {}) => {
+    requests.push({ url: String(url), init });
+    const response = responses.shift();
+    if (!response) throw new Error("Unexpected GitHub recovery-state request");
+    return Promise.resolve(response);
+  };
+  const snapshot = await readGitHubSentinelRecoveryLedger({
+    token: "token",
+    repository: "ubiquity/ai.ubq.fi",
+    fetcher,
+  });
+  assert.equal(snapshot.state_ref_exists, false);
+  const written = await writeGitHubSentinelRecoveryLedger({
+    token: "token",
+    repository: "ubiquity/ai.ubq.fi",
+    snapshot,
+    ledger: snapshot.ledger,
+    message: "chore(sentinel): claim recovery work",
+    fetcher,
+  });
+  assert.equal(written.commit_sha, nextCommit);
+  assert.equal(requests.at(-1)?.url.endsWith("/git/refs"), true);
+  assert.deepEqual(JSON.parse(String(requests.at(-1)?.init.body)), {
+    ref: "refs/heads/sentinel/recovery-state",
+    sha: nextCommit,
+  });
+});
+
+Deno.test("an empty durable recovery pass performs no state write", async () => {
+  const commit = "1".repeat(40);
+  const tree = "2".repeat(40);
+  const encoded = btoa(renderSentinelRecoveryLedger(emptySentinelRecoveryLedger()));
+  const methods: string[] = [];
+  const responses = [
+    Response.json({ object: { sha: commit } }),
+    Response.json({ tree: { sha: tree } }),
+    Response.json({ encoding: "base64", content: encoded }),
+  ];
+  const fetcher: typeof fetch = (_url, init = {}) => {
+    methods.push(init.method ?? "GET");
+    const response = responses.shift();
+    if (!response) throw new Error("Unexpected recovery pass request");
+    return Promise.resolve(response);
+  };
+  assert.deepEqual(
+    await runSentinelRecoveryPass({
+      token: "token",
+      repository: "ubiquity/ai.ubq.fi",
+      owner: "run-1",
+      now: "2026-08-28T18:00:00.000Z",
+      fetcher,
+    }),
+    [],
+  );
+  assert.deepEqual(methods, ["GET", "GET", "GET"]);
 });

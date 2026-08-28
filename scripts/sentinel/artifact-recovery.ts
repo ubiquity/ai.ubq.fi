@@ -3,10 +3,13 @@ import { GitHubActionsClient, type GitHubArtifact, type GitHubWorkflowRun } from
 import {
   assertSentinelRecoveryTransition,
   parseSentinelRecoveryRecord,
+  sentinelRecoveryCandidateBranch as recoveryCandidateBranchForIdentity,
   type SentinelRecoveryRecordV1,
   type SentinelRecoverySourceKind,
 } from "./recovery.ts";
 import { isSentinelProtectedImplementationPath } from "./policy.ts";
+import { sentinelRecoveryIdentityKey, upsertSentinelRecoveryRecord } from "./recovery-ledger.ts";
+import { readGitHubSentinelRecoveryLedger, writeGitHubSentinelRecoveryLedger } from "./recovery-github-store.ts";
 
 const TEXT_DECODER = new TextDecoder("utf-8", { fatal: true });
 const TEXT_ENCODER = new TextEncoder();
@@ -339,12 +342,6 @@ const slug = (value: string, fallback: string): string => {
   return result || fallback;
 };
 
-const recoveryBranchSegment = (value: string, maximumLength: number, fallback: string): string => {
-  const segment = value.replace(/[^A-Za-z0-9._-]+/gu, "-").replace(/^-+|-+$/gu, "").slice(0, maximumLength)
-    .replace(/-+$/gu, "");
-  return segment.length > 0 ? segment : fallback;
-};
-
 const validateRecoveryIdentity = (record: SentinelRecoveryRecordV1): void => {
   if (
     !SAFE_REPOSITORY.test(record.identity.repository) || !RECOVERY_SOURCE_KINDS.has(record.identity.source_kind) ||
@@ -363,10 +360,7 @@ const validateRecoveryIdentity = (record: SentinelRecoveryRecordV1): void => {
 /** Return the deterministic quarantine branch shared with issue reconciliation. */
 export const sentinelRecoveryCandidateBranch = (record: SentinelRecoveryRecordV1): string => {
   validateRecoveryIdentity(record);
-  const source = recoveryBranchSegment(record.identity.source_id, 80, "source");
-  const revision = recoveryBranchSegment(record.identity.source_revision, 32, "revision");
-  const branch =
-    `sentinel/candidate-${record.identity.source_kind}-${source}-${revision}-g${record.identity.candidate_generation}`;
+  const branch = recoveryCandidateBranchForIdentity(record.identity);
   if (!SAFE_BRANCH.test(branch)) throw new CandidateSnapshotError("recovery_record_invalid");
   return branch;
 };
@@ -1264,6 +1258,12 @@ export const recoverSentinelArtifactsInActions = async (
       token: input.token,
       fetcher: input.fetcher,
     });
+    const stateFetcher = (input.fetcher ?? fetch) as typeof fetch;
+    let recoverySnapshot = await readGitHubSentinelRecoveryLedger({
+      token: input.token,
+      repository: input.repository,
+      fetcher: stateFetcher,
+    });
     const artifacts = selectSentinelRecoveryArtifacts(
       await github.listRepositoryArtifacts({ createdAfterMs: Date.now() - 90 * 24 * 60 * 60 * 1_000 }),
     );
@@ -1282,8 +1282,8 @@ export const recoverSentinelArtifactsInActions = async (
         encryptedDigest = await artifactDigest(encrypted);
         decrypted = await decryptSentinelArtifact(encrypted, keyBytes);
         const workflowRun = await workflowRunForArtifact(decrypted, github);
-        const record = recordFromArtifact(decrypted, artifact, encryptedDigest, workflowRun);
-        if (!record) {
+        const artifactRecord = recordFromArtifact(decrypted, artifact, encryptedDigest, workflowRun);
+        if (!artifactRecord) {
           results.push({
             schema_version: SENTINEL_ARTIFACT_RECOVERY_SCHEMA_VERSION,
             disposition: "manual_required",
@@ -1296,6 +1296,36 @@ export const recoverSentinelArtifactsInActions = async (
             recovery_record: null,
             draft_pull_request: null,
           });
+          continue;
+        }
+        const identityKey = sentinelRecoveryIdentityKey(artifactRecord.identity);
+        const existingRecord = recoverySnapshot.ledger.records.find((candidate) =>
+          sentinelRecoveryIdentityKey(candidate.identity) === identityKey
+        ) ?? null;
+        if (existingRecord && existingRecord.disposition !== "active") {
+          continue;
+        }
+        let workingLedger = recoverySnapshot.ledger;
+        let record = existingRecord ?? artifactRecord;
+        if (
+          existingRecord &&
+          (existingRecord.phase === "claimed" || existingRecord.phase === "implementation_running" ||
+            existingRecord.phase === "workspace_dirty" || existingRecord.phase === "checkpoint_publishing" ||
+            existingRecord.phase === "retry_wait")
+        ) {
+          record = transitionRecord(existingRecord, {
+            phase: "recovery_pending",
+            disposition: "active",
+            reason: "Encrypted evidence is available for the interrupted candidate.",
+            next_action: "Reconstruct the candidate from authenticated ciphertext.",
+          });
+          workingLedger = upsertSentinelRecoveryRecord(
+            workingLedger,
+            record,
+            existingRecord.state_version,
+          );
+        }
+        if (record.phase !== "recovery_pending") {
           continue;
         }
         const result = await recoverSentinelArtifactCandidate({
@@ -1320,6 +1350,20 @@ export const recoverSentinelArtifactsInActions = async (
             token: input.token,
             request: result.draft_pull_request,
             fetcher: input.fetcher,
+          });
+        }
+        if (result.recovery_record) {
+          recoverySnapshot = await writeGitHubSentinelRecoveryLedger({
+            token: input.token,
+            repository: input.repository,
+            fetcher: stateFetcher,
+            snapshot: recoverySnapshot,
+            ledger: upsertSentinelRecoveryRecord(
+              workingLedger,
+              result.recovery_record,
+              existingRecord === null ? null : record.state_version,
+            ),
+            message: `chore(sentinel): recover ${identityKey}`,
           });
         }
         results.push(result);

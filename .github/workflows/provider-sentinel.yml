@@ -594,6 +594,20 @@ jobs:
           fi
           echo "Codex auth state was restored, durably sealed, and passively probed." >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Reconcile durable recovery records
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          deno run \
+            --cached-only \
+            --frozen \
+            --lock=deno.lock \
+            --allow-env=GITHUB_TOKEN,GITHUB_REPOSITORY,GITHUB_RUN_ID \
+            --allow-net=api.github.com \
+            scripts/sentinel/recovery-controller.ts
+
       - name: Select agent work
         id: agent-work
         shell: bash

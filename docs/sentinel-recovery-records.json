@@ -2,5 +2,6 @@
   "schema_version": 1,
   "records": [],
   "retry_history": [],
+  "retry_decisions": [],
   "leases": []
 }

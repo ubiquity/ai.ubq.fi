@@ -49,7 +49,6 @@ import {
   sentinelDeploymentInputs,
   sentinelEvidenceArtifactName,
   sentinelRevisionControlInputs,
-  sentinelTemporaryCandidateBranch,
   shouldDeferHourlyBacklogWork,
   terminalTemporaryCandidateBranches,
   TRIAGE_INCIDENT_MS,
@@ -480,13 +479,6 @@ Deno.test("non-runtime issue commits reject post-validation file noise", () => {
   );
 });
 
-Deno.test("Sentinel workflow reruns use distinct candidate branches", () => {
-  assert.equal(sentinelTemporaryCandidateBranch("123456789", 1), "sentinel/candidate-123456789-1");
-  assert.equal(sentinelTemporaryCandidateBranch("123456789", 2), "sentinel/candidate-123456789-2");
-  assert.throws(() => sentinelTemporaryCandidateBranch("123456789", 0), /run identity/);
-  assert.throws(() => sentinelTemporaryCandidateBranch("local-run", 1), /run identity/);
-});
-
 Deno.test("terminal Sentinel cleanup removes a superseded retry checkpoint", () => {
   const checkpoint = {
     branch: "sentinel/candidate-123456789-1",
@@ -817,7 +809,7 @@ Deno.test("native review exhaustion retains one manual checkpoint and advances l
   const source = githubIssueSource([exhaustedIssue, laterIssue]);
   const retryAt = new Date("2026-08-28T00:00:00Z");
   const retryCheckpoint = {
-    branch: sentinelTemporaryCandidateBranch("33177664067", 1),
+    branch: "sentinel/candidate-33177664067-1",
     sha: "b".repeat(40),
     baseSha: "a".repeat(40),
   };
@@ -847,7 +839,7 @@ Deno.test("native review exhaustion retains one manual checkpoint and advances l
   assert.deepEqual(dueRetrySelection?.checkpoint, retryCheckpoint);
 
   const manualCheckpoint = {
-    branch: sentinelTemporaryCandidateBranch("33177664067", 2),
+    branch: "sentinel/candidate-33177664067-2",
     sha: "c".repeat(40),
     baseSha: retryCheckpoint.baseSha,
   };

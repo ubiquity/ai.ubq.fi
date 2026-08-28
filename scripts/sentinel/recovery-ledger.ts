@@ -1,11 +1,17 @@
 import { isRecord } from "../../src/utils.ts";
 import {
+  assertSentinelRecoveryTransition,
   isTerminalRecoveryPhase,
   parseSentinelRecoveryRecord,
   type SentinelRecoveryIdentityV1,
   type SentinelRecoveryRecordV1,
 } from "./recovery.ts";
-import { parseSentinelRetryAttempt, type SentinelRetryAttemptV1 } from "./retry.ts";
+import {
+  parseSentinelRetryAttempt,
+  parseSentinelRetryDecision,
+  type SentinelRetryAttemptV1,
+  type SentinelRetryDecision,
+} from "./retry.ts";
 
 export const SENTINEL_RECOVERY_LEDGER_SCHEMA_VERSION = 1 as const;
 export const SENTINEL_RECOVERY_LEDGER_PATH = "docs/sentinel-recovery-records.json";
@@ -23,6 +29,7 @@ export type SentinelRecoveryLedgerV1 = Readonly<{
   schema_version: typeof SENTINEL_RECOVERY_LEDGER_SCHEMA_VERSION;
   records: readonly SentinelRecoveryRecordV1[];
   retry_history: readonly SentinelRetryAttemptV1[];
+  retry_decisions: readonly Readonly<{ identity_key: string; decision: SentinelRetryDecision }>[];
   leases: readonly SentinelRecoveryLeaseV1[];
 }>;
 
@@ -52,29 +59,44 @@ export const parseSentinelRecoveryLedger = (value: unknown): SentinelRecoveryLed
     !isRecord(value) || value.schema_version !== SENTINEL_RECOVERY_LEDGER_SCHEMA_VERSION ||
     !Array.isArray(value.records) || value.records.length > SENTINEL_RECOVERY_LEDGER_MAX_RECORDS ||
     !Array.isArray(value.retry_history) ||
-    value.retry_history.length > SENTINEL_RECOVERY_LEDGER_MAX_RETRY_ATTEMPTS || !Array.isArray(value.leases)
+    value.retry_history.length > SENTINEL_RECOVERY_LEDGER_MAX_RETRY_ATTEMPTS ||
+    !Array.isArray(value.retry_decisions) || !Array.isArray(value.leases)
   ) throw new Error("Sentinel recovery ledger is invalid");
   const records = value.records.map(parseSentinelRecoveryRecord);
   const retryHistory = value.retry_history.map(parseSentinelRetryAttempt);
+  const retryDecisions = value.retry_decisions.map((entry) => {
+    if (!isRecord(entry) || typeof entry.identity_key !== "string" || entry.identity_key.length === 0) {
+      throw new Error("Sentinel retry decision entry is invalid");
+    }
+    return Object.freeze({ identity_key: entry.identity_key, decision: parseSentinelRetryDecision(entry.decision) });
+  });
   const leases = value.leases.map(parseLease);
   const recordKeys = records.map((record) => sentinelRecoveryIdentityKey(record.identity));
+  const decisionKeys = retryDecisions.map((entry) => entry.identity_key);
   const leaseKeys = leases.map((lease) => lease.identity_key);
-  if (new Set(recordKeys).size !== recordKeys.length || new Set(leaseKeys).size !== leaseKeys.length) {
+  if (
+    new Set(recordKeys).size !== recordKeys.length || new Set(decisionKeys).size !== decisionKeys.length ||
+    new Set(leaseKeys).size !== leaseKeys.length
+  ) {
     throw new Error("Sentinel recovery ledger contains duplicate identities");
   }
-  if (leases.some((lease) => !recordKeys.includes(lease.identity_key))) {
-    throw new Error("Sentinel recovery lease has no matching record");
+  if (
+    retryDecisions.some((entry) => !recordKeys.includes(entry.identity_key)) ||
+    leases.some((lease) => !recordKeys.includes(lease.identity_key))
+  ) {
+    throw new Error("Sentinel recovery metadata has no matching record");
   }
   return Object.freeze({
     schema_version: SENTINEL_RECOVERY_LEDGER_SCHEMA_VERSION,
     records: Object.freeze(records),
     retry_history: Object.freeze(retryHistory),
+    retry_decisions: Object.freeze(retryDecisions),
     leases: Object.freeze(leases),
   });
 };
 
 export const emptySentinelRecoveryLedger = (): SentinelRecoveryLedgerV1 =>
-  parseSentinelRecoveryLedger({ schema_version: 1, records: [], retry_history: [], leases: [] });
+  parseSentinelRecoveryLedger({ schema_version: 1, records: [], retry_history: [], retry_decisions: [], leases: [] });
 
 export const renderSentinelRecoveryLedger = (ledger: SentinelRecoveryLedgerV1): string =>
   `${JSON.stringify(parseSentinelRecoveryLedger(ledger), null, 2)}\n`;
@@ -98,6 +120,7 @@ export const upsertSentinelRecoveryRecord = (
   } else if (existing === null || existing.state_version !== expectedStateVersion) {
     throw new Error("Sentinel recovery record compare-and-swap failed");
   }
+  if (existing !== null) assertSentinelRecoveryTransition(existing, record);
   const records = [
     ...ledger.records.filter((candidate) => sentinelRecoveryIdentityKey(candidate.identity) !== key),
     record,
@@ -139,5 +162,21 @@ export const acquireSentinelRecoveryLease = (
     ...ledger,
     leases: [...ledger.leases.filter((candidate) => candidate.identity_key !== key), lease]
       .sort((left, right) => left.identity_key.localeCompare(right.identity_key)),
+  });
+};
+
+export const releaseSentinelRecoveryLease = (
+  ledgerValue: unknown,
+  identity: SentinelRecoveryIdentityV1,
+  token: string,
+): SentinelRecoveryLedgerV1 => {
+  const ledger = parseSentinelRecoveryLedger(ledgerValue);
+  const key = sentinelRecoveryIdentityKey(identity);
+  const existing = ledger.leases.find((lease) => lease.identity_key === key);
+  if (!existing) return ledger;
+  if (existing.token !== token) throw new Error("Sentinel recovery lease token does not match");
+  return parseSentinelRecoveryLedger({
+    ...ledger,
+    leases: ledger.leases.filter((lease) => lease.identity_key !== key),
   });
 };

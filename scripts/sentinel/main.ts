@@ -48,10 +48,15 @@ import {
   selectNextReviewBacklogEntry,
 } from "./review.ts";
 import {
+  assertSentinelRecoveryTransition,
   parseSentinelRecoveryRecord,
+  type SentinelRecoveryIdentityV1,
   type SentinelRecoveryRecordV1,
   type SentinelRecoverySourceKind,
 } from "./recovery.ts";
+import { sentinelRecoveryIdentityKey, upsertSentinelRecoveryRecord } from "./recovery-ledger.ts";
+import { readGitHubSentinelRecoveryLedger, writeGitHubSentinelRecoveryLedger } from "./recovery-github-store.ts";
+import { isSentinelRecoveryCandidateBranch, sentinelRecoveryCandidateBranch } from "./issue-delivery.ts";
 import {
   assertActionableFindingsResolved,
   assertCompleteFindingDispositions,
@@ -1850,9 +1855,7 @@ const assertImplementationFilesExcludeValues = async (
   }
 };
 
-const validTemporaryCandidateBranch = (branch: string): boolean =>
-  branch.startsWith(SENTINEL_POLICY.temporaryBranchPrefix) &&
-  /^[1-9][0-9]*(?:-[1-9][0-9]*)?$/u.test(branch.slice(SENTINEL_POLICY.temporaryBranchPrefix.length));
+const validTemporaryCandidateBranch = (branch: string): boolean => isSentinelRecoveryCandidateBranch(branch);
 
 const parseRemoteTemporaryCandidateSha = (branch: string, stdout: Uint8Array): string | null => {
   const lines = textDecoder.decode(stdout).trim().split("\n").filter(Boolean);
@@ -1863,13 +1866,6 @@ const parseRemoteTemporaryCandidateSha = (branch: string, stdout: Uint8Array): s
     throw new Error("Sentinel candidate branch lookup returned an unexpected ref");
   }
   return ensureFullSha(sha ?? "", "Remote candidate SHA");
-};
-
-export const sentinelTemporaryCandidateBranch = (runId: string, runAttempt: number): string => {
-  if (!/^[1-9][0-9]*$/u.test(runId) || !Number.isSafeInteger(runAttempt) || runAttempt <= 0) {
-    throw new Error("Sentinel workflow run identity is invalid");
-  }
-  return `${SENTINEL_POLICY.temporaryBranchPrefix}${runId}-${runAttempt}`;
 };
 
 const remoteTemporaryCandidateSha = async (
@@ -2891,6 +2887,119 @@ const run = async (): Promise<void> => {
     return;
   }
 
+  const recoverySourceKind: SentinelRecoverySourceKind = workSelection.source === "github_issue"
+    ? "github_issue"
+    : workSelection.source === "review_backlog"
+    ? "review_backlog"
+    : mode === "incident"
+    ? "incident"
+    : "triage";
+  const recoverySourceId = workSelection.issueJob
+    ? String(workSelection.issueJob.issueId)
+    : workSelection.backlogEntry?.fingerprint ?? state.event_dedupe_key ?? runId;
+  const recoverySourceRevision = workSelection.issueJob?.fingerprint ?? workSelection.backlogEntry?.sha ??
+    (selectedDevelopmentSha ?? await fetchDevelopmentBase(root, gitEnvironment));
+  const recoveryBaseSha = selectedDevelopmentSha ?? await fetchDevelopmentBase(root, gitEnvironment);
+  let recoverySnapshot = await readGitHubSentinelRecoveryLedger({ token: githubToken, repository });
+  const relatedRecoveryRecords = recoverySnapshot.ledger.records.filter((record) =>
+    record.identity.repository === repository && record.identity.source_kind === recoverySourceKind &&
+    record.identity.source_id === recoverySourceId
+  );
+  const currentRecoveryRecord = relatedRecoveryRecords.find((record) =>
+    record.identity.source_revision === recoverySourceRevision && record.disposition === "active"
+  );
+  const currentRecoveryKey = currentRecoveryRecord ? sentinelRecoveryIdentityKey(currentRecoveryRecord.identity) : null;
+  const currentRetryDecision = currentRecoveryKey === null
+    ? null
+    : recoverySnapshot.ledger.retry_decisions.find((entry) => entry.identity_key === currentRecoveryKey)?.decision ??
+      null;
+  const retryIsDue = currentRecoveryRecord?.phase === "retry_wait" && currentRetryDecision?.should_retry === true &&
+    currentRetryDecision.retry_at !== null && Date.parse(currentRetryDecision.retry_at) <= Date.now();
+  if (currentRecoveryRecord && !retryIsDue) {
+    await writeJson(`${reportsDir}/recovery-record-v1.json`, currentRecoveryRecord);
+    await updateState("recovery_pending", {
+      status: "no_change",
+      base_development_sha: currentRecoveryRecord.base_sha,
+      candidate_sha: currentRecoveryRecord.candidate_sha,
+      temporary_branch: currentRecoveryRecord.candidate_branch,
+      branch_disposition: "recovery_record_pending",
+    });
+    return;
+  }
+  let recoveryIdentity: SentinelRecoveryIdentityV1;
+  let durableRecoveryRecord: SentinelRecoveryRecordV1;
+  if (currentRecoveryRecord) {
+    recoveryIdentity = currentRecoveryRecord.identity;
+    durableRecoveryRecord = parseSentinelRecoveryRecord({
+      ...currentRecoveryRecord,
+      run_id: runId,
+      attempt: currentRecoveryRecord.attempt + 1,
+      phase: "claimed",
+      state_version: currentRecoveryRecord.state_version + 1,
+      updated_at: new Date().toISOString(),
+      reason: "The bounded retry delay elapsed and the same candidate generation was reclaimed.",
+      next_action: "Resume the Luna implementation stage from durable evidence.",
+    });
+    assertSentinelRecoveryTransition(currentRecoveryRecord, durableRecoveryRecord);
+    recoverySnapshot = await writeGitHubSentinelRecoveryLedger({
+      token: githubToken,
+      repository,
+      snapshot: recoverySnapshot,
+      ledger: upsertSentinelRecoveryRecord(
+        recoverySnapshot.ledger,
+        durableRecoveryRecord,
+        currentRecoveryRecord.state_version,
+      ),
+      message: `chore(sentinel): retry ${sentinelRecoveryIdentityKey(recoveryIdentity)}`,
+    });
+  } else {
+    const candidateGeneration = relatedRecoveryRecords.reduce(
+      (maximum, record) => Math.max(maximum, record.identity.candidate_generation),
+      0,
+    ) + 1;
+    recoveryIdentity = {
+      repository,
+      source_kind: recoverySourceKind,
+      source_id: recoverySourceId,
+      source_revision: recoverySourceRevision,
+      candidate_generation: candidateGeneration,
+    };
+    durableRecoveryRecord = parseSentinelRecoveryRecord({
+      schema_version: 1,
+      identity: recoveryIdentity,
+      run_id: runId,
+      attempt: githubRunAttempt,
+      lease_token: `${runId}-${githubRunAttempt}`,
+      base_sha: recoveryBaseSha,
+      phase: "claimed",
+      disposition: "active",
+      state_version: 1,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      candidate_branch: null,
+      candidate_sha: null,
+      changed_files: [],
+      tree_sha: null,
+      failure_class: null,
+      failure_fingerprint: null,
+      artifact_ids: [],
+      artifact_digests: [],
+      reason: "The selected work item is durably claimed before implementation.",
+      next_action: "Start the Luna implementation stage.",
+      predecessor: relatedRecoveryRecords.at(-1)
+        ? sentinelRecoveryIdentityKey(relatedRecoveryRecords.at(-1)!.identity)
+        : null,
+    });
+    recoverySnapshot = await writeGitHubSentinelRecoveryLedger({
+      token: githubToken,
+      repository,
+      snapshot: recoverySnapshot,
+      ledger: upsertSentinelRecoveryRecord(recoverySnapshot.ledger, durableRecoveryRecord, null),
+      message: `chore(sentinel): claim ${sentinelRecoveryIdentityKey(recoveryIdentity)}`,
+    });
+  }
+  await writeJson(`${reportsDir}/recovery-record-v1.json`, durableRecoveryRecord);
+
   const authSlots = await requiredAuthSlotsFromPrivateState();
   const previewCredential = requiredEnvironment("PREVIEW_UOS_AI_USER_TOKEN");
   const replayKey = requiredEnvironment("SENTINEL_REPLAY_KEY");
@@ -2984,7 +3093,7 @@ const run = async (): Promise<void> => {
     return;
   }
 
-  const branch = sentinelTemporaryCandidateBranch(runId, githubRunAttempt);
+  const branch = sentinelRecoveryCandidateBranch(recoveryIdentity);
   await updateState("creating_candidate", {
     temporary_branch: branch,
     branch_disposition: "runner_local_pending_review",
@@ -3018,6 +3127,9 @@ const run = async (): Promise<void> => {
     baseSha = selectedDevelopmentSha;
   } else {
     baseSha = await fetchDevelopmentBase(root, gitEnvironment);
+    if (baseSha !== recoveryBaseSha) {
+      throw new Error("origin/development advanced after Sentinel recovery claim");
+    }
   }
   await addCandidateWorktree(root, checkout, branch, baseSha);
   if (workSelection.backlogEntry) {
@@ -3082,6 +3194,29 @@ const run = async (): Promise<void> => {
         SENTINEL_POLICY.paths.reviewBacklog,
       ]),
     ].sort();
+  const implementationRecoveryRecord = parseSentinelRecoveryRecord({
+    ...durableRecoveryRecord,
+    phase: "implementation_running",
+    state_version: durableRecoveryRecord.state_version + 1,
+    updated_at: new Date().toISOString(),
+    candidate_branch: branch,
+    reason: "The isolated Luna implementation stage is running.",
+    next_action: "Checkpoint every Git-derived candidate change before report validation.",
+  });
+  assertSentinelRecoveryTransition(durableRecoveryRecord, implementationRecoveryRecord);
+  recoverySnapshot = await writeGitHubSentinelRecoveryLedger({
+    token: githubToken,
+    repository,
+    snapshot: recoverySnapshot,
+    ledger: upsertSentinelRecoveryRecord(
+      recoverySnapshot.ledger,
+      implementationRecoveryRecord,
+      durableRecoveryRecord.state_version,
+    ),
+    message: `chore(sentinel): start ${sentinelRecoveryIdentityKey(recoveryIdentity)}`,
+  });
+  durableRecoveryRecord = implementationRecoveryRecord;
+  await writeJson(`${reportsDir}/recovery-record-v1.json`, durableRecoveryRecord);
   await updateState("implementing", { base_development_sha: baseSha });
   const baseProtectedHashes = await hashProtectedFiles(checkout, SENTINEL_POLICY.protectedImplementationPaths);
   let protectedHashes = baseProtectedHashes;
@@ -3181,17 +3316,7 @@ const run = async (): Promise<void> => {
   let manualCheckpoint: GitHubIssueJobCheckpoint | null = null;
   let lastPushedCandidateSha: string | null = null;
   let candidateCheckpointInput: SentinelCandidateCheckpointInput | null = null;
-  const recoverySourceKind: SentinelRecoverySourceKind = workSelection.source === "github_issue"
-    ? "github_issue"
-    : workSelection.source === "review_backlog"
-    ? "review_backlog"
-    : "triage";
-  const recoverySourceId = workSelection.issueJob
-    ? String(workSelection.issueJob.number)
-    : workSelection.backlogEntry?.fingerprint ?? state.event_dedupe_key ?? runId;
-  const recoverySourceRevision = workSelection.issueJob?.fingerprint ?? workSelection.backlogEntry?.sha ?? baseSha;
   const recoveryRecordPath = `${reportsDir}/recovery-record-v1.json`;
-  const recoveryLeaseToken = `${runId}-${githubRunAttempt}`;
   const checkpointFailureFingerprint = async (
     stage: string,
     actualChangedFiles: readonly string[],
@@ -3208,8 +3333,50 @@ const run = async (): Promise<void> => {
         ),
       ),
     );
+  const persistCandidateRecoveryPhase = async (record: SentinelRecoveryRecordV1): Promise<void> => {
+    const next = parseSentinelRecoveryRecord({
+      ...durableRecoveryRecord,
+      phase: record.phase,
+      state_version: durableRecoveryRecord.state_version + 1,
+      updated_at: new Date().toISOString(),
+      candidate_branch: record.candidate_branch,
+      candidate_sha: record.candidate_sha,
+      changed_files: record.changed_files,
+      tree_sha: record.tree_sha,
+      failure_class: record.failure_class,
+      failure_fingerprint: record.failure_fingerprint,
+      artifact_ids: record.artifact_ids,
+      artifact_digests: record.artifact_digests,
+      reason: record.reason,
+      next_action: record.next_action,
+    });
+    assertSentinelRecoveryTransition(durableRecoveryRecord, next);
+    recoverySnapshot = await writeGitHubSentinelRecoveryLedger({
+      token: githubToken,
+      repository,
+      snapshot: recoverySnapshot,
+      ledger: upsertSentinelRecoveryRecord(
+        recoverySnapshot.ledger,
+        next,
+        durableRecoveryRecord.state_version,
+      ),
+      message: `chore(sentinel): ${next.phase} ${sentinelRecoveryIdentityKey(recoveryIdentity)}`,
+    });
+    durableRecoveryRecord = next;
+    await writeJson(recoveryRecordPath, durableRecoveryRecord);
+  };
   const writeCandidateRecoveryRecord = async (record: SentinelRecoveryRecordV1): Promise<void> => {
-    await writeJson(recoveryRecordPath, record);
+    if (record.phase === "validation_failed" && durableRecoveryRecord.phase === "implementation_running") {
+      await persistCandidateRecoveryPhase(parseSentinelRecoveryRecord({
+        ...record,
+        phase: "checkpoint_durable",
+        failure_class: null,
+        failure_fingerprint: null,
+        reason: null,
+        next_action: "Validate the checkpoint candidate.",
+      }));
+    }
+    await persistCandidateRecoveryPhase(record);
   };
   const checkpointDirtyCandidate = async (
     stage: string,
@@ -3290,10 +3457,10 @@ const run = async (): Promise<void> => {
       sourceKind: recoverySourceKind,
       sourceId: recoverySourceId,
       sourceRevision: recoverySourceRevision,
-      candidateGeneration: githubRunAttempt,
+      candidateGeneration: recoveryIdentity.candidate_generation,
       runId,
       attempt: githubRunAttempt,
-      leaseToken: recoveryLeaseToken,
+      leaseToken: durableRecoveryRecord.lease_token,
       baseSha,
       candidateBranch: branch,
       candidateSha: checkpointSha,

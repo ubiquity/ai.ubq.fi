@@ -3,6 +3,9 @@ import { isRecord } from "../../src/utils.ts";
 const FULL_SHA = /^[0-9a-f]{40}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T/u;
+const SAFE_REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
+const RECOVERY_BRANCH =
+  /^sentinel\/candidate-(?:[1-9][0-9]*(?:-[1-9][0-9]*)?|(?:github_issue|review_backlog|triage|incident)-[A-Za-z0-9][A-Za-z0-9._-]{0,79}-[A-Za-z0-9][A-Za-z0-9._-]{0,31}-g[1-9][0-9]*-[0-9a-f]{16})$/u;
 
 export const SENTINEL_RECOVERY_SCHEMA_VERSION = 1 as const;
 
@@ -122,6 +125,44 @@ const sameIdentity = (left: SentinelRecoveryIdentityV1, right: SentinelRecoveryI
   left.repository === right.repository && left.source_kind === right.source_kind &&
   left.source_id === right.source_id &&
   left.source_revision === right.source_revision && left.candidate_generation === right.candidate_generation;
+
+const recoveryBranchSegment = (value: string, maximumLength: number, fallback: string): string => {
+  const segment = value.replace(/[^A-Za-z0-9._-]+/gu, "-").replace(/^-+|-+$/gu, "").slice(0, maximumLength)
+    .replace(/-+$/gu, "");
+  return segment.length > 0 ? segment : fallback;
+};
+
+const recoveryIdentityHash = (identity: SentinelRecoveryIdentityV1): string => {
+  let hash = 0xcbf29ce484222325n;
+  for (
+    const byte of new TextEncoder().encode(JSON.stringify([
+      identity.repository,
+      identity.source_kind,
+      identity.source_id,
+      identity.source_revision,
+      identity.candidate_generation,
+    ]))
+  ) {
+    hash ^= BigInt(byte);
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+  }
+  return hash.toString(16).padStart(16, "0");
+};
+
+export const sentinelRecoveryCandidateBranch = (identity: SentinelRecoveryIdentityV1): string => {
+  if (!isIdentity(identity) || !SAFE_REPOSITORY.test(identity.repository)) {
+    throw new Error("Sentinel recovery identity is invalid");
+  }
+  const source = recoveryBranchSegment(identity.source_id, 80, "source");
+  const revision = recoveryBranchSegment(identity.source_revision, 32, "revision");
+  const branch = `sentinel/candidate-${identity.source_kind}-${source}-${revision}-g${identity.candidate_generation}-${
+    recoveryIdentityHash(identity)
+  }`;
+  if (!RECOVERY_BRANCH.test(branch)) throw new Error("Sentinel recovery candidate branch is invalid");
+  return branch;
+};
+
+export const isSentinelRecoveryCandidateBranch = (branch: string): boolean => RECOVERY_BRANCH.test(branch);
 
 export const isTerminalRecoveryPhase = (phase: SentinelRecoveryPhase): boolean => terminalPhases.has(phase);
 

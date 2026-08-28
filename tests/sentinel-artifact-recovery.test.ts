@@ -267,7 +267,7 @@ Deno.test({
       assert.equal(first.candidate_sha, second.candidate_sha);
       assert.equal(first.tree_sha, second.tree_sha);
       assert.equal(first.candidate_branch, sentinelRecoveryCandidateBranch(record));
-      assert.equal(first.candidate_branch, `sentinel/candidate-github_issue-136-${"a".repeat(32)}-g1`);
+      assert.match(first.candidate_branch ?? "", /^sentinel\/candidate-github_issue-136-a{32}-g1-[0-9a-f]{16}$/u);
       assert.notEqual(
         first.candidate_branch,
         sentinelRecoveryCandidateBranch({

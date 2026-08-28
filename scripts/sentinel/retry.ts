@@ -456,6 +456,37 @@ export type SentinelRetryDecision = Readonly<{
   next_action: string | null;
 }>;
 
+export const parseSentinelRetryDecision = (value: unknown): SentinelRetryDecision => {
+  if (
+    value === null || typeof value !== "object" || Array.isArray(value) ||
+    ((value as Record<string, unknown>).disposition !== "retry_wait" &&
+      (value as Record<string, unknown>).disposition !== "manual_required" &&
+      (value as Record<string, unknown>).disposition !== "fresh_generation") ||
+    typeof (value as Record<string, unknown>).should_retry !== "boolean" ||
+    typeof (value as Record<string, unknown>).circuit_open !== "boolean" ||
+    typeof (value as Record<string, unknown>).validation_repair_allowed !== "boolean" ||
+    typeof (value as Record<string, unknown>).source_revision_changed !== "boolean" ||
+    !Number.isSafeInteger((value as Record<string, unknown>).candidate_generation) ||
+    ((value as Record<string, unknown>).candidate_generation as number) <= 0 ||
+    !Number.isSafeInteger((value as Record<string, unknown>).attempt_count) ||
+    ((value as Record<string, unknown>).attempt_count as number) <= 0 ||
+    !Number.isSafeInteger((value as Record<string, unknown>).identical_failure_count) ||
+    ((value as Record<string, unknown>).identical_failure_count as number) <= 0 ||
+    !((value as Record<string, unknown>).backoff_ms === null ||
+      (Number.isSafeInteger((value as Record<string, unknown>).backoff_ms) &&
+        ((value as Record<string, unknown>).backoff_ms as number) >= 0)) ||
+    !((value as Record<string, unknown>).retry_at === null ||
+      validTimestamp((value as Record<string, unknown>).retry_at)) ||
+    !failureClasses.has((value as Record<string, unknown>).failure_class as SentinelFailureClass) ||
+    typeof (value as Record<string, unknown>).failure_fingerprint !== "string" ||
+    !SHA256.test((value as Record<string, unknown>).failure_fingerprint as string) ||
+    !nonEmpty((value as Record<string, unknown>).reason) ||
+    !((value as Record<string, unknown>).next_action === null ||
+      nonEmpty((value as Record<string, unknown>).next_action))
+  ) throw new Error("Sentinel retry decision is invalid");
+  return value as SentinelRetryDecision;
+};
+
 export type SentinelRetryPolicyInput = Readonly<{
   identity: SentinelRecoveryIdentityV1;
   failure: SentinelRetryFailureInput;
