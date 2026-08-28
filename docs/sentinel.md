@@ -1,9 +1,10 @@
 # Provider Sentinel
 
-Provider Sentinel is a single-runner Deno orchestration workflow for provider incident triage, repair, native review,
-preview replay, explicit Deno revision promotion, and post-promotion monitoring. Repository content, Deno logs, and
-captured request bodies are untrusted inputs. Agent prompts cannot change the fixed model, review, credential,
-deployment, or promotion policy in `scripts/sentinel/`.
+Provider Sentinel is a serialized Deno orchestration workflow with a bounded concurrent repair matrix. It performs
+provider incident triage, isolated repair, deterministic convergence, native review, preview replay, explicit Deno
+revision promotion, and post-promotion monitoring. Repository content, Deno logs, and captured request bodies are
+untrusted inputs. Agent prompts cannot change the fixed model, review, credential, deployment, or promotion policy in
+`scripts/sentinel/`.
 
 ## Modes and schedule
 
@@ -50,6 +51,21 @@ App-authenticated incident runs are skipped unless `SENTINEL_AUTONOMY_ENABLED` i
 requires the fixed GitHub App actor, trusted `development` ref, opaque incident ID, attempt, and first-failure
 timestamp. Manual preview runs remain eligible while that gate is disabled, but return without Codex when the interval
 contains no failed-request capture.
+
+Each eligible cycle has three trusted phases. `prepare` fixes the exact `origin/development` base, runs triage, rejects
+ambiguous or protected ownership, and writes a digest-bound matrix plan. `repair` fans out at most four independent
+cells. Every cell starts from that exact base, may change only its declared paths, uses only `gpt-5.6-luna` with `max`
+reasoning, runs focused validation and secret checks, and publishes an encrypted receipt for its exact branch head.
+`converge` verifies all required receipts and remote heads, asks one final Luna/max integration agent for a complete
+decision, and lets trusted code merge accepted cells in stable cell-ID order with visible ancestry. A missing, failed,
+blocked, or rejected required cell stops publication; it is never omitted or replaced with another model.
+
+Only convergence runs combined validation, the bounded native review loop, preview, delivery, or production. Matrix
+cells cannot deploy. The integrated candidate is pushed to its temporary branch and is delivered through one head-pinned
+pull request with the merge method fixed to a merge commit. After GitHub merges it, Sentinel fetches
+`origin/development` and proves that the integration head and every accepted cell head are ancestors of the returned
+merge SHA before production can start. `matrix-cycle.json` retains every cell disposition, rejected or blocked branch,
+ancestry proof, pull request number, merge SHA, and final delivery or rollback outcome.
 
 Hourly backlog selection is deterministic: P2 before P3, then oldest first observation, then fingerprint. Only exact
 `open` entries with an implementation-eligible repository location are selected. Sentinel-control paths remain protected
@@ -192,11 +208,12 @@ resolution.
 
 ## Deployment identity and workflow dispatch
 
-The default workflow token can push a candidate to `development`, but that token's push does not create another push
-workflow run. Provider Sentinel therefore performs an explicit workaround: after proving that `origin/development` has
-not advanced and pushing the accepted SHA, it dispatches `.github/workflows/deno-deploy.yml` at the exact `development`
-ref. It accepts only the deployment run whose recorded head SHA equals the candidate SHA. Preview runs use the same
-explicit dispatch with `deploy_preview=true` at the temporary Sentinel ref. Every Sentinel dispatch also sets
+The default workflow token does not create another push workflow run for its own repository changes. After a matrix
+candidate passes preview, Provider Sentinel merges its one head-pinned delivery pull request, rebinds the production
+candidate to that ancestry-preserving merge SHA, and dispatches `.github/workflows/deno-deploy.yml` at the exact
+`development` ref. Non-matrix maintenance paths retain their established trusted publication behavior. Sentinel accepts
+only the deployment run whose recorded head SHA equals the delivered candidate SHA. Preview runs use the same explicit
+dispatch with `deploy_preview=true` at the temporary Sentinel ref. Every Sentinel dispatch also sets
 `sentinel_build_only=true`. For that path, the pinned reusable workflow is forced into its mode without `--prod` while
 its preview target is set to the requested application. The run requires exactly one post-baseline revision, verifies
 its immutable body and header identity, and uploads `sentinel-deployment-<run-id>` with the exact app, SHA, and

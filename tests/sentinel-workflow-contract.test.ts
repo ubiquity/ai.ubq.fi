@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-
-const workflow = await Deno.readTextFile(
-  new URL("../.github/workflows/provider-sentinel.yml", import.meta.url),
-);
+import workflow from "../.github/workflows/provider-sentinel.yml" with { type: "text" };
+import githubClient from "../scripts/sentinel/github.ts" with { type: "text" };
+import orchestrator from "../scripts/sentinel/main.ts" with { type: "text" };
 
 const jobSection = (name: string, nextName: string): string => {
   const start = workflow.indexOf(`\n  ${name}:`);
@@ -86,4 +85,14 @@ Deno.test("Provider Sentinel preserves incident, fixed-model, and delivery/attes
   assert.match(converge, /Publish supervised cycle summary/u);
   assert.match(converge, /scripts\/sentinel\/main\.ts/u);
   assert.match(converge, /SENTINEL_CODEX_AUTH_STATE_ENVELOPE/u);
+});
+
+Deno.test("matrix cells cannot review or deploy and convergence has one integrated delivery", () => {
+  assert.doesNotMatch(repair, /runNativeCodexReview|dispatchAndResolveRevision|deno-deploy\.yml|promote/u);
+  assert.equal(orchestrator.match(/runNativeCodexReview\(/gu)?.length, 1);
+  assert.match(orchestrator, /github\.createPullRequest\(/u);
+  assert.match(orchestrator, /github\.mergePullRequest\(/u);
+  assert.match(githubClient, /merge_method: "merge"/u);
+  assert.match(orchestrator, /Merged development lost required ancestry/u);
+  assert.match(orchestrator, /writeMatrixDelivery\(\{\s*status: "published"/u);
 });

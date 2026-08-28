@@ -281,6 +281,98 @@ Deno.test({
 });
 
 Deno.test({
+  name: "synthetic three-cell convergence integrates two heads and retains one rejected branch",
+  ignore: permissions.some((permission) => permission.state !== "granted"),
+  async fn() {
+    const root = await Deno.makeTempDir({ prefix: "sentinel-matrix-three-cell-" });
+    try {
+      await git(root, ["init", "-b", "development"]);
+      await git(root, ["config", "user.name", "Sentinel Test"]);
+      await git(root, ["config", "user.email", "sentinel@example.invalid"]);
+      await Deno.mkdir(`${root}/src`, { recursive: true });
+      for (const name of ["one", "two", "three"]) {
+        await Deno.writeTextFile(`${root}/src/${name}.ts`, `export const ${name} = 'base';\n`);
+      }
+      await git(root, ["add", "src"]);
+      await git(root, ["commit", "-m", "base"]);
+      const baseSha = await git(root, ["rev-parse", "HEAD"]);
+      const plan = await buildMatrixPlan({
+        run_id: "m06-acceptance",
+        run_attempt: 1,
+        base_sha: baseSha,
+        evidence_digests: [],
+        findings: ["one", "two", "three"].map((name, index) => ({
+          id: name,
+          fingerprint: String.fromCharCode(97 + index).repeat(64),
+          allowed_paths: [`src/${name}.ts`],
+          validation_requirements: [`validate ${name}`],
+        })),
+      });
+      assert.equal(plan.cells.length, 3);
+      const reports: MatrixCellReportV1[] = [];
+      for (const cell of plan.cells) {
+        await git(root, ["switch", "-c", cell.branch, baseSha]);
+        const path = cell.allowed_paths[0]!;
+        const name = path.slice("src/".length, -".ts".length);
+        await Deno.writeTextFile(`${root}/${path}`, `export const ${name} = 'fixed';\n`);
+        await git(root, ["add", "--", path]);
+        await git(root, ["commit", "-m", `cell ${cell.cell_id}`]);
+        reports.push(
+          await reportFor(
+            plan,
+            plan.cells.indexOf(cell),
+            await git(root, ["rev-parse", "HEAD"]),
+            await git(root, ["rev-parse", "HEAD^{tree}"]),
+          ),
+        );
+      }
+      await git(root, ["switch", "-c", "sentinel/integrated-m06", baseSha]);
+      const rejectedCell = plan.cells.find((cell) => cell.allowed_paths.includes("src/three.ts"))!;
+      const decision = await decisionFor(
+        plan,
+        plan.cells.map((cell) => ({
+          cell_id: cell.cell_id,
+          decision: cell.cell_id === rejectedCell.cell_id ? "reject" as const : "accept" as const,
+          reason: cell.cell_id === rejectedCell.cell_id ? "synthetic semantic rejection" : "validated",
+          required_combined_checks: ["deno check"],
+          correction_paths: [],
+        })),
+      );
+      const result = await executeMatrixIntegration({
+        plan,
+        reports,
+        decision,
+        checkoutPath: root,
+        integrationBranch: "sentinel/integrated-m06",
+        git: (command) => runGit(command.cwd, command.args),
+      });
+      assert.equal(result.merge_receipts.length, 2);
+      assert.equal(result.cycle_report.accepted_ancestry.length, 2);
+      assert.equal(result.cycle_report.rejected_branches.length, 1);
+      assert.equal(result.cycle_report.rejected_branches[0]?.cell_id, rejectedCell.cell_id);
+      assert.equal(result.cycle_report.delivery.status, "not_attempted");
+      const integratedHead = result.cycle_report.integrated_candidate?.head_sha;
+      assert.ok(integratedHead);
+      for (const ancestry of result.cycle_report.accepted_ancestry) {
+        assert.equal(ancestry.integrated_head_sha, integratedHead);
+        assert.equal(
+          await runGit(root, ["merge-base", "--is-ancestor", ancestry.cell_head_sha, integratedHead]).then(
+            (output) => output.code,
+          ),
+          0,
+        );
+      }
+      const rejectedHead = result.cycle_report.rejected_branches[0]?.head_sha;
+      assert.ok(rejectedHead);
+      assert.equal((await runGit(root, ["merge-base", "--is-ancestor", rejectedHead, integratedHead])).code, 1);
+      assert.equal(await git(root, ["status", "--porcelain"]), "");
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
   name: "matrix integration permits ours only after exact patch-equivalence proof",
   ignore: permissions.some((permission) => permission.state !== "granted"),
   async fn() {

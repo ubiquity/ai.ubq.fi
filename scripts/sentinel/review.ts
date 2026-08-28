@@ -416,6 +416,9 @@ export const reviewBacklogTriageReport = (
     severity: entry.severity,
     title: `Resolve native review backlog finding ${entry.fingerprint.slice(0, 12)}`,
     affected_surface: entry.location,
+    allowed_paths: [reviewBacklogLocationPath(entry.location)!],
+    shared_paths: [],
+    depends_on: [],
     evidence: [{
       source: "repository",
       reference: `${SENTINEL_POLICY.paths.reviewBacklog}#${entry.fingerprint}`,

@@ -950,10 +950,13 @@ Deno.test("observe cycle cannot reach replay, repair, Git, deployment, promotion
     findings: [
       {
         id: "finding-1",
-        fingerprint: "0123456789abcdef",
+        fingerprint: "0123456789abcdef".repeat(4),
         severity: "P1",
         title: "Actionable provider failure",
         affected_surface: "/v1/responses",
+        allowed_paths: ["src/provider.ts"],
+        shared_paths: [],
+        depends_on: [],
         evidence: [{ source: "deno_log", reference: "line:1", detail: "provider transport failed" }],
         proposed_correction: "Repair the provider transport path.",
         validation_requirements: ["Replay the failed request."],
@@ -961,10 +964,13 @@ Deno.test("observe cycle cannot reach replay, repair, Git, deployment, promotion
       },
       {
         id: "finding-2",
-        fingerprint: "fedcba9876543210",
+        fingerprint: "fedcba9876543210".repeat(4),
         severity: "P3",
         title: "Efficiency opportunity",
         affected_surface: "provider catalog",
+        allowed_paths: ["src/provider.ts"],
+        shared_paths: [],
+        depends_on: [],
         evidence: [{ source: "repository", reference: "src/provider.ts", detail: "duplicate lookup" }],
         proposed_correction: "Reuse the existing lookup.",
         validation_requirements: ["Measure lookup count."],
@@ -2741,6 +2747,9 @@ Deno.test("implementation contract requires a disposition for every triage findi
       severity: "P1",
       title: "one",
       affected_surface: "responses",
+      allowed_paths: ["src/provider.ts"],
+      shared_paths: [],
+      depends_on: [],
       evidence: [{ source: "deno_log", reference: "line 1", detail: "failure" }],
       proposed_correction: "fix it",
       validation_requirements: ["test"],
@@ -2783,6 +2792,34 @@ Deno.test("triage requires a concrete reason only when it has no findings", () =
   assert.equal(
     isTriageReport({ schema_version: 1, interval, findings: [], no_findings_reason: "No failures in the interval." }),
     true,
+  );
+});
+
+Deno.test("triage fingerprints use the matrix SHA-256 contract", () => {
+  const interval = computeSentinelInterval("hourly", now);
+  const finding = {
+    id: "one",
+    fingerprint: "1".repeat(64),
+    severity: "P1",
+    title: "one",
+    affected_surface: "responses",
+    allowed_paths: ["src/provider.ts"],
+    shared_paths: [],
+    depends_on: [],
+    evidence: [{ source: "repository", reference: "src/provider.ts", detail: "failure" }],
+    proposed_correction: "fix it",
+    validation_requirements: ["test"],
+    actionable: true,
+  } as const;
+  assert.equal(isTriageReport({ schema_version: 1, interval, findings: [finding], no_findings_reason: null }), true);
+  assert.equal(
+    isTriageReport({
+      schema_version: 1,
+      interval,
+      findings: [{ ...finding, fingerprint: "1".repeat(16) }],
+      no_findings_reason: null,
+    }),
+    false,
   );
 });
 

@@ -1134,6 +1134,66 @@ Deno.test("GitHub dispatch requires exact run details from the modern API", asyn
   fake.assertDrained();
 });
 
+Deno.test("GitHub matrix delivery pins the pull request head and merge method", async () => {
+  const branch = "sentinel/candidate-123-1";
+  const marker = "<!-- provider-sentinel-matrix:123:1 -->";
+  const pull = {
+    number: 91,
+    html_url: "https://github.com/ubiquity/ai.ubq.fi/pull/91",
+    state: "open",
+    merged: false,
+    body: marker,
+    head: { ref: branch, sha: NEW_SHA },
+    base: { ref: "development" },
+  };
+  const fake = queuedFetch([
+    (request) => {
+      assertGitHubApiRequest(request, "/repos/ubiquity/ai.ubq.fi/pulls");
+      assert.equal(request.url.searchParams.get("state"), "open");
+      assert.equal(request.url.searchParams.get("base"), "development");
+      assert.equal(request.url.searchParams.get("page"), "1");
+      return json([]);
+    },
+    async (request) => {
+      assertGitHubApiRequest(request, "/repos/ubiquity/ai.ubq.fi/pulls", "POST");
+      assert.deepEqual(JSON.parse(await new Response(request.body).text()), {
+        title: "matrix repair",
+        body: marker,
+        head: branch,
+        base: "development",
+        draft: false,
+        maintainer_can_modify: false,
+      });
+      return json(pull, 201);
+    },
+    async (request) => {
+      assertGitHubApiRequest(request, "/repos/ubiquity/ai.ubq.fi/pulls/91/merge", "PUT");
+      assert.deepEqual(JSON.parse(await new Response(request.body).text()), {
+        sha: NEW_SHA,
+        merge_method: "merge",
+        commit_title: "matrix repair",
+      });
+      return json({ merged: true, sha: WRONG_SHA, message: "Pull Request successfully merged" });
+    },
+  ]);
+  const client = githubClient(fake.fetcher);
+  assert.deepEqual(await client.listOpenPullRequests("development"), []);
+  const created = await client.createPullRequest({
+    title: "matrix repair",
+    body: marker,
+    head: branch,
+    base: "development",
+  });
+  assert.equal(created.headSha, NEW_SHA);
+  const merged = await client.mergePullRequest(created.number, NEW_SHA, "matrix repair");
+  assert.deepEqual(merged, {
+    merged: true,
+    sha: WRONG_SHA,
+    message: "Pull Request successfully merged",
+  });
+  fake.assertDrained();
+});
+
 Deno.test("GitHub API requests use a bounded timeout and fail closed", async () => {
   const timeouts: number[] = [];
   const controller = new AbortController();

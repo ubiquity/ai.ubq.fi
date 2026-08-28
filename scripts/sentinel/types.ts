@@ -22,6 +22,9 @@ export type TriageFinding = Readonly<{
   severity: TriageSeverity;
   title: string;
   affected_surface: string;
+  allowed_paths: readonly string[];
+  shared_paths: readonly string[];
+  depends_on: readonly string[];
   evidence: readonly TriageEvidence[];
   proposed_correction: string;
   validation_requirements: readonly string[];
@@ -156,9 +159,11 @@ export const isTriageReport = (value: unknown): value is TriageReport => {
       return false;
     }
     ids.add(finding.id);
-    return typeof finding.fingerprint === "string" && finding.fingerprint.length >= 16 &&
+    return typeof finding.fingerprint === "string" && /^[0-9a-f]{64}$/u.test(finding.fingerprint) &&
       isSeverity(finding.severity) && typeof finding.title === "string" &&
-      typeof finding.affected_surface === "string" && Array.isArray(finding.evidence) &&
+      typeof finding.affected_surface === "string" && isStringArray(finding.allowed_paths) &&
+      finding.allowed_paths.length > 0 && isStringArray(finding.shared_paths) && isStringArray(finding.depends_on) &&
+      Array.isArray(finding.evidence) &&
       finding.evidence.length > 0 && finding.evidence.every((evidence) =>
         isRecord(evidence) &&
         (evidence.source === "deno_log" || evidence.source === "replay_manifest" || evidence.source === "repository" ||
@@ -248,6 +253,9 @@ export const TRIAGE_OUTPUT_SCHEMA = {
           "severity",
           "title",
           "affected_surface",
+          "allowed_paths",
+          "shared_paths",
+          "depends_on",
           "evidence",
           "proposed_correction",
           "validation_requirements",
@@ -255,10 +263,13 @@ export const TRIAGE_OUTPUT_SCHEMA = {
         ],
         properties: {
           id: { type: "string", minLength: 1 },
-          fingerprint: { type: "string", minLength: 16 },
+          fingerprint: { type: "string", pattern: "^[0-9a-f]{64}$" },
           severity: { type: "string", enum: ["P0", "P1", "P2", "P3"] },
           title: { type: "string", minLength: 1 },
           affected_surface: { type: "string", minLength: 1 },
+          allowed_paths: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
+          shared_paths: { type: "array", items: { type: "string", minLength: 1 } },
+          depends_on: { type: "array", items: { type: "string", minLength: 1 } },
           evidence: {
             type: "array",
             minItems: 1,

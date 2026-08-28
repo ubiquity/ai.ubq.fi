@@ -783,6 +783,7 @@ jobs:
           deno eval --frozen --lock=deno.lock --allow-env=RUNNER_TEMP,SENTINEL_ARTIFACT_KEY,EXPECTED_RUN_ID,EXPECTED_RUN_ATTEMPT,EXPECTED_BASE_SHA,EXPECTED_PLAN_DIGEST --allow-read="$RUNNER_TEMP" --allow-write=.sentinel/reports '
             import { decodeSentinelArtifactKey, decryptSentinelArtifact } from "./scripts/sentinel/artifact-crypto.ts";
             import { parseMatrixPlanV1, validateMatrixCellReportV1, canonicalMatrixJson } from "./scripts/sentinel/matrix.ts";
+            import { isTriageReport } from "./scripts/sentinel/types.ts";
             const root = Deno.env.get("RUNNER_TEMP")!;
             const key = decodeSentinelArtifactKey(Deno.env.get("SENTINEL_ARTIFACT_KEY")!);
             const readEnvelope = async (path: string) => {
@@ -811,6 +812,13 @@ jobs:
                 plan = await parseMatrixPlanV1(planFile.bytes);
                 if (plan.run_id !== Deno.env.get("EXPECTED_RUN_ID") || plan.run_attempt !== Number(Deno.env.get("EXPECTED_RUN_ATTEMPT")) || plan.base_sha !== Deno.env.get("EXPECTED_BASE_SHA") || plan.manifest_digest !== Deno.env.get("EXPECTED_PLAN_DIGEST")) throw new Error("MatrixPlanV1 identity changed in transport");
                 await Deno.writeTextFile(".sentinel/reports/matrix-plan.json", `${canonicalMatrixJson(plan)}\n`, { create: true, mode: 0o600 });
+                const triageFile = planFiles.find((file) => file.path === "reports/triage.json");
+                if (!triageFile) throw new Error("encrypted MatrixPlanV1 artifact is missing its triage report");
+                const triage = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(triageFile.bytes));
+                if (!isTriageReport(triage)) throw new Error("encrypted matrix triage report is invalid");
+                const actionable = triage.findings.filter((finding) => finding.actionable).map((finding) => { const ownership = plan.ownership.find((candidate) => candidate.finding_id === finding.id); return { finding_id: finding.id, fingerprint: finding.fingerprint, allowed_paths: [...finding.allowed_paths].sort(), prohibited_paths: [...ownership?.prohibited_paths ?? []].sort(), shared_paths: [...finding.shared_paths].sort(), depends_on: [...finding.depends_on].sort(), validation_requirements: [...finding.validation_requirements].sort() }; }).sort((left, right) => left.finding_id.localeCompare(right.finding_id));
+                if (canonicalMatrixJson(actionable) !== canonicalMatrixJson(plan.ownership)) throw new Error("matrix triage ownership differs from MatrixPlanV1");
+                await Deno.writeTextFile(".sentinel/reports/triage.json", `${JSON.stringify(triage)}\n`, { create: true, mode: 0o600 });
               } finally { for (const file of planFiles) file.bytes.fill(0); }
               const expected = new Set(plan.cells.map((cell) => cell.cell_id));
               const seen = new Set<string>();
@@ -823,12 +831,15 @@ jobs:
                     await validateMatrixCellReportV1(report, plan);
                     if (!expected.has(report.cell_id) || seen.has(report.cell_id)) throw new Error("matrix cell report coverage is duplicate or unknown");
                     seen.add(report.cell_id);
-                    await Deno.writeTextFile(`.sentinel/reports/matrix/${report.cell_id}.json`, `${canonicalMatrixJson(report)}\n`, { create: true, mode: 0o600 });
+                    const cell = plan.cells.find((candidate) => candidate.cell_id === report.cell_id)!;
+                    const parent = cell.report_path.slice(0, cell.report_path.lastIndexOf("/"));
+                    await Deno.mkdir(parent, { recursive: true, mode: 0o700 });
+                    await Deno.writeTextFile(cell.report_path, `${canonicalMatrixJson(report)}\n`, { create: true, mode: 0o600 });
                   }
                 } finally { for (const file of files) file.bytes.fill(0); }
               }
               if (seen.size !== expected.size) throw new Error("required matrix cell artifact is missing");
-              const index = plan.cells.map((cell) => ({ cell_id: cell.cell_id, branch: cell.branch, base_sha: cell.base_sha, report_path: `.sentinel/reports/matrix/${cell.cell_id}.json` }));
+              const index = plan.cells.map((cell) => ({ cell_id: cell.cell_id, branch: cell.branch, base_sha: cell.base_sha, report_path: cell.report_path }));
               await Deno.writeTextFile(".sentinel/reports/matrix-report-index.json", `${canonicalMatrixJson({ schema_version: 1, run_id: plan.run_id, run_attempt: plan.run_attempt, base_sha: plan.base_sha, plan_digest: plan.manifest_digest, cells: index })}\n`, { create: true, mode: 0o600 });
             } finally { key.fill(0); }
           '
