@@ -2655,6 +2655,14 @@ Deno.test("openai: Codex HTTP errors use OpenAI envelopes without changing routi
       assert.equal(response.headers.get("Retry-After"), testCase.retryAfter);
       assert.equal(response.headers.get("X-Codex-Diagnostic"), null);
       assert.deepEqual(await response.json(), { error: testCase.expectedError });
+      if (testCase.route === "responses" && testCase.status >= 500) {
+        const telemetry = getResponseTelemetry(response);
+        assert.ok(telemetry);
+        assert.equal(telemetry.failureKind, "upstream_http_5xx");
+        assert.equal(telemetry.streamTerminalType, "error");
+        assert.equal(telemetry.responseCreatedObserved, false);
+        assert.equal(telemetry.fallbackReason, null);
+      }
       assert.equal(codexCalls, 1);
     });
   }

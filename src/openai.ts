@@ -1128,6 +1128,8 @@ const failureKindForResponsesAttemptTrigger = (
   trigger: ResponsesAttemptTrigger,
 ): ResponsesStreamFailureKind | null => {
   switch (trigger) {
+    case "http_5xx":
+      return "upstream_http_5xx";
     case "premature_eof":
       return "premature_eof";
     case "malformed_event":
