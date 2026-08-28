@@ -3631,7 +3631,8 @@ if (import.meta.main) {
       if (state.status === "running") {
         state.status = "failed";
         state.stage = "failed";
-        state.branch_disposition = state.branch_disposition === "remote_retained_pending_decision"
+        state.branch_disposition = state.branch_disposition === "remote_retained_pending_decision" ||
+            state.branch_disposition === "remote_retained_issue_retry_pending"
           ? "remote_retained_after_failed_cycle"
           : state.temporary_branch
           ? "runner_local_after_failed_cycle"

@@ -475,7 +475,15 @@ export const getKernelAttestationContext = async (
   return { owner: attestation.payload.owner, repo: attestation.payload.repo };
 };
 
-const verifyGitHubTokenRepoAccess = async (token: string, owner: string, repo: string): Promise<boolean> => {
+type GitHubTokenRepoAccessResult =
+  | { ok: true }
+  | { ok: false; reason: "rejected" | "upstream_unavailable" };
+
+const verifyGitHubTokenRepoAccess = async (
+  token: string,
+  owner: string,
+  repo: string,
+): Promise<GitHubTokenRepoAccessResult> => {
   const res = await fetch(`${GITHUB_API_BASE_URL}/repos/${owner}/${repo}`, {
     method: "GET",
     headers: {
@@ -487,13 +495,19 @@ const verifyGitHubTokenRepoAccess = async (token: string, owner: string, repo: s
     redirect: "manual",
   });
 
+  const status = res.status;
+
   try {
     await res.body?.cancel();
   } catch {
     // ignore
   }
 
-  return res.ok;
+  if (res.ok) return { ok: true };
+  if (status === 401 || status === 404) {
+    return { ok: false, reason: "rejected" };
+  }
+  return { ok: false, reason: "upstream_unavailable" };
 };
 
 type ClientAuthMethod =
@@ -523,10 +537,22 @@ export type AdminAuthResult =
   | { ok: true; token: string; method: AdminAuthMethod; is_super_admin: boolean }
   | { ok: false; response: Response };
 
-const authenticateGitHubToken = async (
+type GitHubBearerVerification =
+  | Readonly<{
+    kind: "verified";
+    owner: string;
+    repo: string;
+    stateId: string;
+    cacheKey: string;
+    cacheHit: boolean;
+  }>
+  | Readonly<{ kind: "rejected" | "unavailable"; response: Response }>
+  | null;
+
+const verifyGitHubBearer = async (
   req: Request,
   token: string,
-): Promise<{ ok: true; method: ClientAuthMethod } | { ok: false; response: Response } | null> => {
+): Promise<GitHubBearerVerification> => {
   if (!looksLikeGitHubToken(token)) return null;
   // An explicitly configured admin token remains an allowlisted credential,
   // even if its value happens to use a GitHub token prefix. Let the normal
@@ -536,7 +562,7 @@ const authenticateGitHubToken = async (
   const repoHeaders = getGitHubRepoHeaders(req);
   const kernelToken = (req.headers.get("X-Ubiquity-Kernel-Token") ?? "").trim();
   if (!repoHeaders && !kernelToken) {
-    return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
+    return { kind: "rejected", response: openaiError(401, "Unauthorized", "invalid_api_key") };
   }
 
   const attestation = await verifyKernelAttestation(req, {
@@ -544,44 +570,66 @@ const authenticateGitHubToken = async (
     owner: repoHeaders?.owner,
     repo: repoHeaders?.repo,
   });
-  if (!attestation.ok) return { ok: false, response: attestation.response };
+  if (!attestation.ok) {
+    return {
+      kind: attestation.response.status === 401 ? "rejected" : "unavailable",
+      response: attestation.response,
+    };
+  }
   const { owner, repo } = attestation.payload;
   const stateId = attestation.payload.state_id;
 
   const cacheKey = await sha256Base64Url(`${token}:${owner}/${repo}`);
   const cachedUntil = githubTokenCache.get(cacheKey) ?? 0;
   if (cachedUntil > Date.now()) {
-    const policyState = await resolveKernelQuotaPolicyState(owner, repo);
-    if (!policyState.ok) return { ok: false, response: policyState.response };
-    if (!policyState.has_policy) {
-      await recordKernelPolicyQueue(owner, repo, getRequestPath(req));
-    }
-    return {
-      ok: true,
-      method: { kind: "github_token", owner, repo, state_id: stateId, limit_scope: policyState.limit_scope },
-    };
+    return { kind: "verified", owner, repo, stateId, cacheKey, cacheHit: true };
   }
 
   try {
-    const hasAccess = await verifyGitHubTokenRepoAccess(token, owner, repo);
-    if (!hasAccess) {
-      return { ok: false, response: openaiError(401, "Invalid GitHub token for repo", "invalid_auth_for_repo") };
+    const access = await verifyGitHubTokenRepoAccess(token, owner, repo);
+    if (!access.ok && access.reason === "rejected") {
+      return {
+        kind: "rejected",
+        response: openaiError(401, "Invalid GitHub token for repo", "invalid_auth_for_repo"),
+      };
     }
-
-    githubTokenCache.set(cacheKey, Date.now() + GITHUB_TOKEN_CACHE_TTL_MS);
-    const policyState = await resolveKernelQuotaPolicyState(owner, repo);
-    if (!policyState.ok) return { ok: false, response: policyState.response };
-    if (!policyState.has_policy) {
-      await recordKernelPolicyQueue(owner, repo, getRequestPath(req));
+    if (!access.ok) {
+      return {
+        kind: "unavailable",
+        response: openaiError(502, "Failed to verify GitHub token", "bad_gateway"),
+      };
     }
-    return {
-      ok: true,
-      method: { kind: "github_token", owner, repo, state_id: stateId, limit_scope: policyState.limit_scope },
-    };
+    return { kind: "verified", owner, repo, stateId, cacheKey, cacheHit: false };
   } catch (error) {
     console.error("[ai.ubq.fi] GitHub token verification failed:", error);
-    return { ok: false, response: openaiError(502, "Failed to verify GitHub token", "bad_gateway") };
+    return {
+      kind: "unavailable",
+      response: openaiError(502, "Failed to verify GitHub token", "bad_gateway"),
+    };
   }
+};
+
+const authenticateGitHubToken = async (
+  req: Request,
+  token: string,
+): Promise<{ ok: true; method: ClientAuthMethod } | { ok: false; response: Response } | null> => {
+  const verification = await verifyGitHubBearer(req, token);
+  if (!verification) return null;
+  if (verification.kind !== "verified") return { ok: false, response: verification.response };
+
+  const { owner, repo, stateId } = verification;
+  if (!verification.cacheHit) {
+    githubTokenCache.set(verification.cacheKey, Date.now() + GITHUB_TOKEN_CACHE_TTL_MS);
+  }
+  const policyState = await resolveKernelQuotaPolicyState(owner, repo);
+  if (!policyState.ok) return { ok: false, response: policyState.response };
+  if (!policyState.has_policy) {
+    await recordKernelPolicyQueue(owner, repo, getRequestPath(req));
+  }
+  return {
+    ok: true,
+    method: { kind: "github_token", owner, repo, state_id: stateId, limit_scope: policyState.limit_scope },
+  };
 };
 
 const looksLikeUbqAiClientToken = (token: string): boolean => looksLikeUosApiKey(token);
@@ -650,6 +698,14 @@ const logAuthDecision = (req: Request, entry: AuthLogEntry): void => {
   console.warn("[ai.ubq.fi] auth", line);
 };
 
+const getPasskeyCookieSessionForRequest = (req: Request) => {
+  const passkeyHeaders = new Headers(req.headers);
+  passkeyHeaders.delete("authorization");
+  return getPasskeySessionForRequest(
+    new Request(req.url, { headers: passkeyHeaders }),
+  );
+};
+
 export const authenticateClient = async (req: Request): Promise<AuthenticateClientResult> => {
   const kv = await getKv();
   const localAuthDisabled = isLocalClientAuthDisabledRequest(req);
@@ -716,11 +772,30 @@ export const authenticateClient = async (req: Request): Promise<AuthenticateClie
   }
 
   const githubResult = await authenticateGitHubToken(req, token);
-  if (githubResult) {
-    if (githubResult.ok) {
-      logClientAuth({ ok: true, method: "github_token" });
-      return { ok: true, token, method: githubResult.method };
+  if (githubResult?.ok) {
+    logClientAuth({ ok: true, method: "github_token" });
+    return { ok: true, token, method: githubResult.method };
+  }
+
+  if (githubResult && !githubResult.ok && githubResult.response.status === 401 && req.headers.has("cookie")) {
+    const passkeySession = await getPasskeyCookieSessionForRequest(req);
+    if (passkeySession) {
+      logClientAuth({ ok: true, method: "passkey_session" });
+      return {
+        ok: true,
+        token: passkeySession.token,
+        method: {
+          kind: "passkey_session",
+          user_id: passkeySession.user.id,
+          handle: passkeySession.user.handle,
+          is_admin: isPasskeyUserAdmin(passkeySession.user),
+          credential_count: passkeySession.user.credential_ids.length,
+        },
+      };
     }
+  }
+
+  if (githubResult) {
     logClientAuth({
       ok: false,
       method: "github_token",
@@ -926,7 +1001,30 @@ export const authenticateAdmin = async (req: Request): Promise<AdminAuthResult> 
       method: { kind: "disabled" },
     };
   }
-  const passkeySession = await getPasskeySessionForRequest(req);
+  let passkeySession = await getPasskeySessionForRequest(req);
+  if (
+    !passkeySession && token && looksLikeGitHubToken(token) && !config.adminTokens.has(token) &&
+    !config.authTokens.has(token) &&
+    req.headers.has("cookie")
+  ) {
+    const githubVerification = await verifyGitHubBearer(req, token);
+    if (githubVerification?.kind === "verified") {
+      logAdminAuth({ ok: false, method: "github_token", status: 401, reason: "github_token_not_admin" });
+      return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
+    }
+    if (githubVerification?.kind === "unavailable") {
+      logAdminAuth({
+        ok: false,
+        method: "github_token",
+        status: githubVerification.response.status,
+        reason: "github_token_verification_failed",
+      });
+      return { ok: false, response: githubVerification.response };
+    }
+    if (githubVerification?.kind === "rejected") {
+      passkeySession = await getPasskeyCookieSessionForRequest(req);
+    }
+  }
   if (passkeySession) {
     if (!isPasskeyUserAdmin(passkeySession.user)) {
       logAdminAuth({ ok: false, method: "passkey_session", status: 403, reason: "passkey_user_not_admin" });

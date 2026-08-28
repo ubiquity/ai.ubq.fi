@@ -622,6 +622,12 @@ Deno.test({
       candidatePushPosition >= 0 && retainedShaPosition > candidatePushPosition,
       "A candidate SHA must become retained only after its remote push succeeds",
     );
+    assert(
+      orchestrator.includes('state.branch_disposition === "remote_retained_pending_decision" ||') &&
+        orchestrator.includes('state.branch_disposition === "remote_retained_issue_retry_pending"') &&
+        orchestrator.includes('? "remote_retained_after_failed_cycle"'),
+      "A failed retry-ledger push must preserve the already-pushed candidate branch disposition",
+    );
     for (
       const [startNeedle, endNeedle, stage] of [
         ["const nativeReviewStage = `native_review_", "    const rawReview =", "native_review_"],
