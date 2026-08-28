@@ -8,6 +8,7 @@ import {
 import {
   agentCheckoutPath,
   assertRetainedReplayArtifactBudget,
+  assertTriageMatchesMatrixPlan,
   candidateRevertDiffArguments,
   deduplicateRetainedReplayCaptures,
   durableProductionDecision,
@@ -56,6 +57,7 @@ import {
   withStageHeartbeat,
   zeroUnselectedReplayBodies,
 } from "../scripts/sentinel/main.ts";
+import { buildMatrixPlan } from "../scripts/sentinel/matrix.ts";
 import { CodexInvocationError } from "../scripts/sentinel/codex.ts";
 import type {
   GitHubIssue,
@@ -940,6 +942,49 @@ Deno.test("every structured-output property declares an explicit JSON Schema typ
   visit(TRIAGE_OUTPUT_SCHEMA, "triage");
   visit(IMPLEMENTATION_OUTPUT_SCHEMA, "implementation");
   visit(MONITOR_OUTPUT_SCHEMA, "monitor");
+});
+
+Deno.test("matrix convergence compares triage ownership in planner fingerprint order", async () => {
+  const interval = computeSentinelInterval("incident", now);
+  const finding = (id: string, fingerprint: string, path: string): TriageReport["findings"][number] => ({
+    id,
+    fingerprint,
+    severity: "P1",
+    title: `Repair ${id}`,
+    affected_surface: path,
+    allowed_paths: [path],
+    shared_paths: [],
+    depends_on: [],
+    evidence: [{ source: "repository", reference: path, detail: `Defect in ${id}` }],
+    proposed_correction: `Correct ${id}`,
+    validation_requirements: [`Validate ${id}`],
+    actionable: true,
+  });
+  const triage: TriageReport = {
+    schema_version: 1,
+    interval,
+    findings: [
+      finding("first-by-id", "f".repeat(64), "src/first.ts"),
+      finding("second-by-id", "0".repeat(64), "src/second.ts"),
+    ],
+    no_findings_reason: null,
+  };
+  const plan = await buildMatrixPlan({
+    run_id: "ownership-order",
+    run_attempt: 1,
+    base_sha: "a".repeat(40),
+    evidence_digests: [],
+    findings: triage.findings.map((item) => ({
+      id: item.id,
+      fingerprint: item.fingerprint,
+      allowed_paths: item.allowed_paths,
+      prohibited_paths: SENTINEL_POLICY.protectedImplementationPaths,
+      shared_paths: item.shared_paths,
+      depends_on: item.depends_on,
+      validation_requirements: item.validation_requirements,
+    })),
+  });
+  assert.doesNotThrow(() => assertTriageMatchesMatrixPlan(triage, plan));
 });
 
 Deno.test("observe cycle cannot reach replay, repair, Git, deployment, promotion, or rollback capabilities", async () => {

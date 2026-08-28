@@ -716,7 +716,7 @@ const writePreparedMatrixPlan = async (
   return plan;
 };
 
-const assertTriageMatchesMatrixPlan = (triage: TriageReport, plan: MatrixPlanV1): void => {
+export const assertTriageMatchesMatrixPlan = (triage: TriageReport, plan: MatrixPlanV1): void => {
   const actionable = triage.findings.filter((finding) => finding.actionable).map((finding) => ({
     finding_id: finding.id,
     fingerprint: finding.fingerprint,
@@ -725,7 +725,9 @@ const assertTriageMatchesMatrixPlan = (triage: TriageReport, plan: MatrixPlanV1)
     shared_paths: [...finding.shared_paths].sort(),
     depends_on: [...finding.depends_on].sort(),
     validation_requirements: [...finding.validation_requirements].sort(),
-  })).sort((left, right) => left.finding_id.localeCompare(right.finding_id));
+  })).sort((left, right) =>
+    left.fingerprint.localeCompare(right.fingerprint) || left.finding_id.localeCompare(right.finding_id)
+  );
   if (JSON.stringify(actionable) !== JSON.stringify(plan.ownership)) {
     throw new Error("Matrix convergence triage does not match immutable plan ownership");
   }

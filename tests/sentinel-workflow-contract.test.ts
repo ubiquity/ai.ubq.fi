@@ -42,6 +42,8 @@ Deno.test("Provider Sentinel has explicit prepare, bounded repair, and convergen
   assert.match(repair, /ref: \$\{\{ matrix\.base_sha \}\}/u);
   assert.match(repair, /git switch --create "\$CELL_BRANCH" "\$CELL_BASE_SHA"/u);
   assert.match(repair, /runMatrixCell/u);
+  assert.match(repair, /reports\/triage\.json/u);
+  assert.match(repair, /triageValue\.findings\.filter/u);
   assert.match(repair, /--force-with-lease=/u);
   assert.match(repair, /Upload encrypted cell evidence/u);
   assert.match(repair, /path: \.sentinel\/encrypted\/sentinel-evidence-v1\.json/u);

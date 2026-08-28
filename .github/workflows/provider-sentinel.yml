@@ -408,11 +408,13 @@ jobs:
               const files = await decryptSentinelArtifact(await Deno.readFile(envelope), key);
               try {
                 const planFile = files.find((file) => file.path === "reports/matrix-plan.json");
-                if (!planFile) throw new Error("MatrixPlanV1 was not found in ciphertext");
+                const triageFile = files.find((file) => file.path === "reports/triage.json");
+                if (!planFile || !triageFile) throw new Error("Matrix plan or triage report was not found in ciphertext");
                 const plan = await parseMatrixPlanV1(planFile.bytes);
                 const cell = plan.cells.find((candidate) => candidate.cell_id === Deno.env.get("CELL_ID"));
                 if (!cell || cell.base_sha !== Deno.env.get("CELL_BASE_SHA") || cell.branch !== Deno.env.get("CELL_BRANCH")) throw new Error("cell contract drifted from MatrixPlanV1");
                 await Deno.writeFile(`${root}/sentinel-matrix-plan.json`, planFile.bytes, { create: true, mode: 0o600 });
+                await Deno.writeFile(`${root}/sentinel-matrix-triage.json`, triageFile.bytes, { create: true, mode: 0o600 });
               } finally { for (const file of files) file.bytes.fill(0); }
             } finally { key.fill(0); }
           '
@@ -443,13 +445,15 @@ jobs:
         run: |
           set -euo pipefail
           deno eval --frozen --lock=deno.lock --allow-env --allow-net --allow-read --allow-write --allow-run '
-            import { IMPLEMENTATION_OUTPUT_SCHEMA } from "./scripts/sentinel/types.ts";
+            import { IMPLEMENTATION_OUTPUT_SCHEMA, isTriageReport } from "./scripts/sentinel/types.ts";
             import { parseMatrixPlanV1 } from "./scripts/sentinel/matrix.ts";
             import { runMatrixCell } from "./scripts/sentinel/matrix-cell.ts";
             import { runCandidateValidation } from "./scripts/sentinel/validation.ts";
             const env = (name: string): string => Deno.env.get(name) ?? "";
             const root = env("RUNNER_TEMP");
             const plan = await parseMatrixPlanV1(await Deno.readTextFile(`${root}/sentinel-matrix-plan.json`));
+            const triageValue: unknown = JSON.parse(await Deno.readTextFile(`${root}/sentinel-matrix-triage.json`));
+            if (!isTriageReport(triageValue)) throw new Error("Matrix cell triage report is invalid");
             const cell = plan.cells.find((candidate) => candidate.cell_id === env("CELL_ID"));
             if (!cell) throw new Error("Matrix cell is absent from the immutable plan");
             const authSlots: Record<string, string> = {};
@@ -467,7 +471,7 @@ jobs:
             const report = await runMatrixCell({
               plan, cell, checkoutPath: Deno.cwd(), reportPath: env("CELL_REPORT_PATH"),
               secretScanReportPath: `${root}/sentinel-cell-secret-scan.json`, outputSchemaPath: `${root}/sentinel-cell-implementation-schema.json`,
-              authSlots, sensitiveValues, findings: plan.ownership.filter((finding) => cell.finding_ids.includes(finding.finding_id)),
+              authSlots, sensitiveValues, findings: triageValue.findings.filter((finding) => cell.finding_ids.includes(finding.id)),
               validate: async ({ checkoutPath }) => {
                 try {
                   await runCandidateValidation({ cwd: checkoutPath, reportPath: `${root}/sentinel-cell-validation.json`, privateDir: root, denoDirectory: env("DENO_DIR") });
@@ -548,7 +552,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for target in "$RUNNER_TEMP/sentinel-codex-auth-state" "$RUNNER_TEMP/sentinel-matrix-plan" "$RUNNER_TEMP/sentinel-matrix-plan.json" "$RUNNER_TEMP/sentinel-cell-report.json"; do
+          for target in "$RUNNER_TEMP/sentinel-codex-auth-state" "$RUNNER_TEMP/sentinel-matrix-plan" "$RUNNER_TEMP/sentinel-matrix-plan.json" "$RUNNER_TEMP/sentinel-matrix-triage.json" "$RUNNER_TEMP/sentinel-cell-report.json"; do
             if [ -e "$target" ]; then find "$target" -type f -exec sh -c ': > "$1"' _ {} \; 2>/dev/null || true; rm -rf -- "$target"; fi
           done
 
@@ -816,7 +820,7 @@ jobs:
                 if (!triageFile) throw new Error("encrypted MatrixPlanV1 artifact is missing its triage report");
                 const triage = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(triageFile.bytes));
                 if (!isTriageReport(triage)) throw new Error("encrypted matrix triage report is invalid");
-                const actionable = triage.findings.filter((finding) => finding.actionable).map((finding) => { const ownership = plan.ownership.find((candidate) => candidate.finding_id === finding.id); return { finding_id: finding.id, fingerprint: finding.fingerprint, allowed_paths: [...finding.allowed_paths].sort(), prohibited_paths: [...ownership?.prohibited_paths ?? []].sort(), shared_paths: [...finding.shared_paths].sort(), depends_on: [...finding.depends_on].sort(), validation_requirements: [...finding.validation_requirements].sort() }; }).sort((left, right) => left.finding_id.localeCompare(right.finding_id));
+                const actionable = triage.findings.filter((finding) => finding.actionable).map((finding) => { const ownership = plan.ownership.find((candidate) => candidate.finding_id === finding.id); return { finding_id: finding.id, fingerprint: finding.fingerprint, allowed_paths: [...finding.allowed_paths].sort(), prohibited_paths: [...ownership?.prohibited_paths ?? []].sort(), shared_paths: [...finding.shared_paths].sort(), depends_on: [...finding.depends_on].sort(), validation_requirements: [...finding.validation_requirements].sort() }; }).sort((left, right) => left.fingerprint.localeCompare(right.fingerprint) || left.finding_id.localeCompare(right.finding_id));
                 if (canonicalMatrixJson(actionable) !== canonicalMatrixJson(plan.ownership)) throw new Error("matrix triage ownership differs from MatrixPlanV1");
                 await Deno.writeTextFile(".sentinel/reports/triage.json", `${JSON.stringify(triage)}\n`, { create: true, mode: 0o600 });
               } finally { for (const file of planFiles) file.bytes.fill(0); }
