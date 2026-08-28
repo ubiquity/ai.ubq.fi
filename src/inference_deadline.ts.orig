@@ -18,13 +18,6 @@ export const INFERENCE_DEADLINE_MS = STREAM_FIRST_EVENT_DEADLINE_MS;
 export const BUFFERED_INFERENCE_DEADLINE_MS = INFERENCE_DEADLINE_MS;
 
 let streamFirstEventDeadlineMs = STREAM_FIRST_EVENT_DEADLINE_MS;
-let streamMaxWallClockDeadlineMs = STREAM_MAX_WALL_CLOCK_DEADLINE_MS;
-
-const STREAM_WALL_CLOCK_TIMEOUT_MARKER = Symbol("stream-wall-clock-timeout");
-
-export const isStreamWallClockTimeoutReason = (reason: unknown): boolean =>
-  reason !== null && typeof reason === "object" &&
-  (reason as Record<PropertyKey, unknown>)[STREAM_WALL_CLOCK_TIMEOUT_MARKER] === true;
 
 export const createInferenceSignal = (
   requestSignal: AbortSignal,
