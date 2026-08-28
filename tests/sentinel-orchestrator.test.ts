@@ -32,6 +32,7 @@ import {
   previewCompletionForDecision,
   replayIndexArtifactMayMatch,
   replayIndexArtifactName,
+  requireResolvedReviewBacklogImplementation,
   requiresReplayEvaluation,
   resolveCycleAnchorMs,
   RetryCheckpointResumeError,
@@ -512,6 +513,24 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
     "retry_pending",
   );
   assert.deepEqual(events, ["preserve", "discard"]);
+  events.length = 0;
+  await assert.rejects(
+    () =>
+      prepareImplementationFailureRetry(
+        "github_issue",
+        failure,
+        () => {
+          events.push("preserve");
+          return Promise.reject(new Error("snapshot failed"));
+        },
+        () => {
+          events.push("discard");
+          return Promise.resolve();
+        },
+      ),
+    /snapshot failed/,
+  );
+  assert.deepEqual(events, ["preserve"]);
   const checkpoint = {
     branch: "sentinel/candidate-123456789",
     sha: "b".repeat(40),
@@ -2268,7 +2287,7 @@ Deno.test("review backlog parsing is strict and round-trips renderer escapes", (
   );
 });
 
-Deno.test("backlog implementation decisions reject no-code resolution and report mismatches", () => {
+Deno.test("backlog implementation decisions reconcile already-fixed work and reject report mismatches", () => {
   assert.deepEqual(
     evaluateReviewBacklogImplementation(
       "implemented",
@@ -2285,6 +2304,10 @@ Deno.test("backlog implementation decisions reject no-code resolution and report
     });
   }
   assert.deepEqual(evaluateReviewBacklogImplementation("already_fixed", [], []), {
+    disposition: "manual_required",
+    continueToRuntimeValidation: false,
+  });
+  assert.deepEqual(evaluateReviewBacklogImplementation("already_fixed", [], [], "src/handler.ts", true), {
     disposition: "resolved",
     continueToRuntimeValidation: false,
   });
@@ -2295,6 +2318,14 @@ Deno.test("backlog implementation decisions reject no-code resolution and report
   assert.throws(
     () => evaluateReviewBacklogImplementation("blocked", ["src/handler.ts"], ["src/handler.ts"]),
     /cannot retain/,
+  );
+  assert.throws(
+    () => evaluateReviewBacklogImplementation("already_fixed", ["src/handler.ts"], ["src/handler.ts"]),
+    /cannot retain/,
+  );
+  assert.throws(
+    () => requireResolvedReviewBacklogImplementation("already_fixed", [], [], "src/handler.ts"),
+    /does not retain/,
   );
   assert.throws(
     () => evaluateReviewBacklogImplementation("implemented", ["README.md"], ["README.md"], "src/handler.ts"),

@@ -289,6 +289,7 @@ export const CANDIDATE_DENO_CHECK_ARGS = Object.freeze(
     "scripts/sentinel/encrypt-artifacts.ts",
     "scripts/sentinel/main.ts",
     "scripts/sentinel/revision-control.ts",
+    "scripts/sentinel/scrub-artifacts.ts",
   ] as const,
 );
 
@@ -347,7 +348,14 @@ const runValidationCommand = async (
     command: "bwrap",
     args: sandboxArgs,
     cwd,
-    env: { HOME: sandboxHome, DENO_DIR: denoDirectory },
+    env: {
+      HOME: sandboxHome,
+      DENO_DIR: denoDirectory,
+      // Candidate validation is already network-isolated by bubblewrap. Bypass
+      // the workflow's real-development push gate so local Git fixture remotes
+      // are not mistaken for a Sentinel delivery push.
+      SENTINEL_GIT_WRAPPER_BYPASS: "1",
+    },
     maximumOutputBytes: VALIDATION_OUTPUT_MAX_BYTES,
   });
   const durationMs = Date.now() - started;

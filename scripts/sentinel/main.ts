@@ -293,6 +293,7 @@ export const evaluateReviewBacklogImplementation = (
   actualChangedPaths: readonly string[],
   reportedChangedPaths: readonly string[],
   requiredChangedPath?: string,
+  alreadyFixedAffectedPathChangedAtBase = false,
 ): ReviewBacklogImplementationDecision => {
   const actual = sortedUniquePaths(actualChangedPaths, "Backlog implementation diff");
   const reported = sortedUniquePaths(reportedChangedPaths, "Backlog implementation report");
@@ -304,7 +305,7 @@ export const evaluateReviewBacklogImplementation = (
     }
     return { disposition: "resolved", continueToRuntimeValidation: true };
   }
-  if (status === "already_fixed" && actual.length === 0) {
+  if (status === "already_fixed" && actual.length === 0 && alreadyFixedAffectedPathChangedAtBase) {
     return { disposition: "resolved", continueToRuntimeValidation: false };
   }
   if (actual.length > 0) {
@@ -1333,6 +1334,45 @@ export const aggregateCandidateChangedPaths = async (
       !excluded.has(path)
     ),
   );
+};
+
+export const reviewBacklogAffectedPathChangedAtSelectedBase = async (
+  checkout: string,
+  recordedSha: string,
+  selectedBaseSha: string,
+  affectedPath: string,
+): Promise<boolean> => {
+  ensureFullSha(recordedSha, "Review backlog affected SHA");
+  ensureFullSha(selectedBaseSha, "Review backlog selected base SHA");
+  const segments = affectedPath.split("/");
+  if (
+    affectedPath.length === 0 || affectedPath.startsWith("/") || affectedPath.includes("\\") ||
+    affectedPath.includes("\0") || segments.some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    throw new Error("Review backlog affected path is invalid");
+  }
+  const ancestry = await runTrustedGitUnchecked({
+    args: ["merge-base", "--is-ancestor", recordedSha, selectedBaseSha],
+    cwd: checkout,
+  });
+  if (ancestry.code === 1) return false;
+  if (ancestry.code !== 0) throw new Error("Review backlog affected SHA ancestry check failed");
+  const changed = await runTrustedGitUnchecked({
+    args: [
+      "diff",
+      "--quiet",
+      "--no-ext-diff",
+      "--no-textconv",
+      recordedSha,
+      selectedBaseSha,
+      "--",
+      affectedPath,
+    ],
+    cwd: checkout,
+  });
+  if (changed.code === 0) return false;
+  if (changed.code === 1) return true;
+  throw new Error("Review backlog affected path comparison failed");
 };
 
 export const restoreIssueRetryAggregateIfEmpty = async (
@@ -2796,11 +2836,20 @@ const run = async (): Promise<void> => {
     if (!selectedBacklogAffectedPath) throw new Error("Selected review backlog finding lost its affected path");
     const reportDisposition = selectedBacklogReportDisposition(report);
     const actualPaths = await selectedBacklogAggregatePaths();
+    const alreadyFixedAffectedPathChangedAtBase = reportDisposition.status === "already_fixed"
+      ? await reviewBacklogAffectedPathChangedAtSelectedBase(
+        checkout,
+        workSelection.backlogEntry.sha,
+        baseSha,
+        selectedBacklogAffectedPath,
+      )
+      : false;
     const decision = evaluateReviewBacklogImplementation(
       reportDisposition.status,
       actualPaths,
       reportDisposition.changed_files,
       selectedBacklogAffectedPath,
+      alreadyFixedAffectedPathChangedAtBase,
     );
     await writeSelectedBacklogDisposition(reportDisposition, decision.disposition, "initial_implementation");
     selectedBacklogState.continueToRuntimeValidation = decision.continueToRuntimeValidation;
@@ -2916,6 +2965,7 @@ const run = async (): Promise<void> => {
   ): Promise<void> => {
     if (!/^[a-z0-9_-]+$/u.test(stage)) throw new Error("Failed implementation stage label is invalid");
     let preservation: Record<string, unknown>;
+    let preservationError: unknown = null;
     try {
       await assertAgentDidNotCommitOrSwitch(checkout, preInvocationSha, branch, gitControlState);
       await assertImplementationAgentScope(checkout);
@@ -2931,13 +2981,20 @@ const run = async (): Promise<void> => {
         preserved: true,
         location: `reports/failed-${stage}-candidate/manifest.json in encrypted evidence artifact`,
       };
-    } catch (preservationError) {
-      preservation = { preserved: false, ...safeErrorSummary(preservationError) };
+    } catch (caught) {
+      preservationError = caught;
+      preservation = { preserved: false, ...safeErrorSummary(caught) };
     }
     await writeJson(`${reportsDir}/failed-${stage}-preservation.json`, {
       ...safeErrorSummary(error),
       candidate: preservation,
     });
+    if (preservationError !== null) {
+      throw new AggregateError(
+        [error, preservationError],
+        "Sentinel implementation failed and its candidate could not be preserved safely",
+      );
+    }
   };
   const publishGitHubIssueRetryCheckpoint = async (
     stage: string,
@@ -3304,27 +3361,72 @@ const run = async (): Promise<void> => {
 
   if (selectedBacklogState.disposition !== null && !selectedBacklogState.continueToRuntimeValidation) {
     const manualRequired = selectedBacklogState.disposition === "manual_required";
-    const changedPaths = [...await implementationAgentChangedPaths(checkout)].sort();
-    if (
-      changedPaths.length !== 1 || changedPaths[0] !== SENTINEL_POLICY.paths.reviewBacklog
-    ) {
-      throw new Error("Non-runtime backlog completion must change only the trusted backlog file");
-    }
     const backlogPath = `${checkout}/${SENTINEL_POLICY.paths.reviewBacklog}`;
-    parseReviewBacklog(await Deno.readTextFile(backlogPath));
+    const dispositionLabel = manualRequired ? "manual" : "already-fixed";
     await updateState(manualRequired ? "validating_manual_backlog" : "validating_already_fixed_backlog");
-    await scanCandidateWithGitleaks({
-      cwd: checkout,
-      reportPath: `${reportsDir}/secret-scan-${manualRequired ? "manual" : "already-fixed"}-backlog.json`,
-    });
-    await runDocumentationValidation({
-      cwd: checkout,
-      reportPath: `${reportsDir}/validation-${manualRequired ? "manual" : "already-fixed"}-backlog.json`,
-      privateDir,
-      denoDirectory,
-      files: [SENTINEL_POLICY.paths.reviewBacklog],
-    });
-    await assertGitControlStateUnchanged(gitControlState);
+    let snapshotAllowed = false;
+    try {
+      const changedPaths = [...await implementationAgentChangedPaths(checkout)].sort();
+      if (
+        changedPaths.length !== 1 || changedPaths[0] !== SENTINEL_POLICY.paths.reviewBacklog
+      ) {
+        throw new Error("Non-runtime backlog completion must change only the trusted backlog file");
+      }
+      const currentHead = ensureFullSha(
+        await gitText(checkout, ["rev-parse", "HEAD"]),
+        "Non-runtime backlog candidate SHA",
+      );
+      if (currentHead !== baseSha) {
+        throw new Error("Non-runtime backlog completion must remain on the immutable development base");
+      }
+      parseReviewBacklog(await Deno.readTextFile(backlogPath));
+      await assertGitControlStateUnchanged(gitControlState);
+      await assertImplementationFilesExcludeValues(
+        checkout,
+        sensitiveValues,
+        [SENTINEL_POLICY.paths.reviewBacklog],
+      );
+      await scanCandidateWithGitleaks({
+        cwd: checkout,
+        reportPath: `${reportsDir}/secret-scan-${dispositionLabel}-backlog.json`,
+      });
+      snapshotAllowed = true;
+      await runDocumentationValidation({
+        cwd: checkout,
+        reportPath: `${reportsDir}/validation-${dispositionLabel}-backlog.json`,
+        privateDir,
+        denoDirectory,
+        files: [SENTINEL_POLICY.paths.reviewBacklog],
+      });
+    } catch (error) {
+      let candidate: Record<string, unknown> = { preserved: false, ...safeErrorSummary(error) };
+      let snapshotError: unknown = null;
+      if (snapshotAllowed) {
+        try {
+          const snapshotDirectory = `${reportsDir}/failed-${dispositionLabel}-backlog-candidate`;
+          await captureFailedCandidateSnapshot(checkout, snapshotDirectory, baseSha);
+          candidate = {
+            preserved: true,
+            location:
+              `reports/failed-${dispositionLabel}-backlog-candidate/manifest.json in encrypted evidence artifact`,
+          };
+        } catch (caught) {
+          snapshotError = caught;
+          candidate = { preserved: false, ...safeErrorSummary(caught) };
+        }
+      }
+      await writeJson(`${reportsDir}/failed-${dispositionLabel}-backlog-preservation.json`, {
+        ...safeErrorSummary(error),
+        candidate,
+      });
+      if (snapshotError !== null) {
+        throw new AggregateError(
+          [error, snapshotError],
+          "Non-runtime backlog validation failed and its safe candidate snapshot could not be preserved",
+        );
+      }
+      throw error;
+    }
     const backlogSha = await commitChanges(
       checkout,
       manualRequired
@@ -3332,13 +3434,13 @@ const run = async (): Promise<void> => {
         : "docs: record already-fixed Sentinel backlog item",
     );
     await assertGitHistoryExcludesValues({ cwd: checkout, sensitiveValues });
+    await updateState(manualRequired ? "pushing_manual_backlog" : "pushing_already_fixed_backlog", {
+      candidate_sha: backlogSha,
+    });
     const remoteDevelopment = await fetchDevelopmentBase(checkout, gitEnvironment);
     if (remoteDevelopment !== baseSha) {
       throw new Error("origin/development advanced before non-runtime backlog classification could be pushed");
     }
-    await updateState(manualRequired ? "pushing_manual_backlog" : "pushing_already_fixed_backlog", {
-      candidate_sha: backlogSha,
-    });
     await runTrustedGit({
       args: ["push", "origin", `HEAD:${SENTINEL_POLICY.developmentRef}`],
       cwd: checkout,
@@ -3443,11 +3545,17 @@ const run = async (): Promise<void> => {
     const nativeReviewStage = `native_review_${reviewRound}`;
     await updateState(nativeReviewStage, { candidate_sha: candidateSha });
     let reviewResult: CodexInvocationResult;
+    let review: Awaited<ReturnType<typeof parseStructuredNativeReview>>;
     try {
       reviewResult = await withStageHeartbeat(
         nativeReviewStage,
         () => runNativeCodexReview({ checkoutPath: checkout, authSlots }),
       );
+      await assertGitControlStateUnchanged(gitControlState);
+      const rawReview = `${reviewResult.stdout}\n${reviewResult.stderr}`;
+      await Deno.writeTextFile(`${reportsDir}/native-review-round-${reviewRound}.txt`, rawReview, { mode: 0o600 });
+      review = await parseStructuredNativeReview(reviewResult.nativeReviewOutput, reviewRound, checkout);
+      await writeJson(`${reportsDir}/native-review-round-${reviewRound}.json`, review);
     } catch (error) {
       if (
         workSelection.source === "github_issue" &&
@@ -3461,13 +3569,11 @@ const run = async (): Promise<void> => {
         await completeNonRuntimeGitHubIssueDisposition();
         return;
       }
+      if (workSelection.source !== "github_issue") {
+        await preserveFailedImplementation(error, nativeReviewStage, candidateSha);
+      }
       throw error;
     }
-    await assertGitControlStateUnchanged(gitControlState);
-    const rawReview = `${reviewResult.stdout}\n${reviewResult.stderr}`;
-    await Deno.writeTextFile(`${reportsDir}/native-review-round-${reviewRound}.txt`, rawReview, { mode: 0o600 });
-    const review = await parseStructuredNativeReview(reviewResult.nativeReviewOutput, reviewRound, checkout);
-    await writeJson(`${reportsDir}/native-review-round-${reviewRound}.json`, review);
     const requiredBacklogFingerprint = selectedBacklogState.disposition === "resolved"
       ? workSelection.backlogEntry?.fingerprint
       : undefined;
@@ -3575,16 +3681,17 @@ const run = async (): Promise<void> => {
     if (workSelection.source === "github_issue" && selectedIssueState.disposition !== "resolved") {
       throw new Error("Selected GitHub issue work is not resolved before runtime validation");
     }
-    await updateState(`validation_${reviewRound}`);
-    await scanCandidateWithGitleaks({
-      cwd: checkout,
-      reportPath: `${reportsDir}/secret-scan-round-${reviewRound}.json`,
-    });
-    await assertGitHistoryExcludesValues({
-      cwd: checkout,
-      sensitiveValues,
-    });
+    const validationStage = `validation_${reviewRound}`;
+    await updateState(validationStage);
     try {
+      await scanCandidateWithGitleaks({
+        cwd: checkout,
+        reportPath: `${reportsDir}/secret-scan-round-${reviewRound}.json`,
+      });
+      await assertGitHistoryExcludesValues({
+        cwd: checkout,
+        sensitiveValues,
+      });
       await runCandidateValidation({
         cwd: checkout,
         reportPath: `${reportsDir}/validation-round-${reviewRound}.json`,
@@ -3592,7 +3699,10 @@ const run = async (): Promise<void> => {
         denoDirectory,
       });
     } catch (error) {
-      if (!(error instanceof CandidateValidationError) || !canStartReviewRound(reviewRound)) throw error;
+      if (!(error instanceof CandidateValidationError) || !canStartReviewRound(reviewRound)) {
+        await preserveFailedImplementation(error, validationStage, candidateSha);
+        throw error;
+      }
       const preValidationFixSha = candidateSha;
       const stage = `implementation_validation_fix_${reviewRound}`;
       try {

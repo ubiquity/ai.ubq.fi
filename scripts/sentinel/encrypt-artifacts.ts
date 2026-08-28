@@ -82,7 +82,7 @@ const removeIfPresent = async (path: string): Promise<void> => {
   }
 };
 
-export const encryptAndScrubGeneratedEvidence = async (
+export const encryptAndVerifyGeneratedEvidence = async (
   sentinelRoot: string,
   keyBytes: Uint8Array<ArrayBuffer>,
 ): Promise<Readonly<{ fileCount: number; outputPath: string }>> => {
@@ -125,10 +125,6 @@ export const encryptAndScrubGeneratedEvidence = async (
     } finally {
       persisted.fill(0);
     }
-    await removeIfPresent(`${sentinelRoot}/raw-logs`);
-    await removeIfPresent(`${sentinelRoot}/reports`);
-    await removeIfPresent(`${sentinelRoot}/candidate-worktree`);
-    await removeIfPresent(`${sentinelRoot}/private`);
     return { fileCount: files.length, outputPath };
   } catch (error) {
     if (createdOutput) await removeIfPresent(outputPath).catch(() => {});
@@ -137,6 +133,13 @@ export const encryptAndScrubGeneratedEvidence = async (
     encrypted.fill(0);
     for (const file of files) file.bytes.fill(0);
   }
+};
+
+export const scrubGeneratedEvidence = async (sentinelRoot: string): Promise<void> => {
+  await removeIfPresent(`${sentinelRoot}/raw-logs`);
+  await removeIfPresent(`${sentinelRoot}/reports`);
+  await removeIfPresent(`${sentinelRoot}/candidate-worktree`);
+  await removeIfPresent(`${sentinelRoot}/private`);
 };
 
 if (import.meta.main) {
@@ -149,12 +152,12 @@ if (import.meta.main) {
   if (!encodedKey) throw new Error("SENTINEL_ARTIFACT_KEY is required");
   const keyBytes = decodeSentinelArtifactKey(encodedKey);
   try {
-    const result = await encryptAndScrubGeneratedEvidence(
+    const result = await encryptAndVerifyGeneratedEvidence(
       ".sentinel",
       keyBytes,
     );
     console.log(
-      `Encrypted and scrubbed ${result.fileCount} Sentinel evidence files.`,
+      `Encrypted and verified ${result.fileCount} Sentinel evidence files.`,
     );
   } finally {
     keyBytes.fill(0);

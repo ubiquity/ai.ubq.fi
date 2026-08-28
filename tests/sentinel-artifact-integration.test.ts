@@ -12,6 +12,7 @@ import {
   restoreIssueRetryAggregateIfEmpty,
   RetryCheckpointResumeError,
   retryCheckpointResumeFailureDisposition,
+  reviewBacklogAffectedPathChangedAtSelectedBase,
   writeReplayArtifactMetadata,
 } from "../scripts/sentinel/main.ts";
 import { captureRawDenoLogs, persistCandidateValidationFailure } from "../scripts/sentinel/validation.ts";
@@ -129,6 +130,19 @@ Deno.test({
         "-m",
         "candidate repair",
       ]);
+      const repairSha = await git(["rev-parse", "HEAD"]);
+      assert.equal(
+        await reviewBacklogAffectedPathChangedAtSelectedBase(checkout, baseSha, repairSha, "src/handler.ts"),
+        true,
+      );
+      assert.equal(
+        await reviewBacklogAffectedPathChangedAtSelectedBase(checkout, baseSha, repairSha, "README.md"),
+        false,
+      );
+      assert.equal(
+        await reviewBacklogAffectedPathChangedAtSelectedBase(checkout, repairSha, baseSha, "src/handler.ts"),
+        false,
+      );
       await Deno.writeTextFile(`${checkout}/docs/sentinel-review-backlog.md`, "resolved\n");
       await git(["add", "docs/sentinel-review-backlog.md"]);
       await git([
