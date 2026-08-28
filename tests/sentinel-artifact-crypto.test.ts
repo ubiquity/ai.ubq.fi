@@ -478,6 +478,11 @@ Deno.test({
       manualLane.includes("HEAD:${SENTINEL_POLICY.developmentRef}"),
       "Manual backlog completion must persist its trusted documentation change",
     );
+    assert(
+      manualLane.includes("await runManualBacklogValidation({") &&
+        !manualLane.includes("await runCandidateValidation({"),
+      "Manual backlog completion must validate only its trusted documentation change",
+    );
     for (const forbidden of ["pushTemporaryCandidate", "dispatchAndResolveRevision", "dispatchSerializedPromotion"]) {
       assert(!manualLane.includes(forbidden), `Manual backlog completion must not call ${forbidden}`);
     }

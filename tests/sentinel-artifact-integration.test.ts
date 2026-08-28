@@ -14,7 +14,11 @@ import {
   retryCheckpointResumeFailureDisposition,
   writeReplayArtifactMetadata,
 } from "../scripts/sentinel/main.ts";
-import { captureRawDenoLogs, persistCandidateValidationFailure } from "../scripts/sentinel/validation.ts";
+import {
+  captureRawDenoLogs,
+  persistCandidateValidationFailure,
+  runManualBacklogValidation,
+} from "../scripts/sentinel/validation.ts";
 import { type ExportedSentinelReplayCapture, SENTINEL_REPLAY_TTL_MS } from "../src/sentinel_replay_capture.ts";
 
 const requiredPermissions = await Promise.all([
@@ -56,6 +60,34 @@ Deno.test({
     } finally {
       stdout.fill(0);
       stderr.fill(0);
+      await Deno.remove(directory, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "manual backlog validation checks only the trusted backlog document",
+  ignore: requiredPermissions.some((permission) => permission.state !== "granted"),
+  async fn() {
+    const directory = await Deno.makeTempDir({ prefix: "sentinel-manual-backlog-validation-" });
+    try {
+      await Deno.mkdir(`${directory}/docs`);
+      await Deno.writeTextFile(`${directory}/docs/sentinel-review-backlog.md`, "# Sentinel Review Backlog\n");
+      const reportPath = `${directory}/validation-manual-backlog.json`;
+      await runManualBacklogValidation({ cwd: directory, reportPath });
+      const report = JSON.parse(await Deno.readTextFile(reportPath)) as {
+        files: string[];
+        commands: Array<{ phase: string; command: string[]; exit_code: number }>;
+        passed: boolean;
+      };
+      assert.deepEqual(report.files, ["docs/sentinel-review-backlog.md"]);
+      assert.deepEqual(report.commands.map(({ phase, command, exit_code }) => ({ phase, command, exit_code })), [{
+        phase: "manual_backlog_format_check",
+        command: ["deno", "fmt", "--check", "docs/sentinel-review-backlog.md"],
+        exit_code: 0,
+      }], "manual backlog completion must not run the candidate test suite");
+      assert.equal(report.passed, true);
+    } finally {
       await Deno.remove(directory, { recursive: true });
     }
   },

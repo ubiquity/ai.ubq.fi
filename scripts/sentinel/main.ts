@@ -71,6 +71,7 @@ import {
   hashProtectedFiles,
   runCandidateValidation,
   runChecked,
+  runManualBacklogValidation,
   runTrustedGit,
   runTrustedGitUnchecked,
   scanCandidateWithGitleaks,
@@ -3315,11 +3316,9 @@ const run = async (): Promise<void> => {
       cwd: checkout,
       reportPath: `${reportsDir}/secret-scan-manual-backlog.json`,
     });
-    await runCandidateValidation({
+    await runManualBacklogValidation({
       cwd: checkout,
       reportPath: `${reportsDir}/validation-manual-backlog.json`,
-      privateDir,
-      denoDirectory,
     });
     await assertGitControlStateUnchanged(gitControlState);
     const manualSha = await commitChanges(checkout, "docs: classify Sentinel backlog item for manual review");

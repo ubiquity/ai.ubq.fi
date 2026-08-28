@@ -6,6 +6,7 @@ export type CommandResult = Readonly<{
 
 export type CandidateValidationPhase =
   | "format_check"
+  | "manual_backlog_format_check"
   | "lint"
   | "type_check"
   | "sentinel_artifact_tests"
@@ -372,6 +373,61 @@ const runValidationCommand = async (
     result.stdout.fill(0);
     result.stderr.fill(0);
   }
+};
+
+const MANUAL_BACKLOG_PATH = "docs/sentinel-review-backlog.md";
+
+export const runManualBacklogValidation = async (
+  input: Readonly<{
+    cwd: string;
+    reportPath: string;
+  }>,
+): Promise<void> => {
+  if (!input.cwd.startsWith("/") || !input.reportPath.startsWith("/")) {
+    throw new Error("Manual backlog validation paths must be absolute");
+  }
+  const report: Array<Record<string, unknown>> = [];
+  let failure: unknown = null;
+  try {
+    const started = Date.now();
+    const command = ["deno", "fmt", "--check", MANUAL_BACKLOG_PATH] as const;
+    const result = await runCommand({
+      command: Deno.execPath(),
+      args: command.slice(1),
+      cwd: input.cwd,
+      maximumOutputBytes: VALIDATION_OUTPUT_MAX_BYTES,
+    });
+    const durationMs = Date.now() - started;
+    try {
+      if (result.code === 0) {
+        report.push({ phase: "manual_backlog_format_check", command, exit_code: result.code, duration_ms: durationMs });
+      } else {
+        const validationFailure = await persistCandidateValidationFailure({
+          reportPath: input.reportPath,
+          phase: "manual_backlog_format_check",
+          command,
+          exitCode: result.code,
+          durationMs,
+          stdout: result.stdout,
+          stderr: result.stderr,
+        });
+        report.push(validationFailure);
+        throw new CandidateValidationError(validationFailure);
+      }
+    } finally {
+      result.stdout.fill(0);
+      result.stderr.fill(0);
+    }
+  } catch (error) {
+    failure = error;
+  } finally {
+    await Deno.writeTextFile(
+      input.reportPath,
+      `${JSON.stringify({ files: [MANUAL_BACKLOG_PATH], commands: report, passed: failure === null }, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+  }
+  if (failure !== null) throw failure;
 };
 
 export const runCandidateValidation = async (
