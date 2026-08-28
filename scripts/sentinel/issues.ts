@@ -753,6 +753,9 @@ export const githubIssueJobTriageReport = (
       severity: job.priority,
       title: job.title,
       affected_surface: job.files.join(", "),
+      allowed_paths: [...job.files],
+      shared_paths: [],
+      depends_on: [],
       evidence: [{
         source: "github_issue",
         reference: job.htmlUrl,

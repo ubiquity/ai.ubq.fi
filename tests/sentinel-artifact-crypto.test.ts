@@ -949,7 +949,7 @@ Deno.test({
         manualCompletionPosition > manualLedgerDispositionPosition &&
         manualTerminalizerLane.includes('branch_disposition: "runner_local_manual_checkpoint_ready"') &&
         manualTerminalizerLane.includes('"manual_required",') &&
-        orchestrator.includes("const branch = sentinelTemporaryCandidateBranch(runId, githubRunAttempt)"),
+        orchestrator.includes("const branch = sentinelRecoveryCandidateBranch(recoveryIdentity)"),
       "Round-three terminalization must retain the current run-attempt checkpoint before the manual ledger disposition",
     );
     for (

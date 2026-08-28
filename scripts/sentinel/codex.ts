@@ -35,6 +35,17 @@ export const SENTINEL_AGENT_POLICIES: Readonly<Record<SentinelAgentRole, Sentine
   monitoring: Object.freeze({ model: "gpt-5.6-sol", reasoningEffort: "medium", sandbox: "read-only" }),
 });
 
+/** Guard the owner-controlled implementation policy at every cell boundary. */
+export const assertSentinelImplementationPolicy = (): void => {
+  const policy = SENTINEL_AGENT_POLICIES.implementation;
+  if (
+    policy.model !== "gpt-5.6-luna" || policy.reasoningEffort !== "max" ||
+    policy.sandbox !== "workspace-write"
+  ) {
+    throw new Error("Provider Sentinel implementation must use gpt-5.6-luna at max with workspace-write sandbox");
+  }
+};
+
 export type CodexCommandRequest = Readonly<{
   executable: string;
   args: readonly string[];
@@ -1125,6 +1136,56 @@ export const runStructuredCodexAgent = async (
     requireNativeReviewOutput: false,
     workspaceWritable: policy.sandbox === "workspace-write",
   }, dependencies);
+};
+
+export type StructuredCodexAgentContinuationOptions = Readonly<
+  & StructuredCodexAgentOptions
+  & {
+    /** The first bounded attempt. A timeout gets one and only one continuation. */
+    initialTimeoutMs?: number;
+    /** The final bounded continuation after the first attempt times out. */
+    continuationTimeoutMs?: number;
+    /** Trusted checks to run after a timeout and before the continuation starts. */
+    onTimeout?(error: CodexInvocationError): Promise<void> | void;
+  }
+>;
+
+/**
+ * Run one implementation invocation and, only after a timeout, one bounded
+ * continuation in the same checkout. The caller owns candidate integrity
+ * checks in `onTimeout`; this helper never resets or silently substitutes a
+ * model. `runStructuredCodexAgent` still selects the role policy, so an
+ * implementation call remains pinned to gpt-5.6-luna at max reasoning.
+ */
+export const runStructuredCodexAgentWithContinuation = async (
+  options: StructuredCodexAgentContinuationOptions,
+  dependencies: CodexInvocationDependencies = {},
+): Promise<CodexInvocationResult> => {
+  const initialTimeoutMs = positiveInteger(
+    options.initialTimeoutMs ?? options.expectedMaximumRuntimeMs ?? CODEX_EXPECTED_INVOCATION_MS,
+    "initialTimeoutMs",
+  );
+  const continuationTimeoutMs = positiveInteger(
+    options.continuationTimeoutMs ?? initialTimeoutMs,
+    "continuationTimeoutMs",
+  );
+  const invoke = (attempt: 1 | 2): Promise<CodexInvocationResult> =>
+    runStructuredCodexAgent({
+      ...options,
+      prompt: `${options.prompt}\n\n${
+        attempt === 1
+          ? "Finish this bounded implementation-cell invocation and return the required JSON before the deadline. Prioritize the scoped repair over optional work."
+          : "The first bounded implementation-cell invocation timed out. Continue from the existing cell changes. Inspect the current diff, do not redo completed work, and return the required JSON within this final bounded continuation."
+      }`,
+      expectedMaximumRuntimeMs: attempt === 1 ? initialTimeoutMs : continuationTimeoutMs,
+    }, dependencies);
+  try {
+    return await invoke(1);
+  } catch (error) {
+    if (!(error instanceof CodexInvocationError) || error.failure !== "invocation_timeout") throw error;
+    await options.onTimeout?.(error);
+    return await invoke(2);
+  }
 };
 
 export const runNativeCodexReview = async (

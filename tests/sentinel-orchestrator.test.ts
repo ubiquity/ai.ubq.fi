@@ -8,6 +8,7 @@ import {
 import {
   agentCheckoutPath,
   assertRetainedReplayArtifactBudget,
+  assertTriageMatchesMatrixPlan,
   candidateRevertDiffArguments,
   candidateShaForReview,
   createSentinelCandidateRecoveryRecord,
@@ -58,6 +59,7 @@ import {
   withStageHeartbeat,
   zeroUnselectedReplayBodies,
 } from "../scripts/sentinel/main.ts";
+import { buildMatrixPlan } from "../scripts/sentinel/matrix.ts";
 import { CodexInvocationError } from "../scripts/sentinel/codex.ts";
 import type {
   GitHubIssue,
@@ -950,6 +952,49 @@ Deno.test("every structured-output property declares an explicit JSON Schema typ
   visit(MONITOR_OUTPUT_SCHEMA, "monitor");
 });
 
+Deno.test("matrix convergence compares triage ownership in planner fingerprint order", async () => {
+  const interval = computeSentinelInterval("incident", now);
+  const finding = (id: string, fingerprint: string, path: string): TriageReport["findings"][number] => ({
+    id,
+    fingerprint,
+    severity: "P1",
+    title: `Repair ${id}`,
+    affected_surface: path,
+    allowed_paths: [path],
+    shared_paths: [],
+    depends_on: [],
+    evidence: [{ source: "repository", reference: path, detail: `Defect in ${id}` }],
+    proposed_correction: `Correct ${id}`,
+    validation_requirements: [`Validate ${id}`],
+    actionable: true,
+  });
+  const triage: TriageReport = {
+    schema_version: 1,
+    interval,
+    findings: [
+      finding("first-by-id", "f".repeat(64), "src/first.ts"),
+      finding("second-by-id", "0".repeat(64), "src/second.ts"),
+    ],
+    no_findings_reason: null,
+  };
+  const plan = await buildMatrixPlan({
+    run_id: "ownership-order",
+    run_attempt: 1,
+    base_sha: "a".repeat(40),
+    evidence_digests: [],
+    findings: triage.findings.map((item) => ({
+      id: item.id,
+      fingerprint: item.fingerprint,
+      allowed_paths: item.allowed_paths,
+      prohibited_paths: SENTINEL_POLICY.protectedImplementationPaths,
+      shared_paths: item.shared_paths,
+      depends_on: item.depends_on,
+      validation_requirements: item.validation_requirements,
+    })),
+  });
+  assert.doesNotThrow(() => assertTriageMatchesMatrixPlan(triage, plan));
+});
+
 Deno.test("observe cycle cannot reach replay, repair, Git, deployment, promotion, or rollback capabilities", async () => {
   const interval = computeSentinelInterval("observe", now);
   const triage: TriageReport = {
@@ -958,10 +1003,13 @@ Deno.test("observe cycle cannot reach replay, repair, Git, deployment, promotion
     findings: [
       {
         id: "finding-1",
-        fingerprint: "0123456789abcdef",
+        fingerprint: "0123456789abcdef".repeat(4),
         severity: "P1",
         title: "Actionable provider failure",
         affected_surface: "/v1/responses",
+        allowed_paths: ["src/provider.ts"],
+        shared_paths: [],
+        depends_on: [],
         evidence: [{ source: "deno_log", reference: "line:1", detail: "provider transport failed" }],
         proposed_correction: "Repair the provider transport path.",
         validation_requirements: ["Replay the failed request."],
@@ -969,10 +1017,13 @@ Deno.test("observe cycle cannot reach replay, repair, Git, deployment, promotion
       },
       {
         id: "finding-2",
-        fingerprint: "fedcba9876543210",
+        fingerprint: "fedcba9876543210".repeat(4),
         severity: "P3",
         title: "Efficiency opportunity",
         affected_surface: "provider catalog",
+        allowed_paths: ["src/provider.ts"],
+        shared_paths: [],
+        depends_on: [],
         evidence: [{ source: "repository", reference: "src/provider.ts", detail: "duplicate lookup" }],
         proposed_correction: "Reuse the existing lookup.",
         validation_requirements: ["Measure lookup count."],
@@ -3062,6 +3113,9 @@ Deno.test("implementation contract requires a disposition for every triage findi
       severity: "P1",
       title: "one",
       affected_surface: "responses",
+      allowed_paths: ["src/provider.ts"],
+      shared_paths: [],
+      depends_on: [],
       evidence: [{ source: "deno_log", reference: "line 1", detail: "failure" }],
       proposed_correction: "fix it",
       validation_requirements: ["test"],
@@ -3104,6 +3158,34 @@ Deno.test("triage requires a concrete reason only when it has no findings", () =
   assert.equal(
     isTriageReport({ schema_version: 1, interval, findings: [], no_findings_reason: "No failures in the interval." }),
     true,
+  );
+});
+
+Deno.test("triage fingerprints use the matrix SHA-256 contract", () => {
+  const interval = computeSentinelInterval("hourly", now);
+  const finding = {
+    id: "one",
+    fingerprint: "1".repeat(64),
+    severity: "P1",
+    title: "one",
+    affected_surface: "responses",
+    allowed_paths: ["src/provider.ts"],
+    shared_paths: [],
+    depends_on: [],
+    evidence: [{ source: "repository", reference: "src/provider.ts", detail: "failure" }],
+    proposed_correction: "fix it",
+    validation_requirements: ["test"],
+    actionable: true,
+  } as const;
+  assert.equal(isTriageReport({ schema_version: 1, interval, findings: [finding], no_findings_reason: null }), true);
+  assert.equal(
+    isTriageReport({
+      schema_version: 1,
+      interval,
+      findings: [{ ...finding, fingerprint: "1".repeat(16) }],
+      no_findings_reason: null,
+    }),
+    false,
   );
 });
 

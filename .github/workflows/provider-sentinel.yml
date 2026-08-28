@@ -51,7 +51,11 @@ permissions:
   pull-requests: write
 
 jobs:
-  sentinel:
+  # The preparation job is the only writer of the cycle's immutable matrix
+  # manifest.  The coordinator-owned main.ts entrypoint uses the GitHub job
+  # identity as its phase contract; it emits MatrixPlanV1 at the fixed report
+  # path below before this job publishes the ciphertext envelope.
+  prepare:
     if: >-
       (
         github.event_name == 'workflow_dispatch' &&
@@ -76,6 +80,514 @@ jobs:
       )
     runs-on: ubuntu-22.04
     timeout-minutes: 360
+    permissions:
+      actions: write
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      sentinel_mode: ${{ steps.select-mode.outputs.mode }}
+      base_sha: ${{ steps.matrix-plan.outputs.base_sha }}
+      plan_digest: ${{ steps.matrix-plan.outputs.plan_digest }}
+      matrix: ${{ steps.matrix-plan.outputs.matrix }}
+      has_cells: ${{ steps.matrix-plan.outputs.has_cells }}
+      plan_artifact_name: ${{ steps.matrix-plan.outputs.artifact_name }}
+      incident_claimed: ${{ steps.incident-claim.outcome == 'success' }}
+    steps:
+      - name: Require ciphertext-only artifact policy
+        shell: bash
+        env:
+          REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
+          SENTINEL_ARTIFACT_KEY: ${{ secrets.SENTINEL_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          echo "SENTINEL_ARTIFACT_POLICY_ACTIVE=false" >> "$GITHUB_ENV"
+          case "$REPOSITORY_VISIBILITY" in
+            public|private|internal) ;;
+            *) echo "::error::Provider Sentinel received an unsupported repository visibility."; exit 1 ;;
+          esac
+          if [ -z "$SENTINEL_ARTIFACT_KEY" ]; then
+            echo "::error::SENTINEL_ARTIFACT_KEY is required before log capture."
+            exit 1
+          fi
+          decoded_bytes="$(printf '%s' "$SENTINEL_ARTIFACT_KEY" | base64 --decode | wc -c | tr -d ' ')"
+          if [ "$decoded_bytes" != "32" ]; then
+            echo "::error::SENTINEL_ARTIFACT_KEY must encode exactly 32 bytes."
+            exit 1
+          fi
+          echo "SENTINEL_ARTIFACT_POLICY_ACTIVE=true" >> "$GITHUB_ENV"
+          echo "Ciphertext-only evidence policy active for $REPOSITORY_VISIBILITY visibility." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Select immutable run mode
+        id: select-mode
+        shell: bash
+        env:
+          REQUESTED_MODE: ${{ inputs.sentinel_mode }}
+          REQUESTED_INCIDENT_ID: ${{ inputs.incident_id }}
+          REQUESTED_INCIDENT_ATTEMPT: ${{ inputs.incident_attempt }}
+          REQUESTED_INCIDENT_START_MS: ${{ inputs.incident_start_ms }}
+          REQUESTED_INCIDENT_ACK_NONCE: ${{ inputs.incident_ack_nonce }}
+          EXPECTED_SENTINEL_ACTOR_ID: "319834869"
+          EVENT_ACTOR_ID: ${{ github.actor_id }}
+          EVENT_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          case "$GITHUB_EVENT_NAME" in
+            workflow_dispatch)
+              case "$REQUESTED_MODE" in
+                preview|hourly) mode="$REQUESTED_MODE" ;;
+                incident)
+                  if [ "$EVENT_ACTOR_ID" != "$EXPECTED_SENTINEL_ACTOR_ID" ]; then
+                    echo "::error::Incident dispatch did not come from the Ubiquity Sentinel GitHub App."; exit 1
+                  fi
+                  if [ "$EVENT_RUN_ATTEMPT" != "1" ]; then
+                    echo "::error::Incident workflow re-runs are forbidden."; exit 1
+                  fi
+                  if ! [[ "$REQUESTED_INCIDENT_ID" =~ ^provider-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]; then
+                    echo "::error::Incident ID is invalid."; exit 1
+                  fi
+                  if ! [[ "$REQUESTED_INCIDENT_ATTEMPT" =~ ^[1-3]$ ]]; then
+                    echo "::error::Incident attempt is invalid."; exit 1
+                  fi
+                  if ! [[ "$REQUESTED_INCIDENT_START_MS" =~ ^[1-9][0-9]{12}$ ]]; then
+                    echo "::error::Incident start is invalid."; exit 1
+                  fi
+                  if ! [[ "$REQUESTED_INCIDENT_ACK_NONCE" =~ ^[A-Za-z0-9_-]{43}$ ]]; then
+                    echo "::error::Incident acknowledgement nonce is invalid."; exit 1
+                  fi
+                  mode=incident
+                  echo "SENTINEL_INCIDENT_ID=$REQUESTED_INCIDENT_ID" >> "$GITHUB_ENV"
+                  echo "SENTINEL_INCIDENT_ATTEMPT=$REQUESTED_INCIDENT_ATTEMPT" >> "$GITHUB_ENV"
+                  echo "SENTINEL_INCIDENT_START_MS=$REQUESTED_INCIDENT_START_MS" >> "$GITHUB_ENV"
+                  echo "SENTINEL_INCIDENT_ACK_NONCE=$REQUESTED_INCIDENT_ACK_NONCE" >> "$GITHUB_ENV"
+                  echo "SENTINEL_SIGNAL_ID=${REQUESTED_INCIDENT_ID}-a${REQUESTED_INCIDENT_ATTEMPT}" >> "$GITHUB_ENV"
+                  ;;
+                *) echo "::error::Unsupported Provider Sentinel workflow mode."; exit 1 ;;
+              esac
+              ;;
+            schedule)
+              if [ "${{ github.event.schedule }}" = "0 * * * *" ]; then mode=hourly; else
+                echo "::error::Unsupported Provider Sentinel schedule."; exit 1
+              fi
+              ;;
+                *) echo "::error::Unsupported Provider Sentinel event."; exit 1 ;;
+          esac
+          echo "SENTINEL_MODE=$mode" >> "$GITHUB_ENV"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "Sentinel mode: $mode" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Claim incident workflow run
+        id: incident-claim
+        if: github.event_name == 'workflow_dispatch' && inputs.sentinel_mode == 'incident'
+        shell: bash
+        env:
+          DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
+          SENTINEL_INCIDENT_ID: ${{ inputs.incident_id }}
+          SENTINEL_INCIDENT_ATTEMPT: ${{ inputs.incident_attempt }}
+          SENTINEL_INCIDENT_ACK_NONCE: ${{ inputs.incident_ack_nonce }}
+        run: |
+          set -euo pipefail
+          response_file="$RUNNER_TEMP/sentinel-claim-response"
+          request_body="$(jq -cn --arg incident_id "$SENTINEL_INCIDENT_ID" --arg attempt "$SENTINEL_INCIDENT_ATTEMPT" --arg workflow_run_id "$GITHUB_RUN_ID" --arg ack_nonce "$SENTINEL_INCIDENT_ACK_NONCE" '{incident_id: $incident_id, attempt: ($attempt | tonumber), workflow_run_id: ($workflow_run_id | tonumber), ack_nonce: $ack_nonce}')"
+          status="$(curl --silent --show-error --max-time 20 --output "$response_file" --write-out '%{http_code}' --request POST --header "Authorization: Bearer $DENO_DEPLOY_TOKEN" --header "Content-Type: application/json" --data "$request_body" https://ai-ubq-fi.ubiquity-dao.deno.net/admin/sentinel/incidents/claim)"
+          if [ "$status" != "204" ]; then echo "::error::Incident workflow claim failed with HTTP $status."; exit 1; fi
+
+      - name: Configure private Deno cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno_dir="$RUNNER_TEMP/sentinel-deno-cache"
+          mkdir -p "$deno_dir"; chmod 700 "$deno_dir"
+          echo "DENO_DIR=$deno_dir" >> "$GITHUB_ENV"
+          echo "SENTINEL_CODEX_AUTH_STATE_DIR=$RUNNER_TEMP/sentinel-codex-auth-state" >> "$GITHUB_ENV"
+          echo "SENTINEL_CODEX_AUTH_STATE_ENVELOPE=$RUNNER_TEMP/sentinel-codex-auth-envelope/sentinel-codex-auth-state-v1.json" >> "$GITHUB_ENV"
+
+      - name: Check out preparation repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: 2.9.5
+
+      - name: Restore encrypted Codex auth state for preparation
+        id: auth-state-prepare
+        continue-on-error: true
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SENTINEL_CODEX_AUTH_GENERATION: ${{ vars.SENTINEL_CODEX_AUTH_GENERATION }}
+          SENTINEL_CODEX_AUTH_STATE_KEY: ${{ secrets.SENTINEL_CODEX_AUTH_STATE_KEY }}
+          SENTINEL_CODEX_AUTH_SLOT_1_B64: ${{ secrets.SENTINEL_CODEX_AUTH_SLOT_1_B64 }}
+          SENTINEL_CODEX_AUTH_SLOT_2_B64: ${{ secrets.SENTINEL_CODEX_AUTH_SLOT_2_B64 }}
+        run: |
+          set -euo pipefail
+          deno run --frozen --lock=deno.lock --allow-env --allow-net --allow-read="$RUNNER_TEMP" --allow-write="$RUNNER_TEMP" --allow-run=unzip scripts/sentinel/auth-state.ts prepare "$SENTINEL_CODEX_AUTH_STATE_DIR"
+
+      - name: Probe preparation Codex auth readiness
+        id: auth-state-readiness
+        if: always() && steps.auth-state-prepare.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno run --frozen --lock=deno.lock --allow-env --allow-net --allow-read="$RUNNER_TEMP" --allow-write="$RUNNER_TEMP" scripts/sentinel/auth-state.ts probe "$SENTINEL_CODEX_AUTH_STATE_DIR"
+
+      - name: Enforce preparation auth readiness
+        if: always()
+        shell: bash
+        env:
+          PREPARE_OUTCOME: ${{ steps.auth-state-prepare.outcome }}
+          READINESS_OUTCOME: ${{ steps.auth-state-readiness.outcome }}
+        run: |
+          set -euo pipefail
+          if [ "$PREPARE_OUTCOME" != "success" ] || [ "$READINESS_OUTCOME" != "success" ]; then
+            echo "::error::Provider Sentinel preparation auth state is not ready."; exit 1
+          fi
+
+      - name: Install preparation prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno cache --frozen --lock=deno.lock scripts/sentinel/main.ts scripts/sentinel/matrix.ts
+
+      - name: Prepare immutable MatrixPlanV1
+        id: matrix-plan
+        shell: bash
+        env:
+          DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
+          PREVIEW_UOS_AI_USER_TOKEN: ${{ secrets.PREVIEW_UOS_AI_USER_TOKEN }}
+          SENTINEL_REPLAY_KEY: ${{ secrets.SENTINEL_REPLAY_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # m05 wires this existing --mode entrypoint to the prepare phase by
+          # the stable GITHUB_JOB=prepare contract; no new CLI flag is used.
+          deno run --cached-only --frozen --lock=deno.lock --allow-env --allow-net --allow-read --allow-write --allow-run scripts/sentinel/main.ts --mode "$SENTINEL_MODE"
+          plan_path=".sentinel/reports/matrix-plan.json"
+          test -s "$plan_path"
+          jq -e --arg run_id "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" --arg base_sha "$(jq -r '.base_sha' "$plan_path")" '
+            .schema_version == 1 and .run_id == $run_id and .run_attempt == ($attempt | tonumber) and
+            (.base_sha | test("^[0-9a-f]{40}$")) and .maximum_parallelism == 4 and
+            (.cells | type == "array" and length <= 4) and
+            all(.cells[]; (.base_sha == $base_sha) and (.branch | startswith("sentinel/candidate-")) and
+              (.cell_id | test("^cell-[0-9a-f]{64}$")))
+          ' "$plan_path" >/dev/null
+          matrix_json="$(jq -c '{include: [.cells[] | {cell_id, finding_ids, base_sha, branch, report_path, artifact_name}]}' "$plan_path")"
+          has_cells="$(jq -r 'if (.cells | length) > 0 then "true" else "false" end' "$plan_path")"
+          base_sha="$(jq -r '.base_sha' "$plan_path")"
+          plan_digest="$(jq -r '.manifest_digest' "$plan_path")"
+          artifact_name="sentinel-matrix-plan-v1-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          printf 'base_sha=%s\nplan_digest=%s\nhas_cells=%s\nartifact_name=%s\n' "$base_sha" "$plan_digest" "$has_cells" "$artifact_name" >> "$GITHUB_OUTPUT"
+          printf 'matrix=%s\n' "$matrix_json" >> "$GITHUB_OUTPUT"
+          echo "Matrix plan prepared at immutable base $base_sha with $has_cells cell set." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Encrypt preparation evidence
+        shell: bash
+        env:
+          SENTINEL_ARTIFACT_KEY: ${{ secrets.SENTINEL_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          deno run --allow-env=GITHUB_ACTIONS,SENTINEL_ARTIFACT_KEY --allow-read=.sentinel/raw-logs,.sentinel/reports,.sentinel/encrypted --allow-write=.sentinel/encrypted scripts/sentinel/encrypt-artifacts.ts
+          test -f .sentinel/encrypted/sentinel-evidence-v1.json
+
+      - name: Upload encrypted immutable matrix plan
+        id: matrix-plan-upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sentinel-matrix-plan-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .sentinel/encrypted/sentinel-evidence-v1.json
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 90
+
+      - name: Scrub preparation plaintext after durable upload
+        if: always() && steps.matrix-plan-upload.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno run --allow-env=GITHUB_ACTIONS --allow-read=.sentinel/raw-logs,.sentinel/reports,.sentinel/candidate-worktree,.sentinel/private --allow-write=.sentinel/raw-logs,.sentinel/reports,.sentinel/candidate-worktree,.sentinel/private scripts/sentinel/scrub-artifacts.ts
+
+  repair:
+    needs: prepare
+    if: needs.prepare.result == 'success' && needs.prepare.outputs.has_cells == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    permissions:
+      actions: write
+      contents: write
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - name: Require encrypted matrix inputs
+        shell: bash
+        env:
+          SENTINEL_ARTIFACT_KEY: ${{ secrets.SENTINEL_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SENTINEL_ARTIFACT_KEY" ]; then echo "::error::SENTINEL_ARTIFACT_KEY is required."; exit 1; fi
+          decoded_bytes="$(printf '%s' "$SENTINEL_ARTIFACT_KEY" | base64 --decode | wc -c | tr -d ' ')"
+          test "$decoded_bytes" = 32
+
+      - name: Check out immutable cell base
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ matrix.base_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: 2.9.5
+
+      - name: Configure private cell state
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno_dir="$RUNNER_TEMP/sentinel-deno-cache"; mkdir -p "$deno_dir"; chmod 700 "$deno_dir"
+          echo "DENO_DIR=$deno_dir" >> "$GITHUB_ENV"
+          echo "SENTINEL_CODEX_AUTH_STATE_DIR=$RUNNER_TEMP/sentinel-codex-auth-state" >> "$GITHUB_ENV"
+
+      - name: Create exact cell branch and verify base
+        shell: bash
+        env:
+          CELL_BASE_SHA: ${{ matrix.base_sha }}
+          CELL_BRANCH: ${{ matrix.branch }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CELL_BASE_SHA"
+          git switch --create "$CELL_BRANCH" "$CELL_BASE_SHA"
+          test "$(git rev-parse HEAD)" = "$CELL_BASE_SHA"
+          test "$(git branch --show-current)" = "$CELL_BRANCH"
+
+      - name: Download encrypted immutable plan
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.prepare.outputs.plan_artifact_name }}
+          path: ${{ runner.temp }}/sentinel-matrix-plan
+
+      - name: Restore Codex auth state for cell
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SENTINEL_CODEX_AUTH_GENERATION: ${{ vars.SENTINEL_CODEX_AUTH_GENERATION }}
+          SENTINEL_CODEX_AUTH_STATE_KEY: ${{ secrets.SENTINEL_CODEX_AUTH_STATE_KEY }}
+          SENTINEL_CODEX_AUTH_SLOT_1_B64: ${{ secrets.SENTINEL_CODEX_AUTH_SLOT_1_B64 }}
+          SENTINEL_CODEX_AUTH_SLOT_2_B64: ${{ secrets.SENTINEL_CODEX_AUTH_SLOT_2_B64 }}
+        run: |
+          set -euo pipefail
+          deno run --frozen --lock=deno.lock --allow-env --allow-net --allow-read="$RUNNER_TEMP" --allow-write="$RUNNER_TEMP" --allow-run=unzip scripts/sentinel/auth-state.ts prepare "$SENTINEL_CODEX_AUTH_STATE_DIR"
+
+      - name: Materialize and verify immutable cell plan
+        shell: bash
+        env:
+          SENTINEL_ARTIFACT_KEY: ${{ secrets.SENTINEL_ARTIFACT_KEY }}
+          CELL_ID: ${{ matrix.cell_id }}
+          CELL_BASE_SHA: ${{ matrix.base_sha }}
+          CELL_BRANCH: ${{ matrix.branch }}
+        run: |
+          set -euo pipefail
+          envelope="$(find "$RUNNER_TEMP/sentinel-matrix-plan" -type f -name sentinel-evidence-v1.json -print -quit)"
+          test -n "$envelope"
+          deno eval --frozen --lock=deno.lock --allow-env=RUNNER_TEMP,SENTINEL_ARTIFACT_KEY,CELL_ID,CELL_BASE_SHA,CELL_BRANCH --allow-read="$RUNNER_TEMP" --allow-write="$RUNNER_TEMP" '
+            import { decodeSentinelArtifactKey, decryptSentinelArtifact } from "./scripts/sentinel/artifact-crypto.ts";
+            import { parseMatrixPlanV1 } from "./scripts/sentinel/matrix.ts";
+            const root = Deno.env.get("RUNNER_TEMP")!;
+            const entries: string[] = [];
+            for await (const entry of Deno.readDir(`${root}/sentinel-matrix-plan`)) if (entry.isFile) entries.push(entry.name);
+            const envelope = `${root}/sentinel-matrix-plan/${entries.find((name) => name === "sentinel-evidence-v1.json") ?? ""}`;
+            if (!envelope.endsWith("/sentinel-evidence-v1.json")) throw new Error("encrypted matrix plan is missing");
+            const key = decodeSentinelArtifactKey(Deno.env.get("SENTINEL_ARTIFACT_KEY")!);
+            try {
+              const files = await decryptSentinelArtifact(await Deno.readFile(envelope), key);
+              try {
+                const planFile = files.find((file) => file.path === "reports/matrix-plan.json");
+                const triageFile = files.find((file) => file.path === "reports/triage.json");
+                if (!planFile || !triageFile) throw new Error("Matrix plan or triage report was not found in ciphertext");
+                const plan = await parseMatrixPlanV1(planFile.bytes);
+                const cell = plan.cells.find((candidate) => candidate.cell_id === Deno.env.get("CELL_ID"));
+                if (!cell || cell.base_sha !== Deno.env.get("CELL_BASE_SHA") || cell.branch !== Deno.env.get("CELL_BRANCH")) throw new Error("cell contract drifted from MatrixPlanV1");
+                await Deno.writeFile(`${root}/sentinel-matrix-plan.json`, planFile.bytes, { create: true, mode: 0o600 });
+                await Deno.writeFile(`${root}/sentinel-matrix-triage.json`, triageFile.bytes, { create: true, mode: 0o600 });
+              } finally { for (const file of files) file.bytes.fill(0); }
+            } finally { key.fill(0); }
+          '
+
+      - name: Install isolated cell prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update; sudo apt-get install --yes bubblewrap
+          npm install --global --ignore-scripts --no-audit --no-fund @openai/codex@0.149.0
+          mkdir -p "$RUNNER_TEMP/sentinel-bin"
+          GOBIN="$RUNNER_TEMP/sentinel-bin" go install github.com/zricethezav/gitleaks/v8@v8.28.0
+          echo "$RUNNER_TEMP/sentinel-bin" >> "$GITHUB_PATH"
+          bwrap --version; codex --version; "$RUNNER_TEMP/sentinel-bin/gitleaks" version
+          deno cache --frozen --lock=deno.lock scripts/sentinel/matrix-cell.ts scripts/sentinel/validation.ts tests/*.ts
+
+      - name: Run immutable Luna matrix cell
+        id: matrix-cell-run
+        env:
+          CELL_ID: ${{ matrix.cell_id }}
+          CELL_BASE_SHA: ${{ matrix.base_sha }}
+          CELL_BRANCH: ${{ matrix.branch }}
+          CELL_REPORT_PATH: ${{ runner.temp }}/sentinel-cell-report.json
+          SENTINEL_ARTIFACT_KEY: ${{ secrets.SENTINEL_ARTIFACT_KEY }}
+          SENTINEL_CODEX_AUTH_STATE_KEY: ${{ secrets.SENTINEL_CODEX_AUTH_STATE_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno eval --frozen --lock=deno.lock --allow-env --allow-net --allow-read --allow-write --allow-run '
+            import { IMPLEMENTATION_OUTPUT_SCHEMA, isTriageReport } from "./scripts/sentinel/types.ts";
+            import { parseMatrixPlanV1 } from "./scripts/sentinel/matrix.ts";
+            import { runMatrixCell } from "./scripts/sentinel/matrix-cell.ts";
+            import { runCandidateValidation } from "./scripts/sentinel/validation.ts";
+            const env = (name: string): string => Deno.env.get(name) ?? "";
+            const root = env("RUNNER_TEMP");
+            const plan = await parseMatrixPlanV1(await Deno.readTextFile(`${root}/sentinel-matrix-plan.json`));
+            const triageValue: unknown = JSON.parse(await Deno.readTextFile(`${root}/sentinel-matrix-triage.json`));
+            if (!isTriageReport(triageValue)) throw new Error("Matrix cell triage report is invalid");
+            const cell = plan.cells.find((candidate) => candidate.cell_id === env("CELL_ID"));
+            if (!cell) throw new Error("Matrix cell is absent from the immutable plan");
+            const authSlots: Record<string, string> = {};
+            const sensitiveValues = [env("SENTINEL_ARTIFACT_KEY"), env("SENTINEL_CODEX_AUTH_STATE_KEY"), env("GITHUB_TOKEN")].filter((value) => value.length >= 8);
+            const encode = (value: string): string => { const bytes = new TextEncoder().encode(value); try { let binary = ""; for (const byte of bytes) binary += String.fromCharCode(byte); return btoa(binary); } finally { bytes.fill(0); } };
+            for (const slot of [1, 2] as const) {
+              try {
+                const raw = await Deno.readTextFile(`${root}/sentinel-codex-auth-state/slots/${slot}/auth.json`);
+                authSlots[`slot${slot}B64`] = encode(raw);
+                const parsed = JSON.parse(raw);
+                for (const value of Object.values(parsed.tokens ?? {})) if (typeof value === "string" && value.length >= 8) sensitiveValues.push(value);
+              } catch (error) { if (!(error instanceof Deno.errors.NotFound)) throw error; }
+            }
+            await Deno.writeTextFile(`${root}/sentinel-cell-implementation-schema.json`, JSON.stringify(IMPLEMENTATION_OUTPUT_SCHEMA), { create: true, mode: 0o600 });
+            const report = await runMatrixCell({
+              plan, cell, checkoutPath: Deno.cwd(), reportPath: env("CELL_REPORT_PATH"),
+              secretScanReportPath: `${root}/sentinel-cell-secret-scan.json`, outputSchemaPath: `${root}/sentinel-cell-implementation-schema.json`,
+              authSlots, sensitiveValues, findings: triageValue.findings.filter((finding) => cell.finding_ids.includes(finding.id)),
+              validate: async ({ checkoutPath }) => {
+                try {
+                  await runCandidateValidation({ cwd: checkoutPath, reportPath: `${root}/sentinel-cell-validation.json`, privateDir: root, denoDirectory: env("DENO_DIR") });
+                  return { passed: true, checks: [{ name: "candidate-validation", passed: true, detail: "existing candidate validation passed" }] };
+                } catch (error) {
+                  return { passed: false, checks: [{ name: "candidate-validation", passed: false, detail: error instanceof Error ? error.message : "candidate validation failed" }] };
+                }
+              },
+            });
+            await Deno.writeTextFile(`${root}/sentinel-cell-status`, report.status, { create: true, mode: 0o600 });
+          '
+
+      - name: Publish exact cell branch with lease protection
+        id: cell-push
+        if: always()
+        continue-on-error: true
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CELL_BRANCH: ${{ matrix.branch }}
+          CELL_REPORT_PATH: ${{ runner.temp }}/sentinel-cell-report.json
+        run: |
+          set -euo pipefail
+          status="$(tr -d '\r\n' < "$CELL_REPORT_PATH" | jq -r '.status' 2>/dev/null || true)"
+          if [ "$status" != "succeeded" ]; then echo "Cell did not produce a publishable success report."; exit 0; fi
+          basic_token="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 --wrap=0)"
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $basic_token" GIT_TERMINAL_PROMPT=0
+          remote_sha="$(git ls-remote origin "refs/heads/$CELL_BRANCH" | awk 'NF { print $1 }')"
+          remote_sha="${remote_sha:-0000000000000000000000000000000000000000}"
+          if ! [[ "$remote_sha" =~ ^[0-9a-f]{40}$ ]]; then echo "::error::Cell remote SHA is invalid."; exit 1; fi
+          git push --force-with-lease="refs/heads/$CELL_BRANCH:$remote_sha" origin "HEAD:refs/heads/$CELL_BRANCH"
+          unset basic_token GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_TERMINAL_PROMPT
+
+      - name: Encrypt cell report
+        if: always()
+        shell: bash
+        env:
+          CELL_ID: ${{ matrix.cell_id }}
+          SENTINEL_ARTIFACT_KEY: ${{ secrets.SENTINEL_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ".sentinel/reports/matrix/${CELL_ID}"
+          cp "$RUNNER_TEMP/sentinel-cell-report.json" ".sentinel/reports/matrix/${CELL_ID}/cell.json"
+          deno run --allow-env=GITHUB_ACTIONS,SENTINEL_ARTIFACT_KEY --allow-read=.sentinel/raw-logs,.sentinel/reports,.sentinel/encrypted --allow-write=.sentinel/encrypted scripts/sentinel/encrypt-artifacts.ts
+
+      - name: Upload encrypted cell evidence
+        id: cell-evidence-upload
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: .sentinel/encrypted/sentinel-evidence-v1.json
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 90
+
+      - name: Scrub cell plaintext after durable upload
+        if: always() && steps.cell-evidence-upload.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno run --allow-env=GITHUB_ACTIONS --allow-read=.sentinel/raw-logs,.sentinel/reports,.sentinel/candidate-worktree,.sentinel/private --allow-write=.sentinel/raw-logs,.sentinel/reports,.sentinel/candidate-worktree,.sentinel/private scripts/sentinel/scrub-artifacts.ts
+
+      - name: Require successful immutable cell publication
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(jq -r '.status // "missing"' "$RUNNER_TEMP/sentinel-cell-report.json" 2>/dev/null || printf missing)"
+          push_outcome="${{ steps.cell-push.outcome }}"
+          if [ "$status" != "succeeded" ] || [ "$push_outcome" != "success" ]; then
+            echo "::error::Required matrix cell failed closed: status=$status push=$push_outcome"
+            exit 1
+          fi
+
+      - name: Remove cell plaintext and auth state
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          for target in "$RUNNER_TEMP/sentinel-codex-auth-state" "$RUNNER_TEMP/sentinel-matrix-plan" "$RUNNER_TEMP/sentinel-matrix-plan.json" "$RUNNER_TEMP/sentinel-matrix-triage.json" "$RUNNER_TEMP/sentinel-cell-report.json"; do
+            if [ -e "$target" ]; then find "$target" -type f -exec sh -c ': > "$1"' _ {} \; 2>/dev/null || true; rm -rf -- "$target"; fi
+          done
+
+  converge:
+    needs: [prepare, repair]
+    if: >-
+      always() &&
+      (
+        github.event_name == 'workflow_dispatch' &&
+        github.ref == 'refs/heads/development' &&
+        (
+          inputs.sentinel_mode == 'preview' ||
+          (
+            inputs.sentinel_mode == 'hourly' &&
+            vars.SENTINEL_AUTONOMY_ENABLED == 'true'
+          ) ||
+          (
+            inputs.sentinel_mode == 'incident' &&
+            github.actor_id == '319834869' &&
+            github.run_attempt == 1 &&
+            vars.SENTINEL_AUTONOMY_ENABLED == 'true'
+          )
+        )
+      ) ||
+      (
+        github.event_name == 'schedule' &&
+        vars.SENTINEL_AUTONOMY_ENABLED == 'true'
+      )
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    permissions:
+      actions: write
+      contents: write
+      issues: write
+      pull-requests: write
     steps:
       - name: Require ciphertext-only artifact policy
         shell: bash
@@ -179,7 +691,7 @@ jobs:
 
       - name: Claim incident workflow run
         id: incident-claim
-        if: github.event_name == 'workflow_dispatch' && inputs.sentinel_mode == 'incident'
+        if: github.event_name == 'workflow_dispatch' && inputs.sentinel_mode == 'incident' && needs.prepare.outputs.incident_claimed != 'true'
         shell: bash
         env:
           DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
@@ -229,6 +741,10 @@ jobs:
       - name: Check out full repository history
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          # Convergence always starts from the exact immutable plan base.  The
+          # fallback is used only when preparation failed before it emitted a
+          # base and is still guarded by the existing incident failure path.
+          ref: ${{ needs.prepare.outputs.base_sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -280,6 +796,148 @@ jobs:
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: 2.9.5
+
+      - name: Download encrypted matrix plan for convergence
+        if: needs.prepare.result == 'success'
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.prepare.outputs.plan_artifact_name }}
+          path: ${{ runner.temp }}/sentinel-matrix-plan
+
+      - name: Download encrypted matrix cell reports for convergence
+        if: needs.prepare.result == 'success' && needs.prepare.outputs.has_cells == 'true'
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: sentinel-matrix-cell-v1-${{ github.run_id }}-${{ github.run_attempt }}-*
+          path: ${{ runner.temp }}/sentinel-matrix-cell-reports
+          merge-multiple: false
+
+      - name: Materialize and verify encrypted matrix convergence inputs
+        id: matrix-convergence-inputs
+        if: needs.prepare.result == 'success'
+        shell: bash
+        env:
+          SENTINEL_ARTIFACT_KEY: ${{ secrets.SENTINEL_ARTIFACT_KEY }}
+          EXPECTED_RUN_ID: ${{ github.run_id }}
+          EXPECTED_RUN_ATTEMPT: ${{ github.run_attempt }}
+          EXPECTED_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
+          EXPECTED_PLAN_DIGEST: ${{ needs.prepare.outputs.plan_digest }}
+        run: |
+          set -euo pipefail
+          test -n "$SENTINEL_ARTIFACT_KEY"
+          mkdir -p .sentinel/reports/matrix
+          deno eval --frozen --lock=deno.lock --allow-env=RUNNER_TEMP,SENTINEL_ARTIFACT_KEY,EXPECTED_RUN_ID,EXPECTED_RUN_ATTEMPT,EXPECTED_BASE_SHA,EXPECTED_PLAN_DIGEST --allow-read="$RUNNER_TEMP" --allow-write=.sentinel/reports '
+            import { decodeSentinelArtifactKey, decryptSentinelArtifact } from "./scripts/sentinel/artifact-crypto.ts";
+            import { parseMatrixPlanV1, validateMatrixCellReportV1, canonicalMatrixJson } from "./scripts/sentinel/matrix.ts";
+            import { isTriageReport } from "./scripts/sentinel/types.ts";
+            const root = Deno.env.get("RUNNER_TEMP")!;
+            const key = decodeSentinelArtifactKey(Deno.env.get("SENTINEL_ARTIFACT_KEY")!);
+            const readEnvelope = async (path: string) => {
+              const files = await decryptSentinelArtifact(await Deno.readFile(path), key);
+              return files;
+            };
+            const findEnvelopes = async (directory: string): Promise<string[]> => {
+              const found: string[] = [];
+              const visit = async (path: string): Promise<void> => {
+                let info: Deno.FileInfo;
+                try { info = await Deno.lstat(path); } catch (error) { if (error instanceof Deno.errors.NotFound) return; throw error; }
+                if (info.isFile) { if (path.endsWith("/sentinel-evidence-v1.json")) found.push(path); return; }
+                if (!info.isDirectory || info.isSymlink) throw new Error("matrix artifact path is not a regular directory");
+                for await (const entry of Deno.readDir(path)) await visit(`${path}/${entry.name}`);
+              };
+              await visit(directory); return found.sort();
+            };
+            try {
+              const planEnvelopes = await findEnvelopes(`${root}/sentinel-matrix-plan`);
+              if (planEnvelopes.length !== 1) throw new Error("exactly one encrypted MatrixPlanV1 artifact is required");
+              const planFiles = await readEnvelope(planEnvelopes[0]!);
+              let plan: Awaited<ReturnType<typeof parseMatrixPlanV1>>;
+              try {
+                const planFile = planFiles.find((file) => file.path === "reports/matrix-plan.json");
+                if (!planFile) throw new Error("encrypted MatrixPlanV1 artifact is missing its manifest");
+                plan = await parseMatrixPlanV1(planFile.bytes);
+                if (plan.run_id !== Deno.env.get("EXPECTED_RUN_ID") || plan.run_attempt !== Number(Deno.env.get("EXPECTED_RUN_ATTEMPT")) || plan.base_sha !== Deno.env.get("EXPECTED_BASE_SHA") || plan.manifest_digest !== Deno.env.get("EXPECTED_PLAN_DIGEST")) throw new Error("MatrixPlanV1 identity changed in transport");
+                await Deno.writeTextFile(".sentinel/reports/matrix-plan.json", `${canonicalMatrixJson(plan)}\n`, { create: true, mode: 0o600 });
+                const triageFile = planFiles.find((file) => file.path === "reports/triage.json");
+                if (!triageFile) throw new Error("encrypted MatrixPlanV1 artifact is missing its triage report");
+                const triage = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(triageFile.bytes));
+                if (!isTriageReport(triage)) throw new Error("encrypted matrix triage report is invalid");
+                const actionable = triage.findings.filter((finding) => finding.actionable).map((finding) => { const ownership = plan.ownership.find((candidate) => candidate.finding_id === finding.id); return { finding_id: finding.id, fingerprint: finding.fingerprint, allowed_paths: [...finding.allowed_paths].sort(), prohibited_paths: [...ownership?.prohibited_paths ?? []].sort(), shared_paths: [...finding.shared_paths].sort(), depends_on: [...finding.depends_on].sort(), validation_requirements: [...finding.validation_requirements].sort() }; }).sort((left, right) => left.fingerprint.localeCompare(right.fingerprint) || left.finding_id.localeCompare(right.finding_id));
+                if (canonicalMatrixJson(actionable) !== canonicalMatrixJson(plan.ownership)) throw new Error("matrix triage ownership differs from MatrixPlanV1");
+                await Deno.writeTextFile(".sentinel/reports/triage.json", `${JSON.stringify(triage)}\n`, { create: true, mode: 0o600 });
+              } finally { for (const file of planFiles) file.bytes.fill(0); }
+              const expected = new Set(plan.cells.map((cell) => cell.cell_id));
+              const seen = new Set<string>();
+              for (const envelope of await findEnvelopes(`${root}/sentinel-matrix-cell-reports`)) {
+                const files = await readEnvelope(envelope);
+                try {
+                  for (const file of files) {
+                    if (!file.path.startsWith("reports/matrix/") || !file.path.endsWith("/cell.json")) continue;
+                    const report = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(file.bytes));
+                    await validateMatrixCellReportV1(report, plan);
+                    if (!expected.has(report.cell_id) || seen.has(report.cell_id)) throw new Error("matrix cell report coverage is duplicate or unknown");
+                    seen.add(report.cell_id);
+                    const cell = plan.cells.find((candidate) => candidate.cell_id === report.cell_id)!;
+                    const parent = cell.report_path.slice(0, cell.report_path.lastIndexOf("/"));
+                    await Deno.mkdir(parent, { recursive: true, mode: 0o700 });
+                    await Deno.writeTextFile(cell.report_path, `${canonicalMatrixJson(report)}\n`, { create: true, mode: 0o600 });
+                  }
+                } finally { for (const file of files) file.bytes.fill(0); }
+              }
+              if (seen.size !== expected.size) throw new Error("required matrix cell artifact is missing");
+              const index = plan.cells.map((cell) => ({ cell_id: cell.cell_id, branch: cell.branch, base_sha: cell.base_sha, report_path: cell.report_path }));
+              await Deno.writeTextFile(".sentinel/reports/matrix-report-index.json", `${canonicalMatrixJson({ schema_version: 1, run_id: plan.run_id, run_attempt: plan.run_attempt, base_sha: plan.base_sha, plan_digest: plan.manifest_digest, cells: index })}\n`, { create: true, mode: 0o600 });
+            } finally { key.fill(0); }
+          '
+
+      - name: Require complete matrix convergence contract
+        if: always() && needs.prepare.result == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -s .sentinel/reports/matrix-plan.json ] || [ ! -s .sentinel/reports/matrix-report-index.json ]; then
+            echo "::error::Matrix convergence is missing an immutable plan or required cell reports."
+            exit 1
+          fi
+          echo "Verified encrypted MatrixPlanV1 and every required immutable MatrixCellReportV1." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify exact remote cell heads before convergence
+        if: always() && needs.prepare.result == 'success'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test -s .sentinel/reports/matrix-report-index.json
+          basic_token="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 --wrap=0)"
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $basic_token" GIT_TERMINAL_PROMPT=0
+          cell_count=0
+          while IFS= read -r cell; do
+            report_path="$(jq -r '.report_path' <<< "$cell")"
+            branch="$(jq -r '.branch' <<< "$cell")"
+            report_sha="$(jq -r '.head_sha // empty' "$report_path")"
+            report_status="$(jq -r '.status // "missing"' "$report_path")"
+            if [ "$report_status" != "succeeded" ] || ! [[ "$report_sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::Required cell $branch has no succeeded report with an exact head SHA."
+              exit 1
+            fi
+            remote_lines="$(git ls-remote --heads origin "refs/heads/$branch")"
+            if [ "$(printf '%s\n' "$remote_lines" | sed '/^$/d' | wc -l | tr -d ' ')" != "1" ]; then
+              echo "::error::Required cell branch lookup was missing or ambiguous: $branch"
+              exit 1
+            fi
+            remote_sha="$(printf '%s\n' "$remote_lines" | awk '{ print $1 }')"
+            remote_ref="$(printf '%s\n' "$remote_lines" | awk '{ print $2 }')"
+            if [ "$remote_ref" != "refs/heads/$branch" ] || [ "$remote_sha" != "$report_sha" ]; then
+              echo "::error::Required cell branch head differs from its immutable report: $branch"
+              exit 1
+            fi
+            cell_count=$((cell_count + 1))
+          done < <(jq -c '.cells[]' .sentinel/reports/matrix-report-index.json)
+          unset basic_token GITHUB_TOKEN GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_TERMINAL_PROMPT
+          echo "Verified exact remote heads for $cell_count required matrix cells." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Restore or bootstrap encrypted Codex auth state
         id: auth-state-prepare
@@ -967,7 +1625,10 @@ jobs:
           always() &&
           github.event_name == 'workflow_dispatch' &&
           inputs.sentinel_mode == 'incident' &&
-          steps.incident-claim.outcome == 'success'
+          (
+            needs.prepare.outputs.incident_claimed == 'true' ||
+            steps.incident-claim.outcome == 'success'
+          )
         shell: bash
         env:
           AUTH_PREFLIGHT_OUTCOME: ${{ steps.auth-preflight.outcome }}
@@ -1429,7 +2090,10 @@ jobs:
           always() &&
           github.event_name == 'workflow_dispatch' &&
           inputs.sentinel_mode == 'incident' &&
-          steps.incident-claim.outcome == 'success' &&
+          (
+            needs.prepare.outputs.incident_claimed == 'true' ||
+            steps.incident-claim.outcome == 'success'
+          ) &&
           (
             steps.sentinel-run.outcome == 'skipped' ||
             steps.incident-deferral-classification.outputs.reason != '' ||
@@ -1520,7 +2184,7 @@ jobs:
           exit 1
 
       - name: Acknowledge completed incident
-        if: success() && env.SENTINEL_MODE == 'incident'
+        if: success() && env.SENTINEL_MODE == 'incident' && needs.prepare.outputs.incident_claimed == 'true'
         shell: bash
         env:
           DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}

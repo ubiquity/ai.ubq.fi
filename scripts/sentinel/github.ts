@@ -97,6 +97,23 @@ export interface GitHubWorkflowDispatch {
   readonly htmlUrl: string;
 }
 
+export interface GitHubPullRequest {
+  readonly number: number;
+  readonly htmlUrl: string;
+  readonly state: "open" | "closed";
+  readonly merged: boolean;
+  readonly headRef: string;
+  readonly headSha: string;
+  readonly baseRef: string;
+  readonly body: string;
+}
+
+export interface GitHubPullRequestMerge {
+  readonly merged: boolean;
+  readonly sha: string | null;
+  readonly message: string;
+}
+
 export interface ListRepositoryArtifactsOptions {
   readonly name?: string;
   readonly createdAfterMs?: number;
@@ -258,6 +275,27 @@ const parseIssueComment = (value: unknown): GitHubIssueComment => {
   return { id, authorLogin, authorType, body, createdAt, updatedAt };
 };
 
+const parsePullRequest = (value: unknown): GitHubPullRequest => {
+  const record = asRecord(value);
+  const head = asRecord(record?.head);
+  const base = asRecord(record?.base);
+  const number = integer(record?.number);
+  const htmlUrl = nonEmptyString(record?.html_url);
+  const state = record?.state === "open" || record?.state === "closed" ? record.state : null;
+  const headRef = nonEmptyString(head?.ref);
+  const headSha = nonEmptyString(head?.sha);
+  const baseRef = nonEmptyString(base?.ref);
+  const body = record?.body === null ? "" : typeof record?.body === "string" ? record.body : null;
+  const merged = typeof record?.merged === "boolean" ? record.merged : typeof record?.merged_at === "string";
+  if (
+    !record || !number || !htmlUrl || !state || !headRef ||
+    !headSha || !FULL_GIT_SHA.test(headSha) || !baseRef || body === null
+  ) {
+    throw new Error("GitHub returned an incomplete pull request");
+  }
+  return { number, htmlUrl, state, merged, headRef, headSha, baseRef, body };
+};
+
 export class GitHubActionsClient {
   readonly #repository: string;
   readonly #token: string;
@@ -374,6 +412,79 @@ export class GitHubActionsClient {
       throw new Error(`Dispatch workflow ${workflow} returned an HTML run URL outside the repository`);
     }
     return { runId, runUrl, htmlUrl };
+  }
+
+  async listOpenPullRequests(base: string): Promise<readonly GitHubPullRequest[]> {
+    if (base.trim() === "") throw new Error("Pull request base is required");
+    const pulls: GitHubPullRequest[] = [];
+    for (let page = 1;; page += 1) {
+      if (page > MAX_ISSUE_METADATA_PAGES) {
+        throw new Error("GitHub pull request metadata exceeded the Sentinel page limit");
+      }
+      const url = this.#url(`repos/${this.#repository}/pulls`);
+      url.searchParams.set("state", "open");
+      url.searchParams.set("base", base);
+      url.searchParams.set("per_page", "100");
+      url.searchParams.set("page", String(page));
+      const response = await this.#request(url, {
+        method: "GET",
+        headers: this.#headers(),
+        redirect: "manual",
+      }, "List open pull requests");
+      const payload = await this.#json(response, "List open pull requests");
+      if (!Array.isArray(payload)) throw new Error("GitHub returned an invalid pull request list");
+      const pagePulls = payload.map(parsePullRequest);
+      pulls.push(...pagePulls);
+      if (pagePulls.length < 100) return pulls;
+    }
+  }
+
+  async createPullRequest(
+    input: Readonly<{
+      title: string;
+      body: string;
+      head: string;
+      base: string;
+    }>,
+  ): Promise<GitHubPullRequest> {
+    if ([input.title, input.head, input.base].some((value) => value.trim() === "")) {
+      throw new Error("Pull request title, head, and base are required");
+    }
+    const response = await this.#request(this.#url(`repos/${this.#repository}/pulls`), {
+      method: "POST",
+      headers: this.#headers(true),
+      body: JSON.stringify({ ...input, draft: false, maintainer_can_modify: false }),
+      redirect: "manual",
+    }, "Create pull request");
+    return parsePullRequest(await this.#json(response, "Create pull request"));
+  }
+
+  async mergePullRequest(
+    number: number,
+    headSha: string,
+    commitTitle: string,
+  ): Promise<GitHubPullRequestMerge> {
+    if (!Number.isSafeInteger(number) || number <= 0) throw new Error("Pull request number must be positive");
+    if (!FULL_GIT_SHA.test(headSha)) throw new Error("Pull request head SHA must be full");
+    const response = await this.#request(
+      this.#url(`repos/${this.#repository}/pulls/${number}/merge`),
+      {
+        method: "PUT",
+        headers: this.#headers(true),
+        body: JSON.stringify({ sha: headSha, merge_method: "merge", commit_title: commitTitle }),
+        redirect: "manual",
+      },
+      `Merge pull request ${number}`,
+    );
+    const payload = asRecord(await this.#json(response, `Merge pull request ${number}`));
+    const merged = payload?.merged;
+    const sha = payload?.sha === null ? null : nonEmptyString(payload?.sha);
+    const message = nonEmptyString(payload?.message);
+    if (!payload || typeof merged !== "boolean" || (sha !== null && !FULL_GIT_SHA.test(sha)) || !message) {
+      throw new Error(`Merge pull request ${number} returned an invalid result`);
+    }
+    if (merged && sha === null) throw new Error(`Merge pull request ${number} omitted its merge SHA`);
+    return { merged, sha, message };
   }
 
   async getWorkflowRun(runId: number): Promise<GitHubWorkflowRun> {

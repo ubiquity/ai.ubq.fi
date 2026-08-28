@@ -8,6 +8,21 @@ import {
 import { defaultRevisionBaseUrl, DenoDeployClient, type RollbackTarget } from "./deploy.ts";
 import { GitHubActionsClient, type GitHubArtifact } from "./github.ts";
 import {
+  buildMatrixPlan,
+  type MatrixCellReportV1,
+  matrixCycleReportDigest,
+  type MatrixCycleReportV1,
+  type MatrixDeliveryOutcomeV1,
+  type MatrixPlanV1,
+  parseMatrixPlanV1,
+  validateMatrixCellReportV1,
+} from "./matrix.ts";
+import {
+  executeMatrixIntegration,
+  MATRIX_INTEGRATION_OUTPUT_SCHEMA,
+  runMatrixIntegrationAgent,
+} from "./matrix-integrate.ts";
+import {
   applyGitHubIssueJobDisposition,
   blockingIssueReviewFindings,
   evaluateGitHubIssueJobImplementation,
@@ -237,7 +252,8 @@ export type SentinelTriageGate = Readonly<{
     | "incident_signal"
     | "preview_failure_capture"
     | "preview_no_failure_capture"
-    | "explicit_observation";
+    | "explicit_observation"
+    | "matrix_convergence";
 }>;
 
 export const evaluateSentinelTriageGate = (
@@ -817,6 +833,66 @@ export const candidateShaForReview = (
   return ensureFullSha(headSha, "Review candidate SHA");
 };
 
+const writePreparedMatrixPlan = async (
+  input: Readonly<{
+    reportsDir: string;
+    runId: string;
+    runAttempt: number;
+    baseSha: string;
+    rawLogPath?: string;
+    triage?: TriageReport;
+  }>,
+): Promise<MatrixPlanV1> => {
+  ensureFullSha(input.baseSha, "Matrix plan base SHA");
+  const actionable = input.triage?.findings.filter((finding) => finding.actionable) ?? [];
+  for (const finding of actionable) {
+    const forbidden = finding.allowed_paths.filter(isSentinelProtectedImplementationPath);
+    if (forbidden.length > 0) {
+      throw new Error(`Matrix finding ${finding.id} owns protected paths: ${forbidden.join(", ")}`);
+    }
+  }
+  const evidenceDigests: Array<{ name: string; sha256: string }> = [];
+  if (input.rawLogPath) {
+    const rawLog = await immutableFileEvidence(input.rawLogPath);
+    evidenceDigests.push({ name: "raw-deno-log", sha256: rawLog.sha256 });
+  }
+  const plan = await buildMatrixPlan({
+    run_id: input.runId,
+    run_attempt: input.runAttempt,
+    base_sha: input.baseSha,
+    evidence_digests: evidenceDigests,
+    findings: actionable.map((finding) => ({
+      id: finding.id,
+      fingerprint: finding.fingerprint,
+      allowed_paths: finding.allowed_paths,
+      prohibited_paths: SENTINEL_POLICY.protectedImplementationPaths,
+      shared_paths: finding.shared_paths,
+      depends_on: finding.depends_on,
+      validation_requirements: finding.validation_requirements,
+      actionable: true,
+    })),
+  });
+  await writeJson(`${input.reportsDir}/matrix-plan.json`, plan);
+  return plan;
+};
+
+export const assertTriageMatchesMatrixPlan = (triage: TriageReport, plan: MatrixPlanV1): void => {
+  const actionable = triage.findings.filter((finding) => finding.actionable).map((finding) => ({
+    finding_id: finding.id,
+    fingerprint: finding.fingerprint,
+    allowed_paths: [...finding.allowed_paths].sort(),
+    prohibited_paths: [...SENTINEL_POLICY.protectedImplementationPaths].sort(),
+    shared_paths: [...finding.shared_paths].sort(),
+    depends_on: [...finding.depends_on].sort(),
+    validation_requirements: [...finding.validation_requirements].sort(),
+  })).sort((left, right) =>
+    left.fingerprint.localeCompare(right.fingerprint) || left.finding_id.localeCompare(right.finding_id)
+  );
+  if (JSON.stringify(actionable) !== JSON.stringify(plan.ownership)) {
+    throw new Error("Matrix convergence triage does not match immutable plan ownership");
+  }
+};
+
 export type ImmutableFileEvidence = Readonly<{ path: string; byte_count: number; sha256: string }>;
 
 export type ObservationReport = Readonly<{
@@ -1077,7 +1153,7 @@ export const triagePrompt = (
 ): string => `
 ${createAgentPromptPreamble("triage")}
 
-Inspect the repository and every byte of the complete raw Deno log file described below. Read the file directly in bounded chunks if needed. Do not skip, truncate, sanitize, summarize before inspection, or substitute a sample. Report every evidence-backed reliability or efficiency defect in this interval, not only the first defect. Do not invent findings. Each finding needs evidence, severity, affected surface, proposed correction, and validation requirements. Use stable fingerprints. If no finding exists, return an empty findings array and a concrete no_findings_reason. Preserve this interval exactly in the output:
+Inspect the repository and every byte of the complete raw Deno log file described below. Read the file directly in bounded chunks if needed. Do not skip, truncate, sanitize, summarize before inspection, or substitute a sample. Report every evidence-backed reliability or efficiency defect in this interval, not only the first defect. Do not invent findings. Each finding needs evidence, severity, affected surface, proposed correction, validation requirements, and an explicit repository path ownership contract. Set allowed_paths to every normalized repository-relative file or directory path the repair may change. Set shared_paths to shared contracts or control surfaces that force findings into one cell, otherwise use an empty array. Set depends_on to exact finding IDs that must be repaired first, otherwise use an empty array. Never put a Sentinel control, workflow, instruction file, project configuration file, credential path, or any path protected by isSentinelProtectedImplementationPath in allowed_paths. Use stable fingerprints. If no finding exists, return an empty findings array and a concrete no_findings_reason. Preserve this interval exactly in the output:
 ${JSON.stringify(interval)}
 
 Expected client rejections are not gateway defects. Do not treat a 4xx response caused only by missing or invalid authentication, invalid client input, an unsupported method or path, a client quota or policy decision, or client cancellation as repository-actionable unless repository or log evidence proves that the gateway violated its documented contract or repository code generated the bad request. Set actionable to true only when the proposed correction can be implemented and validated in this repository checkout. Report a repeated evidence-backed external caller misconfiguration as actionable false, name the external ownership blocker, and prescribe the caller-side correction. In particular, authenticated OpenAI-compatible routes under "/v1/", including GET /v1/models with or without client_version, must not be made public to silence an unauthenticated probe. The public model catalog is GET /uos/models/catalog. An unauthenticated GET /v1/models response with 401 invalid_api_key is expected gateway behavior; repeated polling may be an external efficiency finding, but it is not repository-actionable without evidence of a repository-owned caller.
@@ -2680,6 +2756,28 @@ const run = async (): Promise<void> => {
   const evidenceArtifactName = sentinelEvidenceArtifactName(dedupeKey);
   state.event_dedupe_key = dedupeKey;
   state.evidence_artifact_name = evidenceArtifactName;
+  const workflowJob = optionalEnvironment("GITHUB_JOB");
+  const matrixPreparePhase = workflowJob === "prepare";
+  const matrixConvergePhase = workflowJob === "converge";
+  const matrixPreparedBaseSha = matrixPreparePhase ? await fetchDevelopmentBase(root, gitEnvironment) : null;
+  if (matrixPreparedBaseSha) {
+    await writeJson(
+      `${reportsDir}/triage.json`,
+      {
+        schema_version: 1,
+        interval: state.interval,
+        findings: [],
+        no_findings_reason: "Matrix preparation ended before an actionable repository finding was selected.",
+      } satisfies TriageReport,
+    );
+    await writePreparedMatrixPlan({
+      reportsDir,
+      runId,
+      runAttempt: githubRunAttempt,
+      baseSha: matrixPreparedBaseSha,
+    });
+    state.base_development_sha = matrixPreparedBaseSha;
+  }
   const githubEnvironment = optionalEnvironment("GITHUB_ENV");
   if (githubEnvironment) {
     await Deno.writeTextFile(
@@ -2861,13 +2959,15 @@ const run = async (): Promise<void> => {
       }
     }
   }
-  const workSelection = selectSentinelWork(
-    mode,
-    currentEncrypted.length,
-    state.interval,
-    reviewBacklogMarkdown,
-    selectedIssueJob,
-  );
+  const workSelection: SentinelWorkSelection = matrixConvergePhase
+    ? { source: "triage", reason: "matrix_convergence", backlogEntry: null, issueJob: null, triage: null }
+    : selectSentinelWork(
+      mode,
+      currentEncrypted.length,
+      state.interval,
+      reviewBacklogMarkdown,
+      selectedIssueJob,
+    );
   await writeJson(`${reportsDir}/triage-gate.json`, {
     schema_version: 1,
     required: workSelection.source === "triage",
@@ -3037,7 +3137,32 @@ const run = async (): Promise<void> => {
   ]);
 
   let triage: TriageReport;
-  if (workSelection.source === "review_backlog") {
+  let matrixConvergencePlan: MatrixPlanV1 | null = null;
+  let matrixConvergenceReports: MatrixCellReportV1[] = [];
+  let matrixImplementationReport: ImplementationReport | null = null;
+  let matrixCycleReport: MatrixCycleReportV1 | null = null;
+  const writeMatrixDelivery = async (delivery: MatrixDeliveryOutcomeV1): Promise<void> => {
+    if (!matrixCycleReport) return;
+    const unsigned: MatrixCycleReportV1 = {
+      ...matrixCycleReport,
+      delivery,
+      cycle_digest: "0".repeat(64),
+    };
+    matrixCycleReport = { ...unsigned, cycle_digest: await matrixCycleReportDigest(unsigned) };
+    await writeJson(`${reportsDir}/matrix-cycle.json`, matrixCycleReport);
+  };
+  if (matrixConvergePhase) {
+    matrixConvergencePlan = await parseMatrixPlanV1(await Deno.readTextFile(`${reportsDir}/matrix-plan.json`));
+    const triageValue: unknown = JSON.parse(await Deno.readTextFile(`${reportsDir}/triage.json`));
+    if (!isTriageReport(triageValue)) throw new Error("Matrix convergence triage report is invalid");
+    triage = triageValue;
+    assertTriageMatchesMatrixPlan(triage, matrixConvergencePlan);
+    matrixConvergenceReports = await Promise.all(matrixConvergencePlan.cells.map(async (cell) => {
+      const value: unknown = JSON.parse(await Deno.readTextFile(cell.report_path));
+      return await validateMatrixCellReportV1(value as MatrixCellReportV1, matrixConvergencePlan!);
+    }));
+    await updateState("matrix_convergence_inputs_verified", { base_development_sha: matrixConvergencePlan.base_sha });
+  } else if (workSelection.source === "review_backlog") {
     if (!workSelection.triage || !workSelection.backlogEntry) {
       throw new Error("Sentinel backlog work selection is incomplete");
     }
@@ -3088,6 +3213,29 @@ const run = async (): Promise<void> => {
   }
   await writeJson(`${reportsDir}/triage.json`, triage);
 
+  if (matrixPreparePhase) {
+    if (!matrixPreparedBaseSha) throw new Error("Matrix preparation lost its immutable development base");
+    const currentDevelopmentSha = await fetchDevelopmentBase(root, gitEnvironment);
+    if (currentDevelopmentSha !== matrixPreparedBaseSha) {
+      throw new Error("origin/development advanced during matrix preparation");
+    }
+    await writePreparedMatrixPlan({
+      reportsDir,
+      runId,
+      runAttempt: githubRunAttempt,
+      baseSha: matrixPreparedBaseSha,
+      rawLogPath,
+      triage,
+    });
+    await updateState("matrix_prepared", {
+      status: triage.findings.some((finding) => finding.actionable) ? "running" : "no_change",
+      base_development_sha: matrixPreparedBaseSha,
+      branch_disposition: "matrix_plan_published",
+    });
+    for (const replayCase of applicableCases) replayCase.body.fill(0);
+    return;
+  }
+
   if (!triage.findings.some((finding) => finding.actionable)) {
     await updateState("complete", { status: "no_change", branch_disposition: "not_created_no_actionable_findings" });
     for (const replayCase of applicableCases) replayCase.body.fill(0);
@@ -3107,7 +3255,14 @@ const run = async (): Promise<void> => {
       : null,
   });
   let baseSha: string;
-  if (workSelection.source === "review_backlog" || workSelection.source === "github_issue") {
+  if (matrixConvergePhase) {
+    if (!matrixConvergencePlan) throw new Error("Matrix convergence lost its immutable plan");
+    const currentDevelopmentSha = await fetchDevelopmentBase(root, gitEnvironment);
+    if (currentDevelopmentSha !== matrixConvergencePlan.base_sha) {
+      throw new Error("origin/development advanced before matrix convergence");
+    }
+    baseSha = matrixConvergencePlan.base_sha;
+  } else if (workSelection.source === "review_backlog" || workSelection.source === "github_issue") {
     if (
       !selectedDevelopmentSha ||
       (workSelection.source === "review_backlog" && !workSelection.backlogEntry) ||
@@ -3133,6 +3288,112 @@ const run = async (): Promise<void> => {
     }
   }
   await addCandidateWorktree(root, checkout, branch, baseSha);
+  if (matrixConvergePhase) {
+    if (!matrixConvergencePlan) throw new Error("Matrix convergence lost its immutable plan");
+    await updateState("matrix_fetching_cell_heads", { base_development_sha: baseSha });
+    for (const report of matrixConvergenceReports) {
+      if (report.status !== "succeeded" || report.head_sha === null) {
+        throw new Error(`Required matrix cell ${report.cell_id} did not succeed`);
+      }
+      await runTrustedGit({
+        args: ["fetch", "--no-tags", "origin", `+refs/heads/${report.branch}:refs/remotes/origin/${report.branch}`],
+        cwd: checkout,
+        env: gitEnvironment,
+      });
+      const fetchedHead = ensureFullSha(
+        await gitText(checkout, ["rev-parse", `refs/remotes/origin/${report.branch}^{commit}`]),
+        "Fetched matrix cell SHA",
+      );
+      if (fetchedHead !== report.head_sha) throw new Error(`Matrix cell ${report.cell_id} remote head changed`);
+    }
+    const integrationSchemaPath = `${reportsDir}/matrix-integration.schema.json`;
+    await writeJson(integrationSchemaPath, MATRIX_INTEGRATION_OUTPUT_SCHEMA);
+    await updateState("matrix_integration_agent");
+    const integrationInvocation = await withStageHeartbeat("matrix_integration_agent", () =>
+      runMatrixIntegrationAgent({
+        plan: matrixConvergencePlan!,
+        reports: matrixConvergenceReports,
+        checkoutPath: checkout,
+        integrationBranch: branch,
+        outputSchemaPath: integrationSchemaPath,
+        authSlots,
+        expectedMaximumRuntimeMs: IMPLEMENTATION_INITIAL_MS,
+      }));
+    await writeJson(`${reportsDir}/matrix-integration-decision.json`, integrationInvocation.decision);
+    await updateState("matrix_trusted_merge");
+    const integration = await executeMatrixIntegration({
+      plan: matrixConvergencePlan,
+      reports: matrixConvergenceReports,
+      decision: integrationInvocation.decision,
+      checkoutPath: checkout,
+      integrationBranch: branch,
+      allowPatchEquivalentOurs: true,
+    });
+    matrixCycleReport = integration.cycle_report;
+    await writeJson(`${reportsDir}/matrix-cycle.json`, matrixCycleReport);
+    if (integrationInvocation.decision.decisions.some((decision) => decision.decision !== "accept")) {
+      throw new Error("Required matrix cells were rejected or blocked by final integration");
+    }
+    for (const ancestry of integration.accepted_ancestry) {
+      if (!ancestry.is_ancestor) throw new Error(`Accepted matrix cell ${ancestry.cell_id} lost ancestry`);
+    }
+    await updateState("matrix_combined_validation", {
+      candidate_sha: integration.cycle_report.integrated_candidate?.head_sha ?? null,
+    });
+    await scanCandidateWithGitleaks({
+      cwd: checkout,
+      reportPath: `${reportsDir}/secret-scan-matrix-combined.json`,
+    });
+    await runCandidateValidation({
+      cwd: checkout,
+      reportPath: `${reportsDir}/validation-matrix-combined.json`,
+      privateDir,
+      denoDirectory,
+    });
+    const dispositions = matrixConvergenceReports.flatMap((report) =>
+      report.finding_dispositions.map((item) => ({
+        finding_id: item.finding_id,
+        status: item.status,
+        summary: item.summary,
+        changed_files: item.changed_files,
+        validation: item.validation,
+      }))
+    );
+    for (const finding of triage.findings.filter((finding) => !finding.actionable)) {
+      dispositions.push({
+        finding_id: finding.id,
+        status: "not_actionable",
+        summary: "The immutable triage report classified this finding as outside repository repair scope.",
+        changed_files: [],
+        validation: [],
+      });
+    }
+    matrixImplementationReport = {
+      schema_version: 1,
+      candidate_sha: integration.cycle_report.integrated_candidate?.head_sha ?? null,
+      dispositions,
+      replay_acceptances: [],
+      summary: integrationInvocation.decision.summary,
+    };
+    assertCompleteFindingDispositions(triage, matrixImplementationReport);
+    assertActionableFindingsResolved(triage, matrixImplementationReport);
+    await writeJson(`${reportsDir}/implementation-matrix-integrated.json`, matrixImplementationReport);
+    if (integration.cycle_report.integrated_candidate?.head_sha === baseSha) {
+      await writeMatrixDelivery({
+        status: "not_attempted",
+        pr_number: null,
+        merge_sha: null,
+        reason: "All accepted matrix findings were already fixed at the immutable base",
+      });
+      await updateState("complete", {
+        status: "no_change",
+        candidate_sha: baseSha,
+        branch_disposition: "matrix_no_change_cell_branches_retained",
+      });
+      for (const replayCase of applicableCases) replayCase.body.fill(0);
+      return;
+    }
+  }
   if (workSelection.backlogEntry) {
     const candidateBacklog = await Deno.readTextFile(`${checkout}/${SENTINEL_POLICY.paths.reviewBacklog}`);
     const candidateEntry = selectNextReviewBacklogEntry(candidateBacklog);
@@ -3619,6 +3880,7 @@ const run = async (): Promise<void> => {
     selectedIssueState.continueToRuntimeValidation = true;
   };
   let implementationReport: ImplementationReport;
+  if (matrixImplementationReport) implementationReport = matrixImplementationReport;
   const preserveFailedImplementation = async (
     error: unknown,
     stage: string,
@@ -4074,84 +4336,95 @@ const run = async (): Promise<void> => {
       return;
     }
   }
-  const beforeAgentSha = ensureFullSha(await gitText(checkout, ["rev-parse", "HEAD"]), "Pre-agent SHA");
-  let implementationInvocationSha = beforeAgentSha;
-  let implementationResult: CodexInvocationResult;
-  try {
-    implementationResult = await runImplementationStageWithContinuation({
-      basePrompt: stageImplementationPrompt([], null),
-      initialTimeoutMs: IMPLEMENTATION_INITIAL_MS,
-      ...(workSelection.source === "github_issue"
-        ? { continuationTimeoutMs: GITHUB_ISSUE_IMPLEMENTATION_CONTINUATION_MS }
-        : {}),
-      invoke: ({ attempt, prompt, timeoutMs }) =>
-        withStageHeartbeat(attempt === 1 ? "implementing" : "implementing_continuation", () =>
-          runStructuredCodexAgent({
-            role: "implementation",
-            checkoutPath: checkout,
-            prompt,
-            outputSchemaPath: implementationSchemaPath,
-            authSlots,
-            expectedMaximumRuntimeMs: timeoutMs,
-          })),
-      onTimeout: async (timeoutError) => {
-        const checkpoint = await checkpointDirtyCandidate("implementation_timeout", implementationInvocationSha);
-        if (checkpoint !== null) implementationInvocationSha = checkpoint.checkpoint.sha;
-        await scanCandidateWithGitleaks({
-          cwd: checkout,
-          reportPath: `${reportsDir}/secret-scan-implementation-timeout.json`,
-        });
-        await writeJson(`${reportsDir}/implementation-invocation-1-timeout.json`, safeErrorSummary(timeoutError));
-        await updateState("implementing_continuation");
-      },
-    });
-    const checkpoint = await checkpointDirtyCandidate("implementation", implementationInvocationSha);
-    if (checkpoint !== null) implementationInvocationSha = checkpoint.checkpoint.sha;
-    implementationReport = parseStructuredResult(implementationResult, isImplementationReport, "Implementation agent");
-    assertCompleteFindingDispositions(triage, implementationReport);
-    await writeJson(`${reportsDir}/implementation-round-1.json`, implementationReport);
-    if (workSelection.source === "review_backlog") {
-      await applyInitialSelectedBacklogDisposition(implementationReport);
-    } else if (workSelection.source === "github_issue") {
-      await applyInitialSelectedIssueDisposition(implementationReport);
-    } else {
-      assertActionableFindingsResolved(triage, implementationReport);
-    }
-  } catch (error) {
-    const mismatch = isSentinelChangedFilesMismatchError(error);
-    const checkpoint = await checkpointDirtyCandidate(
-      "implementation",
-      implementationInvocationSha,
-      mismatch ? error.reportedChangedFiles : undefined,
-    );
-    if (checkpoint !== null) implementationInvocationSha = checkpoint.checkpoint.sha;
-    if (mismatch) {
-      if (checkpoint === null) await recordCandidateReportMismatch(error, "implementation");
-      throw error;
-    }
-    if (workSelection.source === "github_issue") {
-      if (!await deferGitHubIssueImplementationFailure(error, "implementation", implementationInvocationSha)) {
+  if (!matrixConvergePhase) {
+    const beforeAgentSha = ensureFullSha(await gitText(checkout, ["rev-parse", "HEAD"]), "Pre-agent SHA");
+    let implementationInvocationSha = beforeAgentSha;
+    let implementationResult: CodexInvocationResult;
+    try {
+      implementationResult = await runImplementationStageWithContinuation({
+        basePrompt: stageImplementationPrompt([], null),
+        initialTimeoutMs: IMPLEMENTATION_INITIAL_MS,
+        ...(workSelection.source === "github_issue"
+          ? { continuationTimeoutMs: GITHUB_ISSUE_IMPLEMENTATION_CONTINUATION_MS }
+          : {}),
+        invoke: ({ attempt, prompt, timeoutMs }) =>
+          withStageHeartbeat(
+            attempt === 1 ? "implementing" : "implementing_continuation",
+            () =>
+              runStructuredCodexAgent({
+                role: "implementation",
+                checkoutPath: checkout,
+                prompt,
+                outputSchemaPath: implementationSchemaPath,
+                authSlots,
+                expectedMaximumRuntimeMs: timeoutMs,
+              }),
+          ),
+        onTimeout: async (timeoutError) => {
+          const checkpoint = await checkpointDirtyCandidate("implementation_timeout", implementationInvocationSha);
+          if (checkpoint !== null) implementationInvocationSha = checkpoint.checkpoint.sha;
+          await scanCandidateWithGitleaks({
+            cwd: checkout,
+            reportPath: `${reportsDir}/secret-scan-implementation-timeout.json`,
+          });
+          await writeJson(`${reportsDir}/implementation-invocation-1-timeout.json`, safeErrorSummary(timeoutError));
+          await updateState("implementing_continuation");
+        },
+      });
+      const checkpoint = await checkpointDirtyCandidate("implementation", implementationInvocationSha);
+      if (checkpoint !== null) implementationInvocationSha = checkpoint.checkpoint.sha;
+      implementationReport = parseStructuredResult(
+        implementationResult,
+        isImplementationReport,
+        "Implementation agent",
+      );
+      assertCompleteFindingDispositions(triage, implementationReport);
+      await writeJson(`${reportsDir}/implementation-round-1.json`, implementationReport);
+      if (workSelection.source === "review_backlog") {
+        await applyInitialSelectedBacklogDisposition(implementationReport);
+      } else if (workSelection.source === "github_issue") {
+        await applyInitialSelectedIssueDisposition(implementationReport);
+      } else {
+        assertActionableFindingsResolved(triage, implementationReport);
+      }
+    } catch (error) {
+      const mismatch = isSentinelChangedFilesMismatchError(error);
+      const checkpoint = await checkpointDirtyCandidate(
+        "implementation",
+        implementationInvocationSha,
+        mismatch ? error.reportedChangedFiles : undefined,
+      );
+      if (checkpoint !== null) implementationInvocationSha = checkpoint.checkpoint.sha;
+      if (mismatch) {
+        if (checkpoint === null) await recordCandidateReportMismatch(error, "implementation");
         throw error;
       }
-    } else {
-      const failureDisposition = await prepareImplementationFailureRetry(
-        workSelection.source,
-        error,
-        () => preserveFailedImplementation(error, "implementation", implementationInvocationSha),
-        () => discardCandidateChanges(checkout, baseSha),
-      );
-      if (!workSelection.backlogEntry || failureDisposition !== "manual_required") {
-        throw new Error("Sentinel backlog implementation failure is missing its manual disposition");
+      if (workSelection.source === "github_issue") {
+        if (!await deferGitHubIssueImplementationFailure(error, "implementation", implementationInvocationSha)) {
+          throw error;
+        }
+      } else {
+        const failureDisposition = await prepareImplementationFailureRetry(
+          workSelection.source,
+          error,
+          () => preserveFailedImplementation(error, "implementation", implementationInvocationSha),
+          () => discardCandidateChanges(checkout, baseSha),
+        );
+        if (!workSelection.backlogEntry || failureDisposition !== "manual_required") {
+          throw new Error("Sentinel backlog implementation failure is missing its manual disposition");
+        }
+        const failedDisposition: FindingDisposition = Object.freeze({
+          finding_id: `review-backlog:${workSelection.backlogEntry.fingerprint}`,
+          status: "blocked",
+          summary: "The bounded implementation invocations could not complete; this item requires manual work.",
+          changed_files: [],
+          validation: [],
+        });
+        await writeSelectedBacklogDisposition(failedDisposition, "manual_required", "failed_implementation");
       }
-      const failedDisposition: FindingDisposition = Object.freeze({
-        finding_id: `review-backlog:${workSelection.backlogEntry.fingerprint}`,
-        status: "blocked",
-        summary: "The bounded implementation invocations could not complete; this item requires manual work.",
-        changed_files: [],
-        validation: [],
-      });
-      await writeSelectedBacklogDisposition(failedDisposition, "manual_required", "failed_implementation");
     }
+  } else if (!matrixImplementationReport) {
+    throw new Error("Matrix convergence did not produce an implementation report");
   }
 
   if (selectedBacklogState.disposition !== null && !selectedBacklogState.continueToRuntimeValidation) {
@@ -4260,16 +4533,20 @@ const run = async (): Promise<void> => {
     return;
   }
 
-  const aggregateCandidatePaths = workSelection.source === "github_issue"
-    ? await selectedIssueAggregatePaths()
-    : workSelection.source === "review_backlog"
-    ? await selectedBacklogAggregatePaths()
-    : [...await aggregateCandidateChangedPaths(checkout, baseSha)].sort();
-  const checkpointCandidateSha = candidateShaForReview(
-    await gitText(checkout, ["rev-parse", "HEAD"]),
-    aggregateCandidatePaths,
-  );
-  if (checkpointCandidateSha === null) {
+  const aggregateCandidatePaths = !matrixConvergePhase
+    ? workSelection.source === "github_issue"
+      ? await selectedIssueAggregatePaths()
+      : workSelection.source === "review_backlog"
+      ? await selectedBacklogAggregatePaths()
+      : [...await aggregateCandidateChangedPaths(checkout, baseSha)].sort()
+    : [];
+  const checkpointCandidateSha = !matrixConvergePhase
+    ? candidateShaForReview(
+      await gitText(checkout, ["rev-parse", "HEAD"]),
+      aggregateCandidatePaths,
+    )
+    : null;
+  if (!matrixConvergePhase && checkpointCandidateSha === null) {
     if (
       triage.findings.some((finding) =>
         finding.actionable &&
@@ -4775,7 +5052,7 @@ const run = async (): Promise<void> => {
     break;
   }
 
-  const candidateSha = ensureFullSha(await gitText(checkout, ["rev-parse", "HEAD"]), "Accepted candidate SHA");
+  let candidateSha = ensureFullSha(await gitText(checkout, ["rev-parse", "HEAD"]), "Accepted candidate SHA");
   const writeGitHubIssueProductionOutcome = async (
     outcome: "kept" | "rolled_back",
     candidateRevision: string | null,
@@ -5062,6 +5339,14 @@ const run = async (): Promise<void> => {
         revert_promotion_workflow_run_id: revertPromotionWorkflowRunId,
       });
       await writeGitHubIssueProductionOutcome("rolled_back", productionRevision);
+      if (matrixConvergePhase) {
+        await writeMatrixDelivery({
+          status: "rolled_back",
+          pr_number: matrixCycleReport?.delivery.pr_number ?? null,
+          merge_sha: candidateSha,
+          reason,
+        });
+      }
       productionSettled = true;
     })();
     return rollbackPromise;
@@ -5075,12 +5360,95 @@ const run = async (): Promise<void> => {
       }
     }
     await updateState("pushing_development");
-    developmentPushAttempted = true;
-    await runTrustedGit({
-      args: ["push", "origin", `HEAD:${SENTINEL_POLICY.developmentRef}`],
-      cwd: checkout,
-      env: gitEnvironment,
-    });
+    if (matrixConvergePhase) {
+      if (!matrixConvergencePlan || !matrixCycleReport?.integrated_candidate) {
+        throw new Error("Matrix delivery lost its integrated candidate evidence");
+      }
+      const integratedHeadSha = candidateSha;
+      const marker = `<!-- provider-sentinel-matrix:${runId}:${githubRunAttempt}:${integratedHeadSha} -->`;
+      await writeMatrixDelivery({ status: "ready", pr_number: null, merge_sha: null, reason: null });
+      const branchPulls = (await github.listOpenPullRequests(SENTINEL_POLICY.developmentBranch)).filter((pull) =>
+        pull.headRef === branch
+      );
+      if (branchPulls.length > 1) throw new Error("Matrix candidate branch has more than one open pull request");
+      let pull = branchPulls[0] ?? null;
+      if (pull && (pull.headSha !== integratedHeadSha || pull.baseRef !== SENTINEL_POLICY.developmentBranch)) {
+        throw new Error("Existing matrix pull request does not match the immutable candidate");
+      }
+      if (!pull) {
+        pull = await github.createPullRequest({
+          title: `fix: Provider Sentinel matrix ${runId}-${githubRunAttempt}`,
+          body: `${marker}\n\nIntegrated Provider Sentinel matrix candidate at \`${integratedHeadSha}\`.`,
+          head: branch,
+          base: SENTINEL_POLICY.developmentBranch,
+        });
+      }
+      if (
+        pull.state !== "open" || pull.merged || pull.headRef !== branch || pull.headSha !== integratedHeadSha ||
+        pull.baseRef !== SENTINEL_POLICY.developmentBranch || !pull.body.includes(marker)
+      ) {
+        throw new Error("Matrix pull request failed its immutable identity check");
+      }
+      await writeMatrixDelivery({ status: "ready", pr_number: pull.number, merge_sha: null, reason: null });
+      const developmentImmediatelyBeforeMerge = await fetchDevelopmentBase(checkout, gitEnvironment);
+      if (developmentImmediatelyBeforeMerge !== baseSha) {
+        throw new Error("origin/development advanced before the matrix pull request merge");
+      }
+      const merge = await github.mergePullRequest(
+        pull.number,
+        integratedHeadSha,
+        `fix: Provider Sentinel matrix ${runId}-${githubRunAttempt}`,
+      );
+      if (!merge.merged || !merge.sha) throw new Error(`Matrix pull request was not merged: ${merge.message}`);
+      developmentPushAttempted = true;
+      await runTrustedGit({
+        args: ["fetch", "--no-tags", "origin", "development"],
+        cwd: checkout,
+        env: gitEnvironment,
+      });
+      const mergedDevelopmentSha = ensureFullSha(
+        await gitText(checkout, ["rev-parse", "origin/development"]),
+        "Merged development SHA",
+      );
+      if (mergedDevelopmentSha !== merge.sha) {
+        throw new Error("Merged pull request SHA differs from origin/development");
+      }
+      const mergeParents = (await gitText(checkout, ["show", "-s", "--format=%P", mergedDevelopmentSha])).split(" ");
+      if (mergeParents.length !== 2 || mergeParents[0] !== baseSha || mergeParents[1] !== integratedHeadSha) {
+        throw new Error("Matrix pull request merge is not the exact immutable-base merge commit");
+      }
+      const requiredAncestors = [
+        integratedHeadSha,
+        ...matrixCycleReport.accepted_ancestry.map((item) => item.cell_head_sha),
+      ];
+      for (const requiredAncestor of requiredAncestors) {
+        const ancestry = await runTrustedGitUnchecked({
+          args: ["merge-base", "--is-ancestor", requiredAncestor, mergedDevelopmentSha],
+          cwd: checkout,
+          env: gitEnvironment,
+        });
+        if (ancestry.code !== 0) throw new Error(`Merged development lost required ancestry ${requiredAncestor}`);
+      }
+      await runTrustedGit({
+        args: ["merge", "--ff-only", "origin/development"],
+        cwd: checkout,
+        env: gitEnvironment,
+      });
+      candidateSha = mergedDevelopmentSha;
+      await writeMatrixDelivery({
+        status: "published",
+        pr_number: pull.number,
+        merge_sha: candidateSha,
+        reason: null,
+      });
+    } else {
+      developmentPushAttempted = true;
+      await runTrustedGit({
+        args: ["push", "origin", `HEAD:${SENTINEL_POLICY.developmentRef}`],
+        cwd: checkout,
+        env: gitEnvironment,
+      });
+    }
     const production = await dispatchAndResolveRevision({
       github,
       deno,
@@ -5221,6 +5589,14 @@ const run = async (): Promise<void> => {
       } catch (rollbackError) {
         throw new AggregateError([error, rollbackError], "Sentinel failed and its fail-safe rollback did not converge");
       }
+    }
+    if (matrixConvergePhase && !developmentPushAttempted) {
+      await writeMatrixDelivery({
+        status: "failed",
+        pr_number: matrixCycleReport?.delivery.pr_number ?? null,
+        merge_sha: null,
+        reason: error instanceof Error ? error.message : "Unknown matrix delivery failure",
+      });
     }
     throw error;
   }
