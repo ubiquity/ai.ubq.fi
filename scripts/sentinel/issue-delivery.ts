@@ -1,6 +1,7 @@
 const FULL_SHA = /^[0-9a-f]{40}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const SAFE_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/u;
+const CHECKPOINT_BRANCH = /^sentinel\/candidate-[1-9][0-9]*(?:-[1-9][0-9]*)?$/u;
 const SAFE_REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const SAFE_URL = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/(?:pull|actions\/runs)\/[1-9][0-9]*$/u;
 
@@ -51,6 +52,13 @@ export type GitHubIssueRetryPendingReport = Readonly<{
   phase: "failed_implementation";
   implementation_status: "blocked";
   disposition: "retry_pending";
+  retry_checkpoint: GitHubIssueRetryCheckpointReport | null;
+}>;
+
+export type GitHubIssueRetryCheckpointReport = Readonly<{
+  branch: string;
+  sha: string;
+  base_sha: string;
 }>;
 
 export type SentinelRetryPendingCycleReport = Readonly<{
@@ -66,6 +74,7 @@ export type SentinelRetryPendingCycleReport = Readonly<{
     | "runner_local_pending_review"
     | "development_docs_only_issue_retry_pending"
     | "remote_retained_issue_retry_pending";
+  retry_checkpoint: GitHubIssueRetryCheckpointReport | null;
 }>;
 
 export type GitPushUpdate = Readonly<{
@@ -91,6 +100,19 @@ const positiveInteger = (value: unknown): value is number => Number.isSafeIntege
 const nonNegativeInteger = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
 const isoTimestamp = (value: unknown): value is string =>
   typeof value === "string" && Number.isFinite(Date.parse(value)) && /^\d{4}-\d{2}-\d{2}T/u.test(value);
+
+const parseRetryCheckpoint = (value: unknown): GitHubIssueRetryCheckpointReport | null => {
+  if (value === null) return null;
+  const checkpoint = record(value);
+  if (
+    !checkpoint || Object.keys(checkpoint).length !== 3 ||
+    typeof checkpoint.branch !== "string" || !CHECKPOINT_BRANCH.test(checkpoint.branch) ||
+    typeof checkpoint.sha !== "string" || !FULL_SHA.test(checkpoint.sha) ||
+    typeof checkpoint.base_sha !== "string" || !FULL_SHA.test(checkpoint.base_sha) ||
+    checkpoint.sha === checkpoint.base_sha
+  ) throw new Error("Sentinel retry checkpoint report is invalid");
+  return { branch: checkpoint.branch, sha: checkpoint.sha, base_sha: checkpoint.base_sha };
+};
 
 export const parseGitHubIssueSelectionReport = (value: unknown): GitHubIssueSelectionReport => {
   const selection = record(value);
@@ -135,6 +157,7 @@ export const parseGitHubIssueRetryPendingReport = (
   ) {
     throw new Error("Sentinel retry-pending disposition does not match the exact issue selection");
   }
+  const retryCheckpoint = parseRetryCheckpoint(report.retry_checkpoint);
   return {
     schema_version: 1,
     issue_id: expected.issueId,
@@ -143,6 +166,7 @@ export const parseGitHubIssueRetryPendingReport = (
     phase: "failed_implementation",
     implementation_status: "blocked",
     disposition: "retry_pending",
+    retry_checkpoint: retryCheckpoint,
   };
 };
 
@@ -171,6 +195,13 @@ export const parseSentinelRetryPendingCycleReport = (
   ) {
     throw new Error("Sentinel retry-pending cycle report is invalid");
   }
+  const retryCheckpoint = parseRetryCheckpoint(cycle.retry_checkpoint);
+  if (
+    (cycle.branch_disposition === "remote_retained_issue_retry_pending") !== (retryCheckpoint !== null) ||
+    (retryCheckpoint !== null &&
+      (retryCheckpoint.branch !== cycle.temporary_branch ||
+        retryCheckpoint.base_sha !== cycle.base_development_sha))
+  ) throw new Error("Sentinel retry-pending cycle checkpoint does not match its branch disposition");
   return {
     schema_version: 1,
     run_id: expected.runId,
@@ -181,6 +212,7 @@ export const parseSentinelRetryPendingCycleReport = (
     status: expected.status,
     stage: expected.stage,
     branch_disposition: cycle.branch_disposition as SentinelRetryPendingCycleReport["branch_disposition"],
+    retry_checkpoint: retryCheckpoint,
   };
 };
 

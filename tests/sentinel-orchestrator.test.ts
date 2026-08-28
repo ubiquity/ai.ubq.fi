@@ -33,6 +33,8 @@ import {
   replayIndexArtifactName,
   requiresReplayEvaluation,
   resolveCycleAnchorMs,
+  RetryCheckpointResumeError,
+  retryCheckpointResumeFailureDisposition,
   reviewBacklogEntriesMatch,
   runImplementationStageWithContinuation,
   runObserveCycle,
@@ -41,6 +43,7 @@ import {
   sentinelDeploymentInputs,
   sentinelEvidenceArtifactName,
   sentinelRevisionControlInputs,
+  sentinelTemporaryCandidateBranch,
   shouldDeferHourlyBacklogWork,
   TRIAGE_INCIDENT_MS,
   triageExpectedMaximumRuntimeMs,
@@ -76,7 +79,9 @@ import {
   renderGitHubIssueJobHint,
   renderGitHubIssueJobLedger,
   requireResolvedGitHubIssueJobImplementation,
+  retryCheckpointForGitHubIssueJob,
   selectNextGitHubIssueJob,
+  selectNextGitHubIssueJobSelection,
 } from "../scripts/sentinel/issues.ts";
 import {
   inspectSse,
@@ -393,6 +398,26 @@ Deno.test("sentinel capacity failures use bounded source-specific dispositions",
   assert.equal(implementationFailureDisposition("github_issue", new Error("plain failure")), "crash");
   const capacityError = new CodexInvocationError("accounts_unavailable");
   assert.equal(implementationFailureDisposition("github_issue", capacityError), "retry_pending");
+  assert.equal(
+    retryCheckpointResumeFailureDisposition(
+      new RetryCheckpointResumeError("retry_pending", "temporary Git transport failure"),
+    ),
+    "retry_pending",
+  );
+  assert.equal(
+    retryCheckpointResumeFailureDisposition(
+      new RetryCheckpointResumeError("manual_required", "checkpoint identity mismatch"),
+    ),
+    "manual_required",
+  );
+  assert.equal(retryCheckpointResumeFailureDisposition(new Error("unexpected failure")), "crash");
+});
+
+Deno.test("Sentinel workflow reruns use distinct candidate branches", () => {
+  assert.equal(sentinelTemporaryCandidateBranch("123456789", 1), "sentinel/candidate-123456789-1");
+  assert.equal(sentinelTemporaryCandidateBranch("123456789", 2), "sentinel/candidate-123456789-2");
+  assert.throws(() => sentinelTemporaryCandidateBranch("123456789", 0), /run identity/);
+  assert.throws(() => sentinelTemporaryCandidateBranch("local-run", 1), /run identity/);
 });
 
 Deno.test("retryable issue failure preserves, discards, cools down, and advances the queue", async () => {
@@ -430,14 +455,20 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
     "retry_pending",
   );
   assert.deepEqual(events, ["preserve", "discard"]);
+  const checkpoint = {
+    branch: "sentinel/candidate-123456789",
+    sha: "b".repeat(40),
+    baseSha: "a".repeat(40),
+  };
   const pendingLedger = applyGitHubIssueJobDisposition(
     emptyLedger,
     selected,
-    "a".repeat(40),
+    checkpoint.baseSha,
     failedAt,
     "retry_pending",
+    checkpoint,
   );
-  assert.equal(parseGitHubIssueJobLedger(pendingLedger)[0]?.disposition, "retry_pending");
+  assert.deepEqual(parseGitHubIssueJobLedger(pendingLedger)[0]?.checkpoint, checkpoint);
   assert.equal(
     (
       await selectNextGitHubIssueJob(
@@ -449,33 +480,152 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
     )?.number,
     114,
   );
+  const dueAt = new Date(failedAt.getTime() + GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS);
+  const dueSelection = await selectNextGitHubIssueJobSelection(
+    source,
+    "ubiquity/ai.ubq.fi",
+    pendingLedger,
+    dueAt,
+  );
+  assert.equal(dueSelection?.job.fingerprint, selected.fingerprint);
+  assert.deepEqual(dueSelection?.checkpoint, checkpoint);
+  assert.deepEqual(retryCheckpointForGitHubIssueJob(pendingLedger, selected, dueAt), checkpoint);
+  const checkpointHint = parseGitHubIssueJobHint(renderGitHubIssueJobHint(selected, checkpoint));
+  assert.equal(githubIssueJobMatchesHint(checkpointHint, selected, checkpoint), true);
+  assert.equal(githubIssueJobMatchesHint(checkpointHint, selected, null), false);
+  const issueWithLaterInertComment = sentinelGitHubIssue({
+    comments: firstIssue.comments + 1,
+    updatedAt: "2026-08-23T21:00:00Z",
+  });
+  const normalizedSelection = await selectNextGitHubIssueJobSelection(
+    githubIssueSource([issueWithLaterInertComment, secondIssue]),
+    "ubiquity/ai.ubq.fi",
+    pendingLedger,
+    dueAt,
+  );
+  assert.equal(normalizedSelection?.job.number, selected.number);
+  assert.notEqual(normalizedSelection?.job.fingerprint, selected.fingerprint);
+  assert.equal(normalizedSelection?.checkpoint, null);
+  assert.equal(retryCheckpointForGitHubIssueJob(pendingLedger, normalizedSelection!.job, dueAt), null);
+  const normalizedHint = parseGitHubIssueJobHint(renderGitHubIssueJobHint(normalizedSelection!.job));
+  assert.equal(githubIssueJobMatchesHint(normalizedHint, normalizedSelection!.job, null), true);
+  const normalizedRetryAt = new Date(dueAt.getTime() + 1_000);
+  const normalizedRetryLedger = applyGitHubIssueJobDisposition(
+    pendingLedger,
+    normalizedSelection!.job,
+    "f".repeat(40),
+    normalizedRetryAt,
+    "retry_pending",
+  );
+  const normalizedRetryEntries = parseGitHubIssueJobLedger(normalizedRetryLedger);
+  assert.equal(normalizedRetryEntries[0]?.disposition, "manual_required");
+  assert.deepEqual(normalizedRetryEntries[0]?.checkpoint, checkpoint);
   assert.equal(
     (
-      await selectNextGitHubIssueJob(
-        source,
+      await selectNextGitHubIssueJobSelection(
+        githubIssueSource([issueWithLaterInertComment, secondIssue]),
         "ubiquity/ai.ubq.fi",
-        pendingLedger,
-        new Date(failedAt.getTime() + GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS),
+        normalizedRetryLedger,
+        new Date(normalizedRetryAt.getTime() + GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS),
       )
-    )?.fingerprint,
-    selected.fingerprint,
+    )?.job.fingerprint,
+    normalizedSelection!.job.fingerprint,
   );
+  const issueWithSecondLaterInertComment = sentinelGitHubIssue({
+    comments: firstIssue.comments + 2,
+    updatedAt: "2026-08-23T22:00:00Z",
+  });
+  const twiceNormalizedSelection = await selectNextGitHubIssueJobSelection(
+    githubIssueSource([issueWithSecondLaterInertComment, secondIssue]),
+    "ubiquity/ai.ubq.fi",
+    normalizedRetryLedger,
+    new Date(normalizedRetryAt.getTime() + GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS),
+  );
+  assert.equal(twiceNormalizedSelection?.job.number, selected.number);
+  assert.notEqual(twiceNormalizedSelection?.job.fingerprint, normalizedSelection!.job.fingerprint);
+  assert.equal(twiceNormalizedSelection?.checkpoint, null);
+  const changedIssue = sentinelGitHubIssue({
+    title: "Changed issue snapshot with separate retry work",
+    updatedAt: "2026-08-24T01:00:00Z",
+  });
+  const changedJob = await createGitHubIssueJob(
+    "ubiquity/ai.ubq.fi",
+    changedIssue,
+    noIssueRelations,
+    "admin",
+  );
+  assert.ok(changedJob);
+  const terminalLedger = applyGitHubIssueJobDisposition(
+    emptyLedger,
+    selected,
+    "1".repeat(40),
+    failedAt,
+    "resolved",
+  );
+  const changedCheckpoint = {
+    branch: "sentinel/candidate-123456791-1",
+    sha: "3".repeat(40),
+    baseSha: "2".repeat(40),
+  };
+  const terminalAndRetryLedger = applyGitHubIssueJobDisposition(
+    terminalLedger,
+    changedJob,
+    changedCheckpoint.baseSha,
+    new Date("2026-08-24T02:00:00Z"),
+    "retry_pending",
+    changedCheckpoint,
+  );
+  const returnedTerminalSnapshot = sentinelGitHubIssue({
+    comments: firstIssue.comments + 1,
+    updatedAt: "2026-08-24T03:00:00Z",
+  });
+  const returnedSource = githubIssueSource([returnedTerminalSnapshot, secondIssue]);
+  const afterChangedRetryCooldown = new Date("2026-08-24T08:00:00Z");
+  assert.equal(
+    (
+      await selectNextGitHubIssueJobSelection(
+        returnedSource,
+        "ubiquity/ai.ubq.fi",
+        terminalLedger,
+        afterChangedRetryCooldown,
+      )
+    )?.job.number,
+    secondIssue.number,
+  );
+  assert.equal(
+    (
+      await selectNextGitHubIssueJobSelection(
+        returnedSource,
+        "ubiquity/ai.ubq.fi",
+        terminalAndRetryLedger,
+        afterChangedRetryCooldown,
+      )
+    )?.job.number,
+    secondIssue.number,
+  );
+  const nextCheckpoint = {
+    branch: "sentinel/candidate-123456790-2",
+    sha: "d".repeat(40),
+    baseSha: "c".repeat(40),
+  };
   const retriedLedger = applyGitHubIssueJobDisposition(
     pendingLedger,
     selected,
-    "b".repeat(40),
-    new Date(failedAt.getTime() + GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS),
+    nextCheckpoint.baseSha,
+    dueAt,
     "retry_pending",
+    nextCheckpoint,
   );
   assert.equal(parseGitHubIssueJobLedger(retriedLedger).length, 1);
+  assert.deepEqual(parseGitHubIssueJobLedger(retriedLedger)[0]?.checkpoint, nextCheckpoint);
   const resolvedLedger = applyGitHubIssueJobDisposition(
     retriedLedger,
     selected,
-    "c".repeat(40),
+    "e".repeat(40),
     new Date(failedAt.getTime() + 2 * GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS),
     "resolved",
   );
-  assert.equal(parseGitHubIssueJobLedger(resolvedLedger)[0]?.disposition, "resolved");
+  assert.equal(parseGitHubIssueJobLedger(resolvedLedger)[0]?.checkpoint, null);
   const commentNormalizedJob = {
     ...selected,
     fingerprint: "d".repeat(64),
@@ -490,9 +640,11 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
     "resolved",
   );
   const normalizedEntries = parseGitHubIssueJobLedger(commentNormalizedLedger);
-  assert.equal(normalizedEntries.length, 1);
-  assert.equal(normalizedEntries[0]?.fingerprint, commentNormalizedJob.fingerprint);
-  assert.equal(normalizedEntries[0]?.disposition, "resolved");
+  assert.equal(normalizedEntries.length, 2);
+  assert.equal(normalizedEntries[0]?.disposition, "manual_required");
+  assert.deepEqual(normalizedEntries[0]?.checkpoint, checkpoint);
+  assert.equal(normalizedEntries[1]?.fingerprint, commentNormalizedJob.fingerprint);
+  assert.equal(normalizedEntries[1]?.disposition, "resolved");
 });
 
 Deno.test("sentinel schedule windows overlap hourly and incident runs", () => {

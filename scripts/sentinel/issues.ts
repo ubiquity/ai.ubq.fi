@@ -42,6 +42,17 @@ export type GitHubIssueJob = Readonly<{
 
 export type GitHubIssueJobDisposition = "retry_pending" | "resolved" | "manual_required";
 
+export type GitHubIssueJobCheckpoint = Readonly<{
+  branch: string;
+  sha: string;
+  baseSha: string;
+}>;
+
+export type GitHubIssueJobSelection = Readonly<{
+  job: GitHubIssueJob;
+  checkpoint: GitHubIssueJobCheckpoint | null;
+}>;
+
 export type GitHubIssueJobHint = Readonly<{
   schema_version: 1;
   selection:
@@ -51,6 +62,13 @@ export type GitHubIssueJobHint = Readonly<{
       node_id: string;
       issue_number: number;
       fingerprint: string;
+      checkpoint:
+        | Readonly<{
+          branch: string;
+          sha: string;
+          base_sha: string;
+        }>
+        | null;
     }>
     | null;
 }>;
@@ -65,6 +83,7 @@ export type GitHubIssueJobLedgerEntry = Readonly<{
   sourceUpdatedAt: string;
   recordedAt: string;
   baseSha: string;
+  checkpoint: GitHubIssueJobCheckpoint | null;
   title: string;
   disposition: GitHubIssueJobDisposition;
 }>;
@@ -84,6 +103,7 @@ const FILE_LOCATION_PATTERN = /^([A-Za-z0-9_.@/+\-]+)(?::\d+(?:-\d+)?(?::\d+)?)?
 const FULL_SHA = /^[0-9a-f]{40}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const NODE_ID = /^[A-Za-z0-9_=-]{4,160}$/u;
+const CHECKPOINT_BRANCH = /^sentinel\/candidate-[1-9][0-9]*(?:-[1-9][0-9]*)?$/u;
 const MAX_ISSUE_BODY_BYTES = 32 * 1_024;
 const MAX_ISSUE_FILES = 32;
 const MAX_ACCEPTANCE_ITEMS = 32;
@@ -107,6 +127,8 @@ const LEDGER_HEADERS = Object.freeze([
   "Source updated",
   "Recorded",
   "Base SHA",
+  "Checkpoint branch",
+  "Checkpoint SHA",
   "Title",
   "Disposition",
 ]);
@@ -387,7 +409,10 @@ const issueAuthorityPermission = async (
   return permissions.every((permission) => permission === "write" || permission === "admin") ? "write" : "none";
 };
 
-export const renderGitHubIssueJobHint = (job: GitHubIssueJob | null): string =>
+export const renderGitHubIssueJobHint = (
+  job: GitHubIssueJob | null,
+  checkpoint: GitHubIssueJobCheckpoint | null = null,
+): string =>
   `${
     JSON.stringify(
       {
@@ -399,6 +424,13 @@ export const renderGitHubIssueJobHint = (job: GitHubIssueJob | null): string =>
             node_id: job.nodeId,
             issue_number: job.number,
             fingerprint: job.fingerprint,
+            checkpoint: checkpoint
+              ? {
+                branch: checkpoint.branch,
+                sha: checkpoint.sha,
+                base_sha: checkpoint.baseSha,
+              }
+              : null,
           }
           : null,
       } satisfies GitHubIssueJobHint,
@@ -423,13 +455,22 @@ export const parseGitHubIssueJobHint = (value: string): GitHubIssueJobHint => {
   const selection = record(hint.selection);
   if (
     !selection ||
-    !hasExactKeys(selection, ["repository", "issue_id", "node_id", "issue_number", "fingerprint"]) ||
+    !hasExactKeys(selection, ["repository", "issue_id", "node_id", "issue_number", "fingerprint", "checkpoint"]) ||
     typeof selection.repository !== "string" || validatedRepository(selection.repository) !== selection.repository ||
     !Number.isSafeInteger(selection.issue_id) || (selection.issue_id as number) <= 0 ||
     typeof selection.node_id !== "string" || !NODE_ID.test(selection.node_id) ||
     !Number.isSafeInteger(selection.issue_number) || (selection.issue_number as number) <= 0 ||
     typeof selection.fingerprint !== "string" || !SHA256.test(selection.fingerprint)
   ) throw new Error("Sentinel GitHub issue-job hint has an invalid selection");
+  const checkpoint = selection.checkpoint === null ? null : record(selection.checkpoint);
+  if (
+    selection.checkpoint !== null &&
+    (!checkpoint || !hasExactKeys(checkpoint, ["branch", "sha", "base_sha"]) ||
+      typeof checkpoint.branch !== "string" || !CHECKPOINT_BRANCH.test(checkpoint.branch) ||
+      typeof checkpoint.sha !== "string" || !FULL_SHA.test(checkpoint.sha) ||
+      typeof checkpoint.base_sha !== "string" || !FULL_SHA.test(checkpoint.base_sha) ||
+      checkpoint.sha === checkpoint.base_sha)
+  ) throw new Error("Sentinel GitHub issue-job hint has an invalid checkpoint");
   return {
     schema_version: 1,
     selection: {
@@ -438,16 +479,31 @@ export const parseGitHubIssueJobHint = (value: string): GitHubIssueJobHint => {
       node_id: selection.node_id,
       issue_number: selection.issue_number as number,
       fingerprint: selection.fingerprint,
+      checkpoint: checkpoint
+        ? {
+          branch: checkpoint.branch as string,
+          sha: checkpoint.sha as string,
+          base_sha: checkpoint.base_sha as string,
+        }
+        : null,
     },
   };
 };
 
-export const githubIssueJobMatchesHint = (hint: GitHubIssueJobHint, job: GitHubIssueJob | null): boolean =>
+export const githubIssueJobMatchesHint = (
+  hint: GitHubIssueJobHint,
+  job: GitHubIssueJob | null,
+  checkpoint: GitHubIssueJobCheckpoint | null = null,
+): boolean =>
   hint.selection === null
     ? job === null
     : job !== null && hint.selection.repository === job.repository && hint.selection.issue_id === job.issueId &&
       hint.selection.node_id === job.nodeId && hint.selection.issue_number === job.number &&
-      hint.selection.fingerprint === job.fingerprint;
+      hint.selection.fingerprint === job.fingerprint &&
+      JSON.stringify(hint.selection.checkpoint) ===
+        JSON.stringify(
+          checkpoint ? { branch: checkpoint.branch, sha: checkpoint.sha, base_sha: checkpoint.baseSha } : null,
+        );
 
 export const getCurrentGitHubIssueJob = async (
   source: GitHubIssueJobSource,
@@ -467,12 +523,12 @@ export const getCurrentGitHubIssueJob = async (
   );
 };
 
-export const selectNextGitHubIssueJob = async (
+export const selectNextGitHubIssueJobSelection = async (
   source: GitHubIssueJobSource,
   repository: string,
   ledgerMarkdown: string,
   observedAt = new Date(),
-): Promise<GitHubIssueJob | null> => {
+): Promise<GitHubIssueJobSelection | null> => {
   if (!Number.isFinite(observedAt.getTime())) throw new Error("GitHub issue selection timestamp is invalid");
   const ledger = parseGitHubIssueJobLedger(ledgerMarkdown);
   const listed = await source.listOpenIssues();
@@ -527,11 +583,22 @@ export const selectNextGitHubIssueJob = async (
       throw new Error(`GitHub issue ${candidate.number} snapshot changed during selection`);
     }
     let selectionBlocked = false;
-    for (
-      const entry of ledger.filter((entry) =>
-        entry.issueId === job.issueId && entry.nodeId === job.nodeId && entry.number === job.number
-      )
-    ) {
+    let checkpoint: GitHubIssueJobCheckpoint | null = null;
+    const issueEntries = ledger.filter((entry) =>
+      entry.issueId === job.issueId && entry.nodeId === job.nodeId && entry.number === job.number
+    );
+    const exactEntries = issueEntries.filter((entry) => entry.fingerprint === job.fingerprint);
+    const activeRetryEntry = issueEntries.find((entry) => entry.disposition === "retry_pending");
+    const terminalEntries = issueEntries.filter((entry) => entry.disposition !== "retry_pending");
+    // An active retry remains authoritative when it matches after inert-comment
+    // normalization. If it does not match, older terminal snapshots must still
+    // be checked so an issue cannot return to already-dispositioned content.
+    const entriesToInspect = exactEntries.length > 0
+      ? exactEntries
+      : activeRetryEntry
+      ? [activeRetryEntry, ...terminalEntries]
+      : terminalEntries;
+    for (const entry of entriesToInspect) {
       let snapshotMatches = entry.fingerprint === job.fingerprint;
       if (!snapshotMatches) {
         const normalizedJob = await createGitHubIssueJob(
@@ -543,19 +610,46 @@ export const selectNextGitHubIssueJob = async (
         );
         snapshotMatches = normalizedJob?.fingerprint === entry.fingerprint;
       }
+      if (!snapshotMatches) continue;
       const retryReadyAt = Date.parse(entry.recordedAt) + GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS;
-      if (
-        snapshotMatches &&
-        (entry.disposition !== "retry_pending" || observedAt.getTime() < retryReadyAt)
-      ) {
+      if (entry.disposition !== "retry_pending" || observedAt.getTime() < retryReadyAt) {
         selectionBlocked = true;
         break;
       }
+      if (entry.fingerprint === job.fingerprint) checkpoint = entry.checkpoint;
+      // A due active retry that normalized to the current snapshot wins over
+      // older terminal entries retained only for manual checkpoint recovery.
+      break;
     }
     if (selectionBlocked) continue;
-    return job;
+    return { job, checkpoint };
   }
   return null;
+};
+
+export const selectNextGitHubIssueJob = async (
+  source: GitHubIssueJobSource,
+  repository: string,
+  ledgerMarkdown: string,
+  observedAt = new Date(),
+): Promise<GitHubIssueJob | null> =>
+  (await selectNextGitHubIssueJobSelection(source, repository, ledgerMarkdown, observedAt))?.job ?? null;
+
+export const retryCheckpointForGitHubIssueJob = (
+  ledgerMarkdown: string,
+  job: GitHubIssueJob,
+  observedAt = new Date(),
+): GitHubIssueJobCheckpoint | null => {
+  if (!Number.isFinite(observedAt.getTime())) throw new Error("GitHub issue selection timestamp is invalid");
+  const entry = parseGitHubIssueJobLedger(ledgerMarkdown).find((candidate) =>
+    candidate.issueId === job.issueId && candidate.nodeId === job.nodeId && candidate.number === job.number &&
+    candidate.fingerprint === job.fingerprint
+  );
+  if (
+    !entry || entry.disposition !== "retry_pending" ||
+    observedAt.getTime() < Date.parse(entry.recordedAt) + GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS
+  ) return null;
+  return entry.checkpoint;
 };
 
 export const githubIssueJobTriageReport = (
@@ -681,6 +775,8 @@ export const renderGitHubIssueJobLedger = (entries: readonly GitHubIssueJobLedge
     entry.sourceUpdatedAt,
     entry.recordedAt,
     `\`${entry.baseSha}\``,
+    entry.checkpoint ? `\`${entry.checkpoint.branch}\`` : "",
+    entry.checkpoint ? `\`${entry.checkpoint.sha}\`` : "",
     cleanCell(entry.title),
     entry.disposition,
   ]);
@@ -701,7 +797,8 @@ export const renderGitHubIssueJobLedger = (entries: readonly GitHubIssueJobLedge
     "# Sentinel Issue Job Ledger",
     "",
     "Sentinel results for immutable GitHub issue snapshots are tracked here. A retry-pending snapshot waits six hours before",
-    "it is eligible again so later issues can advance. Terminal snapshots are delivered through exactly one pull request that",
+    "it is eligible again so later issues can advance. A retry checkpoint names an immutable remote candidate that Sentinel",
+    "may resume only for the exact unchanged snapshot. Terminal snapshots are delivered through exactly one pull request that",
     "links the issue as evidence. After a verified production keep, Sentinel merges the delivery pull request and closes the",
     "unchanged issue with supporting evidence; a pull request already carried by the development push is accepted after a",
     "containment check. Manual-required, failed, and rolled-back results remain open.",
@@ -742,16 +839,25 @@ export const parseGitHubIssueJobLedger = (markdown: string): GitHubIssueJobLedge
     const sourceUpdatedAt = cells[6]!;
     const recordedAt = cells[7]!;
     const baseSha = /^`[0-9a-f]{40}`$/u.test(cells[8]!) ? cells[8]!.slice(1, -1) : "";
-    const title = decodeCell(cells[9]!);
-    const disposition = cells[10] as GitHubIssueJobDisposition;
+    const checkpointBranch = /^`[^`]+`$/u.test(cells[9]!) ? cells[9]!.slice(1, -1) : "";
+    const checkpointSha = /^`[0-9a-f]{40}`$/u.test(cells[10]!) ? cells[10]!.slice(1, -1) : "";
+    const checkpoint = checkpointBranch || checkpointSha
+      ? { branch: checkpointBranch, sha: checkpointSha, baseSha }
+      : null;
+    const title = decodeCell(cells[11]!);
+    const disposition = cells[12] as GitHubIssueJobDisposition;
     const identity = `${issueId}:${number}:${fingerprint}`;
     if (
       !Number.isSafeInteger(number) || number <= 0 || !Number.isSafeInteger(issueId) || issueId <= 0 ||
       !NODE_ID.test(nodeId) || !SHA256.test(fingerprint) || !SHA256.test(bodySha256) ||
       !Number.isSafeInteger(comments) || comments < 0 ||
       !validTimestamp(sourceUpdatedAt) || !validTimestamp(recordedAt) || !FULL_SHA.test(baseSha) ||
+      ((checkpointBranch === "") !== (checkpointSha === "")) ||
+      (checkpoint !== null &&
+        (!CHECKPOINT_BRANCH.test(checkpoint.branch) || !FULL_SHA.test(checkpoint.sha) || checkpoint.sha === baseSha)) ||
       title.trim().length === 0 || title.length > 512 ||
       (disposition !== "retry_pending" && disposition !== "resolved" && disposition !== "manual_required") ||
+      (disposition === "resolved" && checkpoint !== null) ||
       identities.has(identity)
     ) throw new Error("Sentinel issue-job ledger row is invalid");
     identities.add(identity);
@@ -765,11 +871,21 @@ export const parseGitHubIssueJobLedger = (markdown: string): GitHubIssueJobLedge
       sourceUpdatedAt,
       recordedAt,
       baseSha,
+      checkpoint,
       title,
       disposition,
     });
   }
   const parsed = sortedLedgerEntries(entries);
+  const activeRetryIssues = new Set<string>();
+  for (const entry of parsed) {
+    if (entry.disposition !== "retry_pending") continue;
+    const issueIdentity = `${entry.issueId}:${entry.nodeId}:${entry.number}`;
+    if (activeRetryIssues.has(issueIdentity)) {
+      throw new Error("Sentinel issue-job ledger contains multiple active retries for one issue");
+    }
+    activeRetryIssues.add(issueIdentity);
+  }
   if (markdown !== renderGitHubIssueJobLedger(parsed)) {
     throw new Error("Sentinel issue-job ledger is not in its canonical complete form");
   }
@@ -782,8 +898,15 @@ export const applyGitHubIssueJobDisposition = (
   baseSha: string,
   observedAt: Date,
   disposition: GitHubIssueJobDisposition,
+  checkpoint: GitHubIssueJobCheckpoint | null = null,
 ): string => {
-  if (!FULL_SHA.test(baseSha) || !Number.isFinite(observedAt.getTime())) {
+  if (
+    !FULL_SHA.test(baseSha) || !Number.isFinite(observedAt.getTime()) ||
+    (checkpoint !== null &&
+      (!CHECKPOINT_BRANCH.test(checkpoint.branch) || !FULL_SHA.test(checkpoint.sha) ||
+        checkpoint.baseSha !== baseSha || checkpoint.sha === baseSha)) ||
+    (disposition === "resolved" && checkpoint !== null)
+  ) {
     throw new Error("Sentinel issue-job disposition metadata is invalid");
   }
   const entries = parseGitHubIssueJobLedger(markdown);
@@ -797,6 +920,7 @@ export const applyGitHubIssueJobDisposition = (
     sourceUpdatedAt: job.updatedAt,
     recordedAt: observedAt.toISOString(),
     baseSha,
+    checkpoint,
     title: job.title,
     disposition,
   };
@@ -816,8 +940,12 @@ export const applyGitHubIssueJobDisposition = (
       throw new Error("The selected GitHub issue retry timestamp cannot move backwards");
     }
   }
+  const retainedPriorCheckpoints = priorPending
+    .filter((entry) => entry.fingerprint !== job.fingerprint && entry.checkpoint !== null)
+    .map((entry) => ({ ...entry, disposition: "manual_required" as const }));
   return renderGitHubIssueJobLedger([
     ...entries.filter((entry) => !priorPending.includes(entry)),
+    ...retainedPriorCheckpoints,
     nextEntry,
   ]);
 };

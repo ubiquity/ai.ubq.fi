@@ -108,6 +108,7 @@ const retryPendingDisposition = {
   phase: "failed_implementation",
   implementation_status: "blocked",
   disposition: "retry_pending",
+  retry_checkpoint: null,
 };
 
 const retryPendingCycle = {
@@ -116,10 +117,11 @@ const retryPendingCycle = {
   started_at: "2026-08-27T23:00:00Z",
   base_development_sha: "d".repeat(40),
   candidate_sha: "e".repeat(40),
-  temporary_branch: "sentinel/candidate-123456789",
+  temporary_branch: "sentinel/candidate-123456789-2",
   status: "no_change",
   stage: "complete",
   branch_disposition: "development_docs_only_issue_retry_pending",
+  retry_checkpoint: null,
 };
 
 const retryPendingLedger = renderGitHubIssueJobLedger([{
@@ -132,6 +134,7 @@ const retryPendingLedger = renderGitHubIssueJobLedger([{
   sourceUpdatedAt: selection.updated_at,
   recordedAt: "2026-08-27T23:20:00Z",
   baseSha: retryPendingCycle.base_development_sha,
+  checkpoint: null,
   title: "Retry the bounded issue",
   disposition: "retry_pending",
 }]);
@@ -202,6 +205,89 @@ Deno.test("retry-pending reconciliation validates a durable no-delivery receipt"
     developmentLedgerMarkdown: retryPendingLedger,
   };
   assert.doesNotThrow(() => validateRetryPendingIssueReconciliation(baseInput));
+
+  const checkpoint = {
+    branch: retryPendingCycle.temporary_branch,
+    sha: "1".repeat(40),
+    base_sha: retryPendingCycle.base_development_sha,
+  };
+  const checkpointLedger = renderGitHubIssueJobLedger([{
+    ...parseGitHubIssueJobLedger(retryPendingLedger)[0]!,
+    checkpoint: { branch: checkpoint.branch, sha: checkpoint.sha, baseSha: checkpoint.base_sha },
+  }]);
+  const checkpointInput: Parameters<typeof validateRetryPendingIssueReconciliation>[0] = {
+    ...baseInput,
+    cycleValue: {
+      ...retryPendingCycle,
+      branch_disposition: "remote_retained_issue_retry_pending",
+      retry_checkpoint: checkpoint,
+    },
+    dispositionValue: { ...retryPendingDisposition, retry_checkpoint: checkpoint },
+    developmentLedgerMarkdown: checkpointLedger,
+  };
+  assert.doesNotThrow(() => validateRetryPendingIssueReconciliation(checkpointInput));
+
+  const checkpointMismatchInputs: Array<
+    readonly [Partial<Parameters<typeof validateRetryPendingIssueReconciliation>[0]>, RegExp]
+  > = [
+    [{
+      developmentLedgerMarkdown: renderGitHubIssueJobLedger([{
+        ...parseGitHubIssueJobLedger(checkpointLedger)[0]!,
+        checkpoint: { branch: "sentinel/candidate-123456780", sha: checkpoint.sha, baseSha: checkpoint.base_sha },
+      }]),
+    }, /exact durable ledger row/],
+    [{
+      developmentLedgerMarkdown: renderGitHubIssueJobLedger([{
+        ...parseGitHubIssueJobLedger(checkpointLedger)[0]!,
+        checkpoint: { branch: checkpoint.branch, sha: "2".repeat(40), baseSha: checkpoint.base_sha },
+      }]),
+    }, /exact durable ledger row/],
+    [{
+      developmentLedgerMarkdown: renderGitHubIssueJobLedger([{
+        ...parseGitHubIssueJobLedger(checkpointLedger)[0]!,
+        baseSha: "3".repeat(40),
+        checkpoint: { branch: checkpoint.branch, sha: checkpoint.sha, baseSha: "3".repeat(40) },
+      }]),
+    }, /exact durable ledger row/],
+    [{ dispositionValue: retryPendingDisposition }, /exact durable ledger row/],
+    [{ cycleValue: retryPendingCycle }, /exact durable ledger row/],
+    [{ developmentLedgerMarkdown: retryPendingLedger }, /exact durable ledger row/],
+    [{
+      cycleValue: {
+        ...retryPendingCycle,
+        temporary_branch: "sentinel/candidate-123456780",
+        branch_disposition: "remote_retained_issue_retry_pending",
+        retry_checkpoint: { ...checkpoint, branch: "sentinel/candidate-123456780" },
+      },
+    }, /exact durable ledger row/],
+    [{
+      cycleValue: {
+        ...retryPendingCycle,
+        branch_disposition: "remote_retained_issue_retry_pending",
+        retry_checkpoint: { ...checkpoint, sha: "2".repeat(40) },
+      },
+    }, /exact durable ledger row/],
+    [{
+      cycleValue: {
+        ...retryPendingCycle,
+        branch_disposition: "remote_retained_issue_retry_pending",
+        retry_checkpoint: { ...checkpoint, base_sha: "3".repeat(40) },
+      },
+    }, /checkpoint does not match its branch disposition/],
+    [{
+      cycleValue: {
+        ...retryPendingCycle,
+        branch_disposition: "development_docs_only_issue_retry_pending",
+        retry_checkpoint: checkpoint,
+      },
+    }, /checkpoint does not match its branch disposition/],
+  ];
+  for (const [overrides, pattern] of checkpointMismatchInputs) {
+    assert.throws(
+      () => validateRetryPendingIssueReconciliation({ ...checkpointInput, ...overrides }),
+      pattern,
+    );
+  }
 
   const invalidInputs: Array<
     readonly [Partial<Parameters<typeof validateRetryPendingIssueReconciliation>[0]>, RegExp]

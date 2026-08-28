@@ -640,7 +640,7 @@ jobs:
                     import {
                       GITHUB_ISSUE_JOB_HINT_FILENAME,
                       renderGitHubIssueJobHint,
-                      selectNextGitHubIssueJob,
+                      selectNextGitHubIssueJobSelection,
                     } from "./scripts/sentinel/issues.ts";
                     import { selectNextReviewBacklogEntry } from "./scripts/sentinel/review.ts";
                     const runnerTemp = Deno.env.get("RUNNER_TEMP");
@@ -653,13 +653,16 @@ jobs:
                     } else {
                       const ledger = await Deno.readTextFile(`${runnerTemp}/sentinel-issue-jobs.md`);
                       const github = new GitHubActionsClient({ repository, token });
-                      const issueJob = await selectNextGitHubIssueJob(github, repository, ledger);
+                      const issueSelection = await selectNextGitHubIssueJobSelection(github, repository, ledger);
                       await Deno.writeTextFile(
                         `${runnerTemp}/${GITHUB_ISSUE_JOB_HINT_FILENAME}`,
-                        renderGitHubIssueJobHint(issueJob),
+                        renderGitHubIssueJobHint(
+                          issueSelection?.job ?? null,
+                          issueSelection?.checkpoint ?? null,
+                        ),
                         { createNew: true },
                       );
-                      console.log(issueJob === null ? "false" : "true");
+                      console.log(issueSelection === null ? "false" : "true");
                     }
                   '
               )"; then

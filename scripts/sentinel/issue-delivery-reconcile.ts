@@ -560,7 +560,7 @@ export const validateRetryPendingIssueReconciliation = (
   if (input.pullRequestReportPresent || input.productionOutcomeReportPresent) {
     throw new Error("A retry-pending issue reconciliation cannot contain delivery or production records");
   }
-  parseGitHubIssueRetryPendingReport(input.dispositionValue, {
+  const disposition = parseGitHubIssueRetryPendingReport(input.dispositionValue, {
     issueId: input.selection.issue_id,
     issueNumber: input.selection.issue_number,
     fingerprint: input.selection.fingerprint,
@@ -584,11 +584,18 @@ export const validateRetryPendingIssueReconciliation = (
     entry.issueId === input.selection.issue_id && entry.number === input.selection.issue_number &&
     entry.fingerprint === input.selection.fingerprint
   );
+  const expectedCheckpoint = disposition.retry_checkpoint === null ? null : {
+    branch: disposition.retry_checkpoint.branch,
+    sha: disposition.retry_checkpoint.sha,
+    baseSha: disposition.retry_checkpoint.base_sha,
+  };
   if (
     matches.length !== 1 || matches[0]!.bodySha256 !== input.selection.body_sha256 ||
     matches[0]!.comments !== input.selection.comments ||
-    matches[0]!.sourceUpdatedAt !== input.selection.updated_at ||
-    matches[0]!.disposition !== "retry_pending" || matches[0]!.baseSha !== cycle.base_development_sha ||
+    matches[0]!.sourceUpdatedAt !== input.selection.updated_at || matches[0]!.disposition !== "retry_pending" ||
+    matches[0]!.baseSha !== (expectedCheckpoint?.baseSha ?? cycle.base_development_sha) ||
+    JSON.stringify(matches[0]!.checkpoint) !== JSON.stringify(expectedCheckpoint) ||
+    JSON.stringify(cycle.retry_checkpoint) !== JSON.stringify(disposition.retry_checkpoint) ||
     Date.parse(matches[0]!.recordedAt) < Date.parse(cycle.started_at)
   ) {
     throw new Error("Sentinel retry-pending reconciliation has no exact durable ledger row");

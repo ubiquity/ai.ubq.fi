@@ -422,15 +422,18 @@ Deno.test({
     assert(workflow.includes("inputs.sentinel_mode == 'hourly'"), "Maintainers must be able to start an hourly run");
     assert(workflow.includes("preview|hourly)"), "Manual hourly runs must select the hourly orchestrator mode");
     assert(workflow.includes("selectNextReviewBacklogEntry"), "Hourly runs must preflight eligible backlog work");
-    assert(workflow.includes("selectNextGitHubIssueJob"), "Hourly runs must preflight eligible GitHub issue work");
     assert(
-      workflow.includes("renderGitHubIssueJobHint(issueJob)"),
-      "Hourly preflight must persist both selected and empty GitHub issue hints",
+      workflow.includes("selectNextGitHubIssueJobSelection"),
+      "Hourly runs must preflight eligible GitHub issue and checkpoint work",
     );
     assert(
-      orchestrator.includes("githubIssueJobMatchesHint(issueJobHint, selectedIssueJob)") &&
+      workflow.includes("renderGitHubIssueJobHint(") && workflow.includes("issueSelection?.checkpoint ?? null"),
+      "Hourly preflight must persist selected, empty, and retry-checkpoint hints",
+    );
+    assert(
+      orchestrator.includes("githubIssueJobMatchesHint(") && orchestrator.includes("selectedIssueCheckpoint") &&
         orchestrator.includes("hourly_deferred_github_issue_changed"),
-      "Hourly runtime must defer when the bound GitHub issue selection changes",
+      "Hourly runtime must defer when the bound GitHub issue or checkpoint selection changes",
     );
     assert(
       orchestrator.includes("GITHUB_REPOSITORY: repository"),
@@ -527,7 +530,10 @@ Deno.test({
       "Retry-pending issue pushes must return before ordinary candidate delivery",
     );
     const retryPushLane = issuePushGate.slice(retryPushStart, retryPushEnd);
-    assert(retryPushLane.includes("return null"), "Retry-pending issue pushes must have no delivery record");
+    assert(
+      retryPushLane.includes("requireExactRemoteCandidateBranch(") && retryPushLane.includes("return null"),
+      "Retry-pending issue pushes must verify any retained checkpoint ref and have no delivery record",
+    );
     for (
       const forbidden of [
         "ensureRemoteCandidateBranch",
@@ -598,29 +604,67 @@ Deno.test({
     const retryDeferLane = orchestrator.slice(retryDeferStart, retryDeferEnd);
     const preservePosition = retryDeferLane.indexOf("await preserveFailedImplementation");
     const rollbackPosition = retryDeferLane.indexOf("await beforeDiscard?.()");
+    const checkpointPosition = retryDeferLane.indexOf("await publishGitHubIssueRetryCheckpoint(stage)");
+    const checkpointStatePosition = retryDeferLane.indexOf("retryCheckpoint = checkpoint");
     const discardPosition = retryDeferLane.indexOf("await discardCandidateChanges");
+    const dispositionPosition = retryDeferLane.indexOf("await writeSelectedIssueDisposition");
     assert(
-      preservePosition >= 0 && rollbackPosition > preservePosition && discardPosition > rollbackPosition,
-      "Retry deferral must preserve the candidate, restore preview state, and only then discard local changes",
+      preservePosition >= 0 && rollbackPosition > preservePosition && checkpointPosition > rollbackPosition &&
+        discardPosition > checkpointPosition,
+      "Retry deferral must preserve evidence, restore preview state, publish a checkpoint, and only then discard local changes",
+    );
+    assert(
+      checkpointStatePosition > checkpointPosition && checkpointStatePosition < discardPosition &&
+        checkpointStatePosition < dispositionPosition,
+      "Retry deferral must synchronize nullable checkpoint state before discard and durable reports",
+    );
+    const checkpointPublishStart = orchestrator.indexOf("const publishGitHubIssueRetryCheckpoint = async");
+    const checkpointPublishEnd = orchestrator.indexOf(
+      "const deferGitHubIssueImplementationFailure = async",
+      checkpointPublishStart,
+    );
+    const checkpointPublishLane = orchestrator.slice(checkpointPublishStart, checkpointPublishEnd);
+    const scopeValidationPosition = checkpointPublishLane.indexOf("await assertImplementationAgentScope(checkout)");
+    const trustedRestorePosition = checkpointPublishLane.indexOf('"restore",');
+    assert(
+      scopeValidationPosition >= 0 && trustedRestorePosition > scopeValidationPosition,
+      "Retry checkpoint scope validation must run before trusted ledger and backlog restoration",
     );
     assert(
       orchestrator.includes("captureFailedCandidateSnapshot(checkout, snapshotDirectory, baseSha)") &&
+        orchestrator.includes("let retryCheckpoint = selectedIssueCheckpoint") &&
         orchestrator.includes("let lastPushedCandidateSha: string | null = null") &&
-        retryDeferLane.includes("const retainedRemoteCandidateSha = lastPushedCandidateSha") &&
-        retryDeferLane.includes("head_sha: retainedRemoteCandidateSha") &&
+        orchestrator.includes("lastPushedCandidateSha = pushedCandidateSha") &&
+        checkpointPublishLane.includes("selectedIssueAggregatePaths()") &&
+        checkpointPublishLane.includes("assertImplementationFilesExcludeValues(checkout, sensitiveValues, paths)") &&
+        checkpointPublishLane.includes("assertProtectedFilesUnchanged(checkout, baseProtectedHashes)") &&
+        checkpointPublishLane.includes("scanCandidateWithGitleaks({") &&
+        checkpointPublishLane.includes("await commitChanges(") &&
+        checkpointPublishLane.includes("assertGitHistoryExcludesValues") &&
+        checkpointPublishLane.includes("lastPushedCandidateSha,") &&
+        retryDeferLane.includes("head_sha: checkpoint.sha") &&
         !retryDeferLane.includes("head_sha: preInvocationSha"),
-      "Retry evidence must preserve the aggregate candidate and identify only the SHA retained remotely",
-    );
-    const candidatePushPosition = orchestrator.indexOf(
-      "await pushTemporaryCandidate(checkout, branch, gitEnvironment)",
-    );
-    const retainedShaPosition = orchestrator.indexOf(
-      "lastPushedCandidateSha = candidateSha",
-      candidatePushPosition,
+      "Retry evidence must validate and publish the aggregate candidate before recording the exact remote SHA",
     );
     assert(
-      candidatePushPosition >= 0 && retainedShaPosition > candidatePushPosition,
-      "A candidate SHA must become retained only after its remote push succeeds",
+      checkpointPublishLane.indexOf("const pushedSha = await pushImmutableTemporaryCheckpoint") >= 0 &&
+        checkpointPublishLane.indexOf("retryCheckpoint = checkpoint") >
+          checkpointPublishLane.indexOf("const pushedSha = await pushImmutableTemporaryCheckpoint"),
+      "A retry checkpoint SHA must become retained only after its exact remote push succeeds",
+    );
+    assert(
+      checkpointPublishLane.includes("GitHub issue retry checkpoint has no aggregate implementation diff") &&
+        !checkpointPublishLane.includes("if (paths.length === 0) return retryCheckpoint"),
+      "An empty resumed aggregate must fail closed instead of retaining a checkpoint from another candidate branch",
+    );
+    assert(
+      orchestrator.includes("prepareResumedGitHubIssueCandidate({") &&
+        orchestrator.includes("retryCheckpointResumeFailureDisposition(error)") &&
+        orchestrator.includes('failureDisposition === "retry_pending"') &&
+        orchestrator.includes("Sentinel retry checkpoint conflicts with current development") &&
+        orchestrator.includes('"manual_required",') &&
+        orchestrator.includes('"retry_checkpoint_resume_failed"'),
+      "Checkpoint resume must retry transient failures and fail closed on deterministic integrity failures",
     );
     assert(
       orchestrator.includes('state.branch_disposition === "remote_retained_pending_decision" ||') &&
