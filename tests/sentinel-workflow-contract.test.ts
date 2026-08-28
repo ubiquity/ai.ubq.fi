@@ -27,7 +27,10 @@ Deno.test("Provider Sentinel has explicit prepare, bounded repair, and convergen
   assert.match(workflow, /^\s{2}repair:/mu);
   assert.match(workflow, /^\s{2}converge:/mu);
 
-  assert.match(prepare, /permissions:\n\s+actions: write\n\s+contents: read\n\s+issues: read\n\s+pull-requests: read/u);
+  assert.match(
+    prepare,
+    /permissions:\n\s+actions: write\n\s+contents: write\n\s+issues: read\n\s+pull-requests: read/u,
+  );
   assert.match(prepare, /main\.ts --mode "\$SENTINEL_MODE"/u);
   assert.match(prepare, /\.sentinel\/reports\/matrix-plan\.json/u);
   assert.match(prepare, /Upload encrypted immutable matrix plan/u);
