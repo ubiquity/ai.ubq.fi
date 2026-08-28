@@ -904,15 +904,12 @@ Deno.test({
     );
     const backlogRecordPosition = orchestrator.indexOf(
       "mergeReviewBacklog(currentBacklog, backlogFindings, candidateSha, new Date())",
-      nativeReviewBlockerEnd,
     );
     const previewPushPosition = orchestrator.indexOf(
       "const pushedCandidateSha = await pushTemporaryCandidate",
-      nativeReviewBlockerEnd,
     );
     const previewDeploymentPosition = orchestrator.indexOf(
       "const preview = await dispatchAndResolveRevision({",
-      nativeReviewBlockerEnd,
     );
     assert(
       nativeReviewBlockerStart >= 0 && nativeReviewBlockerEnd > nativeReviewBlockerStart &&
