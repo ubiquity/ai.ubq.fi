@@ -40,7 +40,7 @@ export type GitHubIssueJob = Readonly<{
   relations: GitHubIssueRelations;
 }>;
 
-export type GitHubIssueJobDisposition = "resolved" | "manual_required";
+export type GitHubIssueJobDisposition = "retry_pending" | "resolved" | "manual_required";
 
 export type GitHubIssueJobHint = Readonly<{
   schema_version: 1;
@@ -95,6 +95,7 @@ const MAX_LEDGER_LINE_LENGTH = 4_096;
 const MAX_ISSUE_JOB_HINT_BYTES = 1_024;
 export const MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS = 32;
 export const MAX_ISSUE_JOB_DETAIL_COMMENT_INSPECTIONS = 33;
+export const GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS = 6 * 60 * 60 * 1_000;
 export const GITHUB_ISSUE_JOB_HINT_FILENAME = "sentinel-github-issue-job-hint.json";
 const LEDGER_HEADERS = Object.freeze([
   "Issue",
@@ -470,7 +471,9 @@ export const selectNextGitHubIssueJob = async (
   source: GitHubIssueJobSource,
   repository: string,
   ledgerMarkdown: string,
+  observedAt = new Date(),
 ): Promise<GitHubIssueJob | null> => {
+  if (!Number.isFinite(observedAt.getTime())) throw new Error("GitHub issue selection timestamp is invalid");
   const ledger = parseGitHubIssueJobLedger(ledgerMarkdown);
   const listed = await source.listOpenIssues();
   const candidates: GitHubIssueJob[] = [];
@@ -523,29 +526,33 @@ export const selectNextGitHubIssueJob = async (
     if (!githubIssueJobSourceSnapshotsMatch(candidate, job)) {
       throw new Error(`GitHub issue ${candidate.number} snapshot changed during selection`);
     }
-    let hasTerminalDisposition = false;
+    let selectionBlocked = false;
     for (
       const entry of ledger.filter((entry) =>
         entry.issueId === job.issueId && entry.nodeId === job.nodeId && entry.number === job.number
       )
     ) {
-      if (entry.fingerprint === job.fingerprint) {
-        hasTerminalDisposition = true;
-        break;
+      let snapshotMatches = entry.fingerprint === job.fingerprint;
+      if (!snapshotMatches) {
+        const normalizedJob = await createGitHubIssueJob(
+          repository,
+          { ...current, comments: entry.comments, updatedAt: entry.sourceUpdatedAt },
+          relations,
+          authorityPermission,
+          MAX_GITHUB_ISSUE_TIME_ESTIMATE_MINUTES,
+        );
+        snapshotMatches = normalizedJob?.fingerprint === entry.fingerprint;
       }
-      const normalizedJob = await createGitHubIssueJob(
-        repository,
-        { ...current, comments: entry.comments, updatedAt: entry.sourceUpdatedAt },
-        relations,
-        authorityPermission,
-        MAX_GITHUB_ISSUE_TIME_ESTIMATE_MINUTES,
-      );
-      if (normalizedJob?.fingerprint === entry.fingerprint) {
-        hasTerminalDisposition = true;
+      const retryReadyAt = Date.parse(entry.recordedAt) + GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS;
+      if (
+        snapshotMatches &&
+        (entry.disposition !== "retry_pending" || observedAt.getTime() < retryReadyAt)
+      ) {
+        selectionBlocked = true;
         break;
       }
     }
-    if (hasTerminalDisposition) continue;
+    if (selectionBlocked) continue;
     return job;
   }
   return null;
@@ -693,10 +700,11 @@ export const renderGitHubIssueJobLedger = (entries: readonly GitHubIssueJobLedge
   const markdown = [
     "# Sentinel Issue Job Ledger",
     "",
-    "Terminal Sentinel results for immutable GitHub issue snapshots are tracked here. Each selected snapshot is delivered",
-    "through exactly one pull request that links the issue as evidence. After a verified production keep, Sentinel merges the",
-    "delivery pull request and closes the unchanged issue with supporting evidence; a pull request already carried by the",
-    "development push is accepted after a containment check. Manual-required, failed, and rolled-back results remain open.",
+    "Sentinel results for immutable GitHub issue snapshots are tracked here. A retry-pending snapshot waits six hours before",
+    "it is eligible again so later issues can advance. Terminal snapshots are delivered through exactly one pull request that",
+    "links the issue as evidence. After a verified production keep, Sentinel merges the delivery pull request and closes the",
+    "unchanged issue with supporting evidence; a pull request already carried by the development push is accepted after a",
+    "containment check. Manual-required, failed, and rolled-back results remain open.",
     "",
     ...table,
     "",
@@ -743,7 +751,8 @@ export const parseGitHubIssueJobLedger = (markdown: string): GitHubIssueJobLedge
       !Number.isSafeInteger(comments) || comments < 0 ||
       !validTimestamp(sourceUpdatedAt) || !validTimestamp(recordedAt) || !FULL_SHA.test(baseSha) ||
       title.trim().length === 0 || title.length > 512 ||
-      (disposition !== "resolved" && disposition !== "manual_required") || identities.has(identity)
+      (disposition !== "retry_pending" && disposition !== "resolved" && disposition !== "manual_required") ||
+      identities.has(identity)
     ) throw new Error("Sentinel issue-job ledger row is invalid");
     identities.add(identity);
     entries.push({
@@ -778,13 +787,7 @@ export const applyGitHubIssueJobDisposition = (
     throw new Error("Sentinel issue-job disposition metadata is invalid");
   }
   const entries = parseGitHubIssueJobLedger(markdown);
-  if (
-    entries.some((entry) =>
-      entry.issueId === job.issueId && entry.nodeId === job.nodeId && entry.number === job.number &&
-      entry.fingerprint === job.fingerprint
-    )
-  ) throw new Error("The selected GitHub issue snapshot already has a terminal Sentinel disposition");
-  entries.push({
+  const nextEntry: GitHubIssueJobLedgerEntry = {
     issueId: job.issueId,
     nodeId: job.nodeId,
     number: job.number,
@@ -796,8 +799,27 @@ export const applyGitHubIssueJobDisposition = (
     baseSha,
     title: job.title,
     disposition,
-  });
-  return renderGitHubIssueJobLedger(entries);
+  };
+  const exactExisting = entries.find((entry) =>
+    entry.issueId === job.issueId && entry.nodeId === job.nodeId && entry.number === job.number &&
+    entry.fingerprint === job.fingerprint
+  );
+  if (exactExisting && exactExisting.disposition !== "retry_pending") {
+    throw new Error("The selected GitHub issue snapshot already has a terminal Sentinel disposition");
+  }
+  const priorPending = entries.filter((entry) =>
+    entry.issueId === job.issueId && entry.nodeId === job.nodeId && entry.number === job.number &&
+    entry.disposition === "retry_pending"
+  );
+  for (const existing of priorPending) {
+    if (Date.parse(existing.recordedAt) > observedAt.getTime()) {
+      throw new Error("The selected GitHub issue retry timestamp cannot move backwards");
+    }
+  }
+  return renderGitHubIssueJobLedger([
+    ...entries.filter((entry) => !priorPending.includes(entry)),
+    nextEntry,
+  ]);
 };
 
 export const issueJobFindingId = (job: GitHubIssueJob): string => `github-issue:${job.number}:${job.fingerprint}`;

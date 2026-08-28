@@ -15,8 +15,10 @@ import {
   ISSUE_COMPLETION_EVIDENCE_TEXT,
   issueEvidenceMarker,
   parseGitHubIssuePullRequestRecord,
+  parseGitHubIssueRetryPendingReport,
   parseGitHubIssueSelectionReport,
   parseSentinelCycleReport,
+  parseSentinelRetryPendingCycleReport,
   renderIssueDeliveryEvidence,
 } from "./issue-delivery.ts";
 
@@ -57,6 +59,19 @@ const optionalJson = async (path: string): Promise<unknown | null> => {
     return await readJson(path);
   } catch (error) {
     if (error instanceof Deno.errors.NotFound) return null;
+    throw error;
+  }
+};
+
+const regularFileExists = async (path: string): Promise<boolean> => {
+  try {
+    const information = await Deno.lstat(path);
+    if (!information.isFile || information.isSymlink) {
+      throw new Error("Sentinel reconciliation report paths must be regular files");
+    }
+    return true;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return false;
     throw error;
   }
 };
@@ -441,14 +456,20 @@ const bytesToBase64 = (bytes: Uint8Array): string => {
   return btoa(value);
 };
 
-const removeRolledBackLedgerEntry = async (
+const developmentIssueLedger = async (
   token: string,
   repository: string,
-  issueNumber: number,
-  fingerprint: string,
-): Promise<void> => {
-  const path = "/contents/docs/sentinel-issue-jobs.md?ref=development";
-  const value = record(await githubRequest(token, repository, path));
+  fetcher: typeof fetch = fetch,
+): Promise<Readonly<{ blobSha: string; markdown: string }>> => {
+  const value = record(
+    await githubRequest(
+      token,
+      repository,
+      "/contents/docs/sentinel-issue-jobs.md?ref=development",
+      {},
+      fetcher,
+    ),
+  );
   if (
     !value || typeof value.sha !== "string" || !FULL_SHA.test(value.sha) ||
     typeof value.content !== "string" || value.encoding !== "base64"
@@ -459,6 +480,17 @@ const removeRolledBackLedgerEntry = async (
   const markdown = new TextDecoder("utf-8", { fatal: true }).decode(
     Uint8Array.from(atob(normalized), (character) => character.charCodeAt(0)),
   );
+  parseGitHubIssueJobLedger(markdown);
+  return { blobSha: value.sha, markdown };
+};
+
+const removeRolledBackLedgerEntry = async (
+  token: string,
+  repository: string,
+  issueNumber: number,
+  fingerprint: string,
+): Promise<void> => {
+  const { blobSha, markdown } = await developmentIssueLedger(token, repository);
   const entries = parseGitHubIssueJobLedger(markdown);
   const retained = entries.filter((entry) => !(entry.number === issueNumber && entry.fingerprint === fingerprint));
   if (retained.length === entries.length) return;
@@ -468,7 +500,7 @@ const removeRolledBackLedgerEntry = async (
     body: JSON.stringify({
       message: `chore(sentinel): retry rolled-back issue #${issueNumber}`,
       content,
-      sha: value.sha,
+      sha: blobSha,
       branch: "development",
     }),
   });
@@ -510,6 +542,59 @@ const writeReconciliationReport = async (
   );
 };
 
+export const validateRetryPendingIssueReconciliation = (
+  input: Readonly<{
+    workflowRunId: string;
+    workflowFailed: boolean;
+    selection: GitHubIssueSelectionReport;
+    cycleValue: unknown;
+    dispositionValue: unknown;
+    pullRequestReportPresent: boolean;
+    productionOutcomeReportPresent: boolean;
+    developmentLedgerMarkdown: string;
+  }>,
+): void => {
+  if (input.workflowFailed) {
+    throw new Error("A retry-pending issue reconciliation cannot come from a failed Sentinel run");
+  }
+  if (input.pullRequestReportPresent || input.productionOutcomeReportPresent) {
+    throw new Error("A retry-pending issue reconciliation cannot contain delivery or production records");
+  }
+  parseGitHubIssueRetryPendingReport(input.dispositionValue, {
+    issueId: input.selection.issue_id,
+    issueNumber: input.selection.issue_number,
+    fingerprint: input.selection.fingerprint,
+  });
+  const cycle = parseSentinelRetryPendingCycleReport(input.cycleValue, {
+    runId: input.workflowRunId,
+    status: "no_change",
+    stage: "complete",
+    branchDispositions: [
+      "development_docs_only_issue_retry_pending",
+      "remote_retained_issue_retry_pending",
+    ],
+  });
+  if (
+    cycle.candidate_sha === cycle.base_development_sha ||
+    !cycle.temporary_branch.startsWith("sentinel/candidate-")
+  ) {
+    throw new Error("Sentinel retry-pending reconciliation has an invalid docs-only cycle identity");
+  }
+  const matches = parseGitHubIssueJobLedger(input.developmentLedgerMarkdown).filter((entry) =>
+    entry.issueId === input.selection.issue_id && entry.number === input.selection.issue_number &&
+    entry.fingerprint === input.selection.fingerprint
+  );
+  if (
+    matches.length !== 1 || matches[0]!.bodySha256 !== input.selection.body_sha256 ||
+    matches[0]!.comments !== input.selection.comments ||
+    matches[0]!.sourceUpdatedAt !== input.selection.updated_at ||
+    matches[0]!.disposition !== "retry_pending" || matches[0]!.baseSha !== cycle.base_development_sha ||
+    Date.parse(matches[0]!.recordedAt) < Date.parse(cycle.started_at)
+  ) {
+    throw new Error("Sentinel retry-pending reconciliation has no exact durable ledger row");
+  }
+};
+
 export const reconcileGitHubIssueDelivery = async (
   input: Readonly<{
     repositoryRoot: string;
@@ -524,7 +609,31 @@ export const reconcileGitHubIssueDelivery = async (
   const selectionValue = await optionalJson(`${reportsDir}/github-issue-selection.json`);
   if (selectionValue === null) return;
   const selection = parseGitHubIssueSelectionReport(selectionValue);
-  const cycle = parseSentinelCycleReport(await readJson(`${reportsDir}/cycle.json`));
+  const cycleValue = await readJson(`${reportsDir}/cycle.json`);
+  const cycle = parseSentinelCycleReport(cycleValue);
+  const dispositionValue = await optionalJson(`${reportsDir}/github-issue-disposition.json`);
+  const dispositionRecord = record(dispositionValue);
+  if (dispositionRecord?.disposition === "retry_pending") {
+    const pullRequestReportPresent = await regularFileExists(`${reportsDir}/github-issue-pull-request.json`);
+    const productionOutcomeReportPresent = await regularFileExists(
+      `${reportsDir}/github-issue-production-outcome.json`,
+    );
+    const ledger = await developmentIssueLedger(input.token, input.repository);
+    validateRetryPendingIssueReconciliation({
+      workflowRunId: input.workflowRunId,
+      workflowFailed: input.workflowFailed,
+      selection,
+      cycleValue,
+      dispositionValue,
+      pullRequestReportPresent,
+      productionOutcomeReportPresent,
+      developmentLedgerMarkdown: ledger.markdown,
+    });
+    console.log(
+      `[sentinel] issue_retry_pending=#${selection.issue_number} reconciliation=no_delivery issue=open`,
+    );
+    return;
+  }
   const pullValue = await optionalJson(`${reportsDir}/github-issue-pull-request.json`);
   if (pullValue === null) {
     if (input.workflowFailed) return;
@@ -605,7 +714,7 @@ export const reconcileGitHubIssueDelivery = async (
     return;
   }
 
-  const disposition = parseDisposition(await optionalJson(`${reportsDir}/github-issue-disposition.json`));
+  const disposition = parseDisposition(dispositionValue);
   const outcome = parseOutcome(await optionalJson(`${reportsDir}/github-issue-production-outcome.json`));
   if (outcome && outcome.candidateSha !== pullRecord.head_sha) {
     throw new Error("Sentinel production outcome does not match the issue pull-request head");

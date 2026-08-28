@@ -5,7 +5,10 @@ import {
   parseCandidatePreviewEvidence,
   parseCandidateWorkflowValidationRecord,
   parseIssueCandidateDisposition,
+  validateRetryPendingDevelopmentPush,
 } from "../scripts/sentinel/issue-pr-pre-push.ts";
+import { parseGitHubIssueSelectionReport } from "../scripts/sentinel/issue-delivery.ts";
+import { type GitHubIssueJobLedgerEntry, renderGitHubIssueJobLedger } from "../scripts/sentinel/issues.ts";
 import type { GitHubWorkflowDispatch, GitHubWorkflowRun, WaitForWorkflowOptions } from "../scripts/sentinel/github.ts";
 
 const CANDIDATE_SHA = "b".repeat(40);
@@ -13,6 +16,58 @@ const CANDIDATE_BRANCH = "sentinel/candidate-issue-112";
 const FINGERPRINT = "a".repeat(64);
 const CORRELATION_ID = "sentinel-123e4567-e89b-42d3-a456-426614174000";
 const DISPLAY_TITLE = `Deno Deploy ${CORRELATION_ID}`;
+const BASE_SHA = "d".repeat(40);
+const RETRY_SHA = "e".repeat(40);
+
+const retrySelection = parseGitHubIssueSelectionReport({
+  schema_version: 1,
+  issue_id: 5228586364,
+  issue_number: 112,
+  fingerprint: FINGERPRINT,
+  body_sha256: "f".repeat(64),
+  comments: 2,
+  priority: "P3",
+  time_label: "Time: <1 Day",
+  files: ["src/admin.ts"],
+  updated_at: "2026-08-27T22:48:01Z",
+});
+
+const retryDisposition = {
+  schema_version: 1,
+  issue_id: retrySelection.issue_id,
+  issue_number: retrySelection.issue_number,
+  fingerprint: retrySelection.fingerprint,
+  phase: "failed_implementation",
+  implementation_status: "blocked",
+  disposition: "retry_pending",
+};
+
+const retryCycle = {
+  schema_version: 1,
+  run_id: "123456789",
+  started_at: "2026-08-27T23:00:00Z",
+  base_development_sha: BASE_SHA,
+  candidate_sha: RETRY_SHA,
+  temporary_branch: "sentinel/candidate-123456789",
+  status: "running",
+  stage: "pushing_retry_pending_github_issue",
+  branch_disposition: "runner_local_pending_review",
+};
+
+const retryRow = (overrides: Partial<GitHubIssueJobLedgerEntry> = {}): GitHubIssueJobLedgerEntry => ({
+  issueId: retrySelection.issue_id,
+  nodeId: "I_kwDOQoe6nc8AAAABN6XlfA",
+  number: retrySelection.issue_number,
+  fingerprint: retrySelection.fingerprint,
+  bodySha256: retrySelection.body_sha256,
+  comments: retrySelection.comments,
+  sourceUpdatedAt: retrySelection.updated_at,
+  recordedAt: "2026-08-27T23:20:00Z",
+  baseSha: BASE_SHA,
+  title: "Retry the bounded issue",
+  disposition: "retry_pending" as const,
+  ...overrides,
+});
 
 const successfulRun = (id: number, overrides: Partial<GitHubWorkflowRun> = {}): GitHubWorkflowRun => ({
   id,
@@ -98,6 +153,89 @@ Deno.test("issue candidate evidence parsers bind disposition, preview, and retry
         candidateBranch: CANDIDATE_BRANCH,
       }),
     /does not match the exact candidate/,
+  );
+});
+
+Deno.test("retry-pending development pushes are exact docs-only commits with no delivery candidate", () => {
+  const baseInput: Parameters<typeof validateRetryPendingDevelopmentPush>[0] = {
+    workflowRunId: "123456789",
+    update: {
+      localRef: "HEAD",
+      localSha: RETRY_SHA,
+      remoteRef: "refs/heads/development",
+      remoteSha: BASE_SHA,
+    },
+    selection: retrySelection,
+    cycleValue: retryCycle,
+    dispositionValue: retryDisposition,
+    commitParents: [BASE_SHA],
+    changedPaths: ["docs/sentinel-issue-jobs.md"],
+    parentLedgerMarkdown: renderGitHubIssueJobLedger([]),
+    pushedLedgerMarkdown: renderGitHubIssueJobLedger([retryRow()]),
+  };
+  assert.doesNotThrow(() => validateRetryPendingDevelopmentPush(baseInput));
+
+  const priorPending = retryRow({
+    fingerprint: "9".repeat(64),
+    bodySha256: "8".repeat(64),
+    comments: 1,
+    sourceUpdatedAt: "2026-08-27T22:00:00Z",
+    recordedAt: "2026-08-27T23:05:00Z",
+    baseSha: "c".repeat(40),
+  });
+  assert.doesNotThrow(() =>
+    validateRetryPendingDevelopmentPush({
+      ...baseInput,
+      parentLedgerMarkdown: renderGitHubIssueJobLedger([priorPending]),
+    })
+  );
+
+  const invalidInputs: Array<readonly [Partial<Parameters<typeof validateRetryPendingDevelopmentPush>[0]>, RegExp]> = [
+    [{ dispositionValue: { ...retryDisposition, fingerprint: "7".repeat(64) } }, /exact issue selection/],
+    [{ commitParents: [BASE_SHA, "c".repeat(40)] }, /one-parent commit/],
+    [{ commitParents: ["c".repeat(40)] }, /selected development base/],
+    [{ changedPaths: ["docs/sentinel-issue-jobs.md", "src/admin.ts"] }, /only the issue-job ledger/],
+    [{ pushedLedgerMarkdown: renderGitHubIssueJobLedger([]) }, /exact pending ledger row/],
+    [
+      { pushedLedgerMarkdown: renderGitHubIssueJobLedger([retryRow({ disposition: "resolved" })]) },
+      /pending ledger row/,
+    ],
+    [{ cycleValue: { ...retryCycle, candidate_sha: "c".repeat(40) } }, /exact cycle commit/],
+  ];
+  for (const [overrides, pattern] of invalidInputs) {
+    assert.throws(() => validateRetryPendingDevelopmentPush({ ...baseInput, ...overrides }), pattern);
+  }
+
+  const unrelated = retryRow({
+    issueId: 500,
+    nodeId: "I_kwDOIssue500",
+    number: 500,
+    fingerprint: "6".repeat(64),
+    bodySha256: "5".repeat(64),
+    comments: 0,
+    sourceUpdatedAt: "2026-08-20T00:00:00Z",
+    recordedAt: "2026-08-21T00:00:00Z",
+    baseSha: "4".repeat(40),
+    title: "Unrelated terminal issue",
+    disposition: "resolved",
+  });
+  assert.throws(
+    () =>
+      validateRetryPendingDevelopmentPush({
+        ...baseInput,
+        parentLedgerMarkdown: renderGitHubIssueJobLedger([unrelated]),
+      }),
+    /unrelated issue-job ledger rows/,
+  );
+  assert.throws(
+    () =>
+      validateRetryPendingDevelopmentPush({
+        ...baseInput,
+        parentLedgerMarkdown: renderGitHubIssueJobLedger([
+          retryRow({ recordedAt: "2026-08-28T00:00:00Z" }),
+        ]),
+      }),
+    /timestamp backwards/,
   );
 });
 

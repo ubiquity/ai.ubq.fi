@@ -117,6 +117,7 @@ const CODEX_HEARTBEAT_INTERVAL_MS = 60_000;
 export const TRIAGE_INCIDENT_MS = 6 * 60 * 1_000;
 export const IMPLEMENTATION_INITIAL_MS = 20 * 60 * 1_000;
 export const IMPLEMENTATION_CONTINUATION_MS = 10 * 60 * 1_000;
+export const GITHUB_ISSUE_IMPLEMENTATION_CONTINUATION_MS = 20 * 60 * 1_000;
 export const MONITOR_AGENT_MS = 5 * 60 * 1_000;
 const FAILED_CANDIDATE_MAX_FILES = 1_024;
 const FAILED_CANDIDATE_MAX_BYTES = 64 * 1_024 * 1_024;
@@ -428,10 +429,8 @@ const safeErrorSummary = (error: unknown): Record<string, unknown> => ({
 
 /**
  * Codex failures that indicate capacity or environment problems rather than an
- * agent integrity violation. A bounded implementation budget that expires or an
- * account that cannot be selected is a capacity outcome: the selected
- * maintenance item is recorded as manual_required instead of crashing the
- * cycle and retrying the same unbounded work every hour.
+ * agent integrity violation. GitHub issues use a durable cooldown, while the
+ * review backlog uses its existing manual state to avoid an hourly retry loop.
  */
 const CODEX_CAPACITY_FAILURES: ReadonlySet<CodexInvocationFailureCode> = new Set([
   "accounts_unavailable",
@@ -440,7 +439,7 @@ const CODEX_CAPACITY_FAILURES: ReadonlySet<CodexInvocationFailureCode> = new Set
   "runtime_failure",
 ]);
 
-export type ImplementationFailureDisposition = "manual_required" | "crash";
+export type ImplementationFailureDisposition = "retry_pending" | "manual_required" | "crash";
 
 export const implementationFailureDisposition = (
   source: "triage" | "review_backlog" | "github_issue" | null,
@@ -451,16 +450,29 @@ export const implementationFailureDisposition = (
     error instanceof CodexInvocationError &&
     CODEX_CAPACITY_FAILURES.has(error.failure)
   ) {
-    return "manual_required";
+    return source === "github_issue" ? "retry_pending" : "manual_required";
   }
   return "crash";
+};
+
+export const prepareImplementationFailureRetry = async (
+  source: "triage" | "review_backlog" | "github_issue" | null,
+  error: unknown,
+  preserve: () => Promise<void>,
+  discard: () => Promise<void>,
+): Promise<"retry_pending" | "manual_required"> => {
+  await preserve();
+  const disposition = implementationFailureDisposition(source, error);
+  if (disposition === "crash") throw error;
+  await discard();
+  return disposition;
 };
 
 /**
  * Discards every uncommitted candidate change after a failed implementation
  * attempt. The failed attempt is preserved separately as encrypted evidence
- * before this runs; manual-required completion requires a pristine candidate
- * whose only remaining change is the trusted ledger or backlog file.
+ * before this runs; non-runtime completion requires a pristine candidate whose
+ * only remaining change is the trusted ledger or backlog file.
  */
 const discardCandidateChanges = async (checkout: string, baseSha: string): Promise<void> => {
   ensureFullSha(baseSha, "Candidate discard base SHA");
@@ -1279,8 +1291,11 @@ export const captureFailedCandidateSnapshot = async (
   baseSha: string,
 ): Promise<void> => {
   ensureFullSha(baseSha, "Failed candidate base SHA");
-  const pathStates = await implementationAgentChangedPathStates(checkout);
-  const paths = [...pathStates.keys()].sort();
+  const workingPathStates = await implementationAgentChangedPathStates(checkout);
+  const paths = [...await aggregateCandidateChangedPaths(checkout, baseSha)].sort();
+  const pathStates = new Map<string, ImplementationPathState>(
+    paths.map((path) => [path, workingPathStates.get(path) ?? "tracked"]),
+  );
   if (pathStates.size > FAILED_CANDIDATE_MAX_FILES) {
     throw new Error("Failed implementation candidate contains too many changed files to preserve safely");
   }
@@ -2357,12 +2372,13 @@ const run = async (): Promise<void> => {
     selectedBacklogState.continueToRuntimeValidation = true;
   };
   const selectedIssueState: {
-    disposition: "open" | "resolved" | "manual_required" | null;
+    disposition: "open" | "retry_pending" | "resolved" | "manual_required" | null;
     continueToRuntimeValidation: boolean;
   } = {
     disposition: workSelection.issueJob ? "open" : null,
     continueToRuntimeValidation: workSelection.issueJob === null,
   };
+  let lastPushedCandidateSha: string | null = null;
   const selectedIssueReportDisposition = (report: ImplementationReport): FindingDisposition => {
     if (!workSelection.issueJob) throw new Error("No GitHub issue job was selected");
     const disposition = report.dispositions.find((item) =>
@@ -2373,7 +2389,7 @@ const run = async (): Promise<void> => {
   };
   const writeSelectedIssueDisposition = async (
     reportDisposition: FindingDisposition,
-    disposition: "resolved" | "manual_required",
+    disposition: "retry_pending" | "resolved" | "manual_required",
     phase: string,
   ): Promise<void> => {
     if (!workSelection.issueJob) throw new Error("No GitHub issue job was selected");
@@ -2452,7 +2468,7 @@ const run = async (): Promise<void> => {
         reportPath: `${reportsDir}/secret-scan-failed-${stage}.json`,
       });
       const snapshotDirectory = `${reportsDir}/failed-${stage}-candidate`;
-      await captureFailedCandidateSnapshot(checkout, snapshotDirectory, preInvocationSha);
+      await captureFailedCandidateSnapshot(checkout, snapshotDirectory, baseSha);
       preservation = {
         preserved: true,
         location: `reports/failed-${stage}-candidate/manifest.json in encrypted evidence artifact`,
@@ -2465,11 +2481,121 @@ const run = async (): Promise<void> => {
       candidate: preservation,
     });
   };
+  const deferGitHubIssueImplementationFailure = async (
+    error: unknown,
+    stage: string,
+    preInvocationSha: string,
+    beforeDiscard?: () => Promise<void>,
+  ): Promise<boolean> => {
+    await preserveFailedImplementation(error, stage, preInvocationSha);
+    if (implementationFailureDisposition(workSelection.source, error) !== "retry_pending") return false;
+    if (!workSelection.issueJob) {
+      throw new Error("GitHub issue implementation failure is missing its selected issue");
+    }
+    const retainedRemoteCandidateSha = lastPushedCandidateSha;
+    await beforeDiscard?.();
+    await discardCandidateChanges(checkout, baseSha);
+    selectedIssueState.disposition = "open";
+    selectedIssueState.continueToRuntimeValidation = false;
+    const failedDisposition: FindingDisposition = Object.freeze({
+      finding_id: issueJobFindingId(workSelection.issueJob),
+      status: "blocked",
+      summary: "Infrastructure failure deferred this issue for a bounded retry cooldown.",
+      changed_files: [],
+      validation: [],
+    });
+    await writeSelectedIssueDisposition(failedDisposition, "retry_pending", "failed_implementation");
+    if (retainedRemoteCandidateSha !== null) {
+      await writeJson(`${reportsDir}/github-issue-retry-retained-candidate.json`, {
+        schema_version: 1,
+        issue_id: workSelection.issueJob.issueId,
+        issue_number: workSelection.issueJob.number,
+        fingerprint: workSelection.issueJob.fingerprint,
+        failed_stage: stage,
+        head_branch: branch,
+        head_sha: retainedRemoteCandidateSha,
+      });
+    }
+    return true;
+  };
+  const completeNonRuntimeGitHubIssueDisposition = async (): Promise<void> => {
+    if (selectedIssueState.disposition !== "manual_required" && selectedIssueState.disposition !== "retry_pending") {
+      throw new Error("GitHub issue has no non-runtime disposition to persist");
+    }
+    const retryPending = selectedIssueState.disposition === "retry_pending";
+    if (selectedIssueState.continueToRuntimeValidation || !workSelection.issueJob) {
+      throw new Error("Non-runtime GitHub issue disposition cannot continue to deployment");
+    }
+    const changedPaths = [...await implementationAgentChangedPaths(checkout)].sort();
+    if (changedPaths.length !== 1 || changedPaths[0] !== SENTINEL_POLICY.paths.issueJobLedger) {
+      throw new Error("Non-runtime GitHub issue completion must change only the trusted issue-job ledger");
+    }
+    const dispositionLedgerPath = `${checkout}/${SENTINEL_POLICY.paths.issueJobLedger}`;
+    parseGitHubIssueJobLedger(await Deno.readTextFile(dispositionLedgerPath));
+    const currentIssueJob = await getCurrentGitHubIssueJob(github, repository, workSelection.issueJob.number);
+    if (!githubIssueJobsMatch(workSelection.issueJob, currentIssueJob)) {
+      throw new Error("The selected GitHub issue changed before disposition validation");
+    }
+    await updateState(retryPending ? "validating_retry_pending_github_issue" : "validating_manual_github_issue");
+    await scanCandidateWithGitleaks({
+      cwd: checkout,
+      reportPath: `${reportsDir}/secret-scan-${retryPending ? "retry-pending" : "manual"}-github-issue.json`,
+    });
+    await runCandidateValidation({
+      cwd: checkout,
+      reportPath: `${reportsDir}/validation-${retryPending ? "retry-pending" : "manual"}-github-issue.json`,
+      privateDir,
+      denoDirectory,
+    });
+    await assertGitControlStateUnchanged(gitControlState);
+    const dispositionSha = await commitChanges(
+      checkout,
+      retryPending
+        ? "docs: defer Sentinel GitHub issue after infrastructure failure"
+        : "docs: classify Sentinel GitHub issue for manual review",
+    );
+    await assertGitHistoryExcludesValues({ cwd: checkout, sensitiveValues });
+    const remoteDevelopment = await fetchDevelopmentBase(checkout, gitEnvironment);
+    if (remoteDevelopment !== baseSha) {
+      throw new Error("origin/development advanced before GitHub issue disposition could be pushed");
+    }
+    const pushIssueJob = await getCurrentGitHubIssueJob(github, repository, workSelection.issueJob.number);
+    if (!githubIssueJobsMatch(workSelection.issueJob, pushIssueJob)) {
+      throw new Error("The selected GitHub issue changed before disposition push");
+    }
+    await updateState(retryPending ? "pushing_retry_pending_github_issue" : "pushing_manual_github_issue", {
+      candidate_sha: dispositionSha,
+      ...(retryPending && lastPushedCandidateSha !== null
+        ? { branch_disposition: "remote_retained_issue_retry_pending" }
+        : {}),
+    });
+    await runTrustedGit({
+      args: ["push", "origin", `HEAD:${SENTINEL_POLICY.developmentRef}`],
+      cwd: checkout,
+      env: gitEnvironment,
+    });
+    const pushedDevelopment = await fetchDevelopmentBase(checkout, gitEnvironment);
+    if (pushedDevelopment !== dispositionSha) {
+      throw new Error("GitHub issue disposition did not become the exact development tip");
+    }
+    await updateState("complete", {
+      status: "no_change",
+      branch_disposition: retryPending
+        ? lastPushedCandidateSha !== null
+          ? "remote_retained_issue_retry_pending"
+          : "development_docs_only_issue_retry_pending"
+        : "development_docs_only_issue_manual_required",
+    });
+    for (const replayCase of applicableCases) replayCase.body.fill(0);
+  };
   let implementationResult: CodexInvocationResult;
   try {
     implementationResult = await runImplementationStageWithContinuation({
       basePrompt: stageImplementationPrompt([], null),
       initialTimeoutMs: IMPLEMENTATION_INITIAL_MS,
+      ...(workSelection.source === "github_issue"
+        ? { continuationTimeoutMs: GITHUB_ISSUE_IMPLEMENTATION_CONTINUATION_MS }
+        : {}),
       invoke: ({ attempt, prompt, timeoutMs }) =>
         withStageHeartbeat(attempt === 1 ? "implementing" : "implementing_continuation", () =>
           runStructuredCodexAgent({
@@ -2508,25 +2634,25 @@ const run = async (): Promise<void> => {
       assertActionableFindingsResolved(triage, implementationReport);
     }
   } catch (error) {
-    await preserveFailedImplementation(error, "implementation", beforeAgentSha);
-    if (implementationFailureDisposition(workSelection.source, error) !== "manual_required") {
-      throw error;
-    }
-    await discardCandidateChanges(checkout, baseSha);
-    const failedDisposition: FindingDisposition = Object.freeze({
-      finding_id: workSelection.source === "github_issue"
-        ? issueJobFindingId(workSelection.issueJob!)
-        : `review-backlog:${workSelection.backlogEntry!.fingerprint}`,
-      status: "blocked",
-      summary: "The bounded implementation invocations could not complete; this item requires manual work.",
-      changed_files: [],
-      validation: [],
-    });
     if (workSelection.source === "github_issue") {
-      if (!workSelection.issueJob) throw new Error("GitHub issue implementation failure is missing its job");
-      await writeSelectedIssueDisposition(failedDisposition, "manual_required", "failed_implementation");
+      if (!await deferGitHubIssueImplementationFailure(error, "implementation", beforeAgentSha)) throw error;
     } else {
-      if (!workSelection.backlogEntry) throw new Error("Sentinel backlog implementation failure is missing its entry");
+      const failureDisposition = await prepareImplementationFailureRetry(
+        workSelection.source,
+        error,
+        () => preserveFailedImplementation(error, "implementation", beforeAgentSha),
+        () => discardCandidateChanges(checkout, baseSha),
+      );
+      if (!workSelection.backlogEntry || failureDisposition !== "manual_required") {
+        throw new Error("Sentinel backlog implementation failure is missing its manual disposition");
+      }
+      const failedDisposition: FindingDisposition = Object.freeze({
+        finding_id: `review-backlog:${workSelection.backlogEntry.fingerprint}`,
+        status: "blocked",
+        summary: "The bounded implementation invocations could not complete; this item requires manual work.",
+        changed_files: [],
+        validation: [],
+      });
       await writeSelectedBacklogDisposition(failedDisposition, "manual_required", "failed_implementation");
     }
   }
@@ -2579,57 +2705,8 @@ const run = async (): Promise<void> => {
     return;
   }
 
-  if (selectedIssueState.disposition === "manual_required") {
-    if (selectedIssueState.continueToRuntimeValidation || !workSelection.issueJob) {
-      throw new Error("Manual-required GitHub issue work cannot continue to runtime deployment");
-    }
-    const changedPaths = [...await implementationAgentChangedPaths(checkout)].sort();
-    if (changedPaths.length !== 1 || changedPaths[0] !== SENTINEL_POLICY.paths.issueJobLedger) {
-      throw new Error("Manual-required GitHub issue completion must change only the trusted issue-job ledger");
-    }
-    const manualLedgerPath = `${checkout}/${SENTINEL_POLICY.paths.issueJobLedger}`;
-    parseGitHubIssueJobLedger(await Deno.readTextFile(manualLedgerPath));
-    const currentIssueJob = await getCurrentGitHubIssueJob(github, repository, workSelection.issueJob.number);
-    if (!githubIssueJobsMatch(workSelection.issueJob, currentIssueJob)) {
-      throw new Error("The selected GitHub issue changed before manual classification");
-    }
-    await updateState("validating_manual_github_issue");
-    await scanCandidateWithGitleaks({
-      cwd: checkout,
-      reportPath: `${reportsDir}/secret-scan-manual-github-issue.json`,
-    });
-    await runCandidateValidation({
-      cwd: checkout,
-      reportPath: `${reportsDir}/validation-manual-github-issue.json`,
-      privateDir,
-      denoDirectory,
-    });
-    await assertGitControlStateUnchanged(gitControlState);
-    const manualSha = await commitChanges(checkout, "docs: classify Sentinel GitHub issue for manual review");
-    await assertGitHistoryExcludesValues({ cwd: checkout, sensitiveValues });
-    const remoteDevelopment = await fetchDevelopmentBase(checkout, gitEnvironment);
-    if (remoteDevelopment !== baseSha) {
-      throw new Error("origin/development advanced before GitHub issue classification could be pushed");
-    }
-    const pushIssueJob = await getCurrentGitHubIssueJob(github, repository, workSelection.issueJob.number);
-    if (!githubIssueJobsMatch(workSelection.issueJob, pushIssueJob)) {
-      throw new Error("The selected GitHub issue changed before manual classification push");
-    }
-    await updateState("pushing_manual_github_issue", { candidate_sha: manualSha });
-    await runTrustedGit({
-      args: ["push", "origin", `HEAD:${SENTINEL_POLICY.developmentRef}`],
-      cwd: checkout,
-      env: gitEnvironment,
-    });
-    const pushedDevelopment = await fetchDevelopmentBase(checkout, gitEnvironment);
-    if (pushedDevelopment !== manualSha) {
-      throw new Error("Manual GitHub issue classification did not become the exact development tip");
-    }
-    await updateState("complete", {
-      status: "no_change",
-      branch_disposition: "development_docs_only_issue_manual_required",
-    });
-    for (const replayCase of applicableCases) replayCase.body.fill(0);
+  if (selectedIssueState.disposition === "manual_required" || selectedIssueState.disposition === "retry_pending") {
+    await completeNonRuntimeGitHubIssueDisposition();
     return;
   }
 
@@ -2653,6 +2730,55 @@ const run = async (): Promise<void> => {
   let replayResults: ReplayResult[] | null = null;
   let previewRevision: string | null = null;
   let previewRollbackTarget: RollbackTarget | null | undefined;
+  let issueRetryPreviewTarget: RollbackTarget | null = null;
+  let issueRetryPreviewCandidate: Readonly<{ gitSha: string; revisionId: string }> | null = null;
+  const restoreGitHubIssuePreviewBeforeRetry = async (failedStage: string): Promise<void> => {
+    if (!/^[a-z0-9_-]+$/u.test(failedStage)) throw new Error("GitHub issue retry stage label is invalid");
+    if (!workSelection.issueJob) return;
+    if (issueRetryPreviewTarget === null && issueRetryPreviewCandidate === null) return;
+    if (issueRetryPreviewTarget === null || issueRetryPreviewCandidate === null) {
+      throw new Error("GitHub issue retry preview state is incomplete");
+    }
+    const retryTarget = issueRetryPreviewTarget;
+    const retryCandidate = issueRetryPreviewCandidate;
+    const previewCurrent = await deno.snapshotHealthyProduction(
+      SENTINEL_POLICY.deno.previewApp,
+      [SENTINEL_POLICY.deno.previewHealthUrl],
+    );
+    const previewIsCandidate = previewCurrent.gitSha === retryCandidate.gitSha &&
+      previewCurrent.revisionId === retryCandidate.revisionId;
+    const previewIsTarget = previewCurrent.gitSha === retryTarget.gitSha &&
+      previewCurrent.revisionId === retryTarget.revisionId;
+    if (!previewIsCandidate && !previewIsTarget) {
+      throw new Error("Preview identity changed before GitHub issue retry rollback");
+    }
+    let rollbackWorkflowRunId: number | null = null;
+    if (!previewIsTarget) {
+      rollbackWorkflowRunId = await dispatchSerializedPromotion({
+        github,
+        app: SENTINEL_POLICY.deno.previewApp,
+        targetGitSha: retryTarget.gitSha,
+        targetRevision: retryTarget.revisionId,
+        expectedCurrent: previewCurrent,
+        expectedDevelopmentGitSha: baseSha,
+      });
+    }
+    await deno.verifyHealthIdentity(
+      [SENTINEL_POLICY.deno.previewHealthUrl],
+      retryTarget.gitSha,
+      retryTarget.revisionId,
+    );
+    await writeJson(`${reportsDir}/github-issue-retry-preview-rollback.json`, {
+      schema_version: 1,
+      failed_stage: failedStage,
+      candidate_git_sha: retryCandidate.gitSha,
+      candidate_revision: retryCandidate.revisionId,
+      rollback_git_sha: retryTarget.gitSha,
+      rollback_revision: retryTarget.revisionId,
+      rollback_workflow_run_id: rollbackWorkflowRunId,
+    });
+    issueRetryPreviewCandidate = null;
+  };
   while (true) {
     if (!canStartReviewRound(reviewRound)) {
       throw new Error(
@@ -2661,11 +2787,29 @@ const run = async (): Promise<void> => {
     }
     reviewRound += 1;
     let candidateSha = await commitChanges(checkout, `fix: Provider Sentinel repair round ${reviewRound}`);
-    await updateState(`native_review_${reviewRound}`, { candidate_sha: candidateSha });
-    const reviewResult = await withStageHeartbeat(
-      `native_review_${reviewRound}`,
-      () => runNativeCodexReview({ checkoutPath: checkout, authSlots }),
-    );
+    const nativeReviewStage = `native_review_${reviewRound}`;
+    await updateState(nativeReviewStage, { candidate_sha: candidateSha });
+    let reviewResult: CodexInvocationResult;
+    try {
+      reviewResult = await withStageHeartbeat(
+        nativeReviewStage,
+        () => runNativeCodexReview({ checkoutPath: checkout, authSlots }),
+      );
+    } catch (error) {
+      if (
+        workSelection.source === "github_issue" &&
+        await deferGitHubIssueImplementationFailure(
+          error,
+          nativeReviewStage,
+          candidateSha,
+          () => restoreGitHubIssuePreviewBeforeRetry(nativeReviewStage),
+        )
+      ) {
+        await completeNonRuntimeGitHubIssueDisposition();
+        return;
+      }
+      throw error;
+    }
     await assertGitControlStateUnchanged(gitControlState);
     const rawReview = `${reviewResult.stdout}\n${reviewResult.stderr}`;
     await Deno.writeTextFile(`${reportsDir}/native-review-round-${reviewRound}.txt`, rawReview, { mode: 0o600 });
@@ -2752,7 +2896,21 @@ const run = async (): Promise<void> => {
           throw new Error("Implementation agent did not correct blocking review findings");
         }
       } catch (error) {
-        await preserveFailedImplementation(error, stage, preFixSha);
+        if (workSelection.source === "github_issue") {
+          if (
+            await deferGitHubIssueImplementationFailure(
+              error,
+              stage,
+              preFixSha,
+              () => restoreGitHubIssuePreviewBeforeRetry(stage),
+            )
+          ) {
+            await completeNonRuntimeGitHubIssueDisposition();
+            return;
+          }
+        } else {
+          await preserveFailedImplementation(error, stage, preFixSha);
+        }
         throw error;
       }
       continue;
@@ -2842,7 +3000,21 @@ const run = async (): Promise<void> => {
           throw new Error("Implementation agent did not correct the validation failure");
         }
       } catch (repairError) {
-        await preserveFailedImplementation(repairError, stage, preValidationFixSha);
+        if (workSelection.source === "github_issue") {
+          if (
+            await deferGitHubIssueImplementationFailure(
+              repairError,
+              stage,
+              preValidationFixSha,
+              () => restoreGitHubIssuePreviewBeforeRetry(stage),
+            )
+          ) {
+            await completeNonRuntimeGitHubIssueDisposition();
+            return;
+          }
+        } else {
+          await preserveFailedImplementation(repairError, stage, preValidationFixSha);
+        }
         throw repairError;
       }
       continue;
@@ -2855,6 +3027,9 @@ const run = async (): Promise<void> => {
       SENTINEL_POLICY.deno.previewApp,
       [SENTINEL_POLICY.deno.previewHealthUrl],
     );
+    if (workSelection.issueJob && issueRetryPreviewTarget === null) {
+      issueRetryPreviewTarget = previewBeforeDeployment;
+    }
     if (mode === "preview" && previewRollbackTarget === undefined) {
       previewRollbackTarget = previewBeforeDeployment;
       await writeJson(`${reportsDir}/preview-rollback-target.json`, previewRollbackTarget);
@@ -2866,6 +3041,7 @@ const run = async (): Promise<void> => {
       }
     }
     await pushTemporaryCandidate(checkout, branch, gitEnvironment);
+    lastPushedCandidateSha = candidateSha;
     await updateState(`preview_deploy_${reviewRound}`, {
       candidate_sha: candidateSha,
       branch_disposition: "remote_retained_pending_decision",
@@ -2908,6 +3084,9 @@ const run = async (): Promise<void> => {
       expectedDevelopmentGitSha: baseSha,
     });
     await deno.verifyHealthIdentity([SENTINEL_POLICY.deno.previewHealthUrl], candidateSha, preview.revision);
+    if (workSelection.issueJob) {
+      issueRetryPreviewCandidate = Object.freeze({ gitSha: candidateSha, revisionId: preview.revision });
+    }
     await writeJson(`${reportsDir}/preview-deployment-round-${reviewRound}.json`, {
       git_sha: candidateSha,
       revision: preview.revision,
@@ -2976,7 +3155,20 @@ const run = async (): Promise<void> => {
       assertReplayEvaluation(implementationReport, replayResults);
       if (await hasChanges(checkout)) continue;
     } catch (error) {
-      await preserveFailedImplementation(error, replayEvaluationStage, preReplayEvaluationSha);
+      if (workSelection.source === "github_issue") {
+        const deferred = await deferGitHubIssueImplementationFailure(
+          error,
+          replayEvaluationStage,
+          preReplayEvaluationSha,
+          () => restoreGitHubIssuePreviewBeforeRetry(replayEvaluationStage),
+        );
+        if (deferred) {
+          await completeNonRuntimeGitHubIssueDisposition();
+          return;
+        }
+      } else {
+        await preserveFailedImplementation(error, replayEvaluationStage, preReplayEvaluationSha);
+      }
       throw error;
     }
     break;

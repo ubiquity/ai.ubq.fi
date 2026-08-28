@@ -1,14 +1,19 @@
 import {
   type GitHubIssuePullRequestRecord,
+  type GitHubIssueSelectionReport,
+  type GitPushUpdate,
   isIssueDeliveryFailSafeRevert,
   issuePullRequestMarker,
   parseGitHubIssuePullRequestRecord,
+  parseGitHubIssueRetryPendingReport,
   parseGitHubIssueSelectionReport,
   parseGitPushUpdates,
   parseSentinelCycleReport,
+  parseSentinelRetryPendingCycleReport,
   renderIssuePullRequestBody,
   selectDevelopmentPush,
 } from "./issue-delivery.ts";
+import { parseGitHubIssueJobLedger } from "./issues.ts";
 import {
   GitHubActionsClient,
   type GitHubWorkflowDispatch,
@@ -77,7 +82,7 @@ const optionalJson = async (path: string): Promise<unknown | null> => {
   }
 };
 
-const git = async (args: readonly string[]): Promise<string> => {
+const gitOutput = async (args: readonly string[]): Promise<string> => {
   const executable = Deno.env.get("SENTINEL_REAL_GIT")?.trim() || "git";
   const result = await new Deno.Command(executable, {
     args: [...args],
@@ -90,8 +95,10 @@ const git = async (args: readonly string[]): Promise<string> => {
       `Git command failed: ${executable} ${args.join(" ")}${stderr ? `: ${stderr.slice(0, 500)}` : ""}`,
     );
   }
-  return new TextDecoder().decode(result.stdout).trim();
+  return new TextDecoder().decode(result.stdout);
 };
+
+const git = async (args: readonly string[]): Promise<string> => (await gitOutput(args)).trim();
 
 const githubRequest = async (
   token: string,
@@ -235,6 +242,83 @@ export const parseIssueCandidateDisposition = (
     throw new Error("Sentinel GitHub issue disposition does not match the exact selection");
   }
   return report.disposition;
+};
+
+const retryLedgerEntryMatchesSelection = (
+  entry: ReturnType<typeof parseGitHubIssueJobLedger>[number],
+  selection: GitHubIssueSelectionReport,
+): boolean =>
+  entry.issueId === selection.issue_id && entry.number === selection.issue_number &&
+  entry.fingerprint === selection.fingerprint && entry.bodySha256 === selection.body_sha256 &&
+  entry.comments === selection.comments && entry.sourceUpdatedAt === selection.updated_at;
+
+export const validateRetryPendingDevelopmentPush = (
+  input: Readonly<{
+    workflowRunId: string;
+    update: GitPushUpdate;
+    selection: GitHubIssueSelectionReport;
+    cycleValue: unknown;
+    dispositionValue: unknown;
+    commitParents: readonly string[];
+    changedPaths: readonly string[];
+    parentLedgerMarkdown: string;
+    pushedLedgerMarkdown: string;
+  }>,
+): void => {
+  parseGitHubIssueRetryPendingReport(input.dispositionValue, {
+    issueId: input.selection.issue_id,
+    issueNumber: input.selection.issue_number,
+    fingerprint: input.selection.fingerprint,
+  });
+  const cycle = parseSentinelRetryPendingCycleReport(input.cycleValue, {
+    runId: input.workflowRunId,
+    status: "running",
+    stage: "pushing_retry_pending_github_issue",
+    branchDispositions: ["runner_local_pending_review", "remote_retained_issue_retry_pending"],
+  });
+  if (
+    cycle.candidate_sha !== input.update.localSha || cycle.base_development_sha !== input.update.remoteSha ||
+    !cycle.temporary_branch.startsWith("sentinel/candidate-")
+  ) {
+    throw new Error("Sentinel retry-pending push does not match the exact cycle commit");
+  }
+  if (input.commitParents.length !== 1 || input.commitParents[0] !== input.update.remoteSha) {
+    throw new Error("Sentinel retry-pending push must be a one-parent commit on the selected development base");
+  }
+  if (
+    input.changedPaths.length !== 1 || input.changedPaths[0] !== SENTINEL_POLICY.paths.issueJobLedger
+  ) {
+    throw new Error("Sentinel retry-pending push must change only the issue-job ledger");
+  }
+
+  const parentEntries = parseGitHubIssueJobLedger(input.parentLedgerMarkdown);
+  const pushedEntries = parseGitHubIssueJobLedger(input.pushedLedgerMarkdown);
+  const pushedMatches = pushedEntries.filter((entry) => retryLedgerEntryMatchesSelection(entry, input.selection));
+  if (
+    pushedMatches.length !== 1 || pushedMatches[0]!.disposition !== "retry_pending" ||
+    pushedMatches[0]!.baseSha !== input.update.remoteSha
+  ) {
+    throw new Error("Sentinel retry-pending push has no exact pending ledger row");
+  }
+
+  const priorPending = parentEntries.filter((entry) =>
+    entry.issueId === input.selection.issue_id && entry.number === input.selection.issue_number &&
+    entry.disposition === "retry_pending"
+  );
+  if (priorPending.length > 1) {
+    throw new Error("Sentinel retry-pending push has multiple prior pending rows for the selected issue");
+  }
+  if (
+    priorPending.length === 1 &&
+    Date.parse(priorPending[0]!.recordedAt) > Date.parse(pushedMatches[0]!.recordedAt)
+  ) {
+    throw new Error("Sentinel retry-pending push moved the retry timestamp backwards");
+  }
+  const parentUnrelated = parentEntries.filter((entry) => !priorPending.includes(entry));
+  const pushedUnrelated = pushedEntries.filter((entry) => entry !== pushedMatches[0]);
+  if (JSON.stringify(parentUnrelated) !== JSON.stringify(pushedUnrelated)) {
+    throw new Error("Sentinel retry-pending push changed unrelated issue-job ledger rows");
+  }
 };
 
 export const parseCandidateWorkflowValidationRecord = (
@@ -403,7 +487,51 @@ export const ensureIssuePullRequestForDevelopmentPush = async (
     throw error;
   }
   const selection = parseGitHubIssueSelectionReport(selectionValue);
-  const cycle = parseSentinelCycleReport(await readJson(`${reportsDir}/cycle.json`));
+  const cycleValue = await readJson(`${reportsDir}/cycle.json`);
+  const cycle = parseSentinelCycleReport(cycleValue);
+  const dispositionValue = await readJson(`${reportsDir}/github-issue-disposition.json`);
+  const dispositionRecord = typeof dispositionValue === "object" && dispositionValue !== null &&
+      !Array.isArray(dispositionValue)
+    ? dispositionValue as Record<string, unknown>
+    : null;
+  if (dispositionRecord?.disposition === "retry_pending") {
+    const commitParts = (await git(["rev-list", "--parents", "-n", "1", update.localSha])).split(/\s+/u);
+    const commitSha = commitParts.shift();
+    if (commitSha !== update.localSha) {
+      throw new Error("Sentinel retry-pending push returned the wrong commit identity");
+    }
+    const changedPaths = (await gitOutput([
+      "diff-tree",
+      "--no-commit-id",
+      "--name-only",
+      "-z",
+      "-r",
+      update.remoteSha,
+      update.localSha,
+      "--",
+    ])).split("\0").filter((path) => path.length > 0);
+    validateRetryPendingDevelopmentPush({
+      workflowRunId: input.workflowRunId,
+      update,
+      selection,
+      cycleValue,
+      dispositionValue,
+      commitParents: commitParts,
+      changedPaths,
+      parentLedgerMarkdown: await gitOutput([
+        "show",
+        `${update.remoteSha}:${SENTINEL_POLICY.paths.issueJobLedger}`,
+      ]),
+      pushedLedgerMarkdown: await gitOutput([
+        "show",
+        `${update.localSha}:${SENTINEL_POLICY.paths.issueJobLedger}`,
+      ]),
+    });
+    console.log(
+      `[sentinel] issue_retry_pending=#${selection.issue_number} candidate=${update.localSha} delivery=none`,
+    );
+    return null;
+  }
   if (!cycle.temporary_branch || !cycle.temporary_branch.startsWith("sentinel/candidate-")) {
     throw new Error("Sentinel issue delivery has no valid candidate branch");
   }
@@ -438,7 +566,7 @@ export const ensureIssuePullRequestForDevelopmentPush = async (
   }
 
   const disposition = parseIssueCandidateDisposition(
-    await readJson(`${reportsDir}/github-issue-disposition.json`),
+    dispositionValue,
     { issueNumber: selection.issue_number, fingerprint: selection.fingerprint },
   );
   const preview = await optionalPreviewEvidence(reportsDir, update.localSha);

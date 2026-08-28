@@ -14,6 +14,7 @@ import {
   evaluateReviewBacklogImplementation,
   evaluateRollbackPreflight,
   evaluateSentinelTriageGate,
+  GITHUB_ISSUE_IMPLEMENTATION_CONTINUATION_MS,
   IMPLEMENTATION_CONTINUATION_MS,
   IMPLEMENTATION_INITIAL_MS,
   implementationFailureDisposition,
@@ -26,12 +27,14 @@ import {
   parseMode,
   parseMonitorDecision,
   parseSentinelDeploymentAttestation,
+  prepareImplementationFailureRetry,
   previewCompletionForDecision,
   replayIndexArtifactMayMatch,
   replayIndexArtifactName,
   requiresReplayEvaluation,
   resolveCycleAnchorMs,
   reviewBacklogEntriesMatch,
+  runImplementationStageWithContinuation,
   runObserveCycle,
   runWithSingleTimeoutContinuation,
   selectSentinelWork,
@@ -59,6 +62,7 @@ import {
   createGitHubIssueJob,
   evaluateGitHubIssueJobImplementation,
   getCurrentGitHubIssueJob,
+  GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS,
   githubIssueJobMatchesHint,
   githubIssueJobsMatch,
   type GitHubIssueJobSource,
@@ -266,6 +270,7 @@ Deno.test("validation repair treats private diagnostics as untrusted and keeps p
 Deno.test("implementation timeout gets one continuation and never retries another failure", async () => {
   assert.equal(IMPLEMENTATION_INITIAL_MS, 20 * 60_000);
   assert.equal(IMPLEMENTATION_CONTINUATION_MS, 10 * 60_000);
+  assert.equal(GITHUB_ISSUE_IMPLEMENTATION_CONTINUATION_MS, 20 * 60_000);
   const attempts: number[] = [];
   let timeoutCallbacks = 0;
   const result = await runWithSingleTimeoutContinuation(
@@ -310,6 +315,20 @@ Deno.test("implementation timeout gets one continuation and never retries anothe
     (error) => error instanceof CodexInvocationError && error.failure === "command_failed",
   );
   assert.deepEqual(attempts, [1]);
+
+  const timeoutBudgets: number[] = [];
+  await runImplementationStageWithContinuation({
+    basePrompt: "Implement the selected GitHub issue.",
+    initialTimeoutMs: IMPLEMENTATION_INITIAL_MS,
+    continuationTimeoutMs: GITHUB_ISSUE_IMPLEMENTATION_CONTINUATION_MS,
+    invoke: ({ attempt, timeoutMs }) => {
+      timeoutBudgets.push(timeoutMs);
+      if (attempt === 1) throw new CodexInvocationError("invocation_timeout");
+      return Promise.resolve("completed");
+    },
+    onTimeout: () => Promise.resolve(),
+  });
+  assert.deepEqual(timeoutBudgets, [20 * 60_000, 20 * 60_000]);
 });
 
 Deno.test("stage heartbeat emits safe progress and always cancels its timer", async () => {
@@ -355,12 +374,12 @@ Deno.test("stage heartbeat emits safe progress and always cancels its timer", as
   assert.deepEqual(cleared, [17, 23]);
 });
 
-Deno.test("sentinel capacity failures on selected maintenance work require manual classification", () => {
+Deno.test("sentinel capacity failures use bounded source-specific dispositions", () => {
   const capacityFailures = ["accounts_unavailable", "invocation_timeout", "command_failed", "runtime_failure"];
   const integrityFailure = new CodexInvocationError("secret_in_output", { exitCode: 42 });
   for (const failure of capacityFailures) {
     const capacityError = new CodexInvocationError(failure as never, { exitCode: 1 });
-    assert.equal(implementationFailureDisposition("github_issue", capacityError), "manual_required");
+    assert.equal(implementationFailureDisposition("github_issue", capacityError), "retry_pending");
     assert.equal(implementationFailureDisposition("review_backlog", capacityError), "manual_required");
   }
   assert.equal(implementationFailureDisposition("github_issue", integrityFailure), "crash");
@@ -369,7 +388,107 @@ Deno.test("sentinel capacity failures on selected maintenance work require manua
   assert.equal(implementationFailureDisposition("triage", new Error("plain failure")), "crash");
   assert.equal(implementationFailureDisposition("github_issue", new Error("plain failure")), "crash");
   const capacityError = new CodexInvocationError("accounts_unavailable");
-  assert.equal(implementationFailureDisposition("github_issue", capacityError), "manual_required");
+  assert.equal(implementationFailureDisposition("github_issue", capacityError), "retry_pending");
+});
+
+Deno.test("retryable issue failure preserves, discards, cools down, and advances the queue", async () => {
+  assert.equal(GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS, 6 * 60 * 60_000);
+  const firstIssue = sentinelGitHubIssue();
+  const secondIssue = sentinelGitHubIssue({
+    id: 10_114,
+    nodeId: "I_kwDOIssue114",
+    number: 114,
+    title: "Implement the next eligible issue",
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/114",
+    createdAt: "2026-08-23T19:06:04Z",
+    updatedAt: "2026-08-23T19:07:28Z",
+  });
+  const source = githubIssueSource([firstIssue, secondIssue]);
+  const emptyLedger = renderGitHubIssueJobLedger([]);
+  const failedAt = new Date("2026-08-23T20:00:00Z");
+  const selected = await selectNextGitHubIssueJob(source, "ubiquity/ai.ubq.fi", emptyLedger, failedAt);
+  assert.ok(selected);
+  const events: string[] = [];
+  const failure = new CodexInvocationError("invocation_timeout");
+  assert.equal(
+    await prepareImplementationFailureRetry(
+      "github_issue",
+      failure,
+      () => {
+        events.push("preserve");
+        return Promise.resolve();
+      },
+      () => {
+        events.push("discard");
+        return Promise.resolve();
+      },
+    ),
+    "retry_pending",
+  );
+  assert.deepEqual(events, ["preserve", "discard"]);
+  const pendingLedger = applyGitHubIssueJobDisposition(
+    emptyLedger,
+    selected,
+    "a".repeat(40),
+    failedAt,
+    "retry_pending",
+  );
+  assert.equal(parseGitHubIssueJobLedger(pendingLedger)[0]?.disposition, "retry_pending");
+  assert.equal(
+    (
+      await selectNextGitHubIssueJob(
+        source,
+        "ubiquity/ai.ubq.fi",
+        pendingLedger,
+        new Date(failedAt.getTime() + 60 * 60_000),
+      )
+    )?.number,
+    114,
+  );
+  assert.equal(
+    (
+      await selectNextGitHubIssueJob(
+        source,
+        "ubiquity/ai.ubq.fi",
+        pendingLedger,
+        new Date(failedAt.getTime() + GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS),
+      )
+    )?.fingerprint,
+    selected.fingerprint,
+  );
+  const retriedLedger = applyGitHubIssueJobDisposition(
+    pendingLedger,
+    selected,
+    "b".repeat(40),
+    new Date(failedAt.getTime() + GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS),
+    "retry_pending",
+  );
+  assert.equal(parseGitHubIssueJobLedger(retriedLedger).length, 1);
+  const resolvedLedger = applyGitHubIssueJobDisposition(
+    retriedLedger,
+    selected,
+    "c".repeat(40),
+    new Date(failedAt.getTime() + 2 * GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS),
+    "resolved",
+  );
+  assert.equal(parseGitHubIssueJobLedger(resolvedLedger)[0]?.disposition, "resolved");
+  const commentNormalizedJob = {
+    ...selected,
+    fingerprint: "d".repeat(64),
+    comments: selected.comments + 1,
+    updatedAt: "2026-08-23T21:00:00Z",
+  };
+  const commentNormalizedLedger = applyGitHubIssueJobDisposition(
+    pendingLedger,
+    commentNormalizedJob,
+    "d".repeat(40),
+    new Date(failedAt.getTime() + GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS),
+    "resolved",
+  );
+  const normalizedEntries = parseGitHubIssueJobLedger(commentNormalizedLedger);
+  assert.equal(normalizedEntries.length, 1);
+  assert.equal(normalizedEntries[0]?.fingerprint, commentNormalizedJob.fingerprint);
+  assert.equal(normalizedEntries[0]?.disposition, "resolved");
 });
 
 Deno.test("sentinel schedule windows overlap hourly and incident runs", () => {
