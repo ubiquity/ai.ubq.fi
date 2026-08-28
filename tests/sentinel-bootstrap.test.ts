@@ -15,6 +15,7 @@ import { evaluateSentinelBootstrapHealth } from "../scripts/sentinel/bootstrap/h
 import { parseSentinelBootstrapStateDocument } from "../scripts/sentinel/bootstrap/github-store.ts";
 import {
   parseBootstrapReleaseRecord,
+  type SentinelBootstrapActivationPointerV1,
   type SentinelBootstrapRollbackIntentV1,
   type SentinelFailureConstraintV1,
 } from "../scripts/sentinel/bootstrap/contracts.ts";
@@ -24,6 +25,7 @@ import {
   parseBootstrapEnvironment,
   SENTINEL_BOOTSTRAP_POLICY,
 } from "../scripts/sentinel/bootstrap/policy.ts";
+import { synchronizeObservedRelease } from "../scripts/sentinel/bootstrap/main.ts";
 
 const readPermission = await Deno.permissions.query({ name: "read" });
 const sourceInspectionUnavailable = readPermission.state !== "granted";
@@ -220,6 +222,78 @@ Deno.test("bootstrap Git state document is bounded and starts without invented r
     () => parseSentinelBootstrapStateDocument({ ...document, signals: Array(65).fill(signal()) }),
     /invalid/,
   );
+});
+
+Deno.test("a newly deployed release supersedes and fences an unaccepted candidate", async () => {
+  const currentRelease = release();
+  const activation = initialSentinelBootstrapActivation(currentRelease, currentRelease.activated_at);
+  let writtenRelease: ReturnType<typeof parseBootstrapReleaseRecord> | null = null;
+  let writtenActivation: SentinelBootstrapActivationPointerV1 | null = null;
+  const state = {
+    readDocument: () => ({
+      schema_version: 1 as const,
+      release: currentRelease,
+      signals: [],
+      activation,
+      rollback_intent: null,
+      constraints: [],
+    }),
+    replaceRelease: (
+      nextRelease: ReturnType<typeof parseBootstrapReleaseRecord>,
+      nextActivation?: SentinelBootstrapActivationPointerV1,
+    ) => {
+      writtenRelease = nextRelease;
+      writtenActivation = nextActivation ?? null;
+      return Promise.resolve();
+    },
+  };
+  const observedSha = "4".repeat(40);
+  const next = await synchronizeObservedRelease(
+    state as never,
+    { sha: observedSha, revision: "revision-next" },
+    "2026-08-28T18:30:00.000Z",
+  );
+  assert.equal(next.stable_sha, stableSha);
+  assert.equal(next.candidate_sha, observedSha);
+  assert.equal(next.generation, 2);
+  assert.deepEqual(next.acceptance_evidence, [
+    "health:revision-next",
+    `bootstrap:superseded:${candidateSha}`,
+  ]);
+  assert.equal(writtenRelease, next);
+  assert.ok(writtenActivation !== null);
+  const persistedActivation = writtenActivation as SentinelBootstrapActivationPointerV1;
+  assert.equal(persistedActivation.active_sha, observedSha);
+  assert.equal(persistedActivation.generation, 2);
+  assert.deepEqual(persistedActivation.fenced_generations, [1]);
+  assert.equal(persistedActivation.reason, "managed_candidate_superseded");
+});
+
+Deno.test("a pending rollback intent preserves its release identity until side effects complete", async () => {
+  const currentRelease = release();
+  const activation = initialSentinelBootstrapActivation(currentRelease, currentRelease.activated_at);
+  let writes = 0;
+  const state = {
+    readDocument: () => ({
+      schema_version: 1 as const,
+      release: currentRelease,
+      signals: [],
+      activation,
+      rollback_intent: {} as SentinelBootstrapRollbackIntentV1,
+      constraints: [],
+    }),
+    replaceRelease: () => {
+      writes += 1;
+      return Promise.resolve();
+    },
+  };
+  const unchanged = await synchronizeObservedRelease(
+    state as never,
+    { sha: "4".repeat(40), revision: "revision-next" },
+    "2026-08-28T18:30:00.000Z",
+  );
+  assert.equal(unchanged, currentRelease);
+  assert.equal(writes, 0);
 });
 
 Deno.test("controller performs one fenced rollback and deduplicates its constraint and recovery dispatch", async () => {
