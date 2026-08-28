@@ -267,6 +267,14 @@ Deno.test({
       assert.equal(first.candidate_sha, second.candidate_sha);
       assert.equal(first.tree_sha, second.tree_sha);
       assert.equal(first.candidate_branch, sentinelRecoveryCandidateBranch(record));
+      assert.equal(first.candidate_branch, `sentinel/candidate-github_issue-136-${"a".repeat(32)}-g1`);
+      assert.notEqual(
+        first.candidate_branch,
+        sentinelRecoveryCandidateBranch({
+          ...record,
+          identity: { ...record.identity, candidate_generation: 2 },
+        }),
+      );
       assert.deepEqual(first.changed_files, ["candidate.txt"]);
       assert.equal(first.recovery_record?.phase, "checkpoint_durable");
       assert.equal(first.recovery_record?.candidate_sha, first.candidate_sha);
