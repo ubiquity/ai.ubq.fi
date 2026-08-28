@@ -400,8 +400,14 @@ Deno.test({
       assert.doesNotMatch(source, /contents:\s*write|pull-requests:\s*write/u);
     }
     const workflow = await Deno.readTextFile(".github/workflows/provider-sentinel-bootstrap.yml");
-    assert.match(workflow, /permissions:\s+contents:\s+write/u);
+    const evolvingWorkflow = await Deno.readTextFile(".github/workflows/provider-sentinel.yml");
+    const entryPoint = await Deno.readTextFile("scripts/sentinel/bootstrap/main.ts");
+    assert.match(workflow, /actions:\s+write/u);
+    assert.match(workflow, /^\s+contents:\s+write$/mu);
     assert.match(workflow, /refs\/heads\/sentinel\/bootstrap-state|bootstrap-state/u);
+    assert.match(entryPoint, /provider-sentinel\.yml\/dispatches/u);
+    assert.match(evolvingWorkflow, /Honor protected bootstrap activation/u);
+    assert.match(evolvingWorkflow, /git checkout --detach "\$active_sha"/u);
     assert.doesNotMatch(workflow, /pull-requests:\s+write|deno\s+deploy/u);
     const actions = workflow.split("\n").filter((line) => /\buses:\s/u.test(line));
     assert.ok(actions.length > 0);

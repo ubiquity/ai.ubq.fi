@@ -863,7 +863,8 @@ const pullRequestIdentity = (value: unknown):
   if (
     !isRecord(value) || !positiveSafeInteger(value.number) || typeof value.html_url !== "string" ||
     (value.state !== "open" && value.state !== "closed") ||
-    (value.merged_at !== null && typeof value.merged_at !== "string") || typeof value.body !== "string"
+    (value.merged_at !== null && typeof value.merged_at !== "string") ||
+    !(value.body === null || typeof value.body === "string")
   ) return null;
   const head = isRecord(value.head) ? value.head : null;
   const base = isRecord(value.base) ? value.base : null;
@@ -881,7 +882,7 @@ const pullRequestIdentity = (value: unknown):
     baseBranch: base.ref,
     draft: value.draft,
     autoMerge: value.auto_merge,
-    body: value.body,
+    body: value.body ?? "",
   };
 };
 

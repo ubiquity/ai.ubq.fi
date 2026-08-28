@@ -306,7 +306,19 @@ Deno.test({
         fetcher: (input, init = {}) => {
           const url = String(input);
           requests.push({ url, init });
-          if (init.method === "GET") return Promise.resolve(new Response("[]", { status: 200 }));
+          if (init.method === "GET") {
+            return Promise.resolve(Response.json([{
+              number: 99,
+              html_url: "https://github.com/ubiquity/ai.ubq.fi/pull/99",
+              state: "open",
+              merged_at: null,
+              head: { ref: "unrelated", sha: "f".repeat(40) },
+              base: { ref: "development" },
+              draft: false,
+              auto_merge: null,
+              body: null,
+            }]));
+          }
           const body = JSON.parse(String(init.body));
           assert.equal(body.draft, true);
           assert.equal(body.maintainer_can_modify, false);

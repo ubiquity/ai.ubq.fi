@@ -232,6 +232,50 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Honor protected bootstrap activation
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          response_file="$RUNNER_TEMP/sentinel-bootstrap-state-response.json"
+          status="$(
+            curl \
+              --silent \
+              --show-error \
+              --max-time 20 \
+              --output "$response_file" \
+              --write-out '%{http_code}' \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer $GITHUB_TOKEN" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/contents/docs/sentinel-bootstrap-state.json?ref=sentinel%2Fbootstrap-state"
+          )"
+          if [ "$status" = "404" ]; then
+            echo "Bootstrap activation is not initialized; retaining $GITHUB_SHA."
+            exit 0
+          fi
+          [ "$status" = "200" ] || {
+            echo "::error::Bootstrap activation lookup failed with HTTP $status."
+            exit 1
+          }
+          active_sha="$(jq -r '.content | gsub("\\n"; "") | @base64d | fromjson | .activation.active_sha // empty' "$response_file")"
+          if [ -z "$active_sha" ] || [ "$active_sha" = "$GITHUB_SHA" ]; then
+            echo "Bootstrap activation retains $GITHUB_SHA."
+            exit 0
+          fi
+          [[ "$active_sha" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::Bootstrap activation SHA is invalid."
+            exit 1
+          }
+          git fetch --no-tags --depth=1 origin "$active_sha"
+          git checkout --detach "$active_sha"
+          [ "$(git rev-parse HEAD)" = "$active_sha" ] || {
+            echo "::error::Bootstrap activation checkout did not reach the exact SHA."
+            exit 1
+          }
+          echo "Protected bootstrap selected stable Sentinel source $active_sha."
+
       - name: Install Deno
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:

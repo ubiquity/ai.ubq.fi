@@ -98,6 +98,27 @@ const collectAuthoritativeStartupSignals = async (
   return signals;
 };
 
+const dispatchStableRecovery = async (token: string, repository: string): Promise<void> => {
+  const response = await fetch(
+    `https://api.github.com/repos/${repository}/actions/workflows/provider-sentinel.yml/dispatches`,
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      body: JSON.stringify({ ref: "development", inputs: { sentinel_mode: "hourly" } }),
+      signal: AbortSignal.timeout(20_000),
+    },
+  );
+  if (response.status !== 204) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new Error(`Bootstrap recovery dispatch failed with HTTP ${response.status}`);
+  }
+};
+
 const observeManagedRelease = async (fetcher: typeof fetch): Promise<Readonly<{ sha: string; revision: string }>> => {
   const response = await fetcher("https://ai-ubq-fi.ubiquity-dao.deno.net/health", {
     signal: AbortSignal.timeout(20_000),
@@ -187,9 +208,9 @@ const synchronizeObservedRelease = async (
 
 /**
  * The workflow invokes this entry point from the protected development ref.
- * State and observation wiring is supplied by the orchestrator through the
- * typed controller function; the process entry point itself has no write
- * access to the repository or deployment systems.
+ * State, observation, and bounded recovery-dispatch wiring is supplied by the
+ * orchestrator through the typed controller function. The entry point cannot
+ * merge, deploy, promote, or edit repository history.
  */
 export const runProtectedBootstrap = async (
   input: SentinelBootstrapReconcileInput,
@@ -217,7 +238,11 @@ if (import.meta.main) {
   const outcome = await runProtectedBootstrap({
     release,
     signals: state.readDocument().signals,
-  }, { store: state.store, now: () => now });
+  }, {
+    store: state.store,
+    now: () => now,
+    dispatchRecovery: () => dispatchStableRecovery(token, environment.repository),
+  });
   console.log(JSON.stringify({
     schema_version: 1,
     repository: environment.repository,

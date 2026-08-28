@@ -138,6 +138,42 @@ Deno.test("recovery ledger provides bounded create, CAS, lease, and non-terminal
   assert.throws(() => upsertSentinelRecoveryRecord(updated, running, 1), /compare-and-swap/u);
 });
 
+Deno.test("recovery ledger prunes the oldest terminal record before reaching its hard cap", () => {
+  const terminal = Array.from({ length: 512 }, (_, index) =>
+    parseSentinelRecoveryRecord(record({
+      identity: {
+        repository: "ubiquity/ai.ubq.fi",
+        source_kind: "github_issue",
+        source_id: String(index + 1),
+        source_revision: "a".repeat(64),
+        candidate_generation: 1,
+      },
+      phase: "rejected",
+      disposition: "rejected",
+      updated_at: new Date(Date.parse("2026-08-28T18:01:00.000Z") + index).toISOString(),
+      reason: "rejected/no_candidate_diff",
+      next_action: null,
+    })));
+  const full = parseSentinelRecoveryLedger({ ...emptySentinelRecoveryLedger(), records: terminal });
+  const claimed = parseSentinelRecoveryRecord(record({
+    identity: {
+      repository: "ubiquity/ai.ubq.fi",
+      source_kind: "github_issue",
+      source_id: "513",
+      source_revision: "a".repeat(64),
+      candidate_generation: 1,
+    },
+    phase: "claimed",
+    state_version: 1,
+    candidate_branch: null,
+    candidate_sha: null,
+  }));
+  const pruned = upsertSentinelRecoveryRecord(full, claimed, null);
+  assert.equal(pruned.records.length, 512);
+  assert.equal(pruned.records.some((entry) => entry.identity.source_id === "1"), false);
+  assert.equal(pruned.records.some((entry) => entry.identity.source_id === "513"), true);
+});
+
 Deno.test("GitHub recovery state uses a separate fast-forward-only ref", async () => {
   const base = "a".repeat(40);
   const baseTree = "b".repeat(40);

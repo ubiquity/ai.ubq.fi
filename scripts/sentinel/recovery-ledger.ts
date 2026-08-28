@@ -121,14 +121,41 @@ export const upsertSentinelRecoveryRecord = (
     throw new Error("Sentinel recovery record compare-and-swap failed");
   }
   if (existing !== null) assertSentinelRecoveryTransition(existing, record);
-  const records = [
+  let records = [
     ...ledger.records.filter((candidate) => sentinelRecoveryIdentityKey(candidate.identity) !== key),
     record,
   ]
     .sort((left, right) =>
       sentinelRecoveryIdentityKey(left.identity).localeCompare(sentinelRecoveryIdentityKey(right.identity))
     );
-  return parseSentinelRecoveryLedger({ ...ledger, records });
+  if (records.length > SENTINEL_RECOVERY_LEDGER_MAX_RECORDS) {
+    const active = records.filter((candidate) => !isTerminalRecoveryPhase(candidate.phase));
+    if (active.length > SENTINEL_RECOVERY_LEDGER_MAX_RECORDS) {
+      throw new Error("Sentinel recovery ledger has too many active records");
+    }
+    const retainedTerminal = records
+      .filter((candidate) => isTerminalRecoveryPhase(candidate.phase))
+      .sort((left, right) => {
+        const byTime = Date.parse(right.updated_at) - Date.parse(left.updated_at);
+        return byTime !== 0
+          ? byTime
+          : sentinelRecoveryIdentityKey(right.identity).localeCompare(sentinelRecoveryIdentityKey(left.identity));
+      })
+      .slice(0, SENTINEL_RECOVERY_LEDGER_MAX_RECORDS - active.length);
+    records = [...active, ...retainedTerminal].sort((left, right) =>
+      sentinelRecoveryIdentityKey(left.identity).localeCompare(sentinelRecoveryIdentityKey(right.identity))
+    );
+  }
+  const retainedKeys = new Set(records.map((candidate) => sentinelRecoveryIdentityKey(candidate.identity)));
+  return parseSentinelRecoveryLedger({
+    ...ledger,
+    records,
+    retry_history: ledger.retry_history.filter((attempt) =>
+      retainedKeys.has(sentinelRecoveryIdentityKey(attempt.identity))
+    ),
+    retry_decisions: ledger.retry_decisions.filter((entry) => retainedKeys.has(entry.identity_key)),
+    leases: ledger.leases.filter((lease) => retainedKeys.has(lease.identity_key)),
+  });
 };
 
 export const acquireSentinelRecoveryLease = (
