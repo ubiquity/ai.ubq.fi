@@ -231,11 +231,11 @@ Deno.test({
 });
 
 Deno.test({
-  name: "Sentinel repair workflow retains queued incident signals",
+  name: "Sentinel repair workflow uses supported concurrency and durable incident retry",
   ignore: fileSystemTestsUnavailable,
   async fn() {
     const workflow = await Deno.readTextFile(".github/workflows/provider-sentinel.yml");
-    assert(/^\s+queue: max$/mu.test(workflow), "Sentinel must retain concurrent incident signals");
+    assert(!/^\s+queue:/mu.test(workflow), "Sentinel must use only supported GitHub concurrency keys");
     for (
       const path of [
         ".github/workflows/deno-deploy.yml",

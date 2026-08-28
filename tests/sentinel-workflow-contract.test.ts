@@ -18,7 +18,7 @@ const converge = workflow.slice(workflow.indexOf("\n  converge:") + 1);
 Deno.test("Provider Sentinel retains its outer serialized, non-cancelling concurrency contract", () => {
   assert.match(workflow, /group: provider-sentinel-\$\{\{ github\.repository \}\}/u);
   assert.match(workflow, /cancel-in-progress: false/u);
-  assert.match(workflow, /^\s+queue: max$/mu);
+  assert(!/^\s+queue:/mu.test(workflow), "GitHub Actions does not support a concurrency queue key");
 });
 
 Deno.test("Provider Sentinel has explicit prepare, bounded repair, and convergence job contracts", () => {

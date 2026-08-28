@@ -45,12 +45,11 @@ Hourly and preview cycles exit before raw-log capture when a 90-day evidence art
 retries never trust artifact existence as success because failed runs also preserve encrypted evidence; every delivered
 incident run must complete and write its nonce-bound acknowledgement.
 
-The workflow uses one repository-wide concurrency group and does not cancel an active run. Its `queue: max` policy
-retains pending incident delivery instead of replacing a signal while a repair or deployment is active. Scheduled and
-App-authenticated incident runs are skipped unless `SENTINEL_AUTONOMY_ENABLED` is exactly `true`. Incident dispatch also
-requires the fixed GitHub App actor, trusted `development` ref, opaque incident ID, attempt, and first-failure
-timestamp. Manual preview runs remain eligible while that gate is disabled, but return without Codex when the interval
-contains no failed-request capture.
+The workflow uses one repository-wide concurrency group and does not cancel an active run. Durable incident outbox
+retries retain signals that arrive while a repair or deployment is active. Scheduled and App-authenticated incident runs
+are skipped unless `SENTINEL_AUTONOMY_ENABLED` is exactly `true`. Incident dispatch also requires the fixed GitHub App
+actor, trusted `development` ref, opaque incident ID, attempt, and first-failure timestamp. Manual preview runs remain
+eligible while that gate is disabled, but return without Codex when the interval contains no failed-request capture.
 
 Each eligible cycle has three trusted phases. `prepare` fixes the exact `origin/development` base, runs triage, rejects
 ambiguous or protected ownership, and writes a digest-bound matrix plan. `repair` fans out at most four independent
