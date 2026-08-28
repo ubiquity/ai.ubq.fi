@@ -27,6 +27,7 @@ import {
   closeIssueAfterCompletionEvidenceRevalidation,
   completionEvidenceSnapshotMatches,
   mergeDeliveryPullRequest,
+  readGitHubCommitRefSha,
   validateRetryPendingIssueReconciliation,
 } from "../scripts/sentinel/issue-delivery-reconcile.ts";
 import type { GitHubIssueComment } from "../scripts/sentinel/github.ts";
@@ -365,7 +366,7 @@ Deno.test("retry-pending reconciliation validates a durable no-delivery receipt"
   const invalidInputs: Array<
     readonly [Partial<Parameters<typeof validateRetryPendingIssueReconciliation>[0]>, RegExp]
   > = [
-    [{ workflowFailed: true }, /cannot come from a failed Sentinel run/],
+    [{ workflowFailed: true }, /cycle report is invalid/],
     [{ pullRequestReportPresent: true }, /cannot contain delivery or production records/],
     [{ productionOutcomeReportPresent: true }, /cannot contain delivery or production records/],
     [{ dispositionValue: { ...retryPendingDisposition, issue_id: 999 } }, /exact issue selection/],
@@ -389,6 +390,155 @@ Deno.test("retry-pending reconciliation validates a durable no-delivery receipt"
   for (const [overrides, pattern] of invalidInputs) {
     assert.throws(() => validateRetryPendingIssueReconciliation({ ...baseInput, ...overrides }), pattern);
   }
+});
+
+Deno.test("failed atomic retry reconciliation requires exact durable remote refs", () => {
+  const checkpoint = {
+    branch: retryPendingCycle.temporary_branch,
+    sha: "1".repeat(40),
+    base_sha: retryPendingCycle.base_development_sha,
+  };
+  const cycleValue = {
+    ...retryPendingCycle,
+    status: "failed",
+    stage: "failed",
+    branch_disposition: "atomic_retry_push_requires_reconciliation",
+    retry_checkpoint: checkpoint,
+  };
+  const developmentLedgerMarkdown = renderGitHubIssueJobLedger([{
+    ...parseGitHubIssueJobLedger(retryPendingLedger)[0]!,
+    checkpoint: { branch: checkpoint.branch, sha: checkpoint.sha, baseSha: checkpoint.base_sha },
+  }]);
+  const input: Parameters<typeof validateRetryPendingIssueReconciliation>[0] = {
+    workflowRunId: "123456789",
+    workflowFailed: true,
+    selection,
+    cycleValue,
+    dispositionValue: { ...retryPendingDisposition, retry_checkpoint: checkpoint },
+    pullRequestReportPresent: false,
+    productionOutcomeReportPresent: false,
+    developmentLedgerMarkdown,
+    remoteRefs: {
+      developmentSha: retryPendingCycle.candidate_sha,
+      checkpointSha: checkpoint.sha,
+    },
+  };
+  assert.doesNotThrow(() => validateRetryPendingIssueReconciliation(input));
+  assert.throws(
+    () =>
+      validateRetryPendingIssueReconciliation({
+        ...input,
+        remoteRefs: { ...input.remoteRefs!, developmentSha: "2".repeat(40) },
+      }),
+    /development ref does not match the candidate commit/,
+  );
+  assert.throws(
+    () =>
+      validateRetryPendingIssueReconciliation({
+        ...input,
+        remoteRefs: { ...input.remoteRefs!, checkpointSha: "3".repeat(40) },
+      }),
+    /checkpoint ref does not match the durable checkpoint/,
+  );
+  const { remoteRefs: _remoteRefs, ...withoutRemoteRefs } = input;
+  assert.throws(
+    () => validateRetryPendingIssueReconciliation(withoutRemoteRefs),
+    /requires exact durable remote refs/,
+  );
+
+  const resumedCheckpoint = {
+    branch: "sentinel/candidate-123456700-1",
+    sha: "4".repeat(40),
+    base_sha: "c".repeat(40),
+  };
+  assert.doesNotThrow(() =>
+    validateRetryPendingIssueReconciliation({
+      ...input,
+      cycleValue: {
+        ...cycleValue,
+        temporary_branch: "sentinel/candidate-123456789-3",
+        retry_checkpoint: resumedCheckpoint,
+      },
+      dispositionValue: {
+        ...retryPendingDisposition,
+        phase: "retry_checkpoint_resume_transient",
+        retry_checkpoint: resumedCheckpoint,
+      },
+      developmentLedgerMarkdown: renderGitHubIssueJobLedger([{
+        ...parseGitHubIssueJobLedger(retryPendingLedger)[0]!,
+        baseSha: resumedCheckpoint.base_sha,
+        checkpoint: {
+          branch: resumedCheckpoint.branch,
+          sha: resumedCheckpoint.sha,
+          baseSha: resumedCheckpoint.base_sha,
+        },
+      }]),
+      remoteRefs: {
+        developmentSha: retryPendingCycle.candidate_sha,
+        checkpointSha: resumedCheckpoint.sha,
+      },
+    })
+  );
+});
+
+Deno.test("GitHub atomic retry ref reads require exact commit identities", async () => {
+  const developmentSha = "d".repeat(40);
+  const checkpointBranch = "sentinel/candidate-123456789-2";
+  const checkpointSha = "e".repeat(40);
+  const requests: string[] = [];
+  const validFetcher: typeof fetch = (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    requests.push(new URL(url).pathname);
+    if (url.endsWith("/git/ref/heads/development")) {
+      return Promise.resolve(Response.json({
+        ref: "refs/heads/development",
+        object: { type: "commit", sha: developmentSha },
+      }));
+    }
+    if (url.endsWith(`/git/ref/heads/${checkpointBranch}`)) {
+      return Promise.resolve(Response.json({
+        ref: `refs/heads/${checkpointBranch}`,
+        object: { type: "commit", sha: checkpointSha },
+      }));
+    }
+    return Promise.reject(new Error(`Unexpected GitHub request: ${url}`));
+  };
+  assert.equal(
+    await readGitHubCommitRefSha("test-token", "ubiquity/ai.ubq.fi", "development", validFetcher),
+    developmentSha,
+  );
+  assert.equal(
+    await readGitHubCommitRefSha("test-token", "ubiquity/ai.ubq.fi", checkpointBranch, validFetcher),
+    checkpointSha,
+  );
+  assert.deepEqual(requests, [
+    "/repos/ubiquity/ai.ubq.fi/git/ref/heads/development",
+    `/repos/ubiquity/ai.ubq.fi/git/ref/heads/${checkpointBranch}`,
+  ]);
+
+  for (
+    const payload of [
+      { ref: "refs/heads/other", object: { type: "commit", sha: developmentSha } },
+      { ref: "refs/heads/development", object: { type: "tree", sha: developmentSha } },
+      { ref: "refs/heads/development", object: { type: "commit", sha: "a".repeat(39) } },
+    ]
+  ) {
+    const malformedFetcher: typeof fetch = () => Promise.resolve(Response.json(payload));
+    await assert.rejects(
+      () => readGitHubCommitRefSha("test-token", "ubiquity/ai.ubq.fi", "development", malformedFetcher),
+      /invalid commit identity/,
+    );
+  }
+
+  const missingFetcher: typeof fetch = () => Promise.resolve(Response.json({}, { status: 404 }));
+  await assert.rejects(
+    () => readGitHubCommitRefSha("test-token", "ubiquity/ai.ubq.fi", "development", missingFetcher),
+    /HTTP 404/,
+  );
+  await assert.rejects(
+    () => readGitHubCommitRefSha("test-token", "ubiquity/ai.ubq.fi", checkpointBranch, missingFetcher),
+    /HTTP 404/,
+  );
 });
 
 Deno.test("durable completion evidence never closes a changed issue snapshot", async () => {
