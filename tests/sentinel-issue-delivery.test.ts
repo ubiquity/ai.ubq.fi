@@ -12,6 +12,7 @@ import {
   isContainedDevelopmentComparison,
   isIssueDeliveryFailSafeRevert,
   isPullRequestMergeRefusalStatus,
+  isSentinelRecoveryCandidateBranch,
   ISSUE_COMPLETION_EVIDENCE_TEXT,
   issuePullRequestMarker,
   parseGitHubIssuePullRequestRecord,
@@ -22,12 +23,16 @@ import {
   renderIssueDeliveryEvidence,
   renderIssuePullRequestBody,
   selectDevelopmentPush,
+  sentinelRecoveryCandidateBranch,
+  sentinelRecoveryIdentityKey,
 } from "../scripts/sentinel/issue-delivery.ts";
 import {
   closeIssueAfterCompletionEvidenceRevalidation,
+  compareAndSwapSentinelRecoveryRecord,
   completionEvidenceSnapshotMatches,
   mergeDeliveryPullRequest,
   readGitHubCommitRefSha,
+  reconcileSentinelRecoveryRecord,
   requireCurrentOpenManualIssueSnapshot,
   validateManualRequiredRetainedCheckpointReconciliation,
   validateNativeReviewExhaustedManualCheckpointReconciliation,
@@ -143,6 +148,51 @@ const retryPendingLedger = renderGitHubIssueJobLedger([{
   title: "Retry the bounded issue",
   disposition: "retry_pending",
 }]);
+
+const recoveryIdentity = {
+  repository: "ubiquity/ai.ubq.fi",
+  source_kind: "github_issue" as const,
+  source_id: "136",
+  source_revision: "a".repeat(64),
+  candidate_generation: 1,
+};
+
+const recoveryBranch = sentinelRecoveryCandidateBranch(recoveryIdentity);
+const recoveryCandidateSha = "c".repeat(40);
+
+const recoveryRecord = (overrides: Record<string, unknown> = {}) => ({
+  schema_version: 1,
+  identity: recoveryIdentity,
+  run_id: "33197180235",
+  attempt: 1,
+  lease_token: "lease-1",
+  base_sha: "d".repeat(40),
+  phase: "recovery_pending",
+  disposition: "active",
+  state_version: 1,
+  created_at: "2026-08-28T18:00:00.000Z",
+  updated_at: "2026-08-28T18:01:00.000Z",
+  candidate_branch: recoveryBranch,
+  candidate_sha: recoveryCandidateSha,
+  changed_files: ["src/admin.ts"],
+  tree_sha: null,
+  failure_class: "git_publication_ambiguity",
+  failure_fingerprint: null,
+  artifact_ids: [],
+  artifact_digests: [],
+  reason: "Candidate publication is ambiguous.",
+  next_action: "Reconcile the candidate branch.",
+  predecessor: null,
+  ...overrides,
+});
+
+const recoveryRemote = (overrides: Record<string, unknown> = {}) => ({
+  candidate_branch: recoveryBranch,
+  candidate_sha: recoveryCandidateSha,
+  development_sha: "e".repeat(40),
+  deliveries: [],
+  ...overrides,
+});
 
 const manualSnapshotIssue: GitHubIssue = {
   id: 5228586365,
@@ -1460,4 +1510,212 @@ Deno.test("final evidence binds the issue, PR, workflow, commit, and production 
   assert.ok(evidence.includes(ISSUE_COMPLETION_EVIDENCE_TEXT));
   assert.match(evidence, /closed as completed/);
   assert.match(evidence, /Monitoring decision: keep/);
+});
+
+Deno.test("recovery candidate branches are deterministic and include source generation", () => {
+  assert.equal(sentinelRecoveryCandidateBranch(recoveryIdentity), recoveryBranch);
+  assert.equal(sentinelRecoveryCandidateBranch(recoveryIdentity), sentinelRecoveryCandidateBranch(recoveryIdentity));
+  assert.equal(isSentinelRecoveryCandidateBranch(recoveryBranch), true);
+  assert.match(recoveryBranch, /github_issue-136-a{32}-g1/u);
+  assert.notEqual(
+    sentinelRecoveryIdentityKey(recoveryIdentity),
+    sentinelRecoveryIdentityKey({ ...recoveryIdentity, candidate_generation: 2 }),
+  );
+});
+
+Deno.test("recovery reconciliation confirms one remote checkpoint without changing its branch identity", () => {
+  const first = reconcileSentinelRecoveryRecord({
+    record: recoveryRecord(),
+    remote: recoveryRemote(),
+    now: "2026-08-28T18:02:00.000Z",
+    expected_state_version: 1,
+    expected_lease_token: "lease-1",
+  });
+  assert.equal(first.action, "checkpoint_confirmed");
+  assert.equal(first.after.phase, "checkpoint_durable");
+  assert.equal(first.after.disposition, "active");
+  assert.equal(first.after.candidate_branch, recoveryBranch);
+
+  const repeated = reconcileSentinelRecoveryRecord({
+    record: first.after,
+    remote: recoveryRemote(),
+    now: "2026-08-28T18:03:00.000Z",
+    expected_state_version: first.after.state_version,
+    expected_lease_token: "lease-1",
+  });
+  assert.equal(repeated.action, "resume_validation");
+  assert.equal(repeated.changed, false);
+  assert.equal(repeated.after.state_version, first.after.state_version);
+  assert.equal(repeated.after.candidate_branch, recoveryBranch);
+});
+
+Deno.test("ambiguous checkpoint publication retries the same branch idempotently", () => {
+  const remote = recoveryRemote({ candidate_branch: null, candidate_sha: null });
+  const first = reconcileSentinelRecoveryRecord({
+    record: recoveryRecord(),
+    remote,
+    now: "2026-08-28T18:02:00.000Z",
+  });
+  assert.equal(first.action, "retry_checkpoint_push");
+  assert.equal(first.changed, false);
+  assert.equal(first.after.disposition, "active");
+  assert.equal(first.after.candidate_branch, recoveryBranch);
+  const repeated = reconcileSentinelRecoveryRecord({
+    record: first.after,
+    remote,
+    now: "2026-08-28T18:03:00.000Z",
+  });
+  assert.equal(repeated.action, "retry_checkpoint_push");
+  assert.equal(repeated.changed, false);
+  assert.deepEqual(repeated.after, first.after);
+});
+
+Deno.test("recovery waits for remote evidence and rejects a non-deterministic recorded branch", () => {
+  const absent = reconcileSentinelRecoveryRecord({
+    record: recoveryRecord(),
+    now: "2026-08-28T18:02:00.000Z",
+  });
+  assert.equal(absent.action, "await_evidence");
+  assert.equal(absent.changed, false);
+
+  const unsafe = reconcileSentinelRecoveryRecord({
+    record: recoveryRecord({ candidate_branch: "development" }),
+    remote: recoveryRemote({ candidate_branch: null, candidate_sha: null }),
+    now: "2026-08-28T18:02:00.000Z",
+  });
+  assert.equal(unsafe.action, "manual_required");
+  assert.match(unsafe.after.reason ?? "", /not deterministic/u);
+});
+
+Deno.test("repeated delivery reconciliation records one terminal disposition and no duplicate delivery", () => {
+  const record = recoveryRecord({ phase: "review_pending", state_version: 3 });
+  const remote = recoveryRemote({
+    deliveries: [{
+      pull_request_number: 201,
+      head_branch: recoveryBranch,
+      head_sha: recoveryCandidateSha,
+      base_branch: "development",
+      head_contained_in_development: true,
+      state: "closed",
+      merged_at: "2026-08-28T18:04:00.000Z",
+    }],
+  });
+  const first = reconcileSentinelRecoveryRecord({ record, remote, now: "2026-08-28T18:05:00.000Z" });
+  assert.equal(first.action, "delivery_confirmed");
+  assert.equal(first.after.phase, "delivered");
+  assert.equal(first.after.disposition, "delivered");
+  assert.equal(first.after.candidate_branch, recoveryBranch);
+  const repeated = reconcileSentinelRecoveryRecord({
+    record: first.after,
+    remote,
+    now: "2026-08-28T18:06:00.000Z",
+  });
+  assert.equal(repeated.action, "terminal_noop");
+  assert.equal(repeated.changed, false);
+  assert.equal(repeated.after.disposition, "delivered");
+  assert.equal(repeated.after.state_version, first.after.state_version);
+});
+
+Deno.test("merged recovery delivery requires development ancestry proof", () => {
+  const result = reconcileSentinelRecoveryRecord({
+    record: recoveryRecord({ phase: "review_pending", state_version: 3 }),
+    remote: recoveryRemote({
+      deliveries: [{
+        pull_request_number: 201,
+        head_branch: recoveryBranch,
+        head_sha: recoveryCandidateSha,
+        base_branch: "development",
+        head_contained_in_development: false,
+        state: "closed",
+        merged_at: "2026-08-28T18:04:00.000Z",
+      }],
+    }),
+    now: "2026-08-28T18:05:00.000Z",
+  });
+  assert.equal(result.action, "manual_required");
+  assert.match(result.after.reason ?? "", /not proven in development ancestry/u);
+});
+
+Deno.test("a candidate already at development without a delivery record is manual", () => {
+  const result = reconcileSentinelRecoveryRecord({
+    record: recoveryRecord({ phase: "recovery_pending" }),
+    remote: recoveryRemote({ development_sha: recoveryCandidateSha, deliveries: [] }),
+    now: "2026-08-28T18:05:00.000Z",
+  });
+  assert.equal(result.action, "manual_required");
+  assert.equal(result.after.disposition, "manual_required");
+  assert.match(result.after.reason ?? "", /already development/u);
+});
+
+Deno.test("duplicate delivery observations become one manual disposition and stay terminal", () => {
+  const delivery = {
+    pull_request_number: 201,
+    head_branch: recoveryBranch,
+    head_sha: recoveryCandidateSha,
+    base_branch: "development" as const,
+    head_contained_in_development: false,
+    state: "open" as const,
+    merged_at: null,
+  };
+  const remote = recoveryRemote({ deliveries: [delivery, { ...delivery, pull_request_number: 202 }] });
+  const first = reconcileSentinelRecoveryRecord({
+    record: recoveryRecord({ phase: "review_pending", state_version: 3 }),
+    remote,
+    now: "2026-08-28T18:05:00.000Z",
+  });
+  assert.equal(first.action, "manual_required");
+  assert.equal(first.after.disposition, "manual_required");
+  const repeated = reconcileSentinelRecoveryRecord({
+    record: first.after,
+    remote,
+    now: "2026-08-28T18:06:00.000Z",
+  });
+  assert.equal(repeated.action, "terminal_noop");
+  assert.equal(repeated.changed, false);
+  assert.equal(repeated.after.state_version, first.after.state_version);
+});
+
+Deno.test("recovery compare-and-swap rejects a stale lease or state version", () => {
+  const current = recoveryRecord();
+  const next = reconcileSentinelRecoveryRecord({
+    record: current,
+    remote: recoveryRemote({ candidate_branch: "sentinel/candidate-999999999", candidate_sha: recoveryCandidateSha }),
+    now: "2026-08-28T18:02:00.000Z",
+  }).after;
+  assert.equal(next.disposition, "manual_required");
+  assert.deepEqual(
+    compareAndSwapSentinelRecoveryRecord({
+      current,
+      next,
+      expected_state_version: 1,
+      expected_lease_token: "lease-1",
+    }),
+    next,
+  );
+  assert.throws(
+    () =>
+      compareAndSwapSentinelRecoveryRecord({
+        current,
+        next,
+        expected_state_version: 2,
+        expected_lease_token: "lease-1",
+      }),
+    /lost its lease or observed a newer state/u,
+  );
+});
+
+Deno.test("an empty candidate diff reaches an exact rejected disposition", () => {
+  const result = reconcileSentinelRecoveryRecord({
+    record: recoveryRecord({
+      candidate_branch: null,
+      candidate_sha: null,
+      changed_files: [],
+    }),
+    remote: recoveryRemote({ candidate_branch: null, candidate_sha: null }),
+    now: "2026-08-28T18:02:00.000Z",
+  });
+  assert.equal(result.action, "reject_no_candidate_diff");
+  assert.equal(result.after.phase, "rejected");
+  assert.equal(result.after.disposition, "rejected");
+  assert.equal(result.after.reason, "rejected/no_candidate_diff");
 });

@@ -496,7 +496,7 @@ Deno.test({
     const nonRuntimeStart = orchestrator.indexOf(
       "if (selectedBacklogState.disposition !== null && !selectedBacklogState.continueToRuntimeValidation)",
     );
-    const nonRuntimeEnd = orchestrator.indexOf("if (!await hasChanges(checkout))", nonRuntimeStart);
+    const nonRuntimeEnd = orchestrator.indexOf("const aggregateCandidatePaths", nonRuntimeStart);
     assert(
       nonRuntimeStart >= 0 && nonRuntimeEnd > nonRuntimeStart,
       "Non-runtime backlog completion must have a bounded early-return lane",
@@ -563,7 +563,7 @@ Deno.test({
     const issueDispositionStart = orchestrator.indexOf(
       'if (selectedIssueState.disposition === "manual_required" || selectedIssueState.disposition === "retry_pending")',
     );
-    const issueDispositionEnd = orchestrator.indexOf("if (!await hasChanges(checkout))", issueDispositionStart);
+    const issueDispositionEnd = orchestrator.indexOf("const aggregateCandidatePaths", issueDispositionStart);
     assert(
       issueDispositionStart >= 0 && issueDispositionEnd > issueDispositionStart,
       "Non-runtime GitHub issue completion must have a bounded early-return lane",
@@ -949,7 +949,7 @@ Deno.test({
         manualCompletionPosition > manualLedgerDispositionPosition &&
         manualTerminalizerLane.includes('branch_disposition: "runner_local_manual_checkpoint_ready"') &&
         manualTerminalizerLane.includes('"manual_required",') &&
-        orchestrator.includes("const branch = sentinelTemporaryCandidateBranch(runId, githubRunAttempt)"),
+        orchestrator.includes("const branch = sentinelRecoveryCandidateBranch(recoveryIdentity)"),
       "Round-three terminalization must retain the current run-attempt checkpoint before the manual ledger disposition",
     );
     for (

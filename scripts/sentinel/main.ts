@@ -34,12 +34,14 @@ import {
   githubIssueJobMatchesHint,
   githubIssueJobsMatch,
   githubIssueJobTriageReport,
+  isSentinelChangedFilesMismatchError,
   issueJobFindingId,
   issueReviewBacklogFindings,
   parseGitHubIssueJobHint,
   parseGitHubIssueJobLedger,
   requireResolvedGitHubIssueJobImplementation,
   selectNextGitHubIssueJobSelection,
+  SentinelChangedFilesMismatchError,
 } from "./issues.ts";
 import { isSentinelProtectedImplementationPath, SENTINEL_POLICY, type SentinelMode } from "./policy.ts";
 import {
@@ -60,6 +62,16 @@ import {
   reviewBacklogTriageReport,
   selectNextReviewBacklogEntry,
 } from "./review.ts";
+import {
+  assertSentinelRecoveryTransition,
+  parseSentinelRecoveryRecord,
+  type SentinelRecoveryIdentityV1,
+  type SentinelRecoveryRecordV1,
+  type SentinelRecoverySourceKind,
+} from "./recovery.ts";
+import { sentinelRecoveryIdentityKey, upsertSentinelRecoveryRecord } from "./recovery-ledger.ts";
+import { readGitHubSentinelRecoveryLedger, writeGitHubSentinelRecoveryLedger } from "./recovery-github-store.ts";
+import { isSentinelRecoveryCandidateBranch, sentinelRecoveryCandidateBranch } from "./issue-delivery.ts";
 import {
   assertActionableFindingsResolved,
   assertCompleteFindingDispositions,
@@ -187,7 +199,9 @@ export const failedCycleBranchDisposition = (
   if (
     state.branch_disposition === "remote_retained_pending_decision" ||
     state.branch_disposition === "remote_retained_issue_retry_pending" ||
-    state.branch_disposition === "remote_retained_issue_manual_required"
+    state.branch_disposition === "remote_retained_issue_manual_required" ||
+    state.branch_disposition === "remote_retained_checkpoint_durable" ||
+    state.branch_disposition === "remote_retained_validation_failed"
   ) {
     return "remote_retained_after_failed_cycle";
   }
@@ -324,7 +338,14 @@ export const evaluateReviewBacklogImplementation = (
   const actual = sortedUniquePaths(actualChangedPaths, "Backlog implementation diff");
   const reported = sortedUniquePaths(reportedChangedPaths, "Backlog implementation report");
   const pathsMatch = actual.length === reported.length && actual.every((path, index) => path === reported[index]);
-  if (!pathsMatch) throw new Error("Backlog implementation report changed_files does not match the candidate diff");
+  if (!pathsMatch) {
+    throw new SentinelChangedFilesMismatchError(
+      "Backlog implementation report changed_files does not match the candidate diff",
+      actual,
+      reported,
+      "review_backlog",
+    );
+  }
   if (status === "implemented" && actual.length > 0) {
     if (requiredChangedPath && !actual.includes(requiredChangedPath)) {
       throw new Error("Backlog implementation diff does not include the selected finding's affected path");
@@ -673,6 +694,145 @@ const sha256Hex = async (bytes: Uint8Array<ArrayBuffer>): Promise<string> =>
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
 
+export type SentinelCandidateCheckpointInput = Readonly<{
+  repository: string;
+  sourceKind: SentinelRecoverySourceKind;
+  sourceId: string;
+  sourceRevision: string;
+  candidateGeneration: number;
+  runId: string;
+  attempt: number;
+  leaseToken: string;
+  baseSha: string;
+  candidateBranch: string;
+  candidateSha: string;
+  treeSha?: string | null;
+  changedFiles: readonly string[];
+  reportedChangedFiles?: readonly string[];
+  failureFingerprint?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  artifactIds?: readonly number[];
+  artifactDigests?: readonly string[];
+  predecessor?: string | null;
+  nextAction?: string | null;
+  untrackedChangedFiles?: readonly string[];
+}>;
+
+export type SentinelCandidateFinalization = Readonly<{
+  checkpoint: Readonly<{
+    branch: string;
+    sha: string;
+    baseSha: string;
+    changedFiles: readonly string[];
+    treeSha: string | null;
+  }>;
+  record: SentinelRecoveryRecordV1;
+  recoveryRecord: SentinelRecoveryRecordV1;
+  reportChangedFiles: readonly string[] | null;
+  reportMatches: boolean | null;
+  untrackedChangedFiles: readonly string[];
+}>;
+
+const pathsEqual = (left: readonly string[], right: readonly string[]): boolean =>
+  left.length === right.length && left.every((path, index) => path === right[index]);
+
+/**
+ * Build the durable record only after Git has produced a checkpoint commit.
+ * A report mismatch is data on the record; it must never erase the checkpoint.
+ */
+export const createSentinelCandidateRecoveryRecord = (
+  input: SentinelCandidateCheckpointInput,
+): SentinelRecoveryRecordV1 => {
+  const changedFiles = sortedUniquePaths(input.changedFiles, "Candidate checkpoint diff");
+  const reportedChangedFiles = input.reportedChangedFiles === undefined
+    ? null
+    : sortedUniquePaths(input.reportedChangedFiles, "Candidate implementation report");
+  const reportMatches = reportedChangedFiles === null ? null : pathsEqual(changedFiles, reportedChangedFiles);
+  const mismatch = reportMatches === false;
+  const now = new Date().toISOString();
+  const record = {
+    schema_version: 1 as const,
+    identity: {
+      repository: input.repository,
+      source_kind: input.sourceKind,
+      source_id: input.sourceId,
+      source_revision: input.sourceRevision,
+      candidate_generation: input.candidateGeneration,
+    },
+    run_id: input.runId,
+    attempt: input.attempt,
+    lease_token: input.leaseToken,
+    base_sha: input.baseSha,
+    phase: mismatch ? "validation_failed" as const : "checkpoint_durable" as const,
+    disposition: "active" as const,
+    state_version: 1,
+    created_at: input.createdAt ?? now,
+    updated_at: input.updatedAt ?? now,
+    candidate_branch: input.candidateBranch,
+    candidate_sha: input.candidateSha,
+    changed_files: changedFiles,
+    tree_sha: input.treeSha ?? null,
+    failure_class: mismatch ? "invalid_implementation_report" : null,
+    failure_fingerprint: mismatch ? input.failureFingerprint ?? null : null,
+    artifact_ids: input.artifactIds ?? [],
+    artifact_digests: input.artifactDigests ?? [],
+    reason: mismatch ? "report_diff_mismatch" : null,
+    next_action: mismatch
+      ? input.nextAction ?? "Reconcile the retained checkpoint before retrying."
+      : input.nextAction ?? "Validate the checkpoint candidate.",
+    predecessor: input.predecessor ?? null,
+  } satisfies SentinelRecoveryRecordV1;
+  return parseSentinelRecoveryRecord(record);
+};
+
+/**
+ * Finalize a candidate from Git-derived paths. Once this function is called,
+ * the candidate is represented by a commit and has no untracked dirty files.
+ */
+export const finalizeSentinelCandidate = (
+  input: SentinelCandidateCheckpointInput,
+): SentinelCandidateFinalization => {
+  const changedFiles = sortedUniquePaths(input.changedFiles, "Candidate checkpoint diff");
+  const untrackedChangedFiles = sortedUniquePaths(
+    input.untrackedChangedFiles ?? [],
+    "Candidate checkpoint untracked diff",
+  );
+  if (untrackedChangedFiles.length > 0) {
+    throw new Error("Sentinel candidate checkpoint still has untracked changed files");
+  }
+  const reportedChangedFiles = input.reportedChangedFiles === undefined
+    ? null
+    : sortedUniquePaths(input.reportedChangedFiles, "Candidate implementation report");
+  const reportMatches = reportedChangedFiles === null ? null : pathsEqual(changedFiles, reportedChangedFiles);
+  const record = createSentinelCandidateRecoveryRecord(input);
+  const checkpoint = Object.freeze({
+    branch: input.candidateBranch,
+    sha: input.candidateSha,
+    baseSha: input.baseSha,
+    changedFiles: Object.freeze([...changedFiles]),
+    treeSha: input.treeSha ?? null,
+  });
+  return Object.freeze({
+    checkpoint,
+    record,
+    recoveryRecord: record,
+    reportChangedFiles: reportedChangedFiles === null ? null : Object.freeze([...reportedChangedFiles]),
+    reportMatches,
+    untrackedChangedFiles: Object.freeze([...untrackedChangedFiles]),
+  });
+};
+
+export const finalizeSentinelCandidateCheckpoint = finalizeSentinelCandidate;
+
+export const candidateShaForReview = (
+  headSha: string,
+  aggregateChangedPaths: readonly string[],
+): string | null => {
+  if (aggregateChangedPaths.length === 0) return null;
+  return ensureFullSha(headSha, "Review candidate SHA");
+};
+
 const writePreparedMatrixPlan = async (
   input: Readonly<{
     reportsDir: string;
@@ -875,6 +1035,20 @@ const commitChanges = async (cwd: string, message: string): Promise<string> => {
   await runTrustedGit({ args: ["add", "--all"], cwd });
   await runTrustedGit({ args: ["commit", "--no-gpg-sign", "-m", message], cwd });
   return ensureFullSha(await gitText(cwd, ["rev-parse", "HEAD"]), "Candidate SHA");
+};
+
+const commitCandidateChanges = async (
+  cwd: string,
+  paths: readonly string[],
+  message: string,
+): Promise<string> => {
+  const candidatePaths = [...new Set(paths)].sort();
+  if (candidatePaths.length === 0) {
+    return ensureFullSha(await gitText(cwd, ["rev-parse", "HEAD"]), "Candidate checkpoint SHA");
+  }
+  await runTrustedGit({ args: ["add", "--all", "--", ...candidatePaths], cwd });
+  await runTrustedGit({ args: ["commit", "--no-gpg-sign", "-m", message], cwd });
+  return ensureFullSha(await gitText(cwd, ["rev-parse", "HEAD"]), "Candidate checkpoint SHA");
 };
 
 const parseStructuredResult = <T>(
@@ -1552,7 +1726,7 @@ export const assertGitHubIssueManualCheckpointCodeTreeEquivalent = async (
     baseSha: string;
     reviewedCandidateSha: string;
     checkpointSha: string;
-    allowedPaths: readonly string[];
+    allowedPaths?: readonly string[];
   }>,
 ): Promise<Readonly<{ reviewedCodePaths: readonly string[]; checkpointCodePaths: readonly string[] }>> => {
   ensureFullSha(input.baseSha, "Manual checkpoint base SHA");
@@ -1757,9 +1931,7 @@ const assertImplementationFilesExcludeValues = async (
   }
 };
 
-const validTemporaryCandidateBranch = (branch: string): boolean =>
-  branch.startsWith(SENTINEL_POLICY.temporaryBranchPrefix) &&
-  /^[1-9][0-9]*(?:-[1-9][0-9]*)?$/u.test(branch.slice(SENTINEL_POLICY.temporaryBranchPrefix.length));
+const validTemporaryCandidateBranch = (branch: string): boolean => isSentinelRecoveryCandidateBranch(branch);
 
 const parseRemoteTemporaryCandidateSha = (branch: string, stdout: Uint8Array): string | null => {
   const lines = textDecoder.decode(stdout).trim().split("\n").filter(Boolean);
@@ -1770,13 +1942,6 @@ const parseRemoteTemporaryCandidateSha = (branch: string, stdout: Uint8Array): s
     throw new Error("Sentinel candidate branch lookup returned an unexpected ref");
   }
   return ensureFullSha(sha ?? "", "Remote candidate SHA");
-};
-
-export const sentinelTemporaryCandidateBranch = (runId: string, runAttempt: number): string => {
-  if (!/^[1-9][0-9]*$/u.test(runId) || !Number.isSafeInteger(runAttempt) || runAttempt <= 0) {
-    throw new Error("Sentinel workflow run identity is invalid");
-  }
-  return `${SENTINEL_POLICY.temporaryBranchPrefix}${runId}-${runAttempt}`;
 };
 
 const remoteTemporaryCandidateSha = async (
@@ -1895,7 +2060,7 @@ export const prepareResumedGitHubIssueCandidate = async (
     candidateBranch: string;
     developmentSha: string;
     checkpoint: GitHubIssueJobCheckpoint;
-    allowedPaths: readonly string[];
+    allowedPaths?: readonly string[];
     gitEnvironment: Readonly<Record<string, string>>;
   }>,
 ): Promise<string> => {
@@ -1920,7 +2085,6 @@ export const prepareResumedGitHubIssueCandidate = async (
   if (
     !validTemporaryCandidateBranch(input.candidateBranch) ||
     !validTemporaryCandidateBranch(input.checkpoint.branch) ||
-    input.candidateBranch === input.checkpoint.branch ||
     input.checkpoint.sha === input.checkpoint.baseSha
   ) throw integrityFailure("Sentinel retry checkpoint identity is invalid");
   const currentBranch = await runResumeOperation(
@@ -2022,10 +2186,12 @@ export const prepareResumedGitHubIssueCandidate = async (
       "Sentinel retry checkpoint scope inspection failed",
     )).stdout,
   ).sort();
-  const allowed = new Set(input.allowedPaths);
+  const allowed = input.allowedPaths === undefined ? null : new Set(input.allowedPaths);
   if (
     checkpointPaths.length === 0 || new Set(checkpointPaths).size !== checkpointPaths.length ||
-    checkpointPaths.some((path) => !allowed.has(path) || isSentinelProtectedImplementationPath(path))
+    checkpointPaths.some((path) =>
+      (allowed !== null && !allowed.has(path)) || isSentinelProtectedImplementationPath(path)
+    )
   ) throw integrityFailure("Sentinel retry checkpoint changed an unsafe or out-of-scope path");
   const merge = await runResumeOperation(
     () =>
@@ -2075,10 +2241,10 @@ export const prepareResumedGitHubIssueCandidate = async (
   ].sort();
   if (
     aggregatePaths.length === 0 || aggregatePaths.some((path) =>
-      !allowed.has(path) ||
+      (allowed !== null && !allowed.has(path)) ||
       isSentinelProtectedImplementationPath(path)
     )
-  ) throw integrityFailure("Sentinel resumed candidate drifted outside the declared issue scope");
+  ) throw integrityFailure("Sentinel resumed candidate drifted outside its allowed scope");
   return resumedSha;
 };
 
@@ -2822,6 +2988,119 @@ const run = async (): Promise<void> => {
     return;
   }
 
+  const recoverySourceKind: SentinelRecoverySourceKind = workSelection.source === "github_issue"
+    ? "github_issue"
+    : workSelection.source === "review_backlog"
+    ? "review_backlog"
+    : mode === "incident"
+    ? "incident"
+    : "triage";
+  const recoverySourceId = workSelection.issueJob
+    ? String(workSelection.issueJob.issueId)
+    : workSelection.backlogEntry?.fingerprint ?? state.event_dedupe_key ?? runId;
+  const recoverySourceRevision = workSelection.issueJob?.fingerprint ?? workSelection.backlogEntry?.sha ??
+    (selectedDevelopmentSha ?? await fetchDevelopmentBase(root, gitEnvironment));
+  const recoveryBaseSha = selectedDevelopmentSha ?? await fetchDevelopmentBase(root, gitEnvironment);
+  let recoverySnapshot = await readGitHubSentinelRecoveryLedger({ token: githubToken, repository });
+  const relatedRecoveryRecords = recoverySnapshot.ledger.records.filter((record) =>
+    record.identity.repository === repository && record.identity.source_kind === recoverySourceKind &&
+    record.identity.source_id === recoverySourceId
+  );
+  const currentRecoveryRecord = relatedRecoveryRecords.find((record) =>
+    record.identity.source_revision === recoverySourceRevision && record.disposition === "active"
+  );
+  const currentRecoveryKey = currentRecoveryRecord ? sentinelRecoveryIdentityKey(currentRecoveryRecord.identity) : null;
+  const currentRetryDecision = currentRecoveryKey === null
+    ? null
+    : recoverySnapshot.ledger.retry_decisions.find((entry) => entry.identity_key === currentRecoveryKey)?.decision ??
+      null;
+  const retryIsDue = currentRecoveryRecord?.phase === "retry_wait" && currentRetryDecision?.should_retry === true &&
+    currentRetryDecision.retry_at !== null && Date.parse(currentRetryDecision.retry_at) <= Date.now();
+  if (currentRecoveryRecord && !retryIsDue) {
+    await writeJson(`${reportsDir}/recovery-record-v1.json`, currentRecoveryRecord);
+    await updateState("recovery_pending", {
+      status: "no_change",
+      base_development_sha: currentRecoveryRecord.base_sha,
+      candidate_sha: currentRecoveryRecord.candidate_sha,
+      temporary_branch: currentRecoveryRecord.candidate_branch,
+      branch_disposition: "recovery_record_pending",
+    });
+    return;
+  }
+  let recoveryIdentity: SentinelRecoveryIdentityV1;
+  let durableRecoveryRecord: SentinelRecoveryRecordV1;
+  if (currentRecoveryRecord) {
+    recoveryIdentity = currentRecoveryRecord.identity;
+    durableRecoveryRecord = parseSentinelRecoveryRecord({
+      ...currentRecoveryRecord,
+      run_id: runId,
+      attempt: currentRecoveryRecord.attempt + 1,
+      phase: "claimed",
+      state_version: currentRecoveryRecord.state_version + 1,
+      updated_at: new Date().toISOString(),
+      reason: "The bounded retry delay elapsed and the same candidate generation was reclaimed.",
+      next_action: "Resume the Luna implementation stage from durable evidence.",
+    });
+    assertSentinelRecoveryTransition(currentRecoveryRecord, durableRecoveryRecord);
+    recoverySnapshot = await writeGitHubSentinelRecoveryLedger({
+      token: githubToken,
+      repository,
+      snapshot: recoverySnapshot,
+      ledger: upsertSentinelRecoveryRecord(
+        recoverySnapshot.ledger,
+        durableRecoveryRecord,
+        currentRecoveryRecord.state_version,
+      ),
+      message: `chore(sentinel): retry ${sentinelRecoveryIdentityKey(recoveryIdentity)}`,
+    });
+  } else {
+    const candidateGeneration = relatedRecoveryRecords.reduce(
+      (maximum, record) => Math.max(maximum, record.identity.candidate_generation),
+      0,
+    ) + 1;
+    recoveryIdentity = {
+      repository,
+      source_kind: recoverySourceKind,
+      source_id: recoverySourceId,
+      source_revision: recoverySourceRevision,
+      candidate_generation: candidateGeneration,
+    };
+    durableRecoveryRecord = parseSentinelRecoveryRecord({
+      schema_version: 1,
+      identity: recoveryIdentity,
+      run_id: runId,
+      attempt: githubRunAttempt,
+      lease_token: `${runId}-${githubRunAttempt}`,
+      base_sha: recoveryBaseSha,
+      phase: "claimed",
+      disposition: "active",
+      state_version: 1,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      candidate_branch: null,
+      candidate_sha: null,
+      changed_files: [],
+      tree_sha: null,
+      failure_class: null,
+      failure_fingerprint: null,
+      artifact_ids: [],
+      artifact_digests: [],
+      reason: "The selected work item is durably claimed before implementation.",
+      next_action: "Start the Luna implementation stage.",
+      predecessor: relatedRecoveryRecords.at(-1)
+        ? sentinelRecoveryIdentityKey(relatedRecoveryRecords.at(-1)!.identity)
+        : null,
+    });
+    recoverySnapshot = await writeGitHubSentinelRecoveryLedger({
+      token: githubToken,
+      repository,
+      snapshot: recoverySnapshot,
+      ledger: upsertSentinelRecoveryRecord(recoverySnapshot.ledger, durableRecoveryRecord, null),
+      message: `chore(sentinel): claim ${sentinelRecoveryIdentityKey(recoveryIdentity)}`,
+    });
+  }
+  await writeJson(`${reportsDir}/recovery-record-v1.json`, durableRecoveryRecord);
+
   const authSlots = await requiredAuthSlotsFromPrivateState();
   const previewCredential = requiredEnvironment("PREVIEW_UOS_AI_USER_TOKEN");
   const replayKey = requiredEnvironment("SENTINEL_REPLAY_KEY");
@@ -2963,7 +3242,7 @@ const run = async (): Promise<void> => {
     return;
   }
 
-  const branch = sentinelTemporaryCandidateBranch(runId, githubRunAttempt);
+  const branch = sentinelRecoveryCandidateBranch(recoveryIdentity);
   await updateState("creating_candidate", {
     temporary_branch: branch,
     branch_disposition: "runner_local_pending_review",
@@ -3004,6 +3283,9 @@ const run = async (): Promise<void> => {
     baseSha = selectedDevelopmentSha;
   } else {
     baseSha = await fetchDevelopmentBase(root, gitEnvironment);
+    if (baseSha !== recoveryBaseSha) {
+      throw new Error("origin/development advanced after Sentinel recovery claim");
+    }
   }
   await addCandidateWorktree(root, checkout, branch, baseSha);
   if (matrixConvergePhase) {
@@ -3126,6 +3408,22 @@ const run = async (): Promise<void> => {
     }
     parseGitHubIssueJobLedger(candidateLedger);
   }
+  if (
+    currentRecoveryRecord && retryIsDue && workSelection.source !== "github_issue" &&
+    currentRecoveryRecord.candidate_branch !== null && currentRecoveryRecord.candidate_sha !== null
+  ) {
+    await prepareResumedGitHubIssueCandidate({
+      checkout,
+      candidateBranch: branch,
+      developmentSha: baseSha,
+      checkpoint: {
+        branch: currentRecoveryRecord.candidate_branch,
+        sha: currentRecoveryRecord.candidate_sha,
+        baseSha: currentRecoveryRecord.base_sha,
+      },
+      gitEnvironment,
+    });
+  }
   const selectedBacklogAffectedPath = workSelection.backlogEntry
     ? reviewBacklogLocationPath(workSelection.backlogEntry.location)
     : null;
@@ -3174,6 +3472,29 @@ const run = async (): Promise<void> => {
         SENTINEL_POLICY.paths.reviewBacklog,
       ]),
     ].sort();
+  const implementationRecoveryRecord = parseSentinelRecoveryRecord({
+    ...durableRecoveryRecord,
+    phase: "implementation_running",
+    state_version: durableRecoveryRecord.state_version + 1,
+    updated_at: new Date().toISOString(),
+    candidate_branch: branch,
+    reason: "The isolated Luna implementation stage is running.",
+    next_action: "Checkpoint every Git-derived candidate change before report validation.",
+  });
+  assertSentinelRecoveryTransition(durableRecoveryRecord, implementationRecoveryRecord);
+  recoverySnapshot = await writeGitHubSentinelRecoveryLedger({
+    token: githubToken,
+    repository,
+    snapshot: recoverySnapshot,
+    ledger: upsertSentinelRecoveryRecord(
+      recoverySnapshot.ledger,
+      implementationRecoveryRecord,
+      durableRecoveryRecord.state_version,
+    ),
+    message: `chore(sentinel): start ${sentinelRecoveryIdentityKey(recoveryIdentity)}`,
+  });
+  durableRecoveryRecord = implementationRecoveryRecord;
+  await writeJson(`${reportsDir}/recovery-record-v1.json`, durableRecoveryRecord);
   await updateState("implementing", { base_development_sha: baseSha });
   const baseProtectedHashes = await hashProtectedFiles(checkout, SENTINEL_POLICY.protectedImplementationPaths);
   let protectedHashes = baseProtectedHashes;
@@ -3272,6 +3593,217 @@ const run = async (): Promise<void> => {
   let retryCheckpointExpectedRemoteSha = selectedIssueCheckpoint?.sha ?? null;
   let manualCheckpoint: GitHubIssueJobCheckpoint | null = null;
   let lastPushedCandidateSha: string | null = null;
+  let candidateCheckpointInput: SentinelCandidateCheckpointInput | null = null;
+  const recoveryRecordPath = `${reportsDir}/recovery-record-v1.json`;
+  const checkpointFailureFingerprint = async (
+    stage: string,
+    actualChangedFiles: readonly string[],
+    reportedChangedFiles: readonly string[],
+  ): Promise<string> =>
+    await sha256Hex(
+      new Uint8Array(
+        textEncoder.encode(
+          JSON.stringify({
+            stage,
+            actual_changed_files: actualChangedFiles,
+            reported_changed_files: reportedChangedFiles,
+          }),
+        ),
+      ),
+    );
+  const persistCandidateRecoveryPhase = async (record: SentinelRecoveryRecordV1): Promise<void> => {
+    const next = parseSentinelRecoveryRecord({
+      ...durableRecoveryRecord,
+      phase: record.phase,
+      state_version: durableRecoveryRecord.state_version + 1,
+      updated_at: new Date().toISOString(),
+      candidate_branch: record.candidate_branch,
+      candidate_sha: record.candidate_sha,
+      changed_files: record.changed_files,
+      tree_sha: record.tree_sha,
+      failure_class: record.failure_class,
+      failure_fingerprint: record.failure_fingerprint,
+      artifact_ids: record.artifact_ids,
+      artifact_digests: record.artifact_digests,
+      reason: record.reason,
+      next_action: record.next_action,
+    });
+    assertSentinelRecoveryTransition(durableRecoveryRecord, next);
+    recoverySnapshot = await writeGitHubSentinelRecoveryLedger({
+      token: githubToken,
+      repository,
+      snapshot: recoverySnapshot,
+      ledger: upsertSentinelRecoveryRecord(
+        recoverySnapshot.ledger,
+        next,
+        durableRecoveryRecord.state_version,
+      ),
+      message: `chore(sentinel): ${next.phase} ${sentinelRecoveryIdentityKey(recoveryIdentity)}`,
+    });
+    durableRecoveryRecord = next;
+    await writeJson(recoveryRecordPath, durableRecoveryRecord);
+  };
+  const writeCandidateRecoveryRecord = async (record: SentinelRecoveryRecordV1): Promise<void> => {
+    if (record.phase === "validation_failed" && durableRecoveryRecord.phase === "implementation_running") {
+      await persistCandidateRecoveryPhase(parseSentinelRecoveryRecord({
+        ...record,
+        phase: "checkpoint_durable",
+        failure_class: null,
+        failure_fingerprint: null,
+        reason: null,
+        next_action: "Validate the checkpoint candidate.",
+      }));
+    }
+    await persistCandidateRecoveryPhase(record);
+  };
+  const checkpointDirtyCandidate = async (
+    stage: string,
+    expectedSha: string,
+    reportedChangedFiles?: readonly string[],
+  ): Promise<SentinelCandidateFinalization | null> => {
+    if (!/^[a-z0-9_-]+$/u.test(stage)) throw new Error("Candidate checkpoint stage label is invalid");
+    await assertAgentDidNotCommitOrSwitch(checkout, expectedSha, branch, gitControlState);
+    await assertImplementationAgentScope(checkout);
+    await assertImplementationFilesExcludeValues(checkout, sensitiveValues);
+    await assertProtectedFilesUnchanged(checkout, protectedHashes);
+    const excludedPaths = workSelection.source === "github_issue" || workSelection.source === "review_backlog"
+      ? [SENTINEL_POLICY.paths.issueJobLedger, SENTINEL_POLICY.paths.reviewBacklog]
+      : [];
+    const excluded = new Set<string>(excludedPaths);
+    const dirtyCandidatePaths = [...(await implementationAgentChangedPathStates(checkout)).entries()]
+      .filter(([path]) => !excluded.has(path))
+      .map(([path]) => path)
+      .sort();
+    const paths = [...await aggregateCandidateChangedPaths(checkout, baseSha, excludedPaths)].sort();
+    if (dirtyCandidatePaths.length === 0) {
+      if (reportedChangedFiles === undefined || paths.length === 0) return null;
+      if (candidateCheckpointInput !== null) {
+        const failureFingerprint = await checkpointFailureFingerprint(
+          stage,
+          candidateCheckpointInput.changedFiles,
+          reportedChangedFiles,
+        );
+        const finalized = finalizeSentinelCandidate({
+          ...candidateCheckpointInput,
+          reportedChangedFiles,
+          failureFingerprint,
+        });
+        await writeCandidateRecoveryRecord(finalized.record);
+        if (!finalized.reportMatches) {
+          await updateState("checkpoint_validation_failed", {
+            status: "failed",
+            candidate_sha: finalized.checkpoint.sha,
+            temporary_branch: finalized.checkpoint.branch,
+            branch_disposition: "remote_retained_validation_failed",
+          });
+        }
+        return finalized;
+      }
+    }
+    await assertImplementationFilesExcludeValues(
+      checkout,
+      sensitiveValues,
+      dirtyCandidatePaths.length > 0 ? dirtyCandidatePaths : paths,
+    );
+    const checkpointSha = dirtyCandidatePaths.length > 0
+      ? await commitCandidateChanges(
+        checkout,
+        dirtyCandidatePaths,
+        `chore: checkpoint Sentinel candidate after ${stage}`,
+      )
+      : ensureFullSha(await gitText(checkout, ["rev-parse", "HEAD"]), "Candidate checkpoint SHA");
+    const committedPaths = [...await aggregateCandidateChangedPaths(checkout, baseSha, excludedPaths)].sort();
+    if (JSON.stringify(committedPaths) !== JSON.stringify(paths)) {
+      throw new Error("Sentinel candidate checkpoint changed its Git-derived path set while committing");
+    }
+    const untrackedChangedFiles = [...(await implementationAgentChangedPathStates(checkout)).entries()]
+      .filter(([path, status]) => status === "untracked" && !excluded.has(path))
+      .map(([path]) => path)
+      .sort();
+    if (untrackedChangedFiles.length > 0) {
+      throw new Error("Sentinel candidate checkpoint left untracked changed files");
+    }
+    await assertGitHistoryExcludesValues({ cwd: checkout, sensitiveValues });
+    const treeSha = ensureFullSha(
+      await gitText(checkout, ["rev-parse", "HEAD^{tree}"]),
+      "Candidate checkpoint tree SHA",
+    );
+    const publishedSha = await pushTemporaryCandidate(checkout, branch, gitEnvironment);
+    if (publishedSha !== checkpointSha) throw new Error("Sentinel candidate checkpoint push changed SHA");
+    const checkpointInput: SentinelCandidateCheckpointInput = {
+      repository,
+      sourceKind: recoverySourceKind,
+      sourceId: recoverySourceId,
+      sourceRevision: recoverySourceRevision,
+      candidateGeneration: recoveryIdentity.candidate_generation,
+      runId,
+      attempt: githubRunAttempt,
+      leaseToken: durableRecoveryRecord.lease_token,
+      baseSha,
+      candidateBranch: branch,
+      candidateSha: checkpointSha,
+      treeSha,
+      changedFiles: paths,
+      ...(reportedChangedFiles === undefined ? {} : { reportedChangedFiles }),
+      ...(reportedChangedFiles === undefined ? {} : {
+        failureFingerprint: await checkpointFailureFingerprint(stage, paths, reportedChangedFiles),
+      }),
+      untrackedChangedFiles,
+    };
+    const finalized = finalizeSentinelCandidate(checkpointInput);
+    candidateCheckpointInput = checkpointInput;
+    lastPushedCandidateSha = publishedSha;
+    await writeCandidateRecoveryRecord(finalized.record);
+    await updateState(finalized.reportMatches === false ? "checkpoint_validation_failed" : "checkpoint_durable", {
+      status: finalized.reportMatches === false ? "failed" : state.status,
+      candidate_sha: checkpointSha,
+      temporary_branch: branch,
+      branch_disposition: finalized.reportMatches === false
+        ? "remote_retained_validation_failed"
+        : "remote_retained_checkpoint_durable",
+      ...(workSelection.source === "github_issue"
+        ? { retry_checkpoint: { branch, sha: checkpointSha, base_sha: baseSha } }
+        : {}),
+    });
+    return finalized;
+  };
+  const recordCandidateReportMismatch = async (
+    error: SentinelChangedFilesMismatchError,
+    stage: string,
+  ): Promise<void> => {
+    if (candidateCheckpointInput === null) return;
+    const actualChangedFiles = sortedUniquePaths(error.actualChangedFiles, "Candidate checkpoint diff");
+    if (!pathsEqual(actualChangedFiles, candidateCheckpointInput.changedFiles)) {
+      throw new Error("Candidate report mismatch does not match the retained Git checkpoint");
+    }
+    const failureFingerprint = await checkpointFailureFingerprint(
+      stage,
+      actualChangedFiles,
+      error.reportedChangedFiles,
+    );
+    const finalized = finalizeSentinelCandidate({
+      ...candidateCheckpointInput,
+      changedFiles: actualChangedFiles,
+      reportedChangedFiles: error.reportedChangedFiles,
+      failureFingerprint,
+    });
+    await writeCandidateRecoveryRecord(finalized.record);
+    await updateState("checkpoint_validation_failed", {
+      status: "failed",
+      candidate_sha: finalized.checkpoint.sha,
+      temporary_branch: finalized.checkpoint.branch,
+      branch_disposition: "remote_retained_validation_failed",
+      ...(workSelection.source === "github_issue"
+        ? {
+          retry_checkpoint: {
+            branch: finalized.checkpoint.branch,
+            sha: finalized.checkpoint.sha,
+            base_sha: finalized.checkpoint.baseSha,
+          },
+        }
+        : {}),
+    });
+  };
   const selectedIssueReportDisposition = (report: ImplementationReport): FindingDisposition => {
     if (!workSelection.issueJob) throw new Error("No GitHub issue job was selected");
     const disposition = report.dispositions.find((item) =>
@@ -3806,6 +4338,7 @@ const run = async (): Promise<void> => {
   }
   if (!matrixConvergePhase) {
     const beforeAgentSha = ensureFullSha(await gitText(checkout, ["rev-parse", "HEAD"]), "Pre-agent SHA");
+    let implementationInvocationSha = beforeAgentSha;
     let implementationResult: CodexInvocationResult;
     try {
       implementationResult = await runImplementationStageWithContinuation({
@@ -3828,10 +4361,8 @@ const run = async (): Promise<void> => {
               }),
           ),
         onTimeout: async (timeoutError) => {
-          await assertAgentDidNotCommitOrSwitch(checkout, beforeAgentSha, branch, gitControlState);
-          await assertImplementationAgentScope(checkout);
-          await assertImplementationFilesExcludeValues(checkout, sensitiveValues);
-          await assertProtectedFilesUnchanged(checkout, protectedHashes);
+          const checkpoint = await checkpointDirtyCandidate("implementation_timeout", implementationInvocationSha);
+          if (checkpoint !== null) implementationInvocationSha = checkpoint.checkpoint.sha;
           await scanCandidateWithGitleaks({
             cwd: checkout,
             reportPath: `${reportsDir}/secret-scan-implementation-timeout.json`,
@@ -3840,10 +4371,8 @@ const run = async (): Promise<void> => {
           await updateState("implementing_continuation");
         },
       });
-      await assertAgentDidNotCommitOrSwitch(checkout, beforeAgentSha, branch, gitControlState);
-      await assertImplementationAgentScope(checkout);
-      await assertImplementationFilesExcludeValues(checkout, sensitiveValues);
-      await assertProtectedFilesUnchanged(checkout, protectedHashes);
+      const checkpoint = await checkpointDirtyCandidate("implementation", implementationInvocationSha);
+      if (checkpoint !== null) implementationInvocationSha = checkpoint.checkpoint.sha;
       implementationReport = parseStructuredResult(
         implementationResult,
         isImplementationReport,
@@ -3859,13 +4388,26 @@ const run = async (): Promise<void> => {
         assertActionableFindingsResolved(triage, implementationReport);
       }
     } catch (error) {
+      const mismatch = isSentinelChangedFilesMismatchError(error);
+      const checkpoint = await checkpointDirtyCandidate(
+        "implementation",
+        implementationInvocationSha,
+        mismatch ? error.reportedChangedFiles : undefined,
+      );
+      if (checkpoint !== null) implementationInvocationSha = checkpoint.checkpoint.sha;
+      if (mismatch) {
+        if (checkpoint === null) await recordCandidateReportMismatch(error, "implementation");
+        throw error;
+      }
       if (workSelection.source === "github_issue") {
-        if (!await deferGitHubIssueImplementationFailure(error, "implementation", beforeAgentSha)) throw error;
+        if (!await deferGitHubIssueImplementationFailure(error, "implementation", implementationInvocationSha)) {
+          throw error;
+        }
       } else {
         const failureDisposition = await prepareImplementationFailureRetry(
           workSelection.source,
           error,
-          () => preserveFailedImplementation(error, "implementation", beforeAgentSha),
+          () => preserveFailedImplementation(error, "implementation", implementationInvocationSha),
           () => discardCandidateChanges(checkout, baseSha),
         );
         if (!workSelection.backlogEntry || failureDisposition !== "manual_required") {
@@ -3991,7 +4533,20 @@ const run = async (): Promise<void> => {
     return;
   }
 
-  if (!matrixConvergePhase && !await hasChanges(checkout)) {
+  const aggregateCandidatePaths = !matrixConvergePhase
+    ? workSelection.source === "github_issue"
+      ? await selectedIssueAggregatePaths()
+      : workSelection.source === "review_backlog"
+      ? await selectedBacklogAggregatePaths()
+      : [...await aggregateCandidateChangedPaths(checkout, baseSha)].sort()
+    : [];
+  const checkpointCandidateSha = !matrixConvergePhase
+    ? candidateShaForReview(
+      await gitText(checkout, ["rev-parse", "HEAD"]),
+      aggregateCandidatePaths,
+    )
+    : null;
+  if (!matrixConvergePhase && checkpointCandidateSha === null) {
     if (
       triage.findings.some((finding) =>
         finding.actionable &&
@@ -4067,7 +4622,10 @@ const run = async (): Promise<void> => {
       );
     }
     reviewRound += 1;
-    let candidateSha = await commitChanges(checkout, `fix: Provider Sentinel repair round ${reviewRound}`);
+    let candidateSha = ensureFullSha(await gitText(checkout, ["rev-parse", "HEAD"]), "Review candidate SHA");
+    if (await hasChanges(checkout)) {
+      candidateSha = await commitChanges(checkout, `fix: Provider Sentinel repair round ${reviewRound}`);
+    }
     const nativeReviewStage = `native_review_${reviewRound}`;
     await updateState(nativeReviewStage, { candidate_sha: candidateSha });
     let reviewResult: CodexInvocationResult;
@@ -4138,6 +4696,7 @@ const run = async (): Promise<void> => {
     if (blockers.length) {
       const preFixSha = candidateSha;
       const stage = `implementation_review_fix_${reviewRound}`;
+      let implementationInvocationSha = preFixSha;
       try {
         const fixResult = await runImplementationStageWithContinuation({
           basePrompt: stageImplementationPrompt(blockers, replayResults),
@@ -4153,10 +4712,8 @@ const run = async (): Promise<void> => {
                 expectedMaximumRuntimeMs: timeoutMs,
               })),
           onTimeout: async (timeoutError) => {
-            await assertAgentDidNotCommitOrSwitch(checkout, preFixSha, branch, gitControlState);
-            await assertImplementationAgentScope(checkout);
-            await assertImplementationFilesExcludeValues(checkout, sensitiveValues);
-            await assertProtectedFilesUnchanged(checkout, protectedHashes);
+            const checkpoint = await checkpointDirtyCandidate(stage, implementationInvocationSha);
+            if (checkpoint !== null) implementationInvocationSha = checkpoint.checkpoint.sha;
             await scanCandidateWithGitleaks({
               cwd: checkout,
               reportPath: `${reportsDir}/secret-scan-${stage}-timeout.json`,
@@ -4165,10 +4722,8 @@ const run = async (): Promise<void> => {
             await updateState(`${stage}_continuation`);
           },
         });
-        await assertAgentDidNotCommitOrSwitch(checkout, preFixSha, branch, gitControlState);
-        await assertImplementationAgentScope(checkout);
-        await assertImplementationFilesExcludeValues(checkout, sensitiveValues);
-        await assertProtectedFilesUnchanged(checkout, protectedHashes);
+        const checkpoint = await checkpointDirtyCandidate(stage, implementationInvocationSha);
+        if (checkpoint !== null) implementationInvocationSha = checkpoint.checkpoint.sha;
         implementationReport = parseStructuredResult(
           fixResult,
           isImplementationReport,
@@ -4183,16 +4738,27 @@ const run = async (): Promise<void> => {
         } else {
           assertActionableFindingsResolved(triage, implementationReport);
         }
-        if (!await hasChanges(checkout)) {
+        if (implementationInvocationSha === preFixSha) {
           throw new Error("Implementation agent did not correct blocking review findings");
         }
       } catch (error) {
+        const mismatch = isSentinelChangedFilesMismatchError(error);
+        const checkpoint = await checkpointDirtyCandidate(
+          stage,
+          implementationInvocationSha,
+          mismatch ? error.reportedChangedFiles : undefined,
+        );
+        if (checkpoint !== null) implementationInvocationSha = checkpoint.checkpoint.sha;
+        if (mismatch) {
+          if (checkpoint === null) await recordCandidateReportMismatch(error, stage);
+          throw error;
+        }
         if (workSelection.source === "github_issue") {
           if (
             await deferGitHubIssueImplementationFailure(
               error,
               stage,
-              preFixSha,
+              implementationInvocationSha,
               () => restoreGitHubIssuePreviewBeforeRetry(stage),
             )
           ) {
@@ -4200,7 +4766,7 @@ const run = async (): Promise<void> => {
             return;
           }
         } else {
-          await preserveFailedImplementation(error, stage, preFixSha);
+          await preserveFailedImplementation(error, stage, implementationInvocationSha);
         }
         throw error;
       }
@@ -4237,6 +4803,7 @@ const run = async (): Promise<void> => {
       }
       const preValidationFixSha = candidateSha;
       const stage = `implementation_validation_fix_${reviewRound}`;
+      let implementationInvocationSha = preValidationFixSha;
       try {
         const fixResult = await runImplementationStageWithContinuation({
           basePrompt: validationRepairPrompt(
@@ -4258,10 +4825,8 @@ const run = async (): Promise<void> => {
                 expectedMaximumRuntimeMs: timeoutMs,
               })),
           onTimeout: async (timeoutError) => {
-            await assertAgentDidNotCommitOrSwitch(checkout, preValidationFixSha, branch, gitControlState);
-            await assertImplementationAgentScope(checkout);
-            await assertImplementationFilesExcludeValues(checkout, sensitiveValues);
-            await assertProtectedFilesUnchanged(checkout, protectedHashes);
+            const checkpoint = await checkpointDirtyCandidate(stage, implementationInvocationSha);
+            if (checkpoint !== null) implementationInvocationSha = checkpoint.checkpoint.sha;
             await scanCandidateWithGitleaks({
               cwd: checkout,
               reportPath: `${reportsDir}/secret-scan-${stage}-timeout.json`,
@@ -4270,10 +4835,8 @@ const run = async (): Promise<void> => {
             await updateState(`${stage}_continuation`);
           },
         });
-        await assertAgentDidNotCommitOrSwitch(checkout, preValidationFixSha, branch, gitControlState);
-        await assertImplementationAgentScope(checkout);
-        await assertImplementationFilesExcludeValues(checkout, sensitiveValues);
-        await assertProtectedFilesUnchanged(checkout, protectedHashes);
+        const checkpoint = await checkpointDirtyCandidate(stage, implementationInvocationSha);
+        if (checkpoint !== null) implementationInvocationSha = checkpoint.checkpoint.sha;
         implementationReport = parseStructuredResult(
           fixResult,
           isImplementationReport,
@@ -4291,16 +4854,27 @@ const run = async (): Promise<void> => {
         } else {
           assertActionableFindingsResolved(triage, implementationReport);
         }
-        if (!await hasChanges(checkout)) {
+        if (implementationInvocationSha === preValidationFixSha) {
           throw new Error("Implementation agent did not correct the validation failure");
         }
       } catch (repairError) {
+        const mismatch = isSentinelChangedFilesMismatchError(repairError);
+        const checkpoint = await checkpointDirtyCandidate(
+          stage,
+          implementationInvocationSha,
+          mismatch ? repairError.reportedChangedFiles : undefined,
+        );
+        if (checkpoint !== null) implementationInvocationSha = checkpoint.checkpoint.sha;
+        if (mismatch) {
+          if (checkpoint === null) await recordCandidateReportMismatch(repairError, stage);
+          throw repairError;
+        }
         if (workSelection.source === "github_issue") {
           if (
             await deferGitHubIssueImplementationFailure(
               repairError,
               stage,
-              preValidationFixSha,
+              implementationInvocationSha,
               () => restoreGitHubIssuePreviewBeforeRetry(stage),
             )
           ) {
@@ -4308,7 +4882,7 @@ const run = async (): Promise<void> => {
             return;
           }
         } else {
-          await preserveFailedImplementation(repairError, stage, preValidationFixSha);
+          await preserveFailedImplementation(repairError, stage, implementationInvocationSha);
         }
         throw repairError;
       }
@@ -4401,6 +4975,7 @@ const run = async (): Promise<void> => {
     if (!requiresReplayEvaluation(replayResults)) break;
     const preReplayEvaluationSha = candidateSha;
     const replayEvaluationStage = `replay_evaluation_${reviewRound}`;
+    let implementationInvocationSha = preReplayEvaluationSha;
     try {
       const replayEvaluation = await runImplementationStageWithContinuation({
         basePrompt: stageImplementationPrompt([], replayResults),
@@ -4419,10 +4994,8 @@ const run = async (): Promise<void> => {
               }),
           ),
         onTimeout: async (timeoutError) => {
-          await assertAgentDidNotCommitOrSwitch(checkout, preReplayEvaluationSha, branch, gitControlState);
-          await assertImplementationAgentScope(checkout);
-          await assertImplementationFilesExcludeValues(checkout, sensitiveValues);
-          await assertProtectedFilesUnchanged(checkout, protectedHashes);
+          const checkpoint = await checkpointDirtyCandidate(replayEvaluationStage, implementationInvocationSha);
+          if (checkpoint !== null) implementationInvocationSha = checkpoint.checkpoint.sha;
           await scanCandidateWithGitleaks({
             cwd: checkout,
             reportPath: `${reportsDir}/secret-scan-${replayEvaluationStage}-timeout.json`,
@@ -4434,10 +5007,8 @@ const run = async (): Promise<void> => {
           await updateState(`${replayEvaluationStage}_continuation`);
         },
       });
-      await assertAgentDidNotCommitOrSwitch(checkout, preReplayEvaluationSha, branch, gitControlState);
-      await assertImplementationAgentScope(checkout);
-      await assertImplementationFilesExcludeValues(checkout, sensitiveValues);
-      await assertProtectedFilesUnchanged(checkout, protectedHashes);
+      const checkpoint = await checkpointDirtyCandidate(replayEvaluationStage, implementationInvocationSha);
+      if (checkpoint !== null) implementationInvocationSha = checkpoint.checkpoint.sha;
       implementationReport = parseStructuredResult(replayEvaluation, isImplementationReport, "Replay evaluation agent");
       assertCompleteFindingDispositions(triage, implementationReport);
       await writeJson(`${reportsDir}/replay-evaluation-round-${reviewRound}.json`, implementationReport);
@@ -4449,13 +5020,24 @@ const run = async (): Promise<void> => {
         assertActionableFindingsResolved(triage, implementationReport);
       }
       assertReplayEvaluation(implementationReport, replayResults);
-      if (await hasChanges(checkout)) continue;
+      if (implementationInvocationSha !== preReplayEvaluationSha) continue;
     } catch (error) {
+      const mismatch = isSentinelChangedFilesMismatchError(error);
+      const checkpoint = await checkpointDirtyCandidate(
+        replayEvaluationStage,
+        implementationInvocationSha,
+        mismatch ? error.reportedChangedFiles : undefined,
+      );
+      if (checkpoint !== null) implementationInvocationSha = checkpoint.checkpoint.sha;
+      if (mismatch) {
+        if (checkpoint === null) await recordCandidateReportMismatch(error, replayEvaluationStage);
+        throw error;
+      }
       if (workSelection.source === "github_issue") {
         const deferred = await deferGitHubIssueImplementationFailure(
           error,
           replayEvaluationStage,
-          preReplayEvaluationSha,
+          implementationInvocationSha,
           () => restoreGitHubIssuePreviewBeforeRetry(replayEvaluationStage),
         );
         if (deferred) {
@@ -4463,7 +5045,7 @@ const run = async (): Promise<void> => {
           return;
         }
       } else {
-        await preserveFailedImplementation(error, replayEvaluationStage, preReplayEvaluationSha);
+        await preserveFailedImplementation(error, replayEvaluationStage, implementationInvocationSha);
       }
       throw error;
     }

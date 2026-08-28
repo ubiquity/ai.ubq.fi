@@ -1,0 +1,67 @@
+name: Provider Sentinel Bootstrap
+run-name: Provider Sentinel Bootstrap ${{ github.event_name }} ${{ github.run_id }}
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: provider-sentinel-bootstrap-${{ github.repository }}
+  cancel-in-progress: false
+
+# Bootstrap writes only refs/heads/sentinel/bootstrap-state with fast-forward
+# compare-and-swap commits. It has no
+# pull-request, issue, deployment, promotion, or repository-history write path.
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  bootstrap:
+    if: github.ref == 'refs/heads/development'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out immutable execution SHA
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install pinned Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: 2.9.5
+
+      - name: Verify protected bootstrap module digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="295d988b1a966accccc02a327d7665ecd9bc7f7501ef5abc2ee02f2bc18f1e4f"
+          actual="$(find scripts/sentinel/bootstrap -maxdepth 1 -type f -name '*.ts' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::Protected bootstrap module digest mismatch."
+            exit 1
+          fi
+          echo "Protected bootstrap module digest verified."
+
+      - name: Reconcile protected bootstrap state
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          set -euo pipefail
+          deno run \
+            --cached-only \
+            --frozen \
+            --lock=deno.lock \
+            --allow-env=GITHUB_TOKEN,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_RUN_ID,GITHUB_WORKFLOW_REF \
+            --allow-net=api.github.com,ai-ubq-fi.ubiquity-dao.deno.net \
+            scripts/sentinel/bootstrap/main.ts

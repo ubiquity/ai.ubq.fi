@@ -1,10 +1,31 @@
+import {
+  isSentinelRecoveryCandidateBranch,
+  sentinelRecoveryCandidateBranch,
+  type SentinelRecoveryIdentityV1,
+} from "./recovery.ts";
+
+export { isSentinelRecoveryCandidateBranch, sentinelRecoveryCandidateBranch };
+
 const FULL_SHA = /^[0-9a-f]{40}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const SAFE_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/u;
-const CHECKPOINT_BRANCH = /^sentinel\/candidate-[1-9][0-9]*(?:-[1-9][0-9]*)?$/u;
+const CHECKPOINT_BRANCH =
+  /^sentinel\/candidate-(?:[1-9][0-9]*(?:-[1-9][0-9]*)?|(?:github_issue|review_backlog|triage|incident)-[A-Za-z0-9][A-Za-z0-9._-]{0,79}-[A-Za-z0-9][A-Za-z0-9._-]{0,31}-g[1-9][0-9]*-[0-9a-f]{16})$/u;
 const SAFE_REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const SAFE_URL = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/(?:pull|actions\/runs)\/[1-9][0-9]*$/u;
 const WORKFLOW_RUN_ID = /^[1-9][0-9]*$/u;
+
+/** A collision-resistant, serialisable key for the immutable recovery identity. */
+export const sentinelRecoveryIdentityKey = (identity: SentinelRecoveryIdentityV1): string => {
+  sentinelRecoveryCandidateBranch(identity);
+  return JSON.stringify([
+    identity.repository,
+    identity.source_kind,
+    identity.source_id,
+    identity.source_revision,
+    identity.candidate_generation,
+  ]);
+};
 
 const currentWorkflowCandidateBranch = (branch: string, runId: string, runAttempt: number): boolean =>
   CHECKPOINT_BRANCH.test(branch) && branch === `sentinel/candidate-${runId}-${runAttempt}`;

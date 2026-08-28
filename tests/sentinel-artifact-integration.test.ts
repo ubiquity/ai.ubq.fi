@@ -14,9 +14,9 @@ import {
   RetryCheckpointResumeError,
   retryCheckpointResumeFailureDisposition,
   reviewBacklogAffectedPathChangedAtSelectedBase,
-  sentinelTemporaryCandidateBranch,
   writeReplayArtifactMetadata,
 } from "../scripts/sentinel/main.ts";
+import { sentinelRecoveryCandidateBranch } from "../scripts/sentinel/recovery.ts";
 import {
   applyGitHubIssueJobDisposition,
   type GitHubIssueJob,
@@ -639,8 +639,14 @@ Deno.test({
       await git(checkout, ["remote", "add", "origin", remote]);
       await git(checkout, ["push", "origin", "development"]);
 
-      const branch = sentinelTemporaryCandidateBranch("33177664067", 1);
-      assert.equal(branch, "sentinel/candidate-33177664067-1");
+      const branch = sentinelRecoveryCandidateBranch({
+        repository: "ubiquity/ai.ubq.fi",
+        source_kind: "github_issue",
+        source_id: "33177664067",
+        source_revision: "a".repeat(64),
+        candidate_generation: 1,
+      });
+      assert.match(branch, /^sentinel\/candidate-github_issue-33177664067-a{32}-g1-[0-9a-f]{16}$/u);
       await git(checkout, ["switch", "-c", branch]);
       await Deno.writeTextFile(`${checkout}/src/declared.ts`, "export const selected = 'reviewed';\n");
       await Deno.writeTextFile(`${checkout}/src/declared-new.ts`, "export const reviewOnly = true;\n");
@@ -773,7 +779,13 @@ Deno.test({
       assert.deepEqual(publishedUpdates.get("refs/heads/development"), { oldSha: baseSha, newSha: dispositionSha });
       assert.deepEqual(publishedUpdates.get(`refs/heads/${branch}`), { oldSha: "0".repeat(40), newSha: checkpointSha });
 
-      const racedBranch = sentinelTemporaryCandidateBranch("33177664067", 2);
+      const racedBranch = sentinelRecoveryCandidateBranch({
+        repository: "ubiquity/ai.ubq.fi",
+        source_kind: "github_issue",
+        source_id: "33177664067",
+        source_revision: "a".repeat(64),
+        candidate_generation: 2,
+      });
       await git(checkout, ["switch", "-c", racedBranch, "development"]);
       await Deno.writeTextFile(`${checkout}/src/declared.ts`, "export const selected = 'raced review';\n");
       await Deno.writeTextFile(`${checkout}/src/declared-new.ts`, "export const reviewOnly = 'raced';\n");
