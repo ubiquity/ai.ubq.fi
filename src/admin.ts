@@ -143,9 +143,13 @@ import { MeteredError } from "./metered.ts";
 import {
   getConfiguredMeteredQuotaSnapshot,
   getMeteredQuotaDiagnostics,
+  METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS,
+  METERED_QUOTA_BALANCE_HISTORY_DAILY_BUCKET_MS,
   meterQuotaAccountFingerprint,
+  normalizeMeteredQuotaBalanceWindowDays,
   readMeteredAccountCredentials,
   readMeteredQuotaBalanceHistory,
+  resampleMeteredQuotaBalanceHistory,
 } from "./metered_quota.ts";
 import { listPaidFallbackUsageRollups, PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS } from "./paid_fallback_rollups.ts";
 import {
@@ -2203,9 +2207,9 @@ export const handleAdminKernelUsageDelete = async (req: Request): Promise<Respon
   return json(200, { ok: true, scope, repo: { owner, repo }, deleted: true });
 };
 
-const QUOTA_PROJECTION_BALANCE_HISTORY_MS = 7 * 24 * 60 * 60 * 1_000;
 const QUOTA_PROJECTION_ALLOWED_WINDOWS = new Set([7, 30, 90] as const);
 const QUOTA_PROJECTION_DEFAULT_WINDOW_DAYS = 30 as const;
+const QUOTA_PROJECTION_MAX_BALANCE_SAMPLES = 365;
 
 /**
  * Admin quota-runway view: per-model consumption from retained rollups plus
@@ -2227,22 +2231,38 @@ export const handleAdminProvidersQuotaProjection = async (
       QUOTA_PROJECTION_ALLOWED_WINDOWS.has(rawWindowDays as 7 | 30 | 90)
     ? rawWindowDays as 7 | 30 | 90
     : QUOTA_PROJECTION_DEFAULT_WINDOW_DAYS;
+  const balanceWindowDays = normalizeMeteredQuotaBalanceWindowDays(
+    new URL(request.url).searchParams.get("balance_window_days"),
+  );
   const windowMs = windowDays * 24 * 60 * 60 * 1_000;
+  const balanceWindowMs = balanceWindowDays * 24 * 60 * 60 * 1_000;
+  const balanceHistoryBucketMs = balanceWindowDays === 365
+    ? METERED_QUOTA_BALANCE_HISTORY_DAILY_BUCKET_MS
+    : METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS;
   const accountFingerprint = await meterQuotaAccountFingerprint(readMeteredAccountCredentials()).catch(() => null);
-  const [snapshot, rollups, balanceHistory] = await Promise.all([
+  const [snapshot, rollups, sourceBalanceHistory] = await Promise.all([
     getConfiguredMeteredQuotaSnapshot({ kv }).catch(() => null),
     kv
       ? listPaidFallbackUsageRollups(kv, { sinceMs: nowMs - windowMs, nowMs }).catch(() => null)
       : Promise.resolve(null),
     kv
       ? readMeteredQuotaBalanceHistory(kv, {
-        sinceMs: nowMs - QUOTA_PROJECTION_BALANCE_HISTORY_MS,
+        sinceMs: nowMs - balanceWindowMs,
         nowMs,
         accountFingerprint,
       }).catch(() => null)
       : Promise.resolve(null),
   ]);
   const quota = meteredQuotaRunwayView(snapshot);
+  const balanceHistory = sourceBalanceHistory === null
+    ? null
+    : balanceWindowDays === 365
+    ? resampleMeteredQuotaBalanceHistory(
+      sourceBalanceHistory,
+      METERED_QUOTA_BALANCE_HISTORY_DAILY_BUCKET_MS,
+      QUOTA_PROJECTION_MAX_BALANCE_SAMPLES,
+    )
+    : sourceBalanceHistory.slice(-QUOTA_PROJECTION_MAX_BALANCE_SAMPLES);
   const usage = summarizePaidFallbackUsage(groupPaidFallbackUsageRollups(rollups ?? []), nowMs);
   const models = usage.map((entry) => ({
     model: entry.model,
@@ -2254,10 +2274,13 @@ export const handleAdminProvidersQuotaProjection = async (
   return json(200, {
     snapshot_at_ms: nowMs,
     window_days: windowDays,
+    balance_window_days: balanceWindowDays,
     retention: {
       rollup_bucket_ms: PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS,
       rollup_window_ms: windowMs,
-      balance_history_window_ms: QUOTA_PROJECTION_BALANCE_HISTORY_MS,
+      balance_history_source_bucket_ms: METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS,
+      balance_history_bucket_ms: balanceHistoryBucketMs,
+      balance_history_window_ms: balanceWindowMs,
     },
     quota,
     models,
