@@ -16,6 +16,7 @@ import {
   type MatrixCellReportV1,
   type MatrixPlanV1,
 } from "../scripts/sentinel/matrix.ts";
+import { runMatrixCell } from "../scripts/sentinel/matrix-cell.ts";
 
 const baseCommit = "1".repeat(40);
 const reportDigest = "2".repeat(64);
@@ -198,6 +199,144 @@ Deno.test("matrix integration rejects accepted cell overlap before merge", () =>
     changed_paths: ["src/shared"],
   } as unknown as MatrixCellReportV1;
   assert.throws(() => assertMatrixCellReportsDoNotOverlap([first, second]), /overlap/u);
+});
+
+Deno.test({
+  name: "faithful matrix harness overlaps isolated repair cells before final convergence",
+  ignore: permissions.some((permission) => permission.state !== "granted"),
+  async fn() {
+    const root = await Deno.makeTempDir({ prefix: "sentinel-matrix-concurrent-acceptance-" });
+    const repository = `${root}/repository`;
+    const worktrees = `${root}/worktrees`;
+    try {
+      await Deno.mkdir(repository);
+      await Deno.mkdir(worktrees);
+      await Deno.mkdir(`${root}/reports`);
+      await git(repository, ["init", "-b", "development"]);
+      await git(repository, ["config", "user.name", "Sentinel Acceptance"]);
+      await git(repository, ["config", "user.email", "sentinel-acceptance@example.invalid"]);
+      await Deno.mkdir(`${repository}/src`);
+      await Deno.writeTextFile(`${repository}/src/one.ts`, "export const one = 'base';\n");
+      await Deno.writeTextFile(`${repository}/src/two.ts`, "export const two = 'base';\n");
+      await git(repository, ["add", "src"]);
+      await git(repository, ["commit", "--no-gpg-sign", "-m", "acceptance base"]);
+      const baseSha = await git(repository, ["rev-parse", "HEAD"]);
+      const plan = await buildMatrixPlan({
+        run_id: "m06-concurrent-acceptance",
+        run_attempt: 1,
+        base_sha: baseSha,
+        evidence_digests: [],
+        findings: ["one", "two"].map((name, index) => ({
+          id: name,
+          fingerprint: String.fromCharCode(97 + index).repeat(64),
+          allowed_paths: [`src/${name}.ts`],
+          validation_requirements: [`validate ${name}`],
+        })),
+      });
+      assert.equal(plan.cells.length, 2);
+
+      const timing = new Map<string, { started_at: string; finished_at: string | null }>();
+      let activeCells = 0;
+      let maximumActiveCells = 0;
+      let arrivals = 0;
+      let releaseOverlap!: () => void;
+      const overlapBarrier = new Promise<void>((resolve) => {
+        releaseOverlap = resolve;
+      });
+      const reports = await Promise.all(plan.cells.map(async (cell) => {
+        const checkout = `${worktrees}/${cell.cell_id}`;
+        await git(repository, ["worktree", "add", "-b", cell.branch, checkout, baseSha]);
+        const findingId = cell.finding_ids[0]!;
+        const changedPath = cell.allowed_paths[0]!;
+        return await runMatrixCell({
+          plan,
+          cell,
+          checkoutPath: checkout,
+          reportPath: `${root}/reports/${cell.cell_id}.json`,
+          findings: [],
+          sensitiveValues: [],
+        }, {
+          invokeAgent: async () => {
+            timing.set(cell.cell_id, { started_at: new Date().toISOString(), finished_at: null });
+            activeCells += 1;
+            maximumActiveCells = Math.max(maximumActiveCells, activeCells);
+            arrivals += 1;
+            if (arrivals === plan.cells.length) releaseOverlap();
+            await overlapBarrier;
+            await Deno.writeTextFile(
+              `${checkout}/${changedPath}`,
+              `export const ${findingId} = 'fixed';\n`,
+            );
+            activeCells -= 1;
+            timing.get(cell.cell_id)!.finished_at = new Date().toISOString();
+            return {
+              lastMessage: JSON.stringify({
+                schema_version: 1,
+                dispositions: [{
+                  finding_id: findingId,
+                  status: "implemented",
+                  summary: `Implemented ${findingId}`,
+                  changed_files: [changedPath],
+                  validation: [`validate ${findingId}`],
+                }],
+                replay_acceptances: [],
+                candidate_sha: null,
+                summary: `Completed ${cell.cell_id}`,
+              }),
+            };
+          },
+          secretScan: () => Promise.resolve(),
+          validate: () =>
+            Promise.resolve({
+              passed: true,
+              checks: [{ name: "focused", passed: true, detail: `validated ${findingId}` }],
+            }),
+        });
+      }));
+      assert.equal(maximumActiveCells, 2);
+      assert.ok([...timing.values()].every((entry) => entry.finished_at !== null));
+
+      const integrationCheckout = `${worktrees}/integration`;
+      await git(repository, [
+        "worktree",
+        "add",
+        "-b",
+        "sentinel/integrated-m06-concurrent",
+        integrationCheckout,
+        baseSha,
+      ]);
+      const decision = await decisionFor(
+        plan,
+        plan.cells.map((cell) => ({
+          cell_id: cell.cell_id,
+          decision: "accept" as const,
+          reason: "concurrent cell validated",
+          required_combined_checks: ["focused"],
+          correction_paths: [],
+        })),
+      );
+      const result = await executeMatrixIntegration({
+        plan,
+        reports,
+        decision,
+        checkoutPath: integrationCheckout,
+        integrationBranch: "sentinel/integrated-m06-concurrent",
+        git: (command) => runGit(command.cwd, command.args),
+      });
+      assert.equal(result.merge_receipts.length, 2);
+      assert.equal(result.cycle_report.accepted_ancestry.length, 2);
+      assert.ok(result.merge_receipts.every((receipt) => receipt.is_ancestor));
+      console.log(JSON.stringify({
+        run_id: plan.run_id,
+        maximum_active_cells: maximumActiveCells,
+        cell_timing: Object.fromEntries(timing),
+        integration_head: result.cycle_report.integrated_candidate?.head_sha,
+        dispositions: result.cycle_report.cell_dispositions,
+      }));
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  },
 });
 
 Deno.test("matrix integration correction scope is bounded to declared cell paths", async () => {
