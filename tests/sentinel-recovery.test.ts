@@ -4,6 +4,14 @@ import {
   parseSentinelRecoveryRecord,
   parseSentinelReleaseRecord,
 } from "../scripts/sentinel/recovery.ts";
+import {
+  acquireSentinelRecoveryLease,
+  emptySentinelRecoveryLedger,
+  nonTerminalSentinelRecoveryRecords,
+  parseSentinelRecoveryLedger,
+  renderSentinelRecoveryLedger,
+  upsertSentinelRecoveryRecord,
+} from "../scripts/sentinel/recovery-ledger.ts";
 
 const record = (overrides: Record<string, unknown> = {}) => ({
   schema_version: 1,
@@ -81,4 +89,46 @@ Deno.test("release records require immutable stable identity and evidence", () =
   });
   assert.equal(release.generation, 2);
   assert.throws(() => parseSentinelReleaseRecord({ ...release, stable_sha: "invalid" }), /invalid/);
+});
+
+Deno.test("recovery ledger provides bounded create, CAS, lease, and non-terminal lookup", () => {
+  const claimed = parseSentinelRecoveryRecord(record({
+    phase: "claimed",
+    state_version: 1,
+    candidate_branch: null,
+    candidate_sha: null,
+  }));
+  const created = upsertSentinelRecoveryRecord(emptySentinelRecoveryLedger(), claimed, null);
+  assert.deepEqual(nonTerminalSentinelRecoveryRecords(created), [claimed]);
+  const leased = acquireSentinelRecoveryLease(created, {
+    identity: claimed.identity,
+    owner: "run-1",
+    token: "lease-1",
+    now: "2026-08-28T18:00:00.000Z",
+    expires_at: "2026-08-28T18:10:00.000Z",
+  });
+  assert.throws(
+    () =>
+      acquireSentinelRecoveryLease(leased, {
+        identity: claimed.identity,
+        owner: "run-2",
+        token: "lease-2",
+        now: "2026-08-28T18:01:00.000Z",
+        expires_at: "2026-08-28T18:11:00.000Z",
+      }),
+    /leased by another owner/u,
+  );
+  const running = parseSentinelRecoveryRecord(record({
+    phase: "implementation_running",
+    state_version: 2,
+    candidate_branch: null,
+    candidate_sha: null,
+    updated_at: "2026-08-28T18:02:00.000Z",
+  }));
+  const updated = upsertSentinelRecoveryRecord(leased, running, 1);
+  assert.equal(
+    parseSentinelRecoveryLedger(JSON.parse(renderSentinelRecoveryLedger(updated))).records[0]?.state_version,
+    2,
+  );
+  assert.throws(() => upsertSentinelRecoveryRecord(updated, running, 1), /compare-and-swap/u);
 });
