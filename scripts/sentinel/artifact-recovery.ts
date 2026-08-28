@@ -1226,10 +1226,10 @@ const publishRecoveryBranchToOrigin = async (
   }
 };
 
-const safeSummary = (result: SentinelArtifactRecoveryResult, artifactId: number): string => {
+const safeSummary = (result: SentinelArtifactRecoveryResult): string => {
   const candidate = result.candidate_sha ?? "none";
   const branch = result.candidate_branch ?? "none";
-  return `artifact=${artifactId} disposition=${result.disposition} reason=${result.reason} candidate=${candidate} branch=${branch}`;
+  return `disposition=${result.disposition} reason=${result.reason} candidate=${candidate} branch=${branch}`;
 };
 
 /**
@@ -1407,7 +1407,5 @@ if (import.meta.main) {
     token,
     encodedArtifactKey: encodedKey,
   });
-  for (const [index, result] of results.entries()) {
-    console.log(safeSummary(result, index + 1));
-  }
+  for (const result of results) console.log(safeSummary(result));
 }

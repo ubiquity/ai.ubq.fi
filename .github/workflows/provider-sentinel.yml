@@ -1573,4 +1573,13 @@ jobs:
             --allow-read \
             --allow-write \
             --allow-run=git,unzip \
-            scripts/sentinel/artifact-recovery.ts
+            scripts/sentinel/artifact-recovery.ts | tee "$RUNNER_TEMP/sentinel-artifact-recovery-summary.txt"
+          {
+            echo "### Artifact recovery"
+            echo
+            if [ -s "$RUNNER_TEMP/sentinel-artifact-recovery-summary.txt" ]; then
+              sed 's/^/- `/' "$RUNNER_TEMP/sentinel-artifact-recovery-summary.txt" | sed 's/$/`/'
+            else
+              echo "- No eligible encrypted candidate artifacts were found."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

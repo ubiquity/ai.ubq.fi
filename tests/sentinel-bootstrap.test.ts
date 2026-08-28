@@ -12,6 +12,7 @@ import {
   type SentinelBootstrapRecoveryDispatch,
 } from "../scripts/sentinel/bootstrap/controller.ts";
 import { evaluateSentinelBootstrapHealth } from "../scripts/sentinel/bootstrap/health.ts";
+import { parseSentinelBootstrapStateDocument } from "../scripts/sentinel/bootstrap/github-store.ts";
 import {
   parseBootstrapReleaseRecord,
   type SentinelBootstrapRollbackIntentV1,
@@ -205,6 +206,22 @@ Deno.test("bootstrap release registry requires acceptance evidence", () => {
   );
 });
 
+Deno.test("bootstrap Git state document is bounded and starts without invented release identity", () => {
+  const document = parseSentinelBootstrapStateDocument({
+    schema_version: 1,
+    release: null,
+    signals: [],
+    activation: null,
+    rollback_intent: null,
+    constraints: [],
+  });
+  assert.equal(document.release, null);
+  assert.throws(
+    () => parseSentinelBootstrapStateDocument({ ...document, signals: Array(65).fill(signal()) }),
+    /invalid/,
+  );
+});
+
 Deno.test("controller performs one fenced rollback and deduplicates its constraint and recovery dispatch", async () => {
   const store = new FakeBootstrapStateStore();
   store.pointer = initialSentinelBootstrapActivation(release(), "2026-08-28T18:00:00.000Z");
@@ -372,6 +389,7 @@ Deno.test({
       "scripts/sentinel/bootstrap/contracts.ts",
       "scripts/sentinel/bootstrap/controller.ts",
       "scripts/sentinel/bootstrap/health.ts",
+      "scripts/sentinel/bootstrap/github-store.ts",
       "scripts/sentinel/bootstrap/main.ts",
       "scripts/sentinel/bootstrap/policy.ts",
     ];
@@ -381,8 +399,9 @@ Deno.test({
       assert.doesNotMatch(source, /contents:\s*write|pull-requests:\s*write/u);
     }
     const workflow = await Deno.readTextFile(".github/workflows/provider-sentinel-bootstrap.yml");
-    assert.match(workflow, /permissions:\s+contents:\s+read/u);
-    assert.doesNotMatch(workflow, /contents:\s+write|pull-requests:\s+write|deno\s+deploy/u);
+    assert.match(workflow, /permissions:\s+contents:\s+write/u);
+    assert.match(workflow, /refs\/heads\/sentinel\/bootstrap-state|bootstrap-state/u);
+    assert.doesNotMatch(workflow, /pull-requests:\s+write|deno\s+deploy/u);
     const actions = workflow.split("\n").filter((line) => /\buses:\s/u.test(line));
     assert.ok(actions.length > 0);
     for (const action of actions) {

@@ -10,10 +10,11 @@ concurrency:
   group: provider-sentinel-bootstrap-${{ github.repository }}
   cancel-in-progress: false
 
-# Bootstrap has no repository, pull-request, issue, or deployment write path.
-# Recovery and promotion remain separate protected workflows.
+# Bootstrap writes only refs/heads/sentinel/bootstrap-state with fast-forward
+# compare-and-swap commits. It has no
+# pull-request, issue, deployment, promotion, or repository-history write path.
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   bootstrap:
@@ -37,7 +38,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          expected="88cccb34764e007e0649f73ee224ebd26088553c45e104faac2c947c14460a6b"
+          expected="bce24411bcfad3e80937e58d9fa6f029cbad0e7c588f0fa3bb9d41e9015c9c36"
           actual="$(find scripts/sentinel/bootstrap -maxdepth 1 -type f -name '*.ts' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
           if [ "$actual" != "$expected" ]; then
             echo "::error::Protected bootstrap module digest mismatch."
@@ -45,9 +46,10 @@ jobs:
           fi
           echo "Protected bootstrap module digest verified."
 
-      - name: Run protected bootstrap preflight
+      - name: Reconcile protected bootstrap state
         shell: bash
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_REF: ${{ github.ref }}
           GITHUB_SHA: ${{ github.sha }}
@@ -59,5 +61,6 @@ jobs:
             --cached-only \
             --frozen \
             --lock=deno.lock \
-            --allow-env=GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_RUN_ID,GITHUB_WORKFLOW_REF \
+            --allow-env=GITHUB_TOKEN,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_RUN_ID,GITHUB_WORKFLOW_REF \
+            --allow-net=api.github.com,ai-ubq-fi.ubiquity-dao.deno.net \
             scripts/sentinel/bootstrap/main.ts
