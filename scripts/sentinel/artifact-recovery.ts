@@ -24,6 +24,12 @@ const MAX_ARTIFACT_ZIP_BYTES = 256 * 1024 * 1024;
 const ZERO_SHA = "0".repeat(40);
 const FIXED_AUTHOR_NAME = "Provider Sentinel Recovery";
 const FIXED_AUTHOR_EMAIL = "sentinel-recovery@ubiquity.invalid";
+const RECOVERY_SOURCE_KINDS = new Set<SentinelRecoverySourceKind>([
+  "github_issue",
+  "review_backlog",
+  "triage",
+  "incident",
+]);
 const TERMINAL_RECOVERY_DISPOSITIONS = new Set([
   "delivered",
   "rejected",
@@ -333,8 +339,18 @@ const slug = (value: string, fallback: string): string => {
   return result || fallback;
 };
 
+const recoveryBranchSegment = (value: string, maximumLength: number, fallback: string): string => {
+  const segment = value.replace(/[^A-Za-z0-9._-]+/gu, "-").replace(/^-+|-+$/gu, "").slice(0, maximumLength)
+    .replace(/-+$/gu, "");
+  return segment.length > 0 ? segment : fallback;
+};
+
 const validateRecoveryIdentity = (record: SentinelRecoveryRecordV1): void => {
-  if (!SAFE_REPOSITORY.test(record.identity.repository)) throw new CandidateSnapshotError("recovery_record_invalid");
+  if (
+    !SAFE_REPOSITORY.test(record.identity.repository) || !RECOVERY_SOURCE_KINDS.has(record.identity.source_kind) ||
+    record.identity.source_id.trim().length === 0 || record.identity.source_revision.trim().length === 0 ||
+    !positiveSafeInteger(record.identity.candidate_generation)
+  ) throw new CandidateSnapshotError("recovery_record_invalid");
   if (
     new TextEncoder().encode(record.identity.source_id).byteLength > MAX_SOURCE_ID_BYTES ||
     new TextEncoder().encode(record.identity.source_revision).byteLength > MAX_SOURCE_REVISION_BYTES
@@ -344,23 +360,15 @@ const validateRecoveryIdentity = (record: SentinelRecoveryRecordV1): void => {
   }
 };
 
-/** Return the deterministic quarantine branch for one recovery identity. */
+/** Return the deterministic quarantine branch shared with issue reconciliation. */
 export const sentinelRecoveryCandidateBranch = (record: SentinelRecoveryRecordV1): string => {
   validateRecoveryIdentity(record);
-  const identity = [
-    record.identity.repository,
-    record.identity.source_kind,
-    record.identity.source_id,
-    record.identity.source_revision,
-    record.identity.candidate_generation,
-  ].join("\u0000");
-  const token = slug(record.identity.source_id, "item").slice(0, 64);
-  const revision = slug(record.identity.source_revision, "revision").slice(0, 32);
-  return `sentinel/candidate-recovery-${record.identity.source_kind}-${token}-g${record.identity.candidate_generation}-${revision}-${
-    stableHash(identity)
-  }`
-    .slice(0, 199)
-    .replace(/[./]+$/u, "");
+  const source = recoveryBranchSegment(record.identity.source_id, 80, "source");
+  const revision = recoveryBranchSegment(record.identity.source_revision, 32, "revision");
+  const branch =
+    `sentinel/candidate-${record.identity.source_kind}-${source}-${revision}-g${record.identity.candidate_generation}`;
+  if (!SAFE_BRANCH.test(branch)) throw new CandidateSnapshotError("recovery_record_invalid");
+  return branch;
 };
 
 const recoveryIdentityMarker = (record: SentinelRecoveryRecordV1): string => {
