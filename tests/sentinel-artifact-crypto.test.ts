@@ -722,7 +722,8 @@ Deno.test({
     assert(
       orchestrator.includes('state.branch_disposition === "remote_retained_pending_decision" ||') &&
         orchestrator.includes('state.branch_disposition === "remote_retained_issue_retry_pending"') &&
-        orchestrator.includes('? "remote_retained_after_failed_cycle"'),
+        orchestrator.includes('return "remote_retained_after_failed_cycle"') &&
+        orchestrator.includes('state.stage === "validated_retry_pending_atomic_push"'),
       "A failed retry-ledger push must preserve the already-pushed candidate branch disposition",
     );
     for (

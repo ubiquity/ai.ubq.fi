@@ -14,6 +14,7 @@ import {
   evaluateReviewBacklogImplementation,
   evaluateRollbackPreflight,
   evaluateSentinelTriageGate,
+  failedCycleBranchDisposition,
   GITHUB_ISSUE_IMPLEMENTATION_CONTINUATION_MS,
   IMPLEMENTATION_CONTINUATION_MS,
   IMPLEMENTATION_INITIAL_MS,
@@ -194,6 +195,33 @@ Deno.test("preview completion restores only a candidate accepted by monitoring",
     status: "preview_rolled_back",
     branchDisposition: "remote_retained_rejected_by_monitor",
   });
+});
+
+Deno.test("post-validation atomic retry failures remain reconcilable", () => {
+  assert.equal(
+    failedCycleBranchDisposition({
+      stage: "validated_retry_pending_atomic_push",
+      branch_disposition: "remote_retained_issue_retry_pending",
+      temporary_branch: "sentinel/candidate-123456789",
+    }),
+    "atomic_retry_push_requires_reconciliation",
+  );
+  assert.equal(
+    failedCycleBranchDisposition({
+      stage: "pushing_retry_pending_github_issue",
+      branch_disposition: "remote_retained_issue_retry_pending",
+      temporary_branch: "sentinel/candidate-123456789",
+    }),
+    "remote_retained_after_failed_cycle",
+  );
+  assert.equal(
+    failedCycleBranchDisposition({
+      stage: "verifying_retry_pending_atomic_push",
+      branch_disposition: "atomic_retry_push_accepted_unverified",
+      temporary_branch: "sentinel/candidate-123456789",
+    }),
+    "atomic_retry_push_requires_reconciliation",
+  );
 });
 
 Deno.test("implementation scope protects Sentinel and nested Codex instruction surfaces", () => {

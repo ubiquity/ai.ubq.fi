@@ -143,6 +143,30 @@ const requiredEnvironment = (name: string): string => {
 
 const optionalEnvironment = (name: string): string | undefined => Deno.env.get(name)?.trim() || undefined;
 
+export const failedCycleBranchDisposition = (
+  state: Readonly<{
+    stage: string;
+    branch_disposition: string | null;
+    temporary_branch: string | null;
+  }>,
+): string => {
+  if (
+    state.branch_disposition === "runner_local_atomic_push_in_flight" ||
+    state.branch_disposition === "atomic_retry_push_accepted_unverified" ||
+    (state.stage === "validated_retry_pending_atomic_push" &&
+      state.branch_disposition === "remote_retained_issue_retry_pending")
+  ) {
+    return "atomic_retry_push_requires_reconciliation";
+  }
+  if (
+    state.branch_disposition === "remote_retained_pending_decision" ||
+    state.branch_disposition === "remote_retained_issue_retry_pending"
+  ) {
+    return "remote_retained_after_failed_cycle";
+  }
+  return state.temporary_branch ? "runner_local_after_failed_cycle" : "not_created_failed_cycle";
+};
+
 export const agentCheckoutPath = (
   role: "triage" | "implementation" | "monitoring",
   repositoryRoot: string,
@@ -4226,17 +4250,10 @@ if (import.meta.main) {
     try {
       const state = JSON.parse(await Deno.readTextFile(statePath)) as CycleState;
       if (state.status === "running") {
+        const branchDisposition = failedCycleBranchDisposition(state);
         state.status = "failed";
         state.stage = "failed";
-        state.branch_disposition = state.branch_disposition === "remote_retained_pending_decision" ||
-            state.branch_disposition === "remote_retained_issue_retry_pending"
-          ? "remote_retained_after_failed_cycle"
-          : state.branch_disposition === "runner_local_atomic_push_in_flight" ||
-              state.branch_disposition === "atomic_retry_push_accepted_unverified"
-          ? "atomic_retry_push_requires_reconciliation"
-          : state.temporary_branch
-          ? "runner_local_after_failed_cycle"
-          : "not_created_failed_cycle";
+        state.branch_disposition = branchDisposition;
         await writeJson(statePath, state);
       }
     } catch {
