@@ -9460,6 +9460,13 @@ Deno.test("openai: empty Chat terminal diagnostics are bounded and content-free"
                 delta: "private tool input",
               })
             }\n\n`,
+            `data: ${
+              JSON.stringify({
+                type: "response.custom_tool_call_input.done",
+                item_id: "tool_empty_log",
+                input: "private tool input",
+              })
+            }\n\n`,
             `data: ${JSON.stringify({ type: unknownEventType, output: secretEventPayload })}\n\n`,
             `data: ${
               JSON.stringify({
@@ -9528,6 +9535,7 @@ Deno.test("openai: empty Chat terminal diagnostics are bounded and content-free"
       "response.content_part.added",
       "response.content_part.done",
       "response.custom_tool_call_input.delta",
+      "response.custom_tool_call_input.done",
       "unrecognized",
       "response.completed",
     ]);

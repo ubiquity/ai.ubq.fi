@@ -691,6 +691,7 @@ const CHAT_RESPONSE_EVENT_KINDS = new Set([
   "response.reasoning_summary_part.added",
   "response.reasoning_summary_part.done",
   "response.custom_tool_call_input.delta",
+  "response.custom_tool_call_input.done",
   "response.output_item.added",
   "response.output_item.done",
   "response.function_call_arguments.delta",
