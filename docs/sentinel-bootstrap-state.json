@@ -3,25 +3,26 @@
   "release": {
     "schema_version": 1,
     "stable_sha": "237e145c74a36a3e0ea01a38dd22334526ad9a4a",
-    "candidate_sha": "bcc343265237706b802d426ccf3574c5dc7a3ebb",
+    "candidate_sha": "de18ba52955428592db6c3ccee32ea7b1027b54c",
     "acceptance_evidence": [
-      "health:jrj8ms1nzfb1",
-      "bootstrap:superseded:60d51dc66c6050bd8117b72a838163da6815fc33"
+      "health:n8rder123cxx",
+      "bootstrap:superseded:bcc343265237706b802d426ccf3574c5dc7a3ebb"
     ],
-    "activated_at": "2026-08-28T22:57:19.234Z",
+    "activated_at": "2026-08-28T23:08:39.845Z",
     "rollback_reason": null,
-    "generation": 4
+    "generation": 5
   },
   "signals": [],
   "activation": {
     "schema_version": 1,
-    "active_sha": "bcc343265237706b802d426ccf3574c5dc7a3ebb",
-    "generation": 4,
+    "active_sha": "de18ba52955428592db6c3ccee32ea7b1027b54c",
+    "generation": 5,
     "fenced_generations": [
       2,
-      3
+      3,
+      4
     ],
-    "updated_at": "2026-08-28T22:57:19.234Z",
+    "updated_at": "2026-08-28T23:08:39.845Z",
     "reason": "managed_candidate_superseded"
   },
   "rollback_intent": null,
