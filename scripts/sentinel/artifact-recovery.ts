@@ -1073,6 +1073,26 @@ export const legacyArtifactNeedsManualDisposition = (
     (ciphertextProvesFailure || owningRunProvesFailure);
 };
 
+export const legacyArtifactTerminalDisposition = (
+  files: readonly SentinelArtifactFile[],
+): "manual_required" | "rejected" | "delivered" | null => {
+  if (files.some((file) => file.path === MANUAL_CHECKPOINT_REPORT_PATH)) return "manual_required";
+  for (const file of files.filter((candidate) => TERMINAL_RECORD_REPORT_PATH.test(candidate.path))) {
+    const value = parseArtifactJson(files, file.path);
+    const disposition = value?.disposition;
+    if (disposition === "manual_required") return "manual_required";
+    if (disposition === "rejected") return "rejected";
+    if (disposition === "resolved" || disposition === "delivered") return "delivered";
+  }
+  const outcome = parseArtifactJson(files, TERMINAL_OUTCOME_REPORT_PATH)?.outcome;
+  if (outcome === "kept") return "delivered";
+  if (outcome === "rolled_back") return "rejected";
+  const cycleStatus = parseArtifactJson(files, "reports/cycle.json")?.status;
+  if (cycleStatus === "kept") return "delivered";
+  if (typeof cycleStatus === "string" && TERMINAL_CYCLE_STATUSES.has(cycleStatus)) return "rejected";
+  return null;
+};
+
 const textField = (value: unknown, maximumBytes = 512): string | null =>
   typeof value === "string" && value.length > 0 && new TextEncoder().encode(value).byteLength <= maximumBytes &&
     !containsAsciiControl(value)
@@ -1187,6 +1207,25 @@ export const manualRecoveryRecordForLegacyArtifact = (
     reason: "authenticated legacy evidence lacks a provable recovery record",
     next_action: "a repository owner must inspect the encrypted artifact and its exact workflow base",
     predecessor: null,
+  });
+};
+
+export const terminalRecoveryRecordForLegacyArtifact = (
+  repository: string,
+  artifact: GitHubArtifact,
+  encryptedDigest: string,
+  disposition: "manual_required" | "rejected" | "delivered",
+): SentinelRecoveryRecordV1 | null => {
+  const base = manualRecoveryRecordForLegacyArtifact(repository, artifact, encryptedDigest);
+  if (!base) return null;
+  return parseSentinelRecoveryRecord({
+    ...base,
+    phase: disposition,
+    disposition,
+    reason: "authenticated legacy evidence contains a terminal disposition",
+    next_action: disposition === "manual_required"
+      ? "a repository owner must inspect the encrypted artifact and its exact workflow base"
+      : null,
   });
 };
 
@@ -1347,10 +1386,18 @@ export const recoverSentinelArtifactsInActions = async (
         const workflowRun = await workflowRunForArtifact(decrypted, artifact, github);
         const artifactRecord = recordFromArtifact(decrypted, artifact, encryptedDigest, workflowRun);
         if (!artifactRecord) {
-          let legacyRecord = (
-              isSentinelArtifactRecoveryEligible(decrypted, workflowRun) ||
-              legacyArtifactNeedsManualDisposition(decrypted, workflowRun)
+          const terminalDisposition = legacyArtifactTerminalDisposition(decrypted);
+          let legacyRecord = terminalDisposition !== null
+            ? terminalRecoveryRecordForLegacyArtifact(
+              input.repository,
+              artifact,
+              encryptedDigest,
+              terminalDisposition,
             )
+            : (
+                isSentinelArtifactRecoveryEligible(decrypted, workflowRun) ||
+                legacyArtifactNeedsManualDisposition(decrypted, workflowRun)
+              )
             ? manualRecoveryRecordForLegacyArtifact(input.repository, artifact, encryptedDigest)
             : null;
           if (legacyRecord) {
