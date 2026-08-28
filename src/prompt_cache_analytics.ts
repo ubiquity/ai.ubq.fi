@@ -1,3 +1,4 @@
+import { acquirePromptCacheKvCooldown } from "./prompt_cache_kv_cooldown.ts";
 import { getKv } from "./kv.ts";
 import { PROMPT_CACHE_TELEMETRY_PROVIDERS, PROMPT_CACHE_TELEMETRY_ROUTES } from "./prompt_cache_telemetry_gate.ts";
 import { RELEASE_GIT_SHA } from "./release.ts";
@@ -82,6 +83,7 @@ export type PromptCacheAnalyticsOptions = Readonly<{
   kv?: Deno.Kv | null;
   release?: string;
   now?: () => number;
+  random?: () => number;
 }>;
 
 export type PromptCacheAnalyticsReadOptions =
@@ -422,13 +424,20 @@ export const recordPromptCacheAnalytics = async (
 
   const nowMs = safeNow(options.now ?? Date.now);
   const bucketStartAtMs = alignedBucketStart(nowMs);
+  const cooldown = acquirePromptCacheKvCooldown(options.kv, options);
+  if (!cooldown.admitted) return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
+
   const kv = await resolveKv(options);
-  if (!kv) return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
+  if (!kv) {
+    cooldown.fail();
+    return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
+  }
 
   let cohort: PromptCacheAnalyticsCohort;
   try {
     cohort = await resolveCohort(event) as PromptCacheAnalyticsCohort;
   } catch {
+    cooldown.release();
     return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
   }
   const usage = recordUsage(event);
@@ -452,7 +461,9 @@ export const recordPromptCacheAnalytics = async (
           (counter) => promptCacheAnalyticsCounterKey(bucketStartAtMs, counter),
           usage.deltas,
         );
-        if ((await operation.commit()).ok) {
+        const committed = await operation.commit();
+        if (committed.ok) {
+          cooldown.succeed();
           return recordResult(
             "recorded",
             usage.kind === "reported"
@@ -463,11 +474,13 @@ export const recordPromptCacheAnalytics = async (
             bucketStartAtMs,
           );
         }
-        continue;
+        cooldown.fail();
+        return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
       }
 
       const cardinalityValue = cardinality.value === null ? 0 : storedCardinality(cardinality.value);
       if (cardinalityValue === null) {
+        cooldown.release();
         return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
       }
       if (cardinalityValue >= PROMPT_CACHE_ANALYTICS_MAX_COHORTS_PER_BUCKET) {
@@ -476,8 +489,10 @@ export const recordPromptCacheAnalytics = async (
           dimension_cardinality_limited_sample_count: 1n,
         };
         if (!await commitAggregateAndOverflow(kv, bucketStartAtMs, cappedDeltas)) {
+          cooldown.fail();
           return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
         }
+        cooldown.succeed();
         return recordResult("recorded", "recorded_cardinality_capped", bucketStartAtMs);
       }
 
@@ -497,7 +512,9 @@ export const recordPromptCacheAnalytics = async (
         (counter) => promptCacheAnalyticsCounterKey(bucketStartAtMs, counter),
         usage.deltas,
       );
-      if ((await operation.commit()).ok) {
+      const committed = await operation.commit();
+      if (committed.ok) {
+        cooldown.succeed();
         return recordResult(
           "recorded",
           usage.kind === "reported"
@@ -509,10 +526,12 @@ export const recordPromptCacheAnalytics = async (
         );
       }
     } catch {
+      cooldown.fail();
       return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
     }
   }
 
+  cooldown.release();
   return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
 };
 

@@ -13375,6 +13375,80 @@ Deno.test("openai: buffered committed Responses failures use the official server
   assert.equal(payload.error?.code, "server_error");
 });
 
+Deno.test("openai: streamed genuine Responses error terminals receive bounded failure telemetry", async () => {
+  const response = await withFetchMock(
+    () =>
+      sseResponse([
+        `data: ${
+          JSON.stringify({
+            type: "response.created",
+            response: { id: "resp_genuine_error_stream", status: "in_progress", output: [] },
+          })
+        }\n\n`,
+        `data: ${
+          JSON.stringify({
+            type: "response.in_progress",
+            response: { id: "resp_genuine_error_stream", status: "in_progress", output: [] },
+          })
+        }\n\n`,
+        `data: ${
+          JSON.stringify({
+            type: "error",
+            code: "provider_stream_error",
+            message: "The provider stopped generation.",
+            param: null,
+          })
+        }\n\n`,
+      ]),
+    () => handleResponses(responsesRequest({ stream: true })),
+  );
+
+  assert.equal(response.status, 200);
+  const values = parseResponsesSseValues(await response.text());
+  assert.equal(values.at(-1)?.type, "error");
+  const telemetry = getResponseTelemetry(response);
+  assert.ok(telemetry);
+  assert.equal(telemetry.completed, false);
+  assert.equal(telemetry.streamTerminalType, "error");
+  assert.equal(telemetry.failureKind, "provider_stream_error");
+  assert.equal(telemetry.syntheticTerminalType, null);
+});
+
+Deno.test("openai: buffered genuine Responses failure terminals receive bounded failure telemetry", async () => {
+  const response = await withFetchMock(
+    () =>
+      sseResponse([
+        `data: ${
+          JSON.stringify({
+            type: "response.created",
+            response: { id: "resp_genuine_failed_buffered", status: "in_progress", output: [] },
+          })
+        }\n\n`,
+        `data: ${
+          JSON.stringify({
+            type: "response.failed",
+            response: {
+              id: "resp_genuine_failed_buffered",
+              status: "failed",
+              output: [],
+              error: { type: "provider_error", code: "provider_model_failure", message: "The provider failed." },
+            },
+          })
+        }\n\n`,
+      ]),
+    () => handleResponses(responsesRequest({ stream: false })),
+  );
+
+  assert.equal(response.status, 200);
+  await response.text();
+  const telemetry = getResponseTelemetry(response);
+  assert.ok(telemetry);
+  assert.equal(telemetry.completed, false);
+  assert.equal(telemetry.streamTerminalType, "response.failed");
+  assert.equal(telemetry.failureKind, "provider_model_failure");
+  assert.equal(telemetry.syntheticTerminalType, null);
+});
+
 Deno.test("auth: kernel attestation tokens are reusable within TTL", async () => {
   const keyPair = await crypto.subtle.generateKey(
     {
