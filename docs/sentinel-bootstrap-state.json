@@ -12,7 +12,14 @@
     "generation": 1
   },
   "signals": [],
-  "activation": null,
+  "activation": {
+    "schema_version": 1,
+    "active_sha": "237e145c74a36a3e0ea01a38dd22334526ad9a4a",
+    "generation": 1,
+    "fenced_generations": [],
+    "updated_at": "2026-08-28T21:51:18.612Z",
+    "reason": null
+  },
   "rollback_intent": null,
   "constraints": []
 }
