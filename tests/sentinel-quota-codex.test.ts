@@ -718,6 +718,35 @@ Deno.test("structured execution uses fixed policy, relay-only auth, a private ho
   assert.deepEqual(filesystem.removed, [home]);
 });
 
+Deno.test("implementation execution uses Sol at medium effort in the writable sandbox", async () => {
+  const filesystem = new MemoryFilesystem();
+  let command: CodexCommandRequest | null = null;
+  await runStructuredCodexAgent({
+    role: "implementation",
+    checkoutPath: "/checkout",
+    prompt: "Implement the selected issue.",
+    outputSchemaPath: "/checkout/schemas/implementation.json",
+    authSlots: slots,
+    expectedMaximumRuntimeMs: 1_000,
+  }, {
+    ...commonDependencies(filesystem, healthyFetcher()),
+    commandRunner: (request) => {
+      command = request;
+      const lastMessagePath = request.args[request.args.indexOf("--output-last-message") + 1]!;
+      filesystem.files.set(lastMessagePath, "{}");
+      return Promise.resolve(codexCommandResult());
+    },
+  });
+  assert.ok(command);
+  const captured = command as CodexCommandRequest;
+  assert.equal(captured.workspaceWritable, true);
+  assert.ok(captured.args.includes("gpt-5.6-sol"));
+  assert.equal(captured.args.includes("gpt-5.6-luna"), false);
+  assert.ok(captured.args.includes('model_reasoning_effort="medium"'));
+  assert.equal(captured.args.includes('model_reasoning_effort="max"'), false);
+  assert.ok(captured.args.includes("workspace-write"));
+});
+
 Deno.test("account quota is re-probed before every Codex invocation", async () => {
   const filesystem = new MemoryFilesystem();
   let usageCall = 0;
