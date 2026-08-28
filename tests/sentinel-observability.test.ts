@@ -60,31 +60,39 @@ const fixtures = [
   },
 ] as const;
 
-const runPermission = await Deno.permissions.query({ name: "run" });
-const writePermission = await Deno.permissions.query({ name: "write" });
+const [readPermission, runPermission, writePermission] = await Promise.all([
+  Deno.permissions.query({ name: "read" }),
+  Deno.permissions.query({ name: "run" }),
+  Deno.permissions.query({ name: "write" }),
+]);
 
-Deno.test("Provider Sentinel recovery summary has a metadata-only workflow contract", async () => {
-  const workflow = await Deno.readTextFile(workflowPath);
-  assert.notEqual(workflow.indexOf(summaryStepStart), -1);
-  for (
-    const field of [
-      "source",
-      "candidate_sha",
-      "candidate_branch",
-      "failure_fingerprint",
-      "artifact_expiry",
-      "next_action",
-      "recovery-summary-v1.json",
-    ]
-  ) {
-    assert.match(workflow, new RegExp(field.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")));
-  }
-  assert.doesNotMatch(workflow, /github_issue_(?:title|body)/u);
+Deno.test({
+  name: "Provider Sentinel recovery summary has a metadata-only workflow contract",
+  ignore: readPermission.state !== "granted",
+  async fn() {
+    const workflow = await Deno.readTextFile(workflowPath);
+    assert.notEqual(workflow.indexOf(summaryStepStart), -1);
+    for (
+      const field of [
+        "source",
+        "candidate_sha",
+        "candidate_branch",
+        "failure_fingerprint",
+        "artifact_expiry",
+        "next_action",
+        "recovery-summary-v1.json",
+      ]
+    ) {
+      assert.match(workflow, new RegExp(field.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")));
+    }
+    assert.doesNotMatch(workflow, /github_issue_(?:title|body)/u);
+  },
 });
 
 Deno.test({
   name: "Provider Sentinel recovery summary renders safe terminal and retry fixtures",
-  ignore: runPermission.state !== "granted" || writePermission.state !== "granted",
+  ignore: readPermission.state !== "granted" || runPermission.state !== "granted" ||
+    writePermission.state !== "granted",
   async fn() {
     const workflow = await Deno.readTextFile(workflowPath);
     const script = runScriptFromWorkflow(workflow);
