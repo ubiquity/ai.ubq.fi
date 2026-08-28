@@ -18,6 +18,24 @@ const CORRELATION_ID = "sentinel-123e4567-e89b-42d3-a456-426614174000";
 const DISPLAY_TITLE = `Deno Deploy ${CORRELATION_ID}`;
 const BASE_SHA = "d".repeat(40);
 const RETRY_SHA = "e".repeat(40);
+const ZERO_SHA = "0".repeat(40);
+
+const developmentUpdate = {
+  localRef: "HEAD",
+  localSha: RETRY_SHA,
+  remoteRef: "refs/heads/development",
+  remoteSha: BASE_SHA,
+};
+
+const checkpointUpdate = (
+  checkpoint: Readonly<{ branch: string; sha: string }>,
+  remoteSha = ZERO_SHA,
+) => ({
+  localRef: checkpoint.sha,
+  localSha: checkpoint.sha,
+  remoteRef: `refs/heads/${checkpoint.branch}`,
+  remoteSha,
+});
 
 const retrySelection = parseGitHubIssueSelectionReport({
   schema_version: 1,
@@ -40,6 +58,7 @@ const retryDisposition = {
   phase: "failed_implementation",
   implementation_status: "blocked",
   disposition: "retry_pending",
+  retry_checkpoint: null,
 };
 
 const retryCycle = {
@@ -48,10 +67,11 @@ const retryCycle = {
   started_at: "2026-08-27T23:00:00Z",
   base_development_sha: BASE_SHA,
   candidate_sha: RETRY_SHA,
-  temporary_branch: "sentinel/candidate-123456789",
+  temporary_branch: "sentinel/candidate-123456789-2",
   status: "running",
   stage: "pushing_retry_pending_github_issue",
   branch_disposition: "runner_local_pending_review",
+  retry_checkpoint: null,
 };
 
 const retryRow = (overrides: Partial<GitHubIssueJobLedgerEntry> = {}): GitHubIssueJobLedgerEntry => ({
@@ -64,6 +84,7 @@ const retryRow = (overrides: Partial<GitHubIssueJobLedgerEntry> = {}): GitHubIss
   sourceUpdatedAt: retrySelection.updated_at,
   recordedAt: "2026-08-27T23:20:00Z",
   baseSha: BASE_SHA,
+  checkpoint: null,
   title: "Retry the bounded issue",
   disposition: "retry_pending" as const,
   ...overrides,
@@ -159,12 +180,9 @@ Deno.test("issue candidate evidence parsers bind disposition, preview, and retry
 Deno.test("retry-pending development pushes are exact docs-only commits with no delivery candidate", () => {
   const baseInput: Parameters<typeof validateRetryPendingDevelopmentPush>[0] = {
     workflowRunId: "123456789",
-    update: {
-      localRef: "HEAD",
-      localSha: RETRY_SHA,
-      remoteRef: "refs/heads/development",
-      remoteSha: BASE_SHA,
-    },
+    updates: [developmentUpdate],
+    atomicPush: false,
+    checkpointLeaseSha: null,
     selection: retrySelection,
     cycleValue: retryCycle,
     dispositionValue: retryDisposition,
@@ -174,6 +192,251 @@ Deno.test("retry-pending development pushes are exact docs-only commits with no 
     pushedLedgerMarkdown: renderGitHubIssueJobLedger([retryRow()]),
   };
   assert.doesNotThrow(() => validateRetryPendingDevelopmentPush(baseInput));
+
+  const checkpoint = {
+    branch: retryCycle.temporary_branch,
+    sha: "1".repeat(40),
+    base_sha: BASE_SHA,
+  };
+  const checkpointInput: Parameters<typeof validateRetryPendingDevelopmentPush>[0] = {
+    ...baseInput,
+    updates: [developmentUpdate, checkpointUpdate(checkpoint)],
+    atomicPush: true,
+    checkpointLeaseSha: ZERO_SHA,
+    cycleValue: {
+      ...retryCycle,
+      retry_checkpoint: checkpoint,
+    },
+    dispositionValue: { ...retryDisposition, retry_checkpoint: checkpoint },
+    pushedLedgerMarkdown: renderGitHubIssueJobLedger([retryRow({
+      checkpoint: { branch: checkpoint.branch, sha: checkpoint.sha, baseSha: checkpoint.base_sha },
+    })]),
+  };
+  assert.doesNotThrow(() => validateRetryPendingDevelopmentPush(checkpointInput));
+  assert.doesNotThrow(() =>
+    validateRetryPendingDevelopmentPush({
+      ...checkpointInput,
+      cycleValue: {
+        ...checkpointInput.cycleValue as Record<string, unknown>,
+        branch_disposition: "runner_local_atomic_push_in_flight",
+      },
+    })
+  );
+  assert.throws(
+    () =>
+      validateRetryPendingDevelopmentPush({
+        ...checkpointInput,
+        cycleValue: {
+          ...checkpointInput.cycleValue as Record<string, unknown>,
+          branch_disposition: "remote_retained_atomic_push_in_flight",
+        },
+      }),
+    /new retry checkpoint must remain local until the atomic push/u,
+  );
+  const checkpointPushMismatches: Array<
+    readonly [Partial<Parameters<typeof validateRetryPendingDevelopmentPush>[0]>, RegExp]
+  > = [
+    [{ atomicPush: false }, /atomic two-ref push/u],
+    [{ checkpointLeaseSha: null }, /exact force-with-lease/u],
+    [{ checkpointLeaseSha: "2".repeat(40) }, /exact force-with-lease/u],
+    [{ updates: [developmentUpdate] }, /atomic two-ref push/u],
+    [
+      { updates: [developmentUpdate, checkpointUpdate(checkpoint), checkpointUpdate(checkpoint)] },
+      /atomic two-ref push/u,
+    ],
+    [{
+      updates: [
+        developmentUpdate,
+        { ...checkpointUpdate(checkpoint), remoteRef: "refs/heads/sentinel/candidate-123456780" },
+      ],
+    }, /exact checkpoint update/u],
+    [{
+      updates: [
+        developmentUpdate,
+        { ...checkpointUpdate(checkpoint), localRef: "2".repeat(40), localSha: "2".repeat(40) },
+      ],
+    }, /exact checkpoint update/u],
+    [{
+      updates: [
+        developmentUpdate,
+        checkpointUpdate(checkpoint),
+        {
+          localRef: "HEAD",
+          localSha: RETRY_SHA,
+          remoteRef: "refs/heads/unexpected",
+          remoteSha: ZERO_SHA,
+        },
+      ],
+    }, /atomic two-ref push/u],
+  ];
+  for (const [overrides, pattern] of checkpointPushMismatches) {
+    assert.throws(
+      () => validateRetryPendingDevelopmentPush({ ...checkpointInput, ...overrides }),
+      pattern,
+    );
+  }
+
+  const priorRunCheckpoint = {
+    branch: "sentinel/candidate-123456700-1",
+    sha: "4".repeat(40),
+    base_sha: "c".repeat(40),
+  };
+  assert.doesNotThrow(() =>
+    validateRetryPendingDevelopmentPush({
+      ...baseInput,
+      updates: [developmentUpdate, checkpointUpdate(priorRunCheckpoint, priorRunCheckpoint.sha)],
+      atomicPush: true,
+      checkpointLeaseSha: priorRunCheckpoint.sha,
+      cycleValue: {
+        ...retryCycle,
+        branch_disposition: "remote_retained_atomic_push_in_flight",
+        retry_checkpoint: priorRunCheckpoint,
+      },
+      dispositionValue: {
+        ...retryDisposition,
+        phase: "retry_checkpoint_resume_transient",
+        retry_checkpoint: priorRunCheckpoint,
+      },
+      pushedLedgerMarkdown: renderGitHubIssueJobLedger([retryRow({
+        baseSha: priorRunCheckpoint.base_sha,
+        checkpoint: {
+          branch: priorRunCheckpoint.branch,
+          sha: priorRunCheckpoint.sha,
+          baseSha: priorRunCheckpoint.base_sha,
+        },
+      })]),
+    })
+  );
+  assert.throws(
+    () =>
+      validateRetryPendingDevelopmentPush({
+        ...baseInput,
+        updates: [developmentUpdate, checkpointUpdate(priorRunCheckpoint, priorRunCheckpoint.sha)],
+        atomicPush: true,
+        checkpointLeaseSha: priorRunCheckpoint.sha,
+        cycleValue: {
+          ...retryCycle,
+          branch_disposition: "runner_local_atomic_push_in_flight",
+          retry_checkpoint: priorRunCheckpoint,
+        },
+        dispositionValue: {
+          ...retryDisposition,
+          phase: "retry_checkpoint_resume_transient",
+          retry_checkpoint: priorRunCheckpoint,
+        },
+        pushedLedgerMarkdown: renderGitHubIssueJobLedger([retryRow({
+          baseSha: priorRunCheckpoint.base_sha,
+          checkpoint: {
+            branch: priorRunCheckpoint.branch,
+            sha: priorRunCheckpoint.sha,
+            baseSha: priorRunCheckpoint.base_sha,
+          },
+        })]),
+      }),
+    /prior attempt/,
+  );
+  assert.throws(
+    () =>
+      validateRetryPendingDevelopmentPush({
+        ...baseInput,
+        updates: [developmentUpdate, checkpointUpdate(priorRunCheckpoint, priorRunCheckpoint.sha)],
+        atomicPush: true,
+        checkpointLeaseSha: priorRunCheckpoint.sha,
+        cycleValue: {
+          ...retryCycle,
+          branch_disposition: "remote_retained_issue_retry_pending",
+          retry_checkpoint: priorRunCheckpoint,
+        },
+        dispositionValue: { ...retryDisposition, retry_checkpoint: priorRunCheckpoint },
+        pushedLedgerMarkdown: renderGitHubIssueJobLedger([retryRow({
+          baseSha: priorRunCheckpoint.base_sha,
+          checkpoint: {
+            branch: priorRunCheckpoint.branch,
+            sha: priorRunCheckpoint.sha,
+            baseSha: priorRunCheckpoint.base_sha,
+          },
+        })]),
+      }),
+    /current attempt/,
+  );
+  assert.throws(
+    () =>
+      validateRetryPendingDevelopmentPush({
+        ...baseInput,
+        dispositionValue: { ...retryDisposition, phase: "retry_checkpoint_resume_transient" },
+      }),
+    /prior attempt/,
+  );
+  assert.throws(
+    () =>
+      validateRetryPendingDevelopmentPush({
+        ...checkpointInput,
+        dispositionValue: {
+          ...retryDisposition,
+          phase: "retry_checkpoint_resume_transient",
+          retry_checkpoint: checkpoint,
+        },
+      }),
+    /prior attempt/,
+  );
+
+  const checkpointMismatchInputs: Array<
+    readonly [Partial<Parameters<typeof validateRetryPendingDevelopmentPush>[0]>, RegExp]
+  > = [
+    [{
+      pushedLedgerMarkdown: renderGitHubIssueJobLedger([retryRow({
+        checkpoint: { branch: "sentinel/candidate-123456780", sha: checkpoint.sha, baseSha: checkpoint.base_sha },
+      })]),
+    }, /exact pending ledger row/],
+    [{
+      pushedLedgerMarkdown: renderGitHubIssueJobLedger([retryRow({
+        checkpoint: { branch: checkpoint.branch, sha: "2".repeat(40), baseSha: checkpoint.base_sha },
+      })]),
+    }, /exact pending ledger row/],
+    [{
+      pushedLedgerMarkdown: renderGitHubIssueJobLedger([retryRow({
+        baseSha: "3".repeat(40),
+        checkpoint: { branch: checkpoint.branch, sha: checkpoint.sha, baseSha: "3".repeat(40) },
+      })]),
+    }, /exact pending ledger row/],
+    [{ dispositionValue: retryDisposition }, /exact pending ledger row/],
+    [{ cycleValue: retryCycle }, /exact pending ledger row/],
+    [{
+      cycleValue: {
+        ...retryCycle,
+        temporary_branch: "sentinel/candidate-123456780",
+        branch_disposition: "remote_retained_issue_retry_pending",
+        retry_checkpoint: { ...checkpoint, branch: "sentinel/candidate-123456780" },
+      },
+    }, /exact pending ledger row/],
+    [{
+      cycleValue: {
+        ...retryCycle,
+        branch_disposition: "remote_retained_issue_retry_pending",
+        retry_checkpoint: { ...checkpoint, sha: "2".repeat(40) },
+      },
+    }, /exact pending ledger row/],
+    [{
+      cycleValue: {
+        ...retryCycle,
+        branch_disposition: "remote_retained_issue_retry_pending",
+        retry_checkpoint: { ...checkpoint, base_sha: "3".repeat(40) },
+      },
+    }, /exact pending ledger row/],
+    [{
+      cycleValue: {
+        ...retryCycle,
+        branch_disposition: "development_docs_only_issue_retry_pending",
+        retry_checkpoint: checkpoint,
+      },
+    }, /cycle report is invalid/],
+  ];
+  for (const [overrides, pattern] of checkpointMismatchInputs) {
+    assert.throws(
+      () => validateRetryPendingDevelopmentPush({ ...checkpointInput, ...overrides }),
+      pattern,
+    );
+  }
 
   const priorPending = retryRow({
     fingerprint: "9".repeat(64),
@@ -187,6 +450,40 @@ Deno.test("retry-pending development pushes are exact docs-only commits with no 
     validateRetryPendingDevelopmentPush({
       ...baseInput,
       parentLedgerMarkdown: renderGitHubIssueJobLedger([priorPending]),
+    })
+  );
+  const retainedCheckpointPending = {
+    ...priorPending,
+    checkpoint: {
+      branch: "sentinel/candidate-123456700",
+      sha: "5".repeat(40),
+      baseSha: priorPending.baseSha,
+    },
+  };
+  assert.doesNotThrow(() =>
+    validateRetryPendingDevelopmentPush({
+      ...baseInput,
+      parentLedgerMarkdown: renderGitHubIssueJobLedger([retainedCheckpointPending]),
+      pushedLedgerMarkdown: renderGitHubIssueJobLedger([
+        { ...retainedCheckpointPending, disposition: "checkpoint_retained" },
+        retryRow(),
+      ]),
+    })
+  );
+  const retainedSelectedCheckpoint = {
+    ...retryRow({
+      checkpoint: {
+        branch: "sentinel/candidate-123456701",
+        sha: "6".repeat(40),
+        baseSha: BASE_SHA,
+      },
+    }),
+    disposition: "checkpoint_retained" as const,
+  };
+  assert.doesNotThrow(() =>
+    validateRetryPendingDevelopmentPush({
+      ...baseInput,
+      parentLedgerMarkdown: renderGitHubIssueJobLedger([retainedSelectedCheckpoint]),
     })
   );
 

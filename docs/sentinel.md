@@ -92,22 +92,24 @@ relationships per run and fails closed at that bound. When a selected GitHub iss
 bounded implementation timeout, a failed Codex command, or a failed Codex runtime, Sentinel preserves the candidate as
 encrypted evidence and records a non-terminal `retry_pending` snapshot. The snapshot waits six hours before it is
 eligible again, while later eligible issues continue through the queue. A later successful attempt replaces the retry
-row with its terminal result. The same infrastructure failures on the native review backlog use its existing
-`manual_required` state, so one deterministic finding cannot consume every hourly cycle. Terminal `resolved` and
-semantically blocked `manual_required` snapshots are recorded in the protected `docs/sentinel-issue-jobs.md` ledger. The
-ledger retains the selected comment count so later comment-only timestamp changes do not create a new job identity.
-`resolved` means that the implementation has a matching scoped candidate diff; it is not production acceptance. The
-encrypted `github-issue-production-outcome.json` exists only after production has settled by keeping the candidate
-through monitoring or rolling it back. The Actions summary identifies the selected issue number without exposing its
-title or body. An unchanged open issue is not selected again. A later issue edit creates a new snapshot that can become
-eligible only while its latest editor remains a current writer or administrator. A manual result uses a ledger-only
-development commit and never starts a deployment. Sentinel opens exactly one delivery pull request per selected snapshot
-and links the issue there as evidence. After a verified production keep it merges that pull request and closes the
-unchanged issue with supporting evidence; a refused or protected merge is accepted only when the comparison proves the
-candidate head is already contained in `development` (the state production runs), otherwise the delivery stays open.
-Manual-required, failed, and rolled-back results stay open. The workflow token carries `issues: write` and
-`pull-requests: write`, but Sentinel never assigns, labels, or comments during selection. The workflow concurrency group
-serializes Sentinel runs but does not claim work against a human or another automation system.
+row with its terminal result. A superseded immutable checkpoint remains auditable as nonblocking `checkpoint_retained`
+evidence, so a later rolled-back attempt cannot permanently hide the open issue. The same infrastructure failures on the
+native review backlog use its existing `manual_required` state, so one deterministic finding cannot consume every hourly
+cycle. Terminal `resolved` and semantically blocked `manual_required` snapshots are recorded in the protected
+`docs/sentinel-issue-jobs.md` ledger. The ledger retains the selected comment count so later comment-only timestamp
+changes do not create a new job identity. `resolved` means that the implementation has a matching scoped candidate diff;
+it is not production acceptance. The encrypted `github-issue-production-outcome.json` exists only after production has
+settled by keeping the candidate through monitoring or rolling it back. The Actions summary identifies the selected
+issue number without exposing its title or body. An unchanged open issue is not selected again. A later issue edit
+creates a new snapshot that can become eligible only while its latest editor remains a current writer or administrator.
+A manual result uses a ledger-only development commit and never starts a deployment. Sentinel opens exactly one delivery
+pull request per selected snapshot and links the issue there as evidence. After a verified production keep it merges
+that pull request and closes the unchanged issue with supporting evidence; a refused or protected merge is accepted only
+when the comparison proves the candidate head is already contained in `development` (the state production runs),
+otherwise the delivery stays open. Manual-required, failed, and rolled-back results stay open. The workflow token
+carries `issues: write` and `pull-requests: write`, but Sentinel never assigns, labels, or comments during selection.
+The workflow concurrency group serializes Sentinel runs but does not claim work against a human or another automation
+system.
 
 The workflow supports public, private, and internal repository visibility. It fails before checkout or raw-log capture
 unless `SENTINEL_ARTIFACT_KEY` is present and decodes to exactly 32 bytes. After the cycle, it scans every prospective

@@ -20,11 +20,13 @@ import {
   parseSentinelCycleReport,
   parseSentinelRetryPendingCycleReport,
   renderIssueDeliveryEvidence,
+  validateRetryPendingCheckpointPhaseBinding,
 } from "./issue-delivery.ts";
 
 const API_VERSION = "2022-11-28";
 const FULL_SHA = /^[0-9a-f]{40}$/u;
 const SAFE_REVISION = /^[A-Za-z0-9_-]{1,200}$/u;
+const RECONCILABLE_GIT_REF = /^(?:development|sentinel\/candidate-[1-9][0-9]*(?:-[1-9][0-9]*)?)$/u;
 
 type PullRequest = Readonly<{
   number: number;
@@ -44,6 +46,18 @@ type IssueState = Readonly<{
 }>;
 
 type PullRequestMergeSource = "sentinel_merge_api" | "development_content" | "already_merged" | null;
+type RetryPendingRemoteRefs = Readonly<{ developmentSha: string; checkpointSha: string }>;
+type RetryPendingIssueReconciliationInput = Readonly<{
+  workflowRunId: string;
+  workflowFailed: boolean;
+  selection: GitHubIssueSelectionReport;
+  cycleValue: unknown;
+  dispositionValue: unknown;
+  pullRequestReportPresent: boolean;
+  productionOutcomeReportPresent: boolean;
+  developmentLedgerMarkdown: string;
+  remoteRefs?: RetryPendingRemoteRefs;
+}>;
 const MAX_COMMENT_TIMESTAMP_PROPAGATION_MS = 5_000;
 
 const requiredEnvironment = (name: string): string => {
@@ -126,6 +140,26 @@ const githubRequest = async (
     );
   }
   return payload;
+};
+
+export const readGitHubCommitRefSha = async (
+  token: string,
+  repository: string,
+  branch: string,
+  fetcher: typeof fetch = fetch,
+): Promise<string> => {
+  if (!RECONCILABLE_GIT_REF.test(branch)) {
+    throw new Error("Sentinel reconciliation requires a trusted Git ref name");
+  }
+  const ref = `refs/heads/${branch}`;
+  const value = record(await githubRequest(token, repository, `/git/ref/heads/${branch}`, {}, fetcher));
+  const object = record(value?.object);
+  if (
+    value?.ref !== ref || object?.type !== "commit" || typeof object.sha !== "string" || !FULL_SHA.test(object.sha)
+  ) {
+    throw new Error(`GitHub returned an invalid commit identity for ${ref}`);
+  }
+  return object.sha;
 };
 
 const parsePullRequest = (value: unknown): PullRequest => {
@@ -542,38 +576,43 @@ const writeReconciliationReport = async (
   );
 };
 
-export const validateRetryPendingIssueReconciliation = (
-  input: Readonly<{
-    workflowRunId: string;
-    workflowFailed: boolean;
-    selection: GitHubIssueSelectionReport;
-    cycleValue: unknown;
-    dispositionValue: unknown;
-    pullRequestReportPresent: boolean;
-    productionOutcomeReportPresent: boolean;
-    developmentLedgerMarkdown: string;
-  }>,
-): void => {
-  if (input.workflowFailed) {
-    throw new Error("A retry-pending issue reconciliation cannot come from a failed Sentinel run");
-  }
-  if (input.pullRequestReportPresent || input.productionOutcomeReportPresent) {
-    throw new Error("A retry-pending issue reconciliation cannot contain delivery or production records");
-  }
-  parseGitHubIssueRetryPendingReport(input.dispositionValue, {
+const parseRetryPendingIssueReconciliationReports = (
+  input: RetryPendingIssueReconciliationInput,
+): Readonly<{
+  disposition: ReturnType<typeof parseGitHubIssueRetryPendingReport>;
+  cycle: ReturnType<typeof parseSentinelRetryPendingCycleReport>;
+}> => {
+  const disposition = parseGitHubIssueRetryPendingReport(input.dispositionValue, {
     issueId: input.selection.issue_id,
     issueNumber: input.selection.issue_number,
     fingerprint: input.selection.fingerprint,
   });
-  const cycle = parseSentinelRetryPendingCycleReport(input.cycleValue, {
-    runId: input.workflowRunId,
-    status: "no_change",
-    stage: "complete",
-    branchDispositions: [
-      "development_docs_only_issue_retry_pending",
-      "remote_retained_issue_retry_pending",
-    ],
-  });
+  const cycle = input.workflowFailed
+    ? parseSentinelRetryPendingCycleReport(input.cycleValue, {
+      runId: input.workflowRunId,
+      status: "failed",
+      stage: "failed",
+      branchDispositions: ["atomic_retry_push_requires_reconciliation"],
+    })
+    : parseSentinelRetryPendingCycleReport(input.cycleValue, {
+      runId: input.workflowRunId,
+      status: "no_change",
+      stage: "complete",
+      branchDispositions: [
+        "development_docs_only_issue_retry_pending",
+        "remote_retained_issue_retry_pending",
+      ],
+    });
+  return { disposition, cycle };
+};
+
+export const validateRetryPendingIssueReconciliation = (
+  input: RetryPendingIssueReconciliationInput,
+): void => {
+  if (input.pullRequestReportPresent || input.productionOutcomeReportPresent) {
+    throw new Error("A retry-pending issue reconciliation cannot contain delivery or production records");
+  }
+  const { disposition, cycle } = parseRetryPendingIssueReconciliationReports(input);
   if (
     cycle.candidate_sha === cycle.base_development_sha ||
     !cycle.temporary_branch.startsWith("sentinel/candidate-")
@@ -584,14 +623,38 @@ export const validateRetryPendingIssueReconciliation = (
     entry.issueId === input.selection.issue_id && entry.number === input.selection.issue_number &&
     entry.fingerprint === input.selection.fingerprint
   );
+  const expectedCheckpoint = disposition.retry_checkpoint === null ? null : {
+    branch: disposition.retry_checkpoint.branch,
+    sha: disposition.retry_checkpoint.sha,
+    baseSha: disposition.retry_checkpoint.base_sha,
+  };
   if (
     matches.length !== 1 || matches[0]!.bodySha256 !== input.selection.body_sha256 ||
     matches[0]!.comments !== input.selection.comments ||
-    matches[0]!.sourceUpdatedAt !== input.selection.updated_at ||
-    matches[0]!.disposition !== "retry_pending" || matches[0]!.baseSha !== cycle.base_development_sha ||
+    matches[0]!.sourceUpdatedAt !== input.selection.updated_at || matches[0]!.disposition !== "retry_pending" ||
+    matches[0]!.baseSha !== (expectedCheckpoint?.baseSha ?? cycle.base_development_sha) ||
+    JSON.stringify(matches[0]!.checkpoint) !== JSON.stringify(expectedCheckpoint) ||
+    JSON.stringify(cycle.retry_checkpoint) !== JSON.stringify(disposition.retry_checkpoint) ||
     Date.parse(matches[0]!.recordedAt) < Date.parse(cycle.started_at)
   ) {
     throw new Error("Sentinel retry-pending reconciliation has no exact durable ledger row");
+  }
+  validateRetryPendingCheckpointPhaseBinding(disposition, cycle);
+  if (!input.workflowFailed) return;
+  if (disposition.retry_checkpoint === null) {
+    throw new Error("A failed atomic retry push reconciliation requires a durable retry checkpoint");
+  }
+  const remoteRefs = input.remoteRefs;
+  if (
+    remoteRefs === undefined || !FULL_SHA.test(remoteRefs.developmentSha) || !FULL_SHA.test(remoteRefs.checkpointSha)
+  ) {
+    throw new Error("A failed atomic retry push reconciliation requires exact durable remote refs");
+  }
+  if (remoteRefs.developmentSha !== cycle.candidate_sha) {
+    throw new Error("Sentinel failed atomic retry push development ref does not match the candidate commit");
+  }
+  if (remoteRefs.checkpointSha !== disposition.retry_checkpoint.sha) {
+    throw new Error("Sentinel failed atomic retry push checkpoint ref does not match the durable checkpoint");
   }
 };
 
@@ -619,6 +682,27 @@ export const reconcileGitHubIssueDelivery = async (
       `${reportsDir}/github-issue-production-outcome.json`,
     );
     const ledger = await developmentIssueLedger(input.token, input.repository);
+    let remoteRefs: RetryPendingRemoteRefs | undefined;
+    if (input.workflowFailed) {
+      const { disposition } = parseRetryPendingIssueReconciliationReports({
+        workflowRunId: input.workflowRunId,
+        workflowFailed: input.workflowFailed,
+        selection,
+        cycleValue,
+        dispositionValue,
+        pullRequestReportPresent,
+        productionOutcomeReportPresent,
+        developmentLedgerMarkdown: ledger.markdown,
+      });
+      if (disposition.retry_checkpoint === null) {
+        throw new Error("A failed atomic retry push reconciliation requires a durable retry checkpoint");
+      }
+      const [developmentSha, checkpointSha] = await Promise.all([
+        readGitHubCommitRefSha(input.token, input.repository, "development"),
+        readGitHubCommitRefSha(input.token, input.repository, disposition.retry_checkpoint.branch),
+      ]);
+      remoteRefs = { developmentSha, checkpointSha };
+    }
     validateRetryPendingIssueReconciliation({
       workflowRunId: input.workflowRunId,
       workflowFailed: input.workflowFailed,
@@ -628,6 +712,7 @@ export const reconcileGitHubIssueDelivery = async (
       pullRequestReportPresent,
       productionOutcomeReportPresent,
       developmentLedgerMarkdown: ledger.markdown,
+      remoteRefs,
     });
     console.log(
       `[sentinel] issue_retry_pending=#${selection.issue_number} reconciliation=no_delivery issue=open`,
