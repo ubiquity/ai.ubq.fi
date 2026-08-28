@@ -29,6 +29,7 @@ export type GitHubIssueJob = Readonly<{
   priority: "P2" | "P3";
   priorityLabel: "Priority: 2 (Medium)" | "Priority: 3 (High)";
   timeLabel: string;
+  intake: "declared" | "owner_backlog";
   labels: readonly string[];
   files: readonly string[];
   acceptance: readonly string[];
@@ -79,6 +80,8 @@ const ISSUE_QUEUE_RANK = new Map<GitHubIssueJob["priorityLabel"], number>([
 ]);
 export const MAX_GITHUB_ISSUE_TIME_ESTIMATE_MINUTES = 24 * 60;
 const DEFAULT_GITHUB_ISSUE_TIME_ESTIMATE_MINUTES = 2 * 60;
+const DEFAULT_OWNER_BACKLOG_PRIORITY_LABEL = "Priority: 2 (Medium)";
+const DEFAULT_OWNER_BACKLOG_TIME_LABEL = "Time: <2 Hours";
 const TIME_LABEL_PATTERN = /^Time: <([1-9][0-9]*) (Minute|Minutes|Hour|Hours|Day|Days)$/u;
 const FILE_LOCATION_PATTERN = /^([A-Za-z0-9_.@/+\-]+)(?::\d+(?:-\d+)?(?::\d+)?)?$/u;
 const FULL_SHA = /^[0-9a-f]{40}$/u;
@@ -231,6 +234,32 @@ export const parseGitHubIssueJobBody = (body: string): ParsedIssueBody | null =>
   return { acceptance, files: canonicalFiles };
 };
 
+const parseOwnerBacklogIssueBody = (body: string): ParsedIssueBody | null => {
+  if (textEncoder.encode(body).byteLength > MAX_ISSUE_BODY_BYTES) return null;
+  const lines = body.replaceAll("\r\n", "\n").split("\n");
+  const headings = ["## Context", "## Gap", "## Proposed"];
+  if (headings.some((heading) => lines.filter((line) => line === heading).length !== 1)) return null;
+  const proposedStart = lines.indexOf("## Proposed") + 1;
+  const proposedEnd = lines.findIndex((line, index) => index >= proposedStart && line.startsWith("## "));
+  const proposedLines = lines.slice(proposedStart, proposedEnd === -1 ? undefined : proposedEnd);
+  if (!proposedLines.some((line) => line.trim().length > 0)) return null;
+
+  const files: string[] = [];
+  for (const match of body.matchAll(/`([^`\r\n]+)`/gu)) {
+    const pathMatch = match[1]!.trim().match(FILE_LOCATION_PATTERN);
+    if (!pathMatch) continue;
+    const path = pathMatch[1]!;
+    if (isSentinelProtectedImplementationPath(path)) return null;
+    if (path.startsWith("src/")) files.push(path);
+  }
+  const canonicalFiles = sortedUnique(files);
+  if (!canonicalFiles) return null;
+  return {
+    acceptance: ["Implement the owner-authored proposal within the extracted source-file scope."],
+    files: canonicalFiles,
+  };
+};
+
 const issueJobLabels = (
   labels: readonly string[],
   maximumTimeEstimateMinutes: number,
@@ -306,7 +335,18 @@ export const createGitHubIssueJob = async (
   ) return null;
   const parsedBody = parseGitHubIssueJobBody(issue.body);
   const parsedLabels = issueJobLabels(issue.labels, maximumTimeEstimateMinutes);
-  if (!parsedBody || !parsedLabels) return null;
+  const ownerBacklogBody = authorityPermission === "admin" && issue.labels.length === 0
+    ? parseOwnerBacklogIssueBody(issue.body)
+    : null;
+  const effectiveBody = parsedBody ?? ownerBacklogBody;
+  const effectiveLabels = parsedLabels ?? (ownerBacklogBody === null ? null : {
+    labels: [] as const,
+    priority: "P3" as const,
+    priorityLabel: DEFAULT_OWNER_BACKLOG_PRIORITY_LABEL,
+    timeLabel: DEFAULT_OWNER_BACKLOG_TIME_LABEL,
+  });
+  if (!effectiveBody || !effectiveLabels) return null;
+  const intake = parsedBody !== null && parsedLabels !== null ? "declared" : "owner_backlog";
   const bodySha256 = await sha256(issue.body);
   const fingerprint = await sha256(JSON.stringify({
     schema_version: 1,
@@ -320,15 +360,17 @@ export const createGitHubIssueJob = async (
     html_url: issue.htmlUrl,
     author_login: issue.authorLogin,
     author_association: issue.authorAssociation,
-    labels: parsedLabels.labels,
+    labels: effectiveLabels.labels,
     assignees: issue.assignees,
     locked: issue.locked,
     comments: issue.comments,
     created_at: issue.createdAt,
     updated_at: issue.updatedAt,
     relations,
-    files: parsedBody.files,
-    acceptance: parsedBody.acceptance,
+    // Existing declared snapshots must retain their ledger fingerprint.
+    ...(intake === "owner_backlog" ? { intake } : {}),
+    files: effectiveBody.files,
+    acceptance: effectiveBody.acceptance,
   }));
   return {
     repository,
@@ -340,12 +382,13 @@ export const createGitHubIssueJob = async (
     body: issue.body,
     bodySha256,
     fingerprint,
-    priority: parsedLabels.priority,
-    priorityLabel: parsedLabels.priorityLabel,
-    timeLabel: parsedLabels.timeLabel,
-    labels: parsedLabels.labels,
-    files: parsedBody.files,
-    acceptance: parsedBody.acceptance,
+    priority: effectiveLabels.priority,
+    priorityLabel: effectiveLabels.priorityLabel,
+    timeLabel: effectiveLabels.timeLabel,
+    intake,
+    labels: effectiveLabels.labels,
+    files: effectiveBody.files,
+    acceptance: effectiveBody.acceptance,
     authorLogin: issue.authorLogin,
     authorAssociation: issue.authorAssociation,
     comments: issue.comments,
@@ -369,6 +412,7 @@ const githubIssueJobSourceSnapshotsMatch = (expected: GitHubIssueJob, actual: Gi
   expected.number === actual.number && expected.htmlUrl === actual.htmlUrl && expected.title === actual.title &&
   expected.bodySha256 === actual.bodySha256 && expected.priority === actual.priority &&
   expected.priorityLabel === actual.priorityLabel && expected.timeLabel === actual.timeLabel &&
+  expected.intake === actual.intake &&
   expected.authorLogin === actual.authorLogin && expected.authorAssociation === actual.authorAssociation &&
   expected.comments === actual.comments && expected.createdAt === actual.createdAt &&
   expected.updatedAt === actual.updatedAt &&
@@ -384,7 +428,8 @@ const issueAuthorityPermission = async (
   const logins = issueAuthorityLogins(issue, relations);
   if (logins === null) return "none";
   const permissions = await Promise.all(logins.map((login) => source.getRepositoryPermission(login)));
-  return permissions.every((permission) => permission === "write" || permission === "admin") ? "write" : "none";
+  if (!permissions.every((permission) => permission === "write" || permission === "admin")) return "none";
+  return permissions.every((permission) => permission === "admin") ? "admin" : "write";
 };
 
 export const renderGitHubIssueJobHint = (job: GitHubIssueJob | null): string =>
@@ -490,7 +535,7 @@ export const selectNextGitHubIssueJob = async (
         latestBodyEdit: null,
         latestTitleEdit: null,
       },
-      "write",
+      "admin",
       MAX_GITHUB_ISSUE_TIME_ESTIMATE_MINUTES,
     );
     if (!job) continue;
@@ -561,31 +606,34 @@ export const selectNextGitHubIssueJob = async (
 export const githubIssueJobTriageReport = (
   job: GitHubIssueJob,
   interval: SentinelInterval,
-): TriageReport => ({
-  schema_version: 1,
-  interval,
-  findings: [{
-    id: `github-issue:${job.number}:${job.fingerprint}`,
-    fingerprint: job.fingerprint,
-    severity: job.priority,
-    title: job.title,
-    affected_surface: job.files.join(", "),
-    evidence: [{
-      source: "github_issue",
-      reference: job.htmlUrl,
-      detail: job.body,
+): TriageReport => {
+  const scopeName = job.intake === "owner_backlog" ? "extracted source-file" : "declared Files";
+  return {
+    schema_version: 1,
+    interval,
+    findings: [{
+      id: `github-issue:${job.number}:${job.fingerprint}`,
+      fingerprint: job.fingerprint,
+      severity: job.priority,
+      title: job.title,
+      affected_surface: job.files.join(", "),
+      evidence: [{
+        source: "github_issue",
+        reference: job.htmlUrl,
+        detail: job.body,
+      }],
+      proposed_correction:
+        `Implement GitHub issue #${job.number} within its ${scopeName} scope and satisfy every acceptance item.`,
+      validation_requirements: [
+        ...job.acceptance,
+        `Change only ${scopeName} issue paths: ${job.files.join(", ")}`,
+        "Run repository formatting, lint, build, and affected tests",
+      ],
+      actionable: true,
     }],
-    proposed_correction:
-      `Implement GitHub issue #${job.number} within its declared Files scope and satisfy every Acceptance item.`,
-    validation_requirements: [
-      ...job.acceptance,
-      `Change only declared issue files: ${job.files.join(", ")}`,
-      "Run repository formatting, lint, build, and affected tests",
-    ],
-    actionable: true,
-  }],
-  no_findings_reason: null,
-});
+    no_findings_reason: null,
+  };
+};
 
 export const blockingIssueReviewFindings = (
   report: NativeReviewReport,

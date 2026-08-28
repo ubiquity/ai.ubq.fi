@@ -1114,6 +1114,11 @@ const githubIssueBody = (files = ["src/http.ts", "tests/static-assets.test.ts"])
     files.map((path) => `- ${path}`).join("\n")
   }\n`;
 
+const ownerBacklogIssueBody = (files = ["src/paid_fallback_ledger.ts"]): string =>
+  `## Context\nThe bounded owner backlog needs a repository repair in ${
+    files.map((path) => `\`${path}\``).join(", ")
+  }.\n\n## Gap\nThe current implementation does not complete the requested maintenance.\n\n## Proposed\nImplement the owner-authored maintenance proposal within the cited source-file scope.\n\n## References\n- Existing owner backlog.\n`;
+
 const sentinelGitHubIssue = (overrides: Partial<GitHubIssue> = {}): GitHubIssue => ({
   id: 10_113,
   nodeId: "I_kwDOIssue113",
@@ -1198,6 +1203,14 @@ Deno.test("GitHub issue jobs require a small trusted unclaimed repository-only s
   ) assert.equal(await createGitHubIssueJob("ubiquity/ai.ubq.fi", issue, noIssueRelations, "admin"), null);
   assert.ok(await createGitHubIssueJob("ubiquity/ai.ubq.fi", sentinelGitHubIssue(), noIssueRelations, "write"));
   assert.ok(await createGitHubIssueJob("ubiquity/ai.ubq.fi", sentinelGitHubIssue(), noIssueRelations, "admin"));
+  const declared = await createGitHubIssueJob(
+    "ubiquity/ai.ubq.fi",
+    sentinelGitHubIssue(),
+    noIssueRelations,
+    "admin",
+  );
+  assert.equal(declared?.intake, "declared");
+  assert.equal(declared?.fingerprint, "19e665e4ca76e2994ecf0e0377e274c9fed39dd4b911132c9ca4fc3055687069");
   const commented = await createGitHubIssueJob(
     "ubiquity/ai.ubq.fi",
     sentinelGitHubIssue({ comments: 3 }),
@@ -1246,6 +1259,55 @@ Deno.test("GitHub issue jobs require a small trusted unclaimed repository-only s
       parentIssueNumber: 1,
     }, "admin"),
     null,
+  );
+});
+
+Deno.test("unlabelled administrator backlog proposals use a bounded source-only fallback", async () => {
+  const issue = sentinelGitHubIssue({
+    number: 136,
+    id: 10_136,
+    nodeId: "I_kwDOIssue136",
+    title: "Automate bounded owner backlog maintenance",
+    body: ownerBacklogIssueBody(["src/paid_fallback_ledger.ts", "src/quota_projection.ts"]),
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/136",
+    labels: [],
+  });
+  assert.equal(await createGitHubIssueJob("ubiquity/ai.ubq.fi", issue, noIssueRelations, "write"), null);
+  const selected = await createGitHubIssueJob("ubiquity/ai.ubq.fi", issue, noIssueRelations, "admin");
+  assert.ok(selected);
+  assert.equal(selected.intake, "owner_backlog");
+  assert.equal(selected.priority, "P3");
+  assert.equal(selected.priorityLabel, "Priority: 2 (Medium)");
+  assert.equal(selected.timeLabel, "Time: <2 Hours");
+  assert.deepEqual(selected.files, ["src/paid_fallback_ledger.ts", "src/quota_projection.ts"]);
+  assert.deepEqual(selected.acceptance, [
+    "Implement the owner-authored proposal within the extracted source-file scope.",
+  ]);
+  assert.equal(
+    await createGitHubIssueJob(
+      "ubiquity/ai.ubq.fi",
+      { ...issue, labels: ["Priority: 2 (Medium)"] },
+      noIssueRelations,
+      "admin",
+    ),
+    null,
+  );
+  assert.equal(
+    await createGitHubIssueJob(
+      "ubiquity/ai.ubq.fi",
+      { ...issue, body: ownerBacklogIssueBody(["scripts/sentinel/main.ts"]) },
+      noIssueRelations,
+      "admin",
+    ),
+    null,
+  );
+  assert.equal(
+    (await selectNextGitHubIssueJob(
+      githubIssueSource([issue]),
+      "ubiquity/ai.ubq.fi",
+      renderGitHubIssueJobLedger([]),
+    ))?.number,
+    issue.number,
   );
 });
 
