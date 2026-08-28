@@ -1059,12 +1059,19 @@ export const isSentinelArtifactRecoveryEligible = (
 export const legacyArtifactNeedsManualDisposition = (
   files: readonly SentinelArtifactFile[],
   workflowRun?: Readonly<Pick<GitHubWorkflowRun, "status" | "conclusion">>,
-): boolean =>
-  files.filter((file) => CANDIDATE_MANIFEST.test(file.path)).length === 1 &&
-  !terminalArtifactRecord(files) &&
-  workflowRun?.status === "completed" &&
-  typeof workflowRun.conclusion === "string" &&
-  INCOMPLETE_FAILURE_MARKERS.has(workflowRun.conclusion);
+): boolean => {
+  const cycle = parseArtifactJson(files, "reports/cycle.json");
+  const status = typeof cycle?.status === "string" ? cycle.status : null;
+  const ciphertextProvesFailure = status !== null && INCOMPLETE_FAILURE_STATUSES.has(status) ||
+    explicitIncompleteFailureEvidence(parseArtifactJson(files, "reports/failure.json"));
+  const owningRunProvesFailure = workflowRun?.status === "completed" &&
+    typeof workflowRun.conclusion === "string" &&
+    INCOMPLETE_FAILURE_MARKERS.has(workflowRun.conclusion);
+  return files.some((file) => file.path.startsWith("reports/")) &&
+    !terminalArtifactRecord(files) &&
+    (status === null || !TERMINAL_CYCLE_STATUSES.has(status)) &&
+    (ciphertextProvesFailure || owningRunProvesFailure);
+};
 
 const textField = (value: unknown, maximumBytes = 512): string | null =>
   typeof value === "string" && value.length > 0 && new TextEncoder().encode(value).byteLength <= maximumBytes &&
@@ -1209,10 +1216,15 @@ const workflowRunForArtifact = async (
   github: GitHubActionsClient,
 ): Promise<Readonly<Pick<GitHubWorkflowRun, "status" | "conclusion">> | undefined> => {
   const cycle = parseArtifactJson(files, "reports/cycle.json");
-  const cycleRunId = typeof cycle?.run_id === "string" && /^[1-9][0-9]*$/u.test(cycle.run_id)
-    ? Number(cycle.run_id)
-    : null;
-  const runId = cycleRunId ?? artifact.workflowRunId;
+  const status = typeof cycle?.status === "string" ? cycle.status : null;
+  if (
+    status !== null && INCOMPLETE_FAILURE_STATUSES.has(status) ||
+    explicitIncompleteFailureEvidence(parseArtifactJson(files, "reports/failure.json")) ||
+    cycle !== null && terminalRecordState(cycle) || terminalArtifactRecord(files)
+  ) {
+    return undefined;
+  }
+  const runId = artifact.workflowRunId;
   if (!positiveSafeInteger(runId)) return undefined;
   const run = await github.getWorkflowRun(runId);
   return { status: run.status, conclusion: run.conclusion };
@@ -1335,21 +1347,28 @@ export const recoverSentinelArtifactsInActions = async (
         const workflowRun = await workflowRunForArtifact(decrypted, artifact, github);
         const artifactRecord = recordFromArtifact(decrypted, artifact, encryptedDigest, workflowRun);
         if (!artifactRecord) {
-          const legacyRecord = (
+          let legacyRecord = (
               isSentinelArtifactRecoveryEligible(decrypted, workflowRun) ||
               legacyArtifactNeedsManualDisposition(decrypted, workflowRun)
             )
             ? manualRecoveryRecordForLegacyArtifact(input.repository, artifact, encryptedDigest)
             : null;
           if (legacyRecord) {
-            recoverySnapshot = await writeGitHubSentinelRecoveryLedger({
-              token: input.token,
-              repository: input.repository,
-              fetcher: stateFetcher,
-              snapshot: recoverySnapshot,
-              ledger: upsertSentinelRecoveryRecord(recoverySnapshot.ledger, legacyRecord, null),
-              message: `chore(sentinel): classify legacy artifact ${artifact.id}`,
-            });
+            const existingLegacyRecord = recoverySnapshot.ledger.records.find((candidate) =>
+              sentinelRecoveryIdentityKey(candidate.identity) === sentinelRecoveryIdentityKey(legacyRecord!.identity)
+            ) ?? null;
+            if (existingLegacyRecord) {
+              legacyRecord = existingLegacyRecord;
+            } else {
+              recoverySnapshot = await writeGitHubSentinelRecoveryLedger({
+                token: input.token,
+                repository: input.repository,
+                fetcher: stateFetcher,
+                snapshot: recoverySnapshot,
+                ledger: upsertSentinelRecoveryRecord(recoverySnapshot.ledger, legacyRecord, null),
+                message: `chore(sentinel): classify legacy artifact ${artifact.id}`,
+              });
+            }
           }
           results.push({
             schema_version: SENTINEL_ARTIFACT_RECOVERY_SCHEMA_VERSION,
