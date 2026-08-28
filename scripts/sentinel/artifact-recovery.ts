@@ -1,5 +1,5 @@
 import { decodeSentinelArtifactKey, decryptSentinelArtifact, type SentinelArtifactFile } from "./artifact-crypto.ts";
-import { GitHubActionsClient, type GitHubArtifact } from "./github.ts";
+import { GitHubActionsClient, type GitHubArtifact, type GitHubWorkflowRun } from "./github.ts";
 import {
   assertSentinelRecoveryTransition,
   parseSentinelRecoveryRecord,
@@ -24,6 +24,36 @@ const MAX_ARTIFACT_ZIP_BYTES = 256 * 1024 * 1024;
 const ZERO_SHA = "0".repeat(40);
 const FIXED_AUTHOR_NAME = "Provider Sentinel Recovery";
 const FIXED_AUTHOR_EMAIL = "sentinel-recovery@ubiquity.invalid";
+const TERMINAL_RECOVERY_DISPOSITIONS = new Set([
+  "delivered",
+  "rejected",
+  "manual_required",
+  "resolved",
+  "success",
+  "successful",
+]);
+const TERMINAL_CYCLE_STATUSES = new Set([
+  "no_change",
+  "observed",
+  "preview_complete",
+  "preview_rolled_back",
+  "kept",
+  "rolled_back",
+]);
+const INCOMPLETE_FAILURE_STATUSES = new Set(["failed", "cancelled", "canceled", "timed_out", "timed-out"]);
+const TERMINAL_RECORD_REPORT_PATH =
+  /^reports\/(?:github-issue-disposition|review-backlog-disposition|recovery(?:-record)?|sentinel-recovery(?:-record)?)\.json$/u;
+const TERMINAL_OUTCOME_REPORT_PATH = "reports/github-issue-production-outcome.json";
+const MANUAL_CHECKPOINT_REPORT_PATH = "reports/github-issue-manual-checkpoint.json";
+const INCOMPLETE_FAILURE_MARKERS = new Set([
+  "failure",
+  "cancelled",
+  "canceled",
+  "timed_out",
+  "timed-out",
+  "timeout",
+  "invocation_timeout",
+]);
 
 export const SENTINEL_ARTIFACT_RECOVERY_SCHEMA_VERSION = 1 as const;
 
@@ -963,6 +993,66 @@ const parseArtifactJson = (files: readonly SentinelArtifactFile[], path: string)
   }
 };
 
+const terminalRecordState = (value: JsonRecord): boolean =>
+  [value.phase, value.disposition, value.status].some((state) =>
+    typeof state === "string" && TERMINAL_RECOVERY_DISPOSITIONS.has(state)
+  );
+
+const explicitIncompleteFailureEvidence = (value: JsonRecord | null): boolean => {
+  if (!value) return false;
+  if (value.codex_timed_out === true) return true;
+  return [
+    value.codex_failure,
+    value.failure,
+    value.reason,
+    value.status,
+    value.conclusion,
+    value.workflow_conclusion,
+    value.outcome,
+  ].some((marker) => typeof marker === "string" && INCOMPLETE_FAILURE_MARKERS.has(marker));
+};
+
+const terminalArtifactRecord = (files: readonly SentinelArtifactFile[]): boolean => {
+  const reports = files.filter((file) => TERMINAL_RECORD_REPORT_PATH.test(file.path));
+  for (const report of reports) {
+    const value = parseArtifactJson(files, report.path);
+    // A malformed terminal-state report is not permission to reconstruct a
+    // candidate. Keep the artifact owner-visible without mutating Git.
+    if (value === null || terminalRecordState(value)) return true;
+  }
+  const outcomeFile = files.find((file) => file.path === TERMINAL_OUTCOME_REPORT_PATH);
+  // Any production-outcome report means the candidate reached a terminal
+  // runtime decision. Unknown or malformed values are not safe to replay.
+  if (outcomeFile) return true;
+  // Native review exhaustion already has a human checkpoint. It is terminal
+  // for this recovery job even when a failed preservation report is present.
+  const manualCheckpoint = files.find((file) => file.path === MANUAL_CHECKPOINT_REPORT_PATH);
+  return manualCheckpoint !== undefined;
+};
+
+/**
+ * Return true only for an encrypted artifact that proves it contains an
+ * incomplete failed, cancelled, or timed-out candidate. Terminal cycle and
+ * delivery records are deliberately fail-closed before any Git mutation.
+ */
+export const isSentinelArtifactRecoveryEligible = (
+  files: readonly SentinelArtifactFile[],
+  workflowRun?: Readonly<Pick<GitHubWorkflowRun, "status" | "conclusion">>,
+): boolean => {
+  const candidateManifests = files.filter((file) => CANDIDATE_MANIFEST.test(file.path));
+  if (candidateManifests.length !== 1) return false;
+  const cycle = parseArtifactJson(files, "reports/cycle.json");
+  if (!cycle || cycle.schema_version !== 1 || terminalRecordState(cycle) || terminalArtifactRecord(files)) return false;
+  const status = typeof cycle.status === "string" ? cycle.status : null;
+  if (!status || TERMINAL_CYCLE_STATUSES.has(status)) return false;
+  if (INCOMPLETE_FAILURE_STATUSES.has(status)) return true;
+  if (status !== "running") return false;
+  return explicitIncompleteFailureEvidence(parseArtifactJson(files, "reports/failure.json")) ||
+    workflowRun?.status === "completed" &&
+      typeof workflowRun.conclusion === "string" &&
+      INCOMPLETE_FAILURE_MARKERS.has(workflowRun.conclusion);
+};
+
 const textField = (value: unknown, maximumBytes = 512): string | null =>
   typeof value === "string" && value.length > 0 && new TextEncoder().encode(value).byteLength <= maximumBytes &&
     !containsAsciiControl(value)
@@ -973,7 +1063,9 @@ const recordFromArtifact = (
   files: readonly SentinelArtifactFile[],
   artifact: GitHubArtifact,
   encryptedDigest: string,
+  workflowRun?: Readonly<Pick<GitHubWorkflowRun, "status" | "conclusion">>,
 ): SentinelRecoveryRecordV1 | null => {
+  if (!isSentinelArtifactRecoveryEligible(files, workflowRun)) return null;
   const cycle = parseArtifactJson(files, "reports/cycle.json");
   if (!cycle || cycle.schema_version !== 1) return null;
   const runId = textField(cycle.run_id, 64);
@@ -1034,6 +1126,43 @@ const recordFromArtifact = (
     predecessor: null,
   });
   return record;
+};
+
+const artifactCreatedAtMs = (artifact: GitHubArtifact): number => {
+  const timestamp = Date.parse(artifact.createdAt);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+};
+
+/** Select the newest bounded set of Sentinel evidence artifacts. */
+export const selectSentinelRecoveryArtifacts = (
+  artifacts: readonly GitHubArtifact[],
+  maximum = MAX_RECOVERY_ARTIFACTS,
+): readonly GitHubArtifact[] => {
+  if (!positiveSafeInteger(maximum)) throw new Error("Sentinel recovery artifact bound is invalid");
+  return artifacts
+    .filter((artifact) => !artifact.expired && ARTIFACT_NAME.test(artifact.name))
+    .sort((left, right) => {
+      const createdAtDifference = artifactCreatedAtMs(right) - artifactCreatedAtMs(left);
+      return createdAtDifference !== 0 ? createdAtDifference : right.id - left.id;
+    })
+    .slice(0, maximum);
+};
+
+const workflowRunForArtifact = async (
+  files: readonly SentinelArtifactFile[],
+  github: GitHubActionsClient,
+): Promise<Readonly<Pick<GitHubWorkflowRun, "status" | "conclusion">> | undefined> => {
+  const cycle = parseArtifactJson(files, "reports/cycle.json");
+  if (
+    cycle?.status !== "running" || explicitIncompleteFailureEvidence(parseArtifactJson(files, "reports/failure.json"))
+  ) {
+    return undefined;
+  }
+  if (typeof cycle.run_id !== "string" || !/^[1-9][0-9]*$/u.test(cycle.run_id)) return undefined;
+  const runId = Number(cycle.run_id);
+  if (!positiveSafeInteger(runId)) return undefined;
+  const run = await github.getWorkflowRun(runId);
+  return { status: run.status, conclusion: run.conclusion };
 };
 
 const unzipEnvelope = async (zip: Uint8Array, privateRoot: string): Promise<Uint8Array<ArrayBuffer>> => {
@@ -1127,10 +1256,9 @@ export const recoverSentinelArtifactsInActions = async (
       token: input.token,
       fetcher: input.fetcher,
     });
-    const artifacts = (await github.listRepositoryArtifacts({ createdAfterMs: Date.now() - 90 * 24 * 60 * 60 * 1_000 }))
-      .filter((artifact) => !artifact.expired && ARTIFACT_NAME.test(artifact.name))
-      .sort((left, right) => left.id - right.id)
-      .slice(0, MAX_RECOVERY_ARTIFACTS);
+    const artifacts = selectSentinelRecoveryArtifacts(
+      await github.listRepositoryArtifacts({ createdAfterMs: Date.now() - 90 * 24 * 60 * 60 * 1_000 }),
+    );
     const results: SentinelArtifactRecoveryResult[] = [];
     privateRoot = await Deno.makeTempDir({ prefix: "sentinel-artifact-recovery-private-" });
     for (const artifact of artifacts) {
@@ -1145,7 +1273,8 @@ export const recoverSentinelArtifactsInActions = async (
         encrypted = await unzipEnvelope(envelopeZip, privateRoot);
         encryptedDigest = await artifactDigest(encrypted);
         decrypted = await decryptSentinelArtifact(encrypted, keyBytes);
-        const record = recordFromArtifact(decrypted, artifact, encryptedDigest);
+        const workflowRun = await workflowRunForArtifact(decrypted, github);
+        const record = recordFromArtifact(decrypted, artifact, encryptedDigest, workflowRun);
         if (!record) {
           results.push({
             schema_version: SENTINEL_ARTIFACT_RECOVERY_SCHEMA_VERSION,

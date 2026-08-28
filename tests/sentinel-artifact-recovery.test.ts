@@ -3,9 +3,12 @@ import { encryptSentinelArtifact, type SentinelArtifactFile } from "../scripts/s
 import {
   buildSentinelRecoveryDraftPullRequest,
   createOrReuseSentinelRecoveryDraftPullRequest,
+  isSentinelArtifactRecoveryEligible,
   recoverSentinelArtifactCandidate,
+  selectSentinelRecoveryArtifacts,
   sentinelRecoveryCandidateBranch,
 } from "../scripts/sentinel/artifact-recovery.ts";
+import type { GitHubArtifact } from "../scripts/sentinel/github.ts";
 import type { SentinelRecoveryRecordV1 } from "../scripts/sentinel/recovery.ts";
 
 const permissions = await Promise.all([
@@ -120,6 +123,120 @@ const makeEncryptedFixture = async (
   for (const file of files) file.bytes.fill(0);
   return { encrypted, key, secret };
 };
+
+const makeArtifact = (id: number, createdAt: string, overrides: Partial<GitHubArtifact> = {}): GitHubArtifact => ({
+  id,
+  name: `sentinel-evidence-v1-${id}`,
+  sizeInBytes: 1,
+  expired: false,
+  createdAt,
+  expiresAt: null,
+  ...overrides,
+});
+
+const makeEligibilityEvidence = (
+  status: string,
+  extraReports: Readonly<Record<string, unknown>> = {},
+): SentinelArtifactFile[] => {
+  const baseSha = "a".repeat(40);
+  const files: SentinelArtifactFile[] = [
+    {
+      path: "reports/cycle.json",
+      bytes: textEncoder.encode(JSON.stringify({
+        schema_version: 1,
+        run_id: "33197180235",
+        status,
+        stage: status === "failed" ? "failed" : "complete",
+        started_at: "2026-08-28T18:00:00.000Z",
+        base_development_sha: baseSha,
+      })),
+    },
+    {
+      path: "reports/failed-implementation-candidate/manifest.json",
+      bytes: textEncoder.encode("{}"),
+    },
+  ];
+  for (const [path, report] of Object.entries(extraReports)) {
+    files.push({ path, bytes: textEncoder.encode(JSON.stringify(report)) });
+  }
+  return files;
+};
+
+Deno.test({
+  name: "artifact selection keeps the newest bounded evidence window",
+  ignore: unavailable,
+  fn() {
+    const artifacts = Array.from({ length: 65 }, (_, index) =>
+      makeArtifact(
+        10_000 + index,
+        new Date(Date.UTC(2026, 7, 28, 18, index)).toISOString(),
+      ));
+    artifacts.push(
+      makeArtifact(20_000, new Date(Date.UTC(2026, 7, 28, 19, 10)).toISOString(), { expired: true }),
+      makeArtifact(20_001, new Date(Date.UTC(2026, 7, 28, 19, 11)).toISOString(), {
+        name: "not-sentinel-evidence",
+      }),
+    );
+    const selected = selectSentinelRecoveryArtifacts(artifacts);
+    assert.equal(selected.length, 64);
+    assert.deepEqual(
+      selected.map((artifact) => artifact.id),
+      Array.from({ length: 64 }, (_, index) => 10_064 - index),
+    );
+  },
+});
+
+Deno.test({
+  name: "artifact recovery skips terminal and successful cycle evidence without eligibility",
+  ignore: unavailable,
+  fn() {
+    for (const status of ["no_change", "observed", "preview_complete", "preview_rolled_back", "kept", "rolled_back"]) {
+      const files = makeEligibilityEvidence(status);
+      try {
+        assert.equal(isSentinelArtifactRecoveryEligible(files), false, status);
+      } finally {
+        for (const file of files) file.bytes.fill(0);
+      }
+    }
+    for (
+      const [path, report] of [
+        ["reports/github-issue-disposition.json", { disposition: "manual_required" }],
+        ["reports/github-issue-disposition.json", { disposition: "rejected" }],
+        ["reports/github-issue-disposition.json", { disposition: "resolved" }],
+        ["reports/recovery-record.json", { phase: "delivered", disposition: "delivered" }],
+        ["reports/github-issue-production-outcome.json", { outcome: "kept" }],
+        ["reports/github-issue-manual-checkpoint.json", { phase: "native_review_exhausted" }],
+      ] as const
+    ) {
+      const files = makeEligibilityEvidence("failed", { [path]: report });
+      try {
+        assert.equal(isSentinelArtifactRecoveryEligible(files), false, path);
+      } finally {
+        for (const file of files) file.bytes.fill(0);
+      }
+    }
+    const failed = makeEligibilityEvidence("failed");
+    const runningWithoutFailure = makeEligibilityEvidence("running");
+    const timedOut = makeEligibilityEvidence("running", {
+      "reports/failure.json": { codex_timed_out: true },
+    });
+    try {
+      assert.equal(isSentinelArtifactRecoveryEligible(failed), true);
+      assert.equal(isSentinelArtifactRecoveryEligible(runningWithoutFailure), false);
+      assert.equal(isSentinelArtifactRecoveryEligible(timedOut), true);
+      assert.equal(
+        isSentinelArtifactRecoveryEligible(runningWithoutFailure, { status: "completed", conclusion: "failure" }),
+        true,
+      );
+      assert.equal(
+        isSentinelArtifactRecoveryEligible(runningWithoutFailure, { status: "completed", conclusion: "success" }),
+        false,
+      );
+    } finally {
+      for (const file of [...failed, ...runningWithoutFailure, ...timedOut]) file.bytes.fill(0);
+    }
+  },
+});
 
 Deno.test({
   name: "encrypted candidate recovery creates one deterministic quarantined commit and draft PR request",
