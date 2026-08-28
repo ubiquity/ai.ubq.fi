@@ -718,9 +718,26 @@ Deno.test("GitHub HTTP verification failures do not fall back to relay passkey c
     if (adminRejected.ok) assert.equal(adminRejected.method.kind, "passkey_session");
 
     githubResponse = new Response(null, { status: 200 });
-    const adminValid = await authenticateAdmin(await request("admin_valid"));
+    kv.resetCounts();
+    const adminValidRequest = await request("admin_valid");
+    const adminValid = await authenticateAdmin(adminValidRequest);
     assert.equal(adminValid.ok, false);
     if (!adminValid.ok) assert.equal(adminValid.response.status, 401);
+    assert.equal(
+      kv.readKeys.some((key) => key[0] === "uos_ai" && key[1] === "kernel_quota" && key[2] === "v2"),
+      false,
+      "Admin bearer validation must not read kernel quota policy",
+    );
+    assert.equal(
+      kv.writeKeys.some((key) => encodeKey(key) === encodeKey(["uos_ai", "kernel_policy_queue"])),
+      false,
+      "Admin bearer validation must not enqueue kernel policy work",
+    );
+
+    githubResponse = new Response(null, { status: 503 });
+    const uncachedClient = await authenticateClient(await request("admin_valid"));
+    assert.equal(uncachedClient.ok, false);
+    if (!uncachedClient.ok) assert.equal(uncachedClient.response.status, 502);
 
     const unavailableResponses = [
       new Response(null, { status: 408 }),
