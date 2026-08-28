@@ -349,6 +349,21 @@ Deno.test("authenticated terminal legacy evidence maps to a durable terminal rec
   }
 });
 
+Deno.test("unrecognized authenticated terminal legacy evidence fails closed to manual review", () => {
+  const files = [
+    {
+      path: "reports/github-issue-disposition.json",
+      bytes: new TextEncoder().encode('{"legacy_disposition":"unknown"}'),
+    },
+  ];
+  try {
+    assert.equal(legacyArtifactTerminalDisposition(files), null);
+    assert.equal(legacyArtifactNeedsManualDisposition(files), false);
+  } finally {
+    for (const file of files) file.bytes.fill(0);
+  }
+});
+
 Deno.test({
   name: "encrypted candidate recovery creates one deterministic quarantined commit and draft PR request",
   ignore: unavailable,

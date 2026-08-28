@@ -1386,7 +1386,8 @@ export const recoverSentinelArtifactsInActions = async (
         const workflowRun = await workflowRunForArtifact(decrypted, artifact, github);
         const artifactRecord = recordFromArtifact(decrypted, artifact, encryptedDigest, workflowRun);
         if (!artifactRecord) {
-          const terminalDisposition = legacyArtifactTerminalDisposition(decrypted);
+          const terminalDisposition = legacyArtifactTerminalDisposition(decrypted) ??
+            (terminalArtifactRecord(decrypted) ? "manual_required" : null);
           let legacyRecord = terminalDisposition !== null
             ? terminalRecoveryRecordForLegacyArtifact(
               input.repository,
