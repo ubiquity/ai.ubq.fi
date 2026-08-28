@@ -43,6 +43,31 @@ export type GitHubIssuePullRequestRecord = Readonly<{
   reused: boolean;
 }>;
 
+export type GitHubIssueRetryPendingReport = Readonly<{
+  schema_version: 1;
+  issue_id: number;
+  issue_number: number;
+  fingerprint: string;
+  phase: "failed_implementation";
+  implementation_status: "blocked";
+  disposition: "retry_pending";
+}>;
+
+export type SentinelRetryPendingCycleReport = Readonly<{
+  schema_version: 1;
+  run_id: string;
+  started_at: string;
+  base_development_sha: string;
+  candidate_sha: string;
+  temporary_branch: string;
+  status: "running" | "no_change";
+  stage: "pushing_retry_pending_github_issue" | "complete";
+  branch_disposition:
+    | "runner_local_pending_review"
+    | "development_docs_only_issue_retry_pending"
+    | "remote_retained_issue_retry_pending";
+}>;
+
 export type GitPushUpdate = Readonly<{
   localRef: string;
   localSha: string;
@@ -93,6 +118,69 @@ export const parseGitHubIssueSelectionReport = (value: unknown): GitHubIssueSele
     time_label: selection.time_label,
     files: [...selection.files] as string[],
     updated_at: selection.updated_at,
+  };
+};
+
+export const parseGitHubIssueRetryPendingReport = (
+  value: unknown,
+  expected: Readonly<{ issueId: number; issueNumber: number; fingerprint: string }>,
+): GitHubIssueRetryPendingReport => {
+  const report = record(value);
+  if (
+    !positiveInteger(expected.issueId) || !positiveInteger(expected.issueNumber) ||
+    !SHA256.test(expected.fingerprint) || report?.schema_version !== 1 ||
+    report.issue_id !== expected.issueId || report.issue_number !== expected.issueNumber ||
+    report.fingerprint !== expected.fingerprint || report.phase !== "failed_implementation" ||
+    report.implementation_status !== "blocked" || report.disposition !== "retry_pending"
+  ) {
+    throw new Error("Sentinel retry-pending disposition does not match the exact issue selection");
+  }
+  return {
+    schema_version: 1,
+    issue_id: expected.issueId,
+    issue_number: expected.issueNumber,
+    fingerprint: expected.fingerprint,
+    phase: "failed_implementation",
+    implementation_status: "blocked",
+    disposition: "retry_pending",
+  };
+};
+
+export const parseSentinelRetryPendingCycleReport = (
+  value: unknown,
+  expected: Readonly<{
+    runId: string;
+    stage: SentinelRetryPendingCycleReport["stage"];
+    status: SentinelRetryPendingCycleReport["status"];
+    branchDispositions: readonly SentinelRetryPendingCycleReport["branch_disposition"][];
+  }>,
+): SentinelRetryPendingCycleReport => {
+  const cycle = record(value);
+  if (
+    expected.runId.length === 0 || expected.runId.length > 200 ||
+    !cycle || cycle.schema_version !== 1 || cycle.run_id !== expected.runId ||
+    typeof cycle.started_at !== "string" || !isoTimestamp(cycle.started_at) ||
+    typeof cycle.base_development_sha !== "string" || !FULL_SHA.test(cycle.base_development_sha) ||
+    typeof cycle.candidate_sha !== "string" || !FULL_SHA.test(cycle.candidate_sha) ||
+    typeof cycle.temporary_branch !== "string" || !SAFE_BRANCH.test(cycle.temporary_branch) ||
+    cycle.status !== expected.status || cycle.stage !== expected.stage ||
+    expected.branchDispositions.length === 0 ||
+    !expected.branchDispositions.includes(
+      cycle.branch_disposition as SentinelRetryPendingCycleReport["branch_disposition"],
+    )
+  ) {
+    throw new Error("Sentinel retry-pending cycle report is invalid");
+  }
+  return {
+    schema_version: 1,
+    run_id: expected.runId,
+    started_at: cycle.started_at,
+    base_development_sha: cycle.base_development_sha,
+    candidate_sha: cycle.candidate_sha,
+    temporary_branch: cycle.temporary_branch,
+    status: expected.status,
+    stage: expected.stage,
+    branch_disposition: cycle.branch_disposition as SentinelRetryPendingCycleReport["branch_disposition"],
   };
 };
 

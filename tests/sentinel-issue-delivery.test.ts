@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   createGitHubIssueJob,
   type GitHubIssueJobSource,
+  parseGitHubIssueJobLedger,
   parseGitHubIssueTimeLabel,
   renderGitHubIssueJobLedger,
   selectNextGitHubIssueJob,
@@ -25,6 +26,7 @@ import {
   closeIssueAfterCompletionEvidenceRevalidation,
   completionEvidenceSnapshotMatches,
   mergeDeliveryPullRequest,
+  validateRetryPendingIssueReconciliation,
 } from "../scripts/sentinel/issue-delivery-reconcile.ts";
 import type { GitHubIssueComment } from "../scripts/sentinel/github.ts";
 
@@ -98,6 +100,42 @@ const pullRequest = parseGitHubIssuePullRequestRecord({
   reused: false,
 });
 
+const retryPendingDisposition = {
+  schema_version: 1,
+  issue_id: selection.issue_id,
+  issue_number: selection.issue_number,
+  fingerprint: selection.fingerprint,
+  phase: "failed_implementation",
+  implementation_status: "blocked",
+  disposition: "retry_pending",
+};
+
+const retryPendingCycle = {
+  schema_version: 1,
+  run_id: "123456789",
+  started_at: "2026-08-27T23:00:00Z",
+  base_development_sha: "d".repeat(40),
+  candidate_sha: "e".repeat(40),
+  temporary_branch: "sentinel/candidate-123456789",
+  status: "no_change",
+  stage: "complete",
+  branch_disposition: "development_docs_only_issue_retry_pending",
+};
+
+const retryPendingLedger = renderGitHubIssueJobLedger([{
+  issueId: selection.issue_id,
+  nodeId: "I_kwDOQoe6nc8AAAABN6XlfA",
+  number: selection.issue_number,
+  fingerprint: selection.fingerprint,
+  bodySha256: selection.body_sha256,
+  comments: selection.comments,
+  sourceUpdatedAt: selection.updated_at,
+  recordedAt: "2026-08-27T23:20:00Z",
+  baseSha: retryPendingCycle.base_development_sha,
+  title: "Retry the bounded issue",
+  disposition: "retry_pending",
+}]);
+
 Deno.test("GitHub issue time labels accept deterministic estimates through one day", () => {
   assert.equal(parseGitHubIssueTimeLabel("Time: <15 Minutes"), 15);
   assert.equal(parseGitHubIssueTimeLabel("Time: <1 Hour"), 60);
@@ -150,6 +188,48 @@ Deno.test("the production issue selector accepts a canonical estimate through on
     renderGitHubIssueJobLedger([]),
   );
   assert.equal(selected?.timeLabel, "Time: <1 Day");
+});
+
+Deno.test("retry-pending reconciliation validates a durable no-delivery receipt", () => {
+  const baseInput: Parameters<typeof validateRetryPendingIssueReconciliation>[0] = {
+    workflowRunId: "123456789",
+    workflowFailed: false,
+    selection,
+    cycleValue: retryPendingCycle,
+    dispositionValue: retryPendingDisposition,
+    pullRequestReportPresent: false,
+    productionOutcomeReportPresent: false,
+    developmentLedgerMarkdown: retryPendingLedger,
+  };
+  assert.doesNotThrow(() => validateRetryPendingIssueReconciliation(baseInput));
+
+  const invalidInputs: Array<
+    readonly [Partial<Parameters<typeof validateRetryPendingIssueReconciliation>[0]>, RegExp]
+  > = [
+    [{ workflowFailed: true }, /cannot come from a failed Sentinel run/],
+    [{ pullRequestReportPresent: true }, /cannot contain delivery or production records/],
+    [{ productionOutcomeReportPresent: true }, /cannot contain delivery or production records/],
+    [{ dispositionValue: { ...retryPendingDisposition, issue_id: 999 } }, /exact issue selection/],
+    [{ dispositionValue: { ...retryPendingDisposition, phase: "initial_implementation" } }, /exact issue selection/],
+    [{ cycleValue: { ...retryPendingCycle, run_id: "987654321" } }, /cycle report is invalid/],
+    [{ cycleValue: { ...retryPendingCycle, stage: "pushing_retry_pending_github_issue" } }, /cycle report is invalid/],
+    [{ developmentLedgerMarkdown: renderGitHubIssueJobLedger([]) }, /exact durable ledger row/],
+    [{
+      developmentLedgerMarkdown: renderGitHubIssueJobLedger([{
+        ...parseGitHubIssueJobLedger(retryPendingLedger)[0]!,
+        baseSha: "c".repeat(40),
+      }]),
+    }, /exact durable ledger row/],
+    [{
+      developmentLedgerMarkdown: renderGitHubIssueJobLedger([{
+        ...parseGitHubIssueJobLedger(retryPendingLedger)[0]!,
+        disposition: "resolved",
+      }]),
+    }, /exact durable ledger row/],
+  ];
+  for (const [overrides, pattern] of invalidInputs) {
+    assert.throws(() => validateRetryPendingIssueReconciliation({ ...baseInput, ...overrides }), pattern);
+  }
 });
 
 Deno.test("durable completion evidence never closes a changed issue snapshot", async () => {

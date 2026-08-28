@@ -198,6 +198,18 @@ Deno.test({
       ]);
       const baseSha = await git(["rev-parse", "HEAD"]);
 
+      await Deno.writeTextFile(`${checkout}/committed-only.txt`, "committed candidate\n");
+      await git(["add", "committed-only.txt"]);
+      await git([
+        "-c",
+        "user.name=Sentinel Test",
+        "-c",
+        "user.email=sentinel@example.invalid",
+        "commit",
+        "-m",
+        "candidate",
+      ]);
+
       await Deno.writeTextFile(`${checkout}/modified.txt`, "after\n");
       await Deno.remove(`${checkout}/deleted.txt`);
       await Deno.writeTextFile(`${checkout}/executable.sh`, "#!/bin/sh\nexit 7\n");
@@ -209,7 +221,7 @@ Deno.test({
       const snapshot = JSON.parse(await Deno.readTextFile(`${reportDirectory}/manifest.json`));
       assert.equal(snapshot.schema_version, 1);
       assert.equal(snapshot.base_sha, baseSha);
-      assert.equal(snapshot.file_count, 7);
+      assert.equal(snapshot.file_count, 8);
       const entries = new Map<string, Record<string, unknown>>(
         snapshot.files.map((entry: Record<string, unknown>) => [String(entry.path), entry]),
       );
@@ -224,6 +236,8 @@ Deno.test({
       };
       assert.equal(new TextDecoder().decode(await payload("modified.txt")), "after\n");
       assert.equal(entries.get("modified.txt")!.source, "tracked");
+      assert.equal(new TextDecoder().decode(await payload("committed-only.txt")), "committed candidate\n");
+      assert.equal(entries.get("committed-only.txt")!.source, "tracked");
       assert.deepEqual(await payload("new.bin"), new Uint8Array([0, 1, 254, 255]));
       assert.equal(entries.get("new.bin")!.source, "untracked");
       assert.equal(entries.get("linked.txt")!.kind, "symlink");

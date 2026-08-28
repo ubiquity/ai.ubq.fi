@@ -393,6 +393,8 @@ Deno.test({
     assert(!watchdogExists, "The resident watchdog workflow must be removed");
     const workflow = await Deno.readTextFile(".github/workflows/provider-sentinel.yml");
     const orchestrator = await Deno.readTextFile("scripts/sentinel/main.ts");
+    const issuePushGate = await Deno.readTextFile("scripts/sentinel/issue-pr-pre-push.ts");
+    const issueReconciliation = await Deno.readTextFile("scripts/sentinel/issue-delivery-reconcile.ts");
     const server = await Deno.readTextFile("serve.ts");
     const deploy = await Deno.readTextFile(".github/workflows/deno-deploy.yml");
     for (
@@ -476,20 +478,87 @@ Deno.test({
     for (const forbidden of ["pushTemporaryCandidate", "dispatchAndResolveRevision", "dispatchSerializedPromotion"]) {
       assert(!manualLane.includes(forbidden), `Manual backlog completion must not call ${forbidden}`);
     }
-    const issueManualStart = orchestrator.indexOf('if (selectedIssueState.disposition === "manual_required")');
-    const issueManualEnd = orchestrator.indexOf("if (!await hasChanges(checkout))", issueManualStart);
-    assert(
-      issueManualStart >= 0 && issueManualEnd > issueManualStart,
-      "Manual GitHub issue completion must have a bounded early-return lane",
+    const issueCompletionStart = orchestrator.indexOf(
+      "const completeNonRuntimeGitHubIssueDisposition = async",
     );
-    const issueManualLane = orchestrator.slice(issueManualStart, issueManualEnd);
+    const issueCompletionEnd = orchestrator.indexOf("let implementationResult", issueCompletionStart);
     assert(
-      issueManualLane.includes("HEAD:${SENTINEL_POLICY.developmentRef}"),
-      "Manual GitHub issue completion must persist its trusted ledger change",
+      issueCompletionStart >= 0 && issueCompletionEnd > issueCompletionStart,
+      "Non-runtime GitHub issue completion must use one bounded helper",
+    );
+    const issueCompletionLane = orchestrator.slice(issueCompletionStart, issueCompletionEnd);
+    assert(
+      issueCompletionLane.includes("HEAD:${SENTINEL_POLICY.developmentRef}"),
+      "Non-runtime GitHub issue completion must persist its trusted ledger change",
     );
     for (const forbidden of ["pushTemporaryCandidate", "dispatchAndResolveRevision", "dispatchSerializedPromotion"]) {
-      assert(!issueManualLane.includes(forbidden), `Manual GitHub issue completion must not call ${forbidden}`);
+      assert(
+        !issueCompletionLane.includes(forbidden),
+        `Non-runtime GitHub issue completion must not call ${forbidden}`,
+      );
     }
+    const issueDispositionStart = orchestrator.indexOf(
+      'if (selectedIssueState.disposition === "manual_required" || selectedIssueState.disposition === "retry_pending")',
+    );
+    const issueDispositionEnd = orchestrator.indexOf("if (!await hasChanges(checkout))", issueDispositionStart);
+    assert(
+      issueDispositionStart >= 0 && issueDispositionEnd > issueDispositionStart,
+      "Non-runtime GitHub issue completion must have a bounded early-return lane",
+    );
+    const issueDispositionLane = orchestrator.slice(issueDispositionStart, issueDispositionEnd);
+    assert(
+      issueDispositionLane.includes("await completeNonRuntimeGitHubIssueDisposition()") &&
+        issueDispositionLane.includes("return"),
+      "Non-runtime GitHub issue dispositions must complete and return before candidate delivery",
+    );
+    for (const forbidden of ["pushTemporaryCandidate", "dispatchAndResolveRevision", "dispatchSerializedPromotion"]) {
+      assert(
+        !issueDispositionLane.includes(forbidden),
+        `Non-runtime GitHub issue completion must not call ${forbidden}`,
+      );
+    }
+    const retryPushStart = issuePushGate.indexOf('if (dispositionRecord?.disposition === "retry_pending")');
+    const retryPushEnd = issuePushGate.indexOf(
+      "if (!cycle.temporary_branch || !cycle.temporary_branch.startsWith",
+      retryPushStart,
+    );
+    assert(
+      retryPushStart >= 0 && retryPushEnd > retryPushStart,
+      "Retry-pending issue pushes must return before ordinary candidate delivery",
+    );
+    const retryPushLane = issuePushGate.slice(retryPushStart, retryPushEnd);
+    assert(retryPushLane.includes("return null"), "Retry-pending issue pushes must have no delivery record");
+    for (
+      const forbidden of [
+        "ensureRemoteCandidateBranch",
+        "listPullRequests",
+        "githubRequest",
+        "ensureCandidateWorkflowValidation",
+      ]
+    ) {
+      assert(!retryPushLane.includes(forbidden), `Retry-pending issue push must not call ${forbidden}`);
+    }
+    const retryReconciliationStart = issueReconciliation.indexOf(
+      'if (dispositionRecord?.disposition === "retry_pending")',
+    );
+    const retryReconciliationEnd = issueReconciliation.indexOf(
+      "const pullValue = await optionalJson",
+      retryReconciliationStart,
+    );
+    assert(
+      retryReconciliationStart >= 0 && retryReconciliationEnd > retryReconciliationStart,
+      "Retry-pending reconciliation must finish before ordinary pull-request delivery",
+    );
+    const retryReconciliationLane = issueReconciliation.slice(
+      retryReconciliationStart,
+      retryReconciliationEnd,
+    );
+    assert(
+      retryReconciliationLane.includes("return") && !retryReconciliationLane.includes("closeIssue(") &&
+        !retryReconciliationLane.includes("mergeDeliveryPullRequest(") &&
+        !retryReconciliationLane.includes("upsertComment("),
+      "Retry-pending reconciliation must keep the issue open without a PR or evidence comment",
+    );
     assert(
       !workflow.includes("github_issue_title") && !workflow.includes("github_issue_body"),
       "Untrusted GitHub issue text must not enter workflow environment or summary fields",
@@ -520,6 +589,73 @@ Deno.test({
     assert(
       orchestrator.match(/runImplementationStageWithContinuation\(\{/gu)?.length === 4,
       "Every implementation, review-fix, validation-fix, and replay-evaluation stage must share continuation policy",
+    );
+    const retryDeferStart = orchestrator.indexOf("const deferGitHubIssueImplementationFailure = async");
+    const retryDeferEnd = orchestrator.indexOf(
+      "const completeNonRuntimeGitHubIssueDisposition = async",
+      retryDeferStart,
+    );
+    const retryDeferLane = orchestrator.slice(retryDeferStart, retryDeferEnd);
+    const preservePosition = retryDeferLane.indexOf("await preserveFailedImplementation");
+    const rollbackPosition = retryDeferLane.indexOf("await beforeDiscard?.()");
+    const discardPosition = retryDeferLane.indexOf("await discardCandidateChanges");
+    assert(
+      preservePosition >= 0 && rollbackPosition > preservePosition && discardPosition > rollbackPosition,
+      "Retry deferral must preserve the candidate, restore preview state, and only then discard local changes",
+    );
+    assert(
+      orchestrator.includes("captureFailedCandidateSnapshot(checkout, snapshotDirectory, baseSha)") &&
+        orchestrator.includes("let lastPushedCandidateSha: string | null = null") &&
+        retryDeferLane.includes("const retainedRemoteCandidateSha = lastPushedCandidateSha") &&
+        retryDeferLane.includes("head_sha: retainedRemoteCandidateSha") &&
+        !retryDeferLane.includes("head_sha: preInvocationSha"),
+      "Retry evidence must preserve the aggregate candidate and identify only the SHA retained remotely",
+    );
+    const candidatePushPosition = orchestrator.indexOf(
+      "await pushTemporaryCandidate(checkout, branch, gitEnvironment)",
+    );
+    const retainedShaPosition = orchestrator.indexOf(
+      "lastPushedCandidateSha = candidateSha",
+      candidatePushPosition,
+    );
+    assert(
+      candidatePushPosition >= 0 && retainedShaPosition > candidatePushPosition,
+      "A candidate SHA must become retained only after its remote push succeeds",
+    );
+    for (
+      const [startNeedle, endNeedle, stage] of [
+        ["const nativeReviewStage = `native_review_", "    const rawReview =", "native_review_"],
+        ["const stage = `implementation_review_fix_", "      continue;", "implementation_review_fix_"],
+        ["const stage = `implementation_validation_fix_", "      continue;", "implementation_validation_fix_"],
+        ["const replayEvaluationStage = `replay_evaluation_", "    break;", "replay_evaluation_"],
+      ] as const
+    ) {
+      const start = orchestrator.indexOf(startNeedle);
+      const end = orchestrator.indexOf(endNeedle, start);
+      const lane = orchestrator.slice(start, end);
+      assert(
+        start >= 0 && end > start && lane.includes("deferGitHubIssueImplementationFailure(") &&
+          lane.includes("restoreGitHubIssuePreviewBeforeRetry") &&
+          lane.includes("await completeNonRuntimeGitHubIssueDisposition()") && lane.includes("return;"),
+        `${stage} infrastructure failures must enter the durable GitHub issue retry path`,
+      );
+    }
+    const retryPreviewStart = orchestrator.indexOf("const restoreGitHubIssuePreviewBeforeRetry = async");
+    const retryPreviewEnd = orchestrator.indexOf("while (true)", retryPreviewStart);
+    const retryPreviewLane = orchestrator.slice(retryPreviewStart, retryPreviewEnd);
+    assert(
+      retryPreviewStart >= 0 && retryPreviewEnd > retryPreviewStart &&
+        retryPreviewLane.includes("issueRetryPreviewTarget") &&
+        retryPreviewLane.includes("issueRetryPreviewCandidate") &&
+        retryPreviewLane.includes("dispatchSerializedPromotion({") &&
+        retryPreviewLane.includes("await deno.verifyHealthIdentity(") &&
+        retryPreviewLane.includes("github-issue-retry-preview-rollback.json"),
+      "Every post-preview GitHub issue retry must restore and record the original preview identity",
+    );
+    assert(
+      orchestrator.includes("if (workSelection.issueJob && issueRetryPreviewTarget === null)") &&
+        orchestrator.includes("issueRetryPreviewCandidate = Object.freeze"),
+      "Multi-round GitHub issue work must retain its first preview target and latest promoted candidate",
     );
     assert(
       /- name: Install isolated-agent prerequisites\n\s+if: steps\.agent-work\.outputs\.needs_agent == 'true'/.test(

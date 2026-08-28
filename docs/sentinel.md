@@ -82,10 +82,13 @@ relationships, and every content authority's current repository permission again
 preview branch push, and before a development push. A changed, mismatched, or ineligible snapshot stops that attempt.
 The workflow binds both an exact selected snapshot and an empty selection from its prerequisite preflight to the later
 orchestrator; selection drift is deferred to another run. The selector inspects at most 32 ordered candidate
-relationships per run and fails closed at that bound. A selected item whose bounded implementation budget expires, or
-whose Codex accounts cannot be selected, is recorded as a terminal `manual_required` snapshot instead of being retired
-every hour: the candidate change set is preserved only as encrypted evidence and never enters `development`. Terminal
-`resolved` and `manual_required` snapshots are recorded in the protected `docs/sentinel-issue-jobs.md` ledger. The
+relationships per run and fails closed at that bound. When a selected GitHub issue has unavailable Codex accounts, a
+bounded implementation timeout, a failed Codex command, or a failed Codex runtime, Sentinel preserves the candidate as
+encrypted evidence and records a non-terminal `retry_pending` snapshot. The snapshot waits six hours before it is
+eligible again, while later eligible issues continue through the queue. A later successful attempt replaces the retry
+row with its terminal result. The same infrastructure failures on the native review backlog use its existing
+`manual_required` state, so one deterministic finding cannot consume every hourly cycle. Terminal `resolved` and
+semantically blocked `manual_required` snapshots are recorded in the protected `docs/sentinel-issue-jobs.md` ledger. The
 ledger retains the selected comment count so later comment-only timestamp changes do not create a new job identity.
 `resolved` means that the implementation has a matching scoped candidate diff; it is not production acceptance. The
 encrypted `github-issue-production-outcome.json` exists only after production has settled by keeping the candidate
