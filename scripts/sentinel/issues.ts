@@ -80,7 +80,7 @@ const ISSUE_QUEUE_RANK = new Map<GitHubIssueJob["priorityLabel"], number>([
 ]);
 export const MAX_GITHUB_ISSUE_TIME_ESTIMATE_MINUTES = 24 * 60;
 const DEFAULT_GITHUB_ISSUE_TIME_ESTIMATE_MINUTES = 2 * 60;
-const DEFAULT_OWNER_BACKLOG_PRIORITY_LABEL = "Priority: 2 (Medium)";
+const DEFAULT_OWNER_BACKLOG_PRIORITY_LABEL: GitHubIssueJob["priorityLabel"] = "Priority: 2 (Medium)";
 const DEFAULT_OWNER_BACKLOG_TIME_LABEL = "Time: <2 Hours";
 const TIME_LABEL_PATTERN = /^Time: <([1-9][0-9]*) (Minute|Minutes|Hour|Hours|Day|Days)$/u;
 const FILE_LOCATION_PATTERN = /^([A-Za-z0-9_.@/+\-]+)(?::\d+(?:-\d+)?(?::\d+)?)?$/u;
@@ -335,18 +335,25 @@ export const createGitHubIssueJob = async (
   ) return null;
   const parsedBody = parseGitHubIssueJobBody(issue.body);
   const parsedLabels = issueJobLabels(issue.labels, maximumTimeEstimateMinutes);
-  const ownerBacklogBody = authorityPermission === "admin" && issue.labels.length === 0
-    ? parseOwnerBacklogIssueBody(issue.body)
+  const selectedIntake = parsedBody !== null && parsedLabels !== null
+    ? { body: parsedBody, labels: parsedLabels, intake: "declared" as const }
+    : authorityPermission === "admin" && issue.labels.length === 0
+    ? (() => {
+      const ownerBacklogBody = parseOwnerBacklogIssueBody(issue.body);
+      return ownerBacklogBody === null ? null : {
+        body: ownerBacklogBody,
+        labels: {
+          labels: [] as const,
+          priority: "P3" as const,
+          priorityLabel: DEFAULT_OWNER_BACKLOG_PRIORITY_LABEL,
+          timeLabel: DEFAULT_OWNER_BACKLOG_TIME_LABEL,
+        },
+        intake: "owner_backlog" as const,
+      };
+    })()
     : null;
-  const effectiveBody = parsedBody ?? ownerBacklogBody;
-  const effectiveLabels = parsedLabels ?? (ownerBacklogBody === null ? null : {
-    labels: [] as const,
-    priority: "P3" as const,
-    priorityLabel: DEFAULT_OWNER_BACKLOG_PRIORITY_LABEL,
-    timeLabel: DEFAULT_OWNER_BACKLOG_TIME_LABEL,
-  });
-  if (!effectiveBody || !effectiveLabels) return null;
-  const intake = parsedBody !== null && parsedLabels !== null ? "declared" : "owner_backlog";
+  if (selectedIntake === null) return null;
+  const { body: effectiveBody, intake, labels: effectiveLabels } = selectedIntake;
   const bodySha256 = await sha256(issue.body);
   const fingerprint = await sha256(JSON.stringify({
     schema_version: 1,
@@ -524,6 +531,12 @@ export const selectNextGitHubIssueJob = async (
   const candidates: GitHubIssueJob[] = [];
   for (const candidate of listed) {
     if (candidate.comments > MAX_IGNORABLE_ISSUE_COMMENTS) continue;
+    let preliminaryPermission: GitHubRepositoryPermission = "write";
+    if (candidate.labels.length === 0 && parseOwnerBacklogIssueBody(candidate.body) !== null) {
+      // Do not let an untrusted unlabelled issue consume the bounded detail loop.
+      if (await source.getRepositoryPermission(candidate.authorLogin) !== "admin") continue;
+      preliminaryPermission = "admin";
+    }
     const job = await createGitHubIssueJob(
       repository,
       candidate,
@@ -535,7 +548,7 @@ export const selectNextGitHubIssueJob = async (
         latestBodyEdit: null,
         latestTitleEdit: null,
       },
-      "admin",
+      preliminaryPermission,
       MAX_GITHUB_ISSUE_TIME_ESTIMATE_MINUTES,
     );
     if (!job) continue;

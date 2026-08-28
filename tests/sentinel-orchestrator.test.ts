@@ -1283,6 +1283,19 @@ Deno.test("unlabelled administrator backlog proposals use a bounded source-only 
   assert.deepEqual(selected.acceptance, [
     "Implement the owner-authored proposal within the extracted source-file scope.",
   ]);
+  const mixedScope = await createGitHubIssueJob(
+    "ubiquity/ai.ubq.fi",
+    {
+      ...issue,
+      body: `${
+        ownerBacklogIssueBody(["src/paid_fallback_ledger.ts"])
+      }\nAcceptance:\n- Do not use the fallback source scope.\n\nFiles:\n- static/admin.js\n`,
+    },
+    noIssueRelations,
+    "admin",
+  );
+  assert.equal(mixedScope?.intake, "owner_backlog");
+  assert.deepEqual(mixedScope?.files, ["src/paid_fallback_ledger.ts"]);
   assert.equal(
     await createGitHubIssueJob(
       "ubiquity/ai.ubq.fi",
@@ -1309,6 +1322,53 @@ Deno.test("unlabelled administrator backlog proposals use a bounded source-only 
     ))?.number,
     issue.number,
   );
+});
+
+Deno.test("unlabelled fallback candidates require an administrator before the bounded detail loop", async () => {
+  const untrusted = Array.from({ length: MAX_ISSUE_JOB_DETAIL_COMMENT_INSPECTIONS }, (_, index) => {
+    const number = 200 + index;
+    return sentinelGitHubIssue({
+      id: 20_000 + number,
+      nodeId: `I_kwDOIssue${number}`,
+      number,
+      title: `Untrusted owner backlog ${number}`,
+      body: ownerBacklogIssueBody(),
+      htmlUrl: `https://github.com/ubiquity/ai.ubq.fi/issues/${number}`,
+      authorLogin: `write-user-${number}`,
+      labels: [],
+      createdAt: "2026-08-20T00:00:00Z",
+      updatedAt: "2026-08-20T00:01:00Z",
+    });
+  });
+  const selectedIssue = sentinelGitHubIssue({
+    id: 20_999,
+    nodeId: "I_kwDOIssue999",
+    number: 999,
+    title: "Administrator owner backlog",
+    body: ownerBacklogIssueBody(),
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/999",
+    labels: [],
+    createdAt: "2026-08-21T00:00:00Z",
+    updatedAt: "2026-08-21T00:01:00Z",
+  });
+  const issues = [...untrusted, selectedIssue];
+  const byNumber = new Map(issues.map((issue) => [issue.number, issue]));
+  let detailRequests = 0;
+  const source: GitHubIssueJobSource = {
+    listOpenIssues: () => Promise.resolve(issues),
+    getIssue: (number) => {
+      detailRequests += 1;
+      return Promise.resolve(byNumber.get(number)!);
+    },
+    listIssueComments: () => Promise.resolve([]),
+    getIssueRelations: () => Promise.resolve(noIssueRelations),
+    getRepositoryPermission: (login) => Promise.resolve(login === "0x4007" ? "admin" as const : "write" as const),
+  };
+  assert.equal(
+    (await selectNextGitHubIssueJob(source, "ubiquity/ai.ubq.fi", renderGitHubIssueJobLedger([])))?.number,
+    selectedIssue.number,
+  );
+  assert.equal(detailRequests, 1);
 });
 
 Deno.test("GitHub issue selection is deterministic, snapshot-bound, and becomes triage work", async () => {
