@@ -1,0 +1,63 @@
+name: Provider Sentinel Bootstrap
+run-name: Provider Sentinel Bootstrap ${{ github.event_name }} ${{ github.run_id }}
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: provider-sentinel-bootstrap-${{ github.repository }}
+  cancel-in-progress: false
+
+# Bootstrap has no repository, pull-request, issue, or deployment write path.
+# Recovery and promotion remain separate protected workflows.
+permissions:
+  contents: read
+
+jobs:
+  bootstrap:
+    if: github.ref == 'refs/heads/development'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out immutable execution SHA
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install pinned Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: 2.9.5
+
+      - name: Verify protected bootstrap module digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="071126ce9d86ae910186d835220b029c1316db61c35aecf8e57582512905cfa3"
+          actual="$(find scripts/sentinel/bootstrap -maxdepth 1 -type f -name '*.ts' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::Protected bootstrap module digest mismatch."
+            exit 1
+          fi
+          echo "Protected bootstrap module digest verified."
+
+      - name: Run protected bootstrap preflight
+        shell: bash
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          set -euo pipefail
+          deno run \
+            --cached-only \
+            --frozen \
+            --lock=deno.lock \
+            --allow-env=GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_RUN_ID,GITHUB_WORKFLOW_REF \
+            scripts/sentinel/bootstrap/main.ts
