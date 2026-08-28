@@ -20,6 +20,8 @@ export interface GitHubArtifact {
   readonly expired: boolean;
   readonly createdAt: string;
   readonly expiresAt: string | null;
+  readonly workflowRunId?: number;
+  readonly workflowRunHeadSha?: string;
 }
 
 export interface GitHubIssue {
@@ -183,6 +185,12 @@ const parseArtifact = (value: unknown): GitHubArtifact => {
     ? record.size_in_bytes
     : null;
   const createdAt = nonEmptyString(record.created_at);
+  const workflowRun = asRecord(record.workflow_run);
+  const workflowRunId = workflowRun === null ? null : integer(workflowRun.id);
+  const workflowRunHeadSha = workflowRun === null ? null : nonEmptyString(workflowRun.head_sha);
+  if (workflowRun !== null && (!workflowRunId || !workflowRunHeadSha || !FULL_GIT_SHA.test(workflowRunHeadSha))) {
+    throw new Error("GitHub returned an invalid artifact workflow run");
+  }
   if (!id || !name || sizeInBytes === null || !createdAt || typeof record.expired !== "boolean") {
     throw new Error("GitHub returned an incomplete artifact");
   }
@@ -193,6 +201,7 @@ const parseArtifact = (value: unknown): GitHubArtifact => {
     expired: record.expired,
     createdAt,
     expiresAt: nonEmptyString(record.expires_at),
+    ...(workflowRunId && workflowRunHeadSha ? { workflowRunId, workflowRunHeadSha } : {}),
   };
 };
 
