@@ -5,6 +5,7 @@ const PROTECTED_IMPLEMENTATION_PATHS = Object.freeze([
   "AGENTS.md",
   "deno.json",
   "docs/sentinel-issue-jobs.md",
+  "docs/sentinel-bootstrap-state.json",
   "docs/sentinel-recovery-records.json",
   "docs/sentinel-review-backlog.md",
   "scripts/sentinel/codex.ts",

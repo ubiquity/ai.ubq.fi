@@ -357,6 +357,7 @@ Deno.test("bootstrap policy rejects model substitution and bootstrap-path mutati
   assert.throws(() => assertImplementationSelection("other-model", "max"), /owner-controlled/);
   assert.throws(() => assertNoBootstrapMutation(["scripts/sentinel/bootstrap/controller.ts"]), /cannot modify/);
   assert.throws(() => assertNoBootstrapMutation(["scripts/sentinel/bootstrap"]), /cannot modify/);
+  assert.throws(() => assertNoBootstrapMutation(["docs/sentinel-bootstrap-state.json"]), /cannot modify/);
   assert.doesNotThrow(() => assertNoBootstrapMutation(["src/ordinary-file.ts"]));
 });
 
