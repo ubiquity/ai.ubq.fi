@@ -8,6 +8,7 @@ import {
   pushImmutableTemporaryCheckpoint,
   replayIndexArtifactName,
   requireResolvedReviewBacklogImplementation,
+  restoreIssueRetryAggregateIfEmpty,
   RetryCheckpointResumeError,
   retryCheckpointResumeFailureDisposition,
   writeReplayArtifactMetadata,
@@ -251,6 +252,65 @@ Deno.test({
           .split("\t")[0],
         safeCheckpointSha,
       );
+
+      await Deno.writeTextFile(`${checkout}/allowed.txt`, "base\n");
+      await git(checkout, ["add", "allowed.txt"]);
+      assert.deepEqual(
+        [...await aggregateCandidateChangedPaths(checkout, developmentSha)],
+        [],
+      );
+      assert.deepEqual(
+        await restoreIssueRetryAggregateIfEmpty(
+          checkout,
+          developmentSha,
+          resumedSha,
+          ["allowed.txt", "declared-but-absent.txt"],
+        ),
+        ["allowed.txt"],
+      );
+      assert.equal(await Deno.readTextFile(`${checkout}/allowed.txt`), "checkpoint\n");
+      assert.equal(await git(checkout, ["status", "--porcelain=v1"]), "");
+      assert.equal(
+        await pushImmutableTemporaryCheckpoint(checkout, "sentinel/candidate-101-2", {}, null),
+        resumedSha,
+      );
+      assert.equal(
+        (await git(checkout, ["ls-remote", "--heads", "origin", "refs/heads/sentinel/candidate-101-2"]))
+          .split("\t")[0],
+        resumedSha,
+      );
+
+      await git(checkout, ["switch", "-c", "sentinel/candidate-107", resumedSha]);
+      await git(checkout, ["reset", "--hard", developmentSha]);
+      await Deno.writeTextFile(`${checkout}/allowed.txt`, "allowed residue after history rewrite\n");
+      await assert.rejects(
+        () =>
+          restoreIssueRetryAggregateIfEmpty(
+            checkout,
+            developmentSha,
+            resumedSha,
+            ["allowed.txt"],
+          ),
+        /lost its pre-invocation commit/,
+      );
+      assert.equal(
+        await git(checkout, ["ls-remote", "--heads", "origin", "refs/heads/sentinel/candidate-107"]),
+        "",
+      );
+      await git(checkout, ["restore", "--source", developmentSha, "--staged", "--worktree", "--", "allowed.txt"]);
+
+      await git(checkout, ["switch", "development"]);
+      await git(checkout, ["switch", "-c", "sentinel/candidate-102"]);
+      assert.deepEqual(
+        await restoreIssueRetryAggregateIfEmpty(
+          checkout,
+          developmentSha,
+          developmentSha,
+          ["allowed.txt"],
+        ),
+        [],
+      );
+      assert.equal(await git(checkout, ["status", "--porcelain=v1"]), "");
 
       await git(checkout, ["switch", "development"]);
       await git(checkout, ["switch", "-c", "sentinel/candidate-104"]);

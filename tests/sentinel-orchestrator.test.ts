@@ -519,7 +519,7 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
     "retry_pending",
   );
   const normalizedRetryEntries = parseGitHubIssueJobLedger(normalizedRetryLedger);
-  assert.equal(normalizedRetryEntries[0]?.disposition, "manual_required");
+  assert.equal(normalizedRetryEntries[0]?.disposition, "checkpoint_retained");
   assert.deepEqual(normalizedRetryEntries[0]?.checkpoint, checkpoint);
   assert.equal(
     (
@@ -642,10 +642,47 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
   );
   const normalizedEntries = parseGitHubIssueJobLedger(commentNormalizedLedger);
   assert.equal(normalizedEntries.length, 2);
-  assert.equal(normalizedEntries[0]?.disposition, "manual_required");
+  assert.equal(normalizedEntries[0]?.disposition, "checkpoint_retained");
   assert.deepEqual(normalizedEntries[0]?.checkpoint, checkpoint);
   assert.equal(normalizedEntries[1]?.fingerprint, commentNormalizedJob.fingerprint);
   assert.equal(normalizedEntries[1]?.disposition, "resolved");
+  const normalizedResolvedLedger = applyGitHubIssueJobDisposition(
+    normalizedRetryLedger,
+    normalizedSelection!.job,
+    "e".repeat(40),
+    new Date(normalizedRetryAt.getTime() + GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS),
+    "resolved",
+  );
+  const rolledBackLedger = renderGitHubIssueJobLedger(
+    parseGitHubIssueJobLedger(normalizedResolvedLedger).filter((entry) =>
+      entry.fingerprint !== normalizedSelection!.job.fingerprint
+    ),
+  );
+  assert.equal(
+    (
+      await selectNextGitHubIssueJobSelection(
+        githubIssueSource([issueWithLaterInertComment, secondIssue]),
+        "ubiquity/ai.ubq.fi",
+        rolledBackLedger,
+        new Date(normalizedRetryAt.getTime() + 2 * GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS),
+      )
+    )?.job.fingerprint,
+    normalizedSelection!.job.fingerprint,
+  );
+  const genuineManualLedger = renderGitHubIssueJobLedger(
+    parseGitHubIssueJobLedger(rolledBackLedger).map((entry) => ({ ...entry, disposition: "manual_required" })),
+  );
+  assert.equal(
+    (
+      await selectNextGitHubIssueJobSelection(
+        githubIssueSource([issueWithLaterInertComment, secondIssue]),
+        "ubiquity/ai.ubq.fi",
+        genuineManualLedger,
+        new Date(normalizedRetryAt.getTime() + 2 * GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS),
+      )
+    )?.job.number,
+    secondIssue.number,
+  );
 });
 
 Deno.test("sentinel schedule windows overlap hourly and incident runs", () => {

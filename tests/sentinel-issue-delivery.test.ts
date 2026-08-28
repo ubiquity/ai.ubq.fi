@@ -227,6 +227,78 @@ Deno.test("retry-pending reconciliation validates a durable no-delivery receipt"
   };
   assert.doesNotThrow(() => validateRetryPendingIssueReconciliation(checkpointInput));
 
+  const priorRunCheckpoint = {
+    branch: "sentinel/candidate-123456700-1",
+    sha: "4".repeat(40),
+    base_sha: "c".repeat(40),
+  };
+  assert.doesNotThrow(() =>
+    validateRetryPendingIssueReconciliation({
+      ...baseInput,
+      cycleValue: {
+        ...retryPendingCycle,
+        branch_disposition: "remote_retained_issue_retry_pending",
+        retry_checkpoint: priorRunCheckpoint,
+      },
+      dispositionValue: {
+        ...retryPendingDisposition,
+        phase: "retry_checkpoint_resume_transient",
+        retry_checkpoint: priorRunCheckpoint,
+      },
+      developmentLedgerMarkdown: renderGitHubIssueJobLedger([{
+        ...parseGitHubIssueJobLedger(retryPendingLedger)[0]!,
+        baseSha: priorRunCheckpoint.base_sha,
+        checkpoint: {
+          branch: priorRunCheckpoint.branch,
+          sha: priorRunCheckpoint.sha,
+          baseSha: priorRunCheckpoint.base_sha,
+        },
+      }]),
+    })
+  );
+  assert.throws(
+    () =>
+      validateRetryPendingIssueReconciliation({
+        ...baseInput,
+        cycleValue: {
+          ...retryPendingCycle,
+          branch_disposition: "remote_retained_issue_retry_pending",
+          retry_checkpoint: priorRunCheckpoint,
+        },
+        dispositionValue: { ...retryPendingDisposition, retry_checkpoint: priorRunCheckpoint },
+        developmentLedgerMarkdown: renderGitHubIssueJobLedger([{
+          ...parseGitHubIssueJobLedger(retryPendingLedger)[0]!,
+          baseSha: priorRunCheckpoint.base_sha,
+          checkpoint: {
+            branch: priorRunCheckpoint.branch,
+            sha: priorRunCheckpoint.sha,
+            baseSha: priorRunCheckpoint.base_sha,
+          },
+        }]),
+      }),
+    /current attempt/,
+  );
+  assert.throws(
+    () =>
+      validateRetryPendingIssueReconciliation({
+        ...baseInput,
+        dispositionValue: { ...retryPendingDisposition, phase: "retry_checkpoint_resume_transient" },
+      }),
+    /prior attempt/,
+  );
+  assert.throws(
+    () =>
+      validateRetryPendingIssueReconciliation({
+        ...checkpointInput,
+        dispositionValue: {
+          ...retryPendingDisposition,
+          phase: "retry_checkpoint_resume_transient",
+          retry_checkpoint: checkpoint,
+        },
+      }),
+    /prior attempt/,
+  );
+
   const checkpointMismatchInputs: Array<
     readonly [Partial<Parameters<typeof validateRetryPendingIssueReconciliation>[0]>, RegExp]
   > = [
@@ -273,7 +345,7 @@ Deno.test("retry-pending reconciliation validates a durable no-delivery receipt"
         branch_disposition: "remote_retained_issue_retry_pending",
         retry_checkpoint: { ...checkpoint, base_sha: "3".repeat(40) },
       },
-    }, /checkpoint does not match its branch disposition/],
+    }, /exact durable ledger row/],
     [{
       cycleValue: {
         ...retryPendingCycle,

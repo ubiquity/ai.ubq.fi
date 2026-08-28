@@ -49,7 +49,7 @@ export type GitHubIssueRetryPendingReport = Readonly<{
   issue_id: number;
   issue_number: number;
   fingerprint: string;
-  phase: "failed_implementation";
+  phase: "failed_implementation" | "retry_checkpoint_resume_transient";
   implementation_status: "blocked";
   disposition: "retry_pending";
   retry_checkpoint: GitHubIssueRetryCheckpointReport | null;
@@ -152,7 +152,8 @@ export const parseGitHubIssueRetryPendingReport = (
     !positiveInteger(expected.issueId) || !positiveInteger(expected.issueNumber) ||
     !SHA256.test(expected.fingerprint) || report?.schema_version !== 1 ||
     report.issue_id !== expected.issueId || report.issue_number !== expected.issueNumber ||
-    report.fingerprint !== expected.fingerprint || report.phase !== "failed_implementation" ||
+    report.fingerprint !== expected.fingerprint ||
+    (report.phase !== "failed_implementation" && report.phase !== "retry_checkpoint_resume_transient") ||
     report.implementation_status !== "blocked" || report.disposition !== "retry_pending"
   ) {
     throw new Error("Sentinel retry-pending disposition does not match the exact issue selection");
@@ -163,7 +164,7 @@ export const parseGitHubIssueRetryPendingReport = (
     issue_id: expected.issueId,
     issue_number: expected.issueNumber,
     fingerprint: expected.fingerprint,
-    phase: "failed_implementation",
+    phase: report.phase,
     implementation_status: "blocked",
     disposition: "retry_pending",
     retry_checkpoint: retryCheckpoint,
@@ -197,10 +198,7 @@ export const parseSentinelRetryPendingCycleReport = (
   }
   const retryCheckpoint = parseRetryCheckpoint(cycle.retry_checkpoint);
   if (
-    (cycle.branch_disposition === "remote_retained_issue_retry_pending") !== (retryCheckpoint !== null) ||
-    (retryCheckpoint !== null &&
-      (retryCheckpoint.branch !== cycle.temporary_branch ||
-        retryCheckpoint.base_sha !== cycle.base_development_sha))
+    (cycle.branch_disposition === "remote_retained_issue_retry_pending") !== (retryCheckpoint !== null)
   ) throw new Error("Sentinel retry-pending cycle checkpoint does not match its branch disposition");
   return {
     schema_version: 1,
@@ -214,6 +212,28 @@ export const parseSentinelRetryPendingCycleReport = (
     branch_disposition: cycle.branch_disposition as SentinelRetryPendingCycleReport["branch_disposition"],
     retry_checkpoint: retryCheckpoint,
   };
+};
+
+export const validateRetryPendingCheckpointPhaseBinding = (
+  disposition: GitHubIssueRetryPendingReport,
+  cycle: SentinelRetryPendingCycleReport,
+): void => {
+  const checkpoint = disposition.retry_checkpoint;
+  if (disposition.phase === "failed_implementation") {
+    if (
+      checkpoint !== null &&
+      (checkpoint.branch !== cycle.temporary_branch || checkpoint.base_sha !== cycle.base_development_sha)
+    ) {
+      throw new Error("Sentinel failed implementation checkpoint is not bound to the current attempt");
+    }
+    return;
+  }
+  if (
+    checkpoint === null || cycle.branch_disposition !== "remote_retained_issue_retry_pending" ||
+    checkpoint.branch === cycle.temporary_branch
+  ) {
+    throw new Error("Sentinel transient retry checkpoint is not bound to a prior attempt");
+  }
 };
 
 export const parseSentinelCycleReport = (value: unknown): SentinelCycleReport => {

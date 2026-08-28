@@ -20,6 +20,7 @@ import {
   parseSentinelCycleReport,
   parseSentinelRetryPendingCycleReport,
   renderIssueDeliveryEvidence,
+  validateRetryPendingCheckpointPhaseBinding,
 } from "./issue-delivery.ts";
 
 const API_VERSION = "2022-11-28";
@@ -600,6 +601,7 @@ export const validateRetryPendingIssueReconciliation = (
   ) {
     throw new Error("Sentinel retry-pending reconciliation has no exact durable ledger row");
   }
+  validateRetryPendingCheckpointPhaseBinding(disposition, cycle);
 };
 
 export const reconcileGitHubIssueDelivery = async (

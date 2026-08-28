@@ -12,6 +12,7 @@ import {
   parseSentinelRetryPendingCycleReport,
   renderIssuePullRequestBody,
   selectDevelopmentPush,
+  validateRetryPendingCheckpointPhaseBinding,
 } from "./issue-delivery.ts";
 import { parseGitHubIssueJobLedger, renderGitHubIssueJobLedger } from "./issues.ts";
 import {
@@ -330,6 +331,7 @@ export const validateRetryPendingDevelopmentPush = (
   ) {
     throw new Error("Sentinel retry-pending push has no exact pending ledger row");
   }
+  validateRetryPendingCheckpointPhaseBinding(disposition, cycle);
 
   const priorPending = parentEntries.filter((entry) =>
     entry.issueId === input.selection.issue_id && entry.number === input.selection.issue_number &&
@@ -348,7 +350,7 @@ export const validateRetryPendingDevelopmentPush = (
   const pushedUnrelated = pushedEntries.filter((entry) => entry !== pushedMatches[0]);
   const retainedPriorCheckpoints = priorPending
     .filter((entry) => entry.fingerprint !== input.selection.fingerprint && entry.checkpoint !== null)
-    .map((entry) => ({ ...entry, disposition: "manual_required" as const }));
+    .map((entry) => ({ ...entry, disposition: "checkpoint_retained" as const }));
   const expectedPushedUnrelated = parseGitHubIssueJobLedger(
     renderGitHubIssueJobLedger([...parentUnrelated, ...retainedPriorCheckpoints]),
   );

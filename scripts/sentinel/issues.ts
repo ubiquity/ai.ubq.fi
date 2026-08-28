@@ -41,7 +41,11 @@ export type GitHubIssueJob = Readonly<{
   relations: GitHubIssueRelations;
 }>;
 
-export type GitHubIssueJobDisposition = "retry_pending" | "resolved" | "manual_required";
+export type GitHubIssueJobDisposition =
+  | "retry_pending"
+  | "checkpoint_retained"
+  | "resolved"
+  | "manual_required";
 
 export type GitHubIssueJobCheckpoint = Readonly<{
   branch: string;
@@ -655,9 +659,13 @@ export const selectNextGitHubIssueJobSelection = async (
     const issueEntries = ledger.filter((entry) =>
       entry.issueId === job.issueId && entry.nodeId === job.nodeId && entry.number === job.number
     );
-    const exactEntries = issueEntries.filter((entry) => entry.fingerprint === job.fingerprint);
+    const exactEntries = issueEntries.filter((entry) =>
+      entry.fingerprint === job.fingerprint && entry.disposition !== "checkpoint_retained"
+    );
     const activeRetryEntry = issueEntries.find((entry) => entry.disposition === "retry_pending");
-    const terminalEntries = issueEntries.filter((entry) => entry.disposition !== "retry_pending");
+    const terminalEntries = issueEntries.filter((entry) =>
+      entry.disposition === "resolved" || entry.disposition === "manual_required"
+    );
     // An active retry remains authoritative when it matches after inert-comment
     // normalization. If it does not match, older terminal snapshots must still
     // be checked so an issue cannot return to already-dispositioned content.
@@ -780,7 +788,10 @@ export const evaluateGitHubIssueJobImplementation = (
   status: "implemented" | "already_fixed" | "not_actionable" | "blocked",
   actualChangedPaths: readonly string[],
   reportedChangedPaths: readonly string[],
-): Readonly<{ disposition: GitHubIssueJobDisposition; continueToRuntimeValidation: boolean }> => {
+): Readonly<{
+  disposition: Exclude<GitHubIssueJobDisposition, "checkpoint_retained">;
+  continueToRuntimeValidation: boolean;
+}> => {
   const actual = sortedUnique(actualChangedPaths);
   const reported = sortedUnique(reportedChangedPaths);
   if (
@@ -869,10 +880,11 @@ export const renderGitHubIssueJobLedger = (entries: readonly GitHubIssueJobLedge
     "",
     "Sentinel results for immutable GitHub issue snapshots are tracked here. A retry-pending snapshot waits six hours before",
     "it is eligible again so later issues can advance. A retry checkpoint names an immutable remote candidate that Sentinel",
-    "may resume only for the exact unchanged snapshot. Terminal snapshots are delivered through exactly one pull request that",
-    "links the issue as evidence. After a verified production keep, Sentinel merges the delivery pull request and closes the",
-    "unchanged issue with supporting evidence; a pull request already carried by the development push is accepted after a",
-    "containment check. Manual-required, failed, and rolled-back results remain open.",
+    "may resume only for the exact unchanged snapshot. A superseded checkpoint remains auditable as nonblocking",
+    "checkpoint_retained evidence. Terminal snapshots are delivered through exactly one pull request that links the issue as",
+    "evidence. After a verified production keep, Sentinel merges the delivery pull request and closes the unchanged issue",
+    "with supporting evidence; a pull request already carried by the development push is accepted after a containment check.",
+    "Manual-required, failed, and rolled-back results remain open.",
     "",
     ...table,
     "",
@@ -927,7 +939,9 @@ export const parseGitHubIssueJobLedger = (markdown: string): GitHubIssueJobLedge
       (checkpoint !== null &&
         (!CHECKPOINT_BRANCH.test(checkpoint.branch) || !FULL_SHA.test(checkpoint.sha) || checkpoint.sha === baseSha)) ||
       title.trim().length === 0 || title.length > 512 ||
-      (disposition !== "retry_pending" && disposition !== "resolved" && disposition !== "manual_required") ||
+      (disposition !== "retry_pending" && disposition !== "checkpoint_retained" && disposition !== "resolved" &&
+        disposition !== "manual_required") ||
+      (disposition === "checkpoint_retained" && checkpoint === null) ||
       (disposition === "resolved" && checkpoint !== null) ||
       identities.has(identity)
     ) throw new Error("Sentinel issue-job ledger row is invalid");
@@ -999,7 +1013,10 @@ export const applyGitHubIssueJobDisposition = (
     entry.issueId === job.issueId && entry.nodeId === job.nodeId && entry.number === job.number &&
     entry.fingerprint === job.fingerprint
   );
-  if (exactExisting && exactExisting.disposition !== "retry_pending") {
+  if (
+    exactExisting && exactExisting.disposition !== "retry_pending" &&
+    exactExisting.disposition !== "checkpoint_retained"
+  ) {
     throw new Error("The selected GitHub issue snapshot already has a terminal Sentinel disposition");
   }
   const priorPending = entries.filter((entry) =>
@@ -1013,9 +1030,10 @@ export const applyGitHubIssueJobDisposition = (
   }
   const retainedPriorCheckpoints = priorPending
     .filter((entry) => entry.fingerprint !== job.fingerprint && entry.checkpoint !== null)
-    .map((entry) => ({ ...entry, disposition: "manual_required" as const }));
+    .map((entry) => ({ ...entry, disposition: "checkpoint_retained" as const }));
+  const replacedRetainedCheckpoint = exactExisting?.disposition === "checkpoint_retained" ? exactExisting : null;
   return renderGitHubIssueJobLedger([
-    ...entries.filter((entry) => !priorPending.includes(entry)),
+    ...entries.filter((entry) => !priorPending.includes(entry) && entry !== replacedRetainedCheckpoint),
     ...retainedPriorCheckpoints,
     nextEntry,
   ]);

@@ -1307,6 +1307,52 @@ export const aggregateCandidateChangedPaths = async (
   );
 };
 
+export const restoreIssueRetryAggregateIfEmpty = async (
+  checkout: string,
+  baseSha: string,
+  preInvocationSha: string,
+  issuePaths: readonly string[],
+): Promise<string[]> => {
+  ensureFullSha(baseSha, "Issue retry aggregate base SHA");
+  ensureFullSha(preInvocationSha, "Issue retry pre-invocation SHA");
+  const currentHead = ensureFullSha(await gitText(checkout, ["rev-parse", "HEAD"]), "Issue retry current SHA");
+  if (currentHead !== preInvocationSha) {
+    throw new Error("GitHub issue retry checkpoint lost its pre-invocation commit");
+  }
+  const excludedPaths: readonly string[] = [
+    SENTINEL_POLICY.paths.issueJobLedger,
+    SENTINEL_POLICY.paths.reviewBacklog,
+  ];
+  let paths = [...await aggregateCandidateChangedPaths(checkout, baseSha, excludedPaths)].sort();
+  if (paths.length !== 0 || preInvocationSha === baseSha) return paths;
+  const priorPaths = decodeGitPathList(
+    (await runTrustedGit({
+      args: [
+        "diff",
+        "--no-renames",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--name-only",
+        "-z",
+        baseSha,
+        preInvocationSha,
+        "--",
+      ],
+      cwd: checkout,
+    })).stdout,
+  ).filter((path) => !excludedPaths.includes(path)).sort();
+  if (priorPaths.some((path) => !issuePaths.includes(path))) {
+    throw new Error("GitHub issue retry checkpoint changed a path outside the declared Files scope");
+  }
+  if (priorPaths.length === 0) return paths;
+  await runTrustedGit({
+    args: ["restore", "--source", preInvocationSha, "--staged", "--worktree", "--", ...priorPaths],
+    cwd: checkout,
+  });
+  paths = [...await aggregateCandidateChangedPaths(checkout, baseSha, excludedPaths)].sort();
+  return paths;
+};
+
 export const captureFailedCandidateSnapshot = async (
   checkout: string,
   reportDirectory: string,
@@ -2815,8 +2861,10 @@ const run = async (): Promise<void> => {
   };
   const publishGitHubIssueRetryCheckpoint = async (
     stage: string,
+    preInvocationSha: string,
   ): Promise<GitHubIssueJobCheckpoint | null> => {
     if (!workSelection.issueJob) throw new Error("GitHub issue retry checkpoint is missing its selected issue");
+    await assertAgentDidNotCommitOrSwitch(checkout, preInvocationSha, branch, gitControlState);
     await assertImplementationAgentScope(checkout);
     await runTrustedGit({
       args: [
@@ -2831,10 +2879,13 @@ const run = async (): Promise<void> => {
       ],
       cwd: checkout,
     });
-    const paths = await selectedIssueAggregatePaths();
-    if (paths.length === 0) {
-      throw new Error("GitHub issue retry checkpoint has no aggregate implementation diff");
-    }
+    const paths = await restoreIssueRetryAggregateIfEmpty(
+      checkout,
+      baseSha,
+      preInvocationSha,
+      workSelection.issueJob.files,
+    );
+    if (paths.length === 0) return null;
     if (paths.some((path) => !workSelection.issueJob!.files.includes(path))) {
       throw new Error("GitHub issue retry checkpoint changed a path outside the declared Files scope");
     }
@@ -2854,6 +2905,10 @@ const run = async (): Promise<void> => {
       throw new Error("GitHub issue retry checkpoint changed scope while committing");
     }
     await assertGitHistoryExcludesValues({ cwd: checkout, sensitiveValues });
+    const checkpointIssueJob = await getCurrentGitHubIssueJob(github, repository, workSelection.issueJob.number);
+    if (!githubIssueJobsMatch(workSelection.issueJob, checkpointIssueJob)) {
+      throw new Error("The selected GitHub issue changed before retry checkpoint push");
+    }
     const pushedSha = await pushImmutableTemporaryCheckpoint(
       checkout,
       branch,
@@ -2882,7 +2937,7 @@ const run = async (): Promise<void> => {
       throw new Error("GitHub issue implementation failure is missing its selected issue");
     }
     await beforeDiscard?.();
-    const checkpoint = await publishGitHubIssueRetryCheckpoint(stage);
+    const checkpoint = await publishGitHubIssueRetryCheckpoint(stage, preInvocationSha);
     retryCheckpoint = checkpoint;
     await discardCandidateChanges(checkout, baseSha);
     selectedIssueState.disposition = "open";

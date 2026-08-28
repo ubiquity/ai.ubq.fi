@@ -604,7 +604,9 @@ Deno.test({
     const retryDeferLane = orchestrator.slice(retryDeferStart, retryDeferEnd);
     const preservePosition = retryDeferLane.indexOf("await preserveFailedImplementation");
     const rollbackPosition = retryDeferLane.indexOf("await beforeDiscard?.()");
-    const checkpointPosition = retryDeferLane.indexOf("await publishGitHubIssueRetryCheckpoint(stage)");
+    const checkpointPosition = retryDeferLane.indexOf(
+      "await publishGitHubIssueRetryCheckpoint(stage, preInvocationSha)",
+    );
     const checkpointStatePosition = retryDeferLane.indexOf("retryCheckpoint = checkpoint");
     const discardPosition = retryDeferLane.indexOf("await discardCandidateChanges");
     const dispositionPosition = retryDeferLane.indexOf("await writeSelectedIssueDisposition");
@@ -624,11 +626,15 @@ Deno.test({
       checkpointPublishStart,
     );
     const checkpointPublishLane = orchestrator.slice(checkpointPublishStart, checkpointPublishEnd);
+    const historyAssertionPosition = checkpointPublishLane.indexOf(
+      "await assertAgentDidNotCommitOrSwitch(checkout, preInvocationSha, branch, gitControlState)",
+    );
     const scopeValidationPosition = checkpointPublishLane.indexOf("await assertImplementationAgentScope(checkout)");
     const trustedRestorePosition = checkpointPublishLane.indexOf('"restore",');
     assert(
-      scopeValidationPosition >= 0 && trustedRestorePosition > scopeValidationPosition,
-      "Retry checkpoint scope validation must run before trusted ledger and backlog restoration",
+      historyAssertionPosition >= 0 && scopeValidationPosition > historyAssertionPosition &&
+        trustedRestorePosition > scopeValidationPosition,
+      "Retry checkpoint history and scope validation must run before trusted ledger and backlog restoration",
     );
     assert(
       orchestrator.includes("captureFailedCandidateSnapshot(checkout, snapshotDirectory, baseSha)") &&
@@ -652,10 +658,24 @@ Deno.test({
           checkpointPublishLane.indexOf("const pushedSha = await pushImmutableTemporaryCheckpoint"),
       "A retry checkpoint SHA must become retained only after its exact remote push succeeds",
     );
+    const issueRevalidationPosition = checkpointPublishLane.indexOf(
+      "const checkpointIssueJob = await getCurrentGitHubIssueJob",
+    );
+    const checkpointPushPosition = checkpointPublishLane.indexOf(
+      "const pushedSha = await pushImmutableTemporaryCheckpoint",
+    );
     assert(
-      checkpointPublishLane.includes("GitHub issue retry checkpoint has no aggregate implementation diff") &&
+      issueRevalidationPosition > checkpointPublishLane.indexOf("await assertGitHistoryExcludesValues") &&
+        checkpointPublishLane.indexOf("githubIssueJobsMatch(workSelection.issueJob, checkpointIssueJob)") >
+          issueRevalidationPosition &&
+        checkpointPushPosition > issueRevalidationPosition,
+      "Retry checkpoint publication must revalidate the exact GitHub issue immediately before the remote push",
+    );
+    assert(
+      checkpointPublishLane.includes("await restoreIssueRetryAggregateIfEmpty(") &&
+        checkpointPublishLane.includes("if (paths.length === 0) return null") &&
         !checkpointPublishLane.includes("if (paths.length === 0) return retryCheckpoint"),
-      "An empty resumed aggregate must fail closed instead of retaining a checkpoint from another candidate branch",
+      "A fresh empty attempt may cool down without a checkpoint, while a resumed aggregate is restored before push",
     );
     assert(
       orchestrator.includes("prepareResumedGitHubIssueCandidate({") &&
