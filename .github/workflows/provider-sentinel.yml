@@ -862,6 +862,7 @@ jobs:
               GITHUB_TOKEN="$token" \
               GITHUB_REPOSITORY="$repository" \
               GITHUB_RUN_ID="$run_id" \
+              GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
               GITHUB_SERVER_URL="https://github.com" \
               deno run \
                 --cached-only \
@@ -941,7 +942,7 @@ jobs:
             --cached-only \
             --frozen \
             --lock=deno.lock \
-            --allow-env=GITHUB_TOKEN,GITHUB_REPOSITORY,GITHUB_RUN_ID,GITHUB_SERVER_URL,SENTINEL_WORKFLOW_OUTCOME \
+            --allow-env=GITHUB_TOKEN,GITHUB_REPOSITORY,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_SERVER_URL,SENTINEL_WORKFLOW_OUTCOME \
             --allow-net=api.github.com \
             --allow-read=.sentinel/reports \
             --allow-write=.sentinel/reports \

@@ -4,14 +4,19 @@ import {
   type GitPushUpdate,
   isIssueDeliveryFailSafeRevert,
   issuePullRequestMarker,
+  parseGitHubIssueManualRequiredReport,
+  parseGitHubIssueManualRequiredRetainedCheckpointReport,
   parseGitHubIssuePullRequestRecord,
   parseGitHubIssueRetryPendingReport,
   parseGitHubIssueSelectionReport,
   parseGitPushUpdates,
   parseSentinelCycleReport,
+  parseSentinelManualRequiredCycleReport,
+  parseSentinelManualRequiredRetainedCheckpointCycleReport,
   parseSentinelRetryPendingCycleReport,
   renderIssuePullRequestBody,
   selectDevelopmentPush,
+  selectManualCheckpointPush,
   selectRetryCheckpointPush,
   validateRetryPendingCheckpointPhaseBinding,
 } from "./issue-delivery.ts";
@@ -26,6 +31,7 @@ import { SENTINEL_POLICY } from "./policy.ts";
 
 const API_VERSION = "2022-11-28";
 const FULL_SHA = /^[0-9a-f]{40}$/u;
+const ZERO_SHA = "0".repeat(40);
 const SAFE_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/u;
 const SAFE_REVISION = /^[A-Za-z0-9_-]{1,200}$/u;
 const SENTINEL_DEPLOYMENT_CORRELATION =
@@ -247,7 +253,7 @@ export const parseIssueCandidateDisposition = (
   return report.disposition;
 };
 
-const retryLedgerEntryMatchesSelection = (
+const ledgerEntryMatchesSelection = (
   entry: ReturnType<typeof parseGitHubIssueJobLedger>[number],
   selection: GitHubIssueSelectionReport,
 ): boolean =>
@@ -255,20 +261,89 @@ const retryLedgerEntryMatchesSelection = (
   entry.fingerprint === selection.fingerprint && entry.bodySha256 === selection.body_sha256 &&
   entry.comments === selection.comments && entry.sourceUpdatedAt === selection.updated_at;
 
-export const validateRetryPendingDevelopmentPush = (
+/**
+ * All non-delivery issue outcomes can change only the selected ledger row.
+ * Their report and cycle parsers remain phase-specific; this helper shares
+ * only the deterministic ledger replacement rule.
+ */
+const validateLedgerOnlyIssueDisposition = (
   input: Readonly<{
-    workflowRunId: string;
-    updates: readonly GitPushUpdate[];
-    atomicPush: boolean;
-    checkpointLeaseSha: string | null;
+    label: string;
     selection: GitHubIssueSelectionReport;
-    cycleValue: unknown;
-    dispositionValue: unknown;
-    commitParents: readonly string[];
-    changedPaths: readonly string[];
+    disposition: "retry_pending" | "manual_required";
+    checkpoint: Readonly<{ branch: string; sha: string; baseSha: string }> | null;
+    expectedBaseSha: string;
     parentLedgerMarkdown: string;
     pushedLedgerMarkdown: string;
   }>,
+): void => {
+  const parentEntries = parseGitHubIssueJobLedger(input.parentLedgerMarkdown);
+  const pushedEntries = parseGitHubIssueJobLedger(input.pushedLedgerMarkdown);
+  const pushedMatches = pushedEntries.filter((entry) => ledgerEntryMatchesSelection(entry, input.selection));
+  if (
+    pushedMatches.length !== 1 || pushedMatches[0]!.disposition !== input.disposition ||
+    pushedMatches[0]!.baseSha !== input.expectedBaseSha ||
+    JSON.stringify(pushedMatches[0]!.checkpoint) !== JSON.stringify(input.checkpoint)
+  ) {
+    throw new Error(
+      `Sentinel ${input.label} push has no exact ${
+        input.disposition === "retry_pending" ? "pending" : "manual"
+      } ledger row`,
+    );
+  }
+  const priorPending = parentEntries.filter((entry) =>
+    entry.issueId === input.selection.issue_id && entry.number === input.selection.issue_number &&
+    entry.disposition === "retry_pending"
+  );
+  if (priorPending.length > 1) {
+    throw new Error(`Sentinel ${input.label} push has multiple prior pending rows for the selected issue`);
+  }
+  if (
+    priorPending.length === 1 &&
+    Date.parse(priorPending[0]!.recordedAt) > Date.parse(pushedMatches[0]!.recordedAt)
+  ) {
+    throw new Error(`Sentinel ${input.label} push moved the retry timestamp backwards`);
+  }
+  const replacedSelectedRetained = parentEntries.filter((entry) =>
+    entry.disposition === "checkpoint_retained" && ledgerEntryMatchesSelection(entry, input.selection)
+  );
+  const parentUnrelated = parentEntries.filter((entry) =>
+    !priorPending.includes(entry) && !replacedSelectedRetained.includes(entry)
+  );
+  const retainedPriorCheckpoints = priorPending
+    .filter((entry) => entry.fingerprint !== input.selection.fingerprint && entry.checkpoint !== null)
+    .map((entry) => ({ ...entry, disposition: "checkpoint_retained" as const }));
+  const pushedUnrelated = pushedEntries.filter((entry) => entry !== pushedMatches[0]);
+  const expectedPushedUnrelated = parseGitHubIssueJobLedger(
+    renderGitHubIssueJobLedger([...parentUnrelated, ...retainedPriorCheckpoints]),
+  );
+  if (JSON.stringify(expectedPushedUnrelated) !== JSON.stringify(pushedUnrelated)) {
+    throw new Error(`Sentinel ${input.label} push changed unrelated issue-job ledger rows`);
+  }
+};
+
+type IssueLedgerPushValidationInput = Readonly<{
+  workflowRunId: string;
+  updates: readonly GitPushUpdate[];
+  atomicPush: boolean;
+  checkpointLeaseSha: string | null;
+  selection: GitHubIssueSelectionReport;
+  cycleValue: unknown;
+  dispositionValue: unknown;
+  commitParents: readonly string[];
+  changedPaths: readonly string[];
+  parentLedgerMarkdown: string;
+  pushedLedgerMarkdown: string;
+}>;
+
+type NativeManualLedgerPushValidationInput =
+  & IssueLedgerPushValidationInput
+  & Readonly<{
+    workflowRunAttempt: number;
+  }>;
+
+export const validateRetryPendingDevelopmentPush = (
+  input: IssueLedgerPushValidationInput,
 ): void => {
   const update = selectDevelopmentPush(input.updates);
   if (!update) throw new Error("Sentinel retry-pending push has no development update");
@@ -303,22 +378,23 @@ export const validateRetryPendingDevelopmentPush = (
     throw new Error("Sentinel retry-pending push must change only the issue-job ledger");
   }
 
-  const parentEntries = parseGitHubIssueJobLedger(input.parentLedgerMarkdown);
-  const pushedEntries = parseGitHubIssueJobLedger(input.pushedLedgerMarkdown);
-  const pushedMatches = pushedEntries.filter((entry) => retryLedgerEntryMatchesSelection(entry, input.selection));
   const expectedCheckpoint = disposition.retry_checkpoint === null ? null : {
     branch: disposition.retry_checkpoint.branch,
     sha: disposition.retry_checkpoint.sha,
     baseSha: disposition.retry_checkpoint.base_sha,
   };
-  if (
-    pushedMatches.length !== 1 || pushedMatches[0]!.disposition !== "retry_pending" ||
-    pushedMatches[0]!.baseSha !== (expectedCheckpoint?.baseSha ?? update.remoteSha) ||
-    JSON.stringify(pushedMatches[0]!.checkpoint) !== JSON.stringify(expectedCheckpoint) ||
-    JSON.stringify(cycle.retry_checkpoint) !== JSON.stringify(disposition.retry_checkpoint)
-  ) {
+  if (JSON.stringify(cycle.retry_checkpoint) !== JSON.stringify(disposition.retry_checkpoint)) {
     throw new Error("Sentinel retry-pending push has no exact pending ledger row");
   }
+  validateLedgerOnlyIssueDisposition({
+    label: "retry-pending",
+    selection: input.selection,
+    disposition: "retry_pending",
+    checkpoint: expectedCheckpoint,
+    expectedBaseSha: expectedCheckpoint?.baseSha ?? update.remoteSha,
+    parentLedgerMarkdown: input.parentLedgerMarkdown,
+    pushedLedgerMarkdown: input.pushedLedgerMarkdown,
+  });
   validateRetryPendingCheckpointPhaseBinding(disposition, cycle);
   if (disposition.retry_checkpoint === null) {
     if (input.updates.length !== 1) {
@@ -340,36 +416,123 @@ export const validateRetryPendingDevelopmentPush = (
       throw new Error("Sentinel new retry checkpoint must remain local until the atomic push");
     }
   }
+};
 
-  const priorPending = parentEntries.filter((entry) =>
-    entry.issueId === input.selection.issue_id && entry.number === input.selection.issue_number &&
-    entry.disposition === "retry_pending"
-  );
-  if (priorPending.length > 1) {
-    throw new Error("Sentinel retry-pending push has multiple prior pending rows for the selected issue");
+/**
+ * A failed resume keeps an already-published retry checkpoint. It can publish
+ * only its docs-only manual disposition, never another candidate ref or PR.
+ */
+export const validateManualRequiredRetainedCheckpointDevelopmentPush = (
+  input: IssueLedgerPushValidationInput,
+): void => {
+  const update = selectDevelopmentPush(input.updates);
+  if (!update) throw new Error("Sentinel retained-checkpoint manual push has no development update");
+  const disposition = parseGitHubIssueManualRequiredRetainedCheckpointReport(input.dispositionValue, {
+    issueId: input.selection.issue_id,
+    issueNumber: input.selection.issue_number,
+    fingerprint: input.selection.fingerprint,
+  });
+  const cycle = parseSentinelManualRequiredRetainedCheckpointCycleReport(input.cycleValue, {
+    runId: input.workflowRunId,
+    status: "running",
+    stage: "pushing_manual_github_issue",
+    branchDisposition: "runner_local_pending_review",
+  });
+  if (
+    cycle.candidate_sha !== update.localSha || cycle.base_development_sha !== update.remoteSha ||
+    JSON.stringify(cycle.retry_checkpoint) !== JSON.stringify(disposition.retry_checkpoint)
+  ) {
+    throw new Error("Sentinel retained-checkpoint manual push does not match the exact cycle commit");
+  }
+  if (input.commitParents.length !== 1 || input.commitParents[0] !== update.remoteSha) {
+    throw new Error(
+      "Sentinel retained-checkpoint manual push must be a one-parent commit on the selected development base",
+    );
   }
   if (
-    priorPending.length === 1 &&
-    Date.parse(priorPending[0]!.recordedAt) > Date.parse(pushedMatches[0]!.recordedAt)
+    input.changedPaths.length !== 1 || input.changedPaths[0] !== SENTINEL_POLICY.paths.issueJobLedger
   ) {
-    throw new Error("Sentinel retry-pending push moved the retry timestamp backwards");
+    throw new Error("Sentinel retained-checkpoint manual push must change only the issue-job ledger");
   }
-  const replacedSelectedRetained = parentEntries.filter((entry) =>
-    entry.disposition === "checkpoint_retained" && retryLedgerEntryMatchesSelection(entry, input.selection)
-  );
-  const parentUnrelated = parentEntries.filter((entry) =>
-    !priorPending.includes(entry) && !replacedSelectedRetained.includes(entry)
-  );
-  const pushedUnrelated = pushedEntries.filter((entry) => entry !== pushedMatches[0]);
-  const retainedPriorCheckpoints = priorPending
-    .filter((entry) => entry.fingerprint !== input.selection.fingerprint && entry.checkpoint !== null)
-    .map((entry) => ({ ...entry, disposition: "checkpoint_retained" as const }));
-  const expectedPushedUnrelated = parseGitHubIssueJobLedger(
-    renderGitHubIssueJobLedger([...parentUnrelated, ...retainedPriorCheckpoints]),
-  );
-  if (JSON.stringify(expectedPushedUnrelated) !== JSON.stringify(pushedUnrelated)) {
-    throw new Error("Sentinel retry-pending push changed unrelated issue-job ledger rows");
+  if (input.atomicPush || input.updates.length !== 1 || input.checkpointLeaseSha !== null) {
+    throw new Error("Sentinel retained-checkpoint manual push must be one docs-only development update");
   }
+  const checkpoint = {
+    branch: disposition.retry_checkpoint.branch,
+    sha: disposition.retry_checkpoint.sha,
+    baseSha: disposition.retry_checkpoint.base_sha,
+  };
+  validateLedgerOnlyIssueDisposition({
+    label: "retained-checkpoint manual",
+    selection: input.selection,
+    disposition: "manual_required",
+    checkpoint,
+    expectedBaseSha: checkpoint.baseSha,
+    parentLedgerMarkdown: input.parentLedgerMarkdown,
+    pushedLedgerMarkdown: input.pushedLedgerMarkdown,
+  });
+};
+
+/**
+ * Native-review exhaustion is not a candidate delivery. Its only permitted
+ * push is an atomic create of the immutable candidate ref plus a one-parent
+ * docs-only development commit that leaves the issue open for a person.
+ */
+export const validateManualRequiredDevelopmentPush = (
+  input: NativeManualLedgerPushValidationInput,
+): void => {
+  const update = selectDevelopmentPush(input.updates);
+  if (!update) throw new Error("Sentinel manual-checkpoint push has no development update");
+  const disposition = parseGitHubIssueManualRequiredReport(input.dispositionValue, {
+    issueId: input.selection.issue_id,
+    issueNumber: input.selection.issue_number,
+    fingerprint: input.selection.fingerprint,
+  });
+  const cycle = parseSentinelManualRequiredCycleReport(input.cycleValue, {
+    runId: input.workflowRunId,
+    runAttempt: input.workflowRunAttempt,
+    status: "running",
+    stage: "pushing_manual_required_github_issue",
+    branchDispositions: ["runner_local_manual_atomic_push_in_flight"],
+  });
+  if (JSON.stringify(cycle.retry_checkpoint) !== JSON.stringify(disposition.retry_checkpoint)) {
+    throw new Error("Sentinel manual-checkpoint push has no exact checkpoint receipt");
+  }
+  if (
+    cycle.candidate_sha !== update.localSha || cycle.base_development_sha !== update.remoteSha
+  ) {
+    throw new Error("Sentinel manual-checkpoint push does not match the exact cycle commit");
+  }
+  if (input.commitParents.length !== 1 || input.commitParents[0] !== update.remoteSha) {
+    throw new Error("Sentinel manual-checkpoint push must be a one-parent commit on the selected development base");
+  }
+  if (
+    input.changedPaths.length !== 1 || input.changedPaths[0] !== SENTINEL_POLICY.paths.issueJobLedger
+  ) {
+    throw new Error("Sentinel manual-checkpoint push must change only the issue-job ledger");
+  }
+  if (!input.atomicPush || input.updates.length !== 2) {
+    throw new Error("Sentinel manual-checkpoint push must be one atomic two-ref push");
+  }
+  const checkpointUpdate = selectManualCheckpointPush(input.updates, disposition.retry_checkpoint);
+  if (checkpointUpdate.remoteSha !== ZERO_SHA || input.checkpointLeaseSha !== ZERO_SHA) {
+    throw new Error("Sentinel manual-checkpoint push must create its candidate ref with a zero lease");
+  }
+
+  const expectedCheckpoint = {
+    branch: disposition.retry_checkpoint.branch,
+    sha: disposition.retry_checkpoint.sha,
+    baseSha: disposition.retry_checkpoint.base_sha,
+  };
+  validateLedgerOnlyIssueDisposition({
+    label: "manual-checkpoint",
+    selection: input.selection,
+    disposition: "manual_required",
+    checkpoint: expectedCheckpoint,
+    expectedBaseSha: expectedCheckpoint.baseSha,
+    parentLedgerMarkdown: input.parentLedgerMarkdown,
+    pushedLedgerMarkdown: input.pushedLedgerMarkdown,
+  });
 };
 
 export const parseCandidateWorkflowValidationRecord = (
@@ -524,6 +687,7 @@ export const ensureIssuePullRequestForDevelopmentPush = async (
     token: string;
     repository: string;
     workflowRunId: string;
+    workflowRunAttempt: number;
     serverUrl: string;
     atomicPush?: boolean;
     checkpointLeaseSha?: string | null;
@@ -590,6 +754,98 @@ export const ensureIssuePullRequestForDevelopmentPush = async (
     });
     console.log(
       `[sentinel] issue_retry_pending=#${selection.issue_number} candidate=${update.localSha} delivery=none`,
+    );
+    return null;
+  }
+  if (
+    dispositionRecord?.disposition === "manual_required" &&
+    dispositionRecord.phase === "retry_checkpoint_resume_failed"
+  ) {
+    const commitParts = (await git(["rev-list", "--parents", "-n", "1", update.localSha])).split(/\s+/u);
+    const commitSha = commitParts.shift();
+    if (commitSha !== update.localSha) {
+      throw new Error("Sentinel retained-checkpoint manual push returned the wrong commit identity");
+    }
+    const changedPaths = (await gitOutput([
+      "diff-tree",
+      "--no-commit-id",
+      "--name-only",
+      "-z",
+      "-r",
+      update.remoteSha,
+      update.localSha,
+      "--",
+    ])).split("\0").filter((path) => path.length > 0);
+    validateManualRequiredRetainedCheckpointDevelopmentPush({
+      workflowRunId: input.workflowRunId,
+      updates,
+      atomicPush: input.atomicPush ?? false,
+      checkpointLeaseSha: input.checkpointLeaseSha ?? null,
+      selection,
+      cycleValue,
+      dispositionValue,
+      commitParents: commitParts,
+      changedPaths,
+      parentLedgerMarkdown: await gitOutput([
+        "show",
+        `${update.remoteSha}:${SENTINEL_POLICY.paths.issueJobLedger}`,
+      ]),
+      pushedLedgerMarkdown: await gitOutput([
+        "show",
+        `${update.localSha}:${SENTINEL_POLICY.paths.issueJobLedger}`,
+      ]),
+    });
+    console.log(
+      `[sentinel] issue_manual_required=#${selection.issue_number} candidate=${update.localSha} delivery=none`,
+    );
+    return null;
+  }
+  if (
+    dispositionRecord?.disposition === "manual_required" &&
+    dispositionRecord.phase === "native_review_exhausted"
+  ) {
+    parseGitHubIssueManualRequiredReport(dispositionValue, {
+      issueId: selection.issue_id,
+      issueNumber: selection.issue_number,
+      fingerprint: selection.fingerprint,
+    });
+    const commitParts = (await git(["rev-list", "--parents", "-n", "1", update.localSha])).split(/\s+/u);
+    const commitSha = commitParts.shift();
+    if (commitSha !== update.localSha) {
+      throw new Error("Sentinel manual-checkpoint push returned the wrong commit identity");
+    }
+    const changedPaths = (await gitOutput([
+      "diff-tree",
+      "--no-commit-id",
+      "--name-only",
+      "-z",
+      "-r",
+      update.remoteSha,
+      update.localSha,
+      "--",
+    ])).split("\0").filter((path) => path.length > 0);
+    validateManualRequiredDevelopmentPush({
+      workflowRunId: input.workflowRunId,
+      workflowRunAttempt: input.workflowRunAttempt,
+      updates,
+      atomicPush: input.atomicPush ?? false,
+      checkpointLeaseSha: input.checkpointLeaseSha ?? null,
+      selection,
+      cycleValue,
+      dispositionValue,
+      commitParents: commitParts,
+      changedPaths,
+      parentLedgerMarkdown: await gitOutput([
+        "show",
+        `${update.remoteSha}:${SENTINEL_POLICY.paths.issueJobLedger}`,
+      ]),
+      pushedLedgerMarkdown: await gitOutput([
+        "show",
+        `${update.localSha}:${SENTINEL_POLICY.paths.issueJobLedger}`,
+      ]),
+    });
+    console.log(
+      `[sentinel] issue_manual_required=#${selection.issue_number} candidate=${update.localSha} delivery=none`,
     );
     return null;
   }
@@ -731,12 +987,17 @@ export const ensureIssuePullRequestForDevelopmentPush = async (
 if (import.meta.main) {
   const repositoryRoot = await Deno.realPath(requiredEnvironment("GITHUB_WORKSPACE"));
   const prePushInput = await new Response(Deno.stdin.readable).text();
+  const workflowRunAttempt = Number(requiredEnvironment("GITHUB_RUN_ATTEMPT"));
+  if (!Number.isSafeInteger(workflowRunAttempt) || workflowRunAttempt <= 0) {
+    throw new Error("GITHUB_RUN_ATTEMPT must be a positive integer for Sentinel issue delivery");
+  }
   await ensureIssuePullRequestForDevelopmentPush({
     repositoryRoot,
     prePushInput,
     token: requiredEnvironment("GITHUB_TOKEN"),
     repository: requiredEnvironment("GITHUB_REPOSITORY"),
     workflowRunId: requiredEnvironment("GITHUB_RUN_ID"),
+    workflowRunAttempt,
     serverUrl: Deno.env.get("GITHUB_SERVER_URL")?.trim() || "https://github.com",
     atomicPush: Deno.env.get("SENTINEL_GIT_PUSH_ATOMIC") === "1",
     checkpointLeaseSha: Deno.env.get("SENTINEL_GIT_CHECKPOINT_LEASE_SHA")?.trim() || null,

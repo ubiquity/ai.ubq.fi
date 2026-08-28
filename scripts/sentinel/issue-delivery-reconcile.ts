@@ -14,10 +14,14 @@ import {
   isPullRequestMergeRefusalStatus,
   ISSUE_COMPLETION_EVIDENCE_TEXT,
   issueEvidenceMarker,
+  parseGitHubIssueManualRequiredReport,
+  parseGitHubIssueManualRequiredRetainedCheckpointReport,
   parseGitHubIssuePullRequestRecord,
   parseGitHubIssueRetryPendingReport,
   parseGitHubIssueSelectionReport,
   parseSentinelCycleReport,
+  parseSentinelManualRequiredCycleReport,
+  parseSentinelManualRequiredRetainedCheckpointCycleReport,
   parseSentinelRetryPendingCycleReport,
   renderIssueDeliveryEvidence,
   validateRetryPendingCheckpointPhaseBinding,
@@ -57,6 +61,28 @@ type RetryPendingIssueReconciliationInput = Readonly<{
   productionOutcomeReportPresent: boolean;
   developmentLedgerMarkdown: string;
   remoteRefs?: RetryPendingRemoteRefs;
+}>;
+type ManualRequiredRetainedCheckpointReconciliationInput = Readonly<{
+  workflowRunId: string;
+  selection: GitHubIssueSelectionReport;
+  cycleValue: unknown;
+  dispositionValue: unknown;
+  pullRequestReportPresent: boolean;
+  productionOutcomeReportPresent: boolean;
+  developmentLedgerMarkdown: string;
+  remoteRefs: RetryPendingRemoteRefs;
+}>;
+type NativeReviewExhaustedManualCheckpointReconciliationInput = Readonly<{
+  workflowRunId: string;
+  workflowRunAttempt: number;
+  workflowFailed: boolean;
+  selection: GitHubIssueSelectionReport;
+  cycleValue: unknown;
+  dispositionValue: unknown;
+  pullRequestReportPresent: boolean;
+  productionOutcomeReportPresent: boolean;
+  developmentLedgerMarkdown: string;
+  remoteRefs: RetryPendingRemoteRefs;
 }>;
 const MAX_COMMENT_TIMESTAMP_PROPAGATION_MS = 5_000;
 
@@ -658,14 +684,179 @@ export const validateRetryPendingIssueReconciliation = (
   }
 };
 
+const parseManualRequiredRetainedCheckpointReconciliationReports = (
+  input: Pick<
+    ManualRequiredRetainedCheckpointReconciliationInput,
+    "workflowRunId" | "selection" | "cycleValue" | "dispositionValue"
+  >,
+): Readonly<{
+  disposition: ReturnType<typeof parseGitHubIssueManualRequiredRetainedCheckpointReport>;
+  cycle: ReturnType<typeof parseSentinelManualRequiredRetainedCheckpointCycleReport>;
+}> => {
+  const disposition = parseGitHubIssueManualRequiredRetainedCheckpointReport(input.dispositionValue, {
+    issueId: input.selection.issue_id,
+    issueNumber: input.selection.issue_number,
+    fingerprint: input.selection.fingerprint,
+  });
+  const cycle = parseSentinelManualRequiredRetainedCheckpointCycleReport(input.cycleValue, {
+    runId: input.workflowRunId,
+    status: "no_change",
+    stage: "complete",
+    branchDisposition: "development_docs_only_issue_manual_required",
+  });
+  return { disposition, cycle };
+};
+
+export const validateManualRequiredRetainedCheckpointReconciliation = (
+  input: ManualRequiredRetainedCheckpointReconciliationInput,
+): void => {
+  if (input.pullRequestReportPresent || input.productionOutcomeReportPresent) {
+    throw new Error("A retained-checkpoint manual reconciliation cannot contain delivery or production records");
+  }
+  const { disposition, cycle } = parseManualRequiredRetainedCheckpointReconciliationReports(input);
+  if (JSON.stringify(cycle.retry_checkpoint) !== JSON.stringify(disposition.retry_checkpoint)) {
+    throw new Error("Sentinel retained-checkpoint manual reconciliation has no exact checkpoint receipt");
+  }
+  const matches = parseGitHubIssueJobLedger(input.developmentLedgerMarkdown).filter((entry) =>
+    entry.issueId === input.selection.issue_id && entry.number === input.selection.issue_number &&
+    entry.fingerprint === input.selection.fingerprint
+  );
+  const expectedCheckpoint = {
+    branch: disposition.retry_checkpoint.branch,
+    sha: disposition.retry_checkpoint.sha,
+    baseSha: disposition.retry_checkpoint.base_sha,
+  };
+  if (
+    matches.length !== 1 || matches[0]!.bodySha256 !== input.selection.body_sha256 ||
+    matches[0]!.comments !== input.selection.comments ||
+    matches[0]!.sourceUpdatedAt !== input.selection.updated_at || matches[0]!.disposition !== "manual_required" ||
+    matches[0]!.baseSha !== disposition.retry_checkpoint.base_sha ||
+    JSON.stringify(matches[0]!.checkpoint) !== JSON.stringify(expectedCheckpoint) ||
+    Date.parse(matches[0]!.recordedAt) < Date.parse(cycle.started_at)
+  ) {
+    throw new Error("Sentinel retained-checkpoint manual reconciliation has no exact durable ledger row");
+  }
+  if (
+    !FULL_SHA.test(input.remoteRefs.developmentSha) || !FULL_SHA.test(input.remoteRefs.checkpointSha) ||
+    input.remoteRefs.developmentSha !== cycle.candidate_sha ||
+    input.remoteRefs.checkpointSha !== disposition.retry_checkpoint.sha
+  ) {
+    throw new Error("Sentinel retained-checkpoint manual reconciliation has no exact durable remote refs");
+  }
+};
+
+const parseNativeReviewExhaustedManualCheckpointReconciliationReports = (
+  input: Pick<
+    NativeReviewExhaustedManualCheckpointReconciliationInput,
+    "workflowRunId" | "workflowRunAttempt" | "workflowFailed" | "selection" | "cycleValue" | "dispositionValue"
+  >,
+): Readonly<{
+  disposition: ReturnType<typeof parseGitHubIssueManualRequiredReport>;
+  cycle: ReturnType<typeof parseSentinelManualRequiredCycleReport>;
+}> => {
+  const disposition = parseGitHubIssueManualRequiredReport(input.dispositionValue, {
+    issueId: input.selection.issue_id,
+    issueNumber: input.selection.issue_number,
+    fingerprint: input.selection.fingerprint,
+  });
+  const cycle = input.workflowFailed
+    ? parseSentinelManualRequiredCycleReport(input.cycleValue, {
+      runId: input.workflowRunId,
+      runAttempt: input.workflowRunAttempt,
+      status: "failed",
+      stage: "failed",
+      branchDispositions: ["atomic_manual_push_requires_reconciliation"],
+    })
+    : parseSentinelManualRequiredCycleReport(input.cycleValue, {
+      runId: input.workflowRunId,
+      runAttempt: input.workflowRunAttempt,
+      status: "no_change",
+      stage: "complete",
+      branchDispositions: ["remote_retained_issue_manual_required"],
+    });
+  return { disposition, cycle };
+};
+
+/**
+ * A round-three review failure is successful only when both remote refs are
+ * exact, the ledger contains the same immutable candidate, and no delivery
+ * artifact exists. It is never an automatic retry or an ordinary PR result.
+ */
+export const validateNativeReviewExhaustedManualCheckpointReconciliation = (
+  input: NativeReviewExhaustedManualCheckpointReconciliationInput,
+): void => {
+  if (input.pullRequestReportPresent || input.productionOutcomeReportPresent) {
+    throw new Error("A native-review-exhausted reconciliation cannot contain delivery or production records");
+  }
+  const { disposition, cycle } = parseNativeReviewExhaustedManualCheckpointReconciliationReports(input);
+  if (
+    cycle.candidate_sha === cycle.base_development_sha ||
+    JSON.stringify(cycle.retry_checkpoint) !== JSON.stringify(disposition.retry_checkpoint)
+  ) {
+    throw new Error("Sentinel native-review-exhausted reconciliation has no exact checkpoint receipt");
+  }
+  const matches = parseGitHubIssueJobLedger(input.developmentLedgerMarkdown).filter((entry) =>
+    entry.issueId === input.selection.issue_id && entry.number === input.selection.issue_number &&
+    entry.fingerprint === input.selection.fingerprint
+  );
+  const expectedCheckpoint = {
+    branch: disposition.retry_checkpoint.branch,
+    sha: disposition.retry_checkpoint.sha,
+    baseSha: disposition.retry_checkpoint.base_sha,
+  };
+  if (
+    matches.length !== 1 || matches[0]!.bodySha256 !== input.selection.body_sha256 ||
+    matches[0]!.comments !== input.selection.comments ||
+    matches[0]!.sourceUpdatedAt !== input.selection.updated_at ||
+    matches[0]!.disposition !== "manual_required" ||
+    matches[0]!.baseSha !== expectedCheckpoint.baseSha ||
+    JSON.stringify(matches[0]!.checkpoint) !== JSON.stringify(expectedCheckpoint) ||
+    Date.parse(matches[0]!.recordedAt) < Date.parse(cycle.started_at)
+  ) {
+    throw new Error("Sentinel native-review-exhausted reconciliation has no exact durable ledger row");
+  }
+  if (
+    !FULL_SHA.test(input.remoteRefs.developmentSha) || !FULL_SHA.test(input.remoteRefs.checkpointSha) ||
+    input.remoteRefs.developmentSha !== cycle.candidate_sha ||
+    input.remoteRefs.checkpointSha !== expectedCheckpoint.sha
+  ) {
+    throw new Error("Sentinel native-review-exhausted reconciliation has no exact durable remote refs");
+  }
+};
+
+export const requireCurrentOpenManualIssueSnapshot = async (
+  input: Readonly<{
+    token: string;
+    repository: string;
+    selection: GitHubIssueSelectionReport;
+    fetcher?: typeof fetch;
+  }>,
+): Promise<void> => {
+  const currentIssue = await getCurrentGitHubIssueJob(
+    new GitHubActionsClient({ repository: input.repository, token: input.token, fetcher: input.fetcher }),
+    input.repository,
+    input.selection.issue_number,
+  );
+  if (
+    !currentIssue || currentIssue.issueId !== input.selection.issue_id ||
+    currentIssue.number !== input.selection.issue_number || currentIssue.fingerprint !== input.selection.fingerprint ||
+    currentIssue.bodySha256 !== input.selection.body_sha256 || currentIssue.comments !== input.selection.comments ||
+    currentIssue.updatedAt !== input.selection.updated_at
+  ) {
+    throw new Error("Sentinel manual reconciliation issue snapshot changed or is no longer open");
+  }
+};
+
 export const reconcileGitHubIssueDelivery = async (
   input: Readonly<{
     repositoryRoot: string;
     token: string;
     repository: string;
     workflowRunId: string;
+    workflowRunAttempt: number;
     serverUrl: string;
     workflowFailed: boolean;
+    fetcher?: typeof fetch;
   }>,
 ): Promise<void> => {
   const reportsDir = `${input.repositoryRoot}/.sentinel/reports`;
@@ -716,6 +907,90 @@ export const reconcileGitHubIssueDelivery = async (
     });
     console.log(
       `[sentinel] issue_retry_pending=#${selection.issue_number} reconciliation=no_delivery issue=open`,
+    );
+    return;
+  }
+  if (
+    dispositionRecord?.disposition === "manual_required" &&
+    dispositionRecord.phase === "retry_checkpoint_resume_failed"
+  ) {
+    const pullRequestReportPresent = await regularFileExists(`${reportsDir}/github-issue-pull-request.json`);
+    const productionOutcomeReportPresent = await regularFileExists(
+      `${reportsDir}/github-issue-production-outcome.json`,
+    );
+    const ledger = await developmentIssueLedger(input.token, input.repository, input.fetcher);
+    const { disposition } = parseManualRequiredRetainedCheckpointReconciliationReports({
+      workflowRunId: input.workflowRunId,
+      selection,
+      cycleValue,
+      dispositionValue,
+    });
+    const [developmentSha, checkpointSha] = await Promise.all([
+      readGitHubCommitRefSha(input.token, input.repository, "development", input.fetcher),
+      readGitHubCommitRefSha(input.token, input.repository, disposition.retry_checkpoint.branch, input.fetcher),
+    ]);
+    validateManualRequiredRetainedCheckpointReconciliation({
+      workflowRunId: input.workflowRunId,
+      selection,
+      cycleValue,
+      dispositionValue,
+      pullRequestReportPresent,
+      productionOutcomeReportPresent,
+      developmentLedgerMarkdown: ledger.markdown,
+      remoteRefs: { developmentSha, checkpointSha },
+    });
+    await requireCurrentOpenManualIssueSnapshot({
+      token: input.token,
+      repository: input.repository,
+      selection,
+      fetcher: input.fetcher,
+    });
+    console.log(
+      `[sentinel] issue_manual_required=#${selection.issue_number} reconciliation=no_delivery issue=open`,
+    );
+    return;
+  }
+  if (
+    dispositionRecord?.disposition === "manual_required" &&
+    dispositionRecord.phase === "native_review_exhausted"
+  ) {
+    const pullRequestReportPresent = await regularFileExists(`${reportsDir}/github-issue-pull-request.json`);
+    const productionOutcomeReportPresent = await regularFileExists(
+      `${reportsDir}/github-issue-production-outcome.json`,
+    );
+    const ledger = await developmentIssueLedger(input.token, input.repository, input.fetcher);
+    const { disposition } = parseNativeReviewExhaustedManualCheckpointReconciliationReports({
+      workflowRunId: input.workflowRunId,
+      workflowRunAttempt: input.workflowRunAttempt,
+      workflowFailed: input.workflowFailed,
+      selection,
+      cycleValue,
+      dispositionValue,
+    });
+    const [developmentSha, checkpointSha] = await Promise.all([
+      readGitHubCommitRefSha(input.token, input.repository, "development", input.fetcher),
+      readGitHubCommitRefSha(input.token, input.repository, disposition.retry_checkpoint.branch, input.fetcher),
+    ]);
+    validateNativeReviewExhaustedManualCheckpointReconciliation({
+      workflowRunId: input.workflowRunId,
+      workflowRunAttempt: input.workflowRunAttempt,
+      workflowFailed: input.workflowFailed,
+      selection,
+      cycleValue,
+      dispositionValue,
+      pullRequestReportPresent,
+      productionOutcomeReportPresent,
+      developmentLedgerMarkdown: ledger.markdown,
+      remoteRefs: { developmentSha, checkpointSha },
+    });
+    await requireCurrentOpenManualIssueSnapshot({
+      token: input.token,
+      repository: input.repository,
+      selection,
+      fetcher: input.fetcher,
+    });
+    console.log(
+      `[sentinel] issue_manual_required=#${selection.issue_number} reconciliation=no_delivery issue=open`,
     );
     return;
   }
@@ -913,11 +1188,16 @@ export const reconcileGitHubIssueDelivery = async (
 if (import.meta.main) {
   const repositoryRoot = Deno.cwd();
   const workflowOutcome = Deno.env.get("SENTINEL_WORKFLOW_OUTCOME")?.trim();
+  const workflowRunAttempt = Number(requiredEnvironment("GITHUB_RUN_ATTEMPT"));
+  if (!Number.isSafeInteger(workflowRunAttempt) || workflowRunAttempt <= 0) {
+    throw new Error("GITHUB_RUN_ATTEMPT must be a positive integer for Sentinel issue reconciliation");
+  }
   await reconcileGitHubIssueDelivery({
     repositoryRoot,
     token: requiredEnvironment("GITHUB_TOKEN"),
     repository: requiredEnvironment("GITHUB_REPOSITORY"),
     workflowRunId: requiredEnvironment("GITHUB_RUN_ID"),
+    workflowRunAttempt,
     serverUrl: Deno.env.get("GITHUB_SERVER_URL")?.trim() || "https://github.com",
     workflowFailed: workflowOutcome === "failure" || workflowOutcome === "cancelled" ||
       workflowOutcome === "timed_out",

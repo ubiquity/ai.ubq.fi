@@ -152,6 +152,15 @@ export const failedCycleBranchDisposition = (
   }>,
 ): string => {
   if (
+    state.branch_disposition === "runner_local_manual_atomic_push_in_flight" ||
+    state.branch_disposition === "remote_retained_manual_atomic_push_in_flight" ||
+    state.branch_disposition === "atomic_manual_push_accepted_unverified" ||
+    (state.stage === "validated_manual_required_atomic_push" &&
+      state.branch_disposition === "remote_retained_issue_manual_required")
+  ) {
+    return "atomic_manual_push_requires_reconciliation";
+  }
+  if (
     state.branch_disposition === "runner_local_atomic_push_in_flight" ||
     state.branch_disposition === "remote_retained_atomic_push_in_flight" ||
     state.branch_disposition === "atomic_retry_push_accepted_unverified" ||
@@ -162,7 +171,8 @@ export const failedCycleBranchDisposition = (
   }
   if (
     state.branch_disposition === "remote_retained_pending_decision" ||
-    state.branch_disposition === "remote_retained_issue_retry_pending"
+    state.branch_disposition === "remote_retained_issue_retry_pending" ||
+    state.branch_disposition === "remote_retained_issue_manual_required"
   ) {
     return "remote_retained_after_failed_cycle";
   }
@@ -1303,6 +1313,13 @@ const implementationAgentChangedPathStates = async (
 const implementationAgentChangedPaths = async (checkout: string): Promise<Set<string>> =>
   new Set((await implementationAgentChangedPathStates(checkout)).keys());
 
+export const requireIssueLedgerOnlyChangedPaths = (paths: readonly string[]): void => {
+  const changedPaths = [...paths].sort();
+  if (changedPaths.length !== 1 || changedPaths[0] !== SENTINEL_POLICY.paths.issueJobLedger) {
+    throw new Error("Non-runtime GitHub issue completion must change only the trusted issue-job ledger");
+  }
+};
+
 export const aggregateCandidateChangedPaths = async (
   checkout: string,
   baseSha: string,
@@ -1419,6 +1436,117 @@ export const restoreIssueRetryAggregateIfEmpty = async (
   });
   paths = [...await aggregateCandidateChangedPaths(checkout, baseSha, excludedPaths)].sort();
   return paths;
+};
+
+const issueCheckpointCodePathsAtRevision = async (
+  checkout: string,
+  baseSha: string,
+  revision: string,
+): Promise<string[]> => {
+  ensureFullSha(baseSha, "Issue checkpoint base SHA");
+  ensureFullSha(revision, "Issue checkpoint revision SHA");
+  const output = await runTrustedGit({
+    args: [
+      "diff",
+      "--no-renames",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--name-only",
+      "-z",
+      baseSha,
+      revision,
+      "--",
+    ],
+    cwd: checkout,
+  });
+  const controlPaths = new Set<string>([
+    SENTINEL_POLICY.paths.issueJobLedger,
+    SENTINEL_POLICY.paths.reviewBacklog,
+  ]);
+  return decodeGitPathList(output.stdout).filter((path) => !controlPaths.has(path)).sort();
+};
+
+/**
+ * Cleanup may make the checkpoint commit SHA differ from the reviewed SHA,
+ * but it must not alter the reviewed issue code or retain trusted controls.
+ */
+export const assertGitHubIssueManualCheckpointCodeTreeEquivalent = async (
+  input: Readonly<{
+    checkout: string;
+    baseSha: string;
+    reviewedCandidateSha: string;
+    checkpointSha: string;
+    allowedPaths: readonly string[];
+  }>,
+): Promise<Readonly<{ reviewedCodePaths: readonly string[]; checkpointCodePaths: readonly string[] }>> => {
+  ensureFullSha(input.baseSha, "Manual checkpoint base SHA");
+  ensureFullSha(input.reviewedCandidateSha, "Manual checkpoint reviewed candidate SHA");
+  ensureFullSha(input.checkpointSha, "Manual checkpoint SHA");
+  const allowedPaths = [...new Set(input.allowedPaths)].sort();
+  if (allowedPaths.length === 0) {
+    throw new Error("Manual checkpoint has no declared issue paths to compare");
+  }
+  const ancestry = await runTrustedGitUnchecked({
+    args: ["merge-base", "--is-ancestor", input.reviewedCandidateSha, input.checkpointSha],
+    cwd: input.checkout,
+  });
+  if (ancestry.code !== 0) {
+    throw new Error("Manual checkpoint does not descend from the exact reviewed candidate");
+  }
+  const [reviewedCodePaths, checkpointCodePaths] = await Promise.all([
+    issueCheckpointCodePathsAtRevision(input.checkout, input.baseSha, input.reviewedCandidateSha),
+    issueCheckpointCodePathsAtRevision(input.checkout, input.baseSha, input.checkpointSha),
+  ]);
+  if (
+    reviewedCodePaths.length === 0 ||
+    reviewedCodePaths.some((path) => !allowedPaths.includes(path)) ||
+    checkpointCodePaths.some((path) => !allowedPaths.includes(path)) ||
+    JSON.stringify(reviewedCodePaths) !== JSON.stringify(checkpointCodePaths)
+  ) {
+    throw new Error("Manual checkpoint does not retain exactly the reviewed declared issue code paths");
+  }
+  const [declaredCodeDiff, trustedControlDiff] = await Promise.all([
+    runTrustedGitUnchecked({
+      args: [
+        "diff",
+        "--quiet",
+        "--no-ext-diff",
+        "--no-textconv",
+        input.reviewedCandidateSha,
+        input.checkpointSha,
+        "--",
+        ...allowedPaths,
+      ],
+      cwd: input.checkout,
+    }),
+    runTrustedGitUnchecked({
+      args: [
+        "diff",
+        "--quiet",
+        "--no-ext-diff",
+        "--no-textconv",
+        input.baseSha,
+        input.checkpointSha,
+        "--",
+        SENTINEL_POLICY.paths.issueJobLedger,
+        SENTINEL_POLICY.paths.reviewBacklog,
+      ],
+      cwd: input.checkout,
+    }),
+  ]);
+  if (declaredCodeDiff.code !== 0 && declaredCodeDiff.code !== 1) {
+    throw new Error("Manual checkpoint code-tree comparison failed");
+  }
+  if (trustedControlDiff.code !== 0 && trustedControlDiff.code !== 1) {
+    throw new Error("Manual checkpoint trusted-control comparison failed");
+  }
+  if (declaredCodeDiff.code === 1) {
+    throw new Error("Manual checkpoint code tree differs from the exact reviewed candidate");
+  }
+  if (trustedControlDiff.code === 1) {
+    throw new Error("Manual checkpoint did not restore the trusted ledger and review backlog to the base");
+  }
+  return { reviewedCodePaths, checkpointCodePaths };
 };
 
 export const captureFailedCandidateSnapshot = async (
@@ -2881,6 +3009,7 @@ const run = async (): Promise<void> => {
   };
   let retryCheckpoint = selectedIssueCheckpoint;
   let retryCheckpointExpectedRemoteSha = selectedIssueCheckpoint?.sha ?? null;
+  let manualCheckpoint: GitHubIssueJobCheckpoint | null = null;
   let lastPushedCandidateSha: string | null = null;
   const selectedIssueReportDisposition = (report: ImplementationReport): FindingDisposition => {
     if (!workSelection.issueJob) throw new Error("No GitHub issue job was selected");
@@ -2996,11 +3125,12 @@ const run = async (): Promise<void> => {
       );
     }
   };
-  const publishGitHubIssueRetryCheckpoint = async (
+  const prepareGitHubIssueCandidateCheckpoint = async (
     stage: string,
     preInvocationSha: string,
+    expectedRemoteSha: string | null,
   ): Promise<GitHubIssueJobCheckpoint | null> => {
-    if (!workSelection.issueJob) throw new Error("GitHub issue retry checkpoint is missing its selected issue");
+    if (!workSelection.issueJob) throw new Error("GitHub issue candidate checkpoint is missing its selected issue");
     await assertAgentDidNotCommitOrSwitch(checkout, preInvocationSha, branch, gitControlState);
     await assertImplementationAgentScope(checkout);
     await runTrustedGit({
@@ -3051,17 +3181,10 @@ const run = async (): Promise<void> => {
       branch,
       checkpointSha,
       gitEnvironment,
-      lastPushedCandidateSha,
+      expectedRemoteSha,
     );
-    if (preparedSha !== checkpointSha) throw new Error("GitHub issue retry checkpoint preparation changed SHA");
+    if (preparedSha !== checkpointSha) throw new Error("GitHub issue candidate checkpoint preparation changed SHA");
     const checkpoint = Object.freeze({ branch, sha: checkpointSha, baseSha });
-    retryCheckpoint = checkpoint;
-    retryCheckpointExpectedRemoteSha = lastPushedCandidateSha;
-    await updateState("preparing_retry_checkpoint", {
-      candidate_sha: checkpointSha,
-      branch_disposition: "runner_local_pending_review",
-      retry_checkpoint: { branch, sha: checkpointSha, base_sha: baseSha },
-    });
     return checkpoint;
   };
   const deferGitHubIssueImplementationFailure = async (
@@ -3076,8 +3199,20 @@ const run = async (): Promise<void> => {
       throw new Error("GitHub issue implementation failure is missing its selected issue");
     }
     await beforeDiscard?.();
-    const checkpoint = await publishGitHubIssueRetryCheckpoint(stage, preInvocationSha);
+    const checkpoint = await prepareGitHubIssueCandidateCheckpoint(
+      stage,
+      preInvocationSha,
+      lastPushedCandidateSha,
+    );
     retryCheckpoint = checkpoint;
+    retryCheckpointExpectedRemoteSha = lastPushedCandidateSha;
+    if (checkpoint !== null) {
+      await updateState("preparing_retry_checkpoint", {
+        candidate_sha: checkpoint.sha,
+        branch_disposition: "runner_local_pending_review",
+        retry_checkpoint: { branch: checkpoint.branch, sha: checkpoint.sha, base_sha: checkpoint.baseSha },
+      });
+    }
     await discardCandidateChanges(checkout, baseSha);
     selectedIssueState.disposition = "open";
     selectedIssueState.continueToRuntimeValidation = false;
@@ -3101,13 +3236,19 @@ const run = async (): Promise<void> => {
       throw new Error("GitHub issue has no non-runtime disposition to persist");
     }
     const retryPending = selectedIssueState.disposition === "retry_pending";
+    const retainedCheckpoint = retryPending ? retryCheckpoint : manualCheckpoint;
+    const manualCheckpointRetained = !retryPending && retainedCheckpoint !== null;
+    // A failed resume retains its prior remote retry checkpoint, but does not
+    // create or advance a candidate ref in this cycle. Keep that exact ledger
+    // receipt visible to its separate no-delivery reconciliation path.
+    const ledgerCheckpoint = retainedCheckpoint ?? (!retryPending ? retryCheckpoint : null);
+    if (manualCheckpointRetained && retainedCheckpoint!.branch !== branch) {
+      throw new Error("Native review exhaustion must retain only the current immutable candidate branch");
+    }
     if (selectedIssueState.continueToRuntimeValidation || !workSelection.issueJob) {
       throw new Error("Non-runtime GitHub issue disposition cannot continue to deployment");
     }
-    const changedPaths = [...await implementationAgentChangedPaths(checkout)].sort();
-    if (changedPaths.length !== 1 || changedPaths[0] !== SENTINEL_POLICY.paths.issueJobLedger) {
-      throw new Error("Non-runtime GitHub issue completion must change only the trusted issue-job ledger");
-    }
+    requireIssueLedgerOnlyChangedPaths([...await implementationAgentChangedPaths(checkout)]);
     const dispositionLedgerPath = `${checkout}/${SENTINEL_POLICY.paths.issueJobLedger}`;
     parseGitHubIssueJobLedger(await Deno.readTextFile(dispositionLedgerPath));
     const currentIssueJob = await getCurrentGitHubIssueJob(github, repository, workSelection.issueJob.number);
@@ -3125,6 +3266,7 @@ const run = async (): Promise<void> => {
       privateDir,
       denoDirectory,
     });
+    requireIssueLedgerOnlyChangedPaths([...await implementationAgentChangedPaths(checkout)]);
     await assertGitControlStateUnchanged(gitControlState);
     const dispositionSha = await commitChanges(
       checkout,
@@ -3141,13 +3283,18 @@ const run = async (): Promise<void> => {
     if (!githubIssueJobsMatch(workSelection.issueJob, pushIssueJob)) {
       throw new Error("The selected GitHub issue changed before disposition push");
     }
-    await updateState(retryPending ? "pushing_retry_pending_github_issue" : "pushing_manual_github_issue", {
+    const pushingStage = retryPending
+      ? "pushing_retry_pending_github_issue"
+      : manualCheckpointRetained
+      ? "pushing_manual_required_github_issue"
+      : "pushing_manual_github_issue";
+    await updateState(pushingStage, {
       candidate_sha: dispositionSha,
-      retry_checkpoint: retryCheckpoint
+      retry_checkpoint: ledgerCheckpoint
         ? {
-          branch: retryCheckpoint.branch,
-          sha: retryCheckpoint.sha,
-          base_sha: retryCheckpoint.baseSha,
+          branch: ledgerCheckpoint.branch,
+          sha: ledgerCheckpoint.sha,
+          base_sha: ledgerCheckpoint.baseSha,
         }
         : null,
       ...(retryPending && retryCheckpoint !== null
@@ -3156,22 +3303,26 @@ const run = async (): Promise<void> => {
             ? "runner_local_pending_review"
             : "remote_retained_issue_retry_pending",
         }
+        : manualCheckpointRetained
+        ? { branch_disposition: "runner_local_manual_checkpoint_ready" }
         : {}),
     });
-    if (retryPending && retryCheckpoint !== null) {
-      const checkpoint = retryCheckpoint;
+    if (retainedCheckpoint !== null) {
+      const checkpoint = retainedCheckpoint;
       await pushRetryPendingRefsAtomically({
         checkout,
         developmentSha: dispositionSha,
         checkpoint,
-        expectedRemoteCheckpointSha: retryCheckpointExpectedRemoteSha,
+        expectedRemoteCheckpointSha: retryPending ? retryCheckpointExpectedRemoteSha : null,
         gitEnvironment,
         onAtomicPushStarting: () =>
-          updateState("pushing_retry_pending_github_issue", {
+          updateState(pushingStage, {
             candidate_sha: dispositionSha,
-            branch_disposition: checkpoint.branch === branch
-              ? "runner_local_atomic_push_in_flight"
-              : "remote_retained_atomic_push_in_flight",
+            branch_disposition: retryPending
+              ? checkpoint.branch === branch
+                ? "runner_local_atomic_push_in_flight"
+                : "remote_retained_atomic_push_in_flight"
+              : "runner_local_manual_atomic_push_in_flight",
             retry_checkpoint: {
               branch: checkpoint.branch,
               sha: checkpoint.sha,
@@ -3179,25 +3330,35 @@ const run = async (): Promise<void> => {
             },
           }),
         onAtomicPushAcceptedUnverified: () =>
-          updateState("verifying_retry_pending_atomic_push", {
-            candidate_sha: dispositionSha,
-            branch_disposition: "atomic_retry_push_accepted_unverified",
-            retry_checkpoint: {
-              branch: checkpoint.branch,
-              sha: checkpoint.sha,
-              base_sha: checkpoint.baseSha,
+          updateState(
+            retryPending ? "verifying_retry_pending_atomic_push" : "verifying_manual_required_atomic_push",
+            {
+              candidate_sha: dispositionSha,
+              branch_disposition: retryPending
+                ? "atomic_retry_push_accepted_unverified"
+                : "atomic_manual_push_accepted_unverified",
+              retry_checkpoint: {
+                branch: checkpoint.branch,
+                sha: checkpoint.sha,
+                base_sha: checkpoint.baseSha,
+              },
             },
-          }),
+          ),
       });
-      await updateState("validated_retry_pending_atomic_push", {
-        candidate_sha: dispositionSha,
-        branch_disposition: "remote_retained_issue_retry_pending",
-        retry_checkpoint: {
-          branch: checkpoint.branch,
-          sha: checkpoint.sha,
-          base_sha: checkpoint.baseSha,
+      await updateState(
+        retryPending ? "validated_retry_pending_atomic_push" : "validated_manual_required_atomic_push",
+        {
+          candidate_sha: dispositionSha,
+          branch_disposition: retryPending
+            ? "remote_retained_issue_retry_pending"
+            : "remote_retained_issue_manual_required",
+          retry_checkpoint: {
+            branch: checkpoint.branch,
+            sha: checkpoint.sha,
+            base_sha: checkpoint.baseSha,
+          },
         },
-      });
+      );
     } else {
       await runTrustedGit({
         args: ["push", "origin", `HEAD:${SENTINEL_POLICY.developmentRef}`],
@@ -3209,32 +3370,124 @@ const run = async (): Promise<void> => {
     if (pushedDevelopment !== dispositionSha) {
       throw new Error("GitHub issue disposition did not become the exact development tip");
     }
-    if (retryPending && retryCheckpoint !== null) {
+    if (retainedCheckpoint !== null) {
       const pushedCheckpoint = await remoteTemporaryCandidateSha(
         checkout,
-        retryCheckpoint.branch,
+        retainedCheckpoint.branch,
         gitEnvironment,
       );
-      if (pushedCheckpoint !== retryCheckpoint.sha) {
-        throw new Error("GitHub issue retry checkpoint did not become the exact remote candidate tip");
+      if (pushedCheckpoint !== retainedCheckpoint.sha) {
+        throw new Error("GitHub issue checkpoint did not become the exact remote candidate tip");
       }
-      await writeJson(`${reportsDir}/github-issue-retry-retained-candidate.json`, {
-        schema_version: 1,
-        issue_id: workSelection.issueJob.issueId,
-        issue_number: workSelection.issueJob.number,
-        fingerprint: workSelection.issueJob.fingerprint,
-        head_branch: retryCheckpoint.branch,
-        head_sha: retryCheckpoint.sha,
-        base_sha: retryCheckpoint.baseSha,
-      });
+      await writeJson(
+        `${reportsDir}/github-issue-${retryPending ? "retry" : "manual"}-retained-candidate.json`,
+        {
+          schema_version: 1,
+          issue_id: workSelection.issueJob.issueId,
+          issue_number: workSelection.issueJob.number,
+          fingerprint: workSelection.issueJob.fingerprint,
+          head_branch: retainedCheckpoint.branch,
+          head_sha: retainedCheckpoint.sha,
+          base_sha: retainedCheckpoint.baseSha,
+          ...(retryPending ? {} : { phase: "native_review_exhausted" }),
+        },
+      );
     }
     await updateState("complete", {
       status: "no_change",
       branch_disposition: retryPending
         ? retryCheckpoint !== null ? "remote_retained_issue_retry_pending" : "development_docs_only_issue_retry_pending"
+        : manualCheckpointRetained
+        ? "remote_retained_issue_manual_required"
         : "development_docs_only_issue_manual_required",
     });
     for (const replayCase of applicableCases) replayCase.body.fill(0);
+  };
+  const terminalizeGitHubIssueNativeReviewExhaustion = async (
+    reviewedCandidateSha: string,
+    blockers: readonly NativeReviewFinding[],
+  ): Promise<void> => {
+    if (!workSelection.issueJob) {
+      throw new Error("Native review exhaustion is missing its selected GitHub issue");
+    }
+    if (selectedIssueState.disposition !== "resolved" || !selectedIssueState.continueToRuntimeValidation) {
+      throw new Error("Native review exhaustion has no resolved GitHub issue candidate to retain");
+    }
+    if (lastPushedCandidateSha !== null) {
+      throw new Error("Native review exhaustion cannot replace an already-published candidate branch");
+    }
+    const stage = "native_review_exhausted";
+    let checkpoint: GitHubIssueJobCheckpoint | null = null;
+    try {
+      checkpoint = await prepareGitHubIssueCandidateCheckpoint(stage, reviewedCandidateSha, null);
+      if (checkpoint === null) {
+        throw new Error("Native review exhaustion has no in-scope candidate changes to retain");
+      }
+      const codeTree = await assertGitHubIssueManualCheckpointCodeTreeEquivalent({
+        checkout,
+        baseSha,
+        reviewedCandidateSha,
+        checkpointSha: checkpoint.sha,
+        allowedPaths: workSelection.issueJob.files,
+      });
+      await captureFailedCandidateSnapshot(
+        checkout,
+        `${reportsDir}/manual-${stage}-candidate`,
+        baseSha,
+      );
+      await writeJson(`${reportsDir}/github-issue-manual-checkpoint.json`, {
+        schema_version: 1,
+        issue_id: workSelection.issueJob.issueId,
+        issue_number: workSelection.issueJob.number,
+        fingerprint: workSelection.issueJob.fingerprint,
+        phase: stage,
+        reviewed_candidate_sha: reviewedCandidateSha,
+        head_branch: checkpoint.branch,
+        head_sha: checkpoint.sha,
+        base_sha: checkpoint.baseSha,
+        blocker_count: blockers.length,
+        code_tree_equivalent: true,
+        reviewed_code_paths: codeTree.reviewedCodePaths,
+        checkpoint_code_paths: codeTree.checkpointCodePaths,
+        trusted_controls_restored_to_base: true,
+      });
+    } catch (error) {
+      const preservationSha = ensureFullSha(
+        await gitText(checkout, ["rev-parse", "HEAD"]),
+        "Native review exhaustion preservation SHA",
+      );
+      await preserveFailedImplementation(error, stage, preservationSha);
+      throw error;
+    }
+    if (checkpoint === null) {
+      throw new Error("Native review exhaustion lost its immutable candidate checkpoint");
+    }
+    manualCheckpoint = checkpoint;
+    await updateState("preparing_manual_checkpoint", {
+      candidate_sha: checkpoint.sha,
+      branch_disposition: "runner_local_manual_checkpoint_ready",
+      retry_checkpoint: { branch: checkpoint.branch, sha: checkpoint.sha, base_sha: checkpoint.baseSha },
+    });
+    // The immutable candidate has passed all safety gates and is now captured
+    // in encrypted evidence. Only then may the candidate worktree be reset so
+    // the development commit contains the ledger row and nothing else.
+    await discardCandidateChanges(checkout, baseSha);
+    selectedIssueState.disposition = "open";
+    selectedIssueState.continueToRuntimeValidation = false;
+    const disposition: FindingDisposition = Object.freeze({
+      finding_id: issueJobFindingId(workSelection.issueJob),
+      status: "blocked",
+      summary: "Native Codex review still has blocking findings after three rounds; manual review is required.",
+      changed_files: [],
+      validation: [],
+    });
+    await writeSelectedIssueDisposition(
+      disposition,
+      "manual_required",
+      stage,
+      checkpoint,
+    );
+    await completeNonRuntimeGitHubIssueDisposition();
   };
   if (workSelection.issueJob && retryCheckpoint) {
     try {
@@ -3583,6 +3836,15 @@ const run = async (): Promise<void> => {
     const backlogFindings = workSelection.issueJob
       ? issueReviewBacklogFindings(review, workSelection.issueJob.files)
       : review.findings.filter((finding) => finding.severity === "P2" || finding.severity === "P3");
+    if (blockers.length && !canStartReviewRound(reviewRound)) {
+      const exhaustion = new Error("Native Codex review still has blocking findings after round three");
+      if (workSelection.source === "github_issue") {
+        await terminalizeGitHubIssueNativeReviewExhaustion(candidateSha, blockers);
+        return;
+      }
+      await preserveFailedImplementation(exhaustion, "native_review_exhausted", candidateSha);
+      throw exhaustion;
+    }
     if (backlogFindings.length) {
       const backlogPath = `${checkout}/${SENTINEL_POLICY.paths.reviewBacklog}`;
       const currentBacklog = await Deno.readTextFile(backlogPath);
@@ -3601,9 +3863,6 @@ const run = async (): Promise<void> => {
       await updateState(`native_review_${reviewRound}`, { candidate_sha: candidateSha });
     }
     if (blockers.length) {
-      if (!canStartReviewRound(reviewRound)) {
-        throw new Error("Native Codex review still has blocking findings after round three");
-      }
       const preFixSha = candidateSha;
       const stage = `implementation_review_fix_${reviewRound}`;
       try {

@@ -32,6 +32,7 @@ import {
   previewCompletionForDecision,
   replayIndexArtifactMayMatch,
   replayIndexArtifactName,
+  requireIssueLedgerOnlyChangedPaths,
   requireResolvedReviewBacklogImplementation,
   requiresReplayEvaluation,
   resolveCycleAnchorMs,
@@ -451,6 +452,18 @@ Deno.test("sentinel capacity failures use bounded source-specific dispositions",
   assert.equal(retryCheckpointResumeFailureDisposition(new Error("unexpected failure")), "crash");
 });
 
+Deno.test("non-runtime issue commits reject post-validation file noise", () => {
+  assert.doesNotThrow(() => requireIssueLedgerOnlyChangedPaths([SENTINEL_POLICY.paths.issueJobLedger]));
+  assert.throws(
+    () => requireIssueLedgerOnlyChangedPaths([SENTINEL_POLICY.paths.issueJobLedger, "deno.json"]),
+    /must change only the trusted issue-job ledger/,
+  );
+  assert.throws(
+    () => requireIssueLedgerOnlyChangedPaths([]),
+    /must change only the trusted issue-job ledger/,
+  );
+});
+
 Deno.test("Sentinel workflow reruns use distinct candidate branches", () => {
   assert.equal(sentinelTemporaryCandidateBranch("123456789", 1), "sentinel/candidate-123456789-1");
   assert.equal(sentinelTemporaryCandidateBranch("123456789", 2), "sentinel/candidate-123456789-2");
@@ -760,6 +773,104 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
     )?.job.number,
     secondIssue.number,
   );
+});
+
+Deno.test("native review exhaustion retains one manual checkpoint and advances later GitHub work", async () => {
+  const exhaustedIssue = sentinelGitHubIssue({
+    id: 10_136,
+    nodeId: "I_kwDOIssue136",
+    number: 136,
+    title: "Automate bounded owner backlog maintenance",
+    body: ownerBacklogIssueBody(["src/paid_fallback_ledger.ts"]),
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/136",
+    labels: [],
+    createdAt: "2026-08-27T19:06:03Z",
+    updatedAt: "2026-08-27T19:07:27Z",
+  });
+  const laterIssue = sentinelGitHubIssue({
+    id: 10_137,
+    nodeId: "I_kwDOIssue137",
+    number: 137,
+    title: "Later eligible owner backlog maintenance",
+    body: ownerBacklogIssueBody(["src/quota_projection.ts"]),
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/137",
+    labels: [],
+    createdAt: "2026-08-27T19:06:04Z",
+    updatedAt: "2026-08-27T19:07:28Z",
+  });
+  const source = githubIssueSource([exhaustedIssue, laterIssue]);
+  const retryAt = new Date("2026-08-28T00:00:00Z");
+  const retryCheckpoint = {
+    branch: sentinelTemporaryCandidateBranch("33177664067", 1),
+    sha: "b".repeat(40),
+    baseSha: "a".repeat(40),
+  };
+  const retrySelection = await selectNextGitHubIssueJobSelection(
+    source,
+    "ubiquity/ai.ubq.fi",
+    renderGitHubIssueJobLedger([]),
+    retryAt,
+  );
+  assert.equal(retrySelection?.job.number, exhaustedIssue.number);
+  const dueRetryLedger = applyGitHubIssueJobDisposition(
+    renderGitHubIssueJobLedger([]),
+    retrySelection!.job,
+    retryCheckpoint.baseSha,
+    retryAt,
+    "retry_pending",
+    retryCheckpoint,
+  );
+  const manualAt = new Date(retryAt.getTime() + GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS);
+  const dueRetrySelection = await selectNextGitHubIssueJobSelection(
+    source,
+    "ubiquity/ai.ubq.fi",
+    dueRetryLedger,
+    manualAt,
+  );
+  assert.equal(dueRetrySelection?.job.number, exhaustedIssue.number);
+  assert.deepEqual(dueRetrySelection?.checkpoint, retryCheckpoint);
+
+  const manualCheckpoint = {
+    branch: sentinelTemporaryCandidateBranch("33177664067", 2),
+    sha: "c".repeat(40),
+    baseSha: retryCheckpoint.baseSha,
+  };
+  const manualLedger = applyGitHubIssueJobDisposition(
+    dueRetryLedger,
+    dueRetrySelection!.job,
+    manualCheckpoint.baseSha,
+    manualAt,
+    "manual_required",
+    manualCheckpoint,
+  );
+  const exhaustedEntries = parseGitHubIssueJobLedger(manualLedger).filter((entry) =>
+    entry.number === exhaustedIssue.number && entry.fingerprint === dueRetrySelection!.job.fingerprint
+  );
+  assert.equal(exhaustedEntries.length, 1);
+  assert.equal(exhaustedEntries[0]?.disposition, "manual_required");
+  assert.deepEqual(exhaustedEntries[0]?.checkpoint, manualCheckpoint);
+  assert.equal(exhaustedEntries.filter((entry) => entry.disposition === "retry_pending").length, 0);
+  assert.throws(
+    () =>
+      applyGitHubIssueJobDisposition(
+        manualLedger,
+        dueRetrySelection!.job,
+        manualCheckpoint.baseSha,
+        manualAt,
+        "manual_required",
+        manualCheckpoint,
+      ),
+    /already has a terminal/,
+  );
+
+  const laterSelection = await selectNextGitHubIssueJobSelection(
+    source,
+    "ubiquity/ai.ubq.fi",
+    manualLedger,
+    new Date(manualAt.getTime() + GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS),
+  );
+  assert.equal(laterSelection?.job.number, laterIssue.number);
+  assert.equal(laterSelection?.checkpoint, null);
 });
 
 Deno.test("sentinel schedule windows overlap hourly and incident runs", () => {
