@@ -492,14 +492,21 @@ Deno.test("365-day balance history is deterministically resampled to UTC days", 
   assert.equal(resampled[1]?.bucket_start_at_ms, dayStart);
   assert.equal(resampled[1]?.balance_quota, 1_000);
 
-  const oversized = Array.from({ length: 366 }, (_, index) => sample(index * DAY_MS, index * DAY_MS + HOUR_MS, index));
+  const bucketMs = 25 * HOUR_MS;
+  const rangeStart = 30 * 60_000;
+  const rangeEnd = rangeStart + 365 * DAY_MS;
+  const oversized = Array.from(
+    { length: 365 * 24 + 1 },
+    (_, index) => sample(rangeStart + index * HOUR_MS, rangeStart + index * HOUR_MS, index),
+  );
   const capped = resampleMeteredQuotaBalanceHistory(
     oversized,
-    METERED_QUOTA_BALANCE_HISTORY_DAILY_BUCKET_MS,
+    bucketMs,
     365,
   );
-  assert.equal(capped.length, 365);
-  assert.equal(capped[0]?.bucket_start_at_ms, DAY_MS);
+  assert.ok(capped.length <= 365);
+  assert.equal(capped[0]?.observed_at_ms, rangeStart + 24 * HOUR_MS);
+  assert.equal(capped.at(-1)?.observed_at_ms, rangeEnd);
 });
 
 Deno.test("balance window accepts supported values and defaults invalid input to seven days", () => {

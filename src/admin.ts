@@ -2240,7 +2240,10 @@ export const handleAdminProvidersQuotaProjection = async (
   // hour UTC bucket that can represent the range within the response cap.
   const balanceHistoryBucketMs = Math.max(
     METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS,
-    Math.ceil(balanceWindowDays * 24 / QUOTA_PROJECTION_MAX_BALANCE_SAMPLES) *
+    // A closed interval can intersect one more aligned bucket than its
+    // duration alone implies. Reserve one response slot for that partial
+    // boundary bucket so neither end of a 365-day range is truncated.
+    Math.ceil(balanceWindowDays * 24 / (QUOTA_PROJECTION_MAX_BALANCE_SAMPLES - 1)) *
       METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS,
   );
   const accountFingerprint = await meterQuotaAccountFingerprint(readMeteredAccountCredentials()).catch(() => null);
