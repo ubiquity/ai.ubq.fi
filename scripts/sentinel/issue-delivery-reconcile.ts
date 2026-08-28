@@ -12,6 +12,7 @@ import {
   type GitHubIssueSelectionReport,
   isContainedDevelopmentComparison,
   isPullRequestMergeRefusalStatus,
+  isSentinelRecoveryCandidateBranch,
   ISSUE_COMPLETION_EVIDENCE_TEXT,
   issueEvidenceMarker,
   parseGitHubIssueManualRequiredReport,
@@ -24,11 +25,21 @@ import {
   parseSentinelManualRequiredRetainedCheckpointCycleReport,
   parseSentinelRetryPendingCycleReport,
   renderIssueDeliveryEvidence,
+  sentinelRecoveryCandidateBranch,
   validateRetryPendingCheckpointPhaseBinding,
 } from "./issue-delivery.ts";
+import {
+  assertSentinelRecoveryTransition,
+  isTerminalRecoveryPhase,
+  parseSentinelRecoveryRecord,
+  type SentinelRecoveryDisposition,
+  type SentinelRecoveryPhase,
+  type SentinelRecoveryRecordV1,
+} from "./recovery.ts";
 
 const API_VERSION = "2022-11-28";
 const FULL_SHA = /^[0-9a-f]{40}$/u;
+const SAFE_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/u;
 const SAFE_REVISION = /^[A-Za-z0-9_-]{1,200}$/u;
 const RECONCILABLE_GIT_REF = /^(?:development|sentinel\/candidate-[1-9][0-9]*(?:-[1-9][0-9]*)?)$/u;
 
@@ -86,6 +97,55 @@ type NativeReviewExhaustedManualCheckpointReconciliationInput = Readonly<{
 }>;
 const MAX_COMMENT_TIMESTAMP_PROPAGATION_MS = 5_000;
 
+/**
+ * The remote facts needed to reconcile one recovery record. GitHub/API
+ * adapters should populate this from exact commit and pull-request identities;
+ * absence is represented by null rather than by an invented SHA.
+ */
+export type SentinelRecoveryDeliveryObservation = Readonly<{
+  pull_request_number: number;
+  head_branch: string;
+  head_sha: string;
+  state: "open" | "closed";
+  merged_at: string | null;
+}>;
+
+export type SentinelRecoveryRemoteObservation = Readonly<{
+  candidate_branch: string | null;
+  candidate_sha: string | null;
+  development_sha: string | null;
+  deliveries: readonly SentinelRecoveryDeliveryObservation[];
+}>;
+
+export type SentinelRecoveryReconciliationAction =
+  | "terminal_noop"
+  | "await_evidence"
+  | "retry_checkpoint_push"
+  | "checkpoint_confirmed"
+  | "resume_validation"
+  | "resume_review"
+  | "delivery_confirmed"
+  | "reject_no_candidate_diff"
+  | "manual_required";
+
+export type SentinelRecoveryReconciliationResult = Readonly<{
+  before: SentinelRecoveryRecordV1;
+  after: SentinelRecoveryRecordV1;
+  changed: boolean;
+  action: SentinelRecoveryReconciliationAction;
+  candidate_branch: string | null;
+  disposition: SentinelRecoveryDisposition;
+  reason: string | null;
+}>;
+
+export type SentinelRecoveryReconciliationInput = Readonly<{
+  record: unknown;
+  remote?: SentinelRecoveryRemoteObservation;
+  now?: string;
+  expected_state_version?: number;
+  expected_lease_token?: string;
+}>;
+
 const requiredEnvironment = (name: string): string => {
   const value = Deno.env.get(name)?.trim();
   if (!value) throw new Error(`${name} is required for Sentinel issue reconciliation`);
@@ -118,6 +178,392 @@ const regularFileExists = async (path: string): Promise<boolean> => {
 
 const record = (value: unknown): Record<string, unknown> | null =>
   typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
+
+const validRecoveryTimestamp = (value: unknown): value is string =>
+  typeof value === "string" && /^\d{4}-\d{2}-\d{2}T/u.test(value) && Number.isFinite(Date.parse(value));
+
+const parseRecoveryRemoteObservation = (
+  value: SentinelRecoveryRemoteObservation,
+): SentinelRecoveryRemoteObservation => {
+  if (
+    value === null || typeof value !== "object" ||
+    (value.candidate_branch !== null &&
+      (typeof value.candidate_branch !== "string" || !isSentinelRecoveryCandidateBranch(value.candidate_branch))) ||
+    (value.candidate_sha !== null &&
+      (typeof value.candidate_sha !== "string" || !FULL_SHA.test(value.candidate_sha))) ||
+    (value.candidate_branch === null && value.candidate_sha !== null) ||
+    (value.development_sha !== null &&
+      (typeof value.development_sha !== "string" || !FULL_SHA.test(value.development_sha))) ||
+    !Array.isArray(value.deliveries)
+  ) {
+    throw new Error("Sentinel recovery remote observation is invalid");
+  }
+  const deliveries = value.deliveries.map((delivery) => {
+    if (
+      delivery === null || typeof delivery !== "object" ||
+      !Number.isSafeInteger(delivery.pull_request_number) || delivery.pull_request_number <= 0 ||
+      typeof delivery.head_branch !== "string" || !SAFE_BRANCH.test(delivery.head_branch) ||
+      typeof delivery.head_sha !== "string" || !FULL_SHA.test(delivery.head_sha) ||
+      (delivery.state !== "open" && delivery.state !== "closed") ||
+      (delivery.merged_at !== null &&
+        (typeof delivery.merged_at !== "string" || !validRecoveryTimestamp(delivery.merged_at))) ||
+      (delivery.state === "open" && delivery.merged_at !== null)
+    ) {
+      throw new Error("Sentinel recovery delivery observation is invalid");
+    }
+    return {
+      pull_request_number: delivery.pull_request_number,
+      head_branch: delivery.head_branch,
+      head_sha: delivery.head_sha,
+      state: delivery.state,
+      merged_at: delivery.merged_at,
+    };
+  });
+  return {
+    candidate_branch: value.candidate_branch,
+    candidate_sha: value.candidate_sha,
+    development_sha: value.development_sha,
+    deliveries,
+  };
+};
+
+const terminalDisposition = (phase: SentinelRecoveryPhase): SentinelRecoveryDisposition =>
+  phase === "manual_required" || phase === "rejected" || phase === "delivered" ? phase : "active";
+
+const transitionRecoveryRecord = (
+  current: SentinelRecoveryRecordV1,
+  phase: SentinelRecoveryPhase,
+  now: string,
+  patch: Readonly<Partial<SentinelRecoveryRecordV1>> = {},
+): SentinelRecoveryRecordV1 => {
+  if (phase === current.phase) return current;
+  const next: SentinelRecoveryRecordV1 = {
+    ...current,
+    ...patch,
+    phase,
+    disposition: terminalDisposition(phase),
+    state_version: current.state_version + 1,
+    updated_at: now,
+  };
+  assertSentinelRecoveryTransition(current, next);
+  return parseSentinelRecoveryRecord(next);
+};
+
+const recoveryResult = (
+  before: SentinelRecoveryRecordV1,
+  after: SentinelRecoveryRecordV1,
+  action: SentinelRecoveryReconciliationAction,
+  candidateBranch: string | null,
+  reason: string | null = after.reason,
+): SentinelRecoveryReconciliationResult => ({
+  before,
+  after,
+  changed: after.state_version !== before.state_version,
+  action,
+  candidate_branch: candidateBranch,
+  disposition: after.disposition,
+  reason,
+});
+
+const recoveryManual = (
+  current: SentinelRecoveryRecordV1,
+  now: string,
+  branch: string | null,
+  reason: string,
+): SentinelRecoveryReconciliationResult => {
+  if (current.phase === "manual_required") return recoveryResult(current, current, "terminal_noop", branch);
+  if (isTerminalRecoveryPhase(current.phase)) {
+    throw new Error(`Sentinel terminal recovery record conflicts with reconciliation: ${reason}`);
+  }
+  const next = transitionRecoveryRecord(current, "manual_required", now, {
+    failure_class: current.failure_class ?? "reconciliation_integrity",
+    reason,
+    next_action: "Owner review is required before another Sentinel attempt.",
+  });
+  return recoveryResult(current, next, "manual_required", branch, reason);
+};
+
+/**
+ * Compare-and-swap guard for a durable recovery record. A caller must read the
+ * record, retain its state version and lease, and only publish a transition if
+ * both still match. This keeps an overlapping reconciler from overwriting a
+ * newer disposition.
+ */
+export const compareAndSwapSentinelRecoveryRecord = (
+  input: Readonly<{
+    current: unknown;
+    next: unknown;
+    expected_state_version: number;
+    expected_lease_token: string;
+  }>,
+): SentinelRecoveryRecordV1 => {
+  const current = parseSentinelRecoveryRecord(input.current);
+  const next = parseSentinelRecoveryRecord(input.next);
+  if (!Number.isSafeInteger(input.expected_state_version) || input.expected_state_version <= 0) {
+    throw new Error("Sentinel recovery compare-and-swap state version is invalid");
+  }
+  if (typeof input.expected_lease_token !== "string" || input.expected_lease_token.trim().length === 0) {
+    throw new Error("Sentinel recovery compare-and-swap lease is invalid");
+  }
+  if (
+    current.state_version !== input.expected_state_version || current.lease_token !== input.expected_lease_token
+  ) {
+    throw new Error("Sentinel recovery compare-and-swap lost its lease or observed a newer state");
+  }
+  assertSentinelRecoveryTransition(current, next);
+  return next;
+};
+
+/**
+ * Reconcile one immutable recovery identity from durable local state and exact
+ * remote observations. The function is deliberately side-effect free: the
+ * workflow/store owns persistence and must use the CAS helper above. Reusing
+ * the returned record on a later invocation is idempotent and never allocates a
+ * second branch or delivery.
+ */
+export const reconcileSentinelRecoveryRecord = (
+  input: SentinelRecoveryReconciliationInput,
+): SentinelRecoveryReconciliationResult => {
+  const current = parseSentinelRecoveryRecord(input.record);
+  if (
+    input.expected_state_version !== undefined &&
+    (current.state_version !== input.expected_state_version ||
+      !Number.isSafeInteger(input.expected_state_version) || input.expected_state_version <= 0)
+  ) {
+    throw new Error("Sentinel recovery reconciliation observed a newer state version");
+  }
+  if (
+    input.expected_lease_token !== undefined &&
+    (typeof input.expected_lease_token !== "string" ||
+      input.expected_lease_token.trim().length === 0 || current.lease_token !== input.expected_lease_token)
+  ) {
+    throw new Error("Sentinel recovery reconciliation lost its lease");
+  }
+  if (isTerminalRecoveryPhase(current.phase)) {
+    if (input.remote !== undefined) {
+      const remote = parseRecoveryRemoteObservation(input.remote);
+      if (current.phase === "delivered" && remote.deliveries.length > 1) {
+        throw new Error("Sentinel terminal recovery record has duplicate delivery observations");
+      }
+    }
+    return recoveryResult(current, current, "terminal_noop", current.candidate_branch);
+  }
+
+  const now = input.now ?? new Date().toISOString();
+  if (!validRecoveryTimestamp(now) || Date.parse(now) < Date.parse(current.updated_at)) {
+    throw new Error("Sentinel recovery reconciliation timestamp moved backwards");
+  }
+  const remote = input.remote === undefined ? null : parseRecoveryRemoteObservation(input.remote);
+  const expectedBranch = sentinelRecoveryCandidateBranch(current.identity);
+  let candidateBranch = current.candidate_branch;
+  if (candidateBranch !== null && !SAFE_BRANCH.test(candidateBranch)) {
+    return recoveryManual(current, now, candidateBranch, "Recorded recovery candidate branch is invalid.");
+  }
+  if (remote !== null && remote.candidate_branch !== null) {
+    if (candidateBranch !== null && remote.candidate_branch !== candidateBranch) {
+      return recoveryManual(
+        current,
+        now,
+        candidateBranch,
+        "Remote candidate branch changed from the recorded identity.",
+      );
+    }
+    if (candidateBranch === null && remote.candidate_branch !== expectedBranch) {
+      return recoveryManual(
+        current,
+        now,
+        remote.candidate_branch,
+        "Remote candidate branch is not the deterministic recovery identity.",
+      );
+    }
+    candidateBranch ??= remote.candidate_branch;
+  }
+  candidateBranch ??= expectedBranch;
+
+  const observedCandidateSha = remote?.candidate_sha ?? null;
+  if (
+    current.candidate_sha !== null && observedCandidateSha !== null && current.candidate_sha !== observedCandidateSha
+  ) {
+    return recoveryManual(current, now, candidateBranch, "Remote candidate SHA changed from the recorded identity.");
+  }
+  const candidateSha = current.candidate_sha ?? observedCandidateSha;
+  const deliveries = remote?.deliveries ?? [];
+  if (deliveries.length > 1) {
+    return recoveryManual(
+      current,
+      now,
+      candidateBranch,
+      "More than one delivery pull request matches the recovery identity.",
+    );
+  }
+  const delivery = deliveries[0] ?? null;
+  if (
+    delivery !== null &&
+    (candidateSha === null || delivery.head_branch !== candidateBranch || delivery.head_sha !== candidateSha)
+  ) {
+    return recoveryManual(
+      current,
+      now,
+      candidateBranch,
+      "Delivery pull request identity does not match the recovery candidate.",
+    );
+  }
+
+  // A candidate tip that is already the development tip may have been pushed
+  // directly during an ambiguous delivery attempt. Without a matching PR,
+  // never manufacture another delivery record or silently mark it delivered.
+  if (remote?.development_sha !== null && remote?.development_sha === candidateSha && delivery === null) {
+    return recoveryManual(
+      current,
+      now,
+      candidateBranch,
+      "The candidate tip is already development without an exact delivery record.",
+    );
+  }
+
+  const hasRemoteCandidate = remote !== null && remote.candidate_branch !== null && observedCandidateSha !== null;
+  const candidatePatch: Partial<SentinelRecoveryRecordV1> = {
+    candidate_branch: candidateBranch,
+    ...(candidateSha === null ? {} : { candidate_sha: candidateSha }),
+  };
+
+  if (delivery !== null && delivery.state === "closed" && delivery.merged_at !== null) {
+    if (current.phase === "review_pending") {
+      const next = transitionRecoveryRecord(current, "delivered", now, {
+        ...candidatePatch,
+        reason: "Delivery pull request is durably merged with the recorded candidate identity.",
+        next_action: null,
+      });
+      return recoveryResult(current, next, "delivery_confirmed", candidateBranch);
+    }
+    if (current.phase === "checkpoint_durable") {
+      const next = transitionRecoveryRecord(current, "review_pending", now, candidatePatch);
+      return recoveryResult(current, next, "resume_review", candidateBranch);
+    }
+  }
+
+  if (hasRemoteCandidate) {
+    if (current.phase === "recovery_pending" || current.phase === "checkpoint_publishing") {
+      const next = transitionRecoveryRecord(current, "checkpoint_durable", now, {
+        ...candidatePatch,
+        reason: "The remote candidate ref matches the recorded candidate SHA.",
+        next_action: "Validate the durable checkpoint before review or delivery.",
+      });
+      return recoveryResult(current, next, "checkpoint_confirmed", candidateBranch);
+    }
+    if (
+      current.phase === "claimed" || current.phase === "implementation_running" ||
+      current.phase === "workspace_dirty" ||
+      current.phase === "retry_wait"
+    ) {
+      const next = transitionRecoveryRecord(current, "recovery_pending", now, {
+        ...candidatePatch,
+        reason: "A remote candidate ref was found for the incomplete recovery record.",
+        next_action: "Validate the durable checkpoint before review or delivery.",
+      });
+      return recoveryResult(current, next, "checkpoint_confirmed", candidateBranch);
+    }
+    if (current.phase === "validation_failed") {
+      const next = transitionRecoveryRecord(current, "retry_wait", now, {
+        ...candidatePatch,
+        reason: "The failed candidate checkpoint is still remotely durable and may be retried.",
+        next_action: "Retry validation according to the bounded failure policy.",
+      });
+      return recoveryResult(current, next, "resume_validation", candidateBranch);
+    }
+    if (current.phase === "checkpoint_durable") {
+      return recoveryResult(
+        current,
+        current,
+        delivery === null ? "resume_validation" : "resume_review",
+        candidateBranch,
+      );
+    }
+    if (current.phase === "review_pending") {
+      return recoveryResult(current, current, delivery === null ? "resume_review" : "resume_review", candidateBranch);
+    }
+  }
+
+  if (delivery !== null) {
+    return recoveryManual(current, now, candidateBranch, "A delivery pull request is closed without a verified merge.");
+  }
+
+  if (candidateSha !== null) {
+    if (current.phase === "review_pending") {
+      const next = transitionRecoveryRecord(current, "manual_required", now, {
+        ...candidatePatch,
+        failure_class: current.failure_class ?? "git_publication_ambiguity",
+        reason: "The recorded candidate ref is no longer visible remotely after review became pending.",
+        next_action: "Owner must prove or restore the candidate ref before delivery.",
+      });
+      return recoveryResult(current, next, "manual_required", candidateBranch);
+    }
+    if (current.phase === "validation_failed") {
+      const next = transitionRecoveryRecord(current, "retry_wait", now, {
+        ...candidatePatch,
+        reason: "Candidate publication remains ambiguous after validation failed.",
+        next_action: "Retry the checkpoint push according to the bounded failure policy.",
+      });
+      return recoveryResult(current, next, "retry_checkpoint_push", candidateBranch);
+    }
+    if (current.phase !== "recovery_pending") {
+      const next = transitionRecoveryRecord(current, "recovery_pending", now, {
+        ...candidatePatch,
+        failure_class: current.failure_class ?? "git_publication_ambiguity",
+        reason: "Candidate publication is ambiguous; retry the same branch identity.",
+        next_action: "Retry the checkpoint push with the recorded branch and SHA.",
+      });
+      return recoveryResult(current, next, "retry_checkpoint_push", candidateBranch);
+    }
+    return recoveryResult(current, current, "retry_checkpoint_push", candidateBranch);
+  }
+
+  if (current.changed_files.length === 0 && remote !== null && remote.candidate_branch === null) {
+    if (
+      current.phase === "claimed" || current.phase === "implementation_running" || current.phase === "review_pending" ||
+      current.phase === "recovery_pending" || current.phase === "validation_failed"
+    ) {
+      const next = transitionRecoveryRecord(current, "rejected", now, {
+        candidate_branch: candidateBranch,
+        reason: "rejected/no_candidate_diff",
+        next_action: null,
+      });
+      return recoveryResult(current, next, "reject_no_candidate_diff", candidateBranch);
+    }
+    const next = transitionRecoveryRecord(current, "recovery_pending", now, {
+      candidate_branch: candidateBranch,
+      reason: "No candidate diff is durable yet; reconcile the incomplete record again.",
+      next_action: "Confirm the absence of a candidate diff before rejection.",
+    });
+    return recoveryResult(current, next, "await_evidence", candidateBranch);
+  }
+
+  if (current.phase === "recovery_pending") {
+    return recoveryResult(current, current, "await_evidence", candidateBranch);
+  }
+  if (current.phase === "review_pending") {
+    return recoveryManual(
+      current,
+      now,
+      candidateBranch,
+      "Review is pending but no exact candidate delivery was observed.",
+    );
+  }
+  if (current.phase === "validation_failed") {
+    const next = transitionRecoveryRecord(current, "retry_wait", now, {
+      candidate_branch: candidateBranch,
+      reason: "Validation failed before a durable candidate was observed.",
+      next_action: "Retry the bounded recovery attempt or require manual review.",
+    });
+    return recoveryResult(current, next, "await_evidence", candidateBranch);
+  }
+  const next = transitionRecoveryRecord(current, "recovery_pending", now, {
+    candidate_branch: candidateBranch,
+    reason: "The record is incomplete and requires another bounded reconciliation pass.",
+    next_action: "Reconcile the recorded branch and candidate SHA.",
+  });
+  return recoveryResult(current, next, "await_evidence", candidateBranch);
+};
 
 const githubRequestRaw = async (
   token: string,

@@ -1,10 +1,60 @@
+import type { SentinelRecoveryIdentityV1 } from "./recovery.ts";
+
 const FULL_SHA = /^[0-9a-f]{40}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const SAFE_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/u;
-const CHECKPOINT_BRANCH = /^sentinel\/candidate-[1-9][0-9]*(?:-[1-9][0-9]*)?$/u;
+const CHECKPOINT_BRANCH =
+  /^sentinel\/candidate-(?:[1-9][0-9]*(?:-[1-9][0-9]*)?|(?:github_issue|review_backlog|triage|incident)-[A-Za-z0-9][A-Za-z0-9._-]{0,79}-[A-Za-z0-9][A-Za-z0-9._-]{0,31}-g[1-9][0-9]*)$/u;
 const SAFE_REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const SAFE_URL = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/(?:pull|actions\/runs)\/[1-9][0-9]*$/u;
 const WORKFLOW_RUN_ID = /^[1-9][0-9]*$/u;
+
+const RECOVERY_SOURCE_KINDS: readonly SentinelRecoveryIdentityV1["source_kind"][] = [
+  "github_issue",
+  "review_backlog",
+  "triage",
+  "incident",
+];
+
+const recoveryIdentityIsValid = (identity: SentinelRecoveryIdentityV1): boolean =>
+  SAFE_REPOSITORY.test(identity.repository) && RECOVERY_SOURCE_KINDS.includes(identity.source_kind) &&
+  typeof identity.source_id === "string" && identity.source_id.trim().length > 0 &&
+  typeof identity.source_revision === "string" && identity.source_revision.trim().length > 0 &&
+  Number.isSafeInteger(identity.candidate_generation) && identity.candidate_generation > 0;
+
+const recoveryBranchSegment = (value: string, maximumLength: number, fallback: string): string => {
+  const segment = value.replace(/[^A-Za-z0-9._-]+/gu, "-").replace(/^-+|-+$/gu, "").slice(0, maximumLength)
+    .replace(/-+$/gu, "");
+  return segment.length > 0 ? segment : fallback;
+};
+
+/**
+ * Return the stable branch identity for one recovery record. The source and
+ * revision are part of the name so a retry cannot silently reuse a candidate
+ * from another issue or source generation.
+ */
+export const sentinelRecoveryCandidateBranch = (identity: SentinelRecoveryIdentityV1): string => {
+  if (!recoveryIdentityIsValid(identity)) throw new Error("Sentinel recovery identity is invalid");
+  const source = recoveryBranchSegment(identity.source_id, 80, "source");
+  const revision = recoveryBranchSegment(identity.source_revision, 32, "revision");
+  const branch = `sentinel/candidate-${identity.source_kind}-${source}-${revision}-g${identity.candidate_generation}`;
+  if (!CHECKPOINT_BRANCH.test(branch)) throw new Error("Sentinel recovery candidate branch is invalid");
+  return branch;
+};
+
+export const isSentinelRecoveryCandidateBranch = (branch: string): boolean => CHECKPOINT_BRANCH.test(branch);
+
+/** A collision-resistant, serialisable key for the immutable recovery identity. */
+export const sentinelRecoveryIdentityKey = (identity: SentinelRecoveryIdentityV1): string => {
+  if (!recoveryIdentityIsValid(identity)) throw new Error("Sentinel recovery identity is invalid");
+  return JSON.stringify([
+    identity.repository,
+    identity.source_kind,
+    identity.source_id,
+    identity.source_revision,
+    identity.candidate_generation,
+  ]);
+};
 
 const currentWorkflowCandidateBranch = (branch: string, runId: string, runAttempt: number): boolean =>
   CHECKPOINT_BRANCH.test(branch) && branch === `sentinel/candidate-${runId}-${runAttempt}`;
