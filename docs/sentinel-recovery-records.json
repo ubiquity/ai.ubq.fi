@@ -314,6 +314,40 @@
       "identity": {
         "repository": "ubiquity/ai.ubq.fi",
         "source_kind": "triage",
+        "source_id": "32894097642",
+        "source_revision": "d933beeb9e3dd6eb37cc03b8167821132dd89015",
+        "candidate_generation": 1
+      },
+      "run_id": "32894097642",
+      "attempt": 1,
+      "lease_token": "artifact-9581821054",
+      "base_sha": "d933beeb9e3dd6eb37cc03b8167821132dd89015",
+      "phase": "rejected",
+      "disposition": "rejected",
+      "state_version": 2,
+      "created_at": "2026-08-25T20:42:04.577Z",
+      "updated_at": "2026-08-28T23:13:05.058Z",
+      "candidate_branch": null,
+      "candidate_sha": null,
+      "changed_files": [],
+      "tree_sha": null,
+      "failure_class": "no_candidate_diff",
+      "failure_fingerprint": "2452a7cbf29eb3572041f9e943c603d0ba6b5c8bae7dd7e493719137b4ccbb5f",
+      "artifact_ids": [
+        9581821054
+      ],
+      "artifact_digests": [
+        "sha256:1f765ebe7af730ed349eab872be26c7c55d46813a6b0aba03fe1d9b0b27eff5b"
+      ],
+      "reason": "no_candidate_diff",
+      "next_action": null,
+      "predecessor": null
+    },
+    {
+      "schema_version": 1,
+      "identity": {
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_kind": "triage",
         "source_id": "32898888968",
         "source_revision": "d933beeb9e3dd6eb37cc03b8167821132dd89015",
         "candidate_generation": 1
