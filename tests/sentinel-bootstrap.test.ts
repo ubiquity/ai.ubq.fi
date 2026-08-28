@@ -4,6 +4,7 @@ import {
   initialSentinelBootstrapActivation,
   selectStableRollbackSha,
   type SentinelBootstrapActivationSnapshot,
+  type SentinelBootstrapRollbackIntentSnapshot,
   type SentinelBootstrapStateStore,
 } from "../scripts/sentinel/bootstrap/activation.ts";
 import {
@@ -13,6 +14,7 @@ import {
 import { evaluateSentinelBootstrapHealth } from "../scripts/sentinel/bootstrap/health.ts";
 import {
   parseBootstrapReleaseRecord,
+  type SentinelBootstrapRollbackIntentV1,
   type SentinelFailureConstraintV1,
 } from "../scripts/sentinel/bootstrap/contracts.ts";
 import {
@@ -53,6 +55,8 @@ const signal = (
 class FakeBootstrapStateStore implements SentinelBootstrapStateStore {
   pointer: ReturnType<typeof initialSentinelBootstrapActivation> | null = null;
   versionstamp: string | null = null;
+  rollbackIntent: SentinelBootstrapRollbackIntentV1 | null = null;
+  rollbackIntentVersionstamp: string | null = null;
   readonly constraints = new Map<string, unknown>();
   readonly activationWrites: Array<{ expected: string | null; activeSha: string; generation: number }> = [];
 
@@ -72,6 +76,39 @@ class FakeBootstrapStateStore implements SentinelBootstrapStateStore {
     });
     this.pointer = next;
     this.versionstamp = String((Number(this.versionstamp) || 0) + 1);
+    return Promise.resolve(true);
+  }
+
+  readRollbackIntent(): Promise<SentinelBootstrapRollbackIntentSnapshot> {
+    return Promise.resolve({ intent: this.rollbackIntent, versionstamp: this.rollbackIntentVersionstamp });
+  }
+
+  commitRollback(
+    expectedActivationVersionstamp: string | null,
+    next: ReturnType<typeof initialSentinelBootstrapActivation>,
+    intent: SentinelBootstrapRollbackIntentV1,
+  ): Promise<boolean> {
+    if (expectedActivationVersionstamp !== this.versionstamp || this.rollbackIntent !== null) {
+      return Promise.resolve(false);
+    }
+    this.activationWrites.push({
+      expected: expectedActivationVersionstamp,
+      activeSha: next.active_sha,
+      generation: next.generation,
+    });
+    this.pointer = next;
+    this.versionstamp = String((Number(this.versionstamp) || 0) + 1);
+    this.rollbackIntent = intent;
+    this.rollbackIntentVersionstamp = "1";
+    return Promise.resolve(true);
+  }
+
+  clearRollbackIntent(expectedVersionstamp: string): Promise<boolean> {
+    if (expectedVersionstamp !== this.rollbackIntentVersionstamp || this.rollbackIntent === null) {
+      return Promise.resolve(false);
+    }
+    this.rollbackIntent = null;
+    this.rollbackIntentVersionstamp = null;
     return Promise.resolve(true);
   }
 
@@ -213,6 +250,49 @@ Deno.test("controller performs one fenced rollback and deduplicates its constrai
   assert.equal(store.constraints.size, 1);
   assert.equal(published, 1);
   assert.equal(dispatches.length, 1);
+});
+
+Deno.test("rollback side effects resume from a durable intent after callback failure", async () => {
+  const store = new FakeBootstrapStateStore();
+  store.pointer = initialSentinelBootstrapActivation(release(), "2026-08-28T18:00:00.000Z");
+  store.versionstamp = "1";
+  const input = {
+    release: release(),
+    signals: [
+      signal({ observation_id: "run-1" }),
+      signal({ observation_id: "run-2" }),
+      signal({ observation_id: "run-3" }),
+    ],
+  };
+  await assert.rejects(
+    () =>
+      reconcileSentinelBootstrap(input, {
+        store,
+        now: () => "2026-08-28T18:20:00.000Z",
+        publishConstraint: () => Promise.reject(new Error("injected publication failure")),
+      }),
+    /injected publication failure/,
+  );
+  assert.equal(store.pointer?.active_sha, stableSha);
+  assert.notEqual(store.rollbackIntent, null);
+
+  let published = 0;
+  let dispatched = 0;
+  const resumed = await reconcileSentinelBootstrap(input, {
+    store,
+    publishConstraint: () => {
+      published += 1;
+      return Promise.resolve();
+    },
+    dispatchRecovery: () => {
+      dispatched += 1;
+      return Promise.resolve();
+    },
+  });
+  assert.equal(resumed.reason, "pending_rollback_effects_completed");
+  assert.equal(published, 1);
+  assert.equal(dispatched, 1);
+  assert.equal(store.rollbackIntent, null);
 });
 
 Deno.test("controller validates an activation pointer returned by a state store", async () => {

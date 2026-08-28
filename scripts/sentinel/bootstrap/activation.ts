@@ -1,8 +1,10 @@
 import {
   parseBootstrapReleaseRecord,
   parseSentinelBootstrapActivationPointer,
+  parseSentinelBootstrapRollbackIntent,
   parseSentinelFailureConstraint,
   type SentinelBootstrapActivationPointerV1,
+  type SentinelBootstrapRollbackIntentV1,
   type SentinelFailureConstraintV1,
 } from "./contracts.ts";
 import { assertBootstrapActivationFence, SENTINEL_BOOTSTRAP_POLICY } from "./policy.ts";
@@ -21,8 +23,20 @@ export const SENTINEL_BOOTSTRAP_CONSTRAINT_PREFIX = [
   "constraint",
 ] as const;
 
+export const SENTINEL_BOOTSTRAP_ROLLBACK_INTENT_KEY = [
+  "uos_ai",
+  "sentinel_bootstrap",
+  "v1",
+  "rollback_intent",
+] as const;
+
 export type SentinelBootstrapActivationSnapshot = Readonly<{
   pointer: SentinelBootstrapActivationPointerV1 | null;
+  versionstamp: string | null;
+}>;
+
+export type SentinelBootstrapRollbackIntentSnapshot = Readonly<{
+  intent: SentinelBootstrapRollbackIntentV1 | null;
   versionstamp: string | null;
 }>;
 
@@ -32,6 +46,13 @@ export interface SentinelBootstrapStateStore {
     expectedVersionstamp: string | null,
     next: SentinelBootstrapActivationPointerV1,
   ): Promise<boolean>;
+  readRollbackIntent(): Promise<SentinelBootstrapRollbackIntentSnapshot>;
+  commitRollback(
+    expectedActivationVersionstamp: string | null,
+    next: SentinelBootstrapActivationPointerV1,
+    intent: SentinelBootstrapRollbackIntentV1,
+  ): Promise<boolean>;
+  clearRollbackIntent(expectedVersionstamp: string): Promise<boolean>;
   putConstraintIfAbsent(constraint: SentinelFailureConstraintV1): Promise<boolean>;
 }
 
@@ -147,6 +168,49 @@ export const createDenoKvBootstrapStateStore = (kv: Deno.Kv): SentinelBootstrapS
     const committed = await kv.atomic()
       .check({ key: SENTINEL_BOOTSTRAP_ACTIVATION_KEY, versionstamp: expectedVersionstamp })
       .set(SENTINEL_BOOTSTRAP_ACTIVATION_KEY, pointer)
+      .commit();
+    return committed.ok;
+  },
+
+  async readRollbackIntent(): Promise<SentinelBootstrapRollbackIntentSnapshot> {
+    const entry = await kv.get<unknown>(SENTINEL_BOOTSTRAP_ROLLBACK_INTENT_KEY);
+    return {
+      intent: entry.value === null ? null : parseSentinelBootstrapRollbackIntent(entry.value),
+      versionstamp: entry.versionstamp,
+    };
+  },
+
+  async commitRollback(
+    expectedActivationVersionstamp: string | null,
+    next: SentinelBootstrapActivationPointerV1,
+    intent: SentinelBootstrapRollbackIntentV1,
+  ): Promise<boolean> {
+    if (!isVersionstamp(expectedActivationVersionstamp)) {
+      throw new Error("Sentinel bootstrap versionstamp is invalid");
+    }
+    const pointer = parseSentinelBootstrapActivationPointer(next);
+    const rollbackIntent = parseSentinelBootstrapRollbackIntent(intent);
+    const existingIntent = await kv.get<unknown>(SENTINEL_BOOTSTRAP_ROLLBACK_INTENT_KEY);
+    if (existingIntent.value !== null) {
+      parseSentinelBootstrapRollbackIntent(existingIntent.value);
+      return false;
+    }
+    const committed = await kv.atomic()
+      .check({ key: SENTINEL_BOOTSTRAP_ACTIVATION_KEY, versionstamp: expectedActivationVersionstamp })
+      .check({ key: SENTINEL_BOOTSTRAP_ROLLBACK_INTENT_KEY, versionstamp: existingIntent.versionstamp })
+      .set(SENTINEL_BOOTSTRAP_ACTIVATION_KEY, pointer)
+      .set(SENTINEL_BOOTSTRAP_ROLLBACK_INTENT_KEY, rollbackIntent)
+      .commit();
+    return committed.ok;
+  },
+
+  async clearRollbackIntent(expectedVersionstamp: string): Promise<boolean> {
+    if (!isVersionstamp(expectedVersionstamp) || expectedVersionstamp === null) {
+      throw new Error("Sentinel bootstrap rollback-intent versionstamp is invalid");
+    }
+    const committed = await kv.atomic()
+      .check({ key: SENTINEL_BOOTSTRAP_ROLLBACK_INTENT_KEY, versionstamp: expectedVersionstamp })
+      .delete(SENTINEL_BOOTSTRAP_ROLLBACK_INTENT_KEY)
       .commit();
     return committed.ok;
   },

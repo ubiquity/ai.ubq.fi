@@ -41,7 +41,6 @@ const API_VERSION = "2022-11-28";
 const FULL_SHA = /^[0-9a-f]{40}$/u;
 const SAFE_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/u;
 const SAFE_REVISION = /^[A-Za-z0-9_-]{1,200}$/u;
-const RECONCILABLE_GIT_REF = /^(?:development|sentinel\/candidate-[1-9][0-9]*(?:-[1-9][0-9]*)?)$/u;
 
 type PullRequest = Readonly<{
   number: number;
@@ -52,7 +51,13 @@ type PullRequest = Readonly<{
   baseRef: string;
 }>;
 
-type Comment = Readonly<{ id: number; body: string; updatedAt: string }>;
+type Comment = Readonly<{
+  id: number;
+  body: string;
+  updatedAt: string;
+  authorLogin: string;
+  authorType: string;
+}>;
 type CompletionEvidenceIdentity = Readonly<{ id: number; updatedAt: string }>;
 
 type IssueState = Readonly<{
@@ -106,6 +111,8 @@ export type SentinelRecoveryDeliveryObservation = Readonly<{
   pull_request_number: number;
   head_branch: string;
   head_sha: string;
+  base_branch: "development";
+  head_contained_in_development: boolean;
   state: "open" | "closed";
   merged_at: string | null;
 }>;
@@ -204,6 +211,7 @@ const parseRecoveryRemoteObservation = (
       !Number.isSafeInteger(delivery.pull_request_number) || delivery.pull_request_number <= 0 ||
       typeof delivery.head_branch !== "string" || !SAFE_BRANCH.test(delivery.head_branch) ||
       typeof delivery.head_sha !== "string" || !FULL_SHA.test(delivery.head_sha) ||
+      delivery.base_branch !== "development" || typeof delivery.head_contained_in_development !== "boolean" ||
       (delivery.state !== "open" && delivery.state !== "closed") ||
       (delivery.merged_at !== null &&
         (typeof delivery.merged_at !== "string" || !validRecoveryTimestamp(delivery.merged_at))) ||
@@ -215,6 +223,8 @@ const parseRecoveryRemoteObservation = (
       pull_request_number: delivery.pull_request_number,
       head_branch: delivery.head_branch,
       head_sha: delivery.head_sha,
+      base_branch: "development" as const,
+      head_contained_in_development: delivery.head_contained_in_development,
       state: delivery.state,
       merged_at: delivery.merged_at,
     };
@@ -356,8 +366,8 @@ export const reconcileSentinelRecoveryRecord = (
   const remote = input.remote === undefined ? null : parseRecoveryRemoteObservation(input.remote);
   const expectedBranch = sentinelRecoveryCandidateBranch(current.identity);
   let candidateBranch = current.candidate_branch;
-  if (candidateBranch !== null && !SAFE_BRANCH.test(candidateBranch)) {
-    return recoveryManual(current, now, candidateBranch, "Recorded recovery candidate branch is invalid.");
+  if (candidateBranch !== null && candidateBranch !== expectedBranch) {
+    return recoveryManual(current, now, candidateBranch, "Recorded recovery candidate branch is not deterministic.");
   }
   if (remote !== null && remote.candidate_branch !== null) {
     if (candidateBranch !== null && remote.candidate_branch !== candidateBranch) {
@@ -406,6 +416,14 @@ export const reconcileSentinelRecoveryRecord = (
       now,
       candidateBranch,
       "Delivery pull request identity does not match the recovery candidate.",
+    );
+  }
+  if (delivery !== null && delivery.merged_at !== null && !delivery.head_contained_in_development) {
+    return recoveryManual(
+      current,
+      now,
+      candidateBranch,
+      "Merged recovery delivery is not proven in development ancestry.",
     );
   }
 
@@ -489,6 +507,15 @@ export const reconcileSentinelRecoveryRecord = (
   }
 
   if (candidateSha !== null) {
+    if (remote === null) {
+      return recoveryResult(
+        current,
+        current,
+        "await_evidence",
+        candidateBranch,
+        "Remote candidate evidence is absent.",
+      );
+    }
     if (current.phase === "review_pending") {
       const next = transitionRecoveryRecord(current, "manual_required", now, {
         ...candidatePatch,
@@ -620,7 +647,7 @@ export const readGitHubCommitRefSha = async (
   branch: string,
   fetcher: typeof fetch = fetch,
 ): Promise<string> => {
-  if (!RECONCILABLE_GIT_REF.test(branch)) {
+  if (branch !== "development" && !isSentinelRecoveryCandidateBranch(branch)) {
     throw new Error("Sentinel reconciliation requires a trusted Git ref name");
   }
   const ref = `refs/heads/${branch}`;
@@ -730,14 +757,22 @@ const listComments = async (
     if (!Array.isArray(value)) throw new Error("GitHub issue-comment listing is invalid");
     for (const item of value) {
       const comment = record(item);
+      const author = record(comment?.user);
       if (
         !comment || !Number.isSafeInteger(comment.id) || (comment.id as number) <= 0 ||
         typeof comment.body !== "string" || typeof comment.updated_at !== "string" ||
-        !Number.isFinite(Date.parse(comment.updated_at))
+        !Number.isFinite(Date.parse(comment.updated_at)) || !author ||
+        typeof author.login !== "string" || typeof author.type !== "string"
       ) {
         throw new Error("GitHub returned an invalid issue comment");
       }
-      comments.push({ id: comment.id as number, body: comment.body, updatedAt: comment.updated_at });
+      comments.push({
+        id: comment.id as number,
+        body: comment.body,
+        updatedAt: comment.updated_at,
+        authorLogin: author.login,
+        authorType: author.type,
+      });
     }
     if (value.length < 100) return comments;
   }
@@ -752,7 +787,7 @@ const upsertComment = async (
   body: string,
 ): Promise<void> => {
   const matching = (await listComments(token, repository, issueNumber)).filter((comment) =>
-    comment.body.includes(marker)
+    comment.authorLogin === "github-actions[bot]" && comment.authorType === "Bot" && comment.body.includes(marker)
   );
   if (matching.length > 1) throw new Error("Sentinel evidence has more than one matching GitHub comment");
   if (matching.length === 1) {
@@ -793,6 +828,7 @@ const completionEvidence = async (
   marker: string,
 ): Promise<Comment | null> => {
   const matching = (await listComments(token, repository, issueNumber)).filter((comment) =>
+    comment.authorLogin === "github-actions[bot]" && comment.authorType === "Bot" &&
     comment.body.includes(marker) && comment.body.includes(ISSUE_COMPLETION_EVIDENCE_TEXT)
   );
   if (matching.length > 1) throw new Error("Sentinel completion evidence is duplicated");
@@ -1454,6 +1490,11 @@ export const reconcileGitHubIssueDelivery = async (
   }
 
   const marker = issueEvidenceMarker(selection);
+  const disposition = parseDisposition(dispositionValue);
+  const outcome = parseOutcome(await optionalJson(`${reportsDir}/github-issue-production-outcome.json`));
+  if (outcome && outcome.candidateSha !== pullRecord.head_sha) {
+    throw new Error("Sentinel production outcome does not match the issue pull-request head");
+  }
   const durableEvidence = await completionEvidence(
     input.token,
     input.repository,
@@ -1461,6 +1502,9 @@ export const reconcileGitHubIssueDelivery = async (
     marker,
   );
   if (durableEvidence !== null) {
+    if (input.workflowFailed || disposition !== "resolved" || outcome?.outcome !== "kept") {
+      throw new Error("Durable completion evidence cannot override the current workflow disposition");
+    }
     const source = new GitHubActionsClient({ repository: input.repository, token: input.token });
     let issue = await source.getIssue(selection.issue_number);
     const requireMatchingOpenSnapshot = async (): Promise<void> => {
@@ -1518,12 +1562,6 @@ export const reconcileGitHubIssueDelivery = async (
       durableCompletionEvidenceReused: true,
     });
     return;
-  }
-
-  const disposition = parseDisposition(dispositionValue);
-  const outcome = parseOutcome(await optionalJson(`${reportsDir}/github-issue-production-outcome.json`));
-  if (outcome && outcome.candidateSha !== pullRecord.head_sha) {
-    throw new Error("Sentinel production outcome does not match the issue pull-request head");
   }
 
   let pullMerged = false;

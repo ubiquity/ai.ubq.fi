@@ -3,9 +3,11 @@ import {
   parseBootstrapReleaseRecord,
   parseSentinelBootstrapActivationPointer,
   parseSentinelBootstrapHealthSignal,
+  parseSentinelBootstrapRollbackIntent,
   parseSentinelFailureConstraint,
   type SentinelBootstrapActivationPointerV1,
   type SentinelBootstrapHealthSignalV1,
+  type SentinelBootstrapRollbackIntentV1,
   type SentinelFailureConstraintV1,
 } from "./contracts.ts";
 import {
@@ -66,6 +68,48 @@ export type SentinelBootstrapReconcileOutcome = Readonly<{
 }>;
 
 const nowIso = (): string => new Date().toISOString();
+
+type CompletedRollbackEffects = Readonly<{
+  completed: boolean;
+  constraintPublished: boolean;
+  recoveryDispatched: boolean;
+}>;
+
+const completePendingRollbackEffects = async (
+  pointer: SentinelBootstrapActivationPointerV1,
+  dependencies: SentinelBootstrapControllerDependencies,
+): Promise<CompletedRollbackEffects> => {
+  const snapshot = await dependencies.store.readRollbackIntent();
+  if (snapshot.intent === null) {
+    return { completed: false, constraintPublished: false, recoveryDispatched: false };
+  }
+  if (snapshot.versionstamp === null) throw new Error("Sentinel bootstrap rollback intent is not durable");
+  const intent = parseSentinelBootstrapRollbackIntent(snapshot.intent);
+  if (intent.target_sha !== pointer.active_sha || intent.active_generation !== pointer.generation) {
+    throw new SentinelBootstrapStateConflict("Sentinel bootstrap rollback intent does not match activation");
+  }
+  await dependencies.store.putConstraintIfAbsent(intent.constraint);
+  if (dependencies.publishConstraint !== undefined) await dependencies.publishConstraint(intent.constraint);
+  let recoveryDispatched = false;
+  if (dependencies.dispatchRecovery !== undefined) {
+    const dispatch: SentinelBootstrapRecoveryDispatch = {
+      repository: SENTINEL_BOOTSTRAP_POLICY.repository,
+      ref: SENTINEL_BOOTSTRAP_POLICY.developmentRef,
+      sha: intent.target_sha,
+      previous_sha: intent.previous_sha,
+      fenced_generation: intent.fenced_generation,
+      active_generation: intent.active_generation,
+      constraint: intent.constraint,
+    };
+    assertRecoveryDispatchIdentity(dispatch);
+    await dependencies.dispatchRecovery(dispatch);
+    recoveryDispatched = true;
+  }
+  if (!await dependencies.store.clearRollbackIntent(snapshot.versionstamp)) {
+    throw new SentinelBootstrapStateConflict("Sentinel bootstrap rollback intent changed before completion");
+  }
+  return { completed: true, constraintPublished: true, recoveryDispatched };
+};
 
 const buildConstraint = (
   decision: SentinelBootstrapHealthDecision,
@@ -177,11 +221,26 @@ export const reconcileSentinelBootstrap = async (
     assertBootstrapActivationFence(activation.pointer, input.expectedFence);
   }
 
+  const pendingEffects = await completePendingRollbackEffects(activation.pointer, dependencies);
+
   const health = evaluateSentinelBootstrapHealth({
     activeGeneration: activation.pointer.generation,
     signals,
   });
   if (!health.rollback) {
+    if (pendingEffects.completed) {
+      return {
+        action: "rolled_back",
+        active_sha: activation.pointer.active_sha,
+        generation: activation.pointer.generation,
+        fenced_generation: activation.pointer.generation - 1,
+        stable_sha: stableSha,
+        health,
+        constraint_published: pendingEffects.constraintPublished,
+        recovery_dispatched: pendingEffects.recoveryDispatched,
+        reason: "pending_rollback_effects_completed",
+      };
+    }
     return outcomeWithoutRollback(
       activation.initialized ? "initialized" : "none",
       activation.pointer,
@@ -202,14 +261,21 @@ export const reconcileSentinelBootstrap = async (
     );
   }
   const now = dependencies.now?.() ?? nowIso();
-  const previousActiveSha = activation.pointer.active_sha;
+  const constraint = buildConstraint(health, now);
   let rolledBack: SentinelBootstrapActivationPointerV1 | null = null;
-  let rollbackCommitted = false;
   for (let attempt = 0; attempt < MAX_STATE_ATTEMPTS; attempt += 1) {
     const next = createRollbackActivation(activation.pointer, release, now);
-    if (await dependencies.store.compareAndSetActivation(activation.versionstamp, next)) {
+    const intent: SentinelBootstrapRollbackIntentV1 = parseSentinelBootstrapRollbackIntent({
+      schema_version: 1,
+      previous_sha: activation.pointer.active_sha,
+      target_sha: next.active_sha,
+      fenced_generation: activation.pointer.generation,
+      active_generation: next.generation,
+      constraint,
+      created_at: now,
+    });
+    if (await dependencies.store.commitRollback(activation.versionstamp, next, intent)) {
       rolledBack = next;
-      rollbackCommitted = true;
       break;
     }
     activation = await activationFromStore(input, dependencies);
@@ -223,27 +289,7 @@ export const reconcileSentinelBootstrap = async (
     throw new SentinelBootstrapStateConflict("Sentinel bootstrap rollback lost its activation fence");
   }
 
-  const constraint = buildConstraint(health, now);
-  const constraintCreated = await dependencies.store.putConstraintIfAbsent(constraint);
-  if (constraintCreated && dependencies.publishConstraint !== undefined) {
-    await dependencies.publishConstraint(constraint);
-  }
-
-  let recoveryDispatched = false;
-  if (rollbackCommitted && dependencies.dispatchRecovery !== undefined) {
-    const dispatch: SentinelBootstrapRecoveryDispatch = {
-      repository: SENTINEL_BOOTSTRAP_POLICY.repository,
-      ref: SENTINEL_BOOTSTRAP_POLICY.developmentRef,
-      sha: rolledBack.active_sha,
-      previous_sha: previousActiveSha,
-      fenced_generation: health.generation,
-      active_generation: rolledBack.generation,
-      constraint,
-    };
-    assertRecoveryDispatchIdentity(dispatch);
-    await dependencies.dispatchRecovery(dispatch);
-    recoveryDispatched = true;
-  }
+  const effects = await completePendingRollbackEffects(rolledBack, dependencies);
   return {
     action: "rolled_back",
     active_sha: rolledBack.active_sha,
@@ -251,8 +297,8 @@ export const reconcileSentinelBootstrap = async (
     fenced_generation: health.generation,
     stable_sha: stableSha,
     health,
-    constraint_published: constraintCreated,
-    recovery_dispatched: recoveryDispatched,
+    constraint_published: effects.constraintPublished,
+    recovery_dispatched: effects.recoveryDispatched,
     reason: "authoritative_failure_rollback",
   };
 };

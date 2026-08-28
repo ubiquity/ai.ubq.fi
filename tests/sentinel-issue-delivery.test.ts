@@ -1570,6 +1570,23 @@ Deno.test("ambiguous checkpoint publication retries the same branch idempotently
   assert.deepEqual(repeated.after, first.after);
 });
 
+Deno.test("recovery waits for remote evidence and rejects a non-deterministic recorded branch", () => {
+  const absent = reconcileSentinelRecoveryRecord({
+    record: recoveryRecord(),
+    now: "2026-08-28T18:02:00.000Z",
+  });
+  assert.equal(absent.action, "await_evidence");
+  assert.equal(absent.changed, false);
+
+  const unsafe = reconcileSentinelRecoveryRecord({
+    record: recoveryRecord({ candidate_branch: "development" }),
+    remote: recoveryRemote({ candidate_branch: null, candidate_sha: null }),
+    now: "2026-08-28T18:02:00.000Z",
+  });
+  assert.equal(unsafe.action, "manual_required");
+  assert.match(unsafe.after.reason ?? "", /not deterministic/u);
+});
+
 Deno.test("repeated delivery reconciliation records one terminal disposition and no duplicate delivery", () => {
   const record = recoveryRecord({ phase: "review_pending", state_version: 3 });
   const remote = recoveryRemote({
@@ -1577,6 +1594,8 @@ Deno.test("repeated delivery reconciliation records one terminal disposition and
       pull_request_number: 201,
       head_branch: recoveryBranch,
       head_sha: recoveryCandidateSha,
+      base_branch: "development",
+      head_contained_in_development: true,
       state: "closed",
       merged_at: "2026-08-28T18:04:00.000Z",
     }],
@@ -1597,6 +1616,26 @@ Deno.test("repeated delivery reconciliation records one terminal disposition and
   assert.equal(repeated.after.state_version, first.after.state_version);
 });
 
+Deno.test("merged recovery delivery requires development ancestry proof", () => {
+  const result = reconcileSentinelRecoveryRecord({
+    record: recoveryRecord({ phase: "review_pending", state_version: 3 }),
+    remote: recoveryRemote({
+      deliveries: [{
+        pull_request_number: 201,
+        head_branch: recoveryBranch,
+        head_sha: recoveryCandidateSha,
+        base_branch: "development",
+        head_contained_in_development: false,
+        state: "closed",
+        merged_at: "2026-08-28T18:04:00.000Z",
+      }],
+    }),
+    now: "2026-08-28T18:05:00.000Z",
+  });
+  assert.equal(result.action, "manual_required");
+  assert.match(result.after.reason ?? "", /not proven in development ancestry/u);
+});
+
 Deno.test("a candidate already at development without a delivery record is manual", () => {
   const result = reconcileSentinelRecoveryRecord({
     record: recoveryRecord({ phase: "recovery_pending" }),
@@ -1613,6 +1652,8 @@ Deno.test("duplicate delivery observations become one manual disposition and sta
     pull_request_number: 201,
     head_branch: recoveryBranch,
     head_sha: recoveryCandidateSha,
+    base_branch: "development" as const,
+    head_contained_in_development: false,
     state: "open" as const,
     merged_at: null,
   };

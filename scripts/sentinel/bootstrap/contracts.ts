@@ -1,6 +1,3 @@
-import { parseSentinelReleaseRecord, type SentinelReleaseRecordV1 } from "../recovery.ts";
-import { isRecord } from "../../../src/utils.ts";
-
 export const SENTINEL_BOOTSTRAP_SCHEMA_VERSION = 1 as const;
 
 const FULL_SHA = /^[0-9a-f]{40}$/u;
@@ -69,6 +66,29 @@ export type SentinelFailureConstraintV1 = Readonly<{
   regression_test: string;
   created_at: string;
 }>;
+
+export type SentinelBootstrapRollbackIntentV1 = Readonly<{
+  schema_version: typeof SENTINEL_BOOTSTRAP_SCHEMA_VERSION;
+  previous_sha: string;
+  target_sha: string;
+  fenced_generation: number;
+  active_generation: number;
+  constraint: SentinelFailureConstraintV1;
+  created_at: string;
+}>;
+
+export type SentinelBootstrapReleaseRecordV1 = Readonly<{
+  schema_version: 1;
+  stable_sha: string;
+  candidate_sha: string | null;
+  acceptance_evidence: readonly string[];
+  activated_at: string;
+  rollback_reason: string | null;
+  generation: number;
+}>;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const positiveInteger = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value > 0;
@@ -142,12 +162,33 @@ export const parseSentinelFailureConstraint = (value: unknown): SentinelFailureC
   return value as SentinelFailureConstraintV1;
 };
 
-export const parseBootstrapReleaseRecord = (value: unknown): SentinelReleaseRecordV1 => {
-  const release = parseSentinelReleaseRecord(value);
-  if (release.acceptance_evidence.length === 0) {
+export const parseSentinelBootstrapRollbackIntent = (value: unknown): SentinelBootstrapRollbackIntentV1 => {
+  if (
+    !isRecord(value) || value.schema_version !== SENTINEL_BOOTSTRAP_SCHEMA_VERSION ||
+    typeof value.previous_sha !== "string" || !FULL_SHA.test(value.previous_sha) ||
+    typeof value.target_sha !== "string" || !FULL_SHA.test(value.target_sha) ||
+    value.previous_sha === value.target_sha || !positiveInteger(value.fenced_generation) ||
+    !positiveInteger(value.active_generation) || value.active_generation !== value.fenced_generation + 1 ||
+    !timestamp(value.created_at)
+  ) throw new Error("Sentinel bootstrap rollback intent is invalid");
+  parseSentinelFailureConstraint(value.constraint);
+  return value as SentinelBootstrapRollbackIntentV1;
+};
+
+export const parseBootstrapReleaseRecord = (value: unknown): SentinelBootstrapReleaseRecordV1 => {
+  if (
+    !isRecord(value) || value.schema_version !== 1 || typeof value.stable_sha !== "string" ||
+    !FULL_SHA.test(value.stable_sha) ||
+    !(value.candidate_sha === null ||
+      (typeof value.candidate_sha === "string" && FULL_SHA.test(value.candidate_sha))) ||
+    !Array.isArray(value.acceptance_evidence) || !value.acceptance_evidence.every(boundedReference) ||
+    !timestamp(value.activated_at) ||
+    !(value.rollback_reason === null || boundedReference(value.rollback_reason)) || !positiveInteger(value.generation)
+  ) throw new Error("Sentinel bootstrap release record is invalid");
+  if (value.acceptance_evidence.length === 0) {
     throw new Error("Sentinel bootstrap release record has no acceptance evidence");
   }
-  return release;
+  return value as SentinelBootstrapReleaseRecordV1;
 };
 
 export const assertFullGitSha = (value: string, label: string): string => {
