@@ -4,6 +4,7 @@ import {
   buildSentinelRecoveryDraftPullRequest,
   createOrReuseSentinelRecoveryDraftPullRequest,
   isSentinelArtifactRecoveryEligible,
+  manualRecoveryRecordForLegacyArtifact,
   recoverSentinelArtifactCandidate,
   selectSentinelRecoveryArtifacts,
   sentinelRecoveryCandidateBranch,
@@ -236,6 +237,27 @@ Deno.test({
       for (const file of [...failed, ...runningWithoutFailure, ...timedOut]) file.bytes.fill(0);
     }
   },
+});
+
+Deno.test("authenticated legacy candidate evidence receives a durable manual disposition", () => {
+  const headSha = "b".repeat(40);
+  const digest = `sha256:${"c".repeat(64)}`;
+  const record = manualRecoveryRecordForLegacyArtifact(
+    "ubiquity/ai.ubq.fi",
+    makeArtifact(9697049137, "2026-08-28T17:58:52.000Z", {
+      workflowRunId: 33197180235,
+      workflowRunHeadSha: headSha,
+    }),
+    digest,
+  );
+  assert(record);
+  assert.equal(record.phase, "manual_required");
+  assert.equal(record.disposition, "manual_required");
+  assert.deepEqual(record.artifact_ids, [9697049137]);
+  assert.deepEqual(record.artifact_digests, [digest]);
+  assert.equal(record.identity.source_id, "33197180235");
+  assert.equal(record.identity.source_revision, headSha);
+  assert.match(record.next_action ?? "", /repository owner/u);
 });
 
 Deno.test({

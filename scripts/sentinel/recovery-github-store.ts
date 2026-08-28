@@ -52,7 +52,11 @@ const request = async (
   });
   if (allowNotFound && response.status === 404) return { status: 404, value: null };
   const value = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(`GitHub recovery state request failed with HTTP ${response.status}`);
+  if (!response.ok) {
+    throw new Error(
+      `GitHub recovery state ${init.method ?? "GET"} ${path} failed with HTTP ${response.status}`,
+    );
+  }
   return { status: response.status, value };
 };
 

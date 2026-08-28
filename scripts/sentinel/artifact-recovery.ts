@@ -1131,6 +1131,48 @@ const recordFromArtifact = (
   return record;
 };
 
+export const manualRecoveryRecordForLegacyArtifact = (
+  repository: string,
+  artifact: GitHubArtifact,
+  encryptedDigest: string,
+): SentinelRecoveryRecordV1 | null => {
+  if (
+    !SAFE_REPOSITORY.test(repository) || !artifact.workflowRunId || !artifact.workflowRunHeadSha ||
+    !FULL_SHA.test(artifact.workflowRunHeadSha) || !validSha256(encryptedDigest.replace(/^sha256:/u, "")) ||
+    !validIsoTimestamp(artifact.createdAt)
+  ) return null;
+  return parseSentinelRecoveryRecord({
+    schema_version: 1,
+    identity: {
+      repository,
+      source_kind: "triage",
+      source_id: String(artifact.workflowRunId),
+      source_revision: artifact.workflowRunHeadSha,
+      candidate_generation: 1,
+    },
+    run_id: String(artifact.workflowRunId),
+    attempt: 1,
+    lease_token: `artifact-${artifact.id}`,
+    base_sha: artifact.workflowRunHeadSha,
+    phase: "manual_required",
+    disposition: "manual_required",
+    state_version: 1,
+    created_at: artifact.createdAt,
+    updated_at: artifact.createdAt,
+    candidate_branch: null,
+    candidate_sha: null,
+    changed_files: [],
+    tree_sha: null,
+    failure_class: "artifact_invalid",
+    failure_fingerprint: encryptedDigest.replace(/^sha256:/u, ""),
+    artifact_ids: [artifact.id],
+    artifact_digests: [encryptedDigest],
+    reason: "authenticated legacy evidence lacks a provable recovery record",
+    next_action: "a repository owner must inspect the encrypted artifact and its exact workflow base",
+    predecessor: null,
+  });
+};
+
 const artifactCreatedAtMs = (artifact: GitHubArtifact): number => {
   const timestamp = Date.parse(artifact.createdAt);
   return Number.isFinite(timestamp) ? timestamp : 0;
@@ -1285,6 +1327,19 @@ export const recoverSentinelArtifactsInActions = async (
         const workflowRun = await workflowRunForArtifact(decrypted, github);
         const artifactRecord = recordFromArtifact(decrypted, artifact, encryptedDigest, workflowRun);
         if (!artifactRecord) {
+          const legacyRecord = isSentinelArtifactRecoveryEligible(decrypted, workflowRun)
+            ? manualRecoveryRecordForLegacyArtifact(input.repository, artifact, encryptedDigest)
+            : null;
+          if (legacyRecord) {
+            recoverySnapshot = await writeGitHubSentinelRecoveryLedger({
+              token: input.token,
+              repository: input.repository,
+              fetcher: stateFetcher,
+              snapshot: recoverySnapshot,
+              ledger: upsertSentinelRecoveryRecord(recoverySnapshot.ledger, legacyRecord, null),
+              message: `chore(sentinel): classify legacy artifact ${artifact.id}`,
+            });
+          }
           results.push({
             schema_version: SENTINEL_ARTIFACT_RECOVERY_SCHEMA_VERSION,
             disposition: "manual_required",
@@ -1294,7 +1349,7 @@ export const recoverSentinelArtifactsInActions = async (
             candidate_sha: null,
             tree_sha: null,
             changed_files: [],
-            recovery_record: null,
+            recovery_record: legacyRecord,
             draft_pull_request: null,
           });
           continue;
