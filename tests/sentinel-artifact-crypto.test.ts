@@ -468,25 +468,31 @@ Deno.test({
       workflow.includes("installing agent prerequisites conservatively"),
       "Backlog hint failures must fail toward installing the agent",
     );
-    const manualStart = orchestrator.indexOf("const docsOnlyDisposition = selectedBacklogState.disposition");
-    const manualEnd = orchestrator.indexOf("if (!await hasChanges(checkout))", manualStart);
+    const nonRuntimeStart = orchestrator.indexOf(
+      "if (selectedBacklogState.disposition !== null && !selectedBacklogState.continueToRuntimeValidation)",
+    );
+    const nonRuntimeEnd = orchestrator.indexOf("if (!await hasChanges(checkout))", nonRuntimeStart);
     assert(
-      manualStart >= 0 && manualEnd > manualStart,
+      nonRuntimeStart >= 0 && nonRuntimeEnd > nonRuntimeStart,
       "Non-runtime backlog completion must have a bounded early-return lane",
     );
-    const manualLane = orchestrator.slice(manualStart, manualEnd);
+    const nonRuntimeLane = orchestrator.slice(nonRuntimeStart, nonRuntimeEnd);
     assert(
-      manualLane.includes("HEAD:${SENTINEL_POLICY.developmentRef}") &&
-        manualLane.includes('"development_docs_only_review_backlog_resolved"') &&
-        manualLane.includes('"development_docs_only_manual_required"'),
+      nonRuntimeLane.includes("HEAD:${SENTINEL_POLICY.developmentRef}") &&
+        nonRuntimeLane.includes('"development_docs_only_backlog_already_fixed"') &&
+        nonRuntimeLane.includes('"development_docs_only_manual_required"'),
       "Non-runtime backlog completion must persist either trusted documentation disposition",
     );
     assert(
-      manualLane.includes("pushTemporaryCandidate(checkout, branch, gitEnvironment)"),
+      nonRuntimeLane.includes("runDocumentationValidation({") && !nonRuntimeLane.includes("runCandidateValidation({"),
+      "Non-runtime backlog completion must use scoped documentation validation instead of the runtime suite",
+    );
+    assert(
+      nonRuntimeLane.includes("pushTemporaryCandidate(checkout, branch, gitEnvironment)"),
       "Non-runtime backlog completion must retain its exact candidate before the development push",
     );
     for (const forbidden of ["dispatchAndResolveRevision", "dispatchSerializedPromotion"]) {
-      assert(!manualLane.includes(forbidden), `Non-runtime backlog completion must not call ${forbidden}`);
+      assert(!nonRuntimeLane.includes(forbidden), `Non-runtime backlog completion must not call ${forbidden}`);
     }
     const validationCommandStart = validation.indexOf("const runValidationCommand = async");
     const validationCommandEnd = validation.indexOf("export const runCandidateValidation", validationCommandStart);
