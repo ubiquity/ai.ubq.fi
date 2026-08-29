@@ -1400,12 +1400,7 @@ export const recoverSentinelArtifactsInActions = async (
               encryptedDigest,
               terminalDisposition,
             )
-            : (
-                isSentinelArtifactRecoveryEligible(decrypted, workflowRun) ||
-                legacyArtifactNeedsManualDisposition(decrypted, workflowRun)
-              )
-            ? manualRecoveryRecordForLegacyArtifact(input.repository, artifact, encryptedDigest)
-            : null;
+            : manualRecoveryRecordForLegacyArtifact(input.repository, artifact, encryptedDigest);
           if (legacyRecord) {
             const existingLegacyRecord = recoverySnapshot.ledger.records.find((candidate) =>
               sentinelRecoveryIdentityKey(candidate.identity) === sentinelRecoveryIdentityKey(legacyRecord!.identity)
