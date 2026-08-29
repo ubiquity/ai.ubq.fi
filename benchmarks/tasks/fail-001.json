@@ -1,0 +1,32 @@
+{
+  "id": "fail-001",
+  "category": "failure",
+  "title": "Recover from an injected permission error",
+  "description": "Reading data/source.txt fails once with a permission error before succeeding; record the value in answer.txt.",
+  "fixture": "fail-001",
+  "fixture_revision": "sha256:48dc4e442988ae9c4fc2fa88834e38503f19514e57a32bded545a57f11d258b2",
+  "timeout_ms": 60000,
+  "max_tool_calls": 40,
+  "min_tool_calls": 3,
+  "min_model_calls": 0,
+  "allowed_write_scope": ["**"],
+  "verify": { "command": "sh tests/run.sh", "timeout_ms": 20000 },
+  "oracle": {
+    "file_checks": [{ "path": "answer.txt", "kind": "equals", "value": "the value is 42" }]
+  },
+  "scripted_trail": [
+    {
+      "tool": "shell.exec",
+      "args": { "command": "cat data/source.txt" },
+      "inject": { "error": "cat: data/source.txt: Permission denied", "error_code": "EACCES" },
+      "expect": { "ok": false, "error_contains": "Permission denied" }
+    },
+    {
+      "tool": "shell.exec",
+      "args": { "command": "cat data/source.txt" },
+      "recovery": true,
+      "expect": { "ok": true, "output_contains": ["the value is 42"] }
+    },
+    { "tool": "editor.apply_patch", "args": { "path": "answer.txt", "add": true, "new": "the value is 42" } }
+  ]
+}

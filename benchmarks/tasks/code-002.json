@@ -1,0 +1,40 @@
+{
+  "id": "code-002",
+  "category": "coding",
+  "title": "Implement the format_name stub",
+  "description": "Implement the stub in src/format.txt so it returns \"<last>, <first>\"; the fixture test suite must pass unchanged.",
+  "fixture": "code-002",
+  "fixture_revision": "sha256:fc31634588b9e85bf6f2ab594c93ec4196e781824e35ec2dd9fdf614dfdcf135",
+  "timeout_ms": 60000,
+  "max_tool_calls": 40,
+  "min_tool_calls": 3,
+  "min_model_calls": 0,
+  "allowed_write_scope": ["**"],
+  "verify": { "command": "sh tests/run.sh", "timeout_ms": 20000 },
+  "oracle": {
+    "file_checks": [
+      {
+        "path": "src/format.txt",
+        "kind": "equals",
+        "value": "def format_name(first, last):\n    # TODO: return \"<last>, <first>\"\n    return last + \", \" + first\n"
+      }
+    ]
+  },
+  "scripted_trail": [
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "tests/run.sh" },
+      "expect": { "ok": true, "output_contains": ["return last + \", \" + first"] }
+    },
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "src/format.txt" },
+      "expect": { "ok": true, "output_contains": ["return \"\""] }
+    },
+    {
+      "tool": "editor.apply_patch",
+      "args": { "path": "src/format.txt", "old": "return \"\"", "new": "return last + \", \" + first" }
+    },
+    { "tool": "shell.exec", "args": { "command": "sh tests/run.sh" }, "expect": { "ok": true } }
+  ]
+}

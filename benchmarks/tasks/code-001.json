@@ -1,0 +1,31 @@
+{
+  "id": "code-001",
+  "category": "coding",
+  "title": "Change the production port constant",
+  "description": "Update src/config.txt so the declared port is 9000; the fixture test suite must pass unchanged.",
+  "fixture": "code-001",
+  "fixture_revision": "sha256:1bfa817d5cde528ede1208a008994107fa30744ca763c14b268ca9ebfc76a8f3",
+  "timeout_ms": 60000,
+  "max_tool_calls": 40,
+  "min_tool_calls": 3,
+  "min_model_calls": 0,
+  "allowed_write_scope": ["**"],
+  "verify": { "command": "sh tests/run.sh", "timeout_ms": 20000 },
+  "oracle": {
+    "file_checks": [{ "path": "src/config.txt", "kind": "equals", "value": "PORT = 9000\n" }]
+  },
+  "scripted_trail": [
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "tests/run.sh" },
+      "expect": { "ok": true, "output_contains": ["PORT = 9000"] }
+    },
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "src/config.txt" },
+      "expect": { "ok": true, "output_contains": ["PORT = 8000"] }
+    },
+    { "tool": "editor.apply_patch", "args": { "path": "src/config.txt", "old": "PORT = 8000", "new": "PORT = 9000" } },
+    { "tool": "shell.exec", "args": { "command": "sh tests/run.sh" }, "expect": { "ok": true } }
+  ]
+}

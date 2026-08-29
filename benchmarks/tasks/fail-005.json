@@ -1,0 +1,41 @@
+{
+  "id": "fail-005",
+  "category": "failure",
+  "title": "Fail verification once, then fix",
+  "description": "A first edit sets the wrong mode; the suite fails. Fix the file to mode=safe and pass the suite.",
+  "fixture": "fail-005",
+  "fixture_revision": "sha256:9291bc205780b06f435b79110e6f2f8de06d8e3a4414a911082c2b739cafac70",
+  "timeout_ms": 60000,
+  "max_tool_calls": 40,
+  "min_tool_calls": 5,
+  "min_model_calls": 0,
+  "allowed_write_scope": ["**"],
+  "verify": { "command": "sh tests/run.sh", "timeout_ms": 20000 },
+  "oracle": {
+    "file_checks": [{ "path": "src/app.txt", "kind": "equals", "value": "mode=safe\n" }]
+  },
+  "scripted_trail": [
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "src/app.txt" },
+      "expect": { "ok": true, "output_contains": ["mode=fast"] }
+    },
+    { "tool": "editor.apply_patch", "args": { "path": "src/app.txt", "old": "mode=fast", "new": "mode=slow" } },
+    {
+      "tool": "shell.exec",
+      "args": { "command": "sh tests/run.sh" },
+      "expect": { "ok": false, "error_contains": "exit code 1" }
+    },
+    {
+      "tool": "editor.apply_patch",
+      "args": { "path": "src/app.txt", "old": "mode=slow", "new": "mode=safe" },
+      "recovery": true
+    },
+    { "tool": "shell.exec", "args": { "command": "sh tests/run.sh" }, "expect": { "ok": true } },
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "src/app.txt" },
+      "expect": { "ok": true, "output_contains": ["mode=safe"] }
+    }
+  ]
+}

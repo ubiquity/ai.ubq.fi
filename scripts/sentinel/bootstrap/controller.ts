@@ -3,10 +3,14 @@ import {
   parseBootstrapReleaseRecord,
   parseSentinelBootstrapActivationPointer,
   parseSentinelBootstrapHealthSignal,
+  parseSentinelBootstrapProgressObservation,
   parseSentinelBootstrapRollbackIntent,
   parseSentinelFailureConstraint,
   type SentinelBootstrapActivationPointerV1,
+  type SentinelBootstrapClassifierEvidenceV1,
   type SentinelBootstrapHealthSignalV1,
+  type SentinelBootstrapProgressDecisionV1,
+  type SentinelBootstrapProgressObservationV1,
   type SentinelBootstrapRollbackIntentV1,
   type SentinelFailureConstraintV1,
 } from "./contracts.ts";
@@ -19,6 +23,11 @@ import {
   type SentinelBootstrapStateStore,
 } from "./activation.ts";
 import { evaluateSentinelBootstrapHealth, type SentinelBootstrapHealthDecision } from "./health.ts";
+import {
+  classifierFailureEvidence,
+  evaluateSentinelBootstrapProgress,
+  resolveSentinelBootstrapProgress,
+} from "./progress.ts";
 import {
   assertBootstrapActivationFence,
   assertImplementationSelection,
@@ -43,6 +52,14 @@ export type SentinelBootstrapControllerDependencies = Readonly<{
   now?: () => string;
   publishConstraint?: (constraint: SentinelFailureConstraintV1) => Promise<void>;
   dispatchRecovery?: (dispatch: SentinelBootstrapRecoveryDispatch) => Promise<void>;
+  /**
+   * One injected zero-tool GPT-OSS classifier consulted only when the
+   * deterministic verdict is `ambiguous`. Its evidence is advisory; any
+   * failure becomes `unknown` and never affects rollback or identity gates.
+   */
+  classifyAmbiguous?: (observation: SentinelBootstrapProgressObservationV1) => Promise<
+    SentinelBootstrapClassifierEvidenceV1
+  >;
 }>;
 
 export type SentinelBootstrapReconcileInput = Readonly<{
@@ -53,6 +70,12 @@ export type SentinelBootstrapReconcileInput = Readonly<{
   implementationModel?: string;
   implementationReasoning?: string;
   expectedFence?: Readonly<{ generation: number; activeSha: string }>;
+  /**
+   * Canonical per-run progress observations, newest last. Absent means the
+   * caller does not evaluate progress; malformed input fails closed to
+   * `progress: null` without blocking health/rollback.
+   */
+  progressObservations?: readonly unknown[];
 }>;
 
 export type SentinelBootstrapReconcileOutcome = Readonly<{
@@ -65,6 +88,13 @@ export type SentinelBootstrapReconcileOutcome = Readonly<{
   constraint_published: boolean;
   recovery_dispatched: boolean;
   reason: string;
+  /**
+   * Advisory bootstrap progress decision (null when no observations were
+   * supplied or they were invalid). The current promotion path does not
+   * consume this field. A later authority change requires live classifier
+   * acceptance and must preserve the existing exact-SHA/revision gates.
+   */
+  progress: SentinelBootstrapProgressDecisionV1 | null;
 }>;
 
 const nowIso = (): string => new Date().toISOString();
@@ -188,6 +218,7 @@ const outcomeWithoutRollback = (
   stableSha: string,
   health: SentinelBootstrapHealthDecision,
   reason: string,
+  progress: SentinelBootstrapProgressDecisionV1 | null,
 ): SentinelBootstrapReconcileOutcome => ({
   action,
   active_sha: pointer.active_sha,
@@ -198,7 +229,43 @@ const outcomeWithoutRollback = (
   constraint_published: false,
   recovery_dispatched: false,
   reason,
+  progress,
 });
+
+/**
+ * Evaluates the advisory progress decision. The deterministic verdict is
+ * pure; the classifier is called exactly once, only for `ambiguous`, and any
+ * failure degrades to `unknown` evidence instead of propagating. Malformed
+ * observations fail closed to no progress evidence without blocking the
+ * controller's authoritative health/rollback work.
+ */
+const evaluateProgress = async (
+  input: SentinelBootstrapReconcileInput,
+  dependencies: SentinelBootstrapControllerDependencies,
+  now: string,
+): Promise<SentinelBootstrapProgressDecisionV1 | null> => {
+  if (input.progressObservations === undefined) return null;
+  try {
+    const observations = input.progressObservations.map(parseSentinelBootstrapProgressObservation);
+    const decision = evaluateSentinelBootstrapProgress(observations, now);
+    if (decision.verdict !== "ambiguous" || dependencies.classifyAmbiguous === undefined) {
+      return resolveSentinelBootstrapProgress(decision, null);
+    }
+    const current = observations[observations.length - 1]!;
+    try {
+      return resolveSentinelBootstrapProgress(decision, await dependencies.classifyAmbiguous(current));
+    } catch {
+      return resolveSentinelBootstrapProgress(
+        decision,
+        classifierFailureEvidence(current, "classifier_injected_call_failed", now),
+      );
+    }
+  } catch {
+    // Invalid or missing progress input is fail-closed: no progress evidence,
+    // rollback and identity decisions remain unaffected.
+    return null;
+  }
+};
 
 /**
  * Reconcile one bootstrap observation set. This controller has no Git,
@@ -213,6 +280,7 @@ export const reconcileSentinelBootstrap = async (
   const release = parseBootstrapReleaseRecord(input.release);
   const signals: readonly SentinelBootstrapHealthSignalV1[] = input.signals.map(parseSentinelBootstrapHealthSignal);
   const stableSha = release.stable_sha;
+  const now = dependencies.now?.() ?? nowIso();
   let activation = await activationFromStore(input, dependencies);
   if (activation.pointer.active_sha !== release.stable_sha && activation.pointer.active_sha !== release.candidate_sha) {
     throw new Error("Sentinel bootstrap activation points outside the release record");
@@ -227,6 +295,7 @@ export const reconcileSentinelBootstrap = async (
     activeGeneration: activation.pointer.generation,
     signals,
   });
+  const progress = await evaluateProgress(input, dependencies, now);
   if (!health.rollback) {
     if (pendingEffects.completed) {
       return {
@@ -239,6 +308,7 @@ export const reconcileSentinelBootstrap = async (
         constraint_published: pendingEffects.constraintPublished,
         recovery_dispatched: pendingEffects.recoveryDispatched,
         reason: "pending_rollback_effects_completed",
+        progress,
       };
     }
     return outcomeWithoutRollback(
@@ -247,6 +317,7 @@ export const reconcileSentinelBootstrap = async (
       stableSha,
       health,
       activation.initialized ? "activation_pointer_initialized" : health.reason,
+      progress,
     );
   }
 
@@ -258,9 +329,9 @@ export const reconcileSentinelBootstrap = async (
       stableSha,
       health,
       "active_version_is_already_stable",
+      progress,
     );
   }
-  const now = dependencies.now?.() ?? nowIso();
   const constraint = buildConstraint(health, now);
   let rolledBack: SentinelBootstrapActivationPointerV1 | null = null;
   for (let attempt = 0; attempt < MAX_STATE_ATTEMPTS; attempt += 1) {
@@ -300,6 +371,7 @@ export const reconcileSentinelBootstrap = async (
     constraint_published: effects.constraintPublished,
     recovery_dispatched: effects.recoveryDispatched,
     reason: "authoritative_failure_rollback",
+    progress,
   };
 };
 

@@ -1,0 +1,59 @@
+{
+  "id": "seq-004",
+  "category": "sequential",
+  "title": "Commit a note in two ordered commits",
+  "description": "Append two note lines to notes/CHANGES.txt and create one commit per line, leaving a clean worktree.",
+  "fixture": "seq-004",
+  "fixture_revision": "sha256:93ac1d7627175986fb5e72b0a2f8fc8e41e4bd8060f034dbbf9fff3d00a4d00d",
+  "timeout_ms": 60000,
+  "max_tool_calls": 40,
+  "min_tool_calls": 6,
+  "min_model_calls": 0,
+  "allowed_write_scope": ["**"],
+  "git": { "init": true },
+  "verify": { "command": "sh tests/run.sh", "timeout_ms": 20000 },
+  "oracle": {
+    "file_checks": [
+      { "path": "notes/CHANGES.txt", "kind": "equals", "value": "# Changes\nadded note 1\nadded note 2\n" }
+    ],
+    "git_checks": [
+      { "kind": "commit_count", "value": "3" },
+      { "kind": "worktree_clean" },
+      { "kind": "head_message", "value": "add note 2" },
+      { "kind": "file_committed", "value": "notes/CHANGES.txt" }
+    ]
+  },
+  "scripted_trail": [
+    {
+      "tool": "shell.exec",
+      "args": { "command": "git log --oneline" },
+      "expect": { "ok": true, "output_contains": ["base"] }
+    },
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "notes/CHANGES.txt" },
+      "expect": { "ok": true, "output_contains": ["# Changes"] }
+    },
+    {
+      "tool": "editor.apply_patch",
+      "args": { "path": "notes/CHANGES.txt", "old": "# Changes", "new": "# Changes\nadded note 1" }
+    },
+    {
+      "tool": "shell.exec",
+      "args": {
+        "command": "git add -A && git -c user.email=benchmark@invalid.invalid -c user.name=benchmark commit -qm 'add note 1'"
+      }
+    },
+    {
+      "tool": "editor.apply_patch",
+      "args": { "path": "notes/CHANGES.txt", "old": "added note 1", "new": "added note 1\nadded note 2" }
+    },
+    {
+      "tool": "shell.exec",
+      "args": {
+        "command": "git add -A && git -c user.email=benchmark@invalid.invalid -c user.name=benchmark commit -qm 'add note 2'"
+      }
+    },
+    { "tool": "shell.exec", "args": { "command": "sh tests/run.sh" }, "expect": { "ok": true } }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "id": "code-004",
+  "category": "coding",
+  "title": "Remove the duplicated function",
+  "description": "src/utils.txt contains a duplicated helper; remove the second definition so exactly one remains. The fixture test suite must pass unchanged.",
+  "fixture": "code-004",
+  "fixture_revision": "sha256:a734307d8b744a4b190d7a052f267b568746ac320823914629cc54fa20f52530",
+  "timeout_ms": 60000,
+  "max_tool_calls": 40,
+  "min_tool_calls": 3,
+  "min_model_calls": 0,
+  "allowed_write_scope": ["**"],
+  "verify": { "command": "sh tests/run.sh", "timeout_ms": 20000 },
+  "oracle": {
+    "file_checks": [{ "path": "src/utils.txt", "kind": "equals", "value": "def dup_a():\n    return 1\n\n" }]
+  },
+  "scripted_trail": [
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "tests/run.sh" },
+      "expect": { "ok": true, "output_contains": ["-eq 1"] }
+    },
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "src/utils.txt" },
+      "expect": { "ok": true, "output_contains": ["def dup_a"] }
+    },
+    {
+      "tool": "editor.apply_patch",
+      "args": { "path": "src/utils.txt", "old": "def dup_b():\n    return 1\n", "new": "" }
+    },
+    { "tool": "shell.exec", "args": { "command": "sh tests/run.sh" }, "expect": { "ok": true } }
+  ]
+}

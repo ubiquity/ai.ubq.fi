@@ -1,0 +1,41 @@
+{
+  "id": "seq-005",
+  "category": "sequential",
+  "title": "Staged search, read, edit, verify, report",
+  "description": "Locate the target file in src/, edit one line, confirm the sibling file is untouched, run the suite, and close out the plan.",
+  "fixture": "seq-005",
+  "fixture_revision": "sha256:ae4e9bbf9bae47b82601943b9a7a0b4095ef20750e40a13d885446b907e7a480",
+  "timeout_ms": 60000,
+  "max_tool_calls": 40,
+  "min_tool_calls": 5,
+  "min_model_calls": 0,
+  "allowed_write_scope": ["**"],
+  "verify": { "command": "sh tests/run.sh", "timeout_ms": 20000 },
+  "oracle": {
+    "file_checks": [
+      { "path": "src/sample.txt", "kind": "equals", "value": "hi world\n" },
+      { "path": "src/other.txt", "kind": "equals", "value": "keep me\n" }
+    ]
+  },
+  "scripted_trail": [
+    { "tool": "task.update_plan", "args": { "plan": ["locate", "edit", "verify"] } },
+    {
+      "tool": "filesystem.find",
+      "args": { "path": "src", "pattern": "*.txt" },
+      "expect": { "ok": true, "output_contains": ["src/sample.txt", "src/other.txt"] }
+    },
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "src/sample.txt" },
+      "expect": { "ok": true, "output_contains": ["hello world"] }
+    },
+    { "tool": "editor.apply_patch", "args": { "path": "src/sample.txt", "old": "hello world", "new": "hi world" } },
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "src/other.txt" },
+      "expect": { "ok": true, "output_contains": ["keep me"] }
+    },
+    { "tool": "shell.exec", "args": { "command": "sh tests/run.sh" }, "expect": { "ok": true } },
+    { "tool": "task.update_plan", "args": { "plan": ["verified"] } }
+  ]
+}
