@@ -264,6 +264,23 @@ Deno.test("authenticated legacy candidate evidence receives a durable manual dis
   assert.match(record.next_action ?? "", /repository owner/u);
 });
 
+Deno.test("authenticated unrecognized evidence receives a durable manual disposition", () => {
+  const headSha = "d".repeat(40);
+  const digest = `sha256:${"e".repeat(64)}`;
+  const record = manualRecoveryRecordForLegacyArtifact(
+    "ubiquity/ai.ubq.fi",
+    makeArtifact(9697049138, "2026-08-28T18:25:53Z", {
+      workflowRunId: 33197180236,
+      workflowRunHeadSha: headSha,
+    }),
+    digest,
+  );
+  assert(record);
+  assert.equal(record.failure_class, "artifact_invalid");
+  assert.deepEqual(record.artifact_ids, [9697049138]);
+  assert.deepEqual(record.artifact_digests, [digest]);
+});
+
 Deno.test("failed legacy candidate evidence remains classifiable when its cycle schema is incomplete", () => {
   const files = makeEligibilityEvidence("legacy_unknown");
   try {
