@@ -1,7 +1,10 @@
 export const SENTINEL_BOOTSTRAP_SCHEMA_VERSION = 1 as const;
+export const SENTINEL_BOOTSTRAP_PROGRESS_SCHEMA_VERSION = 1 as const;
 
 const FULL_SHA = /^[0-9a-f]{40}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
+/** Deterministic non-cryptographic advisory digest (FNV-1a 64-bit hex). */
+const ADVISORY_DIGEST = /^[0-9a-f]{16}$/u;
 const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T/u;
 const OPAQUE_REFERENCE = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/u;
 
@@ -189,6 +192,134 @@ export const parseBootstrapReleaseRecord = (value: unknown): SentinelBootstrapRe
     throw new Error("Sentinel bootstrap release record has no acceptance evidence");
   }
   return value as SentinelBootstrapReleaseRecordV1;
+};
+
+export type SentinelBootstrapProgressVerdict = "progress" | "stuck" | "ambiguous";
+export type SentinelBootstrapProgressResolvedVerdict = "progress" | "stuck" | "unknown";
+
+/**
+ * One canonical per-run progress observation (plan m06). Every field is
+ * required: a missing key makes the observation invalid and fails closed.
+ * `run_id` and `source` identify the observation; they are deliberately NOT
+ * part of the canonical durable state used for cycle detection, because a new
+ * run of an identical dead state is exactly a stuck loop.
+ */
+export type SentinelBootstrapProgressObservationV1 = Readonly<{
+  schema_version: typeof SENTINEL_BOOTSTRAP_PROGRESS_SCHEMA_VERSION;
+  run_id: string;
+  source: string;
+  generation: number | null;
+  phase: string | null;
+  milestone: string | null;
+  failure_fingerprint: string | null;
+  git_sha: string | null;
+  ledger_version: number | null;
+  retry_state: string | null;
+  verification_evidence: string | null;
+}>;
+
+/**
+ * Advisory evidence from the one zero-tool GPT-OSS classifier call. It is
+ * never authoritative: it cannot override health/rollback identity, the exact
+ * Git SHA or immutable revision proof, and it cannot authorize promotion.
+ */
+export type SentinelBootstrapClassifierEvidenceV1 = Readonly<{
+  schema_version: typeof SENTINEL_BOOTSTRAP_PROGRESS_SCHEMA_VERSION;
+  answer: "true" | "false" | "unknown";
+  raw: string | null;
+  /** Bounded snake_case reason token (no surrounding prose). */
+  reason: string;
+  requested_model: string;
+  status: number | null;
+  requested_at: string;
+  observation_digest: string;
+  advisory: true;
+}>;
+
+/**
+ * A bootstrap progress decision. `verdict` is the pure deterministic outcome
+ * computed before any model call; `resolved` is the fail-closed final decision
+ * after the optional classifier call. This evidence is advisory in the current
+ * bootstrap and is not consumed by promotion. Any later authority change must
+ * retain the exact immutable revision and full Git SHA health proof.
+ */
+export type SentinelBootstrapProgressDecisionV1 = Readonly<{
+  schema_version: typeof SENTINEL_BOOTSTRAP_PROGRESS_SCHEMA_VERSION;
+  verdict: SentinelBootstrapProgressVerdict;
+  reason: string;
+  observation_count: number;
+  state_digest: string;
+  classifier: SentinelBootstrapClassifierEvidenceV1 | null;
+  resolved: SentinelBootstrapProgressResolvedVerdict;
+  resolved_reason: string;
+  evaluated_at: string;
+}>;
+
+const progressVerdict = (value: unknown): value is SentinelBootstrapProgressVerdict =>
+  value === "progress" || value === "stuck" || value === "ambiguous";
+
+const resolvedProgressVerdict = (value: unknown): value is SentinelBootstrapProgressResolvedVerdict =>
+  value === "progress" || value === "stuck" || value === "unknown";
+
+const nullablePositiveInteger = (value: unknown): value is number | null => value === null || positiveInteger(value);
+
+const nullableReference = (value: unknown): value is string | null => value === null || boundedReference(value);
+
+const nullableFullSha = (value: unknown): value is string | null =>
+  value === null || (typeof value === "string" && FULL_SHA.test(value));
+
+const nullableSha256 = (value: unknown): value is string | null =>
+  value === null || (typeof value === "string" && SHA256.test(value));
+
+const httpStatus = (value: unknown): value is number | null =>
+  value === null ||
+  (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 599);
+
+const classifierAnswer = (value: unknown): value is "true" | "false" | "unknown" =>
+  value === "true" || value === "false" || value === "unknown";
+
+const advisoryDigest = (value: unknown): value is string => typeof value === "string" && ADVISORY_DIGEST.test(value);
+
+export const parseSentinelBootstrapProgressObservation = (
+  value: unknown,
+): SentinelBootstrapProgressObservationV1 => {
+  if (
+    !isRecord(value) || value.schema_version !== SENTINEL_BOOTSTRAP_PROGRESS_SCHEMA_VERSION ||
+    !boundedReference(value.run_id) || !boundedReference(value.source) ||
+    !nullablePositiveInteger(value.generation) || !nullableReference(value.phase) ||
+    !nullableReference(value.milestone) || !nullableSha256(value.failure_fingerprint) ||
+    !nullableFullSha(value.git_sha) || !nullablePositiveInteger(value.ledger_version) ||
+    !nullableReference(value.retry_state) || !nullableReference(value.verification_evidence)
+  ) throw new Error("Sentinel bootstrap progress observation is invalid");
+  return value as SentinelBootstrapProgressObservationV1;
+};
+
+export const parseSentinelBootstrapClassifierEvidence = (
+  value: unknown,
+): SentinelBootstrapClassifierEvidenceV1 => {
+  if (
+    !isRecord(value) || value.schema_version !== SENTINEL_BOOTSTRAP_PROGRESS_SCHEMA_VERSION ||
+    !classifierAnswer(value.answer) ||
+    !(value.raw === null || (typeof value.raw === "string" && value.raw.length <= 512)) ||
+    !boundedReference(value.reason) || !boundedReference(value.requested_model) ||
+    !httpStatus(value.status) || !timestamp(value.requested_at) ||
+    !advisoryDigest(value.observation_digest) || value.advisory !== true
+  ) throw new Error("Sentinel bootstrap classifier evidence is invalid");
+  return value as SentinelBootstrapClassifierEvidenceV1;
+};
+
+export const parseSentinelBootstrapProgressDecision = (
+  value: unknown,
+): SentinelBootstrapProgressDecisionV1 => {
+  if (
+    !isRecord(value) || value.schema_version !== SENTINEL_BOOTSTRAP_PROGRESS_SCHEMA_VERSION ||
+    !progressVerdict(value.verdict) || !boundedReference(value.reason) ||
+    !positiveInteger(value.observation_count) || !advisoryDigest(value.state_digest) ||
+    !(value.classifier === null || parseSentinelBootstrapClassifierEvidence(value.classifier)) ||
+    !resolvedProgressVerdict(value.resolved) || !boundedReference(value.resolved_reason) ||
+    !timestamp(value.evaluated_at)
+  ) throw new Error("Sentinel bootstrap progress decision is invalid");
+  return value as SentinelBootstrapProgressDecisionV1;
 };
 
 export const assertFullGitSha = (value: string, label: string): string => {
