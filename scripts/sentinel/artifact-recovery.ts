@@ -1334,7 +1334,7 @@ const publishRecoveryBranchToOrigin = async (
 const safeSummary = (result: SentinelArtifactRecoveryResult): string => {
   const candidate = result.candidate_sha ?? "none";
   const branch = result.candidate_branch ?? "none";
-  return `disposition=${result.disposition} reason=${result.reason} candidate=${candidate} branch=${branch}`;
+  return `artifact_digest=${result.artifact_digest} disposition=${result.disposition} reason=${result.reason} candidate=${candidate} branch=${branch}`;
 };
 
 /**
