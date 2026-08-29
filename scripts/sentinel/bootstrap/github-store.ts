@@ -2,10 +2,12 @@ import {
   parseBootstrapReleaseRecord,
   parseSentinelBootstrapActivationPointer,
   parseSentinelBootstrapHealthSignal,
+  parseSentinelBootstrapProgressDecision,
   parseSentinelBootstrapRollbackIntent,
   parseSentinelFailureConstraint,
   type SentinelBootstrapActivationPointerV1,
   type SentinelBootstrapHealthSignalV1,
+  type SentinelBootstrapProgressDecisionV1,
   type SentinelBootstrapReleaseRecordV1,
   type SentinelBootstrapRollbackIntentV1,
   type SentinelFailureConstraintV1,
@@ -30,6 +32,12 @@ export type SentinelBootstrapStateDocumentV1 = Readonly<{
   activation: SentinelBootstrapActivationPointerV1 | null;
   rollback_intent: SentinelBootstrapRollbackIntentV1 | null;
   constraints: readonly SentinelFailureConstraintV1[];
+  /**
+   * Advisory bootstrap progress decision (m06). It never overrides the
+   * activation/rollback identity, exact SHA/revision proof, or promotion
+   * gates; older documents without the field parse as null.
+   */
+  progress: SentinelBootstrapProgressDecisionV1 | null;
 }>;
 
 type Snapshot = Readonly<{
@@ -62,6 +70,9 @@ export const parseSentinelBootstrapStateDocument = (value: unknown): SentinelBoo
     ? null
     : parseSentinelBootstrapRollbackIntent(candidate.rollback_intent);
   const constraints = candidate.constraints.map(parseSentinelFailureConstraint);
+  const progress = candidate.progress === undefined || candidate.progress === null
+    ? null
+    : parseSentinelBootstrapProgressDecision(candidate.progress);
   const constraintKeys = constraints.map((constraint) => constraint.failure_fingerprint);
   if (new Set(constraintKeys).size !== constraintKeys.length) {
     throw new Error("Sentinel bootstrap constraints contain duplicate fingerprints");
@@ -73,6 +84,7 @@ export const parseSentinelBootstrapStateDocument = (value: unknown): SentinelBoo
     activation,
     rollback_intent: rollbackIntent,
     constraints: Object.freeze(constraints),
+    progress,
   });
 };
 
@@ -197,6 +209,8 @@ export type GitHubSentinelBootstrapState = Readonly<{
     release: SentinelBootstrapReleaseRecordV1,
     activation?: SentinelBootstrapActivationPointerV1,
   ): Promise<void>;
+  /** Persists the advisory progress decision; evidence is never authoritative. */
+  replaceProgress(decision: SentinelBootstrapProgressDecisionV1): Promise<void>;
 }>;
 
 export const createGitHubSentinelBootstrapState = async (
@@ -284,6 +298,14 @@ export const createGitHubSentinelBootstrapState = async (
         release: parseBootstrapReleaseRecord(release),
         ...(activation === undefined ? {} : { activation: parseSentinelBootstrapActivationPointer(activation) }),
       }, "chore(sentinel): register bootstrap release");
+    },
+    async replaceProgress(decision): Promise<void> {
+      const parsed = parseSentinelBootstrapProgressDecision(decision);
+      if (JSON.stringify(snapshot.document.progress) === JSON.stringify(parsed)) return;
+      await persist(
+        { ...snapshot.document, progress: parsed },
+        "chore(sentinel): record bootstrap progress evidence",
+      );
     },
   };
 };

@@ -2,7 +2,9 @@ import {
   parseBootstrapReleaseRecord,
   parseSentinelBootstrapActivationPointer,
   parseSentinelBootstrapHealthSignal,
+  parseSentinelBootstrapProgressObservation,
   type SentinelBootstrapHealthSignalV1,
+  type SentinelBootstrapProgressObservationV1,
   type SentinelBootstrapReleaseRecordV1,
 } from "./contracts.ts";
 import { createGitHubSentinelBootstrapState, type GitHubSentinelBootstrapState } from "./github-store.ts";
@@ -12,7 +14,8 @@ import {
   type SentinelBootstrapReconcileInput,
   type SentinelBootstrapReconcileOutcome,
 } from "./controller.ts";
-import { parseBootstrapEnvironment } from "./policy.ts";
+import { parseBootstrapEnvironment, SENTINEL_BOOTSTRAP_POLICY } from "./policy.ts";
+import { parseSentinelRecoveryLedger, SENTINEL_RECOVERY_LEDGER_PATH } from "../recovery-ledger.ts";
 
 const FULL_SHA = /^[0-9a-f]{40}$/u;
 const SAFE_REVISION = /^[A-Za-z0-9._-]{1,128}$/u;
@@ -96,6 +99,136 @@ const collectAuthoritativeStartupSignals = async (
     }
   }
   return signals;
+};
+
+/**
+ * Reads the recovery ledger from the sentinel recovery-state ref when it is
+ * available. A missing ledger is not an error: ledger/state version and retry
+ * state are used only "where available".
+ */
+const fetchRecoveryLedger = async (token: string, repository: string): Promise<unknown | null> => {
+  const response = await fetch(
+    `https://api.github.com/repos/${repository}/contents/${SENTINEL_RECOVERY_LEDGER_PATH}?ref=sentinel/recovery-state`,
+    {
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${token}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      signal: AbortSignal.timeout(20_000),
+    },
+  );
+  if (response.status === 404) return null;
+  const value = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (!response.ok || typeof value?.content !== "string") {
+    throw new Error(`Bootstrap recovery ledger observation failed with HTTP ${response.status}`);
+  }
+  try {
+    return JSON.parse(
+      new TextDecoder("utf-8", { fatal: true }).decode(
+        Uint8Array.from(atob(value.content.replaceAll("\n", "")), (character) => character.charCodeAt(0)),
+      ),
+    );
+  } catch {
+    throw new Error("Bootstrap recovery ledger is invalid");
+  }
+};
+
+const normalizeProgressMilestone = (stepName: string): string => {
+  const segment = stepName
+    .replace(/[^A-Za-z0-9._-]+/gu, "-")
+    .replace(/^-+|-+$/gu, "")
+    .toLowerCase()
+    .slice(0, 128);
+  return `step:${segment.length > 0 ? segment : "unknown-step"}`;
+};
+
+/**
+ * Builds canonical per-run progress observations from the completed
+ * provider-sentinel runs of the observed revision plus the recovery ledger
+ * (when available). Every field comes from immutable facts; run identity
+ * lives in `run_id`/`source`, not in the durable state key.
+ */
+const collectBootstrapProgressObservations = async (
+  token: string,
+  repository: string,
+  activeSha: string,
+  generation: number,
+): Promise<readonly SentinelBootstrapProgressObservationV1[]> => {
+  const runsValue = await githubJson(
+    token,
+    repository,
+    "/actions/workflows/provider-sentinel.yml/runs?branch=development&status=completed&per_page=10",
+  );
+  if (!Array.isArray(runsValue.workflow_runs)) throw new Error("Bootstrap workflow-run observation is invalid");
+  const ledgerValue = await fetchRecoveryLedger(token, repository).catch(() => null);
+  let ledger: ReturnType<typeof parseSentinelRecoveryLedger> | null = null;
+  if (ledgerValue !== null) {
+    try {
+      ledger = parseSentinelRecoveryLedger(ledgerValue);
+    } catch {
+      ledger = null;
+    }
+  }
+  const ledgerVersion = ledger === null
+    ? null
+    : ledger.records.reduce((maximum, record) => Math.max(maximum, record.state_version), 0);
+  const retryState = ledger === null ? null : ledger.retry_history.length > 0 ? "retrying" : "none";
+  const runs = runsValue.workflow_runs
+    .filter((value): value is Record<string, unknown> =>
+      typeof value === "object" && value !== null && !Array.isArray(value) &&
+      (value.conclusion === "success" || value.conclusion === "failure") &&
+      value.head_sha === activeSha && Number.isSafeInteger(value.id) &&
+      typeof value.run_started_at === "string" && Number.isFinite(Date.parse(value.run_started_at))
+    )
+    .sort((left, right) => Date.parse(String(left.run_started_at)) - Date.parse(String(right.run_started_at)))
+    .slice(-8);
+  const observations: SentinelBootstrapProgressObservationV1[] = [];
+  for (const run of runs) {
+    let milestone = "run:completed";
+    let failureFingerprint: string | null = null;
+    if (run.conclusion === "failure") {
+      const failedStep = await collectFirstFailedStep(token, repository, run.id as number);
+      milestone = normalizeProgressMilestone(failedStep ?? "unknown-step");
+      failureFingerprint = await sha256(`workflow_failure\n${activeSha}\n${failedStep ?? "unknown"}`);
+    }
+    observations.push(parseSentinelBootstrapProgressObservation({
+      schema_version: 1,
+      run_id: `run:${run.id}`,
+      // Bounded reference: the workflow basename, not the leading-dot path.
+      source: SENTINEL_BOOTSTRAP_POLICY.evolvingWorkflow.split("/").pop() ?? "provider-sentinel.yml",
+      generation,
+      phase: run.conclusion === "failure" ? "failed" : "completed",
+      milestone,
+      failure_fingerprint: failureFingerprint,
+      git_sha: run.head_sha === null ? null : run.head_sha,
+      ledger_version: ledgerVersion,
+      retry_state: retryState,
+      verification_evidence: run.conclusion === "failure" ? null : "verification:run-complete",
+    }));
+  }
+  return observations;
+};
+
+const collectFirstFailedStep = async (
+  token: string,
+  repository: string,
+  runId: number,
+): Promise<string | null> => {
+  const jobsValue = await githubJson(token, repository, `/actions/runs/${runId}/jobs?per_page=100`);
+  if (!Array.isArray(jobsValue.jobs)) throw new Error("Bootstrap workflow-job observation is invalid");
+  for (const jobValue of jobsValue.jobs) {
+    if (typeof jobValue !== "object" || jobValue === null || Array.isArray(jobValue)) continue;
+    const job = jobValue as Record<string, unknown>;
+    if (!Array.isArray(job.steps)) continue;
+    for (const stepValue of job.steps) {
+      if (typeof stepValue !== "object" || stepValue === null || Array.isArray(stepValue)) continue;
+      const step = stepValue as Record<string, unknown>;
+      if (step.conclusion !== "failure" || typeof step.name !== "string") continue;
+      return step.name;
+    }
+  }
+  return null;
 };
 
 const dispatchStableRecovery = async (token: string, repository: string): Promise<void> => {
@@ -265,14 +398,26 @@ if (import.meta.main) {
   await state.appendSignals(
     await collectAuthoritativeStartupSignals(token, environment.repository, observed.sha, generation),
   );
+  const progressObservations = await collectBootstrapProgressObservations(
+    token,
+    environment.repository,
+    observed.sha,
+    generation,
+  );
   const outcome = await runProtectedBootstrap({
     release,
     signals: state.readDocument().signals,
+    progressObservations,
   }, {
     store: state.store,
     now: () => now,
     dispatchRecovery: () => dispatchStableRecovery(token, environment.repository),
   });
+  // Advisory evidence only: the decision is recorded but never changes the
+  // activation/rollback identity or the exact-SHA/revision promotion gates.
+  if (outcome.progress !== null) {
+    await state.replaceProgress(outcome.progress);
+  }
   console.log(JSON.stringify({
     schema_version: 1,
     repository: environment.repository,
