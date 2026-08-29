@@ -1483,7 +1483,9 @@ export const recoverSentinelArtifactsInActions = async (
           );
         }
         if (record.phase !== "recovery_pending") {
-          if (workflowRun?.status === "completed" && workflowRun.conclusion !== "success") {
+          const owningWorkflowRun = workflowRun ??
+            (artifact.workflowRunId ? await github.getWorkflowRun(artifact.workflowRunId) : undefined);
+          if (owningWorkflowRun?.status === "completed" && owningWorkflowRun.conclusion !== "success") {
             const evidenceRecord = manualRecoveryRecordForLegacyArtifact(input.repository, artifact, encryptedDigest);
             if (evidenceRecord) {
               const evidenceKey = sentinelRecoveryIdentityKey(evidenceRecord.identity);
