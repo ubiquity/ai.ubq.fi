@@ -44,7 +44,7 @@ benchmarks/
   schemas.ts          # shared result contract: manifest / trajectory / result / summary
   manifest.ts         # manifest loading + selection (id, glob, category:<name>)
   fixture.ts          # disposable workspaces, fixture revisions, write-scope enforcement
-  adapter.ts          # adapter contract, tool layer, reference (scripted) adapter
+  adapter.ts          # adapter contract + reference (scripted) adapter over the canonical m04 tool layer
   oracle.ts           # deterministic verification + file/git oracles
   metrics.ts          # metric derivation + aggregation + formatting
   runner.ts           # CLI: run selected configs
@@ -53,7 +53,14 @@ benchmarks/
   tasks/*.json        # 25 deterministic task manifests (5 per category)
   fixtures/<id>/…     # disposable fixture snapshots (snapshots; regenerable)
   tools/gen-fixtures.ts # regenerates fixtures and prints content revisions
-  tests/*.test.ts     # focused hermetic tests (31)
+  tests/*.test.ts     # focused hermetic tests (33)
+
+src/harmony/tools/    # canonical model-facing tool layer (owned by m04)
+  schemas.ts          # stable tool schemas + validation + m01 ToolDefinition rendering
+  result.ts           # machine-readable ToolResult envelope + closed ToolErrorCode set
+  backend.ts          # injected Workspace/Browser/Plan backend contracts + path boundaries
+  router.ts           # runTool: validation, boundaries, dispatch, deterministic formatting
+  fakes.ts            # deterministic offline fakes (workspace, shell, browser, plan)
 ```
 
 ## Shared result contract
@@ -140,13 +147,37 @@ decides failure-classes and reliability semantics; the runner only classifies te
 
 - Writes never leave the repository: the runner copies `benchmarks/fixtures/<id>` into `benchmark-runs/tmp/<run_id>` (a
   disposable directory; removed after the run) and the adapter may write only there.
-- `allowed_write_scope` globs are enforced by the workspace tool layer (`write_scope` error code); paths are resolved
+- `allowed_write_scope` globs are enforced by the canonical tool layer (`write_scope` error code); paths are resolved
   inside the workspace root. `shell.exec` runs unsandboxed inside the disposable workspace by design.
 - `fixture_revision` is a SHA-256 over sorted relative paths + contents (prefix `fixture-v1`).
   `benchmark:fixture-revision` proves all declared revisions match the snapshots; the runner fails a run on mismatch
   before the adapter executes.
 - `gen-fixtures.ts` regenerates only `benchmarks/fixtures/` and prints the current revision for every task; never run it
   against other directories.
+
+## Canonical tool layer (m04)
+
+The compact model-facing tool surface is owned by `src/harmony/tools/` (m04) and is the single source of truth for the
+nine tools: `filesystem.read/find/search`, `browser.search/open/find`, `shell.exec`, `editor.apply_patch`, and
+`task.update_plan`.
+
+- Stable schemas: `schemas.ts` holds the JSON Schema of every tool, `validateToolArguments` type-checks every present
+  argument (unknown keys rejected; required string parameters non-empty; `editor.apply_patch` `old`/`new`/`add` and
+  `filesystem.find` `pattern` stay optional), and `toolDefinitions` renders the surface as m01 `ToolDefinition` entries
+  with one uniform `strict` value.
+- Machine-readable envelopes: every `runTool` call returns `{ ok, output?, error?, error_code? }` plus
+  `exit_code/stdout/stderr` for `shell.exec`; failures use the closed set
+  `invalid_args | path_escape | write_scope |
+  not_found | exec_failed | timeout | patch_failed | unavailable | internal`.
+- Boundaries: paths are normalized inside the workspace root (absolute paths and `..` segments are `path_escape`
+  rejections) and writes must match the manifest `allowed_write_scope` (`write_scope`).
+- Replaceable backends: `WorkspaceBackend`/`BrowserBackend`/`PlanBackend` are injected; `fixture.ts` is bridged into the
+  canonical contract by `adapter.ts`, and the reference adapter runs browser/search/find and plan tracking against
+  deterministic offline fakes (`fakes.ts` — no browser daemon, no network). A configuration without browser support gets
+  the `unavailable` error code instead.
+
+Tool failure is always an envelope, never an exception, so trajectories record invalid calls, `patch_failed` edits and
+failed commands with identical bookkeeping.
 
 ## Deterministic oracles and verification
 
