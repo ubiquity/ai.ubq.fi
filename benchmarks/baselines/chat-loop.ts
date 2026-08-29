@@ -17,6 +17,7 @@
  */
 
 import { type AdapterRunContext, TaskTimeoutError, type ToolResult } from "../adapter.ts";
+import type { ModelRequestEvent } from "../schemas.ts";
 import { BaselineAdapterError, BaselineUpstreamError, sanitizedUpstreamError } from "./errors.ts";
 import type { ChatTransport } from "./transport.ts";
 import { type CanonicalToolDefinition, executeBaselineTool, validateCanonicalToolArgs } from "./tools.ts";
@@ -93,6 +94,17 @@ export async function runChatAgentLoop(ctx: AdapterRunContext, spec: ChatAgentSp
     seq += 1;
 
     if (ctx.signal.aborted) throw new TaskTimeoutError(ctx.task.timeout_ms);
+    const request: ModelRequestEvent = {
+      type: "model_request",
+      at: ctx.time(),
+      id: seq,
+      model: spec.model,
+      message_count: messages.length,
+      input_tokens: 0,
+      output_tokens: 0,
+      tool_count: spec.tools.length,
+    };
+    ctx.record(request);
     const response = await spec.transport(spec.buildRequest(ctx, messages), { signal: ctx.signal });
     const body = await response.json().catch(() => null);
     if (!response.ok) {
@@ -108,16 +120,8 @@ export async function runChatAgentLoop(ctx: AdapterRunContext, spec: ChatAgentSp
     }
 
     const usage = parsed.usage ?? { inputTokens: 0, outputTokens: 0 };
-    ctx.record({
-      type: "model_request",
-      at: ctx.time(),
-      id: seq,
-      model: spec.model,
-      message_count: messages.length,
-      input_tokens: usage.inputTokens,
-      output_tokens: usage.outputTokens,
-      tool_count: spec.tools.length,
-    });
+    request.input_tokens = usage.inputTokens;
+    request.output_tokens = usage.outputTokens;
     ctx.record({
       type: "model_response",
       at: ctx.time(),

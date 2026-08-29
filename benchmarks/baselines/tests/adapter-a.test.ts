@@ -60,6 +60,30 @@ Deno.test("A: completes nav-001 through the fake transport with schema-valid eve
   }
 });
 
+Deno.test("A: records a model request before an upstream failure", async () => {
+  const opts = freshRunOptions();
+  try {
+    const adapter = createBaselineA({
+      transport: () =>
+        Promise.resolve({
+          status: 500,
+          ok: false,
+          json: () => Promise.resolve({ error: { code: "failed", message: "upstream failed" } }),
+        }),
+    });
+    const { result, events } = await runOne(nav001(), adapter, opts);
+    if (result.success || result.metrics.model_calls !== 1) {
+      throw new Error(`failed dispatch must count one model call, got ${result.metrics.model_calls}`);
+    }
+    const request = events.find((event) => event.type === "model_request");
+    if (request === undefined || request.input_tokens !== 0 || request.output_tokens !== 0) {
+      throw new Error("failed dispatch must retain its zero-usage model_request event");
+    }
+  } finally {
+    Deno.removeSync(opts.runsRoot, { recursive: true });
+  }
+});
+
 Deno.test("A: sends the gateway wire shape (no stream, medium effort, official tools)", async () => {
   const opts = freshRunOptions();
   try {

@@ -2,6 +2,7 @@ import {
   bridgeEventToTrajectory,
   CODEX_INFINITY_SOURCE_PIN,
   createBaselineB,
+  drainChildStream,
   parseCodexProcessLine,
   scriptedBridgeDriverFromTrail,
 } from "../adapter-b.ts";
@@ -120,4 +121,40 @@ Deno.test("B: bridge event mapping produces schema-valid trajectory events", () 
   }, "2026-08-29T00:00:00.000Z");
   validateTrajectoryEvent(event);
   if (event.type !== "tool_call" || event.valid !== true) throw new Error("tool_call mapping failed");
+});
+
+Deno.test("B: child stderr is drained without waiting for stdout", async () => {
+  let stderrPulls = 0;
+  let releaseStdout!: () => void;
+  const stderrReady = new Promise<void>((resolve) => releaseStdout = resolve);
+  const stderr = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      controller.enqueue(new Uint8Array(64 * 1024));
+      stderrPulls += 1;
+      if (stderrPulls === 4) {
+        controller.close();
+        releaseStdout();
+      }
+    },
+  });
+  const stdout = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      await stderrReady;
+      controller.enqueue(new TextEncoder().encode("stdout-ready"));
+      controller.close();
+    },
+  });
+
+  const drain = drainChildStream(stderr);
+  const stdoutRead = stdout.getReader().read();
+  const result = await Promise.race([
+    stdoutRead,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("stream drain deadlocked")), 1_000)),
+  ]);
+  await drain;
+
+  if (result.done || new TextDecoder().decode(result.value) !== "stdout-ready") {
+    throw new Error("stdout was not released after concurrent stderr drain");
+  }
+  if (stderrPulls !== 4) throw new Error(`expected all stderr chunks to drain, got ${stderrPulls}`);
 });

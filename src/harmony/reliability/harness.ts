@@ -69,6 +69,9 @@ import {
   VerificationTracker,
 } from "./verify.ts";
 
+const isTransientHttpStatus = (status: number): boolean =>
+  status === 408 || status === 425 || status === 429 || status >= 500;
+
 export type HarnessEvent =
   | Readonly<
     {
@@ -274,6 +277,8 @@ export async function runReliabilityHarness(opts: HarnessOptions): Promise<Harne
         continue;
       }
       if (!response.ok) {
+        await response.body?.cancel().catch(() => undefined);
+        if (!isTransientHttpStatus(response.status)) break;
         await sleep(retryPolicy.backoffMs);
         continue;
       }

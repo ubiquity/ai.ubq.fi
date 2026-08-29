@@ -271,6 +271,20 @@ Deno.test("harness: configured final-attempt limit is enforced", async () => {
   assert.equal(evidence(outcome).finals.length, 1);
 });
 
+Deno.test("harness: deterministic HTTP failures are not retried", async () => {
+  let calls = 0;
+  const outcome = await runReliabilityHarness(baseOptions([], {
+    transport: () => {
+      calls += 1;
+      return Promise.resolve(new Response("unauthorized", { status: 401 }));
+    },
+    retryPolicy: { maxRetriesPerCall: 3, backoffMs: 0, retryableCodes: ["transport"] },
+  }));
+  assert.equal(calls, 1);
+  assert.equal(outcome.abortedReason, "transport_failed");
+  assert.equal(outcome.events.filter((event) => event.type === "model_request").length, 1);
+});
+
 Deno.test("harness: structured mode requests carry deterministically fewer tokens than full mode", async () => {
   const script: ScriptStep[] = [];
   const bigFiles: Record<string, string> = {};

@@ -435,6 +435,19 @@ async function assertPinnedCheckout(checkoutPath: string): Promise<void> {
   }
 }
 
+/** Drain a child stream without retaining its potentially sensitive content. */
+export async function drainChildStream(stream: ReadableStream<Uint8Array>): Promise<void> {
+  const reader = stream.getReader();
+  try {
+    while (!(await reader.read()).done) {
+      // Discard each chunk as soon as it arrives so the child cannot block on
+      // a full pipe while the bridge is waiting for stdout.
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 /** Creates the live, process-spawning driver. Never constructed by default. */
 export function createLiveBridgeProcessDriver(config: CodexInfinityBridgeConfig): ProcessDriver {
   return {
@@ -455,6 +468,10 @@ export function createLiveBridgeProcessDriver(config: CodexInfinityBridgeConfig)
         signal: input.signal,
       });
       const child = command.spawn();
+      // Start draining before reading stdout. A verbose child can fill its
+      // stderr pipe before emitting the next JSONL event and otherwise
+      // deadlock both processes.
+      const stderrDrain = drainChildStream(child.stderr);
       let skipped = 0;
       try {
         const reader = child.stdout.getReader();
@@ -475,11 +492,7 @@ export function createLiveBridgeProcessDriver(config: CodexInfinityBridgeConfig)
       } finally {
         // Drain stderr without exposing its content: it may contain
         // sensitive model output; only summary counts are reported.
-        const stderrReader = child.stderr.getReader();
-        while (true) {
-          const { done } = await stderrReader.read();
-          if (done) break;
-        }
+        await stderrDrain;
       }
       const status = await child.status;
       if (status.code !== 0) {

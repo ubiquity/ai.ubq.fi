@@ -32,6 +32,10 @@ Deno.test("compare: evidence runs deterministically without inference", async ()
       for (const budget of task.budgets) {
         assert.equal(budget.contract_preserved, true, `${task.task_id}@${budget.budget}`);
         assert.ok(budget.full_transcript_tokens >= budget.compaction_tokens);
+        assert.ok(
+          budget.structured_tokens >= compactSurface.tokens,
+          "structured totals must include the compact tool schema",
+        );
       }
     }
     // Structured context costs strictly less than a full replay in the
@@ -65,7 +69,7 @@ Deno.test("compare: aggregation carries per-budget evidence", async () => {
       const agg = evidence.aggregate[kind];
       assert.equal(agg.tasks, 1);
       assert.equal(agg.contract_preserved, 1);
-      assert.ok(agg.structured_ratio > 0 && agg.structured_ratio <= 1);
+      assert.ok(agg.structured_ratio > 0);
     }
   } finally {
     Deno.removeSync(runsRoot, { recursive: true });

@@ -203,7 +203,7 @@ export function buildTaskEvidence(task: TaskManifest, events: readonly Trajector
       replayMeta(compactedObservations, policy),
     );
     const structured = renderStructuredContext(fullState, conversation, { maxTailTurns: TAIL_TURNS[kind] });
-    const structuredTokens = estimateTokens(structured);
+    const structuredTokens = estimateTokens(structured) + surfaceTokenCost(compactToolSurface());
     const reads = compacted.drops.filter((d) => d.kind === "stale_read").length;
     const explore = compacted.drops.filter((d) => d.kind === "old_explore").length;
     const analysis = compacted.drops.filter((d) => d.kind === "analysis").length;
