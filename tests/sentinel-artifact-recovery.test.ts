@@ -311,6 +311,17 @@ Deno.test("failed owning workflow terminalizes authenticated raw legacy evidence
   }
 });
 
+Deno.test("failed owning workflow terminalizes an authenticated empty legacy envelope", () => {
+  assert.equal(
+    legacyArtifactNeedsManualDisposition([], { status: "completed", conclusion: "failure" }),
+    true,
+  );
+  assert.equal(
+    legacyArtifactNeedsManualDisposition([], { status: "completed", conclusion: "success" }),
+    false,
+  );
+});
+
 Deno.test("report-only ciphertext can prove legacy failure without a workflow lookup", () => {
   const files = [
     { path: "reports/cycle.json", bytes: new TextEncoder().encode('{"schema_version":1,"status":"failed"}') },

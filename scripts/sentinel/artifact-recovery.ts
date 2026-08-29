@@ -1067,8 +1067,7 @@ export const legacyArtifactNeedsManualDisposition = (
   const owningRunProvesFailure = workflowRun?.status === "completed" &&
     typeof workflowRun.conclusion === "string" &&
     INCOMPLETE_FAILURE_MARKERS.has(workflowRun.conclusion);
-  return files.length > 0 &&
-    !terminalArtifactRecord(files) &&
+  return !terminalArtifactRecord(files) &&
     (status === null || !TERMINAL_CYCLE_STATUSES.has(status)) &&
     (ciphertextProvesFailure || owningRunProvesFailure);
 };
