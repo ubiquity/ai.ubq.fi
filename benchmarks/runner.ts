@@ -25,6 +25,7 @@ import { computeFixtureRevision, FixtureRevisionMismatchError, FixtureWorkspace 
 import { loadTasks, selectTasks } from "./manifest.ts";
 import { aggregateResults, deriveMetrics, formatSummary } from "./metrics.ts";
 import { evaluateOracle, runVerification } from "./oracle.ts";
+import { deriveReliability } from "./reliability.ts";
 import {
   BENCHMARK_ROOT,
   BENCHMARK_SCHEMA_VERSION,
@@ -244,6 +245,7 @@ export async function runOne(
     : { passed: false, checks: [{ kind: "file" as const, detail: "fixture workspace not prepared", passed: false }] };
 
   const metrics = deriveMetrics(events);
+  const reliability = deriveReliability(events, { verificationCommand: task.verify?.command ?? null });
   const requiredCalls = {
     min_tool_calls: task.min_tool_calls,
     tool_calls: metrics.tool_calls,
@@ -284,6 +286,7 @@ export async function runOne(
     failure_class: failureClass,
     failure_detail: failureDetail,
     metrics,
+    reliability: reliability.summary,
     verification,
     oracle,
     required_calls: requiredCalls,
