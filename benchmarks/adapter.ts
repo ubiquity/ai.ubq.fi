@@ -8,18 +8,32 @@
  * verification, evaluates oracles, and writes the result record.
  *
  * The built-in `reference` adapter executes the task's `scripted_trail`
- * against the tool layer below. It never calls an external model, so the
- * default benchmark commands are fully hermetic and reproducible.
+ * against the canonical tool layer owned by m04
+ * (`src/harmony/tools/*`): stable schemas, machine-readable result envelopes,
+ * path/write boundaries, and dependency-injected deterministic fakes. The
+ * fixture workspace is bridged onto the canonical {@link WorkspaceBackend};
+ * browser search/open/find and task.update_plan run against offline
+ * deterministic fakes (no browser daemon, no network). It never calls an
+ * external model, so the default benchmark commands are fully hermetic and
+ * reproducible.
  *
- * Tool surface (provisional, aligned with the canonical names from the plan):
- * filesystem.read/find/search, shell.exec, editor.apply_patch,
- * task.update_plan, browser.search/open/find. m04 owns the final canonical
- * schemas; the browser tools return a deterministic "unavailable" error here
- * until fake backends land with m04.
+ * `TOOL_SCHEMAS` / `CANONICAL_TOOL_NAMES` / `validateToolArgs` are
+ * m02-compatible views over the canonical schemas.
  */
 
-import { FixtureWorkspace, globMatch, WriteScopeViolationError } from "./fixture.ts";
+import { FixtureWorkspace, WriteScopeViolationError } from "./fixture.ts";
 import { TaskManifest, TrailStep, TrajectoryEvent } from "./schemas.ts";
+import { type ToolBackends, type WorkspaceBackend } from "../src/harmony/tools/backend.ts";
+import { createFakeToolBackends } from "../src/harmony/tools/fakes.ts";
+import { ToolExecutionError, toolFailure } from "../src/harmony/tools/result.ts";
+import { runTool } from "../src/harmony/tools/router.ts";
+import {
+  CANONICAL_TOOL_NAMES as canonicalToolNames,
+  type CanonicalToolSchema,
+  TOOL_SCHEMAS as canonicalToolSchemas,
+  toolParameterTypes,
+  validateToolArguments,
+} from "../src/harmony/tools/schemas.ts";
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -93,7 +107,7 @@ export interface BenchmarkAdapter {
 }
 
 // ---------------------------------------------------------------------------
-// Tool layer
+// Tool layer (canonical m04 surface with m02-compatible views)
 // ---------------------------------------------------------------------------
 
 export interface ToolResult {
@@ -108,131 +122,115 @@ interface ToolSchema {
   types: Record<string, "string" | "boolean" | "string[]">;
 }
 
-export const TOOL_SCHEMAS: Record<string, ToolSchema> = {
-  "filesystem.read": { required: ["path"], types: { path: "string" } },
-  "filesystem.find": { required: ["path"], types: { path: "string", pattern: "string" } },
-  "filesystem.search": { required: ["path", "query"], types: { path: "string", query: "string" } },
-  "shell.exec": { required: ["command"], types: { command: "string" } },
-  "editor.apply_patch": { required: ["path"], types: { path: "string", old: "string", new: "string", add: "boolean" } },
-  "task.update_plan": { required: ["plan"], types: { plan: "string[]" } },
-  "browser.search": { required: ["query"], types: { query: "string" } },
-  "browser.open": { required: ["url"], types: { url: "string" } },
-  "browser.find": { required: ["query"], types: { query: "string" } },
-};
+/** m02-compatible schema view derived from the canonical tool schemas. */
+export const TOOL_SCHEMAS: Record<string, ToolSchema> = Object.fromEntries(
+  Object.values(canonicalToolSchemas).map((toolSchema: CanonicalToolSchema) => [
+    toolSchema.name,
+    {
+      required: toolSchema.parameters.required as string[],
+      types: { ...toolParameterTypes(toolSchema) },
+    },
+  ]),
+);
 
-export const CANONICAL_TOOL_NAMES = Object.keys(TOOL_SCHEMAS).sort();
+export const CANONICAL_TOOL_NAMES: readonly string[] = [...canonicalToolNames].sort();
 
-/** Validate tool arguments against the provisional schema. */
+/** Validate tool arguments against the canonical schema (m02-compatible shape). */
 export function validateToolArgs(tool: string, args: Record<string, unknown>): { valid: boolean; reason?: string } {
-  const schema = TOOL_SCHEMAS[tool];
-  if (!schema) return { valid: false, reason: `unknown tool ${tool}` };
-  for (const key of Object.keys(args)) {
-    if (!(key in schema.types)) return { valid: false, reason: `unexpected argument ${JSON.stringify(key)}` };
-  }
-  for (const key of schema.required) {
-    if (!(key in args) || args[key] === undefined) {
-      return { valid: false, reason: `missing required argument ${JSON.stringify(key)}` };
-    }
-    const expected = schema.types[key];
-    const actual = args[key];
-    const ok = expected === "string"
-      ? typeof actual === "string"
-      : expected === "boolean"
-      ? typeof actual === "boolean"
-      : Array.isArray(actual) && actual.every((x) => typeof x === "string");
-    if (!ok) return { valid: false, reason: `argument ${JSON.stringify(key)} must be ${expected}` };
-  }
-  return { valid: true };
+  const result = validateToolArguments(tool, args);
+  return result.valid ? { valid: true } : { valid: false, reason: result.reason };
 }
 
-const SEARCH_LINE_LIMIT = 200;
-const SHELL_TIMEOUT_MS = 20_000;
-const OUTPUT_LIMIT = 8000;
+const isNotFound = (err: unknown): boolean =>
+  typeof err === "object" && err !== null &&
+  ((err as { code?: unknown }).code === "ENOENT" || (err as { name?: unknown }).name === "NotFound");
 
-function clip(s: string): string {
-  return s.length > OUTPUT_LIMIT ? `${s.slice(0, OUTPUT_LIMIT)}…[truncated]` : s;
+/** Maps a disposable FixtureWorkspace onto the canonical WorkspaceBackend. */
+class FixtureWorkspaceBackend implements WorkspaceBackend {
+  readonly label = "fixture-workspace";
+
+  constructor(readonly workspace: FixtureWorkspace) {}
+
+  read(rel: string): string {
+    try {
+      return this.workspace.read(rel);
+    } catch (err) {
+      throw this.mapFileError(rel, err);
+    }
+  }
+
+  listFiles(rel: string): string[] {
+    try {
+      return this.workspace.listFiles(rel);
+    } catch (err) {
+      throw this.mapFileError(rel, err);
+    }
+  }
+
+  isAllowedWrite(rel: string): boolean {
+    return this.workspace.isAllowedWrite(rel);
+  }
+
+  describeWriteScope(): string {
+    return this.workspace.task.allowed_write_scope.join(", ");
+  }
+
+  write(rel: string, content: string): void {
+    try {
+      this.workspace.write(rel, content);
+    } catch (err) {
+      throw this.mapFileError(rel, err);
+    }
+  }
+
+  applyPatch(
+    rel: string,
+    patch: { old: string; new: string; add: boolean },
+  ): { applied: true; detail: string } {
+    try {
+      // Empty `old` prepends `new` at the start of the file; the workspace's
+      // raw patch helper would treat it as ambiguous (empty matches everywhere).
+      if (!patch.add && patch.old === "") {
+        this.workspace.write(rel, patch.new + this.workspace.read(rel));
+        return { applied: true, detail: `patched ${rel}` };
+      }
+      const result = this.workspace.applyPatch(rel, patch.old, patch.new, patch.add);
+      return { applied: true, detail: result.detail };
+    } catch (err) {
+      if (err instanceof WriteScopeViolationError) throw new ToolExecutionError("write_scope", err.message);
+      const message = isNotFound(err)
+        ? `patch failed: ${rel} does not exist`
+        : err instanceof Error && err.message.length > 0
+        ? err.message
+        : String(err);
+      throw new ToolExecutionError("patch_failed", message);
+    }
+  }
+
+  async execShell(
+    command: string,
+    opts: { timeoutMs: number; signal?: AbortSignal },
+  ): Promise<{ exit_code: number; stdout: string; stderr: string; timed_out: boolean }> {
+    const result = await this.workspace.execShell(command, opts.timeoutMs, opts.signal);
+    return { exit_code: result.code, stdout: result.stdout, stderr: result.stderr, timed_out: result.timedOut };
+  }
+
+  private mapFileError(rel: string, err: unknown): ToolExecutionError {
+    if (err instanceof WriteScopeViolationError) return new ToolExecutionError("write_scope", err.message);
+    if (isNotFound(err)) return new ToolExecutionError("not_found", `file not found: ${rel}`);
+    const message = err instanceof Error && err.message.length > 0 ? err.message : String(err);
+    return new ToolExecutionError("internal", message);
+  }
 }
 
-async function executeTool(
-  workspace: FixtureWorkspace,
-  tool: string,
-  args: Record<string, unknown>,
-  signal?: AbortSignal,
-): Promise<ToolResult> {
-  switch (tool) {
-    case "filesystem.read": {
-      const path = args.path as string;
-      return { ok: true, output: clip(workspace.read(path)) };
-    }
-    case "filesystem.find": {
-      const rel = args.path as string;
-      const pattern = (args.pattern as string | undefined) ?? "**";
-      const files = workspace.listFiles(rel).filter((p) => {
-        const base = p.split("/").pop() ?? p;
-        return globMatch(pattern, p) || (!pattern.includes("/") && globMatch(pattern, base));
-      });
-      return { ok: true, output: files.length === 0 ? "(no matches)" : files.join("\n") };
-    }
-    case "filesystem.search": {
-      const rel = args.path as string;
-      const query = (args.query as string).toLowerCase();
-      const lines: string[] = [];
-      for (const file of workspace.listFiles(rel)) {
-        if (lines.length >= SEARCH_LINE_LIMIT) break;
-        const content = workspace.read(file);
-        content.split("\n").forEach((line, i) => {
-          if (lines.length < SEARCH_LINE_LIMIT && line.toLowerCase().includes(query)) {
-            lines.push(`${file}:${i + 1}:${line}`);
-          }
-        });
-      }
-      return { ok: true, output: lines.length === 0 ? "(no matches)" : lines.join("\n") };
-    }
-    case "shell.exec": {
-      const command = args.command as string;
-      const res = await workspace.execShell(command, SHELL_TIMEOUT_MS, signal);
-      const output = [res.stdout, res.stderr].filter((s) => s.trim() !== "").join("\n");
-      if (res.timedOut) {
-        return { ok: false, error: `command timed out after ${SHELL_TIMEOUT_MS}ms`, error_code: "timeout" };
-      }
-      if (res.code !== 0) {
-        return { ok: false, error: clip(output || `exit code ${res.code}`), error_code: "exec_failed" };
-      }
-      return { ok: true, output: clip(output) };
-    }
-    case "editor.apply_patch": {
-      const path = args.path as string;
-      try {
-        const add = args.add === true;
-        const old = (args.old as string | undefined) ?? "";
-        const next = (args.new as string | undefined) ?? "";
-        const out = workspace.applyPatch(path, old, next, add);
-        return { ok: true, output: out.detail };
-      } catch (err) {
-        if (err instanceof WriteScopeViolationError) {
-          return { ok: false, error: err.message, error_code: "write_scope" };
-        }
-        return { ok: false, error: (err as Error).message, error_code: "patch_failed" };
-      }
-    }
-    case "task.update_plan": {
-      const plan = args.plan as string[];
-      if (!plan.every((p) => typeof p === "string" && p.length > 0)) {
-        return { ok: false, error: "plan entries must be non-empty strings", error_code: "invalid_args" };
-      }
-      return { ok: true, output: `plan updated (${plan.length} items)` };
-    }
-    case "browser.search":
-    case "browser.open":
-    case "browser.find":
-      return {
-        ok: false,
-        error: `${tool} is not wired in the reference adapter; m04 supplies fake backends`,
-        error_code: "unavailable",
-      };
-    default:
-      return { ok: false, error: `unknown tool ${tool}`, error_code: "invalid_args" };
-  }
+/** Canonical backends for the reference adapter: fixture workspace + offline fakes. */
+function referenceBackends(workspace: FixtureWorkspace): ToolBackends {
+  const fakes = createFakeToolBackends();
+  return {
+    workspace: new FixtureWorkspaceBackend(workspace),
+    browser: fakes.browser,
+    plan: fakes.plan,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -253,6 +251,7 @@ export const referenceAdapter: BenchmarkAdapter = {
         error_code: "invalid_args",
       });
     }
+    const backends = referenceBackends(ctx.workspace);
     let seq = 0;
     for (let i = 0; i < task.scripted_trail.length; i++) {
       ctx.checkToolLimit();
@@ -281,9 +280,9 @@ export const referenceAdapter: BenchmarkAdapter = {
         result = { ok: false, error: "wrong tool for this task step", error_code: "wrong_tool" };
       } else {
         try {
-          result = await executeTool(ctx.workspace, step.tool, step.args, ctx.signal);
+          result = await runTool(backends, step.tool, step.args, { signal: ctx.signal });
         } catch (err) {
-          result = { ok: false, error: (err as Error).message, error_code: "exec_failed" };
+          result = toolFailure("internal", err instanceof Error ? err.message : String(err));
         }
       }
       ctx.record({
