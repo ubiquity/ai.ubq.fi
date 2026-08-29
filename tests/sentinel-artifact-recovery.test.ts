@@ -259,7 +259,7 @@ Deno.test("authenticated legacy candidate evidence receives a durable manual dis
   assert.equal(record.disposition, "manual_required");
   assert.deepEqual(record.artifact_ids, [9697049137]);
   assert.deepEqual(record.artifact_digests, [digest]);
-  assert.equal(record.identity.source_id, "33197180235");
+  assert.equal(record.identity.source_id, "33197180235:artifact:9697049137");
   assert.equal(record.identity.source_revision, headSha);
   assert.match(record.next_action ?? "", /repository owner/u);
 });
