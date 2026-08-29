@@ -1034,6 +1034,40 @@
       "identity": {
         "repository": "ubiquity/ai.ubq.fi",
         "source_kind": "triage",
+        "source_id": "32961860403:artifact:9605146610",
+        "source_revision": "d933beeb9e3dd6eb37cc03b8167821132dd89015",
+        "candidate_generation": 1
+      },
+      "run_id": "32961860403",
+      "attempt": 1,
+      "lease_token": "artifact-9605146610",
+      "base_sha": "d933beeb9e3dd6eb37cc03b8167821132dd89015",
+      "phase": "rejected",
+      "disposition": "rejected",
+      "state_version": 1,
+      "created_at": "2026-08-26T11:40:35Z",
+      "updated_at": "2026-08-26T11:40:35Z",
+      "candidate_branch": null,
+      "candidate_sha": null,
+      "changed_files": [],
+      "tree_sha": null,
+      "failure_class": "artifact_invalid",
+      "failure_fingerprint": "17fade9c3c5730f1c3d0a502e44bc8a18e3bcb6ae5e41a566cb39a99ca191a9f",
+      "artifact_ids": [
+        9605146610
+      ],
+      "artifact_digests": [
+        "sha256:17fade9c3c5730f1c3d0a502e44bc8a18e3bcb6ae5e41a566cb39a99ca191a9f"
+      ],
+      "reason": "authenticated legacy evidence contains a terminal disposition",
+      "next_action": null,
+      "predecessor": null
+    },
+    {
+      "schema_version": 1,
+      "identity": {
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_kind": "triage",
         "source_id": "32967043519:artifact:9607142875",
         "source_revision": "d933beeb9e3dd6eb37cc03b8167821132dd89015",
         "candidate_generation": 1
