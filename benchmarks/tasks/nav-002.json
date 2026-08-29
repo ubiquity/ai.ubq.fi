@@ -1,0 +1,30 @@
+{
+  "id": "nav-002",
+  "category": "navigation",
+  "title": "Count symbol occurrences under src/",
+  "description": "Count every occurrence of the symbol harmony_token across files under src/ and write the total to answer.txt.",
+  "fixture": "nav-002",
+  "fixture_revision": "sha256:62ce190a512c729981b4847f93a3f2fb809d7614c3c77e321e475d3487889cba",
+  "timeout_ms": 60000,
+  "max_tool_calls": 40,
+  "min_tool_calls": 3,
+  "min_model_calls": 0,
+  "allowed_write_scope": ["**"],
+  "verify": { "command": "sh tests/run.sh", "timeout_ms": 20000 },
+  "oracle": {
+    "file_checks": [{ "path": "answer.txt", "kind": "equals", "value": "6" }]
+  },
+  "scripted_trail": [
+    {
+      "tool": "filesystem.search",
+      "args": { "path": "src", "query": "harmony_token" },
+      "expect": { "ok": true, "output_contains": ["src/c.txt:2:harmony_token twice harmony_token"] }
+    },
+    {
+      "tool": "shell.exec",
+      "args": { "command": "grep -ro harmony_token src | wc -l" },
+      "expect": { "ok": true, "output_contains": ["6"] }
+    },
+    { "tool": "editor.apply_patch", "args": { "path": "answer.txt", "add": true, "new": "6" } }
+  ]
+}

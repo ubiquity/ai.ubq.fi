@@ -1,0 +1,31 @@
+{
+  "id": "seq-001",
+  "category": "sequential",
+  "title": "Read, edit, verify in order",
+  "description": "Append a gamma entry to notes.txt after reading the current file, then verify the change with the fixture suite.",
+  "fixture": "seq-001",
+  "fixture_revision": "sha256:353d4296a9946129d150c8c7243e27a9db939d602c4876485fba9620bd6750e1",
+  "timeout_ms": 60000,
+  "max_tool_calls": 40,
+  "min_tool_calls": 3,
+  "min_model_calls": 0,
+  "allowed_write_scope": ["**"],
+  "verify": { "command": "sh tests/run.sh", "timeout_ms": 20000 },
+  "oracle": {
+    "file_checks": [{ "path": "notes.txt", "kind": "equals", "value": "alpha\nbeta\ngamma\n" }]
+  },
+  "scripted_trail": [
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "notes.txt" },
+      "expect": { "ok": true, "output_contains": ["alpha"] }
+    },
+    { "tool": "editor.apply_patch", "args": { "path": "notes.txt", "old": "beta", "new": "beta\ngamma" } },
+    { "tool": "shell.exec", "args": { "command": "sh tests/run.sh" }, "expect": { "ok": true } },
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "notes.txt" },
+      "expect": { "ok": true, "output_contains": ["gamma"] }
+    }
+  ]
+}

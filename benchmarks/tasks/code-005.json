@@ -1,0 +1,36 @@
+{
+  "id": "code-005",
+  "category": "coding",
+  "title": "Add the missing export",
+  "description": "src/mod.txt defines helper() but never exports it; add the export so the fixture test suite passes unchanged.",
+  "fixture": "code-005",
+  "fixture_revision": "sha256:48084d2bb6ffc56c11f59ee04d17e9fbf19df823b9bae35aee21e9b70716aed1",
+  "timeout_ms": 60000,
+  "max_tool_calls": 40,
+  "min_tool_calls": 3,
+  "min_model_calls": 0,
+  "allowed_write_scope": ["**"],
+  "verify": { "command": "sh tests/run.sh", "timeout_ms": 20000 },
+  "oracle": {
+    "file_checks": [
+      { "path": "src/mod.txt", "kind": "equals", "value": "def helper():\n    return 42\n\nexport helper\n" }
+    ]
+  },
+  "scripted_trail": [
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "tests/run.sh" },
+      "expect": { "ok": true, "output_contains": ["export helper"] }
+    },
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "src/mod.txt" },
+      "expect": { "ok": true, "output_contains": ["# TODO: export helper"] }
+    },
+    {
+      "tool": "editor.apply_patch",
+      "args": { "path": "src/mod.txt", "old": "# TODO: export helper", "new": "export helper" }
+    },
+    { "tool": "shell.exec", "args": { "command": "sh tests/run.sh" }, "expect": { "ok": true } }
+  ]
+}

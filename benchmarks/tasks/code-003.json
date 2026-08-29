@@ -1,0 +1,40 @@
+{
+  "id": "code-003",
+  "category": "coding",
+  "title": "Fix the off-by-one loop bound",
+  "description": "The loop in src/loop.txt skips its last index; fix the range bound so all indexes are covered. The fixture test suite must pass unchanged.",
+  "fixture": "code-003",
+  "fixture_revision": "sha256:83f5c137f1bcab580324a274278dcf8c4538fcac147bf4d59cb70bf7e69d80e5",
+  "timeout_ms": 60000,
+  "max_tool_calls": 40,
+  "min_tool_calls": 3,
+  "min_model_calls": 0,
+  "allowed_write_scope": ["**"],
+  "verify": { "command": "sh tests/run.sh", "timeout_ms": 20000 },
+  "oracle": {
+    "file_checks": [
+      {
+        "path": "src/loop.txt",
+        "kind": "equals",
+        "value": "for i in range(1, max_index + 1):  # prints 1..max_index-1\n"
+      }
+    ]
+  },
+  "scripted_trail": [
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "tests/run.sh" },
+      "expect": { "ok": true, "output_contains": ["range(1, max_index + 1)"] }
+    },
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "src/loop.txt" },
+      "expect": { "ok": true, "output_contains": ["range(1, max_index)"] }
+    },
+    {
+      "tool": "editor.apply_patch",
+      "args": { "path": "src/loop.txt", "old": "range(1, max_index)", "new": "range(1, max_index + 1)" }
+    },
+    { "tool": "shell.exec", "args": { "command": "sh tests/run.sh" }, "expect": { "ok": true } }
+  ]
+}

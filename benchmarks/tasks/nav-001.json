@@ -1,0 +1,35 @@
+{
+  "id": "nav-001",
+  "category": "navigation",
+  "title": "Locate the largest document in docs/",
+  "description": "Find the file under docs/ with the largest byte size and write its workspace-relative path to answer.txt.",
+  "fixture": "nav-001",
+  "fixture_revision": "sha256:d706ac64d95faf1bc793d5ddadbfc1e7300b1adda8e9fe5110ddd9268fe92006",
+  "timeout_ms": 60000,
+  "max_tool_calls": 40,
+  "min_tool_calls": 3,
+  "min_model_calls": 0,
+  "allowed_write_scope": ["**"],
+  "verify": { "command": "sh tests/run.sh", "timeout_ms": 20000 },
+  "oracle": {
+    "file_checks": [{ "path": "answer.txt", "kind": "equals", "value": "docs/spec.txt" }]
+  },
+  "scripted_trail": [
+    {
+      "tool": "shell.exec",
+      "args": { "command": "find docs -type f -exec wc -c {} \\; | sort -n | tail -1" },
+      "expect": { "ok": true, "output_contains": ["docs/spec.txt"] }
+    },
+    {
+      "tool": "filesystem.find",
+      "args": { "path": "docs", "pattern": "*.txt" },
+      "expect": { "ok": true, "output_contains": ["docs/spec.txt"] }
+    },
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "docs/spec.txt" },
+      "expect": { "ok": true, "output_contains": ["Section 1: stable line content"] }
+    },
+    { "tool": "editor.apply_patch", "args": { "path": "answer.txt", "add": true, "new": "docs/spec.txt" } }
+  ]
+}

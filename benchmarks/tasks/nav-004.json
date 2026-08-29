@@ -1,0 +1,30 @@
+{
+  "id": "nav-004",
+  "category": "navigation",
+  "title": "Identify the tests directory",
+  "description": "Discover the repository layout and write the top-level directory containing the tests to answer.txt.",
+  "fixture": "nav-004",
+  "fixture_revision": "sha256:1856bd1c9de2fbc641f3928c132c3c1c44a10c5e8f640a1ae37cd2eb55213601",
+  "timeout_ms": 60000,
+  "max_tool_calls": 40,
+  "min_tool_calls": 3,
+  "min_model_calls": 0,
+  "allowed_write_scope": ["**"],
+  "verify": { "command": "sh tests/run.sh", "timeout_ms": 20000 },
+  "oracle": {
+    "file_checks": [{ "path": "answer.txt", "kind": "equals", "value": "tests" }]
+  },
+  "scripted_trail": [
+    {
+      "tool": "filesystem.find",
+      "args": { "path": ".", "pattern": "*" },
+      "expect": { "ok": true, "output_contains": ["tests/unit.txt"] }
+    },
+    {
+      "tool": "shell.exec",
+      "args": { "command": "ls -d */" },
+      "expect": { "ok": true, "output_contains": ["tests/"] }
+    },
+    { "tool": "editor.apply_patch", "args": { "path": "answer.txt", "add": true, "new": "tests" } }
+  ]
+}

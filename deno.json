@@ -29,16 +29,21 @@
     "kv:validate": "deno run --unstable-kv --allow-env=DENO_KV_ACCESS_TOKEN --allow-net --allow-read=.kv-migration --allow-write=.kv-migration scripts/kv-migrate.ts validate",
     "kv:incident-v2": "deno run --unstable-kv --allow-env=DENO_KV_ACCESS_TOKEN --allow-net scripts/kv-migrate.ts incident-v2",
     "kv:validate-http": "deno run --allow-env=DENO_DEPLOY_TOKEN,UOS_AI_TOKEN --allow-net scripts/kv-migrate.ts validate-http",
+    "benchmark:run": "sh -c 'deno run --allow-read --allow-write=benchmark-runs --allow-run=sh,git benchmarks/runner.ts \"$@\"' --",
+    "benchmark:summary": "sh -c 'deno run --allow-read --allow-write=benchmark-runs benchmarks/summarize.ts \"$@\"' --",
+    "benchmark:fixture-revision": "deno run --allow-read benchmarks/fixture-revision.ts",
+    "benchmark:test": "deno test --allow-read --allow-write=benchmark-runs --allow-run=sh,git benchmarks/tests",
     "test": "deno test --frozen --env --allow-net=127.0.0.1 --allow-env=CEREBRAS_API_KEY,VOYAGEAI_API_KEY,METERED_API_KEY,SURPLUS_API_KEY,IMAGE_BASE_MODEL,GIT_REVISION,GITHUB_SHA,DENO_DEPLOYMENT_ID,DENO_DEPLOY_BUILD_ID --ignore=lib/codex --ignore=tests/failover-stress-http.test.ts --ignore=tests/usage-optimization-measurement.test.ts tests && deno task test:measurement",
     "test:measurement": "deno test --frozen --env --allow-net=127.0.0.1 --allow-env=UOS_AI_TOKEN,DENO_DEPLOY_TOKEN tests/usage-optimization-measurement.test.ts",
     "test:stress": "deno test --frozen --env --unstable-kv --allow-net=127.0.0.1 --allow-env=METERED_API_KEY,SURPLUS_API_KEY tests/failover-stress-http.test.ts",
     "test:e2e": "deno test --frozen --env --allow-net --allow-env=BASE_URL,UOS_AI_TOKEN,DENO_DEPLOY_TOKEN tests/live-default-model.e2e.ts",
-    "fmt": "deno fmt serve.ts src tests scripts docs",
-    "lint": "deno lint serve.ts src tests scripts"
+    "fmt": "deno fmt serve.ts src tests scripts docs benchmarks",
+    "lint": "deno lint serve.ts src tests scripts benchmarks"
   },
   "fmt": {
     "lineWidth": 120,
-    "semiColons": true
+    "semiColons": true,
+    "exclude": ["benchmarks/fixtures"]
   },
   "deploy": {
     "org": "ubiquity-dao",

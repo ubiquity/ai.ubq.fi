@@ -1,0 +1,38 @@
+{
+  "id": "fail-002",
+  "category": "failure",
+  "title": "Recover from a blocked write outside scope",
+  "description": "An attempted edit to protected/keep.txt is outside the allowed write scope; the edit must instead land in data/target.txt.",
+  "fixture": "fail-002",
+  "fixture_revision": "sha256:f5508e3eaf440b5376210eb191929f5ff04c8bc1faa2f9d13f7322857c36fab7",
+  "timeout_ms": 60000,
+  "max_tool_calls": 40,
+  "min_tool_calls": 3,
+  "min_model_calls": 0,
+  "allowed_write_scope": ["**", "!protected/**"],
+  "verify": { "command": "sh tests/run.sh", "timeout_ms": 20000 },
+  "oracle": {
+    "file_checks": [
+      { "path": "protected/keep.txt", "kind": "equals", "value": "ORIGINAL\n" },
+      { "path": "data/target.txt", "kind": "equals", "value": "changed\n" }
+    ]
+  },
+  "scripted_trail": [
+    {
+      "tool": "editor.apply_patch",
+      "args": { "path": "protected/keep.txt", "old": "ORIGINAL", "new": "TAMPERED" },
+      "expect": { "ok": false, "error_contains": "write scope violation" }
+    },
+    {
+      "tool": "editor.apply_patch",
+      "args": { "path": "data/target.txt", "old": "target", "new": "changed" },
+      "recovery": true
+    },
+    { "tool": "shell.exec", "args": { "command": "sh tests/run.sh" }, "expect": { "ok": true } },
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "protected/keep.txt" },
+      "expect": { "ok": true, "output_contains": ["ORIGINAL"] }
+    }
+  ]
+}

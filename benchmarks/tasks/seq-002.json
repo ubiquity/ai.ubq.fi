@@ -1,0 +1,40 @@
+{
+  "id": "seq-002",
+  "category": "sequential",
+  "title": "Aggregate values across three files",
+  "description": "Read every item= value under data/, sum them, and write the total to answer.txt.",
+  "fixture": "seq-002",
+  "fixture_revision": "sha256:8e91696f9590b2d27d601c69611585eba30eef3a976a6ced918ee03b2e939a94",
+  "timeout_ms": 60000,
+  "max_tool_calls": 40,
+  "min_tool_calls": 4,
+  "min_model_calls": 0,
+  "allowed_write_scope": ["**"],
+  "verify": { "command": "sh tests/run.sh", "timeout_ms": 20000 },
+  "oracle": {
+    "file_checks": [{ "path": "answer.txt", "kind": "equals", "value": "50" }]
+  },
+  "scripted_trail": [
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "data/part-1.txt" },
+      "expect": { "ok": true, "output_contains": ["item=10"] }
+    },
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "data/part-2.txt" },
+      "expect": { "ok": true, "output_contains": ["item=20"] }
+    },
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "data/part-3.txt" },
+      "expect": { "ok": true, "output_contains": ["item=20"] }
+    },
+    {
+      "tool": "shell.exec",
+      "args": { "command": "sed -n 's/item=//p' data/part-*.txt | awk '{s+=$1} END {print s}'" },
+      "expect": { "ok": true, "output_contains": ["50"] }
+    },
+    { "tool": "editor.apply_patch", "args": { "path": "answer.txt", "add": true, "new": "50" } }
+  ]
+}
