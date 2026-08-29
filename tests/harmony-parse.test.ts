@@ -50,6 +50,18 @@ Deno.test("parses the recipient in the role section (alternative header order)",
   });
 });
 
+Deno.test("parses built-in tool recipients on the analysis channel", () => {
+  const parsed = parseHarmonyOutput(
+    '<|start|>assistant<|channel|>analysis to=browser.search<|message|>{"query":"Harmony"}<|call|>',
+  );
+  assert.deepEqual(parsed.turns, [{
+    kind: "tool_call",
+    recipient: "browser.search",
+    name: "browser.search",
+    arguments: '{"query":"Harmony"}',
+  }]);
+});
+
 Deno.test("parses commentary preambles followed by a call in one emission", () => {
   const parsed = parseHarmonyOutput(
     "<|channel|>analysis<|message|>long chain of thought<|end|>" +

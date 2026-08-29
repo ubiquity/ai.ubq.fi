@@ -97,10 +97,6 @@ export const harmonyTurnsFromMessages = (messages: readonly HarmonyRawMessage[])
   const turns: HarmonyTurn[] = [];
   for (const message of messages) {
     if (message.role !== "assistant") continue;
-    if (message.channel === "analysis") {
-      if (message.content) turns.push({ kind: "reasoning", text: message.content });
-      continue;
-    }
     if (message.recipient) {
       // Function calls travel on the commentary channel; built-in tools
       // (browser/python) travel on the analysis channel.  Either way the
@@ -113,6 +109,10 @@ export const harmonyTurnsFromMessages = (messages: readonly HarmonyRawMessage[])
           arguments: normalizeToolArguments(message.content),
         });
       }
+      continue;
+    }
+    if (message.channel === "analysis") {
+      if (message.content) turns.push({ kind: "reasoning", text: message.content });
       continue;
     }
     if (message.channel === "final" || (message.channel === null && message.stoppedBy === "<|return|>")) {

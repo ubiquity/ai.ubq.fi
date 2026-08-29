@@ -30,7 +30,7 @@ import type { ContextBudgetKind } from "../src/harmony/reliability/context.ts";
 import type { RetryPolicy } from "../src/harmony/reliability/retry.ts";
 import type { VerificationPolicy } from "../src/harmony/reliability/verify.ts";
 import { FixtureWorkspace, WriteScopeViolationError } from "./fixture.ts";
-import { TaskManifest, TrailStep, TrajectoryEvent } from "./schemas.ts";
+import { type ModelRequestEvent, TaskManifest, TrailStep, TrajectoryEvent } from "./schemas.ts";
 import { type ToolBackends, type WorkspaceBackend } from "../src/harmony/tools/backend.ts";
 import { createFakeToolBackends } from "../src/harmony/tools/fakes.ts";
 import { ToolExecutionError, toolFailure } from "../src/harmony/tools/result.ts";
@@ -381,10 +381,11 @@ function recordHarnessEvent(
   ctx: AdapterRunContext,
   event: HarnessEvent,
   toolCount: number,
+  requests: Map<number, ModelRequestEvent>,
 ): void {
   switch (event.type) {
-    case "model_request":
-      ctx.record({
+    case "model_request": {
+      const request: ModelRequestEvent = {
         type: "model_request",
         at: ctx.time(),
         id: event.id,
@@ -393,9 +394,14 @@ function recordHarnessEvent(
         input_tokens: event.estimatedTokens,
         output_tokens: 0,
         tool_count: toolCount,
-      });
+      };
+      requests.set(event.id, request);
+      ctx.record(request);
       break;
-    case "model_response":
+    }
+    case "model_response": {
+      const request = requests.get(event.requestId);
+      if (request !== undefined) request.output_tokens = event.estimatedTokens;
       ctx.record({
         type: "model_response",
         at: ctx.time(),
@@ -409,6 +415,7 @@ function recordHarnessEvent(
         finish_reason: event.normalized.finishReason ?? undefined,
       });
       break;
+    }
     case "tool_call":
       ctx.checkToolLimit();
       ctx.record({
@@ -477,6 +484,7 @@ export function createCanonicalAdapter(options: CanonicalAdapterOptions = {}): B
         );
       }
       const tools = surface.definitions;
+      const requests = new Map<number, ModelRequestEvent>();
       const outcome = await runReliabilityHarness({
         systemPrompt: renderCanonicalPolicy({
           tools: tools.map((tool) => tool.name),
@@ -498,7 +506,7 @@ export function createCanonicalAdapter(options: CanonicalAdapterOptions = {}): B
         maxTurns: options.maxTurns ?? 48,
         maxCompletionTokens: options.maxCompletionTokens ?? 512,
         maxToolCalls: ctx.task.max_tool_calls,
-        emit: (event) => recordHarnessEvent(ctx, event, tools.length),
+        emit: (event) => recordHarnessEvent(ctx, event, tools.length, requests),
         signal: ctx.signal,
       });
       if (outcome.abortedReason === "signal") throw new TaskTimeoutError(ctx.task.timeout_ms);

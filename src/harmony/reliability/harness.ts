@@ -358,6 +358,7 @@ export async function runReliabilityHarness(opts: HarnessOptions): Promise<Harne
       if (decision.falseCompletion && decision.attempt.repetitions >= verificationPolicy.maxRepeatedFinals) {
         return abort("false_completion");
       }
+      if (finalAttempts >= verificationPolicy.maxFinalAttempts) return abort("guard_exhausted");
       if (guardRejections >= maxGuardRejections) return abort("guard_exhausted");
       continue;
     }

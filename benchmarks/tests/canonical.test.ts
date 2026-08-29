@@ -132,7 +132,10 @@ Deno.test("canonical: a fake-transport C run completes a task with guard evidenc
     assert.equal(result.reliability?.verification.required, 1);
     assert.equal(result.reliability?.verification.satisfied, 1);
     assert.ok(result.metrics.model_calls >= 6);
+    assert.ok(result.metrics.output_tokens > 0, "model response tokens must be included in metrics");
     for (const event of events) validateTrajectoryEvent(event);
+    const requests = events.filter((event) => event.type === "model_request");
+    assert.ok(requests.every((request) => request.output_tokens > 0));
     const guards = events.filter((e) => e.type === "guard");
     assert.ok(guards.length >= 1);
     assert.equal(guards[0].kind, "unverified_write");

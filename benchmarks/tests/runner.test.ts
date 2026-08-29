@@ -80,7 +80,7 @@ Deno.test("runner: tool_call_limit is classified", async () => {
     if (result.success || result.failure_class !== "tool_call_limit") {
       throw new Error(`expected tool_call_limit, got ${result.failure_class}: ${result.failure_detail}`);
     }
-    if (result.metrics.tool_calls !== 3) throw new Error(`expected 3 recorded calls, got ${result.metrics.tool_calls}`);
+    if (result.metrics.tool_calls !== 2) throw new Error(`expected 2 recorded calls, got ${result.metrics.tool_calls}`);
   } finally {
     Deno.removeSync(opts.runsRoot, { recursive: true });
   }

@@ -321,8 +321,67 @@ export class FixtureWorkspace {
     timeoutMs: number,
     signal?: AbortSignal,
   ): Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean }> {
-    return await this.exec(["sh", "-c", command], { timeoutMs, capture: true, signal });
+    this.assertRoot();
+    if (Deno.build.os === "linux") {
+      const root = Deno.realPathSync(this.root);
+      return await this.exec(
+        [
+          "sh",
+          "-c",
+          [
+            'sandbox="$(command -v bwrap)" || { echo "shell execution sandbox requires bwrap" >&2; exit 126; }',
+            'export HOME="$1" GIT_CONFIG_GLOBAL=/dev/null',
+            'exec "$sandbox" --die-with-parent --unshare-all --new-session',
+            '--ro-bind / / --bind "$1" "$1" --chdir "$1" sh -c "$2"',
+          ].join("\n"),
+          "fixture-sandbox",
+          root,
+          command,
+        ],
+        { timeoutMs, capture: true, signal },
+      );
+    }
+    if (Deno.build.os !== "darwin") {
+      return {
+        code: 126,
+        stdout: "",
+        stderr: `shell execution sandbox is unavailable on ${Deno.build.os}`,
+        timedOut: false,
+      };
+    }
+
+    // A working directory is not a security boundary: an arbitrary shell can
+    // use absolute paths, `..`, or symlinks to mutate the host checkout. Seatbelt
+    // resolves filesystem objects before applying the subpath rule, so all
+    // writes remain inside this disposable fixture even through a symlink.
+    const profile = [
+      "(version 1)",
+      "(deny default)",
+      '(import "system.sb")',
+      "(allow file-read*)",
+      "(allow process-exec)",
+      "(allow process-fork)",
+      '(allow file-write* (literal "/dev/null"))',
+      `(allow file-write* (subpath ${sandboxString(Deno.realPathSync(this.root))}))`,
+      "(deny network*)",
+    ].join("\n");
+    return await this.exec(
+      [
+        "sh",
+        "-c",
+        'export HOME="$3" GIT_CONFIG_GLOBAL=/dev/null; exec /usr/bin/sandbox-exec -p "$1" sh -c "$2"',
+        "fixture-sandbox",
+        profile,
+        command,
+        Deno.realPathSync(this.root),
+      ],
+      { timeoutMs, capture: true, signal },
+    );
   }
+}
+
+function sandboxString(value: string): string {
+  return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
 
 function existsSync(p: string): boolean {

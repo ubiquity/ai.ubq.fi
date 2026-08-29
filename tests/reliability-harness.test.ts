@@ -249,6 +249,28 @@ Deno.test("harness: guard rejection budget exhausts deterministically", async ()
   assert.ok(evidence(outcome).guards.length >= 2);
 });
 
+Deno.test("harness: configured final-attempt limit is enforced", async () => {
+  const outcome = await runReliabilityHarness(baseOptions([
+    { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "a.txt", old: "a=0", new: "a=1" } }] },
+    { content: "unverified" },
+    { content: "must not be requested" },
+  ], {
+    maxGuardRejections: 8,
+    verificationPolicy: {
+      requireVerificationBeforeFinal: true,
+      requireRecoveryBeforeFinal: true,
+      rejectFinalDuringLoop: true,
+      requirePlanBeforeWrites: false,
+      maxRepeatedFinals: 8,
+      maxFinalAttempts: 1,
+      verificationCommand: "sh tests/run.sh",
+    },
+  }));
+  assert.equal(outcome.phase, "failed");
+  assert.equal(outcome.abortedReason, "guard_exhausted");
+  assert.equal(evidence(outcome).finals.length, 1);
+});
+
 Deno.test("harness: structured mode requests carry deterministically fewer tokens than full mode", async () => {
   const script: ScriptStep[] = [];
   const bigFiles: Record<string, string> = {};

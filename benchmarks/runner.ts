@@ -176,7 +176,7 @@ export async function runOne(
     time: isoNow,
     checkToolLimit: () => {
       const calls = events.filter((e) => e.type === "tool_call").length;
-      if (calls > task.max_tool_calls) throw new ToolCallLimitExceededError(task.max_tool_calls);
+      if (calls >= task.max_tool_calls) throw new ToolCallLimitExceededError(task.max_tool_calls);
     },
   };
 
