@@ -21,6 +21,14 @@
  * m02-compatible views over the canonical schemas.
  */
 
+import { CEREBRAS_GPT_OSS_120B_MODEL } from "../src/cerebras.ts";
+import { type HarmonyTransport } from "../src/harmony/adapter.ts";
+import type { HarmonyReasoningEffort } from "../src/harmony/types.ts";
+import { type HarnessEvent, renderCanonicalPolicy, runReliabilityHarness } from "../src/harmony/reliability/harness.ts";
+import { broadToolSurface, compactToolSurface, type ToolSurfaceId } from "../src/harmony/reliability/surfaces.ts";
+import type { ContextBudgetKind } from "../src/harmony/reliability/context.ts";
+import type { RetryPolicy } from "../src/harmony/reliability/retry.ts";
+import type { VerificationPolicy } from "../src/harmony/reliability/verify.ts";
 import { FixtureWorkspace, WriteScopeViolationError } from "./fixture.ts";
 import { TaskManifest, TrailStep, TrajectoryEvent } from "./schemas.ts";
 import { type ToolBackends, type WorkspaceBackend } from "../src/harmony/tools/backend.ts";
@@ -61,6 +69,22 @@ export class TaskTimeoutError extends Error {
   constructor(readonly timeoutMs: number) {
     super(`task timed out after ${timeoutMs}ms`);
     this.name = "TaskTimeoutError";
+  }
+}
+
+/** Canonical config C error: no transport was injected. */
+export class CanonicalAdapterError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CanonicalAdapterError";
+  }
+}
+
+/** Canonical config C error: the reliability harness did not complete. */
+export class CanonicalHarnessError extends Error {
+  constructor(readonly reason: string | null, readonly failureClass: string | null) {
+    super(`canonical harness failed: ${reason ?? "unknown"} (reliability class: ${failureClass ?? "none"})`);
+    this.name = "CanonicalHarnessError";
   }
 }
 
@@ -310,5 +334,183 @@ export const referenceAdapter: BenchmarkAdapter = {
 
 /** Registry consumed by the runner. m03 registers adapters A/B/D here. */
 export function defaultAdapters(): BenchmarkAdapter[] {
-  return [referenceAdapter];
+  return [referenceAdapter, canonicalAdapter];
 }
+
+// ---------------------------------------------------------------------------
+// Canonical configuration C (m05)
+// ---------------------------------------------------------------------------
+
+export interface CanonicalAdapterOptions {
+  /** Stable config id; defaults to "C". */
+  configId?: string;
+  name?: string;
+  description?: string;
+  /**
+   * The model transport.  Injected only — no environment variable, CLI flag
+   * or secret is read.  Absent for the registered default, which therefore
+   * fails fast ("live inference is gated") and is refused by the runner via
+   * `requiresExternalInference: true`.
+   */
+  transport?: HarmonyTransport;
+  /** Default true: the runner refuses this adapter without an approved gate. */
+  requiresExternalInference?: boolean;
+  /** Model-facing tool surface; default "compact" (canonical nine tools). */
+  toolSurface?: ToolSurfaceId;
+  transcriptBudget?: ContextBudgetKind;
+  contextMode?: "full" | "structured";
+  reasoningEffort?: HarmonyReasoningEffort;
+  retryPolicy?: RetryPolicy;
+  verificationPolicy?: VerificationPolicy;
+  maxTurns?: number;
+  maxCompletionTokens?: number;
+}
+
+const parseArgumentsObject = (argumentsText: string): Record<string, unknown> => {
+  try {
+    const value = JSON.parse(argumentsText);
+    if (typeof value === "object" && value !== null && !Array.isArray(value)) return value as Record<string, unknown>;
+  } catch {
+    // fall through
+  }
+  return {};
+};
+
+/** Maps one harness event onto the benchmark trajectory contract. */
+function recordHarnessEvent(
+  ctx: AdapterRunContext,
+  event: HarnessEvent,
+  toolCount: number,
+): void {
+  switch (event.type) {
+    case "model_request":
+      ctx.record({
+        type: "model_request",
+        at: ctx.time(),
+        id: event.id,
+        model: CEREBRAS_GPT_OSS_120B_MODEL,
+        message_count: (event.built.body.messages as unknown[]).length,
+        input_tokens: event.estimatedTokens,
+        output_tokens: 0,
+        tool_count: toolCount,
+      });
+      break;
+    case "model_response":
+      ctx.record({
+        type: "model_response",
+        at: ctx.time(),
+        request_id: event.requestId,
+        content: event.normalized.content ?? undefined,
+        tool_calls: event.normalized.toolCalls.map((call) => ({
+          id: call.id,
+          name: call.name,
+          arguments: parseArgumentsObject(call.arguments),
+        })),
+        finish_reason: event.normalized.finishReason ?? undefined,
+      });
+      break;
+    case "tool_call":
+      ctx.checkToolLimit();
+      ctx.record({
+        type: "tool_call",
+        at: ctx.time(),
+        id: event.id,
+        tool: event.tool,
+        arguments: event.arguments,
+        valid: event.valid,
+        invalid_reason: event.valid ? undefined : event.invalidReason,
+        is_repeated: event.repeated === null || event.repeated === undefined ? undefined : true,
+      });
+      break;
+    case "tool_result":
+      ctx.record({
+        type: "tool_result",
+        at: ctx.time(),
+        id: event.id,
+        ok: event.result.ok,
+        output: event.result.output,
+        error: event.result.error,
+        error_code: event.result.error_code,
+        duration_ms: event.durationMs,
+      });
+      break;
+    case "guard":
+      ctx.record({
+        type: "guard",
+        at: ctx.time(),
+        kind: event.kind,
+        reason: event.message,
+        attempt: event.attempt,
+        phase: event.phase,
+      });
+      break;
+    case "final":
+      // The final content is already recorded by the preceding
+      // model_response event; no extra trajectory event is needed.
+      break;
+  }
+}
+
+/**
+ * Builds the canonical configuration C adapter (m05).  A fake transport makes
+ * it fully deterministic for tests; the registered default carries NO
+ * transport and `requiresExternalInference: true`, so the hermetic runner
+ * refuses it until an approved live gate exists (no env var / flag / secret
+ * is ever read).
+ */
+export function createCanonicalAdapter(options: CanonicalAdapterOptions = {}): BenchmarkAdapter {
+  const configId = options.configId ?? "C";
+  const requiresExternalInference = options.requiresExternalInference ?? true;
+  const surface = options.toolSurface === "broad" ? broadToolSurface() : compactToolSurface();
+  return {
+    configId,
+    name: options.name ?? "canonical C",
+    description: options.description ??
+      `canonical Harmony harness (compact tool surface + m05 reliability guards); transport is injected, so hermetic tests drive it with a fake transport`,
+    requiresExternalInference,
+    async run(ctx: AdapterRunContext): Promise<void> {
+      if (options.transport === undefined) {
+        throw new CanonicalAdapterError(
+          "canonical config C: no transport was injected, so live inference is gated. " +
+            "The runner refuses external-inference adapters; no environment variable, CLI flag or secret is read — " +
+            "construct the adapter with an approved or fake transport.",
+        );
+      }
+      const tools = surface.definitions;
+      const outcome = await runReliabilityHarness({
+        systemPrompt: renderCanonicalPolicy({
+          tools: tools.map((tool) => tool.name),
+          budget: options.transcriptBudget ?? "medium",
+        }),
+        userPrompt: `${ctx.task.title} — ${ctx.task.description}\n` +
+          `Verify your work before answering; the declared verification command is ${
+            JSON.stringify(ctx.task.verify?.command ?? null)
+          }.`,
+        transport: options.transport,
+        backends: referenceBackends(ctx.workspace),
+        tools,
+        reasoningEffort: options.reasoningEffort ?? "low",
+        transcriptBudget: options.transcriptBudget ?? "medium",
+        contextMode: options.contextMode ?? "structured",
+        retryPolicy: options.retryPolicy,
+        verificationPolicy: options.verificationPolicy,
+        verificationCommand: ctx.task.verify?.command ?? null,
+        maxTurns: options.maxTurns ?? 48,
+        maxCompletionTokens: options.maxCompletionTokens ?? 512,
+        maxToolCalls: ctx.task.max_tool_calls,
+        emit: (event) => recordHarnessEvent(ctx, event, tools.length),
+        signal: ctx.signal,
+      });
+      if (outcome.abortedReason === "signal") throw new TaskTimeoutError(ctx.task.timeout_ms);
+      if (outcome.abortedReason === "tool_call_limit") {
+        throw new ToolCallLimitExceededError(ctx.task.max_tool_calls);
+      }
+      if (outcome.phase !== "completed") {
+        throw new CanonicalHarnessError(outcome.abortedReason, outcome.classification.failure_class);
+      }
+    },
+  };
+}
+
+/** Registered canonical configuration C: external inference by default. */
+export const canonicalAdapter: BenchmarkAdapter = createCanonicalAdapter();

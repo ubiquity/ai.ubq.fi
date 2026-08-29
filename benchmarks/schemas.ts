@@ -201,13 +201,33 @@ export interface VerifyEvent {
   output?: string;
 }
 
+/**
+ * m05 additive event: a deterministic reliability-guard rejection (final
+ * answer blocked by unmet verification/loop requirements, or a loop warning).
+ * Readers that do not know this type must ignore the event; derivation always
+ * tolerates unknown event types.
+ */
+export interface GuardEvent {
+  type: "guard";
+  at: string;
+  /** Machine-readable guard kind. */
+  kind: string;
+  /** Deterministic one-line reason (model-facing text). */
+  reason: string;
+  /** Final-attempt number this guard rejected (0 for loop warnings). */
+  attempt: number;
+  /** Structured phase when the guard fired. */
+  phase: string;
+}
+
 export type TrajectoryEvent =
   | RunEvent
   | ModelRequestEvent
   | ModelResponseEvent
   | ToolCallEvent
   | ToolResultEvent
-  | VerifyEvent;
+  | VerifyEvent
+  | GuardEvent;
 
 // ---------------------------------------------------------------------------
 // Result record (one line in result.jsonl)
@@ -258,6 +278,33 @@ export interface OracleOutcome {
   checks: OracleCheckOutcome[];
 }
 
+/**
+ * m05 additive summary: the deterministic reliability evidence derived from
+ * the event stream (never inferred from model text).  Optional so 1.0
+ * artifacts written before m05 remain valid.
+ */
+export interface ReliabilitySummary {
+  /** Structured task phase at the end of the run. */
+  phase: string;
+  final_accepted: boolean;
+  /** Final answers rejected by the verification/loop guard. */
+  guard_rejections: number;
+  /** Final repetitions with no intervening action. */
+  false_completions: number;
+  /** Consecutive invalid tool calls at the end of the run. */
+  invalid_call_streak: number;
+  duplicate_calls: number;
+  semantic_loops: number;
+  retries: { attempts: number; allowed: number; rejected: number };
+  unverified_writes: number;
+  unresolved: { commands: number; edits: number };
+  verification: { required: number; satisfied: number };
+  /** m05 reliability failure class (advisory; the runner stays authoritative). */
+  failure_class: string | null;
+  /** Canonical structured-state contract (deterministic JSON). */
+  state_contract: string;
+}
+
 export interface BenchmarkResult {
   schema_version: string;
   run_id: string;
@@ -273,6 +320,8 @@ export interface BenchmarkResult {
   failure_class: FailureClass | null;
   failure_detail: string | null;
   metrics: RunMetrics;
+  /** m05 additive reliability evidence (derived, never inferred from text). */
+  reliability?: ReliabilitySummary;
   verification: VerificationOutcome;
   oracle: OracleOutcome;
   required_calls: {
@@ -553,6 +602,12 @@ export function validateTrajectoryEvent(e: unknown): TrajectoryEvent {
       if (typeof e.passed !== "boolean") fail("passed", "expected boolean");
       if (typeof e.timed_out !== "boolean") fail("timed_out", "expected boolean");
       return e as unknown as VerifyEvent;
+    case "guard":
+      expectString(e.kind, "kind");
+      expectString(e.reason, "reason");
+      expectInt(e.attempt, "attempt", 0);
+      expectString(e.phase, "phase");
+      return e as unknown as GuardEvent;
     default:
       fail("type", `unknown event type ${type}`);
   }
@@ -582,6 +637,7 @@ export function validateBenchmarkResult(r: unknown): BenchmarkResult {
   if (!isRecord(r.verification)) fail("verification", "expected object");
   if (!isRecord(r.oracle)) fail("oracle", "expected object");
   if (!isRecord(r.required_calls)) fail("required_calls", "expected object");
+  if (r.reliability !== undefined && !isRecord(r.reliability)) fail("reliability", "expected object");
   expectString(r.trajectory, "trajectory");
   expectString(r.created_at, "created_at");
   return r as unknown as BenchmarkResult;
