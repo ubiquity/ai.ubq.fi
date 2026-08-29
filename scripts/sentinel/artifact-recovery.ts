@@ -1483,6 +1483,26 @@ export const recoverSentinelArtifactsInActions = async (
           );
         }
         if (record.phase !== "recovery_pending") {
+          if (workflowRun?.status === "completed" && workflowRun.conclusion !== "success") {
+            const evidenceRecord = manualRecoveryRecordForLegacyArtifact(input.repository, artifact, encryptedDigest);
+            if (evidenceRecord) {
+              const evidenceKey = sentinelRecoveryIdentityKey(evidenceRecord.identity);
+              if (
+                !recoverySnapshot.ledger.records.some((candidate) =>
+                  sentinelRecoveryIdentityKey(candidate.identity) === evidenceKey
+                )
+              ) {
+                recoverySnapshot = await writeGitHubSentinelRecoveryLedger({
+                  token: input.token,
+                  repository: input.repository,
+                  fetcher: stateFetcher,
+                  snapshot: recoverySnapshot,
+                  ledger: upsertSentinelRecoveryRecord(recoverySnapshot.ledger, evidenceRecord, null),
+                  message: `chore(sentinel): terminalize failed artifact ${artifact.id}`,
+                });
+              }
+            }
+          }
           continue;
         }
         const result = await recoverSentinelArtifactCandidate({
