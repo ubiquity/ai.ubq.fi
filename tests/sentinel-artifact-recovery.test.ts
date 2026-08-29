@@ -188,6 +188,10 @@ Deno.test({
       selected.map((artifact) => artifact.id),
       Array.from({ length: 128 }, (_, index) => 10_128 - index),
     );
+    const withRequiredOldest = selectSentinelRecoveryArtifacts(artifacts, 128, new Set([10_000]));
+    assert.equal(withRequiredOldest.length, 128);
+    assert.equal(withRequiredOldest[0].id, 10_000);
+    assert.equal(withRequiredOldest.some((artifact) => artifact.id === 10_001), false);
   },
 });
 

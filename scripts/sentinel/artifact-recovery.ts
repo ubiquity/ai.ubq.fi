@@ -1241,15 +1241,22 @@ const artifactCreatedAtMs = (artifact: GitHubArtifact): number => {
 export const selectSentinelRecoveryArtifacts = (
   artifacts: readonly GitHubArtifact[],
   maximum = MAX_RECOVERY_ARTIFACTS,
+  requiredArtifactIds: ReadonlySet<number> = new Set(),
 ): readonly GitHubArtifact[] => {
   if (!positiveSafeInteger(maximum)) throw new Error("Sentinel recovery artifact bound is invalid");
-  return artifacts
+  if ([...requiredArtifactIds].some((artifactId) => !positiveSafeInteger(artifactId))) {
+    throw new Error("Required Sentinel recovery artifact ID is invalid");
+  }
+  const eligible = artifacts
     .filter((artifact) => !artifact.expired && ARTIFACT_NAME.test(artifact.name))
     .sort((left, right) => {
       const createdAtDifference = artifactCreatedAtMs(right) - artifactCreatedAtMs(left);
       return createdAtDifference !== 0 ? createdAtDifference : right.id - left.id;
-    })
-    .slice(0, maximum);
+    });
+  return [
+    ...eligible.filter((artifact) => requiredArtifactIds.has(artifact.id)),
+    ...eligible.filter((artifact) => !requiredArtifactIds.has(artifact.id)),
+  ].slice(0, maximum);
 };
 
 const workflowRunForArtifact = async (
@@ -1369,8 +1376,15 @@ export const recoverSentinelArtifactsInActions = async (
       repository: input.repository,
       fetcher: stateFetcher,
     });
+    const requiredArtifactIds = new Set(
+      recoverySnapshot.ledger.records
+        .filter((record) => record.disposition === "active")
+        .flatMap((record) => record.artifact_ids),
+    );
     const artifacts = selectSentinelRecoveryArtifacts(
       await github.listRepositoryArtifacts({ createdAfterMs: Date.now() - 90 * 24 * 60 * 60 * 1_000 }),
+      MAX_RECOVERY_ARTIFACTS,
+      requiredArtifactIds,
     );
     const results: SentinelArtifactRecoveryResult[] = [];
     privateRoot = await Deno.makeTempDir({ prefix: "sentinel-artifact-recovery-private-" });
