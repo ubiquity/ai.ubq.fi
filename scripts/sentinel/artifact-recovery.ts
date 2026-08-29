@@ -1437,7 +1437,12 @@ export const recoverSentinelArtifactsInActions = async (
           sentinelRecoveryIdentityKey(candidate.identity) === identityKey
         ) ?? null;
         if (existingRecord && existingRecord.disposition !== "active") {
-          const evidenceRecord = manualRecoveryRecordForLegacyArtifact(input.repository, artifact, encryptedDigest);
+          const evidenceRecord = terminalRecoveryRecordForLegacyArtifact(
+            input.repository,
+            artifact,
+            encryptedDigest,
+            existingRecord.disposition,
+          );
           if (evidenceRecord) {
             const evidenceKey = sentinelRecoveryIdentityKey(evidenceRecord.identity);
             if (
