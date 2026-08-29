@@ -1,0 +1,41 @@
+{
+  "id": "long-001",
+  "category": "long",
+  "title": "Flip six flags across files (more than 10 tool calls)",
+  "description": "Read and update six flag files so every x=0 becomes x=1; the task requires more than 10 tool calls to complete.",
+  "fixture": "long-001",
+  "fixture_revision": "sha256:5bc5dbec3f0999b9404bf2a80b743131a66cc25c07acbb7880acc73a1ec82508",
+  "timeout_ms": 120000,
+  "max_tool_calls": 60,
+  "min_tool_calls": 11,
+  "min_model_calls": 0,
+  "allowed_write_scope": ["**"],
+  "verify": { "command": "sh tests/run.sh", "timeout_ms": 20000 },
+  "oracle": {
+    "file_checks": [
+      { "path": "f01.txt", "kind": "equals", "value": "x=1\n" },
+      { "path": "f06.txt", "kind": "equals", "value": "x=1\n" }
+    ]
+  },
+  "scripted_trail": [
+    { "tool": "task.update_plan", "args": { "plan": ["read six files", "flip each flag", "verify"] } },
+    { "tool": "filesystem.read", "args": { "path": "f01.txt" }, "expect": { "ok": true, "output_contains": ["x=0"] } },
+    { "tool": "filesystem.read", "args": { "path": "f02.txt" }, "expect": { "ok": true, "output_contains": ["x=0"] } },
+    { "tool": "filesystem.read", "args": { "path": "f03.txt" }, "expect": { "ok": true, "output_contains": ["x=0"] } },
+    { "tool": "filesystem.read", "args": { "path": "f04.txt" }, "expect": { "ok": true, "output_contains": ["x=0"] } },
+    { "tool": "filesystem.read", "args": { "path": "f05.txt" }, "expect": { "ok": true, "output_contains": ["x=0"] } },
+    { "tool": "filesystem.read", "args": { "path": "f06.txt" }, "expect": { "ok": true, "output_contains": ["x=0"] } },
+    { "tool": "editor.apply_patch", "args": { "path": "f01.txt", "old": "x=0", "new": "x=1" } },
+    { "tool": "editor.apply_patch", "args": { "path": "f02.txt", "old": "x=0", "new": "x=1" } },
+    { "tool": "editor.apply_patch", "args": { "path": "f03.txt", "old": "x=0", "new": "x=1" } },
+    { "tool": "editor.apply_patch", "args": { "path": "f04.txt", "old": "x=0", "new": "x=1" } },
+    { "tool": "editor.apply_patch", "args": { "path": "f05.txt", "old": "x=0", "new": "x=1" } },
+    { "tool": "editor.apply_patch", "args": { "path": "f06.txt", "old": "x=0", "new": "x=1" } },
+    { "tool": "shell.exec", "args": { "command": "sh tests/run.sh" }, "expect": { "ok": true } },
+    {
+      "tool": "filesystem.find",
+      "args": { "path": ".", "pattern": "f*.txt" },
+      "expect": { "ok": true, "output_contains": ["f06.txt"] }
+    }
+  ]
+}

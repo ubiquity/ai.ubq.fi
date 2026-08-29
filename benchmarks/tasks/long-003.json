@@ -1,0 +1,69 @@
+{
+  "id": "long-003",
+  "category": "long",
+  "title": "Eight flags with two recoveries (more than 20 tool calls)",
+  "description": "Update eight flag files while recovering from two injected failures (one patch, one grep); the task requires more than 20 tool calls.",
+  "fixture": "long-003",
+  "fixture_revision": "sha256:02af10a04c459de4fa5e9cd0f833416b996718930ba2aaebde67f62d82b4842e",
+  "timeout_ms": 120000,
+  "max_tool_calls": 60,
+  "min_tool_calls": 21,
+  "min_model_calls": 0,
+  "allowed_write_scope": ["**"],
+  "verify": { "command": "sh tests/run.sh", "timeout_ms": 20000 },
+  "oracle": {
+    "file_checks": [
+      { "path": "f01.txt", "kind": "equals", "value": "x=1\n" },
+      { "path": "f08.txt", "kind": "equals", "value": "x=1\n" }
+    ]
+  },
+  "scripted_trail": [
+    { "tool": "task.update_plan", "args": { "plan": ["patch eight files", "recover from failures", "verify"] } },
+    {
+      "tool": "filesystem.find",
+      "args": { "path": ".", "pattern": "f*.txt" },
+      "expect": { "ok": true, "output_contains": ["f08.txt"] }
+    },
+    { "tool": "filesystem.read", "args": { "path": "f01.txt" }, "expect": { "ok": true, "output_contains": ["x=0"] } },
+    { "tool": "filesystem.read", "args": { "path": "f02.txt" }, "expect": { "ok": true, "output_contains": ["x=0"] } },
+    { "tool": "filesystem.read", "args": { "path": "f03.txt" }, "expect": { "ok": true, "output_contains": ["x=0"] } },
+    { "tool": "filesystem.read", "args": { "path": "f04.txt" }, "expect": { "ok": true, "output_contains": ["x=0"] } },
+    { "tool": "filesystem.read", "args": { "path": "f05.txt" }, "expect": { "ok": true, "output_contains": ["x=0"] } },
+    { "tool": "filesystem.read", "args": { "path": "f06.txt" }, "expect": { "ok": true, "output_contains": ["x=0"] } },
+    { "tool": "filesystem.read", "args": { "path": "f07.txt" }, "expect": { "ok": true, "output_contains": ["x=0"] } },
+    { "tool": "filesystem.read", "args": { "path": "f08.txt" }, "expect": { "ok": true, "output_contains": ["x=0"] } },
+    { "tool": "editor.apply_patch", "args": { "path": "f01.txt", "old": "x=0", "new": "x=1" } },
+    { "tool": "editor.apply_patch", "args": { "path": "f02.txt", "old": "x=0", "new": "x=1" } },
+    { "tool": "editor.apply_patch", "args": { "path": "f03.txt", "old": "x=0", "new": "x=1" } },
+    { "tool": "editor.apply_patch", "args": { "path": "f04.txt", "old": "x=0", "new": "x=1" } },
+    {
+      "tool": "editor.apply_patch",
+      "args": { "path": "f05.txt", "old": "x=0", "new": "x=1" },
+      "inject": { "error": "cat: f05.txt: Permission denied", "error_code": "EACCES" },
+      "expect": { "ok": false, "error_contains": "Permission denied" }
+    },
+    { "tool": "editor.apply_patch", "args": { "path": "f05.txt", "old": "x=0", "new": "x=1" }, "recovery": true },
+    { "tool": "editor.apply_patch", "args": { "path": "f06.txt", "old": "x=0", "new": "x=1" } },
+    { "tool": "editor.apply_patch", "args": { "path": "f07.txt", "old": "x=0", "new": "x=1" } },
+    { "tool": "editor.apply_patch", "args": { "path": "f08.txt", "old": "x=0", "new": "x=1" } },
+    { "tool": "shell.exec", "args": { "command": "sh tests/run.sh" }, "expect": { "ok": true } },
+    {
+      "tool": "shell.exec",
+      "args": { "command": "grep -rc '^x=1$' f*.txt | wc -l" },
+      "inject": { "error": "grep: permission denied", "error_code": "EACCES" },
+      "expect": { "ok": false, "error_contains": "permission denied" }
+    },
+    {
+      "tool": "shell.exec",
+      "args": { "command": "grep -rc '^x=1$' f*.txt | wc -l" },
+      "recovery": true,
+      "expect": { "ok": true, "output_contains": ["8"] }
+    },
+    {
+      "tool": "filesystem.search",
+      "args": { "path": ".", "query": "x=1" },
+      "expect": { "ok": true, "output_contains": ["f08.txt:1:x=1"] }
+    },
+    { "tool": "task.update_plan", "args": { "plan": ["verified"] } }
+  ]
+}

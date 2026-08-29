@@ -1,0 +1,119 @@
+{
+  "id": "long-005",
+  "category": "long",
+  "title": "Marathon value summation (more than 20 tool calls)",
+  "description": "Collect six values across data/, sum them with independent checks, and persist the total in answer.txt; the task requires more than 20 tool calls.",
+  "fixture": "long-005",
+  "fixture_revision": "sha256:2fbc6b1327cd68e6099f3e64e83fab7ff025e00d7950f47f86ef62f3158e51a6",
+  "timeout_ms": 120000,
+  "max_tool_calls": 60,
+  "min_tool_calls": 21,
+  "min_model_calls": 0,
+  "allowed_write_scope": ["**"],
+  "verify": { "command": "sh tests/run.sh", "timeout_ms": 20000 },
+  "oracle": {
+    "file_checks": [{ "path": "answer.txt", "kind": "equals", "value": "21" }]
+  },
+  "scripted_trail": [
+    { "tool": "task.update_plan", "args": { "plan": ["collect six values", "sum them", "verify"] } },
+    {
+      "tool": "filesystem.find",
+      "args": { "path": "data", "pattern": "*.txt" },
+      "expect": { "ok": true, "output_contains": ["data/v06.txt"] }
+    },
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "data/v01.txt" },
+      "expect": { "ok": true, "output_contains": ["value=1"] }
+    },
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "data/v02.txt" },
+      "expect": { "ok": true, "output_contains": ["value=2"] }
+    },
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "data/v03.txt" },
+      "expect": { "ok": true, "output_contains": ["value=3"] }
+    },
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "data/v04.txt" },
+      "expect": { "ok": true, "output_contains": ["value=4"] }
+    },
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "data/v05.txt" },
+      "expect": { "ok": true, "output_contains": ["value=5"] }
+    },
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "data/v06.txt" },
+      "expect": { "ok": true, "output_contains": ["value=6"] }
+    },
+    {
+      "tool": "shell.exec",
+      "args": { "command": "ls data | wc -l" },
+      "expect": { "ok": true, "output_contains": ["6"] }
+    },
+    {
+      "tool": "shell.exec",
+      "args": { "command": "cat data/v01.txt data/v02.txt data/v03.txt" },
+      "expect": { "ok": true, "output_contains": ["value=3"] }
+    },
+    {
+      "tool": "shell.exec",
+      "args": {
+        "command": "sed -n 's/value=//p' data/v01.txt data/v02.txt data/v03.txt | awk '{s+=$1} END {print s}'"
+      },
+      "expect": { "ok": true, "output_contains": ["6"] }
+    },
+    {
+      "tool": "shell.exec",
+      "args": { "command": "cat data/v04.txt data/v05.txt data/v06.txt" },
+      "expect": { "ok": true, "output_contains": ["value=6"] }
+    },
+    {
+      "tool": "shell.exec",
+      "args": {
+        "command": "sed -n 's/value=//p' data/v04.txt data/v05.txt data/v06.txt | awk '{s+=$1} END {print s}'"
+      },
+      "expect": { "ok": true, "output_contains": ["15"] }
+    },
+    { "tool": "editor.apply_patch", "args": { "path": "answer.txt", "add": true, "new": "21" } },
+    { "tool": "shell.exec", "args": { "command": "sh tests/run.sh" }, "expect": { "ok": true } },
+    { "tool": "shell.exec", "args": { "command": "grep -q '^21$' answer.txt" }, "expect": { "ok": true } },
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "answer.txt" },
+      "expect": { "ok": true, "output_contains": ["21"] }
+    },
+    {
+      "tool": "shell.exec",
+      "args": { "command": "sed -n 's/value=//p' data/v0*.txt | awk '{s+=$1} END {print s}'" },
+      "expect": { "ok": true, "output_contains": ["21"] }
+    },
+    { "tool": "shell.exec", "args": { "command": "sh tests/run.sh" }, "expect": { "ok": true } },
+    { "tool": "task.update_plan", "args": { "plan": ["collected", "summed", "verified"] } },
+    {
+      "tool": "filesystem.find",
+      "args": { "path": "data", "pattern": "v01.txt" },
+      "expect": { "ok": true, "output_contains": ["data/v01.txt"] }
+    },
+    {
+      "tool": "filesystem.search",
+      "args": { "path": "data", "query": "value" },
+      "expect": { "ok": true, "output_contains": ["data/v06.txt:1:value=6"] }
+    },
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "data/v06.txt" },
+      "expect": { "ok": true, "output_contains": ["value=6"] }
+    },
+    {
+      "tool": "shell.exec",
+      "args": { "command": "grep -rc value data | wc -l" },
+      "expect": { "ok": true, "output_contains": ["6"] }
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "id": "nav-003",
+  "category": "navigation",
+  "title": "Find the production port value",
+  "description": "Locate the port value declared in config/app.conf and write it to answer.txt. dev.conf is a decoy.",
+  "fixture": "nav-003",
+  "fixture_revision": "sha256:33641dbdc9effc627d4d816b69f6ebcb31799a70b7161777930ee71f276e241e",
+  "timeout_ms": 60000,
+  "max_tool_calls": 40,
+  "min_tool_calls": 3,
+  "min_model_calls": 0,
+  "allowed_write_scope": ["**"],
+  "verify": { "command": "sh tests/run.sh", "timeout_ms": 20000 },
+  "oracle": {
+    "file_checks": [{ "path": "answer.txt", "kind": "equals", "value": "8081" }]
+  },
+  "scripted_trail": [
+    {
+      "tool": "filesystem.find",
+      "args": { "path": "config", "pattern": "*.conf" },
+      "expect": { "ok": true, "output_contains": ["config/app.conf"] }
+    },
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "config/app.conf" },
+      "expect": { "ok": true, "output_contains": ["port = 8081"] }
+    },
+    { "tool": "editor.apply_patch", "args": { "path": "answer.txt", "add": true, "new": "8081" } }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "id": "fail-004",
+  "category": "failure",
+  "title": "Recover from a wrong-tool start",
+  "description": "The first action picks shell.exec where a filesystem read is the correct tool; correct the choice and record the note body in answer.txt.",
+  "fixture": "fail-004",
+  "fixture_revision": "sha256:f42aad12cc2962b7999f43bfef40dfb505cbf8de44d9fc30db43aa885277bd3e",
+  "timeout_ms": 60000,
+  "max_tool_calls": 40,
+  "min_tool_calls": 3,
+  "min_model_calls": 0,
+  "allowed_write_scope": ["**"],
+  "verify": { "command": "sh tests/run.sh", "timeout_ms": 20000 },
+  "oracle": {
+    "file_checks": [{ "path": "answer.txt", "kind": "equals", "value": "note body" }]
+  },
+  "scripted_trail": [
+    {
+      "tool": "shell.exec",
+      "args": { "command": "cat data/note.txt" },
+      "wrong": true,
+      "expect": { "ok": false, "error_contains": "wrong tool" }
+    },
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "data/note.txt" },
+      "recovery": true,
+      "expect": { "ok": true, "output_contains": ["note body"] }
+    },
+    { "tool": "editor.apply_patch", "args": { "path": "answer.txt", "add": true, "new": "note body" } }
+  ]
+}

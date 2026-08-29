@@ -1,0 +1,31 @@
+{
+  "id": "seq-003",
+  "category": "sequential",
+  "title": "Plan, edit, verify with checkpoint updates",
+  "description": "Mark the widget task as done in src/todo.txt, keeping the fixture suite green, and maintain an updated plan along the way.",
+  "fixture": "seq-003",
+  "fixture_revision": "sha256:6a143d4701f92467046caafbbcf787c0e87015f942b3813d699a999a953897f2",
+  "timeout_ms": 60000,
+  "max_tool_calls": 40,
+  "min_tool_calls": 4,
+  "min_model_calls": 0,
+  "allowed_write_scope": ["**"],
+  "verify": { "command": "sh tests/run.sh", "timeout_ms": 20000 },
+  "oracle": {
+    "file_checks": [{ "path": "src/todo.txt", "kind": "equals", "value": "- [x] fix the widget\n" }]
+  },
+  "scripted_trail": [
+    { "tool": "task.update_plan", "args": { "plan": ["read todo", "mark done", "verify"] } },
+    {
+      "tool": "filesystem.read",
+      "args": { "path": "src/todo.txt" },
+      "expect": { "ok": true, "output_contains": ["- [ ] fix the widget"] }
+    },
+    {
+      "tool": "editor.apply_patch",
+      "args": { "path": "src/todo.txt", "old": "- [ ] fix the widget", "new": "- [x] fix the widget" }
+    },
+    { "tool": "shell.exec", "args": { "command": "sh tests/run.sh" }, "expect": { "ok": true } },
+    { "tool": "task.update_plan", "args": { "plan": ["done"] } }
+  ]
+}

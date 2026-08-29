@@ -1,0 +1,44 @@
+{
+  "id": "nav-005",
+  "category": "navigation",
+  "title": "Find the commit that introduced the changelog",
+  "description": "Using the repository history, find the commit message that first added docs/CHANGELOG.txt and write it to answer.txt, then commit that answer.",
+  "fixture": "nav-005",
+  "fixture_revision": "sha256:119223004ed410fe633f4b1e9aa95eac3e6d6357eb2033027aeb9b8ab1a142c8",
+  "timeout_ms": 60000,
+  "max_tool_calls": 40,
+  "min_tool_calls": 4,
+  "min_model_calls": 0,
+  "allowed_write_scope": ["**"],
+  "git": { "init": true, "history": ["history/init", "history/add-changelog", "history/update-changelog"] },
+  "verify": { "command": "sh tests/run.sh", "timeout_ms": 20000 },
+  "oracle": {
+    "file_checks": [{ "path": "answer.txt", "kind": "equals", "value": "add-changelog" }],
+    "git_checks": [
+      { "kind": "commit_count", "value": "4" },
+      { "kind": "worktree_clean" },
+      { "kind": "head_message", "value": "record answer" },
+      { "kind": "file_committed", "value": "answer.txt" }
+    ]
+  },
+  "scripted_trail": [
+    {
+      "tool": "shell.exec",
+      "args": { "command": "git log --oneline" },
+      "expect": { "ok": true, "output_contains": ["update-changelog"] }
+    },
+    {
+      "tool": "shell.exec",
+      "args": { "command": "git log --diff-filter=A --format=%s -- docs/CHANGELOG.txt" },
+      "expect": { "ok": true, "output_contains": ["add-changelog"] }
+    },
+    { "tool": "editor.apply_patch", "args": { "path": "answer.txt", "add": true, "new": "add-changelog" } },
+    {
+      "tool": "shell.exec",
+      "args": {
+        "command": "git add answer.txt && git -c user.email=benchmark@invalid.invalid -c user.name=benchmark commit -qm 'record answer'"
+      }
+    },
+    { "tool": "shell.exec", "args": { "command": "git status --porcelain" }, "expect": { "ok": true } }
+  ]
+}
