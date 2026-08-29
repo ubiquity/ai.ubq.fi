@@ -1186,7 +1186,7 @@ export const manualRecoveryRecordForLegacyArtifact = (
     identity: {
       repository,
       source_kind: "triage",
-      source_id: String(artifact.workflowRunId),
+      source_id: `${artifact.workflowRunId}:artifact:${artifact.id}`,
       source_revision: artifact.workflowRunHeadSha,
       candidate_generation: 1,
     },
@@ -1437,6 +1437,29 @@ export const recoverSentinelArtifactsInActions = async (
           sentinelRecoveryIdentityKey(candidate.identity) === identityKey
         ) ?? null;
         if (existingRecord && existingRecord.disposition !== "active") {
+          const evidenceRecord = terminalRecoveryRecordForLegacyArtifact(
+            input.repository,
+            artifact,
+            encryptedDigest,
+            existingRecord.disposition,
+          );
+          if (evidenceRecord) {
+            const evidenceKey = sentinelRecoveryIdentityKey(evidenceRecord.identity);
+            if (
+              !recoverySnapshot.ledger.records.some((candidate) =>
+                sentinelRecoveryIdentityKey(candidate.identity) === evidenceKey
+              )
+            ) {
+              recoverySnapshot = await writeGitHubSentinelRecoveryLedger({
+                token: input.token,
+                repository: input.repository,
+                fetcher: stateFetcher,
+                snapshot: recoverySnapshot,
+                ledger: upsertSentinelRecoveryRecord(recoverySnapshot.ledger, evidenceRecord, null),
+                message: `chore(sentinel): retain terminal artifact ${artifact.id}`,
+              });
+            }
+          }
           continue;
         }
         let workingLedger = recoverySnapshot.ledger;
