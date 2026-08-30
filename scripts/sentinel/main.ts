@@ -2,10 +2,10 @@ import {
   CodexInvocationError,
   type CodexInvocationFailureCode,
   type CodexInvocationResult,
-  runNativeCodexReview,
   runStructuredCodexAgent,
 } from "./codex.ts";
 import { defaultRevisionBaseUrl, DenoDeployClient, type RollbackTarget } from "./deploy.ts";
+import { executeProductionRollback } from "./rollback-controller.ts";
 import { GitHubActionsClient, type GitHubArtifact } from "./github.ts";
 import {
   buildMatrixPlan,
@@ -24,7 +24,6 @@ import {
 } from "./matrix-integrate.ts";
 import {
   applyGitHubIssueJobDisposition,
-  blockingIssueReviewFindings,
   evaluateGitHubIssueJobImplementation,
   getCurrentGitHubIssueJob,
   GITHUB_ISSUE_JOB_HINT_FILENAME,
@@ -36,7 +35,6 @@ import {
   githubIssueJobTriageReport,
   isSentinelChangedFilesMismatchError,
   issueJobFindingId,
-  issueReviewBacklogFindings,
   parseGitHubIssueJobHint,
   parseGitHubIssueJobLedger,
   requireResolvedGitHubIssueJobImplementation,
@@ -52,11 +50,8 @@ import {
 } from "./replay.ts";
 import {
   applyReviewBacklogImplementationDisposition,
-  blockingReviewFindings,
   canStartReviewRound,
-  mergeReviewBacklog,
   parseReviewBacklog,
-  parseStructuredNativeReview,
   type ReviewBacklogEntry,
   reviewBacklogLocationPath,
   reviewBacklogTriageReport,
@@ -3591,7 +3586,9 @@ const run = async (): Promise<void> => {
   };
   let retryCheckpoint = selectedIssueCheckpoint;
   let retryCheckpointExpectedRemoteSha = selectedIssueCheckpoint?.sha ?? null;
-  let manualCheckpoint: GitHubIssueJobCheckpoint | null = null;
+  // The rolling review cutover removed the native-review-exhaustion producer;
+  // a manual retained checkpoint is no longer created by this orchestrator.
+  const manualCheckpoint: GitHubIssueJobCheckpoint | null = null;
   let lastPushedCandidateSha: string | null = null;
   let candidateCheckpointInput: SentinelCandidateCheckpointInput | null = null;
   const recoveryRecordPath = `${reportsDir}/recovery-record-v1.json`;
@@ -4183,7 +4180,6 @@ const run = async (): Promise<void> => {
           head_branch: retainedCheckpoint.branch,
           head_sha: retainedCheckpoint.sha,
           base_sha: retainedCheckpoint.baseSha,
-          ...(retryPending ? {} : { phase: "native_review_exhausted" }),
         },
       );
     }
@@ -4196,92 +4192,6 @@ const run = async (): Promise<void> => {
         : "development_docs_only_issue_manual_required",
     });
     for (const replayCase of applicableCases) replayCase.body.fill(0);
-  };
-  const terminalizeGitHubIssueNativeReviewExhaustion = async (
-    reviewedCandidateSha: string,
-    blockers: readonly NativeReviewFinding[],
-  ): Promise<void> => {
-    if (!workSelection.issueJob) {
-      throw new Error("Native review exhaustion is missing its selected GitHub issue");
-    }
-    if (selectedIssueState.disposition !== "resolved" || !selectedIssueState.continueToRuntimeValidation) {
-      throw new Error("Native review exhaustion has no resolved GitHub issue candidate to retain");
-    }
-    if (lastPushedCandidateSha !== null) {
-      throw new Error("Native review exhaustion cannot replace an already-published candidate branch");
-    }
-    const stage = "native_review_exhausted";
-    let checkpoint: GitHubIssueJobCheckpoint | null = null;
-    try {
-      checkpoint = await prepareGitHubIssueCandidateCheckpoint(stage, reviewedCandidateSha, null);
-      if (checkpoint === null) {
-        throw new Error("Native review exhaustion has no in-scope candidate changes to retain");
-      }
-      const codeTree = await assertGitHubIssueManualCheckpointCodeTreeEquivalent({
-        checkout,
-        baseSha,
-        reviewedCandidateSha,
-        checkpointSha: checkpoint.sha,
-        allowedPaths: workSelection.issueJob.files,
-      });
-      await captureFailedCandidateSnapshot(
-        checkout,
-        `${reportsDir}/manual-${stage}-candidate`,
-        baseSha,
-      );
-      await writeJson(`${reportsDir}/github-issue-manual-checkpoint.json`, {
-        schema_version: 1,
-        issue_id: workSelection.issueJob.issueId,
-        issue_number: workSelection.issueJob.number,
-        fingerprint: workSelection.issueJob.fingerprint,
-        phase: stage,
-        reviewed_candidate_sha: reviewedCandidateSha,
-        head_branch: checkpoint.branch,
-        head_sha: checkpoint.sha,
-        base_sha: checkpoint.baseSha,
-        blocker_count: blockers.length,
-        code_tree_equivalent: true,
-        reviewed_code_paths: codeTree.reviewedCodePaths,
-        checkpoint_code_paths: codeTree.checkpointCodePaths,
-        trusted_controls_restored_to_base: true,
-      });
-    } catch (error) {
-      const preservationSha = ensureFullSha(
-        await gitText(checkout, ["rev-parse", "HEAD"]),
-        "Native review exhaustion preservation SHA",
-      );
-      await preserveFailedImplementation(error, stage, preservationSha);
-      throw error;
-    }
-    if (checkpoint === null) {
-      throw new Error("Native review exhaustion lost its immutable candidate checkpoint");
-    }
-    manualCheckpoint = checkpoint;
-    await updateState("preparing_manual_checkpoint", {
-      candidate_sha: checkpoint.sha,
-      branch_disposition: "runner_local_manual_checkpoint_ready",
-      retry_checkpoint: { branch: checkpoint.branch, sha: checkpoint.sha, base_sha: checkpoint.baseSha },
-    });
-    // The immutable candidate has passed all safety gates and is now captured
-    // in encrypted evidence. Only then may the candidate worktree be reset so
-    // the development commit contains the ledger row and nothing else.
-    await discardCandidateChanges(checkout, baseSha);
-    selectedIssueState.disposition = "open";
-    selectedIssueState.continueToRuntimeValidation = false;
-    const disposition: FindingDisposition = Object.freeze({
-      finding_id: issueJobFindingId(workSelection.issueJob),
-      status: "blocked",
-      summary: "Native Codex review still has blocking findings after three rounds; manual review is required.",
-      changed_files: [],
-      validation: [],
-    });
-    await writeSelectedIssueDisposition(
-      disposition,
-      "manual_required",
-      stage,
-      checkpoint,
-    );
-    await completeNonRuntimeGitHubIssueDisposition();
   };
   if (workSelection.issueJob && retryCheckpoint) {
     try {
@@ -4618,160 +4528,19 @@ const run = async (): Promise<void> => {
   while (true) {
     if (!canStartReviewRound(reviewRound)) {
       throw new Error(
-        "Blocking review findings or replay-driven changes remain after three implementation-review rounds",
+        "Deterministic repair attempts remain after the bounded candidate preparation rounds",
       );
     }
     reviewRound += 1;
-    let candidateSha = ensureFullSha(await gitText(checkout, ["rev-parse", "HEAD"]), "Review candidate SHA");
+    let candidateSha = ensureFullSha(await gitText(checkout, ["rev-parse", "HEAD"]), "Repair candidate SHA");
     if (await hasChanges(checkout)) {
       candidateSha = await commitChanges(checkout, `fix: Provider Sentinel repair round ${reviewRound}`);
     }
-    const nativeReviewStage = `native_review_${reviewRound}`;
-    await updateState(nativeReviewStage, { candidate_sha: candidateSha });
-    let reviewResult: CodexInvocationResult;
-    let review: Awaited<ReturnType<typeof parseStructuredNativeReview>>;
-    try {
-      reviewResult = await withStageHeartbeat(
-        nativeReviewStage,
-        () => runNativeCodexReview({ checkoutPath: checkout, authSlots }),
-      );
-      await assertGitControlStateUnchanged(gitControlState);
-      const rawReview = `${reviewResult.stdout}\n${reviewResult.stderr}`;
-      await Deno.writeTextFile(`${reportsDir}/native-review-round-${reviewRound}.txt`, rawReview, { mode: 0o600 });
-      review = await parseStructuredNativeReview(reviewResult.nativeReviewOutput, reviewRound, checkout);
-      await writeJson(`${reportsDir}/native-review-round-${reviewRound}.json`, review);
-    } catch (error) {
-      if (
-        workSelection.source === "github_issue" &&
-        await deferGitHubIssueImplementationFailure(
-          error,
-          nativeReviewStage,
-          candidateSha,
-          () => restoreGitHubIssuePreviewBeforeRetry(nativeReviewStage),
-        )
-      ) {
-        await completeNonRuntimeGitHubIssueDisposition();
-        return;
-      }
-      if (workSelection.source !== "github_issue") {
-        await preserveFailedImplementation(error, nativeReviewStage, candidateSha);
-      }
-      throw error;
-    }
-    const requiredBacklogFingerprint = selectedBacklogState.disposition === "resolved"
-      ? workSelection.backlogEntry?.fingerprint
-      : undefined;
-    const blockers = workSelection.issueJob
-      ? blockingIssueReviewFindings(review, workSelection.issueJob.files)
-      : blockingReviewFindings(review, requiredBacklogFingerprint);
-    const backlogFindings = workSelection.issueJob
-      ? issueReviewBacklogFindings(review, workSelection.issueJob.files)
-      : review.findings.filter((finding) => finding.severity === "P2" || finding.severity === "P3");
-    if (blockers.length && !canStartReviewRound(reviewRound)) {
-      const exhaustion = new Error("Native Codex review still has blocking findings after round three");
-      if (workSelection.source === "github_issue") {
-        await terminalizeGitHubIssueNativeReviewExhaustion(candidateSha, blockers);
-        return;
-      }
-      await preserveFailedImplementation(exhaustion, "native_review_exhausted", candidateSha);
-      throw exhaustion;
-    }
-    if (backlogFindings.length) {
-      const backlogPath = `${checkout}/${SENTINEL_POLICY.paths.reviewBacklog}`;
-      const currentBacklog = await Deno.readTextFile(backlogPath);
-      await Deno.writeTextFile(
-        backlogPath,
-        mergeReviewBacklog(currentBacklog, backlogFindings, candidateSha, new Date()),
-      );
-      candidateSha = await commitChanges(checkout, `docs: record Sentinel review backlog round ${reviewRound}`);
-      protectedHashes = await hashProtectedFiles(checkout, SENTINEL_POLICY.protectedImplementationPaths);
-      if (
-        selectedBacklogState.disposition === "resolved" && workSelection.backlogEntry &&
-        backlogFindings.some((finding) => finding.fingerprint === workSelection.backlogEntry!.fingerprint)
-      ) {
-        selectedBacklogState.disposition = "open";
-      }
-      await updateState(`native_review_${reviewRound}`, { candidate_sha: candidateSha });
-    }
-    if (blockers.length) {
-      const preFixSha = candidateSha;
-      const stage = `implementation_review_fix_${reviewRound}`;
-      let implementationInvocationSha = preFixSha;
-      try {
-        const fixResult = await runImplementationStageWithContinuation({
-          basePrompt: stageImplementationPrompt(blockers, replayResults),
-          initialTimeoutMs: IMPLEMENTATION_INITIAL_MS,
-          invoke: ({ attempt, prompt, timeoutMs }) =>
-            withStageHeartbeat(attempt === 1 ? stage : `${stage}_continuation`, () =>
-              runStructuredCodexAgent({
-                role: "implementation",
-                checkoutPath: checkout,
-                prompt,
-                outputSchemaPath: implementationSchemaPath,
-                authSlots,
-                expectedMaximumRuntimeMs: timeoutMs,
-              })),
-          onTimeout: async (timeoutError) => {
-            const checkpoint = await checkpointDirtyCandidate(stage, implementationInvocationSha);
-            if (checkpoint !== null) implementationInvocationSha = checkpoint.checkpoint.sha;
-            await scanCandidateWithGitleaks({
-              cwd: checkout,
-              reportPath: `${reportsDir}/secret-scan-${stage}-timeout.json`,
-            });
-            await writeJson(`${reportsDir}/${stage}-timeout.json`, safeErrorSummary(timeoutError));
-            await updateState(`${stage}_continuation`);
-          },
-        });
-        const checkpoint = await checkpointDirtyCandidate(stage, implementationInvocationSha);
-        if (checkpoint !== null) implementationInvocationSha = checkpoint.checkpoint.sha;
-        implementationReport = parseStructuredResult(
-          fixResult,
-          isImplementationReport,
-          "Implementation review-fix agent",
-        );
-        assertCompleteFindingDispositions(triage, implementationReport);
-        await writeJson(`${reportsDir}/implementation-round-${reviewRound + 1}.json`, implementationReport);
-        if (workSelection.source === "review_backlog") {
-          await reconcileSelectedBacklogDisposition(implementationReport, `native_review_fix_${reviewRound}`);
-        } else if (workSelection.source === "github_issue") {
-          await reconcileSelectedIssueDisposition(implementationReport, `native_review_fix_${reviewRound}`);
-        } else {
-          assertActionableFindingsResolved(triage, implementationReport);
-        }
-        if (implementationInvocationSha === preFixSha) {
-          throw new Error("Implementation agent did not correct blocking review findings");
-        }
-      } catch (error) {
-        const mismatch = isSentinelChangedFilesMismatchError(error);
-        const checkpoint = await checkpointDirtyCandidate(
-          stage,
-          implementationInvocationSha,
-          mismatch ? error.reportedChangedFiles : undefined,
-        );
-        if (checkpoint !== null) implementationInvocationSha = checkpoint.checkpoint.sha;
-        if (mismatch) {
-          if (checkpoint === null) await recordCandidateReportMismatch(error, stage);
-          throw error;
-        }
-        if (workSelection.source === "github_issue") {
-          if (
-            await deferGitHubIssueImplementationFailure(
-              error,
-              stage,
-              implementationInvocationSha,
-              () => restoreGitHubIssuePreviewBeforeRetry(stage),
-            )
-          ) {
-            await completeNonRuntimeGitHubIssueDisposition();
-            return;
-          }
-        } else {
-          await preserveFailedImplementation(error, stage, implementationInvocationSha);
-        }
-        throw error;
-      }
-      continue;
-    }
+    // The pre-delivery native review gate is removed: Codex review runs
+    // asynchronously after delivery through the rolling review worker and its
+    // findings are ingested into the official review backlog later. The
+    // deterministic validation, preview, replay, deployment, and rollback
+    // gates below remain mandatory before a candidate may be delivered.
 
     if (workSelection.source === "review_backlog" && selectedBacklogState.disposition !== "resolved") {
       throw new Error("Selected review backlog work is not resolved before runtime validation");
@@ -5242,31 +5011,51 @@ const run = async (): Promise<void> => {
         throw new Error("origin/development changed during rollback preflight");
       }
 
+      // The objective automatic rollback controller restores the exact
+      // immutable prior revision from the pre-deploy healthy attestation,
+      // serialized with the other deployment writers, verified on the managed
+      // (body and headers) and custom routes, and evidenced in machine-readable
+      // rollback evidence. It fails closed (throws) whenever identity or
+      // promotion cannot be proven and never acts on Codex review findings.
+      const rollbackTriggerKind = reason === "monitoring_agent_decision"
+        ? "post_promotion_monitoring_rollback"
+        : reason === "fail_safe_after_production_stage_error"
+        ? "post_promotion_acceptance_failed"
+        : null;
+      if (rollbackTriggerKind === null) {
+        throw new Error(`Rollback reason is not a production acceptance or monitoring outcome: ${reason}`);
+      }
       let rollbackPromotionRunId: number | null = null;
       if (preflight.promotePrevious) {
-        const rollbackCandidateRevision = productionRevision ?? observedProduction.revisionId;
-        await verifyPolicyHealthIdentity(
-          deno,
-          SENTINEL_POLICY.deno.productionHealthUrls,
-          candidateSha,
-          rollbackCandidateRevision,
-        );
         await updateState("rolling_back_revision");
-        rollbackPromotionRunId = await dispatchSerializedPromotion({
-          github,
-          app: SENTINEL_POLICY.deno.productionApp,
-          targetGitSha: previous.gitSha,
-          targetRevision: previous.revisionId,
-          expectedCurrent: observedProduction,
-          expectedDevelopmentGitSha: confirmedRemote,
-        });
       }
-      await verifyPolicyHealthIdentity(
-        deno,
-        SENTINEL_POLICY.deno.productionHealthUrls,
-        previous.gitSha,
-        previous.revisionId,
+      const rollbackEvidence = await executeProductionRollback(
+        {
+          app: SENTINEL_POLICY.deno.productionApp,
+          candidate: {
+            gitSha: candidateSha,
+            revisionId: productionRevision ?? observedProduction.revisionId,
+          },
+          previous,
+          expectedDevelopmentGitSha: confirmedRemote,
+          failure: {
+            kind: rollbackTriggerKind,
+            cause: reason,
+            observed_at: new Date().toISOString(),
+          },
+        },
+        {
+          deno,
+          promotion: (promotionInput) =>
+            dispatchSerializedPromotion({
+              github,
+              app: SENTINEL_POLICY.deno.productionApp,
+              ...promotionInput,
+            }).then((workflowRunId) => ({ workflowRunId })),
+          persist: (evidence) => writeJson(`${reportsDir}/rollback-controller.json`, evidence),
+        },
       );
+      rollbackPromotionRunId = rollbackEvidence.promotion_workflow_run_id;
       let revertSha: string | null = null;
       let revertRevision: string | null = null;
       let workflowRunId: number | null = null;

@@ -737,8 +737,8 @@ Deno.test({
       "Candidate validation failures must consume an existing implementation-review round",
     );
     assert(
-      orchestrator.match(/runImplementationStageWithContinuation\(\{/gu)?.length === 4,
-      "Every implementation, review-fix, validation-fix, and replay-evaluation stage must share continuation policy",
+      orchestrator.match(/runImplementationStageWithContinuation\(\{/gu)?.length === 3,
+      "Every implementation, validation-fix, and replay-evaluation stage must share continuation policy",
     );
     const retryDeferStart = orchestrator.indexOf("const deferGitHubIssueImplementationFailure = async");
     const retryDeferEnd = orchestrator.indexOf(
@@ -887,23 +887,28 @@ Deno.test({
         orchestrator.includes('state.stage === "validated_retry_pending_atomic_push"'),
       "A failed retry-ledger push must preserve the already-pushed candidate branch disposition",
     );
-    const nativeReviewBlockerStart = orchestrator.indexOf(
-      "if (blockers.length && !canStartReviewRound(reviewRound))",
+    const rollingCutoverCycleStart = orchestrator.indexOf("let reviewRound = 0;");
+    const rollingCutoverCycleEnd = orchestrator.indexOf(
+      'if (workSelection.source === "review_backlog" && selectedBacklogState.disposition !== "resolved")',
+      rollingCutoverCycleStart,
     );
-    const nativeReviewBlockerEnd = orchestrator.indexOf(
-      "if (backlogFindings.length)",
-      nativeReviewBlockerStart,
+    const rollingCutoverLane = orchestrator.slice(rollingCutoverCycleStart, rollingCutoverCycleEnd);
+    assert(
+      rollingCutoverCycleStart >= 0 && rollingCutoverCycleEnd > rollingCutoverCycleStart &&
+        rollingCutoverLane.includes("canStartReviewRound(reviewRound)") &&
+        rollingCutoverLane.includes("sentinel/report.md") === false,
+      "The bounded deterministic repair lane must start before runtime validation",
     );
-    const nativeReviewBlockerLane = orchestrator.slice(nativeReviewBlockerStart, nativeReviewBlockerEnd);
-    const nativeReviewTerminalizerPosition = nativeReviewBlockerLane.indexOf(
-      "await terminalizeGitHubIssueNativeReviewExhaustion(candidateSha, blockers)",
+    assert(
+      !orchestrator.includes("runNativeCodexReview(") &&
+        !orchestrator.includes("implementation_review_fix_") &&
+        !orchestrator.includes("terminalizeGitHubIssueNativeReviewExhaustion") &&
+        !orchestrator.includes("native_review_exhausted"),
+      "Delivery must no longer wait on or correct a synchronous native Codex review",
     );
-    const nativeReviewTerminalReturnPosition = nativeReviewBlockerLane.indexOf(
-      "return;",
-      nativeReviewTerminalizerPosition,
-    );
-    const backlogRecordPosition = orchestrator.indexOf(
-      "mergeReviewBacklog(currentBacklog, backlogFindings, candidateSha, new Date())",
+    assert(
+      orchestrator.includes("Deterministic repair attempts remain after the bounded candidate preparation rounds"),
+      "The bounded lane must be the last failure boundary before runtime validation",
     );
     const previewPushPosition = orchestrator.indexOf(
       "const pushedCandidateSha = await pushTemporaryCandidate",
@@ -912,64 +917,11 @@ Deno.test({
       "const preview = await dispatchAndResolveRevision({",
     );
     assert(
-      nativeReviewBlockerStart >= 0 && nativeReviewBlockerEnd > nativeReviewBlockerStart &&
-        nativeReviewTerminalizerPosition >= 0 &&
-        nativeReviewTerminalReturnPosition > nativeReviewTerminalizerPosition &&
-        backlogRecordPosition > nativeReviewBlockerEnd && previewPushPosition > nativeReviewBlockerEnd &&
-        previewDeploymentPosition > nativeReviewBlockerEnd,
-      "Round-three GitHub issue blockers must return through manual terminalization before backlog recording or preview deployment",
+      previewPushPosition > rollingCutoverCycleEnd && previewDeploymentPosition > rollingCutoverCycleEnd,
+      "Deterministic validation must finish before the candidate preview push and deployment",
     );
-    const manualTerminalizerStart = orchestrator.indexOf(
-      "const terminalizeGitHubIssueNativeReviewExhaustion = async",
-    );
-    const manualTerminalizerEnd = orchestrator.indexOf(
-      "if (workSelection.issueJob && retryCheckpoint)",
-      manualTerminalizerStart,
-    );
-    const manualTerminalizerLane = orchestrator.slice(manualTerminalizerStart, manualTerminalizerEnd);
-    const manualCheckpointPreparationPosition = manualTerminalizerLane.indexOf(
-      "await prepareGitHubIssueCandidateCheckpoint(",
-    );
-    const manualCheckpointStatePosition = manualTerminalizerLane.indexOf("manualCheckpoint = checkpoint");
-    const manualCheckpointResetPosition = manualTerminalizerLane.indexOf(
-      "await discardCandidateChanges(checkout, baseSha)",
-    );
-    const manualLedgerDispositionPosition = manualTerminalizerLane.indexOf(
-      "await writeSelectedIssueDisposition(",
-    );
-    const manualCompletionPosition = manualTerminalizerLane.indexOf(
-      "await completeNonRuntimeGitHubIssueDisposition()",
-    );
-    assert(
-      manualTerminalizerStart >= 0 && manualTerminalizerEnd > manualTerminalizerStart &&
-        manualCheckpointPreparationPosition >= 0 &&
-        manualCheckpointStatePosition > manualCheckpointPreparationPosition &&
-        manualCheckpointResetPosition > manualCheckpointStatePosition &&
-        manualLedgerDispositionPosition > manualCheckpointResetPosition &&
-        manualCompletionPosition > manualLedgerDispositionPosition &&
-        manualTerminalizerLane.includes('branch_disposition: "runner_local_manual_checkpoint_ready"') &&
-        manualTerminalizerLane.includes('"manual_required",') &&
-        orchestrator.includes("const branch = sentinelRecoveryCandidateBranch(recoveryIdentity)"),
-      "Round-three terminalization must retain the current run-attempt checkpoint before the manual ledger disposition",
-    );
-    for (
-      const forbidden of [
-        "mergeReviewBacklog(",
-        "pushTemporaryCandidate(",
-        "dispatchAndResolveRevision(",
-        "dispatchSerializedPromotion(",
-      ]
-    ) {
-      assert(!manualTerminalizerLane.includes(forbidden), `Manual terminalization must not call ${forbidden}`);
-    }
     for (
       const [startNeedle, endNeedle, stage] of [
-        [
-          "const nativeReviewStage = `native_review_",
-          "    const requiredBacklogFingerprint =",
-          "native_review_",
-        ],
-        ["const stage = `implementation_review_fix_", "      continue;", "implementation_review_fix_"],
         ["const stage = `implementation_validation_fix_", "      continue;", "implementation_validation_fix_"],
         ["const replayEvaluationStage = `replay_evaluation_", "    break;", "replay_evaluation_"],
       ] as const

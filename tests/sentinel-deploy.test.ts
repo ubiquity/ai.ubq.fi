@@ -1194,6 +1194,41 @@ Deno.test("GitHub matrix delivery pins the pull request head and merge method", 
   fake.assertDrained();
 });
 
+Deno.test("GitHub pull-request listing is bounded, read-only, and inclusive of closed pull requests", async () => {
+  const pull = (number: number, state: "open" | "closed", mergedAt: string | null) => ({
+    number,
+    html_url: `https://github.com/ubiquity/ai.ubq.fi/pull/${number}`,
+    state,
+    merged_at: mergedAt,
+    body: "<!-- provider-sentinel-matrix:1:1 -->",
+    head: { ref: `sentinel/candidate-${number}-${"1".repeat(8)}`, sha: NEW_SHA },
+    base: { ref: "development" },
+  });
+  const fake = queuedFetch([
+    (request) => {
+      assertGitHubApiRequest(request, "/repos/ubiquity/ai.ubq.fi/pulls");
+      assert.equal(request.url.searchParams.get("state"), "all");
+      assert.equal(request.url.searchParams.get("per_page"), "100");
+      assert.equal(request.url.searchParams.get("page"), "1");
+      assert.equal(request.redirect, "manual");
+      return json([pull(1, "open", null), pull(2, "closed", "2026-08-22T00:00:00Z")]);
+    },
+  ]);
+  const listed = await githubClient(fake.fetcher).listPullRequests({ state: "all" });
+  assert.deepEqual(
+    listed.map((entry) => [entry.number, entry.state, entry.merged]),
+    [[1, "open", false], [2, "closed", true]],
+  );
+  // Incomplete pull request data fails closed instead of being skipped, so the
+  // review preselection can never silently under-count eligible work.
+  const incomplete = queuedFetch([
+    () => json([{ number: 1, state: "open", html_url: "https://github.com/x/y/pull/1" }]),
+  ]);
+  await assert.rejects(() => githubClient(incomplete.fetcher).listPullRequests(), /incomplete pull request/);
+  fake.assertDrained();
+  incomplete.assertDrained();
+});
+
 Deno.test("GitHub API requests use a bounded timeout and fail closed", async () => {
   const timeouts: number[] = [];
   const controller = new AbortController();

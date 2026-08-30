@@ -1388,6 +1388,48 @@ jobs:
             else
               echo "::warning::Current development backlog could not be read; installing agent prerequisites conservatively."
             fi
+            # Rolling review discovery is an independent agent-work source: once
+            # backlog and issue selection are both absent, an eligible
+            # unreviewed Sentinel pull request still warrants the async reviewer
+            # (and its prerequisites). It is bounded and read-only: the result
+            # identity list comes from the fetched development tree and the pull
+            # list comes from the GitHub client; nothing is mutated and no Codex
+            # is invoked here. Any anomaly keeps prerequisites installed so the
+            # fail-closed worker surfaces it instead of silently skipping work.
+            if [ "$needs_agent" = "false" ] && [ "$hint_ready" = "true" ]; then
+              result_names_path="$RUNNER_TEMP/sentinel-review-results.txt"
+              if git ls-tree -r --name-only origin/development -- docs/sentinel-review-results > "$result_names_path"; then
+                if ! needs_agent="$(
+                  deno eval \
+                    --no-remote \
+                    --no-npm \
+                    --frozen \
+                    --lock=deno.lock \
+                    '
+                      import { GitHubActionsClient } from "./scripts/sentinel/github.ts";
+                      import {
+                        parseRollingReviewResultFileNames,
+                        selectRollingReviewTaskFromIdentities,
+                      } from "./scripts/sentinel/rolling-review.ts";
+                      const runnerTemp = Deno.env.get("RUNNER_TEMP");
+                      const repository = Deno.env.get("GITHUB_REPOSITORY");
+                      const token = Deno.env.get("GITHUB_TOKEN");
+                      if (!runnerTemp || !repository || !token) throw new Error("Sentinel work-selector context is missing");
+                      const lines = (await Deno.readTextFile(`${runnerTemp}/sentinel-review-results.txt`)).split("\n");
+                      const github = new GitHubActionsClient({ repository, token });
+                      const pulls = await github.listPullRequests({ state: "all" });
+                      const identities = parseRollingReviewResultFileNames(lines);
+                      console.log(selectRollingReviewTaskFromIdentities(pulls, identities) === null ? "false" : "true");
+                    '
+                )"; then
+                  needs_agent=true
+                  echo "::warning::Sentinel rolling review discovery could not be completed; installing agent prerequisites conservatively."
+                fi
+              else
+                needs_agent=true
+                echo "::warning::Current rolling review results could not be listed; installing agent prerequisites conservatively."
+              fi
+            fi
             if [ -n "$hint_sha" ]; then
               echo "SENTINEL_BACKLOG_HINT_SHA=$hint_sha" >> "$GITHUB_ENV"
             fi
@@ -1428,6 +1470,7 @@ jobs:
             serve.ts \
             scripts/setup-instance.ts \
             scripts/sentinel/main.ts \
+            scripts/sentinel/rolling-review-worker.ts \
             tests/*.ts
 
       - name: Validate pinned Codex CLI argument contract
@@ -1440,6 +1483,24 @@ jobs:
             --allow-env=PATH \
             --allow-run=codex \
             tests/sentinel-codex-cli-integration.test.ts
+
+      - name: Review delivered Sentinel pull requests asynchronously
+        if: steps.agent-work.outputs.needs_agent == 'true'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          deno run \
+            --cached-only \
+            --frozen \
+            --lock=deno.lock \
+            --allow-env=GITHUB_WORKSPACE,GITHUB_TOKEN,GITHUB_REPOSITORY,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_SERVER_URL,GITHUB_ENV,SENTINEL_MODE,SENTINEL_CODEX_AUTH_STATE_DIR,RUNNER_TEMP,PATH \
+            --allow-net=api.github.com \
+            --allow-read="$GITHUB_WORKSPACE,$RUNNER_TEMP" \
+            --allow-write="$GITHUB_WORKSPACE/.sentinel/reports,$RUNNER_TEMP" \
+            --allow-run=git,codex,gitleaks,deno \
+            scripts/sentinel/rolling-review-worker.ts
 
       - name: Install issue-delivery development-push gate
         shell: bash

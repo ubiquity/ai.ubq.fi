@@ -36,6 +36,38 @@
   warning after the exact managed Deno route passes; do not misclassify it as an old Deno revision, weaken bot
   protection globally, report dashboard work as necessary, or wait through repeated identical probes.
 
+## Rolling Asynchronous Codex Review Workflow
+
+- Ship a bounded pull request for each unit of work, request a Codex review on it without waiting for the review to
+  finish, merge the pull request only after the required deterministic CI and branch protections pass, test the merged
+  result, continue with the next pull request, and collect completed review findings from earlier open or merged pull
+  requests only after the fact.
+- Codex review latency is never a merge gate. A review that has not completed, an unreviewed open pull request, or a
+  review run that could not start must not block delivery, merging, testing, or the next unit of work.
+- P0 and P1 Codex findings never block the reviewed pull request merge. No Codex review finding of any severity (P0, P1,
+  P2, or P3) gates merge, delivery, testing, or the next unit of work: deterministic CI and branch protections are the
+  only merge gates. Every severity enters the asynchronous official review backlog after the fact, with P0 then P1
+  priority (P0 before P1 before P2 before P3) for selection as normal future work. Every claim and remediation carries
+  exact evidence (exact reviewed head and base SHA, review identity, and the original finding text), and the existing
+  production preview, health-identity, monitoring, and acceptance safeguards remain mandatory for every deployed
+  candidate.
+- Collect completed Codex review findings from earlier eligible open and merged Sentinel pull requests into the official
+  review backlog (`docs/sentinel-review-backlog.md`), deduplicating by finding fingerprint. Select backlog entries as
+  normal future work and implement them in a follow-up pull request that requests a new Codex review just like every
+  other pull request. Never assume a reviewed finding was fixed simply because its reviewed pull request merged;
+  verification is the follow-up work item itself.
+- Treat malformed, incomplete, or identity-mismatched review data as fail-closed: preserve the exact evidence, ingest
+  nothing, and surface the failure. Never drop findings, salvage a partial parse, or mark a failed review complete.
+- Automatic rollback exists and is objective: any failed post-merge/post-promotion production acceptance caused by the
+  newly delivered candidate is rolled back by the automatic rollback controller, which restores exactly the immutable
+  prior Deno revision captured in the pre-deploy healthy attestation — promoted through the existing authenticated Deno
+  API path, serialized with deployment writers, verified on the managed health endpoint (exact previous full Git SHA and
+  revision ID in body and headers), probed on the custom domain with the existing Cloudflare-403 warning policy,
+  evidenced in machine-readable rollback evidence, and failed closed whenever identity or promotion cannot be proven.
+  Codex review findings alone never trigger a rollback, and no revision is ever chosen by list order, time, or a
+  "latest" label: a review finding observed after a pull request merged is remedied by the backlog follow-up pull
+  request and its own acceptance flow, not by reverting an already-published deployment.
+
 ## Repository Completion and Checkout Handoff
 
 - Do not leave completed or accepted work only in a worktree, local branch, or unpushed commit. Commit and push every
