@@ -3,6 +3,7 @@ import {
   assertMatrixCellReportDigest,
   assertMatrixCellReportV1,
   buildMatrixPlan,
+  canonicalMatrixJson,
   type MatrixPlanV1,
 } from "../scripts/sentinel/matrix.ts";
 import {
@@ -10,7 +11,14 @@ import {
   CodexInvocationError,
   SENTINEL_AGENT_POLICIES,
 } from "../scripts/sentinel/codex.ts";
-import { runMatrixCell } from "../scripts/sentinel/matrix-cell.ts";
+import {
+  buildMatrixCellRetryRecoveryRecord,
+  matrixCellRecoverySourceRevision,
+  matrixCellRetryEvidenceDirectory,
+  runMatrixCell,
+  writeMatrixCellRetryEvidence,
+} from "../scripts/sentinel/matrix-cell.ts";
+import { classifySentinelFailure, stableSentinelFailureFingerprint } from "../scripts/sentinel/retry.ts";
 
 const permissions = await Promise.all([
   Deno.permissions.query({ name: "read" }),
@@ -40,6 +48,11 @@ const git = async (cwd: string, args: readonly string[]): Promise<string> => {
   return decoder.decode(result.stdout).trim();
 };
 
+const sha256 = async (value: string): Promise<string> => {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
+  return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+};
+
 const reportMessage = (changedFiles: readonly string[], status: "implemented" | "already_fixed" = "implemented") =>
   JSON.stringify({
     schema_version: 1,
@@ -62,15 +75,17 @@ type Fixture = Readonly<{
   plan: MatrixPlanV1;
 }>;
 
-const createFixture = async (): Promise<Fixture> => {
+const createFixture = async (marker = "matrix cell fixture\n"): Promise<Fixture> => {
   const root = await Deno.makeTempDir({ prefix: "sentinel-matrix-cell-" });
   const checkout = `${root}/checkout`;
   await Deno.mkdir(checkout);
   await git(checkout, ["init", "-b", "development"]);
   await git(checkout, ["config", "user.name", "Matrix Cell Fixture"]);
   await git(checkout, ["config", "user.email", "matrix-cell-fixture@example.invalid"]);
-  await Deno.writeTextFile(`${checkout}/README.md`, "matrix cell fixture\n");
-  await git(checkout, ["add", "README.md"]);
+  await Deno.writeTextFile(`${checkout}/README.md`, marker);
+  await Deno.mkdir(`${checkout}/src`);
+  await Deno.writeTextFile(`${checkout}/src/fix.ts`, "export const base = true;\n");
+  await git(checkout, ["add", "README.md", "src/fix.ts"]);
   await git(checkout, ["commit", "--no-gpg-sign", "-m", "fixture base"]);
   const baseSha = await git(checkout, ["rev-parse", "HEAD"]);
   const plan = await buildMatrixPlan({
@@ -81,7 +96,7 @@ const createFixture = async (): Promise<Fixture> => {
     findings: [{
       id: "fixture",
       fingerprint: "1".repeat(64),
-      allowed_paths: ["src/fix.ts"],
+      allowed_paths: ["src/extra.ts", "src/fix.ts"],
       validation_requirements: ["fixture validation"],
     }],
   });
@@ -119,7 +134,7 @@ Deno.test({
         invokeAgent: async ({ attempt, prompt }) => {
           assert.equal(attempt, 1);
           observedPrompts.push(prompt);
-          await Deno.mkdir(`${fixture.checkout}/src`);
+          await Deno.mkdir(`${fixture.checkout}/src`, { recursive: true });
           await Deno.writeTextFile(`${fixture.checkout}/src/fix.ts`, "export const fixed = true;\n");
           return { lastMessage: reportMessage(["src/fix.ts"]) };
         },
@@ -168,7 +183,7 @@ Deno.test({
         invokeAgent: async ({ attempt, prompt }) => {
           attempts.push(attempt);
           if (attempt === 1) {
-            await Deno.mkdir(`${fixture.checkout}/src`);
+            await Deno.mkdir(`${fixture.checkout}/src`, { recursive: true });
             await Deno.writeTextFile(`${fixture.checkout}/src/fix.ts`, 'export const fixed = "partial";\n');
             throw new CodexInvocationError("invocation_timeout");
           }
@@ -204,7 +219,7 @@ Deno.test({
     try {
       const report = await runMatrixCell(cellOptions(fixture, reportPath), {
         invokeAgent: async () => {
-          await Deno.mkdir(`${fixture.checkout}/src`);
+          await Deno.mkdir(`${fixture.checkout}/src`, { recursive: true });
           await Deno.writeTextFile(`${fixture.checkout}/src/apix.ts`, "export const outside = true;\n");
           return { lastMessage: reportMessage(["src/apix.ts"]) };
         },
@@ -234,7 +249,7 @@ Deno.test({
       const report = await runMatrixCell(cellOptions(fixture, reportPath), {
         protectedPaths: ["src/fix.ts"],
         invokeAgent: async () => {
-          await Deno.mkdir(`${fixture.checkout}/src`);
+          await Deno.mkdir(`${fixture.checkout}/src`, { recursive: true });
           await Deno.writeTextFile(`${fixture.checkout}/src/fix.ts`, "export const fixed = true;\n");
           return { lastMessage: reportMessage(["src/fix.ts"]) };
         },
@@ -246,7 +261,7 @@ Deno.test({
       assert.match(report.failure_reason!, /protected path/u);
       assert.deepEqual(report.changed_paths, ["src/fix.ts"]);
       assert.equal(await git(fixture.checkout, ["rev-parse", "HEAD"]), fixture.baseSha);
-      assert.equal(await git(fixture.checkout, ["status", "--porcelain=v1"]), "?? src/");
+      assert.equal(await git(fixture.checkout, ["status", "--porcelain=v1"]), "M src/fix.ts");
       assertMatrixCellReportV1(report, fixture.plan);
       await assertMatrixCellReportDigest(report);
     } finally {
@@ -264,7 +279,7 @@ Deno.test({
     try {
       const report = await runMatrixCell(cellOptions(fixture, reportPath), {
         invokeAgent: async () => {
-          await Deno.mkdir(`${fixture.checkout}/src`);
+          await Deno.mkdir(`${fixture.checkout}/src`, { recursive: true });
           await Deno.writeTextFile(`${fixture.checkout}/src/fix.ts`, "export const fixed = true;\n");
           return { lastMessage: reportMessage(["src/fix.ts"]) };
         },
@@ -298,7 +313,7 @@ Deno.test({
     try {
       const report = await runMatrixCell(cellOptions(fixture, reportPath), {
         invokeAgent: async () => {
-          await Deno.mkdir(`${fixture.checkout}/src`);
+          await Deno.mkdir(`${fixture.checkout}/src`, { recursive: true });
           await Deno.writeTextFile(
             `${fixture.checkout}/src/fix.ts`,
             'export const leaked = "fixture-secret-never-log";\n',
@@ -314,6 +329,465 @@ Deno.test({
       assert.deepEqual(report.changed_paths, ["src/fix.ts"]);
       assertMatrixCellReportV1(report, fixture.plan);
       await assertMatrixCellReportDigest(report);
+    } finally {
+      await Deno.remove(fixture.root, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "retry_pending matrix cell persists durable retry identity and recoverable candidate evidence",
+  ignore: !canRun,
+  async fn() {
+    const fixture = await createFixture();
+    const reportPath = `${fixture.root}/reports/retry.json`;
+    const evidenceDirectory = matrixCellRetryEvidenceDirectory(reportPath);
+    try {
+      const report = await runMatrixCell({
+        ...cellOptions(fixture, reportPath),
+        repository: "ubiquity/ai.ubq.fi",
+        initialTimeoutMs: 25,
+        continuationTimeoutMs: 25,
+      }, {
+        invokeAgent: async ({ attempt }) => {
+          if (attempt === 1) {
+            await Deno.writeTextFile(`${fixture.checkout}/src/fix.ts`, "export const fixed = 1;\n");
+          } else {
+            await Deno.writeTextFile(`${fixture.checkout}/src/extra.ts`, "export const extra = true;\n");
+            await Deno.remove(`${fixture.checkout}/src/fix.ts`);
+          }
+          throw new CodexInvocationError("invocation_timeout");
+        },
+        secretScan: () => Promise.resolve(),
+        validate: successfulValidation,
+      });
+
+      const fixtureSecret = "fixture-secret-never-log";
+      assert.equal(report.status, "retry_pending");
+      assert.equal(report.head_sha, null);
+      assert.equal(report.tree_sha, null);
+      assert.deepEqual(report.changed_paths, ["src/extra.ts", "src/fix.ts"]);
+      assert.equal(report.finding_dispositions[0]!.status, "blocked");
+      assert.equal(await git(fixture.checkout, ["rev-parse", "HEAD"]), fixture.baseSha);
+      assert.match(await git(fixture.checkout, ["status", "--porcelain=v1"]), /src\/fix\.ts/u);
+      assertMatrixCellReportV1(report, fixture.plan);
+      await assertMatrixCellReportDigest(report);
+
+      const record = JSON.parse(await Deno.readTextFile(`${evidenceDirectory}/recovery-record.json`));
+      const cell = fixture.plan.cells[0]!;
+      assert.equal(record.schema_version, 1);
+      assert.equal(record.identity.repository, "ubiquity/ai.ubq.fi");
+      assert.equal(record.identity.source_kind, "triage");
+      assert.equal(record.identity.source_id, cell.cell_id);
+      assert.equal(record.identity.candidate_generation, 1);
+      assert.equal(
+        record.identity.source_revision,
+        await matrixCellRecoverySourceRevision(fixture.baseSha, cell, null),
+      );
+      assert.equal(record.run_id, fixture.plan.run_id);
+      assert.equal(record.attempt, fixture.plan.run_attempt);
+      assert.equal(record.base_sha, fixture.baseSha);
+      assert.equal(record.phase, "recovery_pending");
+      assert.equal(record.disposition, "active");
+      assert.equal(record.state_version, 1);
+      assert.deepEqual(record.changed_files, ["src/extra.ts", "src/fix.ts"]);
+      assert.equal(record.candidate_sha, null);
+      const classification = classifySentinelFailure(new CodexInvocationError("invocation_timeout"), {
+        phase: "implementation_running",
+        code: "invocation_timeout",
+        signature: report.failure_reason,
+      });
+      assert.equal(record.failure_class, classification.failure_class);
+      assert.equal(classification.failure_class, "transient_transport");
+      assert.equal(
+        record.failure_fingerprint,
+        await stableSentinelFailureFingerprint({
+          identity: record.identity,
+          failure_class: classification.failure_class,
+          code: classification.code,
+          phase: classification.phase,
+          signature: classification.signature,
+        }),
+      );
+      assert.equal(JSON.stringify(record).includes(fixtureSecret), false);
+
+      const manifest = JSON.parse(await Deno.readTextFile(`${evidenceDirectory}/manifest.json`));
+      assert.equal(manifest.schema_version, 1);
+      assert.equal(manifest.base_sha, fixture.baseSha);
+      assert.equal(manifest.plan_digest, fixture.plan.manifest_digest);
+      assert.equal(manifest.run_id, fixture.plan.run_id);
+      assert.equal(manifest.run_attempt, fixture.plan.run_attempt);
+      assert.equal(manifest.file_count, 2);
+      assert.equal(JSON.stringify(manifest.cell_contract), JSON.stringify(JSON.parse(canonicalMatrixJson(cell))));
+      const expectedContent = "export const extra = true;\n";
+      assert.equal(manifest.total_bytes, expectedContent.length);
+      assert.deepEqual(
+        Object.keys(manifest.files[0]!).sort(),
+        [
+          "kind",
+          "mode",
+          "path",
+          "payload",
+          "sha256",
+          "size",
+          "source",
+        ].sort(),
+      );
+      assert.equal(manifest.files[0].path, "src/extra.ts");
+      assert.equal(manifest.files[0].source, "untracked");
+      assert.equal(manifest.files[0].kind, "file");
+      assert.equal(manifest.files[0].payload, "files/0000.bin");
+      assert.equal(manifest.files[0].size, expectedContent.length);
+      assert.equal(manifest.files[0].sha256, await sha256(expectedContent));
+      assert.deepEqual(manifest.files[1], { kind: "deleted", path: "src/fix.ts", source: "tracked" });
+      assert.equal(await Deno.readTextFile(`${evidenceDirectory}/files/0000.bin`), expectedContent);
+      assert.equal(JSON.stringify(manifest).includes(fixtureSecret), false);
+      // The capture attestation documents the trusted cell-capture gates; with
+      // no scan report available the digest is null but the status is binding.
+      assert.deepEqual(manifest.capture_attestation, {
+        schema_version: 1,
+        cell_status: "retry_pending",
+        secret_scan_path: null,
+        secret_scan_sha256: null,
+      });
+      // Evidence is written atomically: no staging sibling survives a complete run.
+      await assert.rejects(Deno.stat(`${evidenceDirectory}.staging`), Deno.errors.NotFound);
+      await assert.rejects(Deno.stat(`${evidenceDirectory}/work-selection.json`), Deno.errors.NotFound);
+      await assert.rejects(Deno.stat(`${evidenceDirectory}/cell.json`), Deno.errors.NotFound);
+    } finally {
+      await Deno.remove(fixture.root, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "retry_pending matrix cell without edits persists identity but no candidate snapshot",
+  ignore: !canRun,
+  async fn() {
+    const fixture = await createFixture();
+    const reportPath = `${fixture.root}/reports/retry-empty.json`;
+    const evidenceDirectory = matrixCellRetryEvidenceDirectory(reportPath);
+    try {
+      const report = await runMatrixCell({
+        ...cellOptions(fixture, reportPath),
+        repository: "ubiquity/ai.ubq.fi",
+        initialTimeoutMs: 25,
+        continuationTimeoutMs: 25,
+      }, {
+        invokeAgent: () => {
+          throw new CodexInvocationError("invocation_timeout");
+        },
+        secretScan: () => Promise.resolve(),
+        validate: successfulValidation,
+      });
+
+      assert.equal(report.status, "retry_pending");
+      assert.deepEqual(report.changed_paths, []);
+      assert.equal(await git(fixture.checkout, ["rev-parse", "HEAD"]), fixture.baseSha);
+      const record = JSON.parse(await Deno.readTextFile(`${evidenceDirectory}/recovery-record.json`));
+      assert.deepEqual(record.changed_files, []);
+      assert.equal(record.phase, "recovery_pending");
+      const manifest = JSON.parse(await Deno.readTextFile(`${evidenceDirectory}/manifest.json`));
+      assert.equal(manifest.file_count, 0);
+      assert.deepEqual(manifest.files, []);
+      assert.equal(manifest.total_bytes, 0);
+    } finally {
+      await Deno.remove(fixture.root, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "retry_pending matrix cell never captures paths outside the immutable cell contract",
+  ignore: !canRun,
+  async fn() {
+    const fixture = await createFixture();
+    const reportPath = `${fixture.root}/reports/retry-blocked-scope.json`;
+    const evidenceDirectory = matrixCellRetryEvidenceDirectory(reportPath);
+    try {
+      const report = await runMatrixCell({
+        ...cellOptions(fixture, reportPath),
+        repository: "ubiquity/ai.ubq.fi",
+        initialTimeoutMs: 25,
+        continuationTimeoutMs: 25,
+      }, {
+        invokeAgent: async ({ attempt }) => {
+          if (attempt === 1) {
+            await Deno.writeTextFile(`${fixture.checkout}/src/fix.ts`, "export const fixed = true;\n");
+          } else {
+            await Deno.remove(`${fixture.checkout}/README.md`);
+          }
+          throw new CodexInvocationError("invocation_timeout");
+        },
+        secretScan: () => Promise.resolve(),
+        validate: successfulValidation,
+      });
+
+      // A post-failure integrity violation fails closed: the cell is blocked
+      // and no evidence directory can ever become an uploadable artifact.
+      assert.equal(report.status, "blocked");
+      assert.match(report.failure_reason!, /outside the cell contract/u);
+      assert.deepEqual(report.changed_paths, []);
+      await assert.rejects(Deno.stat(evidenceDirectory), Deno.errors.NotFound);
+      await assert.rejects(Deno.stat(`${evidenceDirectory}.staging`), Deno.errors.NotFound);
+    } finally {
+      await Deno.remove(fixture.root, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "retry evidence identity preserves the authoritative issue work selection and binds the development base",
+  ignore: !canRun,
+  async fn() {
+    const fixture = await createFixture();
+    const otherFixture = await createFixture("other matrix cell fixture base\n");
+    const reportPath = `${fixture.root}/reports/retry-issue.json`;
+    const evidenceDirectory = matrixCellRetryEvidenceDirectory(reportPath);
+    const workSelection = {
+      source_kind: "github_issue" as const,
+      source_id: "208",
+      source_revision: "a".repeat(64),
+    };
+    try {
+      const report = await runMatrixCell({
+        ...cellOptions(fixture, reportPath),
+        repository: "ubiquity/ai.ubq.fi",
+        workSelection,
+        initialTimeoutMs: 25,
+        continuationTimeoutMs: 25,
+      }, {
+        invokeAgent: async ({ attempt }) => {
+          if (attempt === 1) {
+            await Deno.writeTextFile(`${fixture.checkout}/src/fix.ts`, "export const fixed = 1;\n");
+          } else {
+            await Deno.writeTextFile(`${fixture.checkout}/src/extra.ts`, "export const extra = true;\n");
+          }
+          throw new CodexInvocationError("invocation_timeout");
+        },
+        secretScan: () => Promise.resolve(),
+        validate: successfulValidation,
+      });
+
+      assert.equal(report.status, "retry_pending");
+      const record = JSON.parse(await Deno.readTextFile(`${evidenceDirectory}/recovery-record.json`));
+      const cell = fixture.plan.cells[0]!;
+      assert.equal(record.identity.source_kind, "github_issue");
+      assert.equal(record.identity.source_id, "208");
+      assert.equal(
+        record.identity.source_revision,
+        await matrixCellRecoverySourceRevision(fixture.baseSha, cell, workSelection),
+      );
+      assert.notEqual(
+        record.identity.source_revision,
+        await matrixCellRecoverySourceRevision(otherFixture.baseSha, cell, workSelection),
+      );
+      const persistedSelection = JSON.parse(
+        await Deno.readTextFile(`${evidenceDirectory}/work-selection.json`),
+      );
+      assert.deepEqual(persistedSelection, { schema_version: 1, ...workSelection });
+      assert.equal(record.run_id, fixture.plan.run_id);
+      assert.equal(record.base_sha, fixture.baseSha);
+    } finally {
+      await Deno.remove(fixture.root, { recursive: true });
+      await Deno.remove(otherFixture.root, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "retry_pending matrix cell fails closed without evidence when credentials leak after failure",
+  ignore: !canRun,
+  async fn() {
+    const fixture = await createFixture();
+    const reportPath = `${fixture.root}/reports/retry-secret.json`;
+    const evidenceDirectory = matrixCellRetryEvidenceDirectory(reportPath);
+    try {
+      const report = await runMatrixCell({
+        ...cellOptions(fixture, reportPath),
+        repository: "ubiquity/ai.ubq.fi",
+        initialTimeoutMs: 25,
+        continuationTimeoutMs: 25,
+      }, {
+        invokeAgent: async ({ attempt }) => {
+          if (attempt === 1) {
+            await Deno.writeTextFile(`${fixture.checkout}/src/fix.ts`, "export const fixed = 1;\n");
+          } else {
+            await Deno.writeTextFile(
+              `${fixture.checkout}/src/extra.ts`,
+              'export const leaked = "fixture-secret-never-log";\n',
+            );
+          }
+          throw new CodexInvocationError("invocation_timeout");
+        },
+        validate: successfulValidation,
+      });
+
+      assert.equal(report.status, "blocked");
+      assert.match(report.failure_reason!, /Credential material/u);
+      assert.deepEqual(report.changed_paths, ["src/extra.ts", "src/fix.ts"]);
+      await assert.rejects(Deno.stat(evidenceDirectory), Deno.errors.NotFound);
+      await assert.rejects(Deno.stat(`${evidenceDirectory}.staging`), Deno.errors.NotFound);
+    } finally {
+      await Deno.remove(fixture.root, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "retry_pending matrix cell fails closed without evidence when a protected path changed after failure",
+  ignore: !canRun,
+  async fn() {
+    const fixture = await createFixture();
+    const reportPath = `${fixture.root}/reports/retry-protected.json`;
+    const evidenceDirectory = matrixCellRetryEvidenceDirectory(reportPath);
+    try {
+      const report = await runMatrixCell({
+        ...cellOptions(fixture, reportPath),
+        repository: "ubiquity/ai.ubq.fi",
+        initialTimeoutMs: 25,
+        continuationTimeoutMs: 25,
+      }, {
+        protectedPaths: ["src/fix.ts"],
+        invokeAgent: async ({ attempt }) => {
+          if (attempt === 1) {
+            await Deno.writeTextFile(`${fixture.checkout}/src/extra.ts`, "export const extra = true;\n");
+          } else {
+            await Deno.writeTextFile(`${fixture.checkout}/src/fix.ts`, "export const changed = true;\n");
+          }
+          throw new CodexInvocationError("invocation_timeout");
+        },
+        secretScan: () => Promise.resolve(),
+        validate: successfulValidation,
+      });
+
+      assert.equal(report.status, "blocked");
+      assert.match(report.failure_reason!, /protected path/u);
+      assert.deepEqual(report.changed_paths, ["src/extra.ts", "src/fix.ts"]);
+      await assert.rejects(Deno.stat(evidenceDirectory), Deno.errors.NotFound);
+      await assert.rejects(Deno.stat(`${evidenceDirectory}.staging`), Deno.errors.NotFound);
+    } finally {
+      await Deno.remove(fixture.root, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "retry evidence replacement never deletes a complete prior set before the new one is durable",
+  ignore: !canRun,
+  async fn() {
+    const fixture = await createFixture();
+    const reportPath = `${fixture.root}/reports/retry-safe.json`;
+    const evidenceDirectory = matrixCellRetryEvidenceDirectory(reportPath);
+    const changedEntries = [{ path: "src/extra.ts", source: "untracked" as const }];
+    await Deno.writeTextFile(`${fixture.checkout}/src/extra.ts`, "export const extra = true;\n");
+    const record = await buildMatrixCellRetryRecoveryRecord({
+      repository: "ubiquity/ai.ubq.fi",
+      plan: fixture.plan,
+      cell: fixture.plan.cells[0]!,
+      workSelection: null,
+      changedPaths: ["src/extra.ts"],
+      error: new CodexInvocationError("invocation_timeout"),
+      failureCode: "invocation_timeout",
+      failureReason: null,
+      now: "2026-08-28T19:00:00.000Z",
+    });
+    assert(record);
+    const write = (recoveryRecord: typeof record) =>
+      writeMatrixCellRetryEvidence({
+        checkoutPath: fixture.checkout,
+        plan: fixture.plan,
+        cell: fixture.plan.cells[0]!,
+        changedEntries,
+        evidenceDirectory,
+        capturedAt: recoveryRecord.updated_at,
+        recoveryRecord,
+        workSelection: null,
+      });
+    try {
+      await Deno.writeTextFile(`${fixture.checkout}/src/extra.ts`, "export const extra = true;\n");
+      await write(record);
+      const firstManifest = await Deno.readTextFile(`${evidenceDirectory}/manifest.json`);
+      await Deno.writeTextFile(`${fixture.checkout}/src/extra.ts`, "export const extra = second;\n");
+      const secondRecord = await buildMatrixCellRetryRecoveryRecord({
+        repository: "ubiquity/ai.ubq.fi",
+        plan: fixture.plan,
+        cell: fixture.plan.cells[0]!,
+        workSelection: null,
+        changedPaths: ["src/extra.ts"],
+        error: new CodexInvocationError("invocation_timeout"),
+        failureCode: "invocation_timeout",
+        failureReason: null,
+        now: "2026-08-28T19:01:00.000Z",
+      });
+      assert(secondRecord);
+      // A replacement that fails during staged validation never touches the
+      // complete prior evidence set.
+      await assert.rejects(
+        writeMatrixCellRetryEvidence({
+          checkoutPath: fixture.checkout,
+          plan: fixture.plan,
+          cell: fixture.plan.cells[0]!,
+          changedEntries,
+          evidenceDirectory,
+          capturedAt: "2026-08-28T19:02:00.000Z",
+          recoveryRecord: {
+            ...secondRecord,
+            identity: { ...secondRecord.identity, source_revision: "" },
+          } as never,
+          workSelection: null,
+        }),
+      );
+      assert.equal(await Deno.readTextFile(`${evidenceDirectory}/manifest.json`), firstManifest);
+      await assert.rejects(Deno.stat(`${evidenceDirectory}.previous`), Deno.errors.NotFound);
+      // A fully validated replacement swaps atomically and leaves no debris.
+      await write(secondRecord);
+      assert.notEqual(await Deno.readTextFile(`${evidenceDirectory}/manifest.json`), firstManifest);
+      await assert.rejects(Deno.stat(`${evidenceDirectory}.staging`), Deno.errors.NotFound);
+      await assert.rejects(Deno.stat(`${evidenceDirectory}.previous`), Deno.errors.NotFound);
+    } finally {
+      await Deno.remove(fixture.root, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "retry evidence attestation binds the exact secret-scan report digest",
+  ignore: !canRun,
+  async fn() {
+    const fixture = await createFixture();
+    const reportPath = `${fixture.root}/reports/retry-attest.json`;
+    const evidenceDirectory = matrixCellRetryEvidenceDirectory(reportPath);
+    const scanReportPath = `${fixture.root}/sentinel-cell-secret-scan.json`;
+    const scanReport = JSON.stringify({
+      gitleaks: { version: "fixture", findings: [] },
+    });
+    await Deno.writeTextFile(scanReportPath, scanReport);
+    try {
+      const report = await runMatrixCell({
+        ...cellOptions(fixture, reportPath),
+        repository: "ubiquity/ai.ubq.fi",
+        secretScanReportPath: scanReportPath,
+        initialTimeoutMs: 25,
+        continuationTimeoutMs: 25,
+      }, {
+        invokeAgent: async ({ attempt }) => {
+          if (attempt === 1) {
+            await Deno.writeTextFile(`${fixture.checkout}/src/extra.ts`, "export const extra = true;\n");
+          }
+          throw new CodexInvocationError("invocation_timeout");
+        },
+        secretScan: () => Promise.resolve(),
+        validate: successfulValidation,
+      });
+      assert.equal(report.status, "retry_pending");
+      const manifest = JSON.parse(await Deno.readTextFile(`${evidenceDirectory}/manifest.json`));
+      assert.deepEqual(manifest.capture_attestation, {
+        schema_version: 1,
+        cell_status: "retry_pending",
+        secret_scan_path: "sentinel-cell-secret-scan.json",
+        secret_scan_sha256: await sha256(scanReport),
+      });
     } finally {
       await Deno.remove(fixture.root, { recursive: true });
     }

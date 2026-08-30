@@ -189,6 +189,43 @@ const record = (value: unknown): Record<string, unknown> | null =>
 const validRecoveryTimestamp = (value: unknown): value is string =>
   typeof value === "string" && /^\d{4}-\d{2}-\d{2}T/u.test(value) && Number.isFinite(Date.parse(value));
 
+const RECOVERY_SOURCE_KINDS = new Set(
+  [
+    "github_issue",
+    "review_backlog",
+    "triage",
+    "incident",
+  ] as const,
+);
+
+/**
+ * Reconstruct the deterministic candidate branch of the records a recovery
+ * record links to through `predecessor`. The key is the canonical JSON
+ * identity array produced by the ledger, so an attacker never controls a
+ * branch name: only a well-formed known identity yields one.
+ */
+const recoveryBranchFromPredecessor = (predecessorKey: string): string | null => {
+  try {
+    const value = JSON.parse(predecessorKey) as unknown;
+    if (
+      !Array.isArray(value) || value.length !== 5 || typeof value[0] !== "string" ||
+      typeof value[1] !== "string" ||
+      !RECOVERY_SOURCE_KINDS.has(value[1] as SentinelRecoveryRecordV1["identity"]["source_kind"]) ||
+      typeof value[2] !== "string" || typeof value[3] !== "string" ||
+      !Number.isSafeInteger(value[4]) || (value[4] as number) <= 0
+    ) return null;
+    return sentinelRecoveryCandidateBranch({
+      repository: value[0],
+      source_kind: value[1] as SentinelRecoveryRecordV1["identity"]["source_kind"],
+      source_id: value[2],
+      source_revision: value[3],
+      candidate_generation: value[4] as number,
+    });
+  } catch {
+    return null;
+  }
+};
+
 const parseRecoveryRemoteObservation = (
   value: SentinelRecoveryRemoteObservation,
 ): SentinelRecoveryRemoteObservation => {
@@ -365,8 +402,13 @@ export const reconcileSentinelRecoveryRecord = (
   }
   const remote = input.remote === undefined ? null : parseRecoveryRemoteObservation(input.remote);
   const expectedBranch = sentinelRecoveryCandidateBranch(current.identity);
+  // A canonical parent record may point through `predecessor` at its exact
+  // child record whose deterministic branch carries the recovery candidate.
+  const linkedBranch = current.predecessor === null ? null : recoveryBranchFromPredecessor(current.predecessor);
+  const deterministicBranch = (branch: string): boolean =>
+    branch === expectedBranch || (linkedBranch !== null && branch === linkedBranch);
   let candidateBranch = current.candidate_branch;
-  if (candidateBranch !== null && candidateBranch !== expectedBranch) {
+  if (candidateBranch !== null && !deterministicBranch(candidateBranch)) {
     return recoveryManual(current, now, candidateBranch, "Recorded recovery candidate branch is not deterministic.");
   }
   if (remote !== null && remote.candidate_branch !== null) {
@@ -378,7 +420,7 @@ export const reconcileSentinelRecoveryRecord = (
         "Remote candidate branch changed from the recorded identity.",
       );
     }
-    if (candidateBranch === null && remote.candidate_branch !== expectedBranch) {
+    if (candidateBranch === null && !deterministicBranch(remote.candidate_branch)) {
       return recoveryManual(
         current,
         now,

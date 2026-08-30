@@ -1,15 +1,43 @@
 import { decodeSentinelArtifactKey, decryptSentinelArtifact, type SentinelArtifactFile } from "./artifact-crypto.ts";
 import { GitHubActionsClient, type GitHubArtifact, type GitHubWorkflowRun } from "./github.ts";
 import {
+  assertMatrixCellReportDigest,
+  assertMatrixCellReportV1,
+  type MatrixCellReportV1,
+  parseMatrixCellV1,
+} from "./matrix.ts";
+import {
+  matrixCellCanonicalParentIdentity,
+  matrixCellRecoverySourceRevision,
+  type MatrixCellWorkSelectionV1,
+  parseMatrixCellWorkSelection,
+} from "./matrix-cell.ts";
+import {
   assertSentinelRecoveryTransition,
   parseSentinelRecoveryRecord,
   sentinelRecoveryCandidateBranch as recoveryCandidateBranchForIdentity,
+  type SentinelRecoveryIdentityV1,
   type SentinelRecoveryRecordV1,
   type SentinelRecoverySourceKind,
 } from "./recovery.ts";
 import { isSentinelProtectedImplementationPath } from "./policy.ts";
-import { sentinelRecoveryIdentityKey, upsertSentinelRecoveryRecord } from "./recovery-ledger.ts";
-import { readGitHubSentinelRecoveryLedger, writeGitHubSentinelRecoveryLedger } from "./recovery-github-store.ts";
+import {
+  parseSentinelRecoveryLedger,
+  sentinelRecoveryIdentityKey,
+  upsertSentinelRecoveryRecord,
+} from "./recovery-ledger.ts";
+import {
+  readGitHubSentinelRecoveryLedger,
+  type SentinelRecoveryLedgerSnapshot,
+  writeGitHubSentinelRecoveryLedger,
+} from "./recovery-github-store.ts";
+import {
+  applySentinelRetryPolicyToRecovery,
+  type SentinelFailureClass,
+  type SentinelRetryAttemptHistory,
+  type SentinelRetryDecision,
+  stableSentinelFailureFingerprint,
+} from "./retry.ts";
 
 const TEXT_DECODER = new TextDecoder("utf-8", { fatal: true });
 const TEXT_ENCODER = new TextEncoder();
@@ -17,8 +45,15 @@ const FULL_SHA = /^[0-9a-f]{40}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const SAFE_REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const SAFE_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/u;
-const ARTIFACT_NAME = /^sentinel-evidence-v1-[A-Za-z0-9._-]+$/u;
-const CANDIDATE_MANIFEST = /^reports\/(?:failed|manual)-[^/]+-candidate\/manifest\.json$/u;
+const ARTIFACT_NAME = /^sentinel-(?:evidence|matrix-cell)-v1-[A-Za-z0-9._-]+$/u;
+const CANDIDATE_MANIFEST =
+  /^reports\/(?:(?:failed|manual)-[^/]+-candidate|matrix\/cell-[0-9a-f]{64})\/manifest\.json$/u;
+const MATRIX_CELL_DIRECTORY = /^reports\/matrix\/(cell-[0-9a-f]{64})$/u;
+const MATRIX_CELL_REPORT_PATH = /^reports\/matrix\/cell-[0-9a-f]{64}\/cell\.json$/u;
+const MATRIX_CELL_RECOVERY_RECORD_PATH = /^reports\/matrix\/cell-[0-9a-f]{64}\/recovery-record\.json$/u;
+const MATRIX_CELL_WORK_SELECTION_PATH = /^reports\/matrix\/cell-[0-9a-f]{64}\/work-selection\.json$/u;
+const matrixCellIdFromPath = (manifestPath: string): string | null =>
+  manifestPath.slice(0, manifestPath.lastIndexOf("/")).match(MATRIX_CELL_DIRECTORY)?.[1] ?? null;
 const MAX_MANIFEST_BYTES = 512 * 1024;
 const MAX_SOURCE_ID_BYTES = 256;
 const MAX_SOURCE_REVISION_BYTES = 256;
@@ -76,7 +111,10 @@ export type SentinelArtifactRecoveryReason =
   | "candidate_path_forbidden"
   | "candidate_branch_conflict"
   | "recovery_record_invalid"
-  | "reconstruction_failed";
+  | "reconstruction_failed"
+  | "terminal_record"
+  | "development_head_advanced"
+  | "ledger_conflict";
 
 export type SentinelCandidateSnapshotEntry = Readonly<{
   path: string;
@@ -96,6 +134,15 @@ export type SentinelCandidateSnapshot = Readonly<{
   fileCount: number;
   totalBytes: number;
   entries: readonly SentinelCandidateSnapshotEntry[];
+  /** Authenticated matrix-cell binding; present only for matrix retry evidence. */
+  matrix:
+    | Readonly<{
+      planDigest: string;
+      runId: string;
+      runAttempt: number;
+      cellContract: ReturnType<typeof parseMatrixCellV1>;
+    }>
+    | null;
 }>;
 
 export type SentinelRecoveryDraftPullRequestRequest = Readonly<{
@@ -201,6 +248,16 @@ const validIsoTimestamp = (value: unknown): value is string =>
 
 const validSha256 = (value: unknown): value is string => typeof value === "string" && SHA256.test(value);
 
+/**
+ * Attestation of the trusted cell-capture gates (exact cell contract, path
+ * ownership, and credential scan) persisted beside the candidate manifest.
+ * Only the scan report basename and digest are retained, never its content.
+ */
+const validCaptureAttestation = (value: unknown): boolean =>
+  isRecord(value) && value.schema_version === 1 && value.cell_status === "retry_pending" &&
+  (value.secret_scan_path === null || typeof value.secret_scan_path === "string") &&
+  (value.secret_scan_sha256 === null || validSha256(value.secret_scan_sha256));
+
 const containsAsciiControl = (value: string): boolean =>
   [...value].some((character) => {
     const code = character.charCodeAt(0);
@@ -240,17 +297,54 @@ export const parseSentinelCandidateSnapshot = (
 ): SentinelCandidateSnapshot => {
   const selected = findCandidateManifest(files);
   const manifest = decodeJson(selected.file.bytes, "artifact_invalid");
+  const legacyKeys = ["base_sha", "captured_at", "file_count", "files", "schema_version", "total_bytes"];
+  const matrixKeys = [
+    ...legacyKeys,
+    "capture_attestation",
+    "cell_contract",
+    "plan_digest",
+    "run_id",
+    "run_attempt",
+  ];
+  const matrixManifest = hasExactKeys(manifest, matrixKeys);
   if (
-    !hasExactKeys(manifest, ["base_sha", "captured_at", "file_count", "files", "schema_version", "total_bytes"]) ||
+    !matrixManifest && !hasExactKeys(manifest, legacyKeys) ||
     manifest.schema_version !== 1 || typeof manifest.base_sha !== "string" || !FULL_SHA.test(manifest.base_sha) ||
     !validIsoTimestamp(manifest.captured_at) || !nonNegativeSafeInteger(manifest.file_count) ||
     !nonNegativeSafeInteger(manifest.total_bytes) || !Array.isArray(manifest.files)
   ) throw new CandidateSnapshotError("artifact_invalid");
+  if (matrixManifest && !validCaptureAttestation(manifest.capture_attestation)) {
+    throw new CandidateSnapshotError("artifact_invalid");
+  }
   if (manifest.file_count !== manifest.files.length || manifest.files.length > 1_024) {
     throw new CandidateSnapshotError("artifact_invalid");
   }
   if (!nonNegativeSafeInteger(manifest.total_bytes) || manifest.total_bytes > 64 * 1024 * 1024) {
     throw new CandidateSnapshotError("artifact_invalid");
+  }
+  let matrix: SentinelCandidateSnapshot["matrix"] = null;
+  if (matrixManifest) {
+    if (
+      typeof manifest.plan_digest !== "string" || !SHA256.test(manifest.plan_digest) ||
+      typeof manifest.run_id !== "string" || manifest.run_id.trim().length === 0 ||
+      manifest.run_id.length > 64 || !positiveSafeInteger(manifest.run_attempt)
+    ) throw new CandidateSnapshotError("artifact_invalid");
+    try {
+      matrix = {
+        planDigest: manifest.plan_digest,
+        runId: manifest.run_id,
+        runAttempt: manifest.run_attempt,
+        cellContract: parseMatrixCellV1(manifest.cell_contract),
+      };
+    } catch {
+      throw new CandidateSnapshotError("artifact_invalid");
+    }
+    if (matrix.cellContract.base_sha !== manifest.base_sha) {
+      throw new CandidateSnapshotError("artifact_invalid");
+    }
+    if (matrix.cellContract.cell_id !== matrixCellIdFromPath(selected.path)) {
+      throw new CandidateSnapshotError("artifact_invalid");
+    }
   }
   const archiveFiles = new Map(files.map((file) => [file.path, file]));
   const manifestDirectory = selected.path.slice(0, selected.path.lastIndexOf("/"));
@@ -318,6 +412,8 @@ export const parseSentinelCandidateSnapshot = (
   for (const payloadPath of payloads.keys()) {
     if (!expectedPayloads.has(payloadPath)) throw new CandidateSnapshotError("artifact_invalid");
   }
+  const cellId = matrixCellIdFromPath(selected.path);
+  if (matrix !== null && cellId === null) throw new CandidateSnapshotError("artifact_invalid");
   return {
     manifestPath: selected.path,
     baseSha: manifest.base_sha as string,
@@ -325,7 +421,52 @@ export const parseSentinelCandidateSnapshot = (
     fileCount: manifest.file_count as number,
     totalBytes: manifest.total_bytes as number,
     entries,
+    matrix,
   };
+};
+
+const pathOverlaps = (left: string, right: string): boolean =>
+  left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+
+const pathInScope = (path: string, scopes: readonly string[]): boolean =>
+  scopes.some((scope) => pathOverlaps(path, scope));
+
+/**
+ * Re-scan the reconstructed matrix snapshot against the exact immutable cell
+ * contract inside the authenticated manifest before any branch push or draft
+ * PR. Any path outside ownership fails closed to manual review and no byte is
+ * ever published.
+ */
+const assertMatrixSnapshotOwnership = (
+  cell: ReturnType<typeof parseMatrixCellV1>,
+  snapshot: SentinelCandidateSnapshot,
+): void => {
+  for (const entry of snapshot.entries) {
+    if (
+      !candidatePathIsAllowed(entry.path) || !pathInScope(entry.path, cell.allowed_paths) ||
+      pathInScope(entry.path, cell.prohibited_paths) || pathInScope(entry.path, cell.shared_paths)
+    ) {
+      throw new CandidateSnapshotError("candidate_path_forbidden");
+    }
+    // Matrix retry evidence never contains symlinks; a reconstructed symlink
+    // would escape the trusted single-level snapshot model.
+    if (entry.kind === "symlink") throw new CandidateSnapshotError("artifact_invalid");
+  }
+};
+
+const MATRIX_CELL_LEASE = /^matrix-cell-[0-9]+-[1-9][0-9]*-cell-[0-9a-f]{64}$/u;
+
+const assertMatrixRecordSnapshotBinding = (
+  record: SentinelRecoveryRecordV1,
+  matrix: NonNullable<SentinelCandidateSnapshot["matrix"]>,
+): void => {
+  if (
+    !MATRIX_CELL_LEASE.test(record.lease_token) ||
+    record.lease_token !== `matrix-cell-${matrix.runId}-${matrix.runAttempt}-${matrix.cellContract.cell_id}` ||
+    record.run_id !== matrix.runId
+  ) {
+    throw new CandidateSnapshotError("recovery_record_invalid");
+  }
 };
 
 const stableHash = (value: string): string => {
@@ -776,6 +917,10 @@ export const recoverSentinelArtifactCandidate = async (
       snapshot = parseSentinelCandidateSnapshot(decrypted);
       if (snapshot.fileCount === 0) return await rejectedResult(record, digest);
       for (const entry of snapshot.entries) await assertDigest(entry);
+      if (snapshot.matrix !== null) {
+        assertMatrixSnapshotOwnership(snapshot.matrix.cellContract, snapshot);
+        assertMatrixRecordSnapshotBinding(record, snapshot.matrix);
+      }
       if (snapshot.baseSha !== record.base_sha) return await manualResult(record, digest, "artifact_wrong_base");
       const base = await localRefSha(input.checkout, `${record.base_sha}^{commit}`);
       if (base !== record.base_sha) return await manualResult(record, digest, "artifact_base_unavailable");
@@ -797,8 +942,11 @@ export const recoverSentinelArtifactCandidate = async (
         candidate_sha: candidateSha,
         changed_files: snapshot.entries.map((entry) => entry.path),
         tree_sha: treeSha,
-        failure_class: null,
-        failure_fingerprint: null,
+        // The original classified cell failure stays durable on the
+        // checkpoint: it is the only evidence of why the cell ended
+        // retry_pending and feeds the bounded retry circuit.
+        failure_class: record.failure_class,
+        failure_fingerprint: record.failure_fingerprint,
         reason: "encrypted candidate recovered into a quarantined checkpoint",
         next_action: "validate the checkpoint and request human review",
       });
@@ -955,17 +1103,45 @@ export const createOrReuseSentinelRecoveryDraftPullRequest = async (
       throw new Error("Existing Sentinel recovery pull request is not a safe draft");
     }
     reused = true;
-    const updated = await githubFetch(input.token, repository, `/repos/${repository}/pulls/${pull.number}`, {
-      method: "PATCH",
-      body: JSON.stringify({ body: request.body.body, draft: true }),
-    }, fetcher);
-    pull = pullRequestIdentity(updated);
+    // An exact replay of the same artifact reuses the identical draft PR without
+    // any mutation: only a changed body is patched, and only after a fresh
+    // identity re-read of the same pull request.
+    if (pull.body !== request.body.body) {
+      const fetchResult = await githubFetch(input.token, repository, `/repos/${repository}/pulls/${pull.number}`, {
+        method: "PATCH",
+        body: JSON.stringify({ body: request.body.body, draft: true }),
+      }, fetcher);
+      pull = pullRequestIdentity(fetchResult);
+    }
   } else {
-    const created = await githubFetch(input.token, repository, request.path, {
-      method: "POST",
-      body: JSON.stringify(request.body),
-    }, fetcher);
-    pull = pullRequestIdentity(created);
+    let created: unknown = null;
+    try {
+      created = await githubFetch(input.token, repository, request.path, {
+        method: "POST",
+        body: JSON.stringify(request.body),
+      }, fetcher);
+    } catch (error) {
+      // A concurrent recovery may have created the identical draft PR first
+      // (GitHub refuses a second PR for the same head). Re-list and reuse.
+      const retried = await githubFetch(
+        input.token,
+        repository,
+        `/repos/${repository}/pulls?state=open&base=development&per_page=100`,
+        { method: "GET" },
+        fetcher,
+      );
+      if (!Array.isArray(retried)) throw error;
+      const retriedPulls = retried.map(pullRequestIdentity);
+      if (retriedPulls.some((pull) => pull === null)) throw error;
+      const retriedMatches = retriedPulls.filter((pull) =>
+        pull !== null && pull.body.includes(marker) && pull.headBranch === request.body.head &&
+        pull.baseBranch === "development"
+      ) as NonNullable<ReturnType<typeof pullRequestIdentity>>[];
+      if (retriedMatches.length !== 1) throw error;
+      pull = retriedMatches[0];
+      reused = true;
+    }
+    pull = pull ?? pullRequestIdentity(created);
   }
   if (
     !pull || pull.state !== "open" || pull.mergedAt !== null || !pull.draft ||
@@ -973,7 +1149,9 @@ export const createOrReuseSentinelRecoveryDraftPullRequest = async (
     pull.headBranch !== request.body.head || pull.headSha !== request.candidate_sha ||
     pull.baseBranch !== "development" ||
     !pull.body.includes(marker)
-  ) throw new Error("Sentinel recovery pull request failed its draft-only identity check");
+  ) {
+    throw new Error("Sentinel recovery pull request failed its draft-only identity check");
+  }
   return {
     number: pull.number,
     url: pull.url,
@@ -1171,6 +1349,287 @@ const recordFromArtifact = (
   return record;
 };
 
+/**
+ * Recognize authenticated matrix-cell retry evidence. The cell runner persists
+ * a durable recovery identity and the candidate snapshot next to its report;
+ * this function authenticates that evidence into the exact record the recovery
+ * ledger is expected to own. The report digest, plan digest, immutable cell
+ * contract, base, run attempt/branch, work-selection identity, and exact
+ * changed paths are all bound together; authenticated encryption alone is not
+ * treated as proof. Any inconsistency fails closed to `null` so the legacy
+ * classification path keeps the artifact owner-visible instead of mutating Git.
+ */
+export const matrixCellRecoveryRecordFromArtifact = async (
+  files: readonly SentinelArtifactFile[],
+  repository: string,
+): Promise<SentinelRecoveryRecordV1 | null> => {
+  if (!SAFE_REPOSITORY.test(repository)) return null;
+  const cellReports = files.filter((file) => MATRIX_CELL_REPORT_PATH.test(file.path));
+  if (cellReports.length !== 1) return null;
+  const cellReportFile = cellReports[0]!;
+  let report: MatrixCellReportV1;
+  try {
+    report = parseMatrixCellReportV1(await decodeJson(cellReportFile.bytes, "artifact_invalid"));
+    await assertMatrixCellReportDigest(report);
+  } catch {
+    return null;
+  }
+  if (report.status !== "retry_pending") return null;
+  const manifestDirectory = cellReportFile.path.slice(0, cellReportFile.path.lastIndexOf("/"));
+  const recordFile = files.find((file) =>
+    file.path === `${manifestDirectory}/recovery-record.json` &&
+    MATRIX_CELL_RECOVERY_RECORD_PATH.test(file.path)
+  );
+  if (!recordFile) return null;
+  let record: SentinelRecoveryRecordV1;
+  try {
+    record = parseSentinelRecoveryRecord(decodeJson(recordFile.bytes, "artifact_invalid"));
+  } catch {
+    return null;
+  }
+  if (record.phase !== "recovery_pending" || record.identity.repository !== repository) return null;
+  const manifestPath = `${manifestDirectory}/manifest.json`;
+  if (!files.some((file) => file.path === manifestPath && CANDIDATE_MANIFEST.test(file.path))) return null;
+  let snapshot: SentinelCandidateSnapshot;
+  try {
+    snapshot = parseSentinelCandidateSnapshot(files);
+  } catch {
+    return null;
+  }
+  if (snapshot.matrix === null) return null;
+  const cell = snapshot.matrix.cellContract;
+  const selectionFile = files.find((file) =>
+    file.path === `${manifestDirectory}/work-selection.json` && MATRIX_CELL_WORK_SELECTION_PATH.test(file.path)
+  );
+  let workSelection: MatrixCellWorkSelectionV1 | null = null;
+  if (selectionFile) {
+    try {
+      workSelection = parseMatrixCellWorkSelection(decodeJson(selectionFile.bytes, "artifact_invalid"));
+    } catch {
+      return null;
+    }
+    if (workSelection === null) return null;
+  }
+  const sourceRevision = await matrixCellRecoverySourceRevision(report.base_sha, cell, workSelection);
+  if (
+    record.identity.source_kind !== (workSelection?.source_kind ?? "triage") ||
+    record.identity.source_id !== (workSelection?.source_id ?? report.cell_id) ||
+    record.identity.source_revision !== sourceRevision
+  ) return null;
+  if (
+    record.run_id !== report.run_id || record.attempt !== report.run_attempt ||
+    record.base_sha !== report.base_sha
+  ) return null;
+  try {
+    assertMatrixRecordSnapshotBinding(record, snapshot.matrix);
+  } catch {
+    return null;
+  }
+  if (
+    snapshot.matrix.planDigest !== report.plan_digest || snapshot.matrix.runId !== report.run_id ||
+    snapshot.matrix.runAttempt !== report.run_attempt
+  ) return null;
+  if (cell.cell_id !== report.cell_id || cell.branch !== report.branch || cell.base_sha !== report.base_sha) {
+    return null;
+  }
+  const reportFingerprints = report.finding_dispositions.map((item) => item.fingerprint).sort(comparePaths);
+  if (JSON.stringify(reportFingerprints) !== JSON.stringify([...cell.finding_fingerprints].sort(comparePaths))) {
+    return null;
+  }
+  try {
+    assertMatrixSnapshotOwnership(cell, snapshot);
+  } catch {
+    return null;
+  }
+  const changed = [...report.changed_paths].sort(comparePaths);
+  if (
+    JSON.stringify([...record.changed_files].sort(comparePaths)) !== JSON.stringify(changed) ||
+    JSON.stringify(snapshot.entries.map((entry) => entry.path).sort(comparePaths)) !== JSON.stringify(changed)
+  ) return null;
+  return record;
+};
+
+const parseMatrixCellReportV1 = (value: unknown): MatrixCellReportV1 => {
+  assertMatrixCellReportV1(value);
+  return value as MatrixCellReportV1;
+};
+
+/**
+ * Retain later matrix evidence under an artifact-scoped identity when the
+ * authoritative work record is already terminal. The terminal record is never
+ * rewritten; the evidence stays owner-visible through the existing ledger
+ * instead of being silently dropped.
+ */
+export const matrixEvidenceRetentionRecord = (
+  record: SentinelRecoveryRecordV1,
+  artifact: GitHubArtifact,
+  encryptedDigest: string,
+  predecessorKey: string,
+): SentinelRecoveryRecordV1 | null => {
+  if (
+    !artifact.workflowRunId || !validSha256(encryptedDigest.replace(/^sha256:/u, "")) ||
+    !validIsoTimestamp(artifact.createdAt)
+  ) return null;
+  return parseSentinelRecoveryRecord({
+    schema_version: 1,
+    identity: {
+      ...record.identity,
+      source_id: `${record.identity.source_id}:artifact:${artifact.id}`,
+    },
+    run_id: record.run_id,
+    attempt: record.attempt,
+    lease_token: `artifact-${artifact.id}`,
+    base_sha: record.base_sha,
+    phase: "manual_required",
+    disposition: "manual_required",
+    state_version: 1,
+    created_at: artifact.createdAt,
+    updated_at: artifact.createdAt,
+    candidate_branch: null,
+    candidate_sha: null,
+    changed_files: [],
+    tree_sha: null,
+    failure_class: "unrecoverable_evidence",
+    failure_fingerprint: encryptedDigest.replace(/^sha256:/u, ""),
+    artifact_ids: [artifact.id],
+    artifact_digests: [encryptedDigest],
+    reason: "later useful matrix evidence arrived for a terminal recovery record",
+    next_action: "a repository owner must inspect the encrypted evidence and its exact base",
+    predecessor: predecessorKey,
+  });
+};
+
+/**
+ * Resolve the candidate generation against the durable ledger instead of
+ * trusting the provisional generation embedded in the evidence.
+ *
+ * An active record for the exact same cell identity keeps its generation, so
+ * replaying the identical artifact resolves to the same record and never
+ * allocates a second generation. A terminal single-lineage record (empty or
+ * rejected) starts the next generation, and an unknown cell lineage
+ * provisionally begins at one. The computed generation is only ever committed
+ * through the ledger compare-and-swap write; a concurrent writer that wins the
+ * CAS forces the loser to re-read the authoritative ledger and re-resolve
+ * before retrying.
+ */
+export const resolveMatrixRecoveryGeneration = (
+  records: readonly SentinelRecoveryRecordV1[],
+  identity: SentinelRecoveryIdentityV1,
+): number => {
+  const sameIdentity = records.filter((candidate) =>
+    candidate.identity.repository === identity.repository &&
+    candidate.identity.source_kind === identity.source_kind &&
+    candidate.identity.source_id === identity.source_id &&
+    candidate.identity.source_revision === identity.source_revision
+  );
+  const active = sameIdentity.filter((candidate) => candidate.disposition === "active");
+  if (active.length > 0) {
+    return Math.max(...active.map((candidate) => candidate.identity.candidate_generation));
+  }
+  if (sameIdentity.length > 0) {
+    return Math.max(...sameIdentity.map((candidate) => candidate.identity.candidate_generation)) + 1;
+  }
+  return 1;
+};
+
+/** Rebind the artifact's provisional generation to the authoritative ledger. */
+const matrixRecordWithResolvedGeneration = (
+  record: SentinelRecoveryRecordV1,
+  records: readonly SentinelRecoveryRecordV1[],
+): SentinelRecoveryRecordV1 => {
+  const generation = resolveMatrixRecoveryGeneration(records, record.identity);
+  if (generation === record.identity.candidate_generation) return record;
+  return parseSentinelRecoveryRecord({
+    ...record,
+    identity: { ...record.identity, candidate_generation: generation },
+  });
+};
+
+/**
+ * Resolve the canonical parent generation with the exact rule the Sentinel
+ * selection path uses (maximum over every record of the same repository,
+ * source kind, and source id, plus one) so a concurrent or retried recovery
+ * can never fork the work item into two generations.
+ */
+const resolveCanonicalParentGeneration = (
+  records: readonly SentinelRecoveryRecordV1[],
+  identity: Omit<SentinelRecoveryIdentityV1, "candidate_generation">,
+): number =>
+  records
+    .filter((candidate) =>
+      candidate.identity.repository === identity.repository &&
+      candidate.identity.source_kind === identity.source_kind &&
+      candidate.identity.source_id === identity.source_id
+    )
+    .reduce((maximum, candidate) => Math.max(maximum, candidate.identity.candidate_generation), 0) + 1;
+
+/**
+ * Canonical parent record for a recovered matrix cell checkpoint. It carries
+ * the authoritative work-item revision that Sentinel selection matches while
+ * the exact cell binding stays on the child record it points at through
+ * `predecessor`. The candidate branch and SHA are the child's actual durable
+ * refs, so the recovery controller can observe them through the linkage.
+ */
+export const buildMatrixCellParentRecoveryRecord = (
+  child: SentinelRecoveryRecordV1,
+  parentIdentity: SentinelRecoveryIdentityV1,
+  now: string,
+): SentinelRecoveryRecordV1 => {
+  if (!SAFE_BRANCH.test(child.candidate_branch ?? "") || child.candidate_sha === null || child.tree_sha === null) {
+    throw new CandidateSnapshotError("recovery_record_invalid");
+  }
+  return parseSentinelRecoveryRecord({
+    schema_version: 1,
+    identity: parentIdentity,
+    run_id: child.run_id,
+    attempt: child.attempt,
+    lease_token: `matrix-parent-${child.run_id}-${child.attempt}-${parentIdentity.source_id}`,
+    base_sha: child.base_sha,
+    phase: "checkpoint_durable",
+    disposition: "active",
+    state_version: 1,
+    created_at: now,
+    updated_at: now,
+    candidate_branch: child.candidate_branch,
+    candidate_sha: child.candidate_sha,
+    changed_files: child.changed_files,
+    tree_sha: child.tree_sha,
+    failure_class: null,
+    failure_fingerprint: null,
+    artifact_ids: child.artifact_ids,
+    artifact_digests: child.artifact_digests,
+    reason: "A recovered matrix cell checkpoint is durable for the canonical work item.",
+    next_action: "Validate the durable checkpoint and request human delivery review.",
+    predecessor: sentinelRecoveryIdentityKey(child.identity),
+  });
+};
+
+const matrixCellWorkSelectionFromFiles = (
+  files: readonly SentinelArtifactFile[],
+): MatrixCellWorkSelectionV1 | null => {
+  const matrixReport = files.find((file) => MATRIX_CELL_WORK_SELECTION_PATH.test(file.path));
+  if (!matrixReport) return null;
+  try {
+    return parseMatrixCellWorkSelection(decodeJson(matrixReport.bytes, "artifact_invalid"));
+  } catch {
+    return null;
+  }
+};
+
+/** Fetch the exact current `development` ref from GitHub for stale-base checks. */
+const currentRecoveryDevelopmentHead = async (
+  token: string,
+  repository: string,
+  fetcher: GitHubRequest,
+): Promise<string> => {
+  const value = await githubFetch(token, repository, "/git/ref/heads/development", { method: "GET" }, fetcher);
+  const object = isRecord(value) ? value.object : null;
+  if (!object || !isRecord(object) || typeof object.sha !== "string" || !FULL_SHA.test(object.sha)) {
+    throw new Error("Sentinel recovery development head is invalid");
+  }
+  return object.sha;
+};
+
 export const manualRecoveryRecordForLegacyArtifact = (
   repository: string,
   artifact: GitHubArtifact,
@@ -1315,26 +1774,48 @@ const publishRecoveryBranchToOrigin = async (
   }>,
 ): Promise<void> => {
   const env = gitNetworkEnvironment(input.token, input.repository);
-  const remoteOutput = await runGit(
-    input.checkout,
-    ["ls-remote", "--heads", "origin", `refs/heads/${input.branch}`],
-    env,
-  );
-  const remoteLines = TEXT_DECODER.decode(remoteOutput).trim().split("\n").filter(Boolean);
-  if (remoteLines.length > 1) throw new Error("Sentinel recovery remote branch lookup is ambiguous");
-  const remoteSha = remoteLines.length === 0 ? null : remoteLines[0]!.split("\t")[0] ?? null;
-  if (remoteSha !== null && remoteSha !== input.candidateSha) {
-    throw new Error("Sentinel recovery remote branch conflicts");
-  }
-  if (remoteSha === input.candidateSha) return;
-  await runGit(
-    input.checkout,
-    ["push", "--no-verify", "origin", `${input.candidateSha}:refs/heads/${input.branch}`],
-    env,
-  );
-  const confirmed = await runGit(input.checkout, ["ls-remote", "--heads", "origin", `refs/heads/${input.branch}`], env);
-  if (TEXT_DECODER.decode(confirmed).trim().split("\t")[0] !== input.candidateSha) {
-    throw new Error("Sentinel recovery branch did not reach the expected SHA");
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const remoteOutput = await runGit(
+      input.checkout,
+      ["ls-remote", "--heads", "origin", `refs/heads/${input.branch}`],
+      env,
+    );
+    const remoteLines = TEXT_DECODER.decode(remoteOutput).trim().split("\n").filter(Boolean);
+    if (remoteLines.length > 1) throw new Error("Sentinel recovery remote branch lookup is ambiguous");
+    const remoteSha = remoteLines.length === 0 ? null : remoteLines[0]!.split("\t")[0] ?? null;
+    if (remoteSha !== null && remoteSha !== input.candidateSha) {
+      throw new Error("Sentinel recovery remote branch conflicts");
+    }
+    if (remoteSha === input.candidateSha) return;
+    // The lease pins the exact remote ref state just observed: a concurrent
+    // writer that moved the branch forces this push to fail instead of being
+    // silently overwritten. A new branch uses the zero SHA, which only allows
+    // the creation ref.
+    try {
+      await runGit(
+        input.checkout,
+        [
+          "push",
+          "--no-verify",
+          `--force-with-lease=refs/heads/${input.branch}:${remoteSha ?? ZERO_SHA}`,
+          "origin",
+          `${input.candidateSha}:refs/heads/${input.branch}`,
+        ],
+        env,
+      );
+    } catch (error) {
+      if (attempt === 0) continue; // concurrent publication; re-verify and converge
+      throw error;
+    }
+    const confirmed = await runGit(
+      input.checkout,
+      ["ls-remote", "--heads", "origin", `refs/heads/${input.branch}`],
+      env,
+    );
+    if (TEXT_DECODER.decode(confirmed).trim().split("\t")[0] !== input.candidateSha) {
+      throw new Error("Sentinel recovery branch did not reach the expected SHA");
+    }
+    return;
   }
 };
 
@@ -1342,6 +1823,608 @@ const safeSummary = (result: SentinelArtifactRecoveryResult): string => {
   const candidate = result.candidate_sha ?? "none";
   const branch = result.candidate_branch ?? "none";
   return `artifact_digest=${result.artifact_digest} disposition=${result.disposition} reason=${result.reason} candidate=${candidate} branch=${branch}`;
+};
+
+const MAX_LEDGER_CAS_RETRIES = 3;
+
+const isLedgerConflictError = (error: unknown): boolean =>
+  error instanceof Error &&
+  /(?:compare-and-swap|already exists|lost its lease|HTTP (?:409|422)|(?:^|\D)(?:409|422)(?:\D|$))/u.test(
+    error.message,
+  );
+
+const terminalMatrixResult = (
+  digest: string,
+  recoveryRecord: SentinelRecoveryRecordV1 | null,
+): SentinelArtifactRecoveryResult => ({
+  schema_version: SENTINEL_ARTIFACT_RECOVERY_SCHEMA_VERSION,
+  disposition: "manual_required",
+  reason: "terminal_record",
+  artifact_digest: digest,
+  candidate_branch: null,
+  candidate_sha: null,
+  tree_sha: null,
+  changed_files: [],
+  recovery_record: recoveryRecord,
+  draft_pull_request: null,
+});
+
+const staleHeadResult = (
+  digest: string,
+  recoveryRecord: SentinelRecoveryRecordV1,
+): SentinelArtifactRecoveryResult => ({
+  schema_version: SENTINEL_ARTIFACT_RECOVERY_SCHEMA_VERSION,
+  disposition: "manual_required",
+  reason: "development_head_advanced",
+  artifact_digest: digest,
+  candidate_branch: null,
+  candidate_sha: null,
+  tree_sha: null,
+  changed_files: [],
+  recovery_record: recoveryRecord,
+  draft_pull_request: null,
+});
+
+/** Deterministic replay answer for an artifact already recovered under this identity. */
+const recoveredFromExistingRecord = (
+  existing: SentinelRecoveryRecordV1,
+  input: Readonly<{ repository: string; artifactId: number; encryptedDigest: string }>,
+): SentinelArtifactRecoveryResult => ({
+  schema_version: SENTINEL_ARTIFACT_RECOVERY_SCHEMA_VERSION,
+  disposition: "recovered",
+  reason: "recovered",
+  artifact_digest: input.encryptedDigest,
+  candidate_branch: existing.candidate_branch,
+  candidate_sha: existing.candidate_sha,
+  tree_sha: existing.tree_sha,
+  changed_files: existing.changed_files,
+  recovery_record: existing,
+  draft_pull_request: buildSentinelRecoveryDraftPullRequest({
+    repository: input.repository,
+    record: existing,
+    candidateBranch: existing.candidate_branch!,
+    candidateSha: existing.candidate_sha!,
+    artifactId: input.artifactId,
+  }),
+});
+
+const sameIdentityFamily = (left: SentinelRecoveryIdentityV1, right: SentinelRecoveryIdentityV1): boolean =>
+  left.repository === right.repository && left.source_kind === right.source_kind &&
+  left.source_id === right.source_id && left.source_revision === right.source_revision;
+
+/**
+ * Exact-artifact terminal replay: an artifact id or SHA-256 digest already
+ * recorded on a terminal record of the same identity family is the identical
+ * evidence replay. It returns that terminal record so the caller retains the
+ * existing terminal record/result with zero branch/PR/ledger mutation. Only
+ * genuinely new artifact evidence may allocate a fresh generation; the
+ * candidate generation of the terminal record is never consulted, because
+ * replaying the same evidence must not suddenly claim a new generation.
+ */
+const terminalReplayRecordForIdentityFamily = (
+  records: readonly SentinelRecoveryRecordV1[],
+  identity: SentinelRecoveryIdentityV1,
+  artifactId: number,
+  digest: string,
+): SentinelRecoveryRecordV1 | null => {
+  const matches = records.filter((record) =>
+    record.disposition !== "active" && sameIdentityFamily(record.identity, identity) &&
+    (record.artifact_ids.includes(artifactId) || record.artifact_digests.includes(digest))
+  );
+  if (matches.length === 0) return null;
+  return matches.reduce((best, candidate) =>
+    candidate.identity.candidate_generation > best.identity.candidate_generation ||
+      (candidate.identity.candidate_generation === best.identity.candidate_generation &&
+        candidate.state_version > best.state_version)
+      ? candidate
+      : best
+  );
+};
+
+/**
+ * Terminal replay lookup for matrix evidence: the exact child (cell) family
+ * first, then the canonical (work-item) family, because a terminal canonical
+ * record carries the same artifact ids/digests through the parent linkage.
+ */
+const terminalReplayRecordForMatrixArtifact = (
+  records: readonly SentinelRecoveryRecordV1[],
+  identity: SentinelRecoveryIdentityV1,
+  artifactId: number,
+  digest: string,
+  workSelection: MatrixCellWorkSelectionV1 | null,
+): SentinelRecoveryRecordV1 | null => {
+  const childFamily = terminalReplayRecordForIdentityFamily(records, identity, artifactId, digest);
+  if (childFamily !== null) return childFamily;
+  const canonical = matrixCellCanonicalParentIdentity(identity, workSelection);
+  return canonical === null ? null : terminalReplayRecordForIdentityFamily(records, canonical, artifactId, digest);
+};
+
+/**
+ * Apply the bounded retry policy to the original classified cell failure
+ * through the exact `applySentinelRetryPolicyToRecovery` semantics the
+ * recovery controller uses, so the durable history and decision count each
+ * original failure attempt exactly once. An unrecognized failure class stays
+ * owner-visible on the record but never enters the retry circuit.
+ */
+const applyMatrixRetryPolicy = async (
+  ledger: Readonly<{ retry_history: SentinelRetryAttemptHistory }>,
+  record: SentinelRecoveryRecordV1,
+  now: string,
+): Promise<
+  {
+    applied: Awaited<ReturnType<typeof applySentinelRetryPolicyToRecovery>>;
+  } | null
+> => {
+  if (record.failure_class === null || record.failure_fingerprint === null) return null;
+  const key = sentinelRecoveryIdentityKey(record.identity);
+  const history = ledger.retry_history.filter((attempt) => sentinelRecoveryIdentityKey(attempt.identity) === key)
+    .slice(-8);
+  try {
+    return {
+      applied: await applySentinelRetryPolicyToRecovery({
+        record,
+        failure: {
+          failure_class: record.failure_class as SentinelFailureClass,
+          failure_fingerprint: record.failure_fingerprint,
+          phase: record.phase,
+          signature: record.reason ?? record.failure_class,
+        },
+        history,
+        now,
+      }),
+    };
+  } catch {
+    return null;
+  }
+};
+
+const withEvaluatedRetry = (
+  ledger: SentinelRecoveryLedgerSnapshot["ledger"],
+  record: SentinelRecoveryRecordV1,
+  evaluated: Readonly<{ decision: SentinelRetryDecision | null; history: SentinelRetryAttemptHistory }>,
+): SentinelRecoveryLedgerSnapshot["ledger"] => {
+  if (evaluated.decision === null) return ledger;
+  const key = sentinelRecoveryIdentityKey(record.identity);
+  return {
+    ...ledger,
+    retry_history: [
+      ...ledger.retry_history.filter((attempt) => sentinelRecoveryIdentityKey(attempt.identity) !== key),
+      ...evaluated.history,
+    ],
+    retry_decisions: [
+      ...ledger.retry_decisions.filter((entry) => entry.identity_key !== key),
+      { identity_key: key, decision: evaluated.decision },
+    ],
+  };
+};
+
+/**
+ * Durable evidence attachment for a recovered matrix child and its linked
+ * canonical parent: the complete artifact_ids/artifact_digests set is written
+ * in place without changing identity, phase, or state version, because
+ * evidence rows are data, not a recovery transition. The parent is matched
+ * through the exact `predecessor` linkage, so a later exact replay of any
+ * terminal-triggering artifact matches this record family before a generation
+ * is allocated.
+ */
+const withDurableArtifactEvidence = (
+  ledger: SentinelRecoveryLedgerSnapshot["ledger"],
+  childKey: string,
+  artifactIds: readonly number[],
+  artifactDigests: readonly string[],
+): SentinelRecoveryLedgerSnapshot["ledger"] => {
+  const records = ledger.records.map((record) => {
+    const linked = sentinelRecoveryIdentityKey(record.identity) === childKey || record.predecessor === childKey;
+    if (
+      !linked || record.artifact_ids.length === artifactIds.length &&
+        record.artifact_digests.length === artifactDigests.length &&
+        record.artifact_ids.every((value, index) => value === artifactIds[index]) &&
+        record.artifact_digests.every((value, index) => value === artifactDigests[index])
+    ) return record;
+    return parseSentinelRecoveryRecord({ ...record, artifact_ids: artifactIds, artifact_digests: artifactDigests });
+  });
+  if (records.every((record, index) => record === ledger.records[index])) return ledger;
+  return parseSentinelRecoveryLedger({ ...ledger, records });
+};
+
+/**
+ * Fail closed when the exact `development` head moved after the candidate was
+ * reconstructed: no branch is published and no draft PR is opened until the
+ * artifact is re-recovered against the new base.
+ */
+const staleHeadManualRecord = async (
+  record: SentinelRecoveryRecordV1,
+  observed: string,
+): Promise<SentinelRecoveryRecordV1> => {
+  const fingerprint = await stableSentinelFailureFingerprint({
+    identity: record.identity,
+    failure_class: "stale_source",
+    code: "development_head_advanced",
+    phase: "checkpoint_publishing",
+    signature: `development head advanced from ${record.base_sha} to ${observed}`,
+  });
+  return transitionRecord(record, {
+    phase: "manual_required",
+    disposition: "manual_required",
+    candidate_branch: null,
+    candidate_sha: null,
+    tree_sha: null,
+    changed_files: [],
+    failure_class: "stale_source",
+    failure_fingerprint: fingerprint,
+    reason: "The Sentinel development head advanced after reconstruction; no publish happened.",
+    next_action: "Recover the encrypted candidate against the exact new development base.",
+  });
+};
+
+/**
+ * Recover one authenticated matrix cell artifact with idempotent replay and
+ * CAS-coupled state. The exact same artifact always resolves to the same
+ * record, generation, branch, SHA, and draft PR without duplicating a ledger
+ * mutation; a concurrent CAS winner forces a re-read and re-resolution before
+ * the write is retried. The original classified cell failure is persisted into
+ * the durable retry history/decisions before or with the recovery, and the
+ * exact development head is re-verified immediately before branch publication
+ * and draft PR creation.
+ */
+const recoverMatrixArtifactInActions = async (
+  input: Readonly<{
+    checkout: string;
+    repository: string;
+    token: string;
+    stateFetcher: typeof fetch;
+    fetcher: GitHubRequest | undefined;
+    matrixRecord: SentinelRecoveryRecordV1;
+    artifact: GitHubArtifact;
+    encrypted: Uint8Array<ArrayBuffer>;
+    keyBytes: Uint8Array<ArrayBuffer>;
+    decrypted: readonly SentinelArtifactFile[];
+    encryptedDigest: string;
+    expectedBaseSha: string;
+    snapshot: SentinelRecoveryLedgerSnapshot;
+  }>,
+): Promise<Readonly<{ result: SentinelArtifactRecoveryResult; snapshot: SentinelRecoveryLedgerSnapshot }>> => {
+  const attempt = async (snapshot: SentinelRecoveryLedgerSnapshot) => {
+    // Before resolving or allocating any generation: an exact artifact replay
+    // of an already terminal record for the same canonical or child identity
+    // retains that terminal record and performs zero mutation. Only genuinely
+    // new artifact evidence may allocate a fresh generation.
+    const terminalReplay = terminalReplayRecordForMatrixArtifact(
+      snapshot.ledger.records,
+      input.matrixRecord.identity,
+      input.artifact.id,
+      input.encryptedDigest,
+      matrixCellWorkSelectionFromFiles(input.decrypted),
+    );
+    if (terminalReplay !== null) {
+      return { result: terminalMatrixResult(input.encryptedDigest, terminalReplay), snapshot };
+    }
+    const child = matrixRecordWithResolvedGeneration(input.matrixRecord, snapshot.ledger.records);
+    const childKey = sentinelRecoveryIdentityKey(child.identity);
+    const existing =
+      snapshot.ledger.records.find((candidate) => sentinelRecoveryIdentityKey(candidate.identity) === childKey) ?? null;
+    const now = new Date().toISOString();
+
+    // A terminal record is never rewritten; later evidence is retained under an
+    // artifact-scoped identity and remains owner-visible.
+    if (existing && existing.disposition !== "active") {
+      const retention = matrixEvidenceRetentionRecord(
+        child,
+        input.artifact,
+        input.encryptedDigest,
+        childKey,
+      );
+      let ledger = snapshot.ledger;
+      if (
+        retention &&
+        !ledger.records.some((candidate) =>
+          sentinelRecoveryIdentityKey(candidate.identity) === sentinelRecoveryIdentityKey(retention.identity)
+        )
+      ) {
+        ledger = upsertSentinelRecoveryRecord(ledger, retention, null);
+      }
+      const written = ledger === snapshot.ledger ? snapshot : await writeGitHubSentinelRecoveryLedger({
+        token: input.token,
+        repository: input.repository,
+        fetcher: input.stateFetcher,
+        snapshot,
+        ledger,
+        message: `chore(sentinel): retain terminal matrix evidence ${input.artifact.id}`,
+      });
+      return { result: terminalMatrixResult(input.encryptedDigest, retention), snapshot: written };
+    }
+
+    // Exact replay of an already recovered artifact: nothing changes on the
+    // ledger, branch, or draft PR.
+    if (
+      existing && existing.candidate_sha !== null && existing.candidate_branch !== null &&
+      existing.artifact_digests.includes(input.encryptedDigest)
+    ) {
+      return {
+        result: recoveredFromExistingRecord(existing, {
+          repository: input.repository,
+          artifactId: input.artifact.id,
+          encryptedDigest: input.encryptedDigest,
+        }),
+        snapshot,
+      };
+    }
+
+    // A durable checkpoint already exists for this identity and a new later
+    // attempt arrived: the checkpoint stays authoritative and is never
+    // demoted. The incoming artifact id and digest are attached to the
+    // record before the retry policy/history is applied and are written to
+    // the same ledger CAS write, so the policy result and the linked
+    // canonical parent always carry the complete artifact_ids/artifact_digests
+    // set. An exact replay of a terminal-triggering artifact is then matched
+    // before any generation allocation.
+    if (existing && existing.candidate_sha !== null && existing.candidate_branch !== null) {
+      const evidence = safeRecordWithArtifact(existing, input.encryptedDigest, input.artifact.id);
+      const applied = await applyMatrixRetryPolicy(snapshot.ledger, evidence, now);
+      if (applied !== null && applied.applied.decision.disposition !== "retry_wait") {
+        const ledger = withDurableArtifactEvidence(
+          withEvaluatedRetry(
+            upsertSentinelRecoveryRecord(snapshot.ledger, applied.applied.after, existing.state_version),
+            applied.applied.after,
+            applied.applied,
+          ),
+          childKey,
+          applied.applied.after.artifact_ids,
+          applied.applied.after.artifact_digests,
+        );
+        const written = await writeGitHubSentinelRecoveryLedger({
+          token: input.token,
+          repository: input.repository,
+          fetcher: input.stateFetcher,
+          snapshot,
+          ledger,
+          message: `chore(sentinel): terminate retry circuit ${childKey}`,
+        });
+        return { result: terminalMatrixResult(input.encryptedDigest, applied.applied.after), snapshot: written };
+      }
+      const ledger = withDurableArtifactEvidence(
+        applied === null ? snapshot.ledger : withEvaluatedRetry(snapshot.ledger, evidence, applied.applied),
+        childKey,
+        evidence.artifact_ids,
+        evidence.artifact_digests,
+      );
+      if (ledger === snapshot.ledger) {
+        return {
+          result: recoveredFromExistingRecord(existing, {
+            repository: input.repository,
+            artifactId: input.artifact.id,
+            encryptedDigest: input.encryptedDigest,
+          }),
+          snapshot,
+        };
+      }
+      const written = await writeGitHubSentinelRecoveryLedger({
+        token: input.token,
+        repository: input.repository,
+        fetcher: input.stateFetcher,
+        snapshot,
+        ledger,
+        message: `chore(sentinel): record matrix failure ${childKey}`,
+      });
+      return {
+        result: recoveredFromExistingRecord(evidence, {
+          repository: input.repository,
+          artifactId: input.artifact.id,
+          encryptedDigest: input.encryptedDigest,
+        }),
+        snapshot: written,
+      };
+    }
+
+    // Fresh or interrupted identity: recover the candidate with the policy
+    // outcome applied before any publication.
+    let workingLedger = snapshot.ledger;
+    let record = existing ?? child;
+    if (
+      existing &&
+      (existing.phase === "claimed" || existing.phase === "implementation_running" ||
+        existing.phase === "workspace_dirty" || existing.phase === "checkpoint_publishing" ||
+        existing.phase === "checkpoint_durable" || existing.phase === "retry_wait")
+    ) {
+      record = transitionRecord(existing, {
+        phase: "recovery_pending",
+        disposition: "active",
+        reason: "Encrypted evidence is available for the interrupted candidate.",
+        next_action: "Reconstruct the candidate from authenticated ciphertext.",
+      });
+      workingLedger = upsertSentinelRecoveryRecord(workingLedger, record, existing.state_version);
+    }
+    if (record.phase !== "recovery_pending") {
+      const retention = matrixEvidenceRetentionRecord(
+        child,
+        input.artifact,
+        input.encryptedDigest,
+        childKey,
+      );
+      let ledger = workingLedger;
+      if (
+        retention &&
+        !ledger.records.some((candidate) =>
+          sentinelRecoveryIdentityKey(candidate.identity) === sentinelRecoveryIdentityKey(retention.identity)
+        )
+      ) {
+        ledger = upsertSentinelRecoveryRecord(ledger, retention, null);
+      }
+      const written = ledger === workingLedger ? snapshot : await writeGitHubSentinelRecoveryLedger({
+        token: input.token,
+        repository: input.repository,
+        fetcher: input.stateFetcher,
+        snapshot,
+        ledger,
+        message: `chore(sentinel): retain non-recoverable matrix evidence ${input.artifact.id}`,
+      });
+      return { result: terminalMatrixResult(input.encryptedDigest, retention), snapshot: written };
+    }
+
+    const recordWithEvidence = safeRecordWithArtifact(record, input.encryptedDigest, input.artifact.id);
+    const applied = await applyMatrixRetryPolicy(snapshot.ledger, recordWithEvidence, now);
+    if (applied !== null && applied.applied.decision.disposition !== "retry_wait") {
+      // The terminal record is written first so the retry metadata has a
+      // matching record identity in the same ledger CAS write.
+      const childLedger = upsertSentinelRecoveryRecord(
+        workingLedger,
+        applied.applied.after,
+        existing === null ? null : record.state_version,
+      );
+      const ledger = withEvaluatedRetry(childLedger, applied.applied.after, applied.applied);
+      const written = await writeGitHubSentinelRecoveryLedger({
+        token: input.token,
+        repository: input.repository,
+        fetcher: input.stateFetcher,
+        snapshot,
+        ledger,
+        message: `chore(sentinel): terminate retry circuit ${childKey}`,
+      });
+      return { result: terminalMatrixResult(input.encryptedDigest, applied.applied.after), snapshot: written };
+    }
+
+    const result = await recoverSentinelArtifactCandidate({
+      checkout: input.checkout,
+      encryptedBytes: input.encrypted,
+      keyBytes: input.keyBytes,
+      record,
+      expectedBaseSha: input.expectedBaseSha,
+      artifactId: input.artifact.id,
+    });
+    if (result.disposition !== "recovered" || !result.recovery_record) {
+      const ledger = upsertSentinelRecoveryRecord(
+        workingLedger,
+        result.recovery_record!,
+        existing === null ? null : record.state_version,
+      );
+      const written = await writeGitHubSentinelRecoveryLedger({
+        token: input.token,
+        repository: input.repository,
+        fetcher: input.stateFetcher,
+        snapshot,
+        ledger,
+        message: `chore(sentinel): classify matrix artifact ${input.artifact.id}`,
+      });
+      return { result, snapshot: written };
+    }
+    const recovered = result.recovery_record;
+
+    // Final current-head verification: the exact development head is re-read
+    // immediately before branch publication and again before the draft PR.
+    const publishHead = await currentRecoveryDevelopmentHead(input.token, input.repository, input.stateFetcher);
+    if (publishHead !== recovered.base_sha) {
+      const stale = await staleHeadManualRecord(record, publishHead);
+      const ledger = upsertSentinelRecoveryRecord(
+        workingLedger,
+        stale,
+        existing === null ? null : record.state_version,
+      );
+      const written = await writeGitHubSentinelRecoveryLedger({
+        token: input.token,
+        repository: input.repository,
+        fetcher: input.stateFetcher,
+        snapshot,
+        ledger,
+        message: `chore(sentinel): stale published head ${childKey}`,
+      });
+      return {
+        result: staleHeadResult(input.encryptedDigest, stale),
+        snapshot: written,
+      };
+    }
+    await publishRecoveryBranchToOrigin({
+      checkout: input.checkout,
+      branch: result.candidate_branch!,
+      candidateSha: result.candidate_sha!,
+      token: input.token,
+      repository: input.repository,
+    });
+    const prHead = await currentRecoveryDevelopmentHead(input.token, input.repository, input.stateFetcher);
+    if (prHead !== recovered.base_sha) {
+      const stale = await staleHeadManualRecord(record, prHead);
+      const ledger = upsertSentinelRecoveryRecord(
+        workingLedger,
+        stale,
+        existing === null ? null : record.state_version,
+      );
+      const written = await writeGitHubSentinelRecoveryLedger({
+        token: input.token,
+        repository: input.repository,
+        fetcher: input.stateFetcher,
+        snapshot,
+        ledger,
+        message: `chore(sentinel): stale pull-request head ${childKey}`,
+      });
+      return {
+        result: staleHeadResult(input.encryptedDigest, stale),
+        snapshot: written,
+      };
+    }
+    await createOrReuseSentinelRecoveryDraftPullRequest({
+      token: input.token,
+      request: result.draft_pull_request!,
+      fetcher: input.fetcher,
+    });
+
+    // Canonical parent linkage: the authoritative work-item revision is
+    // advanced through CAS so the next Sentinel selection sees the recovered
+    // checkpoint while the exact cell binding stays on the child record.
+    const childLedger = upsertSentinelRecoveryRecord(
+      workingLedger,
+      recovered,
+      existing === null ? null : record.state_version,
+    );
+    let ledger = applied === null ? childLedger : withEvaluatedRetry(childLedger, recovered, applied.applied);
+    const workSelection = matrixCellWorkSelectionFromFiles(input.decrypted);
+    const parentBase = matrixCellCanonicalParentIdentity(recovered.identity, workSelection);
+    if (parentBase !== null) {
+      const parentIdentity = {
+        ...parentBase,
+        candidate_generation: resolveCanonicalParentGeneration(ledger.records, parentBase),
+      };
+      const parentKey = sentinelRecoveryIdentityKey(parentIdentity);
+      const existingParent = ledger.records.find((candidate) =>
+        sentinelRecoveryIdentityKey(candidate.identity) === parentKey
+      ) ?? null;
+      if (existingParent === null) {
+        ledger = upsertSentinelRecoveryRecord(
+          ledger,
+          buildMatrixCellParentRecoveryRecord(recovered, parentIdentity, now),
+          null,
+        );
+      }
+      // Otherwise a canonical parent already links this work item: keep the
+      // winner's checkpoint and never allocate a second parent or overwrite a
+      // different durable cell checkpoint under the same identity.
+    }
+    const written = await writeGitHubSentinelRecoveryLedger({
+      token: input.token,
+      repository: input.repository,
+      fetcher: input.stateFetcher,
+      snapshot,
+      ledger,
+      message: `chore(sentinel): recover ${childKey}`,
+    });
+    return { result, snapshot: written };
+  };
+
+  let snapshot = input.snapshot;
+  for (let retry = 0; retry < MAX_LEDGER_CAS_RETRIES; retry += 1) {
+    try {
+      return await attempt(snapshot);
+    } catch (error) {
+      if (!isLedgerConflictError(error)) throw error;
+      snapshot = await readGitHubSentinelRecoveryLedger({
+        token: input.token,
+        repository: input.repository,
+        fetcher: input.stateFetcher,
+      });
+    }
+  }
+  return {
+    result: await manualResult(null, input.encryptedDigest, "ledger_conflict"),
+    snapshot,
+  };
 };
 
 /**
@@ -1376,6 +2459,7 @@ export const recoverSentinelArtifactsInActions = async (
       repository: input.repository,
       fetcher: stateFetcher,
     });
+    const currentDevelopmentHead = await currentRecoveryDevelopmentHead(input.token, input.repository, stateFetcher);
     const requiredArtifactIds = new Set(
       recoverySnapshot.ledger.records
         .filter((record) => record.disposition === "active")
@@ -1400,8 +2484,11 @@ export const recoverSentinelArtifactsInActions = async (
         encrypted = await unzipEnvelope(envelopeZip, privateRoot);
         encryptedDigest = await artifactDigest(encrypted);
         decrypted = await decryptSentinelArtifact(encrypted, keyBytes);
-        const workflowRun = await workflowRunForArtifact(decrypted, artifact, github);
-        const artifactRecord = recordFromArtifact(decrypted, artifact, encryptedDigest, workflowRun);
+        const matrixRecord = await matrixCellRecoveryRecordFromArtifact(decrypted, input.repository);
+        const workflowRun = matrixRecord === null
+          ? await workflowRunForArtifact(decrypted, artifact, github)
+          : undefined;
+        const artifactRecord = recordFromArtifact(decrypted, artifact, encryptedDigest, workflowRun) ?? matrixRecord;
         if (!artifactRecord) {
           const terminalDisposition = legacyArtifactTerminalDisposition(decrypted) ??
             (legacyArtifactHasTerminalReport(decrypted) || terminalArtifactRecord(decrypted)
@@ -1446,11 +2533,45 @@ export const recoverSentinelArtifactsInActions = async (
           });
           continue;
         }
+        if (matrixRecord !== null) {
+          const recovered = await recoverMatrixArtifactInActions({
+            checkout: input.checkout,
+            repository: input.repository,
+            token: input.token,
+            stateFetcher,
+            fetcher: input.fetcher,
+            matrixRecord,
+            artifact,
+            encrypted,
+            keyBytes,
+            decrypted,
+            encryptedDigest,
+            expectedBaseSha: currentDevelopmentHead,
+            snapshot: recoverySnapshot,
+          });
+          recoverySnapshot = recovered.snapshot;
+          results.push(recovered.result);
+          continue;
+        }
         const identityKey = sentinelRecoveryIdentityKey(artifactRecord.identity);
         const existingRecord = recoverySnapshot.ledger.records.find((candidate) =>
           sentinelRecoveryIdentityKey(candidate.identity) === identityKey
         ) ?? null;
         if (existingRecord && existingRecord.disposition !== "active") {
+          // Exact artifact replay of an already terminal disposition: retain
+          // the existing terminal record and perform zero branch/PR/ledger
+          // mutation. Only genuinely new evidence gets the artifact-scoped
+          // retention record.
+          const exactReplay = terminalReplayRecordForIdentityFamily(
+            recoverySnapshot.ledger.records,
+            artifactRecord.identity,
+            artifact.id,
+            encryptedDigest,
+          );
+          if (exactReplay !== null) {
+            results.push(terminalMatrixResult(encryptedDigest, exactReplay));
+            continue;
+          }
           const evidenceRecord = terminalRecoveryRecordForLegacyArtifact(
             input.repository,
             artifact,
@@ -1482,7 +2603,7 @@ export const recoverSentinelArtifactsInActions = async (
           existingRecord &&
           (existingRecord.phase === "claimed" || existingRecord.phase === "implementation_running" ||
             existingRecord.phase === "workspace_dirty" || existingRecord.phase === "checkpoint_publishing" ||
-            existingRecord.phase === "retry_wait")
+            existingRecord.phase === "checkpoint_durable" || existingRecord.phase === "retry_wait")
         ) {
           record = transitionRecord(existingRecord, {
             phase: "recovery_pending",
@@ -1526,12 +2647,36 @@ export const recoverSentinelArtifactsInActions = async (
           encryptedBytes: encrypted,
           keyBytes,
           record,
+          expectedBaseSha: currentDevelopmentHead,
           artifactId: artifact.id,
         });
         if (
           result.disposition === "recovered" && result.candidate_branch && result.candidate_sha &&
-          result.draft_pull_request
+          result.draft_pull_request && result.recovery_record
         ) {
+          // Final current-head verification, matching the matrix path: the
+          // exact development head is re-read immediately before candidate
+          // branch publication and again before draft PR creation. A moved
+          // head fails closed to stale_source/manual with no push or no PR as
+          // appropriate.
+          const publishHead = await currentRecoveryDevelopmentHead(input.token, input.repository, stateFetcher);
+          if (publishHead !== result.recovery_record.base_sha) {
+            const stale = await staleHeadManualRecord(record, publishHead);
+            recoverySnapshot = await writeGitHubSentinelRecoveryLedger({
+              token: input.token,
+              repository: input.repository,
+              fetcher: stateFetcher,
+              snapshot: recoverySnapshot,
+              ledger: upsertSentinelRecoveryRecord(
+                workingLedger,
+                stale,
+                existingRecord === null ? null : record.state_version,
+              ),
+              message: `chore(sentinel): stale published head ${identityKey}`,
+            });
+            results.push(staleHeadResult(encryptedDigest, stale));
+            continue;
+          }
           await publishRecoveryBranchToOrigin({
             checkout: input.checkout,
             branch: result.candidate_branch,
@@ -1539,6 +2684,24 @@ export const recoverSentinelArtifactsInActions = async (
             token: input.token,
             repository: input.repository,
           });
+          const prHead = await currentRecoveryDevelopmentHead(input.token, input.repository, stateFetcher);
+          if (prHead !== result.recovery_record.base_sha) {
+            const stale = await staleHeadManualRecord(record, prHead);
+            recoverySnapshot = await writeGitHubSentinelRecoveryLedger({
+              token: input.token,
+              repository: input.repository,
+              fetcher: stateFetcher,
+              snapshot: recoverySnapshot,
+              ledger: upsertSentinelRecoveryRecord(
+                workingLedger,
+                stale,
+                existingRecord === null ? null : record.state_version,
+              ),
+              message: `chore(sentinel): stale pull-request head ${identityKey}`,
+            });
+            results.push(staleHeadResult(encryptedDigest, stale));
+            continue;
+          }
           await createOrReuseSentinelRecoveryDraftPullRequest({
             token: input.token,
             request: result.draft_pull_request,

@@ -398,6 +398,7 @@ jobs:
           deno eval --frozen --lock=deno.lock '
             import { decodeSentinelArtifactKey, decryptSentinelArtifact } from "./scripts/sentinel/artifact-crypto.ts";
             import { parseMatrixPlanV1 } from "./scripts/sentinel/matrix.ts";
+            import { matrixCellWorkSelectionFromArtifact } from "./scripts/sentinel/matrix-cell.ts";
             const root = Deno.env.get("RUNNER_TEMP")!;
             const entries: string[] = [];
             for await (const entry of Deno.readDir(`${root}/sentinel-matrix-plan`)) if (entry.isFile) entries.push(entry.name);
@@ -415,6 +416,8 @@ jobs:
                 if (!cell || cell.base_sha !== Deno.env.get("CELL_BASE_SHA") || cell.branch !== Deno.env.get("CELL_BRANCH")) throw new Error("cell contract drifted from MatrixPlanV1");
                 await Deno.writeFile(`${root}/sentinel-matrix-plan.json`, planFile.bytes, { create: true, mode: 0o600 });
                 await Deno.writeFile(`${root}/sentinel-matrix-triage.json`, triageFile.bytes, { create: true, mode: 0o600 });
+                const workSelection = matrixCellWorkSelectionFromArtifact(files);
+                await Deno.writeFile(`${root}/sentinel-matrix-work-selection.json`, JSON.stringify(workSelection), { create: true, mode: 0o600 });
               } finally { for (const file of files) file.bytes.fill(0); }
             } finally { key.fill(0); }
           '
@@ -468,10 +471,17 @@ jobs:
               } catch (error) { if (!(error instanceof Deno.errors.NotFound)) throw error; }
             }
             await Deno.writeTextFile(`${root}/sentinel-cell-implementation-schema.json`, JSON.stringify(IMPLEMENTATION_OUTPUT_SCHEMA), { create: true, mode: 0o600 });
+            const workSelectionValue = await Deno.readTextFile(`${root}/sentinel-matrix-work-selection.json`).catch(() => "null");
+            const workSelection = JSON.parse(workSelectionValue);
+            if (workSelection !== null && (
+              typeof workSelection.source_kind !== "string" || typeof workSelection.source_id !== "string" ||
+              typeof workSelection.source_revision !== "string"
+            )) throw new Error("Matrix work selection is invalid");
             const report = await runMatrixCell({
               plan, cell, checkoutPath: Deno.cwd(), reportPath: env("CELL_REPORT_PATH"),
               secretScanReportPath: `${root}/sentinel-cell-secret-scan.json`, outputSchemaPath: `${root}/sentinel-cell-implementation-schema.json`,
               authSlots, sensitiveValues, findings: triageValue.findings.filter((finding) => cell.finding_ids.includes(finding.id)),
+              workSelection: workSelection ?? undefined,
               validate: async ({ checkoutPath }) => {
                 try {
                   await runCandidateValidation({ cwd: checkoutPath, reportPath: `${root}/sentinel-cell-validation.json`, privateDir: root, denoDirectory: env("DENO_DIR") });
@@ -515,6 +525,11 @@ jobs:
           set -euo pipefail
           mkdir -p ".sentinel/reports/matrix/${CELL_ID}"
           cp "$RUNNER_TEMP/sentinel-cell-report.json" ".sentinel/reports/matrix/${CELL_ID}/cell.json"
+          # Retry evidence (recovery identity and candidate snapshot) is
+          # derived from the report path; only ciphertext is ever uploaded.
+          if [ -d "$RUNNER_TEMP/sentinel-cell-report.json.retry-evidence" ]; then
+            cp -a "$RUNNER_TEMP/sentinel-cell-report.json.retry-evidence"/. ".sentinel/reports/matrix/${CELL_ID}/"
+          fi
           deno run --allow-env=GITHUB_ACTIONS,SENTINEL_ARTIFACT_KEY --allow-read=.sentinel/raw-logs,.sentinel/reports,.sentinel/encrypted --allow-write=.sentinel/encrypted scripts/sentinel/encrypt-artifacts.ts
 
       - name: Upload encrypted cell evidence
@@ -552,7 +567,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for target in "$RUNNER_TEMP/sentinel-codex-auth-state" "$RUNNER_TEMP/sentinel-matrix-plan" "$RUNNER_TEMP/sentinel-matrix-plan.json" "$RUNNER_TEMP/sentinel-matrix-triage.json" "$RUNNER_TEMP/sentinel-cell-report.json"; do
+          for target in "$RUNNER_TEMP/sentinel-codex-auth-state" "$RUNNER_TEMP/sentinel-matrix-plan" "$RUNNER_TEMP/sentinel-matrix-plan.json" "$RUNNER_TEMP/sentinel-matrix-triage.json" "$RUNNER_TEMP/sentinel-matrix-work-selection.json" "$RUNNER_TEMP/sentinel-cell-report.json" "$RUNNER_TEMP/sentinel-cell-report.json.retry-evidence" "$RUNNER_TEMP/sentinel-cell-report.json.retry-evidence.staging" "$RUNNER_TEMP/sentinel-cell-report.json.retry-evidence.previous"; do
             if [ -e "$target" ]; then find "$target" -type f -exec sh -c ': > "$1"' _ {} \; 2>/dev/null || true; rm -rf -- "$target"; fi
           done
 
@@ -1297,6 +1312,7 @@ jobs:
           echo "Codex auth state was restored, durably sealed, and passively probed." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Reconcile durable recovery records
+        if: always()
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}

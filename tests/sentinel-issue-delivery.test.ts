@@ -1636,6 +1636,41 @@ Deno.test("merged recovery delivery requires development ancestry proof", () => 
   assert.match(result.after.reason ?? "", /not proven in development ancestry/u);
 });
 
+Deno.test("linked canonical parents reconcile through the exact child checkpoint branch", () => {
+  const childIdentity = { ...recoveryIdentity, source_revision: "b".repeat(64) };
+  const childKey = sentinelRecoveryIdentityKey(childIdentity);
+  const childBranch = sentinelRecoveryCandidateBranch(childIdentity);
+  const parent = recoveryRecord({
+    phase: "checkpoint_durable" as const,
+    candidate_branch: childBranch,
+    candidate_sha: recoveryCandidateSha,
+    predecessor: childKey,
+  });
+  const remote = recoveryRemote({ candidate_branch: childBranch });
+  const result = reconcileSentinelRecoveryRecord({
+    record: parent,
+    remote,
+    now: "2026-08-28T18:05:00.000Z",
+  });
+  assert.equal(result.action, "resume_validation");
+  assert.equal(result.changed, false);
+  assert.equal(result.after.candidate_branch, childBranch);
+  assert.equal(result.after.phase, "checkpoint_durable");
+  // A recorded branch is deterministic only when it belongs to the linked
+  // child identity; anything else stays a manual disposition.
+  const unsafe = reconcileSentinelRecoveryRecord({
+    record: recoveryRecord({
+      phase: "checkpoint_durable" as const,
+      candidate_branch: "development",
+      predecessor: childKey,
+    }),
+    remote: recoveryRemote({ candidate_branch: null, candidate_sha: null }),
+    now: "2026-08-28T18:05:00.000Z",
+  });
+  assert.equal(unsafe.action, "manual_required");
+  assert.match(unsafe.after.reason ?? "", /not deterministic/u);
+});
+
 Deno.test("a candidate already at development without a delivery record is manual", () => {
   const result = reconcileSentinelRecoveryRecord({
     record: recoveryRecord({ phase: "recovery_pending" }),

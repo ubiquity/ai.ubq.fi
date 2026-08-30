@@ -4,7 +4,7 @@ import {
   type SentinelRecoveryReconciliationAction,
   type SentinelRecoveryRemoteObservation,
 } from "./issue-delivery-reconcile.ts";
-import { sentinelRecoveryCandidateBranch } from "./issue-delivery.ts";
+import { isSentinelRecoveryCandidateBranch, sentinelRecoveryCandidateBranch } from "./issue-delivery.ts";
 import {
   acquireSentinelRecoveryLease,
   nonTerminalSentinelRecoveryRecords,
@@ -55,10 +55,18 @@ const refSha = (value: unknown): string => {
 const observeRemote = async (
   input: Readonly<{ token: string; repository: string; record: SentinelRecoveryRecordV1; fetcher: typeof fetch }>,
 ): Promise<SentinelRecoveryRemoteObservation | undefined> => {
-  const branch = sentinelRecoveryCandidateBranch(input.record.identity);
+  const identityBranch = sentinelRecoveryCandidateBranch(input.record.identity);
+  // A canonical parent record may point through `predecessor` at the exact
+  // child record whose deterministic branch actually carries the checkpoint;
+  // observe that recorded branch when the identity branch is absent.
+  const recordedBranch = input.record.candidate_branch;
+  const linkedBranch = recordedBranch !== null && recordedBranch !== identityBranch &&
+      input.record.predecessor !== null && isSentinelRecoveryCandidateBranch(recordedBranch)
+    ? recordedBranch
+    : identityBranch;
   const branchRef = await request({
     ...input,
-    path: `/git/ref/heads/${branch}`,
+    path: `/git/ref/heads/${linkedBranch}`,
     allowNotFound: true,
   });
   // An encrypted artifact is still a live evidence source. Do not convert its
@@ -74,7 +82,7 @@ const observeRemote = async (
   const owner = input.repository.split("/", 1)[0]!;
   const pullsValue = (await request({
     ...input,
-    path: `/pulls?state=all&base=development&head=${encodeURIComponent(`${owner}:${branch}`)}&per_page=100`,
+    path: `/pulls?state=all&base=development&head=${encodeURIComponent(`${owner}:${linkedBranch}`)}&per_page=100`,
   })).value;
   if (!Array.isArray(pullsValue)) throw new Error("GitHub recovery pull-request response is invalid");
   const deliveries: SentinelRecoveryDeliveryObservation[] = [];
@@ -84,7 +92,8 @@ const observeRemote = async (
     const base = record(pull?.base);
     if (
       !pull || !head || !base || !Number.isSafeInteger(pull.number) || (pull.number as number) <= 0 ||
-      head.ref !== branch || typeof head.sha !== "string" || !FULL_SHA.test(head.sha) || base.ref !== "development" ||
+      head.ref !== linkedBranch || typeof head.sha !== "string" || !FULL_SHA.test(head.sha) ||
+      base.ref !== "development" ||
       (pull.state !== "open" && pull.state !== "closed") ||
       !(pull.merged_at === null || typeof pull.merged_at === "string")
     ) throw new Error("GitHub recovery pull-request identity is invalid");
@@ -95,7 +104,7 @@ const observeRemote = async (
     }
     deliveries.push({
       pull_request_number: pull.number as number,
-      head_branch: branch,
+      head_branch: linkedBranch,
       head_sha: head.sha,
       base_branch: "development",
       head_contained_in_development: contained,
@@ -104,7 +113,7 @@ const observeRemote = async (
     });
   }
   return {
-    candidate_branch: candidateSha === null ? null : branch,
+    candidate_branch: candidateSha === null ? null : linkedBranch,
     candidate_sha: candidateSha,
     development_sha: developmentSha,
     deliveries,
@@ -181,7 +190,10 @@ export const runSentinelRecoveryPass = async (
       ? upsertSentinelRecoveryRecord(snapshot.ledger, reconciled.after, recoveryRecord.state_version)
       : snapshot.ledger;
     let finalRecord = reconciled.after;
-    const failureClass = retryFailureClass(reconciled.action, finalRecord);
+    // A linked canonical parent tracks its exact child record through
+    // `predecessor`; the child owns the classified failure and retry circuit,
+    // so applying policy to the parent would double-count the attempt.
+    const failureClass = finalRecord.predecessor === null ? retryFailureClass(reconciled.action, finalRecord) : null;
     if (failureClass !== null && finalRecord.disposition === "active" && finalRecord.phase !== "retry_wait") {
       const history = ledger.retry_history.filter((attempt) => sentinelRecoveryIdentityKey(attempt.identity) === key)
         .slice(-8);

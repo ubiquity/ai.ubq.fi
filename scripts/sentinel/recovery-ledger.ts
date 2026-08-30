@@ -12,6 +12,7 @@ import {
   type SentinelRetryAttemptV1,
   type SentinelRetryDecision,
 } from "./retry.ts";
+import type { SentinelRecoverySourceKind } from "./recovery.ts";
 
 export const SENTINEL_RECOVERY_LEDGER_SCHEMA_VERSION = 1 as const;
 export const SENTINEL_RECOVERY_LEDGER_PATH = "docs/sentinel-recovery-records.json";
@@ -105,6 +106,71 @@ export const nonTerminalSentinelRecoveryRecords = (
   ledger: SentinelRecoveryLedgerV1,
 ): readonly SentinelRecoveryRecordV1[] =>
   parseSentinelRecoveryLedger(ledger).records.filter((record) => !isTerminalRecoveryPhase(record.phase));
+
+export type SentinelRecoverySelectionInput = Readonly<{
+  ledger: SentinelRecoveryLedgerV1;
+  repository: string;
+  source_kind: SentinelRecoverySourceKind;
+  source_id: string;
+  source_revision: string;
+  now: string;
+}>;
+
+export type SentinelRecoverySelectionResult = Readonly<{
+  related_records: readonly SentinelRecoveryRecordV1[];
+  current_record: SentinelRecoveryRecordV1 | null;
+  current_identity_key: string | null;
+  retry_decision: SentinelRetryDecision | null;
+  retry_is_due: boolean;
+  next_generation: number;
+}>;
+
+/**
+ * The exact selection/recovery lookup the Sentinel cycle runs after a work
+ * item (issue, backlog entry, or matrix cell) is chosen. It returns the
+ * durable record for the authoritative source revision, the durable retry
+ * decision, whether the bounded retry delay elapsed, and the next candidate
+ * generation. A recovered canonical parent record (linked through
+ * `predecessor` to its exact cell record) is matched here, so a next-cycle
+ * selection sees and defers to the recovered checkpoint instead of claiming a
+ * fresh generation.
+ */
+export const resolveSentinelRecoverySelection = (
+  input: SentinelRecoverySelectionInput,
+): SentinelRecoverySelectionResult => {
+  const ledger = parseSentinelRecoveryLedger(input.ledger);
+  if (
+    input.repository.trim().length === 0 || input.source_id.trim().length === 0 ||
+    input.source_revision.trim().length === 0 || !Number.isFinite(Date.parse(input.now))
+  ) throw new Error("Sentinel recovery selection input is invalid");
+  const related = ledger.records.filter((record) =>
+    record.identity.repository === input.repository &&
+    record.identity.source_kind === input.source_kind &&
+    record.identity.source_id === input.source_id
+  );
+  const current =
+    related.find((record) =>
+      record.identity.source_revision === input.source_revision && record.disposition === "active"
+    ) ?? null;
+  const currentKey = current === null ? null : sentinelRecoveryIdentityKey(current.identity);
+  const retryDecision = currentKey === null
+    ? null
+    : ledger.retry_decisions.find((entry) => entry.identity_key === currentKey)?.decision ?? null;
+  const retryIsDue = current?.phase === "retry_wait" && retryDecision?.should_retry === true &&
+    retryDecision.retry_at !== null && Date.parse(retryDecision.retry_at) <= Date.parse(input.now);
+  const nextGeneration = related.reduce(
+    (maximum, record) => Math.max(maximum, record.identity.candidate_generation),
+    0,
+  ) + 1;
+  return {
+    related_records: related,
+    current_record: current,
+    current_identity_key: currentKey,
+    retry_decision: retryDecision,
+    retry_is_due: retryIsDue,
+    next_generation: nextGeneration,
+  };
+};
 
 export const upsertSentinelRecoveryRecord = (
   ledgerValue: unknown,
