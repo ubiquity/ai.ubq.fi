@@ -1631,15 +1631,33 @@ const matrixCellWorkSelectionFromFiles = (
   }
 };
 
-/** Fetch the exact current `development` ref from GitHub for stale-base checks. */
-const currentRecoveryDevelopmentHead = async (
+/**
+ * Fetch the exact current `development` ref from GitHub for stale-base checks.
+ * `githubFetch` takes the repository-scoped path exactly like its other call
+ * sites: the real GitHub ref endpoint is
+ * `GET /repos/{owner}/{repo}/git/ref/heads/development` (a repository-less
+ * `/git/ref/...` request is the live HTTP 404 the recovery run observed). The
+ * response must name the exact `refs/heads/development` commit identity; any
+ * other ref, non-commit object, or non-full SHA fails closed.
+ */
+export const currentRecoveryDevelopmentHead = async (
   token: string,
   repository: string,
   fetcher: GitHubRequest,
 ): Promise<string> => {
-  const value = await githubFetch(token, repository, "/git/ref/heads/development", { method: "GET" }, fetcher);
-  const object = isRecord(value) ? value.object : null;
-  if (!object || !isRecord(object) || typeof object.sha !== "string" || !FULL_SHA.test(object.sha)) {
+  const value = await githubFetch(
+    token,
+    repository,
+    `/repos/${repository}/git/ref/heads/development`,
+    { method: "GET" },
+    fetcher,
+  );
+  const outer = isRecord(value) ? value : null;
+  const object = isRecord(outer?.object) ? outer.object : null;
+  if (
+    outer?.ref !== "refs/heads/development" || object?.type !== "commit" ||
+    typeof object.sha !== "string" || !FULL_SHA.test(object.sha)
+  ) {
     throw new Error("Sentinel recovery development head is invalid");
   }
   return object.sha;

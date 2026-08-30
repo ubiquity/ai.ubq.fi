@@ -4,6 +4,7 @@ import {
   authenticatedMatrixCellReport,
   buildSentinelRecoveryDraftPullRequest,
   createOrReuseSentinelRecoveryDraftPullRequest,
+  currentRecoveryDevelopmentHead,
   isSentinelArtifactRecoveryEligible,
   legacyArtifactHasTerminalReport,
   legacyArtifactNeedsManualDisposition,
@@ -1337,7 +1338,8 @@ class FakeRecoveryStore {
       const sha = this.devHeadAfterReads !== null && this.devReads >= this.devHeadAfterReads.at
         ? this.devHeadAfterReads.sha
         : this.developmentHead;
-      return json({ ref: path, object: { sha, type: "commit" } });
+      // The live GitHub ref response names the exact ref and commit object.
+      return json({ ref: "refs/heads/development", object: { sha, type: "commit" } });
     }
     const commitMatch = path.match(/^\/git\/commits\/([0-9a-f]{40})$/u);
     if (commitMatch) {
@@ -1441,6 +1443,29 @@ class FakeRecoveryStore {
     return fail(404, `unhandled fake route ${method} ${path}`);
   };
 }
+
+/**
+ * Faithful GitHub REST surface: ref routes exist only under
+ * `/repos/{owner}/{repo}`. The FakeRecoveryStore strips the repository prefix
+ * and tolerates repository-less ref URLs, but the live API returns HTTP 404
+ * for them — exactly the failure observed in the artifact-recovery run. This
+ * wrapper enforces the live contract while recording every absolute URL.
+ */
+const liveContractFetcher = (
+  store: FakeRecoveryStore,
+): Readonly<{ fetcher: (input: string | URL | Request, init?: RequestInit) => Promise<Response>; urls: string[] }> => {
+  const urls: string[] = [];
+  const fetcher = async (input: string | URL | Request, init: RequestInit = {}): Promise<Response> => {
+    const url = new URL(String(input));
+    urls.push(url.href);
+    const notFound = (): Response => new Response(JSON.stringify({ message: "Not Found" }), { status: 404 });
+    if (url.origin !== "https://api.github.com" || !url.pathname.startsWith(`/repos/${store.repository}/`)) {
+      return notFound();
+    }
+    return await store.fetcher(input, init);
+  };
+  return { fetcher, urls };
+};
 
 const encryptedArtifactKey = (key: Uint8Array): string => btoa(String.fromCharCode(...key));
 
@@ -2747,6 +2772,160 @@ Deno.test({
     } finally {
       for (const encrypted of encryptedStack) encrypted.fill(0);
       key.fill(0);
+      environment.restore();
+      await Deno.remove(fixture.root, { recursive: true });
+    }
+  },
+});
+
+Deno.test("recovery development head read uses the exact repository-scoped ref contract", async () => {
+  const repository = "ubiquity/ai.ubq.fi";
+  const developmentSha = "3f3d8c46b389dee58489aac1b88d4a01972d9e94";
+  const requested: string[] = [];
+  // Mirrors the live `GET /repos/{owner}/{repo}/git/ref/heads/development`
+  // response: an exact ref name, a commit object, and a full SHA. Every other
+  // route — including the repository-less `/git/ref/...` form the recovery
+  // runner used to request — returns the live HTTP 404.
+  const liveGitHub = (input: string | URL | Request): Promise<Response> => {
+    const url = new URL(String(input));
+    requested.push(url.href);
+    const fail = (status: number, message: string): Response => new Response(JSON.stringify({ message }), { status });
+    if (!url.pathname.startsWith(`/repos/${repository}/`)) return Promise.resolve(fail(404, "Not Found"));
+    if (url.pathname !== `/repos/${repository}/git/ref/heads/development`) {
+      return Promise.resolve(fail(404, `unexpected route ${url.pathname}`));
+    }
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({
+          ref: "refs/heads/development",
+          object: { sha: developmentSha, type: "commit" },
+        }),
+        { status: 200 },
+      ),
+    );
+  };
+  const head = await currentRecoveryDevelopmentHead("fixture-token", repository, liveGitHub);
+  assert.equal(head, developmentSha);
+  assert.deepEqual(requested, [`https://api.github.com/repos/${repository}/git/ref/heads/development`]);
+  // A repository-less ref request is the exact live failure: HTTP 404 surfaces
+  // and nothing is guessed or salvaged.
+  await assert.rejects(
+    () =>
+      currentRecoveryDevelopmentHead(
+        "fixture-token",
+        repository,
+        () => Promise.resolve(new Response(JSON.stringify({ message: "Not Found" }), { status: 404 })),
+      ),
+    /HTTP 404/,
+  );
+  // Every identity mismatch stays fail-closed: wrong ref, non-commit object,
+  // and non-full SHA are all rejected.
+  await assert.rejects(
+    () =>
+      currentRecoveryDevelopmentHead("fixture-token", repository, () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              ref: "refs/heads/main",
+              object: { sha: developmentSha, type: "commit" },
+            }),
+            { status: 200 },
+          ),
+        )),
+    /development head is invalid/,
+  );
+  await assert.rejects(
+    () =>
+      currentRecoveryDevelopmentHead("fixture-token", repository, () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              ref: "refs/heads/development",
+              object: { sha: developmentSha, type: "tag" },
+            }),
+            { status: 200 },
+          ),
+        )),
+    /development head is invalid/,
+  );
+  await assert.rejects(
+    () =>
+      currentRecoveryDevelopmentHead("fixture-token", repository, () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              ref: "refs/heads/development",
+              object: { sha: "abcdef", type: "commit" },
+            }),
+            { status: 200 },
+          ),
+        )),
+    /development head is invalid/,
+  );
+});
+
+Deno.test({
+  name: "recovery flow reads the exact development head through the repository-scoped ref URL",
+  ignore: unavailable,
+  async fn() {
+    const fixture = await createBaseCheckout();
+    await createBareOrigin(fixture.root, fixture.checkout);
+    const evidence = await matrixCellEvidence(fixture);
+    const key = new Uint8Array(32).fill(27);
+    const encrypted = await encryptSentinelArtifact(evidence.files, key, new Uint8Array(12).fill(11));
+    const record = await matrixCellRecoveryRecordFromArtifact(evidence.files, "ubiquity/ai.ubq.fi");
+    assert(record);
+    const environment = await sentinelRepositoryEnvironment();
+    try {
+      const probe = await recoverSentinelArtifactCandidate({
+        checkout: fixture.checkout,
+        encryptedBytes: encrypted,
+        keyBytes: key,
+        record,
+        artifactId: 9697049300,
+      });
+      assert.equal(probe.disposition, "recovered");
+      const store = new FakeRecoveryStore({
+        devHead: fixture.baseSha,
+        artifacts: [{
+          id: 9697049300,
+          name: `sentinel-matrix-cell-v1-33197770000-1-${MATRIX_CELL_ID}`,
+          createdAt: new Date(Date.now() - 60_000).toISOString(),
+          zip: await createEvidenceZip(fixture.root, encrypted),
+        }],
+        branchShas: new Map([[probe.candidate_branch!, probe.candidate_sha!]]),
+      });
+      const live = liveContractFetcher(store);
+      const results = await recoverSentinelArtifactsInActions({
+        checkout: fixture.checkout,
+        repository: "ubiquity/ai.ubq.fi",
+        token: "fixture-token",
+        encodedArtifactKey: encryptedArtifactKey(key),
+        fetcher: live.fetcher,
+      });
+      assert.equal(results.length, 1);
+      assert.equal(results[0]!.disposition, "recovered");
+      assert.equal(results[0]!.candidate_sha, probe.candidate_sha);
+      const developmentRef = `https://api.github.com/repos/${store.repository}/git/ref/heads/development`;
+      assert.ok(
+        live.urls.some((url) => url === developmentRef),
+        "the exact repository-scoped development ref URL must be requested",
+      );
+      assert.ok(
+        !live.urls.some((url) => url === "https://api.github.com/git/ref/heads/development"),
+        "the repository-less ref URL that live-404s must never be requested",
+      );
+      const ledger = parseSentinelRecoveryLedger(store.currentLedger());
+      const child = ledger.records.find((candidate) =>
+        candidate.identity.source_revision === evidence.record.identity.source_revision
+      );
+      assert(child);
+      assert.equal(child.candidate_sha, probe.candidate_sha);
+      assert.equal(child.base_sha, fixture.baseSha);
+    } finally {
+      encrypted.fill(0);
+      key.fill(0);
+      for (const file of evidence.files) file.bytes.fill(0);
       environment.restore();
       await Deno.remove(fixture.root, { recursive: true });
     }
