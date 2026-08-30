@@ -12608,6 +12608,120 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       }
     });
 
+    await t.step("preserves upstream reasoning 1:1 in buffered Chat responses", async () => {
+      const response = await withFetchMock(
+        () =>
+          new Response(
+            JSON.stringify(
+              completionWithMessage("chatcmpl_cerebras_reasoning_buffered", {
+                role: "assistant",
+                content: "pong",
+                reasoning: "the model considered the ping before answering pong.",
+              }),
+            ),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        () => handleChatCompletions(request({ ...refusalBody, stream: false })),
+      );
+
+      assert.equal(response.status, 200);
+      const payload = await response.json() as {
+        choices?: Array<{ message?: Record<string, unknown> }>;
+      };
+      assert.equal(payload.choices?.[0]?.message?.role, "assistant");
+      assert.equal(payload.choices?.[0]?.message?.content, "pong");
+      assert.equal(
+        payload.choices?.[0]?.message?.reasoning,
+        "the model considered the ping before answering pong.",
+      );
+    });
+
+    await t.step("preserves upstream reasoning 1:1 in downgraded Chat streams", async () => {
+      const response = await withFetchMock(
+        () =>
+          new Response(
+            JSON.stringify(
+              completionWithMessage("chatcmpl_cerebras_reasoning_stream", {
+                role: "assistant",
+                content: null,
+                reasoning: "streamed reasoning trace.",
+              }),
+            ),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        () => handleChatCompletions(request({ ...refusalBody, stream: true })),
+      );
+
+      assert.equal(response.status, 200);
+      const streamText = await response.text();
+      const firstDataLine = streamText.split("\n").find((line) => line.startsWith("data: {"));
+      assert.ok(firstDataLine);
+      const firstEvent = JSON.parse(firstDataLine.slice("data: ".length)) as {
+        choices?: Array<{ delta?: Record<string, unknown> }>;
+      };
+      // Native mirror: reasoning rides the leading delta (content stays in
+      // the same chunk when present; here the fixture has content: null).
+      assert.equal(firstEvent.choices?.[0]?.delta?.role, "assistant");
+      assert.equal(firstEvent.choices?.[0]?.delta?.reasoning, "streamed reasoning trace.");
+      assert.match(streamText, /data: \[DONE\]/);
+    });
+
+    await t.step("forwards bounded upstream error message/code 1:1", async () => {
+      const response = await withFetchMock(
+        () =>
+          new Response(
+            JSON.stringify({
+              message:
+                "Tools with mixed values for 'strict' are not allowed. Please set all tools to 'strict: true' or 'strict: false'",
+              type: "invalid_request_error",
+              param: "tools",
+              code: "wrong_api_format",
+            }),
+            {
+              status: 400,
+              headers: {
+                "Content-Type": "application/json",
+                "X-Request-Id": "cerebras-error-request-1",
+                "Retry-After": "17",
+              },
+            },
+          ),
+        () => handleChatCompletions(request(refusalBody)),
+      );
+
+      assert.equal(response.status, 400);
+      assert.equal(response.headers.get("x-uos-upstream"), "cerebras");
+      assert.equal(response.headers.get("x-uos-provider-request-id"), "cerebras-error-request-1");
+      assert.equal(response.headers.get("Retry-After"), "17");
+      const error = (await response.json() as {
+        error?: { message?: string; code?: string; type?: string };
+      }).error;
+      assert.equal(
+        error?.message,
+        "Tools with mixed values for 'strict' are not allowed. Please set all tools to 'strict: true' or 'strict: false'",
+      );
+      assert.equal(error?.code, "wrong_api_format");
+      assert.equal(error?.type, "invalid_request_error");
+    });
+
+    await t.step("keeps the generic error when the upstream body is not JSON", async () => {
+      const response = await withFetchMock(
+        () =>
+          new Response("<html>provider diagnostic page</html>", {
+            status: 502,
+            headers: { "Content-Type": "text/html" },
+          }),
+        () => handleChatCompletions(request(refusalBody)),
+      );
+
+      assert.equal(response.status, 502);
+      const error = (await response.json() as {
+        error?: { message?: string; code?: string };
+      }).error;
+      assert.equal(error?.message, "Cerebras upstream returned an error.");
+      assert.equal(error?.code, "cerebras_upstream_error");
+    });
+
     await t.step("preserves provider-native refusals in buffered Chat responses", async () => {
       const response = await withFetchMock(
         () =>
@@ -12959,6 +13073,10 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
                   error: {
                     message: "provider-body-must-not-be-logged-or-relayed",
                     code: "fixture_failure",
+                    // Arbitrary provider diagnostics must NEVER be relayed:
+                    // only the standard bounded message/code fields are.
+                    provider_debug_marker: "provider-body-must-not-be-logged-or-relayed",
+                    trace_id: "provider-trace-must-not-be-relayed",
                   },
                 }),
                 {
@@ -12994,11 +13112,24 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
               `${header} on ${testCase.status}`,
             );
           }
-          const payload = await response.json() as { error?: { message?: string; type?: string; code?: string } };
+          const payload = await response.json() as {
+            error?: {
+              message?: string;
+              type?: string;
+              code?: string;
+              provider_debug_marker?: string;
+              trace_id?: string;
+            };
+          };
           assert.equal(payload.error?.type, testCase.expectedType);
-          assert.equal(payload.error?.code, "cerebras_upstream_error");
+          // D2 (2026-08-29): bounded standard upstream fields ARE forwarded 1:1.
+          assert.equal(payload.error?.code, "fixture_failure");
+          assert.equal(payload.error?.message, "provider-body-must-not-be-logged-or-relayed");
+          // The body-reflection safety property still holds: unknown provider
+          // fields never reach the client.
+          assert.equal(payload.error?.provider_debug_marker, undefined);
+          assert.equal(payload.error?.trace_id, undefined);
           assert.equal(getResponseTelemetry(response)?.failureKind, "upstream_http_error");
-          assert.doesNotMatch(payload.error?.message ?? "", /provider-body-must-not-be-logged-or-relayed/);
           const logText = JSON.stringify(logs);
           assert.doesNotMatch(logText, /provider-body-must-not-be-logged-or-relayed/);
           assert.doesNotMatch(logText, /cerebras-test-key/);

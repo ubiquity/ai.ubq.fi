@@ -36,7 +36,11 @@ import {
 } from "./codex_models.ts";
 import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
 import { DEFAULT_REASONING_EFFORT, normalizeReasoningEffort, type ReasoningEffort } from "./defaults.ts";
-import { readBoundedResponseBody } from "./bounded_response_body.ts";
+import {
+  BOUNDED_RESPONSE_BODY_MAX_BYTES,
+  BOUNDED_RESPONSE_BODY_TIMEOUT_MS,
+  readBoundedResponseBody,
+} from "./bounded_response_body.ts";
 import { json, openaiError, STANDARD_RATE_LIMIT_HEADERS } from "./http.ts";
 import {
   BUFFERED_INFERENCE_DEADLINE_MS,
@@ -2051,6 +2055,9 @@ const streamCerebrasChatCompletion = (
     const index = typeof value.index === "number" ? value.index : choiceIndex;
     const message = isRecord(value.message) && !Array.isArray(value.message) ? value.message : {};
     const delta: Record<string, unknown> = { role: "assistant" };
+    // Native Cerebras stream deltas carry reasoning in the leading chunk;
+    // mirror that 1:1 (compliance D1) instead of dropping it.
+    if (typeof message.reasoning === "string" && message.reasoning) delta.reasoning = message.reasoning;
     if (typeof message.content === "string") delta.content = message.content;
     if (typeof message.refusal === "string" && message.refusal) delta.refusal = message.refusal;
 
@@ -2196,10 +2203,63 @@ const cancelResponseBody = (response: Response): void => {
 };
 
 // Cerebras responses can contain provider-specific diagnostics. Preserve the
-// HTTP semantics clients need, but never reflect that body through the gateway
-// (and do not leave its stream open while returning the normalized error).
-const toCerebrasUpstreamErrorResponse = (upstream: Response): Response => {
-  cancelResponseBody(upstream);
+// HTTP semantics clients need and forward ONLY the standard OpenAI error
+// fields (message/code, bounded + whitelisted) so 1:1 behavior is
+// debuggable (compliance D2) — never reflect the arbitrary upstream body.
+const CEREBRAS_UPSTREAM_ERROR_MESSAGE_MAX = 1_000;
+const CEREBRAS_UPSTREAM_ERROR_CODE_MAX = 200;
+
+const parseCerebrasUpstreamErrorDetail = (
+  body: unknown,
+): { message?: string; code?: string } => {
+  if (!isRecord(body) || Array.isArray(body)) return {};
+  const error = isRecord(body.error) && !Array.isArray(body.error) ? body.error : null;
+  const pickString = (value: unknown, max: number): string | undefined => {
+    if (typeof value !== "string") return undefined;
+    const trimmed = value.slice(0, max).trim();
+    return trimmed ? trimmed : undefined;
+  };
+  return {
+    message: pickString(
+      error?.message ?? body.message,
+      CEREBRAS_UPSTREAM_ERROR_MESSAGE_MAX,
+    ),
+    code: pickString(
+      error?.code ?? body.code,
+      CEREBRAS_UPSTREAM_ERROR_CODE_MAX,
+    ),
+  };
+};
+
+const toCerebrasUpstreamErrorResponse = async (
+  upstream: Response,
+  signal?: AbortSignal,
+): Promise<Response> => {
+  // Read the error body under the shared bounded ceiling (64 KiB / 1 s) so a
+  // stalled upstream cannot extend the gateway request; only message/code are
+  // ever forwarded.
+  let detail: { message?: string; code?: string } = {};
+  try {
+    const captured = await readBoundedResponseBody(upstream, {
+      signal,
+      maxBytes: BOUNDED_RESPONSE_BODY_MAX_BYTES,
+      timeoutMs: BOUNDED_RESPONSE_BODY_TIMEOUT_MS,
+      cancellationReason: "Cerebras upstream error body",
+    });
+    if (captured.complete && captured.bytes.length > 0) {
+      try {
+        detail = parseCerebrasUpstreamErrorDetail(
+          JSON.parse(new TextDecoder().decode(captured.bytes)) as unknown,
+        );
+      } catch {
+        // Non-JSON error body: keep the generic message (never reflect it).
+      }
+    }
+  } catch {
+    // Bounded read failure must not change the error semantics.
+  } finally {
+    cancelResponseBody(upstream);
+  }
   const headers = cerebrasResponseHeaders(getCerebrasProviderRequestId(upstream));
   const retryAfter = upstream.headers.get("Retry-After");
   if (retryAfter) headers["Retry-After"] = retryAfter;
@@ -2211,8 +2271,8 @@ const toCerebrasUpstreamErrorResponse = (upstream: Response): Response => {
   }
   return openaiError(
     upstream.status,
-    "Cerebras upstream returned an error.",
-    "cerebras_upstream_error",
+    detail.message ?? "Cerebras upstream returned an error.",
+    detail.code ?? "cerebras_upstream_error",
     {
       type: upstream.status === 408 ? "server_error" : upstreamStatusToErrorType(upstream.status),
       headers,
@@ -8718,7 +8778,7 @@ const handleCerebrasChatCompletions = async (
     recordCerebrasFailureKind(usageContext, "upstream_http_error");
     recordStreamTerminalType(usageContext, "response.failed");
     await recordErrorUsage(usageContext);
-    return toCerebrasUpstreamErrorResponse(upstream);
+    return await toCerebrasUpstreamErrorResponse(upstream, requestSignal);
   }
 
   const captured = await readBoundedResponseBody(upstream, {

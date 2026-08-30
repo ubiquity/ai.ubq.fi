@@ -398,6 +398,10 @@ const normalizeChoice = (
     role: "assistant",
     content: message.content ?? (toolCalls?.length || refusal ? null : ""),
   };
+  // 1:1 with native Cerebras (compliance D1, measured 2026-08-29): the
+  // upstream reasoning field must reach clients unchanged. The gateway
+  // previously dropped it, so clients saw content+role only.
+  if (typeof message.reasoning === "string") normalizedMessage.reasoning = message.reasoning;
   if (refusal) normalizedMessage.refusal = refusal;
   if (toolCalls?.length) normalizedMessage.tool_calls = toolCalls;
   return {
