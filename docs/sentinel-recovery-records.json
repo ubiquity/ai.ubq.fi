@@ -734,6 +734,36 @@
       "identity": {
         "repository": "ubiquity/ai.ubq.fi",
         "source_kind": "incident",
+        "source_id": "0bbad34048781a95f2573f84cf2fb402a107f55fb22d6a8982db964c6fbf64be",
+        "source_revision": "c45d85eb7455b02184b68ee3c821ba853153b38e",
+        "candidate_generation": 1
+      },
+      "run_id": "33293914921",
+      "attempt": 1,
+      "lease_token": "33293914921-1",
+      "base_sha": "c45d85eb7455b02184b68ee3c821ba853153b38e",
+      "phase": "claimed",
+      "disposition": "active",
+      "state_version": 1,
+      "created_at": "2026-08-30T05:05:44.891Z",
+      "updated_at": "2026-08-30T05:05:44.891Z",
+      "candidate_branch": null,
+      "candidate_sha": null,
+      "changed_files": [],
+      "tree_sha": null,
+      "failure_class": null,
+      "failure_fingerprint": null,
+      "artifact_ids": [],
+      "artifact_digests": [],
+      "reason": "The selected work item is durably claimed before implementation.",
+      "next_action": "Start the Luna implementation stage.",
+      "predecessor": null
+    },
+    {
+      "schema_version": 1,
+      "identity": {
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_kind": "incident",
         "source_id": "0f1502e3c920f1462b36833bf901ff16be22dd334ec7b63106ee09bbb54ef908",
         "source_revision": "30fa528f428e57cec1eaac212281a02e5c5920f0",
         "candidate_generation": 1
