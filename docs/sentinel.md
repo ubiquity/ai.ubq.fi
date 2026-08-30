@@ -277,3 +277,18 @@ satisfy the gates above and one manual preview cycle on `development` demonstrat
 
 After the supervised run has a complete durable report, set the repository variable `SENTINEL_AUTONOMY_ENABLED=true`.
 Remove or change that variable to stop new autonomous hourly archival and incident cycles.
+
+## Local verification gate
+
+Run `deno task sentinel:test-local` from the repository root before creating any pull request that touches Provider
+Sentinel. It is the single canonical local verification harness (`scripts/sentinel/local-test-harness.ts`) and runs in
+fixed fail-fast order the workflow-contract, rolling-review, artifact-recovery (with the read/write/run permissions its
+fixtures need), recovery/controller, matrix, Luna policy/orchestrator, and rollback tests, then the `fmt` check, `lint`,
+and `build` tasks. It is hermetic by default: child processes get no network access and no GitHub, Deno, or model
+credentials, so no paid model or deployment call can run, and every dependency resolution is locked and cached-only. It
+prints concise per-stage timing and status, preserves child output when a stage fails, exits nonzero on the first failed
+stage, and writes the machine-readable result to the ignored `.sentinel/local-test/result.json`.
+
+CI repeats only that exact command. The `provider-sentinel.yml` workflow invokes exactly `deno task sentinel:test-local`
+and defines no independent Sentinel verification steps of its own; new verification belongs in the local harness. The
+local run must pass before the pull request is created, not after review findings arrive.

@@ -37,6 +37,7 @@
     "test:measurement": "deno test --frozen --env --allow-net=127.0.0.1 --allow-env=UOS_AI_TOKEN,DENO_DEPLOY_TOKEN tests/usage-optimization-measurement.test.ts",
     "test:stress": "deno test --frozen --env --unstable-kv --allow-net=127.0.0.1 --allow-env=METERED_API_KEY,SURPLUS_API_KEY tests/failover-stress-http.test.ts",
     "test:e2e": "deno test --frozen --env --allow-net --allow-env=BASE_URL,UOS_AI_TOKEN,DENO_DEPLOY_TOKEN tests/live-default-model.e2e.ts",
+    "sentinel:test-local": "deno run --allow-env --allow-run=deno --allow-write=.sentinel/local-test scripts/sentinel/local-test-harness.ts",
     "fmt": "deno fmt serve.ts src tests scripts docs benchmarks",
     "lint": "deno lint serve.ts src tests scripts benchmarks"
   },

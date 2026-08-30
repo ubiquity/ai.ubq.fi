@@ -188,6 +188,15 @@ Deno.test("matrix cells cannot review or deploy and convergence has one integrat
   assert.match(orchestrator, /writeMatrixDelivery\(\{\s*status: "published"/u);
 });
 
+Deno.test("Provider Sentinel verification is exactly the canonical local command", () => {
+  assert.equal(
+    workflow.match(/deno task sentinel:test-local/gu)?.length ?? 0,
+    1,
+    "CI must invoke exactly `deno task sentinel:test-local` for Sentinel verification",
+  );
+  assert.doesNotMatch(workflow, /deno test\b/u, "CI must not define its own Sentinel verification steps");
+});
+
 Deno.test("rolling review discovery independently drives the async reviewer gate", () => {
   const selectorStart = workflow.indexOf("- name: Select agent work");
   const selectorEnd = workflow.indexOf(
