@@ -417,7 +417,7 @@ jobs:
                 await Deno.writeFile(`${root}/sentinel-matrix-plan.json`, planFile.bytes, { create: true, mode: 0o600 });
                 await Deno.writeFile(`${root}/sentinel-matrix-triage.json`, triageFile.bytes, { create: true, mode: 0o600 });
                 const workSelection = matrixCellWorkSelectionFromArtifact(files);
-                await Deno.writeFile(`${root}/sentinel-matrix-work-selection.json`, JSON.stringify(workSelection), { create: true, mode: 0o600 });
+                await Deno.writeTextFile(`${root}/sentinel-matrix-work-selection.json`, JSON.stringify(workSelection), { create: true, mode: 0o600 });
               } finally { for (const file of files) file.bytes.fill(0); }
             } finally { key.fill(0); }
           '

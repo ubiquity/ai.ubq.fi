@@ -167,6 +167,19 @@ Deno.test("the cell runner receives the authoritative work selection and scrubs 
   assert.match(repair, /sentinel-matrix-work-selection\.json/u);
   assert.match(repair, /workSelection: workSelection \?\? undefined/u);
   assert.match(repair, /sentinel-cell-report\.json\.retry-evidence\.staging/u);
+  // JSON.stringify yields a string, which Deno.writeFile rejects with
+  // `TypeError: expected Uint8Array, got string`. The materialized selection
+  // must use the text API so this exact bug cannot return.
+  assert.match(
+    repair,
+    /Deno\.writeTextFile\([^\n]*sentinel-matrix-work-selection\.json[^\n]*JSON\.stringify\(workSelection\)/u,
+    "the work selection write must use Deno.writeTextFile for its JSON.stringify output",
+  );
+  assert.doesNotMatch(
+    repair,
+    /Deno\.writeFile\([^\n]*JSON\.stringify\(workSelection\)/u,
+    "Deno.writeFile must never receive the JSON.stringify work selection string",
+  );
   // Work selection is plaintext evidence metadata that must be scrubbed.
   const scrubStep = repair.slice(
     repair.indexOf('for target in "$RUNNER_TEMP/sentinel-codex-auth-state"'),
