@@ -35,5 +35,15 @@
   },
   "rollback_intent": null,
   "constraints": [],
-  "progress": null
+  "progress": {
+    "schema_version": 1,
+    "verdict": "ambiguous",
+    "reason": "insufficient_history",
+    "observation_count": 1,
+    "state_digest": "0bb0819464787efa",
+    "classifier": null,
+    "resolved": "unknown",
+    "resolved_reason": "classifier_not_provisioned",
+    "evaluated_at": "2026-08-30T00:26:48.965Z"
+  }
 }
