@@ -213,7 +213,7 @@ export type ReviewBacklogDisposition = "open" | "resolved" | "accepted_risk" | "
 
 export type ReviewBacklogEntry = Readonly<{
   fingerprint: string;
-  severity: "P2" | "P3";
+  severity: TriageSeverity;
   first: string;
   latest: string;
   sha: string;
@@ -229,6 +229,7 @@ const REVIEW_BACKLOG_FINGERPRINT = /^[0-9a-f]{64}$/u;
 const REVIEW_BACKLOG_SHA = /^[0-9a-f]{40}$/u;
 const REVIEW_BACKLOG_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/u;
 const REVIEW_BACKLOG_LOCATION = /^([A-Za-z0-9_.@/+\-]+):(\d+)(?:-(\d+))?(?::(\d+))?$/u;
+const REVIEW_BACKLOG_SEVERITIES = new Set<string>(["P0", "P1", "P2", "P3"]);
 const REVIEW_BACKLOG_DISPOSITIONS = new Set<ReviewBacklogDisposition>([
   "open",
   "resolved",
@@ -313,7 +314,7 @@ export const reviewBacklogLocationPath = (location: string): string | null => {
 
 const sortedBacklogEntries = (entries: readonly ReviewBacklogEntry[]): ReviewBacklogEntry[] =>
   [...entries].sort((left, right) =>
-    (left.severity === right.severity ? 0 : left.severity === "P2" ? -1 : 1) ||
+    (left.severity === right.severity ? 0 : left.severity < right.severity ? -1 : 1) ||
     Date.parse(left.first) - Date.parse(right.first) || left.fingerprint.localeCompare(right.fingerprint)
   );
 
@@ -339,7 +340,7 @@ export const parseReviewBacklog = (markdown: string): ReviewBacklogEntry[] => {
       throw new Error("Sentinel review backlog row has an invalid fingerprint or SHA");
     }
     const fingerprint = cells[0].slice(1, -1);
-    const severity = cells[1];
+    const severity = cells[1] as TriageSeverity;
     const first = decodeCell(cells[2]);
     const latest = decodeCell(cells[3]);
     const sha = cells[4].slice(1, -1);
@@ -347,7 +348,7 @@ export const parseReviewBacklog = (markdown: string): ReviewBacklogEntry[] => {
     const finding = normalizeCellText(decodeCell(cells[6]));
     const disposition = cells[7] as ReviewBacklogDisposition;
     if (
-      !REVIEW_BACKLOG_FINGERPRINT.test(fingerprint) || (severity !== "P2" && severity !== "P3") ||
+      !REVIEW_BACKLOG_FINGERPRINT.test(fingerprint) || !REVIEW_BACKLOG_SEVERITIES.has(severity) ||
       !validBacklogTimestamp(first) || !validBacklogTimestamp(latest) || Date.parse(latest) < Date.parse(first) ||
       !REVIEW_BACKLOG_SHA.test(sha) || !/^`[^`]+`$/u.test(locationCell) ||
       (decodeCell(locationCell.slice(1, -1)) !== "unknown" &&
@@ -382,8 +383,10 @@ export const renderReviewBacklog = (entries: readonly ReviewBacklogEntry[]): str
   const markdown = [
     "# Sentinel Review Backlog",
     "",
-    "Native Codex review findings at P2 or P3 are tracked here. P0 and P1 findings block the cycle and never enter this",
-    "backlog.",
+    "Completed Codex review findings from earlier eligible open and merged Sentinel pull requests are tracked here. Every",
+    "severity (P0, P1, P2, and P3) enters this backlog asynchronously after the reviewed pull request merged; P0 and P1",
+    "findings sort ahead of P2 and P3 but never block the reviewed pull request merge. Backlog work is a follow-up pull",
+    "request that requests its own new Codex review.",
     "",
     ...backlogTable(sortedBacklogEntries(entries)),
     "",
@@ -461,7 +464,7 @@ export const mergeReviewBacklog = (
   const observed = observedAt.toISOString();
   const entries = new Map(parseReviewBacklog(currentMarkdown).map((entry) => [entry.fingerprint, entry]));
   for (const finding of findings) {
-    if (finding.severity !== "P2" && finding.severity !== "P3") continue;
+    if (!REVIEW_BACKLOG_SEVERITIES.has(finding.severity)) continue;
     const existing = entries.get(finding.fingerprint);
     entries.set(finding.fingerprint, {
       fingerprint: finding.fingerprint,

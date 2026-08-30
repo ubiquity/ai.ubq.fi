@@ -239,8 +239,14 @@ Preview replay uses the resolved revision's immutable hostname, not the shared `
 identity mismatch is fatal. An identified Cloudflare Bot Fight Mode challenge is recorded once as a warning after the
 managed route passes, without repeated identical probes. Before rollback can promote the recorded old revision, the
 orchestrator re-fetches `origin/development`, checks production identity, and stops if the managed identity belongs to
-an unknown deployment. Durable preview and production decision files use the declared deployment-identity shape with
-app, Git SHA, revision, health URL, and observation time for both candidate and previous revisions.
+an unknown deployment. The automatic rollback controller (`scripts/sentinel/rollback-controller.ts`) is the objective
+restore engine for every failed post-promotion production acceptance: it promotes only the exact immutable prior
+revision from the pre-deploy healthy attestation through the serialized revision-control workflow, verifies the exact
+previous SHA and revision on the managed route in body and headers, probes the custom domain with the Cloudflare-403
+warning policy, persists machine-readable rollback evidence, and fails closed when identity or promotion cannot be
+proven. Codex review findings alone never trigger a rollback. Durable preview and production decision files use the
+declared deployment-identity shape with app, Git SHA, revision, health URL, and observation time for both candidate and
+previous revisions.
 
 The supervised preview always proves the rollback leg after monitoring. It restores the candidate only after a `keep`
 decision. A `rollback` decision leaves the prior preview revision live and records the candidate as rejected.
@@ -262,8 +268,9 @@ satisfy the gates above and one manual preview cycle on `development` demonstrat
    handled.
 2. Complete raw logs and durable reports are exported only as authenticated ciphertext, and new encrypted KV captures
    preserve exact request bytes and allowed compatibility headers while replay replaces authorization.
-3. Triage reports every evidence-backed finding, implementation records every disposition, and native `codex review`
-   blocks P0/P1 while deduplicating P2/P3 into `docs/sentinel-review-backlog.md`.
+3. Triage reports every evidence-backed finding, implementation records every disposition, and the rolling asynchronous
+   Codex review later ingests every severity (P0, P1, P2, and P3) into `docs/sentinel-review-backlog.md` with P0 then P1
+   priority, never blocking the reviewed pull request merge.
 4. Formatting, lint, build, affected tests, served HTTP/SSE checks, secret scanning, and replay validation pass for the
    exact candidate SHA.
 5. The exact SHA reaches `p-ai-ubq-fi`; a simulated keep and rollback both restore the expected revision identity.

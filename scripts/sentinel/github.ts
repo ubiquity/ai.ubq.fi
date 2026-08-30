@@ -122,6 +122,10 @@ export interface ListRepositoryArtifactsOptions {
   readonly includeExpired?: boolean;
 }
 
+export interface ListPullRequestsOptions {
+  readonly state?: "open" | "closed" | "all";
+}
+
 const DEFAULT_GITHUB_API_BASE_URL = "https://api.github.com/";
 const DEFAULT_WORKFLOW_TIMEOUT_MS = 45 * 60 * 1000;
 const DEFAULT_POLL_INTERVAL_MS = 10_000;
@@ -441,6 +445,36 @@ export class GitHubActionsClient {
         redirect: "manual",
       }, "List open pull requests");
       const payload = await this.#json(response, "List open pull requests");
+      if (!Array.isArray(payload)) throw new Error("GitHub returned an invalid pull request list");
+      const pagePulls = payload.map(parsePullRequest);
+      pulls.push(...pagePulls);
+      if (pagePulls.length < 100) return pulls;
+    }
+  }
+
+  /**
+   * Bounded read-only listing of repository pull requests in any state. This
+   * is the shared GitHub-client surface for the rolling review preselection:
+   * it never mutates anything, always stops at the Sentinel metadata page
+   * limit, and fails closed on incomplete pull request data.
+   */
+  async listPullRequests(options: ListPullRequestsOptions = {}): Promise<readonly GitHubPullRequest[]> {
+    const state = options.state ?? "all";
+    const pulls: GitHubPullRequest[] = [];
+    for (let page = 1;; page += 1) {
+      if (page > MAX_ISSUE_METADATA_PAGES) {
+        throw new Error("GitHub pull request metadata exceeded the Sentinel page limit");
+      }
+      const url = this.#url(`repos/${this.#repository}/pulls`);
+      url.searchParams.set("state", state);
+      url.searchParams.set("per_page", "100");
+      url.searchParams.set("page", String(page));
+      const response = await this.#request(url, {
+        method: "GET",
+        headers: this.#headers(),
+        redirect: "manual",
+      }, "List pull requests");
+      const payload = await this.#json(response, "List pull requests");
       if (!Array.isArray(payload)) throw new Error("GitHub returned an invalid pull request list");
       const pagePulls = payload.map(parsePullRequest);
       pulls.push(...pagePulls);

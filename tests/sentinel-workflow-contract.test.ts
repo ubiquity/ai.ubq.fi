@@ -146,10 +146,53 @@ Deno.test("Provider Sentinel preserves incident, fixed-model, and delivery/attes
 
 Deno.test("matrix cells cannot review or deploy and convergence has one integrated delivery", () => {
   assert.doesNotMatch(repair, /runNativeCodexReview|dispatchAndResolveRevision|deno-deploy\.yml|promote/u);
-  assert.equal(orchestrator.match(/runNativeCodexReview\(/gu)?.length, 1);
+  assert.equal(orchestrator.match(/runNativeCodexReview\(/gu)?.length ?? 0, 0);
   assert.match(orchestrator, /github\.createPullRequest\(/u);
   assert.match(orchestrator, /github\.mergePullRequest\(/u);
   assert.match(githubClient, /merge_method: "merge"/u);
   assert.match(orchestrator, /Merged development lost required ancestry/u);
   assert.match(orchestrator, /writeMatrixDelivery\(\{\s*status: "published"/u);
+});
+
+Deno.test("rolling review discovery independently drives the async reviewer gate", () => {
+  const selectorStart = workflow.indexOf("- name: Select agent work");
+  const selectorEnd = workflow.indexOf(
+    "- name: Install isolated-agent prerequisites",
+    selectorStart,
+  );
+  assert.ok(selectorStart >= 0 && selectorEnd > selectorStart, "the agent work selector must precede prerequisites");
+  const selector = workflow.slice(selectorStart, selectorEnd);
+  const reviewStart = workflow.indexOf("- name: Review delivered Sentinel pull requests asynchronously", selectorEnd);
+  const reviewEnd = workflow.indexOf("- name: Install issue-delivery development-push gate", reviewStart);
+  assert.ok(reviewStart >= 0 && reviewEnd > reviewStart, "the asynchronous review worker step must exist");
+  const reviewStep = workflow.slice(reviewStart, reviewEnd);
+
+  // The selector folds a bounded read-only rolling review discovery into the
+  // same needs_agent output that gates prerequisite installation, pinned CLI
+  // validation, and the async reviewer.
+  assert.match(selector, /git ls-tree -r --name-only origin\/development -- docs\/sentinel-review-results/u);
+  assert.match(selector, /sentinel-review-results\.txt/u);
+  assert.match(selector, /listPullRequests\(\{ state: "all" \}\)/u);
+  assert.match(selector, /parseRollingReviewResultFileNames/u);
+  assert.match(selector, /selectRollingReviewTaskFromIdentities/u);
+  assert.match(
+    selector,
+    /selectRollingReviewTaskFromIdentities\(pulls, identities\) === null \? "false" : "true"/u,
+    "an eligible unreviewed pull request must turn the agent gate on",
+  );
+  assert.match(
+    selector,
+    /if \[ "\$needs_agent" = "false" \] && \[ "\$hint_ready" = "true" \]; then/u,
+    "review discovery must run only after backlog and issue selection are both absent",
+  );
+  assert.match(selector, /installing agent prerequisites conservatively/u);
+  // The discovery is read-only: no workflow dispatch, merge, or pull creation.
+  assert.doesNotMatch(selector, /dispatchWorkflow|mergePullRequest|createPullRequest/u);
+
+  // The reviewer is gated by exactly the same needs_agent value: with neither
+  // backlog/issue work nor an eligible unreviewed pull request the step is
+  // skipped and no review invocation runs.
+  assert.match(reviewStep, /if: steps\.agent-work\.outputs\.needs_agent == 'true'/u);
+  assert.match(reviewStep, /scripts\/sentinel\/rolling-review-worker\.ts/u);
+  assert.match(reviewStep, /--allow-run=git,codex,gitleaks,deno/u);
 });

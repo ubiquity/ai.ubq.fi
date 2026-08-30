@@ -2705,7 +2705,10 @@ Deno.test("review backlog output is deterministic and uses canonical Deno Markdo
   const first = mergeReviewBacklog(renderReviewBacklog([]), report.findings, "a".repeat(40), observedAt);
   const again = mergeReviewBacklog(renderReviewBacklog([]), report.findings, "a".repeat(40), observedAt);
   assert.equal(first, again);
-  assert.match(first, /never enter this\nbacklog\./u);
+  assert.match(
+    first,
+    /Every\s+severity [^.]*P0, P1, P2, and P3[^.]*never block the reviewed pull request merge\./su,
+  );
   assert.ok([...first].every((character) => character.charCodeAt(0) <= 0x7f));
   assert.match(first, /&#96;Markdown&#96; &#124; safely &#x2014;/u);
 

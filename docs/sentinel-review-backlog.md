@@ -1,7 +1,9 @@
 # Sentinel Review Backlog
 
-Native Codex review findings at P2 or P3 are tracked here. P0 and P1 findings block the cycle and never enter this
-backlog.
+Completed Codex review findings from earlier eligible open and merged Sentinel pull requests are tracked here. Every
+severity (P0, P1, P2, and P3) enters this backlog asynchronously after the reviewed pull request merged; P0 and P1
+findings sort ahead of P2 and P3 but never block the reviewed pull request merge. Backlog work is a follow-up pull
+request that requests its own new Codex review.
 
 | Fingerprint                                                        | Severity | First observed           | Latest observed          | Affected SHA                               | Location                       | Finding                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Disposition     |
 | ------------------------------------------------------------------ | -------- | ------------------------ | ------------------------ | ------------------------------------------ | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- |

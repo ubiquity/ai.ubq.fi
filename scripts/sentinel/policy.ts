@@ -8,6 +8,7 @@ const PROTECTED_IMPLEMENTATION_PATHS = Object.freeze([
   "docs/sentinel-bootstrap-state.json",
   "docs/sentinel-recovery-records.json",
   "docs/sentinel-review-backlog.md",
+  "docs/sentinel-review-results",
   "scripts/sentinel/codex.ts",
   "scripts/sentinel/deploy.ts",
   "scripts/sentinel/github.ts",
@@ -49,6 +50,7 @@ export const isSentinelProtectedImplementationPath = (path: string): boolean => 
   if (segments.some((segment, index) => segment === ".agents" && segments[index + 1] === "skills")) return true;
   return PROTECTED_IMPLEMENTATION_PATHS.includes(path) || path.startsWith(".github/workflows/") ||
     path === "deno.jsonc" || path.startsWith("scripts/sentinel/") || path.startsWith("src/sentinel_replay_") ||
+    path === "docs/sentinel-review-results" || path.startsWith("docs/sentinel-review-results/") ||
     /^tests\/sentinel-.*\.test\.ts$/u.test(path);
 };
 
@@ -88,6 +90,7 @@ export const SENTINEL_POLICY = Object.freeze({
     issueJobLedger: "docs/sentinel-issue-jobs.md",
     recoveryLedger: "docs/sentinel-recovery-records.json",
     reviewBacklog: "docs/sentinel-review-backlog.md",
+    reviewResults: "docs/sentinel-review-results",
   }),
   protectedImplementationPaths: PROTECTED_IMPLEMENTATION_PATHS,
 });
