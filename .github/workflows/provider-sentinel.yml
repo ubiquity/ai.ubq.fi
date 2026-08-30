@@ -1489,16 +1489,13 @@ jobs:
             scripts/sentinel/rolling-review-worker.ts \
             tests/*.ts
 
-      - name: Validate pinned Codex CLI argument contract
-        if: steps.agent-work.outputs.needs_agent == 'true'
+      - name: Run canonical local Sentinel verification
         shell: bash
         run: |
           set -euo pipefail
-          deno test \
-            --cached-only \
-            --allow-env=PATH \
-            --allow-run=codex \
-            tests/sentinel-codex-cli-integration.test.ts
+          # Verification belongs to one canonical local command; CI only repeats
+          # it and defines no Sentinel verification steps of its own.
+          deno task sentinel:test-local
 
       - name: Review delivered Sentinel pull requests asynchronously
         if: steps.agent-work.outputs.needs_agent == 'true'

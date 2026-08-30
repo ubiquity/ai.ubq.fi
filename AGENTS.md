@@ -36,6 +36,17 @@
   warning after the exact managed Deno route passes; do not misclassify it as an old Deno revision, weaken bot
   protection globally, report dashboard work as necessary, or wait through repeated identical probes.
 
+## Provider Sentinel Local Verification
+
+- Run `deno task sentinel:test-local` from the repository root before creating any pull request that touches Provider
+  Sentinel. It is the single canonical local validation: it runs the fixed fail-fast Sentinel test order (workflow
+  contract, rolling review, artifact recovery, recovery/controller, matrix, Luna policy/orchestrator, rollback) and then
+  fmt check, lint, and build, hermetically — no network, no GitHub/Deno/model credentials in child environments, and no
+  paid/model/deployment calls — and writes a JSON report to the ignored `.sentinel/local-test/result.json`.
+- Provider Sentinel CI only repeats that exact command. The `provider-sentinel.yml` workflow invokes exactly
+  `deno task sentinel:test-local` and must never define its own independent Sentinel verification steps; add new
+  verification to the canonical local harness instead.
+
 ## Rolling Asynchronous Codex Review Workflow
 
 - Ship a bounded pull request for each unit of work, request a Codex review on it without waiting for the review to
