@@ -40,11 +40,11 @@
     "schema_version": 1,
     "verdict": "ambiguous",
     "reason": "changed_state_without_verified_advancement",
-    "observation_count": 2,
-    "state_digest": "cad4fec8a35a5206",
+    "observation_count": 4,
+    "state_digest": "c8813d52c095aada",
     "classifier": null,
     "resolved": "unknown",
     "resolved_reason": "classifier_not_provisioned",
-    "evaluated_at": "2026-08-30T17:07:52.623Z"
+    "evaluated_at": "2026-08-30T17:18:13.497Z"
   }
 }
