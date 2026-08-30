@@ -12509,6 +12509,59 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       );
     });
 
+    await t.step("never drops property names that collide with schema keywords", () => {
+      // D3 regression (gateway commit): a property literally named `pattern`
+      // (or format/minLength/...) was deleted by the keyword projection while
+      // `required` still named it, so the model "misassigned" arguments into
+      // whatever field survived. Property NAMES are not schema keywords.
+      const projected = projectCerebrasToolSchema({
+        type: "object",
+        properties: {
+          pattern: { type: "string", description: "Glob to match files, e.g. *.py" },
+          path: { type: "string", description: "Directory to search (optional)." },
+          format: { type: "string", description: "A field named format." },
+        },
+        required: ["pattern"],
+        additionalProperties: false,
+      });
+      assert.deepEqual((projected as Record<string, unknown>).properties, {
+        pattern: { type: "string", description: "Glob to match files, e.g. *.py" },
+        path: { type: "string", description: "Directory to search (optional)." },
+        format: { type: "string", description: "A field named format." },
+      });
+      // Keyword FIELDS inside property schemas are still stripped for Cerebras.
+      assert.deepEqual(
+        projectCerebrasToolSchema({
+          type: "object",
+          properties: { glob: { type: "string", pattern: "^[A-Z]", minLength: 1 } },
+          required: ["glob"],
+        }),
+        {
+          type: "object",
+          properties: { glob: { type: "string" } },
+          required: ["glob"],
+        },
+      );
+    });
+
+    await t.step("preserves a property named like a keyword anywhere in the graph", () => {
+      const projected = projectCerebrasToolSchema({
+        type: "object",
+        properties: {
+          oneOf: { type: "string" }, // property NAMED oneOf stays a property
+          nested: {
+            type: "object",
+            properties: { uniqueItems: { type: "number" } },
+          },
+        },
+        required: ["oneOf"],
+      }) as { properties: Record<string, unknown> };
+      assert.equal(typeof projected.properties.oneOf, "object");
+      const nestedProps =
+        (projected.properties.nested as { properties: Record<string, { type?: unknown }> }).properties;
+      assert.equal(nestedProps.uniqueItems?.type, "number");
+    });
+
     await t.step("routes the exact model and preserves native tools/tool choice", async () => {
       const upstreamCalls: Array<{ url: string; body: Record<string, unknown>; headers: Headers }> = [];
       const logs: unknown[][] = [];

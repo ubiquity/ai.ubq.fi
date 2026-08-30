@@ -129,18 +129,29 @@ const requireCerebrasApiKey = (supplied: string | null | undefined): string => {
  * tools. Keep the product's complete schema at the gateway boundary, then
  * project only the provider-bound copy: its server-side validation remains
  * the authoritative enforcement for omitted bounds.
+ *
+ * IMPORTANT: unsupported KEYWORDS are stripped only at schema positions.
+ * Property NAMES inside a `properties` map are ordinary field identifiers —
+ * a field called `pattern`, `format` or `minLength` must never be dropped
+ * (this used to corrupt multi-field tool schemas: the property disappeared
+ * while `required` still named it, and clients saw the model "misassign"
+ * arguments into whatever field survived). "const"/"oneOf" are likewise
+ * only schema-level constructs.
  */
-const projectCerebrasSchemaValue = (value: unknown): unknown => {
-  if (Array.isArray(value)) return value.map(projectCerebrasSchemaValue);
+const projectCerebrasSchemaValue = (value: unknown, inPropertiesMap = false): unknown => {
+  if (Array.isArray(value)) return value.map((child) => projectCerebrasSchemaValue(child, false));
   if (!isRecord(value) || Array.isArray(value)) return value;
   const projected: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(value)) {
-    if (CEREBRAS_UNSUPPORTED_SCHEMA_FIELDS.has(key)) continue;
-    if (key === "const") {
-      projected.enum = [projectCerebrasSchemaValue(child)];
+    if (!inPropertiesMap && CEREBRAS_UNSUPPORTED_SCHEMA_FIELDS.has(key)) continue;
+    if (key === "const" && !inPropertiesMap) {
+      projected.enum = [projectCerebrasSchemaValue(child, false)];
       continue;
     }
-    projected[key === "oneOf" ? "anyOf" : key] = projectCerebrasSchemaValue(child);
+    projected[key === "oneOf" && !inPropertiesMap ? "anyOf" : key] = projectCerebrasSchemaValue(
+      child,
+      key === "properties",
+    );
   }
   return projected;
 };
