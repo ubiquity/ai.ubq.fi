@@ -2,13 +2,15 @@
   "schema_version": 1,
   "release": {
     "schema_version": 1,
-    "stable_sha": "c45d85eb7455b02184b68ee3c821ba853153b38e",
-    "candidate_sha": "b5201551d4b8b6ea8ad99d5f38697fac99a120e5",
+    "stable_sha": "b5201551d4b8b6ea8ad99d5f38697fac99a120e5",
+    "candidate_sha": null,
     "acceptance_evidence": [
       "health:s1tyw2qebjrd",
-      "bootstrap:superseded:566bbdf46823b845e4e2ed07542dadcf400c9c35"
+      "bootstrap:superseded:566bbdf46823b845e4e2ed07542dadcf400c9c35",
+      "health:s1tyw2qebjrd",
+      "bootstrap:healthy-window"
     ],
-    "activated_at": "2026-08-30T17:07:52.623Z",
+    "activated_at": "2026-08-30T18:22:37.382Z",
     "rollback_reason": null,
     "generation": 17
   },
