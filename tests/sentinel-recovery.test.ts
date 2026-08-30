@@ -225,6 +225,91 @@ Deno.test("GitHub recovery state uses a separate fast-forward-only ref", async (
   });
 });
 
+Deno.test("GitHub recovery state fetches the exact blob for an over-1-MiB contents response", async () => {
+  const commit = "a".repeat(40);
+  const tree = "b".repeat(40);
+  const blobSha = "c".repeat(40);
+  // Above 1 MiB the Contents API returns valid file metadata only
+  // (`content: ""`, `encoding: "none"`) and keeps the payload in the Git Data
+  // blob the validated SHA pins; this mirrors the live recovery branch.
+  const ledger = parseSentinelRecoveryLedger({
+    schema_version: 1,
+    records: [parseSentinelRecoveryRecord(record({ reason: "r".repeat(1_100_000) }))],
+    retry_history: [],
+    retry_decisions: [],
+    leases: [],
+  });
+  const ledgerText = renderSentinelRecoveryLedger(ledger);
+  const size = new TextEncoder().encode(ledgerText).byteLength;
+  assert.ok(size > 1_048_576);
+  const responses = [
+    Response.json({ ref: "refs/heads/sentinel/recovery-state", object: { sha: commit } }),
+    Response.json({ sha: commit, tree: { sha: tree } }),
+    Response.json({ type: "file", encoding: "none", content: "", size, sha: blobSha }),
+    Response.json({ sha: blobSha, size, encoding: "base64", content: btoa(ledgerText) }),
+  ];
+  const requests: Array<{ url: string }> = [];
+  const fetcher: typeof fetch = (url) => {
+    requests.push({ url: String(url) });
+    const response = responses.shift();
+    if (!response) throw new Error("Unexpected large recovery-state request");
+    return Promise.resolve(response);
+  };
+  const snapshot = await readGitHubSentinelRecoveryLedger({
+    token: "token",
+    repository: "ubiquity/ai.ubq.fi",
+    fetcher,
+  });
+  assert.equal(snapshot.state_ref_exists, true);
+  assert.equal(snapshot.commit_sha, commit);
+  assert.equal(snapshot.tree_sha, tree);
+  assert.deepEqual(snapshot.ledger, ledger);
+  assert.equal(requests.length, 4);
+  assert.equal(requests[2]?.url.endsWith(`/contents/docs/sentinel-recovery-records.json?ref=${commit}`), true);
+  assert.equal(requests[3]?.url.endsWith(`/git/blobs/${blobSha}`), true);
+});
+
+Deno.test("GitHub recovery state fails closed on malformed large-file blob responses", async () => {
+  const commit = "1".repeat(40);
+  const tree = "2".repeat(40);
+  const blobSha = "3".repeat(40);
+  const encoded = btoa(renderSentinelRecoveryLedger(emptySentinelRecoveryLedger()));
+  const contents = { type: "file", encoding: "none", content: "", size: 1_049_697, sha: blobSha };
+  const readWith = (contentsValue: unknown, blob: unknown) => {
+    const responses = [
+      Response.json({ object: { sha: commit } }),
+      Response.json({ tree: { sha: tree } }),
+      Response.json(contentsValue),
+      Response.json(blob),
+    ];
+    const fetcher: typeof fetch = () => {
+      const response = responses.shift();
+      if (!response) throw new Error("Unexpected malformed large-file response");
+      return Promise.resolve(response);
+    };
+    return readGitHubSentinelRecoveryLedger({ token: "token", repository: "ubiquity/ai.ubq.fi", fetcher });
+  };
+  // A blob whose SHA does not match the validated file SHA is not the exact
+  // blob the contents metadata identified and must never be accepted.
+  await assert.rejects(
+    readWith(contents, { sha: "4".repeat(40), encoding: "base64", content: encoded }),
+    /file is invalid/u,
+  );
+  // The Git Data blob must carry base64 content; metadata-only or
+  // non-base64 payloads are malformed and fail closed.
+  await assert.rejects(readWith(contents, { sha: blobSha, encoding: "base64" }), /file is invalid/u);
+  await assert.rejects(readWith(contents, { sha: blobSha, encoding: "none", content: "" }), /file is invalid/u);
+  await assert.rejects(
+    readWith(contents, { sha: "not-a-sha", encoding: "base64", content: encoded }),
+    /blob SHA is invalid/u,
+  );
+  // Contents metadata without a valid full SHA cannot pin a blob at all.
+  await assert.rejects(
+    readWith({ ...contents, sha: "not-a-sha" }, { sha: blobSha, encoding: "base64", content: encoded }),
+    /file SHA is invalid/u,
+  );
+});
+
 Deno.test("an empty durable recovery pass performs no state write", async () => {
   const commit = "1".repeat(40);
   const tree = "2".repeat(40);
