@@ -141,6 +141,23 @@ const retryFailureClass = (
     : null;
 };
 
+/**
+ * A successfully reconstructed durable checkpoint is non-actionable to the
+ * retry policy. The original classified cell failure must remain durably
+ * preserved on the record (failure_class/failure_fingerprint) and in the
+ * retry history/decisions written by artifact recovery, but the recovered
+ * checkpoint must never be demoted back to `retry_wait`; it progresses to
+ * validation, review, and delivery instead. This applies to every recovered
+ * child, including triage/incident cells with no canonical parent.
+ */
+const recoveredCheckpointNotActionable = (
+  action: SentinelRecoveryReconciliationAction,
+  record: SentinelRecoveryRecordV1,
+): boolean =>
+  (record.phase === "checkpoint_durable" || record.phase === "review_pending") &&
+  (action === "checkpoint_confirmed" || action === "resume_validation" || action === "resume_review" ||
+    action === "delivery_confirmed");
+
 export const runSentinelRecoveryPass = async (
   input: Readonly<{
     token: string;
@@ -193,7 +210,13 @@ export const runSentinelRecoveryPass = async (
     // A linked canonical parent tracks its exact child record through
     // `predecessor`; the child owns the classified failure and retry circuit,
     // so applying policy to the parent would double-count the attempt.
-    const failureClass = finalRecord.predecessor === null ? retryFailureClass(reconciled.action, finalRecord) : null;
+    // A recovered child whose durable checkpoint just proved itself remotely
+    // durable is likewise non-actionable: the original failure stays preserved
+    // as evidence, but the reconstruction must progress to validation/review.
+    const failureClass = finalRecord.predecessor === null &&
+        !recoveredCheckpointNotActionable(reconciled.action, finalRecord)
+      ? retryFailureClass(reconciled.action, finalRecord)
+      : null;
     if (failureClass !== null && finalRecord.disposition === "active" && finalRecord.phase !== "retry_wait") {
       const history = ledger.retry_history.filter((attempt) => sentinelRecoveryIdentityKey(attempt.identity) === key)
         .slice(-8);

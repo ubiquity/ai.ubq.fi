@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { encryptSentinelArtifact, type SentinelArtifactFile } from "../scripts/sentinel/artifact-crypto.ts";
 import {
+  authenticatedMatrixCellReport,
   buildSentinelRecoveryDraftPullRequest,
   createOrReuseSentinelRecoveryDraftPullRequest,
   isSentinelArtifactRecoveryEligible,
@@ -175,24 +176,32 @@ const matrixCellEvidence = async (
   options: Readonly<{
     workSelection?: Readonly<typeof MATRIX_WORK_SELECTION> | null;
     payloadText?: string;
+    cellId?: string;
+    findingId?: string;
+    findingFingerprint?: string;
+    allowedPath?: string;
   }> = {},
 ): Promise<MatrixFixture> => {
   const secret = "matrix-candidate-private-plaintext";
   const payload = textEncoder.encode(options.payloadText ?? "matrix recovered candidate\n");
   const workSelection = options.workSelection === undefined ? MATRIX_WORK_SELECTION : options.workSelection;
+  const cellId = options.cellId ?? MATRIX_CELL_ID;
+  const findingId = options.findingId ?? "fixture";
+  const findingFingerprint = options.findingFingerprint ?? "4".repeat(64);
+  const allowedPath = options.allowedPath ?? "candidate.txt";
   const cell = {
-    cell_id: MATRIX_CELL_ID,
-    finding_ids: ["fixture"],
-    finding_fingerprints: ["4".repeat(64)],
-    allowed_paths: ["candidate.txt"],
+    cell_id: cellId,
+    finding_ids: [findingId],
+    finding_fingerprints: [findingFingerprint],
+    allowed_paths: [allowedPath],
     prohibited_paths: [],
     shared_paths: [],
     dependencies: [],
     validation_requirements: ["fixture validation"],
     base_sha: fixture.baseSha,
-    branch: `sentinel/candidate-33197770000-1-${MATRIX_CELL_ID}`,
-    report_path: `.sentinel/reports/matrix/33197770000-1/${MATRIX_CELL_ID}.json`,
-    artifact_name: `sentinel-matrix-cell-v1-33197770000-1-${MATRIX_CELL_ID}`,
+    branch: `sentinel/candidate-33197770000-1-${cellId}`,
+    report_path: `.sentinel/reports/matrix/33197770000-1/${cellId}.json`,
+    artifact_name: `sentinel-matrix-cell-v1-33197770000-1-${cellId}`,
   };
   const sourceRevision = await matrixCellRecoverySourceRevision(fixture.baseSha, cell, workSelection);
   const record = parseSentinelRecoveryRecord({
@@ -200,13 +209,13 @@ const matrixCellEvidence = async (
     identity: {
       repository: "ubiquity/ai.ubq.fi",
       source_kind: workSelection?.source_kind ?? ("triage" as const),
-      source_id: workSelection?.source_id ?? MATRIX_CELL_ID,
+      source_id: workSelection?.source_id ?? cellId,
       source_revision: sourceRevision,
       candidate_generation: 1,
     },
     run_id: "33197770000",
     attempt: 1,
-    lease_token: `matrix-cell-33197770000-1-${MATRIX_CELL_ID}`,
+    lease_token: `matrix-cell-33197770000-1-${cellId}`,
     base_sha: fixture.baseSha,
     phase: "recovery_pending",
     disposition: "active",
@@ -215,7 +224,7 @@ const matrixCellEvidence = async (
     updated_at: "2026-08-28T19:00:00.000Z",
     candidate_branch: null,
     candidate_sha: null,
-    changed_files: ["candidate.txt"],
+    changed_files: [allowedPath],
     tree_sha: null,
     failure_class: "transient_transport",
     failure_fingerprint: "8".repeat(64),
@@ -230,15 +239,15 @@ const matrixCellEvidence = async (
     run_id: "33197770000",
     run_attempt: 1,
     plan_digest: "3".repeat(64),
-    cell_id: MATRIX_CELL_ID,
+    cell_id: cellId,
     base_sha: fixture.baseSha,
-    branch: `sentinel/candidate-33197770000-1-${MATRIX_CELL_ID}`,
+    branch: `sentinel/candidate-33197770000-1-${cellId}`,
     head_sha: null,
     tree_sha: null,
-    changed_paths: ["candidate.txt"],
+    changed_paths: [allowedPath],
     finding_dispositions: [{
-      finding_id: "fixture",
-      fingerprint: "4".repeat(64),
+      finding_id: findingId,
+      fingerprint: findingFingerprint,
       status: "blocked" as const,
       summary: "Cell did not complete within the bounded continuation.",
       changed_files: [],
@@ -272,7 +281,7 @@ const matrixCellEvidence = async (
     file_count: 1,
     total_bytes: payload.byteLength,
     files: [{
-      path: "candidate.txt",
+      path: allowedPath,
       source: "untracked",
       kind: "file",
       mode: 0o100644,
@@ -282,17 +291,17 @@ const matrixCellEvidence = async (
     }],
   };
   const files: SentinelArtifactFile[] = [
-    { path: `reports/matrix/${MATRIX_CELL_ID}/cell.json`, bytes: textEncoder.encode(JSON.stringify(report)) },
+    { path: `reports/matrix/${cellId}/cell.json`, bytes: textEncoder.encode(JSON.stringify(report)) },
     {
-      path: `reports/matrix/${MATRIX_CELL_ID}/recovery-record.json`,
+      path: `reports/matrix/${cellId}/recovery-record.json`,
       bytes: textEncoder.encode(JSON.stringify(record)),
     },
-    { path: `reports/matrix/${MATRIX_CELL_ID}/manifest.json`, bytes: textEncoder.encode(JSON.stringify(manifest)) },
-    { path: `reports/matrix/${MATRIX_CELL_ID}/files/0000.bin`, bytes: payload },
+    { path: `reports/matrix/${cellId}/manifest.json`, bytes: textEncoder.encode(JSON.stringify(manifest)) },
+    { path: `reports/matrix/${cellId}/files/0000.bin`, bytes: payload },
   ];
   if (workSelection !== null) {
     files.push({
-      path: `reports/matrix/${MATRIX_CELL_ID}/work-selection.json`,
+      path: `reports/matrix/${cellId}/work-selection.json`,
       bytes: textEncoder.encode(JSON.stringify({ schema_version: 1, ...workSelection })),
     });
   }
@@ -2326,6 +2335,417 @@ Deno.test({
     } finally {
       for (const file of files) file.bytes.fill(0);
       encrypted.fill(0);
+      key.fill(0);
+      environment.restore();
+      await Deno.remove(fixture.root, { recursive: true });
+    }
+  },
+});
+
+const succeededMatrixCellReportFiles = async (
+  fixture: Readonly<{ baseSha: string }>,
+): Promise<SentinelArtifactFile[]> => {
+  const unsigned = {
+    schema_version: 1 as const,
+    run_id: "33197770000",
+    run_attempt: 1,
+    plan_digest: "3".repeat(64),
+    cell_id: MATRIX_CELL_ID,
+    base_sha: fixture.baseSha,
+    branch: `sentinel/candidate-33197770000-1-${MATRIX_CELL_ID}`,
+    head_sha: "7".repeat(40),
+    tree_sha: "7".repeat(40),
+    changed_paths: ["candidate.txt"],
+    finding_dispositions: [{
+      finding_id: "fixture",
+      fingerprint: "4".repeat(64),
+      status: "implemented" as const,
+      summary: "The bounded implementation cell completed the scoped repair.",
+      changed_files: ["candidate.txt"],
+      validation: ["fixture validation passed"],
+    }],
+    validation: {
+      passed: true,
+      checks: [{ name: "focused-validation", passed: true, detail: "focused cell validation passed" }],
+    },
+    replay: { attempted: false, passed: true, results: [] },
+    status: "succeeded" as const,
+    failure_reason: null,
+    artifact_sha256: "7".repeat(64),
+    report_digest: "0".repeat(64),
+  };
+  const report = { ...unsigned, report_digest: await matrixCellReportDigest(unsigned) };
+  return [{ path: `reports/matrix/${MATRIX_CELL_ID}/cell.json`, bytes: textEncoder.encode(JSON.stringify(report)) }];
+};
+
+Deno.test({
+  name: "authenticated succeeded matrix cell artifacts are skipped with zero ledger mutation and no classification",
+  ignore: unavailable,
+  async fn() {
+    const fixture = await createBaseCheckout();
+    await createBareOrigin(fixture.root, fixture.checkout);
+    const key = new Uint8Array(32).fill(33);
+    const environment = await sentinelRepositoryEnvironment();
+    const files = await succeededMatrixCellReportFiles(fixture);
+    try {
+      const authenticated = await authenticatedMatrixCellReport(files);
+      assert(authenticated);
+      assert.equal(authenticated.status, "succeeded");
+      const encrypted = await encryptSentinelArtifact(files, key, new Uint8Array(12).fill(17));
+      const store = new FakeRecoveryStore({
+        devHead: fixture.baseSha,
+        artifacts: [{
+          id: 9697049800,
+          name: `sentinel-matrix-cell-v1-33197770000-1-${MATRIX_CELL_ID}`,
+          createdAt: new Date(Date.now() - 60_000).toISOString(),
+          zip: await createEvidenceZip(fixture.root, encrypted),
+        }],
+      });
+      const results = await recoverSentinelArtifactsInActions({
+        checkout: fixture.checkout,
+        repository: "ubiquity/ai.ubq.fi",
+        token: "fixture-token",
+        encodedArtifactKey: encryptedArtifactKey(key),
+        fetcher: store.fetcher,
+      });
+      // Zero result classification and zero ledger mutation.
+      assert.deepEqual(results, []);
+      assert.equal(store.refWrites, 0);
+      assert.equal(store.pullCreates, 0);
+      assert.equal(store.pullPatches, 0);
+      const ledger = parseSentinelRecoveryLedger(store.currentLedger());
+      assert.equal(ledger.records.length, 0);
+      assert.equal(ledger.retry_history.length, 0);
+      assert.equal(ledger.retry_decisions.length, 0);
+      assert.doesNotMatch(await git(fixture.checkout, ["ls-remote", "--heads", "origin"]), /sentinel\/candidate-/u);
+    } finally {
+      for (const file of files) file.bytes.fill(0);
+      key.fill(0);
+      environment.restore();
+      await Deno.remove(fixture.root, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "malformed matrix retry artifacts still fail closed through legacy classification",
+  ignore: unavailable,
+  async fn() {
+    const fixture = await createBaseCheckout();
+    const key = new Uint8Array(32).fill(34);
+    const environment = await sentinelRepositoryEnvironment();
+    const evidence = await matrixCellEvidence(fixture);
+    try {
+      // An authenticated retry_pending report without any recovery evidence
+      // (no manifest, no recovery record) is not a normal terminal cell
+      // report: it must stay owner-visible as artifact_invalid instead of
+      // being silently skipped.
+      const malformed = evidence.files.filter((file) =>
+        file.path !== `reports/matrix/${MATRIX_CELL_ID}/recovery-record.json` &&
+        file.path !== `reports/matrix/${MATRIX_CELL_ID}/manifest.json` &&
+        file.path !== `reports/matrix/${MATRIX_CELL_ID}/files/0000.bin`
+      );
+      malformed.push({
+        path: "reports/cycle.json",
+        bytes: textEncoder.encode(JSON.stringify({
+          schema_version: 1,
+          run_id: "33197770000",
+          status: "failed",
+          stage: "failed",
+          started_at: "2026-08-28T19:00:00.000Z",
+          base_development_sha: fixture.baseSha,
+        })),
+      });
+      const authenticated = await authenticatedMatrixCellReport(malformed);
+      assert(authenticated);
+      assert.equal(authenticated.status, "retry_pending");
+      const encrypted = await encryptSentinelArtifact(malformed, key, new Uint8Array(12).fill(18));
+      const store = new FakeRecoveryStore({
+        devHead: fixture.baseSha,
+        artifacts: [{
+          id: 9697049801,
+          name: `sentinel-matrix-cell-v1-33197770000-1-${MATRIX_CELL_ID}`,
+          createdAt: new Date(Date.now() - 60_000).toISOString(),
+          zip: await createEvidenceZip(fixture.root, encrypted),
+        }],
+      });
+      const results = await recoverSentinelArtifactsInActions({
+        checkout: fixture.checkout,
+        repository: "ubiquity/ai.ubq.fi",
+        token: "fixture-token",
+        encodedArtifactKey: encryptedArtifactKey(key),
+        fetcher: store.fetcher,
+      });
+      assert.equal(results.length, 1);
+      assert.equal(results[0]!.disposition, "manual_required");
+      assert.equal(results[0]!.reason, "artifact_invalid");
+      assert.equal(results[0]!.candidate_branch, null);
+      assert.equal(results[0]!.draft_pull_request, null);
+      assert.equal(store.refWrites, 1);
+      const ledger = parseSentinelRecoveryLedger(store.currentLedger());
+      assert.equal(ledger.records.length, 1);
+      assert.equal(ledger.records[0]!.disposition, "manual_required");
+      assert.equal(ledger.records[0]!.failure_class, "artifact_invalid");
+    } finally {
+      key.fill(0);
+      environment.restore();
+      await Deno.remove(fixture.root, { recursive: true });
+    }
+  },
+});
+
+const MATRIX_CELL_B_ID = `cell-${"8".repeat(64)}`;
+const MATRIX_CELL_B_OPTIONS = {
+  cellId: MATRIX_CELL_B_ID,
+  findingId: "fixture-b",
+  findingFingerprint: "5".repeat(64),
+  allowedPath: "candidate-b.txt",
+};
+
+Deno.test({
+  name: "two interrupted cells for one issue reuse a single canonical parent and merge both checkpoints' evidence",
+  ignore: unavailable,
+  async fn() {
+    const fixture = await createBaseCheckout();
+    await createBareOrigin(fixture.root, fixture.checkout);
+    const key = new Uint8Array(32).fill(35);
+    const environment = await sentinelRepositoryEnvironment();
+    const evidenceA = await matrixCellEvidence(fixture, { payloadText: "cell A candidate\n" });
+    const evidenceB = await matrixCellEvidence(fixture, {
+      payloadText: "cell B candidate\n",
+      ...MATRIX_CELL_B_OPTIONS,
+    });
+    const encryptedA = await encryptSentinelArtifact(evidenceA.files, key, new Uint8Array(12).fill(19));
+    const encryptedB = await encryptSentinelArtifact(evidenceB.files, key, new Uint8Array(12).fill(20));
+    const encryptedStack = [encryptedA, encryptedB];
+    try {
+      const recordA = await matrixCellRecoveryRecordFromArtifact(evidenceA.files, "ubiquity/ai.ubq.fi");
+      const recordB = await matrixCellRecoveryRecordFromArtifact(evidenceB.files, "ubiquity/ai.ubq.fi");
+      assert(recordA);
+      assert(recordB);
+      assert.notEqual(recordA.identity.source_revision, recordB.identity.source_revision);
+      const probeA = await recoverSentinelArtifactCandidate({
+        checkout: fixture.checkout,
+        encryptedBytes: encryptedA,
+        keyBytes: key,
+        record: recordA,
+        artifactId: 9697049810,
+      });
+      const probeB = await recoverSentinelArtifactCandidate({
+        checkout: fixture.checkout,
+        encryptedBytes: encryptedB,
+        keyBytes: key,
+        record: recordB,
+        artifactId: 9697049811,
+      });
+      assert.equal(probeA.disposition, "recovered");
+      assert.equal(probeB.disposition, "recovered");
+      assert.notEqual(probeA.candidate_sha, probeB.candidate_sha);
+      const store = new FakeRecoveryStore({
+        devHead: fixture.baseSha,
+        artifacts: [
+          {
+            id: 9697049810,
+            name: `sentinel-matrix-cell-v1-33197770000-1-${MATRIX_CELL_ID}`,
+            createdAt: new Date(Date.now() - 60_000).toISOString(),
+            zip: await createEvidenceZip(fixture.root, encryptedA),
+          },
+          {
+            id: 9697049811,
+            name: `sentinel-matrix-cell-v1-33197770000-1-${MATRIX_CELL_B_ID}`,
+            createdAt: new Date(Date.now() - 120_000).toISOString(),
+            zip: await createEvidenceZip(fixture.root, encryptedB),
+          },
+        ],
+        branchShas: new Map([
+          [probeA.candidate_branch!, probeA.candidate_sha!],
+          [probeB.candidate_branch!, probeB.candidate_sha!],
+        ]),
+      });
+      const results = await recoverSentinelArtifactsInActions({
+        checkout: fixture.checkout,
+        repository: "ubiquity/ai.ubq.fi",
+        token: "fixture-token",
+        encodedArtifactKey: encryptedArtifactKey(key),
+        fetcher: store.fetcher,
+      });
+      assert.deepEqual(results.map((result) => result.disposition), ["recovered", "recovered"]);
+      const ledger = parseSentinelRecoveryLedger(store.currentLedger());
+      const issueFamily = ledger.records.filter((candidate) =>
+        candidate.identity.source_kind === "github_issue" && candidate.identity.source_id === "208"
+      );
+      assert.equal(issueFamily.length, 3); // one child per cell plus exactly one canonical parent
+      const parents = issueFamily.filter((candidate) =>
+        candidate.identity.source_revision === MATRIX_WORK_SELECTION.source_revision
+      );
+      assert.equal(parents.length, 1);
+      const parent = parents[0]!;
+      assert.equal(parent.phase, "checkpoint_durable");
+      assert.equal(parent.candidate_sha, probeA.candidate_sha);
+      assert.equal(
+        parent.predecessor,
+        JSON.stringify([
+          recordA.identity.repository,
+          recordA.identity.source_kind,
+          recordA.identity.source_id,
+          recordA.identity.source_revision,
+          recordA.identity.candidate_generation,
+        ]),
+      );
+      const digests = (await Promise.all([encryptedA, encryptedB].map(async (encrypted) =>
+        `sha256:${await sha256(encrypted)}`
+      )))
+        .sort();
+      assert.deepEqual(parent.artifact_ids, [9697049810, 9697049811]);
+      assert.deepEqual(parent.artifact_digests, digests);
+      const childA = issueFamily.find((candidate) =>
+        candidate.identity.source_revision === recordA.identity.source_revision
+      )!;
+      const childB = issueFamily.find((candidate) =>
+        candidate.identity.source_revision === recordB.identity.source_revision
+      )!;
+      assert.equal(childA.phase, "checkpoint_durable");
+      assert.equal(childA.candidate_sha, probeA.candidate_sha);
+      assert.equal(childB.phase, "checkpoint_durable");
+      assert.equal(childB.candidate_sha, probeB.candidate_sha);
+      // Neither child's evidence is orphaned: each carries its own artifact.
+      assert.deepEqual(childA.artifact_ids, [9697049810]);
+      assert.deepEqual(childB.artifact_ids, [9697049811]);
+      // The next-cycle selection deterministically sees exactly one parent.
+      const selection = resolveSentinelRecoverySelection({
+        ledger,
+        repository: "ubiquity/ai.ubq.fi",
+        source_kind: "github_issue",
+        source_id: "208",
+        source_revision: MATRIX_WORK_SELECTION.source_revision,
+        now: "2026-08-28T20:00:00.000Z",
+      });
+      assert.equal(selection.related_records.length, 3);
+      assert.equal(selection.current_record?.identity.candidate_generation, parent.identity.candidate_generation);
+      assert.equal(selection.current_record?.candidate_sha, probeA.candidate_sha);
+      assert.equal(selection.current_record?.phase, "checkpoint_durable");
+      assert.equal(selection.retry_is_due, false);
+      assert.equal(selection.next_generation, parent.identity.candidate_generation + 1);
+    } finally {
+      for (const encrypted of encryptedStack) encrypted.fill(0);
+      key.fill(0);
+      environment.restore();
+      await Deno.remove(fixture.root, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "concurrent recovery of two cells for one issue converges on one canonical parent through ledger CAS",
+  ignore: unavailable,
+  async fn() {
+    const fixture = await createBaseCheckout();
+    await createBareOrigin(fixture.root, fixture.checkout);
+    const key = new Uint8Array(32).fill(36);
+    const environment = await sentinelRepositoryEnvironment();
+    const evidenceA = await matrixCellEvidence(fixture, { payloadText: "cell A candidate\n" });
+    const evidenceB = await matrixCellEvidence(fixture, {
+      payloadText: "cell B candidate\n",
+      ...MATRIX_CELL_B_OPTIONS,
+    });
+    const recordA = await matrixCellRecoveryRecordFromArtifact(evidenceA.files, "ubiquity/ai.ubq.fi");
+    const recordB = await matrixCellRecoveryRecordFromArtifact(evidenceB.files, "ubiquity/ai.ubq.fi");
+    assert(recordA);
+    assert(recordB);
+    const encryptedA = await encryptSentinelArtifact(evidenceA.files, key, new Uint8Array(12).fill(21));
+    const encryptedB = await encryptSentinelArtifact(evidenceB.files, key, new Uint8Array(12).fill(22));
+    const encryptedStack = [encryptedA, encryptedB];
+    try {
+      const probeA = await recoverSentinelArtifactCandidate({
+        checkout: fixture.checkout,
+        encryptedBytes: encryptedA,
+        keyBytes: key,
+        record: recordA,
+        artifactId: 9697049820,
+      });
+      const probeB = await recoverSentinelArtifactCandidate({
+        checkout: fixture.checkout,
+        encryptedBytes: encryptedB,
+        keyBytes: key,
+        record: recordB,
+        artifactId: 9697049821,
+      });
+      const store = new FakeRecoveryStore({
+        devHead: fixture.baseSha,
+        artifacts: [
+          {
+            id: 9697049820,
+            name: `sentinel-matrix-cell-v1-33197770000-1-${MATRIX_CELL_ID}`,
+            createdAt: new Date(Date.now() - 60_000).toISOString(),
+            zip: await createEvidenceZip(fixture.root, encryptedA),
+          },
+          {
+            id: 9697049821,
+            name: `sentinel-matrix-cell-v1-33197770000-1-${MATRIX_CELL_B_ID}`,
+            createdAt: new Date(Date.now() - 120_000).toISOString(),
+            zip: await createEvidenceZip(fixture.root, encryptedB),
+          },
+        ],
+        branchShas: new Map([
+          [probeA.candidate_branch!, probeA.candidate_sha!],
+          [probeB.candidate_branch!, probeB.candidate_sha!],
+        ]),
+      });
+      store.enableConcurrencyRace();
+      const invoke = () =>
+        recoverSentinelArtifactsInActions({
+          checkout: fixture.checkout,
+          repository: "ubiquity/ai.ubq.fi",
+          token: "fixture-token",
+          encodedArtifactKey: encryptedArtifactKey(key),
+          fetcher: store.fetcher,
+        });
+      const [left, right] = await Promise.all([invoke(), invoke()]);
+      for (const result of [...left, ...right]) {
+        assert.equal(result.disposition, "recovered");
+        assert.notEqual(result.reason, "ledger_conflict");
+        assert.notEqual(result.reason, "artifact_corrupt");
+      }
+      const ledger = parseSentinelRecoveryLedger(store.currentLedger());
+      const issueFamily = ledger.records.filter((candidate) =>
+        candidate.identity.source_kind === "github_issue" && candidate.identity.source_id === "208"
+      );
+      assert.equal(issueFamily.length, 3);
+      const parents = issueFamily.filter((candidate) =>
+        candidate.identity.source_revision === MATRIX_WORK_SELECTION.source_revision
+      );
+      assert.equal(parents.length, 1);
+      const parent = parents[0]!;
+      const digests = (await Promise.all([encryptedA, encryptedB].map(async (encrypted) =>
+        `sha256:${await sha256(encrypted)}`
+      )))
+        .sort();
+      assert.deepEqual(parent.artifact_ids, [9697049820, 9697049821]);
+      assert.deepEqual(parent.artifact_digests, digests);
+      const childA = issueFamily.find((candidate) =>
+        candidate.identity.source_revision === recordA.identity.source_revision
+      )!;
+      const childB = issueFamily.find((candidate) =>
+        candidate.identity.source_revision === recordB.identity.source_revision
+      )!;
+      assert.equal(childA.phase, "checkpoint_durable");
+      assert.equal(childB.phase, "checkpoint_durable");
+      assert.equal(childA.artifact_ids.length, 1);
+      assert.equal(childB.artifact_ids.length, 1);
+      const selection = resolveSentinelRecoverySelection({
+        ledger,
+        repository: "ubiquity/ai.ubq.fi",
+        source_kind: "github_issue",
+        source_id: "208",
+        source_revision: MATRIX_WORK_SELECTION.source_revision,
+        now: "2026-08-28T20:00:00.000Z",
+      });
+      assert.equal(selection.related_records.length, 3);
+      assert.equal(selection.current_record?.identity.candidate_generation, parent.identity.candidate_generation);
+      assert.equal(selection.retry_is_due, false);
+      assert.equal(selection.next_generation, parent.identity.candidate_generation + 1);
+    } finally {
+      for (const encrypted of encryptedStack) encrypted.fill(0);
       key.fill(0);
       environment.restore();
       await Deno.remove(fixture.root, { recursive: true });

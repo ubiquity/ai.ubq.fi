@@ -1350,6 +1350,27 @@ const recordFromArtifact = (
 };
 
 /**
+ * Authenticate the matrix cell report embedded in an already decrypted
+ * artifact: exactly one cell report, valid report schema, and a matching
+ * report digest. It returns the authenticated report or null; the result is
+ * independent of retry evidence, so a normal terminal cell report can be
+ * recognized without any candidate manifest or recovery record.
+ */
+export const authenticatedMatrixCellReport = async (
+  files: readonly SentinelArtifactFile[],
+): Promise<MatrixCellReportV1 | null> => {
+  const cellReports = files.filter((file) => MATRIX_CELL_REPORT_PATH.test(file.path));
+  if (cellReports.length !== 1) return null;
+  try {
+    const report = parseMatrixCellReportV1(await decodeJson(cellReports[0]!.bytes, "artifact_invalid"));
+    await assertMatrixCellReportDigest(report);
+    return report;
+  } catch {
+    return null;
+  }
+};
+
+/**
  * Recognize authenticated matrix-cell retry evidence. The cell runner persists
  * a durable recovery identity and the candidate snapshot next to its report;
  * this function authenticates that evidence into the exact record the recovery
@@ -1364,17 +1385,9 @@ export const matrixCellRecoveryRecordFromArtifact = async (
   repository: string,
 ): Promise<SentinelRecoveryRecordV1 | null> => {
   if (!SAFE_REPOSITORY.test(repository)) return null;
-  const cellReports = files.filter((file) => MATRIX_CELL_REPORT_PATH.test(file.path));
-  if (cellReports.length !== 1) return null;
-  const cellReportFile = cellReports[0]!;
-  let report: MatrixCellReportV1;
-  try {
-    report = parseMatrixCellReportV1(await decodeJson(cellReportFile.bytes, "artifact_invalid"));
-    await assertMatrixCellReportDigest(report);
-  } catch {
-    return null;
-  }
-  if (report.status !== "retry_pending") return null;
+  const report = await authenticatedMatrixCellReport(files);
+  if (report === null || report.status !== "retry_pending") return null;
+  const cellReportFile = files.find((file) => MATRIX_CELL_REPORT_PATH.test(file.path))!;
   const manifestDirectory = cellReportFile.path.slice(0, cellReportFile.path.lastIndexOf("/"));
   const recordFile = files.find((file) =>
     file.path === `${manifestDirectory}/recovery-record.json` &&
@@ -1548,8 +1561,10 @@ const matrixRecordWithResolvedGeneration = (
 /**
  * Resolve the canonical parent generation with the exact rule the Sentinel
  * selection path uses (maximum over every record of the same repository,
- * source kind, and source id, plus one) so a concurrent or retried recovery
- * can never fork the work item into two generations.
+ * source kind, and source id, plus one). It is consulted only after
+ * `activeCanonicalParentRecord` found no compatible active parent, so a
+ * concurrent or retried recovery for the same work item reuses the linked
+ * parent instead of forking the work item into two generations.
  */
 const resolveCanonicalParentGeneration = (
   records: readonly SentinelRecoveryRecordV1[],
@@ -2027,6 +2042,72 @@ const withDurableArtifactEvidence = (
   return parseSentinelRecoveryLedger({ ...ledger, records });
 };
 
+type CanonicalParentIdentity = Omit<SentinelRecoveryIdentityV1, "candidate_generation">;
+
+const matrixCanonicalParentMatches = (
+  candidate: SentinelRecoveryRecordV1,
+  parent: CanonicalParentIdentity,
+): boolean =>
+  candidate.identity.repository === parent.repository &&
+  candidate.identity.source_kind === parent.source_kind &&
+  candidate.identity.source_id === parent.source_id &&
+  candidate.identity.source_revision === parent.source_revision;
+
+/**
+ * Find the single existing active canonical parent for a work item before any
+ * new generation is allocated. The match is independent of candidate
+ * generation, so a second interrupted cell for the same issue/backlog reuses
+ * the parent that already links the work item instead of forking a competing
+ * active parent. If multiple active parents somehow exist, the lowest
+ * generation (the first linked lineage) wins deterministically.
+ */
+const activeCanonicalParentRecord = (
+  records: readonly SentinelRecoveryRecordV1[],
+  parent: CanonicalParentIdentity,
+): SentinelRecoveryRecordV1 | null => {
+  const matches = records.filter((candidate) =>
+    candidate.disposition === "active" && candidate.candidate_branch !== null && candidate.candidate_sha !== null &&
+    matrixCanonicalParentMatches(candidate, parent)
+  );
+  if (matches.length === 0) return null;
+  return matches.reduce((best, candidate) =>
+    candidate.identity.candidate_generation < best.identity.candidate_generation ||
+      (candidate.identity.candidate_generation === best.identity.candidate_generation &&
+        candidate.state_version > best.state_version)
+      ? candidate
+      : best
+  );
+};
+
+/**
+ * Merge one recovered child checkpoint's evidence into the reused canonical
+ * parent without allocating a generation, changing phase, or touching state
+ * version: evidence rows are data, not a recovery transition, matching
+ * `withDurableArtifactEvidence`, and both cells' artifact evidence must stay
+ * durable on the single parent so neither child's evidence is orphaned. The
+ * parent keeps its winner's checkpoint refs and child linkage.
+ */
+const withMergedCanonicalParentEvidence = (
+  ledger: SentinelRecoveryLedgerSnapshot["ledger"],
+  parent: SentinelRecoveryRecordV1,
+  artifactIds: readonly number[],
+  artifactDigests: readonly string[],
+): SentinelRecoveryLedgerSnapshot["ledger"] => {
+  const ids = [...new Set([...parent.artifact_ids, ...artifactIds])].sort((left, right) => left - right);
+  const digests = [...new Set([...parent.artifact_digests, ...artifactDigests])].sort();
+  if (
+    ids.length === parent.artifact_ids.length && digests.length === parent.artifact_digests.length &&
+    ids.every((value, index) => value === parent.artifact_ids[index]) &&
+    digests.every((value, index) => value === parent.artifact_digests[index])
+  ) return ledger;
+  const records = ledger.records.map((record) =>
+    record === parent
+      ? parseSentinelRecoveryRecord({ ...record, artifact_ids: ids, artifact_digests: digests })
+      : record
+  );
+  return parseSentinelRecoveryLedger({ ...ledger, records });
+};
+
 /**
  * Fail closed when the exact `development` head moved after the candidate was
  * reconstructed: no branch is published and no draft PR is opened until the
@@ -2368,7 +2449,12 @@ const recoverMatrixArtifactInActions = async (
 
     // Canonical parent linkage: the authoritative work-item revision is
     // advanced through CAS so the next Sentinel selection sees the recovered
-    // checkpoint while the exact cell binding stays on the child record.
+    // checkpoint while the exact cell binding stays on the child record. The
+    // existing compatible active canonical parent is found and reused first,
+    // so a second interrupted cell for the same work item CAS-merges its
+    // checkpoint evidence into that single parent instead of forking a
+    // competing generation; a new generation is allocated only when no
+    // compatible active parent exists.
     const childLedger = upsertSentinelRecoveryRecord(
       workingLedger,
       recovered,
@@ -2378,24 +2464,25 @@ const recoverMatrixArtifactInActions = async (
     const workSelection = matrixCellWorkSelectionFromFiles(input.decrypted);
     const parentBase = matrixCellCanonicalParentIdentity(recovered.identity, workSelection);
     if (parentBase !== null) {
-      const parentIdentity = {
-        ...parentBase,
-        candidate_generation: resolveCanonicalParentGeneration(ledger.records, parentBase),
-      };
-      const parentKey = sentinelRecoveryIdentityKey(parentIdentity);
-      const existingParent = ledger.records.find((candidate) =>
-        sentinelRecoveryIdentityKey(candidate.identity) === parentKey
-      ) ?? null;
-      if (existingParent === null) {
+      const existingParent = activeCanonicalParentRecord(ledger.records, parentBase);
+      if (existingParent !== null) {
+        ledger = withMergedCanonicalParentEvidence(
+          ledger,
+          existingParent,
+          recovered.artifact_ids,
+          recovered.artifact_digests,
+        );
+      } else {
+        const parentIdentity = {
+          ...parentBase,
+          candidate_generation: resolveCanonicalParentGeneration(ledger.records, parentBase),
+        };
         ledger = upsertSentinelRecoveryRecord(
           ledger,
           buildMatrixCellParentRecoveryRecord(recovered, parentIdentity, now),
           null,
         );
       }
-      // Otherwise a canonical parent already links this work item: keep the
-      // winner's checkpoint and never allocate a second parent or overwrite a
-      // different durable cell checkpoint under the same identity.
     }
     const written = await writeGitHubSentinelRecoveryLedger({
       token: input.token,
@@ -2485,6 +2572,15 @@ export const recoverSentinelArtifactsInActions = async (
         encryptedDigest = await artifactDigest(encrypted);
         decrypted = await decryptSentinelArtifact(encrypted, keyBytes);
         const matrixRecord = await matrixCellRecoveryRecordFromArtifact(decrypted, input.repository);
+        // A normal terminal matrix cell report (succeeded/failed/blocked) is
+        // not recovery evidence: it never carries retry evidence or a recovery
+        // record, so it is skipped with zero ledger mutation and no result
+        // classification instead of being misclassified as a legacy
+        // artifact_invalid. Only an authenticated non-retry report is skipped;
+        // malformed retry evidence (or any report that fails authentication)
+        // still fails closed through the legacy classification path.
+        const matrixReport = matrixRecord === null ? await authenticatedMatrixCellReport(decrypted) : null;
+        if (matrixReport !== null && matrixReport.status !== "retry_pending") continue;
         const workflowRun = matrixRecord === null
           ? await workflowRunForArtifact(decrypted, artifact, github)
           : undefined;
