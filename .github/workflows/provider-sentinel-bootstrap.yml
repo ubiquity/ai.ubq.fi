@@ -3,7 +3,10 @@ run-name: Provider Sentinel Bootstrap ${{ github.event_name }} ${{ github.run_id
 
 on:
   schedule:
-    - cron: "0 * * * *"
+    # Same rapid five-minute cadence as the evolving Sentinel workflow, staggered by two
+    # minutes so bootstrap evaluation never fires in the same scheduled minute as the main
+    # cycle. Each workflow keeps its own serializing, non-cancelling concurrency group.
+    - cron: "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
   workflow_dispatch:
 
 concurrency:

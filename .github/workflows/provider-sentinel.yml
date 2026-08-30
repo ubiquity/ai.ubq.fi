@@ -3,8 +3,10 @@ run-name: Provider Sentinel ${{ github.event_name }} ${{ github.run_id }}
 
 on:
   schedule:
-    # Hourly encrypted evidence archival and one eligible backlog repair. Incidents trigger separately.
-    - cron: "0 * * * *"
+    # Rapid five-minute evaluation: encrypted evidence archival and one eligible backlog
+    # repair. Incidents trigger separately. The bootstrap workflow shares this cadence but
+    # is staggered by two minutes so the two workflows never fire in the same scheduled minute.
+    - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
       sentinel_mode:
@@ -164,7 +166,7 @@ jobs:
               esac
               ;;
             schedule)
-              if [ "${{ github.event.schedule }}" = "0 * * * *" ]; then mode=hourly; else
+              if [ "${{ github.event.schedule }}" = "*/5 * * * *" ]; then mode=hourly; else
                 echo "::error::Unsupported Provider Sentinel schedule."; exit 1
               fi
               ;;
@@ -672,7 +674,7 @@ jobs:
               esac
               ;;
             schedule)
-              if [ "${{ github.event.schedule }}" = "0 * * * *" ]; then
+              if [ "${{ github.event.schedule }}" = "*/5 * * * *" ]; then
                 mode=hourly
               else
                 echo "::error::Unsupported Provider Sentinel schedule."

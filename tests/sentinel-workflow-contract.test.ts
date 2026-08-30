@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import workflow from "../.github/workflows/provider-sentinel.yml" with { type: "text" };
+import bootstrapWorkflow from "../.github/workflows/provider-sentinel-bootstrap.yml" with { type: "text" };
 import githubClient from "../scripts/sentinel/github.ts" with { type: "text" };
 import orchestrator from "../scripts/sentinel/main.ts" with { type: "text" };
 
@@ -11,6 +12,29 @@ const jobSection = (name: string, nextName: string): string => {
   return workflow.slice(start, end);
 };
 
+const scheduleBlock = (document: string): string => {
+  const start = document.indexOf("  schedule:");
+  const end = document.indexOf("  workflow_dispatch:", start);
+  assert.ok(start >= 0, "workflow is missing a schedule block");
+  assert.ok(end > start, "workflow has no bounded schedule block");
+  return document.slice(start, end);
+};
+
+const cronMinutes = (expression: string): number[] => {
+  const minute = expression.split(/\s+/u)[0];
+  if (minute.startsWith("*/")) {
+    const step = Number(minute.slice(2));
+    assert.ok(Number.isSafeInteger(step) && step >= 1, `unsupported minute step ${minute}`);
+    return Array.from({ length: Math.floor(60 / step) }, (_, index) => index * step);
+  }
+  const minutes = minute.split(",").map((value) => Number(value));
+  assert.ok(
+    minutes.every((value) => Number.isSafeInteger(value) && value >= 0 && value < 60),
+    `invalid minute list ${minute}`,
+  );
+  return minutes;
+};
+
 const prepare = jobSection("prepare", "repair");
 const repair = jobSection("repair", "converge");
 const converge = workflow.slice(workflow.indexOf("\n  converge:") + 1);
@@ -19,6 +43,30 @@ Deno.test("Provider Sentinel retains its outer serialized, non-cancelling concur
   assert.match(workflow, /group: provider-sentinel-\$\{\{ github\.repository \}\}/u);
   assert.match(workflow, /cancel-in-progress: false/u);
   assert(!/^\s+queue:/mu.test(workflow), "GitHub Actions does not support a concurrency queue key");
+});
+
+Deno.test("Provider Sentinel evaluates every five minutes with a staggered bootstrap cadence", () => {
+  const mainCron = /- cron: "([^"]+)"/u.exec(scheduleBlock(workflow))?.[1];
+  const bootstrapCron = /- cron: "([^"]+)"/u.exec(scheduleBlock(bootstrapWorkflow))?.[1];
+  assert.equal(mainCron, "*/5 * * * *");
+  assert.equal(bootstrapCron, "2,7,12,17,22,27,32,37,42,47,52,57 * * * *");
+  const mainMinutes = new Set(cronMinutes(mainCron));
+  const bootstrapMinutes = new Set(cronMinutes(bootstrapCron));
+  assert.equal(mainMinutes.size, 12);
+  assert.equal(bootstrapMinutes.size, 12);
+  assert.ok([...mainMinutes].every((minute) => minute % 5 === 0));
+  assert.ok([...bootstrapMinutes].every((minute) => minute % 5 === 2));
+  for (const minute of bootstrapMinutes) {
+    assert.ok(
+      !mainMinutes.has(minute),
+      `bootstrap fires in the same scheduled minute as the main workflow (${minute})`,
+    );
+  }
+  // Both schedule identity checks in the main workflow must accept the rapid cadence.
+  assert.equal(workflow.match(/\[ "\$\{\{ github\.event\.schedule \}\}" = "\*\/5 \* \* \* \*" \]/gu)?.length, 2);
+  // Staggering must not remove either workflow's own serializing, non-cancelling group.
+  assert.match(bootstrapWorkflow, /group: provider-sentinel-bootstrap-\$\{\{ github\.repository \}\}/u);
+  assert.match(bootstrapWorkflow, /cancel-in-progress: false/u);
 });
 
 Deno.test("Provider Sentinel uses Deno eval without unsupported permission flags", () => {

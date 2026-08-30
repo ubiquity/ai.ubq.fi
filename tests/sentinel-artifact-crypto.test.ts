@@ -443,7 +443,7 @@ Deno.test({
       "A standard manual dispatch must run the autonomous hourly work cycle",
     );
     assert(workflow.includes("github.actor_id == '319834869'"), "Incident mode must require the Sentinel App actor");
-    assert(workflow.includes('- cron: "0 * * * *"'), "Sentinel archival must run hourly");
+    assert(workflow.includes('- cron: "*/5 * * * *"'), "Sentinel evaluation must run every five minutes");
     assert(workflow.includes("mode=hourly"), "Scheduled runs must use hourly mode");
     assert(workflow.includes("inputs.sentinel_mode == 'hourly'"), "Maintainers must be able to start an hourly run");
     assert(workflow.includes("preview|hourly)"), "Manual hourly runs must select the hourly orchestrator mode");
