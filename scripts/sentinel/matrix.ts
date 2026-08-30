@@ -723,6 +723,9 @@ const assertMatrixCellShape = (value: unknown, label: string): MatrixCellV1 => {
   };
 };
 
+/** Structural validation for a decoded exact MatrixCellV1 contract. */
+export const parseMatrixCellV1 = (value: unknown): MatrixCellV1 => assertMatrixCellShape(value, "Matrix cell");
+
 const sameStrings = (left: readonly string[], right: readonly string[]): boolean =>
   left.length === right.length && left.every((value, index) => value === right[index]);
 

@@ -144,6 +144,40 @@ Deno.test("Provider Sentinel preserves incident, fixed-model, and delivery/attes
   assert.match(converge, /SENTINEL_CODEX_AUTH_STATE_ENVELOPE/u);
 });
 
+Deno.test("recovery reconciliation runs before selection even when convergence head verification fails", () => {
+  const verifyIndex = converge.indexOf("      - name: Verify exact remote cell heads before convergence");
+  const reconcileIndex = converge.indexOf("      - name: Reconcile durable recovery records");
+  const selectionIndex = converge.indexOf("      - name: Select agent work");
+  assert.ok(verifyIndex >= 0, "converge is missing exact remote head verification");
+  assert.ok(reconcileIndex > verifyIndex, "recovery reconciliation must run after head verification");
+  assert.ok(selectionIndex > reconcileIndex, "recovery reconciliation must run before normal selection");
+  const reconcileStep = converge.slice(reconcileIndex, selectionIndex);
+  assert.match(reconcileStep, /\n\s+if: always\(\)\n/u);
+});
+
+Deno.test("matrix cell retry evidence is encrypted from the cell report path", () => {
+  assert.match(repair, /sentinel-cell-report\.json\.retry-evidence/u);
+  assert.match(repair, /mkdir -p "\.sentinel\/reports\/matrix\/\$\{CELL_ID\}"/u);
+  assert.match(repair, /cp -a "\$RUNNER_TEMP\/sentinel-cell-report\.json\.retry-evidence"/u);
+  assert.doesNotMatch(repair, /upload-artifact@[\w-]+[\s\S]*?path:\s*\n\s+\.sentinel\/(?:raw-logs|reports)(?:\s|$)/u);
+});
+
+Deno.test("the cell runner receives the authoritative work selection and scrubs partial evidence staging", () => {
+  assert.match(repair, /matrixCellWorkSelectionFromArtifact/u);
+  assert.match(repair, /sentinel-matrix-work-selection\.json/u);
+  assert.match(repair, /workSelection: workSelection \?\? undefined/u);
+  assert.match(repair, /sentinel-cell-report\.json\.retry-evidence\.staging/u);
+  // Work selection is plaintext evidence metadata that must be scrubbed.
+  const scrubStep = repair.slice(
+    repair.indexOf('for target in "$RUNNER_TEMP/sentinel-codex-auth-state"'),
+    repair.indexOf('for target in "$RUNNER_TEMP/sentinel-codex-auth-state"') + 800,
+  );
+  assert.match(scrubStep, /sentinel-matrix-work-selection\.json/u);
+  assert.match(scrubStep, /retry-evidence\.staging/u);
+  // A moved-aside prior evidence set is also plaintext and must be scrubbed.
+  assert.match(scrubStep, /retry-evidence\.previous/u);
+});
+
 Deno.test("matrix cells cannot review or deploy and convergence has one integrated delivery", () => {
   assert.doesNotMatch(repair, /runNativeCodexReview|dispatchAndResolveRevision|deno-deploy\.yml|promote/u);
   assert.equal(orchestrator.match(/runNativeCodexReview\(/gu)?.length ?? 0, 0);

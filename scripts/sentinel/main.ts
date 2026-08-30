@@ -64,7 +64,11 @@ import {
   type SentinelRecoveryRecordV1,
   type SentinelRecoverySourceKind,
 } from "./recovery.ts";
-import { sentinelRecoveryIdentityKey, upsertSentinelRecoveryRecord } from "./recovery-ledger.ts";
+import {
+  resolveSentinelRecoverySelection,
+  sentinelRecoveryIdentityKey,
+  upsertSentinelRecoveryRecord,
+} from "./recovery-ledger.ts";
 import { readGitHubSentinelRecoveryLedger, writeGitHubSentinelRecoveryLedger } from "./recovery-github-store.ts";
 import { isSentinelRecoveryCandidateBranch, sentinelRecoveryCandidateBranch } from "./issue-delivery.ts";
 import {
@@ -2997,20 +3001,17 @@ const run = async (): Promise<void> => {
     (selectedDevelopmentSha ?? await fetchDevelopmentBase(root, gitEnvironment));
   const recoveryBaseSha = selectedDevelopmentSha ?? await fetchDevelopmentBase(root, gitEnvironment);
   let recoverySnapshot = await readGitHubSentinelRecoveryLedger({ token: githubToken, repository });
-  const relatedRecoveryRecords = recoverySnapshot.ledger.records.filter((record) =>
-    record.identity.repository === repository && record.identity.source_kind === recoverySourceKind &&
-    record.identity.source_id === recoverySourceId
-  );
-  const currentRecoveryRecord = relatedRecoveryRecords.find((record) =>
-    record.identity.source_revision === recoverySourceRevision && record.disposition === "active"
-  );
-  const currentRecoveryKey = currentRecoveryRecord ? sentinelRecoveryIdentityKey(currentRecoveryRecord.identity) : null;
-  const currentRetryDecision = currentRecoveryKey === null
-    ? null
-    : recoverySnapshot.ledger.retry_decisions.find((entry) => entry.identity_key === currentRecoveryKey)?.decision ??
-      null;
-  const retryIsDue = currentRecoveryRecord?.phase === "retry_wait" && currentRetryDecision?.should_retry === true &&
-    currentRetryDecision.retry_at !== null && Date.parse(currentRetryDecision.retry_at) <= Date.now();
+  const recoverySelection = resolveSentinelRecoverySelection({
+    ledger: recoverySnapshot.ledger,
+    repository,
+    source_kind: recoverySourceKind,
+    source_id: recoverySourceId,
+    source_revision: recoverySourceRevision,
+    now: new Date().toISOString(),
+  });
+  const relatedRecoveryRecords = recoverySelection.related_records;
+  const currentRecoveryRecord = recoverySelection.current_record;
+  const retryIsDue = recoverySelection.retry_is_due;
   if (currentRecoveryRecord && !retryIsDue) {
     await writeJson(`${reportsDir}/recovery-record-v1.json`, currentRecoveryRecord);
     await updateState("recovery_pending", {
@@ -3049,10 +3050,7 @@ const run = async (): Promise<void> => {
       message: `chore(sentinel): retry ${sentinelRecoveryIdentityKey(recoveryIdentity)}`,
     });
   } else {
-    const candidateGeneration = relatedRecoveryRecords.reduce(
-      (maximum, record) => Math.max(maximum, record.identity.candidate_generation),
-      0,
-    ) + 1;
+    const candidateGeneration = recoverySelection.next_generation;
     recoveryIdentity = {
       repository,
       source_kind: recoverySourceKind,

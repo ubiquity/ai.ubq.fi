@@ -25,6 +25,14 @@ import {
 import { isSentinelProtectedImplementationPath, SENTINEL_POLICY } from "./policy.ts";
 import type { CodexAuthSlotSecrets } from "./quota.ts";
 import {
+  parseSentinelRecoveryRecord,
+  type SentinelRecoveryIdentityV1,
+  type SentinelRecoveryRecordV1,
+  type SentinelRecoverySourceKind,
+} from "./recovery.ts";
+import { classifySentinelFailure, stableSentinelFailureFingerprint } from "./retry.ts";
+import type { SentinelArtifactFile } from "./artifact-crypto.ts";
+import {
   assertGitHistoryExcludesValues,
   runTrustedGit,
   runTrustedGitUnchecked,
@@ -37,6 +45,12 @@ const FULL_SHA = /^[0-9a-f]{40}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const MAX_REPORT_TEXT = 4_096;
 const MAX_CONTROL_ENTRIES = 4_096;
+const MAX_RECOVERY_EVIDENCE_BYTES = 64 * 1024 * 1024;
+const MAX_SECRET_SCAN_REPORT_BYTES = 512 * 1024;
+const MATRIX_RETRY_EVIDENCE_SUFFIX = ".retry-evidence";
+const MATRIX_RETRY_EVIDENCE_STAGING_SUFFIX = ".staging";
+const MATRIX_RETRY_EVIDENCE_PREVIOUS_SUFFIX = ".previous";
+export const MATRIX_CELL_WORK_SELECTION_FILENAME = "work-selection.json";
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder("utf-8", { fatal: true });
 
@@ -108,7 +122,11 @@ const decodeGitPaths = (bytes: Uint8Array): string[] => TEXT_DECODER.decode(byte
 const gitText = async (cwd: string, args: readonly string[]): Promise<string> =>
   TEXT_DECODER.decode((await runTrustedGit({ args, cwd })).stdout).trim();
 
-const readChangedPaths = async (checkoutPath: string): Promise<string[]> => {
+const comparePaths = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0;
+
+export type MatrixCellChangedPathEntry = Readonly<{ path: string; source: "tracked" | "untracked" }>;
+
+const readChangedPathEntries = async (checkoutPath: string): Promise<readonly MatrixCellChangedPathEntry[]> => {
   const [tracked, untracked] = await Promise.all([
     runTrustedGit({
       args: ["diff", "--no-renames", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "HEAD"],
@@ -116,7 +134,11 @@ const readChangedPaths = async (checkoutPath: string): Promise<string[]> => {
     }),
     runTrustedGit({ args: ["ls-files", "--others", "--exclude-standard", "-z"], cwd: checkoutPath }),
   ]);
-  return sortedUnique([...decodeGitPaths(tracked.stdout), ...decodeGitPaths(untracked.stdout)]);
+  const entries = [
+    ...decodeGitPaths(tracked.stdout).map((path): MatrixCellChangedPathEntry => ({ path, source: "tracked" })),
+    ...decodeGitPaths(untracked.stdout).map((path): MatrixCellChangedPathEntry => ({ path, source: "untracked" })),
+  ].sort((left, right) => comparePaths(left.path, right.path));
+  return entries.filter((entry, index) => index === 0 || entry.path !== entries[index - 1]!.path);
 };
 
 const readStagedState = async (checkoutPath: string): Promise<void> => {
@@ -363,6 +385,39 @@ const defaultSecretScan: MatrixCellSecretScanner = async (input) => {
   }
 };
 
+/**
+ * Final integrity gate shared by the successful candidate path and the
+ * post-failure evidence path. It proves the Git index and control surfaces
+ * stayed trusted, every changed path is inside the immutable cell contract,
+ * protected paths are unchanged, and the changed files plus reachable history
+ * contain no trusted credential value. It never resolves or exports bytes.
+ */
+const assertFinalCandidateIntegrity = async (
+  input: Readonly<{
+    checkoutPath: string;
+    cell: MatrixCellV1;
+    protectedState: GitControlState | null;
+    gitControlState: GitControlState | null;
+    scanner: MatrixCellSecretScanner;
+    sensitiveValues: readonly string[];
+    secretScanReportPath: string | null;
+  }>,
+): Promise<readonly MatrixCellChangedPathEntry[]> => {
+  await readStagedState(input.checkoutPath);
+  const observedEntries = await readChangedPathEntries(input.checkoutPath);
+  const observed = observedEntries.map((entry) => entry.path);
+  await assertCellChangedPaths(input.checkoutPath, input.cell, observed);
+  if (input.protectedState) await assertProtectedPathsUnchanged(input.checkoutPath, input.protectedState);
+  if (input.gitControlState) await assertGitControlStateUnchanged(input.gitControlState);
+  await input.scanner({
+    checkoutPath: input.checkoutPath,
+    changedPaths: observed,
+    sensitiveValues: input.sensitiveValues,
+    reportPath: input.secretScanReportPath,
+  });
+  return observedEntries;
+};
+
 export type MatrixCellAgentAttempt = Readonly<{
   attempt: 1 | 2;
   prompt: string;
@@ -417,6 +472,15 @@ export type MatrixCellRunnerOptions = Readonly<{
   plan: MatrixPlanV1;
   cell: MatrixCellV1;
   checkoutPath: string;
+  /** Optional durable identity owner; defaults to the GitHub repository environment. */
+  repository?: string;
+  /**
+   * Optional authoritative work-selection identity (issue REST id and
+   * fingerprint, backlog fingerprint and base) used by the trusted planner.
+   * It is never derived from untrusted model output and binds the durable
+   * recovery identity to the work item that actually selected this cell.
+   */
+  workSelection?: MatrixCellWorkSelectionV1;
   /** Optional scoped evidence. It is untrusted and is never interpreted as policy. */
   scopedEvidence?: unknown;
   /** Optional finding detail supplied by the trusted planner. */
@@ -730,6 +794,486 @@ const writeReport = async (path: string | undefined, report: MatrixCellReportV1)
   await Deno.writeTextFile(path, `${canonicalMatrixJson(report)}\n`, { mode: 0o600 });
 };
 
+/** Deterministic sibling directory hosting durable retry evidence for one cell report. */
+export const matrixCellRetryEvidenceDirectory = (reportPath: string): string =>
+  `${reportPath}${MATRIX_RETRY_EVIDENCE_SUFFIX}`;
+
+/**
+ * Authoritative work-selection identity fragment. It is produced only by the
+ * trusted planner from the encrypted selection reports, never from model
+ * output, and is the same identity the recovery ledger uses for issue and
+ * backlog work items.
+ */
+export type MatrixCellWorkSelectionV1 = Readonly<{
+  source_kind: SentinelRecoverySourceKind;
+  source_id: string;
+  source_revision: string;
+}>;
+
+const SENTINEL_RECOVERY_SOURCE_KINDS: ReadonlySet<SentinelRecoverySourceKind> = new Set([
+  "github_issue",
+  "review_backlog",
+  "triage",
+  "incident",
+]);
+
+const parseMatrixCellWorkSelectionValue = (value: unknown): MatrixCellWorkSelectionV1 | null => {
+  if (
+    !isRecord(value) || value.schema_version !== 1 || typeof value.source_kind !== "string" ||
+    !SENTINEL_RECOVERY_SOURCE_KINDS.has(value.source_kind as SentinelRecoverySourceKind) ||
+    typeof value.source_id !== "string" || value.source_id.trim() === "" ||
+    typeof value.source_revision !== "string" || value.source_revision.trim() === ""
+  ) return null;
+  return {
+    source_kind: value.source_kind as SentinelRecoverySourceKind,
+    source_id: value.source_id,
+    source_revision: value.source_revision,
+  };
+};
+
+/** Parse the authenticated work-selection fragment stored inside cell evidence. */
+export const parseMatrixCellWorkSelection = (value: unknown): MatrixCellWorkSelectionV1 | null =>
+  parseMatrixCellWorkSelectionValue(value);
+
+const artifactJson = (files: readonly SentinelArtifactFile[], path: string): unknown => {
+  const file = files.find((candidate) => candidate.path === path);
+  if (!file || file.bytes.byteLength > 512 * 1024) return null;
+  try {
+    return JSON.parse(TEXT_DECODER.decode(file.bytes));
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Derive the authoritative work-selection identity from the authenticated
+ * selection reports inside a prepared matrix artifact. It mirrors the exact
+ * identity derivation used by the recovery ledger so issue and backlog work
+ * items keep one identity across runs.
+ */
+export const matrixCellWorkSelectionFromArtifact = (
+  files: readonly SentinelArtifactFile[],
+): MatrixCellWorkSelectionV1 | null => {
+  const issue = artifactJson(files, "reports/github-issue-selection.json");
+  if (
+    isRecord(issue) && typeof issue.issue_id === "number" && Number.isSafeInteger(issue.issue_id) &&
+    issue.issue_id > 0 && typeof issue.fingerprint === "string" && SHA256.test(issue.fingerprint)
+  ) {
+    return {
+      source_kind: "github_issue",
+      source_id: String(issue.issue_id),
+      source_revision: issue.fingerprint,
+    };
+  }
+  const backlog = artifactJson(files, "reports/review-backlog-selection.json");
+  if (isRecord(backlog) && typeof backlog.fingerprint === "string" && SHA256.test(backlog.fingerprint)) {
+    return {
+      source_kind: "review_backlog",
+      source_id: backlog.fingerprint,
+      source_revision: typeof backlog.affected_sha === "string" && FULL_SHA.test(backlog.affected_sha)
+        ? backlog.affected_sha
+        : backlog.fingerprint,
+    };
+  }
+  return null;
+};
+
+const matrixCellWorkSelectionJson = (workSelection: MatrixCellWorkSelectionV1 | null): string | null =>
+  workSelection === null ? null : `${
+    canonicalMatrixJson({
+      schema_version: 1,
+      source_kind: workSelection.source_kind,
+      source_id: workSelection.source_id,
+      source_revision: workSelection.source_revision,
+    })
+  }\n`;
+
+/**
+ * Content-derived revision of the exact cell contract bound to the
+ * authoritative work-selection revision and the immutable development base.
+ * It is stable across workflow reruns of the same work item and changes when
+ * the work item, its ownership contract, or the development head changes, so
+ * parallel development heads never collide on one recovery identity.
+ */
+export const matrixCellRecoverySourceRevision = (
+  baseSha: string,
+  cell: MatrixCellV1,
+  workSelection: MatrixCellWorkSelectionV1 | null,
+): Promise<string> =>
+  sha256Text(
+    canonicalMatrixJson({
+      schema_version: 1,
+      work_revision: workSelection?.source_revision ?? null,
+      base_sha: baseSha,
+      finding_fingerprints: [...cell.finding_fingerprints].sort(),
+      allowed_paths: [...cell.allowed_paths].sort(),
+      prohibited_paths: [...cell.prohibited_paths].sort(),
+      shared_paths: [...cell.shared_paths].sort(),
+      validation_requirements: [...cell.validation_requirements].sort(),
+    }),
+  );
+
+const matrixCellRecoveryIdentity = async (
+  repository: string,
+  plan: MatrixPlanV1,
+  cell: MatrixCellV1,
+  workSelection: MatrixCellWorkSelectionV1 | null,
+  candidateGeneration: number,
+): Promise<SentinelRecoveryIdentityV1> => ({
+  repository,
+  source_kind: workSelection?.source_kind ?? "triage",
+  source_id: workSelection?.source_id ?? cell.cell_id,
+  source_revision: await matrixCellRecoverySourceRevision(plan.base_sha, cell, workSelection),
+  candidate_generation: candidateGeneration,
+});
+
+/**
+ * Canonical work-item identity derived from the authenticated work selection.
+ * The cell evidence record keeps the exact base/cell-bound child revision; a
+ * separate canonical parent record links that child to the authoritative
+ * source revision the Sentinel selection path matches (issue fingerprint or
+ * backlog affected SHA). Returns null when the child identity is already the
+ * canonical parent revision or when no authoritative work selection exists.
+ */
+export const matrixCellCanonicalParentIdentity = (
+  childIdentity: SentinelRecoveryIdentityV1,
+  workSelection: MatrixCellWorkSelectionV1 | null,
+): SentinelRecoveryIdentityV1 | null => {
+  if (workSelection === null) return null;
+  if (
+    childIdentity.source_kind !== workSelection.source_kind ||
+    childIdentity.source_id !== workSelection.source_id
+  ) return null;
+  if (childIdentity.source_revision === workSelection.source_revision) return null;
+  return { ...childIdentity, source_revision: workSelection.source_revision };
+};
+
+/**
+ * Attestation of the trusted cell-capture gates that ran before the candidate
+ * snapshot was persisted. It names only the secret-scan report basename and
+ * its digest (never its content or any credential), so recovery consumers can
+ * prove the evidence passed the cell integrity and credential gates.
+ */
+export type MatrixCellCaptureAttestationV1 = Readonly<{
+  schema_version: 1;
+  cell_status: "retry_pending";
+  secret_scan_path: string | null;
+  secret_scan_sha256: string | null;
+}>;
+
+const matrixCellCaptureAttestation = async (
+  secretScanReportPath: string | null,
+): Promise<MatrixCellCaptureAttestationV1> => {
+  if (secretScanReportPath === null) {
+    return { schema_version: 1, cell_status: "retry_pending", secret_scan_path: null, secret_scan_sha256: null };
+  }
+  try {
+    const information = await Deno.stat(secretScanReportPath);
+    if (!information.isFile || information.size > MAX_SECRET_SCAN_REPORT_BYTES) {
+      throw new Error("Sentinel secret-scan report is not a bounded regular file");
+    }
+    const bytes = await Deno.readFile(secretScanReportPath);
+    try {
+      return {
+        schema_version: 1,
+        cell_status: "retry_pending",
+        secret_scan_path: secretScanReportPath.split("/").at(-1) ?? null,
+        secret_scan_sha256: await sha256Bytes(bytes),
+      };
+    } finally {
+      bytes.fill(0);
+    }
+  } catch {
+    // A missing or unreadable scan report must not block evidence capture; the
+    // digest is simply unavailable and the consumer can validate the remaining
+    // exact cell binding instead.
+    return { schema_version: 1, cell_status: "retry_pending", secret_scan_path: null, secret_scan_sha256: null };
+  }
+};
+
+const matrixCellAttestationValid = (value: unknown): boolean =>
+  isRecord(value) && value.schema_version === 1 && value.cell_status === "retry_pending" &&
+  (value.secret_scan_path === null || typeof value.secret_scan_path === "string") &&
+  (value.secret_scan_sha256 === null ||
+    (typeof value.secret_scan_sha256 === "string" && SHA256.test(value.secret_scan_sha256)));
+
+/**
+ * Durable retry identity for a retry_pending matrix cell. The failure class
+ * and fingerprint come from the existing classifier; the attempt is the
+ * authoritative workflow run attempt; the recovery ledger layer is expected to
+ * resolve the candidate generation against prior durable state before the
+ * record is upserted. It never contains candidate content.
+ */
+export const buildMatrixCellRetryRecoveryRecord = async (
+  input: Readonly<{
+    repository: string;
+    plan: MatrixPlanV1;
+    cell: MatrixCellV1;
+    workSelection: MatrixCellWorkSelectionV1 | null;
+    changedPaths: readonly string[];
+    error: unknown;
+    failureCode: string;
+    failureReason: string | null;
+    candidateGeneration?: number;
+    attempt?: number;
+    now: string;
+  }>,
+): Promise<SentinelRecoveryRecordV1 | null> => {
+  const repository = input.repository.trim();
+  if (repository.length === 0) return null;
+  const identity = await matrixCellRecoveryIdentity(
+    repository,
+    input.plan,
+    input.cell,
+    input.workSelection,
+    input.candidateGeneration ?? 1,
+  );
+  const classification = classifySentinelFailure(input.error, {
+    phase: "implementation_running",
+    code: input.failureCode,
+    signature: input.failureReason,
+  });
+  const failureFingerprint = await stableSentinelFailureFingerprint({
+    identity,
+    failure_class: classification.failure_class,
+    code: classification.code,
+    phase: classification.phase,
+    signature: classification.signature,
+  });
+  return parseSentinelRecoveryRecord({
+    schema_version: 1,
+    identity,
+    run_id: input.plan.run_id,
+    attempt: input.attempt ?? input.plan.run_attempt,
+    lease_token: `matrix-cell-${input.plan.run_id}-${input.plan.run_attempt}-${input.cell.cell_id}`,
+    base_sha: input.plan.base_sha,
+    phase: "recovery_pending",
+    disposition: "active",
+    state_version: 1,
+    created_at: input.now,
+    updated_at: input.now,
+    candidate_branch: null,
+    candidate_sha: null,
+    changed_files: sortedUnique(input.changedPaths),
+    tree_sha: null,
+    failure_class: classification.failure_class,
+    failure_fingerprint: failureFingerprint,
+    artifact_ids: [],
+    artifact_digests: [],
+    reason: "The matrix cell ended retry_pending without a durable candidate ref.",
+    next_action: "Recover the encrypted cell candidate evidence into a quarantined branch.",
+    predecessor: null,
+  });
+};
+
+const MATRIX_SNAPSHOT_MANIFEST_KEYS = new Set([
+  "base_sha",
+  "capture_attestation",
+  "captured_at",
+  "cell_contract",
+  "file_count",
+  "files",
+  "plan_digest",
+  "run_id",
+  "run_attempt",
+  "schema_version",
+  "total_bytes",
+]);
+
+const MATRIX_SNAPSHOT_FILE_KEYS = new Set(["kind", "mode", "path", "payload", "sha256", "size", "source"]);
+const MATRIX_SNAPSHOT_DELETED_KEYS = new Set(["kind", "path", "source"]);
+
+/**
+ * Prove every snapshot path is inside the immutable cell contract: within the
+ * allowed paths, outside prohibited and shared paths, and never a protected
+ * Sentinel path. Recovery re-runs this gate against the reconstructed
+ * snapshot before any branch push or draft PR.
+ */
+export const assertMatrixCellEvidencePaths = (cell: MatrixCellV1, paths: readonly string[]): void => {
+  for (const path of paths) {
+    if (!repositoryPath(path)) throw new MatrixCellSafetyError("Cell retry evidence contains an invalid path");
+    if (!pathInScope(path, cell.allowed_paths)) {
+      throw new MatrixCellSafetyError(`Cell retry evidence captured a path outside the cell contract: ${path}`);
+    }
+    if (pathInScope(path, cell.prohibited_paths) || pathInScope(path, cell.shared_paths)) {
+      throw new MatrixCellSafetyError(`Cell retry evidence captured a prohibited shared path: ${path}`);
+    }
+    if (isSentinelProtectedImplementationPath(path)) {
+      throw new MatrixCellSafetyError(`Cell retry evidence captured a protected Sentinel path: ${path}`);
+    }
+  }
+};
+
+const evidenceManifestKeysValid = (manifest: Record<string, unknown>, fileCount: number, totalBytes: number): boolean =>
+  fileCount === manifest.file_count && totalBytes === manifest.total_bytes &&
+  Array.isArray(manifest.files) && manifest.files.length === fileCount &&
+  manifest.files.every((value: unknown) => {
+    if (!isRecord(value)) return false;
+    const keys = new Set(Object.keys(value));
+    return value.kind === "deleted"
+      ? keys.size === MATRIX_SNAPSHOT_DELETED_KEYS.size &&
+        [...keys].every((key) => MATRIX_SNAPSHOT_DELETED_KEYS.has(key))
+      : keys.size === MATRIX_SNAPSHOT_FILE_KEYS.size &&
+        [...keys].every((key) => MATRIX_SNAPSHOT_FILE_KEYS.has(key));
+  }) &&
+  matrixCellAttestationValid(manifest.capture_attestation) &&
+  [...Object.keys(manifest)].every((key) => MATRIX_SNAPSHOT_MANIFEST_KEYS.has(key)) &&
+  [...Object.keys(manifest)].length === MATRIX_SNAPSHOT_MANIFEST_KEYS.size;
+
+/**
+ * Persist the recoverable candidate evidence for one retry_pending cell as the
+ * authenticated snapshot format understood by artifact recovery. Everything is
+ * written into a private staging sibling first, validated by re-reading it
+ * from disk, and only then renamed to the final directory, so no partial or
+ * empty evidence directory can ever become an uploadable artifact.
+ */
+export const writeMatrixCellRetryEvidence = async (
+  input: Readonly<{
+    checkoutPath: string;
+    plan: MatrixPlanV1;
+    cell: MatrixCellV1;
+    changedEntries: readonly MatrixCellChangedPathEntry[];
+    evidenceDirectory: string;
+    capturedAt: string;
+    recoveryRecord: SentinelRecoveryRecordV1;
+    workSelection: MatrixCellWorkSelectionV1 | null;
+    secretScanReportPath?: string | null;
+  }>,
+): Promise<void> => {
+  const evidenceEntries = [...input.changedEntries].sort((left, right) => comparePaths(left.path, right.path));
+  const paths = evidenceEntries.map((entry) => entry.path);
+  await assertCellChangedPaths(input.checkoutPath, input.cell, paths);
+  await assertMatrixCellEvidencePaths(input.cell, paths);
+  const evidenceDirectory = externalOutputPath(
+    input.checkoutPath,
+    absolutePath(input.evidenceDirectory, "Evidence directory"),
+    "Evidence directory",
+  );
+  const stagingDirectory = `${evidenceDirectory}${MATRIX_RETRY_EVIDENCE_STAGING_SUFFIX}`;
+  await Deno.remove(stagingDirectory, { recursive: true }).catch(() => undefined);
+  const filesDirectory = `${stagingDirectory}/files`;
+  await Deno.mkdir(filesDirectory, { recursive: true, mode: 0o700 });
+
+  const manifestFiles: Array<Readonly<Record<string, unknown>>> = [];
+  let totalBytes = 0;
+  try {
+    for (const [index, entry] of evidenceEntries.entries()) {
+      let information: Deno.FileInfo;
+      try {
+        information = await Deno.lstat(`${input.checkoutPath}/${entry.path}`);
+      } catch (error) {
+        if (error instanceof Deno.errors.NotFound) {
+          manifestFiles.push({ kind: "deleted", path: entry.path, source: "tracked" });
+          continue;
+        }
+        throw error;
+      }
+      if (information.isSymlink || !information.isFile) {
+        throw new MatrixCellSafetyError("Retry evidence captured a non-file cell path");
+      }
+      const bytes = await Deno.readFile(`${input.checkoutPath}/${entry.path}`);
+      try {
+        totalBytes += bytes.byteLength;
+        if (totalBytes > MAX_RECOVERY_EVIDENCE_BYTES) {
+          throw new MatrixCellExecutionError("Cell retry evidence exceeded its byte bound");
+        }
+        const payloadName = `files/${index.toString().padStart(4, "0")}.bin`;
+        await Deno.writeFile(`${stagingDirectory}/${payloadName}`, bytes, { mode: 0o600 });
+        manifestFiles.push({
+          kind: "file",
+          mode: (information.mode ?? 0o100644) & 0o7777,
+          path: entry.path,
+          payload: payloadName,
+          sha256: await sha256Bytes(bytes),
+          size: bytes.byteLength,
+          source: entry.source,
+        });
+      } finally {
+        bytes.fill(0);
+      }
+    }
+    const manifest = {
+      schema_version: 1,
+      plan_digest: input.plan.manifest_digest,
+      run_id: input.plan.run_id,
+      run_attempt: input.plan.run_attempt,
+      base_sha: input.plan.base_sha,
+      captured_at: input.capturedAt,
+      cell_contract: JSON.parse(canonicalMatrixJson(input.cell)) as unknown,
+      capture_attestation: await matrixCellCaptureAttestation(input.secretScanReportPath ?? null),
+      file_count: manifestFiles.length,
+      total_bytes: totalBytes,
+      files: manifestFiles,
+    };
+    const canonical = canonicalMatrixJson(manifest);
+    const parsed = JSON.parse(canonical) as Record<string, unknown>;
+    if (!isRecord(parsed) || !evidenceManifestKeysValid(parsed, manifestFiles.length, totalBytes)) {
+      throw new MatrixCellExecutionError("Cell retry evidence manifest is invalid");
+    }
+    await Deno.writeTextFile(`${stagingDirectory}/manifest.json`, `${canonical}\n`, { mode: 0o600 });
+    await Deno.writeTextFile(
+      `${stagingDirectory}/recovery-record.json`,
+      `${canonicalMatrixJson(input.recoveryRecord)}\n`,
+      { mode: 0o600 },
+    );
+    const workSelectionJson = matrixCellWorkSelectionJson(input.workSelection);
+    if (workSelectionJson !== null) {
+      await Deno.writeTextFile(`${stagingDirectory}/${MATRIX_CELL_WORK_SELECTION_FILENAME}`, workSelectionJson, {
+        mode: 0o600,
+      });
+    }
+
+    // Validate the durable staged bytes by re-reading and re-hashing them;
+    // a partial or tampered staging directory must never become evidence.
+    const onDisk = JSON.parse(await Deno.readTextFile(`${stagingDirectory}/manifest.json`)) as Record<string, unknown>;
+    if (!isRecord(onDisk) || !evidenceManifestKeysValid(onDisk, manifestFiles.length, totalBytes)) {
+      throw new MatrixCellExecutionError("Cell retry evidence manifest is invalid on disk");
+    }
+    parseSentinelRecoveryRecord(JSON.parse(await Deno.readTextFile(`${stagingDirectory}/recovery-record.json`)));
+    if (
+      workSelectionJson !== null && parseMatrixCellWorkSelectionValue(
+          JSON.parse(await Deno.readTextFile(`${stagingDirectory}/${MATRIX_CELL_WORK_SELECTION_FILENAME}`)),
+        ) === null
+    ) {
+      throw new MatrixCellExecutionError("Cell retry evidence work selection is invalid on disk");
+    }
+    let bytesOnDisk = 0;
+    for (const entry of (onDisk.files as Array<Readonly<Record<string, unknown>>>)) {
+      if (entry.kind !== "file" || typeof entry.payload !== "string") continue;
+      const bytes = await Deno.readFile(`${stagingDirectory}/${entry.payload}`);
+      try {
+        bytesOnDisk += bytes.byteLength;
+        if (await sha256Bytes(bytes) !== entry.sha256 || bytes.byteLength !== entry.size) {
+          throw new MatrixCellExecutionError("Cell retry evidence payload digest does not match its manifest");
+        }
+      } finally {
+        bytes.fill(0);
+      }
+    }
+    if (bytesOnDisk !== totalBytes) {
+      throw new MatrixCellExecutionError("Cell retry evidence payload bytes are incomplete");
+    }
+
+    // Safe no-overwrite completion: the final directory only ever appears by
+    // renaming a fully validated staging directory, and a complete prior set
+    // is moved aside atomically instead of being deleted before the new set is
+    // durable. An interruption at any point leaves at least one complete set.
+    const previousDirectory = `${evidenceDirectory}${MATRIX_RETRY_EVIDENCE_PREVIOUS_SUFFIX}`;
+    await Deno.remove(previousDirectory, { recursive: true }).catch(() => undefined);
+    try {
+      await Deno.rename(stagingDirectory, evidenceDirectory);
+    } catch {
+      // A prior evidence set already occupies the final path. Keep it intact
+      // until the new fully validated set is renamed into place.
+      await Deno.rename(evidenceDirectory, previousDirectory);
+      await Deno.rename(stagingDirectory, evidenceDirectory);
+      await Deno.remove(previousDirectory, { recursive: true }).catch(() => undefined);
+    }
+  } finally {
+    await Deno.remove(stagingDirectory, { recursive: true }).catch(() => undefined);
+  }
+};
+
 const buildReport = async (
   options: MatrixCellRunnerOptions,
   status: MatrixCellStatus,
@@ -908,6 +1452,7 @@ export const runMatrixCell = async (
     scopedEvidence: options.scopedEvidence,
   });
   let changedPaths: string[] = [];
+  let recoveryChangedEntries: readonly MatrixCellChangedPathEntry[] = [];
   let dispositions = createBlockedDispositions(plan, options.cell, "Cell did not complete", sensitiveValues);
   const validationChecks: MatrixValidationCheckV1[] = [];
   let replay = replayWithoutCases();
@@ -915,9 +1460,21 @@ export const runMatrixCell = async (
   let treeSha: string | null = null;
   let status: MatrixCellStatus = "failed";
   let failureReason: string | null = "Cell did not complete";
+  let failureCode = "unknown_failure";
   let protectedState: GitControlState | null = null;
   let gitControlState: GitControlState | null = null;
   let preflightComplete = false;
+  let failureError: unknown = null;
+  const finalIntegrity = (): Promise<readonly MatrixCellChangedPathEntry[]> =>
+    assertFinalCandidateIntegrity({
+      checkoutPath: options.checkoutPath,
+      cell: options.cell,
+      protectedState,
+      gitControlState,
+      scanner,
+      sensitiveValues,
+      secretScanReportPath,
+    });
   try {
     const realCheckout = await Deno.realPath(options.checkoutPath);
     const topLevel = await gitText(options.checkoutPath, ["rev-parse", "--show-toplevel"]);
@@ -950,15 +1507,7 @@ export const runMatrixCell = async (
       await readStagedState(options.checkoutPath);
     };
     const assertCandidateState = async (): Promise<void> => {
-      changedPaths = await readChangedPaths(options.checkoutPath);
-      await assertCellChangedPaths(options.checkoutPath, options.cell, changedPaths);
-      if (protectedState) await assertProtectedPathsUnchanged(options.checkoutPath, protectedState);
-      await scanner({
-        checkoutPath: options.checkoutPath,
-        changedPaths,
-        sensitiveValues,
-        reportPath: secretScanReportPath,
-      });
+      changedPaths = (await finalIntegrity()).map((entry) => entry.path);
     };
     const implementation = await invokeAgentWithContinuation(options, dependencies, prompt, async (timeoutError) => {
       await assertAgentState();
@@ -1046,15 +1595,40 @@ export const runMatrixCell = async (
     status = "succeeded";
     failureReason = null;
   } catch (error) {
+    failureError = error;
     status = statusForFailure(error);
+    failureCode = error instanceof CodexInvocationError ? error.failure : "unknown_failure";
     failureReason = errorDetail(error, sensitiveValues);
     if (preflightComplete) {
+      // Before any retry evidence is persisted, re-run the exact final gates
+      // of the successful candidate path. A workspace that failed a safety
+      // gate is blocked and never becomes an uploadable evidence artifact.
       try {
-        const observed = await readChangedPaths(options.checkoutPath);
-        await assertCellChangedPaths(options.checkoutPath, options.cell, observed);
+        const observedEntries = await finalIntegrity();
+        recoveryChangedEntries = observedEntries;
+        const observed = observedEntries.map((entry) => entry.path);
         if (headSha === null || observed.length > 0) changedPaths = observed;
-      } catch {
-        if (headSha === null) changedPaths = [];
+        validationChecks.push(
+          check("post-failure-integrity", true, "final integrity gates passed before retry evidence capture"),
+        );
+      } catch (finalError) {
+        if (finalError instanceof MatrixCellSafetyError) {
+          status = "blocked";
+          failureReason = errorDetail(finalError, sensitiveValues);
+        }
+        if (headSha === null) {
+          // Best-effort path evidence for the report: the unsafe paths are
+          // never captured into an artifact, but the blocked cell report still
+          // names the in-contract paths the agent touched.
+          try {
+            const observed = (await readChangedPathEntries(options.checkoutPath)).map((entry) => entry.path);
+            await assertCellChangedPaths(options.checkoutPath, options.cell, observed);
+            changedPaths = observed;
+          } catch {
+            changedPaths = [];
+          }
+        }
+        recoveryChangedEntries = [];
       }
     }
     validationChecks.push(check("cell-outcome", false, failureReason));
@@ -1074,6 +1648,57 @@ export const runMatrixCell = async (
       summary: redact(failureReason ?? "Cell did not complete", sensitiveValues),
       changed_files: [],
     }));
+  }
+  // Capture durable retry evidence before the report is finalized. A safety
+  // violation while snapshotting bytes blocks the cell; a non-safety evidence
+  // failure leaves a report-only artifact that recovery classifies manually.
+  if (status === "retry_pending" && reportPath !== undefined) {
+    try {
+      let repository = options.repository?.trim() ?? "";
+      if (repository.length === 0) {
+        try {
+          repository = Deno.env.get("GITHUB_REPOSITORY")?.trim() ?? "";
+        } catch {
+          repository = "";
+        }
+      }
+      const recoveryRecord = await buildMatrixCellRetryRecoveryRecord({
+        repository,
+        plan,
+        cell: options.cell,
+        workSelection: options.workSelection ?? null,
+        changedPaths,
+        error: failureError,
+        failureCode,
+        failureReason,
+        now: new Date().toISOString(),
+      });
+      if (recoveryRecord !== null) {
+        await writeMatrixCellRetryEvidence({
+          checkoutPath: options.checkoutPath,
+          plan,
+          cell: options.cell,
+          changedEntries: recoveryChangedEntries,
+          evidenceDirectory: matrixCellRetryEvidenceDirectory(reportPath),
+          capturedAt: recoveryRecord.updated_at,
+          recoveryRecord,
+          workSelection: options.workSelection ?? null,
+          secretScanReportPath: options.secretScanReportPath ?? null,
+        });
+      }
+    } catch (evidenceError) {
+      if (evidenceError instanceof MatrixCellSafetyError) {
+        status = "blocked";
+        failureReason = errorDetail(evidenceError, sensitiveValues);
+        const blockedReason = failureReason ?? "Cell did not complete";
+        dispositions = dispositions.map((item) => ({
+          ...item,
+          status: "blocked",
+          summary: redact(blockedReason, sensitiveValues),
+          changed_files: [],
+        }));
+      }
+    }
   }
   const report = await buildReport(
     options,
