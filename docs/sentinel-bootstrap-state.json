@@ -40,13 +40,13 @@
   "constraints": [],
   "progress": {
     "schema_version": 1,
-    "verdict": "stuck",
-    "reason": "unchanged_or_cycling_state",
+    "verdict": "progress",
+    "reason": "verified_phase_or_milestone_change",
     "observation_count": 8,
-    "state_digest": "55a0486b54f12a4d",
+    "state_digest": "3627af72ad5b2197",
     "classifier": null,
-    "resolved": "stuck",
-    "resolved_reason": "unchanged_or_cycling_state",
-    "evaluated_at": "2026-08-30T19:30:14.978Z"
+    "resolved": "progress",
+    "resolved_reason": "verified_phase_or_milestone_change",
+    "evaluated_at": "2026-08-30T19:38:49.078Z"
   }
 }
