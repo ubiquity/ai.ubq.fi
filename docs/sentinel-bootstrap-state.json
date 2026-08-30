@@ -2,12 +2,14 @@
   "schema_version": 1,
   "release": {
     "schema_version": 1,
-    "stable_sha": "b5201551d4b8b6ea8ad99d5f38697fac99a120e5",
-    "candidate_sha": "3f3d8c46b389dee58489aac1b88d4a01972d9e94",
+    "stable_sha": "3f3d8c46b389dee58489aac1b88d4a01972d9e94",
+    "candidate_sha": null,
     "acceptance_evidence": [
-      "health:5yetjgbyen4a"
+      "health:5yetjgbyen4a",
+      "health:5yetjgbyen4a",
+      "bootstrap:healthy-window"
     ],
-    "activated_at": "2026-08-30T20:32:10.060Z",
+    "activated_at": "2026-08-30T21:32:35.967Z",
     "rollback_reason": null,
     "generation": 18
   },
