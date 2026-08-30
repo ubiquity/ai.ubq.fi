@@ -5032,29 +5032,25 @@
       "attempt": 1,
       "lease_token": "artifact-9577175316",
       "base_sha": "4d2928f47f3ba3ad66b8c15e6323bcccd0a39390",
-      "phase": "checkpoint_durable",
-      "disposition": "active",
-      "state_version": 2,
+      "phase": "manual_required",
+      "disposition": "manual_required",
+      "state_version": 4,
       "created_at": "2026-08-25T18:02:24.642Z",
-      "updated_at": "2026-08-28T23:13:15.898Z",
-      "candidate_branch": "sentinel/candidate-triage-32878776053-4d2928f47f3ba3ad66b8c15e6323bccc-g1-dd7807f5cc03c8f6",
-      "candidate_sha": "00b60a57058675070f69cb5801abf9f126b0dc90",
-      "changed_files": [
-        "src/codex.ts",
-        "src/openai.ts",
-        "tests/openai-compat.test.ts"
-      ],
-      "tree_sha": "546bde16fda3ea45e45b38183c6edfd3d5257696",
-      "failure_class": null,
-      "failure_fingerprint": null,
+      "updated_at": "2026-08-30T22:18:51.411Z",
+      "candidate_branch": null,
+      "candidate_sha": null,
+      "changed_files": [],
+      "tree_sha": null,
+      "failure_class": "artifact_wrong_base",
+      "failure_fingerprint": "575ff89af3c0357dd6add0d27cd5b7a9f6a9ca59a13eb0b7d638643c7f646704",
       "artifact_ids": [
         9577175316
       ],
       "artifact_digests": [
         "sha256:ce27b7a5faa087a3bb27a3f0d6225a42f4e1895599455bcf1f48be7715abc223"
       ],
-      "reason": "encrypted candidate recovered into a quarantined checkpoint",
-      "next_action": "validate the checkpoint and request human review",
+      "reason": "artifact_wrong_base",
+      "next_action": "manual inspection of encrypted evidence and the exact base is required",
       "predecessor": null
     },
     {
