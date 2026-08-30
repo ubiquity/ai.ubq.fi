@@ -100,10 +100,27 @@ export const readGitHubSentinelRecoveryLedger = async (
       fetcher,
     )).value,
   );
-  if (!contents || contents.encoding !== "base64" || typeof contents.content !== "string") {
-    throw new Error("GitHub recovery state file is invalid");
+  if (!contents) throw new Error("GitHub recovery state file is invalid");
+  let ledgerText: string;
+  if (contents.encoding === "base64" && typeof contents.content === "string") {
+    ledgerText = decodeBase64(contents.content);
+  } else {
+    // GitHub omits inline Base64 once the file exceeds 1 MiB (encoding:
+    // "none", empty content); fetch the exact blob its validated SHA pins via
+    // the Git Data blobs endpoint and require the blob SHA to agree.
+    const blobSha = requiredSha(contents.sha, "GitHub recovery state file SHA");
+    const blob = record(
+      (await request(input.token, input.repository, `/git/blobs/${blobSha}`, {}, fetcher)).value,
+    );
+    if (
+      blob === null || requiredSha(blob.sha, "GitHub recovery state blob SHA") !== blobSha ||
+      blob.encoding !== "base64" || typeof blob.content !== "string"
+    ) {
+      throw new Error("GitHub recovery state file is invalid");
+    }
+    ledgerText = decodeBase64(blob.content);
   }
-  const ledger = parseSentinelRecoveryLedger(JSON.parse(decodeBase64(contents.content)));
+  const ledger = parseSentinelRecoveryLedger(JSON.parse(ledgerText));
   return { ledger, commit_sha: commitSha, tree_sha: treeSha, state_ref_exists: stateRefExists };
 };
 
