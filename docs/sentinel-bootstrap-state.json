@@ -38,13 +38,13 @@
   "constraints": [],
   "progress": {
     "schema_version": 1,
-    "verdict": "ambiguous",
-    "reason": "changed_state_without_verified_advancement",
-    "observation_count": 4,
-    "state_digest": "c8813d52c095aada",
+    "verdict": "stuck",
+    "reason": "unchanged_or_cycling_state",
+    "observation_count": 6,
+    "state_digest": "500f58d6531d215f",
     "classifier": null,
-    "resolved": "unknown",
-    "resolved_reason": "classifier_not_provisioned",
-    "evaluated_at": "2026-08-30T17:18:13.497Z"
+    "resolved": "stuck",
+    "resolved_reason": "unchanged_or_cycling_state",
+    "evaluated_at": "2026-08-30T17:26:03.026Z"
   }
 }
