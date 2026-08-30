@@ -83,39 +83,55 @@ const githubRequest = async (token: string, repository: string, path: string): P
   return JSON.parse(text);
 };
 
+/**
+ * Parses one page of the GitHub REST pull-request listing into the minimal
+ * pull-request identity the rolling scan keys on. The live GitHub pull payload
+ * reports an absent description as `body: null`, which is a valid contract
+ * value (the shared GitHub parsers normalize it to `""`); every other field
+ * must carry the exact PR/head/base identity the rolling review requires. Any
+ * truly malformed record fails closed before the page can be used: no
+ * fallback, no partial parse, no guessed identity.
+ */
+export const parseSentinelPullList = (value: unknown): SentinelPullRequest[] => {
+  if (!Array.isArray(value)) throw new Error("GitHub pull-request listing is invalid");
+  const pulls: SentinelPullRequest[] = [];
+  for (const candidate of value) {
+    if (!isRecord(candidate)) throw new Error("GitHub returned an invalid pull request");
+    const head = isRecord(candidate.head) ? candidate.head : null;
+    const base = isRecord(candidate.base) ? candidate.base : null;
+    if (
+      !Number.isSafeInteger(candidate.number) || (candidate.number as number) <= 0 ||
+      typeof candidate.html_url !== "string" || !/^https:\/\/github\.com\//u.test(candidate.html_url) ||
+      (candidate.state !== "open" && candidate.state !== "closed") ||
+      !(candidate.merged_at === null || typeof candidate.merged_at === "string") ||
+      !(candidate.body === null || typeof candidate.body === "string") || !head || !base ||
+      typeof head.ref !== "string" || !SAFE_BRANCH.test(head.ref) ||
+      typeof head.sha !== "string" || !FULL_SHA.test(head.sha) ||
+      typeof base.ref !== "string" || !SAFE_BRANCH.test(base.ref)
+    ) {
+      throw new Error("GitHub returned an invalid pull request");
+    }
+    pulls.push({
+      number: candidate.number as number,
+      htmlUrl: candidate.html_url as string,
+      state: candidate.state as "open" | "closed",
+      merged: candidate.merged_at !== null,
+      headRef: head.ref,
+      headSha: head.sha,
+      baseRef: base.ref,
+      body: candidate.body ?? "",
+    });
+  }
+  return pulls;
+};
+
 const listSentinelPulls = async (token: string, repository: string): Promise<SentinelPullRequest[]> => {
   const pulls: SentinelPullRequest[] = [];
   for (let page = 1; page <= MAX_PULL_PAGES; page++) {
     const value = await githubRequest(token, repository, `/pulls?state=all&per_page=100&page=${page}`);
-    if (!Array.isArray(value)) throw new Error("GitHub pull-request listing is invalid");
-    for (const candidate of value) {
-      if (!isRecord(candidate)) throw new Error("GitHub returned an invalid pull request");
-      const head = isRecord(candidate.head) ? candidate.head : null;
-      const base = isRecord(candidate.base) ? candidate.base : null;
-      if (
-        !Number.isSafeInteger(candidate.number) || (candidate.number as number) <= 0 ||
-        typeof candidate.html_url !== "string" || !/^https:\/\/github\.com\//u.test(candidate.html_url) ||
-        (candidate.state !== "open" && candidate.state !== "closed") ||
-        !(candidate.merged_at === null || typeof candidate.merged_at === "string") ||
-        typeof candidate.body !== "string" || !head || !base ||
-        typeof head.ref !== "string" || !SAFE_BRANCH.test(head.ref) ||
-        typeof head.sha !== "string" || !FULL_SHA.test(head.sha) ||
-        typeof base.ref !== "string" || !SAFE_BRANCH.test(base.ref)
-      ) {
-        throw new Error("GitHub returned an invalid pull request");
-      }
-      pulls.push({
-        number: candidate.number as number,
-        htmlUrl: candidate.html_url as string,
-        state: candidate.state as "open" | "closed",
-        merged: candidate.merged_at !== null,
-        headRef: head.ref,
-        headSha: head.sha,
-        baseRef: base.ref,
-        body: candidate.body,
-      });
-    }
-    if (value.length < 100) break;
+    const pagePulls = parseSentinelPullList(value);
+    pulls.push(...pagePulls);
+    if (pagePulls.length < 100) break;
   }
   return pulls;
 };

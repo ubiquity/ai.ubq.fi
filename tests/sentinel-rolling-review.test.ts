@@ -15,6 +15,7 @@ import {
   selectRollingReviewTaskFromIdentities,
   type SentinelPullRequest,
 } from "../scripts/sentinel/rolling-review.ts";
+import { parseSentinelPullList } from "../scripts/sentinel/rolling-review-worker.ts";
 import { SENTINEL_POLICY } from "../scripts/sentinel/policy.ts";
 import { parseReviewBacklog, renderReviewBacklog, selectNextReviewBacklogEntry } from "../scripts/sentinel/review.ts";
 import type { NativeReviewFinding } from "../scripts/sentinel/types.ts";
@@ -474,4 +475,118 @@ Deno.test("rolling review result file identity parse is fail-closed and bounded"
     (_, index) => `${REVIEW_RESULT_PREFIX}${rollingReviewResultFileName(1_000 + index, headSha)}`,
   );
   assert.throws(() => parseRollingReviewResultFileNames(many), /exceeds its entry limit/);
+});
+
+Deno.test("rolling review listing accepts the live GitHub payload contract and preserves exact identity", () => {
+  // Records captured from the live `GET /repos/ubiquity/ai.ubq.fi/pulls?state=all`
+  // listing. The GitHub REST API reports an absent pull-request description as
+  // `body: null` (PR #169 and #159); the pre-fix listing rejected that valid
+  // contract value with "GitHub returned an invalid pull request" and aborted
+  // the whole rolling review cycle.
+  const liveMergedWithoutBody = {
+    number: 169,
+    html_url: "https://github.com/ubiquity/ai.ubq.fi/pull/169",
+    state: "closed",
+    merged_at: "2026-08-28T09:08:28Z",
+    body: null,
+    head: { ref: "fix/sentinel-luna-stream-stall", sha: "f508d765147a7c260ee3bfe63a257dc062df40e0" },
+    base: { ref: "development" },
+  };
+  const liveClosedUnmergedWithoutBody = {
+    number: 159,
+    html_url: "https://github.com/ubiquity/ai.ubq.fi/pull/159",
+    state: "closed",
+    merged_at: null,
+    body: null,
+    head: { ref: "fix/sentinel-hourly-selection", sha: "9105bffd073a002e09f43d579da5c3f09b23669b" },
+    base: { ref: "development" },
+  };
+  const liveSentinelPull = {
+    number: 166,
+    html_url: "https://github.com/ubiquity/ai.ubq.fi/pull/166",
+    state: "closed",
+    merged_at: "2026-08-28T03:32:40Z",
+    body:
+      "<!-- provider-sentinel:issue-pr:v1 issue=142 fingerprint=d8e960924dc9d21789c0f08da036b9521117aaa10f909cdffab7e62560887438 -->",
+    head: { ref: "sentinel/candidate-33137768977", sha: "8870fadd42b55333a313cdfde2b5d7c540e3a731" },
+    base: { ref: "development" },
+  };
+  const parsed = parseSentinelPullList([liveMergedWithoutBody, liveClosedUnmergedWithoutBody, liveSentinelPull]);
+  assert.equal(parsed.length, 3);
+  assert.deepEqual(parsed[0], {
+    number: 169,
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/pull/169",
+    state: "closed",
+    merged: true,
+    headRef: "fix/sentinel-luna-stream-stall",
+    headSha: "f508d765147a7c260ee3bfe63a257dc062df40e0",
+    baseRef: "development",
+    body: "",
+  });
+  assert.deepEqual(parsed[1], {
+    number: 159,
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/pull/159",
+    state: "closed",
+    merged: false,
+    headRef: "fix/sentinel-hourly-selection",
+    headSha: "9105bffd073a002e09f43d579da5c3f09b23669b",
+    baseRef: "development",
+    body: "",
+  });
+  // The exact Sentinel pull identity is preserved untouched for later
+  // eligibility, and a bodyless non-Sentinel pull request is simply not
+  // eligible rather than a parse failure.
+  assert.deepEqual(parsed[2], {
+    number: 166,
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/pull/166",
+    state: "closed",
+    merged: true,
+    headRef: "sentinel/candidate-33137768977",
+    headSha: "8870fadd42b55333a313cdfde2b5d7c540e3a731",
+    baseRef: "development",
+    body: liveSentinelPull.body,
+  });
+  assert.equal(isSentinelRollingReviewPull(parsed[0]), false);
+  assert.equal(isSentinelRollingReviewPull(parsed[1]), false);
+  assert.equal(isSentinelRollingReviewPull(parsed[2]), true);
+});
+
+Deno.test("rolling review listing stays fail-closed for truly malformed pull records", () => {
+  const valid = {
+    number: 212,
+    html_url: "https://github.com/ubiquity/ai.ubq.fi/pull/212",
+    state: "closed",
+    merged_at: "2026-08-30T20:23:06Z",
+    body: "<!-- provider-sentinel:issue-pr:v1 issue=142 -->",
+    head: { ref: "sentinel/candidate-33137768977", sha: "8870fadd42b55333a313cdfde2b5d7c540e3a731" },
+    base: { ref: "development" },
+  };
+  const malformed: unknown[] = [
+    { ...valid, number: 0 },
+    { ...valid, number: 1.5 },
+    { ...valid, html_url: "https://example.com/pull/1" },
+    { ...valid, state: "draft" },
+    { ...valid, merged_at: 123 },
+    { ...valid, body: 42 },
+    { ...valid, head: null },
+    { ...valid, head: { ref: "sentinel/candidate-x", sha: "short" } },
+    { ...valid, head: { ref: "../escape", sha: "8870fadd42b55333a313cdfde2b5d7c540e3a731" } },
+    { ...valid, base: null },
+    { ...valid, base: { ref: "" } },
+    null,
+    "not-a-record",
+  ];
+  for (const candidate of malformed) {
+    assert.throws(
+      () => parseSentinelPullList([candidate]),
+      /invalid pull request/,
+      `malformed record must fail closed: ${JSON.stringify(candidate)?.slice(0, 80)}`,
+    );
+  }
+  // A non-array page and a partially malformed page are equally fail-closed.
+  assert.throws(() => parseSentinelPullList({ not: "a list" }), /listing is invalid/);
+  assert.throws(
+    () => parseSentinelPullList([{ ...valid, state: "open" }, { ...valid, head: null }]),
+    /invalid pull request/,
+  );
 });
