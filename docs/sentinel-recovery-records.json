@@ -21455,5 +21455,12 @@
       }
     }
   ],
-  "leases": []
+  "leases": [
+    {
+      "identity_key": "[\"ubiquity/ai.ubq.fi\",\"incident\",\"b58eae141037bd8caffd1d6a4f95b94e52738d6d3a551f5567f05e83260168ae\",\"c45d85eb7455b02184b68ee3c821ba853153b38e\",1]",
+      "owner": "33313041224",
+      "token": "33313041224:31040615-cb2b-4930-9266-c91bdbd071f7",
+      "expires_at": "2026-08-30T13:12:29.609Z"
+    }
+  ]
 }
