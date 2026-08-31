@@ -48,11 +48,11 @@
     "schema_version": 1,
     "verdict": "stuck",
     "reason": "unchanged_or_cycling_state",
-    "observation_count": 4,
-    "state_digest": "a53b8ec0c288fcb1",
+    "observation_count": 5,
+    "state_digest": "86601be856d8363e",
     "classifier": null,
     "resolved": "stuck",
     "resolved_reason": "unchanged_or_cycling_state",
-    "evaluated_at": "2026-08-31T16:31:13.155Z"
+    "evaluated_at": "2026-08-31T16:40:57.339Z"
   }
 }
