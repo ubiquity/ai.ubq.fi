@@ -3658,7 +3658,7 @@
       "candidate_sha": null,
       "changed_files": [],
       "created_at": "2026-08-31T15:33:07.034Z",
-      "disposition": "active",
+      "disposition": "manual_required",
       "failure_class": "runner_interruption",
       "failure_fingerprint": "44eacf4170814e2f51e94832e14c2bd3843ced4d6e572632ca34bfc0084f7e01",
       "identity": {
@@ -3669,15 +3669,15 @@
         "source_revision": "bd10877b2ff3601610aec751db8eaa58cf9ebb0251e825d4f1e8557f17cdd11e"
       },
       "lease_token": "matrix-cell-33408872424-1-cell-fc6f952babeafb398a569f6fd5f5b684174e5a1a6ad38eb1ddb60a0fb20253d7",
-      "next_action": "Retry after 2026-08-31T15:41:28.045Z.",
-      "phase": "retry_wait",
+      "next_action": "Owner review is required before another Sentinel attempt.",
+      "phase": "manual_required",
       "predecessor": null,
-      "reason": "The bounded Sentinel retry policy scheduled another attempt.",
+      "reason": "Three identical Sentinel failure fingerprints opened the circuit breaker.",
       "run_id": "33408872424",
       "schema_version": 1,
-      "state_version": 4,
+      "state_version": 6,
       "tree_sha": null,
-      "updated_at": "2026-08-31T15:39:27.099Z"
+      "updated_at": "2026-08-31T15:46:44.933Z"
     },
     {
       "artifact_digests": [
@@ -25694,34 +25694,6 @@
     {
       "schema_version": 1,
       "identity": {
-        "candidate_generation": 1,
-        "repository": "ubiquity/ai.ubq.fi",
-        "source_id": "5289263183",
-        "source_kind": "github_issue",
-        "source_revision": "bd10877b2ff3601610aec751db8eaa58cf9ebb0251e825d4f1e8557f17cdd11e"
-      },
-      "attempt": 1,
-      "failure_class": "transient_transport",
-      "failure_fingerprint": "44eacf4170814e2f51e94832e14c2bd3843ced4d6e572632ca34bfc0084f7e01",
-      "observed_at": "2026-08-31T15:36:41.019Z"
-    },
-    {
-      "schema_version": 1,
-      "identity": {
-        "candidate_generation": 1,
-        "repository": "ubiquity/ai.ubq.fi",
-        "source_id": "5289263183",
-        "source_kind": "github_issue",
-        "source_revision": "bd10877b2ff3601610aec751db8eaa58cf9ebb0251e825d4f1e8557f17cdd11e"
-      },
-      "attempt": 2,
-      "failure_class": "runner_interruption",
-      "failure_fingerprint": "44eacf4170814e2f51e94832e14c2bd3843ced4d6e572632ca34bfc0084f7e01",
-      "observed_at": "2026-08-31T15:39:27.099Z"
-    },
-    {
-      "schema_version": 1,
-      "identity": {
         "repository": "ubiquity/ai.ubq.fi",
         "source_kind": "triage",
         "source_id": "4534f11ed9a84a16f18ca1e92dbbe044edb8abfb681c363f4718ab50eab48b54",
@@ -25802,6 +25774,48 @@
       "failure_class": "runner_interruption",
       "failure_fingerprint": "7635263cadcd46b7465405b0e51d3acf5bd0f8c26335adcdc94f419bb89e69be",
       "observed_at": "2026-08-31T15:39:27.099Z"
+    },
+    {
+      "schema_version": 1,
+      "identity": {
+        "candidate_generation": 1,
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_id": "5289263183",
+        "source_kind": "github_issue",
+        "source_revision": "bd10877b2ff3601610aec751db8eaa58cf9ebb0251e825d4f1e8557f17cdd11e"
+      },
+      "attempt": 1,
+      "failure_class": "transient_transport",
+      "failure_fingerprint": "44eacf4170814e2f51e94832e14c2bd3843ced4d6e572632ca34bfc0084f7e01",
+      "observed_at": "2026-08-31T15:36:41.019Z"
+    },
+    {
+      "schema_version": 1,
+      "identity": {
+        "candidate_generation": 1,
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_id": "5289263183",
+        "source_kind": "github_issue",
+        "source_revision": "bd10877b2ff3601610aec751db8eaa58cf9ebb0251e825d4f1e8557f17cdd11e"
+      },
+      "attempt": 2,
+      "failure_class": "runner_interruption",
+      "failure_fingerprint": "44eacf4170814e2f51e94832e14c2bd3843ced4d6e572632ca34bfc0084f7e01",
+      "observed_at": "2026-08-31T15:39:27.099Z"
+    },
+    {
+      "schema_version": 1,
+      "identity": {
+        "candidate_generation": 1,
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_id": "5289263183",
+        "source_kind": "github_issue",
+        "source_revision": "bd10877b2ff3601610aec751db8eaa58cf9ebb0251e825d4f1e8557f17cdd11e"
+      },
+      "attempt": 3,
+      "failure_class": "runner_interruption",
+      "failure_fingerprint": "44eacf4170814e2f51e94832e14c2bd3843ced4d6e572632ca34bfc0084f7e01",
+      "observed_at": "2026-08-31T15:46:44.933Z"
     }
   ],
   "retry_decisions": [
@@ -30005,25 +30019,6 @@
       }
     },
     {
-      "identity_key": "[\"ubiquity/ai.ubq.fi\",\"github_issue\",\"5289263183\",\"bd10877b2ff3601610aec751db8eaa58cf9ebb0251e825d4f1e8557f17cdd11e\",1]",
-      "decision": {
-        "disposition": "retry_wait",
-        "should_retry": true,
-        "circuit_open": false,
-        "validation_repair_allowed": false,
-        "source_revision_changed": false,
-        "candidate_generation": 1,
-        "attempt_count": 2,
-        "identical_failure_count": 2,
-        "backoff_ms": 120946,
-        "retry_at": "2026-08-31T15:41:28.045Z",
-        "failure_class": "runner_interruption",
-        "failure_fingerprint": "44eacf4170814e2f51e94832e14c2bd3843ced4d6e572632ca34bfc0084f7e01",
-        "reason": "The bounded Sentinel retry policy scheduled another attempt.",
-        "next_action": "Retry after 2026-08-31T15:41:28.045Z."
-      }
-    },
-    {
       "identity_key": "[\"ubiquity/ai.ubq.fi\",\"triage\",\"4534f11ed9a84a16f18ca1e92dbbe044edb8abfb681c363f4718ab50eab48b54\",\"6098a83435c308168d9b28fc1ca0ac8a9afa2853\",1]",
       "decision": {
         "disposition": "manual_required",
@@ -30079,14 +30074,26 @@
         "reason": "The bounded Sentinel retry policy scheduled another attempt.",
         "next_action": "Retry after 2026-08-31T15:41:29.549Z."
       }
-    }
-  ],
-  "leases": [
+    },
     {
       "identity_key": "[\"ubiquity/ai.ubq.fi\",\"github_issue\",\"5289263183\",\"bd10877b2ff3601610aec751db8eaa58cf9ebb0251e825d4f1e8557f17cdd11e\",1]",
-      "owner": "33409862813",
-      "token": "33409862813:b2405d2b-3dc0-48fa-8048-7dc0a279723b",
-      "expires_at": "2026-08-31T15:56:44.933Z"
+      "decision": {
+        "disposition": "manual_required",
+        "should_retry": false,
+        "circuit_open": true,
+        "validation_repair_allowed": false,
+        "source_revision_changed": false,
+        "candidate_generation": 1,
+        "attempt_count": 3,
+        "identical_failure_count": 3,
+        "backoff_ms": null,
+        "retry_at": null,
+        "failure_class": "runner_interruption",
+        "failure_fingerprint": "44eacf4170814e2f51e94832e14c2bd3843ced4d6e572632ca34bfc0084f7e01",
+        "reason": "Three identical Sentinel failure fingerprints opened the circuit breaker.",
+        "next_action": "Owner review is required before another Sentinel attempt."
+      }
     }
-  ]
+  ],
+  "leases": []
 }
