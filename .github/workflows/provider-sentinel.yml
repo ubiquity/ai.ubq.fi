@@ -543,24 +543,53 @@ jobs:
           include-hidden-files: true
           retention-days: 90
 
+      - name: Require successful immutable cell publication
+        if: always()
+        shell: bash
+        env:
+          CELL_ID: ${{ matrix.cell_id }}
+          CELL_EVIDENCE_UPLOAD_OUTCOME: ${{ steps.cell-evidence-upload.outcome }}
+        run: |
+          set -euo pipefail
+          status="$(jq -r '.status // "missing"' "$RUNNER_TEMP/sentinel-cell-report.json" 2>/dev/null || printf missing)"
+          push_outcome="${{ steps.cell-push.outcome }}"
+          evidence_dir=".sentinel/reports/matrix/${CELL_ID}"
+          case "$status" in
+            succeeded)
+              if [ "$push_outcome" != "success" ]; then
+                echo "::error::Required matrix cell failed closed: status=$status push=$push_outcome"
+                exit 1
+              fi
+              ;;
+            retry_pending)
+              # A retry_pending cell is a valid durable publication only when its
+              # authenticated retry evidence (recovery identity and candidate
+              # snapshot) was captured beside the report and the encrypted cell
+              # evidence was durably uploaded; anything else fails closed.
+              if [ "$CELL_EVIDENCE_UPLOAD_OUTCOME" != "success" ] || \
+                [ ! -s "$evidence_dir/recovery-record.json" ] || \
+                [ ! -s "$evidence_dir/manifest.json" ]; then
+                echo "::error::Required matrix cell retry evidence is missing: status=$status upload=$CELL_EVIDENCE_UPLOAD_OUTCOME"
+                exit 1
+              fi
+              head_sha="$(jq -r '.head_sha // empty' "$RUNNER_TEMP/sentinel-cell-report.json" 2>/dev/null)"
+              if [ -n "$head_sha" ]; then
+                echo "::error::Required matrix cell retry_pending report claims a published head."
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::Required matrix cell failed closed: status=$status push=$push_outcome"
+              exit 1
+              ;;
+          esac
+
       - name: Scrub cell plaintext after durable upload
         if: always() && steps.cell-evidence-upload.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
           deno run --allow-env=GITHUB_ACTIONS --allow-read=.sentinel/raw-logs,.sentinel/reports,.sentinel/candidate-worktree,.sentinel/private --allow-write=.sentinel/raw-logs,.sentinel/reports,.sentinel/candidate-worktree,.sentinel/private scripts/sentinel/scrub-artifacts.ts
-
-      - name: Require successful immutable cell publication
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          status="$(jq -r '.status // "missing"' "$RUNNER_TEMP/sentinel-cell-report.json" 2>/dev/null || printf missing)"
-          push_outcome="${{ steps.cell-push.outcome }}"
-          if [ "$status" != "succeeded" ] || [ "$push_outcome" != "success" ]; then
-            echo "::error::Required matrix cell failed closed: status=$status push=$push_outcome"
-            exit 1
-          fi
 
       - name: Remove cell plaintext and auth state
         if: always()
@@ -892,6 +921,18 @@ jobs:
                     if (!file.path.startsWith("reports/matrix/") || !file.path.endsWith("/cell.json")) continue;
                     const report = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(file.bytes));
                     await validateMatrixCellReportV1(report, plan);
+                    if (report.status === "retry_pending") {
+                      // A retry_pending cell is accepted into convergence only
+                      // when its durable retry evidence (recovery identity and
+                      // candidate snapshot) was published beside the report.
+                      const evidenceDirectory = `reports/matrix/${report.cell_id}/`;
+                      if (
+                        !files.some((file) => file.path === `${evidenceDirectory}manifest.json`) ||
+                        !files.some((file) => file.path === `${evidenceDirectory}recovery-record.json`)
+                      ) {
+                        throw new Error("retry_pending matrix cell report is missing durable retry evidence");
+                      }
+                    }
                     if (!expected.has(report.cell_id) || seen.has(report.cell_id)) throw new Error("matrix cell report coverage is duplicate or unknown");
                     seen.add(report.cell_id);
                     const cell = plan.cells.find((candidate) => candidate.cell_id === report.cell_id)!;
@@ -934,6 +975,17 @@ jobs:
             branch="$(jq -r '.branch' <<< "$cell")"
             report_sha="$(jq -r '.head_sha // empty' "$report_path")"
             report_status="$(jq -r '.status // "missing"' "$report_path")"
+            if [ "$report_status" = "retry_pending" ]; then
+              # A retry_pending cell is a durable retry publication: the cell
+              # never committed, so there is no exact head to prove remotely.
+              # The materialized inputs already proved its retry evidence; a
+              # retry_pending report that claims a head is invalid.
+              if [ -n "$report_sha" ]; then
+                echo "::error::Retry_pending cell $branch claims a published head."
+                exit 1
+              fi
+              continue
+            fi
             if [ "$report_status" != "succeeded" ] || ! [[ "$report_sha" =~ ^[0-9a-f]{40}$ ]]; then
               echo "::error::Required cell $branch has no succeeded report with an exact head SHA."
               exit 1

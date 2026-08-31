@@ -10,6 +10,7 @@ import { GitHubActionsClient, type GitHubArtifact } from "./github.ts";
 import {
   buildMatrixPlan,
   type MatrixCellReportV1,
+  type MatrixCycleCellStatus,
   matrixCycleReportDigest,
   type MatrixCycleReportV1,
   type MatrixDeliveryOutcomeV1,
@@ -3284,7 +3285,18 @@ const run = async (): Promise<void> => {
   if (matrixConvergePhase) {
     if (!matrixConvergencePlan) throw new Error("Matrix convergence lost its immutable plan");
     await updateState("matrix_fetching_cell_heads", { base_development_sha: baseSha });
+    const retryPendingCells = matrixConvergenceReports.filter((report) => report.status === "retry_pending");
     for (const report of matrixConvergenceReports) {
+      if (report.status === "retry_pending") {
+        // A retry_pending cell is a durable retry publication: the encrypted
+        // report and its authenticated retry evidence were published, but the
+        // cell never committed, so there is no exact head to verify remotely.
+        // A retry_pending report that claims a head is invalid and fails closed.
+        if (report.head_sha !== null) {
+          throw new Error(`Matrix cell ${report.cell_id} is retry_pending with a published head`);
+        }
+        continue;
+      }
       if (report.status !== "succeeded" || report.head_sha === null) {
         throw new Error(`Required matrix cell ${report.cell_id} did not succeed`);
       }
@@ -3298,6 +3310,55 @@ const run = async (): Promise<void> => {
         "Fetched matrix cell SHA",
       );
       if (fetchedHead !== report.head_sha) throw new Error(`Matrix cell ${report.cell_id} remote head changed`);
+    }
+    if (retryPendingCells.length > 0) {
+      // The immutable work set is incomplete: the cycle stops before
+      // integration and records the retry_pending disposition so the bounded
+      // retry circuit can schedule the retry from the durable recovery ledger.
+      // Nothing is merged or delivered; every cell branch stays retained.
+      const cellDispositions = matrixConvergencePlan.cells.map((cell) => {
+        const report = matrixConvergenceReports.find((candidate) => candidate.cell_id === cell.cell_id)!;
+        const retryPending = report.status === "retry_pending";
+        const status: MatrixCycleCellStatus = retryPending ? "retry_pending" : "blocked";
+        return {
+          cell_id: cell.cell_id,
+          branch: cell.branch,
+          finding_ids: [...cell.finding_ids],
+          status,
+          head_sha: report.head_sha,
+          reason: retryPending
+            ? report.failure_reason ?? "The matrix cell ended retry_pending."
+            : `The cycle stopped because required matrix cell ${cell.cell_id} is retry_pending.`,
+        };
+      });
+      const unsigned: MatrixCycleReportV1 = {
+        schema_version: 1,
+        run_id: matrixConvergencePlan.run_id,
+        run_attempt: matrixConvergencePlan.run_attempt,
+        plan_digest: matrixConvergencePlan.manifest_digest,
+        base_sha: matrixConvergencePlan.base_sha,
+        cell_dispositions: cellDispositions,
+        accepted_ancestry: [],
+        rejected_branches: [],
+        blocked_branches: cellDispositions.map((item) => ({
+          cell_id: item.cell_id,
+          branch: item.branch,
+          head_sha: item.head_sha,
+          reason: item.reason ?? "The matrix cell was not integrated in this cycle.",
+        })),
+        integrated_candidate: null,
+        delivery: { status: "not_attempted", pr_number: null, merge_sha: null, reason: null },
+        cycle_digest: "0".repeat(64),
+      };
+      matrixCycleReport = { ...unsigned, cycle_digest: await matrixCycleReportDigest(unsigned) };
+      await writeJson(`${reportsDir}/matrix-cycle.json`, matrixCycleReport);
+      await updateState("complete", {
+        status: "no_change",
+        base_development_sha: baseSha,
+        branch_disposition: "matrix_retry_pending_cell_branches_retained",
+      });
+      for (const replayCase of applicableCases) replayCase.body.fill(0);
+      return;
     }
     const integrationSchemaPath = `${reportsDir}/matrix-integration.schema.json`;
     await writeJson(integrationSchemaPath, MATRIX_INTEGRATION_OUTPUT_SCHEMA);

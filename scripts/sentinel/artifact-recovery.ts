@@ -114,6 +114,7 @@ export type SentinelArtifactRecoveryReason =
   | "reconstruction_failed"
   | "terminal_record"
   | "development_head_advanced"
+  | "retry_scheduled"
   | "ledger_conflict";
 
 export type SentinelCandidateSnapshotEntry = Readonly<{
@@ -176,7 +177,7 @@ export type SentinelRecoveryDraftPullRequest = Readonly<{
 
 export type SentinelArtifactRecoveryResult = Readonly<{
   schema_version: typeof SENTINEL_ARTIFACT_RECOVERY_SCHEMA_VERSION;
-  disposition: "recovered" | "rejected" | "manual_required";
+  disposition: "recovered" | "rejected" | "manual_required" | "retry_pending";
   reason: SentinelArtifactRecoveryReason;
   artifact_digest: string;
   candidate_branch: string | null;
@@ -1898,6 +1899,30 @@ const staleHeadResult = (
   draft_pull_request: null,
 });
 
+/**
+ * Result for an authenticated retry_pending matrix cell with valid but empty
+ * candidate evidence (`no_candidate_diff`): the original classified failure
+ * was scheduled for a bounded retry by the retry circuit. The durable record
+ * stays non-terminal (`retry_wait`/active) with the evaluated retry history
+ * and decision; the recovery-classification reason stays bound to the result
+ * so the operator still sees why no checkpoint was published.
+ */
+const retryPendingMatrixResult = (
+  digest: string,
+  recoveryRecord: SentinelRecoveryRecordV1,
+): SentinelArtifactRecoveryResult => ({
+  schema_version: SENTINEL_ARTIFACT_RECOVERY_SCHEMA_VERSION,
+  disposition: "retry_pending",
+  reason: "retry_scheduled",
+  artifact_digest: digest,
+  candidate_branch: null,
+  candidate_sha: null,
+  tree_sha: null,
+  changed_files: recoveryRecord.changed_files,
+  recovery_record: recoveryRecord,
+  draft_pull_request: null,
+});
+
 /** Deterministic replay answer for an artifact already recovered under this identity. */
 const recoveredFromExistingRecord = (
   existing: SentinelRecoveryRecordV1,
@@ -2315,6 +2340,18 @@ const recoverMatrixArtifactInActions = async (
       };
     }
 
+    // An exact replay of an already scheduled retry (the same artifact
+    // evidence recorded on an active retry_wait record) is not a new failure
+    // attempt: only genuinely new cell evidence may advance the bounded retry
+    // circuit. Zero ledger, branch, or pull-request mutation happens.
+    if (
+      existing && existing.disposition === "active" && existing.phase === "retry_wait" &&
+      (existing.artifact_ids.includes(input.artifact.id) ||
+        existing.artifact_digests.includes(input.encryptedDigest))
+    ) {
+      return { result: retryPendingMatrixResult(input.encryptedDigest, existing), snapshot };
+    }
+
     // Fresh or interrupted identity: recover the candidate with the policy
     // outcome applied before any publication.
     let workingLedger = snapshot.ledger;
@@ -2391,6 +2428,44 @@ const recoverMatrixArtifactInActions = async (
       artifactId: input.artifact.id,
     });
     if (result.disposition !== "recovered" || !result.recovery_record) {
+      // A retry_pending cell with authenticated but empty candidate evidence
+      // (`no_candidate_diff`) is a valid durable retry publication: the
+      // bounded retry circuit already scheduled another attempt for the
+      // original classified cell failure. The retry_wait record and its
+      // evaluated history/decision must stay durable and non-terminal so the
+      // next selection can reclaim it; terminalizing it here would silently
+      // drop the scheduled retry. Every other classification — corrupt
+      // ciphertext, wrong or unavailable base, invalid record binding, or
+      // failed reconstruction — is invalid evidence and fails closed to
+      // manual_required even though the retry circuit would permit a retry.
+      if (
+        applied !== null && applied.applied.decision.disposition === "retry_wait" &&
+        result.reason === "no_candidate_diff"
+      ) {
+        const retryChildLedger = upsertSentinelRecoveryRecord(
+          workingLedger,
+          applied.applied.after,
+          existing === null ? null : record.state_version,
+        );
+        const retryLedger = withDurableArtifactEvidence(
+          withEvaluatedRetry(retryChildLedger, applied.applied.after, applied.applied),
+          childKey,
+          applied.applied.after.artifact_ids,
+          applied.applied.after.artifact_digests,
+        );
+        const written = await writeGitHubSentinelRecoveryLedger({
+          token: input.token,
+          repository: input.repository,
+          fetcher: input.stateFetcher,
+          snapshot,
+          ledger: retryLedger,
+          message: `chore(sentinel): schedule retry ${childKey}`,
+        });
+        return {
+          result: retryPendingMatrixResult(input.encryptedDigest, applied.applied.after),
+          snapshot: written,
+        };
+      }
       const ledger = upsertSentinelRecoveryRecord(
         workingLedger,
         result.recovery_record!,

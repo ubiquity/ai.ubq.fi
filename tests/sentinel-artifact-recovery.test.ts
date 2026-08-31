@@ -181,6 +181,7 @@ const matrixCellEvidence = async (
     findingId?: string;
     findingFingerprint?: string;
     allowedPath?: string;
+    changedPaths?: readonly string[];
   }> = {},
 ): Promise<MatrixFixture> => {
   const secret = "matrix-candidate-private-plaintext";
@@ -190,6 +191,7 @@ const matrixCellEvidence = async (
   const findingId = options.findingId ?? "fixture";
   const findingFingerprint = options.findingFingerprint ?? "4".repeat(64);
   const allowedPath = options.allowedPath ?? "candidate.txt";
+  const changedPaths = options.changedPaths ?? [allowedPath];
   const cell = {
     cell_id: cellId,
     finding_ids: [findingId],
@@ -225,7 +227,7 @@ const matrixCellEvidence = async (
     updated_at: "2026-08-28T19:00:00.000Z",
     candidate_branch: null,
     candidate_sha: null,
-    changed_files: [allowedPath],
+    changed_files: [...changedPaths],
     tree_sha: null,
     failure_class: "transient_transport",
     failure_fingerprint: "8".repeat(64),
@@ -245,7 +247,7 @@ const matrixCellEvidence = async (
     branch: `sentinel/candidate-33197770000-1-${cellId}`,
     head_sha: null,
     tree_sha: null,
-    changed_paths: [allowedPath],
+    changed_paths: [...changedPaths],
     finding_dispositions: [{
       finding_id: findingId,
       fingerprint: findingFingerprint,
@@ -279,9 +281,9 @@ const matrixCellEvidence = async (
       secret_scan_path: null,
       secret_scan_sha256: null,
     },
-    file_count: 1,
-    total_bytes: payload.byteLength,
-    files: [{
+    file_count: changedPaths.length,
+    total_bytes: changedPaths.length === 0 ? 0 : payload.byteLength,
+    files: changedPaths.length === 0 ? [] : [{
       path: allowedPath,
       source: "untracked",
       kind: "file",
@@ -298,8 +300,10 @@ const matrixCellEvidence = async (
       bytes: textEncoder.encode(JSON.stringify(record)),
     },
     { path: `reports/matrix/${cellId}/manifest.json`, bytes: textEncoder.encode(JSON.stringify(manifest)) },
-    { path: `reports/matrix/${cellId}/files/0000.bin`, bytes: payload },
   ];
+  if (changedPaths.length > 0) {
+    files.push({ path: `reports/matrix/${cellId}/files/0000.bin`, bytes: payload });
+  }
   if (workSelection !== null) {
     files.push({
       path: `reports/matrix/${cellId}/work-selection.json`,
@@ -2513,6 +2517,177 @@ Deno.test({
       assert.equal(ledger.records[0]!.failure_class, "artifact_invalid");
     } finally {
       key.fill(0);
+      environment.restore();
+      await Deno.remove(fixture.root, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "retry_pending cell without a reconstructable candidate still schedules the bounded retry",
+  ignore: unavailable,
+  async fn() {
+    const fixture = await createBaseCheckout();
+    await createBareOrigin(fixture.root, fixture.checkout);
+    const key = new Uint8Array(32).fill(36);
+    const environment = await sentinelRepositoryEnvironment();
+    // The cell failed transiently with no candidate edit, so its encrypted
+    // snapshot is empty: recovery cannot reconstruct a checkpoint, but the
+    // authenticated retry_pending evidence must still schedule the bounded
+    // retry instead of terminalizing as rejected/no_candidate_diff.
+    const evidence = await matrixCellEvidence(fixture, { changedPaths: [] });
+    const encrypted = await encryptSentinelArtifact(evidence.files, key, new Uint8Array(12).fill(21));
+    try {
+      assert.equal(
+        (await matrixCellRecoveryRecordFromArtifact(evidence.files, "ubiquity/ai.ubq.fi"))?.phase,
+        "recovery_pending",
+      );
+      const store = new FakeRecoveryStore({
+        devHead: fixture.baseSha,
+        artifacts: [{
+          id: 9697049850,
+          name: `sentinel-matrix-cell-v1-33197770000-1-${MATRIX_CELL_ID}`,
+          createdAt: new Date(Date.now() - 60_000).toISOString(),
+          zip: await createEvidenceZip(fixture.root, encrypted),
+        }],
+      });
+      const results = await recoverSentinelArtifactsInActions({
+        checkout: fixture.checkout,
+        repository: "ubiquity/ai.ubq.fi",
+        token: "fixture-token",
+        encodedArtifactKey: encryptedArtifactKey(key),
+        fetcher: store.fetcher,
+      });
+      assert.equal(results.length, 1);
+      assert.equal(results[0]!.disposition, "retry_pending");
+      assert.equal(results[0]!.reason, "retry_scheduled");
+      assert.equal(results[0]!.candidate_branch, null);
+      assert.equal(results[0]!.candidate_sha, null);
+      assert.equal(results[0]!.draft_pull_request, null);
+      assert.equal(results[0]!.recovery_record?.phase, "retry_wait");
+      assert.equal(store.pullCreates, 0);
+      assert.equal(store.refWrites, 1);
+      assert.doesNotMatch(await git(fixture.checkout, ["ls-remote", "--heads", "origin"]), /sentinel\/candidate-/u);
+      const ledger = parseSentinelRecoveryLedger(store.currentLedger());
+      assert.equal(ledger.records.length, 1);
+      const record = ledger.records[0]!;
+      assert.equal(record.phase, "retry_wait");
+      assert.equal(record.disposition, "active");
+      assert.equal(record.failure_class, "transient_transport");
+      assert.equal(record.failure_fingerprint, evidence.record.failure_fingerprint);
+      assert.equal(record.state_version, 2);
+      assert.deepEqual(record.changed_files, []);
+      assert.deepEqual(record.artifact_ids, [9697049850]);
+      const keyOf = (identity: SentinelRecoveryRecordV1["identity"]): string =>
+        JSON.stringify([
+          identity.repository,
+          identity.source_kind,
+          identity.source_id,
+          identity.source_revision,
+          identity.candidate_generation,
+        ]);
+      const childKey = keyOf(record.identity);
+      const history = ledger.retry_history.filter((attempt) => keyOf(attempt.identity) === childKey);
+      assert.equal(history.length, 1);
+      assert.equal(history[0]!.attempt, 1);
+      assert.equal(history[0]!.failure_class, "transient_transport");
+      assert.equal(history[0]!.failure_fingerprint, evidence.record.failure_fingerprint);
+      const decision = ledger.retry_decisions.find((entry) => entry.identity_key === childKey);
+      assert(decision);
+      assert.equal(decision.decision.disposition, "retry_wait");
+      assert.equal(decision.decision.should_retry, true);
+      assert.ok(decision.decision.retry_at !== null);
+      assert.equal(decision.decision.circuit_open, false);
+      // The retry record stays non-terminal: a later exact replay of the same
+      // artifact keeps the scheduled retry and performs no new mutation.
+      const replay = await recoverSentinelArtifactsInActions({
+        checkout: fixture.checkout,
+        repository: "ubiquity/ai.ubq.fi",
+        token: "fixture-token",
+        encodedArtifactKey: encryptedArtifactKey(key),
+        fetcher: store.fetcher,
+      });
+      assert.equal(replay.length, 1);
+      assert.equal(replay[0]!.disposition, "retry_pending");
+      assert.equal(store.pullCreates, 0);
+      assert.equal(store.refWrites, 1);
+    } finally {
+      encrypted.fill(0);
+      key.fill(0);
+      environment.restore();
+      await Deno.remove(fixture.root, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "invalid retry_pending evidence fails closed to manual_required instead of scheduling a retry",
+  ignore: unavailable,
+  async fn() {
+    const fixture = await createBaseCheckout();
+    await createBareOrigin(fixture.root, fixture.checkout);
+    const key = new Uint8Array(32).fill(37);
+    const environment = await sentinelRepositoryEnvironment();
+    // The report, recovery record, and manifest bind exactly, but the
+    // candidate payload does not match its authenticated digest: the snapshot
+    // is invalid evidence. The bounded retry circuit would allow a retry (the
+    // original failure is transient), yet recovery must fail closed to
+    // manual_required instead of scheduling one from tampered evidence.
+    const evidence = await matrixCellEvidence(fixture);
+    const tampered = matrixFilesWith(
+      evidence.files,
+      `reports/matrix/${MATRIX_CELL_ID}/manifest.json`,
+      (value) => ({
+        ...value,
+        files: [{ ...(value.files as Array<Record<string, unknown>>)[0]!, sha256: "0".repeat(64) }],
+      }),
+    );
+    const encrypted = await encryptSentinelArtifact(tampered, key, new Uint8Array(12).fill(22));
+    try {
+      assert.equal(
+        (await matrixCellRecoveryRecordFromArtifact(tampered, "ubiquity/ai.ubq.fi"))?.phase,
+        "recovery_pending",
+      );
+      const store = new FakeRecoveryStore({
+        devHead: fixture.baseSha,
+        artifacts: [{
+          id: 9697049851,
+          name: `sentinel-matrix-cell-v1-33197770000-1-${MATRIX_CELL_ID}`,
+          createdAt: new Date(Date.now() - 60_000).toISOString(),
+          zip: await createEvidenceZip(fixture.root, encrypted),
+        }],
+      });
+      const results = await recoverSentinelArtifactsInActions({
+        checkout: fixture.checkout,
+        repository: "ubiquity/ai.ubq.fi",
+        token: "fixture-token",
+        encodedArtifactKey: encryptedArtifactKey(key),
+        fetcher: store.fetcher,
+      });
+      assert.equal(results.length, 1);
+      assert.equal(results[0]!.disposition, "manual_required");
+      assert.equal(results[0]!.reason, "artifact_invalid");
+      assert.equal(results[0]!.candidate_branch, null);
+      assert.equal(results[0]!.candidate_sha, null);
+      assert.equal(results[0]!.draft_pull_request, null);
+      assert.equal(JSON.stringify(results).includes(evidence.secret), false);
+      assert.equal(store.pullCreates, 0);
+      assert.equal(store.refWrites, 1);
+      assert.doesNotMatch(await git(fixture.checkout, ["ls-remote", "--heads", "origin"]), /sentinel\/candidate-/u);
+      const ledger = parseSentinelRecoveryLedger(store.currentLedger());
+      assert.equal(ledger.records.length, 1);
+      const record = ledger.records[0]!;
+      assert.equal(record.phase, "manual_required");
+      assert.equal(record.disposition, "manual_required");
+      assert.equal(record.candidate_branch, null);
+      assert.equal(record.candidate_sha, null);
+      assert.equal(record.artifact_digests.length, 1);
+      assert.equal(ledger.retry_history.length, 0);
+      assert.equal(ledger.retry_decisions.length, 0);
+    } finally {
+      encrypted.fill(0);
+      key.fill(0);
+      for (const file of tampered) file.bytes.fill(0);
       environment.restore();
       await Deno.remove(fixture.root, { recursive: true });
     }

@@ -107,15 +107,43 @@ Deno.test("Provider Sentinel has explicit prepare, bounded repair, and convergen
   assert.match(repair, /Required matrix cell failed closed/u);
   assert.doesNotMatch(repair, /path:\s*\n\s+\.sentinel\/(?:raw-logs|reports)(?:\s|$)/u);
 
+  // A retry_pending cell is a valid durable publication exactly when its
+  // authenticated retry evidence (recovery identity and candidate snapshot)
+  // was captured beside the report and the encrypted cell evidence was
+  // durably uploaded. The gate runs before the plaintext scrub so the
+  // evidence is still present and fails closed on any other status.
+  assert.match(repair, /CELL_EVIDENCE_UPLOAD_OUTCOME/u);
+  assert.match(repair, /case "\$status" in/u);
+  assert.match(repair, /retry_pending\)/u);
+  assert.match(repair, /recovery-record\.json/u);
+  assert.match(repair, /manifest\.json/u);
+  assert.match(repair, /Required matrix cell retry evidence is missing: status=\$status/u);
+  const publicationStart = repair.indexOf("      - name: Require successful immutable cell publication");
+  const scrubStart = repair.indexOf("      - name: Scrub cell plaintext after durable upload");
+  assert.ok(
+    publicationStart >= 0 && scrubStart > publicationStart,
+    "the publication gate must run before the plaintext scrub",
+  );
+
   assert.match(converge, /needs: \[prepare, repair\]/u);
   assert.match(converge, /always\(\)/u);
   assert.match(converge, /ref: \$\{\{ needs\.prepare\.outputs\.base_sha \|\| github\.sha \}\}/u);
   assert.match(converge, /decryptSentinelArtifact/u);
   assert.match(converge, /validateMatrixCellReportV1/u);
   assert.match(converge, /required matrix cell artifact is missing/u);
+  // The materialized convergence inputs prove retry evidence presence inside
+  // the ciphertext: a retry_pending report without its manifest and recovery
+  // record (or without any report at all) fails closed.
+  assert.match(converge, /retry_pending matrix cell report is missing durable retry evidence/u);
   assert.match(converge, /Verify exact remote cell heads before convergence/u);
   assert.match(converge, /git ls-remote --heads origin/u);
   assert.match(converge, /remote_sha.*report_sha|report_sha.*remote_sha/u);
+  // Retry_pending cells have no published head to verify: the converge step
+  // accepts them only without a claimed head and keeps verifying succeeded
+  // cells against their exact immutable remote head.
+  assert.match(converge, /report_status" = "retry_pending"/u);
+  assert.match(converge, /Retry_pending cell \$branch claims a published head/u);
+  assert.match(converge, /has no succeeded report with an exact head SHA/u);
   assert.match(converge, /Run Provider Sentinel/u);
   assert.match(converge, /Upload encrypted Sentinel evidence/u);
 });
@@ -251,4 +279,21 @@ Deno.test("rolling review discovery independently drives the async reviewer gate
   assert.match(reviewStep, /if: steps\.agent-work\.outputs\.needs_agent == 'true'/u);
   assert.match(reviewStep, /scripts\/sentinel\/rolling-review-worker\.ts/u);
   assert.match(reviewStep, /--allow-run=git,codex,gitleaks,deno/u);
+});
+
+Deno.test("matrix convergence accepts durable retry_pending reports and stops publication", () => {
+  // The orchestrator verifies exact remote heads only for succeeded cells. A
+  // retry_pending report is a durable retry publication without a head; one
+  // that claims a head is invalid and fails closed.
+  assert.match(orchestrator, /status === "retry_pending"/u);
+  assert.match(orchestrator, /is retry_pending with a published head/u);
+  assert.match(orchestrator, /Required matrix cell \$\{report\.cell_id\} did not succeed/u);
+  // A retry_pending cell stops the cycle before integration: no merge, no
+  // delivery, and the retry_pending disposition is recorded in the immutable
+  // cycle report while the bounded retry circuit schedules the retry.
+  assert.match(orchestrator, /retryPendingCells\.length > 0/u);
+  assert.match(orchestrator, /matrix_retry_pending_cell_branches_retained/u);
+  assert.match(orchestrator, /cell_dispositions: cellDispositions/u);
+  assert.match(orchestrator, /integrated_candidate: null/u);
+  assert.match(orchestrator, /matrix-cycle\.json/u);
 });
