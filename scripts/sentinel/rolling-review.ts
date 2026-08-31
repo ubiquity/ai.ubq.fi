@@ -29,15 +29,19 @@ export type SentinelPullRequest = Readonly<{
   body: string;
 }>;
 
-export type RollingReviewParseStatus = "findings" | "no_findings" | "unparseable";
+export type RollingReviewParseStatus = "findings" | "no_findings" | "unparseable" | "unreachable";
 
-export type RollingReviewResultStatus = "completed" | "unparseable";
+export type RollingReviewResultStatus = "completed" | "unparseable" | "unreachable";
 
 /**
  * Durable result of one completed (or fail-closed) rolling Codex review.
  * The record's identity (pull request number, exact head and base SHA, head
  * branch, and request id derived from the file name) is what later cycles use
- * to ingest findings without re-running the review.
+ * to ingest findings without re-running the review. An `unreachable` record
+ * is a permanent disposition for a review target that cannot be anchored to a
+ * distinct development base (git merge-base exited nonzero, or the merge base
+ * is the head itself): it preserves the exact identity, is never ingested as
+ * a completed review, and later cycles never re-attempt the same target.
  */
 export type RollingReviewResult = Readonly<{
   schema_version: 1;
@@ -46,7 +50,8 @@ export type RollingReviewResult = Readonly<{
   pr_number: number;
   pr_url: string;
   head_sha: string;
-  base_sha: string;
+  /** Exact merge base against development; null only for an unreachable target. */
+  base_sha: string | null;
   head_branch: string;
   status: RollingReviewResultStatus;
   reviewed_at: string;
@@ -59,7 +64,7 @@ export type RollingReviewResult = Readonly<{
   structured_review: unknown | null;
   /** Parsed findings; always empty for an unparseable or no-findings record. */
   findings: readonly NativeReviewFinding[];
-  /** Exact reason a record is unparseable; null for completed records. */
+  /** Exact reason a record is unparseable or unreachable; null for completed records. */
   failure: string | null;
 }>;
 
@@ -77,7 +82,12 @@ const SAFE_BRANCH = /^sentinel\/candidate-[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$/u;
 const SAFE_URL_PREFIX = /^https:\/\/github\.com\//u;
 const SAFE_RESULT_NAME = /^[1-9][0-9]*-[0-9a-f]{40}\.json$/u;
 const SEVERITIES = new Set<TriageSeverity>(["P0", "P1", "P2", "P3"]);
-const VALID_PARSE_STATUSES = new Set<RollingReviewParseStatus>(["findings", "no_findings", "unparseable"]);
+const VALID_PARSE_STATUSES = new Set<RollingReviewParseStatus>([
+  "findings",
+  "no_findings",
+  "unparseable",
+  "unreachable",
+]);
 
 /** Maximum serialized bytes of a single durable review result. */
 export const MAX_ROLLING_REVIEW_RESULT_BYTES = 256 * 1_024;
@@ -182,9 +192,10 @@ const validateFinding = (value: unknown): NativeReviewFinding | null => {
 /**
  * Fail-closed validated parse of one durable rolling review result. Every
  * identity field must match the exact file identity and the file name, and
- * the record must be internally consistent (unparseable ↔ no findings with
- * an exact failure; completed ↔ parseable and no failure). Any violation
- * throws and nothing is ever partially ingested.
+ * the record must be internally consistent: unparseable ↔ no findings with
+ * an exact failure and a full base SHA, unreachable ↔ no findings with an
+ * exact failure and a null base SHA, and completed ↔ parseable and no
+ * failure. Any violation throws and nothing is ever partially ingested.
  */
 export const parseRollingReviewResult = (
   value: unknown,
@@ -215,14 +226,18 @@ export const parseRollingReviewResult = (
   if (typeof raw.head_sha !== "string" || !FULL_SHA.test(raw.head_sha) || raw.head_sha !== expected.headSha) {
     throw new Error("Rolling review result head SHA does not match its file identity");
   }
-  if (typeof raw.base_sha !== "string" || !FULL_SHA.test(raw.base_sha) || raw.base_sha === raw.head_sha) {
-    throw new Error("Rolling review result base SHA is invalid");
-  }
   if (typeof raw.head_branch !== "string" || !isSafeBranch(raw.head_branch)) {
     throw new Error("Rolling review result head branch is invalid");
   }
-  if (raw.status !== "completed" && raw.status !== "unparseable") {
+  if (raw.status !== "completed" && raw.status !== "unparseable" && raw.status !== "unreachable") {
     throw new Error("Rolling review result status is invalid");
+  }
+  if (raw.status === "unreachable") {
+    if (raw.base_sha !== null) {
+      throw new Error("Rolling review result base SHA must be null for an unreachable target");
+    }
+  } else if (typeof raw.base_sha !== "string" || !FULL_SHA.test(raw.base_sha) || raw.base_sha === raw.head_sha) {
+    throw new Error("Rolling review result base SHA is invalid");
   }
   if (typeof raw.reviewed_at !== "string" || !isTimestamp(raw.reviewed_at)) {
     throw new Error("Rolling review result reviewed-at timestamp is invalid");
@@ -259,16 +274,23 @@ export const parseRollingReviewResult = (
   if (raw.failure !== null && new TextEncoder().encode(raw.failure).byteLength > MAX_ROLLING_REVIEW_RAW_TEXT_STDERR) {
     throw new Error("Rolling review result failure is too large");
   }
-  if (
-    (raw.status === "unparseable") !== (raw.parse_status === "unparseable") ||
-    (raw.parse_status === "unparseable" && (parsedFindings.length !== 0 || raw.failure === null)) ||
-    (raw.parse_status !== "unparseable" && raw.failure !== null)
-  ) {
+  if ((raw.status === "unparseable") !== (raw.parse_status === "unparseable")) {
+    throw new Error("Rolling review result status is internally inconsistent");
+  }
+  if ((raw.status === "unreachable") !== (raw.parse_status === "unreachable")) {
+    throw new Error("Rolling review result status is internally inconsistent");
+  }
+  if (raw.status === "unparseable" || raw.status === "unreachable") {
+    if (parsedFindings.length !== 0 || raw.failure === null) {
+      throw new Error("Rolling review result status is internally inconsistent");
+    }
+  } else if (raw.failure !== null) {
     throw new Error("Rolling review result status is internally inconsistent");
   }
   if (
     (parsedFindings.length > 0) !== (raw.parse_status === "findings") ||
-    (parsedFindings.length === 0 && raw.parse_status !== "no_findings" && raw.parse_status !== "unparseable")
+    (parsedFindings.length === 0 && raw.parse_status !== "no_findings" && raw.parse_status !== "unparseable" &&
+      raw.parse_status !== "unreachable")
   ) {
     throw new Error("Rolling review result findings do not match its parse status");
   }
@@ -282,7 +304,7 @@ export const parseRollingReviewResult = (
     pr_number: raw.pr_number as number,
     pr_url: raw.pr_url as string,
     head_sha: raw.head_sha as string,
-    base_sha: raw.base_sha as string,
+    base_sha: raw.base_sha as string | null,
     head_branch: raw.head_branch as string,
     status: raw.status as RollingReviewResultStatus,
     reviewed_at: raw.reviewed_at as string,
@@ -299,11 +321,14 @@ export const parseRollingReviewResult = (
  * Splits one validated record into P0/P1 findings and P2/P3 backlog findings.
  * All severities are non-blocking for the reviewed pull request's merge and
  * are ingested into the official backlog with their true severity. Unparseable
- * records produce no findings and no report: nothing is ingested and every
- * caller observes the fail-closed status.
+ * and unreachable records produce no findings and no report: nothing is
+ * ingested, and every caller observes the fail-closed status.
  */
 export const analyzeRollingReviewRecord = (record: RollingReviewResult): RollingReviewIngestOutcome => {
-  if (record.status === "unparseable" || record.parse_status === "unparseable") {
+  if (
+    record.status === "unparseable" || record.status === "unreachable" ||
+    record.parse_status === "unparseable" || record.parse_status === "unreachable"
+  ) {
     return { record, priorityFindings: [], backlogFindings: [], report: null };
   }
   const priorityFindings = record.findings.filter((finding) => finding.severity === "P0" || finding.severity === "P1");
@@ -321,9 +346,9 @@ export const analyzeRollingReviewRecord = (record: RollingReviewResult): Rolling
  * Ingests completed findings into the official review backlog, deduplicating
  * by fingerprint through the existing backlog merge. P0 and P1 findings enter
  * the backlog with their true severity so the normal selection order treats
- * them as mandatory remediation before P2 and P3. Unparseable records are
- * skipped here by design: they never became a completed review and their
- * exact evidence is retained in the durable result file.
+ * them as mandatory remediation before P2 and P3. Unparseable and unreachable
+ * records are skipped here by design: they never became a completed review
+ * and their exact evidence is retained in the durable result file.
  */
 export const applyRollingReviewIngestion = (
   currentBacklogMarkdown: string,
@@ -332,7 +357,9 @@ export const applyRollingReviewIngestion = (
 ): string => {
   let markdown = currentBacklogMarkdown;
   for (const outcome of outcomes) {
-    if (outcome.record.status === "unparseable" || outcome.report === null) continue;
+    if (outcome.record.status === "unparseable" || outcome.record.status === "unreachable" || outcome.report === null) {
+      continue;
+    }
     markdown = mergeReviewBacklog(markdown, outcome.report.findings, outcome.record.head_sha, observedAt);
   }
   return markdown;
@@ -512,15 +539,126 @@ export const parseCompletedRollingReview = async (
   }
 };
 
+/**
+ * Byte-accurate truncation for bounded durable review evidence: the result is
+ * always a UTF-8 prefix whose encoded byte length never exceeds the limit, so
+ * a record carrying high-byte diagnostics still passes the strict size
+ * validation later cycles apply instead of failing fail-closed.
+ */
+const truncateToBytes = (value: string, limit: number): string => {
+  const encoder = new TextEncoder();
+  if (encoder.encode(value).byteLength <= limit) return value;
+  let result = "";
+  let bytes = 0;
+  for (const char of value) {
+    const charBytes = encoder.encode(char).byteLength;
+    if (bytes + charBytes > limit) break;
+    result += char;
+    bytes += charBytes;
+  }
+  return result;
+};
+
 /** The raw review text and diagnostics are bounded before durable retention. */
 export const boundedRawReview = (stdout: string, stderr: string): { stdout: string; stderr: string } => {
-  const encoder = new TextEncoder();
-  const truncate = (value: string, limit: number): string => {
-    if (encoder.encode(value).byteLength <= limit) return value;
-    return value.slice(0, limit);
-  };
   return {
-    stdout: truncate(stdout, MAX_ROLLING_REVIEW_RAW_TEXT),
-    stderr: truncate(stderr, MAX_ROLLING_REVIEW_RAW_TEXT_STDERR),
+    stdout: truncateToBytes(stdout, MAX_ROLLING_REVIEW_RAW_TEXT),
+    stderr: truncateToBytes(stderr, MAX_ROLLING_REVIEW_RAW_TEXT_STDERR),
   };
+};
+
+/**
+ * Disposition of one review-target anchor check: either the exact merge base
+ * against development, or a durable unreachable disposition with the exact
+ * reason.
+ */
+export type RollingReviewTargetAnchor =
+  | Readonly<{ status: "anchored"; baseSha: string }>
+  | Readonly<{ status: "unreachable"; failure: string }>;
+
+/**
+ * Pure conversion of one `git merge-base <head> origin/development` outcome
+ * into a fail-closed review-target disposition. Exit code 1 with no stderr is
+ * git's exact "no common ancestor" contract (the head cannot be anchored to
+ * development), and a merge base equal to the head itself means the reviewed
+ * head is already an ancestor of development (e.g. a fast-forward merged
+ * candidate branch whose head became the development tip), so there is no
+ * distinct base to review against. Neither shape is a completed review: both
+ * produce an unreachable disposition carrying the exact git evidence, so the
+ * worker records it durably instead of failing the cycle, and later cycles
+ * never re-attempt the same identity.
+ */
+export const resolveRollingReviewTargetAnchor = (
+  result: Readonly<{ code: number; stdout: string; stderr: string }>,
+  headSha: string,
+): RollingReviewTargetAnchor => {
+  if (!FULL_SHA.test(headSha)) throw new Error("Rolling review target head SHA is invalid");
+  if (result.code !== 0) {
+    const stderr = truncateToBytes(result.stderr.trim(), MAX_ROLLING_REVIEW_RAW_TEXT_STDERR);
+    const detail = stderr.length > 0 ? ` (stderr: ${stderr})` : " (no stderr output)";
+    return {
+      status: "unreachable",
+      failure:
+        `Rolling review target ${headSha} is unreachable: git merge-base exited ${result.code} without a common ` +
+        `ancestor with development${detail}`,
+    };
+  }
+  const baseSha = result.stdout.trim();
+  if (!FULL_SHA.test(baseSha)) {
+    return {
+      status: "unreachable",
+      failure: `Rolling review target ${headSha} is unreachable: git merge-base resolved no well-formed base SHA`,
+    };
+  }
+  if (baseSha === headSha) {
+    return {
+      status: "unreachable",
+      failure:
+        `Rolling review target ${headSha} is unreachable: its merge base is the head itself (the reviewed head is ` +
+        `already an ancestor of development, so there is no distinct base to review against)`,
+    };
+  }
+  return { status: "anchored", baseSha };
+};
+
+/**
+ * Builds the durable fail-closed record for a review target that could not be
+ * anchored to development. The exact identity (pull request number, head SHA,
+ * head branch, and request id) is preserved, the review is never marked
+ * completed, nothing is ingested, and the exact reason is retained as the
+ * record failure for later cycles.
+ */
+export const unreachableRollingReviewRecord = (
+  input: Readonly<{
+    prNumber: number;
+    prUrl: string;
+    headSha: string;
+    headRef: string;
+    failure: string;
+    observedAt: string;
+  }>,
+): RollingReviewResult => {
+  const fileName = rollingReviewResultFileName(input.prNumber, input.headSha);
+  const record: RollingReviewResult = {
+    schema_version: 1,
+    request_id: rollingReviewRequestId(input.prNumber, input.headSha),
+    pr_number: input.prNumber,
+    pr_url: input.prUrl,
+    head_sha: input.headSha,
+    base_sha: null,
+    head_branch: input.headRef,
+    status: "unreachable",
+    reviewed_at: input.observedAt,
+    parse_status: "unreachable",
+    raw_review_text: "",
+    review_stderr: "",
+    structured_review: null,
+    findings: [],
+    failure: truncateToBytes(input.failure, MAX_ROLLING_REVIEW_RAW_TEXT_STDERR),
+  };
+  // Fail-closed self-check before durable retention: the record must satisfy
+  // exactly the strict identity, consistency, and size validation that later
+  // cycles apply when they ingest it.
+  parseRollingReviewResult(record, { prNumber: input.prNumber, headSha: input.headSha, fileName });
+  return record;
 };

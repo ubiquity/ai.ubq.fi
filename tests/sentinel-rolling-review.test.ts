@@ -3,10 +3,12 @@ import {
   analyzeRollingReviewRecord,
   applyRollingReviewIngestion,
   isSentinelRollingReviewPull,
+  MAX_ROLLING_REVIEW_RAW_TEXT_STDERR,
   parseCompletedRollingReview,
   parseRollingReviewResult,
   parseRollingReviewResultFileName,
   parseRollingReviewResultFileNames,
+  resolveRollingReviewTargetAnchor,
   rollingReviewRequestId,
   type RollingReviewResult,
   rollingReviewResultFileName,
@@ -14,6 +16,7 @@ import {
   selectNextRollingReviewTask,
   selectRollingReviewTaskFromIdentities,
   type SentinelPullRequest,
+  unreachableRollingReviewRecord,
 } from "../scripts/sentinel/rolling-review.ts";
 import { parseSentinelPullList } from "../scripts/sentinel/rolling-review-worker.ts";
 import { SENTINEL_POLICY } from "../scripts/sentinel/policy.ts";
@@ -588,5 +591,229 @@ Deno.test("rolling review listing stays fail-closed for truly malformed pull rec
   assert.throws(
     () => parseSentinelPullList([{ ...valid, state: "open" }, { ...valid, head: null }]),
     /invalid pull request/,
+  );
+});
+
+Deno.test("rolling review git merge-base exit 1 becomes a durable unreachable disposition", () => {
+  const livePr147Head = "8203788b929a9270e2d0c32ae60919bda185cdab";
+  const liveDevelopment = "b1e88fc40ac8caf6ffb41c3e73a91d42cb79224b";
+  // The live historical candidate: PR #147 at 8203788b929a... (fast-forward
+  // merged on 2026-08-27, branch `sentinel/candidate-33035267454`), selected
+  // as the oldest eligible unreviewed target by the rolling worker.
+  // `git merge-base <head> origin/development` exited 1 with EMPTY stderr —
+  // git's exact no-common-ancestor contract — which previously raised through
+  // `runTrustedGit` (exit 1) and failed the whole non-blocking review step.
+  const noAncestor = resolveRollingReviewTargetAnchor({ code: 1, stdout: "", stderr: "" }, livePr147Head);
+  assert.equal(noAncestor.status, "unreachable");
+  assert.match(noAncestor.failure, /exited 1 without a common ancestor/u);
+  assert.match(noAncestor.failure, /no stderr output/u);
+  // Any real git diagnostics are retained exactly and bounded to the durable
+  // record's diagnostic limit.
+  const withStderr = resolveRollingReviewTargetAnchor(
+    { code: 1, stdout: "", stderr: "fatal: not a valid object name\n" },
+    livePr147Head,
+  );
+  assert.equal(withStderr.status, "unreachable");
+  assert.match(withStderr.failure, /not a valid object name/u);
+  const huge = resolveRollingReviewTargetAnchor(
+    { code: 1, stdout: "", stderr: "x".repeat(MAX_ROLLING_REVIEW_RAW_TEXT_STDERR * 4) },
+    livePr147Head,
+  );
+  assert.equal(huge.status, "unreachable");
+  // Byte-accurate truncation: high-byte diagnostics stay within the durable
+  // record's strict size limit, so the record validates (never fail-closed).
+  const multibyte = resolveRollingReviewTargetAnchor(
+    { code: 1, stdout: "", stderr: "é".repeat(MAX_ROLLING_REVIEW_RAW_TEXT_STDERR * 2) },
+    livePr147Head,
+  );
+  assert.equal(multibyte.status, "unreachable");
+  const multibyteRecord = unreachableRollingReviewRecord({
+    prNumber: 147,
+    prUrl: "https://github.com/ubiquity/ai.ubq.fi/pull/147",
+    headSha: livePr147Head,
+    headRef: "sentinel/candidate-33035267454",
+    failure: multibyte.failure,
+    observedAt: "2026-08-30T23:18:39.000Z",
+  });
+  assert.ok(new TextEncoder().encode(multibyteRecord.failure ?? "").byteLength <= MAX_ROLLING_REVIEW_RAW_TEXT_STDERR);
+  assert.equal(multibyteRecord.findings.length, 0);
+  assert.equal(
+    unreachableRollingReviewRecord({
+      prNumber: 147,
+      prUrl: "https://github.com/ubiquity/ai.ubq.fi/pull/147",
+      headSha: livePr147Head,
+      headRef: "sentinel/candidate-33035267454",
+      failure: huge.failure,
+      observedAt: "2026-08-30T23:18:39.000Z",
+    }).findings.length,
+    0,
+  );
+  // A successful merge base with a distinct base SHA anchors the review.
+  assert.deepEqual(
+    resolveRollingReviewTargetAnchor({ code: 0, stdout: `${liveDevelopment}\n`, stderr: "" }, livePr147Head),
+    { status: "anchored", baseSha: liveDevelopment },
+  );
+  // A zero exit resolving no well-formed base is never trusted.
+  const malformed = resolveRollingReviewTargetAnchor({ code: 0, stdout: "", stderr: "" }, livePr147Head);
+  assert.equal(malformed.status, "unreachable");
+  assert.match(malformed.failure, /no well-formed base SHA/u);
+  // The target head identity itself still fails closed before any disposition.
+  assert.throws(
+    () => resolveRollingReviewTargetAnchor({ code: 0, stdout: liveDevelopment, stderr: "" }, "not-a-sha"),
+    /head SHA is invalid/,
+  );
+});
+
+Deno.test("rolling review live fast-forward candidate shape is retained as unreachable, never completed", () => {
+  const livePr147 = {
+    number: 147,
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/pull/147",
+    headSha: "8203788b929a9270e2d0c32ae60919bda185cdab",
+    headRef: "sentinel/candidate-33035267454",
+  };
+  const livePr148 = {
+    ...push(148),
+    state: "closed" as const,
+    merged: true,
+    headRef: "sentinel/candidate-33037193821",
+    headSha: "91c65cbdebf9ffc1073c10cba7f5d12dc7a4cd2d",
+  };
+  // Every eligible live candidate head was merged by fast-forward
+  // (`merge_commit_sha == head_sha`), so on a full clone git merge-base
+  // returns the head itself; the old guard turned that into a fatal
+  // "no exact merge base" worker failure and reselected the same PR forever.
+  const selfBase = resolveRollingReviewTargetAnchor(
+    { code: 0, stdout: `${livePr147.headSha}\n`, stderr: "" },
+    livePr147.headSha,
+  );
+  assert.equal(selfBase.status, "unreachable");
+  assert.match(selfBase.failure, /merge base is the head itself/u);
+  const record = unreachableRollingReviewRecord({
+    prNumber: livePr147.number,
+    prUrl: livePr147.htmlUrl,
+    headSha: livePr147.headSha,
+    headRef: livePr147.headRef,
+    failure: selfBase.failure,
+    observedAt: "2026-08-30T23:18:39.000Z",
+  });
+  // Exact identity is preserved and the record validates under the same
+  // strict rules later cycles apply.
+  const fileName = rollingReviewResultFileName(livePr147.number, livePr147.headSha);
+  assert.equal(record.request_id, rollingReviewRequestId(livePr147.number, livePr147.headSha));
+  assert.equal(record.status, "unreachable");
+  assert.equal(record.parse_status, "unreachable");
+  assert.equal(record.base_sha, null);
+  assert.deepEqual(record.findings, []);
+  assert.match(record.failure ?? "", /merge base is the head itself/u);
+  const parsed = parseRollingReviewResult(record, {
+    prNumber: livePr147.number,
+    headSha: livePr147.headSha,
+    fileName,
+  });
+  assert.equal(parsed.status, "unreachable");
+  assert.deepEqual(parseRollingReviewResultFileName(fileName), {
+    prNumber: livePr147.number,
+    headSha: livePr147.headSha,
+  });
+  // The disposition is durable: the target is consumed by the scan and the
+  // identity-only preselection exactly like a completed result, and no
+  // completed review is ever claimed.
+  const pull147: SentinelPullRequest = {
+    ...push(livePr147.number),
+    state: "closed",
+    merged: true,
+    headRef: livePr147.headRef,
+    headSha: livePr147.headSha,
+    htmlUrl: livePr147.htmlUrl,
+  };
+  const scan = scanRollingReviewResults([pull147, livePr148], [record]);
+  assert.deepEqual(scan.reviewed.map((entry) => entry.pull.number), [147]);
+  assert.deepEqual(scan.unreviewed.map((entry) => entry.number), [148]);
+  assert.deepEqual(selectNextRollingReviewTask([pull147, livePr148], [record])?.number, 148);
+  const identities = parseRollingReviewResultFileNames([
+    `${REVIEW_RESULT_PREFIX}${fileName}`,
+  ]);
+  assert.deepEqual(
+    selectRollingReviewTaskFromIdentities([pull147, livePr148], identities)?.number,
+    148,
+  );
+  // Never ingested into the official backlog: no findings, no report.
+  const outcome = analyzeRollingReviewRecord(record);
+  assert.deepEqual(outcome.priorityFindings, []);
+  assert.deepEqual(outcome.backlogFindings, []);
+  assert.equal(outcome.report, null);
+  assert.equal(
+    applyRollingReviewIngestion(renderReviewBacklog([]), [outcome], new Date("2026-08-30T23:19:00.000Z")),
+    renderReviewBacklog([]),
+  );
+  // Fail-closed: an unreachable record never masquerades as completed, and
+  // completed records never lose their exact base.
+  assert.throws(
+    () =>
+      parseRollingReviewResult({ ...record, base_sha: "b".repeat(40) }, {
+        prNumber: 147,
+        headSha: livePr147.headSha,
+        fileName,
+      }),
+    /base SHA must be null/u,
+  );
+  assert.throws(
+    () =>
+      parseRollingReviewResult({ ...record, failure: null }, { prNumber: 147, headSha: livePr147.headSha, fileName }),
+    /internally inconsistent/u,
+  );
+  assert.throws(
+    () =>
+      parseRollingReviewResult(
+        { ...record, status: "completed", parse_status: "unreachable", base_sha: "b".repeat(40), failure: null },
+        { prNumber: 147, headSha: livePr147.headSha, fileName },
+      ),
+    /internally inconsistent/u,
+  );
+  assert.throws(
+    () =>
+      parseRollingReviewResult({
+        ...record,
+        findings: [finding("b1".repeat(32), "P2")],
+      }, { prNumber: 147, headSha: livePr147.headSha, fileName }),
+    /internally inconsistent/u,
+  );
+  const completed = parseRollingReviewResult(
+    { ...record, status: "completed", parse_status: "no_findings", base_sha: "b".repeat(40), failure: null },
+    { prNumber: 147, headSha: livePr147.headSha, fileName },
+  );
+  assert.equal(completed.status, "completed");
+  assert.throws(
+    () =>
+      parseRollingReviewResult({ ...completed, base_sha: null }, {
+        prNumber: 147,
+        headSha: livePr147.headSha,
+        fileName,
+      }),
+    /base SHA is invalid/u,
+  );
+  assert.throws(
+    () =>
+      parseRollingReviewResult({ ...completed, base_sha: livePr147.headSha }, {
+        prNumber: 147,
+        headSha: livePr147.headSha,
+        fileName,
+      }),
+    /base SHA is invalid/u,
+  );
+  // An unparseable record still requires its own exact base: nothing weakened.
+  assert.throws(
+    () =>
+      parseRollingReviewResult(
+        { ...record, status: "unparseable", parse_status: "unparseable", base_sha: null },
+        { prNumber: 147, headSha: livePr147.headSha, fileName },
+      ),
+    /base SHA is invalid/u,
+  );
+  // Identity drift between the durable record and its pull request stays
+  // fail-closed for unreachable dispositions too.
+  assert.throws(
+    () => scanRollingReviewResults([pull147], [{ ...record, head_branch: "sentinel/candidate-999-nosuchbranch" }]),
+    /drifted/,
   );
 });

@@ -8,11 +8,13 @@ import {
   parseCompletedRollingReview,
   parseRollingReviewResult,
   parseRollingReviewResultFileName,
+  resolveRollingReviewTargetAnchor,
   rollingReviewRequestId,
   type RollingReviewResult,
   rollingReviewResultFileName,
   selectNextRollingReviewTask,
   type SentinelPullRequest,
+  unreachableRollingReviewRecord,
 } from "./rolling-review.ts";
 import {
   assertGitHistoryExcludesValues,
@@ -27,8 +29,12 @@ import {
  * This entrypoint is the only component that executes a Codex review after a
  * Sentinel pull request was already delivered. It never gates delivery,
  * merging, or testing: when no review is due or the review invocation cannot
- * run, it records an `unavailable` outcome and exits cleanly. Every durable
- * review result is strictly validated before ingestion, and any malformed or
+ * run, it records an `unavailable` outcome and exits cleanly. A review target
+ * that cannot be anchored to development (git merge-base finds no common
+ * ancestor, or the merge base is the head itself) also exits cleanly after
+ * retaining a durable `unreachable` disposition, so a historical or displaced
+ * candidate never blocks Sentinel forward progress. Every durable review
+ * result is strictly validated before ingestion, and any malformed or
  * identity-mismatched data fails closed (nothing ingested, nothing pushed,
  * exact evidence retained, non-zero exit).
  */
@@ -277,10 +283,12 @@ const run = async (): Promise<void> => {
   }
   const scratch = `${runnerTemp}/rolling-review/scratch`;
   let reviewFailure: string | null = null;
+  let targetFailure: string | null = null;
   let rawReview = "";
   let reviewStderr = "";
   let structuredReview: unknown | null = null;
   let mergeBase = "";
+  let record: RollingReviewResult;
   try {
     // A merged Sentinel pull request may have had its candidate branch
     // deleted; the exact head commit is still reachable from development, so
@@ -332,39 +340,53 @@ const run = async (): Promise<void> => {
       cwd: root,
       env: gitEnv,
     });
-    mergeBase = decodeUtf8(
-      (await runTrustedGit({
-        args: ["merge-base", task.headSha, "origin/development"],
-        cwd: root,
-        env: gitEnv,
-      })).stdout,
-    ).trim();
-    if (!FULL_SHA.test(mergeBase) || mergeBase === task.headSha) {
-      throw new Error("Rolling review pull request has no exact merge base");
-    }
-    await runTrustedGit({
-      args: ["worktree", "add", "--detach", "--force", scratch, task.headSha],
+    // The merge-base result is fail-closed: `git merge-base` exits 1 without
+    // any stderr when the head has no common ancestor with development, and a
+    // merge base equal to the head means the reviewed head is already part of
+    // development. Neither is a review failure to retry — both are durable
+    // unreachable dispositions recorded for the exact identity so Sentinel
+    // continues instead of re-selecting the same target forever.
+    const anchorResult = await runTrustedGitUnchecked({
+      args: ["merge-base", task.headSha, "origin/development"],
       cwd: root,
       env: gitEnv,
     });
-    await runTrustedGit({
-      args: ["update-ref", "refs/remotes/origin/development", mergeBase],
-      cwd: scratch,
-      env: gitEnv,
-    });
-    try {
-      const review = await runNativeCodexReview({
-        checkoutPath: scratch,
-        authSlots,
-        expectedMaximumRuntimeMs: ROLLING_REVIEW_INVOCATION_MS,
+    const anchor = resolveRollingReviewTargetAnchor(
+      {
+        code: anchorResult.code,
+        stdout: new TextDecoder("utf-8").decode(anchorResult.stdout),
+        stderr: new TextDecoder("utf-8").decode(anchorResult.stderr),
+      },
+      task.headSha,
+    );
+    if (anchor.status === "unreachable") {
+      targetFailure = anchor.failure;
+    } else {
+      mergeBase = anchor.baseSha;
+      await runTrustedGit({
+        args: ["worktree", "add", "--detach", "--force", scratch, task.headSha],
+        cwd: root,
+        env: gitEnv,
       });
-      const bounded = boundedRawReview(review.stdout, review.stderr);
-      rawReview = bounded.stdout;
-      reviewStderr = bounded.stderr;
-      structuredReview = review.nativeReviewOutput ?? null;
-    } catch (error) {
-      if (error instanceof CodexInvocationError && error.failure === "secret_in_output") throw error;
-      reviewFailure = error instanceof Error ? error.message : "Rolling review invocation failed";
+      await runTrustedGit({
+        args: ["update-ref", "refs/remotes/origin/development", mergeBase],
+        cwd: scratch,
+        env: gitEnv,
+      });
+      try {
+        const review = await runNativeCodexReview({
+          checkoutPath: scratch,
+          authSlots,
+          expectedMaximumRuntimeMs: ROLLING_REVIEW_INVOCATION_MS,
+        });
+        const bounded = boundedRawReview(review.stdout, review.stderr);
+        rawReview = bounded.stdout;
+        reviewStderr = bounded.stderr;
+        structuredReview = review.nativeReviewOutput ?? null;
+      } catch (error) {
+        if (error instanceof CodexInvocationError && error.failure === "secret_in_output") throw error;
+        reviewFailure = error instanceof Error ? error.message : "Rolling review invocation failed";
+      }
     }
   } finally {
     await runTrustedGitUnchecked({
@@ -373,7 +395,16 @@ const run = async (): Promise<void> => {
       env: gitEnv,
     }).catch(() => undefined);
   }
-  if (reviewFailure !== null) {
+  if (targetFailure !== null) {
+    record = unreachableRollingReviewRecord({
+      prNumber: task.number,
+      prUrl: task.htmlUrl,
+      headSha: task.headSha,
+      headRef: task.headRef,
+      failure: targetFailure,
+      observedAt: new Date(reviewStart).toISOString(),
+    });
+  } else if (reviewFailure !== null) {
     await writeJsonFile(reportPath, {
       schema_version: 1,
       status: "unavailable",
@@ -383,32 +414,32 @@ const run = async (): Promise<void> => {
       failure: reviewFailure.slice(0, 2_000),
     });
     return;
+  } else {
+    const parsed = await parseCompletedRollingReview({
+      rawReviewText: rawReview,
+      reviewStderr,
+      structuredReview,
+      checkoutPath: scratch,
+      round: 1,
+    });
+    record = {
+      schema_version: 1,
+      request_id: rollingReviewRequestId(task.number, task.headSha),
+      pr_number: task.number,
+      pr_url: task.htmlUrl,
+      head_sha: task.headSha,
+      base_sha: mergeBase,
+      head_branch: task.headRef,
+      status: parsed.parse_status === "unparseable" ? "unparseable" : "completed",
+      reviewed_at: new Date(reviewStart).toISOString(),
+      parse_status: parsed.parse_status,
+      raw_review_text: rawReview,
+      review_stderr: reviewStderr,
+      structured_review: structuredReview,
+      findings: parsed.parse_status === "unparseable" ? [] : parsed.report.findings,
+      failure: parsed.failure,
+    };
   }
-
-  const parsed = await parseCompletedRollingReview({
-    rawReviewText: rawReview,
-    reviewStderr,
-    structuredReview,
-    checkoutPath: scratch,
-    round: 1,
-  });
-  const record: RollingReviewResult = {
-    schema_version: 1,
-    request_id: rollingReviewRequestId(task.number, task.headSha),
-    pr_number: task.number,
-    pr_url: task.htmlUrl,
-    head_sha: task.headSha,
-    base_sha: mergeBase,
-    head_branch: task.headRef,
-    status: parsed.parse_status === "unparseable" ? "unparseable" : "completed",
-    reviewed_at: new Date(reviewStart).toISOString(),
-    parse_status: parsed.parse_status,
-    raw_review_text: rawReview,
-    review_stderr: reviewStderr,
-    structured_review: structuredReview,
-    findings: parsed.parse_status === "unparseable" ? [] : parsed.report.findings,
-    failure: parsed.failure,
-  };
   const outcomes = [analyzeRollingReviewRecord(record)];
   const fileStem = rollingReviewResultFileName(record.pr_number, record.head_sha);
   const resultPath = `${SENTINEL_POLICY.paths.reviewResults}/${fileStem}`;
@@ -470,8 +501,11 @@ const run = async (): Promise<void> => {
     ) {
       throw new Error("Rolling review docs commit changed an unexpected path set");
     }
+    const commitMessage = record.status === "unreachable"
+      ? `docs: record unreachable Sentinel rolling review target for PR #${task.number}`
+      : `docs: ingest completed Sentinel rolling Codex review for PR #${task.number}`;
     await runTrustedGit({
-      args: ["commit", "-m", `docs: ingest completed Sentinel rolling Codex review for PR #${task.number}`],
+      args: ["commit", "-m", commitMessage],
       cwd: docsScratch,
       env: gitEnv,
     });
