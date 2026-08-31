@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "request_id": "166-8870fadd42b55333a313cdfde2b5d7c540e3a731",
+  "pr_number": 166,
+  "pr_url": "https://github.com/ubiquity/ai.ubq.fi/pull/166",
+  "head_sha": "8870fadd42b55333a313cdfde2b5d7c540e3a731",
+  "base_sha": null,
+  "head_branch": "sentinel/candidate-33137768977",
+  "status": "unreachable",
+  "reviewed_at": "2026-08-31T05:09:51.071Z",
+  "parse_status": "unreachable",
+  "raw_review_text": "",
+  "review_stderr": "",
+  "structured_review": null,
+  "findings": [],
+  "failure": "Gitleaks rejected the candidate or Git history"
+}
