@@ -42,13 +42,13 @@
   "constraints": [],
   "progress": {
     "schema_version": 1,
-    "verdict": "ambiguous",
-    "reason": "insufficient_history",
-    "observation_count": 1,
-    "state_digest": "da87633d1d2a369a",
+    "verdict": "stuck",
+    "reason": "unchanged_or_cycling_state",
+    "observation_count": 3,
+    "state_digest": "8f1355fc485f2b8d",
     "classifier": null,
-    "resolved": "unknown",
-    "resolved_reason": "classifier_not_provisioned",
-    "evaluated_at": "2026-08-31T03:44:45.776Z"
+    "resolved": "stuck",
+    "resolved_reason": "unchanged_or_cycling_state",
+    "evaluated_at": "2026-08-31T03:53:01.060Z"
   }
 }
