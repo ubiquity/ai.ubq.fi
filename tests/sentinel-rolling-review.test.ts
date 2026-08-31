@@ -22,13 +22,23 @@ import {
   deferGitleaksRejectedTarget,
   GITLEAKS_TARGET_REJECTION,
   parseSentinelPullList,
+  stageRollingReviewResult,
 } from "../scripts/sentinel/rolling-review-worker.ts";
 import { SENTINEL_POLICY } from "../scripts/sentinel/policy.ts";
 import { parseReviewBacklog, renderReviewBacklog, selectNextReviewBacklogEntry } from "../scripts/sentinel/review.ts";
 import type { NativeReviewFinding } from "../scripts/sentinel/types.ts";
+import { runTrustedGit } from "../scripts/sentinel/validation.ts";
 
 const FULL_SHA = "a".repeat(40);
 const REVIEW_RESULT_PREFIX = `${SENTINEL_POLICY.paths.reviewResults}/`;
+const gitPermissions = await Promise.all([
+  Deno.permissions.query({ name: "read" }),
+  Deno.permissions.query({ name: "write" }),
+  Deno.permissions.query({ name: "run", command: "git" }),
+]);
+
+const git = async (cwd: string, args: readonly string[]): Promise<string> =>
+  new TextDecoder().decode((await runTrustedGit({ cwd, args })).stdout).trim();
 
 const finding = (
   fingerprint: string,
@@ -105,6 +115,56 @@ Deno.test("rolling review never waits and never gates on review completion", () 
   const after = scanRollingReviewResults([eligibleOpen, eligibleMerged], [completed]);
   assert.deepEqual(after.reviewed.length, 1);
   assert.deepEqual(after.unreviewed.map((entry) => entry.number), [102]);
+});
+
+Deno.test({
+  name: "rolling review worker publishes finding results only and defers backlog ingestion",
+  ignore: gitPermissions.some((permission) => permission.state !== "granted"),
+  async fn() {
+    const root = await Deno.makeTempDir({ prefix: "sentinel-rolling-review-worker-" });
+    try {
+      await runTrustedGit({ cwd: root, args: ["init", "-b", "development"] });
+      const backlogPath = SENTINEL_POLICY.paths.reviewBacklog;
+      const initialBacklog = renderReviewBacklog([]);
+      await Deno.mkdir(`${root}/docs`, { recursive: true });
+      await Deno.writeTextFile(`${root}/${backlogPath}`, initialBacklog);
+      await runTrustedGit({ cwd: root, args: ["add", "--", backlogPath] });
+      await runTrustedGit({ cwd: root, args: ["commit", "-m", "seed rolling review backlog"] });
+
+      const headSha = "c".repeat(40);
+      const fingerprint = "d".repeat(64);
+      const reviewed = record(203, headSha, {
+        parse_status: "findings",
+        findings: [finding(fingerprint, "P2")],
+      });
+      const resultPath = await stageRollingReviewResult(root, reviewed);
+      await runTrustedGit({ cwd: root, args: ["commit", "-m", "record rolling review result"] });
+
+      const changed = (await runTrustedGit({
+        cwd: root,
+        args: ["diff-tree", "--no-commit-id", "--name-status", "--no-renames", "-r", "-z", "HEAD"],
+      })).stdout;
+      assert.deepEqual(new TextDecoder().decode(changed).split("\0").filter((entry) => entry.length > 0), [
+        "A",
+        resultPath,
+      ]);
+      assert.equal(await git(root, ["show", `HEAD:${backlogPath}`]), initialBacklog.trim());
+
+      const persisted = JSON.parse(await git(root, ["show", `HEAD:${resultPath}`]));
+      const parsed = parseRollingReviewResult(persisted, {
+        prNumber: reviewed.pr_number,
+        headSha: reviewed.head_sha,
+        fileName: resultPath.slice(`${REVIEW_RESULT_PREFIX}`.length),
+      });
+      const outcome = analyzeRollingReviewRecord(parsed);
+      assert.deepEqual(outcome.backlogFindings.map((entry) => entry.fingerprint), [fingerprint]);
+      const ingested = applyRollingReviewIngestion(initialBacklog, [outcome], new Date("2026-08-31T00:00:00.000Z"));
+      assert.deepEqual(parseReviewBacklog(ingested).map((entry) => entry.fingerprint), [fingerprint]);
+      assert.equal(selectNextReviewBacklogEntry(ingested)?.fingerprint, fingerprint);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  },
 });
 
 Deno.test("rolling review ingestion is later and merges into the official backlog", async () => {

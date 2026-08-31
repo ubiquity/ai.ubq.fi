@@ -90,6 +90,16 @@ Deno.test("the local harness runs the Sentinel stages in the fixed fail-fast ord
   for (const permission of ["--allow-env", "--allow-read", "--allow-write", "--allow-run"]) {
     assert.ok(artifactRecovery.argv.includes(permission), "artifact-recovery fixture tests must not self-ignore");
   }
+  const lunaOrchestrator = SENTINEL_LOCAL_TEST_STAGES.find((stage) => stage.name === "luna-orchestrator");
+  assert.ok(lunaOrchestrator);
+  for (const permission of ["--allow-read", "--allow-write", "--allow-run"]) {
+    assert.ok(lunaOrchestrator.argv.includes(permission), "luna-orchestrator Git fixtures must not self-ignore");
+  }
+  assert.equal(
+    lunaOrchestrator.argv.includes("--allow-env"),
+    false,
+    "luna-orchestrator tests do not need environment access",
+  );
 });
 
 Deno.test("credential scrubbing keeps GitHub, Deno, and model credentials out of child environments", () => {

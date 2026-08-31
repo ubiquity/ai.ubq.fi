@@ -17,6 +17,8 @@ import {
   type MatrixPlanV1,
 } from "../scripts/sentinel/matrix.ts";
 import { runMatrixCell } from "../scripts/sentinel/matrix-cell.ts";
+import { parseRollingReviewResult } from "../scripts/sentinel/rolling-review.ts";
+import { verifyMatrixConvergenceAdvance } from "../scripts/sentinel/main.ts";
 
 const baseCommit = "1".repeat(40);
 const reportDigest = "2".repeat(64);
@@ -202,6 +204,105 @@ Deno.test("matrix integration rejects accepted cell overlap before merge", () =>
 });
 
 Deno.test({
+  name: "matrix convergence integrates cells from the verified effective base while retaining plan base ownership",
+  ignore: permissions.some((permission) => permission.state !== "granted"),
+  async fn() {
+    const root = await Deno.makeTempDir({ prefix: "sentinel-matrix-effective-base-" });
+    try {
+      await git(root, ["init", "-b", "development"]);
+      await git(root, ["config", "user.name", "Sentinel Test"]);
+      await git(root, ["config", "user.email", "sentinel@example.invalid"]);
+      await Deno.mkdir(`${root}/src`, { recursive: true });
+      await Deno.writeTextFile(`${root}/src/one.ts`, "export const one = 'base';\n");
+      await git(root, ["add", "src/one.ts"]);
+      await git(root, ["commit", "-m", "matrix effective-base plan base"]);
+      const planBaseSha = await git(root, ["rev-parse", "HEAD"]);
+      const plan = await buildMatrixPlan({
+        run_id: "effective-base",
+        run_attempt: 1,
+        base_sha: planBaseSha,
+        evidence_digests: [],
+        findings: [{
+          id: "one",
+          fingerprint: "a".repeat(64),
+          allowed_paths: ["src/one.ts"],
+          validation_requirements: ["focused"],
+        }],
+      });
+      const cell = plan.cells[0]!;
+
+      await git(root, ["switch", "-c", cell.branch, planBaseSha]);
+      await Deno.writeTextFile(`${root}/src/one.ts`, "export const one = 'fixed';\n");
+      await git(root, ["add", "src/one.ts"]);
+      await git(root, ["commit", "-m", "matrix cell repair"]);
+      const cellHeadSha = await git(root, ["rev-parse", "HEAD"]);
+      const report = await reportFor(plan, 0, cellHeadSha, await git(root, ["rev-parse", "HEAD^{tree}"]));
+
+      await git(root, ["switch", "development"]);
+      const reviewHeadSha = "c".repeat(40);
+      const reviewFileName = `123-${reviewHeadSha}.json`;
+      const reviewResult = {
+        schema_version: 1,
+        request_id: `123-${reviewHeadSha}`,
+        pr_number: 123,
+        pr_url: "https://github.com/ubiquity/ai.ubq.fi/pull/123",
+        head_sha: reviewHeadSha,
+        base_sha: planBaseSha,
+        head_branch: "sentinel/candidate-123",
+        status: "completed",
+        reviewed_at: "2026-08-31T00:00:00.000Z",
+        parse_status: "no_findings",
+        raw_review_text: "",
+        review_stderr: "",
+        structured_review: null,
+        findings: [],
+        failure: null,
+      };
+      parseRollingReviewResult(reviewResult, { prNumber: 123, headSha: reviewHeadSha, fileName: reviewFileName });
+      await Deno.mkdir(`${root}/docs/sentinel-review-results`, { recursive: true });
+      await Deno.writeTextFile(
+        `${root}/docs/sentinel-review-results/${reviewFileName}`,
+        JSON.stringify(reviewResult),
+      );
+      await git(root, ["add", "docs/sentinel-review-results"]);
+      await git(root, ["commit", "-m", "record rolling review result"]);
+      const effectiveBaseSha = await git(root, ["rev-parse", "HEAD"]);
+      await verifyMatrixConvergenceAdvance(root, planBaseSha, effectiveBaseSha);
+
+      const integrationBranch = "sentinel/integrated-effective-base";
+      await git(root, ["switch", "-c", integrationBranch, effectiveBaseSha]);
+      const decision = await decisionFor(plan, [{
+        cell_id: cell.cell_id,
+        decision: "accept",
+        reason: "validated",
+        required_combined_checks: ["focused"],
+        correction_paths: [],
+      }]);
+      const result = await executeMatrixIntegration({
+        plan,
+        reports: [report],
+        decision,
+        effectiveBaseSha,
+        checkoutPath: root,
+        integrationBranch,
+        git: (command) => runGit(command.cwd, command.args),
+      });
+      const integratedCandidate = result.cycle_report.integrated_candidate;
+      assert.ok(integratedCandidate);
+      assert.equal(integratedCandidate.base_sha, planBaseSha);
+      assert.equal(result.merge_receipts[0]?.before_head_sha, effectiveBaseSha);
+      assert.equal(
+        await git(root, ["merge-base", "--is-ancestor", effectiveBaseSha, integratedCandidate.head_sha]).then(() => 0),
+        0,
+      );
+      assert.equal(await git(root, ["status", "--porcelain"]), "");
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
   name: "faithful matrix harness overlaps isolated repair cells before final convergence",
   ignore: permissions.some((permission) => permission.state !== "granted"),
   async fn() {
@@ -320,6 +421,7 @@ Deno.test({
         reports,
         decision,
         checkoutPath: integrationCheckout,
+        effectiveBaseSha: baseSha,
         integrationBranch: "sentinel/integrated-m06-concurrent",
         git: (command) => runGit(command.cwd, command.args),
       });
@@ -404,6 +506,7 @@ Deno.test({
         reports,
         decision,
         checkoutPath: root,
+        effectiveBaseSha: baseSha,
         integrationBranch: "sentinel/integrated-m03",
         git: executor,
       });
@@ -482,6 +585,7 @@ Deno.test({
         reports,
         decision,
         checkoutPath: root,
+        effectiveBaseSha: baseSha,
         integrationBranch: "sentinel/integrated-m06",
         git: (command) => runGit(command.cwd, command.args),
       });
@@ -569,6 +673,7 @@ Deno.test({
         reports: [report],
         decision,
         checkoutPath: root,
+        effectiveBaseSha: baseSha,
         integrationBranch: "sentinel/integrated-ours",
         allowPatchEquivalentOurs: true,
         git: executor,

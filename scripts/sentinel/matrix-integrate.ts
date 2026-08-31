@@ -144,6 +144,8 @@ export type MatrixIntegrationAgentInvocation = Readonly<{
 export type MatrixIntegrationAgentOptions = Readonly<{
   plan: MatrixPlanV1;
   reports: readonly MatrixReportInput[];
+  /** Verified current development SHA used as the integration checkout base. */
+  effectiveBaseSha: string;
   checkoutPath: string;
   integrationBranch: string;
   outputSchemaPath: string;
@@ -162,6 +164,8 @@ export type MatrixIntegrationExecutionInput = Readonly<{
   plan: MatrixPlanV1;
   reports: readonly MatrixReportInput[];
   decision: IntegrationDecisionV1;
+  /** Verified current development SHA used as the integration checkout base. */
+  effectiveBaseSha: string;
   checkoutPath: string;
   integrationBranch: string;
   /** Permit a pre-existing, agent-created working-tree correction when proven exact. */
@@ -383,6 +387,17 @@ const assertAncestry = async (
     allowFailure: true,
   });
   if (result.code !== 0) throw new MatrixIntegrationError("head_drift", `${label} is not an ancestor`);
+};
+
+const requireEffectiveBaseSha = async (
+  executor: MatrixGitExecutor,
+  checkoutPath: string,
+  plan: MatrixPlanV1,
+  effectiveBaseSha: string,
+): Promise<string> => {
+  const resolved = requireFullSha(effectiveBaseSha, "Effective integration base SHA");
+  await assertAncestry(executor, checkoutPath, plan.base_sha, resolved, "Effective integration base");
+  return resolved;
 };
 
 const assertDiffQuiet = async (
@@ -772,9 +787,15 @@ export const runMatrixIntegrationAgent = async (
     checkoutPath: options.checkoutPath,
     git: executor,
   });
+  const effectiveBaseSha = await requireEffectiveBaseSha(
+    executor,
+    options.checkoutPath,
+    validation.plan,
+    options.effectiveBaseSha,
+  );
   const beforeHead = await readCurrentHead(executor, options.checkoutPath);
-  if (beforeHead !== options.plan.base_sha) {
-    throw new MatrixIntegrationError("invalid_input", "Integration checkout is not on the immutable matrix base");
+  if (beforeHead !== effectiveBaseSha) {
+    throw new MatrixIntegrationError("invalid_input", "Integration checkout is not on the effective integration base");
   }
   await assertAgentCheckoutIdentity(executor, options.checkoutPath, beforeHead, integrationBranch, true);
   const invocation = await (options.agentInvoker ?? runStructuredCodexAgent)({
@@ -1013,6 +1034,12 @@ export const executeMatrixIntegration = async (
     artifact_sha256_by_cell: input.artifact_sha256_by_cell,
     git: executor,
   });
+  const effectiveBaseSha = await requireEffectiveBaseSha(
+    executor,
+    input.checkoutPath,
+    validation.plan,
+    input.effectiveBaseSha,
+  );
   assertIntegrationDecisionV1(input.decision, validation.plan);
   await assertIntegrationDecisionDigest(input.decision);
   const correctionPaths = assertIntegrationCorrectionScope({ plan: validation.plan, decision: input.decision });
@@ -1035,8 +1062,8 @@ export const executeMatrixIntegration = async (
     }
   }
   const beforeHead = await readCurrentHead(executor, input.checkoutPath);
-  if (beforeHead !== validation.plan.base_sha) {
-    throw new MatrixIntegrationError("invalid_input", "Integration checkout is not on the immutable matrix base");
+  if (beforeHead !== effectiveBaseSha) {
+    throw new MatrixIntegrationError("invalid_input", "Integration checkout is not on the effective integration base");
   }
   if (await readCurrentBranch(executor, input.checkoutPath) !== integrationBranch) {
     throw new MatrixIntegrationError("invalid_input", "Integration checkout is on the wrong branch");

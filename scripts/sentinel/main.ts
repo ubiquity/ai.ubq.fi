@@ -61,6 +61,11 @@ import {
   selectNextReviewBacklogEntry,
 } from "./review.ts";
 import {
+  MAX_ROLLING_REVIEW_RESULT_BYTES,
+  parseRollingReviewResult,
+  parseRollingReviewResultFileNames,
+} from "./rolling-review.ts";
+import {
   assertSentinelRecoveryTransition,
   parseSentinelRecoveryRecord,
   type SentinelRecoveryIdentityV1,
@@ -1483,6 +1488,130 @@ const fetchDevelopmentBase = async (
     env: gitEnvironment,
   });
   return ensureFullSha(await gitText(root, ["rev-parse", "origin/development"]), "Development base");
+};
+
+/**
+ * Fail-closed verifier for the bounded advance of `origin/development` between
+ * the immutable matrix convergence plan base and the freshly fetched current
+ * development SHA. The advance is accepted only when it is a strict linear
+ * history of at most 8 single-parent commits, each adding exactly one durable
+ * rolling review result file under `docs/sentinel-review-results/` and nothing
+ * else, where the file name parses and its blob parses as a fully validated
+ * rolling review result whose PR number and head SHA match the file identity.
+ * Merge, delete, rename, unrelated-path, malformed-body, and identity-mismatch
+ * advances are all rejected.
+ */
+export const verifyMatrixConvergenceAdvance = async (
+  repoPath: string,
+  plannedBaseSha: string,
+  currentDevelopmentSha: string,
+): Promise<void> => {
+  ensureFullSha(plannedBaseSha, "Matrix convergence planned base");
+  ensureFullSha(currentDevelopmentSha, "Matrix convergence current development");
+  if (plannedBaseSha === currentDevelopmentSha) {
+    throw new Error("Matrix convergence advance is empty");
+  }
+  const ancestry = await runTrustedGitUnchecked({
+    args: ["merge-base", "--is-ancestor", plannedBaseSha, currentDevelopmentSha],
+    cwd: repoPath,
+  });
+  if (ancestry.code !== 0) {
+    throw new Error("Matrix convergence planned base is not an ancestor of origin/development");
+  }
+  const commitCount = Number(
+    await gitText(repoPath, ["rev-list", "--count", `${plannedBaseSha}..${currentDevelopmentSha}`]),
+  );
+  if (!Number.isSafeInteger(commitCount) || commitCount < 1 || commitCount > 8) {
+    throw new Error("Matrix convergence advance exceeds the allowed commit count");
+  }
+  const commits = (await gitText(repoPath, [
+    "rev-list",
+    "--reverse",
+    "--topo-order",
+    `${plannedBaseSha}..${currentDevelopmentSha}`,
+  ]))
+    .split("\n")
+    .filter((line) => line.length > 0);
+  if (commits.length !== commitCount) {
+    throw new Error("Matrix convergence advance commit listing is inconsistent");
+  }
+  const prefix = `${SENTINEL_POLICY.paths.reviewResults}/`;
+  for (const [index, commit] of commits.entries()) {
+    const parents = (await gitText(repoPath, ["show", "-s", "--format=%P", commit]))
+      .split(" ")
+      .filter((value) => value.length > 0);
+    if (parents.length !== 1) {
+      throw new Error(`Matrix convergence advance commit ${commit} is not a single-parent commit`);
+    }
+    const expectedParent = index === 0 ? plannedBaseSha : commits[index - 1]!;
+    if (parents[0] !== expectedParent) {
+      throw new Error(`Matrix convergence advance commit ${commit} is not on the planned linear path`);
+    }
+    const changed = new TextDecoder("utf-8", { fatal: true }).decode(
+      (await runTrustedGit({
+        args: [
+          "diff-tree",
+          "--no-commit-id",
+          "--no-ext-diff",
+          "--no-textconv",
+          "--name-status",
+          "--no-renames",
+          "-r",
+          "-z",
+          commit,
+        ],
+        cwd: repoPath,
+      })).stdout,
+    ).split("\0").filter((entry) => entry.length > 0);
+    if (changed.length !== 2) {
+      throw new Error(`Matrix convergence advance commit ${commit} changes multiple paths`);
+    }
+    const [status, path] = changed;
+    if (status !== "A" || path === undefined) {
+      throw new Error(`Matrix convergence advance commit ${commit} is not a single-file add`);
+    }
+    if (!path.startsWith(prefix)) {
+      throw new Error(`Matrix convergence advance commit ${commit} adds a path outside the review results`);
+    }
+    const fileName = path.slice(prefix.length);
+    const identities = parseRollingReviewResultFileNames([path]);
+    if (identities.length !== 1) {
+      throw new Error(`Matrix convergence advance result file name is invalid: ${fileName}`);
+    }
+    const identity = identities[0]!;
+    const treeEntries = new TextDecoder("utf-8", { fatal: true }).decode(
+      (await runTrustedGit({
+        args: ["ls-tree", "-z", commit, "--", path],
+        cwd: repoPath,
+      })).stdout,
+    ).split("\0").filter((entry) => entry.length > 0);
+    const treeEntry = treeEntries.length === 1 ? treeEntries[0]! : null;
+    const separator = treeEntry?.indexOf("\t") ?? -1;
+    const metadata = separator >= 0 ? treeEntry!.slice(0, separator).split(" ") : [];
+    const treePath = separator >= 0 ? treeEntry!.slice(separator + 1) : "";
+    if (
+      treeEntry === null || metadata.length !== 3 || metadata[0] !== "100644" || metadata[1] !== "blob" ||
+      !FULL_SHA.test(metadata[2]!) || treePath !== path
+    ) {
+      throw new Error(`Matrix convergence advance result path is not a regular 100644 Git blob: ${path}`);
+    }
+    const blob = await runTrustedGit({
+      args: ["show", `${commit}:${path}`],
+      cwd: repoPath,
+      maximumOutputBytes: MAX_ROLLING_REVIEW_RESULT_BYTES + 64 * 1_024,
+    });
+    if (blob.stdout.byteLength > MAX_ROLLING_REVIEW_RESULT_BYTES) {
+      throw new Error(`Matrix convergence advance result blob exceeds its byte limit: ${path}`);
+    }
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(blob.stdout);
+    let value: unknown;
+    try {
+      value = JSON.parse(text);
+    } catch {
+      throw new Error(`Matrix convergence advance result blob is not valid JSON: ${path}`);
+    }
+    parseRollingReviewResult(value, { prNumber: identity.prNumber, headSha: identity.headSha, fileName });
+  }
 };
 
 const readReviewBacklogAtRevision = async (root: string, revision: string): Promise<string> => {
@@ -3262,9 +3391,9 @@ const run = async (): Promise<void> => {
     if (!matrixConvergencePlan) throw new Error("Matrix convergence lost its immutable plan");
     const currentDevelopmentSha = await fetchDevelopmentBase(root, gitEnvironment);
     if (currentDevelopmentSha !== matrixConvergencePlan.base_sha) {
-      throw new Error("origin/development advanced before matrix convergence");
+      await verifyMatrixConvergenceAdvance(root, matrixConvergencePlan.base_sha, currentDevelopmentSha);
     }
-    baseSha = matrixConvergencePlan.base_sha;
+    baseSha = currentDevelopmentSha;
   } else if (workSelection.source === "review_backlog" || workSelection.source === "github_issue") {
     if (
       !selectedDevelopmentSha ||
@@ -3376,6 +3505,7 @@ const run = async (): Promise<void> => {
       runMatrixIntegrationAgent({
         plan: matrixConvergencePlan!,
         reports: matrixConvergenceReports,
+        effectiveBaseSha: baseSha,
         checkoutPath: checkout,
         integrationBranch: branch,
         outputSchemaPath: integrationSchemaPath,
@@ -3388,6 +3518,7 @@ const run = async (): Promise<void> => {
       plan: matrixConvergencePlan,
       reports: matrixConvergenceReports,
       decision: integrationInvocation.decision,
+      effectiveBaseSha: baseSha,
       checkoutPath: checkout,
       integrationBranch: branch,
       allowPatchEquivalentOurs: true,
