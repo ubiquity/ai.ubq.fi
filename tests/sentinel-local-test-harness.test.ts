@@ -93,7 +93,7 @@ Deno.test("the local harness runs the Sentinel stages in the fixed fail-fast ord
   const lunaOrchestrator = SENTINEL_LOCAL_TEST_STAGES.find((stage) => stage.name === "luna-orchestrator");
   assert.ok(lunaOrchestrator);
   for (const permission of ["--allow-read", "--allow-write", "--allow-run"]) {
-    assert.ok(lunaOrchestrator.argv.includes(permission), "luna-orchestrator Git fixtures must not self-ignore");
+    assert.ok(lunaOrchestrator.argv.includes(permission), `luna-orchestrator stage must request ${permission}`);
   }
   assert.equal(
     lunaOrchestrator.argv.includes("--allow-env"),
