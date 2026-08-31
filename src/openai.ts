@@ -1087,7 +1087,9 @@ const streamPreflightFailureResponse = (
 };
 
 type ResponsesAttemptTrigger =
+  | "http_4xx"
   | "http_5xx"
+  | "http_error"
   | "missing_body"
   | "malformed_event"
   | "event_too_large"
@@ -1125,6 +1127,9 @@ type ResponsesAttemptResult =
 
 const isEligibleResponsesAttemptStatus = (response: Response): boolean => response.status >= 500;
 
+const responsesHttpErrorTrigger = (response: Response): "http_4xx" | "http_5xx" | "http_error" =>
+  response.status >= 500 ? "http_5xx" : response.status >= 400 ? "http_4xx" : "http_error";
+
 const triggerForResponsesError = (error: unknown, signal: AbortSignal): ResponsesAttemptTrigger => {
   if (signal.aborted && signal.reason instanceof Error && signal.reason.name === "TimeoutError") {
     return "semantic_timeout";
@@ -1142,8 +1147,12 @@ const failureKindForResponsesAttemptTrigger = (
   trigger: ResponsesAttemptTrigger,
 ): ResponsesStreamFailureKind | null => {
   switch (trigger) {
+    case "http_4xx":
+      return "upstream_http_4xx";
     case "http_5xx":
       return "upstream_http_5xx";
+    case "http_error":
+      return "upstream_http_error";
     case "premature_eof":
       return "premature_eof";
     case "malformed_event":
@@ -1241,7 +1250,7 @@ const prepareResponsesAttempt = async (
     };
   };
   if (!response.ok) {
-    const trigger = isEligibleResponsesAttemptStatus(response) ? "http_5xx" : "read_error";
+    const trigger = responsesHttpErrorTrigger(response);
     const normalized = await toOpenAiUpstreamErrorResponse(response, provider, deadline.signal);
     deadline.clear();
     return fail(trigger, normalized);
@@ -1500,6 +1509,8 @@ const fetchAndPreparePrimaryResponses = async (
       ? "semantic_timeout"
       : routed.response.status >= 500
       ? "http_5xx"
+      : !routed.response.ok
+      ? responsesHttpErrorTrigger(routed.response)
       : "read_error";
     return {
       kind: "failed",
@@ -9626,7 +9637,10 @@ const handleResponsesInternal = async (
             if (globalProbe) void releaseGlobalRemovedProviderProbe(globalProbe).catch(() => {});
             return failed.response;
           }
-          if (!isEligibleResponsesAttemptStatus(failed.response) && failed.trigger === "read_error") {
+          if (
+            !isEligibleResponsesAttemptStatus(failed.response) &&
+            (failed.trigger === "http_4xx" || failed.trigger === "http_error" || failed.trigger === "read_error")
+          ) {
             if (globalProbe) void releaseGlobalRemovedProviderProbe(globalProbe).catch(() => {});
             lifecycle.terminal("response.failed");
             return failed.response;

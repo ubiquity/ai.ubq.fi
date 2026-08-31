@@ -2608,6 +2608,19 @@ Deno.test("openai: Codex HTTP errors use OpenAI envelopes without changing routi
         code: "upstream_error",
       },
     },
+    {
+      name: "responses classifies an upstream 400 separately from stream reads",
+      route: "responses",
+      status: 400,
+      statusText: "Codex Invalid Request",
+      body: "Codex rejected the request body.",
+      retryAfter: null,
+      expectedError: {
+        message: "Codex rejected the request body.",
+        type: "invalid_request_error",
+        code: "upstream_error",
+      },
+    },
   ] as const;
 
   for (const testCase of cases) {
@@ -2655,10 +2668,13 @@ Deno.test("openai: Codex HTTP errors use OpenAI envelopes without changing routi
       assert.equal(response.headers.get("Retry-After"), testCase.retryAfter);
       assert.equal(response.headers.get("X-Codex-Diagnostic"), null);
       assert.deepEqual(await response.json(), { error: testCase.expectedError });
-      if (testCase.route === "responses" && testCase.status >= 500) {
+      if (testCase.route === "responses") {
         const telemetry = getResponseTelemetry(response);
         assert.ok(telemetry);
-        assert.equal(telemetry.failureKind, "upstream_http_5xx");
+        assert.equal(
+          telemetry.failureKind,
+          testCase.status >= 500 ? "upstream_http_5xx" : "upstream_http_4xx",
+        );
         assert.equal(telemetry.streamTerminalType, "error");
         assert.equal(telemetry.responseCreatedObserved, false);
         assert.equal(telemetry.fallbackReason, null);
@@ -4583,6 +4599,69 @@ Deno.test("openai: temporary free GLM cut uses only Surplus without paid fallbac
         },
       );
     }
+
+    await t.step("Surplus upstream 400 stays an HTTP failure without paid advancement", async () => {
+      clearSurplusHealth();
+      const keyId = "free-glm-http-400-key";
+      const requestId = "free-glm-http-400-request";
+      let surplusCalls = 0;
+      let meteredCalls = 0;
+      const response = await withFetchMock(
+        (url) => {
+          if (url === "https://api.surplusintelligence.ai/v1/responses") {
+            surplusCalls += 1;
+            return new Response(JSON.stringify({ error: { message: "invalid request" } }), {
+              status: 400,
+              headers: {
+                "Content-Type": "application/json",
+                "X-Oneapi-Request-Id": "free-glm-http-400-provider",
+              },
+            });
+          }
+          if (url === "https://api.openlux.ai/v1/responses") {
+            meteredCalls += 1;
+            throw new Error("Metered must not follow a Surplus HTTP 400");
+          }
+          throw new Error("Unexpected upstream URL: " + url);
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: TEMPORARY_FREE_SURPLUS_TEST_MODEL,
+                input: "ping",
+              }),
+            }),
+            {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              paidFallbackEnabled: true,
+              requestId,
+              startedAtMs: Date.now(),
+              startedAtMonotonicMs: performance.now(),
+            },
+          ),
+      );
+      assert.equal(response.status, 400);
+      assert.equal(response.headers.get("x-uos-upstream"), "surplus");
+      const telemetry = getResponseTelemetry(response);
+      assert.ok(telemetry);
+      assert.equal(telemetry.failureKind, "upstream_http_4xx");
+      assert.equal(telemetry.streamTerminalType, "error");
+      assert.equal(telemetry.responseCreatedObserved, false);
+      assert.equal(telemetry.fallbackReason, null);
+      assert.deepEqual(telemetry.attemptedProviders, ["surplus"]);
+      assert.equal(surplusCalls, 1);
+      assert.equal(meteredCalls, 0);
+      assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null);
+      const health = await waitForSurplusHealth("reachable");
+      assert.equal(health.status, 400);
+      assert.notEqual(health.event, "quota_exhausted");
+      assert.equal(health.provider_request_id, "free-glm-http-400-provider");
+    });
 
     await t.step("ordinary API-key quota rejection happens before Surplus transport", async () => {
       clearSurplusHealth();
