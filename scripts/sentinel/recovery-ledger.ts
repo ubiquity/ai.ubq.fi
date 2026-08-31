@@ -19,6 +19,26 @@ export const SENTINEL_RECOVERY_LEDGER_PATH = "docs/sentinel-recovery-records.jso
 export const SENTINEL_RECOVERY_LEDGER_MAX_RECORDS = 512;
 export const SENTINEL_RECOVERY_LEDGER_MAX_RETRY_ATTEMPTS = 4_096;
 
+// Owner-controlled identities that must retain a durable terminal
+// disposition regardless of the 512-record cap or the newest-128 artifact
+// scan. These are the known self-healing candidates: run 33197180235 /
+// artifact 9697049137, run 33190526163 / artifact 9695880683, and issue #136
+// (candidate sentinel/candidate-33188346422-1). Artifact evidence is matched
+// by artifact id, the issue by source kind and id, and the legacy candidate
+// by its recorded branch.
+export const SENTINEL_REQUIRED_LEGACY_ARTIFACT_IDS = Object.freeze([9697049137, 9695880683]);
+export const SENTINEL_REQUIRED_LEGACY_ISSUE_SOURCE_ID = "136";
+export const SENTINEL_REQUIRED_LEGACY_CANDIDATE_BRANCHES = Object.freeze(["sentinel/candidate-33188346422-1"]);
+
+const requiredLegacyArtifactIds = new Set<number>(SENTINEL_REQUIRED_LEGACY_ARTIFACT_IDS);
+const requiredLegacyCandidateBranches = new Set<string>(SENTINEL_REQUIRED_LEGACY_CANDIDATE_BRANCHES);
+
+export const isRequiredSentinelRecoveryRecord = (record: SentinelRecoveryRecordV1): boolean =>
+  record.artifact_ids.some((artifactId) => requiredLegacyArtifactIds.has(artifactId)) ||
+  (record.identity.source_kind === "github_issue" &&
+    record.identity.source_id === SENTINEL_REQUIRED_LEGACY_ISSUE_SOURCE_ID) ||
+  (record.candidate_branch !== null && requiredLegacyCandidateBranches.has(record.candidate_branch));
+
 export type SentinelRecoveryLeaseV1 = Readonly<{
   identity_key: string;
   owner: string;
@@ -195,20 +215,23 @@ export const upsertSentinelRecoveryRecord = (
       sentinelRecoveryIdentityKey(left.identity).localeCompare(sentinelRecoveryIdentityKey(right.identity))
     );
   if (records.length > SENTINEL_RECOVERY_LEDGER_MAX_RECORDS) {
-    const active = records.filter((candidate) => !isTerminalRecoveryPhase(candidate.phase));
-    if (active.length > SENTINEL_RECOVERY_LEDGER_MAX_RECORDS) {
+    const required = records.filter(isRequiredSentinelRecoveryRecord);
+    const active = records.filter(
+      (candidate) => !isTerminalRecoveryPhase(candidate.phase) && !isRequiredSentinelRecoveryRecord(candidate),
+    );
+    if (active.length + required.length > SENTINEL_RECOVERY_LEDGER_MAX_RECORDS) {
       throw new Error("Sentinel recovery ledger has too many active records");
     }
     const retainedTerminal = records
-      .filter((candidate) => isTerminalRecoveryPhase(candidate.phase))
+      .filter((candidate) => isTerminalRecoveryPhase(candidate.phase) && !isRequiredSentinelRecoveryRecord(candidate))
       .sort((left, right) => {
         const byTime = Date.parse(right.updated_at) - Date.parse(left.updated_at);
         return byTime !== 0
           ? byTime
           : sentinelRecoveryIdentityKey(right.identity).localeCompare(sentinelRecoveryIdentityKey(left.identity));
       })
-      .slice(0, SENTINEL_RECOVERY_LEDGER_MAX_RECORDS - active.length);
-    records = [...active, ...retainedTerminal].sort((left, right) =>
+      .slice(0, SENTINEL_RECOVERY_LEDGER_MAX_RECORDS - active.length - required.length);
+    records = [...required, ...active, ...retainedTerminal].sort((left, right) =>
       sentinelRecoveryIdentityKey(left.identity).localeCompare(sentinelRecoveryIdentityKey(right.identity))
     );
   }
