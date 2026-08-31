@@ -671,6 +671,40 @@
     },
     {
       "artifact_digests": [
+        "sha256:cad5d41a16107b887d4d458b8f03e19d5fb950cb2ab7380ab203fe766adadad0"
+      ],
+      "artifact_ids": [
+        9745746495
+      ],
+      "attempt": 1,
+      "base_sha": "c9ce69ba712b4358157078a751212ccac2192d8f",
+      "candidate_branch": null,
+      "candidate_sha": null,
+      "changed_files": [],
+      "created_at": "2026-08-31T04:42:14.698Z",
+      "disposition": "manual_required",
+      "failure_class": "artifact_wrong_base",
+      "failure_fingerprint": "575ff89af3c0357dd6add0d27cd5b7a9f6a9ca59a13eb0b7d638643c7f646704",
+      "identity": {
+        "candidate_generation": 1,
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_id": "5289263183",
+        "source_kind": "github_issue",
+        "source_revision": "0e6bce89fad208929dc5d3c19caec923fee8fad6a38516b236b3af3b23408c05"
+      },
+      "lease_token": "matrix-cell-33357880222-1-cell-fc6f952babeafb398a569f6fd5f5b684174e5a1a6ad38eb1ddb60a0fb20253d7",
+      "next_action": "manual inspection of encrypted evidence and the exact base is required",
+      "phase": "manual_required",
+      "predecessor": null,
+      "reason": "artifact_wrong_base",
+      "run_id": "33357880222",
+      "schema_version": 1,
+      "state_version": 2,
+      "tree_sha": null,
+      "updated_at": "2026-08-31T04:46:01.223Z"
+    },
+    {
+      "artifact_digests": [
         "sha256:6f6f72bb742313fa7ea51de1e03181630b93f3cec22af7fb59983f7fdebf48a6"
       ],
       "artifact_ids": [
@@ -5606,40 +5640,6 @@
         "sha256:1f765ebe7af730ed349eab872be26c7c55d46813a6b0aba03fe1d9b0b27eff5b"
       ],
       "reason": "no_candidate_diff",
-      "next_action": null,
-      "predecessor": null
-    },
-    {
-      "schema_version": 1,
-      "identity": {
-        "repository": "ubiquity/ai.ubq.fi",
-        "source_kind": "triage",
-        "source_id": "33062331159",
-        "source_revision": "ae5a5b4d88a81ef2671e39cec81f8f06f803e9f7",
-        "candidate_generation": 1
-      },
-      "run_id": "33062331159",
-      "attempt": 1,
-      "lease_token": "artifact-9642238780",
-      "base_sha": "ae5a5b4d88a81ef2671e39cec81f8f06f803e9f7",
-      "phase": "rejected",
-      "disposition": "rejected",
-      "state_version": 1,
-      "created_at": "2026-08-27T10:17:06Z",
-      "updated_at": "2026-08-27T10:17:06Z",
-      "candidate_branch": null,
-      "candidate_sha": null,
-      "changed_files": [],
-      "tree_sha": null,
-      "failure_class": "artifact_invalid",
-      "failure_fingerprint": "bdd7f06e0610cf77a9cc663425ad3321c084b4710e85f6a99b31821193c92c1e",
-      "artifact_ids": [
-        9642238780
-      ],
-      "artifact_digests": [
-        "sha256:bdd7f06e0610cf77a9cc663425ad3321c084b4710e85f6a99b31821193c92c1e"
-      ],
-      "reason": "authenticated legacy evidence contains a terminal disposition",
       "next_action": null,
       "predecessor": null
     },
