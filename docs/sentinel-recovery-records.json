@@ -7184,6 +7184,36 @@
       "identity": {
         "repository": "ubiquity/ai.ubq.fi",
         "source_kind": "triage",
+        "source_id": "2791b986f36b49ebf11c71ee858667feef08303d714f6d071ad7bfb79dbe573e",
+        "source_revision": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
+        "candidate_generation": 1
+      },
+      "run_id": "33438692409",
+      "attempt": 1,
+      "lease_token": "33438692409-1",
+      "base_sha": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
+      "phase": "claimed",
+      "disposition": "active",
+      "state_version": 1,
+      "created_at": "2026-08-31T20:59:09.506Z",
+      "updated_at": "2026-08-31T20:59:09.506Z",
+      "candidate_branch": null,
+      "candidate_sha": null,
+      "changed_files": [],
+      "tree_sha": null,
+      "failure_class": null,
+      "failure_fingerprint": null,
+      "artifact_ids": [],
+      "artifact_digests": [],
+      "reason": "The selected work item is durably claimed before implementation.",
+      "next_action": "Start the Luna implementation stage.",
+      "predecessor": null
+    },
+    {
+      "schema_version": 1,
+      "identity": {
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_kind": "triage",
         "source_id": "2d04928e8099b40f2f364c9e25f97be30408eaee50116703a29b36251c9755c9",
         "source_revision": "6098a83435c308168d9b28fc1ca0ac8a9afa2853",
         "candidate_generation": 1
@@ -7607,40 +7637,6 @@
       ],
       "reason": "artifact_wrong_base",
       "next_action": "manual inspection of encrypted evidence and the exact base is required",
-      "predecessor": null
-    },
-    {
-      "schema_version": 1,
-      "identity": {
-        "repository": "ubiquity/ai.ubq.fi",
-        "source_kind": "triage",
-        "source_id": "33285577990:artifact:9724327096",
-        "source_revision": "c45d85eb7455b02184b68ee3c821ba853153b38e",
-        "candidate_generation": 1
-      },
-      "run_id": "33285577990",
-      "attempt": 1,
-      "lease_token": "artifact-9724327096",
-      "base_sha": "c45d85eb7455b02184b68ee3c821ba853153b38e",
-      "phase": "manual_required",
-      "disposition": "manual_required",
-      "state_version": 1,
-      "created_at": "2026-08-30T01:25:31Z",
-      "updated_at": "2026-08-30T01:25:31Z",
-      "candidate_branch": null,
-      "candidate_sha": null,
-      "changed_files": [],
-      "tree_sha": null,
-      "failure_class": "artifact_invalid",
-      "failure_fingerprint": "3c3f79277d8503972ec5fb52b4ef3cfe932e196ebad3f53006354f741a89b4c0",
-      "artifact_ids": [
-        9724327096
-      ],
-      "artifact_digests": [
-        "sha256:3c3f79277d8503972ec5fb52b4ef3cfe932e196ebad3f53006354f741a89b4c0"
-      ],
-      "reason": "authenticated legacy evidence lacks a provable recovery record",
-      "next_action": "a repository owner must inspect the encrypted artifact and its exact workflow base",
       "predecessor": null
     },
     {
