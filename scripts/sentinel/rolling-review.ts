@@ -29,9 +29,9 @@ export type SentinelPullRequest = Readonly<{
   body: string;
 }>;
 
-export type RollingReviewParseStatus = "findings" | "no_findings" | "unparseable" | "unreachable";
+export type RollingReviewParseStatus = "findings" | "no_findings" | "unparseable" | "unreachable" | "rejected";
 
-export type RollingReviewResultStatus = "completed" | "unparseable" | "unreachable";
+export type RollingReviewResultStatus = "completed" | "unparseable" | "unreachable" | "rejected";
 
 /**
  * Durable result of one completed (or fail-closed) rolling Codex review.
@@ -41,7 +41,12 @@ export type RollingReviewResultStatus = "completed" | "unparseable" | "unreachab
  * is a permanent disposition for a review target that cannot be anchored to a
  * distinct development base (git merge-base exited nonzero, or the merge base
  * is the head itself): it preserves the exact identity, is never ingested as
- * a completed review, and later cycles never re-attempt the same target.
+ * a completed review, and later cycles never re-attempt the same target. A
+ * `rejected` record is the permanent disposition for an anchored target whose
+ * review evidence was rejected by the Gitleaks gate: unlike the unreachable
+ * case it preserves the exact proven base SHA next to the exact head identity
+ * and the exact safe rejection reason, and it likewise is never ingested as a
+ * completed review and never re-attempted.
  */
 export type RollingReviewResult = Readonly<{
   schema_version: 1;
@@ -50,7 +55,7 @@ export type RollingReviewResult = Readonly<{
   pr_number: number;
   pr_url: string;
   head_sha: string;
-  /** Exact merge base against development; null only for an unreachable target. */
+  /** Exact merge base against development; null only for a genuinely unanchored unreachable target. */
   base_sha: string | null;
   head_branch: string;
   status: RollingReviewResultStatus;
@@ -87,6 +92,7 @@ const VALID_PARSE_STATUSES = new Set<RollingReviewParseStatus>([
   "no_findings",
   "unparseable",
   "unreachable",
+  "rejected",
 ]);
 
 /** Maximum serialized bytes of a single durable review result. */
@@ -194,7 +200,8 @@ const validateFinding = (value: unknown): NativeReviewFinding | null => {
  * identity field must match the exact file identity and the file name, and
  * the record must be internally consistent: unparseable ↔ no findings with
  * an exact failure and a full base SHA, unreachable ↔ no findings with an
- * exact failure and a null base SHA, and completed ↔ parseable and no
+ * exact failure and a null base SHA, rejected ↔ no findings with an exact
+ * failure and the exact full base SHA, and completed ↔ parseable and no
  * failure. Any violation throws and nothing is ever partially ingested.
  */
 export const parseRollingReviewResult = (
@@ -229,7 +236,10 @@ export const parseRollingReviewResult = (
   if (typeof raw.head_branch !== "string" || !isSafeBranch(raw.head_branch)) {
     throw new Error("Rolling review result head branch is invalid");
   }
-  if (raw.status !== "completed" && raw.status !== "unparseable" && raw.status !== "unreachable") {
+  if (
+    raw.status !== "completed" && raw.status !== "unparseable" && raw.status !== "unreachable" &&
+    raw.status !== "rejected"
+  ) {
     throw new Error("Rolling review result status is invalid");
   }
   if (raw.status === "unreachable") {
@@ -280,7 +290,10 @@ export const parseRollingReviewResult = (
   if ((raw.status === "unreachable") !== (raw.parse_status === "unreachable")) {
     throw new Error("Rolling review result status is internally inconsistent");
   }
-  if (raw.status === "unparseable" || raw.status === "unreachable") {
+  if ((raw.status === "rejected") !== (raw.parse_status === "rejected")) {
+    throw new Error("Rolling review result status is internally inconsistent");
+  }
+  if (raw.status === "unparseable" || raw.status === "unreachable" || raw.status === "rejected") {
     if (parsedFindings.length !== 0 || raw.failure === null) {
       throw new Error("Rolling review result status is internally inconsistent");
     }
@@ -290,7 +303,7 @@ export const parseRollingReviewResult = (
   if (
     (parsedFindings.length > 0) !== (raw.parse_status === "findings") ||
     (parsedFindings.length === 0 && raw.parse_status !== "no_findings" && raw.parse_status !== "unparseable" &&
-      raw.parse_status !== "unreachable")
+      raw.parse_status !== "unreachable" && raw.parse_status !== "rejected")
   ) {
     throw new Error("Rolling review result findings do not match its parse status");
   }
@@ -320,14 +333,14 @@ export const parseRollingReviewResult = (
 /**
  * Splits one validated record into P0/P1 findings and P2/P3 backlog findings.
  * All severities are non-blocking for the reviewed pull request's merge and
- * are ingested into the official backlog with their true severity. Unparseable
- * and unreachable records produce no findings and no report: nothing is
- * ingested, and every caller observes the fail-closed status.
+ * are ingested into the official backlog with their true severity. Unparseable,
+ * unreachable, and rejected records produce no findings and no report: nothing
+ * is ingested, and every caller observes the fail-closed status.
  */
 export const analyzeRollingReviewRecord = (record: RollingReviewResult): RollingReviewIngestOutcome => {
   if (
-    record.status === "unparseable" || record.status === "unreachable" ||
-    record.parse_status === "unparseable" || record.parse_status === "unreachable"
+    record.status === "unparseable" || record.status === "unreachable" || record.status === "rejected" ||
+    record.parse_status === "unparseable" || record.parse_status === "unreachable" || record.parse_status === "rejected"
   ) {
     return { record, priorityFindings: [], backlogFindings: [], report: null };
   }
@@ -346,9 +359,10 @@ export const analyzeRollingReviewRecord = (record: RollingReviewResult): Rolling
  * Ingests completed findings into the official review backlog, deduplicating
  * by fingerprint through the existing backlog merge. P0 and P1 findings enter
  * the backlog with their true severity so the normal selection order treats
- * them as mandatory remediation before P2 and P3. Unparseable and unreachable
- * records are skipped here by design: they never became a completed review
- * and their exact evidence is retained in the durable result file.
+ * them as mandatory remediation before P2 and P3. Unparseable, unreachable,
+ * and rejected records are skipped here by design: they never became a
+ * completed review and their exact evidence is retained in the durable result
+ * file.
  */
 export const applyRollingReviewIngestion = (
   currentBacklogMarkdown: string,
@@ -357,7 +371,10 @@ export const applyRollingReviewIngestion = (
 ): string => {
   let markdown = currentBacklogMarkdown;
   for (const outcome of outcomes) {
-    if (outcome.record.status === "unparseable" || outcome.record.status === "unreachable" || outcome.report === null) {
+    if (
+      outcome.record.status === "unparseable" || outcome.record.status === "unreachable" ||
+      outcome.record.status === "rejected" || outcome.report === null
+    ) {
       continue;
     }
     markdown = mergeReviewBacklog(markdown, outcome.report.findings, outcome.record.head_sha, observedAt);
@@ -650,6 +667,52 @@ export const unreachableRollingReviewRecord = (
     status: "unreachable",
     reviewed_at: input.observedAt,
     parse_status: "unreachable",
+    raw_review_text: "",
+    review_stderr: "",
+    structured_review: null,
+    findings: [],
+    failure: truncateToBytes(input.failure, MAX_ROLLING_REVIEW_RAW_TEXT_STDERR),
+  };
+  // Fail-closed self-check before durable retention: the record must satisfy
+  // exactly the strict identity, consistency, and size validation that later
+  // cycles apply when they ingest it.
+  parseRollingReviewResult(record, { prNumber: input.prNumber, headSha: input.headSha, fileName });
+  return record;
+};
+
+/**
+ * Builds the durable fail-closed record for an anchored review target whose
+ * candidate evidence the Gitleaks gate rejected. The exact identity (pull
+ * request number, head SHA, head branch, and request id) is preserved together
+ * with the already proven exact merge base SHA, the review is never marked
+ * completed, nothing is ingested, and the exact safe rejection reason is
+ * retained as the record failure for later cycles. Unlike the unreachable
+ * disposition, a rejected target had a distinct development base, so dropping
+ * it would falsify the reviewed head/base identity.
+ */
+export const rejectedRollingReviewRecord = (
+  input: Readonly<{
+    prNumber: number;
+    prUrl: string;
+    headSha: string;
+    baseSha: string;
+    headRef: string;
+    failure: string;
+    observedAt: string;
+  }>,
+): RollingReviewResult => {
+  const fileName = rollingReviewResultFileName(input.prNumber, input.headSha);
+  const record: RollingReviewResult = {
+    schema_version: 1,
+    request_id: rollingReviewRequestId(input.prNumber, input.headSha),
+    pr_number: input.prNumber,
+    pr_url: input.prUrl,
+    head_sha: input.headSha,
+    base_sha: input.baseSha,
+    head_branch: input.headRef,
+    status: "rejected",
+    reviewed_at: input.observedAt,
+    parse_status: "rejected",
     raw_review_text: "",
     review_stderr: "",
     structured_review: null,
