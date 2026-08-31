@@ -3236,6 +3236,36 @@
       "identity": {
         "repository": "ubiquity/ai.ubq.fi",
         "source_kind": "incident",
+        "source_id": "43d568878d8011e061509f8a52c5e0c9e28fa36a5822daf3dc8588f066bc2a00",
+        "source_revision": "6098a83435c308168d9b28fc1ca0ac8a9afa2853",
+        "candidate_generation": 1
+      },
+      "run_id": "33361938894",
+      "attempt": 1,
+      "lease_token": "33361938894-1",
+      "base_sha": "6098a83435c308168d9b28fc1ca0ac8a9afa2853",
+      "phase": "claimed",
+      "disposition": "active",
+      "state_version": 1,
+      "created_at": "2026-08-31T05:58:32.389Z",
+      "updated_at": "2026-08-31T05:58:32.389Z",
+      "candidate_branch": null,
+      "candidate_sha": null,
+      "changed_files": [],
+      "tree_sha": null,
+      "failure_class": null,
+      "failure_fingerprint": null,
+      "artifact_ids": [],
+      "artifact_digests": [],
+      "reason": "The selected work item is durably claimed before implementation.",
+      "next_action": "Start the Luna implementation stage.",
+      "predecessor": null
+    },
+    {
+      "schema_version": 1,
+      "identity": {
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_kind": "incident",
         "source_id": "45252845f3bce0cd0e57e1d7ddd97122879275bf8bc6e3246555840e024a6b13",
         "source_revision": "a41aaef37bfe7fa7326360dd2afac4bf10cc388b",
         "candidate_generation": 1
@@ -6200,40 +6230,6 @@
         "sha256:1f765ebe7af730ed349eab872be26c7c55d46813a6b0aba03fe1d9b0b27eff5b"
       ],
       "reason": "no_candidate_diff",
-      "next_action": null,
-      "predecessor": null
-    },
-    {
-      "schema_version": 1,
-      "identity": {
-        "repository": "ubiquity/ai.ubq.fi",
-        "source_kind": "triage",
-        "source_id": "33117525423:artifact:9666286694",
-        "source_revision": "34a656385aa3c20554622ff9a9f1f57221f58971",
-        "candidate_generation": 1
-      },
-      "run_id": "33117525423",
-      "attempt": 1,
-      "lease_token": "artifact-9666286694",
-      "base_sha": "34a656385aa3c20554622ff9a9f1f57221f58971",
-      "phase": "rejected",
-      "disposition": "rejected",
-      "state_version": 1,
-      "created_at": "2026-08-27T21:59:25Z",
-      "updated_at": "2026-08-27T21:59:25Z",
-      "candidate_branch": null,
-      "candidate_sha": null,
-      "changed_files": [],
-      "tree_sha": null,
-      "failure_class": "artifact_invalid",
-      "failure_fingerprint": "b7562e3062938bff6e62943b8c4da496240aa5a43ffc92f4c27199e960892b1f",
-      "artifact_ids": [
-        9666286694
-      ],
-      "artifact_digests": [
-        "sha256:b7562e3062938bff6e62943b8c4da496240aa5a43ffc92f4c27199e960892b1f"
-      ],
-      "reason": "authenticated legacy evidence contains a terminal disposition",
       "next_action": null,
       "predecessor": null
     },
