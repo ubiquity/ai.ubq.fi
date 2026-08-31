@@ -161,6 +161,13 @@ const matrixVerifierGitEnvironment = {
   GIT_TERMINAL_PROMPT: "0",
 };
 
+const matrixVerifierPermissions = await Promise.all([
+  Deno.permissions.query({ name: "read" }),
+  Deno.permissions.query({ name: "write" }),
+  Deno.permissions.query({ name: "run", command: "git" }),
+]);
+const matrixVerifierTestsIgnored = matrixVerifierPermissions.some((permission) => permission.state !== "granted");
+
 const matrixVerifierGit = async (cwd: string, args: readonly string[]): Promise<string> => {
   const output = await new Deno.Command("git", {
     args: [...args],
@@ -1049,360 +1056,368 @@ Deno.test("every structured-output property declares an explicit JSON Schema typ
   visit(MONITOR_OUTPUT_SCHEMA, "monitor");
 });
 
-Deno.test("matrix convergence accepts a bounded linear review-result-only advance", async () => {
-  const fixture = await createMatrixVerifierRepository();
-  try {
-    const firstHeadSha = "a".repeat(40);
-    await writeMatrixVerifierResult(
-      fixture.repo,
-      801,
-      firstHeadSha,
-      rollingReviewResultFixture(801, firstHeadSha),
-    );
-    await commitMatrixVerifierFixture(fixture.repo, "first rolling review result");
-
-    const secondHeadSha = "c".repeat(40);
-    await writeMatrixVerifierResult(
-      fixture.repo,
-      802,
-      secondHeadSha,
-      rollingReviewResultFixture(802, secondHeadSha),
-    );
-    const currentDevelopmentSha = await commitMatrixVerifierFixture(fixture.repo, "second rolling review result");
-
-    await assert.doesNotReject(
-      verifyMatrixConvergenceAdvance(fixture.repo, fixture.baseSha, currentDevelopmentSha),
-    );
-    assert.equal(await matrixVerifierGit(fixture.repo, ["rev-parse", "HEAD"]), currentDevelopmentSha);
-  } finally {
-    await Deno.remove(fixture.repo, { recursive: true });
-  }
-});
-
-Deno.test("matrix convergence rejects unsafe history and rolling-result advances", async () => {
-  const cases: readonly MatrixVerifierNegativeCase[] = [
-    {
-      name: "empty advance",
-      prepare: ({ baseSha }) => Promise.resolve({ plannedBaseSha: baseSha, currentDevelopmentSha: baseSha }),
-      error: /advance is empty/u,
-    },
-    {
-      name: "non-ancestor planned base",
-      prepare: async ({ repo, baseSha }) => {
-        const headSha = "a".repeat(40);
-        await writeMatrixVerifierResult(repo, 810, headSha, rollingReviewResultFixture(810, headSha));
-        const descendantSha = await commitMatrixVerifierFixture(repo, "descendant");
-        return { plannedBaseSha: descendantSha, currentDevelopmentSha: baseSha };
-      },
-      error: /not an ancestor/u,
-    },
-    {
-      name: "more than eight commits",
-      prepare: async ({ repo, baseSha }) => {
-        let currentDevelopmentSha = baseSha;
-        for (let index = 0; index < 9; index++) {
-          const headSha = index.toString(16).repeat(40);
-          await writeMatrixVerifierResult(
-            repo,
-            820 + index,
-            headSha,
-            rollingReviewResultFixture(820 + index, headSha),
-          );
-          currentDevelopmentSha = await commitMatrixVerifierFixture(repo, `rolling result ${index}`);
-        }
-        return { plannedBaseSha: baseSha, currentDevelopmentSha };
-      },
-      error: /allowed commit count/u,
-    },
-    {
-      name: "merge commit",
-      prepare: async ({ repo, baseSha }) => {
-        await matrixVerifierGit(repo, ["switch", "-c", "side"]).then(() => undefined);
-        const sideHeadSha = "a".repeat(40);
-        await writeMatrixVerifierResult(repo, 830, sideHeadSha, rollingReviewResultFixture(830, sideHeadSha));
-        await commitMatrixVerifierFixture(repo, "side rolling result");
-        await matrixVerifierGit(repo, ["switch", "development"]);
-        const mainHeadSha = "c".repeat(40);
-        await writeMatrixVerifierResult(repo, 831, mainHeadSha, rollingReviewResultFixture(831, mainHeadSha));
-        await commitMatrixVerifierFixture(repo, "main rolling result");
-        await matrixVerifierGit(repo, ["merge", "--no-ff", "side", "-m", "merge rolling result branches"]);
-        return {
-          plannedBaseSha: baseSha,
-          currentDevelopmentSha: await matrixVerifierGit(repo, ["rev-parse", "HEAD"]),
-        };
-      },
-      error: /not (?:a single-parent commit|on the planned linear path)/u,
-    },
-    {
-      name: "delete",
-      prepare: async ({ repo }) => {
-        const headSha = "a".repeat(40);
-        const path = matrixVerifierResultPath(840, headSha);
-        await writeMatrixVerifierResult(repo, 840, headSha, rollingReviewResultFixture(840, headSha));
-        const plannedBaseSha = await commitMatrixVerifierFixture(repo, "existing rolling result");
-        await matrixVerifierGit(repo, ["rm", "--", path]);
-        return {
-          plannedBaseSha,
-          currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "delete rolling result", false),
-        };
-      },
-      error: /not a single-file add/u,
-    },
-    {
-      name: "rename",
-      prepare: async ({ repo }) => {
-        const oldHeadSha = "a".repeat(40);
-        const newHeadSha = "c".repeat(40);
-        const oldPath = matrixVerifierResultPath(850, oldHeadSha);
-        const newPath = matrixVerifierResultPath(851, newHeadSha);
-        await writeMatrixVerifierResult(repo, 850, oldHeadSha, rollingReviewResultFixture(850, oldHeadSha));
-        const plannedBaseSha = await commitMatrixVerifierFixture(repo, "existing result before rename");
-        await matrixVerifierGit(repo, ["mv", "--", oldPath, newPath]);
-        return {
-          plannedBaseSha,
-          currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "rename rolling result"),
-        };
-      },
-      error: /changes multiple paths/u,
-    },
-    {
-      name: "symlink result",
-      prepare: async ({ repo, baseSha }) => {
-        const headSha = "a".repeat(40);
-        const path = matrixVerifierResultPath(855, headSha);
-        await Deno.mkdir(`${repo}/docs/sentinel-review-results`, { recursive: true });
-        await Deno.symlink("not-a-regular-result", `${repo}/${path}`);
-        return {
-          plannedBaseSha: baseSha,
-          currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "symlink rolling result"),
-        };
-      },
-      error: /regular 100644 Git blob/u,
-    },
-    {
-      name: "configured external diff cannot hide mixed paths",
-      prepare: async ({ repo, baseSha }) => {
-        await matrixVerifierGit(repo, ["config", "diff.external", "/bin/false"]);
-        const headSha = "a".repeat(40);
-        await writeMatrixVerifierResult(repo, 856, headSha, rollingReviewResultFixture(856, headSha));
-        await Deno.writeTextFile(`${repo}/docs/external-diff-unrelated.md`, "unrelated\n");
-        return {
-          plannedBaseSha: baseSha,
-          currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "external diff mixed paths"),
-        };
-      },
-      error: /changes multiple paths/u,
-    },
-    {
-      name: "configured textconv cannot hide mixed paths",
-      prepare: async ({ repo }) => {
-        const headSha = "a".repeat(40);
-        await Deno.writeTextFile(`${repo}/.gitattributes`, "README.md diff=sentinel-verifier-textconv\n");
-        await matrixVerifierGit(repo, ["config", "diff.sentinel-verifier-textconv.textconv", "/bin/false"]);
-        const plannedBaseSha = await commitMatrixVerifierFixture(repo, "configure verifier textconv");
-        await writeMatrixVerifierResult(repo, 857, headSha, rollingReviewResultFixture(857, headSha));
-        await Deno.writeTextFile(`${repo}/README.md`, "changed by textconv fixture\n");
-        return {
-          plannedBaseSha,
-          currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "textconv mixed paths"),
-        };
-      },
-      error: /changes multiple paths/u,
-    },
-    {
-      name: "mixed result and unrelated paths",
-      prepare: async ({ repo, baseSha }) => {
-        const headSha = "a".repeat(40);
-        await writeMatrixVerifierResult(repo, 860, headSha, rollingReviewResultFixture(860, headSha));
-        await Deno.writeTextFile(`${repo}/docs/mixed-path.md`, "unrelated\n");
-        return {
-          plannedBaseSha: baseSha,
-          currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "mixed result and unrelated path"),
-        };
-      },
-      error: /changes multiple paths/u,
-    },
-    {
-      name: "two result files in one commit",
-      prepare: async ({ repo, baseSha }) => {
-        const firstHeadSha = "a".repeat(40);
-        const secondHeadSha = "c".repeat(40);
-        await writeMatrixVerifierResult(repo, 870, firstHeadSha, rollingReviewResultFixture(870, firstHeadSha));
-        await writeMatrixVerifierResult(repo, 871, secondHeadSha, rollingReviewResultFixture(871, secondHeadSha));
-        return {
-          plannedBaseSha: baseSha,
-          currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "two rolling results"),
-        };
-      },
-      error: /changes multiple paths/u,
-    },
-    {
-      name: "unrelated path",
-      prepare: async ({ repo, baseSha }) => {
-        await Deno.mkdir(`${repo}/src`, { recursive: true });
-        await Deno.writeTextFile(`${repo}/src/unrelated.ts`, "export const unrelated = true;\n");
-        return {
-          plannedBaseSha: baseSha,
-          currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "unrelated path"),
-        };
-      },
-      error: /outside the review results/u,
-    },
-    {
-      name: "near-match result directory",
-      prepare: async ({ repo, baseSha }) => {
-        const headSha = "a".repeat(40);
-        await Deno.mkdir(`${repo}/docs/sentinel-review-results-bak`, { recursive: true });
-        await Deno.writeTextFile(
-          `${repo}/docs/sentinel-review-results-bak/880-${headSha}.json`,
-          JSON.stringify(rollingReviewResultFixture(880, headSha)),
-        );
-        return {
-          plannedBaseSha: baseSha,
-          currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "near-match result directory"),
-        };
-      },
-      error: /outside the review results/u,
-    },
-    {
-      name: "invalid result filename",
-      prepare: async ({ repo, baseSha }) => {
-        const headSha = "a".repeat(40);
-        await writeMatrixVerifierResult(
-          repo,
-          890,
-          headSha,
-          rollingReviewResultFixture(890, headSha),
-          "docs/sentinel-review-results/not-a-result.json",
-        );
-        return {
-          plannedBaseSha: baseSha,
-          currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "invalid result filename"),
-        };
-      },
-      error: /file name is invalid/u,
-    },
-    {
-      name: "nested result filename",
-      prepare: async ({ repo, baseSha }) => {
-        const headSha = "a".repeat(40);
-        await Deno.mkdir(`${repo}/docs/sentinel-review-results/nested`, { recursive: true });
-        await Deno.writeTextFile(
-          `${repo}/docs/sentinel-review-results/nested/891-${headSha}.json`,
-          JSON.stringify(rollingReviewResultFixture(891, headSha)),
-        );
-        return {
-          plannedBaseSha: baseSha,
-          currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "nested result filename"),
-        };
-      },
-      error: /file name is invalid/u,
-    },
-    {
-      name: "invalid JSON body",
-      prepare: async ({ repo, baseSha }) => {
-        const headSha = "a".repeat(40);
-        await writeMatrixVerifierResult(repo, 900, headSha, "not-json");
-        return {
-          plannedBaseSha: baseSha,
-          currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "invalid JSON body"),
-        };
-      },
-      error: /not valid JSON/u,
-    },
-    {
-      name: "body PR mismatch",
-      prepare: async ({ repo, baseSha }) => {
-        const headSha = "a".repeat(40);
-        await writeMatrixVerifierResult(
-          repo,
-          910,
-          headSha,
-          rollingReviewResultFixture(910, headSha, { pr_number: 911 }),
-        );
-        return {
-          plannedBaseSha: baseSha,
-          currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "body PR mismatch"),
-        };
-      },
-      error: /pull request number is invalid/u,
-    },
-    {
-      name: "body head mismatch",
-      prepare: async ({ repo, baseSha }) => {
-        const fileHeadSha = "a".repeat(40);
-        await writeMatrixVerifierResult(
-          repo,
-          920,
-          fileHeadSha,
-          rollingReviewResultFixture(920, fileHeadSha, { head_sha: "c".repeat(40) }),
-        );
-        return {
-          plannedBaseSha: baseSha,
-          currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "body head mismatch"),
-        };
-      },
-      error: /head SHA does not match its file identity/u,
-    },
-    {
-      name: "modified result instead of add",
-      prepare: async ({ repo }) => {
-        const headSha = "a".repeat(40);
-        await writeMatrixVerifierResult(repo, 930, headSha, rollingReviewResultFixture(930, headSha));
-        const plannedBaseSha = await commitMatrixVerifierFixture(repo, "existing result before modification");
-        await writeMatrixVerifierResult(
-          repo,
-          930,
-          headSha,
-          rollingReviewResultFixture(930, headSha, { raw_review_text: "modified" }),
-        );
-        return {
-          plannedBaseSha,
-          currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "modify rolling result"),
-        };
-      },
-      error: /not a single-file add/u,
-    },
-    {
-      name: "internally inconsistent body",
-      prepare: async ({ repo, baseSha }) => {
-        const headSha = "a".repeat(40);
-        await writeMatrixVerifierResult(
-          repo,
-          940,
-          headSha,
-          rollingReviewResultFixture(940, headSha, { failure: "unexpected failure" }),
-        );
-        return {
-          plannedBaseSha: baseSha,
-          currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "inconsistent result body"),
-        };
-      },
-      error: /internally inconsistent/u,
-    },
-    {
-      name: "empty commit",
-      prepare: async ({ repo, baseSha }) => ({
-        plannedBaseSha: baseSha,
-        currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "empty commit", true),
-      }),
-      error: /changes multiple paths/u,
-    },
-  ];
-
-  for (const testCase of cases) {
+Deno.test({
+  name: "matrix convergence accepts a bounded linear review-result-only advance",
+  ignore: matrixVerifierTestsIgnored,
+  async fn() {
     const fixture = await createMatrixVerifierRepository();
     try {
-      const advance = await testCase.prepare(fixture);
-      await assert.rejects(
-        verifyMatrixConvergenceAdvance(fixture.repo, advance.plannedBaseSha, advance.currentDevelopmentSha),
-        testCase.error,
-        testCase.name,
+      const firstHeadSha = "a".repeat(40);
+      await writeMatrixVerifierResult(
+        fixture.repo,
+        801,
+        firstHeadSha,
+        rollingReviewResultFixture(801, firstHeadSha),
       );
+      await commitMatrixVerifierFixture(fixture.repo, "first rolling review result");
+
+      const secondHeadSha = "c".repeat(40);
+      await writeMatrixVerifierResult(
+        fixture.repo,
+        802,
+        secondHeadSha,
+        rollingReviewResultFixture(802, secondHeadSha),
+      );
+      const currentDevelopmentSha = await commitMatrixVerifierFixture(fixture.repo, "second rolling review result");
+
+      await assert.doesNotReject(
+        verifyMatrixConvergenceAdvance(fixture.repo, fixture.baseSha, currentDevelopmentSha),
+      );
+      assert.equal(await matrixVerifierGit(fixture.repo, ["rev-parse", "HEAD"]), currentDevelopmentSha);
     } finally {
       await Deno.remove(fixture.repo, { recursive: true });
     }
-  }
+  },
+});
+
+Deno.test({
+  name: "matrix convergence rejects unsafe history and rolling-result advances",
+  ignore: matrixVerifierTestsIgnored,
+  async fn() {
+    const cases: readonly MatrixVerifierNegativeCase[] = [
+      {
+        name: "empty advance",
+        prepare: ({ baseSha }) => Promise.resolve({ plannedBaseSha: baseSha, currentDevelopmentSha: baseSha }),
+        error: /advance is empty/u,
+      },
+      {
+        name: "non-ancestor planned base",
+        prepare: async ({ repo, baseSha }) => {
+          const headSha = "a".repeat(40);
+          await writeMatrixVerifierResult(repo, 810, headSha, rollingReviewResultFixture(810, headSha));
+          const descendantSha = await commitMatrixVerifierFixture(repo, "descendant");
+          return { plannedBaseSha: descendantSha, currentDevelopmentSha: baseSha };
+        },
+        error: /not an ancestor/u,
+      },
+      {
+        name: "more than eight commits",
+        prepare: async ({ repo, baseSha }) => {
+          let currentDevelopmentSha = baseSha;
+          for (let index = 0; index < 9; index++) {
+            const headSha = index.toString(16).repeat(40);
+            await writeMatrixVerifierResult(
+              repo,
+              820 + index,
+              headSha,
+              rollingReviewResultFixture(820 + index, headSha),
+            );
+            currentDevelopmentSha = await commitMatrixVerifierFixture(repo, `rolling result ${index}`);
+          }
+          return { plannedBaseSha: baseSha, currentDevelopmentSha };
+        },
+        error: /allowed commit count/u,
+      },
+      {
+        name: "merge commit",
+        prepare: async ({ repo, baseSha }) => {
+          await matrixVerifierGit(repo, ["switch", "-c", "side"]).then(() => undefined);
+          const sideHeadSha = "a".repeat(40);
+          await writeMatrixVerifierResult(repo, 830, sideHeadSha, rollingReviewResultFixture(830, sideHeadSha));
+          await commitMatrixVerifierFixture(repo, "side rolling result");
+          await matrixVerifierGit(repo, ["switch", "development"]);
+          const mainHeadSha = "c".repeat(40);
+          await writeMatrixVerifierResult(repo, 831, mainHeadSha, rollingReviewResultFixture(831, mainHeadSha));
+          await commitMatrixVerifierFixture(repo, "main rolling result");
+          await matrixVerifierGit(repo, ["merge", "--no-ff", "side", "-m", "merge rolling result branches"]);
+          return {
+            plannedBaseSha: baseSha,
+            currentDevelopmentSha: await matrixVerifierGit(repo, ["rev-parse", "HEAD"]),
+          };
+        },
+        error: /not (?:a single-parent commit|on the planned linear path)/u,
+      },
+      {
+        name: "delete",
+        prepare: async ({ repo }) => {
+          const headSha = "a".repeat(40);
+          const path = matrixVerifierResultPath(840, headSha);
+          await writeMatrixVerifierResult(repo, 840, headSha, rollingReviewResultFixture(840, headSha));
+          const plannedBaseSha = await commitMatrixVerifierFixture(repo, "existing rolling result");
+          await matrixVerifierGit(repo, ["rm", "--", path]);
+          return {
+            plannedBaseSha,
+            currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "delete rolling result", false),
+          };
+        },
+        error: /not a single-file add/u,
+      },
+      {
+        name: "rename",
+        prepare: async ({ repo }) => {
+          const oldHeadSha = "a".repeat(40);
+          const newHeadSha = "c".repeat(40);
+          const oldPath = matrixVerifierResultPath(850, oldHeadSha);
+          const newPath = matrixVerifierResultPath(851, newHeadSha);
+          await writeMatrixVerifierResult(repo, 850, oldHeadSha, rollingReviewResultFixture(850, oldHeadSha));
+          const plannedBaseSha = await commitMatrixVerifierFixture(repo, "existing result before rename");
+          await matrixVerifierGit(repo, ["mv", "--", oldPath, newPath]);
+          return {
+            plannedBaseSha,
+            currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "rename rolling result"),
+          };
+        },
+        error: /changes multiple paths/u,
+      },
+      {
+        name: "symlink result",
+        prepare: async ({ repo, baseSha }) => {
+          const headSha = "a".repeat(40);
+          const path = matrixVerifierResultPath(855, headSha);
+          await Deno.mkdir(`${repo}/docs/sentinel-review-results`, { recursive: true });
+          await Deno.symlink("not-a-regular-result", `${repo}/${path}`);
+          return {
+            plannedBaseSha: baseSha,
+            currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "symlink rolling result"),
+          };
+        },
+        error: /regular 100644 Git blob/u,
+      },
+      {
+        name: "configured external diff cannot hide mixed paths",
+        prepare: async ({ repo, baseSha }) => {
+          await matrixVerifierGit(repo, ["config", "diff.external", "/bin/false"]);
+          const headSha = "a".repeat(40);
+          await writeMatrixVerifierResult(repo, 856, headSha, rollingReviewResultFixture(856, headSha));
+          await Deno.writeTextFile(`${repo}/docs/external-diff-unrelated.md`, "unrelated\n");
+          return {
+            plannedBaseSha: baseSha,
+            currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "external diff mixed paths"),
+          };
+        },
+        error: /changes multiple paths/u,
+      },
+      {
+        name: "configured textconv cannot hide mixed paths",
+        prepare: async ({ repo }) => {
+          const headSha = "a".repeat(40);
+          await Deno.writeTextFile(`${repo}/.gitattributes`, "README.md diff=sentinel-verifier-textconv\n");
+          await matrixVerifierGit(repo, ["config", "diff.sentinel-verifier-textconv.textconv", "/bin/false"]);
+          const plannedBaseSha = await commitMatrixVerifierFixture(repo, "configure verifier textconv");
+          await writeMatrixVerifierResult(repo, 857, headSha, rollingReviewResultFixture(857, headSha));
+          await Deno.writeTextFile(`${repo}/README.md`, "changed by textconv fixture\n");
+          return {
+            plannedBaseSha,
+            currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "textconv mixed paths"),
+          };
+        },
+        error: /changes multiple paths/u,
+      },
+      {
+        name: "mixed result and unrelated paths",
+        prepare: async ({ repo, baseSha }) => {
+          const headSha = "a".repeat(40);
+          await writeMatrixVerifierResult(repo, 860, headSha, rollingReviewResultFixture(860, headSha));
+          await Deno.writeTextFile(`${repo}/docs/mixed-path.md`, "unrelated\n");
+          return {
+            plannedBaseSha: baseSha,
+            currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "mixed result and unrelated path"),
+          };
+        },
+        error: /changes multiple paths/u,
+      },
+      {
+        name: "two result files in one commit",
+        prepare: async ({ repo, baseSha }) => {
+          const firstHeadSha = "a".repeat(40);
+          const secondHeadSha = "c".repeat(40);
+          await writeMatrixVerifierResult(repo, 870, firstHeadSha, rollingReviewResultFixture(870, firstHeadSha));
+          await writeMatrixVerifierResult(repo, 871, secondHeadSha, rollingReviewResultFixture(871, secondHeadSha));
+          return {
+            plannedBaseSha: baseSha,
+            currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "two rolling results"),
+          };
+        },
+        error: /changes multiple paths/u,
+      },
+      {
+        name: "unrelated path",
+        prepare: async ({ repo, baseSha }) => {
+          await Deno.mkdir(`${repo}/src`, { recursive: true });
+          await Deno.writeTextFile(`${repo}/src/unrelated.ts`, "export const unrelated = true;\n");
+          return {
+            plannedBaseSha: baseSha,
+            currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "unrelated path"),
+          };
+        },
+        error: /outside the review results/u,
+      },
+      {
+        name: "near-match result directory",
+        prepare: async ({ repo, baseSha }) => {
+          const headSha = "a".repeat(40);
+          await Deno.mkdir(`${repo}/docs/sentinel-review-results-bak`, { recursive: true });
+          await Deno.writeTextFile(
+            `${repo}/docs/sentinel-review-results-bak/880-${headSha}.json`,
+            JSON.stringify(rollingReviewResultFixture(880, headSha)),
+          );
+          return {
+            plannedBaseSha: baseSha,
+            currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "near-match result directory"),
+          };
+        },
+        error: /outside the review results/u,
+      },
+      {
+        name: "invalid result filename",
+        prepare: async ({ repo, baseSha }) => {
+          const headSha = "a".repeat(40);
+          await writeMatrixVerifierResult(
+            repo,
+            890,
+            headSha,
+            rollingReviewResultFixture(890, headSha),
+            "docs/sentinel-review-results/not-a-result.json",
+          );
+          return {
+            plannedBaseSha: baseSha,
+            currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "invalid result filename"),
+          };
+        },
+        error: /file name is invalid/u,
+      },
+      {
+        name: "nested result filename",
+        prepare: async ({ repo, baseSha }) => {
+          const headSha = "a".repeat(40);
+          await Deno.mkdir(`${repo}/docs/sentinel-review-results/nested`, { recursive: true });
+          await Deno.writeTextFile(
+            `${repo}/docs/sentinel-review-results/nested/891-${headSha}.json`,
+            JSON.stringify(rollingReviewResultFixture(891, headSha)),
+          );
+          return {
+            plannedBaseSha: baseSha,
+            currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "nested result filename"),
+          };
+        },
+        error: /file name is invalid/u,
+      },
+      {
+        name: "invalid JSON body",
+        prepare: async ({ repo, baseSha }) => {
+          const headSha = "a".repeat(40);
+          await writeMatrixVerifierResult(repo, 900, headSha, "not-json");
+          return {
+            plannedBaseSha: baseSha,
+            currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "invalid JSON body"),
+          };
+        },
+        error: /not valid JSON/u,
+      },
+      {
+        name: "body PR mismatch",
+        prepare: async ({ repo, baseSha }) => {
+          const headSha = "a".repeat(40);
+          await writeMatrixVerifierResult(
+            repo,
+            910,
+            headSha,
+            rollingReviewResultFixture(910, headSha, { pr_number: 911 }),
+          );
+          return {
+            plannedBaseSha: baseSha,
+            currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "body PR mismatch"),
+          };
+        },
+        error: /pull request number is invalid/u,
+      },
+      {
+        name: "body head mismatch",
+        prepare: async ({ repo, baseSha }) => {
+          const fileHeadSha = "a".repeat(40);
+          await writeMatrixVerifierResult(
+            repo,
+            920,
+            fileHeadSha,
+            rollingReviewResultFixture(920, fileHeadSha, { head_sha: "c".repeat(40) }),
+          );
+          return {
+            plannedBaseSha: baseSha,
+            currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "body head mismatch"),
+          };
+        },
+        error: /head SHA does not match its file identity/u,
+      },
+      {
+        name: "modified result instead of add",
+        prepare: async ({ repo }) => {
+          const headSha = "a".repeat(40);
+          await writeMatrixVerifierResult(repo, 930, headSha, rollingReviewResultFixture(930, headSha));
+          const plannedBaseSha = await commitMatrixVerifierFixture(repo, "existing result before modification");
+          await writeMatrixVerifierResult(
+            repo,
+            930,
+            headSha,
+            rollingReviewResultFixture(930, headSha, { raw_review_text: "modified" }),
+          );
+          return {
+            plannedBaseSha,
+            currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "modify rolling result"),
+          };
+        },
+        error: /not a single-file add/u,
+      },
+      {
+        name: "internally inconsistent body",
+        prepare: async ({ repo, baseSha }) => {
+          const headSha = "a".repeat(40);
+          await writeMatrixVerifierResult(
+            repo,
+            940,
+            headSha,
+            rollingReviewResultFixture(940, headSha, { failure: "unexpected failure" }),
+          );
+          return {
+            plannedBaseSha: baseSha,
+            currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "inconsistent result body"),
+          };
+        },
+        error: /internally inconsistent/u,
+      },
+      {
+        name: "empty commit",
+        prepare: async ({ repo, baseSha }) => ({
+          plannedBaseSha: baseSha,
+          currentDevelopmentSha: await commitMatrixVerifierFixture(repo, "empty commit", true),
+        }),
+        error: /changes multiple paths/u,
+      },
+    ];
+
+    for (const testCase of cases) {
+      const fixture = await createMatrixVerifierRepository();
+      try {
+        const advance = await testCase.prepare(fixture);
+        await assert.rejects(
+          verifyMatrixConvergenceAdvance(fixture.repo, advance.plannedBaseSha, advance.currentDevelopmentSha),
+          testCase.error,
+          testCase.name,
+        );
+      } finally {
+        await Deno.remove(fixture.repo, { recursive: true });
+      }
+    }
+  },
 });
 
 Deno.test("matrix convergence compares triage ownership in planner fingerprint order", async () => {
