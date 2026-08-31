@@ -2031,6 +2031,40 @@
     },
     {
       "artifact_digests": [
+        "sha256:9e5808f4541dce311957c3aaa2515ebb017fab5ba9c8e741b2b09686c77c188f"
+      ],
+      "artifact_ids": [
+        9746184700
+      ],
+      "attempt": 1,
+      "base_sha": "f1fc82cc7a66d5882cdd19ea623dd4c02296e854",
+      "candidate_branch": null,
+      "candidate_sha": null,
+      "changed_files": [],
+      "created_at": "2026-08-31T05:07:47.475Z",
+      "disposition": "manual_required",
+      "failure_class": "artifact_wrong_base",
+      "failure_fingerprint": "575ff89af3c0357dd6add0d27cd5b7a9f6a9ca59a13eb0b7d638643c7f646704",
+      "identity": {
+        "candidate_generation": 1,
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_id": "5289263183",
+        "source_kind": "github_issue",
+        "source_revision": "d02e75ea5312c9b7fbaa0df0279edf948663bfaa58985e219facbbe5f3afe0a7"
+      },
+      "lease_token": "matrix-cell-33359012385-1-cell-fc6f952babeafb398a569f6fd5f5b684174e5a1a6ad38eb1ddb60a0fb20253d7",
+      "next_action": "manual inspection of encrypted evidence and the exact base is required",
+      "phase": "manual_required",
+      "predecessor": null,
+      "reason": "artifact_wrong_base",
+      "run_id": "33359012385",
+      "schema_version": 1,
+      "state_version": 2,
+      "tree_sha": null,
+      "updated_at": "2026-08-31T05:11:23.669Z"
+    },
+    {
+      "artifact_digests": [
         "sha256:5e1db86409e4d4588f976769164b0d9a44a583329e201c6ae1a1b74efde9e931"
       ],
       "artifact_ids": [
@@ -5825,40 +5859,6 @@
       ],
       "reason": "no_candidate_diff",
       "next_action": null,
-      "predecessor": null
-    },
-    {
-      "schema_version": 1,
-      "identity": {
-        "repository": "ubiquity/ai.ubq.fi",
-        "source_kind": "triage",
-        "source_id": "33081689043",
-        "source_revision": "ae5a5b4d88a81ef2671e39cec81f8f06f803e9f7",
-        "candidate_generation": 1
-      },
-      "run_id": "33081689043",
-      "attempt": 1,
-      "lease_token": "artifact-9650357810",
-      "base_sha": "ae5a5b4d88a81ef2671e39cec81f8f06f803e9f7",
-      "phase": "manual_required",
-      "disposition": "manual_required",
-      "state_version": 1,
-      "created_at": "2026-08-27T14:21:42Z",
-      "updated_at": "2026-08-27T14:21:42Z",
-      "candidate_branch": null,
-      "candidate_sha": null,
-      "changed_files": [],
-      "tree_sha": null,
-      "failure_class": "artifact_invalid",
-      "failure_fingerprint": "eca9d810db498dd3309e90f6a9259475521a9a4fd30f0df62218d82131f84352",
-      "artifact_ids": [
-        9650357810
-      ],
-      "artifact_digests": [
-        "sha256:eca9d810db498dd3309e90f6a9259475521a9a4fd30f0df62218d82131f84352"
-      ],
-      "reason": "authenticated legacy evidence lacks a provable recovery record",
-      "next_action": "a repository owner must inspect the encrypted artifact and its exact workflow base",
       "predecessor": null
     },
     {
