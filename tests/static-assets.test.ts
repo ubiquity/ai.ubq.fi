@@ -5,6 +5,7 @@ import { corsHeaders } from "../src/http.ts";
 import { handleRoot, handleStaticAsset, hasStaticAsset } from "../src/static.ts";
 import readmeText from "../README.md" with { type: "text" };
 import adminCss from "../static/admin.css" with { type: "text" };
+import adminCacheScript from "../static/admin-cache.js" with { type: "text" };
 import adminHtml from "../static/admin.html" with { type: "text" };
 import aboutHtml from "../static/about.html" with { type: "text" };
 import adminScript from "../static/admin.js" with { type: "text" };
@@ -39,6 +40,7 @@ Deno.test("static assets register frontend module dependencies", () => {
       "/models.js",
       "/models.css",
       "/reasoning-select.js",
+      "/admin-cache.js",
     ]
   ) {
     assert.equal(hasStaticAsset(path), true, `${path} should be registered`);
@@ -305,7 +307,7 @@ Deno.test("admin provider view places capacity history before current providers"
   assert.match(adminHtml, /Provider analytics/);
   assert.match(adminHtml, /Fifteen-minute capacity, cached-input, and cache-write history/);
   assert.match(adminHtml, /admin\.css\?v=admin-polish-20260827-v3/);
-  assert.match(adminHtml, /admin\.js\?v=admin-polish-20260827-v3/);
+  assert.match(adminHtml, /admin\.js\?v=admin-indexeddb-cache-20260830-v5/);
   assert.doesNotMatch(adminHtml, /removed_provider-failover|debug-routing/);
   assert.doesNotMatch(adminScript, /RemovedProviderFailover|refresh=live/);
   assert.match(adminScript, /fetch\(apiUrl\("\/admin\/providers\/capacity"\)/);
@@ -358,6 +360,34 @@ Deno.test("admin error tab opens its view", () => {
   assert.match(adminScript, /if \(loadId !== errorsLoadId\) return/);
   assert.match(adminScript, /invalidateAdminErrors\("Sign in to load gateway errors\."\)/);
   assert.match(adminScript, /invalidateAdminErrors\("Target changed\. Sign in to load gateway errors\."\)/);
+});
+
+Deno.test("admin responses use a scoped IndexedDB stale cache", () => {
+  assert.match(adminCacheScript, /const DATABASE_NAME = "uos_ai\.admin-cache";/);
+  assert.match(adminCacheScript, /store\.createIndex\(SCOPE_INDEX, "scope", \{ unique: false \}\)/);
+  assert.match(adminCacheScript, /objectStore\(STORE_NAME\)\.get/);
+  assert.doesNotMatch(adminCacheScript, /localStorage|Authorization|Cookie/);
+
+  assert.match(
+    adminScript,
+    /import \{ createAdminSnapshotCache \} from "\.\/admin-cache\.js\?v=admin-indexeddb-cache-20260830-v5";/,
+  );
+  assert.match(adminScript, /const cacheFreshAdminRead = \(response, cacheKey, scope, epoch\) =>/);
+  assert.match(adminScript, /if \(!response\.ok \|\| !cacheKey \|\| !scope/);
+  assert.match(adminScript, /const hydrateAdminSnapshots = async \(\) =>/);
+  assert.match(
+    adminScript,
+    /setAdminSnapshotScopeFromAuth\(data\.auth\);\s+setAdminAccessState\(\{ checked: true, isAdmin: true, isSuperAdmin \}\);\s+void hydrateAdminSnapshots\(\);/,
+  );
+  assert.match(adminScript, /globalThis\.requestAnimationFrame\(\(\) => \{\s+globalThis\.setTimeout/);
+  assert.doesNotMatch(adminScript, /showPendingAdminViewAfterPrefetch/);
+  assert.match(
+    adminScript,
+    /adminAccessState\.checked && adminAccessState\.isAdmin && currentAdminView === ADMIN_VIEW_DEFAULT\) \{\s+setAdminView\(ADMIN_VIEW_AUTHENTICATED_DEFAULT, \{ allowInaccessible: false \}\);/,
+  );
+  assert.match(adminScript, /"Cached · refreshing"/);
+  assert.match(adminScript, /setKeysBadge\("ok", view === "all" \? "No API keys" : `No \$\{view\} API keys`\);/);
+  assert.match(adminScript, /clearAdminSnapshotScope\(\);/);
 });
 
 Deno.test("admin boot probes server auth mode without requiring a browser token", () => {

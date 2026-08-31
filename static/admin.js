@@ -19,6 +19,7 @@ import {
   parseAuthRelayAction,
   parseTrustedAuthRelayOrigin,
 } from "./auth-relay.js?v=passkey-relay-20260823-v4";
+import { createAdminSnapshotCache } from "./admin-cache.js?v=admin-indexeddb-cache-20260830-v5";
 import { bindForegroundRefresh } from "./foreground-refresh.js";
 import { setReasoningPlaceholder, updateReasoningSelectForModel } from "./reasoning-select.js";
 
@@ -30,41 +31,87 @@ const STORAGE_KEYS = {
   expiresPreset: "uos_ai.admin.expires_preset",
   base: AUTH_STORAGE_KEYS.base,
   view: "uos_ai.admin.view",
-  defaultsSnapshot: "uos_ai.admin.defaults_snapshot",
-  defaultsModels: "uos_ai.admin.defaults_models",
 };
 
 const AUTH_RELAY_TIMEOUT_MS = 120_000;
 const API_KEY_REQUEST_LOGS_LIMIT = 20;
 const API_KEY_REQUEST_LOGS_TTL_MS = 10_000;
+const LEGACY_ADMIN_CACHE_STORAGE_KEYS = [
+  "uos_ai.admin.defaults_snapshot",
+  "uos_ai.admin.defaults_models",
+];
+const adminSnapshotCache = createAdminSnapshotCache();
+let adminCacheScope = "";
+let adminCacheEpoch = 0;
+
+for (const key of LEGACY_ADMIN_CACHE_STORAGE_KEYS) storage.remove(key);
 
 const fetchWithCredentials = (input, init = {}) => {
   const headers = new Headers(init.headers);
   return globalThis.fetch(input, { ...init, headers, credentials: "include" });
 };
 
-const fetch = (input, init = {}) => {
+const requestMethod = (input, init = {}) =>
+  String(init.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+
+const adminCacheKeyForRequest = (input, init = {}) => {
+  if (!adminCacheScope || requestMethod(input, init) !== "GET") return "";
+  let url;
+  try {
+    url = new URL(input instanceof Request ? input.url : String(input), globalThis.location.origin);
+  } catch {
+    return "";
+  }
+  if (!url.pathname.startsWith("/admin/") && url.pathname !== "/health/providers") return "";
+  url.hash = "";
+  url.searchParams.sort();
+  return `${url.pathname}${url.search}`;
+};
+
+const isAdminMutation = (input, init = {}) => {
+  const method = requestMethod(input, init);
+  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return false;
+  try {
+    const url = new URL(input instanceof Request ? input.url : String(input), globalThis.location.origin);
+    return url.pathname.startsWith("/admin/");
+  } catch {
+    return false;
+  }
+};
+
+const invalidateAdminSnapshotCache = () => {
+  const scope = adminCacheScope;
+  adminCacheEpoch += 1;
+  if (scope) void adminSnapshotCache.clear(scope);
+};
+
+const clearAdminSnapshotScope = () => {
+  const scope = adminCacheScope;
+  adminCacheScope = "";
+  adminCacheEpoch += 1;
+  if (scope) void adminSnapshotCache.clear(scope);
+};
+
+const cacheFreshAdminRead = (response, cacheKey, scope, epoch) => {
+  if (!response.ok || !cacheKey || !scope || epoch !== adminCacheEpoch || scope !== adminCacheScope) return;
+  if (!response.headers.get("content-type")?.includes("application/json")) return;
+  void response.clone().json().then((payload) => {
+    if (epoch !== adminCacheEpoch || scope !== adminCacheScope) return;
+    void adminSnapshotCache.write(scope, cacheKey, payload);
+  }).catch(() => {});
+};
+
+const fetch = async (input, init = {}) => {
   const headers = new Headers(init.headers);
   if (!getAdminToken() || (isRemoteRelayOrigin() && relaySessionActive)) headers.delete("Authorization");
-  return fetchWithCredentials(input, { ...init, headers });
-};
-
-const readStorageJson = (key) => {
-  const raw = storage.get(key);
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-};
-
-const writeStorageJson = (key, value) => {
-  try {
-    storage.set(key, JSON.stringify(value));
-  } catch {
-    // ignore
-  }
+  const request = { ...init, headers };
+  const cacheKey = adminCacheKeyForRequest(input, request);
+  const scope = adminCacheScope;
+  const epoch = adminCacheEpoch;
+  const response = await fetchWithCredentials(input, request);
+  if (cacheKey) cacheFreshAdminRead(response, cacheKey, scope, epoch);
+  else if (response.ok && isAdminMutation(input, request)) invalidateAdminSnapshotCache();
+  return response;
 };
 
 const debounce = (fn, wait = 450) => {
@@ -188,8 +235,10 @@ let providersLoading = false;
 let providersLoadId = 0;
 let providersLoadedAt = 0;
 let providerCapacityLoading = false;
+let providerCapacityLoadedAt = 0;
 let providerCapacityLoadedForOpen = false;
 let quotaProjectionLoading = false;
+let quotaProjectionLoadedAt = 0;
 let quotaProjectionLoadedForOpen = false;
 let quotaProjectionLoadId = 0;
 let latestProviderCapacityChartState = null;
@@ -251,6 +300,7 @@ let defaultsSaving = false;
 let defaultsModelMap = new Map();
 let defaultsTouched = false;
 let defaultsLoadId = 0;
+let defaultsLoadedAt = 0;
 
 const kernelListBadge = mustGet("kernel-list-badge");
 const kernelAttention = mustGet("kernel-attention");
@@ -448,6 +498,32 @@ const getAdminToken = () => tokenInput.value.trim();
 const hasAdminCredential = () => Boolean(getAdminToken()) || relaySessionActive || adminAccessState.isAdmin;
 
 const canUseLocalDevelopmentAuth = () => isLocalDevelopmentOrigin() && getBaseChoice() === "local";
+
+const setAdminSnapshotScopeFromAuth = (auth) => {
+  const method = typeof auth?.method?.kind === "string" ? auth.method.kind : "";
+  const tokenFingerprint = typeof auth?.token?.sha256_12 === "string" ? auth.token.sha256_12 : "";
+  const passkeyUserId = typeof auth?.method?.user?.id === "string" ? auth.method.user.id : "";
+  const localDevelopmentPrincipal = method === "disabled" && canUseLocalDevelopmentAuth() ? "local-development" : "";
+  const principal = tokenFingerprint || (passkeyUserId ? `${method}:${passkeyUserId}` : localDevelopmentPrincipal);
+  if (!method || !principal) {
+    clearAdminSnapshotScope();
+    return false;
+  }
+  const target = new URL(resolveBaseUrl()).origin;
+  const nextScope = `v1:${target}:${method}:${principal}`;
+  if (adminCacheScope === nextScope) return true;
+  clearAdminSnapshotScope();
+  clearApiKeyRequestLogCaches();
+  adminCacheScope = nextScope;
+  return true;
+};
+
+const readAdminSnapshot = (path) => {
+  const scope = adminCacheScope;
+  if (!scope) return Promise.resolve(null);
+  const cacheKey = adminCacheKeyForRequest(apiUrl(path));
+  return cacheKey ? adminSnapshotCache.read(scope, cacheKey) : Promise.resolve(null);
+};
 
 const applyLocalDevelopmentAuth = () => {
   if (!canUseLocalDevelopmentAuth() || getAdminToken()) return false;
@@ -2591,7 +2667,7 @@ const loadProviderCapacity = async () => {
     return false;
   }
   providerCapacityLoading = true;
-  setBadge(providerCapacityBadge, "unknown", "Loading capacity");
+  setBadge(providerCapacityBadge, "unknown", providerCapacityLoadedAt ? "Cached · refreshing" : "Loading capacity");
   try {
     const headers = { Authorization: `Bearer ${token}` };
     const [response, errorsResponse] = await Promise.all([
@@ -2603,6 +2679,11 @@ const loadProviderCapacity = async () => {
       errorsResponse.json().catch(() => null),
     ]);
     if (!response.ok || !payload) {
+      if (providerCapacityLoadedAt) {
+        setBadge(providerCapacityBadge, "unknown", "Cached · refresh unavailable");
+        providerCapacityUpdated.textContent = "Cached · refresh unavailable";
+        return false;
+      }
       setBadge(providerCapacityBadge, "bad", payload?.error?.message ?? "Capacity unavailable");
       providerCapacityUpdated.textContent = "Snapshot unavailable";
       return false;
@@ -2611,8 +2692,14 @@ const loadProviderCapacity = async () => {
       payload,
       errorsResponse.ok && Array.isArray(errorsPayload?.five_xx_buckets) ? errorsPayload.five_xx_buckets : [],
     );
+    providerCapacityLoadedAt = Date.now();
     return true;
   } catch {
+    if (providerCapacityLoadedAt) {
+      setBadge(providerCapacityBadge, "unknown", "Cached · offline");
+      providerCapacityUpdated.textContent = "Cached · offline";
+      return false;
+    }
     setBadge(providerCapacityBadge, "bad", "Offline");
     providerCapacityUpdated.textContent = "Snapshot unavailable";
     return false;
@@ -2814,7 +2901,7 @@ const loadQuotaProjection = async () => {
   const loadId = ++quotaProjectionLoadId;
   const signature = `${token}\u0000${resolveBaseUrl()}`;
   quotaProjectionLoading = true;
-  setBadge(quotaRunwayBadge, "unknown", "Loading projection");
+  setBadge(quotaRunwayBadge, "unknown", quotaProjectionLoadedAt ? "Cached · refreshing" : "Loading projection");
   try {
     const response = await fetch(apiUrl("/admin/providers/quota-projection?window_days=30&balance_window_days=365"), {
       cache: "no-store",
@@ -2826,14 +2913,25 @@ const loadQuotaProjection = async () => {
       signature !== `${getAdminToken()}\u0000${resolveBaseUrl()}`
     ) return false;
     if (!response.ok || !payload) {
+      if (quotaProjectionLoadedAt) {
+        setBadge(quotaRunwayBadge, "unknown", "Cached · refresh unavailable");
+        quotaRunwayUpdated.textContent = "Cached · refresh unavailable";
+        return false;
+      }
       setBadge(quotaRunwayBadge, "bad", payload?.error?.message ?? "Projection unavailable");
       quotaRunwayUpdated.textContent = "Projection unavailable";
       return false;
     }
     renderQuotaProjection(payload);
+    quotaProjectionLoadedAt = Date.now();
     return true;
   } catch {
     if (loadId !== quotaProjectionLoadId) return false;
+    if (quotaProjectionLoadedAt) {
+      setBadge(quotaRunwayBadge, "unknown", "Cached · offline");
+      quotaRunwayUpdated.textContent = "Cached · offline";
+      return false;
+    }
     setBadge(quotaRunwayBadge, "bad", "Offline");
     quotaRunwayUpdated.textContent = "Projection unavailable";
     return false;
@@ -2873,6 +2971,12 @@ const loadProviders = async () => {
     const payload = await response.json().catch(() => null);
     if (loadId !== providersLoadId) return;
     if (!response.ok || !payload) {
+      if (providersLoadedAt) {
+        if (latestProviderCapacityChartState?.sources) {
+          renderProviderCapacityList(latestProviderCapacityChartState.sources);
+        }
+        return;
+      }
       latestProviderHealth = null;
       if (latestProviderCapacityChartState?.sources) {
         renderProviderCapacityList(latestProviderCapacityChartState.sources);
@@ -2884,6 +2988,12 @@ const loadProviders = async () => {
     providersLoadedAt = Date.now();
   } catch {
     if (loadId !== providersLoadId) return;
+    if (providersLoadedAt) {
+      if (latestProviderCapacityChartState?.sources) {
+        renderProviderCapacityList(latestProviderCapacityChartState.sources);
+      }
+      return;
+    }
     latestProviderHealth = null;
     if (latestProviderCapacityChartState?.sources) renderProviderCapacityList(latestProviderCapacityChartState.sources);
   } finally {
@@ -3130,8 +3240,10 @@ const refreshAccessUpstreamSummary = async () => {
     return;
   }
   accessUpstreamLoading = true;
-  setAccessValue(accessUpstreamSource, "Loading...");
-  setAccessValue(accessUpstreamExpiry, "Loading...");
+  if (!accessUpstreamLoadedAt) {
+    setAccessValue(accessUpstreamSource, "Loading...");
+    setAccessValue(accessUpstreamExpiry, "Loading...");
+  }
   try {
     const res = await fetch(apiUrl("/health/providers"), {
       cache: "no-store",
@@ -3146,6 +3258,7 @@ const refreshAccessUpstreamSummary = async () => {
       : [];
     const expMs = expirations.length ? Math.min(...expirations) : null;
     if (!res.ok) {
+      if (accessUpstreamLoadedAt) return;
       setAccessValue(accessUpstreamSource, source === "none" ? "None" : source);
       setAccessValue(accessUpstreamExpiry, data?.error ?? "Unavailable");
       return;
@@ -3154,6 +3267,7 @@ const refreshAccessUpstreamSummary = async () => {
     setAccessValue(accessUpstreamExpiry, typeof expMs === "number" ? formatDate(expMs) : "Unknown");
     accessUpstreamLoadedAt = Date.now();
   } catch {
+    if (accessUpstreamLoadedAt) return;
     setAccessValue(accessUpstreamSource, "Offline");
     setAccessValue(accessUpstreamExpiry, "Offline");
   } finally {
@@ -3583,7 +3697,7 @@ const refreshKernelPolicyQueue = async () => {
 
   if (kernelQueueLoading) return;
   kernelQueueLoading = true;
-  setKernelQueueBadge("unknown", "Loading...");
+  setKernelQueueBadge("unknown", kernelQueueLoadedAt ? "Cached · refreshing" : "Loading...");
 
   try {
     const res = await fetch(apiUrl("/admin/kernel-policy-queue"), {
@@ -3592,6 +3706,10 @@ const refreshKernelPolicyQueue = async () => {
     });
     const data = await res.json().catch(() => null);
     if (!res.ok) {
+      if (kernelQueueLoadedAt) {
+        setKernelQueueBadge("unknown", "Cached · refresh unavailable");
+        return;
+      }
       setKernelQueueBadge("bad", data?.error?.message ?? "Error");
       setKernelQueueMessage("Failed to load the rate limit queue.");
       return;
@@ -3606,6 +3724,10 @@ const refreshKernelPolicyQueue = async () => {
       records.length === 0 ? "No requests" : `${records.length} request${records.length === 1 ? "" : "s"}`,
     );
   } catch {
+    if (kernelQueueLoadedAt) {
+      setKernelQueueBadge("unknown", "Cached · offline");
+      return;
+    }
     kernelQueueItems = [];
     setKernelQueueBadge("bad", "Offline");
     setKernelQueueMessage("Failed to load the rate limit queue.");
@@ -3912,9 +4034,13 @@ const loadKernelList = async () => {
   }
 
   const loadId = ++kernelListLoadId;
-  setKernelListBadge("unknown", "Loading...");
-  resetKernelPolicyState();
-  setKernelAttention("");
+  if (kernelListLoadedAt) {
+    setKernelListBadge("unknown", "Cached · refreshing");
+  } else {
+    setKernelListBadge("unknown", "Loading...");
+    resetKernelPolicyState();
+    setKernelAttention("");
+  }
 
   try {
     const [orgUsageResult, repoUsageResult, orgPolicyResult, repoPolicyResult] = await Promise.all([
@@ -3938,6 +4064,11 @@ const loadKernelList = async () => {
       ]
         .filter(Boolean)
         .join(" · ") || "Error";
+      if (kernelListLoadedAt) {
+        setKernelListBadge("unknown", "Cached · refresh unavailable");
+        updateAccessGithubSummary();
+        return;
+      }
       setKernelListBadge("bad", message);
       setKernelListMessage(message);
       updateAccessGithubSummary();
@@ -3973,6 +4104,11 @@ const loadKernelList = async () => {
     updateAccessGithubSummary();
   } catch {
     if (loadId !== kernelListLoadId) return;
+    if (kernelListLoadedAt) {
+      setKernelListBadge("unknown", "Cached · offline");
+      updateAccessGithubSummary();
+      return;
+    }
     setKernelListBadge("bad", "Offline");
     setKernelListMessage("Request failed.");
     updateAccessGithubSummary();
@@ -4721,7 +4857,7 @@ const refreshKernelPubKeys = async () => {
 
   if (kernelPubKeysLoading) return;
   kernelPubKeysLoading = true;
-  setKernelPubKeysBadge("unknown", "Loading...");
+  setKernelPubKeysBadge("unknown", kernelPubKeysLoadedAt ? "Cached · refreshing" : "Loading...");
 
   try {
     const res = await fetch(apiUrl("/admin/kernel-pubkeys"), {
@@ -4730,6 +4866,10 @@ const refreshKernelPubKeys = async () => {
     });
     const data = await res.json().catch(() => null);
     if (!res.ok) {
+      if (kernelPubKeysLoadedAt) {
+        setKernelPubKeysBadge("unknown", "Cached · refresh unavailable");
+        return;
+      }
       setKernelPubKeysBadge("bad", data?.error?.message ?? "Error");
       setKernelPubKeysMessage("Failed to load kernel attestation keys.");
       return;
@@ -4741,6 +4881,10 @@ const refreshKernelPubKeys = async () => {
     renderKernelPubKeys(records);
     setKernelPubKeysBadge("ok", `${records.length} key${records.length === 1 ? "" : "s"}`);
   } catch {
+    if (kernelPubKeysLoadedAt) {
+      setKernelPubKeysBadge("unknown", "Cached · offline");
+      return;
+    }
     kernelPubKeys = [];
     setKernelPubKeysBadge("bad", "Offline");
     setKernelPubKeysMessage("Failed to load kernel attestation keys.");
@@ -5615,6 +5759,7 @@ const renderKeys = (keys, view = "all") => {
   }
   if (!filteredKeys.length) {
     setKeyListMessage(view === "all" ? "No API keys yet." : `No ${view} API keys.`);
+    setKeysBadge("ok", view === "all" ? "No API keys" : `No ${view} API keys`);
     updateAccessApiKeysSummary();
     return;
   }
@@ -6440,7 +6585,7 @@ const refreshPasskeyUsers = async () => {
 
   if (passkeyUsersLoading) return;
   passkeyUsersLoading = true;
-  setPasskeyUsersBadge("unknown", "Loading...");
+  setPasskeyUsersBadge("unknown", passkeyUsersLoadedAt ? "Cached · refreshing" : "Loading...");
 
   try {
     const res = await fetch(apiUrl("/admin/passkey-users"), {
@@ -6449,6 +6594,10 @@ const refreshPasskeyUsers = async () => {
     });
     const data = await res.json().catch(() => null);
     if (!res.ok) {
+      if (passkeyUsersLoadedAt) {
+        setPasskeyUsersBadge("unknown", "Cached · refresh unavailable");
+        return;
+      }
       setPasskeyUsersBadge("bad", data?.error?.message ?? "Error");
       setPasskeyUsersMessage(
         res.status === 403
@@ -6462,6 +6611,10 @@ const refreshPasskeyUsers = async () => {
     passkeyUsersLoadedAt = Date.now();
     renderPasskeyUsers(passkeyUsers);
   } catch {
+    if (passkeyUsersLoadedAt) {
+      setPasskeyUsersBadge("unknown", "Cached · offline");
+      return;
+    }
     passkeyUsers = [];
     setPasskeyUsersBadge("bad", "Offline");
     setPasskeyUsersMessage("Failed to load passkey users.");
@@ -6519,6 +6672,7 @@ const updatePasskeyUserAdmin = async (id, isAdmin, checkbox) => {
 };
 
 const ADMIN_VIEW_DEFAULT = "loading";
+const ADMIN_VIEW_AUTHENTICATED_DEFAULT = "keys";
 const VIEW_HASHES = {
   loading: "loading",
   keys: "keys",
@@ -6691,7 +6845,7 @@ const loadAdminErrors = async () => {
   if (errorsLoading) return;
   const loadId = ++errorsLoadId;
   errorsLoading = true;
-  setBadge(errorsBadge, "unknown", "Loading");
+  setBadge(errorsBadge, "unknown", errorsLoadedAt ? "Cached · refreshing" : "Loading");
   try {
     const token = getAdminToken();
     const res = await fetch(apiUrl("/admin/errors?limit=200"), {
@@ -6708,6 +6862,10 @@ const loadAdminErrors = async () => {
     errorsUpdated.textContent = `Updated ${formatDate(errorsLoadedAt)}`;
   } catch (error) {
     if (loadId !== errorsLoadId) return;
+    if (errorsLoadedAt) {
+      setBadge(errorsBadge, "unknown", "Cached · refresh unavailable");
+      return;
+    }
     setBadge(errorsBadge, "bad", "Unavailable");
     setErrorsMessage(error?.message || "Error history is unavailable");
   } finally {
@@ -6837,14 +6995,6 @@ const startAdminPrefetch = () => {
   return adminPrefetchPromise;
 };
 
-const showPendingAdminViewAfterPrefetch = (view) => {
-  startAdminPrefetch().finally(() => {
-    if (pendingAdminView !== view || !canAccessView(view)) return;
-    pendingAdminView = null;
-    setAdminView(view, { hashMode: "replace", allowInaccessible: false });
-  });
-};
-
 const updateViewAccess = () => {
   Object.entries(viewTabs).forEach(([key, tab]) => {
     setTabState(tab, key === currentAdminView, canAccessView(key));
@@ -6918,36 +7068,39 @@ const setAdminAccessState = (next) => {
   updateLoadingAuthStatus();
   syncLoadingGate();
   updateViewAccess();
-  let prefetchPromise = null;
   if (adminAccessState.isAdmin) {
     closeAutoOpenedAuthWidget();
-    prefetchPromise = startAdminPrefetch();
   } else if (adminAccessState.checked) {
     closeAutoOpenedAuthWidget();
   }
   if (pendingAdminView && canAccessView(pendingAdminView)) {
     const view = pendingAdminView;
-    if (prefetchPromise) {
-      showPendingAdminViewAfterPrefetch(view);
-      return;
-    }
     pendingAdminView = null;
     setAdminView(view, { hashMode: "replace" });
-    return;
-  }
-  if (pendingAdminView && adminAccessState.checked && adminAccessState.isAdmin && !canAccessView(pendingAdminView)) {
+  } else if (
+    pendingAdminView && adminAccessState.checked && adminAccessState.isAdmin && !canAccessView(pendingAdminView)
+  ) {
     pendingAdminView = null;
-    setAdminView(ADMIN_VIEW_DEFAULT, { hashMode: "replace", allowInaccessible: false });
-    return;
-  }
-  if (adminAccessState.checked && !adminAccessState.isAdmin && !canAccessView(currentAdminView)) {
+    setAdminView(ADMIN_VIEW_AUTHENTICATED_DEFAULT, { hashMode: "replace", allowInaccessible: false });
+  } else if (adminAccessState.checked && !adminAccessState.isAdmin && !canAccessView(currentAdminView)) {
     currentAdminView = ADMIN_VIEW_DEFAULT;
+    syncVisibleAdminView();
+    updateViewAccess();
+  } else if (adminAccessState.checked && adminAccessState.isAdmin && currentAdminView === ADMIN_VIEW_DEFAULT) {
+    setAdminView(ADMIN_VIEW_AUTHENTICATED_DEFAULT, { allowInaccessible: false });
   } else if (adminAccessState.checked && adminAccessState.isAdmin && !canAccessView(currentAdminView)) {
-    setAdminView(ADMIN_VIEW_DEFAULT, { hashMode: "replace", allowInaccessible: false });
-    return;
+    setAdminView(ADMIN_VIEW_AUTHENTICATED_DEFAULT, { hashMode: "replace", allowInaccessible: false });
+  } else {
+    syncVisibleAdminView();
+    loadAdminView(currentAdminView);
   }
-  syncVisibleAdminView();
-  loadAdminView(currentAdminView);
+  if (adminAccessState.isAdmin) {
+    globalThis.requestAnimationFrame(() => {
+      globalThis.setTimeout(() => {
+        if (adminAccessState.isAdmin) void startAdminPrefetch();
+      }, 0);
+    });
+  }
 };
 
 const setAdminView = (view, options = {}) => {
@@ -6956,7 +7109,7 @@ const setAdminView = (view, options = {}) => {
   if (!allowInaccessible && !canAccessView(nextView)) {
     if (adminAccessState.checked && adminAccessState.isAdmin) {
       pendingAdminView = null;
-      setAdminView(ADMIN_VIEW_DEFAULT, { hashMode: "replace", allowInaccessible: false });
+      setAdminView(ADMIN_VIEW_AUTHENTICATED_DEFAULT, { hashMode: "replace", allowInaccessible: false });
       return false;
     }
     pendingAdminView = nextView;
@@ -7036,12 +7189,14 @@ const testAdminToken = async ({ allowBearerFallback = true } = {}) => {
     }
     const { res, data } = authResult;
     if (!res.ok) {
+      clearAdminSnapshotScope();
       setAuthBadge("bad", data?.error?.message ?? "Unauthorized");
       setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
       setSignedInState(false);
       return false;
     }
     if (!data?.auth?.is_admin) {
+      clearAdminSnapshotScope();
       setAuthBadge("bad", "Not admin");
       setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
       setSignedInState(false);
@@ -7050,7 +7205,9 @@ const testAdminToken = async ({ allowBearerFallback = true } = {}) => {
     const kind = data?.auth?.method?.kind;
     const isSuperAdmin = data?.auth?.is_super_admin === true;
     setAuthBadge("ok", kind ? `OK (${formatAuthMethodLabel(kind)})` : "OK");
+    setAdminSnapshotScopeFromAuth(data.auth);
     setAdminAccessState({ checked: true, isAdmin: true, isSuperAdmin });
+    void hydrateAdminSnapshots();
     setSignedInState(true, {
       canRegisterPasskey: true,
       deviceRegistered: hasAuthPasskeyCredential(data?.auth) || hasStoredPasskeyCredentials(),
@@ -7058,6 +7215,7 @@ const testAdminToken = async ({ allowBearerFallback = true } = {}) => {
     });
     return true;
   } catch {
+    clearAdminSnapshotScope();
     setAuthBadge("bad", "Offline");
     setAdminAccessState({ checked: true, isAdmin: false, isSuperAdmin: false });
     setSignedInState(false);
@@ -7189,8 +7347,12 @@ const refreshKeys = async () => {
 
   if (keysLoading) return;
   keysLoading = true;
-  setKeysBadge("unknown", "Loading...");
-  setKeysListLoading();
+  if (keysLoadedAt) {
+    setKeysBadge("unknown", "Cached · refreshing");
+  } else {
+    setKeysBadge("unknown", "Loading...");
+    setKeysListLoading();
+  }
 
   try {
     const res = await fetch(apiUrl("/admin/api-keys?include_usage=1"), {
@@ -7199,6 +7361,10 @@ const refreshKeys = async () => {
     });
     const data = await res.json().catch(() => null);
     if (!res.ok) {
+      if (keysLoadedAt) {
+        setKeysBadge("unknown", "Cached · refresh unavailable");
+        return;
+      }
       setKeysBadge("bad", data?.error?.message ?? "Error");
       setKeyListMessage("Failed to load API keys.");
       return;
@@ -7208,6 +7374,10 @@ const refreshKeys = async () => {
     keysLoadedAt = Date.now();
     renderKeys(allKeys, currentKeyView);
   } catch {
+    if (keysLoadedAt) {
+      setKeysBadge("unknown", "Cached · offline");
+      return;
+    }
     allKeys = [];
     setKeysBadge("bad", "Offline");
     setKeyListMessage("Failed to load API keys.");
@@ -7356,32 +7526,6 @@ const formatModelLabel = (model) => {
   return label && label.trim() ? label : "unknown";
 };
 
-const coerceFiniteInt = (value) => (typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : null);
-
-const extractCachedModels = (cached) => {
-  if (!cached || typeof cached !== "object") return { snapshot: null, models: [] };
-  const rawModels = Array.isArray(cached.models) ? cached.models : [];
-  const models = rawModels.filter((model) => typeof model?.slug === "string" && model.slug.trim().length > 0);
-  if (!models.length) return { snapshot: null, models: [] };
-  const snapshot = {
-    updated_at_ms: coerceFiniteInt(cached.updated_at_ms),
-    source: typeof cached.source === "string" && cached.source.trim() ? cached.source.trim() : "cached",
-    client_version: typeof cached.client_version === "string" && cached.client_version.trim()
-      ? cached.client_version.trim()
-      : "",
-  };
-  return { snapshot, models };
-};
-
-const extractCachedDefaults = (cached) => {
-  if (!cached || typeof cached !== "object") return null;
-  const model = typeof cached.model === "string" ? cached.model : "";
-  const reasoning = typeof cached.reasoning_effort === "string" ? cached.reasoning_effort : "";
-  const limit = coerceFiniteInt(cached.kernel_policy_limit_requests);
-  const windowMs = coerceFiniteInt(cached.kernel_policy_window_ms);
-  return { model, reasoning_effort: reasoning, kernel_policy_limit_requests: limit, kernel_policy_window_ms: windowMs };
-};
-
 const clearMeteredQuotaDiagnostics = () => {
   meteredQuotaRemaining.textContent = "—";
   meteredQuotaProgress.hidden = true;
@@ -7508,21 +7652,6 @@ const applyDefaultsSnapshot = (snapshot, defaults, options = {}) => {
   return { selectedModel, selectedReasoning };
 };
 
-const persistDefaultsSnapshot = (snapshot) => {
-  if (!snapshot) return;
-  writeStorageJson(STORAGE_KEYS.defaultsSnapshot, snapshot);
-};
-
-const persistDefaultsModels = (snapshot, models) => {
-  if (!Array.isArray(models) || models.length === 0) return;
-  writeStorageJson(STORAGE_KEYS.defaultsModels, {
-    updated_at_ms: snapshot?.updated_at_ms ?? null,
-    source: snapshot?.source ?? "unknown",
-    client_version: snapshot?.client_version ?? "",
-    models,
-  });
-};
-
 const setSelectOptions = (select, options, selected, emptyLabel) => {
   select.textContent = "";
   if (!options.length) {
@@ -7565,25 +7694,8 @@ const loadDefaults = async (options = {}) => {
   const preserveInputs = options.preserveInputs === true;
   if (!preserveInputs) defaultsTouched = false;
   defaultsLoaded = false;
-  setDefaultsBadge("unknown", "Loading...");
-  setMeteredQuotaBadge("unknown", "Loading...");
-  let cacheApplied = false;
-  const cachedDefaults = extractCachedDefaults(readStorageJson(STORAGE_KEYS.defaultsSnapshot));
-  const cachedModels = extractCachedModels(readStorageJson(STORAGE_KEYS.defaultsModels));
-  if (cachedModels.models.length) {
-    const cachedSnapshot = {
-      models: cachedModels.models,
-      meta: cachedModels.snapshot,
-    };
-    const cachedResult = applyDefaultsSnapshot(cachedSnapshot, cachedDefaults, {
-      preserveInputs: preserveInputs || defaultsTouched,
-    });
-    if (cachedResult) {
-      cacheApplied = true;
-      defaultsLoaded = true;
-      setDefaultsBadge("unknown", "Cached");
-    }
-  }
+  setDefaultsBadge("unknown", defaultsLoadedAt ? "Cached · refreshing" : "Loading...");
+  setMeteredQuotaBadge("unknown", defaultsLoadedAt ? "Cached · refreshing" : "Loading...");
   try {
     const [modelsRes, defaultsRes] = await Promise.all([
       fetch(apiUrl("/admin/codex/models"), {
@@ -7598,6 +7710,12 @@ const loadDefaults = async (options = {}) => {
     if (loadId !== defaultsLoadId) return;
     const modelsPayload = await modelsRes.json().catch(() => null);
     if (!modelsRes.ok) {
+      if (defaultsLoadedAt) {
+        defaultsLoaded = true;
+        setDefaultsBadge("unknown", "Cached · refresh unavailable");
+        setMeteredQuotaBadge("unknown", "Cached · refresh unavailable");
+        return;
+      }
       setDefaultsBadge("bad", modelsPayload?.error?.message ?? "Error");
       return;
     }
@@ -7607,10 +7725,15 @@ const loadDefaults = async (options = {}) => {
       : [];
     defaultsModelMap = new Map(models.map((model) => [model.slug, model]));
     updateDefaultsMeta(snapshot, models);
-    persistDefaultsModels(snapshot, models);
 
     const defaultsPayload = await defaultsRes.json().catch(() => null);
     if (!defaultsRes.ok) {
+      if (defaultsLoadedAt) {
+        defaultsLoaded = true;
+        setDefaultsBadge("unknown", "Cached · refresh unavailable");
+        setMeteredQuotaBadge("unknown", "Cached · refresh unavailable");
+        return;
+      }
       setDefaultsBadge("bad", defaultsPayload?.error?.message ?? "Error");
       renderMeteredQuotaDiagnostics(null);
       return;
@@ -7619,10 +7742,8 @@ const loadDefaults = async (options = {}) => {
 
     if (!models.length) {
       setDefaultsBadge("bad", "No models");
-      if (!cacheApplied) {
-        setSelectOptions(defaultsModelSelect, [], "", "No models available");
-        setReasoningPlaceholder(defaultsReasoningSelect, "No reasoning levels");
-      }
+      setSelectOptions(defaultsModelSelect, [], "", "No models available");
+      setReasoningPlaceholder(defaultsReasoningSelect, "No reasoning levels");
       return;
     }
 
@@ -7638,17 +7759,23 @@ const loadDefaults = async (options = {}) => {
         ? Math.trunc(defaultsPayload.defaults.kernel_policy_window_ms)
         : DEFAULT_KERNEL_POLICY_WINDOW_MS,
     };
-    persistDefaultsSnapshot(serverDefaults);
     const result = applyDefaultsSnapshot(
       { models, meta: snapshot },
       serverDefaults,
       { preserveInputs: preserveInputs || defaultsTouched },
     );
     defaultsLoaded = true;
+    defaultsLoadedAt = Date.now();
     if (!defaultsTouched && result) {
       setDefaultsBadge("ok", `${result.selectedModel} · ${result.selectedReasoning}`);
     }
   } catch {
+    if (defaultsLoadedAt) {
+      defaultsLoaded = true;
+      setDefaultsBadge("unknown", "Cached · offline");
+      setMeteredQuotaBadge("unknown", "Cached · offline");
+      return;
+    }
     setDefaultsBadge("bad", "Offline");
     renderMeteredQuotaDiagnostics(null);
   }
@@ -7706,18 +7833,6 @@ const saveDefaults = async () => {
     if (typeof saved?.kernel_policy_window_ms === "number") {
       defaultsKernelWindowInput.value = String(Math.trunc(saved.kernel_policy_window_ms));
     }
-    persistDefaultsSnapshot({
-      model: typeof saved?.model === "string" && saved.model ? saved.model : model,
-      reasoning_effort: typeof saved?.reasoning_effort === "string" && saved.reasoning_effort
-        ? saved.reasoning_effort
-        : reasoning,
-      kernel_policy_limit_requests: typeof saved?.kernel_policy_limit_requests === "number"
-        ? Math.trunc(saved.kernel_policy_limit_requests)
-        : limitValue,
-      kernel_policy_window_ms: typeof saved?.kernel_policy_window_ms === "number"
-        ? Math.trunc(saved.kernel_policy_window_ms)
-        : windowResult.value,
-    });
     defaultsTouched = false;
     setDefaultsBadge("ok", summary);
   } catch {
@@ -7725,6 +7840,206 @@ const saveDefaults = async () => {
   } finally {
     defaultsSaving = false;
   }
+};
+
+const cachedPayload = (snapshot) => snapshot?.payload && typeof snapshot.payload === "object" ? snapshot.payload : null;
+
+const cachedList = (snapshot, key = "data") => {
+  const payload = cachedPayload(snapshot);
+  return Array.isArray(payload?.[key]) ? payload[key] : null;
+};
+
+const cachedKernelResult = (snapshot, key) => {
+  const records = cachedList(snapshot, key);
+  return records
+    ? { ok: true, message: "", records }
+    : { ok: false, message: "Cached response unavailable", records: [] };
+};
+
+const hydrateAdminSnapshots = async () => {
+  const scope = adminCacheScope;
+  const epoch = adminCacheEpoch;
+  if (!scope || !adminAccessState.isAdmin) return;
+
+  const paths = [
+    "/admin/api-keys?include_usage=1",
+    "/admin/passkey-users",
+    "/admin/kernel-policy-queue",
+    "/admin/kernel-pubkeys",
+    "/admin/kernel-usage?scope=org&list=1&inventory=1",
+    "/admin/kernel-usage?scope=repo&list=1&inventory=1",
+    "/admin/kernel-usage?scope=org&list=1",
+    "/admin/kernel-usage?scope=repo&list=1",
+    "/admin/codex/models",
+    "/admin/defaults",
+    "/health/providers",
+    "/admin/providers",
+    "/admin/providers/capacity",
+    "/admin/errors?limit=1",
+    "/admin/providers/quota-projection?window_days=30&balance_window_days=365",
+    "/admin/errors?limit=200",
+  ];
+  const snapshots = await Promise.all(paths.map((path) => readAdminSnapshot(path)));
+  if (scope !== adminCacheScope || epoch !== adminCacheEpoch || !adminAccessState.isAdmin) return;
+
+  const [
+    keysSnapshot,
+    usersSnapshot,
+    queueSnapshot,
+    pubkeysSnapshot,
+    orgUsageSnapshot,
+    repoUsageSnapshot,
+    orgPolicySnapshot,
+    repoPolicySnapshot,
+    modelsSnapshot,
+    defaultsSnapshot,
+    upstreamSnapshot,
+    providersSnapshot,
+    capacitySnapshot,
+    capacityErrorsSnapshot,
+    quotaProjectionSnapshot,
+    errorsSnapshot,
+  ] = snapshots;
+
+  const keys = cachedList(keysSnapshot);
+  if (keys && keysLoadedAt <= keysSnapshot.savedAt) {
+    allKeys = keys;
+    keysLoadedAt = keysSnapshot.savedAt;
+    renderKeys(allKeys, currentKeyView);
+    setKeysBadge("unknown", "Cached · refreshing");
+  }
+
+  const users = cachedList(usersSnapshot);
+  if (adminAccessState.isSuperAdmin && users && passkeyUsersLoadedAt <= usersSnapshot.savedAt) {
+    passkeyUsers = users;
+    passkeyUsersLoadedAt = usersSnapshot.savedAt;
+    renderPasskeyUsers(passkeyUsers);
+    setPasskeyUsersBadge("unknown", "Cached · refreshing");
+  }
+
+  const queue = cachedList(queueSnapshot);
+  if (queue && kernelQueueLoadedAt <= queueSnapshot.savedAt) {
+    kernelQueueItems = queue;
+    kernelQueueLoadedAt = queueSnapshot.savedAt;
+    renderKernelPolicyQueue(kernelQueueItems);
+    setKernelQueueBadge("unknown", "Cached · refreshing");
+  }
+
+  const pubkeys = cachedList(pubkeysSnapshot);
+  if (pubkeys && kernelPubKeysLoadedAt <= pubkeysSnapshot.savedAt) {
+    kernelPubKeys = pubkeys;
+    kernelPubKeysLoadedAt = pubkeysSnapshot.savedAt;
+    renderKernelPubKeys(kernelPubKeys);
+    setKernelPubKeysBadge("unknown", "Cached · refreshing");
+  }
+
+  const cachedKernelResults = [
+    cachedKernelResult(orgUsageSnapshot, "usage"),
+    cachedKernelResult(repoUsageSnapshot, "usage"),
+    cachedKernelResult(orgPolicySnapshot, "limits"),
+    cachedKernelResult(repoPolicySnapshot, "limits"),
+  ];
+  if (cachedKernelResults.every((result) => result.ok)) {
+    const [orgUsageResult, repoUsageResult, orgPolicyResult, repoPolicyResult] = cachedKernelResults;
+    const cachedAt = Math.min(
+      orgUsageSnapshot.savedAt,
+      repoUsageSnapshot.savedAt,
+      orgPolicySnapshot.savedAt,
+      repoPolicySnapshot.savedAt,
+    );
+    if (kernelListLoadedAt <= cachedAt) {
+      kernelPolicyState = buildKernelPolicyStateFromLists(orgPolicyResult, repoPolicyResult);
+      kernelListRecords = {
+        org: mergeKernelRecords(orgUsageResult.records, orgPolicyResult.records, "org"),
+        repo: mergeKernelRecords(repoUsageResult.records, repoPolicyResult.records, "repo"),
+      };
+      const result = renderKernelList(kernelListRecords, kernelPolicyState);
+      kernelListLoadedAt = cachedAt;
+      setKernelListBadge("unknown", `Cached · ${formatKernelListBadge(result)}`);
+    }
+  }
+
+  const modelsPayload = cachedPayload(modelsSnapshot);
+  const defaultsPayload = cachedPayload(defaultsSnapshot);
+  const models = Array.isArray(modelsPayload?.data?.models)
+    ? modelsPayload.data.models.filter((model) => typeof model?.slug === "string")
+    : [];
+  if (
+    models.length && defaultsPayload && defaultsLoadedAt <= Math.min(modelsSnapshot.savedAt, defaultsSnapshot.savedAt)
+  ) {
+    const serverDefaults = {
+      model: typeof defaultsPayload?.defaults?.model === "string" ? defaultsPayload.defaults.model : "",
+      reasoning_effort: typeof defaultsPayload?.defaults?.reasoning_effort === "string"
+        ? defaultsPayload.defaults.reasoning_effort
+        : "",
+      kernel_policy_limit_requests: typeof defaultsPayload?.defaults?.kernel_policy_limit_requests === "number"
+        ? Math.trunc(defaultsPayload.defaults.kernel_policy_limit_requests)
+        : DEFAULT_KERNEL_POLICY_LIMIT,
+      kernel_policy_window_ms: typeof defaultsPayload?.defaults?.kernel_policy_window_ms === "number"
+        ? Math.trunc(defaultsPayload.defaults.kernel_policy_window_ms)
+        : DEFAULT_KERNEL_POLICY_WINDOW_MS,
+    };
+    const result = applyDefaultsSnapshot({ models, meta: modelsPayload.data }, serverDefaults, {
+      preserveInputs: defaultsTouched,
+    });
+    renderMeteredQuotaDiagnostics(defaultsPayload?.metered_quota);
+    defaultsLoaded = true;
+    defaultsLoadedAt = Math.min(modelsSnapshot.savedAt, defaultsSnapshot.savedAt);
+    if (result && !defaultsTouched) setDefaultsBadge("unknown", "Cached · refreshing");
+  }
+
+  const upstreamPayload = cachedPayload(upstreamSnapshot);
+  if (upstreamPayload && accessUpstreamLoadedAt <= upstreamSnapshot.savedAt) {
+    const source = upstreamPayload?.codex?.source ?? "unknown";
+    const expirations = Array.isArray(upstreamPayload?.codex?.accounts)
+      ? upstreamPayload.codex.accounts
+        .map((account) => account?.access_token_exp_ms)
+        .filter((value) => typeof value === "number")
+      : [];
+    setAccessValue(accessUpstreamSource, source === "none" ? "None" : source);
+    setAccessValue(accessUpstreamExpiry, expirations.length ? formatDate(Math.min(...expirations)) : "Unknown");
+    accessUpstreamLoadedAt = upstreamSnapshot.savedAt;
+  }
+
+  const providersPayload = cachedPayload(providersSnapshot);
+  if (providersPayload && providersLoadedAt <= providersSnapshot.savedAt) {
+    latestProviderHealth = providersPayload;
+    providersLoadedAt = providersSnapshot.savedAt;
+  }
+
+  const capacityPayload = cachedPayload(capacitySnapshot);
+  const capacityErrorsPayload = cachedPayload(capacityErrorsSnapshot);
+  if (capacityPayload && providerCapacityLoadedAt <= capacitySnapshot.savedAt) {
+    renderProviderCapacity(
+      capacityPayload,
+      Array.isArray(capacityErrorsPayload?.five_xx_buckets) ? capacityErrorsPayload.five_xx_buckets : [],
+    );
+    providerCapacityLoadedAt = capacitySnapshot.savedAt;
+    providerCapacityUpdated.textContent = `Cached ${formatDate(capacitySnapshot.savedAt)} · refreshing`;
+    setBadge(providerCapacityBadge, "unknown", "Cached · refreshing");
+  } else if (latestProviderCapacityChartState?.sources) {
+    renderProviderCapacityList(latestProviderCapacityChartState.sources);
+  }
+
+  const quotaProjectionPayload = cachedPayload(quotaProjectionSnapshot);
+  if (quotaProjectionPayload && quotaProjectionLoadedAt <= quotaProjectionSnapshot.savedAt) {
+    renderQuotaProjection(quotaProjectionPayload);
+    quotaProjectionLoadedAt = quotaProjectionSnapshot.savedAt;
+    quotaRunwayUpdated.textContent = `Cached ${formatDate(quotaProjectionSnapshot.savedAt)} · refreshing`;
+    setBadge(quotaRunwayBadge, "unknown", "Cached · refreshing");
+  }
+
+  const errors = cachedList(errorsSnapshot);
+  if (errors && errorsLoadedAt <= errorsSnapshot.savedAt) {
+    renderAdminErrors(errors);
+    errorsUpdated.textContent = `Cached ${formatDate(errorsSnapshot.savedAt)} · refreshing`;
+    setBadge(errorsBadge, "unknown", "Cached · refreshing");
+    errorsLoadedAt = errorsSnapshot.savedAt;
+  }
+
+  updateAccessApiKeysSummary();
+  updateAccessGithubSummary();
+  updateAccessPubkeysSummary();
 };
 
 const scheduleDefaultsSave = debounce(() => {
@@ -7790,6 +8105,7 @@ showTokenInput.addEventListener("change", () => {
 });
 
 tokenInput.addEventListener("input", () => {
+  clearAdminSnapshotScope();
   if (localDevelopmentAutoAuth && tokenInput.value.trim() !== LOCAL_DEVELOPMENT_ADMIN_TOKEN) {
     localDevelopmentAutoAuth = false;
   }
@@ -7798,6 +8114,7 @@ tokenInput.addEventListener("input", () => {
   keysLoadedAt = 0;
   passkeyUsersLoadedAt = 0;
   defaultsLoaded = false;
+  defaultsLoadedAt = 0;
   kernelListLoadedAt = 0;
   kernelQueueLoadedAt = 0;
   kernelPubKeysLoadedAt = 0;
@@ -7806,8 +8123,10 @@ tokenInput.addEventListener("input", () => {
   providersLoading = false;
   providersLoadedAt = 0;
   providerCapacityLoadedForOpen = false;
+  providerCapacityLoadedAt = 0;
   quotaProjectionLoadedForOpen = false;
   quotaProjectionLoading = false;
+  quotaProjectionLoadedAt = 0;
   quotaProjectionLoadId += 1;
   quotaRunwayBadge.setAttribute("data-state", "unknown");
   quotaRunwayBadge.textContent = "Not loaded";
@@ -7971,6 +8290,7 @@ globalThis.addEventListener("hashchange", () => {
 });
 
 baseSelect.addEventListener("change", () => {
+  clearAdminSnapshotScope();
   storage.set(STORAGE_KEYS.base, getBaseChoice());
   if (canUseLocalDevelopmentAuth()) applyLocalDevelopmentAuth();
   else clearLocalDevelopmentAuth();
@@ -8001,6 +8321,7 @@ baseSelect.addEventListener("change", () => {
   passkeyUsers = [];
   passkeyUsersLoadedAt = 0;
   defaultsLoaded = false;
+  defaultsLoadedAt = 0;
   defaultsLoadId += 1;
   kernelListLoadedAt = 0;
   kernelListLoadId += 1;
@@ -8013,8 +8334,10 @@ baseSelect.addEventListener("change", () => {
   providersLoading = false;
   providersLoadedAt = 0;
   providerCapacityLoadedForOpen = false;
+  providerCapacityLoadedAt = 0;
   quotaProjectionLoadedForOpen = false;
   quotaProjectionLoading = false;
+  quotaProjectionLoadedAt = 0;
   quotaProjectionLoadId += 1;
   quotaRunwayBadge.setAttribute("data-state", "unknown");
   quotaRunwayBadge.textContent = "Not loaded";
