@@ -9,12 +9,14 @@ import { executeProductionRollback } from "./rollback-controller.ts";
 import { GitHubActionsClient, type GitHubArtifact } from "./github.ts";
 import {
   buildMatrixPlan,
+  canonicalMatrixJson,
   type MatrixCellReportV1,
   type MatrixCycleCellStatus,
   matrixCycleReportDigest,
   type MatrixCycleReportV1,
   type MatrixDeliveryOutcomeV1,
   type MatrixPlanV1,
+  normalizeFindings,
   parseMatrixPlanV1,
   validateMatrixCellReportV1,
 } from "./matrix.ts";
@@ -877,18 +879,25 @@ const writePreparedMatrixPlan = async (
 };
 
 export const assertTriageMatchesMatrixPlan = (triage: TriageReport, plan: MatrixPlanV1): void => {
-  const actionable = triage.findings.filter((finding) => finding.actionable).map((finding) => ({
-    finding_id: finding.id,
-    fingerprint: finding.fingerprint,
-    allowed_paths: [...finding.allowed_paths].sort(),
-    prohibited_paths: [...SENTINEL_POLICY.protectedImplementationPaths].sort(),
-    shared_paths: [...finding.shared_paths].sort(),
-    depends_on: [...finding.depends_on].sort(),
-    validation_requirements: [...finding.validation_requirements].sort(),
-  })).sort((left, right) =>
-    left.fingerprint.localeCompare(right.fingerprint) || left.finding_id.localeCompare(right.finding_id)
+  const actionable = normalizeFindings(
+    triage.findings
+      .filter((finding) => finding.actionable)
+      .map((finding) => ({
+        id: finding.id,
+        fingerprint: finding.fingerprint,
+        allowed_paths: finding.allowed_paths,
+        prohibited_paths: SENTINEL_POLICY.protectedImplementationPaths,
+        shared_paths: finding.shared_paths,
+        depends_on: finding.depends_on,
+        validation_requirements: finding.validation_requirements,
+        actionable: true,
+      })),
   );
-  if (JSON.stringify(actionable) !== JSON.stringify(plan.ownership)) {
+  // Ownership is compared as canonical JSON: the same normalization built the
+  // plan, and the persisted plan is parsed back from canonical key order, so a
+  // legitimate convergence must compare equal under key order, array order,
+  // and search-order normalization while any content difference still throws.
+  if (canonicalMatrixJson(actionable) !== canonicalMatrixJson(plan.ownership)) {
     throw new Error("Matrix convergence triage does not match immutable plan ownership");
   }
 };

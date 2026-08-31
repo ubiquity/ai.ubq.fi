@@ -59,7 +59,12 @@ import {
   withStageHeartbeat,
   zeroUnselectedReplayBodies,
 } from "../scripts/sentinel/main.ts";
-import { buildMatrixPlan } from "../scripts/sentinel/matrix.ts";
+import {
+  buildMatrixPlan,
+  canonicalMatrixJson,
+  type MatrixPlanV1,
+  parseMatrixPlanV1,
+} from "../scripts/sentinel/matrix.ts";
 import { CodexInvocationError } from "../scripts/sentinel/codex.ts";
 import type {
   GitHubIssue,
@@ -993,6 +998,186 @@ Deno.test("matrix convergence compares triage ownership in planner fingerprint o
     })),
   });
   assert.doesNotThrow(() => assertTriageMatchesMatrixPlan(triage, plan));
+});
+
+Deno.test("matrix convergence accepts production-canonical persisted plan ownership", async () => {
+  const interval = computeSentinelInterval("incident", now);
+  const finding = (
+    id: string,
+    fingerprint: string,
+    allowedPaths: string[],
+    sharedPaths: string[],
+    dependsOn: string[],
+    validations: string[],
+  ): TriageReport["findings"][number] => ({
+    id,
+    fingerprint,
+    severity: "P1",
+    title: `Repair ${id}`,
+    affected_surface: allowedPaths[0]!,
+    allowed_paths: allowedPaths,
+    shared_paths: sharedPaths,
+    depends_on: dependsOn,
+    evidence: [{ source: "repository", reference: allowedPaths[0]!, detail: `Defect in ${id}` }],
+    proposed_correction: `Correct ${id}`,
+    validation_requirements: validations,
+    actionable: true,
+  });
+  // Production shape: findings declared out of fingerprint order and with
+  // unsorted path, dependency, and validation arrays. IDs mix punctuation and
+  // letter case so ordering must be canonical, not linguistic.
+  const triage: TriageReport = {
+    schema_version: 1,
+    interval,
+    findings: [
+      finding(
+        "triage.Z-pattern:repair",
+        "f".repeat(64),
+        ["src/z-pattern.ts", "src/a-pattern.ts"],
+        ["tests/z-pattern.test.ts", "tests/a-pattern.test.ts"],
+        ["triage.A-pattern:repair"],
+        ["deno task sentinel:test-local", "deno fmt --check"],
+      ),
+      finding(
+        "triage.A-pattern:repair",
+        "0".repeat(64),
+        ["src/b-pattern.ts", "src/c-pattern.ts"],
+        ["tests/b-pattern.test.ts"],
+        [],
+        ["deno check scripts/sentinel/main.ts"],
+      ),
+    ],
+    no_findings_reason: null,
+  };
+  const plan = await buildMatrixPlan({
+    run_id: "production-ownership",
+    run_attempt: 1,
+    base_sha: "a".repeat(40),
+    evidence_digests: [],
+    findings: triage.findings.map((item) => ({
+      id: item.id,
+      fingerprint: item.fingerprint,
+      allowed_paths: item.allowed_paths,
+      prohibited_paths: SENTINEL_POLICY.protectedImplementationPaths,
+      shared_paths: item.shared_paths,
+      depends_on: item.depends_on,
+      validation_requirements: item.validation_requirements,
+    })),
+  });
+  // The converge job persists the plan with canonicalMatrixJson (sorted object
+  // keys) and main.ts parses that exact text back through parseMatrixPlanV1.
+  const persisted = `${canonicalMatrixJson(plan)}\n`;
+  const reparsed = await parseMatrixPlanV1(persisted);
+  assert.equal(Object.keys(reparsed.ownership[0]!)[0], "allowed_paths");
+  assert.doesNotThrow(() => assertTriageMatchesMatrixPlan(triage, reparsed));
+});
+
+Deno.test("matrix convergence rejects genuine ownership changes after canonical persistence", async () => {
+  const interval = computeSentinelInterval("incident", now);
+  const finding = (id: string, fingerprint: string, path: string): TriageReport["findings"][number] => ({
+    id,
+    fingerprint,
+    severity: "P1",
+    title: `Repair ${id}`,
+    affected_surface: path,
+    allowed_paths: [path],
+    shared_paths: [],
+    depends_on: [],
+    evidence: [{ source: "repository", reference: path, detail: `Defect in ${id}` }],
+    proposed_correction: `Correct ${id}`,
+    validation_requirements: [`Validate ${id}`],
+    actionable: true,
+  });
+  const triage: TriageReport = {
+    schema_version: 1,
+    interval,
+    findings: [
+      finding("first-by-id", "f".repeat(64), "src/first.ts"),
+      finding("second-by-id", "0".repeat(64), "src/second.ts"),
+    ],
+    no_findings_reason: null,
+  };
+  const planInput = (prohibited: string[]): Array<{
+    id: string;
+    fingerprint: string;
+    allowed_paths: string[];
+    prohibited_paths: string[];
+    shared_paths: string[];
+    depends_on: string[];
+    validation_requirements: string[];
+  }> =>
+    triage.findings.map((item) => ({
+      id: item.id,
+      fingerprint: item.fingerprint,
+      allowed_paths: [...item.allowed_paths],
+      prohibited_paths: prohibited,
+      shared_paths: [...item.shared_paths],
+      depends_on: [...item.depends_on],
+      validation_requirements: [...item.validation_requirements],
+    }));
+
+  // An immutable plan whose prohibited paths differ from the current policy
+  // (for example, a plan built before the policy was extended).
+  const reparseWithProhibited = async (prohibited: string[]): Promise<MatrixPlanV1> => {
+    const plan = await buildMatrixPlan({
+      run_id: "ownership-mismatch",
+      run_attempt: 1,
+      base_sha: "a".repeat(40),
+      evidence_digests: [],
+      findings: planInput(prohibited),
+    });
+    return await parseMatrixPlanV1(`${canonicalMatrixJson(plan)}\n`);
+  };
+  const variant = (overrides: {
+    fingerprint?: string;
+    allowedPaths?: string[];
+    dependsOn?: string[];
+    validations?: string[];
+  }): TriageReport => ({
+    schema_version: 1,
+    interval,
+    findings: [
+      {
+        ...triage.findings[0]!,
+        fingerprint: overrides.fingerprint ?? triage.findings[0]!.fingerprint,
+        allowed_paths: overrides.allowedPaths ?? triage.findings[0]!.allowed_paths,
+      },
+      {
+        ...triage.findings[1]!,
+        depends_on: overrides.dependsOn ?? triage.findings[1]!.depends_on,
+        validation_requirements: overrides.validations ?? triage.findings[1]!.validation_requirements,
+      },
+    ],
+    no_findings_reason: null,
+  });
+
+  // The legitimate production round trip is accepted.
+  const canonical = await reparseWithProhibited([...SENTINEL_POLICY.protectedImplementationPaths]);
+  assert.doesNotThrow(() => assertTriageMatchesMatrixPlan(triage, canonical));
+
+  const mismatch = /Matrix convergence triage does not match immutable plan ownership/;
+  assert.throws(
+    () => assertTriageMatchesMatrixPlan(variant({ fingerprint: "e".repeat(64) }), canonical),
+    mismatch,
+  );
+  assert.throws(
+    () => assertTriageMatchesMatrixPlan(variant({ allowedPaths: ["src/other.ts"] }), canonical),
+    mismatch,
+  );
+  assert.throws(
+    () => assertTriageMatchesMatrixPlan(variant({ dependsOn: ["first-by-id"] }), canonical),
+    mismatch,
+  );
+  assert.throws(
+    () => assertTriageMatchesMatrixPlan(variant({ validations: ["Validate something else"] }), canonical),
+    mismatch,
+  );
+
+  const changedPlanProhibited = await reparseWithProhibited([
+    ...SENTINEL_POLICY.protectedImplementationPaths,
+    "scripts/sentinel/matrix.ts",
+  ]);
+  assert.throws(() => assertTriageMatchesMatrixPlan(triage, changedPlanProhibited), mismatch);
 });
 
 Deno.test("observe cycle cannot reach replay, repair, Git, deployment, promotion, or rollback capabilities", async () => {

@@ -375,7 +375,12 @@ const normalizeFinding = (input: MatrixFindingInput, index: number): MatrixFindi
   };
 };
 
-const normalizeFindings = (findings: readonly MatrixFindingInput[]): MatrixFindingOwnershipV1[] => {
+/**
+ * Canonical MatrixFindingInput normalization shared by plan building and the
+ * convergence ownership comparison, so both sides apply identical validation,
+ * sorting, and defaulting.
+ */
+export const normalizeFindings = (findings: readonly MatrixFindingInput[]): MatrixFindingOwnershipV1[] => {
   if (!Array.isArray(findings) || findings.length > MAX_FINDINGS) {
     throw new Error(`Matrix findings exceed the limit of ${MAX_FINDINGS}`);
   }
