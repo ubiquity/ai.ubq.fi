@@ -307,7 +307,7 @@ Deno.test("admin provider view places capacity history before current providers"
   assert.match(adminHtml, /Provider analytics/);
   assert.match(adminHtml, /Fifteen-minute capacity, cached-input, and cache-write history/);
   assert.match(adminHtml, /admin\.css\?v=admin-polish-20260827-v3/);
-  assert.match(adminHtml, /admin\.js\?v=admin-indexeddb-cache-20260830-v5/);
+  assert.match(adminHtml, /admin\.js\?v=admin-indexeddb-cache-20260830-v7/);
   assert.doesNotMatch(adminHtml, /removed_provider-failover|debug-routing/);
   assert.doesNotMatch(adminScript, /RemovedProviderFailover|refresh=live/);
   assert.match(adminScript, /fetch\(apiUrl\("\/admin\/providers\/capacity"\)/);
@@ -370,7 +370,7 @@ Deno.test("admin responses use a scoped IndexedDB stale cache", () => {
 
   assert.match(
     adminScript,
-    /import \{ createAdminSnapshotCache \} from "\.\/admin-cache\.js\?v=admin-indexeddb-cache-20260830-v5";/,
+    /import \{ createAdminSnapshotCache \} from "\.\/admin-cache\.js\?v=admin-indexeddb-cache-20260830-v7";/,
   );
   assert.match(adminScript, /const cacheFreshAdminRead = \(response, cacheKey, scope, epoch\) =>/);
   assert.match(adminScript, /if \(!response\.ok \|\| !cacheKey \|\| !scope/);
@@ -387,6 +387,30 @@ Deno.test("admin responses use a scoped IndexedDB stale cache", () => {
   );
   assert.match(adminScript, /"Cached · refreshing"/);
   assert.match(adminScript, /setKeysBadge\("ok", view === "all" \? "No API keys" : `No \$\{view\} API keys`\);/);
+  assert.match(adminScript, /const readCachedApiKeyRequestLogs = async \(keyId\) =>/);
+  assert.match(adminScript, /renderApiKeyRequestLogs\(panel, list, summary, cached\.records, "Cached · refreshing"\);/);
+  assert.match(adminScript, /const inFlightEntry = \{ scope, epoch, request: null \};/);
+  assert.match(
+    adminScript,
+    /isCurrentApiKeyRequestLogCacheEntry\(cached, scope, epoch\)[\s\S]*now - cached\.fetchedAt < API_KEY_REQUEST_LOGS_TTL_MS/,
+  );
+  assert.match(
+    adminScript,
+    /if \(isCurrentApiKeyRequestLogScope\(scope, epoch\)\) \{\s+apiKeyRequestLogCache\.set\(cacheKey, \{[\s\S]*scope,[\s\S]*epoch,/,
+  );
+  assert.match(
+    adminScript,
+    /if \(apiKeyRequestLogPromises\.get\(cacheKey\) === inFlightEntry\) \{\s+apiKeyRequestLogPromises\.delete\(cacheKey\);/,
+  );
+  assert.match(
+    adminScript,
+    /const scope = adminCacheScope;\s+const epoch = adminCacheEpoch;\s+const isCurrentPanel = \(\) =>[\s\S]*isCurrentApiKeyRequestLogScope\(scope, epoch\);/,
+  );
+  assert.match(
+    adminScript,
+    /const cached = await readCachedApiKeyRequestLogs\(currentKeyId\);\s+if \(!isCurrentPanel\(\)\)/,
+  );
+  assert.match(adminScript, /const response = await refresh;\s+if \(!isCurrentPanel\(\)\)/);
   assert.match(adminScript, /clearAdminSnapshotScope\(\);/);
 });
 

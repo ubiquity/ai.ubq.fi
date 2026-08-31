@@ -19,7 +19,7 @@ import {
   parseAuthRelayAction,
   parseTrustedAuthRelayOrigin,
 } from "./auth-relay.js?v=passkey-relay-20260823-v4";
-import { createAdminSnapshotCache } from "./admin-cache.js?v=admin-indexeddb-cache-20260830-v5";
+import { createAdminSnapshotCache } from "./admin-cache.js?v=admin-indexeddb-cache-20260830-v7";
 import { bindForegroundRefresh } from "./foreground-refresh.js";
 import { setReasoningPlaceholder, updateReasoningSelectForModel } from "./reasoning-select.js";
 
@@ -82,6 +82,7 @@ const isAdminMutation = (input, init = {}) => {
 const invalidateAdminSnapshotCache = () => {
   const scope = adminCacheScope;
   adminCacheEpoch += 1;
+  clearApiKeyRequestLogCaches();
   if (scope) void adminSnapshotCache.clear(scope);
 };
 
@@ -89,6 +90,7 @@ const clearAdminSnapshotScope = () => {
   const scope = adminCacheScope;
   adminCacheScope = "";
   adminCacheEpoch += 1;
+  clearApiKeyRequestLogCaches();
   if (scope) void adminSnapshotCache.clear(scope);
 };
 
@@ -262,6 +264,9 @@ const clearApiKeyRequestLogCaches = () => {
   apiKeyRequestLogCache.clear();
   apiKeyRequestLogPromises.clear();
 };
+const isCurrentApiKeyRequestLogScope = (scope, epoch) =>
+  Boolean(scope) && scope === adminCacheScope && epoch === adminCacheEpoch;
+const isCurrentApiKeyRequestLogCacheEntry = (entry, scope, epoch) => entry?.scope === scope && entry?.epoch === epoch;
 let passkeyUsers = [];
 let passkeyUsersLoading = false;
 let passkeyUsersLoadedAt = 0;
@@ -5635,6 +5640,27 @@ const createRequestLogRow = (record) => {
   return row;
 };
 
+const getApiKeyRequestLogsPath = (keyId) =>
+  `/admin/api-keys/${encodeURIComponent(keyId)}/paid-fallbacks?limit=${API_KEY_REQUEST_LOGS_LIMIT}`;
+
+const normalizeApiKeyRequestLogRecords = (payload) => {
+  const rawRecords = Array.isArray(payload?.data) ? payload.data : [];
+  return rawRecords
+    .map((record) => normalizeApiKeyRequestLogRecord(record))
+    .filter((record) => record && record.created_at_ms !== null);
+};
+
+const readCachedApiKeyRequestLogs = async (keyId) => {
+  const cacheKey = getApiKeyRequestLogCacheKey(keyId);
+  if (!cacheKey) return null;
+  const snapshot = await readAdminSnapshot(getApiKeyRequestLogsPath(cacheKey));
+  if (!Array.isArray(snapshot?.payload?.data)) return null;
+  return {
+    records: normalizeApiKeyRequestLogRecords(snapshot.payload),
+    savedAt: snapshot.savedAt,
+  };
+};
+
 const loadApiKeyRequestLogs = (keyId) => {
   const cacheKey = getApiKeyRequestLogCacheKey(keyId);
   if (!cacheKey) return { ok: false, records: [], error: "Missing key id" };
@@ -5642,21 +5668,25 @@ const loadApiKeyRequestLogs = (keyId) => {
   const token = getAdminToken();
   if (!token && !hasAdminCredential()) return { ok: false, records: [], error: "Missing token" };
 
+  const scope = adminCacheScope;
+  const epoch = adminCacheEpoch;
   const now = Date.now();
   const cached = apiKeyRequestLogCache.get(cacheKey);
-  if (cached && now - cached.fetchedAt < API_KEY_REQUEST_LOGS_TTL_MS) {
+  if (
+    isCurrentApiKeyRequestLogCacheEntry(cached, scope, epoch) &&
+    now - cached.fetchedAt < API_KEY_REQUEST_LOGS_TTL_MS
+  ) {
     return { ok: true, records: cached.records, fromCache: true };
   }
 
   const inFlight = apiKeyRequestLogPromises.get(cacheKey);
-  if (inFlight) return inFlight;
+  if (isCurrentApiKeyRequestLogCacheEntry(inFlight, scope, epoch)) return inFlight.request;
+
+  const inFlightEntry = { scope, epoch, request: null };
 
   const request = (async () => {
     try {
-      const url = new URL(apiUrl(`/admin/api-keys/${encodeURIComponent(cacheKey)}/paid-fallbacks`));
-      url.searchParams.set("limit", String(API_KEY_REQUEST_LOGS_LIMIT));
-
-      const res = await fetch(url.toString(), {
+      const res = await fetch(apiUrl(getApiKeyRequestLogsPath(cacheKey)), {
         headers: {
           Authorization: `Bearer ${token}`,
         },
@@ -5671,26 +5701,49 @@ const loadApiKeyRequestLogs = (keyId) => {
         };
       }
 
-      const rawRecords = Array.isArray(data?.data) ? data.data : [];
-      const records = rawRecords
-        .map((record) => normalizeApiKeyRequestLogRecord(record))
-        .filter((record) => record && record.created_at_ms !== null);
+      const records = normalizeApiKeyRequestLogRecords(data);
 
-      apiKeyRequestLogCache.set(cacheKey, {
-        records,
-        fetchedAt: Date.now(),
-      });
+      if (isCurrentApiKeyRequestLogScope(scope, epoch)) {
+        apiKeyRequestLogCache.set(cacheKey, {
+          records,
+          fetchedAt: Date.now(),
+          scope,
+          epoch,
+        });
+      }
 
       return { ok: true, records };
     } catch {
       return { ok: false, records: [], error: API_KEY_REQUEST_LOG_STATUS_UNAVAILABLE };
     } finally {
-      apiKeyRequestLogPromises.delete(cacheKey);
+      if (apiKeyRequestLogPromises.get(cacheKey) === inFlightEntry) {
+        apiKeyRequestLogPromises.delete(cacheKey);
+      }
     }
   })();
 
-  apiKeyRequestLogPromises.set(cacheKey, request);
+  inFlightEntry.request = request;
+  apiKeyRequestLogPromises.set(cacheKey, inFlightEntry);
   return request;
+};
+
+const renderApiKeyRequestLogs = (panel, list, summary, records, cacheStatus = "") => {
+  panel.dataset.requestLogsState = "ready";
+  if (!records.length) {
+    const text = cacheStatus ? `${cacheStatus} · No paid fallbacks recorded` : "No paid fallbacks recorded";
+    setRequestLogsPanelMessage(list, summary, text);
+    return;
+  }
+
+  const countText = records.length === 1 ? "1 paid fallback" : `${records.length} paid fallbacks`;
+  summary.textContent = `${countText} (showing last ${API_KEY_REQUEST_LOGS_LIMIT})${
+    cacheStatus ? ` · ${cacheStatus}` : ""
+  }`;
+  delete summary.dataset.state;
+  list.textContent = "";
+  records.forEach((record) => {
+    list.appendChild(createRequestLogRow(record));
+  });
 };
 
 const hydrateApiKeyRequestLogs = async (panel, keyId) => {
@@ -5698,6 +5751,12 @@ const hydrateApiKeyRequestLogs = async (panel, keyId) => {
   const currentKeyId = panel.dataset.keyId;
   if (!currentKeyId || currentKeyId !== keyId) return;
 
+  const scope = adminCacheScope;
+  const epoch = adminCacheEpoch;
+  const isCurrentPanel = () =>
+    panel.isConnected &&
+    panel.dataset.keyId === currentKeyId &&
+    isCurrentApiKeyRequestLogScope(scope, epoch);
   const summary = panel.querySelector("[data-usage-summary]");
   const list = panel.querySelector("[data-api-key-request-list]");
   if (!summary || !list) return;
@@ -5705,21 +5764,41 @@ const hydrateApiKeyRequestLogs = async (panel, keyId) => {
     const cacheKey = getApiKeyRequestLogCacheKey(currentKeyId);
     if (cacheKey) {
       const cached = apiKeyRequestLogCache.get(cacheKey);
-      if (cached && Date.now() - cached.fetchedAt < API_KEY_REQUEST_LOGS_TTL_MS) return;
+      if (
+        isCurrentApiKeyRequestLogCacheEntry(cached, scope, epoch) &&
+        Date.now() - cached.fetchedAt < API_KEY_REQUEST_LOGS_TTL_MS
+      ) return;
     }
   }
 
   if (panel.dataset.requestLogsLoading === "1") return;
   panel.dataset.requestLogsLoading = "1";
   setRequestLogsPanelMessage(list, summary, "Loading...", API_KEY_REQUEST_LOG_STATUS_OK);
-  const response = await loadApiKeyRequestLogs(currentKeyId);
+  const refresh = loadApiKeyRequestLogs(currentKeyId);
+  const cached = await readCachedApiKeyRequestLogs(currentKeyId);
 
-  if (!panel.isConnected || panel.dataset.keyId !== currentKeyId) {
+  if (!isCurrentPanel()) {
+    panel.dataset.requestLogsLoading = "0";
+    return;
+  }
+
+  if (cached) {
+    renderApiKeyRequestLogs(panel, list, summary, cached.records, "Cached · refreshing");
+  }
+
+  const response = await refresh;
+
+  if (!isCurrentPanel()) {
     panel.dataset.requestLogsLoading = "0";
     return;
   }
 
   if (!response.ok) {
+    if (cached) {
+      renderApiKeyRequestLogs(panel, list, summary, cached.records, "Cached · refresh unavailable");
+      panel.dataset.requestLogsLoading = "0";
+      return;
+    }
     panel.dataset.requestLogsState = "error";
     setRequestLogsPanelMessage(
       list,
@@ -5731,20 +5810,7 @@ const hydrateApiKeyRequestLogs = async (panel, keyId) => {
     return;
   }
 
-  panel.dataset.requestLogsState = "ready";
-  const records = response.records || [];
-  if (!records.length) {
-    setRequestLogsPanelMessage(list, summary, "No paid fallbacks recorded");
-    panel.dataset.requestLogsLoading = "0";
-    return;
-  }
-
-  const countText = records.length === 1 ? "1 paid fallback" : `${records.length} paid fallbacks`;
-  summary.textContent = `${countText} (showing last ${API_KEY_REQUEST_LOGS_LIMIT})`;
-  list.textContent = "";
-  records.forEach((record) => {
-    list.appendChild(createRequestLogRow(record));
-  });
+  renderApiKeyRequestLogs(panel, list, summary, response.records || []);
   panel.dataset.requestLogsLoading = "0";
 };
 
