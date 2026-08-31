@@ -19,9 +19,23 @@
   second, and OpenLux last. Advance to the next paid tier only after an authoritative quota or capacity signal; do not
   treat a transient timeout, stalled stream, network or read error, or upstream 5xx as quota exhaustion.
 - Treat the Provider Sentinel implementation-agent model as an owner-controlled invariant. Only `gpt-5.6-luna` is
-  allowed. Agents must not change or substitute this model, or weaken the policy, instructions, or tests that enforce
-  it. A failed, timed-out, or exhausted Luna attempt must remain a failure, retry, or blocked outcome; it never
-  authorizes a model change.
+  allowed; Sentinel CI/runtime implementation agents must not change or substitute it or weaken its policy,
+  instructions, or tests. Local development requires the locally configured DSH DeepSeek model, which must preserve that
+  CI/runtime Luna configuration. A failed, timed-out, or exhausted Luna attempt must remain a failure, retry, or blocked
+  outcome; it never authorizes a model change.
+- For local DSH orchestration with this installed TUI, use the exact model
+  `deepseek-official/deepseek-v4-flash-vision-exp`. Max reasoning is required and is selected by
+  `agent-default-model.reasoningEffort: max` in `~/.dsh/settings.yaml`, because this installed TUI has no reasoning CLI
+  flag. Before launch, verify both that settings entry and
+  `dsh --profile tui --model deepseek-official/deepseek-v4-flash-vision-exp --doctor`. Then launch a fresh coding
+  session from the exact target worktree with
+  `DSH_PERMISSION_MODE=danger-full-access dsh --profile tui --model
+  deepseek-official/deepseek-v4-flash-vision-exp`.
+  Orchestration is through the TUI, not GUI automation: launch it in a PTY from the target worktree, write the prompt
+  text, then submit it with a separate Enter input — text that merely appears in the composer has not been submitted.
+  `--preset` is unsupported in this installed version, so the prompt must be submitted inside the TUI. Use fresh
+  sessions for independent tasks and `--resume` only for intentional continuation; terminate stalled read-only
+  trajectories by exact PID and replace them.
 - Treat `deno deploy --prod` as a build and production-timeline operation, not as proof that the stable route moved. A
   dashboard promotion creates a persistent production pin that a later deployment does not replace automatically.
 - For every stable Deno deployment, capture the pre-deploy revision IDs, identify exactly one new succeeded revision,

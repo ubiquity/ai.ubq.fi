@@ -2,7 +2,6 @@ import { CodexInvocationError, runNativeCodexReview } from "./codex.ts";
 import { SENTINEL_POLICY } from "./policy.ts";
 import {
   analyzeRollingReviewRecord,
-  applyRollingReviewIngestion,
   boundedRawReview,
   isSentinelRollingReviewPull,
   parseCompletedRollingReview,
@@ -103,7 +102,6 @@ const SAFE_REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 const MAX_PULL_PAGES = 10;
 const MAX_REVIEW_RESULTS = 256;
 const MAX_REVIEW_RESULT_FILE_BYTES = 512 * 1_024;
-const MAX_REVIEW_BACKLOG_BYTES_ON_READ = 512 * 1_024;
 const ROLLING_REVIEW_INVOCATION_MS = 40 * 60 * 1_000;
 
 const requiredEnvironment = (name: string): string => {
@@ -249,17 +247,35 @@ const listDevelopmentReviewResults = async (
   return results;
 };
 
-const readDevelopmentBacklog = async (
-  root: string,
-  gitEnv: Readonly<Record<string, string>>,
+/**
+ * Writes and stages exactly one validated rolling-review result. The worker
+ * publishes this result as its complete docs change; backlog ingestion stays
+ * downstream so a finding-bearing worker commit can satisfy the strict
+ * result-only development-advance contract.
+ */
+export const stageRollingReviewResult = async (
+  checkoutPath: string,
+  record: RollingReviewResult,
+  gitEnv: Readonly<Record<string, string>> = {},
 ): Promise<string> => {
-  const blob = await runTrustedGit({
-    args: ["show", `origin/development:${SENTINEL_POLICY.paths.reviewBacklog}`],
-    cwd: root,
-    env: gitEnv,
-    maximumOutputBytes: MAX_REVIEW_BACKLOG_BYTES_ON_READ,
-  });
-  return new TextDecoder("utf-8", { fatal: true }).decode(blob.stdout);
+  const fileStem = rollingReviewResultFileName(record.pr_number, record.head_sha);
+  const resultPath = `${SENTINEL_POLICY.paths.reviewResults}/${fileStem}`;
+  parseRollingReviewResult(record, { prNumber: record.pr_number, headSha: record.head_sha, fileName: fileStem });
+  const resultDirectory = `${checkoutPath}/${SENTINEL_POLICY.paths.reviewResults}`;
+  await Deno.mkdir(resultDirectory, { recursive: true, mode: 0o700 });
+  await writeJsonFile(`${checkoutPath}/${resultPath}`, record);
+  await runTrustedGit({ args: ["add", "--", resultPath], cwd: checkoutPath, env: gitEnv });
+  const staged = decodeUtf8(
+    (await runTrustedGit({
+      args: ["diff", "--cached", "--name-status", "--no-renames", "-z"],
+      cwd: checkoutPath,
+      env: gitEnv,
+    })).stdout,
+  ).split("\0").filter((entry) => entry.length > 0);
+  if (staged.length !== 2 || staged[0] !== "A" || staged[1] !== resultPath) {
+    throw new Error("Rolling review result publication changed an unexpected path set");
+  }
+  return resultPath;
 };
 
 type AuthSlots = Readonly<{ slot1B64?: string; slot2B64?: string }>;
@@ -504,9 +520,11 @@ const run = async (): Promise<void> => {
   // cycles apply when they ingest it.
   parseRollingReviewResult(record, { prNumber: record.pr_number, headSha: record.head_sha, fileName: fileStem });
 
-  // Evidence and backlog ingestion are committed from a separate docs-only
-  // worktree so the primary checkout stays untouched: one-parent commit on
+  // The validated result is committed from a separate docs-only worktree so
+  // the primary checkout stays untouched: one-parent result-only commit on
   // the exact development tip, gitleaks and secret-history gates, then push.
+  // Backlog ingestion is deliberately deferred to the controlled downstream
+  // ingestion/candidate path; this worker must never mix it into development.
   // Refresh development first: the review scratch rewrote the shared
   // origin/development ref to the reviewed merge base.
   await currentDevelopmentSha(root, gitEnv);
@@ -517,7 +535,6 @@ const run = async (): Promise<void> => {
     env: gitEnv,
   });
   try {
-    const currentBacklog = await readDevelopmentBacklog(docsScratch, gitEnv);
     const resultDirectory = `${docsScratch}/${SENTINEL_POLICY.paths.reviewResults}`;
     await Deno.mkdir(resultDirectory, { recursive: true, mode: 0o700 });
     await writeJsonFile(`${resultDirectory}/${fileStem}`, record);
@@ -543,7 +560,7 @@ const run = async (): Promise<void> => {
       await writeJsonFile(`${resultDirectory}/${fileStem}`, record);
     }
     const outcomes = [analyzeRollingReviewRecord(record)];
-    const nextBacklog = applyRollingReviewIngestion(currentBacklog, outcomes, new Date(reviewStart));
+    await stageRollingReviewResult(docsScratch, record, gitEnv);
     await assertGitHistoryExcludesValues({
       cwd: docsScratch,
       sensitiveValues: [
@@ -556,32 +573,15 @@ const run = async (): Promise<void> => {
       (await runTrustedGit({ args: ["rev-parse", "HEAD"], cwd: docsScratch, env: gitEnv })).stdout,
     ).trim();
     await runTrustedGit({
-      args: ["add", "--", `${SENTINEL_POLICY.paths.reviewResults}/`, SENTINEL_POLICY.paths.reviewBacklog],
-      cwd: docsScratch,
-      env: gitEnv,
-    });
-    const changedPaths = decodeUtf8(
-      (await runTrustedGit({
-        args: ["diff", "--cached", "--name-only", "-z"],
-        cwd: docsScratch,
-        env: gitEnv,
-      })).stdout,
-    ).split("\0").filter((path) => path.length > 0).sort();
-    const allowed = [resultPath, SENTINEL_POLICY.paths.reviewBacklog];
-    if (
-      changedPaths.length > 2 || changedPaths.some((path) => !allowed.includes(path)) ||
-      (nextBacklog === currentBacklog && changedPaths.length !== 1) ||
-      (nextBacklog !== currentBacklog && changedPaths.length !== 2)
-    ) {
-      throw new Error("Rolling review docs commit changed an unexpected path set");
-    }
-    const commitMessage = record.status === "unreachable"
-      ? `docs: record unreachable Sentinel rolling review target for PR #${task.number}`
-      : record.status === "rejected"
-      ? `docs: record Gitleaks-rejected Sentinel rolling review target for PR #${task.number}`
-      : `docs: ingest completed Sentinel rolling Codex review for PR #${task.number}`;
-    await runTrustedGit({
-      args: ["commit", "-m", commitMessage],
+      args: [
+        "commit",
+        "-m",
+        record.status === "unreachable"
+          ? `docs: record unreachable Sentinel rolling review target for PR #${task.number}`
+          : record.status === "rejected"
+          ? `docs: record Gitleaks-rejected Sentinel rolling review target for PR #${task.number}`
+          : `docs: record Sentinel rolling Codex review result for PR #${task.number}`,
+      ],
       cwd: docsScratch,
       env: gitEnv,
     });

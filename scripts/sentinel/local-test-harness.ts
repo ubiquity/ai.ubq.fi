@@ -79,7 +79,15 @@ export const SENTINEL_LOCAL_TEST_STAGES: readonly SentinelLocalTestStage[] = [
   {
     name: "luna-orchestrator",
     description: "Luna policy and orchestrator tests",
-    argv: ["test", "--cached-only", "--frozen", "tests/sentinel-orchestrator.test.ts"],
+    argv: [
+      "test",
+      "--cached-only",
+      "--frozen",
+      "--allow-read",
+      "--allow-write",
+      "--allow-run",
+      "tests/sentinel-orchestrator.test.ts",
+    ],
   },
   {
     name: "rollback",
