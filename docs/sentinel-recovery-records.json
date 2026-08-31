@@ -7814,40 +7814,6 @@
       "identity": {
         "repository": "ubiquity/ai.ubq.fi",
         "source_kind": "triage",
-        "source_id": "33219411210:artifact:9704641531",
-        "source_revision": "de18ba52955428592db6c3ccee32ea7b1027b54c",
-        "candidate_generation": 1
-      },
-      "run_id": "33219411210",
-      "attempt": 1,
-      "lease_token": "artifact-9704641531",
-      "base_sha": "de18ba52955428592db6c3ccee32ea7b1027b54c",
-      "phase": "rejected",
-      "disposition": "rejected",
-      "state_version": 1,
-      "created_at": "2026-08-28T23:11:23Z",
-      "updated_at": "2026-08-28T23:11:23Z",
-      "candidate_branch": null,
-      "candidate_sha": null,
-      "changed_files": [],
-      "tree_sha": null,
-      "failure_class": "artifact_invalid",
-      "failure_fingerprint": "3d25ddf49eb178444b7fe5eca5ca74cfa9b37cd0640be46c00f17c3722a52189",
-      "artifact_ids": [
-        9704641531
-      ],
-      "artifact_digests": [
-        "sha256:3d25ddf49eb178444b7fe5eca5ca74cfa9b37cd0640be46c00f17c3722a52189"
-      ],
-      "reason": "authenticated legacy evidence contains a terminal disposition",
-      "next_action": null,
-      "predecessor": null
-    },
-    {
-      "schema_version": 1,
-      "identity": {
-        "repository": "ubiquity/ai.ubq.fi",
-        "source_kind": "triage",
         "source_id": "33219411210",
         "source_revision": "de18ba52955428592db6c3ccee32ea7b1027b54c",
         "candidate_generation": 1
@@ -15287,6 +15253,40 @@
       ],
       "reason": "authenticated legacy evidence contains a terminal disposition",
       "next_action": null,
+      "predecessor": null
+    },
+    {
+      "schema_version": 1,
+      "identity": {
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_kind": "triage",
+        "source_id": "33384435518:artifact:9755084670",
+        "source_revision": "6098a83435c308168d9b28fc1ca0ac8a9afa2853",
+        "candidate_generation": 1
+      },
+      "run_id": "33384435518",
+      "attempt": 1,
+      "lease_token": "artifact-9755084670",
+      "base_sha": "6098a83435c308168d9b28fc1ca0ac8a9afa2853",
+      "phase": "manual_required",
+      "disposition": "manual_required",
+      "state_version": 1,
+      "created_at": "2026-08-31T10:56:43Z",
+      "updated_at": "2026-08-31T10:56:43Z",
+      "candidate_branch": null,
+      "candidate_sha": null,
+      "changed_files": [],
+      "tree_sha": null,
+      "failure_class": "artifact_invalid",
+      "failure_fingerprint": "c16a26936d68babbde100275398650745c8c99c926f5991b951908714ba8d3eb",
+      "artifact_ids": [
+        9755084670
+      ],
+      "artifact_digests": [
+        "sha256:c16a26936d68babbde100275398650745c8c99c926f5991b951908714ba8d3eb"
+      ],
+      "reason": "authenticated legacy evidence lacks a provable recovery record",
+      "next_action": "a repository owner must inspect the encrypted artifact and its exact workflow base",
       "predecessor": null
     },
     {
