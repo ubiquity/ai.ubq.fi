@@ -267,7 +267,7 @@ export const stageRollingReviewResult = async (
   await runTrustedGit({ args: ["add", "--", resultPath], cwd: checkoutPath, env: gitEnv });
   const staged = decodeUtf8(
     (await runTrustedGit({
-      args: ["diff", "--cached", "--name-status", "--no-renames", "-z"],
+      args: ["diff", "--cached", "--no-ext-diff", "--no-textconv", "--name-status", "--no-renames", "-z"],
       cwd: checkoutPath,
       env: gitEnv,
     })).stdout,
