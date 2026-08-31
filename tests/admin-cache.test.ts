@@ -111,3 +111,90 @@ Deno.test("admin cache serializes invalidation behind a pending write", async ()
   assert.equal(await pendingClear, true);
   assert.equal(records.size, 0);
 });
+
+Deno.test("admin cache reads wait for a queued invalidation", async () => {
+  const records = new Map<string, unknown>();
+  const database = {
+    transaction: () => {
+      const transaction: {
+        onabort?: () => void;
+        oncomplete?: () => void;
+        onerror?: () => void;
+        objectStore: () => {
+          get: (id: string) => {
+            onerror?: () => void;
+            onsuccess?: () => void;
+            result?: unknown;
+          };
+          index: () => {
+            openCursor: () => {
+              onerror?: () => void;
+              onsuccess?: () => void;
+              result?: null;
+            };
+          };
+          put: (record: { id: string }) => void;
+        };
+      } = {
+        objectStore: () => store,
+      };
+      const store = {
+        get: (id: string) => {
+          const request: {
+            onerror?: () => void;
+            onsuccess?: () => void;
+            result?: unknown;
+          } = {};
+          queueMicrotask(() => {
+            request.result = records.get(id);
+            request.onsuccess?.();
+            queueMicrotask(() => transaction.oncomplete?.());
+          });
+          return request;
+        },
+        index: () => ({
+          openCursor: () => {
+            const request: {
+              onerror?: () => void;
+              onsuccess?: () => void;
+              result?: null;
+            } = {};
+            setTimeout(() => {
+              records.clear();
+              request.result = null;
+              request.onsuccess?.();
+              queueMicrotask(() => transaction.oncomplete?.());
+            }, 10);
+            return request;
+          },
+        }),
+        put: (record: { id: string }) => {
+          records.set(record.id, record);
+          queueMicrotask(() => transaction.oncomplete?.());
+        },
+      };
+      return transaction;
+    },
+  };
+  const indexedDB = {
+    open: () => {
+      const request = {
+        onsuccess: undefined as (() => void) | undefined,
+        result: database,
+      };
+      queueMicrotask(() => request.onsuccess?.());
+      return request;
+    },
+  };
+  const cache = createAdminSnapshotCache({
+    indexedDB,
+    keyRange: { only: (scope: string) => scope },
+  });
+
+  assert.equal(await cache.write("scope", "key", { cached: true }), true);
+  const pendingClear = cache.clear("scope");
+  const readAfterClear = cache.read("scope", "key");
+
+  assert.equal(await pendingClear, true);
+  assert.equal(await readAfterClear, null);
+});

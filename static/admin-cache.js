@@ -63,6 +63,7 @@ export const createAdminSnapshotCache = ({
   const read = async (scope, key) => {
     if (!isNonEmptyString(scope) || !isNonEmptyString(key)) return null;
     try {
+      await mutationQueue;
       const database = await openDatabase();
       if (!database) return null;
       const transaction = database.transaction(STORE_NAME, "readonly");
