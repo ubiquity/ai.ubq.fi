@@ -1628,11 +1628,11 @@
       "attempt": 1,
       "lease_token": "33359012385-1",
       "base_sha": "f1fc82cc7a66d5882cdd19ea623dd4c02296e854",
-      "phase": "recovery_pending",
-      "disposition": "active",
-      "state_version": 2,
+      "phase": "rejected",
+      "disposition": "rejected",
+      "state_version": 3,
       "created_at": "2026-08-31T05:05:40.793Z",
-      "updated_at": "2026-08-31T05:08:25.900Z",
+      "updated_at": "2026-08-31T05:15:22.205Z",
       "candidate_branch": "sentinel/candidate-github_issue-5289263183-6f0a664cf8bc949b929222bbfe729af2-g34-b1f47fd02fb53a1c",
       "candidate_sha": null,
       "changed_files": [],
@@ -1641,8 +1641,8 @@
       "failure_fingerprint": null,
       "artifact_ids": [],
       "artifact_digests": [],
-      "reason": "The record is incomplete and requires another bounded reconciliation pass.",
-      "next_action": "Reconcile the recorded branch and candidate SHA.",
+      "reason": "rejected/no_candidate_diff",
+      "next_action": null,
       "predecessor": "[\"ubiquity/ai.ubq.fi\",\"github_issue\",\"5289263183\",\"ec8e38b3feef9721794190b28aa7bb781ce683829a8c203ec8faba631405b273\",2]"
     },
     {
@@ -26974,12 +26974,5 @@
       }
     }
   ],
-  "leases": [
-    {
-      "identity_key": "[\"ubiquity/ai.ubq.fi\",\"github_issue\",\"5289263183\",\"6f0a664cf8bc949b929222bbfe729af2277a7f354760e394d2894dd12c2e1e52\",34]",
-      "owner": "33359753742",
-      "token": "33359753742:43f85d7c-3634-455b-9454-9cd3305eba57",
-      "expires_at": "2026-08-31T05:25:22.205Z"
-    }
-  ]
+  "leases": []
 }
