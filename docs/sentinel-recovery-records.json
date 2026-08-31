@@ -28157,5 +28157,12 @@
       }
     }
   ],
-  "leases": []
+  "leases": [
+    {
+      "identity_key": "[\"ubiquity/ai.ubq.fi\",\"github_issue\",\"5289263183\",\"703a4d3a928943b933ce8f3ca41046993390d84eb69669fe0a358be1b9139c07\",6]",
+      "owner": "33367426086",
+      "token": "33367426086:81c36214-c997-42ba-b5f6-aaddcb84cb82",
+      "expires_at": "2026-08-31T07:25:21.938Z"
+    }
+  ]
 }
