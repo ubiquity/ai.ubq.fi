@@ -23,6 +23,7 @@ import {
 import { isSentinelProtectedImplementationPath } from "./policy.ts";
 import {
   parseSentinelRecoveryLedger,
+  SENTINEL_REQUIRED_LEGACY_ARTIFACT_IDS,
   sentinelRecoveryIdentityKey,
   upsertSentinelRecoveryRecord,
 } from "./recovery-ledger.ts";
@@ -1730,7 +1731,13 @@ const artifactCreatedAtMs = (artifact: GitHubArtifact): number => {
   return Number.isFinite(timestamp) ? timestamp : 0;
 };
 
-/** Select the newest bounded set of Sentinel evidence artifacts. */
+/**
+ * Select the newest bounded set of Sentinel evidence artifacts. Required
+ * artifact ids (the known self-healing candidates, plus any artifact referenced
+ * by an active recovery record) are always retained at the front of the result
+ * even when they fall outside the newest window or are already expired, so a
+ * required candidate is never silently dropped from the bounded scan.
+ */
 export const selectSentinelRecoveryArtifacts = (
   artifacts: readonly GitHubArtifact[],
   maximum = MAX_RECOVERY_ARTIFACTS,
@@ -1740,15 +1747,15 @@ export const selectSentinelRecoveryArtifacts = (
   if ([...requiredArtifactIds].some((artifactId) => !positiveSafeInteger(artifactId))) {
     throw new Error("Required Sentinel recovery artifact ID is invalid");
   }
-  const eligible = artifacts
-    .filter((artifact) => !artifact.expired && ARTIFACT_NAME.test(artifact.name))
+  const ordered = artifacts
+    .filter((artifact) => ARTIFACT_NAME.test(artifact.name))
     .sort((left, right) => {
       const createdAtDifference = artifactCreatedAtMs(right) - artifactCreatedAtMs(left);
       return createdAtDifference !== 0 ? createdAtDifference : right.id - left.id;
     });
   return [
-    ...eligible.filter((artifact) => requiredArtifactIds.has(artifact.id)),
-    ...eligible.filter((artifact) => !requiredArtifactIds.has(artifact.id)),
+    ...ordered.filter((artifact) => requiredArtifactIds.has(artifact.id)),
+    ...ordered.filter((artifact) => !requiredArtifactIds.has(artifact.id) && !artifact.expired),
   ].slice(0, maximum);
 };
 
@@ -2640,11 +2647,12 @@ export const recoverSentinelArtifactsInActions = async (
       fetcher: stateFetcher,
     });
     const currentDevelopmentHead = await currentRecoveryDevelopmentHead(input.token, input.repository, stateFetcher);
-    const requiredArtifactIds = new Set(
-      recoverySnapshot.ledger.records
+    const requiredArtifactIds = new Set([
+      ...SENTINEL_REQUIRED_LEGACY_ARTIFACT_IDS,
+      ...recoverySnapshot.ledger.records
         .filter((record) => record.disposition === "active")
         .flatMap((record) => record.artifact_ids),
-    );
+    ]);
     const artifacts = selectSentinelRecoveryArtifacts(
       await github.listRepositoryArtifacts({ createdAfterMs: Date.now() - 90 * 24 * 60 * 60 * 1_000 }),
       MAX_RECOVERY_ARTIFACTS,

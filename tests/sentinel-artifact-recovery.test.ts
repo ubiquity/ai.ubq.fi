@@ -28,8 +28,10 @@ import { matrixCellReportDigest } from "../scripts/sentinel/matrix.ts";
 import { parseSentinelRecoveryRecord, type SentinelRecoveryRecordV1 } from "../scripts/sentinel/recovery.ts";
 import type { SentinelRetryDecision } from "../scripts/sentinel/retry.ts";
 import {
+  isRequiredSentinelRecoveryRecord,
   parseSentinelRecoveryLedger,
   resolveSentinelRecoverySelection,
+  SENTINEL_REQUIRED_LEGACY_ARTIFACT_IDS,
   sentinelRecoveryIdentityKey,
   type SentinelRecoveryLedgerV1,
 } from "../scripts/sentinel/recovery-ledger.ts";
@@ -774,6 +776,130 @@ Deno.test({
     assert.equal(withRequiredOldest.length, 128);
     assert.equal(withRequiredOldest[0].id, 10_000);
     assert.equal(withRequiredOldest.some((artifact) => artifact.id === 10_001), false);
+  },
+});
+
+Deno.test({
+  name: "artifact selection always includes required artifacts outside the newest-128 window",
+  ignore: unavailable,
+  fn() {
+    const artifacts = Array.from(
+      { length: 128 },
+      (_, index) => makeArtifact(20_000 + index, new Date(Date.UTC(2026, 7, 28, 19, index)).toISOString()),
+    );
+    // A required legacy artifact that is older than the whole window and
+    // already expired must still be scanned so its terminal disposition is
+    // proved and retained rather than silently dropped from the bounded scan.
+    artifacts.push(
+      makeArtifact(9695880683, new Date(Date.UTC(2026, 7, 20, 3, 0)).toISOString(), {
+        workflowRunId: 33190526163,
+        workflowRunHeadSha: "d".repeat(40),
+        expired: true,
+      }),
+    );
+    const selected = selectSentinelRecoveryArtifacts(artifacts, 128, new Set([9695880683]));
+    assert.equal(selected.length, 128);
+    assert.equal(selected[0]!.id, 9695880683);
+    // The newest live artifacts fill the rest of the bounded window.
+    assert.equal(selected.some((artifact) => artifact.id === 20_127), true);
+    // The oldest live artifact is dropped to make room for the required one.
+    assert.equal(selected.some((artifact) => artifact.id === 20_000), false);
+  },
+});
+
+Deno.test({
+  name: "required legacy artifact ids are retained by the Actions scan regardless of active records",
+  ignore: unavailable,
+  fn() {
+    const artifacts = [
+      makeArtifact(9697049137, "2026-08-28T17:58:52.000Z", {
+        workflowRunId: 33197180235,
+        workflowRunHeadSha: "b".repeat(40),
+      }),
+      makeArtifact(9695880683, "2026-08-26T10:00:00.000Z", {
+        workflowRunId: 33190526163,
+        workflowRunHeadSha: "d".repeat(40),
+      }),
+    ];
+    // A full ledger with no active records (so no artifact is "required" via
+    // the active-record rule) still keeps the legacy artifact ids required.
+    const ledger = parseSentinelRecoveryLedger({
+      schema_version: 1,
+      records: [
+        terminalRecoveryRecordForLegacyArtifact(
+          "ubiquity/ai.ubq.fi",
+          artifacts[0]!,
+          `sha256:${"c".repeat(64)}`,
+          "manual_required",
+        )!,
+      ],
+      retry_history: [],
+      retry_decisions: [],
+      leases: [],
+    });
+    const requiredArtifactIds = new Set<number>([
+      ...SENTINEL_REQUIRED_LEGACY_ARTIFACT_IDS,
+      ...ledger.records.filter((record) => record.disposition === "active").flatMap((record) => record.artifact_ids),
+    ]);
+    const selected = selectSentinelRecoveryArtifacts(artifacts, 128, requiredArtifactIds);
+    assert.equal(selected.length, 2);
+    assert.equal(selected.some((artifact) => artifact.id === 9697049137), true);
+    assert.equal(selected.some((artifact) => artifact.id === 9695880683), true);
+  },
+});
+
+Deno.test({
+  name: "the known legacy candidates each resolve to a durable required disposition",
+  ignore: unavailable,
+  fn() {
+    // run 33197180235 / artifact 9697049137
+    const artifactA = makeArtifact(9697049137, "2026-08-28T17:58:52.000Z", {
+      workflowRunId: 33197180235,
+      workflowRunHeadSha: "b".repeat(40),
+    });
+    const recordA = terminalRecoveryRecordForLegacyArtifact(
+      "ubiquity/ai.ubq.fi",
+      artifactA,
+      `sha256:${"c".repeat(64)}`,
+      "manual_required",
+    );
+    assert(recordA);
+    assert.equal(recordA.disposition, "manual_required");
+    assert.equal(recordA.identity.source_id, "33197180235:artifact:9697049137");
+    assert.deepEqual(recordA.artifact_ids, [9697049137]);
+    assert.equal(isRequiredSentinelRecoveryRecord(recordA), true);
+    // run 33190526163 / artifact 9695880683
+    const artifactB = makeArtifact(9695880683, "2026-08-26T10:00:00.000Z", {
+      workflowRunId: 33190526163,
+      workflowRunHeadSha: "d".repeat(40),
+    });
+    const recordB = terminalRecoveryRecordForLegacyArtifact(
+      "ubiquity/ai.ubq.fi",
+      artifactB,
+      `sha256:${"e".repeat(64)}`,
+      "manual_required",
+    );
+    assert(recordB);
+    assert.equal(recordB.disposition, "manual_required");
+    assert.equal(recordB.identity.source_id, "33190526163:artifact:9695880683");
+    assert.deepEqual(recordB.artifact_ids, [9695880683]);
+    assert.equal(isRequiredSentinelRecoveryRecord(recordB), true);
+    // issue #136 candidate sentinel/candidate-33188346422-1
+    const issueRecord = makeRecord("7a1a853bedbcec6e103f62ab82ace2c60bb9ae7a", {
+      identity: {
+        repository: "ubiquity/ai.ubq.fi",
+        source_kind: "github_issue",
+        source_id: "136",
+        source_revision: "7a1a853bedbcec6e103f62ab82ace2c60bb9ae7a",
+        candidate_generation: 1,
+      },
+      candidate_branch: "sentinel/candidate-33188346422-1",
+      candidate_sha: "7a1a853bedbcec6e103f62ab82ace2c60bb9ae7a",
+      phase: "retry_wait",
+      state_version: 2,
+    });
+    assert.equal(isRequiredSentinelRecoveryRecord(issueRecord), true);
+    assert.equal(issueRecord.candidate_branch, "sentinel/candidate-33188346422-1");
   },
 });
 

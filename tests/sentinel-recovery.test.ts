@@ -8,9 +8,11 @@ import {
 import {
   acquireSentinelRecoveryLease,
   emptySentinelRecoveryLedger,
+  isRequiredSentinelRecoveryRecord,
   nonTerminalSentinelRecoveryRecords,
   parseSentinelRecoveryLedger,
   renderSentinelRecoveryLedger,
+  SENTINEL_REQUIRED_LEGACY_ARTIFACT_IDS,
   sentinelRecoveryIdentityKey,
   type SentinelRecoveryLedgerV1,
   upsertSentinelRecoveryRecord,
@@ -20,7 +22,10 @@ import {
   readGitHubSentinelRecoveryLedger,
   writeGitHubSentinelRecoveryLedger,
 } from "../scripts/sentinel/recovery-github-store.ts";
-import { runSentinelRecoveryPass } from "../scripts/sentinel/recovery-controller.ts";
+import {
+  escalateAgedSentinelRecoveryRecords,
+  runSentinelRecoveryPass,
+} from "../scripts/sentinel/recovery-controller.ts";
 
 const record = (overrides: Record<string, unknown> = {}) => ({
   schema_version: 1,
@@ -174,6 +179,87 @@ Deno.test("recovery ledger prunes the oldest terminal record before reaching its
   }));
   const pruned = upsertSentinelRecoveryRecord(full, claimed, null);
   assert.equal(pruned.records.length, 512);
+  assert.equal(pruned.records.some((entry) => entry.identity.source_id === "1"), false);
+  assert.equal(pruned.records.some((entry) => entry.identity.source_id === "513"), true);
+});
+
+Deno.test("recovery ledger retains required legacy records beyond the hard cap", () => {
+  // A full 512-record ledger of non-required terminal records.
+  const terminal = Array.from({ length: 510 }, (_, index) =>
+    parseSentinelRecoveryRecord(record({
+      identity: {
+        repository: "ubiquity/ai.ubq.fi",
+        source_kind: "github_issue",
+        source_id: String(index + 1),
+        source_revision: "a".repeat(64),
+        candidate_generation: 1,
+      },
+      phase: "rejected",
+      disposition: "rejected",
+      updated_at: new Date(Date.parse("2026-08-28T18:01:00.000Z") + index).toISOString(),
+      reason: "rejected/no_candidate_diff",
+      next_action: null,
+    })));
+  // Required legacy candidates that are the OLDEST records: without the
+  // required-retention rule they would be the first terminal records pruned.
+  const requiredArtifact = parseSentinelRecoveryRecord(record({
+    identity: {
+      repository: "ubiquity/ai.ubq.fi",
+      source_kind: "triage",
+      source_id: "33197180235:artifact:9697049137",
+      source_revision: "b".repeat(40),
+      candidate_generation: 1,
+    },
+    phase: "manual_required",
+    disposition: "manual_required",
+    updated_at: "2026-08-27T17:00:00.000Z",
+    failure_class: "artifact_invalid",
+    artifact_ids: [9697049137],
+    artifact_digests: [`sha256:${"c".repeat(64)}`],
+    reason: "authenticated legacy evidence lacks a provable recovery record",
+    next_action: "a repository owner must inspect the encrypted artifact and its exact workflow base",
+  }));
+  const requiredIssue = parseSentinelRecoveryRecord(record({
+    identity: {
+      repository: "ubiquity/ai.ubq.fi",
+      source_kind: "github_issue",
+      source_id: "136",
+      source_revision: "d".repeat(40),
+      candidate_generation: 1,
+    },
+    phase: "manual_required",
+    disposition: "manual_required",
+    updated_at: "2026-08-27T16:00:00.000Z",
+    reason: "manual_required",
+    next_action: "Owner must resolve issue #136.",
+  }));
+  const full = parseSentinelRecoveryLedger({
+    ...emptySentinelRecoveryLedger(),
+    records: [...terminal, requiredArtifact, requiredIssue],
+  });
+  const claimed = parseSentinelRecoveryRecord(record({
+    identity: {
+      repository: "ubiquity/ai.ubq.fi",
+      source_kind: "github_issue",
+      source_id: "513",
+      source_revision: "a".repeat(64),
+      candidate_generation: 1,
+    },
+    phase: "claimed",
+    state_version: 1,
+    candidate_branch: null,
+    candidate_sha: null,
+  }));
+  const pruned = upsertSentinelRecoveryRecord(full, claimed, null);
+  assert.equal(pruned.records.length, 512);
+  const retainedKeys = pruned.records.map((entry) => sentinelRecoveryIdentityKey(entry.identity));
+  // Both required legacy identities survive eviction despite being the oldest.
+  assert.ok(retainedKeys.includes(sentinelRecoveryIdentityKey(requiredArtifact.identity)));
+  assert.ok(retainedKeys.includes(sentinelRecoveryIdentityKey(requiredIssue.identity)));
+  assert.equal(isRequiredSentinelRecoveryRecord(requiredArtifact), true);
+  assert.equal(isRequiredSentinelRecoveryRecord(requiredIssue), true);
+  assert.equal(SENTINEL_REQUIRED_LEGACY_ARTIFACT_IDS.includes(9695880683), true);
+  // The oldest non-required terminal record is still pruned to stay at the cap.
   assert.equal(pruned.records.some((entry) => entry.identity.source_id === "1"), false);
   assert.equal(pruned.records.some((entry) => entry.identity.source_id === "513"), true);
 });
@@ -587,5 +673,138 @@ Deno.test({
     assert.equal(reconciled.failure_fingerprint, "8".repeat(64));
     assert.equal(after.retry_history.length, 0);
     assert.equal(after.retry_decisions.length, 0);
+  },
+});
+
+Deno.test("aged non-terminal records escalate to manual_required with owner and next action", () => {
+  const aged = parseSentinelRecoveryRecord(record({
+    lease_token: "lease-aged",
+    phase: "retry_wait",
+    state_version: 3,
+    updated_at: "2026-08-27T18:00:00.000Z",
+  }));
+  const fresh = parseSentinelRecoveryRecord(record({
+    identity: {
+      repository: "ubiquity/ai.ubq.fi",
+      source_kind: "github_issue",
+      source_id: "137",
+      source_revision: "a".repeat(64),
+      candidate_generation: 1,
+    },
+    run_id: "33197180236",
+    lease_token: "lease-fresh",
+    phase: "retry_wait",
+    state_version: 3,
+    updated_at: "2026-08-28T17:30:00.000Z",
+  }));
+  const ledgerSentinelRecovery = parseSentinelRecoveryLedger({
+    ...emptySentinelRecoveryLedger(),
+    records: [aged, fresh],
+  });
+  const escalated = escalateAgedSentinelRecoveryRecords(ledgerSentinelRecovery, {
+    now: "2026-08-28T19:00:00.000Z",
+    owner: "run-1",
+    sla_window_ms: 24 * 60 * 60 * 1_000,
+  });
+  assert.equal(escalated.escalated.length, 1);
+  const agedKey = sentinelRecoveryIdentityKey(aged.identity);
+  const agedAfter = escalated.ledger.records.find((candidate) =>
+    sentinelRecoveryIdentityKey(candidate.identity) === agedKey
+  )!;
+  assert.equal(agedAfter.phase, "manual_required");
+  assert.equal(agedAfter.disposition, "manual_required");
+  assert.equal(agedAfter.state_version, aged.state_version + 1);
+  assert.equal(agedAfter.failure_class, "sla_escalation");
+  assert.match(agedAfter.reason ?? "", /service-level window/u);
+  assert.match(agedAfter.next_action ?? "", /Owner run-1/u);
+  // A recent non-terminal record is left untouched.
+  const freshKey = sentinelRecoveryIdentityKey(fresh.identity);
+  const freshAfter = escalated.ledger.records.find((candidate) =>
+    sentinelRecoveryIdentityKey(candidate.identity) === freshKey
+  )!;
+  assert.equal(freshAfter.phase, "retry_wait");
+  assert.equal(freshAfter.state_version, fresh.state_version);
+});
+
+Deno.test("SLA escalation skips records leased by another active owner", () => {
+  const aged = parseSentinelRecoveryRecord(record({
+    phase: "retry_wait",
+    state_version: 3,
+    updated_at: "2026-08-27T18:00:00.000Z",
+  }));
+  const key = sentinelRecoveryIdentityKey(aged.identity);
+  const ledger = parseSentinelRecoveryLedger({
+    ...emptySentinelRecoveryLedger(),
+    records: [aged],
+    leases: [{
+      identity_key: key,
+      owner: "run-2",
+      token: "lease-other",
+      expires_at: "2026-08-28T20:00:00.000Z",
+    }],
+  });
+  const escalated = escalateAgedSentinelRecoveryRecords(ledger, {
+    now: "2026-08-28T19:00:00.000Z",
+    owner: "run-1",
+    sla_window_ms: 24 * 60 * 60 * 1_000,
+  });
+  assert.equal(escalated.escalated.length, 0);
+  const after = escalated.ledger.records.find((candidate) => sentinelRecoveryIdentityKey(candidate.identity) === key)!;
+  assert.equal(after.phase, "retry_wait");
+  // The same record with a stale foreign lease is escalated by the owner.
+  const staleLease = escalateAgedSentinelRecoveryRecords(
+    parseSentinelRecoveryLedger({
+      ...emptySentinelRecoveryLedger(),
+      records: [aged],
+      leases: [{
+        identity_key: key,
+        owner: "run-2",
+        token: "lease-other",
+        expires_at: "2026-08-28T18:00:00.000Z",
+      }],
+    }),
+    { now: "2026-08-28T19:00:00.000Z", owner: "run-1", sla_window_ms: 24 * 60 * 60 * 1_000 },
+  );
+  assert.equal(staleLease.escalated.length, 1);
+  assert.equal(
+    staleLease.ledger.records.find((candidate) => sentinelRecoveryIdentityKey(candidate.identity) === key)!.phase,
+    "manual_required",
+  );
+});
+
+Deno.test({
+  name: "an aged non-terminal record is escalated by the recovery pass without further reconciliation",
+  async fn() {
+    const aged = parseSentinelRecoveryRecord(record({
+      lease_token: "lease-aged",
+      phase: "retry_wait",
+      state_version: 3,
+      updated_at: "2026-08-27T18:00:00.000Z",
+    }));
+    const key = sentinelRecoveryIdentityKey(aged.identity);
+    const { fetcher, ledger } = recoveryPassFetcher({
+      ledger: {
+        schema_version: 1,
+        records: [aged],
+        retry_history: [],
+        retry_decisions: [],
+        leases: [],
+      },
+      candidateShas: {},
+    });
+    const results = await runSentinelRecoveryPass({
+      token: "token",
+      repository: "ubiquity/ai.ubq.fi",
+      owner: "run-1",
+      now: "2026-08-28T19:10:00.000Z",
+      fetcher,
+    });
+    assert.deepEqual(results.map((result) => result.action), ["manual_required"]);
+    const after = ledger();
+    const escalated = after.records.find((candidate) => sentinelRecoveryIdentityKey(candidate.identity) === key)!;
+    assert.equal(escalated.phase, "manual_required");
+    assert.equal(escalated.disposition, "manual_required");
+    assert.equal(escalated.state_version, aged.state_version + 1);
+    assert.match(escalated.next_action ?? "", /Owner run-1/u);
   },
 });

@@ -8,8 +8,10 @@ import { isSentinelRecoveryCandidateBranch, sentinelRecoveryCandidateBranch } fr
 import {
   acquireSentinelRecoveryLease,
   nonTerminalSentinelRecoveryRecords,
+  parseSentinelRecoveryLedger,
   releaseSentinelRecoveryLease,
   sentinelRecoveryIdentityKey,
+  type SentinelRecoveryLedgerV1,
   upsertSentinelRecoveryRecord,
 } from "./recovery-ledger.ts";
 import {
@@ -17,7 +19,11 @@ import {
   type SentinelRecoveryLedgerSnapshot,
   writeGitHubSentinelRecoveryLedger,
 } from "./recovery-github-store.ts";
-import type { SentinelRecoveryRecordV1 } from "./recovery.ts";
+import {
+  assertSentinelRecoveryTransition,
+  parseSentinelRecoveryRecord,
+  type SentinelRecoveryRecordV1,
+} from "./recovery.ts";
 import { applySentinelRetryPolicyToRecovery, type SentinelFailureClass } from "./retry.ts";
 
 const FULL_SHA = /^[0-9a-f]{40}$/u;
@@ -158,6 +164,64 @@ const recoveredCheckpointNotActionable = (
   (action === "checkpoint_confirmed" || action === "resume_validation" || action === "resume_review" ||
     action === "delivery_confirmed");
 
+// The deterministic recovery service-level window. A non-terminal record older
+// than this is a blocked candidate: it is escalated to `manual_required` with
+// the pass owner and an exact next action rather than retrying indefinitely.
+const SENTINEL_RECOVERY_SLA_WINDOW_MS = 24 * 60 * 60 * 1_000;
+
+const slaEscalationRecord = (
+  current: SentinelRecoveryRecordV1,
+  now: string,
+  owner: string,
+): SentinelRecoveryRecordV1 => {
+  const next: SentinelRecoveryRecordV1 = {
+    ...current,
+    phase: "manual_required",
+    disposition: "manual_required",
+    state_version: current.state_version + 1,
+    updated_at: now,
+    failure_class: current.failure_class ?? "sla_escalation",
+    reason: "The recovery record exceeded its Sentinel service-level window without a durable disposition.",
+    next_action: `Owner ${owner} must resolve the ${current.phase} recovery record before another Sentinel attempt.`,
+  };
+  assertSentinelRecoveryTransition(current, next);
+  return parseSentinelRecoveryRecord(next);
+};
+
+/**
+ * Deterministic SLA escalation: every non-terminal recovery record whose age
+ * exceeds the service-level window is advanced to `manual_required` with the
+ * acting owner and an exact next action. Records holding a live lease owned by
+ * another actor are left to that actor (an actively worked record is not
+ * stuck), and already-terminal records are never touched. It is idempotent:
+ * an escalated record is terminal on the next pass and is skipped.
+ */
+export const escalateAgedSentinelRecoveryRecords = (
+  ledgerValue: unknown,
+  input: Readonly<{ now: string; owner: string; sla_window_ms?: number }>,
+): Readonly<{ ledger: SentinelRecoveryLedgerV1; escalated: readonly SentinelRecoveryRecordV1[] }> => {
+  const ledger = parseSentinelRecoveryLedger(ledgerValue);
+  if (!input.owner.trim() || !Number.isFinite(Date.parse(input.now))) {
+    throw new Error("Sentinel recovery SLA escalation identity is invalid");
+  }
+  const windowMs = input.sla_window_ms === undefined ? SENTINEL_RECOVERY_SLA_WINDOW_MS : input.sla_window_ms;
+  if (!Number.isSafeInteger(windowMs) || windowMs < 0) {
+    throw new Error("Sentinel recovery SLA window is invalid");
+  }
+  let result = ledger;
+  const escalated: SentinelRecoveryRecordV1[] = [];
+  for (const record of nonTerminalSentinelRecoveryRecords(ledger)) {
+    const key = sentinelRecoveryIdentityKey(record.identity);
+    const lease = ledger.leases.find((candidate) => candidate.identity_key === key);
+    if (lease && lease.owner !== input.owner && Date.parse(lease.expires_at) > Date.parse(input.now)) continue;
+    if (Date.parse(input.now) - Date.parse(record.updated_at) <= windowMs) continue;
+    const next = slaEscalationRecord(record, input.now, input.owner);
+    result = upsertSentinelRecoveryRecord(result, next, record.state_version);
+    escalated.push(next);
+  }
+  return { ledger: result, escalated };
+};
+
 export const runSentinelRecoveryPass = async (
   input: Readonly<{
     token: string;
@@ -173,7 +237,21 @@ export const runSentinelRecoveryPass = async (
     throw new Error("Sentinel recovery pass identity is invalid");
   }
   let snapshot: SentinelRecoveryLedgerSnapshot = await readGitHubSentinelRecoveryLedger({ ...input, fetcher });
-  const results: SentinelRecoveryPassResult[] = [];
+  const sla = escalateAgedSentinelRecoveryRecords(snapshot.ledger, { now, owner: input.owner });
+  if (sla.escalated.length > 0) {
+    snapshot = await writeGitHubSentinelRecoveryLedger({
+      ...input,
+      fetcher,
+      snapshot,
+      ledger: sla.ledger,
+      message: "chore(sentinel): escalate aged recovery to manual_required",
+    });
+  }
+  const results: SentinelRecoveryPassResult[] = sla.escalated.map((record) => ({
+    identity_key: sentinelRecoveryIdentityKey(record.identity),
+    action: "manual_required" as SentinelRecoveryReconciliationAction,
+    state_version: record.state_version,
+  }));
   for (const recoveryRecord of nonTerminalSentinelRecoveryRecords(snapshot.ledger).slice(0, MAX_RECORDS_PER_PASS)) {
     const key = sentinelRecoveryIdentityKey(recoveryRecord.identity);
     const currentLease = snapshot.ledger.leases.find((lease) => lease.identity_key === key);
