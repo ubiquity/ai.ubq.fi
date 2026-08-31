@@ -18,7 +18,11 @@ import {
   type SentinelPullRequest,
   unreachableRollingReviewRecord,
 } from "../scripts/sentinel/rolling-review.ts";
-import { parseSentinelPullList } from "../scripts/sentinel/rolling-review-worker.ts";
+import {
+  deferGitleaksRejectedTarget,
+  GITLEAKS_TARGET_REJECTION,
+  parseSentinelPullList,
+} from "../scripts/sentinel/rolling-review-worker.ts";
 import { SENTINEL_POLICY } from "../scripts/sentinel/policy.ts";
 import { parseReviewBacklog, renderReviewBacklog, selectNextReviewBacklogEntry } from "../scripts/sentinel/review.ts";
 import type { NativeReviewFinding } from "../scripts/sentinel/types.ts";
@@ -815,5 +819,189 @@ Deno.test("rolling review live fast-forward candidate shape is retained as unrea
   assert.throws(
     () => scanRollingReviewResults([pull147], [{ ...record, head_branch: "sentinel/candidate-999-nosuchbranch" }]),
     /drifted/,
+  );
+});
+
+Deno.test("rolling review anchored Gitleaks rejection is the strict rejected disposition", () => {
+  // `scanCandidateWithGitleaks` throws exactly this error object when it
+  // rejects the candidate working tree or Git history, and the worker must
+  // catch only this target-validation rejection.
+  const task = push(931);
+  const baseSha = "b".repeat(40);
+  const observedAt = "2026-08-31T00:00:00.000Z";
+  const scanFailure = new Error(GITLEAKS_TARGET_REJECTION);
+  const deferred = deferGitleaksRejectedTarget(
+    scanFailure,
+    { prNumber: task.number, prUrl: task.htmlUrl, headSha: task.headSha, headRef: task.headRef },
+    baseSha,
+    observedAt,
+  );
+  // The disposition keeps the same exact PR/head identity as the selected
+  // target and passes the same strict contract later cycles apply.
+  const fileName = rollingReviewResultFileName(task.number, task.headSha);
+  assert.equal(deferred.pr_number, task.number);
+  assert.equal(deferred.pr_url, task.htmlUrl);
+  assert.equal(deferred.head_sha, task.headSha);
+  assert.equal(deferred.head_branch, task.headRef);
+  assert.equal(deferred.request_id, rollingReviewRequestId(task.number, task.headSha));
+  // The target was successfully anchored before the gate rejected it, so the
+  // exact proven merge base is preserved: never base_sha:null, and never the
+  // unanchored unreachable semantics.
+  assert.equal(deferred.base_sha, baseSha);
+  assert.equal(
+    parseRollingReviewResult(deferred, { prNumber: task.number, headSha: task.headSha, fileName }).status,
+    "rejected",
+  );
+  // It is the non-complete fail-closed disposition, never a completed review,
+  // and it carries the exact safe rejection reason with zero findings.
+  assert.notEqual(deferred.status, "completed");
+  assert.equal(deferred.status, "rejected");
+  assert.equal(deferred.parse_status, "rejected");
+  assert.equal(deferred.failure, GITLEAKS_TARGET_REJECTION);
+  assert.deepEqual(deferred.findings, []);
+  assert.equal(deferred.raw_review_text, "");
+  assert.equal(deferred.review_stderr, "");
+  assert.equal(deferred.structured_review, null);
+  // A malformed rejected record fails closed exactly like every other
+  // disposition: the exact base can never be dropped, the failure can never
+  // be erased, findings can never be attached, and status/parse status can
+  // never diverge.
+  assert.throws(
+    () =>
+      parseRollingReviewResult({ ...deferred, base_sha: null }, {
+        prNumber: task.number,
+        headSha: task.headSha,
+        fileName,
+      }),
+    /base SHA is invalid/u,
+  );
+  assert.throws(
+    () =>
+      parseRollingReviewResult({ ...deferred, failure: null }, {
+        prNumber: task.number,
+        headSha: task.headSha,
+        fileName,
+      }),
+    /internally inconsistent/u,
+  );
+  assert.throws(
+    () =>
+      parseRollingReviewResult({ ...deferred, findings: [finding("c1".repeat(32), "P2")] }, {
+        prNumber: task.number,
+        headSha: task.headSha,
+        fileName,
+      }),
+    /internally inconsistent/u,
+  );
+  assert.throws(
+    () =>
+      parseRollingReviewResult({ ...deferred, parse_status: "no_findings" }, {
+        prNumber: task.number,
+        headSha: task.headSha,
+        fileName,
+      }),
+    /internally inconsistent/u,
+  );
+  assert.throws(
+    () =>
+      parseRollingReviewResult({ ...deferred, base_sha: task.headSha }, {
+        prNumber: task.number,
+        headSha: task.headSha,
+        fileName,
+      }),
+    /base SHA is invalid/u,
+  );
+  const outcome = analyzeRollingReviewRecord(deferred);
+  assert.deepEqual(outcome.priorityFindings, []);
+  assert.deepEqual(outcome.backlogFindings, []);
+  assert.equal(outcome.report, null);
+  assert.equal(
+    applyRollingReviewIngestion(renderReviewBacklog([]), [outcome], new Date("2026-08-31T00:00:01.000Z")),
+    renderReviewBacklog([]),
+  );
+  // The target is consumed exactly like every other durable disposition, so
+  // the worker never re-selects it: the next cycle reports no pending review
+  // for the target and the worker exits successfully instead of failing.
+  const scan = scanRollingReviewResults([task], [deferred]);
+  assert.deepEqual(scan.reviewed.map((entry) => entry.pull.number), [931]);
+  assert.deepEqual(scan.unreviewed, []);
+  assert.equal(selectNextRollingReviewTask([task], [deferred]), null);
+  assert.equal(
+    selectRollingReviewTaskFromIdentities(
+      [task],
+      parseRollingReviewResultFileNames([`${REVIEW_RESULT_PREFIX}${fileName}`]),
+    ),
+    null,
+  );
+});
+
+Deno.test("rolling review Gitleaks rejection keeps unreachable semantics only for unanchored targets", () => {
+  const task = push(932);
+  const observedAt = "2026-08-31T00:00:00.000Z";
+  const scanFailure = new Error(GITLEAKS_TARGET_REJECTION);
+  // A genuinely unanchored target has no distinct base to preserve, so the
+  // existing unreachable disposition is retained: base_sha null, exact safe
+  // failure, zero findings, never completed, never ingested, never reselected.
+  const deferred = deferGitleaksRejectedTarget(
+    scanFailure,
+    { prNumber: task.number, prUrl: task.htmlUrl, headSha: task.headSha, headRef: task.headRef },
+    null,
+    observedAt,
+  );
+  const fileName = rollingReviewResultFileName(task.number, task.headSha);
+  assert.equal(deferred.status, "unreachable");
+  assert.equal(deferred.parse_status, "unreachable");
+  assert.equal(deferred.base_sha, null);
+  assert.equal(deferred.failure, GITLEAKS_TARGET_REJECTION);
+  assert.deepEqual(deferred.findings, []);
+  assert.equal(
+    parseRollingReviewResult(deferred, { prNumber: task.number, headSha: task.headSha, fileName }).base_sha,
+    null,
+  );
+  const outcome = analyzeRollingReviewRecord(deferred);
+  assert.deepEqual(outcome.priorityFindings, []);
+  assert.deepEqual(outcome.backlogFindings, []);
+  assert.equal(outcome.report, null);
+  assert.equal(
+    applyRollingReviewIngestion(renderReviewBacklog([]), [outcome], new Date("2026-08-31T00:00:01.000Z")),
+    renderReviewBacklog([]),
+  );
+  assert.equal(selectNextRollingReviewTask([task], [deferred]), null);
+});
+
+Deno.test("rolling review Gitleaks rejection fail-closes on invalid base and only the exact rejection", () => {
+  const task = push(933);
+  const observedAt = "2026-08-31T00:00:00.000Z";
+  const target = { prNumber: task.number, prUrl: task.htmlUrl, headSha: task.headSha, headRef: task.headRef };
+  // An anchored rejection must carry a well-formed exact base distinct from
+  // the head: an invalid base fails closed through the strict contract
+  // instead of manufacturing evidence.
+  assert.throws(
+    () => deferGitleaksRejectedTarget(new Error(GITLEAKS_TARGET_REJECTION), target, task.headSha, observedAt),
+    /base SHA is invalid/u,
+  );
+  assert.throws(
+    () => deferGitleaksRejectedTarget(new Error(GITLEAKS_TARGET_REJECTION), target, "not-a-sha", observedAt),
+    /base SHA is invalid/u,
+  );
+  // Only the exact rejection is deferred: every other scan or tooling error
+  // still throws through the worker unchanged instead of being masked.
+  assert.throws(
+    () => deferGitleaksRejectedTarget(new Error("unexpected scan failure"), target, "b".repeat(40), observedAt),
+    /unexpected scan failure/u,
+  );
+  assert.throws(
+    () =>
+      deferGitleaksRejectedTarget(
+        new TypeError(GITLEAKS_TARGET_REJECTION),
+        target,
+        "b".repeat(40),
+        observedAt,
+      ),
+    /Gitleaks rejected the candidate/u,
+  );
+  assert.throws(
+    () => deferGitleaksRejectedTarget(GITLEAKS_TARGET_REJECTION, target, "b".repeat(40), observedAt),
+    /Gitleaks rejected the candidate/u,
   );
 });

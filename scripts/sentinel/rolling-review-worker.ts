@@ -8,6 +8,7 @@ import {
   parseCompletedRollingReview,
   parseRollingReviewResult,
   parseRollingReviewResultFileName,
+  rejectedRollingReviewRecord,
   resolveRollingReviewTargetAnchor,
   rollingReviewRequestId,
   type RollingReviewResult,
@@ -33,11 +34,67 @@ import {
  * that cannot be anchored to development (git merge-base finds no common
  * ancestor, or the merge base is the head itself) also exits cleanly after
  * retaining a durable `unreachable` disposition, so a historical or displaced
- * candidate never blocks Sentinel forward progress. Every durable review
- * result is strictly validated before ingestion, and any malformed or
- * identity-mismatched data fails closed (nothing ingested, nothing pushed,
- * exact evidence retained, non-zero exit).
+ * candidate never blocks Sentinel forward progress. A review target whose
+ * candidate working tree or Git history is rejected by the Gitleaks gate is
+ * retained with a durable non-complete disposition carrying the exact safe
+ * rejection reason: an anchored target keeps the exact proven base SHA in the
+ * fail-closed `rejected` disposition, while a genuinely unanchored target
+ * keeps its existing `unreachable` semantics. Its review evidence is never
+ * published and zero findings are ingested, while the worker still exits
+ * cleanly. Every durable review result is strictly validated before
+ * ingestion, and any malformed or identity-mismatched data fails closed
+ * (nothing ingested, nothing pushed, exact evidence retained, non-zero exit).
  */
+
+/**
+ * The exact target-validation rejection thrown by `scanCandidateWithGitleaks`
+ * when Gitleaks flags the candidate working tree or Git history. The message
+ * is fixed and contains no secret material, so it is safe to persist verbatim
+ * as the exact rejection reason of the durable disposition.
+ */
+export const GITLEAKS_TARGET_REJECTION = "Gitleaks rejected the candidate or Git history";
+
+/**
+ * Fail-closed handling of one Gitleaks target-validation rejection: only the
+ * exact rejection above (a plain `Error` carrying the exact message thrown by
+ * `scanCandidateWithGitleaks`) converts the selected target into a durable
+ * non-complete disposition carrying the same exact PR/head identity and the
+ * exact safe rejection reason. An anchored target (`baseSha` is its proven
+ * exact merge base) becomes the strict `rejected` disposition that preserves
+ * that exact base SHA; a genuinely unanchored target (`baseSha` is null)
+ * keeps the existing `unreachable` semantics with a null base. Any other
+ * error is an unexpected scan or tooling failure and rethrows unchanged, so
+ * the worker still fails instead of masking it.
+ */
+export const deferGitleaksRejectedTarget = (
+  error: unknown,
+  target: Readonly<{ prNumber: number; prUrl: string; headSha: string; headRef: string }>,
+  baseSha: string | null,
+  observedAt: string,
+): RollingReviewResult => {
+  if (!(error instanceof Error) || error.constructor !== Error || error.message !== GITLEAKS_TARGET_REJECTION) {
+    throw error;
+  }
+  if (baseSha === null) {
+    return unreachableRollingReviewRecord({
+      prNumber: target.prNumber,
+      prUrl: target.prUrl,
+      headSha: target.headSha,
+      headRef: target.headRef,
+      failure: error.message,
+      observedAt,
+    });
+  }
+  return rejectedRollingReviewRecord({
+    prNumber: target.prNumber,
+    prUrl: target.prUrl,
+    headSha: target.headSha,
+    baseSha,
+    headRef: target.headRef,
+    failure: error.message,
+    observedAt,
+  });
+};
 
 const API_VERSION = "2022-11-28";
 const FULL_SHA = /^[0-9a-f]{40}$/u;
@@ -440,7 +497,6 @@ const run = async (): Promise<void> => {
       failure: parsed.failure,
     };
   }
-  const outcomes = [analyzeRollingReviewRecord(record)];
   const fileStem = rollingReviewResultFileName(record.pr_number, record.head_sha);
   const resultPath = `${SENTINEL_POLICY.paths.reviewResults}/${fileStem}`;
   // Fail-closed self-check before durable retention: the record must satisfy
@@ -462,14 +518,32 @@ const run = async (): Promise<void> => {
   });
   try {
     const currentBacklog = await readDevelopmentBacklog(docsScratch, gitEnv);
-    const nextBacklog = applyRollingReviewIngestion(currentBacklog, outcomes, new Date(reviewStart));
     const resultDirectory = `${docsScratch}/${SENTINEL_POLICY.paths.reviewResults}`;
     await Deno.mkdir(resultDirectory, { recursive: true, mode: 0o700 });
     await writeJsonFile(`${resultDirectory}/${fileStem}`, record);
-    await scanCandidateWithGitleaks({
-      cwd: docsScratch,
-      reportPath: `${reportsDir}/secret-scan-rolling-review.json`,
-    });
+    try {
+      await scanCandidateWithGitleaks({
+        cwd: docsScratch,
+        reportPath: `${reportsDir}/secret-scan-rolling-review.json`,
+      });
+    } catch (error) {
+      // The candidate working tree or Git history was rejected by Gitleaks, so
+      // this target's review evidence cannot be published safely. An anchored
+      // target keeps the exact proven merge base in the strict `rejected`
+      // disposition (never base_sha:null): the exact reviewed head and base
+      // identity survive with zero findings and the exact safe rejection
+      // reason. A genuinely unanchored target keeps its existing unreachable
+      // semantics. Any other error rethrows unchanged.
+      record = deferGitleaksRejectedTarget(
+        error,
+        { prNumber: task.number, prUrl: task.htmlUrl, headSha: task.headSha, headRef: task.headRef },
+        record.base_sha,
+        new Date(reviewStart).toISOString(),
+      );
+      await writeJsonFile(`${resultDirectory}/${fileStem}`, record);
+    }
+    const outcomes = [analyzeRollingReviewRecord(record)];
+    const nextBacklog = applyRollingReviewIngestion(currentBacklog, outcomes, new Date(reviewStart));
     await assertGitHistoryExcludesValues({
       cwd: docsScratch,
       sensitiveValues: [
@@ -503,6 +577,8 @@ const run = async (): Promise<void> => {
     }
     const commitMessage = record.status === "unreachable"
       ? `docs: record unreachable Sentinel rolling review target for PR #${task.number}`
+      : record.status === "rejected"
+      ? `docs: record Gitleaks-rejected Sentinel rolling review target for PR #${task.number}`
       : `docs: ingest completed Sentinel rolling Codex review for PR #${task.number}`;
     await runTrustedGit({
       args: ["commit", "-m", commitMessage],
