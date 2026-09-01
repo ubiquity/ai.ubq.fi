@@ -5281,40 +5281,6 @@
     },
     {
       "artifact_digests": [
-        "sha256:5e1db86409e4d4588f976769164b0d9a44a583329e201c6ae1a1b74efde9e931"
-      ],
-      "artifact_ids": [
-        9743734052
-      ],
-      "attempt": 1,
-      "base_sha": "2aeb025c02d03a8ce36c85feb603500be653af20",
-      "candidate_branch": null,
-      "candidate_sha": null,
-      "changed_files": [],
-      "created_at": "2026-08-31T02:40:34.494Z",
-      "disposition": "rejected",
-      "failure_class": "no_candidate_diff",
-      "failure_fingerprint": "2452a7cbf29eb3572041f9e943c603d0ba6b5c8bae7dd7e493719137b4ccbb5f",
-      "identity": {
-        "candidate_generation": 1,
-        "repository": "ubiquity/ai.ubq.fi",
-        "source_id": "5289263183",
-        "source_kind": "github_issue",
-        "source_revision": "dd9bc92c041607e3a5980601e7be570393435670ff06341ce28d3b4c241b7111"
-      },
-      "lease_token": "matrix-cell-33351305391-1-cell-fc6f952babeafb398a569f6fd5f5b684174e5a1a6ad38eb1ddb60a0fb20253d7",
-      "next_action": null,
-      "phase": "rejected",
-      "predecessor": null,
-      "reason": "no_candidate_diff",
-      "run_id": "33351305391",
-      "schema_version": 1,
-      "state_version": 2,
-      "tree_sha": null,
-      "updated_at": "2026-08-31T02:41:36.722Z"
-    },
-    {
-      "artifact_digests": [
         "sha256:cff2cded1c6ad2a3747b8b968ae648392ebe2fae3b8cddb72f5c77590fafe0a6"
       ],
       "artifact_ids": [
@@ -7205,6 +7171,36 @@
       "artifact_digests": [],
       "reason": "The bounded Sentinel retry policy scheduled another attempt.",
       "next_action": "Retry after 2026-09-01T10:08:38.229Z.",
+      "predecessor": null
+    },
+    {
+      "schema_version": 1,
+      "identity": {
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_kind": "triage",
+        "source_id": "1ee7a993fa8fc0391411ccb4c1847fb9bb0e921c8d1b087e7986aa84d0274f0e",
+        "source_revision": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
+        "candidate_generation": 1
+      },
+      "run_id": "33495435055",
+      "attempt": 1,
+      "lease_token": "33495435055-1",
+      "base_sha": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
+      "phase": "claimed",
+      "disposition": "active",
+      "state_version": 1,
+      "created_at": "2026-09-01T10:08:28.837Z",
+      "updated_at": "2026-09-01T10:08:28.837Z",
+      "candidate_branch": null,
+      "candidate_sha": null,
+      "changed_files": [],
+      "tree_sha": null,
+      "failure_class": null,
+      "failure_fingerprint": null,
+      "artifact_ids": [],
+      "artifact_digests": [],
+      "reason": "The selected work item is durably claimed before implementation.",
+      "next_action": "Start the Luna implementation stage.",
       "predecessor": null
     },
     {
