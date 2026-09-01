@@ -244,6 +244,40 @@
       "updated_at": "2026-09-01T01:23:39.254Z"
     },
     {
+      "artifact_digests": [
+        "sha256:1c26d2826e6a97a458f19491e30dd409eaded4b2f4afb0d83511b3f02f7d7e26"
+      ],
+      "artifact_ids": [
+        9782300955
+      ],
+      "attempt": 1,
+      "base_sha": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
+      "candidate_branch": null,
+      "candidate_sha": null,
+      "changed_files": [],
+      "created_at": "2026-09-01T01:22:59.164Z",
+      "disposition": "active",
+      "failure_class": "transient_transport",
+      "failure_fingerprint": "9cb437bc9b8d1b4b6c558ef301a88be8227b99d5c179aca80230ba9d81b4b69c",
+      "identity": {
+        "candidate_generation": 8,
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_id": "5262330278",
+        "source_kind": "github_issue",
+        "source_revision": "4b5705d88b960ad11bfbc21ba379fcf0b7e0cab5a1f7beeb31c98304fbb329ba"
+      },
+      "lease_token": "matrix-cell-33458373642-1-cell-07fcdf4266069ed33f6b6a5e94594a140ef43fa304ffec1995c244683f1c7d58",
+      "next_action": "Retry after 2026-09-01T01:27:18.439Z.",
+      "phase": "retry_wait",
+      "predecessor": null,
+      "reason": "The bounded Sentinel retry policy scheduled another attempt.",
+      "run_id": "33458373642",
+      "schema_version": 1,
+      "state_version": 2,
+      "tree_sha": null,
+      "updated_at": "2026-09-01T01:26:19.305Z"
+    },
+    {
       "schema_version": 1,
       "identity": {
         "repository": "ubiquity/ai.ubq.fi",
@@ -7767,40 +7801,6 @@
       ],
       "reason": "artifact_wrong_base",
       "next_action": "manual inspection of encrypted evidence and the exact base is required",
-      "predecessor": null
-    },
-    {
-      "schema_version": 1,
-      "identity": {
-        "repository": "ubiquity/ai.ubq.fi",
-        "source_kind": "triage",
-        "source_id": "33321314573:artifact:9735010758",
-        "source_revision": "8d1fcf2be92da6c50cfd7cacf414776585ca6a71",
-        "candidate_generation": 1
-      },
-      "run_id": "33321314573",
-      "attempt": 1,
-      "lease_token": "artifact-9735010758",
-      "base_sha": "8d1fcf2be92da6c50cfd7cacf414776585ca6a71",
-      "phase": "manual_required",
-      "disposition": "manual_required",
-      "state_version": 1,
-      "created_at": "2026-08-30T16:06:40Z",
-      "updated_at": "2026-08-30T16:06:40Z",
-      "candidate_branch": null,
-      "candidate_sha": null,
-      "changed_files": [],
-      "tree_sha": null,
-      "failure_class": "artifact_invalid",
-      "failure_fingerprint": "d30d7e621250898e0253e169f1154d6b174bbe9e51b28b166c78618afc496c18",
-      "artifact_ids": [
-        9735010758
-      ],
-      "artifact_digests": [
-        "sha256:d30d7e621250898e0253e169f1154d6b174bbe9e51b28b166c78618afc496c18"
-      ],
-      "reason": "authenticated legacy evidence lacks a provable recovery record",
-      "next_action": "a repository owner must inspect the encrypted artifact and its exact workflow base",
       "predecessor": null
     },
     {
@@ -25934,6 +25934,20 @@
       "failure_class": "runner_interruption",
       "failure_fingerprint": "79d3426524a906a80a7aaeaab67dd87f54c5482698950d41c73aaf04803348d3",
       "observed_at": "2026-09-01T01:23:39.254Z"
+    },
+    {
+      "schema_version": 1,
+      "identity": {
+        "candidate_generation": 8,
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_id": "5262330278",
+        "source_kind": "github_issue",
+        "source_revision": "4b5705d88b960ad11bfbc21ba379fcf0b7e0cab5a1f7beeb31c98304fbb329ba"
+      },
+      "attempt": 1,
+      "failure_class": "transient_transport",
+      "failure_fingerprint": "9cb437bc9b8d1b4b6c558ef301a88be8227b99d5c179aca80230ba9d81b4b69c",
+      "observed_at": "2026-09-01T01:26:19.305Z"
     }
   ],
   "retry_decisions": [
@@ -30267,6 +30281,25 @@
         "failure_fingerprint": "79d3426524a906a80a7aaeaab67dd87f54c5482698950d41c73aaf04803348d3",
         "reason": "The bounded Sentinel retry policy scheduled another attempt.",
         "next_action": "Retry after 2026-09-01T01:25:18.379Z."
+      }
+    },
+    {
+      "identity_key": "[\"ubiquity/ai.ubq.fi\",\"github_issue\",\"5262330278\",\"4b5705d88b960ad11bfbc21ba379fcf0b7e0cab5a1f7beeb31c98304fbb329ba\",8]",
+      "decision": {
+        "disposition": "retry_wait",
+        "should_retry": true,
+        "circuit_open": false,
+        "validation_repair_allowed": false,
+        "source_revision_changed": false,
+        "candidate_generation": 8,
+        "attempt_count": 1,
+        "identical_failure_count": 1,
+        "backoff_ms": 59134,
+        "retry_at": "2026-09-01T01:27:18.439Z",
+        "failure_class": "transient_transport",
+        "failure_fingerprint": "9cb437bc9b8d1b4b6c558ef301a88be8227b99d5c179aca80230ba9d81b4b69c",
+        "reason": "The bounded Sentinel retry policy scheduled another attempt.",
+        "next_action": "Retry after 2026-09-01T01:27:18.439Z."
       }
     }
   ],
