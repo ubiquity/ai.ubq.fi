@@ -6984,6 +6984,36 @@
       "identity": {
         "repository": "ubiquity/ai.ubq.fi",
         "source_kind": "triage",
+        "source_id": "08796e0b9a697e0fe324e451d6cbea5aa5b9d2bbf0d6e9af7497a7367ec864f7",
+        "source_revision": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
+        "candidate_generation": 1
+      },
+      "run_id": "33489517752",
+      "attempt": 1,
+      "lease_token": "33489517752-1",
+      "base_sha": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
+      "phase": "claimed",
+      "disposition": "active",
+      "state_version": 1,
+      "created_at": "2026-09-01T08:58:34.929Z",
+      "updated_at": "2026-09-01T08:58:34.929Z",
+      "candidate_branch": null,
+      "candidate_sha": null,
+      "changed_files": [],
+      "tree_sha": null,
+      "failure_class": null,
+      "failure_fingerprint": null,
+      "artifact_ids": [],
+      "artifact_digests": [],
+      "reason": "The selected work item is durably claimed before implementation.",
+      "next_action": "Start the Luna implementation stage.",
+      "predecessor": null
+    },
+    {
+      "schema_version": 1,
+      "identity": {
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_kind": "triage",
         "source_id": "0a03472f9fd72a431412ae98f70460ea91aa36deb9e81ac485e3e3cf30c372a8",
         "source_revision": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
         "candidate_generation": 1
@@ -7826,40 +7856,6 @@
       ],
       "artifact_digests": [
         "sha256:61ee2e19b1902de52e38cf52a35fa5f70e491d47f48b11e46fc84e24820df9da"
-      ],
-      "reason": "artifact_wrong_base",
-      "next_action": "manual inspection of encrypted evidence and the exact base is required",
-      "predecessor": null
-    },
-    {
-      "schema_version": 1,
-      "identity": {
-        "repository": "ubiquity/ai.ubq.fi",
-        "source_kind": "triage",
-        "source_id": "32878776053",
-        "source_revision": "4d2928f47f3ba3ad66b8c15e6323bcccd0a39390",
-        "candidate_generation": 1
-      },
-      "run_id": "32878776053",
-      "attempt": 1,
-      "lease_token": "artifact-9577175316",
-      "base_sha": "4d2928f47f3ba3ad66b8c15e6323bcccd0a39390",
-      "phase": "manual_required",
-      "disposition": "manual_required",
-      "state_version": 4,
-      "created_at": "2026-08-25T18:02:24.642Z",
-      "updated_at": "2026-08-30T22:18:51.411Z",
-      "candidate_branch": null,
-      "candidate_sha": null,
-      "changed_files": [],
-      "tree_sha": null,
-      "failure_class": "artifact_wrong_base",
-      "failure_fingerprint": "575ff89af3c0357dd6add0d27cd5b7a9f6a9ca59a13eb0b7d638643c7f646704",
-      "artifact_ids": [
-        9577175316
-      ],
-      "artifact_digests": [
-        "sha256:ce27b7a5faa087a3bb27a3f0d6225a42f4e1895599455bcf1f48be7715abc223"
       ],
       "reason": "artifact_wrong_base",
       "next_action": "manual inspection of encrypted evidence and the exact base is required",
