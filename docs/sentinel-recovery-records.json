@@ -7354,40 +7354,6 @@
       "identity": {
         "repository": "ubiquity/ai.ubq.fi",
         "source_kind": "triage",
-        "source_id": "33358628096:artifact:9746111561",
-        "source_revision": "3640fa3b63cb1246176410b790919ce59f36f3d3",
-        "candidate_generation": 1
-      },
-      "run_id": "33358628096",
-      "attempt": 1,
-      "lease_token": "artifact-9746111561",
-      "base_sha": "3640fa3b63cb1246176410b790919ce59f36f3d3",
-      "phase": "manual_required",
-      "disposition": "manual_required",
-      "state_version": 1,
-      "created_at": "2026-08-31T05:03:37Z",
-      "updated_at": "2026-08-31T05:03:37Z",
-      "candidate_branch": null,
-      "candidate_sha": null,
-      "changed_files": [],
-      "tree_sha": null,
-      "failure_class": "artifact_invalid",
-      "failure_fingerprint": "a754f1055de112559304c00390881f1ee2187b7858be8589af56556b114c6bf2",
-      "artifact_ids": [
-        9746111561
-      ],
-      "artifact_digests": [
-        "sha256:a754f1055de112559304c00390881f1ee2187b7858be8589af56556b114c6bf2"
-      ],
-      "reason": "authenticated legacy evidence lacks a provable recovery record",
-      "next_action": "a repository owner must inspect the encrypted artifact and its exact workflow base",
-      "predecessor": null
-    },
-    {
-      "schema_version": 1,
-      "identity": {
-        "repository": "ubiquity/ai.ubq.fi",
-        "source_kind": "triage",
         "source_id": "33359012385:artifact:9746241885",
         "source_revision": "f1fc82cc7a66d5882cdd19ea623dd4c02296e854",
         "candidate_generation": 1
@@ -13327,6 +13293,36 @@
       "artifact_digests": [],
       "reason": "Three identical Sentinel failure fingerprints opened the circuit breaker.",
       "next_action": "Owner review is required before another Sentinel attempt.",
+      "predecessor": null
+    },
+    {
+      "schema_version": 1,
+      "identity": {
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_kind": "triage",
+        "source_id": "36b50641f5f4a1dc279f638c8fe1515850aaa09e875e5b4cb6a9106f930955c4",
+        "source_revision": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
+        "candidate_generation": 1
+      },
+      "run_id": "33510558061",
+      "attempt": 1,
+      "lease_token": "33510558061-1",
+      "base_sha": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
+      "phase": "claimed",
+      "disposition": "active",
+      "state_version": 1,
+      "created_at": "2026-09-01T13:00:49.858Z",
+      "updated_at": "2026-09-01T13:00:49.858Z",
+      "candidate_branch": null,
+      "candidate_sha": null,
+      "changed_files": [],
+      "tree_sha": null,
+      "failure_class": null,
+      "failure_fingerprint": null,
+      "artifact_ids": [],
+      "artifact_digests": [],
+      "reason": "The selected work item is durably claimed before implementation.",
+      "next_action": "Start the Luna implementation stage.",
       "predecessor": null
     },
     {
