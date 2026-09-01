@@ -51,10 +51,10 @@
     "verdict": "stuck",
     "reason": "unchanged_or_cycling_state",
     "observation_count": 8,
-    "state_digest": "1a69ca46f35cdba7",
+    "state_digest": "e523ae9fe1842440",
     "classifier": null,
     "resolved": "stuck",
     "resolved_reason": "unchanged_or_cycling_state",
-    "evaluated_at": "2026-09-01T15:14:35.482Z"
+    "evaluated_at": "2026-09-01T15:44:19.007Z"
   }
 }
