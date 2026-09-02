@@ -5,7 +5,7 @@ import {
   normalizeApiKeyWindowMs,
 } from "./api_keys.ts";
 import { openaiError, STANDARD_RATE_LIMIT_HEADERS } from "./http.ts";
-import { getKv } from "./kv.ts";
+import { getKv, KV_OPERATION_TIMEOUT_MS, KvCircuitOpenError, KvOperationTimeoutError, type KvOperationName, withKvOperation } from "./kv.ts";
 import { hasStrictPaidFallbackPolicy } from "./paid_fallback.ts";
 import type { ApiKeyHashRecord, ApiKeyUsageRequestV3, ApiKeyUsageWindowV3 } from "./types.ts";
 import { isRecord, sha256Base64Url } from "./utils.ts";
@@ -16,8 +16,11 @@ export const API_KEY_USAGE_V2_PREFIX = ["uos_ai", "api_key_usage", "v2"] as cons
 export const API_KEY_USAGE_V3_PREFIX = ["uos_ai", "api_key_usage", "v3"] as const;
 export const API_KEY_USAGE_V3_WINDOW_PREFIX = [...API_KEY_USAGE_V3_PREFIX, "window"] as const;
 export const API_KEY_USAGE_V3_REQUEST_PREFIX = [...API_KEY_USAGE_V3_PREFIX, "request"] as const;
+export const API_KEY_USAGE_V3_EXPIRY_PREFIX = [...API_KEY_USAGE_V3_PREFIX, "expiry"] as const;
 export const API_KEY_USAGE_V3_RESERVATION_LEASE_MS = 5 * 60_000;
 export const API_KEY_USAGE_V3_RETENTION_MS = 7 * 24 * 60 * 60_000;
+export const API_KEY_QUOTA_ADMISSION_DEADLINE_MS = 1_500;
+const API_KEY_USAGE_V3_RECLAIM_BATCH_SIZE = 32;
 const MAX_KV_RETRIES = 5;
 
 export type ApiKeyUsageProvider =
@@ -165,6 +168,12 @@ export const apiKeyUsageV3RequestKey = (
     requestId,
   ] as const;
 
+export const apiKeyUsageV3ExpiryKey = (
+  policy: Pick<ApiKeyPolicy, "key_id" | "policy_version" | "window_start_ms">,
+  leaseExpiresAtMs: number,
+  requestId: string,
+) => [...API_KEY_USAGE_V3_EXPIRY_PREFIX, policy.key_id, policy.policy_version, policy.window_start_ms, leaseExpiresAtMs, requestId] as const;
+
 export const apiKeyUsageV3RetentionMs = (windowResetAtMs: number, nowMs = Date.now()): number =>
   Math.max(1, windowResetAtMs + API_KEY_USAGE_V3_RETENTION_MS - nowMs);
 
@@ -225,9 +234,15 @@ export const normalizeApiKeyUsageRequestV3 = (value: unknown): ApiKeyUsageReques
   return value as ApiKeyUsageRequestV3;
 };
 
-const quotaUnavailable = (message = "API key quota ledger is unavailable"): ApiKeyUsageReservationDecision => ({
+const quotaUnavailable = (
+  message = "API key quota ledger is unavailable",
+  retryAfterSeconds = 1,
+): ApiKeyUsageReservationDecision => ({
   ok: false,
-  response: openaiError(503, message, "server_error", { type: "server_error" }),
+  response: openaiError(503, message, "server_error", {
+    type: "server_error",
+    headers: { "Retry-After": String(Math.max(1, Math.trunc(retryAfterSeconds))) },
+  }),
 });
 
 const expiredPolicyResponse = (): ApiKeyUsageReservationDecision => ({
