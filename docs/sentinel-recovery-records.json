@@ -4460,36 +4460,6 @@
         "source_kind": "github_issue",
         "source_id": "5289263183",
         "source_revision": "6f0a664cf8bc949b929222bbfe729af2277a7f354760e394d2894dd12c2e1e52",
-        "candidate_generation": 59
-      },
-      "run_id": "33395349336",
-      "attempt": 1,
-      "lease_token": "33395349336-1",
-      "base_sha": "6098a83435c308168d9b28fc1ca0ac8a9afa2853",
-      "phase": "rejected",
-      "disposition": "rejected",
-      "state_version": 3,
-      "created_at": "2026-08-31T13:14:23.762Z",
-      "updated_at": "2026-08-31T13:21:18.629Z",
-      "candidate_branch": "sentinel/candidate-github_issue-5289263183-6f0a664cf8bc949b929222bbfe729af2-g59-9fecedd0254b5f2f",
-      "candidate_sha": null,
-      "changed_files": [],
-      "tree_sha": null,
-      "failure_class": null,
-      "failure_fingerprint": null,
-      "artifact_ids": [],
-      "artifact_digests": [],
-      "reason": "rejected/no_candidate_diff",
-      "next_action": null,
-      "predecessor": "[\"ubiquity/ai.ubq.fi\",\"github_issue\",\"5289263183\",\"ec8e38b3feef9721794190b28aa7bb781ce683829a8c203ec8faba631405b273\",2]"
-    },
-    {
-      "schema_version": 1,
-      "identity": {
-        "repository": "ubiquity/ai.ubq.fi",
-        "source_kind": "github_issue",
-        "source_id": "5289263183",
-        "source_revision": "6f0a664cf8bc949b929222bbfe729af2277a7f354760e394d2894dd12c2e1e52",
         "candidate_generation": 60
       },
       "run_id": "33396979011",
@@ -12540,6 +12510,40 @@
       ],
       "artifact_digests": [
         "sha256:287f21e87ca9360e5104dfcc3eddc783921f3eb10058ee7b4bede15eeae2ad97"
+      ],
+      "reason": "authenticated legacy evidence contains a terminal disposition",
+      "next_action": null,
+      "predecessor": null
+    },
+    {
+      "schema_version": 1,
+      "identity": {
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_kind": "triage",
+        "source_id": "33587955578:artifact:9830806693",
+        "source_revision": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
+        "candidate_generation": 1
+      },
+      "run_id": "33587955578",
+      "attempt": 1,
+      "lease_token": "artifact-9830806693",
+      "base_sha": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
+      "phase": "rejected",
+      "disposition": "rejected",
+      "state_version": 1,
+      "created_at": "2026-09-02T03:44:39Z",
+      "updated_at": "2026-09-02T03:44:39Z",
+      "candidate_branch": null,
+      "candidate_sha": null,
+      "changed_files": [],
+      "tree_sha": null,
+      "failure_class": "artifact_invalid",
+      "failure_fingerprint": "022ae2c87aeb6bb035fce8c78a736506d39164bbfc58935a8180b87359923dc5",
+      "artifact_ids": [
+        9830806693
+      ],
+      "artifact_digests": [
+        "sha256:022ae2c87aeb6bb035fce8c78a736506d39164bbfc58935a8180b87359923dc5"
       ],
       "reason": "authenticated legacy evidence contains a terminal disposition",
       "next_action": null,
