@@ -1,4 +1,5 @@
 import { getRecentModelReasoning } from "./reasoning-select.js?v=20260824-recent-reasoning-v2";
+import { toast } from "./toast.js?v=20260903-toast-v1";
 
 const summary = document.querySelector("[data-source-summary]");
 const list = document.querySelector("[data-model-list]");
@@ -41,6 +42,9 @@ const positiveTokenCount = (value) =>
   typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
 
 let catalog = [];
+const assignCatalog = (next) => {
+  catalog = next;
+};
 
 const render = () => {
   const query = search.value.trim().toLowerCase();
@@ -118,7 +122,7 @@ try {
   const response = await fetch("/uos/models/catalog", { headers: { Accept: "application/json" } });
   if (!response.ok) throw new Error(`Catalog request failed with HTTP ${response.status}`);
   const payload = await response.json();
-  catalog = Array.isArray(payload.data) ? payload.data : [];
+  assignCatalog(Array.isArray(payload.data) ? payload.data : []);
   summary.replaceChildren(
     ...Object.entries(payload.sources ?? {}).map(([id, source]) => {
       const article = document.createElement("article");
@@ -137,4 +141,7 @@ try {
 } catch (error) {
   count.textContent = "Catalog unavailable";
   list.textContent = error instanceof Error ? error.message : "Unable to load models.";
+  toast.error("Catalog unavailable", {
+    description: error instanceof Error ? error.message : "Unable to load models.",
+  });
 }

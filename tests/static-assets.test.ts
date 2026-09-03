@@ -41,12 +41,14 @@ Deno.test("static assets register frontend module dependencies", () => {
       "/models.css",
       "/reasoning-select.js",
       "/admin-cache.js",
+      "/toast.js",
     ]
   ) {
     assert.equal(hasStaticAsset(path), true, `${path} should be registered`);
   }
-  assert.match(chatHtml, /<script type="module" src="\/chat\.js\?v=20260827-response-stats-v4"><\/script>/);
+  assert.match(chatHtml, /<script type="module" src="\/chat\.js\?v=20260903-chat-motion-v1"><\/script>/);
   assert.match(chatScript, /from "\.\/chat-stats\.js\?v=20260827-response-stats-v4";/);
+  assert.match(chatScript, /from "\.\/toast\.js\?v=20260903-toast-v1";/);
 });
 
 Deno.test("chat response stats use one conversation bar below the composer", () => {
@@ -70,11 +72,11 @@ Deno.test("chat response stats use one conversation bar below the composer", () 
 Deno.test("public models page is registered", () => {
   assert.equal(hasStaticAsset("/models"), true);
   assert.equal(hasStaticAsset("/models.html"), true);
-  assert.match(modelsHtml, /<script type="module" src="\/models\.js\?v=20260824-recent-reasoning-v2"><\/script>/);
+  assert.match(modelsHtml, /<script type="module" src="\/models\.js\?v=20260903-recent-reasoning-v3"><\/script>/);
 });
 
 Deno.test("public console pages share versioned styles, canonical navigation, and accurate active states", () => {
-  const assetVersion = "public-console-20260827-v5";
+  const assetVersion = "public-console-20260903-v6";
   const canonicalLinks = [
     { href: "/models", label: "Models" },
     { href: "/developers", label: "Developers" },
@@ -306,8 +308,8 @@ Deno.test("admin provider view places capacity history before current providers"
 
   assert.match(adminHtml, /Provider analytics/);
   assert.match(adminHtml, /Fifteen-minute capacity, cached-input, and cache-write history/);
-  assert.match(adminHtml, /admin\.css\?v=admin-polish-20260827-v3/);
-  assert.match(adminHtml, /admin\.js\?v=admin-indexeddb-cache-20260830-v7/);
+  assert.match(adminHtml, /admin\.css\?v=admin-polish-20260903-v4/);
+  assert.match(adminHtml, /admin\.js\?v=admin-indexeddb-cache-20260903-v8/);
   assert.doesNotMatch(adminHtml, /removed_provider-failover|debug-routing/);
   assert.doesNotMatch(adminScript, /RemovedProviderFailover|refresh=live/);
   assert.match(adminScript, /fetch\(apiUrl\("\/admin\/providers\/capacity"\)/);

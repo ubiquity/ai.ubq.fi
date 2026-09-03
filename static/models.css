@@ -62,6 +62,29 @@ body[data-page="models"] [data-model-list] h2 {
 
 body[data-page="models"] [data-source-summary] strong {
   font-size: 32px;
+  font-variant-numeric: tabular-nums;
+}
+
+body[data-page="models"] [data-source-summary] article {
+  animation: rise 0.5s var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * 80ms);
+}
+
+body[data-page="models"] [data-source-summary] article:nth-child(1) {
+  --i: 0;
+}
+
+body[data-page="models"] [data-source-summary] article:nth-child(2) {
+  --i: 1;
+}
+
+body[data-page="models"] [data-source-summary] article:nth-child(3) {
+  --i: 2;
+}
+
+body[data-page="models"] [data-model-list] {
+  animation: rise 0.4s var(--ease-out) both;
+  animation-delay: 240ms;
 }
 
 body[data-page="models"] [data-source-summary] span {
@@ -145,6 +168,14 @@ body[data-page="models"] [data-context-window],
 body[data-page="models"] [data-auto-compact] {
   color: var(--muted-2);
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body[data-page="models"] [data-source-summary] article,
+  body[data-page="models"] [data-model-list] {
+    animation: none;
+  }
 }
 
 @media (max-width: 680px) {

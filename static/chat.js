@@ -31,6 +31,7 @@ import {
   splitChatSseEvents,
 } from "./chat-stats.js?v=20260827-response-stats-v4";
 import { bindForegroundRefresh } from "./foreground-refresh.js";
+import { toast } from "./toast.js?v=20260903-toast-v1";
 
 const STORAGE_KEYS = {
   rememberToken: AUTH_STORAGE_KEYS.rememberToken,
@@ -794,6 +795,9 @@ const sendPrompt = async () => {
       } else {
         setChatMessageContent(assistantEl, errorPayload?.error?.message ?? `${res.status} ${res.statusText}`);
       }
+      toast.error("Chat request failed", {
+        description: errorPayload?.error?.message ?? `${res.status} ${res.statusText}`,
+      });
       return;
     }
 
@@ -820,6 +824,20 @@ const sendPrompt = async () => {
     let streamCompleted = false;
     let streamCompletedAt = null;
     let streamFailure = "";
+    let pendingStreamFlush = null;
+    const flushAssistantText = () => {
+      pendingStreamFlush = null;
+      setChatMessageContent(assistantEl, assistantText);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    };
+    const scheduleStreamFlush = () => {
+      if (pendingStreamFlush !== null) return;
+      const raf = globalThis.requestAnimationFrame;
+      pendingStreamFlush = typeof raf === "function"
+        ? raf(flushAssistantText)
+        : globalThis.setTimeout(flushAssistantText, 16);
+    };
+    assistantEl.dataset.streaming = "";
     await streamSse(res, (rawEvent) => {
       const event = parseChatSseEvent(rawEvent);
       if (event.kind === "done") {
@@ -840,9 +858,9 @@ const sendPrompt = async () => {
       if (!event.delta) return;
       if (firstTokenAt === null) firstTokenAt = performance.now();
       assistantText += event.delta;
-      setChatMessageContent(assistantEl, assistantText);
-      messagesEl.scrollTop = messagesEl.scrollHeight;
+      scheduleStreamFlush();
     });
+    flushAssistantText();
 
     if (streamFailure || !streamCompleted) {
       assistantEl.dataset.message = "error";
@@ -877,9 +895,11 @@ const sendPrompt = async () => {
     }
     assistantEl.dataset.message = "error";
     setChatMessageContent(assistantEl, "Request failed.");
+    toast.error("Chat request failed", { description: "Request failed." });
   } finally {
     abortController = null;
     setBusy(false);
+    delete assistantEl.dataset.streaming;
     promptInput.focus();
   }
 };

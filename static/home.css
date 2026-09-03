@@ -11,3 +11,25 @@ body[data-page="home"] [data-lead] {
   font-size: clamp(14px, 1.8vw, 16px);
   max-width: 60ch;
 }
+
+body[data-page="home"] [data-hero] h1,
+body[data-page="home"] [data-hero] [data-lead],
+body[data-page="home"] [data-hero] [data-layout="row"] {
+  animation: rise 450ms var(--ease-out) both;
+}
+
+body[data-page="home"] [data-hero] [data-lead] {
+  animation-delay: 60ms;
+}
+
+body[data-page="home"] [data-hero] [data-layout="row"] {
+  animation-delay: 120ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body[data-page="home"] [data-hero] h1,
+  body[data-page="home"] [data-hero] [data-lead],
+  body[data-page="home"] [data-hero] [data-layout="row"] {
+    animation: none;
+  }
+}
