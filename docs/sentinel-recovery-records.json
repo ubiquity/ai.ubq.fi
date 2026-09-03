@@ -14806,9 +14806,9 @@
       "base_sha": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
       "phase": "retry_wait",
       "disposition": "active",
-      "state_version": 3,
+      "state_version": 5,
       "created_at": "2026-09-03T15:51:11.279Z",
-      "updated_at": "2026-09-03T15:56:16.417Z",
+      "updated_at": "2026-09-03T16:01:26.677Z",
       "candidate_branch": "sentinel/candidate-triage-a68e484270496b4359bb9286532260794eabd23cf96c357a38e52f03f5b2cd33-5127ad329b1ad1aea9b5614e76c8ff09-g1-6b237d0eb4503a21",
       "candidate_sha": null,
       "changed_files": [],
@@ -14818,7 +14818,7 @@
       "artifact_ids": [],
       "artifact_digests": [],
       "reason": "The bounded Sentinel retry policy scheduled another attempt.",
-      "next_action": "Retry after 2026-09-03T15:57:20.448Z.",
+      "next_action": "Retry after 2026-09-03T16:03:06.663Z.",
       "predecessor": null
     },
     {
@@ -27012,20 +27012,6 @@
     {
       "schema_version": 1,
       "identity": {
-        "repository": "ubiquity/ai.ubq.fi",
-        "source_kind": "triage",
-        "source_id": "a68e484270496b4359bb9286532260794eabd23cf96c357a38e52f03f5b2cd33",
-        "source_revision": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
-        "candidate_generation": 1
-      },
-      "attempt": 1,
-      "failure_class": "runner_interruption",
-      "failure_fingerprint": "c7f6bd5b35928b11dbe70b52b8c975ef07e0dead7a43203f04be185f6d76bcd1",
-      "observed_at": "2026-09-03T15:56:16.417Z"
-    },
-    {
-      "schema_version": 1,
-      "identity": {
         "candidate_generation": 136,
         "repository": "ubiquity/ai.ubq.fi",
         "source_id": "5262330278",
@@ -27105,6 +27091,34 @@
       "attempt": 1,
       "failure_class": "runner_interruption",
       "failure_fingerprint": "0dcefd790be98efd4458259b28ba664a3329ba461de3bc43418980fbef0d3bb1",
+      "observed_at": "2026-09-03T16:01:26.677Z"
+    },
+    {
+      "schema_version": 1,
+      "identity": {
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_kind": "triage",
+        "source_id": "a68e484270496b4359bb9286532260794eabd23cf96c357a38e52f03f5b2cd33",
+        "source_revision": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
+        "candidate_generation": 1
+      },
+      "attempt": 1,
+      "failure_class": "runner_interruption",
+      "failure_fingerprint": "c7f6bd5b35928b11dbe70b52b8c975ef07e0dead7a43203f04be185f6d76bcd1",
+      "observed_at": "2026-09-03T15:56:16.417Z"
+    },
+    {
+      "schema_version": 1,
+      "identity": {
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_kind": "triage",
+        "source_id": "a68e484270496b4359bb9286532260794eabd23cf96c357a38e52f03f5b2cd33",
+        "source_revision": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
+        "candidate_generation": 1
+      },
+      "attempt": 2,
+      "failure_class": "runner_interruption",
+      "failure_fingerprint": "c7f6bd5b35928b11dbe70b52b8c975ef07e0dead7a43203f04be185f6d76bcd1",
       "observed_at": "2026-09-03T16:01:26.677Z"
     }
   ],
@@ -31917,25 +31931,6 @@
       }
     },
     {
-      "identity_key": "[\"ubiquity/ai.ubq.fi\",\"triage\",\"a68e484270496b4359bb9286532260794eabd23cf96c357a38e52f03f5b2cd33\",\"5127ad329b1ad1aea9b5614e76c8ff09b209d087\",1]",
-      "decision": {
-        "disposition": "retry_wait",
-        "should_retry": true,
-        "circuit_open": false,
-        "validation_repair_allowed": false,
-        "source_revision_changed": false,
-        "candidate_generation": 1,
-        "attempt_count": 1,
-        "identical_failure_count": 1,
-        "backoff_ms": 64031,
-        "retry_at": "2026-09-03T15:57:20.448Z",
-        "failure_class": "runner_interruption",
-        "failure_fingerprint": "c7f6bd5b35928b11dbe70b52b8c975ef07e0dead7a43203f04be185f6d76bcd1",
-        "reason": "The bounded Sentinel retry policy scheduled another attempt.",
-        "next_action": "Retry after 2026-09-03T15:57:20.448Z."
-      }
-    },
-    {
       "identity_key": "[\"ubiquity/ai.ubq.fi\",\"github_issue\",\"5262330278\",\"4b5705d88b960ad11bfbc21ba379fcf0b7e0cab5a1f7beeb31c98304fbb329ba\",136]",
       "decision": {
         "disposition": "retry_wait",
@@ -31991,14 +31986,26 @@
         "reason": "The bounded Sentinel retry policy scheduled another attempt.",
         "next_action": "Retry after 2026-09-03T16:02:31.753Z."
       }
-    }
-  ],
-  "leases": [
+    },
     {
       "identity_key": "[\"ubiquity/ai.ubq.fi\",\"triage\",\"a68e484270496b4359bb9286532260794eabd23cf96c357a38e52f03f5b2cd33\",\"5127ad329b1ad1aea9b5614e76c8ff09b209d087\",1]",
-      "owner": "33775920685",
-      "token": "33775920685:6e1be751-730c-4b99-b51a-96d73aff3c25",
-      "expires_at": "2026-09-03T16:11:26.677Z"
+      "decision": {
+        "disposition": "retry_wait",
+        "should_retry": true,
+        "circuit_open": false,
+        "validation_repair_allowed": false,
+        "source_revision_changed": false,
+        "candidate_generation": 1,
+        "attempt_count": 2,
+        "identical_failure_count": 2,
+        "backoff_ms": 99986,
+        "retry_at": "2026-09-03T16:03:06.663Z",
+        "failure_class": "runner_interruption",
+        "failure_fingerprint": "c7f6bd5b35928b11dbe70b52b8c975ef07e0dead7a43203f04be185f6d76bcd1",
+        "reason": "The bounded Sentinel retry policy scheduled another attempt.",
+        "next_action": "Retry after 2026-09-03T16:03:06.663Z."
+      }
     }
-  ]
+  ],
+  "leases": []
 }
