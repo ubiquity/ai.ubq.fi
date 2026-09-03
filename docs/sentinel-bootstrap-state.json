@@ -3,19 +3,20 @@
   "release": {
     "schema_version": 1,
     "stable_sha": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
-    "candidate_sha": "674a35360c8ed6e7f3299fea7fe69ba408545524",
+    "candidate_sha": "fb2fafed9663448f9e3a57bbc74938787a867f5a",
     "acceptance_evidence": [
-      "health:z2dbynhmcp2g"
+      "health:293xynwdzw3p",
+      "bootstrap:superseded:674a35360c8ed6e7f3299fea7fe69ba408545524"
     ],
-    "activated_at": "2026-09-03T19:57:26.802Z",
+    "activated_at": "2026-09-03T20:18:05.528Z",
     "rollback_reason": null,
-    "generation": 30
+    "generation": 31
   },
   "signals": [],
   "activation": {
     "schema_version": 1,
-    "active_sha": "674a35360c8ed6e7f3299fea7fe69ba408545524",
-    "generation": 30,
+    "active_sha": "fb2fafed9663448f9e3a57bbc74938787a867f5a",
+    "generation": 31,
     "fenced_generations": [
       2,
       3,
@@ -36,10 +37,11 @@
       23,
       25,
       26,
-      28
+      28,
+      30
     ],
-    "updated_at": "2026-09-03T19:57:26.802Z",
-    "reason": "managed_health_observed"
+    "updated_at": "2026-09-03T20:18:05.528Z",
+    "reason": "managed_candidate_superseded"
   },
   "rollback_intent": null,
   "constraints": [],
