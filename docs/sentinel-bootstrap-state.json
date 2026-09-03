@@ -48,13 +48,13 @@
   "constraints": [],
   "progress": {
     "schema_version": 1,
-    "verdict": "progress",
-    "reason": "verified_phase_or_milestone_change",
+    "verdict": "stuck",
+    "reason": "unchanged_or_cycling_state",
     "observation_count": 8,
-    "state_digest": "d18d3968bfdcb10a",
+    "state_digest": "dc22e5b0d45806a6",
     "classifier": null,
-    "resolved": "progress",
-    "resolved_reason": "verified_phase_or_milestone_change",
-    "evaluated_at": "2026-09-03T15:33:43.176Z"
+    "resolved": "stuck",
+    "resolved_reason": "unchanged_or_cycling_state",
+    "evaluated_at": "2026-09-03T15:43:24.925Z"
   }
 }
