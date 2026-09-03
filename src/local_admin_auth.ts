@@ -78,6 +78,7 @@ export const shouldDisableAdminAuthForListener = (
 };
 
 let adminAuthDisabled = false;
+let adminAuthPeer: Deno.Addr | null = null;
 
 export const configureAdminAuthForListener = (
   options: ServeRuntimeOptions,
@@ -85,11 +86,26 @@ export const configureAdminAuthForListener = (
 ): boolean => {
   const disabled = shouldDisableAdminAuthForListener(options, address);
   adminAuthDisabled = disabled;
+  adminAuthPeer = null;
   return disabled;
 };
 
+/** Records the TCP peer of the request currently being handled by the server. */
+export const configureAdminAuthPeerForRequest = (peer: Deno.Addr | null): void => {
+  adminAuthPeer = peer;
+};
+
+const isLoopbackPeer = (peer: Deno.Addr): boolean =>
+  peer.transport === "tcp" && isNumericLoopbackHostname(peer.hostname);
+
 export const isAdminAuthDisabledForRequest = (request: Request): boolean => {
   if (!adminAuthDisabled) return false;
+  // The bypass must be granted only to an actual loopback peer, never to a
+  // forwarded, tunneled, or port-forwarded request whose URL hostname is
+  // client-controlled. Fail closed when the peer is unknown (for example a
+  // request constructed outside a Deno serve listener).
+  const peer = adminAuthPeer;
+  if (!peer || !isLoopbackPeer(peer)) return false;
   try {
     return isLoopbackHostname(new URL(request.url).hostname);
   } catch {
