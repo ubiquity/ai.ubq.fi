@@ -50,11 +50,11 @@
     "schema_version": 1,
     "verdict": "stuck",
     "reason": "unchanged_or_cycling_state",
-    "observation_count": 3,
-    "state_digest": "1b60eca61ce95178",
+    "observation_count": 5,
+    "state_digest": "14e28f7be1cd74a7",
     "classifier": null,
     "resolved": "stuck",
     "resolved_reason": "unchanged_or_cycling_state",
-    "evaluated_at": "2026-09-03T20:40:05.500Z"
+    "evaluated_at": "2026-09-03T20:48:24.031Z"
   }
 }
