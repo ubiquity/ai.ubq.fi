@@ -616,7 +616,8 @@ set as `DENO_DEPLOY_TOKEN` from the fallback chain `DENO_DEPLOY_TOKEN_UBIQUITY_D
 sign-in on `http://127.0.0.1:8000`. The injected token lives in the server process only — `.env` values are not
 re-exported to your shell, and the admin credential never flows into separate commands. `deno task dev:local` behaves
 the same way; `deno task admin:models` (and its `:spark` variant) fall back to `DENO_DEPLOY_TOKEN_UBIQUITY_DAO` from
-your shell, and local scripts need no token at all because the loopback server has admin authentication disabled.
+your shell, and against a loopback `BASE_URL` (the default) they send no token at all — only a non-loopback `BASE_URL`
+requires one, exactly like the loopback server itself, which has admin authentication disabled.
 
 Admin authentication is disabled only when the server's actual TCP listener, the request's TCP peer, and the request URL
 are all loopback. A local reverse proxy or tunnel that forwards an external request to this loopback server is
