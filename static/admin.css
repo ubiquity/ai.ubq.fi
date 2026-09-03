@@ -11,20 +11,6 @@ body[data-page="admin"] header[data-shared-header] {
   padding: 12px 14px;
 }
 
-body[data-page="admin"] [data-actions] {
-  padding: 4px;
-  border-radius: 999px;
-  background: var(--surface);
-}
-
-body[data-page="admin"] [data-actions] a[data-button] {
-  padding: 6px 10px;
-  font-size: 12px;
-  font-weight: 500;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.05);
-}
-
 body[data-page="admin"] h1 {
   font-size: clamp(24px, 2.6vw, 34px);
 }
@@ -1426,28 +1412,6 @@ body[data-page="admin"] [data-brand] > [data-muted] {
   color: #77818e;
 }
 
-body[data-page="admin"] [data-actions] {
-  gap: 3px;
-  padding: 3px;
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.035);
-}
-
-body[data-page="admin"] [data-actions] a[data-button] {
-  min-height: 32px;
-  padding: 5px 10px;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-body[data-page="admin"] [data-actions] a[aria-current="page"] {
-  background: rgba(255, 255, 255, 0.1);
-  color: #f5f7fa;
-}
-
 body[data-page="admin"] main {
   grid-template-rows: auto auto;
   align-content: start;
@@ -2126,14 +2090,6 @@ body[data-page="admin"] [data-auth-item] {
 @media (max-width: 560px) {
   body[data-page="admin"] [data-brand] > [data-muted] {
     display: none;
-  }
-
-  body[data-page="admin"] [data-actions] {
-    width: 100%;
-  }
-
-  body[data-page="admin"] [data-actions] a[data-button] {
-    flex: 1 0 auto;
   }
 
   body[data-page="admin"] [data-quota-runway-row] {
