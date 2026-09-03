@@ -610,20 +610,23 @@ export CODEX_AUTH_JSON_B64="$(base64 < ~/.codex/auth.json | tr -d '\n')"
 deno task dev
 ```
 
-`deno task dev` binds to loopback and supplies a local-only `local-dev-admin` token when `DENO_DEPLOY_TOKEN` is not
-already exported. The `/admin` page fills that token automatically on `http://localhost` or `http://127.0.0.1`; it never
-auto-fills it for `https://ai.ubq.fi`. Export `DENO_DEPLOY_TOKEN` before starting the task when you need a different
-credential, then paste that credential into the fallback-token field.
+`deno task dev` binds to loopback, disables admin authentication for the loopback server, and injects the admin token
+set as `DENO_DEPLOY_TOKEN` from the fallback chain `DENO_DEPLOY_TOKEN_UBIQUITY_DAO` → `DENO_DEPLOY_TOKEN` →
+`local-dev-admin` (the `.env` file is read first). The `/admin` dashboard therefore opens with super-admin access and no
+sign-in on `http://127.0.0.1:8000`, and scripts that authenticate with `DENO_DEPLOY_TOKEN` against the local server use
+your real token. `deno task dev:local` behaves the same way.
 
-To disable admin authentication explicitly for local UI development, pass the server flag through the dev task:
+Admin authentication is disabled only when the server's actual TCP listener and the request URL are both loopback.
+Startup fails if you make the listener public (e.g. `--host 0.0.0.0`), in Deno Deploy, with a duplicated flag, or with
+an unknown server argument. To require a real admin token even on loopback (for example to exercise the sign-in flow),
+start the server directly without the baked-in flag:
 
 ```bash
-deno task dev --disable-admin-auth
+deno serve --host 127.0.0.1 --allow-env --allow-net --allow-read --unstable-kv serve.ts
 ```
 
-The flag grants super-admin access only when the server's actual TCP listener and the request URL are both loopback.
-Startup fails if the listener is public, the runtime is Deno Deploy, the flag is duplicated, or an unknown server
-argument is supplied. The equivalent direct command must place the application flag after the entry point:
+The equivalent direct command that mirrors the dev task's behavior must place the application flag after the entry
+point:
 
 ```bash
 deno serve --host 127.0.0.1 --allow-env --allow-net --allow-read --unstable-kv serve.ts --disable-admin-auth
