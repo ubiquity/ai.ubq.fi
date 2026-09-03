@@ -22,6 +22,7 @@ import {
 import { createAdminSnapshotCache } from "./admin-cache.js?v=admin-indexeddb-cache-20260830-v7";
 import { bindForegroundRefresh } from "./foreground-refresh.js";
 import { setReasoningPlaceholder, updateReasoningSelectForModel } from "./reasoning-select.js";
+import { toast } from "./toast.js?v=20260903-toast-v1";
 
 const STORAGE_KEYS = {
   rememberToken: AUTH_STORAGE_KEYS.rememberToken,
@@ -926,7 +927,7 @@ const renderCapacityWindow = (container, label, window) => {
     progress.dataset.state = "unavailable";
     progress.setAttribute("aria-valuetext", "Remaining capacity not reported");
   } else {
-    progress.style.setProperty("--capacity-progress", `${remainingPercent}%`);
+    progress.style.setProperty("--capacity-progress", String(remainingPercent / 100));
     progress.setAttribute("aria-valuenow", String(remainingPercent));
     progress.setAttribute("aria-valuetext", `${formatCapacityPercent(remainingPercent)} remaining`);
   }
@@ -4448,6 +4449,7 @@ const buildKernelPolicyTile = (record, options = {}) => {
       const data = await res.json().catch(() => null);
       if (!res.ok) {
         setEditBadge("bad", data?.error?.message ?? "Error");
+        toast.error("Save failed", { description: data?.error?.message ?? "Error" });
         return;
       }
 
@@ -4461,8 +4463,10 @@ const buildKernelPolicyTile = (record, options = {}) => {
       updateInfo(record);
       resetEditInputs();
       setEditBadge("ok", "Saved");
+      toast.success("Rate limit saved");
     } catch {
       setEditBadge("bad", "Offline");
+      toast.error("Save failed", { description: "Offline" });
     } finally {
       saveBtn.disabled = false;
     }
@@ -4493,11 +4497,14 @@ const buildKernelPolicyTile = (record, options = {}) => {
       const data = await res.json().catch(() => null);
       if (!res.ok) {
         setKernelListBadge("bad", data?.error?.message ?? "Error");
+        toast.error("Delete failed", { description: data?.error?.message ?? "Error" });
         return;
       }
       await loadKernelList();
+      toast.success("Rate limit deleted");
     } catch {
       setKernelListBadge("bad", "Offline");
+      toast.error("Delete failed", { description: "Offline" });
     } finally {
       deleteBtn.disabled = false;
     }
@@ -7359,6 +7366,7 @@ const createKey = async () => {
       setCreateBadge("bad", "Error");
       createResult.textContent = data?.error?.message ?? "Request failed.";
       createResult.hidden = false;
+      toast.error("Create failed", { description: data?.error?.message ?? "Request failed." });
       return;
     }
 
@@ -7387,6 +7395,7 @@ const createKey = async () => {
     createResult.textContent = lines.join("\n").trim();
     createResult.hidden = false;
     setCreateBadge("ok", "Created");
+    toast.success("API key created", { description: "Copy the token now — it won't be shown again." });
     keyNameInput.value = "";
     keyUsageWindowInput.value = "";
     keyPaidFallbackEnabledInput.checked = false;
@@ -7397,6 +7406,7 @@ const createKey = async () => {
     setCreateBadge("bad", "Error");
     createResult.textContent = "Request failed.";
     createResult.hidden = false;
+    toast.error("Create failed", { description: "Request failed." });
   } finally {
     createKeyBtn.disabled = false;
   }
@@ -7577,11 +7587,14 @@ const deleteKey = async (id, name, button) => {
     const data = await res.json().catch(() => null);
     if (!res.ok) {
       setKeysBadge("bad", data?.error?.message ?? "Error");
+      toast.error("Delete failed", { description: data?.error?.message ?? "Error" });
       return;
     }
     await refreshKeys();
+    toast.success(`Deleted ${name}`);
   } catch {
     setKeysBadge("bad", "Offline");
+    toast.error("Delete failed", { description: "Offline" });
   } finally {
     if (button) button.disabled = false;
   }

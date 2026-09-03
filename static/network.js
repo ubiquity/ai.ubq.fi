@@ -85,9 +85,16 @@ const ensureTraceLayer = (side) => {
 
 const renderNetworkTrace = (originKey) => {
   if (typeof document === "undefined") return;
+  if (
+    typeof globalThis.matchMedia === "function" &&
+    globalThis.matchMedia("(prefers-reduced-motion: reduce)").matches
+  ) {
+    return;
+  }
   const upLayer = ensureTraceLayer("left");
   const downLayer = ensureTraceLayer("right");
   if (!upLayer || !downLayer) return;
+  if (upLayer.childElementCount > 0 || downLayer.childElementCount > 0) return;
   const durationMs = getAverageDurationMs(originKey);
   const halfDurationMs = Math.max(1, durationMs / 2);
 
