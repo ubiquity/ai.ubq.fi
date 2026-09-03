@@ -12212,6 +12212,40 @@
       "identity": {
         "repository": "ubiquity/ai.ubq.fi",
         "source_kind": "triage",
+        "source_id": "33706283476:artifact:9875430301",
+        "source_revision": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
+        "candidate_generation": 1
+      },
+      "run_id": "33706283476",
+      "attempt": 1,
+      "lease_token": "artifact-9875430301",
+      "base_sha": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
+      "phase": "rejected",
+      "disposition": "rejected",
+      "state_version": 1,
+      "created_at": "2026-09-03T02:11:06Z",
+      "updated_at": "2026-09-03T02:11:06Z",
+      "candidate_branch": null,
+      "candidate_sha": null,
+      "changed_files": [],
+      "tree_sha": null,
+      "failure_class": "artifact_invalid",
+      "failure_fingerprint": "1872dfc79de956a8d238205708836221b813ab9db6bd94fe993dc73c3037b111",
+      "artifact_ids": [
+        9875430301
+      ],
+      "artifact_digests": [
+        "sha256:1872dfc79de956a8d238205708836221b813ab9db6bd94fe993dc73c3037b111"
+      ],
+      "reason": "authenticated legacy evidence contains a terminal disposition",
+      "next_action": null,
+      "predecessor": null
+    },
+    {
+      "schema_version": 1,
+      "identity": {
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_kind": "triage",
         "source_id": "341902b5b81feb40cbd4efc15479a4fd3ee900639c664111eeaffa9a1e7b49e4",
         "source_revision": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
         "candidate_generation": 1
@@ -14001,36 +14035,6 @@
       "tree_sha": null,
       "failure_class": "runner_interruption",
       "failure_fingerprint": "c283b44ac36a832944ab0b090c60ec6fd8e87ae93aad3a9374d397a9e5ab5bc7",
-      "artifact_ids": [],
-      "artifact_digests": [],
-      "reason": "Three identical Sentinel failure fingerprints opened the circuit breaker.",
-      "next_action": "Owner review is required before another Sentinel attempt.",
-      "predecessor": null
-    },
-    {
-      "schema_version": 1,
-      "identity": {
-        "repository": "ubiquity/ai.ubq.fi",
-        "source_kind": "triage",
-        "source_id": "7a4e8b206135f9efe9c15b7fcf6d4a11d4a7f755f16c8dae289102b5d6f719b7",
-        "source_revision": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
-        "candidate_generation": 1
-      },
-      "run_id": "33497374807",
-      "attempt": 1,
-      "lease_token": "33497374807-1",
-      "base_sha": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
-      "phase": "manual_required",
-      "disposition": "manual_required",
-      "state_version": 7,
-      "created_at": "2026-09-01T10:29:46.869Z",
-      "updated_at": "2026-09-01T10:58:30.863Z",
-      "candidate_branch": "sentinel/candidate-triage-7a4e8b206135f9efe9c15b7fcf6d4a11d4a7f755f16c8dae289102b5d6f719b7-5127ad329b1ad1aea9b5614e76c8ff09-g1-6c1c05adc2798649",
-      "candidate_sha": null,
-      "changed_files": [],
-      "tree_sha": null,
-      "failure_class": "runner_interruption",
-      "failure_fingerprint": "13bdc4757b1c056ed8a054d50bf04ca0b0965e01690e033ed6f257685ca1a341",
       "artifact_ids": [],
       "artifact_digests": [],
       "reason": "Three identical Sentinel failure fingerprints opened the circuit breaker.",
@@ -16379,48 +16383,6 @@
     }
   ],
   "retry_history": [
-    {
-      "schema_version": 1,
-      "identity": {
-        "repository": "ubiquity/ai.ubq.fi",
-        "source_kind": "triage",
-        "source_id": "7a4e8b206135f9efe9c15b7fcf6d4a11d4a7f755f16c8dae289102b5d6f719b7",
-        "source_revision": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
-        "candidate_generation": 1
-      },
-      "attempt": 1,
-      "failure_class": "runner_interruption",
-      "failure_fingerprint": "13bdc4757b1c056ed8a054d50bf04ca0b0965e01690e033ed6f257685ca1a341",
-      "observed_at": "2026-09-01T10:42:34.261Z"
-    },
-    {
-      "schema_version": 1,
-      "identity": {
-        "repository": "ubiquity/ai.ubq.fi",
-        "source_kind": "triage",
-        "source_id": "7a4e8b206135f9efe9c15b7fcf6d4a11d4a7f755f16c8dae289102b5d6f719b7",
-        "source_revision": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
-        "candidate_generation": 1
-      },
-      "attempt": 2,
-      "failure_class": "runner_interruption",
-      "failure_fingerprint": "13bdc4757b1c056ed8a054d50bf04ca0b0965e01690e033ed6f257685ca1a341",
-      "observed_at": "2026-09-01T10:48:45.509Z"
-    },
-    {
-      "schema_version": 1,
-      "identity": {
-        "repository": "ubiquity/ai.ubq.fi",
-        "source_kind": "triage",
-        "source_id": "7a4e8b206135f9efe9c15b7fcf6d4a11d4a7f755f16c8dae289102b5d6f719b7",
-        "source_revision": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
-        "candidate_generation": 1
-      },
-      "attempt": 3,
-      "failure_class": "runner_interruption",
-      "failure_fingerprint": "13bdc4757b1c056ed8a054d50bf04ca0b0965e01690e033ed6f257685ca1a341",
-      "observed_at": "2026-09-01T10:58:30.863Z"
-    },
     {
       "schema_version": 1,
       "identity": {
@@ -27105,25 +27067,6 @@
     }
   ],
   "retry_decisions": [
-    {
-      "identity_key": "[\"ubiquity/ai.ubq.fi\",\"triage\",\"7a4e8b206135f9efe9c15b7fcf6d4a11d4a7f755f16c8dae289102b5d6f719b7\",\"5127ad329b1ad1aea9b5614e76c8ff09b209d087\",1]",
-      "decision": {
-        "disposition": "manual_required",
-        "should_retry": false,
-        "circuit_open": true,
-        "validation_repair_allowed": false,
-        "source_revision_changed": false,
-        "candidate_generation": 1,
-        "attempt_count": 3,
-        "identical_failure_count": 3,
-        "backoff_ms": null,
-        "retry_at": null,
-        "failure_class": "runner_interruption",
-        "failure_fingerprint": "13bdc4757b1c056ed8a054d50bf04ca0b0965e01690e033ed6f257685ca1a341",
-        "reason": "Three identical Sentinel failure fingerprints opened the circuit breaker.",
-        "next_action": "Owner review is required before another Sentinel attempt."
-      }
-    },
     {
       "identity_key": "[\"ubiquity/ai.ubq.fi\",\"triage\",\"e5aff17b93b5749b5395d3ba57b55021ac53455e38ae7223abada5b0ca53a84c\",\"5127ad329b1ad1aea9b5614e76c8ff09b209d087\",1]",
       "decision": {
