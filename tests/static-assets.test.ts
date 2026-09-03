@@ -308,7 +308,7 @@ Deno.test("admin provider view places capacity history before current providers"
 
   assert.match(adminHtml, /Provider analytics/);
   assert.match(adminHtml, /Fifteen-minute capacity, cached-input, and cache-write history/);
-  assert.match(adminHtml, /admin\.css\?v=admin-polish-20260903-v4/);
+  assert.match(adminHtml, /admin\.css\?v=admin-polish-20260903-v5/);
   assert.match(adminHtml, /admin\.js\?v=admin-indexeddb-cache-20260903-v8/);
   assert.doesNotMatch(adminHtml, /removed_provider-failover|debug-routing/);
   assert.doesNotMatch(adminScript, /RemovedProviderFailover|refresh=live/);
