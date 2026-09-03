@@ -2,7 +2,11 @@
 
 import { getKv } from "./src/kv.ts";
 import { config } from "./src/config.ts";
-import { configureAdminAuthForListener, parseServeRuntimeOptions } from "./src/local_admin_auth.ts";
+import {
+  configureAdminAuthForListener,
+  configureAdminAuthPeerForRequest,
+  parseServeRuntimeOptions,
+} from "./src/local_admin_auth.ts";
 import { reconcileDuePaidFallbacksV3 } from "./src/paid_fallback_ledger.ts";
 import { prunePromptCacheAnalytics } from "./src/prompt_cache_analytics.ts";
 import { sampleProviderCapacityForCron } from "./src/provider_capacity.ts";
@@ -70,13 +74,16 @@ Deno.cron("deliver pending Provider Sentinel incidents", "* * * * *", async () =
   }
 });
 
-const fetch = createServeHandler();
+const serveHandler = createServeHandler();
 
 const runtimeOptions = parseServeRuntimeOptions(Deno.args, { isDeploy: config.isDeploy });
 
 const server: Deno.ServeDefaultExport = runtimeOptions.disableAdminAuth
   ? {
-    fetch,
+    fetch(request, info) {
+      configureAdminAuthPeerForRequest(info.remoteAddr);
+      return serveHandler(request, info);
+    },
     onListen(address) {
       configureAdminAuthForListener(runtimeOptions, address);
       const netAddress = address as Deno.NetAddr;
@@ -87,6 +94,6 @@ const server: Deno.ServeDefaultExport = runtimeOptions.disableAdminAuth
       );
     },
   }
-  : { fetch };
+  : { fetch: serveHandler };
 
 export default server;

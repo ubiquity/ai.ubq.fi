@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { authenticateAdmin, authenticateClient, handleV1Auth, requireSuperAdminAuth } from "../src/auth.ts";
 import {
   configureAdminAuthForListener,
+  configureAdminAuthPeerForRequest,
   isAdminAuthDisabledForRequest,
   isLoopbackHostname,
   parseServeRuntimeOptions,
@@ -80,11 +81,28 @@ Deno.test("admin auth can only be disabled on a loopback TCP listener", () => {
   );
 });
 
-Deno.test("guarded runtime bypass grants local super-admin access without changing remote requests", async () => {
+Deno.test("guarded runtime bypass grants local super-admin access only to loopback peers", async () => {
   const localRequest = new Request("http://127.0.0.1/admin/api-keys");
   const remoteRequest = new Request("https://ai.ubq.fi/admin/api-keys");
 
   configureAdminAuthForListener(enabledOptions, tcpAddress("127.0.0.1"));
+  // Fail closed until a loopback peer is observed.
+  assert.equal(isAdminAuthDisabledForRequest(localRequest), false);
+  const localAuthNoPeer = await authenticateAdmin(localRequest);
+  assert.equal(localAuthNoPeer.ok, false);
+
+  // A forwarded or port-forwarded request has a non-loopback peer and must
+  // never receive the bypass, regardless of its (client-controlled) URL host.
+  configureAdminAuthPeerForRequest(tcpAddress("192.168.1.10"));
+  assert.equal(isAdminAuthDisabledForRequest(localRequest), false);
+  const localAuthForwarded = await authenticateAdmin(localRequest);
+  assert.equal(localAuthForwarded.ok, false);
+
+  // A unix-socket peer never qualifies.
+  configureAdminAuthPeerForRequest({ transport: "unix", path: "/tmp/ai-ubq-fi.sock" });
+  assert.equal(isAdminAuthDisabledForRequest(localRequest), false);
+
+  configureAdminAuthPeerForRequest(tcpAddress("127.0.0.1"));
   try {
     assert.equal(isAdminAuthDisabledForRequest(localRequest), true);
     assert.equal(isAdminAuthDisabledForRequest(remoteRequest), false);
