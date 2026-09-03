@@ -619,9 +619,12 @@ the same way; `deno task admin:models` (and its `:spark` variant) fall back to `
 your shell, and local scripts need no token at all because the loopback server has admin authentication disabled.
 
 Admin authentication is disabled only when the server's actual TCP listener, the request's TCP peer, and the request URL
-are all loopback. Startup fails if you make the listener public (e.g. `--host 0.0.0.0`), in Deno Deploy, with a
-duplicated flag, or with an unknown server argument. To require a real admin token even on loopback (for example to
-exercise the sign-in flow), start the server directly without the baked-in flag:
+are all loopback. A local reverse proxy or tunnel that forwards an external request to this loopback server is
+indistinguishable from a direct local connection (its upstream peer is loopback and the `Host` header is client
+controlled), so the bypass also applies there: never expose the loopback dev server to the network. Startup fails if you
+make the listener public (e.g. `--host 0.0.0.0`), in Deno Deploy, with a duplicated flag, or with an unknown server
+argument. To require a real admin token even on loopback (for example to exercise the sign-in flow), start the server
+directly without the baked-in flag:
 
 ```bash
 deno serve --host 127.0.0.1 --allow-env --allow-net --allow-read --unstable-kv serve.ts
