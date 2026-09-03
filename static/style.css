@@ -408,6 +408,7 @@ a[data-button] {
 button[data-icon-button] {
   width: 36px;
   height: 36px;
+  min-height: 36px;
   padding: 0;
 }
 
@@ -478,7 +479,7 @@ a[data-button] {
   text-decoration: none;
 }
 
-button:hover,
+button:not(:disabled):hover,
 a[data-button]:hover {
   background: rgba(255, 255, 255, 0.11);
 }
@@ -499,7 +500,8 @@ a[data-button]:focus-visible {
   color: var(--accent-ink);
 }
 
-[data-variant="primary"]:hover {
+button:not(:disabled)[data-variant="primary"]:hover,
+a[data-button][data-variant="primary"]:hover {
   background: #ffffff;
   color: var(--accent-ink);
 }
@@ -509,7 +511,8 @@ a[data-button]:focus-visible {
   color: var(--danger);
 }
 
-[data-variant="danger"]:hover {
+button:not(:disabled)[data-variant="danger"]:hover,
+a[data-button][data-variant="danger"]:hover {
   background: rgba(246, 201, 201, 0.24);
 }
 
@@ -639,8 +642,10 @@ input[type="checkbox"] {
   accent-color: var(--accent);
   width: 16px;
   height: 16px;
+  min-height: 16px;
   padding: 0;
   margin: 0;
+  border: 0;
   border-radius: 4px;
   background-color: transparent;
   flex: 0 0 auto;
@@ -1111,6 +1116,7 @@ details[data-usage][open] summary[data-usage-title]::after {
 
 [data-tabs] [role="tab"] {
   padding: 8px 12px;
+  border: 0;
   border-radius: 999px;
   font-size: 11px;
   letter-spacing: 0.12em;

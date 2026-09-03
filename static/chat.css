@@ -311,25 +311,22 @@ body[data-page="chat"] [data-chat-compose-actions] {
 body[data-page="chat"] [data-chat-form] textarea {
   min-height: 60px;
   padding: 8px 10px;
+  border: 0;
+  border-radius: 0;
   background: transparent;
   box-shadow: none;
 }
 
 body[data-page="chat"] [data-chat-form] textarea:focus {
   background: transparent;
+  border-color: transparent;
   box-shadow: none;
-}
-
-body[data-page="chat"] button,
-body[data-page="chat"] a[data-button] {
-  border-radius: 12px;
-  padding: 8px 12px;
-  font-weight: 500;
 }
 
 body[data-page="chat"] button[data-icon-button] {
   width: 40px;
   height: 40px;
+  min-height: 40px;
 }
 
 body[data-page="chat"] [data-chat-sidebar] input,

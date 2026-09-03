@@ -72,11 +72,11 @@ Deno.test("chat response stats use one conversation bar below the composer", () 
 Deno.test("public models page is registered", () => {
   assert.equal(hasStaticAsset("/models"), true);
   assert.equal(hasStaticAsset("/models.html"), true);
-  assert.match(modelsHtml, /<script type="module" src="\/models\.js\?v=20260903-recent-reasoning-v3"><\/script>/);
+  assert.match(modelsHtml, /<script type="module" src="\/models\.js\?v=20260903-recent-reasoning-v4"><\/script>/);
 });
 
 Deno.test("public console pages share versioned styles, canonical navigation, and accurate active states", () => {
-  const assetVersion = "public-console-20260903-v6";
+  const assetVersion = "public-console-20260903-v7";
   const canonicalLinks = [
     { href: "/models", label: "Models" },
     { href: "/developers", label: "Developers" },
@@ -313,7 +313,7 @@ Deno.test("admin provider view places capacity history before current providers"
 
   assert.match(adminHtml, /Provider analytics/);
   assert.match(adminHtml, /Fifteen-minute capacity, cached-input, and cache-write history/);
-  assert.match(adminHtml, /admin\.css\?v=admin-polish-20260903-v5/);
+  assert.match(adminHtml, /admin\.css\?v=admin-polish-20260903-v6/);
   assert.match(adminHtml, /admin\.js\?v=admin-indexeddb-cache-20260903-v8/);
   assert.doesNotMatch(adminHtml, /removed_provider-failover|debug-routing/);
   assert.doesNotMatch(adminScript, /RemovedProviderFailover|refresh=live/);

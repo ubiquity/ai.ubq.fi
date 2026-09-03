@@ -61,7 +61,7 @@ const render = () => {
       contextWindow ? "context compact compression" : "",
     ].filter(Boolean).join(" ").toLowerCase();
     return !query || model.id.toLowerCase().includes(query) ||
-      model.providers.some((provider) => providerNames[provider.id].toLowerCase().includes(query)) ||
+      model.providers.some((provider) => (providerNames[provider.id] ?? provider.id).toLowerCase().includes(query)) ||
       reasoning?.modelClass?.includes(query) ||
       reasoning?.levels.some((level) => level.includes(query)) ||
       contextSearch.includes(query);
@@ -76,7 +76,7 @@ const render = () => {
     for (const provider of model.providers) {
       const badge = document.createElement("span");
       badge.dataset.provider = provider.id;
-      badge.textContent = providerNames[provider.id];
+      badge.textContent = providerNames[provider.id] ?? provider.id;
       badge.title = provider.supported_endpoints.join(", ");
       providers.append(badge);
     }
