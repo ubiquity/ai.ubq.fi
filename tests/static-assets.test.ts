@@ -158,6 +158,11 @@ Deno.test("public console pages share versioned styles, canonical navigation, an
   }
 
   assert.match(adminHtml, new RegExp(`/style\\.css\\?v=${assetVersion}`));
+  assert.match(
+    adminHtml,
+    /<nav data-actions aria-label="Primary">[\s\S]*href="\/models">Models<\/a>[\s\S]*href="\/developers">Developers<\/a>[\s\S]*href="\/docs">Docs<\/a>[\s\S]*href="\/chat">Chat<\/a>[\s\S]*href="\/admin">Admin<\/a>[\s\S]*<\/nav>/,
+    "admin should share the canonical primary navigation with the public pages",
+  );
 });
 
 Deno.test("public console styles retain the bordered neutral admin surface without decorative Models blue", () => {
