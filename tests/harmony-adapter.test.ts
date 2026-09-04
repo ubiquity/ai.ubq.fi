@@ -363,3 +363,31 @@ Deno.test("consecutive generic turns keep the conversation consistent", async ()
   if (!second.ok) throw new Error("expected ok");
   assert.equal(second.normalized.analysis.length, 1);
 });
+
+Deno.test("createCerebrasTransport passes AbortSignal to the underlying fetcher", async () => {
+  const controller = new AbortController();
+  let receivedSignal: AbortSignal | undefined;
+
+  const mockFetcher = (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    receivedSignal = init?.signal as AbortSignal | undefined;
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({
+          id: "test-id",
+          created: 12345,
+          model: "gpt-oss-120b",
+          choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+  };
+
+  const transport = createCerebrasTransport({ apiKey: "test-key", fetcher: mockFetcher });
+  const res = await transport({ model: "gpt-oss-120b", messages: [] }, { signal: controller.signal });
+  assert.equal(res.status, 200);
+  assert.ok(receivedSignal);
+  assert.equal(receivedSignal?.aborted, false);
+  controller.abort();
+  assert.equal(receivedSignal?.aborted, true);
+});

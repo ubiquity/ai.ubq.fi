@@ -101,7 +101,10 @@ export type HarnessEvent =
 export interface HarnessOptions {
   systemPrompt: string;
   userPrompt: string;
-  transport: (body: Readonly<Record<string, unknown>>) => Promise<Response>;
+  transport: (
+    body: Readonly<Record<string, unknown>>,
+    options?: Readonly<{ signal?: AbortSignal }>,
+  ) => Promise<Response>;
   backends: ToolBackends;
   /** Model-facing tool surface; defaults to the canonical compact surface. */
   tools?: readonly ToolDefinition[];
@@ -271,11 +274,13 @@ export async function runReliabilityHarness(opts: HarnessOptions): Promise<Harne
       emit({ type: "model_request", id: requestId, mode, built, estimatedTokens: estimateRequestTokens(built.body) });
       let response: Response;
       try {
-        response = await opts.transport(built.body);
-      } catch {
+        response = await opts.transport(built.body, opts.signal ? { signal: opts.signal } : undefined);
+      } catch (_err) {
+        if (opts.signal?.aborted) return abort("signal");
         await sleep(retryPolicy.backoffMs);
         continue;
       }
+      if (opts.signal?.aborted) return abort("signal");
       if (!response.ok) {
         await response.body?.cancel().catch(() => undefined);
         if (!isTransientHttpStatus(response.status)) break;

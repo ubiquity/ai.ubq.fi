@@ -483,6 +483,7 @@ export function createCanonicalAdapter(options: CanonicalAdapterOptions = {}): B
             "construct the adapter with an approved or fake transport.",
         );
       }
+      if (ctx.signal.aborted) throw new TaskTimeoutError(ctx.task.timeout_ms);
       const tools = surface.definitions;
       const requests = new Map<number, ModelRequestEvent>();
       const outcome = await runReliabilityHarness({

@@ -343,3 +343,42 @@ Deno.test("harness: policy preambles are deterministic and reference the surface
   assert.match(a, /filesystem\.read/);
   assert.match(a, /Context budget tier: large/);
 });
+
+Deno.test("harness: a stalled injected transport stops at the signal without retrying", async () => {
+  const controller = new AbortController();
+  let transportCalls = 0;
+  let receivedSignal: AbortSignal | undefined;
+
+  const stalledTransport: HarmonyTransport = (_body, options) => {
+    transportCalls += 1;
+    receivedSignal = options?.signal;
+    return new Promise((_resolve, reject) => {
+      if (options?.signal) {
+        options.signal.addEventListener("abort", () => {
+          reject(new DOMException("The operation was aborted", "AbortError"));
+        });
+      }
+    });
+  };
+
+  const harnessPromise = runReliabilityHarness(baseOptions([
+    { content: "done" },
+  ], {
+    transport: stalledTransport,
+    signal: controller.signal,
+    retryPolicy: { maxRetriesPerCall: 3, backoffMs: 0, retryableCodes: ["transport"] },
+  }));
+
+  // Verify transport was called and received the signal
+  assert.equal(transportCalls, 1);
+  assert.equal(receivedSignal, controller.signal);
+
+  // Trigger whole-run abort
+  controller.abort();
+
+  const outcome = await harnessPromise;
+  assert.equal(outcome.phase, "aborted");
+  assert.equal(outcome.abortedReason, "signal");
+  // Ensure it stopped immediately without consuming retries
+  assert.equal(transportCalls, 1);
+});
