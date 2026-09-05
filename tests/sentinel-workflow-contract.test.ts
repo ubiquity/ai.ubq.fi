@@ -335,6 +335,29 @@ Deno.test("matrix cell retry evidence is encrypted from the cell report path", (
   assert.doesNotMatch(repair, /upload-artifact@[\w-]+[\s\S]*?path:\s*\n\s+\.sentinel\/(?:raw-logs|reports)(?:\s|$)/u);
 });
 
+Deno.test("focused validation evidence is staged before cell evidence encryption and absent matches are skipped", () => {
+  const encryptStart = repair.indexOf("      - name: Encrypt cell report");
+  const encryptEnd = repair.indexOf("      - name: Upload encrypted cell evidence", encryptStart);
+  assert.ok(encryptStart >= 0 && encryptEnd > encryptStart, "the Encrypt cell report step must exist");
+  const encryptStep = repair.slice(encryptStart, encryptEnd);
+  // The per-invocation candidate validation reports (and their binary
+  // stdout/stderr sidecars) are copied beside the cell report before the
+  // encrypt-artifacts invocation; the compgen guard skips the copy when no
+  // validation evidence exists.
+  assert.match(encryptStep, /compgen -G "\$RUNNER_TEMP\/sentinel-cell-validation-\*\.json\*"/u);
+  assert.match(
+    encryptStep,
+    /cp "\$RUNNER_TEMP"\/sentinel-cell-validation-\*\.json\* "\.sentinel\/reports\/matrix\/\$\{CELL_ID\}\/"/u,
+  );
+  const copyIndex = encryptStep.indexOf("sentinel-cell-validation-");
+  const encryptIndex = encryptStep.indexOf("scripts/sentinel/encrypt-artifacts.ts");
+  assert.ok(copyIndex >= 0, "the Encrypt cell report step must stage focused validation evidence");
+  assert.ok(
+    encryptIndex > copyIndex,
+    "focused validation evidence must be copied before encrypt-artifacts runs",
+  );
+});
+
 Deno.test("the cell runner receives the authoritative work selection and scrubs partial evidence staging", () => {
   assert.match(repair, /matrixCellWorkSelectionFromArtifact/u);
   assert.match(repair, /sentinel-matrix-work-selection\.json/u);
@@ -497,14 +520,23 @@ Deno.test("matrix convergence accepts durable retry_pending reports and stops pu
 });
 
 Deno.test("the focused cell validation runner is carried in the runMatrixCell options object", async () => {
+  const counterStart = repair.indexOf("let validationAttempt = 0");
+  assert.ok(counterStart >= 0, "repair is missing the validation attempt counter");
   const callStart = repair.indexOf("const report = await runMatrixCell({");
   assert.ok(callStart >= 0, "repair is missing the runMatrixCell call");
+  assert.ok(
+    counterStart < callStart,
+    "the validation attempt counter must precede the runMatrixCell call",
+  );
   const snippetEnd = repair.indexOf("await Deno.writeTextFile", callStart);
   assert.ok(
     snippetEnd > callStart,
     "the runMatrixCell call must be bounded by the following cell status write",
   );
-  const snippet = repair.slice(callStart, snippetEnd).trim();
+  const snippet = repair.slice(counterStart, snippetEnd).trim();
+  // The snippet is executed as plain JavaScript by new Function, so the
+  // extractable workflow body must stay free of TypeScript-only annotations.
+  assert.doesNotMatch(snippet, /\s(?:as|satisfies|implements)\s/u);
 
   // Execute the exact repair snippet with harmless stand-ins: runMatrixCell
   // returns its captured options, so the test can prove the focused validation
@@ -516,14 +548,38 @@ Deno.test("the focused cell validation runner is carried in the runMatrixCell op
     return options;
   };
   const validationCalls: Array<Record<string, unknown>> = [];
-  let validationThrows = false;
+  const snippetSecret = "fixture-artifact-key-12345678";
+  const snippetFailure = {
+    phase: "type_check",
+    exit_code: 42,
+    stdout_excerpt: `stdout leak ${snippetSecret} ${"x".repeat(2000)}`,
+    stderr_excerpt: `stderr leak ${snippetSecret}`,
+  };
+  class CandidateValidationError extends Error {
+    readonly failure: typeof snippetFailure;
+    constructor(failure: typeof snippetFailure) {
+      super("Candidate validation failed");
+      this.name = "CandidateValidationError";
+      this.failure = failure;
+    }
+  }
+  let validationMode: "success" | "generic" | "typed" = "success";
   const runCandidateValidation = (candidate: Record<string, unknown>): void => {
     validationCalls.push(candidate);
-    if (validationThrows) throw new Error("candidate validation exploded");
+    if (validationMode === "generic") throw new Error("candidate validation exploded");
+    if (validationMode === "typed") throw new CandidateValidationError(snippetFailure);
+  };
+  const stdoutLines: unknown[] = [];
+  const consoleStub = {
+    log: (...values: unknown[]): void => {
+      stdoutLines.push(...values);
+    },
   };
   const executeRepair = new Function(
     "runMatrixCell",
     "runCandidateValidation",
+    "CandidateValidationError",
+    "console",
     "Deno",
     "env",
     "root",
@@ -538,13 +594,15 @@ Deno.test("the focused cell validation runner is carried in the runMatrixCell op
   const report = await executeRepair(
     runMatrixCell,
     runCandidateValidation,
+    CandidateValidationError,
+    consoleStub,
     { cwd: () => "/repo/checkout" },
     (name: string): string => (name === "DENO_DIR" ? "/home/runner/.deno-cache" : ""),
     "/tmp/runner",
     { cells: [] },
     { cell_id: "cell-1", finding_ids: [] },
     {},
-    [],
+    [snippetSecret],
     { findings: [] },
     null,
   );
@@ -563,7 +621,7 @@ Deno.test("the focused cell validation runner is carried in the runMatrixCell op
   assert.deepEqual(validationCalls, [
     {
       cwd: "/repo/checkout",
-      reportPath: "/tmp/runner/sentinel-cell-validation.json",
+      reportPath: "/tmp/runner/sentinel-cell-validation-1.json",
       privateDir: "/tmp/runner",
       denoDirectory: "/home/runner/.deno-cache",
     },
@@ -577,18 +635,18 @@ Deno.test("the focused cell validation runner is carried in the runMatrixCell op
     }],
   });
 
-  validationThrows = true;
+  validationMode = "generic";
   const failure = await runValidation({ checkoutPath: "/repo/checkout" });
   assert.deepEqual(validationCalls, [
     {
       cwd: "/repo/checkout",
-      reportPath: "/tmp/runner/sentinel-cell-validation.json",
+      reportPath: "/tmp/runner/sentinel-cell-validation-1.json",
       privateDir: "/tmp/runner",
       denoDirectory: "/home/runner/.deno-cache",
     },
     {
       cwd: "/repo/checkout",
-      reportPath: "/tmp/runner/sentinel-cell-validation.json",
+      reportPath: "/tmp/runner/sentinel-cell-validation-2.json",
       privateDir: "/tmp/runner",
       denoDirectory: "/home/runner/.deno-cache",
     },
@@ -601,4 +659,37 @@ Deno.test("the focused cell validation runner is carried in the runMatrixCell op
       detail: "candidate validation exploded",
     }],
   });
+  assert.equal(stdoutLines.length, 0, "generic failures emit no public validation stdout");
+
+  validationMode = "typed";
+  const typedFailure = await runValidation({ checkoutPath: "/repo/checkout" });
+  assert.equal(
+    validationCalls[2]!.reportPath,
+    "/tmp/runner/sentinel-cell-validation-3.json",
+  );
+  assert.notEqual(validationCalls[1]!.reportPath, validationCalls[2]!.reportPath);
+  assert.equal(typedFailure.passed, false);
+  const typedDetail = JSON.parse(typedFailure.checks[0]!.detail) as Record<string, unknown>;
+  assert.deepEqual(
+    Object.keys(typedDetail).sort(),
+    ["exit_code", "phase", "stderr_excerpt", "stdout_excerpt"],
+    "the typed failure detail must be bounded to phase, exit code, and redacted excerpts",
+  );
+  assert.equal(typedDetail.phase, "type_check");
+  assert.equal(typedDetail.exit_code, 42);
+  const stdoutExcerpt = typedDetail.stdout_excerpt as string;
+  const stderrExcerpt = typedDetail.stderr_excerpt as string;
+  // Secrets are removed before the 1500-character bound so no excerpt can
+  // survive redaction as a partial secret prefix.
+  assert.equal(stdoutExcerpt.length, 1500);
+  assert.equal(stdoutExcerpt.includes(snippetSecret), false);
+  assert.equal(stdoutExcerpt.includes("[REDACTED]"), true);
+  assert.equal(stdoutExcerpt.includes("stdout leak [REDACTED]"), true);
+  assert.equal(stderrExcerpt.includes(snippetSecret), false);
+  assert.equal(stderrExcerpt.includes("[REDACTED]"), true);
+  // Public stdout carries only the fixed phase and exit-code JSON: no report
+  // path, key, or raw excerpt may be logged.
+  assert.equal(stdoutLines.length, 1, "typed failures emit exactly one public stdout line");
+  assert.deepEqual(JSON.parse(stdoutLines[0] as string), { phase: "type_check", exit_code: 42 });
+  assert.equal(stdoutLines.every((line) => !JSON.stringify(line).includes(snippetSecret)), true);
 });

@@ -160,6 +160,21 @@ Deno.test({
       assert.equal(await git(fixture.checkout, ["status", "--porcelain=v1"]), "");
       assert.equal(report.finding_dispositions[0]!.status, "implemented");
       assert.ok(report.artifact_sha256);
+      // The initial pass runs focused validation exactly once: its final result
+      // is recorded as a terminal focused-validation check, not only after a
+      // bounded correction.
+      assert.equal(
+        report.validation.checks.filter((item) => item.name === "focused-validation").length,
+        1,
+      );
+      assert.equal(
+        report.validation.checks.find((item) => item.name === "focused-validation")!.passed,
+        true,
+      );
+      assert.equal(
+        report.validation.checks.some((item) => item.name === "focused:fixture" && item.passed === true),
+        true,
+      );
     } finally {
       await Deno.remove(fixture.root, { recursive: true });
     }
@@ -296,6 +311,522 @@ Deno.test({
       assert.equal(await git(fixture.checkout, ["rev-parse", "HEAD"]), fixture.baseSha);
       assert.deepEqual(report.changed_paths, ["src/fix.ts"]);
       assert.equal(report.finding_dispositions[0]!.status, "blocked");
+      assertMatrixCellReportV1(report, fixture.plan);
+      await assertMatrixCellReportDigest(report);
+    } finally {
+      await Deno.remove(fixture.root, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "matrix cell runner spends the unused second invocation on one bounded validation repair and commits the corrected aggregate",
+  ignore: !canRun,
+  async fn() {
+    const fixture = await createFixture();
+    const reportPath = `${fixture.root}/reports/repair.json`;
+    const attempts: number[] = [];
+    const validationRuns: string[][] = [];
+    const repairPrompts: string[] = [];
+    try {
+      const report = await runMatrixCell({
+        ...cellOptions(fixture, reportPath),
+        initialTimeoutMs: 25,
+        continuationTimeoutMs: 50,
+      }, {
+        invokeAgent: async ({ attempt, prompt }) => {
+          attempts.push(attempt);
+          if (attempt === 1) {
+            await Deno.mkdir(`${fixture.checkout}/src`, { recursive: true });
+            await Deno.writeTextFile(`${fixture.checkout}/src/fix.ts`, "export const fixed = 1;\n");
+            return { lastMessage: reportMessage(["src/fix.ts"]) };
+          }
+          repairPrompts.push(prompt);
+          assert.match(prompt, /Cell contract/u);
+          assert.match(prompt, /UNTRUSTED DATA/u);
+          // The repair suffix names the exact pre-correction aggregate: only
+          // src/fix.ts existed when the first attempt ended, so the repair is
+          // told the aggregate exactly, not merely a permitted-path mention.
+          assert.match(
+            prompt,
+            /Current aggregate changed paths \(repository-relative\): \["src\/fix\.ts"\]/u,
+          );
+          await Deno.writeTextFile(`${fixture.checkout}/src/fix.ts`, "export const fixed = true;\n");
+          await Deno.writeTextFile(`${fixture.checkout}/src/extra.ts`, "export const extra = true;\n");
+          return { lastMessage: reportMessage(["src/extra.ts", "src/fix.ts"]) };
+        },
+        secretScan: () => Promise.resolve(),
+        validate: async ({ changedPaths }) => {
+          validationRuns.push([...changedPaths]);
+          const candidate = await Deno.readTextFile(`${fixture.checkout}/src/fix.ts`);
+          if (candidate.includes("fixed = true")) return successfulValidation();
+          return Promise.resolve({
+            passed: false,
+            checks: [{ name: "fixture", passed: false, detail: "fixture validation failed: export shape differs" }],
+          });
+        },
+      });
+
+      assert.equal(report.status, "succeeded");
+      assert.deepEqual(attempts, [1, 2]);
+      assert.equal(validationRuns.length, 2);
+      assert.deepEqual(validationRuns[0], ["src/fix.ts"]);
+      assert.deepEqual(validationRuns[1], ["src/extra.ts", "src/fix.ts"]);
+      assert.equal(repairPrompts.length, 1);
+      assert.equal(repairPrompts[0]!.includes("fixture-secret-never-log"), false);
+      assert.deepEqual(report.changed_paths, ["src/extra.ts", "src/fix.ts"]);
+      assert.equal(await git(fixture.checkout, ["rev-parse", "HEAD^"]), fixture.baseSha);
+      assert.equal(await git(fixture.checkout, ["status", "--porcelain=v1"]), "");
+      const trigger = report.validation.checks.find((item) => item.name === "validation-repair-trigger");
+      assert.ok(trigger);
+      assert.equal(trigger.passed, true);
+      assert.match(trigger.detail, /initial focused validation failed/u);
+      assert.equal(
+        report.validation.checks.filter((item) => item.name === "focused-validation").length,
+        1,
+      );
+      assert.equal(
+        report.validation.checks.find((item) => item.name === "focused-validation")!.passed,
+        true,
+      );
+      // The bounded repair passes the same evidence gates as the initial
+      // attempt: integrity, exact aggregate path scope, protected paths,
+      // secret scan, and terminal finding coverage are all recorded as passed.
+      const repairChecks = Object.fromEntries(
+        [
+          "repair-agent-integrity",
+          "repair-path-scope",
+          "repair-protected-paths",
+          "repair-secret-scan",
+          "repair-finding-coverage",
+        ]
+          .map((name) => {
+            const item = report.validation.checks.find((candidate) => candidate.name === name);
+            assert.ok(item, `the repair evidence check ${name} must be recorded`);
+            return [name, item];
+          }),
+      );
+      for (const item of Object.values(repairChecks)) assert.equal(item.passed, true);
+      // The repair-path-scope check carries the exact serialized sorted
+      // aggregate: the repair added src/extra.ts to the committed src/fix.ts.
+      assert.equal(
+        repairChecks["repair-path-scope"]!.detail.includes('["src/extra.ts","src/fix.ts"]'),
+        true,
+      );
+      assert.match(
+        repairChecks["repair-agent-integrity"]!.detail,
+        /remained unchanged after the bounded validation repair/u,
+      );
+      assert.match(
+        repairChecks["repair-protected-paths"]!.detail,
+        /protected Sentinel paths remain unchanged after the bounded validation repair/u,
+      );
+      assert.match(
+        repairChecks["repair-secret-scan"]!.detail,
+        /repaired cell files and reachable history contain no trusted credential values/u,
+      );
+      assert.match(
+        repairChecks["repair-finding-coverage"]!.detail,
+        /have terminal resolved dispositions after the bounded validation repair/u,
+      );
+      assertMatrixCellReportV1(report, fixture.plan);
+      await assertMatrixCellReportDigest(report);
+    } finally {
+      await Deno.remove(fixture.root, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "matrix cell runner keeps a repeated focused validation failure failed without a commit or a third invocation",
+  ignore: !canRun,
+  async fn() {
+    const fixture = await createFixture();
+    const reportPath = `${fixture.root}/reports/repair-failed.json`;
+    const attempts: number[] = [];
+    const validationRuns: string[][] = [];
+    try {
+      const report = await runMatrixCell(cellOptions(fixture, reportPath), {
+        invokeAgent: async ({ attempt }) => {
+          attempts.push(attempt);
+          await Deno.writeTextFile(
+            `${fixture.checkout}/src/fix.ts`,
+            attempt === 1 ? "export const fixed = 1;\n" : "export const fixed = 2;\n",
+          );
+          return { lastMessage: reportMessage(["src/fix.ts"]) };
+        },
+        secretScan: () => Promise.resolve(),
+        validate: ({ changedPaths }) => {
+          validationRuns.push([...changedPaths]);
+          return Promise.resolve({
+            passed: false,
+            checks: [{ name: "fixture", passed: false, detail: "fixture validation failed" }],
+          });
+        },
+      });
+
+      assert.equal(report.status, "failed");
+      assert.deepEqual(attempts, [1, 2]);
+      assert.equal(validationRuns.length, 2);
+      assert.match(report.failure_reason!, /Focused cell validation failed/u);
+      assert.equal(await git(fixture.checkout, ["rev-parse", "HEAD"]), fixture.baseSha);
+      assert.deepEqual(report.changed_paths, ["src/fix.ts"]);
+      assert.equal(report.finding_dispositions[0]!.status, "blocked");
+      assert.equal(
+        report.validation.checks.some(
+          (item) => item.name === "validation-repair-trigger" && item.passed === true,
+        ),
+        true,
+      );
+      assert.equal(
+        report.validation.checks.some(
+          (item) => item.name === "focused-validation" && item.passed === false,
+        ),
+        true,
+      );
+      assertMatrixCellReportV1(report, fixture.plan);
+      await assertMatrixCellReportDigest(report);
+    } finally {
+      await Deno.remove(fixture.root, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "matrix cell runner never triggers a third invocation when the timeout continuation consumed the second call",
+  ignore: !canRun,
+  async fn() {
+    const fixture = await createFixture();
+    const reportPath = `${fixture.root}/reports/repair-spent.json`;
+    const attempts: number[] = [];
+    const validationRuns: number[] = [];
+    try {
+      const report = await runMatrixCell({
+        ...cellOptions(fixture, reportPath),
+        initialTimeoutMs: 25,
+        continuationTimeoutMs: 50,
+      }, {
+        invokeAgent: async ({ attempt }) => {
+          attempts.push(attempt);
+          if (attempt === 1) {
+            await Deno.writeTextFile(`${fixture.checkout}/src/fix.ts`, "export const fixed = 1;\n");
+            throw new CodexInvocationError("invocation_timeout");
+          }
+          await Deno.writeTextFile(`${fixture.checkout}/src/fix.ts`, "export const fixed = true;\n");
+          return { lastMessage: reportMessage(["src/fix.ts"]) };
+        },
+        secretScan: () => Promise.resolve(),
+        validate: () => {
+          validationRuns.push(1);
+          return Promise.resolve({
+            passed: false,
+            checks: [{ name: "fixture", passed: false, detail: "fixture validation failed" }],
+          });
+        },
+      });
+
+      assert.deepEqual(attempts, [1, 2]);
+      assert.equal(validationRuns.length, 1);
+      assert.equal(report.status, "failed");
+      assert.match(report.failure_reason!, /Focused cell validation failed/u);
+      assert.equal(await git(fixture.checkout, ["rev-parse", "HEAD"]), fixture.baseSha);
+      assert.equal(
+        report.validation.checks.some((item) => item.name === "validation-repair-trigger"),
+        false,
+      );
+      assertMatrixCellReportV1(report, fixture.plan);
+      await assertMatrixCellReportDigest(report);
+    } finally {
+      await Deno.remove(fixture.root, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "matrix cell runner keeps a timed-out validation repair retry_pending without a third invocation",
+  ignore: !canRun,
+  async fn() {
+    const fixture = await createFixture();
+    const reportPath = `${fixture.root}/reports/repair-timeout.json`;
+    const attempts: number[] = [];
+    const validationRuns: number[] = [];
+    try {
+      const report = await runMatrixCell({
+        ...cellOptions(fixture, reportPath),
+        initialTimeoutMs: 25,
+        continuationTimeoutMs: 25,
+      }, {
+        invokeAgent: async ({ attempt }) => {
+          attempts.push(attempt);
+          if (attempt === 1) {
+            await Deno.writeTextFile(`${fixture.checkout}/src/fix.ts`, "export const fixed = 1;\n");
+            return { lastMessage: reportMessage(["src/fix.ts"]) };
+          }
+          throw new CodexInvocationError("invocation_timeout");
+        },
+        secretScan: () => Promise.resolve(),
+        validate: () => {
+          validationRuns.push(1);
+          return Promise.resolve({
+            passed: false,
+            checks: [{ name: "fixture", passed: false, detail: "fixture validation failed" }],
+          });
+        },
+      });
+
+      assert.deepEqual(attempts, [1, 2]);
+      assert.equal(validationRuns.length, 1);
+      assert.equal(report.status, "retry_pending");
+      assert.equal(report.head_sha, null);
+      assert.equal(report.tree_sha, null);
+      assert.equal(await git(fixture.checkout, ["rev-parse", "HEAD"]), fixture.baseSha);
+      assert.equal(
+        report.validation.checks.some(
+          (item) => item.name === "validation-repair-trigger" && item.passed === true,
+        ),
+        true,
+      );
+      assertMatrixCellReportV1(report, fixture.plan);
+      await assertMatrixCellReportDigest(report);
+    } finally {
+      await Deno.remove(fixture.root, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "matrix cell runner blocks a validation repair that touches a protected path before revalidation",
+  ignore: !canRun,
+  async fn() {
+    const fixture = await createFixture();
+    const reportPath = `${fixture.root}/reports/repair-protected.json`;
+    const attempts: number[] = [];
+    const validationRuns: number[] = [];
+    try {
+      const report = await runMatrixCell(cellOptions(fixture, reportPath), {
+        protectedPaths: ["src/fix.ts"],
+        invokeAgent: async ({ attempt }) => {
+          attempts.push(attempt);
+          if (attempt === 1) {
+            await Deno.writeTextFile(`${fixture.checkout}/src/extra.ts`, "export const extra = true;\n");
+            return { lastMessage: reportMessage(["src/extra.ts"]) };
+          }
+          await Deno.writeTextFile(`${fixture.checkout}/src/fix.ts`, "export const changed = true;\n");
+          return { lastMessage: reportMessage(["src/extra.ts", "src/fix.ts"]) };
+        },
+        secretScan: () => Promise.resolve(),
+        validate: () => {
+          validationRuns.push(1);
+          return Promise.resolve({
+            passed: false,
+            checks: [{ name: "fixture", passed: false, detail: "fixture validation failed" }],
+          });
+        },
+      });
+
+      assert.deepEqual(attempts, [1, 2]);
+      assert.equal(validationRuns.length, 1);
+      assert.equal(report.status, "blocked");
+      assert.match(report.failure_reason!, /protected path/u);
+      assert.equal(await git(fixture.checkout, ["rev-parse", "HEAD"]), fixture.baseSha);
+      assert.deepEqual(report.changed_paths, ["src/extra.ts", "src/fix.ts"]);
+      assertMatrixCellReportV1(report, fixture.plan);
+      await assertMatrixCellReportDigest(report);
+    } finally {
+      await Deno.remove(fixture.root, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "matrix cell runner blocks a validation repair that changes a path outside the cell contract before revalidation",
+  ignore: !canRun,
+  async fn() {
+    const fixture = await createFixture();
+    const reportPath = `${fixture.root}/reports/repair-scope.json`;
+    const attempts: number[] = [];
+    const validationRuns: number[] = [];
+    try {
+      const report = await runMatrixCell(cellOptions(fixture, reportPath), {
+        invokeAgent: async ({ attempt }) => {
+          attempts.push(attempt);
+          if (attempt === 1) {
+            await Deno.writeTextFile(`${fixture.checkout}/src/fix.ts`, "export const fixed = 1;\n");
+            return { lastMessage: reportMessage(["src/fix.ts"]) };
+          }
+          await Deno.writeTextFile(`${fixture.checkout}/src/outside.ts`, "export const outside = true;\n");
+          return { lastMessage: reportMessage(["src/outside.ts"]) };
+        },
+        secretScan: () => Promise.resolve(),
+        validate: () => {
+          validationRuns.push(1);
+          return Promise.resolve({
+            passed: false,
+            checks: [{ name: "fixture", passed: false, detail: "fixture validation failed" }],
+          });
+        },
+      });
+
+      assert.deepEqual(attempts, [1, 2]);
+      assert.equal(validationRuns.length, 1);
+      assert.equal(report.status, "blocked");
+      assert.match(report.failure_reason!, /outside the cell contract/u);
+      assert.equal(await git(fixture.checkout, ["rev-parse", "HEAD"]), fixture.baseSha);
+      assert.deepEqual(report.changed_paths, []);
+      assertMatrixCellReportV1(report, fixture.plan);
+      await assertMatrixCellReportDigest(report);
+    } finally {
+      await Deno.remove(fixture.root, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "matrix cell runner blocks a validation repair whose changed_files omit a still-changed permitted path before revalidation",
+  ignore: !canRun,
+  async fn() {
+    const fixture = await createFixture();
+    const reportPath = `${fixture.root}/reports/repair-aggregate.json`;
+    const attempts: number[] = [];
+    const validationRuns: number[] = [];
+    try {
+      const report = await runMatrixCell(cellOptions(fixture, reportPath), {
+        invokeAgent: async ({ attempt }) => {
+          attempts.push(attempt);
+          if (attempt === 1) {
+            await Deno.writeTextFile(`${fixture.checkout}/src/fix.ts`, "export const fixed = 1;\n");
+            return { lastMessage: reportMessage(["src/fix.ts"]) };
+          }
+          await Deno.writeTextFile(`${fixture.checkout}/src/extra.ts`, "export const extra = true;\n");
+          // The repair report omits src/fix.ts, which remains changed in the
+          // aggregate: a missing permitted path is still a changed_files
+          // mismatch and must block before any revalidation.
+          return { lastMessage: reportMessage(["src/extra.ts"]) };
+        },
+        secretScan: () => Promise.resolve(),
+        validate: () => {
+          validationRuns.push(1);
+          return Promise.resolve({
+            passed: false,
+            checks: [{ name: "fixture", passed: false, detail: "fixture validation failed" }],
+          });
+        },
+      });
+
+      assert.deepEqual(attempts, [1, 2]);
+      assert.equal(validationRuns.length, 1);
+      assert.equal(report.status, "failed");
+      assert.match(report.failure_reason!, /did not attribute every changed path to a finding/u);
+      assert.equal(report.finding_dispositions[0]!.status, "blocked");
+      assert.equal(await git(fixture.checkout, ["rev-parse", "HEAD"]), fixture.baseSha);
+      assert.deepEqual(report.changed_paths, ["src/extra.ts", "src/fix.ts"]);
+      assertMatrixCellReportV1(report, fixture.plan);
+      await assertMatrixCellReportDigest(report);
+    } finally {
+      await Deno.remove(fixture.root, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "matrix cell runner excludes sensitive values from validation repair feedback and labels it untrusted data",
+  ignore: !canRun,
+  async fn() {
+    const fixture = await createFixture();
+    const reportPath = `${fixture.root}/reports/repair-secret.json`;
+    const repairPrompts: string[] = [];
+    try {
+      const report = await runMatrixCell(cellOptions(fixture, reportPath), {
+        invokeAgent: async ({ attempt, prompt }) => {
+          if (attempt === 1) {
+            await Deno.writeTextFile(`${fixture.checkout}/src/fix.ts`, "export const fixed = 1;\n");
+            return { lastMessage: reportMessage(["src/fix.ts"]) };
+          }
+          repairPrompts.push(prompt);
+          await Deno.writeTextFile(`${fixture.checkout}/src/fix.ts`, "export const fixed = true;\n");
+          return { lastMessage: reportMessage(["src/fix.ts"]) };
+        },
+        secretScan: () => Promise.resolve(),
+        validate: async () => {
+          const candidate = await Deno.readTextFile(`${fixture.checkout}/src/fix.ts`);
+          if (candidate.includes("fixed = true")) return successfulValidation();
+          return Promise.resolve({
+            passed: false,
+            checks: [{
+              name: "fixture",
+              passed: false,
+              detail: "fixture validation failed: fixture-secret-never-log leaked",
+            }],
+          });
+        },
+      });
+
+      assert.equal(report.status, "succeeded");
+      assert.equal(repairPrompts.length, 1);
+      assert.match(repairPrompts[0]!, /UNTRUSTED DATA/u);
+      assert.equal(repairPrompts[0]!.includes("fixture-secret-never-log"), false);
+      assert.match(repairPrompts[0]!, /\[REDACTED\]/u);
+      const trigger = report.validation.checks.find((item) => item.name === "validation-repair-trigger");
+      assert.ok(trigger);
+      assert.equal(trigger.passed, true);
+      assert.equal(trigger.detail.includes("fixture-secret-never-log"), false);
+      assert.equal(JSON.stringify(report).includes("fixture-secret-never-log"), false);
+      assertMatrixCellReportV1(report, fixture.plan);
+      await assertMatrixCellReportDigest(report);
+    } finally {
+      await Deno.remove(fixture.root, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "matrix cell runner redacts a secret crossing the report-text cutoff without leaking a partial prefix",
+  ignore: !canRun,
+  async fn() {
+    const fixture = await createFixture();
+    const reportPath = `${fixture.root}/reports/repair-cutoff.json`;
+    const repairPrompts: string[] = [];
+    const secret = "fixture-secret-never-log";
+    const detailPrefix = "x".repeat(4_084);
+    const detail = `${detailPrefix}${secret}${"y".repeat(200)}`;
+    try {
+      const report = await runMatrixCell(cellOptions(fixture, reportPath), {
+        invokeAgent: async ({ attempt, prompt }) => {
+          if (attempt === 1) {
+            await Deno.writeTextFile(`${fixture.checkout}/src/fix.ts`, "export const fixed = 1;\n");
+            return { lastMessage: reportMessage(["src/fix.ts"]) };
+          }
+          repairPrompts.push(prompt);
+          await Deno.writeTextFile(`${fixture.checkout}/src/fix.ts`, "export const fixed = true;\n");
+          return { lastMessage: reportMessage(["src/fix.ts"]) };
+        },
+        secretScan: () => Promise.resolve(),
+        validate: async () => {
+          const candidate = await Deno.readTextFile(`${fixture.checkout}/src/fix.ts`);
+          if (candidate.includes("fixed = true")) return successfulValidation();
+          // The secret starts before the 4 096-character report-text cutoff and
+          // extends past it: truncation alone would keep a partial prefix.
+          return Promise.resolve({
+            passed: false,
+            checks: [{
+              name: "fixture",
+              passed: false,
+              detail,
+            }],
+          });
+        },
+      });
+
+      assert.equal(report.status, "succeeded");
+      assert.equal(repairPrompts.length, 1);
+      assert.equal(repairPrompts[0]!.includes(secret), false);
+      assert.equal(repairPrompts[0]!.includes(secret.slice(0, 12)), false);
+      assert.match(repairPrompts[0]!, /\[REDACTED\]/u);
+      assert.equal(JSON.stringify(report).includes(secret), false);
+      assert.equal(JSON.stringify(report).includes(secret.slice(0, 12)), false);
       assertMatrixCellReportV1(report, fixture.plan);
       await assertMatrixCellReportDigest(report);
     } finally {
