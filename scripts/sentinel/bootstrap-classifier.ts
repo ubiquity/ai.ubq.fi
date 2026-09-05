@@ -1,5 +1,13 @@
 /**
- * Bounded ambiguous-progress classifier (plan m06).
+ * Bounded ambiguous-progress classifier adapter (plan m06).
+ *
+ * This module lives OUTSIDE the protected bootstrap package
+ * (`scripts/sentinel/bootstrap/`) so every bootstrap module can keep a closed
+ * local import graph: the adapter itself is provider-adjacent and reaches
+ * `src/cerebras.ts` and the Harmony classifier contract, and therefore cannot
+ * be part of the independently pinned package. Bootstrap never imports it;
+ * the controller receives the classifier via dependency injection and treats
+ * its evidence as advisory only.
  *
  * For an `ambiguous` deterministic verdict only, this module performs exactly
  * one zero-tool, data-only request to the exact model `gpt-oss-120b` through
@@ -16,23 +24,23 @@
  * promotion by itself.
  */
 
-import { CEREBRAS_GPT_OSS_120B_MODEL, type CerebrasFetch } from "../../../src/cerebras.ts";
+import { CEREBRAS_GPT_OSS_120B_MODEL, type CerebrasFetch } from "../../src/cerebras.ts";
 import {
   BOOTSTRAP_CLASSIFIER_MAX_OUTPUT_TOKENS,
   buildBootstrapClassifierRequest,
   verdictFromBootstrapResponse,
-} from "../../../src/harmony/classifier.ts";
+} from "../../src/harmony/classifier.ts";
 import {
   createCerebrasTransport,
   type HarmonyTransport,
   normalizeHarmonyChatCompletion,
-} from "../../../src/harmony/adapter.ts";
+} from "../../src/harmony/adapter.ts";
 import {
   parseSentinelBootstrapClassifierEvidence,
   type SentinelBootstrapClassifierEvidenceV1,
   type SentinelBootstrapProgressObservationV1,
-} from "./contracts.ts";
-import { sentinelBootstrapObservationDigest, toBootstrapClassifierObservation } from "./observation.ts";
+} from "./bootstrap/contracts.ts";
+import { sentinelBootstrapObservationDigest, toBootstrapClassifierObservation } from "./bootstrap/observation.ts";
 
 /** Exact model constant from the existing Cerebras interface. */
 export const BOOTSTRAP_CLASSIFIER_MODEL = CEREBRAS_GPT_OSS_120B_MODEL;

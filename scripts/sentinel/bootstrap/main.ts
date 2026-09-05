@@ -15,7 +15,7 @@ import {
   type SentinelBootstrapReconcileOutcome,
 } from "./controller.ts";
 import { parseBootstrapEnvironment, SENTINEL_BOOTSTRAP_POLICY } from "./policy.ts";
-import { parseSentinelRecoveryLedger, SENTINEL_RECOVERY_LEDGER_PATH } from "../recovery-ledger.ts";
+import { parseAdvisoryRecoveryLedgerSummary, SENTINEL_RECOVERY_LEDGER_PATH } from "./recovery-ledger-summary.ts";
 
 const FULL_SHA = /^[0-9a-f]{40}$/u;
 const SAFE_REVISION = /^[A-Za-z0-9._-]{1,128}$/u;
@@ -162,18 +162,9 @@ const collectBootstrapProgressObservations = async (
   );
   if (!Array.isArray(runsValue.workflow_runs)) throw new Error("Bootstrap workflow-run observation is invalid");
   const ledgerValue = await fetchRecoveryLedger(token, repository).catch(() => null);
-  let ledger: ReturnType<typeof parseSentinelRecoveryLedger> | null = null;
-  if (ledgerValue !== null) {
-    try {
-      ledger = parseSentinelRecoveryLedger(ledgerValue);
-    } catch {
-      ledger = null;
-    }
-  }
-  const ledgerVersion = ledger === null
-    ? null
-    : ledger.records.reduce((maximum, record) => Math.max(maximum, record.state_version), 0);
-  const retryState = ledger === null ? null : ledger.retry_history.length > 0 ? "retrying" : "none";
+  const summary = ledgerValue === null ? null : parseAdvisoryRecoveryLedgerSummary(ledgerValue);
+  const ledgerVersion = summary === null ? null : summary.max_state_version;
+  const retryState = summary === null ? null : summary.retry_state;
   const runs = runsValue.workflow_runs
     .filter((value): value is Record<string, unknown> =>
       typeof value === "object" && value !== null && !Array.isArray(value) &&

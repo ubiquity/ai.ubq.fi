@@ -10,8 +10,24 @@
  * This module is pure and performs no I/O.
  */
 
-import type { BootstrapObservation } from "../../../src/harmony/classifier.ts";
 import type { SentinelBootstrapProgressObservationV1 } from "./contracts.ts";
+
+/**
+ * The bounded classifier data shape projected from a canonical observation.
+ * Defined locally so bootstrap's module graph never reaches provider code;
+ * it mirrors the classifier adapter contract that lives outside the package.
+ */
+export type BootstrapObservation = Readonly<{
+  runId: string;
+  generation: number | null;
+  phase: string | null;
+  milestone: string | null;
+  failureFingerprint: string | null;
+  gitSha: string | null;
+  ledgerVersion: number | null;
+  retryState: string | null;
+  verificationEvidence: string | null;
+}>;
 
 /**
  * The durable state fields compared for cycle detection. Order is fixed so

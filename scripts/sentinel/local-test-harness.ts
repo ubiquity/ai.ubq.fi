@@ -2,8 +2,9 @@
 //
 // This is the single source of truth for local Sentinel verification and the
 // exact command CI repeats (`deno task sentinel:test-local`). It is hermetic
-// by default: child processes inherit a scrubbed environment (no GitHub,
-// Deno, or model credentials), are never granted network access, and resolve
+// by default: child processes receive exactly a scrubbed environment (no
+// GitHub, Deno, or model credentials — enforced with clearEnv at the actual
+// execution boundary), are never granted network access, and resolve
 // dependencies only from the frozen local cache, so nothing is downloaded and
 // no paid model or deployment call can run. It runs the fixed Sentinel test
 // order below in fail-fast sequence, then the same fmt, lint, and build checks
@@ -58,8 +59,22 @@ export const SENTINEL_LOCAL_TEST_STAGES: readonly SentinelLocalTestStage[] = [
   },
   {
     name: "recovery",
-    description: "recovery and recovery-controller tests",
-    argv: ["test", "--cached-only", "--frozen", "tests/sentinel-recovery.test.ts"],
+    description: "recovery-controller, bootstrap, and local-harness tests",
+    argv: [
+      "test",
+      "--cached-only",
+      "--frozen",
+      // The bootstrap source-inspection, isolation, and local-harness
+      // regression tests read the tree, build temporary trees/fixtures, and
+      // spawn Deno children; a scoped run grant would make them self-ignore.
+      "--allow-read",
+      "--allow-write",
+      "--allow-run",
+      "tests/sentinel-recovery.test.ts",
+      "tests/sentinel-bootstrap.test.ts",
+      "tests/sentinel-bootstrap-isolation.test.ts",
+      "tests/sentinel-local-test-harness.test.ts",
+    ],
   },
   {
     name: "matrix",
@@ -119,6 +134,7 @@ export const SENTINEL_LOCAL_TEST_STAGES: readonly SentinelLocalTestStage[] = [
       "scripts/sentinel/rolling-review-worker.ts",
       "scripts/sentinel/revision-control.ts",
       "scripts/sentinel/rollback-controller.ts",
+      "scripts/sentinel/bootstrap/main.ts",
     ],
   },
 ];
@@ -166,6 +182,29 @@ export function scrubSentinelLocalTestEnvironment(
     if (!isScrubbedEnvironmentKey(key)) scrubbed[key] = value;
   }
   return scrubbed;
+}
+
+/**
+ * Runs one stage at the actual hermetic child boundary: the child receives
+ * exactly the scrubbed environment and nothing else. `clearEnv: true` is
+ * required here — Deno.Command would otherwise overlay `env` on the inherited
+ * environment, so scrubbing alone does NOT remove credentials that exist in
+ * the parent. The child keeps every non-credential (toolchain) variable from
+ * the parent environment that survives scrubbing.
+ */
+export function runSentinelLocalTestChild(
+  stage: SentinelLocalTestStage,
+  environment: Readonly<Record<string, string>> = Deno.env.toObject(),
+): Promise<Deno.CommandOutput> {
+  const command = new Deno.Command(Deno.execPath(), {
+    args: [...stage.argv],
+    cwd: Deno.cwd(),
+    env: scrubSentinelLocalTestEnvironment(environment),
+    clearEnv: true,
+    stdout: "piped",
+    stderr: "piped",
+  });
+  return command.output();
 }
 
 // Tokens that would permit network access, an all-permission child, or paid
@@ -291,23 +330,12 @@ async function main(): Promise<void> {
   }
 
   const startedAtMs = Date.now();
-  // Children receive the scrubbed parent environment: no GitHub, Deno, or
-  // model credentials can reach a test, and no allow-net flag exists in any
-  // stage, so network and paid/model/deployment calls are impossible.
-  const childEnvironment = scrubSentinelLocalTestEnvironment(Deno.env.toObject());
   const childOutput = new Map<string, string>();
   const decoder = new TextDecoder();
 
   const runStage: SentinelLocalTestStageRunner = async (stage) => {
     try {
-      const command = new Deno.Command(Deno.execPath(), {
-        args: [...stage.argv],
-        cwd: Deno.cwd(),
-        env: childEnvironment,
-        stdout: "piped",
-        stderr: "piped",
-      });
-      const outcome = await command.output();
+      const outcome = await runSentinelLocalTestChild(stage);
       if (outcome.code !== 0) {
         const output = decoder.decode(outcome.stdout).replace(/\s+$/u, "");
         const error = decoder.decode(outcome.stderr).replace(/\s+$/u, "");

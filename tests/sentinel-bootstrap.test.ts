@@ -25,6 +25,7 @@ import {
   type SentinelFailureConstraintV1,
 } from "../scripts/sentinel/bootstrap/contracts.ts";
 import {
+  BOOTSTRAP_ADVISORY_CLASSIFIER_MODEL,
   classifierFailureEvidence,
   evaluateSentinelBootstrapProgress,
   resolveSentinelBootstrapProgress,
@@ -35,10 +36,11 @@ import {
   sentinelBootstrapProgressStateKey,
 } from "../scripts/sentinel/bootstrap/observation.ts";
 import {
+  BOOTSTRAP_CLASSIFIER_MODEL,
   BOOTSTRAP_PROGRESS_DECISION_DEFINITION,
   createBootstrapClassifier,
   createBootstrapGptOssClassifier,
-} from "../scripts/sentinel/bootstrap/classifier.ts";
+} from "../scripts/sentinel/bootstrap-classifier.ts";
 import {
   assertImplementationSelection,
   assertNoBootstrapMutation,
@@ -46,6 +48,10 @@ import {
   SENTINEL_BOOTSTRAP_POLICY,
 } from "../scripts/sentinel/bootstrap/policy.ts";
 import { synchronizeObservedRelease } from "../scripts/sentinel/bootstrap/main.ts";
+import {
+  parseAdvisoryRecoveryLedgerSummary,
+  SENTINEL_RECOVERY_LEDGER_PATH,
+} from "../scripts/sentinel/bootstrap/recovery-ledger-summary.ts";
 
 const readPermission = await Deno.permissions.query({ name: "read" });
 const sourceInspectionUnavailable = readPermission.state !== "granted";
@@ -1203,13 +1209,103 @@ Deno.test("m06 classifier evidence construction stays advisory and bounded", asy
   assert.ok(longOutput.raw === null || longOutput.raw.length <= 512);
 });
 
+// ---------------------------------------------------------------------------
+// Advisory recovery-ledger summary: local bounded parsing without importing
+// the evolving recovery/retry validators.
+// ---------------------------------------------------------------------------
+
+const recoveryIdentity = (candidateGeneration = 1): Record<string, unknown> => ({
+  repository: "ubiquity/ai.ubq.fi",
+  source_kind: "incident",
+  source_id: "run:1",
+  source_revision: "development",
+  candidate_generation: candidateGeneration,
+});
+
+const recoveryRecord = (stateVersion: number): Record<string, unknown> => ({
+  schema_version: 1,
+  identity: recoveryIdentity(),
+  run_id: "run:1",
+  attempt: 1,
+  lease_token: "lease-1",
+  base_sha: stableSha,
+  phase: "implementation_running",
+  disposition: "active",
+  state_version: stateVersion,
+  created_at: progressAt,
+  updated_at: progressAt,
+  candidate_branch: null,
+  candidate_sha: null,
+  changed_files: [],
+  tree_sha: null,
+  failure_class: null,
+  failure_fingerprint: null,
+  artifact_ids: [],
+  artifact_digests: [],
+  reason: null,
+  next_action: null,
+  predecessor: null,
+});
+
+const recoveryLedger = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+  schema_version: 1,
+  records: [recoveryRecord(3), recoveryRecord(7)],
+  retry_history: [{ identity: recoveryIdentity(), started_at: progressAt }],
+  retry_decisions: [{ identity_key: "ignored", decision: { should_retry: false } }],
+  leases: [],
+  ...overrides,
+});
+
+Deno.test("bootstrap advisory ledger summary parses the actual recovery ledger shape", () => {
+  assert.equal(SENTINEL_RECOVERY_LEDGER_PATH, "docs/sentinel-recovery-records.json");
+  const summary = parseAdvisoryRecoveryLedgerSummary(recoveryLedger());
+  assert.deepEqual(summary, { max_state_version: 7, retry_state: "retrying" });
+});
+
+Deno.test("bootstrap advisory ledger summary fails closed on absent or invalid metadata", () => {
+  assert.equal(parseAdvisoryRecoveryLedgerSummary(null), null);
+  assert.equal(parseAdvisoryRecoveryLedgerSummary({}), null);
+  assert.equal(parseAdvisoryRecoveryLedgerSummary(recoveryLedger({ schema_version: 2 })), null);
+  assert.equal(parseAdvisoryRecoveryLedgerSummary(recoveryLedger({ records: "not-an-array" })), null);
+  assert.equal(parseAdvisoryRecoveryLedgerSummary(recoveryLedger({ records: [{}] })), null);
+  assert.equal(parseAdvisoryRecoveryLedgerSummary(recoveryLedger({ records: [recoveryRecord(0)] })), null);
+  assert.equal(parseAdvisoryRecoveryLedgerSummary(recoveryLedger({ records: [recoveryRecord(-1)] })), null);
+  assert.equal(parseAdvisoryRecoveryLedgerSummary(recoveryLedger({ retry_history: {} })), null);
+  assert.equal(parseAdvisoryRecoveryLedgerSummary(recoveryLedger({ retry_history: ["not-a-record"] })), null);
+  assert.equal(parseAdvisoryRecoveryLedgerSummary(recoveryLedger({ retry_decisions: undefined })), null);
+  assert.equal(parseAdvisoryRecoveryLedgerSummary(recoveryLedger({ leases: undefined })), null);
+  assert.equal(
+    parseAdvisoryRecoveryLedgerSummary(
+      recoveryLedger({ records: Array.from({ length: 513 }, () => recoveryRecord(1)) }),
+    ),
+    null,
+  );
+  assert.equal(
+    parseAdvisoryRecoveryLedgerSummary(recoveryLedger({ retry_history: Array.from({ length: 4097 }, () => ({})) })),
+    null,
+  );
+});
+
+Deno.test("bootstrap advisory ledger summary keeps the empty-ledger state version at zero", () => {
+  // Same reduce semantics as the original derivation: an empty record set
+  // yields the reduction seed 0, never null and never a negative value.
+  const summary = parseAdvisoryRecoveryLedgerSummary(recoveryLedger({ records: [], retry_history: [] }));
+  assert.deepEqual(summary, { max_state_version: 0, retry_state: "none" });
+});
+
+Deno.test("bootstrap keeps the fixed advisory model local and aligned with the adapter", () => {
+  assert.equal(BOOTSTRAP_ADVISORY_CLASSIFIER_MODEL, "gpt-oss-120b");
+  assert.equal(BOOTSTRAP_CLASSIFIER_MODEL, BOOTSTRAP_ADVISORY_CLASSIFIER_MODEL);
+  const evidence = classifierFailureEvidence(progressObservation(), "classifier_injected_call_failed", progressAt);
+  assert.equal(evidence.requested_model, BOOTSTRAP_ADVISORY_CLASSIFIER_MODEL);
+});
+
 Deno.test({
   name: "bootstrap source and workflow expose no mutation or model-substitution path",
   ignore: sourceInspectionUnavailable,
   async fn() {
     const modulePaths = [
       "scripts/sentinel/bootstrap/activation.ts",
-      "scripts/sentinel/bootstrap/classifier.ts",
       "scripts/sentinel/bootstrap/contracts.ts",
       "scripts/sentinel/bootstrap/controller.ts",
       "scripts/sentinel/bootstrap/health.ts",
@@ -1218,12 +1314,26 @@ Deno.test({
       "scripts/sentinel/bootstrap/observation.ts",
       "scripts/sentinel/bootstrap/policy.ts",
       "scripts/sentinel/bootstrap/progress.ts",
+      "scripts/sentinel/bootstrap/recovery-ledger-summary.ts",
     ];
+    const expectedResolved = new Set(modulePaths.map((path) => `${Deno.cwd()}/${path}`));
     for (const path of modulePaths) {
       const source = await Deno.readTextFile(path);
       assert.doesNotMatch(source, /Deno\.Command|git\s+(?:push|merge)|force-with-lease|deno\s+deploy/u);
       assert.doesNotMatch(source, /contents:\s*write|pull-requests:\s*write/u);
+      for (const specifier of [...source.matchAll(/from\s+["']([^"']+)["']/gu)].map((match) => match[1]!)) {
+        assert.doesNotMatch(specifier, /^(?:https?:|node:|jsr:|npm:|deno:)/u, `${path} imports a non-local module`);
+        assert.ok(specifier.startsWith("./"), `${path} escapes the bootstrap package (${specifier})`);
+        const resolved = new URL(specifier, new URL(`file://${Deno.cwd()}/${path}`)).pathname;
+        assert.ok(
+          expectedResolved.has(resolved),
+          `${path} must import only another bootstrap module (${resolved})`,
+        );
+      }
     }
+    // The provider-adjacent classifier adapter must not live in the protected
+    // bootstrap package: its evidence is advisory and injected from outside.
+    await assert.rejects(Deno.stat("scripts/sentinel/bootstrap/classifier.ts"), /not found|No such file/u);
     const workflow = await Deno.readTextFile(".github/workflows/provider-sentinel-bootstrap.yml");
     const evolvingWorkflow = await Deno.readTextFile(".github/workflows/provider-sentinel.yml");
     const entryPoint = await Deno.readTextFile("scripts/sentinel/bootstrap/main.ts");
