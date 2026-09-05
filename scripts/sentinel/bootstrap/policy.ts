@@ -70,6 +70,8 @@ export const assertImplementationSelection = (model: string, reasoning: string):
   ) throw new Error("Sentinel implementation selection violates the owner-controlled bootstrap policy");
 };
 
+export const SENTINEL_PROVIDER_EXECUTOR_EVIDENCE_PATH = "docs/sentinel-provider-executor-evidence" as const;
+
 export const isBootstrapProtectedPath = (path: string): boolean => {
   if (
     path.length === 0 || path.startsWith("/") || path.includes("\\") || path.includes("..") ||
@@ -80,7 +82,9 @@ export const isBootstrapProtectedPath = (path: string): boolean => {
     path === "docs/sentinel-provider-state.json" ||
     path === "docs/sentinel-bootstrap-state.json" ||
     path === "scripts/sentinel/bootstrap" ||
-    path.startsWith("scripts/sentinel/bootstrap/");
+    path.startsWith("scripts/sentinel/bootstrap/") ||
+    path === SENTINEL_PROVIDER_EXECUTOR_EVIDENCE_PATH ||
+    path.startsWith(`${SENTINEL_PROVIDER_EXECUTOR_EVIDENCE_PATH}/`);
 };
 
 export const assertNoBootstrapMutation = (changedPaths: readonly string[]): void => {

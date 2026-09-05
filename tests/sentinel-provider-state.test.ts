@@ -6,9 +6,11 @@ import {
   SENTINEL_BOOTSTRAP_STATE_PATH,
   SENTINEL_PROVIDER_STATE_PATH,
 } from "../scripts/sentinel/bootstrap/github-store.ts";
+import { SENTINEL_PROVIDER_EXECUTOR_EVIDENCE_PATH } from "../scripts/sentinel/bootstrap/policy.ts";
 import {
   parseSentinelProviderStateDocument,
   type SentinelProviderStateDocumentV1,
+  type SentinelProviderTransactionV1,
 } from "../scripts/sentinel/bootstrap/provider-state.ts";
 import type { SentinelBootstrapReleaseRecordV1 } from "../scripts/sentinel/bootstrap/contracts.ts";
 
@@ -1159,12 +1161,22 @@ const DEVELOPMENT_REF = "refs/heads/development";
 const REPOSITORY = "ubiquity/ai.ubq.fi";
 
 class FakeGitHubBackend {
-  readonly requests: Array<{ method: string; path: string; query: string }> = [];
+  readonly requests: Array<{
+    method: string;
+    path: string;
+    query: string;
+    url: string;
+    redirect: string;
+  }> = [];
   readonly refUpdates: Array<Readonly<{ method: string; body: Record<string, unknown> }>> = [];
   readonly blobs = new Map<string, string>();
   readonly trees = new Map<string, ReadonlyMap<string, string>>();
   readonly commits = new Map<string, { tree: string; parents: readonly string[] }>();
   readonly refs = new Map<string, string>();
+  /** Exact run-attempt GET responses, keyed by `/actions/runs/<id>/attempts/<n>`; factories return a fresh Response per request. */
+  readonly attemptResponses = new Map<string, () => Response>();
+  /** Runs before each attempt GET is served (drift hook). */
+  beforeAttemptGet: (() => void | Promise<void>) | null = null;
   refReadGate: Promise<void> | null = null;
   beforeRefUpdate: (() => void | Promise<void>) | null = null;
   refResponseShaOverride: string | null = null;
@@ -1290,7 +1302,13 @@ class FakeGitHubBackend {
     const url = new URL(String(input));
     const path = url.pathname.replace(/^\/repos\/[^/]+\/[^/]+/u, "");
     const query = url.search;
-    this.requests.push({ method: init.method ?? "GET", path, query });
+    this.requests.push({
+      method: init.method ?? "GET",
+      path,
+      query,
+      url: String(input),
+      redirect: init.redirect ?? "follow",
+    });
     if (init.method === "PATCH" || init.method === "POST") {
       if (path === "/git/refs" || path.endsWith("/sentinel/bootstrap-state")) {
         this.refUpdates.push({
@@ -1310,6 +1328,15 @@ class FakeGitHubBackend {
     }
     if (path === "/git/refs") {
       return this.refCreate();
+    }
+    const attemptMatch = path.match(/^\/actions\/runs\/([0-9]+)\/attempts\/([0-9]+)$/u);
+    if (attemptMatch) {
+      if (this.beforeAttemptGet !== null) await this.beforeAttemptGet();
+      const factory = this.attemptResponses.get(path);
+      if (factory === undefined) {
+        throw new Error(`Unexpected fake GitHub attempt request ${init.method ?? "GET"} ${path}`);
+      }
+      return await factory();
     }
     const commitMatch = path.match(/^\/git\/commits\/([0-9a-f]{40})$/u);
     if (commitMatch) {
@@ -3036,4 +3063,968 @@ Deno.test("an ambiguous rollback result may reconcile to acknowledged 204 and th
   assert.equal(rolledBack.route!.revision_id, "rev-a", "the restored route identifies the previous revision");
   assert.equal(rolledBack.restoration!.git_sha, SHA_A, "the restoration matches the previous identity");
   assert.equal(rolledBack.restoration!.verified_at, RESTORED_AT);
+});
+
+// ---------------------------------------------------------------------------
+// Provider executor handover: exact run-attempt authority, raw evidence
+// retention, and the dedicated owner transition.
+// ---------------------------------------------------------------------------
+
+const GITHUB_RUN_URL_BASE = `https://github.com/${REPOSITORY}/actions/runs`;
+const REVISION_CONTROL_WORKFLOW = ".github/workflows/sentinel-revision-control.yml";
+const HANDOVER_NOW = Date.parse("2026-09-04T11:30:00.000Z");
+
+type AttemptOverrides = Readonly<Record<string, unknown>>;
+
+type AttemptFixture = Readonly<{
+  runId: number;
+  runAttempt: number;
+  payload: Record<string, unknown>;
+}>;
+
+const sha256Hex = async (data: Uint8Array): Promise<string> => {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(data)));
+  return [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+};
+
+const attemptKey = (runId: number, runAttempt: number): string => `/actions/runs/${runId}/attempts/${runAttempt}`;
+
+const setAttempt = (
+  backend: FakeGitHubBackend,
+  runId: number,
+  runAttempt: number,
+  factory: () => Response,
+): void => {
+  backend.attemptResponses.set(attemptKey(runId, runAttempt), factory);
+};
+
+const attemptPayload = (
+  runId: number,
+  runAttempt: number,
+  overrides: AttemptOverrides = {},
+): Record<string, unknown> => ({
+  id: runId,
+  run_attempt: runAttempt,
+  repository: { full_name: REPOSITORY },
+  path: REVISION_CONTROL_WORKFLOW,
+  status: "completed",
+  conclusion: "success",
+  created_at: "2026-09-04T09:00:00Z",
+  run_started_at: "2026-09-04T09:30:00Z",
+  updated_at: "2026-09-04T10:00:00Z",
+  html_url: `${GITHUB_RUN_URL_BASE}/${runId}`,
+  ...overrides,
+});
+
+const inProgressAttempt = (
+  runId: number,
+  runAttempt: number,
+  overrides: AttemptOverrides = {},
+): Record<string, unknown> =>
+  attemptPayload(runId, runAttempt, { status: "in_progress", conclusion: null, ...overrides });
+
+const standardHandoverAuthority = (
+  retiringRunId = 42,
+  retiringRunAttempt = 1,
+  nextRunId = 43,
+  nextRunAttempt = 1,
+  retiringOverrides: AttemptOverrides = {},
+  nextOverrides: AttemptOverrides = {},
+): { retiring: AttemptFixture; next: AttemptFixture } => ({
+  retiring: {
+    runId: retiringRunId,
+    runAttempt: retiringRunAttempt,
+    payload: attemptPayload(retiringRunId, retiringRunAttempt, retiringOverrides),
+  },
+  next: {
+    runId: nextRunId,
+    runAttempt: nextRunAttempt,
+    payload: inProgressAttempt(nextRunId, nextRunAttempt, nextOverrides),
+  },
+});
+
+const registerHandoverAuthority = (
+  backend: FakeGitHubBackend,
+  authority: { retiring: AttemptFixture; next: AttemptFixture },
+): void => {
+  setAttempt(
+    backend,
+    authority.retiring.runId,
+    authority.retiring.runAttempt,
+    () => Response.json(authority.retiring.payload),
+  );
+  setAttempt(backend, authority.next.runId, authority.next.runAttempt, () => Response.json(authority.next.payload));
+};
+
+const revisionControlExecutor = (runId: number, runAttempt: number): Record<string, unknown> => ({
+  repository: REPOSITORY,
+  workflow_path: REVISION_CONTROL_WORKFLOW,
+  run_id: runId,
+  run_attempt: runAttempt,
+});
+
+const handoverTransaction = (overrides: Record<string, unknown> = {}): Fixture =>
+  preparedTransaction({ executor: revisionControlExecutor(42, 1), ...overrides });
+
+const handoverDocument = (
+  transaction: Fixture | null = handoverTransaction(),
+  generation = 2,
+  overrides: Fixture = {},
+): Fixture =>
+  stateDocument({
+    generation,
+    applications: [
+      { app: "ai-ubq-fi", healthy: previousAttestation(), transaction },
+      { app: "p-ai-ubq-fi", healthy: previousAttestation(), transaction: null },
+    ],
+    ...overrides,
+  });
+
+const seedHandoverBranch = async (document: Fixture): Promise<FakeGitHubBackend> => {
+  const backend = new FakeGitHubBackend();
+  await backend.seedDevelopment({
+    [SENTINEL_PROVIDER_STATE_PATH]: providerStateJson(parseOk(document)),
+    "docs/other.txt": "unrelated bytes\n",
+  });
+  await backend.siblingCreateBranch({});
+  return backend;
+};
+
+const makeHandoverAdapter = (
+  backend: FakeGitHubBackend,
+  now: () => number = () => HANDOVER_NOW,
+) =>
+  createGitHubSentinelProviderState({
+    token: "test-token",
+    repository: REPOSITORY,
+    fetcher: backend.fetcher,
+    now,
+  });
+
+const attemptRequests = (backend: FakeGitHubBackend): ReadonlyArray<
+  Readonly<{
+    path: string;
+    url: string;
+    redirect: string;
+  }>
+> =>
+  backend.requests.filter(
+    (request) => request.method === "GET" && request.path.startsWith("/actions/runs/"),
+  );
+
+const assertNoPublication = (backend: FakeGitHubBackend, label: string): void => {
+  assert.equal(countRequestsWhere(backend, "POST"), 0, `${label} must create no Git objects`);
+  assert.equal(countRequestsWhere(backend, "PATCH"), 0, `${label} must never update the state ref`);
+};
+
+const assertExactRunAttemptReads = (backend: FakeGitHubBackend, label: string): void => {
+  for (const request of attemptRequests(backend)) {
+    assert.match(request.path, /^\/actions\/runs\/[0-9]+\/attempts\/[0-9]+$/u, `${label}: only exact endpoints`);
+    const url = new URL(request.url);
+    assert.equal(url.origin, "https://api.github.com", `${label}: fixed API host only`);
+    assert.equal(url.username, "", `${label}: no credentials in the attempt URL`);
+    assert.equal(url.search, "", `${label}: no query in the attempt URL`);
+    assert.equal(url.hash, "", `${label}: no fragment in the attempt URL`);
+    assert.equal(request.redirect, "error", `${label}: redirects are disabled`);
+  }
+};
+
+const trackedResponseBody = (bytes: Uint8Array, onCancel: () => void): Response => {
+  // Keep the stream open after enqueue: the bounded reader must be the one
+  // cancelling it (oversize bytes or fatal UTF-8), and the source cancel hook
+  // is the only observable of that cancellation.
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(bytes);
+    },
+    cancel() {
+      onCancel();
+    },
+  });
+  return new Response(stream, { status: 200 });
+};
+
+const expectedVerifiedAttempt = (
+  payload: Record<string, unknown>,
+  runId: number,
+  runAttempt: number,
+  status: string,
+  conclusion: string | null,
+): Record<string, unknown> => ({
+  request_path: `/repos/${REPOSITORY}/actions/runs/${runId}/attempts/${runAttempt}`,
+  http_status: 200,
+  response: payload,
+  run_id: runId,
+  run_attempt: runAttempt,
+  html_url: `${GITHUB_RUN_URL_BASE}/${runId}`,
+  status,
+  conclusion,
+  created_at: "2026-09-04T09:00:00.000Z",
+  run_started_at: "2026-09-04T09:30:00.000Z",
+  updated_at: "2026-09-04T10:00:00.000Z",
+});
+
+const expectedEvidenceContent = (
+  transactionId: string,
+  stateCommitSha: string,
+  observedAt: string,
+  retiring: AttemptFixture,
+  next: AttemptFixture,
+): string =>
+  `${
+    JSON.stringify(
+      {
+        schema_version: 1,
+        transaction_id: transactionId,
+        state_commit_sha: stateCommitSha,
+        observed_at: observedAt,
+        retiring: expectedVerifiedAttempt(
+          retiring.payload,
+          retiring.runId,
+          retiring.runAttempt,
+          "completed",
+          "success",
+        ),
+        next: expectedVerifiedAttempt(
+          next.payload,
+          next.runId,
+          next.runAttempt,
+          "in_progress",
+          null,
+        ),
+      },
+      null,
+      2,
+    )
+  }\n`;
+
+const withoutOwnerFields = (transaction: SentinelProviderTransactionV1): Fixture => {
+  const copy = { ...transaction } as Record<string, unknown>;
+  delete copy.executor;
+  delete copy.fence_generation;
+  delete copy.retired_executor;
+  return copy;
+};
+
+Deno.test("handover accepts every real terminal retiring conclusion with an in_progress replacement", async () => {
+  const conclusions = [
+    "success",
+    "failure",
+    "cancelled",
+    "timed_out",
+    "action_required",
+    "neutral",
+    "skipped",
+  ] as const;
+  for (const conclusion of conclusions) {
+    const backend = await seedHandoverBranch(handoverDocument());
+    registerHandoverAuthority(backend, standardHandoverAuthority(42, 1, 43, 1, { conclusion }));
+    const adapter = await makeHandoverAdapter(backend);
+    const head = adapter.readSnapshot().commit_sha;
+    assert.equal(
+      await adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(43, 1)),
+      true,
+      `conclusion ${conclusion} must be accepted`,
+    );
+    assertExactRunAttemptReads(backend, `conclusion ${conclusion}`);
+    const document = parseOk(JSON.parse((await backend.headFile(SENTINEL_PROVIDER_STATE_PATH))!));
+    const transaction = document.applications.find((app) => app.app === "ai-ubq-fi")!.transaction!;
+    assert.equal(document.generation, 3, `conclusion ${conclusion} advances the generation`);
+    assert.equal(transaction.fence_generation, 3);
+    assert.deepEqual(transaction.executor, revisionControlExecutor(43, 1));
+    assert.deepEqual(transaction.retired_executor!.executor, revisionControlExecutor(42, 1));
+    assert.equal(transaction.retired_executor!.conclusion, conclusion);
+    assert.equal(transaction.retired_executor!.observed_at, "2026-09-04T11:30:00.000Z");
+    assert.match(transaction.retired_executor!.evidence_ref, /^sha256:[0-9a-f]{64}$/u);
+  }
+});
+
+Deno.test("handover accepts a replacement in a newer attempt of the same run", async () => {
+  const backend = await seedHandoverBranch(handoverDocument());
+  registerHandoverAuthority(backend, standardHandoverAuthority(42, 1, 42, 2));
+  const adapter = await makeHandoverAdapter(backend);
+  const head = adapter.readSnapshot().commit_sha;
+  assert.equal(await adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(42, 2)), true);
+  const document = parseOk(JSON.parse((await backend.headFile(SENTINEL_PROVIDER_STATE_PATH))!));
+  const transaction = document.applications.find((app) => app.app === "ai-ubq-fi")!.transaction!;
+  assert.deepEqual(transaction.executor, revisionControlExecutor(42, 2));
+  assert.equal(transaction.retired_executor!.executor.run_id, 42);
+  assert.equal(transaction.retired_executor!.executor.run_attempt, 1);
+});
+
+Deno.test("handover fails closed on every response identity, path, repository, id, attempt, and URL mismatch", async () => {
+  const mismatches: ReadonlyArray<readonly [string, AttemptOverrides]> = [
+    ["response id mismatch", { id: 99 }],
+    ["response run_attempt mismatch", { run_attempt: 7 }],
+    ["repository full_name mismatch", { repository: { full_name: "other/repo" } }],
+    ["repository is not an object", { repository: null }],
+    ["workflow path mismatch", { path: ".github/workflows/other.yml" }],
+    ["html_url on another host", { html_url: "https://github.com/other/actions/runs/42" }],
+    ["html_url for another run", { html_url: `${GITHUB_RUN_URL_BASE}/99` }],
+    ["html_url for another attempt", { html_url: `${GITHUB_RUN_URL_BASE}/42/attempts/7` }],
+    ["html_url with a query", { html_url: `${GITHUB_RUN_URL_BASE}/42?ref=dev` }],
+    ["html_url with a fragment", { html_url: `${GITHUB_RUN_URL_BASE}/42#frag` }],
+    ["html_url is not a string", { html_url: 42 }],
+  ];
+  for (const [label, overrides] of mismatches) {
+    const backend = await seedHandoverBranch(handoverDocument());
+    registerHandoverAuthority(backend, standardHandoverAuthority(42, 1, 43, 1, overrides));
+    const adapter = await makeHandoverAdapter(backend);
+    const head = adapter.readSnapshot().commit_sha;
+    assert.equal(await adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(43, 1)), false, label);
+    assertNoPublication(backend, label);
+    assertExactRunAttemptReads(backend, label);
+    assert.equal(attemptRequests(backend).length, 1, `${label}: the retiring read must fail closed`);
+    assert.equal(backend.childCommitsOf(head), 0, `${label}: no commit may be created`);
+    assert.equal(backend.stateRefHead(), head, `${label}: the state ref must not move`);
+  }
+  const backend = await seedHandoverBranch(handoverDocument());
+  registerHandoverAuthority(backend, standardHandoverAuthority(42, 1, 43, 1, {}, { id: 99 }));
+  const adapter = await makeHandoverAdapter(backend);
+  const head = adapter.readSnapshot().commit_sha;
+  assert.equal(await adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(43, 1)), false);
+  assertNoPublication(backend, "replacement identity mismatch");
+  assert.equal(attemptRequests(backend).length, 2, "the replacement identity is checked after the retiring read");
+});
+
+Deno.test("an in_progress retiring attempt or a completed/concluded replacement is never accepted", async () => {
+  const cases: ReadonlyArray<readonly [string, AttemptOverrides, AttemptOverrides]> = [
+    ["retiring attempt is in_progress", { status: "in_progress" }, {}],
+    ["replacement is a completed historical executor", {}, { status: "completed", conclusion: "success" }],
+    ["replacement carries a conclusion", {}, { conclusion: "success" }],
+    ["replacement carries a failure conclusion", {}, { conclusion: "failure" }],
+  ];
+  for (const [label, retiringOverrides, nextOverrides] of cases) {
+    const backend = await seedHandoverBranch(handoverDocument());
+    registerHandoverAuthority(backend, standardHandoverAuthority(42, 1, 43, 1, retiringOverrides, nextOverrides));
+    const adapter = await makeHandoverAdapter(backend);
+    const head = adapter.readSnapshot().commit_sha;
+    assert.equal(await adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(43, 1)), false, label);
+    assertNoPublication(backend, label);
+    assertExactRunAttemptReads(backend, label);
+  }
+});
+
+Deno.test("a null, unknown, or synthetic stale retiring conclusion is rejected", async () => {
+  // Both exact responses are read before status/conclusion semantics; only a
+  // non-string conclusion fails inside the per-attempt validation layer and
+  // rejects before the replacement read.
+  const cases: ReadonlyArray<readonly [string, AttemptOverrides, number]> = [
+    ["null conclusion", { conclusion: null }, 2],
+    ["unknown conclusion", { conclusion: "unknown" }, 2],
+    ["synthetic stale conclusion", { conclusion: "stale" }, 2],
+    ["non-string conclusion", { conclusion: 17 }, 1],
+  ];
+  for (const [label, retiringOverrides, expectedReads] of cases) {
+    const backend = await seedHandoverBranch(handoverDocument());
+    registerHandoverAuthority(backend, standardHandoverAuthority(42, 1, 43, 1, retiringOverrides));
+    const adapter = await makeHandoverAdapter(backend);
+    const head = adapter.readSnapshot().commit_sha;
+    assert.equal(await adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(43, 1)), false, label);
+    assertNoPublication(backend, label);
+    assert.equal(attemptRequests(backend).length, expectedReads, `${label}: attempt read count`);
+  }
+});
+
+Deno.test("handover fails closed on malformed evidence, oversize or binary bodies, token echoes, and transport errors", async () => {
+  const rows: ReadonlyArray<Readonly<{ label: string; attempts: number; factory: () => Response }>> = [
+    {
+      label: "malformed created_at",
+      attempts: 1,
+      factory: () => Response.json(attemptPayload(42, 1, { created_at: "yesterday" })),
+    },
+    {
+      label: "malformed run_started_at",
+      attempts: 1,
+      factory: () => Response.json(attemptPayload(42, 1, { run_started_at: "no time" })),
+    },
+    {
+      label: "malformed updated_at",
+      attempts: 1,
+      factory: () => Response.json(attemptPayload(42, 1, { updated_at: 7 })),
+    },
+    {
+      label: "created_at after run_started_at",
+      attempts: 1,
+      factory: () => Response.json(attemptPayload(42, 1, { created_at: "2026-09-04T09:40:00.000Z" })),
+    },
+    {
+      label: "run_started_at after updated_at",
+      attempts: 1,
+      factory: () => Response.json(attemptPayload(42, 1, { run_started_at: "2026-09-04T10:40:00.000Z" })),
+    },
+    {
+      label: "updated_at after the final clock",
+      attempts: 2,
+      factory: () => Response.json(attemptPayload(42, 1, { updated_at: "2026-09-04T12:00:00.000Z" })),
+    },
+    { label: "body is not JSON", attempts: 1, factory: () => new Response("{ this is not json", { status: 200 }) },
+    { label: "body is a JSON array", attempts: 1, factory: () => Response.json([1, 2, 3]) },
+    { label: "HTTP 404 status", attempts: 1, factory: () => new Response("not found", { status: 404 }) },
+    { label: "HTTP 500 status", attempts: 1, factory: () => new Response("server error", { status: 500 }) },
+    {
+      label: "transport failure",
+      attempts: 1,
+      factory: () => {
+        throw new Error("network down");
+      },
+    },
+    {
+      label: "raw token echo",
+      attempts: 1,
+      factory: () =>
+        new Response(JSON.stringify(attemptPayload(42, 1, { note: "authorization test-token" })), { status: 200 }),
+    },
+  ];
+  for (const row of rows) {
+    const backend = await seedHandoverBranch(handoverDocument());
+    setAttempt(backend, 42, 1, row.factory);
+    setAttempt(backend, 43, 1, () => Response.json(inProgressAttempt(43, 1)));
+    const adapter = await makeHandoverAdapter(backend);
+    const head = adapter.readSnapshot().commit_sha;
+    assert.equal(await adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(43, 1)), false, row.label);
+    assertNoPublication(backend, row.label);
+    assertExactRunAttemptReads(backend, row.label);
+    assert.equal(attemptRequests(backend).length, row.attempts, `${row.label}: read count`);
+  }
+  for (
+    const [label, bytes] of [
+      ["oversize body", new TextEncoder().encode("x".repeat(1024 * 1024 + 1))],
+      ["malformed UTF-8 body", new Uint8Array([0x22, 0xff, 0xfe, 0x22])],
+    ] as const
+  ) {
+    const backend = await seedHandoverBranch(handoverDocument());
+    let cancelled = false;
+    setAttempt(backend, 42, 1, () =>
+      trackedResponseBody(bytes, () => {
+        cancelled = true;
+      }));
+    setAttempt(backend, 43, 1, () => Response.json(inProgressAttempt(43, 1)));
+    const adapter = await makeHandoverAdapter(backend);
+    const head = adapter.readSnapshot().commit_sha;
+    assert.equal(await adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(43, 1)), false, label);
+    assert.equal(cancelled, true, `${label}: the response stream must be cancelled`);
+    assertNoPublication(backend, label);
+    assertExactRunAttemptReads(backend, label);
+  }
+});
+
+const assertLocalInputRejected = async (
+  label: string,
+  invoke: (adapter: Awaited<ReturnType<typeof createGitHubSentinelProviderState>>, head: string) => Promise<boolean>,
+  seedDocument: Fixture | "missing" = handoverDocument(),
+): Promise<void> => {
+  const backend = new FakeGitHubBackend();
+  if (seedDocument === "missing") {
+    await backend.seedDevelopment({ "docs/other.txt": "unrelated bytes\n" });
+  } else {
+    await backend.seedDevelopment({
+      [SENTINEL_PROVIDER_STATE_PATH]: providerStateJson(parseOk(seedDocument)),
+      "docs/other.txt": "unrelated bytes\n",
+    });
+  }
+  await backend.siblingCreateBranch({});
+  const adapter = await makeHandoverAdapter(backend);
+  const head = adapter.readSnapshot().commit_sha;
+  const before = backend.requests.length;
+  assert.equal(await invoke(adapter, head), false, label);
+  assert.equal(countRequestsWhere(backend, "POST"), 0, `${label}: no Git objects`);
+  assert.equal(countRequestsWhere(backend, "PATCH"), 0, `${label}: no ref update`);
+  assert.ok(
+    backend.requests.slice(before).every((request) => !request.path.startsWith("/actions/runs/")),
+    `${label}: rejected before any attempt GET`,
+  );
+};
+
+// Terminal local fixtures keep both application entries, overriding only the
+// healthy attestation: the parser requires kept to equal the exact candidate
+// and rolled_back to equal the exact restoration, never the default previous.
+const terminalSeedDocument = (healthy: Fixture, transaction: Fixture): Fixture =>
+  stateDocument({
+    generation: 2,
+    applications: [
+      { app: "ai-ubq-fi", healthy, transaction },
+      { app: "p-ai-ubq-fi", healthy: previousAttestation(), transaction: null },
+    ],
+  });
+
+Deno.test("stale, missing, terminal, or invalid local inputs reject handover before any attempt GET", async () => {
+  const cases: ReadonlyArray<
+    Readonly<{
+      label: string;
+      seed?: Fixture | "missing";
+      invoke: (
+        adapter: Awaited<ReturnType<typeof createGitHubSentinelProviderState>>,
+        head: string,
+      ) => Promise<boolean>;
+    }>
+  > = [
+    {
+      label: "stale expected SHA",
+      invoke: (adapter, _head) => adapter.handover("f".repeat(40), "ai-ubq-fi", revisionControlExecutor(43, 1)),
+    },
+    {
+      label: "missing provider document",
+      seed: "missing",
+      invoke: (adapter, head) => adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(43, 1)),
+    },
+    {
+      label: "unknown application",
+      invoke: (adapter, head) => adapter.handover(head, "not-an-app", revisionControlExecutor(43, 1)),
+    },
+    {
+      label: "application has no transaction",
+      seed: handoverDocument(null),
+      invoke: (adapter, head) => adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(43, 1)),
+    },
+    {
+      label: "kept terminal transaction",
+      seed: terminalSeedDocument(
+        candidateAttestation(),
+        keptTransaction({ executor: revisionControlExecutor(42, 1) }),
+      ),
+      invoke: (adapter, head) => adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(43, 1)),
+    },
+    {
+      label: "rolled_back terminal transaction",
+      seed: terminalSeedDocument(
+        restorationAttestation(),
+        rolledBackTransaction({ executor: revisionControlExecutor(42, 1) }),
+      ),
+      invoke: (adapter, head) => adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(43, 1)),
+    },
+    {
+      label: "transaction executor is not the revision-control workflow",
+      seed: handoverDocument(preparedTransaction()),
+      invoke: (adapter, head) => adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(43, 1)),
+    },
+    {
+      label: "non-string application",
+      invoke: (adapter, head) => adapter.handover(head, 7 as unknown as string, revisionControlExecutor(43, 1)),
+    },
+    {
+      label: "next executor is null",
+      invoke: (adapter, head) => adapter.handover(head, "ai-ubq-fi", null),
+    },
+    {
+      label: "next executor is an array",
+      invoke: (adapter, head) => adapter.handover(head, "ai-ubq-fi", []),
+    },
+    {
+      label: "next executor wrong repository",
+      invoke: (adapter, head) =>
+        adapter.handover(head, "ai-ubq-fi", { ...revisionControlExecutor(43, 1), repository: "other/org" }),
+    },
+    {
+      label: "next executor wrong workflow path",
+      invoke: (adapter, head) =>
+        adapter.handover(head, "ai-ubq-fi", {
+          ...revisionControlExecutor(43, 1),
+          workflow_path: ".github/workflows/other.yml",
+        }),
+    },
+    {
+      label: "next executor run_id zero",
+      invoke: (adapter, head) => adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(0, 1)),
+    },
+    {
+      label: "next executor run_id negative",
+      invoke: (adapter, head) => adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(-5, 1)),
+    },
+    {
+      label: "next executor run_id float",
+      invoke: (adapter, head) => adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(1.5, 1)),
+    },
+    {
+      label: "next executor run_id string",
+      invoke: (adapter, head) =>
+        adapter.handover(head, "ai-ubq-fi", revisionControlExecutor("43" as unknown as number, 1)),
+    },
+    {
+      label: "next executor run_attempt zero",
+      invoke: (adapter, head) => adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(43, 0)),
+    },
+    {
+      label: "next executor run_attempt float",
+      invoke: (adapter, head) => adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(43, 2.5)),
+    },
+    {
+      label: "next executor has extra keys",
+      invoke: (adapter, head) =>
+        adapter.handover(head, "ai-ubq-fi", { ...revisionControlExecutor(43, 1), extra: true }),
+    },
+    {
+      label: "next executor equals the current owner",
+      invoke: (adapter, head) => adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(42, 1)),
+    },
+    {
+      label: "generation overflow",
+      seed: handoverDocument(handoverTransaction(), Number.MAX_SAFE_INTEGER),
+      invoke: (adapter, head) => adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(43, 1)),
+    },
+  ];
+  for (const entry of cases) {
+    await assertLocalInputRejected(entry.label, entry.invoke, entry.seed ?? handoverDocument());
+  }
+});
+
+Deno.test("a blocked transaction remains active and handoverable", async () => {
+  const backend = await seedHandoverBranch(
+    handoverDocument(blockedTransaction({ executor: revisionControlExecutor(42, 1) })),
+  );
+  registerHandoverAuthority(backend, standardHandoverAuthority());
+  const adapter = await makeHandoverAdapter(backend);
+  const head = adapter.readSnapshot().commit_sha;
+  assert.equal(await adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(43, 1)), true);
+  const document = parseOk(JSON.parse((await backend.headFile(SENTINEL_PROVIDER_STATE_PATH))!));
+  const transaction = document.applications.find((app) => app.app === "ai-ubq-fi")!.transaction!;
+  assert.equal(transaction.phase, "blocked", "handover must preserve the phase");
+  assert.equal(transaction.retired_executor!.conclusion, "success");
+  assert.deepEqual(transaction.executor, revisionControlExecutor(43, 1));
+});
+
+Deno.test("attempt-read drift that moves the remote ref before publication rejects with zero Git writes", async () => {
+  const backend = await seedHandoverBranch(handoverDocument());
+  registerHandoverAuthority(backend, standardHandoverAuthority());
+  const adapter = await makeHandoverAdapter(backend);
+  const head = adapter.readSnapshot().commit_sha;
+  let drifted = false;
+  backend.beforeAttemptGet = async () => {
+    if (drifted) return;
+    drifted = true;
+    await backend.siblingWrite({ "docs/drift.txt": "sibling moved the ref" });
+  };
+  assert.equal(
+    await adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(43, 1)),
+    false,
+    "the post-authority recheck must reject the drifted parent",
+  );
+  assertNoPublication(backend, "post-authority ref drift");
+  assertExactRunAttemptReads(backend, "post-authority ref drift");
+  assert.equal(attemptRequests(backend).length, 2, "both attempt reads complete before the drift is detected");
+  assert.equal(backend.stateRefHead() !== head, true, "the sibling write is the surviving state");
+  assert.equal(await backend.headFile("docs/drift.txt"), "sibling moved the ref");
+  const refreshed = await adapter.refresh();
+  assert.equal(refreshed.commit_sha, backend.stateRefHead());
+});
+
+Deno.test("generic compareAndSet still cannot change the transaction owner and never issues attempt GETs", async () => {
+  const backend = await seedHandoverBranch(handoverDocument());
+  const adapter = await makeHandoverAdapter(backend);
+  const head = adapter.readSnapshot().commit_sha;
+  const attempts: ReadonlyArray<readonly [string, Fixture]> = [
+    [
+      "changed run_id",
+      stateDocument({
+        generation: 3,
+        applications: [
+          {
+            app: "ai-ubq-fi",
+            healthy: previousAttestation(),
+            transaction: preparedTransaction({ executor: revisionControlExecutor(43, 1) }),
+          },
+          { app: "p-ai-ubq-fi", healthy: previousAttestation(), transaction: null },
+        ],
+      }),
+    ],
+    [
+      "changed workflow path",
+      stateDocument({
+        generation: 3,
+        applications: [
+          {
+            app: "ai-ubq-fi",
+            healthy: previousAttestation(),
+            transaction: preparedTransaction({
+              executor: { ...revisionControlExecutor(42, 1), workflow_path: ".github/workflows/other.yml" },
+            }),
+          },
+          { app: "p-ai-ubq-fi", healthy: previousAttestation(), transaction: null },
+        ],
+      }),
+    ],
+    [
+      "changed run_attempt",
+      stateDocument({
+        generation: 3,
+        applications: [
+          {
+            app: "ai-ubq-fi",
+            healthy: previousAttestation(),
+            transaction: preparedTransaction({ executor: revisionControlExecutor(42, 2) }),
+          },
+          { app: "p-ai-ubq-fi", healthy: previousAttestation(), transaction: null },
+        ],
+      }),
+    ],
+  ];
+  for (const [label, candidate] of attempts) {
+    assert.equal(await adapter.compareAndSet(head, parseOk(candidate)), false, label);
+    assertNoPublication(backend, label);
+    assert.equal(attemptRequests(backend).length, 0, `${label}: generic CAS never executes attempt GETs`);
+  }
+  assert.equal(backend.stateRefHead(), head);
+});
+
+Deno.test("a valid handover publishes on the exact captured parent and changes only the allowed transaction fields", async () => {
+  const backend = await seedHandoverBranch(handoverDocument());
+  registerHandoverAuthority(backend, standardHandoverAuthority());
+  const adapter = await makeHandoverAdapter(backend);
+  const previous = adapter.readSnapshot();
+  const head = previous.commit_sha;
+  const previousTransaction = previous.document!.applications.find((app) => app.app === "ai-ubq-fi")!.transaction!;
+  assert.equal(await adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(43, 1)), true);
+  const headCommit = backend.commits.get(backend.stateRefHead()!)!;
+  assert.deepEqual(headCommit.parents, [head], "the exact captured parent must be used");
+  assert.equal(countRequestsWhere(backend, "POST"), 4, "one blob per retained file, one tree, one commit");
+  assert.equal(countRequestsWhere(backend, "PATCH"), 1, "exactly one ref publication");
+  const document = parseOk(JSON.parse((await backend.headFile(SENTINEL_PROVIDER_STATE_PATH))!));
+  assert.equal(document.generation, previous.document!.generation + 1);
+  assert.deepEqual(
+    document.applications[1],
+    previous.document!.applications[1],
+    "the unrelated application is untouched",
+  );
+  const transaction = document.applications.find((app) => app.app === "ai-ubq-fi")!.transaction!;
+  assert.equal(transaction.fence_generation, document.generation);
+  assert.deepEqual(transaction.executor, revisionControlExecutor(43, 1));
+  assert.deepEqual(transaction.retired_executor!.executor, revisionControlExecutor(42, 1));
+  assert.equal(transaction.retired_executor!.conclusion, "success");
+  assert.equal(transaction.retired_executor!.observed_at, "2026-09-04T11:30:00.000Z");
+  assert.match(transaction.retired_executor!.evidence_ref, /^sha256:[0-9a-f]{64}$/u);
+  assert.deepEqual(
+    withoutOwnerFields(transaction),
+    withoutOwnerFields(previousTransaction),
+    "every non-owner transaction field must be preserved exactly",
+  );
+  assert.deepEqual(
+    document.applications.find((app) => app.app === "ai-ubq-fi")!.healthy,
+    previous.document!.applications.find((app) => app.app === "ai-ubq-fi")!.healthy,
+    "the healthy attestation is untouched",
+  );
+  assert.equal(await backend.headFile("docs/other.txt"), "unrelated bytes\n", "unrelated tree bytes are preserved");
+});
+
+Deno.test("handover retains both raw responses content-addressed in the same commit with a matching evidence_ref", async () => {
+  const backend = await seedHandoverBranch(handoverDocument());
+  const authority = standardHandoverAuthority();
+  registerHandoverAuthority(backend, authority);
+  const adapter = await makeHandoverAdapter(backend);
+  const head = adapter.readSnapshot().commit_sha;
+  assert.equal(await adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(43, 1)), true);
+  const observedAt = "2026-09-04T11:30:00.000Z";
+  const evidenceContent = expectedEvidenceContent("tx-1", head, observedAt, authority.retiring, authority.next);
+  const digest = await sha256Hex(new TextEncoder().encode(evidenceContent));
+  const evidencePath = `${SENTINEL_PROVIDER_EXECUTOR_EVIDENCE_PATH}/${digest}.json`;
+  assert.equal(
+    await backend.headFile(evidencePath),
+    evidenceContent,
+    "the content-addressed raw evidence is retained verbatim at the head",
+  );
+  assert.equal(await backend.fileAtRef(evidencePath, head), null, "the evidence rides only the new commit");
+  assert.ok(!evidenceContent.includes("test-token"), "no credential is retained in the evidence");
+  const document = parseOk(JSON.parse((await backend.headFile(SENTINEL_PROVIDER_STATE_PATH))!));
+  const transaction = document.applications.find((app) => app.app === "ai-ubq-fi")!.transaction!;
+  assert.equal(
+    transaction.retired_executor!.evidence_ref,
+    `sha256:${digest}`,
+    "the evidence_ref is the sha256 of the retained bytes",
+  );
+});
+
+Deno.test("E1 to E2 to E3 keeps the E1 raw sidecar and normalized record reachable through the exact parent chain", async () => {
+  const backend = await seedHandoverBranch(handoverDocument());
+  const first = standardHandoverAuthority(42, 1, 43, 1);
+  registerHandoverAuthority(backend, first);
+  const adapter = await makeHandoverAdapter(backend);
+  const head0 = adapter.readSnapshot().commit_sha;
+  assert.equal(await adapter.handover(head0, "ai-ubq-fi", revisionControlExecutor(43, 1)), true);
+  const head1 = backend.stateRefHead()!;
+  const evidence1 = expectedEvidenceContent("tx-1", head0, "2026-09-04T11:30:00.000Z", first.retiring, first.next);
+  const digest1 = await sha256Hex(new TextEncoder().encode(evidence1));
+
+  const second = standardHandoverAuthority(43, 1, 44, 1);
+  registerHandoverAuthority(backend, second);
+  assert.equal(await adapter.handover(head1, "ai-ubq-fi", revisionControlExecutor(44, 1)), true);
+  const head2 = backend.stateRefHead()!;
+  const evidence2 = expectedEvidenceContent("tx-1", head1, "2026-09-04T11:30:00.000Z", second.retiring, second.next);
+  const digest2 = await sha256Hex(new TextEncoder().encode(evidence2));
+
+  assert.deepEqual(backend.commits.get(head1)!.parents, [head0], "E1 to E2 uses the exact parent");
+  assert.deepEqual(backend.commits.get(head2)!.parents, [head1], "E2 to E3 uses the exact parent");
+  const path1 = `${SENTINEL_PROVIDER_EXECUTOR_EVIDENCE_PATH}/${digest1}.json`;
+  const path2 = `${SENTINEL_PROVIDER_EXECUTOR_EVIDENCE_PATH}/${digest2}.json`;
+  assert.equal(await backend.fileAtRef(path1, head1), evidence1, "the E1 raw sidecar rides the E1 commit");
+  assert.equal(await backend.fileAtRef(path1, head2), evidence1, "the E1 raw sidecar survives into the E2 commit tree");
+  assert.equal(await backend.fileAtRef(path2, head2), evidence2, "the E2 raw sidecar rides the E2 commit");
+
+  const head1Document = parseOk(JSON.parse((await backend.fileAtRef(SENTINEL_PROVIDER_STATE_PATH, head1))!));
+  const head1Transaction = head1Document.applications.find((app) => app.app === "ai-ubq-fi")!.transaction!;
+  assert.equal(head1Transaction.retired_executor!.evidence_ref, `sha256:${digest1}`);
+  assert.deepEqual(head1Transaction.retired_executor!.executor, revisionControlExecutor(42, 1));
+  assert.deepEqual(head1Transaction.executor, revisionControlExecutor(43, 1));
+
+  const head2Document = parseOk(JSON.parse((await backend.fileAtRef(SENTINEL_PROVIDER_STATE_PATH, head2))!));
+  const head2Transaction = head2Document.applications.find((app) => app.app === "ai-ubq-fi")!.transaction!;
+  assert.equal(head2Transaction.retired_executor!.evidence_ref, `sha256:${digest2}`);
+  assert.deepEqual(head2Transaction.retired_executor!.executor, revisionControlExecutor(43, 1));
+  assert.deepEqual(head2Transaction.executor, revisionControlExecutor(44, 1));
+});
+
+Deno.test("a stale expected parent after a successful handover rejects without new reads or writes", async () => {
+  const backend = await seedHandoverBranch(handoverDocument());
+  registerHandoverAuthority(backend, standardHandoverAuthority());
+  const adapter = await makeHandoverAdapter(backend);
+  const head0 = adapter.readSnapshot().commit_sha;
+  assert.equal(await adapter.handover(head0, "ai-ubq-fi", revisionControlExecutor(43, 1)), true);
+  const head1 = backend.stateRefHead()!;
+  const before = backend.requests.length;
+  assert.equal(await adapter.handover(head0, "ai-ubq-fi", revisionControlExecutor(44, 1)), false);
+  assert.equal(backend.requests.length, before, "a stale expected SHA must fail before any request");
+  assert.equal(countRequestsWhere(backend, "POST"), 4, "no additional Git objects");
+  assert.equal(countRequestsWhere(backend, "PATCH"), 1, "no additional ref update");
+  assert.equal(backend.stateRefHead(), head1, "the state ref must not move");
+});
+
+Deno.test("a racing sibling ref update during handover is a conflict that refreshes without blind retry", async () => {
+  const backend = await seedHandoverBranch(handoverDocument());
+  registerHandoverAuthority(backend, standardHandoverAuthority());
+  const adapter = await makeHandoverAdapter(backend);
+  const head = adapter.readSnapshot().commit_sha;
+  backend.beforeRefUpdate = async () => {
+    await backend.siblingWrite({ "docs/from-sibling.txt": "sibling" });
+  };
+  assert.equal(
+    await adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(43, 1)),
+    false,
+    "the 422 ref conflict is not success",
+  );
+  assert.equal(backend.refUpdates.filter((update) => update.method === "PATCH").length, 1, "no blind retry");
+  const refreshed = await adapter.refresh();
+  assert.equal(refreshed.document!.generation, 2, "the sibling kept the prior generation");
+  assert.equal(refreshed.commit_sha, backend.stateRefHead());
+  assert.equal(await backend.headFile("docs/from-sibling.txt"), "sibling");
+});
+
+Deno.test("an ambiguous ref response during handover is an explicit error that refresh can reconcile", async () => {
+  const backend = await seedHandoverBranch(handoverDocument());
+  registerHandoverAuthority(backend, standardHandoverAuthority());
+  const adapter = await makeHandoverAdapter(backend);
+  const head = adapter.readSnapshot().commit_sha;
+  backend.refResponseShaOverride = "f".repeat(40);
+  await assert.rejects(
+    adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(43, 1)),
+    /ambiguous/u,
+  );
+  assert.equal(backend.refUpdates.filter((update) => update.method === "PATCH").length, 1, "no blind retry");
+  const refreshed = await adapter.refresh();
+  assert.equal(refreshed.document!.generation, 3, "the remote publication actually advanced the state");
+  assert.deepEqual(
+    refreshed.document!.applications.find((app) => app.app === "ai-ubq-fi")!.transaction!.executor,
+    revisionControlExecutor(43, 1),
+    "the reconciled head carries the published successor",
+  );
+  assert.deepEqual(
+    refreshed.document,
+    parseOk(JSON.parse((await backend.headFile(SENTINEL_PROVIDER_STATE_PATH))!)),
+    "the reconciled snapshot is the exact backend head with its evidence",
+  );
+  assert.equal(refreshed.commit_sha, backend.stateRefHead());
+});
+
+Deno.test("a Unicode-escaped synthetic token in either key or value position is rejected after decoding", async () => {
+  const escapedFragments: ReadonlyArray<readonly [string, string]> = [
+    ["escaped token in a value", '"\\u0074est-token"'],
+    ["escaped token in a key", '"\\u0074est-token":"x"'],
+  ];
+  for (const [label, fragment] of escapedFragments) {
+    const backend = await seedHandoverBranch(handoverDocument());
+    const raw = `${JSON.stringify(attemptPayload(42, 1)).slice(0, -1)},${fragment}}`;
+    assert.ok(!raw.includes("test-token"), `${label}: the raw body must not contain the literal token`);
+    setAttempt(backend, 42, 1, () => new Response(raw, { status: 200 }));
+    setAttempt(backend, 43, 1, () => Response.json(inProgressAttempt(43, 1)));
+    const adapter = await makeHandoverAdapter(backend);
+    const head = adapter.readSnapshot().commit_sha;
+    assert.equal(await adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(43, 1)), false, label);
+    assertNoPublication(backend, label);
+    assert.equal(attemptRequests(backend).length, 1, `${label}: the retiring response must reject`);
+  }
+});
+
+Deno.test("an advancing injected clock succeeds with the final observation authoritative for evidence", async () => {
+  const backend = await seedHandoverBranch(handoverDocument());
+  // The replacement updated_at (11:40) sits between the initial clock (11:30)
+  // and the final clock (11:45): only post-read clock handling accepts it.
+  registerHandoverAuthority(
+    backend,
+    standardHandoverAuthority(42, 1, 43, 1, {}, { updated_at: "2026-09-04T11:40:00Z" }),
+  );
+  const ticks = [
+    Date.parse("2026-09-04T11:30:00.000Z"),
+    Date.parse("2026-09-04T11:45:00.000Z"),
+    Date.parse("2026-09-04T11:45:00.000Z"),
+  ];
+  let tick = 0;
+  const adapter = await makeHandoverAdapter(backend, () => {
+    const value = ticks[Math.min(tick, ticks.length - 1)]!;
+    tick += 1;
+    return value;
+  });
+  const head = adapter.readSnapshot().commit_sha;
+  assert.equal(await adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(43, 1)), true);
+  const document = parseOk(JSON.parse((await backend.headFile(SENTINEL_PROVIDER_STATE_PATH))!));
+  const transaction = document.applications.find((app) => app.app === "ai-ubq-fi")!.transaction!;
+  assert.equal(
+    transaction.retired_executor!.observed_at,
+    "2026-09-04T11:45:00.000Z",
+    "the final clock is authoritative",
+  );
+});
+
+Deno.test("an invalid or regressing injected clock fails closed before any attempt read or at the final sample", async () => {
+  const invalidClocks: ReadonlyArray<readonly [string, () => number]> = [
+    ["NaN clock", () => Number.NaN],
+    ["Infinity clock", () => Number.POSITIVE_INFINITY],
+    ["finite out-of-range clock", () => 1e100],
+    ["sub-millisecond clock", () => Date.parse("2026-09-04T11:30:00.000Z") + 0.5],
+  ];
+  for (const [label, now] of invalidClocks) {
+    const backend = await seedHandoverBranch(handoverDocument());
+    registerHandoverAuthority(backend, standardHandoverAuthority());
+    const adapter = await makeHandoverAdapter(backend, now);
+    const head = adapter.readSnapshot().commit_sha;
+    assert.equal(await adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(43, 1)), false, label);
+    assertNoPublication(backend, label);
+    assert.equal(attemptRequests(backend).length, 0, `${label}: invalid clocks reject before any attempt read`);
+  }
+  const backend = await seedHandoverBranch(handoverDocument());
+  registerHandoverAuthority(backend, standardHandoverAuthority());
+  const later = Date.parse("2026-09-04T11:45:00.000Z");
+  const earlier = Date.parse("2026-09-04T11:30:00.000Z");
+  const ticks = [later, earlier];
+  let tick = 0;
+  const adapter = await makeHandoverAdapter(backend, () => ticks[tick++]!);
+  const head = adapter.readSnapshot().commit_sha;
+  assert.equal(
+    await adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(43, 1)),
+    false,
+    "a regressing injected clock must fail closed",
+  );
+  assertNoPublication(backend, "a regressing injected clock must fail closed");
+  assert.equal(attemptRequests(backend).length, 2, "the regression is detected after both reads");
+});
+
+Deno.test("a noncanonical adapter repository rejects handover before any attempt read or write", async () => {
+  const backend = await seedHandoverBranch(handoverDocument());
+  registerHandoverAuthority(backend, standardHandoverAuthority());
+  const adapter = await createGitHubSentinelProviderState({
+    token: "test-token",
+    repository: "ubiquity/not-ai-ubq-fi",
+    fetcher: backend.fetcher,
+    now: () => HANDOVER_NOW,
+  });
+  const head = adapter.readSnapshot().commit_sha;
+  assert.equal(await adapter.handover(head, "ai-ubq-fi", revisionControlExecutor(43, 1)), false);
+  assert.equal(attemptRequests(backend).length, 0, "an unapproved adapter repository must never read a run attempt");
+  assertNoPublication(backend, "an unapproved adapter repository");
 });

@@ -460,6 +460,14 @@ Deno.test("bootstrap policy rejects model substitution and bootstrap-path mutati
   assert.throws(() => assertNoBootstrapMutation(["docs/sentinel-bootstrap-state.json"]), /cannot modify/);
   assert.throws(() => assertNoBootstrapMutation(["docs/sentinel-provider-state.json"]), /cannot modify/);
   assert.throws(
+    () => assertNoBootstrapMutation(["docs/sentinel-provider-executor-evidence"]),
+    /cannot modify/,
+  );
+  assert.throws(
+    () => assertNoBootstrapMutation(["docs/sentinel-provider-executor-evidence/ab12cd34.json"]),
+    /cannot modify/,
+  );
+  assert.throws(
     () => assertNoBootstrapMutation([".github/workflows/sentinel-revision-control.yml"]),
     /cannot modify/,
   );
@@ -1314,6 +1322,7 @@ Deno.test({
       "scripts/sentinel/bootstrap/contracts.ts",
       "scripts/sentinel/bootstrap/controller.ts",
       "scripts/sentinel/bootstrap/deploy.ts",
+      "scripts/sentinel/bootstrap/executor.ts",
       "scripts/sentinel/bootstrap/health.ts",
       "scripts/sentinel/bootstrap/github-store.ts",
       "scripts/sentinel/bootstrap/main.ts",

@@ -9,6 +9,15 @@ import {
   type SentinelProviderTransactionV1,
 } from "./provider-state.ts";
 import {
+  ExecutorAuthorityError,
+  parseProviderExecutorIdentity,
+  PROVIDER_EXECUTOR_REPOSITORY,
+  PROVIDER_EXECUTOR_WORKFLOW_PATH,
+  type VerifiedExecutorAuthority,
+  verifyExecutorHandoverAuthority,
+} from "./executor.ts";
+import { SENTINEL_PROVIDER_EXECUTOR_EVIDENCE_PATH } from "./policy.ts";
+import {
   parseBootstrapReleaseRecord,
   parseSentinelBootstrapActivationPointer,
   parseSentinelBootstrapHealthSignal,
@@ -75,6 +84,14 @@ export type GitHubSentinelProviderState = Readonly<{
   readSnapshot(): SentinelProviderStateSnapshot;
   refresh(): Promise<SentinelProviderStateSnapshot>;
   compareAndSet(expectedCommitSha: string, nextDocument: unknown): Promise<boolean>;
+  /**
+   * Dedicated verified owner transition (provider executor handover). Only
+   * this method may change the transaction owner; the generic compareAndSet
+   * retains every executor/fence/origin/retired check and never calls
+   * execution APIs. Returns false (no execution GETs or Git writes) for any
+   * stale, missing, terminal, unapproved, or drifted input.
+   */
+  handover(expectedCommitSha: string, app: string, nextExecutor: unknown): Promise<boolean>;
 }>;
 
 const record = (value: unknown): JsonRecord | null =>
@@ -220,6 +237,29 @@ const readProviderSnapshot = async (
   return Object.freeze({ document, ...base });
 };
 
+const createBlob = async (
+  token: string,
+  repository: string,
+  content: string,
+  fetcher: typeof fetch,
+): Promise<string> => {
+  const blob = record(
+    (await request(token, repository, "/git/blobs", {
+      method: "POST",
+      body: JSON.stringify({ content, encoding: "utf-8" }),
+    }, fetcher)).value,
+  );
+  return sha(blob?.sha, "Sentinel state blob SHA");
+};
+
+/**
+ * Narrow optional tree entry for internally derived raw evidence only (the
+ * provider handover path retain its content-addressed evidence file in the
+ * same tree/commit as the provider owner update). No generalized tree write
+ * or caller-supplied evidence override is exposed.
+ */
+type StateCommitEvidenceEntry = Readonly<{ path: string; content: string }>;
+
 const createStateCommit = async (
   token: string,
   repository: string,
@@ -228,20 +268,30 @@ const createStateCommit = async (
   document: unknown,
   message: string,
   fetcher: typeof fetch,
+  evidence?: StateCommitEvidenceEntry,
 ): Promise<Readonly<{ commit_sha: string; tree_sha: string }>> => {
-  const blob = record(
-    (await request(token, repository, "/git/blobs", {
-      method: "POST",
-      body: JSON.stringify({ content: `${JSON.stringify(document, null, 2)}\n`, encoding: "utf-8" }),
-    }, fetcher)).value,
-  );
-  const blobSha = sha(blob?.sha, "Sentinel state blob SHA");
+  const entries = [
+    {
+      path: documentPath,
+      mode: "100644",
+      type: "blob",
+      sha: await createBlob(token, repository, `${JSON.stringify(document, null, 2)}\n`, fetcher),
+    },
+  ];
+  if (evidence !== undefined) {
+    entries.push({
+      path: evidence.path,
+      mode: "100644",
+      type: "blob",
+      sha: await createBlob(token, repository, evidence.content, fetcher),
+    });
+  }
   const tree = record(
     (await request(token, repository, "/git/trees", {
       method: "POST",
       body: JSON.stringify({
         base_tree: base.tree_sha,
-        tree: [{ path: documentPath, mode: "100644", type: "blob", sha: blobSha }],
+        tree: entries,
       }),
     }, fetcher)).value,
   );
@@ -681,24 +731,111 @@ export const createGitHubSentinelBootstrapState = async (
   };
 };
 
+const sha256Hex = async (bytes: Uint8Array<ArrayBuffer>): Promise<string> => {
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+};
+
 /**
- * Fixed GitHub provider-state adapter. It reads by immutable commit, writes
- * ONLY docs/sentinel-provider-state.json into the existing tree with exactly
- * the captured parent, and publishes with force:false. It never reads or
- * parses the controller document, never calls health/deployment APIs, and
- * never force-updates any ref.
+ * Exact-parent recheck against the immutable captured snapshot: the state ref
+ * (or the development ref while the state ref does not exist) must still
+ * point at the captured commit. Any drift returns false.
+ */
+const providerRefStillMatchesCaptured = async (
+  token: string,
+  repository: string,
+  captured: GitSnapshotBase,
+  fetcher: typeof fetch,
+): Promise<boolean> => {
+  const remoteStateRef = await request(
+    token,
+    repository,
+    "/git/ref/heads/sentinel/bootstrap-state",
+    {},
+    fetcher,
+    true,
+  );
+  if (captured.state_ref_exists) {
+    return remoteStateRef.status !== 404 && refSha(remoteStateRef.value) === captured.commit_sha;
+  }
+  if (remoteStateRef.status !== 404) return false;
+  const development = await request(token, repository, "/git/ref/heads/development", {}, fetcher);
+  return refSha(development.value) === captured.commit_sha;
+};
+
+/**
+ * Fixed GitHub provider-state adapter. It reads by immutable commit and
+ * publishes with force:false. The generic compareAndSet writes ONLY
+ * docs/sentinel-provider-state.json into the existing tree with exactly the
+ * captured parent; the dedicated handover also retains its protected
+ * content-addressed executor evidence file in that same tree/commit. It
+ * never reads or parses the controller document, never calls
+ * health/deployment APIs, never force-updates any ref, and never confers
+ * Deno promotion authority or exclusive control over writers.
  */
 export const createGitHubSentinelProviderState = async (
-  input: Readonly<{ token: string; repository: string; fetcher?: typeof fetch }>,
+  input: Readonly<{
+    token: string;
+    repository: string;
+    fetcher?: typeof fetch;
+    /** Deterministic observation clock; defaults to Date.now. */
+    now?: () => number;
+  }>,
 ): Promise<GitHubSentinelProviderState> => {
   if (!input.token || !SAFE_REPOSITORY.test(input.repository)) {
     throw new Error("GitHub provider state identity is invalid");
   }
   const fetcher = input.fetcher ?? fetch;
+  const now = input.now ?? Date.now;
   let current = await readProviderSnapshot(input.token, input.repository, fetcher);
   const refresh = async (): Promise<SentinelProviderStateSnapshot> => {
     current = await readProviderSnapshot(input.token, input.repository, fetcher);
     return current;
+  };
+  /**
+   * Exact-parent publication/ref-conflict/ambiguous-response reconciliation
+   * shared by the ordinary CAS and the dedicated handover. The captured ref is
+   * re-checked immediately before any Git object is created; a conflict
+   * refreshes and returns false with no blind retry.
+   */
+  const publishProviderState = async (
+    captured: SentinelProviderStateSnapshot,
+    next: SentinelProviderStateDocumentV1,
+    message: string,
+    evidence?: StateCommitEvidenceEntry,
+  ): Promise<boolean> => {
+    if (!(await providerRefStillMatchesCaptured(input.token, input.repository, captured, fetcher))) {
+      return false;
+    }
+    const created = await createStateCommit(
+      input.token,
+      input.repository,
+      captured,
+      SENTINEL_PROVIDER_STATE_PATH,
+      next,
+      message,
+      fetcher,
+      evidence,
+    );
+    const publication = await updateStateRef(
+      input.token,
+      input.repository,
+      captured,
+      created.commit_sha,
+      fetcher,
+    );
+    if (publication === "conflict") {
+      // Never blind-retry a stale write; reconcile through an exact refresh.
+      await refresh().catch(() => undefined);
+      return false;
+    }
+    current = Object.freeze({
+      document: next,
+      commit_sha: created.commit_sha,
+      tree_sha: created.tree_sha,
+      state_ref_exists: true,
+    });
+    return true;
   };
   return {
     readSnapshot: (): SentinelProviderStateSnapshot => current,
@@ -717,57 +854,115 @@ export const createGitHubSentinelProviderState = async (
       if (expectedCommitSha !== captured.commit_sha) return false;
       const next = parseSentinelProviderStateDocument(nextDocument);
       if (!isValidProviderStateTransition(captured.document, next, captured.commit_sha)) return false;
-      // Re-check the exact captured ref (and development SHA when the state
-      // branch is absent) before creating any Git object.
-      const remoteStateRef = await request(
-        input.token,
-        input.repository,
-        "/git/ref/heads/sentinel/bootstrap-state",
-        {},
-        fetcher,
-        true,
-      );
-      if (captured.state_ref_exists) {
-        if (remoteStateRef.status === 404 || refSha(remoteStateRef.value) !== captured.commit_sha) return false;
-      } else {
-        if (remoteStateRef.status !== 404) return false;
-        const development = await request(
-          input.token,
-          input.repository,
-          "/git/ref/heads/development",
-          {},
-          fetcher,
-        );
-        if (refSha(development.value) !== captured.commit_sha) return false;
-      }
-      const created = await createStateCommit(
-        input.token,
-        input.repository,
+      return await publishProviderState(
         captured,
-        SENTINEL_PROVIDER_STATE_PATH,
         next,
         `chore(sentinel): record provider state ${crypto.randomUUID()}`,
-        fetcher,
       );
-      const publication = await updateStateRef(
-        input.token,
-        input.repository,
-        captured,
-        created.commit_sha,
-        fetcher,
-      );
-      if (publication === "conflict") {
-        // Never blind-retry a stale write; reconcile through an exact refresh.
-        await refresh().catch(() => undefined);
+    },
+    async handover(expectedCommitSha, app, nextExecutor): Promise<boolean> {
+      // The handover authority is bound to the exact owner-controlled
+      // repository; the permissive SAFE_REPOSITORY adapter identity is never
+      // enough for an owner change. This rejects before any attempt GET.
+      if (input.repository !== PROVIDER_EXECUTOR_REPOSITORY) return false;
+      // Capture the complete immutable snapshot once; every identity, parent,
+      // tree, and ref decision below uses this exact captured state.
+      const captured = current;
+      if (expectedCommitSha !== captured.commit_sha) return false;
+      const document = captured.document;
+      if (document === null) return false;
+      if (typeof app !== "string") return false;
+      const appState = document.applications.find((entry) => entry.app === app);
+      if (appState === undefined) return false;
+      const transaction = appState.transaction;
+      if (transaction === null) return false;
+      if (isTerminalSentinelProviderPhase(transaction.phase)) return false;
+      // The retiring executor must be exactly the approved revision-control
+      // workflow; permissive schema workflow paths never authorize a change.
+      if (transaction.executor.workflow_path !== PROVIDER_EXECUTOR_WORKFLOW_PATH) return false;
+      const next = parseProviderExecutorIdentity(nextExecutor);
+      if (next === null) return false;
+      if (executorEquals(transaction.executor, next)) return false;
+      const nextGeneration = document.generation + 1;
+      if (!Number.isSafeInteger(nextGeneration)) return false;
+      // The remote state ref must still equal the captured exact parent
+      // before any attempt GET; stale state rejects with no attempt or Git
+      // writes.
+      let verified: VerifiedExecutorAuthority;
+      try {
+        if (!(await providerRefStillMatchesCaptured(input.token, input.repository, captured, fetcher))) {
+          return false;
+        }
+        verified = await verifyExecutorHandoverAuthority({
+          token: input.token,
+          fetcher,
+          retiring: transaction.executor,
+          next,
+          now,
+        });
+      } catch (error) {
+        if (error instanceof ExecutorAuthorityError) return false;
+        throw error;
+      }
+      // Raw evidence: original parsed JSON for both exact HTTP responses,
+      // exact request paths/status, observed_at, transaction id, and the
+      // captured state commit. No Authorization header or token is retained.
+      // Canonical JSON.stringify(..., null, 2) plus a newline is hashed for
+      // the content-addressed path and stored verbatim in the same Git
+      // tree/commit as the owner update.
+      const evidenceContent = `${
+        JSON.stringify(
+          {
+            schema_version: 1,
+            transaction_id: transaction.id,
+            state_commit_sha: captured.commit_sha,
+            observed_at: verified.observed_at,
+            retiring: verified.retiring,
+            next: verified.next,
+          },
+          null,
+          2,
+        )
+      }\n`;
+      const evidenceDigest = await sha256Hex(new TextEncoder().encode(evidenceContent));
+      const evidence: StateCommitEvidenceEntry = {
+        path: `${SENTINEL_PROVIDER_EXECUTOR_EVIDENCE_PATH}/${evidenceDigest}.json`,
+        content: evidenceContent,
+      };
+      const retired = Object.freeze({
+        executor: transaction.executor,
+        conclusion: verified.retiring.conclusion,
+        observed_at: verified.observed_at,
+        evidence_ref: `sha256:${evidenceDigest}`,
+      });
+      let nextDocument: SentinelProviderStateDocumentV1;
+      try {
+        nextDocument = parseSentinelProviderStateDocument({
+          schema_version: 1,
+          generation: nextGeneration,
+          applications: document.applications.map((entry) =>
+            entry.app === app
+              ? Object.freeze({
+                ...entry,
+                transaction: Object.freeze({
+                  ...transaction,
+                  fence_generation: nextGeneration,
+                  executor: next,
+                  retired_executor: retired,
+                }),
+              })
+              : entry
+          ),
+        });
+      } catch {
         return false;
       }
-      current = Object.freeze({
-        document: next,
-        commit_sha: created.commit_sha,
-        tree_sha: created.tree_sha,
-        state_ref_exists: true,
-      });
-      return true;
+      return await publishProviderState(
+        captured,
+        nextDocument,
+        `chore(sentinel): record provider executor handover ${crypto.randomUUID()}`,
+        evidence,
+      );
     },
   };
 };
