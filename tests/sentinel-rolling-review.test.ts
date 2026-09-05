@@ -28,6 +28,7 @@ import { SENTINEL_POLICY } from "../scripts/sentinel/policy.ts";
 import { parseReviewBacklog, renderReviewBacklog, selectNextReviewBacklogEntry } from "../scripts/sentinel/review.ts";
 import type { NativeReviewFinding } from "../scripts/sentinel/types.ts";
 import { runTrustedGit } from "../scripts/sentinel/validation.ts";
+import backlogMarkdown from "../docs/sentinel-review-backlog.md" with { type: "text" };
 
 const FULL_SHA = "a".repeat(40);
 const REVIEW_RESULT_PREFIX = `${SENTINEL_POLICY.paths.reviewResults}/`;
@@ -1064,4 +1065,22 @@ Deno.test("rolling review Gitleaks rejection fail-closes on invalid base and onl
     () => deferGitleaksRejectedTarget(GITLEAKS_TARGET_REJECTION, target, "b".repeat(40), observedAt),
     /Gitleaks rejected the candidate/u,
   );
+});
+
+Deno.test("the checked-in review backlog strict-parses every complete table row", () => {
+  // The backlog is a live growing queue: the expectation is derived from the
+  // imported document itself, never frozen to the current row set.
+  const tableRowCount = backlogMarkdown.split("\n").filter((line) => {
+    if (!line.startsWith("|")) return false;
+    const cells = line.slice(1, -1).split("|");
+    const first = cells[0]?.trim() ?? "";
+    return cells.length === 8 && first !== "Fingerprint" && !/^-+$/u.test(first);
+  }).length;
+  const entries = parseReviewBacklog(backlogMarkdown);
+  assert.ok(entries.length > 0, "the checked-in review backlog must not be empty");
+  assert.equal(entries.length, tableRowCount, "strict parse must accept every complete table row");
+  // Canonical roundtrip: the strict parser already requires the exact canonical
+  // render; re-rendering and re-parsing must reproduce the same entries.
+  assert.equal(renderReviewBacklog(entries), backlogMarkdown);
+  assert.deepEqual(parseReviewBacklog(renderReviewBacklog(entries)), entries);
 });

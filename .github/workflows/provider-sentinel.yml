@@ -252,6 +252,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
+          npm install --global --ignore-scripts --no-audit --no-fund @openai/codex@0.149.0
+          bwrap --version
+          codex --version
           deno cache --frozen --lock=deno.lock scripts/sentinel/main.ts scripts/sentinel/matrix.ts
 
       - name: Prepare immutable MatrixPlanV1
