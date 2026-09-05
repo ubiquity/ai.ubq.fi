@@ -98,6 +98,8 @@ jobs:
             if (report.status !== "failed") throw new Error("Diagnostic cell status mismatch");
             if (!Array.isArray(report.changed_paths)) throw new Error("Diagnostic report shape mismatch");
 
+            const boundedVerbatim = (value: string): string =>
+              value.replaceAll(rawKey, "[REDACTED]").slice(0, 4096);
             const failureReason = typeof report.failure_reason === "string" ? report.failure_reason : null;
             let reasonIndex = null;
             let reasonOutput = "noncanonical_reason";
@@ -122,12 +124,14 @@ jobs:
                 name: VALID_CHECK_NAME.test(check.name) ? check.name : "unknown_check",
                 passed: check.passed,
                 detail_category: detailCategory,
+                detail_text: boundedVerbatim(check.detail),
               });
             }
 
             const fixedOutput: Record<string, unknown> = {
               failure_reason_index: reasonIndex,
               failure_reason: reasonOutput,
+              failure_reason_detail: failureReason === null ? null : boundedVerbatim(failureReason),
               changed_path_count: report.changed_paths.length,
               validation_checks: validationChecks,
             };
