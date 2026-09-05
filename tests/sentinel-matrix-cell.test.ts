@@ -345,7 +345,13 @@ Deno.test({
           repairPrompts.push(prompt);
           assert.match(prompt, /Cell contract/u);
           assert.match(prompt, /UNTRUSTED DATA/u);
-          assert.match(prompt, /src\/extra\.ts/u);
+          // The repair suffix names the exact pre-correction aggregate: only
+          // src/fix.ts existed when the first attempt ended, so the repair is
+          // told the aggregate exactly, not merely a permitted-path mention.
+          assert.match(
+            prompt,
+            /Current aggregate changed paths \(repository-relative\): \["src\/fix\.ts"\]/u,
+          );
           await Deno.writeTextFile(`${fixture.checkout}/src/fix.ts`, "export const fixed = true;\n");
           await Deno.writeTextFile(`${fixture.checkout}/src/extra.ts`, "export const extra = true;\n");
           return { lastMessage: reportMessage(["src/extra.ts", "src/fix.ts"]) };
@@ -383,6 +389,46 @@ Deno.test({
       assert.equal(
         report.validation.checks.find((item) => item.name === "focused-validation")!.passed,
         true,
+      );
+      // The bounded repair passes the same evidence gates as the initial
+      // attempt: integrity, exact aggregate path scope, protected paths,
+      // secret scan, and terminal finding coverage are all recorded as passed.
+      const repairChecks = Object.fromEntries(
+        [
+          "repair-agent-integrity",
+          "repair-path-scope",
+          "repair-protected-paths",
+          "repair-secret-scan",
+          "repair-finding-coverage",
+        ]
+          .map((name) => {
+            const item = report.validation.checks.find((candidate) => candidate.name === name);
+            assert.ok(item, `the repair evidence check ${name} must be recorded`);
+            return [name, item];
+          }),
+      );
+      for (const item of Object.values(repairChecks)) assert.equal(item.passed, true);
+      // The repair-path-scope check carries the exact serialized sorted
+      // aggregate: the repair added src/extra.ts to the committed src/fix.ts.
+      assert.equal(
+        repairChecks["repair-path-scope"]!.detail.includes('["src/extra.ts","src/fix.ts"]'),
+        true,
+      );
+      assert.match(
+        repairChecks["repair-agent-integrity"]!.detail,
+        /remained unchanged after the bounded validation repair/u,
+      );
+      assert.match(
+        repairChecks["repair-protected-paths"]!.detail,
+        /protected Sentinel paths remain unchanged after the bounded validation repair/u,
+      );
+      assert.match(
+        repairChecks["repair-secret-scan"]!.detail,
+        /repaired cell files and reachable history contain no trusted credential values/u,
+      );
+      assert.match(
+        repairChecks["repair-finding-coverage"]!.detail,
+        /have terminal resolved dispositions after the bounded validation repair/u,
       );
       assertMatrixCellReportV1(report, fixture.plan);
       await assertMatrixCellReportDigest(report);

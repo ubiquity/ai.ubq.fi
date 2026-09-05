@@ -1687,6 +1687,50 @@ export const runMatrixCell = async (
       if (!resolvedDispositions(dispositions)) {
         throw new MatrixCellSafetyError("The cell repair left one or more findings unresolved");
       }
+      // The repair ran through the exact same gates as the initial attempt
+      // (agent output exclusion, Git control check, candidate integrity, and
+      // disposition coverage). Record passed evidence for each so the report
+      // proves the corrected aggregate passed every gate before revalidation.
+      validationChecks.push(
+        check(
+          "repair-agent-integrity",
+          true,
+          "Git history, index, branch, hooks, and configuration remained unchanged after the bounded validation repair",
+        ),
+      );
+      validationChecks.push(
+        check(
+          "repair-path-scope",
+          true,
+          redact(
+            `${changedPaths.length} changed path(s) remain inside the cell contract after the bounded validation repair: ${
+              untrustedJson(sortedUnique(changedPaths))
+            }`,
+            sensitiveValues,
+          ),
+        ),
+      );
+      validationChecks.push(
+        check(
+          "repair-protected-paths",
+          true,
+          "protected Sentinel paths remain unchanged after the bounded validation repair",
+        ),
+      );
+      validationChecks.push(
+        check(
+          "repair-secret-scan",
+          true,
+          "repaired cell files and reachable history contain no trusted credential values",
+        ),
+      );
+      validationChecks.push(
+        check(
+          "repair-finding-coverage",
+          true,
+          `all ${dispositions.length} cell finding(s) have terminal resolved dispositions after the bounded validation repair`,
+        ),
+      );
       focused = await runFocusedValidation();
       pushFocusedValidation(focused);
       if (!focused.passed) throw new MatrixCellExecutionError("Focused cell validation failed");

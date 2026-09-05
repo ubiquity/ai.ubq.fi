@@ -459,7 +459,7 @@ jobs:
             import { IMPLEMENTATION_OUTPUT_SCHEMA, isTriageReport } from "./scripts/sentinel/types.ts";
             import { parseMatrixPlanV1 } from "./scripts/sentinel/matrix.ts";
             import { runMatrixCell } from "./scripts/sentinel/matrix-cell.ts";
-            import { runCandidateValidation } from "./scripts/sentinel/validation.ts";
+            import { CandidateValidationError, runCandidateValidation } from "./scripts/sentinel/validation.ts";
             const env = (name: string): string => Deno.env.get(name) ?? "";
             const root = env("RUNNER_TEMP");
             const plan = await parseMatrixPlanV1(await Deno.readTextFile(`${root}/sentinel-matrix-plan.json`));
@@ -485,6 +485,7 @@ jobs:
               typeof workSelection.source_kind !== "string" || typeof workSelection.source_id !== "string" ||
               typeof workSelection.source_revision !== "string"
             )) throw new Error("Matrix work selection is invalid");
+            let validationAttempt = 0;
             const report = await runMatrixCell({
               plan, cell, checkoutPath: Deno.cwd(), reportPath: env("CELL_REPORT_PATH"),
               secretScanReportPath: `${root}/sentinel-cell-secret-scan.json`, outputSchemaPath: `${root}/sentinel-cell-implementation-schema.json`,
@@ -492,10 +493,35 @@ jobs:
               workSelection: workSelection ?? undefined,
               validation: async ({ checkoutPath }) => {
                 try {
-                  await runCandidateValidation({ cwd: checkoutPath, reportPath: `${root}/sentinel-cell-validation.json`, privateDir: root, denoDirectory: env("DENO_DIR") });
+                  await runCandidateValidation({
+                    cwd: checkoutPath,
+                    reportPath: `${root}/sentinel-cell-validation-${++validationAttempt}.json`,
+                    privateDir: root,
+                    denoDirectory: env("DENO_DIR"),
+                  });
                   return { passed: true, checks: [{ name: "candidate-validation", passed: true, detail: "existing candidate validation passed" }] };
                 } catch (error) {
-                  return { passed: false, checks: [{ name: "candidate-validation", passed: false, detail: error instanceof Error ? error.message : "candidate validation failed" }] };
+                  if (error instanceof CandidateValidationError) {
+                    const failure = error.failure;
+                    // Public stdout is limited to the fixed phase and exit code:
+                    // no excerpt, report path, key, or raw validation log ever
+                    // reaches the public workflow log.
+                    console.log(JSON.stringify({ phase: failure.phase, exit_code: failure.exit_code }));
+                    return {
+                      passed: false,
+                      checks: [{
+                        name: "candidate-validation",
+                        passed: false,
+                        detail: JSON.stringify({
+                          phase: failure.phase,
+                          exit_code: failure.exit_code,
+                          stdout_excerpt: sensitiveValues.reduce((text, secret) => (secret.length >= 8 ? text.replaceAll(secret, "[REDACTED]") : text), failure.stdout_excerpt).slice(0, 1500),
+                          stderr_excerpt: sensitiveValues.reduce((text, secret) => (secret.length >= 8 ? text.replaceAll(secret, "[REDACTED]") : text), failure.stderr_excerpt).slice(0, 1500),
+                        }),
+                      }],
+                    };
+                  }
+                  return { passed: false, checks: [{ name: "candidate-validation", passed: false, detail: error instanceof Error ? sensitiveValues.reduce((text, secret) => (secret.length >= 8 ? text.replaceAll(secret, "[REDACTED]") : text), error.message).slice(0, 1500) : "candidate validation failed" }] };
                 }
               },
             });
@@ -537,6 +563,12 @@ jobs:
           # derived from the report path; only ciphertext is ever uploaded.
           if [ -d "$RUNNER_TEMP/sentinel-cell-report.json.retry-evidence" ]; then
             cp -a "$RUNNER_TEMP/sentinel-cell-report.json.retry-evidence"/. ".sentinel/reports/matrix/${CELL_ID}/"
+          fi
+          # Focused validation evidence (per-invocation report and its binary
+          # stdout/stderr sidecars) is staged beside the cell report so the
+          # same encryption invocation seals it; absent matches are skipped.
+          if compgen -G "$RUNNER_TEMP/sentinel-cell-validation-*.json*" > /dev/null; then
+            cp "$RUNNER_TEMP"/sentinel-cell-validation-*.json* ".sentinel/reports/matrix/${CELL_ID}/"
           fi
           deno run --allow-env=GITHUB_ACTIONS,SENTINEL_ARTIFACT_KEY --allow-read=.sentinel/raw-logs,.sentinel/reports,.sentinel/encrypted --allow-write=.sentinel/encrypted scripts/sentinel/encrypt-artifacts.ts
 
