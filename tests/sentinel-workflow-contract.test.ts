@@ -9,14 +9,14 @@ import orchestrator from "../scripts/sentinel/main.ts" with { type: "text" };
 // SHA and verifies the frozen package against this exact manifest digest. The
 // isolation test reconstructs the digest from the real package bytes; these
 // constants are the workflow contract, never a second source of truth.
-const BOOTSTRAP_EXECUTION_SHA = "e43b2d6a6949899435f4eb88fc8a56bb47a1c53c";
-const BOOTSTRAP_PACKAGE_MANIFEST_DIGEST = "c53d75038caa1cb8c6e36b9d52f51ba50893167bb3c0f7898ab8b4bb131a967e";
+const BOOTSTRAP_EXECUTION_SHA = "8ba8c8d878a5f50004c5835f7d36d79e54d3f4f1";
+const BOOTSTRAP_PACKAGE_MANIFEST_DIGEST = "133ac04bc5fd4a7cee903bd2c94e1d12bcc250faf3c0b523f311c2d40fb8fb5f";
 
 // The revision-control workflow is the deployment authority over the same
 // frozen package: it pins the identical immutable execution SHA and verifies
 // the identical manifest digest before its credentialed executor runs.
-const REVISION_CONTROL_EXECUTION_SHA = "e43b2d6a6949899435f4eb88fc8a56bb47a1c53c";
-const REVISION_CONTROL_PACKAGE_MANIFEST_DIGEST = "c53d75038caa1cb8c6e36b9d52f51ba50893167bb3c0f7898ab8b4bb131a967e";
+const REVISION_CONTROL_EXECUTION_SHA = "8ba8c8d878a5f50004c5835f7d36d79e54d3f4f1";
+const REVISION_CONTROL_PACKAGE_MANIFEST_DIGEST = "133ac04bc5fd4a7cee903bd2c94e1d12bcc250faf3c0b523f311c2d40fb8fb5f";
 
 const jobSection = (name: string, nextName: string): string => {
   const start = workflow.indexOf(`\n  ${name}:`);
