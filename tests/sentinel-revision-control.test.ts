@@ -12,6 +12,8 @@ import {
   type RevisionControlInput,
   RevisionControlOutcomeError,
 } from "../scripts/sentinel/revision-control.ts";
+import { verifyActiveProviderExecutorAuthority } from "../scripts/sentinel/bootstrap/executor.ts";
+import { DenoDeployClient } from "../scripts/sentinel/deploy.ts";
 
 const DEVELOPMENT_SHA = "1".repeat(40);
 const CURRENT_SHA = "2".repeat(40);
@@ -388,4 +390,125 @@ Deno.test("revision control verifies only the managed stable route for the previ
     deno.calls.filter((call) => call.startsWith("snapshot:")),
     ["snapshot:p-ai-ubq-fi:1", "snapshot:p-ai-ubq-fi:1"],
   );
+});
+Deno.test("active executor authority verifies the exact run attempt, retains the raw response, and fails closed on stale or foreign attempts", async () => {
+  const executor = {
+    repository: "ubiquity/ai.ubq.fi",
+    workflow_path: ".github/workflows/sentinel-revision-control.yml",
+    run_id: 42,
+    run_attempt: 2,
+  };
+  const payload = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id: 42,
+    run_attempt: 2,
+    repository: { full_name: "ubiquity/ai.ubq.fi" },
+    path: executor.workflow_path,
+    status: "in_progress",
+    conclusion: null,
+    created_at: "2026-09-05T00:00:00Z",
+    run_started_at: "2026-09-05T00:00:01Z",
+    updated_at: "2026-09-05T00:07:59Z",
+    html_url: "https://github.com/ubiquity/ai.ubq.fi/actions/runs/42/attempts/2",
+    ...overrides,
+  });
+  const now = () => Date.parse("2026-09-05T00:08:00.000Z");
+
+  let observed: { url: string; method: string; authorization: string | null } | undefined;
+  const fetcher = ((url: string | URL | Request, init?: RequestInit) => {
+    observed = {
+      url: String(url),
+      method: String(init?.method ?? "GET"),
+      authorization: new Headers(init?.headers).get("Authorization"),
+    };
+    return Promise.resolve(Response.json(payload()));
+  }) as typeof fetch;
+
+  const result = await verifyActiveProviderExecutorAuthority({
+    token: "synthetic-github-token",
+    fetcher,
+    executor,
+    now,
+  });
+  assert.equal(
+    observed?.url,
+    "https://api.github.com/repos/ubiquity/ai.ubq.fi/actions/runs/42/attempts/2",
+  );
+  assert.equal(observed?.method, "GET");
+  assert.equal(observed?.authorization, "Bearer synthetic-github-token");
+  assert.deepEqual(result.attempt.response, payload());
+  assert.equal(result.attempt.run_id, 42);
+  assert.equal(result.attempt.run_attempt, 2);
+  assert.equal(result.attempt.status, "in_progress");
+  assert.equal(result.attempt.conclusion, null);
+  assert.equal(result.attempt.request_path, "/repos/ubiquity/ai.ubq.fi/actions/runs/42/attempts/2");
+  assert.equal(result.observed_at, "2026-09-05T00:08:00.000Z");
+
+  for (
+    const [name, overrides] of [
+      ["completed with a conclusion", { status: "completed", conclusion: "failure" }],
+      ["active with a conclusion", { status: "in_progress", conclusion: "failure" }],
+      ["wrong run attempt", { run_attempt: 4 }],
+      ["foreign workflow path", { path: ".github/workflows/other.yml" }],
+    ] as ReadonlyArray<readonly [string, Record<string, unknown>]>
+  ) {
+    const fetcher = (() => Promise.resolve(Response.json(payload(overrides)))) as typeof fetch;
+    await assert.rejects(
+      () =>
+        verifyActiveProviderExecutorAuthority({
+          token: "synthetic-github-token",
+          fetcher,
+          executor,
+          now,
+        }),
+      /ExecutorAuthorityError/,
+      name,
+    );
+  }
+});
+
+Deno.test("promoteRevision runs the guard after the target reads and before the promote POST", async () => {
+  const events: string[] = [];
+  const fetcher = ((input: string | URL | Request, init?: RequestInit) => {
+    const request = new Request(input, init);
+    const url = new URL(request.url);
+    if (url.href === "https://api.deno.com/v2/apps/ai-ubq-fi/revisions?limit=100") {
+      assert.equal(request.method, "GET");
+      events.push("membership");
+      return Promise.resolve(Response.json([{ id: "target-revision", status: "succeeded" }]));
+    }
+    if (url.href === "https://api.deno.com/v2/revisions/target-revision") {
+      assert.equal(request.method, "GET");
+      events.push("target");
+      return Promise.resolve(Response.json({ id: "target-revision", status: "succeeded" }));
+    }
+    if (url.href === "https://api.deno.com/v2/revisions/target-revision/promote") {
+      assert.equal(request.method, "POST");
+      events.push("post");
+      return Promise.resolve(new Response(null, { status: 204 }));
+    }
+    return Promise.reject(new Error(`unexpected Deno request: ${request.method} ${url.href}`));
+  }) as typeof fetch;
+
+  const client = new DenoDeployClient({
+    token: "synthetic-deno-token",
+    fetcher,
+    createTimeoutSignal: () => new AbortController().signal,
+  });
+
+  await assert.rejects(
+    () =>
+      client.promoteRevision("ai-ubq-fi", "target-revision", () => {
+        events.push("guard");
+        return Promise.reject(new Error("guard rejected promotion"));
+      }),
+    /guard rejected promotion/,
+  );
+  assert.deepEqual(events, ["membership", "target", "guard"]);
+
+  events.length = 0;
+  await client.promoteRevision("ai-ubq-fi", "target-revision", () => {
+    events.push("guard");
+    return Promise.resolve();
+  });
+  assert.deepEqual(events, ["membership", "target", "guard", "post"]);
 });

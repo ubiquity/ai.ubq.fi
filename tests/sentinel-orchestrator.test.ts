@@ -369,6 +369,7 @@ Deno.test("implementation scope protects Sentinel and nested Codex instruction s
       "scripts/sentinel/main.ts",
       "docs/sentinel-issue-jobs.md",
       "docs/sentinel-recovery-records.json",
+      "docs/sentinel-provider-state.json",
       "scripts/sentinel/issues.ts",
       "src/sentinel_replay_capture.ts",
       "tests/sentinel-replay-capture.test.ts",

@@ -1,25 +1,19 @@
 import {
-  parseBootstrapReleaseRecord,
-  parseSentinelBootstrapActivationPointer,
   parseSentinelBootstrapHealthSignal,
   parseSentinelBootstrapProgressObservation,
   type SentinelBootstrapHealthSignalV1,
   type SentinelBootstrapProgressObservationV1,
-  type SentinelBootstrapReleaseRecordV1,
 } from "./contracts.ts";
 import { createGitHubSentinelBootstrapState, type GitHubSentinelBootstrapState } from "./github-store.ts";
 import {
   reconcileSentinelBootstrap,
   type SentinelBootstrapControllerDependencies,
-  type SentinelBootstrapReconcileInput,
   type SentinelBootstrapReconcileOutcome,
 } from "./controller.ts";
-import { parseBootstrapEnvironment, SENTINEL_BOOTSTRAP_POLICY } from "./policy.ts";
-import { parseSentinelRecoveryLedger, SENTINEL_RECOVERY_LEDGER_PATH } from "../recovery-ledger.ts";
+import { initialSentinelBootstrapActivation } from "./activation.ts";
+import { type BootstrapEnvironment, parseBootstrapEnvironment, SENTINEL_BOOTSTRAP_POLICY } from "./policy.ts";
+import { parseAdvisoryRecoveryLedgerSummary, SENTINEL_RECOVERY_LEDGER_PATH } from "./recovery-ledger-summary.ts";
 
-const FULL_SHA = /^[0-9a-f]{40}$/u;
-const SAFE_REVISION = /^[A-Za-z0-9._-]{1,128}$/u;
-const HEALTHY_CANDIDATE_ACCEPTANCE_MS = 60 * 60 * 1_000;
 const AUTHORITATIVE_STARTUP_STEPS = new Set([
   "Require ciphertext-only artifact policy",
   "Select immutable run mode",
@@ -162,18 +156,9 @@ const collectBootstrapProgressObservations = async (
   );
   if (!Array.isArray(runsValue.workflow_runs)) throw new Error("Bootstrap workflow-run observation is invalid");
   const ledgerValue = await fetchRecoveryLedger(token, repository).catch(() => null);
-  let ledger: ReturnType<typeof parseSentinelRecoveryLedger> | null = null;
-  if (ledgerValue !== null) {
-    try {
-      ledger = parseSentinelRecoveryLedger(ledgerValue);
-    } catch {
-      ledger = null;
-    }
-  }
-  const ledgerVersion = ledger === null
-    ? null
-    : ledger.records.reduce((maximum, record) => Math.max(maximum, record.state_version), 0);
-  const retryState = ledger === null ? null : ledger.retry_history.length > 0 ? "retrying" : "none";
+  const summary = ledgerValue === null ? null : parseAdvisoryRecoveryLedgerSummary(ledgerValue);
+  const ledgerVersion = summary === null ? null : summary.max_state_version;
+  const retryState = summary === null ? null : summary.retry_state;
   const runs = runsValue.workflow_runs
     .filter((value): value is Record<string, unknown> =>
       typeof value === "object" && value !== null && !Array.isArray(value) &&
@@ -252,177 +237,99 @@ const dispatchStableRecovery = async (token: string, repository: string): Promis
   }
 };
 
-const observeManagedRelease = async (fetcher: typeof fetch): Promise<Readonly<{ sha: string; revision: string }>> => {
-  const response = await fetcher("https://ai-ubq-fi.ubiquity-dao.deno.net/health", {
-    signal: AbortSignal.timeout(20_000),
-  });
-  const value = await response.json().catch(() => null) as Record<string, unknown> | null;
-  const release = value && typeof value.release === "object" && value.release !== null
-    ? value.release as Record<string, unknown>
-    : null;
-  if (
-    response.status !== 200 || value?.status !== "available" || typeof release?.git_sha !== "string" ||
-    !FULL_SHA.test(release.git_sha) || typeof release.deployment_id !== "string" ||
-    !SAFE_REVISION.test(release.deployment_id)
-  ) throw new Error("Managed Sentinel health identity is invalid");
-  return { sha: release.git_sha, revision: release.deployment_id };
-};
+export type SentinelBootstrapCycleInput = Readonly<{
+  environment: BootstrapEnvironment;
+  state: GitHubSentinelBootstrapState;
+  adapters: Readonly<{
+    now: () => string;
+    collectStartupSignals: (
+      activeSha: string,
+      generation: number,
+    ) => Promise<readonly SentinelBootstrapHealthSignalV1[]>;
+    collectProgressObservations: (
+      activeSha: string,
+      generation: number,
+    ) => Promise<readonly SentinelBootstrapProgressObservationV1[]>;
+    dispatchRecovery: NonNullable<SentinelBootstrapControllerDependencies["dispatchRecovery"]>;
+  }>;
+}>;
 
-export const synchronizeObservedRelease = async (
-  state: GitHubSentinelBootstrapState,
-  observed: Readonly<{ sha: string; revision: string }>,
-  now: string,
-): Promise<SentinelBootstrapReleaseRecordV1> => {
-  const current = state.readDocument();
-  if (current.release === null) {
-    const initial = parseBootstrapReleaseRecord({
-      schema_version: 1,
-      stable_sha: observed.sha,
-      candidate_sha: null,
-      acceptance_evidence: [`health:${observed.revision}`],
-      activated_at: now,
-      rollback_reason: null,
-      generation: 1,
-    });
-    await state.replaceRelease(initial);
-    return initial;
-  }
-  // Preserve the release/activation identities that own a durable rollback
-  // intent. The controller must finish those side effects before observation
-  // can advance or normalize either record.
-  if (current.rollback_intent !== null) return current.release;
-  if (current.release.candidate_sha === observed.sha) {
-    const currentGenerationHasFailure = current.signals.some((signal) =>
-      signal.generation === current.release!.generation
-    );
-    if (
-      !currentGenerationHasFailure &&
-      Date.parse(now) - Date.parse(current.release.activated_at) >= HEALTHY_CANDIDATE_ACCEPTANCE_MS
-    ) {
-      const accepted = parseBootstrapReleaseRecord({
-        ...current.release,
-        stable_sha: observed.sha,
-        candidate_sha: null,
-        acceptance_evidence: [
-          ...current.release.acceptance_evidence,
-          `health:${observed.revision}`,
-          "bootstrap:healthy-window",
-        ].slice(-8),
-        activated_at: now,
-      });
-      await state.replaceRelease(accepted);
-      return accepted;
-    }
-    return current.release;
-  }
-  if (current.release.stable_sha === observed.sha) {
-    if (
-      current.release.candidate_sha !== null && current.activation !== null &&
-      current.activation.active_sha === current.release.stable_sha &&
-      current.activation.generation > current.release.generation
-    ) {
-      const rolledBack = parseBootstrapReleaseRecord({
-        ...current.release,
-        candidate_sha: null,
-        acceptance_evidence: [
-          ...current.release.acceptance_evidence,
-          `health:${observed.revision}`,
-          "bootstrap:rollback-confirmed",
-        ].slice(-8),
-        activated_at: now,
-        rollback_reason: "authoritative_failure_rollback",
-        generation: current.activation.generation,
-      });
-      await state.replaceRelease(rolledBack);
-      return rolledBack;
-    }
-    return current.release;
-  }
-  if (current.activation === null) {
-    throw new Error("Managed Sentinel release changed before the prior candidate was reconciled");
-  }
-  const generation = current.activation.generation + 1;
-  const supersededCandidate = current.release.candidate_sha;
-  const next = parseBootstrapReleaseRecord({
-    schema_version: 1,
-    stable_sha: current.release.stable_sha,
-    candidate_sha: observed.sha,
-    acceptance_evidence: [
-      `health:${observed.revision}`,
-      ...(supersededCandidate === null ? [] : [`bootstrap:superseded:${supersededCandidate}`]),
-    ],
-    activated_at: now,
-    rollback_reason: null,
-    generation,
-  });
-  const activation = parseSentinelBootstrapActivationPointer({
-    schema_version: 1,
-    active_sha: observed.sha,
-    generation,
-    fenced_generations: supersededCandidate === null
-      ? current.activation.fenced_generations
-      : [...current.activation.fenced_generations, current.activation.generation].slice(-64),
-    updated_at: now,
-    reason: supersededCandidate === null ? "managed_health_observed" : "managed_candidate_superseded",
-  });
-  await state.replaceRelease(next, activation);
-  return next;
-};
+export type SentinelBootstrapCycleResult = Readonly<
+  | { status: "uninitialized"; reason: "durable_release_missing" }
+  | { status: "reconciled"; outcome: SentinelBootstrapReconcileOutcome }
+>;
 
 /**
- * The workflow invokes this entry point from the protected development ref.
- * State, observation, and bounded recovery-dispatch wiring is supplied by the
- * orchestrator through the typed controller function. The entry point cannot
- * merge, deploy, promote, or edit repository history.
+ * One state-read-to-reconcile bootstrap cycle. The workflow invokes this
+ * entry point from the frozen protected bootstrap package, never from the
+ * evolving provider sources or a surrounding config. Controller identity is
+ * selected exclusively from the durable release/activation record: provider
+ * /health and elapsed healthy time can never initialize, supersede, or
+ * accept a controller, and startup/progress/recovery work without any
+ * provider health request. State, observation, and bounded recovery-dispatch
+ * wiring is supplied by the orchestrator through the typed adapters. The
+ * entry point cannot merge application changes or deploy/promote releases.
  */
-export const runProtectedBootstrap = async (
-  input: SentinelBootstrapReconcileInput,
-  dependencies: SentinelBootstrapControllerDependencies,
-): Promise<SentinelBootstrapReconcileOutcome> => {
-  const environment = parseBootstrapEnvironment();
-  return await reconcileSentinelBootstrap({
-    ...input,
-    repository: environment.repository,
-    ref: environment.ref,
-  }, dependencies);
+export const runBootstrapCycle = async (
+  input: SentinelBootstrapCycleInput,
+): Promise<SentinelBootstrapCycleResult> => {
+  const document = input.state.readDocument();
+  if (document.release === null) {
+    return { status: "uninitialized", reason: "durable_release_missing" };
+  }
+  const now = input.adapters.now();
+  const selected = document.activation ?? initialSentinelBootstrapActivation(document.release, now);
+  await input.state.appendSignals(
+    await input.adapters.collectStartupSignals(selected.active_sha, selected.generation),
+  );
+  const progressObservations = await input.adapters.collectProgressObservations(
+    selected.active_sha,
+    selected.generation,
+  );
+  const outcome = await reconcileSentinelBootstrap({
+    release: document.release,
+    signals: input.state.readDocument().signals,
+    progressObservations,
+    repository: input.environment.repository,
+    ref: input.environment.ref,
+    expectedFence: { generation: selected.generation, activeSha: selected.active_sha },
+  }, {
+    store: input.state.store,
+    now: () => now,
+    dispatchRecovery: input.adapters.dispatchRecovery,
+  });
+  // Advisory evidence only: the decision is recorded but never changes the
+  // activation/rollback identity or the exact-SHA/revision promotion gates.
+  if (outcome.progress !== null) {
+    await input.state.replaceProgress(outcome.progress);
+  }
+  return { status: "reconciled", outcome };
 };
 
 if (import.meta.main) {
   const environment = parseBootstrapEnvironment();
   const token = requiredEnvironment("GITHUB_TOKEN");
   const state = await createGitHubSentinelBootstrapState({ token, repository: environment.repository });
-  const now = new Date().toISOString();
-  const observed = await observeManagedRelease(fetch);
-  const release = await synchronizeObservedRelease(state, observed, now);
-  const generation = state.readDocument().activation?.generation ?? release.generation;
-  await state.appendSignals(
-    await collectAuthoritativeStartupSignals(token, environment.repository, observed.sha, generation),
-  );
-  const progressObservations = await collectBootstrapProgressObservations(
-    token,
-    environment.repository,
-    observed.sha,
-    generation,
-  );
-  const outcome = await runProtectedBootstrap({
-    release,
-    signals: state.readDocument().signals,
-    progressObservations,
-  }, {
-    store: state.store,
-    now: () => now,
-    dispatchRecovery: () => dispatchStableRecovery(token, environment.repository),
+  const result = await runBootstrapCycle({
+    environment,
+    state,
+    adapters: {
+      now: () => new Date().toISOString(),
+      collectStartupSignals: (activeSha, generation) =>
+        collectAuthoritativeStartupSignals(token, environment.repository, activeSha, generation),
+      collectProgressObservations: (activeSha, generation) =>
+        collectBootstrapProgressObservations(token, environment.repository, activeSha, generation),
+      dispatchRecovery: () => dispatchStableRecovery(token, environment.repository),
+    },
   });
-  // Advisory evidence only: the decision is recorded but never changes the
-  // activation/rollback identity or the exact-SHA/revision promotion gates.
-  if (outcome.progress !== null) {
-    await state.replaceProgress(outcome.progress);
+  if (result.status === "uninitialized") {
+    Deno.exitCode = 1;
   }
   console.log(JSON.stringify({
     schema_version: 1,
     repository: environment.repository,
     execution_sha: environment.sha,
     run_id: environment.runId,
-    ...outcome,
+    ...(result.status === "reconciled" ? result.outcome : { status: result.status, reason: result.reason }),
   }));
 }

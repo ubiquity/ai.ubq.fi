@@ -9,22 +9,32 @@ import {
 } from "../scripts/sentinel/bootstrap/activation.ts";
 import {
   reconcileSentinelBootstrap,
+  type SentinelBootstrapReconcileOutcome,
   type SentinelBootstrapRecoveryDispatch,
 } from "../scripts/sentinel/bootstrap/controller.ts";
 import { evaluateSentinelBootstrapHealth } from "../scripts/sentinel/bootstrap/health.ts";
-import { parseSentinelBootstrapStateDocument } from "../scripts/sentinel/bootstrap/github-store.ts";
+import {
+  type GitHubSentinelBootstrapState,
+  parseSentinelBootstrapStateDocument,
+  type SentinelBootstrapStateDocumentV1,
+} from "../scripts/sentinel/bootstrap/github-store.ts";
 import {
   parseBootstrapReleaseRecord,
   parseSentinelBootstrapClassifierEvidence,
+  parseSentinelBootstrapHealthSignal,
   parseSentinelBootstrapProgressDecision,
   parseSentinelBootstrapProgressObservation,
   type SentinelBootstrapActivationPointerV1,
   type SentinelBootstrapClassifierEvidenceV1,
+  type SentinelBootstrapHealthSignalV1,
+  type SentinelBootstrapProgressDecisionV1,
   type SentinelBootstrapProgressObservationV1,
+  type SentinelBootstrapReleaseRecordV1,
   type SentinelBootstrapRollbackIntentV1,
   type SentinelFailureConstraintV1,
 } from "../scripts/sentinel/bootstrap/contracts.ts";
 import {
+  BOOTSTRAP_ADVISORY_CLASSIFIER_MODEL,
   classifierFailureEvidence,
   evaluateSentinelBootstrapProgress,
   resolveSentinelBootstrapProgress,
@@ -35,17 +45,23 @@ import {
   sentinelBootstrapProgressStateKey,
 } from "../scripts/sentinel/bootstrap/observation.ts";
 import {
+  BOOTSTRAP_CLASSIFIER_MODEL,
   BOOTSTRAP_PROGRESS_DECISION_DEFINITION,
   createBootstrapClassifier,
   createBootstrapGptOssClassifier,
-} from "../scripts/sentinel/bootstrap/classifier.ts";
+} from "../scripts/sentinel/bootstrap-classifier.ts";
 import {
   assertImplementationSelection,
   assertNoBootstrapMutation,
+  type BootstrapEnvironment,
   parseBootstrapEnvironment,
   SENTINEL_BOOTSTRAP_POLICY,
 } from "../scripts/sentinel/bootstrap/policy.ts";
-import { synchronizeObservedRelease } from "../scripts/sentinel/bootstrap/main.ts";
+import { runBootstrapCycle, type SentinelBootstrapCycleResult } from "../scripts/sentinel/bootstrap/main.ts";
+import {
+  parseAdvisoryRecoveryLedgerSummary,
+  SENTINEL_RECOVERY_LEDGER_PATH,
+} from "../scripts/sentinel/bootstrap/recovery-ledger-summary.ts";
 
 const readPermission = await Deno.permissions.query({ name: "read" });
 const sourceInspectionUnavailable = readPermission.state !== "granted";
@@ -140,6 +156,58 @@ class FakeBootstrapStateStore implements SentinelBootstrapStateStore {
     if (this.constraints.has(key)) return Promise.resolve(false);
     this.constraints.set(key, constraint);
     return Promise.resolve(true);
+  }
+}
+
+class FakeGitHubSentinelBootstrapState implements GitHubSentinelBootstrapState {
+  readonly store = new FakeBootstrapStateStore();
+  appendSignalsCalls = 0;
+  replaceProgressCalls = 0;
+  private signals: SentinelBootstrapHealthSignalV1[] = [];
+  private progress: SentinelBootstrapProgressDecisionV1 | null = null;
+  private release: SentinelBootstrapReleaseRecordV1 | null;
+
+  constructor(
+    release: SentinelBootstrapReleaseRecordV1 | null,
+    activation: SentinelBootstrapActivationPointerV1 | null = null,
+  ) {
+    this.release = release;
+    this.store.pointer = activation;
+    this.store.versionstamp = activation === null ? null : "1";
+  }
+
+  readDocument(): SentinelBootstrapStateDocumentV1 {
+    return parseSentinelBootstrapStateDocument({
+      schema_version: 1,
+      release: this.release,
+      signals: this.signals,
+      activation: this.store.pointer,
+      rollback_intent: this.store.rollbackIntent,
+      constraints: [...this.store.constraints.values()],
+      progress: this.progress,
+    });
+  }
+
+  appendSignals(signals: readonly SentinelBootstrapHealthSignalV1[]): Promise<void> {
+    this.appendSignalsCalls += 1;
+    const byIdentity = new Map<string, SentinelBootstrapHealthSignalV1>();
+    for (const observed of [...this.signals, ...signals]) {
+      byIdentity.set(observed.observation_id ?? JSON.stringify(observed), observed);
+    }
+    this.signals = [...byIdentity.values()]
+      .sort((left, right) => Date.parse(left.observed_at) - Date.parse(right.observed_at))
+      .slice(-64);
+    return Promise.resolve();
+  }
+
+  replaceRelease(): Promise<never> {
+    return Promise.reject(new Error("the bootstrap cycle must never rewrite the durable release record"));
+  }
+
+  replaceProgress(decision: SentinelBootstrapProgressDecisionV1): Promise<void> {
+    this.replaceProgressCalls += 1;
+    this.progress = parseSentinelBootstrapProgressDecision(decision);
+    return Promise.resolve();
   }
 }
 
@@ -244,76 +312,287 @@ Deno.test("bootstrap Git state document is bounded and starts without invented r
   );
 });
 
-Deno.test("a newly deployed release supersedes and fences an unaccepted candidate", async () => {
-  const currentRelease = release();
-  const activation = initialSentinelBootstrapActivation(currentRelease, currentRelease.activated_at);
-  let writtenRelease: ReturnType<typeof parseBootstrapReleaseRecord> | null = null;
-  let writtenActivation: SentinelBootstrapActivationPointerV1 | null = null;
-  const state = {
-    readDocument: () => ({
-      schema_version: 1 as const,
-      release: currentRelease,
-      signals: [],
-      activation,
-      rollback_intent: null,
-      constraints: [],
-    }),
-    replaceRelease: (
-      nextRelease: ReturnType<typeof parseBootstrapReleaseRecord>,
-      nextActivation?: SentinelBootstrapActivationPointerV1,
-    ) => {
-      writtenRelease = nextRelease;
-      writtenActivation = nextActivation ?? null;
-      return Promise.resolve();
+const cycleEnvironment = (): BootstrapEnvironment =>
+  parseBootstrapEnvironment({ get: (name) => validBootstrapEnvironment()[name] });
+
+const parsedRelease = (): SentinelBootstrapReleaseRecordV1 => parseBootstrapReleaseRecord(release());
+
+const requireReconciled = (result: SentinelBootstrapCycleResult): SentinelBootstrapReconcileOutcome => {
+  if (result.status === "reconciled") return result.outcome;
+  throw new Error(`expected a reconciled cycle result, got ${result.status}: ${result.reason}`);
+};
+
+Deno.test("bootstrap cycle reports uninitialized with no clock, collector, store, or dispatch effects", async () => {
+  const state = new FakeGitHubSentinelBootstrapState(null);
+  let nowCalls = 0;
+  let startupCalls = 0;
+  let progressCalls = 0;
+  let dispatchCalls = 0;
+  const result = await runBootstrapCycle({
+    environment: cycleEnvironment(),
+    state,
+    adapters: {
+      now: () => {
+        nowCalls += 1;
+        return "2026-08-28T18:20:00.000Z";
+      },
+      collectStartupSignals: () => {
+        startupCalls += 1;
+        return Promise.resolve([]);
+      },
+      collectProgressObservations: () => {
+        progressCalls += 1;
+        return Promise.resolve([]);
+      },
+      dispatchRecovery: () => {
+        dispatchCalls += 1;
+        return Promise.resolve();
+      },
     },
-  };
-  const observedSha = "4".repeat(40);
-  const next = await synchronizeObservedRelease(
-    state as never,
-    { sha: observedSha, revision: "revision-next" },
-    "2026-08-28T18:30:00.000Z",
-  );
-  assert.equal(next.stable_sha, stableSha);
-  assert.equal(next.candidate_sha, observedSha);
-  assert.equal(next.generation, 2);
-  assert.deepEqual(next.acceptance_evidence, [
-    "health:revision-next",
-    `bootstrap:superseded:${candidateSha}`,
-  ]);
-  assert.equal(writtenRelease, next);
-  assert.ok(writtenActivation !== null);
-  const persistedActivation = writtenActivation as SentinelBootstrapActivationPointerV1;
-  assert.equal(persistedActivation.active_sha, observedSha);
-  assert.equal(persistedActivation.generation, 2);
-  assert.deepEqual(persistedActivation.fenced_generations, [1]);
-  assert.equal(persistedActivation.reason, "managed_candidate_superseded");
+  });
+  assert.deepEqual(result, { status: "uninitialized", reason: "durable_release_missing" });
+  assert.equal(nowCalls, 0);
+  assert.equal(startupCalls, 0);
+  assert.equal(progressCalls, 0);
+  assert.equal(dispatchCalls, 0);
+  assert.equal(state.appendSignalsCalls, 0);
+  assert.equal(state.replaceProgressCalls, 0);
+  assert.equal(state.store.pointer, null);
+  assert.equal(state.store.versionstamp, null);
+  assert.deepEqual(state.store.activationWrites, []);
 });
 
-Deno.test("a pending rollback intent preserves its release identity until side effects complete", async () => {
-  const currentRelease = release();
-  const activation = initialSentinelBootstrapActivation(currentRelease, currentRelease.activated_at);
-  let writes = 0;
-  const state = {
-    readDocument: () => ({
-      schema_version: 1 as const,
-      release: currentRelease,
-      signals: [],
-      activation,
-      rollback_intent: {} as SentinelBootstrapRollbackIntentV1,
-      constraints: [],
+Deno.test("bootstrap cycle collects against the exact durable activation identity, never GITHUB_SHA", async () => {
+  const durableRelease = parsedRelease();
+  const activation = initialSentinelBootstrapActivation(durableRelease, durableRelease.activated_at);
+  const state = new FakeGitHubSentinelBootstrapState(durableRelease, activation);
+  assert.notEqual(validBootstrapEnvironment().GITHUB_SHA, activation.active_sha);
+  const startupArgs: Array<readonly [string, number]> = [];
+  const progressArgs: Array<readonly [string, number]> = [];
+  const outcome = requireReconciled(
+    await runBootstrapCycle({
+      environment: cycleEnvironment(),
+      state,
+      adapters: {
+        now: () => "2026-08-28T18:20:00.000Z",
+        collectStartupSignals: (activeSha, generation) => {
+          startupArgs.push([activeSha, generation]);
+          return Promise.resolve([]);
+        },
+        collectProgressObservations: (activeSha, generation) => {
+          progressArgs.push([activeSha, generation]);
+          return Promise.resolve([]);
+        },
+        dispatchRecovery: () => Promise.resolve(),
+      },
     }),
-    replaceRelease: () => {
-      writes += 1;
-      return Promise.resolve();
+  );
+  assert.deepEqual(startupArgs, [[candidateSha, 1]]);
+  assert.deepEqual(progressArgs, [[candidateSha, 1]]);
+  assert.equal(outcome.action, "none");
+  assert.equal(outcome.active_sha, candidateSha);
+  assert.equal(outcome.generation, 1);
+  assert.deepEqual(state.readDocument().release, durableRelease);
+  assert.equal(state.store.activationWrites.length, 0);
+  assert.equal(state.replaceProgressCalls, 0);
+});
+
+Deno.test("an elapsed healthy candidate never becomes stable or superseded without provider health", async () => {
+  const durableRelease = parsedRelease();
+  const activation = initialSentinelBootstrapActivation(durableRelease, durableRelease.activated_at);
+  const state = new FakeGitHubSentinelBootstrapState(durableRelease, activation);
+  assert.notEqual(validBootstrapEnvironment().GITHUB_SHA, candidateSha);
+  const outcome = requireReconciled(
+    await runBootstrapCycle({
+      environment: cycleEnvironment(),
+      state,
+      adapters: {
+        // Far beyond the old healthy-candidate acceptance window, and the
+        // bootstrap workflow execution SHA (GITHUB_SHA) mismatches the durable
+        // candidate.
+        now: () => "2026-08-28T20:30:00.000Z",
+        collectStartupSignals: () => Promise.resolve([]),
+        collectProgressObservations: () => Promise.resolve([]),
+        dispatchRecovery: () => Promise.resolve(),
+      },
+    }),
+  );
+  assert.equal(outcome.action, "none");
+  assert.equal(outcome.active_sha, candidateSha);
+  const document = state.readDocument();
+  assert.equal(document.release!.stable_sha, stableSha);
+  assert.equal(document.release!.candidate_sha, candidateSha);
+  assert.deepEqual(document.release!.acceptance_evidence, ["ci:stable"]);
+  assert.equal(document.release!.activated_at, "2026-08-28T18:00:00.000Z");
+  assert.equal(document.release!.generation, 1);
+  assert.equal(document.activation?.active_sha, candidateSha);
+  assert.equal(document.activation?.generation, 1);
+  assert.equal(state.store.activationWrites.length, 0);
+});
+
+Deno.test("bootstrap cycle derives a null activation with initialSentinelBootstrapActivation semantics", async () => {
+  const durableRelease = parsedRelease();
+  const state = new FakeGitHubSentinelBootstrapState(durableRelease, null);
+  const startupArgs: Array<readonly [string, number]> = [];
+  const outcome = requireReconciled(
+    await runBootstrapCycle({
+      environment: cycleEnvironment(),
+      state,
+      adapters: {
+        now: () => "2026-08-28T18:20:00.000Z",
+        collectStartupSignals: (activeSha, generation) => {
+          startupArgs.push([activeSha, generation]);
+          return Promise.resolve([]);
+        },
+        collectProgressObservations: () => Promise.resolve([]),
+        dispatchRecovery: () => Promise.resolve(),
+      },
+    }),
+  );
+  assert.equal(outcome.action, "initialized");
+  assert.equal(outcome.active_sha, candidateSha);
+  assert.equal(outcome.generation, 1);
+  assert.deepEqual(startupArgs, [[candidateSha, 1]]);
+  assert.equal(state.store.pointer?.active_sha, candidateSha);
+  assert.equal(state.store.pointer?.generation, 1);
+  assert.equal(state.store.pointer?.reason, null);
+  assert.equal(state.store.pointer?.updated_at, "2026-08-28T18:20:00.000Z");
+  assert.equal(state.store.pointer?.fenced_generations.length, 0);
+  assert.deepEqual(state.store.activationWrites, [{ expected: null, activeSha: candidateSha, generation: 1 }]);
+});
+
+Deno.test("bootstrap cycle rolls back a failed generation with exactly one recovery dispatch", async () => {
+  const durableRelease = parsedRelease();
+  const state = new FakeGitHubSentinelBootstrapState(
+    durableRelease,
+    initialSentinelBootstrapActivation(durableRelease, "2026-08-28T18:00:00.000Z"),
+  );
+  const dispatches: SentinelBootstrapRecoveryDispatch[] = [];
+  const failedSignals = [
+    parseSentinelBootstrapHealthSignal(signal({
+      observation_id: "run-1",
+      evidence_refs: ["run:1"],
+      observed_at: "2026-08-28T18:10:00.000Z",
+    })),
+    parseSentinelBootstrapHealthSignal(signal({
+      observation_id: "run-2",
+      evidence_refs: ["run:2"],
+      observed_at: "2026-08-28T18:11:00.000Z",
+    })),
+    parseSentinelBootstrapHealthSignal(signal({
+      observation_id: "run-3",
+      evidence_refs: ["run:3"],
+      observed_at: "2026-08-28T18:12:00.000Z",
+    })),
+  ];
+  const input = {
+    environment: cycleEnvironment(),
+    state,
+    adapters: {
+      now: () => "2026-08-28T18:20:00.000Z",
+      collectStartupSignals: (activeSha: string) => Promise.resolve(activeSha === candidateSha ? failedSignals : []),
+      collectProgressObservations: () => Promise.resolve([]),
+      dispatchRecovery: (dispatch: SentinelBootstrapRecoveryDispatch) => {
+        dispatches.push(dispatch);
+        return Promise.resolve();
+      },
     },
   };
-  const unchanged = await synchronizeObservedRelease(
-    state as never,
-    { sha: "4".repeat(40), revision: "revision-next" },
-    "2026-08-28T18:30:00.000Z",
-  );
-  assert.equal(unchanged, currentRelease);
-  assert.equal(writes, 0);
+  const outcome = requireReconciled(await runBootstrapCycle(input));
+  assert.equal(outcome.action, "rolled_back");
+  assert.equal(outcome.active_sha, stableSha);
+  assert.equal(outcome.generation, 2);
+  assert.equal(outcome.fenced_generation, 1);
+  assert.equal(outcome.constraint_published, true);
+  assert.equal(outcome.recovery_dispatched, true);
+  assert.equal(dispatches.length, 1);
+  assert.equal(dispatches[0]!.previous_sha, candidateSha);
+  assert.equal(dispatches[0]!.sha, stableSha);
+  assert.equal(dispatches[0]!.fenced_generation, 1);
+  assert.equal(dispatches[0]!.active_generation, 2);
+  assert.equal(dispatches[0]!.constraint.failure_fingerprint, fingerprint);
+  assert.deepEqual(state.readDocument().release, durableRelease);
+  assert.equal(state.appendSignalsCalls, 1);
+
+  // The same durable recovery is not dispatched again on the next cycle.
+  const second = requireReconciled(await runBootstrapCycle(input));
+  assert.equal(second.action, "none");
+  assert.equal(second.active_sha, stableSha);
+  assert.equal(second.generation, 2);
+  assert.equal(second.recovery_dispatched, false);
+  assert.equal(dispatches.length, 1);
+  assert.equal(state.store.constraints.size, 1);
+  assert.deepEqual(state.readDocument().release, durableRelease);
+});
+
+Deno.test("bootstrap cycle makes zero fetch calls and retains release identity for provider health variants", async () => {
+  const cases: Array<{ name: string; respond: () => Promise<Response> | Response }> = [
+    {
+      name: "healthy but mismatched provider identity",
+      respond: () =>
+        new Response(
+          JSON.stringify({
+            status: "available",
+            release: { git_sha: "4".repeat(40), deployment_id: "revision-1" },
+          }),
+          { status: 200 },
+        ),
+    },
+    {
+      name: "provider health timeout",
+      respond: () => {
+        throw new DOMException("timeout", "TimeoutError");
+      },
+    },
+    { name: "non-JSON provider health", respond: () => new Response("not json", { status: 200 }) },
+    { name: "provider health HTTP 500", respond: () => new Response('{"error": "boom"}', { status: 500 }) },
+  ];
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const entry of cases) {
+      let fetchCalls = 0;
+      globalThis.fetch = (() => {
+        fetchCalls += 1;
+        return Promise.resolve(entry.respond());
+      }) as typeof fetch;
+      const durableRelease = parsedRelease();
+      const state = new FakeGitHubSentinelBootstrapState(
+        durableRelease,
+        initialSentinelBootstrapActivation(durableRelease, durableRelease.activated_at),
+      );
+      let startupCalls = 0;
+      let progressCalls = 0;
+      const outcome = requireReconciled(
+        await runBootstrapCycle({
+          environment: cycleEnvironment(),
+          state,
+          adapters: {
+            now: () => "2026-08-28T18:20:00.000Z",
+            collectStartupSignals: () => {
+              startupCalls += 1;
+              return Promise.resolve([]);
+            },
+            collectProgressObservations: () => {
+              progressCalls += 1;
+              return Promise.resolve([]);
+            },
+            dispatchRecovery: () => Promise.resolve(),
+          },
+        }),
+      );
+      assert.equal(fetchCalls, 0, `${entry.name}: the cycle must not call fetch`);
+      assert.equal(startupCalls, 1, `${entry.name}: the startup collector must still run`);
+      assert.equal(progressCalls, 1, `${entry.name}: the progress collector must still run`);
+      assert.equal(outcome.action, "none", entry.name);
+      const document = state.readDocument();
+      assert.equal(document.release!.stable_sha, stableSha, entry.name);
+      assert.equal(document.release!.candidate_sha, candidateSha, entry.name);
+      assert.equal(document.activation!.active_sha, candidateSha, entry.name);
+      assert.equal(document.activation!.generation, 1, entry.name);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 Deno.test("controller performs one fenced rollback and deduplicates its constraint and recovery dispatch", async () => {
@@ -452,6 +731,19 @@ Deno.test("bootstrap policy rejects model substitution and bootstrap-path mutati
   assert.throws(() => assertNoBootstrapMutation(["scripts/sentinel/bootstrap/controller.ts"]), /cannot modify/);
   assert.throws(() => assertNoBootstrapMutation(["scripts/sentinel/bootstrap"]), /cannot modify/);
   assert.throws(() => assertNoBootstrapMutation(["docs/sentinel-bootstrap-state.json"]), /cannot modify/);
+  assert.throws(() => assertNoBootstrapMutation(["docs/sentinel-provider-state.json"]), /cannot modify/);
+  assert.throws(
+    () => assertNoBootstrapMutation(["docs/sentinel-provider-executor-evidence"]),
+    /cannot modify/,
+  );
+  assert.throws(
+    () => assertNoBootstrapMutation(["docs/sentinel-provider-executor-evidence/ab12cd34.json"]),
+    /cannot modify/,
+  );
+  assert.throws(
+    () => assertNoBootstrapMutation([".github/workflows/sentinel-revision-control.yml"]),
+    /cannot modify/,
+  );
   assert.doesNotThrow(() => assertNoBootstrapMutation(["src/ordinary-file.ts"]));
 });
 
@@ -1203,27 +1495,136 @@ Deno.test("m06 classifier evidence construction stays advisory and bounded", asy
   assert.ok(longOutput.raw === null || longOutput.raw.length <= 512);
 });
 
+// ---------------------------------------------------------------------------
+// Advisory recovery-ledger summary: local bounded parsing without importing
+// the evolving recovery/retry validators.
+// ---------------------------------------------------------------------------
+
+const recoveryIdentity = (candidateGeneration = 1): Record<string, unknown> => ({
+  repository: "ubiquity/ai.ubq.fi",
+  source_kind: "incident",
+  source_id: "run:1",
+  source_revision: "development",
+  candidate_generation: candidateGeneration,
+});
+
+const recoveryRecord = (stateVersion: number): Record<string, unknown> => ({
+  schema_version: 1,
+  identity: recoveryIdentity(),
+  run_id: "run:1",
+  attempt: 1,
+  lease_token: "lease-1",
+  base_sha: stableSha,
+  phase: "implementation_running",
+  disposition: "active",
+  state_version: stateVersion,
+  created_at: progressAt,
+  updated_at: progressAt,
+  candidate_branch: null,
+  candidate_sha: null,
+  changed_files: [],
+  tree_sha: null,
+  failure_class: null,
+  failure_fingerprint: null,
+  artifact_ids: [],
+  artifact_digests: [],
+  reason: null,
+  next_action: null,
+  predecessor: null,
+});
+
+const recoveryLedger = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+  schema_version: 1,
+  records: [recoveryRecord(3), recoveryRecord(7)],
+  retry_history: [{ identity: recoveryIdentity(), started_at: progressAt }],
+  retry_decisions: [{ identity_key: "ignored", decision: { should_retry: false } }],
+  leases: [],
+  ...overrides,
+});
+
+Deno.test("bootstrap advisory ledger summary parses the actual recovery ledger shape", () => {
+  assert.equal(SENTINEL_RECOVERY_LEDGER_PATH, "docs/sentinel-recovery-records.json");
+  const summary = parseAdvisoryRecoveryLedgerSummary(recoveryLedger());
+  assert.deepEqual(summary, { max_state_version: 7, retry_state: "retrying" });
+});
+
+Deno.test("bootstrap advisory ledger summary fails closed on absent or invalid metadata", () => {
+  assert.equal(parseAdvisoryRecoveryLedgerSummary(null), null);
+  assert.equal(parseAdvisoryRecoveryLedgerSummary({}), null);
+  assert.equal(parseAdvisoryRecoveryLedgerSummary(recoveryLedger({ schema_version: 2 })), null);
+  assert.equal(parseAdvisoryRecoveryLedgerSummary(recoveryLedger({ records: "not-an-array" })), null);
+  assert.equal(parseAdvisoryRecoveryLedgerSummary(recoveryLedger({ records: [{}] })), null);
+  assert.equal(parseAdvisoryRecoveryLedgerSummary(recoveryLedger({ records: [recoveryRecord(0)] })), null);
+  assert.equal(parseAdvisoryRecoveryLedgerSummary(recoveryLedger({ records: [recoveryRecord(-1)] })), null);
+  assert.equal(parseAdvisoryRecoveryLedgerSummary(recoveryLedger({ retry_history: {} })), null);
+  assert.equal(parseAdvisoryRecoveryLedgerSummary(recoveryLedger({ retry_history: ["not-a-record"] })), null);
+  assert.equal(parseAdvisoryRecoveryLedgerSummary(recoveryLedger({ retry_decisions: undefined })), null);
+  assert.equal(parseAdvisoryRecoveryLedgerSummary(recoveryLedger({ leases: undefined })), null);
+  assert.equal(
+    parseAdvisoryRecoveryLedgerSummary(
+      recoveryLedger({ records: Array.from({ length: 513 }, () => recoveryRecord(1)) }),
+    ),
+    null,
+  );
+  assert.equal(
+    parseAdvisoryRecoveryLedgerSummary(recoveryLedger({ retry_history: Array.from({ length: 4097 }, () => ({})) })),
+    null,
+  );
+});
+
+Deno.test("bootstrap advisory ledger summary keeps the empty-ledger state version at zero", () => {
+  // Same reduce semantics as the original derivation: an empty record set
+  // yields the reduction seed 0, never null and never a negative value.
+  const summary = parseAdvisoryRecoveryLedgerSummary(recoveryLedger({ records: [], retry_history: [] }));
+  assert.deepEqual(summary, { max_state_version: 0, retry_state: "none" });
+});
+
+Deno.test("bootstrap keeps the fixed advisory model local and aligned with the adapter", () => {
+  assert.equal(BOOTSTRAP_ADVISORY_CLASSIFIER_MODEL, "gpt-oss-120b");
+  assert.equal(BOOTSTRAP_CLASSIFIER_MODEL, BOOTSTRAP_ADVISORY_CLASSIFIER_MODEL);
+  const evidence = classifierFailureEvidence(progressObservation(), "classifier_injected_call_failed", progressAt);
+  assert.equal(evidence.requested_model, BOOTSTRAP_ADVISORY_CLASSIFIER_MODEL);
+});
+
 Deno.test({
   name: "bootstrap source and workflow expose no mutation or model-substitution path",
   ignore: sourceInspectionUnavailable,
   async fn() {
     const modulePaths = [
       "scripts/sentinel/bootstrap/activation.ts",
-      "scripts/sentinel/bootstrap/classifier.ts",
       "scripts/sentinel/bootstrap/contracts.ts",
       "scripts/sentinel/bootstrap/controller.ts",
+      "scripts/sentinel/bootstrap/deploy.ts",
+      "scripts/sentinel/bootstrap/executor.ts",
       "scripts/sentinel/bootstrap/health.ts",
       "scripts/sentinel/bootstrap/github-store.ts",
       "scripts/sentinel/bootstrap/main.ts",
       "scripts/sentinel/bootstrap/observation.ts",
       "scripts/sentinel/bootstrap/policy.ts",
       "scripts/sentinel/bootstrap/progress.ts",
+      "scripts/sentinel/bootstrap/provider-recovery.ts",
+      "scripts/sentinel/bootstrap/provider-state.ts",
+      "scripts/sentinel/bootstrap/recovery-ledger-summary.ts",
+      "scripts/sentinel/bootstrap/revision-control.ts",
     ];
+    const expectedResolved = new Set(modulePaths.map((path) => `${Deno.cwd()}/${path}`));
     for (const path of modulePaths) {
       const source = await Deno.readTextFile(path);
       assert.doesNotMatch(source, /Deno\.Command|git\s+(?:push|merge)|force-with-lease|deno\s+deploy/u);
       assert.doesNotMatch(source, /contents:\s*write|pull-requests:\s*write/u);
+      for (const specifier of [...source.matchAll(/from\s+["']([^"']+)["']/gu)].map((match) => match[1]!)) {
+        assert.doesNotMatch(specifier, /^(?:https?:|node:|jsr:|npm:|deno:)/u, `${path} imports a non-local module`);
+        assert.ok(specifier.startsWith("./"), `${path} escapes the bootstrap package (${specifier})`);
+        const resolved = new URL(specifier, new URL(`file://${Deno.cwd()}/${path}`)).pathname;
+        assert.ok(
+          expectedResolved.has(resolved),
+          `${path} must import only another bootstrap module (${resolved})`,
+        );
+      }
     }
+    // The provider-adjacent classifier adapter must not live in the protected
+    // bootstrap package: its evidence is advisory and injected from outside.
+    await assert.rejects(Deno.stat("scripts/sentinel/bootstrap/classifier.ts"), /not found|No such file/u);
     const workflow = await Deno.readTextFile(".github/workflows/provider-sentinel-bootstrap.yml");
     const evolvingWorkflow = await Deno.readTextFile(".github/workflows/provider-sentinel.yml");
     const entryPoint = await Deno.readTextFile("scripts/sentinel/bootstrap/main.ts");

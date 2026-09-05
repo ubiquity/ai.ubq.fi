@@ -1404,3 +1404,455 @@ Deno.test("GitHub repository artifact listing rejects malformed expiration metad
     fake.assertDrained();
   }
 });
+
+Deno.test("Deno route ownership confirms when the active revision holds the managed route", async () => {
+  const fake = queuedFetch([
+    (request) => {
+      assertDenoApiRequest(request, "/v2/apps/ai-ubq-fi/revisions");
+      return json({ revisions: [{ id: "k3a2f3cpzra7", status: "succeeded" }] });
+    },
+    (request) => {
+      assertDenoApiRequest(request, "/v2/revisions/k3a2f3cpzra7");
+      return json({
+        id: "k3a2f3cpzra7",
+        status: "succeeded",
+        timelines: [
+          { name: "Production", context: "Production", hostnames: ["ai-ubq-fi.ubiquity-dao.deno.net"] },
+          { name: "Preview", context: "Preview", hostnames: ["ai-ubq-fi-k3a2f3cpzra7.ubiquity-dao.deno.net"] },
+        ],
+      });
+    },
+  ]);
+  const ownership = await denoClient(fake.fetcher, { now: () => Date.parse("2026-09-04T12:00:00Z") })
+    .readProductionRouteOwnership("ai-ubq-fi", "k3a2f3cpzra7");
+
+  assert.deepEqual(ownership, {
+    app: "ai-ubq-fi",
+    revisionId: "k3a2f3cpzra7",
+    managedHostname: "ai-ubq-fi.ubiquity-dao.deno.net",
+    ownsRoute: true,
+    observedAt: "2026-09-04T12:00:00.000Z",
+  });
+  assert.equal(Object.isFrozen(ownership), true);
+  assert.equal("gitSha" in ownership, false, "route ownership is not a Git SHA proof");
+  assert.equal(fake.seen.length, 2, "route ownership must make only the membership and revision GETs");
+  for (const request of fake.seen) {
+    assert.equal(request.method, "GET", "route ownership must be read-only");
+    assert.equal(request.redirect, "manual");
+    assert.match(request.url.pathname, /^\/v2\/(?:apps|revisions)\//u);
+    assert.equal(request.url.pathname.includes("health"), false, "route ownership never calls app health");
+    assert.equal(request.url.pathname.includes("promote"), false, "route ownership never promotes");
+  }
+  fake.assertDrained();
+});
+
+Deno.test("Deno route ownership reports false for a shadowed revision with no production hostnames", async () => {
+  const fake = queuedFetch([
+    () => json({ revisions: [{ id: "hk95eyzdn3b2", status: "succeeded" }] }),
+    () =>
+      json({
+        id: "hk95eyzdn3b2",
+        status: "succeeded",
+        timelines: [
+          { name: "Production", context: "Production", hostnames: [] },
+          { name: "Preview", context: "Preview", hostnames: ["ai-ubq-fi-hk95eyzdn3b2.ubiquity-dao.deno.net"] },
+        ],
+      }),
+  ]);
+  const ownership = await denoClient(fake.fetcher)
+    .readProductionRouteOwnership("ai-ubq-fi", "hk95eyzdn3b2");
+  assert.equal(ownership.managedHostname, "ai-ubq-fi.ubiquity-dao.deno.net");
+  assert.equal(ownership.ownsRoute, false);
+  fake.assertDrained();
+});
+
+Deno.test("Deno route ownership reports false when timelines omit Production", async () => {
+  const emptyTimelines = queuedFetch([
+    () => json({ revisions: [{ id: "candidate-revision" }] }),
+    () => json({ id: "candidate-revision", status: "succeeded", timelines: [] }),
+  ]);
+  assert.equal(
+    (await denoClient(emptyTimelines.fetcher).readProductionRouteOwnership("ai-ubq-fi", "candidate-revision"))
+      .ownsRoute,
+    false,
+  );
+  emptyTimelines.assertDrained();
+
+  const previewOnly = queuedFetch([
+    () => json({ revisions: [{ id: "candidate-revision" }] }),
+    () =>
+      json({
+        id: "candidate-revision",
+        status: "succeeded",
+        timelines: [{
+          name: "Preview",
+          context: "Preview",
+          hostnames: ["ai-ubq-fi-candidate-revision.ubiquity-dao.deno.net"],
+        }],
+      }),
+  ]);
+  assert.equal(
+    (await denoClient(previewOnly.fetcher).readProductionRouteOwnership("ai-ubq-fi", "candidate-revision"))
+      .ownsRoute,
+    false,
+  );
+  previewOnly.assertDrained();
+});
+
+Deno.test("Deno route ownership derives the managed hostname from the configured organization", async () => {
+  const fake = queuedFetch([
+    () => json({ revisions: [{ id: "candidate-revision" }] }),
+    () =>
+      json({
+        id: "candidate-revision",
+        status: "succeeded",
+        timelines: [{
+          name: "Production",
+          context: "Production",
+          hostnames: ["ai-ubq-fi.acme-corp.deno.net"],
+        }],
+      }),
+  ]);
+  const client = new DenoDeployClient({
+    token: DENO_TOKEN,
+    apiBaseUrl: "https://deno.test/v2/",
+    organization: "acme-corp",
+    fetcher: fake.fetcher,
+  });
+  const ownership = await client.readProductionRouteOwnership("ai-ubq-fi", "candidate-revision");
+  assert.equal(ownership.managedHostname, "ai-ubq-fi.acme-corp.deno.net");
+  assert.equal(ownership.ownsRoute, true);
+  fake.assertDrained();
+});
+
+Deno.test("Deno route ownership requires exact application membership before reading revision data", async () => {
+  const fake = queuedFetch([() => json({ revisions: [{ id: "different-revision" }] })]);
+  await assert.rejects(
+    () => denoClient(fake.fetcher).readProductionRouteOwnership("ai-ubq-fi", "candidate-revision"),
+    /not a member/,
+  );
+  assert.equal(fake.seen.length, 1, "membership failure must stop before the revision GET");
+  fake.assertDrained();
+});
+
+Deno.test("Deno route ownership rejects a revision payload for a different id", async () => {
+  const fake = queuedFetch([
+    () => json({ revisions: [{ id: "candidate-revision" }] }),
+    () => json({ id: "different-revision", status: "succeeded", timelines: [] }),
+  ]);
+  await assert.rejects(
+    () => denoClient(fake.fetcher).readProductionRouteOwnership("ai-ubq-fi", "candidate-revision"),
+    /wrong revision/,
+  );
+  fake.assertDrained();
+});
+
+Deno.test("Deno route ownership requires normalized routed control-plane status", async () => {
+  for (const status of ["building", "failed", "ready"]) {
+    const fake = queuedFetch([
+      () => json({ revisions: [{ id: "candidate-revision" }] }),
+      () => json({ id: "candidate-revision", status, timelines: [] }),
+    ]);
+    await assert.rejects(
+      () => denoClient(fake.fetcher).readProductionRouteOwnership("ai-ubq-fi", "candidate-revision"),
+      /not routed on the Deno control plane/,
+    );
+    fake.assertDrained();
+  }
+});
+
+Deno.test("Deno route ownership fails closed on malformed or missing control-plane timelines", async () => {
+  const payloads: Record<string, unknown>[] = [
+    { id: "candidate-revision", status: "succeeded" },
+    { id: "candidate-revision", status: "succeeded", timelines: {} },
+    { id: "candidate-revision", status: "succeeded", timelines: [null] },
+    { id: "candidate-revision", status: "succeeded", timelines: [{ context: "Production", hostnames: [] }] },
+    { id: "candidate-revision", status: "succeeded", timelines: [{ name: "", context: "Production", hostnames: [] }] },
+    { id: "candidate-revision", status: "succeeded", timelines: [{ name: " ", context: "Production", hostnames: [] }] },
+    { id: "candidate-revision", status: "succeeded", timelines: [{ name: "Production", hostnames: [] }] },
+    { id: "candidate-revision", status: "succeeded", timelines: [{ name: "Production", context: "", hostnames: [] }] },
+    { id: "candidate-revision", status: "succeeded", timelines: [{ name: "Production", context: "Production" }] },
+    {
+      id: "candidate-revision",
+      status: "succeeded",
+      timelines: [{ name: "Production", context: "Production", hostnames: "ai-ubq-fi.ubiquity-dao.deno.net" }],
+    },
+    {
+      id: "candidate-revision",
+      status: "succeeded",
+      timelines: [{ name: "Production", context: "Production", hostnames: [""] }],
+    },
+    {
+      id: "candidate-revision",
+      status: "succeeded",
+      timelines: [{ name: "Production", context: "Production", hostnames: ["AI-UBQ-FI.ubiquity-dao.deno.net"] }],
+    },
+    {
+      id: "candidate-revision",
+      status: "succeeded",
+      timelines: [{ name: "Production", context: "Production", hostnames: ["ai-ubq-fi.ubiquity-dao.deno.net."] }],
+    },
+    {
+      id: "candidate-revision",
+      status: "succeeded",
+      timelines: [{ name: "Production", context: "Production", hostnames: ["ai-ubq-fi.ubiquity-dao.deno.net:443"] }],
+    },
+    {
+      id: "candidate-revision",
+      status: "succeeded",
+      timelines: [{
+        name: "Production",
+        context: "Production",
+        hostnames: ["https://ai-ubq-fi.ubiquity-dao.deno.net"],
+      }],
+    },
+    {
+      id: "candidate-revision",
+      status: "succeeded",
+      timelines: [{ name: "Production", context: "Production", hostnames: ["ai-ubq-fi.ubiquity-dao.deno.net/health"] }],
+    },
+    {
+      id: "candidate-revision",
+      status: "succeeded",
+      timelines: [{ name: "Production", context: "Production", hostnames: ["*.ubiquity-dao.deno.net"] }],
+    },
+    {
+      id: "candidate-revision",
+      status: "succeeded",
+      timelines: [{ name: "Production", context: "Production", hostnames: ["ai-ubq-fi.ubiquity_dao.deno.net"] }],
+    },
+    // Individual labels are bounded to 63 characters even when the whole
+    // hostname is under 253 characters.
+    {
+      id: "candidate-revision",
+      status: "succeeded",
+      timelines: [{
+        name: "Production",
+        context: "Production",
+        hostnames: [`${"a".repeat(64)}.ubiquity-dao.deno.net`],
+      }],
+    },
+    {
+      id: "candidate-revision",
+      status: "succeeded",
+      timelines: [{ name: "Production", context: "Production", hostnames: [`ai-ubq-fi.${"b".repeat(64)}.deno.net`] }],
+    },
+  ];
+  for (const payload of payloads) {
+    const fake = queuedFetch([
+      () => json({ revisions: [{ id: "candidate-revision" }] }),
+      () => json(payload),
+    ]);
+    await assert.rejects(
+      () => denoClient(fake.fetcher).readProductionRouteOwnership("ai-ubq-fi", "candidate-revision"),
+      /Revision candidate-revision/,
+    );
+    fake.assertDrained();
+  }
+});
+
+Deno.test("Deno route ownership rejects duplicate hostnames within one timeline", async () => {
+  const fake = queuedFetch([
+    () => json({ revisions: [{ id: "candidate-revision" }] }),
+    () =>
+      json({
+        id: "candidate-revision",
+        status: "succeeded",
+        timelines: [{
+          name: "Production",
+          context: "Production",
+          hostnames: ["ai-ubq-fi.ubiquity-dao.deno.net", "ai-ubq-fi.ubiquity-dao.deno.net"],
+        }],
+      }),
+  ]);
+  await assert.rejects(
+    () => denoClient(fake.fetcher).readProductionRouteOwnership("ai-ubq-fi", "candidate-revision"),
+    /duplicate hostnames/,
+  );
+  fake.assertDrained();
+});
+
+Deno.test("Deno route ownership rejects duplicate and partial Production timeline records", async () => {
+  const cases: { timelines: unknown[]; error: RegExp }[] = [
+    {
+      timelines: [
+        { name: "Production", context: "Production", hostnames: ["ai-ubq-fi.ubiquity-dao.deno.net"] },
+        { name: "Production", context: "Production", hostnames: ["ai-ubq-fi.ubiquity-dao.deno.net"] },
+      ],
+      error: /multiple Production/,
+    },
+    {
+      timelines: [{
+        name: "Production",
+        context: "Preview",
+        hostnames: ["ai-ubq-fi.ubiquity-dao.deno.net"],
+      }],
+      error: /partial Production/,
+    },
+    {
+      timelines: [{
+        name: "Preview",
+        context: "Production",
+        hostnames: ["ai-ubq-fi.ubiquity-dao.deno.net"],
+      }],
+      error: /partial Production/,
+    },
+    // Padded names are not authoritative Production entries.
+    {
+      timelines: [{
+        name: " Production ",
+        context: "Production",
+        hostnames: ["ai-ubq-fi.ubiquity-dao.deno.net"],
+      }],
+      error: /partial Production/,
+    },
+    {
+      timelines: [{
+        name: "Production",
+        context: " Production ",
+        hostnames: ["ai-ubq-fi.ubiquity-dao.deno.net"],
+      }],
+      error: /partial Production/,
+    },
+  ];
+  for (const { timelines, error } of cases) {
+    const fake = queuedFetch([
+      () => json({ revisions: [{ id: "candidate-revision" }] }),
+      () => json({ id: "candidate-revision", status: "succeeded", timelines }),
+    ]);
+    await assert.rejects(
+      () => denoClient(fake.fetcher).readProductionRouteOwnership("ai-ubq-fi", "candidate-revision"),
+      error,
+    );
+    fake.assertDrained();
+  }
+});
+
+Deno.test("Deno route ownership treats lookalike and immutable preview hostnames as non-owning", async () => {
+  const lookalikeHostnames = [
+    ["ai-ubq-fi-extra.ubiquity-dao.deno.net"],
+    ["p-ai-ubq-fi.ubiquity-dao.deno.net"],
+    ["ai-ubq-fi.k3a2f3cpzra7.ubiquity-dao.deno.net"],
+    ["ai-ubq-fi-k3a2f3cpzra7.ubiquity-dao.deno.net"],
+    ["ai-ubq-fi.ubiquity-dao.deno.net.evil.example"],
+  ];
+  for (const hostnames of lookalikeHostnames) {
+    const fake = queuedFetch([
+      () => json({ revisions: [{ id: "candidate-revision" }] }),
+      () =>
+        json({
+          id: "candidate-revision",
+          status: "succeeded",
+          timelines: [{ name: "Production", context: "Production", hostnames }],
+        }),
+    ]);
+    const ownership = await denoClient(fake.fetcher)
+      .readProductionRouteOwnership("ai-ubq-fi", "candidate-revision");
+    assert.equal(ownership.ownsRoute, false, `hostnames ${hostnames.join(",")} must not own the route`);
+    fake.assertDrained();
+  }
+});
+
+Deno.test("Deno route ownership rejects the managed hostname advertised outside Production", async () => {
+  const previewOnly = queuedFetch([
+    () => json({ revisions: [{ id: "candidate-revision" }] }),
+    () =>
+      json({
+        id: "candidate-revision",
+        status: "succeeded",
+        timelines: [{
+          name: "Preview",
+          context: "Preview",
+          hostnames: ["ai-ubq-fi.ubiquity-dao.deno.net"],
+        }],
+      }),
+  ]);
+  await assert.rejects(
+    () => denoClient(previewOnly.fetcher).readProductionRouteOwnership("ai-ubq-fi", "candidate-revision"),
+    /outside Production/,
+  );
+  previewOnly.assertDrained();
+
+  const contradictory = queuedFetch([
+    () => json({ revisions: [{ id: "candidate-revision" }] }),
+    () =>
+      json({
+        id: "candidate-revision",
+        status: "succeeded",
+        timelines: [
+          { name: "Production", context: "Production", hostnames: ["ai-ubq-fi.ubiquity-dao.deno.net"] },
+          { name: "Preview", context: "Preview", hostnames: ["ai-ubq-fi.ubiquity-dao.deno.net"] },
+        ],
+      }),
+  ]);
+  await assert.rejects(
+    () => denoClient(contradictory.fetcher).readProductionRouteOwnership("ai-ubq-fi", "candidate-revision"),
+    /outside Production/,
+  );
+  contradictory.assertDrained();
+
+  const paddedBoth = queuedFetch([
+    () => json({ revisions: [{ id: "candidate-revision" }] }),
+    () =>
+      json({
+        id: "candidate-revision",
+        status: "succeeded",
+        timelines: [{
+          name: " Production ",
+          context: " Production ",
+          hostnames: ["ai-ubq-fi.ubiquity-dao.deno.net"],
+        }],
+      }),
+  ]);
+  await assert.rejects(
+    () => denoClient(paddedBoth.fetcher).readProductionRouteOwnership("ai-ubq-fi", "candidate-revision"),
+    /outside Production/,
+  );
+  paddedBoth.assertDrained();
+});
+
+Deno.test("Deno route ownership validates lowercase DNS label inputs before any request", async () => {
+  const invalid: [string, string][] = [
+    ["", "candidate-revision"],
+    ["ai-ubq-fi", ""],
+    ["AI-UBQ-FI", "candidate-revision"],
+    ["ai-ubq-fi", "CANDIDATE-REVISION"],
+    ["ai_ubq_fi", "candidate-revision"],
+    ["ai-ubq-fi", "candidate_revision"],
+    ["-ai-ubq-fi", "candidate-revision"],
+    ["ai-ubq-fi", "-candidate-revision"],
+    ["ai-ubq-fi-", "candidate-revision"],
+    ["a".repeat(64), "candidate-revision"],
+    ["ai-ubq-fi", "a".repeat(64)],
+  ];
+  for (const [app, revisionId] of invalid) {
+    const fake = queuedFetch([]);
+    await assert.rejects(
+      () => denoClient(fake.fetcher).readProductionRouteOwnership(app, revisionId),
+      /lowercase DNS label/,
+    );
+    assert.equal(fake.seen.length, 0, "invalid input must fail before any control-plane request");
+    fake.assertDrained();
+  }
+});
+
+Deno.test("Deno route ownership rejects an unrepresentable observation time", async () => {
+  for (const now of [Number.NaN, Number.POSITIVE_INFINITY]) {
+    const fake = queuedFetch([
+      () => json({ revisions: [{ id: "candidate-revision" }] }),
+      () =>
+        json({
+          id: "candidate-revision",
+          status: "succeeded",
+          timelines: [{ name: "Production", context: "Production", hostnames: ["ai-ubq-fi.ubiquity-dao.deno.net"] }],
+        }),
+    ]);
+    await assert.rejects(
+      () =>
+        denoClient(fake.fetcher, { now: () => now })
+          .readProductionRouteOwnership("ai-ubq-fi", "candidate-revision"),
+      /not representable/,
+    );
+    fake.assertDrained();
+  }
+});

@@ -23,7 +23,6 @@
  * This module is pure and performs no I/O.
  */
 
-import { CEREBRAS_GPT_OSS_120B_MODEL } from "../../../src/cerebras.ts";
 import {
   parseSentinelBootstrapClassifierEvidence,
   parseSentinelBootstrapProgressDecision,
@@ -33,6 +32,14 @@ import {
   type SentinelBootstrapProgressObservationV1,
 } from "./contracts.ts";
 import { sentinelBootstrapObservationDigest, sentinelBootstrapProgressStateKey } from "./observation.ts";
+
+/**
+ * The fixed advisory classifier model, kept local in bootstrap so the package
+ * module graph never reaches provider code. It is the zero-tool GPT-OSS model
+ * used for ambiguous-progress advisory evidence only; it is never the
+ * implementation model (Luna/max stays pinned in SENTINEL_BOOTSTRAP_POLICY).
+ */
+export const BOOTSTRAP_ADVISORY_CLASSIFIER_MODEL = "gpt-oss-120b";
 
 /** Hard bound on how many observations one decision may consider. */
 export const SENTINEL_BOOTSTRAP_PROGRESS_MAX_OBSERVATIONS = 16;
@@ -138,7 +145,7 @@ export const classifierFailureEvidence = (
     answer: "unknown",
     raw: null,
     reason,
-    requested_model: CEREBRAS_GPT_OSS_120B_MODEL,
+    requested_model: BOOTSTRAP_ADVISORY_CLASSIFIER_MODEL,
     status: null,
     requested_at: now,
     observation_digest: sentinelBootstrapObservationDigest(observation),
