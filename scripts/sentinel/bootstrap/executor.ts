@@ -195,6 +195,11 @@ export type VerifiedExecutorAuthority = Readonly<{
   next: VerifiedReplacementAttempt;
 }>;
 
+export type VerifiedActiveExecutorAuthority = Readonly<{
+  observed_at: string;
+  attempt: VerifiedReplacementAttempt;
+}>;
+
 const verifyAttempt = async (
   input: Readonly<{
     token: string;
@@ -356,6 +361,66 @@ export const verifyExecutorHandoverAuthority = async (
     }),
     next: Object.freeze({
       ...next,
+      status: "in_progress" as const,
+      conclusion: null,
+    }),
+  });
+};
+
+/**
+ * Verifies the single current executor attempt used to authorize a protected
+ * operation. The supplied candidate is first reduced through the strict local
+ * parser (exactly the approved repository/workflow with positive safe run
+ * id/attempt), then read through the same exact run-attempt endpoint with the
+ * same strict transport/identity/body rules as the handover verifier. Only an
+ * in_progress status with a null conclusion authorizes; a completed, failed,
+ * stale, foreign, or malformed attempt fails closed with a safe
+ * ExecutorAuthorityError.
+ *
+ * The injected clock is validated before any network read, sampled again after
+ * the response read, must never regress, and is the sole authority for the
+ * future-evidence check and the observed_at instant.
+ */
+export const verifyActiveProviderExecutorAuthority = async (
+  input: Readonly<{
+    token: string;
+    fetcher: typeof fetch;
+    executor: SentinelProviderExecutorV1;
+    now: () => number;
+  }>,
+): Promise<VerifiedActiveExecutorAuthority> => {
+  // Validate the initial clock before any request so a NaN/Infinity/invalid
+  // clock can never trigger a network read.
+  const initialIso = normalizeClock(input.now(), "initial");
+  const initialMs = Date.parse(initialIso);
+  const parsed = parseProviderExecutorIdentity(input.executor);
+  if (parsed === null) throw new ExecutorAuthorityError("executor workflow identity is not approved");
+  const attempt = await verifyAttempt({
+    token: input.token,
+    fetcher: input.fetcher,
+    executor: parsed,
+  });
+  if (attempt.status !== "in_progress") {
+    throw new ExecutorAuthorityError("executor attempt is not in progress");
+  }
+  if (attempt.conclusion !== null) {
+    throw new ExecutorAuthorityError("executor attempt has a conclusion");
+  }
+  // Final clock after the read: a legitimate updated_at observed during the
+  // read must not be rejected, regression must fail closed, and the final
+  // instant is authoritative for the future check and observed_at.
+  const finalIso = normalizeClock(input.now(), "final");
+  const finalMs = Date.parse(finalIso);
+  if (finalMs < initialMs) {
+    throw new ExecutorAuthorityError("executor authority clock regressed");
+  }
+  if (Date.parse(attempt.updated_at) > finalMs) {
+    throw new ExecutorAuthorityError("executor authority response contains evidence from the future");
+  }
+  return Object.freeze({
+    observed_at: finalIso,
+    attempt: Object.freeze({
+      ...attempt,
       status: "in_progress" as const,
       conclusion: null,
     }),

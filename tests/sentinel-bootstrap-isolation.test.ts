@@ -12,7 +12,7 @@ const BOOTSTRAP_PACKAGE_DIR = "scripts/sentinel/bootstrap";
 // below from the real package bytes (never trusted from a second constant), so
 // a tampered package, a removed file, or an omitted nested file fails this test
 // and the workflow fails closed.
-const BOOTSTRAP_PACKAGE_MANIFEST_DIGEST = "c53d75038caa1cb8c6e36b9d52f51ba50893167bb3c0f7898ab8b4bb131a967e";
+const BOOTSTRAP_PACKAGE_MANIFEST_DIGEST = "133ac04bc5fd4a7cee903bd2c94e1d12bcc250faf3c0b523f311c2d40fb8fb5f";
 
 // Provider/evolving sources that must never be reachable from the pinned
 // bootstrap package. Each is deliberately broken so an accidental import
@@ -198,10 +198,20 @@ Deno.test({
         !mainModules.includes(`${packageDir}/revision-control.ts`),
         "bootstrap main must not load the revision-control executor",
       );
+      assert.ok(
+        !mainModules.includes(`${packageDir}/provider-recovery.ts`),
+        "bootstrap main must not load the provider-recovery executor",
+      );
       assert.deepEqual(
         executorModules,
-        [`${packageDir}/deploy.ts`, `${packageDir}/revision-control.ts`].sort(),
-        "the executor graph must contain only revision-control.ts and deploy.ts",
+        [
+          `${packageDir}/deploy.ts`,
+          `${packageDir}/executor.ts`,
+          `${packageDir}/provider-recovery.ts`,
+          `${packageDir}/provider-state.ts`,
+          `${packageDir}/revision-control.ts`,
+        ].sort(),
+        "the executor graph must contain only the five protected executor siblings",
       );
 
       // 2. Type-checked module loads of both entrypoints resolve with the

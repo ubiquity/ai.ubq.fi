@@ -712,7 +712,19 @@ export class DenoDeployClient {
     throw new Error(`No new routed revision for ${options.candidateGitSha} reached the expected health identity`);
   }
 
-  async promoteRevision(app: string, revisionId: string): Promise<void> {
+  /**
+   * Promotes one exact revision to the application's stable route. The
+   * optional guard runs after the client's own target membership/status reads
+   * and directly before the actual POST; a throwing guard prevents the POST.
+   * The guard is the protection-hook point for callers whose re-verification
+   * must observe the client's asynchronous target reads first. Callers that
+   * omit the guard keep the exact previous behavior.
+   */
+  async promoteRevision(
+    app: string,
+    revisionId: string,
+    beforePromote?: () => Promise<void>,
+  ): Promise<void> {
     await this.assertRevisionBelongsToApp(app, revisionId);
     const revision = await this.getRevision(revisionId);
     if (revision.id !== revisionId) {
@@ -721,6 +733,7 @@ export class DenoDeployClient {
     if (revision.status !== "routed") {
       throw new Error(`Revision ${revisionId} is not routed immediately before promotion`);
     }
+    await beforePromote?.();
     const operation = `Promote revision ${revisionId}`;
     const { response } = await this.#request(
       this.#apiUrl(`revisions/${encodeURIComponent(revisionId)}/promote`),

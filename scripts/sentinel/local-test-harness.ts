@@ -124,6 +124,8 @@ export const SENTINEL_LOCAL_TEST_STAGES: readonly SentinelLocalTestStage[] = [
       "--frozen",
       "tests/sentinel-rollback-controller.test.ts",
       "tests/sentinel-deploy.test.ts",
+      "tests/sentinel-revision-control.test.ts",
+      "tests/sentinel-provider-recovery.test.ts",
     ],
   },
   {

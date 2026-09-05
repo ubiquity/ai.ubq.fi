@@ -604,3 +604,16 @@ export const runRevisionControlCli = async (): Promise<void> => {
 if (import.meta.main) {
   await runRevisionControlCli();
 }
+
+// Protected Provider Sentinel recovery operation (provider owner rollback).
+// Re-exported here so the pinned executor module graph reaches it; it is not
+// yet invoked by the revision-control CLI.
+export { ProviderRecoveryError, recoverProviderTransaction } from "./provider-recovery.ts";
+export type {
+  ProviderRecoveryDependencies,
+  ProviderRecoveryInput,
+  ProviderRecoveryPendingReason,
+  ProviderRecoveryResult,
+  ProviderRecoveryState,
+  ProviderRecoveryStateSnapshot,
+} from "./provider-recovery.ts";
