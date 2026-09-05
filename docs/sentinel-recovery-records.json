@@ -2806,11 +2806,11 @@
       "attempt": 1,
       "lease_token": "33989106944-1",
       "base_sha": "9a5ed964b19fa81491c75dc6f93979005682a13c",
-      "phase": "implementation_running",
+      "phase": "recovery_pending",
       "disposition": "active",
-      "state_version": 2,
+      "state_version": 3,
       "created_at": "2026-09-05T20:07:27.330Z",
-      "updated_at": "2026-09-05T20:41:49.172Z",
+      "updated_at": "2026-09-05T20:41:50.759Z",
       "candidate_branch": "sentinel/candidate-github_issue-5262330278-c5c00917f18ebf3644826ff1c003274a-g164-323034b90633739a",
       "candidate_sha": null,
       "changed_files": [],
@@ -2819,8 +2819,8 @@
       "failure_fingerprint": null,
       "artifact_ids": [],
       "artifact_digests": [],
-      "reason": "The isolated Luna implementation stage is running.",
-      "next_action": "Checkpoint every Git-derived candidate change before report validation.",
+      "reason": "The record is incomplete and requires another bounded reconciliation pass.",
+      "next_action": "Reconcile the recorded branch and candidate SHA.",
       "predecessor": "[\"ubiquity/ai.ubq.fi\",\"github_issue\",\"5262330278\",\"c5c00917f18ebf3644826ff1c003274a1e903f851ca91a5d4574e755a808debc\",163]"
     },
     {
@@ -26063,12 +26063,5 @@
       }
     }
   ],
-  "leases": [
-    {
-      "identity_key": "[\"ubiquity/ai.ubq.fi\",\"github_issue\",\"5262330278\",\"c5c00917f18ebf3644826ff1c003274a1e903f851ca91a5d4574e755a808debc\",164]",
-      "owner": "33989106944",
-      "token": "33989106944:d8b52f5e-0a69-4851-924e-fce1e52f2189",
-      "expires_at": "2026-09-05T20:51:50.759Z"
-    }
-  ]
+  "leases": []
 }
