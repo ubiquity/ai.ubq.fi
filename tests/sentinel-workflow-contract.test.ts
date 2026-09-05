@@ -212,15 +212,111 @@ Deno.test("Provider Sentinel preserves incident, fixed-model, and delivery/attes
   assert.match(converge, /SENTINEL_CODEX_AUTH_STATE_ENVELOPE/u);
 });
 
-Deno.test("recovery reconciliation runs before selection even when convergence head verification fails", () => {
-  const verifyIndex = converge.indexOf("      - name: Verify exact remote cell heads before convergence");
+Deno.test("recovery reconciliation runs immediately after the sentinel run and always cleans up", () => {
+  const sentinelRunIndex = converge.indexOf("      - name: Run Provider Sentinel");
   const reconcileIndex = converge.indexOf("      - name: Reconcile durable recovery records");
   const selectionIndex = converge.indexOf("      - name: Select agent work");
-  assert.ok(verifyIndex >= 0, "converge is missing exact remote head verification");
-  assert.ok(reconcileIndex > verifyIndex, "recovery reconciliation must run after head verification");
-  assert.ok(selectionIndex > reconcileIndex, "recovery reconciliation must run before normal selection");
-  const reconcileStep = converge.slice(reconcileIndex, selectionIndex);
+  const issueDeliveryIndex = converge.indexOf("      - name: Reconcile GitHub issue delivery");
+  assert.ok(sentinelRunIndex >= 0, "converge is missing the provider sentinel run");
+  assert.ok(reconcileIndex > sentinelRunIndex, "recovery reconciliation must run after Run Provider Sentinel");
+  assert.ok(reconcileIndex > selectionIndex, "recovery reconciliation must not run before normal selection");
+  assert.ok(
+    issueDeliveryIndex > reconcileIndex,
+    "recovery reconciliation must run before Reconcile GitHub issue delivery",
+  );
+  // Exact source order: no step may sit between Run Provider Sentinel and the
+  // recovery reconciliation, so the freshly claimed prepare record is never
+  // mutated before the sentinel run consumes it.
+  const nextStepIndex = converge.indexOf("      - name: ", sentinelRunIndex + 1);
+  assert.equal(
+    nextStepIndex,
+    reconcileIndex,
+    "recovery reconciliation must be the next step after Run Provider Sentinel",
+  );
+  // The moved step keeps its always() cleanup contract and every command,
+  // permission, and env unchanged.
+  const reconcileStepEnd = converge.indexOf("      - name: ", reconcileIndex + 1);
+  const reconcileStep = converge.slice(reconcileIndex, reconcileStepEnd);
   assert.match(reconcileStep, /\n\s+if: always\(\)\n/u);
+  assert.match(reconcileStep, /GITHUB_TOKEN: \$\{\{ github\.token \}\}/u);
+  assert.match(reconcileStep, /set -euo pipefail/u);
+  assert.match(reconcileStep, /scripts\/sentinel\/recovery-controller\.ts/u);
+  assert.match(reconcileStep, /--cached-only/u);
+  assert.match(reconcileStep, /--frozen/u);
+  assert.match(reconcileStep, /--lock=deno\.lock/u);
+  assert.match(reconcileStep, /--allow-env=GITHUB_TOKEN,GITHUB_REPOSITORY,GITHUB_RUN_ID/u);
+  assert.match(reconcileStep, /--allow-net=api\.github\.com/u);
+});
+
+Deno.test("convergence authentically materializes the prepared recovery and issue selection", () => {
+  const materializeStart = converge.indexOf(
+    "      - name: Materialize and verify encrypted matrix convergence inputs",
+  );
+  const materializeEnd = converge.indexOf(
+    "      - name: Require complete matrix convergence contract",
+    materializeStart,
+  );
+  assert.ok(
+    materializeStart >= 0 && materializeEnd > materializeStart,
+    "the convergence materialization step must exist",
+  );
+  const materialize = converge.slice(materializeStart, materializeEnd);
+  // Materialization runs inside the authenticated decryption: no plaintext
+  // matrix artifact is ever trusted as a convergence input.
+  assert.match(materialize, /decodeSentinelArtifactKey/u);
+  assert.match(materialize, /decryptSentinelArtifact/u);
+  assert.match(materialize, /parseSentinelRecoveryRecord/u);
+  assert.match(materialize, /parseGitHubIssueSelectionReport/u);
+  // The prepared claimed recovery record and its issue selection are
+  // materialized for exactly the cell-bearing matrix plan before the run.
+  assert.match(materialize, /plan\.cells\.length > 0/u);
+  assert.match(materialize, /reports\/recovery-record-v1\.json/u);
+  assert.match(materialize, /reports\/github-issue-selection\.json/u);
+  assert.match(
+    materialize,
+    /recovery\.run_id !== plan\.run_id \|\| recovery\.base_sha !== plan\.base_sha/u,
+    "the materialized recovery record must keep its exact matrix plan identity",
+  );
+  assert.match(
+    materialize,
+    /recovery\.phase !== "claimed" \|\| recovery\.disposition !== "active"/u,
+    "the prepared recovery record must still be claimed and active when materialized",
+  );
+  assert.match(
+    materialize,
+    /github issue selection does not match the sentinel recovery identity/u,
+    "a github-issue recovery must match its materialized issue selection exactly",
+  );
+});
+
+Deno.test("matrix convergence guards checkpoint resume and reuses the prepared recovery record", () => {
+  // Matrix convergence must never resume an issue retry checkpoint, never take
+  // the recovery_pending no-change path, and never prepare a retried issue
+  // candidate: the prepared claimed record is reused exactly.
+  assert.match(orchestrator, /!matrixConvergePhase && workSelection\.issueJob && retryCheckpoint/u);
+  assert.match(orchestrator, /!matrixConvergePhase && currentRecoveryRecord && !retryIsDue/u);
+  assert.match(orchestrator, /!matrixConvergePhase && currentRecoveryRecord && retryIsDue/u);
+  assert.match(orchestrator, /reuseMatrixPreparedRecoveryRecord/u);
+  assert.match(orchestrator, /Prepared sentinel recovery record differs from the ledger recovery record/u);
+  assert.match(orchestrator, /Ledger sentinel recovery record is not an active claimed recovery/u);
+  assert.match(orchestrator, /Matrix convergence lost its current recovery record/u);
+  assert.match(orchestrator, /Matrix convergence lost its prepared recovery record/u);
+});
+
+Deno.test("matrix convergence applies selection dispositions and wires the issue PR helper", () => {
+  // The focused matrix implementation applies the exact same initial
+  // dispositions as the normal path and wires the issue-delivery PR helper
+  // into the matrix integration path.
+  assert.match(orchestrator, /applyInitialSelectedBacklogDisposition\(implementationReport\)/u);
+  assert.match(orchestrator, /applyInitialSelectedIssueDisposition\(implementationReport\)/u);
+  assert.match(orchestrator, /ensureIssuePullRequestForDevelopmentPush/u);
+  assert.match(orchestrator, /Matrix issue delivery did not produce an issue pull request record/u);
+  assert.match(orchestrator, /Matrix issue pull request record does not match the immutable candidate/u);
+  assert.match(orchestrator, /Matrix issue pull request is missing or ambiguous/u);
+  // The converge job installs the pre-push gate that invokes the helper script.
+  assert.match(converge, /Install issue-delivery development-push gate/u);
+  assert.match(converge, /scripts\/sentinel\/issue-pr-pre-push\.ts/u);
+  assert.match(converge, /SENTINEL_GIT_CHECKPOINT_LEASE_SHA/u);
 });
 
 Deno.test("matrix cell retry evidence is encrypted from the cell report path", () => {

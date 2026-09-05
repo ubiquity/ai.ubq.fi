@@ -28,6 +28,7 @@ import {
   sentinelRecoveryCandidateBranch,
   validateRetryPendingCheckpointPhaseBinding,
 } from "./issue-delivery.ts";
+import { assertMatrixCycleReportV1, parseMatrixPlanV1, validateMatrixCycleReportV1 } from "./matrix.ts";
 import {
   assertSentinelRecoveryTransition,
   isTerminalRecoveryPhase,
@@ -996,6 +997,87 @@ const parseOutcome = (value: unknown):
   };
 };
 
+/**
+ * Prove that a production outcome pointing at a real ancestry-preserving merge
+ * SHA matches the matrix cycle evidence and the exact GitHub pull request and
+ * merge commit. Every identity check is exact; missing or invalid matrix
+ * evidence fails closed before any network access, and there is no fallback to
+ * a latest or ancestry-only match.
+ */
+export const validateMatrixIssueDeliveryMerge = async (
+  input: Readonly<{
+    token: string;
+    repository: string;
+    workflowRunId: string;
+    workflowRunAttempt: number;
+    pullRequest: GitHubIssuePullRequestRecord;
+    outcome: "kept" | "rolled_back";
+    deployedSha: string;
+    matrixPlanValue: unknown;
+    matrixCycleValue: unknown;
+    fetcher?: typeof fetch;
+  }>,
+): Promise<void> => {
+  if (!FULL_SHA.test(input.deployedSha)) {
+    throw new Error("Matrix issue delivery merge SHA is invalid");
+  }
+  const planRaw = JSON.stringify(input.matrixPlanValue);
+  if (planRaw === undefined) throw new Error("Matrix plan JSON is invalid");
+  const plan = await parseMatrixPlanV1(planRaw);
+  const cycleValue = input.matrixCycleValue;
+  assertMatrixCycleReportV1(cycleValue, plan);
+  const cycle = await validateMatrixCycleReportV1(cycleValue, plan);
+  if (cycle.run_id !== input.workflowRunId || cycle.run_attempt !== input.workflowRunAttempt) {
+    throw new Error("Matrix cycle report does not match the issuing workflow run");
+  }
+  const candidate = cycle.integrated_candidate;
+  if (
+    candidate === null || candidate.head_sha !== input.pullRequest.head_sha ||
+    candidate.branch !== input.pullRequest.head_branch
+  ) {
+    throw new Error("Matrix cycle integrated candidate does not match the issue pull request");
+  }
+  if (
+    cycle.delivery.pr_number !== input.pullRequest.pull_request_number ||
+    cycle.delivery.merge_sha !== input.deployedSha
+  ) {
+    throw new Error("Matrix cycle delivery does not match the deployed merge");
+  }
+  if (cycle.delivery.status !== (input.outcome === "kept" ? "published" : "rolled_back")) {
+    throw new Error("Matrix cycle delivery status does not match the production outcome");
+  }
+  const fetcher = input.fetcher ?? fetch;
+  const rawPull = record(
+    await githubRequest(
+      input.token,
+      input.repository,
+      `/pulls/${input.pullRequest.pull_request_number}`,
+      {},
+      fetcher,
+    ),
+  );
+  const pull = parsePullRequest(rawPull);
+  if (
+    pull.number !== input.pullRequest.pull_request_number ||
+    pull.headRef !== input.pullRequest.head_branch || pull.headSha !== input.pullRequest.head_sha ||
+    pull.baseRef !== input.pullRequest.base_branch || pull.state !== "closed" || pull.mergedAt === null ||
+    typeof rawPull?.body !== "string" || !rawPull.body.includes(input.pullRequest.marker) ||
+    rawPull?.merge_commit_sha !== input.deployedSha
+  ) {
+    throw new Error("Matrix issue pull request is not the exact delivered merge");
+  }
+  const commit = record(
+    await githubRequest(input.token, input.repository, `/commits/${input.deployedSha}`, {}, fetcher),
+  );
+  const parents = commit?.parents;
+  if (
+    commit?.sha !== input.deployedSha || !Array.isArray(parents) || parents.length !== 2 ||
+    record(parents[0])?.sha !== candidate.base_sha || record(parents[1])?.sha !== input.pullRequest.head_sha
+  ) {
+    throw new Error("Matrix deployed merge commit is not the exact ancestry-preserving merge");
+  }
+};
+
 const productionWorkflowEvidence = async (
   reportsDir: string,
 ): Promise<
@@ -1535,7 +1617,18 @@ export const reconcileGitHubIssueDelivery = async (
   const disposition = parseDisposition(dispositionValue);
   const outcome = parseOutcome(await optionalJson(`${reportsDir}/github-issue-production-outcome.json`));
   if (outcome && outcome.candidateSha !== pullRecord.head_sha) {
-    throw new Error("Sentinel production outcome does not match the issue pull-request head");
+    await validateMatrixIssueDeliveryMerge({
+      token: input.token,
+      repository: input.repository,
+      workflowRunId: input.workflowRunId,
+      workflowRunAttempt: input.workflowRunAttempt,
+      pullRequest: pullRecord,
+      outcome: outcome.outcome,
+      deployedSha: outcome.candidateSha,
+      matrixPlanValue: await optionalJson(`${reportsDir}/matrix-plan.json`),
+      matrixCycleValue: await optionalJson(`${reportsDir}/matrix-cycle.json`),
+      fetcher: input.fetcher,
+    });
   }
   const durableEvidence = await completionEvidence(
     input.token,

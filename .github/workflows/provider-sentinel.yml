@@ -883,6 +883,8 @@ jobs:
           deno eval --frozen --lock=deno.lock '
             import { decodeSentinelArtifactKey, decryptSentinelArtifact } from "./scripts/sentinel/artifact-crypto.ts";
             import { parseMatrixPlanV1, validateMatrixCellReportV1, canonicalMatrixJson } from "./scripts/sentinel/matrix.ts";
+            import { parseGitHubIssueSelectionReport } from "./scripts/sentinel/issue-delivery.ts";
+            import { parseSentinelRecoveryRecord } from "./scripts/sentinel/recovery.ts";
             import { isTriageReport } from "./scripts/sentinel/types.ts";
             const root = Deno.env.get("RUNNER_TEMP")!;
             const key = decodeSentinelArtifactKey(Deno.env.get("SENTINEL_ARTIFACT_KEY")!);
@@ -919,6 +921,21 @@ jobs:
                 const actionable = triage.findings.filter((finding) => finding.actionable).map((finding) => { const ownership = plan.ownership.find((candidate) => candidate.finding_id === finding.id); return { finding_id: finding.id, fingerprint: finding.fingerprint, allowed_paths: [...finding.allowed_paths].sort(), prohibited_paths: [...ownership?.prohibited_paths ?? []].sort(), shared_paths: [...finding.shared_paths].sort(), depends_on: [...finding.depends_on].sort(), validation_requirements: [...finding.validation_requirements].sort() }; }).sort((left, right) => left.fingerprint.localeCompare(right.fingerprint) || left.finding_id.localeCompare(right.finding_id));
                 if (canonicalMatrixJson(actionable) !== canonicalMatrixJson(plan.ownership)) throw new Error("matrix triage ownership differs from MatrixPlanV1");
                 await Deno.writeTextFile(".sentinel/reports/triage.json", `${JSON.stringify(triage)}\n`, { create: true, mode: 0o600 });
+                if (plan.cells.length > 0) {
+                  const recoveryFile = planFiles.find((file) => file.path === "reports/recovery-record-v1.json");
+                  if (!recoveryFile) throw new Error("encrypted MatrixPlanV1 artifact is missing its recovery record");
+                  const recovery = parseSentinelRecoveryRecord(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(recoveryFile.bytes)));
+                  if (recovery.run_id !== plan.run_id || recovery.base_sha !== plan.base_sha) throw new Error("sentinel recovery record identity changed in transport");
+                  if (recovery.phase !== "claimed" || recovery.disposition !== "active") throw new Error("sentinel recovery record is not an active claimed recovery");
+                  await Deno.writeTextFile(".sentinel/reports/recovery-record-v1.json", `${JSON.stringify(recovery, null, 2)}\n`, { create: true, mode: 0o600 });
+                  const selectionFile = planFiles.find((file) => file.path === "reports/github-issue-selection.json");
+                  let selection: ReturnType<typeof parseGitHubIssueSelectionReport> | null = null;
+                  if (selectionFile) {
+                    selection = parseGitHubIssueSelectionReport(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(selectionFile.bytes)));
+                    await Deno.writeTextFile(".sentinel/reports/github-issue-selection.json", `${JSON.stringify(selection, null, 2)}\n`, { create: true, mode: 0o600 });
+                  }
+                  if (recovery.identity.source_kind === "github_issue" && (!selection || String(selection.issue_id) !== recovery.identity.source_id || selection.fingerprint !== recovery.identity.source_revision)) throw new Error("github issue selection does not match the sentinel recovery identity");
+                }
               } finally { for (const file of planFiles) file.bytes.fill(0); }
               const expected = new Set(plan.cells.map((cell) => cell.cell_id));
               const seen = new Set<string>();
@@ -1371,21 +1388,6 @@ jobs:
           fi
           echo "Codex auth state was restored, durably sealed, and passively probed." >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Reconcile durable recovery records
-        if: always()
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          deno run \
-            --cached-only \
-            --frozen \
-            --lock=deno.lock \
-            --allow-env=GITHUB_TOKEN,GITHUB_REPOSITORY,GITHUB_RUN_ID \
-            --allow-net=api.github.com \
-            scripts/sentinel/recovery-controller.ts
-
       - name: Select agent work
         id: agent-work
         shell: bash
@@ -1755,6 +1757,21 @@ jobs:
             --allow-run \
             scripts/sentinel/main.ts \
             --mode "$SENTINEL_MODE"
+
+      - name: Reconcile durable recovery records
+        if: always()
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          deno run \
+            --cached-only \
+            --frozen \
+            --lock=deno.lock \
+            --allow-env=GITHUB_TOKEN,GITHUB_REPOSITORY,GITHUB_RUN_ID \
+            --allow-net=api.github.com \
+            scripts/sentinel/recovery-controller.ts
 
       - name: Classify incident infrastructure deferral
         id: incident-deferral-classification

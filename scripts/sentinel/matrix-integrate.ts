@@ -1202,7 +1202,7 @@ export const executeMatrixIntegration = async (
   }
   const integratedCandidate = receipts.length > 0 || remainingChangedPaths.length > 0
     ? {
-      base_sha: validation.plan.base_sha,
+      base_sha: effectiveBaseSha,
       branch: integrationBranch,
       head_sha: currentHead,
       tree_sha: await readTreeSha(executor, input.checkoutPath, currentHead),

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { fileURLToPath } from "node:url";
 import issueJobLedger from "../docs/sentinel-issue-jobs.md" with { type: "text" };
 import {
   isAutonomousMode,
@@ -9,6 +10,7 @@ import {
   agentCheckoutPath,
   assertRetainedReplayArtifactBudget,
   assertTriageMatchesMatrixPlan,
+  bindMatrixConvergenceWork,
   candidateRevertDiffArguments,
   candidateShaForReview,
   createSentinelCandidateRecoveryRecord,
@@ -42,6 +44,7 @@ import {
   resolveCycleAnchorMs,
   RetryCheckpointResumeError,
   retryCheckpointResumeFailureDisposition,
+  reuseMatrixPreparedRecoveryRecord,
   reviewBacklogEntriesMatch,
   runImplementationStageWithContinuation,
   runObserveCycle,
@@ -63,9 +66,14 @@ import {
 import {
   buildMatrixPlan,
   canonicalMatrixJson,
+  matrixCellReportDigest,
+  matrixCycleReportDigest,
+  type MatrixCycleReportV1,
   type MatrixPlanV1,
   parseMatrixPlanV1,
 } from "../scripts/sentinel/matrix.ts";
+import { encryptSentinelArtifact } from "../scripts/sentinel/artifact-crypto.ts";
+import { validateMatrixIssueDeliveryMerge } from "../scripts/sentinel/issue-delivery-reconcile.ts";
 import { CodexInvocationError } from "../scripts/sentinel/codex.ts";
 import type {
   GitHubIssue,
@@ -80,6 +88,7 @@ import {
   evaluateGitHubIssueJobImplementation,
   getCurrentGitHubIssueJob,
   GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS,
+  type GitHubIssueJob,
   githubIssueJobMatchesHint,
   githubIssueJobsMatch,
   type GitHubIssueJobSource,
@@ -98,6 +107,8 @@ import {
   selectNextGitHubIssueJobSelection,
   SentinelChangedFilesMismatchError,
 } from "../scripts/sentinel/issues.ts";
+import type { GitHubIssueSelectionReport } from "../scripts/sentinel/issue-delivery.ts";
+import { parseSentinelRecoveryRecord, type SentinelRecoveryRecordV1 } from "../scripts/sentinel/recovery.ts";
 import {
   inspectSse,
   isInferenceOnlyReplayEndpoint,
@@ -115,6 +126,7 @@ import {
   parseStructuredNativeReview,
   renderReviewBacklog,
   type ReviewBacklogEntry,
+  reviewBacklogTriageReport,
   selectNextReviewBacklogEntry,
 } from "../scripts/sentinel/review.ts";
 import {
@@ -3904,4 +3916,973 @@ Deno.test("replay bundle artifact Bloom names never omit a recorded case group",
   assert.equal(replayIndexArtifactMayMatch(`${name}-123456`, new Set([recorded[1]!])), true);
   assert.equal(replayIndexArtifactMayMatch("sentinel-replay-bundle-v1-invalid", new Set(recorded)), false);
   assert.equal(replayIndexArtifactMayMatch(`${name}-bad/run`, new Set(recorded)), false);
+});
+
+Deno.test("matrix issue delivery merge validation fixture variants", async () => {
+  type DeepMutable<T> = T extends object ? { -readonly [K in keyof T]: DeepMutable<T[K]> } : T;
+
+  const runId = "123456789";
+  const planBase = "a".repeat(40);
+  const effectiveBase = "b".repeat(40);
+  const cellHead = "c".repeat(40);
+  const head = "d".repeat(40);
+  const merged = "e".repeat(40);
+  const branch = "sentinel/candidate-fixture";
+  const marker = "<!-- provider-sentinel:issue:fixture -->";
+
+  const plan = await buildMatrixPlan({
+    run_id: runId,
+    run_attempt: 1,
+    base_sha: planBase,
+    evidence_digests: [],
+    findings: [{
+      id: "finding-1",
+      fingerprint: "1".repeat(64),
+      allowed_paths: ["src/example.ts"],
+    }],
+  });
+  const cell = plan.cells[0]!;
+
+  const unsigned: DeepMutable<MatrixCycleReportV1> = {
+    schema_version: 1,
+    run_id: runId,
+    run_attempt: 1,
+    plan_digest: plan.manifest_digest,
+    base_sha: planBase,
+    cell_dispositions: [{
+      cell_id: cell.cell_id,
+      branch: cell.branch,
+      finding_ids: [...cell.finding_ids],
+      status: "accepted",
+      head_sha: cellHead,
+      reason: null,
+    }],
+    accepted_ancestry: [{
+      cell_id: cell.cell_id,
+      cell_head_sha: cellHead,
+      integrated_head_sha: head,
+      is_ancestor: true,
+    }],
+    rejected_branches: [],
+    blocked_branches: [],
+    integrated_candidate: {
+      base_sha: effectiveBase,
+      branch,
+      head_sha: head,
+      tree_sha: "f".repeat(40),
+    },
+    delivery: {
+      status: "published",
+      pr_number: 129,
+      merge_sha: merged,
+      reason: null,
+    },
+    cycle_digest: "0".repeat(64),
+  };
+
+  const cycle: DeepMutable<MatrixCycleReportV1> = {
+    ...unsigned,
+    cycle_digest: await matrixCycleReportDigest(unsigned),
+  };
+
+  const pullRequest = {
+    schema_version: 1 as const,
+    issue_number: 112,
+    fingerprint: "1".repeat(64),
+    pull_request_number: 129,
+    pull_request_url: "https://github.com/ubiquity/ai.ubq.fi/pull/129",
+    head_branch: branch,
+    head_sha: head,
+    base_branch: "development" as const,
+    marker,
+    reused: false,
+  };
+
+  const rawPull = {
+    number: 129,
+    html_url: pullRequest.pull_request_url,
+    state: "closed",
+    merged_at: "2026-09-05T12:00:00Z",
+    merge_commit_sha: merged,
+    body: marker,
+    head: { ref: branch, sha: head },
+    base: { ref: "development" },
+  };
+
+  const commit = {
+    sha: merged,
+    parents: [{ sha: effectiveBase }, { sha: head }],
+  };
+
+  const variants = [
+    "valid_effective_base",
+    "wrong_plan_digest",
+    "wrong_cycle_digest",
+    "wrong_run",
+    "wrong_attempt",
+    "wrong_pr",
+    "wrong_status",
+    "wrong_delivery_sha",
+    "wrong_marker",
+    "open_pr",
+    "missing_merge_sha",
+    "wrong_commit_sha",
+    "wrong_base_parent",
+    "wrong_head_parent",
+    "swapped_parents",
+    "one_parent",
+    "three_parents",
+    "pr_branch_drift",
+    "pr_head_drift",
+    "pr_base_drift",
+    "valid_rollback",
+  ] as const;
+
+  for (const variant of variants) {
+    let p: typeof plan = structuredClone(plan);
+    const c = structuredClone(cycle);
+    const pr = structuredClone(rawPull);
+    const co = structuredClone(commit);
+
+    let outcome: "kept" | "rolled_back" = "kept";
+    let workflowRunId = runId;
+    let workflowRunAttempt = 1;
+
+    switch (variant) {
+      case "wrong_plan_digest":
+        p = { ...p, manifest_digest: "9".repeat(64) };
+        break;
+      case "wrong_cycle_digest":
+        c.cycle_digest = "9".repeat(64);
+        break;
+      case "wrong_run":
+        workflowRunId = "222";
+        break;
+      case "wrong_attempt":
+        workflowRunAttempt = 2;
+        break;
+      case "wrong_pr":
+        c.delivery.pr_number = 130;
+        break;
+      case "wrong_status":
+        c.delivery.status = "rolled_back";
+        break;
+      case "wrong_delivery_sha":
+        c.delivery.merge_sha = "9".repeat(40);
+        break;
+      case "wrong_marker":
+        pr.body = "removed";
+        break;
+      case "open_pr":
+        pr.state = "open";
+        break;
+      case "missing_merge_sha":
+        pr.merge_commit_sha = "";
+        break;
+      case "wrong_commit_sha":
+        co.sha = "9".repeat(40);
+        break;
+      case "wrong_base_parent":
+        co.parents[0] = { sha: planBase };
+        break;
+      case "wrong_head_parent":
+        co.parents[1] = { sha: cellHead };
+        break;
+      case "swapped_parents":
+        co.parents.reverse();
+        break;
+      case "one_parent":
+        co.parents.pop();
+        break;
+      case "three_parents":
+        co.parents.push({ sha: planBase });
+        break;
+      case "pr_branch_drift":
+        pr.head.ref = `${branch}-drift`;
+        break;
+      case "pr_head_drift":
+        pr.head.sha = planBase;
+        break;
+      case "pr_base_drift":
+        pr.base.ref = "main";
+        break;
+      case "valid_rollback":
+        outcome = "rolled_back";
+        c.delivery.status = "rolled_back";
+        break;
+    }
+
+    if (c.delivery.status === "rolled_back") {
+      c.delivery.reason = "fixture rollback";
+    }
+    if (variant !== "wrong_cycle_digest") {
+      c.cycle_digest = await matrixCycleReportDigest(c);
+    }
+
+    const calls: string[] = [];
+    const fetcher = (input: RequestInfo | URL): Promise<Response> => {
+      const url = String(input);
+      calls.push(url);
+      if (url.endsWith("/pulls/129")) {
+        return Promise.resolve(Response.json(pr));
+      }
+      if (url.endsWith(`/commits/${merged}`)) {
+        return Promise.resolve(Response.json(co));
+      }
+      throw new Error("Unexpected fixture network target");
+    };
+
+    const execute = () =>
+      validateMatrixIssueDeliveryMerge({
+        token: "fixture-only",
+        repository: "ubiquity/ai.ubq.fi",
+        workflowRunId,
+        workflowRunAttempt,
+        pullRequest,
+        outcome,
+        deployedSha: merged,
+        matrixPlanValue: p,
+        matrixCycleValue: c,
+        fetcher: fetcher as typeof fetch,
+      });
+
+    if (variant.startsWith("valid")) {
+      await execute();
+      assert.equal(calls.length, 2);
+    } else {
+      await assert.rejects(execute);
+    }
+  }
+});
+
+Deno.test({
+  name: "matrix convergence artifact materialize workflow fixture: valid, missing selection, changed run, empty plan",
+  ignore: matrixVerifierTestsIgnored,
+  async fn() {
+    const enc = new TextEncoder();
+    const key = new Uint8Array(32).fill(7);
+    const repositoryPath = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
+
+    const workflow = await Deno.readTextFile(`${repositoryPath}/.github/workflows/provider-sentinel.yml`);
+    const start = workflow.indexOf("- name: Materialize and verify encrypted matrix convergence inputs");
+    const block = workflow.slice(start, workflow.indexOf("\n      - name:", start + 1));
+    const marker = "deno eval --frozen --lock=deno.lock '\n";
+    const evalStart = block.indexOf(marker) + marker.length;
+    assert.ok(evalStart >= marker.length);
+    const snippet = block
+      .slice(evalStart, block.lastIndexOf("\n          '"))
+      .replaceAll('from "./scripts/', `from "${repositoryPath}/scripts/`);
+
+    const fp = "b".repeat(64);
+    const finding = {
+      id: `github-issue:208:${fp}`,
+      fingerprint: fp,
+      severity: "P3",
+      title: "Fixture issue",
+      affected_surface: "src/fix.ts",
+      allowed_paths: ["src/fix.ts"],
+      shared_paths: [],
+      depends_on: [],
+      evidence: [{
+        source: "github_issue",
+        reference: "https://github.com/ubiquity/ai.ubq.fi/issues/208",
+        detail: "fixture",
+      }],
+      proposed_correction: "Fix fixture",
+      validation_requirements: ["fixture validation"],
+      actionable: true,
+    };
+    const triage = {
+      schema_version: 1,
+      interval: { start: "2026-09-05T00:00:00Z", end: "2026-09-05T01:00:00Z", duration_ms: 3600000 },
+      findings: [finding],
+      no_findings_reason: null,
+    };
+    const plan = await buildMatrixPlan({
+      run_id: "12345",
+      run_attempt: 1,
+      base_sha: "a".repeat(40),
+      evidence_digests: [],
+      findings: [{ ...finding, prohibited_paths: [] }],
+    });
+    const cell = plan.cells[0]!;
+
+    const unsigned = {
+      schema_version: 1 as const,
+      run_id: plan.run_id,
+      run_attempt: 1,
+      plan_digest: plan.manifest_digest,
+      cell_id: cell.cell_id,
+      base_sha: plan.base_sha,
+      branch: cell.branch,
+      head_sha: "d".repeat(40),
+      tree_sha: "e".repeat(40),
+      changed_paths: ["src/fix.ts"],
+      finding_dispositions: [{
+        finding_id: finding.id,
+        fingerprint: fp,
+        status: "implemented" as const,
+        summary: "fixed",
+        changed_files: ["src/fix.ts"],
+        validation: ["fixture validation"],
+      }],
+      validation: { passed: true, checks: [{ name: "focused", passed: true, detail: "passed" }] },
+      replay: { attempted: false, passed: true, results: [] },
+      status: "succeeded" as const,
+      failure_reason: null,
+      artifact_sha256: "f".repeat(64),
+      report_digest: "0".repeat(64),
+    };
+    const report = { ...unsigned, report_digest: await matrixCellReportDigest(unsigned) };
+
+    const recovery = {
+      schema_version: 1,
+      identity: {
+        repository: "ubiquity/ai.ubq.fi",
+        source_kind: "github_issue",
+        source_id: "208",
+        source_revision: fp,
+        candidate_generation: 1,
+      },
+      run_id: plan.run_id,
+      attempt: 1,
+      lease_token: "prepare-lease",
+      base_sha: plan.base_sha,
+      phase: "claimed",
+      disposition: "active",
+      state_version: 1,
+      created_at: "2026-09-05T00:00:00Z",
+      updated_at: "2026-09-05T00:00:00Z",
+      candidate_branch: null,
+      candidate_sha: null,
+      changed_files: [],
+      tree_sha: null,
+      failure_class: null,
+      failure_fingerprint: null,
+      artifact_ids: [],
+      artifact_digests: [],
+      reason: "fixture",
+      next_action: "fixture",
+      predecessor: null,
+    };
+    const selection = {
+      schema_version: 1,
+      issue_id: 208,
+      issue_number: 208,
+      fingerprint: fp,
+      body_sha256: "c".repeat(64),
+      comments: 0,
+      priority: "P3",
+      time_label: "Time: <2 Hours",
+      files: ["src/fix.ts"],
+      updated_at: "2026-09-05T00:00:00Z",
+    };
+
+    const file = (path: string, value: unknown): { path: string; bytes: Uint8Array<ArrayBuffer> } => ({
+      path,
+      bytes: enc.encode(JSON.stringify(value)),
+    });
+
+    const runMaterialize = async (
+      tmp: string,
+      planBundle: readonly { path: string; bytes: Uint8Array<ArrayBuffer> }[],
+      cellBundle: readonly { path: string; bytes: Uint8Array<ArrayBuffer> }[],
+      expectedPlanDigest: string,
+    ): Promise<{ code: number; stderr: string }> => {
+      await Deno.mkdir(`${tmp}/.sentinel/reports/matrix`, { recursive: true });
+      await Deno.mkdir(`${tmp}/sentinel-matrix-plan/fixture`, { recursive: true });
+      await Deno.mkdir(`${tmp}/sentinel-matrix-cell-reports/fixture`, { recursive: true });
+      await Deno.writeFile(
+        `${tmp}/sentinel-matrix-plan/fixture/sentinel-evidence-v1.json`,
+        await encryptSentinelArtifact([...planBundle], key),
+      );
+      await Deno.writeFile(
+        `${tmp}/sentinel-matrix-cell-reports/fixture/sentinel-evidence-v1.json`,
+        await encryptSentinelArtifact([...cellBundle], key),
+      );
+      const processOutput = await new Deno.Command(Deno.execPath(), {
+        args: ["eval", "--no-config", "--cached-only", snippet],
+        cwd: tmp,
+        clearEnv: true,
+        env: {
+          DENO_DIR: `${tmp}/cache`,
+          RUNNER_TEMP: tmp,
+          EXPECTED_RUN_ID: plan.run_id,
+          EXPECTED_RUN_ATTEMPT: "1",
+          EXPECTED_BASE_SHA: plan.base_sha,
+          EXPECTED_PLAN_DIGEST: expectedPlanDigest,
+          SENTINEL_ARTIFACT_KEY: btoa(String.fromCharCode(...key)),
+        },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      return { code: processOutput.code, stderr: new TextDecoder().decode(processOutput.stderr) };
+    };
+
+    for (const variant of ["valid", "missing_selection", "changed_run"] as const) {
+      const tmp = await Deno.makeTempDir({ prefix: "uos-matrix-artifact-proof-" });
+      try {
+        const planBundle = [
+          file("reports/matrix-plan.json", plan),
+          file("reports/triage.json", triage),
+          file(
+            "reports/recovery-record-v1.json",
+            variant === "changed_run" ? { ...recovery, run_id: "67890" } : recovery,
+          ),
+        ];
+        if (variant !== "missing_selection") {
+          planBundle.push(file("reports/github-issue-selection.json", selection));
+        }
+        const { code, stderr } = await runMaterialize(
+          tmp,
+          planBundle,
+          [file(`reports/matrix/${cell.cell_id}/cell.json`, report)],
+          plan.manifest_digest,
+        );
+        if (variant === "valid") {
+          assert.equal(code, 0, stderr);
+          assert.deepEqual(
+            JSON.parse(await Deno.readTextFile(`${tmp}/.sentinel/reports/github-issue-selection.json`)),
+            selection,
+          );
+          assert.deepEqual(
+            JSON.parse(await Deno.readTextFile(`${tmp}/.sentinel/reports/recovery-record-v1.json`)),
+            recovery,
+          );
+          assert.deepEqual(JSON.parse(await Deno.readTextFile(`${tmp}/${cell.report_path}`)), report);
+        } else {
+          assert.notEqual(code, 0);
+          assert.match(
+            stderr,
+            variant === "missing_selection"
+              ? /github issue selection does not match/
+              : /recovery record identity changed/,
+          );
+        }
+      } finally {
+        await Deno.remove(tmp, { recursive: true });
+      }
+    }
+
+    const emptyTriage = {
+      schema_version: 1,
+      interval: { start: "2026-09-05T00:00:00Z", end: "2026-09-05T01:00:00Z", duration_ms: 3600000 },
+      findings: [],
+      no_findings_reason: "Fixture window had no actionable findings.",
+    };
+    const emptyPlan = await buildMatrixPlan({
+      run_id: "12345",
+      run_attempt: 1,
+      base_sha: "a".repeat(40),
+      evidence_digests: [],
+      findings: [],
+    });
+    const emptyTmp = await Deno.makeTempDir({ prefix: "uos-matrix-artifact-proof-" });
+    try {
+      const { code, stderr } = await runMaterialize(
+        emptyTmp,
+        [file("reports/matrix-plan.json", emptyPlan), file("reports/triage.json", emptyTriage)],
+        [],
+        emptyPlan.manifest_digest,
+      );
+      assert.equal(code, 0, stderr);
+      await assert.rejects(Deno.stat(`${emptyTmp}/.sentinel/reports/github-issue-selection.json`));
+      await assert.rejects(Deno.stat(`${emptyTmp}/.sentinel/reports/recovery-record-v1.json`));
+    } finally {
+      await Deno.remove(emptyTmp, { recursive: true });
+    }
+  },
+});
+
+type MatrixPreparedConvergenceFixture = Readonly<{
+  runId: string;
+  runAttempt: number;
+  repository: string;
+  interval: ReturnType<typeof computeSentinelInterval>;
+  job: GitHubIssueJob;
+  triage: TriageReport;
+  plan: MatrixPlanV1;
+  prepared: SentinelRecoveryRecordV1;
+  issueSelection: GitHubIssueSelectionReport;
+}>;
+
+const matrixPreparedConvergenceFixture = async (): Promise<MatrixPreparedConvergenceFixture> => {
+  const runId = "23546719284";
+  const runAttempt = 1;
+  const repository = "ubiquity/ai.ubq.fi";
+  const interval = computeSentinelInterval("hourly", now);
+  const job = await createGitHubIssueJob(repository, sentinelGitHubIssue(), noIssueRelations, "admin");
+  assert.ok(job);
+  const triage = githubIssueJobTriageReport(job, interval);
+  const plan = await buildMatrixPlan({
+    run_id: runId,
+    run_attempt: runAttempt,
+    base_sha: "2".repeat(40),
+    evidence_digests: [],
+    findings: triage.findings.map((finding) => ({
+      id: finding.id,
+      fingerprint: finding.fingerprint,
+      allowed_paths: finding.allowed_paths,
+      prohibited_paths: SENTINEL_POLICY.protectedImplementationPaths,
+      shared_paths: finding.shared_paths,
+      depends_on: finding.depends_on,
+      validation_requirements: finding.validation_requirements,
+    })),
+  });
+  const prepared = parseSentinelRecoveryRecord({
+    schema_version: 1,
+    identity: {
+      repository,
+      source_kind: "github_issue",
+      source_id: String(job.issueId),
+      source_revision: job.fingerprint,
+      candidate_generation: 1,
+    },
+    run_id: plan.run_id,
+    attempt: runAttempt,
+    lease_token: `${runId}-${runAttempt}`,
+    base_sha: plan.base_sha,
+    phase: "claimed",
+    disposition: "active",
+    state_version: 1,
+    created_at: "2026-08-21T06:00:00.000Z",
+    updated_at: "2026-08-21T06:00:00.000Z",
+    candidate_branch: null,
+    candidate_sha: null,
+    changed_files: [],
+    tree_sha: null,
+    failure_class: null,
+    failure_fingerprint: null,
+    artifact_ids: [],
+    artifact_digests: [],
+    reason: "Matrix convergence prepared github issue work",
+    next_action: "Run the github issue implementation stage",
+    predecessor: null,
+  });
+  const issueSelection: GitHubIssueSelectionReport = {
+    schema_version: 1,
+    issue_id: job.issueId,
+    issue_number: job.number,
+    fingerprint: job.fingerprint,
+    body_sha256: job.bodySha256,
+    comments: job.comments,
+    priority: job.priority,
+    time_label: job.timeLabel,
+    files: [...job.files],
+    updated_at: job.updatedAt,
+  };
+  return { runId, runAttempt, repository, interval, job, triage, plan, prepared, issueSelection };
+};
+
+type MatrixConvergenceInputs = Readonly<{
+  plan: MatrixPlanV1;
+  triage: TriageReport;
+  preparedRecovery: SentinelRecoveryRecordV1;
+  issueSelection: GitHubIssueSelectionReport | null;
+  selectedIssueJob: GitHubIssueJob | null;
+}>;
+
+Deno.test("matrix prepared recovery binds github issue convergence identity exactly", async () => {
+  const { runId, runAttempt, repository, job, triage, plan, prepared, issueSelection } =
+    await matrixPreparedConvergenceFixture();
+  assert.equal(prepared.schema_version, 1);
+  assert.deepEqual(prepared.identity, {
+    repository,
+    source_kind: "github_issue",
+    source_id: String(job.issueId),
+    source_revision: job.fingerprint,
+    candidate_generation: 1,
+  });
+  assert.equal(prepared.run_id, plan.run_id);
+  assert.equal(prepared.attempt, runAttempt);
+  assert.equal(prepared.lease_token, `${runId}-${runAttempt}`);
+  assert.equal(prepared.base_sha, plan.base_sha);
+  assert.equal(prepared.phase, "claimed");
+  assert.equal(prepared.disposition, "active");
+  assert.equal(prepared.state_version, 1);
+  assert.ok(Number.isFinite(Date.parse(prepared.created_at)));
+  assert.ok(Number.isFinite(Date.parse(prepared.updated_at)));
+  assert.equal(prepared.candidate_branch, null);
+  assert.equal(prepared.candidate_sha, null);
+  assert.equal(prepared.tree_sha, null);
+  assert.equal(prepared.failure_class, null);
+  assert.equal(prepared.failure_fingerprint, null);
+  assert.equal(prepared.predecessor, null);
+  assert.deepEqual(prepared.changed_files, []);
+  assert.deepEqual(prepared.artifact_ids, []);
+  assert.deepEqual(prepared.artifact_digests, []);
+  assert.ok(prepared.reason !== null && prepared.reason.trim().length > 0);
+  assert.ok(prepared.next_action !== null && prepared.next_action.trim().length > 0);
+  assert.deepEqual(issueSelection, {
+    schema_version: 1,
+    issue_id: job.issueId,
+    issue_number: job.number,
+    fingerprint: job.fingerprint,
+    body_sha256: job.bodySha256,
+    comments: job.comments,
+    priority: job.priority,
+    time_label: job.timeLabel,
+    files: [...job.files],
+    updated_at: job.updatedAt,
+  });
+  const selection = bindMatrixConvergenceWork({
+    repository,
+    runId,
+    runAttempt,
+    plan,
+    triage,
+    preparedRecovery: prepared,
+    issueSelection,
+    selectedIssueJob: job,
+  });
+  assert.equal(selection.source, "github_issue");
+  assert.equal(selection.reason, "hourly_github_issue");
+  assert.equal(selection.backlogEntry, null);
+  assert.equal(selection.issueJob, job);
+  assert.equal(selection.triage, triage);
+});
+
+Deno.test("matrix prepared recovery rejects github issue convergence transport drift", async () => {
+  const fixture = await matrixPreparedConvergenceFixture();
+  const bindWith = (overrides: Partial<MatrixConvergenceInputs>) =>
+    bindMatrixConvergenceWork({
+      repository: fixture.repository,
+      runId: fixture.runId,
+      runAttempt: fixture.runAttempt,
+      plan: overrides.plan ?? fixture.plan,
+      triage: overrides.triage ?? fixture.triage,
+      preparedRecovery: overrides.preparedRecovery ?? fixture.prepared,
+      issueSelection: overrides.issueSelection === undefined ? fixture.issueSelection : overrides.issueSelection,
+      selectedIssueJob: overrides.selectedIssueJob === undefined ? fixture.job : overrides.selectedIssueJob,
+    });
+  const rejectCases: ReadonlyArray<
+    Readonly<{
+      name: string;
+      drift: (fixture: MatrixPreparedConvergenceFixture) => Partial<MatrixConvergenceInputs>;
+      error: RegExp;
+    }>
+  > = [
+    {
+      name: "missing issue selection",
+      drift: () => ({ issueSelection: null }),
+      error: /requires its selection report and current issue job/,
+    },
+    {
+      name: "missing current issue job",
+      drift: () => ({ selectedIssueJob: null }),
+      error: /requires its selection report and current issue job/,
+    },
+    {
+      name: "changed issue id",
+      drift: (current) => ({ issueSelection: { ...current.issueSelection, issue_id: current.job.issueId + 1 } }),
+      error: /does not match the current issue job/,
+    },
+    {
+      name: "changed issue number",
+      drift: (current) => ({ issueSelection: { ...current.issueSelection, issue_number: current.job.number + 1 } }),
+      error: /does not match the current issue job/,
+    },
+    {
+      name: "changed issue fingerprint",
+      drift: (current) => ({ issueSelection: { ...current.issueSelection, fingerprint: "0".repeat(64) } }),
+      error: /does not match the current issue job/,
+    },
+    {
+      name: "changed issue body digest",
+      drift: (current) => ({ issueSelection: { ...current.issueSelection, body_sha256: "c".repeat(64) } }),
+      error: /does not match the current issue job/,
+    },
+    {
+      name: "changed issue comments",
+      drift: (current) => ({ issueSelection: { ...current.issueSelection, comments: current.job.comments + 1 } }),
+      error: /does not match the current issue job/,
+    },
+    {
+      name: "changed issue priority",
+      drift: (current) => ({ issueSelection: { ...current.issueSelection, priority: "P2" } }),
+      error: /does not match the current issue job/,
+    },
+    {
+      name: "changed issue time label",
+      drift: (current) => ({ issueSelection: { ...current.issueSelection, time_label: "Time: <8 Hours" } }),
+      error: /does not match the current issue job/,
+    },
+    {
+      name: "changed issue files",
+      drift: (current) => ({
+        issueSelection: { ...current.issueSelection, files: [...current.issueSelection.files, "src/extra.ts"] },
+      }),
+      error: /does not match the current issue job/,
+    },
+    {
+      name: "changed issue updated at",
+      drift: (current) => ({ issueSelection: { ...current.issueSelection, updated_at: "2026-08-23T19:08:27Z" } }),
+      error: /does not match the current issue job/,
+    },
+    {
+      name: "changed plan run",
+      drift: (current) => ({ plan: { ...current.plan, run_id: "transport-drift" } }),
+      error: /identity changed in transport/,
+    },
+    {
+      name: "changed plan attempt",
+      drift: (current) => ({ plan: { ...current.plan, run_attempt: 2 } }),
+      error: /identity changed in transport/,
+    },
+    {
+      name: "changed recovery run",
+      drift: (current) => ({ preparedRecovery: { ...current.prepared, run_id: "transport-drift" } }),
+      error: /run identity changed in transport/,
+    },
+    {
+      name: "changed recovery repository",
+      drift: (current) => ({
+        preparedRecovery: {
+          ...current.prepared,
+          identity: { ...current.prepared.identity, repository: "elsewhere/repository" },
+        },
+      }),
+      error: /repository differs/,
+    },
+    {
+      name: "changed recovery base sha",
+      drift: (current) => ({ preparedRecovery: { ...current.prepared, base_sha: "3".repeat(40) } }),
+      error: /base SHA differs/,
+    },
+    {
+      name: "changed recovery source id",
+      drift: (current) => ({
+        preparedRecovery: {
+          ...current.prepared,
+          identity: { ...current.prepared.identity, source_id: "10_114" },
+        },
+      }),
+      error: /does not match the prepared recovery identity/,
+    },
+    {
+      name: "changed recovery source revision",
+      drift: (current) => ({
+        preparedRecovery: {
+          ...current.prepared,
+          identity: { ...current.prepared.identity, source_revision: "0".repeat(64) },
+        },
+      }),
+      error: /does not match the prepared recovery identity/,
+    },
+    {
+      name: "changed recovery phase state",
+      drift: (current) => ({ preparedRecovery: { ...current.prepared, phase: "implementation_running" } }),
+      error: /not an active claimed recovery/,
+    },
+    {
+      name: "changed triage ownership",
+      drift: (current) => ({
+        triage: { ...current.triage, findings: [{ ...current.triage.findings[0]!, fingerprint: "0".repeat(64) }] },
+      }),
+      error: /does not match immutable plan ownership/,
+    },
+    {
+      name: "changed triage content",
+      drift: (current) => ({
+        triage: { ...current.triage, findings: [{ ...current.triage.findings[0]!, severity: "P2" }] },
+      }),
+      error: /triage differs from the prepared matrix convergence triage/,
+    },
+  ];
+  for (const rejectCase of rejectCases) {
+    assert.throws(() => bindWith(rejectCase.drift(fixture)), rejectCase.error, rejectCase.name);
+  }
+});
+
+Deno.test("matrix prepared recovery reuses the exact prepared ledger record", async () => {
+  const fixture = await matrixPreparedConvergenceFixture();
+  const ledger = parseSentinelRecoveryRecord(JSON.parse(JSON.stringify(fixture.prepared)));
+  assert.notEqual(ledger, fixture.prepared);
+  const reused = reuseMatrixPreparedRecoveryRecord(fixture.prepared, ledger);
+  assert.equal(reused, ledger);
+  assert.deepEqual(reused, fixture.prepared);
+  assert.throws(
+    () => reuseMatrixPreparedRecoveryRecord(fixture.prepared, null),
+    /lost its current recovery record/,
+  );
+  const rejectCases: ReadonlyArray<Readonly<{ name: string; current: unknown }>> = [
+    { name: "changed attempt", current: { ...ledger, attempt: 2 } },
+    { name: "changed lease token", current: { ...ledger, lease_token: "transport-drift-1" } },
+    {
+      name: "changed candidate generation",
+      current: { ...ledger, identity: { ...ledger.identity, candidate_generation: 2 } },
+    },
+    { name: "changed base sha", current: { ...ledger, base_sha: "3".repeat(40) } },
+    { name: "changed phase", current: { ...ledger, phase: "implementation_running" } },
+    { name: "changed state version", current: { ...ledger, state_version: 2 } },
+  ];
+  for (const rejectCase of rejectCases) {
+    const drifted = parseSentinelRecoveryRecord(rejectCase.current);
+    assert.throws(
+      () => reuseMatrixPreparedRecoveryRecord(fixture.prepared, drifted),
+      /differs from the ledger recovery record/,
+      rejectCase.name,
+    );
+  }
+});
+
+Deno.test("matrix prepared recovery binds review backlog convergence identity exactly", async () => {
+  const runId = "23546719285";
+  const runAttempt = 1;
+  const repository = "ubiquity/ai.ubq.fi";
+  const interval = computeSentinelInterval("hourly", now);
+  const backlogEntry = reviewBacklogEntry();
+  const triage = reviewBacklogTriageReport(backlogEntry, interval);
+  const plan = await buildMatrixPlan({
+    run_id: runId,
+    run_attempt: runAttempt,
+    base_sha: "2".repeat(40),
+    evidence_digests: [],
+    findings: triage.findings.map((finding) => ({
+      id: finding.id,
+      fingerprint: finding.fingerprint,
+      allowed_paths: finding.allowed_paths,
+      prohibited_paths: SENTINEL_POLICY.protectedImplementationPaths,
+      shared_paths: finding.shared_paths,
+      depends_on: finding.depends_on,
+      validation_requirements: finding.validation_requirements,
+    })),
+  });
+  const prepared = parseSentinelRecoveryRecord({
+    schema_version: 1,
+    identity: {
+      repository,
+      source_kind: "review_backlog",
+      source_id: backlogEntry.fingerprint,
+      source_revision: backlogEntry.sha,
+      candidate_generation: 1,
+    },
+    run_id: plan.run_id,
+    attempt: runAttempt,
+    lease_token: `${runId}-${runAttempt}`,
+    base_sha: plan.base_sha,
+    phase: "claimed",
+    disposition: "active",
+    state_version: 1,
+    created_at: "2026-08-21T07:00:00.000Z",
+    updated_at: "2026-08-21T07:00:00.000Z",
+    candidate_branch: null,
+    candidate_sha: null,
+    changed_files: [],
+    tree_sha: null,
+    failure_class: null,
+    failure_fingerprint: null,
+    artifact_ids: [],
+    artifact_digests: [],
+    reason: "Matrix convergence prepared review backlog work",
+    next_action: "Run the review backlog implementation stage",
+    predecessor: null,
+  });
+  assert.deepEqual(prepared.identity, {
+    repository,
+    source_kind: "review_backlog",
+    source_id: backlogEntry.fingerprint,
+    source_revision: backlogEntry.sha,
+    candidate_generation: 1,
+  });
+  assert.equal(prepared.run_id, plan.run_id);
+  assert.equal(prepared.base_sha, plan.base_sha);
+  assert.equal(prepared.phase, "claimed");
+  assert.equal(prepared.disposition, "active");
+  assert.equal(prepared.candidate_branch, null);
+  assert.equal(prepared.candidate_sha, null);
+  assert.equal(prepared.tree_sha, null);
+  assert.equal(prepared.failure_class, null);
+  assert.equal(prepared.failure_fingerprint, null);
+  assert.equal(prepared.predecessor, null);
+  assert.deepEqual(prepared.changed_files, []);
+  assert.deepEqual(prepared.artifact_ids, []);
+  assert.deepEqual(prepared.artifact_digests, []);
+  assert.ok(prepared.reason !== null && prepared.reason.trim().length > 0);
+  assert.ok(prepared.next_action !== null && prepared.next_action.trim().length > 0);
+  const selection = bindMatrixConvergenceWork({
+    repository,
+    runId,
+    runAttempt,
+    plan,
+    triage,
+    preparedRecovery: prepared,
+    issueSelection: null,
+    selectedIssueJob: null,
+    selectedBacklogEntry: backlogEntry,
+  });
+  assert.equal(selection.source, "review_backlog");
+  assert.equal(selection.reason, "hourly_review_backlog");
+  assert.equal(selection.backlogEntry, backlogEntry);
+  assert.equal(selection.issueJob, null);
+  assert.equal(selection.triage, triage);
+
+  const bindWith = (
+    overrides: Readonly<{
+      triage?: TriageReport;
+      issueSelection?: GitHubIssueSelectionReport | null;
+      selectedBacklogEntry?: ReviewBacklogEntry | null;
+    }>,
+  ) =>
+    bindMatrixConvergenceWork({
+      repository,
+      runId,
+      runAttempt,
+      plan,
+      triage: overrides.triage ?? triage,
+      preparedRecovery: prepared,
+      issueSelection: overrides.issueSelection === undefined ? null : overrides.issueSelection,
+      selectedIssueJob: null,
+      selectedBacklogEntry: overrides.selectedBacklogEntry === undefined
+        ? backlogEntry
+        : overrides.selectedBacklogEntry,
+    });
+  const unexpectedSelection: GitHubIssueSelectionReport = {
+    schema_version: 1,
+    issue_id: 10_113,
+    issue_number: 113,
+    fingerprint: "1".repeat(64),
+    body_sha256: "2".repeat(64),
+    comments: 0,
+    priority: "P2",
+    time_label: "Time: <2 Hours",
+    files: ["src/http.ts"],
+    updated_at: "2026-08-23T19:07:27Z",
+  };
+  const rejectCases: ReadonlyArray<
+    Readonly<{
+      name: string;
+      drift: () => Parameters<typeof bindWith>[0];
+      error: RegExp;
+    }>
+  > = [
+    {
+      name: "missing backlog entry",
+      drift: () => ({ selectedBacklogEntry: null }),
+      error: /requires its exact backlog entry without an issue selection/,
+    },
+    {
+      name: "unexpected issue selection",
+      drift: () => ({ issueSelection: unexpectedSelection }),
+      error: /requires its exact backlog entry without an issue selection/,
+    },
+    {
+      name: "changed backlog fingerprint",
+      drift: () => ({ selectedBacklogEntry: { ...backlogEntry, fingerprint: "b".repeat(64) } }),
+      error: /does not match the prepared recovery identity/,
+    },
+    {
+      name: "changed backlog sha",
+      drift: () => ({ selectedBacklogEntry: { ...backlogEntry, sha: "c".repeat(40) } }),
+      error: /does not match the prepared recovery identity/,
+    },
+    {
+      name: "changed backlog triage",
+      drift: () => ({ triage: { ...triage, findings: [{ ...triage.findings[0]!, severity: "P3" }] } }),
+      error: /triage differs from the prepared matrix convergence triage/,
+    },
+  ];
+  for (const rejectCase of rejectCases) {
+    assert.throws(() => bindWith(rejectCase.drift()), rejectCase.error, rejectCase.name);
+  }
 });

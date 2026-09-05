@@ -289,12 +289,17 @@ Deno.test({
       });
       const integratedCandidate = result.cycle_report.integrated_candidate;
       assert.ok(integratedCandidate);
-      assert.equal(integratedCandidate.base_sha, planBaseSha);
+      assert.equal(result.cycle_report.base_sha, planBaseSha);
+      assert.equal(integratedCandidate.base_sha, effectiveBaseSha);
       assert.equal(result.merge_receipts[0]?.before_head_sha, effectiveBaseSha);
       assert.equal(
         await git(root, ["merge-base", "--is-ancestor", effectiveBaseSha, integratedCandidate.head_sha]).then(() => 0),
         0,
       );
+      const mergeParents = (await git(root, ["show", "-s", "--format=%P", integratedCandidate.head_sha])).split(" ");
+      assert.equal(mergeParents.length, 2);
+      assert.equal(mergeParents[0], effectiveBaseSha);
+      assert.equal(mergeParents[1], cellHeadSha);
       assert.equal(await git(root, ["status", "--porcelain"]), "");
     } finally {
       await Deno.remove(root, { recursive: true });
