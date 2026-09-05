@@ -309,6 +309,15 @@ Deno.test("matrix convergence applies selection dispositions and wires the issue
   // into the matrix integration path.
   assert.match(orchestrator, /applyInitialSelectedBacklogDisposition\(implementationReport\)/u);
   assert.match(orchestrator, /applyInitialSelectedIssueDisposition\(implementationReport\)/u);
+  // Selected issue and backlog work must never take the matrix not_attempted
+  // no-change early return: the exact early-return condition excludes both
+  // selections so an already_fixed integration reaches the selection
+  // disposition handlers and the docs-only completion path.
+  assert.match(
+    orchestrator,
+    /if \(\s*integration\.cycle_report\.integrated_candidate\?\.head_sha === baseSha && !workSelection\.issueJob &&\s*!workSelection\.backlogEntry\s*\) \{\s*await writeMatrixDelivery\(\{\s*status: "not_attempted",[\s\S]*?All accepted matrix findings were already fixed at the immutable base/u,
+    "the matrix no-change early return must exclude selected issue and backlog work",
+  );
   assert.match(orchestrator, /ensureIssuePullRequestForDevelopmentPush/u);
   assert.match(orchestrator, /Matrix issue delivery did not produce an issue pull request record/u);
   assert.match(orchestrator, /Matrix issue pull request record does not match the immutable candidate/u);

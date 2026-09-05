@@ -3766,7 +3766,10 @@ const run = async (): Promise<void> => {
     assertCompleteFindingDispositions(triage, matrixImplementationReport);
     assertActionableFindingsResolved(triage, matrixImplementationReport);
     await writeJson(`${reportsDir}/implementation-matrix-integrated.json`, matrixImplementationReport);
-    if (integration.cycle_report.integrated_candidate?.head_sha === baseSha) {
+    if (
+      integration.cycle_report.integrated_candidate?.head_sha === baseSha && !workSelection.issueJob &&
+      !workSelection.backlogEntry
+    ) {
       await writeMatrixDelivery({
         status: "not_attempted",
         pr_number: null,
