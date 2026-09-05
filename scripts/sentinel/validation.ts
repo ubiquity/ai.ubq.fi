@@ -657,14 +657,158 @@ export const assertGitHistoryExcludesValues = async (
   if (found) throw new Error("Credential material was found in reachable Git history");
 };
 
+// Deterministic snapshot of a protected directory root. The value digests
+// every nested entry — relative path, type, permission mode, content bytes,
+// and symlink target — including untracked entries, so nested edits, adds,
+// deletes, renames, and symlink retargets all change the digest. Directory
+// traversal never follows symlinks. Any root or entry that cannot be fully
+// captured (missing, unreadable, or an unsupported file type) throws: an
+// equal snapshot must prove the protected content is byte-identical, so a
+// snapshot that could not be completed must never compare equal to a previous
+// one.
+const PROTECTED_SNAPSHOT_DIRECTORY_PREFIX = "dir:sha256:";
+const PROTECTED_DIRECTORY_SNAPSHOT_VERSION = 1;
+
+type ProtectedSnapshotEntry = Readonly<{
+  path: string;
+  type: string;
+  mode: string;
+  size: number;
+  sha256: string | null;
+  target: string | null;
+}>;
+
+const protectedSnapshotEncoder = new TextEncoder();
+
+const protectedPermissionMode = (mode: number | null): string =>
+  mode === null ? "000" : (mode & 0o7777).toString(8).padStart(3, "0");
+
+const protectedEntryType = (info: Deno.FileInfo): string => {
+  if (info.isFile) return "file";
+  if (info.isDirectory) return "dir";
+  if (info.isSymlink) return "symlink";
+  if (info.mode === null) return "unknown";
+  switch (info.mode & 0o170000) {
+    case 0o140000:
+      return "socket";
+    case 0o060000:
+      return "block";
+    case 0o020000:
+      return "char";
+    case 0o010000:
+      return "fifo";
+    default:
+      return "unknown";
+  }
+};
+
+const protectedSnapshotFailure = (label: string, error: unknown): Error =>
+  new Error(`${label}: ${error instanceof Error ? error.message : String(error)}`);
+
+// Sorts names by their UTF-8 byte sequence so snapshots do not depend on the
+// filesystem entry order.
+const compareProtectedNames = (left: string, right: string): number => {
+  const a = protectedSnapshotEncoder.encode(left);
+  const b = protectedSnapshotEncoder.encode(right);
+  for (let index = 0; index < Math.min(a.byteLength, b.byteLength); index++) {
+    if (a[index] !== b[index]) return a[index] - b[index];
+  }
+  return a.byteLength - b.byteLength;
+};
+
+const snapshotProtectedDirectory = async (root: string, relative: string): Promise<string> => {
+  const rootInfo = await Deno.lstat(root).catch((error) => {
+    throw protectedSnapshotFailure(`Protected directory ${relative} is unreadable`, error);
+  });
+  if (!rootInfo.isDirectory) throw new Error(`Protected path ${relative} is not a directory`);
+  const entries: ProtectedSnapshotEntry[] = [];
+  const visit = async (junction: string, prefix: string): Promise<void> => {
+    const names: string[] = [];
+    try {
+      for await (const entry of Deno.readDir(junction)) names.push(entry.name);
+    } catch (error) {
+      const label = prefix === "" ? relative : `${relative}/${prefix}`;
+      throw protectedSnapshotFailure(`Protected directory ${label} is unreadable`, error);
+    }
+    names.sort(compareProtectedNames);
+    for (const name of names) {
+      const junctionPath = `${junction}/${name}`;
+      const entryPath = prefix === "" ? name : `${prefix}/${name}`;
+      const info = await Deno.lstat(junctionPath).catch((error) => {
+        throw protectedSnapshotFailure(`Protected entry ${relative}/${entryPath} is unreadable`, error);
+      });
+      const type = protectedEntryType(info);
+      const mode = protectedPermissionMode(info.mode);
+      if (type === "dir") {
+        entries.push({ path: entryPath, type, mode, size: 0, sha256: null, target: null });
+        await visit(junctionPath, entryPath);
+      } else if (type === "file") {
+        const bytes = await Deno.readFile(junctionPath).catch((error) => {
+          throw protectedSnapshotFailure(`Protected entry ${relative}/${entryPath} is unreadable`, error);
+        });
+        entries.push({
+          path: entryPath,
+          type,
+          mode,
+          size: bytes.byteLength,
+          sha256: await sha256Hex(bytes),
+          target: null,
+        });
+      } else if (type === "symlink") {
+        const target = await Deno.readLink(junctionPath).catch((error) => {
+          throw protectedSnapshotFailure(`Protected symlink ${relative}/${entryPath} is unreadable`, error);
+        });
+        entries.push({ path: entryPath, type, mode, size: 0, sha256: null, target });
+      } else {
+        throw new Error(`Protected directory ${relative} contains unsupported entry ${entryPath} (${type})`);
+      }
+    }
+  };
+  await visit(root, "");
+  const snapshot = JSON.stringify({
+    version: PROTECTED_DIRECTORY_SNAPSHOT_VERSION,
+    root: {
+      path: ".",
+      type: "dir",
+      mode: protectedPermissionMode(rootInfo.mode),
+      size: 0,
+      sha256: null,
+      target: null,
+    },
+    entries,
+  });
+  return `${PROTECTED_SNAPSHOT_DIRECTORY_PREFIX}${await sha256Hex(
+    protectedSnapshotEncoder.encode(snapshot),
+  )}`;
+};
+
 export const hashProtectedFiles = async (
   cwd: string,
   paths: readonly string[],
 ): Promise<Readonly<Record<string, string>>> => {
   const hashes: Record<string, string> = {};
   for (const path of paths) {
-    const result = await runTrustedGit({ args: ["hash-object", "--no-filters", path], cwd });
-    hashes[path] = decode(result.stdout);
+    const root = `${cwd}/${path}`;
+    const info = await Deno.lstat(root).catch((error) => {
+      const missing = error instanceof Error && error.name === "NotFound";
+      throw new Error(
+        `Protected path ${path} ${missing ? "is missing" : "is unreadable"}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
+    if (info.isDirectory) {
+      hashes[path] = await snapshotProtectedDirectory(root, path);
+    } else if (info.isSymlink) {
+      throw new Error(
+        `Protected path ${path} is a symlink and cannot be verified without following it`,
+      );
+    } else if (info.isFile) {
+      const result = await runTrustedGit({ args: ["hash-object", "--no-filters", path], cwd });
+      hashes[path] = decode(result.stdout);
+    } else {
+      throw new Error(`Protected path ${path} has unsupported type ${protectedEntryType(info)}`);
+    }
   }
   return hashes;
 };

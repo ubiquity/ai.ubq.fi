@@ -161,7 +161,12 @@ import {
   INCIDENT_WINDOW_MS,
   OBSERVE_WINDOW_MS,
 } from "../scripts/sentinel/windows.ts";
-import { CANDIDATE_DENO_CHECK_ARGS, type CandidateValidationFailure } from "../scripts/sentinel/validation.ts";
+import {
+  assertProtectedFilesUnchanged,
+  CANDIDATE_DENO_CHECK_ARGS,
+  type CandidateValidationFailure,
+  hashProtectedFiles,
+} from "../scripts/sentinel/validation.ts";
 import type { ExportedSentinelReplayCapture } from "../src/sentinel_replay_capture.ts";
 
 const now = Date.parse("2026-08-21T06:00:00.000Z");
@@ -4885,4 +4890,255 @@ Deno.test("matrix prepared recovery binds review backlog convergence identity ex
   for (const rejectCase of rejectCases) {
     assert.throws(() => bindWith(rejectCase.drift()), rejectCase.error, rejectCase.name);
   }
+});
+
+const protectedSnapshotPermissions = await Promise.all([
+  Deno.permissions.query({ name: "read" }),
+  Deno.permissions.query({ name: "write" }),
+  Deno.permissions.query({ name: "run", command: "git" }),
+]);
+const protectedSnapshotTestsIgnored = protectedSnapshotPermissions.some(
+  (permission) => permission.state !== "granted",
+);
+const protectedSnapshotFifoTestsIgnored = protectedSnapshotTestsIgnored ||
+  Deno.build.os !== "linux" ||
+  (await Deno.permissions.query({ name: "run", command: "mkfifo" })).state !== "granted";
+
+const createProtectedSnapshotFixture = async (): Promise<string> => {
+  const repo = await Deno.makeTempDir({ prefix: "sentinel-protected-snapshot-" });
+  await matrixVerifierGit(repo, ["init", "-b", "development"]);
+  await matrixVerifierGit(repo, ["config", "user.name", "Sentinel Protected Snapshot Fixture"]);
+  await matrixVerifierGit(repo, ["config", "user.email", "sentinel-protected-fixture@example.invalid"]);
+  await Deno.mkdir(`${repo}/docs/review-results/nested`, { recursive: true });
+  await Deno.writeTextFile(`${repo}/docs/review-results/000-base.json`, "base\n");
+  await Deno.writeTextFile(`${repo}/docs/review-results/nested/deep.txt`, "deep\n");
+  await matrixVerifierGit(repo, ["add", "--all"]);
+  await matrixVerifierGit(repo, ["commit", "--no-gpg-sign", "-m", "protected snapshot base"]);
+  return repo;
+};
+
+const snapshotProtectedRoot = async (repo: string, path: string): Promise<string> =>
+  (await hashProtectedFiles(repo, [path]))[path]!;
+
+Deno.test({
+  name: "production protected-path hashing snapshots the review-results directory and preserves file hashing",
+  ignore: protectedSnapshotTestsIgnored,
+  fn: async () => {
+    const cwd = Deno.cwd();
+    const paths = SENTINEL_POLICY.protectedImplementationPaths;
+    const hashes = await hashProtectedFiles(cwd, paths);
+    assert.deepEqual(Object.keys(hashes).sort(), [...paths].sort());
+    const directory = hashes["docs/sentinel-review-results"]!;
+    assert.match(directory, /^dir:sha256:[0-9a-f]{64}$/u);
+    for (const [path, hash] of Object.entries(hashes)) {
+      assert.ok(hash.length > 0, `empty protected hash for ${path}`);
+    }
+    // Repeated production-shaped invocations are byte-for-byte identical.
+    assert.deepEqual(await hashProtectedFiles(cwd, paths), hashes);
+    // Ordinary file roots keep exact Git blob hashing.
+    const expected = await matrixVerifierGit(cwd, ["hash-object", "--no-filters", ".gitleaksignore"]);
+    assert.equal(hashes[".gitleaksignore"], expected);
+  },
+});
+
+Deno.test({
+  name: "protected directory snapshots are deterministic and detect nested edits and mode changes",
+  ignore: protectedSnapshotTestsIgnored,
+  fn: async () => {
+    const repo = await createProtectedSnapshotFixture();
+    try {
+      const baseline = await snapshotProtectedRoot(repo, "docs/review-results");
+      assert.match(baseline, /^dir:sha256:[0-9a-f]{64}$/u);
+      assert.equal(await snapshotProtectedRoot(repo, "docs/review-results"), baseline);
+      // Identical trees written in a different order produce the same digest.
+      await Deno.mkdir(`${repo}/sibling/nested`, { recursive: true });
+      await Deno.writeTextFile(`${repo}/sibling/nested/deep.txt`, "deep\n");
+      await Deno.writeTextFile(`${repo}/sibling/000-base.json`, "base\n");
+      assert.equal(await snapshotProtectedRoot(repo, "sibling"), baseline);
+      // Nested edits change the digest.
+      await Deno.writeTextFile(`${repo}/docs/review-results/nested/deep.txt`, "deep but changed\n");
+      assert.notEqual(await snapshotProtectedRoot(repo, "docs/review-results"), baseline);
+      await Deno.writeTextFile(`${repo}/docs/review-results/nested/deep.txt`, "deep\n");
+      assert.equal(await snapshotProtectedRoot(repo, "docs/review-results"), baseline);
+      if (Deno.build.os === "linux") {
+        // File, directory, and root permission modes are part of the snapshot.
+        await Deno.chmod(`${repo}/docs/review-results/nested/deep.txt`, 0o600);
+        assert.notEqual(await snapshotProtectedRoot(repo, "docs/review-results"), baseline);
+        await Deno.chmod(`${repo}/docs/review-results/nested/deep.txt`, 0o644);
+        assert.equal(await snapshotProtectedRoot(repo, "docs/review-results"), baseline);
+        await Deno.chmod(`${repo}/docs/review-results/nested`, 0o700);
+        assert.notEqual(await snapshotProtectedRoot(repo, "docs/review-results"), baseline);
+        await Deno.chmod(`${repo}/docs/review-results/nested`, 0o755);
+        assert.equal(await snapshotProtectedRoot(repo, "docs/review-results"), baseline);
+        await Deno.chmod(`${repo}/docs/review-results`, 0o700);
+        assert.notEqual(await snapshotProtectedRoot(repo, "docs/review-results"), baseline);
+        await Deno.chmod(`${repo}/docs/review-results`, 0o755);
+        assert.equal(await snapshotProtectedRoot(repo, "docs/review-results"), baseline);
+      }
+    } finally {
+      await Deno.remove(repo, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "protected directory snapshots detect adds, deletes, renames and untracked entries",
+  ignore: protectedSnapshotTestsIgnored,
+  fn: async () => {
+    const repo = await createProtectedSnapshotFixture();
+    try {
+      const baseline = await snapshotProtectedRoot(repo, "docs/review-results");
+      // Untracked additions are part of the snapshot.
+      await Deno.writeTextFile(`${repo}/docs/review-results/999-untracked.json`, "untracked\n");
+      assert.notEqual(await snapshotProtectedRoot(repo, "docs/review-results"), baseline);
+      await Deno.remove(`${repo}/docs/review-results/999-untracked.json`);
+      assert.equal(await snapshotProtectedRoot(repo, "docs/review-results"), baseline);
+      // A rename changes the relative path even when the bytes are preserved.
+      await Deno.rename(
+        `${repo}/docs/review-results/000-base.json`,
+        `${repo}/docs/review-results/000-renamed.json`,
+      );
+      assert.notEqual(await snapshotProtectedRoot(repo, "docs/review-results"), baseline);
+      await Deno.rename(
+        `${repo}/docs/review-results/000-renamed.json`,
+        `${repo}/docs/review-results/000-base.json`,
+      );
+      assert.equal(await snapshotProtectedRoot(repo, "docs/review-results"), baseline);
+      // Deletion of a nested entry is detected.
+      await Deno.remove(`${repo}/docs/review-results/nested/deep.txt`);
+      assert.notEqual(await snapshotProtectedRoot(repo, "docs/review-results"), baseline);
+    } finally {
+      await Deno.remove(repo, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "protected directory snapshots record symlink targets without following links",
+  ignore: protectedSnapshotTestsIgnored,
+  fn: async () => {
+    const repo = await createProtectedSnapshotFixture();
+    try {
+      const baseline = await snapshotProtectedRoot(repo, "docs/review-results");
+      await Deno.symlink("000-base.json", `${repo}/docs/review-results/alias.json`);
+      assert.notEqual(await snapshotProtectedRoot(repo, "docs/review-results"), baseline);
+      const withAlias = await snapshotProtectedRoot(repo, "docs/review-results");
+      // Retargeting the symlink changes the snapshot.
+      await Deno.remove(`${repo}/docs/review-results/alias.json`);
+      await Deno.symlink("nested/deep.txt", `${repo}/docs/review-results/alias.json`);
+      assert.notEqual(await snapshotProtectedRoot(repo, "docs/review-results"), withAlias);
+      const retargeted = await snapshotProtectedRoot(repo, "docs/review-results");
+      // Replacing a regular file with a directory at the same nested path
+      // changes the recorded type.
+      await Deno.remove(`${repo}/docs/review-results/000-base.json`);
+      await Deno.mkdir(`${repo}/docs/review-results/000-base.json`, { recursive: true });
+      await Deno.writeTextFile(`${repo}/docs/review-results/000-base.json/inner.txt`, "inner\n");
+      assert.notEqual(await snapshotProtectedRoot(repo, "docs/review-results"), retargeted);
+      await Deno.remove(`${repo}/docs/review-results/000-base.json`, { recursive: true });
+      await Deno.writeTextFile(`${repo}/docs/review-results/000-base.json`, "base\n");
+      assert.equal(await snapshotProtectedRoot(repo, "docs/review-results"), retargeted);
+      // A symlink to a file outside the protected root is recorded by target
+      // only: content changes beyond the root must not change the snapshot.
+      await Deno.writeTextFile(`${repo}/docs/external.txt`, "external\n");
+      await Deno.symlink("../external.txt", `${repo}/docs/review-results/external-link`);
+      const withExternal = await snapshotProtectedRoot(repo, "docs/review-results");
+      assert.notEqual(withExternal, withAlias);
+      await Deno.writeTextFile(`${repo}/docs/external.txt`, "external changed\n");
+      assert.equal(await snapshotProtectedRoot(repo, "docs/review-results"), withExternal);
+      // Retargeting the link to another outside file is a snapshot change.
+      await Deno.writeTextFile(`${repo}/docs/external-two.txt`, "second\n");
+      await Deno.remove(`${repo}/docs/review-results/external-link`);
+      await Deno.symlink("../external-two.txt", `${repo}/docs/review-results/external-link`);
+      assert.notEqual(await snapshotProtectedRoot(repo, "docs/review-results"), withExternal);
+      await Deno.remove(`${repo}/docs/review-results/external-link`);
+      // Symlink cycles are recorded as entries, never followed recursively.
+      await Deno.symlink("loop-b", `${repo}/docs/review-results/loop-a`);
+      await Deno.symlink("loop-a", `${repo}/docs/review-results/loop-b`);
+      const cyclic = await snapshotProtectedRoot(repo, "docs/review-results");
+      assert.match(cyclic, /^dir:sha256:[0-9a-f]{64}$/u);
+      assert.notEqual(cyclic, withAlias);
+      // A root symlink cannot be verified without following it and is rejected.
+      await Deno.symlink("docs/review-results", `${repo}/review-link`);
+      await assert.rejects(
+        hashProtectedFiles(repo, ["review-link"]),
+        /review-link is a symlink and cannot be verified without following it/u,
+      );
+    } finally {
+      await Deno.remove(repo, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "protected path hashing throws for missing, unreadable, and unsupported roots and entries",
+  ignore: protectedSnapshotFifoTestsIgnored,
+  fn: async () => {
+    const repo = await createProtectedSnapshotFixture();
+    try {
+      await assert.rejects(
+        hashProtectedFiles(repo, ["docs/does-not-exist"]),
+        /Protected path docs\/does-not-exist is missing/u,
+      );
+      // A FIFO root cannot be captured and must fail closed.
+      await new Deno.Command("mkfifo", { args: [`${repo}/docs/pipe`] }).output();
+      await assert.rejects(
+        hashProtectedFiles(repo, ["docs/pipe"]),
+        /Protected path docs\/pipe has unsupported type fifo/u,
+      );
+      // An unsupported nested entry fails the whole directory snapshot.
+      await new Deno.Command("mkfifo", { args: [`${repo}/docs/review-results/pipe`] }).output();
+      await assert.rejects(
+        hashProtectedFiles(repo, ["docs/review-results"]),
+        /unsupported entry pipe \(fifo\)/u,
+      );
+      await Deno.remove(`${repo}/docs/review-results/pipe`);
+      // An unreadable directory root fails closed instead of snapshotting a
+      // marker that could compare equal to a previously captured value.
+      await Deno.chmod(`${repo}/docs/review-results`, 0o000);
+      try {
+        await assert.rejects(
+          hashProtectedFiles(repo, ["docs/review-results"]),
+          /Protected directory docs\/review-results is unreadable/u,
+        );
+      } finally {
+        await Deno.chmod(`${repo}/docs/review-results`, 0o755);
+      }
+    } finally {
+      await Deno.remove(repo, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "protected path assertion reports nested changes and deleted protected paths",
+  ignore: protectedSnapshotTestsIgnored,
+  fn: async () => {
+    const repo = await createProtectedSnapshotFixture();
+    try {
+      const directoryBase = await hashProtectedFiles(repo, ["docs/review-results"]);
+      await Deno.writeTextFile(`${repo}/docs/review-results/nested/deep.txt`, "edited\n");
+      await assert.rejects(
+        assertProtectedFilesUnchanged(repo, directoryBase),
+        /changed protected policy file docs\/review-results/u,
+      );
+      await Deno.writeTextFile(`${repo}/docs/review-results/nested/deep.txt`, "deep\n");
+      // Ordinary file roots preserve Git blob hashing for the change report.
+      const fileBase = await hashProtectedFiles(repo, ["docs/review-results/000-base.json"]);
+      assert.match(fileBase["docs/review-results/000-base.json"]!, /^[0-9a-f]{40}$/u);
+      await Deno.writeTextFile(`${repo}/docs/review-results/000-base.json`, "base edited\n");
+      await assert.rejects(
+        assertProtectedFilesUnchanged(repo, fileBase),
+        /changed protected policy file docs\/review-results\/000-base\.json/u,
+      );
+      await Deno.writeTextFile(`${repo}/docs/review-results/000-base.json`, "base\n");
+      // A deleted protected path fails closed on the missing root itself.
+      await Deno.remove(`${repo}/docs/review-results/000-base.json`);
+      await assert.rejects(
+        assertProtectedFilesUnchanged(repo, fileBase),
+        /docs\/review-results\/000-base\.json is missing/u,
+      );
+    } finally {
+      await Deno.remove(repo, { recursive: true });
+    }
+  },
 });
