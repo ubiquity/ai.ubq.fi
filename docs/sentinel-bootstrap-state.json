@@ -2,12 +2,14 @@
   "schema_version": 1,
   "release": {
     "schema_version": 1,
-    "stable_sha": "7dd4812f6cde3f99b97ff7830d695952a9a50eab",
-    "candidate_sha": "9a5ed964b19fa81491c75dc6f93979005682a13c",
+    "stable_sha": "9a5ed964b19fa81491c75dc6f93979005682a13c",
+    "candidate_sha": null,
     "acceptance_evidence": [
-      "health:gvc5e5yf7ctf"
+      "health:gvc5e5yf7ctf",
+      "health:gvc5e5yf7ctf",
+      "bootstrap:healthy-window"
     ],
-    "activated_at": "2026-09-05T20:10:44.361Z",
+    "activated_at": "2026-09-05T21:12:53.310Z",
     "rollback_reason": null,
     "generation": 41
   },
