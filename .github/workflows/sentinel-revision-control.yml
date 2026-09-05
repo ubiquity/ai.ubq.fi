@@ -59,14 +59,36 @@ jobs:
         (inputs.target_app == 'ai-ubq-fi' && needs.production-approval.result == 'success') ||
         (inputs.target_app == 'p-ai-ubq-fi' && needs.production-approval.result == 'skipped')
       )
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          # Revision control must always load the exact frozen execution SHA,
+          # never the moving development tip, and leaves no credentials behind.
+          ref: bef2c55b2a2f4c0ea45d3d779be49b36c4990dda
+          fetch-depth: 1
           persist-credentials: false
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: 2.9.5
+
+      - name: Verify protected revision-control package manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Every regular file below the frozen package is covered recursively;
+          # no symlink may redirect the manifest outside the package.
+          if [ -n "$(find scripts/sentinel/bootstrap -type l -print -quit)" ]; then
+            echo "::error::Protected revision-control package contains a symlink."
+            exit 1
+          fi
+          expected="0112fd75a3619ace539a22ed6f5f74269bd30710b5cba4a4817a8824d675150c"
+          actual="$(find scripts/sentinel/bootstrap -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::Protected revision-control package manifest mismatch."
+            exit 1
+          fi
+          echo "Protected revision-control package manifest verified."
 
       - name: Promote and verify exact revision
         env:
@@ -79,12 +101,47 @@ jobs:
           SENTINEL_EXPECTED_DEVELOPMENT_GIT_SHA: ${{ inputs.expected_development_git_sha }}
           DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
-        run: >-
-          deno run --frozen --no-remote
-          --allow-env=SENTINEL_CORRELATION_ID,SENTINEL_TARGET_APP,SENTINEL_TARGET_GIT_SHA,SENTINEL_TARGET_REVISION,SENTINEL_EXPECTED_CURRENT_GIT_SHA,SENTINEL_EXPECTED_CURRENT_REVISION,SENTINEL_EXPECTED_DEVELOPMENT_GIT_SHA,GITHUB_REPOSITORY,GITHUB_RUN_ID,GITHUB_SHA,GITHUB_REF,DENO_DEPLOY_TOKEN,GITHUB_TOKEN
-          --allow-net
-          --allow-write=sentinel-revision-control-result.json
-          scripts/sentinel/revision-control.ts
+        run: |
+          set -euo pipefail
+          # The executor may reach only the exact hosts the protected
+          # revision-control client uses. Every guard fails closed before the
+          # network permission is constructed, and errors name the field
+          # without echoing the supplied value.
+          if [ "$SENTINEL_TARGET_APP" != "ai-ubq-fi" ] && [ "$SENTINEL_TARGET_APP" != "p-ai-ubq-fi" ]; then
+            echo "::error::SENTINEL_TARGET_APP must be exactly ai-ubq-fi or p-ai-ubq-fi."
+            exit 1
+          fi
+          if [[ ! "$SENTINEL_TARGET_REVISION" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; then
+            echo "::error::SENTINEL_TARGET_REVISION must be a safe Deno revision ID."
+            exit 1
+          fi
+          if [[ ! "$SENTINEL_EXPECTED_CURRENT_REVISION" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; then
+            echo "::error::SENTINEL_EXPECTED_CURRENT_REVISION must be a safe Deno revision ID."
+            exit 1
+          fi
+          if [ "$(( ${#SENTINEL_TARGET_APP} + 1 + ${#SENTINEL_TARGET_REVISION} ))" -gt 63 ]; then
+            echo "::error::SENTINEL_TARGET_APP plus SENTINEL_TARGET_REVISION exceeds the immutable hostname label limit."
+            exit 1
+          fi
+          if [ "$(( ${#SENTINEL_TARGET_APP} + 1 + ${#SENTINEL_EXPECTED_CURRENT_REVISION} ))" -gt 63 ]; then
+            echo "::error::SENTINEL_TARGET_APP plus SENTINEL_EXPECTED_CURRENT_REVISION exceeds the immutable hostname label limit."
+            exit 1
+          fi
+          managed_host="${SENTINEL_TARGET_APP}.ubiquity-dao.deno.net"
+          target_host="${SENTINEL_TARGET_APP}-${SENTINEL_TARGET_REVISION}.ubiquity-dao.deno.net"
+          current_host="${SENTINEL_TARGET_APP}-${SENTINEL_EXPECTED_CURRENT_REVISION}.ubiquity-dao.deno.net"
+          allow_net="api.github.com,api.deno.com,console.deno.com,${managed_host},${target_host},${current_host}"
+          if [ "$SENTINEL_TARGET_APP" = "ai-ubq-fi" ]; then
+            allow_net="${allow_net},ai.ubq.fi"
+          fi
+          deno run \
+            --no-config \
+            --no-lock \
+            --cached-only \
+            --allow-env=SENTINEL_CORRELATION_ID,SENTINEL_TARGET_APP,SENTINEL_TARGET_GIT_SHA,SENTINEL_TARGET_REVISION,SENTINEL_EXPECTED_CURRENT_GIT_SHA,SENTINEL_EXPECTED_CURRENT_REVISION,SENTINEL_EXPECTED_DEVELOPMENT_GIT_SHA,GITHUB_REPOSITORY,GITHUB_RUN_ID,GITHUB_SHA,GITHUB_REF,DENO_DEPLOY_TOKEN,GITHUB_TOKEN \
+            --allow-write=sentinel-revision-control-result.json \
+            "--allow-net=$allow_net" \
+            scripts/sentinel/bootstrap/revision-control.ts
 
       - name: Upload promotion result
         if: always()

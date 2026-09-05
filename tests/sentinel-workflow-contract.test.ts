@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import workflow from "../.github/workflows/provider-sentinel.yml" with { type: "text" };
 import bootstrapWorkflow from "../.github/workflows/provider-sentinel-bootstrap.yml" with { type: "text" };
+import revisionControlWorkflow from "../.github/workflows/sentinel-revision-control.yml" with { type: "text" };
 import githubClient from "../scripts/sentinel/github.ts" with { type: "text" };
 import orchestrator from "../scripts/sentinel/main.ts" with { type: "text" };
 
@@ -8,8 +9,14 @@ import orchestrator from "../scripts/sentinel/main.ts" with { type: "text" };
 // SHA and verifies the frozen package against this exact manifest digest. The
 // isolation test reconstructs the digest from the real package bytes; these
 // constants are the workflow contract, never a second source of truth.
-const BOOTSTRAP_EXECUTION_SHA = "b9d4c0c9328448f4ca3f477abb43903e48ec4248";
-const BOOTSTRAP_PACKAGE_MANIFEST_DIGEST = "a9a3ab1bfb652ec2caafdb74fff02d03a2809134b7ac603c6a8e8a763353f32c";
+const BOOTSTRAP_EXECUTION_SHA = "bef2c55b2a2f4c0ea45d3d779be49b36c4990dda";
+const BOOTSTRAP_PACKAGE_MANIFEST_DIGEST = "0112fd75a3619ace539a22ed6f5f74269bd30710b5cba4a4817a8824d675150c";
+
+// The revision-control workflow is the deployment authority over the same
+// frozen package: it pins the identical immutable execution SHA and verifies
+// the identical manifest digest before its credentialed executor runs.
+const REVISION_CONTROL_EXECUTION_SHA = "bef2c55b2a2f4c0ea45d3d779be49b36c4990dda";
+const REVISION_CONTROL_PACKAGE_MANIFEST_DIGEST = "0112fd75a3619ace539a22ed6f5f74269bd30710b5cba4a4817a8824d675150c";
 
 const jobSection = (name: string, nextName: string): string => {
   const start = workflow.indexOf(`\n  ${name}:`);
@@ -45,6 +52,23 @@ const cronMinutes = (expression: string): number[] => {
 const prepare = jobSection("prepare", "repair");
 const repair = jobSection("repair", "converge");
 const converge = workflow.slice(workflow.indexOf("\n  converge:") + 1);
+
+const promoteJob = revisionControlWorkflow.slice(revisionControlWorkflow.indexOf("\n  promote:"));
+
+const revisionControlExecutor = (): string => {
+  const start = promoteJob.indexOf("- name: Promote and verify exact revision");
+  const end = promoteJob.indexOf("- name: Upload promotion result");
+  assert.ok(start >= 0, "revision-control workflow is missing the credentialed executor step");
+  assert.ok(end > start, "revision-control workflow is missing the executor boundary");
+  return promoteJob.slice(start, end);
+};
+
+const revisionControlRunBlock = (): string => {
+  const executor = revisionControlExecutor();
+  const start = executor.indexOf("        run: |");
+  assert.ok(start >= 0, "revision-control executor must use a literal run block");
+  return executor.slice(start);
+};
 
 Deno.test("Provider Sentinel retains its outer serialized, non-cancelling concurrency contract", () => {
   assert.match(workflow, /group: provider-sentinel-\$\{\{ github\.repository \}\}/u);
@@ -348,4 +372,160 @@ Deno.test("matrix convergence accepts durable retry_pending reports and stops pu
   assert.match(orchestrator, /cell_dispositions: cellDispositions/u);
   assert.match(orchestrator, /integrated_candidate: null/u);
   assert.match(orchestrator, /matrix-cycle\.json/u);
+});
+
+Deno.test("revision-control workflow pins the literal execution SHA on ubuntu-22.04 with the pinned Deno", () => {
+  assert.match(promoteJob, /runs-on: ubuntu-22\.04/u);
+  assert.match(promoteJob, /deno-version: 2\.9\.5/u);
+  const checkout = promoteJob.slice(
+    promoteJob.indexOf("actions/checkout@11d5960a326750d5838078e36cf38b85af677262"),
+    promoteJob.indexOf("denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed"),
+  );
+  assert.ok(checkout.length > 0, "revision-control workflow must contain the immutable checkout step");
+  assert.match(checkout, new RegExp(`ref: ${REVISION_CONTROL_EXECUTION_SHA}$`, "mu"));
+  assert.doesNotMatch(checkout, /ref: \$\{\{ github\.sha \}\}/u);
+  assert.match(checkout, /fetch-depth: 1/u);
+  assert.match(checkout, /persist-credentials: false/u);
+  assert.doesNotMatch(checkout, /\$\{\{/u);
+});
+
+Deno.test("revision-control workflow verifies the frozen package manifest before the credentialed executor", () => {
+  const verifyStart = promoteJob.indexOf("- name: Verify protected revision-control package manifest");
+  const executorStart = promoteJob.indexOf("- name: Promote and verify exact revision");
+  assert.ok(verifyStart >= 0, "revision-control workflow must verify the protected package manifest");
+  assert.ok(executorStart > verifyStart, "the manifest verification must run before the credentialed executor");
+  const verifyStep = promoteJob.slice(verifyStart, executorStart);
+  assert.match(verifyStep, new RegExp(`expected="${REVISION_CONTROL_PACKAGE_MANIFEST_DIGEST}"`, "u"));
+  // The deterministic sorted manifest covers every regular file recursively:
+  // no depth limit, no extension filter, no symlink indirection, and a
+  // mismatch fails the job closed.
+  assert.match(verifyStep, /find scripts\/sentinel\/bootstrap -type f -print0/u);
+  assert.match(verifyStep, /LC_ALL=C sort -z/u);
+  assert.match(verifyStep, /xargs -0 sha256sum/u);
+  assert.match(verifyStep, /\| sha256sum \| awk '\{print \$1\}'/u);
+  assert.match(verifyStep, /-type l/u);
+  assert.match(verifyStep, /if \[ "\$actual" != "\$expected" \]; then/u);
+  assert.doesNotMatch(verifyStep, /-maxdepth/u);
+  assert.doesNotMatch(verifyStep, /-name /u);
+  assert.doesNotMatch(verifyStep, /-iname /u);
+});
+
+Deno.test("revision-control executor runs cached-only without config or lock and keeps the exact env allowlist", () => {
+  const runBlock = revisionControlRunBlock();
+  assert.match(runBlock, /deno run \\\n\s+--no-config \\\n\s+--no-lock \\\n\s+--cached-only/u);
+  assert.doesNotMatch(runBlock, /--frozen/u);
+  assert.doesNotMatch(runBlock, /--no-remote/u);
+  assert.doesNotMatch(runBlock, /--lock=/u);
+  assert.match(
+    runBlock,
+    /--allow-env=SENTINEL_CORRELATION_ID,SENTINEL_TARGET_APP,SENTINEL_TARGET_GIT_SHA,SENTINEL_TARGET_REVISION,SENTINEL_EXPECTED_CURRENT_GIT_SHA,SENTINEL_EXPECTED_CURRENT_REVISION,SENTINEL_EXPECTED_DEVELOPMENT_GIT_SHA,GITHUB_REPOSITORY,GITHUB_RUN_ID,GITHUB_SHA,GITHUB_REF,DENO_DEPLOY_TOKEN,GITHUB_TOKEN/u,
+  );
+  assert.match(runBlock, /--allow-write=sentinel-revision-control-result\.json/u);
+  assert.match(runBlock, /scripts\/sentinel\/bootstrap\/revision-control\.ts/u);
+  // Every file the executor loads is inside the digest-verified package; the
+  // out-of-package wrapper must never be the entrypoint.
+  assert.doesNotMatch(runBlock, /scripts\/sentinel\/revision-control\.ts/u);
+});
+
+Deno.test("revision-control executor grants network only through one quoted, computed host list", () => {
+  const runBlock = revisionControlRunBlock();
+  // The host list is a single quoted argument computed by the shell; there is
+  // no bare --allow-net flag (or short -A alias) left to grant everything.
+  assert.match(runBlock, /"--allow-net=\$allow_net"/u);
+  assert.doesNotMatch(runBlock, /(?:^|\s)--allow-net(?:$|\s)/mu);
+  assert.doesNotMatch(runBlock, /(?:^|\s)-A(?:$|\s)/mu);
+  assert.match(
+    runBlock,
+    /allow_net="api\.github\.com,api\.deno\.com,console\.deno\.com,\$\{managed_host\},\$\{target_host\},\$\{current_host\}"/u,
+  );
+});
+
+Deno.test("revision-control executor validates app, revision IDs, and immutable hostname labels before network", () => {
+  const runBlock = revisionControlRunBlock();
+  assert.match(runBlock, /set -euo pipefail/u);
+  assert.match(
+    runBlock,
+    /if \[ "\$SENTINEL_TARGET_APP" != "ai-ubq-fi" \] && \[ "\$SENTINEL_TARGET_APP" != "p-ai-ubq-fi" \]; then/u,
+  );
+  assert.match(
+    runBlock,
+    /\[\[ ! "\$SENTINEL_TARGET_REVISION" =~ \^\[a-z0-9\]\(\[a-z0-9-\]\{0,61\}\[a-z0-9\]\)\?\$ \]\]/u,
+  );
+  assert.match(
+    runBlock,
+    /\[\[ ! "\$SENTINEL_EXPECTED_CURRENT_REVISION" =~ \^\[a-z0-9\]\(\[a-z0-9-\]\{0,61\}\[a-z0-9\]\)\?\$ \]\]/u,
+  );
+  // Each immutable hostname label is app + separator + revision (<= 63 chars).
+  assert.match(runBlock, /\$\(\( \$\{#SENTINEL_TARGET_APP\} \+ 1 \+ \$\{#SENTINEL_TARGET_REVISION\} \)\)" -gt 63/u);
+  assert.match(
+    runBlock,
+    /\$\(\( \$\{#SENTINEL_TARGET_APP\} \+ 1 \+ \$\{#SENTINEL_EXPECTED_CURRENT_REVISION\} \)\)" -gt 63/u,
+  );
+  // Guards fail closed naming the field and never echo the supplied value.
+  assert.match(runBlock, /::error::SENTINEL_TARGET_APP must be exactly ai-ubq-fi or p-ai-ubq-fi\./u);
+  assert.match(runBlock, /::error::SENTINEL_TARGET_REVISION must be a safe Deno revision ID\./u);
+  assert.match(runBlock, /::error::SENTINEL_EXPECTED_CURRENT_REVISION must be a safe Deno revision ID\./u);
+  assert.match(
+    runBlock,
+    /::error::SENTINEL_TARGET_APP plus SENTINEL_TARGET_REVISION exceeds the immutable hostname label limit\./u,
+  );
+  assert.match(
+    runBlock,
+    /::error::SENTINEL_TARGET_APP plus SENTINEL_EXPECTED_CURRENT_REVISION exceeds the immutable hostname label limit\./u,
+  );
+  assert.doesNotMatch(runBlock, /echo[^\n]*\$\{?SENTINEL_[A-Z_]+\}?/u);
+});
+
+Deno.test("revision-control executor builds the exact host list and appends the custom domain only for production", () => {
+  const runBlock = revisionControlRunBlock();
+  assert.match(runBlock, /managed_host="\$\{SENTINEL_TARGET_APP\}\.ubiquity-dao\.deno\.net"/u);
+  assert.match(
+    runBlock,
+    /target_host="\$\{SENTINEL_TARGET_APP\}-\$\{SENTINEL_TARGET_REVISION\}\.ubiquity-dao\.deno\.net"/u,
+  );
+  assert.match(
+    runBlock,
+    /current_host="\$\{SENTINEL_TARGET_APP\}-\$\{SENTINEL_EXPECTED_CURRENT_REVISION\}\.ubiquity-dao\.deno\.net"/u,
+  );
+  const baseStart = runBlock.indexOf('allow_net="api.github.com,api.deno.com,console.deno.com');
+  const denoStart = runBlock.indexOf("deno run \\");
+  assert.ok(baseStart >= 0 && denoStart > baseStart, "the computed host list must precede the executor invocation");
+  const hostList = runBlock.slice(baseStart, denoStart);
+  assert.match(hostList, /if \[ "\$SENTINEL_TARGET_APP" = "ai-ubq-fi" \]; then/u);
+  assert.match(hostList, /allow_net="\$\{allow_net\},ai\.ubq\.fi"/u);
+  assert.match(hostList, /\n\s+fi\n/u);
+  // The custom domain appears exactly once, inside the production-only branch.
+  assert.equal(runBlock.match(/ai\.ubq\.fi/gu)?.length, 1);
+  assert.equal(hostList.match(/allow_net="/gu)?.length, 2);
+});
+
+Deno.test("revision-control workflow keeps serialized deploy concurrency, approval, and inputs out of the run block", () => {
+  assert.match(revisionControlWorkflow, /on:\n\s+workflow_dispatch:\n\s+inputs:/u);
+  assert.match(revisionControlWorkflow, /group: ai-ubq-fi-deploy/u);
+  assert.match(revisionControlWorkflow, /cancel-in-progress: false/u);
+  assert.match(revisionControlWorkflow, /permissions:\n\s+contents: read/u);
+  assert.match(revisionControlWorkflow, /environment: production/u);
+  assert.match(revisionControlWorkflow, /if: inputs\.target_app == 'ai-ubq-fi'/u);
+  // The executor receives inputs only through the unchanged env mapping.
+  const executor = revisionControlExecutor();
+  const envStart = executor.indexOf("        env:");
+  const runStart = executor.indexOf("        run: |");
+  assert.ok(envStart >= 0 && runStart > envStart, "the executor env mapping must precede its run block");
+  const envMapping = executor.slice(envStart, runStart);
+  assert.match(envMapping, /SENTINEL_CORRELATION_ID: \$\{\{ inputs\.correlation_id \}\}/u);
+  assert.match(envMapping, /SENTINEL_TARGET_APP: \$\{\{ inputs\.target_app \}\}/u);
+  assert.match(envMapping, /SENTINEL_TARGET_GIT_SHA: \$\{\{ inputs\.target_git_sha \}\}/u);
+  assert.match(envMapping, /SENTINEL_TARGET_REVISION: \$\{\{ inputs\.target_revision \}\}/u);
+  assert.match(envMapping, /SENTINEL_EXPECTED_CURRENT_GIT_SHA: \$\{\{ inputs\.expected_current_git_sha \}\}/u);
+  assert.match(envMapping, /SENTINEL_EXPECTED_CURRENT_REVISION: \$\{\{ inputs\.expected_current_revision \}\}/u);
+  assert.match(envMapping, /SENTINEL_EXPECTED_DEVELOPMENT_GIT_SHA: \$\{\{ inputs\.expected_development_git_sha \}\}/u);
+  assert.match(envMapping, /DENO_DEPLOY_TOKEN: \$\{\{ secrets\.DENO_DEPLOY_TOKEN \}\}/u);
+  assert.match(envMapping, /GITHUB_TOKEN: \$\{\{ github\.token \}\}/u);
+  assert.doesNotMatch(revisionControlRunBlock(), /\$\{\{/u);
+  // The result artifact and its fail-closed collection stay intact.
+  assert.match(promoteJob, /Upload promotion result/u);
+  assert.match(promoteJob, /if: always\(\)/u);
+  assert.match(promoteJob, /path: sentinel-revision-control-result\.json/u);
+  assert.match(promoteJob, /if-no-files-found: error/u);
+  assert.match(promoteJob, /name: sentinel-revision-control-\$\{\{ github\.run_id \}\}/u);
 });
