@@ -55,11 +55,11 @@
     "schema_version": 1,
     "verdict": "ambiguous",
     "reason": "changed_state_without_verified_advancement",
-    "observation_count": 2,
-    "state_digest": "59a3a9053b44b84e",
+    "observation_count": 3,
+    "state_digest": "0575767f626d5bb5",
     "classifier": null,
     "resolved": "unknown",
     "resolved_reason": "classifier_not_provisioned",
-    "evaluated_at": "2026-09-05T18:49:19.423Z"
+    "evaluated_at": "2026-09-05T18:57:16.912Z"
   }
 }
