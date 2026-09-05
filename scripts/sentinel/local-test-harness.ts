@@ -83,6 +83,7 @@ export const SENTINEL_LOCAL_TEST_STAGES: readonly SentinelLocalTestStage[] = [
       "tests/sentinel-recovery.test.ts",
       "tests/sentinel-bootstrap.test.ts",
       "tests/sentinel-bootstrap-isolation.test.ts",
+      "tests/sentinel-provider-state.test.ts",
       "tests/sentinel-local-test-harness.test.ts",
     ],
   },

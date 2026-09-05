@@ -1314,6 +1314,7 @@ Deno.test({
       "scripts/sentinel/bootstrap/observation.ts",
       "scripts/sentinel/bootstrap/policy.ts",
       "scripts/sentinel/bootstrap/progress.ts",
+      "scripts/sentinel/bootstrap/provider-state.ts",
       "scripts/sentinel/bootstrap/recovery-ledger-summary.ts",
     ];
     const expectedResolved = new Set(modulePaths.map((path) => `${Deno.cwd()}/${path}`));

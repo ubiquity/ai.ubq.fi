@@ -12,7 +12,7 @@ const BOOTSTRAP_PACKAGE_DIR = "scripts/sentinel/bootstrap";
 // below from the real package bytes (never trusted from a second constant), so
 // a tampered package, a removed file, or an omitted nested file fails this test
 // and the workflow fails closed.
-const BOOTSTRAP_PACKAGE_MANIFEST_DIGEST = "318b11cc83ffc49fc419a1366072174879dd910a2a683ea9e5b78d9dca3aee01";
+const BOOTSTRAP_PACKAGE_MANIFEST_DIGEST = "a9a3ab1bfb652ec2caafdb74fff02d03a2809134b7ac603c6a8e8a763353f32c";
 
 // Provider/evolving sources that must never be reachable from the pinned
 // bootstrap package. Each is deliberately broken so an accidental import
