@@ -278,6 +278,59 @@ Deno.test("Provider Sentinel verification is exactly the canonical local command
   assert.doesNotMatch(workflow, /deno test\b/u, "CI must not define its own Sentinel verification steps");
 });
 
+Deno.test("isolated jobs lift the unprivileged userns restriction and probe network isolation before validation", () => {
+  const installStep = (document: string, name: string, nextName: string): string => {
+    const start = document.indexOf(`      - name: ${name}`);
+    assert.ok(start >= 0, `${name} step is missing`);
+    const end = document.indexOf(`      - name: ${nextName}`, start + 1);
+    assert.ok(end > start, `${name} step is missing its following boundary`);
+    return document.slice(start, end);
+  };
+  const sysctl = "sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0";
+  const fallback = "|| echo 'apparmor userns knob absent — the functional probe decides'";
+  const probe =
+    "bwrap --die-with-parent --new-session --unshare-net --unshare-pid --unshare-ipc --unshare-uts --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp -- /bin/true";
+  const cellInstall = installStep(
+    repair,
+    "Install isolated cell prerequisites",
+    "Run immutable Luna matrix cell",
+  );
+  const agentInstall = installStep(
+    converge,
+    "Install isolated-agent prerequisites",
+    "Prime locked Deno dependency cache",
+  );
+  for (
+    const [label, step, document, validationStep] of [
+      ["repair", cellInstall, repair, "Run immutable Luna matrix cell"],
+      ["converge", agentInstall, converge, "Run canonical local Sentinel verification"],
+    ] as const
+  ) {
+    const bubblewrapIndex = step.indexOf("sudo apt-get install --yes bubblewrap");
+    const sysctlIndex = step.indexOf(sysctl);
+    const fallbackIndex = step.indexOf(fallback);
+    const probeIndex = step.indexOf(probe);
+    assert.ok(
+      bubblewrapIndex >= 0 && sysctlIndex > bubblewrapIndex && fallbackIndex > sysctlIndex &&
+        probeIndex > sysctlIndex,
+      `${label} must install bubblewrap, lift the AppArmor userns restriction, and probe network isolation in order`,
+    );
+    assert.ok(
+      document.indexOf(probe) < document.indexOf(`      - name: ${validationStep}`),
+      `${label} must prove network isolation before validation`,
+    );
+  }
+  assert.equal(
+    workflow.split(probe).length - 1,
+    2,
+    "the functional network-isolation probe must exist exactly once per isolated job",
+  );
+  assert.ok(
+    !prepare.includes(sysctl) && !prepare.includes(probe),
+    "the userns prerequisite and probe must stay scoped to the isolated repair and converge jobs",
+  );
+});
+
 Deno.test("rolling review discovery independently drives the async reviewer gate", () => {
   const selectorStart = workflow.indexOf("- name: Select agent work");
   const selectorEnd = workflow.indexOf(

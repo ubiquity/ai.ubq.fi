@@ -970,11 +970,15 @@ Deno.test({
       "Quiet hourly archival must not install Codex",
     );
     assert(
-      /- name: Validate pinned Codex CLI argument contract\n\s+if: steps\.agent-work\.outputs\.needs_agent == 'true'/
+      /- name: Run canonical local Sentinel verification\n\s+shell: bash\n\s+run: \|\n\s+set -euo pipefail\n\s+# Verification belongs to one canonical local command; CI only repeats\n\s+# it and defines no Sentinel verification steps of its own\.\n\s+deno task sentinel:test-local/u
         .test(
           workflow,
         ),
-      "Quiet hourly archival must not run Codex CLI validation",
+      "Quiet hourly archival must run exactly the canonical local Sentinel verification",
+    );
+    assert(
+      !workflow.includes("Validate pinned Codex CLI argument contract"),
+      "Sentinel must not reinstate the removed independent pinned Codex CLI validation",
     );
     assert(workflow.includes("github.run_attempt == 1"), "Incident mode must reject human-triggered workflow re-runs");
     assert(workflow.includes("SENTINEL_AUTONOMY_ENABLED == 'true'"), "Incident mode must require autonomy");

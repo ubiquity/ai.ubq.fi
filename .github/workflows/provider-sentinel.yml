@@ -1,6 +1,12 @@
 name: Provider Sentinel
+run-name: Provider Sentinel ${{ github.event_name }} ${{ github.run_id }}
 
 on:
+  schedule:
+    # Rapid five-minute evaluation: encrypted evidence archival and one eligible backlog
+    # repair. Incidents trigger separately. The bootstrap workflow shares this cadence but
+    # is staggered by two minutes so the two workflows never fire in the same scheduled minute.
+    - cron: "*/5 * * * *"
   workflow_dispatch:
     inputs:
       sentinel_mode:
@@ -12,168 +18,2413 @@ on:
           - hourly
           - preview
           - incident
+      incident_id:
+        description: Opaque durable incident identifier
+        required: false
+        type: string
+        default: ""
+      incident_attempt:
+        description: Durable incident delivery attempt
+        required: false
+        type: string
+        default: ""
+      incident_start_ms:
+        description: First failed-request timestamp in milliseconds
+        required: false
+        type: string
+        default: ""
+      incident_ack_nonce:
+        description: Opaque acknowledgement nonce for this delivery attempt
+        required: false
+        type: string
+        default: ""
 
 concurrency:
-  group: provider-sentinel-diagnostic-${{ github.repository }}
+  # One repair cycle may operate on the repository or shared preview app at a time.
+  group: provider-sentinel-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  actions: write
+  contents: write
+  issues: write
+  pull-requests: write
 
 jobs:
-  diagnostic:
-    if: github.ref == 'refs/heads/codex/stability-handoff-2026-09-05-g552d65b8d4' && github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+  # The preparation job is the only writer of the cycle's immutable matrix
+  # manifest.  The coordinator-owned main.ts entrypoint uses the GitHub job
+  # identity as its phase contract; it emits MatrixPlanV1 at the fixed report
+  # path below before this job publishes the ciphertext envelope.
+  prepare:
+    if: >-
+      (
+        github.event_name == 'workflow_dispatch' &&
+        github.ref == 'refs/heads/development' &&
+        (
+          inputs.sentinel_mode == 'preview' ||
+          (
+            inputs.sentinel_mode == 'hourly' &&
+            vars.SENTINEL_AUTONOMY_ENABLED == 'true'
+          ) ||
+          (
+            inputs.sentinel_mode == 'incident' &&
+            github.actor_id == '319834869' &&
+            github.run_attempt == 1 &&
+            vars.SENTINEL_AUTONOMY_ENABLED == 'true'
+          )
+        )
+      ) ||
+      (
+        github.event_name == 'schedule' &&
+        vars.SENTINEL_AUTONOMY_ENABLED == 'true'
+      )
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
     permissions:
-      contents: read
-      actions: read
+      actions: write
+      contents: write
+      issues: read
+      pull-requests: read
+    outputs:
+      sentinel_mode: ${{ steps.select-mode.outputs.mode }}
+      base_sha: ${{ steps.matrix-plan.outputs.base_sha }}
+      plan_digest: ${{ steps.matrix-plan.outputs.plan_digest }}
+      matrix: ${{ steps.matrix-plan.outputs.matrix }}
+      has_cells: ${{ steps.matrix-plan.outputs.has_cells }}
+      plan_artifact_name: ${{ steps.matrix-plan.outputs.artifact_name }}
+      incident_claimed: ${{ steps.incident-claim.outcome == 'success' }}
     steps:
-      - name: Checkout pinned diagnostic SHA
+      - name: Require ciphertext-only artifact policy
+        shell: bash
+        env:
+          REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
+          SENTINEL_ARTIFACT_KEY: ${{ secrets.SENTINEL_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          echo "SENTINEL_ARTIFACT_POLICY_ACTIVE=false" >> "$GITHUB_ENV"
+          case "$REPOSITORY_VISIBILITY" in
+            public|private|internal) ;;
+            *) echo "::error::Provider Sentinel received an unsupported repository visibility."; exit 1 ;;
+          esac
+          if [ -z "$SENTINEL_ARTIFACT_KEY" ]; then
+            echo "::error::SENTINEL_ARTIFACT_KEY is required before log capture."
+            exit 1
+          fi
+          decoded_bytes="$(printf '%s' "$SENTINEL_ARTIFACT_KEY" | base64 --decode | wc -c | tr -d ' ')"
+          if [ "$decoded_bytes" != "32" ]; then
+            echo "::error::SENTINEL_ARTIFACT_KEY must encode exactly 32 bytes."
+            exit 1
+          fi
+          echo "SENTINEL_ARTIFACT_POLICY_ACTIVE=true" >> "$GITHUB_ENV"
+          echo "Ciphertext-only evidence policy active for $REPOSITORY_VISIBILITY visibility." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Select immutable run mode
+        id: select-mode
+        shell: bash
+        env:
+          REQUESTED_MODE: ${{ inputs.sentinel_mode }}
+          REQUESTED_INCIDENT_ID: ${{ inputs.incident_id }}
+          REQUESTED_INCIDENT_ATTEMPT: ${{ inputs.incident_attempt }}
+          REQUESTED_INCIDENT_START_MS: ${{ inputs.incident_start_ms }}
+          REQUESTED_INCIDENT_ACK_NONCE: ${{ inputs.incident_ack_nonce }}
+          EXPECTED_SENTINEL_ACTOR_ID: "319834869"
+          EVENT_ACTOR_ID: ${{ github.actor_id }}
+          EVENT_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          case "$GITHUB_EVENT_NAME" in
+            workflow_dispatch)
+              case "$REQUESTED_MODE" in
+                preview|hourly) mode="$REQUESTED_MODE" ;;
+                incident)
+                  if [ "$EVENT_ACTOR_ID" != "$EXPECTED_SENTINEL_ACTOR_ID" ]; then
+                    echo "::error::Incident dispatch did not come from the Ubiquity Sentinel GitHub App."; exit 1
+                  fi
+                  if [ "$EVENT_RUN_ATTEMPT" != "1" ]; then
+                    echo "::error::Incident workflow re-runs are forbidden."; exit 1
+                  fi
+                  if ! [[ "$REQUESTED_INCIDENT_ID" =~ ^provider-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]; then
+                    echo "::error::Incident ID is invalid."; exit 1
+                  fi
+                  if ! [[ "$REQUESTED_INCIDENT_ATTEMPT" =~ ^[1-3]$ ]]; then
+                    echo "::error::Incident attempt is invalid."; exit 1
+                  fi
+                  if ! [[ "$REQUESTED_INCIDENT_START_MS" =~ ^[1-9][0-9]{12}$ ]]; then
+                    echo "::error::Incident start is invalid."; exit 1
+                  fi
+                  if ! [[ "$REQUESTED_INCIDENT_ACK_NONCE" =~ ^[A-Za-z0-9_-]{43}$ ]]; then
+                    echo "::error::Incident acknowledgement nonce is invalid."; exit 1
+                  fi
+                  mode=incident
+                  echo "SENTINEL_INCIDENT_ID=$REQUESTED_INCIDENT_ID" >> "$GITHUB_ENV"
+                  echo "SENTINEL_INCIDENT_ATTEMPT=$REQUESTED_INCIDENT_ATTEMPT" >> "$GITHUB_ENV"
+                  echo "SENTINEL_INCIDENT_START_MS=$REQUESTED_INCIDENT_START_MS" >> "$GITHUB_ENV"
+                  echo "SENTINEL_INCIDENT_ACK_NONCE=$REQUESTED_INCIDENT_ACK_NONCE" >> "$GITHUB_ENV"
+                  echo "SENTINEL_SIGNAL_ID=${REQUESTED_INCIDENT_ID}-a${REQUESTED_INCIDENT_ATTEMPT}" >> "$GITHUB_ENV"
+                  ;;
+                *) echo "::error::Unsupported Provider Sentinel workflow mode."; exit 1 ;;
+              esac
+              ;;
+            schedule)
+              if [ "${{ github.event.schedule }}" = "*/5 * * * *" ]; then mode=hourly; else
+                echo "::error::Unsupported Provider Sentinel schedule."; exit 1
+              fi
+              ;;
+                *) echo "::error::Unsupported Provider Sentinel event."; exit 1 ;;
+          esac
+          echo "SENTINEL_MODE=$mode" >> "$GITHUB_ENV"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "Sentinel mode: $mode" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Claim incident workflow run
+        id: incident-claim
+        if: github.event_name == 'workflow_dispatch' && inputs.sentinel_mode == 'incident'
+        shell: bash
+        env:
+          DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
+          SENTINEL_INCIDENT_ID: ${{ inputs.incident_id }}
+          SENTINEL_INCIDENT_ATTEMPT: ${{ inputs.incident_attempt }}
+          SENTINEL_INCIDENT_ACK_NONCE: ${{ inputs.incident_ack_nonce }}
+        run: |
+          set -euo pipefail
+          response_file="$RUNNER_TEMP/sentinel-claim-response"
+          request_body="$(jq -cn --arg incident_id "$SENTINEL_INCIDENT_ID" --arg attempt "$SENTINEL_INCIDENT_ATTEMPT" --arg workflow_run_id "$GITHUB_RUN_ID" --arg ack_nonce "$SENTINEL_INCIDENT_ACK_NONCE" '{incident_id: $incident_id, attempt: ($attempt | tonumber), workflow_run_id: ($workflow_run_id | tonumber), ack_nonce: $ack_nonce}')"
+          status="$(curl --silent --show-error --max-time 20 --output "$response_file" --write-out '%{http_code}' --request POST --header "Authorization: Bearer $DENO_DEPLOY_TOKEN" --header "Content-Type: application/json" --data "$request_body" https://ai-ubq-fi.ubiquity-dao.deno.net/admin/sentinel/incidents/claim)"
+          if [ "$status" != "204" ]; then echo "::error::Incident workflow claim failed with HTTP $status."; exit 1; fi
+
+      - name: Configure private Deno cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno_dir="$RUNNER_TEMP/sentinel-deno-cache"
+          mkdir -p "$deno_dir"; chmod 700 "$deno_dir"
+          echo "DENO_DIR=$deno_dir" >> "$GITHUB_ENV"
+          echo "SENTINEL_CODEX_AUTH_STATE_DIR=$RUNNER_TEMP/sentinel-codex-auth-state" >> "$GITHUB_ENV"
+          echo "SENTINEL_CODEX_AUTH_STATE_ENVELOPE=$RUNNER_TEMP/sentinel-codex-auth-envelope/sentinel-codex-auth-state-v1.json" >> "$GITHUB_ENV"
+
+      - name: Check out preparation repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: 7430eba59512962f42e6df63abab2115df16204f
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Setup Deno
-        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
+      - name: Install Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: "2.9.5"
+          deno-version: 2.9.5
 
-      - name: Download encrypted cell evidence
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: sentinel-matrix-cell-v1-33972701194-1-cell-07fcdf4266069ed33f6b6a5e94594a140ef43fa304ffec1995c244683f1c7d58
-          path: ${{ runner.temp }}/sentinel-cell-diagnostic
-          run-id: 33972701194
-          github-token: ${{ github.token }}
+      - name: Restore encrypted Codex auth state for preparation
+        id: auth-state-prepare
+        continue-on-error: true
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SENTINEL_CODEX_AUTH_GENERATION: ${{ vars.SENTINEL_CODEX_AUTH_GENERATION }}
+          SENTINEL_CODEX_AUTH_STATE_KEY: ${{ secrets.SENTINEL_CODEX_AUTH_STATE_KEY }}
+          SENTINEL_CODEX_AUTH_SLOT_1_B64: ${{ secrets.SENTINEL_CODEX_AUTH_SLOT_1_B64 }}
+          SENTINEL_CODEX_AUTH_SLOT_2_B64: ${{ secrets.SENTINEL_CODEX_AUTH_SLOT_2_B64 }}
+        run: |
+          set -euo pipefail
+          deno run --frozen --lock=deno.lock --allow-env --allow-net --allow-read="$RUNNER_TEMP" --allow-write="$RUNNER_TEMP" --allow-run=unzip scripts/sentinel/auth-state.ts prepare "$SENTINEL_CODEX_AUTH_STATE_DIR"
 
-      - name: Emit allowlisted diagnostic metadata
+      - name: Probe preparation Codex auth readiness
+        id: auth-state-readiness
+        if: always() && steps.auth-state-prepare.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno run --frozen --lock=deno.lock --allow-env --allow-net --allow-read="$RUNNER_TEMP" --allow-write="$RUNNER_TEMP" scripts/sentinel/auth-state.ts probe "$SENTINEL_CODEX_AUTH_STATE_DIR"
+
+      - name: Enforce preparation auth readiness
+        if: always()
+        shell: bash
+        env:
+          PREPARE_OUTCOME: ${{ steps.auth-state-prepare.outcome }}
+          READINESS_OUTCOME: ${{ steps.auth-state-readiness.outcome }}
+        run: |
+          set -euo pipefail
+          if [ "$PREPARE_OUTCOME" != "success" ] || [ "$READINESS_OUTCOME" != "success" ]; then
+            echo "::error::Provider Sentinel preparation auth state is not ready."; exit 1
+          fi
+
+      - name: Install preparation prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
+          npm install --global --ignore-scripts --no-audit --no-fund @openai/codex@0.149.0
+          bwrap --version
+          codex --version
+          deno cache --frozen --lock=deno.lock scripts/sentinel/main.ts scripts/sentinel/matrix.ts
+
+      - name: Prepare immutable MatrixPlanV1
+        id: matrix-plan
+        shell: bash
+        env:
+          DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
+          PREVIEW_UOS_AI_USER_TOKEN: ${{ secrets.PREVIEW_UOS_AI_USER_TOKEN }}
+          SENTINEL_REPLAY_KEY: ${{ secrets.SENTINEL_REPLAY_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # m05 wires this existing --mode entrypoint to the prepare phase by
+          # the stable GITHUB_JOB=prepare contract; no new CLI flag is used.
+          deno run --cached-only --frozen --lock=deno.lock --allow-env --allow-net --allow-read --allow-write --allow-run scripts/sentinel/main.ts --mode "$SENTINEL_MODE"
+          plan_path=".sentinel/reports/matrix-plan.json"
+          test -s "$plan_path"
+          jq -e --arg run_id "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" --arg base_sha "$(jq -r '.base_sha' "$plan_path")" '
+            .schema_version == 1 and .run_id == $run_id and .run_attempt == ($attempt | tonumber) and
+            (.base_sha | test("^[0-9a-f]{40}$")) and .maximum_parallelism == 4 and
+            (.cells | type == "array" and length <= 4) and
+            all(.cells[]; (.base_sha == $base_sha) and (.branch | startswith("sentinel/candidate-")) and
+              (.cell_id | test("^cell-[0-9a-f]{64}$")))
+          ' "$plan_path" >/dev/null
+          matrix_json="$(jq -c '{include: [.cells[] | {cell_id, finding_ids, base_sha, branch, report_path, artifact_name}]}' "$plan_path")"
+          has_cells="$(jq -r 'if (.cells | length) > 0 then "true" else "false" end' "$plan_path")"
+          base_sha="$(jq -r '.base_sha' "$plan_path")"
+          plan_digest="$(jq -r '.manifest_digest' "$plan_path")"
+          artifact_name="sentinel-matrix-plan-v1-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          printf 'base_sha=%s\nplan_digest=%s\nhas_cells=%s\nartifact_name=%s\n' "$base_sha" "$plan_digest" "$has_cells" "$artifact_name" >> "$GITHUB_OUTPUT"
+          printf 'matrix=%s\n' "$matrix_json" >> "$GITHUB_OUTPUT"
+          echo "Matrix plan prepared at immutable base $base_sha with $has_cells cell set." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Encrypt preparation evidence
+        shell: bash
         env:
           SENTINEL_ARTIFACT_KEY: ${{ secrets.SENTINEL_ARTIFACT_KEY }}
         run: |
-          deno eval '
-          import { decodeSentinelArtifactKey, decryptSentinelArtifact } from "./scripts/sentinel/artifact-crypto.ts";
+          set -euo pipefail
+          deno run --allow-env=GITHUB_ACTIONS,SENTINEL_ARTIFACT_KEY --allow-read=.sentinel/raw-logs,.sentinel/reports,.sentinel/encrypted --allow-write=.sentinel/encrypted scripts/sentinel/encrypt-artifacts.ts
+          test -f .sentinel/encrypted/sentinel-evidence-v1.json
 
-          const CELL_REPORT_PATH =
-            "reports/matrix/cell-07fcdf4266069ed33f6b6a5e94594a140ef43fa304ffec1995c244683f1c7d58/cell.json";
-          const EXPECTED_RUN_ID = "33972701194";
-          const EXPECTED_BASE_SHA = "7430eba59512962f42e6df63abab2115df16204f";
-          const REASON_CATEGORIES = [
-            "Focused cell validation failed",
-            "Cell replay detected a regression",
-            "The cell agent did not return a final structured message",
-            "The cell agent returned invalid JSON",
-            "The cell agent violated the implementation output contract",
-            "The cell agent did not cover exactly every finding",
-            "The cell agent did not attribute every changed path to a finding",
-            "Cell validation evidence was incomplete",
-            "Codex invocation stopped (invalid_options).",
-            "Codex invocation stopped (last_message_missing).",
-            "Codex invocation stopped (output_limit_exceeded).",
-            "Codex invocation stopped (native_review_missing).",
-          ];
-          const VALID_CHECK_NAME = /^[a-z][a-z0-9:-]{0,79}$/;
+      - name: Upload encrypted immutable matrix plan
+        id: matrix-plan-upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sentinel-matrix-plan-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .sentinel/encrypted/sentinel-evidence-v1.json
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 90
 
-          const evidencePath =
-            "${{ runner.temp }}/sentinel-cell-diagnostic/sentinel-evidence-v1.json";
+      - name: Scrub preparation plaintext after durable upload
+        if: always() && steps.matrix-plan-upload.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno run --allow-env=GITHUB_ACTIONS --allow-read=.sentinel/raw-logs,.sentinel/reports,.sentinel/candidate-worktree,.sentinel/private --allow-write=.sentinel/raw-logs,.sentinel/reports,.sentinel/candidate-worktree,.sentinel/private scripts/sentinel/scrub-artifacts.ts
 
-          let keyBytes = new Uint8Array(0);
-          let decryptedFiles: Array<{ path: string; bytes: Uint8Array<ArrayBuffer> }> = [];
-          let plainBytes = new Uint8Array(0);
-          let reportText = "";
-          try {
-            const rawKey = Deno.env.get("SENTINEL_ARTIFACT_KEY") ?? "";
-            if (rawKey === "") throw new Error("Diagnostic artifact key missing");
-            keyBytes = decodeSentinelArtifactKey(rawKey);
-            const encrypted = await Deno.readFile(evidencePath);
+  repair:
+    needs: prepare
+    if: needs.prepare.result == 'success' && needs.prepare.outputs.has_cells == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    permissions:
+      actions: write
+      contents: write
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - name: Require encrypted matrix inputs
+        shell: bash
+        env:
+          SENTINEL_ARTIFACT_KEY: ${{ secrets.SENTINEL_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SENTINEL_ARTIFACT_KEY" ]; then echo "::error::SENTINEL_ARTIFACT_KEY is required."; exit 1; fi
+          decoded_bytes="$(printf '%s' "$SENTINEL_ARTIFACT_KEY" | base64 --decode | wc -c | tr -d ' ')"
+          test "$decoded_bytes" = 32
+
+      - name: Check out immutable cell base
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ matrix.base_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: 2.9.5
+
+      - name: Configure private cell state
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno_dir="$RUNNER_TEMP/sentinel-deno-cache"; mkdir -p "$deno_dir"; chmod 700 "$deno_dir"
+          echo "DENO_DIR=$deno_dir" >> "$GITHUB_ENV"
+          echo "SENTINEL_CODEX_AUTH_STATE_DIR=$RUNNER_TEMP/sentinel-codex-auth-state" >> "$GITHUB_ENV"
+
+      - name: Create exact cell branch and verify base
+        shell: bash
+        env:
+          CELL_BASE_SHA: ${{ matrix.base_sha }}
+          CELL_BRANCH: ${{ matrix.branch }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CELL_BASE_SHA"
+          git switch --create "$CELL_BRANCH" "$CELL_BASE_SHA"
+          test "$(git rev-parse HEAD)" = "$CELL_BASE_SHA"
+          test "$(git branch --show-current)" = "$CELL_BRANCH"
+
+      - name: Download encrypted immutable plan
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.prepare.outputs.plan_artifact_name }}
+          path: ${{ runner.temp }}/sentinel-matrix-plan
+
+      - name: Restore Codex auth state for cell
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SENTINEL_CODEX_AUTH_GENERATION: ${{ vars.SENTINEL_CODEX_AUTH_GENERATION }}
+          SENTINEL_CODEX_AUTH_STATE_KEY: ${{ secrets.SENTINEL_CODEX_AUTH_STATE_KEY }}
+          SENTINEL_CODEX_AUTH_SLOT_1_B64: ${{ secrets.SENTINEL_CODEX_AUTH_SLOT_1_B64 }}
+          SENTINEL_CODEX_AUTH_SLOT_2_B64: ${{ secrets.SENTINEL_CODEX_AUTH_SLOT_2_B64 }}
+        run: |
+          set -euo pipefail
+          deno run --frozen --lock=deno.lock --allow-env --allow-net --allow-read="$RUNNER_TEMP" --allow-write="$RUNNER_TEMP" --allow-run=unzip scripts/sentinel/auth-state.ts prepare "$SENTINEL_CODEX_AUTH_STATE_DIR"
+
+      - name: Materialize and verify immutable cell plan
+        shell: bash
+        env:
+          SENTINEL_ARTIFACT_KEY: ${{ secrets.SENTINEL_ARTIFACT_KEY }}
+          CELL_ID: ${{ matrix.cell_id }}
+          CELL_BASE_SHA: ${{ matrix.base_sha }}
+          CELL_BRANCH: ${{ matrix.branch }}
+        run: |
+          set -euo pipefail
+          envelope="$(find "$RUNNER_TEMP/sentinel-matrix-plan" -type f -name sentinel-evidence-v1.json -print -quit)"
+          test -n "$envelope"
+          deno eval --frozen --lock=deno.lock '
+            import { decodeSentinelArtifactKey, decryptSentinelArtifact } from "./scripts/sentinel/artifact-crypto.ts";
+            import { parseMatrixPlanV1 } from "./scripts/sentinel/matrix.ts";
+            import { matrixCellWorkSelectionFromArtifact } from "./scripts/sentinel/matrix-cell.ts";
+            const root = Deno.env.get("RUNNER_TEMP")!;
+            const entries: string[] = [];
+            for await (const entry of Deno.readDir(`${root}/sentinel-matrix-plan`)) if (entry.isFile) entries.push(entry.name);
+            const envelope = `${root}/sentinel-matrix-plan/${entries.find((name) => name === "sentinel-evidence-v1.json") ?? ""}`;
+            if (!envelope.endsWith("/sentinel-evidence-v1.json")) throw new Error("encrypted matrix plan is missing");
+            const key = decodeSentinelArtifactKey(Deno.env.get("SENTINEL_ARTIFACT_KEY")!);
             try {
-              decryptedFiles = await decryptSentinelArtifact(encrypted, keyBytes);
-            } finally {
-              encrypted.fill(0);
-            }
-            const reportFile = decryptedFiles.find((file) => file.path === CELL_REPORT_PATH);
-            if (reportFile === undefined) throw new Error("Diagnostic cell report missing");
-            plainBytes = reportFile.bytes;
-            reportText = new TextDecoder().decode(plainBytes);
-            const report = JSON.parse(reportText);
-            if (report.run_id !== EXPECTED_RUN_ID) throw new Error("Diagnostic run identity mismatch");
-            if (report.base_sha !== EXPECTED_BASE_SHA) throw new Error("Diagnostic base identity mismatch");
-            if (report.status !== "failed") throw new Error("Diagnostic cell status mismatch");
-            if (!Array.isArray(report.changed_paths)) throw new Error("Diagnostic report shape mismatch");
-
-            const boundedVerbatim = (value: string): string =>
-              value.replaceAll(rawKey, "[REDACTED]").slice(0, 4096);
-            const failureReason = typeof report.failure_reason === "string" ? report.failure_reason : null;
-            let reasonIndex = null;
-            let reasonOutput = "noncanonical_reason";
-            if (failureReason !== null) {
-              const matched = REASON_CATEGORIES.indexOf(failureReason);
-              if (matched !== -1) {
-                reasonIndex = matched;
-                reasonOutput = failureReason;
-              }
-            }
-
-            const validationChecks = [];
-            for (const check of report.validation.checks ?? []) {
-              if (
-                typeof check.name !== "string" || typeof check.passed !== "boolean" ||
-                typeof check.detail !== "string"
-              ) continue;
-              let detailCategory = "unclassified_detail";
-              if (REASON_CATEGORIES.includes(check.detail)) detailCategory = check.detail;
-              else if (check.detail === "Candidate validation failed") detailCategory = "Candidate validation failed";
-              validationChecks.push({
-                name: VALID_CHECK_NAME.test(check.name) ? check.name : "unknown_check",
-                passed: check.passed,
-                detail_category: detailCategory,
-                detail_text: boundedVerbatim(check.detail),
-              });
-            }
-
-            const fixedOutput: Record<string, unknown> = {
-              failure_reason_index: reasonIndex,
-              failure_reason: reasonOutput,
-              failure_reason_detail: failureReason === null ? null : boundedVerbatim(failureReason),
-              changed_path_count: report.changed_paths.length,
-              validation_checks: validationChecks,
-            };
-            if (typeof report.validation.passed === "boolean") fixedOutput.validation_passed = report.validation.passed;
-            if (typeof report.replay.passed === "boolean") fixedOutput.replay_passed = report.replay.passed;
-            console.log(JSON.stringify(fixedOutput));
-          } finally {
-            keyBytes.fill(0);
-            for (const file of decryptedFiles) file.bytes.fill(0);
-            plainBytes.fill(0);
-            reportText = "";
-          }
+              const files = await decryptSentinelArtifact(await Deno.readFile(envelope), key);
+              try {
+                const planFile = files.find((file) => file.path === "reports/matrix-plan.json");
+                const triageFile = files.find((file) => file.path === "reports/triage.json");
+                if (!planFile || !triageFile) throw new Error("Matrix plan or triage report was not found in ciphertext");
+                const plan = await parseMatrixPlanV1(planFile.bytes);
+                const cell = plan.cells.find((candidate) => candidate.cell_id === Deno.env.get("CELL_ID"));
+                if (!cell || cell.base_sha !== Deno.env.get("CELL_BASE_SHA") || cell.branch !== Deno.env.get("CELL_BRANCH")) throw new Error("cell contract drifted from MatrixPlanV1");
+                await Deno.writeFile(`${root}/sentinel-matrix-plan.json`, planFile.bytes, { create: true, mode: 0o600 });
+                await Deno.writeFile(`${root}/sentinel-matrix-triage.json`, triageFile.bytes, { create: true, mode: 0o600 });
+                const workSelection = matrixCellWorkSelectionFromArtifact(files);
+                await Deno.writeTextFile(`${root}/sentinel-matrix-work-selection.json`, JSON.stringify(workSelection), { create: true, mode: 0o600 });
+              } finally { for (const file of files) file.bytes.fill(0); }
+            } finally { key.fill(0); }
           '
 
-      - name: Install baseline validation prerequisites
+      - name: Install isolated cell prerequisites
+        shell: bash
         run: |
+          set -euo pipefail
+          sudo apt-get update; sudo apt-get install --yes bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 \
+            || echo 'apparmor userns knob absent — the functional probe decides'
+          bwrap --die-with-parent --new-session --unshare-net --unshare-pid --unshare-ipc --unshare-uts --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp -- /bin/true
+          npm install --global --ignore-scripts --no-audit --no-fund @openai/codex@0.149.0
+          mkdir -p "$RUNNER_TEMP/sentinel-bin"
+          GOBIN="$RUNNER_TEMP/sentinel-bin" go install github.com/zricethezav/gitleaks/v8@v8.28.0
+          echo "$RUNNER_TEMP/sentinel-bin" >> "$GITHUB_PATH"
+          bwrap --version; codex --version; "$RUNNER_TEMP/sentinel-bin/gitleaks" version
+          deno cache --frozen --lock=deno.lock scripts/sentinel/matrix-cell.ts scripts/sentinel/validation.ts tests/*.ts
+
+      - name: Run immutable Luna matrix cell
+        id: matrix-cell-run
+        env:
+          CELL_ID: ${{ matrix.cell_id }}
+          CELL_BASE_SHA: ${{ matrix.base_sha }}
+          CELL_BRANCH: ${{ matrix.branch }}
+          CELL_REPORT_PATH: ${{ runner.temp }}/sentinel-cell-report.json
+          SENTINEL_ARTIFACT_KEY: ${{ secrets.SENTINEL_ARTIFACT_KEY }}
+          SENTINEL_CODEX_AUTH_STATE_KEY: ${{ secrets.SENTINEL_CODEX_AUTH_STATE_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno eval --frozen --lock=deno.lock '
+            import { IMPLEMENTATION_OUTPUT_SCHEMA, isTriageReport } from "./scripts/sentinel/types.ts";
+            import { parseMatrixPlanV1 } from "./scripts/sentinel/matrix.ts";
+            import { runMatrixCell } from "./scripts/sentinel/matrix-cell.ts";
+            import { runCandidateValidation } from "./scripts/sentinel/validation.ts";
+            const env = (name: string): string => Deno.env.get(name) ?? "";
+            const root = env("RUNNER_TEMP");
+            const plan = await parseMatrixPlanV1(await Deno.readTextFile(`${root}/sentinel-matrix-plan.json`));
+            const triageValue: unknown = JSON.parse(await Deno.readTextFile(`${root}/sentinel-matrix-triage.json`));
+            if (!isTriageReport(triageValue)) throw new Error("Matrix cell triage report is invalid");
+            const cell = plan.cells.find((candidate) => candidate.cell_id === env("CELL_ID"));
+            if (!cell) throw new Error("Matrix cell is absent from the immutable plan");
+            const authSlots: Record<string, string> = {};
+            const sensitiveValues = [env("SENTINEL_ARTIFACT_KEY"), env("SENTINEL_CODEX_AUTH_STATE_KEY"), env("GITHUB_TOKEN")].filter((value) => value.length >= 8);
+            const encode = (value: string): string => { const bytes = new TextEncoder().encode(value); try { let binary = ""; for (const byte of bytes) binary += String.fromCharCode(byte); return btoa(binary); } finally { bytes.fill(0); } };
+            for (const slot of [1, 2] as const) {
+              try {
+                const raw = await Deno.readTextFile(`${root}/sentinel-codex-auth-state/slots/${slot}/auth.json`);
+                authSlots[`slot${slot}B64`] = encode(raw);
+                const parsed = JSON.parse(raw);
+                for (const value of Object.values(parsed.tokens ?? {})) if (typeof value === "string" && value.length >= 8) sensitiveValues.push(value);
+              } catch (error) { if (!(error instanceof Deno.errors.NotFound)) throw error; }
+            }
+            await Deno.writeTextFile(`${root}/sentinel-cell-implementation-schema.json`, JSON.stringify(IMPLEMENTATION_OUTPUT_SCHEMA), { create: true, mode: 0o600 });
+            const workSelectionValue = await Deno.readTextFile(`${root}/sentinel-matrix-work-selection.json`).catch(() => "null");
+            const workSelection = JSON.parse(workSelectionValue);
+            if (workSelection !== null && (
+              typeof workSelection.source_kind !== "string" || typeof workSelection.source_id !== "string" ||
+              typeof workSelection.source_revision !== "string"
+            )) throw new Error("Matrix work selection is invalid");
+            const report = await runMatrixCell({
+              plan, cell, checkoutPath: Deno.cwd(), reportPath: env("CELL_REPORT_PATH"),
+              secretScanReportPath: `${root}/sentinel-cell-secret-scan.json`, outputSchemaPath: `${root}/sentinel-cell-implementation-schema.json`,
+              authSlots, sensitiveValues, findings: triageValue.findings.filter((finding) => cell.finding_ids.includes(finding.id)),
+              workSelection: workSelection ?? undefined,
+              validation: async ({ checkoutPath }) => {
+                try {
+                  await runCandidateValidation({ cwd: checkoutPath, reportPath: `${root}/sentinel-cell-validation.json`, privateDir: root, denoDirectory: env("DENO_DIR") });
+                  return { passed: true, checks: [{ name: "candidate-validation", passed: true, detail: "existing candidate validation passed" }] };
+                } catch (error) {
+                  return { passed: false, checks: [{ name: "candidate-validation", passed: false, detail: error instanceof Error ? error.message : "candidate validation failed" }] };
+                }
+              },
+            });
+            await Deno.writeTextFile(`${root}/sentinel-cell-status`, report.status, { create: true, mode: 0o600 });
+          '
+
+      - name: Publish exact cell branch with lease protection
+        id: cell-push
+        if: always()
+        continue-on-error: true
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CELL_BRANCH: ${{ matrix.branch }}
+          CELL_REPORT_PATH: ${{ runner.temp }}/sentinel-cell-report.json
+        run: |
+          set -euo pipefail
+          status="$(tr -d '\r\n' < "$CELL_REPORT_PATH" | jq -r '.status' 2>/dev/null || true)"
+          if [ "$status" != "succeeded" ]; then echo "Cell did not produce a publishable success report."; exit 0; fi
+          basic_token="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 --wrap=0)"
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $basic_token" GIT_TERMINAL_PROMPT=0
+          remote_sha="$(git ls-remote origin "refs/heads/$CELL_BRANCH" | awk 'NF { print $1 }')"
+          remote_sha="${remote_sha:-0000000000000000000000000000000000000000}"
+          if ! [[ "$remote_sha" =~ ^[0-9a-f]{40}$ ]]; then echo "::error::Cell remote SHA is invalid."; exit 1; fi
+          git push --force-with-lease="refs/heads/$CELL_BRANCH:$remote_sha" origin "HEAD:refs/heads/$CELL_BRANCH"
+          unset basic_token GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_TERMINAL_PROMPT
+
+      - name: Encrypt cell report
+        if: always()
+        shell: bash
+        env:
+          CELL_ID: ${{ matrix.cell_id }}
+          SENTINEL_ARTIFACT_KEY: ${{ secrets.SENTINEL_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ".sentinel/reports/matrix/${CELL_ID}"
+          cp "$RUNNER_TEMP/sentinel-cell-report.json" ".sentinel/reports/matrix/${CELL_ID}/cell.json"
+          # Retry evidence (recovery identity and candidate snapshot) is
+          # derived from the report path; only ciphertext is ever uploaded.
+          if [ -d "$RUNNER_TEMP/sentinel-cell-report.json.retry-evidence" ]; then
+            cp -a "$RUNNER_TEMP/sentinel-cell-report.json.retry-evidence"/. ".sentinel/reports/matrix/${CELL_ID}/"
+          fi
+          deno run --allow-env=GITHUB_ACTIONS,SENTINEL_ARTIFACT_KEY --allow-read=.sentinel/raw-logs,.sentinel/reports,.sentinel/encrypted --allow-write=.sentinel/encrypted scripts/sentinel/encrypt-artifacts.ts
+
+      - name: Upload encrypted cell evidence
+        id: cell-evidence-upload
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: .sentinel/encrypted/sentinel-evidence-v1.json
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 90
+
+      - name: Require successful immutable cell publication
+        if: always()
+        shell: bash
+        env:
+          CELL_ID: ${{ matrix.cell_id }}
+          CELL_EVIDENCE_UPLOAD_OUTCOME: ${{ steps.cell-evidence-upload.outcome }}
+        run: |
+          set -euo pipefail
+          status="$(jq -r '.status // "missing"' "$RUNNER_TEMP/sentinel-cell-report.json" 2>/dev/null || printf missing)"
+          push_outcome="${{ steps.cell-push.outcome }}"
+          evidence_dir=".sentinel/reports/matrix/${CELL_ID}"
+          case "$status" in
+            succeeded)
+              if [ "$push_outcome" != "success" ]; then
+                echo "::error::Required matrix cell failed closed: status=$status push=$push_outcome"
+                exit 1
+              fi
+              ;;
+            retry_pending)
+              # A retry_pending cell is a valid durable publication only when its
+              # authenticated retry evidence (recovery identity and candidate
+              # snapshot) was captured beside the report and the encrypted cell
+              # evidence was durably uploaded; anything else fails closed.
+              if [ "$CELL_EVIDENCE_UPLOAD_OUTCOME" != "success" ] || \
+                [ ! -s "$evidence_dir/recovery-record.json" ] || \
+                [ ! -s "$evidence_dir/manifest.json" ]; then
+                echo "::error::Required matrix cell retry evidence is missing: status=$status upload=$CELL_EVIDENCE_UPLOAD_OUTCOME"
+                exit 1
+              fi
+              head_sha="$(jq -r '.head_sha // empty' "$RUNNER_TEMP/sentinel-cell-report.json" 2>/dev/null)"
+              if [ -n "$head_sha" ]; then
+                echo "::error::Required matrix cell retry_pending report claims a published head."
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::Required matrix cell failed closed: status=$status push=$push_outcome"
+              exit 1
+              ;;
+          esac
+
+      - name: Scrub cell plaintext after durable upload
+        if: always() && steps.cell-evidence-upload.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno run --allow-env=GITHUB_ACTIONS --allow-read=.sentinel/raw-logs,.sentinel/reports,.sentinel/candidate-worktree,.sentinel/private --allow-write=.sentinel/raw-logs,.sentinel/reports,.sentinel/candidate-worktree,.sentinel/private scripts/sentinel/scrub-artifacts.ts
+
+      - name: Remove cell plaintext and auth state
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          for target in "$RUNNER_TEMP/sentinel-codex-auth-state" "$RUNNER_TEMP/sentinel-matrix-plan" "$RUNNER_TEMP/sentinel-matrix-plan.json" "$RUNNER_TEMP/sentinel-matrix-triage.json" "$RUNNER_TEMP/sentinel-matrix-work-selection.json" "$RUNNER_TEMP/sentinel-cell-report.json" "$RUNNER_TEMP/sentinel-cell-report.json.retry-evidence" "$RUNNER_TEMP/sentinel-cell-report.json.retry-evidence.staging" "$RUNNER_TEMP/sentinel-cell-report.json.retry-evidence.previous"; do
+            if [ -e "$target" ]; then find "$target" -type f -exec sh -c ': > "$1"' _ {} \; 2>/dev/null || true; rm -rf -- "$target"; fi
+          done
+
+  converge:
+    needs: [prepare, repair]
+    if: >-
+      always() &&
+      (
+        github.event_name == 'workflow_dispatch' &&
+        github.ref == 'refs/heads/development' &&
+        (
+          inputs.sentinel_mode == 'preview' ||
+          (
+            inputs.sentinel_mode == 'hourly' &&
+            vars.SENTINEL_AUTONOMY_ENABLED == 'true'
+          ) ||
+          (
+            inputs.sentinel_mode == 'incident' &&
+            github.actor_id == '319834869' &&
+            github.run_attempt == 1 &&
+            vars.SENTINEL_AUTONOMY_ENABLED == 'true'
+          )
+        )
+      ) ||
+      (
+        github.event_name == 'schedule' &&
+        vars.SENTINEL_AUTONOMY_ENABLED == 'true'
+      )
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    permissions:
+      actions: write
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Require ciphertext-only artifact policy
+        shell: bash
+        env:
+          REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
+          SENTINEL_ARTIFACT_KEY: ${{ secrets.SENTINEL_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          echo "SENTINEL_ARTIFACT_POLICY_ACTIVE=false" >> "$GITHUB_ENV"
+          case "$REPOSITORY_VISIBILITY" in
+            public|private|internal) ;;
+            *)
+              echo "::error::Provider Sentinel received an unsupported repository visibility."
+              exit 1
+              ;;
+          esac
+          if [ -z "$SENTINEL_ARTIFACT_KEY" ]; then
+            echo "::error::SENTINEL_ARTIFACT_KEY is required before log capture."
+            exit 1
+          fi
+          decoded_bytes="$(printf '%s' "$SENTINEL_ARTIFACT_KEY" | base64 --decode | wc -c | tr -d ' ')"
+          if [ "$decoded_bytes" != "32" ]; then
+            echo "::error::SENTINEL_ARTIFACT_KEY must encode exactly 32 bytes."
+            exit 1
+          fi
+          echo "SENTINEL_ARTIFACT_POLICY_ACTIVE=true" >> "$GITHUB_ENV"
+          echo "Ciphertext-only evidence policy active for $REPOSITORY_VISIBILITY visibility." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Select immutable run mode
+        shell: bash
+        env:
+          REQUESTED_MODE: ${{ inputs.sentinel_mode }}
+          REQUESTED_INCIDENT_ID: ${{ inputs.incident_id }}
+          REQUESTED_INCIDENT_ATTEMPT: ${{ inputs.incident_attempt }}
+          REQUESTED_INCIDENT_START_MS: ${{ inputs.incident_start_ms }}
+          REQUESTED_INCIDENT_ACK_NONCE: ${{ inputs.incident_ack_nonce }}
+          EXPECTED_SENTINEL_ACTOR_ID: "319834869"
+          EVENT_ACTOR_ID: ${{ github.actor_id }}
+          EVENT_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          case "$GITHUB_EVENT_NAME" in
+            workflow_dispatch)
+              case "$REQUESTED_MODE" in
+                preview|hourly)
+                  mode="$REQUESTED_MODE"
+                  ;;
+                incident)
+                  if [ "$EVENT_ACTOR_ID" != "$EXPECTED_SENTINEL_ACTOR_ID" ]; then
+                    echo "::error::Incident dispatch did not come from the Ubiquity Sentinel GitHub App."
+                    exit 1
+                  fi
+                  if [ "$EVENT_RUN_ATTEMPT" != "1" ]; then
+                    echo "::error::Incident workflow re-runs are forbidden."
+                    exit 1
+                  fi
+                  if ! [[ "$REQUESTED_INCIDENT_ID" =~ ^provider-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]]; then
+                    echo "::error::Incident ID is invalid."
+                    exit 1
+                  fi
+                  if ! [[ "$REQUESTED_INCIDENT_ATTEMPT" =~ ^[1-3]$ ]]; then
+                    echo "::error::Incident attempt is invalid."
+                    exit 1
+                  fi
+                  if ! [[ "$REQUESTED_INCIDENT_START_MS" =~ ^[1-9][0-9]{12}$ ]]; then
+                    echo "::error::Incident start is invalid."
+                    exit 1
+                  fi
+                  if ! [[ "$REQUESTED_INCIDENT_ACK_NONCE" =~ ^[A-Za-z0-9_-]{43}$ ]]; then
+                    echo "::error::Incident acknowledgement nonce is invalid."
+                    exit 1
+                  fi
+                  mode=incident
+                  echo "SENTINEL_INCIDENT_ID=$REQUESTED_INCIDENT_ID" >> "$GITHUB_ENV"
+                  echo "SENTINEL_INCIDENT_ATTEMPT=$REQUESTED_INCIDENT_ATTEMPT" >> "$GITHUB_ENV"
+                  echo "SENTINEL_INCIDENT_START_MS=$REQUESTED_INCIDENT_START_MS" >> "$GITHUB_ENV"
+                  echo "SENTINEL_INCIDENT_ACK_NONCE=$REQUESTED_INCIDENT_ACK_NONCE" >> "$GITHUB_ENV"
+                  echo "SENTINEL_SIGNAL_ID=${REQUESTED_INCIDENT_ID}-a${REQUESTED_INCIDENT_ATTEMPT}" >> "$GITHUB_ENV"
+                  ;;
+                *)
+                  echo "::error::Unsupported Provider Sentinel workflow mode."
+                  exit 1
+                  ;;
+              esac
+              ;;
+            schedule)
+              if [ "${{ github.event.schedule }}" = "*/5 * * * *" ]; then
+                mode=hourly
+              else
+                echo "::error::Unsupported Provider Sentinel schedule."
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::Unsupported Provider Sentinel event."
+              exit 1
+              ;;
+          esac
+          echo "SENTINEL_MODE=$mode" >> "$GITHUB_ENV"
+          echo "Sentinel mode: $mode" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Claim incident workflow run
+        id: incident-claim
+        if: github.event_name == 'workflow_dispatch' && inputs.sentinel_mode == 'incident' && needs.prepare.outputs.incident_claimed != 'true'
+        shell: bash
+        env:
+          DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
+          SENTINEL_INCIDENT_ID: ${{ inputs.incident_id }}
+          SENTINEL_INCIDENT_ATTEMPT: ${{ inputs.incident_attempt }}
+          SENTINEL_INCIDENT_ACK_NONCE: ${{ inputs.incident_ack_nonce }}
+        run: |
+          set -euo pipefail
+          response_file="$RUNNER_TEMP/sentinel-claim-response"
+          request_body="$(
+            jq -cn \
+              --arg incident_id "$SENTINEL_INCIDENT_ID" \
+              --arg attempt "$SENTINEL_INCIDENT_ATTEMPT" \
+              --arg workflow_run_id "$GITHUB_RUN_ID" \
+              --arg ack_nonce "$SENTINEL_INCIDENT_ACK_NONCE" \
+              '{incident_id: $incident_id, attempt: ($attempt | tonumber), workflow_run_id: ($workflow_run_id | tonumber), ack_nonce: $ack_nonce}'
+          )"
+          status="$(
+            curl \
+              --silent \
+              --show-error \
+              --max-time 20 \
+              --output "$response_file" \
+              --write-out '%{http_code}' \
+              --request POST \
+              --header "Authorization: Bearer $DENO_DEPLOY_TOKEN" \
+              --header "Content-Type: application/json" \
+              --data "$request_body" \
+              https://ai-ubq-fi.ubiquity-dao.deno.net/admin/sentinel/incidents/claim
+          )"
+          if [ "$status" != "204" ]; then
+            echo "::error::Incident workflow claim failed with HTTP $status."
+            exit 1
+          fi
+
+      - name: Configure private Deno cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno_dir="$RUNNER_TEMP/sentinel-deno-cache"
+          mkdir -p "$deno_dir"
+          chmod 700 "$deno_dir"
+          echo "DENO_DIR=$deno_dir" >> "$GITHUB_ENV"
+          echo "SENTINEL_CODEX_AUTH_STATE_DIR=$RUNNER_TEMP/sentinel-codex-auth-state" >> "$GITHUB_ENV"
+          echo "SENTINEL_CODEX_AUTH_STATE_ENVELOPE=$RUNNER_TEMP/sentinel-codex-auth-envelope/sentinel-codex-auth-state-v1.json" >> "$GITHUB_ENV"
+
+      - name: Check out full repository history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Convergence always starts from the exact immutable plan base.  The
+          # fallback is used only when preparation failed before it emitted a
+          # base and is still guarded by the existing incident failure path.
+          ref: ${{ needs.prepare.outputs.base_sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Honor protected bootstrap activation
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          response_file="$RUNNER_TEMP/sentinel-bootstrap-state-response.json"
+          status="$(
+            curl \
+              --silent \
+              --show-error \
+              --max-time 20 \
+              --output "$response_file" \
+              --write-out '%{http_code}' \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer $GITHUB_TOKEN" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/contents/docs/sentinel-bootstrap-state.json?ref=sentinel%2Fbootstrap-state"
+          )"
+          if [ "$status" = "404" ]; then
+            echo "Bootstrap activation is not initialized; retaining $GITHUB_SHA."
+            exit 0
+          fi
+          [ "$status" = "200" ] || {
+            echo "::error::Bootstrap activation lookup failed with HTTP $status."
+            exit 1
+          }
+          active_sha="$(jq -r '.content | gsub("\\n"; "") | @base64d | fromjson | .activation.active_sha // empty' "$response_file")"
+          if [ -z "$active_sha" ] || [ "$active_sha" = "$GITHUB_SHA" ]; then
+            echo "Bootstrap activation retains $GITHUB_SHA."
+            exit 0
+          fi
+          [[ "$active_sha" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::Bootstrap activation SHA is invalid."
+            exit 1
+          }
+          git fetch --no-tags --depth=1 origin "$active_sha"
+          git checkout --detach "$active_sha"
+          [ "$(git rev-parse HEAD)" = "$active_sha" ] || {
+            echo "::error::Bootstrap activation checkout did not reach the exact SHA."
+            exit 1
+          }
+          echo "Protected bootstrap selected stable Sentinel source $active_sha."
+
+      - name: Install Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: 2.9.5
+
+      - name: Download encrypted matrix plan for convergence
+        if: needs.prepare.result == 'success'
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.prepare.outputs.plan_artifact_name }}
+          path: ${{ runner.temp }}/sentinel-matrix-plan
+
+      - name: Download encrypted matrix cell reports for convergence
+        if: needs.prepare.result == 'success' && needs.prepare.outputs.has_cells == 'true'
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: sentinel-matrix-cell-v1-${{ github.run_id }}-${{ github.run_attempt }}-*
+          path: ${{ runner.temp }}/sentinel-matrix-cell-reports
+          merge-multiple: false
+
+      - name: Materialize and verify encrypted matrix convergence inputs
+        id: matrix-convergence-inputs
+        if: needs.prepare.result == 'success'
+        shell: bash
+        env:
+          SENTINEL_ARTIFACT_KEY: ${{ secrets.SENTINEL_ARTIFACT_KEY }}
+          EXPECTED_RUN_ID: ${{ github.run_id }}
+          EXPECTED_RUN_ATTEMPT: ${{ github.run_attempt }}
+          EXPECTED_BASE_SHA: ${{ needs.prepare.outputs.base_sha }}
+          EXPECTED_PLAN_DIGEST: ${{ needs.prepare.outputs.plan_digest }}
+        run: |
+          set -euo pipefail
+          test -n "$SENTINEL_ARTIFACT_KEY"
+          mkdir -p .sentinel/reports/matrix
+          deno eval --frozen --lock=deno.lock '
+            import { decodeSentinelArtifactKey, decryptSentinelArtifact } from "./scripts/sentinel/artifact-crypto.ts";
+            import { parseMatrixPlanV1, validateMatrixCellReportV1, canonicalMatrixJson } from "./scripts/sentinel/matrix.ts";
+            import { isTriageReport } from "./scripts/sentinel/types.ts";
+            const root = Deno.env.get("RUNNER_TEMP")!;
+            const key = decodeSentinelArtifactKey(Deno.env.get("SENTINEL_ARTIFACT_KEY")!);
+            const readEnvelope = async (path: string) => {
+              const files = await decryptSentinelArtifact(await Deno.readFile(path), key);
+              return files;
+            };
+            const findEnvelopes = async (directory: string): Promise<string[]> => {
+              const found: string[] = [];
+              const visit = async (path: string): Promise<void> => {
+                let info: Deno.FileInfo;
+                try { info = await Deno.lstat(path); } catch (error) { if (error instanceof Deno.errors.NotFound) return; throw error; }
+                if (info.isFile) { if (path.endsWith("/sentinel-evidence-v1.json")) found.push(path); return; }
+                if (!info.isDirectory || info.isSymlink) throw new Error("matrix artifact path is not a regular directory");
+                for await (const entry of Deno.readDir(path)) await visit(`${path}/${entry.name}`);
+              };
+              await visit(directory); return found.sort();
+            };
+            try {
+              const planEnvelopes = await findEnvelopes(`${root}/sentinel-matrix-plan`);
+              if (planEnvelopes.length !== 1) throw new Error("exactly one encrypted MatrixPlanV1 artifact is required");
+              const planFiles = await readEnvelope(planEnvelopes[0]!);
+              let plan: Awaited<ReturnType<typeof parseMatrixPlanV1>>;
+              try {
+                const planFile = planFiles.find((file) => file.path === "reports/matrix-plan.json");
+                if (!planFile) throw new Error("encrypted MatrixPlanV1 artifact is missing its manifest");
+                plan = await parseMatrixPlanV1(planFile.bytes);
+                if (plan.run_id !== Deno.env.get("EXPECTED_RUN_ID") || plan.run_attempt !== Number(Deno.env.get("EXPECTED_RUN_ATTEMPT")) || plan.base_sha !== Deno.env.get("EXPECTED_BASE_SHA") || plan.manifest_digest !== Deno.env.get("EXPECTED_PLAN_DIGEST")) throw new Error("MatrixPlanV1 identity changed in transport");
+                await Deno.writeTextFile(".sentinel/reports/matrix-plan.json", `${canonicalMatrixJson(plan)}\n`, { create: true, mode: 0o600 });
+                const triageFile = planFiles.find((file) => file.path === "reports/triage.json");
+                if (!triageFile) throw new Error("encrypted MatrixPlanV1 artifact is missing its triage report");
+                const triage = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(triageFile.bytes));
+                if (!isTriageReport(triage)) throw new Error("encrypted matrix triage report is invalid");
+                const actionable = triage.findings.filter((finding) => finding.actionable).map((finding) => { const ownership = plan.ownership.find((candidate) => candidate.finding_id === finding.id); return { finding_id: finding.id, fingerprint: finding.fingerprint, allowed_paths: [...finding.allowed_paths].sort(), prohibited_paths: [...ownership?.prohibited_paths ?? []].sort(), shared_paths: [...finding.shared_paths].sort(), depends_on: [...finding.depends_on].sort(), validation_requirements: [...finding.validation_requirements].sort() }; }).sort((left, right) => left.fingerprint.localeCompare(right.fingerprint) || left.finding_id.localeCompare(right.finding_id));
+                if (canonicalMatrixJson(actionable) !== canonicalMatrixJson(plan.ownership)) throw new Error("matrix triage ownership differs from MatrixPlanV1");
+                await Deno.writeTextFile(".sentinel/reports/triage.json", `${JSON.stringify(triage)}\n`, { create: true, mode: 0o600 });
+              } finally { for (const file of planFiles) file.bytes.fill(0); }
+              const expected = new Set(plan.cells.map((cell) => cell.cell_id));
+              const seen = new Set<string>();
+              for (const envelope of await findEnvelopes(`${root}/sentinel-matrix-cell-reports`)) {
+                const files = await readEnvelope(envelope);
+                try {
+                  for (const file of files) {
+                    if (!file.path.startsWith("reports/matrix/") || !file.path.endsWith("/cell.json")) continue;
+                    const report = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(file.bytes));
+                    await validateMatrixCellReportV1(report, plan);
+                    if (report.status === "retry_pending") {
+                      // A retry_pending cell is accepted into convergence only
+                      // when its durable retry evidence (recovery identity and
+                      // candidate snapshot) was published beside the report.
+                      const evidenceDirectory = `reports/matrix/${report.cell_id}/`;
+                      if (
+                        !files.some((file) => file.path === `${evidenceDirectory}manifest.json`) ||
+                        !files.some((file) => file.path === `${evidenceDirectory}recovery-record.json`)
+                      ) {
+                        throw new Error("retry_pending matrix cell report is missing durable retry evidence");
+                      }
+                    }
+                    if (!expected.has(report.cell_id) || seen.has(report.cell_id)) throw new Error("matrix cell report coverage is duplicate or unknown");
+                    seen.add(report.cell_id);
+                    const cell = plan.cells.find((candidate) => candidate.cell_id === report.cell_id)!;
+                    const parent = cell.report_path.slice(0, cell.report_path.lastIndexOf("/"));
+                    await Deno.mkdir(parent, { recursive: true, mode: 0o700 });
+                    await Deno.writeTextFile(cell.report_path, `${canonicalMatrixJson(report)}\n`, { create: true, mode: 0o600 });
+                  }
+                } finally { for (const file of files) file.bytes.fill(0); }
+              }
+              if (seen.size !== expected.size) throw new Error("required matrix cell artifact is missing");
+              const index = plan.cells.map((cell) => ({ cell_id: cell.cell_id, branch: cell.branch, base_sha: cell.base_sha, report_path: cell.report_path }));
+              await Deno.writeTextFile(".sentinel/reports/matrix-report-index.json", `${canonicalMatrixJson({ schema_version: 1, run_id: plan.run_id, run_attempt: plan.run_attempt, base_sha: plan.base_sha, plan_digest: plan.manifest_digest, cells: index })}\n`, { create: true, mode: 0o600 });
+            } finally { key.fill(0); }
+          '
+
+      - name: Require complete matrix convergence contract
+        if: always() && needs.prepare.result == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -s .sentinel/reports/matrix-plan.json ] || [ ! -s .sentinel/reports/matrix-report-index.json ]; then
+            echo "::error::Matrix convergence is missing an immutable plan or required cell reports."
+            exit 1
+          fi
+          echo "Verified encrypted MatrixPlanV1 and every required immutable MatrixCellReportV1." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify exact remote cell heads before convergence
+        if: always() && needs.prepare.result == 'success'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test -s .sentinel/reports/matrix-report-index.json
+          basic_token="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 --wrap=0)"
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $basic_token" GIT_TERMINAL_PROMPT=0
+          cell_count=0
+          while IFS= read -r cell; do
+            report_path="$(jq -r '.report_path' <<< "$cell")"
+            branch="$(jq -r '.branch' <<< "$cell")"
+            report_sha="$(jq -r '.head_sha // empty' "$report_path")"
+            report_status="$(jq -r '.status // "missing"' "$report_path")"
+            if [ "$report_status" = "retry_pending" ]; then
+              # A retry_pending cell is a durable retry publication: the cell
+              # never committed, so there is no exact head to prove remotely.
+              # The materialized inputs already proved its retry evidence; a
+              # retry_pending report that claims a head is invalid.
+              if [ -n "$report_sha" ]; then
+                echo "::error::Retry_pending cell $branch claims a published head."
+                exit 1
+              fi
+              continue
+            fi
+            if [ "$report_status" != "succeeded" ] || ! [[ "$report_sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::Required cell $branch has no succeeded report with an exact head SHA."
+              exit 1
+            fi
+            remote_lines="$(git ls-remote --heads origin "refs/heads/$branch")"
+            if [ "$(printf '%s\n' "$remote_lines" | sed '/^$/d' | wc -l | tr -d ' ')" != "1" ]; then
+              echo "::error::Required cell branch lookup was missing or ambiguous: $branch"
+              exit 1
+            fi
+            remote_sha="$(printf '%s\n' "$remote_lines" | awk '{ print $1 }')"
+            remote_ref="$(printf '%s\n' "$remote_lines" | awk '{ print $2 }')"
+            if [ "$remote_ref" != "refs/heads/$branch" ] || [ "$remote_sha" != "$report_sha" ]; then
+              echo "::error::Required cell branch head differs from its immutable report: $branch"
+              exit 1
+            fi
+            cell_count=$((cell_count + 1))
+          done < <(jq -c '.cells[]' .sentinel/reports/matrix-report-index.json)
+          unset basic_token GITHUB_TOKEN GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_TERMINAL_PROMPT
+          echo "Verified exact remote heads for $cell_count required matrix cells." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Restore or bootstrap encrypted Codex auth state
+        id: auth-state-prepare
+        continue-on-error: true
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SENTINEL_CODEX_AUTH_GENERATION: ${{ vars.SENTINEL_CODEX_AUTH_GENERATION }}
+          SENTINEL_CODEX_AUTH_STATE_KEY: ${{ secrets.SENTINEL_CODEX_AUTH_STATE_KEY }}
+          SENTINEL_CODEX_AUTH_SLOT_1_B64: ${{ secrets.SENTINEL_CODEX_AUTH_SLOT_1_B64 }}
+          SENTINEL_CODEX_AUTH_SLOT_2_B64: ${{ secrets.SENTINEL_CODEX_AUTH_SLOT_2_B64 }}
+        run: |
+          set -euo pipefail
+          deno run \
+            --frozen \
+            --lock=deno.lock \
+            --allow-env \
+            --allow-net \
+            --allow-read="$RUNNER_TEMP" \
+            --allow-write="$RUNNER_TEMP" \
+            --allow-run=unzip \
+            scripts/sentinel/auth-state.ts \
+            prepare \
+            "$SENTINEL_CODEX_AUTH_STATE_DIR"
+
+      - name: Mask restored Codex auth state
+        id: auth-state-mask-restored
+        if: always() && steps.auth-state-prepare.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          auth_files=("$SENTINEL_CODEX_AUTH_STATE_DIR"/slots/*/auth.json)
+          if [ "${#auth_files[@]}" -lt 1 ]; then
+            echo "::error::Restored Codex auth state contains no slots."
+            exit 1
+          fi
+          for auth_file in "${auth_files[@]}"; do
+            encoded="$(base64 --wrap=0 "$auth_file")"
+            echo "::add-mask::$encoded"
+            unset encoded
+            while IFS= read -r secret_value; do
+              if [ -n "$secret_value" ]; then
+                echo "::add-mask::$secret_value"
+              fi
+            done < <(
+              jq -er \
+                '.tokens | [.id_token, .access_token, .refresh_token, .account_id] | .[] | select(type == "string" and length > 0)' \
+                "$auth_file"
+            )
+          done
+
+      - name: Install pinned Codex CLI for auth maintenance
+        id: auth-maintenance-install
+        if: >-
+          always() &&
+          steps.auth-state-prepare.outcome == 'success' &&
+          steps.auth-state-prepare.outputs.needs_maintenance == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --global --ignore-scripts --no-audit --no-fund @openai/codex@0.149.0
+          test "$(codex --version)" = "codex-cli 0.149.0"
+          codex_package_root="$(npm root --global)/@openai/codex"
+          platform_package_json="$(node -e '
+            const { createRequire } = require("node:module");
+            const resolveFromCodex = createRequire(process.argv[1] + "/package.json");
+            process.stdout.write(resolveFromCodex.resolve("@openai/codex-linux-x64/package.json"));
+          ' "$codex_package_root")"
+          native_codex="$(dirname "$platform_package_json")/vendor/x86_64-unknown-linux-musl/bin/codex"
+          test -x "$native_codex"
+          test "$("$native_codex" --version)" = "codex-cli 0.149.0"
+          echo "SENTINEL_CODEX_AUTH_EXECUTABLE=$native_codex" >> "$GITHUB_ENV"
+
+      - name: Let pinned Codex maintain its auth files
+        id: auth-maintenance
+        if: >-
+          always() &&
+          steps.auth-state-prepare.outcome == 'success' &&
+          steps.auth-state-prepare.outputs.needs_maintenance == 'true' &&
+          steps.auth-maintenance-install.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          result_path="$RUNNER_TEMP/sentinel-codex-auth-maintenance-result.json"
+          deno run \
+            --frozen \
+            --lock=deno.lock \
+            --allow-env=PATH,RUNNER_TEMP,SENTINEL_CODEX_AUTH_EXECUTABLE,SENTINEL_CODEX_AUTH_STATE_DIR \
+            --allow-read="$RUNNER_TEMP" \
+            --allow-write="$RUNNER_TEMP" \
+            --allow-run="$SENTINEL_CODEX_AUTH_EXECUTABLE" \
+            scripts/sentinel/auth-maintenance.ts \
+            maintain > "$result_path"
+          jq -e '
+            .schema_version == 1 and
+            (.slots | type == "array" and length >= 1 and length <= 2) and
+            ([.slots[].slot] | length == (unique | length)) and
+            all(.slots[];
+              (.slot == 1 or .slot == 2) and
+              (.due | type) == "boolean" and
+              (.invoked | type) == "boolean" and
+              (.duplicateAccountSkipped | type) == "boolean" and
+              (.rpcSucceeded | type) == "boolean" and
+              (.managedAccountAvailable | type) == "boolean" and
+              (
+                .commandCode == null or
+                (
+                  (.commandCode | type) == "number" and
+                  (.commandCode | floor) == .commandCode and
+                  .commandCode >= 0 and
+                  .commandCode <= 255
+                )
+              ) and
+              (.timedOut | type) == "boolean" and
+              (.outputExceeded | type) == "boolean" and
+              (.stdoutBytes | type) == "number" and
+              (.stdoutBytes | floor) == .stdoutBytes and
+              .stdoutBytes >= 0 and
+              (.stderrBytes | type) == "number" and
+              (.stderrBytes | floor) == .stderrBytes and
+              .stderrBytes >= 0 and
+              (.stateChanged | type) == "boolean" and
+              (.readyForMaintenanceWindow | type) == "boolean"
+            )
+          ' "$result_path" > /dev/null
+          {
+            echo "### Codex auth maintenance"
+            echo
+            jq -r '
+              .slots | sort_by(.slot)[] |
+              "- Slot \(.slot): due=\(.due); invoked=\(.invoked); " +
+              "duplicate_account_skipped=\(.duplicateAccountSkipped); rpc_succeeded=\(.rpcSucceeded); " +
+              "managed_account_available=\(.managedAccountAvailable); " +
+              "command_code=\(.commandCode // "none"); timed_out=\(.timedOut); " +
+              "output_exceeded=\(.outputExceeded); stdout_bytes=\(.stdoutBytes); " +
+              "stderr_bytes=\(.stderrBytes); state_changed=\(.stateChanged); " +
+              "ready_for_maintenance_window=\(.readyForMaintenanceWindow)"
+            ' "$result_path"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Mask maintained Codex auth state
+        id: auth-state-mask-maintained
+        if: always() && steps.auth-state-prepare.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          auth_files=("$SENTINEL_CODEX_AUTH_STATE_DIR"/slots/*/auth.json)
+          if [ "${#auth_files[@]}" -lt 1 ]; then
+            echo "::error::Maintained Codex auth state contains no slots."
+            exit 1
+          fi
+          for auth_file in "${auth_files[@]}"; do
+            encoded="$(base64 --wrap=0 "$auth_file")"
+            echo "::add-mask::$encoded"
+            unset encoded
+            while IFS= read -r secret_value; do
+              if [ -n "$secret_value" ]; then
+                echo "::add-mask::$secret_value"
+              fi
+            done < <(
+              jq -er \
+                '.tokens | [.id_token, .access_token, .refresh_token, .account_id] | .[] | select(type == "string" and length > 0)' \
+                "$auth_file"
+            )
+          done
+
+      - name: Seal refreshed Codex auth state
+        id: auth-state-seal
+        if: always() && steps.auth-state-prepare.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        env:
+          SENTINEL_CODEX_AUTH_GENERATION: ${{ vars.SENTINEL_CODEX_AUTH_GENERATION }}
+          SENTINEL_CODEX_AUTH_STATE_KEY: ${{ secrets.SENTINEL_CODEX_AUTH_STATE_KEY }}
+        run: |
+          set -euo pipefail
+          envelope_directory="$(dirname "$SENTINEL_CODEX_AUTH_STATE_ENVELOPE")"
+          mkdir -p "$envelope_directory"
+          chmod 700 "$envelope_directory"
+          deno run \
+            --frozen \
+            --lock=deno.lock \
+            --allow-env \
+            --allow-read="$RUNNER_TEMP" \
+            --allow-write="$RUNNER_TEMP" \
+            scripts/sentinel/auth-state.ts \
+            seal \
+            "$SENTINEL_CODEX_AUTH_STATE_DIR" \
+            "$SENTINEL_CODEX_AUTH_STATE_ENVELOPE"
+
+      - name: Upload encrypted Codex auth state
+        id: auth-state-upload
+        if: always() && steps.auth-state-seal.outcome == 'success'
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.auth-state-seal.outputs.artifact_name }}
+          path: ${{ env.SENTINEL_CODEX_AUTH_STATE_ENVELOPE }}
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 90
+
+      - name: Probe Codex auth readiness
+        id: auth-state-readiness
+        if: always() && steps.auth-state-upload.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno run \
+            --frozen \
+            --lock=deno.lock \
+            --allow-env \
+            --allow-net=chatgpt.com \
+            --allow-read="$RUNNER_TEMP" \
+            --allow-write="$RUNNER_TEMP" \
+            scripts/sentinel/auth-state.ts \
+            probe \
+            "$SENTINEL_CODEX_AUTH_STATE_DIR"
+
+      - name: Enforce durable Codex auth readiness
+        id: auth-preflight
+        if: always()
+        shell: bash
+        env:
+          PREPARE_OUTCOME: ${{ steps.auth-state-prepare.outcome }}
+          MASK_RESTORED_OUTCOME: ${{ steps.auth-state-mask-restored.outcome }}
+          NEEDS_MAINTENANCE: ${{ steps.auth-state-prepare.outputs.needs_maintenance }}
+          INSTALL_OUTCOME: ${{ steps.auth-maintenance-install.outcome }}
+          MAINTENANCE_OUTCOME: ${{ steps.auth-maintenance.outcome }}
+          MASK_MAINTAINED_OUTCOME: ${{ steps.auth-state-mask-maintained.outcome }}
+          SEAL_OUTCOME: ${{ steps.auth-state-seal.outcome }}
+          UPLOAD_OUTCOME: ${{ steps.auth-state-upload.outcome }}
+          READINESS_OUTCOME: ${{ steps.auth-state-readiness.outcome }}
+          AUTH_USABLE: ${{ steps.auth-state-readiness.outputs.auth_usable }}
+          SELECTED_SLOT: ${{ steps.auth-state-readiness.outputs.selected_slot }}
+          SLOT_1_CODE: ${{ steps.auth-state-readiness.outputs.slot_1_code }}
+          SLOT_1_HTTP_STATUS: ${{ steps.auth-state-readiness.outputs.slot_1_http_status }}
+          SLOT_1_HEADROOM_PERCENT: ${{ steps.auth-state-readiness.outputs.slot_1_headroom_percent }}
+          SLOT_2_CODE: ${{ steps.auth-state-readiness.outputs.slot_2_code }}
+          SLOT_2_HTTP_STATUS: ${{ steps.auth-state-readiness.outputs.slot_2_http_status }}
+          SLOT_2_HEADROOM_PERCENT: ${{ steps.auth-state-readiness.outputs.slot_2_headroom_percent }}
+        run: |
+          set -euo pipefail
+          safe_outcome() {
+            case "$1" in
+              success|failure|cancelled|skipped) printf '%s' "$1" ;;
+              *) printf 'unavailable' ;;
+            esac
+          }
+          safe_boolean() {
+            case "$1" in
+              true|false) printf '%s' "$1" ;;
+              *) printf 'unavailable' ;;
+            esac
+          }
+          safe_selected_slot() {
+            case "$1" in
+              1|2|none) printf '%s' "$1" ;;
+              *) printf 'unavailable' ;;
+            esac
+          }
+          safe_probe_code() {
+            case "$1" in
+              available|not_configured|invalid_base64|invalid_utf8|invalid_json|invalid_document|invalid_access_token|access_token_expiring|timeout|network_error|redirect_rejected|http_error|response_too_large|invalid_response_json|invalid_usage_document|quota_exhausted|ready|missing|account_identity_changed) printf '%s' "$1" ;;
+              *) printf 'unavailable' ;;
+            esac
+          }
+          safe_http_status() {
+            if [ "$1" = "none" ] || [[ "$1" =~ ^[1-5][0-9][0-9]$ ]]; then
+              printf '%s' "$1"
+            else
+              printf 'unavailable'
+            fi
+          }
+          safe_headroom() {
+            if [ "$1" = "none" ] || [[ "$1" =~ ^[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?$ ]]; then
+              printf '%s' "$1"
+            else
+              printf 'unavailable'
+            fi
+          }
+
+          auth_usable="$(safe_boolean "$AUTH_USABLE")"
+          selected_slot="$(safe_selected_slot "$SELECTED_SLOT")"
+          slot_1_code="$(safe_probe_code "$SLOT_1_CODE")"
+          slot_1_http_status="$(safe_http_status "$SLOT_1_HTTP_STATUS")"
+          slot_1_headroom_percent="$(safe_headroom "$SLOT_1_HEADROOM_PERCENT")"
+          slot_2_code="$(safe_probe_code "$SLOT_2_CODE")"
+          slot_2_http_status="$(safe_http_status "$SLOT_2_HTTP_STATUS")"
+          slot_2_headroom_percent="$(safe_headroom "$SLOT_2_HEADROOM_PERCENT")"
+
+          failed=false
+          for outcome in \
+            "$PREPARE_OUTCOME" \
+            "$MASK_RESTORED_OUTCOME" \
+            "$MASK_MAINTAINED_OUTCOME" \
+            "$SEAL_OUTCOME" \
+            "$UPLOAD_OUTCOME" \
+            "$READINESS_OUTCOME"; do
+            if [ "$outcome" != "success" ]; then
+              failed=true
+            fi
+          done
+          if [ "$NEEDS_MAINTENANCE" = "true" ]; then
+            if [ "$INSTALL_OUTCOME" != "success" ] || [ "$MAINTENANCE_OUTCOME" != "success" ]; then
+              failed=true
+            fi
+          elif [ "$NEEDS_MAINTENANCE" != "false" ]; then
+            failed=true
+          fi
+          for diagnostic in \
+            "$auth_usable" \
+            "$selected_slot" \
+            "$slot_1_code" \
+            "$slot_1_http_status" \
+            "$slot_1_headroom_percent" \
+            "$slot_2_code" \
+            "$slot_2_http_status" \
+            "$slot_2_headroom_percent"; do
+            if [ "$diagnostic" = "unavailable" ]; then
+              failed=true
+            fi
+          done
+          if [ "$READINESS_OUTCOME" = "success" ] && \
+            { [ "$auth_usable" != "true" ] || [ "$selected_slot" = "none" ]; }; then
+            failed=true
+          fi
+          {
+            echo "### Codex auth durability preflight"
+            echo
+            echo "- Prepare: $(safe_outcome "$PREPARE_OUTCOME")"
+            echo "- Mask restored state: $(safe_outcome "$MASK_RESTORED_OUTCOME")"
+            echo "- Maintenance required: $(safe_boolean "$NEEDS_MAINTENANCE")"
+            echo "- Maintenance install: $(safe_outcome "$INSTALL_OUTCOME")"
+            echo "- Maintenance run: $(safe_outcome "$MAINTENANCE_OUTCOME")"
+            echo "- Mask maintained state: $(safe_outcome "$MASK_MAINTAINED_OUTCOME")"
+            echo "- Seal: $(safe_outcome "$SEAL_OUTCOME")"
+            echo "- Upload: $(safe_outcome "$UPLOAD_OUTCOME")"
+            echo "- Readiness probe: $(safe_outcome "$READINESS_OUTCOME")"
+            echo "- Probe usable: $auth_usable"
+            echo "- Probe selected slot: $selected_slot"
+            echo "- Probe slot 1: code=$slot_1_code; HTTP status=$slot_1_http_status; headroom percent=$slot_1_headroom_percent"
+            echo "- Probe slot 2: code=$slot_2_code; HTTP status=$slot_2_http_status; headroom percent=$slot_2_headroom_percent"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$failed" = "true" ]; then
+            echo "::error::Sentinel Codex auth durability failed: prepare=$(safe_outcome "$PREPARE_OUTCOME"), mask_restored=$(safe_outcome "$MASK_RESTORED_OUTCOME"), needs_maintenance=$(safe_boolean "$NEEDS_MAINTENANCE"), install=$(safe_outcome "$INSTALL_OUTCOME"), maintenance=$(safe_outcome "$MAINTENANCE_OUTCOME"), mask_maintained=$(safe_outcome "$MASK_MAINTAINED_OUTCOME"), seal=$(safe_outcome "$SEAL_OUTCOME"), upload=$(safe_outcome "$UPLOAD_OUTCOME"), readiness=$(safe_outcome "$READINESS_OUTCOME")."
+            echo "::error::Sentinel Codex auth probe failed: usable=$auth_usable, selected_slot=$selected_slot, slot_1_code=$slot_1_code, slot_1_http_status=$slot_1_http_status, slot_1_headroom_percent=$slot_1_headroom_percent, slot_2_code=$slot_2_code, slot_2_http_status=$slot_2_http_status, slot_2_headroom_percent=$slot_2_headroom_percent."
+            exit 1
+          fi
+          echo "Codex auth state was restored, durably sealed, and passively probed." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Reconcile durable recovery records
+        if: always()
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          deno run \
+            --cached-only \
+            --frozen \
+            --lock=deno.lock \
+            --allow-env=GITHUB_TOKEN,GITHUB_REPOSITORY,GITHUB_RUN_ID \
+            --allow-net=api.github.com \
+            scripts/sentinel/recovery-controller.ts
+
+      - name: Select agent work
+        id: agent-work
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          needs_agent=true
+          if [ "$SENTINEL_MODE" = "hourly" ]; then
+            hint_path="$RUNNER_TEMP/sentinel-review-backlog.md"
+            issue_ledger_path="$RUNNER_TEMP/sentinel-issue-jobs.md"
+            hint_sha=""
+            basic_token="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
+            export GIT_CONFIG_COUNT=1
+            export GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
+            export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $basic_token"
+            export GIT_TERMINAL_PROMPT=0
+            hint_ready=false
+            if git fetch --no-tags origin development; then
+              candidate_hint_sha="$(git rev-parse origin/development)"
+              backlog_blob_size="$(git cat-file -s origin/development:docs/sentinel-review-backlog.md 2>/dev/null || true)"
+              issue_ledger_blob_size="$(git cat-file -s origin/development:docs/sentinel-issue-jobs.md 2>/dev/null || true)"
+              if [[ "$candidate_hint_sha" =~ ^[0-9a-f]{40}$ ]] && \
+                [[ "$backlog_blob_size" =~ ^[0-9]+$ ]] && \
+                [[ "$issue_ledger_blob_size" =~ ^[0-9]+$ ]] && \
+                [ "$backlog_blob_size" -le 262144 ] && \
+                [ "$issue_ledger_blob_size" -le 262144 ] && \
+                git show origin/development:docs/sentinel-review-backlog.md > "$hint_path" && \
+                git show origin/development:docs/sentinel-issue-jobs.md > "$issue_ledger_path"
+              then
+                hint_sha="$candidate_hint_sha"
+                hint_ready=true
+              fi
+            fi
+            if [ "$hint_ready" = "true" ]; then
+              if ! needs_agent="$(
+                deno eval \
+                  --no-remote \
+                  --no-npm \
+                  --frozen \
+                  --lock=deno.lock \
+                  '
+                    import { GitHubActionsClient } from "./scripts/sentinel/github.ts";
+                    import {
+                      GITHUB_ISSUE_JOB_HINT_FILENAME,
+                      renderGitHubIssueJobHint,
+                      selectNextGitHubIssueJobSelection,
+                    } from "./scripts/sentinel/issues.ts";
+                    import { selectNextReviewBacklogEntry } from "./scripts/sentinel/review.ts";
+                    const runnerTemp = Deno.env.get("RUNNER_TEMP");
+                    const repository = Deno.env.get("GITHUB_REPOSITORY");
+                    const token = Deno.env.get("GITHUB_TOKEN");
+                    if (!runnerTemp || !repository || !token) throw new Error("Sentinel work-selector context is missing");
+                    const backlog = await Deno.readTextFile(`${runnerTemp}/sentinel-review-backlog.md`);
+                    if (selectNextReviewBacklogEntry(backlog) !== null) {
+                      console.log("true");
+                    } else {
+                      const ledger = await Deno.readTextFile(`${runnerTemp}/sentinel-issue-jobs.md`);
+                      const github = new GitHubActionsClient({ repository, token });
+                      const issueSelection = await selectNextGitHubIssueJobSelection(github, repository, ledger);
+                      await Deno.writeTextFile(
+                        `${runnerTemp}/${GITHUB_ISSUE_JOB_HINT_FILENAME}`,
+                        renderGitHubIssueJobHint(
+                          issueSelection?.job ?? null,
+                          issueSelection?.checkpoint ?? null,
+                        ),
+                        { createNew: true },
+                      );
+                      console.log(issueSelection === null ? "false" : "true");
+                    }
+                  '
+              )"; then
+                needs_agent=true
+                echo "::warning::Sentinel backlog hint could not be parsed; installing agent prerequisites conservatively."
+              fi
+            else
+              echo "::warning::Current development backlog could not be read; installing agent prerequisites conservatively."
+            fi
+            # Rolling review discovery is an independent agent-work source: once
+            # backlog and issue selection are both absent, an eligible
+            # unreviewed Sentinel pull request still warrants the async reviewer
+            # (and its prerequisites). It is bounded and read-only: the result
+            # identity list comes from the fetched development tree and the pull
+            # list comes from the GitHub client; nothing is mutated and no Codex
+            # is invoked here. Any anomaly keeps prerequisites installed so the
+            # fail-closed worker surfaces it instead of silently skipping work.
+            if [ "$needs_agent" = "false" ] && [ "$hint_ready" = "true" ]; then
+              result_names_path="$RUNNER_TEMP/sentinel-review-results.txt"
+              if git ls-tree -r --name-only origin/development -- docs/sentinel-review-results > "$result_names_path"; then
+                if ! needs_agent="$(
+                  deno eval \
+                    --no-remote \
+                    --no-npm \
+                    --frozen \
+                    --lock=deno.lock \
+                    '
+                      import { GitHubActionsClient } from "./scripts/sentinel/github.ts";
+                      import {
+                        parseRollingReviewResultFileNames,
+                        selectRollingReviewTaskFromIdentities,
+                      } from "./scripts/sentinel/rolling-review.ts";
+                      const runnerTemp = Deno.env.get("RUNNER_TEMP");
+                      const repository = Deno.env.get("GITHUB_REPOSITORY");
+                      const token = Deno.env.get("GITHUB_TOKEN");
+                      if (!runnerTemp || !repository || !token) throw new Error("Sentinel work-selector context is missing");
+                      const lines = (await Deno.readTextFile(`${runnerTemp}/sentinel-review-results.txt`)).split("\n");
+                      const github = new GitHubActionsClient({ repository, token });
+                      const pulls = await github.listPullRequests({ state: "all" });
+                      const identities = parseRollingReviewResultFileNames(lines);
+                      console.log(selectRollingReviewTaskFromIdentities(pulls, identities) === null ? "false" : "true");
+                    '
+                )"; then
+                  needs_agent=true
+                  echo "::warning::Sentinel rolling review discovery could not be completed; installing agent prerequisites conservatively."
+                fi
+              else
+                needs_agent=true
+                echo "::warning::Current rolling review results could not be listed; installing agent prerequisites conservatively."
+              fi
+            fi
+            if [ -n "$hint_sha" ]; then
+              echo "SENTINEL_BACKLOG_HINT_SHA=$hint_sha" >> "$GITHUB_ENV"
+            fi
+            unset basic_token GITHUB_TOKEN GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 GIT_TERMINAL_PROMPT
+          fi
+          case "$needs_agent" in
+            true|false) ;;
+            *)
+              echo "::error::Sentinel agent work selector returned an invalid result."
+              exit 1
+              ;;
+          esac
+          echo "needs_agent=$needs_agent" >> "$GITHUB_OUTPUT"
+          echo "Sentinel agent work required: $needs_agent" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install isolated-agent prerequisites
+        if: steps.agent-work.outputs.needs_agent == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
           sudo apt-get update
           sudo apt-get install --yes bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 \
             || echo 'apparmor userns knob absent — the functional probe decides'
           bwrap --die-with-parent --new-session --unshare-net --unshare-pid --unshare-ipc --unshare-uts --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp -- /bin/true
-          mkdir -p "$RUNNER_TEMP/sentinel-baseline-deno-cache"
-          DENO_DIR="$RUNNER_TEMP/sentinel-baseline-deno-cache" deno cache --frozen --lock=deno.lock scripts/sentinel/matrix-cell.ts scripts/sentinel/validation.ts tests/*.ts
+          npm install --global --ignore-scripts --no-audit --no-fund @openai/codex@0.149.0
+          mkdir -p "$RUNNER_TEMP/sentinel-bin"
+          GOBIN="$RUNNER_TEMP/sentinel-bin" go install github.com/zricethezav/gitleaks/v8@v8.28.0
+          echo "$RUNNER_TEMP/sentinel-bin" >> "$GITHUB_PATH"
+          bwrap --version
+          codex --version
+          "$RUNNER_TEMP/sentinel-bin/gitleaks" version
 
-      - name: Run pinned baseline candidate validation
+      - name: Prime locked Deno dependency cache
+        shell: bash
         run: |
-          DENO_DIR="$RUNNER_TEMP/sentinel-baseline-deno-cache" deno eval '
-          import { runCandidateValidation, CandidateValidationError } from "./scripts/sentinel/validation.ts";
-          try {
-            await runCandidateValidation({
-              cwd: Deno.cwd(),
-              reportPath: "${{ runner.temp }}/baseline-validation.json",
-              privateDir: "${{ runner.temp }}",
-              denoDirectory: "${{ runner.temp }}/sentinel-baseline-deno-cache",
-            });
-            console.log("BASELINE_VALIDATION_PASSED");
-          } catch (error) {
-            if (error instanceof CandidateValidationError) {
-              console.log(JSON.stringify({ baseline_validation_failure: error.failure }));
-            } else {
-              throw error;
+          set -euo pipefail
+          deno cache \
+            --frozen \
+            --lock=deno.lock \
+            serve.ts \
+            scripts/setup-instance.ts \
+            scripts/sentinel/main.ts \
+            scripts/sentinel/rolling-review-worker.ts \
+            tests/*.ts
+
+      - name: Run canonical local Sentinel verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Verification belongs to one canonical local command; CI only repeats
+          # it and defines no Sentinel verification steps of its own.
+          deno task sentinel:test-local
+
+      - name: Review delivered Sentinel pull requests asynchronously
+        if: steps.agent-work.outputs.needs_agent == 'true'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          deno run \
+            --cached-only \
+            --frozen \
+            --lock=deno.lock \
+            --allow-env=GITHUB_WORKSPACE,GITHUB_TOKEN,GITHUB_REPOSITORY,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_SERVER_URL,GITHUB_ENV,SENTINEL_MODE,SENTINEL_CODEX_AUTH_STATE_DIR,RUNNER_TEMP,PATH \
+            --allow-net=api.github.com \
+            --allow-read="$GITHUB_WORKSPACE,$RUNNER_TEMP" \
+            --allow-write="$GITHUB_WORKSPACE/.sentinel/reports,$RUNNER_TEMP" \
+            --allow-run=git,codex,gitleaks,deno \
+            scripts/sentinel/rolling-review-worker.ts
+
+      - name: Install issue-delivery development-push gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          real_git="$(command -v git)"
+          wrapper_dir="$RUNNER_TEMP/sentinel-git-wrapper"
+          mkdir -p "$wrapper_dir"
+          {
+            printf '#!/usr/bin/env bash\nset -euo pipefail\nREAL_GIT=%q\n' "$real_git"
+            cat <<'EOF'
+          if [ "${SENTINEL_GIT_WRAPPER_BYPASS:-}" = "1" ]; then
+            exec "$REAL_GIT" "$@"
+          fi
+          is_push=false
+          atomic_push=0
+          development_specs=()
+          candidate_specs=()
+          push_specs=()
+          checkpoint_lease_ref=""
+          checkpoint_lease_sha=""
+          checkpoint_lease_count=0
+          zero_sha="0000000000000000000000000000000000000000"
+          for argument in "$@"; do
+            if [ "$argument" = "push" ]; then
+              is_push=true
+            fi
+            if [ "$argument" = "--atomic" ]; then
+              atomic_push=1
+            fi
+            case "$argument" in
+              --force-with-lease=refs/heads/sentinel/candidate-*:* )
+                checkpoint_lease_count=$((checkpoint_lease_count + 1))
+                lease_spec="${argument#--force-with-lease=}"
+                checkpoint_lease_ref="${lease_spec%%:*}"
+                checkpoint_lease_sha="${lease_spec#*:}"
+                ;;
+              *:refs/heads/development)
+                development_specs+=("$argument")
+                push_specs+=("$argument")
+                ;;
+              *:refs/heads/sentinel/candidate-*)
+                candidate_specs+=("$argument")
+                push_specs+=("$argument")
+                ;;
+              *:refs/*) push_specs+=("$argument") ;;
+            esac
+          done
+          if [ "$is_push" = "true" ] && [ "${#development_specs[@]}" -gt 0 ]; then
+            if [ "${#development_specs[@]}" -ne 1 ] || [ "${#candidate_specs[@]}" -gt 1 ]; then
+              echo "Provider Sentinel push has ambiguous development or candidate refspecs." >&2
+              exit 1
+            fi
+            probe="$(pwd -P)"
+            repository_root=""
+            while [ "$probe" != "/" ]; do
+              if [ -f "$probe/.sentinel/reports/cycle.json" ]; then
+                repository_root="$probe"
+                break
+              fi
+              probe="$(dirname "$probe")"
+            done
+            if [ -z "$repository_root" ]; then
+              echo "Provider Sentinel development push has no cycle report root." >&2
+              exit 1
+            fi
+            normalized_checkpoint_lease_sha=""
+            if [ "${#candidate_specs[@]}" -eq 1 ]; then
+              candidate_remote_ref="${candidate_specs[0]#*:}"
+              if [ "$checkpoint_lease_count" -ne 1 ] || [ "$checkpoint_lease_ref" != "$candidate_remote_ref" ]; then
+                echo "Provider Sentinel checkpoint push has no exact force-with-lease ref." >&2
+                exit 1
+              fi
+              normalized_checkpoint_lease_sha="${checkpoint_lease_sha:-$zero_sha}"
+              if ! [[ "$normalized_checkpoint_lease_sha" =~ ^[0-9a-f]{40}$ ]]; then
+                echo "Provider Sentinel checkpoint lease has an invalid SHA." >&2
+                exit 1
+              fi
+            elif [ "$checkpoint_lease_count" -ne 0 ]; then
+              echo "Provider Sentinel checkpoint lease has no candidate refspec." >&2
+              exit 1
+            fi
+            authorization="${GIT_CONFIG_VALUE_0:-}"
+            case "$authorization" in
+              "AUTHORIZATION: basic "*) ;;
+              *)
+                echo "Provider Sentinel development push is missing trusted GitHub authorization." >&2
+                exit 1
+                ;;
+            esac
+            basic="${authorization#AUTHORIZATION: basic }"
+            decoded="$(printf '%s' "$basic" | base64 --decode)"
+            case "$decoded" in
+              x-access-token:*) token="${decoded#x-access-token:}" ;;
+              *)
+                echo "Provider Sentinel development push authorization is invalid." >&2
+                exit 1
+                ;;
+            esac
+            repository="${GITHUB_REPOSITORY:-}"
+            if ! [[ "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+              echo "Provider Sentinel repository identity is invalid." >&2
+              exit 1
+            fi
+            run_id="$(jq -r '.run_id // empty' "$repository_root/.sentinel/reports/cycle.json")"
+            if ! [[ "$run_id" =~ ^[1-9][0-9]*$ ]]; then
+              echo "Provider Sentinel cycle has no GitHub workflow run ID." >&2
+              exit 1
+            fi
+            {
+              for push_spec in "${push_specs[@]}"; do
+                local_ref="${push_spec%%:*}"
+                remote_ref="${push_spec#*:}"
+                local_sha="$("$REAL_GIT" rev-parse --verify "${local_ref}^{commit}")"
+                remote_output="$("$REAL_GIT" ls-remote origin "$remote_ref")"
+                if [ "$(printf '%s\n' "$remote_output" | sed '/^$/d' | wc -l | tr -d ' ')" -gt 1 ]; then
+                  echo "Provider Sentinel push found an ambiguous remote ref." >&2
+                  exit 1
+                fi
+                remote_sha="$(printf '%s\n' "$remote_output" | awk 'NF { print $1 }')"
+                if [ -z "$remote_sha" ] && [ "$remote_ref" != "refs/heads/development" ]; then
+                  remote_sha="$zero_sha"
+                fi
+                if ! [[ "$local_sha" =~ ^[0-9a-f]{40}$ ]] || ! [[ "$remote_sha" =~ ^[0-9a-f]{40}$ ]]; then
+                  echo "Provider Sentinel push has invalid local or remote identity." >&2
+                  exit 1
+                fi
+                printf '%s %s %s %s\n' "$local_ref" "$local_sha" "$remote_ref" "$remote_sha"
+              done
+            } | \
+              SENTINEL_GIT_WRAPPER_BYPASS=1 \
+              SENTINEL_GIT_PUSH_ATOMIC="$atomic_push" \
+              SENTINEL_GIT_CHECKPOINT_LEASE_SHA="$normalized_checkpoint_lease_sha" \
+              SENTINEL_REAL_GIT="$REAL_GIT" \
+              GITHUB_WORKSPACE="$repository_root" \
+              GITHUB_TOKEN="$token" \
+              GITHUB_REPOSITORY="$repository" \
+              GITHUB_RUN_ID="$run_id" \
+              GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+              GITHUB_SERVER_URL="https://github.com" \
+              deno run \
+                --cached-only \
+                --frozen \
+                --lock="$repository_root/deno.lock" \
+                --allow-env \
+                --allow-net=api.github.com \
+                --allow-read="$repository_root" \
+                --allow-write="$repository_root/.sentinel/reports" \
+                --allow-run="$REAL_GIT" \
+                "$repository_root/scripts/sentinel/issue-pr-pre-push.ts"
+          fi
+          exec "$REAL_GIT" "$@"
+          EOF
+          } > "$wrapper_dir/git"
+          chmod 700 "$wrapper_dir/git"
+          echo "$wrapper_dir" >> "$GITHUB_PATH"
+
+      - name: Run Provider Sentinel
+        id: sentinel-run
+        shell: bash
+        env:
+          DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
+          PREVIEW_UOS_AI_USER_TOKEN: ${{ secrets.PREVIEW_UOS_AI_USER_TOKEN }}
+          SENTINEL_REPLAY_KEY: ${{ secrets.SENTINEL_REPLAY_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          deno run \
+            --cached-only \
+            --frozen \
+            --lock=deno.lock \
+            --allow-env \
+            --allow-net \
+            --allow-read \
+            --allow-write \
+            --allow-run \
+            scripts/sentinel/main.ts \
+            --mode "$SENTINEL_MODE"
+
+      - name: Classify incident infrastructure deferral
+        id: incident-deferral-classification
+        if: >-
+          always() &&
+          github.event_name == 'workflow_dispatch' &&
+          inputs.sentinel_mode == 'incident' &&
+          (
+            needs.prepare.outputs.incident_claimed == 'true' ||
+            steps.incident-claim.outcome == 'success'
+          )
+        shell: bash
+        env:
+          AUTH_PREFLIGHT_OUTCOME: ${{ steps.auth-preflight.outcome }}
+          SENTINEL_RUN_OUTCOME: ${{ steps.sentinel-run.outcome }}
+        run: |
+          set -euo pipefail
+          reason=""
+          if [ "$SENTINEL_RUN_OUTCOME" = "skipped" ]; then
+            if [ "$AUTH_PREFLIGHT_OUTCOME" = "failure" ]; then
+              reason="codex_auth_preflight_failed"
+            else
+              reason="sentinel_infrastructure_preflight_failed"
+            fi
+          elif [ "$SENTINEL_RUN_OUTCOME" = "failure" ] && \
+            [ -f .sentinel/reports/failure.json ] && \
+            [ "$(jq -r '.codex_failure // empty' .sentinel/reports/failure.json)" = "auth_refresh_required" ]; then
+            reason="codex_auth_preflight_failed"
+          fi
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+
+      - name: Reconcile GitHub issue delivery
+        if: always() && env.SENTINEL_ARTIFACT_POLICY_ACTIVE == 'true'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SENTINEL_WORKFLOW_OUTCOME: ${{ steps.sentinel-run.outcome }}
+        run: |
+          set -euo pipefail
+          deno run \
+            --cached-only \
+            --frozen \
+            --lock=deno.lock \
+            --allow-env=GITHUB_TOKEN,GITHUB_REPOSITORY,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT,GITHUB_SERVER_URL,SENTINEL_WORKFLOW_OUTCOME \
+            --allow-net=api.github.com \
+            --allow-read=.sentinel/reports \
+            --allow-write=.sentinel/reports \
+            scripts/sentinel/issue-delivery-reconcile.ts
+
+      - name: Reject credential files from artifact paths
+        if: always() && env.SENTINEL_ARTIFACT_POLICY_ACTIVE == 'true'
+        shell: bash
+        env:
+          DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
+          PREVIEW_UOS_AI_USER_TOKEN: ${{ secrets.PREVIEW_UOS_AI_USER_TOKEN }}
+          SENTINEL_ARTIFACT_KEY: ${{ secrets.SENTINEL_ARTIFACT_KEY }}
+          SENTINEL_CODEX_AUTH_STATE_KEY: ${{ secrets.SENTINEL_CODEX_AUTH_STATE_KEY }}
+          SENTINEL_REPLAY_KEY: ${{ secrets.SENTINEL_REPLAY_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "SENTINEL_PLAINTEXT_SAFE=false" >> "$GITHUB_ENV"
+          if find \
+            .sentinel/raw-logs \
+            .sentinel/replay-cases \
+            .sentinel/replay-index \
+            .sentinel/reports \
+            -type f \( -name auth.json -o -name '*codex-auth*' -o -name '*auth-slot*' \) \
+            -print -quit 2>/dev/null | grep -q .; then
+            echo "::error::A forbidden credential-like file exists in a Sentinel artifact path."
+            exit 1
+          fi
+          for secret_name in \
+            DENO_DEPLOY_TOKEN \
+            PREVIEW_UOS_AI_USER_TOKEN \
+            SENTINEL_ARTIFACT_KEY \
+            SENTINEL_CODEX_AUTH_STATE_KEY \
+            SENTINEL_REPLAY_KEY \
+            GITHUB_TOKEN; do
+            secret_value="${!secret_name:-}"
+            if [ -n "$secret_value" ]; then
+              pattern_file="$(mktemp "$RUNNER_TEMP/sentinel-artifact-pattern.XXXXXX")"
+              chmod 600 "$pattern_file"
+              printf '%s' "$secret_value" > "$pattern_file"
+              if grep \
+                --recursive \
+                --fixed-strings \
+                --quiet \
+                --file "$pattern_file" \
+                .sentinel/raw-logs \
+                .sentinel/replay-cases \
+                .sentinel/replay-index \
+                .sentinel/reports 2>/dev/null; then
+                : > "$pattern_file"
+                rm -f "$pattern_file"
+                echo "::error::Credential material exists in a Sentinel artifact path."
+                exit 1
+              fi
+              : > "$pattern_file"
+              rm -f "$pattern_file"
+            fi
+          done
+          shopt -s nullglob
+          for auth_file in "$SENTINEL_CODEX_AUTH_STATE_DIR"/slots/*/auth.json; do
+            pattern_file="$(mktemp "$RUNNER_TEMP/sentinel-auth-state-pattern.XXXXXX")"
+            chmod 600 "$pattern_file"
+            {
+              base64 --wrap=0 "$auth_file"
+              echo
+              jq -er \
+                '.tokens | [.id_token, .access_token, .refresh_token, .account_id] | .[] | select(type == "string" and length > 0)' \
+                "$auth_file"
+            } > "$pattern_file"
+            if grep \
+              --recursive \
+              --fixed-strings \
+              --quiet \
+              --file "$pattern_file" \
+              .sentinel/raw-logs \
+              .sentinel/replay-cases \
+              .sentinel/replay-index \
+              .sentinel/reports 2>/dev/null; then
+              : > "$pattern_file"
+              rm -f "$pattern_file"
+              echo "::error::Codex auth material exists in a Sentinel artifact path."
+              exit 1
+            fi
+            : > "$pattern_file"
+            rm -f "$pattern_file"
+          done
+          echo "SENTINEL_PLAINTEXT_SAFE=true" >> "$GITHUB_ENV"
+
+      - name: Remove plaintext Codex auth state
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          for target in \
+            "$RUNNER_TEMP/sentinel-codex-auth-state" \
+            "$RUNNER_TEMP/sentinel-codex-auth-envelope" \
+            "$RUNNER_TEMP/sentinel-codex-auth-maintenance-workspace"; do
+            if [ -e "$target" ]; then
+              find "$target" -type f -exec sh -c ': > "$1"' _ {} \;
+              rm -rf -- "$target"
+            fi
+          done
+
+      - name: Publish supervised cycle summary
+        if: always() && env.SENTINEL_PLAINTEXT_SAFE == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "### Provider Sentinel supervised cycle"
+            echo
+            echo "- Mode: ${SENTINEL_MODE:-unavailable}"
+            if [ -f .sentinel/reports/cycle.json ]; then
+              jq -r '
+                "- Status: " + .status,
+                "- Stage: " + .stage,
+                "- Candidate SHA: " + (.candidate_sha // "not created"),
+                "- Temporary branch: " + (.temporary_branch // "not created"),
+                "- Branch disposition: " + (.branch_disposition // "unavailable")
+              ' .sentinel/reports/cycle.json
+            else
+              echo "- Status: unavailable before initialization"
+            fi
+            if [ -f .sentinel/reports/triage.json ]; then
+              jq -r '
+                "- Findings: " + (.findings | length | tostring),
+                "- Severity counts: P0=" + ([.findings[] | select(.severity == "P0")] | length | tostring) +
+                  ", P1=" + ([.findings[] | select(.severity == "P1")] | length | tostring) +
+                  ", P2=" + ([.findings[] | select(.severity == "P2")] | length | tostring) +
+                  ", P3=" + ([.findings[] | select(.severity == "P3")] | length | tostring)
+              ' .sentinel/reports/triage.json
+            fi
+            if [ -f .sentinel/reports/triage-gate.json ]; then
+              selected_issue="$(jq -r '
+                if .work_source != "github_issue" then empty
+                elif (.github_issue_number | type) != "number" then empty
+                elif .github_issue_number < 1 or .github_issue_number > 9007199254740991 then empty
+                elif (.github_issue_number | floor) != .github_issue_number then empty
+                else .github_issue_number | tostring
+                end
+              ' .sentinel/reports/triage-gate.json || true)"
+              if [[ "$selected_issue" =~ ^[1-9][0-9]*$ ]]; then
+                echo "- Work source: GitHub issue"
+                echo "- Selected GitHub issue: #$selected_issue"
+              fi
+            fi
+            if [ -f .sentinel/reports/github-issue-production-outcome.json ]; then
+              jq -r '
+                if .outcome == "kept" then "- GitHub issue production outcome: kept"
+                elif .outcome == "rolled_back" then "- GitHub issue production outcome: rolled back"
+                else empty
+                end
+              ' .sentinel/reports/github-issue-production-outcome.json
+            fi
+            if [ -f .sentinel/reports/failure.json ]; then
+              jq -r '
+                "- Failure: " + (.codex_failure // .error_class // "unavailable"),
+                "- Codex duration: " + (if .codex_duration_ms == null then "unavailable" else ((.codex_duration_ms / 1000 | floor | tostring) + " seconds") end),
+                "- Codex output retained: metadata only; stdout and stderr remain private"
+              ' .sentinel/reports/failure.json
+            fi
+            for preservation in .sentinel/reports/failed-*-preservation.json; do
+              if [ -f "$preservation" ]; then
+                jq -r '"- Failed candidate preserved in encrypted evidence: " + (.candidate.preserved | tostring)' "$preservation"
+              fi
+            done
+            echo "- Evidence artifact: encrypted AES-256-GCM ciphertext only"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish recovery disposition summary
+        if: always() && env.SENTINEL_PLAINTEXT_SAFE == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p .sentinel/reports
+          raw_records="$RUNNER_TEMP/sentinel-recovery-records.json"
+          normalized_records="$RUNNER_TEMP/sentinel-recovery-records-normalized.json"
+          artifact_expiry="$RUNNER_TEMP/sentinel-recovery-artifact-expiry.json"
+          recovery_summary="$RUNNER_TEMP/sentinel-recovery-summary-v1.json"
+          printf '[]\n' > "$raw_records"
+          printf '{}\n' > "$artifact_expiry"
+
+          recovery_files=()
+          if [ -f .sentinel/reports/recovery-record-v1.json ]; then
+            recovery_files+=(.sentinel/reports/recovery-record-v1.json)
+          fi
+          if [ -d .sentinel/reports/recovery-records ]; then
+            while IFS= read -r -d '' recovery_file; do
+              recovery_files+=("$recovery_file")
+            done < <(find .sentinel/reports/recovery-records -type f -name '*.json' -print0 | sort -z)
+          fi
+
+          invalid_records=0
+          for recovery_file in "${recovery_files[@]}"; do
+            if ! jq -e 'type == "object"' "$recovery_file" >/dev/null 2>&1; then
+              invalid_records=$((invalid_records + 1))
+              continue
+            fi
+            jq --slurpfile record "$recovery_file" '. + $record' "$raw_records" > "$raw_records.tmp"
+            mv -- "$raw_records.tmp" "$raw_records"
+          done
+
+          github_token='${{ github.token }}'
+          if [ -n "$github_token" ] && [[ "${GITHUB_REPOSITORY:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            while IFS= read -r artifact_id; do
+              if ! [[ "$artifact_id" =~ ^[1-9][0-9]*$ ]]; then continue; fi
+              response_file="$RUNNER_TEMP/sentinel-artifact-$artifact_id.json"
+              status="$({
+                curl \
+                  --silent \
+                  --max-time 20 \
+                  --output "$response_file" \
+                  --write-out '%{http_code}' \
+                  --header 'Accept: application/vnd.github+json' \
+                  --header "Authorization: Bearer $github_token" \
+                  --header 'X-GitHub-Api-Version: 2022-11-28' \
+                  "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id"
+              } || true)"
+              if [ "$status" != "200" ]; then continue; fi
+              expiry_value="$(jq -r '
+                if (.id | type) == "number" and (.expires_at | type) == "string" and
+                  (.expires_at | test("^20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$"))
+                then .expires_at else empty end
+              ' "$response_file" 2>/dev/null || true)"
+              if [ -z "$expiry_value" ]; then continue; fi
+              jq --arg id "$artifact_id" --arg expiry "$expiry_value" '. + {($id): $expiry}' "$artifact_expiry" > "$artifact_expiry.tmp"
+              mv -- "$artifact_expiry.tmp" "$artifact_expiry"
+            done < <(
+              jq -r '[.[] | .artifact_ids? // [] | .[]? | select(type == "number" and . > 0 and floor == .)] | unique[]?' \
+                "$raw_records"
+            )
+          fi
+
+          jq --argjson artifact_expiry "$(<"$artifact_expiry")" '
+            def safe_text($value; $fallback):
+              if ($value | type) == "string" and ($value | length) > 0 and ($value | length) <= 240 and
+                ($value | test("^[A-Za-z0-9][A-Za-z0-9 .,:;()/_+!?-]{0,239}$"))
+              then $value else $fallback end;
+            def safe_sha($value):
+              if ($value | type) == "string" and ($value | test("^[0-9a-f]{40}$")) then $value else "none" end;
+            def safe_fingerprint($value):
+              if ($value | type) == "string" and ($value | test("^[0-9a-f]{64}$")) then $value else "none" end;
+            def safe_branch($value):
+              if ($value | type) == "string" and ($value | test("^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")) then $value
+              else "none" end;
+            def safe_expiry($value):
+              if ($value | type) == "string" and
+                ($value | test("^20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$"))
+              then $value else null end;
+            def identity_source:
+              if (.identity | type) == "object" and
+                (.identity.source_kind | type) == "string" and
+                (.identity.source_kind | test("^(github_issue|review_backlog|triage|incident)$")) and
+                (.identity.source_id | type) == "string" and
+                (.identity.source_id | test("^[A-Za-z0-9_.:/-]{1,256}$"))
+              then (.identity.source_kind + "/" + .identity.source_id)
+              elif (.source | type) == "string" and (.source | test("^[A-Za-z0-9_.:/-]{1,256}$")) then .source
+              else "unavailable" end;
+            def source_revision:
+              if (.identity.source_revision | type) == "string" then safe_text(.identity.source_revision; "unavailable")
+              elif (.source_revision | type) == "string" then safe_text(.source_revision; "unavailable")
+              else "unavailable" end;
+            def disposition:
+              if .disposition == "recovered" then "recovered"
+              elif .disposition == "delivered" then "delivered"
+              elif .disposition == "rejected" then "rejected"
+              elif .disposition == "manual_required" then "manual_required"
+              elif .disposition == "retrying" or .phase == "retry_wait" or .status == "retrying" then "retrying"
+              else "active" end;
+            def status:
+              (disposition) as $disposition |
+              if $disposition == "recovered" or $disposition == "delivered" then "recovered"
+              elif $disposition == "rejected" then "rejected"
+              elif $disposition == "manual_required" then "manual_required"
+              elif $disposition == "retrying" then "retrying"
+              else "pending" end;
+            def artifact_ids:
+              [(.artifact_ids? // [])[]? | select(type == "number" and . > 0 and floor == .) | tostring] | unique;
+            def direct_expiry:
+              [.artifact_expiry?, .artifact_expires_at?, .expires_at?]
+              | map(safe_expiry(.))
+              | map(select(type == "string"))
+              | unique;
+            def artifact_expiry:
+              (direct_expiry) as $direct |
+              if ($direct | length) > 0 then ($direct | join(", "))
+              elif (artifact_ids | length) == 0 then "none recorded"
+              else
+                [artifact_ids[] as $id |
+                  if ($artifact_expiry[$id] | type) == "string" then
+                    "artifact " + $id + " expires " + $artifact_expiry[$id]
+                  else "artifact " + $id + " expiry unavailable" end] | join("; ")
+              end;
+            map(select(type == "object"))
+            | map({
+              source: identity_source,
+              source_revision: source_revision,
+              candidate_sha: safe_sha(.candidate_sha // .head_sha),
+              branch: safe_branch(.candidate_branch // .head_branch // .branch),
+              disposition: disposition,
+              status: status,
+              failure_fingerprint: safe_fingerprint(.failure_fingerprint // .fingerprint),
+              artifact_expiry: artifact_expiry,
+              next_action: safe_text(.next_action // .nextAction; "No automatic action recorded.")
+            })
+            | sort_by([.status, .source, .source_revision, .candidate_sha])
+          ' "$raw_records" > "$normalized_records"
+
+          generated_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          jq --arg generated_at "$generated_at" --argjson invalid_records "$invalid_records" '
+            {
+              schema_version: 1,
+              generated_at: $generated_at,
+              invalid_records: $invalid_records,
+              counts: {
+                recovered: ([.[] | select(.status == "recovered")] | length),
+                pending: ([.[] | select(.status == "pending" or .status == "retrying")] | length),
+                retrying: ([.[] | select(.status == "retrying")] | length),
+                rejected: ([.[] | select(.status == "rejected")] | length),
+                manual_required: ([.[] | select(.status == "manual_required")] | length)
+              },
+              records: .
             }
-          }
-          '
+          ' "$normalized_records" > "$recovery_summary"
+          cp -- "$recovery_summary" .sentinel/reports/recovery-summary-v1.json
+
+          repository="${GITHUB_REPOSITORY:-}"
+          run_id="${GITHUB_RUN_ID:-}"
+          if [[ "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] && [[ "$run_id" =~ ^[1-9][0-9]*$ ]]; then
+            run_link="https://github.com/$repository/actions/runs/$run_id"
+          else
+            run_link="https://github.com"
+          fi
+          {
+            echo "### Provider Sentinel recovery dispositions"
+            echo
+            jq -r --arg link "$run_link" '
+              "- [Recovered](" + $link + "): " + (.counts.recovered | tostring),
+              "- [Pending](" + $link + "): " + (.counts.pending | tostring),
+              "- [Retrying](" + $link + "): " + (.counts.retrying | tostring),
+              "- [Rejected](" + $link + "): " + (.counts.rejected | tostring),
+              "- [Manual required](" + $link + "): " + (.counts.manual_required | tostring),
+              (if .invalid_records > 0 then "- Invalid recovery metadata skipped: " + (.invalid_records | tostring) else empty end)
+            ' "$recovery_summary"
+            if [ "$(jq '.records | length' "$recovery_summary")" -gt 0 ]; then
+              echo
+              echo "| Status | Source | Source revision | Candidate SHA | Branch | Failure fingerprint | Artifact expiry | Next action |"
+              echo "| --- | --- | --- | --- | --- | --- | --- | --- |"
+              jq -r '.records[] |
+                "| " + .status + " | " + .source + " | " + .source_revision + " | " + .candidate_sha +
+                " | " + .branch + " | " + .failure_fingerprint + " | " + .artifact_expiry + " | " + .next_action + " |"' \
+                "$recovery_summary"
+            else
+              echo
+              echo "- No recovery records were available in this cycle."
+            fi
+            echo
+            echo "- Recovery metadata report: encrypted with the cycle evidence; decrypted candidate content is never published."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Encrypt and verify Sentinel evidence
+        if: always() && env.SENTINEL_PLAINTEXT_SAFE == 'true'
+        shell: bash
+        env:
+          SENTINEL_ARTIFACT_KEY: ${{ secrets.SENTINEL_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          echo "SENTINEL_ARTIFACTS_SAFE=false" >> "$GITHUB_ENV"
+          deno run \
+            --allow-env=GITHUB_ACTIONS,SENTINEL_ARTIFACT_KEY \
+            --allow-read=.sentinel/raw-logs,.sentinel/reports,.sentinel/encrypted \
+            --allow-write=.sentinel/encrypted \
+            scripts/sentinel/encrypt-artifacts.ts
+          test -f .sentinel/encrypted/sentinel-evidence-v1.json
+          echo "SENTINEL_ARTIFACTS_SAFE=true" >> "$GITHUB_ENV"
+
+      - name: Upload encrypted Sentinel evidence
+        id: sentinel-evidence-upload
+        if: >-
+          always() &&
+          env.SENTINEL_ARTIFACTS_SAFE == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ env.SENTINEL_EVIDENCE_ARTIFACT_NAME || format('sentinel-evidence-failed-before-dedupe-{0}', github.run_id) }}
+          path: .sentinel/encrypted/sentinel-evidence-v1.json
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 90
+
+      - name: Scrub Sentinel plaintext after evidence upload
+        if: >-
+          always() &&
+          env.SENTINEL_ARTIFACTS_SAFE == 'true' &&
+          steps.sentinel-evidence-upload.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno run \
+            --allow-env=GITHUB_ACTIONS \
+            --allow-read=.sentinel/raw-logs,.sentinel/reports,.sentinel/candidate-worktree,.sentinel/private \
+            --allow-write=.sentinel/raw-logs,.sentinel/reports,.sentinel/candidate-worktree,.sentinel/private \
+            scripts/sentinel/scrub-artifacts.ts
+          test ! -e .sentinel/raw-logs
+          test ! -e .sentinel/reports
+          test ! -e .sentinel/candidate-worktree
+          test ! -e .sentinel/private
+
+      - name: Upload encrypted replay bundle
+        if: >-
+          always() &&
+          env.SENTINEL_ARTIFACTS_SAFE == 'true' &&
+          env.SENTINEL_HAS_REPLAY_CASES == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ env.SENTINEL_REPLAY_BUNDLE_ARTIFACT_NAME }}
+          path: |
+            .sentinel/replay-cases
+            .sentinel/replay-index
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 90
+
+      - name: Defer incident after infrastructure failure
+        if: >-
+          always() &&
+          github.event_name == 'workflow_dispatch' &&
+          inputs.sentinel_mode == 'incident' &&
+          (
+            needs.prepare.outputs.incident_claimed == 'true' ||
+            steps.incident-claim.outcome == 'success'
+          ) &&
+          (
+            steps.sentinel-run.outcome == 'skipped' ||
+            steps.incident-deferral-classification.outputs.reason != '' ||
+            (steps.sentinel-run.outcome == 'success' && failure())
+          )
+        shell: bash
+        env:
+          CLASSIFIED_REASON: ${{ steps.incident-deferral-classification.outputs.reason }}
+          DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
+          SENTINEL_INCIDENT_ID: ${{ inputs.incident_id }}
+          SENTINEL_INCIDENT_ATTEMPT: ${{ inputs.incident_attempt }}
+          SENTINEL_INCIDENT_ACK_NONCE: ${{ inputs.incident_ack_nonce }}
+        run: |
+          set -euo pipefail
+          deferral_reason="${CLASSIFIED_REASON:-sentinel_infrastructure_preflight_failed}"
+          case "$deferral_reason" in
+            codex_auth_preflight_failed|sentinel_infrastructure_preflight_failed) ;;
+            *)
+              echo "::error::Incident infrastructure deferral reason is invalid."
+              exit 1
+              ;;
+          esac
+          response_file="$RUNNER_TEMP/sentinel-defer-response"
+          response_headers="$RUNNER_TEMP/sentinel-defer-headers"
+          request_body="$(
+            jq -cn \
+              --arg incident_id "$SENTINEL_INCIDENT_ID" \
+              --arg attempt "$SENTINEL_INCIDENT_ATTEMPT" \
+              --arg workflow_run_id "$GITHUB_RUN_ID" \
+              --arg ack_nonce "$SENTINEL_INCIDENT_ACK_NONCE" \
+              --arg reason "$deferral_reason" \
+              '{
+                incident_id: $incident_id,
+                attempt: ($attempt | tonumber),
+                workflow_run_id: ($workflow_run_id | tonumber),
+                ack_nonce: $ack_nonce,
+                reason: $reason
+              }'
+          )"
+          for request_attempt in 1 2 3; do
+            set +e
+            status="$(
+              curl \
+                --silent \
+                --show-error \
+                --max-time 20 \
+                --dump-header "$response_headers" \
+                --output "$response_file" \
+                --write-out '%{http_code}' \
+                --request POST \
+                --header "Authorization: Bearer $DENO_DEPLOY_TOKEN" \
+                --header "Content-Type: application/json" \
+                --data "$request_body" \
+                https://ai-ubq-fi.ubiquity-dao.deno.net/admin/sentinel/incidents/defer
+            )"
+            curl_status=$?
+            set -e
+            if [ "$curl_status" = "0" ] && [ "$status" = "204" ]; then
+              disposition="$(
+                tr -d '\r' < "$response_headers" | \
+                  awk -F': ' 'tolower($1) == "x-sentinel-incident-disposition" { value=$2 } END { print value }'
+              )"
+              case "$disposition" in
+                deferred)
+                  echo "Incident infrastructure failure was durably deferred without consuming its repair attempt." >> "$GITHUB_STEP_SUMMARY"
+                  exit 0
+                  ;;
+                dead_letter)
+                  echo "::error::Incident exhausted its infrastructure deferral budget and was dead-lettered."
+                  exit 1
+                  ;;
+                *)
+                  echo "::error::Incident deferral returned an invalid disposition."
+                  exit 1
+                  ;;
+              esac
+            fi
+            if [ "$request_attempt" -lt 3 ] && {
+              [ "$curl_status" != "0" ] || [[ "$status" =~ ^5[0-9][0-9]$ ]];
+            }; then
+              sleep "$request_attempt"
+              continue
+            fi
+            echo "::error::Incident infrastructure deferral failed (curl=$curl_status HTTP=$status)."
+            exit 1
+          done
+          echo "::error::Incident infrastructure deferral exhausted its request retry bound."
+          exit 1
+
+      - name: Acknowledge completed incident
+        if: success() && env.SENTINEL_MODE == 'incident' && needs.prepare.outputs.incident_claimed == 'true'
+        shell: bash
+        env:
+          DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
+        run: |
+          set -euo pipefail
+          deno eval \
+            '
+              const incidentId = Deno.env.get("SENTINEL_INCIDENT_ID");
+              const attempt = Number(Deno.env.get("SENTINEL_INCIDENT_ATTEMPT"));
+              const workflowRunId = Number(Deno.env.get("GITHUB_RUN_ID"));
+              const ackNonce = Deno.env.get("SENTINEL_INCIDENT_ACK_NONCE");
+              const token = Deno.env.get("DENO_DEPLOY_TOKEN");
+              if (
+                !incidentId || !Number.isSafeInteger(attempt) || !Number.isSafeInteger(workflowRunId) ||
+                !ackNonce || !/^[A-Za-z0-9_-]{43}$/.test(ackNonce) || !token
+              ) {
+                throw new Error("Incident acknowledgement environment is invalid");
+              }
+              const response = await fetch(
+                "https://ai-ubq-fi.ubiquity-dao.deno.net/admin/sentinel/incidents/ack",
+                {
+                  method: "POST",
+                  headers: {
+                    Authorization: `Bearer ${token}`,
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify({
+                    incident_id: incidentId,
+                    attempt,
+                    workflow_run_id: workflowRunId,
+                    ack_nonce: ackNonce,
+                  }),
+                  signal: AbortSignal.timeout(20_000),
+                },
+              );
+              if (response.status !== 204) {
+                await response.body?.cancel().catch(() => {});
+                throw new Error(`Incident acknowledgement failed with HTTP ${response.status}`);
+              }
+            '
+
+  artifact-recovery:
+    needs: converge
+    if: >-
+      always() &&
+      vars.SENTINEL_AUTONOMY_ENABLED == 'true' &&
+      (
+        github.event_name == 'schedule' ||
+        (
+          github.event_name == 'workflow_dispatch' &&
+          (inputs.sentinel_mode == 'hourly' || inputs.sentinel_mode == 'incident')
+        )
+      )
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Check out full repository history for artifact recovery
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Deno for artifact recovery
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: 2.9.5
+
+      - name: Cache artifact recovery dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno cache \
+            --frozen \
+            --lock=deno.lock \
+            scripts/sentinel/artifact-recovery.ts
+
+      - name: Recover encrypted Sentinel artifacts into draft-only candidates
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SENTINEL_ARTIFACT_KEY: ${{ secrets.SENTINEL_ARTIFACT_KEY }}
+        run: |
+          set -euo pipefail
+          deno run \
+            --cached-only \
+            --frozen \
+            --lock=deno.lock \
+            --allow-env=GITHUB_ACTIONS,GITHUB_REPOSITORY,GITHUB_TOKEN,SENTINEL_ARTIFACT_KEY \
+            --allow-net \
+            --allow-read \
+            --allow-write \
+            --allow-run=git,unzip \
+            scripts/sentinel/artifact-recovery.ts | tee "$RUNNER_TEMP/sentinel-artifact-recovery-summary.txt"
+          {
+            echo "### Artifact recovery"
+            echo
+            if [ -s "$RUNNER_TEMP/sentinel-artifact-recovery-summary.txt" ]; then
+              sed 's/^/- `/' "$RUNNER_TEMP/sentinel-artifact-recovery-summary.txt" | sed 's/$/`/'
+            else
+              echo "- No eligible encrypted candidate artifacts were found."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
