@@ -55,13 +55,13 @@
   "constraints": [],
   "progress": {
     "schema_version": 1,
-    "verdict": "ambiguous",
-    "reason": "changed_state_without_verified_advancement",
+    "verdict": "progress",
+    "reason": "verified_phase_or_milestone_change",
     "observation_count": 2,
-    "state_digest": "6bed5e5a8fbbc326",
+    "state_digest": "37079ec680e9366d",
     "classifier": null,
-    "resolved": "unknown",
-    "resolved_reason": "classifier_not_provisioned",
-    "evaluated_at": "2026-09-05T23:19:42.911Z"
+    "resolved": "progress",
+    "resolved_reason": "verified_phase_or_milestone_change",
+    "evaluated_at": "2026-09-05T23:38:12.858Z"
   }
 }
