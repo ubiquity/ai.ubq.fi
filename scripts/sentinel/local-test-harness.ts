@@ -116,8 +116,14 @@ export const SENTINEL_LOCAL_TEST_STAGES: readonly SentinelLocalTestStage[] = [
   },
   {
     name: "rollback",
-    description: "automatic rollback controller tests",
-    argv: ["test", "--cached-only", "--frozen", "tests/sentinel-rollback-controller.test.ts"],
+    description: "automatic rollback controller and Deno route ownership tests",
+    argv: [
+      "test",
+      "--cached-only",
+      "--frozen",
+      "tests/sentinel-rollback-controller.test.ts",
+      "tests/sentinel-deploy.test.ts",
+    ],
   },
   {
     name: "fmt",
@@ -230,7 +236,10 @@ export function validateSentinelLocalTestStage(stage: SentinelLocalTestStage): s
     if (FORBIDDEN_STAGE_OPTIONS.some((option) => argument === option || argument.startsWith(`${option}=`))) {
       return `stage "${stage.name}" permits network or all-permission access (${argument})`;
     }
-    if (FORBIDDEN_STAGE_TOKENS.some((token) => argument.includes(token))) {
+    // The fixed `deno test` command consumes this one control-plane test
+    // module; its name must not read as an invocation of the deployment CLI.
+    const isDeployTestInput = stage.argv[0] === "test" && argument === "tests/sentinel-deploy.test.ts";
+    if (!isDeployTestInput && FORBIDDEN_STAGE_TOKENS.some((token) => argument.includes(token))) {
       return `stage "${stage.name}" invokes paid, model, or deployment tooling (${argument})`;
     }
   }

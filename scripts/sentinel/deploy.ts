@@ -27,6 +27,14 @@ export type ProductionHealthAttestation = Readonly<{
   custom: CustomHealthAttestation;
 }>;
 
+export interface ProductionRouteOwnership {
+  readonly app: string;
+  readonly revisionId: string;
+  readonly managedHostname: string;
+  readonly ownsRoute: boolean;
+  readonly observedAt: string;
+}
+
 export interface RollbackTarget {
   readonly gitSha: string;
   readonly revisionId: string;
@@ -70,6 +78,10 @@ const REVISION_PAGE_LIMIT = 100;
 const MAX_REVISION_PAGES = 1_000;
 const MAX_REVISION_CURSOR_LENGTH = 4_096;
 const FULL_GIT_SHA = /^[0-9a-f]{40}$/;
+const DNS_LABEL = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u;
+const DNS_HOSTNAME = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$/u;
+const DNS_LABEL_MAX_LENGTH = 63;
+const DNS_HOSTNAME_MAX_LENGTH = 253;
 
 class HealthIdentityMismatchError extends Error {
   constructor(url: string, expectedGitSha: string, expectedRevisionId: string) {
@@ -91,6 +103,18 @@ const requireGitSha = (gitSha: string, label: string): void => {
   if (!FULL_GIT_SHA.test(gitSha)) {
     throw new Error(`${label} must be a lowercase, full Git commit SHA`);
   }
+};
+
+const requireDnsLabel = (value: unknown, label: string): string => {
+  if (typeof value !== "string" || value.length > DNS_LABEL_MAX_LENGTH || !DNS_LABEL.test(value)) {
+    throw new Error(`${label} must be a nonempty lowercase DNS label`);
+  }
+  return value;
+};
+
+const isDnsHostname = (value: string): boolean => {
+  if (value.length > DNS_HOSTNAME_MAX_LENGTH || !DNS_HOSTNAME.test(value)) return false;
+  return value.split(".").every((label) => label.length <= DNS_LABEL_MAX_LENGTH);
 };
 
 const positiveMilliseconds = (value: number, label: string): number => {
@@ -228,6 +252,72 @@ export const defaultRevisionHealthUrl = (
   revisionId: string,
   organization = DEFAULT_DENO_ORGANIZATION,
 ): string => `${defaultRevisionBaseUrl(app, revisionId, organization)}/health`;
+
+interface RouteTimelineEntry {
+  readonly name: string;
+  readonly context: string;
+  readonly hostnames: readonly string[];
+}
+
+const parseRouteTimelineEntry = (value: unknown, revisionId: string): RouteTimelineEntry => {
+  const entry = asRecord(value);
+  if (!entry) throw new Error(`Revision ${revisionId} has a malformed timeline entry`);
+  // Exact control-plane strings: a padded " Production " is not an
+  // authoritative Production entry and must stay distinguishable.
+  const name = entry.name;
+  const context = entry.context;
+  if (
+    typeof name !== "string" || name.trim() === "" ||
+    typeof context !== "string" || context.trim() === ""
+  ) {
+    throw new Error(`Revision ${revisionId} has an incomplete timeline entry`);
+  }
+  if (!Array.isArray(entry.hostnames)) {
+    throw new Error(`Revision ${revisionId} timeline ${name} has no hostnames array`);
+  }
+  const hostnames: string[] = [];
+  for (const hostname of entry.hostnames) {
+    if (typeof hostname !== "string" || !isDnsHostname(hostname)) {
+      throw new Error(`Revision ${revisionId} timeline ${name} has an invalid hostname`);
+    }
+    hostnames.push(hostname);
+  }
+  if (hostnames.length !== new Set(hostnames).size) {
+    throw new Error(`Revision ${revisionId} timeline ${name} has duplicate hostnames`);
+  }
+  return Object.freeze({ name, context, hostnames: Object.freeze([...hostnames]) });
+};
+
+const ownsManagedRoute = (
+  raw: Readonly<Record<string, unknown>>,
+  revisionId: string,
+  managedHostname: string,
+): boolean => {
+  const timelines = raw.timelines;
+  if (!Array.isArray(timelines)) {
+    throw new Error(`Revision ${revisionId} has malformed control-plane timelines`);
+  }
+  let production: RouteTimelineEntry | null = null;
+  for (const value of timelines) {
+    const entry = parseRouteTimelineEntry(value, revisionId);
+    const productionName = entry.name === "Production";
+    const productionContext = entry.context === "Production";
+    if (productionName !== productionContext) {
+      throw new Error(`Revision ${revisionId} has a partial Production timeline entry`);
+    }
+    if (productionName && productionContext) {
+      if (production !== null) {
+        throw new Error(`Revision ${revisionId} has multiple Production timeline entries`);
+      }
+      production = entry;
+    } else if (entry.hostnames.includes(managedHostname)) {
+      throw new Error(
+        `Revision ${revisionId} advertises the managed route ${managedHostname} outside Production`,
+      );
+    }
+  }
+  return production?.hostnames.includes(managedHostname) ?? false;
+};
 
 export class DenoDeployClient {
   readonly #token: string;
@@ -644,5 +734,41 @@ export class DenoDeployClient {
     if (response.status !== 204) {
       throw new Error(`Promote revision ${revisionId} failed with HTTP ${response.status}; expected 204`);
     }
+  }
+
+  /**
+   * Reads read-only control-plane route ownership evidence for one exact
+   * revision: whether that revision currently holds the app's stable managed
+   * hostname in its Production timeline. Routing evidence only — never a
+   * healthy attestation and never a Git SHA proof.
+   */
+  async readProductionRouteOwnership(
+    app: string,
+    revisionId: string,
+  ): Promise<ProductionRouteOwnership> {
+    const routeApp = requireDnsLabel(app, "Deno application name");
+    const routeRevisionId = requireDnsLabel(revisionId, "Deno revision ID");
+    const managedHostname = `${routeApp}.${this.#organization}.deno.net`;
+    await this.assertRevisionBelongsToApp(routeApp, routeRevisionId);
+    const revision = await this.getRevision(routeRevisionId);
+    if (revision.id !== routeRevisionId) {
+      throw new Error(`Deno returned the wrong revision for ${routeRevisionId}`);
+    }
+    if (revision.status !== "routed") {
+      throw new Error(`Revision ${routeRevisionId} is not routed on the Deno control plane`);
+    }
+    const ownsRoute = ownsManagedRoute(revision.raw, routeRevisionId, managedHostname);
+    const observedAtMs = this.#now();
+    const observedAt = new Date(observedAtMs);
+    if (!Number.isFinite(observedAtMs) || Number.isNaN(observedAt.getTime())) {
+      throw new Error("Route ownership observation time is not representable");
+    }
+    return Object.freeze({
+      app: routeApp,
+      revisionId: routeRevisionId,
+      managedHostname,
+      ownsRoute,
+      observedAt: observedAt.toISOString(),
+    });
   }
 }
