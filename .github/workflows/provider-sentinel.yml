@@ -487,7 +487,7 @@ jobs:
               secretScanReportPath: `${root}/sentinel-cell-secret-scan.json`, outputSchemaPath: `${root}/sentinel-cell-implementation-schema.json`,
               authSlots, sensitiveValues, findings: triageValue.findings.filter((finding) => cell.finding_ids.includes(finding.id)),
               workSelection: workSelection ?? undefined,
-              validate: async ({ checkoutPath }) => {
+              validation: async ({ checkoutPath }) => {
                 try {
                   await runCandidateValidation({ cwd: checkoutPath, reportPath: `${root}/sentinel-cell-validation.json`, privateDir: root, denoDirectory: env("DENO_DIR") });
                   return { passed: true, checks: [{ name: "candidate-validation", passed: true, detail: "existing candidate validation passed" }] };
