@@ -9,14 +9,14 @@ import orchestrator from "../scripts/sentinel/main.ts" with { type: "text" };
 // SHA and verifies the frozen package against this exact manifest digest. The
 // isolation test reconstructs the digest from the real package bytes; these
 // constants are the workflow contract, never a second source of truth.
-const BOOTSTRAP_EXECUTION_SHA = "976da518f1dc547ae7bcfe5fa1d16bbd084c9244";
-const BOOTSTRAP_PACKAGE_MANIFEST_DIGEST = "3b1430379f05ebd9faa804d73d137557ee81f4ceacc171846979c73d9b38c7b3";
+const BOOTSTRAP_EXECUTION_SHA = "e43b2d6a6949899435f4eb88fc8a56bb47a1c53c";
+const BOOTSTRAP_PACKAGE_MANIFEST_DIGEST = "c53d75038caa1cb8c6e36b9d52f51ba50893167bb3c0f7898ab8b4bb131a967e";
 
 // The revision-control workflow is the deployment authority over the same
 // frozen package: it pins the identical immutable execution SHA and verifies
 // the identical manifest digest before its credentialed executor runs.
-const REVISION_CONTROL_EXECUTION_SHA = "976da518f1dc547ae7bcfe5fa1d16bbd084c9244";
-const REVISION_CONTROL_PACKAGE_MANIFEST_DIGEST = "3b1430379f05ebd9faa804d73d137557ee81f4ceacc171846979c73d9b38c7b3";
+const REVISION_CONTROL_EXECUTION_SHA = "e43b2d6a6949899435f4eb88fc8a56bb47a1c53c";
+const REVISION_CONTROL_PACKAGE_MANIFEST_DIGEST = "c53d75038caa1cb8c6e36b9d52f51ba50893167bb3c0f7898ab8b4bb131a967e";
 
 const jobSection = (name: string, nextName: string): string => {
   const start = workflow.indexOf(`\n  ${name}:`);
@@ -141,7 +141,11 @@ Deno.test("bootstrap workflow verifies the whole frozen package manifest and run
     runStep,
     /--allow-env=GITHUB_TOKEN,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_RUN_ID,GITHUB_WORKFLOW_REF/u,
   );
-  assert.match(runStep, /--allow-net=api\.github\.com,ai-ubq-fi\.ubiquity-dao\.deno\.net/u);
+  assert.match(
+    runStep,
+    /--allow-net=api\.github\.com\s+\\\n/u,
+    "the bootstrap executor must grant exactly one host: api.github.com must be the complete --allow-net argument",
+  );
   assert.match(runStep, /scripts\/sentinel\/bootstrap\/main\.ts/u);
 });
 
