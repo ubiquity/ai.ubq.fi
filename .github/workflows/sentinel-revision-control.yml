@@ -65,7 +65,7 @@ jobs:
         with:
           # Revision control must always load the exact frozen execution SHA,
           # never the moving development tip, and leaves no credentials behind.
-          ref: bef2c55b2a2f4c0ea45d3d779be49b36c4990dda
+          ref: b1101be90e7d76e148043100ff170d47598c77c3
           fetch-depth: 1
           persist-credentials: false
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
@@ -82,7 +82,7 @@ jobs:
             echo "::error::Protected revision-control package contains a symlink."
             exit 1
           fi
-          expected="0112fd75a3619ace539a22ed6f5f74269bd30710b5cba4a4817a8824d675150c"
+          expected="98bc217a6ffb767c77225055a67fa8a5e49e45b50ead500ea916c593defbce5a"
           actual="$(find scripts/sentinel/bootstrap -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
           if [ "$actual" != "$expected" ]; then
             echo "::error::Protected revision-control package manifest mismatch."
