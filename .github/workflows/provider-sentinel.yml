@@ -48,7 +48,7 @@ jobs:
         env:
           SENTINEL_ARTIFACT_KEY: ${{ secrets.SENTINEL_ARTIFACT_KEY }}
         run: |
-          deno eval --allow-env=SENTINEL_ARTIFACT_KEY --allow-read="${{ runner.temp }}" '
+          deno eval '
           import { decodeSentinelArtifactKey, decryptSentinelArtifact } from "./scripts/sentinel/artifact-crypto.ts";
 
           const CELL_REPORT_PATH =
