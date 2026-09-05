@@ -181,6 +181,7 @@ Deno.test({
           resolve();
         };
       });
+      const codexRetryAfter = new Date((Math.floor(Date.now() / 1_000) + 60) * 1_000).toUTCString();
       providerServer = Deno.serve(
         { hostname: "127.0.0.1", port: 0, onListen: () => {} },
         async (request) => {
@@ -188,8 +189,8 @@ Deno.test({
           if (url.pathname === "/codex/responses") {
             codexCalls += 1;
             return Response.json(
-              { error: { message: "Primary quota exhausted", type: "rate_limit_error", code: "rate_limit_exceeded" } },
-              { status: 429 },
+              { error: { message: "Primary quota exhausted", type: "usage_limit_reached" } },
+              { status: 429, headers: { "Retry-After": codexRetryAfter } },
             );
           }
           if (url.pathname === "/metered/responses") {
@@ -330,7 +331,7 @@ Deno.test({
         assert.equal(meteredCalls, 100);
         assert.equal(meteredInFlight, 100);
         assert.equal(maxMeteredInFlight, 100);
-        assert.equal(codexCalls, 200);
+        assert.equal(codexCalls, 100);
       } catch (error) {
         dispatchBarrierError = error;
       } finally {
@@ -350,7 +351,7 @@ Deno.test({
       assert.deepEqual(results.map((result) => result.provider), Array(100).fill("metered"));
       const invalidResults = results.filter((result) => !result.completed || !result.exact || result.error !== null);
       assert.deepEqual(invalidResults, []);
-      assert.equal(codexCalls, 200);
+      assert.equal(codexCalls, 100);
       assert.equal(meteredCalls, 100);
       assert.equal(meteredInFlight, 0);
       assert.equal(maxMeteredInFlight, 100);
