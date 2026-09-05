@@ -331,8 +331,7 @@ export class FixtureWorkspace {
           [
             'sandbox="$(command -v bwrap)" || { echo "shell execution sandbox requires bwrap" >&2; exit 126; }',
             'export HOME="$1" GIT_CONFIG_GLOBAL=/dev/null',
-            'exec "$sandbox" --die-with-parent --unshare-all --new-session',
-            '--ro-bind / / --bind "$1" "$1" --chdir "$1" sh -c "$2"',
+            'exec "$sandbox" --die-with-parent --unshare-all --new-session --ro-bind / / --dev /dev --bind "$1" "$1" --chdir "$1" sh -c "$2"',
           ].join("\n"),
           "fixture-sandbox",
           root,

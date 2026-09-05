@@ -42,7 +42,7 @@ export const SENTINEL_LOCAL_TEST_STAGES: readonly SentinelLocalTestStage[] = [
   },
   {
     name: "artifact-recovery",
-    description: "artifact-recovery fixture tests",
+    description: "artifact recovery, crypto, and integration fixture tests",
     argv: [
       "test",
       "--cached-only",
@@ -54,6 +54,9 @@ export const SENTINEL_LOCAL_TEST_STAGES: readonly SentinelLocalTestStage[] = [
       "--allow-write",
       "--allow-run",
       "tests/sentinel-artifact-recovery.test.ts",
+      "tests/sentinel-artifact-crypto.test.ts",
+      "tests/sentinel-artifact-integration.test.ts",
+      "tests/sentinel-implementation-process-integration.test.ts",
     ],
   },
   {

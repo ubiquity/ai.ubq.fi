@@ -1354,9 +1354,6 @@ export function assertMatrixCycleReportV1(
   value.rejected_branches.map((item, index) => assertCycleBranch(item, `rejected_branches[${index}]`));
   value.blocked_branches.map((item, index) => assertCycleBranch(item, `blocked_branches[${index}]`));
   const integratedCandidate = assertIntegratedCandidate(value.integrated_candidate);
-  if (integratedCandidate && (integratedCandidate.base_sha !== baseSha)) {
-    throw new Error("Integrated candidate base SHA differs");
-  }
   assertDelivery(value.delivery);
   assertSha(value.cycle_digest, "cycle_digest", SHA256);
   if (plan) {

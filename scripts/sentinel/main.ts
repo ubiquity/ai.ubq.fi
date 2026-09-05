@@ -6,7 +6,7 @@ import {
 } from "./codex.ts";
 import { defaultRevisionBaseUrl, DenoDeployClient, type RollbackTarget } from "./deploy.ts";
 import { executeProductionRollback } from "./rollback-controller.ts";
-import { GitHubActionsClient, type GitHubArtifact } from "./github.ts";
+import { GitHubActionsClient, type GitHubArtifact, type GitHubPullRequest } from "./github.ts";
 import {
   buildMatrixPlan,
   canonicalMatrixJson,
@@ -44,6 +44,7 @@ import {
   selectNextGitHubIssueJobSelection,
   SentinelChangedFilesMismatchError,
 } from "./issues.ts";
+import { ensureIssuePullRequestForDevelopmentPush } from "./issue-pr-pre-push.ts";
 import { isSentinelProtectedImplementationPath, SENTINEL_POLICY, type SentinelMode } from "./policy.ts";
 import {
   decryptReplayCaptures,
@@ -78,7 +79,12 @@ import {
   upsertSentinelRecoveryRecord,
 } from "./recovery-ledger.ts";
 import { readGitHubSentinelRecoveryLedger, writeGitHubSentinelRecoveryLedger } from "./recovery-github-store.ts";
-import { isSentinelRecoveryCandidateBranch, sentinelRecoveryCandidateBranch } from "./issue-delivery.ts";
+import {
+  type GitHubIssueSelectionReport,
+  isSentinelRecoveryCandidateBranch,
+  parseGitHubIssueSelectionReport,
+  sentinelRecoveryCandidateBranch,
+} from "./issue-delivery.ts";
 import {
   assertActionableFindingsResolved,
   assertCompleteFindingDispositions,
@@ -319,6 +325,144 @@ export const selectSentinelWork = (
     }
   }
   return { source: null, reason: triageGate.reason, backlogEntry: null, issueJob: null, triage: null };
+};
+
+/**
+ * Bind the immutable prepared matrix convergence inputs to the runtime work
+ * selection. The prepared recovery record is the single source of the
+ * recovery identity: a github_issue recovery must match the issue selection
+ * report the workflow materialized and the issue job the runtime reselected,
+ * while every other recovery must carry no issue selection at all.
+ */
+export const bindMatrixConvergenceWork = (
+  input: Readonly<{
+    repository: string;
+    runId: string;
+    runAttempt: number;
+    plan: MatrixPlanV1;
+    triage: TriageReport;
+    preparedRecovery: SentinelRecoveryRecordV1;
+    issueSelection: GitHubIssueSelectionReport | null;
+    selectedIssueJob: GitHubIssueJob | null;
+    selectedBacklogEntry?: ReviewBacklogEntry | null;
+  }>,
+): SentinelWorkSelection => {
+  const {
+    repository,
+    runId,
+    runAttempt,
+    plan,
+    triage,
+    preparedRecovery,
+    issueSelection,
+    selectedIssueJob,
+    selectedBacklogEntry = null,
+  } = input;
+  if (plan.run_id !== runId || plan.run_attempt !== runAttempt) {
+    throw new Error("Matrix convergence plan identity changed in transport");
+  }
+  if (preparedRecovery.run_id !== runId) {
+    throw new Error("Prepared sentinel recovery record run identity changed in transport");
+  }
+  if (preparedRecovery.base_sha !== plan.base_sha) {
+    throw new Error("Prepared sentinel recovery record base SHA differs from the matrix convergence plan");
+  }
+  if (preparedRecovery.identity.repository !== repository) {
+    throw new Error("Prepared sentinel recovery record repository differs from the matrix convergence plan");
+  }
+  if (preparedRecovery.phase !== "claimed" || preparedRecovery.disposition !== "active") {
+    throw new Error("Prepared sentinel recovery record is not an active claimed recovery");
+  }
+  assertTriageMatchesMatrixPlan(triage, plan);
+  if (preparedRecovery.identity.source_kind === "github_issue") {
+    if (!issueSelection || !selectedIssueJob) {
+      throw new Error("Github issue matrix convergence requires its selection report and current issue job");
+    }
+    const selectionFiles = [...issueSelection.files].sort();
+    const jobFiles = [...selectedIssueJob.files].sort();
+    if (
+      issueSelection.issue_id !== selectedIssueJob.issueId ||
+      issueSelection.issue_number !== selectedIssueJob.number ||
+      issueSelection.fingerprint !== selectedIssueJob.fingerprint ||
+      issueSelection.body_sha256 !== selectedIssueJob.bodySha256 ||
+      issueSelection.comments !== selectedIssueJob.comments ||
+      issueSelection.priority !== selectedIssueJob.priority ||
+      issueSelection.time_label !== selectedIssueJob.timeLabel ||
+      canonicalMatrixJson(selectionFiles) !== canonicalMatrixJson(jobFiles) ||
+      issueSelection.updated_at !== selectedIssueJob.updatedAt
+    ) {
+      throw new Error("Github issue selection report does not match the current issue job");
+    }
+    if (
+      String(issueSelection.issue_id) !== preparedRecovery.identity.source_id ||
+      issueSelection.fingerprint !== preparedRecovery.identity.source_revision
+    ) {
+      throw new Error("Github issue selection report does not match the prepared recovery identity");
+    }
+    if (
+      canonicalMatrixJson(githubIssueJobTriageReport(selectedIssueJob, triage.interval)) !==
+        canonicalMatrixJson(triage)
+    ) {
+      throw new Error("Current issue job triage differs from the prepared matrix convergence triage");
+    }
+    return {
+      source: "github_issue",
+      reason: "hourly_github_issue",
+      backlogEntry: null,
+      issueJob: selectedIssueJob,
+      triage,
+    };
+  }
+  if (preparedRecovery.identity.source_kind === "review_backlog") {
+    if (!selectedBacklogEntry || issueSelection !== null) {
+      throw new Error("Review backlog matrix convergence requires its exact backlog entry without an issue selection");
+    }
+    if (
+      selectedBacklogEntry.fingerprint !== preparedRecovery.identity.source_id ||
+      selectedBacklogEntry.sha !== preparedRecovery.identity.source_revision
+    ) {
+      throw new Error("Selected review backlog entry does not match the prepared recovery identity");
+    }
+    if (
+      canonicalMatrixJson(reviewBacklogTriageReport(selectedBacklogEntry, triage.interval)) !==
+        canonicalMatrixJson(triage)
+    ) {
+      throw new Error("Selected review backlog triage differs from the prepared matrix convergence triage");
+    }
+    return {
+      source: "review_backlog",
+      reason: "hourly_review_backlog",
+      backlogEntry: selectedBacklogEntry,
+      issueJob: null,
+      triage,
+    };
+  }
+  if (issueSelection !== null) {
+    throw new Error("A non-github-issue recovery cannot carry a github issue selection report");
+  }
+  return { source: "triage", reason: "matrix_convergence", backlogEntry: null, issueJob: null, triage };
+};
+
+/**
+ * Reuse the exact prepared recovery record during matrix convergence: the
+ * ledger record must still be the claimed active record the workflow
+ * published, and neither a new lease, attempt, nor candidate generation is
+ * minted. The record object is returned unchanged.
+ */
+export const reuseMatrixPreparedRecoveryRecord = (
+  prepared: SentinelRecoveryRecordV1,
+  current: SentinelRecoveryRecordV1 | null,
+): SentinelRecoveryRecordV1 => {
+  if (!current) {
+    throw new Error("Matrix convergence lost its current recovery record");
+  }
+  if (canonicalMatrixJson(prepared) !== canonicalMatrixJson(current)) {
+    throw new Error("Prepared sentinel recovery record differs from the ledger recovery record");
+  }
+  if (current.phase !== "claimed" || current.disposition !== "active") {
+    throw new Error("Ledger sentinel recovery record is not an active claimed recovery");
+  }
+  return current;
 };
 
 export const requiresReplayEvaluation = (results: readonly ReplayResult[]): boolean => results.length > 0;
@@ -3097,15 +3241,58 @@ const run = async (): Promise<void> => {
       }
     }
   }
-  const workSelection: SentinelWorkSelection = matrixConvergePhase
-    ? { source: "triage", reason: "matrix_convergence", backlogEntry: null, issueJob: null, triage: null }
-    : selectSentinelWork(
-      mode,
-      currentEncrypted.length,
-      state.interval,
-      reviewBacklogMarkdown,
-      selectedIssueJob,
+  let matrixConvergencePlan: MatrixPlanV1 | null = null;
+  let matrixConvergenceTriage: TriageReport | null = null;
+  let matrixConvergencePreparedRecovery: SentinelRecoveryRecordV1 | null = null;
+  let matrixWorkSelection: SentinelWorkSelection | null = null;
+  if (matrixConvergePhase) {
+    matrixConvergencePlan = await parseMatrixPlanV1(await Deno.readTextFile(`${reportsDir}/matrix-plan.json`));
+    const convergenceTriageValue: unknown = JSON.parse(await Deno.readTextFile(`${reportsDir}/triage.json`));
+    if (!isTriageReport(convergenceTriageValue)) throw new Error("Matrix convergence triage report is invalid");
+    matrixConvergenceTriage = convergenceTriageValue;
+    assertTriageMatchesMatrixPlan(matrixConvergenceTriage, matrixConvergencePlan);
+    if (matrixConvergencePlan.cells.length === 0) {
+      if (matrixConvergencePlan.run_id !== runId || matrixConvergencePlan.run_attempt !== githubRunAttempt) {
+        throw new Error(
+          `Matrix convergence plan identity mismatch: expected run ${runId} attempt ${githubRunAttempt}, received run ${matrixConvergencePlan.run_id} attempt ${matrixConvergencePlan.run_attempt}`,
+        );
+      }
+      await updateState("complete", {
+        status: "no_change",
+        branch_disposition: "not_created_no_actionable_findings",
+      });
+      return;
+    }
+    matrixConvergencePreparedRecovery = parseSentinelRecoveryRecord(
+      JSON.parse(await Deno.readTextFile(`${reportsDir}/recovery-record-v1.json`)),
     );
+    let convergenceIssueSelection: GitHubIssueSelectionReport | null = null;
+    try {
+      convergenceIssueSelection = parseGitHubIssueSelectionReport(
+        JSON.parse(await Deno.readTextFile(`${reportsDir}/github-issue-selection.json`)),
+      );
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) throw error;
+    }
+    matrixWorkSelection = bindMatrixConvergenceWork({
+      repository,
+      runId,
+      runAttempt: githubRunAttempt,
+      plan: matrixConvergencePlan,
+      triage: matrixConvergenceTriage,
+      preparedRecovery: matrixConvergencePreparedRecovery,
+      issueSelection: convergenceIssueSelection,
+      selectedIssueJob,
+      selectedBacklogEntry: selectNextReviewBacklogEntry(reviewBacklogMarkdown),
+    });
+  }
+  const workSelection: SentinelWorkSelection = matrixWorkSelection ?? selectSentinelWork(
+    mode,
+    currentEncrypted.length,
+    state.interval,
+    reviewBacklogMarkdown,
+    selectedIssueJob,
+  );
   await writeJson(`${reportsDir}/triage-gate.json`, {
     schema_version: 1,
     required: workSelection.source === "triage",
@@ -3126,18 +3313,21 @@ const run = async (): Promise<void> => {
     return;
   }
 
-  const recoverySourceKind: SentinelRecoverySourceKind = workSelection.source === "github_issue"
-    ? "github_issue"
-    : workSelection.source === "review_backlog"
-    ? "review_backlog"
-    : mode === "incident"
-    ? "incident"
-    : "triage";
-  const recoverySourceId = workSelection.issueJob
-    ? String(workSelection.issueJob.issueId)
-    : workSelection.backlogEntry?.fingerprint ?? state.event_dedupe_key ?? runId;
-  const recoverySourceRevision = workSelection.issueJob?.fingerprint ?? workSelection.backlogEntry?.sha ??
-    (selectedDevelopmentSha ?? await fetchDevelopmentBase(root, gitEnvironment));
+  const recoverySourceKind: SentinelRecoverySourceKind = matrixConvergencePreparedRecovery?.identity.source_kind ??
+    (workSelection.source === "github_issue"
+      ? "github_issue"
+      : workSelection.source === "review_backlog"
+      ? "review_backlog"
+      : mode === "incident"
+      ? "incident"
+      : "triage");
+  const recoverySourceId = matrixConvergencePreparedRecovery?.identity.source_id ??
+    (workSelection.issueJob
+      ? String(workSelection.issueJob.issueId)
+      : workSelection.backlogEntry?.fingerprint ?? state.event_dedupe_key ?? runId);
+  const recoverySourceRevision = matrixConvergencePreparedRecovery?.identity.source_revision ??
+    (workSelection.issueJob?.fingerprint ?? workSelection.backlogEntry?.sha ??
+      (selectedDevelopmentSha ?? await fetchDevelopmentBase(root, gitEnvironment)));
   const recoveryBaseSha = selectedDevelopmentSha ?? await fetchDevelopmentBase(root, gitEnvironment);
   let recoverySnapshot = await readGitHubSentinelRecoveryLedger({ token: githubToken, repository });
   const recoverySelection = resolveSentinelRecoverySelection({
@@ -3151,7 +3341,7 @@ const run = async (): Promise<void> => {
   const relatedRecoveryRecords = recoverySelection.related_records;
   const currentRecoveryRecord = recoverySelection.current_record;
   const retryIsDue = recoverySelection.retry_is_due;
-  if (currentRecoveryRecord && !retryIsDue) {
+  if (!matrixConvergePhase && currentRecoveryRecord && !retryIsDue) {
     await writeJson(`${reportsDir}/recovery-record-v1.json`, currentRecoveryRecord);
     await updateState("recovery_pending", {
       status: "no_change",
@@ -3164,7 +3354,13 @@ const run = async (): Promise<void> => {
   }
   let recoveryIdentity: SentinelRecoveryIdentityV1;
   let durableRecoveryRecord: SentinelRecoveryRecordV1;
-  if (currentRecoveryRecord) {
+  if (matrixConvergePhase) {
+    if (!matrixConvergencePreparedRecovery) {
+      throw new Error("Matrix convergence lost its prepared recovery record");
+    }
+    durableRecoveryRecord = reuseMatrixPreparedRecoveryRecord(matrixConvergencePreparedRecovery, currentRecoveryRecord);
+    recoveryIdentity = durableRecoveryRecord.identity;
+  } else if (currentRecoveryRecord) {
     recoveryIdentity = currentRecoveryRecord.identity;
     durableRecoveryRecord = parseSentinelRecoveryRecord({
       ...currentRecoveryRecord,
@@ -3269,7 +3465,6 @@ const run = async (): Promise<void> => {
   ]);
 
   let triage: TriageReport;
-  let matrixConvergencePlan: MatrixPlanV1 | null = null;
   let matrixConvergenceReports: MatrixCellReportV1[] = [];
   let matrixImplementationReport: ImplementationReport | null = null;
   let matrixCycleReport: MatrixCycleReportV1 | null = null;
@@ -3284,11 +3479,10 @@ const run = async (): Promise<void> => {
     await writeJson(`${reportsDir}/matrix-cycle.json`, matrixCycleReport);
   };
   if (matrixConvergePhase) {
-    matrixConvergencePlan = await parseMatrixPlanV1(await Deno.readTextFile(`${reportsDir}/matrix-plan.json`));
-    const triageValue: unknown = JSON.parse(await Deno.readTextFile(`${reportsDir}/triage.json`));
-    if (!isTriageReport(triageValue)) throw new Error("Matrix convergence triage report is invalid");
-    triage = triageValue;
-    assertTriageMatchesMatrixPlan(triage, matrixConvergencePlan);
+    if (!matrixConvergencePlan || !matrixConvergenceTriage) {
+      throw new Error("Matrix convergence lost its immutable inputs");
+    }
+    triage = matrixConvergenceTriage;
     matrixConvergenceReports = await Promise.all(matrixConvergencePlan.cells.map(async (cell) => {
       const value: unknown = JSON.parse(await Deno.readTextFile(cell.report_path));
       return await validateMatrixCellReportV1(value as MatrixCellReportV1, matrixConvergencePlan!);
@@ -3572,7 +3766,10 @@ const run = async (): Promise<void> => {
     assertCompleteFindingDispositions(triage, matrixImplementationReport);
     assertActionableFindingsResolved(triage, matrixImplementationReport);
     await writeJson(`${reportsDir}/implementation-matrix-integrated.json`, matrixImplementationReport);
-    if (integration.cycle_report.integrated_candidate?.head_sha === baseSha) {
+    if (
+      integration.cycle_report.integrated_candidate?.head_sha === baseSha && !workSelection.issueJob &&
+      !workSelection.backlogEntry
+    ) {
       await writeMatrixDelivery({
         status: "not_attempted",
         pr_number: null,
@@ -3603,7 +3800,7 @@ const run = async (): Promise<void> => {
     parseGitHubIssueJobLedger(candidateLedger);
   }
   if (
-    currentRecoveryRecord && retryIsDue && workSelection.source !== "github_issue" &&
+    !matrixConvergePhase && currentRecoveryRecord && retryIsDue && workSelection.source !== "github_issue" &&
     currentRecoveryRecord.candidate_branch !== null && currentRecoveryRecord.candidate_sha !== null
   ) {
     await prepareResumedGitHubIssueCandidate({
@@ -4392,7 +4589,7 @@ const run = async (): Promise<void> => {
     });
     for (const replayCase of applicableCases) replayCase.body.fill(0);
   };
-  if (workSelection.issueJob && retryCheckpoint) {
+  if (!matrixConvergePhase && workSelection.issueJob && retryCheckpoint) {
     try {
       await updateState("resuming_retry_checkpoint", {
         retry_checkpoint: {
@@ -4534,6 +4731,16 @@ const run = async (): Promise<void> => {
     }
   } else if (!matrixImplementationReport) {
     throw new Error("Matrix convergence did not produce an implementation report");
+  } else {
+    implementationReport = matrixImplementationReport;
+    assertCompleteFindingDispositions(triage, implementationReport);
+    if (workSelection.source === "review_backlog") {
+      await applyInitialSelectedBacklogDisposition(implementationReport);
+    } else if (workSelection.source === "github_issue") {
+      await applyInitialSelectedIssueDisposition(implementationReport);
+    } else {
+      assertActionableFindingsResolved(triage, implementationReport);
+    }
   }
 
   if (selectedBacklogState.disposition !== null && !selectedBacklogState.continueToRuntimeValidation) {
@@ -5352,28 +5559,91 @@ const run = async (): Promise<void> => {
       if (!matrixConvergencePlan || !matrixCycleReport?.integrated_candidate) {
         throw new Error("Matrix delivery lost its integrated candidate evidence");
       }
+      if (matrixCycleReport.integrated_candidate.base_sha !== baseSha) {
+        throw new Error("Matrix delivery integrated candidate base differs from the current development base");
+      }
       const integratedHeadSha = candidateSha;
+      const requiredDeliveryAncestors = [
+        matrixCycleReport.integrated_candidate.head_sha,
+        ...matrixCycleReport.accepted_ancestry.map((item) => item.cell_head_sha),
+      ];
+      for (const requiredAncestor of requiredDeliveryAncestors) {
+        const ancestry = await runTrustedGitUnchecked({
+          args: ["merge-base", "--is-ancestor", requiredAncestor, integratedHeadSha],
+          cwd: checkout,
+          env: gitEnvironment,
+        });
+        if (ancestry.code !== 0) {
+          throw new Error(`Matrix delivery candidate lost required ancestry ${requiredAncestor}`);
+        }
+      }
+      const integratedTreeSha = ensureFullSha(
+        await gitText(checkout, ["rev-parse", "HEAD^{tree}"]),
+        "Integrated candidate tree SHA",
+      );
+      matrixCycleReport = {
+        ...matrixCycleReport,
+        integrated_candidate: {
+          ...matrixCycleReport.integrated_candidate,
+          head_sha: integratedHeadSha,
+          tree_sha: integratedTreeSha,
+        },
+        accepted_ancestry: matrixCycleReport.accepted_ancestry.map((item) => ({
+          ...item,
+          integrated_head_sha: integratedHeadSha,
+        })),
+      };
       const marker = `<!-- provider-sentinel-matrix:${runId}:${githubRunAttempt}:${integratedHeadSha} -->`;
       await writeMatrixDelivery({ status: "ready", pr_number: null, merge_sha: null, reason: null });
-      const branchPulls = (await github.listOpenPullRequests(SENTINEL_POLICY.developmentBranch)).filter((pull) =>
-        pull.headRef === branch
-      );
-      if (branchPulls.length > 1) throw new Error("Matrix candidate branch has more than one open pull request");
-      let pull = branchPulls[0] ?? null;
-      if (pull && (pull.headSha !== integratedHeadSha || pull.baseRef !== SENTINEL_POLICY.developmentBranch)) {
-        throw new Error("Existing matrix pull request does not match the immutable candidate");
-      }
-      if (!pull) {
-        pull = await github.createPullRequest({
-          title: `fix: Provider Sentinel matrix ${runId}-${githubRunAttempt}`,
-          body: `${marker}\n\nIntegrated Provider Sentinel matrix candidate at \`${integratedHeadSha}\`.`,
-          head: branch,
-          base: SENTINEL_POLICY.developmentBranch,
+      let pull: GitHubPullRequest | null = null;
+      let pullMarker = marker;
+      if (workSelection.issueJob) {
+        await updateState("pushing_development", { candidate_sha: integratedHeadSha });
+        const issuePullRecord = await ensureIssuePullRequestForDevelopmentPush({
+          repositoryRoot: root,
+          prePushInput: `HEAD ${integratedHeadSha} refs/heads/development ${baseSha}\n`,
+          token: githubToken,
+          repository,
+          workflowRunId: runId,
+          workflowRunAttempt: githubRunAttempt,
+          serverUrl: optionalEnvironment("GITHUB_SERVER_URL") ?? "https://github.com",
         });
+        if (issuePullRecord === null) {
+          throw new Error("Matrix issue delivery did not produce an issue pull request record");
+        }
+        if (issuePullRecord.head_sha !== integratedHeadSha || issuePullRecord.head_branch !== branch) {
+          throw new Error("Matrix issue pull request record does not match the immutable candidate");
+        }
+        const issuePulls = (await github.listOpenPullRequests(SENTINEL_POLICY.developmentBranch)).filter(
+          (candidate) => candidate.number === issuePullRecord.pull_request_number,
+        );
+        if (issuePulls.length !== 1) {
+          throw new Error("Matrix issue pull request is missing or ambiguous");
+        }
+        pull = issuePulls[0];
+        pullMarker = issuePullRecord.marker;
+      } else {
+        const branchPulls = (await github.listOpenPullRequests(SENTINEL_POLICY.developmentBranch)).filter(
+          (candidate) => candidate.headRef === branch,
+        );
+        if (branchPulls.length > 1) throw new Error("Matrix candidate branch has more than one open pull request");
+        pull = branchPulls[0] ?? null;
+        if (pull && (pull.headSha !== integratedHeadSha || pull.baseRef !== SENTINEL_POLICY.developmentBranch)) {
+          throw new Error("Existing matrix pull request does not match the immutable candidate");
+        }
+        if (!pull) {
+          pull = await github.createPullRequest({
+            title: `fix: Provider Sentinel matrix ${runId}-${githubRunAttempt}`,
+            body: `${marker}\n\nIntegrated Provider Sentinel matrix candidate at \`${integratedHeadSha}\`.`,
+            head: branch,
+            base: SENTINEL_POLICY.developmentBranch,
+          });
+        }
       }
       if (
-        pull.state !== "open" || pull.merged || pull.headRef !== branch || pull.headSha !== integratedHeadSha ||
-        pull.baseRef !== SENTINEL_POLICY.developmentBranch || !pull.body.includes(marker)
+        pull === null || pull.state !== "open" || pull.merged || pull.headRef !== branch ||
+        pull.headSha !== integratedHeadSha || pull.baseRef !== SENTINEL_POLICY.developmentBranch ||
+        !pull.body.includes(pullMarker)
       ) {
         throw new Error("Matrix pull request failed its immutable identity check");
       }
