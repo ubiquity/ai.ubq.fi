@@ -4740,40 +4740,6 @@
       "identity": {
         "repository": "ubiquity/ai.ubq.fi",
         "source_kind": "triage",
-        "source_id": "33675296197:artifact:9864237066",
-        "source_revision": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
-        "candidate_generation": 1
-      },
-      "run_id": "33675296197",
-      "attempt": 1,
-      "lease_token": "artifact-9864237066",
-      "base_sha": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
-      "phase": "rejected",
-      "disposition": "rejected",
-      "state_version": 1,
-      "created_at": "2026-09-02T19:50:17Z",
-      "updated_at": "2026-09-02T19:50:17Z",
-      "candidate_branch": null,
-      "candidate_sha": null,
-      "changed_files": [],
-      "tree_sha": null,
-      "failure_class": "artifact_invalid",
-      "failure_fingerprint": "2edf49b1ac769c6445508a90ab427e812c171fa50aa8bc80d16414a197dc2796",
-      "artifact_ids": [
-        9864237066
-      ],
-      "artifact_digests": [
-        "sha256:2edf49b1ac769c6445508a90ab427e812c171fa50aa8bc80d16414a197dc2796"
-      ],
-      "reason": "authenticated legacy evidence contains a terminal disposition",
-      "next_action": null,
-      "predecessor": null
-    },
-    {
-      "schema_version": 1,
-      "identity": {
-        "repository": "ubiquity/ai.ubq.fi",
-        "source_kind": "triage",
         "source_id": "33676119098:artifact:9864589563",
         "source_revision": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
         "candidate_generation": 1
@@ -14420,6 +14386,40 @@
       ],
       "artifact_digests": [
         "sha256:edde34142562572057e834d16d89779ba92ce59c699c9341df9d0f04ed3bb2ea"
+      ],
+      "reason": "authenticated legacy evidence lacks a provable recovery record",
+      "next_action": "a repository owner must inspect the encrypted artifact and its exact workflow base",
+      "predecessor": null
+    },
+    {
+      "schema_version": 1,
+      "identity": {
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_kind": "triage",
+        "source_id": "33952224722:artifact:9965225990",
+        "source_revision": "2ab2b39b61e6ae05584349e5a92d9275db1218c2",
+        "candidate_generation": 1
+      },
+      "run_id": "33952224722",
+      "attempt": 1,
+      "lease_token": "artifact-9965225990",
+      "base_sha": "2ab2b39b61e6ae05584349e5a92d9275db1218c2",
+      "phase": "manual_required",
+      "disposition": "manual_required",
+      "state_version": 1,
+      "created_at": "2026-09-05T07:22:06Z",
+      "updated_at": "2026-09-05T07:22:06Z",
+      "candidate_branch": null,
+      "candidate_sha": null,
+      "changed_files": [],
+      "tree_sha": null,
+      "failure_class": "artifact_invalid",
+      "failure_fingerprint": "b13f8575b60f2f81eda0556d3b0f9e65498628f93207613d8b74752b9279a3cc",
+      "artifact_ids": [
+        9965225990
+      ],
+      "artifact_digests": [
+        "sha256:b13f8575b60f2f81eda0556d3b0f9e65498628f93207613d8b74752b9279a3cc"
       ],
       "reason": "authenticated legacy evidence lacks a provable recovery record",
       "next_action": "a repository owner must inspect the encrypted artifact and its exact workflow base",
