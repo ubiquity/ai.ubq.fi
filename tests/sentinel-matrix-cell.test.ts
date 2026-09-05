@@ -457,7 +457,7 @@ Deno.test({
           return { lastMessage: reportMessage(["src/fix.ts"]) };
         },
         secretScan: () => Promise.resolve(),
-        validate: async ({ changedPaths }) => {
+        validate: ({ changedPaths }) => {
           validationRuns.push([...changedPaths]);
           return Promise.resolve({
             passed: false,
@@ -517,7 +517,7 @@ Deno.test({
           return { lastMessage: reportMessage(["src/fix.ts"]) };
         },
         secretScan: () => Promise.resolve(),
-        validate: async () => {
+        validate: () => {
           validationRuns.push(1);
           return Promise.resolve({
             passed: false,
@@ -566,7 +566,7 @@ Deno.test({
           throw new CodexInvocationError("invocation_timeout");
         },
         secretScan: () => Promise.resolve(),
-        validate: async () => {
+        validate: () => {
           validationRuns.push(1);
           return Promise.resolve({
             passed: false,
@@ -616,7 +616,7 @@ Deno.test({
           return { lastMessage: reportMessage(["src/extra.ts", "src/fix.ts"]) };
         },
         secretScan: () => Promise.resolve(),
-        validate: async () => {
+        validate: () => {
           validationRuns.push(1);
           return Promise.resolve({
             passed: false,
@@ -660,7 +660,7 @@ Deno.test({
           return { lastMessage: reportMessage(["src/outside.ts"]) };
         },
         secretScan: () => Promise.resolve(),
-        validate: async () => {
+        validate: () => {
           validationRuns.push(1);
           return Promise.resolve({
             passed: false,
@@ -707,7 +707,7 @@ Deno.test({
           return { lastMessage: reportMessage(["src/extra.ts"]) };
         },
         secretScan: () => Promise.resolve(),
-        validate: async () => {
+        validate: () => {
           validationRuns.push(1);
           return Promise.resolve({
             passed: false,
