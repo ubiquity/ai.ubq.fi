@@ -1970,46 +1970,28 @@ Deno.test("every application's transaction and retention are validated before an
 
 Deno.test("terminal transactions persist only exactly equal with an unchanged healthy attestation", async () => {
   const backend = new FakeGitHubBackend();
-  await backend.seedDevelopment({});
+  // A kept snapshot is only reachable through the full release path, which
+  // this test does not exercise: seed an already valid kept document on the
+  // state branch through the sibling-writer facade so the terminal
+  // equality/clear/regression assertions below see it as current at
+  // generation 3, exactly as the original prepared->kept setup did.
+  const kept = parseOk(stateDocument({
+    generation: 3,
+    applications: [{
+      app: "ai-ubq-fi",
+      healthy: candidateAttestation(),
+      transaction: keptTransaction(),
+    }],
+  }));
+  await backend.seedDevelopment({ [SENTINEL_PROVIDER_STATE_PATH]: providerStateJson(kept) });
+  await backend.siblingCreateBranch({});
   const adapter = await makeAdapter(backend);
-  assert.equal(
-    await adapter.compareAndSet(
-      backend.developmentHead(),
-      parseOk(stateDocument({ generation: 1, applications: [appState()] })),
-    ),
-    true,
-  );
   let head = adapter.readSnapshot().commit_sha;
   assert.equal(
-    await adapter.compareAndSet(
-      head,
-      parseOk(stateDocument({
-        generation: 2,
-        applications: [{
-          app: "ai-ubq-fi",
-          healthy: previousAttestation(),
-          transaction: preparedTransaction(),
-        }],
-      })),
-    ),
-    true,
+    adapter.readSnapshot().document!.applications[0]!.transaction!.phase,
+    "kept",
+    "the seeded state branch must present the kept transaction as current",
   );
-  head = adapter.readSnapshot().commit_sha;
-  assert.equal(
-    await adapter.compareAndSet(
-      head,
-      parseOk(stateDocument({
-        generation: 3,
-        applications: [{
-          app: "ai-ubq-fi",
-          healthy: candidateAttestation(),
-          transaction: keptTransaction(),
-        }],
-      })),
-    ),
-    true,
-  );
-  head = adapter.readSnapshot().commit_sha;
   const unchanged = parseOk(stateDocument({
     generation: 4,
     applications: [{
@@ -2024,6 +2006,8 @@ Deno.test("terminal transactions persist only exactly equal with an unchanged he
     "an exactly equal terminal transaction persists with its healthy attestation",
   );
   head = adapter.readSnapshot().commit_sha;
+  const postsAfterPersist = countRequestsWhere(backend, "POST");
+  const patchesAfterPersist = countRequestsWhere(backend, "PATCH");
   const clear = parseOk(stateDocument({
     generation: 5,
     applications: [{
@@ -2056,6 +2040,16 @@ Deno.test("terminal transactions persist only exactly equal with an unchanged he
   }));
   assert.equal(await adapter.compareAndSet(head, rewrite), false, "completed evidence can never be rewritten");
   assert.equal(backend.childCommitsOf(head), 0, "rejected terminal persistence must publish nothing");
+  assert.equal(
+    countRequestsWhere(backend, "POST"),
+    postsAfterPersist,
+    "rejected terminal persistence must create no additional Git objects",
+  );
+  assert.equal(
+    countRequestsWhere(backend, "PATCH"),
+    patchesAfterPersist,
+    "rejected terminal persistence must never update the state ref",
+  );
 });
 
 Deno.test("a remote sibling writer between snapshot and CAS is rejected before any publish", async () => {
@@ -2478,4 +2472,568 @@ Deno.test("transaction origin and retired executor evidence are pinned once the 
   );
   assert.equal(backend.stateRefHead(), head, "rejected attempts must not move the state ref");
   assert.equal(backend.childCommitsOf(head), 0, "rejected attempts must publish nothing");
+});
+
+// ---------------------------------------------------------------------------
+// Same-ID release progress/evidence coverage.
+// ---------------------------------------------------------------------------
+
+// An observing transaction with recorded promotion, route, and observation
+// evidence used as the seeded baseline for the negative and positive
+// same-ID progress cases below.
+const seededObserving = (overrides: Record<string, unknown> = {}): Fixture =>
+  observing({
+    route: { revision_id: "rev-b", observed_at: OBSERVED, evidence_ref: "github:route-candidate" },
+    observation: {
+      last_observed_at: "2026-09-04T12:35:00.000Z",
+      samples: 2,
+      consecutive_liveness_failures: 1,
+      consecutive_inference_failures: 0,
+      invariant_id: "fix-1",
+      consecutive_invariant_failures: 1,
+    },
+    ...overrides,
+  });
+
+// Seeds a schema-valid provider document on development and publishes the
+// state branch via the sibling-writer facade, so the adapter's captured
+// snapshot presents the document as already current.
+const seedStateBranch = async (document: Fixture): Promise<FakeGitHubBackend> => {
+  const backend = new FakeGitHubBackend();
+  await backend.seedDevelopment({ [SENTINEL_PROVIDER_STATE_PATH]: providerStateJson(parseOk(document)) });
+  await backend.siblingCreateBranch({});
+  return backend;
+};
+
+Deno.test("an acknowledged observing snapshot rejects backward phases and every evidence rewrite before any publish", async () => {
+  const backend = await seedStateBranch(stateDocument({
+    generation: 2,
+    applications: [{ app: "ai-ubq-fi", healthy: previousAttestation(), transaction: seededObserving() }],
+  }));
+  const adapter = await makeAdapter(backend);
+  const head = adapter.readSnapshot().commit_sha;
+  const attempts: ReadonlyArray<readonly [string, Fixture]> = [
+    ["backward to prepared", preparedTransaction()],
+    ["backward to promotion_pending clears promotion evidence", promotionPending()],
+    [
+      "acknowledged promotion result rewritten",
+      seededObserving({ promotion_result: { ...acknowledged(), evidence_ref: "github:promotion-rewritten" } }),
+    ],
+    [
+      "promotion result time rewound",
+      seededObserving({ promotion_result: { ...acknowledged(), observed_at: "2026-09-04T12:09:00.000Z" } }),
+    ],
+    ["route cleared", seededObserving({ route: null })],
+    [
+      "route rewound to an older observation",
+      seededObserving({
+        route: { revision_id: "rev-b", observed_at: "2026-09-04T12:20:00.000Z", evidence_ref: "github:older-route" },
+      }),
+    ],
+    [
+      "route rewritten to the previous revision at an equal timestamp",
+      seededObserving({
+        route: { revision_id: "rev-a", observed_at: OBSERVED, evidence_ref: "github:route-previous" },
+      }),
+    ],
+    [
+      "observation last-seen time rewound at equal samples",
+      seededObserving({
+        observation: {
+          last_observed_at: "2026-09-04T12:34:00.000Z",
+          samples: 2,
+          consecutive_liveness_failures: 1,
+          consecutive_inference_failures: 0,
+          invariant_id: "fix-1",
+          consecutive_invariant_failures: 1,
+        },
+      }),
+    ],
+    [
+      "observation samples decreased",
+      seededObserving({
+        observation: {
+          last_observed_at: "2026-09-04T12:35:00.000Z",
+          samples: 1,
+          consecutive_liveness_failures: 1,
+          consecutive_inference_failures: 0,
+          invariant_id: "fix-1",
+          consecutive_invariant_failures: 1,
+        },
+      }),
+    ],
+    [
+      "same-sample consecutive counters changed",
+      seededObserving({
+        observation: {
+          last_observed_at: "2026-09-04T12:35:00.000Z",
+          samples: 2,
+          consecutive_liveness_failures: 2,
+          consecutive_inference_failures: 0,
+          invariant_id: "fix-1",
+          consecutive_invariant_failures: 1,
+        },
+      }),
+    ],
+  ];
+  for (const [label, transaction] of attempts) {
+    assert.equal(
+      await adapter.compareAndSet(
+        head,
+        parseOk(stateDocument({
+          generation: 3,
+          applications: [{ app: "ai-ubq-fi", healthy: previousAttestation(), transaction }],
+        })),
+      ),
+      false,
+      label,
+    );
+  }
+  assert.equal(countRequestsWhere(backend, "POST"), 0, "rejected attempts must create no Git objects");
+  assert.equal(countRequestsWhere(backend, "PATCH"), 0, "rejected attempts must never update the state ref");
+  assert.equal(backend.childCommitsOf(head), 0, "rejected attempts must publish nothing");
+});
+
+Deno.test("prepared to promotion_pending to observing to kept accepts ambiguous promotion reconciliation", async () => {
+  const backend = new FakeGitHubBackend();
+  await backend.seedDevelopment({});
+  const adapter = await makeAdapter(backend);
+  const publish = async (document: Fixture): Promise<void> => {
+    const head = adapter.readSnapshot().commit_sha;
+    assert.equal(await adapter.compareAndSet(head, parseOk(document)), true);
+  };
+  await publish(stateDocument({ generation: 1, applications: [appState()] }));
+  await publish(stateDocument({
+    generation: 2,
+    applications: [{ app: "ai-ubq-fi", healthy: previousAttestation(), transaction: preparedTransaction() }],
+  }));
+  await publish(stateDocument({
+    generation: 3,
+    applications: [{
+      app: "ai-ubq-fi",
+      healthy: previousAttestation(),
+      transaction: promotionPending({ promotion_result: ambiguous() }),
+    }],
+  }));
+  await publish(stateDocument({
+    generation: 4,
+    applications: [{
+      app: "ai-ubq-fi",
+      healthy: previousAttestation(),
+      transaction: observing({ promotion_result: acknowledged() }),
+    }],
+  }));
+  await publish(stateDocument({
+    generation: 5,
+    applications: [{
+      app: "ai-ubq-fi",
+      healthy: candidateAttestation(),
+      transaction: keptTransaction(),
+    }],
+  }));
+  const final = adapter.readSnapshot().document!.applications[0]!.transaction!;
+  assert.equal(final.phase, "kept");
+  assert.equal(final.promotion_intent_at, INTENT, "earlier promotion intent evidence persists");
+  assert.equal(final.observation_deadline_at, DEADLINE, "the original observation deadline persists");
+  assert.equal(final.created_at, CREATED_AT, "the original transaction origin persists");
+  assert.equal(final.promotion_result!.kind, "acknowledged");
+  assert.equal(final.promotion_result!.http_status, 204, "the ambiguous result reconciled to HTTP 204");
+  assert.equal(final.route!.revision_id, "rev-b");
+  assert.equal(final.observation.samples, 3);
+});
+
+Deno.test("blocked stays nonterminal: no replacement, prepared, or terminal jump, and reason changes are legal", async () => {
+  const backend = await seedStateBranch(stateDocument({
+    generation: 2,
+    applications: [{ app: "ai-ubq-fi", healthy: previousAttestation(), transaction: blockedTransaction() }],
+  }));
+  const adapter = await makeAdapter(backend);
+  const head = adapter.readSnapshot().commit_sha;
+  const attempts: ReadonlyArray<readonly [string, Fixture, Fixture]> = [
+    [
+      "a different transaction id may never replace a blocked transaction",
+      preparedTransaction({ id: "tx-2", fence_generation: 3 }),
+      previousAttestation(),
+    ],
+    ["blocked may never regress to prepared", preparedTransaction(), previousAttestation()],
+    ["blocked may never jump directly to kept", keptTransaction(), candidateAttestation()],
+    ["blocked may never jump directly to rolled_back", rolledBackTransaction(), restorationAttestation()],
+  ];
+  for (const [label, transaction, healthy] of attempts) {
+    assert.equal(
+      await adapter.compareAndSet(
+        head,
+        parseOk(stateDocument({
+          generation: 3,
+          applications: [{ app: "ai-ubq-fi", healthy, transaction }],
+        })),
+      ),
+      false,
+      label,
+    );
+  }
+  assert.equal(backend.childCommitsOf(head), 0, "rejected blocked transitions must publish nothing");
+  assert.equal(
+    countRequestsWhere(backend, "POST"),
+    0,
+    "rejected blocked transitions must create no Git objects",
+  );
+  assert.equal(
+    countRequestsWhere(backend, "PATCH"),
+    0,
+    "rejected blocked transitions must never update the state ref",
+  );
+  assert.equal(
+    await adapter.compareAndSet(
+      head,
+      parseOk(stateDocument({
+        generation: 3,
+        applications: [{
+          app: "ai-ubq-fi",
+          healthy: previousAttestation(),
+          transaction: blockedTransaction({ reason: "updated_dependency_reason" }),
+        }],
+      })),
+    ),
+    true,
+    "a blocked dependency reason may change while the transaction stays blocked",
+  );
+  const current = adapter.readSnapshot().document!.applications[0]!.transaction!;
+  assert.equal(current.phase, "blocked", "blocked remains nonterminal");
+  assert.equal(current.reason, "updated_dependency_reason");
+});
+
+Deno.test("blocked resumes exactly the phase implied by its retained promotion/rollback evidence", async () => {
+  const stages: ReadonlyArray<
+    Readonly<{
+      label: string;
+      seed: Fixture;
+      resume: Fixture;
+      phase: string;
+      rejected?: Fixture;
+    }>
+  > = [
+    {
+      label: "no promotion result and no rollback evidence",
+      seed: blockedTransaction({ promotion_result: null }),
+      resume: promotionPending(),
+      phase: "promotion_pending",
+    },
+    {
+      label: "a recorded promotion result",
+      seed: blockedTransaction({ promotion_result: ambiguous() }),
+      resume: observing({ promotion_result: ambiguous() }),
+      phase: "observing",
+    },
+    {
+      label: "a recorded rollback intent",
+      seed: blockedTransaction({
+        promotion_result: acknowledged(),
+        rollback_intent_at: ROLLBACK_INTENT,
+      }),
+      resume: rollbackPending({ promotion_result: acknowledged() }),
+      phase: "rollback_pending",
+      rejected: observing({ promotion_result: acknowledged() }),
+    },
+    {
+      label: "an acknowledged rollback result",
+      seed: blockedTransaction({
+        promotion_result: acknowledged(),
+        rollback_intent_at: ROLLBACK_INTENT,
+        rollback_result: { ...acknowledged(), observed_at: ROLLBACK_RESULT_AT },
+      }),
+      resume: rollbackPendingVerification({ promotion_result: acknowledged() }),
+      phase: "rollback_pending_verification",
+      rejected: rollbackPending({ promotion_result: acknowledged() }),
+    },
+  ];
+  for (const stage of stages) {
+    const backend = await seedStateBranch(stateDocument({
+      generation: 2,
+      applications: [{ app: "ai-ubq-fi", healthy: previousAttestation(), transaction: stage.seed }],
+    }));
+    const adapter = await makeAdapter(backend);
+    const head = adapter.readSnapshot().commit_sha;
+    if (stage.rejected !== undefined) {
+      assert.equal(
+        await adapter.compareAndSet(
+          head,
+          parseOk(stateDocument({
+            generation: 3,
+            applications: [{ app: "ai-ubq-fi", healthy: previousAttestation(), transaction: stage.rejected }],
+          })),
+        ),
+        false,
+        `${stage.label}: every phase other than the implied one must be rejected`,
+      );
+    }
+    assert.equal(countRequestsWhere(backend, "POST"), 0, `${stage.label}: no Git object before a valid resume`);
+    assert.equal(countRequestsWhere(backend, "PATCH"), 0, `${stage.label}: no ref update before a valid resume`);
+    assert.equal(
+      await adapter.compareAndSet(
+        head,
+        parseOk(stateDocument({
+          generation: 3,
+          applications: [{ app: "ai-ubq-fi", healthy: previousAttestation(), transaction: stage.resume }],
+        })),
+      ),
+      true,
+      `${stage.label}: blocked must resume ${stage.phase}`,
+    );
+    assert.equal(adapter.readSnapshot().document!.applications[0]!.transaction!.phase, stage.phase);
+  }
+});
+
+Deno.test("seeded rollback_pending rejects phase jumps, evidence rewrites, and parser-valid clearings without publishing", async () => {
+  const cases: ReadonlyArray<Readonly<{ label: string; seed: Fixture; attempt: Fixture }>> = [
+    {
+      label: "rollback_pending may never jump to observing",
+      seed: rollbackPending(),
+      attempt: observing({ promotion_result: ambiguous() }),
+    },
+    {
+      label: "promotion_intent_at rewound with its bound deadline",
+      seed: rollbackPending(),
+      attempt: rollbackPending({
+        promotion_intent_at: "2026-09-04T11:30:00.000Z",
+        observation_deadline_at: "2026-09-04T12:00:00.000Z",
+      }),
+    },
+    {
+      label: "observation_deadline_at rewound with its bound intent",
+      seed: rollbackPending(),
+      attempt: rollbackPending({
+        promotion_intent_at: "2026-09-04T11:45:00.000Z",
+        observation_deadline_at: "2026-09-04T12:15:00.000Z",
+      }),
+    },
+    {
+      label: "rollback_intent_at rewritten",
+      seed: rollbackPending(),
+      attempt: rollbackPending({ rollback_intent_at: "2026-09-04T13:30:00.000Z" }),
+    },
+    {
+      label: "promotion_result explicitly cleared on a blocked shape",
+      seed: blockedTransaction({ promotion_result: acknowledged(), rollback_intent_at: ROLLBACK_INTENT }),
+      attempt: blockedTransaction({ promotion_result: null, rollback_intent_at: ROLLBACK_INTENT }),
+    },
+    {
+      label: "rollback intent explicitly cleared on a blocked shape",
+      seed: blockedTransaction({ promotion_result: acknowledged(), rollback_intent_at: ROLLBACK_INTENT }),
+      attempt: blockedTransaction({ promotion_result: acknowledged(), rollback_intent_at: null }),
+    },
+  ];
+  for (const entry of cases) {
+    const backend = await seedStateBranch(stateDocument({
+      generation: 2,
+      applications: [{ app: "ai-ubq-fi", healthy: previousAttestation(), transaction: entry.seed }],
+    }));
+    const adapter = await makeAdapter(backend);
+    const head = adapter.readSnapshot().commit_sha;
+    assert.equal(
+      await adapter.compareAndSet(
+        head,
+        parseOk(stateDocument({
+          generation: 3,
+          applications: [{ app: "ai-ubq-fi", healthy: previousAttestation(), transaction: entry.attempt }],
+        })),
+      ),
+      false,
+      entry.label,
+    );
+    assert.equal(countRequestsWhere(backend, "POST"), 0, `${entry.label}: no Git object may be created`);
+    assert.equal(countRequestsWhere(backend, "PATCH"), 0, `${entry.label}: the state ref must never be updated`);
+  }
+});
+
+Deno.test("newer route and observation evidence truthfully refresh with counter resets and invariant changes", async () => {
+  const baselineObservation = {
+    last_observed_at: "2026-09-04T12:35:00.000Z",
+    samples: 2,
+    consecutive_liveness_failures: 2,
+    consecutive_inference_failures: 0,
+    invariant_id: "fix-1",
+    consecutive_invariant_failures: 2,
+  };
+  const backend = await seedStateBranch(stateDocument({
+    generation: 2,
+    applications: [{
+      app: "ai-ubq-fi",
+      healthy: previousAttestation(),
+      transaction: seededObserving({ observation: baselineObservation }),
+    }],
+  }));
+  const adapter = await makeAdapter(backend);
+  const publish = async (generation: number, transaction: Fixture): Promise<void> => {
+    const head = adapter.readSnapshot().commit_sha;
+    assert.equal(
+      await adapter.compareAndSet(
+        head,
+        parseOk(stateDocument({
+          generation,
+          applications: [{ app: "ai-ubq-fi", healthy: previousAttestation(), transaction }],
+        })),
+      ),
+      true,
+      `generation ${generation}`,
+    );
+  };
+  await publish(
+    3,
+    seededObserving({
+      observation: baselineObservation,
+      route: { revision_id: "rev-a", observed_at: "2026-09-04T12:41:00.000Z", evidence_ref: "github:route-previous" },
+    }),
+  );
+  await publish(
+    4,
+    seededObserving({
+      observation: baselineObservation,
+      route: { revision_id: "rev-b", observed_at: "2026-09-04T12:42:00.000Z", evidence_ref: "github:route-candidate" },
+    }),
+  );
+  await publish(
+    5,
+    seededObserving({
+      route: { revision_id: "rev-b", observed_at: "2026-09-04T12:42:00.000Z", evidence_ref: "github:route-candidate" },
+      observation: {
+        last_observed_at: "2026-09-04T12:42:00.000Z",
+        samples: 3,
+        consecutive_liveness_failures: 1,
+        consecutive_inference_failures: 0,
+        invariant_id: "fix-1",
+        consecutive_invariant_failures: 1,
+      },
+    }),
+  );
+  await publish(
+    6,
+    seededObserving({
+      route: { revision_id: "rev-b", observed_at: "2026-09-04T12:42:00.000Z", evidence_ref: "github:route-candidate" },
+      observation: {
+        last_observed_at: "2026-09-04T12:43:00.000Z",
+        samples: 4,
+        consecutive_liveness_failures: 0,
+        consecutive_inference_failures: 0,
+        invariant_id: "fix-2",
+        consecutive_invariant_failures: 0,
+      },
+    }),
+  );
+  const final = adapter.readSnapshot().document!.applications[0]!.transaction!;
+  assert.equal(final.route!.revision_id, "rev-b", "the newest truthful route evidence wins");
+  assert.equal(final.observation.samples, 4);
+  assert.equal(final.observation.consecutive_liveness_failures, 0, "counters may reset to zero with newer samples");
+  assert.equal(final.observation.invariant_id, "fix-2", "the invariant identity may change with newer samples");
+});
+
+Deno.test("an ambiguous rollback result may reconcile to acknowledged 204 and the acknowledged result is immutable", async () => {
+  const backend = await seedStateBranch(stateDocument({
+    generation: 2,
+    applications: [{
+      app: "ai-ubq-fi",
+      healthy: previousAttestation(),
+      transaction: rollbackPending({
+        rollback_result: {
+          ...ambiguous(),
+          observed_at: ROLLBACK_RESULT_AT,
+          evidence_ref: "github:rollback-ambiguous",
+        },
+      }),
+    }],
+  }));
+  const adapter = await makeAdapter(backend);
+  const head = adapter.readSnapshot().commit_sha;
+  assert.equal(
+    await adapter.compareAndSet(
+      head,
+      parseOk(stateDocument({
+        generation: 3,
+        applications: [{
+          app: "ai-ubq-fi",
+          healthy: previousAttestation(),
+          transaction: rollbackPendingVerification(),
+        }],
+      })),
+    ),
+    true,
+    "ambiguous rollback evidence may resolve to an acknowledged HTTP 204 at an equal observed_at",
+  );
+  const current = adapter.readSnapshot().commit_sha;
+  assert.equal(
+    adapter.readSnapshot().document!.applications[0]!.transaction!.rollback_result!.kind,
+    "acknowledged",
+  );
+  assert.equal(countRequestsWhere(backend, "PATCH"), 1, "only the reconciliation may publish");
+  const postsAfterReconciliation = countRequestsWhere(backend, "POST");
+  const patchesAfterReconciliation = countRequestsWhere(backend, "PATCH");
+  const rewrites: ReadonlyArray<readonly [string, Fixture]> = [
+    [
+      "acknowledged rollback result rewritten with new evidence",
+      rollbackPendingVerification({
+        rollback_result: {
+          ...acknowledged(),
+          observed_at: ROLLBACK_RESULT_AT,
+          evidence_ref: "github:rollback-rewritten",
+        },
+      }),
+    ],
+    [
+      "acknowledged rollback result backdated",
+      rollbackPendingVerification({
+        rollback_result: { ...acknowledged(), observed_at: "2026-09-04T13:04:00.000Z" },
+      }),
+    ],
+    [
+      "acknowledged rollback result erased through a phase regression",
+      rollbackPending({ rollback_result: null }),
+    ],
+  ];
+  for (const [label, transaction] of rewrites) {
+    assert.equal(
+      await adapter.compareAndSet(
+        current,
+        parseOk(stateDocument({
+          generation: 4,
+          applications: [{ app: "ai-ubq-fi", healthy: previousAttestation(), transaction }],
+        })),
+      ),
+      false,
+      label,
+    );
+  }
+  assert.equal(backend.childCommitsOf(current), 0, "rejected rewrites must publish nothing");
+  assert.equal(
+    countRequestsWhere(backend, "POST"),
+    postsAfterReconciliation,
+    "rejected rewrites must create no additional Git objects",
+  );
+  assert.equal(
+    countRequestsWhere(backend, "PATCH"),
+    patchesAfterReconciliation,
+    "rejected rewrites must never update the state ref",
+  );
+  assert.equal(
+    await adapter.compareAndSet(
+      current,
+      parseOk(stateDocument({
+        generation: 4,
+        applications: [{ app: "ai-ubq-fi", healthy: restorationAttestation(), transaction: rolledBackTransaction() }],
+      })),
+    ),
+    true,
+    "a verified rollback may complete to rolled_back preserving its exact prior evidence",
+  );
+  const rolledBack = adapter.readSnapshot().document!.applications[0]!.transaction!;
+  assert.equal(rolledBack.phase, "rolled_back", "the transaction is terminal after rollback verification");
+  assert.equal(rolledBack.rollback_result!.kind, "acknowledged");
+  assert.equal(
+    rolledBack.rollback_result!.observed_at,
+    ROLLBACK_RESULT_AT,
+    "the reconciled rollback evidence persists",
+  );
+  assert.equal(rolledBack.rollback_intent_at, ROLLBACK_INTENT);
+  assert.equal(rolledBack.route!.revision_id, "rev-a", "the restored route identifies the previous revision");
+  assert.equal(rolledBack.restoration!.git_sha, SHA_A, "the restoration matches the previous identity");
+  assert.equal(rolledBack.restoration!.verified_at, RESTORED_AT);
 });

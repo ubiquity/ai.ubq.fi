@@ -3,7 +3,10 @@ import {
   isTerminalSentinelProviderPhase,
   parseSentinelProviderStateDocument,
   type SentinelProviderAttestationV1,
+  type SentinelProviderPhase,
+  type SentinelProviderPromotionResultV1,
   type SentinelProviderStateDocumentV1,
+  type SentinelProviderTransactionV1,
 } from "./provider-state.ts";
 import {
   parseBootstrapReleaseRecord,
@@ -292,6 +295,153 @@ const attestationEquals = (left: SentinelProviderAttestationV1, right: SentinelP
   JSON.stringify(left) === JSON.stringify(right);
 
 /**
+ * The single phase a blocked transaction may resume: its retained evidence
+ * implies exactly one phase. Acknowledged rollback evidence restarts rollback
+ * verification; otherwise a recorded rollback intent restarts the rollback;
+ * otherwise a recorded promotion result resumes observation; otherwise the
+ * promotion is still pending. Blocked never resumes directly to prepared,
+ * kept, or rolled_back.
+ */
+const blockedResumePhase = (transaction: SentinelProviderTransactionV1): SentinelProviderPhase => {
+  if (transaction.rollback_result !== null && transaction.rollback_result.kind === "acknowledged") {
+    return "rollback_pending_verification";
+  }
+  if (transaction.rollback_intent_at !== null) return "rollback_pending";
+  if (transaction.promotion_result !== null) return "observing";
+  return "promotion_pending";
+};
+
+/**
+ * Promotion/rollback result evidence: an existing result must persist exactly,
+ * except that an ambiguous result may resolve to an acknowledged HTTP 204 at a
+ * nondecreasing observed_at. Acknowledged evidence is never cleared or
+ * rewritten.
+ */
+const resultEvidenceValid = (
+  previous: SentinelProviderPromotionResultV1,
+  next: SentinelProviderPromotionResultV1 | null,
+): boolean => {
+  if (next === null) return false;
+  if (JSON.stringify(next) === JSON.stringify(previous)) return true;
+  return previous.kind === "ambiguous" && next.kind === "acknowledged" &&
+    next.http_status === 204 && next.observed_at >= previous.observed_at;
+};
+
+/**
+ * Same-ID transaction progress/evidence validation for unfinished
+ * transactions. Fixed identity, previous/candidate, executor/fence,
+ * created_at/retired_executor, and archive-link checks run before this;
+ * this predicate governs the allowed phase progression and the mutable
+ * promotion, observation, and rollback evidence. Decisions and reasons are
+ * already phase-validated by the parser and may change (a blocked
+ * dependency reason is consumed on valid resumption), so they are not
+ * re-validated here.
+ */
+const isSameIdProgressValid = (
+  previous: SentinelProviderTransactionV1,
+  next: SentinelProviderTransactionV1,
+): boolean => {
+  // Phase progression: a transaction may persist in the same phase (subject
+  // to the evidence checks below) or move forward only on the enumerated
+  // allowed edges; blocked resumes only the phase its retained evidence
+  // implies, and no direct transition into prepared/kept/rolled_back exists
+  // except the observing->kept and rollback_pending_verification->rolled_back
+  // completion edges.
+  if (next.phase !== previous.phase) {
+    let edgeAllowed = false;
+    switch (previous.phase) {
+      case "prepared":
+        edgeAllowed = next.phase === "promotion_pending";
+        break;
+      case "promotion_pending":
+        edgeAllowed = next.phase === "observing" || next.phase === "rollback_pending" ||
+          next.phase === "blocked";
+        break;
+      case "observing":
+        edgeAllowed = next.phase === "kept" || next.phase === "rollback_pending" ||
+          next.phase === "blocked";
+        break;
+      case "rollback_pending":
+        edgeAllowed = next.phase === "rollback_pending_verification" || next.phase === "blocked";
+        break;
+      case "rollback_pending_verification":
+        edgeAllowed = next.phase === "rolled_back" || next.phase === "blocked";
+        break;
+      case "blocked":
+        edgeAllowed = next.phase === blockedResumePhase(previous);
+        break;
+      case "kept":
+      case "rolled_back":
+        edgeAllowed = false;
+        break;
+    }
+    if (!edgeAllowed) return false;
+  }
+
+  // Intent and deadline evidence is immutable once recorded.
+  if (
+    previous.promotion_intent_at !== null &&
+    next.promotion_intent_at !== previous.promotion_intent_at
+  ) return false;
+  if (
+    previous.observation_deadline_at !== null &&
+    next.observation_deadline_at !== previous.observation_deadline_at
+  ) return false;
+  if (
+    previous.rollback_intent_at !== null &&
+    next.rollback_intent_at !== previous.rollback_intent_at
+  ) return false;
+
+  // Existing promotion and rollback results follow the same evidence rule.
+  if (
+    previous.promotion_result !== null && !resultEvidenceValid(previous.promotion_result, next.promotion_result)
+  ) return false;
+  if (
+    previous.rollback_result !== null && !resultEvidenceValid(previous.rollback_result, next.rollback_result)
+  ) return false;
+
+  // Verified restoration evidence is immutable.
+  if (previous.restoration !== null && JSON.stringify(next.restoration) !== JSON.stringify(previous.restoration)) {
+    return false;
+  }
+
+  // Route evidence may persist exactly (an equal timestamp requires exact
+  // object equality) or refresh at a strictly newer observation; it may never
+  // be cleared or move backward. The parser bounds the revision identity, so
+  // a newer route may identify either recorded revision.
+  if (previous.route !== null) {
+    if (next.route === null || next.route.observed_at < previous.route.observed_at) return false;
+    if (
+      next.route.observed_at === previous.route.observed_at &&
+      (next.route.revision_id !== previous.route.revision_id ||
+        next.route.evidence_ref !== previous.route.evidence_ref)
+    ) return false;
+  }
+
+  // Observation samples never decrease: equal samples require exact
+  // observation equality, and larger samples require a strictly newer
+  // last_observed_at when the prior timestamp exists. Consecutive counters
+  // may reset to zero or smaller positive values and invariant_id may change
+  // with newer samples; the parser supplies their bounds.
+  if (next.observation.samples < previous.observation.samples) return false;
+  if (next.observation.samples === previous.observation.samples) {
+    if (
+      next.observation.last_observed_at !== previous.observation.last_observed_at ||
+      next.observation.consecutive_liveness_failures !== previous.observation.consecutive_liveness_failures ||
+      next.observation.consecutive_inference_failures !== previous.observation.consecutive_inference_failures ||
+      next.observation.invariant_id !== previous.observation.invariant_id ||
+      next.observation.consecutive_invariant_failures !== previous.observation.consecutive_invariant_failures
+    ) return false;
+  } else if (
+    previous.observation.last_observed_at !== null &&
+    (next.observation.last_observed_at === null ||
+      next.observation.last_observed_at <= previous.observation.last_observed_at)
+  ) return false;
+
+  return true;
+};
+
+/**
  * CAS policy validation between the captured snapshot document and the next
  * document. Generation, application retention, protected transaction fields,
  * and the no-reclaim/no-implicit-initialization rules are all enforced here;
@@ -344,6 +494,8 @@ const isValidProviderStateTransition = (
       if (JSON.stringify(nextTransaction.retired_executor) !== JSON.stringify(prevTransaction.retired_executor)) {
         return false;
       }
+      // Phase progression and mutable evidence follow the same-ID predicate.
+      if (!isSameIdProgressValid(prevTransaction, nextTransaction)) return false;
       continue;
     }
     if (prevTransaction === null) {
