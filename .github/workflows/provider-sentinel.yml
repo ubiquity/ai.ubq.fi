@@ -69,7 +69,7 @@ jobs:
             "Codex invocation stopped (output_limit_exceeded).",
             "Codex invocation stopped (native_review_missing).",
           ];
-          const VALID_CHECK_NAME = /^[a-z][a-z0-9-]{0,79}$/;
+          const VALID_CHECK_NAME = /^[a-z][a-z0-9:-]{0,79}$/;
 
           const evidencePath =
             "${{ runner.temp }}/sentinel-cell-diagnostic/sentinel-evidence-v1.json";
