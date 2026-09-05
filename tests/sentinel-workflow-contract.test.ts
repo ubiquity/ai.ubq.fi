@@ -8,8 +8,8 @@ import orchestrator from "../scripts/sentinel/main.ts" with { type: "text" };
 // SHA and verifies the frozen package against this exact manifest digest. The
 // isolation test reconstructs the digest from the real package bytes; these
 // constants are the workflow contract, never a second source of truth.
-const BOOTSTRAP_EXECUTION_SHA = "702d276b1252250e5379b4dd1f618cbfc4af260b";
-const BOOTSTRAP_PACKAGE_MANIFEST_DIGEST = "318b11cc83ffc49fc419a1366072174879dd910a2a683ea9e5b78d9dca3aee01";
+const BOOTSTRAP_EXECUTION_SHA = "b9d4c0c9328448f4ca3f477abb43903e48ec4248";
+const BOOTSTRAP_PACKAGE_MANIFEST_DIGEST = "a9a3ab1bfb652ec2caafdb74fff02d03a2809134b7ac603c6a8e8a763353f32c";
 
 const jobSection = (name: string, nextName: string): string => {
   const start = workflow.indexOf(`\n  ${name}:`);

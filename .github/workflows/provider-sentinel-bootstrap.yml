@@ -31,7 +31,7 @@ jobs:
         with:
           # Bootstrap must always load the exact frozen execution SHA, never the
           # moving development tip, and leaves no credentials behind.
-          ref: 702d276b1252250e5379b4dd1f618cbfc4af260b
+          ref: b9d4c0c9328448f4ca3f477abb43903e48ec4248
           fetch-depth: 1
           persist-credentials: false
 
@@ -50,7 +50,7 @@ jobs:
             echo "::error::Protected bootstrap package contains a symlink."
             exit 1
           fi
-          expected="318b11cc83ffc49fc419a1366072174879dd910a2a683ea9e5b78d9dca3aee01"
+          expected="a9a3ab1bfb652ec2caafdb74fff02d03a2809134b7ac603c6a8e8a763353f32c"
           actual="$(find scripts/sentinel/bootstrap -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
           if [ "$actual" != "$expected" ]; then
             echo "::error::Protected bootstrap package manifest mismatch."
