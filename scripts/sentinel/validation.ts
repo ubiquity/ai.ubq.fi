@@ -466,6 +466,7 @@ export const runCandidateValidation = async (
         "--ignore=lib/codex",
         "--ignore=tests/failover-stress-http.test.ts",
         "--ignore=tests/usage-optimization-measurement.test.ts",
+        "tests",
       ],
       sandboxHome,
       input.denoDirectory,

@@ -541,6 +541,23 @@ Deno.test({
         validationCommand.includes('SENTINEL_GIT_WRAPPER_BYPASS: "1"'),
       "Network-isolated candidate validation must bypass only the workflow Git wrapper used by local fixtures",
     );
+    const repositoryTestsStart = validation.indexOf('"repository_tests",', validationCommandEnd);
+    const repositoryTestsEnd = validation.indexOf("sandboxHome", repositoryTestsStart);
+    const repositoryTestsBlock = validation.slice(repositoryTestsStart, repositoryTestsEnd);
+    assert(
+      repositoryTestsStart >= 0 && repositoryTestsEnd > repositoryTestsStart,
+      "Bounded repository test invocation must appear before the validation command runner",
+    );
+    assert(
+      repositoryTestsBlock.includes(
+        '"--ignore=tests/usage-optimization-measurement.test.ts",\n        "tests",\n      ],',
+      ),
+      "Bounded repository test invocation must explicitly target the tests suite after its ignores",
+    );
+    assert(
+      !repositoryTestsBlock.includes("benchmark"),
+      "Bounded repository test invocation must not discover benchmark test trees",
+    );
     const issueCompletionStart = orchestrator.indexOf(
       "const completeNonRuntimeGitHubIssueDisposition = async",
     );
