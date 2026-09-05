@@ -1,21 +1,31 @@
 // Canonical local Provider Sentinel verification harness.
 //
 // This is the single source of truth for local Sentinel verification and the
-// exact command CI repeats (`deno task sentinel:test-local`). It is hermetic
-// by default: child processes receive exactly a scrubbed environment (no
-// GitHub, Deno, or model credentials — enforced with clearEnv at the actual
-// execution boundary), are never granted network access, and resolve
-// dependencies only from the frozen local cache, so nothing is downloaded and
-// no paid model or deployment call can run. It runs the fixed Sentinel test
-// order below in fail-fast sequence, then the same fmt, lint, and build checks
-// CI relies on, prints one concise timing/status line per stage, preserves
-// full child output when a stage fails, and writes a machine-readable report
-// to the ignored `.sentinel/local-test/result.json`.
+// exact command CI repeats (`deno task sentinel:test-local`). It runs the fixed
+// Sentinel test order below in fail-fast sequence, then the same fmt, lint, and
+// build checks CI relies on, prints one concise timing/status line per stage,
+// preserves full child output when a stage fails, and writes a machine-readable
+// report to the ignored `.sentinel/local-test/result.json`.
 //
-// Hermeticity is enforced, not assumed: fixture stages grant the read/write/
-// run permissions their fixtures require, but every stage resolves modules
-// only from the frozen local cache and no stage ever receives network access,
-// so tests cannot reach a registry, a paid model, or a deployment API.
+// Isolation boundary — exactly what each mechanism establishes for every stage
+// child process:
+//   - `clearEnv: true` drops every inherited variable: the child receives
+//     exactly the supplied environment map. The scrubber removes the recognized
+//     credential names (exact list, the GITHUB_ / DENO_DEPLOY_TOKEN_ prefixes,
+//     and the _TOKEN / _KEY / _SECRET / _PASSWORD / _PASS suffixes); it is a
+//     name-based filter and does not detect every possible secret name.
+//   - `--cached-only` (on the stages that carry it) refuses to fetch modules
+//     that are not already cached, so nothing new is downloaded; `--frozen`
+//     refuses lockfile changes but does not by itself prevent downloads, and
+//     the build stage additionally denies the configured registries.
+//   - omitted network permission (no `--allow-net`): the Deno permission model
+//     denies network APIs to the Deno stage process itself, and the static
+//     stage check below rejects any stage argv granting network or
+//     all-permission access.
+// These mechanisms bound the Deno stage process and its environment. They are
+// NOT an operating-system sandbox for arbitrary child processes: fixture
+// stages run with `--allow-run` and may spawn child executables (Deno, git,
+// sha256sum, ...) that are not governed by the parent's Deno permission flags.
 
 export const SENTINEL_LOCAL_TEST_COMMAND = "deno task sentinel:test-local";
 export const SENTINEL_LOCAL_TEST_REPORT_PATH = ".sentinel/local-test/result.json";
@@ -125,8 +135,9 @@ export const SENTINEL_LOCAL_TEST_STAGES: readonly SentinelLocalTestStage[] = [
     argv: [
       "check",
       "--frozen",
-      // `deno check` has no --cached-only, so deny the registries the project
-      // can reach: cached resolutions still work, uncached ones fail closed.
+      // The pinned CI Deno (2.9.5) does not offer --cached-only on `deno
+      // check`, so the build denies the registries the project can reach:
+      // cached resolutions still work, uncached ones fail closed.
       "--deny-import=jsr.io,registry.npmjs.org,deno.land,esm.sh",
       "serve.ts",
       "scripts/setup-instance.ts",
@@ -141,7 +152,8 @@ export const SENTINEL_LOCAL_TEST_STAGES: readonly SentinelLocalTestStage[] = [
 
 // Environment keys that grant access to GitHub, Deno, or model/provider
 // infrastructure and are never passed to child processes. The parent harness
-// may run inside an agent or Actions environment that exports these.
+// may run inside an agent or Actions environment that exports these. The
+// filter is name-based: an unrecognized secret name is not detected.
 const SCRUBBED_ENVIRONMENT_EXACT = [
   "GITHUB_TOKEN",
   "GH_TOKEN",

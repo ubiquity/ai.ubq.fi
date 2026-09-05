@@ -29,7 +29,9 @@ jobs:
       - name: Check out immutable execution SHA
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.sha }}
+          # Bootstrap must always load the exact frozen execution SHA, never the
+          # moving development tip, and leaves no credentials behind.
+          ref: 702d276b1252250e5379b4dd1f618cbfc4af260b
           fetch-depth: 1
           persist-credentials: false
 
@@ -38,17 +40,23 @@ jobs:
         with:
           deno-version: 2.9.5
 
-      - name: Verify protected bootstrap module digest
+      - name: Verify protected bootstrap package manifest
         shell: bash
         run: |
           set -euo pipefail
-          expected="15ed82e6fd6360af69d666881c87900ade384ba224fccc348e21acfb03a8a2b9"
-          actual="$(find scripts/sentinel/bootstrap -maxdepth 1 -type f -name '*.ts' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
-          if [ "$actual" != "$expected" ]; then
-            echo "::error::Protected bootstrap module digest mismatch."
+          # Every regular file below the frozen package is covered recursively;
+          # no symlink may redirect the manifest outside the package.
+          if [ -n "$(find scripts/sentinel/bootstrap -type l -print -quit)" ]; then
+            echo "::error::Protected bootstrap package contains a symlink."
             exit 1
           fi
-          echo "Protected bootstrap module digest verified."
+          expected="318b11cc83ffc49fc419a1366072174879dd910a2a683ea9e5b78d9dca3aee01"
+          actual="$(find scripts/sentinel/bootstrap -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::Protected bootstrap package manifest mismatch."
+            exit 1
+          fi
+          echo "Protected bootstrap package manifest verified."
 
       - name: Reconcile protected bootstrap state
         shell: bash
@@ -62,9 +70,9 @@ jobs:
         run: |
           set -euo pipefail
           deno run \
+            --no-config \
+            --no-lock \
             --cached-only \
-            --frozen \
-            --lock=deno.lock \
             --allow-env=GITHUB_TOKEN,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_RUN_ID,GITHUB_WORKFLOW_REF \
             --allow-net=api.github.com,ai-ubq-fi.ubiquity-dao.deno.net \
             scripts/sentinel/bootstrap/main.ts

@@ -80,8 +80,11 @@ Deno.test("the local harness runs the Sentinel stages in the fixed fail-fast ord
     SENTINEL_LOCAL_TEST_STAGES.slice(-3).map((stage) => stage.name),
     ["fmt", "lint", "build"],
   );
-  // No stage may grant network or all-permission access, or invoke model,
-  // deployment, or secret-scan tooling.
+  // No stage command may grant network or all-permission access, or invoke
+  // model, deployment, or secret-scan tooling. This validates the Deno stage
+  // argv itself; it is not an OS sandbox for children spawned by the
+  // --allow-run fixture stages — those executables are not governed by the
+  // parent stage's Deno permission flags.
   for (const stage of SENTINEL_LOCAL_TEST_STAGES) {
     assert.equal(validateSentinelLocalTestStage(stage), null, `stage "${stage.name}" is not hermetic`);
   }

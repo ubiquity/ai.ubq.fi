@@ -4,6 +4,13 @@ import bootstrapWorkflow from "../.github/workflows/provider-sentinel-bootstrap.
 import githubClient from "../scripts/sentinel/github.ts" with { type: "text" };
 import orchestrator from "../scripts/sentinel/main.ts" with { type: "text" };
 
+// The bootstrap workflow binds its checkout to this exact immutable execution
+// SHA and verifies the frozen package against this exact manifest digest. The
+// isolation test reconstructs the digest from the real package bytes; these
+// constants are the workflow contract, never a second source of truth.
+const BOOTSTRAP_EXECUTION_SHA = "702d276b1252250e5379b4dd1f618cbfc4af260b";
+const BOOTSTRAP_PACKAGE_MANIFEST_DIGEST = "318b11cc83ffc49fc419a1366072174879dd910a2a683ea9e5b78d9dca3aee01";
+
 const jobSection = (name: string, nextName: string): string => {
   const start = workflow.indexOf(`\n  ${name}:`);
   const end = workflow.indexOf(`\n  ${nextName}:`, start + 1);
@@ -67,6 +74,51 @@ Deno.test("Provider Sentinel evaluates every five minutes with a staggered boots
   // Staggering must not remove either workflow's own serializing, non-cancelling group.
   assert.match(bootstrapWorkflow, /group: provider-sentinel-bootstrap-\$\{\{ github\.repository \}\}/u);
   assert.match(bootstrapWorkflow, /cancel-in-progress: false/u);
+});
+
+Deno.test("bootstrap workflow pins the literal execution SHA and keeps its development trigger", () => {
+  assert.match(bootstrapWorkflow, /github\.ref == 'refs\/heads\/development'/u);
+  assert.match(bootstrapWorkflow, /deno-version: 2\.9\.5/u);
+  const checkout = bootstrapWorkflow.slice(
+    bootstrapWorkflow.indexOf("- name: Check out immutable execution SHA"),
+    bootstrapWorkflow.indexOf("- name: Install pinned Deno"),
+  );
+  assert.ok(checkout.length > 0, "bootstrap workflow must contain the immutable checkout step");
+  assert.match(checkout, /uses: actions\/checkout@11d5960a326750d5838078e36cf38b85af677262/u);
+  assert.match(checkout, new RegExp(`ref: ${BOOTSTRAP_EXECUTION_SHA}$`, "mu"));
+  assert.doesNotMatch(checkout, /ref: \$\{\{ github\.sha \}\}/u);
+  assert.match(checkout, /fetch-depth: 1/u);
+  assert.match(checkout, /persist-credentials: false/u);
+});
+
+Deno.test("bootstrap workflow verifies the whole frozen package manifest and runs cached-only without config or lock", () => {
+  const verifyStep = bootstrapWorkflow.slice(
+    bootstrapWorkflow.indexOf("- name: Verify protected bootstrap package manifest"),
+    bootstrapWorkflow.indexOf("- name: Reconcile protected bootstrap state"),
+  );
+  assert.ok(verifyStep.length > 0, "bootstrap workflow must contain the package manifest verification step");
+  assert.match(verifyStep, new RegExp(`expected="${BOOTSTRAP_PACKAGE_MANIFEST_DIGEST}"`, "u"));
+  // The deterministic sorted manifest covers every regular file recursively:
+  // no depth limit, no extension filter, no symlink indirection.
+  assert.match(verifyStep, /find scripts\/sentinel\/bootstrap -type f -print0/u);
+  assert.match(verifyStep, /LC_ALL=C sort -z/u);
+  assert.match(verifyStep, /xargs -0 sha256sum/u);
+  assert.match(verifyStep, /\| sha256sum \| awk '\{print \$1\}'/u);
+  assert.match(verifyStep, /-type l/u);
+  assert.doesNotMatch(verifyStep, /-maxdepth/u);
+  assert.doesNotMatch(verifyStep, /-name /u);
+  assert.doesNotMatch(verifyStep, /-iname /u);
+
+  const runStep = bootstrapWorkflow.slice(bootstrapWorkflow.indexOf("- name: Reconcile protected bootstrap state"));
+  assert.match(runStep, /deno run \\\n\s+--no-config \\\n\s+--no-lock \\\n\s+--cached-only/u);
+  assert.doesNotMatch(runStep, /--frozen/u);
+  assert.doesNotMatch(runStep, /--lock=/u);
+  assert.match(
+    runStep,
+    /--allow-env=GITHUB_TOKEN,GITHUB_REPOSITORY,GITHUB_REF,GITHUB_SHA,GITHUB_RUN_ID,GITHUB_WORKFLOW_REF/u,
+  );
+  assert.match(runStep, /--allow-net=api\.github\.com,ai-ubq-fi\.ubiquity-dao\.deno\.net/u);
+  assert.match(runStep, /scripts\/sentinel\/bootstrap\/main\.ts/u);
 });
 
 Deno.test("Provider Sentinel uses Deno eval without unsupported permission flags", () => {
