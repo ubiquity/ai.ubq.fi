@@ -12,7 +12,7 @@ const BOOTSTRAP_PACKAGE_DIR = "scripts/sentinel/bootstrap";
 // below from the real package bytes (never trusted from a second constant), so
 // a tampered package, a removed file, or an omitted nested file fails this test
 // and the workflow fails closed.
-const BOOTSTRAP_PACKAGE_MANIFEST_DIGEST = "a9a3ab1bfb652ec2caafdb74fff02d03a2809134b7ac603c6a8e8a763353f32c";
+const BOOTSTRAP_PACKAGE_MANIFEST_DIGEST = "0112fd75a3619ace539a22ed6f5f74269bd30710b5cba4a4817a8824d675150c";
 
 // Provider/evolving sources that must never be reachable from the pinned
 // bootstrap package. Each is deliberately broken so an accidental import
@@ -21,6 +21,8 @@ const BROKEN_PROVIDER_FILES: ReadonlyArray<readonly [string, string]> = [
   ["src/cerebras.ts", "export const syntaxError = 1 + ;"],
   ["src/harmony/classifier.ts", "export const syntaxError = 1 + ;"],
   ["scripts/sentinel/main.ts", "export const syntaxError = 1 + ;"],
+  ["scripts/sentinel/deploy.ts", "export const syntaxError = 1 + ;"],
+  ["scripts/sentinel/revision-control.ts", "export const syntaxError = 1 + ;"],
   ["scripts/sentinel/recovery-ledger.ts", "export const syntaxError = 1 + ;"],
   ["scripts/sentinel/retry.ts", "export const syntaxError = 1 + ;"],
 ];
@@ -94,7 +96,7 @@ const packageManifestDigest = async (
 };
 
 Deno.test({
-  name: "bootstrap entrypoint loads from an isolated package with no provider, evolving, or config dependency",
+  name: "bootstrap entrypoints load from an isolated package with no provider, evolving, or config dependency",
   ignore: isolationUnavailable,
   async fn() {
     const parent = await Deno.makeTempDir({ prefix: "sentinel-bootstrap-isolation-" });
@@ -133,56 +135,101 @@ Deno.test({
         sourceDigest,
         "the isolated copy must be byte-identical and include every package file",
       );
-      const entrypoint = `${packageDir}/main.ts`;
+      const mainEntrypoint = `${packageDir}/main.ts`;
+      const executorEntrypoint = `${packageDir}/revision-control.ts`;
       const expectedModules = new Set(copiedEntries.map(([, relative]) => `${packageDir}/${relative}`));
 
       // The parent config is discovered without --no-config, which is the
       // exact fragility this prerequisite removes.
-      const discovered = await invokeDeno(["info", "--json", "--no-lock", entrypoint], parent);
+      const discovered = await invokeDeno(["info", "--json", "--no-lock", mainEntrypoint], parent);
       assert.notEqual(
         discovered.exitCode,
         0,
         "an invalid surrounding deno.json must be discovered without --no-config",
       );
 
-      // 1. Full deno info graph: closed, complete, and entirely local. The
-      // entrypoint is discovered via --no-config/--no-lock; `deno info` has no
-      // --cached-only flag, and `deno check` keeps --no-config --no-lock so the
-      // invocation matches the pinned CI Deno (2.9.5), so only the `deno run`
-      // invocation below carries --cached-only.
-      const first = await invokeDeno(["info", "--json", "--no-config", "--no-lock", entrypoint], parent);
-      assert.equal(first.exitCode, 0, first.stderr);
-      const graph = JSON.parse(first.stdout) as { modules: ReadonlyArray<{ specifier: string }> };
-      const modulePaths = graph.modules.map((module) => new URL(module.specifier).pathname);
-      assert.equal(
-        modulePaths.length,
-        copiedEntries.length,
-        "bootstrap graph must contain exactly the package modules",
+      // 1. Full deno info graphs for BOTH entrypoints: closed, complete, and
+      // entirely local. The entrypoints are discovered via
+      // --no-config/--no-lock; `deno info` has no --cached-only flag, and
+      // `deno check` keeps --no-config --no-lock so the invocation matches the
+      // pinned CI Deno (2.9.5), so only the `deno run` invocations below carry
+      // --cached-only.
+      const graphModules = async (
+        entrypoint: string,
+      ): Promise<Readonly<{ modules: readonly string[]; stdout: string }>> => {
+        const result = await invokeDeno(["info", "--json", "--no-config", "--no-lock", entrypoint], parent);
+        assert.equal(result.exitCode, 0, result.stderr);
+        const graph = JSON.parse(result.stdout) as { modules: ReadonlyArray<{ specifier: string }> };
+        assert.doesNotMatch(result.stdout, /https?:\/\//u, "bootstrap graph must contain no remote module");
+        assert.doesNotMatch(result.stdout, /jsr:|npm:|deno\.land/u, "bootstrap graph must contain no registry module");
+        return {
+          modules: graph.modules.map((module) => new URL(module.specifier).pathname).sort(),
+          stdout: result.stdout,
+        };
+      };
+      const mainInfo = await graphModules(mainEntrypoint);
+      const executorInfo = await graphModules(executorEntrypoint);
+      const mainModules = mainInfo.modules;
+      const executorModules = executorInfo.modules;
+
+      // The union of both entrypoint graphs is exactly the copied package:
+      // nothing outside it, nothing inside it unreachable from an entrypoint.
+      const unionModules = [...new Set([...mainModules, ...executorModules])].sort();
+      assert.deepEqual(
+        unionModules,
+        [...expectedModules].sort(),
+        "the two bootstrap entrypoints must reach exactly the package modules",
       );
-      for (const modulePath of modulePaths) {
+      for (const modulePath of unionModules) {
         assert.ok(expectedModules.has(modulePath), `bootstrap graph escapes its package: ${modulePath}`);
       }
-      for (const expected of expectedModules) {
-        assert.ok(modulePaths.includes(expected), `bootstrap package module is missing from the graph: ${expected}`);
+      // Each graph alone stays wholly local inside the package.
+      for (const modulePath of [...mainModules, ...executorModules]) {
+        assert.ok(expectedModules.has(modulePath), `bootstrap graph escapes its package: ${modulePath}`);
       }
-      assert.doesNotMatch(first.stdout, /https?:\/\//u, "bootstrap graph must contain no remote module");
-      assert.doesNotMatch(first.stdout, /jsr:|npm:|deno\.land/u, "bootstrap graph must contain no registry module");
+      // The controller entrypoint must not load the Deno credential runtime:
+      // deploy.ts (and its executor revision-control.ts) are pinned to their
+      // own protected executor graph, never into bootstrap main.
+      assert.ok(
+        !mainModules.includes(`${packageDir}/deploy.ts`),
+        "bootstrap main must not load the Deno credential runtime",
+      );
+      assert.ok(
+        !mainModules.includes(`${packageDir}/revision-control.ts`),
+        "bootstrap main must not load the revision-control executor",
+      );
+      assert.deepEqual(
+        executorModules,
+        [`${packageDir}/deploy.ts`, `${packageDir}/revision-control.ts`].sort(),
+        "the executor graph must contain only revision-control.ts and deploy.ts",
+      );
 
-      // 2. Type-checked module load of the entrypoint resolves with the
+      // 2. Type-checked module loads of both entrypoints resolve with the
       // workflow's --no-config/--no-lock configuration flags.
-      const check = await invokeDeno(["check", "--no-config", "--no-lock", entrypoint], parent);
-      assert.equal(check.exitCode, 0, check.stderr);
+      const mainCheck = await invokeDeno(["check", "--no-config", "--no-lock", mainEntrypoint], parent);
+      assert.equal(mainCheck.exitCode, 0, mainCheck.stderr);
+      const executorCheck = await invokeDeno(["check", "--no-config", "--no-lock", executorEntrypoint], parent);
+      assert.equal(executorCheck.exitCode, 0, executorCheck.stderr);
 
-      // 3. Runtime module load succeeds without performing main's remote
-      // effects: the entrypoint is imported (never executed as main), so the
-      // GitHub observation/dispatch block cannot run even without credentials.
-      const wrapper = `${root}/load-entrypoint.ts`;
-      await Deno.writeTextFile(wrapper, 'import "./scripts/sentinel/bootstrap/main.ts";\n');
-      const loaded = await invokeDeno(["run", "--no-config", "--no-lock", "--cached-only", wrapper], parent);
-      assert.equal(loaded.exitCode, 0, loaded.stderr);
-      assert.equal(loaded.stdout.trim(), "", "entrypoint import must have no remote effects");
+      // 3. Runtime module loads succeed without performing remote effects:
+      // both entrypoints are imported (never executed as main), so the GitHub
+      // observation/dispatch block and the promotion CLI cannot run even
+      // without credentials or network permission.
+      const mainWrapper = `${root}/load-main-entrypoint.ts`;
+      await Deno.writeTextFile(mainWrapper, 'import "./scripts/sentinel/bootstrap/main.ts";\n');
+      const mainLoaded = await invokeDeno(["run", "--no-config", "--no-lock", "--cached-only", mainWrapper], parent);
+      assert.equal(mainLoaded.exitCode, 0, mainLoaded.stderr);
+      assert.equal(mainLoaded.stdout.trim(), "", "main entrypoint import must have no remote effects");
+      const executorWrapper = `${root}/load-executor-entrypoint.ts`;
+      await Deno.writeTextFile(executorWrapper, 'import "./scripts/sentinel/bootstrap/revision-control.ts";\n');
+      const executorLoaded = await invokeDeno(
+        ["run", "--no-config", "--no-lock", "--cached-only", executorWrapper],
+        parent,
+      );
+      assert.equal(executorLoaded.exitCode, 0, executorLoaded.stderr);
+      assert.equal(executorLoaded.stdout.trim(), "", "executor entrypoint import must have no remote effects");
 
-      // 4. A different parent config cannot alter the isolated graph: the
+      // 4. A different parent config cannot alter either isolated graph: the
       // --no-config invocations keep resolution identical under a poisoned
       // import map and different compiler options.
       await Deno.writeTextFile(
@@ -192,9 +239,15 @@ Deno.test({
           compilerOptions: { jsx: "react", jsxImportSource: "https://bogus.invalid/jsx" },
         }),
       );
-      const second = await invokeDeno(["info", "--json", "--no-config", "--no-lock", entrypoint], parent);
-      assert.equal(second.exitCode, 0, second.stderr);
-      assert.equal(second.stdout, first.stdout, "parent config must not alter the bootstrap graph");
+      const secondMain = await invokeDeno(["info", "--json", "--no-config", "--no-lock", mainEntrypoint], parent);
+      assert.equal(secondMain.exitCode, 0, secondMain.stderr);
+      assert.equal(secondMain.stdout, mainInfo.stdout, "parent config must not alter the bootstrap main graph");
+      const secondExecutor = await invokeDeno(
+        ["info", "--json", "--no-config", "--no-lock", executorEntrypoint],
+        parent,
+      );
+      assert.equal(secondExecutor.exitCode, 0, secondExecutor.stderr);
+      assert.equal(secondExecutor.stdout, executorInfo.stdout, "parent config must not alter the executor graph");
 
       // Negative checks with actual bytes: a tampered package file and an
       // omitted nested file must both be rejected by the manifest pipeline.

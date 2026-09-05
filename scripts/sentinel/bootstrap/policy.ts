@@ -76,6 +76,8 @@ export const isBootstrapProtectedPath = (path: string): boolean => {
     path.split("/").some((segment) => segment === "" || segment === ".")
   ) return true;
   return path === SENTINEL_BOOTSTRAP_POLICY.bootstrapWorkflow ||
+    path === ".github/workflows/sentinel-revision-control.yml" ||
+    path === "docs/sentinel-provider-state.json" ||
     path === "docs/sentinel-bootstrap-state.json" ||
     path === "scripts/sentinel/bootstrap" ||
     path.startsWith("scripts/sentinel/bootstrap/");

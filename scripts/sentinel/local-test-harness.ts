@@ -153,6 +153,7 @@ export const SENTINEL_LOCAL_TEST_STAGES: readonly SentinelLocalTestStage[] = [
       "scripts/sentinel/revision-control.ts",
       "scripts/sentinel/rollback-controller.ts",
       "scripts/sentinel/bootstrap/main.ts",
+      "scripts/sentinel/bootstrap/revision-control.ts",
     ],
   },
 ];

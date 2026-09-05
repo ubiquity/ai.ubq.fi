@@ -458,6 +458,11 @@ Deno.test("bootstrap policy rejects model substitution and bootstrap-path mutati
   assert.throws(() => assertNoBootstrapMutation(["scripts/sentinel/bootstrap/controller.ts"]), /cannot modify/);
   assert.throws(() => assertNoBootstrapMutation(["scripts/sentinel/bootstrap"]), /cannot modify/);
   assert.throws(() => assertNoBootstrapMutation(["docs/sentinel-bootstrap-state.json"]), /cannot modify/);
+  assert.throws(() => assertNoBootstrapMutation(["docs/sentinel-provider-state.json"]), /cannot modify/);
+  assert.throws(
+    () => assertNoBootstrapMutation([".github/workflows/sentinel-revision-control.yml"]),
+    /cannot modify/,
+  );
   assert.doesNotThrow(() => assertNoBootstrapMutation(["src/ordinary-file.ts"]));
 });
 
@@ -1308,6 +1313,7 @@ Deno.test({
       "scripts/sentinel/bootstrap/activation.ts",
       "scripts/sentinel/bootstrap/contracts.ts",
       "scripts/sentinel/bootstrap/controller.ts",
+      "scripts/sentinel/bootstrap/deploy.ts",
       "scripts/sentinel/bootstrap/health.ts",
       "scripts/sentinel/bootstrap/github-store.ts",
       "scripts/sentinel/bootstrap/main.ts",
@@ -1316,6 +1322,7 @@ Deno.test({
       "scripts/sentinel/bootstrap/progress.ts",
       "scripts/sentinel/bootstrap/provider-state.ts",
       "scripts/sentinel/bootstrap/recovery-ledger-summary.ts",
+      "scripts/sentinel/bootstrap/revision-control.ts",
     ];
     const expectedResolved = new Set(modulePaths.map((path) => `${Deno.cwd()}/${path}`));
     for (const path of modulePaths) {
