@@ -20,7 +20,7 @@ jobs:
   diagnostic:
     if: github.ref == 'refs/heads/codex/stability-handoff-2026-09-05-g552d65b8d4' && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     permissions:
       contents: read
       actions: read
@@ -29,6 +29,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: 7430eba59512962f42e6df63abab2115df16204f
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Setup Deno
@@ -143,5 +144,33 @@ jobs:
             for (const file of decryptedFiles) file.bytes.fill(0);
             plainBytes.fill(0);
             reportText = "";
+          }
+          '
+
+      - name: Install baseline validation prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
+          mkdir -p "$RUNNER_TEMP/sentinel-baseline-deno-cache"
+          DENO_DIR="$RUNNER_TEMP/sentinel-baseline-deno-cache" deno cache --frozen --lock=deno.lock scripts/sentinel/matrix-cell.ts scripts/sentinel/validation.ts tests/*.ts
+
+      - name: Run pinned baseline candidate validation
+        run: |
+          DENO_DIR="$RUNNER_TEMP/sentinel-baseline-deno-cache" deno eval '
+          import { runCandidateValidation, CandidateValidationError } from "./scripts/sentinel/validation.ts";
+          try {
+            await runCandidateValidation({
+              cwd: Deno.cwd(),
+              reportPath: "${{ runner.temp }}/baseline-validation.json",
+              privateDir: "${{ runner.temp }}",
+              denoDirectory: "${{ runner.temp }}/sentinel-baseline-deno-cache",
+            });
+            console.log("BASELINE_VALIDATION_PASSED");
+          } catch (error) {
+            if (error instanceof CandidateValidationError) {
+              console.log(JSON.stringify({ baseline_validation_failure: error.failure }));
+            } else {
+              throw error;
+            }
           }
           '
