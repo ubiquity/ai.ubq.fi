@@ -151,6 +151,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 \
+            || echo 'apparmor userns knob absent — the functional probe decides'
+          bwrap --die-with-parent --new-session --unshare-net --unshare-pid --unshare-ipc --unshare-uts --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp -- /bin/true
           mkdir -p "$RUNNER_TEMP/sentinel-baseline-deno-cache"
           DENO_DIR="$RUNNER_TEMP/sentinel-baseline-deno-cache" deno cache --frozen --lock=deno.lock scripts/sentinel/matrix-cell.ts scripts/sentinel/validation.ts tests/*.ts
 
