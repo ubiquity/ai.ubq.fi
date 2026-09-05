@@ -3298,11 +3298,11 @@
       "attempt": 1,
       "lease_token": "33981273803-1",
       "base_sha": "7430eba59512962f42e6df63abab2115df16204f",
-      "phase": "recovery_pending",
-      "disposition": "active",
-      "state_version": 2,
+      "phase": "rejected",
+      "disposition": "rejected",
+      "state_version": 3,
       "created_at": "2026-09-05T17:35:47.658Z",
-      "updated_at": "2026-09-05T17:41:14.090Z",
+      "updated_at": "2026-09-05T17:52:35.885Z",
       "candidate_branch": "sentinel/candidate-incident-60cd2c7e272d666f76849ca175835c4cd5279e219322d8a153454f595180e49f-7430eba59512962f42e6df63abab2115-g2-b4cad36f0cbf70d8",
       "candidate_sha": null,
       "changed_files": [],
@@ -3311,8 +3311,8 @@
       "failure_fingerprint": null,
       "artifact_ids": [],
       "artifact_digests": [],
-      "reason": "The record is incomplete and requires another bounded reconciliation pass.",
-      "next_action": "Reconcile the recorded branch and candidate SHA.",
+      "reason": "rejected/no_candidate_diff",
+      "next_action": null,
       "predecessor": "[\"ubiquity/ai.ubq.fi\",\"incident\",\"60cd2c7e272d666f76849ca175835c4cd5279e219322d8a153454f595180e49f\",\"7430eba59512962f42e6df63abab2115df16204f\",1]"
     },
     {
@@ -26377,12 +26377,5 @@
       }
     }
   ],
-  "leases": [
-    {
-      "identity_key": "[\"ubiquity/ai.ubq.fi\",\"incident\",\"60cd2c7e272d666f76849ca175835c4cd5279e219322d8a153454f595180e49f\",\"7430eba59512962f42e6df63abab2115df16204f\",2]",
-      "owner": "33981840237",
-      "token": "33981840237:4f264913-c20b-410c-91c0-f3f602b4bdad",
-      "expires_at": "2026-09-05T18:02:35.885Z"
-    }
-  ]
+  "leases": []
 }
