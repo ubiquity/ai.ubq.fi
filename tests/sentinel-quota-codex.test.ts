@@ -166,6 +166,9 @@ const codexCommandResult = (
   };
 };
 
+const schemaFixture = (title: string): string =>
+  JSON.stringify({ title, type: "object", required: ["summary"], additionalProperties: false });
+
 Deno.test("auth parsing requires a complete document and rejects tokens inside the expiry safety window", () => {
   const parsed = parseCodexAuthJsonB64(slot1.encoded, 1, { nowMs, minimumValidityMs: 60_000 });
   assert.equal(parsed.rawJson, slot1.raw);
@@ -776,6 +779,8 @@ Deno.test("persistent transient failures report the final probe after bounded re
 
 Deno.test("structured execution uses fixed policy, relay-only auth, a private home, and a clean environment", async () => {
   const filesystem = new MemoryFilesystem();
+  const triageSchema = schemaFixture("triage-cell-result");
+  filesystem.files.set("/checkout/schemas/triage.json", triageSchema);
   let command: CodexCommandRequest | null = null;
   let runtimeAuth = "";
   const result = await runStructuredCodexAgent({
@@ -854,11 +859,19 @@ Deno.test("structured execution uses fixed policy, relay-only auth, a private ho
   assert.equal(filesystem.modes.get(home), 0o700);
   assert.equal(filesystem.modes.get(`${home}/auth.json`), 0o600);
   assert.equal(filesystem.modes.get(`${home}/last-message.json`), 0o600);
+  assert.equal(filesystem.modes.get(`${home}/output-schema.json`), 0o600);
+  assert.equal(
+    captured.args[captured.args.indexOf("--output-schema") + 1]!,
+    `${home}/output-schema.json`,
+  );
+  assert.equal(captured.args.includes("/checkout/schemas/triage.json"), false);
+  assert.equal(filesystem.files.get("/checkout/schemas/triage.json"), triageSchema);
   assert.deepEqual(filesystem.removed, [home]);
 });
 
 Deno.test("implementation execution uses the owner-controlled Luna model in the writable sandbox", async () => {
   const filesystem = new MemoryFilesystem();
+  filesystem.files.set("/checkout/schemas/implementation.json", schemaFixture("implementation-cell-result"));
   let command: CodexCommandRequest | null = null;
   await runStructuredCodexAgent({
     role: "implementation",
@@ -890,6 +903,7 @@ Deno.test("implementation execution uses the owner-controlled Luna model in the 
 
 Deno.test("account quota is re-probed before every Codex invocation", async () => {
   const filesystem = new MemoryFilesystem();
+  filesystem.files.set("/checkout/schema.json", schemaFixture("monitor-cell-result"));
   let usageCall = 0;
   const fetcher: CodexUsageFetch = (_input, init) => {
     const invocation = Math.floor(usageCall++ / 2);
@@ -927,6 +941,7 @@ Deno.test("account quota is re-probed before every Codex invocation", async () =
 
 Deno.test("Codex output containing a credential is rejected and never returned", async () => {
   const filesystem = new MemoryFilesystem();
+  filesystem.files.set("/checkout/schema.json", schemaFixture("implementation-cell-result"));
   await assert.rejects(
     () =>
       runStructuredCodexAgent({
@@ -953,6 +968,7 @@ Deno.test("Codex output containing a credential is rejected and never returned",
 
 Deno.test("Codex auth mutation is fail-closed", async () => {
   const filesystem = new MemoryFilesystem();
+  filesystem.files.set("/checkout/schema.json", schemaFixture("implementation-cell-result"));
   await assert.rejects(
     () =>
       runStructuredCodexAgent({
@@ -978,6 +994,7 @@ Deno.test("Codex auth mutation is fail-closed", async () => {
 
 Deno.test("a relayed upstream 401 requests parent-owned refresh before synthetic auth mutation", async () => {
   const filesystem = new MemoryFilesystem();
+  filesystem.files.set("/checkout/schema.json", schemaFixture("implementation-cell-result"));
   await assert.rejects(
     () =>
       runStructuredCodexAgent({
@@ -1007,6 +1024,7 @@ Deno.test("a relayed upstream 401 requests parent-owned refresh before synthetic
 
 Deno.test("Codex invocation timeout is fail-closed and closes the authentication relay", async () => {
   const filesystem = new MemoryFilesystem();
+  filesystem.files.set("/checkout/schema.json", schemaFixture("triage-cell-result"));
   let relayClosed = false;
   await assert.rejects(
     () =>
@@ -1058,6 +1076,7 @@ Deno.test("Codex invocation timeout is fail-closed and closes the authentication
 
 Deno.test("a relay-detected idle stream preserves the final implementation continuation", async () => {
   const filesystem = new MemoryFilesystem();
+  filesystem.files.set("/checkout/schema.json", schemaFixture("implementation-cell-result"));
   await assert.rejects(
     () =>
       runStructuredCodexAgent({
@@ -1168,5 +1187,104 @@ Deno.test("native review stops when the private rollout has no structured comple
       }),
     (error) => error instanceof CodexInvocationError && error.failure === "native_review_missing",
   );
+  assert.equal(filesystem.removed.length, 1);
+});
+
+Deno.test("structured output schema staged from runner temp is copied byte-exact into the private home", async () => {
+  const filesystem = new MemoryFilesystem();
+  const source = "/home/runner/work/_temp/sentinel-cell-implementation-schema.json";
+  const schema = JSON.stringify({
+    title: "implementation-cell-result",
+    description: "cell fix summary – exact bytes",
+    type: "object",
+    required: ["summary", "changed_files"],
+    additionalProperties: false,
+  });
+  filesystem.files.set(source, schema);
+  let command: CodexCommandRequest | null = null;
+  let stagedBytes = "";
+  let stagedMode: number | undefined;
+  await runStructuredCodexAgent({
+    role: "implementation",
+    checkoutPath: "/checkout",
+    prompt: "Implement the selected issue.",
+    outputSchemaPath: source,
+    authSlots: slots,
+    expectedMaximumRuntimeMs: 1_000,
+  }, {
+    ...commonDependencies(filesystem, healthyFetcher()),
+    commandRunner: (request) => {
+      command = request;
+      const privateSchemaPath = `${request.env.CODEX_HOME}/output-schema.json`;
+      stagedBytes = filesystem.files.get(privateSchemaPath) ?? "";
+      stagedMode = filesystem.modes.get(privateSchemaPath);
+      const lastMessagePath = request.args[request.args.indexOf("--output-last-message") + 1]!;
+      filesystem.files.set(lastMessagePath, "{}");
+      return Promise.resolve(codexCommandResult());
+    },
+  });
+  assert.ok(command);
+  const captured = command as unknown as CodexCommandRequest;
+  const privateHome = captured.env.CODEX_HOME;
+  const privateSchemaPath = `${privateHome}/output-schema.json`;
+  assert.ok(privateSchemaPath.startsWith(privateHome));
+  assert.equal(privateSchemaPath.startsWith("/home/runner/work/_temp"), false);
+  assert.equal(captured.args.includes(source), false);
+  assert.equal(captured.args[captured.args.indexOf("--output-schema") + 1]!, privateSchemaPath);
+  assert.equal(stagedBytes, schema);
+  assert.equal(stagedMode, 0o600);
+  assert.equal(filesystem.files.get(source), schema);
+  assert.equal(filesystem.files.has(privateSchemaPath), false);
+  assert.deepEqual(filesystem.removed, [privateHome]);
+});
+
+Deno.test("staged output schema is cleaned up when the invocation fails", async () => {
+  const filesystem = new MemoryFilesystem();
+  const source = "/home/runner/work/_temp/sentinel-cell-implementation-schema.json";
+  const schema = schemaFixture("implementation-cell-result");
+  filesystem.files.set(source, schema);
+  await assert.rejects(
+    () =>
+      runStructuredCodexAgent({
+        role: "implementation",
+        checkoutPath: "/checkout",
+        prompt: "Implement the selected issue.",
+        outputSchemaPath: source,
+        authSlots: slots,
+        expectedMaximumRuntimeMs: 1_000,
+      }, {
+        ...commonDependencies(filesystem, healthyFetcher()),
+        commandRunner: () => Promise.resolve(codexCommandResult({ code: 1 })),
+      }),
+    (error) => error instanceof CodexInvocationError && error.failure === "command_failed",
+  );
+  assert.equal(filesystem.removed.length, 1);
+  const home = filesystem.removed[0]!;
+  assert.equal(filesystem.files.get(source), schema);
+  assert.equal(filesystem.files.has(`${home}/output-schema.json`), false);
+});
+
+Deno.test("an unreadable structured schema source fails before spawning and cleans the private home", async () => {
+  const filesystem = new MemoryFilesystem();
+  let spawned = false;
+  await assert.rejects(
+    () =>
+      runStructuredCodexAgent({
+        role: "implementation",
+        checkoutPath: "/checkout",
+        prompt: "Implement the selected issue.",
+        outputSchemaPath: "/home/runner/work/_temp/missing-cell-schema.json",
+        authSlots: slots,
+        expectedMaximumRuntimeMs: 1_000,
+      }, {
+        ...commonDependencies(filesystem, healthyFetcher()),
+        commandRunner: () => {
+          spawned = true;
+          return Promise.resolve(codexCommandResult());
+        },
+      }),
+    (error) => error instanceof CodexInvocationError && error.failure === "invalid_options",
+  );
+  assert.equal(spawned, false);
   assert.equal(filesystem.removed.length, 1);
 });

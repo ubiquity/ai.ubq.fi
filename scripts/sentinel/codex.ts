@@ -902,7 +902,17 @@ type PrivateInvocationOptions = Readonly<{
   outputLimitBytes: number;
   prompt: string;
   quotaModel: string | null;
-  args: (lastMessagePath: string, relayBaseUrl: string) => readonly string[];
+  /**
+   * Absolute source of the structured-output schema. The exact source text is
+   * copied into the private Codex home before spawning because bubblewrap never
+   * mounts an external runner temp directory.
+   */
+  outputSchemaSourcePath?: string;
+  args: (
+    lastMessagePath: string,
+    relayBaseUrl: string,
+    stagedOutputSchemaPath: string | null,
+  ) => readonly string[];
   requireLastMessage: boolean;
   requireNativeReviewOutput: boolean;
   workspaceWritable: boolean;
@@ -970,6 +980,18 @@ const invokePrivately = async (
   try {
     codexHome = await filesystem.makePrivateTempDir("uos-sentinel-codex-");
     await filesystem.chmod(codexHome, 0o700);
+    let stagedOutputSchemaPath: string | null = null;
+    if (options.outputSchemaSourcePath !== undefined) {
+      let sourceSchema: string;
+      try {
+        sourceSchema = await filesystem.readTextFile(options.outputSchemaSourcePath);
+      } catch {
+        throw new CodexInvocationError("invalid_options", { slot: selection.slot, probes: selection.probes });
+      }
+      stagedOutputSchemaPath = `${codexHome}/output-schema.json`;
+      await filesystem.writePrivateTextFile(stagedOutputSchemaPath, sourceSchema);
+      await filesystem.chmod(stagedOutputSchemaPath, 0o600);
+    }
     const authPath = `${codexHome}/auth.json`;
     const lastMessagePath = `${codexHome}/last-message.json`;
     const runtimeAuthJson = syntheticCodexAuthJson(
@@ -982,7 +1004,7 @@ const invokePrivately = async (
 
     const commandResult = await commandRunner({
       executable: options.codexExecutable,
-      args: options.args(lastMessagePath, authRelay.baseUrl),
+      args: options.args(lastMessagePath, authRelay.baseUrl, stagedOutputSchemaPath),
       cwd: options.checkoutPath,
       repositoryRoot: repositoryRootForCheckout(options.checkoutPath),
       workspaceWritable: options.workspaceWritable,
@@ -1130,8 +1152,13 @@ export const runStructuredCodexAgent = async (
     outputLimitBytes,
     prompt: options.prompt,
     quotaModel: policy.model,
-    args: (lastMessagePath, relayBaseUrl) =>
-      execConfigArgs(checkoutPath, policy, outputSchemaPath, lastMessagePath, relayBaseUrl),
+    outputSchemaSourcePath: outputSchemaPath,
+    args: (lastMessagePath, relayBaseUrl, stagedOutputSchemaPath) => {
+      if (stagedOutputSchemaPath === null) {
+        throw new Error("Provider Sentinel output schema was not staged into the private Codex home");
+      }
+      return execConfigArgs(checkoutPath, policy, stagedOutputSchemaPath, lastMessagePath, relayBaseUrl);
+    },
     requireLastMessage: true,
     requireNativeReviewOutput: false,
     workspaceWritable: policy.sandbox === "workspace-write",
