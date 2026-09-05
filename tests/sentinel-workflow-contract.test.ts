@@ -4,6 +4,11 @@ import bootstrapWorkflow from "../.github/workflows/provider-sentinel-bootstrap.
 import githubClient from "../scripts/sentinel/github.ts" with { type: "text" };
 import orchestrator from "../scripts/sentinel/main.ts" with { type: "text" };
 
+type Validator = (input: { checkoutPath: string }) => Promise<{
+  passed: boolean;
+  checks: Array<{ name: string; passed: boolean; detail: string }>;
+}>;
+
 const jobSection = (name: string, nextName: string): string => {
   const start = workflow.indexOf(`\n  ${name}:`);
   const end = workflow.indexOf(`\n  ${nextName}:`, start + 1);
@@ -331,4 +336,111 @@ Deno.test("matrix convergence accepts durable retry_pending reports and stops pu
   assert.match(orchestrator, /cell_dispositions: cellDispositions/u);
   assert.match(orchestrator, /integrated_candidate: null/u);
   assert.match(orchestrator, /matrix-cycle\.json/u);
+});
+
+Deno.test("the focused cell validation runner is carried in the runMatrixCell options object", async () => {
+  const callStart = repair.indexOf("const report = await runMatrixCell({");
+  assert.ok(callStart >= 0, "repair is missing the runMatrixCell call");
+  const snippetEnd = repair.indexOf("await Deno.writeTextFile", callStart);
+  assert.ok(
+    snippetEnd > callStart,
+    "the runMatrixCell call must be bounded by the following cell status write",
+  );
+  const snippet = repair.slice(callStart, snippetEnd).trim();
+
+  // Execute the exact repair snippet with harmless stand-ins: runMatrixCell
+  // returns its captured options, so the test can prove the focused validation
+  // runner is carried in the options object under the `validation` key that
+  // runMatrixCell consults (`options.validation ?? dependencies.validate`).
+  const capturedOptions: Record<string, unknown> = {};
+  const runMatrixCell = (options: Record<string, unknown>): unknown => {
+    Object.assign(capturedOptions, options);
+    return options;
+  };
+  const validationCalls: Array<Record<string, unknown>> = [];
+  let validationThrows = false;
+  const runCandidateValidation = (candidate: Record<string, unknown>): void => {
+    validationCalls.push(candidate);
+    if (validationThrows) throw new Error("candidate validation exploded");
+  };
+  const executeRepair = new Function(
+    "runMatrixCell",
+    "runCandidateValidation",
+    "Deno",
+    "env",
+    "root",
+    "plan",
+    "cell",
+    "authSlots",
+    "sensitiveValues",
+    "triageValue",
+    "workSelection",
+    `return (async () => {${snippet}; return report;})();`,
+  ) as (...args: unknown[]) => Promise<Record<string, unknown>>;
+  const report = await executeRepair(
+    runMatrixCell,
+    runCandidateValidation,
+    { cwd: () => "/repo/checkout" },
+    (name: string): string => (name === "DENO_DIR" ? "/home/runner/.deno-cache" : ""),
+    "/tmp/runner",
+    { cells: [] },
+    { cell_id: "cell-1", finding_ids: [] },
+    {},
+    [],
+    { findings: [] },
+    null,
+  );
+  assert.equal(report.checkoutPath, "/repo/checkout");
+
+  const validation = capturedOptions.validation as
+    | Validator
+    | undefined;
+  assert.ok(
+    typeof validation === "function",
+    "runMatrixCell options must carry the focused validation runner under `validation`",
+  );
+  const runValidation = validation as Validator;
+
+  const success = await runValidation({ checkoutPath: "/repo/checkout" });
+  assert.deepEqual(validationCalls, [
+    {
+      cwd: "/repo/checkout",
+      reportPath: "/tmp/runner/sentinel-cell-validation.json",
+      privateDir: "/tmp/runner",
+      denoDirectory: "/home/runner/.deno-cache",
+    },
+  ]);
+  assert.deepEqual(success, {
+    passed: true,
+    checks: [{
+      name: "candidate-validation",
+      passed: true,
+      detail: "existing candidate validation passed",
+    }],
+  });
+
+  validationThrows = true;
+  const failure = await runValidation({ checkoutPath: "/repo/checkout" });
+  assert.deepEqual(validationCalls, [
+    {
+      cwd: "/repo/checkout",
+      reportPath: "/tmp/runner/sentinel-cell-validation.json",
+      privateDir: "/tmp/runner",
+      denoDirectory: "/home/runner/.deno-cache",
+    },
+    {
+      cwd: "/repo/checkout",
+      reportPath: "/tmp/runner/sentinel-cell-validation.json",
+      privateDir: "/tmp/runner",
+      denoDirectory: "/home/runner/.deno-cache",
+    },
+  ]);
+  assert.deepEqual(failure, {
+    passed: false,
+    checks: [{
+      name: "candidate-validation",
+      passed: false,
+      detail: "candidate validation exploded",
+    }],
+  });
 });
