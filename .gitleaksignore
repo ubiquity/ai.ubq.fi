@@ -3,3 +3,7 @@ scripts/setup-instance.ts:private-key:95
 docs/sub2api-internal-reliability-gap-audit-handoff-2026-08-21.md:generic-api-key:33
 809c69c5714c3b3cb7e0dbf69c298d4b90952e4a:scripts/setup-instance.ts:private-key:95
 f78251f4e995a189f6f0626ea0abab4a0ac2ec95:docs/sub2api-internal-reliability-gap-audit-handoff-2026-08-21.md:generic-api-key:33
+
+# Synthetic empty Codex auth fixture.
+tests/sentinel-local-test-harness.test.ts:generic-api-key:39
+38af333c808d289ba38c3771a9e0b74119a53726:tests/sentinel-local-test-harness.test.ts:generic-api-key:39
