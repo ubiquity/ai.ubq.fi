@@ -148,6 +148,41 @@ Deno.test("Provider Sentinel has explicit prepare, bounded repair, and convergen
   assert.match(converge, /Upload encrypted Sentinel evidence/u);
 });
 
+Deno.test("prepare installs and verifies tool prerequisites before the immutable matrix plan", () => {
+  const prerequisitesStart = prepare.indexOf("      - name: Install preparation prerequisites");
+  const matrixPlanStart = prepare.indexOf("      - name: Prepare immutable MatrixPlanV1");
+  assert.ok(prerequisitesStart >= 0, "prepare is missing its preparation prerequisites step");
+  assert.ok(
+    matrixPlanStart > prerequisitesStart,
+    "preparation prerequisites must install and verify before Prepare immutable MatrixPlanV1",
+  );
+  const step = prepare.slice(prerequisitesStart, matrixPlanStart);
+  const commandIndex = (needle: string): number => {
+    const index = step.indexOf(needle);
+    assert.ok(index >= 0, `preparation prerequisites step is missing: ${needle}`);
+    return index;
+  };
+  const updateIndex = commandIndex("sudo apt-get update");
+  const bubblewrapIndex = commandIndex("sudo apt-get install --yes bubblewrap");
+  const npmIndex = commandIndex(
+    "npm install --global --ignore-scripts --no-audit --no-fund @openai/codex@0.149.0",
+  );
+  const bwrapVersionIndex = commandIndex("bwrap --version");
+  const codexVersionIndex = commandIndex("codex --version");
+  assert.ok(bwrapVersionIndex > bubblewrapIndex, "bwrap must be verified after it is installed");
+  assert.ok(codexVersionIndex > npmIndex, "codex must be verified after it is installed");
+  assert.ok(bubblewrapIndex > updateIndex, "bubblewrap must be installed after apt-get update");
+  // The prepare step installs and verifies the exact Codex pin the repair and
+  // converge jobs install; a drift between the pins is a contract break.
+  const codexPin = (document: string): string => {
+    const pin = /@openai\/codex@([0-9][0-9A-Za-z.-]*)/u.exec(document);
+    assert.ok(pin !== null, "workflow is missing its pinned @openai/codex install");
+    return pin[1];
+  };
+  assert.equal(codexPin(step), codexPin(repair));
+  assert.equal(codexPin(step), codexPin(converge));
+});
+
 Deno.test("Provider Sentinel matrix transport stays encrypted and uses least-privilege cell permissions", () => {
   assert.match(repair, /permissions:\n\s+actions: write\n\s+contents: write/u);
   assert.doesNotMatch(repair, /permissions:[\s\S]*?issues:\s+write/u);
