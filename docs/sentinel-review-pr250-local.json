@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "review_identity": "local-codex-review-1e313630-20260906",
+  "command": "codex review --commit 1e313630",
+  "worktree": "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/issue-throughput-handoff-2026-09-06-g5a02cbbad3",
+  "reviewed_head_sha": "1e313630af693debfed29fa185de6e1fa11f5145",
+  "reviewed_base_sha": "8485bf45243941095b11a76404b5eaa9bd91c494",
+  "pr_number": 250,
+  "exit_code": 0,
+  "original_finding_text": "- [P1] Guard the Git-backed test with the existing permission check — /Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/issue-throughput-handoff-2026-09-06-g5a02cbbad3/tests/sentinel-orchestrator.test.ts:5758-5762\n  `deno task test`, used by `.github/workflows/deno-deploy.yml`, grants neither filesystem write nor subprocess permissions. This new test unconditionally calls `createPlanAdvanceRepository`, so it fails with `NotCapable: Requires write access to <TMP>` and breaks deployment CI. Use the existing `ignore: matrixVerifierTestsIgnored` guard, as nearby Git-backed tests do; the canonical Sentinel harness grants the required permissions and will still execute it. The focused test fails without these permissions and passes with them.",
+  "normalization": "Removed exact canonical worktree prefix from paths for repository-relative finding fingerprints.",
+  "report": {
+    "schema_version": 1,
+    "round": 1,
+    "parse_status": "findings",
+    "findings": [
+      {
+        "fingerprint": "b3820cae45280dc87fa2f2bd05487f48ca14280979d9707ccdec57f3a7390803",
+        "severity": "P1",
+        "title": "Guard the Git-backed test with the existing permission check — tests/sentinel-orchestrator.test.ts:5758-5762",
+        "body": "`deno task test`, used by `.github/workflows/deno-deploy.yml`, grants neither filesystem write nor subprocess permissions. This new test unconditionally calls `createPlanAdvanceRepository`, so it fails with `NotCapable: Requires write access to <TMP>` and breaks deployment CI. Use the existing `ignore: matrixVerifierTestsIgnored` guard, as nearby Git-backed tests do; the canonical Sentinel harness grants the required permissions and will still execute it. The focused test fails without these permissions and passes with them.",
+        "location": "tests/sentinel-orchestrator.test.ts:5758-5762"
+      }
+    ]
+  }
+}
