@@ -133,6 +133,35 @@ export interface FixtureWorkspaceOptions {
   task: TaskManifest;
 }
 
+const LINUX_SANDBOX_PATH = "/sandbox-bin:/usr/bin:/bin";
+const MACOS_SANDBOX_PATH = "/usr/bin:/bin";
+const LINUX_SANDBOX_BOOTSTRAP = 'mkdir -p "$HOME" "$TMPDIR" && exec /usr/bin/sh -c "$0"';
+const MACOS_SANDBOX_BOOTSTRAP = 'mkdir -p "$HOME" "$TMPDIR" && exec /bin/sh -c "$0"';
+
+/**
+ * Environment variables deliberately made visible to a fixture shell.
+ *
+ * PWD is included because POSIX shells export it when they start. Some macOS
+ * shells also add SHLVL and _; those are shell-generated values, rather than
+ * inherited values, and contain no host configuration or secret.
+ */
+export const SAFE_SHELL_ENVIRONMENT_KEYS = [
+  "GIT_CONFIG_GLOBAL",
+  "GIT_CONFIG_NOSYSTEM",
+  "GIT_CONFIG_SYSTEM",
+  "HOME",
+  "PATH",
+  "PWD",
+  "TMPDIR",
+] as const;
+
+type ExecOptions = {
+  timeoutMs: number;
+  capture: boolean;
+  signal?: AbortSignal;
+  env?: Record<string, string>;
+};
+
 export class FixtureWorkspace {
   readonly root: string;
   readonly fixtureDir: string;
@@ -282,7 +311,7 @@ export class FixtureWorkspace {
   /** Run a command in the workspace; used by oracles and verification. */
   async exec(
     cmd: string[],
-    opts: { timeoutMs: number; capture: boolean; signal?: AbortSignal },
+    opts: ExecOptions,
   ): Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean }> {
     const signal = opts.signal === undefined
       ? AbortSignal.timeout(opts.timeoutMs)
@@ -293,6 +322,7 @@ export class FixtureWorkspace {
       stdout: opts.capture ? "piped" : "null",
       stderr: opts.capture ? "piped" : "null",
       signal,
+      env: opts.env,
     });
     try {
       const out = await proc.output();
@@ -322,22 +352,64 @@ export class FixtureWorkspace {
     signal?: AbortSignal,
   ): Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean }> {
     this.assertRoot();
+    const root = Deno.realPathSync(this.root);
+    const path = Deno.build.os === "linux" ? LINUX_SANDBOX_PATH : MACOS_SANDBOX_PATH;
+    const environment = sandboxEnvironment(root, path);
+
     if (Deno.build.os === "linux") {
-      const root = Deno.realPathSync(this.root);
+      // Keep the command surface useful for benchmark tasks without making
+      // the host root or the repository checkout readable. /usr/bin and the
+      // library directories are system runtime paths; the workspace is the
+      // only writable host bind. awk is commonly an /etc/alternatives
+      // symlink, so expose its resolved binary through a private PATH entry
+      // instead of exposing the alternatives directory.
+      const awk = Deno.realPathSync("/usr/bin/awk");
       return await this.exec(
         [
           "sh",
           "-c",
           [
             'sandbox="$(command -v bwrap)" || { echo "shell execution sandbox requires bwrap" >&2; exit 126; }',
-            'export HOME="$1" GIT_CONFIG_GLOBAL=/dev/null',
-            'exec "$sandbox" --die-with-parent --unshare-all --new-session --ro-bind / / --dev /dev --bind "$1" "$1" --chdir "$1" sh -c "$2"',
+            'exec "$sandbox" --die-with-parent --unshare-user --unshare-pid --unshare-ipc --unshare-uts --unshare-cgroup --new-session \\',
+            "  --tmpfs / \\",
+            "  --dev /dev \\",
+            "  --tmpfs /tmp \\",
+            "  --dir /sandbox-bin \\",
+            "  --dir /usr \\",
+            "  --dir /usr/bin \\",
+            "  --dir /usr/lib \\",
+            "  --dir /usr/share \\",
+            "  --dir /usr/share/git-core \\",
+            "  --dir /lib \\",
+            "  --dir /lib64 \\",
+            "  --ro-bind /usr/bin /usr/bin \\",
+            "  --ro-bind /lib /lib \\",
+            "  --ro-bind /lib64 /lib64 \\",
+            "  --ro-bind /usr/lib/git-core /usr/lib/git-core \\",
+            "  --ro-bind /usr/share/git-core /usr/share/git-core \\",
+            '  --ro-bind "$3" /sandbox-bin/awk \\',
+            "  --symlink usr/bin /bin \\",
+            '  --bind "$1" "$1" \\',
+            '  --tmpfs "$1/.home" \\',
+            '  --tmpfs "$1/.tmp" \\',
+            '  --chdir "$1" \\',
+            "  --clearenv \\",
+            '  --setenv PATH "' + LINUX_SANDBOX_PATH + '" \\',
+            '  --setenv HOME "$1/.home" \\',
+            '  --setenv TMPDIR "$1/.tmp" \\',
+            '  --setenv PWD "$1" \\',
+            "  --setenv GIT_CONFIG_GLOBAL /dev/null \\",
+            "  --setenv GIT_CONFIG_SYSTEM /dev/null \\",
+            "  --setenv GIT_CONFIG_NOSYSTEM 1 \\",
+            '/usr/bin/sh -c "$4" "$2"',
           ].join("\n"),
           "fixture-sandbox",
           root,
           command,
+          awk,
+          LINUX_SANDBOX_BOOTSTRAP,
         ],
-        { timeoutMs, capture: true, signal },
+        { timeoutMs, capture: true, signal, env: environment },
       );
     }
     if (Deno.build.os !== "darwin") {
@@ -357,7 +429,16 @@ export class FixtureWorkspace {
       "(version 1)",
       "(deny default)",
       '(import "system.sb")',
-      "(allow file-read*)",
+      "(allow file-read* (subpath " + sandboxString(root) + "))",
+      '(allow file-read* (subpath "/bin"))',
+      '(allow file-read* (subpath "/usr/bin"))',
+      '(allow file-read* (subpath "/usr/lib"))',
+      '(allow file-read* (subpath "/usr/libexec"))',
+      '(allow file-read* (subpath "/usr/share/git-core"))',
+      '(allow file-read* (subpath "/usr/libexec/git-core"))',
+      '(allow file-read* (subpath "/System/Library"))',
+      '(allow file-read* (subpath "/private/var/db/dyld"))',
+      '(allow file-read* (literal "/dev/null"))',
       "(allow process-exec)",
       "(allow process-fork)",
       '(allow file-write* (literal "/dev/null"))',
@@ -368,15 +449,38 @@ export class FixtureWorkspace {
       [
         "sh",
         "-c",
-        'export HOME="$3" GIT_CONFIG_GLOBAL=/dev/null; exec /usr/bin/sandbox-exec -p "$1" sh -c "$2"',
+        [
+          "exec /usr/bin/env -i \\",
+          '  "PATH=/usr/bin:/bin" \\',
+          '  "HOME=$3/.home" \\',
+          '  "TMPDIR=$3/.tmp" \\',
+          '  "PWD=$3" \\',
+          "  GIT_CONFIG_GLOBAL=/dev/null \\",
+          "  GIT_CONFIG_SYSTEM=/dev/null \\",
+          "  GIT_CONFIG_NOSYSTEM=1 \\",
+          '  /usr/bin/sandbox-exec -p "$1" /bin/sh -c "$4" "$2"',
+        ].join("\n"),
         "fixture-sandbox",
         profile,
         command,
-        Deno.realPathSync(this.root),
+        root,
+        MACOS_SANDBOX_BOOTSTRAP,
       ],
-      { timeoutMs, capture: true, signal },
+      { timeoutMs, capture: true, signal, env: environment },
     );
   }
+}
+
+function sandboxEnvironment(root: string, path: string): Record<string, string> {
+  return {
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_SYSTEM: "/dev/null",
+    HOME: root + "/.home",
+    PATH: path,
+    PWD: root,
+    TMPDIR: root + "/.tmp",
+  };
 }
 
 function sandboxString(value: string): string {
