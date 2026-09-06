@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "source": "github_codex_review",
+  "reviewed_head_sha": "d465107d9e7f8cf784c383f6e40949ac7394fb8d",
+  "reviewed_base_sha": "3349acbac3f025851eb1d9cc846a02e5c833be26",
+  "review": {
+    "id": 5126049284,
+    "node_id": "PRR_kwDOQoe6nc8AAAABMYlOBA",
+    "user": {
+      "login": "chatgpt-codex-connector[bot]",
+      "id": 199175422,
+      "node_id": "BOT_kgDOC98s_g",
+      "avatar_url": "https://avatars.githubusercontent.com/in/1144995?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D",
+      "html_url": "https://github.com/apps/chatgpt-codex-connector",
+      "followers_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/followers",
+      "following_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/following{/other_user}",
+      "gists_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/subscriptions",
+      "organizations_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/orgs",
+      "repos_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/repos",
+      "events_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/received_events",
+      "type": "Bot",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "\n### 💡 Codex Review\n\nHere are some automated review suggestions for this pull request.\n\n**Reviewed commit:** `d465107d9e`\n    \n\n<details> <summary>ℹ️ About Codex in GitHub</summary>\n<br/>\n\n[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you\n- Open a pull request for review\n- Mark a draft as ready\n- Comment \"@codex review\".\n\nIf Codex has suggestions, it will comment; otherwise it will react with 👍.\n\n\n\n\nCodex can also answer questions or update the PR. Try commenting \"@codex address that feedback\".\n            \n</details>",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/ubiquity/ai.ubq.fi/pull/244#pullrequestreview-5126049284",
+    "pull_request_url": "https://api.github.com/repos/ubiquity/ai.ubq.fi/pulls/244",
+    "author_association": "NONE",
+    "_links": {
+      "html": {
+        "href": "https://github.com/ubiquity/ai.ubq.fi/pull/244#pullrequestreview-5126049284"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/ubiquity/ai.ubq.fi/pulls/244"
+      }
+    },
+    "submitted_at": "2026-09-06T17:18:23Z",
+    "commit_id": "d465107d9e7f8cf784c383f6e40949ac7394fb8d"
+  },
+  "comments": [
+    {
+      "body": "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Normalize directory markers before protected-path validation**\n\nWhen the planner follows the new prompt and emits an explicit directory such as `tests/`, this call passes the trailing slash to `isSentinelProtectedImplementationPath`, whose path validation treats the resulting empty final segment as protected. Consequently every supported directory scope is rejected as `plan_scope_invalid`, causing retries and eventual manual blocking instead of implementing issues that require a directory or new files; validate the normalized path while separately preventing directory scopes from covering protected controls.\n\nUseful? React with 👍 / 👎.",
+      "commit_id": "3d6b0376597a4fa35a7a7d112c6a566538edbf42",
+      "created_at": "2026-09-06T17:18:23Z",
+      "html_url": "https://github.com/ubiquity/ai.ubq.fi/pull/244#discussion_r3944685778",
+      "id": 3944685778,
+      "line": 1913,
+      "original_commit_id": "d465107d9e7f8cf784c383f6e40949ac7394fb8d",
+      "original_line": 1913,
+      "path": "scripts/sentinel/main.ts",
+      "pull_request_review_id": 5126049284
+    },
+    {
+      "body": "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Enforce open dependencies before accepting a plan**\n\nWhen an issue has an open `blockedBy` dependency, a planner can still return a schema-valid actionable finding and this validation accepts it without checking `job.relations.dependencies` or `dependenciesComplete`. The autonomous flow can therefore implement and deliver work that GitHub explicitly marks as blocked; reject incomplete dependency captures and deterministically persist an `unresolved_dependency` blocker whenever a captured prerequisite remains open.\n\nUseful? React with 👍 / 👎.",
+      "commit_id": "3d6b0376597a4fa35a7a7d112c6a566538edbf42",
+      "created_at": "2026-09-06T17:18:23Z",
+      "html_url": "https://github.com/ubiquity/ai.ubq.fi/pull/244#discussion_r3944685781",
+      "id": 3944685781,
+      "line": 1898,
+      "original_commit_id": "d465107d9e7f8cf784c383f6e40949ac7394fb8d",
+      "original_line": 1898,
+      "path": "scripts/sentinel/main.ts",
+      "pull_request_review_id": 5126049284
+    },
+    {
+      "body": "**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Isolate comment-count races to the affected queue item**\n\nIf a comment is added after `getIssue` returns but before `listIssueComments` completes, `current.comments` contains the old count while the captured list contains the new comment, so `materialContextDigest` throws at this call. Because the per-candidate loop does not retry or classify that consistency error as `source_unavailable`, one actively discussed issue aborts the entire workflow instead of allowing later eligible queue entries to be inspected.\n\nUseful? React with 👍 / 👎.",
+      "commit_id": "3d6b0376597a4fa35a7a7d112c6a566538edbf42",
+      "created_at": "2026-09-06T17:18:23Z",
+      "html_url": "https://github.com/ubiquity/ai.ubq.fi/pull/244#discussion_r3944685784",
+      "id": 3944685784,
+      "line": 733,
+      "original_commit_id": "d465107d9e7f8cf784c383f6e40949ac7394fb8d",
+      "original_line": 733,
+      "path": "scripts/sentinel/issues.ts",
+      "pull_request_review_id": 5126049284
+    }
+  ],
+  "raw": "- [P1] Normalize directory markers before protected-path validation — scripts/sentinel/main.ts:1913\nWhen the planner follows the new prompt and emits an explicit directory such as `tests/`, this call passes the trailing slash to `isSentinelProtectedImplementationPath`, whose path validation treats the resulting empty final segment as protected. Consequently every supported directory scope is rejected as `plan_scope_invalid`, causing retries and eventual manual blocking instead of implementing issues that require a directory or new files; validate the normalized path while separately preventing directory scopes from covering protected controls.\n\n- [P1] Enforce open dependencies before accepting a plan — scripts/sentinel/main.ts:1898\nWhen an issue has an open `blockedBy` dependency, a planner can still return a schema-valid actionable finding and this validation accepts it without checking `job.relations.dependencies` or `dependenciesComplete`. The autonomous flow can therefore implement and deliver work that GitHub explicitly marks as blocked; reject incomplete dependency captures and deterministically persist an `unresolved_dependency` blocker whenever a captured prerequisite remains open.\n\n- [P2] Isolate comment-count races to the affected queue item — scripts/sentinel/issues.ts:733\nIf a comment is added after `getIssue` returns but before `listIssueComments` completes, `current.comments` contains the old count while the captured list contains the new comment, so `materialContextDigest` throws at this call. Because the per-candidate loop does not retry or classify that consistency error as `source_unavailable`, one actively discussed issue aborts the entire workflow instead of allowing later eligible queue entries to be inspected.",
+  "report": {
+    "schema_version": 1,
+    "round": 1,
+    "parse_status": "findings",
+    "findings": [
+      {
+        "fingerprint": "03e971bfe467d03bc31296295c40f784d56747d8428ba15fcb4303070691834f",
+        "severity": "P1",
+        "title": "Normalize directory markers before protected-path validation — scripts/sentinel/main.ts:1913",
+        "body": "When the planner follows the new prompt and emits an explicit directory such as `tests/`, this call passes the trailing slash to `isSentinelProtectedImplementationPath`, whose path validation treats the resulting empty final segment as protected. Consequently every supported directory scope is rejected as `plan_scope_invalid`, causing retries and eventual manual blocking instead of implementing issues that require a directory or new files; validate the normalized path while separately preventing directory scopes from covering protected controls.",
+        "location": "scripts/sentinel/main.ts:1913"
+      },
+      {
+        "fingerprint": "f72a8edbc419ae3fc6750b5cc634ad1b6a6845bce61e397ed71363af077d4d6f",
+        "severity": "P1",
+        "title": "Enforce open dependencies before accepting a plan — scripts/sentinel/main.ts:1898",
+        "body": "When an issue has an open `blockedBy` dependency, a planner can still return a schema-valid actionable finding and this validation accepts it without checking `job.relations.dependencies` or `dependenciesComplete`. The autonomous flow can therefore implement and deliver work that GitHub explicitly marks as blocked; reject incomplete dependency captures and deterministically persist an `unresolved_dependency` blocker whenever a captured prerequisite remains open.",
+        "location": "scripts/sentinel/main.ts:1898"
+      },
+      {
+        "fingerprint": "759eb232f18b3fb5a6cb88d5f831a7f94eb31b03b4ebb51fca61a53f46907e72",
+        "severity": "P2",
+        "title": "Isolate comment-count races to the affected queue item — scripts/sentinel/issues.ts:733",
+        "body": "If a comment is added after `getIssue` returns but before `listIssueComments` completes, `current.comments` contains the old count while the captured list contains the new comment, so `materialContextDigest` throws at this call. Because the per-candidate loop does not retry or classify that consistency error as `source_unavailable`, one actively discussed issue aborts the entire workflow instead of allowing later eligible queue entries to be inspected.",
+        "location": "scripts/sentinel/issues.ts:733"
+      }
+    ]
+  }
+}

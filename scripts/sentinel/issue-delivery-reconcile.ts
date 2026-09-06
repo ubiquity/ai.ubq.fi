@@ -1484,6 +1484,7 @@ export const reconcileGitHubIssueDelivery = async (
       selection,
       triageValue: triageFile,
       cycleBaseSha: cycle.base_development_sha,
+      repositoryRoot: input.repositoryRoot,
       recovery,
       runId: cycle.run_id,
     });
