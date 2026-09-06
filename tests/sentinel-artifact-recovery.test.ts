@@ -26,6 +26,10 @@ import {
 } from "../scripts/sentinel/matrix-cell.ts";
 import { matrixCellReportDigest } from "../scripts/sentinel/matrix.ts";
 import { parseSentinelRecoveryRecord, type SentinelRecoveryRecordV1 } from "../scripts/sentinel/recovery.ts";
+import { decryptSentinelEvidenceEnvelope } from "../scripts/sentinel/artifact-recovery.ts";
+import { githubIssuePlanDigest } from "../scripts/sentinel/issue-delivery.ts";
+import { issueJobFindingId } from "../scripts/sentinel/issues.ts";
+import { loadRetainedIssueFrozenPlan } from "../scripts/sentinel/main.ts";
 import type { SentinelRetryDecision } from "../scripts/sentinel/retry.ts";
 import {
   parseSentinelRecoveryLedger,
@@ -3103,6 +3107,469 @@ Deno.test({
       for (const file of evidence.files) file.bytes.fill(0);
       environment.restore();
       await Deno.remove(fixture.root, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "authenticated retained issue plan recovery reuses frozen V2 evidence without a planner",
+  ignore: unavailable,
+  async fn() {
+    const key = new Uint8Array(32).fill(11);
+    const keyB64 = encryptedArtifactKey(key);
+    const repository = "ubiquity/ai.ubq.fi";
+    const baseSha = "1".repeat(40);
+    const candidateSha = "2".repeat(40);
+    const job = {
+      repository,
+      issueId: 5228586364,
+      nodeId: "I_kwDOQoe6nc8AAAABN6X112",
+      number: 112,
+      htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/112",
+      title: "Retained issue",
+      body: "Ordinary retained source body.",
+      bodySha256: "a".repeat(64),
+      fingerprint: "3".repeat(64),
+      priority: "P3" as const,
+      priorityLabel: "Priority: 2 (Medium)",
+      queuePriority: null,
+      queuePriorityAmbiguous: false,
+      timeLabel: null,
+      intake: "backlog" as const,
+      labels: [],
+      files: [] as string[],
+      acceptance: [] as string[],
+      materialDigest: null,
+      capturedComments: [] as unknown[],
+      authorLogin: "0x4007",
+      authorAssociation: "MEMBER",
+      comments: 0,
+      createdAt: "2026-09-01T00:00:00Z",
+      updatedAt: "2026-09-01T00:01:00Z",
+      relations: {
+        parentIssueNumber: null,
+        subIssueCount: 0,
+        blockedByCount: 0,
+        blockingCount: 0,
+        latestBodyEdit: null,
+        latestTitleEdit: null,
+      },
+    } as unknown as Parameters<typeof loadRetainedIssueFrozenPlan>[0]["job"];
+    const interval = {
+      schema_version: 1,
+      mode: "hourly",
+      start: "2026-09-01T00:00:00.000Z",
+      end: "2026-09-01T01:00:00.000Z",
+      duration_ms: 60 * 60_000,
+    };
+    const triage = {
+      schema_version: 1,
+      interval,
+      findings: [{
+        id: issueJobFindingId(job),
+        fingerprint: job.fingerprint,
+        severity: "P3" as const,
+        title: job.title,
+        affected_surface: "src/admin.ts",
+        allowed_paths: ["src/admin.ts", "tests/"],
+        shared_paths: [],
+        depends_on: [],
+        evidence: [{ source: "github_issue", reference: job.htmlUrl, detail: job.body }],
+        proposed_correction: "Implement the retained issue.",
+        validation_requirements: ["Run deno fmt and affected tests"],
+        actionable: true,
+      }],
+      no_findings_reason: null,
+    };
+    const planSha256 = await githubIssuePlanDigest({
+      repository,
+      issue_id: job.issueId,
+      fingerprint: job.fingerprint,
+      base_sha: baseSha,
+      plan: triage as never,
+    });
+    const cycle = {
+      schema_version: 1,
+      run_id: "123456789",
+      started_at: "2026-09-01T00:00:00.000Z",
+      base_development_sha: baseSha,
+    };
+    const selection = {
+      schema_version: 2 as const,
+      issue_id: job.issueId,
+      issue_number: job.number,
+      fingerprint: job.fingerprint,
+      body_sha256: job.bodySha256,
+      comments: 0,
+      priority: "P3" as const,
+      time_label: null,
+      files: [] as string[],
+      updated_at: job.updatedAt,
+      base_sha: baseSha,
+      plan_sha256: planSha256,
+    };
+    const record = parseSentinelRecoveryRecord({
+      schema_version: 1,
+      identity: {
+        repository,
+        source_kind: "github_issue",
+        source_id: String(job.issueId),
+        source_revision: job.fingerprint,
+        candidate_generation: 1,
+      },
+      run_id: "123456789",
+      attempt: 1,
+      lease_token: "lease",
+      base_sha: baseSha,
+      phase: "checkpoint_durable",
+      disposition: "active",
+      state_version: 4,
+      created_at: "2026-09-01T00:00:00.000Z",
+      updated_at: "2026-09-01T00:10:00.000Z",
+      candidate_branch: "sentinel/candidate-123456789-1",
+      candidate_sha: candidateSha,
+      changed_files: ["src/admin.ts"],
+      tree_sha: "4".repeat(40),
+      failure_class: null,
+      failure_fingerprint: null,
+      artifact_ids: [9697049201],
+      artifact_digests: [],
+      reason: "retained",
+      next_action: "resume",
+      predecessor: null,
+    });
+    const checkpoint = { branch: "sentinel/candidate-123456789-1", sha: candidateSha, baseSha };
+    const root = await Deno.makeTempDir({ prefix: "sentinel-retained-loader-" });
+    try {
+      const textEncoder = new TextEncoder();
+      const retryReport = {
+        schema_version: 1,
+        issue_id: job.issueId,
+        issue_number: job.number,
+        fingerprint: job.fingerprint,
+        phase: "failed_implementation",
+        implementation_status: "blocked",
+        disposition: "retry_pending",
+        retry_checkpoint: {
+          branch: checkpoint.branch,
+          sha: checkpoint.sha,
+          base_sha: checkpoint.baseSha,
+        },
+      };
+      const files: SentinelArtifactFile[] = [
+        { path: "reports/cycle.json", bytes: textEncoder.encode(JSON.stringify(cycle)) },
+        { path: "reports/github-issue-selection.json", bytes: textEncoder.encode(JSON.stringify(selection)) },
+        { path: "reports/triage.json", bytes: textEncoder.encode(JSON.stringify(triage)) },
+        { path: "reports/recovery-record-v1.json", bytes: textEncoder.encode(JSON.stringify(record)) },
+        { path: "reports/github-issue-disposition.json", bytes: textEncoder.encode(JSON.stringify(retryReport)) },
+      ];
+      const encrypted = await encryptSentinelArtifact(files, key, new Uint8Array(12).fill(2));
+      const zip = await createEvidenceZip(root, encrypted);
+      const envelope = await decryptSentinelEvidenceEnvelope({ zip, encodedArtifactKey: keyB64, privateRoot: root });
+      assert.ok(envelope.files.length === 5);
+      const withDigest = { ...record, artifact_digests: [envelope.encrypted_digest] };
+      const download = (): Promise<Uint8Array> => Promise.resolve(zip);
+
+      const artifacts = [{
+        workflow_run_id: 123456789,
+        expired: false,
+        expires_at: null,
+        size_in_bytes: 1_024,
+      }];
+      const loaded = await loadRetainedIssueFrozenPlan({
+        repository,
+        job,
+        checkpoint,
+        record: withDigest,
+        artifacts,
+        download,
+        encodedArtifactKey: keyB64,
+        privateRoot: root,
+      });
+      assert.equal(loaded.available, true);
+      if (loaded.available) {
+        assert.equal(loaded.triage.findings[0]!.fingerprint, job.fingerprint);
+        assert.deepEqual(loaded.triage.findings[0]!.allowed_paths, ["src/admin.ts", "tests/"]);
+      }
+      // Wrong digest: explicit unavailable, checkpoint preserved.
+      const wrongDigest = await loadRetainedIssueFrozenPlan({
+        repository,
+        job,
+        checkpoint,
+        record: { ...record, artifact_digests: [`sha256:${"0".repeat(64)}`] },
+        artifacts,
+        download,
+        encodedArtifactKey: keyB64,
+        privateRoot: root,
+      });
+      assert.equal(wrongDigest.available, false);
+      if (!wrongDigest.available) {
+        assert.equal(wrongDigest.reason.includes("digest"), true);
+      }
+      // Wrong checkpoint base: unavailable.
+      const wrongBase = await loadRetainedIssueFrozenPlan({
+        repository,
+        job,
+        checkpoint: { ...checkpoint, baseSha: "5".repeat(40) },
+        record: withDigest,
+        artifacts,
+        download,
+        encodedArtifactKey: keyB64,
+        privateRoot: root,
+      });
+      assert.equal(wrongBase.available, false);
+      // Wrong checkpoint branch: unavailable.
+      const wrongBranch = await loadRetainedIssueFrozenPlan({
+        repository,
+        job,
+        checkpoint: { ...checkpoint, branch: "sentinel/candidate-999999999-1" },
+        record: withDigest,
+        artifacts,
+        download,
+        encodedArtifactKey: keyB64,
+        privateRoot: root,
+      });
+      assert.equal(wrongBranch.available, false);
+      // Wrong source fingerprint: unavailable.
+      const wrongSource = await loadRetainedIssueFrozenPlan({
+        repository,
+        job: { ...job, fingerprint: "6".repeat(64) },
+        checkpoint,
+        record: withDigest,
+        artifacts,
+        download,
+        encodedArtifactKey: keyB64,
+        privateRoot: root,
+      });
+      assert.equal(wrongSource.available, false);
+    } finally {
+      key.fill(0);
+      await Deno.remove(root, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "retained loader keeps V1 deterministic reconstruction and rejects unauthenticated metadata",
+  ignore: unavailable,
+  async fn() {
+    const key = new Uint8Array(32).fill(13);
+    const keyB64 = encryptedArtifactKey(key);
+    const repository = "ubiquity/ai.ubq.fi";
+    const baseSha = "7".repeat(40);
+    const candidateSha = "8".repeat(40);
+    const job = {
+      repository,
+      issueId: 5228586364,
+      nodeId: "I_kwDOQoe6nc8AAAABN6X112",
+      number: 112,
+      htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/112",
+      title: "Retained V1 issue",
+      body: "Implement the bounded change.\n\nAcceptance:\n- The change is complete.\n\nFiles:\n- src/http.ts\n",
+      bodySha256: "a".repeat(64),
+      fingerprint: "9".repeat(64),
+      priority: "P3" as const,
+      priorityLabel: "Priority: 2 (Medium)",
+      queuePriority: null,
+      queuePriorityAmbiguous: false,
+      timeLabel: "Time: <1 Hour",
+      intake: "declared" as const,
+      labels: ["Priority: 2 (Medium)", "Time: <1 Hour"],
+      files: ["src/http.ts"],
+      acceptance: ["The change is complete."],
+      materialDigest: null,
+      capturedComments: [] as unknown[],
+      authorLogin: "0x4007",
+      authorAssociation: "MEMBER",
+      comments: 0,
+      createdAt: "2026-09-01T00:00:00Z",
+      updatedAt: "2026-09-01T00:01:00Z",
+      relations: {} as never,
+    } as unknown as Parameters<typeof loadRetainedIssueFrozenPlan>[0]["job"];
+    const interval = {
+      schema_version: 1,
+      mode: "hourly",
+      start: "2026-09-01T00:00:00.000Z",
+      end: "2026-09-01T01:00:00.000Z",
+      duration_ms: 60 * 60_000,
+    };
+    // Historical deterministic triage the V1 reproduction must reconstruct.
+    const intervalReport = {
+      schema_version: 1,
+      interval,
+      findings: [{
+        id: issueJobFindingId(job),
+        fingerprint: job.fingerprint,
+        severity: "P3" as const,
+        title: job.title,
+        affected_surface: "src/http.ts",
+        allowed_paths: ["src/http.ts"],
+        shared_paths: [],
+        depends_on: [],
+        evidence: [{ source: "github_issue", reference: job.htmlUrl, detail: job.body }],
+        proposed_correction:
+          "Implement GitHub issue #112 within its declared Files scope and satisfy every acceptance item.",
+        validation_requirements: [
+          "The change is complete.",
+          "Change only declared Files issue paths: src/http.ts",
+          "Run repository formatting, lint, build, and affected tests",
+        ],
+        actionable: true,
+      }],
+      no_findings_reason: null,
+    };
+    const v1Selection = {
+      schema_version: 1 as const,
+      issue_id: job.issueId,
+      issue_number: job.number,
+      fingerprint: job.fingerprint,
+      body_sha256: job.bodySha256,
+      comments: 0,
+      priority: "P3" as const,
+      time_label: "Time: <1 Hour",
+      files: ["src/http.ts"],
+      updated_at: job.updatedAt,
+    };
+    const cycle = {
+      schema_version: 1,
+      run_id: "987654321",
+      started_at: "2026-09-01T00:00:00.000Z",
+      base_development_sha: baseSha,
+    };
+    const record = parseSentinelRecoveryRecord({
+      schema_version: 1,
+      identity: {
+        repository,
+        source_kind: "github_issue",
+        source_id: String(job.issueId),
+        source_revision: job.fingerprint,
+        candidate_generation: 1,
+      },
+      run_id: "987654321",
+      attempt: 1,
+      lease_token: "lease",
+      base_sha: baseSha,
+      phase: "checkpoint_durable",
+      disposition: "active",
+      state_version: 4,
+      created_at: "2026-09-01T00:00:00.000Z",
+      updated_at: "2026-09-01T00:10:00.000Z",
+      candidate_branch: "sentinel/candidate-987654321-1",
+      candidate_sha: candidateSha,
+      changed_files: ["src/http.ts"],
+      tree_sha: "4".repeat(40),
+      failure_class: null,
+      failure_fingerprint: null,
+      artifact_ids: [9697049202],
+      artifact_digests: [],
+      reason: "retained",
+      next_action: "resume",
+      predecessor: null,
+    });
+    const checkpoint = { branch: "sentinel/candidate-987654321-1", sha: candidateSha, baseSha };
+    const root = await Deno.makeTempDir({ prefix: "sentinel-retained-v1-" });
+    try {
+      const textEncoder = new TextEncoder();
+      const retryReport = {
+        schema_version: 1,
+        issue_id: job.issueId,
+        issue_number: job.number,
+        fingerprint: job.fingerprint,
+        phase: "failed_implementation",
+        implementation_status: "blocked",
+        disposition: "retry_pending",
+        retry_checkpoint: { branch: checkpoint.branch, sha: checkpoint.sha, base_sha: checkpoint.baseSha },
+      };
+      const files: SentinelArtifactFile[] = [
+        { path: "reports/cycle.json", bytes: textEncoder.encode(JSON.stringify(cycle)) },
+        { path: "reports/github-issue-selection.json", bytes: textEncoder.encode(JSON.stringify(v1Selection)) },
+        { path: "reports/triage.json", bytes: textEncoder.encode(JSON.stringify(intervalReport)) },
+        { path: "reports/recovery-record-v1.json", bytes: textEncoder.encode(JSON.stringify(record)) },
+        { path: "reports/github-issue-disposition.json", bytes: textEncoder.encode(JSON.stringify(retryReport)) },
+      ];
+      const encrypted = await encryptSentinelArtifact(files, key, new Uint8Array(12).fill(3));
+      const zip = await createEvidenceZip(root, encrypted);
+      const envelope = await decryptSentinelEvidenceEnvelope({ zip, encodedArtifactKey: keyB64, privateRoot: root });
+      const withDigest = { ...record, artifact_digests: [envelope.encrypted_digest] };
+      const download = (_artifactId: number): Promise<Uint8Array> => Promise.resolve(zip);
+      const validArtifact = { workflow_run_id: 987654321, expired: false, expires_at: null, size_in_bytes: 1_024 };
+      const base = {
+        repository,
+        job,
+        checkpoint,
+        record: withDigest,
+        artifacts: [validArtifact],
+        download,
+        encodedArtifactKey: keyB64,
+        privateRoot: root,
+      };
+      const loaded = await loadRetainedIssueFrozenPlan(base);
+      assert.equal(loaded.available, true);
+      if (loaded.available) {
+        assert.deepEqual(loaded.triage.findings[0]!.allowed_paths, ["src/http.ts"]);
+        assert.equal(loaded.selection.schema_version, 1);
+      }
+      // Metadata must prove the original workflow run; a missing run id rejects.
+      const noRun = await loadRetainedIssueFrozenPlan({
+        ...base,
+        artifacts: [{ expired: false, expires_at: null, size_in_bytes: 1_024 }],
+      });
+      assert.equal(noRun.available, false);
+      if (!noRun.available) assert.equal(noRun.reason.includes("workflow run"), true);
+      const expired = await loadRetainedIssueFrozenPlan({
+        ...base,
+        artifacts: [{ workflow_run_id: 987654321, expired: true, expires_at: null, size_in_bytes: 1_024 }],
+      });
+      assert.equal(expired.available, false);
+      // Corrupt artifact bytes: explicit unavailable, checkpoint preserved.
+      const corruptZip = new Uint8Array(64).fill(7);
+      const corrupt = await loadRetainedIssueFrozenPlan({
+        ...base,
+        download: () => Promise.resolve(corruptZip),
+      });
+      assert.equal(corrupt.available, false);
+      // Wrong original attempt: embedded recovery attempt mismatch rejects.
+      const wrongAttempt = await loadRetainedIssueFrozenPlan({
+        ...base,
+        record: { ...withDigest, attempt: 2 },
+      });
+      assert.equal(wrongAttempt.available, false);
+      if (!wrongAttempt.available) {
+        assert.equal(wrongAttempt.reason.includes("recovery attempt"), true);
+      }
+      // Malformed selection schema (valid JSON, invalid schema) fails closed
+      // as unavailable with a matching authenticated digest.
+      const malformedFiles = files.map((file) =>
+        file.path === "reports/github-issue-selection.json"
+          ? {
+            ...file,
+            bytes: textEncoder.encode(JSON.stringify({
+              schema_version: 1,
+              issue_id: job.issueId,
+              issue_number: job.number,
+            })),
+          }
+          : file
+      );
+      const malformedEncrypted = await encryptSentinelArtifact(malformedFiles, key, new Uint8Array(12).fill(4));
+      const malformedZip = await createEvidenceZip(root, malformedEncrypted);
+      const malformedEnvelope = await decryptSentinelEvidenceEnvelope({
+        zip: malformedZip,
+        encodedArtifactKey: keyB64,
+        privateRoot: root,
+      });
+      const malformed = await loadRetainedIssueFrozenPlan({
+        ...base,
+        download: () => Promise.resolve(malformedZip),
+        record: { ...withDigest, artifact_digests: [malformedEnvelope.encrypted_digest] },
+      });
+      assert.equal(malformed.available, false);
+      if (!malformed.available) {
+        assert.equal(malformed.reason.includes("malformed"), true);
+      }
+    } finally {
+      key.fill(0);
+      await Deno.remove(root, { recursive: true });
     }
   },
 });

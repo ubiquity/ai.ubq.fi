@@ -142,6 +142,14 @@ snapshot before a generation is claimed. The bounded 512-record ledger retains o
 unchanged issue/review source revision and fails closed when the required protected records cannot fit; unrelated
 terminal records stay eligible for recency-based pruning.
 
+Convergence binds the exact prepared work item (issue or review backlog) by source identity and never re-runs the
+time-dependent queue selector, so an earlier item becoming due while cells run cannot discard completed matrix work. PR
+#243 review finding [226fe1c6...](https://github.com/ubiquity/ai.ubq.fi/pull/243#discussion_r3944350738) (review
+5125735701, comment 3944350738, reviewed head `4cf7a31712ecb5ac7deb803f70ddfd6a6e736002`, base
+`64d1d075bc102dc375e6be4292fc5871808f4572`) raised this race; remediation is tracked in
+`docs/sentinel-review-backlog.md` and is resolved only after the exact-prepared-source regressions for both issue and
+review backlog convergence pass.
+
 The workflow supports public, private, and internal repository visibility. It fails before checkout or raw-log capture
 unless `SENTINEL_ARTIFACT_KEY` is present and decodes to exactly 32 bytes. After the cycle, it scans every prospective
 artifact path for credentials, encrypts raw logs and durable reports with AES-256-GCM, reads the persisted ciphertext

@@ -915,7 +915,7 @@ jobs:
           deno eval --frozen --lock=deno.lock '
             import { decodeSentinelArtifactKey, decryptSentinelArtifact } from "./scripts/sentinel/artifact-crypto.ts";
             import { parseMatrixPlanV1, validateMatrixCellReportV1, canonicalMatrixJson } from "./scripts/sentinel/matrix.ts";
-            import { parseGitHubIssueSelectionReport } from "./scripts/sentinel/issue-delivery.ts";
+            import { parseGitHubIssueSelectionReportAny } from "./scripts/sentinel/issue-delivery.ts";
             import { parseSentinelRecoveryRecord } from "./scripts/sentinel/recovery.ts";
             import { isTriageReport } from "./scripts/sentinel/types.ts";
             const root = Deno.env.get("RUNNER_TEMP")!;
@@ -961,9 +961,9 @@ jobs:
                   if (recovery.phase !== "claimed" || recovery.disposition !== "active") throw new Error("sentinel recovery record is not an active claimed recovery");
                   await Deno.writeTextFile(".sentinel/reports/recovery-record-v1.json", `${JSON.stringify(recovery, null, 2)}\n`, { create: true, mode: 0o600 });
                   const selectionFile = planFiles.find((file) => file.path === "reports/github-issue-selection.json");
-                  let selection: ReturnType<typeof parseGitHubIssueSelectionReport> | null = null;
+                  let selection: ReturnType<typeof parseGitHubIssueSelectionReportAny> | null = null;
                   if (selectionFile) {
-                    selection = parseGitHubIssueSelectionReport(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(selectionFile.bytes)));
+                    selection = parseGitHubIssueSelectionReportAny(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(selectionFile.bytes)));
                     await Deno.writeTextFile(".sentinel/reports/github-issue-selection.json", `${JSON.stringify(selection, null, 2)}\n`, { create: true, mode: 0o600 });
                   }
                   if (recovery.identity.source_kind === "github_issue" && (!selection || String(selection.issue_id) !== recovery.identity.source_id || selection.fingerprint !== recovery.identity.source_revision)) throw new Error("github issue selection does not match the sentinel recovery identity");
@@ -1797,6 +1797,7 @@ jobs:
           DENO_DEPLOY_TOKEN: ${{ secrets.DENO_DEPLOY_TOKEN }}
           PREVIEW_UOS_AI_USER_TOKEN: ${{ secrets.PREVIEW_UOS_AI_USER_TOKEN }}
           SENTINEL_REPLAY_KEY: ${{ secrets.SENTINEL_REPLAY_KEY }}
+          SENTINEL_ARTIFACT_KEY: ${{ secrets.SENTINEL_ARTIFACT_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -2015,6 +2016,28 @@ jobs:
                 echo "- Work source: GitHub issue"
                 echo "- Selected GitHub issue: #$selected_issue"
               fi
+            fi
+            if [ -f .sentinel/reports/github-issue-queue.json ]; then
+              jq -r '
+                if .selected_issue_number != null then
+                  "- Queue selected: #" + (.selected_issue_number | tostring)
+                else
+                  "- Queue selected: none"
+                end,
+                "- Queue exhausted: " + (.queue_exhausted | tostring),
+                (.["entries"][]? |
+                  "- Queue #" + (.number | tostring) +
+                    " priority=" + (if .queue_priority == null then "unrecognized" else (.queue_priority | tostring) end) +
+                    " selected=" + (.selected | tostring) +
+                    " reason=" + .reason)
+              ' .sentinel/reports/github-issue-queue.json || true
+            fi
+            if [ -f .sentinel/reports/github-issue-selection.json ]; then
+              jq -r '
+                "- Selection schema: " + (.schema_version | tostring),
+                "- Selection base: " + (.base_sha // "legacy"),
+                "- Selection plan: " + (.plan_sha256 // "legacy")
+              ' .sentinel/reports/github-issue-selection.json || true
             fi
             if [ -f .sentinel/reports/github-issue-production-outcome.json ]; then
               jq -r '

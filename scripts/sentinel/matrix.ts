@@ -65,14 +65,28 @@ const assertPath = (value: unknown, label: string): string => {
   if (typeof value !== "string" || value.length === 0 || value.length > MAX_PATH_LENGTH) {
     throw new Error(`${label} must be a relative repository path`);
   }
+  const normalized = value.endsWith("/") ? value.slice(0, -1) : value;
   if (
     value !== value.trim() || value.startsWith("/") || value.includes("\\") || value.includes("\u0000") ||
-    value.split("/").some((segment) => segment.length === 0 || segment === "." || segment === "..")
+    value.endsWith("//") || normalized.length === 0 ||
+    normalized.split("/").some((segment) => segment.length === 0 || segment === "." || segment === "..")
   ) {
     throw new Error(`${label} must be a normalized relative repository path`);
   }
   return value;
 };
+
+/**
+ * A directory scope entry is an explicit trailing-slash path; it covers
+ * descendants at a path-component boundary (`src/foo/` never authorizes
+ * `src/foobar.ts`). A non-slash entry is an exact file and equals only itself.
+ * Repository root and traversal are impossible after assertPath normalization.
+ */
+export const matrixAllowedPathDirectory = (allowed: string): string =>
+  allowed.endsWith("/") ? allowed.slice(0, -1) : allowed;
+
+export const matrixAllowedPathCovers = (path: string, allowed: string): boolean =>
+  allowed.endsWith("/") ? path.startsWith(allowed) : path === allowed;
 
 const assertPathList = (value: unknown, label: string, maximum = MAX_PATHS_PER_FINDING): string[] => {
   if (!Array.isArray(value) || value.length > maximum || !value.every((item) => typeof item === "string")) {
@@ -99,8 +113,12 @@ const assertNoOverlap = (left: readonly string[], right: readonly string[], labe
 };
 
 /** Path overlap treats a directory and any path below it as the same write scope. */
-export const matrixPathsOverlap = (left: string, right: string): boolean =>
-  left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+export const matrixPathsOverlap = (left: string, right: string): boolean => {
+  const leftDirectory = matrixAllowedPathDirectory(left);
+  const rightDirectory = matrixAllowedPathDirectory(right);
+  return leftDirectory === rightDirectory || leftDirectory.startsWith(`${rightDirectory}/`) ||
+    rightDirectory.startsWith(`${leftDirectory}/`);
+};
 
 const anyPathOverlap = (left: readonly string[], right: readonly string[]): boolean =>
   left.some((leftPath) => right.some((rightPath) => matrixPathsOverlap(leftPath, rightPath)));

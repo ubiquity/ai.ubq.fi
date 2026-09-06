@@ -2,7 +2,10 @@ import {
   isSentinelRecoveryCandidateBranch,
   sentinelRecoveryCandidateBranch,
   type SentinelRecoveryIdentityV1,
+  type SentinelRecoveryRecordV1,
 } from "./recovery.ts";
+import { canonicalMatrixJson } from "./matrix.ts";
+import { isTriageReport, type TriageReport } from "./types.ts";
 
 export { isSentinelRecoveryCandidateBranch, sentinelRecoveryCandidateBranch };
 
@@ -33,18 +36,61 @@ const currentWorkflowCandidateBranch = (branch: string, runId: string, runAttemp
 export const ISSUE_COMPLETION_EVIDENCE_TEXT =
   "Delivered, merged, and verified in production; issue closed as completed.";
 
+const safeSelectionPath = (path: unknown): path is string =>
+  typeof path === "string" && path.length > 0 && path.length <= 512 && !path.startsWith("/") &&
+  !path.includes("\\") && !path.split("/").some((part) => part === "" || part === "." || part === "..");
+
 export type GitHubIssueSelectionReport = Readonly<{
-  schema_version: 1;
+  schema_version: 1 | 2;
   issue_id: number;
   issue_number: number;
   fingerprint: string;
   body_sha256: string;
   comments: number;
   priority: "P2" | "P3";
-  time_label: string;
+  time_label: string | null;
   files: readonly string[];
   updated_at: string;
+  /** V2: exact development base the frozen plan was prepared against. */
+  base_sha?: string;
+  /** V2: digest binding repository, issue identity, source fingerprint, base SHA, and canonical frozen triage. */
+  plan_sha256?: string;
 }>;
+
+/**
+ * The canonical frozen-plan digest for a V2 selection report: repository,
+ * issue identity, source fingerprint, exact base SHA, and the canonical full
+ * TriageReport (scope, validation requirements, evidence).
+ */
+export const githubIssuePlanDigest = async (
+  input: Readonly<{
+    repository: string;
+    issue_id: number;
+    fingerprint: string;
+    base_sha: string;
+    plan: TriageReport;
+  }>,
+): Promise<string> => {
+  if (
+    !SAFE_REPOSITORY.test(input.repository) || !positiveInteger(input.issue_id) ||
+    !SHA256.test(input.fingerprint) || !FULL_SHA.test(input.base_sha)
+  ) {
+    throw new Error("Sentinel GitHub issue plan digest input is invalid");
+  }
+  const canonical = canonicalMatrixJson({
+    repository: input.repository,
+    issue_id: input.issue_id,
+    fingerprint: input.fingerprint,
+    base_sha: input.base_sha,
+    plan: input.plan,
+  });
+  return await sha256Hex(canonical);
+};
+
+const textEncoder = new TextEncoder();
+const sha256Hex = async (value: string): Promise<string> =>
+  [...new Uint8Array(await crypto.subtle.digest("SHA-256", textEncoder.encode(value)))]
+    .map((byte) => byte.toString(16).padStart(2, "0")).join("");
 
 export type SentinelCycleReport = Readonly<{
   schema_version: 1;
@@ -54,6 +100,8 @@ export type SentinelCycleReport = Readonly<{
   status: string;
   stage: string;
   evidence_artifact_name: string | null;
+  /** The pinned development base the cycle prepared against (V2 binding). */
+  base_development_sha: string | null;
 }>;
 
 export type GitHubIssuePullRequestRecord = Readonly<{
@@ -211,6 +259,52 @@ const parseRetryCheckpoint = (value: unknown): GitHubIssueRetryCheckpointReport 
 const parseManualCheckpoint = (value: unknown): GitHubIssueManualCheckpointReport | null =>
   parseCheckpoint(value, "manual");
 
+/**
+ * Fail-closed verification of a V2 frozen plan at delivery/closure callers:
+ * the frozen triage at the run reports path must re-derive the exact bound
+ * plan digest for the same source identity. V1 stays legacy (no re-binding).
+ */
+export const verifyFrozenIssuePlanDigest = async (
+  input: Readonly<{
+    repository: string;
+    selection: GitHubIssueSelectionReport;
+    triageValue: unknown;
+    cycleBaseSha: string | null;
+    recovery?: SentinelRecoveryRecordV1;
+    runId?: string;
+  }>,
+): Promise<void> => {
+  if (input.selection.schema_version !== 2) return;
+  if (!isTriageReport(input.triageValue)) throw new Error("Sentinel frozen triage report is invalid");
+  if (input.cycleBaseSha !== null && input.selection.base_sha !== input.cycleBaseSha) {
+    throw new Error("Sentinel frozen plan base does not match the cycle development base");
+  }
+  if (input.recovery !== undefined) {
+    const identity = input.recovery.identity;
+    if (
+      identity.repository !== input.repository || identity.source_kind !== "github_issue" ||
+      identity.source_id !== String(input.selection.issue_id) ||
+      identity.source_revision !== input.selection.fingerprint ||
+      input.recovery.base_sha !== input.selection.base_sha
+    ) {
+      throw new Error("Sentinel frozen plan does not bind the authoritative recovery source identity");
+    }
+    if (input.runId !== undefined && input.recovery.run_id !== input.runId) {
+      throw new Error("Sentinel frozen plan recovery run does not match the delivery run");
+    }
+  }
+  const digest = await githubIssuePlanDigest({
+    repository: input.repository,
+    issue_id: input.selection.issue_id,
+    fingerprint: input.selection.fingerprint,
+    base_sha: input.selection.base_sha!,
+    plan: input.triageValue,
+  });
+  if (digest !== input.selection.plan_sha256) {
+    throw new Error("Sentinel frozen plan digest does not match the frozen triage");
+  }
+};
+
 export const parseGitHubIssueSelectionReport = (value: unknown): GitHubIssueSelectionReport => {
   const selection = record(value);
   if (
@@ -221,10 +315,7 @@ export const parseGitHubIssueSelectionReport = (value: unknown): GitHubIssueSele
     (selection.priority !== "P2" && selection.priority !== "P3") ||
     typeof selection.time_label !== "string" || selection.time_label.length === 0 || selection.time_label.length > 80 ||
     !Array.isArray(selection.files) || selection.files.length === 0 || selection.files.length > 32 ||
-    !selection.files.every((path) =>
-      typeof path === "string" && path.length > 0 && path.length <= 512 && !path.startsWith("/") &&
-      !path.includes("\\") && !path.split("/").some((part) => part === "" || part === "." || part === "..")
-    ) || !isoTimestamp(selection.updated_at)
+    !selection.files.every(safeSelectionPath) || !isoTimestamp(selection.updated_at)
   ) throw new Error("Sentinel GitHub issue selection report is invalid");
   return {
     schema_version: 1,
@@ -237,6 +328,55 @@ export const parseGitHubIssueSelectionReport = (value: unknown): GitHubIssueSele
     time_label: selection.time_label,
     files: [...selection.files] as string[],
     updated_at: selection.updated_at,
+  };
+};
+
+/**
+ * Universal V1/V2 selection report reader used by every report consumer: V1
+ * is strictly legacy, V2 adds base/plan binding.
+ */
+export const parseGitHubIssueSelectionReportAny = (value: unknown): GitHubIssueSelectionReport => {
+  const selection = record(value);
+  if (selection === null) throw new Error("Sentinel GitHub issue selection report is invalid");
+  return selection.schema_version === 2
+    ? parseGitHubIssueSelectionReportV2(selection)
+    : parseGitHubIssueSelectionReport(selection);
+};
+
+/**
+ * Strict V2 frozen-plan selection report reader. V2 keeps the source fields
+ * (nullable estimate, empty source hints allowed) and binds the exact
+ * development base and the canonical frozen triage digest.
+ */
+export const parseGitHubIssueSelectionReportV2 = (value: unknown): GitHubIssueSelectionReport => {
+  const selection = record(value);
+  if (
+    !selection || selection.schema_version !== 2 || !positiveInteger(selection.issue_id) ||
+    !positiveInteger(selection.issue_number) || typeof selection.fingerprint !== "string" ||
+    !SHA256.test(selection.fingerprint) || typeof selection.body_sha256 !== "string" ||
+    !SHA256.test(selection.body_sha256) || !nonNegativeInteger(selection.comments) ||
+    (selection.priority !== "P2" && selection.priority !== "P3") ||
+    !(selection.time_label === null ||
+      (typeof selection.time_label === "string" && selection.time_label.length > 0 &&
+        selection.time_label.length <= 80)) ||
+    !Array.isArray(selection.files) || selection.files.length > 32 ||
+    !selection.files.every(safeSelectionPath) || !isoTimestamp(selection.updated_at) ||
+    typeof selection.base_sha !== "string" || !FULL_SHA.test(selection.base_sha) ||
+    typeof selection.plan_sha256 !== "string" || !SHA256.test(selection.plan_sha256)
+  ) throw new Error("Sentinel GitHub issue selection V2 report is invalid");
+  return {
+    schema_version: 2,
+    issue_id: selection.issue_id,
+    issue_number: selection.issue_number,
+    fingerprint: selection.fingerprint,
+    body_sha256: selection.body_sha256,
+    comments: selection.comments,
+    priority: selection.priority,
+    time_label: selection.time_label,
+    files: [...selection.files] as string[],
+    updated_at: selection.updated_at,
+    base_sha: selection.base_sha,
+    plan_sha256: selection.plan_sha256,
   };
 };
 
@@ -517,7 +657,9 @@ export const parseSentinelCycleReport = (value: unknown): SentinelCycleReport =>
     typeof cycle.status !== "string" || cycle.status.length === 0 || cycle.status.length > 80 ||
     typeof cycle.stage !== "string" || cycle.stage.length === 0 || cycle.stage.length > 120 ||
     (cycle.evidence_artifact_name !== null &&
-      (typeof cycle.evidence_artifact_name !== "string" || cycle.evidence_artifact_name.length > 240))
+      (typeof cycle.evidence_artifact_name !== "string" || cycle.evidence_artifact_name.length > 240)) ||
+    (cycle.base_development_sha !== undefined && cycle.base_development_sha !== null &&
+      (typeof cycle.base_development_sha !== "string" || !FULL_SHA.test(cycle.base_development_sha)))
   ) throw new Error("Sentinel cycle report is invalid");
   return {
     schema_version: 1,
@@ -527,6 +669,7 @@ export const parseSentinelCycleReport = (value: unknown): SentinelCycleReport =>
     status: cycle.status,
     stage: cycle.stage,
     evidence_artifact_name: cycle.evidence_artifact_name,
+    base_development_sha: cycle.base_development_sha ?? null,
   };
 };
 

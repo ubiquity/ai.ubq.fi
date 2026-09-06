@@ -27,6 +27,7 @@ import {
   implementationFailureDisposition,
   implementationPrompt,
   isObserveOnlyMode,
+  isStablePlanningBlocker,
   loadPreparedConvergenceRecoveryRecord,
   MAX_MATCHING_REPLAY_ARCHIVE_BYTES,
   MAX_MATCHING_REPLAY_ARTIFACTS,
@@ -35,6 +36,7 @@ import {
   parseMode,
   parseMonitorDecision,
   parseSentinelDeploymentAttestation,
+  persistPlanningOutcome,
   prepareImplementationFailureRetry,
   previewCompletionForDecision,
   replayIndexArtifactMayMatch,
@@ -95,10 +97,6 @@ import {
   type GitHubIssueJobSource,
   githubIssueJobTriageReport,
   issueReviewBacklogFindings,
-  MAX_ISSUE_JOB_DETAIL_COMMENT_INSPECTIONS,
-  MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS,
-  MAX_OWNER_BACKLOG_PERMISSION_PREFLIGHTS,
-  parseGitHubIssueJobBody,
   parseGitHubIssueJobHint,
   parseGitHubIssueJobLedger,
   renderGitHubIssueJobHint,
@@ -114,8 +112,10 @@ import {
   emptySentinelRecoveryLedger,
   parseSentinelRecoveryLedger,
   type SentinelRecoveryEligibilityContext,
+  sentinelRecoveryIdentityKey,
   type SentinelRecoveryLedgerV1,
 } from "../scripts/sentinel/recovery-ledger.ts";
+import type { SentinelRecoveryLedgerSnapshot } from "../scripts/sentinel/recovery-github-store.ts";
 import {
   inspectSse,
   isInferenceOnlyReplayEndpoint,
@@ -126,6 +126,7 @@ import {
   applyReviewBacklogImplementationDisposition,
   blockingReviewFindings,
   canStartReviewRound,
+  findReviewBacklogEntry,
   mergeReviewBacklog,
   nativeReviewParseInput,
   parseNativeReview,
@@ -181,10 +182,11 @@ const now = Date.parse("2026-08-21T06:00:00.000Z");
 const recoverySelectionContext = (
   ledger: SentinelRecoveryLedgerV1 = emptySentinelRecoveryLedger(),
   continuationRecord: SentinelRecoveryRecordV1 | null = null,
+  now = "2026-08-28T06:00:00.000Z",
 ): SentinelRecoveryEligibilityContext => ({
   repository: "ubiquity/ai.ubq.fi",
   ledger,
-  now: "2026-08-28T06:00:00.000Z",
+  now,
   continuation_record: continuationRecord,
 });
 
@@ -732,7 +734,7 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
     recoverySelectionContext(),
     dueAt,
   );
-  assert.equal(dueSelection?.job.fingerprint, selected.fingerprint);
+  assert.equal(dueSelection?.job?.fingerprint, selected.fingerprint);
   assert.deepEqual(dueSelection?.checkpoint, checkpoint);
   const checkpointHint = parseGitHubIssueJobHint(renderGitHubIssueJobHint(selected, checkpoint));
   assert.equal(githubIssueJobMatchesHint(checkpointHint, selected, checkpoint), true);
@@ -748,17 +750,17 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
     recoverySelectionContext(),
     dueAt,
   );
-  assert.equal(normalizedSelection?.job.number, selected.number);
-  assert.notEqual(normalizedSelection?.job.fingerprint, selected.fingerprint);
+  assert.equal(normalizedSelection?.job?.number, selected.number);
+  assert.notEqual(normalizedSelection?.job?.fingerprint, selected.fingerprint);
   assert.deepEqual(normalizedSelection?.checkpoint, checkpoint);
   const normalizedHint = parseGitHubIssueJobHint(
-    renderGitHubIssueJobHint(normalizedSelection!.job, normalizedSelection!.checkpoint),
+    renderGitHubIssueJobHint(normalizedSelection!.job!, normalizedSelection!.checkpoint),
   );
-  assert.equal(githubIssueJobMatchesHint(normalizedHint, normalizedSelection!.job, checkpoint), true);
+  assert.equal(githubIssueJobMatchesHint(normalizedHint, normalizedSelection!.job!, checkpoint), true);
   const normalizedRetryAt = new Date(dueAt.getTime() + 1_000);
   const normalizedRetryLedger = applyGitHubIssueJobDisposition(
     pendingLedger,
-    normalizedSelection!.job,
+    normalizedSelection!.job!,
     checkpoint.baseSha,
     normalizedRetryAt,
     "retry_pending",
@@ -778,7 +780,7 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
     recoverySelectionContext(),
     new Date(normalizedRetryAt.getTime() + GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS),
   );
-  assert.equal(normalizedRetrySelection?.job.fingerprint, normalizedSelection!.job.fingerprint);
+  assert.equal(normalizedRetrySelection?.job?.fingerprint, normalizedSelection!.job!.fingerprint);
   assert.deepEqual(normalizedRetrySelection?.checkpoint, checkpoint);
   const issueWithSecondLaterInertComment = sentinelGitHubIssue({
     comments: firstIssue.comments + 2,
@@ -791,8 +793,8 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
     recoverySelectionContext(),
     new Date(normalizedRetryAt.getTime() + GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS),
   );
-  assert.equal(twiceNormalizedSelection?.job.number, selected.number);
-  assert.notEqual(twiceNormalizedSelection?.job.fingerprint, normalizedSelection!.job.fingerprint);
+  assert.equal(twiceNormalizedSelection?.job?.number, selected.number);
+  assert.notEqual(twiceNormalizedSelection?.job?.fingerprint, normalizedSelection!.job!.fingerprint);
   assert.deepEqual(twiceNormalizedSelection?.checkpoint, checkpoint);
   const changedIssue = sentinelGitHubIssue({
     title: "Changed issue snapshot with separate retry work",
@@ -802,7 +804,6 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
     "ubiquity/ai.ubq.fi",
     changedIssue,
     noIssueRelations,
-    "admin",
   );
   assert.ok(changedJob);
   const terminalLedger = applyGitHubIssueJobDisposition(
@@ -840,7 +841,7 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
         recoverySelectionContext(),
         afterChangedRetryCooldown,
       )
-    )?.job.number,
+    )?.job?.number,
     secondIssue.number,
   );
   assert.equal(
@@ -852,7 +853,7 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
         recoverySelectionContext(),
         afterChangedRetryCooldown,
       )
-    )?.job.number,
+    )?.job?.number,
     secondIssue.number,
   );
   const nextCheckpoint = {
@@ -899,14 +900,14 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
   assert.equal(normalizedEntries[1]?.disposition, "resolved");
   const normalizedResolvedLedger = applyGitHubIssueJobDisposition(
     normalizedRetryLedger,
-    normalizedSelection!.job,
+    normalizedSelection!.job!,
     "e".repeat(40),
     new Date(normalizedRetryAt.getTime() + GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS),
     "resolved",
   );
   const rolledBackLedger = renderGitHubIssueJobLedger(
     parseGitHubIssueJobLedger(normalizedResolvedLedger).filter((entry) =>
-      entry.fingerprint !== normalizedSelection!.job.fingerprint
+      entry.fingerprint !== normalizedSelection!.job!.fingerprint
     ),
   );
   assert.equal(
@@ -918,8 +919,8 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
         recoverySelectionContext(),
         new Date(normalizedRetryAt.getTime() + 2 * GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS),
       )
-    )?.job.fingerprint,
-    normalizedSelection!.job.fingerprint,
+    )?.job?.fingerprint,
+    normalizedSelection!.job!.fingerprint,
   );
   const genuineManualLedger = renderGitHubIssueJobLedger(
     parseGitHubIssueJobLedger(rolledBackLedger).map((entry) => ({ ...entry, disposition: "manual_required" })),
@@ -933,7 +934,7 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
         recoverySelectionContext(),
         new Date(normalizedRetryAt.getTime() + 2 * GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS),
       )
-    )?.job.number,
+    )?.job?.number,
     secondIssue.number,
   );
 });
@@ -975,10 +976,10 @@ Deno.test("native review exhaustion retains one manual checkpoint and advances l
     recoverySelectionContext(),
     retryAt,
   );
-  assert.equal(retrySelection?.job.number, exhaustedIssue.number);
+  assert.equal(retrySelection?.job?.number, exhaustedIssue.number);
   const dueRetryLedger = applyGitHubIssueJobDisposition(
     renderGitHubIssueJobLedger([]),
-    retrySelection!.job,
+    retrySelection!.job!,
     retryCheckpoint.baseSha,
     retryAt,
     "retry_pending",
@@ -992,7 +993,7 @@ Deno.test("native review exhaustion retains one manual checkpoint and advances l
     recoverySelectionContext(),
     manualAt,
   );
-  assert.equal(dueRetrySelection?.job.number, exhaustedIssue.number);
+  assert.equal(dueRetrySelection?.job?.number, exhaustedIssue.number);
   assert.deepEqual(dueRetrySelection?.checkpoint, retryCheckpoint);
 
   const manualCheckpoint = {
@@ -1002,14 +1003,14 @@ Deno.test("native review exhaustion retains one manual checkpoint and advances l
   };
   const manualLedger = applyGitHubIssueJobDisposition(
     dueRetryLedger,
-    dueRetrySelection!.job,
+    dueRetrySelection!.job!,
     manualCheckpoint.baseSha,
     manualAt,
     "manual_required",
     manualCheckpoint,
   );
   const exhaustedEntries = parseGitHubIssueJobLedger(manualLedger).filter((entry) =>
-    entry.number === exhaustedIssue.number && entry.fingerprint === dueRetrySelection!.job.fingerprint
+    entry.number === exhaustedIssue.number && entry.fingerprint === (dueRetrySelection!.job)!.fingerprint
   );
   assert.equal(exhaustedEntries.length, 1);
   assert.equal(exhaustedEntries[0]?.disposition, "manual_required");
@@ -1019,7 +1020,7 @@ Deno.test("native review exhaustion retains one manual checkpoint and advances l
     () =>
       applyGitHubIssueJobDisposition(
         manualLedger,
-        dueRetrySelection!.job,
+        dueRetrySelection!.job!,
         manualCheckpoint.baseSha,
         manualAt,
         "manual_required",
@@ -1035,7 +1036,7 @@ Deno.test("native review exhaustion retains one manual checkpoint and advances l
     recoverySelectionContext(),
     new Date(manualAt.getTime() + GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS),
   );
-  assert.equal(laterSelection?.job.number, laterIssue.number);
+  assert.equal(laterSelection?.job?.number, laterIssue.number);
   assert.equal(laterSelection?.checkpoint, null);
 });
 
@@ -1072,6 +1073,64 @@ const recoveryRecordFixture = (overrides: Readonly<Record<string, unknown>> = {}
     ...overrides,
   });
 
+const planningIdentity = (
+  job: GitHubIssueJob,
+  generation = 1,
+): {
+  repository: string;
+  source_kind: "github_issue";
+  source_id: string;
+  source_revision: string;
+  candidate_generation: number;
+} => ({
+  repository: "ubiquity/ai.ubq.fi",
+  source_kind: "github_issue",
+  source_id: String(job.issueId),
+  source_revision: job.fingerprint,
+  candidate_generation: generation,
+});
+
+const planningJobFixture = async (): Promise<GitHubIssueJob> => {
+  const job = await createGitHubIssueJob("ubiquity/ai.ubq.fi", sentinelGitHubIssue(), noIssueRelations);
+  assert.ok(job);
+  return job;
+};
+
+const planningLedgerSnapshot = (ledger: SentinelRecoveryLedgerV1): SentinelRecoveryLedgerSnapshot => ({
+  ledger,
+  commit_sha: "d".repeat(40),
+  tree_sha: "e".repeat(40),
+  state_ref_exists: true,
+});
+
+const planningPersistenceStore = (
+  initial: SentinelRecoveryLedgerV1 = emptySentinelRecoveryLedger(),
+): Readonly<{
+  store: Readonly<{
+    read(): Promise<SentinelRecoveryLedgerSnapshot>;
+    write(
+      snapshot: SentinelRecoveryLedgerSnapshot,
+      ledger: SentinelRecoveryLedgerV1,
+      message: string,
+    ): Promise<SentinelRecoveryLedgerSnapshot>;
+  }>;
+  writes: ReadonlyArray<Readonly<{ ledger: SentinelRecoveryLedgerV1; message: string }>>;
+}> => {
+  let current = initial;
+  const writes: { ledger: SentinelRecoveryLedgerV1; message: string }[] = [];
+  return {
+    writes,
+    store: {
+      read: () => Promise.resolve(planningLedgerSnapshot(current)),
+      write: (_snapshot, ledger, message) => {
+        writes.push({ ledger, message });
+        current = ledger;
+        return Promise.resolve(planningLedgerSnapshot(ledger));
+      },
+    },
+  };
+};
+
 Deno.test("issue137 circuit reopen via generated generations cannot restart the unchanged source", async () => {
   const issue137 = sentinelGitHubIssue({
     id: 10_137,
@@ -1103,7 +1162,7 @@ Deno.test("issue137 circuit reopen via generated generations cannot restart the 
     recoverySelectionContext(),
     new Date("2026-08-28T00:00:00Z"),
   );
-  const fingerprint = selection!.job.fingerprint;
+  const fingerprint = (selection!.job)!.fingerprint;
   const revision = fingerprint;
   // Generation 1 opened the circuit (manual_required), generations 2-6 were
   // rejected on the same unchanged fingerprint, generation 7 is active.
@@ -1138,8 +1197,8 @@ Deno.test("issue137 circuit reopen via generated generations cannot restart the 
   );
   // The terminal circuit decision keeps the first item unavailable while the
   // later eligible item advances — no starvation and no circuit bypass.
-  assert.equal(skipped?.job.number, laterIssue.number);
-  assert.notEqual(skipped?.job.fingerprint, fingerprint);
+  assert.equal(skipped?.job?.number, laterIssue.number);
+  assert.notEqual(skipped?.job?.fingerprint, fingerprint);
   // The active generation 7 on the same fingerprint also stays unavailable to
   // a competing run even with a due-looking future retry because it is in
   // flight, and a malformed snapshot can never reopen it.
@@ -1205,7 +1264,7 @@ Deno.test("an unavailable first option never starves later eligible work and con
     recoverySelectionContext(),
     new Date("2026-08-23T20:00:00Z"),
   );
-  const firstJob = selection!.job;
+  const firstJob = selection!.job!;
   const terminal = recoveryRecordFixture({
     identity: {
       repository: "ubiquity/ai.ubq.fi",
@@ -1229,7 +1288,7 @@ Deno.test("an unavailable first option never starves later eligible work and con
     recoverySelectionContext(ledger),
     new Date("2026-08-24T09:00:00Z"),
   );
-  assert.equal(skippedFirst?.job.number, secondIssue.number);
+  assert.equal(skippedFirst?.job?.number, secondIssue.number);
   // The convergence continuation of the run's own exact record is selected;
   // its own active claimed record must not be mistaken for a fresh claim even
   // though it is not due for a retry.
@@ -1260,7 +1319,7 @@ Deno.test("an unavailable first option never starves later eligible work and con
     recoverySelectionContext(activeLedger, claimed),
     new Date("2026-08-28T18:30:00Z"),
   );
-  assert.equal(continued?.job.number, firstIssue.number);
+  assert.equal(continued?.job?.number, firstIssue.number);
   // A different run has no continuation identity: the active claim is
   // unavailable and later work wins instead of starving.
   const competing = await selectNextGitHubIssueJobSelection(
@@ -1270,7 +1329,7 @@ Deno.test("an unavailable first option never starves later eligible work and con
     recoverySelectionContext(activeLedger),
     new Date("2026-08-28T18:30:00Z"),
   );
-  assert.equal(competing?.job.number, secondIssue.number);
+  assert.equal(competing?.job?.number, secondIssue.number);
 });
 
 const recoveryFilePermissions = await Promise.all([
@@ -2601,82 +2660,137 @@ const githubIssueSource = (
   };
 };
 
-Deno.test("GitHub issue jobs require a small trusted unclaimed repository-only scope", async () => {
-  assert.deepEqual(parseGitHubIssueJobBody(githubIssueBody()), {
-    acceptance: ["Preserve the public contract.", "Add focused coverage."],
-    files: ["src/http.ts", "tests/static-assets.test.ts"],
+Deno.test("broad intake admits ordinary sources and orders numeric priority descending then oldest", async () => {
+  const ordinary = sentinelGitHubIssue({
+    number: 140,
+    id: 10_140,
+    nodeId: "I_kwDOIssue140",
+    title: "Ordinary prose issue without template",
+    body: "Please make the runway projection refill-aware and keep the old number visible for contrast.",
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/140",
+    labels: [],
+    createdAt: "2026-08-28T00:00:00Z",
+    updatedAt: "2026-08-28T00:01:00Z",
   });
+  const broadJob = await createGitHubIssueJob("ubiquity/ai.ubq.fi", ordinary, noIssueRelations);
+  assert.ok(broadJob);
+  assert.equal(broadJob!.intake, "backlog");
+  assert.equal(broadJob!.queuePriority, null);
+  assert.deepEqual(broadJob!.files, []);
+  assert.deepEqual(broadJob!.acceptance, []);
+  // Independent admission: assignees, locked, unprivileged author, parent/
+  // subissue, outgoing blockers, long/missing estimate, arbitrary labels.
   for (
     const issue of [
       sentinelGitHubIssue({ assignees: ["worker"] }),
       sentinelGitHubIssue({ locked: true }),
+      sentinelGitHubIssue({ authorLogin: "write-user", labels: ["Time: <3 Days"] }),
       sentinelGitHubIssue({ labels: ["Priority: 2 (Medium)", "Time: <4 Hours"] }),
-      sentinelGitHubIssue({ body: githubIssueBody(["deno.json"]) }),
-      sentinelGitHubIssue({ body: githubIssueBody(["../outside.ts"]) }),
+      sentinelGitHubIssue({
+        ...ordinary,
+        id: 10_141,
+        number: 141,
+        htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/141",
+        labels: ["Time: <30 Days"],
+      }),
     ]
-  ) assert.equal(await createGitHubIssueJob("ubiquity/ai.ubq.fi", issue, noIssueRelations, "admin"), null);
-  assert.ok(await createGitHubIssueJob("ubiquity/ai.ubq.fi", sentinelGitHubIssue(), noIssueRelations, "write"));
-  assert.ok(await createGitHubIssueJob("ubiquity/ai.ubq.fi", sentinelGitHubIssue(), noIssueRelations, "admin"));
-  const declared = await createGitHubIssueJob(
+  ) assert.ok(await createGitHubIssueJob("ubiquity/ai.ubq.fi", issue, noIssueRelations));
+  const relational = await createGitHubIssueJob("ubiquity/ai.ubq.fi", sentinelGitHubIssue(), {
+    ...noIssueRelations,
+    parentIssueNumber: 1,
+    subIssueCount: 2,
+    blockedByCount: 1,
+    blockingCount: 1,
+  });
+  assert.ok(relational);
+  // Ordering: numeric priority descending, then created_at ascending, then
+  // number; highest recognized duplicate; absent/unrecognized last.
+  const low = sentinelGitHubIssue({
+    number: 200,
+    id: 10_200,
+    nodeId: "I_kwDOIssue200",
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/200",
+    labels: ["Priority: 2 (Medium)"],
+    createdAt: "2026-08-20T00:00:00Z",
+    updatedAt: "2026-08-20T00:01:00Z",
+  });
+  const high = sentinelGitHubIssue({
+    number: 201,
+    id: 10_201,
+    nodeId: "I_kwDOIssue201",
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/201",
+    labels: ["Priority: 3 (High)"],
+    createdAt: "2026-08-21T00:00:00Z",
+    updatedAt: "2026-08-21T00:01:00Z",
+  });
+  const duplicate = sentinelGitHubIssue({
+    number: 202,
+    id: 10_202,
+    nodeId: "I_kwDOIssue202",
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/202",
+    labels: ["Priority: 2 (Medium)", "Priority: 4 (Critical)"],
+    createdAt: "2026-08-19T00:00:00Z",
+    updatedAt: "2026-08-19T00:01:00Z",
+  });
+  const unrecognized = sentinelGitHubIssue({
+    number: 203,
+    id: 10_203,
+    nodeId: "I_kwDOIssue203",
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/203",
+    labels: ["Priority: Emergency"],
+    createdAt: "2026-08-18T00:00:00Z",
+    updatedAt: "2026-08-18T00:01:00Z",
+  });
+  const selected = await selectNextGitHubIssueJobSelection(
+    githubIssueSource([low, high, duplicate, unrecognized]),
     "ubiquity/ai.ubq.fi",
-    sentinelGitHubIssue(),
-    noIssueRelations,
-    "admin",
+    renderGitHubIssueJobLedger([]),
+    recoverySelectionContext(),
+    new Date("2026-08-28T06:00:00Z"),
   );
-  assert.equal(declared?.intake, "declared");
-  assert.equal(declared?.fingerprint, "19e665e4ca76e2994ecf0e0377e274c9fed39dd4b911132c9ca4fc3055687069");
-  const commented = await createGitHubIssueJob(
+  assert.equal(selected?.job?.number, 202);
+  assert.equal(selected?.job?.queuePriority, 4);
+  assert.equal(selected?.job?.queuePriorityAmbiguous, true);
+  assert.equal(selected?.job?.priority, "P2");
+  // A terminal recovery decision on the first-priority source skips it and
+  // the queue continues in strict order: highest recognized next, then age.
+  const duplicateJob = await createGitHubIssueJob(
     "ubiquity/ai.ubq.fi",
-    sentinelGitHubIssue({ comments: 3 }),
+    duplicate,
     noIssueRelations,
-    "admin",
+    inertIssueComments(duplicate.comments),
   );
-  assert.equal(commented?.comments, 3);
-  assert.equal(
-    (await createGitHubIssueJob(
-      "ubiquity/ai.ubq.fi",
-      sentinelGitHubIssue({ comments: 998 }),
-      noIssueRelations,
-      "admin",
-    ))?.comments,
-    998,
+  assert.ok(duplicateJob);
+  const second = await selectNextGitHubIssueJobSelection(
+    githubIssueSource([unrecognized, low, high, duplicate]),
+    "ubiquity/ai.ubq.fi",
+    renderGitHubIssueJobLedger([]),
+    recoverySelectionContext(parseSentinelRecoveryLedger({
+      ...emptySentinelRecoveryLedger(),
+      records: [recoveryRecordFixture({
+        identity: {
+          repository: "ubiquity/ai.ubq.fi",
+          source_kind: "github_issue",
+          source_id: String(duplicate.id),
+          source_revision: duplicateJob!.fingerprint,
+          candidate_generation: 1,
+        },
+        phase: "rejected",
+        disposition: "rejected",
+        updated_at: "2026-08-28T00:00:00.000Z",
+        reason: "rejected/no_candidate_diff",
+        next_action: null,
+      })],
+    })),
+    new Date("2026-08-28T06:00:00Z"),
   );
-  assert.equal(
-    await createGitHubIssueJob(
-      "ubiquity/ai.ubq.fi",
-      sentinelGitHubIssue({ comments: 999 }),
-      noIssueRelations,
-      "admin",
-    ),
-    null,
-  );
-  assert.notEqual(
-    commented?.fingerprint,
-    (await createGitHubIssueJob("ubiquity/ai.ubq.fi", sentinelGitHubIssue(), noIssueRelations, "admin"))?.fingerprint,
-  );
-  for (const permission of ["none", "read"] as const) {
-    assert.equal(
-      await createGitHubIssueJob("ubiquity/ai.ubq.fi", sentinelGitHubIssue(), noIssueRelations, permission),
-      null,
-    );
-  }
-  assert.equal(
-    await createGitHubIssueJob("ubiquity/ai.ubq.fi", sentinelGitHubIssue(), {
-      ...noIssueRelations,
-      blockedByCount: 1,
-    }, "admin"),
-    null,
-  );
-  assert.equal(
-    await createGitHubIssueJob("ubiquity/ai.ubq.fi", sentinelGitHubIssue(), {
-      ...noIssueRelations,
-      parentIssueNumber: 1,
-    }, "admin"),
-    null,
-  );
+  assert.equal(second?.job?.number, high.number);
+  assert.equal(second?.job?.queuePriority, 3);
+  assert.equal(second?.queue.entries.length, 2);
+  assert.equal(second?.queue.entries[0]?.reason?.startsWith("recovery_unavailable"), true);
 });
 
-Deno.test("unlabelled administrator backlog proposals use a bounded source-only fallback", async () => {
+Deno.test("legacy owner-backlog projection is shape-derived and permission-free", async () => {
   const issue = sentinelGitHubIssue({
     number: 136,
     id: 10_136,
@@ -2686,17 +2800,13 @@ Deno.test("unlabelled administrator backlog proposals use a bounded source-only 
     htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/136",
     labels: [],
   });
-  assert.equal(await createGitHubIssueJob("ubiquity/ai.ubq.fi", issue, noIssueRelations, "write"), null);
-  const selected = await createGitHubIssueJob("ubiquity/ai.ubq.fi", issue, noIssueRelations, "admin");
+  const selected = await createGitHubIssueJob("ubiquity/ai.ubq.fi", issue, noIssueRelations);
   assert.ok(selected);
-  assert.equal(selected.intake, "owner_backlog");
-  assert.equal(selected.priority, "P3");
-  assert.equal(selected.priorityLabel, "Priority: 2 (Medium)");
-  assert.equal(selected.timeLabel, "Time: <2 Hours");
-  assert.deepEqual(selected.files, ["src/paid_fallback_ledger.ts", "src/quota_projection.ts"]);
-  assert.deepEqual(selected.acceptance, [
-    "Implement the owner-authored proposal within the extracted source-file scope.",
-  ]);
+  assert.equal(selected!.intake, "owner_backlog");
+  assert.equal(selected!.priority, "P3");
+  assert.equal(selected!.priorityLabel, "Priority: 2 (Medium)");
+  assert.equal(selected!.timeLabel, "Time: <2 Hours");
+  assert.deepEqual(selected!.files, ["src/paid_fallback_ledger.ts", "src/quota_projection.ts"]);
   const repeatedCitation = await createGitHubIssueJob(
     "ubiquity/ai.ubq.fi",
     {
@@ -2704,159 +2814,18 @@ Deno.test("unlabelled administrator backlog proposals use a bounded source-only 
       body: ownerBacklogIssueBody(["src/paid_fallback_ledger.ts:10", "src/paid_fallback_ledger.ts:20"]),
     },
     noIssueRelations,
-    "admin",
   );
   assert.deepEqual(repeatedCitation?.files, ["src/paid_fallback_ledger.ts"]);
-  const mixedScope = await createGitHubIssueJob(
+  // A malformed legacy source is admitted under broad backlog intake, never
+  // silently dropped: shape-derived projection is not an admission veto.
+  const emptyScope = await createGitHubIssueJob(
     "ubiquity/ai.ubq.fi",
-    {
-      ...issue,
-      body: `${
-        ownerBacklogIssueBody(["src/paid_fallback_ledger.ts"])
-      }\nAcceptance:\n- Do not use the fallback source scope.\n\nFiles:\n- static/admin.js\n`,
-    },
+    { ...issue, body: ownerBacklogIssueBody([]) },
     noIssueRelations,
-    "admin",
   );
-  assert.equal(mixedScope?.intake, "owner_backlog");
-  assert.deepEqual(mixedScope?.files, ["src/paid_fallback_ledger.ts"]);
-  assert.equal(
-    await createGitHubIssueJob(
-      "ubiquity/ai.ubq.fi",
-      { ...issue, body: ownerBacklogIssueBody([]) },
-      noIssueRelations,
-      "admin",
-    ),
-    null,
-  );
-  assert.equal(
-    await createGitHubIssueJob(
-      "ubiquity/ai.ubq.fi",
-      {
-        ...issue,
-        body: ownerBacklogIssueBody(Array.from({ length: 33 }, (_, index) => `src/owner-backlog-${index}.ts`)),
-      },
-      noIssueRelations,
-      "admin",
-    ),
-    null,
-  );
-  assert.equal(
-    await createGitHubIssueJob(
-      "ubiquity/ai.ubq.fi",
-      { ...issue, labels: ["Priority: 2 (Medium)"] },
-      noIssueRelations,
-      "admin",
-    ),
-    null,
-  );
-  assert.equal(
-    await createGitHubIssueJob(
-      "ubiquity/ai.ubq.fi",
-      { ...issue, body: ownerBacklogIssueBody(["scripts/sentinel/main.ts"]) },
-      noIssueRelations,
-      "admin",
-    ),
-    null,
-  );
-  assert.equal(
-    (await selectNextGitHubIssueJob(
-      githubIssueSource([issue]),
-      "ubiquity/ai.ubq.fi",
-      renderGitHubIssueJobLedger([]),
-      recoverySelectionContext(),
-    ))?.number,
-    issue.number,
-  );
-});
-
-Deno.test("unlabelled fallback candidates require an administrator before the bounded detail loop", async () => {
-  const untrusted = Array.from({ length: MAX_ISSUE_JOB_DETAIL_COMMENT_INSPECTIONS }, (_, index) => {
-    const number = 200 + index;
-    return sentinelGitHubIssue({
-      id: 20_000 + number,
-      nodeId: `I_kwDOIssue${number}`,
-      number,
-      title: `Untrusted owner backlog ${number}`,
-      body: ownerBacklogIssueBody(),
-      htmlUrl: `https://github.com/ubiquity/ai.ubq.fi/issues/${number}`,
-      authorLogin: `write-user-${number}`,
-      labels: [],
-      createdAt: "2026-08-20T00:00:00Z",
-      updatedAt: "2026-08-20T00:01:00Z",
-    });
-  });
-  const selectedIssue = sentinelGitHubIssue({
-    id: 20_999,
-    nodeId: "I_kwDOIssue999",
-    number: 999,
-    title: "Administrator owner backlog",
-    body: ownerBacklogIssueBody(),
-    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/999",
-    labels: [],
-    createdAt: "2026-08-21T00:00:00Z",
-    updatedAt: "2026-08-21T00:01:00Z",
-  });
-  const issues = [...untrusted, selectedIssue];
-  const byNumber = new Map(issues.map((issue) => [issue.number, issue]));
-  let detailRequests = 0;
-  const source: GitHubIssueJobSource = {
-    listOpenIssues: () => Promise.resolve(issues),
-    getIssue: (number) => {
-      detailRequests += 1;
-      return Promise.resolve(byNumber.get(number)!);
-    },
-    listIssueComments: () => Promise.resolve([]),
-    getIssueRelations: () => Promise.resolve(noIssueRelations),
-    getRepositoryPermission: (login) => Promise.resolve(login === "0x4007" ? "admin" as const : "write" as const),
-  };
-  assert.equal(
-    (await selectNextGitHubIssueJob(
-      source,
-      "ubiquity/ai.ubq.fi",
-      renderGitHubIssueJobLedger([]),
-      recoverySelectionContext(),
-    ))?.number,
-    selectedIssue.number,
-  );
-  assert.equal(detailRequests, 1);
-});
-
-Deno.test("unlabelled fallback permission preflight has a fixed budget", async () => {
-  const issues = Array.from({ length: MAX_OWNER_BACKLOG_PERMISSION_PREFLIGHTS + 10 }, (_, index) => {
-    const number = 400 + index;
-    return sentinelGitHubIssue({
-      id: 40_000 + number,
-      nodeId: `I_kwDOIssue${number}`,
-      number,
-      title: `Untrusted owner backlog ${number}`,
-      body: ownerBacklogIssueBody(),
-      htmlUrl: `https://github.com/ubiquity/ai.ubq.fi/issues/${number}`,
-      authorLogin: `write-user-${number}`,
-      labels: [],
-    });
-  });
-  let permissionRequests = 0;
-  const source: GitHubIssueJobSource = {
-    listOpenIssues: () => Promise.resolve(issues),
-    getIssue: () => Promise.reject(new Error("untrusted candidates must not reach detail inspection")),
-    listIssueComments: () => Promise.resolve([]),
-    getIssueRelations: () => Promise.resolve(noIssueRelations),
-    getRepositoryPermission: () => {
-      permissionRequests += 1;
-      return Promise.resolve("write" as const);
-    },
-  };
-  assert.equal(
-    await selectNextGitHubIssueJob(
-      source,
-      "ubiquity/ai.ubq.fi",
-      renderGitHubIssueJobLedger([]),
-      recoverySelectionContext(),
-    ),
-    null,
-  );
-  assert.equal(permissionRequests, MAX_OWNER_BACKLOG_PERMISSION_PREFLIGHTS);
+  assert.ok(emptyScope);
+  assert.equal(emptyScope!.intake, "backlog");
+  assert.deepEqual(emptyScope!.files, []);
 });
 
 Deno.test("GitHub issue selection is deterministic, snapshot-bound, and becomes triage work", async () => {
@@ -2912,7 +2881,9 @@ Deno.test("GitHub issue selection is deterministic, snapshot-bound, and becomes 
   assert.equal(githubIssueJobMatchesHint(selectedHint, changed), false);
 });
 
-Deno.test("GitHub issue selection rejects a comment-count race", async () => {
+Deno.test("comment captures are material: count changes and human discussion are captured, never vetoed", async () => {
+  // A comment-count change between listing and detail inspection is captured
+  // as the current source (never an aborted queue); material digest binds it.
   const listed = sentinelGitHubIssue({ comments: 3 });
   const source: GitHubIssueJobSource = {
     listOpenIssues: () => Promise.resolve([listed]),
@@ -2921,22 +2892,19 @@ Deno.test("GitHub issue selection rejects a comment-count race", async () => {
     getIssueRelations: () => Promise.resolve(noIssueRelations),
     getRepositoryPermission: () => Promise.resolve("admin"),
   };
-  await assert.rejects(
-    () =>
-      selectNextGitHubIssueJob(
-        source,
-        "ubiquity/ai.ubq.fi",
-        renderGitHubIssueJobLedger([]),
-        recoverySelectionContext(),
-      ),
-    /snapshot changed during selection/,
+  const raced = await selectNextGitHubIssueJob(
+    source,
+    "ubiquity/ai.ubq.fi",
+    renderGitHubIssueJobLedger([]),
+    recoverySelectionContext(),
   );
-});
-
-Deno.test("GitHub issue selection rejects human comments while accepting fixed bot notices", async () => {
-  const issue = sentinelGitHubIssue({ comments: 1 });
-  const source: GitHubIssueJobSource = {
-    ...githubIssueSource([issue]),
+  assert.equal(raced?.comments, 4);
+  assert.equal(raced?.materialDigest, null);
+  // Ordinary human discussion is untrusted task data, not an admission veto:
+  // the issue is admitted and its material digest binds the actual comment.
+  const humanIssue = sentinelGitHubIssue({ comments: 1 });
+  const humanSource: GitHubIssueJobSource = {
+    ...githubIssueSource([humanIssue]),
     listIssueComments: () =>
       Promise.resolve([{
         id: 70_001,
@@ -2947,241 +2915,39 @@ Deno.test("GitHub issue selection rejects human comments while accepting fixed b
         updatedAt: "2026-08-26T23:33:29Z",
       }]),
   };
-  assert.equal(
-    await selectNextGitHubIssueJob(
-      source,
-      "ubiquity/ai.ubq.fi",
-      renderGitHubIssueJobLedger([]),
-      recoverySelectionContext(),
-    ),
-    null,
+  const human = await selectNextGitHubIssueJob(
+    humanSource,
+    "ubiquity/ai.ubq.fi",
+    renderGitHubIssueJobLedger([]),
+    recoverySelectionContext(),
   );
-  const laterIssue = sentinelGitHubIssue({
-    id: 10_114,
-    nodeId: "I_kwDOIssue114",
-    number: 114,
-    title: "Later eligible issue",
-    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/114",
-    createdAt: "2026-08-23T19:06:04Z",
-    updatedAt: "2026-08-23T19:07:28Z",
-  });
-  const issues = [issue, laterIssue];
-  const byNumber = new Map(issues.map((candidate) => [candidate.number, candidate]));
-  const unknownAuthorSource: GitHubIssueJobSource = {
-    listOpenIssues: () => Promise.resolve(issues),
-    getIssue: (number) => Promise.resolve(byNumber.get(number)!),
-    listIssueComments: (number) =>
-      Promise.resolve(
-        number === issue.number
-          ? [{
-            id: 70_002,
-            authorLogin: null,
-            authorType: null,
-            body: null,
-            createdAt: "2026-08-26T23:33:29Z",
-            updatedAt: "2026-08-26T23:33:29Z",
-          }]
-          : [],
-      ),
-    getIssueRelations: () => Promise.resolve(noIssueRelations),
-    getRepositoryPermission: () => Promise.resolve("admin"),
-  };
-  assert.equal(
-    (await selectNextGitHubIssueJob(
-      unknownAuthorSource,
-      "ubiquity/ai.ubq.fi",
-      renderGitHubIssueJobLedger([]),
-      recoverySelectionContext(),
-    ))?.number,
-    laterIssue.number,
+  assert.equal(human?.number, humanIssue.number);
+  assert.equal(human?.materialDigest !== null, true);
+  assert.deepEqual(human?.capturedComments.map((comment) => comment.id), [70_001]);
+  // Inert UbiquityOS notices are the only context normalized away (no digest).
+  const inert = await selectNextGitHubIssueJob(
+    githubIssueSource([sentinelGitHubIssue({ comments: 1 })]),
+    "ubiquity/ai.ubq.fi",
+    renderGitHubIssueJobLedger([]),
+    recoverySelectionContext(),
   );
-  assert.equal(
-    (await selectNextGitHubIssueJob(
-      githubIssueSource([issue]),
-      "ubiquity/ai.ubq.fi",
-      renderGitHubIssueJobLedger([]),
-      recoverySelectionContext(),
-    ))?.comments,
-    1,
+  assert.equal(inert?.materialDigest, null);
+  // A same-count ordinary-comment edit changes the source identity: the old
+  // snapshot is never normalized away.
+  const edited = await createGitHubIssueJob(
+    "ubiquity/ai.ubq.fi",
+    sentinelGitHubIssue({ comments: 1 }),
+    noIssueRelations,
+    [{
+      id: 70_001,
+      authorLogin: "human-reviewer",
+      authorType: "User",
+      body: "I am still working on this issue now.",
+      createdAt: "2026-08-26T23:33:29Z",
+      updatedAt: "2026-08-26T23:33:29Z",
+    }],
   );
-});
-
-Deno.test("GitHub issue selection does not let disallowed comments consume relationship budget", async () => {
-  const disallowed = Array.from({ length: MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS }, (_, index) => {
-    const number = 200 + index;
-    return sentinelGitHubIssue({
-      id: 20_000 + number,
-      nodeId: `I_kwDOIssue${number}`,
-      number,
-      title: `Commented candidate ${number}`,
-      htmlUrl: `https://github.com/ubiquity/ai.ubq.fi/issues/${number}`,
-      comments: 1,
-    });
-  });
-  const selectedIssue = sentinelGitHubIssue({
-    id: 20_999,
-    nodeId: "I_kwDOIssue999",
-    number: 999,
-    title: "Eligible issue after commented candidates",
-    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/999",
-  });
-  const issues = [...disallowed, selectedIssue];
-  const byNumber = new Map(issues.map((issue) => [issue.number, issue]));
-  let detailRequests = 0;
-  let commentRequests = 0;
-  let relationRequests = 0;
-  let permissionRequests = 0;
-  const source: GitHubIssueJobSource = {
-    listOpenIssues: () => Promise.resolve(issues),
-    getIssue: (number) => {
-      detailRequests += 1;
-      return Promise.resolve(byNumber.get(number)!);
-    },
-    listIssueComments: (number) => {
-      commentRequests += 1;
-      const issue = byNumber.get(number)!;
-      return Promise.resolve(
-        issue.comments === 1
-          ? [{
-            id: 80_000 + number,
-            authorLogin: "human-reviewer",
-            authorType: "User",
-            body: "This issue is already being discussed.",
-            createdAt: "2026-08-26T23:33:29Z",
-            updatedAt: "2026-08-26T23:33:29Z",
-          }]
-          : [],
-      );
-    },
-    getIssueRelations: () => {
-      relationRequests += 1;
-      return Promise.resolve(noIssueRelations);
-    },
-    getRepositoryPermission: () => {
-      permissionRequests += 1;
-      return Promise.resolve("admin");
-    },
-  };
-  assert.equal(
-    (await selectNextGitHubIssueJob(
-      source,
-      "ubiquity/ai.ubq.fi",
-      renderGitHubIssueJobLedger([]),
-      recoverySelectionContext(),
-    ))?.number,
-    selectedIssue.number,
-  );
-  assert.equal(detailRequests, MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS + 1);
-  assert.equal(commentRequests, MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS);
-  assert.equal(relationRequests, 1);
-  assert.equal(permissionRequests, 1);
-});
-
-Deno.test("GitHub issue selection has a fixed detail-and-comment inspection budget", async () => {
-  const rejected = Array.from({ length: MAX_ISSUE_JOB_DETAIL_COMMENT_INSPECTIONS }, (_, index) => {
-    const number = 300 + index;
-    return sentinelGitHubIssue({
-      id: 30_000 + number,
-      nodeId: `I_kwDOIssue${number}`,
-      number,
-      title: `Commented candidate ${number}`,
-      htmlUrl: `https://github.com/ubiquity/ai.ubq.fi/issues/${number}`,
-      comments: 1,
-    });
-  });
-  const selectedIssue = sentinelGitHubIssue({
-    id: 40_999,
-    nodeId: "I_kwDOIssue1999",
-    number: 1_999,
-    title: "Eligible issue beyond the detail budget",
-    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/1999",
-  });
-  const issues = [...rejected, selectedIssue];
-  const byNumber = new Map(issues.map((issue) => [issue.number, issue]));
-  let detailRequests = 0;
-  let commentRequests = 0;
-  let relationRequests = 0;
-  const source: GitHubIssueJobSource = {
-    listOpenIssues: () => Promise.resolve(issues),
-    getIssue: (number) => {
-      detailRequests += 1;
-      return Promise.resolve(byNumber.get(number)!);
-    },
-    listIssueComments: (number) => {
-      commentRequests += 1;
-      return Promise.resolve([{
-        id: 90_000 + number,
-        authorLogin: "human-reviewer",
-        authorType: "User",
-        body: "This issue is already being discussed.",
-        createdAt: "2026-08-26T23:33:29Z",
-        updatedAt: "2026-08-26T23:33:29Z",
-      }]);
-    },
-    getIssueRelations: () => {
-      relationRequests += 1;
-      return Promise.resolve(noIssueRelations);
-    },
-    getRepositoryPermission: () => Promise.resolve("admin"),
-  };
-  await assert.rejects(
-    () =>
-      selectNextGitHubIssueJob(
-        source,
-        "ubiquity/ai.ubq.fi",
-        renderGitHubIssueJobLedger([]),
-        recoverySelectionContext(),
-      ),
-    /detail-and-comment inspection limit/,
-  );
-  assert.equal(detailRequests, MAX_ISSUE_JOB_DETAIL_COMMENT_INSPECTIONS);
-  assert.equal(commentRequests, MAX_ISSUE_JOB_DETAIL_COMMENT_INSPECTIONS);
-  assert.equal(relationRequests, 0);
-});
-
-Deno.test("GitHub issue selection has a fixed relationship-inspection budget", async () => {
-  const issues = Array.from({ length: MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS + 1 }, (_, index) => {
-    const number = 200 + index;
-    return sentinelGitHubIssue({
-      id: 20_000 + number,
-      nodeId: `I_kwDOIssue${number}`,
-      number,
-      title: `Candidate ${number}`,
-      htmlUrl: `https://github.com/ubiquity/ai.ubq.fi/issues/${number}`,
-    });
-  });
-  let detailRequests = 0;
-  let relationRequests = 0;
-  let permissionRequests = 0;
-  const source: GitHubIssueJobSource = {
-    listOpenIssues: () => Promise.resolve(issues),
-    getIssue: (number) => {
-      detailRequests += 1;
-      return Promise.resolve(issues.find((issue) => issue.number === number)!);
-    },
-    listIssueComments: () => Promise.resolve([]),
-    getIssueRelations: () => {
-      relationRequests += 1;
-      return Promise.resolve({ ...noIssueRelations, subIssueCount: 1 });
-    },
-    getRepositoryPermission: () => {
-      permissionRequests += 1;
-      return Promise.resolve("write");
-    },
-  };
-  await assert.rejects(
-    () =>
-      selectNextGitHubIssueJob(
-        source,
-        "ubiquity/ai.ubq.fi",
-        renderGitHubIssueJobLedger([]),
-        recoverySelectionContext(),
-      ),
-    /relationship-inspection limit/,
-  );
-  assert.equal(detailRequests, MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS + 1);
-  assert.equal(relationRequests, MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS);
-  assert.equal(permissionRequests, MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS);
+  assert.notEqual(edited?.fingerprint, human?.fingerprint);
 });
 
 Deno.test("GitHub issue authority binds and rechecks the author and latest content editors", async () => {
@@ -3210,27 +2976,26 @@ Deno.test("GitHub issue authority binds and rechecks the author and latest conte
   assert.equal(selected.authorLogin, "0x4007");
   assert.deepEqual(selected.relations, editedRelations);
 
-  const revoked: GitHubIssueJobSource = {
-    ...writable,
-    getRepositoryPermission: () => Promise.resolve("read"),
-  };
-  assert.equal(await getCurrentGitHubIssueJob(revoked, "ubiquity/ai.ubq.fi", issue.number), null);
-
+  // Author/editor repository permissions are no longer an admission rule (the
+  // owner instruction authorizes repository-wide processing); editor identity
+  // still binds the immutable source fingerprint, so a changed editor is a
+  // changed source, never a normalization.
   const untrustedBodyEditor = githubIssueSource([issue], { [issue.number]: editedRelations }, {
-    "0x4007": "admin",
+    "0x4007": "read",
     "body-writer": "read",
-    "title-writer": "admin",
-  });
-  assert.equal(await getCurrentGitHubIssueJob(untrustedBodyEditor, "ubiquity/ai.ubq.fi", issue.number), null);
-
-  const untrustedTitleEditor = githubIssueSource([issue], { [issue.number]: editedRelations }, {
-    "0x4007": "admin",
-    "body-writer": "write",
     "title-writer": "read",
   });
-  assert.equal(await getCurrentGitHubIssueJob(untrustedTitleEditor, "ubiquity/ai.ubq.fi", issue.number), null);
+  const untrustedBodyJob = await getCurrentGitHubIssueJob(untrustedBodyEditor, "ubiquity/ai.ubq.fi", issue.number);
+  assert.ok(untrustedBodyJob);
+  assert.equal(untrustedBodyJob!.relations.latestBodyEdit?.editorLogin, "body-writer");
+  // Editor identity binds the immutable source: a job without the editor is a
+  // different source, never an admission rejection.
+  const withoutEditors = await getCurrentGitHubIssueJob(githubIssueSource([issue]), "ubiquity/ai.ubq.fi", issue.number);
+  assert.ok(withoutEditors);
+  assert.equal(githubIssueJobsMatch(withoutEditors!, selected), false);
+  assert.equal(githubIssueJobsMatch(untrustedBodyJob!, selected), true);
 
-  const wrongCurrentTitle = await getCurrentGitHubIssueJob(
+  const wrongCurrentTitlePromise = getCurrentGitHubIssueJob(
     githubIssueSource([issue], {
       [issue.number]: {
         ...editedRelations,
@@ -3240,7 +3005,7 @@ Deno.test("GitHub issue authority binds and rechecks the author and latest conte
     "ubiquity/ai.ubq.fi",
     issue.number,
   );
-  assert.equal(wrongCurrentTitle, null);
+  await assert.rejects(wrongCurrentTitlePromise, /inconsistent|source is inconsistent/i);
 
   const renamed = await getCurrentGitHubIssueJob(
     githubIssueSource([{ ...issue, authorLogin: "different-writer" }]),
@@ -3332,7 +3097,6 @@ Deno.test("GitHub issue ledger round-trips literal entity text in issue titles",
     "ubiquity/ai.ubq.fi",
     sentinelGitHubIssue({ title }),
     noIssueRelations,
-    "admin",
   );
   assert.ok(job);
   const ledger = applyGitHubIssueJobDisposition(
@@ -3348,7 +3112,7 @@ Deno.test("GitHub issue ledger round-trips literal entity text in issue titles",
 });
 
 Deno.test("GitHub issue implementation stays inside declared Files and blocks in-scope review findings", async () => {
-  const job = await createGitHubIssueJob("ubiquity/ai.ubq.fi", sentinelGitHubIssue(), noIssueRelations, "admin");
+  const job = await createGitHubIssueJob("ubiquity/ai.ubq.fi", sentinelGitHubIssue(), noIssueRelations);
   assert.ok(job);
   assert.deepEqual(
     evaluateGitHubIssueJobImplementation(job, "implemented", ["src/http.ts"], ["src/http.ts"]),
@@ -3360,7 +3124,7 @@ Deno.test("GitHub issue implementation stays inside declared Files and blocks in
   });
   assert.throws(
     () => evaluateGitHubIssueJobImplementation(job, "implemented", ["README.md"], ["README.md"]),
-    /outside the declared Files scope/,
+    /outside the frozen planned scope/,
   );
   assert.throws(
     () => requireResolvedGitHubIssueJobImplementation(job, "already_fixed", [], []),
@@ -3405,8 +3169,67 @@ Deno.test("GitHub issue implementation stays inside declared Files and blocks in
   );
 });
 
+// Whole-issue planned scope: exact files match exactly, explicit directories
+// cover descendants at a component boundary, protected descendants denied.
+const broad = await createGitHubIssueJob(
+  "ubiquity/ai.ubq.fi",
+  sentinelGitHubIssue({ body: "Ordinary prose, no template or paths." }),
+  noIssueRelations,
+);
+assert.deepEqual(broad?.files, []);
+assert.deepEqual(
+  evaluateGitHubIssueJobImplementation(broad!, "implemented", ["src/http.ts", "tests/http.test.ts"], [
+    "src/http.ts",
+    "tests/http.test.ts",
+  ], ["src/http.ts", "tests/"]),
+  { disposition: "resolved", continueToRuntimeValidation: true },
+);
+assert.throws(
+  () =>
+    evaluateGitHubIssueJobImplementation(
+      broad!,
+      "implemented",
+      ["src/http-2.ts"],
+      ["src/http-2.ts"],
+      ["src/http.ts", "tests/"],
+    ),
+  /outside the frozen planned scope|frozen planned scope/,
+);
+assert.deepEqual(
+  evaluateGitHubIssueJobImplementation(
+    broad!,
+    "implemented",
+    ["tests/new-dir/http.test.ts"],
+    ["tests/new-dir/http.test.ts"],
+    ["src/", "tests/"],
+  ),
+  { disposition: "resolved", continueToRuntimeValidation: true },
+);
+assert.throws(
+  () =>
+    evaluateGitHubIssueJobImplementation(
+      broad!,
+      "implemented",
+      ["tests/fixtures-x.test.ts"],
+      ["tests/fixtures-x.test.ts"],
+      ["src/", "tests/fixtures/"],
+    ),
+  /outside the frozen planned scope|frozen planned scope/,
+);
+assert.throws(
+  () =>
+    evaluateGitHubIssueJobImplementation(
+      broad!,
+      "implemented",
+      ["scripts/sentinel/main.ts"],
+      ["scripts/sentinel/main.ts"],
+      ["src/", "tests/"],
+    ),
+  /protected path/,
+);
+
 Deno.test("changed_files mismatch retains the Git checkpoint as a durable validation failure", async () => {
-  const job = await createGitHubIssueJob("ubiquity/ai.ubq.fi", sentinelGitHubIssue(), noIssueRelations, "admin");
+  const job = await createGitHubIssueJob("ubiquity/ai.ubq.fi", sentinelGitHubIssue(), noIssueRelations);
   assert.ok(job);
   assert.throws(
     () => evaluateGitHubIssueJobImplementation(job, "implemented", ["src/http.ts"], ["src/other.ts"]),
@@ -4790,7 +4613,7 @@ const matrixPreparedConvergenceFixture = async (): Promise<MatrixPreparedConverg
   const runAttempt = 1;
   const repository = "ubiquity/ai.ubq.fi";
   const interval = computeSentinelInterval("hourly", now);
-  const job = await createGitHubIssueJob(repository, sentinelGitHubIssue(), noIssueRelations, "admin");
+  const job = await createGitHubIssueJob(repository, sentinelGitHubIssue(), noIssueRelations);
   assert.ok(job);
   const triage = githubIssueJobTriageReport(job, interval);
   const plan = await buildMatrixPlan({
@@ -4904,7 +4727,7 @@ Deno.test("matrix prepared recovery binds github issue convergence identity exac
     files: [...job.files],
     updated_at: job.updatedAt,
   });
-  const selection = bindMatrixConvergenceWork({
+  const selection = await bindMatrixConvergenceWork({
     repository,
     runId,
     runAttempt,
@@ -4923,8 +4746,8 @@ Deno.test("matrix prepared recovery binds github issue convergence identity exac
 
 Deno.test("matrix prepared recovery rejects github issue convergence transport drift", async () => {
   const fixture = await matrixPreparedConvergenceFixture();
-  const bindWith = (overrides: Partial<MatrixConvergenceInputs>) =>
-    bindMatrixConvergenceWork({
+  const bindWith = async (overrides: Partial<MatrixConvergenceInputs>) =>
+    await bindMatrixConvergenceWork({
       repository: fixture.repository,
       runId: fixture.runId,
       runAttempt: fixture.runAttempt,
@@ -5069,7 +4892,7 @@ Deno.test("matrix prepared recovery rejects github issue convergence transport d
     },
   ];
   for (const rejectCase of rejectCases) {
-    assert.throws(() => bindWith(rejectCase.drift(fixture)), rejectCase.error, rejectCase.name);
+    await assert.rejects(() => bindWith(rejectCase.drift(fixture)), rejectCase.error, rejectCase.name);
   }
 });
 
@@ -5103,6 +4926,286 @@ Deno.test("matrix prepared recovery reuses the exact prepared ledger record", as
       rejectCase.name,
     );
   }
+});
+
+Deno.test("planning barrier classification requires evidence-bearing stable reasons only", () => {
+  assert.equal(isStablePlanningBlocker("requires_protected_action: scripts/sentinel/main.ts"), true);
+  assert.equal(isStablePlanningBlocker("unresolved_dependency: issue 209 is required and open"), true);
+  assert.equal(isStablePlanningBlocker("needs_owner_decision: the owner cannot be resolved"), true);
+  assert.equal(isStablePlanningBlocker("scope_not_bounded: issue text has no bounded path"), true);
+  assert.equal(isStablePlanningBlocker("scope_not_bounded"), false);
+  assert.equal(isStablePlanningBlocker("requires_protected_action"), false);
+  assert.equal(isStablePlanningBlocker("unresolved_dependency"), false);
+  assert.equal(isStablePlanningBlocker("needs_owner_decision: "), false);
+  assert.equal(isStablePlanningBlocker("planning_failed"), false);
+  assert.equal(isStablePlanningBlocker("planning_failed: transport outage"), false);
+  assert.equal(isStablePlanningBlocker("plan_scope_invalid"), false);
+  assert.equal(isStablePlanningBlocker("planning_interval_mismatch"), false);
+  assert.equal(isStablePlanningBlocker("unresolved_dependency_garbage"), false);
+  assert.equal(isStablePlanningBlocker("requires_protected_action-suffix"), false);
+});
+
+Deno.test("planning persistence writes a first fresh-source retry_wait record through the production helper", async () => {
+  const job = await planningJobFixture();
+  const persistence = planningPersistenceStore();
+  const outcome = await persistPlanningOutcome({
+    store: persistence.store,
+    repository: "ubiquity/ai.ubq.fi",
+    job,
+    runId: "run-1",
+    runAttempt: 1,
+    pinnedBaseSha: "b".repeat(40),
+    blockedReason: "planning_failed",
+    now: "2026-09-01T00:00:00.000Z",
+  });
+  assert.equal(outcome.reason, "planning_failed");
+  assert.equal(outcome.persisted, true);
+  assert.equal(persistence.writes.length, 1);
+  assert.match(persistence.writes[0]!.message, /chore\(sentinel\): planning retry /u);
+  const after = persistence.writes[0]!.ledger;
+  const key = sentinelRecoveryIdentityKey(planningIdentity(job));
+  const record = after.records.find((candidate) => sentinelRecoveryIdentityKey(candidate.identity) === key);
+  assert.ok(record);
+  assert.equal(record.phase, "retry_wait");
+  assert.equal(record.disposition, "active");
+  assert.equal(record.attempt, 1);
+  assert.equal(record.state_version, 1);
+  assert.equal(record.base_sha, "b".repeat(40));
+  assert.equal(record.run_id, "run-1");
+  assert.equal(record.lease_token, "run-1-1");
+  assert.equal(record.identity.candidate_generation, 1);
+  assert.equal(record.failure_class, "transient_transport");
+  assert.ok(record.failure_fingerprint !== null && /^[0-9a-f]{64}$/u.test(record.failure_fingerprint));
+  assert.equal(record.reason, "planning_blocked:planning_failed");
+  assert.equal(after.retry_history.length, 1);
+  assert.equal(after.retry_history[0]!.attempt, 1);
+  assert.equal(after.retry_history[0]!.identity.candidate_generation, 1);
+  assert.equal(after.retry_decisions.length, 1);
+  assert.equal(after.retry_decisions[0]!.identity_key, key);
+  assert.equal(after.retry_decisions[0]!.decision.disposition, "retry_wait");
+  assert.equal(after.retry_decisions[0]!.decision.attempt_count, 1);
+  assert.equal(after.retry_decisions[0]!.decision.candidate_generation, 1);
+});
+
+Deno.test("planning persistence continues the same-identity attempt history on a due retry", async () => {
+  const job = await planningJobFixture();
+  const persistence = planningPersistenceStore();
+  const first = await persistPlanningOutcome({
+    store: persistence.store,
+    repository: "ubiquity/ai.ubq.fi",
+    job,
+    runId: "run-1",
+    runAttempt: 1,
+    pinnedBaseSha: "b".repeat(40),
+    blockedReason: "planning_failed",
+    now: "2026-09-01T00:00:00.000Z",
+  });
+  assert.equal(first.persisted, true);
+  const retryAt = persistence.writes[0]!.ledger.retry_decisions[0]!.decision.retry_at;
+  assert.ok(retryAt !== null);
+  const second = await persistPlanningOutcome({
+    store: persistence.store,
+    repository: "ubiquity/ai.ubq.fi",
+    job,
+    runId: "run-2",
+    runAttempt: 2,
+    pinnedBaseSha: "b".repeat(40),
+    blockedReason: "planning_failed",
+    now: retryAt,
+  });
+  assert.equal(second.persisted, true);
+  assert.equal(persistence.writes.length, 2);
+  const after = persistence.writes[1]!.ledger;
+  const key = sentinelRecoveryIdentityKey(planningIdentity(job));
+  const record = after.records.find((candidate) => sentinelRecoveryIdentityKey(candidate.identity) === key);
+  assert.ok(record);
+  // The due retry resumes the exact durable record instead of resetting it:
+  // generation, state version, run lineage and retry phase are preserved.
+  assert.equal(record.state_version, 1);
+  assert.equal(record.attempt, 1);
+  assert.equal(record.run_id, "run-1");
+  assert.equal(record.identity.candidate_generation, 1);
+  assert.equal(record.phase, "retry_wait");
+  assert.equal(after.retry_history.length, 2);
+  assert.deepEqual(after.retry_history.map((attempt) => attempt.attempt), [1, 2]);
+  assert.deepEqual(
+    after.retry_history.map((attempt) => attempt.identity.candidate_generation),
+    [1, 1],
+  );
+  assert.equal(after.retry_decisions.length, 1);
+  assert.equal(after.retry_decisions[0]!.identity_key, key);
+  assert.equal(after.retry_decisions[0]!.decision.attempt_count, 2);
+  assert.equal(after.retry_decisions[0]!.decision.identical_failure_count, 2);
+  assert.equal(after.retry_decisions[0]!.decision.candidate_generation, 1);
+  assert.equal(after.retry_decisions[0]!.decision.disposition, "retry_wait");
+});
+
+Deno.test("planning persistence opens the circuit terminal with complete retained evidence", async () => {
+  const job = await planningJobFixture();
+  const persistence = planningPersistenceStore();
+  const attempt = (runId: string, runAttempt: number, now: string) =>
+    persistPlanningOutcome({
+      store: persistence.store,
+      repository: "ubiquity/ai.ubq.fi",
+      job,
+      runId,
+      runAttempt,
+      pinnedBaseSha: "b".repeat(40),
+      blockedReason: "planning_failed",
+      now,
+    });
+  await attempt("run-1", 1, "2026-09-01T00:00:00.000Z");
+  const firstRetryAt = persistence.writes[0]!.ledger.retry_decisions[0]!.decision.retry_at;
+  assert.ok(firstRetryAt !== null);
+  await attempt("run-2", 2, firstRetryAt);
+  const secondRetryAt = persistence.writes[1]!.ledger.retry_decisions[0]!.decision.retry_at;
+  assert.ok(secondRetryAt !== null);
+  const third = await attempt("run-3", 3, secondRetryAt);
+  assert.equal(third.persisted, true);
+  assert.equal(persistence.writes.length, 3);
+  const after = persistence.writes[2]!.ledger;
+  const key = sentinelRecoveryIdentityKey(planningIdentity(job));
+  const record = after.records.find((candidate) => sentinelRecoveryIdentityKey(candidate.identity) === key);
+  assert.ok(record);
+  // The third identical failure opens the circuit: the same durable record
+  // transitions to the terminal manual decision without losing evidence.
+  assert.equal(record.phase, "manual_required");
+  assert.equal(record.disposition, "manual_required");
+  assert.equal(record.state_version, 2);
+  assert.equal(record.run_id, "run-1");
+  assert.equal(record.lease_token, "run-1-1");
+  assert.equal(record.identity.candidate_generation, 1);
+  assert.equal(record.failure_class, "transient_transport");
+  assert.ok(record.failure_fingerprint !== null && /^[0-9a-f]{64}$/u.test(record.failure_fingerprint));
+  assert.equal(record.reason, "planning_blocked:planning_failed");
+  assert.equal(record.next_action, "Resolve the named blocker before another attempt.");
+  assert.equal(after.retry_history.length, 3);
+  assert.deepEqual(after.retry_history.map((attempt) => attempt.attempt), [1, 2, 3]);
+  assert.equal(after.retry_decisions.length, 1);
+  assert.equal(after.retry_decisions[0]!.identity_key, key);
+  assert.equal(after.retry_decisions[0]!.decision.disposition, "manual_required");
+  assert.equal(after.retry_decisions[0]!.decision.circuit_open, true);
+  assert.equal(after.retry_decisions[0]!.decision.attempt_count, 3);
+  assert.equal(after.retry_decisions[0]!.decision.identical_failure_count, 3);
+  assert.equal(after.retry_decisions[0]!.decision.candidate_generation, 1);
+  // A later run never reopens the terminal circuit and writes nothing.
+  const terminalAttempt = await attempt("run-4", 4, "2026-09-02T00:00:00.000Z");
+  assert.equal(terminalAttempt.persisted, false);
+  assert.equal(persistence.writes.length, 3);
+});
+
+Deno.test("planning persistence records a stable blocker terminal on a fresh source", async () => {
+  const job = await planningJobFixture();
+  const persistence = planningPersistenceStore();
+  const outcome = await persistPlanningOutcome({
+    store: persistence.store,
+    repository: "ubiquity/ai.ubq.fi",
+    job,
+    runId: "run-1",
+    runAttempt: 1,
+    pinnedBaseSha: "b".repeat(40),
+    blockedReason: "requires_protected_action: scripts/sentinel/main.ts",
+    now: "2026-09-01T00:00:00.000Z",
+  });
+  assert.equal(outcome.persisted, true);
+  assert.equal(persistence.writes.length, 1);
+  const after = persistence.writes[0]!.ledger;
+  const key = sentinelRecoveryIdentityKey(planningIdentity(job));
+  const record = after.records.find((candidate) => sentinelRecoveryIdentityKey(candidate.identity) === key);
+  assert.ok(record);
+  assert.equal(record.phase, "manual_required");
+  assert.equal(record.disposition, "manual_required");
+  assert.equal(record.state_version, 1);
+  assert.equal(record.reason, "planning_blocked:requires_protected_action: scripts/sentinel/main.ts");
+  assert.equal(record.next_action, "Resolve the named blocker before another attempt.");
+  assert.equal(record.failure_class, null);
+  assert.equal(record.failure_fingerprint, null);
+  assert.equal(after.retry_history.length, 1);
+  assert.equal(after.retry_history[0]!.failure_class, "invalid_implementation_report");
+  assert.equal(after.retry_history[0]!.attempt, 1);
+  assert.equal(after.retry_decisions.length, 0);
+});
+
+Deno.test("planning persistence retains attempt history when a stable blocker terminates an active record", async () => {
+  const job = await planningJobFixture();
+  const persistence = planningPersistenceStore();
+  const first = await persistPlanningOutcome({
+    store: persistence.store,
+    repository: "ubiquity/ai.ubq.fi",
+    job,
+    runId: "run-1",
+    runAttempt: 1,
+    pinnedBaseSha: "b".repeat(40),
+    blockedReason: "planning_failed",
+    now: "2026-09-01T00:00:00.000Z",
+  });
+  assert.equal(first.persisted, true);
+  const retryAt = persistence.writes[0]!.ledger.retry_decisions[0]!.decision.retry_at;
+  assert.ok(retryAt !== null);
+  const second = await persistPlanningOutcome({
+    store: persistence.store,
+    repository: "ubiquity/ai.ubq.fi",
+    job,
+    runId: "run-2",
+    runAttempt: 2,
+    pinnedBaseSha: "b".repeat(40),
+    blockedReason: "requires_protected_action: scripts/sentinel/main.ts",
+    now: retryAt,
+  });
+  assert.equal(second.persisted, true);
+  assert.equal(persistence.writes.length, 2);
+  const after = persistence.writes[1]!.ledger;
+  const key = sentinelRecoveryIdentityKey(planningIdentity(job));
+  const record = after.records.find((candidate) => sentinelRecoveryIdentityKey(candidate.identity) === key);
+  assert.ok(record);
+  assert.equal(record.phase, "manual_required");
+  assert.equal(record.disposition, "manual_required");
+  assert.equal(record.state_version, 2);
+  assert.equal(record.identity.candidate_generation, 1);
+  assert.equal(record.failure_class, "invalid_implementation_report");
+  assert.ok(record.failure_fingerprint !== null && /^[0-9a-f]{64}$/u.test(record.failure_fingerprint));
+  assert.equal(record.reason, "planning_blocked:requires_protected_action: scripts/sentinel/main.ts");
+  assert.equal(record.next_action, "Resolve the named blocker before another attempt.");
+  // The terminal transition never clears prior attempts or the durable decision.
+  assert.equal(after.retry_history.length, 2);
+  assert.deepEqual(after.retry_history.map((attempt) => attempt.attempt), [1, 2]);
+  assert.deepEqual(
+    after.retry_history.map((attempt) => attempt.failure_class),
+    ["transient_transport", "invalid_implementation_report"],
+  );
+  assert.equal(after.retry_decisions.length, 1);
+  assert.equal(after.retry_decisions[0]!.identity_key, key);
+  assert.equal(after.retry_decisions[0]!.decision.attempt_count, 2);
+});
+
+Deno.test("planning persistence never writes over a concurrent claim", async () => {
+  const job = await planningJobFixture();
+  const claimed = recoveryRecordFixture({
+    identity: planningIdentity(job, 2),
+    run_id: "run-claim",
+    attempt: 1,
+    lease_token: "run-claim-1",
+    phase: "claimed",
+    disposition: "active",
+    state_version: 3,
+    reason: "Concurrent run claimed the source",
+  });
+  const persistence = planningPersistenceStore(
+    parseSentinelRecoveryLedger({ ...emptySentinelRecoveryLedger(), records: [claimed] }),
+  );
+  const outcome = await persistPlanningOutcome({
+    store: persistence.store,
+    repository: "ubiquity/ai.ubq.fi",
+    job,
+    runId: "run-1",
+    runAttempt: 1,
+    pinnedBaseSha: "b".repeat(40),
+    blockedReason: "planning_failed",
+    now: "2026-09-01T00:00:00.000Z",
+  });
+  assert.equal(outcome.reason, "planning_failed");
+  assert.equal(outcome.persisted, false);
+  assert.equal(persistence.writes.length, 0);
 });
 
 Deno.test("matrix prepared recovery binds review backlog convergence identity exactly", async () => {
@@ -5179,7 +5282,7 @@ Deno.test("matrix prepared recovery binds review backlog convergence identity ex
   assert.deepEqual(prepared.artifact_digests, []);
   assert.ok(prepared.reason !== null && prepared.reason.trim().length > 0);
   assert.ok(prepared.next_action !== null && prepared.next_action.trim().length > 0);
-  const selection = bindMatrixConvergenceWork({
+  const selection = await bindMatrixConvergenceWork({
     repository,
     runId,
     runAttempt,
@@ -5196,14 +5299,14 @@ Deno.test("matrix prepared recovery binds review backlog convergence identity ex
   assert.equal(selection.issueJob, null);
   assert.equal(selection.triage, triage);
 
-  const bindWith = (
+  const bindWith = async (
     overrides: Readonly<{
       triage?: TriageReport;
       issueSelection?: GitHubIssueSelectionReport | null;
       selectedBacklogEntry?: ReviewBacklogEntry | null;
     }>,
   ) =>
-    bindMatrixConvergenceWork({
+    await bindMatrixConvergenceWork({
       repository,
       runId,
       runAttempt,
@@ -5262,8 +5365,121 @@ Deno.test("matrix prepared recovery binds review backlog convergence identity ex
     },
   ];
   for (const rejectCase of rejectCases) {
-    assert.throws(() => bindWith(rejectCase.drift()), rejectCase.error, rejectCase.name);
+    await assert.rejects(() => bindWith(rejectCase.drift()), rejectCase.error, rejectCase.name);
   }
+});
+
+Deno.test("convergence binds the exact prepared source even when an earlier item becomes due", async () => {
+  const runId = "23546719286";
+  const runAttempt = 1;
+  const repository = "ubiquity/ai.ubq.fi";
+  const interval = computeSentinelInterval("hourly", now);
+  const earlier = reviewBacklogEntry({ fingerprint: "9".repeat(64), sha: "7".repeat(40), severity: "P0" });
+  const prepared = reviewBacklogEntry({ fingerprint: "8".repeat(64), sha: "6".repeat(40), severity: "P1" });
+  const markdown = renderReviewBacklog([earlier, prepared]);
+  // The earlier entry's recovery retry becomes due while the cells run: a
+  // plain reselection would now return it and retarget prepared convergence.
+  const waiting = recoveryRecordFixture({
+    identity: {
+      repository,
+      source_kind: "review_backlog",
+      source_id: earlier.fingerprint,
+      source_revision: earlier.sha,
+      candidate_generation: 1,
+    },
+    phase: "retry_wait",
+    state_version: 5,
+    updated_at: "2026-08-28T18:05:00.000Z",
+  });
+  const waitingKey = sentinelRecoveryIdentityKey(waiting.identity);
+  const due = {
+    disposition: "retry_wait" as const,
+    should_retry: true,
+    circuit_open: false,
+    validation_repair_allowed: false,
+    source_revision_changed: false,
+    candidate_generation: 1,
+    attempt_count: 1,
+    identical_failure_count: 1,
+    backoff_ms: 60_000,
+    retry_at: "2026-08-28T18:15:00.000Z",
+    failure_class: "runner_interruption" as const,
+    failure_fingerprint: "f".repeat(64),
+    reason: "The bounded Sentinel retry policy scheduled another attempt.",
+    next_action: "Retry after the scheduled delay.",
+  };
+  const ledger = parseSentinelRecoveryLedger({
+    ...emptySentinelRecoveryLedger(),
+    records: [waiting],
+    retry_decisions: [{ identity_key: waitingKey, decision: due }],
+  });
+  const dueContext = recoverySelectionContext(ledger, null, "2026-08-28T18:30:00.000Z");
+  assert.equal(selectNextReviewBacklogEntry(markdown, dueContext)?.fingerprint, earlier.fingerprint);
+  // Exact prepared-source lookup still returns the prepared entry, so the
+  // convergence binding below stays on the prepared work.
+  const selected = findReviewBacklogEntry(markdown, prepared.fingerprint, prepared.sha);
+  assert.equal(selected?.fingerprint, prepared.fingerprint);
+  assert.equal(selected?.sha, prepared.sha);
+  assert.deepEqual(selected, prepared);
+  const triage = reviewBacklogTriageReport(prepared, interval);
+  const plan = await buildMatrixPlan({
+    run_id: runId,
+    run_attempt: runAttempt,
+    base_sha: "2".repeat(40),
+    evidence_digests: [],
+    findings: triage.findings.map((finding) => ({
+      id: finding.id,
+      fingerprint: finding.fingerprint,
+      allowed_paths: finding.allowed_paths,
+      prohibited_paths: SENTINEL_POLICY.protectedImplementationPaths,
+      shared_paths: finding.shared_paths,
+      depends_on: finding.depends_on,
+      validation_requirements: finding.validation_requirements,
+    })),
+  });
+  const preparedRecovery: SentinelRecoveryRecordV1 = parseSentinelRecoveryRecord({
+    schema_version: 1,
+    identity: {
+      repository,
+      source_kind: "review_backlog",
+      source_id: prepared.fingerprint,
+      source_revision: prepared.sha,
+      candidate_generation: 1,
+    },
+    run_id: plan.run_id,
+    attempt: runAttempt,
+    lease_token: `${runId}-${runAttempt}`,
+    base_sha: plan.base_sha,
+    phase: "claimed",
+    disposition: "active",
+    state_version: 1,
+    created_at: "2026-08-28T18:00:00.000Z",
+    updated_at: "2026-08-28T18:00:00.000Z",
+    candidate_branch: null,
+    candidate_sha: null,
+    changed_files: [],
+    tree_sha: null,
+    failure_class: null,
+    failure_fingerprint: null,
+    artifact_ids: [],
+    artifact_digests: [],
+    reason: "Matrix convergence prepared review backlog work",
+    next_action: "Run the review backlog implementation stage",
+    predecessor: null,
+  });
+  const selection = await bindMatrixConvergenceWork({
+    repository,
+    runId,
+    runAttempt,
+    plan,
+    triage,
+    preparedRecovery,
+    issueSelection: null,
+    selectedIssueJob: null,
+    selectedBacklogEntry: selected,
+  });
+  assert.equal(selection.backlogEntry?.fingerprint, prepared.fingerprint);
+  assert.equal(selection.source, "review_backlog");
 });
 
 const protectedSnapshotPermissions = await Promise.all([

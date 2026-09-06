@@ -70,7 +70,20 @@ export interface GitHubIssueRelations {
       title: string;
     }>
     | null;
+  /**
+   * Actual incoming prerequisite identities and current states. Optional so
+   * legacy serialization stays byte-identical for unchanged sources; present
+   * only when the relationship read captured them.
+   */
+  readonly dependencies?: readonly GitHubIssueDependency[];
+  /** True when the dependency read covered every prerequisite. */
+  readonly dependenciesComplete?: boolean;
 }
+
+export type GitHubIssueDependency = Readonly<{
+  issue_number: number;
+  state: "open" | "closed" | "unknown";
+}>;
 
 export type GitHubRepositoryPermission = "none" | "read" | "write" | "admin";
 
@@ -663,7 +676,7 @@ export class GitHubActionsClient {
       redirect: "manual",
       body: JSON.stringify({
         query:
-          "query SentinelIssueRelations($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { issue(number: $number) { editor { login } lastEditedAt timelineItems(last: 1, itemTypes: [RENAMED_TITLE_EVENT]) { totalCount nodes { ... on RenamedTitleEvent { createdAt actor { login } currentTitle } } } parent { number } blockedBy(first: 1) { totalCount } blocking(first: 1) { totalCount } } } }",
+          "query SentinelIssueRelations($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { issue(number: $number) { editor { login } lastEditedAt timelineItems(last: 1, itemTypes: [RENAMED_TITLE_EVENT]) { totalCount nodes { ... on RenamedTitleEvent { createdAt actor { login } currentTitle } } } parent { number } blockedBy(first: 100) { totalCount nodes { number state } } blocking(first: 1) { totalCount } } } }",
         variables: { owner, name, number: issueNumber },
       }),
     }, `Read GitHub issue ${issueNumber} dependencies`);
@@ -681,6 +694,21 @@ export class GitHubActionsClient {
     const blockedBy = asRecord(issue?.blockedBy);
     const blocking = asRecord(issue?.blocking);
     const parent = asRecord(issue?.parent);
+    const blockedByNodes = Array.isArray(blockedBy?.nodes) ? blockedBy.nodes : [];
+    const dependencies: GitHubIssueDependency[] = [];
+    for (const node of blockedByNodes) {
+      const dependency = asRecord(node);
+      const dependencyNumber = integer(dependency?.number);
+      const dependencyState = dependency?.state === "OPEN" || dependency?.state === "CLOSED"
+        ? dependency.state.toLowerCase() as GitHubIssueDependency["state"]
+        : dependency?.state === "open" || dependency?.state === "closed"
+        ? dependency.state as GitHubIssueDependency["state"]
+        : null;
+      if (dependencyNumber === null || dependencyState === null) {
+        throw new Error(`Read GitHub issue ${issueNumber} dependencies returned an incomplete payload`);
+      }
+      dependencies.push({ issue_number: dependencyNumber, state: dependencyState });
+    }
     const bodyEditor = asRecord(issue?.editor);
     const bodyEditorLogin = issue?.editor === null ? null : nonEmptyString(bodyEditor?.login);
     const bodyEditedAt = issue?.lastEditedAt === null ? null : isoTimestamp(issue?.lastEditedAt);
@@ -719,6 +747,8 @@ export class GitHubActionsClient {
       blockingCount,
       latestBodyEdit: bodyEditorLogin && bodyEditedAt ? { editorLogin: bodyEditorLogin, editedAt: bodyEditedAt } : null,
       latestTitleEdit,
+      dependencies: blockedByCount === null || dependencies.length === 0 ? undefined : dependencies,
+      dependenciesComplete: blockedByCount === null ? undefined : dependencies.length === blockedByCount,
     };
   }
 

@@ -8,7 +8,7 @@ import {
   parseGitHubIssueManualRequiredRetainedCheckpointReport,
   parseGitHubIssuePullRequestRecord,
   parseGitHubIssueRetryPendingReport,
-  parseGitHubIssueSelectionReport,
+  parseGitHubIssueSelectionReportAny,
   parseGitPushUpdates,
   parseSentinelCycleReport,
   parseSentinelManualRequiredCycleReport,
@@ -19,8 +19,10 @@ import {
   selectManualCheckpointPush,
   selectRetryCheckpointPush,
   validateRetryPendingCheckpointPhaseBinding,
+  verifyFrozenIssuePlanDigest,
 } from "./issue-delivery.ts";
 import { parseGitHubIssueJobLedger, renderGitHubIssueJobLedger } from "./issues.ts";
+import { parseSentinelRecoveryRecord } from "./recovery.ts";
 import {
   GitHubActionsClient,
   type GitHubWorkflowDispatch,
@@ -704,9 +706,24 @@ export const ensureIssuePullRequestForDevelopmentPush = async (
     if (error instanceof Deno.errors.NotFound) return null;
     throw error;
   }
-  const selection = parseGitHubIssueSelectionReport(selectionValue);
+  const selection = parseGitHubIssueSelectionReportAny(selectionValue);
   const cycleValue = await readJson(`${reportsDir}/cycle.json`);
   const cycle = parseSentinelCycleReport(cycleValue);
+  if (selection.schema_version === 2) {
+    // V2 delivery binding: the frozen plan must re-derive its exact digest,
+    // its base must equal the authoritative prepared recovery base, and the
+    // recovery source/run identity must bind the report before any PR action.
+    const triageValue = await readJson(`${reportsDir}/triage.json`);
+    const recovery = parseSentinelRecoveryRecord(await readJson(`${reportsDir}/recovery-record-v1.json`));
+    await verifyFrozenIssuePlanDigest({
+      repository: input.repository,
+      selection,
+      triageValue,
+      cycleBaseSha: cycle.base_development_sha,
+      recovery,
+      runId: cycle.run_id,
+    });
+  }
   const dispositionValue = await readJson(`${reportsDir}/github-issue-disposition.json`);
   const dispositionRecord = typeof dispositionValue === "object" && dispositionValue !== null &&
       !Array.isArray(dispositionValue)
