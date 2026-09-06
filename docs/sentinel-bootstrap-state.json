@@ -3,20 +3,20 @@
   "release": {
     "schema_version": 1,
     "stable_sha": "3349acbac3f025851eb1d9cc846a02e5c833be26",
-    "candidate_sha": "63ce001409575bcc6315d56ae3d0cabf050259a6",
+    "candidate_sha": "cd89657d477bce4cd5398ad6cee27354e6ea1c38",
     "acceptance_evidence": [
-      "health:ansfpkd3wtsc",
-      "bootstrap:superseded:0be974c31c508aaf2d34f71cdc733b8544fa07f8"
+      "health:336jare1cczp",
+      "bootstrap:superseded:63ce001409575bcc6315d56ae3d0cabf050259a6"
     ],
-    "activated_at": "2026-09-06T18:55:32.559Z",
+    "activated_at": "2026-09-06T19:04:05.253Z",
     "rollback_reason": null,
-    "generation": 48
+    "generation": 49
   },
   "signals": [],
   "activation": {
     "schema_version": 1,
-    "active_sha": "63ce001409575bcc6315d56ae3d0cabf050259a6",
-    "generation": 48,
+    "active_sha": "cd89657d477bce4cd5398ad6cee27354e6ea1c38",
+    "generation": 49,
     "fenced_generations": [
       2,
       3,
@@ -48,9 +48,10 @@
       38,
       45,
       46,
-      47
+      47,
+      48
     ],
-    "updated_at": "2026-09-06T18:55:32.559Z",
+    "updated_at": "2026-09-06T19:04:05.253Z",
     "reason": "managed_candidate_superseded"
   },
   "rollback_intent": null,
