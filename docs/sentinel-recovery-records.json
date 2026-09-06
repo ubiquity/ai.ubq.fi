@@ -2,6 +2,36 @@
   "schema_version": 1,
   "records": [
     {
+      "schema_version": 1,
+      "identity": {
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_kind": "github_issue",
+        "source_id": "5228588522",
+        "source_revision": "c502cd00ece8b7f8fbfd07cc6fa89369f1023840967090a675a1bb9ad39dc9e6",
+        "candidate_generation": 1
+      },
+      "run_id": "34053889321",
+      "attempt": 1,
+      "lease_token": "34053889321-1",
+      "base_sha": "cd89657d477bce4cd5398ad6cee27354e6ea1c38",
+      "phase": "manual_required",
+      "disposition": "manual_required",
+      "state_version": 1,
+      "created_at": "2026-09-06T19:12:31.694Z",
+      "updated_at": "2026-09-06T19:12:31.694Z",
+      "candidate_branch": null,
+      "candidate_sha": null,
+      "changed_files": [],
+      "tree_sha": null,
+      "failure_class": null,
+      "failure_fingerprint": null,
+      "artifact_ids": [],
+      "artifact_digests": [],
+      "reason": "planning_blocked:requires_protected_action: proving that production approval occurs before secrets, deployment, or promotion requires changing the protected workflow .github/workflows/deno-deploy.yml; .github/workflows/sentinel-revision-control.yml is also a protected workflow in the requested production control surface. The required production-environment reviewers, wait timer, allowed deployment branches, and development branch-protection review/required-check policy additionally require an unresolved owner policy decision and GitHub Settings changes.",
+      "next_action": "Resolve the named blocker before another attempt.",
+      "predecessor": null
+    },
+    {
       "artifact_digests": [
         "sha256:d3a616821bdb6192ea61703565f9c2fa84035bf50165e286b7fc6b72298c1061"
       ],
@@ -782,36 +812,6 @@
       "state_version": 6,
       "tree_sha": null,
       "updated_at": "2026-09-05T13:02:23.376Z"
-    },
-    {
-      "schema_version": 1,
-      "identity": {
-        "repository": "ubiquity/ai.ubq.fi",
-        "source_kind": "github_issue",
-        "source_id": "5262330278",
-        "source_revision": "c5c00917f18ebf3644826ff1c003274a1e903f851ca91a5d4574e755a808debc",
-        "candidate_generation": 129
-      },
-      "run_id": "33755202126",
-      "attempt": 1,
-      "lease_token": "33755202126-1",
-      "base_sha": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
-      "phase": "rejected",
-      "disposition": "rejected",
-      "state_version": 3,
-      "created_at": "2026-09-03T12:26:59.793Z",
-      "updated_at": "2026-09-03T12:49:17.343Z",
-      "candidate_branch": "sentinel/candidate-github_issue-5262330278-c5c00917f18ebf3644826ff1c003274a-g129-0fe58cb8f2e09827",
-      "candidate_sha": null,
-      "changed_files": [],
-      "tree_sha": null,
-      "failure_class": null,
-      "failure_fingerprint": null,
-      "artifact_ids": [],
-      "artifact_digests": [],
-      "reason": "rejected/no_candidate_diff",
-      "next_action": null,
-      "predecessor": "[\"ubiquity/ai.ubq.fi\",\"github_issue\",\"5262330278\",\"c5c00917f18ebf3644826ff1c003274a1e903f851ca91a5d4574e755a808debc\",99]"
     },
     {
       "schema_version": 1,
@@ -22070,6 +22070,20 @@
       "failure_class": "runner_interruption",
       "failure_fingerprint": "5e16aa352115fc407cdb93327823e687951edc9a5c6eb6497ea14acbe0e22858",
       "observed_at": "2026-09-06T19:08:34.210Z"
+    },
+    {
+      "schema_version": 1,
+      "identity": {
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_kind": "github_issue",
+        "source_id": "5228588522",
+        "source_revision": "c502cd00ece8b7f8fbfd07cc6fa89369f1023840967090a675a1bb9ad39dc9e6",
+        "candidate_generation": 1
+      },
+      "attempt": 1,
+      "failure_class": "invalid_implementation_report",
+      "failure_fingerprint": "9fc9938c927c7e5ad1376baa0e09b2c85b2fab725388f9e75442167cb77cce28",
+      "observed_at": "2026-09-06T19:12:31.694Z"
     }
   ],
   "retry_decisions": [
