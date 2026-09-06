@@ -43,6 +43,45 @@ Deno.test({
   },
 });
 
+Deno.test({
+  name: "fixture: shell writes honor allowed scope and roll back excluded mutations",
+  ignore: Deno.build.os !== "darwin" && Deno.build.os !== "linux",
+  async fn() {
+    const task = loadTasks(TASKS_DIR).find((candidate) => candidate.id === "fail-002")!;
+    const tmpParent = Deno.makeTempDirSync({ dir: `${Deno.cwd()}/benchmark-runs` });
+    const workspace = new FixtureWorkspace({
+      fixtureDir: `${FIXTURES_DIR}/${task.fixture}`,
+      runId: "scope",
+      tmpParent,
+      task,
+    });
+    try {
+      await workspace.prepare();
+      const attempted = await workspace.execShell(
+        "printf 'changed\\n' > data/target.txt; printf 'TAMPERED\\n' > protected/keep.txt",
+        20_000,
+      );
+      if (
+        attempted.code === 0 || attempted.error_code !== "write_scope" ||
+        !attempted.stderr.includes("write scope violation: protected/keep.txt")
+      ) {
+        throw new Error(`expected deterministic write-scope rejection: ${attempted.stderr}`);
+      }
+      if (workspace.read("data/target.txt") !== "target\n" || workspace.read("protected/keep.txt") !== "ORIGINAL\n") {
+        throw new Error("unauthorized shell mutation was not rolled back");
+      }
+
+      const allowed = await workspace.execShell("printf 'changed\\n' > data/target.txt", 20_000);
+      if (allowed.code !== 0 || workspace.read("data/target.txt") !== "changed\n") {
+        throw new Error(`expected in-scope shell write to succeed: ${allowed.stderr}`);
+      }
+    } finally {
+      await workspace.remove().catch(() => {});
+      await Deno.remove(tmpParent, { recursive: true }).catch(() => {});
+    }
+  },
+});
+
 async function exists(path: string): Promise<boolean> {
   try {
     await Deno.stat(path);

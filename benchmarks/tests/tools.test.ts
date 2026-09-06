@@ -22,6 +22,10 @@ function nav001(): TaskManifest {
   return loadTasks(TASKS_DIR).find((t) => t.id === "nav-001")!;
 }
 
+function fail002(): TaskManifest {
+  return loadTasks(TASKS_DIR).find((t) => t.id === "fail-002")!;
+}
+
 Deno.test("tools: canonical browser fakes resolve inside the reference adapter", async () => {
   const opts = freshOptions();
   try {
@@ -98,6 +102,47 @@ Deno.test("tools: canonical boundaries and error codes flow through the adapter"
     }
     if (toolResults[3].error_code !== undefined || toolResults[3].ok !== true) {
       throw new Error("expected the final patch to be a clean success");
+    }
+  } finally {
+    Deno.removeSync(opts.runsRoot, { recursive: true });
+  }
+});
+
+Deno.test("tools: shell write-scope violations are deterministic and rolled back", async () => {
+  const opts = freshOptions();
+  try {
+    const task: TaskManifest = {
+      ...fail002(),
+      scripted_trail: [
+        {
+          tool: "shell.exec",
+          args: {
+            command: "printf 'changed\\n' > data/target.txt; printf 'TAMPERED\\n' > protected/keep.txt",
+          },
+          expect: { ok: false, error_contains: "write scope violation: protected/keep.txt" },
+        },
+        {
+          tool: "editor.apply_patch",
+          args: { path: "data/target.txt", old: "target", new: "changed" },
+        },
+        { tool: "shell.exec", args: { command: "sh tests/run.sh" }, expect: { ok: true } },
+        {
+          tool: "filesystem.read",
+          args: { path: "protected/keep.txt" },
+          expect: { ok: true, output_contains: ["ORIGINAL"] },
+        },
+      ],
+    };
+    const { result, events } = await runOne(task, referenceAdapter, opts);
+    if (!result.success || result.failure_class !== null) {
+      throw new Error(`expected success, got ${result.failure_class}: ${result.failure_detail}`);
+    }
+    const toolResults = events.filter((e): e is ToolResultEvent => e.type === "tool_result");
+    if (toolResults[0].error_code !== "write_scope") {
+      throw new Error(`expected write_scope, got ${toolResults[0].error_code}`);
+    }
+    if (toolResults[0].ok || toolResults[1].ok !== true || toolResults[2].ok !== true) {
+      throw new Error("expected the rejected shell write followed by successful recovery");
     }
   } finally {
     Deno.removeSync(opts.runsRoot, { recursive: true });

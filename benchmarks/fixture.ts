@@ -320,8 +320,50 @@ export class FixtureWorkspace {
     command: string,
     timeoutMs: number,
     signal?: AbortSignal,
-  ): Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean }> {
+  ): Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean; error_code?: "write_scope" }> {
     this.assertRoot();
+    const before = snapshotWorkspace(this.root);
+    const result = Deno.build.os === "linux"
+      ? await this.execLinuxShell(command, timeoutMs, signal)
+      : Deno.build.os === "darwin"
+      ? await this.execDarwinShell(command, timeoutMs, signal)
+      : {
+        code: 126,
+        stdout: "",
+        stderr: `shell execution sandbox is unavailable on ${Deno.build.os}`,
+        timedOut: false,
+      };
+
+    const after = snapshotWorkspace(this.root);
+    const changed = changedPaths(before, after);
+    const unauthorized = changed.find((rel) => !this.isAllowedShellMutation(rel, changed, after));
+    if (unauthorized !== undefined) {
+      await restoreWorkspace(this.root, before);
+      return {
+        code: 1,
+        stdout: result.stdout,
+        stderr: `${result.stderr}${result.stderr.endsWith("\n") || result.stderr === "" ? "" : "\n"}` +
+          `${new WriteScopeViolationError(unauthorized, this.task.allowed_write_scope).message}\n`,
+        timedOut: false,
+        error_code: "write_scope",
+      };
+    }
+    return result;
+  }
+
+  /** Allow a newly-created parent directory when its changed descendants are in scope. */
+  private isAllowedShellMutation(rel: string, changed: readonly string[], after: WorkspaceSnapshot): boolean {
+    if (this.isAllowedWrite(rel)) return true;
+    const entry = after.get(rel);
+    if (entry?.kind !== "directory") return false;
+    return changed.some((child) => child.startsWith(`${rel}/`) && this.isAllowedWrite(child));
+  }
+
+  private async execLinuxShell(
+    command: string,
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ): Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean }> {
     if (Deno.build.os === "linux") {
       const root = Deno.realPathSync(this.root);
       return await this.exec(
@@ -340,15 +382,14 @@ export class FixtureWorkspace {
         { timeoutMs, capture: true, signal },
       );
     }
-    if (Deno.build.os !== "darwin") {
-      return {
-        code: 126,
-        stdout: "",
-        stderr: `shell execution sandbox is unavailable on ${Deno.build.os}`,
-        timedOut: false,
-      };
-    }
+    throw new Error(`linux shell helper called on ${Deno.build.os}`);
+  }
 
+  private async execDarwinShell(
+    command: string,
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ): Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean }> {
     // A working directory is not a security boundary: an arbitrary shell can
     // use absolute paths, `..`, or symlinks to mutate the host checkout. Seatbelt
     // resolves filesystem objects before applying the subpath rule, so all
@@ -376,6 +417,86 @@ export class FixtureWorkspace {
       ],
       { timeoutMs, capture: true, signal },
     );
+  }
+}
+
+type WorkspaceSnapshotEntry =
+  | { kind: "directory"; mode: number | null }
+  | { kind: "file"; mode: number | null; content: Uint8Array }
+  | { kind: "symlink"; target: string }
+  | { kind: "other" };
+type WorkspaceSnapshot = Map<string, WorkspaceSnapshotEntry>;
+
+function snapshotWorkspace(root: string): WorkspaceSnapshot {
+  const snapshot: WorkspaceSnapshot = new Map();
+  const walk = (dir: string, prefix: string) => {
+    for (const entry of [...Deno.readDirSync(dir)].sort((a, b) => a.name.localeCompare(b.name))) {
+      const rel = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+      const abs = `${dir}/${entry.name}`;
+      const info = Deno.lstatSync(abs);
+      if (info.isSymlink) {
+        snapshot.set(rel, { kind: "symlink", target: Deno.readLinkSync(abs) });
+      } else if (info.isDirectory) {
+        snapshot.set(rel, { kind: "directory", mode: info.mode });
+        walk(abs, rel);
+      } else if (info.isFile) {
+        snapshot.set(rel, { kind: "file", mode: info.mode, content: Deno.readFileSync(abs) });
+      } else {
+        snapshot.set(rel, { kind: "other" });
+      }
+    }
+  };
+  walk(root, "");
+  return snapshot;
+}
+
+function changedPaths(before: WorkspaceSnapshot, after: WorkspaceSnapshot): string[] {
+  const paths = new Set([...before.keys(), ...after.keys()]);
+  return [...paths].filter((rel) => !snapshotEntryEqual(before.get(rel), after.get(rel))).sort();
+}
+
+function snapshotEntryEqual(
+  before: WorkspaceSnapshotEntry | undefined,
+  after: WorkspaceSnapshotEntry | undefined,
+): boolean {
+  if (before === undefined || after === undefined || before.kind !== after.kind) return false;
+  if (before.kind === "symlink" && after.kind === "symlink") return before.target === after.target;
+  if (before.kind === "other" || after.kind === "other") return true;
+  if (
+    (before.kind !== "directory" && before.kind !== "file") || (after.kind !== "directory" && after.kind !== "file")
+  ) {
+    return false;
+  }
+  if (before.mode !== after.mode) return false;
+  if (before.kind === "directory" && after.kind === "directory") return true;
+  if (before.kind === "file" && after.kind === "file") {
+    return before.content.length === after.content.length &&
+      before.content.every((byte, i) => byte === after.content[i]);
+  }
+  return false;
+}
+
+async function restoreWorkspace(root: string, snapshot: WorkspaceSnapshot): Promise<void> {
+  for (const entry of Deno.readDirSync(root)) await Deno.remove(`${root}/${entry.name}`, { recursive: true });
+
+  const entries = [...snapshot.entries()].sort(([a], [b]) => a.localeCompare(b));
+  const directories: Array<{ path: string; mode: number | null }> = [];
+  for (const [rel, entry] of entries) {
+    const abs = `${root}/${rel}`;
+    if (entry.kind === "directory") {
+      await Deno.mkdir(abs, { recursive: true, mode: 0o777 });
+      directories.push({ path: abs, mode: entry.mode });
+    } else if (entry.kind === "file") {
+      await Deno.mkdir(abs.slice(0, abs.lastIndexOf("/")), { recursive: true });
+      await Deno.writeFile(abs, entry.content);
+      if (entry.mode !== null) await Deno.chmod(abs, entry.mode);
+    } else if (entry.kind === "symlink") {
+      await Deno.mkdir(abs.slice(0, abs.lastIndexOf("/")), { recursive: true });
+      await Deno.symlink(entry.target, abs);
+    }
+  }
+  for (const directory of directories.reverse()) {
+    if (directory.mode !== null) await Deno.chmod(directory.path, directory.mode);
   }
 }
 

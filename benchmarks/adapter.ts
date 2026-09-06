@@ -236,7 +236,13 @@ class FixtureWorkspaceBackend implements WorkspaceBackend {
     opts: { timeoutMs: number; signal?: AbortSignal },
   ): Promise<{ exit_code: number; stdout: string; stderr: string; timed_out: boolean }> {
     const result = await this.workspace.execShell(command, opts.timeoutMs, opts.signal);
-    return { exit_code: result.code, stdout: result.stdout, stderr: result.stderr, timed_out: result.timedOut };
+    return {
+      exit_code: result.code,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      timed_out: result.timedOut,
+      ...(result.error_code === undefined ? {} : { error_code: result.error_code }),
+    };
   }
 
   private mapFileError(rel: string, err: unknown): ToolExecutionError {

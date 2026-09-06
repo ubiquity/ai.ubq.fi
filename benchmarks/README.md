@@ -169,7 +169,9 @@ decides failure-classes and reliability semantics; the runner only classifies te
 - Writes never leave the repository: the runner copies `benchmarks/fixtures/<id>` into `benchmark-runs/tmp/<run_id>` (a
   disposable directory; removed after the run) and the adapter may write only there.
 - `allowed_write_scope` globs are enforced by the canonical tool layer (`write_scope` error code); paths are resolved
-  inside the workspace root. `shell.exec` runs unsandboxed inside the disposable workspace by design.
+  inside the workspace root. `shell.exec` runs inside the disposable workspace sandbox, and its filesystem changes
+  are checked against the same scope after each command. Unauthorized changes are rolled back and returned as a
+  deterministic `write_scope` failure.
 - `fixture_revision` is a SHA-256 over sorted relative paths + contents (prefix `fixture-v1`).
   `benchmark:fixture-revision` proves all declared revisions match the snapshots; the runner fails a run on mismatch
   before the adapter executes.

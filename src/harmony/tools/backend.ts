@@ -25,6 +25,8 @@ export interface ShellExecResult {
   stdout: string;
   stderr: string;
   timed_out: boolean;
+  /** Present when the command was rolled back for violating task write scope. */
+  error_code?: "write_scope";
 }
 
 /** Workspace-relative file operations and shell execution. */

@@ -114,6 +114,16 @@ const execShell = async (
     .map((text) => text.trimEnd())
     .filter((text) => text !== "")
     .join("\n");
+  if (result.error_code !== undefined) {
+    return {
+      ok: false,
+      error: clipToolText(merged || result.error_code, outputLimit),
+      error_code: result.error_code,
+      exit_code: result.exit_code,
+      stdout,
+      stderr,
+    };
+  }
   if (result.exit_code !== 0) {
     return {
       ok: false,
