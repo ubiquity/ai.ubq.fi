@@ -27,6 +27,7 @@ import {
   implementationFailureDisposition,
   implementationPrompt,
   isObserveOnlyMode,
+  loadPreparedConvergenceRecoveryRecord,
   MAX_MATCHING_REPLAY_ARCHIVE_BYTES,
   MAX_MATCHING_REPLAY_ARTIFACTS,
   MONITOR_AGENT_MS,
@@ -110,6 +111,12 @@ import {
 import type { GitHubIssueSelectionReport } from "../scripts/sentinel/issue-delivery.ts";
 import { parseSentinelRecoveryRecord, type SentinelRecoveryRecordV1 } from "../scripts/sentinel/recovery.ts";
 import {
+  emptySentinelRecoveryLedger,
+  parseSentinelRecoveryLedger,
+  type SentinelRecoveryEligibilityContext,
+  type SentinelRecoveryLedgerV1,
+} from "../scripts/sentinel/recovery-ledger.ts";
+import {
   inspectSse,
   isInferenceOnlyReplayEndpoint,
   replayOneCase,
@@ -170,6 +177,16 @@ import {
 import type { ExportedSentinelReplayCapture } from "../src/sentinel_replay_capture.ts";
 
 const now = Date.parse("2026-08-21T06:00:00.000Z");
+
+const recoverySelectionContext = (
+  ledger: SentinelRecoveryLedgerV1 = emptySentinelRecoveryLedger(),
+  continuationRecord: SentinelRecoveryRecordV1 | null = null,
+): SentinelRecoveryEligibilityContext => ({
+  repository: "ubiquity/ai.ubq.fi",
+  ledger,
+  now: "2026-08-28T06:00:00.000Z",
+  continuation_record: continuationRecord,
+});
 
 const matrixVerifierGitEnvironment = {
   GIT_CONFIG_GLOBAL: "/dev/null",
@@ -637,7 +654,13 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
   const source = githubIssueSource([firstIssue, secondIssue]);
   const emptyLedger = renderGitHubIssueJobLedger([]);
   const failedAt = new Date("2026-08-23T20:00:00Z");
-  const selected = await selectNextGitHubIssueJob(source, "ubiquity/ai.ubq.fi", emptyLedger, failedAt);
+  const selected = await selectNextGitHubIssueJob(
+    source,
+    "ubiquity/ai.ubq.fi",
+    emptyLedger,
+    recoverySelectionContext(),
+    failedAt,
+  );
   assert.ok(selected);
   const events: string[] = [];
   const failure = new CodexInvocationError("invocation_timeout");
@@ -695,6 +718,7 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
         source,
         "ubiquity/ai.ubq.fi",
         pendingLedger,
+        recoverySelectionContext(),
         new Date(failedAt.getTime() + 60 * 60_000),
       )
     )?.number,
@@ -705,6 +729,7 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
     source,
     "ubiquity/ai.ubq.fi",
     pendingLedger,
+    recoverySelectionContext(),
     dueAt,
   );
   assert.equal(dueSelection?.job.fingerprint, selected.fingerprint);
@@ -720,6 +745,7 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
     githubIssueSource([issueWithLaterInertComment, secondIssue]),
     "ubiquity/ai.ubq.fi",
     pendingLedger,
+    recoverySelectionContext(),
     dueAt,
   );
   assert.equal(normalizedSelection?.job.number, selected.number);
@@ -749,6 +775,7 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
     githubIssueSource([issueWithLaterInertComment, secondIssue]),
     "ubiquity/ai.ubq.fi",
     normalizedRetryLedger,
+    recoverySelectionContext(),
     new Date(normalizedRetryAt.getTime() + GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS),
   );
   assert.equal(normalizedRetrySelection?.job.fingerprint, normalizedSelection!.job.fingerprint);
@@ -761,6 +788,7 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
     githubIssueSource([issueWithSecondLaterInertComment, secondIssue]),
     "ubiquity/ai.ubq.fi",
     normalizedRetryLedger,
+    recoverySelectionContext(),
     new Date(normalizedRetryAt.getTime() + GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS),
   );
   assert.equal(twiceNormalizedSelection?.job.number, selected.number);
@@ -809,6 +837,7 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
         returnedSource,
         "ubiquity/ai.ubq.fi",
         terminalLedger,
+        recoverySelectionContext(),
         afterChangedRetryCooldown,
       )
     )?.job.number,
@@ -820,6 +849,7 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
         returnedSource,
         "ubiquity/ai.ubq.fi",
         terminalAndRetryLedger,
+        recoverySelectionContext(),
         afterChangedRetryCooldown,
       )
     )?.job.number,
@@ -885,6 +915,7 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
         githubIssueSource([issueWithLaterInertComment, secondIssue]),
         "ubiquity/ai.ubq.fi",
         rolledBackLedger,
+        recoverySelectionContext(),
         new Date(normalizedRetryAt.getTime() + 2 * GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS),
       )
     )?.job.fingerprint,
@@ -899,6 +930,7 @@ Deno.test("retryable issue failure preserves, discards, cools down, and advances
         githubIssueSource([issueWithLaterInertComment, secondIssue]),
         "ubiquity/ai.ubq.fi",
         genuineManualLedger,
+        recoverySelectionContext(),
         new Date(normalizedRetryAt.getTime() + 2 * GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS),
       )
     )?.job.number,
@@ -940,6 +972,7 @@ Deno.test("native review exhaustion retains one manual checkpoint and advances l
     source,
     "ubiquity/ai.ubq.fi",
     renderGitHubIssueJobLedger([]),
+    recoverySelectionContext(),
     retryAt,
   );
   assert.equal(retrySelection?.job.number, exhaustedIssue.number);
@@ -956,6 +989,7 @@ Deno.test("native review exhaustion retains one manual checkpoint and advances l
     source,
     "ubiquity/ai.ubq.fi",
     dueRetryLedger,
+    recoverySelectionContext(),
     manualAt,
   );
   assert.equal(dueRetrySelection?.job.number, exhaustedIssue.number);
@@ -998,10 +1032,288 @@ Deno.test("native review exhaustion retains one manual checkpoint and advances l
     source,
     "ubiquity/ai.ubq.fi",
     manualLedger,
+    recoverySelectionContext(),
     new Date(manualAt.getTime() + GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS),
   );
   assert.equal(laterSelection?.job.number, laterIssue.number);
   assert.equal(laterSelection?.checkpoint, null);
+});
+
+const recoveryRecordFixture = (overrides: Readonly<Record<string, unknown>> = {}): SentinelRecoveryRecordV1 =>
+  parseSentinelRecoveryRecord({
+    schema_version: 1,
+    identity: {
+      repository: "ubiquity/ai.ubq.fi",
+      source_kind: "github_issue",
+      source_id: "10113",
+      source_revision: "a".repeat(64),
+      candidate_generation: 1,
+    },
+    run_id: "run-1",
+    attempt: 1,
+    lease_token: "lease-1",
+    base_sha: "b".repeat(40),
+    phase: "workspace_dirty",
+    disposition: "active",
+    state_version: 2,
+    created_at: "2026-08-28T18:00:00.000Z",
+    updated_at: "2026-08-28T18:01:00.000Z",
+    candidate_branch: null,
+    candidate_sha: null,
+    changed_files: ["src/paid_fallback_ledger.ts"],
+    tree_sha: null,
+    failure_class: null,
+    failure_fingerprint: null,
+    artifact_ids: [],
+    artifact_digests: [],
+    reason: null,
+    next_action: "publish checkpoint",
+    predecessor: null,
+    ...overrides,
+  });
+
+Deno.test("issue137 circuit reopen via generated generations cannot restart the unchanged source", async () => {
+  const issue137 = sentinelGitHubIssue({
+    id: 10_137,
+    nodeId: "I_kwDOIssue137",
+    number: 137,
+    title: "Blocked unchanged source",
+    body: ownerBacklogIssueBody(["src/quota_projection.ts"]),
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/137",
+    labels: [],
+    createdAt: "2026-08-27T19:06:03Z",
+    updatedAt: "2026-08-27T19:07:27Z",
+  });
+  const laterIssue = sentinelGitHubIssue({
+    id: 10_138,
+    nodeId: "I_kwDOIssue138",
+    number: 138,
+    title: "Eligible later work advances past the blocked source",
+    body: ownerBacklogIssueBody(["src/paid_fallback_ledger.ts"]),
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/138",
+    labels: [],
+    createdAt: "2026-08-27T19:06:04Z",
+    updatedAt: "2026-08-27T19:07:28Z",
+  });
+  const source = githubIssueSource([issue137, laterIssue]);
+  const selection = await selectNextGitHubIssueJobSelection(
+    source,
+    "ubiquity/ai.ubq.fi",
+    renderGitHubIssueJobLedger([]),
+    recoverySelectionContext(),
+    new Date("2026-08-28T00:00:00Z"),
+  );
+  const fingerprint = selection!.job.fingerprint;
+  const revision = fingerprint;
+  // Generation 1 opened the circuit (manual_required), generations 2-6 were
+  // rejected on the same unchanged fingerprint, generation 7 is active.
+  const records = Array.from({ length: 7 }, (_, index) => {
+    const generation = index + 1;
+    return recoveryRecordFixture({
+      identity: {
+        repository: "ubiquity/ai.ubq.fi",
+        source_kind: "github_issue",
+        source_id: "10137",
+        source_revision: revision,
+        candidate_generation: generation,
+      },
+      run_id: `run-${generation}`,
+      attempt: generation,
+      lease_token: `lease-${generation}`,
+      phase: generation === 1 ? "manual_required" : generation === 7 ? "claimed" : "rejected",
+      disposition: generation === 1 ? "manual_required" : generation === 7 ? "active" : "rejected",
+      state_version: generation * 10,
+      updated_at: new Date(Date.parse("2026-08-28T18:00:00.000Z") + generation * 1_000).toISOString(),
+      reason: generation === 1 ? "Three identical Sentinel failure fingerprints opened the circuit breaker." : null,
+      next_action: null,
+    });
+  });
+  const ledger = parseSentinelRecoveryLedger({ ...emptySentinelRecoveryLedger(), records });
+  const skipped = await selectNextGitHubIssueJobSelection(
+    source,
+    "ubiquity/ai.ubq.fi",
+    renderGitHubIssueJobLedger([]),
+    recoverySelectionContext(ledger),
+    new Date("2026-09-06T14:10:00Z"),
+  );
+  // The terminal circuit decision keeps the first item unavailable while the
+  // later eligible item advances — no starvation and no circuit bypass.
+  assert.equal(skipped?.job.number, laterIssue.number);
+  assert.notEqual(skipped?.job.fingerprint, fingerprint);
+  // The active generation 7 on the same fingerprint also stays unavailable to
+  // a competing run even with a due-looking future retry because it is in
+  // flight, and a malformed snapshot can never reopen it.
+  await assert.rejects(
+    () =>
+      selectNextGitHubIssueJobSelection(
+        source,
+        "ubiquity/ai.ubq.fi",
+        renderGitHubIssueJobLedger([]),
+        recoverySelectionContext({
+          ...emptySentinelRecoveryLedger(),
+          records: [{ ...records[6]!, phase: "no_such_phase" }],
+        } as unknown as SentinelRecoveryLedgerV1),
+        new Date("2026-09-06T14:10:00Z"),
+      ),
+    /record is invalid|ledger is invalid/u,
+  );
+  // A malformed snapshot fails closed even when no candidate reaches the
+  // detail loop: the recovery context is validated before the loop itself.
+  await assert.rejects(
+    () =>
+      selectNextGitHubIssueJobSelection(
+        githubIssueSource([]),
+        "ubiquity/ai.ubq.fi",
+        renderGitHubIssueJobLedger([]),
+        recoverySelectionContext({
+          ...emptySentinelRecoveryLedger(),
+          records: [{ ...records[6]!, phase: "no_such_phase" }],
+        } as unknown as SentinelRecoveryLedgerV1),
+        new Date("2026-09-06T14:10:00Z"),
+      ),
+    /record is invalid|ledger is invalid/u,
+  );
+  assert.throws(
+    () =>
+      selectNextReviewBacklogEntry(
+        renderReviewBacklog([]),
+        recoverySelectionContext({
+          ...emptySentinelRecoveryLedger(),
+          records: [{ ...records[6]!, phase: "no_such_phase" }],
+        } as unknown as SentinelRecoveryLedgerV1),
+      ),
+    /record is invalid|ledger is invalid/u,
+  );
+});
+
+Deno.test("an unavailable first option never starves later eligible work and convergence continues its own claim", async () => {
+  const firstIssue = sentinelGitHubIssue();
+  const secondIssue = sentinelGitHubIssue({
+    id: 10_114,
+    nodeId: "I_kwDOIssue114",
+    number: 114,
+    title: "Implement the next eligible issue",
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/114",
+    createdAt: "2026-08-23T19:06:04Z",
+    updatedAt: "2026-08-23T19:07:28Z",
+  });
+  const source = githubIssueSource([firstIssue, secondIssue]);
+  const selection = await selectNextGitHubIssueJobSelection(
+    source,
+    "ubiquity/ai.ubq.fi",
+    renderGitHubIssueJobLedger([]),
+    recoverySelectionContext(),
+    new Date("2026-08-23T20:00:00Z"),
+  );
+  const firstJob = selection!.job;
+  const terminal = recoveryRecordFixture({
+    identity: {
+      repository: "ubiquity/ai.ubq.fi",
+      source_kind: "github_issue",
+      source_id: String(firstIssue.id),
+      source_revision: firstJob.fingerprint,
+      candidate_generation: 1,
+    },
+    phase: "manual_required",
+    disposition: "manual_required",
+    state_version: 9,
+    updated_at: "2026-08-28T18:05:00.000Z",
+    reason: "Owner review is required before another Sentinel attempt.",
+    next_action: null,
+  });
+  const ledger = parseSentinelRecoveryLedger({ ...emptySentinelRecoveryLedger(), records: [terminal] });
+  const skippedFirst = await selectNextGitHubIssueJobSelection(
+    source,
+    "ubiquity/ai.ubq.fi",
+    renderGitHubIssueJobLedger([]),
+    recoverySelectionContext(ledger),
+    new Date("2026-08-24T09:00:00Z"),
+  );
+  assert.equal(skippedFirst?.job.number, secondIssue.number);
+  // The convergence continuation of the run's own exact record is selected;
+  // its own active claimed record must not be mistaken for a fresh claim even
+  // though it is not due for a retry.
+  const claimed = recoveryRecordFixture({
+    identity: {
+      repository: "ubiquity/ai.ubq.fi",
+      source_kind: "github_issue",
+      source_id: String(firstIssue.id),
+      source_revision: firstJob.fingerprint,
+      candidate_generation: 2,
+    },
+    phase: "claimed",
+    state_version: 1,
+    candidate_branch: null,
+    candidate_sha: null,
+    run_id: "prepare-run",
+    lease_token: "prepare-lease",
+    attempt: 2,
+    updated_at: "2026-08-28T18:20:00.000Z",
+    reason: "The selected work item is durably claimed before implementation.",
+    next_action: "Start the Luna implementation stage.",
+  });
+  const activeLedger = parseSentinelRecoveryLedger({ ...emptySentinelRecoveryLedger(), records: [claimed] });
+  const continued = await selectNextGitHubIssueJobSelection(
+    source,
+    "ubiquity/ai.ubq.fi",
+    renderGitHubIssueJobLedger([]),
+    recoverySelectionContext(activeLedger, claimed),
+    new Date("2026-08-28T18:30:00Z"),
+  );
+  assert.equal(continued?.job.number, firstIssue.number);
+  // A different run has no continuation identity: the active claim is
+  // unavailable and later work wins instead of starving.
+  const competing = await selectNextGitHubIssueJobSelection(
+    source,
+    "ubiquity/ai.ubq.fi",
+    renderGitHubIssueJobLedger([]),
+    recoverySelectionContext(activeLedger),
+    new Date("2026-08-28T18:30:00Z"),
+  );
+  assert.equal(competing?.job.number, secondIssue.number);
+});
+
+const recoveryFilePermissions = await Promise.all([
+  Deno.permissions.query({ name: "read" }),
+  Deno.permissions.query({ name: "write" }),
+]);
+const recoveryFileTestsIgnored = recoveryFilePermissions.some(
+  (permission) => permission.state !== "granted",
+);
+
+Deno.test({
+  name: "zero-cell matrix convergence does not require a prepared recovery record",
+  ignore: recoveryFileTestsIgnored,
+  async fn() {
+    const root = await Deno.makeTempDir({ prefix: "sentinel-convergence-recovery-" });
+    try {
+      // A no-actionable-work plan intentionally has no recovery record; the fast
+      // path must not demand the file.
+      assert.equal(await loadPreparedConvergenceRecoveryRecord(`${root}/reports`), null);
+      // The exact prepared record is loaded for cell-bearing convergence.
+      const prepared = recoveryRecordFixture({
+        identity: {
+          repository: "ubiquity/ai.ubq.fi",
+          source_kind: "github_issue",
+          source_id: "10113",
+          source_revision: "a".repeat(64),
+          candidate_generation: 1,
+        },
+        phase: "claimed",
+        state_version: 1,
+        candidate_branch: null,
+        candidate_sha: null,
+      });
+      await Deno.mkdir(`${root}/reports`, { recursive: true });
+      await Deno.writeTextFile(`${root}/reports/recovery-record-v1.json`, `${JSON.stringify(prepared)}\n`);
+      assert.deepEqual(await loadPreparedConvergenceRecoveryRecord(`${root}/reports`), prepared);
+      // A malformed prepared record fails closed.
+      await Deno.writeTextFile(`${root}/reports/recovery-record-v1.json`, `{"schema_version": 1}\n`);
+      await assert.rejects(loadPreparedConvergenceRecoveryRecord(`${root}/reports`), /record is invalid|phase and/u);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  },
 });
 
 Deno.test("sentinel schedule windows overlap hourly and incident runs", () => {
@@ -2452,6 +2764,7 @@ Deno.test("unlabelled administrator backlog proposals use a bounded source-only 
       githubIssueSource([issue]),
       "ubiquity/ai.ubq.fi",
       renderGitHubIssueJobLedger([]),
+      recoverySelectionContext(),
     ))?.number,
     issue.number,
   );
@@ -2498,7 +2811,12 @@ Deno.test("unlabelled fallback candidates require an administrator before the bo
     getRepositoryPermission: (login) => Promise.resolve(login === "0x4007" ? "admin" as const : "write" as const),
   };
   assert.equal(
-    (await selectNextGitHubIssueJob(source, "ubiquity/ai.ubq.fi", renderGitHubIssueJobLedger([])))?.number,
+    (await selectNextGitHubIssueJob(
+      source,
+      "ubiquity/ai.ubq.fi",
+      renderGitHubIssueJobLedger([]),
+      recoverySelectionContext(),
+    ))?.number,
     selectedIssue.number,
   );
   assert.equal(detailRequests, 1);
@@ -2530,7 +2848,12 @@ Deno.test("unlabelled fallback permission preflight has a fixed budget", async (
     },
   };
   assert.equal(
-    await selectNextGitHubIssueJob(source, "ubiquity/ai.ubq.fi", renderGitHubIssueJobLedger([])),
+    await selectNextGitHubIssueJob(
+      source,
+      "ubiquity/ai.ubq.fi",
+      renderGitHubIssueJobLedger([]),
+      recoverySelectionContext(),
+    ),
     null,
   );
   assert.equal(permissionRequests, MAX_OWNER_BACKLOG_PERMISSION_PREFLIGHTS);
@@ -2550,13 +2873,18 @@ Deno.test("GitHub issue selection is deterministic, snapshot-bound, and becomes 
   const p2 = sentinelGitHubIssue();
   const source = githubIssueSource([p3, p2]);
   const emptyLedger = renderGitHubIssueJobLedger([]);
-  const selected = await selectNextGitHubIssueJob(source, "ubiquity/ai.ubq.fi", emptyLedger);
+  const selected = await selectNextGitHubIssueJob(
+    source,
+    "ubiquity/ai.ubq.fi",
+    emptyLedger,
+    recoverySelectionContext(),
+  );
   assert.equal(selected?.number, 120, "High GitHub issues sort before Medium GitHub issues");
   assert.equal(selected?.priority, "P2");
   assert.ok(selected);
 
   const interval = computeSentinelInterval("hourly", now);
-  const work = selectSentinelWork("hourly", 0, interval, renderReviewBacklog([]), selected);
+  const work = selectSentinelWork("hourly", 0, interval, renderReviewBacklog([]), recoverySelectionContext(), selected);
   assert.equal(work.source, "github_issue");
   assert.equal(work.reason, "hourly_github_issue");
   assert.equal(work.issueJob?.fingerprint, selected.fingerprint);
@@ -2594,7 +2922,13 @@ Deno.test("GitHub issue selection rejects a comment-count race", async () => {
     getRepositoryPermission: () => Promise.resolve("admin"),
   };
   await assert.rejects(
-    () => selectNextGitHubIssueJob(source, "ubiquity/ai.ubq.fi", renderGitHubIssueJobLedger([])),
+    () =>
+      selectNextGitHubIssueJob(
+        source,
+        "ubiquity/ai.ubq.fi",
+        renderGitHubIssueJobLedger([]),
+        recoverySelectionContext(),
+      ),
     /snapshot changed during selection/,
   );
 });
@@ -2614,7 +2948,12 @@ Deno.test("GitHub issue selection rejects human comments while accepting fixed b
       }]),
   };
   assert.equal(
-    await selectNextGitHubIssueJob(source, "ubiquity/ai.ubq.fi", renderGitHubIssueJobLedger([])),
+    await selectNextGitHubIssueJob(
+      source,
+      "ubiquity/ai.ubq.fi",
+      renderGitHubIssueJobLedger([]),
+      recoverySelectionContext(),
+    ),
     null,
   );
   const laterIssue = sentinelGitHubIssue({
@@ -2652,6 +2991,7 @@ Deno.test("GitHub issue selection rejects human comments while accepting fixed b
       unknownAuthorSource,
       "ubiquity/ai.ubq.fi",
       renderGitHubIssueJobLedger([]),
+      recoverySelectionContext(),
     ))?.number,
     laterIssue.number,
   );
@@ -2660,6 +3000,7 @@ Deno.test("GitHub issue selection rejects human comments while accepting fixed b
       githubIssueSource([issue]),
       "ubiquity/ai.ubq.fi",
       renderGitHubIssueJobLedger([]),
+      recoverySelectionContext(),
     ))?.comments,
     1,
   );
@@ -2722,7 +3063,12 @@ Deno.test("GitHub issue selection does not let disallowed comments consume relat
     },
   };
   assert.equal(
-    (await selectNextGitHubIssueJob(source, "ubiquity/ai.ubq.fi", renderGitHubIssueJobLedger([])))?.number,
+    (await selectNextGitHubIssueJob(
+      source,
+      "ubiquity/ai.ubq.fi",
+      renderGitHubIssueJobLedger([]),
+      recoverySelectionContext(),
+    ))?.number,
     selectedIssue.number,
   );
   assert.equal(detailRequests, MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS + 1);
@@ -2779,7 +3125,13 @@ Deno.test("GitHub issue selection has a fixed detail-and-comment inspection budg
     getRepositoryPermission: () => Promise.resolve("admin"),
   };
   await assert.rejects(
-    () => selectNextGitHubIssueJob(source, "ubiquity/ai.ubq.fi", renderGitHubIssueJobLedger([])),
+    () =>
+      selectNextGitHubIssueJob(
+        source,
+        "ubiquity/ai.ubq.fi",
+        renderGitHubIssueJobLedger([]),
+        recoverySelectionContext(),
+      ),
     /detail-and-comment inspection limit/,
   );
   assert.equal(detailRequests, MAX_ISSUE_JOB_DETAIL_COMMENT_INSPECTIONS);
@@ -2818,7 +3170,13 @@ Deno.test("GitHub issue selection has a fixed relationship-inspection budget", a
     },
   };
   await assert.rejects(
-    () => selectNextGitHubIssueJob(source, "ubiquity/ai.ubq.fi", renderGitHubIssueJobLedger([])),
+    () =>
+      selectNextGitHubIssueJob(
+        source,
+        "ubiquity/ai.ubq.fi",
+        renderGitHubIssueJobLedger([]),
+        recoverySelectionContext(),
+      ),
     /relationship-inspection limit/,
   );
   assert.equal(detailRequests, MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS + 1);
@@ -2846,6 +3204,7 @@ Deno.test("GitHub issue authority binds and rechecks the author and latest conte
     writable,
     "ubiquity/ai.ubq.fi",
     renderGitHubIssueJobLedger([]),
+    recoverySelectionContext(),
   );
   assert.ok(selected);
   assert.equal(selected.authorLogin, "0x4007");
@@ -2906,7 +3265,12 @@ Deno.test("GitHub issue authority binds and rechecks the author and latest conte
 Deno.test("GitHub issue ledger prevents unchanged retries and permits an edited snapshot", async () => {
   const issue = sentinelGitHubIssue({ comments: 3 });
   const source = githubIssueSource([issue]);
-  const selected = await selectNextGitHubIssueJob(source, "ubiquity/ai.ubq.fi", renderGitHubIssueJobLedger([]));
+  const selected = await selectNextGitHubIssueJob(
+    source,
+    "ubiquity/ai.ubq.fi",
+    renderGitHubIssueJobLedger([]),
+    recoverySelectionContext(),
+  );
   assert.ok(selected);
   const ledger = applyGitHubIssueJobDisposition(
     renderGitHubIssueJobLedger([]),
@@ -2917,7 +3281,7 @@ Deno.test("GitHub issue ledger prevents unchanged retries and permits an edited 
   );
   assert.equal(parseGitHubIssueJobLedger(ledger)[0]?.number, 113);
   assert.equal(parseGitHubIssueJobLedger(ledger)[0]?.comments, 3);
-  assert.equal(await selectNextGitHubIssueJob(source, "ubiquity/ai.ubq.fi", ledger), null);
+  assert.equal(await selectNextGitHubIssueJob(source, "ubiquity/ai.ubq.fi", ledger, recoverySelectionContext()), null);
   assert.throws(
     () =>
       applyGitHubIssueJobDisposition(
@@ -2931,7 +3295,12 @@ Deno.test("GitHub issue ledger prevents unchanged retries and permits an edited 
   );
   const commented = { ...issue, comments: 4, updatedAt: "2026-08-23T20:30:00Z" };
   assert.equal(
-    await selectNextGitHubIssueJob(githubIssueSource([commented]), "ubiquity/ai.ubq.fi", ledger),
+    await selectNextGitHubIssueJob(
+      githubIssueSource([commented]),
+      "ubiquity/ai.ubq.fi",
+      ledger,
+      recoverySelectionContext(),
+    ),
     null,
   );
   const edited = sentinelGitHubIssue({
@@ -2940,7 +3309,12 @@ Deno.test("GitHub issue ledger prevents unchanged retries and permits an edited 
     updatedAt: "2026-08-23T21:00:00Z",
   });
   assert.equal(
-    (await selectNextGitHubIssueJob(githubIssueSource([edited]), "ubiquity/ai.ubq.fi", ledger))?.number,
+    (await selectNextGitHubIssueJob(
+      githubIssueSource([edited]),
+      "ubiquity/ai.ubq.fi",
+      ledger,
+      recoverySelectionContext(),
+    ))?.number,
     113,
   );
 });
@@ -3420,7 +3794,7 @@ Deno.test("review backlog parsing is strict and round-trips renderer escapes", (
   );
   const unknownLocation = renderReviewBacklog([{ ...entry, location: "unknown" }]);
   assert.equal(parseReviewBacklog(unknownLocation)[0]?.location, "unknown");
-  assert.equal(selectNextReviewBacklogEntry(unknownLocation), null);
+  assert.equal(selectNextReviewBacklogEntry(unknownLocation, recoverySelectionContext()), null);
   assert.throws(
     () => renderReviewBacklog([{ ...entry, finding: "—".repeat(800) }]),
     /row exceeds its length limit/,
@@ -3530,19 +3904,19 @@ Deno.test("quiet backlog work selects one eligible P2 before P3 and skips protec
     }),
   ];
   const markdown = renderReviewBacklog(entries);
-  assert.equal(selectNextReviewBacklogEntry(markdown)?.fingerprint, "3".repeat(64));
+  assert.equal(selectNextReviewBacklogEntry(markdown, recoverySelectionContext())?.fingerprint, "3".repeat(64));
 
   const interval = computeSentinelInterval("hourly", now);
-  const selection = selectSentinelWork("hourly", 0, interval, markdown);
+  const selection = selectSentinelWork("hourly", 0, interval, markdown, recoverySelectionContext());
   assert.equal(selection.source, "review_backlog");
   assert.equal(selection.reason, "hourly_review_backlog");
   assert.equal(selection.backlogEntry?.fingerprint, "3".repeat(64));
   assert.ok(selection.triage && isTriageReport(selection.triage));
   assert.equal(selection.triage?.findings[0]?.id, `review-backlog:${"3".repeat(64)}`);
-  assert.equal(selectSentinelWork("incident", 0, interval, markdown).source, "triage");
-  assert.equal(selectSentinelWork("preview", 0, interval, markdown).source, null);
+  assert.equal(selectSentinelWork("incident", 0, interval, markdown, recoverySelectionContext()).source, "triage");
+  assert.equal(selectSentinelWork("preview", 0, interval, markdown, recoverySelectionContext()).source, null);
   assert.equal(
-    selectSentinelWork("hourly", 0, interval, renderReviewBacklog([entries[0]!])).source,
+    selectSentinelWork("hourly", 0, interval, renderReviewBacklog([entries[0]!]), recoverySelectionContext()).source,
     null,
   );
 });
@@ -3563,7 +3937,7 @@ Deno.test("backlog implementation dispositions stop retries and recurrence reope
   assert.equal(resolved.disposition, "resolved");
   assert.equal(parseReviewBacklog(resolved.markdown)[0]?.disposition, "resolved");
   assert.equal(parseReviewBacklog(resolved.markdown)[0]?.latest, observedAt.toISOString());
-  assert.equal(selectNextReviewBacklogEntry(resolved.markdown), null);
+  assert.equal(selectNextReviewBacklogEntry(resolved.markdown, recoverySelectionContext()), null);
   assert.throws(
     () =>
       applyReviewBacklogImplementationDisposition(
@@ -3580,7 +3954,7 @@ Deno.test("backlog implementation dispositions stop retries and recurrence reope
     "manual_required",
   );
   assert.equal(manual.disposition, "manual_required");
-  assert.equal(selectNextReviewBacklogEntry(manual.markdown), null);
+  assert.equal(selectNextReviewBacklogEntry(manual.markdown, recoverySelectionContext()), null);
 
   const recurrence = mergeReviewBacklog(
     resolved.markdown,

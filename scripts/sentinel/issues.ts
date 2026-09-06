@@ -1,5 +1,10 @@
 import type { GitHubIssue, GitHubIssueComment, GitHubIssueRelations, GitHubRepositoryPermission } from "./github.ts";
 import { isSentinelProtectedImplementationPath, SENTINEL_POLICY } from "./policy.ts";
+import {
+  parseSentinelRecoveryLedger,
+  resolveSentinelRecoverySelection,
+  type SentinelRecoveryEligibilityContext,
+} from "./recovery-ledger.ts";
 import type {
   NativeReviewFinding,
   NativeReviewReport,
@@ -612,9 +617,16 @@ export const selectNextGitHubIssueJobSelection = async (
   source: GitHubIssueJobSource,
   repository: string,
   ledgerMarkdown: string,
+  recovery: SentinelRecoveryEligibilityContext,
   observedAt = new Date(),
 ): Promise<GitHubIssueJobSelection | null> => {
   if (!Number.isFinite(observedAt.getTime())) throw new Error("GitHub issue selection timestamp is invalid");
+  // Validate the authoritative recovery context before the candidate loop so a
+  // malformed snapshot fails closed even when every candidate is filtered out.
+  const recoveryLedger = parseSentinelRecoveryLedger(recovery.ledger);
+  if (recovery.repository.trim().length === 0 || !Number.isFinite(Date.parse(recovery.now))) {
+    throw new Error("Sentinel recovery eligibility context is invalid");
+  }
   const ledger = parseGitHubIssueJobLedger(ledgerMarkdown);
   const listed = await source.listOpenIssues();
   const candidates: GitHubIssueJob[] = [];
@@ -726,6 +738,20 @@ export const selectNextGitHubIssueJobSelection = async (
       break;
     }
     if (selectionBlocked) continue;
+    // The authoritative recovery state is consulted before the candidate is
+    // returned: an unavailable first item must never starve a later eligible
+    // item. The caller supplies the parsed snapshot (fetched once per
+    // selection stage) and its exact continuation record for convergence.
+    const eligibility = resolveSentinelRecoverySelection({
+      ledger: recoveryLedger,
+      repository,
+      source_kind: "github_issue",
+      source_id: String(job.issueId),
+      source_revision: job.fingerprint,
+      now: recovery.now,
+      continuation_record: recovery.continuation_record ?? null,
+    });
+    if (!eligibility.eligibility.available) continue;
     return { job, checkpoint };
   }
   return null;
@@ -735,9 +761,10 @@ export const selectNextGitHubIssueJob = async (
   source: GitHubIssueJobSource,
   repository: string,
   ledgerMarkdown: string,
+  recovery: SentinelRecoveryEligibilityContext,
   observedAt = new Date(),
 ): Promise<GitHubIssueJob | null> =>
-  (await selectNextGitHubIssueJobSelection(source, repository, ledgerMarkdown, observedAt))?.job ?? null;
+  (await selectNextGitHubIssueJobSelection(source, repository, ledgerMarkdown, recovery, observedAt))?.job ?? null;
 
 export const githubIssueJobTriageReport = (
   job: GitHubIssueJob,

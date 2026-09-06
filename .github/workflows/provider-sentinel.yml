@@ -1469,17 +1469,39 @@ jobs:
                       selectNextGitHubIssueJobSelection,
                     } from "./scripts/sentinel/issues.ts";
                     import { selectNextReviewBacklogEntry } from "./scripts/sentinel/review.ts";
+                    import { parseSentinelRecoveryRecord } from "./scripts/sentinel/recovery.ts";
+                    import { readGitHubSentinelRecoveryLedger } from "./scripts/sentinel/recovery-github-store.ts";
                     const runnerTemp = Deno.env.get("RUNNER_TEMP");
                     const repository = Deno.env.get("GITHUB_REPOSITORY");
                     const token = Deno.env.get("GITHUB_TOKEN");
                     if (!runnerTemp || !repository || !token) throw new Error("Sentinel work-selector context is missing");
+                    // The authoritative sentinel/recovery-state snapshot is
+                    // fetched once and drives every selection pass; a malformed
+                    // snapshot fails the selector closed. Matrix convergence
+                    // binds its exact prepared record so its own active claim
+                    // is a continuation instead of a competing fresh claim.
+                    const recoverySnapshot = await readGitHubSentinelRecoveryLedger({ token, repository });
+                    let continuationRecord = null;
+                    try {
+                      continuationRecord = parseSentinelRecoveryRecord(
+                        JSON.parse(await Deno.readTextFile(".sentinel/reports/recovery-record-v1.json")),
+                      );
+                    } catch (error) {
+                      if (!(error instanceof Deno.errors.NotFound)) throw error;
+                    }
+                    const recovery = {
+                      repository,
+                      ledger: recoverySnapshot.ledger,
+                      now: new Date().toISOString(),
+                      continuation_record: continuationRecord,
+                    };
                     const backlog = await Deno.readTextFile(`${runnerTemp}/sentinel-review-backlog.md`);
-                    if (selectNextReviewBacklogEntry(backlog) !== null) {
+                    if (selectNextReviewBacklogEntry(backlog, recovery) !== null) {
                       console.log("true");
                     } else {
                       const ledger = await Deno.readTextFile(`${runnerTemp}/sentinel-issue-jobs.md`);
                       const github = new GitHubActionsClient({ repository, token });
-                      const issueSelection = await selectNextGitHubIssueJobSelection(github, repository, ledger);
+                      const issueSelection = await selectNextGitHubIssueJobSelection(github, repository, ledger, recovery);
                       await Deno.writeTextFile(
                         `${runnerTemp}/${GITHUB_ISSUE_JOB_HINT_FILENAME}`,
                         renderGitHubIssueJobHint(

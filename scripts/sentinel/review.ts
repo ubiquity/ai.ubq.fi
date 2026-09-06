@@ -1,4 +1,9 @@
 import { isSentinelProtectedImplementationPath, SENTINEL_POLICY } from "./policy.ts";
+import {
+  parseSentinelRecoveryLedger,
+  resolveSentinelRecoverySelection,
+  type SentinelRecoveryEligibilityContext,
+} from "./recovery-ledger.ts";
 import type {
   NativeReviewFinding,
   NativeReviewReport,
@@ -397,11 +402,32 @@ export const renderReviewBacklog = (entries: readonly ReviewBacklogEntry[]): str
   return markdown;
 };
 
-export const selectNextReviewBacklogEntry = (markdown: string): ReviewBacklogEntry | null => {
+export const selectNextReviewBacklogEntry = (
+  markdown: string,
+  recovery: SentinelRecoveryEligibilityContext,
+): ReviewBacklogEntry | null => {
+  // Validate the authoritative recovery context before the entry loop so a
+  // malformed snapshot fails closed even when the backlog is empty.
+  const recoveryLedger = parseSentinelRecoveryLedger(recovery.ledger);
+  if (recovery.repository.trim().length === 0 || !Number.isFinite(Date.parse(recovery.now))) {
+    throw new Error("Sentinel recovery eligibility context is invalid");
+  }
   for (const entry of parseReviewBacklog(markdown)) {
     if (entry.disposition !== "open") continue;
     const path = reviewBacklogLocationPath(entry.location);
     if (!path || isSentinelProtectedImplementationPath(path)) continue;
+    // The authoritative recovery state is consulted before the entry is
+    // returned so an unavailable first entry cannot starve a later one.
+    const eligibility = resolveSentinelRecoverySelection({
+      ledger: recoveryLedger,
+      repository: recovery.repository,
+      source_kind: "review_backlog",
+      source_id: entry.fingerprint,
+      source_revision: entry.sha,
+      now: recovery.now,
+      continuation_record: recovery.continuation_record ?? null,
+    });
+    if (!eligibility.eligibility.available) continue;
     return entry;
   }
   return null;
