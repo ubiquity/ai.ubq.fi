@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "review_identity": "local-codex-review-80767610-20260906",
+  "command": "codex review --commit 80767610",
+  "worktree": "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/issue-throughput-handoff-2026-09-06-g5a02cbbad3",
+  "reviewed_head_sha": "80767610dd31ee99cd5183d1e7978e55add68cab",
+  "reviewed_base_sha": "0be974c31c508aaf2d34f71cdc733b8544fa07f8",
+  "pr_number": 247,
+  "exit_code": 0,
+  "original_finding_text": "- [P1] Support accepted directory scopes through matrix preparation — /Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/issue-throughput-handoff-2026-09-06-g5a02cbbad3/scripts/sentinel/main.ts:2073-2079\n  When a planner emits `src/`, `tests/`, or any other directory scope, this validator now accepts it, but `writePreparedMatrixPlan` still passes the trailing-slash path directly to `isSentinelProtectedImplementationPath` and throws. This moves the failure outside the per-issue planning handler, aborting matrix preparation instead of advancing the queue. Normalizing that later check alone is insufficient: `buildMatrixPlan` also rejects `src/` and `tests/` because they overlap the supplied protected descendants. Make directory handling consistent through matrix preparation while retaining per-file protection, and test the accepted plan through that path.",
+  "normalization": "Removed exact canonical worktree prefix from paths for repository-relative finding fingerprints.",
+  "report": {
+    "schema_version": 1,
+    "round": 1,
+    "parse_status": "findings",
+    "findings": [
+      {
+        "fingerprint": "7f12a193b77025269d8182f80f16e318a5932e89ef990395b06ee1e3a862cb0d",
+        "severity": "P1",
+        "title": "Support accepted directory scopes through matrix preparation — scripts/sentinel/main.ts:2073-2079",
+        "body": "When a planner emits `src/`, `tests/`, or any other directory scope, this validator now accepts it, but `writePreparedMatrixPlan` still passes the trailing-slash path directly to `isSentinelProtectedImplementationPath` and throws. This moves the failure outside the per-issue planning handler, aborting matrix preparation instead of advancing the queue. Normalizing that later check alone is insufficient: `buildMatrixPlan` also rejects `src/` and `tests/` because they overlap the supplied protected descendants. Make directory handling consistent through matrix preparation while retaining per-file protection, and test the accepted plan through that path.",
+        "location": "scripts/sentinel/main.ts:2073-2079"
+      }
+    ]
+  }
+}

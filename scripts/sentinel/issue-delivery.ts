@@ -478,6 +478,15 @@ export const verifyFrozenIssuePlanDigest = async (
     ) {
       throw new Error("Sentinel frozen plan does not bind the authoritative recovery source identity");
     }
+    if (
+      input.cycleBaseSha !== null && input.recovery.base_sha !== input.cycleBaseSha
+    ) {
+      // Both the recovery record and the cycle development base may be
+      // permitted descendants of the ORIGINAL plan base, but they carry the
+      // SAME execution base and must agree exactly; an independently proven
+      // B/C mismatch is still identity drift.
+      throw new Error("Sentinel frozen plan recovery execution base does not match the cycle development base");
+    }
     if (input.recovery.base_sha !== input.selection.base_sha) {
       // The recovery record carries the current execution base while the
       // ORIGINAL plan base is preserved; the advance must prove compatible.
