@@ -720,6 +720,7 @@ export const ensureIssuePullRequestForDevelopmentPush = async (
       selection,
       triageValue,
       cycleBaseSha: cycle.base_development_sha,
+      repositoryRoot: input.repositoryRoot,
       recovery,
       runId: cycle.run_id,
     });

@@ -40,6 +40,7 @@ import {
   persistPlanningOutcome,
   prepareImplementationFailureRetry,
   previewCompletionForDecision,
+  reclaimDueSentinelRetryRecord,
   replayIndexArtifactMayMatch,
   replayIndexArtifactName,
   requireIssueLedgerOnlyChangedPaths,
@@ -47,6 +48,7 @@ import {
   requireResolvedSelectedIssueImplementation,
   requiresReplayEvaluation,
   resolveCycleAnchorMs,
+  restoreIssueRetryAggregateIfEmpty,
   RetryCheckpointResumeError,
   retryCheckpointResumeFailureDisposition,
   reuseMatrixPreparedRecoveryRecord,
@@ -111,6 +113,11 @@ import {
   SentinelChangedFilesMismatchError,
 } from "../scripts/sentinel/issues.ts";
 import type { GitHubIssueSelectionReport } from "../scripts/sentinel/issue-delivery.ts";
+import {
+  githubIssuePlanDigest,
+  verifyFrozenIssuePlanDigest,
+  verifyIssuePlanBaseCompatibility,
+} from "../scripts/sentinel/issue-delivery.ts";
 import { parseSentinelRecoveryRecord, type SentinelRecoveryRecordV1 } from "../scripts/sentinel/recovery.ts";
 import {
   emptySentinelRecoveryLedger,
@@ -1808,6 +1815,222 @@ Deno.test({
       } finally {
         await Deno.remove(fixture.repo, { recursive: true });
       }
+    }
+  },
+});
+
+const createPlanAdvanceRepository = async (): Promise<Readonly<{ repositoryRoot: string; originalBase: string }>> => {
+  const repositoryRoot = await Deno.makeTempDir({ prefix: "sentinel-plan-base-" });
+  await matrixVerifierGit(repositoryRoot, ["init", "-b", "development"]);
+  await matrixVerifierGit(repositoryRoot, ["config", "user.name", "Sentinel Plan Base Fixture"]);
+  await matrixVerifierGit(repositoryRoot, ["config", "user.email", "sentinel-plan-base@example.invalid"]);
+  await Deno.writeTextFile(`${repositoryRoot}/README.md`, "plan base\n");
+  await Deno.mkdir(`${repositoryRoot}/docs`, { recursive: true });
+  await Deno.writeTextFile(`${repositoryRoot}/docs/sentinel-issue-jobs.md`, renderGitHubIssueJobLedger([]));
+  await matrixVerifierGit(repositoryRoot, ["add", "--all"]);
+  await matrixVerifierGit(repositoryRoot, ["commit", "--no-gpg-sign", "-m", "plan base"]);
+  return { repositoryRoot, originalBase: await matrixVerifierGit(repositoryRoot, ["rev-parse", "HEAD"]) };
+};
+
+const commitPlanBaseAdvance = async (repositoryRoot: string, message: string): Promise<void> => {
+  await matrixVerifierGit(repositoryRoot, ["add", "--all"]);
+  await matrixVerifierGit(repositoryRoot, ["commit", "--no-gpg-sign", "-m", message]);
+};
+
+Deno.test({
+  name: "frozen plan base compatibility proves only trusted bounded advances",
+  ignore: matrixVerifierTestsIgnored,
+  async fn() {
+    // Equality never needs a checkout proof.
+    const equality = await createPlanAdvanceRepository();
+    const equalityHead = await matrixVerifierGit(equality.repositoryRoot, ["rev-parse", "HEAD"]);
+    try {
+      await verifyIssuePlanBaseCompatibility({
+        repositoryRoot: equality.repositoryRoot,
+        planBaseSha: equalityHead,
+        executionBaseSha: equalityHead,
+      });
+    } finally {
+      await Deno.remove(equality.repositoryRoot, { recursive: true });
+    }
+    // A canonical ledger-only advance and a validated review-result add both
+    // prove; the delivery validator engine accepts the same proven advance with
+    // the ORIGINAL frozen selection/digest.
+    const ledgerAdvance = await createPlanAdvanceRepository();
+    try {
+      await Deno.writeTextFile(
+        `${ledgerAdvance.repositoryRoot}/docs/sentinel-issue-jobs.md`,
+        renderGitHubIssueJobLedger(parseGitHubIssueJobLedger(issueJobLedger).slice(0, 1)),
+      );
+      await commitPlanBaseAdvance(ledgerAdvance.repositoryRoot, "docs: retry ledger");
+      const currentBase = await matrixVerifierGit(ledgerAdvance.repositoryRoot, ["rev-parse", "HEAD"]);
+      await verifyIssuePlanBaseCompatibility({
+        repositoryRoot: ledgerAdvance.repositoryRoot,
+        planBaseSha: ledgerAdvance.originalBase,
+        executionBaseSha: currentBase,
+      });
+      const repository = "ubiquity/ai.ubq.fi";
+      const job = await createGitHubIssueJob(repository, sentinelGitHubIssue(), noIssueRelations);
+      assert.ok(job);
+      const interval = computeSentinelInterval("hourly", now);
+      const triage = githubIssueJobTriageReport(job, interval);
+      const planSha256 = await githubIssuePlanDigest({
+        repository,
+        issue_id: job.issueId,
+        fingerprint: job.fingerprint,
+        base_sha: ledgerAdvance.originalBase,
+        plan: triage,
+      });
+      const selection: GitHubIssueSelectionReport = {
+        schema_version: 2,
+        issue_id: job.issueId,
+        issue_number: job.number,
+        fingerprint: job.fingerprint,
+        body_sha256: job.bodySha256,
+        comments: job.comments,
+        priority: job.priority,
+        time_label: job.timeLabel,
+        files: [...job.files],
+        updated_at: job.updatedAt,
+        base_sha: ledgerAdvance.originalBase,
+        plan_sha256: planSha256,
+      };
+      const recovery = parseSentinelRecoveryRecord(recoveryRecordFixture({
+        identity: {
+          repository,
+          source_kind: "github_issue",
+          source_id: String(job.issueId),
+          source_revision: job.fingerprint,
+          candidate_generation: 1,
+        },
+        base_sha: currentBase,
+        phase: "claimed",
+        disposition: "active",
+        run_id: "123456789",
+      }));
+      // Original digest is preserved while the recovery/execution base advanced.
+      await verifyFrozenIssuePlanDigest({
+        repository,
+        selection,
+        triageValue: triage,
+        cycleBaseSha: currentBase,
+        repositoryRoot: ledgerAdvance.repositoryRoot,
+        recovery,
+        runId: "123456789",
+      });
+    } finally {
+      await Deno.remove(ledgerAdvance.repositoryRoot, { recursive: true });
+    }
+    const reviewAdvance = await createPlanAdvanceRepository();
+    try {
+      const headSha = "a".repeat(40);
+      await writeMatrixVerifierResult(
+        reviewAdvance.repositoryRoot,
+        960,
+        headSha,
+        rollingReviewResultFixture(960, headSha),
+      );
+      await commitPlanBaseAdvance(reviewAdvance.repositoryRoot, "docs: review result");
+      const currentBase = await matrixVerifierGit(reviewAdvance.repositoryRoot, ["rev-parse", "HEAD"]);
+      await verifyIssuePlanBaseCompatibility({
+        repositoryRoot: reviewAdvance.repositoryRoot,
+        planBaseSha: reviewAdvance.originalBase,
+        executionBaseSha: currentBase,
+      });
+    } finally {
+      await Deno.remove(reviewAdvance.repositoryRoot, { recursive: true });
+    }
+    // Code changes, invalid ledger content, and divergence all fail closed.
+    const rejectCases: ReadonlyArray<
+      Readonly<{ name: string; prepare: (root: string) => Promise<void>; error: RegExp }>
+    > = [
+      {
+        name: "code change",
+        prepare: async (root) => {
+          await Deno.writeTextFile(`${root}/README.md`, "code change\n");
+          await commitPlanBaseAdvance(root, "code change");
+        },
+        error: /disallowed path/,
+      },
+      {
+        name: "invalid ledger",
+        prepare: async (root) => {
+          await Deno.writeTextFile(`${root}/docs/sentinel-issue-jobs.md`, "| broken | row |\n");
+          await commitPlanBaseAdvance(root, "invalid ledger");
+        },
+        error: /issue-job ledger|canonical|invalid/u,
+      },
+      {
+        name: "divergence",
+        prepare: async (root) => {
+          const base = await matrixVerifierGit(root, ["rev-parse", "HEAD"]);
+          await matrixVerifierGit(root, ["switch", "-c", "side", base]);
+          await Deno.writeTextFile(`${root}/README.md`, "side change\n");
+          await commitPlanBaseAdvance(root, "side change");
+          await matrixVerifierGit(root, ["switch", "development"]);
+          await Deno.writeTextFile(
+            `${root}/docs/sentinel-issue-jobs.md`,
+            renderGitHubIssueJobLedger(parseGitHubIssueJobLedger(issueJobLedger).slice(0, 1)),
+          );
+          await commitPlanBaseAdvance(root, "docs: ahead ledger");
+          await matrixVerifierGit(root, ["merge", "--no-ff", "-m", "merge side", "side"]);
+        },
+        error: /single-parent|planned linear path|disallowed path/,
+      },
+    ];
+    for (const rejectCase of rejectCases) {
+      const rejectionRepo = await createPlanAdvanceRepository();
+      try {
+        await rejectCase.prepare(rejectionRepo.repositoryRoot);
+        const currentBase = await matrixVerifierGit(rejectionRepo.repositoryRoot, ["rev-parse", "HEAD"]);
+        await assert.rejects(
+          () =>
+            verifyIssuePlanBaseCompatibility({
+              repositoryRoot: rejectionRepo.repositoryRoot,
+              planBaseSha: rejectionRepo.originalBase,
+              executionBaseSha: currentBase,
+            }),
+          rejectCase.error,
+          rejectCase.name,
+        );
+      } finally {
+        await Deno.remove(rejectionRepo.repositoryRoot, { recursive: true });
+      }
+    }
+  },
+});
+
+Deno.test({
+  name: "retry checkpoint restoration keeps planned-scope paths for broad issues",
+  ignore: matrixVerifierTestsIgnored,
+  async fn() {
+    const repo = await Deno.makeTempDir({ prefix: "sentinel-restoration-" });
+    try {
+      await matrixVerifierGit(repo, ["init", "-b", "development"]);
+      await matrixVerifierGit(repo, ["config", "user.name", "Sentinel Restoration Fixture"]);
+      await matrixVerifierGit(repo, ["config", "user.email", "sentinel-restoration@example.invalid"]);
+      await Deno.writeTextFile(`${repo}/README.md`, "base\n");
+      await matrixVerifierGit(repo, ["add", "--all"]);
+      await matrixVerifierGit(repo, ["commit", "--no-gpg-sign", "-m", "base"]);
+      const baseSha = await matrixVerifierGit(repo, ["rev-parse", "HEAD"]);
+      await Deno.mkdir(`${repo}/src`, { recursive: true });
+      await Deno.writeTextFile(`${repo}/src/http.ts`, "checkpoint code\n");
+      await matrixVerifierGit(repo, ["add", "--all"]);
+      await matrixVerifierGit(repo, ["commit", "--no-gpg-sign", "-m", "checkpoint"]);
+      const preInvocationSha = await matrixVerifierGit(repo, ["rev-parse", "HEAD"]);
+      // Simulate the discarded worktree so the aggregate is empty while the
+      // checkpoint commit still differs from the execution base.
+      await matrixVerifierGit(repo, ["restore", "--source", baseSha, "--staged", "--worktree", "--", "src/http.ts"]);
+      const restored = await restoreIssueRetryAggregateIfEmpty(repo, baseSha, preInvocationSha, ["src/", "tests/"]);
+      assert.deepEqual(restored, ["src/http.ts"]);
+      // An out-of-scope checkpoint path is rejected (directory-component match).
+      await matrixVerifierGit(repo, ["restore", "--source", baseSha, "--staged", "--worktree", "--", "src/http.ts"]);
+      await assert.rejects(
+        () => restoreIssueRetryAggregateIfEmpty(repo, baseSha, preInvocationSha, ["tests/"]),
+        /outside the declared Files scope/,
+      );
+    } finally {
+      await Deno.remove(repo, { recursive: true });
     }
   },
 });
@@ -4810,6 +5033,7 @@ Deno.test("matrix prepared recovery binds github issue convergence identity exac
     repository,
     runId,
     runAttempt,
+    repositoryRoot: "/tmp",
     plan,
     triage,
     preparedRecovery: prepared,
@@ -4830,6 +5054,7 @@ Deno.test("matrix prepared recovery rejects github issue convergence transport d
       repository: fixture.repository,
       runId: fixture.runId,
       runAttempt: fixture.runAttempt,
+      repositoryRoot: "/tmp",
       plan: overrides.plan ?? fixture.plan,
       triage: overrides.triage ?? fixture.triage,
       preparedRecovery: overrides.preparedRecovery ?? fixture.prepared,
@@ -5287,6 +5512,200 @@ Deno.test("planning persistence never writes over a concurrent claim", async () 
   assert.equal(persistence.writes.length, 0);
 });
 
+Deno.test("planning persistence keeps per-identity history bounded without truncating other identities", async () => {
+  const job = await planningJobFixture();
+  const identity = planningIdentity(job);
+  const key = sentinelRecoveryIdentityKey(identity);
+  const unrelated = Array.from({ length: 12 }, (_, index) =>
+    createSentinelRetryAttempt({
+      identity: planningIdentity(job, 100 + index),
+      attempt: 1,
+      failure_class: "transient_transport",
+      failure_fingerprint: `${(index + 1).toString(16).padStart(64, "0")}`,
+      observed_at: "2026-08-01T00:00:00.000Z",
+    }));
+  const target = [1, 2].map((attempt) =>
+    createSentinelRetryAttempt({
+      identity,
+      attempt,
+      failure_class: "transient_transport",
+      failure_fingerprint: "e".repeat(64),
+      observed_at: "2026-08-01T00:00:00.000Z",
+    })
+  );
+  // A valid global ledger may hold far more than the per-identity maximum:
+  // the production helper must filter to this identity before the bounded
+  // per-identity parser and preserve every unrelated attempt.
+  const persistence = planningPersistenceStore(
+    parseSentinelRecoveryLedger({ ...emptySentinelRecoveryLedger(), retry_history: [...unrelated, ...target] }),
+  );
+  const outcome = await persistPlanningOutcome({
+    store: persistence.store,
+    repository: "ubiquity/ai.ubq.fi",
+    job,
+    runId: "run-1",
+    runAttempt: 1,
+    pinnedBaseSha: "b".repeat(40),
+    blockedReason: "planning_failed",
+    now: "2026-09-01T00:00:00.000Z",
+  });
+  assert.equal(outcome.persisted, true);
+  assert.equal(persistence.writes.length, 1);
+  const after = persistence.writes[0]!.ledger;
+  assert.equal(
+    after.retry_history.filter((attempt) => sentinelRecoveryIdentityKey(attempt.identity) === key).length,
+    3,
+  );
+  assert.equal(
+    after.retry_history.filter((attempt) => sentinelRecoveryIdentityKey(attempt.identity) !== key).length,
+    12,
+  );
+  assert.equal(after.retry_history.length, 15);
+  assert.equal(after.retry_decisions[0]!.decision.attempt_count, 3);
+});
+Deno.test("planning persistence replaces only the reclaimed identity history on a due active retry", async () => {
+  const job = await planningJobFixture();
+  const identity = planningIdentity(job);
+  const key = sentinelRecoveryIdentityKey(identity);
+  const unrelated = Array.from({ length: 12 }, (_, index) =>
+    createSentinelRetryAttempt({
+      identity: planningIdentity(job, 100 + index),
+      attempt: 1,
+      failure_class: "transient_transport",
+      failure_fingerprint: `${(index + 1).toString(16).padStart(64, "0")}`,
+      observed_at: "2026-08-01T00:00:00.000Z",
+    }));
+  const target = [1, 2].map((attempt) =>
+    createSentinelRetryAttempt({
+      identity,
+      attempt,
+      failure_class: "transient_transport",
+      failure_fingerprint: attempt === 1 ? "e".repeat(64) : "d".repeat(64),
+      observed_at: "2026-08-01T00:00:00.000Z",
+    })
+  );
+  const waiting = recoveryRecordFixture({
+    identity,
+    phase: "retry_wait",
+    disposition: "active",
+    state_version: 5,
+    run_id: "run-1",
+    attempt: 1,
+    lease_token: "lease-1",
+    updated_at: "2026-08-01T00:00:00.000Z",
+  });
+  const seedDecision = (await evaluateSentinelRetryPolicy({
+    identity,
+    failure: {
+      failure_class: "transient_transport",
+      failure_fingerprint: "e".repeat(64),
+      code: "planning_output_invalid",
+      phase: "issue_planning",
+      signature: "planning_failed",
+    },
+    history: target.slice(0, 1),
+    now: "2026-08-10T00:00:00.000Z",
+  })).decision;
+  assert.ok(seedDecision.retry_at !== null);
+  const persistence = planningPersistenceStore(
+    parseSentinelRecoveryLedger({
+      ...emptySentinelRecoveryLedger(),
+      records: [waiting],
+      retry_history: [...unrelated, ...target],
+      retry_decisions: [{ identity_key: key, decision: seedDecision }],
+    }),
+  );
+  const outcome = await persistPlanningOutcome({
+    store: persistence.store,
+    repository: "ubiquity/ai.ubq.fi",
+    job,
+    runId: "run-2",
+    runAttempt: 2,
+    pinnedBaseSha: "b".repeat(40),
+    blockedReason: "planning_failed",
+    now: seedDecision.retry_at,
+  });
+  assert.equal(outcome.persisted, true);
+  assert.equal(persistence.writes.length, 1);
+  const after = persistence.writes[0]!.ledger;
+  assert.equal(
+    after.retry_history.filter((attempt) => sentinelRecoveryIdentityKey(attempt.identity) === key).length,
+    3,
+  );
+  assert.equal(
+    after.retry_history.filter((attempt) => sentinelRecoveryIdentityKey(attempt.identity) !== key).length,
+    12,
+  );
+  assert.equal(after.retry_history.length, 15);
+  assert.equal(after.retry_decisions[0]!.decision.attempt_count, 3);
+  const record = after.records.find((candidate) => sentinelRecoveryIdentityKey(candidate.identity) === key);
+  assert.ok(record);
+  assert.equal(record.state_version, waiting.state_version);
+  assert.equal(record.phase, "retry_wait");
+});
+
+Deno.test("due retry reclaim rebases only proven GitHub issue work to the execution base", () => {
+  const currentBase = "9".repeat(40);
+  const reclaim = (current: SentinelRecoveryRecordV1): SentinelRecoveryRecordV1 =>
+    reclaimDueSentinelRetryRecord(current, {
+      runId: "run-2",
+      now: "2026-09-02T00:00:00.000Z",
+      currentBaseSha: currentBase,
+    });
+  const candidateFree = recoveryRecordFixture({
+    phase: "retry_wait",
+    disposition: "active",
+    base_sha: "2".repeat(40),
+    run_id: "run-1",
+    attempt: 1,
+    lease_token: "lease-1",
+  });
+  const reclaimedFree = reclaim(candidateFree);
+  assert.equal(reclaimedFree.base_sha, currentBase);
+  assert.equal(reclaimedFree.phase, "claimed");
+  assert.equal(reclaimedFree.disposition, "active");
+  assert.equal(reclaimedFree.attempt, candidateFree.attempt + 1);
+  assert.equal(reclaimedFree.state_version, candidateFree.state_version + 1);
+  assert.deepEqual(reclaimedFree.identity, candidateFree.identity);
+  assert.equal(reclaimedFree.lease_token, candidateFree.lease_token);
+  const candidateCarrying = recoveryRecordFixture({
+    phase: "retry_wait",
+    disposition: "active",
+    base_sha: "2".repeat(40),
+    candidate_branch: "sentinel/candidate-123456789-1",
+    candidate_sha: "c".repeat(40),
+    artifact_ids: [9697049201],
+    run_id: "run-1",
+    attempt: 1,
+    lease_token: "lease-1",
+  });
+  const reclaimedCandidate = reclaim(candidateCarrying);
+  assert.equal(reclaimedCandidate.base_sha, currentBase);
+  assert.equal(reclaimedCandidate.candidate_branch, candidateCarrying.candidate_branch);
+  assert.equal(reclaimedCandidate.candidate_sha, candidateCarrying.candidate_sha);
+  assert.deepEqual(reclaimedCandidate.artifact_ids, candidateCarrying.artifact_ids);
+  // Unrelated source kinds (review backlog, incident, triage) preserve the
+  // original base: only proven GitHub issue work reclaims at the execution base.
+  const backlogRetry = recoveryRecordFixture({
+    identity: {
+      repository: "ubiquity/ai.ubq.fi",
+      source_kind: "review_backlog",
+      source_id: "a".repeat(64),
+      source_revision: "b".repeat(40),
+      candidate_generation: 1,
+    },
+    phase: "retry_wait",
+    disposition: "active",
+    base_sha: "2".repeat(40),
+    run_id: "run-1",
+    attempt: 1,
+    lease_token: "lease-1",
+  });
+  const reclaimedBacklog = reclaim(backlogRetry);
+  assert.equal(reclaimedBacklog.base_sha, backlogRetry.base_sha);
+  assert.equal(reclaimedBacklog.phase, "claimed");
+});
+
 Deno.test("matrix prepared recovery binds review backlog convergence identity exactly", async () => {
   const runId = "23546719285";
   const runAttempt = 1;
@@ -5365,6 +5784,7 @@ Deno.test("matrix prepared recovery binds review backlog convergence identity ex
     repository,
     runId,
     runAttempt,
+    repositoryRoot: "/tmp",
     plan,
     triage,
     preparedRecovery: prepared,
@@ -5389,6 +5809,7 @@ Deno.test("matrix prepared recovery binds review backlog convergence identity ex
       repository,
       runId,
       runAttempt,
+      repositoryRoot: "/tmp",
       plan,
       triage: overrides.triage ?? triage,
       preparedRecovery: prepared,
@@ -5550,6 +5971,7 @@ Deno.test("convergence binds the exact prepared source even when an earlier item
     repository,
     runId,
     runAttempt,
+    repositoryRoot: "/tmp",
     plan,
     triage,
     preparedRecovery,

@@ -6,6 +6,14 @@ import {
 } from "./recovery.ts";
 import { canonicalMatrixJson } from "./matrix.ts";
 import { isTriageReport, type TriageReport } from "./types.ts";
+import { SENTINEL_POLICY } from "./policy.ts";
+import { parseGitHubIssueJobLedger } from "./issues.ts";
+import {
+  MAX_ROLLING_REVIEW_RESULT_BYTES,
+  parseRollingReviewResult,
+  parseRollingReviewResultFileNames,
+} from "./rolling-review.ts";
+import { runTrustedGit, runTrustedGitUnchecked } from "./validation.ts";
 
 export { isSentinelRecoveryCandidateBranch, sentinelRecoveryCandidateBranch };
 
@@ -260,6 +268,178 @@ const parseManualCheckpoint = (value: unknown): GitHubIssueManualCheckpointRepor
   parseCheckpoint(value, "manual");
 
 /**
+ * Bounded linear advance allowed between the original frozen plan base and the
+ * current execution base: the same eight-commit review advance limit used by
+ * the matrix convergence advance verifier.
+ */
+export const SENTINEL_PLAN_BASE_ADVANCE_COMMIT_LIMIT = 8 as const;
+
+const regularBlobTreeMetadata = async (
+  repositoryRoot: string,
+  revision: string,
+  path: string,
+): Promise<Readonly<{ mode: string; objectType: string; sha: string; path: string }>> => {
+  const tree = new TextDecoder("utf-8", { fatal: true }).decode(
+    (await runTrustedGit({
+      args: ["ls-tree", "-z", revision, "--", path],
+      cwd: repositoryRoot,
+    })).stdout,
+  ).split("\0").filter((entry) => entry.length > 0);
+  const treeEntry = tree.length === 1 ? tree[0]! : null;
+  const separator = treeEntry?.indexOf("\t") ?? -1;
+  const metadata = separator >= 0 ? treeEntry!.slice(0, separator).split(" ") : [];
+  return {
+    mode: metadata.length === 3 ? metadata[0]! : "",
+    objectType: metadata.length === 3 ? metadata[1]! : "",
+    sha: metadata.length === 3 ? metadata[2]! : "",
+    path: separator >= 0 ? treeEntry!.slice(separator + 1) : "",
+  };
+};
+
+const readPathText = async (repositoryRoot: string, revision: string, path: string): Promise<string> => {
+  const output = await runTrustedGit({
+    args: ["show", `${revision}:${path}`],
+    cwd: repositoryRoot,
+    maximumOutputBytes: MAX_ROLLING_REVIEW_RESULT_BYTES + 512 * 1_024,
+  });
+  return new TextDecoder("utf-8", { fatal: true }).decode(output.stdout);
+};
+
+/**
+ * Trusted base-compatibility proof for a V2 frozen plan carried across runs:
+ * the original plan base must either equal the current execution base, or be
+ * its ancestor through a bounded linear single-parent history in which every
+ * intervening commit is either a canonical issue-job ledger-only update or an
+ * exactly one fully validated rolling review result add. Source-code changes,
+ * merges, deletes, renames, rewrites, invalid ledger/review data and unproved
+ * ancestry are rejected; an actual repository checkout is always required.
+ */
+export const verifyIssuePlanBaseCompatibility = async (
+  input: Readonly<{
+    repositoryRoot: string;
+    planBaseSha: string;
+    executionBaseSha: string;
+  }>,
+): Promise<void> => {
+  const { repositoryRoot, planBaseSha, executionBaseSha } = input;
+  if (!FULL_SHA.test(planBaseSha)) throw new Error("Sentinel frozen plan base SHA is invalid");
+  if (!FULL_SHA.test(executionBaseSha)) throw new Error("Sentinel frozen plan execution base SHA is invalid");
+  if (planBaseSha === executionBaseSha) return;
+  const ancestry = await runTrustedGitUnchecked({
+    args: ["merge-base", "--is-ancestor", planBaseSha, executionBaseSha],
+    cwd: repositoryRoot,
+  });
+  if (ancestry.code !== 0) {
+    throw new Error("Sentinel frozen plan base is not an ancestor of the execution base");
+  }
+  const commitCountText = new TextDecoder("utf-8", { fatal: true }).decode(
+    (await runTrustedGit({
+      args: ["rev-list", "--count", `${planBaseSha}..${executionBaseSha}`],
+      cwd: repositoryRoot,
+    })).stdout,
+  ).trim();
+  const commitCount = Number(commitCountText);
+  if (
+    !Number.isSafeInteger(commitCount) || commitCount < 1 ||
+    commitCount > SENTINEL_PLAN_BASE_ADVANCE_COMMIT_LIMIT
+  ) {
+    throw new Error("Sentinel frozen plan base advance exceeds the allowed commit count");
+  }
+  const commits = new TextDecoder("utf-8", { fatal: true }).decode(
+    (await runTrustedGit({
+      args: ["rev-list", "--reverse", "--topo-order", `${planBaseSha}..${executionBaseSha}`],
+      cwd: repositoryRoot,
+    })).stdout,
+  ).split("\n").filter((line) => line.length > 0);
+  if (commits.length !== commitCount) {
+    throw new Error("Sentinel frozen plan base advance commit listing is inconsistent");
+  }
+  const reviewResultsPrefix = `${SENTINEL_POLICY.paths.reviewResults}/`;
+  for (const [index, commit] of commits.entries()) {
+    const parents = new TextDecoder("utf-8", { fatal: true }).decode(
+      (await runTrustedGit({ args: ["show", "-s", "--format=%P", commit], cwd: repositoryRoot })).stdout,
+    ).trim().split(" ").filter((value) => value.length > 0);
+    if (parents.length !== 1) {
+      throw new Error(`Sentinel frozen plan base advance commit ${commit} is not a single-parent commit`);
+    }
+    const expectedParent = index === 0 ? planBaseSha : commits[index - 1]!;
+    if (parents[0] !== expectedParent) {
+      throw new Error(`Sentinel frozen plan base advance commit ${commit} is not on the planned linear path`);
+    }
+    const changed = new TextDecoder("utf-8", { fatal: true }).decode(
+      (await runTrustedGit({
+        args: [
+          "diff-tree",
+          "--no-commit-id",
+          "--no-ext-diff",
+          "--no-textconv",
+          "--name-status",
+          "--no-renames",
+          "-r",
+          "-z",
+          commit,
+        ],
+        cwd: repositoryRoot,
+      })).stdout,
+    ).split("\0").filter((entry) => entry.length > 0);
+    if (changed.length !== 2) {
+      throw new Error(`Sentinel frozen plan base advance commit ${commit} changes multiple paths`);
+    }
+    const [status, path] = changed;
+    if (status === "M" && path === SENTINEL_POLICY.paths.issueJobLedger) {
+      const [before, after] = await Promise.all([
+        regularBlobTreeMetadata(repositoryRoot, expectedParent, path),
+        regularBlobTreeMetadata(repositoryRoot, commit, path),
+      ]);
+      if (
+        before.mode !== "100644" || before.objectType !== "blob" || !FULL_SHA.test(before.sha) ||
+        before.path !== path || after.mode !== "100644" || after.objectType !== "blob" ||
+        !FULL_SHA.test(after.sha) || after.path !== path
+      ) {
+        throw new Error(`Sentinel frozen plan base advance ledger is not a regular 100644 Git file: ${path}`);
+      }
+      // Both revisions must be canonical complete valid issue-job ledgers.
+      parseGitHubIssueJobLedger(await readPathText(repositoryRoot, expectedParent, path));
+      parseGitHubIssueJobLedger(await readPathText(repositoryRoot, commit, path));
+      continue;
+    }
+    if (status === "A" && path.startsWith(reviewResultsPrefix)) {
+      const fileName = path.slice(reviewResultsPrefix.length);
+      const identities = parseRollingReviewResultFileNames([path]);
+      if (identities.length !== 1) {
+        throw new Error(`Sentinel frozen plan base advance result file name is invalid: ${fileName}`);
+      }
+      const identity = identities[0]!;
+      const treeEntry = await regularBlobTreeMetadata(repositoryRoot, commit, path);
+      if (
+        treeEntry.mode !== "100644" || treeEntry.objectType !== "blob" ||
+        !FULL_SHA.test(treeEntry.sha) || treeEntry.path !== path
+      ) {
+        throw new Error(`Sentinel frozen plan base advance result path is not a regular 100644 Git blob: ${path}`);
+      }
+      const blob = await runTrustedGit({
+        args: ["show", `${commit}:${path}`],
+        cwd: repositoryRoot,
+        maximumOutputBytes: MAX_ROLLING_REVIEW_RESULT_BYTES + 64 * 1_024,
+      });
+      if (blob.stdout.byteLength > MAX_ROLLING_REVIEW_RESULT_BYTES) {
+        throw new Error(`Sentinel frozen plan base advance result blob exceeds its byte limit: ${path}`);
+      }
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(blob.stdout);
+      let value: unknown;
+      try {
+        value = JSON.parse(text);
+      } catch {
+        throw new Error(`Sentinel frozen plan base advance result blob is not valid JSON: ${path}`);
+      }
+      parseRollingReviewResult(value, { prNumber: identity.prNumber, headSha: identity.headSha, fileName });
+      continue;
+    }
+    throw new Error(`Sentinel frozen plan base advance commit ${commit} changes a disallowed path`);
+  }
+};
+
+/**
  * Fail-closed verification of a V2 frozen plan at delivery/closure callers:
  * the frozen triage at the run reports path must re-derive the exact bound
  * plan digest for the same source identity. V1 stays legacy (no re-binding).
@@ -270,6 +450,7 @@ export const verifyFrozenIssuePlanDigest = async (
     selection: GitHubIssueSelectionReport;
     triageValue: unknown;
     cycleBaseSha: string | null;
+    repositoryRoot?: string;
     recovery?: SentinelRecoveryRecordV1;
     runId?: string;
   }>,
@@ -277,17 +458,37 @@ export const verifyFrozenIssuePlanDigest = async (
   if (input.selection.schema_version !== 2) return;
   if (!isTriageReport(input.triageValue)) throw new Error("Sentinel frozen triage report is invalid");
   if (input.cycleBaseSha !== null && input.selection.base_sha !== input.cycleBaseSha) {
-    throw new Error("Sentinel frozen plan base does not match the cycle development base");
+    if (input.repositoryRoot === undefined) {
+      throw new Error("Sentinel frozen plan base does not match the cycle development base");
+    }
+    // The execution base may only advance from the ORIGINAL plan base through
+    // trusted bounded linear history: ledger-only or validated review results.
+    await verifyIssuePlanBaseCompatibility({
+      repositoryRoot: input.repositoryRoot,
+      planBaseSha: input.selection.base_sha!,
+      executionBaseSha: input.cycleBaseSha,
+    });
   }
   if (input.recovery !== undefined) {
     const identity = input.recovery.identity;
     if (
       identity.repository !== input.repository || identity.source_kind !== "github_issue" ||
       identity.source_id !== String(input.selection.issue_id) ||
-      identity.source_revision !== input.selection.fingerprint ||
-      input.recovery.base_sha !== input.selection.base_sha
+      identity.source_revision !== input.selection.fingerprint
     ) {
       throw new Error("Sentinel frozen plan does not bind the authoritative recovery source identity");
+    }
+    if (input.recovery.base_sha !== input.selection.base_sha) {
+      // The recovery record carries the current execution base while the
+      // ORIGINAL plan base is preserved; the advance must prove compatible.
+      if (input.repositoryRoot === undefined) {
+        throw new Error("Sentinel frozen plan does not bind the authoritative recovery execution base");
+      }
+      await verifyIssuePlanBaseCompatibility({
+        repositoryRoot: input.repositoryRoot,
+        planBaseSha: input.selection.base_sha!,
+        executionBaseSha: input.recovery.base_sha,
+      });
     }
     if (input.runId !== undefined && input.recovery.run_id !== input.runId) {
       throw new Error("Sentinel frozen plan recovery run does not match the delivery run");

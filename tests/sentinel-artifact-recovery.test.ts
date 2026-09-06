@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import issueJobLedger from "../docs/sentinel-issue-jobs.md" with { type: "text" };
 import { encryptSentinelArtifact, type SentinelArtifactFile } from "../scripts/sentinel/artifact-crypto.ts";
+import { parseGitHubIssueJobLedger, renderGitHubIssueJobLedger } from "../scripts/sentinel/issues.ts";
 import {
   authenticatedMatrixCellReport,
   buildSentinelRecoveryDraftPullRequest,
@@ -3285,6 +3287,7 @@ Deno.test({
         download,
         encodedArtifactKey: keyB64,
         privateRoot: root,
+        repositoryRoot: root,
       });
       assert.equal(loaded.available, true);
       if (loaded.available) {
@@ -3301,6 +3304,7 @@ Deno.test({
         download,
         encodedArtifactKey: keyB64,
         privateRoot: root,
+        repositoryRoot: root,
       });
       assert.equal(wrongDigest.available, false);
       if (!wrongDigest.available) {
@@ -3316,6 +3320,7 @@ Deno.test({
         download,
         encodedArtifactKey: keyB64,
         privateRoot: root,
+        repositoryRoot: root,
       });
       assert.equal(wrongBase.available, false);
       // Wrong checkpoint branch: unavailable.
@@ -3328,6 +3333,7 @@ Deno.test({
         download,
         encodedArtifactKey: keyB64,
         privateRoot: root,
+        repositoryRoot: root,
       });
       assert.equal(wrongBranch.available, false);
       // Wrong source fingerprint: unavailable.
@@ -3340,8 +3346,107 @@ Deno.test({
         download,
         encodedArtifactKey: keyB64,
         privateRoot: root,
+        repositoryRoot: root,
       });
       assert.equal(wrongSource.available, false);
+      // Two successive permitted retry advances A -> B -> C: the ORIGINAL
+      // plan base stays A in the carried selection while the durable recovery
+      // record is reclaimed at each newer execution base; every advance must
+      // prove compatible through the actual repository checkout, and a
+      // code-changing advance must fail closed.
+      const advanceRoot = await Deno.makeTempDir({ prefix: "sentinel-retained-advance-" });
+      try {
+        await git(advanceRoot, ["init", "-b", "development"]);
+        await git(advanceRoot, ["config", "user.name", "Sentinel Retained Fixture"]);
+        await git(advanceRoot, ["config", "user.email", "sentinel-retained-fixture@example.invalid"]);
+        await Deno.mkdir(`${advanceRoot}/docs`, { recursive: true });
+        await Deno.writeTextFile(
+          `${advanceRoot}/docs/sentinel-issue-jobs.md`,
+          renderGitHubIssueJobLedger([]),
+        );
+        await git(advanceRoot, ["add", "--all"]);
+        await git(advanceRoot, ["commit", "--no-gpg-sign", "-m", "plan base"]);
+        // The ORIGINAL plan base is the actual repository revision A the
+        // frozen selection was prepared against.
+        const advanceBase = await git(advanceRoot, ["rev-parse", "HEAD"]);
+        const advanceSelection = {
+          ...selection,
+          base_sha: advanceBase,
+          plan_sha256: await githubIssuePlanDigest({
+            repository,
+            issue_id: job.issueId,
+            fingerprint: job.fingerprint,
+            base_sha: advanceBase,
+            plan: triage as never,
+          }),
+        };
+        const advanceCommit = async (message: string): Promise<string> => {
+          await git(advanceRoot, ["add", "--all"]);
+          await git(advanceRoot, ["commit", "--no-gpg-sign", "-m", message]);
+          return await git(advanceRoot, ["rev-parse", "HEAD"]);
+        };
+        const loadAtExecutionBase = async (executionBase: string) => {
+          // The carried envelope replays the ORIGINAL frozen plan selection
+          // while its embedded recovery record carries the execution base of
+          // the reclaimed run this envelope was published by.
+          const executionRecord = parseSentinelRecoveryRecord({ ...record, base_sha: executionBase });
+          const advanceFiles = files.map((file) => {
+            if (file.path === "reports/recovery-record-v1.json") {
+              return { ...file, bytes: textEncoder.encode(JSON.stringify(executionRecord)) };
+            }
+            return file.path === "reports/github-issue-selection.json"
+              ? { ...file, bytes: textEncoder.encode(JSON.stringify(advanceSelection)) }
+              : file;
+          });
+          const advanceEncrypted = await encryptSentinelArtifact(
+            advanceFiles,
+            key,
+            new Uint8Array(12).fill(6),
+          );
+          const advanceZip = await createEvidenceZip(root, advanceEncrypted);
+          const advanceEnvelope = await decryptSentinelEvidenceEnvelope({
+            zip: advanceZip,
+            encodedArtifactKey: keyB64,
+            privateRoot: root,
+          });
+          return loadRetainedIssueFrozenPlan({
+            repository,
+            job,
+            checkpoint,
+            record: { ...executionRecord, artifact_digests: [advanceEnvelope.encrypted_digest] },
+            artifacts,
+            download: () => Promise.resolve(advanceZip),
+            encodedArtifactKey: keyB64,
+            privateRoot: root,
+            repositoryRoot: advanceRoot,
+          });
+        };
+        await Deno.writeTextFile(
+          `${advanceRoot}/docs/sentinel-issue-jobs.md`,
+          renderGitHubIssueJobLedger(parseGitHubIssueJobLedger(issueJobLedger).slice(0, 1)),
+        );
+        const firstAdvance = await advanceCommit("docs: first retry ledger advance");
+        const firstAdvanced = await loadAtExecutionBase(firstAdvance);
+        assert.equal(firstAdvanced.available, true);
+        if (firstAdvanced.available) {
+          assert.equal(firstAdvanced.selection.base_sha, advanceBase);
+          assert.equal(firstAdvanced.selection.plan_sha256, advanceSelection.plan_sha256);
+          assert.deepEqual(firstAdvanced.triage.findings[0]!.allowed_paths, ["src/admin.ts", "tests/"]);
+        }
+        await Deno.writeTextFile(
+          `${advanceRoot}/docs/sentinel-issue-jobs.md`,
+          renderGitHubIssueJobLedger([]),
+        );
+        const secondAdvance = await advanceCommit("docs: second retry ledger advance");
+        const secondAdvanced = await loadAtExecutionBase(secondAdvance);
+        assert.equal(secondAdvanced.available, true);
+        await Deno.writeTextFile(`${advanceRoot}/README.md`, "code change in the advance\n");
+        const codeAdvance = await advanceCommit("feat: source change");
+        const codeAdvanced = await loadAtExecutionBase(codeAdvance);
+        assert.equal(codeAdvanced.available, false);
+      } finally {
+        await Deno.remove(advanceRoot, { recursive: true });
+      }
     } finally {
       key.fill(0);
       await Deno.remove(root, { recursive: true });
@@ -3502,6 +3607,7 @@ Deno.test({
         download,
         encodedArtifactKey: keyB64,
         privateRoot: root,
+        repositoryRoot: root,
       };
       const loaded = await loadRetainedIssueFrozenPlan(base);
       assert.equal(loaded.available, true);

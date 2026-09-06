@@ -78,53 +78,34 @@ findings remain nonblocking and are merged into the backlog. If `development` ad
 cycle archives evidence and defers the new backlog state to the next hour. Empty replay sets skip the replay-evaluation
 model call.
 
-GitHub issue selection is a read-only fallback when the native-review backlog has no eligible entry. Sentinel excludes
-pull requests and accepts only an open issue whose author and latest body or title editors currently have calculated
-`write` or `admin` permission for the repository. The issue must be unlocked and unassigned. Normally it must have
-exactly one supported priority label, `Priority: 3 (High)` or `Priority: 2 (Medium)`, and exactly one `Time: <N Unit`
-label using `Minute`, `Minutes`, `Hour`, `Hours`, `Day`, or `Days`, with an estimate no greater than one day. Normally
-it also needs a bounded `Acceptance:` list and a bounded `Files:` list. Every file must be a repository-relative path
-that the Sentinel implementation policy permits.
+GitHub issue selection is a read-only fallback when the native-review backlog has no eligible entry. Sentinel admits
+open issues in this repository without author/editor privilege, assignment, lock, estimate, template, source-file hint,
+or comment-count admission rules. Parent, sub-issue and outgoing blocker relationships are context. Incoming
+prerequisites are captured with their states for planning. Issue text and discussion are untrusted task data and cannot
+authorize changes to Sentinel controls, model policy, credentials or protected files.
 
-An unlabelled issue is eligible only through the narrow admin-owned backlog fallback: every current content authority
-must have `admin` permission, its body must contain exactly one each of `## Context`, `## Gap`, and `## Proposed`, and
-it must explicitly cite one or more permitted `src/` files in inline code. The fallback binds the agent only to those
-extracted source files and uses the fixed Medium/P3, two-hour policy; labels are not added or changed. An issue with any
-partial or unsupported labels remains ineligible. Human or unrecognized comments block selection. Sentinel permits at
-most eight exact, unedited UbiquityOS label-denial bot notices; it inspects those bounded comments only to classify the
-fixed notice and never includes them in agent input. Their count remains part of the immutable snapshot. The issue must
-have no parent, sub-issue, blocked-by, or blocking relationships. High priority sorts before Medium, then by creation
-time and issue number. High becomes review severity P2 and Medium becomes P3. Issue text and metadata are untrusted
-input and cannot expand the bound file scope or change Sentinel policy.
+Priority controls ordering only: the highest recognized numeric Priority label sorts first, then the oldest creation
+timestamp, then the lowest issue number. Multiple recognized labels use their highest value; missing or unrecognized
+priority sorts last. Estimates and labels are not edited to make an issue eligible. Optional legacy Acceptance and Files
+sections remain source hints, but ordinary issue prose can proceed to read-only planning.
 
-Selection records an immutable digest of the issue body and complete issue snapshot, including the author login and the
-latest body-edit and title-edit actors, timestamps, and current title. Sentinel reads the exact issue, its
-relationships, and every content authority's current repository permission again before candidate creation, before a
-preview branch push, and before a development push. A changed, mismatched, or ineligible snapshot stops that attempt.
-The workflow binds both an exact selected snapshot and an empty selection from its prerequisite preflight to the later
-orchestrator; selection drift is deferred to another run. The selector inspects at most 32 ordered candidate
-relationships per run and fails closed at that bound. When a selected GitHub issue has unavailable Codex accounts, a
-bounded implementation timeout, a failed Codex command, or a failed Codex runtime, Sentinel preserves the candidate as
-encrypted evidence and records a non-terminal `retry_pending` snapshot. The snapshot waits six hours before it is
-eligible again, while later eligible issues continue through the queue. A later successful attempt replaces the retry
-row with its terminal result. A superseded immutable checkpoint remains auditable as nonblocking `checkpoint_retained`
-evidence, so a later rolled-back attempt cannot permanently hide the open issue. The same infrastructure failures on the
-native review backlog use its existing `manual_required` state, so one deterministic finding cannot consume every hourly
-cycle. Terminal `resolved` and semantically blocked `manual_required` snapshots are recorded in the protected
-`docs/sentinel-issue-jobs.md` ledger. The ledger retains the selected comment count so later comment-only timestamp
-changes do not create a new job identity. `resolved` means that the implementation has a matching scoped candidate diff;
-it is not production acceptance. The encrypted `github-issue-production-outcome.json` exists only after production has
-settled by keeping the candidate through monitoring or rolling it back. The Actions summary identifies the selected
-issue number without exposing its title or body. An unchanged open issue is not selected again. A later issue edit
-creates a new snapshot that can become eligible only while its latest editor remains a current writer or administrator.
-A manual result uses a ledger-only development commit and never starts a deployment. Sentinel opens exactly one delivery
-pull request per selected snapshot and links the issue there as evidence. After a verified production keep it merges
-that pull request and closes the unchanged issue with supporting evidence; a refused or protected merge is accepted only
-when the comparison proves the candidate head is already contained in `development` (the state production runs),
-otherwise the delivery stays open. Manual-required, failed, and rolled-back results stay open. The workflow token
-carries `issues: write` and `pull-requests: write`, but Sentinel never assigns, labels, or comments during selection.
-The workflow concurrency group serializes Sentinel runs but does not claim work against a human or another automation
-system.
+The source snapshot binds issue identity, body, title, material discussion and relationships. Preparation uses the
+existing read-only Sol planner to produce one complete issue plan with a bounded scope and validation requirements. The
+V2 selection report binds the original source fingerprint, development base and frozen plan digest. Generated scope does
+not change source identity. Execution uses the frozen scope, including necessary supporting tests, while retaining the
+protected-path checks. Retained V1 evidence keeps its historical exact-file interpretation.
+
+Sentinel revalidates source identity before publication. Prepared convergence binds its exact selected issue and plan; a
+newly higher-priority issue affects the next fresh selection. Active claims, retry deadlines and terminal recovery
+decisions remain authoritative. Unavailable items have explicit dispositions and later eligible items can proceed.
+GitHub pagination and response limits remain bounded; an incomplete capture cannot authorize implementation.
+
+Candidate checkpoints remain encrypted and auditable. Retry attempts preserve their source identity and generation; an
+unchanged terminal decision cannot restart merely because a new workflow runs. A legacy ledger word alone does not prove
+production delivery or authorize issue closure. The delivery flow requires matching candidate and pull-request evidence,
+the existing deployment and health identity checks, and production acceptance. Failed, manual-required and rolled-back
+work stays open. Sentinel preserves contributor branches and unfinished work, and never assigns, labels or comments
+during source selection. The workflow concurrency group serializes Sentinel runs.
 
 ## Authoritative recovery eligibility
 

@@ -7,7 +7,7 @@ import {
 import { defaultRevisionBaseUrl, DenoDeployClient, type RollbackTarget } from "./deploy.ts";
 import {
   evaluateSentinelRetryPolicy,
-  retryHistoryForIdentity,
+  SENTINEL_RETRY_MAX_HISTORY_ENTRIES,
   type SentinelRetryAttemptV1,
   type SentinelRetryDecision,
   stableSentinelFailureFingerprint,
@@ -109,6 +109,7 @@ import {
   parseGitHubIssueSelectionReportV2,
   sentinelRecoveryCandidateBranch,
   verifyFrozenIssuePlanDigest,
+  verifyIssuePlanBaseCompatibility,
 } from "./issue-delivery.ts";
 import {
   assertActionableFindingsResolved,
@@ -362,16 +363,14 @@ export const loadRetainedIssueFrozenPlan = async (
     download: (artifactId: number) => Promise<Uint8Array>;
     encodedArtifactKey: string;
     privateRoot: string;
+    repositoryRoot: string;
     now?: string;
   }>,
 ): Promise<RetainedIssuePlanLoadResult> => {
   const unavailable = (reason: string): RetainedIssuePlanLoadResult => ({ available: false, reason });
   const record = input.record;
-  if (
-    record.base_sha !== input.checkpoint.baseSha || record.candidate_sha !== input.checkpoint.sha ||
-    record.candidate_branch !== input.checkpoint.branch
-  ) {
-    return unavailable("Retained recovery checkpoint base or candidate does not match");
+  if (record.candidate_sha !== input.checkpoint.sha || record.candidate_branch !== input.checkpoint.branch) {
+    return unavailable("Retained recovery checkpoint candidate does not match");
   }
   if (
     record.identity.repository !== input.repository || record.identity.source_kind !== "github_issue" ||
@@ -498,21 +497,22 @@ export const loadRetainedIssueFrozenPlan = async (
         continue;
       }
       if (frozenSelection.schema_version === 2) {
-        if (frozenSelection.base_sha !== record.base_sha) {
-          lastReason = "Retained V2 plan base does not match the recovery record";
-          continue;
-        }
         try {
+          // The ORIGINAL selection base/digest is never rewritten; when the
+          // durable recovery record was reclaimed at a newer execution base,
+          // that advance must prove compatible through the trusted bounded
+          // linear history in the actual repository checkout.
           await verifyFrozenIssuePlanDigest({
             repository: input.repository,
             selection: frozenSelection,
             triageValue: frozenTriageValue,
             cycleBaseSha: record.base_sha,
+            repositoryRoot: input.repositoryRoot,
             recovery: record,
             runId: record.run_id,
           });
         } catch {
-          lastReason = "Retained V2 plan digest does not match the frozen triage";
+          lastReason = "Retained V2 plan does not match the frozen triage or a proven execution base";
           continue;
         }
       } else {
@@ -666,6 +666,15 @@ export const persistPlanningOutcome = async (
     phase: "issue_planning",
     signature: input.blockedReason,
   });
+  // The global ledger history is shared across many identities and is bounded
+  // only globally; the per-identity bounded helper must never see every
+  // unrelated entry. Filter to this identity (last N by the per-identity
+  // maximum) before the bounded policy evaluation, preserving the global
+  // ledger validation and every other identity's history.
+  const outcomeKey = sentinelRecoveryIdentityKey(outcomeIdentity);
+  const identityRetryHistory = fresh.ledger.retry_history
+    .filter((attempt) => sentinelRecoveryIdentityKey(attempt.identity) === outcomeKey)
+    .slice(-SENTINEL_RETRY_MAX_HISTORY_ENTRIES);
   const evaluated = await evaluateSentinelRetryPolicy({
     identity: outcomeIdentity,
     failure: {
@@ -675,7 +684,7 @@ export const persistPlanningOutcome = async (
       phase: "issue_planning",
       signature: input.blockedReason,
     },
-    history: retryHistoryForIdentity(fresh.ledger.retry_history, outcomeIdentity),
+    history: identityRetryHistory,
     now: nowIso,
   });
   const decision = evaluated.decision;
@@ -770,7 +779,13 @@ export const persistPlanningOutcome = async (
   const ledgerAfter = parseSentinelRecoveryLedger({
     ...fresh.ledger,
     records: upsertSentinelRecoveryRecord(fresh.ledger, record, null).records,
-    retry_history: [...fresh.ledger.retry_history, ...history],
+    // The evaluated history already contains this identity's prior attempts:
+    // replace only those rows instead of appending duplicates; every other
+    // identity's history is preserved byte-for-byte.
+    retry_history: [
+      ...fresh.ledger.retry_history.filter((attempt) => sentinelRecoveryIdentityKey(attempt.identity) !== outcomeKey),
+      ...history,
+    ],
     retry_decisions: [
       ...fresh.ledger.retry_decisions,
       ...(manualNow ? [] : [{ identity_key: sentinelRecoveryIdentityKey(outcomeIdentity), decision }]),
@@ -840,6 +855,7 @@ export const bindMatrixConvergenceWork = async (
     repository: string;
     runId: string;
     runAttempt: number;
+    repositoryRoot: string;
     plan: MatrixPlanV1;
     triage: TriageReport;
     preparedRecovery: SentinelRecoveryRecordV1;
@@ -852,6 +868,7 @@ export const bindMatrixConvergenceWork = async (
     repository,
     runId,
     runAttempt,
+    repositoryRoot,
     plan,
     triage,
     preparedRecovery,
@@ -866,6 +883,8 @@ export const bindMatrixConvergenceWork = async (
     throw new Error("Prepared sentinel recovery record run identity changed in transport");
   }
   if (preparedRecovery.base_sha !== plan.base_sha) {
+    // Both are the CURRENT execution base after a corrected reclaim: any
+    // difference is transport drift and fails closed before any proof.
     throw new Error("Prepared sentinel recovery record base SHA differs from the matrix convergence plan");
   }
   if (preparedRecovery.identity.repository !== repository) {
@@ -901,16 +920,22 @@ export const bindMatrixConvergenceWork = async (
       throw new Error("Github issue selection report does not match the prepared recovery identity");
     }
     if (issueSelection.schema_version === 2) {
-      // V2 binds the exact base and the canonical frozen plan digest: current
-      // source data cannot deterministically regenerate a model-produced plan.
+      // V2 binds the ORIGINAL plan base and the canonical frozen plan digest:
+      // current source data cannot deterministically regenerate a
+      // model-produced plan. A current matrix base differing from that
+      // original base requires the trusted bounded linear proof.
       if (issueSelection.base_sha !== plan.base_sha) {
-        throw new Error("Github issue selection V2 base SHA differs from the matrix convergence plan");
+        await verifyIssuePlanBaseCompatibility({
+          repositoryRoot,
+          planBaseSha: issueSelection.base_sha!,
+          executionBaseSha: plan.base_sha,
+        });
       }
       const digest = await githubIssuePlanDigest({
         repository,
         issue_id: issueSelection.issue_id,
         fingerprint: issueSelection.fingerprint,
-        base_sha: issueSelection.base_sha,
+        base_sha: issueSelection.base_sha!,
         plan: triage,
       });
       if (digest !== issueSelection.plan_sha256) {
@@ -1012,6 +1037,45 @@ const sortedUniquePaths = (paths: readonly string[], label: string): string[] =>
   const unique = new Set(paths);
   if (unique.size !== paths.length) throw new Error(`${label} contains duplicate paths`);
   return [...unique].sort();
+};
+
+/**
+ * Reclaim a due retry record. Only GitHub issue work whose fresh planning or
+ * retained compatibility proof succeeded may reclaim at the current execution
+ * base; every other source kind (incident, triage, review backlog) preserves
+ * its original base. Identity, generation, attempt count and history are
+ * preserved in every case.
+ */
+export const reclaimDueSentinelRetryRecord = (
+  current: SentinelRecoveryRecordV1,
+  input: Readonly<{ runId: string; now: string; currentBaseSha: string | null }>,
+): SentinelRecoveryRecordV1 => {
+  const candidateFree = current.candidate_branch === null && current.candidate_sha === null &&
+    current.artifact_ids.length === 0;
+  // Only GitHub issue work may reclaim at the current execution base: the
+  // caller passes it only after fresh planning or the retained compatibility
+  // proof succeeded. Every other source kind preserves its original base.
+  const rebaseBase = current.identity.source_kind === "github_issue" ? input.currentBaseSha : null;
+  const rebased = rebaseBase !== null;
+  const reclaimed = parseSentinelRecoveryRecord({
+    ...current,
+    run_id: input.runId,
+    attempt: current.attempt + 1,
+    phase: "claimed",
+    state_version: current.state_version + 1,
+    updated_at: input.now,
+    base_sha: rebased ? rebaseBase : current.base_sha,
+    reason: rebased
+      ? candidateFree
+        ? "The bounded planning retry delay elapsed and the candidate-free source was reclaimed at the current development base."
+        : "The bounded retry delay elapsed and the same candidate generation was reclaimed at the current development base after the retained plan base proof."
+      : "The bounded retry delay elapsed and the same candidate generation was reclaimed at its original base.",
+    next_action: candidateFree
+      ? "Run the planning and implementation stages at the current development base."
+      : "Resume the Luna implementation stage from durable evidence.",
+  });
+  assertSentinelRecoveryTransition(current, reclaimed);
+  return reclaimed;
 };
 
 export const evaluateReviewBacklogImplementation = (
@@ -2617,10 +2681,15 @@ export const restoreIssueRetryAggregateIfEmpty = async (
       cwd: checkout,
     })).stdout,
   ).filter((path) => !excludedPaths.includes(path)).sort();
-  if (priorPaths.some((path) => !issuePaths.includes(path))) {
+  if (priorPaths.length === 0) return paths;
+  // The frozen planned scope (exact files or explicit directories) governs:
+  // broad issues with empty source hints still keep their in-scope checkpoint
+  // paths, and a path matched by a directory entry is a directory-component
+  // match, never a raw prefix.
+  const outOfScope = priorPaths.some((path) => !issuePaths.some((entry) => matrixAllowedPathCovers(path, entry)));
+  if (outOfScope) {
     throw new Error("GitHub issue retry checkpoint changed a path outside the declared Files scope");
   }
-  if (priorPaths.length === 0) return paths;
   await runTrustedGit({
     args: ["restore", "--source", preInvocationSha, "--staged", "--worktree", "--", ...priorPaths],
     cwd: checkout,
@@ -3937,6 +4006,7 @@ const run = async (): Promise<void> => {
           download: (artifactId: number) => github.downloadArtifact(artifactId, MAX_ARTIFACT_ZIP_BYTES),
           encodedArtifactKey,
           privateRoot,
+          repositoryRoot: root,
         });
         if (!loaded.available) {
           return { ready: false, reason: `source_unavailable: ${loaded.reason}`, persisted: false };
@@ -3946,7 +4016,18 @@ const run = async (): Promise<void> => {
           selectedDevelopmentSha !== null &&
           loaded.retained_base !== selectedDevelopmentSha
         ) {
-          return { ready: false, reason: "retained_base_changed", persisted: false };
+          // The ORIGINAL plan base is never rewritten; the current selected
+          // development may only advance through the trusted bounded linear
+          // proof (ledger-only or validated review results) from that base.
+          try {
+            await verifyIssuePlanBaseCompatibility({
+              repositoryRoot: root,
+              planBaseSha: loaded.retained_base,
+              executionBaseSha: selectedDevelopmentSha,
+            });
+          } catch {
+            return { ready: false, reason: "retained_base_changed", persisted: false };
+          }
         }
         retainedIssueFrozenSelection = {
           report: loaded.selection,
@@ -4238,6 +4319,7 @@ const run = async (): Promise<void> => {
       repository,
       runId,
       runAttempt: githubRunAttempt,
+      repositoryRoot: root,
       plan: matrixConvergencePlan,
       triage: matrixConvergenceTriage,
       preparedRecovery: matrixConvergencePreparedRecovery,
@@ -4358,17 +4440,11 @@ const run = async (): Promise<void> => {
     recoveryIdentity = durableRecoveryRecord.identity;
   } else if (currentRecoveryRecord) {
     recoveryIdentity = currentRecoveryRecord.identity;
-    durableRecoveryRecord = parseSentinelRecoveryRecord({
-      ...currentRecoveryRecord,
-      run_id: runId,
-      attempt: currentRecoveryRecord.attempt + 1,
-      phase: "claimed",
-      state_version: currentRecoveryRecord.state_version + 1,
-      updated_at: new Date().toISOString(),
-      reason: "The bounded retry delay elapsed and the same candidate generation was reclaimed.",
-      next_action: "Resume the Luna implementation stage from durable evidence.",
+    durableRecoveryRecord = reclaimDueSentinelRetryRecord(currentRecoveryRecord, {
+      runId,
+      now: new Date().toISOString(),
+      currentBaseSha: recoverySourceKind === "github_issue" ? recoveryBaseSha : null,
     });
-    assertSentinelRecoveryTransition(currentRecoveryRecord, durableRecoveryRecord);
     recoverySnapshot = await writeGitHubSentinelRecoveryLedger({
       token: githubToken,
       repository,
@@ -4516,13 +4592,19 @@ const run = async (): Promise<void> => {
     const frozenSelection = frozenSelectionDispatch();
     if (frozenSelection !== null) {
       // Retained V2: the ORIGINAL frozen selection/base/digest is carried
-      // downstream verbatim; never rehash it against a new base.
+      // downstream verbatim; never rehash it against a new base. The current
+      // selected development may only advance from the original plan base
+      // through the trusted bounded linear proof.
       if (
         frozenSelection.retained_base !== null &&
         selectedDevelopmentSha !== null &&
         frozenSelection.retained_base !== selectedDevelopmentSha
       ) {
-        throw new Error("Retained V2 plan base changed after the pre-claim check");
+        await verifyIssuePlanBaseCompatibility({
+          repositoryRoot: root,
+          planBaseSha: frozenSelection.retained_base,
+          executionBaseSha: selectedDevelopmentSha,
+        });
       }
       await writeJson(`${reportsDir}/github-issue-selection.json`, frozenSelection.report);
     } else {
@@ -5364,14 +5446,15 @@ const run = async (): Promise<void> => {
       ],
       cwd: checkout,
     });
+    const plannedScope = plannedIssueScope(workSelection);
     const paths = await restoreIssueRetryAggregateIfEmpty(
       checkout,
       baseSha,
       preInvocationSha,
-      workSelection.issueJob.files,
+      plannedScope,
     );
     if (paths.length === 0) return null;
-    if (paths.some((path) => !workSelection.issueJob!.files.includes(path))) {
+    if (paths.some((path) => !plannedScope.some((entry) => matrixAllowedPathCovers(path, entry)))) {
       throw new Error("GitHub issue retry checkpoint changed a path outside the declared Files scope");
     }
     await assertGitControlStateUnchanged(gitControlState);
