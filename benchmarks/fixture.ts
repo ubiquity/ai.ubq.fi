@@ -119,11 +119,32 @@ function normalizeLexically(p: string): string {
 }
 
 export class WriteScopeViolationError extends Error {
-  constructor(readonly path: string, readonly scope: string[]) {
-    super(`write scope violation: ${path} is not writable (scope: ${scope.join(", ")})`);
+  readonly paths: string[];
+  readonly path: string;
+
+  constructor(pathOrPaths: string | readonly string[], readonly scope: string[]) {
+    const paths = typeof pathOrPaths === "string" ? [pathOrPaths] : [...pathOrPaths];
+    paths.sort(comparePaths);
+    const normalizedPaths = [...new Set(paths)];
+    const evidence = normalizedPaths.join(", ");
+    const verb = normalizedPaths.length === 1 ? "is" : "are";
+    super(`write scope violation: ${evidence} ${verb} not writable (scope: ${scope.join(", ")})`);
+    this.paths = normalizedPaths;
+    this.path = normalizedPaths[0] ?? "";
     this.name = "WriteScopeViolationError";
   }
 }
+
+type FixtureEntryKind = "file" | "directory" | "symlink" | "other";
+
+interface FixtureEntryState {
+  kind: FixtureEntryKind;
+  mode: number | null;
+  content?: Uint8Array;
+  target?: string;
+}
+
+type FixtureTreeState = Map<string, FixtureEntryState>;
 
 export interface FixtureWorkspaceOptions {
   fixtureDir: string;
@@ -322,6 +343,35 @@ export class FixtureWorkspace {
     signal?: AbortSignal,
   ): Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean }> {
     this.assertRoot();
+    const before = captureFixtureTree(this.root);
+    let result: { code: number; stdout: string; stderr: string; timedOut: boolean } | undefined;
+    let commandError: unknown;
+    let commandThrew = false;
+    try {
+      result = await this.execShellUnscoped(command, timeoutMs, signal);
+    } catch (err) {
+      commandThrew = true;
+      commandError = err;
+    }
+
+    const after = captureFixtureTree(this.root);
+    const changed = changedFixturePaths(before, after);
+    const violations = changed.filter((path) => !this.isAllowedWrite(path));
+
+    if (violations.length > 0) {
+      restoreFixtureTree(this.root, before, after, violations);
+      throw new WriteScopeViolationError(violations, this.task.allowed_write_scope);
+    }
+    if (commandThrew) throw commandError;
+    return result!;
+  }
+
+  /** Execute the shell inside the disposable-root sandbox without task-scope checks. */
+  private async execShellUnscoped(
+    command: string,
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ): Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean }> {
     if (Deno.build.os === "linux") {
       const root = Deno.realPathSync(this.root);
       return await this.exec(
@@ -377,6 +427,200 @@ export class FixtureWorkspace {
       { timeoutMs, capture: true, signal },
     );
   }
+}
+
+function comparePaths(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function captureFixtureTree(root: string): FixtureTreeState {
+  const state: FixtureTreeState = new Map();
+  const walk = (dir: string, prefix: string): void => {
+    const entries = [...Deno.readDirSync(dir)].sort((left, right) => comparePaths(left.name, right.name));
+    for (const entry of entries) {
+      const rel = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+      const abs = `${dir}/${entry.name}`;
+      const info = Deno.lstatSync(abs);
+      const entryState = captureFixtureEntry(abs, info);
+      state.set(rel, entryState);
+      if (entryState.kind === "directory") walk(abs, rel);
+    }
+  };
+  walk(root, "");
+  return state;
+}
+
+function captureFixtureEntry(path: string, info: Deno.FileInfo): FixtureEntryState {
+  const mode = info.mode === null ? null : info.mode & 0o7777;
+  if (info.isDirectory) return { kind: "directory", mode };
+  if (info.isFile) return { kind: "file", mode, content: Deno.readFileSync(path) };
+  if (info.isSymlink) return { kind: "symlink", mode, target: Deno.readLinkSync(path) };
+  return { kind: "other", mode };
+}
+
+function changedFixturePaths(before: FixtureTreeState, after: FixtureTreeState): string[] {
+  const paths = new Set<string>([...before.keys(), ...after.keys()]);
+  return [...paths].filter((path) => !sameFixtureEntry(before.get(path), after.get(path))).sort(comparePaths);
+}
+
+function sameFixtureEntry(left: FixtureEntryState | undefined, right: FixtureEntryState | undefined): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  if (left.kind !== right.kind || left.mode !== right.mode) return false;
+  if (left.kind === "file") return sameBytes(left.content!, right.content!);
+  if (left.kind === "symlink") return left.target === right.target;
+  return true;
+}
+
+function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i++) {
+    if (left[i] !== right[i]) return false;
+  }
+  return true;
+}
+
+function restoreFixtureTree(
+  root: string,
+  before: FixtureTreeState,
+  after: FixtureTreeState,
+  violations: readonly string[],
+): void {
+  const target = new Map(after);
+  for (const path of violations) {
+    const original = before.get(path);
+    if (original === undefined) target.delete(path);
+    else target.set(path, original);
+  }
+  for (const path of violations) {
+    const parts = path.split("/");
+    for (let i = 1; i < parts.length; i++) {
+      const ancestorPath = parts.slice(0, i).join("/");
+      const original = before.get(ancestorPath);
+      const desired = target.get(ancestorPath);
+      if (original !== undefined && (desired === undefined || desired.kind !== original.kind)) {
+        target.set(ancestorPath, original);
+      }
+    }
+  }
+  pruneImpossibleFixtureDescendants(target);
+
+  const current = captureFixtureTree(root);
+  makeFixtureTreeWritable(root, current);
+  const removals = [...current.keys()]
+    .filter((path) => {
+      const desired = target.get(path);
+      return desired === undefined || desired.kind !== current.get(path)!.kind;
+    })
+    .sort((left, right) => pathDepth(right) - pathDepth(left) || comparePaths(right, left));
+  for (const path of removals) removeFixtureEntry(`${root}/${path}`);
+
+  const paths = [...target.keys()].sort((left, right) =>
+    pathDepth(left) - pathDepth(right) || comparePaths(left, right)
+  );
+  for (const path of paths) {
+    const desired = target.get(path)!;
+    const abs = `${root}/${path}`;
+    const existing = fixtureEntryIfExists(abs);
+    if (existing === null) {
+      ensureFixtureParent(root, path);
+      createFixtureEntry(abs, desired);
+      continue;
+    }
+    if (existing.kind !== desired.kind) {
+      removeFixtureEntry(abs);
+      ensureFixtureParent(root, path);
+      createFixtureEntry(abs, desired);
+      continue;
+    }
+    updateFixtureEntry(abs, existing, desired);
+  }
+  for (const path of paths) {
+    const desired = target.get(path)!;
+    if (desired.kind !== "symlink") {
+      applyFixtureMode(`${root}/${path}`, desired);
+    }
+  }
+}
+
+function pruneImpossibleFixtureDescendants(target: FixtureTreeState): void {
+  const paths = [...target.keys()].sort((left, right) =>
+    pathDepth(left) - pathDepth(right) || comparePaths(left, right)
+  );
+  for (const path of paths) {
+    const parts = path.split("/");
+    for (let i = 1; i < parts.length; i++) {
+      const ancestor = target.get(parts.slice(0, i).join("/"));
+      if (ancestor === undefined || ancestor.kind !== "directory") {
+        target.delete(path);
+        break;
+      }
+    }
+  }
+}
+
+function pathDepth(path: string): number {
+  return path.split("/").length;
+}
+
+function fixtureEntryIfExists(path: string): FixtureEntryState | null {
+  try {
+    return captureFixtureEntry(path, Deno.lstatSync(path));
+  } catch (err) {
+    if (err instanceof Deno.errors.NotFound) return null;
+    throw err;
+  }
+}
+
+function ensureFixtureParent(root: string, path: string): void {
+  const slash = path.lastIndexOf("/");
+  if (slash === -1) return;
+  Deno.mkdirSync(`${root}/${path.slice(0, slash)}`, { recursive: true });
+}
+
+function makeFixtureTreeWritable(root: string, current: FixtureTreeState): void {
+  for (const [path, entry] of current) {
+    if (entry.kind === "directory" && entry.mode !== null) {
+      Deno.chmodSync(`${root}/${path}`, entry.mode | 0o700);
+    }
+  }
+}
+
+function createFixtureEntry(path: string, entry: FixtureEntryState): void {
+  switch (entry.kind) {
+    case "directory":
+      Deno.mkdirSync(path, { recursive: true });
+      break;
+    case "file":
+      Deno.writeFileSync(path, entry.content!);
+      applyFixtureMode(path, entry);
+      break;
+    case "symlink":
+      Deno.symlinkSync(entry.target!, path);
+      break;
+    case "other":
+      throw new Error(`cannot restore unsupported fixture entry: ${path}`);
+  }
+}
+
+function updateFixtureEntry(path: string, current: FixtureEntryState, desired: FixtureEntryState): void {
+  if (desired.kind === "file" && !sameBytes(current.content!, desired.content!)) {
+    if (current.mode !== null && (current.mode & 0o222) === 0) Deno.chmodSync(path, current.mode | 0o600);
+    Deno.writeFileSync(path, desired.content!);
+  }
+  if (desired.kind === "symlink" && current.target !== desired.target) {
+    removeFixtureEntry(path);
+    Deno.symlinkSync(desired.target!, path);
+  }
+}
+
+function applyFixtureMode(path: string, entry: FixtureEntryState): void {
+  if (entry.mode !== null) Deno.chmodSync(path, entry.mode);
+}
+
+function removeFixtureEntry(path: string): void {
+  const info = fixtureEntryIfExists(path);
+  if (info === null) return;
+  Deno.removeSync(path, { recursive: info.kind === "directory" });
 }
 
 function sandboxString(value: string): string {
