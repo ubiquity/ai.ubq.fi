@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "source": "github_codex_review",
+  "reviewed_head_sha": "7814d069bdd567f7ef5b0a34a60f12ff084de246",
+  "reviewed_base_sha": "63ce001409575bcc6315d56ae3d0cabf050259a6",
+  "review": {
+    "id": 5126302041,
+    "node_id": "PRR_kwDOQoe6nc8AAAABMY0pWQ",
+    "user": {
+      "login": "chatgpt-codex-connector[bot]",
+      "id": 199175422,
+      "node_id": "BOT_kgDOC98s_g",
+      "avatar_url": "https://avatars.githubusercontent.com/in/1144995?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D",
+      "html_url": "https://github.com/apps/chatgpt-codex-connector",
+      "followers_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/followers",
+      "following_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/following{/other_user}",
+      "gists_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/subscriptions",
+      "organizations_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/orgs",
+      "repos_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/repos",
+      "events_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/received_events",
+      "type": "Bot",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "\n### 💡 Codex Review\n\nHere are some automated review suggestions for this pull request.\n\n**Reviewed commit:** `7814d069bd`\n    \n\n<details> <summary>ℹ️ About Codex in GitHub</summary>\n<br/>\n\n[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you\n- Open a pull request for review\n- Mark a draft as ready\n- Comment \"@codex review\".\n\nIf Codex has suggestions, it will comment; otherwise it will react with 👍.\n\n\n\n\nCodex can also answer questions or update the PR. Try commenting \"@codex address that feedback\".\n            \n</details>",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/ubiquity/ai.ubq.fi/pull/248#pullrequestreview-5126302041",
+    "pull_request_url": "https://api.github.com/repos/ubiquity/ai.ubq.fi/pulls/248",
+    "author_association": "NONE",
+    "_links": {
+      "html": {
+        "href": "https://github.com/ubiquity/ai.ubq.fi/pull/248#pullrequestreview-5126302041"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/ubiquity/ai.ubq.fi/pulls/248"
+      }
+    },
+    "submitted_at": "2026-09-06T19:01:02Z",
+    "commit_id": "7814d069bdd567f7ef5b0a34a60f12ff084de246"
+  },
+  "comments": [
+    {
+      "id": 3944951252,
+      "node_id": "PRRC_kwDOQoe6nc7rIy3U",
+      "url": "https://api.github.com/repos/ubiquity/ai.ubq.fi/pulls/comments/3944951252",
+      "pull_request_review_id": 5126302041,
+      "diff_hunk": "@@ -478,6 +478,15 @@ export const verifyFrozenIssuePlanDigest = async (\n     ) {\n       throw new Error(\"Sentinel frozen plan does not bind the authoritative recovery source identity\");\n     }\n+    if (\n+      input.cycleBaseSha !== null && input.recovery.base_sha !== input.cycleBaseSha",
+      "path": "scripts/sentinel/issue-delivery.ts",
+      "position": 5,
+      "original_position": 5,
+      "commit_id": "7814d069bdd567f7ef5b0a34a60f12ff084de246",
+      "user": {
+        "login": "chatgpt-codex-connector[bot]",
+        "id": 199175422,
+        "node_id": "BOT_kgDOC98s_g",
+        "avatar_url": "https://avatars.githubusercontent.com/in/1144995?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D",
+        "html_url": "https://github.com/apps/chatgpt-codex-connector",
+        "followers_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/followers",
+        "following_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/following{/other_user}",
+        "gists_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/subscriptions",
+        "organizations_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/orgs",
+        "repos_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/repos",
+        "events_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/received_events",
+        "type": "Bot",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "body": "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Advance the recovery record with an accepted convergence base**\n\nWhen a GitHub-issue matrix is prepared at A and `origin/development` advances to B through history accepted by `verifyMatrixConvergenceAdvance`, convergence deliberately executes and records the cycle at B (`main.ts:4772-4778`), but `reuseMatrixPreparedRecoveryRecord` retains A and `persistCandidateRecoveryPhase` never copies the checkpoint record's new `base_sha`. The recovery report therefore remains at A even after a successful checkpoint, so this equality check makes pre-push and the always-run delivery reconciliation reject every such otherwise-valid converged candidate. Update the durable recovery record to B after proving the advance, rather than weakening the identity check.\n\nAGENTS.md reference: [AGENTS.md:L84-L85](https://github.com/ubiquity/ai.ubq.fi/blob/7814d069bdd567f7ef5b0a34a60f12ff084de246/AGENTS.md#L84-L85)\n\nUseful? React with 👍 / 👎.",
+      "created_at": "2026-09-06T19:01:02Z",
+      "updated_at": "2026-09-06T19:01:02Z",
+      "html_url": "https://github.com/ubiquity/ai.ubq.fi/pull/248#discussion_r3944951252",
+      "pull_request_url": "https://api.github.com/repos/ubiquity/ai.ubq.fi/pulls/248",
+      "author_association": "NONE",
+      "_links": {
+        "self": {
+          "href": "https://api.github.com/repos/ubiquity/ai.ubq.fi/pulls/comments/3944951252"
+        },
+        "html": {
+          "href": "https://github.com/ubiquity/ai.ubq.fi/pull/248#discussion_r3944951252"
+        },
+        "pull_request": {
+          "href": "https://api.github.com/repos/ubiquity/ai.ubq.fi/pulls/248"
+        }
+      },
+      "original_commit_id": "7814d069bdd567f7ef5b0a34a60f12ff084de246",
+      "reactions": {
+        "url": "https://api.github.com/repos/ubiquity/ai.ubq.fi/pulls/comments/3944951252/reactions",
+        "total_count": 0,
+        "+1": 0,
+        "-1": 0,
+        "laugh": 0,
+        "hooray": 0,
+        "confused": 0,
+        "heart": 0,
+        "rocket": 0,
+        "eyes": 0
+      }
+    }
+  ],
+  "raw": "- [P1] Advance the recovery record with an accepted convergence base — scripts/sentinel/issue-delivery.ts:482\nWhen a GitHub-issue matrix is prepared at A and `origin/development` advances to B through history accepted by `verifyMatrixConvergenceAdvance`, convergence deliberately executes and records the cycle at B (`main.ts:4772-4778`), but `reuseMatrixPreparedRecoveryRecord` retains A and `persistCandidateRecoveryPhase` never copies the checkpoint record's new `base_sha`. The recovery report therefore remains at A even after a successful checkpoint, so this equality check makes pre-push and the always-run delivery reconciliation reject every such otherwise-valid converged candidate. Update the durable recovery record to B after proving the advance, rather than weakening the identity check.\n\nAGENTS.md reference: [AGENTS.md:L84-L85](https://github.com/ubiquity/ai.ubq.fi/blob/7814d069bdd567f7ef5b0a34a60f12ff084de246/AGENTS.md#L84-L85)",
+  "report": {
+    "schema_version": 1,
+    "round": 1,
+    "parse_status": "findings",
+    "findings": [
+      {
+        "fingerprint": "eb2263f930bbad222666b00ac6b0732a8f0a58a6239d6733c92e0b1ab77692c9",
+        "severity": "P1",
+        "title": "Advance the recovery record with an accepted convergence base — scripts/sentinel/issue-delivery.ts:482",
+        "body": "When a GitHub-issue matrix is prepared at A and `origin/development` advances to B through history accepted by `verifyMatrixConvergenceAdvance`, convergence deliberately executes and records the cycle at B (`main.ts:4772-4778`), but `reuseMatrixPreparedRecoveryRecord` retains A and `persistCandidateRecoveryPhase` never copies the checkpoint record's new `base_sha`. The recovery report therefore remains at A even after a successful checkpoint, so this equality check makes pre-push and the always-run delivery reconciliation reject every such otherwise-valid converged candidate. Update the durable recovery record to B after proving the advance, rather than weakening the identity check.\nAGENTS.md reference: [AGENTS.md:L84-L85](https://github.com/ubiquity/ai.ubq.fi/blob/7814d069bdd567f7ef5b0a34a60f12ff084de246/AGENTS.md#L84-L85)",
+        "location": "scripts/sentinel/issue-delivery.ts:482"
+      }
+    ]
+  }
+}

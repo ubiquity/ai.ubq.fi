@@ -1,0 +1,194 @@
+{
+  "schema_version": 1,
+  "source": "github_codex_review",
+  "reviewed_head_sha": "80767610dd31ee99cd5183d1e7978e55add68cab",
+  "reviewed_base_sha": "0be974c31c508aaf2d34f71cdc733b8544fa07f8",
+  "review": {
+    "id": 5126280277,
+    "node_id": "PRR_kwDOQoe6nc8AAAABMYzUVQ",
+    "user": {
+      "login": "chatgpt-codex-connector[bot]",
+      "id": 199175422,
+      "node_id": "BOT_kgDOC98s_g",
+      "avatar_url": "https://avatars.githubusercontent.com/in/1144995?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D",
+      "html_url": "https://github.com/apps/chatgpt-codex-connector",
+      "followers_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/followers",
+      "following_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/following{/other_user}",
+      "gists_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/subscriptions",
+      "organizations_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/orgs",
+      "repos_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/repos",
+      "events_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/received_events",
+      "type": "Bot",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "\n### 💡 Codex Review\n\nHere are some automated review suggestions for this pull request.\n\n**Reviewed commit:** `80767610dd`\n    \n\n<details> <summary>ℹ️ About Codex in GitHub</summary>\n<br/>\n\n[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you\n- Open a pull request for review\n- Mark a draft as ready\n- Comment \"@codex review\".\n\nIf Codex has suggestions, it will comment; otherwise it will react with 👍.\n\n\n\n\nCodex can also answer questions or update the PR. Try commenting \"@codex address that feedback\".\n            \n</details>",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/ubiquity/ai.ubq.fi/pull/247#pullrequestreview-5126280277",
+    "pull_request_url": "https://api.github.com/repos/ubiquity/ai.ubq.fi/pulls/247",
+    "author_association": "NONE",
+    "_links": {
+      "html": {
+        "href": "https://github.com/ubiquity/ai.ubq.fi/pull/247#pullrequestreview-5126280277"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/ubiquity/ai.ubq.fi/pulls/247"
+      }
+    },
+    "submitted_at": "2026-09-06T18:50:51Z",
+    "commit_id": "80767610dd31ee99cd5183d1e7978e55add68cab"
+  },
+  "comments": [
+    {
+      "id": 3944927159,
+      "node_id": "PRRC_kwDOQoe6nc7rIs-3",
+      "url": "https://api.github.com/repos/ubiquity/ai.ubq.fi/pulls/comments/3944927159",
+      "pull_request_review_id": 5126280277,
+      "diff_hunk": "@@ -2014,11 +2056,29 @@ export const validatePlannedIssueTriage = (\n   if (\n     scope.length === 0 || scope.length > 32 ||\n     scope.some((path) => {\n-      const normalized = path.endsWith(\"/\") ? path.slice(0, -1) : path;\n-      return normalized.length === 0 || normalized.length > 512 || path.startsWith(\"/\") ||\n+      // Explicit directories are validated by their NORMALIZED path: the\n+      // slash-suffixed form contains an empty segment that the protected\n+      // matcher rejects, so ordinary src/ and tests/ scope must be checked\n+      // after normalization. An explicit directory scope never grants\n+      // permission to protected descendants (the implementation stage keeps\n+      // actual per-file protected checks) and protected directory roots are\n+      // rejected outright.\n+      const directory = path.endsWith(\"/\");\n+      const normalized = directory ? path.slice(0, -1) : path;\n+      if (\n+        normalized.length === 0 || normalized.length > 512 || path.startsWith(\"/\") ||\n         path.includes(\"\\\\\") || path.endsWith(\"//\") ||\n-        normalized.split(\"/\").some((part) => part === \"\" || part === \".\" || part === \"..\") ||\n-        isSentinelProtectedImplementationPath(path);\n+        normalized.split(\"/\").some((part) => part === \"\" || part === \".\" || part === \"..\")\n+      ) return true;\n+      if (directory) {\n+        return isSentinelProtectedImplementationPath(normalized) ||",
+      "path": "scripts/sentinel/main.ts",
+      "position": 79,
+      "original_position": 79,
+      "commit_id": "80767610dd31ee99cd5183d1e7978e55add68cab",
+      "user": {
+        "login": "chatgpt-codex-connector[bot]",
+        "id": 199175422,
+        "node_id": "BOT_kgDOC98s_g",
+        "avatar_url": "https://avatars.githubusercontent.com/in/1144995?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D",
+        "html_url": "https://github.com/apps/chatgpt-codex-connector",
+        "followers_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/followers",
+        "following_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/following{/other_user}",
+        "gists_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/subscriptions",
+        "organizations_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/orgs",
+        "repos_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/repos",
+        "events_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/received_events",
+        "type": "Bot",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "body": "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Keep accepted directories compatible with matrix ownership**\n\nWhen the planner emits one of the newly supported broad scopes such as `src/` or `tests/`, this branch accepts it because the normalized directory root is not itself protected. Later, `writePreparedMatrixPlan` supplies every protected path as `prohibited_paths` (`main.ts:1614-1619`), while `assertNoOverlap` treats a directory and any protected descendant as overlapping (`matrix.ts:109-120`). Since both example directories contain protected files, matrix preparation throws before any implementation cell can run; the validation and matrix ownership representation need compatible semantics for directories with excluded protected descendants.\n\nUseful? React with 👍 / 👎.",
+      "created_at": "2026-09-06T18:50:51Z",
+      "updated_at": "2026-09-06T18:50:51Z",
+      "html_url": "https://github.com/ubiquity/ai.ubq.fi/pull/247#discussion_r3944927159",
+      "pull_request_url": "https://api.github.com/repos/ubiquity/ai.ubq.fi/pulls/247",
+      "author_association": "NONE",
+      "_links": {
+        "self": {
+          "href": "https://api.github.com/repos/ubiquity/ai.ubq.fi/pulls/comments/3944927159"
+        },
+        "html": {
+          "href": "https://github.com/ubiquity/ai.ubq.fi/pull/247#discussion_r3944927159"
+        },
+        "pull_request": {
+          "href": "https://api.github.com/repos/ubiquity/ai.ubq.fi/pulls/247"
+        }
+      },
+      "original_commit_id": "80767610dd31ee99cd5183d1e7978e55add68cab",
+      "reactions": {
+        "url": "https://api.github.com/repos/ubiquity/ai.ubq.fi/pulls/comments/3944927159/reactions",
+        "total_count": 0,
+        "+1": 0,
+        "-1": 0,
+        "laugh": 0,
+        "hooray": 0,
+        "confused": 0,
+        "heart": 0,
+        "rocket": 0,
+        "eyes": 0
+      }
+    },
+    {
+      "id": 3944927164,
+      "node_id": "PRRC_kwDOQoe6nc7rIs-8",
+      "url": "https://api.github.com/repos/ubiquity/ai.ubq.fi/pulls/comments/3944927164",
+      "pull_request_review_id": 5126280277,
+      "diff_hunk": "@@ -3950,6 +4010,42 @@ const run = async (): Promise<void> => {\n   ): Promise<GitHubIssueJobPlanning> => {\n     const pinnedBaseSha = selectedDevelopmentSha;\n     if (pinnedBaseSha === null) throw new Error(\"GitHub issue planning requires a pinned development base\");\n+    const persistPlanningBlocker = (blockedReason: string) =>\n+      persistPlanningOutcome({\n+        store: {\n+          read: () => readGitHubSentinelRecoveryLedger({ token: githubToken, repository }),\n+          write: async (snapshot, ledger, message) => {\n+            selectionRecoverySnapshot = await writeGitHubSentinelRecoveryLedger({\n+              token: githubToken,\n+              repository,\n+              snapshot,\n+              ledger,\n+              message,\n+            });\n+            return selectionRecoverySnapshot;\n+          },\n+        },\n+        repository,\n+        job,\n+        runId,\n+        runAttempt: githubRunAttempt,\n+        pinnedBaseSha,\n+        blockedReason,\n+        now: new Date().toISOString(),\n+      });\n+    // Deterministic incoming-dependency gate for a FRESH plan: incomplete\n+    // dependency capture is a retryable source_unavailable and any captured\n+    // OPEN prerequisite is a stable unresolved_dependency blocker. Both are\n+    // persisted through the production helper before any planner invocation\n+    // so the ordered selector continues to the next issue, and none of it\n+    // depends on the planner obeying instruction text.\n+    if (context.checkpoint === null) {\n+      const dependencyState = evaluatePlannedIssueIncomingDependencies(job);\n+      if (dependencyState.blocked) {\n+        const outcome = await persistPlanningBlocker(dependencyState.reason);\n+        return { ready: false, reason: outcome.reason, persisted: outcome.persisted };",
+      "path": "scripts/sentinel/main.ts",
+      "position": 127,
+      "original_position": 127,
+      "commit_id": "80767610dd31ee99cd5183d1e7978e55add68cab",
+      "user": {
+        "login": "chatgpt-codex-connector[bot]",
+        "id": 199175422,
+        "node_id": "BOT_kgDOC98s_g",
+        "avatar_url": "https://avatars.githubusercontent.com/in/1144995?v=4",
+        "gravatar_id": "",
+        "url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D",
+        "html_url": "https://github.com/apps/chatgpt-codex-connector",
+        "followers_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/followers",
+        "following_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/following{/other_user}",
+        "gists_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/gists{/gist_id}",
+        "starred_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/starred{/owner}{/repo}",
+        "subscriptions_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/subscriptions",
+        "organizations_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/orgs",
+        "repos_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/repos",
+        "events_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/events{/privacy}",
+        "received_events_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/received_events",
+        "type": "Bot",
+        "user_view_type": "public",
+        "site_admin": false
+      },
+      "body": "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Apply the dependency gate to retained checkpoints**\n\nWhen a retained checkpoint was created from a frozen plan that ignored an incoming open dependency, `context.checkpoint` is non-null and this condition skips the new deterministic gate. The retained-plan path authenticates and returns the frozen triage without calling `validatePlannedIssueTriage`, so an unchanged open prerequisite can still proceed to implementation and delivery after the retry becomes due. Evaluate the current captured dependency state for retained work as well, while preserving the checkpoint when it remains blocked.\n\nUseful? React with 👍 / 👎.",
+      "created_at": "2026-09-06T18:50:51Z",
+      "updated_at": "2026-09-06T18:50:51Z",
+      "html_url": "https://github.com/ubiquity/ai.ubq.fi/pull/247#discussion_r3944927164",
+      "pull_request_url": "https://api.github.com/repos/ubiquity/ai.ubq.fi/pulls/247",
+      "author_association": "NONE",
+      "_links": {
+        "self": {
+          "href": "https://api.github.com/repos/ubiquity/ai.ubq.fi/pulls/comments/3944927164"
+        },
+        "html": {
+          "href": "https://github.com/ubiquity/ai.ubq.fi/pull/247#discussion_r3944927164"
+        },
+        "pull_request": {
+          "href": "https://api.github.com/repos/ubiquity/ai.ubq.fi/pulls/247"
+        }
+      },
+      "original_commit_id": "80767610dd31ee99cd5183d1e7978e55add68cab",
+      "reactions": {
+        "url": "https://api.github.com/repos/ubiquity/ai.ubq.fi/pulls/comments/3944927164/reactions",
+        "total_count": 0,
+        "+1": 0,
+        "-1": 0,
+        "laugh": 0,
+        "hooray": 0,
+        "confused": 0,
+        "heart": 0,
+        "rocket": 0,
+        "eyes": 0
+      }
+    }
+  ],
+  "raw": "- [P1] Keep accepted directories compatible with matrix ownership — scripts/sentinel/main.ts:2074\nWhen the planner emits one of the newly supported broad scopes such as `src/` or `tests/`, this branch accepts it because the normalized directory root is not itself protected. Later, `writePreparedMatrixPlan` supplies every protected path as `prohibited_paths` (`main.ts:1614-1619`), while `assertNoOverlap` treats a directory and any protected descendant as overlapping (`matrix.ts:109-120`). Since both example directories contain protected files, matrix preparation throws before any implementation cell can run; the validation and matrix ownership representation need compatible semantics for directories with excluded protected descendants.\n\n- [P1] Apply the dependency gate to retained checkpoints — scripts/sentinel/main.ts:4046\nWhen a retained checkpoint was created from a frozen plan that ignored an incoming open dependency, `context.checkpoint` is non-null and this condition skips the new deterministic gate. The retained-plan path authenticates and returns the frozen triage without calling `validatePlannedIssueTriage`, so an unchanged open prerequisite can still proceed to implementation and delivery after the retry becomes due. Evaluate the current captured dependency state for retained work as well, while preserving the checkpoint when it remains blocked.",
+  "report": {
+    "schema_version": 1,
+    "round": 1,
+    "parse_status": "findings",
+    "findings": [
+      {
+        "fingerprint": "c07493fcb16e4c4d702eddb3088e364b0b8e26a2f8deec9e3513abe11ec3cb5f",
+        "severity": "P1",
+        "title": "Keep accepted directories compatible with matrix ownership — scripts/sentinel/main.ts:2074",
+        "body": "When the planner emits one of the newly supported broad scopes such as `src/` or `tests/`, this branch accepts it because the normalized directory root is not itself protected. Later, `writePreparedMatrixPlan` supplies every protected path as `prohibited_paths` (`main.ts:1614-1619`), while `assertNoOverlap` treats a directory and any protected descendant as overlapping (`matrix.ts:109-120`). Since both example directories contain protected files, matrix preparation throws before any implementation cell can run; the validation and matrix ownership representation need compatible semantics for directories with excluded protected descendants.",
+        "location": "scripts/sentinel/main.ts:2074"
+      },
+      {
+        "fingerprint": "fb24ea72a586a77ab6bd028bb7e374d11ca8daf4df824dfda77a63d605df4fdc",
+        "severity": "P1",
+        "title": "Apply the dependency gate to retained checkpoints — scripts/sentinel/main.ts:4046",
+        "body": "When a retained checkpoint was created from a frozen plan that ignored an incoming open dependency, `context.checkpoint` is non-null and this condition skips the new deterministic gate. The retained-plan path authenticates and returns the frozen triage without calling `validatePlannedIssueTriage`, so an unchanged open prerequisite can still proceed to implementation and delivery after the retry becomes due. Evaluate the current captured dependency state for retained work as well, while preserving the checkpoint when it remains blocked.",
+        "location": "scripts/sentinel/main.ts:4046"
+      }
+    ]
+  }
+}
