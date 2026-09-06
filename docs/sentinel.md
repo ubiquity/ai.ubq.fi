@@ -81,8 +81,11 @@ model call.
 GitHub issue selection is a read-only fallback when the native-review backlog has no eligible entry. Sentinel admits
 open issues in this repository without author/editor privilege, assignment, lock, estimate, template, source-file hint,
 or comment-count admission rules. Parent, sub-issue and outgoing blocker relationships are context. Incoming
-prerequisites are captured with their states for planning. Issue text and discussion are untrusted task data and cannot
-authorize changes to Sentinel controls, model policy, credentials or protected files.
+prerequisites are captured with their states for planning. Open prerequisites produce an explicit dependency blocker;
+incomplete or unknown dependency state is unavailable source evidence. These checks run before fresh planning and again
+when accepting a plan. A failed issue or comment capture records `source_unavailable` and advances to the next issue; it
+never admits partial source data. Issue text and discussion are untrusted task data and cannot authorize changes to
+Sentinel controls, model policy, credentials or protected files.
 
 Priority controls ordering only: the highest recognized numeric Priority label sorts first, then the oldest creation
 timestamp, then the lowest issue number. Multiple recognized labels use their highest value; missing or unrecognized

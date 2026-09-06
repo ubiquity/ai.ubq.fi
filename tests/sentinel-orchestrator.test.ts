@@ -16,6 +16,7 @@ import {
   createSentinelCandidateRecoveryRecord,
   deduplicateRetainedReplayCaptures,
   durableProductionDecision,
+  evaluatePlannedIssueIncomingDependencies,
   evaluateReviewBacklogImplementation,
   evaluateRollbackPreflight,
   evaluateSelectedIssueImplementation,
@@ -66,6 +67,7 @@ import {
   TRIAGE_INCIDENT_MS,
   triageExpectedMaximumRuntimeMs,
   triagePrompt,
+  validatePlannedIssueTriage,
   validationRepairPrompt,
   verifyMatrixConvergenceAdvance,
   withStageHeartbeat,
@@ -98,6 +100,7 @@ import {
   GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS,
   type GitHubIssueJob,
   githubIssueJobMatchesHint,
+  type GitHubIssueJobPlanning,
   githubIssueJobsMatch,
   type GitHubIssueJobSource,
   githubIssueJobTriageReport,
@@ -5704,6 +5707,312 @@ Deno.test("due retry reclaim rebases only proven GitHub issue work to the execut
   const reclaimedBacklog = reclaim(backlogRetry);
   assert.equal(reclaimedBacklog.base_sha, backlogRetry.base_sha);
   assert.equal(reclaimedBacklog.phase, "claimed");
+});
+Deno.test("per-candidate source capture failures are explicit skips that never starve later work", async () => {
+  const repository = "ubiquity/ai.ubq.fi";
+  const first = sentinelGitHubIssue({
+    id: 10_139,
+    nodeId: "I_kwDOIssue139",
+    number: 139,
+    title: "Unreadable comments",
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/139",
+    createdAt: "2026-08-27T19:06:05Z",
+    updatedAt: "2026-08-27T19:07:29Z",
+  });
+  const later = sentinelGitHubIssue({
+    id: 10_140,
+    nodeId: "I_kwDOIssue140",
+    number: 140,
+    title: "Later eligible",
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/140",
+    createdAt: "2026-08-27T19:06:06Z",
+    updatedAt: "2026-08-27T19:07:29Z",
+  });
+  const listed = {
+    ...githubIssueSource([first, later]),
+    listIssueComments: (number: number) =>
+      number === first.number ? Promise.reject(new Error("comment transport")) : Promise.resolve([]),
+  } as GitHubIssueJobSource;
+  const selection = await selectNextGitHubIssueJobSelection(
+    listed,
+    repository,
+    renderGitHubIssueJobLedger([]),
+    recoverySelectionContext(),
+    new Date("2026-08-28T00:01:00Z"),
+  );
+  assert.equal(selection?.job?.number, later.number);
+  assert.equal(selection?.queue.entries[0].number, first.number);
+  assert.equal(selection?.queue.entries[0].reason, "source_unavailable");
+  assert.equal(selection?.queue.entries[0].fingerprint, "");
+  // A source identity race is equally isolated: the changed identity is never
+  // admitted and the next eligible candidate still advances.
+  const raced = {
+    ...githubIssueSource([first, later]),
+    getIssue: (number: number) =>
+      number === first.number ? Promise.resolve({ ...first, id: first.id + 1 }) : Promise.resolve(later),
+  } as GitHubIssueJobSource;
+  const racedSelection = await selectNextGitHubIssueJobSelection(
+    raced,
+    repository,
+    renderGitHubIssueJobLedger([]),
+    recoverySelectionContext(),
+    new Date("2026-08-28T00:01:00Z"),
+  );
+  assert.equal(racedSelection?.job?.number, later.number);
+  assert.equal(racedSelection?.queue.entries[0].reason, "source_unavailable");
+  // Global invalid ledger content stays fail-closed.
+  await assert.rejects(
+    () =>
+      selectNextGitHubIssueJobSelection(
+        githubIssueSource([later]),
+        repository,
+        "| broken\n",
+        recoverySelectionContext(),
+        new Date(),
+      ),
+    /ledger/u,
+  );
+});
+
+Deno.test("fresh plan acceptance deterministically blocks incomplete or OPEN incoming dependencies", async () => {
+  const repository = "ubiquity/ai.ubq.fi";
+  const withRelations = async (relations: Partial<GitHubIssueRelations>): Promise<GitHubIssueJob> => {
+    const job = await createGitHubIssueJob(repository, sentinelGitHubIssue(), { ...noIssueRelations, ...relations });
+    assert.ok(job);
+    return job;
+  };
+  const blocked = await withRelations({
+    blockedByCount: 1,
+    dependencies: [{ issue_number: 200, state: "open" }],
+    dependenciesComplete: true,
+  });
+  const evaluated = evaluatePlannedIssueIncomingDependencies(blocked);
+  assert.equal(evaluated.blocked, true);
+  if (evaluated.blocked) assert.match(evaluated.reason, /unresolved_dependency: #200 \(open\)/u);
+  // The validator itself rejects schema-valid actionable output while the
+  // OPEN prerequisite blocks: the gate is part of plan acceptance.
+  const interval = computeSentinelInterval("hourly", now);
+  const triageFor = (allowedPaths: readonly string[]): TriageReport => ({
+    schema_version: 1,
+    interval,
+    findings: [{
+      id: issueJobFindingId(blocked),
+      fingerprint: blocked.fingerprint,
+      severity: blocked.priority,
+      title: blocked.title,
+      affected_surface: "src/http.ts",
+      allowed_paths: allowedPaths,
+      shared_paths: [],
+      depends_on: [],
+      evidence: [{ source: "github_issue", reference: blocked.htmlUrl, detail: blocked.body }],
+      proposed_correction: "Implement the bounded repair.",
+      validation_requirements: ["Run deno fmt and affected tests"],
+      actionable: true,
+    }],
+    no_findings_reason: null,
+  });
+  assert.throws(
+    () => validatePlannedIssueTriage(blocked, triageFor(["src/", "tests/"]), interval),
+    /unresolved_dependency: #200/u,
+  );
+  // Closed prerequisites and relationship-only metadata never block.
+  const closed = await withRelations({
+    blockedByCount: 1,
+    dependencies: [{ issue_number: 200, state: "closed" }],
+    dependenciesComplete: true,
+  });
+  assert.deepEqual(evaluatePlannedIssueIncomingDependencies(closed), { blocked: false });
+  const relationshipOnly = await withRelations({ parentIssueNumber: 77, subIssueCount: 2, blockingCount: 1 });
+  assert.deepEqual(evaluatePlannedIssueIncomingDependencies(relationshipOnly), { blocked: false });
+  // The legacy no-dependency shape stays complete.
+  const legacy = await withRelations({});
+  assert.deepEqual(evaluatePlannedIssueIncomingDependencies(legacy), { blocked: false });
+  // Incomplete capture is retryable source_unavailable: explicit flag, an
+  // unknown prerequisite state, and a count/list mismatch all block.
+  for (
+    const relations of [
+      { blockedByCount: 1, dependencies: [{ issue_number: 200, state: "closed" }], dependenciesComplete: false },
+      {
+        blockedByCount: 1,
+        dependencies: [{ issue_number: 200, state: "unknown" }],
+        dependenciesComplete: false,
+      },
+      {
+        blockedByCount: 2,
+        dependencies: [{ issue_number: 200, state: "closed" }],
+        dependenciesComplete: false,
+      },
+    ] as const
+  ) {
+    const incomplete = await withRelations(relations);
+    const incompleteState = evaluatePlannedIssueIncomingDependencies(incomplete);
+    assert.equal(incompleteState.blocked, true);
+    if (incompleteState.blocked) {
+      assert.match(incompleteState.reason, /source_unavailable: incomplete incoming dependency capture/u);
+    }
+  }
+  // Actual dependency state is part of the source fingerprint: closing the
+  // prerequisite permits a changed-source evaluation.
+  const openFingerprint = (await withRelations({
+    blockedByCount: 1,
+    dependencies: [{ issue_number: 200, state: "open" }],
+    dependenciesComplete: true,
+  })).fingerprint;
+  const closedFingerprint = (await withRelations({
+    blockedByCount: 1,
+    dependencies: [{ issue_number: 200, state: "closed" }],
+    dependenciesComplete: true,
+  })).fingerprint;
+  assert.notEqual(openFingerprint, closedFingerprint);
+});
+
+Deno.test("blocked-first dependency keeps ordered advancement and directory scope validates normalized paths", async () => {
+  const repository = "ubiquity/ai.ubq.fi";
+  const first = sentinelGitHubIssue({
+    id: 10_141,
+    nodeId: "I_kwDOIssue141",
+    number: 141,
+    title: "Dependency blocked",
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/141",
+    createdAt: "2026-08-27T19:06:05Z",
+    updatedAt: "2026-08-27T19:07:29Z",
+  });
+  const second = sentinelGitHubIssue({
+    id: 10_142,
+    nodeId: "I_kwDOIssue142",
+    number: 142,
+    title: "Later work",
+    htmlUrl: "https://github.com/ubiquity/ai.ubq.fi/issues/142",
+    createdAt: "2026-08-27T19:06:06Z",
+    updatedAt: "2026-08-27T19:07:29Z",
+  });
+  // The first candidate carries a real OPEN prerequisite; the selector's
+  // planning callback runs the actual production gate and persists the stable
+  // blocker through the injected production store before advancing.
+  const relationsByNumber: Readonly<Record<number, GitHubIssueRelations>> = {
+    [first.number]: {
+      ...noIssueRelations,
+      blockedByCount: 1,
+      dependencies: [{ issue_number: 200, state: "open" }],
+      dependenciesComplete: true,
+    },
+  };
+  const persistence = planningPersistenceStore();
+  const blobbedPlanning = async (job: GitHubIssueJob): Promise<GitHubIssueJobPlanning> => {
+    const dependencyState = evaluatePlannedIssueIncomingDependencies(job);
+    if (dependencyState.blocked) {
+      const outcome = await persistPlanningOutcome({
+        store: persistence.store,
+        repository,
+        job,
+        runId: "run-1",
+        runAttempt: 1,
+        pinnedBaseSha: "b".repeat(40),
+        blockedReason: dependencyState.reason,
+        now: "2026-09-01T00:00:00.000Z",
+      });
+      return { ready: false, reason: outcome.reason, persisted: outcome.persisted };
+    }
+    return { ready: true, triage: githubIssueJobTriageReport(job, computeSentinelInterval("hourly", now)) };
+  };
+  const selection = await selectNextGitHubIssueJobSelection(
+    githubIssueSource([first, second], relationsByNumber),
+    repository,
+    renderGitHubIssueJobLedger([]),
+    recoverySelectionContext(),
+    new Date("2026-08-28T00:01:00Z"),
+    blobbedPlanning,
+  );
+  assert.equal(selection?.job?.number, second.number);
+  assert.equal(selection?.queue.entries[0].reason, "planning_blocked:unresolved_dependency: #200 (open)");
+  assert.equal(persistence.writes.length, 1);
+  const persistedRecord = persistence.writes[0]!.ledger.records[0];
+  assert.equal(persistedRecord.phase, "manual_required");
+  assert.equal(persistedRecord.disposition, "manual_required");
+  assert.equal(persistedRecord.reason, "planning_blocked:unresolved_dependency: #200 (open)");
+  assert.equal(persistedRecord.identity.source_kind, "github_issue");
+  assert.equal(persistedRecord.identity.source_id, String(first.id));
+  assert.equal(
+    persistence.writes[0]!.message.includes(sentinelRecoveryIdentityKey(persistedRecord.identity)),
+    true,
+  );
+  // Ordinary src/ and tests/ directory scope is accepted by the real
+  // validator and the controller disposition route after normalization.
+  const job = await createGitHubIssueJob(
+    repository,
+    sentinelGitHubIssue({ body: "Ordinary prose, no paths." }),
+    noIssueRelations,
+  );
+  assert.ok(job);
+  assert.deepEqual(job.files, []);
+  const interval = computeSentinelInterval("hourly", now);
+  const triageFor = (allowedPaths: readonly string[]): TriageReport => ({
+    schema_version: 1,
+    interval,
+    findings: [{
+      id: issueJobFindingId(job),
+      fingerprint: job.fingerprint,
+      severity: job.priority,
+      title: job.title,
+      affected_surface: "src/http.ts",
+      allowed_paths: allowedPaths,
+      shared_paths: [],
+      depends_on: [],
+      evidence: [{ source: "github_issue", reference: job.htmlUrl, detail: job.body }],
+      proposed_correction: "Implement the bounded repair.",
+      validation_requirements: ["Run deno fmt and affected tests"],
+      actionable: true,
+    }],
+    no_findings_reason: null,
+  });
+  const triage = validatePlannedIssueTriage(job, triageFor(["src/", "tests/"]), interval);
+  const selectionWithPlan: SentinelWorkSelection = {
+    source: "github_issue",
+    reason: "hourly_github_issue",
+    backlogEntry: null,
+    issueJob: job,
+    triage,
+  };
+  assert.deepEqual(
+    evaluateSelectedIssueImplementation(selectionWithPlan, "implemented", [
+      "src/http.ts",
+      "tests/http.test.ts",
+    ], ["src/http.ts", "tests/http.test.ts"]),
+    { disposition: "resolved", continueToRuntimeValidation: true },
+  );
+  assert.throws(
+    () =>
+      evaluateSelectedIssueImplementation(selectionWithPlan, "implemented", [
+        "scripts/sentinel/main.ts",
+      ], ["scripts/sentinel/main.ts"]),
+    /protected path/,
+  );
+  assert.throws(
+    () =>
+      evaluateSelectedIssueImplementation(selectionWithPlan, "implemented", [
+        "docs/sentinel-review-results/000-base.json",
+      ], ["docs/sentinel-review-results/000-base.json"]),
+    /protected path/,
+  );
+  // Protected directory roots, traversal and malformed separators are
+  // rejected even though ordinary directory scope is accepted.
+  for (
+    const scope of [
+      ["src/", "scripts/sentinel/"],
+      [".github/workflows/"],
+      ["docs/sentinel-review-results/"],
+      [".codex/"],
+      ["../src/"],
+      ["src//"],
+      ["src/", "tests/", "scripts/sentinel/"],
+    ] as const
+  ) {
+    assert.throws(
+      () => validatePlannedIssueTriage(job, triageFor([...scope]), interval),
+      /plan_scope_invalid/,
+      scope.join(","),
+    );
+  }
 });
 
 Deno.test("matrix prepared recovery binds review backlog convergence identity exactly", async () => {
