@@ -1985,6 +1985,41 @@ export const isStablePlanningBlocker = (reason: string): boolean =>
   );
 
 /**
+ * Deterministic incoming-dependency gate for a FRESH issue plan: an
+ * incomplete dependency capture is a retryable source_unavailable condition,
+ * and any captured OPEN incoming prerequisite is a stable unresolved
+ * dependency blocker carried by concrete issue identities. CLOSED
+ * prerequisites and parent/subissue/outgoing metadata alone never block, and
+ * the dependency state is already part of the source fingerprint so closing a
+ * prerequisite permits a changed-source evaluation.
+ */
+export const evaluatePlannedIssueIncomingDependencies = (
+  job: GitHubIssueJob,
+): Readonly<{ blocked: false }> | Readonly<{ blocked: true; reason: string }> => {
+  const captured = job.relations.dependencies ?? [];
+  const blockedByCount = job.relations.blockedByCount;
+  // An incomplete capture is retryable: every prerequisite identity/state must
+  // be present (an unknown state is never inferred away). The legacy
+  // no-dependency shape (zero count with no captured list) stays complete.
+  if (
+    job.relations.dependenciesComplete === false ||
+    captured.some((dependency) => dependency.state === "unknown") ||
+    (blockedByCount !== null && captured.length !== blockedByCount) ||
+    (blockedByCount === null && captured.length > 0)
+  ) {
+    return { blocked: true, reason: "source_unavailable: incomplete incoming dependency capture" };
+  }
+  const open = captured.filter((dependency) => dependency.state === "open");
+  if (open.length > 0) {
+    return {
+      blocked: true,
+      reason: `unresolved_dependency: ${open.map((dependency) => `#${dependency.issue_number} (open)`).join(", ")}`,
+    };
+  }
+  return { blocked: false };
+};
+
+/**
  * Deterministically validate the planned single-issue TriageReport before it
  * is frozen: exactly one actionable finding bound to the source identity,
  * with a non-empty bounded scope and concrete validation requirements.
@@ -1995,6 +2030,13 @@ export const validatePlannedIssueTriage = (
   triage: TriageReport,
   interval: CycleState["interval"],
 ): TriageReport => {
+  // The deterministic incoming-dependency gate is part of plan acceptance
+  // itself: even schema-valid actionable planner output is never accepted or
+  // claimed while an OPEN prerequisite or an incomplete capture blocks.
+  const dependencyState = evaluatePlannedIssueIncomingDependencies(job);
+  if (dependencyState.blocked) {
+    throw new SentinelIssuePlanningBlockedError(dependencyState.reason);
+  }
   if (JSON.stringify(triage.interval) !== JSON.stringify(interval)) {
     throw new SentinelIssuePlanningBlockedError("planning_interval_mismatch");
   }
@@ -2014,11 +2056,29 @@ export const validatePlannedIssueTriage = (
   if (
     scope.length === 0 || scope.length > 32 ||
     scope.some((path) => {
-      const normalized = path.endsWith("/") ? path.slice(0, -1) : path;
-      return normalized.length === 0 || normalized.length > 512 || path.startsWith("/") ||
+      // Explicit directories are validated by their NORMALIZED path: the
+      // slash-suffixed form contains an empty segment that the protected
+      // matcher rejects, so ordinary src/ and tests/ scope must be checked
+      // after normalization. An explicit directory scope never grants
+      // permission to protected descendants (the implementation stage keeps
+      // actual per-file protected checks) and protected directory roots are
+      // rejected outright.
+      const directory = path.endsWith("/");
+      const normalized = directory ? path.slice(0, -1) : path;
+      if (
+        normalized.length === 0 || normalized.length > 512 || path.startsWith("/") ||
         path.includes("\\") || path.endsWith("//") ||
-        normalized.split("/").some((part) => part === "" || part === "." || part === "..") ||
-        isSentinelProtectedImplementationPath(path);
+        normalized.split("/").some((part) => part === "" || part === "." || part === "..")
+      ) return true;
+      if (directory) {
+        return isSentinelProtectedImplementationPath(normalized) ||
+          normalized === "scripts/sentinel" || normalized.startsWith("scripts/sentinel/") ||
+          normalized === ".github/workflows" || normalized.startsWith(".github/workflows/") ||
+          normalized === "docs/sentinel-review-results" ||
+          normalized.startsWith("docs/sentinel-review-results/") ||
+          normalized.split("/").includes(".codex");
+      }
+      return isSentinelProtectedImplementationPath(normalized);
     }) || finding.validation_requirements.length === 0
   ) {
     throw new SentinelIssuePlanningBlockedError("plan_scope_invalid");
@@ -3950,6 +4010,42 @@ const run = async (): Promise<void> => {
   ): Promise<GitHubIssueJobPlanning> => {
     const pinnedBaseSha = selectedDevelopmentSha;
     if (pinnedBaseSha === null) throw new Error("GitHub issue planning requires a pinned development base");
+    const persistPlanningBlocker = (blockedReason: string) =>
+      persistPlanningOutcome({
+        store: {
+          read: () => readGitHubSentinelRecoveryLedger({ token: githubToken, repository }),
+          write: async (snapshot, ledger, message) => {
+            selectionRecoverySnapshot = await writeGitHubSentinelRecoveryLedger({
+              token: githubToken,
+              repository,
+              snapshot,
+              ledger,
+              message,
+            });
+            return selectionRecoverySnapshot;
+          },
+        },
+        repository,
+        job,
+        runId,
+        runAttempt: githubRunAttempt,
+        pinnedBaseSha,
+        blockedReason,
+        now: new Date().toISOString(),
+      });
+    // Deterministic incoming-dependency gate for a FRESH plan: incomplete
+    // dependency capture is a retryable source_unavailable and any captured
+    // OPEN prerequisite is a stable unresolved_dependency blocker. Both are
+    // persisted through the production helper before any planner invocation
+    // so the ordered selector continues to the next issue, and none of it
+    // depends on the planner obeying instruction text.
+    if (context.checkpoint === null) {
+      const dependencyState = evaluatePlannedIssueIncomingDependencies(job);
+      if (dependencyState.blocked) {
+        const outcome = await persistPlanningBlocker(dependencyState.reason);
+        return { ready: false, reason: outcome.reason, persisted: outcome.persisted };
+      }
+    }
     // Retained candidate: checkpoint/recovery context is bound, but frozen
     // plan evidence for a separate run lives only in authenticated encrypted
     // artifacts (artifact IDs/digests on the retained recovery record). They
@@ -4073,28 +4169,7 @@ const run = async (): Promise<void> => {
         // continues to the next candidate.
         blockedReason = "planning_failed";
       }
-      const outcome = await persistPlanningOutcome({
-        store: {
-          read: () => readGitHubSentinelRecoveryLedger({ token: githubToken, repository }),
-          write: async (snapshot, ledger, message) => {
-            selectionRecoverySnapshot = await writeGitHubSentinelRecoveryLedger({
-              token: githubToken,
-              repository,
-              snapshot,
-              ledger,
-              message,
-            });
-            return selectionRecoverySnapshot;
-          },
-        },
-        repository,
-        job,
-        runId,
-        runAttempt: githubRunAttempt,
-        pinnedBaseSha,
-        blockedReason,
-        now: new Date().toISOString(),
-      });
+      const outcome = await persistPlanningBlocker(blockedReason);
       await Deno.remove(planningCheckout, { recursive: true }).catch(() => {});
       return { ready: false, reason: outcome.reason, persisted: outcome.persisted };
     }

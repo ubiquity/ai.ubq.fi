@@ -724,13 +724,35 @@ export const selectNextGitHubIssueJobSelection = async (
   );
   const queueEntries: GitHubIssueQueueEntry[] = [];
   for (const candidate of prioritized) {
-    const current = await source.getIssue(candidate.number);
-    if (current.id !== candidate.id || current.nodeId !== candidate.nodeId) {
-      throw new Error(`GitHub issue ${candidate.number} identity changed during selection`);
+    let current: GitHubIssue;
+    let relations: GitHubIssueRelations | null = null;
+    let job: GitHubIssueJob | null;
+    try {
+      current = await source.getIssue(candidate.number);
+      if (current.id !== candidate.id || current.nodeId !== candidate.nodeId) {
+        throw new Error(`GitHub issue ${candidate.number} identity changed during selection`);
+      }
+      const comments = await source.listIssueComments(candidate.number);
+      relations = await source.getIssueRelations(candidate.number);
+      job = await createGitHubIssueJob(repository, current, relations, comments);
+    } catch {
+      // A per-candidate source capture failure (fetch, source identity race,
+      // comment/relationship read or projection) is isolated: only the safe
+      // listed identity is reported, no partial source data is ever admitted,
+      // and ordered selection continues to the next candidate. Global ledger
+      // parsing/recovery validation and list failure stay fail-closed, and
+      // planning/persistence errors are never caught here.
+      queueEntries.push({
+        number: candidate.number,
+        node_id: candidate.nodeId,
+        fingerprint: "",
+        queue_priority: parseNumericQueuePriority(candidate.labels),
+        selected: false,
+        reason: "source_unavailable",
+        next_action: "Resolve the unreadable issue source and re-inspect.",
+      });
+      continue;
     }
-    const comments = await source.listIssueComments(candidate.number);
-    const relations = await source.getIssueRelations(candidate.number);
-    const job = await createGitHubIssueJob(repository, current, relations, comments);
     if (job === null) {
       queueEntries.push({
         number: candidate.number,
@@ -777,7 +799,7 @@ export const selectNextGitHubIssueJobSelection = async (
           const normalizedJob = await createGitHubIssueJobHistoricalProjection(
             repository,
             { ...current, comments: entry.comments, updatedAt: entry.sourceUpdatedAt },
-            relations,
+            relations!,
           );
           snapshotMatches = normalizedJob?.fingerprint === entry.fingerprint;
         }

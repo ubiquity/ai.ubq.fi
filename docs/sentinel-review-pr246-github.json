@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "source": "github_codex_review",
+  "reviewed_head_sha": "e7d1fd0be504ab42a0a5b41cc5ce8750a2b64036",
+  "reviewed_base_sha": "7948a61145f8b299e54511dac3a3c7ff8c0fc48a",
+  "review": {
+    "id": 5126215478,
+    "node_id": "PRR_kwDOQoe6nc8AAAABMYvXNg",
+    "user": {
+      "login": "chatgpt-codex-connector[bot]",
+      "id": 199175422,
+      "node_id": "BOT_kgDOC98s_g",
+      "avatar_url": "https://avatars.githubusercontent.com/in/1144995?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D",
+      "html_url": "https://github.com/apps/chatgpt-codex-connector",
+      "followers_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/followers",
+      "following_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/following{/other_user}",
+      "gists_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/subscriptions",
+      "organizations_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/orgs",
+      "repos_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/repos",
+      "events_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/received_events",
+      "type": "Bot",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "\n### 💡 Codex Review\n\nHere are some automated review suggestions for this pull request.\n\n**Reviewed commit:** `e7d1fd0be5`\n    \n\n<details> <summary>ℹ️ About Codex in GitHub</summary>\n<br/>\n\n[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you\n- Open a pull request for review\n- Mark a draft as ready\n- Comment \"@codex review\".\n\nIf Codex has suggestions, it will comment; otherwise it will react with 👍.\n\n\n\n\nCodex can also answer questions or update the PR. Try commenting \"@codex address that feedback\".\n            \n</details>",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/ubiquity/ai.ubq.fi/pull/246#pullrequestreview-5126215478",
+    "pull_request_url": "https://api.github.com/repos/ubiquity/ai.ubq.fi/pulls/246",
+    "author_association": "NONE",
+    "_links": {
+      "html": {
+        "href": "https://github.com/ubiquity/ai.ubq.fi/pull/246#pullrequestreview-5126215478"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/ubiquity/ai.ubq.fi/pulls/246"
+      }
+    },
+    "submitted_at": "2026-09-06T18:23:03Z",
+    "commit_id": "e7d1fd0be504ab42a0a5b41cc5ce8750a2b64036"
+  },
+  "comments": [
+    {
+      "body": "**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  Bind the recovery base to the cycle execution base**\n\nWhen `cycleBaseSha` and `recovery.base_sha` are two different commits that each independently descend from the frozen plan base through allowlisted ledger/review-only history, both compatibility checks pass. The pre-push and delivery-reconcile callers can therefore accept a recovery record for a different execution base than the cycle being delivered, despite their contract requiring identity-mismatched evidence to fail closed. Require the recovery base to equal the non-null cycle base, then verify that single execution base against the original plan base.\n\nAGENTS.md reference: [AGENTS.md:L84-L85](https://github.com/ubiquity/ai.ubq.fi/blob/e7d1fd0be504ab42a0a5b41cc5ce8750a2b64036/AGENTS.md#L84-L85)\n\nUseful? React with 👍 / 👎.",
+      "commit_id": "e7d1fd0be504ab42a0a5b41cc5ce8750a2b64036",
+      "created_at": "2026-09-06T18:23:03Z",
+      "html_url": "https://github.com/ubiquity/ai.ubq.fi/pull/246#discussion_r3944859257",
+      "id": 3944859257,
+      "line": 481,
+      "original_commit_id": "e7d1fd0be504ab42a0a5b41cc5ce8750a2b64036",
+      "original_line": 481,
+      "path": "scripts/sentinel/issue-delivery.ts",
+      "pull_request_review_id": 5126215478
+    }
+  ],
+  "raw": "- [P1] Bind the recovery base to the cycle execution base — scripts/sentinel/issue-delivery.ts:481\nWhen `cycleBaseSha` and `recovery.base_sha` are two different commits that each independently descend from the frozen plan base through allowlisted ledger/review-only history, both compatibility checks pass. The pre-push and delivery-reconcile callers can therefore accept a recovery record for a different execution base than the cycle being delivered, despite their contract requiring identity-mismatched evidence to fail closed. Require the recovery base to equal the non-null cycle base, then verify that single execution base against the original plan base.\n\nAGENTS.md reference: [AGENTS.md:L84-L85](https://github.com/ubiquity/ai.ubq.fi/blob/e7d1fd0be504ab42a0a5b41cc5ce8750a2b64036/AGENTS.md#L84-L85)",
+  "report": {
+    "schema_version": 1,
+    "round": 1,
+    "parse_status": "findings",
+    "findings": [
+      {
+        "fingerprint": "46d1816190ec5e8967a763743d802011b54eca92d2277361403da24360fcfdd5",
+        "severity": "P1",
+        "title": "Bind the recovery base to the cycle execution base — scripts/sentinel/issue-delivery.ts:481",
+        "body": "When `cycleBaseSha` and `recovery.base_sha` are two different commits that each independently descend from the frozen plan base through allowlisted ledger/review-only history, both compatibility checks pass. The pre-push and delivery-reconcile callers can therefore accept a recovery record for a different execution base than the cycle being delivered, despite their contract requiring identity-mismatched evidence to fail closed. Require the recovery base to equal the non-null cycle base, then verify that single execution base against the original plan base.\nAGENTS.md reference: [AGENTS.md:L84-L85](https://github.com/ubiquity/ai.ubq.fi/blob/e7d1fd0be504ab42a0a5b41cc5ce8750a2b64036/AGENTS.md#L84-L85)",
+        "location": "scripts/sentinel/issue-delivery.ts:481"
+      }
+    ]
+  }
+}
