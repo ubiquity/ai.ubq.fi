@@ -58,7 +58,7 @@ const MAX_MANIFEST_BYTES = 512 * 1024;
 const MAX_SOURCE_ID_BYTES = 256;
 const MAX_SOURCE_REVISION_BYTES = 256;
 const MAX_RECOVERY_ARTIFACTS = 128;
-const MAX_ARTIFACT_ZIP_BYTES = 256 * 1024 * 1024;
+export const MAX_ARTIFACT_ZIP_BYTES = 256 * 1024 * 1024;
 const ZERO_SHA = "0".repeat(40);
 const FIXED_AUTHOR_NAME = "Provider Sentinel Recovery";
 const FIXED_AUTHOR_EMAIL = "sentinel-recovery@ubiquity.invalid";
@@ -1770,6 +1770,31 @@ const workflowRunForArtifact = async (
   if (!positiveSafeInteger(runId)) return undefined;
   const run = await github.getWorkflowRun(runId);
   return { status: run.status, conclusion: run.conclusion };
+};
+
+export type SentinelEvidenceEnvelope = Readonly<{
+  files: readonly SentinelArtifactFile[];
+  encrypted_digest: string;
+}>;
+
+/**
+ * Bounded evidence-envelope loader for retained run evidence: unzips the
+ * artifact zip, authenticates the encrypted bytes digest, and decrypts with
+ * the existing Sentinel artifact key. No new secret, env name, or CLI.
+ */
+export const decryptSentinelEvidenceEnvelope = async (
+  input: Readonly<{ zip: Uint8Array; encodedArtifactKey: string; privateRoot: string }>,
+): Promise<SentinelEvidenceEnvelope> => {
+  const keyBytes = decodeSentinelArtifactKey(input.encodedArtifactKey);
+  try {
+    const encrypted = await unzipEnvelope(input.zip, input.privateRoot);
+    return {
+      files: await decryptSentinelArtifact(encrypted, keyBytes),
+      encrypted_digest: await artifactDigest(encrypted),
+    };
+  } finally {
+    keyBytes.fill(0);
+  }
 };
 
 const unzipEnvelope = async (zip: Uint8Array, privateRoot: string): Promise<Uint8Array<ArrayBuffer>> => {

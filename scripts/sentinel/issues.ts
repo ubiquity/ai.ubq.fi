@@ -1,17 +1,12 @@
 import type { GitHubIssue, GitHubIssueComment, GitHubIssueRelations, GitHubRepositoryPermission } from "./github.ts";
 import { isSentinelProtectedImplementationPath, SENTINEL_POLICY } from "./policy.ts";
+import { matrixAllowedPathCovers } from "./matrix.ts";
 import {
   parseSentinelRecoveryLedger,
   resolveSentinelRecoverySelection,
   type SentinelRecoveryEligibilityContext,
 } from "./recovery-ledger.ts";
-import type {
-  NativeReviewFinding,
-  NativeReviewReport,
-  SentinelInterval,
-  TriageReport,
-  TriageSeverity,
-} from "./types.ts";
+import type { NativeReviewFinding, NativeReviewReport, SentinelInterval, TriageReport } from "./types.ts";
 
 export interface GitHubIssueJobSource {
   listOpenIssues(): Promise<readonly GitHubIssue[]>;
@@ -20,6 +15,8 @@ export interface GitHubIssueJobSource {
   getIssueRelations(issueNumber: number): Promise<GitHubIssueRelations>;
   getRepositoryPermission(username: string): Promise<GitHubRepositoryPermission>;
 }
+
+export type GitHubIssueIntake = "declared" | "owner_backlog" | "backlog";
 
 export type GitHubIssueJob = Readonly<{
   repository: string;
@@ -31,19 +28,45 @@ export type GitHubIssueJob = Readonly<{
   body: string;
   bodySha256: string;
   fingerprint: string;
+  /** Execution severity adapter, distinct from queue order (numeric >=3 is P2). */
   priority: "P2" | "P3";
-  priorityLabel: "Priority: 2 (Medium)" | "Priority: 3 (High)";
-  timeLabel: string;
-  intake: "declared" | "owner_backlog";
+  /** The highest recognized numeric priority label, or "" when absent/unrecognized. */
+  priorityLabel: string;
+  /** Recognized nonnegative numeric queue priority; null when absent/unrecognized. */
+  queuePriority: number | null;
+  /** True when the issue carries several recognized numeric priority labels. */
+  queuePriorityAmbiguous: boolean;
+  timeLabel: string | null;
+  intake: GitHubIssueIntake;
   labels: readonly string[];
   files: readonly string[];
   acceptance: readonly string[];
+  /** Canonical digest of material comment/dependency context; null for legacy projections. */
+  materialDigest: string | null;
+  /** Canonical captured ordinary discussion that the material digest binds; planning data. */
+  capturedComments: readonly GitHubIssueComment[];
   authorLogin: string;
   authorAssociation: string;
   comments: number;
   createdAt: string;
   updatedAt: string;
   relations: GitHubIssueRelations;
+}>;
+
+/** One inspected candidate's explicit queue disposition. */
+export type GitHubIssueQueueEntry = Readonly<{
+  number: number;
+  node_id: string;
+  fingerprint: string;
+  queue_priority: number | null;
+  selected: boolean;
+  reason: string;
+  next_action: string;
+}>;
+
+export type GitHubIssueQueueDispositions = Readonly<{
+  queue_exhausted: boolean;
+  entries: readonly GitHubIssueQueueEntry[];
 }>;
 
 export type GitHubIssueJobDisposition =
@@ -85,9 +108,27 @@ export const isSentinelChangedFilesMismatchError = (
   error: unknown,
 ): error is SentinelChangedFilesMismatchError => error instanceof SentinelChangedFilesMismatchError;
 
-export type GitHubIssueJobSelection = Readonly<{
-  job: GitHubIssueJob;
+export type GitHubIssueJobPlanning =
+  | Readonly<{ ready: true; triage: TriageReport }>
+  | Readonly<{ ready: false; reason: string; persisted: boolean }>;
+
+export type GitHubIssueJobPlanningContext = Readonly<{
   checkpoint: GitHubIssueJobCheckpoint | null;
+  recovery: SentinelRecoveryEligibilityContext;
+}>;
+
+export type GitHubIssueJobPlanningCallback = (
+  job: GitHubIssueJob,
+  context: GitHubIssueJobPlanningContext,
+) => Promise<GitHubIssueJobPlanning>;
+
+export type GitHubIssueJobSelection = Readonly<{
+  job: GitHubIssueJob | null;
+  checkpoint: GitHubIssueJobCheckpoint | null;
+  /** The frozen plan triage when the runtime planning callback produced one. */
+  triage: TriageReport | null;
+  /** Explicit per-issue queue dispositions for the inspected ordered queue. */
+  queue: GitHubIssueQueueDispositions;
 }>;
 
 export type GitHubIssueJobHint = Readonly<{
@@ -125,19 +166,15 @@ export type GitHubIssueJobLedgerEntry = Readonly<{
   disposition: GitHubIssueJobDisposition;
 }>;
 
-const PRIORITY_LABELS = new Map<GitHubIssueJob["priorityLabel"], GitHubIssueJob["priority"]>([
+const PRIORITY_LABELS = new Map<string, GitHubIssueJob["priority"]>([
   ["Priority: 2 (Medium)", "P3"],
   ["Priority: 3 (High)", "P2"],
 ]);
-const ISSUE_QUEUE_RANK = new Map<GitHubIssueJob["priorityLabel"], number>([
-  ["Priority: 3 (High)", 0],
-  ["Priority: 2 (Medium)", 1],
-]);
 export const MAX_GITHUB_ISSUE_TIME_ESTIMATE_MINUTES = 24 * 60;
-const DEFAULT_GITHUB_ISSUE_TIME_ESTIMATE_MINUTES = 2 * 60;
-const DEFAULT_OWNER_BACKLOG_PRIORITY_LABEL: GitHubIssueJob["priorityLabel"] = "Priority: 2 (Medium)";
+const DEFAULT_OWNER_BACKLOG_PRIORITY_LABEL = "Priority: 2 (Medium)";
 const DEFAULT_OWNER_BACKLOG_TIME_LABEL = "Time: <2 Hours";
 const TIME_LABEL_PATTERN = /^Time: <([1-9][0-9]*) (Minute|Minutes|Hour|Hours|Day|Days)$/u;
+const NUMERIC_PRIORITY_PATTERN = /^Priority: ([0-9]+)(?: \([^)]*\))?$/u;
 const FILE_LOCATION_PATTERN = /^([A-Za-z0-9_.@/+\-]+)(?::\d+(?:-\d+)?(?::\d+)?)?$/u;
 const FULL_SHA = /^[0-9a-f]{40}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
@@ -147,15 +184,9 @@ const CHECKPOINT_BRANCH =
 const MAX_ISSUE_BODY_BYTES = 32 * 1_024;
 const MAX_ISSUE_FILES = 32;
 const MAX_ACCEPTANCE_ITEMS = 32;
-const MAX_GITHUB_ISSUE_COMMENTS = 998;
-const MAX_IGNORABLE_ISSUE_COMMENTS = 8;
 const MAX_LEDGER_BYTES = 256 * 1_024;
 const MAX_LEDGER_ENTRIES = 512;
 const MAX_LEDGER_LINE_LENGTH = 4_096;
-const MAX_ISSUE_JOB_HINT_BYTES = 1_024;
-export const MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS = 32;
-export const MAX_ISSUE_JOB_DETAIL_COMMENT_INSPECTIONS = 33;
-export const MAX_OWNER_BACKLOG_PERMISSION_PREFLIGHTS = 64;
 export const GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS = 6 * 60 * 60 * 1_000;
 export const GITHUB_ISSUE_JOB_HINT_FILENAME = "sentinel-github-issue-job-hint.json";
 const LEDGER_HEADERS = Object.freeze([
@@ -174,16 +205,16 @@ const LEDGER_HEADERS = Object.freeze([
   "Disposition",
 ]);
 
-const textEncoder = new TextEncoder();
-
+const MAX_ISSUE_JOB_HINT_BYTES = 1_024;
 const record = (value: unknown): Record<string, unknown> | null =>
   typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
-
 const hasExactKeys = (value: Record<string, unknown>, keys: readonly string[]): boolean => {
   const actual = Object.keys(value).sort();
   const expected = [...keys].sort();
   return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
 };
+
+const textEncoder = new TextEncoder();
 
 const sha256 = async (value: string): Promise<string> => {
   const digest = await crypto.subtle.digest("SHA-256", textEncoder.encode(value));
@@ -202,24 +233,6 @@ export const isSentinelInertIssueComment = (comment: GitHubIssueComment): boolea
   validTimestamp(comment.createdAt) && validTimestamp(comment.updatedAt) &&
   comment.updatedAt === comment.createdAt && typeof comment.body === "string" &&
   UBIQUITY_OS_LABEL_DENIAL_COMMENT.test(comment.body);
-
-const issueCommentsAreOnlyInertNotices = async (
-  source: GitHubIssueJobSource,
-  issue: GitHubIssue,
-): Promise<boolean> => {
-  if (issue.comments === 0) return true;
-  if (issue.comments > MAX_IGNORABLE_ISSUE_COMMENTS) return false;
-  const comments = await source.listIssueComments(issue.number);
-  if (comments.length !== issue.comments) {
-    throw new Error(`GitHub issue ${issue.number} comment count changed during inspection`);
-  }
-  const ids = new Set<number>();
-  for (const comment of comments) {
-    if (ids.has(comment.id) || !isSentinelInertIssueComment(comment)) return false;
-    ids.add(comment.id);
-  }
-  return true;
-};
 
 const sortedUnique = (values: readonly string[]): string[] | null => {
   if (values.some((value) => value.trim() !== value || value.length === 0)) return null;
@@ -348,56 +361,117 @@ const issueJobLabels = (
   return { labels: canonicalLabels, priority, priorityLabel, timeLabel };
 };
 
-const issueAuthorityLogins = (
-  issue: GitHubIssue,
-  relations: GitHubIssueRelations,
-): readonly string[] | null => {
-  const bodyEdit = relations.latestBodyEdit;
-  const titleEdit = relations.latestTitleEdit;
-  for (const edit of [bodyEdit, titleEdit]) {
-    if (
-      edit !== null &&
-      (edit.editorLogin.trim() !== edit.editorLogin || edit.editorLogin.length === 0 ||
-        !validTimestamp(edit.editedAt) || Date.parse(edit.editedAt) < Date.parse(issue.createdAt) ||
-        Date.parse(edit.editedAt) > Date.parse(issue.updatedAt))
-    ) return null;
+const baseIssueStructuralEligible = (issue: GitHubIssue): boolean =>
+  issue.state === "open" && !issue.isPullRequest && issue.title.length <= 256 &&
+  Number.isSafeInteger(issue.id) && issue.id > 0 && Number.isSafeInteger(issue.number) && issue.number > 0 &&
+  Number.isSafeInteger(issue.comments) && issue.comments >= 0;
+
+/** Highest recognized numeric repository priority; null when absent/unrecognized. */
+export const parseNumericQueuePriority = (labels: readonly string[]): number | null => {
+  let highest: number | null = null;
+  for (const label of labels) {
+    const match = label.match(NUMERIC_PRIORITY_PATTERN);
+    if (!match) continue;
+    const value = Number(match[1]!);
+    if (!Number.isSafeInteger(value) || value < 0) continue;
+    if (highest === null || value > highest) highest = value;
   }
-  if (titleEdit !== null && titleEdit.title !== issue.title) return null;
-  return [
-    ...new Set([
-      issue.authorLogin,
-      ...(bodyEdit === null ? [] : [bodyEdit.editorLogin]),
-      ...(titleEdit === null ? [] : [titleEdit.editorLogin]),
-    ]),
-  ].sort();
+  return highest;
 };
 
-const baseIssueEligible = (issue: GitHubIssue, authorityPermission: GitHubRepositoryPermission): boolean =>
-  issue.state === "open" && !issue.isPullRequest && !issue.locked && issue.assignees.length === 0 &&
-  issue.title.length <= 256 && Number.isSafeInteger(issue.comments) && issue.comments >= 0 &&
-  issue.comments <= MAX_GITHUB_ISSUE_COMMENTS &&
-  (authorityPermission === "write" || authorityPermission === "admin");
+const queuePriorityIsAmbiguous = (labels: readonly string[]): boolean => {
+  const recognized = labels.filter((label) => NUMERIC_PRIORITY_PATTERN.test(label)).length;
+  return recognized > 1;
+};
 
-export const createGitHubIssueJob = async (
+const recognizedQueuePriorityLabel = (labels: readonly string[]): string => {
+  const highest = parseNumericQueuePriority(labels);
+  if (highest === null) return "";
+  const withHighest = labels.filter(
+    (label) => NUMERIC_PRIORITY_PATTERN.test(label) && Number(label.match(NUMERIC_PRIORITY_PATTERN)![1]!) === highest,
+  );
+  return withHighest.sort()[0] ?? "";
+};
+
+/** Legacy projection serialization only: defaults for unchanged supported old sources. */
+const relationsProjection = (relations: GitHubIssueRelations): Readonly<Record<string, unknown>> => ({
+  parentIssueNumber: relations.parentIssueNumber,
+  subIssueCount: relations.subIssueCount,
+  blockedByCount: relations.blockedByCount,
+  blockingCount: relations.blockingCount,
+  latestBodyEdit: relations.latestBodyEdit,
+  latestTitleEdit: relations.latestTitleEdit,
+});
+
+/**
+ * Canonical digest of the material discussion/dependency context: ordinary
+ * comments (content, author, timestamps), plus incoming prerequisite
+ * identities and states. Inert UbiquityOS label-denial notices are excluded;
+ * legacy projections with no material context keep digest null.
+ */
+export const materialContextDigest = async (
+  issue: GitHubIssue,
+  comments: readonly GitHubIssueComment[],
+  relations: GitHubIssueRelations,
+): Promise<string | null> => {
+  const ids = new Set<number>();
+  for (const comment of comments) {
+    if (!Number.isSafeInteger(comment.id) || comment.id <= 0 || ids.has(comment.id)) {
+      throw new Error("GitHub issue comment capture is incomplete or duplicated");
+    }
+    ids.add(comment.id);
+  }
+  if (ids.size !== issue.comments) {
+    throw new Error("GitHub issue comment capture does not match the issue comment count");
+  }
+  const material = comments
+    .filter((comment) => !isSentinelInertIssueComment(comment))
+    .map((comment) => ({
+      id: comment.id,
+      author_login: comment.authorLogin,
+      author_type: comment.authorType,
+      body: comment.body,
+      created_at: comment.createdAt,
+      updated_at: comment.updatedAt,
+    }))
+    .sort((left, right) => left.id - right.id);
+  const dependencies = (relations.dependencies ?? [])
+    .map((dependency) => ({
+      issue_number: dependency.issue_number,
+      state: dependency.state,
+    }))
+    .sort((left, right) => left.issue_number - right.issue_number);
+  if (material.length === 0 && dependencies.length === 0) return null;
+  return await sha256(JSON.stringify({ comments: material, dependencies }));
+};
+
+const createGitHubIssueJobInner = async (
   repository: string,
   issue: GitHubIssue,
   relations: GitHubIssueRelations,
-  authorityPermission: GitHubRepositoryPermission,
-  maximumTimeEstimateMinutes = DEFAULT_GITHUB_ISSUE_TIME_ESTIMATE_MINUTES,
+  materialDigest: string | null,
+  capturedComments: readonly GitHubIssueComment[],
 ): Promise<GitHubIssueJob | null> => {
   validatedRepository(repository);
   if (
-    !baseIssueEligible(issue, authorityPermission) || issueAuthorityLogins(issue, relations) === null ||
-    relations.parentIssueNumber !== null ||
-    relations.subIssueCount !== 0 || relations.blockedByCount !== 0 ||
-    relations.blockingCount !== 0 || !validTimestamp(issue.createdAt) || !validTimestamp(issue.updatedAt) ||
+    !baseIssueStructuralEligible(issue) || !validTimestamp(issue.createdAt) || !validTimestamp(issue.updatedAt) ||
     Date.parse(issue.updatedAt) < Date.parse(issue.createdAt) || !validIssueUrl(issue.htmlUrl, repository, issue.number)
   ) return null;
+  // Source consistency: a stale title timeline is an inconsistent optimistic
+  // capture and fails closed explicitly, never silently admitted.
+  if (relations.latestTitleEdit !== null && relations.latestTitleEdit.title !== issue.title) {
+    throw new Error(`GitHub issue ${issue.number} source is inconsistent: title edit disagrees with the current title`);
+  }
+  // Legacy source-identity projections are derived deterministically from the
+  // source alone: an unchanged previously supported snapshot keeps its exact
+  // fingerprint; any other open source is admitted as broad `backlog` intake
+  // (empty source hints mean planning required).
   const parsedBody = parseGitHubIssueJobBody(issue.body);
-  const parsedLabels = issueJobLabels(issue.labels, maximumTimeEstimateMinutes);
-  const selectedIntake = parsedBody !== null && parsedLabels !== null
+  const parsedLabels = issueJobLabels(issue.labels, MAX_GITHUB_ISSUE_TIME_ESTIMATE_MINUTES);
+  const legacyDeclared = parsedBody !== null && parsedLabels !== null
     ? { body: parsedBody, labels: parsedLabels, intake: "declared" as const }
-    : authorityPermission === "admin" && issue.labels.length === 0
+    : null;
+  const legacyOwnerBacklog = legacyDeclared === null && issue.labels.length === 0
     ? (() => {
       const ownerBacklogBody = parseOwnerBacklogIssueBody(issue.body);
       return ownerBacklogBody === null ? null : {
@@ -412,7 +486,24 @@ export const createGitHubIssueJob = async (
       };
     })()
     : null;
-  if (selectedIntake === null) return null;
+  const queuePriority = parseNumericQueuePriority(issue.labels);
+  const queuePriorityLabel = recognizedQueuePriorityLabel(issue.labels);
+  const queuePriorityAmbiguousFlag = queuePriorityIsAmbiguous(issue.labels);
+  const canonicalLabels = sortedUnique(issue.labels) ?? issue.labels;
+  const legacyProjection = legacyDeclared ?? legacyOwnerBacklog;
+  const selectedIntake = legacyProjection ?? {
+    body: {
+      acceptance: [] as const,
+      files: [] as const,
+    },
+    labels: {
+      labels: canonicalLabels,
+      priority: (queuePriority !== null && queuePriority >= 3 ? "P2" : "P3") as GitHubIssueJob["priority"],
+      priorityLabel: queuePriorityLabel,
+      timeLabel: null,
+    },
+    intake: "backlog" as const,
+  };
   const { body: effectiveBody, intake, labels: effectiveLabels } = selectedIntake;
   const bodySha256 = await sha256(issue.body);
   const fingerprint = await sha256(JSON.stringify({
@@ -433,11 +524,13 @@ export const createGitHubIssueJob = async (
     comments: issue.comments,
     created_at: issue.createdAt,
     updated_at: issue.updatedAt,
-    relations,
-    // Existing declared snapshots must retain their ledger fingerprint.
-    ...(intake === "owner_backlog" ? { intake } : {}),
+    relations: relationsProjection(relations),
+    // Existing declared snapshots must retain their ledger fingerprint; the
+    // broad intake marker appears only for newly admitted backlog sources.
+    ...(intake === "owner_backlog" ? { intake } : intake === "backlog" ? { intake } : {}),
     files: effectiveBody.files,
     acceptance: effectiveBody.acceptance,
+    ...(materialDigest !== null ? { material_digest: materialDigest } : {}),
   }));
   return {
     repository,
@@ -451,11 +544,15 @@ export const createGitHubIssueJob = async (
     fingerprint,
     priority: effectiveLabels.priority,
     priorityLabel: effectiveLabels.priorityLabel,
+    queuePriority,
+    queuePriorityAmbiguous: queuePriorityAmbiguousFlag,
     timeLabel: effectiveLabels.timeLabel,
     intake,
     labels: effectiveLabels.labels,
     files: effectiveBody.files,
     acceptance: effectiveBody.acceptance,
+    materialDigest,
+    capturedComments: Object.freeze([...capturedComments].sort((left, right) => left.id - right.id)),
     authorLogin: issue.authorLogin,
     authorAssociation: issue.authorAssociation,
     comments: issue.comments,
@@ -465,39 +562,33 @@ export const createGitHubIssueJob = async (
   };
 };
 
-const issueJobOrder = (left: GitHubIssueJob, right: GitHubIssueJob): number =>
-  ISSUE_QUEUE_RANK.get(left.priorityLabel)! - ISSUE_QUEUE_RANK.get(right.priorityLabel)! ||
-  Date.parse(left.createdAt) - Date.parse(right.createdAt) || left.number - right.number;
+export const createGitHubIssueJob = async (
+  repository: string,
+  issue: GitHubIssue,
+  relations: GitHubIssueRelations,
+  capturedComments: readonly GitHubIssueComment[] = [],
+): Promise<GitHubIssueJob | null> => {
+  // The material digest validates capture completeness once and binds the
+  // actual ordinary discussion (plus dependency identities) into the identity.
+  const materialDigest = await materialContextDigest(issue, capturedComments, relations);
+  return await createGitHubIssueJobInner(repository, issue, relations, materialDigest, capturedComments);
+};
+
+/**
+ * Historical identity projection for a proven inert-notice-only context: the
+ * old ledger row serialized count/timestamps without material comment content.
+ * The caller must have proven the current capture is inert-only; ordinary
+ * material discussion is never normalized away through this path.
+ */
+export const createGitHubIssueJobHistoricalProjection = async (
+  repository: string,
+  issue: GitHubIssue,
+  relations: GitHubIssueRelations,
+): Promise<GitHubIssueJob | null> => await createGitHubIssueJobInner(repository, issue, relations, null, []);
 
 export const githubIssueJobsMatch = (expected: GitHubIssueJob, actual: GitHubIssueJob | null): boolean =>
   actual !== null && expected.repository === actual.repository && expected.issueId === actual.issueId &&
   expected.nodeId === actual.nodeId && expected.number === actual.number && expected.fingerprint === actual.fingerprint;
-
-const githubIssueJobSourceSnapshotsMatch = (expected: GitHubIssueJob, actual: GitHubIssueJob): boolean =>
-  expected.repository === actual.repository && expected.issueId === actual.issueId &&
-  expected.nodeId === actual.nodeId &&
-  expected.number === actual.number && expected.htmlUrl === actual.htmlUrl && expected.title === actual.title &&
-  expected.bodySha256 === actual.bodySha256 && expected.priority === actual.priority &&
-  expected.priorityLabel === actual.priorityLabel && expected.timeLabel === actual.timeLabel &&
-  expected.intake === actual.intake &&
-  expected.authorLogin === actual.authorLogin && expected.authorAssociation === actual.authorAssociation &&
-  expected.comments === actual.comments && expected.createdAt === actual.createdAt &&
-  expected.updatedAt === actual.updatedAt &&
-  JSON.stringify(expected.labels) === JSON.stringify(actual.labels) &&
-  JSON.stringify(expected.files) === JSON.stringify(actual.files) &&
-  JSON.stringify(expected.acceptance) === JSON.stringify(actual.acceptance);
-
-const issueAuthorityPermission = async (
-  source: GitHubIssueJobSource,
-  issue: GitHubIssue,
-  relations: GitHubIssueRelations,
-): Promise<GitHubRepositoryPermission> => {
-  const logins = issueAuthorityLogins(issue, relations);
-  if (logins === null) return "none";
-  const permissions = await Promise.all(logins.map((login) => source.getRepositoryPermission(login)));
-  if (!permissions.every((permission) => permission === "write" || permission === "admin")) return "none";
-  return permissions.every((permission) => permission === "admin") ? "admin" : "write";
-};
 
 export const renderGitHubIssueJobHint = (
   job: GitHubIssueJob | null,
@@ -601,16 +692,9 @@ export const getCurrentGitHubIssueJob = async (
   issueNumber: number,
 ): Promise<GitHubIssueJob | null> => {
   const issue = await source.getIssue(issueNumber);
-  if (!await issueCommentsAreOnlyInertNotices(source, issue)) return null;
   const relations = await source.getIssueRelations(issueNumber);
-  const authorityPermission = await issueAuthorityPermission(source, issue, relations);
-  return await createGitHubIssueJob(
-    repository,
-    issue,
-    relations,
-    authorityPermission,
-    MAX_GITHUB_ISSUE_TIME_ESTIMATE_MINUTES,
-  );
+  const comments = await source.listIssueComments(issueNumber);
+  return await createGitHubIssueJob(repository, issue, relations, comments);
 };
 
 export const selectNextGitHubIssueJobSelection = async (
@@ -619,6 +703,7 @@ export const selectNextGitHubIssueJobSelection = async (
   ledgerMarkdown: string,
   recovery: SentinelRecoveryEligibilityContext,
   observedAt = new Date(),
+  planning: GitHubIssueJobPlanningCallback | null = null,
 ): Promise<GitHubIssueJobSelection | null> => {
   if (!Number.isFinite(observedAt.getTime())) throw new Error("GitHub issue selection timestamp is invalid");
   // Validate the authoritative recovery context before the candidate loop so a
@@ -629,73 +714,38 @@ export const selectNextGitHubIssueJobSelection = async (
   }
   const ledger = parseGitHubIssueJobLedger(ledgerMarkdown);
   const listed = await source.listOpenIssues();
-  const candidates: GitHubIssueJob[] = [];
-  const ownerBacklogAuthorPermissions = new Map<string, GitHubRepositoryPermission>();
-  let ownerBacklogPermissionPreflights = 0;
-  for (const candidate of listed) {
-    if (candidate.comments > MAX_IGNORABLE_ISSUE_COMMENTS) continue;
-    let preliminaryPermission: GitHubRepositoryPermission = "write";
-    if (candidate.labels.length === 0 && parseOwnerBacklogIssueBody(candidate.body) !== null) {
-      // Do not let an untrusted unlabelled issue consume the bounded detail loop.
-      let authorPermission = ownerBacklogAuthorPermissions.get(candidate.authorLogin);
-      if (authorPermission === undefined) {
-        if (ownerBacklogPermissionPreflights >= MAX_OWNER_BACKLOG_PERMISSION_PREFLIGHTS) continue;
-        authorPermission = await source.getRepositoryPermission(candidate.authorLogin);
-        ownerBacklogAuthorPermissions.set(candidate.authorLogin, authorPermission);
-        ownerBacklogPermissionPreflights += 1;
-      }
-      if (authorPermission !== "admin") continue;
-      preliminaryPermission = "admin";
-    }
-    const job = await createGitHubIssueJob(
-      repository,
-      candidate,
-      {
-        parentIssueNumber: null,
-        subIssueCount: 0,
-        blockedByCount: 0,
-        blockingCount: 0,
-        latestBodyEdit: null,
-        latestTitleEdit: null,
-      },
-      preliminaryPermission,
-      MAX_GITHUB_ISSUE_TIME_ESTIMATE_MINUTES,
-    );
-    if (!job) continue;
-    candidates.push(job);
-  }
-  candidates.sort(issueJobOrder);
-  let detailCommentInspections = 0;
-  let relationshipInspections = 0;
-  for (const candidate of candidates) {
-    if (detailCommentInspections >= MAX_ISSUE_JOB_DETAIL_COMMENT_INSPECTIONS) {
-      throw new Error("GitHub issue selection exceeded the Sentinel detail-and-comment inspection limit");
-    }
-    detailCommentInspections += 1;
+  // Lightweight ordering by listed metadata; no author/editor, template,
+  // estimate, comment, assignee, lock, relationship, or inspection-budget
+  // preflight vetoes. The queue is exhausted only after every listed issue has
+  // been inspected; transport pagination still bounds each single source read.
+  const prioritized = [...listed].sort((left, right) =>
+    (parseNumericQueuePriority(right.labels) ?? -1) - (parseNumericQueuePriority(left.labels) ?? -1) ||
+    Date.parse(left.createdAt) - Date.parse(right.createdAt) || left.number - right.number
+  );
+  const queueEntries: GitHubIssueQueueEntry[] = [];
+  for (const candidate of prioritized) {
     const current = await source.getIssue(candidate.number);
-    if (current.id !== candidate.issueId || current.nodeId !== candidate.nodeId) {
+    if (current.id !== candidate.id || current.nodeId !== candidate.nodeId) {
       throw new Error(`GitHub issue ${candidate.number} identity changed during selection`);
     }
-    if (!await issueCommentsAreOnlyInertNotices(source, current)) continue;
-    if (relationshipInspections >= MAX_ISSUE_JOB_RELATIONSHIP_INSPECTIONS) {
-      throw new Error("GitHub issue selection exceeded the Sentinel relationship-inspection limit");
-    }
-    relationshipInspections += 1;
+    const comments = await source.listIssueComments(candidate.number);
     const relations = await source.getIssueRelations(candidate.number);
-    const authorityPermission = await issueAuthorityPermission(source, current, relations);
-    const job = await createGitHubIssueJob(
-      repository,
-      current,
-      relations,
-      authorityPermission,
-      MAX_GITHUB_ISSUE_TIME_ESTIMATE_MINUTES,
-    );
-    if (!job) continue;
-    if (!githubIssueJobSourceSnapshotsMatch(candidate, job)) {
-      throw new Error(`GitHub issue ${candidate.number} snapshot changed during selection`);
+    const job = await createGitHubIssueJob(repository, current, relations, comments);
+    if (job === null) {
+      queueEntries.push({
+        number: candidate.number,
+        node_id: candidate.nodeId,
+        fingerprint: "",
+        queue_priority: parseNumericQueuePriority(candidate.labels),
+        selected: false,
+        reason: "source_unavailable",
+        next_action: "Resolve the unreadable issue source and re-inspect.",
+      });
+      continue;
     }
     let selectionBlocked = false;
     let checkpoint: GitHubIssueJobCheckpoint | null = null;
+    let blockingReason = "";
     const issueEntries = ledger.filter((entry) =>
       entry.issueId === job.issueId && entry.nodeId === job.nodeId && entry.number === job.number
     );
@@ -707,8 +757,8 @@ export const selectNextGitHubIssueJobSelection = async (
       entry.disposition === "resolved" || entry.disposition === "manual_required"
     );
     // An active retry remains authoritative when it matches after inert-comment
-    // normalization. If it does not match, older terminal snapshots must still
-    // be checked so an issue cannot return to already-dispositioned content.
+    // normalization; an ordinary material discussion must never be normalized
+    // away (materialDigest equality is mandatory).
     const entriesToInspect = exactEntries.length > 0
       ? exactEntries
       : activeRetryEntry
@@ -717,19 +767,26 @@ export const selectNextGitHubIssueJobSelection = async (
     for (const entry of entriesToInspect) {
       let snapshotMatches = entry.fingerprint === job.fingerprint;
       if (!snapshotMatches) {
-        const normalizedJob = await createGitHubIssueJob(
-          repository,
-          { ...current, comments: entry.comments, updatedAt: entry.sourceUpdatedAt },
-          relations,
-          authorityPermission,
-          MAX_GITHUB_ISSUE_TIME_ESTIMATE_MINUTES,
-        );
-        snapshotMatches = normalizedJob?.fingerprint === entry.fingerprint;
+        // Inert-notice normalization is allowed only when the CURRENT capture
+        // is proven inert-only (materialDigest null): then the historical
+        // identity projection replays the old row's count/timestamp without
+        // pretending to be a different captured comment list. Ordinary material
+        // discussion is never normalized away, and differing inert counts do
+        // not abort the queue.
+        if (job.materialDigest === null) {
+          const normalizedJob = await createGitHubIssueJobHistoricalProjection(
+            repository,
+            { ...current, comments: entry.comments, updatedAt: entry.sourceUpdatedAt },
+            relations,
+          );
+          snapshotMatches = normalizedJob?.fingerprint === entry.fingerprint;
+        }
       }
       if (!snapshotMatches) continue;
       const retryReadyAt = Date.parse(entry.recordedAt) + GITHUB_ISSUE_JOB_RETRY_COOLDOWN_MS;
       if (entry.disposition !== "retry_pending" || observedAt.getTime() < retryReadyAt) {
         selectionBlocked = true;
+        blockingReason = entry.disposition;
         break;
       }
       checkpoint = entry.checkpoint;
@@ -737,7 +794,18 @@ export const selectNextGitHubIssueJobSelection = async (
       // older terminal entries retained only for manual checkpoint recovery.
       break;
     }
-    if (selectionBlocked) continue;
+    if (selectionBlocked) {
+      queueEntries.push({
+        number: job.number,
+        node_id: job.nodeId,
+        fingerprint: job.fingerprint,
+        queue_priority: job.queuePriority,
+        selected: false,
+        reason: `issue_ledger_blocked:${blockingReason}`,
+        next_action: "Wait for the recorded retry cooldown or terminal disposition.",
+      });
+      continue;
+    }
     // The authoritative recovery state is consulted before the candidate is
     // returned: an unavailable first item must never starve a later eligible
     // item. The caller supplies the parsed snapshot (fetched once per
@@ -751,10 +819,77 @@ export const selectNextGitHubIssueJobSelection = async (
       now: recovery.now,
       continuation_record: recovery.continuation_record ?? null,
     });
-    if (!eligibility.eligibility.available) continue;
-    return { job, checkpoint };
+    if (!eligibility.eligibility.available) {
+      queueEntries.push({
+        number: job.number,
+        node_id: job.nodeId,
+        fingerprint: job.fingerprint,
+        queue_priority: job.queuePriority,
+        selected: false,
+        reason: `recovery_unavailable:${eligibility.eligibility.reason}`,
+        next_action: "Honor the authoritative terminal decision or wait for the due retry.",
+      });
+      continue;
+    }
+    if (planning !== null) {
+      // Runtime planning runs only after both ledger and recovery eligibility:
+      // a confirmed blocker is recorded and the ordered selection continues to
+      // the next candidate instead of blocking the queue prefix.
+      const planned = await planning(job, { checkpoint, recovery });
+      if (!planned.ready) {
+        queueEntries.push({
+          number: job.number,
+          node_id: job.nodeId,
+          fingerprint: job.fingerprint,
+          queue_priority: job.queuePriority,
+          selected: false,
+          reason: `planning_blocked:${planned.reason}`,
+          next_action: planned.persisted
+            ? "Persisted blocker holds this source; resolve it before review."
+            : "Transient planning failure preserves the existing retry behavior.",
+        });
+        continue;
+      }
+      queueEntries.push({
+        number: job.number,
+        node_id: job.nodeId,
+        fingerprint: job.fingerprint,
+        queue_priority: job.queuePriority,
+        selected: true,
+        reason: "eligible_selected",
+        next_action: "Prepare the frozen plan for this issue.",
+      });
+      return {
+        job,
+        checkpoint,
+        triage: planned.triage,
+        queue: { queue_exhausted: false, entries: queueEntries },
+      };
+    }
+    queueEntries.push({
+      number: job.number,
+      node_id: job.nodeId,
+      fingerprint: job.fingerprint,
+      queue_priority: job.queuePriority,
+      selected: true,
+      reason: "eligible_selected",
+      next_action: "Prepare the frozen plan for this issue.",
+    });
+    return {
+      job,
+      checkpoint,
+      triage: null,
+      queue: { queue_exhausted: false, entries: queueEntries },
+    };
   }
-  return null;
+  // Every listed issue was inspected without a selection: the queue itself is
+  // exhausted, never a budget/prefix artifact.
+  return {
+    job: null,
+    checkpoint: null,
+    triage: null,
+    queue: { queue_exhausted: true, entries: queueEntries },
+  };
 };
 
 export const selectNextGitHubIssueJob = async (
@@ -801,24 +936,37 @@ export const githubIssueJobTriageReport = (
   };
 };
 
+/**
+ * Planned-scope path matching: exact files match exactly; explicit directory
+ * entries (trailing slash) match descendants at a path-component boundary.
+ * `src/foo/` never authorizes `src/foobar.ts`; protected descendants are
+ * enforced independently by the protected-path matcher.
+ */
+export const issuePathWithinPlannedScope = (path: string, scope: readonly string[]): boolean =>
+  // Shared matrix representation: explicit trailing-slash directories match
+  // descendants at a component boundary; non-slash entries are exact files.
+  scope.some((entry) => matrixAllowedPathCovers(path, entry));
+
 export const blockingIssueReviewFindings = (
   report: NativeReviewReport,
   files: readonly string[],
+  plannedScope?: readonly string[],
 ): NativeReviewFinding[] => {
   if (report.parse_status === "unparseable") throw new Error("Native Codex review output was not parseable");
-  const fileSet = new Set(files);
+  const scope = plannedScope ?? files;
   return report.findings.filter((finding) => {
     if (finding.severity === "P0" || finding.severity === "P1") return true;
     const locationPath = finding.location.match(FILE_LOCATION_PATTERN)?.[1];
-    return locationPath !== undefined && fileSet.has(locationPath);
+    return locationPath !== undefined && issuePathWithinPlannedScope(locationPath, scope);
   });
 };
 
 export const issueReviewBacklogFindings = (
   report: NativeReviewReport,
   files: readonly string[],
+  plannedScope?: readonly string[],
 ): NativeReviewFinding[] => {
-  const blockers = new Set(blockingIssueReviewFindings(report, files));
+  const blockers = new Set(blockingIssueReviewFindings(report, files, plannedScope));
   return report.findings.filter((finding) =>
     (finding.severity === "P2" || finding.severity === "P3") && !blockers.has(finding)
   );
@@ -829,6 +977,7 @@ export const evaluateGitHubIssueJobImplementation = (
   status: "implemented" | "already_fixed" | "not_actionable" | "blocked",
   actualChangedPaths: readonly string[],
   reportedChangedPaths: readonly string[],
+  plannedScope: readonly string[] | null = null,
 ): Readonly<{
   disposition: Exclude<GitHubIssueJobDisposition, "checkpoint_retained">;
   continueToRuntimeValidation: boolean;
@@ -846,8 +995,14 @@ export const evaluateGitHubIssueJobImplementation = (
       "github_issue",
     );
   }
-  if (actual.some((path) => !job.files.includes(path))) {
-    throw new Error("GitHub issue implementation changed a path outside the declared Files scope");
+  // The frozen execution scope is the planned scope (exact files or explicit
+  // directories); source hints are never execution authority for fresh work.
+  const scope = plannedScope ?? job.files;
+  if (actual.some((path) => isSentinelProtectedImplementationPath(path))) {
+    throw new Error("GitHub issue implementation changed a protected path");
+  }
+  if (actual.some((path) => !issuePathWithinPlannedScope(path, scope))) {
+    throw new Error("GitHub issue implementation changed a path outside the frozen planned scope");
   }
   if (status === "implemented" && actual.length > 0) {
     return { disposition: "resolved", continueToRuntimeValidation: true };
@@ -863,8 +1018,15 @@ export const requireResolvedGitHubIssueJobImplementation = (
   status: "implemented" | "already_fixed" | "not_actionable" | "blocked",
   actualChangedPaths: readonly string[],
   reportedChangedPaths: readonly string[],
+  plannedScope: readonly string[] | null = null,
 ): void => {
-  const decision = evaluateGitHubIssueJobImplementation(job, status, actualChangedPaths, reportedChangedPaths);
+  const decision = evaluateGitHubIssueJobImplementation(
+    job,
+    status,
+    actualChangedPaths,
+    reportedChangedPaths,
+    plannedScope,
+  );
   if (decision.disposition !== "resolved" || !decision.continueToRuntimeValidation) {
     throw new Error("The selected GitHub issue repair does not retain a matching aggregate candidate code diff");
   }
@@ -1093,6 +1255,3 @@ export const issueJobProtectedControlPaths = (): readonly string[] => [
   SENTINEL_POLICY.paths.reviewBacklog,
   SENTINEL_POLICY.paths.issueJobLedger,
 ];
-
-export const issuePrioritySeverity = (label: string): TriageSeverity | null =>
-  PRIORITY_LABELS.get(label as GitHubIssueJob["priorityLabel"]) ?? null;

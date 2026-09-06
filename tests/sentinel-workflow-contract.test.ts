@@ -246,6 +246,20 @@ Deno.test("recovery reconciliation runs immediately after the sentinel run and a
   assert.match(reconcileStep, /--lock=deno\.lock/u);
   assert.match(reconcileStep, /--allow-env=GITHUB_TOKEN,GITHUB_REPOSITORY,GITHUB_RUN_ID/u);
   assert.match(reconcileStep, /--allow-net=api\.github\.com/u);
+  // The sentinel run step receives the existing artifact key under its
+  // existing name so authenticated retained-plan recovery can decrypt the
+  // original evidence envelopes; agent/validation children never receive it.
+  const sentinelRunStepStart = converge.indexOf("      - name: Run Provider Sentinel");
+  const sentinelRunStep = converge.slice(
+    sentinelRunStepStart,
+    converge.indexOf("      - name: ", sentinelRunStepStart + 1),
+  );
+  assert.match(sentinelRunStep, /SENTINEL_ARTIFACT_KEY: \$\{\{ secrets\.SENTINEL_ARTIFACT_KEY \}\}/u);
+  assert.match(sentinelRunStep, /SENTINEL_REPLAY_KEY: \$\{\{ secrets\.SENTINEL_REPLAY_KEY \}\}/u);
+  assert.match(sentinelRunStep, /--allow-env/u);
+  // The agent/validation children must not carry the artifact key: their
+  // deno invocations never pass it, and no bwrap/codex/gitleaks child leak.
+  assert.doesNotMatch(sentinelRunStep, /--allow-env=SENTINEL_ARTIFACT_KEY/u);
 });
 
 Deno.test("convergence authentically materializes the prepared recovery and issue selection", () => {

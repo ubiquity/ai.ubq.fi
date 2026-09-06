@@ -402,6 +402,20 @@ export const renderReviewBacklog = (entries: readonly ReviewBacklogEntry[]): str
   return markdown;
 };
 
+/**
+ * Exact-source backlog lookup for convergent work: the prepared recovery
+ * identity is source_id=fingerprint and source_revision=affected SHA, so an
+ * already prepared entry is bound by exact identity instead of being
+ * re-selected. Earlier entries that become due while cells run must never
+ * retarget the prepared convergence work.
+ */
+export const findReviewBacklogEntry = (
+  markdown: string,
+  fingerprint: string,
+  sha: string,
+): ReviewBacklogEntry | null =>
+  parseReviewBacklog(markdown).find((entry) => entry.fingerprint === fingerprint && entry.sha === sha) ?? null;
+
 export const selectNextReviewBacklogEntry = (
   markdown: string,
   recovery: SentinelRecoveryEligibilityContext,

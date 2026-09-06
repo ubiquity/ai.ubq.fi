@@ -13,6 +13,7 @@ import {
 } from "../scripts/sentinel/recovery-ledger.ts";
 import {
   evaluateIssueCompletionAction,
+  githubIssuePlanDigest,
   isContainedDevelopmentComparison,
   isIssueDeliveryFailSafeRevert,
   isPullRequestMergeRefusalStatus,
@@ -29,6 +30,7 @@ import {
   selectDevelopmentPush,
   sentinelRecoveryCandidateBranch,
   sentinelRecoveryIdentityKey,
+  verifyFrozenIssuePlanDigest,
 } from "../scripts/sentinel/issue-delivery.ts";
 import {
   closeIssueAfterCompletionEvidenceRevalidation,
@@ -43,6 +45,7 @@ import {
   validateRetryPendingIssueReconciliation,
 } from "../scripts/sentinel/issue-delivery-reconcile.ts";
 import type { GitHubIssue, GitHubIssueComment } from "../scripts/sentinel/github.ts";
+import { parseSentinelRecoveryRecord } from "../scripts/sentinel/recovery.ts";
 
 const emptyRecoveryContext = (): SentinelRecoveryEligibilityContext => ({
   repository: "ubiquity/ai.ubq.fi",
@@ -237,8 +240,6 @@ const manualSnapshotSelection = async () => {
     "ubiquity/ai.ubq.fi",
     manualSnapshotIssue,
     manualSnapshotRelations,
-    "admin",
-    1_440,
   );
   assert.ok(job);
   return parseGitHubIssueSelectionReport({
@@ -297,6 +298,9 @@ const manualSnapshotFetcher = (
         },
       },
     }));
+  }
+  if (url.pathname === `/repos/ubiquity/ai.ubq.fi/issues/${issue.number}/comments`) {
+    return Promise.resolve(Response.json([]));
   }
   if (url.pathname === `/repos/ubiquity/ai.ubq.fi/collaborators/${issue.authorLogin}/permission`) {
     return Promise.resolve(Response.json({ permission: "admin" }));
@@ -1017,8 +1021,7 @@ Deno.test("normal delivery revalidates the snapshot after completion evidence be
     "ubiquity/ai.ubq.fi",
     originalIssue,
     relations,
-    "admin",
-    1_440,
+    inertIssueComments(originalIssue.comments),
   );
   assert.ok(selected);
   const selectionReport = parseGitHubIssueSelectionReport({
@@ -1107,8 +1110,7 @@ Deno.test("issue closure rejects an edit during asynchronous snapshot validation
     "ubiquity/ai.ubq.fi",
     originalIssue,
     relations,
-    "admin",
-    1_440,
+    inertIssueComments(originalIssue.comments),
   );
   assert.ok(selected);
   const selectionReport = parseGitHubIssueSelectionReport({
@@ -1765,4 +1767,123 @@ Deno.test("an empty candidate diff reaches an exact rejected disposition", () =>
   assert.equal(result.after.phase, "rejected");
   assert.equal(result.after.disposition, "rejected");
   assert.equal(result.after.reason, "rejected/no_candidate_diff");
+});
+
+Deno.test("V2 frozen plan verification binds the cycle base, not only the recovery base", async () => {
+  const repository = "ubiquity/ai.ubq.fi";
+  const cycleBase = "2".repeat(40);
+  const recoveryBase = "3".repeat(40);
+  const triageValue = {
+    schema_version: 1,
+    interval: {
+      schema_version: 1,
+      mode: "hourly",
+      start: "2026-09-01T00:00:00.000Z",
+      end: "2026-09-01T01:00:00.000Z",
+      duration_ms: 60 * 60_000,
+    },
+    findings: [{
+      id: "github-issue:112:source",
+      fingerprint: "a".repeat(64),
+      severity: "P3",
+      title: "Frozen plan",
+      affected_surface: "src/admin.ts",
+      allowed_paths: ["src/admin.ts", "tests/"],
+      shared_paths: [],
+      depends_on: [],
+      evidence: [{
+        source: "github_issue",
+        reference: "https://github.com/ubiquity/ai.ubq.fi/issues/112",
+        detail: "body",
+      }],
+      proposed_correction: "Implement.",
+      validation_requirements: ["Run deno fmt and tests"],
+      actionable: true,
+    }],
+    no_findings_reason: null,
+  };
+  const selection = {
+    schema_version: 2 as const,
+    issue_id: 5228586364,
+    issue_number: 112,
+    fingerprint: "a".repeat(64),
+    body_sha256: "b".repeat(64),
+    comments: 0,
+    priority: "P3" as const,
+    time_label: null,
+    files: [] as string[],
+    updated_at: "2026-08-25T00:00:00Z",
+    base_sha: recoveryBase,
+    plan_sha256: await githubIssuePlanDigest({
+      repository,
+      issue_id: 5228586364,
+      fingerprint: "a".repeat(64),
+      base_sha: recoveryBase,
+      plan: triageValue as never,
+    }),
+  };
+  const recovery = parseSentinelRecoveryRecord({
+    schema_version: 1,
+    identity: {
+      repository,
+      source_kind: "github_issue",
+      source_id: "5228586364",
+      source_revision: "a".repeat(64),
+      candidate_generation: 1,
+    },
+    run_id: "123456789",
+    attempt: 1,
+    lease_token: "lease",
+    base_sha: recoveryBase,
+    phase: "claimed",
+    disposition: "active",
+    state_version: 1,
+    created_at: "2026-09-01T00:00:00.000Z",
+    updated_at: "2026-09-01T00:00:00.000Z",
+    candidate_branch: null,
+    candidate_sha: null,
+    changed_files: [],
+    tree_sha: null,
+    failure_class: null,
+    failure_fingerprint: null,
+    artifact_ids: [],
+    artifact_digests: [],
+    reason: "claim",
+    next_action: "run",
+    predecessor: null,
+  });
+  // Matching recovery/source/digest but a differing cycle base must fail.
+  await assert.rejects(
+    () =>
+      verifyFrozenIssuePlanDigest({
+        repository,
+        selection,
+        triageValue,
+        cycleBaseSha: cycleBase,
+        recovery,
+        runId: recovery.run_id,
+      }),
+    /cycle development base/,
+  );
+  // A matching cycle base passes, and a wrong recovery run identity fails.
+  await verifyFrozenIssuePlanDigest({
+    repository,
+    selection,
+    triageValue,
+    cycleBaseSha: recoveryBase,
+    recovery,
+    runId: recovery.run_id,
+  });
+  await assert.rejects(
+    () =>
+      verifyFrozenIssuePlanDigest({
+        repository,
+        selection,
+        triageValue,
+        cycleBaseSha: recoveryBase,
+        recovery,
+        runId: "different-run",
+      }),
+    /recovery run does not match/,
+  );
 });

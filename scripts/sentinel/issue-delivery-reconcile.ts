@@ -19,7 +19,7 @@ import {
   parseGitHubIssueManualRequiredRetainedCheckpointReport,
   parseGitHubIssuePullRequestRecord,
   parseGitHubIssueRetryPendingReport,
-  parseGitHubIssueSelectionReport,
+  parseGitHubIssueSelectionReportAny,
   parseSentinelCycleReport,
   parseSentinelManualRequiredCycleReport,
   parseSentinelManualRequiredRetainedCheckpointCycleReport,
@@ -27,6 +27,7 @@ import {
   renderIssueDeliveryEvidence,
   sentinelRecoveryCandidateBranch,
   validateRetryPendingCheckpointPhaseBinding,
+  verifyFrozenIssuePlanDigest,
 } from "./issue-delivery.ts";
 import { assertMatrixCycleReportV1, parseMatrixPlanV1, validateMatrixCycleReportV1 } from "./matrix.ts";
 import {
@@ -1468,9 +1469,25 @@ export const reconcileGitHubIssueDelivery = async (
   const reportsDir = `${input.repositoryRoot}/.sentinel/reports`;
   const selectionValue = await optionalJson(`${reportsDir}/github-issue-selection.json`);
   if (selectionValue === null) return;
-  const selection = parseGitHubIssueSelectionReport(selectionValue);
+  const selection = parseGitHubIssueSelectionReportAny(selectionValue);
   const cycleValue = await readJson(`${reportsDir}/cycle.json`);
   const cycle = parseSentinelCycleReport(cycleValue);
+  if (selection.schema_version === 2) {
+    const triageFile = await optionalJson(`${reportsDir}/triage.json`);
+    const recoveryValue = await optionalJson(`${reportsDir}/recovery-record-v1.json`);
+    if (triageFile === null || recoveryValue === null) {
+      throw new Error("Missing V2 frozen plan evidence before issue delivery reconcile");
+    }
+    const recovery = parseSentinelRecoveryRecord(recoveryValue);
+    await verifyFrozenIssuePlanDigest({
+      repository: input.repository,
+      selection,
+      triageValue: triageFile,
+      cycleBaseSha: cycle.base_development_sha,
+      recovery,
+      runId: cycle.run_id,
+    });
+  }
   const dispositionValue = await optionalJson(`${reportsDir}/github-issue-disposition.json`);
   const dispositionRecord = record(dispositionValue);
   if (dispositionRecord?.disposition === "retry_pending") {

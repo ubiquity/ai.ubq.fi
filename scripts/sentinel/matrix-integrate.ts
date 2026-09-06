@@ -8,6 +8,7 @@ import {
   type IntegrationCellDecisionV1,
   type IntegrationDecisionV1,
   type MatrixAcceptedAncestryV1,
+  matrixAllowedPathCovers,
   type MatrixCellReportV1,
   type MatrixCycleCellStatus,
   matrixCycleReportDigest,
@@ -644,7 +645,9 @@ export const assertIntegrationCorrectionScope = (
           cellId: cell.cell_id,
         });
       }
-      if (!cell.allowed_paths.some((allowed) => path === allowed || path.startsWith(`${allowed}/`))) {
+      if (
+        !cell.allowed_paths.some((allowed) => matrixAllowedPathCovers(path, allowed))
+      ) {
         throw new MatrixIntegrationError(
           "correction_scope",
           `Correction path ${path} is outside cell ${cell.cell_id} ownership`,

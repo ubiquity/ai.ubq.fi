@@ -11,6 +11,7 @@ import {
   assertMatrixCellReportDigest,
   assertMatrixCellReportV1,
   canonicalMatrixJson,
+  matrixAllowedPathCovers,
   type MatrixCellFindingDispositionV1,
   matrixCellReportDigest,
   type MatrixCellReportV1,
@@ -103,21 +104,21 @@ const errorDetail = (error: unknown, sensitiveValues: readonly string[]): string
 const repositoryPath = (value: string): boolean => {
   if (
     value.length === 0 || value.length > 512 || value.startsWith("/") || value.includes("\\") ||
-    value.includes("\0") || value !== value.trim() || [...value].some((character) => {
+    value.includes("\0") || value !== value.trim() || value.endsWith("//") ||
+    [...value].some((character) => {
       const code = character.charCodeAt(0);
       return code <= 0x1f || code === 0x7f;
     })
   ) return false;
-  return value.split("/").every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
+  const normalized = value.endsWith("/") ? value.slice(0, -1) : value;
+  return normalized.length > 0 &&
+    normalized.split("/").every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
 };
 
 const sortedUnique = (values: readonly string[]): string[] => [...new Set(values)].sort();
 
-const pathOverlaps = (left: string, right: string): boolean =>
-  left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
-
 const pathInScope = (path: string, scopes: readonly string[]): boolean =>
-  scopes.some((scope) => pathOverlaps(path, scope));
+  scopes.some((scope) => matrixAllowedPathCovers(path, scope));
 
 const decodeGitPaths = (bytes: Uint8Array): string[] => TEXT_DECODER.decode(bytes).split("\0").filter(Boolean);
 
