@@ -1434,46 +1434,6 @@ const isPaidFallbackBackfillState = (value: unknown): value is PaidFallbackBackf
   Number.isSafeInteger(value.completed_at_ms) &&
   value.completed_at_ms >= 0;
 
-const isBackfillableSettledPaidFallbackRequest = (value: unknown): boolean => {
-  if (!isRecord(value)) return false;
-  return value.billing_state === "settled" &&
-    typeof value.model === "string" &&
-    value.model.trim().length > 0 &&
-    typeof value.provider_quota === "number" &&
-    Number.isFinite(value.provider_quota) &&
-    value.provider_quota >= 0 &&
-    typeof value.spend_microcredits === "number" &&
-    Number.isFinite(value.spend_microcredits) &&
-    value.spend_microcredits >= 0;
-};
-
-const hasUnrolledSettledPaidFallbackRequest = async (kv: Deno.Kv): Promise<boolean> => {
-  for await (
-    const entry of kv.list<PaidFallbackRequestV3>(
-      { prefix: paidFallbackRequestV3GlobalPrefix },
-      { consistency: "strong" },
-    )
-  ) {
-    if (
-      isBackfillableSettledPaidFallbackRequest(entry.value) &&
-      typeof entry.value.usage_rollup_at_ms !== "number"
-    ) return true;
-  }
-  return false;
-};
-
-const hasPaidFallbackWindowRows = async (kv: Deno.Kv): Promise<boolean> => {
-  for await (
-    const entry of kv.list<PaidFallbackWindowV3>(
-      { prefix: paidFallbackWindowV3GlobalPrefix },
-      { consistency: "strong" },
-    )
-  ) {
-    if (isPaidFallbackWindowV3(entry.value)) return true;
-  }
-  return false;
-};
-
 const paidFallbackBackfillNeedsRun = async (kv: Deno.Kv): Promise<boolean> => {
   const [stateEntry, requestCursorEntry, windowCursorEntry] = await Promise.all([
     kv.get<PaidFallbackBackfillStateV3>(paidFallbackBackfillStateV3Key(), { consistency: "strong" }),
@@ -1487,12 +1447,11 @@ const paidFallbackBackfillNeedsRun = async (kv: Deno.Kv): Promise<boolean> => {
   ) {
     return true;
   }
-  // Do not use the existence of any rollup as a completion signal. A live
-  // settlement can create one rollup before this first pass sees older
-  // unmarked settlements, leaving a partial history permanently unfilled.
-  // The durable completion marker is the one-time scan guard; before it is
-  // written, inspect both namespaces that the automatic pass repairs.
-  return await hasUnrolledSettledPaidFallbackRequest(kv) || await hasPaidFallbackWindowRows(kv);
+  // The completion marker is written only after both strong-consistency
+  // sweeps finish. Live writes apply their own rollup marker and window TTL,
+  // so a valid marker is the durable one-time guard and avoids scanning the
+  // full namespaces on every later admission.
+  return false;
 };
 
 const acquirePaidFallbackBackfillLease = async (
