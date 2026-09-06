@@ -2842,12 +2842,12 @@
       "attempt": 1,
       "lease_token": "34049537151-1",
       "base_sha": "7948a61145f8b299e54511dac3a3c7ff8c0fc48a",
-      "phase": "claimed",
+      "phase": "recovery_pending",
       "disposition": "active",
-      "state_version": 1,
+      "state_version": 2,
       "created_at": "2026-09-06T17:47:54.189Z",
-      "updated_at": "2026-09-06T17:47:54.189Z",
-      "candidate_branch": null,
+      "updated_at": "2026-09-06T18:11:03.832Z",
+      "candidate_branch": "sentinel/candidate-incident-2122b6529c733c7f34ebcc5f47a29022b836b62514c6ad8d41704eb4089c326c-7948a61145f8b299e54511dac3a3c7ff-g2-9a4e963ab9666161",
       "candidate_sha": null,
       "changed_files": [],
       "tree_sha": null,
@@ -2855,8 +2855,8 @@
       "failure_fingerprint": null,
       "artifact_ids": [],
       "artifact_digests": [],
-      "reason": "The selected work item is durably claimed before implementation.",
-      "next_action": "Start the Luna implementation stage.",
+      "reason": "The record is incomplete and requires another bounded reconciliation pass.",
+      "next_action": "Reconcile the recorded branch and candidate SHA.",
       "predecessor": "[\"ubiquity/ai.ubq.fi\",\"incident\",\"2122b6529c733c7f34ebcc5f47a29022b836b62514c6ad8d41704eb4089c326c\",\"3349acbac3f025851eb1d9cc846a02e5c833be26\",1]"
     },
     {
@@ -24572,12 +24572,5 @@
       }
     }
   ],
-  "leases": [
-    {
-      "identity_key": "[\"ubiquity/ai.ubq.fi\",\"incident\",\"2122b6529c733c7f34ebcc5f47a29022b836b62514c6ad8d41704eb4089c326c\",\"7948a61145f8b299e54511dac3a3c7ff8c0fc48a\",2]",
-      "owner": "34049537151",
-      "token": "34049537151:364596de-5a18-4fec-98fc-44f6e926f390",
-      "expires_at": "2026-09-06T18:21:03.832Z"
-    }
-  ]
+  "leases": []
 }
