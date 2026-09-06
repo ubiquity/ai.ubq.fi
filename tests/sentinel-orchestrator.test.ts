@@ -5049,13 +5049,12 @@ Deno.test("matrix prepared recovery binds github issue convergence identity exac
 
 Deno.test("matrix prepared recovery rejects github issue convergence transport drift", async () => {
   const fixture = await matrixPreparedConvergenceFixture();
-  const driftRoot = await Deno.makeTempDir({ prefix: "sentinel-matrix-convergence-drift-" });
   const bindWith = async (overrides: Partial<MatrixConvergenceInputs>) =>
     await bindMatrixConvergenceWork({
       repository: fixture.repository,
       runId: fixture.runId,
       runAttempt: fixture.runAttempt,
-      repositoryRoot: driftRoot,
+      repositoryRoot: "/tmp",
       plan: overrides.plan ?? fixture.plan,
       triage: overrides.triage ?? fixture.triage,
       preparedRecovery: overrides.preparedRecovery ?? fixture.prepared,
