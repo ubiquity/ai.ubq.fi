@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "review_identity": "local-codex-review-d465107d-20260906T1712Z",
+  "command": "codex review --commit d465107d",
+  "worktree": "/Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/issue-throughput-handoff-2026-09-06-g5a02cbbad3",
+  "reviewed_head_sha": "d465107d9e7f8cf784c383f6e40949ac7394fb8d",
+  "reviewed_base_sha": "3349acbac3f025851eb1d9cc846a02e5c833be26",
+  "pr_number": 244,
+  "exit_code": 0,
+  "original_finding_text": "- [P1] Pass the frozen scope into controller disposition checks — /Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/issue-throughput-handoff-2026-09-06-g5a02cbbad3/scripts/sentinel/issues.ts:998-1005\n  For newly admitted issues without `Files:` hints, `job.files` is empty. Both `applyInitialSelectedIssueDisposition` and `reconcileSelectedIssueDisposition` still call these helpers without `plannedScope`, so every nonempty implementation fails this check even when it matches the frozen plan. Existing issues also fail when the plan adds necessary supporting files. Pass `plannedIssueScope(workSelection)` through both controller calls.\n\n- [P1] Supply the artifact key to the preparation job — /Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/issue-throughput-handoff-2026-09-06-g5a02cbbad3/scripts/sentinel/main.ts:3861-3868\n  When an issue has a retained checkpoint, this new path requires `SENTINEL_ARTIFACT_KEY`. However, the workflow's `Prepare immutable MatrixPlanV1` step does not receive that variable; the patch adds it only to the later convergence invocation, which bypasses issue planning. Consequently, scheduled preparation always skips retained checkpoints as unavailable. Pass the existing secret to the preparation invocation too.\n\n- [P1] Allow the retry ledger commit when validating retained bases — /Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/issue-throughput-handoff-2026-09-06-g5a02cbbad3/scripts/sentinel/main.ts:3900-3905\n  A successfully published V2 retry necessarily advances `development`: `completeNonRuntimeGitHubIssueDisposition` pushes a docs-only retry ledger commit while retaining the checkpoint's original base. On the next attempt, this equality check therefore rejects that checkpoint even if no implementation code changed. Preserve the original plan digest, but verify permitted intervening changes and checkpoint ancestry instead of requiring the current development tip to equal the original plan base.\n\n- [P2] Align successful planning retries with their recovery base — /Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/issue-throughput-handoff-2026-09-06-g5a02cbbad3/scripts/sentinel/main.ts:4485-4492\n  If planning fails at base A and development advances to B before its retry, planning runs against B and emits a V2 selection bound to B here. However, the claim path spreads the existing recovery record and retains `base_sha: A`. The resulting matrix plan and recovery record disagree, so convergence rejects the prepared work. Reconcile candidate-free planning retries with the selected base before publishing the frozen plan and recovery claim.\n\n- [P2] Isolate unreadable issue captures from the remaining queue — /Users/nv/repos/ubiquity/ai.ubq.fi/.codex-worktrees/issue-throughput-handoff-2026-09-06-g5a02cbbad3/scripts/sentinel/issues.ts:731-734\n  An issue with at least 1,000 comments now reaches `listIssueComments`, whose ten-page limit throws. Previously, the comment-count prefilter skipped it. Because this read is outside any per-candidate error handling, one such issue now aborts selection and prevents all later eligible issues from running. Record an explicit unavailable disposition for incomplete captures and continue without admitting partial source data.",
+  "normalization": "Removed exact canonical worktree prefix from paths for repository-relative finding fingerprints.",
+  "report": {
+    "schema_version": 1,
+    "round": 1,
+    "parse_status": "findings",
+    "findings": [
+      {
+        "fingerprint": "8a282786204fc3bbc3620c5cd2dd91352fc19bdc891098edea03fad68a29226e",
+        "severity": "P1",
+        "title": "Pass the frozen scope into controller disposition checks — scripts/sentinel/issues.ts:998-1005",
+        "body": "For newly admitted issues without `Files:` hints, `job.files` is empty. Both `applyInitialSelectedIssueDisposition` and `reconcileSelectedIssueDisposition` still call these helpers without `plannedScope`, so every nonempty implementation fails this check even when it matches the frozen plan. Existing issues also fail when the plan adds necessary supporting files. Pass `plannedIssueScope(workSelection)` through both controller calls.",
+        "location": "scripts/sentinel/issues.ts:998-1005"
+      },
+      {
+        "fingerprint": "3aca8ddd22f534bbca0d30c4a9eded3568dfb465792ce5726400014cf531dd27",
+        "severity": "P1",
+        "title": "Supply the artifact key to the preparation job — scripts/sentinel/main.ts:3861-3868",
+        "body": "When an issue has a retained checkpoint, this new path requires `SENTINEL_ARTIFACT_KEY`. However, the workflow's `Prepare immutable MatrixPlanV1` step does not receive that variable; the patch adds it only to the later convergence invocation, which bypasses issue planning. Consequently, scheduled preparation always skips retained checkpoints as unavailable. Pass the existing secret to the preparation invocation too.",
+        "location": "scripts/sentinel/main.ts:3861-3868"
+      },
+      {
+        "fingerprint": "d6ebac80e9ef224c3caab52d486befbafb550b5085627d55c38d0fdd189d6049",
+        "severity": "P1",
+        "title": "Allow the retry ledger commit when validating retained bases — scripts/sentinel/main.ts:3900-3905",
+        "body": "A successfully published V2 retry necessarily advances `development`: `completeNonRuntimeGitHubIssueDisposition` pushes a docs-only retry ledger commit while retaining the checkpoint's original base. On the next attempt, this equality check therefore rejects that checkpoint even if no implementation code changed. Preserve the original plan digest, but verify permitted intervening changes and checkpoint ancestry instead of requiring the current development tip to equal the original plan base.",
+        "location": "scripts/sentinel/main.ts:3900-3905"
+      },
+      {
+        "fingerprint": "133754c33419b1fc73794213fc09ecf6599b52a13010f8e0e8e50f82fa476b3c",
+        "severity": "P2",
+        "title": "Align successful planning retries with their recovery base — scripts/sentinel/main.ts:4485-4492",
+        "body": "If planning fails at base A and development advances to B before its retry, planning runs against B and emits a V2 selection bound to B here. However, the claim path spreads the existing recovery record and retains `base_sha: A`. The resulting matrix plan and recovery record disagree, so convergence rejects the prepared work. Reconcile candidate-free planning retries with the selected base before publishing the frozen plan and recovery claim.",
+        "location": "scripts/sentinel/main.ts:4485-4492"
+      },
+      {
+        "fingerprint": "f0effe4aae66ed496bf47c877c20b3bd8c012c3127fb85384dd701555d6678c4",
+        "severity": "P2",
+        "title": "Isolate unreadable issue captures from the remaining queue — scripts/sentinel/issues.ts:731-734",
+        "body": "An issue with at least 1,000 comments now reaches `listIssueComments`, whose ten-page limit throws. Previously, the comment-count prefilter skipped it. Because this read is outside any per-candidate error handling, one such issue now aborts selection and prevents all later eligible issues from running. Record an explicit unavailable disposition for incomplete captures and continue without admitting partial source data.",
+        "location": "scripts/sentinel/issues.ts:731-734"
+      }
+    ]
+  }
+}

@@ -18,6 +18,7 @@ import {
   durableProductionDecision,
   evaluateReviewBacklogImplementation,
   evaluateRollbackPreflight,
+  evaluateSelectedIssueImplementation,
   evaluateSentinelTriageGate,
   failedCycleBranchDisposition,
   finalizeSentinelCandidate,
@@ -43,6 +44,7 @@ import {
   replayIndexArtifactName,
   requireIssueLedgerOnlyChangedPaths,
   requireResolvedReviewBacklogImplementation,
+  requireResolvedSelectedIssueImplementation,
   requiresReplayEvaluation,
   resolveCycleAnchorMs,
   RetryCheckpointResumeError,
@@ -56,6 +58,7 @@ import {
   sentinelDeploymentInputs,
   sentinelEvidenceArtifactName,
   sentinelRevisionControlInputs,
+  type SentinelWorkSelection,
   shouldDeferHourlyBacklogWork,
   terminalTemporaryCandidateBranches,
   TRIAGE_INCIDENT_MS,
@@ -96,6 +99,7 @@ import {
   githubIssueJobsMatch,
   type GitHubIssueJobSource,
   githubIssueJobTriageReport,
+  issueJobFindingId,
   issueReviewBacklogFindings,
   parseGitHubIssueJobHint,
   parseGitHubIssueJobLedger,
@@ -3227,6 +3231,81 @@ assert.throws(
     ),
   /protected path/,
 );
+
+Deno.test("selected issue controller route applies the frozen plan scope when job.files are empty", () => {
+  // Ordinary issue with no source hint files: the controller route alone can
+  // carry the frozen plan scope into the real disposition check.
+  const job = broad!;
+  assert.deepEqual(job.files, []);
+  const workSelection: SentinelWorkSelection = {
+    source: "github_issue",
+    reason: "hourly_github_issue",
+    backlogEntry: null,
+    issueJob: job,
+    triage: {
+      schema_version: 1,
+      interval: computeSentinelInterval("hourly", now),
+      findings: [{
+        id: issueJobFindingId(job),
+        fingerprint: job.fingerprint,
+        severity: "P3" as const,
+        title: job.title,
+        affected_surface: "src/paid_fallback_ledger.ts",
+        allowed_paths: ["src/", "tests/"],
+        shared_paths: [],
+        depends_on: [],
+        evidence: [{ source: "github_issue", reference: job.htmlUrl, detail: job.body }],
+        proposed_correction: "Implement the bounded repair.",
+        validation_requirements: ["Run deno fmt and affected tests"],
+        actionable: true,
+      }],
+      no_findings_reason: null,
+    },
+  };
+  // Matching changes inside the frozen scope resolve despite the empty
+  // source hint files, exactly as the controller closures evaluate them.
+  assert.deepEqual(
+    evaluateSelectedIssueImplementation(workSelection, "implemented", [
+      "src/paid_fallback_ledger.ts",
+      "tests/paid_fallback_ledger.test.ts",
+    ], [
+      "src/paid_fallback_ledger.ts",
+      "tests/paid_fallback_ledger.test.ts",
+    ]),
+    { disposition: "resolved", continueToRuntimeValidation: true },
+  );
+  assert.doesNotThrow(() =>
+    requireResolvedSelectedIssueImplementation(workSelection, "implemented", [
+      "src/paid_fallback_ledger.ts",
+    ], ["src/paid_fallback_ledger.ts"])
+  );
+  // Changes outside the frozen scope are rejected by the same route.
+  assert.throws(
+    () => evaluateSelectedIssueImplementation(workSelection, "implemented", ["README.md"], ["README.md"]),
+    /outside the frozen planned scope/,
+  );
+  assert.throws(
+    () =>
+      requireResolvedSelectedIssueImplementation(
+        workSelection,
+        "implemented",
+        ["docs/sentinel.md"],
+        ["docs/sentinel.md"],
+      ),
+    /outside the frozen planned scope/,
+  );
+  // Protected paths are rejected even when they sit inside the frozen scope.
+  assert.throws(
+    () =>
+      evaluateSelectedIssueImplementation(
+        workSelection,
+        "implemented",
+        ["scripts/sentinel/main.ts"],
+        ["scripts/sentinel/main.ts"],
+      ),
+    /protected path/,
+  );
+});
 
 Deno.test("changed_files mismatch retains the Git checkpoint as a durable validation failure", async () => {
   const job = await createGitHubIssueJob("ubiquity/ai.ubq.fi", sentinelGitHubIssue(), noIssueRelations);

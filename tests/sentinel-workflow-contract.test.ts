@@ -199,6 +199,18 @@ Deno.test("Provider Sentinel matrix transport stays encrypted and uses least-pri
   assert.match(converge, /actions\/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093/u);
   assert.match(converge, /SENTINEL_ARTIFACT_KEY/u);
   assert.match(converge, /SENTINEL_CODEX_AUTH_STATE_KEY/u);
+  // Retained planning runs inside the immutable preparation step: the existing
+  // artifact key is passed there under its existing name so scheduled
+  // preparation can decrypt retained frozen evidence. Model and validation
+  // children never receive it.
+  const prepareStepStart = prepare.indexOf("      - name: Prepare immutable MatrixPlanV1");
+  assert.ok(prepareStepStart >= 0, "prepare is missing its immutable matrix plan step");
+  const prepareStep = prepare.slice(
+    prepareStepStart,
+    prepare.indexOf("      - name: ", prepareStepStart + 1),
+  );
+  assert.match(prepareStep, /SENTINEL_ARTIFACT_KEY: \$\{\{ secrets\.SENTINEL_ARTIFACT_KEY \}\}/u);
+  assert.doesNotMatch(prepareStep, /--allow-env=SENTINEL_ARTIFACT_KEY/u);
 });
 
 Deno.test("Provider Sentinel preserves incident, fixed-model, and delivery/attestation controls", () => {
