@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "request_id": "241-ce42faf61857ba5a0eea1eb99268f91591d9862f",
+  "pr_number": 241,
+  "pr_url": "https://github.com/ubiquity/ai.ubq.fi/pull/241",
+  "head_sha": "ce42faf61857ba5a0eea1eb99268f91591d9862f",
+  "base_sha": null,
+  "head_branch": "sentinel/candidate-github_issue-5262330278-c5c00917f18ebf3644826ff1c003274a-g173-29240bb900f782ea",
+  "status": "unreachable",
+  "reviewed_at": "2026-09-06T08:27:54.430Z",
+  "parse_status": "unreachable",
+  "raw_review_text": "",
+  "review_stderr": "",
+  "structured_review": null,
+  "findings": [],
+  "failure": "Rolling review target ce42faf61857ba5a0eea1eb99268f91591d9862f is unreachable: its merge base is the head itself (the reviewed head is already an ancestor of development, so there is no distinct base to review against)"
+}
