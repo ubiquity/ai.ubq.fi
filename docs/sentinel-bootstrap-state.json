@@ -3,20 +3,20 @@
   "release": {
     "schema_version": 1,
     "stable_sha": "3349acbac3f025851eb1d9cc846a02e5c833be26",
-    "candidate_sha": "cd89657d477bce4cd5398ad6cee27354e6ea1c38",
+    "candidate_sha": "8485bf45243941095b11a76404b5eaa9bd91c494",
     "acceptance_evidence": [
-      "health:336jare1cczp",
-      "bootstrap:superseded:63ce001409575bcc6315d56ae3d0cabf050259a6"
+      "health:qqszfmf1y23w",
+      "bootstrap:superseded:cd89657d477bce4cd5398ad6cee27354e6ea1c38"
     ],
-    "activated_at": "2026-09-06T19:04:05.253Z",
+    "activated_at": "2026-09-06T19:21:44.329Z",
     "rollback_reason": null,
-    "generation": 49
+    "generation": 50
   },
   "signals": [],
   "activation": {
     "schema_version": 1,
-    "active_sha": "cd89657d477bce4cd5398ad6cee27354e6ea1c38",
-    "generation": 49,
+    "active_sha": "8485bf45243941095b11a76404b5eaa9bd91c494",
+    "generation": 50,
     "fenced_generations": [
       2,
       3,
@@ -49,9 +49,10 @@
       45,
       46,
       47,
-      48
+      48,
+      49
     ],
-    "updated_at": "2026-09-06T19:04:05.253Z",
+    "updated_at": "2026-09-06T19:21:44.329Z",
     "reason": "managed_candidate_superseded"
   },
   "rollback_intent": null,
