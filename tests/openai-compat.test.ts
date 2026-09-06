@@ -13526,6 +13526,103 @@ Deno.test("openai: Chat precommit telemetry separates upstream arrival from sema
   assert.ok(telemetry.firstUpstreamSseEventMs! <= telemetry.streamTerminalMs!);
 });
 
+Deno.test("openai: real Responses failure terminals classify without provider content", async (t) => {
+  const secretMessage = "provider error message must not enter telemetry";
+  const secretProviderField = "provider private diagnostic must not enter telemetry";
+  const cases = [
+    {
+      name: "error",
+      terminal: {
+        type: "error",
+        error: {
+          code: "provider_error",
+          type: "provider_error_type",
+          message: secretMessage,
+          provider_detail: secretProviderField,
+        },
+      },
+      expectedFailureKind: "provider_error",
+      expectedTerminalType: "error",
+    },
+    {
+      name: "response.failed",
+      terminal: {
+        type: "response.failed",
+        response: {
+          id: "resp_real_failure",
+          status: "failed",
+          error: {
+            type: "provider_failure",
+            message: secretMessage,
+            provider_detail: secretProviderField,
+          },
+          output: [],
+        },
+      },
+      expectedFailureKind: "provider_failure",
+      expectedTerminalType: "response.failed",
+    },
+  ] as const;
+
+  for (const testCase of cases) {
+    await t.step(testCase.name, async () => {
+      const logs: unknown[][] = [];
+      const originalInfo = console.info;
+      console.info = (...args: unknown[]) => logs.push(args);
+      try {
+        const response = await withFetchMock(
+          () =>
+            sseResponse([
+              "data: " + JSON.stringify({
+                type: "response.created",
+                response: { id: "resp_real_failure" },
+              }) + "\n\n",
+              "data: " + JSON.stringify(testCase.terminal) + "\n\n",
+            ]),
+          () => handleResponses(responsesRequest({ stream: true })),
+        );
+        const loggedResponse = await withTerminalRequestLog(response, {
+          route: "responses",
+          telemetryResponse: response,
+          startedAtMonotonicMs: performance.now(),
+          requestId: "real-responses-failure-" + testCase.name,
+        });
+        const serialized = await loggedResponse.text();
+        assert.equal(response.status, 200);
+        assert.deepEqual(
+          parseResponsesSseValues(serialized).map((value) => value.type),
+          ["response.created", testCase.terminal.type],
+        );
+
+        const telemetry = getResponseTelemetry(response);
+        assert.ok(telemetry);
+        assert.equal(telemetry.completed, false);
+        assert.equal(telemetry.streamTerminalType, testCase.expectedTerminalType);
+        assert.equal(telemetry.failureKind, testCase.expectedFailureKind);
+        assert.equal(telemetry.syntheticTerminalType, null);
+        assert.equal(telemetry.responseCreatedObserved, true);
+        assert.ok(telemetry.failureKind !== null && telemetry.failureKind.length <= 128);
+        const serializedTelemetry = JSON.stringify(telemetry);
+        assert.equal(serializedTelemetry.includes(secretMessage), false);
+        assert.equal(serializedTelemetry.includes(secretProviderField), false);
+
+        const terminalLogs = logs
+          .filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal")
+          .map((entry) => JSON.parse(String(entry[1])) as Record<string, unknown>);
+        assert.equal(terminalLogs.length, 1);
+        const terminalLog = terminalLogs[0]!;
+        assert.equal(terminalLog.stream_terminal_type, testCase.expectedTerminalType);
+        assert.equal(terminalLog.failure_kind, testCase.expectedFailureKind);
+        const serializedLog = JSON.stringify(terminalLog);
+        assert.equal(serializedLog.includes(secretMessage), false);
+        assert.equal(serializedLog.includes(secretProviderField), false);
+      } finally {
+        console.info = originalInfo;
+      }
+    });
+  }
+});
+
 Deno.test("openai: streamed Responses force the SSE content type", async () => {
   const response = await withFetchMock(
     () =>

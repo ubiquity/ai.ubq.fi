@@ -709,6 +709,27 @@ const CHAT_RESPONSE_EVENT_KINDS = new Set([
 
 const boundedResponseEventKind = (type: string): string => CHAT_RESPONSE_EVENT_KINDS.has(type) ? type : "unrecognized";
 
+const boundedResponsesFailureKind = (value: unknown): string | null =>
+  typeof value === "string" && /^[A-Za-z0-9_.:-]{1,128}$/.test(value) ? value : null;
+
+const officialResponsesErrorKind = (value: unknown): string | null => {
+  if (!isRecord(value) || Array.isArray(value)) return null;
+  return boundedResponsesFailureKind(value.code) ?? boundedResponsesFailureKind(value.type);
+};
+
+const failureKindFromResponsesTerminal = (event: ResponsesStreamEvent): string | null => {
+  if (event.type === "response.failed") {
+    const response = isRecord(event.value.response) ? event.value.response : null;
+    return officialResponsesErrorKind(response?.error) ??
+      "response_failed";
+  }
+  if (event.type === "error") {
+    return officialResponsesErrorKind(event.value.error) ?? boundedResponsesFailureKind(event.value.code) ??
+      "upstream_error";
+  }
+  return null;
+};
+
 const recordResponsesEventTelemetry = (
   context: UsageContext | undefined,
   event: ResponsesStreamEvent,
@@ -725,6 +746,12 @@ const recordResponsesEventTelemetry = (
     if (reason && /^(?:gateway|provider|upstream|server|network|timeout|deadline)[A-Za-z0-9_.:-]*$/i.test(reason)) {
       telemetry.failureKind = `response_incomplete:${reason}`;
     }
+  }
+  if (
+    (event.type === "response.failed" || event.type === "error") &&
+    !isSyntheticResponsesFailureEvent(event)
+  ) {
+    telemetry.failureKind = failureKindFromResponsesTerminal(event);
   }
   if (isSyntheticResponsesFailureEvent(event)) {
     telemetry.syntheticTerminalType = event.type === "response.failed" || event.type === "error" ? event.type : null;
