@@ -12,6 +12,7 @@ import {
   isPaidFallbackUsageRollup,
   mergePaidFallbackUsageRollup,
   PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS,
+  PAID_FALLBACK_USAGE_ROLLUP_PREFIX,
   type PaidFallbackUsageRollup,
   paidFallbackUsageRollupKey,
   paidFallbackUsageRollupShard,
@@ -22,6 +23,8 @@ const MAX_CAS_ATTEMPTS = 128;
 const RETRY_DELAYS_MS = [5_000, 30_000, 120_000, 600_000, 3_600_000, 21_600_000] as const;
 const UNRESOLVED_AFTER_MS = 24 * 60 * 60_000;
 const RECONCILIATION_LEASE_MS = 60_000;
+const PAID_FALLBACK_BACKFILL_LEASE_MS = 5 * 60_000;
+const PAID_FALLBACK_AUTOMATIC_BACKFILL_LIMIT = 5_000;
 
 /**
  * Raw paid-fallback request rows are retained for one year from request
@@ -104,6 +107,14 @@ export const paidFallbackBackfillWindowCursorV3Key = (): Deno.KvKey => [
   ...PREFIX,
   "rollup_backfill_window_cursor",
 ];
+export const paidFallbackBackfillLeaseV3Key = (): Deno.KvKey => [
+  ...PREFIX,
+  "rollup_backfill_lease",
+];
+export const paidFallbackBackfillStateV3Key = (): Deno.KvKey => [
+  ...PREFIX,
+  "rollup_backfill_state",
+];
 export const paidFallbackDeletionGuardV3Key = (keyId: string): Deno.KvKey => [
   ...PREFIX,
   "deletion_guard",
@@ -126,6 +137,16 @@ type PaidFallbackReconciliationJobV3 = Readonly<{
 type PaidFallbackReconciliationLeaseV3 = Readonly<{
   token: string;
   expires_at_ms: number;
+}>;
+
+type PaidFallbackBackfillLeaseV3 = Readonly<{
+  token: string;
+  expires_at_ms: number;
+}>;
+
+type PaidFallbackBackfillStateV3 = Readonly<{
+  v: 1;
+  completed_at_ms: number;
 }>;
 
 type PaidFallbackDeletionGuardV3 = Readonly<{
@@ -516,6 +537,7 @@ export const admitPaidFallbackV3 = async (
 > => {
   const kv = await getKv();
   if (!kv) return { kind: "blocked", reason: "invalid_policy" };
+  if (!paidFallbackBackfillAttempted || paidFallbackBackfillRetryPending) schedulePaidFallbackBackfill(kv);
   const unlimited = input.limitMicrocredits === PAID_FALLBACK_NO_LIMIT;
   if (
     (!unlimited && (!Number.isSafeInteger(input.limitMicrocredits) || input.limitMicrocredits <= 0)) ||
@@ -1198,12 +1220,17 @@ export const backfillPaidFallbackUsageRollups = async (
       // retention without touching the rollup or the row value; marked rows
       // never consume the run budget.
       try {
-        await kv.atomic()
+        const committed = await kv.atomic()
           .check(requestEntry)
           .set(requestKey, request, { expireIn: requestRowExpireIn(request, nowMs) })
           .commit();
+        if (!committed.ok) {
+          failedRows += 1;
+          break;
+        }
       } catch {
-        // Best effort: a concurrent writer owns the row.
+        failedRows += 1;
+        break;
       }
       lastVisitedKey = requestKey;
       continue;
@@ -1322,6 +1349,7 @@ export const backfillPaidFallbackWindowTtls = async (
   let scanned = 0;
   let rewritten = 0;
   let lastRewrittenKey: Deno.KvKey | null = null;
+  let failed = false;
   const selector: Deno.KvListSelector = resumeKey
     ? { prefix: paidFallbackWindowV3GlobalPrefix, start: resumeKey }
     : { prefix: paidFallbackWindowV3GlobalPrefix };
@@ -1347,12 +1375,15 @@ export const backfillPaidFallbackWindowTtls = async (
         .check(windowEntry)
         .set(entry.key, windowEntry.value, { expireIn: windowExpireIn(windowEntry.value, nowMs) })
         .commit();
-      if (committed.ok) {
-        lastRewrittenKey = entry.key;
-        rewritten += 1;
+      if (!committed.ok) {
+        failed = true;
+        break;
       }
+      lastRewrittenKey = entry.key;
+      rewritten += 1;
     } catch {
-      // Best effort: a concurrent writer owns the window.
+      failed = true;
+      break;
     }
     if (rewritten >= limit && lastRewrittenKey) {
       // Probe for rows beyond this batch before reporting truncation, so the
@@ -1375,8 +1406,190 @@ export const backfillPaidFallbackWindowTtls = async (
       break;
     }
   }
+  if (failed) {
+    // Keep the cursor at the last successful rewrite so the next run retries
+    // the row that lost its CAS instead of advancing past its missing TTL.
+    const cursorKeyValue = lastRewrittenKey ?? resumeKey;
+    if (cursorKeyValue) {
+      await kv.atomic().set(cursorKey, { request_key: cursorKeyValue }).commit().catch(() => {});
+    }
+    return { scanned, rewritten, truncated: true };
+  }
   await kv.atomic().delete(cursorKey).commit().catch(() => {});
   return { scanned, rewritten, truncated: false };
+};
+
+export type PaidFallbackAutomaticBackfillResult = Readonly<{
+  kind: "completed" | "in_progress" | "skipped" | "busy";
+  requests: PaidFallbackRollupBackfillResult | null;
+  windows: PaidFallbackWindowTtlBackfillResult | null;
+}>;
+
+const isPaidFallbackBackfillState = (value: unknown): value is PaidFallbackBackfillStateV3 =>
+  isRecord(value) &&
+  value.v === 1 &&
+  typeof value.completed_at_ms === "number" &&
+  Number.isSafeInteger(value.completed_at_ms) &&
+  value.completed_at_ms >= 0;
+
+const isBackfillableSettledPaidFallbackRequest = (value: unknown): boolean => {
+  if (!isRecord(value)) return false;
+  return value.billing_state === "settled" &&
+    typeof value.model === "string" &&
+    value.model.trim().length > 0 &&
+    typeof value.provider_quota === "number" &&
+    Number.isFinite(value.provider_quota) &&
+    value.provider_quota >= 0 &&
+    typeof value.spend_microcredits === "number" &&
+    Number.isFinite(value.spend_microcredits) &&
+    value.spend_microcredits >= 0;
+};
+
+const hasPaidFallbackUsageRollups = async (kv: Deno.Kv): Promise<boolean> => {
+  for await (
+    const _entry of kv.list<unknown>(
+      { prefix: PAID_FALLBACK_USAGE_ROLLUP_PREFIX },
+      { consistency: "strong" },
+    )
+  ) {
+    return true;
+  }
+  return false;
+};
+
+const hasBackfillableSettledPaidFallbackRequest = async (kv: Deno.Kv): Promise<boolean> => {
+  for await (
+    const entry of kv.list<PaidFallbackRequestV3>(
+      { prefix: paidFallbackRequestV3GlobalPrefix },
+      { consistency: "strong" },
+    )
+  ) {
+    if (isBackfillableSettledPaidFallbackRequest(entry.value)) return true;
+  }
+  return false;
+};
+
+const paidFallbackBackfillNeedsRun = async (kv: Deno.Kv): Promise<boolean> => {
+  const [stateEntry, requestCursorEntry, windowCursorEntry] = await Promise.all([
+    kv.get<PaidFallbackBackfillStateV3>(paidFallbackBackfillStateV3Key(), { consistency: "strong" }),
+    kv.get<unknown>(paidFallbackBackfillCursorV3Key(), { consistency: "strong" }),
+    kv.get<unknown>(paidFallbackBackfillWindowCursorV3Key(), { consistency: "strong" }),
+  ]);
+  if (
+    !isPaidFallbackBackfillState(stateEntry.value) ||
+    requestCursorEntry.value !== null ||
+    windowCursorEntry.value !== null
+  ) {
+    return true;
+  }
+  if (await hasPaidFallbackUsageRollups(kv)) return false;
+  return await hasBackfillableSettledPaidFallbackRequest(kv);
+};
+
+const acquirePaidFallbackBackfillLease = async (
+  kv: Deno.Kv,
+  nowMs: number,
+): Promise<PaidFallbackBackfillLeaseV3 | null> => {
+  const leaseKey = paidFallbackBackfillLeaseV3Key();
+  for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
+    const entry = await kv.get<PaidFallbackBackfillLeaseV3>(leaseKey, { consistency: "strong" });
+    if (entry.value && entry.value.expires_at_ms > nowMs) return null;
+    const lease = {
+      token: crypto.randomUUID(),
+      expires_at_ms: nowMs + PAID_FALLBACK_BACKFILL_LEASE_MS,
+    } satisfies PaidFallbackBackfillLeaseV3;
+    const commit = await kv.atomic().check(entry).set(leaseKey, lease, {
+      expireIn: PAID_FALLBACK_BACKFILL_LEASE_MS,
+    }).commit();
+    if (commit.ok) return lease;
+  }
+  return null;
+};
+
+const releasePaidFallbackBackfillLease = async (
+  kv: Deno.Kv,
+  lease: PaidFallbackBackfillLeaseV3,
+): Promise<void> => {
+  try {
+    const entry = await kv.get<PaidFallbackBackfillLeaseV3>(
+      paidFallbackBackfillLeaseV3Key(),
+      { consistency: "strong" },
+    );
+    if (entry.value?.token !== lease.token) return;
+    await kv.atomic().check(entry).delete(paidFallbackBackfillLeaseV3Key()).commit().catch(() => {});
+  } catch {
+    // Lease expiry is the recovery path when a release races a KV outage.
+  }
+};
+
+/**
+ * Executes the request-row and window-TTL sweeps under one durable lease.
+ * Cursor keys let a bootstrap pass resume on a later request or revision,
+ * while the completion marker avoids paying the scan cost on every request.
+ */
+export const runPaidFallbackBackfillV3 = async (
+  kv: Deno.Kv,
+  options: Readonly<{ force?: boolean; limit?: number; nowMs?: number }> = {},
+): Promise<PaidFallbackAutomaticBackfillResult> => {
+  const requestedLimit = Math.trunc(options.limit ?? PAID_FALLBACK_AUTOMATIC_BACKFILL_LIMIT);
+  const limit = Number.isFinite(requestedLimit)
+    ? Math.max(1, Math.min(10_000, requestedLimit))
+    : PAID_FALLBACK_AUTOMATIC_BACKFILL_LIMIT;
+  const nowMs = Math.trunc(options.nowMs ?? Date.now());
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0) {
+    throw new Error("Paid fallback automatic backfill clock is invalid");
+  }
+  if (options.force !== true && !await paidFallbackBackfillNeedsRun(kv)) {
+    return { kind: "skipped", requests: null, windows: null };
+  }
+  const lease = await acquirePaidFallbackBackfillLease(kv, nowMs);
+  if (!lease) return { kind: "busy", requests: null, windows: null };
+  try {
+    const requests = await backfillPaidFallbackUsageRollups(kv, { limit, nowMs });
+    const windows = await backfillPaidFallbackWindowTtls(kv, { limit, nowMs });
+    const complete = !requests.truncated && !windows.truncated;
+    if (complete) {
+      const committed = await kv.set(
+        paidFallbackBackfillStateV3Key(),
+        {
+          v: 1,
+          completed_at_ms: nowMs,
+        } satisfies PaidFallbackBackfillStateV3,
+      );
+      if (!committed.ok) throw new Error("Paid fallback automatic backfill state changed concurrently.");
+    }
+    return {
+      kind: complete ? "completed" : "in_progress",
+      requests,
+      windows,
+    };
+  } finally {
+    await releasePaidFallbackBackfillLease(kv, lease);
+  }
+};
+
+let scheduledPaidFallbackBackfill: Promise<void> | null = null;
+let paidFallbackBackfillAttempted = false;
+let paidFallbackBackfillRetryPending = false;
+
+const schedulePaidFallbackBackfill = (kvOverride?: Deno.Kv): void => {
+  if (scheduledPaidFallbackBackfill) return;
+  paidFallbackBackfillAttempted = true;
+  scheduledPaidFallbackBackfill = (kvOverride ? Promise.resolve(kvOverride) : resolveKv(undefined))
+    .then(async (kv) => {
+      if (!kv) {
+        paidFallbackBackfillRetryPending = true;
+        return;
+      }
+      const result = await runPaidFallbackBackfillV3(kv);
+      paidFallbackBackfillRetryPending = result.kind === "in_progress" || result.kind === "busy";
+    })
+    .catch(() => {
+      paidFallbackBackfillRetryPending = true;
+    })
+    .finally(() => {
+      scheduledPaidFallbackBackfill = null;
+    });
 };
 
 export const reconcilePaidFallbackV3 = async (
