@@ -32,6 +32,36 @@
       "predecessor": null
     },
     {
+      "schema_version": 1,
+      "identity": {
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_kind": "github_issue",
+        "source_id": "5244456941",
+        "source_revision": "4a2fd9d87aa5c08b39c5b18bf77fbeb93e3f3d4a4f5be9b30b4ed0f8f68bbb9a",
+        "candidate_generation": 1
+      },
+      "run_id": "34054382576",
+      "attempt": 1,
+      "lease_token": "34054382576-1",
+      "base_sha": "cd89657d477bce4cd5398ad6cee27354e6ea1c38",
+      "phase": "manual_required",
+      "disposition": "manual_required",
+      "state_version": 1,
+      "created_at": "2026-09-06T19:18:51.450Z",
+      "updated_at": "2026-09-06T19:18:51.450Z",
+      "candidate_branch": null,
+      "candidate_sha": null,
+      "changed_files": [],
+      "tree_sha": null,
+      "failure_class": null,
+      "failure_fingerprint": null,
+      "artifact_ids": [],
+      "artifact_digests": [],
+      "reason": "planning_blocked:requires_protected_action: completing the issue requires changes to protected Provider Sentinel controls: .github/workflows/provider-sentinel.yml (add pull-requests: write and issues: write and wire delivery/completion behavior), scripts/sentinel/issues.ts (canonical time-label intake), scripts/sentinel/issue-delivery.ts, scripts/sentinel/issue-pr-pre-push.ts, and scripts/sentinel/issue-delivery-reconcile.ts (one-PR identity, evidence, and completion gates), docs/sentinel-issue-jobs.md (workflow contract documentation), and tests/sentinel-issue-delivery.test.ts (deterministic coverage). isSentinelProtectedImplementationPath protects the workflow, every scripts/sentinel/ path, docs/sentinel-issue-jobs.md, and tests/sentinel-*.test.ts; therefore the complete issue cannot be planned as actionable non-protected work.",
+      "next_action": "Resolve the named blocker before another attempt.",
+      "predecessor": null
+    },
+    {
       "artifact_digests": [
         "sha256:d3a616821bdb6192ea61703565f9c2fa84035bf50165e286b7fc6b72298c1061"
       ],
@@ -4563,40 +4593,6 @@
       "artifact_digests": [],
       "reason": "Three identical Sentinel failure fingerprints opened the circuit breaker.",
       "next_action": "Owner review is required before another Sentinel attempt.",
-      "predecessor": null
-    },
-    {
-      "schema_version": 1,
-      "identity": {
-        "repository": "ubiquity/ai.ubq.fi",
-        "source_kind": "triage",
-        "source_id": "33757270379:artifact:9894086676",
-        "source_revision": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
-        "candidate_generation": 1
-      },
-      "run_id": "33757270379",
-      "attempt": 1,
-      "lease_token": "artifact-9894086676",
-      "base_sha": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
-      "phase": "rejected",
-      "disposition": "rejected",
-      "state_version": 1,
-      "created_at": "2026-09-03T12:51:25Z",
-      "updated_at": "2026-09-03T12:51:25Z",
-      "candidate_branch": null,
-      "candidate_sha": null,
-      "changed_files": [],
-      "tree_sha": null,
-      "failure_class": "artifact_invalid",
-      "failure_fingerprint": "4260f4fcaf2fbfec9609b4446155e1f7afd09f313c0fb8d0208e047ea2f12a83",
-      "artifact_ids": [
-        9894086676
-      ],
-      "artifact_digests": [
-        "sha256:4260f4fcaf2fbfec9609b4446155e1f7afd09f313c0fb8d0208e047ea2f12a83"
-      ],
-      "reason": "authenticated legacy evidence contains a terminal disposition",
-      "next_action": null,
       "predecessor": null
     },
     {
@@ -22060,6 +22056,20 @@
       "failure_class": "runner_interruption",
       "failure_fingerprint": "ad2ece98f5332ee5d7a687519116fcf7b18c745633cd787bcedd8bd1677c4b9b",
       "observed_at": "2026-09-06T19:15:54.914Z"
+    },
+    {
+      "schema_version": 1,
+      "identity": {
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_kind": "github_issue",
+        "source_id": "5244456941",
+        "source_revision": "4a2fd9d87aa5c08b39c5b18bf77fbeb93e3f3d4a4f5be9b30b4ed0f8f68bbb9a",
+        "candidate_generation": 1
+      },
+      "attempt": 1,
+      "failure_class": "invalid_implementation_report",
+      "failure_fingerprint": "a20acffc042fffbb6813791a0e00f84021d857877fc02d332b660230245dfc04",
+      "observed_at": "2026-09-06T19:18:51.450Z"
     }
   ],
   "retry_decisions": [
