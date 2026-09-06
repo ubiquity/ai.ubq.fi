@@ -705,7 +705,8 @@ Deno.test("GitHub issue detail and relationships use exact repository resources"
       assert.match(body.query, /lastEditedAt/u);
       assert.match(body.query, /RENAMED_TITLE_EVENT/u);
       assert.match(body.query, /parent \{ number \}/u);
-      assert.match(body.query, /blockedBy\(first: 1\)/u);
+      assert.match(body.query, /blockedBy\(first: 100\)/u);
+      assert.match(body.query, /nodes \{ number state \}/u);
       return json({
         data: {
           repository: {
@@ -721,7 +722,10 @@ Deno.test("GitHub issue detail and relationships use exact repository resources"
                 }],
               },
               parent: null,
-              blockedBy: { totalCount: 0 },
+              blockedBy: {
+                totalCount: 2,
+                nodes: [{ number: 200, state: "OPEN" }, { number: 201, state: "CLOSED" }],
+              },
               blocking: { totalCount: 0 },
             },
           },
@@ -738,7 +742,7 @@ Deno.test("GitHub issue detail and relationships use exact repository resources"
   assert.deepEqual(relations, {
     parentIssueNumber: null,
     subIssueCount: 0,
-    blockedByCount: 0,
+    blockedByCount: 2,
     blockingCount: 0,
     latestBodyEdit: { editorLogin: "body-writer", editedAt: "2026-08-21T12:00:30Z" },
     latestTitleEdit: {
@@ -746,6 +750,11 @@ Deno.test("GitHub issue detail and relationships use exact repository resources"
       editedAt: "2026-08-21T12:00:45Z",
       title: "Issue 113",
     },
+    dependencies: [
+      { issue_number: 200, state: "open" },
+      { issue_number: 201, state: "closed" },
+    ],
+    dependenciesComplete: true,
   });
   fake.assertDrained();
 });
@@ -825,7 +834,7 @@ Deno.test("GitHub issue relationships retain a non-null parent issue number", as
               lastEditedAt: null,
               timelineItems: { totalCount: 0, nodes: [] },
               parent: { number: 77 },
-              blockedBy: { totalCount: 0 },
+              blockedBy: { totalCount: 0, nodes: [] },
               blocking: { totalCount: 0 },
             },
           },
@@ -839,6 +848,8 @@ Deno.test("GitHub issue relationships retain a non-null parent issue number", as
     blockingCount: 0,
     latestBodyEdit: null,
     latestTitleEdit: null,
+    dependencies: undefined,
+    dependenciesComplete: true,
   });
   fake.assertDrained();
 });
