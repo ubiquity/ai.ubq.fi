@@ -63,10 +63,10 @@
     "verdict": "ambiguous",
     "reason": "insufficient_history",
     "observation_count": 1,
-    "state_digest": "1c1b577e300f5fcc",
+    "state_digest": "5a70adff75bb0dd5",
     "classifier": null,
     "resolved": "unknown",
     "resolved_reason": "classifier_not_provisioned",
-    "evaluated_at": "2026-09-06T22:52:29.265Z"
+    "evaluated_at": "2026-09-06T23:16:54.178Z"
   }
 }
