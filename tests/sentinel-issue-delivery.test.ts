@@ -8,6 +8,10 @@ import {
   selectNextGitHubIssueJob,
 } from "../scripts/sentinel/issues.ts";
 import {
+  emptySentinelRecoveryLedger,
+  type SentinelRecoveryEligibilityContext,
+} from "../scripts/sentinel/recovery-ledger.ts";
+import {
   evaluateIssueCompletionAction,
   isContainedDevelopmentComparison,
   isIssueDeliveryFailSafeRevert,
@@ -39,6 +43,12 @@ import {
   validateRetryPendingIssueReconciliation,
 } from "../scripts/sentinel/issue-delivery-reconcile.ts";
 import type { GitHubIssue, GitHubIssueComment } from "../scripts/sentinel/github.ts";
+
+const emptyRecoveryContext = (): SentinelRecoveryEligibilityContext => ({
+  repository: "ubiquity/ai.ubq.fi",
+  ledger: emptySentinelRecoveryLedger(),
+  now: "2026-08-28T06:00:00.000Z",
+});
 
 const inertIssueComments = (count: number): readonly GitHubIssueComment[] =>
   Array.from({ length: count }, (_, index) => ({
@@ -344,6 +354,7 @@ Deno.test("the production issue selector accepts a canonical estimate through on
     source,
     "ubiquity/ai.ubq.fi",
     renderGitHubIssueJobLedger([]),
+    emptyRecoveryContext(),
   );
   assert.equal(selected?.timeLabel, "Time: <1 Day");
 });
@@ -926,6 +937,7 @@ Deno.test("durable completion evidence never closes a changed issue snapshot", a
     source,
     "ubiquity/ai.ubq.fi",
     renderGitHubIssueJobLedger([]),
+    emptyRecoveryContext(),
   );
   assert.ok(selected);
   const retrySelection = parseGitHubIssueSelectionReport({

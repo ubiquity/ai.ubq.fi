@@ -493,6 +493,16 @@ Deno.test("rolling review discovery independently drives the async reviewer gate
   assert.match(selector, /installing agent prerequisites conservatively/u);
   // The discovery is read-only: no workflow dispatch, merge, or pull creation.
   assert.doesNotMatch(selector, /dispatchWorkflow|mergePullRequest|createPullRequest/u);
+  // The embedded prerequisite selector and runtime selection consume the same
+  // authoritative sentinel/recovery-state snapshot, bound to the exact
+  // prepared convergence record, so the hint and runtime never disagree.
+  assert.match(selector, /readGitHubSentinelRecoveryLedger\(/u);
+  assert.match(selector, /selectNextReviewBacklogEntry\(backlog, recovery\)/u);
+  assert.match(selector, /selectNextGitHubIssueJobSelection\(github, repository, ledger, recovery\)/u);
+  assert.match(selector, /continuation_record: continuationRecord/u);
+  assert.match(orchestrator, /readGitHubSentinelRecoveryLedger\(\{ token: githubToken, repository \}\)/u);
+  assert.match(orchestrator, /continuation_record: matrixConvergencePreparedRecovery/u);
+  assert.match(orchestrator, /eligibility\.available/u);
 
   // The reviewer is gated by exactly the same needs_agent value: with neither
   // backlog/issue work nor an eligible unreviewed pull request the step is

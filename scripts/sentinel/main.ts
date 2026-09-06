@@ -75,6 +75,7 @@ import {
 } from "./recovery.ts";
 import {
   resolveSentinelRecoverySelection,
+  type SentinelRecoveryEligibilityContext,
   sentinelRecoveryIdentityKey,
   upsertSentinelRecoveryRecord,
 } from "./recovery-ledger.ts";
@@ -297,6 +298,7 @@ export const selectSentinelWork = (
   currentCaptureCount: number,
   interval: CycleState["interval"],
   reviewBacklogMarkdown: string,
+  recovery: SentinelRecoveryEligibilityContext,
   issueJob: GitHubIssueJob | null = null,
 ): SentinelWorkSelection => {
   const triageGate = evaluateSentinelTriageGate(mode, currentCaptureCount);
@@ -304,7 +306,7 @@ export const selectSentinelWork = (
     return { source: "triage", reason: triageGate.reason, backlogEntry: null, issueJob: null, triage: null };
   }
   if (mode === "hourly") {
-    const backlogEntry = selectNextReviewBacklogEntry(reviewBacklogMarkdown);
+    const backlogEntry = selectNextReviewBacklogEntry(reviewBacklogMarkdown, recovery);
     if (backlogEntry) {
       return {
         source: "review_backlog",
@@ -441,6 +443,23 @@ export const bindMatrixConvergenceWork = (
     throw new Error("A non-github-issue recovery cannot carry a github issue selection report");
   }
   return { source: "triage", reason: "matrix_convergence", backlogEntry: null, issueJob: null, triage };
+};
+
+/**
+ * Load the convergence run's exact prepared recovery record beside the
+ * immutable matrix inputs. A zero-cell plan is a recognized no-actionable-work
+ * outcome and intentionally carries no recovery record: it must remain a fast
+ * path, not a required-file failure. A malformed prepared record fails closed.
+ */
+export const loadPreparedConvergenceRecoveryRecord = async (
+  reportsDir: string,
+): Promise<SentinelRecoveryRecordV1 | null> => {
+  try {
+    return parseSentinelRecoveryRecord(JSON.parse(await Deno.readTextFile(`${reportsDir}/recovery-record-v1.json`)));
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return null;
+    throw error;
+  }
 };
 
 /**
@@ -3179,6 +3198,22 @@ const run = async (): Promise<void> => {
   let issueJobLedgerMarkdown = "";
   let selectedIssueJob: GitHubIssueJob | null = null;
   let selectedIssueCheckpoint: GitHubIssueJobCheckpoint | null = null;
+  // The authoritative sentinel/recovery-state snapshot is fetched once per
+  // selection stage; every individual selection pass (review backlog, GitHub
+  // issue) uses it. Matrix convergence binds its exact prepared recovery
+  // record so its own active claim is a continuation, never a fresh claim; a
+  // zero-cell convergence plan intentionally has no recovery record.
+  let matrixConvergencePreparedRecovery: SentinelRecoveryRecordV1 | null = null;
+  if (matrixConvergePhase) {
+    matrixConvergencePreparedRecovery = await loadPreparedConvergenceRecoveryRecord(reportsDir);
+  }
+  const selectionRecoverySnapshot = await readGitHubSentinelRecoveryLedger({ token: githubToken, repository });
+  const recoveryContext: SentinelRecoveryEligibilityContext = {
+    repository,
+    ledger: selectionRecoverySnapshot.ledger,
+    now: new Date().toISOString(),
+    continuation_record: matrixConvergencePreparedRecovery,
+  };
   if (mode === "hourly") {
     selectedDevelopmentSha = await fetchDevelopmentBase(root, gitEnvironment);
     const hintedDevelopmentSha = optionalEnvironment("SENTINEL_BACKLOG_HINT_SHA");
@@ -3202,15 +3237,25 @@ const run = async (): Promise<void> => {
     reviewBacklogMarkdown = await readReviewBacklogAtRevision(root, selectedDevelopmentSha);
     issueJobLedgerMarkdown = await readIssueJobLedgerAtRevision(root, selectedDevelopmentSha);
     parseGitHubIssueJobLedger(issueJobLedgerMarkdown);
-    if (selectNextReviewBacklogEntry(reviewBacklogMarkdown) === null) {
+    if (selectNextReviewBacklogEntry(reviewBacklogMarkdown, recoveryContext) === null) {
       const hourlyRunnerTemp = optionalEnvironment("RUNNER_TEMP");
       const issueJobHint = hourlyRunnerTemp ? await readGitHubIssueJobHint(hourlyRunnerTemp) : null;
       if (issueJobHint?.selection) {
-        const selection = await selectNextGitHubIssueJobSelection(github, repository, issueJobLedgerMarkdown);
+        const selection = await selectNextGitHubIssueJobSelection(
+          github,
+          repository,
+          issueJobLedgerMarkdown,
+          recoveryContext,
+        );
         selectedIssueJob = selection?.job ?? null;
         selectedIssueCheckpoint = selection?.checkpoint ?? null;
       } else if (issueJobHint === null && hintedDevelopmentSha === undefined) {
-        const selection = await selectNextGitHubIssueJobSelection(github, repository, issueJobLedgerMarkdown);
+        const selection = await selectNextGitHubIssueJobSelection(
+          github,
+          repository,
+          issueJobLedgerMarkdown,
+          recoveryContext,
+        );
         selectedIssueJob = selection?.job ?? null;
         selectedIssueCheckpoint = selection?.checkpoint ?? null;
       }
@@ -3243,7 +3288,6 @@ const run = async (): Promise<void> => {
   }
   let matrixConvergencePlan: MatrixPlanV1 | null = null;
   let matrixConvergenceTriage: TriageReport | null = null;
-  let matrixConvergencePreparedRecovery: SentinelRecoveryRecordV1 | null = null;
   let matrixWorkSelection: SentinelWorkSelection | null = null;
   if (matrixConvergePhase) {
     matrixConvergencePlan = await parseMatrixPlanV1(await Deno.readTextFile(`${reportsDir}/matrix-plan.json`));
@@ -3263,9 +3307,6 @@ const run = async (): Promise<void> => {
       });
       return;
     }
-    matrixConvergencePreparedRecovery = parseSentinelRecoveryRecord(
-      JSON.parse(await Deno.readTextFile(`${reportsDir}/recovery-record-v1.json`)),
-    );
     let convergenceIssueSelection: GitHubIssueSelectionReport | null = null;
     try {
       convergenceIssueSelection = parseGitHubIssueSelectionReport(
@@ -3273,6 +3314,9 @@ const run = async (): Promise<void> => {
       );
     } catch (error) {
       if (!(error instanceof Deno.errors.NotFound)) throw error;
+    }
+    if (!matrixConvergencePreparedRecovery) {
+      throw new Error("Matrix convergence lost its prepared recovery record");
     }
     matrixWorkSelection = bindMatrixConvergenceWork({
       repository,
@@ -3283,7 +3327,7 @@ const run = async (): Promise<void> => {
       preparedRecovery: matrixConvergencePreparedRecovery,
       issueSelection: convergenceIssueSelection,
       selectedIssueJob,
-      selectedBacklogEntry: selectNextReviewBacklogEntry(reviewBacklogMarkdown),
+      selectedBacklogEntry: selectNextReviewBacklogEntry(reviewBacklogMarkdown, recoveryContext),
     });
   }
   const workSelection: SentinelWorkSelection = matrixWorkSelection ?? selectSentinelWork(
@@ -3291,6 +3335,7 @@ const run = async (): Promise<void> => {
     currentEncrypted.length,
     state.interval,
     reviewBacklogMarkdown,
+    recoveryContext,
     selectedIssueJob,
   );
   await writeJson(`${reportsDir}/triage-gate.json`, {
@@ -3329,6 +3374,8 @@ const run = async (): Promise<void> => {
     (workSelection.issueJob?.fingerprint ?? workSelection.backlogEntry?.sha ??
       (selectedDevelopmentSha ?? await fetchDevelopmentBase(root, gitEnvironment)));
   const recoveryBaseSha = selectedDevelopmentSha ?? await fetchDevelopmentBase(root, gitEnvironment);
+  // Recheck against the authoritative snapshot before claiming a generation:
+  // the selection-stage snapshot may be stale, so the fresh read rules.
   let recoverySnapshot = await readGitHubSentinelRecoveryLedger({ token: githubToken, repository });
   const recoverySelection = resolveSentinelRecoverySelection({
     ledger: recoverySnapshot.ledger,
@@ -3337,6 +3384,7 @@ const run = async (): Promise<void> => {
     source_id: recoverySourceId,
     source_revision: recoverySourceRevision,
     now: new Date().toISOString(),
+    continuation_record: matrixConvergencePreparedRecovery,
   });
   const relatedRecoveryRecords = recoverySelection.related_records;
   const currentRecoveryRecord = recoverySelection.current_record;
@@ -3349,6 +3397,28 @@ const run = async (): Promise<void> => {
       candidate_sha: currentRecoveryRecord.candidate_sha,
       temporary_branch: currentRecoveryRecord.candidate_branch,
       branch_disposition: "recovery_record_pending",
+    });
+    return;
+  }
+  if (!matrixConvergePhase && !recoverySelection.eligibility.available) {
+    // A terminal decision (delivered/manual_required/rejected), an active
+    // lease, or colliding active records blocks a fresh generation: this is
+    // unavailable work, distinct from an empty or malformed recovery state.
+    await writeJson(`${reportsDir}/recovery-gate.json`, {
+      schema_version: 1,
+      repository,
+      source_kind: recoverySourceKind,
+      source_id: recoverySourceId,
+      source_revision: recoverySourceRevision,
+      available: false,
+      reason: recoverySelection.eligibility.reason,
+      blocking_record_identity_key: recoverySelection.eligibility.blocking_record
+        ? sentinelRecoveryIdentityKey(recoverySelection.eligibility.blocking_record.identity)
+        : null,
+    });
+    await updateState("complete", {
+      status: "no_change",
+      branch_disposition: "not_created_recovery_unavailable",
     });
     return;
   }
@@ -3787,7 +3857,7 @@ const run = async (): Promise<void> => {
   }
   if (workSelection.backlogEntry) {
     const candidateBacklog = await Deno.readTextFile(`${checkout}/${SENTINEL_POLICY.paths.reviewBacklog}`);
-    const candidateEntry = selectNextReviewBacklogEntry(candidateBacklog);
+    const candidateEntry = selectNextReviewBacklogEntry(candidateBacklog, recoveryContext);
     if (!reviewBacklogEntriesMatch(workSelection.backlogEntry, candidateEntry)) {
       throw new Error("Candidate backlog selection does not match the exact fetched development base");
     }

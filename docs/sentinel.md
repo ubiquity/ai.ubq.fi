@@ -126,6 +126,22 @@ carries `issues: write` and `pull-requests: write`, but Sentinel never assigns, 
 The workflow concurrency group serializes Sentinel runs but does not claim work against a human or another automation
 system.
 
+## Authoritative recovery eligibility
+
+Durable recovery decisions from the `sentinel/recovery-state` ref are authoritative over both the embedded workflow
+prerequisite selector and the runtime issue and review-backlog selection. One snapshot is fetched per selection stage
+and every individual selection pass uses it; a malformed or unreadable snapshot fails closed and never falls back to an
+empty ledger. For the exact repository, source kind, source ID, and source revision across all generations, an existing
+`delivered` or `manual_required` decision blocks a new generation, and a rejected unchanged source stays blocked until
+the source revision changes (rejection never resets attempts). An active record proceeds only through its own due retry
+decision; an active non-due record is unavailable, as is an exact source with colliding active generations or a live
+lease held by another owner. A truly unseen source revision remains eligible, and matrix convergence continues the
+exactly prepared claimed record (bound by run ID and lease token) instead of treating it as a competitor. Unavailable
+first items are skipped so later eligible work advances, and the decision is rechecked against a fresh authoritative
+snapshot before a generation is claimed. The bounded 512-record ledger retains one newest terminal circuit decision per
+unchanged issue/review source revision and fails closed when the required protected records cannot fit; unrelated
+terminal records stay eligible for recency-based pruning.
+
 The workflow supports public, private, and internal repository visibility. It fails before checkout or raw-log capture
 unless `SENTINEL_ARTIFACT_KEY` is present and decodes to exactly 32 bytes. After the cycle, it scans every prospective
 artifact path for credentials, encrypts raw logs and durable reports with AES-256-GCM, reads the persisted ciphertext

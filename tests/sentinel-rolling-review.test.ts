@@ -26,9 +26,19 @@ import {
 } from "../scripts/sentinel/rolling-review-worker.ts";
 import { SENTINEL_POLICY } from "../scripts/sentinel/policy.ts";
 import { parseReviewBacklog, renderReviewBacklog, selectNextReviewBacklogEntry } from "../scripts/sentinel/review.ts";
+import {
+  emptySentinelRecoveryLedger,
+  type SentinelRecoveryEligibilityContext,
+} from "../scripts/sentinel/recovery-ledger.ts";
 import type { NativeReviewFinding } from "../scripts/sentinel/types.ts";
 import { runTrustedGit } from "../scripts/sentinel/validation.ts";
 import backlogMarkdown from "../docs/sentinel-review-backlog.md" with { type: "text" };
+
+const emptyRecoveryContext = (): SentinelRecoveryEligibilityContext => ({
+  repository: "ubiquity/ai.ubq.fi",
+  ledger: emptySentinelRecoveryLedger(),
+  now: "2026-08-28T06:00:00.000Z",
+});
 
 const FULL_SHA = "a".repeat(40);
 const REVIEW_RESULT_PREFIX = `${SENTINEL_POLICY.paths.reviewResults}/`;
@@ -161,7 +171,7 @@ Deno.test({
       assert.deepEqual(outcome.backlogFindings.map((entry) => entry.fingerprint), [fingerprint]);
       const ingested = applyRollingReviewIngestion(initialBacklog, [outcome], new Date("2026-08-31T00:00:00.000Z"));
       assert.deepEqual(parseReviewBacklog(ingested).map((entry) => entry.fingerprint), [fingerprint]);
-      assert.equal(selectNextReviewBacklogEntry(ingested)?.fingerprint, fingerprint);
+      assert.equal(selectNextReviewBacklogEntry(ingested, emptyRecoveryContext())?.fingerprint, fingerprint);
     } finally {
       await Deno.remove(root, { recursive: true });
     }
@@ -184,7 +194,7 @@ Deno.test("rolling review ingestion is later and merges into the official backlo
   assert.deepEqual(entries[0]!.disposition, "open");
   assert.deepEqual(entries[0]!.sha, "c".repeat(40));
   // The ingested entry is selected as normal future work.
-  assert.deepEqual(selectNextReviewBacklogEntry(backlog)?.fingerprint, "2".repeat(64));
+  assert.deepEqual(selectNextReviewBacklogEntry(backlog, emptyRecoveryContext())?.fingerprint, "2".repeat(64));
   // Finished review text from a later cycle parses and ingests too.
   const raw = `[P2] Fix later\nsrc/handler.ts:439 — description\n`;
   const parsed = await parseCompletedRollingReview({
@@ -242,12 +252,12 @@ Deno.test("P0 and P1 findings are mandatory remediation sorted ahead of P2 and P
   const backlog = applyRollingReviewIngestion(renderReviewBacklog([]), [outcome], new Date("2026-08-22T04:00:00.000Z"));
   const entries = parseReviewBacklog(backlog);
   assert.deepEqual(entries.map((entry) => entry.severity), ["P0", "P1", "P2", "P3"]);
-  assert.deepEqual(selectNextReviewBacklogEntry(backlog)?.severity, "P0");
+  assert.deepEqual(selectNextReviewBacklogEntry(backlog, emptyRecoveryContext())?.severity, "P0");
   const resolvedP0 = parseReviewBacklog(backlog).map((entry) =>
     entry.severity === "P0" ? { ...entry, disposition: "resolved" as const } : entry
   );
   const rest = renderReviewBacklog(resolvedP0);
-  assert.deepEqual(selectNextReviewBacklogEntry(rest)?.severity, "P1");
+  assert.deepEqual(selectNextReviewBacklogEntry(rest, emptyRecoveryContext())?.severity, "P1");
   // P0 remains a P0 entry: its severity is never downgraded or dropped.
   assert(entries.some((entry) => entry.severity === "P0" && entry.finding.includes("P0")));
 });
@@ -287,7 +297,7 @@ Deno.test("all severities are non-blocking: P0-P3 findings never gate the review
   );
   assert.match(backlog, /never block the reviewed pull request merge/u);
   // Selection is normal future work: P0 first, then P1, exactly once each.
-  assert.deepEqual(selectNextReviewBacklogEntry(backlog)?.severity, "P0");
+  assert.deepEqual(selectNextReviewBacklogEntry(backlog, emptyRecoveryContext())?.severity, "P0");
 });
 
 Deno.test("prior eligible open and merged Sentinel pull requests are scanned exactly", () => {
@@ -438,7 +448,7 @@ Deno.test("rolling review structured findings parse fail-closed and preserve sev
     [outcome],
     new Date("2026-08-22T06:00:00.000Z"),
   );
-  assert.deepEqual(selectNextReviewBacklogEntry(backlog)?.severity, "P1");
+  assert.deepEqual(selectNextReviewBacklogEntry(backlog, emptyRecoveryContext())?.severity, "P1");
   // Structured output that contradicts itself is unparseable, never partially trusted.
   const selfContradictory = {
     ...structured,
