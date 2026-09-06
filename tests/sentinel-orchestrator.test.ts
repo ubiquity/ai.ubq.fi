@@ -1273,35 +1273,47 @@ Deno.test("an unavailable first option never starves later eligible work and con
   assert.equal(competing?.job.number, secondIssue.number);
 });
 
-Deno.test("zero-cell matrix convergence does not require a prepared recovery record", async () => {
-  const root = await Deno.makeTempDir({ prefix: "sentinel-convergence-recovery-" });
-  try {
-    // A no-actionable-work plan intentionally has no recovery record; the fast
-    // path must not demand the file.
-    assert.equal(await loadPreparedConvergenceRecoveryRecord(`${root}/reports`), null);
-    // The exact prepared record is loaded for cell-bearing convergence.
-    const prepared = recoveryRecordFixture({
-      identity: {
-        repository: "ubiquity/ai.ubq.fi",
-        source_kind: "github_issue",
-        source_id: "10113",
-        source_revision: "a".repeat(64),
-        candidate_generation: 1,
-      },
-      phase: "claimed",
-      state_version: 1,
-      candidate_branch: null,
-      candidate_sha: null,
-    });
-    await Deno.mkdir(`${root}/reports`, { recursive: true });
-    await Deno.writeTextFile(`${root}/reports/recovery-record-v1.json`, `${JSON.stringify(prepared)}\n`);
-    assert.deepEqual(await loadPreparedConvergenceRecoveryRecord(`${root}/reports`), prepared);
-    // A malformed prepared record fails closed.
-    await Deno.writeTextFile(`${root}/reports/recovery-record-v1.json`, `{"schema_version": 1}\n`);
-    await assert.rejects(loadPreparedConvergenceRecoveryRecord(`${root}/reports`), /record is invalid|phase and/u);
-  } finally {
-    await Deno.remove(root, { recursive: true });
-  }
+const recoveryFilePermissions = await Promise.all([
+  Deno.permissions.query({ name: "read" }),
+  Deno.permissions.query({ name: "write" }),
+]);
+const recoveryFileTestsIgnored = recoveryFilePermissions.some(
+  (permission) => permission.state !== "granted",
+);
+
+Deno.test({
+  name: "zero-cell matrix convergence does not require a prepared recovery record",
+  ignore: recoveryFileTestsIgnored,
+  async fn() {
+    const root = await Deno.makeTempDir({ prefix: "sentinel-convergence-recovery-" });
+    try {
+      // A no-actionable-work plan intentionally has no recovery record; the fast
+      // path must not demand the file.
+      assert.equal(await loadPreparedConvergenceRecoveryRecord(`${root}/reports`), null);
+      // The exact prepared record is loaded for cell-bearing convergence.
+      const prepared = recoveryRecordFixture({
+        identity: {
+          repository: "ubiquity/ai.ubq.fi",
+          source_kind: "github_issue",
+          source_id: "10113",
+          source_revision: "a".repeat(64),
+          candidate_generation: 1,
+        },
+        phase: "claimed",
+        state_version: 1,
+        candidate_branch: null,
+        candidate_sha: null,
+      });
+      await Deno.mkdir(`${root}/reports`, { recursive: true });
+      await Deno.writeTextFile(`${root}/reports/recovery-record-v1.json`, `${JSON.stringify(prepared)}\n`);
+      assert.deepEqual(await loadPreparedConvergenceRecoveryRecord(`${root}/reports`), prepared);
+      // A malformed prepared record fails closed.
+      await Deno.writeTextFile(`${root}/reports/recovery-record-v1.json`, `{"schema_version": 1}\n`);
+      await assert.rejects(loadPreparedConvergenceRecoveryRecord(`${root}/reports`), /record is invalid|phase and/u);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  },
 });
 
 Deno.test("sentinel schedule windows overlap hourly and incident runs", () => {
