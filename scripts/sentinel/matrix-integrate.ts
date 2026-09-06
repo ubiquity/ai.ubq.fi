@@ -6,6 +6,7 @@ import {
   assertMatrixPlanDigest,
   assertMatrixPlanV1,
   type IntegrationCellDecisionV1,
+  integrationDecisionDigest,
   type IntegrationDecisionV1,
   type MatrixAcceptedAncestryV1,
   matrixAllowedPathCovers,
@@ -58,7 +59,6 @@ export const MATRIX_INTEGRATION_OUTPUT_SCHEMA = {
     "combined_validation_requirements",
     "correction_paths",
     "summary",
-    "decision_digest",
   ],
   properties: {
     schema_version: { type: "integer", const: 1 },
@@ -84,7 +84,6 @@ export const MATRIX_INTEGRATION_OUTPUT_SCHEMA = {
     combined_validation_requirements: { type: "array", items: { type: "string" } },
     correction_paths: { type: "array", items: { type: "string" } },
     summary: { type: "string", minLength: 1 },
-    decision_digest: { type: "string", pattern: "^[0-9a-f]{64}$" },
   },
 } as const;
 
@@ -725,7 +724,8 @@ condition prevents a safe decision. A blocked cell must never be silently omitte
 If a bounded semantic correction is required, correction_paths must be the exact sorted repository-relative paths changed in
 the integration checkout. Use only the cell's declared allowed_paths, never a prohibited path, Sentinel control, workflow,
 configuration, credential, policy, or test-control path. Keep correction paths empty unless a correction is necessary. The
-trusted controller, not you, performs every Git write and proves ancestry.
+trusted controller, not you, performs every Git write, proves ancestry, and seals the final decision digest: never
+return a decision_digest field.
 
 Plan:
 ${JSON.stringify(input.plan)}
@@ -738,6 +738,19 @@ Integration branch: ${JSON.stringify(input.integration_branch)}
 `.trim();
 };
 
+const INTEGRATION_DECISION_DRAFT_KEYS = [
+  "schema_version",
+  "run_id",
+  "run_attempt",
+  "plan_digest",
+  "base_sha",
+  "decisions",
+  "combined_validation_requirements",
+  "correction_paths",
+  "summary",
+] as const;
+
+/** Hard cutover: the model returns a digest-less DRAFT; the trusted controller seals it. */
 const parseDecision = async (value: string | null, plan: MatrixPlanV1): Promise<IntegrationDecisionV1> => {
   if (!value) throw new MatrixIntegrationError("decision_drift", "Integration agent returned no structured decision");
   let parsed: unknown;
@@ -746,15 +759,28 @@ const parseDecision = async (value: string | null, plan: MatrixPlanV1): Promise<
   } catch (error) {
     throw new MatrixIntegrationError("decision_drift", "Integration agent returned invalid JSON", { cause: error });
   }
+  // Reject every unexpected or missing field: an explicit model-supplied
+  // decision_digest is never trusted, repaired, or accepted.
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new MatrixIntegrationError("decision_drift", "Integration agent returned an unexpected decision draft shape");
+  }
+  const record = parsed as Record<string, unknown>;
+  const draftKeys = Object.keys(record).sort();
+  const expectedKeys = [...INTEGRATION_DECISION_DRAFT_KEYS].sort();
+  if (draftKeys.length !== expectedKeys.length || draftKeys.some((key, index) => key !== expectedKeys[index])) {
+    throw new MatrixIntegrationError("decision_drift", "Integration agent returned an unexpected decision draft shape");
+  }
+  const draft = { ...record, decision_digest: "0".repeat(64) } as IntegrationDecisionV1;
   try {
-    assertIntegrationDecisionV1(parsed, plan);
-    await assertIntegrationDecisionDigest(parsed);
+    assertIntegrationDecisionV1(draft, plan);
   } catch (error) {
     throw new MatrixIntegrationError("decision_drift", "Integration agent violated the decision contract", {
       cause: error,
     });
   }
-  return parsed;
+  const sealed = { ...draft, decision_digest: await integrationDecisionDigest(draft) };
+  await assertIntegrationDecisionDigest(sealed);
+  return sealed;
 };
 
 const assertAgentCheckoutIdentity = async (

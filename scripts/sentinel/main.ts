@@ -5117,16 +5117,25 @@ const run = async (): Promise<void> => {
         SENTINEL_POLICY.paths.reviewBacklog,
       ]),
     ].sort();
-  const implementationRecoveryRecord = parseSentinelRecoveryRecord({
-    ...durableRecoveryRecord,
-    phase: "implementation_running",
-    state_version: durableRecoveryRecord.state_version + 1,
-    updated_at: new Date().toISOString(),
-    candidate_branch: branch,
-    reason: "The isolated Luna implementation stage is running.",
-    next_action: "Checkpoint every Git-derived candidate change before report validation.",
-  });
-  assertSentinelRecoveryTransition(durableRecoveryRecord, implementationRecoveryRecord);
+  // The normal post-integration transition binds the PROVEN execution base
+  // immediately: clean matrix convergence already committed at B while the
+  // durable claim was prepared at A, so no later repair/checkpoint side effect
+  // may be relied on. The existing production phase builder rejects any
+  // phase base that does not match the selected execution base.
+  const implementationRecoveryRecord = buildPersistedCandidateRecoveryPhase(
+    durableRecoveryRecord,
+    parseSentinelRecoveryRecord({
+      ...durableRecoveryRecord,
+      base_sha: baseSha,
+      phase: "implementation_running",
+      state_version: durableRecoveryRecord.state_version + 1,
+      updated_at: new Date().toISOString(),
+      candidate_branch: branch,
+      reason: "The isolated Luna implementation stage is running.",
+      next_action: "Checkpoint every Git-derived candidate change before report validation.",
+    }),
+    baseSha,
+  );
   recoverySnapshot = await writeGitHubSentinelRecoveryLedger({
     token: githubToken,
     repository,
