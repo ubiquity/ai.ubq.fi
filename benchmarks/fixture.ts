@@ -118,10 +118,59 @@ function normalizeLexically(p: string): string {
   return (p.startsWith("/") ? "/" : "") + out.join("/");
 }
 
+type FixtureEntryKind = "file" | "directory" | "symlink" | "other";
+
+interface FixtureEntryState {
+  readonly path: string;
+  readonly kind: FixtureEntryKind;
+  readonly mode: number | null;
+  /** Modification time in milliseconds; incidental directory changes are filtered from child diffs. */
+  readonly mtimeMs: number | null;
+  readonly size: number;
+  readonly content?: Uint8Array;
+  readonly linkTarget?: string;
+}
+
+type FixtureWorkspaceSnapshot = Map<string, FixtureEntryState>;
+
+function comparePaths(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function pathDepth(path: string): number {
+  return path.split("/").length;
+}
+
+function isPathOrDescendant(path: string, parent: string): boolean {
+  return path === parent || path.startsWith(`${parent}/`);
+}
+
+function statesEqual(a: FixtureEntryState | undefined, b: FixtureEntryState | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  if (a.kind !== b.kind || a.mode !== b.mode || a.mtimeMs !== b.mtimeMs) return false;
+  if (a.kind !== "directory" && a.size !== b.size) return false;
+  if (a.kind === "file") {
+    if (a.content === undefined || b.content === undefined) return a.content === b.content;
+    if (a.content.length !== b.content.length) return false;
+    return a.content.every((byte, index) => byte === b.content![index]);
+  }
+  if (a.kind === "symlink") return a.linkTarget === b.linkTarget;
+  return true;
+}
+
 export class WriteScopeViolationError extends Error {
-  constructor(readonly path: string, readonly scope: string[]) {
-    super(`write scope violation: ${path} is not writable (scope: ${scope.join(", ")})`);
+  readonly path: string;
+  readonly paths: readonly string[];
+  readonly scope: readonly string[];
+
+  constructor(pathOrPaths: string | readonly string[], scope: readonly string[]) {
+    const paths = [...new Set(typeof pathOrPaths === "string" ? [pathOrPaths] : pathOrPaths)].sort(comparePaths);
+    const evidence = paths.length === 1 ? `${paths[0]} is not writable` : `paths ${paths.join(", ")} are not writable`;
+    super(`write scope violation: ${evidence} (scope: ${scope.join(", ")})`);
     this.name = "WriteScopeViolationError";
+    this.path = paths[0] ?? "";
+    this.paths = paths;
+    this.scope = [...scope];
   }
 }
 
@@ -322,6 +371,41 @@ export class FixtureWorkspace {
     signal?: AbortSignal,
   ): Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean }> {
     this.assertRoot();
+    const before = this.captureSnapshot();
+    let result: { code: number; stdout: string; stderr: string; timedOut: boolean } | undefined;
+    let commandError: unknown;
+    try {
+      result = await this.execShellSandbox(command, timeoutMs, signal);
+    } catch (err) {
+      commandError = err;
+    }
+
+    const after = this.captureSnapshot();
+    const changedPaths = this.changedPaths(before, after);
+    const unauthorizedPaths = changedPaths.filter((path) => !this.isAllowedWrite(path));
+    if (unauthorizedPaths.length > 0) {
+      let restorationError: unknown;
+      try {
+        this.restoreUnauthorizedChanges(before, after, unauthorizedPaths);
+      } catch (err) {
+        restorationError = err;
+      }
+      const violation = new WriteScopeViolationError(unauthorizedPaths, this.task.allowed_write_scope);
+      if (restorationError !== undefined) {
+        const detail = restorationError instanceof Error ? restorationError.message : String(restorationError);
+        violation.message += `; restoration failed: ${detail}`;
+      }
+      throw violation;
+    }
+    if (commandError !== undefined) throw commandError;
+    return result!;
+  }
+
+  private async execShellSandbox(
+    command: string,
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ): Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean }> {
     if (Deno.build.os === "linux") {
       const root = Deno.realPathSync(this.root);
       return await this.exec(
@@ -377,6 +461,250 @@ export class FixtureWorkspace {
       { timeoutMs, capture: true, signal },
     );
   }
+
+  private captureSnapshot(): FixtureWorkspaceSnapshot {
+    const snapshot: FixtureWorkspaceSnapshot = new Map();
+    const walk = (dir: string, prefix: string): void => {
+      const entries = [...Deno.readDirSync(dir)].sort((a, b) => comparePaths(a.name, b.name));
+      for (const entry of entries) {
+        const path = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+        const abs = `${this.root}/${path}`;
+        const state = this.captureEntryState(abs, path);
+        snapshot.set(path, state);
+        if (state.kind === "directory") walk(abs, path);
+      }
+    };
+    walk(this.root, "");
+    return snapshot;
+  }
+
+  private captureEntryState(abs: string, path: string): FixtureEntryState {
+    const info = Deno.lstatSync(abs);
+    const kind: FixtureEntryKind = info.isFile
+      ? "file"
+      : info.isDirectory
+      ? "directory"
+      : info.isSymlink
+      ? "symlink"
+      : "other";
+    const mode = info.mode === null ? null : info.mode & 0o7777;
+    const mtimeMs = kind === "symlink" ? null : info.mtime?.getTime() ?? null;
+    if (kind === "file") {
+      let content: Uint8Array | undefined;
+      try {
+        content = Deno.readFileSync(abs);
+      } catch {
+        // The mode may have been changed to deny reads. The missing content is
+        // intentionally treated as a changed state and restored from `before`.
+      }
+      return { path, kind, mode, mtimeMs, size: info.size, content };
+    }
+    if (kind === "symlink") return { path, kind, mode, mtimeMs, size: info.size, linkTarget: Deno.readLinkSync(abs) };
+    return { path, kind, mode, mtimeMs, size: kind === "directory" ? 0 : info.size };
+  }
+
+  private changedPaths(before: FixtureWorkspaceSnapshot, after: FixtureWorkspaceSnapshot): string[] {
+    const paths = new Set<string>([...before.keys(), ...after.keys()]);
+    const changed = [...paths].filter((path) => !statesEqual(before.get(path), after.get(path)));
+    return changed.filter((path) => {
+      const previous = before.get(path);
+      const current = after.get(path);
+      if (
+        previous?.kind === "directory" && current?.kind === "directory" &&
+        previous.mode === current.mode && previous.mtimeMs !== current.mtimeMs
+      ) {
+        return !changed.some((child) => child !== path && isPathOrDescendant(child, path));
+      }
+      return true;
+    }).sort(comparePaths);
+  }
+
+  private restoreUnauthorizedChanges(
+    before: FixtureWorkspaceSnapshot,
+    after: FixtureWorkspaceSnapshot,
+    unauthorizedPaths: readonly string[],
+  ): void {
+    const forcedWholeTreePaths = new Set<string>();
+    const forcedMetadataPaths = new Set<string>();
+    for (const path of unauthorizedPaths) {
+      const parts = path.split("/");
+      parts.pop();
+      for (let length = parts.length; length > 0; length--) {
+        const ancestor = parts.slice(0, length).join("/");
+        const previous = before.get(ancestor);
+        const current = after.get(ancestor);
+        if (previous?.kind === "directory" && (current === undefined || current.kind !== "directory")) {
+          forcedWholeTreePaths.add(ancestor);
+          break;
+        }
+        if (previous?.kind === "directory" && current?.kind === "directory") {
+          forcedMetadataPaths.add(ancestor);
+        }
+      }
+    }
+    let wholeTreePaths = unauthorizedPaths.filter((path) => {
+      const previous = before.get(path);
+      const current = after.get(path);
+      return previous === undefined || current === undefined || previous.kind !== current.kind;
+    }).filter((path, index, paths) =>
+      !paths.some((parent, parentIndex) => {
+        return parentIndex !== index && parent !== path && isPathOrDescendant(path, parent);
+      })
+    );
+    wholeTreePaths = [...new Set([...wholeTreePaths, ...forcedWholeTreePaths])];
+
+    // Restore directory modes before recreating children so deleted children
+    // can be restored even when an ancestor was chmodded by the command.
+    const metadataPaths = [...new Set([...unauthorizedPaths, ...forcedMetadataPaths])].filter((path) => {
+      const previous = before.get(path);
+      const current = after.get(path);
+      return previous !== undefined && current !== undefined && previous.kind === current.kind &&
+        !wholeTreePaths.some((root) => isPathOrDescendant(path, root));
+    }).sort((a, b) => {
+      const depth = pathDepth(a) - pathDepth(b);
+      return depth !== 0 ? depth : comparePaths(a, b);
+    });
+    for (const path of metadataPaths) this.restoreEntryState(before.get(path)!);
+
+    const roots = wholeTreePaths.sort((a, b) => {
+      const depth = pathDepth(a) - pathDepth(b);
+      return depth !== 0 ? depth : comparePaths(a, b);
+    });
+    for (const path of roots) {
+      if (roots.some((parent) => parent !== path && isPathOrDescendant(path, parent))) continue;
+      this.restoreSubtree(before, path);
+    }
+
+    // A changed descendant can be covered by a whole-tree restoration above;
+    // all remaining paths have the same type and need only their own state.
+    for (const path of unauthorizedPaths) {
+      if (roots.some((root) => root !== path && isPathOrDescendant(path, root))) continue;
+      const previous = before.get(path);
+      if (previous !== undefined && after.get(path) !== undefined && previous.kind === after.get(path)!.kind) {
+        this.restoreEntryState(previous);
+      }
+    }
+    // Child removal/recreation can update an ancestor mtime after the first
+    // metadata pass, so restore those ancestor states once more at the end.
+    for (const path of forcedMetadataPaths) this.restoreEntryState(before.get(path)!);
+  }
+
+  private restoreSubtree(before: FixtureWorkspaceSnapshot, path: string): void {
+    const previous = before.get(path);
+    this.removePath(path);
+    if (previous === undefined) return;
+
+    const states = [...before.values()]
+      .filter((state) => isPathOrDescendant(state.path, path))
+      .sort((a, b) => {
+        const depth = pathDepth(a.path) - pathDepth(b.path);
+        return depth !== 0 ? depth : comparePaths(a.path, b.path);
+      });
+    for (const state of states) this.createEntry(state);
+    for (const state of states) this.restoreMetadata(state);
+  }
+
+  private restoreEntryState(previous: FixtureEntryState): void {
+    const abs = this.assertPath(previous.path);
+    const current = statIfExists(abs, true);
+    if (current === null) {
+      this.createEntry(previous);
+      this.restoreMetadata(previous);
+      return;
+    }
+    if (
+      current.isDirectory !== (previous.kind === "directory") || current.isFile !== (previous.kind === "file") ||
+      current.isSymlink !== (previous.kind === "symlink")
+    ) {
+      throw new Error(`cannot restore changed entry type without its subtree: ${previous.path}`);
+    }
+    if (previous.kind === "file") {
+      if (previous.content !== undefined) {
+        this.makeWritable(abs, current);
+        Deno.writeFileSync(abs, previous.content);
+      }
+    } else if (previous.kind === "symlink" && previous.linkTarget !== undefined) {
+      const currentTarget = Deno.readLinkSync(abs);
+      if (currentTarget !== previous.linkTarget) {
+        Deno.removeSync(abs);
+        Deno.symlinkSync(previous.linkTarget, abs);
+      }
+    }
+    this.restoreMetadata(previous);
+  }
+
+  private createEntry(state: FixtureEntryState): void {
+    const abs = this.assertPath(state.path);
+    this.ensureRestoreParent(state.path);
+    const current = statIfExists(abs, true);
+    if (current !== null) {
+      if (state.kind === "directory" && current.isDirectory && !current.isSymlink) return;
+      this.removePath(state.path);
+    }
+    switch (state.kind) {
+      case "directory":
+        Deno.mkdirSync(abs);
+        break;
+      case "file":
+        Deno.writeFileSync(abs, state.content ?? new Uint8Array());
+        break;
+      case "symlink":
+        Deno.symlinkSync(state.linkTarget ?? "", abs);
+        break;
+      case "other":
+        throw new Error(`cannot restore unsupported filesystem entry: ${state.path}`);
+    }
+  }
+
+  private restoreMetadata(state: FixtureEntryState): void {
+    const abs = this.assertPath(state.path);
+    const current = statIfExists(abs, true);
+    if (current === null) return;
+    if (state.mode !== null && state.kind !== "symlink") Deno.chmodSync(abs, state.mode);
+    if (state.mtimeMs !== null && state.kind !== "symlink") {
+      const atimeMs = current.atime?.getTime() ?? state.mtimeMs;
+      Deno.utimeSync(abs, new Date(atimeMs), new Date(state.mtimeMs));
+    }
+  }
+
+  private ensureRestoreParent(path: string): void {
+    const parts = path.split("/");
+    parts.pop();
+    let current = this.root;
+    for (const part of parts) {
+      current += `/${part}`;
+      const info = statIfExists(current, true);
+      if (info === null) {
+        Deno.mkdirSync(current);
+      } else if (!info.isDirectory || info.isSymlink) {
+        throw new Error(`cannot restore ${path}: parent is not a directory`);
+      }
+    }
+  }
+
+  private removePath(path: string): void {
+    const abs = this.assertPath(path);
+    const info = statIfExists(abs, true);
+    if (info === null) return;
+    if (info.isDirectory && !info.isSymlink) this.makeTreeWritable(abs);
+    Deno.removeSync(abs, { recursive: info.isDirectory && !info.isSymlink });
+  }
+
+  private makeTreeWritable(abs: string): void {
+    const info = statIfExists(abs, true);
+    if (info === null || info.isSymlink || !info.isDirectory) return;
+    try {
+      Deno.chmodSync(abs, 0o700);
+    } catch {
+      // The removal below will report a deterministic restoration failure when
+      // the platform does not permit changing directory permissions.
+    }
+    for (const entry of Deno.readDirSync(abs)) this.makeTreeWritable(`${abs}/${entry.name}`);
+  }
+
+  private makeWritable(abs: string, info: Deno.FileInfo): void {
+    if (info.mode !== null) Deno.chmodSync(abs, info.mode | 0o600);
+  }
 }
 
 function sandboxString(value: string): string {
@@ -392,9 +720,9 @@ function existsSync(p: string): boolean {
   }
 }
 
-function statIfExists(p: string): Deno.FileInfo | null {
+function statIfExists(p: string, noFollow = false): Deno.FileInfo | null {
   try {
-    return Deno.statSync(p);
+    return noFollow ? Deno.lstatSync(p) : Deno.statSync(p);
   } catch {
     return null;
   }
