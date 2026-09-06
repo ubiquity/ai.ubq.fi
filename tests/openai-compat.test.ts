@@ -3898,6 +3898,8 @@ Deno.test("openai: streaming Responses clear their absolute deadline after seman
     const values = parseResponsesSseValues(await response.text());
     assert.equal(values.filter((event) => event.type === "response.completed").length, 1);
     assert.equal(values.filter((event) => event.type === "response.failed").length, 0);
+    assert.equal(values.filter((event) => event.type === "response.incomplete").length, 0);
+    assert.equal(values.filter((event) => event.type === "error").length, 0);
   } finally {
     setStreamFirstEventDeadlineMsForTest(null);
   }

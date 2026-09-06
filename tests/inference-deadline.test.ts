@@ -18,7 +18,8 @@ Deno.test("inference deadlines retain guidance while buffered work stays inside 
   assert.equal(BUFFERED_INFERENCE_DEADLINE_MS, STREAM_FIRST_EVENT_DEADLINE_MS);
   assert.ok(BUFFERED_INFERENCE_DEADLINE_MS < 125_000);
   assert.ok(STREAM_FIRST_EVENT_DEADLINE_MS < 125_000);
-  assert.equal(STREAM_INACTIVITY_DEADLINE_MS, 120_000);
+  assert.equal(STREAM_INACTIVITY_DEADLINE_MS, OPENAI_DEFAULT_REQUEST_TIMEOUT_MS);
+  assert.ok(STREAM_INACTIVITY_DEADLINE_MS > STREAM_FIRST_EVENT_DEADLINE_MS);
 });
 
 Deno.test("inference signal propagates downstream cancellation", () => {

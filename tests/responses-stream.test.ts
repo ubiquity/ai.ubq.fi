@@ -443,3 +443,59 @@ Deno.test("Responses proxy cancellation is forwarded once without waiting for bo
   assert.equal(upstreamCancelCount, 1);
   assert.equal(source.locked, false);
 });
+
+Deno.test("Responses parser allows post-semantic resumption beyond the first-event deadline", async () => {
+  const firstFrame = 'data: {"type":"response.output_text.delta","delta":"partial"}\n\n';
+  const terminalFrame = 'data: {"type":"response.completed","response":{"status":"completed"}}\n\n';
+  let cancelled = 0;
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(bytes(firstFrame));
+      setTimeout(() => {
+        controller.enqueue(bytes(terminalFrame));
+      }, 25);
+    },
+    cancel() {
+      cancelled += 1;
+    },
+  });
+  const events = [];
+  for await (
+    const event of readResponsesStream(source, undefined, {
+      firstEventTimeoutMs: 10,
+      inactivityTimeoutMs: 100,
+    })
+  ) events.push(event);
+
+  assert.deepEqual(events.map((event) => event.type), ["response.output_text.delta", "response.completed"]);
+  assert.equal(events.filter((event) => event.terminal).length, 1);
+  assert.equal(cancelled, 1);
+  assert.equal(source.locked, false);
+});
+
+Deno.test("Responses parser bounds genuinely inactive post-semantic streams", async () => {
+  let cancelled = 0;
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(bytes('data: {"type":"response.output_text.delta","delta":"partial"}\n\n'));
+    },
+    cancel() {
+      cancelled += 1;
+    },
+  });
+  const error = await captureError(async () => {
+    for await (
+      const _ of readResponsesStream(source, undefined, {
+        firstEventTimeoutMs: 10,
+        inactivityTimeoutMs: 12,
+      })
+    ) {
+      // consume
+    }
+  });
+
+  assert.ok(error instanceof ResponsesStreamError);
+  assert.equal(error.kind, "inactivity_timeout");
+  assert.equal(cancelled, 1);
+  assert.equal(source.locked, false);
+});
