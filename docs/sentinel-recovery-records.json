@@ -2786,11 +2786,11 @@
       "attempt": 1,
       "lease_token": "34043616032-1",
       "base_sha": "3349acbac3f025851eb1d9cc846a02e5c833be26",
-      "phase": "retry_wait",
-      "disposition": "active",
-      "state_version": 5,
+      "phase": "manual_required",
+      "disposition": "manual_required",
+      "state_version": 7,
       "created_at": "2026-09-06T15:53:42.666Z",
-      "updated_at": "2026-09-06T16:04:54.822Z",
+      "updated_at": "2026-09-06T16:13:12.606Z",
       "candidate_branch": "sentinel/candidate-incident-16ed84316c1960a2651ede3c3ed2896c435f9c850254609be1f96c3f76ca9cf7-3349acbac3f025851eb1d9cc846a02e5-g1-df98d40ca9e2294b",
       "candidate_sha": null,
       "changed_files": [],
@@ -2799,8 +2799,8 @@
       "failure_fingerprint": "523ad751dca23d334519b943bc97e68d5f00f7edef791eb99fde0e331e058c42",
       "artifact_ids": [],
       "artifact_digests": [],
-      "reason": "The bounded Sentinel retry policy scheduled another attempt.",
-      "next_action": "Retry after 2026-09-06T16:06:58.340Z.",
+      "reason": "Three identical Sentinel failure fingerprints opened the circuit breaker.",
+      "next_action": "Owner review is required before another Sentinel attempt.",
       "predecessor": null
     },
     {
@@ -22240,6 +22240,20 @@
       "failure_class": "runner_interruption",
       "failure_fingerprint": "523ad751dca23d334519b943bc97e68d5f00f7edef791eb99fde0e331e058c42",
       "observed_at": "2026-09-06T16:04:54.822Z"
+    },
+    {
+      "schema_version": 1,
+      "identity": {
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_kind": "incident",
+        "source_id": "16ed84316c1960a2651ede3c3ed2896c435f9c850254609be1f96c3f76ca9cf7",
+        "source_revision": "3349acbac3f025851eb1d9cc846a02e5c833be26",
+        "candidate_generation": 1
+      },
+      "attempt": 3,
+      "failure_class": "runner_interruption",
+      "failure_fingerprint": "523ad751dca23d334519b943bc97e68d5f00f7edef791eb99fde0e331e058c42",
+      "observed_at": "2026-09-06T16:13:12.606Z"
     }
   ],
   "retry_decisions": [
@@ -24716,29 +24730,22 @@
     {
       "identity_key": "[\"ubiquity/ai.ubq.fi\",\"incident\",\"16ed84316c1960a2651ede3c3ed2896c435f9c850254609be1f96c3f76ca9cf7\",\"3349acbac3f025851eb1d9cc846a02e5c833be26\",1]",
       "decision": {
-        "disposition": "retry_wait",
-        "should_retry": true,
-        "circuit_open": false,
+        "disposition": "manual_required",
+        "should_retry": false,
+        "circuit_open": true,
         "validation_repair_allowed": false,
         "source_revision_changed": false,
         "candidate_generation": 1,
-        "attempt_count": 2,
-        "identical_failure_count": 2,
-        "backoff_ms": 123518,
-        "retry_at": "2026-09-06T16:06:58.340Z",
+        "attempt_count": 3,
+        "identical_failure_count": 3,
+        "backoff_ms": null,
+        "retry_at": null,
         "failure_class": "runner_interruption",
         "failure_fingerprint": "523ad751dca23d334519b943bc97e68d5f00f7edef791eb99fde0e331e058c42",
-        "reason": "The bounded Sentinel retry policy scheduled another attempt.",
-        "next_action": "Retry after 2026-09-06T16:06:58.340Z."
+        "reason": "Three identical Sentinel failure fingerprints opened the circuit breaker.",
+        "next_action": "Owner review is required before another Sentinel attempt."
       }
     }
   ],
-  "leases": [
-    {
-      "identity_key": "[\"ubiquity/ai.ubq.fi\",\"incident\",\"16ed84316c1960a2651ede3c3ed2896c435f9c850254609be1f96c3f76ca9cf7\",\"3349acbac3f025851eb1d9cc846a02e5c833be26\",1]",
-      "owner": "34044596982",
-      "token": "34044596982:076d9868-f82d-499e-8b45-4c499ca5305f",
-      "expires_at": "2026-09-06T16:23:12.606Z"
-    }
-  ]
+  "leases": []
 }
