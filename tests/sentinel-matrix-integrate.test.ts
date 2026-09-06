@@ -5,10 +5,13 @@ import {
   executeMatrixIntegration,
   type MatrixGitExecutor,
   provePatchEquivalentOursMerge,
+  runMatrixIntegrationAgent,
   validateMatrixIntegrationInputs,
   verifyMatrixCellReportHead,
 } from "../scripts/sentinel/matrix-integrate.ts";
 import {
+  assertIntegrationDecisionDigest,
+  assertIntegrationDecisionV1,
   buildMatrixPlan,
   integrationDecisionDigest,
   type IntegrationDecisionV1,
@@ -686,6 +689,161 @@ Deno.test({
       assert.equal(result.merge_receipts[0]?.strategy, "no_ff_ours");
       assert.equal(await git(root, ["status", "--porcelain"]), "");
       assert.equal(await git(root, ["merge-base", "--is-ancestor", headSha, "HEAD"]).then(() => true), true);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  },
+});
+import type { CodexInvocationResult } from "../scripts/sentinel/codex.ts";
+import type { CodexUsageProbe } from "../scripts/sentinel/quota.ts";
+
+Deno.test({
+  name: "matrix integration hard cutover seals the controller-owned decision digest",
+  ignore: permissions.some((permission) => permission.state !== "granted"),
+  async fn() {
+    const root = await Deno.makeTempDir({ prefix: "sentinel-matrix-cutover-" });
+    try {
+      await git(root, ["init", "-b", "development"]);
+      await git(root, ["config", "user.name", "Sentinel Test"]);
+      await git(root, ["config", "user.email", "sentinel@example.invalid"]);
+      await Deno.mkdir(`${root}/src`, { recursive: true });
+      await Deno.writeTextFile(`${root}/src/one.ts`, "export const one = 'base';\n");
+      await git(root, ["add", "src"]);
+      await git(root, ["commit", "-m", "base"]);
+      const baseSha = await git(root, ["rev-parse", "HEAD"]);
+      const plan = await buildMatrixPlan({
+        run_id: "m09-cutover",
+        run_attempt: 1,
+        base_sha: baseSha,
+        evidence_digests: [],
+        findings: [{
+          id: "one",
+          fingerprint: "a".repeat(64),
+          allowed_paths: ["src/one.ts"],
+          validation_requirements: ["validate one"],
+        }],
+      });
+      const cell = plan.cells[0]!;
+      await git(root, ["switch", "-c", cell.branch]);
+      await Deno.writeTextFile(`${root}/src/one.ts`, "export const one = 'fixed';\n");
+      await git(root, ["add", "src/one.ts"]);
+      await git(root, ["commit", "-m", "cell one"]);
+      const headSha = await git(root, ["rev-parse", "HEAD"]);
+      const treeSha = await git(root, ["rev-parse", "HEAD^{tree}"]);
+      const report = await reportFor(plan, plan.cells.indexOf(cell), headSha, treeSha);
+      await git(root, ["switch", "-c", "sentinel/integrated-cutover", baseSha]);
+      const executor: MatrixGitExecutor = (command) => runGit(command.cwd, command.args);
+      const probes: readonly [CodexUsageProbe, CodexUsageProbe] = [
+        { kind: "available", slot: 1, headroomPercent: 0, observedAtMs: 0 },
+        { kind: "available", slot: 1, headroomPercent: 0, observedAtMs: 0 },
+      ];
+      const invocationFor = (lastMessage: string): CodexInvocationResult => ({
+        slot: 1,
+        headroomPercent: 0,
+        probes,
+        stdout: "",
+        stderr: "",
+        lastMessage,
+        nativeReviewOutput: null,
+      });
+      const draft = {
+        schema_version: 1,
+        run_id: plan.run_id,
+        run_attempt: plan.run_attempt,
+        plan_digest: plan.manifest_digest,
+        base_sha: plan.base_sha,
+        decisions: [{
+          cell_id: cell.cell_id,
+          decision: "accept",
+          reason: "coherent",
+          required_combined_checks: ["deno check"],
+          correction_paths: [],
+        }],
+        combined_validation_requirements: ["deno check"],
+        correction_paths: [],
+        summary: "cutover decision",
+      };
+      const invokeAgent = (lastMessage: string) => () => Promise.resolve(invocationFor(lastMessage));
+      // Valid digest-less draft is sealed by the controller: the returned
+      // V1 decision passes the strict digest verifier.
+      const sealedRun = await runMatrixIntegrationAgent({
+        plan,
+        reports: [report],
+        checkoutPath: root,
+        integrationBranch: "sentinel/integrated-cutover",
+        git: executor,
+        effectiveBaseSha: baseSha,
+        outputSchemaPath: `${root}/integration.schema.json`,
+        authSlots: {},
+        agentInvoker: invokeAgent(JSON.stringify(draft)),
+      });
+      await assertIntegrationDecisionV1(sealedRun.decision, plan);
+      await assertIntegrationDecisionDigest(sealedRun.decision);
+      assert.equal(sealedRun.decision.decisions.length, 1);
+      assert.match(sealedRun.decision.decision_digest, /^[0-9a-f]{64}$/u);
+      // Wrong plan/run identity fails closed.
+      for (
+        const drifted of [
+          { run_id: "other-run" },
+          { plan_digest: "0".repeat(64) },
+        ]
+      ) {
+        await assert.rejects(
+          () =>
+            runMatrixIntegrationAgent({
+              plan,
+              reports: [report],
+              checkoutPath: root,
+              integrationBranch: "sentinel/integrated-cutover",
+              git: executor,
+              effectiveBaseSha: baseSha,
+              outputSchemaPath: `${root}/integration.schema.json`,
+              authSlots: {},
+              agentInvoker: invokeAgent(JSON.stringify({ ...draft, ...drifted })),
+            }),
+          /contract|identity/u,
+        );
+      }
+      // An explicit model-supplied digest or a missing draft field is never
+      // trusted or repaired: the producer boundary rejects the shape.
+      for (
+        const malformed of [
+          { ...draft, decision_digest: "0".repeat(64) },
+          { summary: undefined },
+        ]
+      ) {
+        await assert.rejects(
+          () =>
+            runMatrixIntegrationAgent({
+              plan,
+              reports: [report],
+              checkoutPath: root,
+              integrationBranch: "sentinel/integrated-cutover",
+              git: executor,
+              effectiveBaseSha: baseSha,
+              outputSchemaPath: `${root}/integration.schema.json`,
+              authSlots: {},
+              agentInvoker: invokeAgent(JSON.stringify(malformed)),
+            }),
+          /unexpected decision draft shape/u,
+        );
+      }
+      // Malformed cell coverage fails closed.
+      await assert.rejects(
+        () =>
+          runMatrixIntegrationAgent({
+            plan,
+            reports: [report],
+            checkoutPath: root,
+            integrationBranch: "sentinel/integrated-cutover",
+            git: executor,
+            effectiveBaseSha: baseSha,
+            outputSchemaPath: `${root}/integration.schema.json`,
+            authSlots: {},
+            agentInvoker: invokeAgent(JSON.stringify({ ...draft, decisions: [] })),
+          }),
+        /contract|cell/u,
+      );
     } finally {
       await Deno.remove(root, { recursive: true });
     }

@@ -5821,12 +5821,24 @@ Deno.test({
         candidate_sha: "c".repeat(40),
         tree_sha: "d".repeat(40),
         changed_files: ["src/http.ts"],
+        artifact_ids: [9697049201],
+        artifact_digests: [`sha256:${"3".repeat(64)}`],
       }));
+      // The production builder used by the NORMAL clean-matrix caller:
+      // proven base B bound, every retained candidate/artifact field kept
+      // (no checkpoint-side reset, no later repair side effect required).
       const persisted = buildPersistedCandidateRecoveryPhase(durableAtA, phaseAtB, executionBase);
       assert.equal(persisted.base_sha, executionBase);
       assert.equal(persisted.phase, "implementation_running");
       assert.equal(persisted.state_version, durableAtA.state_version + 1);
+      assert.equal(persisted.candidate_branch, phaseAtB.candidate_branch);
       assert.equal(persisted.candidate_sha, phaseAtB.candidate_sha);
+      assert.equal(persisted.tree_sha, phaseAtB.tree_sha);
+      assert.deepEqual(persisted.changed_files, phaseAtB.changed_files);
+      assert.deepEqual(persisted.artifact_ids, [9697049201]);
+      assert.deepEqual(persisted.artifact_digests, phaseAtB.artifact_digests);
+      assert.deepEqual(persisted.identity, durableAtA.identity);
+      assert.equal(persisted.lease_token, durableAtA.lease_token);
       // Final frozen-plan verification: original A selection stays bound,
       // cycle/recovery agree at B through the actual checkout proof.
       await verifyFrozenIssuePlanDigest({
