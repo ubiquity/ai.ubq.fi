@@ -42,6 +42,8 @@ export type HarmonyRequestOptions = Readonly<{
   style: HarmonyCallStyle;
   /** Full conversation (system/developer turns are dropped in native style). */
   turns: readonly ConversationTurn[];
+  /** Whole-run cancellation forwarded to the transport, never sent on wire. */
+  signal?: AbortSignal;
   reasoningEffort?: HarmonyReasoningEffort;
   tools?: readonly ToolDefinition[];
   /** Default: `normalize-false` (Cerebras requires one value per request). */
@@ -417,7 +419,14 @@ export const normalizeHarmonyChatCompletion = (
   };
 };
 
-export type HarmonyTransport = (body: Record<string, unknown>) => Promise<Response>;
+export type HarmonyTransportRequestOptions = Readonly<{
+  signal?: AbortSignal;
+}>;
+
+export type HarmonyTransport = (
+  body: Record<string, unknown>,
+  options?: HarmonyTransportRequestOptions,
+) => Promise<Response>;
 
 export type HarmonyTransportOptions = Readonly<{
   apiKey?: string | null;
@@ -429,10 +438,11 @@ export type HarmonyTransportOptions = Readonly<{
  * handling, deadline and error normalization (`src/cerebras.ts`).
  */
 export const createCerebrasTransport = (options: HarmonyTransportOptions = {}): HarmonyTransport => {
-  return (body) =>
+  return (body, requestOptions) =>
     fetchCerebrasChatCompletions(body, {
       ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
       ...(options.fetcher ? { fetcher: options.fetcher } : {}),
+      ...(requestOptions?.signal ? { signal: requestOptions.signal } : {}),
     });
 };
 
@@ -477,7 +487,7 @@ export const runHarmonyTurn = async (
   transport: HarmonyTransport,
 ): Promise<RunTurnResult> => {
   const built = buildCerebrasHarmonyRequest(options);
-  const response = await transport(built.body);
+  const response = await transport(built.body, { signal: options.signal });
   const status = response.status;
   if (!response.ok) {
     const body = await response.json().catch(() => null);

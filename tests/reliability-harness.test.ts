@@ -285,6 +285,43 @@ Deno.test("harness: deterministic HTTP failures are not retried", async () => {
   assert.equal(outcome.events.filter((event) => event.type === "model_request").length, 1);
 });
 
+Deno.test("harness: stalled transport observes whole-run cancellation", async () => {
+  const controller = new AbortController();
+  let startedResolve: (() => void) | undefined;
+  const started = new Promise<void>((resolve) => startedResolve = resolve);
+  let receivedSignal: AbortSignal | undefined;
+  let calls = 0;
+  const transport: HarmonyTransport = (_body, options) => {
+    calls += 1;
+    receivedSignal = options?.signal;
+    startedResolve?.();
+    return new Promise<Response>((_resolve, reject) => {
+      const signal = options?.signal;
+      if (signal === undefined) {
+        reject(new Error("transport signal was not supplied"));
+        return;
+      }
+      const rejectOnAbort = (): void => reject(new Error("stalled transport aborted"));
+      if (signal.aborted) rejectOnAbort();
+      else signal.addEventListener("abort", rejectOnAbort, { once: true });
+    });
+  };
+
+  const run = runReliabilityHarness(baseOptions([], {
+    transport,
+    signal: controller.signal,
+    retryPolicy: { maxRetriesPerCall: 3, backoffMs: 1_000, retryableCodes: ["transport"] },
+  }));
+  await started;
+  controller.abort("task deadline");
+  const outcome = await run;
+
+  assert.equal(receivedSignal, controller.signal);
+  assert.equal(calls, 1);
+  assert.equal(outcome.phase, "aborted");
+  assert.equal(outcome.abortedReason, "signal");
+});
+
 Deno.test("harness: structured mode requests carry deterministically fewer tokens than full mode", async () => {
   const script: ScriptStep[] = [];
   const bigFiles: Record<string, string> = {};
