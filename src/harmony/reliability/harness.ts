@@ -26,7 +26,12 @@
  * the same loop in focused tests and in the C-fake benchmark matrix.
  */
 
-import { buildCerebrasHarmonyRequest, type BuiltHarmonyRequest, normalizeHarmonyChatCompletion } from "../adapter.ts";
+import {
+  buildCerebrasHarmonyRequest,
+  type BuiltHarmonyRequest,
+  type HarmonyTransport,
+  normalizeHarmonyChatCompletion,
+} from "../adapter.ts";
 import { appendTurn, appendUser, type Conversation, createConversation } from "../conversation.ts";
 import type { HarmonyReasoningEffort, NormalizedAssistantResponse, ToolCall, ToolDefinition } from "../types.ts";
 import type { ToolBackends } from "../tools/backend.ts";
@@ -101,7 +106,7 @@ export type HarnessEvent =
 export interface HarnessOptions {
   systemPrompt: string;
   userPrompt: string;
-  transport: (body: Readonly<Record<string, unknown>>) => Promise<Response>;
+  transport: HarmonyTransport;
   backends: ToolBackends;
   /** Model-facing tool surface; defaults to the canonical compact surface. */
   tools?: readonly ToolDefinition[];
@@ -186,8 +191,21 @@ export async function runReliabilityHarness(opts: HarnessOptions): Promise<Harne
     events.push(event);
     opts.emit?.(event);
   };
-  const sleep = (ms: number): Promise<void> =>
-    ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
+  const sleep = (ms: number): Promise<boolean> => {
+    if (opts.signal?.aborted) return Promise.resolve(false);
+    if (ms <= 0) return Promise.resolve(!opts.signal?.aborted);
+    return new Promise((resolve) => {
+      const finish = (completed: boolean): void => {
+        if (timer !== undefined) clearTimeout(timer);
+        opts.signal?.removeEventListener("abort", onAbort);
+        resolve(completed && !opts.signal?.aborted);
+      };
+      const onAbort = (): void => finish(false);
+      const timer = setTimeout(() => finish(true), ms);
+      opts.signal?.addEventListener("abort", onAbort, { once: true });
+      if (opts.signal?.aborted) onAbort();
+    });
+  };
 
   let conversation = createConversation();
   if (opts.systemPrompt) conversation = appendTurn(conversation, { role: "system", content: opts.systemPrompt });
@@ -271,25 +289,31 @@ export async function runReliabilityHarness(opts: HarnessOptions): Promise<Harne
       emit({ type: "model_request", id: requestId, mode, built, estimatedTokens: estimateRequestTokens(built.body) });
       let response: Response;
       try {
-        response = await opts.transport(built.body);
+        response = await opts.transport(built.body, opts.signal);
       } catch {
-        await sleep(retryPolicy.backoffMs);
+        if (opts.signal?.aborted) return abort("signal");
+        if (!(await sleep(retryPolicy.backoffMs))) return abort("signal");
         continue;
       }
       if (!response.ok) {
         await response.body?.cancel().catch(() => undefined);
+        if (opts.signal?.aborted) return abort("signal");
         if (!isTransientHttpStatus(response.status)) break;
-        await sleep(retryPolicy.backoffMs);
+        if (opts.signal?.aborted) return abort("signal");
+        if (!(await sleep(retryPolicy.backoffMs))) return abort("signal");
         continue;
       }
       const body = await response.json().catch(() => null);
+      if (opts.signal?.aborted) return abort("signal");
       if (body === null) {
-        await sleep(retryPolicy.backoffMs);
+        if (opts.signal?.aborted) return abort("signal");
+        if (!(await sleep(retryPolicy.backoffMs))) return abort("signal");
         continue;
       }
       const candidate = normalizeHarmonyChatCompletion(body);
       if ("error" in candidate) {
-        await sleep(retryPolicy.backoffMs);
+        if (opts.signal?.aborted) return abort("signal");
+        if (!(await sleep(retryPolicy.backoffMs))) return abort("signal");
         continue;
       }
       normalized = candidate;

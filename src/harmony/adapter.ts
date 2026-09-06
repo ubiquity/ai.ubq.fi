@@ -417,7 +417,7 @@ export const normalizeHarmonyChatCompletion = (
   };
 };
 
-export type HarmonyTransport = (body: Record<string, unknown>) => Promise<Response>;
+export type HarmonyTransport = (body: Record<string, unknown>, signal?: AbortSignal) => Promise<Response>;
 
 export type HarmonyTransportOptions = Readonly<{
   apiKey?: string | null;
@@ -429,10 +429,11 @@ export type HarmonyTransportOptions = Readonly<{
  * handling, deadline and error normalization (`src/cerebras.ts`).
  */
 export const createCerebrasTransport = (options: HarmonyTransportOptions = {}): HarmonyTransport => {
-  return (body) =>
+  return (body, signal) =>
     fetchCerebrasChatCompletions(body, {
       ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
       ...(options.fetcher ? { fetcher: options.fetcher } : {}),
+      ...(signal ? { signal } : {}),
     });
 };
 
@@ -475,9 +476,10 @@ const upstreamErrorFromBody = (value: unknown): { code: string | null; message: 
 export const runHarmonyTurn = async (
   options: HarmonyRequestOptions,
   transport: HarmonyTransport,
+  signal?: AbortSignal,
 ): Promise<RunTurnResult> => {
   const built = buildCerebrasHarmonyRequest(options);
-  const response = await transport(built.body);
+  const response = await transport(built.body, signal);
   const status = response.status;
   if (!response.ok) {
     const body = await response.json().catch(() => null);
