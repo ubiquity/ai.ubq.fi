@@ -1921,6 +1921,38 @@ Deno.test({
         recovery,
         runId: "123456789",
       });
+      // A second permitted ledger-only advance to C: recovery and cycle are
+      // both proven descendants of the original base A, but they carry the
+      // SAME execution base and must agree exactly; a mismatched B/C pair
+      // rejects even though both advances are individually permitted.
+      await Deno.writeTextFile(
+        `${ledgerAdvance.repositoryRoot}/docs/sentinel-issue-jobs.md`,
+        renderGitHubIssueJobLedger([]),
+      );
+      await commitPlanBaseAdvance(ledgerAdvance.repositoryRoot, "docs: second retry ledger advance");
+      const secondAdvanceBase = await matrixVerifierGit(ledgerAdvance.repositoryRoot, ["rev-parse", "HEAD"]);
+      await assert.rejects(
+        () =>
+          verifyFrozenIssuePlanDigest({
+            repository,
+            selection,
+            triageValue: triage,
+            cycleBaseSha: secondAdvanceBase,
+            repositoryRoot: ledgerAdvance.repositoryRoot,
+            recovery,
+            runId: "123456789",
+          }),
+        /recovery execution base does not match/,
+      );
+      await verifyFrozenIssuePlanDigest({
+        repository,
+        selection,
+        triageValue: triage,
+        cycleBaseSha: secondAdvanceBase,
+        repositoryRoot: ledgerAdvance.repositoryRoot,
+        recovery: { ...recovery, base_sha: secondAdvanceBase },
+        runId: "123456789",
+      });
     } finally {
       await Deno.remove(ledgerAdvance.repositoryRoot, { recursive: true });
     }
