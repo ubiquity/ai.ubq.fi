@@ -543,6 +543,50 @@ export const plannedIssueScope = (workSelection: SentinelWorkSelection): readonl
 };
 
 /**
+ * Controller route for selected GitHub issue implementation: the reported and
+ * actual changes are evaluated against the frozen execution scope derived from
+ * the selected work, never the raw source hint files (which can be empty for
+ * newly admitted issues). Both controller disposition closures use this single
+ * route so the frozen plan scope is always applied.
+ */
+export const evaluateSelectedIssueImplementation = (
+  workSelection: SentinelWorkSelection,
+  status: Parameters<typeof evaluateGitHubIssueJobImplementation>[1],
+  actualChangedPaths: readonly string[],
+  reportedChangedPaths: readonly string[],
+): ReturnType<typeof evaluateGitHubIssueJobImplementation> => {
+  if (workSelection.issueJob === null) {
+    throw new Error("GitHub issue implementation evaluation requires selected issue work");
+  }
+  return evaluateGitHubIssueJobImplementation(
+    workSelection.issueJob,
+    status,
+    actualChangedPaths,
+    reportedChangedPaths,
+    plannedIssueScope(workSelection),
+  );
+};
+
+/** Reconcile route: requires a resolved implementation through the same frozen scope. */
+export const requireResolvedSelectedIssueImplementation = (
+  workSelection: SentinelWorkSelection,
+  status: Parameters<typeof evaluateGitHubIssueJobImplementation>[1],
+  actualChangedPaths: readonly string[],
+  reportedChangedPaths: readonly string[],
+): void => {
+  if (workSelection.issueJob === null) {
+    throw new Error("GitHub issue implementation reconciliation requires selected issue work");
+  }
+  requireResolvedGitHubIssueJobImplementation(
+    workSelection.issueJob,
+    status,
+    actualChangedPaths,
+    reportedChangedPaths,
+    plannedIssueScope(workSelection),
+  );
+};
+
+/**
  * Bind the validated ready-plan triage into the final work selection: fresh
  * GitHub issue work executes only the frozen Sol plan, never the synthetic
  * source-hint regeneration (which stays V1 artifact replay only).
@@ -5233,8 +5277,8 @@ const run = async (): Promise<void> => {
     if (!workSelection.issueJob) return;
     const reportDisposition = selectedIssueReportDisposition(report);
     const actualPaths = await selectedIssueAggregatePaths();
-    const decision = evaluateGitHubIssueJobImplementation(
-      workSelection.issueJob,
+    const decision = evaluateSelectedIssueImplementation(
+      workSelection,
       reportDisposition.status,
       actualPaths,
       reportDisposition.changed_files,
@@ -5249,8 +5293,8 @@ const run = async (): Promise<void> => {
       throw new Error("A later implementation stage downgraded the selected GitHub issue repair");
     }
     const actualPaths = await selectedIssueAggregatePaths();
-    requireResolvedGitHubIssueJobImplementation(
-      workSelection.issueJob,
+    requireResolvedSelectedIssueImplementation(
+      workSelection,
       reportDisposition.status,
       actualPaths,
       reportDisposition.changed_files,
