@@ -71,6 +71,7 @@ import {
   validationRepairPrompt,
   verifyMatrixConvergenceAdvance,
   withStageHeartbeat,
+  writePreparedMatrixPlan,
   zeroUnselectedReplayBodies,
 } from "../scripts/sentinel/main.ts";
 import {
@@ -5553,7 +5554,7 @@ Deno.test("planning persistence keeps per-identity history bounded without trunc
   const key = sentinelRecoveryIdentityKey(identity);
   const unrelated = Array.from({ length: 12 }, (_, index) =>
     createSentinelRetryAttempt({
-      identity: planningIdentity(job, 100 + index),
+      identity: { ...identity, source_id: String(90_000 + index) },
       attempt: 1,
       failure_class: "transient_transport",
       failure_fingerprint: `${(index + 1).toString(16).padStart(64, "0")}`,
@@ -5571,8 +5572,21 @@ Deno.test("planning persistence keeps per-identity history bounded without trunc
   // A valid global ledger may hold far more than the per-identity maximum:
   // the production helper must filter to this identity before the bounded
   // per-identity parser and preserve every unrelated attempt.
+  // A coherent ledger: every retained unrelated attempt belongs to a durable
+  // unrelated terminal record, matching the upsert metadata-prune semantics.
   const persistence = planningPersistenceStore(
-    parseSentinelRecoveryLedger({ ...emptySentinelRecoveryLedger(), retry_history: [...unrelated, ...target] }),
+    parseSentinelRecoveryLedger({
+      ...emptySentinelRecoveryLedger(),
+      records: unrelated.map((attempt) =>
+        recoveryRecordFixture({
+          identity: attempt.identity,
+          phase: "manual_required",
+          disposition: "manual_required",
+          updated_at: "2026-08-01T00:00:00.000Z",
+        })
+      ),
+      retry_history: [...unrelated, ...target],
+    }),
   );
   const outcome = await persistPlanningOutcome({
     store: persistence.store,
@@ -5604,7 +5618,7 @@ Deno.test("planning persistence replaces only the reclaimed identity history on 
   const key = sentinelRecoveryIdentityKey(identity);
   const unrelated = Array.from({ length: 12 }, (_, index) =>
     createSentinelRetryAttempt({
-      identity: planningIdentity(job, 100 + index),
+      identity: { ...identity, source_id: String(90_000 + index) },
       attempt: 1,
       failure_class: "transient_transport",
       failure_fingerprint: `${(index + 1).toString(16).padStart(64, "0")}`,
@@ -5739,6 +5753,300 @@ Deno.test("due retry reclaim rebases only proven GitHub issue work to the execut
   const reclaimedBacklog = reclaim(backlogRetry);
   assert.equal(reclaimedBacklog.base_sha, backlogRetry.base_sha);
   assert.equal(reclaimedBacklog.phase, "claimed");
+});
+Deno.test({
+  name: "matrix preparation persists directory scope plans with protected exclusions intact",
+  ignore: matrixVerifierTestsIgnored,
+  async fn() {
+    const repository = "ubiquity/ai.ubq.fi";
+    const job = await createGitHubIssueJob(
+      repository,
+      sentinelGitHubIssue({ body: "Ordinary prose, no paths." }),
+      noIssueRelations,
+    );
+    assert.ok(job);
+    const interval = computeSentinelInterval("hourly", now);
+    const triage: TriageReport = {
+      schema_version: 1,
+      interval,
+      findings: [{
+        id: issueJobFindingId(job),
+        fingerprint: job.fingerprint,
+        severity: job.priority,
+        title: job.title,
+        affected_surface: "src/http.ts",
+        allowed_paths: ["src/", "tests/"],
+        shared_paths: [],
+        depends_on: [],
+        evidence: [{ source: "github_issue", reference: job.htmlUrl, detail: job.body }],
+        proposed_correction: "Implement the bounded repair.",
+        validation_requirements: ["Run deno fmt and affected tests"],
+        actionable: true,
+      }],
+      no_findings_reason: null,
+    };
+    const reportsDir = await Deno.makeTempDir({ prefix: "sentinel-m07-prep-" });
+    try {
+      const plan = await writePreparedMatrixPlan({
+        reportsDir,
+        runId: "23546719287",
+        runAttempt: 1,
+        baseSha: "2".repeat(40),
+        triage,
+      });
+      assert.deepEqual([...plan.ownership[0]!.allowed_paths].sort(), ["src/", "tests/"]);
+      assert.deepEqual(
+        [...plan.ownership[0]!.prohibited_paths].sort(),
+        [...SENTINEL_POLICY.protectedImplementationPaths].sort(),
+      );
+      const persisted = await parseMatrixPlanV1(
+        await Deno.readTextFile(`${reportsDir}/matrix-plan.json`),
+      );
+      assert.equal(persisted.manifest_digest, plan.manifest_digest);
+      assert.equal(persisted.ownership.length, 1);
+      assert.deepEqual([...persisted.ownership[0]!.allowed_paths].sort(), ["src/", "tests/"]);
+      // Per-file enforcement stays: ordinary descendants permitted, real
+      // protected descendants (replay capture, sentinel tests) remain rejected.
+      const selection: SentinelWorkSelection = {
+        source: "github_issue",
+        reason: "hourly_github_issue",
+        backlogEntry: null,
+        issueJob: job,
+        triage,
+      };
+      assert.deepEqual(
+        evaluateSelectedIssueImplementation(selection, "implemented", [
+          "src/http.ts",
+          "tests/http.test.ts",
+        ], ["src/http.ts", "tests/http.test.ts"]),
+        { disposition: "resolved", continueToRuntimeValidation: true },
+      );
+      assert.throws(
+        () =>
+          evaluateSelectedIssueImplementation(selection, "implemented", [
+            "src/sentinel_replay_capture.ts",
+          ], ["src/sentinel_replay_capture.ts"]),
+        /protected path/,
+      );
+      assert.throws(
+        () =>
+          evaluateSelectedIssueImplementation(selection, "implemented", [
+            "tests/sentinel-matrix.test.ts",
+          ], ["tests/sentinel-matrix.test.ts"]),
+        /protected path/,
+      );
+    } finally {
+      await Deno.remove(reportsDir, { recursive: true });
+    }
+  },
+});
+
+Deno.test("planning persistence keeps pruned metadata coherent on a full ledger", async () => {
+  const job = await planningJobFixture();
+  const identity = planningIdentity(job);
+  const protectedIssue = recoveryRecordFixture({
+    // A distinct protected issue revision circuit: the TARGET issue stays
+    // fresh so the planning blocker takes the new-record path.
+    identity: { ...identity, source_revision: "f".repeat(64) },
+    phase: "manual_required",
+    disposition: "manual_required",
+    state_version: 9,
+    run_id: "run-protected",
+    attempt: 3,
+    lease_token: "lease-protected",
+    updated_at: "2026-09-01T00:00:00.000Z",
+  });
+  const protectedKey = sentinelRecoveryIdentityKey(protectedIssue.identity);
+  const incidents = Array.from({ length: 511 }, (_, index) =>
+    recoveryRecordFixture({
+      identity: {
+        repository: "ubiquity/ai.ubq.fi",
+        source_kind: "incident",
+        source_id: `incident-${index}`,
+        source_revision: "b".repeat(40),
+        candidate_generation: 1,
+      },
+      phase: "manual_required",
+      disposition: "manual_required",
+      reason: "old unrelated incident circuit",
+      run_id: `incident-run-${index}`,
+      attempt: 1,
+      lease_token: `incident-lease-${index}`,
+      updated_at: new Date(Date.parse("2026-01-01T00:00:00.000Z") + index * 1_000).toISOString(),
+      base_sha: "2".repeat(40),
+    }));
+  const evictedDecision = (await evaluateSentinelRetryPolicy({
+    identity: incidents[0]!.identity,
+    failure: {
+      failure_class: "transient_transport",
+      failure_fingerprint: "0".repeat(64),
+      code: "planning_output_invalid",
+      phase: "issue_planning",
+      signature: "incident-0",
+    },
+    history: [],
+    now: "2026-01-01T00:00:00.000Z",
+  })).decision;
+  const protectedDecision = (await evaluateSentinelRetryPolicy({
+    identity: protectedIssue.identity,
+    failure: {
+      failure_class: "transient_transport",
+      failure_fingerprint: "1".repeat(64),
+      code: "planning_output_invalid",
+      phase: "issue_planning",
+      signature: "protected",
+    },
+    history: [],
+    now: "2026-09-01T00:00:00.000Z",
+  })).decision;
+  const evictedKey = sentinelRecoveryIdentityKey(incidents[0]!.identity);
+  const persistence = planningPersistenceStore(
+    parseSentinelRecoveryLedger({
+      ...emptySentinelRecoveryLedger(),
+      records: [...incidents, protectedIssue],
+      retry_history: [
+        createSentinelRetryAttempt({
+          identity: incidents[0]!.identity,
+          attempt: 1,
+          failure_class: "transient_transport",
+          failure_fingerprint: "0".repeat(64),
+          observed_at: "2026-01-01T00:00:00.000Z",
+        }),
+      ],
+      retry_decisions: [
+        { identity_key: evictedKey, decision: evictedDecision },
+        { identity_key: protectedKey, decision: protectedDecision },
+      ],
+    }),
+  );
+  const outcome = await persistPlanningOutcome({
+    store: persistence.store,
+    repository: "ubiquity/ai.ubq.fi",
+    job,
+    runId: "run-1",
+    runAttempt: 1,
+    pinnedBaseSha: "b".repeat(40),
+    blockedReason: "unresolved_dependency: #200 (open)",
+    now: "2026-09-02T00:00:00.000Z",
+  });
+  assert.equal(outcome.persisted, true);
+  assert.equal(persistence.writes.length, 1);
+  const after = persistence.writes[0]!.ledger;
+  assert.equal(after.records.length <= 512, true);
+  assert.equal(
+    after.records.some((record) => sentinelRecoveryIdentityKey(record.identity) === protectedKey),
+    true,
+  );
+  assert.equal(
+    after.retry_decisions.some((entry) => entry.identity_key === protectedKey),
+    true,
+  );
+  assert.equal(
+    after.retry_decisions.some((entry) => entry.identity_key === evictedKey),
+    false,
+  );
+  assert.equal(
+    after.retry_history.some((attempt) => sentinelRecoveryIdentityKey(attempt.identity) === evictedKey),
+    false,
+  );
+});
+
+Deno.test("retained due dependency blocker preserves the immutable checkpoint fields", async () => {
+  // The dependency-bearing job is authoritative: the retained recovery
+  // identity is derived from that exact job so the persisted blocker
+  // transitions the retained checkpoint rather than creating another source.
+  const job = await createGitHubIssueJob("ubiquity/ai.ubq.fi", sentinelGitHubIssue(), {
+    ...noIssueRelations,
+    blockedByCount: 1,
+    dependencies: [{ issue_number: 200, state: "open" }],
+    dependenciesComplete: true,
+  });
+  assert.ok(job);
+  const identity = planningIdentity(job);
+  const retained = recoveryRecordFixture({
+    identity,
+    phase: "retry_wait",
+    disposition: "active",
+    base_sha: "2".repeat(40),
+    candidate_branch: "sentinel/candidate-123456789-1",
+    candidate_sha: "c".repeat(40),
+    artifact_ids: [9697049201],
+    run_id: "run-retained",
+    attempt: 1,
+    lease_token: "lease-retained",
+    updated_at: "2026-08-01T00:00:00.000Z",
+  });
+  const key = sentinelRecoveryIdentityKey(identity);
+  const dueDecision = (await evaluateSentinelRetryPolicy({
+    identity,
+    failure: {
+      failure_class: "transient_transport",
+      failure_fingerprint: "2".repeat(64),
+      code: "planning_output_invalid",
+      phase: "issue_planning",
+      signature: "retained",
+    },
+    history: [],
+    now: "2026-08-01T00:00:00.000Z",
+  })).decision;
+  assert.ok(dueDecision.retry_at !== null);
+  const persistence = planningPersistenceStore(
+    parseSentinelRecoveryLedger({
+      ...emptySentinelRecoveryLedger(),
+      records: [retained],
+      retry_decisions: [{ identity_key: key, decision: dueDecision }],
+    }),
+  );
+  const outcome = await persistPlanningOutcome({
+    store: persistence.store,
+    repository: "ubiquity/ai.ubq.fi",
+    job: job,
+    runId: "run-2",
+    runAttempt: 2,
+    pinnedBaseSha: "b".repeat(40),
+    blockedReason: "unresolved_dependency: #200 (open)",
+    now: dueDecision.retry_at,
+  });
+  assert.equal(outcome.persisted, true);
+  const record = persistence.writes[0]!.ledger.records.find(
+    (candidate) => sentinelRecoveryIdentityKey(candidate.identity) === key,
+  );
+  assert.ok(record);
+  assert.equal(record.phase, "manual_required");
+  assert.equal(record.reason, "planning_blocked:unresolved_dependency: #200 (open)");
+  assert.equal(record.candidate_branch, retained.candidate_branch);
+  assert.equal(record.candidate_sha, retained.candidate_sha);
+  assert.deepEqual(record.artifact_ids, retained.artifact_ids);
+  assert.deepEqual(record.identity, retained.identity);
+});
+
+Deno.test("review backlog convergence still fails closed without its exact entry", async () => {
+  const fixture = await matrixPreparedConvergenceFixture();
+  const backlogRecovery = parseSentinelRecoveryRecord({
+    ...fixture.prepared,
+    identity: {
+      repository: fixture.repository,
+      source_kind: "review_backlog",
+      source_id: "a".repeat(64),
+      source_revision: "b".repeat(40),
+      candidate_generation: 1,
+    },
+  });
+  await assert.rejects(
+    () =>
+      bindMatrixConvergenceWork({
+        repository: fixture.repository,
+        runId: fixture.runId,
+        runAttempt: fixture.runAttempt,
+        repositoryRoot: "/tmp",
+        plan: fixture.plan,
+        triage: fixture.triage,
+        preparedRecovery: backlogRecovery,
+        issueSelection: null,
+        selectedIssueJob: null,
+      }),
+    /requires its exact backlog entry/,
+  );
 });
 Deno.test("per-candidate source capture failures are explicit skips that never starve later work", async () => {
   const repository = "ubiquity/ai.ubq.fi";

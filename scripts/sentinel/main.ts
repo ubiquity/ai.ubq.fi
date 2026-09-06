@@ -776,18 +776,22 @@ export const persistPlanningOutcome = async (
     next_action: manualNow ? "Resolve the named blocker before another attempt." : `Retry after ${retryAt}.`,
     predecessor: null,
   });
+  // The upsert returns a fully coherent ledger: it prunes evicted terminal
+  // records AND their metadata. Keep that entire retained ledger instead of
+  // spreading fresh metadata, which would undo the pruning and orphan the
+  // evicted identity's retry_decisions/leases at the record bound.
+  const upserted = upsertSentinelRecoveryRecord(fresh.ledger, record, null);
   const ledgerAfter = parseSentinelRecoveryLedger({
-    ...fresh.ledger,
-    records: upsertSentinelRecoveryRecord(fresh.ledger, record, null).records,
+    ...upserted,
     // The evaluated history already contains this identity's prior attempts:
     // replace only those rows instead of appending duplicates; every other
     // identity's history is preserved byte-for-byte.
     retry_history: [
-      ...fresh.ledger.retry_history.filter((attempt) => sentinelRecoveryIdentityKey(attempt.identity) !== outcomeKey),
+      ...upserted.retry_history.filter((attempt) => sentinelRecoveryIdentityKey(attempt.identity) !== outcomeKey),
       ...history,
     ],
     retry_decisions: [
-      ...fresh.ledger.retry_decisions,
+      ...upserted.retry_decisions,
       ...(manualNow ? [] : [{ identity_key: sentinelRecoveryIdentityKey(outcomeIdentity), decision }]),
     ],
   });
@@ -1583,7 +1587,29 @@ export const candidateShaForReview = (
   return ensureFullSha(headSha, "Review candidate SHA");
 };
 
-const writePreparedMatrixPlan = async (
+/**
+ * Protected-scope rule shared by plan validation and actual matrix
+ * preparation: an exact protected file, an equal protected directory, or a
+ * path beneath a protected directory is rejected. An explicit allowed
+ * directory ancestor of protected descendants is permitted: the protected
+ * paths stay in the manifest and per-file protected checks still reject
+ * every descendant.
+ */
+const plannedScopeEntryIsProtected = (path: string): boolean => {
+  const directory = path.endsWith("/");
+  const normalized = directory ? path.slice(0, -1) : path;
+  if (directory) {
+    return isSentinelProtectedImplementationPath(normalized) ||
+      normalized === "scripts/sentinel" || normalized.startsWith("scripts/sentinel/") ||
+      normalized === ".github/workflows" || normalized.startsWith(".github/workflows/") ||
+      normalized === "docs/sentinel-review-results" ||
+      normalized.startsWith("docs/sentinel-review-results/") ||
+      normalized.split("/").includes(".codex");
+  }
+  return isSentinelProtectedImplementationPath(normalized);
+};
+
+export const writePreparedMatrixPlan = async (
   input: Readonly<{
     reportsDir: string;
     runId: string;
@@ -1596,7 +1622,7 @@ const writePreparedMatrixPlan = async (
   ensureFullSha(input.baseSha, "Matrix plan base SHA");
   const actionable = input.triage?.findings.filter((finding) => finding.actionable) ?? [];
   for (const finding of actionable) {
-    const forbidden = finding.allowed_paths.filter(isSentinelProtectedImplementationPath);
+    const forbidden = finding.allowed_paths.filter(plannedScopeEntryIsProtected);
     if (forbidden.length > 0) {
       throw new Error(`Matrix finding ${finding.id} owns protected paths: ${forbidden.join(", ")}`);
     }
@@ -2070,15 +2096,7 @@ export const validatePlannedIssueTriage = (
         path.includes("\\") || path.endsWith("//") ||
         normalized.split("/").some((part) => part === "" || part === "." || part === "..")
       ) return true;
-      if (directory) {
-        return isSentinelProtectedImplementationPath(normalized) ||
-          normalized === "scripts/sentinel" || normalized.startsWith("scripts/sentinel/") ||
-          normalized === ".github/workflows" || normalized.startsWith(".github/workflows/") ||
-          normalized === "docs/sentinel-review-results" ||
-          normalized.startsWith("docs/sentinel-review-results/") ||
-          normalized.split("/").includes(".codex");
-      }
-      return isSentinelProtectedImplementationPath(normalized);
+      return plannedScopeEntryIsProtected(path);
     }) || finding.validation_requirements.length === 0
   ) {
     throw new SentinelIssuePlanningBlockedError("plan_scope_invalid");
@@ -4033,13 +4051,17 @@ const run = async (): Promise<void> => {
         blockedReason,
         now: new Date().toISOString(),
       });
-    // Deterministic incoming-dependency gate for a FRESH plan: incomplete
-    // dependency capture is a retryable source_unavailable and any captured
-    // OPEN prerequisite is a stable unresolved_dependency blocker. Both are
-    // persisted through the production helper before any planner invocation
-    // so the ordered selector continues to the next issue, and none of it
-    // depends on the planner obeying instruction text.
-    if (context.checkpoint === null) {
+    // Deterministic incoming-dependency gate: incomplete dependency capture
+    // is a retryable source_unavailable and any captured OPEN prerequisite is
+    // a stable unresolved_dependency blocker. Both are persisted through the
+    // production helper before any planner invocation or retained evidence
+    // loading so the ordered selector continues to the next issue, and none
+    // of it depends on the planner obeying instruction text.
+    // The current exact relationship capture is authoritative for BOTH fresh
+    // and retained due work: it runs before any planner invocation or retained
+    // evidence loading, and the persisted blocker preserves the retained
+    // candidate branch/SHA/artifact fields through the existing helper.
+    {
       const dependencyState = evaluatePlannedIssueIncomingDependencies(job);
       if (dependencyState.blocked) {
         const outcome = await persistPlanningBlocker(dependencyState.reason);
@@ -4400,11 +4422,17 @@ const run = async (): Promise<void> => {
       preparedRecovery: matrixConvergencePreparedRecovery,
       issueSelection: convergenceIssueSelection,
       selectedIssueJob,
-      selectedBacklogEntry: findReviewBacklogEntry(
-        reviewBacklogMarkdown,
-        matrixConvergencePreparedRecovery.identity.source_id,
-        matrixConvergencePreparedRecovery.identity.source_revision,
-      ),
+      // Outside hourly intake reviewBacklogMarkdown is empty; a review backlog
+      // exists only for a review_backlog prepared source. Other source kinds
+      // bind with no backlog entry, and real review_backlog sources still
+      // fail closed through their canonical parse.
+      selectedBacklogEntry: matrixConvergencePreparedRecovery.identity.source_kind === "review_backlog"
+        ? findReviewBacklogEntry(
+          reviewBacklogMarkdown,
+          matrixConvergencePreparedRecovery.identity.source_id,
+          matrixConvergencePreparedRecovery.identity.source_revision,
+        )
+        : null,
     });
   }
   let workSelection: SentinelWorkSelection = matrixWorkSelection ?? selectSentinelWork(

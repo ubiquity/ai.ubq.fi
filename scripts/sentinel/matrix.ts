@@ -107,8 +107,20 @@ const assertStringList = (value: unknown, label: string, maximum = MAX_REQUIREME
 };
 
 const assertNoOverlap = (left: readonly string[], right: readonly string[], label: string): void => {
-  if (left.some((leftPath) => right.some((rightPath) => matrixPathsOverlap(leftPath, rightPath)))) {
-    throw new Error(`${label} contains an allowed/prohibited path overlap`);
+  for (const leftPath of left) {
+    for (const rightPath of right) {
+      if (!matrixPathsOverlap(leftPath, rightPath)) continue;
+      // An explicit allowed directory ancestor of a prohibited descendant is a
+      // permitted exclusion: the protected path stays in the manifest and the
+      // per-file protected checks still reject every descendant. An allowed
+      // exact protected file, an equal protected directory, or an allowed path
+      // beneath a prohibited directory remain conflicts.
+      if (
+        leftPath.endsWith("/") &&
+        matrixAllowedPathDirectory(rightPath).startsWith(`${matrixAllowedPathDirectory(leftPath)}/`)
+      ) continue;
+      throw new Error(`${label} contains an allowed/prohibited path overlap`);
+    }
   }
 };
 
