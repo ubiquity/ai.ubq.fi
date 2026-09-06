@@ -1579,6 +1579,44 @@ export const finalizeSentinelCandidate = (
 
 export const finalizeSentinelCandidateCheckpoint = finalizeSentinelCandidate;
 
+/**
+ * Bind a candidate recovery phase to the ACTUAL selected execution base: the
+ * phase record carries the base it was produced against (a proven A -> B
+ * convergence leaves the durable claim at A while the candidate/cycle sit at
+ * B), and the persisted record copies that exact base instead of spreading
+ * the older durable claim. A phase record whose base does not match the
+ * current execution base is an unrelated checkpoint and is rejected before
+ * the CAS write; the transition checker keeps permitting base changes.
+ */
+export const buildPersistedCandidateRecoveryPhase = (
+  durable: SentinelRecoveryRecordV1,
+  record: SentinelRecoveryRecordV1,
+  baseSha: string,
+): SentinelRecoveryRecordV1 => {
+  if (record.base_sha !== baseSha) {
+    throw new Error("Candidate recovery checkpoint base does not match the selected execution base");
+  }
+  const next = parseSentinelRecoveryRecord({
+    ...durable,
+    base_sha: record.base_sha,
+    phase: record.phase,
+    state_version: durable.state_version + 1,
+    updated_at: new Date().toISOString(),
+    candidate_branch: record.candidate_branch,
+    candidate_sha: record.candidate_sha,
+    changed_files: record.changed_files,
+    tree_sha: record.tree_sha,
+    failure_class: record.failure_class,
+    failure_fingerprint: record.failure_fingerprint,
+    artifact_ids: record.artifact_ids,
+    artifact_digests: record.artifact_digests,
+    reason: record.reason,
+    next_action: record.next_action,
+  });
+  assertSentinelRecoveryTransition(durable, next);
+  return next;
+};
+
 export const candidateShaForReview = (
   headSha: string,
   aggregateChangedPaths: readonly string[],
@@ -5221,23 +5259,7 @@ const run = async (): Promise<void> => {
       ),
     );
   const persistCandidateRecoveryPhase = async (record: SentinelRecoveryRecordV1): Promise<void> => {
-    const next = parseSentinelRecoveryRecord({
-      ...durableRecoveryRecord,
-      phase: record.phase,
-      state_version: durableRecoveryRecord.state_version + 1,
-      updated_at: new Date().toISOString(),
-      candidate_branch: record.candidate_branch,
-      candidate_sha: record.candidate_sha,
-      changed_files: record.changed_files,
-      tree_sha: record.tree_sha,
-      failure_class: record.failure_class,
-      failure_fingerprint: record.failure_fingerprint,
-      artifact_ids: record.artifact_ids,
-      artifact_digests: record.artifact_digests,
-      reason: record.reason,
-      next_action: record.next_action,
-    });
-    assertSentinelRecoveryTransition(durableRecoveryRecord, next);
+    const next = buildPersistedCandidateRecoveryPhase(durableRecoveryRecord, record, baseSha);
     recoverySnapshot = await writeGitHubSentinelRecoveryLedger({
       token: githubToken,
       repository,

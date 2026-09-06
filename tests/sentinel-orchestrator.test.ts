@@ -11,6 +11,7 @@ import {
   assertRetainedReplayArtifactBudget,
   assertTriageMatchesMatrixPlan,
   bindMatrixConvergenceWork,
+  buildPersistedCandidateRecoveryPhase,
   candidateRevertDiffArguments,
   candidateShaForReview,
   createSentinelCandidateRecoveryRecord,
@@ -5753,6 +5754,115 @@ Deno.test("due retry reclaim rebases only proven GitHub issue work to the execut
   const reclaimedBacklog = reclaim(backlogRetry);
   assert.equal(reclaimedBacklog.base_sha, backlogRetry.base_sha);
   assert.equal(reclaimedBacklog.phase, "claimed");
+});
+Deno.test({
+  name: "candidate recovery phase persists and verifies the proven execution base",
+  ignore: matrixVerifierTestsIgnored,
+  async fn() {
+    // Permitted A -> B convergence: the durable claim sits at A while the
+    // candidate and cycle use B; the persisted phase must bind B and the frozen
+    // plan verification must keep the original A selection binding.
+    const advanceRepo = await createPlanAdvanceRepository();
+    try {
+      await Deno.writeTextFile(
+        `${advanceRepo.repositoryRoot}/docs/sentinel-issue-jobs.md`,
+        renderGitHubIssueJobLedger(parseGitHubIssueJobLedger(issueJobLedger).slice(0, 1)),
+      );
+      await commitPlanBaseAdvance(advanceRepo.repositoryRoot, "docs: retry ledger advance");
+      const executionBase = await matrixVerifierGit(advanceRepo.repositoryRoot, ["rev-parse", "HEAD"]);
+      const repository = "ubiquity/ai.ubq.fi";
+      const job = await createGitHubIssueJob(repository, sentinelGitHubIssue(), noIssueRelations);
+      assert.ok(job);
+      const interval = computeSentinelInterval("hourly", now);
+      const triage = githubIssueJobTriageReport(job, interval);
+      const planSha256 = await githubIssuePlanDigest({
+        repository,
+        issue_id: job.issueId,
+        fingerprint: job.fingerprint,
+        base_sha: advanceRepo.originalBase,
+        plan: triage,
+      });
+      const selection: GitHubIssueSelectionReport = {
+        schema_version: 2,
+        issue_id: job.issueId,
+        issue_number: job.number,
+        fingerprint: job.fingerprint,
+        body_sha256: job.bodySha256,
+        comments: job.comments,
+        priority: job.priority,
+        time_label: job.timeLabel,
+        files: [...job.files],
+        updated_at: job.updatedAt,
+        base_sha: advanceRepo.originalBase,
+        plan_sha256: planSha256,
+      };
+      const durableAtA = parseSentinelRecoveryRecord(recoveryRecordFixture({
+        identity: {
+          repository,
+          source_kind: "github_issue",
+          source_id: String(job.issueId),
+          source_revision: job.fingerprint,
+          candidate_generation: 1,
+        },
+        base_sha: advanceRepo.originalBase,
+        phase: "claimed",
+        disposition: "active",
+        state_version: 1,
+        run_id: "123456789",
+      }));
+      const phaseAtB = parseSentinelRecoveryRecord(recoveryRecordFixture({
+        identity: durableAtA.identity,
+        base_sha: executionBase,
+        phase: "implementation_running",
+        disposition: "active",
+        state_version: 3,
+        run_id: "123456789",
+        candidate_branch: "sentinel/candidate-123456789-1",
+        candidate_sha: "c".repeat(40),
+        tree_sha: "d".repeat(40),
+        changed_files: ["src/http.ts"],
+      }));
+      const persisted = buildPersistedCandidateRecoveryPhase(durableAtA, phaseAtB, executionBase);
+      assert.equal(persisted.base_sha, executionBase);
+      assert.equal(persisted.phase, "implementation_running");
+      assert.equal(persisted.state_version, durableAtA.state_version + 1);
+      assert.equal(persisted.candidate_sha, phaseAtB.candidate_sha);
+      // Final frozen-plan verification: original A selection stays bound,
+      // cycle/recovery agree at B through the actual checkout proof.
+      await verifyFrozenIssuePlanDigest({
+        repository,
+        selection,
+        triageValue: triage,
+        cycleBaseSha: executionBase,
+        repositoryRoot: advanceRepo.repositoryRoot,
+        recovery: persisted,
+        runId: "123456789",
+      });
+      // A mismatched/unrelated checkpoint base is rejected before the write.
+      const unrelated = parseSentinelRecoveryRecord({
+        ...phaseAtB,
+        base_sha: "9".repeat(40),
+      });
+      assert.throws(
+        () => buildPersistedCandidateRecoveryPhase(durableAtA, unrelated, executionBase),
+        /does not match the selected execution base/,
+      );
+      // Same-base behavior is retained.
+      const sameBase = parseSentinelRecoveryRecord({ ...phaseAtB, base_sha: advanceRepo.originalBase });
+      assert.throws(
+        () => buildPersistedCandidateRecoveryPhase(durableAtA, sameBase, executionBase),
+        /does not match the selected execution base/,
+      );
+      const sameBasePersisted = buildPersistedCandidateRecoveryPhase(
+        durableAtA,
+        sameBase,
+        advanceRepo.originalBase,
+      );
+      assert.equal(sameBasePersisted.base_sha, advanceRepo.originalBase);
+    } finally {
+      await Deno.remove(advanceRepo.repositoryRoot, { recursive: true });
+    }
+  },
 });
 Deno.test({
   name: "matrix preparation persists directory scope plans with protected exclusions intact",
