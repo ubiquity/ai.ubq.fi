@@ -417,11 +417,17 @@ export const failureEventAfterCommit = (
   output: readonly Record<string, unknown>[] = [],
   responseTemplate: Readonly<Record<string, unknown>> = {},
 ): ResponsesStreamEvent => {
+  const responseWithoutUsage = { ...responseTemplate };
+  delete responseWithoutUsage.usage;
   const event = responseEventFromValue({
     type: "response.failed",
     sequence_number: sequenceNumber,
     response: {
-      ...responseTemplate,
+      // Usage is authoritative only on an upstream terminal. A non-terminal
+      // response snapshot may contain null, partial, or provider-specific usage;
+      // carrying it into the synthetic failure would turn missing usage into an
+      // invalid or fabricated terminal observation.
+      ...responseWithoutUsage,
       id: responseId,
       object: getString(responseTemplate.object) ?? "response",
       status: "failed",

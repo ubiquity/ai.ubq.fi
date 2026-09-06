@@ -12,7 +12,11 @@ import {
   responsesEventSemanticKind,
   rewriteResponsesEventForWarning,
 } from "../src/responses_failover_stream.ts";
-import type { ResponsesStreamEvent, ResponsesStreamIterator } from "../src/responses_stream.ts";
+import {
+  readResponsesStream,
+  type ResponsesStreamEvent,
+  type ResponsesStreamIterator,
+} from "../src/responses_stream.ts";
 
 const event = (value: Record<string, unknown>): ResponsesStreamEvent => responseEventFromValue(value);
 
@@ -543,6 +547,7 @@ Deno.test("Owned stream synthetic failure preserves template, text, tools, and s
     created_at: 42,
     model: "google/gemini",
     service_tier: "default",
+    usage: null,
     status: "in_progress",
     output: [],
   };
@@ -585,6 +590,7 @@ Deno.test("Owned stream synthetic failure preserves template, text, tools, and s
   assert.equal(response.created_at, 42);
   assert.equal(response.model, "google/gemini");
   assert.equal(response.service_tier, "default");
+  assert.equal("usage" in response, false);
   assert.equal(response.status, "failed");
   assert.deepEqual(response.error, {
     code: "server_error",
@@ -737,4 +743,73 @@ Deno.test("Owned stream marks recovered text completed only after a done event",
   const response = values.at(-1)?.response as Record<string, unknown>;
   const output = response.output as Record<string, unknown>[];
   assert.equal(output.find((item) => item.id === "msg_done_text")?.status, "completed");
+});
+
+Deno.test("Owned stream emits one synthetic failure after a post-commit inactivity timeout", async () => {
+  let cancelCount = 0;
+  let observedFailure: Record<string, unknown> | null = null;
+  const encoder = new TextEncoder();
+  const frame = (value: Record<string, unknown>): string =>
+    "data: " + JSON.stringify(value) + String.fromCharCode(10, 10);
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode(
+        frame({ type: "response.created", response: { id: "resp_stalled", status: "in_progress", output: [] } }) +
+          frame({
+            type: "response.output_text.delta",
+            response_id: "resp_stalled",
+            item_id: "msg_stalled",
+            output_index: 0,
+            delta: "partial",
+          }),
+      ));
+    },
+    cancel() {
+      cancelCount += 1;
+    },
+  });
+  const upstream = readResponsesStream(source, undefined, { firstEventTimeoutMs: 100, inactivityTimeoutMs: 12 });
+  const first = await upstream.next();
+  const second = await upstream.next();
+  assert.ok(first.value);
+  assert.ok(second.value);
+  const firstEvent = first.value as ResponsesStreamEvent;
+  const secondEvent = second.value as ResponsesStreamEvent;
+  const body = createOwnedResponsesStream({
+    initial: [firstEvent, secondEvent],
+    iterator: upstream,
+    responseId: "resp_stalled",
+    onFailure: (_error, details) => {
+      observedFailure = {
+        failureKind: details.failureKind,
+        semanticCommitmentObserved: details.semanticCommitmentObserved,
+        syntheticTerminalType: details.syntheticTerminalType,
+      };
+    },
+  });
+  const output = await new Response(body).text();
+  const values = output.split(String.fromCharCode(10)).filter((line) => line.startsWith("data: ")).map((line) =>
+    JSON.parse(line.slice(6)) as Record<string, unknown>
+  );
+  assert.deepEqual(values.map((value) => value.type), [
+    "response.created",
+    "response.output_text.delta",
+    "response.failed",
+  ]);
+  assert.equal(values.filter((value) => value.type === "response.failed").length, 1);
+  assert.equal(values.filter((value) => value.delta === "partial").length, 1);
+  const terminalResponse = values.at(-1)?.response as Record<string, unknown>;
+  assert.equal(terminalResponse.status, "failed");
+  assert.deepEqual(terminalResponse.error, {
+    code: "server_error",
+    message: "The upstream stream ended unexpectedly.",
+  });
+  assert.equal("usage" in terminalResponse, false);
+  assert.deepEqual(observedFailure, {
+    failureKind: "inactivity_timeout",
+    semanticCommitmentObserved: true,
+    syntheticTerminalType: "response.failed",
+  });
+  assert.equal(cancelCount, 1);
+  assert.equal(source.locked, false);
 });

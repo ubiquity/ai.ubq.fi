@@ -11,6 +11,10 @@ export const STREAM_FIRST_EVENT_DEADLINE_MS = 120_000;
 export const STREAM_FAILOVER_RESERVE_MS = 15_000;
 export const STREAM_INACTIVITY_DEADLINE_MS = 120_000;
 
+let streamInactivityDeadlineMs = STREAM_INACTIVITY_DEADLINE_MS;
+
+export const getStreamInactivityDeadlineMs = (): number => streamInactivityDeadlineMs;
+
 /** Buffered responses must finish before Cloudflare's 125-second read limit. */
 export const INFERENCE_DEADLINE_MS = STREAM_FIRST_EVENT_DEADLINE_MS;
 export const BUFFERED_INFERENCE_DEADLINE_MS = INFERENCE_DEADLINE_MS;
@@ -86,4 +90,8 @@ export const createStreamSemanticDeadline = (
 
 export const setStreamFirstEventDeadlineMsForTest = (timeoutMs: number | null): void => {
   streamFirstEventDeadlineMs = timeoutMs ?? STREAM_FIRST_EVENT_DEADLINE_MS;
+};
+
+export const setStreamInactivityDeadlineMsForTest = (timeoutMs: number | null): void => {
+  streamInactivityDeadlineMs = timeoutMs ?? STREAM_INACTIVITY_DEADLINE_MS;
 };

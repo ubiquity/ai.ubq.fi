@@ -9646,6 +9646,14 @@ const handleResponsesInternal = async (
               routed.provider,
             );
           }
+          if (failed.trigger === "semantic_timeout") {
+            // An inactivity deadline is transport evidence, not an
+            // authoritative Codex quota/capacity signal. Keep the failed
+            // request on the Codex outcome and never spend a paid or legacy
+            // fallback reservation for an ambiguous upstream stall.
+            if (globalProbe) void releaseGlobalRemovedProviderProbe(globalProbe).catch(() => {});
+            return failed.response;
+          }
           if (!apiKey) return failed.response;
           const transition = await recordRemovedProviderEligibleFailure(globalProbe);
           if (transition !== "none") recordRemovedProviderFields(usageContext, { circuitTransition: transition });

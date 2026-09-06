@@ -3,6 +3,7 @@ import {
   MAX_RESPONSES_SSE_EVENT_BYTES,
   preflightResponsesStream,
   proxyResponsesStream,
+  proxyResponsesStreamIterator,
   readResponsesStream,
   ResponsesStreamError,
   withSseKeepalive,
@@ -441,5 +442,37 @@ Deno.test("Responses proxy cancellation is forwarded once without waiting for bo
   await Promise.resolve();
   assert.equal(downstreamCancelCount, 1);
   assert.equal(upstreamCancelCount, 1);
+  assert.equal(source.locked, false);
+});
+
+Deno.test("Responses proxy emits one schema-valid terminal after a post-event inactivity timeout", async () => {
+  let cancelCount = 0;
+  const source = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(
+        bytes(
+          "data: " + JSON.stringify({ type: "response.output_text.delta", delta: "partial" }) +
+            String.fromCharCode(10, 10),
+        ),
+      );
+    },
+    cancel() {
+      cancelCount += 1;
+    },
+  });
+  const iterator = readResponsesStream(source, undefined, { firstEventTimeoutMs: 100, inactivityTimeoutMs: 12 });
+  const output = await new Response(proxyResponsesStreamIterator(iterator)).text();
+  const values = output.split(String.fromCharCode(10)).filter((line) => line.startsWith("data: ")).map((line) =>
+    JSON.parse(line.slice(6)) as Record<string, unknown>
+  );
+  assert.deepEqual(values.map((value) => value.type), ["response.output_text.delta", "error"]);
+  assert.equal(values.filter((value) => value.type === "error").length, 1);
+  assert.deepEqual(values.at(-1)?.error, {
+    type: "server_error",
+    code: "upstream_stream_error",
+    message: "The upstream stream ended unexpectedly.",
+    param: null,
+  });
+  assert.equal(cancelCount, 1);
   assert.equal(source.locked, false);
 });

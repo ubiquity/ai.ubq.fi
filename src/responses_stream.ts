@@ -1,5 +1,5 @@
 import { getString, isRecord } from "./utils.ts";
-import { STREAM_FIRST_EVENT_DEADLINE_MS, STREAM_INACTIVITY_DEADLINE_MS } from "./inference_deadline.ts";
+import { getStreamInactivityDeadlineMs, STREAM_FIRST_EVENT_DEADLINE_MS } from "./inference_deadline.ts";
 
 export const RESPONSES_TERMINAL_EVENT_TYPES = new Set([
   "error",
@@ -191,7 +191,7 @@ export const readResponsesStream = async function* (
   };
   const readWithDeadline = async (): Promise<ReadableStreamReadResult<Uint8Array>> => {
     const timeoutMs = sawEvent
-      ? options.inactivityTimeoutMs ?? STREAM_INACTIVITY_DEADLINE_MS
+      ? options.inactivityTimeoutMs ?? getStreamInactivityDeadlineMs()
       : Math.max(0, firstEventDeadlineAtMs - Date.now());
     const timeout = AbortSignal.timeout(timeoutMs);
     let abortTimeout = (): void => {};

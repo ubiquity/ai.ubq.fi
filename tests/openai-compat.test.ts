@@ -3,7 +3,10 @@ import type { CodexBankedResetConfig } from "../src/codex_banked_reset.ts";
 import type { CodexUsageResetProvider } from "../src/codex_banked_reset_provider.ts";
 import type { CodexAuthPoolState } from "../src/types.ts";
 import { DEFAULT_MODEL_KEY, DEFAULT_REASONING_EFFORT_KEY } from "../src/defaults.ts";
-import { setStreamFirstEventDeadlineMsForTest } from "../src/inference_deadline.ts";
+import {
+  setStreamFirstEventDeadlineMsForTest,
+  setStreamInactivityDeadlineMsForTest,
+} from "../src/inference_deadline.ts";
 import { RELEASE_GIT_SHA } from "../src/release.ts";
 import { MAX_RESPONSES_SSE_EVENT_BYTES } from "../src/responses_stream.ts";
 import { sha256Base64Url, sha256Hex } from "../src/utils.ts";
@@ -13678,4 +13681,168 @@ Deno.test("auth: kernel attestation tokens are reusable within TTL", async () =>
 
 addEventListener("unload", () => {
   setKvForTest(null);
+});
+
+Deno.test("openai: post-commit inactivity emits one synthetic failure without replay", async () => {
+  setStreamFirstEventDeadlineMsForTest(100);
+  setStreamInactivityDeadlineMsForTest(12);
+  let codexCalls = 0;
+  let upstreamCancellations = 0;
+  const frame = (value: Record<string, unknown>): string =>
+    "data: " + JSON.stringify(value) + String.fromCharCode(10, 10);
+  try {
+    const response = await withFetchMock(
+      (url) => {
+        assert.equal(url, "https://chatgpt.com/backend-api/codex/responses");
+        codexCalls += 1;
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(TEXT_ENCODER.encode(
+                frame({
+                  type: "response.created",
+                  response: {
+                    id: "resp_post_commit_stall",
+                    status: "in_progress",
+                    output: [],
+                    usage: null,
+                  },
+                }) +
+                  frame({
+                    type: "response.output_text.delta",
+                    response_id: "resp_post_commit_stall",
+                    item_id: "msg_post_commit_stall",
+                    output_index: 0,
+                    delta: "partial",
+                  }),
+              ));
+            },
+            cancel() {
+              upstreamCancellations += 1;
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        );
+      },
+      () =>
+        handleResponses(responsesRequest(), {
+          keyId: null,
+          kernelRepo: null,
+          kernelOrg: null,
+          requestId: "post-commit-stall",
+          startedAtMs: Date.now(),
+          startedAtMonotonicMs: performance.now(),
+        }),
+    );
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
+    const values = parseResponsesSseValues(await response.text());
+    assert.deepEqual(values.map((value) => value.type), [
+      "response.created",
+      "response.output_text.delta",
+      "response.failed",
+    ]);
+    assert.equal(values.filter((value) => value.type === "response.failed").length, 1);
+    assert.equal(values.filter((value) => value.delta === "partial").length, 1);
+    const terminalResponse = values.at(-1)?.response as Record<string, unknown>;
+    assert.equal(terminalResponse.status, "failed");
+    assert.equal("usage" in terminalResponse, false);
+    const telemetry = getResponseTelemetry(response);
+    assert.equal(telemetry?.failureKind, "inactivity_timeout");
+    assert.equal(telemetry?.syntheticTerminalType, "response.failed");
+    assert.equal(telemetry?.semanticOutputObserved, true);
+    assert.equal(telemetry?.usageObserved, false);
+    assert.equal(telemetry?.usageTelemetryStatus, "missing");
+    assert.equal(codexCalls, 1);
+    assert.equal(upstreamCancellations, 1);
+  } finally {
+    setStreamFirstEventDeadlineMsForTest(null);
+    setStreamInactivityDeadlineMsForTest(null);
+  }
+});
+
+Deno.test("openai: precommit inactivity does not advance to paid or legacy recovery", async () => {
+  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
+  const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
+  const keyId = "precommit-inactivity-no-fallback";
+  const requestId = "request-precommit-inactivity-no-fallback";
+  let codexCalls = 0;
+  let paidDispatches: string[] = [];
+  let removedProviderCalls = 0;
+  setStreamFirstEventDeadlineMsForTest(100);
+  setStreamInactivityDeadlineMsForTest(12);
+  Deno.env.set("METERED_API_KEY", "metered-test-key");
+  Deno.env.set("SURPLUS_API_KEY", "surplus-test-key");
+  resetMeteredModelsCacheForTest();
+  resetSurplusModelsCacheForTest();
+  seedPaidFallbackKey(keyId);
+  setRemovedProviderApiKeyForTest("removed-provider-test-key");
+  setRemovedProviderTestAdapterForTest({
+    fetchResponses: async () => {
+      removedProviderCalls += 1;
+      throw new Error("legacy recovery must not follow an inactivity timeout");
+    },
+    modelFromEvent: () => DEFAULT_TEST_MODEL,
+    isEligibleModel: () => true,
+  });
+  try {
+    const response = await withFetchMock(
+      (url) => {
+        if (url !== "https://chatgpt.com/backend-api/codex/responses") {
+          paidDispatches.push(url);
+          throw new Error("paid recovery must not follow an inactivity timeout");
+        }
+        codexCalls += 1;
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(TEXT_ENCODER.encode(
+                "data: " +
+                  JSON.stringify({
+                    type: "response.created",
+                    response: { id: "resp_precommit_stall", status: "in_progress", output: [] },
+                  }) +
+                  String.fromCharCode(10, 10),
+              ));
+            },
+            cancel() {},
+          }),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        );
+      },
+      () =>
+        handleResponses(responsesRequest(), {
+          keyId,
+          kernelRepo: null,
+          kernelOrg: null,
+          paidFallbackEnabled: true,
+          requestId,
+          startedAtMs: Date.now(),
+          startedAtMonotonicMs: performance.now(),
+        }),
+    );
+    assert.equal(response.status, 504);
+    assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
+    const telemetry = getResponseTelemetry(response);
+    assert.equal(telemetry?.failureKind, "inactivity_timeout");
+    assert.equal(telemetry?.semanticOutputObserved, null);
+    assert.deepEqual(telemetry?.attemptedProviders, ["chatgpt_codex"]);
+    assert.deepEqual(paidDispatches, []);
+    assert.equal(removedProviderCalls, 0);
+    assert.equal(codexCalls, 1);
+    assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null);
+  } finally {
+    setRemovedProviderTestAdapterForTest(null);
+    setRemovedProviderApiKeyForTest(undefined);
+    kvStore.delete(keyToString(["ubq_ai", "api_keys", "id", keyId]));
+    kvStore.delete(keyToString(["ubq_ai", "api_keys", "hash", "hash-" + keyId]));
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
+    if (originalSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
+    else Deno.env.set("SURPLUS_API_KEY", originalSurplusApiKey);
+    setStreamFirstEventDeadlineMsForTest(null);
+    setStreamInactivityDeadlineMsForTest(null);
+  }
 });
