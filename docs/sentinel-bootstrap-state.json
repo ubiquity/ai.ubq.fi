@@ -61,12 +61,12 @@
   "progress": {
     "schema_version": 1,
     "verdict": "ambiguous",
-    "reason": "insufficient_history",
-    "observation_count": 1,
-    "state_digest": "b005c4a4f86b622d",
+    "reason": "changed_state_without_verified_advancement",
+    "observation_count": 2,
+    "state_digest": "fb8acb22f533c086",
     "classifier": null,
     "resolved": "unknown",
     "resolved_reason": "classifier_not_provisioned",
-    "evaluated_at": "2026-09-07T05:05:23.281Z"
+    "evaluated_at": "2026-09-07T05:23:51.512Z"
   }
 }
