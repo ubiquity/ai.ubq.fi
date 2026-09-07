@@ -343,3 +343,52 @@ Deno.test("harness: policy preambles are deterministic and reference the surface
   assert.match(a, /filesystem\.read/);
   assert.match(a, /Context budget tier: large/);
 });
+
+Deno.test("harness: whole-run cancellation aborts a stalled transport without retrying", async () => {
+  const controller = new AbortController();
+  let receivedSignal: AbortSignal | undefined;
+  let calls = 0;
+  let started!: () => void;
+  const transportStarted = new Promise<void>((resolve) => started = resolve);
+  const transport: HarmonyTransport = (_body, requestOptions) => {
+    calls += 1;
+    receivedSignal = requestOptions?.signal;
+    started();
+    return new Promise<Response>((_resolve, reject) => {
+      const signal = requestOptions?.signal;
+      if (signal === undefined) {
+        reject(new Error("missing run signal"));
+        return;
+      }
+      if (signal.aborted) return;
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  };
+  const run = runReliabilityHarness(baseOptions([], {
+    transport,
+    signal: controller.signal,
+    retryPolicy: { maxRetriesPerCall: 3, backoffMs: 25, retryableCodes: ["transport"] },
+  }));
+
+  await transportStarted;
+  assert.equal(receivedSignal, controller.signal);
+  const abortedAt = performance.now();
+  controller.abort(new DOMException("task deadline", "TimeoutError"));
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const outcome = await Promise.race([
+      run,
+      new Promise<never>((_resolve, reject) => {
+        timeoutId = setTimeout(() => reject(new Error("stalled transport did not settle")), 250);
+      }),
+    ]);
+    assert.ok(performance.now() - abortedAt < 250);
+    assert.equal(outcome.phase, "aborted");
+    assert.equal(outcome.abortedReason, "signal");
+    assert.equal(outcome.classification.failure_class, null);
+    assert.equal(calls, 1);
+    assert.equal(receivedSignal?.aborted, true);
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  }
+});
