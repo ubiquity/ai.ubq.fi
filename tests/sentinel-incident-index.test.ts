@@ -76,6 +76,23 @@ const ciphertextDigest = async (capture: ExportedSentinelReplayCapture): Promise
   return encodeHex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
 };
 
+const captureChunkDigest = async (kv: Deno.Kv, captureId: string, chunkCount: number): Promise<string> => {
+  const chunkPrefix = ["uos_ai", "sentinel_replay", "v1", "chunk", captureId] as const;
+  const parts: Uint8Array<ArrayBuffer>[] = [];
+  for (let index = 0; index < chunkCount; index += 1) {
+    const chunk = await kv.get<Uint8Array>([...chunkPrefix, index]);
+    assert.ok(chunk.value instanceof Uint8Array, `capture chunk ${index} must exist`);
+    parts.push(new Uint8Array(chunk.value));
+  }
+  const merged = new Uint8Array(parts.reduce((sum, part) => sum + part.byteLength, 0));
+  let offset = 0;
+  for (const part of parts) {
+    merged.set(part, offset);
+    offset += part.byteLength;
+  }
+  return encodeHex(new Uint8Array(await crypto.subtle.digest("SHA-256", merged)));
+};
+
 const clientObservationFor = (status: number) => ({
   status,
   stream: false,
@@ -146,14 +163,25 @@ const assertIndexRowShape = (row: Record<string, unknown>, count: number): void 
   assert.equal(context.location, null);
   assert.deepEqual(context.sample, []);
   const provenance = row.provenance as { endpoint: string; captured_at_ms: number; captured_by: unknown };
-  assert.equal(provenance.endpoint, "/v1/responses");
+  assert.equal(
+    provenance.endpoint,
+    "https://ai.ubq.fi/v1/responses",
+    "wire provenance must emit the fixed canonical gateway URL",
+  );
   assert.equal(typeof provenance.captured_at_ms, "number");
   assert.equal(provenance.captured_by, null);
   const evidenceRef = row.evidence_ref as { ref: string; digest: string | null } | null;
   if (evidenceRef !== null) {
     assert.equal(typeof evidenceRef.ref, "string");
     assert.ok(evidenceRef.ref.length > 0);
-    assert.equal(evidenceRef.ref.startsWith("capture:"), true, "ref must be an opaque capture reference");
+    assert.equal(
+      evidenceRef.ref.startsWith(`artifact://sentinel/${row.incident_id}/`),
+      true,
+      "wire ref must use the restricted artifact namespace and bind the exact incident id",
+    );
+    const wireCaptureId = evidenceRef.ref.slice(`artifact://sentinel/${row.incident_id}/`.length);
+    assert.match(wireCaptureId, /^[A-Za-z0-9_-]{1,128}$/, "wire ref must carry exactly one capture id segment");
+    assert.equal(evidenceRef.ref.startsWith("capture:"), false, "internal capture refs must never reach wire output");
     if (evidenceRef.digest !== null) assert.match(evidenceRef.digest, /^[0-9a-f]{64}$/);
   }
   const expires = row.evidence_expires_at_ms as number | null;
@@ -235,7 +263,19 @@ Deno.test({
       const capture = filteredBody.data[0]!;
 
       const evidence = row.evidence_ref as { ref: string; digest: string | null };
-      assert.equal(evidence.ref, `capture:${capture.manifest.capture_id}`, "index ref must name the bound capture");
+      const wireRef = `artifact://sentinel/${incidentId}/${capture.manifest.capture_id}`;
+      assert.equal(
+        evidence.ref,
+        wireRef,
+        "wire ref must bind the exact incident id and capture id through the restricted artifact namespace",
+      );
+      const internalRows = (await listSentinelIncidentIndexRows(kv, { incidentId, limit: 1 })).rows;
+      assert.equal(internalRows.length, 1);
+      assert.equal(
+        internalRows[0]!.evidence_ref?.ref,
+        `capture:${capture.manifest.capture_id}`,
+        "the internal index must keep the validated capture: ref",
+      );
       const digest = await ciphertextDigest(capture);
       assert.equal(evidence.digest, digest, "index digest must be the SHA-256 of the actual concatenated ciphertext");
       assert.equal(row.evidence_expires_at_ms, capture.manifest.expires_at_ms);
@@ -951,6 +991,183 @@ Deno.test({
       assert.equal(text.includes("internal_query"), false, "query strings must never reach wire output");
       assert.equal(text.includes("uos_ai"), false, "internal KV prefixes must never reach wire output");
       assert.equal(text.includes("sentinel_replay"), false, "capture storage prefixes must never reach wire output");
+    } finally {
+      adminTokens.delete(SUPER_ADMIN_TOKEN);
+      await kv.close();
+      setKvForTest(null);
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "wire provenance is a fixed canonical allowlist: known/other classifications, hostile request, query, and index origins cannot alter the emitted URL",
+  ignore: !kvAvailable,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const kv = await Deno.openKv(":memory:");
+    setKvForTest(kv);
+    const adminTokens = config.adminTokens as Set<string>;
+    adminTokens.add(SUPER_ADMIN_TOKEN);
+    try {
+      const keyBytes = newSyntheticKey();
+      const observedAtMs = 1_700_000_200_000;
+      const capturedAtMs = 1_700_000_300_000;
+      const randomUuid = (): string => crypto.randomUUID();
+
+      // Known, unknown, hostile-URL and hostile-query endpoints go through the
+      // same producer index observation the actual gateway capture path uses
+      // (recordSentinelIncidentIndexObservation at capture time).
+      const cases: readonly { endpoint: string; status: number; expected: string }[] = [
+        { endpoint: "/v1/responses", status: 500, expected: "https://ai.ubq.fi/v1/responses" },
+        { endpoint: "/v1/chat/completions", status: 501, expected: "https://ai.ubq.fi/v1/chat/completions" },
+        { endpoint: "/v1/images/generations", status: 502, expected: "https://ai.ubq.fi/" },
+        { endpoint: "https://evil.example/v1/responses", status: 503, expected: "https://ai.ubq.fi/" },
+        {
+          endpoint: "/v1/responses?origin=https://evil.example",
+          status: 504,
+          expected: "https://ai.ubq.fi/v1/responses",
+        },
+      ];
+      const first = await recordSentinelIncidentIndexObservation(kv, {
+        endpoint: cases[0]!.endpoint,
+        method: "POST",
+        gitSha: "",
+        observedAtMs,
+        observation: clientObservationFor(cases[0]!.status),
+      }, { randomUuid });
+      for (const item of cases.slice(1)) {
+        await recordSentinelIncidentIndexObservation(kv, {
+          endpoint: item.endpoint,
+          method: "POST",
+          gitSha: "",
+          observedAtMs: observedAtMs + item.status,
+          observation: clientObservationFor(item.status),
+        }, { randomUuid });
+      }
+
+      // Bind real capture evidence to the known /v1/responses group so the
+      // historical timestamp/digest projection can be compared exactly.
+      const input = syntheticInput(
+        new TextEncoder().encode(JSON.stringify({ input: "fixed-allowlist" })),
+        "fixed-allowlist-request",
+        "/v1/responses",
+      );
+      const stored = await persistEncryptedSentinelReplay(
+        input,
+        failureObservation(cases[0]!.status),
+        {
+          kv,
+          keyBytes,
+          now: () => capturedAtMs,
+          randomUuid: () => "fixed-allowlist-capture",
+          randomBytes: twelveByteIv,
+        },
+        clientObservationFor(cases[0]!.status),
+      );
+      assert.equal(stored.status, "stored");
+      if (stored.status !== "stored") throw new Error("expected a stored capture");
+
+      // Actual authenticated handler read: even a hostile admin request origin
+      // cannot influence the emitted provenance.
+      const response = await handler(
+        new Request("https://evil.example/admin/sentinel/incidents", { headers: superAdminHeaders }),
+      );
+      assert.equal(response.status, 200);
+      const body = await response.json() as { data: Record<string, unknown>[] };
+      assert.equal(body.data.length, cases.length);
+      const text = JSON.stringify(body);
+      assert.equal(text.includes("evil.example"), false, "a hostile origin must never reach wire output");
+      assert.deepEqual(
+        body.data.map((row) => (row.provenance as { endpoint: string }).endpoint).sort(),
+        cases.map((item) => item.expected).sort(),
+        "wire provenance must be exactly the fixed canonical allowlist projection",
+      );
+
+      // A hostile query on the admin request is rejected by the frozen
+      // unknown-key validation (fail closed) instead of reaching the rows.
+      const hostileQuery = await handler(
+        new Request(
+          "https://ai.ubq.fi/admin/sentinel/incidents?origin=https://evil.example",
+          { headers: superAdminHeaders },
+        ),
+      );
+      assert.equal(hostileQuery.status, 400);
+
+      // Historical evidence projection: the internal `capture:<id>` ref is
+      // mapped to the restricted wire artifact ref while the exact id and
+      // digest stay bound; captured_at_ms remains the exact stored timestamp.
+      const { rows: storedRows } = await listSentinelIncidentIndexRows(kv, { limit: 100 });
+      assert.equal(storedRows.length, cases.length);
+      const wireByIncident = new Map(body.data.map((row) => [row.incident_id as string, row]));
+      for (const storedRow of storedRows) {
+        const wire = wireByIncident.get(storedRow.incident_id);
+        assert.ok(wire, "every stored row must be on the wire page");
+        assert.equal(
+          (wire.provenance as { captured_at_ms: number }).captured_at_ms,
+          storedRow.provenance.captured_at_ms,
+          "wire captured_at_ms must be the exact stored historical timestamp",
+        );
+        assert.equal(
+          (wire.provenance as { captured_by: unknown }).captured_by,
+          storedRow.provenance.captured_by,
+        );
+        const wireEvidence = wire.evidence_ref as { ref: string; digest: string | null } | null;
+        const storedEvidence = storedRow.evidence_ref;
+        assert.equal(
+          wireEvidence === null,
+          storedEvidence === null,
+          "wire evidence_ref must mirror internal evidence presence",
+        );
+        if (wireEvidence !== null && storedEvidence !== null) {
+          assert.equal(
+            wireEvidence.ref,
+            `artifact://sentinel/${storedRow.incident_id}/${storedEvidence.ref.slice("capture:".length)}`,
+            "wire evidence_ref must map the stored capture: id through the exact incident id",
+          );
+          assert.equal(
+            wireEvidence.digest,
+            storedEvidence.digest,
+            "wire evidence_ref digest must stay the exact stored historical digest",
+          );
+        }
+      }
+      const boundWire = wireByIncident.get(first.value.incident_id)!;
+      assert.equal(
+        (boundWire.provenance as { captured_at_ms: number }).captured_at_ms,
+        capturedAtMs,
+        "the bound row must carry the original capture timestamp",
+      );
+      const digest = await captureChunkDigest(kv, "fixed-allowlist-capture", stored.manifest.chunk_count);
+      assert.equal((boundWire.evidence_ref as { digest: string }).digest, digest);
+      const boundStored = storedRows.find((storedRow) => storedRow.incident_id === first.value.incident_id)!;
+      assert.equal(
+        boundStored.evidence_ref?.ref,
+        "capture:fixed-allowlist-capture",
+        "the internal index must keep the validated capturing ref",
+      );
+      assert.equal(
+        (boundWire.evidence_ref as { ref: string }).ref,
+        `artifact://sentinel/${first.value.incident_id}/fixed-allowlist-capture`,
+        "wire ref must link exactly the bound incident id and capture id",
+      );
+
+      // A hostile endpoint written directly into storage must be rejected by
+      // the unchanged row validation (fail closed, 503) and never emitted.
+      const corrupted = {
+        ...storedRows[0]!,
+        provenance: { ...storedRows[0]!.provenance, endpoint: "https://evil.example" },
+      };
+      await kv.set([...SENTINEL_INCIDENT_INDEX_PREFIX, corrupted.fingerprint], corrupted);
+      const corrupt = await handler(new Request(indexUrl(), { headers: superAdminHeaders }));
+      assert.equal(corrupt.status, 503);
+      const corruptText = await corrupt.text();
+      assert.equal(
+        corruptText.includes("evil.example"),
+        false,
+        "a corrupted origin must fail closed, never be emitted",
+      );
     } finally {
       adminTokens.delete(SUPER_ADMIN_TOKEN);
       await kv.close();

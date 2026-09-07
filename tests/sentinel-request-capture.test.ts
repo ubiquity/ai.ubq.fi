@@ -209,9 +209,13 @@ Deno.test({
       const incident = incidentsBody.data[0]!;
       assert.equal(incident.severity, "P2");
       assert.equal(incident.count, 1);
-      assert.equal(incident.provenance.endpoint, "/v1/responses");
+      assert.equal(incident.provenance.endpoint, "https://ai.ubq.fi/v1/responses");
       assert.equal(incident.provenance.captured_by, null);
-      assert.equal(incident.evidence_ref?.ref, `capture:${capture.manifest.capture_id}`);
+      assert.equal(
+        incident.evidence_ref?.ref,
+        `artifact://sentinel/${incident.incident_id}/${capture.manifest.capture_id}`,
+        "wire evidence ref must bind the exact capture through the restricted artifact namespace",
+      );
       assert.equal(incident.evidence_expires_at_ms, capture.manifest.expires_at_ms);
 
       const scoped = await handler(

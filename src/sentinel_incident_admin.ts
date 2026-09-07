@@ -27,6 +27,52 @@ type SentinelIncidentAdminDependencies = Readonly<{
   listSentinelIncidentIndexRows?: typeof listSentinelIncidentIndexRows;
 }>;
 
+/**
+ * Fixed canonical gateway identity for wire provenance. The frozen consumer
+ * contract requires an absolute HTTP(S) URL here, while the internal index
+ * keeps only the safe endpoint classification (a recognized path or "other")
+ * and the private encrypted capture retains the detailed evidence. This
+ * projection is an explicit fixed allowlist: a known path maps to its exact
+ * gateway URL, and any unknown path is represented at the gateway origin.
+ * The origin is a deliberate constant — stored row values, request URLs,
+ * Host and forwarded headers can never influence the emitted URL, and
+ * arbitrary stored data is never concatenated.
+ */
+const wireProvenanceEndpoint = (endpoint: string): string => {
+  if (endpoint === "/v1/responses") return "https://ai.ubq.fi/v1/responses";
+  if (endpoint === "/v1/chat/completions") return "https://ai.ubq.fi/v1/chat/completions";
+  return "https://ai.ubq.fi/";
+};
+
+/**
+ * Fixed literal wire namespace for the restricted evidence artifact ref. The
+ * frozen consumer only accepts opaque restricted storage refs
+ * (`artifact://<namespace>/<incident_id>/<capture_id>`), never the internal
+ * `capture:<id>` form. The namespace is a constant — no request URL, Host or
+ * stored value can influence it, and no arbitrary scheme or external
+ * reference is ever emitted. The capture id is sliced from the internal ref
+ * only after the index row reader has validated the exact `capture:` prefix;
+ * the incident id is the validated frozen provider-UUID from the same row.
+ */
+const WIRE_EVIDENCE_REF_NAMESPACE = "sentinel";
+const WIRE_EVIDENCE_REF_CAPTURE_PREFIX = "capture:";
+
+const wireEvidenceRef = (
+  evidence: NonNullable<SentinelIncidentIndexRow["evidence_ref"]>,
+  incidentId: string,
+): { ref: string; digest: string | null } => {
+  if (!evidence.ref.startsWith(WIRE_EVIDENCE_REF_CAPTURE_PREFIX)) {
+    // The row reader validates `capture:<id>` refs before this projection; an
+    // unexpected ref is an internal invariant violation and fails closed.
+    throw new Error("Sentinel index evidence ref is not a validated capture ref");
+  }
+  const captureId = evidence.ref.slice(WIRE_EVIDENCE_REF_CAPTURE_PREFIX.length);
+  return {
+    ref: `artifact://${WIRE_EVIDENCE_REF_NAMESPACE}/${incidentId}/${captureId}`,
+    digest: evidence.digest,
+  };
+};
+
 /** Exact snake_case wire row; internal keys/metadata are never exposed. */
 const rowToWire = (row: SentinelIncidentIndexRow): Record<string, unknown> => ({
   incident_id: row.incident_id,
@@ -43,11 +89,11 @@ const rowToWire = (row: SentinelIncidentIndexRow): Record<string, unknown> => ({
     sample: [...row.context.sample],
   },
   provenance: {
-    endpoint: row.provenance.endpoint,
+    endpoint: wireProvenanceEndpoint(row.provenance.endpoint),
     captured_at_ms: row.provenance.captured_at_ms,
     captured_by: row.provenance.captured_by,
   },
-  evidence_ref: row.evidence_ref === null ? null : { ref: row.evidence_ref.ref, digest: row.evidence_ref.digest },
+  evidence_ref: row.evidence_ref === null ? null : wireEvidenceRef(row.evidence_ref, row.incident_id),
   evidence_expires_at_ms: row.evidence_expires_at_ms,
 });
 
