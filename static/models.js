@@ -13,6 +13,7 @@ if (!summary || !list || !count || !(search instanceof HTMLInputElement)) {
 const providerNames = { codex: "Codex", openlux: "Metered 2", surplus: "Metered 1" };
 const reasoningOrder = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 const tokenNumber = new Intl.NumberFormat("en-US");
+const catalogEntryCountLabel = (value) => `${value} catalog entr${value === 1 ? "y" : "ies"}`;
 
 const normalizeReasoningLevels = (value) => {
   if (!Array.isArray(value)) return [];
@@ -66,7 +67,7 @@ const render = () => {
       reasoning?.levels.some((level) => level.includes(query)) ||
       contextSearch.includes(query);
   });
-  count.textContent = `${visible.length} cataloged model${visible.length === 1 ? "" : "s"}`;
+  count.textContent = catalogEntryCountLabel(visible.length);
   list.replaceChildren(...visible.map((model) => {
     const article = document.createElement("article");
     const heading = document.createElement("h2");
@@ -130,8 +131,8 @@ try {
       const total = document.createElement("strong");
       const state = document.createElement("span");
       name.textContent = providerNames[id] ?? id;
-      total.textContent = String(source.count ?? 0);
-      state.textContent = source.status === "available" ? "cataloged models" : "catalog unavailable";
+      total.textContent = catalogEntryCountLabel(source.count ?? 0);
+      state.textContent = source.status === "available" ? "listed in catalog" : "catalog unavailable";
       article.dataset.state = source.status ?? "unavailable";
       article.append(name, total, state);
       return article;
