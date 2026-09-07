@@ -361,9 +361,11 @@ streaming, or billing acceptance. Append the filled record to
 Admin examples (uses `DENO_DEPLOY_TOKEN`):
 
 ```bash
+# Run Codex auth uploads from an existing ai.ubq.fi checkout (the repository root).
+cd "$(git rev-parse --show-toplevel)"
 export DENO_DEPLOY_TOKEN="..."
-ubq-ai admin upload-auth --auth-json ~/.codex/auth.json | jq
-ubq-ai admin upload-auth --auth-json /secure/path/to/second-account-auth.json | jq
+deno task upload:auth --url https://ai.ubq.fi --auth-json ~/.codex/auth.json
+deno task upload:auth --url https://ai.ubq.fi --auth-json /secure/path/to/second-account-auth.json
 ubq-ai admin keys create "example key"
 ubq-ai admin keys create "tmp key" --expires week
 ubq-ai admin keys list | jq
@@ -392,19 +394,23 @@ ubq-ai admin keys list | jq
 
 ## Output-token caps by endpoint and provider
 
-`max_completion_tokens` is the OpenAI Chat Completions cap; `max_output_tokens` is the OpenAI Responses cap. Both are
-positive-integer output caps, not quota or health indicators. Their transport behavior depends on the selected route:
+`POST /v1/chat/completions` uses the OpenAI `max_completion_tokens` output cap. `POST /v1/responses` uses the OpenAI
+`max_output_tokens` output cap. Both are positive-integer output caps, not quota or health indicators. Their transport
+behavior depends on the selected route:
 
-| Request and provider                          | Gateway/upstream behavior                                                                                                                                 |
-| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Chat Completions to Codex                     | `max_completion_tokens` is translated to the Codex Responses field `max_output_tokens`.                                                                   |
-| Responses to Codex                            | `max_output_tokens` is forwarded as `max_output_tokens`.                                                                                                  |
-| Chat Completions to Cerebras (`gpt-oss-120b`) | `max_completion_tokens` is forwarded unchanged to Cerebras.                                                                                               |
-| Paid fallback (Metered or Surplus)            | The provider uses its Responses API, so Chat `max_completion_tokens` arrives as `max_output_tokens`, and Responses `max_output_tokens` remains unchanged. |
+| Request and provider                           | Gateway/upstream behavior                                                                  |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Chat Completions to Codex                      | `max_completion_tokens` is translated to the Codex Responses field `max_output_tokens`.    |
+| Responses to Codex                             | `max_output_tokens` is forwarded as `max_output_tokens`.                                   |
+| Chat Completions to Cerebras (`gpt-oss-120b`)  | `max_completion_tokens` is forwarded unchanged to Cerebras.                                |
+| Chat Completions to Metered Responses fallback | `max_completion_tokens` is translated to the fallback Responses field `max_output_tokens`. |
+| Responses to Metered Responses fallback        | `max_output_tokens` is forwarded unchanged to the fallback Responses endpoint.             |
+| Chat Completions to Surplus Responses fallback | `max_completion_tokens` is translated to the fallback Responses field `max_output_tokens`. |
+| Responses to Surplus Responses fallback        | `max_output_tokens` is forwarded unchanged to the fallback Responses endpoint.             |
 
 Do not swap these fields between endpoints: Chat Completions accepts `max_completion_tokens`, while Responses accepts
-`max_output_tokens`. The paid-fallback cap limits generated output; it does not report the provider's remaining paid
-capacity.
+`max_output_tokens`. Metered and Surplus fallback both receive the Responses field `max_output_tokens`; the cap limits
+generated output and does not report the provider's remaining paid capacity.
 
 ## Chat Completions provider contract
 

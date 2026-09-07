@@ -218,43 +218,52 @@ Deno.test("public console styles retain the bordered neutral admin surface witho
 
 Deno.test("published guidance documents endpoint-specific output caps and repository-local auth uploads", () => {
   for (const publishedText of [readmeText, llmsFullText]) {
-    assert.match(publishedText, /`max_completion_tokens` is the OpenAI Chat Completions cap/);
-    assert.match(publishedText, /`max_output_tokens` is the OpenAI Responses cap/);
-    assert.match(
-      publishedText,
-      /Chat Completions to Codex[\s\S]*translated to the Codex Responses field `max_output_tokens`/,
-    );
-    assert.match(
-      publishedText,
-      /Responses to Codex[\s\S]*`max_output_tokens` is forwarded as `max_output_tokens`/,
-    );
-    assert.match(
-      publishedText,
-      /Chat Completions to Cerebras \(`gpt-oss-120b`\)[\s\S]*forwarded unchanged/,
-    );
-    assert.match(
-      publishedText,
-      /Paid fallback \(Metered or Surplus\)[\s\S]*Chat `max_completion_tokens` arrives as `max_output_tokens`/,
-    );
+    assert.match(publishedText, /POST \/v1\/chat\/completions` uses the OpenAI\s+`max_completion_tokens` output cap/);
+    assert.match(publishedText, /POST \/v1\/responses` uses the OpenAI\s+`max_output_tokens` output cap/);
+    const routeAssertions = [
+      /Chat Completions to Codex[^\n]*translated to the Codex Responses field `max_output_tokens`/,
+      /Responses to Codex[^\n]*`max_output_tokens` is forwarded as `max_output_tokens`/,
+      /Chat Completions to Cerebras \(`gpt-oss-120b`\)[^\n]*forwarded unchanged/,
+      /Chat Completions to Metered Responses fallback[^\n]*`max_completion_tokens`[^\n]*`max_output_tokens`/,
+      /Responses to Metered Responses fallback[^\n]*`max_output_tokens`[^\n]*forwarded unchanged/,
+      /Chat Completions to Surplus Responses fallback[^\n]*`max_completion_tokens`[^\n]*`max_output_tokens`/,
+      /Responses to Surplus Responses fallback[^\n]*`max_output_tokens`[^\n]*forwarded unchanged/,
+    ];
+    for (const routeAssertion of routeAssertions) assert.match(publishedText, routeAssertion);
     assert.match(publishedText, /Do not swap these fields between endpoints/);
+    assert.match(publishedText, /Metered and Surplus fallback both receive the Responses field `max_output_tokens`/);
   }
 
-  assert.doesNotMatch(readmeText, /cd lib\/ai\.ubq\.fi/);
-  assert.match(readmeText, /git rev-parse --show-toplevel/);
+  for (const publishedText of [readmeText, llmsFullText]) {
+    assert.doesNotMatch(publishedText, /cd lib\/ai\.ubq\.fi/);
+    assert.doesNotMatch(publishedText, /ubq-ai admin upload-auth/);
+    assert.match(publishedText, /existing[\s\S]{0,160}ai\.ubq\.fi[\s\S]{0,30}checkout/);
+    assert.match(publishedText, /cd "\$\(git rev-parse --show-toplevel\)"/);
+    assert.match(
+      publishedText,
+      /deno task upload:auth --url https:\/\/ai\.ubq\.fi --auth-json ~\/\.codex\/auth\.json/,
+    );
+    assert.match(
+      publishedText,
+      /deno task upload:auth --url https:\/\/ai\.ubq\.fi --auth-json \/secure\/path\/to\/second-account-auth\.json/,
+    );
+  }
   assert.match(llmsFullText, /scripts\/upload-codex-auth\.ts/);
-  assert.match(
-    llmsFullText,
-    /deno task upload:auth --url https:\/\/ai\.ubq\.fi --auth-json ~\/\.codex\/auth\.json/,
-  );
 });
 
 Deno.test("models page labels provider counts as catalog entries, not inference availability", () => {
-  assert.match(modelsHtml, /Cataloged text models and the providers that list them/);
-  assert.match(modelsHtml, /does not guarantee\s+inference availability or remaining quota/);
+  assert.match(modelsHtml, /Catalog entries from the providers that list them/);
+  assert.match(
+    modelsHtml,
+    /Catalog membership does not prove inference\s+availability, provider health, or remaining quota/,
+  );
   assert.doesNotMatch(modelsHtml, /Live upstream catalog/);
-  assert.match(modelsScript, /cataloged model/);
-  assert.match(modelsScript, /cataloged models/);
-  assert.doesNotMatch(modelsScript, /available models/);
+  assert.match(modelsScript, /catalogEntryCountLabel/);
+  assert.match(modelsScript, /count\.textContent = catalogEntryCountLabel\(visible\.length\)/);
+  assert.match(modelsScript, /total\.textContent = catalogEntryCountLabel\(source\.count \?\? 0\)/);
+  assert.match(modelsScript, /listed in catalog/);
+  assert.doesNotMatch(modelsScript, /(?:live|available|healthy|inference-ready) models?/i);
+  assert.doesNotMatch(modelsScript, /models?\s+(?:available|healthy|ready)/i);
 });
 
 Deno.test("public brand logos are inline and inherit the page foreground", async () => {
