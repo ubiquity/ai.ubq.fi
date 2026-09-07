@@ -6,8 +6,11 @@ import deploymentWorkflow from "../.github/workflows/deno-deploy.yml" with { typ
 
 Deno.test("gateway entry points start no Sentinel automation but keep the authorized capture/export", () => {
   assert.doesNotMatch(serverSource, /sentinel/i);
-  assert.doesNotMatch(handlerSource, /sentinel_incident_admin/u);
-  assert.doesNotMatch(handlerSource, /\/admin\/sentinel\/incidents\//u);
+  // m06 adds only the passive, read-only incident index GET: no automation,
+  // dispatch, control or claim/ack/defer wiring may return.
+  assert.match(handlerSource, /GET" && path === "\/admin\/sentinel\/incidents"/u);
+  assert.match(handlerSource, /handleAdminSentinelIncidents/u);
+  assert.doesNotMatch(handlerSource, /coalesceSentinelIncidentFailureEvents/u);
   assert.doesNotMatch(handlerSource, /\?\? recordSentinelProviderDegradationFromEnvironment/u);
   assert.doesNotMatch(catalogSource, /\?\? recordSentinelProviderDegradationFromEnvironment/u);
   assert.match(deploymentWorkflow, /sentinel:test-local/u);

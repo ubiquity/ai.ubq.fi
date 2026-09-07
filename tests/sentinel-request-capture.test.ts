@@ -10,7 +10,7 @@ import {
   type ExportedSentinelReplayCapture,
   SENTINEL_REPLAY_MANIFEST_PREFIX,
 } from "../src/sentinel_replay_capture.ts";
-import { base64UrlEncode, encodeHex, sha256Base64Url } from "../src/utils.ts";
+import { base64UrlDecode, base64UrlEncode, encodeHex, sha256Base64Url } from "../src/utils.ts";
 
 const { default: handler } = await import("../src/handler.ts");
 
@@ -180,6 +180,69 @@ Deno.test({
       assert.equal(new TextDecoder().decode(plaintext.body), new TextDecoder().decode(CAPTURE_BODY));
       assert.equal(plaintext.observation.status, response.status);
       assert.equal(plaintext.client_observation.terminal_type, "http.error");
+
+      // m06: the durable incident index is produced by the same real flow and
+      // the stable incident id reaches the incident-filtered export without any
+      // manual linking, reproducing the byte-exact accepted body.
+      const incidents = await handler(
+        new Request("https://ai.ubq.fi/admin/sentinel/incidents", {
+          headers: { Authorization: `Bearer ${SUPER_ADMIN_TOKEN}` },
+        }),
+      );
+      assert.equal(incidents.status, 200);
+      const incidentsBody = await incidents.json() as {
+        data: Array<{
+          incident_id: string;
+          fingerprint: string;
+          severity: string;
+          count: number;
+          evidence_ref: { ref: string; digest: string | null } | null;
+          evidence_expires_at_ms: number | null;
+          provenance: { endpoint: string; captured_by: unknown };
+        }>;
+        cursor: string | null;
+      };
+      const incidentsText = JSON.stringify(incidentsBody);
+      assert.equal(incidentsText.includes(MARKER), false, "index leaks request plaintext");
+      assert.equal(incidentsBody.cursor, null);
+      assert.equal(incidentsBody.data.length, 1);
+      const incident = incidentsBody.data[0]!;
+      assert.equal(incident.severity, "P2");
+      assert.equal(incident.count, 1);
+      assert.equal(incident.provenance.endpoint, "/v1/responses");
+      assert.equal(incident.provenance.captured_by, null);
+      assert.equal(incident.evidence_ref?.ref, `capture:${capture.manifest.capture_id}`);
+      assert.equal(incident.evidence_expires_at_ms, capture.manifest.expires_at_ms);
+
+      const scoped = await handler(
+        new Request(
+          exportUrl({
+            after_ms: "0",
+            before_ms: String(Date.now() + 1),
+            incident_id: incident.incident_id,
+          }),
+          { headers: { Authorization: `Bearer ${SUPER_ADMIN_TOKEN}` } },
+        ),
+      );
+      assert.equal(scoped.status, 200);
+      const scopedBody = await scoped.json() as { data: ExportedSentinelReplayCapture[] };
+      assert.equal(scopedBody.data.length, 1, "the durable incident id must reach the bound capture");
+      const scopedCapture = scopedBody.data[0]!;
+      const ciphertextParts = scopedCapture.chunks.map(base64UrlDecode);
+      const ciphertextLength = ciphertextParts.reduce((sum, part) => sum + part.byteLength, 0);
+      const ciphertext = new Uint8Array(ciphertextLength);
+      let ciphertextOffset = 0;
+      for (const part of ciphertextParts) {
+        ciphertext.set(part, ciphertextOffset);
+        ciphertextOffset += part.byteLength;
+      }
+      const actualDigest = encodeHex(
+        new Uint8Array(await crypto.subtle.digest("SHA-256", ciphertext)),
+      );
+      assert.equal(incident.evidence_ref?.digest, actualDigest, "evidence digest is the actual ciphertext SHA-256");
+      assert.deepEqual(scopedCapture.manifest, capture.manifest);
+      const scopedPlaintext = await decryptExportedSentinelReplay(scopedCapture, keyBytes);
+      assert.deepEqual([...scopedPlaintext.body], [...CAPTURE_BODY]);
     } finally {
       Deno.env.delete("SENTINEL_REPLAY_KEY");
       adminTokens.delete(SUPER_ADMIN_TOKEN);

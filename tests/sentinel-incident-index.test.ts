@@ -1,0 +1,960 @@
+import assert from "node:assert/strict";
+import { apiKeyHashKey, apiKeyIdKey } from "../src/api_keys.ts";
+import { config } from "../src/config.ts";
+import { DEBUG_ROUTING_KEY } from "../src/debug_routing.ts";
+import { setKvForTest } from "../src/kv.ts";
+import {
+  type AcceptedSentinelReplayInput,
+  decryptExportedSentinelReplay,
+  type ExportedSentinelReplayCapture,
+  persistEncryptedSentinelReplay,
+  SENTINEL_REPLAY_MANIFEST_PREFIX,
+  type SentinelFailureObservation,
+} from "../src/sentinel_replay_capture.ts";
+import { PASSKEY_RELAY_COOKIE_NAME, passkeyHandleKey, passkeySessionKey, passkeyUserKey } from "../src/passkeys.ts";
+import {
+  bindSentinelIncidentIndexEvidence,
+  isSentinelIncidentId,
+  listSentinelIncidentIndexRows,
+  recordSentinelIncidentIndexObservation,
+  SENTINEL_INCIDENT_CAPTURE_REF_PREFIX,
+  SENTINEL_INCIDENT_INDEX_PREFIX,
+} from "../src/sentinel_incident_outbox.ts";
+import { base64UrlDecode, base64UrlEncode, encodeHex, sha256Base64Url } from "../src/utils.ts";
+
+const { default: handler } = await import("../src/handler.ts");
+
+const kvAvailable = typeof Deno.openKv === "function";
+const SUPER_ADMIN_TOKEN = "sentinel-incident-index-super-admin";
+const MARKER = "sentinel-incident-index-marker-7b1d4e";
+const CAPTURE_BODY: Uint8Array<ArrayBuffer> = new TextEncoder().encode(JSON.stringify({
+  model: "gpt-5.6-sol",
+  stream: false,
+  input: MARKER,
+  user: "incident-index-test-user",
+}));
+
+const newSyntheticKey = (): Uint8Array<ArrayBuffer> =>
+  crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
+
+const failureObservation = (status = 502): SentinelFailureObservation => ({
+  status,
+  stream: false,
+  completed: false,
+  terminal_type: "http.error",
+  failure_kind: "upstream_timeout",
+  synthetic_terminal_type: null,
+  provider_route: "test-provider",
+});
+
+const syntheticInput = (
+  bytes: Uint8Array<ArrayBuffer>,
+  requestId: string,
+  endpoint = "/v1/responses",
+): AcceptedSentinelReplayInput => ({
+  endpoint,
+  method: "POST",
+  body: bytes,
+  content_type: "application/json",
+  compatibility_headers: { "x-codex-client-version": "9.9.9-secret-version" },
+  request_id: requestId,
+  git_sha: "synthetic-git-sha",
+  deno_revision: "synthetic-revision",
+});
+
+const twelveByteIv = (): Uint8Array<ArrayBuffer> => new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+
+const ciphertextDigest = async (capture: ExportedSentinelReplayCapture): Promise<string> => {
+  const parts = capture.chunks.map(base64UrlDecode);
+  const length = parts.reduce((sum, part) => sum + part.byteLength, 0);
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const part of parts) {
+    bytes.set(part, offset);
+    offset += part.byteLength;
+  }
+  return encodeHex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
+};
+
+const clientObservationFor = (status: number) => ({
+  status,
+  stream: false,
+  completed: false,
+  terminal_type: "http.error",
+  failure_kind: "upstream_timeout",
+  framing_valid: true,
+  provider_route: "test-provider",
+});
+
+const seedAuthenticatedKey = async (kv: Deno.Kv, token: string): Promise<void> => {
+  const now = Date.now();
+  const hash = await sha256Base64Url(token);
+  const id = `incident-index-${hash.slice(0, 12)}`;
+  const policyBase = {
+    expires_at_ms: -1,
+    revoked_at_ms: null,
+    usage_limit_requests: 100,
+    usage_requests: 0,
+    usage_reset_at_ms: now + 60_000,
+    window_ms: 60_000,
+    usage_quota_version: 3,
+    paid_fallback_enabled: true,
+    paid_fallback_limit_microcredits: 1_000_000,
+    paid_fallback_spent_microcredits: 0,
+    paid_fallback_reserved_microcredits: 0,
+    paid_fallback_reservation_request_id: null,
+  };
+  await kv.set(apiKeyHashKey(hash), { id, ...policyBase });
+  await kv.set(apiKeyIdKey(id), {
+    id,
+    name: "incident index test key",
+    prefix: token.slice(0, 12),
+    hash,
+    created_at_ms: now,
+    ...policyBase,
+    paid_fallback_model_ids: ["gpt-5.6-sol"],
+    paid_fallback_quota_per_credit: 500_000,
+    paid_fallback_max_exposure_microcredits: { "gpt-5.6-sol": 250_000 },
+    paid_fallback_pricing_checked_at_ms: now,
+  });
+};
+
+const indexUrl = (params: Record<string, string> = {}): string => {
+  const query = new URLSearchParams(params);
+  return `https://ai.ubq.fi/admin/sentinel/incidents${query.size > 0 ? `?${query}` : ""}`;
+};
+
+const exportUrl = (params: Record<string, string>): string =>
+  `https://ai.ubq.fi/admin/sentinel/replay-captures?${new URLSearchParams(params)}`;
+
+const superAdminHeaders = { Authorization: `Bearer ${SUPER_ADMIN_TOKEN}` };
+
+const assertIndexRowShape = (row: Record<string, unknown>, count: number): void => {
+  assert.equal(typeof row.incident_id, "string");
+  assert.equal(isSentinelIncidentId(row.incident_id), true, "row incident_id must be a frozen provider-UUID");
+  assert.match(row.fingerprint as string, /^[0-9a-f]{64}$/);
+  assert.equal(row.severity, "P2", "general failures must never be inferred above P2");
+  assert.equal(typeof row.first_seen_at_ms, "number");
+  assert.equal(typeof row.last_seen_at_ms, "number");
+  assert.ok((row.last_seen_at_ms as number) >= (row.first_seen_at_ms as number));
+  assert.equal(row.count, count);
+  if (row.failing_revision !== null) assert.match(row.failing_revision as string, /^[0-9a-f]{40}$/);
+  assert.equal(typeof row.error_type, "string");
+  assert.ok((row.error_type as string).length > 0);
+  const context = row.context as { message: string; location: unknown; sample: unknown[] };
+  assert.equal(typeof context.message, "string");
+  assert.equal(context.location, null);
+  assert.deepEqual(context.sample, []);
+  const provenance = row.provenance as { endpoint: string; captured_at_ms: number; captured_by: unknown };
+  assert.equal(provenance.endpoint, "/v1/responses");
+  assert.equal(typeof provenance.captured_at_ms, "number");
+  assert.equal(provenance.captured_by, null);
+  const evidenceRef = row.evidence_ref as { ref: string; digest: string | null } | null;
+  if (evidenceRef !== null) {
+    assert.equal(typeof evidenceRef.ref, "string");
+    assert.ok(evidenceRef.ref.length > 0);
+    assert.equal(evidenceRef.ref.startsWith("capture:"), true, "ref must be an opaque capture reference");
+    if (evidenceRef.digest !== null) assert.match(evidenceRef.digest, /^[0-9a-f]{64}$/);
+  }
+  const expires = row.evidence_expires_at_ms as number | null;
+  assert.equal(expires === null, evidenceRef === null, "evidence expiry and ref must be consistent");
+};
+
+Deno.test({
+  name: "real handler failure flow: durable index, incident-filtered export, byte-exact decryption",
+  ignore: !kvAvailable,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const kv = await Deno.openKv(":memory:");
+    setKvForTest(kv);
+    const adminTokens = config.adminTokens as Set<string>;
+    adminTokens.add(SUPER_ADMIN_TOKEN);
+    const keyBytes = newSyntheticKey();
+    Deno.env.set("SENTINEL_REPLAY_KEY", base64UrlEncode(keyBytes));
+    const token = `u_${encodeHex(crypto.getRandomValues(new Uint8Array(32)))}`;
+    try {
+      await seedAuthenticatedKey(kv, token);
+      await kv.set(DEBUG_ROUTING_KEY, {
+        scenario: "codex_429",
+        expires_at_ms: null,
+        updated_at_ms: Date.now(),
+      });
+      // Include a query string and a compatibility header plus a user field:
+      // none of these may leak into the public index rows.
+      const request = new Request("https://ai.ubq.fi/v1/responses?incident_index_secret_query=1", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "x-codex-client-version": "9.9.9-secret-version",
+        },
+        body: CAPTURE_BODY,
+      });
+      const response = await handler(request);
+      assert.ok(response.status >= 400, `expected a failure response, got ${response.status}`);
+      const responseText = await response.text();
+      assert.equal(responseText.includes(MARKER), false, "failure response leaks request plaintext");
+
+      const indexResponse = await handler(new Request(indexUrl(), { headers: superAdminHeaders }));
+      assert.equal(indexResponse.status, 200);
+      assert.equal(indexResponse.headers.get("Cache-Control"), "no-store");
+      const indexBody = await indexResponse.json() as {
+        data: Record<string, unknown>[];
+        cursor: string | null;
+        coverage: { status: string };
+      };
+      assert.deepEqual(indexBody.coverage, { status: "complete" });
+      assert.equal(indexBody.cursor, null, "a single durable row must exhaust pagination");
+      assert.equal(indexBody.data.length, 1);
+      const row = indexBody.data[0]!;
+      assertIndexRowShape(row, 1);
+      const indexText = JSON.stringify(indexBody);
+      assert.equal(indexText.includes(MARKER), false, "index leaks request plaintext marker");
+      assert.equal(indexText.includes("incident_index_secret_query"), false, "index leaks a query string");
+      assert.equal(indexText.includes("9.9.9-secret-version"), false, "index leaks a compatibility header");
+      assert.equal(indexText.includes("incident-index-test-user"), false, "index leaks user input");
+      assert.equal(indexText.includes("rate_limit_error"), false, "index leaks provider error text");
+      assert.equal(indexText.includes("chatgpt_codex"), false, "index leaks a provider route");
+      assert.ok(row.evidence_ref !== null, "a successfully captured incident must carry evidence");
+      const incidentId = row.incident_id as string;
+
+      const filtered = await handler(
+        new Request(
+          exportUrl({
+            after_ms: "0",
+            before_ms: String(Date.now() + 1),
+            incident_id: incidentId,
+          }),
+          { headers: superAdminHeaders },
+        ),
+      );
+      assert.equal(filtered.status, 200, "incident-filtered export must be reachable by index incident_id");
+      const filteredBody = await filtered.json() as { data: ExportedSentinelReplayCapture[]; cursor: string | null };
+      assert.equal(filteredBody.data.length, 1, "the bound capture must be reachable through the stable incident id");
+      const capture = filteredBody.data[0]!;
+
+      const evidence = row.evidence_ref as { ref: string; digest: string | null };
+      assert.equal(evidence.ref, `capture:${capture.manifest.capture_id}`, "index ref must name the bound capture");
+      const digest = await ciphertextDigest(capture);
+      assert.equal(evidence.digest, digest, "index digest must be the SHA-256 of the actual concatenated ciphertext");
+      assert.equal(row.evidence_expires_at_ms, capture.manifest.expires_at_ms);
+
+      const plaintext = await decryptExportedSentinelReplay(capture, keyBytes);
+      assert.deepEqual([...plaintext.body], [...CAPTURE_BODY]);
+      assert.equal(new TextDecoder().decode(plaintext.body), new TextDecoder().decode(CAPTURE_BODY));
+      assert.equal(plaintext.observation.status, response.status);
+      assert.equal(plaintext.client_observation.terminal_type, "http.error");
+
+      // The existing unfiltered export remains compatible and returns the same capture.
+      const unfiltered = await handler(
+        new Request(exportUrl({ after_ms: "0", before_ms: String(Date.now() + 1) }), { headers: superAdminHeaders }),
+      );
+      assert.equal(unfiltered.status, 200);
+      const unfilteredBody = await unfiltered.json() as { data: ExportedSentinelReplayCapture[] };
+      assert.equal(unfilteredBody.data.length, 1);
+      assert.deepEqual(unfilteredBody.data[0]?.manifest, capture.manifest);
+    } finally {
+      Deno.env.delete("SENTINEL_REPLAY_KEY");
+      adminTokens.delete(SUPER_ADMIN_TOKEN);
+      await kv.close();
+      setKvForTest(null);
+    }
+  },
+});
+
+Deno.test({
+  name: "duplicate observations keep one stable incident id, exact digest, and original expiry",
+  ignore: !kvAvailable,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const kv = await Deno.openKv(":memory:");
+    setKvForTest(kv);
+    try {
+      const keyBytes = newSyntheticKey();
+      const now1 = Date.now() - 60_000;
+      const now2 = now1 + 60_000;
+      const randomUuid = () => "00000000-0000-4000-8000-000000000001";
+      const bytes = new TextEncoder().encode(JSON.stringify({ model: "gpt-5.6-sol", input: "dup" }));
+      const input = syntheticInput(bytes, "incident-index-duplicate");
+      const observation = failureObservation(502);
+      const clientObservation = clientObservationFor(502);
+
+      const first = await recordSentinelIncidentIndexObservation(kv, {
+        endpoint: input.endpoint,
+        method: input.method,
+        gitSha: input.git_sha,
+        observedAtMs: now1,
+        observation: clientObservation,
+      }, { randomUuid });
+      const second = await recordSentinelIncidentIndexObservation(kv, {
+        endpoint: input.endpoint,
+        method: input.method,
+        gitSha: input.git_sha,
+        observedAtMs: now2,
+        observation: clientObservation,
+      }, { randomUuid });
+      assert.equal(second.value.incident_id, first.value.incident_id, "a stable group must keep one incident id");
+      assert.equal(second.value.count, 2);
+      assert.equal(second.value.first_seen_at_ms, now1);
+      assert.equal(second.value.last_seen_at_ms, now2);
+
+      const stored = await persistEncryptedSentinelReplay(input, observation, {
+        kv,
+        keyBytes,
+        now: () => now1,
+        randomUuid: () => "duplicate-capture-one",
+        randomBytes: twelveByteIv,
+      }, clientObservation);
+      assert.equal(stored.status, "stored");
+      if (stored.status !== "stored") throw new Error("expected a stored capture");
+      const originalExpiry = stored.manifest.expires_at_ms;
+
+      const duplicate = await persistEncryptedSentinelReplay(input, observation, {
+        kv,
+        keyBytes,
+        now: () => now2,
+        randomUuid: () => "duplicate-capture-two",
+        randomBytes: twelveByteIv,
+      }, clientObservation);
+      assert.equal(duplicate.status, "duplicate");
+      if (duplicate.status !== "duplicate") throw new Error("expected a duplicate capture");
+      assert.deepEqual(duplicate.manifest_key, stored.manifest_key, "a duplicate must reference the winning manifest");
+
+      let manifests = 0;
+      for await (const _entry of kv.list({ prefix: SENTINEL_REPLAY_MANIFEST_PREFIX })) manifests += 1;
+      assert.equal(manifests, 1, "duplicate observations must not create new evidence");
+      let references = 0;
+      for await (const _entry of kv.list({ prefix: SENTINEL_INCIDENT_CAPTURE_REF_PREFIX })) references += 1;
+      assert.equal(references, 1, "one capture ref per stable incident");
+
+      const { rows } = await listSentinelIncidentIndexRows(kv, { incidentId: first.value.incident_id, limit: 1 });
+      assert.equal(rows.length, 1);
+      const row = rows[0]!;
+      assert.equal(row.count, 2, "each actual observation is counted exactly once");
+      assert.equal(row.evidence_ref?.ref, "capture:duplicate-capture-one");
+      assert.equal(row.evidence_expires_at_ms, originalExpiry, "a duplicate must retain the original expiry");
+
+      // Capture deletion (manifest + chunks + ref) keeps the durable index row
+      // with its evidence metadata so the consumer can report the expiry.
+      await kv.delete(stored.manifest_key!);
+      for (let index = 0; index < stored.manifest.chunk_count; index += 1) {
+        await kv.delete(["uos_ai", "sentinel_replay", "v1", "chunk", stored.manifest.capture_id, index]);
+      }
+      for await (const entry of kv.list({ prefix: SENTINEL_INCIDENT_CAPTURE_REF_PREFIX })) {
+        await kv.delete(entry.key);
+      }
+      const afterDelete = await listSentinelIncidentIndexRows(kv, { incidentId: first.value.incident_id, limit: 1 });
+      assert.equal(afterDelete.rows.length, 1, "durable discovery must survive capture deletion");
+      assert.equal(afterDelete.rows[0]!.evidence_ref?.ref, "capture:duplicate-capture-one");
+      assert.equal(afterDelete.rows[0]!.evidence_expires_at_ms, originalExpiry);
+    } finally {
+      await kv.close();
+      setKvForTest(null);
+    }
+  },
+});
+
+Deno.test({
+  name: "durable index survives a clock beyond the capture lifetime with expired evidence metadata",
+  ignore: !kvAvailable,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const kv = await Deno.openKv(":memory:");
+    setKvForTest(kv);
+    try {
+      const keyBytes = newSyntheticKey();
+      const capturedAt = Date.now() - 49 * 60 * 60 * 1_000;
+      const randomUuid = () => "00000000-0000-4000-8000-000000000002";
+      const clientObservation = clientObservationFor(503);
+      const bytes = new TextEncoder().encode(JSON.stringify({ input: "expiry" }));
+      const input: AcceptedSentinelReplayInput = {
+        ...syntheticInput(bytes, "incident-index-expiry"),
+        git_sha: "1234567890abcdef1234567890abcdef12345678",
+      };
+      await recordSentinelIncidentIndexObservation(kv, {
+        endpoint: input.endpoint,
+        method: input.method,
+        gitSha: "1234567890abcdef1234567890abcdef12345678",
+        observedAtMs: capturedAt,
+        observation: clientObservation,
+      }, { randomUuid });
+      const stored = await persistEncryptedSentinelReplay(input, failureObservation(503), {
+        kv,
+        keyBytes,
+        now: () => capturedAt,
+        randomUuid: () => "expired-capture",
+        randomBytes: twelveByteIv,
+      }, clientObservation);
+      assert.equal(stored.status, "stored");
+      if (stored.status !== "stored") throw new Error("expected a stored capture");
+      const { rows } = await listSentinelIncidentIndexRows(kv, { limit: 20 });
+      assert.equal(rows.length, 1);
+      const row = rows[0]!;
+      assert.equal(row.evidence_ref?.ref, "capture:expired-capture");
+      assert.ok((row.evidence_expires_at_ms ?? 0) < Date.now(), "expired evidence must not claim validity");
+      assert.equal(row.failing_revision, "1234567890abcdef1234567890abcdef12345678");
+    } finally {
+      await kv.close();
+      setKvForTest(null);
+    }
+  },
+});
+
+Deno.test({
+  name: "real handler with a missing capture key leaves a discoverable row without evidence",
+  ignore: !kvAvailable,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const kv = await Deno.openKv(":memory:");
+    setKvForTest(kv);
+    const adminTokens = config.adminTokens as Set<string>;
+    adminTokens.add(SUPER_ADMIN_TOKEN);
+    const token = `u_${encodeHex(crypto.getRandomValues(new Uint8Array(32)))}`;
+    try {
+      await seedAuthenticatedKey(kv, token);
+      await kv.set(DEBUG_ROUTING_KEY, {
+        scenario: "codex_429",
+        expires_at_ms: null,
+        updated_at_ms: Date.now(),
+      });
+      Deno.env.delete("SENTINEL_REPLAY_KEY");
+
+      const response = await handler(captureRequest(token, "https://ai.ubq.fi/v1/responses"));
+      assert.ok(response.status >= 400, `expected a failure response, got ${response.status}`);
+
+      const indexResponse = await handler(new Request(indexUrl(), { headers: superAdminHeaders }));
+      assert.equal(indexResponse.status, 200);
+      const indexBody = await indexResponse.json() as { data: Record<string, unknown>[] };
+      assert.equal(indexBody.data.length, 1, "a missing key still leaves a discoverable index row");
+      assert.equal(indexBody.data[0]?.evidence_ref, null);
+      assert.equal(indexBody.data[0]?.evidence_expires_at_ms, null);
+
+      const incidentId = indexBody.data[0]!.incident_id as string;
+      const filtered = await handler(
+        new Request(
+          exportUrl({
+            after_ms: "0",
+            before_ms: String(Date.now() + 1),
+            incident_id: incidentId,
+          }),
+          { headers: superAdminHeaders },
+        ),
+      );
+      assert.equal(filtered.status, 200);
+      const filteredBody = await filtered.json() as { data: unknown[] };
+      assert.deepEqual(filteredBody.data, []);
+    } finally {
+      adminTokens.delete(SUPER_ADMIN_TOKEN);
+      await kv.close();
+      setKvForTest(null);
+    }
+  },
+});
+
+Deno.test({
+  name: "a duplicate binds the exact original capture revision, timestamp, digest, and expiry",
+  ignore: !kvAvailable,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const kv = await Deno.openKv(":memory:");
+    setKvForTest(kv);
+    try {
+      const keyBytes = newSyntheticKey();
+      const now1 = 1_700_000_000_000;
+      const now2 = now1 + 60_000;
+      const now3 = now2 + 60_000;
+      const shaA = "a".repeat(40);
+      const shaB = "b".repeat(40);
+      const observation = failureObservation(502);
+      const clientObservation = clientObservationFor(502);
+      const inputA = syntheticInput(
+        new TextEncoder().encode(JSON.stringify({ input: "original-a" })),
+        "revision-request-a",
+      );
+      const inputB = syntheticInput(
+        new TextEncoder().encode(JSON.stringify({ input: "newer-b" })),
+        "revision-request-b",
+      );
+
+      await recordSentinelIncidentIndexObservation(kv, {
+        endpoint: inputA.endpoint,
+        method: inputA.method,
+        gitSha: shaA,
+        observedAtMs: now1,
+        observation: clientObservation,
+      });
+      const storedA = await persistEncryptedSentinelReplay({ ...inputA, git_sha: shaA }, observation, {
+        kv,
+        keyBytes,
+        now: () => now1,
+        randomUuid: () => "revision-capture-a",
+        randomBytes: twelveByteIv,
+      }, clientObservation);
+      assert.equal(storedA.status, "stored");
+      if (storedA.status !== "stored") throw new Error("expected a stored capture A");
+
+      await recordSentinelIncidentIndexObservation(kv, {
+        endpoint: inputB.endpoint,
+        method: inputB.method,
+        gitSha: shaB,
+        observedAtMs: now2,
+        observation: clientObservation,
+      });
+      const storedB = await persistEncryptedSentinelReplay({ ...inputB, git_sha: shaB }, observation, {
+        kv,
+        keyBytes,
+        now: () => now2,
+        randomUuid: () => "revision-capture-b",
+        randomBytes: twelveByteIv,
+      }, clientObservation);
+      assert.equal(storedB.status, "stored");
+      if (storedB.status !== "stored") throw new Error("expected a stored capture B");
+
+      const afterB = (await listSentinelIncidentIndexRows(kv, { limit: 1 })).rows[0]!;
+      assert.equal(afterB.failing_revision, shaB, "freshly captured evidence carries its own revision");
+      assert.equal(afterB.provenance.captured_at_ms, now2, "fresh binding provenance is the capture timestamp");
+
+      // Same body as A but a newer request revision: the capture must remain a
+      // duplicate of A, so the index keeps A's exact revision/provenance and
+      // never the newer B revision or the duplicate request's git_sha. The
+      // observation is recorded first exactly like the environment producer.
+      await recordSentinelIncidentIndexObservation(kv, {
+        endpoint: inputA.endpoint,
+        method: inputA.method,
+        gitSha: "c".repeat(40),
+        observedAtMs: now3,
+        observation: clientObservation,
+      });
+      const duplicateA = await persistEncryptedSentinelReplay({ ...inputA, git_sha: "c".repeat(40) }, observation, {
+        kv,
+        keyBytes,
+        now: () => now3,
+        randomUuid: () => "revision-capture-c",
+        randomBytes: twelveByteIv,
+      }, clientObservation);
+      assert.equal(duplicateA.status, "duplicate");
+      if (duplicateA.status !== "duplicate") throw new Error("expected a duplicate of capture A");
+      assert.deepEqual(
+        duplicateA.manifest_key,
+        storedA.manifest_key,
+        "duplicate must reference the winning A manifest",
+      );
+
+      const row = (await listSentinelIncidentIndexRows(kv, { limit: 1 })).rows[0]!;
+      assert.equal(row.count, 3, "observation history still counts every observation");
+      assert.equal(row.first_seen_at_ms, now1);
+      assert.equal(row.last_seen_at_ms, now3);
+      assert.equal(
+        row.evidence_ref?.ref,
+        "capture:revision-capture-a",
+        "duplicate remains bound to the original capture",
+      );
+      assert.equal(row.failing_revision, shaA, "the older duplicate must bind the referenced capture's exact revision");
+      assert.equal(row.provenance.captured_at_ms, now1, "index provenance must match the referenced capture timestamp");
+      assert.equal(row.evidence_expires_at_ms, storedA.manifest.expires_at_ms, "a duplicate must never renew evidence");
+
+      const chunkPrefix = ["uos_ai", "sentinel_replay", "v1", "chunk", "revision-capture-a"] as const;
+      const parts: Uint8Array<ArrayBuffer>[] = [];
+      for (let index = 0; index < storedA.manifest.chunk_count; index += 1) {
+        const chunk = await kv.get<Uint8Array>([...chunkPrefix, index]);
+        assert.ok(chunk.value instanceof Uint8Array, "capture A chunk must still exist");
+        parts.push(new Uint8Array(chunk.value));
+      }
+      const merged = new Uint8Array(parts.reduce((sum, part) => sum + part.byteLength, 0));
+      let offset = 0;
+      for (const part of parts) {
+        merged.set(part, offset);
+        offset += part.byteLength;
+      }
+      const digestA = encodeHex(new Uint8Array(await crypto.subtle.digest("SHA-256", merged)));
+      assert.equal(row.evidence_ref?.digest, digestA, "duplicate digest must be capture A's exact ciphertext digest");
+
+      // Missing winning evidence fails closed and never erases useful evidence.
+      await kv.delete(storedA.manifest_key!);
+      await assert.rejects(
+        () =>
+          persistEncryptedSentinelReplay({ ...inputA, git_sha: "c".repeat(40) }, observation, {
+            kv,
+            keyBytes,
+            now: () => now3,
+            randomUuid: () => "revision-capture-d",
+            randomBytes: twelveByteIv,
+          }, clientObservation),
+        /Sentinel incident replay manifest is unavailable/,
+      );
+      const preserved = (await listSentinelIncidentIndexRows(kv, { limit: 1 })).rows[0]!;
+      assert.equal(
+        preserved.evidence_ref?.ref,
+        "capture:revision-capture-a",
+        "a failed duplicate must not erase useful existing evidence",
+      );
+    } finally {
+      await kv.close();
+      setKvForTest(null);
+    }
+  },
+});
+
+Deno.test({
+  name: "direct duplicate persistence without a durable index row still returns duplicate and binds nothing",
+  ignore: !kvAvailable,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const kv = await Deno.openKv(":memory:");
+    setKvForTest(kv);
+    try {
+      const keyBytes = newSyntheticKey();
+      const now1 = 1_700_000_000_000;
+      const now2 = now1 + 60_000;
+      const input = syntheticInput(
+        new TextEncoder().encode(JSON.stringify({ input: "no-index-direct-caller" })),
+        "no-index-direct-request",
+      );
+      const observation = failureObservation(502);
+      const clientObservation = clientObservationFor(502);
+      const stored = await persistEncryptedSentinelReplay(input, observation, {
+        kv,
+        keyBytes,
+        now: () => now1,
+        randomUuid: () => "no-index-capture",
+        randomBytes: twelveByteIv,
+      }, clientObservation);
+      assert.equal(stored.status, "stored");
+      if (stored.status !== "stored") throw new Error("expected a stored capture");
+      const duplicate = await persistEncryptedSentinelReplay(input, observation, {
+        kv,
+        keyBytes,
+        now: () => now2,
+        randomUuid: () => "no-index-capture-two",
+        randomBytes: twelveByteIv,
+      }, clientObservation);
+      assert.equal(duplicate.status, "duplicate", "the optional passive index must not make a direct duplicate fail");
+      assert.deepEqual(duplicate.manifest_key, stored.manifest_key);
+
+      let indexes = 0;
+      for await (const _entry of kv.list({ prefix: SENTINEL_INCIDENT_INDEX_PREFIX })) indexes += 1;
+      assert.equal(indexes, 0, "the low-level encryptor must never create an implicit index row");
+      let references = 0;
+      for await (const _entry of kv.list({ prefix: SENTINEL_INCIDENT_CAPTURE_REF_PREFIX })) references += 1;
+      assert.equal(references, 0, "no capture ref may be written without a recorded index observation");
+
+      // With no index row the optional passive integration stays absent even
+      // when evidence is gone: duplicates still report duplicate instead of a
+      // storage error, because nothing was ever observed to attach to.
+      await kv.delete(stored.manifest_key!);
+      const afterDelete = await persistEncryptedSentinelReplay(input, observation, {
+        kv,
+        keyBytes,
+        now: () => now2,
+        randomUuid: () => "no-index-capture-three",
+        randomBytes: twelveByteIv,
+      }, clientObservation);
+      assert.equal(afterDelete.status, "duplicate");
+    } finally {
+      await kv.close();
+      setKvForTest(null);
+    }
+  },
+});
+
+Deno.test({
+  name: "index evidence binding CAS-checks the winning manifest versionstamp",
+  ignore: !kvAvailable,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const kv = await Deno.openKv(":memory:");
+    setKvForTest(kv);
+    try {
+      const observed = await recordSentinelIncidentIndexObservation(kv, {
+        endpoint: "/v1/responses",
+        method: "POST",
+        gitSha: "aa".repeat(20),
+        observedAtMs: 1_700_000_000_000,
+        observation: clientObservationFor(500),
+      });
+      const manifestKey = [...SENTINEL_REPLAY_MANIFEST_PREFIX, 1_700_000_000_000, "ff".repeat(32), "cas-capture"];
+      await kv.set(manifestKey, { version: 1, signature: "original" });
+      const first = await kv.get(manifestKey);
+      await kv.set(manifestKey, { version: 1, signature: "replaced" });
+      await assert.rejects(
+        () =>
+          bindSentinelIncidentIndexEvidence(kv, observed.value.fingerprint, {
+            observedAtMs: 1_700_000_000_000,
+            captureId: "cas-capture",
+            gitSha: "aa".repeat(20),
+            referenceFingerprint: "ff".repeat(32),
+            manifestKey,
+            manifestVersionstamp: first.versionstamp,
+            capturedAtMs: 1_700_000_000_000,
+            digest: "cd".repeat(32),
+            expiresAtMs: 1_700_000_000_000 + 48 * 60 * 60 * 1_000,
+          }),
+        /conflicted repeatedly/,
+      );
+      const after = (await listSentinelIncidentIndexRows(kv, {
+        incidentId: observed.value.incident_id,
+        limit: 1,
+      })).rows[0]!;
+      assert.equal(after.evidence_ref, null, "a replaced manifest must never silently attach evidence");
+      assert.equal(after.evidence_expires_at_ms, null);
+      assert.equal(
+        after.provenance.captured_at_ms,
+        1_700_000_000_000,
+        "observation provenance is untouched before a successful binding",
+      );
+    } finally {
+      await kv.close();
+      setKvForTest(null);
+    }
+  },
+});
+
+const captureRequest = (token: string, url = "https://ai.ubq.fi/v1/responses"): Request =>
+  new Request(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: CAPTURE_BODY,
+  });
+
+Deno.test({
+  name: "concurrent observations converge to one group row with one count per observation",
+  ignore: !kvAvailable,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const kv = await Deno.openKv(":memory:");
+    setKvForTest(kv);
+    try {
+      const randomUuid = (): string => crypto.randomUUID();
+      const observations = Array.from({ length: 6 }, (_, index) =>
+        recordSentinelIncidentIndexObservation(kv, {
+          endpoint: "/v1/responses",
+          method: "POST",
+          gitSha: "abcdef0123456789abcdef0123456789abcdef01",
+          observedAtMs: 1_700_000_000_000 + index,
+          observation: { ...clientObservationFor(529), terminal_type: "error" },
+        }, { randomUuid }));
+      await Promise.all(observations);
+      const { rows } = await listSentinelIncidentIndexRows(kv, { limit: 20 });
+      assert.equal(rows.length, 1, "one stable failure group must yield exactly one row");
+      assert.equal(rows[0]!.count, 6, "each actual observation must count exactly once");
+      assert.equal(rows[0]!.first_seen_at_ms, 1_700_000_000_000);
+      assert.equal(rows[0]!.last_seen_at_ms, 1_700_000_000_005);
+      let references = 0;
+      for await (const _entry of kv.list({ prefix: SENTINEL_INCIDENT_CAPTURE_REF_PREFIX })) references += 1;
+      assert.equal(references, 0, "observations alone must never create orphan capture references");
+      let manifests = 0;
+      for await (const _entry of kv.list({ prefix: SENTINEL_REPLAY_MANIFEST_PREFIX })) manifests += 1;
+      assert.equal(manifests, 0);
+    } finally {
+      await kv.close();
+      setKvForTest(null);
+    }
+  },
+});
+
+Deno.test("incident index requires super admin authorization before any storage access", async () => {
+  const kv = await Deno.openKv(":memory:");
+  setKvForTest(kv);
+  const adminTokens = config.adminTokens as Set<string>;
+  adminTokens.add(SUPER_ADMIN_TOKEN);
+  try {
+    const anonymous = await handler(new Request(indexUrl()));
+    assert.equal(anonymous.status, 401);
+    const payload = await anonymous.json() as { error?: { code?: string } };
+    assert.equal(payload.error?.code, "invalid_api_key");
+
+    const now = Date.now();
+    const userId = "incident-index-passkey-user";
+    const handle = "incident-index-passkey-handle";
+    const sessionToken = "incident-index-passkey-session-token";
+    await kv.set(passkeyUserKey(userId), {
+      id: userId,
+      handle,
+      is_admin: true,
+      credential_ids: ["incident-index-credential"],
+      created_at_ms: now,
+      updated_at_ms: now,
+    });
+    await kv.set(passkeyHandleKey(handle), userId);
+    await kv.set(passkeySessionKey(sessionToken), {
+      token: sessionToken,
+      user_id: userId,
+      created_at_ms: now,
+      expires_at_ms: now + 3_600_000,
+    });
+    const forbidden = await handler(
+      new Request(indexUrl(), {
+        headers: { Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(sessionToken)}` },
+      }),
+    );
+    assert.equal(forbidden.status, 403);
+    const forbiddenPayload = await forbidden.json() as { error?: { message?: string } };
+    assert.equal(forbiddenPayload.error?.message, "Super admin token required");
+  } finally {
+    adminTokens.delete(SUPER_ADMIN_TOKEN);
+    await kv.close();
+    setKvForTest(null);
+  }
+});
+
+Deno.test({
+  name: "incident index pagination is bounded and an incident filter never silently misses a row",
+  ignore: !kvAvailable,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const kv = await Deno.openKv(":memory:");
+    setKvForTest(kv);
+    const adminTokens = config.adminTokens as Set<string>;
+    adminTokens.add(SUPER_ADMIN_TOKEN);
+    try {
+      const randomUuid = (): string => crypto.randomUUID();
+      const incidentIds: string[] = [];
+      for (let index = 0; index < 25; index += 1) {
+        const entry = await recordSentinelIncidentIndexObservation(kv, {
+          endpoint: index === 24 ? "/v1/chat/completions" : "/v1/responses",
+          method: "POST",
+          gitSha: "",
+          observedAtMs: 1_700_000_000_000 + index,
+          observation: { ...clientObservationFor(400 + index), terminal_type: index % 2 === 0 ? "error" : null },
+        }, { randomUuid });
+        incidentIds.push(entry.value.incident_id);
+      }
+      const pageOne = await handler(
+        new Request(indexUrl({ limit: "20" }), { headers: superAdminHeaders }),
+      );
+      assert.equal(pageOne.status, 200);
+      const pageOneBody = await pageOne.json() as { data: Record<string, unknown>[]; cursor: string | null };
+      assert.equal(pageOneBody.data.length, 20);
+      assert.equal(typeof pageOneBody.cursor, "string");
+      assert.ok(pageOneBody.cursor, "a complete page with more rows must carry a non-null cursor");
+      const pageTwo = await handler(
+        new Request(indexUrl({ limit: "20", cursor: pageOneBody.cursor! }), { headers: superAdminHeaders }),
+      );
+      const pageTwoBody = await pageTwo.json() as { data: Record<string, unknown>[]; cursor: string | null };
+      assert.equal(pageTwoBody.data.length, 5);
+      assert.equal(pageTwoBody.cursor, null, "exhaustion must be signaled by null cursor");
+
+      // The target incident is the LAST row: an incident filter with limit 1
+      // must follow cursors and still find it rather than silently dropping it.
+      const target = incidentIds[24]!;
+      let cursor: string | null = null;
+      let found = false;
+      for (let page = 0; page < 64; page += 1) {
+        const params: Record<string, string> = { limit: "1", incident_id: target };
+        if (cursor !== null) params.cursor = cursor;
+        const response = await handler(new Request(indexUrl(params), { headers: superAdminHeaders }));
+        assert.equal(response.status, 200);
+        const body = await response.json() as { data: Record<string, unknown>[]; cursor: string | null };
+        if (body.data.some((row) => row.incident_id === target)) {
+          found = true;
+          break;
+        }
+        cursor = body.cursor;
+        if (cursor === null) break;
+      }
+      assert.equal(found, true, "a filtered scan must never silently miss a matching later row");
+    } finally {
+      adminTokens.delete(SUPER_ADMIN_TOKEN);
+      await kv.close();
+      setKvForTest(null);
+    }
+  },
+});
+
+Deno.test("incident index rejects invalid inputs and fails closed on corrupt storage", async () => {
+  const kv = await Deno.openKv(":memory:");
+  setKvForTest(kv);
+  const adminTokens = config.adminTokens as Set<string>;
+  adminTokens.add(SUPER_ADMIN_TOKEN);
+  try {
+    // Frozen 1..100 server limit contract: every integer in range is accepted.
+    for (const limit of [1, 20, 21, 100]) {
+      const accepted = await handler(
+        new Request(`${indexUrl()}?limit=${limit}`, { headers: superAdminHeaders }),
+      );
+      assert.equal(accepted.status, 200, `frozen 1..100 contract rejected limit ${limit}`);
+      await accepted.body?.cancel();
+    }
+    for (
+      const query of [
+        "limit=0",
+        "limit=101",
+        "limit=",
+        "limit=abc",
+        "limit=1.5",
+        "limit=1e1",
+        "limit=1.0",
+        "cursor=",
+        "cursor=!!",
+        `cursor=${"a".repeat(3_000)}`,
+        "incident_id=",
+        "incident_id=not-an-incident-id",
+        "unexpected=1",
+        "limit=1&limit=2",
+        "cursor=cursor-1&cursor=cursor-2",
+      ]
+    ) {
+      const response = await handler(
+        new Request(`${indexUrl()}?${query}`, { headers: superAdminHeaders }),
+      );
+      assert.equal(response.status, 400, query);
+      await response.body?.cancel();
+    }
+
+    // An index record that does not parse must fail closed, never succeed empty.
+    await kv.set([...SENTINEL_INCIDENT_INDEX_PREFIX, "f".repeat(64)], { version: 999, corrupted: true });
+    const corrupt = await handler(new Request(indexUrl(), { headers: superAdminHeaders }));
+    assert.equal(corrupt.status, 503);
+    const corruptPayload = await corrupt.json() as { error?: { code?: string }; data?: unknown };
+    assert.equal(corruptPayload.error?.code, "sentinel_incidents_unavailable");
+    assert.equal(corruptPayload.data, undefined);
+  } finally {
+    adminTokens.delete(SUPER_ADMIN_TOKEN);
+    await kv.close();
+    setKvForTest(null);
+  }
+});
+
+Deno.test({
+  name: "index rows never carry internal KV keys or metadata into wire output",
+  ignore: !kvAvailable,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const kv = await Deno.openKv(":memory:");
+    setKvForTest(kv);
+    const adminTokens = config.adminTokens as Set<string>;
+    adminTokens.add(SUPER_ADMIN_TOKEN);
+    try {
+      await recordSentinelIncidentIndexObservation(kv, {
+        endpoint: "/v1/responses?internal_query=zzz",
+        method: "POST",
+        gitSha: "",
+        observedAtMs: Date.now(),
+        observation: clientObservationFor(500),
+      });
+      const response = await handler(new Request(indexUrl(), { headers: superAdminHeaders }));
+      assert.equal(response.status, 200);
+      const text = await response.text();
+      assert.equal(text.includes("internal_query"), false, "query strings must never reach wire output");
+      assert.equal(text.includes("uos_ai"), false, "internal KV prefixes must never reach wire output");
+      assert.equal(text.includes("sentinel_replay"), false, "capture storage prefixes must never reach wire output");
+    } finally {
+      adminTokens.delete(SUPER_ADMIN_TOKEN);
+      await kv.close();
+      setKvForTest(null);
+    }
+  },
+});

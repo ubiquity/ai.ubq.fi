@@ -1,5 +1,5 @@
 import { getKv } from "./kv.ts";
-import { base64UrlEncode, isRecord } from "./utils.ts";
+import { base64UrlEncode, isRecord, sha256Hex } from "./utils.ts";
 
 export const SENTINEL_INCIDENT_CONTROL_KEY = ["uos_ai", "sentinel_incident", "v1", "control"] as const;
 export const SENTINEL_INCIDENT_CAPTURE_REF_PREFIX = [
@@ -1292,4 +1292,345 @@ export const logSentinelIncidentReconcileResult = (result: SentinelIncidentRecon
   } else {
     console.info("[ai.ubq.fi] sentinel_incident", detail);
   }
+};
+
+// ---------------------------------------------------------------------------
+// Durable passive incident index (m06). Index rows have NO TTL so durable
+// discovery survives the 48-hour capture lifetime; they are never derived from
+// the retired transient event/control/ack records. The row key is a stable
+// failure group: SHA-256 over a canonical, explicitly safe classification
+// (recognized endpoint/method, numeric status, boolean stream/completion/
+// framing, fixed terminal category). No raw body, request ID, compatibility
+// header, query string, user/model input or error text is hashed or copied to
+// public records.
+// ---------------------------------------------------------------------------
+
+export const SENTINEL_INCIDENT_INDEX_PREFIX = ["uos_ai", "sentinel_incident", "v1", "index"] as const;
+// Frozen gateway query contract: server page limit is any integer 1..100.
+export const SENTINEL_INCIDENT_INDEX_MAX_PAGE_LIMIT = 100;
+export const SENTINEL_INCIDENT_INDEX_DEFAULT_PAGE_LIMIT = 20;
+export const SENTINEL_INCIDENT_INDEX_MAX_CAS_ATTEMPTS = 8;
+
+export const SENTINEL_INCIDENT_TERMINAL_CATEGORIES = [
+  "stream_framing",
+  "http_error",
+  "response_failed",
+  "response_incomplete",
+  "error",
+  "deadline",
+  "eof",
+  "unknown",
+] as const;
+export type SentinelIncidentTerminalCategory = (typeof SENTINEL_INCIDENT_TERMINAL_CATEGORIES)[number];
+
+export const isSentinelIncidentTerminalCategory = (value: unknown): value is SentinelIncidentTerminalCategory =>
+  typeof value === "string" && (SENTINEL_INCIDENT_TERMINAL_CATEGORIES as readonly string[]).includes(value);
+
+const INDEX_CURSOR = /^[A-Za-z0-9_-]+={0,2}$/;
+const INDEX_REF = /^capture:[A-Za-z0-9_-]{1,128}$/;
+const INDEX_MESSAGE = "Gateway observed a provider failure for this incident group.";
+const INDEX_ENDPOINTS: readonly string[] = ["/v1/responses", "/v1/chat/completions"];
+
+export type SentinelIncidentIndexObservation = Readonly<{
+  status: number;
+  stream: boolean;
+  completed: boolean;
+  framing_valid: boolean;
+  terminal_type: string | null;
+}>;
+
+export type SentinelIncidentIndexEvidenceRef = Readonly<{
+  ref: string;
+  digest: string | null;
+}>;
+
+export type SentinelIncidentIndexRow = Readonly<{
+  version: 1;
+  incident_id: string;
+  fingerprint: string;
+  severity: "P2";
+  first_seen_at_ms: number;
+  last_seen_at_ms: number;
+  count: number;
+  failing_revision: string | null;
+  error_type: string;
+  context: Readonly<{ message: string; location: null; sample: readonly string[] }>;
+  provenance: Readonly<{ endpoint: string; captured_at_ms: number; captured_by: null }>;
+  evidence_ref: SentinelIncidentIndexEvidenceRef | null;
+  evidence_expires_at_ms: number | null;
+}>;
+
+export const isSentinelIncidentIndexEvidenceRef = (value: unknown): value is SentinelIncidentIndexEvidenceRef =>
+  isRecord(value) && typeof value.ref === "string" && INDEX_REF.test(value.ref) &&
+  (value.digest === null || (typeof value.digest === "string" && /^[0-9a-f]{64}$/.test(value.digest)));
+
+export const isSentinelIncidentIndexEndpoint = (value: unknown): value is string =>
+  typeof value === "string" && (INDEX_ENDPOINTS.includes(value) || value === "other");
+
+export const isSentinelIncidentIndexRow = (value: unknown): value is SentinelIncidentIndexRow => {
+  if (
+    !isRecord(value) || value.version !== 1 || !isSentinelIncidentId(value.incident_id) ||
+    typeof value.fingerprint !== "string" || !/^[0-9a-f]{64}$/.test(value.fingerprint) ||
+    value.severity !== "P2" || !positiveInteger(value.first_seen_at_ms) ||
+    !positiveInteger(value.last_seen_at_ms) || value.last_seen_at_ms < value.first_seen_at_ms ||
+    !positiveInteger(value.count) ||
+    (value.failing_revision !== null &&
+      (typeof value.failing_revision !== "string" || !FULL_SHA.test(value.failing_revision))) ||
+    !isSentinelIncidentTerminalCategory(value.error_type) ||
+    !isRecord(value.context) || value.context.message !== INDEX_MESSAGE || value.context.location !== null ||
+    !Array.isArray(value.context.sample) || value.context.sample.length !== 0 ||
+    !isRecord(value.provenance) || !isSentinelIncidentIndexEndpoint(value.provenance.endpoint) ||
+    !positiveInteger(value.provenance.captured_at_ms) || value.provenance.captured_by !== null ||
+    (value.evidence_ref !== null && !isSentinelIncidentIndexEvidenceRef(value.evidence_ref)) ||
+    (value.evidence_expires_at_ms !== null && !positiveInteger(value.evidence_expires_at_ms)) ||
+    (value.evidence_ref === null) !== (value.evidence_expires_at_ms === null)
+  ) return false;
+  return true;
+};
+
+/** Normalize a captured endpoint: recognized path without query, else a fixed safe label. */
+export const normalizeSentinelIncidentEndpoint = (endpoint: string): string => {
+  const path = endpoint.split("?", 1)[0] ?? "";
+  return INDEX_ENDPOINTS.includes(path) ? path : "other";
+};
+
+export const normalizeSentinelIncidentMethod = (method: string): string => method === "POST" ? "POST" : "other";
+
+/** Fixed safe terminal/failure category; truly unrecognized values are "unknown". */
+export const classifySentinelIncidentTerminal = (
+  observation: SentinelIncidentIndexObservation,
+): SentinelIncidentTerminalCategory => {
+  if (observation.stream && !observation.framing_valid) return "stream_framing";
+  switch (observation.terminal_type) {
+    case "http.error":
+      return "http_error";
+    case "response.failed":
+      return "response_failed";
+    case "response.incomplete":
+      return "response_incomplete";
+    case "error":
+      return "error";
+    case "deadline":
+      return "deadline";
+    case "eof":
+      return "eof";
+    default:
+      return "unknown";
+  }
+};
+
+export const sentinelIncidentClassification = (input: {
+  endpoint: string;
+  method: string;
+  observation: SentinelIncidentIndexObservation;
+}): string => {
+  if (
+    !Number.isSafeInteger(input.observation.status) || input.observation.status < 0 ||
+    input.observation.status > 599
+  ) throw new Error("Sentinel incident classification status is invalid");
+  return JSON.stringify({
+    endpoint: normalizeSentinelIncidentEndpoint(input.endpoint),
+    method: normalizeSentinelIncidentMethod(input.method),
+    status: input.observation.status,
+    stream: input.observation.stream,
+    completed: input.observation.completed,
+    framing_valid: input.observation.framing_valid,
+    terminal: classifySentinelIncidentTerminal(input.observation),
+  });
+};
+
+/** Stable group fingerprint: SHA-256 of the canonical safe classification. */
+export const sentinelIncidentFingerprint = (input: {
+  endpoint: string;
+  method: string;
+  observation: SentinelIncidentIndexObservation;
+}): Promise<string> => sha256Hex(sentinelIncidentClassification(input));
+
+const indexRowKey = (fingerprint: string): Deno.KvKey => [...SENTINEL_INCIDENT_INDEX_PREFIX, fingerprint];
+
+const newIndexRow = (
+  input: Readonly<{
+    fingerprint: string;
+    incidentId: string;
+    gitSha: string;
+    observedAtMs: number;
+    endpoint: string;
+    method: string;
+    observation: SentinelIncidentIndexObservation;
+  }>,
+): SentinelIncidentIndexRow => ({
+  version: 1,
+  incident_id: input.incidentId,
+  fingerprint: input.fingerprint,
+  severity: "P2",
+  first_seen_at_ms: input.observedAtMs,
+  last_seen_at_ms: input.observedAtMs,
+  count: 1,
+  failing_revision: FULL_SHA.test(input.gitSha) ? input.gitSha : null,
+  error_type: classifySentinelIncidentTerminal(input.observation),
+  context: { message: INDEX_MESSAGE, location: null, sample: [] },
+  provenance: {
+    endpoint: normalizeSentinelIncidentEndpoint(input.endpoint),
+    captured_at_ms: input.observedAtMs,
+    captured_by: null,
+  },
+  evidence_ref: null,
+  evidence_expires_at_ms: null,
+});
+
+/**
+ * Record one actual observation for the stable failure group. Bounded
+ * optimistic CAS (8 attempts) guarantees a single group row under concurrent
+ * observations; each call counts exactly once and first/last times stay
+ * monotonic. Later observations never retag evidence or revision metadata.
+ */
+export const recordSentinelIncidentIndexObservation = async (
+  kv: Deno.Kv,
+  input: Readonly<{
+    endpoint: string;
+    method: string;
+    gitSha: string;
+    observedAtMs: number;
+    observation: SentinelIncidentIndexObservation;
+  }>,
+  dependencies: Pick<SentinelIncidentDependencies, "randomUuid"> = {},
+): Promise<Deno.KvEntry<SentinelIncidentIndexRow>> => {
+  if (!positiveInteger(input.observedAtMs)) throw new Error("Sentinel incident timestamp is invalid");
+  const fingerprint = await sentinelIncidentFingerprint(input);
+  const key = indexRowKey(fingerprint);
+  for (let attempt = 0; attempt < SENTINEL_INCIDENT_INDEX_MAX_CAS_ATTEMPTS; attempt += 1) {
+    const entry = await kv.get<SentinelIncidentIndexRow>(key);
+    let next: SentinelIncidentIndexRow;
+    let checkVersionstamp: string | null;
+    if (entry.value === null) {
+      const incidentId = `provider-${(dependencies.randomUuid ?? defaultRandomUuid)().toLowerCase()}`;
+      if (!isSentinelIncidentId(incidentId)) throw new Error("Sentinel incident UUID is invalid");
+      next = newIndexRow({ ...input, fingerprint, incidentId });
+      checkVersionstamp = null;
+    } else {
+      if (!isSentinelIncidentIndexRow(entry.value)) throw new Error("Sentinel incident index record is invalid");
+      next = {
+        ...entry.value,
+        first_seen_at_ms: Math.min(entry.value.first_seen_at_ms, input.observedAtMs),
+        last_seen_at_ms: Math.max(entry.value.last_seen_at_ms, input.observedAtMs),
+        count: entry.value.count + 1,
+      };
+      checkVersionstamp = entry.versionstamp;
+    }
+    if (!isSentinelIncidentIndexRow(next)) throw new Error("Sentinel incident index record is invalid");
+    const committed = await kv.atomic()
+      .check({ key, versionstamp: checkVersionstamp })
+      .set(key, next)
+      .commit();
+    if (committed.ok) return { key, value: next, versionstamp: committed.versionstamp };
+  }
+  throw new Error("Sentinel incident index update conflicted repeatedly");
+};
+
+/**
+ * Bind a real capture to the stable index row. `evidence` is the SHA-256 of
+ * the decoded concatenated ciphertext bytes (never the manifest HMAC
+ * fingerprint or JSON hash); `ref` is opaque (`capture:<capture_id>`).
+ * The binding is exact: `gitSha` is the winning capture's original plaintext
+ * revision (valid full SHA or null) and `capturedAtMs` is that manifest's
+ * captured_at_ms — never the index's first/last observation or the current
+ * duplicate request. The atomic CAS-checks the winning manifest versionstamp
+ * so an observed binding cannot silently attach to a replaced/deleted
+ * manifest; ref/evidence/index are one transaction, no non-atomic pairing.
+ */
+export const bindSentinelIncidentIndexEvidence = async (
+  kv: Deno.Kv,
+  indexFingerprint: string,
+  input: Readonly<{
+    observedAtMs: number;
+    captureId: string;
+    gitSha: string | null;
+    referenceFingerprint: string;
+    manifestKey: Deno.KvKey;
+    manifestVersionstamp: string | null;
+    capturedAtMs: number;
+    digest: string;
+    expiresAtMs: number;
+  }>,
+): Promise<Deno.KvEntry<SentinelIncidentIndexRow>> => {
+  if (
+    !/^[0-9a-f]{64}$/.test(indexFingerprint) || !/^[0-9a-f]{64}$/.test(input.referenceFingerprint) ||
+    !/^[0-9a-f]{64}$/.test(input.digest) || !positiveInteger(input.observedAtMs) ||
+    !positiveInteger(input.capturedAtMs) || !positiveInteger(input.expiresAtMs) ||
+    !Array.isArray(input.manifestKey) || input.manifestKey.length !== 7 ||
+    (input.manifestVersionstamp !== null && typeof input.manifestVersionstamp !== "string")
+  ) throw new Error("Sentinel incident index evidence binding is invalid");
+  const key = indexRowKey(indexFingerprint);
+  const remainingMs = input.expiresAtMs - input.observedAtMs;
+  const reference: SentinelIncidentCaptureReference = { version: 1, manifest_key: [...input.manifestKey] };
+  if (!isSentinelIncidentCaptureReference(reference)) throw new Error("Sentinel replay manifest key is invalid");
+  for (let attempt = 0; attempt < SENTINEL_INCIDENT_INDEX_MAX_CAS_ATTEMPTS; attempt += 1) {
+    const entry = await kv.get<SentinelIncidentIndexRow>(key);
+    if (entry.value === null) throw new Error("Sentinel incident index record is missing");
+    if (!isSentinelIncidentIndexRow(entry.value)) throw new Error("Sentinel incident index record is invalid");
+    const evidence: SentinelIncidentIndexEvidenceRef = {
+      ref: `capture:${input.captureId}`,
+      digest: input.digest,
+    };
+    if (!isSentinelIncidentIndexEvidenceRef(evidence)) throw new Error("Sentinel incident index evidence is invalid");
+    const next: SentinelIncidentIndexRow = {
+      ...entry.value,
+      failing_revision: input.gitSha !== null && FULL_SHA.test(input.gitSha) ? input.gitSha : null,
+      provenance: { ...entry.value.provenance, captured_at_ms: input.capturedAtMs },
+      evidence_ref: evidence,
+      evidence_expires_at_ms: input.expiresAtMs,
+    };
+    if (!isSentinelIncidentIndexRow(next)) throw new Error("Sentinel incident index record is invalid");
+    let operation = kv.atomic()
+      .check({ key, versionstamp: entry.versionstamp })
+      .set(key, next);
+    if (input.manifestVersionstamp !== null) {
+      operation = operation.check({ key: input.manifestKey, versionstamp: input.manifestVersionstamp });
+    }
+    if (remainingMs > 0) {
+      operation = operation.set(
+        [...SENTINEL_INCIDENT_CAPTURE_REF_PREFIX, next.incident_id, input.referenceFingerprint],
+        reference,
+        { expireIn: remainingMs },
+      );
+    }
+    const committed = await operation.commit();
+    if (committed.ok) return { key, value: next, versionstamp: committed.versionstamp };
+  }
+  throw new Error("Sentinel incident index evidence binding conflicted repeatedly");
+};
+
+/**
+ * Read-only bounded pagination over the durable index. Every success is a
+ * complete page: `cursor` is null only when the scan is exhausted, never when
+ * a record is malformed or storage fails (callers fail closed). An incident
+ * filter still obeys bounded pagination: a matching row after this page's
+ * bound is reached by following the non-null cursor, never silently dropped.
+ */
+export const listSentinelIncidentIndexRows = async (
+  kv: Deno.Kv,
+  options: Readonly<{ incidentId?: string; cursor?: string; limit?: number }> = {},
+): Promise<Readonly<{ rows: SentinelIncidentIndexRow[]; cursor: string | null }>> => {
+  const limit = options.limit ?? SENTINEL_INCIDENT_INDEX_DEFAULT_PAGE_LIMIT;
+  if (
+    !Number.isSafeInteger(limit) || limit < 1 || limit > SENTINEL_INCIDENT_INDEX_MAX_PAGE_LIMIT ||
+    (options.cursor !== undefined &&
+      (options.cursor.length < 1 || options.cursor.length > 2_048 || !INDEX_CURSOR.test(options.cursor)))
+  ) throw new Error("Sentinel incident index pagination is invalid");
+  const iterator = kv.list<SentinelIncidentIndexRow>(
+    { prefix: SENTINEL_INCIDENT_INDEX_PREFIX },
+    { cursor: options.cursor, limit },
+  );
+  const rows: SentinelIncidentIndexRow[] = [];
+  for await (const entry of iterator) {
+    const expectedKey = [...SENTINEL_INCIDENT_INDEX_PREFIX, entry.value.fingerprint];
+    if (
+      !isSentinelIncidentIndexRow(entry.value) || entry.key.length !== expectedKey.length ||
+      expectedKey.some((part, index) => entry.key[index] !== part)
+    ) throw new Error("Sentinel incident index record is invalid");
+    if (options.incidentId !== undefined && entry.value.incident_id !== options.incidentId) continue;
+    rows.push(entry.value);
+    if (rows.length >= limit) break;
+  }
+  return { rows, cursor: iterator.cursor || null };
 };
