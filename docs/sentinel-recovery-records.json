@@ -6,6 +6,36 @@
       "identity": {
         "repository": "ubiquity/ai.ubq.fi",
         "source_kind": "github_issue",
+        "source_id": "5228586686",
+        "source_revision": "e51af3147877fad7660614778722a3d3099f143ba819c3a4c2ad21df4814249d",
+        "candidate_generation": 1
+      },
+      "run_id": "34074621058",
+      "attempt": 1,
+      "lease_token": "34074621058-1",
+      "base_sha": "aafb7ee0598699bb7fb8a72ea133693ed64462da",
+      "phase": "manual_required",
+      "disposition": "manual_required",
+      "state_version": 1,
+      "created_at": "2026-09-07T02:00:12.060Z",
+      "updated_at": "2026-09-07T02:00:12.060Z",
+      "candidate_branch": null,
+      "candidate_sha": null,
+      "changed_files": [],
+      "tree_sha": null,
+      "failure_class": null,
+      "failure_fingerprint": null,
+      "artifact_ids": [],
+      "artifact_digests": [],
+      "reason": "planning_blocked:requires_protected_action: acceptance requires adding the deterministic OpenAI specification drift task to protected path deno.json and its CI gate to protected path .github/workflows/deno-deploy.yml; isSentinelProtectedImplementationPath explicitly protects both paths, so the complete issue cannot be assigned to an implementation finding.",
+      "next_action": "Resolve the named blocker before another attempt.",
+      "predecessor": null
+    },
+    {
+      "schema_version": 1,
+      "identity": {
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_kind": "github_issue",
         "source_id": "5228588522",
         "source_revision": "c502cd00ece8b7f8fbfd07cc6fa89369f1023840967090a675a1bb9ad39dc9e6",
         "candidate_generation": 1
@@ -60,40 +90,6 @@
       "reason": "planning_blocked:requires_protected_action: completing the issue requires changes to protected Provider Sentinel controls: .github/workflows/provider-sentinel.yml (add pull-requests: write and issues: write and wire delivery/completion behavior), scripts/sentinel/issues.ts (canonical time-label intake), scripts/sentinel/issue-delivery.ts, scripts/sentinel/issue-pr-pre-push.ts, and scripts/sentinel/issue-delivery-reconcile.ts (one-PR identity, evidence, and completion gates), docs/sentinel-issue-jobs.md (workflow contract documentation), and tests/sentinel-issue-delivery.test.ts (deterministic coverage). isSentinelProtectedImplementationPath protects the workflow, every scripts/sentinel/ path, docs/sentinel-issue-jobs.md, and tests/sentinel-*.test.ts; therefore the complete issue cannot be planned as actionable non-protected work.",
       "next_action": "Resolve the named blocker before another attempt.",
       "predecessor": null
-    },
-    {
-      "artifact_digests": [
-        "sha256:c5786bdcbb1c759d779a783f89baa4499d4b3b6bf10811f9939318cf15474835"
-      ],
-      "artifact_ids": [
-        9896543984
-      ],
-      "attempt": 1,
-      "base_sha": "5127ad329b1ad1aea9b5614e76c8ff09b209d087",
-      "candidate_branch": "sentinel/candidate-github_issue-5262330278-4b5705d88b960ad11bfbc21ba379fcf0-g131-728d28e228a3edf7",
-      "candidate_sha": null,
-      "changed_files": [],
-      "created_at": "2026-09-03T13:53:31.739Z",
-      "disposition": "manual_required",
-      "failure_class": "runner_interruption",
-      "failure_fingerprint": "9cb437bc9b8d1b4b6c558ef301a88be8227b99d5c179aca80230ba9d81b4b69c",
-      "identity": {
-        "candidate_generation": 131,
-        "repository": "ubiquity/ai.ubq.fi",
-        "source_id": "5262330278",
-        "source_kind": "github_issue",
-        "source_revision": "4b5705d88b960ad11bfbc21ba379fcf0b7e0cab5a1f7beeb31c98304fbb329ba"
-      },
-      "lease_token": "matrix-cell-33763372897-1-cell-07fcdf4266069ed33f6b6a5e94594a140ef43fa304ffec1995c244683f1c7d58",
-      "next_action": "Owner review is required before another Sentinel attempt.",
-      "phase": "manual_required",
-      "predecessor": null,
-      "reason": "Three identical Sentinel failure fingerprints opened the circuit breaker.",
-      "run_id": "33763372897",
-      "schema_version": 1,
-      "state_version": 6,
-      "tree_sha": null,
-      "updated_at": "2026-09-03T14:25:32.259Z"
     },
     {
       "artifact_digests": [
@@ -16776,48 +16772,6 @@
     {
       "schema_version": 1,
       "identity": {
-        "candidate_generation": 131,
-        "repository": "ubiquity/ai.ubq.fi",
-        "source_id": "5262330278",
-        "source_kind": "github_issue",
-        "source_revision": "4b5705d88b960ad11bfbc21ba379fcf0b7e0cab5a1f7beeb31c98304fbb329ba"
-      },
-      "attempt": 1,
-      "failure_class": "transient_transport",
-      "failure_fingerprint": "9cb437bc9b8d1b4b6c558ef301a88be8227b99d5c179aca80230ba9d81b4b69c",
-      "observed_at": "2026-09-03T13:58:04.340Z"
-    },
-    {
-      "schema_version": 1,
-      "identity": {
-        "candidate_generation": 131,
-        "repository": "ubiquity/ai.ubq.fi",
-        "source_id": "5262330278",
-        "source_kind": "github_issue",
-        "source_revision": "4b5705d88b960ad11bfbc21ba379fcf0b7e0cab5a1f7beeb31c98304fbb329ba"
-      },
-      "attempt": 2,
-      "failure_class": "runner_interruption",
-      "failure_fingerprint": "9cb437bc9b8d1b4b6c558ef301a88be8227b99d5c179aca80230ba9d81b4b69c",
-      "observed_at": "2026-09-03T14:00:39.899Z"
-    },
-    {
-      "schema_version": 1,
-      "identity": {
-        "candidate_generation": 131,
-        "repository": "ubiquity/ai.ubq.fi",
-        "source_id": "5262330278",
-        "source_kind": "github_issue",
-        "source_revision": "4b5705d88b960ad11bfbc21ba379fcf0b7e0cab5a1f7beeb31c98304fbb329ba"
-      },
-      "attempt": 3,
-      "failure_class": "runner_interruption",
-      "failure_fingerprint": "9cb437bc9b8d1b4b6c558ef301a88be8227b99d5c179aca80230ba9d81b4b69c",
-      "observed_at": "2026-09-03T14:25:32.259Z"
-    },
-    {
-      "schema_version": 1,
-      "identity": {
         "repository": "ubiquity/ai.ubq.fi",
         "source_kind": "triage",
         "source_id": "bac1dd1adf6504a3c6040566fa36ab0c97f4b120b6d59d1841a7954b3f55e08e",
@@ -21966,28 +21920,23 @@
       "failure_class": "runner_interruption",
       "failure_fingerprint": "e8063c83692565591cac309cdebe8c42f62bc2d19e1f4491d2c295496f867418",
       "observed_at": "2026-09-07T01:56:07.615Z"
+    },
+    {
+      "schema_version": 1,
+      "identity": {
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_kind": "github_issue",
+        "source_id": "5228586686",
+        "source_revision": "e51af3147877fad7660614778722a3d3099f143ba819c3a4c2ad21df4814249d",
+        "candidate_generation": 1
+      },
+      "attempt": 1,
+      "failure_class": "invalid_implementation_report",
+      "failure_fingerprint": "aa94455938d68b2c23aaac065c11c4ea5779557ec311cb59c080e0739bb36e62",
+      "observed_at": "2026-09-07T02:00:12.060Z"
     }
   ],
   "retry_decisions": [
-    {
-      "identity_key": "[\"ubiquity/ai.ubq.fi\",\"github_issue\",\"5262330278\",\"4b5705d88b960ad11bfbc21ba379fcf0b7e0cab5a1f7beeb31c98304fbb329ba\",131]",
-      "decision": {
-        "disposition": "manual_required",
-        "should_retry": false,
-        "circuit_open": true,
-        "validation_repair_allowed": false,
-        "source_revision_changed": false,
-        "candidate_generation": 131,
-        "attempt_count": 3,
-        "identical_failure_count": 3,
-        "backoff_ms": null,
-        "retry_at": null,
-        "failure_class": "runner_interruption",
-        "failure_fingerprint": "9cb437bc9b8d1b4b6c558ef301a88be8227b99d5c179aca80230ba9d81b4b69c",
-        "reason": "Three identical Sentinel failure fingerprints opened the circuit breaker.",
-        "next_action": "Owner review is required before another Sentinel attempt."
-      }
-    },
     {
       "identity_key": "[\"ubiquity/ai.ubq.fi\",\"triage\",\"bac1dd1adf6504a3c6040566fa36ab0c97f4b120b6d59d1841a7954b3f55e08e\",\"5127ad329b1ad1aea9b5614e76c8ff09b209d087\",1]",
       "decision": {
