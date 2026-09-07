@@ -44,21 +44,21 @@
       "attempt": 1,
       "lease_token": "34074621058-1",
       "base_sha": "aafb7ee0598699bb7fb8a72ea133693ed64462da",
-      "phase": "claimed",
+      "phase": "retry_wait",
       "disposition": "active",
-      "state_version": 1,
+      "state_version": 3,
       "created_at": "2026-09-07T02:02:11.129Z",
-      "updated_at": "2026-09-07T02:02:11.129Z",
-      "candidate_branch": null,
+      "updated_at": "2026-09-07T02:31:02.686Z",
+      "candidate_branch": "sentinel/candidate-github_issue-5228588238-587592cfb4fc4b17a2b8fe520ae11683-g1-f27edf6a909e81ca",
       "candidate_sha": null,
       "changed_files": [],
       "tree_sha": null,
-      "failure_class": null,
-      "failure_fingerprint": null,
+      "failure_class": "runner_interruption",
+      "failure_fingerprint": "8f0bdd079af81d541939a0b9bb53414d2873c5215ec11c62931276c46fa5fcf9",
       "artifact_ids": [],
       "artifact_digests": [],
-      "reason": "The selected work item is durably claimed before implementation.",
-      "next_action": "Start the Luna implementation stage.",
+      "reason": "The bounded Sentinel retry policy scheduled another attempt.",
+      "next_action": "Retry after 2026-09-07T02:31:57.692Z.",
       "predecessor": null
     },
     {
@@ -21892,6 +21892,20 @@
       "failure_class": "invalid_implementation_report",
       "failure_fingerprint": "aa94455938d68b2c23aaac065c11c4ea5779557ec311cb59c080e0739bb36e62",
       "observed_at": "2026-09-07T02:00:12.060Z"
+    },
+    {
+      "schema_version": 1,
+      "identity": {
+        "repository": "ubiquity/ai.ubq.fi",
+        "source_kind": "github_issue",
+        "source_id": "5228588238",
+        "source_revision": "587592cfb4fc4b17a2b8fe520ae116838bd88cd3e9df0c34c42905db0d0cea00",
+        "candidate_generation": 1
+      },
+      "attempt": 1,
+      "failure_class": "runner_interruption",
+      "failure_fingerprint": "8f0bdd079af81d541939a0b9bb53414d2873c5215ec11c62931276c46fa5fcf9",
+      "observed_at": "2026-09-07T02:31:02.686Z"
     }
   ],
   "retry_decisions": [
@@ -24212,14 +24226,26 @@
         "reason": "The bounded Sentinel retry policy scheduled another attempt.",
         "next_action": "Retry after 2026-09-07T01:57:48.744Z."
       }
-    }
-  ],
-  "leases": [
+    },
     {
       "identity_key": "[\"ubiquity/ai.ubq.fi\",\"github_issue\",\"5228588238\",\"587592cfb4fc4b17a2b8fe520ae116838bd88cd3e9df0c34c42905db0d0cea00\",1]",
-      "owner": "34074621058",
-      "token": "34074621058:61706ee7-0dec-4555-8771-b91bdbeeecf5",
-      "expires_at": "2026-09-07T02:41:02.686Z"
+      "decision": {
+        "disposition": "retry_wait",
+        "should_retry": true,
+        "circuit_open": false,
+        "validation_repair_allowed": false,
+        "source_revision_changed": false,
+        "candidate_generation": 1,
+        "attempt_count": 1,
+        "identical_failure_count": 1,
+        "backoff_ms": 55006,
+        "retry_at": "2026-09-07T02:31:57.692Z",
+        "failure_class": "runner_interruption",
+        "failure_fingerprint": "8f0bdd079af81d541939a0b9bb53414d2873c5215ec11c62931276c46fa5fcf9",
+        "reason": "The bounded Sentinel retry policy scheduled another attempt.",
+        "next_action": "Retry after 2026-09-07T02:31:57.692Z."
+      }
     }
-  ]
+  ],
+  "leases": []
 }
