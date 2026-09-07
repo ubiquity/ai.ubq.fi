@@ -92,6 +92,7 @@ import {
   shouldPersistSentinelReplay,
   zeroSentinelReplayInput,
 } from "./sentinel_replay_capture.ts";
+import { handleAdminSentinelReplayCaptures } from "./sentinel_replay_admin.ts";
 import type { recordSentinelProviderDegradationFromEnvironment } from "./sentinel_incident_outbox.ts";
 
 type AuthenticatedClientResult = Extract<
@@ -917,6 +918,12 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     const authError = await requireSuperAdminAuth(req);
     if (authError) return withCors(authError);
     return withCors(await handleAdminKvMigrationValidate());
+  }
+
+  if (req.method === "GET" && path === "/admin/sentinel/replay-captures") {
+    const authError = await requireSuperAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminSentinelReplayCaptures(req));
   }
 
   if (req.method === "GET" && path === "/admin/errors") {
