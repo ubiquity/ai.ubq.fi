@@ -62,11 +62,11 @@
     "schema_version": 1,
     "verdict": "ambiguous",
     "reason": "changed_state_without_verified_advancement",
-    "observation_count": 4,
-    "state_digest": "2a7542179bd704b6",
+    "observation_count": 5,
+    "state_digest": "286cb75ebff9c629",
     "classifier": null,
     "resolved": "unknown",
     "resolved_reason": "classifier_not_provisioned",
-    "evaluated_at": "2026-09-07T02:21:07.859Z"
+    "evaluated_at": "2026-09-07T02:39:21.739Z"
   }
 }
