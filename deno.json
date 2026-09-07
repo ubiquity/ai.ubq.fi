@@ -7,7 +7,7 @@
     "@std/yaml": "jsr:@std/yaml@1.0.9"
   },
   "tasks": {
-    "build": "deno check --frozen serve.ts scripts/setup-instance.ts scripts/sentinel/main.ts scripts/sentinel/rolling-review-worker.ts scripts/sentinel/revision-control.ts scripts/sentinel/rollback-controller.ts",
+    "build": "deno check --frozen serve.ts scripts/setup-instance.ts",
     "dev": "sh -c 'if [ -f .env ]; then set -a; . ./.env; set +a; fi; export DENO_DEPLOY_TOKEN=\"${DENO_DEPLOY_TOKEN_UBIQUITY_DAO:-${DENO_DEPLOY_TOKEN:-local-dev-admin}}\"; exec deno serve --watch --env --host 127.0.0.1 --allow-env --allow-net --allow-read --unstable-kv serve.ts --disable-admin-auth \"$@\"' --",
     "dev:play": "deno task dev:local",
     "dev:local": "sh -c 'if [ -z \"${CODEX_AUTH_JSON_B64:-}\" ]; then if [ -f \"$HOME/.codex/auth.json\" ]; then export CODEX_AUTH_JSON_B64=\"$(base64 < \"$HOME/.codex/auth.json\" | tr -d \"\\n\")\"; echo \"Loaded CODEX_AUTH_JSON_B64 from ~/.codex/auth.json\"; else echo \"No CODEX_AUTH_JSON_B64 and no ~/.codex/auth.json found. /v1/models will stay empty until a model snapshot is initialized.\"; fi; fi; if [ -f .env ]; then set -a; . ./.env; set +a; fi; export DENO_DEPLOY_TOKEN=\"${DENO_DEPLOY_TOKEN_UBIQUITY_DAO:-${DENO_DEPLOY_TOKEN:-local-dev-admin}}\"; exec deno serve --watch --host 127.0.0.1 --allow-env --allow-net --allow-read --unstable-kv serve.ts --disable-admin-auth \"$@\"' --",
@@ -37,7 +37,6 @@
     "test:measurement": "deno test --frozen --env --allow-net=127.0.0.1 --allow-env=UOS_AI_TOKEN,DENO_DEPLOY_TOKEN tests/usage-optimization-measurement.test.ts",
     "test:stress": "deno test --frozen --env --unstable-kv --allow-net=127.0.0.1 --allow-env=METERED_API_KEY,SURPLUS_API_KEY tests/failover-stress-http.test.ts",
     "test:e2e": "deno test --frozen --env --allow-net --allow-env=BASE_URL,UOS_AI_TOKEN,DENO_DEPLOY_TOKEN tests/live-default-model.e2e.ts",
-    "sentinel:test-local": "deno run --allow-env --allow-run=deno --allow-write=.sentinel/local-test scripts/sentinel/local-test-harness.ts",
     "fmt": "deno fmt serve.ts src tests scripts docs benchmarks",
     "lint": "deno lint serve.ts src tests scripts benchmarks"
   },
