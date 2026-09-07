@@ -83,8 +83,11 @@ import { sha256Hex } from "./utils.ts";
 import { handleProviderCapacity } from "./provider_capacity.ts";
 import {
   type AcceptedSentinelReplayInput,
+  captureAcceptedSentinelReplayInput,
   createSentinelSseInspector,
+  discardSentinelReplayCaptureCandidate,
   inspectSentinelBufferedResponseBody,
+  materializeSentinelReplayInput,
   persistSentinelReplayFromEnvironment,
   resolveSentinelClientFailureObservation,
   type SentinelClientBodyObservation,
@@ -1194,6 +1197,12 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
       }),
     );
   }
+  const sentinelReplayCandidate = terminalRoute ? captureAcceptedSentinelReplayInput(req, requestId) : null;
+  const takeSentinelReplayInput = (): AcceptedSentinelReplayInput | null => {
+    const materialized = materializeSentinelReplayInput(sentinelReplayCandidate);
+    discardSentinelReplayCaptureCandidate(sentinelReplayCandidate);
+    return materialized;
+  };
   const settleKernelQuota = async (
     outcome: "completed" | "incomplete",
     reason = "request_incomplete",
@@ -1221,6 +1230,7 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     const telemetry = getResponseTelemetry(response);
     const correlated = withProviderRequestId(response, telemetry?.providerRequestId ?? null);
     const decorated = includeQuota ? decorateInferenceQuota(correlated, usagePolicy, telemetry) : correlated;
+    const sentinelReplayInput = takeSentinelReplayInput();
     try {
       return await withTerminalRequestLog(withCors(withRequestId(decorated, requestId)), {
         route,
@@ -1230,8 +1240,10 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
         onTerminal: trackKernelTerminal ? settleKernelQuota : undefined,
         deliveryCompleted: delivery?.completed,
         deliverySignal: delivery?.downstreamSignal,
+        sentinelReplayInput,
       });
     } catch (error) {
+      zeroSentinelReplayInput(sentinelReplayInput);
       await bestEffortSettleKernelQuota("incomplete", "terminal_wrapper_error");
       throw error;
     }
@@ -1273,6 +1285,26 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     }
     if (runError) {
       await bestEffortSettleKernelQuota("incomplete", "inference_exception");
+      const sentinelReplayInput = takeSentinelReplayInput();
+      if (sentinelReplayInput) {
+        const observation: SentinelFailureObservation = {
+          status: 500,
+          stream: null,
+          completed: false,
+          terminal_type: "error",
+          failure_kind: runError instanceof Error ? runError.name : "unknown_exception",
+          synthetic_terminal_type: null,
+          provider_route: "gateway",
+        };
+        try {
+          await persistSentinelReplayFromEnvironment(sentinelReplayInput, observation);
+        } catch {
+          // Replay persistence is best effort and cannot replace the original
+          // gateway exception or expose its request body in logs.
+        } finally {
+          zeroSentinelReplayInput(sentinelReplayInput);
+        }
+      }
       throw runError;
     }
     if (!response) {

@@ -35,6 +35,7 @@ jobs:
       - run: deno lint
       - run: deno task build
       - run: deno task test
+      - run: deno task sentinel:test-local
 
       - name: Package immutable source
         id: package

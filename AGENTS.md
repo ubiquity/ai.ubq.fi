@@ -34,8 +34,11 @@
 
 ## Sentinel Retirement
 
-- Sentinel automation has moved to the separate `ubiquity/sentinel` repository. Do not restore Sentinel workflows,
-  schedules, incident delivery, request capture, or deployment credentials in this repository.
+- Sentinel automation has moved to the separate `ubiquity/sentinel` repository. Do not restore embedded Sentinel
+  workflows, schedules, incident dispatch, or deployment credentials in this repository.
+- The owner approved authenticated failure capture/export, bounded upstream replay data, and exact-build receipts on
+  2026-09-07 for the standalone Sentinel integration. Keep scheduling and agents standalone; live activation and
+  promotion ownership transfer remain separate from this integration.
 
 ## Rolling Asynchronous Codex Review Workflow
 
