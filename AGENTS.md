@@ -18,24 +18,6 @@
 - Use this fixed inference waterfall, in cost order: eligible Codex subscription capacity first, Surplus Intelligence
   second, and OpenLux last. Advance to the next paid tier only after an authoritative quota or capacity signal; do not
   treat a transient timeout, stalled stream, network or read error, or upstream 5xx as quota exhaustion.
-- Treat the Provider Sentinel implementation-agent model as an owner-controlled invariant. Only `gpt-5.6-luna` is
-  allowed; Sentinel CI/runtime implementation agents must not change or substitute it or weaken its policy,
-  instructions, or tests. Local development requires the locally configured DSH DeepSeek model, which must preserve that
-  CI/runtime Luna configuration. A failed, timed-out, or exhausted Luna attempt must remain a failure, retry, or blocked
-  outcome; it never authorizes a model change.
-- For local DSH orchestration with this installed TUI, use the exact model
-  `deepseek-official/deepseek-v4-flash-vision-exp`. Max reasoning is required and is selected by
-  `agent-default-model.reasoningEffort: max` in `~/.dsh/settings.yaml`, because this installed TUI has no reasoning CLI
-  flag. Before launch, verify both that settings entry and
-  `dsh --profile tui --model deepseek-official/deepseek-v4-flash-vision-exp --doctor`. Then launch a fresh coding
-  session from the exact target worktree with
-  `DSH_PERMISSION_MODE=danger-full-access dsh --profile tui --model
-  deepseek-official/deepseek-v4-flash-vision-exp`.
-  Orchestration is through the TUI, not GUI automation: launch it in a PTY from the target worktree, write the prompt
-  text, then submit it with a separate Enter input — text that merely appears in the composer has not been submitted.
-  `--preset` is unsupported in this installed version, so the prompt must be submitted inside the TUI. Use fresh
-  sessions for independent tasks and `--resume` only for intentional continuation; terminate stalled read-only
-  trajectories by exact PID and replace them.
 - Treat `deno deploy --prod` as a build and production-timeline operation, not as proof that the stable route moved. A
   dashboard promotion creates a persistent production pin that a later deployment does not replace automatically.
 - For every stable Deno deployment, capture the pre-deploy revision IDs, identify exactly one new succeeded revision,
@@ -50,16 +32,10 @@
   warning after the exact managed Deno route passes; do not misclassify it as an old Deno revision, weaken bot
   protection globally, report dashboard work as necessary, or wait through repeated identical probes.
 
-## Provider Sentinel Local Verification
+## Sentinel Retirement
 
-- Run `deno task sentinel:test-local` from the repository root before creating any pull request that touches Provider
-  Sentinel. It is the single canonical local validation: it runs the fixed fail-fast Sentinel test order (workflow
-  contract, rolling review, artifact recovery, recovery/controller, matrix, Luna policy/orchestrator, rollback) and then
-  fmt check, lint, and build, hermetically — no network, no GitHub/Deno/model credentials in child environments, and no
-  paid/model/deployment calls — and writes a JSON report to the ignored `.sentinel/local-test/result.json`.
-- Provider Sentinel CI only repeats that exact command. The `provider-sentinel.yml` workflow invokes exactly
-  `deno task sentinel:test-local` and must never define its own independent Sentinel verification steps; add new
-  verification to the canonical local harness instead.
+- Sentinel automation has moved to the separate `ubiquity/sentinel` repository. Do not restore Sentinel workflows,
+  schedules, incident delivery, request capture, or deployment credentials in this repository.
 
 ## Rolling Asynchronous Codex Review Workflow
 
@@ -76,22 +52,8 @@
   exact evidence (exact reviewed head and base SHA, review identity, and the original finding text), and the existing
   production preview, health-identity, monitoring, and acceptance safeguards remain mandatory for every deployed
   candidate.
-- Collect completed Codex review findings from earlier eligible open and merged Sentinel pull requests into the official
-  review backlog (`docs/sentinel-review-backlog.md`), deduplicating by finding fingerprint. Select backlog entries as
-  normal future work and implement them in a follow-up pull request that requests a new Codex review just like every
-  other pull request. Never assume a reviewed finding was fixed simply because its reviewed pull request merged;
-  verification is the follow-up work item itself.
 - Treat malformed, incomplete, or identity-mismatched review data as fail-closed: preserve the exact evidence, ingest
   nothing, and surface the failure. Never drop findings, salvage a partial parse, or mark a failed review complete.
-- Automatic rollback exists and is objective: any failed post-merge/post-promotion production acceptance caused by the
-  newly delivered candidate is rolled back by the automatic rollback controller, which restores exactly the immutable
-  prior Deno revision captured in the pre-deploy healthy attestation — promoted through the existing authenticated Deno
-  API path, serialized with deployment writers, verified on the managed health endpoint (exact previous full Git SHA and
-  revision ID in body and headers), probed on the custom domain with the existing Cloudflare-403 warning policy,
-  evidenced in machine-readable rollback evidence, and failed closed whenever identity or promotion cannot be proven.
-  Codex review findings alone never trigger a rollback, and no revision is ever chosen by list order, time, or a
-  "latest" label: a review finding observed after a pull request merged is remedied by the backlog follow-up pull
-  request and its own acceptance flow, not by reverting an already-published deployment.
 
 ## Repository Completion and Checkout Handoff
 

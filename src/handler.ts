@@ -83,11 +83,8 @@ import { sha256Hex } from "./utils.ts";
 import { handleProviderCapacity } from "./provider_capacity.ts";
 import {
   type AcceptedSentinelReplayInput,
-  captureAcceptedSentinelReplayInput,
   createSentinelSseInspector,
-  discardSentinelReplayCaptureCandidate,
   inspectSentinelBufferedResponseBody,
-  materializeSentinelReplayInput,
   persistSentinelReplayFromEnvironment,
   resolveSentinelClientFailureObservation,
   type SentinelClientBodyObservation,
@@ -95,13 +92,7 @@ import {
   shouldPersistSentinelReplay,
   zeroSentinelReplayInput,
 } from "./sentinel_replay_capture.ts";
-import { handleAdminSentinelReplayCaptures } from "./sentinel_replay_admin.ts";
-import {
-  handleAdminSentinelIncidentAck,
-  handleAdminSentinelIncidentClaim,
-  handleAdminSentinelIncidentDefer,
-} from "./sentinel_incident_admin.ts";
-import { recordSentinelProviderDegradationFromEnvironment } from "./sentinel_incident_outbox.ts";
+import type { recordSentinelProviderDegradationFromEnvironment } from "./sentinel_incident_outbox.ts";
 
 type AuthenticatedClientResult = Extract<
   Awaited<ReturnType<typeof authenticateClient>>,
@@ -373,7 +364,7 @@ const logTerminalRequest = async (
         completed: telemetry?.completed ?? false,
         removedProviderTriggerClass: terminal.removed_provider_trigger_class,
       })
-      ? (input.recordSentinelDegradation ?? recordSentinelProviderDegradationFromEnvironment)(Date.now())
+      ? input.recordSentinelDegradation?.(Date.now())
       : Promise.resolve();
     const adminErrorWrite = (input.recordAdminError ?? recordAdminError)({
       request_id: terminal.request_id,
@@ -928,34 +919,10 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     return withCors(await handleAdminKvMigrationValidate());
   }
 
-  if (req.method === "GET" && path === "/admin/sentinel/replay-captures") {
-    const authError = await requireSuperAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminSentinelReplayCaptures(req));
-  }
-
   if (req.method === "GET" && path === "/admin/errors") {
     const authError = await requireAdminAuth(req);
     if (authError) return withCors(authError);
     return withCors(await handleAdminErrors(req));
-  }
-
-  if (req.method === "POST" && path === "/admin/sentinel/incidents/ack") {
-    const authError = await requireSuperAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminSentinelIncidentAck(req));
-  }
-
-  if (req.method === "POST" && path === "/admin/sentinel/incidents/claim") {
-    const authError = await requireSuperAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminSentinelIncidentClaim(req));
-  }
-
-  if (req.method === "POST" && path === "/admin/sentinel/incidents/defer") {
-    const authError = await requireSuperAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminSentinelIncidentDefer(req));
   }
 
   if ((req.method === "GET" || req.method === "POST") && path === "/admin/defaults") {
@@ -1220,12 +1187,6 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
       }),
     );
   }
-  const sentinelReplayCandidate = terminalRoute ? captureAcceptedSentinelReplayInput(req, requestId) : null;
-  const takeSentinelReplayInput = (): AcceptedSentinelReplayInput | null => {
-    const materialized = materializeSentinelReplayInput(sentinelReplayCandidate);
-    discardSentinelReplayCaptureCandidate(sentinelReplayCandidate);
-    return materialized;
-  };
   const settleKernelQuota = async (
     outcome: "completed" | "incomplete",
     reason = "request_incomplete",
@@ -1253,7 +1214,6 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     const telemetry = getResponseTelemetry(response);
     const correlated = withProviderRequestId(response, telemetry?.providerRequestId ?? null);
     const decorated = includeQuota ? decorateInferenceQuota(correlated, usagePolicy, telemetry) : correlated;
-    const sentinelReplayInput = takeSentinelReplayInput();
     try {
       return await withTerminalRequestLog(withCors(withRequestId(decorated, requestId)), {
         route,
@@ -1263,10 +1223,8 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
         onTerminal: trackKernelTerminal ? settleKernelQuota : undefined,
         deliveryCompleted: delivery?.completed,
         deliverySignal: delivery?.downstreamSignal,
-        sentinelReplayInput,
       });
     } catch (error) {
-      zeroSentinelReplayInput(sentinelReplayInput);
       await bestEffortSettleKernelQuota("incomplete", "terminal_wrapper_error");
       throw error;
     }
@@ -1308,26 +1266,6 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     }
     if (runError) {
       await bestEffortSettleKernelQuota("incomplete", "inference_exception");
-      const sentinelReplayInput = takeSentinelReplayInput();
-      if (sentinelReplayInput) {
-        const observation: SentinelFailureObservation = {
-          status: 500,
-          stream: null,
-          completed: false,
-          terminal_type: "error",
-          failure_kind: runError instanceof Error ? runError.name : "unknown_exception",
-          synthetic_terminal_type: null,
-          provider_route: "gateway",
-        };
-        try {
-          await persistSentinelReplayFromEnvironment(sentinelReplayInput, observation);
-        } catch {
-          // Replay persistence is best effort and cannot replace the original
-          // gateway exception or expose its request body in logs.
-        } finally {
-          zeroSentinelReplayInput(sentinelReplayInput);
-        }
-      }
       throw runError;
     }
     if (!response) {

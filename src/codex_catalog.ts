@@ -28,7 +28,7 @@ import {
 } from "./runtime_config.ts";
 import { getString, isRecord, sha256Hex } from "./utils.ts";
 import { fetchMeteredModels, METERED_MODELS_CACHE_TTL_MS } from "./metered.ts";
-import { recordSentinelProviderDegradationFromEnvironment } from "./sentinel_incident_outbox.ts";
+import type { recordSentinelProviderDegradationFromEnvironment } from "./sentinel_incident_outbox.ts";
 import { fetchSurplusModels, SURPLUS_MODELS_CACHE_TTL_MS } from "./surplus.ts";
 import { recentModelContextFor } from "./recent_model_context.ts";
 
@@ -736,7 +736,7 @@ const recordCatalogDegradation = async (
   dependencies: CodexCatalogDependencies,
 ): Promise<void> => {
   try {
-    await (dependencies.recordSentinelDegradation ?? recordSentinelProviderDegradationFromEnvironment)(
+    await dependencies.recordSentinelDegradation?.(
       dependencies.now?.() ?? Date.now(),
     );
   } catch (error) {
