@@ -315,13 +315,90 @@ export class FixtureWorkspace {
     }
   }
 
-  /** Run a shell command in the workspace. */
+  /** Run a shell command in the workspace and enforce task allowed_write_scope. */
   async execShell(
     command: string,
     timeoutMs: number,
     signal?: AbortSignal,
   ): Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean }> {
     this.assertRoot();
+    const snapshot = this.captureWorkspaceSnapshot();
+    let result: { code: number; stdout: string; stderr: string; timedOut: boolean };
+    try {
+      result = await this.runShellSandboxed(command, timeoutMs, signal);
+    } catch (err) {
+      this.enforceWriteScope(snapshot);
+      throw err;
+    }
+    this.enforceWriteScope(snapshot);
+    return result;
+  }
+
+  private captureWorkspaceSnapshot(): Map<string, Uint8Array> {
+    const snapshot = new Map<string, Uint8Array>();
+    for (const rel of this.listFiles()) {
+      try {
+        const abs = `${this.root}/${rel}`;
+        snapshot.set(rel, Deno.readFileSync(abs));
+      } catch {
+        // ignore concurrent/missing
+      }
+    }
+    return snapshot;
+  }
+
+  private enforceWriteScope(snapshot: Map<string, Uint8Array>): void {
+    const currentFiles = new Set(this.listFiles());
+    const unauthorized: string[] = [];
+
+    // Check for unauthorized deletions.
+    for (const [rel, originalContent] of snapshot.entries()) {
+      if (!currentFiles.has(rel)) {
+        if (!this.isAllowedWrite(rel)) {
+          unauthorized.push(rel);
+          // Restore deleted file.
+          const abs = `${this.root}/${rel}`;
+          Deno.mkdirSync(abs.slice(0, abs.lastIndexOf("/")), { recursive: true });
+          Deno.writeFileSync(abs, originalContent);
+        }
+      }
+    }
+
+    // Check for unauthorized modifications and creations.
+    for (const rel of currentFiles) {
+      if (snapshot.has(rel)) {
+        const originalContent = snapshot.get(rel)!;
+        const currentContent = Deno.readFileSync(`${this.root}/${rel}`);
+        if (!areByteArraysEqual(originalContent, currentContent)) {
+          if (!this.isAllowedWrite(rel)) {
+            unauthorized.push(rel);
+            // Restore original content.
+            Deno.writeFileSync(`${this.root}/${rel}`, originalContent);
+          }
+        }
+      } else {
+        if (!this.isAllowedWrite(rel)) {
+          unauthorized.push(rel);
+          // Remove unauthorized created file.
+          try {
+            Deno.removeSync(`${this.root}/${rel}`);
+          } catch {
+            // ignore
+          }
+        }
+      }
+    }
+
+    if (unauthorized.length > 0) {
+      throw new WriteScopeViolationError(unauthorized[0], this.task.allowed_write_scope);
+    }
+  }
+
+  private async runShellSandboxed(
+    command: string,
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ): Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean }> {
     if (Deno.build.os === "linux") {
       const root = Deno.realPathSync(this.root);
       return await this.exec(
@@ -396,6 +473,14 @@ export class FixtureWorkspace {
       { timeoutMs, capture: true, signal },
     );
   }
+}
+
+function areByteArraysEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
 }
 
 function sandboxString(value: string): string {

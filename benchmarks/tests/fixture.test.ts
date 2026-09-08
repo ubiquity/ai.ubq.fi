@@ -115,6 +115,74 @@ Deno.test({
   },
 });
 
+Deno.test({
+  name: "fixture: shell.exec enforces task allowed_write_scope and restores unauthorized writes",
+  ignore: Deno.build.os !== "darwin" && Deno.build.os !== "linux",
+  async fn() {
+    const baseTask = loadTasks(TASKS_DIR).find((candidate) => candidate.id === "nav-001")!;
+    // Configure a task with explicit allowed_write_scope including an exclusion rule.
+    const task = {
+      ...baseTask,
+      allowed_write_scope: ["src/**", "!src/protected.ts"],
+    };
+    const tmpParent = Deno.makeTempDirSync({ dir: `${Deno.cwd()}/benchmark-runs` });
+    const workspace = new FixtureWorkspace({
+      fixtureDir: `${FIXTURES_DIR}/${task.fixture}`,
+      runId: "scope-enforcement-workspace",
+      tmpParent,
+      task,
+    });
+    try {
+      await workspace.prepare();
+      await Deno.mkdir(`${workspace.root}/src`, { recursive: true });
+
+      // Case 1: Allowed write inside allowed_write_scope.
+      const allowedResult = await workspace.execShell("echo 'allowed content' > src/allowed.txt", 20_000);
+      if (allowedResult.code !== 0 || !await exists(`${workspace.root}/src/allowed.txt`)) {
+        throw new Error(`expected allowed write to succeed: ${allowedResult.stderr}`);
+      }
+
+      // Prepare a protected file inside the excluded path.
+      await Deno.mkdir(`${workspace.root}/src`, { recursive: true });
+      await Deno.writeTextFile(`${workspace.root}/src/protected.ts`, "ORIGINAL_PROTECTED_CONTENT");
+
+      // Case 2: Attempted write to excluded path (!src/protected.ts).
+      let caughtExcludedError = false;
+      try {
+        await workspace.execShell("echo 'MUTATED' > src/protected.ts", 20_000);
+      } catch (err) {
+        if (err instanceof Error && err.name === "WriteScopeViolationError") {
+          caughtExcludedError = true;
+        }
+      }
+      if (!caughtExcludedError) throw new Error("expected WriteScopeViolationError on excluded path write");
+      // Verify the excluded file was restored to its original content.
+      const protectedContentAfter = await Deno.readTextFile(`${workspace.root}/src/protected.ts`);
+      if (protectedContentAfter !== "ORIGINAL_PROTECTED_CONTENT") {
+        throw new Error(`expected protected file to be restored, got: ${protectedContentAfter}`);
+      }
+
+      // Case 3: Attempted creation of a file outside allowed_write_scope (e.g. root level unauthorized.txt).
+      let caughtOutsideError = false;
+      try {
+        await workspace.execShell("echo 'MUTATED' > unauthorized.txt", 20_000);
+      } catch (err) {
+        if (err instanceof Error && err.name === "WriteScopeViolationError") {
+          caughtOutsideError = true;
+        }
+      }
+      if (!caughtOutsideError) throw new Error("expected WriteScopeViolationError on outside path write");
+      // Verify the unauthorized file was deleted and not persisted.
+      if (await exists(`${workspace.root}/unauthorized.txt`)) {
+        throw new Error("unauthorized file was persisted despite write scope violation");
+      }
+    } finally {
+      await workspace.remove().catch(() => {});
+      await Deno.remove(tmpParent, { recursive: true }).catch(() => {});
+    }
+  },
+});
+
 async function exists(path: string): Promise<boolean> {
   try {
     await Deno.stat(path);
