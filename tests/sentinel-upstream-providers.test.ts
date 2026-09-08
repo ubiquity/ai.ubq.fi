@@ -978,11 +978,270 @@ Deno.test({
 });
 
 /**
+ * Historical source identities recorded by the MASTER-PLAN §6/§9.1
+ * before/after cells for this fixture. The original Surplus revision passed
+ * the raw upstream stream through unchanged (the unterminated suffix event
+ * delivered verbatim to the client); the fix normalizes the stream and
+ * terminates it at response.completed. The blob SHAs pin src/surplus.ts at
+ * each revision and are verified against the Git object store whenever the
+ * runtime grants read/run/write permissions.
+ */
+const HISTORICAL_UNDERMINATED_SHA = "0d795e28e42be63bbd7f0d4ce44d8ea0f6ab9d4a" as const;
+const HISTORICAL_FIXED_SHA = "7cac5b68d09efe2a053e8ac658288a15aeac9af8" as const;
+const HISTORICAL_UNDERMINATED_SURPLUS_BLOB = "5c6196f175c7cb7bc08658cc2e2d98093ce21d33" as const;
+const HISTORICAL_FIXED_SURPLUS_BLOB = "0ecff3477d46cbec28e0aad22259a5dfe7012c93" as const;
+/** SHA-256 (hex) of the recorded raw upstream bytes carried by the fixture. */
+const FIXTURE_RAW_UPSTREAM_SHA256 = "d81a61c2ede75351b9d9e51bb3157dbe51f4baec92c67f6ffcfa5a910b771bad" as const;
+/** SHA-256 (hex) of the repaired client stream produced by the current source. */
+const FIXTURE_REPAIRED_STREAM_SHA256 = "e4b23d2ea5338058f67a28fb6b02f526e38166e7c50715dd23bcc23333c0145a" as const;
+/** SHA-256 (hex) of the committed fixture file bytes. */
+const FIXTURE_FILE_SHA256 = "33938442d369c52213bdde02ea5e51b9848050400302f5e9dde4fcf6b84cacaf" as const;
+
+const sha256Hex = async (bytes: Uint8Array<ArrayBuffer>): Promise<string> =>
+  encodeHex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
+
+const isPermissionBlocked = (error: unknown): boolean =>
+  error instanceof Deno.errors.PermissionDenied ||
+  (error instanceof Error && error.name === "PermissionDenied") ||
+  (error instanceof Error && /Requires (read|run|write) access/.test(error.message));
+
+/**
+ * The primary stream check shared by every run of the framing fixture: the
+ * client stream must end on a blank-line terminator, every frame must be
+ * exactly one event+data pair, the repaired terminal event sequence must be
+ * observed, and the recorded pre-terminal delta must be forwarded exactly
+ * once. The framing assertion runs first so a regression to the original
+ * passthrough is reported for the intended reason (the unterminated suffix)
+ * rather than a later semantic mismatch.
+ */
+const assertClientStreamSemantics = (text: string): Array<{ event: string; value: Record<string, unknown> }> => {
+  assert.equal(text.endsWith("\n\n"), true, "every client frame must end on its blank-line terminator");
+  const frames = text.split("\n\n").filter((frame) => frame.length > 0);
+  const parseFrame = (frame: string): { event: string; value: Record<string, unknown> } => {
+    const lines = frame.split("\n");
+    assert.equal(lines.length, 2, `client frame must be exactly one event+data pair: ${JSON.stringify(frame)}`);
+    assert.equal(lines[0]!.startsWith("event: "), true);
+    assert.equal(lines[1]!.startsWith("data: "), true);
+    return {
+      event: lines[0]!.slice("event: ".length),
+      value: JSON.parse(lines[1]!.slice("data: ".length)) as Record<string, unknown>,
+    };
+  };
+  const events = frames.map(parseFrame);
+  assert.deepEqual(
+    events.map(({ event }) => event),
+    [
+      "response.created",
+      "response.output_text.delta",
+      "response.output_text.done",
+      "response.output_item.done",
+      "response.completed",
+    ],
+    "the client stream must terminate at response.completed with no post-terminal suffix event",
+  );
+  assert.equal(
+    events.filter(({ event }) => event === "response.output_text.delta").length,
+    1,
+    "exactly one pre-terminal text delta must be forwarded, never the unterminated suffix delta",
+  );
+  assert.equal((events[1]!.value as { delta?: unknown }).delta, "fixture text");
+  assert.equal(
+    (events[2]!.value as { text?: unknown }).text,
+    "fixture text",
+    "the synthesized output_text.done must carry the exact fixture text",
+  );
+  assert.equal(
+    (events[3]!.value.item as { type?: unknown }).type,
+    "message",
+    "exactly one output_item.done message must be forwarded",
+  );
+  assert.equal(
+    (events[4]!.value.response as { status?: unknown }).status,
+    "completed",
+    "response.completed must be the terminal client event",
+  );
+  return events;
+};
+
+/**
+ * Disposable child harness: imports the historical src/surplus.ts that sits
+ * next to it (never the current source) and replays the recorded upstream
+ * through the historical fetch path. Global fetch is replaced by a throwing
+ * stub and the child is started without net permission, so any live network
+ * use fails the child. The fetcher accepts only the exact historical
+ * Responses endpoint built from the historical module's own SURPLUS_BASE_URL
+ * constant, binding endpoint identity to the exercised revision.
+ */
+const HISTORICAL_SOURCE_HARNESS = [
+  'import { fetchSurplusResponses, SURPLUS_BASE_URL } from "./src/surplus.ts";',
+  "",
+  'const root = new URL(".", import.meta.url);',
+  'const upstreamRaw = await Deno.readFile(new URL("./upstream.raw", root));',
+  'const request = JSON.parse(await Deno.readTextFile(new URL("./request.json", root))) as Record<string, unknown>;',
+  'const expectedEndpoint = SURPLUS_BASE_URL + "/v1/responses";',
+  "",
+  "let liveFetchCalls = 0;",
+  "globalThis.fetch = ((..._args: unknown[]) => {",
+  "  liveFetchCalls += 1;",
+  '  throw new Error("live network must not be used in the historical source exercise");',
+  "}) as typeof fetch;",
+  "",
+  "const result = await fetchSurplusResponses(request, {",
+  '  apiKey: "test-only-fixture-key",',
+  "  fetcher: (input: RequestInfo | URL, _init?: RequestInit) => {",
+  "    const url = input instanceof Request ? input.url : new URL(String(input)).href;",
+  '    if (url !== expectedEndpoint) return Promise.reject(new TypeError("unexpected endpoint " + url));',
+  "    return Promise.resolve(",
+  '      new Response(upstreamRaw, { status: 200, headers: { "Content-Type": "text/event-stream" } }),',
+  "    );",
+  "  },",
+  "});",
+  'if (liveFetchCalls !== 0) throw new Error("live network fetch was invoked");',
+  "const clientText = await result.response.text();",
+  "await Deno.stdout.write(new TextEncoder().encode(clientText));",
+  "",
+].join("\n");
+
+/**
+ * Reproduces both recorded historical revisions from disposable exact source
+ * archives (git archive of the exact src tree at each SHA) in a temporary
+ * directory under the checkout, runs a child Deno process that imports the
+ * historical src/surplus.ts and replays the recorded upstream through the
+ * historical fetch path, and returns the exact client-visible stream bytes
+ * each revision produced together with the verified source identities.
+ *
+ * The ordinary sentinel:test-local permission set grants neither subprocess
+ * nor write access; in that environment this returns null and the caller
+ * keeps the fixture-level before/after cells only, without claiming
+ * historical-source proof. Every other failure is fail-closed: an exact
+ * error naming the revision, never a causal claim from unavailable sources.
+ */
+const exerciseHistoricalFramingSources = async (options: {
+  requestBody: string;
+  rawUpstream: Uint8Array<ArrayBuffer>;
+}): Promise<
+  null | {
+    originalClientText: string;
+    fixedClientText: string;
+    fixtureFileSha256: string;
+    originalBlobSha: string;
+    fixedBlobSha: string;
+    orderingAncestor: boolean;
+  }
+> => {
+  let fixtureBytes: Uint8Array<ArrayBuffer>;
+  try {
+    fixtureBytes = await Deno.readFile(new URL("./fixtures/sentinel-historical-framing.json", import.meta.url));
+  } catch (error) {
+    if (isPermissionBlocked(error)) return null;
+    throw new Error(`historical framing regression cannot read the committed fixture: ${String(error)}`, {
+      cause: error,
+    });
+  }
+
+  const readBlob = async (sha: string): Promise<string> => {
+    const result = await new Deno.Command("git", {
+      args: ["rev-parse", `${sha}:src/surplus.ts`],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    if (result.code !== 0) {
+      throw new Error(
+        `historical framing regression cannot prove the causal boundary: Git object ${sha}:src/surplus.ts is not available in this checkout (${
+          new TextDecoder().decode(result.stderr).trim()
+        })`,
+      );
+    }
+    return new TextDecoder().decode(result.stdout).trim();
+  };
+  const originalBlobSha = await readBlob(HISTORICAL_UNDERMINATED_SHA);
+  const fixedBlobSha = await readBlob(HISTORICAL_FIXED_SHA);
+  const ordering = await new Deno.Command("git", {
+    args: ["merge-base", "--is-ancestor", HISTORICAL_UNDERMINATED_SHA, HISTORICAL_FIXED_SHA],
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  if (ordering.code !== 0) {
+    throw new Error(
+      `historical framing regression cannot prove the causal boundary: ${HISTORICAL_UNDERMINATED_SHA} is not an ancestor of ${HISTORICAL_FIXED_SHA} in this checkout (${
+        new TextDecoder().decode(ordering.stderr).trim()
+      })`,
+    );
+  }
+
+  const tempDir = await Deno.makeTempDir({ dir: Deno.cwd(), prefix: "m06-historical-framing-" });
+  try {
+    const runHistorical = async (sha: string): Promise<string> => {
+      const archiveDir = `${tempDir}/${sha.slice(0, 8)}`;
+      const treeDir = `${archiveDir}/tree`;
+      await Deno.mkdir(treeDir, { recursive: true });
+      const archive = await new Deno.Command("git", {
+        args: ["archive", "--format=tar", sha, "src"],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      if (archive.code !== 0) {
+        throw new Error(
+          `historical framing regression cannot prove the ${sha} cell: git archive failed (${
+            new TextDecoder().decode(archive.stderr).trim()
+          })`,
+        );
+      }
+      const archivePath = `${archiveDir}/src.tar`;
+      await Deno.writeFile(archivePath, archive.stdout);
+      const extracted = await new Deno.Command("tar", {
+        args: ["-xf", archivePath, "-C", treeDir],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      if (extracted.code !== 0) {
+        throw new Error(
+          `historical framing regression cannot prove the ${sha} cell: source archive extraction failed (${
+            new TextDecoder().decode(extracted.stderr).trim()
+          })`,
+        );
+      }
+      await Deno.writeTextFile(`${treeDir}/harness.ts`, HISTORICAL_SOURCE_HARNESS);
+      await Deno.writeTextFile(`${treeDir}/request.json`, options.requestBody);
+      await Deno.writeFile(`${treeDir}/upstream.raw`, options.rawUpstream);
+      const child = await new Deno.Command(Deno.execPath(), {
+        args: ["run", "--no-config", "--no-prompt", "--allow-read=.", "harness.ts"],
+        cwd: treeDir,
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      if (child.code !== 0) {
+        throw new Error(
+          `historical framing regression cannot prove the ${sha} cell: harness exited ${child.code} (${
+            new TextDecoder().decode(child.stderr).trim()
+          })`,
+        );
+      }
+      return new TextDecoder().decode(child.stdout);
+    };
+    const originalClientText = await runHistorical(HISTORICAL_UNDERMINATED_SHA);
+    const fixedClientText = await runHistorical(HISTORICAL_FIXED_SHA);
+    return {
+      originalClientText,
+      fixedClientText,
+      fixtureFileSha256: await sha256Hex(fixtureBytes),
+      originalBlobSha,
+      fixedBlobSha,
+      orderingAncestor: true,
+    };
+  } finally {
+    await Deno.remove(tempDir, { recursive: true }).catch(() => {});
+  }
+};
+
+/**
  * Provenance: this fixture was generated by the positive sanitizer from a
  * local authenticated synthetic capture. Historical source
  * 0d795e28e42be63bbd7f0d4ce44d8ea0f6ab9d4a fails and historical
  * 7cac5b68d09efe2a053e8ac658288a15aeac9af8 passes the primary four-cell
- * check. It is not a production incident and is not a causal attestation.
+ * check. It is not a production incident, but the causal before/after
+ * boundary is exercised below from the exact historical sources whenever the
+ * runtime can run Git and child processes.
  */
 Deno.test("historical framing fixture replays through the real Surplus fetch without the unterminated suffix", async () => {
   const framingFixture = sentinelHistoricalFraming as unknown as Readonly<{
@@ -1050,54 +1309,84 @@ Deno.test("historical framing fixture replays through the real Surplus fetch wit
   assert.equal(result.response.status, 200);
   assert.equal(globalThis.fetch, originalFetch, "the regression must never fall through to a real network");
   const normalized = await result.response.text();
-  assert.equal(normalized.endsWith("\n\n"), true, "every client frame must end on its blank-line terminator");
-  const frames = normalized.split("\n\n").filter((frame) => frame.length > 0);
-  const parseFrame = (frame: string): { event: string; value: Record<string, unknown> } => {
-    const lines = frame.split("\n");
-    assert.equal(lines.length, 2, `client frame must be exactly one event+data pair: ${JSON.stringify(frame)}`);
-    assert.equal(lines[0]!.startsWith("event: "), true);
-    assert.equal(lines[1]!.startsWith("data: "), true);
-    return {
-      event: lines[0]!.slice("event: ".length),
-      value: JSON.parse(lines[1]!.slice("data: ".length)) as Record<string, unknown>,
-    };
-  };
-  const events = frames.map(parseFrame);
-  assert.deepEqual(
-    events.map(({ event }) => event),
-    [
-      "response.created",
-      "response.output_text.delta",
-      "response.output_text.done",
-      "response.output_item.done",
-      "response.completed",
-    ],
-    "the client stream must terminate at response.completed with no post-terminal suffix event",
-  );
-  assert.equal(
-    events.filter(({ event }) => event === "response.output_text.delta").length,
-    1,
-    "exactly one pre-terminal text delta must be forwarded, never the unterminated suffix delta",
-  );
-  assert.equal((events[1]!.value as { delta?: unknown }).delta, "fixture text");
-  assert.equal(
-    (events[2]!.value as { text?: unknown }).text,
-    "fixture text",
-    "the synthesized output_text.done must carry the exact fixture text",
-  );
-  assert.equal(
-    (events[3]!.value.item as { type?: unknown }).type,
-    "message",
-    "exactly one output_item.done message must be forwarded",
-  );
-  assert.equal(
-    (events[4]!.value.response as { status?: unknown }).status,
-    "completed",
-    "response.completed must be the terminal client event",
-  );
+  assertClientStreamSemantics(normalized);
   // The responses parser cancels the raw source at the terminal event, so the
   // recorded transport never reaches its stored EOF: the honest attempt
   // outcome is dispatched-but-not-completed. No assertComplete claim and no
   // invented EOF here.
   assert.deepEqual(replay.snapshot(), { attemptsDispatched: 1, attemptsCompleted: 0, failed: false });
+
+  // Fixture-level causal cells, always verified without any subprocess: the
+  // recorded raw upstream bytes keep their exact committed identity, they
+  // fail the primary check specifically for the unterminated framing, and
+  // they never contain the repaired done events. The repaired client stream
+  // digest is the identity this permanent regression is pinned to.
+  assert.equal(
+    await sha256Hex(new TextEncoder().encode(rawText)),
+    FIXTURE_RAW_UPSTREAM_SHA256,
+    "the recorded raw upstream bytes must keep their exact committed identity",
+  );
+  assert.equal(
+    await sha256Hex(new TextEncoder().encode(normalized)),
+    FIXTURE_REPAIRED_STREAM_SHA256,
+    "the repaired client stream must keep its exact committed identity",
+  );
+  assert.throws(
+    () => assertClientStreamSemantics(rawText),
+    (error: unknown) => error instanceof Error && error.message.includes("blank-line terminator"),
+    "the recorded raw upstream must fail the primary check specifically for the unterminated framing",
+  );
+  assert.equal(
+    rawText.includes("event: response.output_text.done"),
+    false,
+    "the recorded raw upstream never synthesizes the repaired done events",
+  );
+
+  // Causal before/after boundary: exercise the exact recorded historical
+  // sources from disposable exact source archives. The original revision
+  // must produce the verbatim unterminated stream (failing the primary
+  // check for the intended reason), and the fixed revision must reproduce
+  // today's repaired client stream byte-for-byte.
+  const historical = await exerciseHistoricalFramingSources({
+    requestBody: framingFixture.request.body,
+    rawUpstream: new TextEncoder().encode(rawText),
+  });
+  if (historical !== null) {
+    assert.equal(
+      historical.fixtureFileSha256,
+      FIXTURE_FILE_SHA256,
+      "the committed fixture file must keep its exact byte identity",
+    );
+    assert.equal(
+      historical.originalBlobSha,
+      HISTORICAL_UNDERMINATED_SURPLUS_BLOB,
+      "src/surplus.ts at the original revision must match the recorded source blob",
+    );
+    assert.equal(
+      historical.fixedBlobSha,
+      HISTORICAL_FIXED_SURPLUS_BLOB,
+      "src/surplus.ts at the fixed revision must match the recorded source blob",
+    );
+    assert.equal(
+      historical.orderingAncestor,
+      true,
+      "the original revision must be an ancestor of the fixed revision",
+    );
+    assert.equal(
+      historical.originalClientText,
+      rawText,
+      "the original revision must deliver the recorded raw upstream bytes verbatim",
+    );
+    assert.throws(
+      () => assertClientStreamSemantics(historical.originalClientText),
+      (error: unknown) => error instanceof Error && error.message.includes("blank-line terminator"),
+      "the original revision must fail the primary check for the unterminated framing",
+    );
+    assert.equal(
+      historical.fixedClientText,
+      normalized,
+      "the fixed revision must reproduce the current repaired client stream byte-for-byte",
+    );
+    assertClientStreamSemantics(historical.fixedClientText);
+  }
 });
