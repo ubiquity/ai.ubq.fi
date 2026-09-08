@@ -43,6 +43,78 @@ Deno.test({
   },
 });
 
+Deno.test({
+  name: "fixture: shell commands cannot read host files outside the disposable workspace",
+  ignore: Deno.build.os !== "darwin" && Deno.build.os !== "linux",
+  async fn() {
+    const task = loadTasks(TASKS_DIR).find((candidate) => candidate.id === "nav-001")!;
+    const tmpParent = Deno.makeTempDirSync({ dir: `${Deno.cwd()}/benchmark-runs` });
+    const outside = Deno.makeTempDirSync({ dir: `${Deno.cwd()}/benchmark-runs` });
+    const secretFile = `${outside}/host-secret.txt`;
+    Deno.writeTextFileSync(secretFile, "SUPER_SECRET_HOST_TOKEN_789");
+
+    const workspace = new FixtureWorkspace({
+      fixtureDir: `${FIXTURES_DIR}/${task.fixture}`,
+      runId: "read-isolation-workspace",
+      tmpParent,
+      task,
+    });
+    try {
+      await workspace.prepare();
+      // Attempt 1: Direct absolute read of host file outside workspace.
+      const directRead = await workspace.execShell(`cat ${secretFile}`, 20_000);
+      if (directRead.code === 0 && directRead.stdout.includes("SUPER_SECRET_HOST_TOKEN_789")) {
+        throw new Error("sandbox allowed direct read of a host file outside the workspace");
+      }
+
+      // Attempt 2: Read through a symlink to outside.
+      await new Deno.Command("sh", {
+        args: ["-c", 'ln -s "$1" "$2"', "symlink-test", secretFile, `${workspace.root}/secret-link`],
+      }).output();
+      const symlinkRead = await workspace.execShell("cat secret-link", 20_000);
+      if (symlinkRead.code === 0 && symlinkRead.stdout.includes("SUPER_SECRET_HOST_TOKEN_789")) {
+        throw new Error("sandbox allowed symlinked read of a host file outside the workspace");
+      }
+    } finally {
+      await workspace.remove().catch(() => {});
+      await Deno.remove(tmpParent, { recursive: true }).catch(() => {});
+      await Deno.remove(outside, { recursive: true }).catch(() => {});
+    }
+  },
+});
+
+Deno.test({
+  name: "fixture: shell commands cannot read inherited environment variables or API keys",
+  ignore: Deno.build.os !== "darwin" && Deno.build.os !== "linux",
+  async fn() {
+    const task = loadTasks(TASKS_DIR).find((candidate) => candidate.id === "nav-001")!;
+    const tmpParent = Deno.makeTempDirSync({ dir: `${Deno.cwd()}/benchmark-runs` });
+    const secretKey = "MOCK_SECRET_API_KEY_ABCD_1234";
+    Deno.env.set("BENCHMARK_MOCK_API_KEY", secretKey);
+
+    const workspace = new FixtureWorkspace({
+      fixtureDir: `${FIXTURES_DIR}/${task.fixture}`,
+      runId: "env-isolation-workspace",
+      tmpParent,
+      task,
+    });
+    try {
+      await workspace.prepare();
+      const readEnv = await workspace.execShell('echo "KEY=$BENCHMARK_MOCK_API_KEY"', 20_000);
+      if (readEnv.stdout.includes(secretKey)) {
+        throw new Error("sandbox exposed inherited API key environment variable to shell");
+      }
+      if (readEnv.stdout.trim() !== "KEY=") {
+        throw new Error(`expected empty env var, got: ${readEnv.stdout}`);
+      }
+    } finally {
+      Deno.env.delete("BENCHMARK_MOCK_API_KEY");
+      await workspace.remove().catch(() => {});
+      await Deno.remove(tmpParent, { recursive: true }).catch(() => {});
+    }
+  },
+});
+
 async function exists(path: string): Promise<boolean> {
   try {
     await Deno.stat(path);

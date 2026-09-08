@@ -330,8 +330,15 @@ export class FixtureWorkspace {
           "-c",
           [
             'sandbox="$(command -v bwrap)" || { echo "shell execution sandbox requires bwrap" >&2; exit 126; }',
-            'export HOME="$1" GIT_CONFIG_GLOBAL=/dev/null',
-            'exec "$sandbox" --die-with-parent --unshare-all --new-session --ro-bind / / --dev /dev --bind "$1" "$1" --chdir "$1" sh -c "$2"',
+            'root="$1"; cmd="$2"',
+            'set -- --die-with-parent --unshare-all --new-session',
+            'for d in /usr /etc; do [ -d "$d" ] && set -- "$@" --ro-bind "$d" "$d"; done',
+            'for l in bin lib lib64; do',
+            '  if [ -L "/$l" ]; then set -- "$@" --symlink "usr/$l" "/$l"',
+            '  elif [ -d "/$l" ]; then set -- "$@" --ro-bind "/$l" "/$l"; fi',
+            'done',
+            'set -- "$@" --dev /dev --proc /proc --tmpfs /tmp --bind "$root" "$root" --chdir "$root" --clearenv --setenv PATH "/usr/bin:/bin:/usr/local/bin" --setenv HOME "$root" --setenv GIT_CONFIG_GLOBAL /dev/null --setenv USER "benchmark"',
+            'exec "$sandbox" "$@" sh -c "$cmd"',
           ].join("\n"),
           "fixture-sandbox",
           root,
@@ -353,26 +360,38 @@ export class FixtureWorkspace {
     // use absolute paths, `..`, or symlinks to mutate the host checkout. Seatbelt
     // resolves filesystem objects before applying the subpath rule, so all
     // writes remain inside this disposable fixture even through a symlink.
+    const root = Deno.realPathSync(this.root);
     const profile = [
       "(version 1)",
       "(deny default)",
       '(import "system.sb")',
-      "(allow file-read*)",
-      "(allow process-exec)",
-      "(allow process-fork)",
+      '(allow process-exec)',
+      '(allow process-fork)',
+      '(allow file-read* (subpath "/System"))',
+      '(allow file-read* (subpath "/usr"))',
+      '(allow file-read* (subpath "/bin"))',
+      '(allow file-read* (subpath "/sbin"))',
+      '(allow file-read* (subpath "/Library"))',
+      '(allow file-read* (subpath "/dev"))',
+      '(allow file-read* (subpath "/private/etc"))',
+      '(allow file-read* (subpath "/etc"))',
+      '(allow file-read* (subpath "/private/tmp"))',
+      '(allow file-read* (subpath "/tmp"))',
+      '(allow file-read* (subpath "/private/var"))',
+      `(allow file-read* (subpath ${sandboxString(root)}))`,
       '(allow file-write* (literal "/dev/null"))',
-      `(allow file-write* (subpath ${sandboxString(Deno.realPathSync(this.root))}))`,
+      `(allow file-write* (subpath ${sandboxString(root)}))`,
       "(deny network*)",
     ].join("\n");
     return await this.exec(
       [
         "sh",
         "-c",
-        'export HOME="$3" GIT_CONFIG_GLOBAL=/dev/null; exec /usr/bin/sandbox-exec -p "$1" sh -c "$2"',
+        'exec env -i PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin" HOME="$3" GIT_CONFIG_GLOBAL=/dev/null USER=benchmark /usr/bin/sandbox-exec -p "$1" sh -c "$2"',
         "fixture-sandbox",
         profile,
         command,
-        Deno.realPathSync(this.root),
+        root,
       ],
       { timeoutMs, capture: true, signal },
     );
