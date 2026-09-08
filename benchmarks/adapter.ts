@@ -494,7 +494,11 @@ export function createCanonicalAdapter(options: CanonicalAdapterOptions = {}): B
           `Verify your work before answering; the declared verification command is ${
             JSON.stringify(ctx.task.verify?.command ?? null)
           }.`,
-        transport: options.transport,
+        transport: (body, requestOptions) =>
+          options.transport!(body, {
+            ...requestOptions,
+            signal: ctx.signal,
+          }),
         backends: referenceBackends(ctx.workspace),
         tools,
         reasoningEffort: options.reasoningEffort ?? "low",

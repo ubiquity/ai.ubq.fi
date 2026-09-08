@@ -417,7 +417,14 @@ export const normalizeHarmonyChatCompletion = (
   };
 };
 
-export type HarmonyTransport = (body: Record<string, unknown>) => Promise<Response>;
+export type HarmonyTransportRequestOptions = Readonly<{
+  signal?: AbortSignal;
+}>;
+
+export type HarmonyTransport = (
+  body: Record<string, unknown>,
+  options?: HarmonyTransportRequestOptions,
+) => Promise<Response>;
 
 export type HarmonyTransportOptions = Readonly<{
   apiKey?: string | null;
@@ -429,10 +436,11 @@ export type HarmonyTransportOptions = Readonly<{
  * handling, deadline and error normalization (`src/cerebras.ts`).
  */
 export const createCerebrasTransport = (options: HarmonyTransportOptions = {}): HarmonyTransport => {
-  return (body) =>
+  return (body, requestOptions) =>
     fetchCerebrasChatCompletions(body, {
       ...(options.apiKey === undefined ? {} : { apiKey: options.apiKey }),
       ...(options.fetcher ? { fetcher: options.fetcher } : {}),
+      ...(requestOptions?.signal ? { signal: requestOptions.signal } : {}),
     });
 };
 
