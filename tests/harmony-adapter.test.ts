@@ -363,3 +363,31 @@ Deno.test("consecutive generic turns keep the conversation consistent", async ()
   if (!second.ok) throw new Error("expected ok");
   assert.equal(second.normalized.analysis.length, 1);
 });
+
+Deno.test("createCerebrasTransport passes and combines AbortSignal", async () => {
+  let observedSignal: AbortSignal | undefined;
+  const transport = createCerebrasTransport({
+    apiKey: "test-key",
+    fetcher: (_url, init) => {
+      observedSignal = init?.signal as AbortSignal | undefined;
+      return Promise.resolve(
+        okResponse(
+          chatCompletion({
+            choices: [{
+              index: 0,
+              message: { role: "assistant", content: "ok" },
+              finish_reason: "stop",
+            }],
+          }),
+        ),
+      );
+    },
+  });
+
+  const controller = new AbortController();
+  await transport({}, { signal: controller.signal });
+  assert.ok(observedSignal !== undefined);
+  assert.equal(observedSignal.aborted, false);
+  controller.abort();
+  assert.equal(observedSignal.aborted, true);
+});

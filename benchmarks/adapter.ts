@@ -485,6 +485,12 @@ export function createCanonicalAdapter(options: CanonicalAdapterOptions = {}): B
       }
       const tools = surface.definitions;
       const requests = new Map<number, ModelRequestEvent>();
+      const injectedTransport = options.transport;
+      const transport: HarmonyTransport = (body, callOptions) => {
+        const signals = [ctx.signal, callOptions?.signal].filter((s): s is AbortSignal => s !== undefined);
+        const signal = signals.length === 0 ? undefined : signals.length === 1 ? signals[0] : AbortSignal.any(signals);
+        return injectedTransport(body, signal ? { signal } : undefined);
+      };
       const outcome = await runReliabilityHarness({
         systemPrompt: renderCanonicalPolicy({
           tools: tools.map((tool) => tool.name),
@@ -494,7 +500,7 @@ export function createCanonicalAdapter(options: CanonicalAdapterOptions = {}): B
           `Verify your work before answering; the declared verification command is ${
             JSON.stringify(ctx.task.verify?.command ?? null)
           }.`,
-        transport: options.transport,
+        transport,
         backends: referenceBackends(ctx.workspace),
         tools,
         reasoningEffort: options.reasoningEffort ?? "low",

@@ -84,6 +84,9 @@ export function classifyReliability(input: ClassificationInput): ReliabilityClas
     if (input.abortedReason === "turn_limit") {
       return { failure_class: "stalled", detail: "max turns reached without completion" };
     }
+    if (input.abortedReason === "signal") {
+      return { failure_class: "stalled", detail: "run cancelled or timed out via signal" };
+    }
   }
   if (input.loopStreak >= 3 || state.semanticLoopStreak >= 3) {
     return { failure_class: "semantic_loop", detail: "semantic loop detected while finalizing" };

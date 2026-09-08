@@ -343,3 +343,30 @@ Deno.test("harness: policy preambles are deterministic and reference the surface
   assert.match(a, /filesystem\.read/);
   assert.match(a, /Context budget tier: large/);
 });
+
+Deno.test("harness: stalled injected transport aborts when run signal triggers", async () => {
+  const controller = new AbortController();
+  const stalledTransport = (_body: unknown, init?: { signal?: AbortSignal }): Promise<Response> => {
+    return new Promise<Response>((_resolve, reject) => {
+      if (init?.signal?.aborted) {
+        reject(new DOMException("The signal has been aborted", "AbortError"));
+        return;
+      }
+      init?.signal?.addEventListener("abort", () => {
+        reject(new DOMException("The signal has been aborted", "AbortError"));
+      });
+    });
+  };
+
+  const harnessPromise = runReliabilityHarness(baseOptions([], {
+    transport: stalledTransport,
+    signal: controller.signal,
+  }));
+
+  controller.abort();
+  const outcome = await harnessPromise;
+
+  assert.equal(outcome.phase, "aborted");
+  assert.equal(outcome.abortedReason, "signal");
+  assert.equal(outcome.classification.failure_class, "stalled");
+});
