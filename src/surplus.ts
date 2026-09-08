@@ -1,6 +1,7 @@
 import { STREAM_FIRST_EVENT_DEADLINE_MS } from "./inference_deadline.ts";
 import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
 import { readResponsesStream } from "./responses_stream.ts";
+import type { SentinelUpstreamRecorder } from "./sentinel_upstream_capture.ts";
 
 export const SURPLUS_BASE_URL = "https://api.surplusintelligence.ai";
 export const SURPLUS_API_KEY_ENV = "SURPLUS_API_KEY";
@@ -66,6 +67,8 @@ export type SurplusAuthenticatedFetchOptions = Readonly<{
   supportsParallelToolCalls?: boolean;
   beforeDispatch?: () => Promise<ApiKeyProviderDispatch | void>;
   onDispatch?: () => void;
+  /** Request-owned passive recorder; best effort, never required. */
+  sentinelUpstreamRecorder?: SentinelUpstreamRecorder;
 }>;
 
 export type SurplusResponsesResult = Readonly<{
@@ -511,6 +514,7 @@ export const fetchSurplusResponses = async (
   );
   const signal = options.signal ? AbortSignal.any([options.signal, headersDeadline.signal]) : headersDeadline.signal;
   let response: Response;
+  let upstreamAttempt: ReturnType<SentinelUpstreamRecorder["startAttempt"]> | null = null;
   try {
     const dispatch = options.beforeDispatch ? await options.beforeDispatch() : undefined;
     if (signal.aborted) {
@@ -519,6 +523,7 @@ export const fetchSurplusResponses = async (
     }
     dispatch?.markTransportStarted();
     options.onDispatch?.();
+    upstreamAttempt = options.sentinelUpstreamRecorder?.startAttempt("surplus") ?? null;
     response = await awaitWithAbort(
       (options.fetcher ?? fetch)(SURPLUS_RESPONSES_URL, {
         method: "POST",
@@ -530,6 +535,7 @@ export const fetchSurplusResponses = async (
       signal,
     );
   } catch (error) {
+    upstreamAttempt?.recordFetchError();
     if (error instanceof ApiKeyQuotaDispatchError) throw error;
     if (options.signal?.aborted) throw options.signal.reason ?? error;
     if (headersDeadline.signal.aborted) throw headersDeadline.signal.reason ?? error;
@@ -543,5 +549,8 @@ export const fetchSurplusResponses = async (
     clearTimeout(headersTimer);
   }
 
-  return { response: normalizeSurplusResponsesStream(response), request_id: responseRequestId(response) };
+  return {
+    response: normalizeSurplusResponsesStream(upstreamAttempt ? upstreamAttempt.wrap(response) : response),
+    request_id: responseRequestId(response),
+  };
 };

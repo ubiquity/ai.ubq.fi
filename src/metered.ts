@@ -1,5 +1,6 @@
 import { STREAM_FIRST_EVENT_DEADLINE_MS } from "./inference_deadline.ts";
 import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
+import type { SentinelUpstreamRecorder } from "./sentinel_upstream_capture.ts";
 
 export const METERED_BASE_URL = "https://api.openlux.ai";
 
@@ -230,6 +231,8 @@ export type MeteredAuthenticatedFetchOptions = Readonly<{
   signal?: AbortSignal;
   beforeDispatch?: () => Promise<ApiKeyProviderDispatch | void>;
   onDispatch?: () => void;
+  /** Request-owned passive recorder; best effort, never required. */
+  sentinelUpstreamRecorder?: SentinelUpstreamRecorder;
 }>;
 
 export type MeteredTokenLogFetchOptions =
@@ -574,6 +577,7 @@ export const fetchMeteredResponses = async (
   headers.set("Content-Type", "application/json");
 
   let response: Response;
+  let upstreamAttempt: ReturnType<SentinelUpstreamRecorder["startAttempt"]> | null = null;
   const headersDeadline = new AbortController();
   const headersTimer = setTimeout(
     () => headersDeadline.abort(new DOMException("Metered response headers timed out.", "TimeoutError")),
@@ -594,6 +598,7 @@ export const fetchMeteredResponses = async (
     }
     dispatch?.markTransportStarted();
     options.onDispatch?.();
+    upstreamAttempt = options.sentinelUpstreamRecorder?.startAttempt("metered") ?? null;
     response = await (options.fetcher ?? fetch)(METERED_RESPONSES_URL, {
       method: "POST",
       headers,
@@ -602,6 +607,7 @@ export const fetchMeteredResponses = async (
       signal,
     });
   } catch (error) {
+    upstreamAttempt?.recordFetchError();
     if (error instanceof ApiKeyQuotaDispatchError) throw error;
     if (options.signal?.aborted) throw options.signal.reason ?? error;
     if (headersDeadline.signal.aborted) throw headersDeadline.signal.reason ?? error;
@@ -618,7 +624,7 @@ export const fetchMeteredResponses = async (
   }
 
   return {
-    response,
+    response: upstreamAttempt ? upstreamAttempt.wrap(response) : response,
     request_id: nonEmptyString(response.headers.get("X-Api-Request-Id")) ??
       nonEmptyString(response.headers.get("X-Oneapi-Request-Id")) ??
       nonEmptyString(response.headers.get("X-Request-Id")),

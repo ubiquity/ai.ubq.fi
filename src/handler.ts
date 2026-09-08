@@ -86,6 +86,7 @@ import {
   captureAcceptedSentinelReplayInput,
   createSentinelSseInspector,
   discardSentinelReplayCaptureCandidate,
+  disposeSentinelUpstreamRecorder,
   inspectSentinelBufferedResponseBody,
   materializeSentinelReplayInput,
   persistSentinelReplayFromEnvironment,
@@ -93,8 +94,10 @@ import {
   type SentinelClientBodyObservation,
   type SentinelFailureObservation,
   shouldPersistSentinelReplay,
+  snapshotSentinelReplayInput,
   zeroSentinelReplayInput,
 } from "./sentinel_replay_capture.ts";
+import { createSentinelUpstreamRecorder } from "./sentinel_upstream_capture.ts";
 import { handleAdminSentinelReplayCaptures } from "./sentinel_replay_admin.ts";
 import { handleAdminSentinelIncidents } from "./sentinel_incident_admin.ts";
 import type { recordSentinelProviderDegradationFromEnvironment } from "./sentinel_incident_outbox.ts";
@@ -455,9 +458,12 @@ export const withTerminalRequestLog = (
   const persistReplayAtApplicationTerminal = (streamReadFailure = false): Promise<void> => {
     if (replayFinalization) return replayFinalization;
     const originalReplayInput = input.sentinelReplayInput;
-    const backgroundReplayInput = originalReplayInput
-      ? { ...originalReplayInput, body: new Uint8Array(originalReplayInput.body) }
-      : null;
+    // One snapshot copies the body and seals the request-owned upstream
+    // recorder together, before the original is zeroed or any await. The
+    // recorder is disposed inside the snapshot: zeroing the original can
+    // never erase captured upstream evidence, and HMAC/encryption use the
+    // same immutable trace.
+    const backgroundReplayInput = originalReplayInput ? snapshotSentinelReplayInput(originalReplayInput) : null;
     // The background task owns the independent snapshot. Release the
     // request-owned bytes before any inspection or persistence await so a
     // stalled clone, crypto operation, or KV write cannot retain both copies.
@@ -663,8 +669,12 @@ export const withTerminalRequestLog = (
         clientBodyObservation = finishSseInspection("read_error");
         const downstreamAborted = downstreamCancelled || input.deliverySignal?.aborted === true;
         await finalizeFromTelemetry(downstreamAborted ? "downstream_cancelled" : "stream_read_error");
-        if (downstreamAborted) zeroSentinelReplayInput(input.sentinelReplayInput);
-        else await persistReplayAtApplicationTerminal(true);
+        if (downstreamAborted) {
+          zeroSentinelReplayInput(input.sentinelReplayInput);
+          disposeSentinelUpstreamRecorder(input.sentinelReplayInput);
+        } else {
+          await persistReplayAtApplicationTerminal(true);
+        }
         if (!deliveryOutcome) await log(undefined, "interrupted", !downstreamAborted, true);
         try {
           controller.error(error);
@@ -680,6 +690,7 @@ export const withTerminalRequestLog = (
         if (downstreamAborted) {
           await finalizeFromTelemetry("downstream_cancelled");
           zeroSentinelReplayInput(input.sentinelReplayInput);
+          disposeSentinelUpstreamRecorder(input.sentinelReplayInput);
           try {
             controller.close();
           } catch {
@@ -720,6 +731,7 @@ export const withTerminalRequestLog = (
         void reader.cancel().catch(() => {});
         void finalizeFromTelemetry("downstream_enqueue_failed");
         zeroSentinelReplayInput(input.sentinelReplayInput);
+        disposeSentinelUpstreamRecorder(input.sentinelReplayInput);
         if (!deliveryOutcome) await log(undefined, "interrupted", false, true);
         settleBody?.("interrupted");
       }
@@ -731,6 +743,7 @@ export const withTerminalRequestLog = (
       void reader.cancel(reason).catch(() => {});
       void finalizeFromTelemetry("downstream_cancelled");
       zeroSentinelReplayInput(input.sentinelReplayInput);
+      disposeSentinelUpstreamRecorder(input.sentinelReplayInput);
       if (!deliveryOutcome) void log(undefined, "interrupted", false, true);
       settleBody?.("interrupted");
     },
@@ -1179,6 +1192,10 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     }
     kernelReservation = admission.reservation;
   }
+  // One request-owned passive upstream recorder for accepted terminal
+  // inference requests. It is created only after quota admission, is never
+  // global, and is sealed/disposed at the application-terminal handoff.
+  const sentinelUpstreamRecorder = terminalRoute ? createSentinelUpstreamRecorder() : null;
   const usageContext = {
     keyId: usageKeyId,
     kernelRepo,
@@ -1192,6 +1209,7 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
       ? AbortSignal.any([delivery?.downstreamSignal ?? req.signal, kernelReservation.signal])
       : delivery?.downstreamSignal,
     beforeProviderDispatch: usageReservation?.beforeProviderDispatch,
+    ...(sentinelUpstreamRecorder ? { sentinelUpstreamRecorder } : {}),
   };
   if (terminalRoute) {
     console.info(
@@ -1208,7 +1226,11 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
   const takeSentinelReplayInput = (): AcceptedSentinelReplayInput | null => {
     const materialized = materializeSentinelReplayInput(sentinelReplayCandidate);
     discardSentinelReplayCaptureCandidate(sentinelReplayCandidate);
-    return materialized;
+    if (!materialized) {
+      sentinelUpstreamRecorder?.dispose();
+      return null;
+    }
+    return sentinelUpstreamRecorder ? { ...materialized, upstreamRecorder: sentinelUpstreamRecorder } : materialized;
   };
   const settleKernelQuota = async (
     outcome: "completed" | "incomplete",
@@ -1251,6 +1273,7 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
       });
     } catch (error) {
       zeroSentinelReplayInput(sentinelReplayInput);
+      disposeSentinelUpstreamRecorder(sentinelReplayInput);
       await bestEffortSettleKernelQuota("incomplete", "terminal_wrapper_error");
       throw error;
     }
@@ -1303,13 +1326,18 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
           synthetic_terminal_type: null,
           provider_route: "gateway",
         };
+        // Snapshot body and upstream recorder together before persistence:
+        // the recorder is sealed and disposed here, and the same immutable
+        // trace feeds HMAC and encryption.
+        const replaySnapshot = snapshotSentinelReplayInput(sentinelReplayInput);
         try {
-          await persistSentinelReplayFromEnvironment(sentinelReplayInput, observation);
+          await persistSentinelReplayFromEnvironment(replaySnapshot, observation);
         } catch {
           // Replay persistence is best effort and cannot replace the original
           // gateway exception or expose its request body in logs.
         } finally {
           zeroSentinelReplayInput(sentinelReplayInput);
+          zeroSentinelReplayInput(replaySnapshot);
         }
       }
       throw runError;

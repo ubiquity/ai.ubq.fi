@@ -2,6 +2,13 @@ import { runtimeDeploymentId, runtimeGitSha } from "./config.ts";
 import { getKv } from "./kv.ts";
 import { MAX_ACCEPTED_JSON_BODY_BYTES, observeRawBodyOnce } from "./request.ts";
 import {
+  canonicalSentinelUpstreamJson,
+  emptySentinelUpstreamTrace,
+  parseSentinelUpstreamTrace,
+  type SentinelUpstreamRecorder,
+  type SentinelUpstreamTrace,
+} from "./sentinel_upstream_capture.ts";
+import {
   bindSentinelIncidentIndexEvidence,
   completeSentinelIncidentFailureEvent,
   createSentinelIncidentFailureEventFromEnvironment,
@@ -35,6 +42,11 @@ const TEXT_DECODER = new TextDecoder();
 const AES_GCM_IV_BYTES = 12;
 const REPLAY_KEY_BYTES = 32;
 const ENVELOPE_VERSION = 1;
+/** Private plaintext metadata cut over to version 2 with required upstream evidence. */
+const REPLAY_PLAINTEXT_VERSION = 2;
+/** v2 fingerprint frame namespace; the outer crypto transport stays v1. */
+const FINGERPRINT_NAMESPACE_V2 = "uos-sentinel-replay-v2:fingerprint";
+const CASE_GROUP_NAMESPACE_V1 = "uos-sentinel-replay-v1:case-group";
 const MAX_REPLAY_METADATA_BYTES = 256 * 1_024;
 const MAX_REPLAY_PLAINTEXT_BYTES = SENTINEL_REPLAY_MAX_BODY_BYTES + MAX_REPLAY_METADATA_BYTES + 4;
 const MAX_REPLAY_CIPHERTEXT_BYTES = MAX_REPLAY_PLAINTEXT_BYTES + 1_024 * 1_024 + 16;
@@ -103,6 +115,10 @@ export type AcceptedSentinelReplayInput = Readonly<{
   request_id: string;
   git_sha: string;
   deno_revision: string;
+  /** Sealed immutable v2 upstream trace; absent means request-only evidence. */
+  upstream?: SentinelUpstreamTrace;
+  /** Request-owned passive upstream recorder carried until the snapshot handoff. */
+  upstreamRecorder?: SentinelUpstreamRecorder;
 }>;
 
 export type SentinelReplayCaptureCandidate = {
@@ -117,7 +133,7 @@ export type SentinelReplayCaptureCandidate = {
 };
 
 export type SentinelReplayPlaintext = Readonly<{
-  version: 1;
+  version: 2;
   captured_at_ms: number;
   endpoint: string;
   method: string;
@@ -129,6 +145,7 @@ export type SentinelReplayPlaintext = Readonly<{
   request_id: string;
   git_sha: string;
   deno_revision: string;
+  upstream: SentinelUpstreamTrace;
   body: Uint8Array<ArrayBuffer>;
 }>;
 
@@ -235,6 +252,37 @@ export const materializeSentinelReplayInput = (
 
 export const zeroSentinelReplayInput = (input: AcceptedSentinelReplayInput | null | undefined): void => {
   input?.body.fill(0);
+};
+
+/**
+ * Narrow application-terminal snapshot helper: copy the accepted body and
+ * seal the request-owned upstream recorder together, before the original body
+ * is zeroed or any await. HMAC, encryption and the plaintext metadata all use
+ * this same immutable trace; the recorder is disposed so zeroing the original
+ * never erases the snapshot and no later read retains additional bytes.
+ */
+export const snapshotSentinelReplayInput = (input: AcceptedSentinelReplayInput): AcceptedSentinelReplayInput => {
+  const recorder = input.upstreamRecorder;
+  const upstream = recorder ? recorder.snapshotAndSeal() : input.upstream ?? emptySentinelUpstreamTrace();
+  recorder?.dispose();
+  return {
+    endpoint: input.endpoint,
+    method: input.method,
+    body: cloneBytes(input.body),
+    content_type: input.content_type,
+    compatibility_headers: input.compatibility_headers,
+    request_id: input.request_id,
+    git_sha: input.git_sha,
+    deno_revision: input.deno_revision,
+    upstream,
+  };
+};
+
+/** Discard a recorder that never reached a snapshot (zero retained bytes). */
+export const disposeSentinelUpstreamRecorder = (
+  input: AcceptedSentinelReplayInput | null | undefined,
+): void => {
+  input?.upstreamRecorder?.dispose();
 };
 
 export const discardSentinelReplayCaptureCandidate = (
@@ -777,15 +825,48 @@ const isClientFailureObservation = (value: unknown): value is SentinelClientFail
   (value.failure_kind === null || typeof value.failure_kind === "string") &&
   typeof value.framing_valid === "boolean" && typeof value.provider_route === "string";
 
-const isReplayMetadata = (value: unknown): value is ReplayMetadata =>
-  isRecord(value) && value.version === ENVELOPE_VERSION && Number.isSafeInteger(value.captured_at_ms) &&
-  (value.captured_at_ms as number) >= 0 &&
-  typeof value.endpoint === "string" && typeof value.method === "string" &&
-  (value.content_type === null || typeof value.content_type === "string") &&
-  isCompatibilityHeaders(value.compatibility_headers) && typeof value.failure_signature === "string" &&
-  isFailureObservation(value.observation) && isClientFailureObservation(value.client_observation) &&
-  typeof value.request_id === "string" &&
-  typeof value.git_sha === "string" && typeof value.deno_revision === "string";
+const REPLAY_METADATA_KEYS = [
+  "version",
+  "captured_at_ms",
+  "endpoint",
+  "method",
+  "content_type",
+  "compatibility_headers",
+  "failure_signature",
+  "observation",
+  "client_observation",
+  "request_id",
+  "git_sha",
+  "deno_revision",
+  "upstream",
+] as const;
+
+const isReplayMetadata = (value: unknown): value is ReplayMetadata => {
+  if (!isRecord(value) || value.version !== REPLAY_PLAINTEXT_VERSION) return false;
+  const actualKeys = Object.keys(value);
+  if (
+    actualKeys.length !== REPLAY_METADATA_KEYS.length ||
+    actualKeys.some((key) => !REPLAY_METADATA_KEYS.includes(key as (typeof REPLAY_METADATA_KEYS)[number]))
+  ) {
+    return false;
+  }
+  if (!Number.isSafeInteger(value.captured_at_ms) || (value.captured_at_ms as number) < 0) return false;
+  if (typeof value.endpoint !== "string" || typeof value.method !== "string") return false;
+  if (value.content_type !== null && typeof value.content_type !== "string") return false;
+  if (!isCompatibilityHeaders(value.compatibility_headers)) return false;
+  if (typeof value.failure_signature !== "string") return false;
+  if (!isFailureObservation(value.observation) || !isClientFailureObservation(value.client_observation)) {
+    return false;
+  }
+  if (typeof value.request_id !== "string" || typeof value.git_sha !== "string") return false;
+  if (typeof value.deno_revision !== "string") return false;
+  try {
+    parseSentinelUpstreamTrace(value.upstream);
+  } catch {
+    return false;
+  }
+  return true;
+};
 
 const randomBytes = (length: number): Uint8Array<ArrayBuffer> => crypto.getRandomValues(new Uint8Array(length));
 
@@ -804,6 +885,7 @@ const fingerprintParts = (
   input: AcceptedSentinelReplayInput,
   failureSignature: string,
   purpose: "fingerprint" | "case-group",
+  upstream?: SentinelUpstreamTrace,
 ): Uint8Array<ArrayBuffer>[] => {
   const frame = (value: Uint8Array<ArrayBuffer>): Uint8Array<ArrayBuffer>[] => {
     const length = new Uint8Array(8);
@@ -811,13 +893,21 @@ const fingerprintParts = (
     return [length, value];
   };
   const common = [
-    ...frame(TEXT_ENCODER.encode(`uos-sentinel-replay-v1:${purpose}`)),
+    ...frame(TEXT_ENCODER.encode(purpose === "fingerprint" ? FINGERPRINT_NAMESPACE_V2 : CASE_GROUP_NAMESPACE_V1)),
     ...frame(TEXT_ENCODER.encode(input.method)),
     ...frame(TEXT_ENCODER.encode(input.endpoint)),
     ...frame(TEXT_ENCODER.encode(stableHeaderText(input.compatibility_headers))),
   ];
+  // Keep the case-group identity exactly the v1 request-only HMAC. Only the
+  // fingerprint gains one appended frame of canonical upstream JSON, so
+  // different partial/complete traces cannot suppress one another.
   return purpose === "fingerprint"
-    ? [...common, ...frame(input.body), ...frame(TEXT_ENCODER.encode(failureSignature))]
+    ? [
+      ...common,
+      ...frame(input.body),
+      ...frame(TEXT_ENCODER.encode(failureSignature)),
+      ...frame(TEXT_ENCODER.encode(upstream ? canonicalSentinelUpstreamJson(upstream) : "")),
+    ]
     : [...common, ...frame(input.body)];
 };
 
@@ -909,7 +999,11 @@ export const persistEncryptedSentinelReplay = async (
   // Cancellation cleanup can zero the request-owned buffer while KV and
   // cryptographic operations are pending. One synchronous snapshot must feed
   // the digests and encrypted envelope so a capture cannot disagree with its
-  // own manifest.
+  // own manifest. Request-only callers emit the required empty upstream trace
+  // with all truncation flags false; it is never labeled captured coverage.
+  const upstreamTrace = input.upstream !== undefined
+    ? parseSentinelUpstreamTrace(input.upstream)
+    : emptySentinelUpstreamTrace();
   const bodySnapshot = cloneBytes(input.body);
   const snapshotInput: AcceptedSentinelReplayInput = { ...input, body: bodySnapshot };
   try {
@@ -918,7 +1012,7 @@ export const persistEncryptedSentinelReplay = async (
     const fingerprint = await hmacHex(
       dependencies.keyBytes,
       "fingerprint",
-      fingerprintParts(snapshotInput, failureSignature, "fingerprint"),
+      fingerprintParts(snapshotInput, failureSignature, "fingerprint", upstreamTrace),
     );
     const caseGroupDigest = await hmacHex(
       dependencies.keyBytes,
@@ -975,7 +1069,7 @@ export const persistEncryptedSentinelReplay = async (
     const iv = dependencies.randomBytes?.(AES_GCM_IV_BYTES) ?? randomBytes(AES_GCM_IV_BYTES);
     if (iv.byteLength !== AES_GCM_IV_BYTES) throw new Error("Sentinel replay IV must be 12 bytes");
     const metadata: ReplayMetadata = {
-      version: ENVELOPE_VERSION,
+      version: REPLAY_PLAINTEXT_VERSION,
       captured_at_ms: now,
       endpoint: input.endpoint,
       method: input.method,
@@ -987,6 +1081,7 @@ export const persistEncryptedSentinelReplay = async (
       request_id: input.request_id,
       git_sha: input.git_sha,
       deno_revision: input.deno_revision,
+      upstream: upstreamTrace,
     };
     const encodedPlaintext = encodePlaintext(metadata, bodySnapshot);
     let compressed: Uint8Array<ArrayBuffer>;
@@ -1441,7 +1536,7 @@ export const decryptExportedSentinelReplay = async (
     const fingerprint = await hmacHex(
       keyBytes,
       "fingerprint",
-      fingerprintParts(accepted, plaintext.failure_signature, "fingerprint"),
+      fingerprintParts(accepted, plaintext.failure_signature, "fingerprint", plaintext.upstream),
     );
     const caseGroupDigest = await hmacHex(
       keyBytes,

@@ -1,6 +1,7 @@
 import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
 import { BUFFERED_INFERENCE_DEADLINE_MS } from "./inference_deadline.ts";
 import { getString, isRecord } from "./utils.ts";
+import type { SentinelUpstreamRecorder } from "./sentinel_upstream_capture.ts";
 
 export const CEREBRAS_GPT_OSS_120B_MODEL = "gpt-oss-120b";
 export const CEREBRAS_CHAT_COMPLETIONS_URL = "https://api.cerebras.ai/v1/chat/completions";
@@ -47,6 +48,8 @@ export type CerebrasChatCompletionsOptions = Readonly<{
   beforeDispatch?: () => Promise<ApiKeyProviderDispatch | void>;
   onDispatch?: () => void;
   onHeaders?: () => void;
+  /** Request-owned passive recorder; best effort, never required. */
+  sentinelUpstreamRecorder?: SentinelUpstreamRecorder;
 }>;
 
 type NormalizationResult<T> =
@@ -290,6 +293,7 @@ export const fetchCerebrasChatCompletions = async (
   );
   const signal = options.signal ? AbortSignal.any([options.signal, deadline.signal]) : deadline.signal;
 
+  let upstreamAttempt: ReturnType<SentinelUpstreamRecorder["startAttempt"]> | null = null;
   try {
     // Keep this as the final awaited operation before provider transport so
     // API-key admission cannot be committed after a cancelled request.
@@ -302,6 +306,7 @@ export const fetchCerebrasChatCompletions = async (
     }
     dispatch?.markTransportStarted();
     options.onDispatch?.();
+    upstreamAttempt = options.sentinelUpstreamRecorder?.startAttempt("cerebras") ?? null;
     const response = await (options.fetcher ?? fetch)(CEREBRAS_CHAT_COMPLETIONS_URL, {
       method: "POST",
       headers,
@@ -310,8 +315,9 @@ export const fetchCerebrasChatCompletions = async (
       signal,
     });
     options.onHeaders?.();
-    return response;
+    return upstreamAttempt ? upstreamAttempt.wrap(response) : response;
   } catch (error) {
+    upstreamAttempt?.recordFetchError();
     if (error instanceof ApiKeyQuotaDispatchError || error instanceof CerebrasError) throw error;
     if (options.signal?.aborted) {
       if (isTimeoutError(abortError(options.signal))) throw timeoutError();
