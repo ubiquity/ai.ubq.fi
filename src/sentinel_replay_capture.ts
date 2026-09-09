@@ -2,14 +2,29 @@ import { runtimeDeploymentId, runtimeGitSha } from "./config.ts";
 import { getKv } from "./kv.ts";
 import { MAX_ACCEPTED_JSON_BODY_BYTES, observeRawBodyOnce } from "./request.ts";
 import {
+  canonicalSentinelUpstreamJson,
+  emptySentinelUpstreamTrace,
+  parseSentinelUpstreamTrace,
+  type SentinelUpstreamRecorder,
+  type SentinelUpstreamTrace,
+} from "./sentinel_upstream_capture.ts";
+import {
+  bindSentinelIncidentIndexEvidence,
   completeSentinelIncidentFailureEvent,
   createSentinelIncidentFailureEventFromEnvironment,
   isSentinelIncidentCaptureReference,
   isSentinelIncidentId,
+  isSentinelIncidentIndexRow,
   readySentinelIncidentFailureEvent,
+  recordSentinelIncidentIndexObservation,
   SENTINEL_INCIDENT_CAPTURE_REF_PREFIX,
+  SENTINEL_INCIDENT_INDEX_MAX_CAS_ATTEMPTS,
+  SENTINEL_INCIDENT_INDEX_PREFIX,
   SENTINEL_INCIDENT_TTL_MS,
+  type SentinelIncidentCaptureReference,
   type SentinelIncidentFailureEvent,
+  sentinelIncidentFingerprint,
+  type SentinelIncidentIndexRow,
 } from "./sentinel_incident_outbox.ts";
 import { base64UrlDecode, base64UrlEncode, encodeHex, isRecord } from "./utils.ts";
 
@@ -27,6 +42,11 @@ const TEXT_DECODER = new TextDecoder();
 const AES_GCM_IV_BYTES = 12;
 const REPLAY_KEY_BYTES = 32;
 const ENVELOPE_VERSION = 1;
+/** Private plaintext metadata cut over to version 2 with required upstream evidence. */
+const REPLAY_PLAINTEXT_VERSION = 2;
+/** v2 fingerprint frame namespace; the outer crypto transport stays v1. */
+const FINGERPRINT_NAMESPACE_V2 = "uos-sentinel-replay-v2:fingerprint";
+const CASE_GROUP_NAMESPACE_V1 = "uos-sentinel-replay-v1:case-group";
 const MAX_REPLAY_METADATA_BYTES = 256 * 1_024;
 const MAX_REPLAY_PLAINTEXT_BYTES = SENTINEL_REPLAY_MAX_BODY_BYTES + MAX_REPLAY_METADATA_BYTES + 4;
 const MAX_REPLAY_CIPHERTEXT_BYTES = MAX_REPLAY_PLAINTEXT_BYTES + 1_024 * 1_024 + 16;
@@ -95,6 +115,10 @@ export type AcceptedSentinelReplayInput = Readonly<{
   request_id: string;
   git_sha: string;
   deno_revision: string;
+  /** Sealed immutable v2 upstream trace; absent means request-only evidence. */
+  upstream?: SentinelUpstreamTrace;
+  /** Request-owned passive upstream recorder carried until the snapshot handoff. */
+  upstreamRecorder?: SentinelUpstreamRecorder;
 }>;
 
 export type SentinelReplayCaptureCandidate = {
@@ -109,7 +133,7 @@ export type SentinelReplayCaptureCandidate = {
 };
 
 export type SentinelReplayPlaintext = Readonly<{
-  version: 1;
+  version: 2;
   captured_at_ms: number;
   endpoint: string;
   method: string;
@@ -121,6 +145,7 @@ export type SentinelReplayPlaintext = Readonly<{
   request_id: string;
   git_sha: string;
   deno_revision: string;
+  upstream: SentinelUpstreamTrace;
   body: Uint8Array<ArrayBuffer>;
 }>;
 
@@ -227,6 +252,37 @@ export const materializeSentinelReplayInput = (
 
 export const zeroSentinelReplayInput = (input: AcceptedSentinelReplayInput | null | undefined): void => {
   input?.body.fill(0);
+};
+
+/**
+ * Narrow application-terminal snapshot helper: copy the accepted body and
+ * seal the request-owned upstream recorder together, before the original body
+ * is zeroed or any await. HMAC, encryption and the plaintext metadata all use
+ * this same immutable trace; the recorder is disposed so zeroing the original
+ * never erases the snapshot and no later read retains additional bytes.
+ */
+export const snapshotSentinelReplayInput = (input: AcceptedSentinelReplayInput): AcceptedSentinelReplayInput => {
+  const recorder = input.upstreamRecorder;
+  const upstream = recorder ? recorder.snapshotAndSeal() : input.upstream ?? emptySentinelUpstreamTrace();
+  recorder?.dispose();
+  return {
+    endpoint: input.endpoint,
+    method: input.method,
+    body: cloneBytes(input.body),
+    content_type: input.content_type,
+    compatibility_headers: input.compatibility_headers,
+    request_id: input.request_id,
+    git_sha: input.git_sha,
+    deno_revision: input.deno_revision,
+    upstream,
+  };
+};
+
+/** Discard a recorder that never reached a snapshot (zero retained bytes). */
+export const disposeSentinelUpstreamRecorder = (
+  input: AcceptedSentinelReplayInput | null | undefined,
+): void => {
+  input?.upstreamRecorder?.dispose();
 };
 
 export const discardSentinelReplayCaptureCandidate = (
@@ -769,15 +825,48 @@ const isClientFailureObservation = (value: unknown): value is SentinelClientFail
   (value.failure_kind === null || typeof value.failure_kind === "string") &&
   typeof value.framing_valid === "boolean" && typeof value.provider_route === "string";
 
-const isReplayMetadata = (value: unknown): value is ReplayMetadata =>
-  isRecord(value) && value.version === ENVELOPE_VERSION && Number.isSafeInteger(value.captured_at_ms) &&
-  (value.captured_at_ms as number) >= 0 &&
-  typeof value.endpoint === "string" && typeof value.method === "string" &&
-  (value.content_type === null || typeof value.content_type === "string") &&
-  isCompatibilityHeaders(value.compatibility_headers) && typeof value.failure_signature === "string" &&
-  isFailureObservation(value.observation) && isClientFailureObservation(value.client_observation) &&
-  typeof value.request_id === "string" &&
-  typeof value.git_sha === "string" && typeof value.deno_revision === "string";
+const REPLAY_METADATA_KEYS = [
+  "version",
+  "captured_at_ms",
+  "endpoint",
+  "method",
+  "content_type",
+  "compatibility_headers",
+  "failure_signature",
+  "observation",
+  "client_observation",
+  "request_id",
+  "git_sha",
+  "deno_revision",
+  "upstream",
+] as const;
+
+const isReplayMetadata = (value: unknown): value is ReplayMetadata => {
+  if (!isRecord(value) || value.version !== REPLAY_PLAINTEXT_VERSION) return false;
+  const actualKeys = Object.keys(value);
+  if (
+    actualKeys.length !== REPLAY_METADATA_KEYS.length ||
+    actualKeys.some((key) => !REPLAY_METADATA_KEYS.includes(key as (typeof REPLAY_METADATA_KEYS)[number]))
+  ) {
+    return false;
+  }
+  if (!Number.isSafeInteger(value.captured_at_ms) || (value.captured_at_ms as number) < 0) return false;
+  if (typeof value.endpoint !== "string" || typeof value.method !== "string") return false;
+  if (value.content_type !== null && typeof value.content_type !== "string") return false;
+  if (!isCompatibilityHeaders(value.compatibility_headers)) return false;
+  if (typeof value.failure_signature !== "string") return false;
+  if (!isFailureObservation(value.observation) || !isClientFailureObservation(value.client_observation)) {
+    return false;
+  }
+  if (typeof value.request_id !== "string" || typeof value.git_sha !== "string") return false;
+  if (typeof value.deno_revision !== "string") return false;
+  try {
+    parseSentinelUpstreamTrace(value.upstream);
+  } catch {
+    return false;
+  }
+  return true;
+};
 
 const randomBytes = (length: number): Uint8Array<ArrayBuffer> => crypto.getRandomValues(new Uint8Array(length));
 
@@ -796,6 +885,7 @@ const fingerprintParts = (
   input: AcceptedSentinelReplayInput,
   failureSignature: string,
   purpose: "fingerprint" | "case-group",
+  upstream?: SentinelUpstreamTrace,
 ): Uint8Array<ArrayBuffer>[] => {
   const frame = (value: Uint8Array<ArrayBuffer>): Uint8Array<ArrayBuffer>[] => {
     const length = new Uint8Array(8);
@@ -803,19 +893,79 @@ const fingerprintParts = (
     return [length, value];
   };
   const common = [
-    ...frame(TEXT_ENCODER.encode(`uos-sentinel-replay-v1:${purpose}`)),
+    ...frame(TEXT_ENCODER.encode(purpose === "fingerprint" ? FINGERPRINT_NAMESPACE_V2 : CASE_GROUP_NAMESPACE_V1)),
     ...frame(TEXT_ENCODER.encode(input.method)),
     ...frame(TEXT_ENCODER.encode(input.endpoint)),
     ...frame(TEXT_ENCODER.encode(stableHeaderText(input.compatibility_headers))),
   ];
+  // Keep the case-group identity exactly the v1 request-only HMAC. Only the
+  // fingerprint gains one appended frame of canonical upstream JSON, so
+  // different partial/complete traces cannot suppress one another.
   return purpose === "fingerprint"
-    ? [...common, ...frame(input.body), ...frame(TEXT_ENCODER.encode(failureSignature))]
+    ? [
+      ...common,
+      ...frame(input.body),
+      ...frame(TEXT_ENCODER.encode(failureSignature)),
+      ...frame(TEXT_ENCODER.encode(upstream ? canonicalSentinelUpstreamJson(upstream) : "")),
+    ]
     : [...common, ...frame(input.body)];
 };
 
 const dedupeManifestKey = (value: unknown): Deno.KvKey | null => {
   if (!isRecord(value) || !Array.isArray(value.manifest_key) || value.manifest_key.length !== 7) return null;
   return value.manifest_key as Deno.KvKey;
+};
+
+const ciphertextDigest = async (bytes: Uint8Array<ArrayBuffer>): Promise<string> =>
+  encodeHex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
+
+/**
+ * Read and validate the winning manifest/chunks of an existing capture, then
+ * bind the same actual capture to the stable index row in one CAS transaction.
+ * The digest is the SHA-256 of the decoded concatenated ciphertext bytes,
+ * exactly the consumer capture digest; the original expiry is retained and
+ * nothing pretends a duplicate created new evidence. The winning capture is
+ * authenticated/decrypted with the key already held by the caller so the bound
+ * revision and provenance timestamp are the EXACT originals carried by that
+ * encrypted capture; plaintext is zeroed and never persisted.
+ */
+const bindWinnerIndexEvidence = async (
+  kv: Deno.Kv,
+  indexFingerprint: string,
+  observedAtMs: number,
+  referenceFingerprint: string,
+  manifestKey: Deno.KvKey,
+  keyBytes: Uint8Array<ArrayBuffer>,
+): Promise<void> => {
+  const manifestEntry = await kv.get<SentinelReplayManifest>(manifestKey);
+  if (
+    !manifestEntry.value || !isSentinelReplayManifest(manifestEntry.value) ||
+    manifestEntry.value.fingerprint !== referenceFingerprint ||
+    !manifestMatchesKey(manifestKey, manifestEntry.value)
+  ) throw new Error("Sentinel incident replay manifest is unavailable");
+  const chunks = await getChunks(kv, manifestEntry.value);
+  let plaintext: SentinelReplayPlaintext | null = null;
+  try {
+    const digest = await ciphertextDigest(concatBytes(chunks));
+    plaintext = await decryptExportedSentinelReplay(
+      { manifest: manifestEntry.value, chunks: chunks.map(base64UrlEncode) },
+      keyBytes,
+    );
+    await bindSentinelIncidentIndexEvidence(kv, indexFingerprint, {
+      observedAtMs,
+      captureId: manifestEntry.value.capture_id,
+      gitSha: /^[0-9a-f]{40}$/.test(plaintext.git_sha) ? plaintext.git_sha : null,
+      referenceFingerprint,
+      manifestKey,
+      manifestVersionstamp: manifestEntry.versionstamp,
+      capturedAtMs: manifestEntry.value.captured_at_ms,
+      digest,
+      expiresAtMs: manifestEntry.value.expires_at_ms,
+    });
+  } finally {
+    plaintext?.body.fill(0);
+    for (const chunk of chunks) chunk.fill(0);
+  }
 };
 
 const completeReplayIncidentEvent = async (
@@ -849,7 +999,11 @@ export const persistEncryptedSentinelReplay = async (
   // Cancellation cleanup can zero the request-owned buffer while KV and
   // cryptographic operations are pending. One synchronous snapshot must feed
   // the digests and encrypted envelope so a capture cannot disagree with its
-  // own manifest.
+  // own manifest. Request-only callers emit the required empty upstream trace
+  // with all truncation flags false; it is never labeled captured coverage.
+  const upstreamTrace = input.upstream !== undefined
+    ? parseSentinelUpstreamTrace(input.upstream)
+    : emptySentinelUpstreamTrace();
   const bodySnapshot = cloneBytes(input.body);
   const snapshotInput: AcceptedSentinelReplayInput = { ...input, body: bodySnapshot };
   try {
@@ -858,7 +1012,7 @@ export const persistEncryptedSentinelReplay = async (
     const fingerprint = await hmacHex(
       dependencies.keyBytes,
       "fingerprint",
-      fingerprintParts(snapshotInput, failureSignature, "fingerprint"),
+      fingerprintParts(snapshotInput, failureSignature, "fingerprint", upstreamTrace),
     );
     const caseGroupDigest = await hmacHex(
       dependencies.keyBytes,
@@ -866,10 +1020,43 @@ export const persistEncryptedSentinelReplay = async (
       fingerprintParts(snapshotInput, failureSignature, "case-group"),
     );
     const dedupeKey = [...SENTINEL_REPLAY_DEDUPE_PREFIX, fingerprint] as const;
+    let indexFingerprint: string | null = null;
+    try {
+      indexFingerprint = await sentinelIncidentFingerprint({
+        endpoint: input.endpoint,
+        method: input.method,
+        observation: clientObservation,
+      });
+    } catch {
+      // The index is best-effort for direct callers: the environment producer
+      // already recorded this observation before the key lookup.
+      indexFingerprint = null;
+    }
+    const indexKey: Deno.KvKey | null = indexFingerprint === null
+      ? null
+      : [...SENTINEL_INCIDENT_INDEX_PREFIX, indexFingerprint];
     const existingDedupe = await dependencies.kv.get(dedupeKey);
     if (existingDedupe.value !== null) {
       const manifestKey = dedupeManifestKey(existingDedupe.value);
       if (!manifestKey) throw new Error("Sentinel replay dedupe record is invalid");
+      if (indexKey !== null) {
+        // Attach only to an actually recorded index observation: direct
+        // callers with no durable index row keep plain duplicate behavior.
+        const indexEntry = await dependencies.kv.get<SentinelIncidentIndexRow>(indexKey);
+        if (indexEntry.value !== null) {
+          if (!isSentinelIncidentIndexRow(indexEntry.value)) {
+            throw new Error("Sentinel incident index record is invalid");
+          }
+          await bindWinnerIndexEvidence(
+            dependencies.kv,
+            indexFingerprint!,
+            now,
+            fingerprint,
+            manifestKey,
+            dependencies.keyBytes,
+          );
+        }
+      }
       await completeReplayIncidentEvent(dependencies.kv, dependencies.incidentEvent, now, {
         status: "duplicate",
         fingerprint,
@@ -882,7 +1069,7 @@ export const persistEncryptedSentinelReplay = async (
     const iv = dependencies.randomBytes?.(AES_GCM_IV_BYTES) ?? randomBytes(AES_GCM_IV_BYTES);
     if (iv.byteLength !== AES_GCM_IV_BYTES) throw new Error("Sentinel replay IV must be 12 bytes");
     const metadata: ReplayMetadata = {
-      version: ENVELOPE_VERSION,
+      version: REPLAY_PLAINTEXT_VERSION,
       captured_at_ms: now,
       endpoint: input.endpoint,
       method: input.method,
@@ -894,6 +1081,7 @@ export const persistEncryptedSentinelReplay = async (
       request_id: input.request_id,
       git_sha: input.git_sha,
       deno_revision: input.deno_revision,
+      upstream: upstreamTrace,
     };
     const encodedPlaintext = encodePlaintext(metadata, bodySnapshot);
     let compressed: Uint8Array<ArrayBuffer>;
@@ -935,6 +1123,7 @@ export const persistEncryptedSentinelReplay = async (
     };
 
     const manifestKey = [...SENTINEL_REPLAY_MANIFEST_PREFIX, now, fingerprint, captureId] as const;
+    const evidenceDigest = await ciphertextDigest(encrypted);
     const cleanupChunks = async (): Promise<void> => {
       await Promise.all(
         chunks.map((_chunk, index) => dependencies.kv.delete([...SENTINEL_REPLAY_CHUNK_PREFIX, captureId, index])),
@@ -948,26 +1137,68 @@ export const persistEncryptedSentinelReplay = async (
           })
         ),
       );
-      let operation = dependencies.kv.atomic()
-        .check({ key: dedupeKey, versionstamp: null })
-        .set(dedupeKey, { manifest_key: manifestKey }, { expireIn: SENTINEL_REPLAY_TTL_MS })
-        .set(manifestKey, manifest, { expireIn: SENTINEL_REPLAY_TTL_MS });
-      if (dependencies.incidentEvent) {
-        const readyEvent = readySentinelIncidentFailureEvent(dependencies.incidentEvent, now, {
-          status: "stored",
-          fingerprint,
-          manifestKey,
-        });
-        operation = operation
-          .check({ key: dependencies.incidentEvent.key, versionstamp: dependencies.incidentEvent.versionstamp })
-          .set(dependencies.incidentEvent.key, readyEvent, { expireIn: SENTINEL_INCIDENT_TTL_MS });
+      let committed: Deno.KvCommitResult | Deno.KvCommitError | null = null;
+      for (let attempt = 0; attempt < SENTINEL_INCIDENT_INDEX_MAX_CAS_ATTEMPTS; attempt += 1) {
+        const indexEntry = indexKey === null ? null : await dependencies.kv.get<SentinelIncidentIndexRow>(indexKey);
+        let operation = dependencies.kv.atomic()
+          .check({ key: dedupeKey, versionstamp: null })
+          .set(dedupeKey, { manifest_key: manifestKey }, { expireIn: SENTINEL_REPLAY_TTL_MS })
+          .set(manifestKey, manifest, { expireIn: SENTINEL_REPLAY_TTL_MS });
+        if (dependencies.incidentEvent) {
+          const readyEvent = readySentinelIncidentFailureEvent(dependencies.incidentEvent, now, {
+            status: "stored",
+            fingerprint,
+            manifestKey,
+          });
+          operation = operation
+            .check({ key: dependencies.incidentEvent.key, versionstamp: dependencies.incidentEvent.versionstamp })
+            .set(dependencies.incidentEvent.key, readyEvent, { expireIn: SENTINEL_INCIDENT_TTL_MS });
+        }
+        if (indexEntry !== null && indexEntry.value !== null && indexKey !== null) {
+          if (!isSentinelIncidentIndexRow(indexEntry.value)) {
+            throw new Error("Sentinel incident index record is invalid");
+          }
+          const next: SentinelIncidentIndexRow = {
+            ...indexEntry.value,
+            failing_revision: /^[0-9a-f]{40}$/.test(input.git_sha) ? input.git_sha : null,
+            provenance: { ...indexEntry.value.provenance, captured_at_ms: manifest.captured_at_ms },
+            evidence_ref: { ref: `capture:${captureId}`, digest: evidenceDigest },
+            evidence_expires_at_ms: expiresAtMs,
+          };
+          if (!isSentinelIncidentIndexRow(next)) throw new Error("Sentinel incident index record is invalid");
+          const reference: SentinelIncidentCaptureReference = { version: 1, manifest_key: [...manifestKey] };
+          operation = operation
+            .check({ key: indexKey, versionstamp: indexEntry.versionstamp })
+            .set(
+              [...SENTINEL_INCIDENT_CAPTURE_REF_PREFIX, next.incident_id, fingerprint],
+              reference,
+              { expireIn: expiresAtMs - now },
+            )
+            .set(indexKey, next);
+        }
+        committed = await operation.commit();
+        if (committed.ok) return { status: "stored", manifest, manifest_key: manifestKey };
       }
-      const committed = await operation.commit();
-      if (committed.ok) return { status: "stored", manifest, manifest_key: manifestKey };
       await cleanupChunks().catch(() => {});
       const winningDedupe = await dependencies.kv.get(dedupeKey);
       const winningManifestKey = dedupeManifestKey(winningDedupe.value);
       if (!winningManifestKey) throw new Error("Sentinel replay dedupe winner is unavailable");
+      if (indexKey !== null) {
+        const indexEntry = await dependencies.kv.get<SentinelIncidentIndexRow>(indexKey);
+        if (indexEntry.value !== null) {
+          if (!isSentinelIncidentIndexRow(indexEntry.value)) {
+            throw new Error("Sentinel incident index record is invalid");
+          }
+          await bindWinnerIndexEvidence(
+            dependencies.kv,
+            indexFingerprint!,
+            now,
+            fingerprint,
+            winningManifestKey,
+            dependencies.keyBytes,
+          );
+        }
+      }
       await completeReplayIncidentEvent(dependencies.kv, dependencies.incidentEvent, now, {
         status: "duplicate",
         fingerprint,
@@ -1012,6 +1243,25 @@ export const persistSentinelReplayFromEnvironment = async (
     kv = await getKv();
     if (!kv) return { status: "disabled", reason: "kv_unavailable" };
     if (shouldSignalSentinelIncident(observation, resolvedClientObservation)) {
+      // The durable index observation is recorded BEFORE the key lookup and
+      // encryption: even a missing key still leaves a discoverable incident
+      // row with evidence_ref null. Unlike the transient event helper this
+      // passive path is never environment-gated (it must work in the real
+      // handler tests without a production deployment flag).
+      try {
+        await recordSentinelIncidentIndexObservation(kv, {
+          endpoint: input.endpoint,
+          method: input.method,
+          gitSha: input.git_sha,
+          observedAtMs: now,
+          observation: resolvedClientObservation,
+        });
+      } catch {
+        console.warn(
+          "[ai.ubq.fi] sentinel_incident",
+          JSON.stringify({ status: "deferred", reason: "index_write_failed" }),
+        );
+      }
       try {
         incidentEvent = (await createSentinelIncidentFailureEventFromEnvironment(kv, now)) ?? undefined;
       } catch {
@@ -1286,7 +1536,7 @@ export const decryptExportedSentinelReplay = async (
     const fingerprint = await hmacHex(
       keyBytes,
       "fingerprint",
-      fingerprintParts(accepted, plaintext.failure_signature, "fingerprint"),
+      fingerprintParts(accepted, plaintext.failure_signature, "fingerprint", plaintext.upstream),
     );
     const caseGroupDigest = await hmacHex(
       keyBytes,

@@ -62,6 +62,7 @@ import {
   RUNTIME_CONFIG_V2_KEY,
 } from "./runtime_config.ts";
 import { recordProviderCapacityDowntimeEvent, recordProviderCapacityResetEvent } from "./provider_capacity_events.ts";
+import type { SentinelUpstreamRecorder } from "./sentinel_upstream_capture.ts";
 import { base64UrlDecode, decodeBase64ToString, getString, isRecord, sha256Hex } from "./utils.ts";
 import type { CodexAuthPoolState, CodexAuthState, ResponseInputItem } from "./types.ts";
 
@@ -1656,6 +1657,8 @@ type FetchCodexResponsesOptions = Readonly<{
   retrySleep?: (milliseconds: number) => Promise<void>;
   beforeDispatch?: () => Promise<ApiKeyProviderDispatch | void>;
   bankedReset?: CodexBankedResetOptions;
+  /** Request-owned passive recorder; best effort, never required. */
+  sentinelUpstreamRecorder?: SentinelUpstreamRecorder;
 }>;
 
 type CodexProviderDispatchCoordinator = Readonly<{
@@ -2401,6 +2404,11 @@ const fetchPreparedCodexResponses = async (
   ): Promise<Response> => {
     attemptNumber += 1;
     attemptTransportStarted = false;
+    // Assigned inside the actual onDispatch callback; a holder avoids control
+    // flow narrowing `null` to `never` across the opaque transport call.
+    const upstreamAttempt: { current: ReturnType<SentinelUpstreamRecorder["startAttempt"]> | null } = {
+      current: null,
+    };
     try {
       await providerDispatch.claim();
       const response = await fetchCodexResponseWithAuth(
@@ -2414,22 +2422,27 @@ const fetchPreparedCodexResponses = async (
           providerDispatch.markTransportStarted();
           attemptTransportStarted = true;
           reportCodexResponseTiming(options.timing?.onDispatch);
+          upstreamAttempt.current = options.sentinelUpstreamRecorder?.startAttempt("chatgpt_codex") ?? null;
         },
       );
-      setCodexResponseAccountTelemetry(response, routing.slot + 1, auth.account_id);
-      setCodexResponseAffinityDispatch(response, prepared.affinityIdentity, routing, affinity);
+      // Wrap before the response WeakMap account/affinity/health registration
+      // so the wrapper is the canonical identity every consumer observes.
+      const recordedResponse = upstreamAttempt.current ? upstreamAttempt.current.wrap(response) : response;
+      setCodexResponseAccountTelemetry(recordedResponse, routing.slot + 1, auth.account_id);
+      setCodexResponseAffinityDispatch(recordedResponse, prepared.affinityIdentity, routing, affinity);
       reportCodexResponseTiming(options.timing?.onHeaders);
-      void recordCodexResponseHealth(auth.account_id, response, auth);
+      void recordCodexResponseHealth(auth.account_id, recordedResponse, auth);
       logCodexRouting("codex_attempt", {
         request_id: options.requestId ?? null,
         attempt: attemptNumber,
         slot: routing.slot + 1,
         phase,
-        status: response.status,
-        status_class: codexStatusClass(response.status),
+        status: recordedResponse.status,
+        status_class: codexStatusClass(recordedResponse.status),
       });
-      return response;
+      return recordedResponse;
     } catch (error) {
+      upstreamAttempt.current?.recordFetchError();
       const signalReason = options.signal?.reason;
       const clientCancelled = options.signal?.aborted === true &&
         !(signalReason instanceof Error && signalReason.name === "TimeoutError");

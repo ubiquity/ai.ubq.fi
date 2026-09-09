@@ -28,6 +28,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: 2.9.5
@@ -35,6 +37,8 @@ jobs:
       - run: deno lint
       - run: deno task build
       - run: deno task test
+      - run: deno task sentinel:test-local
+      - run: deno test --frozen --allow-read --allow-write --allow-run=bash,jq --allow-env=PATH tests/deploy-workflow-policy.test.ts
 
       - name: Package immutable source
         id: package
@@ -361,6 +365,7 @@ jobs:
       contents: read
     steps:
       - name: Promote and verify exact deployment revision
+        id: attest
         shell: bash
         env:
           BASELINE_REVISION_IDS: ${{ needs.capture-deployment-baseline.outputs.revision_ids }}
@@ -487,6 +492,55 @@ jobs:
             '.[] | select(.id == $id and .status == "succeeded")' \
             >/dev/null || fail "Revision ${revision_id} is no longer in a succeeded state."
 
+          # Begin exact-build receipt
+          # Build-only receipt: it proves the exact revision was built by this
+          # run and never implies acceptance or promotion. Every user-derived
+          # value is passed to jq with --arg; none reaches the jq program text.
+          if [[ ! "$GITHUB_REPOSITORY" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$ ]]; then
+            fail "GITHUB_REPOSITORY is not a strict safe-ASCII owner/name repository."
+          fi
+          if [[ ! "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
+            fail "GITHUB_RUN_ID is not a positive canonical decimal run ID."
+          fi
+          if [[ ! "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
+            fail "GITHUB_RUN_ATTEMPT is not a positive canonical decimal run attempt."
+          fi
+          if [[ ! "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            fail "GITHUB_SHA is not a full lowercase hex Git commit SHA."
+          fi
+          if [[ "$TARGET_PROJECT" != "ai-ubq-fi" && "$TARGET_PROJECT" != "p-ai-ubq-fi" ]]; then
+            fail "TARGET_PROJECT is not ai-ubq-fi or p-ai-ubq-fi."
+          fi
+          if [[ ! "$revision_id" =~ ^[a-z0-9][a-z0-9-]{0,127}$ ]]; then
+            fail "Revision ${revision_id} is not a lower alphanumeric/hyphen ID of 1..128 characters with a leading alphanumeric."
+          fi
+          if [[ "$GITHUB_WORKFLOW_REF" != "${GITHUB_REPOSITORY}/.github/workflows/deno-deploy.yml@${GITHUB_REF}" ]]; then
+            fail "GITHUB_WORKFLOW_REF does not exactly identify this workflow on the current ref."
+          fi
+
+          mkdir -p .release
+          jq -en \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg workflow_ref "$GITHUB_WORKFLOW_REF" \
+            --arg git_sha "$GITHUB_SHA" \
+            --arg project "$TARGET_PROJECT" \
+            --arg revision_id "$revision_id" \
+            '{
+              version: 1,
+              repository: $repository,
+              run_id: $run_id,
+              run_attempt: $run_attempt,
+              workflow_ref: $workflow_ref,
+              git_sha: $git_sha,
+              project: $project,
+              revision_id: $revision_id,
+              build_transaction_id: ("github-actions:" + $repository + ":" + $run_id + ":" + $run_attempt)
+            }' > .release/sentinel-build-receipt.json
+          echo "build_receipt_ready=true" >> "$GITHUB_OUTPUT"
+          # End exact-build receipt
+
           promote_status="$(curl -sS --max-time 30 -o "$promote_body" -w '%{http_code}' \
             -X POST \
             -H "Authorization: Bearer $DENO_DEPLOY_TOKEN" \
@@ -544,3 +598,13 @@ jobs:
             echo "- Managed health: exact release identity attested"
             echo "- Custom health: ${custom_health}"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload exact-build receipt
+        if: always() && steps.attest.outputs.build_receipt_ready == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sentinel-build-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .release/sentinel-build-receipt.json
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 14

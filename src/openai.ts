@@ -134,6 +134,7 @@ import {
   SurplusError,
 } from "./surplus.ts";
 import { loadDebugRoutingConfig } from "./debug_routing.ts";
+import type { SentinelUpstreamRecorder } from "./sentinel_upstream_capture.ts";
 
 // Temporary hard cut while this exact gateway model has free Surplus inference.
 // Remove the cut when the free-inference window ends; do not generalize it to
@@ -206,6 +207,8 @@ type UsageContext = Readonly<{
   beforeProviderDispatch?: (
     provider: "cerebras" | "chatgpt_codex" | "removed_provider" | "metered" | "surplus" | "voyage",
   ) => Promise<ApiKeyProviderDispatch | void>;
+  /** Request-owned passive upstream recorder for accepted inference requests. */
+  sentinelUpstreamRecorder?: SentinelUpstreamRecorder;
   /** Test seam for proving one terminal usage observation per response. */
   onTerminalUsage?: (usage: UsageTokens | null, completed: boolean) => void;
 }>;
@@ -386,6 +389,7 @@ const withResponseTelemetryContext = (
   startedAtMonotonicMs: context?.startedAtMonotonicMs,
   downstreamSignal: context?.downstreamSignal,
   beforeProviderDispatch: context?.beforeProviderDispatch,
+  sentinelUpstreamRecorder: context?.sentinelUpstreamRecorder,
   onTerminalUsage: context?.onTerminalUsage,
   responseTelemetry: state,
 });
@@ -2584,6 +2588,7 @@ const fetchResponsesWithPaidFallback = async (
           transportStarted = true;
           recordFirstProviderDispatch(options.usageContext);
         },
+        sentinelUpstreamRecorder: options.usageContext?.sentinelUpstreamRecorder,
       });
       recordFirstProviderHeaders(options.usageContext);
       const providerRequestId = normalizeProviderRequestId(result.request_id);
@@ -2826,6 +2831,7 @@ const fetchResponsesWithPaidFallback = async (
         },
         beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("chatgpt_codex") ?? Promise.resolve(),
         bankedReset: codexBankedResetOptionsForTest ?? undefined,
+        sentinelUpstreamRecorder: options.usageContext?.sentinelUpstreamRecorder,
       });
     } catch (error) {
       if (!(error instanceof CodexError) || error.status !== 401) throw error;
@@ -3052,6 +3058,7 @@ const fetchResponsesWithPaidFallback = async (
             transportStarted = true;
             recordFirstProviderDispatch(options.usageContext);
           },
+          sentinelUpstreamRecorder: options.usageContext?.sentinelUpstreamRecorder,
         })
         : await fetchMeteredResponses(body, {
           signal: fallbackSignal,
@@ -3060,6 +3067,7 @@ const fetchResponsesWithPaidFallback = async (
             transportStarted = true;
             recordFirstProviderDispatch(options.usageContext);
           },
+          sentinelUpstreamRecorder: options.usageContext?.sentinelUpstreamRecorder,
         });
       recordFirstProviderHeaders(options.usageContext);
       await recordPaidProviderResponseHealth(provider, candidate.response.status, candidate.request_id);
@@ -8758,6 +8766,7 @@ const handleCerebrasChatCompletions = async (
         recordFirstProviderDispatch(usageContext);
       },
       onHeaders: () => recordFirstProviderHeaders(usageContext),
+      sentinelUpstreamRecorder: usageContext?.sentinelUpstreamRecorder,
     });
   } catch (error) {
     const terminalType = cerebrasTerminalTypeForError(error, downstreamSignal);
