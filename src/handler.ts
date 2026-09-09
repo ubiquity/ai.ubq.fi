@@ -757,6 +757,46 @@ export const withTerminalRequestLog = (
   );
 };
 
+export const persistExceptionSentinelReplay = (
+  sentinelReplayInput: AcceptedSentinelReplayInput,
+  runError: unknown,
+  options?: Readonly<{
+    persistSentinelReplay?: typeof persistSentinelReplayFromEnvironment;
+    waitUntil?: SentinelBackgroundTaskRegistrar;
+  }>,
+): Promise<void> => {
+  const observation: SentinelFailureObservation = {
+    status: 500,
+    stream: null,
+    completed: false,
+    terminal_type: "error",
+    failure_kind: runError instanceof Error ? runError.name : "unknown_exception",
+    synthetic_terminal_type: null,
+    provider_route: "gateway",
+  };
+  // Snapshot body and upstream recorder together before persistence:
+  // the recorder is sealed and disposed here, and the same immutable
+  // trace feeds HMAC and encryption.
+  const replaySnapshot = snapshotSentinelReplayInput(sentinelReplayInput);
+  zeroSentinelReplayInput(sentinelReplayInput);
+  const replayTask = (async () => {
+    try {
+      await (options?.persistSentinelReplay ?? persistSentinelReplayFromEnvironment)(
+        replaySnapshot,
+        observation,
+      );
+    } catch {
+      // Replay persistence is best effort and cannot replace the original
+      // gateway exception or expose its request body in logs.
+    } finally {
+      zeroSentinelReplayInput(sentinelReplayInput);
+      zeroSentinelReplayInput(replaySnapshot);
+    }
+  })();
+  scheduleSentinelBackgroundTask(replayTask, options?.waitUntil);
+  return replayTask;
+};
+
 const terminalRouteForRequest = (method: string, path: string): string | null => {
   if (method === "POST" && path === "/uos/embeddings") return "embeddings";
   if (method === "POST" && path === "/uos/embedding-jobs") return "embeddings.jobs.create";
@@ -1317,28 +1357,7 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
       await bestEffortSettleKernelQuota("incomplete", "inference_exception");
       const sentinelReplayInput = takeSentinelReplayInput();
       if (sentinelReplayInput) {
-        const observation: SentinelFailureObservation = {
-          status: 500,
-          stream: null,
-          completed: false,
-          terminal_type: "error",
-          failure_kind: runError instanceof Error ? runError.name : "unknown_exception",
-          synthetic_terminal_type: null,
-          provider_route: "gateway",
-        };
-        // Snapshot body and upstream recorder together before persistence:
-        // the recorder is sealed and disposed here, and the same immutable
-        // trace feeds HMAC and encryption.
-        const replaySnapshot = snapshotSentinelReplayInput(sentinelReplayInput);
-        try {
-          await persistSentinelReplayFromEnvironment(replaySnapshot, observation);
-        } catch {
-          // Replay persistence is best effort and cannot replace the original
-          // gateway exception or expose its request body in logs.
-        } finally {
-          zeroSentinelReplayInput(sentinelReplayInput);
-          zeroSentinelReplayInput(replaySnapshot);
-        }
+        persistExceptionSentinelReplay(sentinelReplayInput, runError);
       }
       throw runError;
     }

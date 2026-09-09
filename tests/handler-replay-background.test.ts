@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { withTerminalRequestLog } from "../src/handler.ts";
+import { persistExceptionSentinelReplay, withTerminalRequestLog } from "../src/handler.ts";
 
 type TerminalLogInput = Parameters<typeof withTerminalRequestLog>[1];
 type ReplayInput = NonNullable<TerminalLogInput["sentinelReplayInput"]>;
@@ -137,3 +137,110 @@ Deno.test("EdgeRuntime replay registration returns failure responses before defe
     else globals.EdgeRuntime = previousEdgeRuntime;
   }
 });
+
+Deno.test("EdgeRuntime exception replay registration schedules deferred persistence without delaying caller", async () => {
+  const globals = globalThis as TestGlobals;
+  const previousEdgeRuntime = globals.EdgeRuntime;
+  const registeredTasks: Promise<unknown>[] = [];
+  const persistence = Promise.withResolvers<Awaited<ReturnType<ReplayPersistence>>>();
+  const persistenceStarted = Promise.withResolvers<void>();
+  let persistenceSettled = false;
+  let persistedSnapshot: ReplayInput | null = null;
+  const capture = acceptedInput();
+  const originalBytes = [...capture.body];
+
+  globals.EdgeRuntime = {
+    waitUntil(task) {
+      registeredTasks.push(task);
+    },
+  };
+
+  try {
+    const runError = new Error("inference upstream network partition");
+    const persistencePromise = persistExceptionSentinelReplay(capture, runError, {
+      persistSentinelReplay: (snapshot) => {
+        persistedSnapshot = snapshot;
+        persistenceStarted.resolve();
+        return persistence.promise;
+      },
+    });
+
+    // Original capture body is zeroed immediately
+    assert.ok(capture.body.every((byte) => byte === 0));
+
+    // Wait for the background persistence task to be invoked
+    await persistenceStarted.promise;
+    assert.equal(registeredTasks.length, 1);
+    assert.equal(persistenceSettled, false);
+
+    const snapshot = persistedSnapshot as ReplayInput | null;
+    if (snapshot === null) throw new Error("replay persistence did not receive a snapshot");
+    assert.notEqual(snapshot.body, capture.body);
+    assert.deepEqual([...snapshot.body], originalBytes);
+
+    // Persistence is still pending, proving the caller was not delayed
+    assert.equal(persistenceSettled, false);
+
+    // Conclude the stalled persistence write with an error
+    persistenceSettled = true;
+    persistence.reject(new Error("fixture kv persistence timeout"));
+    await registeredTasks[0];
+
+    // Snapshot body is now zeroed in finally
+    assert.ok(snapshot.body.every((byte) => byte === 0));
+  } finally {
+    if (!persistenceSettled) {
+      persistenceSettled = true;
+      persistence.resolve({ status: "disabled", reason: "kv_unavailable" });
+    }
+    await Promise.allSettled(registeredTasks);
+    if (previousEdgeRuntime === undefined) delete globals.EdgeRuntime;
+    else globals.EdgeRuntime = previousEdgeRuntime;
+  }
+});
+
+Deno.test("exception replay persistence operates without EdgeRuntime and preserves zeroing cleanup", async () => {
+  const globals = globalThis as TestGlobals;
+  const previousEdgeRuntime = globals.EdgeRuntime;
+  delete globals.EdgeRuntime;
+
+  const persistence = Promise.withResolvers<Awaited<ReturnType<ReplayPersistence>>>();
+  const persistenceStarted = Promise.withResolvers<void>();
+  let persistenceSettled = false;
+  let persistedSnapshot: ReplayInput | null = null;
+  const capture = acceptedInput();
+  const originalBytes = [...capture.body];
+
+  try {
+    const runError = new Error("unscheduled inference error");
+    const task = persistExceptionSentinelReplay(capture, runError, {
+      persistSentinelReplay: (snapshot) => {
+        persistedSnapshot = snapshot;
+        persistenceStarted.resolve();
+        return persistence.promise;
+      },
+    });
+
+    // Original capture body is zeroed immediately without waiting
+    assert.ok(capture.body.every((byte) => byte === 0));
+    await persistenceStarted.promise;
+    assert.equal(persistenceSettled, false);
+
+    const snapshot = persistedSnapshot as ReplayInput | null;
+    if (snapshot === null) throw new Error("replay persistence did not receive a snapshot");
+    assert.deepEqual([...snapshot.body], originalBytes);
+
+    persistenceSettled = true;
+    persistence.resolve({ status: "disabled", reason: "kv_unavailable" });
+    await task;
+
+    assert.ok(snapshot.body.every((byte) => byte === 0));
+  } finally {
+    if (!persistenceSettled) {
+      persistenceSettled = true;
+      persistence.resolve({ status: "disabled", reason: "kv_unavailable" });
+    }
+    if (previousEdgeRuntime !== undefined) globals.EdgeRuntime = previousEdgeRuntime;
+  }
+});
+
