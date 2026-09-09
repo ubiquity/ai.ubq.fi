@@ -803,49 +803,55 @@ Deno.test({
   },
 });
 
-Deno.test("incident index requires super admin authorization before any storage access", async () => {
-  const kv = await Deno.openKv(":memory:");
-  setKvForTest(kv);
-  const adminTokens = config.adminTokens as Set<string>;
-  adminTokens.add(SUPER_ADMIN_TOKEN);
-  try {
-    const anonymous = await handler(new Request(indexUrl()));
-    assert.equal(anonymous.status, 401);
-    const payload = await anonymous.json() as { error?: { code?: string } };
-    assert.equal(payload.error?.code, "invalid_api_key");
+Deno.test({
+  name: "incident index requires super admin authorization before any storage access",
+  ignore: !kvAvailable,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const kv = await Deno.openKv(":memory:");
+    setKvForTest(kv);
+    const adminTokens = config.adminTokens as Set<string>;
+    adminTokens.add(SUPER_ADMIN_TOKEN);
+    try {
+      const anonymous = await handler(new Request(indexUrl()));
+      assert.equal(anonymous.status, 401);
+      const payload = await anonymous.json() as { error?: { code?: string } };
+      assert.equal(payload.error?.code, "invalid_api_key");
 
-    const now = Date.now();
-    const userId = "incident-index-passkey-user";
-    const handle = "incident-index-passkey-handle";
-    const sessionToken = "incident-index-passkey-session-token";
-    await kv.set(passkeyUserKey(userId), {
-      id: userId,
-      handle,
-      is_admin: true,
-      credential_ids: ["incident-index-credential"],
-      created_at_ms: now,
-      updated_at_ms: now,
-    });
-    await kv.set(passkeyHandleKey(handle), userId);
-    await kv.set(passkeySessionKey(sessionToken), {
-      token: sessionToken,
-      user_id: userId,
-      created_at_ms: now,
-      expires_at_ms: now + 3_600_000,
-    });
-    const forbidden = await handler(
-      new Request(indexUrl(), {
-        headers: { Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(sessionToken)}` },
-      }),
-    );
-    assert.equal(forbidden.status, 403);
-    const forbiddenPayload = await forbidden.json() as { error?: { message?: string } };
-    assert.equal(forbiddenPayload.error?.message, "Super admin token required");
-  } finally {
-    adminTokens.delete(SUPER_ADMIN_TOKEN);
-    await kv.close();
-    setKvForTest(null);
-  }
+      const now = Date.now();
+      const userId = "incident-index-passkey-user";
+      const handle = "incident-index-passkey-handle";
+      const sessionToken = "incident-index-passkey-session-token";
+      await kv.set(passkeyUserKey(userId), {
+        id: userId,
+        handle,
+        is_admin: true,
+        credential_ids: ["incident-index-credential"],
+        created_at_ms: now,
+        updated_at_ms: now,
+      });
+      await kv.set(passkeyHandleKey(handle), userId);
+      await kv.set(passkeySessionKey(sessionToken), {
+        token: sessionToken,
+        user_id: userId,
+        created_at_ms: now,
+        expires_at_ms: now + 3_600_000,
+      });
+      const forbidden = await handler(
+        new Request(indexUrl(), {
+          headers: { Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(sessionToken)}` },
+        }),
+      );
+      assert.equal(forbidden.status, 403);
+      const forbiddenPayload = await forbidden.json() as { error?: { message?: string } };
+      assert.equal(forbiddenPayload.error?.message, "Super admin token required");
+    } finally {
+      adminTokens.delete(SUPER_ADMIN_TOKEN);
+      await kv.close();
+      setKvForTest(null);
+    }
+  },
 });
 
 Deno.test({
@@ -913,58 +919,64 @@ Deno.test({
   },
 });
 
-Deno.test("incident index rejects invalid inputs and fails closed on corrupt storage", async () => {
-  const kv = await Deno.openKv(":memory:");
-  setKvForTest(kv);
-  const adminTokens = config.adminTokens as Set<string>;
-  adminTokens.add(SUPER_ADMIN_TOKEN);
-  try {
-    // Frozen 1..100 server limit contract: every integer in range is accepted.
-    for (const limit of [1, 20, 21, 100]) {
-      const accepted = await handler(
-        new Request(`${indexUrl()}?limit=${limit}`, { headers: superAdminHeaders }),
-      );
-      assert.equal(accepted.status, 200, `frozen 1..100 contract rejected limit ${limit}`);
-      await accepted.body?.cancel();
-    }
-    for (
-      const query of [
-        "limit=0",
-        "limit=101",
-        "limit=",
-        "limit=abc",
-        "limit=1.5",
-        "limit=1e1",
-        "limit=1.0",
-        "cursor=",
-        "cursor=!!",
-        `cursor=${"a".repeat(3_000)}`,
-        "incident_id=",
-        "incident_id=not-an-incident-id",
-        "unexpected=1",
-        "limit=1&limit=2",
-        "cursor=cursor-1&cursor=cursor-2",
-      ]
-    ) {
-      const response = await handler(
-        new Request(`${indexUrl()}?${query}`, { headers: superAdminHeaders }),
-      );
-      assert.equal(response.status, 400, query);
-      await response.body?.cancel();
-    }
+Deno.test({
+  name: "incident index rejects invalid inputs and fails closed on corrupt storage",
+  ignore: !kvAvailable,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const kv = await Deno.openKv(":memory:");
+    setKvForTest(kv);
+    const adminTokens = config.adminTokens as Set<string>;
+    adminTokens.add(SUPER_ADMIN_TOKEN);
+    try {
+      // Frozen 1..100 server limit contract: every integer in range is accepted.
+      for (const limit of [1, 20, 21, 100]) {
+        const accepted = await handler(
+          new Request(`${indexUrl()}?limit=${limit}`, { headers: superAdminHeaders }),
+        );
+        assert.equal(accepted.status, 200, `frozen 1..100 contract rejected limit ${limit}`);
+        await accepted.body?.cancel();
+      }
+      for (
+        const query of [
+          "limit=0",
+          "limit=101",
+          "limit=",
+          "limit=abc",
+          "limit=1.5",
+          "limit=1e1",
+          "limit=1.0",
+          "cursor=",
+          "cursor=!!",
+          `cursor=${"a".repeat(3_000)}`,
+          "incident_id=",
+          "incident_id=not-an-incident-id",
+          "unexpected=1",
+          "limit=1&limit=2",
+          "cursor=cursor-1&cursor=cursor-2",
+        ]
+      ) {
+        const response = await handler(
+          new Request(`${indexUrl()}?${query}`, { headers: superAdminHeaders }),
+        );
+        assert.equal(response.status, 400, query);
+        await response.body?.cancel();
+      }
 
-    // An index record that does not parse must fail closed, never succeed empty.
-    await kv.set([...SENTINEL_INCIDENT_INDEX_PREFIX, "f".repeat(64)], { version: 999, corrupted: true });
-    const corrupt = await handler(new Request(indexUrl(), { headers: superAdminHeaders }));
-    assert.equal(corrupt.status, 503);
-    const corruptPayload = await corrupt.json() as { error?: { code?: string }; data?: unknown };
-    assert.equal(corruptPayload.error?.code, "sentinel_incidents_unavailable");
-    assert.equal(corruptPayload.data, undefined);
-  } finally {
-    adminTokens.delete(SUPER_ADMIN_TOKEN);
-    await kv.close();
-    setKvForTest(null);
-  }
+      // An index record that does not parse must fail closed, never succeed empty.
+      await kv.set([...SENTINEL_INCIDENT_INDEX_PREFIX, "f".repeat(64)], { version: 999, corrupted: true });
+      const corrupt = await handler(new Request(indexUrl(), { headers: superAdminHeaders }));
+      assert.equal(corrupt.status, 503);
+      const corruptPayload = await corrupt.json() as { error?: { code?: string }; data?: unknown };
+      assert.equal(corruptPayload.error?.code, "sentinel_incidents_unavailable");
+      assert.equal(corruptPayload.data, undefined);
+    } finally {
+      adminTokens.delete(SUPER_ADMIN_TOKEN);
+      await kv.close();
+      setKvForTest(null);
+    }
+  },
 });
 
 Deno.test({
