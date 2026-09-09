@@ -285,6 +285,41 @@ Deno.test("harness: deterministic HTTP failures are not retried", async () => {
   assert.equal(outcome.events.filter((event) => event.type === "model_request").length, 1);
 });
 
+Deno.test("harness: whole-run cancellation aborts a stalled injected transport", async () => {
+  const controller = new AbortController();
+  let observedSignal: AbortSignal | undefined;
+  const transport: HarmonyTransport = (_body, options) => {
+    observedSignal = options?.signal;
+    return new Promise<Response>((_resolve, reject) => {
+      const signal = options?.signal;
+      if (signal === undefined) return;
+      if (signal.aborted) {
+        reject(signal.reason);
+        return;
+      }
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  };
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timeoutId = setTimeout(() => reject(new Error("stalled transport ignored cancellation")), 500);
+  });
+  const started = Date.now();
+  setTimeout(() => controller.abort(new DOMException("task deadline", "TimeoutError")), 20);
+  try {
+    const outcome = await Promise.race([
+      runReliabilityHarness(baseOptions([], { transport, signal: controller.signal })),
+      timeout,
+    ]);
+    assert.equal(observedSignal, controller.signal);
+    assert.equal(outcome.phase, "aborted");
+    assert.equal(outcome.abortedReason, "signal");
+    assert.ok(Date.now() - started < 500, "transport should stop at the run deadline");
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  }
+});
+
 Deno.test("harness: structured mode requests carry deterministically fewer tokens than full mode", async () => {
   const script: ScriptStep[] = [];
   const bigFiles: Record<string, string> = {};
