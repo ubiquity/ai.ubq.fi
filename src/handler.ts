@@ -1330,14 +1330,25 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
         // the recorder is sealed and disposed here, and the same immutable
         // trace feeds HMAC and encryption.
         const replaySnapshot = snapshotSentinelReplayInput(sentinelReplayInput);
+        let replaySnapshotScheduled = false;
         try {
-          await persistSentinelReplayFromEnvironment(replaySnapshot, observation);
+          const replayTask = persistSentinelReplayFromEnvironment(replaySnapshot, observation);
+          // Replay persistence is optional. When the runtime provides a
+          // background registrar, return the original inference error without
+          // waiting for KV lookup, encryption, or writes. Local runtimes and
+          // tests still await it so failures remain observable and buffers are
+          // cleaned up deterministically.
+          const backgroundReplayTask = replayTask
+            .then(() => undefined, () => undefined)
+            .finally(() => zeroSentinelReplayInput(replaySnapshot));
+          replaySnapshotScheduled = scheduleSentinelBackgroundTask(backgroundReplayTask, undefined);
+          if (!replaySnapshotScheduled) await replayTask;
         } catch {
           // Replay persistence is best effort and cannot replace the original
           // gateway exception or expose its request body in logs.
         } finally {
           zeroSentinelReplayInput(sentinelReplayInput);
-          zeroSentinelReplayInput(replaySnapshot);
+          if (!replaySnapshotScheduled) zeroSentinelReplayInput(replaySnapshot);
         }
       }
       throw runError;
