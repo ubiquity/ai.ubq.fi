@@ -7,7 +7,7 @@
   <array>
     <string>/bin/sh</string>
     <string>-c</string>
-    <string>set -eu; cd -P .data/current; exec /Users/nv/.deno/bin/deno run --frozen --no-prompt --env-file=/Users/nv/repos/ubiquity/ai.ubq.fi/.env --unstable-kv --allow-env --allow-net --allow-read=/Users/nv/repos/ubiquity/ai.ubq.fi --allow-write=/Users/nv/repos/ubiquity/ai.ubq.fi/.data scripts/serve-mac.ts</string>
+    <string>set -eu; cd -P .data/current; exec /Users/nv/.deno/bin/deno run --frozen --no-prompt --env-file=/Users/nv/repos/ubiquity/ai.ubq.fi/.env --unstable-kv --allow-env --allow-net --allow-read=/Users/nv/repos/ubiquity/ai.ubq.fi,/Users/nv/.codex/auth.json --allow-write=/Users/nv/repos/ubiquity/ai.ubq.fi/.data scripts/serve-mac.ts</string>
   </array>
   <key>WorkingDirectory</key><string>/Users/nv/repos/ubiquity/ai.ubq.fi</string>
   <key>RunAtLoad</key><true/>

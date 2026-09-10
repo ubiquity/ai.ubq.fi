@@ -35,8 +35,6 @@ try {
   await Deno.rename(next, ".data/current");
   const domain = `gui/${await command("id", ["-u"])}`;
   const service = `${domain}/com.ubiquity.ai.local`;
-  const registration = new Deno.Command("launchctl", { args: ["print", service], stdout: "null", stderr: "null" });
-  if ((await registration.output()).success) await command("launchctl", ["bootout", service]);
   const link = "/Users/nv/Library/LaunchAgents/com.ubiquity.ai.local.plist";
   try {
     const target = await Deno.readLink(link);
@@ -46,6 +44,23 @@ try {
   } catch (error) {
     if (!(error instanceof Deno.errors.NotFound)) throw error;
     await Deno.symlink(`${root}/ops/com.ubiquity.ai.local.plist`, link);
+  }
+  const registration = await new Deno.Command("launchctl", {
+    args: ["print", service],
+    stdout: "piped",
+    stderr: "null",
+  }).output();
+  if (registration.success) {
+    const oldPid = new TextDecoder().decode(registration.stdout).match(/\n\s*pid = (\d+)/)?.[1];
+    await command("launchctl", ["bootout", service]);
+    // bootout returns before a draining process exits. Wait before registering its replacement.
+    if (oldPid) {
+      const deadline = Date.now() + 185_000;
+      while ((await new Deno.Command("ps", { args: ["-p", oldPid, "-o", "pid="], stdout: "null" }).output()).success) {
+        if (Date.now() >= deadline) throw new Error(`The previous Mac service process ${oldPid} did not exit`);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    }
   }
   await command("launchctl", ["bootstrap", domain, link]);
   for (let attempt = 0; attempt < 30; attempt++) {

@@ -44,7 +44,7 @@
     "fmt": "deno fmt serve.ts src tests scripts docs benchmarks",
     "lint": "deno lint serve.ts src tests scripts benchmarks",
     "deploy:vps": "deno run --allow-read --allow-write --allow-run=git,tar,sudo --allow-net=127.0.0.1:8001 ops/deploy.ts",
-    "deploy:mac": "deno run --allow-read --allow-write --allow-run=git,tar,id,launchctl --allow-net=127.0.0.1:8000 ops/deploy-mac.ts"
+    "deploy:mac": "deno run --allow-read --allow-write --allow-run=git,tar,id,launchctl,ps --allow-net=127.0.0.1:8000 ops/deploy-mac.ts"
   },
   "fmt": {
     "lineWidth": 120,
