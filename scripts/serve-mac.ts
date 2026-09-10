@@ -6,7 +6,12 @@ const releasePath = await Deno.realPath(release);
 for (const name of ["DENO_DEPLOY", "DENO_DEPLOYMENT_ID", "DENO_DEPLOY_BUILD_ID", "DENO_REGION", "DENO_TIMELINE"]) {
   Deno.env.delete(name);
 }
-// Scheduled production billing stays on the VPS. This companion owns only local requests.
+// Scheduled production automation stays on the VPS. This companion owns local
+// requests and local maintenance, so run its scheduled billing reconciliation
+// and analytics pruning against the local KV without claiming the production
+// timeline, which would also re-enable production-only automation such as
+// Sentinel.
+Deno.env.set("DENO_LOCAL_MAINTENANCE", "1");
 const { config, runtimeGitSha } = await import(new URL("src/config.ts", release).href);
 const gitSha = runtimeGitSha();
 if (!/^[0-9a-f]{40}$/.test(gitSha) || !releasePath.endsWith(`/releases/${gitSha}`)) {
