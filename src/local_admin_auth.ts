@@ -107,7 +107,12 @@ export const isAdminAuthDisabledForRequest = (request: Request): boolean => {
   const peer = adminAuthPeer;
   if (!peer || !isLoopbackPeer(peer)) return false;
   try {
-    return isLoopbackHostname(new URL(request.url).hostname);
+    const url = new URL(request.url);
+    const origin = request.headers.get("origin");
+    if (origin !== null && origin !== url.origin) return false;
+    const fetchSite = request.headers.get("sec-fetch-site");
+    if (fetchSite !== null && fetchSite !== "same-origin" && fetchSite !== "none") return false;
+    return isLoopbackHostname(url.hostname);
   } catch {
     return false;
   }
