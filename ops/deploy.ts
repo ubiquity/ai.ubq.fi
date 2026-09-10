@@ -43,6 +43,7 @@ try {
   const next = `.data/current-${crypto.randomUUID()}`;
   await Deno.symlink(`releases/${sha}`, next);
   await Deno.rename(next, ".data/current");
+  await command("sudo", ["-n", "systemctl", "daemon-reload"]);
   await command("sudo", ["-n", "systemctl", "restart", "ai-ubq-fi.service"]);
 
   for (let attempt = 0; attempt < 30; attempt++) {
