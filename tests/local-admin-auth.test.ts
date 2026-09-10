@@ -115,6 +115,11 @@ Deno.test("guarded runtime bypass grants local super-admin access only to loopba
     }
     assert.equal(await requireSuperAdminAuth(localRequest), null);
 
+    // Explicit listener bypass also covers clients outside the legacy dev-host list.
+    const loopbackClient = await authenticateClient(new Request("http://127.42.9.3/v1/models"));
+    assert.equal(loopbackClient.ok, true);
+    if (loopbackClient.ok) assert.equal(loopbackClient.method.kind, "disabled");
+
     const remoteAuth = await authenticateAdmin(remoteRequest);
     assert.equal(remoteAuth.ok, false);
     if (!remoteAuth.ok) assert.equal(remoteAuth.response.status, 401);
