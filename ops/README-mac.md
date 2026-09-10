@@ -1,0 +1,29 @@
+# Mac gateway service
+
+The Mac companion listens on `http://127.0.0.1:8000`. `com.ubiquity.ai.local` is a per-user launchd agent: it starts at
+login and restarts after exit. It does not run before the user logs in or keep a sleeping Mac awake.
+
+Configuration lives in `ops/com.ubiquity.ai.local.plist`, linked from `~/Library/LaunchAgents/`. The repository-root
+`.env` contains the existing client and admin API tokens. Local KV is `.data/kv.sqlite3`. Code runs from the immutable
+release selected by `.data/current`, including that release's Deno configuration. Runtime identity is
+`mac-<full-git-sha>`.
+
+Give the local gateway a separate Codex sign-in and upload it through authenticated `POST /admin/codex/auth`. Do not
+copy the VPS credential pool or the normal CLI's rotating token into this database. After upload, the gateway must be
+the only refresh writer for that sign-in. Production scheduled billing remains on the VPS.
+
+From the clean Mac repository root, `deno task deploy:mac` installs the committed release and loads the launch agent.
+Verify authenticated local inference after deployment before changing Codex routing. The task's health check alone does
+not establish provider readiness.
+
+```sh
+launchctl print gui/501/com.ubiquity.ai.local
+launchctl kickstart -k gui/501/com.ubiquity.ai.local
+curl --fail http://127.0.0.1:8000/health
+tail -n 50 .data/mac.stderr.log
+```
+
+Use a custom Codex provider with base URL `http://127.0.0.1:8000/v1`, the Responses wire API, and the existing
+`UOS_AI_TOKEN`. Keep the remote `uos` provider available for an explicit remote profile. Local inference avoids the VPS
+round trip; traffic between the Mac and upstream model providers still uses the internet. The two gateways have
+independent usage and routing state.
