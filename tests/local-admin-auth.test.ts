@@ -107,6 +107,26 @@ Deno.test("guarded runtime bypass grants local super-admin access only to loopba
     assert.equal(isAdminAuthDisabledForRequest(localRequest), true);
     assert.equal(isAdminAuthDisabledForRequest(remoteRequest), false);
 
+    const crossOriginHeaders: HeadersInit[] = [
+      { origin: "https://attacker.example" },
+      { origin: "null" },
+      { "sec-fetch-site": "cross-site" },
+      { "sec-fetch-site": "same-site" },
+    ];
+    for (const headers of crossOriginHeaders) {
+      const crossOrigin = new Request(localRequest, { headers });
+      assert.equal(isAdminAuthDisabledForRequest(crossOrigin), false);
+      assert.equal((await authenticateAdmin(crossOrigin)).ok, false);
+    }
+    assert.equal(
+      isAdminAuthDisabledForRequest(
+        new Request(localRequest, {
+          headers: { origin: "http://127.0.0.1", "sec-fetch-site": "same-origin" },
+        }),
+      ),
+      true,
+    );
+
     const localAuth = await authenticateAdmin(localRequest);
     assert.equal(localAuth.ok, true);
     if (localAuth.ok) {
