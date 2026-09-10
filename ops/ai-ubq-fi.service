@@ -11,7 +11,7 @@ Group=codex
 WorkingDirectory=/home/codex/repos/ubiquity/ai.ubq.fi
 Environment=DENO_DIR=/home/codex/repos/ubiquity/ai.ubq.fi/.data/deno
 Environment=DENO_TIMELINE=production
-ExecStart=/usr/local/bin/deno run --frozen --no-prompt --env-file=.env --unstable-kv --allow-env --allow-net --allow-read=/home/codex/repos/ubiquity/ai.ubq.fi --allow-write=/home/codex/repos/ubiquity/ai.ubq.fi/.data scripts/serve-vps.ts
+ExecStart=/bin/sh -c 'exec /usr/local/bin/deno run --frozen --no-prompt --env-file=.env --unstable-kv --allow-env --allow-net --allow-read=/home/codex/repos/ubiquity/ai.ubq.fi --allow-write=/home/codex/repos/ubiquity/ai.ubq.fi/.data --config /home/codex/repos/ubiquity/ai.ubq.fi/.data/current/deno.json /home/codex/repos/ubiquity/ai.ubq.fi/.data/current/scripts/serve-vps.ts'
 Restart=always
 RestartSec=5
 TimeoutStopSec=180

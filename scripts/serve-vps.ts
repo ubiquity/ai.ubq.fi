@@ -1,5 +1,6 @@
 // Keep the database and secrets in the repository root across code updates.
-const root = new URL("../", import.meta.url);
+const isRelease = import.meta.url.includes("/.data/releases/");
+const root = new URL(isRelease ? "../../../../" : "../", import.meta.url);
 Deno.chdir(root);
 // Resolve the symlink once: static assets and lazy imports must stay on this release.
 const releasePath = await Deno.realPath(new URL(".data/current", root));
