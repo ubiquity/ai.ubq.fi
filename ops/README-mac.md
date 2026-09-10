@@ -4,9 +4,10 @@ The Mac companion listens on `http://127.0.0.1:8000`. `com.ubiquity.ai.local` is
 login and restarts after exit. It does not run before the user logs in or keep a sleeping Mac awake.
 
 Configuration lives in `ops/com.ubiquity.ai.local.plist`, linked from `~/Library/LaunchAgents/`. The repository-root
-`.env` contains the existing client and admin API tokens. Local KV is `.data/kv.sqlite3`. Code runs from the immutable
-release selected by `.data/current`, including that release's Deno configuration. Runtime identity is
-`mac-<full-git-sha>`.
+`.env` contains the existing upstream credentials. Local client and admin authentication are disabled for loopback
+requests using the listener and peer checks; the admin dashboard opens without sign-in. Local KV is `.data/kv.sqlite3`.
+Code runs from the immutable release selected by `.data/current`, including that release's Deno configuration. Runtime
+identity is `mac-<full-git-sha>`.
 
 The daemon can read the existing synced `~/.codex/auth.json` through the gateway's normal local credential loader. Keep
 the existing sign-in and cross-machine sync. This uses the gateway's existing KV credential-pool behavior after initial
