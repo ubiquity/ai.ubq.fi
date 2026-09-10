@@ -9,6 +9,9 @@ requests using the listener and peer checks; the admin dashboard opens without s
 Code runs from the immutable release selected by `.data/current`, including that release's Deno configuration. Runtime
 identity is `mac-<full-git-sha>`.
 
+Provider quota is sampled at startup and every fifteen minutes into local KV so the Providers dashboard has current
+capacity and accumulates its own history.
+
 The daemon can read the existing synced `~/.codex/auth.json` through the gateway's normal local credential loader. Keep
 the existing sign-in and cross-machine sync. This uses the gateway's existing KV credential-pool behavior after initial
 loading; it does not change the synced auth file. Production scheduled billing remains on the VPS. Local capped paid

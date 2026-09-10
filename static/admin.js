@@ -6745,7 +6745,7 @@ const updatePasskeyUserAdmin = async (id, isAdmin, checkbox) => {
 };
 
 const ADMIN_VIEW_DEFAULT = "loading";
-const ADMIN_VIEW_AUTHENTICATED_DEFAULT = "keys";
+const ADMIN_VIEW_AUTHENTICATED_DEFAULT = "providers";
 const VIEW_HASHES = {
   loading: "loading",
   keys: "keys",
@@ -6846,12 +6846,12 @@ const bindTablistKeyboard = (tablist) => {
 };
 
 const viewTabs = {
+  providers: viewTabProviders,
   keys: viewTabKeys,
   users: viewTabUsers,
   kernel: viewTabKernel,
   pubkeys: viewTabPubkeys,
   defaults: viewTabDefaults,
-  providers: viewTabProviders,
   errors: viewTabErrors,
 };
 
