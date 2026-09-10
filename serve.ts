@@ -11,10 +11,7 @@ import { reconcileDuePaidFallbacksV3 } from "./src/paid_fallback_ledger.ts";
 import { prunePromptCacheAnalytics } from "./src/prompt_cache_analytics.ts";
 import { sampleProviderCapacityForCron } from "./src/provider_capacity.ts";
 import { createServeHandler } from "./src/serve_handler.ts";
-const isProductionRuntime = (): boolean =>
-  Deno.env.get("DENO_DEPLOY_ORG_SLUG") === "ubiquity-dao" &&
-  Deno.env.get("DENO_DEPLOY_APP_SLUG") === "ai-ubq-fi" &&
-  Deno.env.get("DENO_TIMELINE") === "production";
+const isProductionRuntime = (): boolean => Deno.env.get("DENO_TIMELINE") === "production";
 
 Deno.cron("reconcile pending metered billing", "* * * * *", async () => {
   if (!isProductionRuntime()) return;
