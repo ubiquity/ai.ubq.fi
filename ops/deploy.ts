@@ -43,6 +43,7 @@ try {
   const next = `.data/current-${crypto.randomUUID()}`;
   await Deno.symlink(`releases/${sha}`, next);
   await Deno.rename(next, ".data/current");
+  await command("sudo", ["-n", "systemctl", "daemon-reload"]);
   await command("sudo", ["-n", "systemctl", "restart", "ai-ubq-fi.service"]);
 
   for (let attempt = 0; attempt < 30; attempt++) {
@@ -55,7 +56,13 @@ try {
         response.headers.get("x-uos-git-sha") === sha &&
         response.headers.get("x-uos-deployment-id") === `vps-${sha}`
       ) {
-        console.log(JSON.stringify({ git_sha: sha, deployment_id: `vps-${sha}`, release, health_verified: true }));
+        console.log(JSON.stringify({
+          git_sha: sha,
+          deployment_id: `vps-${sha}`,
+          release,
+          systemd_daemon_reloaded: true,
+          health_verified: true,
+        }));
         Deno.exit(0);
       }
     } catch { /* The listener may still be starting. */ }
