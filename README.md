@@ -1,6 +1,8 @@
 # ai.ubq.fi
 
-OpenAI API-compatible gateway for the ubq.fi ecosystem (Deno Deploy).
+OpenAI API-compatible gateway for the ubq.fi ecosystem, hosted on the VPS.
+
+See [VPS operations](ops/README.md) for service management, deployment, data, and TLS.
 
 Autonomous agents should start at `https://ai.ubq.fi/llms.txt`. The machine-readable API contract is served at
 `https://ai.ubq.fi/openapi.json`, and the complete integration guide is served at `https://ai.ubq.fi/llms-full.txt` from

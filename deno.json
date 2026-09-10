@@ -1,5 +1,8 @@
 {
-  "unstable": ["no-legacy-abort", "cron"],
+  "unstable": [
+    "no-legacy-abort",
+    "cron"
+  ],
   "imports": {
     "@deno/kv-utils/import-export": "jsr:@deno/kv-utils@0.1.4/import-export",
     "@deno/kv-utils/json": "jsr:@deno/kv-utils@0.1.4/json",
@@ -7,7 +10,7 @@
     "@std/yaml": "jsr:@std/yaml@1.0.9"
   },
   "tasks": {
-    "build": "deno check --frozen serve.ts scripts/setup-instance.ts",
+    "build": "deno check --frozen serve.ts scripts/setup-instance.ts scripts/serve-vps.ts ops/deploy.ts",
     "dev": "sh -c 'if [ -f .env ]; then set -a; . ./.env; set +a; fi; export DENO_DEPLOY_TOKEN=\"${DENO_DEPLOY_TOKEN_UBIQUITY_DAO:-${DENO_DEPLOY_TOKEN:-local-dev-admin}}\"; exec deno serve --watch --env --host 127.0.0.1 --allow-env --allow-net --allow-read --unstable-kv serve.ts --disable-admin-auth \"$@\"' --",
     "dev:play": "deno task dev:local",
     "dev:local": "sh -c 'if [ -z \"${CODEX_AUTH_JSON_B64:-}\" ]; then if [ -f \"$HOME/.codex/auth.json\" ]; then export CODEX_AUTH_JSON_B64=\"$(base64 < \"$HOME/.codex/auth.json\" | tr -d \"\\n\")\"; echo \"Loaded CODEX_AUTH_JSON_B64 from ~/.codex/auth.json\"; else echo \"No CODEX_AUTH_JSON_B64 and no ~/.codex/auth.json found. /v1/models will stay empty until a model snapshot is initialized.\"; fi; fi; if [ -f .env ]; then set -a; . ./.env; set +a; fi; export DENO_DEPLOY_TOKEN=\"${DENO_DEPLOY_TOKEN_UBIQUITY_DAO:-${DENO_DEPLOY_TOKEN:-local-dev-admin}}\"; exec deno serve --watch --host 127.0.0.1 --allow-env --allow-net --allow-read --unstable-kv serve.ts --disable-admin-auth \"$@\"' --",
@@ -39,15 +42,14 @@
     "test:e2e": "deno test --frozen --env --allow-net --allow-env=BASE_URL,UOS_AI_TOKEN,DENO_DEPLOY_TOKEN tests/live-default-model.e2e.ts",
     "sentinel:test-local": "deno test --frozen --unstable-kv --allow-env=SENTINEL_REPLAY_KEY tests/sentinel-replay-export.test.ts tests/sentinel-request-capture.test.ts tests/sentinel-incident-index.test.ts tests/sentinel-retirement.test.ts tests/handler-replay-background.test.ts tests/sentinel-upstream-capture.test.ts && deno test --frozen --unstable-kv --allow-read=. --allow-run=git,tar,deno --allow-write=. --allow-env=SENTINEL_REPLAY_KEY tests/sentinel-upstream-providers.test.ts",
     "fmt": "deno fmt serve.ts src tests scripts docs benchmarks",
-    "lint": "deno lint serve.ts src tests scripts benchmarks"
+    "lint": "deno lint serve.ts src tests scripts benchmarks",
+    "deploy:vps": "deno run --allow-read=. --allow-write=.data --allow-run=git,tar,sudo --allow-net=127.0.0.1:8001 ops/deploy.ts"
   },
   "fmt": {
     "lineWidth": 120,
     "semiColons": true,
-    "exclude": ["benchmarks/fixtures"]
-  },
-  "deploy": {
-    "org": "ubiquity-dao",
-    "app": "ai-ubq-fi"
+    "exclude": [
+      "benchmarks/fixtures"
+    ]
   }
 }
