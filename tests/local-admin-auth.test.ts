@@ -144,3 +144,20 @@ Deno.test("guarded runtime bypass grants local super-admin access only to loopba
   assert.equal(otherLoopbackClient.ok, false);
   if (!otherLoopbackClient.ok) assert.equal(otherLoopbackClient.response.status, 401);
 });
+
+Deno.test("authenticateClient enforces auth on localhost when DENO_TIMELINE=production", async () => {
+  const originalTimeline = Deno.env.get("DENO_TIMELINE");
+  try {
+    Deno.env.set("DENO_TIMELINE", "production");
+    const localRequest = new Request("http://127.0.0.1/v1/models");
+    const localAuth = await authenticateClient(localRequest);
+    assert.equal(localAuth.ok, false);
+    if (!localAuth.ok) assert.equal(localAuth.response.status, 401);
+  } finally {
+    if (originalTimeline !== undefined) {
+      Deno.env.set("DENO_TIMELINE", originalTimeline);
+    } else {
+      Deno.env.delete("DENO_TIMELINE");
+    }
+  }
+});

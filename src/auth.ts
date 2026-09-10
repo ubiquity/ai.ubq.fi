@@ -655,6 +655,7 @@ const getRequestPath = (req: Request): string => {
 };
 
 const isLocalClientAuthDisabledRequest = (req: Request): boolean => {
+  if (Deno.env.get("DENO_TIMELINE") === "production") return false;
   if (config.isDeploy || runtimeGitSha() !== "unknown") return false;
   try {
     const hostname = new URL(req.url).hostname.toLowerCase();
