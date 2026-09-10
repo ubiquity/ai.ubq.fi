@@ -54,4 +54,6 @@ export const runtimeGitSha = (): string => RELEASE_GIT_SHA;
 // still identify themselves truthfully.
 export const runtimeDeploymentId = (): string =>
   getEnv("DENO_DEPLOY_BUILD_ID")?.trim() || getEnv("DENO_DEPLOYMENT_ID")?.trim() ||
-  (!config.isDeploy && runtimeGitSha() !== "unknown" ? `vps-${runtimeGitSha()}` : "unknown");
+  (!config.isDeploy && runtimeGitSha() !== "unknown"
+    ? `${Deno.build.os === "darwin" ? "mac" : "vps"}-${runtimeGitSha()}`
+    : "unknown");
