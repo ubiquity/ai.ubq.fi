@@ -1,9 +1,10 @@
+// systemd resolves .data/current before Deno starts, selecting this release's
+// launcher, configuration, import map, and lockfile together.
+const release = new URL("../", import.meta.url);
+const releasePath = await Deno.realPath(release);
 // Keep the database and secrets in the repository root across code updates.
-const root = new URL("../", import.meta.url);
+const root = new URL("../../../", release);
 Deno.chdir(root);
-// Resolve the symlink once: static assets and lazy imports must stay on this release.
-const releasePath = await Deno.realPath(new URL(".data/current", root));
-const release = new URL(`file://${releasePath}/`);
 const { config, runtimeGitSha } = await import(new URL("src/config.ts", release).href);
 const { initializeKv } = await import(new URL("src/kv.ts", release).href);
 if (config.isDeploy) throw new Error("The VPS entrypoint cannot run in Deno Deploy");

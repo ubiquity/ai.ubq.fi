@@ -4,6 +4,10 @@ Production runs as `ai-ubq-fi.service` on `codex@vps.pavlovcik.com` (129.158.58.
 to `/home/codex/repos/ubiquity/ai.ubq.fi`.
 
 - `ops/ai-ubq-fi.service`: enabled systemd service; starts at boot and restarts after exit.
+- The service resolves `.data/current` before starting Deno. The selected release supplies `deno.json`, its import map,
+  `deno.lock`, and `scripts/serve-vps.ts`; the mutable checkout cannot override their dependency resolution.
+- The empty `workspace` in `deno.json` makes each release a workspace root, stopping Deno's parent-config discovery at
+  the immutable release rather than including the checkout above it.
 - `scripts/serve-vps.ts`: authenticated listener on `127.0.0.1:8001`, with graceful shutdown.
 - `.env`: existing production credentials, mode 0600. `DENO_DEPLOY_TOKEN` remains the application's admin-token name.
 - `.data/kv.sqlite3`: persistent local KV. Never replace it during a code deployment.
@@ -49,6 +53,15 @@ provider inference. The startup message, health body, and response headers ident
 
 To roll back code, atomically point `.data/current` to a previously accepted release and restart `ai-ubq-fi.service`.
 Preserve `.env` and `.data/kv.sqlite3`.
+
+After installing this service change, run `sudo systemctl daemon-reload` before the next restart. Rollback targets must
+include the release-root VPS launcher used by this service; older artifacts whose launcher searches for `.data/current`
+relative to itself are not compatible. Keep a tested release with this launcher as the rollback baseline.
+
+`deno task test:vps` runs the service startup command against two isolated fixture releases, then rolls back while the
+mutable checkout has invalid configuration and lockfile contents. It verifies each release's launcher, dependency
+mapping, and Git identity, plus repository-root environment loading and persistent KV data. It uses a fixture handler
+without opening a listener or contacting a provider; live deployment and inference checks remain required above.
 
 ## Data migration and recovery
 
