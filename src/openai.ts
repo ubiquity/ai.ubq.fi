@@ -1654,8 +1654,8 @@ const markPrimarySemanticRecovery = (
   }).catch(() => {});
 };
 
-const collectBufferedResponses = async (
-  attempt: PreparedResponsesAttempt,
+export const collectBufferedResponses = async (
+  attempt: Pick<PreparedResponsesAttempt, "provider" | "responseId" | "prepared">,
   options: Readonly<{
     warningModel?: string | null;
     usageContext?: UsageContext;
