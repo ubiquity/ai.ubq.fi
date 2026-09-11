@@ -7,6 +7,12 @@ let openedKv: Deno.Kv | null = null;
 let nextOpenAttemptAtMs = 0;
 let openFailureCount = 0;
 
+/** Install the persistent database before the VPS starts accepting requests. */
+export const initializeKv = (kv: Deno.Kv): void => {
+  if (openedKv || openPromise) throw new Error("KV has already been initialized");
+  openedKv = kv;
+};
+
 const retryDelayMs = (failureCount: number): number => {
   const capped = Math.min(5_000, 250 * 2 ** Math.min(5, Math.max(0, failureCount - 1)));
   return Math.trunc(capped * (0.75 + Math.random() * 0.5));

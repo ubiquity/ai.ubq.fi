@@ -1,4 +1,4 @@
-import { config } from "./config.ts";
+import { config, runtimeGitSha } from "./config.ts";
 import { apiKeyIdKey, coerceApiKeyExpiresAtMs } from "./api_keys.ts";
 import { type ApiKeyPolicy, authenticateApiKeyToken, getApiKeyUsageV3, looksLikeUosApiKey } from "./api_key_policy.ts";
 import { json, openaiError } from "./http.ts";
@@ -655,7 +655,8 @@ const getRequestPath = (req: Request): string => {
 };
 
 const isLocalClientAuthDisabledRequest = (req: Request): boolean => {
-  if (config.isDeploy) return false;
+  if (isAdminAuthDisabledForRequest(req)) return true;
+  if (config.isDeploy || runtimeGitSha() !== "unknown") return false;
   try {
     const hostname = new URL(req.url).hostname.toLowerCase();
     return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";

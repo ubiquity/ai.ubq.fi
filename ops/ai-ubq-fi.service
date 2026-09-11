@@ -1,0 +1,26 @@
+[Unit]
+Description=ai.ubq.fi API gateway
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=codex
+Group=codex
+WorkingDirectory=/home/codex/repos/ubiquity/ai.ubq.fi
+Environment=DENO_DIR=/home/codex/repos/ubiquity/ai.ubq.fi/.data/deno
+Environment=DENO_TIMELINE=production
+ExecStart=/usr/local/bin/deno run --frozen --no-prompt --env-file=.env --unstable-kv --allow-env --allow-net --allow-read=/home/codex/repos/ubiquity/ai.ubq.fi --allow-write=/home/codex/repos/ubiquity/ai.ubq.fi/.data scripts/serve-vps.ts
+Restart=always
+RestartSec=5
+TimeoutStopSec=180
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/codex/repos/ubiquity/ai.ubq.fi/.data
+
+[Install]
+WantedBy=multi-user.target

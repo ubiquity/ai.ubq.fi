@@ -1,0 +1,6 @@
+ai.ubq.fi {
+    tls /etc/caddy/ai-ubq-fi-tls/ai.ubq.fi.pem /etc/caddy/ai-ubq-fi-tls/ai.ubq.fi.key
+    reverse_proxy 127.0.0.1:8001 {
+        flush_interval -1
+    }
+}

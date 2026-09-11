@@ -107,6 +107,26 @@ Deno.test("guarded runtime bypass grants local super-admin access only to loopba
     assert.equal(isAdminAuthDisabledForRequest(localRequest), true);
     assert.equal(isAdminAuthDisabledForRequest(remoteRequest), false);
 
+    const crossOriginHeaders: HeadersInit[] = [
+      { origin: "https://attacker.example" },
+      { origin: "null" },
+      { "sec-fetch-site": "cross-site" },
+      { "sec-fetch-site": "same-site" },
+    ];
+    for (const headers of crossOriginHeaders) {
+      const crossOrigin = new Request(localRequest, { headers });
+      assert.equal(isAdminAuthDisabledForRequest(crossOrigin), false);
+      assert.equal((await authenticateAdmin(crossOrigin)).ok, false);
+    }
+    assert.equal(
+      isAdminAuthDisabledForRequest(
+        new Request(localRequest, {
+          headers: { origin: "http://127.0.0.1", "sec-fetch-site": "same-origin" },
+        }),
+      ),
+      true,
+    );
+
     const localAuth = await authenticateAdmin(localRequest);
     assert.equal(localAuth.ok, true);
     if (localAuth.ok) {
@@ -114,6 +134,11 @@ Deno.test("guarded runtime bypass grants local super-admin access only to loopba
       assert.equal(localAuth.is_super_admin, true);
     }
     assert.equal(await requireSuperAdminAuth(localRequest), null);
+
+    // Explicit listener bypass also covers clients outside the legacy dev-host list.
+    const loopbackClient = await authenticateClient(new Request("http://127.42.9.3/v1/models"));
+    assert.equal(loopbackClient.ok, true);
+    if (loopbackClient.ok) assert.equal(loopbackClient.method.kind, "disabled");
 
     const remoteAuth = await authenticateAdmin(remoteRequest);
     assert.equal(remoteAuth.ok, false);
