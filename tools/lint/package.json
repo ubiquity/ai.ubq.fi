@@ -1,0 +1,25 @@
+{
+  "name": "ai-ubq-fi",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Dev-only lint tooling for the ai.ubq.fi Deno gateway. Single source of truth for lint/format tool versions, consumed by the scripts/ wrappers and the deno.json tasks.",
+  "scripts": {
+    "format": "sh scripts/format.sh",
+    "format:check": "sh scripts/format.sh --check",
+    "knip": "sh scripts/knip.sh",
+    "lint": "sh scripts/lint.sh",
+    "lint:fix": "sh scripts/lint.sh --fix",
+    "verify": "sh scripts/verify.sh"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.0.0",
+    "eslint": "^10.10.0",
+    "eslint-plugin-check-file": "^3.3.2",
+    "eslint-plugin-sonarjs": "^4.2.0",
+    "knip": "^6.35.1",
+    "prettier": "^3.9.6",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.70.0"
+  }
+}
