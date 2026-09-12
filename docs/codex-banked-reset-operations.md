@@ -68,13 +68,17 @@ After a verified reset, the original inference request is the one recovery probe
 
 ## Configuration
 
-The admin console has a gateway-wide **Use banked resets** switch under **Providers**. It saves immediately in KV and
-survives restarts. The authenticated `GET` and `PATCH /admin/providers/codex/banked-resets` endpoint reads or updates
-it; PATCH accepts only `{ "enabled": true }` or `{ "enabled": false }`. Changing the switch never calls the reset
-provider. An absent setting preserves existing behavior. Turning it on retains the environment mode and caps below; the
-console shows when server configuration still pauses live use. Turning it off blocks new selection and submission,
-including a disable that wins the atomic check at the final submission renewal. A reset already authorized for
-submission cannot be cancelled or undone. Existing redemption and daily-cap records are retained.
+The admin console has a **Use banked resets** switch on each API key's create form and editor under **API keys**. The
+authenticated `GET /admin/api-keys` response includes `banked_resets_enabled`; `POST` accepts that boolean when creating
+a key, and `PATCH` accepts it alongside the key's `id`. Edits save automatically to that key's record in KV and survive
+restarts. New and existing keys default to enabled until explicitly changed. The former gateway-wide admin control is
+removed.
+
+This is permission for a key's requests to redeem a reset, not separate provider quota: restored Codex capacity remains
+shared. Disabling one key does not change another key. The key record is read strongly at selection and atomically
+checked before recording an inventory decision or authorizing submission. Existing environment mode and caps below still
+apply, including for non-key authentication. Changing a switch never calls the reset provider. A reset already
+authorized for submission cannot be cancelled or undone. Existing redemption and daily-cap records are retained.
 
 Settings are re-read on each gateway request and immediately before the consume boundary.
 

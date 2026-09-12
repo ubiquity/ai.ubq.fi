@@ -31,6 +31,7 @@ import {
   API_KEY_ID_PREFIX,
   API_KEY_NO_EXPIRATION_MS,
   API_KEY_NO_USAGE_LIMIT,
+  apiKeyBankedResetsEnabled,
   apiKeyHashKey,
   apiKeyIdKey,
   calculateNextResetMs,
@@ -107,12 +108,7 @@ import {
   validateKvMigrationTarget,
 } from "./kv_migration.ts";
 import { getKv } from "./kv.ts";
-import {
-  getCodexBankedResetUsage,
-  listCodexResetShadowDecisions,
-  loadCodexBankedResetConfig,
-  setCodexBankedResetUsage,
-} from "./codex_banked_reset.ts";
+import { listCodexResetShadowDecisions } from "./codex_banked_reset.ts";
 import {
   assertPromptCacheScopeExperimentTelemetryBaseline,
   PromptCacheScopeExperimentBusyError,
@@ -219,31 +215,6 @@ export const handleAdminCodexRecheck = async (slot: number): Promise<Response> =
   const accepted = await recheckCodexRoutingSlot(slot);
   if (!accepted) return openaiError(404, "Codex account slot is not configured", "not_found");
   return new Response(null, { status: 204 });
-};
-
-/** Stores a gateway-wide permission; changing it never redeems a credit. */
-export const handleAdminCodexBankedResetUsage = async (req: Request): Promise<Response> => {
-  try {
-    if (req.method === "PATCH") {
-      const body: unknown = await req.json().catch(() => null);
-      if (!isRecord(body) || typeof body.enabled !== "boolean" || Object.keys(body).length !== 1) {
-        return openaiError(400, "Expected a single enabled boolean", "invalid_request_error");
-      }
-      await setCodexBankedResetUsage(body.enabled);
-    }
-    const enabled = await getCodexBankedResetUsage();
-    const config = loadCodexBankedResetConfig();
-    return json(200, {
-      enabled,
-      active: enabled && config.enabled && config.mode === "live" && config.maxGlobalPerDay === 1 &&
-        config.maxPerAccountPerWindow === 1,
-    }, { "Cache-Control": "no-store" });
-  } catch {
-    return openaiError(503, "Banked-reset settings are unavailable", "banked_reset_settings_unavailable", {
-      type: "server_error",
-      headers: { "Cache-Control": "no-store" },
-    });
-  }
 };
 
 /** Returns only the redacted shadow-decision ledger, without redeeming. */
@@ -970,6 +941,7 @@ const paidFallbackPublicFields = async (
     getPaidFallbackProviderUsageV3(record.id, windowResetAtMs, kv),
   ]);
   return {
+    banked_resets_enabled: apiKeyBankedResetsEnabled(record),
     paid_fallback_enabled: record.paid_fallback_enabled,
     paid_fallback_limit_credits: paidFallbackMicrocreditsToCredits(record.paid_fallback_limit_microcredits),
     paid_fallback_spent_credits: paidFallbackMicrocreditsToCredits(projection?.settled_microcredits ?? 0),
@@ -1148,6 +1120,10 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
   }
   const resolvedWindowMs = windowMs ?? USAGE_RESET_PERIOD_MS;
 
+  if (Object.hasOwn(raw, "banked_resets_enabled") && typeof raw.banked_resets_enabled !== "boolean") {
+    return openaiError(400, "banked_resets_enabled must be a boolean", "invalid_request_error");
+  }
+
   if (
     Object.prototype.hasOwnProperty.call(raw, "paid_fallback_enabled") &&
     typeof raw.paid_fallback_enabled !== "boolean"
@@ -1206,6 +1182,7 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
     usage_reset_at_ms: usageResetAtMs,
     window_ms: resolvedWindowMs,
     usage_quota_version: 3,
+    banked_resets_enabled: apiKeyBankedResetsEnabled(raw),
     ...paidFallbackPolicy,
   };
   const hashRecord: ApiKeyHashRecord = {
@@ -1410,6 +1387,13 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
   let nextUsageRequests = entry.value.usage_requests;
   let nextUsageResetAtMs = entry.value.usage_reset_at_ms;
   let nextWindowMs = currentWindowMs;
+  let nextBankedResetsEnabled = apiKeyBankedResetsEnabled(entry.value);
+  if (Object.hasOwn(raw, "banked_resets_enabled")) {
+    if (typeof raw.banked_resets_enabled !== "boolean") {
+      return openaiError(400, "banked_resets_enabled must be a boolean", "invalid_request_error");
+    }
+    nextBankedResetsEnabled = raw.banked_resets_enabled;
+  }
   let nextPaidFallbackEnabled = entry.value.paid_fallback_enabled;
   let nextPaidFallbackLimitMicrocredits = entry.value.paid_fallback_limit_microcredits;
   let nextPaidFallbackSpentMicrocredits = entry.value.paid_fallback_spent_microcredits;
@@ -1507,6 +1491,7 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
   }
 
   const hasChanges = nextName !== entry.value.name ||
+    nextBankedResetsEnabled !== apiKeyBankedResetsEnabled(entry.value) ||
     nextExpiresAtMs !== currentExpiresAtMs ||
     nextUsageLimit !== entry.value.usage_limit_requests ||
     nextWindowMs !== currentWindowMs ||
@@ -1554,6 +1539,7 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
 
   const updated: ApiKeyRecord = {
     ...entry.value,
+    banked_resets_enabled: nextBankedResetsEnabled,
     name: nextName,
     expires_at_ms: nextExpiresAtMs,
     usage_limit_requests: nextUsageLimit,

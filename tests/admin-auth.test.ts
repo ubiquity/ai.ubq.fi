@@ -119,7 +119,6 @@ const {
   handleAdminApiKeysUnrevoke,
   handleAdminApiKeysUpdate,
   handleAdminCodexAuth,
-  handleAdminCodexBankedResetUsage,
   handleAdminCodexModelsGet,
   handleAdminCodexModelsSet,
   handleAdminDefaults,
@@ -128,49 +127,53 @@ const {
   handleAdminKvMigrationImport,
 } = await import("../src/admin.ts");
 
-Deno.test("admin banked-reset usage persists strict booleans and rejects other setting changes", async () => {
+Deno.test("banked reset settings are independent per API key and survive unrelated edits", async () => {
   kvStore.clear();
-  const url = "http://localhost/admin/providers/codex/banked-resets";
-  const initial = await handleAdminCodexBankedResetUsage(new Request(url));
-  assert.equal((await initial.json()).enabled, true);
-  for (const enabled of [false, true, false]) {
-    const saved = await handleAdminCodexBankedResetUsage(
+  const url = "http://localhost/admin/api-keys";
+  const create = async (name: string, enabled?: boolean) => {
+    const response = await handleAdminApiKeysCreate(
       new Request(url, {
-        method: "PATCH",
-        body: JSON.stringify({ enabled }),
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          usage_limit_requests: -1,
+          ...(enabled === undefined ? {} : { banked_resets_enabled: enabled }),
+        }),
       }),
     );
+    assert.equal(response.status, 200);
+    return await response.json();
+  };
+  const first = await create("reset-disabled", false);
+  const second = await create("reset-enabled");
+  assert.equal(first.banked_resets_enabled, false);
+  assert.equal(second.banked_resets_enabled, true);
+  const update = async (body: unknown) =>
+    await handleAdminApiKeysUpdate(new Request(url, { method: "PATCH", body: JSON.stringify(body) }));
+  for (const enabled of [true, false]) {
+    const saved = await update({ id: first.id, banked_resets_enabled: enabled });
     assert.equal(saved.status, 200);
-    const loaded = await handleAdminCodexBankedResetUsage(new Request(url));
-    assert.equal(loaded.headers.get("Cache-Control"), "no-store");
-    const payload = await loaded.json();
-    assert.equal(payload.enabled, enabled);
-    if (!enabled) assert.equal(payload.active, false);
+    assert.equal((await saved.json()).banked_resets_enabled, enabled);
+    const list = await handleAdminApiKeysList(new Request(url));
+    const data = await list.json();
+    assert.equal(data.data.find((key: { id: string }) => key.id === first.id).banked_resets_enabled, enabled);
+    assert.equal(data.data.find((key: { id: string }) => key.id === second.id).banked_resets_enabled, true);
   }
-  for (const body of [{ enabled: "true" }, { enabled: true, mode: "live" }, {}, null]) {
-    const invalid = await handleAdminCodexBankedResetUsage(
-      new Request(url, {
-        method: "PATCH",
-        body: JSON.stringify(body),
-      }),
+  const renamed = await update({ id: first.id, name: "still-disabled" });
+  assert.equal((await renamed.json()).banked_resets_enabled, false);
+  for (const value of ["true", null, 1]) {
+    assert.equal((await update({ id: first.id, banked_resets_enabled: value })).status, 400);
+    const invalidCreate = await handleAdminApiKeysCreate(
+      new Request(url, { method: "POST", body: JSON.stringify({ name: "invalid", banked_resets_enabled: value }) }),
     );
-    assert.equal(invalid.status, 400);
+    assert.equal(invalidCreate.status, 400);
   }
-  const final = await handleAdminCodexBankedResetUsage(new Request(url));
-  assert.equal((await final.json()).enabled, false);
   const { default: handler } = await import("../src/handler.ts");
-  for (const method of ["GET", "PATCH"]) {
-    const unauthorized = await handler(
-      new Request(url, {
-        method,
-        ...(method === "PATCH" ? { body: JSON.stringify({ enabled: true }) } : {}),
-      }),
-    );
-    assert.equal(unauthorized.status, 401);
-    await unauthorized.body?.cancel();
-  }
-  const unchanged = await handleAdminCodexBankedResetUsage(new Request(url));
-  assert.equal((await unchanged.json()).enabled, false);
+  const unauthorized = await handler(
+    new Request(url, { method: "PATCH", body: JSON.stringify({ id: first.id, banked_resets_enabled: true }) }),
+  );
+  assert.equal(unauthorized.status, 401);
+  await unauthorized.body?.cancel();
   kvStore.clear();
 });
 const {

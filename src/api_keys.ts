@@ -27,6 +27,9 @@ export const USAGE_RESET_PERIOD_MS = 7 * 24 * 60 * 60 * 1000;
 export const apiKeyIdKey = (id: string) => [...API_KEY_ID_PREFIX, id] as const;
 export const apiKeyHashKey = (hash: string) => [...API_KEY_HASH_PREFIX, hash] as const;
 
+export const apiKeyBankedResetsEnabled = (record: unknown): boolean =>
+  isRecord(record) && (record.banked_resets_enabled === undefined || record.banked_resets_enabled === true);
+
 export const normalizePaidFallbackMicrocredits = (value: unknown): number | null => {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) return null;
   return value;

@@ -2830,7 +2830,7 @@ const fetchResponsesWithPaidFallback = async (
           onHeaders: () => recordFirstCodexHeaders(options.usageContext),
         },
         beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("chatgpt_codex") ?? Promise.resolve(),
-        bankedReset: codexBankedResetOptionsForTest ?? undefined,
+        bankedReset: { ...codexBankedResetOptionsForTest, keyId: options.usageContext?.keyId ?? undefined },
         sentinelUpstreamRecorder: options.usageContext?.sentinelUpstreamRecorder,
       });
     } catch (error) {
