@@ -18,30 +18,19 @@
 import { classifyReliability } from "../src/harmony/reliability/failure.ts";
 import { callIdentity } from "../src/harmony/reliability/loops.ts";
 import { decideRetry, DEFAULT_RETRY_POLICY, RetryLedger } from "../src/harmony/reliability/retry.ts";
-import {
-  deriveStateWithMeta,
-  type FinalObservation,
-  replayMeta,
-  stateContract,
-  type ToolObservation,
-} from "../src/harmony/reliability/state.ts";
-import {
-  DEFAULT_VERIFICATION_POLICY,
-  type VerificationPolicy,
-  VerificationTracker,
-} from "../src/harmony/reliability/verify.ts";
+import { deriveStateWithMeta, type FinalObservation, replayMeta, stateContract, type ToolObservation } from "../src/harmony/reliability/state.ts";
+import { DEFAULT_VERIFICATION_POLICY, type VerificationPolicy, VerificationTracker } from "../src/harmony/reliability/verify.ts";
 import type { ReliabilitySummary, TrajectoryEvent } from "./schemas.ts";
 
-export interface ReliabilityDerivation {
+export type ReliabilityDerivation = {
   state_contract: string;
   summary: ReliabilitySummary;
-}
+};
 
 type ToolCallEvent = Extract<TrajectoryEvent, { type: "tool_call" }>;
 type ToolResultEvent = Extract<TrajectoryEvent, { type: "tool_result" }>;
 
-const isGuardCode = (code: string | null | undefined): boolean =>
-  code === "duplicate_call" || code === "repeated_failure";
+const isGuardCode = (code: string | null | undefined): boolean => code === "duplicate_call" || code === "repeated_failure";
 
 /** Maps recorded events into the m05 observation stream (deterministic). */
 export function observationsFromEvents(events: readonly TrajectoryEvent[]): ToolObservation[] {
@@ -60,12 +49,15 @@ export function observationsFromEvents(events: readonly TrajectoryEvent[]): Tool
       tool: event.tool,
       args: event.arguments,
       valid: event.valid,
-      result: resultEvent === undefined ? null : {
-        ok: resultEvent.ok,
-        error_code: resultEvent.error_code ?? null,
-        error: resultEvent.error ?? null,
-        output: resultEvent.output ?? null,
-      },
+      result:
+        resultEvent === undefined
+          ? null
+          : {
+              ok: resultEvent.ok,
+              error_code: resultEvent.error_code ?? null,
+              error: resultEvent.error ?? null,
+              output: resultEvent.output ?? null,
+            },
     });
   }
   return observations;
@@ -83,8 +75,7 @@ export function finalsFromEvents(events: readonly TrajectoryEvent[]): FinalObser
     if (event.content === undefined || event.content === null || event.content.length === 0) continue;
     seq += 1;
     const index = events.indexOf(event);
-    const accepted = index > lastCallIndex &&
-      !events.slice(index + 1).some((e) => e.type === "guard" || e.type === "tool_call");
+    const accepted = index > lastCallIndex && !events.slice(index + 1).some((e) => e.type === "guard" || e.type === "tool_call");
     finals.push({ content: event.content, accepted, seq });
   }
   return finals;
@@ -104,9 +95,7 @@ export function trailingInvalidStreak(observations: readonly ToolObservation[]):
 export function retrySummaryFromEvents(events: readonly TrajectoryEvent[]): ReliabilitySummary["retries"] {
   const ledger = new RetryLedger(DEFAULT_RETRY_POLICY);
   const calls = events.filter((e): e is ToolCallEvent => e.type === "tool_call");
-  const results = new Map(
-    events.filter((e): e is ToolResultEvent => e.type === "tool_result").map((e) => [e.id, e]),
-  );
+  const results = new Map(events.filter((e): e is ToolResultEvent => e.type === "tool_result").map((e) => [e.id, e]));
   let attempts = 0;
   let allowed = 0;
   let rejected = 0;
@@ -117,16 +106,19 @@ export function retrySummaryFromEvents(events: readonly TrajectoryEvent[]): Reli
       attempts += 1;
       const previous = [...calls.slice(0, index)].reverse().find((c) => callIdentity(c.tool, c.arguments) === identity);
       const previousResult = previous === undefined ? undefined : results.get(previous.id);
-      const previousCode = previousResult === undefined || previousResult.ok ? null : previousResult.error_code ?? null;
+      const previousCode = previousResult === undefined || previousResult.ok ? null : (previousResult.error_code ?? null);
       const decision = decideRetry(DEFAULT_RETRY_POLICY, previousCode, priorAttempts);
       if (decision.retry) allowed += 1;
       else rejected += 1;
     }
     const result = results.get(event.id);
-    const observed = result === undefined ? { ok: false, error_code: "internal" as const } : {
-      ok: result.ok,
-      error_code: result.error_code as import("../src/harmony/tools/result.ts").ToolErrorCode | undefined,
-    };
+    const observed =
+      result === undefined
+        ? { ok: false, error_code: "internal" as const }
+        : {
+            ok: result.ok,
+            error_code: result.error_code as import("../src/harmony/tools/result.ts").ToolErrorCode | undefined,
+          };
     ledger.observe(identity, observed, priorAttempts);
   }
   return { attempts, allowed, rejected };
@@ -137,10 +129,7 @@ export function retrySummaryFromEvents(events: readonly TrajectoryEvent[]): Reli
  * include the `run` event and every tool_call/tool_result pair, exactly like
  * the trajectory files the runner persists.
  */
-export function deriveReliability(
-  events: readonly TrajectoryEvent[],
-  opts: { verificationCommand?: string | null } = {},
-): ReliabilityDerivation {
+export function deriveReliability(events: readonly TrajectoryEvent[], opts: { verificationCommand?: string | null } = {}): ReliabilityDerivation {
   const policy: VerificationPolicy = {
     ...DEFAULT_VERIFICATION_POLICY,
     verificationCommand: opts.verificationCommand ?? null,

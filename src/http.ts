@@ -2,13 +2,7 @@ import { parseTrustedAuthRelayOrigin } from "./auth_relay.ts";
 import { config, runtimeDeploymentId, runtimeGitSha } from "./config.ts";
 import { CEREBRAS_RATE_LIMIT_HEADERS } from "./cerebras_rate_limits.ts";
 
-export const STANDARD_RATE_LIMIT_HEADERS = [
-  "RateLimit",
-  "RateLimit-Policy",
-  "RateLimit-Limit",
-  "RateLimit-Remaining",
-  "RateLimit-Reset",
-] as const;
+export const STANDARD_RATE_LIMIT_HEADERS = ["RateLimit", "RateLimit-Policy", "RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset"] as const;
 
 const EXPOSED_RESPONSE_HEADERS = [
   "x-uos-warning",
@@ -40,8 +34,7 @@ const getRequestOrigin = (req?: Request): string | null => {
 export const corsHeaders = (req?: Request): HeadersInit => {
   const requestOrigin = getRequestOrigin(req);
   const configuredOrigin = config.allowOrigin;
-  const canUseCredentials = Boolean(requestOrigin) &&
-    (configuredOrigin === "*" || configuredOrigin === requestOrigin);
+  const canUseCredentials = Boolean(requestOrigin) && (configuredOrigin === "*" || configuredOrigin === requestOrigin);
   return {
     "Access-Control-Allow-Origin": canUseCredentials ? requestOrigin! : configuredOrigin,
     "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,HEAD,OPTIONS",
@@ -85,11 +78,7 @@ export const withoutBody = (response: Response): Response =>
     headers: response.headers,
   });
 
-export const json = (
-  status: number,
-  body: unknown,
-  extraHeaders: HeadersInit = {},
-): Response =>
+export const json = (status: number, body: unknown, extraHeaders: HeadersInit = {}): Response =>
   new Response(JSON.stringify(body), {
     status,
     headers: {
@@ -102,7 +91,7 @@ export const openaiError = (
   status: number,
   message: string,
   code?: string,
-  options: { type?: string; param?: string | null; headers?: HeadersInit } = {},
+  options: { type?: string; param?: string | null; headers?: HeadersInit } = {}
 ): Response => {
   const type = (options.type ?? "invalid_request_error").trim() || "invalid_request_error";
   const error: Record<string, unknown> = {
@@ -113,9 +102,13 @@ export const openaiError = (
   if (Object.prototype.hasOwnProperty.call(options, "param")) {
     error.param = options.param ?? null;
   }
-  return json(status, {
-    error,
-  }, options.headers);
+  return json(
+    status,
+    {
+      error,
+    },
+    options.headers
+  );
 };
 
 export const notFound = (): Response =>
@@ -130,6 +123,6 @@ export const notFound = (): Response =>
 export const getBearerToken = (req: Request): string | null => {
   const value = req.headers.get("Authorization");
   if (!value) return null;
-  const match = value.match(/^Bearer\s+(.+)$/i);
+  const match = /^Bearer\s+(.+)$/i.exec(value);
   return match?.[1]?.trim() || null;
 };

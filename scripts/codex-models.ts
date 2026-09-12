@@ -95,7 +95,7 @@ export const resolveCodexBinaryPath = async (
   os: string,
   arch: string,
   realPath?: (path: string) => Promise<string>,
-  fileExists?: (path: string) => Promise<boolean>,
+  fileExists?: (path: string) => Promise<boolean>
 ): Promise<string> => {
   let resolvedPath = codexPath;
   if (realPath) {
@@ -125,27 +125,8 @@ export const resolveCodexBinaryPath = async (
     if (packageName) {
       const packageRoot = joinPath(sep, wrapperDir, "..");
       const nodeModulesRoot = joinPath(sep, wrapperDir, "..", "..", "..");
-      const nestedPath = joinPath(
-        sep,
-        packageRoot,
-        "node_modules",
-        "@openai",
-        packageName,
-        "vendor",
-        targetTriple,
-        "codex",
-        binaryName,
-      );
-      const siblingPath = joinPath(
-        sep,
-        nodeModulesRoot,
-        "@openai",
-        packageName,
-        "vendor",
-        targetTriple,
-        "codex",
-        binaryName,
-      );
+      const nestedPath = joinPath(sep, packageRoot, "node_modules", "@openai", packageName, "vendor", targetTriple, "codex", binaryName);
+      const siblingPath = joinPath(sep, nodeModulesRoot, "@openai", packageName, "vendor", targetTriple, "codex", binaryName);
       if (fileExists) {
         if (await fileExists(nestedPath)) return nestedPath;
         if (await fileExists(siblingPath)) return siblingPath;
@@ -204,8 +185,7 @@ const extractJsonObjectAt = (text: string, index: number): string | null => {
   return null;
 };
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
 const getString = (value: unknown): string | null => (typeof value === "string" ? value : null);
 
@@ -219,7 +199,7 @@ const isHiddenCodexModel = (value: Record<string, unknown>): boolean =>
   getString(value.visibility)?.trim().toLowerCase() === "hide" && value.supported_in_api !== true;
 
 export const extractCodexModelsFromText = (text: string): ExtractedCodexModels | null => {
-  const versionMatch = text.match(/codex_cli_rs\/([0-9]+(?:\.[0-9]+){1,2})/);
+  const versionMatch = /codex_cli_rs\/([0-9]+(?:\.[0-9]+){1,2})/.exec(text);
   const clientVersion = versionMatch ? versionMatch[1] : null;
 
   const slugRegex = /"slug"\s*:\s*"([^"]+)"/g;
@@ -255,9 +235,7 @@ export const extractCodexModelsFromText = (text: string): ExtractedCodexModels |
       const count = getNonNegativeInteger(parsed[key]);
       if (count !== null) normalized[key] = count;
     }
-    const defaultReasoning = parsed.default_reasoning_level === null
-      ? "none"
-      : getString(parsed.default_reasoning_level);
+    const defaultReasoning = parsed.default_reasoning_level === null ? "none" : getString(parsed.default_reasoning_level);
     if (defaultReasoning) normalized.default_reasoning_level = defaultReasoning;
     if (Array.isArray(parsed.supported_reasoning_levels)) {
       const levels = parsed.supported_reasoning_levels

@@ -105,11 +105,9 @@ Deno.test("router: shell.exec returns exit code, stdout, stderr and error codes"
   assert.equal(unknown.error_code, "exec_failed");
   assert.equal(unknown.exit_code, 127);
 
-  const timedOut = await runTool(
-    createFakeToolBackends({ files, shell: new FakeShell([{ command: "sleep", timed_out: true }]) }),
-    "shell.exec",
-    { command: "sleep" },
-  );
+  const timedOut = await runTool(createFakeToolBackends({ files, shell: new FakeShell([{ command: "sleep", timed_out: true }]) }), "shell.exec", {
+    command: "sleep",
+  });
   assert.equal(timedOut.ok, false);
   assert.equal(timedOut.error_code, "timeout");
   assert.equal(timedOut.exit_code, undefined);
@@ -201,9 +199,7 @@ Deno.test("router: browser tools use deterministic fake backends with current-pa
     browserSearch: [
       {
         query: "harmony",
-        results: [
-          { title: "Harmony Guide", url: "https://docs.example.com/guide", snippet: "Tools are called here." },
-        ],
+        results: [{ title: "Harmony Guide", url: "https://docs.example.com/guide", snippet: "Tools are called here." }],
       },
     ],
     browserSearchFallback: [{ title: "Anything", url: "https://example.com/any", snippet: "fallback result." }],
@@ -211,20 +207,13 @@ Deno.test("router: browser tools use deterministic fake backends with current-pa
 
   const search = await runTool(backendsWithBrowser, "browser.search", { query: "HARMONY" });
   ok(search);
-  assert.equal(
-    search.output,
-    "- Harmony Guide\n  https://docs.example.com/guide\n  Tools are called here.",
-  );
+  assert.equal(search.output, "- Harmony Guide\n  https://docs.example.com/guide\n  Tools are called here.");
 
   const fallback = await runTool(backendsWithBrowser, "browser.search", { query: "unknown-query" });
   ok(fallback);
   assert.match(fallback.output ?? "", /fallback result/);
 
-  const noResults = await runTool(
-    createFakeToolBackends({ files, browserSearchFallback: [] }),
-    "browser.search",
-    { query: "something" },
-  );
+  const noResults = await runTool(createFakeToolBackends({ files, browserSearchFallback: [] }), "browser.search", { query: "something" });
   ok(noResults);
   assert.equal(noResults.output, "(no results)");
 
@@ -269,7 +258,9 @@ Deno.test("router: fake workspace write scope is enforced at the backend boundar
   assert.equal(workspace.isAllowedWrite("src/config.txt"), true);
   assert.equal(workspace.isAllowedWrite("docs/spec.txt"), false);
   assert.equal(workspace.isAllowedWrite("../outside"), false);
-  assert.throws(() => workspace.write("docs/spec.txt", "x"), /write scope violation/);
+  assert.throws(() => {
+    workspace.write("docs/spec.txt", "x");
+  }, /write scope violation/);
   assert.throws(() => workspace.read("nope.txt"), /not found/);
   assert.equal(workspace.listFiles("docs").length, 2);
 });

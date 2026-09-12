@@ -39,7 +39,7 @@ class FakeElement {
   }
 
   querySelector(selector: string): FakeElement | null {
-    const dataName = selector.match(/^\[data-([a-z-]+)\]$/)?.[1];
+    const dataName = /^\[data-([a-z-]+)\]$/.exec(selector)?.[1];
     if (!dataName) return null;
     const datasetKey = dataName.replace(/-([a-z])/g, (_match, letter: string) => letter.toUpperCase());
     return this.children.find((child) => datasetKey in child.dataset) ?? null;
@@ -74,7 +74,7 @@ Deno.test("chat stats aggregate completed responses with weighted averages", () 
         prompt_tokens_details: { cached_tokens: 25 },
       },
     }),
-    true,
+    true
   );
   assert.equal(
     recordCompletedChatResponse(stats, {
@@ -89,14 +89,10 @@ Deno.test("chat stats aggregate completed responses with weighted averages", () 
         prompt_tokens_details: { cached_tokens: 675 },
       },
     }),
-    true,
+    true
   );
 
-  assert.equal(
-    formatChatStatsLine(stats),
-    "2 turns · 2 steps | LLM avg 2s | TTFT avg 0.5s · 50 tok/s | " +
-      "Cache hit 70% | Input 1K tok · Output 100 tok",
-  );
+  assert.equal(formatChatStatsLine(stats), "2 turns · 2 steps | LLM avg 2s | TTFT avg 0.5s · 50 tok/s | " + "Cache hit 70% | Input 1K tok · Output 100 tok");
 });
 
 Deno.test("chat message text preserves non-streaming refusals", () => {
@@ -104,13 +100,13 @@ Deno.test("chat message text preserves non-streaming refusals", () => {
     readChatCompletionMessageText({
       choices: [{ message: { role: "assistant", content: null, refusal: "I cannot help with that." } }],
     }),
-    "I cannot help with that.",
+    "I cannot help with that."
   );
   assert.equal(
     readChatCompletionMessageText({
       choices: [{ message: { role: "assistant", content: "Normal response", refusal: "Ignored fallback" } }],
     }),
-    "Normal response",
+    "Normal response"
   );
   assert.equal(readChatCompletionMessageText({ choices: [{ message: { content: null } }] }), null);
   assert.equal(readChatCompletionMessageText({ choices: [{ message: { content: "  \n" } }] }), null);
@@ -125,10 +121,7 @@ Deno.test("chat stats align decode tokens with visible streamed output", () => {
   assert.equal(readChatCompletionDecodeTokens(usage, "high"), 10);
   assert.equal(readChatCompletionDecodeTokens({ prompt_tokens: 100, completion_tokens: 90 }, "high"), null);
   assert.equal(readChatCompletionDecodeTokens({ prompt_tokens: 100, completion_tokens: 90 }, "none"), 90);
-  assert.equal(
-    readChatCompletionDecodeTokens({ ...usage, completion_tokens_details: { reasoning_tokens: 91 } }, "high"),
-    null,
-  );
+  assert.equal(readChatCompletionDecodeTokens({ ...usage, completion_tokens_details: { reasoning_tokens: 91 } }, "high"), null);
 });
 
 Deno.test("chat stats omit metrics that the browser cannot measure", () => {
@@ -152,7 +145,7 @@ Deno.test("chat stats keep cache-write details out of the OpenAI prompt total", 
       outputTokens: 25,
       cachedInputTokens: 40,
       cacheWriteInputTokens: 20,
-    },
+    }
   );
   const stats = createChatStatsAccumulator();
   recordCompletedChatResponse(stats, {
@@ -272,27 +265,21 @@ Deno.test("chat stats reject incomplete response samples without changing averag
 });
 
 Deno.test("chat stream events preserve refusals, usage, completion, and failures", () => {
-  assert.deepEqual(
-    parseChatCompletionStreamEvent('{"choices":[{"delta":{"refusal":"I cannot help with that."}}]}'),
-    { kind: "event", delta: "I cannot help with that.", usage: undefined },
-  );
-  assert.deepEqual(
-    parseChatCompletionStreamEvent(
-      '{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}',
-    ),
-    {
-      kind: "event",
-      delta: "",
-      usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
-    },
-  );
+  assert.deepEqual(parseChatCompletionStreamEvent('{"choices":[{"delta":{"refusal":"I cannot help with that."}}]}'), {
+    kind: "event",
+    delta: "I cannot help with that.",
+    usage: undefined,
+  });
+  assert.deepEqual(parseChatCompletionStreamEvent('{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}'), {
+    kind: "event",
+    delta: "",
+    usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
+  });
   assert.deepEqual(parseChatCompletionStreamEvent("[DONE]"), { kind: "done" });
-  assert.deepEqual(
-    parseChatCompletionStreamEvent(
-      '{"error":{"message":"The upstream stream ended unexpectedly.","code":"upstream_stream_error"}}',
-    ),
-    { kind: "error", message: "The upstream stream ended unexpectedly." },
-  );
+  assert.deepEqual(parseChatCompletionStreamEvent('{"error":{"message":"The upstream stream ended unexpectedly.","code":"upstream_stream_error"}}'), {
+    kind: "error",
+    message: "The upstream stream ended unexpectedly.",
+  });
   assert.deepEqual(parseChatCompletionStreamEvent("not JSON"), { kind: "invalid" });
   assert.deepEqual(parseChatCompletionStreamEvent("{}"), { kind: "invalid" });
   assert.deepEqual(parseChatCompletionStreamEvent('{"choices":"bad"}'), { kind: "invalid" });
@@ -301,13 +288,10 @@ Deno.test("chat stream events preserve refusals, usage, completion, and failures
 });
 
 Deno.test("chat SSE framing accepts all line endings and a final unterminated event", () => {
-  assert.deepEqual(
-    splitChatSseEvents("data: first\r\n\r\ndata: second\n\ndata: final", true),
-    {
-      events: ["data: first", "data: second", "data: final"],
-      remaining: "",
-    },
-  );
+  assert.deepEqual(splitChatSseEvents("data: first\r\n\r\ndata: second\n\ndata: final", true), {
+    events: ["data: first", "data: second", "data: final"],
+    remaining: "",
+  });
 
   assert.deepEqual(splitChatSseEvents("data: partial\r\n"), {
     events: [],
@@ -321,10 +305,9 @@ Deno.test("chat SSE framing accepts all line endings and a final unterminated ev
 });
 
 Deno.test("chat SSE parsing accepts CR-only comments and multiline data", () => {
-  assert.deepEqual(
-    parseChatSseEvent(
-      ': keep-alive\rdata: {"choices":[\rdata: {"delta":{"content":"CR stream"}}\rdata: ]}',
-    ),
-    { kind: "event", delta: "CR stream", usage: undefined },
-  );
+  assert.deepEqual(parseChatSseEvent(': keep-alive\rdata: {"choices":[\rdata: {"delta":{"content":"CR stream"}}\rdata: ]}'), {
+    kind: "event",
+    delta: "CR stream",
+    usage: undefined,
+  });
 });

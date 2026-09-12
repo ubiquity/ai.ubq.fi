@@ -20,15 +20,15 @@
  */
 
 /** Result of one shell execution. */
-export interface ShellExecResult {
+export type ShellExecResult = {
   exit_code: number;
   stdout: string;
   stderr: string;
   timed_out: boolean;
-}
+};
 
 /** Workspace-relative file operations and shell execution. */
-export interface WorkspaceBackend {
+export type WorkspaceBackend = {
   /** Stable label for error messages, e.g. `fixture-workspace` or `fake-workspace`. */
   readonly label: string;
   /** Read a file. Throws ToolExecutionError `not_found` when it does not exist. */
@@ -46,58 +46,55 @@ export interface WorkspaceBackend {
    * create the file when `add` is true). Throws ToolExecutionError
    * `write_scope` or `patch_failed`.
    */
-  applyPatch(
-    rel: string,
-    patch: Readonly<{ old: string; new: string; add: boolean }>,
-  ): Readonly<{ applied: true; detail: string }>;
+  applyPatch(rel: string, patch: Readonly<{ old: string; new: string; add: boolean }>): Readonly<{ applied: true; detail: string }>;
   /** Run a command with `sh -c` inside the workspace. */
   execShell(command: string, opts: Readonly<{ timeoutMs: number; signal?: AbortSignal }>): Promise<ShellExecResult>;
-}
+};
 
 /** One deterministic web search result. */
-export interface BrowserSearchResult {
+export type BrowserSearchResult = {
   title: string;
   url: string;
   snippet: string;
-}
+};
 
 /** One opened page. */
-export interface BrowserPage {
+export type BrowserPage = {
   url: string;
   title: string;
   content: string;
-}
+};
 
 /** One text match inside the current page. */
-export interface BrowserLineMatch {
+export type BrowserLineMatch = {
   line: number;
   text: string;
-}
+};
 
 /** Browser state and navigation; backends own the current-page state. */
-export interface BrowserBackend {
+export type BrowserBackend = {
   /** Search the web. Returns an empty list when nothing matches. */
   search(query: string): readonly BrowserSearchResult[];
   /** Open a page (making it the current page). Throws `not_found` when unknown. */
   open(url: string): BrowserPage;
   /** Search the current page. Throws `invalid_args` when no page is open. */
   findOnCurrentPage(query: string): Readonly<{ url: string; matches: readonly BrowserLineMatch[] }>;
-}
+};
 
 /** Task plan state. */
-export interface PlanBackend {
+export type PlanBackend = {
   /** Replace the plan; returns the number of stored items. */
   update(plan: readonly string[]): Readonly<{ items: number }>;
-}
+};
 
 /** The injected dependencies for one canonical tool dispatch. */
-export interface ToolBackends {
+export type ToolBackends = {
   readonly workspace: WorkspaceBackend;
   /** Absent when the harness runs without browser support. */
   readonly browser?: BrowserBackend;
   /** Absent when the harness runs without plan tracking. */
   readonly plan?: PlanBackend;
-}
+};
 
 /**
  * Normalizes a workspace-relative path and rejects traversal.

@@ -49,13 +49,11 @@ class AuthKv {
 
   getMany<T extends readonly unknown[]>(
     keys: readonly Deno.KvKey[],
-    options?: { consistency?: "strong" | "eventual" },
+    options?: { consistency?: "strong" | "eventual" }
   ): Promise<{ [K in keyof T]: Deno.KvEntryMaybe<T[K]> }> {
-    return Promise.all(keys.map((key) => this.get(key, options))) as Promise<
-      {
-        [K in keyof T]: Deno.KvEntryMaybe<T[K]>;
-      }
-    >;
+    return Promise.all(keys.map((key) => this.get(key, options))) as Promise<{
+      [K in keyof T]: Deno.KvEntryMaybe<T[K]>;
+    }>;
   }
 
   set(key: Deno.KvKey, value: unknown): Promise<Deno.KvCommitResult> {
@@ -70,10 +68,10 @@ class AuthKv {
   }
 
   atomic(): Deno.AtomicOperation {
-    const checks: Array<{ key: Deno.KvKey; versionstamp: string | null }> = [];
-    const writes: Array<{ type: "set" | "delete"; key: Deno.KvKey; value?: unknown }> = [];
+    const checks: { key: Deno.KvKey; versionstamp: string | null }[] = [];
+    const writes: { type: "set" | "delete"; key: Deno.KvKey; value?: unknown }[] = [];
     const chain = {
-      check: (...entries: Array<{ key: Deno.KvKey; versionstamp: string | null }>) => {
+      check: (...entries: { key: Deno.KvKey; versionstamp: string | null }[]) => {
         checks.push(...entries);
         return chain;
       },
@@ -86,18 +84,18 @@ class AuthKv {
         return chain;
       },
       commit: async () => {
-        const providerHealthSuccess = writes.some((write) =>
-          write.key[0] === "uos_ai" && write.key[1] === "provider_health" && write.key[2] === "v1" &&
-          (write.value as { event?: unknown } | undefined)?.event === "success"
+        const providerHealthSuccess = writes.some(
+          (write) =>
+            write.key[0] === "uos_ai" &&
+            write.key[1] === "provider_health" &&
+            write.key[2] === "v1" &&
+            (write.value as { event?: unknown } | undefined)?.event === "success"
         );
         if (providerHealthSuccess) {
           this.onProviderHealthSuccessCommit?.();
           await this.providerHealthSuccessCommitGate;
         }
-        if (
-          this.routingCommitFailures > 0 &&
-          writes.some((write) => JSON.stringify(write.key) !== JSON.stringify(AUTH_KEY))
-        ) {
+        if (this.routingCommitFailures > 0 && writes.some((write) => JSON.stringify(write.key) !== JSON.stringify(AUTH_KEY))) {
           this.routingCommitFailures -= 1;
           return Promise.resolve({ ok: false } as const);
         }
@@ -106,8 +104,8 @@ class AuthKv {
           const version = isAuth
             ? String(this.authVersion).padStart(20, "0")
             : this.extra.has(JSON.stringify(check.key))
-            ? String(this.extra.get(JSON.stringify(check.key))!.version).padStart(20, "0")
-            : null;
+              ? String(this.extra.get(JSON.stringify(check.key))!.version).padStart(20, "0")
+              : null;
           if (version !== check.versionstamp) return Promise.resolve({ ok: false } as const);
         }
         for (const write of writes) {
@@ -131,10 +129,8 @@ class AuthKv {
 
 const fixedStartMs = 1_000_000;
 const utf8ByteLength = (value: string): number => new TextEncoder().encode(value).byteLength;
-const encodeBase64Url = (value: unknown): string =>
-  btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-const accessToken = (label: string): string =>
-  `${encodeBase64Url({ alg: "none" })}.${encodeBase64Url({ exp: (fixedStartMs + 60 * 60_000) / 1000 })}.${label}`;
+const encodeBase64Url = (value: unknown): string => btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+const accessToken = (label: string): string => `${encodeBase64Url({ alg: "none" })}.${encodeBase64Url({ exp: (fixedStartMs + 60 * 60_000) / 1000 })}.${label}`;
 const auth = (label: string): CodexAuthState => ({
   access_token: accessToken(label),
   refresh_token: `refresh-${label}`,
@@ -143,9 +139,7 @@ const auth = (label: string): CodexAuthState => ({
 });
 const staleAuth = (label: string): CodexAuthState => ({
   ...auth(label),
-  access_token: `${encodeBase64Url({ alg: "none" })}.${
-    encodeBase64Url({ exp: (fixedStartMs + 30_000) / 1000 })
-  }.${label}`,
+  access_token: `${encodeBase64Url({ alg: "none" })}.${encodeBase64Url({ exp: (fixedStartMs + 30_000) / 1000 })}.${label}`,
 });
 const pool = (...accounts: CodexAuthState[]): CodexAuthPoolState => ({
   accounts,
@@ -187,14 +181,14 @@ const { resetProviderHealthThrottleForTest } = await import("../src/provider_hea
 
 Deno.test("Codex auth account ordering rotates from the selected account", () => {
   const accounts = [auth("one"), auth("two")];
-  assert.deepEqual(orderCodexAuthAccounts(accounts, 0).map((candidate) => candidate.account_id), [
-    "account-one",
-    "account-two",
-  ]);
-  assert.deepEqual(orderCodexAuthAccounts(accounts, 1).map((candidate) => candidate.account_id), [
-    "account-two",
-    "account-one",
-  ]);
+  assert.deepEqual(
+    orderCodexAuthAccounts(accounts, 0).map((candidate) => candidate.account_id),
+    ["account-one", "account-two"]
+  );
+  assert.deepEqual(
+    orderCodexAuthAccounts(accounts, 1).map((candidate) => candidate.account_id),
+    ["account-two", "account-one"]
+  );
 });
 
 Deno.test("repeated requests preserve subscription account order", async () => {
@@ -215,10 +209,7 @@ Deno.test("repeated requests preserve subscription account order", async () => {
 
   try {
     for (const _ of [0, 1]) {
-      const response = await fetchCodexResponses(
-        { model: "gpt-5.6-luna", input: "stable routing order" },
-        {},
-      );
+      const response = await fetchCodexResponses({ model: "gpt-5.6-luna", input: "stable routing order" }, {});
       assert.equal(response.status, 200);
       await markCodexResponseCompleted(response);
     }
@@ -267,17 +258,12 @@ Deno.test("successful account affinity is persisted only after terminal completi
   globalThis.fetch = () => Promise.resolve(new Response("{}", { status: 200 }));
 
   try {
-    const response = await fetchCodexResponses(
-      { input: "terminal affinity", prompt_cache_key: promptCacheKey },
-      { cacheScope },
-    );
+    const response = await fetchCodexResponses({ input: "terminal affinity", prompt_cache_key: promptCacheKey }, { cacheScope });
     assert.equal(response.status, 200);
     assert.deepEqual(kv.extra.get(JSON.stringify(identity.kvKey)), originalAffinity);
 
     await markCodexResponseCompleted(response);
-    const persisted = kv.extra.get(JSON.stringify(identity.kvKey))?.value as
-      | { account_cohort_hash?: unknown }
-      | undefined;
+    const persisted = kv.extra.get(JSON.stringify(identity.kvKey))?.value as { account_cohort_hash?: unknown } | undefined;
     assert.equal(persisted?.account_cohort_hash, replacementHash);
   } finally {
     resetCodexAuthCacheForTest();
@@ -325,7 +311,7 @@ Deno.test("a pre-operation KV outage does not block upstream dispatch", async ()
             },
           });
         },
-      },
+      }
     );
     assert.equal(response.status, 200);
     assert.equal(providerCalls, 1);
@@ -362,14 +348,12 @@ Deno.test("concurrent Codex requests dispatch without gateway admission rejectio
   };
 
   try {
-    const responses = await Promise.all(
-      Array.from(
-        { length: 8 },
-        (_, index) => fetchCodexResponses({ model: "gpt-5.6-luna", input: `agent-${index}` }),
-      ),
-    );
+    const responses = await Promise.all(Array.from({ length: 8 }, (_, index) => fetchCodexResponses({ model: "gpt-5.6-luna", input: `agent-${index}` })));
     assert.equal(providerCalls, 8);
-    assert.deepEqual(responses.map((response) => response.status), Array(8).fill(200));
+    assert.deepEqual(
+      responses.map((response) => response.status),
+      Array(8).fill(200)
+    );
     await Promise.all(responses.map(markCodexResponseCompleted));
   } finally {
     resetCodexAuthCacheForTest();
@@ -403,33 +387,36 @@ Deno.test("Codex responses use the native prompt-cache wire contract and stable 
     prompt_cache_retention: "24h",
     max_output_tokens: 64,
     max_completion_tokens: 64,
-    input: [{
-      type: "message",
-      role: "user",
-      content: [{
-        type: "input_text",
-        text: "stable prefix",
-        prompt_cache_breakpoint: { mode: "explicit" },
-      }],
-    }],
-    tools: [{
-      type: "function",
-      name: "cache_schema_fixture",
-      parameters: {
-        type: "object",
-        properties: { prompt_cache_breakpoint: { type: "string" } },
+    input: [
+      {
+        type: "message",
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: "stable prefix",
+            prompt_cache_breakpoint: { mode: "explicit" },
+          },
+        ],
       },
-    }],
+    ],
+    tools: [
+      {
+        type: "function",
+        name: "cache_schema_fixture",
+        parameters: {
+          type: "object",
+          properties: { prompt_cache_breakpoint: { type: "string" } },
+        },
+      },
+    ],
   };
   const originalBody = structuredClone(cacheableBody);
 
   try {
     const first = await fetchCodexResponses(cacheableBody, { cacheScope: "principal-one" });
     const second = await fetchCodexResponses(cacheableBody, { cacheScope: "principal-one" });
-    const differentKey = await fetchCodexResponses(
-      { ...cacheableBody, prompt_cache_key: "different-cache-key" },
-      { cacheScope: "principal-one" },
-    );
+    const differentKey = await fetchCodexResponses({ ...cacheableBody, prompt_cache_key: "different-cache-key" }, { cacheScope: "principal-one" });
     const differentPrincipal = await fetchCodexResponses(cacheableBody, { cacheScope: "principal-two" });
     await fetchCodexResponses(cacheableBody);
     await fetchCodexResponses(cacheableBody);
@@ -438,19 +425,17 @@ Deno.test("Codex responses use the native prompt-cache wire contract and stable 
 
     assert.deepEqual(cacheableBody, originalBody);
     assert.equal(requests.length, 8);
-    const bodies = await Promise.all(
-      requests.map((request) => request.clone().json() as Promise<Record<string, unknown>>),
-    );
+    const bodies = await Promise.all(requests.map((request) => request.clone().json() as Promise<Record<string, unknown>>));
     const firstBody = bodies[0]!;
     assert.equal(firstBody.prompt_cache_key, "stable-cache-key");
     assert.equal("prompt_cache_options" in firstBody, false);
     assert.equal("prompt_cache_retention" in firstBody, false);
     assert.equal("max_output_tokens" in firstBody, false);
     assert.equal("max_completion_tokens" in firstBody, false);
-    const input = firstBody.input as Array<Record<string, unknown>>;
-    const content = input[0]?.content as Array<Record<string, unknown>>;
+    const input = firstBody.input as Record<string, unknown>[];
+    const content = input[0]?.content as Record<string, unknown>[];
     assert.equal("prompt_cache_breakpoint" in content[0]!, false);
-    const tools = firstBody.tools as Array<Record<string, unknown>>;
+    const tools = firstBody.tools as Record<string, unknown>[];
     assert.deepEqual(tools[0], cacheableBody.tools[0]);
     assert.deepEqual(bodies[1], firstBody);
 
@@ -471,14 +456,13 @@ Deno.test("Codex responses use the native prompt-cache wire contract and stable 
     assert.notEqual(requests[4]!.headers.get("conversation_id"), requests[5]!.headers.get("conversation_id"));
     assert.notEqual(requests[6]!.headers.get("conversation_id"), requests[7]!.headers.get("conversation_id"));
 
-    const expectedWarnings = [
-      "prompt_cache_options_ignored",
-      "prompt_cache_retention_ignored",
-      "max_output_tokens_ignored",
-      "prompt_cache_breakpoint_ignored",
-    ];
+    const expectedWarnings = ["prompt_cache_options_ignored", "prompt_cache_retention_ignored", "max_output_tokens_ignored", "prompt_cache_breakpoint_ignored"];
     for (const response of [first, second, differentKey, differentPrincipal]) {
-      const warnings = response.headers.get("x-uos-warning")?.split(",").map((value) => value.trim()) ?? [];
+      const warnings =
+        response.headers
+          .get("x-uos-warning")
+          ?.split(",")
+          .map((value) => value.trim()) ?? [];
       assert.deepEqual(warnings, expectedWarnings);
     }
   } finally {
@@ -550,29 +534,33 @@ Deno.test("Codex responses dispatch the fresh positive dashboard account first",
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(blockedUntil).toUTCString() },
       }),
-      fixedStartMs - 1,
+      fixedStartMs - 1
     );
     await kv.set(PROVIDER_CAPACITY_SNAPSHOT_KEY, {
       snapshot_at_ms: fixedStartMs,
-      sources: [{
-        source: "codex",
-        slot: 2,
-        state: "available",
-        source_observed_at_ms: fixedStartMs,
-        snapshot_at_ms: fixedStartMs,
-        windows: {
-          primary: { limit_window_seconds: 604_800, used_percent: 100, reset_at_ms: fixedStartMs + 604_800_000 },
-          secondary: null,
-        },
-        additional_rate_limits: [{
-          limit_name: "GPT-5.3-Codex-Spark",
-          metered_feature: "codex_bengalfox",
+      sources: [
+        {
+          source: "codex",
+          slot: 2,
+          state: "available",
+          source_observed_at_ms: fixedStartMs,
+          snapshot_at_ms: fixedStartMs,
           windows: {
-            primary: { limit_window_seconds: 18_000, used_percent: 50, reset_at_ms: fixedStartMs + 18_000_000 },
+            primary: { limit_window_seconds: 604_800, used_percent: 100, reset_at_ms: fixedStartMs + 604_800_000 },
             secondary: null,
           },
-        }],
-      }],
+          additional_rate_limits: [
+            {
+              limit_name: "GPT-5.3-Codex-Spark",
+              metered_feature: "codex_bengalfox",
+              windows: {
+                primary: { limit_window_seconds: 18_000, used_percent: 50, reset_at_ms: fixedStartMs + 18_000_000 },
+                secondary: null,
+              },
+            },
+          ],
+        },
+      ],
     });
     resetCodexAccountRoutingForTest();
 
@@ -637,12 +625,8 @@ Deno.test("Codex responses do not replay a dispatched transport failure", async 
 
   try {
     await assert.rejects(
-      () =>
-        fetchCodexResponses(
-          { input: "timeout-sibling-retry" },
-          {},
-        ),
-      (error: unknown) => error instanceof CodexError && error.code === "gateway_timeout",
+      () => fetchCodexResponses({ input: "timeout-sibling-retry" }, {}),
+      (error: unknown) => error instanceof CodexError && error.code === "gateway_timeout"
     );
     assert.deepEqual(accountIds, ["account-one"]);
   } finally {
@@ -684,12 +668,8 @@ Deno.test("transport failures preserve affinity and provider health", async () =
 
   try {
     await assert.rejects(
-      () =>
-        fetchCodexResponses(
-          { input: "all siblings fail", prompt_cache_key: promptCacheKey },
-          { cacheScope },
-        ),
-      (error: unknown) => error instanceof CodexError && error.code === "gateway_timeout" && error.status === 504,
+      () => fetchCodexResponses({ input: "all siblings fail", prompt_cache_key: promptCacheKey }, { cacheScope }),
+      (error: unknown) => error instanceof CodexError && error.code === "gateway_timeout" && error.status === 504
     );
     assert.deepEqual(accountIds, ["account-one"]);
     assert.deepEqual(kv.extra.get(JSON.stringify(identity.kvKey)), affinityBefore);
@@ -722,7 +702,9 @@ Deno.test("post-dispatch client cancellation stops Codex transport", async () =>
       const signal = init?.signal;
       assert.ok(signal);
       transportStarted.resolve();
-      const rejectFromSignal = (): void => reject(signal.reason);
+      const rejectFromSignal = (): void => {
+        reject(signal.reason);
+      };
       if (signal.aborted) rejectFromSignal();
       else signal.addEventListener("abort", rejectFromSignal, { once: true });
     });
@@ -732,13 +714,13 @@ Deno.test("post-dispatch client cancellation stops Codex transport", async () =>
       { input: "cancel after dispatch" },
       {
         signal: requestAbort.signal,
-      },
+      }
     );
     await transportStarted.promise;
     requestAbort.abort(new DOMException("client disconnected", "AbortError"));
     await assert.rejects(
       () => pending,
-      (error: unknown) => error instanceof Error && error.name === "AbortError",
+      (error: unknown) => error instanceof Error && error.name === "AbortError"
     );
   } finally {
     resetCodexAuthCacheForTest();
@@ -771,7 +753,7 @@ Deno.test("Codex responses make one bounded final retry after both accounts retu
       new Response(JSON.stringify({ error: { type: "rate_limit_error" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": "1" },
-      }),
+      })
     );
   };
 
@@ -784,7 +766,7 @@ Deno.test("Codex responses make one bounded final retry after both accounts retu
           retryDelays.push(milliseconds);
           return Promise.resolve();
         },
-      },
+      }
     );
     assert.equal(response.status, 200);
     assert.deepEqual(accountIds, ["account-one", "account-two", "account-one"]);
@@ -793,7 +775,10 @@ Deno.test("Codex responses make one bounded final retry after both accounts retu
     assert.equal(utf8ByteLength(expectedSerializedBody), 25);
     assert.deepEqual(serializedBodies, [expectedSerializedBody, expectedSerializedBody, expectedSerializedBody]);
     assert.deepEqual(serializedBodies.map(utf8ByteLength), [25, 25, 25]);
-    assert.equal(serializedBodies.reduce((total, body) => total + utf8ByteLength(body), 0), 75);
+    assert.equal(
+      serializedBodies.reduce((total, body) => total + utf8ByteLength(body), 0),
+      75
+    );
   } finally {
     resetCodexAuthCacheForTest();
     globalThis.fetch = originalFetch;
@@ -821,7 +806,7 @@ Deno.test("Codex 429 retry sleep normalizes a shared timeout as a gateway timeou
       new Response(JSON.stringify({ error: { type: "rate_limit_error" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": "1" },
-      }),
+      })
     );
   };
 
@@ -833,10 +818,12 @@ Deno.test("Codex 429 retry sleep normalizes a shared timeout as a gateway timeou
           {
             signal: controller.signal,
             retrySleep: () => {
-              queueMicrotask(() => controller.abort(timeoutReason));
+              queueMicrotask(() => {
+                controller.abort(timeoutReason);
+              });
               return new Promise<void>(() => {});
             },
-          },
+          }
         ),
       (error: unknown) => {
         if (!(error instanceof CodexError)) return false;
@@ -844,7 +831,7 @@ Deno.test("Codex 429 retry sleep normalizes a shared timeout as a gateway timeou
         assert.equal(error.status, 504);
         assert.equal((error as Error & { cause?: unknown }).cause, timeoutReason);
         return true;
-      },
+      }
     );
     assert.deepEqual(accountIds, ["account-one", "account-two"]);
   } finally {
@@ -874,7 +861,7 @@ Deno.test("Codex 429 retry sleep preserves ordinary cancellation", async () => {
       new Response(JSON.stringify({ error: { type: "rate_limit_error" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": "1" },
-      }),
+      })
     );
   };
 
@@ -886,15 +873,17 @@ Deno.test("Codex 429 retry sleep preserves ordinary cancellation", async () => {
           {
             signal: controller.signal,
             retrySleep: () => {
-              queueMicrotask(() => controller.abort(abortReason));
+              queueMicrotask(() => {
+                controller.abort(abortReason);
+              });
               return new Promise<void>(() => {});
             },
-          },
+          }
         ),
       (error: unknown) => {
         assert.equal(error, abortReason);
         return true;
-      },
+      }
     );
     assert.deepEqual(accountIds, ["account-one", "account-two"]);
   } finally {
@@ -929,8 +918,8 @@ Deno.test("an expired generic 429 retry preserves the later 403 fallback respons
               code: "rate_limit_exceeded",
             },
           },
-          { status: 429 },
-        ),
+          { status: 429 }
+        )
       );
     }
     if (accountIds.length === 2) {
@@ -944,8 +933,8 @@ Deno.test("an expired generic 429 retry preserves the later 403 fallback respons
               code: "second_account_forbidden",
             },
           },
-          { status: 403 },
-        ),
+          { status: 403 }
+        )
       );
     }
     return Promise.resolve(new Response("late retry must not run", { status: 200 }));
@@ -957,7 +946,7 @@ Deno.test("an expired generic 429 retry preserves the later 403 fallback respons
       {
         requestId: "request-expired-generic-retry",
         retrySleep: () => Promise.resolve(),
-      },
+      }
     );
     assert.equal(response.status, 403);
     assert.deepEqual(accountIds, ["account-one", "account-two"]);
@@ -999,8 +988,8 @@ Deno.test("Codex routing logs attempts, refresh, and bounded retry without sensi
             access_token: "refreshed-secret-access",
             refresh_token: "refreshed-secret-refresh",
           }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        ),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
       );
     }
     inferenceCalls += 1;
@@ -1009,7 +998,7 @@ Deno.test("Codex routing logs attempts, refresh, and bounded retry without sensi
       new Response(JSON.stringify({ error: { message: "full-sensitive-upstream-error-body" } }), {
         status,
         headers: status === 429 ? { "Retry-After": "1" } : undefined,
-      }),
+      })
     );
   };
 
@@ -1019,7 +1008,7 @@ Deno.test("Codex routing logs attempts, refresh, and bounded retry without sensi
       {
         requestId: "request-redacted-logs",
         retrySleep: () => Promise.resolve(),
-      },
+      }
     );
     assert.equal(response.status, 429);
     const output = lines.join("\n");
@@ -1028,17 +1017,15 @@ Deno.test("Codex routing logs attempts, refresh, and bounded retry without sensi
     assert.match(output, /"event":"codex_two_second_retry"/);
     assert.match(output, /"status_class":"401"/);
     assert.match(output, /"status_class":"429"/);
-    for (
-      const forbidden of [
-        "account-one",
-        "account-two",
-        "access-one",
-        "refresh-one",
-        "refreshed-secret-access",
-        "refreshed-secret-refresh",
-        "full-sensitive-upstream-error-body",
-      ]
-    ) {
+    for (const forbidden of [
+      "account-one",
+      "account-two",
+      "access-one",
+      "refresh-one",
+      "refreshed-secret-access",
+      "refreshed-secret-refresh",
+      "full-sensitive-upstream-error-body",
+    ]) {
       assert.equal(output.includes(forbidden), false, forbidden);
     }
   } finally {
@@ -1076,8 +1063,8 @@ Deno.test("Codex responses retry the other account when a 401 cannot refresh", a
               return new Promise<void>(() => {});
             },
           }),
-          { status: 401 },
-        ),
+          { status: 401 }
+        )
       );
     }
     accountIds.push(request.headers.get("chatgpt-account-id") ?? "");
@@ -1093,8 +1080,8 @@ Deno.test("Codex responses retry the other account when a 401 cannot refresh", a
               return new Promise<void>(() => {});
             },
           }),
-          { status: 401 },
-        ),
+          { status: 401 }
+        )
       );
     }
     return Promise.resolve(new Response("{}", { status: 200 }));
@@ -1157,15 +1144,15 @@ Deno.test("a credential replacement landing after 401 is retried without an OAut
     const response = await fetchCodexResponses({ input: "rotation-between-401-and-refresh" });
     assert.equal(response.status, 200);
     assert.equal(oauthCalls, 0);
-    assert.deepEqual(authorizationHeaders, [
-      `Bearer ${attempted.access_token}`,
-      `Bearer ${replacement.access_token}`,
-    ]);
+    assert.deepEqual(authorizationHeaders, [`Bearer ${attempted.access_token}`, `Bearer ${replacement.access_token}`]);
     const expectedSerializedBody = JSON.stringify({ input: "rotation-between-401-and-refresh" });
     assert.equal(utf8ByteLength(expectedSerializedBody), 44);
     assert.deepEqual(serializedBodies, [expectedSerializedBody, expectedSerializedBody]);
     assert.deepEqual(serializedBodies.map(utf8ByteLength), [44, 44]);
-    assert.equal(serializedBodies.reduce((total, body) => total + utf8ByteLength(body), 0), 88);
+    assert.equal(
+      serializedBodies.reduce((total, body) => total + utf8ByteLength(body), 0),
+      88
+    );
   } finally {
     resetCodexAuthCacheForTest();
     globalThis.fetch = originalFetch;
@@ -1198,7 +1185,7 @@ Deno.test("Codex responses synthesize 401 only after every account has an invali
   try {
     const response = await fetchCodexResponses({ input: "auth-exhaustion" });
     assert.equal(response.status, 401);
-    assert.equal((await response.json() as { error?: { code?: string } }).error?.code, "codex_auth_invalid");
+    assert.equal(((await response.json()) as { error?: { code?: string } }).error?.code, "codex_auth_invalid");
     assert.equal(accountIds.length, 2);
     assert.equal(new Set(accountIds).size, 2);
     assert.equal(refreshCalls, 2);
@@ -1246,7 +1233,10 @@ Deno.test("concurrent proactive refreshes share one OAuth exchange", async () =>
     releaseRefresh();
     const responses = await Promise.all(requests);
     assert.equal(refreshCalls, 1);
-    assert.deepEqual(responses.map((response) => response.status), Array(8).fill(200));
+    assert.deepEqual(
+      responses.map((response) => response.status),
+      Array(8).fill(200)
+    );
   } finally {
     resetCodexAuthCacheForTest();
     globalThis.fetch = originalFetch;
@@ -1285,7 +1275,7 @@ Deno.test("a deterministic proactive refresh rejection quarantines the credentia
     assert.equal(second.headers.get("x-uos-warning"), CODEX_AUTH_REAUTH_WARNING);
     assert.equal(refreshCalls, 1);
     assert.equal(inferenceCalls, 0);
-    assert.equal((await first.json() as { error?: { code?: string } }).error?.code, "codex_auth_invalid");
+    assert.equal(((await first.json()) as { error?: { code?: string } }).error?.code, "codex_auth_invalid");
   } finally {
     resetCodexAuthCacheForTest();
     globalThis.fetch = originalFetch;
@@ -1315,8 +1305,8 @@ Deno.test("refresh-token reuse returns an actionable re-auth warning without exp
               message: "provider secret must not escape",
             },
           }),
-          { status: 400, headers: { "Content-Type": "application/json" } },
-        ),
+          { status: 400, headers: { "Content-Type": "application/json" } }
+        )
       );
     }
     inferenceCalls += 1;
@@ -1327,7 +1317,7 @@ Deno.test("refresh-token reuse returns an actionable re-auth warning without exp
     const response = await fetchCodexResponses({ input: "reused-refresh-token" });
     assert.equal(response.status, 401);
     assert.equal(response.headers.get("x-uos-warning"), CODEX_AUTH_REAUTH_WARNING);
-    const payload = await response.json() as { error?: { message?: string; code?: string } };
+    const payload = (await response.json()) as { error?: { message?: string; code?: string } };
     assert.equal(payload.error?.code, "refresh_token_reused");
     assert.match(payload.error?.message ?? "", /already used/i);
     assert.equal((payload.error?.message ?? "").includes("provider secret"), false);
@@ -1361,7 +1351,7 @@ Deno.test("a refresh failure warning survives a later quota-shaped 403 from anot
       new Response(JSON.stringify({ error: { message: "user quota is not enough" } }), {
         status: accountId === "account-quota" ? 403 : 200,
         headers: { "Content-Type": "application/json" },
-      }),
+      })
     );
   };
 
@@ -1398,14 +1388,14 @@ Deno.test("a malformed successful refresh is transient and does not quarantine t
           new Response(JSON.stringify({ refresh_token: "refresh-one" }), {
             status: 200,
             headers: { "Content-Type": "application/json" },
-          }),
+          })
         );
       }
       return Promise.resolve(
-        new Response(
-          JSON.stringify({ access_token: accessToken("recovered"), refresh_token: "refresh-recovered" }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        ),
+        new Response(JSON.stringify({ access_token: accessToken("recovered"), refresh_token: "refresh-recovered" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
       );
     }
     inferenceCalls += 1;
@@ -1415,11 +1405,7 @@ Deno.test("a malformed successful refresh is transient and does not quarantine t
   try {
     await assert.rejects(
       () => fetchCodexResponses({ input: "malformed-refresh" }),
-      (error: unknown) =>
-        error instanceof Error &&
-        "status" in error &&
-        error.status === 503 &&
-        error.message.includes("missing access_token"),
+      (error: unknown) => error instanceof Error && "status" in error && error.status === 503 && error.message.includes("missing access_token")
     );
     const recovered = await fetchCodexResponses({ input: "valid-refresh" });
     assert.equal(recovered.status, 200);
@@ -1441,15 +1427,13 @@ Deno.test("direct failures release quota probes and timeouts do not gate the nex
   Date.now = () => now;
   (config as { isDeploy: boolean }).isDeploy = true;
   try {
-    for (
-      const testCase of [
-        { name: "403", status: 403 },
-        { name: "invalid 400", status: 400 },
-        { name: "500", status: 500 },
-        { name: "network", status: null },
-        { name: "timeout", status: null, timeout: true },
-      ] as const
-    ) {
+    for (const testCase of [
+      { name: "403", status: 403 },
+      { name: "invalid 400", status: 400 },
+      { name: "500", status: 500 },
+      { name: "network", status: null },
+      { name: "timeout", status: null, timeout: true },
+    ] as const) {
       await t.step(testCase.name, async () => {
         now = fixedStartMs;
         kv.auth = pool(auth("one"));
@@ -1464,7 +1448,7 @@ Deno.test("direct failures release quota probes and timeouts do not gate the nex
             status: 429,
             headers: { "Content-Type": "application/json", "Retry-After": "1" },
           }),
-          now,
+          now
         );
 
         now += 1_001;
@@ -1486,12 +1470,12 @@ Deno.test("direct failures release quota probes and timeouts do not gate the nex
           timeoutController = new AbortController();
           await assert.rejects(
             () => fetchCodexResponses({ input: testCase.name }, { signal: timeoutController!.signal }),
-            (error: unknown) => error instanceof Error && "status" in error && error.status === 504,
+            (error: unknown) => error instanceof Error && "status" in error && error.status === 504
           );
         } else if (testCase.status === null) {
           await assert.rejects(
             () => fetchCodexResponses({ input: testCase.name }),
-            (error: unknown) => error instanceof Error && "status" in error && error.status === 502,
+            (error: unknown) => error instanceof Error && "status" in error && error.status === 502
           );
         } else {
           const direct = await fetchCodexResponses({ input: testCase.name });
@@ -1545,9 +1529,9 @@ Deno.test("cache-scope dispatch timeouts remain request-scoped", async () => {
             slot: 1,
             conversationId: "cache-scope-timeout-conversation",
             signal: controller.signal,
-          },
+          }
         ),
-      (error: unknown) => error instanceof CodexError && error.code === "gateway_timeout" && error.status === 504,
+      (error: unknown) => error instanceof CodexError && error.code === "gateway_timeout" && error.status === 504
     );
     resetCodexAccountRoutingForTest();
     const selected = await selectCodexRoutingAccounts(kv.auth, [kv.auth.accounts[0]!], fixedStartMs);
@@ -1578,10 +1562,7 @@ Deno.test("a legacy timeout probe cannot block provider transport", async () => 
   const initial = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, fixedStartMs);
   assert.equal(initial.kind, "eligible");
   if (initial.kind !== "eligible") return;
-  await markCodexUpstreamTimeout(
-    initial.accounts[0]!,
-    fixedStartMs - CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS - 1,
-  );
+  await markCodexUpstreamTimeout(initial.accounts[0]!, fixedStartMs - CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS - 1);
   kv.routingCommitFailures = 3;
   globalThis.fetch = () => {
     inferenceCalls += 1;
@@ -1618,10 +1599,7 @@ Deno.test("a timeout probe that returns quota retags its bounded retry as quota"
   const initial = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, fixedStartMs);
   assert.equal(initial.kind, "eligible");
   if (initial.kind !== "eligible") return;
-  await markCodexUpstreamTimeout(
-    initial.accounts[0]!,
-    fixedStartMs - CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS - 1,
-  );
+  await markCodexUpstreamTimeout(initial.accounts[0]!, fixedStartMs - CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS - 1);
   globalThis.fetch = async () => {
     inferenceCalls += 1;
     if (inferenceCalls === 1) {
@@ -1641,10 +1619,7 @@ Deno.test("a timeout probe that returns quota retags its bounded retry as quota"
   };
 
   try {
-    const response = await fetchCodexResponses(
-      { input: "timeout-probe-quota-retry" },
-      { retrySleep: () => Promise.resolve() },
-    );
+    const response = await fetchCodexResponses({ input: "timeout-probe-quota-retry" }, { retrySleep: () => Promise.resolve() });
     assert.equal(response.status, 429);
     assert.equal(concurrentStatus, 429);
     assert.equal(inferenceCalls, 2);
@@ -1678,7 +1653,7 @@ Deno.test("a timeout during bounded retry refresh preserves only the quota fence
         new Response(JSON.stringify({ access_token: accessToken("one"), refresh_token: "refresh-one" }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
-        }),
+        })
       );
     }
     inferenceCalls += 1;
@@ -1687,7 +1662,7 @@ Deno.test("a timeout during bounded retry refresh preserves only the quota fence
         new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
           status: 429,
           headers: { "Content-Type": "application/json", "Retry-After": "1" },
-        }),
+        })
       );
     }
     if (inferenceCalls === 2) return Promise.resolve(new Response("{}", { status: 401 }));
@@ -1698,11 +1673,14 @@ Deno.test("a timeout during bounded retry refresh preserves only the quota fence
   try {
     await assert.rejects(
       () =>
-        fetchCodexResponses({ input: "bounded-retry-refresh-timeout" }, {
-          signal: controller.signal,
-          retrySleep: () => Promise.resolve(),
-        }),
-      (error: unknown) => error instanceof CodexError && error.code === "gateway_timeout" && error.status === 504,
+        fetchCodexResponses(
+          { input: "bounded-retry-refresh-timeout" },
+          {
+            signal: controller.signal,
+            retrySleep: () => Promise.resolve(),
+          }
+        ),
+      (error: unknown) => error instanceof CodexError && error.code === "gateway_timeout" && error.status === 504
     );
     resetCodexAccountRoutingForTest();
     const selected = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, fixedStartMs);
@@ -1739,7 +1717,7 @@ Deno.test("an already-aborted timeout signal does not open or dispatch an accoun
   try {
     await assert.rejects(
       () => fetchCodexResponses({ input: "pre-dispatch-timeout" }, { signal: controller.signal }),
-      (error: unknown) => error instanceof CodexError && error.code === "gateway_timeout" && error.status === 504,
+      (error: unknown) => error instanceof CodexError && error.code === "gateway_timeout" && error.status === 504
     );
     resetCodexAccountRoutingForTest();
     const selected = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, fixedStartMs);
@@ -1775,7 +1753,7 @@ Deno.test("a 429 retry that proves invalid credentials remains quarantined", asy
       status: 429,
       headers: { "Content-Type": "application/json", "Retry-After": "1" },
     }),
-    now,
+    now
   );
   now += 1_001;
   globalThis.fetch = (input) => {
@@ -1790,17 +1768,14 @@ Deno.test("a 429 retry that proves invalid credentials remains quarantined", asy
         new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
           status: 429,
           headers: { "Content-Type": "application/json", "Retry-After": "1" },
-        }),
+        })
       );
     }
     return Promise.resolve(new Response("{}", { status: 401 }));
   };
 
   try {
-    const first = await fetchCodexResponses(
-      { input: "retry-invalid" },
-      { retrySleep: () => Promise.resolve() },
-    );
+    const first = await fetchCodexResponses({ input: "retry-invalid" }, { retrySleep: () => Promise.resolve() });
     assert.equal(first.status, 401);
     const second = await fetchCodexResponses({ input: "retry-invalid-again" });
     assert.equal(second.status, 401);
@@ -1835,8 +1810,8 @@ Deno.test("a 401 after proactive refresh does not refresh the same account twice
             access_token: accessToken("refreshed-once"),
             refresh_token: "refresh-refreshed-once",
           }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        ),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
       );
     }
     inferenceCalls += 1;
@@ -1889,9 +1864,7 @@ Deno.test("Codex auth cache revalidates rotations across warm isolates without p
     assert.equal(authorizations.at(-1), `Bearer ${accessToken("old")}`);
 
     nowMs += 2;
-    await Promise.all(
-      Array.from({ length: 8 }, (_, index) => fetchCodexResponses({ input: `revalidate-${index}` })),
-    );
+    await Promise.all(Array.from({ length: 8 }, (_, index) => fetchCodexResponses({ input: `revalidate-${index}` })));
     assert.equal(kv.reads, 2, "concurrent expiry must coalesce to one credential read");
     assert.deepEqual(authorizations.slice(-8), Array(8).fill(`Bearer ${accessToken("rotated")}`));
     assert.deepEqual(accountIds.slice(-8), Array(8).fill("account-rotated"));
@@ -1952,7 +1925,7 @@ Deno.test("a valid persisted Codex pool is not overlaid by a local configured se
         refresh_token: localSeed.refresh_token,
         account_id: localSeed.account_id,
       },
-    }),
+    })
   );
   kv.auth = pool(persisted);
   kv.extra.clear();
@@ -2005,7 +1978,7 @@ const seedStableBankedResetBlock = async (accountId = "account-one"): Promise<vo
       status: 429,
       headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
     }),
-    fixedStartMs,
+    fixedStartMs
   );
   resetCodexAccountRoutingForTest();
 };
@@ -2018,7 +1991,7 @@ const scriptedResetProvider = (
     onRedeem?: () => void;
     onVerify?: () => void;
     redeemGate?: Promise<void>;
-  }> = {},
+  }> = {}
 ) => {
   const calls: string[] = [];
   const inventoryAccountIds: string[] = [];
@@ -2039,9 +2012,7 @@ const scriptedResetProvider = (
       return {
         availableCount: 1,
         observedAtMs: fixedStartMs,
-        credits: [
-          { id: "fixture-credit", status: "available", resetType: "codex_rate_limits", expiresAtMs: null },
-        ],
+        credits: [{ id: "fixture-credit", status: "available", resetType: "codex_rate_limits", expiresAtMs: null }],
       };
     },
     redeem: async (input) => {
@@ -2053,8 +2024,8 @@ const scriptedResetProvider = (
       return options.redeemKind === "unknown"
         ? { kind: "unknown", providerReceiptId: null }
         : options.redeemKind === "already_redeemed"
-        ? { kind: "already_redeemed", providerReceiptId: "receipt-sanitized" }
-        : { kind: "completed", providerReceiptId: "receipt-sanitized" };
+          ? { kind: "already_redeemed", providerReceiptId: "receipt-sanitized" }
+          : { kind: "completed", providerReceiptId: "receipt-sanitized" };
     },
     lookup: (input) => {
       calls.push("lookup");
@@ -2090,7 +2061,7 @@ Deno.test("banked reset exhausts normal routing, verifies, and retries the redee
         new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
           status: 429,
           headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
-        }),
+        })
       );
     }
     return Promise.resolve(new Response(JSON.stringify({ id: "response-after-reset" }), { status: 200 }));
@@ -2108,7 +2079,7 @@ Deno.test("banked reset exhausts normal routing, verifies, and retries the redee
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-happy",
         },
-      },
+      }
     );
     assert.equal(response.status, 200);
     assert.deepEqual(accountIds, ["account-one", "account-one"]);
@@ -2128,14 +2099,11 @@ Deno.test("the default upstream adapter shadows and redeems one partial blocked 
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
   const originalCodexBaseUrl = config.codexBaseUrl;
-  const requests: Array<
-    Readonly<{ url: string; method: string; headers: Headers; body: string; signal: AbortSignal | null }>
-  > = [];
+  const requests: Readonly<{ url: string; method: string; headers: Headers; body: string; signal: AbortSignal | null }>[] = [];
   let live = false;
   Date.now = () => fixedStartMs;
   (config as { isDeploy: boolean; codexBaseUrl: string }).isDeploy = true;
-  (config as { isDeploy: boolean; codexBaseUrl: string }).codexBaseUrl =
-    "https://upstream-reset.test/backend-api/codex";
+  (config as { isDeploy: boolean; codexBaseUrl: string }).codexBaseUrl = "https://upstream-reset.test/backend-api/codex";
   kv.auth = pool(auth("one"), auth("two"));
   kv.extra.clear();
   resetCodexAuthCacheForTest();
@@ -2162,7 +2130,7 @@ Deno.test("the default upstream adapter shadows and redeems one partial blocked 
           {
             status: 429,
             headers: { "Content-Type": "application/json" },
-          },
+          }
         );
       }
       return new Response(JSON.stringify({ id: `response-${accountId}` }), { status: 200 });
@@ -2202,31 +2170,17 @@ Deno.test("the default upstream adapter shadows and redeems one partial blocked 
         newOwnerToken: () => `owner-${requestId}`,
       },
     });
-    const seeded = await fetchCodexResponses(
-      { input: "seed-partial-block" },
-      shadowOptions("seed-partial-block"),
-    );
+    const seeded = await fetchCodexResponses({ input: "seed-partial-block" }, shadowOptions("seed-partial-block"));
     assert.equal(seeded.status, 200);
 
-    const shadowed = await fetchCodexResponses(
-      { input: "shadow-partial-block" },
-      shadowOptions("shadow-partial-block"),
-    );
+    const shadowed = await fetchCodexResponses({ input: "shadow-partial-block" }, shadowOptions("shadow-partial-block"));
     assert.equal(shadowed.status, 200);
-    const inventoryCountAfterShadow = requests.filter((request) =>
-      request.url.endsWith("/rate-limit-reset-credits")
-    ).length;
+    const inventoryCountAfterShadow = requests.filter((request) => request.url.endsWith("/rate-limit-reset-credits")).length;
     assert.equal(inventoryCountAfterShadow, 1);
 
-    const duplicateShadow = await fetchCodexResponses(
-      { input: "shadow-partial-block-duplicate" },
-      shadowOptions("shadow-partial-block-duplicate"),
-    );
+    const duplicateShadow = await fetchCodexResponses({ input: "shadow-partial-block-duplicate" }, shadowOptions("shadow-partial-block-duplicate"));
     assert.equal(duplicateShadow.status, 200);
-    assert.equal(
-      requests.filter((request) => request.url.endsWith("/rate-limit-reset-credits")).length,
-      inventoryCountAfterShadow,
-    );
+    assert.equal(requests.filter((request) => request.url.endsWith("/rate-limit-reset-credits")).length, inventoryCountAfterShadow);
 
     live = true;
     const redeemed = await fetchCodexResponses(
@@ -2240,13 +2194,11 @@ Deno.test("the default upstream adapter shadows and redeems one partial blocked 
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-live-partial-block",
         },
-      },
+      }
     );
     assert.equal(redeemed.status, 200);
     assert.deepEqual(
-      requests.map((request) =>
-        `${request.method} ${new URL(request.url).pathname} ${request.headers.get("chatgpt-account-id")}`
-      ),
+      requests.map((request) => `${request.method} ${new URL(request.url).pathname} ${request.headers.get("chatgpt-account-id")}`),
       [
         "POST /backend-api/codex/responses account-one",
         "POST /backend-api/codex/responses account-two",
@@ -2256,7 +2208,7 @@ Deno.test("the default upstream adapter shadows and redeems one partial blocked 
         "GET /backend-api/wham/rate-limit-reset-credits account-one",
         "POST /backend-api/wham/rate-limit-reset-credits/consume account-one",
         "POST /backend-api/codex/responses account-one",
-      ],
+      ]
     );
     const consume = requests.find((request) => request.url.endsWith("/consume"));
     assert.ok(consume);
@@ -2283,8 +2235,7 @@ Deno.test("persistent live auto-arms a partial cohort before one later consume a
   const consumeBodies: unknown[] = [];
   Date.now = () => fixedStartMs;
   (config as { isDeploy: boolean; codexBaseUrl: string }).isDeploy = true;
-  (config as { isDeploy: boolean; codexBaseUrl: string }).codexBaseUrl =
-    "https://upstream-reset.test/backend-api/codex";
+  (config as { isDeploy: boolean; codexBaseUrl: string }).codexBaseUrl = "https://upstream-reset.test/backend-api/codex";
   kv.auth = pool(auth("one"), auth("two"));
   kv.extra.clear();
   resetCodexAuthCacheForTest();
@@ -2331,19 +2282,13 @@ Deno.test("persistent live auto-arms a partial cohort before one later consume a
   });
 
   try {
-    const armed = await fetchCodexResponses(
-      { input: "persistent-live-partial-arm" },
-      options("persistent-live-partial-arm"),
-    );
+    const armed = await fetchCodexResponses({ input: "persistent-live-partial-arm" }, options("persistent-live-partial-arm"));
     assert.equal(armed.status, 200);
     assert.deepEqual(inventoryAccountIds, ["account-one"]);
     assert.deepEqual(consumeAccountIds, []);
     assert.deepEqual(inferenceAccountIds, ["account-two"]);
 
-    const consumed = await fetchCodexResponses(
-      { input: "persistent-live-partial-consume" },
-      options("persistent-live-partial-consume"),
-    );
+    const consumed = await fetchCodexResponses({ input: "persistent-live-partial-consume" }, options("persistent-live-partial-consume"));
     assert.equal(consumed.status, 200);
     assert.ok(getCodexRoutingProbe(consumed));
     assert.deepEqual(inventoryAccountIds, ["account-one", "account-one"]);
@@ -2376,8 +2321,7 @@ Deno.test("persistent live auto-arms an all-blocked cohort before one later cons
   };
   Date.now = () => fixedStartMs;
   (config as { isDeploy: boolean; codexBaseUrl: string }).isDeploy = true;
-  (config as { isDeploy: boolean; codexBaseUrl: string }).codexBaseUrl =
-    "https://upstream-reset.test/backend-api/codex";
+  (config as { isDeploy: boolean; codexBaseUrl: string }).codexBaseUrl = "https://upstream-reset.test/backend-api/codex";
   kv.auth = pool(auth("one"), auth("two"));
   kv.extra.clear();
   resetCodexAuthCacheForTest();
@@ -2425,20 +2369,14 @@ Deno.test("persistent live auto-arms an all-blocked cohort before one later cons
   });
 
   try {
-    const armed = await fetchCodexResponses(
-      { input: "persistent-live-all-blocked-arm" },
-      options("persistent-live-all-blocked-arm"),
-    );
+    const armed = await fetchCodexResponses({ input: "persistent-live-all-blocked-arm" }, options("persistent-live-all-blocked-arm"));
     assert.equal(armed.status, 429);
     assert.equal((await armed.json()).error.code, "codex_quota_blocked");
     assert.deepEqual([...inventoryAccountIds].sort(), ["account-one", "account-two"]);
     assert.deepEqual(consumeAccountIds, []);
     assert.deepEqual(inferenceAccountIds, []);
 
-    const consumed = await fetchCodexResponses(
-      { input: "persistent-live-all-blocked-consume" },
-      options("persistent-live-all-blocked-consume"),
-    );
+    const consumed = await fetchCodexResponses({ input: "persistent-live-all-blocked-consume" }, options("persistent-live-all-blocked-consume"));
     assert.equal(consumed.status, 200);
     assert.ok(getCodexRoutingProbe(consumed));
     assert.equal(inventoryAccountIds.filter((accountId) => accountId === "account-one").length, 2);
@@ -2489,13 +2427,10 @@ Deno.test("post-reset response probes retain their tombstone until an explicit c
       return Promise.resolve(
         inferenceCalls === 1
           ? new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
-            status: 429,
-            headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
-          })
-          : new Response(
-            'data: {"type":"response.completed","response":{"output":[]}}\n\n',
-            { status: 200, headers: { "Content-Type": "text/event-stream" } },
-          ),
+              status: 429,
+              headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
+            })
+          : new Response('data: {"type":"response.completed","response":{"output":[]}}\n\n', { status: 200, headers: { "Content-Type": "text/event-stream" } })
       );
     };
     const response = await fetchCodexResponses(
@@ -2508,7 +2443,7 @@ Deno.test("post-reset response probes retain their tombstone until an explicit c
           now: () => fixedStartMs,
           newOwnerToken: () => owner,
         },
-      },
+      }
     );
     assert.equal(response.status, 200);
     assert.equal(inferenceCalls, 2);
@@ -2600,7 +2535,7 @@ Deno.test("simultaneous gateway requests share one durable banked-reset submissi
         new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
           status: 429,
           headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
-        }),
+        })
       );
     }
     return Promise.resolve(new Response(JSON.stringify({ id: "response-after-concurrent-reset" }), { status: 200 }));
@@ -2614,19 +2549,13 @@ Deno.test("simultaneous gateway requests share one durable banked-reset submissi
     newOwnerToken: () => "owner-concurrent-gateway-reset",
   };
   try {
-    const first = fetchCodexResponses(
-      { input: "first-concurrent-banked-reset" },
-      { requestId: "first-concurrent-banked-reset", bankedReset },
-    );
+    const first = fetchCodexResponses({ input: "first-concurrent-banked-reset" }, { requestId: "first-concurrent-banked-reset", bankedReset });
     await redeemEntered;
 
     // The second request sees the durable `submitted` transaction while its
     // provider call is stalled. It may return the normal quota response but
     // must neither dispatch inference nor submit another reset.
-    const second = await fetchCodexResponses(
-      { input: "second-concurrent-banked-reset" },
-      { requestId: "second-concurrent-banked-reset", bankedReset },
-    );
+    const second = await fetchCodexResponses({ input: "second-concurrent-banked-reset" }, { requestId: "second-concurrent-banked-reset", bankedReset });
     assert.equal(second.status, 429);
     assert.equal(inferenceCalls, 1);
     assert.deepEqual(reset.calls, ["inventory", "redeem"]);
@@ -2668,7 +2597,7 @@ Deno.test("an already-redeemed reset is independently verified before one same-a
         new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
           status: 429,
           headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
-        }),
+        })
       );
     }
     return Promise.resolve(new Response(JSON.stringify({ id: "response-after-already-redeemed" }), { status: 200 }));
@@ -2686,7 +2615,7 @@ Deno.test("an already-redeemed reset is independently verified before one same-a
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-already-redeemed",
         },
-      },
+      }
     );
     assert.equal(response.status, 200);
     assert.deepEqual(accountIds, ["account-one", "account-one"]);
@@ -2728,7 +2657,7 @@ Deno.test("an auth rotation after verification fences off the post-reset retry",
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
-      }),
+      })
     );
   };
 
@@ -2743,7 +2672,7 @@ Deno.test("an auth rotation after verification fences off the post-reset retry",
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-auth-rotation",
         },
-      },
+      }
     );
     assert.equal(response.status, 429);
     assert.equal(inferenceCalls, 1, "a rotated auth-pool entry must prevent the post-reset retry");
@@ -2778,7 +2707,7 @@ Deno.test("an auth rotation inside the final dispatch hook fences off a post-res
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
-      }),
+      })
     );
   };
 
@@ -2816,7 +2745,7 @@ Deno.test("an auth rotation inside the final dispatch hook fences off a post-res
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-dispatch-race",
         },
-      },
+      }
     );
     assert.equal(response.status, 429);
     assert.equal(beforeDispatchCalls, 2);
@@ -2860,7 +2789,7 @@ Deno.test("an auth-pool slot reorder during a claimed reset fences submission be
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": stableRetryAfter },
-      }),
+      })
     );
   };
 
@@ -2875,7 +2804,7 @@ Deno.test("an auth-pool slot reorder during a claimed reset fences submission be
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-slot-reorder",
         },
-      },
+      }
     );
     assert.equal(response.status, 429);
     assert.deepEqual(upstreamAccounts, ["account-one", "account-two"]);
@@ -2909,10 +2838,10 @@ Deno.test("the request that first discovers a healthy fallback does not spend be
     return Promise.resolve(
       accountIds.length === 1
         ? new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
-          status: 429,
-          headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
-        })
-        : new Response(JSON.stringify({ id: "fallback-success" }), { status: 200 }),
+            status: 429,
+            headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
+          })
+        : new Response(JSON.stringify({ id: "fallback-success" }), { status: 200 })
     );
   };
 
@@ -2927,7 +2856,7 @@ Deno.test("the request that first discovers a healthy fallback does not spend be
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-fallback",
         },
-      },
+      }
     );
     assert.equal(response.status, 200);
     assert.deepEqual(accountIds, ["account-one", "account-two"]);
@@ -2955,10 +2884,7 @@ Deno.test("a sibling blocked during partial preflight is not dispatched from the
   await seedStableBankedResetBlock();
   const warmed = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, fixedStartMs);
   assert.equal(warmed.kind, "eligible");
-  assert.deepEqual(
-    warmed.kind === "eligible" ? warmed.accounts.map((account) => account.auth.account_id) : [],
-    ["account-two"],
-  );
+  assert.deepEqual(warmed.kind === "eligible" ? warmed.accounts.map((account) => account.auth.account_id) : [], ["account-two"]);
   const reset = scriptedResetProvider({
     onInventory: () => {
       // Simulate a different isolate writing the durable record directly. The
@@ -3008,7 +2934,7 @@ Deno.test("a sibling blocked during partial preflight is not dispatched from the
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-partial-preflight-sibling-blocked",
         },
-      },
+      }
     );
     assert.equal(response.status, 429);
     assert.equal((await response.json()).error.code, "codex_quota_blocked");
@@ -3081,7 +3007,7 @@ Deno.test("a sibling legacy timeout during partial preflight does not gate fallb
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-partial-preflight-sibling-timeout",
         },
-      },
+      }
     );
     assert.equal(response.status, 200);
     assert.equal((await response.json()).id, "stale-timeout-fallback");
@@ -3139,12 +3065,10 @@ Deno.test("a routing KV outage after partial preflight never dispatches a cached
               now: () => fixedStartMs,
               newOwnerToken: () => "owner-partial-preflight-routing-unavailable",
             },
-          },
+          }
         ),
       (error: unknown) =>
-        error instanceof CodexError &&
-        error.status === 503 &&
-        error.message === "Codex routing state is unavailable after banked-reset preflight.",
+        error instanceof CodexError && error.status === 503 && error.message === "Codex routing state is unavailable after banked-reset preflight."
     );
     assert.deepEqual(reset.inventoryAccountIds, ["account-one"]);
     assert.deepEqual(reset.redeemAccountIds, []);
@@ -3202,7 +3126,7 @@ Deno.test("partial preflight reselects a rotated healthy sibling before ordinary
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-partial-preflight-sibling-rotated",
         },
-      },
+      }
     );
     assert.equal(response.status, 200);
     assert.deepEqual(reset.inventoryAccountIds, ["account-one"]);
@@ -3254,7 +3178,7 @@ Deno.test("partial preflight reselects a reordered healthy sibling before ordina
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-partial-preflight-sibling-reordered",
         },
-      },
+      }
     );
     assert.equal(response.status, 200);
     assert.deepEqual(reset.inventoryAccountIds, ["account-one"]);
@@ -3304,8 +3228,8 @@ Deno.test("definitive partial-cohort probe failures fall through once to the hea
                   type: status === 429 ? "usage_limit_reached" : status === 401 ? "authentication_error" : "forbidden",
                 },
               }),
-              { status, headers },
-            ),
+              { status, headers }
+            )
           );
         };
 
@@ -3320,7 +3244,7 @@ Deno.test("definitive partial-cohort probe failures fall through once to the hea
               now: () => fixedStartMs,
               newOwnerToken: () => `owner-partial-probe-${status}`,
             },
-          },
+          }
         );
 
         assert.equal(response.status, 200);
@@ -3371,7 +3295,7 @@ Deno.test("an ambiguous partial-cohort post-reset transport outcome never replay
             now: () => fixedStartMs,
             newOwnerToken: () => "owner-partial-probe-transport-ambiguous",
           },
-        },
+        }
       )
     );
     assert.deepEqual(accountIds, ["account-one"]);
@@ -3423,16 +3347,10 @@ Deno.test("simultaneous partial-cohort requests share one consume and let the co
   };
 
   try {
-    const first = fetchCodexResponses(
-      { input: "partial-concurrent-first" },
-      { requestId: "partial-concurrent-first", bankedReset },
-    );
+    const first = fetchCodexResponses({ input: "partial-concurrent-first" }, { requestId: "partial-concurrent-first", bankedReset });
     await redeemEntered;
 
-    const second = await fetchCodexResponses(
-      { input: "partial-concurrent-second" },
-      { requestId: "partial-concurrent-second", bankedReset },
-    );
+    const second = await fetchCodexResponses({ input: "partial-concurrent-second" }, { requestId: "partial-concurrent-second", bankedReset });
     assert.equal(second.status, 200);
     assert.deepEqual(accountIds, ["account-two"]);
     assert.deepEqual(reset.calls, ["inventory", "redeem"]);
@@ -3483,7 +3401,7 @@ Deno.test("a skipped half-open probe prevents a sibling banked-reset redemption"
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(expiredAtMs).toUTCString() },
       }),
-      now,
+      now
     );
     now = expiredAtMs + 1;
 
@@ -3515,7 +3433,7 @@ Deno.test("a skipped half-open probe prevents a sibling banked-reset redemption"
         new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
           status: 429,
           headers: { "Content-Type": "application/json", "Retry-After": candidateRetryAfter },
-        }),
+        })
       );
     };
 
@@ -3529,7 +3447,7 @@ Deno.test("a skipped half-open probe prevents a sibling banked-reset redemption"
           now: () => now,
           newOwnerToken: () => "owner-probe-unavailable",
         },
-      },
+      }
     );
 
     assert.equal(response.status, 429);
@@ -3567,7 +3485,7 @@ Deno.test("a 403 sibling blocks a full-pool banked reset", async () => {
         new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
           status: 429,
           headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
-        }),
+        })
       );
     }
     if (accountIds.length === 2) {
@@ -3575,7 +3493,7 @@ Deno.test("a 403 sibling blocks a full-pool banked reset", async () => {
         new Response(JSON.stringify({ error: { type: "forbidden" } }), {
           status: 403,
           headers: { "Content-Type": "application/json" },
-        }),
+        })
       );
     }
     return Promise.resolve(new Response(JSON.stringify({ id: "response-after-reset" }), { status: 200 }));
@@ -3592,7 +3510,7 @@ Deno.test("a 403 sibling blocks a full-pool banked reset", async () => {
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-after-403",
         },
-      },
+      }
     );
 
     assert.equal(response.status, 403);
@@ -3627,7 +3545,7 @@ Deno.test("an earlier allowlisted exhausted account is redeemed after a later si
         new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
           status: 429,
           headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
-        }),
+        })
       );
     }
     return Promise.resolve(new Response(JSON.stringify({ id: "response-after-earlier-reset" }), { status: 200 }));
@@ -3644,7 +3562,7 @@ Deno.test("an earlier allowlisted exhausted account is redeemed after a later si
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-earlier-allowlisted",
         },
-      },
+      }
     );
 
     assert.equal(response.status, 200);
@@ -3682,7 +3600,7 @@ Deno.test("a 403 during the bounded retry blocks a full-pool redemption", async 
         new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
           status: 429,
           headers: { "Content-Type": "application/json", "Retry-After": shortStableRetryAfter },
-        }),
+        })
       );
     }
     if (accountIds.length === 3) {
@@ -3690,7 +3608,7 @@ Deno.test("a 403 during the bounded retry blocks a full-pool redemption", async 
         new Response(JSON.stringify({ error: { type: "forbidden" } }), {
           status: 403,
           headers: { "Content-Type": "application/json" },
-        }),
+        })
       );
     }
     return Promise.resolve(new Response(JSON.stringify({ id: "response-after-reset" }), { status: 200 }));
@@ -3708,7 +3626,7 @@ Deno.test("a 403 during the bounded retry blocks a full-pool redemption", async 
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-bounded-retry-403",
         },
-      },
+      }
     );
 
     assert.equal(response.status, 403);
@@ -3743,7 +3661,7 @@ Deno.test("a successful ordinary bounded retry never spends a banked reset", asy
         new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
           status: 429,
           headers: { "Content-Type": "application/json", "Retry-After": shortStableRetryAfter },
-        }),
+        })
       );
     }
     return Promise.resolve(new Response(JSON.stringify({ id: "ordinary-retry-success" }), { status: 200 }));
@@ -3761,7 +3679,7 @@ Deno.test("a successful ordinary bounded retry never spends a banked reset", asy
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-ordinary-retry-success",
         },
-      },
+      }
     );
 
     assert.equal(response.status, 200);
@@ -3781,15 +3699,13 @@ Deno.test("only a complete stable usage-limit response can reach the banked-rese
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
   const stableRetryAfter = new Date(fixedStartMs + 60_000).toUTCString();
-  const cases: Array<
-    Readonly<{
-      name: string;
-      status: number;
-      body: string;
-      retryAfter?: string;
-      expectedStatus: number;
-    }>
-  > = [
+  const cases: Readonly<{
+    name: string;
+    status: number;
+    body: string;
+    retryAfter?: string;
+    expectedStatus: number;
+  }>[] = [
     {
       name: "generic rate limit",
       status: 429,
@@ -3911,7 +3827,7 @@ Deno.test("only a complete stable usage-limit response can reach the banked-rese
             now: () => fixedStartMs,
             newOwnerToken: () => `owner-nonqualifying-${testCase.name}`,
           },
-        },
+        }
       );
       assert.equal(response.status, testCase.expectedStatus, testCase.name);
       assert.deepEqual(reset.calls, [], testCase.name);
@@ -3947,7 +3863,7 @@ Deno.test("a later non-qualifying 429 clears an earlier banked-reset candidate",
       new Response(JSON.stringify({ error: { type: errorType } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": stableRetryAfter },
-      }),
+      })
     );
   };
 
@@ -3962,7 +3878,7 @@ Deno.test("a later non-qualifying 429 clears an earlier banked-reset candidate",
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-later-nonqualifying-429",
         },
-      },
+      }
     );
     assert.equal(response.status, 429);
     assert.deepEqual(accountIds, ["account-one", "account-two"]);
@@ -3994,7 +3910,7 @@ Deno.test("post-reset inference may return one normal 429 but never triggers a s
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
-      }),
+      })
     );
   };
 
@@ -4009,7 +3925,7 @@ Deno.test("post-reset inference may return one normal 429 but never triggers a s
           now: () => fixedStartMs,
           newOwnerToken: () => "owner-second-429",
         },
-      },
+      }
     );
     assert.equal(response.status, 429);
     assert.equal(inferenceCalls, 2);
@@ -4049,7 +3965,7 @@ Deno.test("a failed banked-reset probe gets a bounded retry and eventually reope
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": delayedPropagationRetryAfter },
-      }),
+      })
     );
   };
 
@@ -4079,9 +3995,7 @@ Deno.test("a failed banked-reset probe gets a bounded retry and eventually reope
       const stillBlocked = await fetchCodexResponses({ input: `during-reset-propagation-${attempt}` }, { bankedReset });
       assert.equal(stillBlocked.status, 429);
       assert.equal(inferenceAccounts.at(-1), "account-one");
-      const routingAfterProbe = parseCodexAccountRoutingState(
-        (await kv.get(CODEX_ACCOUNT_ROUTING_KV_KEY, { consistency: "strong" })).value,
-      );
+      const routingAfterProbe = parseCodexAccountRoutingState((await kv.get(CODEX_ACCOUNT_ROUTING_KV_KEY, { consistency: "strong" })).value);
       assert.equal(routingAfterProbe?.slots[0]?.quota_blocked_until_ms, now + CODEX_HALF_OPEN_LEASE_MS);
       assert.equal(routingAfterProbe?.slots[0]?.banked_reset_generation_ambiguous, true);
       assert.deepEqual(reset.calls, resetCallsAfterFirst);
@@ -4090,18 +4004,9 @@ Deno.test("a failed banked-reset probe gets a bounded retry and eventually reope
     now += CODEX_HALF_OPEN_LEASE_MS + 1;
     const recovered = await fetchCodexResponses({ input: "after-reset-propagation" }, { bankedReset });
     assert.equal(recovered.status, 200);
-    assert.deepEqual(inferenceAccounts, [
-      "account-one",
-      "account-two",
-      "account-one",
-      "account-one",
-      "account-one",
-      "account-one",
-    ]);
+    assert.deepEqual(inferenceAccounts, ["account-one", "account-two", "account-one", "account-one", "account-one", "account-one"]);
     await markCodexResponseCompleted(recovered);
-    const routing = parseCodexAccountRoutingState(
-      (await kv.get(CODEX_ACCOUNT_ROUTING_KV_KEY, { consistency: "strong" })).value,
-    );
+    const routing = parseCodexAccountRoutingState((await kv.get(CODEX_ACCOUNT_ROUTING_KV_KEY, { consistency: "strong" })).value);
     assert.equal(routing?.slots[0]?.quota_blocked_until_ms, null);
     assert.equal(routing?.slots[0]?.banked_reset_generation_ambiguous, false);
     assert.equal(routing?.slots[1]?.quota_blocked_until_ms, delayedPropagationResetAtMs);
@@ -4132,10 +4037,10 @@ Deno.test("a stale verified reset recovers the existing account without another 
     return Promise.resolve(
       inferenceCalls <= 2
         ? new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
-          status: 429,
-          headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
-        })
-        : new Response(JSON.stringify({ id: "recovered-stale-reset" }), { status: 200 }),
+            status: 429,
+            headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
+          })
+        : new Response(JSON.stringify({ id: "recovered-stale-reset" }), { status: 200 })
     );
   };
 
@@ -4157,13 +4062,15 @@ Deno.test("a stale verified reset recovers the existing account without another 
     assert.ok(current);
     await kv.set(CODEX_ACCOUNT_ROUTING_KV_KEY, {
       ...current,
-      slots: [{
-        ...current!.slots[0]!,
-        quota_blocked_until_ms: delayedResetAtMs,
-        generation: current!.slots[0]!.generation + 1,
-        probe_lease: null,
-        banked_reset_generation_ambiguous: true,
-      }],
+      slots: [
+        {
+          ...current!.slots[0]!,
+          quota_blocked_until_ms: delayedResetAtMs,
+          generation: current!.slots[0]!.generation + 1,
+          probe_lease: null,
+          banked_reset_generation_ambiguous: true,
+        },
+      ],
     });
     resetCodexAccountRoutingForTest();
 
@@ -4200,10 +4107,10 @@ Deno.test("all-blocked routing recovers an unknown reset while new submissions a
     return Promise.resolve(
       inferenceCalls === 1
         ? new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
-          status: 429,
-          headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
-        })
-        : new Response(JSON.stringify({ id: "recovered-after-unknown" }), { status: 200 }),
+            status: 429,
+            headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
+          })
+        : new Response(JSON.stringify({ id: "recovered-after-unknown" }), { status: 200 })
     );
   };
 
@@ -4211,7 +4118,7 @@ Deno.test("all-blocked routing recovers an unknown reset while new submissions a
   const disabledConfig: CodexBankedResetConfig = { ...liveConfig, enabled: false, mode: "disabled" };
   const bankedReset = {
     config: liveConfig,
-    reloadConfig: () => live ? liveConfig : disabledConfig,
+    reloadConfig: () => (live ? liveConfig : disabledConfig),
     provider: reset.provider,
     kv: kv as unknown as Deno.Kv,
     now: () => now,

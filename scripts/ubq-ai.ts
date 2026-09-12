@@ -55,10 +55,7 @@ const normalizeVersion = (value: unknown): string | null => {
   return trimmed ? trimmed : null;
 };
 
-const readCodexModelsCacheVersion = async (
-  runtime: UbqAiRuntime,
-  homeDir: string | undefined,
-): Promise<string | null> => {
+const readCodexModelsCacheVersion = async (runtime: UbqAiRuntime, homeDir: string | undefined): Promise<string | null> => {
   if (!homeDir) return null;
   try {
     const text = await runtime.readTextFile(`${homeDir}/.codex/models_cache.json`);
@@ -105,7 +102,7 @@ const readCodexPackageVersion = async (runtime: UbqAiRuntime, codexPath: string 
 const resolveCodexClientVersion = async (
   runtime: UbqAiRuntime,
   codexPaths: (string | null | undefined)[],
-  homeDir: string | undefined,
+  homeDir: string | undefined
 ): Promise<string | null> => {
   const cachedVersion = await readCodexModelsCacheVersion(runtime, homeDir);
   if (cachedVersion) return cachedVersion;
@@ -119,11 +116,7 @@ const resolveCodexClientVersion = async (
   return null;
 };
 
-const listCodexBinaryCandidates = (
-  runtime: UbqAiRuntime,
-  codexBinFlag: string | null,
-  homeDir: string | undefined,
-): string[] => {
+const listCodexBinaryCandidates = (runtime: UbqAiRuntime, codexBinFlag: string | null, homeDir: string | undefined): string[] => {
   const candidates: string[] = [];
   if (codexBinFlag) candidates.push(expandTilde(codexBinFlag, homeDir));
   const pathValue = runtime.envGet("PATH") ?? "";
@@ -149,15 +142,7 @@ const pushFlag = (flags: Record<string, FlagValue>, key: string, value: string |
   }
 };
 
-const BOOLEAN_FLAGS = new Set([
-  "help",
-  "json",
-  "raw",
-  "reset-usage",
-  "stream",
-  "token-only",
-  "verbose",
-]);
+const BOOLEAN_FLAGS = new Set(["help", "json", "raw", "reset-usage", "stream", "token-only", "verbose"]);
 
 export const parseArgs = (args: string[]): ParsedArgs => {
   const flags: Record<string, FlagValue> = {};
@@ -236,19 +221,18 @@ const tryReadTextFile = async (runtime: UbqAiRuntime, path: string): Promise<str
 
 const parseGitDirFromDotGitFile = (content: string): string | null => {
   const firstLine = (content.split(/\r?\n/, 1)[0] ?? "").trim();
-  const match = firstLine.match(/^gitdir:\s*(.+)\s*$/i);
+  const match = /^gitdir:\s*(.+)\s*$/i.exec(firstLine);
   return match?.[1]?.trim() || null;
 };
 
-const isAbsolutePath = (path: string): boolean =>
-  path.startsWith("/") || path.startsWith("\\") || /^[a-zA-Z]:[\\/]/.test(path);
+const isAbsolutePath = (path: string): boolean => path.startsWith("/") || path.startsWith("\\") || /^[a-zA-Z]:[\\/]/.test(path);
 
 const readGitHeadShortRevision = async (runtime: UbqAiRuntime, gitDir: string): Promise<string | null> => {
   const head = await tryReadTextFile(runtime, `${gitDir}/HEAD`);
   if (!head) return null;
   const trimmedHead = head.trim();
 
-  const refMatch = trimmedHead.match(/^ref:\s*(.+)\s*$/);
+  const refMatch = /^ref:\s*(.+)\s*$/.exec(trimmedHead);
   if (!refMatch) return toShortGitRevision(trimmedHead);
 
   const refPath = refMatch[1]?.trim();
@@ -277,16 +261,7 @@ const gitShortRevision = async (runtime: UbqAiRuntime): Promise<string | null> =
   const env = toShortGitRevision(runtime.envGet("GIT_REVISION") ?? runtime.envGet("GITHUB_SHA") ?? undefined);
   if (env) return env;
 
-  const gitRoots = [
-    ".",
-    "..",
-    "../..",
-    "../../..",
-    "../../../..",
-    "../../../../..",
-    "../../../../../..",
-    "../../../../../../..",
-  ];
+  const gitRoots = [".", "..", "../..", "../../..", "../../../..", "../../../../..", "../../../../../..", "../../../../../../.."];
   for (const root of gitRoots) {
     const dotGitHead = await tryReadTextFile(runtime, `${root}/.git/HEAD`);
     if (dotGitHead) return await readGitHeadShortRevision(runtime, `${root}/.git`);
@@ -304,7 +279,7 @@ const gitShortRevision = async (runtime: UbqAiRuntime): Promise<string | null> =
 };
 
 const renderUbqLogo = (revision: string | null): string => {
-  const revLabel = revision ? `${revision}` : "";
+  const revLabel = revision ? revision : "";
   return `⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣤⣾⣷⣤⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠀⣀⣴⣾⡿⠛⠉⠉⠛⢿⣷⣦⣀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⣠⣴⣿⠿⠛⠁⠀⠀⠀⠀⠀⠀⠈⠛⠿⣿⣦⣄⠀⠀⠀
@@ -416,15 +391,16 @@ const readStdin = async (): Promise<string> => {
 
 const doFetch = async (
   runtime: UbqAiRuntime,
-  req: Request,
+  req: Request
 ): Promise<
-  { ok: true; status: number; contentType: string; json: unknown; headers: Headers } | {
-    ok: false;
-    status: number;
-    contentType: string;
-    body: string;
-    headers: Headers;
-  }
+  | { ok: true; status: number; contentType: string; json: unknown; headers: Headers }
+  | {
+      ok: false;
+      status: number;
+      contentType: string;
+      body: string;
+      headers: Headers;
+    }
 > => {
   const res = await runtime.fetch(req);
   const contentType = res.headers.get("Content-Type") ?? "";
@@ -454,7 +430,7 @@ const streamToOut = async (runtime: UbqAiRuntime, body: ReadableStream<Uint8Arra
   }
 };
 
-const parseSseEvents = async function* (stream: ReadableStream<Uint8Array>): AsyncGenerator<unknown | "[DONE]"> {
+const parseSseEvents = async function* (stream: ReadableStream<Uint8Array>): AsyncGenerator {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -559,7 +535,10 @@ const getFlagString = (flags: Record<string, FlagValue>, key: string): string | 
 type ApiKeyExpiryPreset = "day" | "week" | "month" | "quarter" | "year" | "forever";
 
 const normalizeApiKeyExpiryPreset = (raw: string): ApiKeyExpiryPreset | null => {
-  const normalized = raw.trim().toLowerCase().replace(/[\s_-]+/g, "");
+  const normalized = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
   if (!normalized) return null;
 
   if (normalized === "day" || normalized === "1d" || normalized === "1day" || normalized === "oneday") return "day";
@@ -571,9 +550,7 @@ const normalizeApiKeyExpiryPreset = (raw: string): ApiKeyExpiryPreset | null => 
     return "quarter";
   }
   if (normalized === "year" || normalized === "1y" || normalized === "1year" || normalized === "oneyear") return "year";
-  if (
-    normalized === "forever" || normalized === "never" || normalized === "noexpiry" || normalized === "noexpiration"
-  ) {
+  if (normalized === "forever" || normalized === "never" || normalized === "noexpiry" || normalized === "noexpiration") {
     return "forever";
   }
   return null;
@@ -593,9 +570,7 @@ const apiKeyExpiresAtMsFromPreset = (preset: ApiKeyExpiryPreset, nowMs: number):
   return nowMs + durations[preset];
 };
 
-const parseApiKeyExpiresAtMs = (
-  flags: Record<string, FlagValue>,
-): { ok: true; value: number | undefined } | { ok: false; message: string } => {
+const parseApiKeyExpiresAtMs = (flags: Record<string, FlagValue>): { ok: true; value: number | undefined } | { ok: false; message: string } => {
   const rawExpiresAtMs = getFlagString(flags, "expires-at-ms");
   const rawPreset = getFlagString(flags, "expires");
   if (rawExpiresAtMs && rawPreset) {
@@ -662,25 +637,21 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
   };
 
   await debug(`[ubq-ai] url=${baseUrl}\n`);
-  await debug(
-    `[ubq-ai] env UOS_AI_TOKEN=${await describeSecret(runtime.envGet("UOS_AI_TOKEN"))}\n`,
-  );
-  await debug(
-    `[ubq-ai] env DENO_DEPLOY_TOKEN=${await describeSecret(runtime.envGet("DENO_DEPLOY_TOKEN"))}\n`,
-  );
+  await debug(`[ubq-ai] env UOS_AI_TOKEN=${await describeSecret(runtime.envGet("UOS_AI_TOKEN"))}\n`);
+  await debug(`[ubq-ai] env DENO_DEPLOY_TOKEN=${await describeSecret(runtime.envGet("DENO_DEPLOY_TOKEN"))}\n`);
   await debug(`[ubq-ai] env DENO_DEPLOY_TOKEN=${await describeSecret(runtime.envGet("DENO_DEPLOY_TOKEN"))}\n`);
   const clientSource = getFlagString(flags, "token")
     ? "--token"
     : (runtime.envGet("UOS_AI_TOKEN") ?? "").trim()
-    ? "UOS_AI_TOKEN"
-    : resolveAdminToken(flags, runtime)
-    ? "(admin fallback)"
-    : "(unset)";
+      ? "UOS_AI_TOKEN"
+      : resolveAdminToken(flags, runtime)
+        ? "(admin fallback)"
+        : "(unset)";
   const adminSource = getFlagString(flags, "admin-token")
     ? "--admin-token"
     : (runtime.envGet("DENO_DEPLOY_TOKEN") ?? "").trim()
-    ? "DENO_DEPLOY_TOKEN"
-    : "(unset)";
+      ? "DENO_DEPLOY_TOKEN"
+      : "(unset)";
   await debug(`[ubq-ai] token_sources client=${clientSource} admin=${adminSource}\n`);
   const resolvedClientToken = resolveClientToken(flags, runtime) ?? undefined;
   const resolvedAdminToken = resolveAdminToken(flags, runtime) ?? undefined;
@@ -703,7 +674,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
   };
 
   if (cmd === "health") {
-    const req = new Request(endpoint("/health"), { method: "GET", headers: { "Accept": "application/json" } });
+    const req = new Request(endpoint("/health"), { method: "GET", headers: { Accept: "application/json" } });
     const result = await doFetchWithDebug(req);
     if (!result.ok) {
       await writeErrText(runtime, `Request failed (${result.status}).\n`);
@@ -715,7 +686,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
   }
 
   if (cmd === "info") {
-    const req = new Request(endpoint("/"), { method: "GET", headers: { "Accept": "application/json" } });
+    const req = new Request(endpoint("/"), { method: "GET", headers: { Accept: "application/json" } });
     const result = await doFetchWithDebug(req);
     if (!result.ok) {
       await writeErrText(runtime, `Request failed (${result.status}).\n`);
@@ -729,17 +700,14 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
   if (cmd === "whoami") {
     const token = resolveClientToken(flags, runtime);
     if (!token) {
-      await writeErrText(
-        runtime,
-        "Missing client token. Set UOS_AI_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
-      );
+      await writeErrText(runtime, "Missing client token. Set UOS_AI_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n");
       return 2;
     }
     const req = new Request(endpoint("/uos/auth"), {
       method: "GET",
       headers: {
-        "Authorization": `Bearer ${token}`,
-        "Accept": "application/json",
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
       },
     });
     const result = await doFetchWithDebug(req);
@@ -755,17 +723,14 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
   if (cmd === "models") {
     const token = resolveClientToken(flags, runtime);
     if (!token) {
-      await writeErrText(
-        runtime,
-        "Missing client token. Set UOS_AI_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
-      );
+      await writeErrText(runtime, "Missing client token. Set UOS_AI_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n");
       return 2;
     }
     const req = new Request(endpoint("/v1/models"), {
       method: "GET",
       headers: {
-        "Authorization": `Bearer ${token}`,
-        "Accept": "application/json",
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
       },
     });
     const result = await doFetchWithDebug(req);
@@ -781,10 +746,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
   if (cmd === "chat") {
     const token = resolveClientToken(flags, runtime);
     if (!token) {
-      await writeErrText(
-        runtime,
-        "Missing client token. Set UOS_AI_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
-      );
+      await writeErrText(runtime, "Missing client token. Set UOS_AI_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n");
       return 2;
     }
     const model = (getFlagString(flags, "model") ?? "").trim();
@@ -835,7 +797,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
         return 2;
       }
 
-      const m: Array<{ role: string; content: string }> = [];
+      const m: { role: string; content: string }[] = [];
       if (system.trim()) m.push({ role: "system", content: system });
       if (developer.trim()) m.push({ role: "developer", content: developer });
       m.push({ role: "user", content: prompt });
@@ -853,9 +815,9 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
     const req = new Request(endpoint("/v1/chat/completions"), {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${token}`,
+        Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
-        "Accept": wantsStream ? "text/event-stream" : "application/json",
+        Accept: wantsStream ? "text/event-stream" : "application/json",
       },
       body: JSON.stringify(body),
     });
@@ -917,10 +879,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
   if (cmd === "responses") {
     const token = resolveClientToken(flags, runtime);
     if (!token) {
-      await writeErrText(
-        runtime,
-        "Missing client token. Set UOS_AI_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n",
-      );
+      await writeErrText(runtime, "Missing client token. Set UOS_AI_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n");
       return 2;
     }
     const model = (getFlagString(flags, "model") ?? "").trim();
@@ -987,9 +946,9 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
     const req = new Request(endpoint("/v1/responses"), {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${token}`,
+        Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
-        "Accept": wantsStream ? "text/event-stream" : "application/json",
+        Accept: wantsStream ? "text/event-stream" : "application/json",
       },
       body: JSON.stringify(body),
     });
@@ -1052,10 +1011,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
   if (cmd === "admin") {
     const adminToken = resolveAdminToken(flags, runtime);
     if (!adminToken) {
-      await writeErrText(
-        runtime,
-        "Missing admin token. Set DENO_DEPLOY_TOKEN or pass --admin-token.\n",
-      );
+      await writeErrText(runtime, "Missing admin token. Set DENO_DEPLOY_TOKEN or pass --admin-token.\n");
       return 2;
     }
 
@@ -1083,18 +1039,11 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
       }
 
       if (flags["skip-models"] !== undefined || flags["no-models"] !== undefined) {
-        await writeErrText(
-          runtime,
-          "--skip-models is obsolete; upload-auth always stores the live upstream Codex model catalog.\n",
-        );
+        await writeErrText(runtime, "--skip-models is obsolete; upload-auth always stores the live upstream Codex model catalog.\n");
         return 2;
       }
       const codexBinFlag = getFlagString(flags, "codex-bin");
-      const clientVersion = await resolveCodexClientVersion(
-        runtime,
-        listCodexBinaryCandidates(runtime, codexBinFlag, homeDir),
-        homeDir,
-      ) ?? undefined;
+      const clientVersion = (await resolveCodexClientVersion(runtime, listCodexBinaryCandidates(runtime, codexBinFlag, homeDir), homeDir)) ?? undefined;
       const modelsPayload: Record<string, unknown> = {
         source: "chatgpt_codex",
         client_version: clientVersion,
@@ -1105,9 +1054,9 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
       const req = new Request(endpoint("/admin/codex/auth"), {
         method: "POST",
         headers: {
-          "Authorization": `Bearer ${adminToken}`,
+          Authorization: `Bearer ${adminToken}`,
           "Content-Type": "application/json",
-          "Accept": "application/json",
+          Accept: "application/json",
         },
         body: JSON.stringify(payload),
       });
@@ -1165,9 +1114,9 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
         const req = new Request(endpoint("/admin/api-keys"), {
           method: "POST",
           headers: {
-            "Authorization": `Bearer ${adminToken}`,
+            Authorization: `Bearer ${adminToken}`,
             "Content-Type": "application/json",
-            "Accept": "application/json",
+            Accept: "application/json",
           },
           body: JSON.stringify(body),
         });
@@ -1180,9 +1129,7 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
         }
 
         if (tokenOnly) {
-          const tokenValue = (result.json && typeof result.json === "object" && "token" in result.json)
-            ? (result.json as { token?: unknown }).token
-            : null;
+          const tokenValue = result.json && typeof result.json === "object" && "token" in result.json ? (result.json as { token?: unknown }).token : null;
           if (typeof tokenValue === "string" && tokenValue.trim()) {
             await writeOutText(runtime, `${tokenValue}\n`);
             return 0;
@@ -1199,8 +1146,8 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
         const req = new Request(endpoint("/admin/api-keys"), {
           method: "GET",
           headers: {
-            "Authorization": `Bearer ${adminToken}`,
-            "Accept": "application/json",
+            Authorization: `Bearer ${adminToken}`,
+            Accept: "application/json",
           },
         });
         const result = await doFetchWithDebug(req);
@@ -1222,9 +1169,9 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
         const req = new Request(endpoint("/admin/api-keys/revoke"), {
           method: "POST",
           headers: {
-            "Authorization": `Bearer ${adminToken}`,
+            Authorization: `Bearer ${adminToken}`,
             "Content-Type": "application/json",
-            "Accept": "application/json",
+            Accept: "application/json",
           },
           body: JSON.stringify({ id }),
         });
@@ -1250,8 +1197,8 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
         const req = new Request(endpoint("/admin/kernel-pubkeys"), {
           method: "GET",
           headers: {
-            "Authorization": `Bearer ${adminToken}`,
-            "Accept": "application/json",
+            Authorization: `Bearer ${adminToken}`,
+            Accept: "application/json",
           },
         });
         const result = await doFetchWithDebug(req);
@@ -1290,9 +1237,9 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
         const req = new Request(endpoint("/admin/kernel-pubkeys"), {
           method: "POST",
           headers: {
-            "Authorization": `Bearer ${adminToken}`,
+            Authorization: `Bearer ${adminToken}`,
             "Content-Type": "application/json",
-            "Accept": "application/json",
+            Accept: "application/json",
           },
           body: JSON.stringify({ app_id: appId, pem, owner }),
         });
@@ -1324,8 +1271,8 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
         const req = new Request(url, {
           method: "DELETE",
           headers: {
-            "Authorization": `Bearer ${adminToken}`,
-            "Accept": "application/json",
+            Authorization: `Bearer ${adminToken}`,
+            Accept: "application/json",
           },
         });
         const result = await doFetchWithDebug(req);
@@ -1372,8 +1319,8 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
         const req = new Request(url, {
           method: "GET",
           headers: {
-            "Authorization": `Bearer ${adminToken}`,
-            "Accept": "application/json",
+            Authorization: `Bearer ${adminToken}`,
+            Accept: "application/json",
           },
         });
         const result = await doFetchWithDebug(req);
@@ -1446,9 +1393,9 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
         const req = new Request(endpoint("/admin/kernel-usage"), {
           method: "POST",
           headers: {
-            "Authorization": `Bearer ${adminToken}`,
+            Authorization: `Bearer ${adminToken}`,
             "Content-Type": "application/json",
-            "Accept": "application/json",
+            Accept: "application/json",
           },
           body: JSON.stringify(body),
         });

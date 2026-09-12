@@ -2,12 +2,7 @@ import { getKv } from "./kv.ts";
 import { base64UrlEncode, isRecord, sha256Hex } from "./utils.ts";
 
 export const SENTINEL_INCIDENT_CONTROL_KEY = ["uos_ai", "sentinel_incident", "v1", "control"] as const;
-export const SENTINEL_INCIDENT_CAPTURE_REF_PREFIX = [
-  "uos_ai",
-  "sentinel_incident",
-  "v1",
-  "capture_ref",
-] as const;
+export const SENTINEL_INCIDENT_CAPTURE_REF_PREFIX = ["uos_ai", "sentinel_incident", "v1", "capture_ref"] as const;
 export const SENTINEL_INCIDENT_EVENT_PREFIX = ["uos_ai", "sentinel_incident", "v1", "event"] as const;
 export const SENTINEL_INCIDENT_ACK_PREFIX = ["uos_ai", "sentinel_incident", "v1", "ack"] as const;
 export const SENTINEL_INCIDENT_DEFER_PREFIX = ["uos_ai", "sentinel_incident", "v1", "defer"] as const;
@@ -53,9 +48,7 @@ export type SentinelIncidentBatch = Readonly<{
   infrastructure_deferrals?: number;
 }>;
 
-export type SentinelIncidentDeferralReason =
-  | "codex_auth_preflight_failed"
-  | "sentinel_infrastructure_preflight_failed";
+export type SentinelIncidentDeferralReason = "codex_auth_preflight_failed" | "sentinel_infrastructure_preflight_failed";
 
 export type SentinelIncidentControl = Readonly<{
   version: 1;
@@ -130,55 +123,56 @@ const safeEnvironment: EnvironmentReader = {
   },
 };
 
-const positiveInteger = (value: unknown): value is number =>
-  typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+const positiveInteger = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 
-const nonNegativeInteger = (value: unknown): value is number =>
-  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+const nonNegativeInteger = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
 const nullablePositiveInteger = (value: unknown): value is number | null => value === null || positiveInteger(value);
 
-export const isSentinelIncidentId = (value: unknown): value is string =>
-  typeof value === "string" && INCIDENT_ID.test(value);
+export const isSentinelIncidentId = (value: unknown): value is string => typeof value === "string" && INCIDENT_ID.test(value);
 
 export const isSentinelIncidentDeferralReason = (value: unknown): value is SentinelIncidentDeferralReason =>
   value === "codex_auth_preflight_failed" || value === "sentinel_infrastructure_preflight_failed";
 
 const isWorkflowRunUrl = (value: unknown, runId: number | null): value is string | null => {
   if (value === null) return runId === null;
-  return typeof value === "string" && runId !== null &&
-    value === `https://github.com/${GITHUB_REPOSITORY}/actions/runs/${runId}`;
+  return typeof value === "string" && runId !== null && value === `https://github.com/${GITHUB_REPOSITORY}/actions/runs/${runId}`;
 };
 
 export const isSentinelIncidentBatch = (value: unknown): value is SentinelIncidentBatch => {
   if (!isRecord(value) || value.version !== 1 || !isSentinelIncidentId(value.id)) return false;
   if (value.state !== "queued" && value.state !== "dispatching" && value.state !== "dispatched") return false;
   if (
-    !positiveInteger(value.first_observed_at_ms) || !positiveInteger(value.latest_observed_at_ms) ||
-    value.latest_observed_at_ms < value.first_observed_at_ms || !positiveInteger(value.failure_count) ||
-    !positiveInteger(value.attempt) || value.attempt > MAX_WORKFLOW_ATTEMPTS ||
+    !positiveInteger(value.first_observed_at_ms) ||
+    !positiveInteger(value.latest_observed_at_ms) ||
+    value.latest_observed_at_ms < value.first_observed_at_ms ||
+    !positiveInteger(value.failure_count) ||
+    !positiveInteger(value.attempt) ||
+    value.attempt > MAX_WORKFLOW_ATTEMPTS ||
     (value.infrastructure_deferrals !== undefined &&
-      (!nonNegativeInteger(value.infrastructure_deferrals) ||
-        value.infrastructure_deferrals > MAX_SENTINEL_INFRASTRUCTURE_DEFERRALS)) ||
+      (!nonNegativeInteger(value.infrastructure_deferrals) || value.infrastructure_deferrals > MAX_SENTINEL_INFRASTRUCTURE_DEFERRALS)) ||
     !positiveInteger(value.next_action_at_ms) ||
-    !nullablePositiveInteger(value.lease_expires_at_ms) || !nullablePositiveInteger(value.workflow_run_id) ||
+    !nullablePositiveInteger(value.lease_expires_at_ms) ||
+    !nullablePositiveInteger(value.workflow_run_id) ||
     !nullablePositiveInteger(value.success_observed_at_ms) ||
     !isWorkflowRunUrl(value.workflow_run_url, value.workflow_run_id) ||
-    typeof value.ack_nonce !== "string" || !ACK_NONCE.test(value.ack_nonce)
-  ) return false;
+    typeof value.ack_nonce !== "string" ||
+    !ACK_NONCE.test(value.ack_nonce)
+  )
+    return false;
   if (value.state === "queued") {
-    return value.lease_expires_at_ms === null && value.workflow_run_id === null && value.workflow_run_url === null &&
-      value.success_observed_at_ms === null;
+    return value.lease_expires_at_ms === null && value.workflow_run_id === null && value.workflow_run_url === null && value.success_observed_at_ms === null;
   }
   if (value.state === "dispatching") {
-    return value.lease_expires_at_ms !== null && value.workflow_run_id === null && value.workflow_run_url === null &&
-      value.success_observed_at_ms === null;
+    return value.lease_expires_at_ms !== null && value.workflow_run_id === null && value.workflow_run_url === null && value.success_observed_at_ms === null;
   }
   return value.lease_expires_at_ms === null && value.workflow_run_id !== null && value.workflow_run_url !== null;
 };
 
 export const isSentinelIncidentControl = (value: unknown): value is SentinelIncidentControl =>
-  isRecord(value) && value.version === 1 && positiveInteger(value.updated_at_ms) &&
+  isRecord(value) &&
+  value.version === 1 &&
+  positiveInteger(value.updated_at_ms) &&
   (value.active === null || isSentinelIncidentBatch(value.active)) &&
   (value.pending === null || isSentinelIncidentBatch(value.pending)) &&
   (value.pending === null || value.pending.state === "queued") &&
@@ -189,24 +183,25 @@ export const isSentinelIncidentCaptureReference = (value: unknown): value is Sen
 
 export const isSentinelIncidentFailureEvent = (value: unknown): value is SentinelIncidentFailureEvent => {
   if (
-    !isRecord(value) || value.version !== 1 || !isSentinelIncidentId(value.incident_id) ||
-    !positiveInteger(value.observed_at_ms) || !positiveInteger(value.created_at_ms) ||
+    !isRecord(value) ||
+    value.version !== 1 ||
+    !isSentinelIncidentId(value.incident_id) ||
+    !positiveInteger(value.observed_at_ms) ||
+    !positiveInteger(value.created_at_ms) ||
     value.created_at_ms < value.observed_at_ms ||
     (value.ready_at_ms !== null && !positiveInteger(value.ready_at_ms)) ||
-    (value.capture_fingerprint !== null &&
-      (typeof value.capture_fingerprint !== "string" || !/^[0-9a-f]{64}$/.test(value.capture_fingerprint))) ||
+    (value.capture_fingerprint !== null && (typeof value.capture_fingerprint !== "string" || !/^[0-9a-f]{64}$/.test(value.capture_fingerprint))) ||
     (value.manifest_key !== null && (!Array.isArray(value.manifest_key) || value.manifest_key.length !== 7))
-  ) return false;
+  )
+    return false;
   if (value.state === "capturing") {
-    return value.ready_at_ms === null && value.capture_status === "pending" && value.capture_fingerprint === null &&
-      value.manifest_key === null;
+    return value.ready_at_ms === null && value.capture_status === "pending" && value.capture_fingerprint === null && value.manifest_key === null;
   }
   if (value.state !== "ready" || value.ready_at_ms === null || value.ready_at_ms < value.created_at_ms) return false;
   if (value.capture_status === "unavailable") {
     return value.capture_fingerprint === null && value.manifest_key === null;
   }
-  return (value.capture_status === "stored" || value.capture_status === "duplicate") &&
-    value.capture_fingerprint !== null && value.manifest_key !== null;
+  return (value.capture_status === "stored" || value.capture_status === "duplicate") && value.capture_fingerprint !== null && value.manifest_key !== null;
 };
 
 export const isSentinelProductionRuntime = (environment: EnvironmentReader = safeEnvironment): boolean =>
@@ -224,11 +219,7 @@ const emptyControl = (now: number): SentinelIncidentControl => ({
 const defaultRandomUuid = (): string => crypto.randomUUID();
 const defaultAckNonce = (): string => base64UrlEncode(crypto.getRandomValues(new Uint8Array(32)));
 
-const newBatch = (
-  now: number,
-  randomUuid: () => string,
-  randomAckNonce: () => string = defaultAckNonce,
-): SentinelIncidentBatch => {
+const newBatch = (now: number, randomUuid: () => string, randomAckNonce: () => string = defaultAckNonce): SentinelIncidentBatch => {
   const id = `provider-${randomUuid().toLowerCase()}`;
   if (!isSentinelIncidentId(id)) throw new Error("Sentinel incident UUID is invalid");
   const ackNonce = randomAckNonce();
@@ -269,9 +260,10 @@ const controlEntry = async (kv: Deno.Kv): Promise<Deno.KvEntryMaybe<SentinelInci
 const setControl = (
   kv: Deno.Kv,
   entry: Deno.KvEntryMaybe<SentinelIncidentControl>,
-  value: SentinelIncidentControl,
+  value: SentinelIncidentControl
 ): Promise<Deno.KvCommitResult | Deno.KvCommitError> =>
-  kv.atomic()
+  kv
+    .atomic()
     .check({ key: SENTINEL_INCIDENT_CONTROL_KEY, versionstamp: entry.versionstamp })
     .set(SENTINEL_INCIDENT_CONTROL_KEY, value, { expireIn: SENTINEL_INCIDENT_TTL_MS })
     .commit();
@@ -281,7 +273,7 @@ const incidentEventKey = (incidentId: string): Deno.KvKey => [...SENTINEL_INCIDE
 export const createSentinelIncidentFailureEvent = async (
   kv: Deno.Kv,
   observedAtMs: number,
-  dependencies: Pick<SentinelIncidentDependencies, "randomUuid"> = {},
+  dependencies: Pick<SentinelIncidentDependencies, "randomUuid"> = {}
 ): Promise<Deno.KvEntry<SentinelIncidentFailureEvent>> => {
   if (!positiveInteger(observedAtMs)) throw new Error("Sentinel incident timestamp is invalid");
   const incidentId = `provider-${(dependencies.randomUuid ?? defaultRandomUuid)().toLowerCase()}`;
@@ -298,10 +290,7 @@ export const createSentinelIncidentFailureEvent = async (
     capture_fingerprint: null,
     manifest_key: null,
   };
-  const committed = await kv.atomic()
-    .check({ key, versionstamp: null })
-    .set(key, value, { expireIn: SENTINEL_INCIDENT_TTL_MS })
-    .commit();
+  const committed = await kv.atomic().check({ key, versionstamp: null }).set(key, value, { expireIn: SENTINEL_INCIDENT_TTL_MS }).commit();
   if (!committed.ok) throw new Error("Sentinel incident event identifier conflicted");
   return { key, value, versionstamp: committed.versionstamp };
 };
@@ -309,7 +298,7 @@ export const createSentinelIncidentFailureEvent = async (
 export const recordSentinelProviderDegradation = async (
   kv: Deno.Kv,
   observedAtMs: number,
-  dependencies: Pick<SentinelIncidentDependencies, "randomUuid"> = {},
+  dependencies: Pick<SentinelIncidentDependencies, "randomUuid"> = {}
 ): Promise<string> => {
   if (!positiveInteger(observedAtMs)) throw new Error("Sentinel incident timestamp is invalid");
   const incidentId = `provider-${(dependencies.randomUuid ?? defaultRandomUuid)().toLowerCase()}`;
@@ -326,22 +315,18 @@ export const recordSentinelProviderDegradation = async (
     capture_fingerprint: null,
     manifest_key: null,
   };
-  const committed = await kv.atomic()
-    .check({ key, versionstamp: null })
-    .set(key, value, { expireIn: SENTINEL_INCIDENT_TTL_MS })
-    .commit();
+  const committed = await kv.atomic().check({ key, versionstamp: null }).set(key, value, { expireIn: SENTINEL_INCIDENT_TTL_MS }).commit();
   if (!committed.ok) throw new Error("Sentinel incident event identifier conflicted");
   return incidentId;
 };
 
 type IncidentCaptureCompletion =
-  | Readonly<{ status: "stored" | "duplicate"; fingerprint: string; manifestKey: Deno.KvKey }>
-  | Readonly<{ status: "unavailable" }>;
+  Readonly<{ status: "stored" | "duplicate"; fingerprint: string; manifestKey: Deno.KvKey }> | Readonly<{ status: "unavailable" }>;
 
 export const readySentinelIncidentFailureEvent = (
   entry: Deno.KvEntry<SentinelIncidentFailureEvent>,
   readyAtMs: number,
-  capture: IncidentCaptureCompletion,
+  capture: IncidentCaptureCompletion
 ): SentinelIncidentFailureEvent => {
   if (!isSentinelIncidentFailureEvent(entry.value) || entry.value.state !== "capturing") {
     throw new Error("Sentinel incident event is not awaiting capture");
@@ -349,21 +334,22 @@ export const readySentinelIncidentFailureEvent = (
   if (!positiveInteger(readyAtMs) || readyAtMs < entry.value.created_at_ms) {
     throw new Error("Sentinel incident ready timestamp is invalid");
   }
-  const value: SentinelIncidentFailureEvent = capture.status === "unavailable"
-    ? {
-      ...entry.value,
-      state: "ready",
-      ready_at_ms: readyAtMs,
-      capture_status: "unavailable",
-    }
-    : {
-      ...entry.value,
-      state: "ready",
-      ready_at_ms: readyAtMs,
-      capture_status: capture.status,
-      capture_fingerprint: capture.fingerprint,
-      manifest_key: [...capture.manifestKey],
-    };
+  const value: SentinelIncidentFailureEvent =
+    capture.status === "unavailable"
+      ? {
+          ...entry.value,
+          state: "ready",
+          ready_at_ms: readyAtMs,
+          capture_status: "unavailable",
+        }
+      : {
+          ...entry.value,
+          state: "ready",
+          ready_at_ms: readyAtMs,
+          capture_status: capture.status,
+          capture_fingerprint: capture.fingerprint,
+          manifest_key: [...capture.manifestKey],
+        };
   if (!isSentinelIncidentFailureEvent(value)) throw new Error("Sentinel incident capture completion is invalid");
   return value;
 };
@@ -372,21 +358,18 @@ export const completeSentinelIncidentFailureEvent = async (
   kv: Deno.Kv,
   entry: Deno.KvEntry<SentinelIncidentFailureEvent>,
   readyAtMs: number,
-  capture: IncidentCaptureCompletion,
+  capture: IncidentCaptureCompletion
 ): Promise<boolean> => {
   const value = readySentinelIncidentFailureEvent(entry, readyAtMs, capture);
-  const committed = await kv.atomic()
+  const committed = await kv
+    .atomic()
     .check({ key: entry.key, versionstamp: entry.versionstamp })
     .set(entry.key, value, { expireIn: SENTINEL_INCIDENT_TTL_MS })
     .commit();
   return committed.ok;
 };
 
-const batchFromFailureEvent = (
-  event: SentinelIncidentFailureEvent,
-  now: number,
-  randomAckNonce: () => string,
-): SentinelIncidentBatch => {
+const batchFromFailureEvent = (event: SentinelIncidentFailureEvent, now: number, randomAckNonce: () => string): SentinelIncidentBatch => {
   const ackNonce = randomAckNonce();
   if (!ACK_NONCE.test(ackNonce)) throw new Error("Sentinel incident ACK nonce is invalid");
   return {
@@ -410,7 +393,7 @@ const batchFromFailureEvent = (
 export const coalesceSentinelIncidentFailureEvents = async (
   kv: Deno.Kv,
   now: number,
-  dependencies: Pick<SentinelIncidentDependencies, "randomAckNonce"> = {},
+  dependencies: Pick<SentinelIncidentDependencies, "randomAckNonce"> = {}
 ): Promise<number> => {
   if (!positiveInteger(now)) throw new Error("Sentinel incident clock is invalid");
   const randomAckNonce = dependencies.randomAckNonce ?? defaultAckNonce;
@@ -422,7 +405,8 @@ export const coalesceSentinelIncidentFailureEvents = async (
     if (eventEntry.value.state === "capturing") {
       if (eventEntry.value.created_at_ms + CAPTURE_RECOVERY_MS > now) continue;
       const recovered = readySentinelIncidentFailureEvent(eventEntry, now, { status: "unavailable" });
-      const committed = await kv.atomic()
+      const committed = await kv
+        .atomic()
         .check({ key: eventEntry.key, versionstamp: eventEntry.versionstamp })
         .set(eventEntry.key, recovered, { expireIn: SENTINEL_INCIDENT_TTL_MS })
         .commit();
@@ -432,10 +416,7 @@ export const coalesceSentinelIncidentFailureEvents = async (
 
     let integrated = false;
     for (let casAttempt = 0; casAttempt < MAX_CAS_ATTEMPTS; casAttempt += 1) {
-      const [latestEvent, entry] = await Promise.all([
-        kv.get<SentinelIncidentFailureEvent>(eventEntry.key),
-        controlEntry(kv),
-      ]);
+      const [latestEvent, entry] = await Promise.all([kv.get<SentinelIncidentFailureEvent>(eventEntry.key), controlEntry(kv)]);
       if (latestEvent.value === null) {
         integrated = true;
         break;
@@ -463,7 +444,8 @@ export const coalesceSentinelIncidentFailureEvents = async (
         incidentId = pending.id;
       }
 
-      let operation = kv.atomic()
+      let operation = kv
+        .atomic()
         .check({ key: SENTINEL_INCIDENT_CONTROL_KEY, versionstamp: entry.versionstamp })
         .check({ key: latestEvent.key, versionstamp: latestEvent.versionstamp })
         .set(
@@ -474,21 +456,15 @@ export const coalesceSentinelIncidentFailureEvents = async (
             pending,
             updated_at_ms: now,
           } satisfies SentinelIncidentControl,
-          { expireIn: SENTINEL_INCIDENT_TTL_MS },
+          { expireIn: SENTINEL_INCIDENT_TTL_MS }
         );
-      if (
-        latestEvent.value.capture_status === "stored" || latestEvent.value.capture_status === "duplicate"
-      ) {
+      if (latestEvent.value.capture_status === "stored" || latestEvent.value.capture_status === "duplicate") {
         const fingerprint = latestEvent.value.capture_fingerprint!;
         const reference: SentinelIncidentCaptureReference = {
           version: 1,
           manifest_key: [...latestEvent.value.manifest_key!],
         };
-        operation = operation.set(
-          [...SENTINEL_INCIDENT_CAPTURE_REF_PREFIX, incidentId, fingerprint],
-          reference,
-          { expireIn: SENTINEL_INCIDENT_TTL_MS },
-        );
+        operation = operation.set([...SENTINEL_INCIDENT_CAPTURE_REF_PREFIX, incidentId, fingerprint], reference, { expireIn: SENTINEL_INCIDENT_TTL_MS });
       }
       const committed = await operation.delete(latestEvent.key).commit();
       if (committed.ok) {
@@ -505,7 +481,7 @@ export const coalesceSentinelIncidentFailureEvents = async (
 export const recordSentinelIncidentFailure = async (
   kv: Deno.Kv,
   observedAtMs: number,
-  dependencies: Pick<SentinelIncidentDependencies, "randomUuid" | "randomAckNonce"> = {},
+  dependencies: Pick<SentinelIncidentDependencies, "randomUuid" | "randomAckNonce"> = {}
 ): Promise<Readonly<{ incidentId: string; created: boolean }>> => {
   if (!positiveInteger(observedAtMs)) throw new Error("Sentinel incident timestamp is invalid");
   const randomUuid = dependencies.randomUuid ?? defaultRandomUuid;
@@ -543,12 +519,7 @@ export const recordSentinelIncidentFailure = async (
   throw new Error("Sentinel incident control update conflicted repeatedly");
 };
 
-export const linkSentinelReplayToIncident = async (
-  kv: Deno.Kv,
-  incidentId: string,
-  fingerprint: string,
-  manifestKey: Deno.KvKey,
-): Promise<void> => {
+export const linkSentinelReplayToIncident = async (kv: Deno.Kv, incidentId: string, fingerprint: string, manifestKey: Deno.KvKey): Promise<void> => {
   if (!isSentinelIncidentId(incidentId) || !/^[0-9a-f]{64}$/.test(fingerprint)) {
     throw new Error("Sentinel incident capture reference is invalid");
   }
@@ -577,41 +548,17 @@ const concat = (...parts: readonly Uint8Array[]): Uint8Array<ArrayBuffer> => {
   return output;
 };
 
-const derValue = (tag: number, value: Uint8Array): Uint8Array<ArrayBuffer> =>
-  concat(Uint8Array.of(tag), derLength(value.byteLength), value);
+const derValue = (tag: number, value: Uint8Array): Uint8Array<ArrayBuffer> => concat(Uint8Array.of(tag), derLength(value.byteLength), value);
 
 const wrapPkcs1AsPkcs8 = (pkcs1: Uint8Array): Uint8Array<ArrayBuffer> => {
-  const rsaAlgorithmIdentifier = Uint8Array.of(
-    0x30,
-    0x0d,
-    0x06,
-    0x09,
-    0x2a,
-    0x86,
-    0x48,
-    0x86,
-    0xf7,
-    0x0d,
-    0x01,
-    0x01,
-    0x01,
-    0x05,
-    0x00,
-  );
-  return derValue(
-    0x30,
-    concat(Uint8Array.of(0x02, 0x01, 0x00), rsaAlgorithmIdentifier, derValue(0x04, pkcs1)),
-  );
+  const rsaAlgorithmIdentifier = Uint8Array.of(0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00);
+  return derValue(0x30, concat(Uint8Array.of(0x02, 0x01, 0x00), rsaAlgorithmIdentifier, derValue(0x04, pkcs1)));
 };
 
 const decodePem = (privateKeyPem: string): Uint8Array<ArrayBuffer> => {
-  const normalized = privateKeyPem.includes("\n")
-    ? privateKeyPem.replaceAll("\r\n", "\n").trim()
-    : privateKeyPem.replaceAll("\\n", "\n").trim();
+  const normalized = privateKeyPem.includes("\n") ? privateKeyPem.replaceAll("\r\n", "\n").trim() : privateKeyPem.replaceAll("\\n", "\n").trim();
   if (normalized.length < 100 || normalized.length > 32_768) throw new Error("GitHub App private key is invalid");
-  const match = normalized.match(
-    /^-----BEGIN (RSA PRIVATE KEY|PRIVATE KEY)-----\n([A-Za-z0-9+/=\n]+)\n-----END \1-----$/,
-  );
+  const match = /^-----BEGIN (RSA PRIVATE KEY|PRIVATE KEY)-----\n([A-Za-z0-9+/=\n]+)\n-----END \1-----$/.exec(normalized);
   if (!match) throw new Error("GitHub App private key is invalid");
   let decoded: Uint8Array<ArrayBuffer>;
   try {
@@ -628,20 +575,10 @@ export const createSentinelGitHubAppJwt = async (privateKeyPem: string, nowMs: n
   if (!positiveInteger(nowMs)) throw new Error("GitHub App clock is invalid");
   const pkcs8 = decodePem(privateKeyPem);
   try {
-    const key = await crypto.subtle.importKey(
-      "pkcs8",
-      pkcs8,
-      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-      false,
-      ["sign"],
-    );
+    const key = await crypto.subtle.importKey("pkcs8", pkcs8, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]);
     const nowSeconds = Math.floor(nowMs / 1_000);
-    const unsigned = `${encodeJson({ alg: "RS256", typ: "JWT" })}.${
-      encodeJson({ iat: nowSeconds - 60, exp: nowSeconds + 540, iss: GITHUB_APP_ID })
-    }`;
-    const signature = new Uint8Array(
-      await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(unsigned)),
-    );
+    const unsigned = `${encodeJson({ alg: "RS256", typ: "JWT" })}.${encodeJson({ iat: nowSeconds - 60, exp: nowSeconds + 540, iss: GITHUB_APP_ID })}`;
+    const signature = new Uint8Array(await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(unsigned)));
     return `${unsigned}.${base64UrlEncode(signature)}`;
   } catch {
     throw new Error("GitHub App private key is invalid");
@@ -678,7 +615,7 @@ const request = async (
   createTimeoutSignal: (milliseconds: number) => AbortSignal,
   url: URL,
   init: RequestInit,
-  code: string,
+  code: string
 ): Promise<Response> => {
   try {
     return await fetcher(url, { ...init, redirect: "manual", signal: createTimeoutSignal(10_000) });
@@ -695,20 +632,23 @@ const githubHeaders = (token: string): Headers =>
     "X-GitHub-Api-Version": GITHUB_API_VERSION,
   });
 
-const createGitHubAppClient = async (
-  privateKeyPem: string,
-  dependencies: SentinelIncidentDependencies,
-): Promise<GitHubAppClient> => {
+const createGitHubAppClient = async (privateKeyPem: string, dependencies: SentinelIncidentDependencies): Promise<GitHubAppClient> => {
   const now = dependencies.now?.() ?? Date.now();
   const fetcher = dependencies.fetcher ?? fetch;
   const createTimeoutSignal = dependencies.createTimeoutSignal ?? AbortSignal.timeout;
   const jwt = await createSentinelGitHubAppJwt(privateKeyPem, now);
   const tokenUrl = new URL(`app/installations/${GITHUB_INSTALLATION_ID}/access_tokens`, GITHUB_API_BASE);
-  const tokenResponse = await request(fetcher, createTimeoutSignal, tokenUrl, {
-    method: "POST",
-    headers: githubHeaders(jwt),
-    body: JSON.stringify({ repositories: ["ai.ubq.fi"], permissions: { actions: "write" } }),
-  }, "github_app_token_request_failed");
+  const tokenResponse = await request(
+    fetcher,
+    createTimeoutSignal,
+    tokenUrl,
+    {
+      method: "POST",
+      headers: githubHeaders(jwt),
+      body: JSON.stringify({ repositories: ["ai.ubq.fi"], permissions: { actions: "write" } }),
+    },
+    "github_app_token_request_failed"
+  );
   if (tokenResponse.status !== 201) {
     await tokenResponse.body?.cancel().catch(() => {});
     throw new SentinelIncidentDeliveryError(`github_app_token_http_${tokenResponse.status}`);
@@ -722,25 +662,28 @@ const createGitHubAppClient = async (
 
   return {
     async dispatch(incident) {
-      const dispatchUrl = new URL(
-        `repos/${GITHUB_REPOSITORY}/actions/workflows/${GITHUB_WORKFLOW}/dispatches`,
-        GITHUB_API_BASE,
+      const dispatchUrl = new URL(`repos/${GITHUB_REPOSITORY}/actions/workflows/${GITHUB_WORKFLOW}/dispatches`, GITHUB_API_BASE);
+      const response = await request(
+        fetcher,
+        createTimeoutSignal,
+        dispatchUrl,
+        {
+          method: "POST",
+          headers: githubHeaders(token),
+          body: JSON.stringify({
+            ref: GITHUB_REF,
+            inputs: {
+              sentinel_mode: "incident",
+              incident_id: incident.id,
+              incident_attempt: String(incident.attempt),
+              incident_start_ms: String(incident.first_observed_at_ms),
+              incident_ack_nonce: incident.ack_nonce,
+            },
+            return_run_details: true,
+          }),
+        },
+        "github_workflow_dispatch_request_failed"
       );
-      const response = await request(fetcher, createTimeoutSignal, dispatchUrl, {
-        method: "POST",
-        headers: githubHeaders(token),
-        body: JSON.stringify({
-          ref: GITHUB_REF,
-          inputs: {
-            sentinel_mode: "incident",
-            incident_id: incident.id,
-            incident_attempt: String(incident.attempt),
-            incident_start_ms: String(incident.first_observed_at_ms),
-            incident_ack_nonce: incident.ack_nonce,
-          },
-          return_run_details: true,
-        }),
-      }, "github_workflow_dispatch_request_failed");
       if (response.status !== 200) {
         await response.body?.cancel().catch(() => {});
         throw new SentinelIncidentDeliveryError(`github_workflow_dispatch_http_${response.status}`);
@@ -750,18 +693,26 @@ const createGitHubAppClient = async (
       const runUrl = typeof payload.run_url === "string" ? payload.run_url : null;
       const htmlUrl = typeof payload.html_url === "string" ? payload.html_url : null;
       if (
-        !runId || runUrl !== `https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${runId}` ||
+        !runId ||
+        runUrl !== `https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${runId}` ||
         htmlUrl !== `https://github.com/${GITHUB_REPOSITORY}/actions/runs/${runId}`
-      ) throw new SentinelIncidentDeliveryError("github_workflow_dispatch_invalid_run");
+      )
+        throw new SentinelIncidentDeliveryError("github_workflow_dispatch_invalid_run");
       return { runId, htmlUrl };
     },
     async getRun(runId) {
       if (!positiveInteger(runId)) throw new SentinelIncidentDeliveryError("github_workflow_run_id_invalid");
       const runUrl = new URL(`repos/${GITHUB_REPOSITORY}/actions/runs/${runId}`, GITHUB_API_BASE);
-      const response = await request(fetcher, createTimeoutSignal, runUrl, {
-        method: "GET",
-        headers: githubHeaders(token),
-      }, "github_workflow_run_request_failed");
+      const response = await request(
+        fetcher,
+        createTimeoutSignal,
+        runUrl,
+        {
+          method: "GET",
+          headers: githubHeaders(token),
+        },
+        "github_workflow_run_request_failed"
+      );
       if (response.status !== 200) {
         await response.body?.cancel().catch(() => {});
         throw new SentinelIncidentDeliveryError(`github_workflow_run_http_${response.status}`);
@@ -769,15 +720,17 @@ const createGitHubAppClient = async (
       const payload = await responseJson(response, "github_workflow_run_invalid_json");
       const id = positiveInteger(payload.id) ? payload.id : null;
       const status = typeof payload.status === "string" ? payload.status : "";
-      const conclusion = payload.conclusion === null || typeof payload.conclusion === "string"
-        ? payload.conclusion as string | null
-        : undefined;
+      const conclusion = payload.conclusion === null || typeof payload.conclusion === "string" ? (payload.conclusion as string | null) : undefined;
       const htmlUrl = typeof payload.html_url === "string" ? payload.html_url : "";
       const headSha = typeof payload.head_sha === "string" ? payload.head_sha : "";
       if (
-        id !== runId || !status || conclusion === undefined ||
-        htmlUrl !== `https://github.com/${GITHUB_REPOSITORY}/actions/runs/${runId}` || !FULL_SHA.test(headSha)
-      ) throw new SentinelIncidentDeliveryError("github_workflow_run_invalid");
+        id !== runId ||
+        !status ||
+        conclusion === undefined ||
+        htmlUrl !== `https://github.com/${GITHUB_REPOSITORY}/actions/runs/${runId}` ||
+        !FULL_SHA.test(headSha)
+      )
+        throw new SentinelIncidentDeliveryError("github_workflow_run_invalid");
       return { id, status, conclusion, htmlUrl, headSha };
     },
   };
@@ -787,7 +740,7 @@ const updateActive = async (
   kv: Deno.Kv,
   incidentId: string,
   incidentAttempt: number,
-  update: (active: SentinelIncidentBatch, control: SentinelIncidentControl) => SentinelIncidentControl,
+  update: (active: SentinelIncidentBatch, control: SentinelIncidentControl) => SentinelIncidentControl
 ): Promise<boolean> => {
   for (let casAttempt = 0; casAttempt < MAX_CAS_ATTEMPTS; casAttempt += 1) {
     const entry = await controlEntry(kv);
@@ -803,8 +756,7 @@ const updateActive = async (
 
 const dispatchBackoffMs = (attempt: number): number => Math.min(15 * 60_000, 60_000 * 2 ** Math.max(0, attempt - 1));
 
-const infrastructureDeferralBackoffMs = (deferral: number): number =>
-  Math.min(60 * 60_000, 5 * 60_000 * 2 ** Math.max(0, deferral - 1));
+const infrastructureDeferralBackoffMs = (deferral: number): number => Math.min(60 * 60_000, 5 * 60_000 * 2 ** Math.max(0, deferral - 1));
 
 const rotatedAckNonce = (previous: string, randomAckNonce: () => string): string => {
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
@@ -815,18 +767,16 @@ const rotatedAckNonce = (previous: string, randomAckNonce: () => string): string
   throw new Error("Sentinel incident ACK nonce did not rotate");
 };
 
-const claimDispatch = async (
-  kv: Deno.Kv,
-  now: number,
-): Promise<SentinelIncidentBatch | null> => {
+const claimDispatch = async (kv: Deno.Kv, now: number): Promise<SentinelIncidentBatch | null> => {
   for (let casAttempt = 0; casAttempt < MAX_CAS_ATTEMPTS; casAttempt += 1) {
     const entry = await controlEntry(kv);
     const control = entry.value;
     const active = control?.active;
     if (!control || !active) return null;
-    const due = active.state === "queued"
-      ? active.next_action_at_ms <= now
-      : active.state === "dispatching" && (active.lease_expires_at_ms ?? Number.MAX_SAFE_INTEGER) <= now;
+    const due =
+      active.state === "queued"
+        ? active.next_action_at_ms <= now
+        : active.state === "dispatching" && (active.lease_expires_at_ms ?? Number.MAX_SAFE_INTEGER) <= now;
     if (!due) return null;
     const claimed: SentinelIncidentBatch = {
       ...active,
@@ -843,10 +793,7 @@ const claimDispatch = async (
   throw new Error("Sentinel incident dispatch claim conflicted repeatedly");
 };
 
-const claimWorkflowPoll = async (
-  kv: Deno.Kv,
-  now: number,
-): Promise<SentinelIncidentBatch | null> => {
+const claimWorkflowPoll = async (kv: Deno.Kv, now: number): Promise<SentinelIncidentBatch | null> => {
   for (let casAttempt = 0; casAttempt < MAX_CAS_ATTEMPTS; casAttempt += 1) {
     const entry = await controlEntry(kv);
     const control = entry.value;
@@ -871,17 +818,22 @@ const failConfirmedWorkflow = async (
   batch: SentinelIncidentBatch,
   now: number,
   conclusion: string,
-  randomAckNonce: () => string = defaultAckNonce,
+  randomAckNonce: () => string = defaultAckNonce
 ): Promise<"retry" | "dead_letter" | "stale"> => {
   for (let casAttempt = 0; casAttempt < MAX_CAS_ATTEMPTS; casAttempt += 1) {
     const entry = await controlEntry(kv);
     const control = entry.value;
     const active = control?.active;
     if (
-      !control || !active || active.id !== batch.id || active.attempt !== batch.attempt ||
-      active.state !== "dispatched" || active.workflow_run_id !== batch.workflow_run_id ||
+      !control ||
+      !active ||
+      active.id !== batch.id ||
+      active.attempt !== batch.attempt ||
+      active.state !== "dispatched" ||
+      active.workflow_run_id !== batch.workflow_run_id ||
       active.ack_nonce !== batch.ack_nonce
-    ) return "stale";
+    )
+      return "stale";
     const operation = kv.atomic().check({ key: SENTINEL_INCIDENT_CONTROL_KEY, versionstamp: entry.versionstamp });
     if (active.attempt < MAX_WORKFLOW_ATTEMPTS) {
       const ackNonce = randomAckNonce();
@@ -898,9 +850,13 @@ const failConfirmedWorkflow = async (
         ack_nonce: ackNonce,
       };
       const committed = await operation
-        .set(SENTINEL_INCIDENT_CONTROL_KEY, { ...control, active: queued, updated_at_ms: now }, {
-          expireIn: SENTINEL_INCIDENT_TTL_MS,
-        })
+        .set(
+          SENTINEL_INCIDENT_CONTROL_KEY,
+          { ...control, active: queued, updated_at_ms: now },
+          {
+            expireIn: SENTINEL_INCIDENT_TTL_MS,
+          }
+        )
         .commit();
       if (committed.ok) return "retry";
     } else {
@@ -933,7 +889,7 @@ export type SentinelIncidentReconcileResult = Readonly<{
 export const reconcileSentinelIncidentOutbox = async (
   kv: Deno.Kv,
   privateKeyPem: string,
-  dependencies: SentinelIncidentDependencies = {},
+  dependencies: SentinelIncidentDependencies = {}
 ): Promise<SentinelIncidentReconcileResult> => {
   const now = dependencies.now?.() ?? Date.now();
   if (!positiveInteger(now)) throw new Error("Sentinel incident clock is invalid");
@@ -943,33 +899,35 @@ export const reconcileSentinelIncidentOutbox = async (
     try {
       const client = await createGitHubAppClient(privateKeyPem, dependencies);
       const run = await client.dispatch(dispatch);
-      await claimSentinelIncidentWorkflowRun(kv, {
-        incidentId: dispatch.id,
-        attempt: dispatch.attempt,
-        workflowRunId: run.runId,
-        ackNonce: dispatch.ack_nonce,
-      }, now);
+      await claimSentinelIncidentWorkflowRun(
+        kv,
+        {
+          incidentId: dispatch.id,
+          attempt: dispatch.attempt,
+          workflowRunId: run.runId,
+          ackNonce: dispatch.ack_nonce,
+        },
+        now
+      );
       return { status: "dispatched", incidentId: dispatch.id, attempt: dispatch.attempt, workflowRunId: run.runId };
     } catch (error) {
       const reason = error instanceof SentinelIncidentDeliveryError ? error.code : "github_dispatch_failed";
-      await updateActive(
-        kv,
-        dispatch.id,
-        dispatch.attempt,
-        (active, control) =>
-          active.state === "dispatched" ? control : {
-            ...control,
-            active: {
-              ...active,
-              state: "dispatching",
-              next_action_at_ms: now + dispatchBackoffMs(active.attempt),
-              lease_expires_at_ms: now + dispatchBackoffMs(active.attempt),
-              workflow_run_id: null,
-              workflow_run_url: null,
-              success_observed_at_ms: null,
-            },
-            updated_at_ms: now,
-          },
+      await updateActive(kv, dispatch.id, dispatch.attempt, (active, control) =>
+        active.state === "dispatched"
+          ? control
+          : {
+              ...control,
+              active: {
+                ...active,
+                state: "dispatching",
+                next_action_at_ms: now + dispatchBackoffMs(active.attempt),
+                lease_expires_at_ms: now + dispatchBackoffMs(active.attempt),
+                workflow_run_id: null,
+                workflow_run_url: null,
+                success_observed_at_ms: null,
+              },
+              updated_at_ms: now,
+            }
       );
       return { status: "deferred", incidentId: dispatch.id, attempt: dispatch.attempt, reason };
     }
@@ -1002,13 +960,7 @@ export const reconcileSentinelIncidentOutbox = async (
       if (now < poll.success_observed_at_ms + WORKFLOW_ACK_GRACE_MS) {
         return { status: "running", incidentId: poll.id, attempt: poll.attempt, workflowRunId: run.id };
       }
-      const disposition = await failConfirmedWorkflow(
-        kv,
-        poll,
-        now,
-        "success_without_ack",
-        dependencies.randomAckNonce,
-      );
+      const disposition = await failConfirmedWorkflow(kv, poll, now, "success_without_ack", dependencies.randomAckNonce);
       return {
         status: disposition === "dead_letter" ? "dead_letter" : disposition === "retry" ? "retry" : "waiting",
         incidentId: poll.id,
@@ -1041,34 +993,36 @@ type SentinelIncidentWorkflowIdentity = Readonly<{
   ackNonce: string;
 }>;
 
-type SentinelIncidentDeferralIdentity =
-  & SentinelIncidentWorkflowIdentity
-  & Readonly<{
+type SentinelIncidentDeferralIdentity = SentinelIncidentWorkflowIdentity &
+  Readonly<{
     reason: SentinelIncidentDeferralReason;
   }>;
 
 const validateWorkflowIdentity = (input: SentinelIncidentWorkflowIdentity, now: number): void => {
   if (
-    !isSentinelIncidentId(input.incidentId) || !positiveInteger(input.attempt) ||
-    input.attempt > MAX_WORKFLOW_ATTEMPTS || !positiveInteger(input.workflowRunId) ||
-    typeof input.ackNonce !== "string" || !ACK_NONCE.test(input.ackNonce) || !positiveInteger(now)
-  ) throw new Error("Sentinel incident workflow identity is invalid");
+    !isSentinelIncidentId(input.incidentId) ||
+    !positiveInteger(input.attempt) ||
+    input.attempt > MAX_WORKFLOW_ATTEMPTS ||
+    !positiveInteger(input.workflowRunId) ||
+    typeof input.ackNonce !== "string" ||
+    !ACK_NONCE.test(input.ackNonce) ||
+    !positiveInteger(now)
+  )
+    throw new Error("Sentinel incident workflow identity is invalid");
 };
 
 export const claimSentinelIncidentWorkflowRun = async (
   kv: Deno.Kv,
   input: SentinelIncidentWorkflowIdentity,
-  now = Date.now(),
+  now = Date.now()
 ): Promise<"claimed" | "duplicate"> => {
   validateWorkflowIdentity(input, now);
   for (let casAttempt = 0; casAttempt < MAX_CAS_ATTEMPTS; casAttempt += 1) {
     const entry = await controlEntry(kv);
     const control = entry.value;
     const active = control?.active;
-    if (
-      !control || !active || active.id !== input.incidentId || active.attempt !== input.attempt ||
-      active.ack_nonce !== input.ackNonce
-    ) throw new SentinelIncidentClaimConflict();
+    if (!control || !active || active.id !== input.incidentId || active.attempt !== input.attempt || active.ack_nonce !== input.ackNonce)
+      throw new SentinelIncidentClaimConflict();
     if (active.state === "dispatched") {
       if (active.workflow_run_id !== input.workflowRunId) throw new SentinelIncidentClaimConflict();
       return "duplicate";
@@ -1093,41 +1047,42 @@ export const deferSentinelIncident = async (
   kv: Deno.Kv,
   input: SentinelIncidentDeferralIdentity,
   now = Date.now(),
-  dependencies: Pick<SentinelIncidentDependencies, "randomAckNonce"> = {},
+  dependencies: Pick<SentinelIncidentDependencies, "randomAckNonce"> = {}
 ): Promise<"deferred" | "dead_letter"> => {
   validateWorkflowIdentity(input, now);
   if (!isSentinelIncidentDeferralReason(input.reason)) {
     throw new Error("Sentinel incident deferral reason is invalid");
   }
-  const receiptKey = [
-    ...SENTINEL_INCIDENT_DEFER_PREFIX,
-    input.incidentId,
-    input.attempt,
-    input.workflowRunId,
-  ] as const;
+  const receiptKey = [...SENTINEL_INCIDENT_DEFER_PREFIX, input.incidentId, input.attempt, input.workflowRunId] as const;
   const randomAckNonce = dependencies.randomAckNonce ?? defaultAckNonce;
   for (let casAttempt = 0; casAttempt < MAX_CAS_ATTEMPTS; casAttempt += 1) {
-    const [receipt, entry] = await Promise.all([
-      kv.get(receiptKey),
-      controlEntry(kv),
-    ]);
+    const [receipt, entry] = await Promise.all([kv.get(receiptKey), controlEntry(kv)]);
     if (receipt.value !== null) {
       if (
-        !isRecord(receipt.value) || receipt.value.version !== 1 ||
-        receipt.value.incident_id !== input.incidentId || receipt.value.attempt !== input.attempt ||
-        receipt.value.workflow_run_id !== input.workflowRunId || receipt.value.ack_nonce !== input.ackNonce ||
+        !isRecord(receipt.value) ||
+        receipt.value.version !== 1 ||
+        receipt.value.incident_id !== input.incidentId ||
+        receipt.value.attempt !== input.attempt ||
+        receipt.value.workflow_run_id !== input.workflowRunId ||
+        receipt.value.ack_nonce !== input.ackNonce ||
         receipt.value.reason !== input.reason ||
         (receipt.value.disposition !== "deferred" && receipt.value.disposition !== "dead_letter")
-      ) throw new SentinelIncidentDeferConflict();
+      )
+        throw new SentinelIncidentDeferConflict();
       return receipt.value.disposition;
     }
     const control = entry.value;
     const active = control?.active;
     if (
-      !control || !active || active.id !== input.incidentId || active.attempt !== input.attempt ||
-      active.state !== "dispatched" || active.workflow_run_id !== input.workflowRunId ||
+      !control ||
+      !active ||
+      active.id !== input.incidentId ||
+      active.attempt !== input.attempt ||
+      active.state !== "dispatched" ||
+      active.workflow_run_id !== input.workflowRunId ||
       active.ack_nonce !== input.ackNonce
-    ) throw new SentinelIncidentDeferConflict();
+    )
+      throw new SentinelIncidentDeferConflict();
 
     const infrastructureDeferrals = (active.infrastructure_deferrals ?? 0) + 1;
     const disposition = infrastructureDeferrals >= MAX_SENTINEL_INFRASTRUCTURE_DEFERRALS ? "dead_letter" : "deferred";
@@ -1142,7 +1097,8 @@ export const deferSentinelIncident = async (
       infrastructure_deferrals: infrastructureDeferrals,
       recorded_at_ms: now,
     } as const;
-    let operation = kv.atomic()
+    let operation = kv
+      .atomic()
       .check({ key: SENTINEL_INCIDENT_CONTROL_KEY, versionstamp: entry.versionstamp })
       .check({ key: receiptKey, versionstamp: receipt.versionstamp })
       .set(receiptKey, receiptValue, { expireIn: SENTINEL_INCIDENT_TTL_MS });
@@ -1158,15 +1114,11 @@ export const deferSentinelIncident = async (
         ack_nonce: rotatedAckNonce(active.ack_nonce, randomAckNonce),
         infrastructure_deferrals: infrastructureDeferrals,
       };
-      operation = operation.set(
-        SENTINEL_INCIDENT_CONTROL_KEY,
-        { ...control, active: queued, updated_at_ms: now },
-        { expireIn: SENTINEL_INCIDENT_TTL_MS },
-      );
+      operation = operation.set(SENTINEL_INCIDENT_CONTROL_KEY, { ...control, active: queued, updated_at_ms: now }, { expireIn: SENTINEL_INCIDENT_TTL_MS });
     } else {
-      operation = operation
-        .set(SENTINEL_INCIDENT_CONTROL_KEY, promotePending(control, now), { expireIn: SENTINEL_INCIDENT_TTL_MS })
-        .set([...SENTINEL_INCIDENT_DEAD_PREFIX, active.id], {
+      operation = operation.set(SENTINEL_INCIDENT_CONTROL_KEY, promotePending(control, now), { expireIn: SENTINEL_INCIDENT_TTL_MS }).set(
+        [...SENTINEL_INCIDENT_DEAD_PREFIX, active.id],
+        {
           version: 1,
           incident_id: active.id,
           attempt: active.attempt,
@@ -1174,7 +1126,9 @@ export const deferSentinelIncident = async (
           conclusion: "infrastructure_deferrals_exhausted",
           infrastructure_deferrals: infrastructureDeferrals,
           recorded_at_ms: now,
-        }, { expireIn: SENTINEL_INCIDENT_TTL_MS });
+        },
+        { expireIn: SENTINEL_INCIDENT_TTL_MS }
+      );
     }
     const committed = await operation.commit();
     if (committed.ok) return disposition;
@@ -1185,44 +1139,54 @@ export const deferSentinelIncident = async (
 export const acknowledgeSentinelIncident = async (
   kv: Deno.Kv,
   input: Readonly<{ incidentId: string; attempt: number; workflowRunId: number; ackNonce: string }>,
-  now = Date.now(),
+  now = Date.now()
 ): Promise<"acknowledged" | "duplicate"> => {
   validateWorkflowIdentity(input, now);
   const receiptKey = [...SENTINEL_INCIDENT_ACK_PREFIX, input.incidentId, input.attempt] as const;
   for (let casAttempt = 0; casAttempt < MAX_CAS_ATTEMPTS; casAttempt += 1) {
-    const [receipt, entry] = await Promise.all([
-      kv.get(receiptKey),
-      controlEntry(kv),
-    ]);
+    const [receipt, entry] = await Promise.all([kv.get(receiptKey), controlEntry(kv)]);
     if (receipt.value !== null) {
       if (
-        !isRecord(receipt.value) || receipt.value.version !== 1 || receipt.value.incident_id !== input.incidentId ||
-        receipt.value.attempt !== input.attempt || receipt.value.workflow_run_id !== input.workflowRunId ||
+        !isRecord(receipt.value) ||
+        receipt.value.version !== 1 ||
+        receipt.value.incident_id !== input.incidentId ||
+        receipt.value.attempt !== input.attempt ||
+        receipt.value.workflow_run_id !== input.workflowRunId ||
         receipt.value.ack_nonce !== input.ackNonce
-      ) throw new SentinelIncidentAckConflict();
+      )
+        throw new SentinelIncidentAckConflict();
       return "duplicate";
     }
     const control = entry.value;
     const active = control?.active;
     if (
-      !control || !active || active.id !== input.incidentId || active.attempt !== input.attempt ||
-      (active.state !== "dispatching" && active.state !== "dispatched") || active.ack_nonce !== input.ackNonce ||
+      !control ||
+      !active ||
+      active.id !== input.incidentId ||
+      active.attempt !== input.attempt ||
+      (active.state !== "dispatching" && active.state !== "dispatched") ||
+      active.ack_nonce !== input.ackNonce ||
       (active.state === "dispatched" && active.workflow_run_id !== input.workflowRunId)
     ) {
       throw new SentinelIncidentAckConflict();
     }
-    const committed = await kv.atomic()
+    const committed = await kv
+      .atomic()
       .check({ key: SENTINEL_INCIDENT_CONTROL_KEY, versionstamp: entry.versionstamp })
       .check({ key: receiptKey, versionstamp: receipt.versionstamp })
       .set(SENTINEL_INCIDENT_CONTROL_KEY, promotePending(control, now), { expireIn: SENTINEL_INCIDENT_TTL_MS })
-      .set(receiptKey, {
-        version: 1,
-        incident_id: input.incidentId,
-        attempt: input.attempt,
-        workflow_run_id: input.workflowRunId,
-        ack_nonce: input.ackNonce,
-        acknowledged_at_ms: now,
-      }, { expireIn: SENTINEL_INCIDENT_TTL_MS })
+      .set(
+        receiptKey,
+        {
+          version: 1,
+          incident_id: input.incidentId,
+          attempt: input.attempt,
+          workflow_run_id: input.workflowRunId,
+          ack_nonce: input.ackNonce,
+          acknowledged_at_ms: now,
+        },
+        { expireIn: SENTINEL_INCIDENT_TTL_MS }
+      )
       .commit();
     if (committed.ok) return "acknowledged";
   }
@@ -1232,14 +1196,14 @@ export const acknowledgeSentinelIncident = async (
 export const recordSentinelIncidentFailureFromEnvironment = async (
   kv: Deno.Kv,
   observedAtMs: number,
-  environment: EnvironmentReader = safeEnvironment,
+  environment: EnvironmentReader = safeEnvironment
 ): Promise<Readonly<{ incidentId: string; created: boolean }> | null> =>
   isSentinelProductionRuntime(environment) ? await recordSentinelIncidentFailure(kv, observedAtMs) : null;
 
 export const createSentinelIncidentFailureEventFromEnvironment = async (
   kv: Deno.Kv,
   observedAtMs: number,
-  environment: EnvironmentReader = safeEnvironment,
+  environment: EnvironmentReader = safeEnvironment
 ): Promise<Deno.KvEntry<SentinelIncidentFailureEvent> | null> =>
   isSentinelProductionRuntime(environment) ? await createSentinelIncidentFailureEvent(kv, observedAtMs) : null;
 
@@ -1249,25 +1213,24 @@ export const recordSentinelProviderDegradationFromEnvironment = async (
     environment?: EnvironmentReader;
     kv?: Deno.Kv;
     randomUuid?: () => string;
-  }> = {},
+  }> = {}
 ): Promise<boolean> => {
   const environment = dependencies.environment ?? safeEnvironment;
   if (!isSentinelProductionRuntime(environment)) return false;
-  const kv = dependencies.kv ?? await getKv();
+  const kv = dependencies.kv ?? (await getKv());
   if (!kv) return false;
   await recordSentinelProviderDegradation(kv, observedAtMs, dependencies);
   return true;
 };
 
-const privateKeyFromEnvironment = (environment: EnvironmentReader): string | null =>
-  environment.get("SENTINEL_GITHUB_APP_PRIVATE_KEY")?.trim() || null;
+const privateKeyFromEnvironment = (environment: EnvironmentReader): string | null => environment.get("SENTINEL_GITHUB_APP_PRIVATE_KEY")?.trim() || null;
 
 export const reconcileSentinelIncidentOutboxFromEnvironment = async (
-  dependencies: SentinelIncidentDependencies & Readonly<{ environment?: EnvironmentReader; kv?: Deno.Kv }> = {},
+  dependencies: SentinelIncidentDependencies & Readonly<{ environment?: EnvironmentReader; kv?: Deno.Kv }> = {}
 ): Promise<SentinelIncidentReconcileResult> => {
   const environment = dependencies.environment ?? safeEnvironment;
   if (!isSentinelProductionRuntime(environment)) return { status: "idle" };
-  const kv = dependencies.kv ?? await getKv();
+  const kv = dependencies.kv ?? (await getKv());
   if (!kv) return { status: "deferred", reason: "kv_unavailable" };
   const now = dependencies.now?.() ?? Date.now();
   await coalesceSentinelIncidentFailureEvents(kv, now, dependencies);
@@ -1361,7 +1324,9 @@ export type SentinelIncidentIndexRow = Readonly<{
 }>;
 
 export const isSentinelIncidentIndexEvidenceRef = (value: unknown): value is SentinelIncidentIndexEvidenceRef =>
-  isRecord(value) && typeof value.ref === "string" && INDEX_REF.test(value.ref) &&
+  isRecord(value) &&
+  typeof value.ref === "string" &&
+  INDEX_REF.test(value.ref) &&
   (value.digest === null || (typeof value.digest === "string" && /^[0-9a-f]{64}$/.test(value.digest)));
 
 export const isSentinelIncidentIndexEndpoint = (value: unknown): value is string =>
@@ -1369,22 +1334,32 @@ export const isSentinelIncidentIndexEndpoint = (value: unknown): value is string
 
 export const isSentinelIncidentIndexRow = (value: unknown): value is SentinelIncidentIndexRow => {
   if (
-    !isRecord(value) || value.version !== 1 || !isSentinelIncidentId(value.incident_id) ||
-    typeof value.fingerprint !== "string" || !/^[0-9a-f]{64}$/.test(value.fingerprint) ||
-    value.severity !== "P2" || !positiveInteger(value.first_seen_at_ms) ||
-    !positiveInteger(value.last_seen_at_ms) || value.last_seen_at_ms < value.first_seen_at_ms ||
+    !isRecord(value) ||
+    value.version !== 1 ||
+    !isSentinelIncidentId(value.incident_id) ||
+    typeof value.fingerprint !== "string" ||
+    !/^[0-9a-f]{64}$/.test(value.fingerprint) ||
+    value.severity !== "P2" ||
+    !positiveInteger(value.first_seen_at_ms) ||
+    !positiveInteger(value.last_seen_at_ms) ||
+    value.last_seen_at_ms < value.first_seen_at_ms ||
     !positiveInteger(value.count) ||
-    (value.failing_revision !== null &&
-      (typeof value.failing_revision !== "string" || !FULL_SHA.test(value.failing_revision))) ||
+    (value.failing_revision !== null && (typeof value.failing_revision !== "string" || !FULL_SHA.test(value.failing_revision))) ||
     !isSentinelIncidentTerminalCategory(value.error_type) ||
-    !isRecord(value.context) || value.context.message !== INDEX_MESSAGE || value.context.location !== null ||
-    !Array.isArray(value.context.sample) || value.context.sample.length !== 0 ||
-    !isRecord(value.provenance) || !isSentinelIncidentIndexEndpoint(value.provenance.endpoint) ||
-    !positiveInteger(value.provenance.captured_at_ms) || value.provenance.captured_by !== null ||
+    !isRecord(value.context) ||
+    value.context.message !== INDEX_MESSAGE ||
+    value.context.location !== null ||
+    !Array.isArray(value.context.sample) ||
+    value.context.sample.length !== 0 ||
+    !isRecord(value.provenance) ||
+    !isSentinelIncidentIndexEndpoint(value.provenance.endpoint) ||
+    !positiveInteger(value.provenance.captured_at_ms) ||
+    value.provenance.captured_by !== null ||
     (value.evidence_ref !== null && !isSentinelIncidentIndexEvidenceRef(value.evidence_ref)) ||
     (value.evidence_expires_at_ms !== null && !positiveInteger(value.evidence_expires_at_ms)) ||
     (value.evidence_ref === null) !== (value.evidence_expires_at_ms === null)
-  ) return false;
+  )
+    return false;
   return true;
 };
 
@@ -1394,12 +1369,10 @@ export const normalizeSentinelIncidentEndpoint = (endpoint: string): string => {
   return INDEX_ENDPOINTS.includes(path) ? path : "other";
 };
 
-export const normalizeSentinelIncidentMethod = (method: string): string => method === "POST" ? "POST" : "other";
+export const normalizeSentinelIncidentMethod = (method: string): string => (method === "POST" ? "POST" : "other");
 
 /** Fixed safe terminal/failure category; truly unrecognized values are "unknown". */
-export const classifySentinelIncidentTerminal = (
-  observation: SentinelIncidentIndexObservation,
-): SentinelIncidentTerminalCategory => {
+export const classifySentinelIncidentTerminal = (observation: SentinelIncidentIndexObservation): SentinelIncidentTerminalCategory => {
   if (observation.stream && !observation.framing_valid) return "stream_framing";
   switch (observation.terminal_type) {
     case "http.error":
@@ -1419,15 +1392,9 @@ export const classifySentinelIncidentTerminal = (
   }
 };
 
-export const sentinelIncidentClassification = (input: {
-  endpoint: string;
-  method: string;
-  observation: SentinelIncidentIndexObservation;
-}): string => {
-  if (
-    !Number.isSafeInteger(input.observation.status) || input.observation.status < 0 ||
-    input.observation.status > 599
-  ) throw new Error("Sentinel incident classification status is invalid");
+export const sentinelIncidentClassification = (input: { endpoint: string; method: string; observation: SentinelIncidentIndexObservation }): string => {
+  if (!Number.isSafeInteger(input.observation.status) || input.observation.status < 0 || input.observation.status > 599)
+    throw new Error("Sentinel incident classification status is invalid");
   return JSON.stringify({
     endpoint: normalizeSentinelIncidentEndpoint(input.endpoint),
     method: normalizeSentinelIncidentMethod(input.method),
@@ -1440,11 +1407,8 @@ export const sentinelIncidentClassification = (input: {
 };
 
 /** Stable group fingerprint: SHA-256 of the canonical safe classification. */
-export const sentinelIncidentFingerprint = (input: {
-  endpoint: string;
-  method: string;
-  observation: SentinelIncidentIndexObservation;
-}): Promise<string> => sha256Hex(sentinelIncidentClassification(input));
+export const sentinelIncidentFingerprint = (input: { endpoint: string; method: string; observation: SentinelIncidentIndexObservation }): Promise<string> =>
+  sha256Hex(sentinelIncidentClassification(input));
 
 const indexRowKey = (fingerprint: string): Deno.KvKey => [...SENTINEL_INCIDENT_INDEX_PREFIX, fingerprint];
 
@@ -1457,7 +1421,7 @@ const newIndexRow = (
     endpoint: string;
     method: string;
     observation: SentinelIncidentIndexObservation;
-  }>,
+  }>
 ): SentinelIncidentIndexRow => ({
   version: 1,
   incident_id: input.incidentId,
@@ -1493,7 +1457,7 @@ export const recordSentinelIncidentIndexObservation = async (
     observedAtMs: number;
     observation: SentinelIncidentIndexObservation;
   }>,
-  dependencies: Pick<SentinelIncidentDependencies, "randomUuid"> = {},
+  dependencies: Pick<SentinelIncidentDependencies, "randomUuid"> = {}
 ): Promise<Deno.KvEntry<SentinelIncidentIndexRow>> => {
   if (!positiveInteger(input.observedAtMs)) throw new Error("Sentinel incident timestamp is invalid");
   const fingerprint = await sentinelIncidentFingerprint(input);
@@ -1518,10 +1482,7 @@ export const recordSentinelIncidentIndexObservation = async (
       checkVersionstamp = entry.versionstamp;
     }
     if (!isSentinelIncidentIndexRow(next)) throw new Error("Sentinel incident index record is invalid");
-    const committed = await kv.atomic()
-      .check({ key, versionstamp: checkVersionstamp })
-      .set(key, next)
-      .commit();
+    const committed = await kv.atomic().check({ key, versionstamp: checkVersionstamp }).set(key, next).commit();
     if (committed.ok) return { key, value: next, versionstamp: committed.versionstamp };
   }
   throw new Error("Sentinel incident index update conflicted repeatedly");
@@ -1551,15 +1512,20 @@ export const bindSentinelIncidentIndexEvidence = async (
     capturedAtMs: number;
     digest: string;
     expiresAtMs: number;
-  }>,
+  }>
 ): Promise<Deno.KvEntry<SentinelIncidentIndexRow>> => {
   if (
-    !/^[0-9a-f]{64}$/.test(indexFingerprint) || !/^[0-9a-f]{64}$/.test(input.referenceFingerprint) ||
-    !/^[0-9a-f]{64}$/.test(input.digest) || !positiveInteger(input.observedAtMs) ||
-    !positiveInteger(input.capturedAtMs) || !positiveInteger(input.expiresAtMs) ||
-    !Array.isArray(input.manifestKey) || input.manifestKey.length !== 7 ||
+    !/^[0-9a-f]{64}$/.test(indexFingerprint) ||
+    !/^[0-9a-f]{64}$/.test(input.referenceFingerprint) ||
+    !/^[0-9a-f]{64}$/.test(input.digest) ||
+    !positiveInteger(input.observedAtMs) ||
+    !positiveInteger(input.capturedAtMs) ||
+    !positiveInteger(input.expiresAtMs) ||
+    !Array.isArray(input.manifestKey) ||
+    input.manifestKey.length !== 7 ||
     (input.manifestVersionstamp !== null && typeof input.manifestVersionstamp !== "string")
-  ) throw new Error("Sentinel incident index evidence binding is invalid");
+  )
+    throw new Error("Sentinel incident index evidence binding is invalid");
   const key = indexRowKey(indexFingerprint);
   const remainingMs = input.expiresAtMs - input.observedAtMs;
   const reference: SentinelIncidentCaptureReference = { version: 1, manifest_key: [...input.manifestKey] };
@@ -1581,18 +1547,12 @@ export const bindSentinelIncidentIndexEvidence = async (
       evidence_expires_at_ms: input.expiresAtMs,
     };
     if (!isSentinelIncidentIndexRow(next)) throw new Error("Sentinel incident index record is invalid");
-    let operation = kv.atomic()
-      .check({ key, versionstamp: entry.versionstamp })
-      .set(key, next);
+    let operation = kv.atomic().check({ key, versionstamp: entry.versionstamp }).set(key, next);
     if (input.manifestVersionstamp !== null) {
       operation = operation.check({ key: input.manifestKey, versionstamp: input.manifestVersionstamp });
     }
     if (remainingMs > 0) {
-      operation = operation.set(
-        [...SENTINEL_INCIDENT_CAPTURE_REF_PREFIX, next.incident_id, input.referenceFingerprint],
-        reference,
-        { expireIn: remainingMs },
-      );
+      operation = operation.set([...SENTINEL_INCIDENT_CAPTURE_REF_PREFIX, next.incident_id, input.referenceFingerprint], reference, { expireIn: remainingMs });
     }
     const committed = await operation.commit();
     if (committed.ok) return { key, value: next, versionstamp: committed.versionstamp };
@@ -1609,25 +1569,22 @@ export const bindSentinelIncidentIndexEvidence = async (
  */
 export const listSentinelIncidentIndexRows = async (
   kv: Deno.Kv,
-  options: Readonly<{ incidentId?: string; cursor?: string; limit?: number }> = {},
+  options: Readonly<{ incidentId?: string; cursor?: string; limit?: number }> = {}
 ): Promise<Readonly<{ rows: SentinelIncidentIndexRow[]; cursor: string | null }>> => {
   const limit = options.limit ?? SENTINEL_INCIDENT_INDEX_DEFAULT_PAGE_LIMIT;
   if (
-    !Number.isSafeInteger(limit) || limit < 1 || limit > SENTINEL_INCIDENT_INDEX_MAX_PAGE_LIMIT ||
-    (options.cursor !== undefined &&
-      (options.cursor.length < 1 || options.cursor.length > 2_048 || !INDEX_CURSOR.test(options.cursor)))
-  ) throw new Error("Sentinel incident index pagination is invalid");
-  const iterator = kv.list<SentinelIncidentIndexRow>(
-    { prefix: SENTINEL_INCIDENT_INDEX_PREFIX },
-    { cursor: options.cursor, limit },
-  );
+    !Number.isSafeInteger(limit) ||
+    limit < 1 ||
+    limit > SENTINEL_INCIDENT_INDEX_MAX_PAGE_LIMIT ||
+    (options.cursor !== undefined && (options.cursor.length < 1 || options.cursor.length > 2_048 || !INDEX_CURSOR.test(options.cursor)))
+  )
+    throw new Error("Sentinel incident index pagination is invalid");
+  const iterator = kv.list<SentinelIncidentIndexRow>({ prefix: SENTINEL_INCIDENT_INDEX_PREFIX }, { cursor: options.cursor, limit });
   const rows: SentinelIncidentIndexRow[] = [];
   for await (const entry of iterator) {
     const expectedKey = [...SENTINEL_INCIDENT_INDEX_PREFIX, entry.value.fingerprint];
-    if (
-      !isSentinelIncidentIndexRow(entry.value) || entry.key.length !== expectedKey.length ||
-      expectedKey.some((part, index) => entry.key[index] !== part)
-    ) throw new Error("Sentinel incident index record is invalid");
+    if (!isSentinelIncidentIndexRow(entry.value) || entry.key.length !== expectedKey.length || expectedKey.some((part, index) => entry.key[index] !== part))
+      throw new Error("Sentinel incident index record is invalid");
     if (options.incidentId !== undefined && entry.value.incident_id !== options.incidentId) continue;
     rows.push(entry.value);
     if (rows.length >= limit) break;

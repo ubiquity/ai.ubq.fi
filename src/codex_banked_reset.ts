@@ -11,12 +11,7 @@ import {
   type ResetInventory,
   type ResetInventoryCredit,
 } from "./codex_banked_reset_provider.ts";
-import type {
-  CodexResetGlobalDailyRecord,
-  CodexResetRedemptionRecord,
-  CodexResetRedemptionState,
-  CodexResetShadowDecisionRecord,
-} from "./types.ts";
+import type { CodexResetGlobalDailyRecord, CodexResetRedemptionRecord, CodexResetRedemptionState, CodexResetShadowDecisionRecord } from "./types.ts";
 import { isRecord, sha256Hex } from "./utils.ts";
 
 /**
@@ -40,15 +35,9 @@ export const codexResetRedemptionKey = (accountIdHash: string, quotaGeneration: 
   quotaGeneration,
 ];
 
-export const codexResetGlobalDailyKey = (day: string): Deno.KvKey => [
-  ...CODEX_RESET_GLOBAL_DAILY_KV_PREFIX,
-  day,
-];
+export const codexResetGlobalDailyKey = (day: string): Deno.KvKey => [...CODEX_RESET_GLOBAL_DAILY_KV_PREFIX, day];
 
-export const codexResetShadowDecisionKey = (episodeHash: string): Deno.KvKey => [
-  ...CODEX_RESET_SHADOW_DECISION_KV_PREFIX,
-  episodeHash,
-];
+export const codexResetShadowDecisionKey = (episodeHash: string): Deno.KvKey => [...CODEX_RESET_SHADOW_DECISION_KV_PREFIX, episodeHash];
 
 export type CodexBankedResetMode = "disabled" | "shadow" | "live";
 
@@ -97,9 +86,7 @@ const parseMode = (value: string | undefined): CodexBankedResetMode => {
  * configuration update can kill new claims immediately without deleting an
  * existing submitted/unknown record that still requires reconciliation.
  */
-export const parseCodexBankedResetConfig = (
-  readEnv: (key: string) => string | undefined = getEnv,
-): CodexBankedResetConfig => ({
+export const parseCodexBankedResetConfig = (readEnv: (key: string) => string | undefined = getEnv): CodexBankedResetConfig => ({
   // Shadow telemetry never consumes a credit. A spend still requires
   // explicit live mode, valid caps, and an approved provider contract.
   enabled: parseStrictBoolean(readEnv("CODEX_BANKED_RESET_ENABLED"), true),
@@ -113,10 +100,13 @@ export const loadCodexBankedResetConfig = (): CodexBankedResetConfig => parseCod
 const readBankedResetUsage = async (kv: Deno.Kv, keyId: string | undefined, nowMs: number) => {
   // Non-key authentication continues to use the deployment policy.
   if (keyId === undefined) return { allowed: true, entries: [] };
-  const entry = await kv.get<unknown>(apiKeyIdKey(keyId), { consistency: "strong" });
+  const entry = await kv.get(apiKeyIdKey(keyId), { consistency: "strong" });
   const value = entry.value;
   return {
-    allowed: isRecord(value) && value.id === keyId && apiKeyBankedResetsEnabled(value) &&
+    allowed:
+      isRecord(value) &&
+      value.id === keyId &&
+      apiKeyBankedResetsEnabled(value) &&
       value.revoked_at_ms === null &&
       (value.expires_at_ms === -1 || (typeof value.expires_at_ms === "number" && value.expires_at_ms > nowMs)),
     entries: [entry],
@@ -256,14 +246,11 @@ type ResetContext = Readonly<{
   idempotencyKeyHash: string;
 }>;
 
-const isSafeMs = (value: unknown): value is number =>
-  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+const isSafeMs = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
-const isSafeNonnegativeInteger = (value: unknown): value is number =>
-  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+const isSafeNonnegativeInteger = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
-const isNonEmptyText = (value: unknown, max = 512): value is string =>
-  typeof value === "string" && value.length > 0 && value.length <= max;
+const isNonEmptyText = (value: unknown, max = 512): value is string => typeof value === "string" && value.length > 0 && value.length <= max;
 
 const isState = (value: unknown): value is CodexResetRedemptionState =>
   value === "claimed" || value === "submitted" || value === "unknown" || value === "verified" || value === "rejected";
@@ -271,13 +258,19 @@ const isState = (value: unknown): value is CodexResetRedemptionState =>
 export const parseCodexResetRedemptionRecord = (value: unknown): CodexResetRedemptionRecord | null => {
   if (!isRecord(value) || value.v !== 1) return null;
   if (
-    !isNonEmptyText(value.account_id_hash) || !isNonEmptyText(value.credential_version) ||
-    !isNonEmptyText(value.quota_generation) || !isNonEmptyText(value.idempotency_key_hash) ||
-    !isState(value.state) || !isNonEmptyText(value.owner_token) ||
-    !isSafeNonnegativeInteger(value.routing_generation) || !isSafeNonnegativeInteger(value.fence) ||
+    !isNonEmptyText(value.account_id_hash) ||
+    !isNonEmptyText(value.credential_version) ||
+    !isNonEmptyText(value.quota_generation) ||
+    !isNonEmptyText(value.idempotency_key_hash) ||
+    !isState(value.state) ||
+    !isNonEmptyText(value.owner_token) ||
+    !isSafeNonnegativeInteger(value.routing_generation) ||
+    !isSafeNonnegativeInteger(value.fence) ||
     !isSafeMs(value.lease_expires_at_ms) ||
-    !isSafeMs(value.created_at_ms) || !isSafeMs(value.updated_at_ms)
-  ) return null;
+    !isSafeMs(value.created_at_ms) ||
+    !isSafeMs(value.updated_at_ms)
+  )
+    return null;
   if (value.provider_receipt_id !== null && !isNonEmptyText(value.provider_receipt_id)) return null;
   if (value.submitted_at_ms !== null && !isSafeMs(value.submitted_at_ms)) return null;
   if (value.verified_at_ms !== null && !isSafeMs(value.verified_at_ms)) return null;
@@ -285,17 +278,11 @@ export const parseCodexResetRedemptionRecord = (value: unknown): CodexResetRedem
   if (value.updated_at_ms < value.created_at_ms) return null;
   if (value.submitted_at_ms !== null && value.submitted_at_ms < value.created_at_ms) return null;
   if (value.submitted_at_ms !== null && value.updated_at_ms < value.submitted_at_ms) return null;
-  if (
-    value.verified_at_ms !== null &&
-    (value.submitted_at_ms === null || value.verified_at_ms < value.submitted_at_ms)
-  ) return null;
+  if (value.verified_at_ms !== null && (value.submitted_at_ms === null || value.verified_at_ms < value.submitted_at_ms)) return null;
   if (value.verified_at_ms !== null && value.updated_at_ms < value.verified_at_ms) return null;
   switch (value.state) {
     case "claimed":
-      if (
-        value.submitted_at_ms !== null || value.verified_at_ms !== null || value.provider_receipt_id !== null ||
-        value.last_error_code !== null
-      ) return null;
+      if (value.submitted_at_ms !== null || value.verified_at_ms !== null || value.provider_receipt_id !== null || value.last_error_code !== null) return null;
       break;
     case "submitted":
       if (value.submitted_at_ms === null || value.verified_at_ms !== null || value.last_error_code !== null) {
@@ -308,9 +295,7 @@ export const parseCodexResetRedemptionRecord = (value: unknown): CodexResetRedem
       }
       break;
     case "verified":
-      if (
-        value.submitted_at_ms === null || value.verified_at_ms === null || value.last_error_code !== null
-      ) return null;
+      if (value.submitted_at_ms === null || value.verified_at_ms === null || value.last_error_code !== null) return null;
       break;
     case "rejected":
       if (value.verified_at_ms !== null || value.last_error_code === null) return null;
@@ -342,14 +327,16 @@ const parseGlobalDailyRecord = (value: unknown, day: string): CodexResetGlobalDa
   return { v: 1, day, submission_count: value.submission_count, updated_at_ms: value.updated_at_ms };
 };
 
-const parseShadowDecisionFence = (
-  value: unknown,
-): CodexResetShadowDecisionRecord["fences"][number] | null => {
+const parseShadowDecisionFence = (value: unknown): CodexResetShadowDecisionRecord["fences"][number] | null => {
   if (
-    !isRecord(value) || !isSafeNonnegativeInteger(value.slot) || !isNonEmptyText(value.account_id_hash) ||
-    !isNonEmptyText(value.quota_generation) || !isSafeNonnegativeInteger(value.routing_generation) ||
+    !isRecord(value) ||
+    !isSafeNonnegativeInteger(value.slot) ||
+    !isNonEmptyText(value.account_id_hash) ||
+    !isNonEmptyText(value.quota_generation) ||
+    !isSafeNonnegativeInteger(value.routing_generation) ||
     !isSafeMs(value.quota_reset_at_ms)
-  ) return null;
+  )
+    return null;
   return {
     slot: value.slot,
     account_id_hash: value.account_id_hash,
@@ -362,10 +349,16 @@ const parseShadowDecisionFence = (
 /** Parse only redacted, safe-to-return shadow decision evidence. */
 export const parseCodexResetShadowDecisionRecord = (value: unknown): CodexResetShadowDecisionRecord | null => {
   if (
-    !isRecord(value) || value.v !== 1 || !isNonEmptyText(value.episode_hash) || !isSafeMs(value.created_at_ms) ||
-    !isSafeMs(value.expires_at_ms) || value.expires_at_ms < value.created_at_ms ||
-    !isNonEmptyText(value.decision_reason, 128) || !Array.isArray(value.fences)
-  ) return null;
+    !isRecord(value) ||
+    value.v !== 1 ||
+    !isNonEmptyText(value.episode_hash) ||
+    !isSafeMs(value.created_at_ms) ||
+    !isSafeMs(value.expires_at_ms) ||
+    value.expires_at_ms < value.created_at_ms ||
+    !isNonEmptyText(value.decision_reason, 128) ||
+    !Array.isArray(value.fences)
+  )
+    return null;
   if (value.selected_account_id_hash !== null && !isNonEmptyText(value.selected_account_id_hash)) return null;
   if (value.selected_credit_id_hash !== null && !isNonEmptyText(value.selected_credit_id_hash)) return null;
   if (value.selected_credit_expires_at_ms !== null && !isSafeMs(value.selected_credit_expires_at_ms)) return null;
@@ -412,7 +405,7 @@ const outcome = (
   kind: CodexBankedResetOutcome["kind"],
   reason: string,
   context: ResetContext | null = null,
-  record: CodexResetRedemptionRecord | null = null,
+  record: CodexResetRedemptionRecord | null = null
 ): CodexBankedResetOutcome => ({
   kind,
   reason,
@@ -448,13 +441,8 @@ const policyReason = (config: CodexBankedResetConfig): string | null => {
   }
 };
 
-const providerPolicyReason = (
-  config: CodexBankedResetConfig,
-  provider: CodexUsageResetProvider,
-): string | null =>
-  config.mode === "live" && providerTreatsRedeemOutcomeAsFinal(provider) && config.maxGlobalPerDay !== 1
-    ? "terminal_outcome_global_limit_must_be_one"
-    : null;
+const providerPolicyReason = (config: CodexBankedResetConfig, provider: CodexUsageResetProvider): string | null =>
+  config.mode === "live" && providerTreatsRedeemOutcomeAsFinal(provider) && config.maxGlobalPerDay !== 1 ? "terminal_outcome_global_limit_must_be_one" : null;
 
 const boundedInventorySignal = (signal?: AbortSignal): AbortSignal => {
   const timeout = AbortSignal.timeout(CODEX_BANKED_RESET_INVENTORY_TIMEOUT_MS);
@@ -464,7 +452,7 @@ const boundedInventorySignal = (signal?: AbortSignal): AbortSignal => {
 const telemetryFields = (
   context: ResetContext,
   candidate: CodexBankedResetCandidate,
-  extras: CodexBankedResetTelemetryFields = {},
+  extras: CodexBankedResetTelemetryFields = {}
 ): CodexBankedResetTelemetryFields => ({
   request_id: candidate.requestId,
   account_id_hash: context.account.accountIdHash,
@@ -475,11 +463,7 @@ const telemetryFields = (
   ...extras,
 });
 
-const emit = (
-  telemetry: CodexBankedResetTelemetry,
-  event: CodexBankedResetEvent,
-  fields: CodexBankedResetTelemetryFields,
-): void => {
+const emit = (telemetry: CodexBankedResetTelemetry, event: CodexBankedResetEvent, fields: CodexBankedResetTelemetryFields): void => {
   try {
     telemetry.event?.(event, fields);
   } catch {
@@ -487,12 +471,7 @@ const emit = (
   }
 };
 
-const metric = (
-  telemetry: CodexBankedResetTelemetry,
-  name: CodexBankedResetMetric,
-  value: number,
-  fields: CodexBankedResetTelemetryFields,
-): void => {
+const metric = (telemetry: CodexBankedResetTelemetry, name: CodexBankedResetMetric, value: number, fields: CodexBankedResetTelemetryFields): void => {
   try {
     telemetry.metric?.(name, value, fields);
   } catch {
@@ -504,24 +483,27 @@ const metric = (
 export const reportCodexBankedResetEvent = (
   telemetry: CodexBankedResetTelemetry | undefined,
   event: CodexBankedResetEvent,
-  fields: CodexBankedResetTelemetryFields,
-): void => emit(telemetry ?? defaultTelemetry, event, fields);
+  fields: CodexBankedResetTelemetryFields
+): void => {
+  emit(telemetry ?? defaultTelemetry, event, fields);
+};
 
 /** Allows gateway-level post-retry metrics to share the default sink. */
 export const reportCodexBankedResetMetric = (
   telemetry: CodexBankedResetTelemetry | undefined,
   name: CodexBankedResetMetric,
   value: number,
-  fields: CodexBankedResetTelemetryFields,
-): void => metric(telemetry ?? defaultTelemetry, name, value, fields);
+  fields: CodexBankedResetTelemetryFields
+): void => {
+  metric(telemetry ?? defaultTelemetry, name, value, fields);
+};
 
-const makeResetContext = async (
-  candidate: CodexBankedResetCandidate,
-  hash: (value: string) => Promise<string>,
-): Promise<ResetContext | null> => {
+const makeResetContext = async (candidate: CodexBankedResetCandidate, hash: (value: string) => Promise<string>): Promise<ResetContext | null> => {
   if (
-    !isNonEmptyText(candidate.accountId, 1024) || !isNonEmptyText(candidate.credentialVersion, 512) ||
-    !isSafeMs(candidate.quotaResetAtMs) || !Number.isSafeInteger(candidate.routingGeneration) ||
+    !isNonEmptyText(candidate.accountId, 1024) ||
+    !isNonEmptyText(candidate.credentialVersion, 512) ||
+    !isSafeMs(candidate.quotaResetAtMs) ||
+    !Number.isSafeInteger(candidate.routingGeneration) ||
     candidate.routingGeneration < 0
   ) {
     return null;
@@ -534,20 +516,11 @@ const makeResetContext = async (
     // identity; an observed deadline change fails closed before this path.
     // Credential version remains a separate routing fence, so refresh cannot
     // manufacture a second logical redemption for one observed window.
-    const credentialVersion = `v1:${await hash(
-      `uos_ai\u0000codex_reset_credential_version\u0000${candidate.credentialVersion}`,
-    )}`;
-    const quotaGeneration = `v1:${await hash(
-      `uos_ai\u0000codex_reset_generation\u0000${accountIdHash}\u0000${candidate.quotaResetAtMs}`,
-    )}`;
-    const idempotencyKey = `uos_ai_codex_reset_v1_${await hash(
-      `uos_ai\u0000codex_reset_idempotency\u0000${accountIdHash}\u0000${quotaGeneration}`,
-    )}`;
+    const credentialVersion = `v1:${await hash(`uos_ai\u0000codex_reset_credential_version\u0000${candidate.credentialVersion}`)}`;
+    const quotaGeneration = `v1:${await hash(`uos_ai\u0000codex_reset_generation\u0000${accountIdHash}\u0000${candidate.quotaResetAtMs}`)}`;
+    const idempotencyKey = `uos_ai_codex_reset_v1_${await hash(`uos_ai\u0000codex_reset_idempotency\u0000${accountIdHash}\u0000${quotaGeneration}`)}`;
     const idempotencyKeyHash = await hash(idempotencyKey);
-    if (
-      !isNonEmptyText(accountIdHash) || !isNonEmptyText(credentialVersion) || !isNonEmptyText(quotaGeneration) ||
-      !isNonEmptyText(idempotencyKeyHash)
-    ) {
+    if (!isNonEmptyText(accountIdHash) || !isNonEmptyText(credentialVersion) || !isNonEmptyText(quotaGeneration) || !isNonEmptyText(idempotencyKeyHash)) {
       return null;
     }
     return {
@@ -576,17 +549,11 @@ type ClaimResult =
   | Readonly<{ kind: "failure"; code: string }>;
 
 type FenceRead =
-  | Readonly<{ kind: "valid"; entries: readonly Deno.KvEntryMaybe<unknown>[] }>
-  | Readonly<{ kind: "stale" }>
-  | Readonly<{ kind: "failure"; code: string }>;
+  Readonly<{ kind: "valid"; entries: readonly Deno.KvEntryMaybe<unknown>[] }> | Readonly<{ kind: "stale" }> | Readonly<{ kind: "failure"; code: string }>;
 
-type SubmissionPreparation =
-  | Readonly<{ kind: "submitted"; record: CodexResetRedemptionRecord }>
-  | Readonly<{ kind: "failure"; code: string }>;
+type SubmissionPreparation = Readonly<{ kind: "submitted"; record: CodexResetRedemptionRecord }> | Readonly<{ kind: "failure"; code: string }>;
 
-type SubmissionRenewal =
-  | Readonly<{ kind: "renewed"; record: CodexResetRedemptionRecord }>
-  | Readonly<{ kind: "failure"; code: string }>;
+type SubmissionRenewal = Readonly<{ kind: "renewed"; record: CodexResetRedemptionRecord }> | Readonly<{ kind: "failure"; code: string }>;
 
 const matchesContext = (record: CodexResetRedemptionRecord, context: ResetContext): boolean =>
   record.account_id_hash === context.account.accountIdHash &&
@@ -604,8 +571,7 @@ const nextFence = (fence: number): number | null => {
   return Number.isSafeInteger(next) ? next : null;
 };
 
-const quotaWindowIsOpen = (candidate: CodexBankedResetCandidate, nowMs: number): boolean =>
-  nowMs < candidate.quotaResetAtMs;
+const quotaWindowIsOpen = (candidate: CodexBankedResetCandidate, nowMs: number): boolean => nowMs < candidate.quotaResetAtMs;
 
 const readClock = (clock: () => number): number | null => {
   try {
@@ -617,10 +583,9 @@ const readClock = (clock: () => number): number | null => {
 };
 
 const hasUsableFences = (candidate: CodexBankedResetCandidate): boolean =>
-  Array.isArray(candidate.fences) && candidate.fences.length > 0 &&
-  candidate.fences.every((fence) =>
-    isRecord(fence) && Array.isArray(fence.key) && typeof fence.isCurrent === "function"
-  );
+  Array.isArray(candidate.fences) &&
+  candidate.fences.length > 0 &&
+  candidate.fences.every((fence) => isRecord(fence) && Array.isArray(fence.key) && typeof fence.isCurrent === "function");
 
 const readCurrentFences = async (kv: Deno.Kv, candidate: CodexBankedResetCandidate): Promise<FenceRead> => {
   if (!hasUsableFences(candidate)) return { kind: "failure", code: "routing_fence_missing" };
@@ -628,7 +593,7 @@ const readCurrentFences = async (kv: Deno.Kv, candidate: CodexBankedResetCandida
   for (const fence of candidate.fences) {
     let entry: Deno.KvEntryMaybe<unknown>;
     try {
-      entry = await kv.get<unknown>(fence.key, { consistency: "strong" });
+      entry = await kv.get(fence.key, { consistency: "strong" });
     } catch {
       return { kind: "failure", code: "kv_unavailable" };
     }
@@ -642,10 +607,7 @@ const readCurrentFences = async (kv: Deno.Kv, candidate: CodexBankedResetCandida
   return { kind: "valid", entries };
 };
 
-const withFenceChecks = (
-  operation: Deno.AtomicOperation,
-  entries: readonly Deno.KvEntryMaybe<unknown>[],
-): Deno.AtomicOperation => {
+const withFenceChecks = (operation: Deno.AtomicOperation, entries: readonly Deno.KvEntryMaybe<unknown>[]): Deno.AtomicOperation => {
   let next = operation;
   for (const entry of entries) next = next.check(entry);
   return next;
@@ -653,7 +615,7 @@ const withFenceChecks = (
 
 const readExistingRecord = async (
   kv: Deno.Kv,
-  context: ResetContext,
+  context: ResetContext
 ): Promise<Readonly<{ record: CodexResetRedemptionRecord | null; code: string | null }>> => {
   const key = codexResetRedemptionKey(context.account.accountIdHash, context.account.quotaGeneration);
   try {
@@ -673,7 +635,7 @@ const claimTransaction = async (
   nowMs: number,
   clock: () => number,
   ownerToken: string,
-  allowNewSubmission: boolean,
+  allowNewSubmission: boolean
 ): Promise<ClaimResult> => {
   const expiresAtMs = leaseUntil(nowMs);
   if (expiresAtMs === null) return { kind: "failure", code: "invalid_clock" };
@@ -725,9 +687,7 @@ const claimTransaction = async (
         return { kind: "failure", code: "quota_window_expired" };
       }
       try {
-        const committed = await withFenceChecks(kv.atomic().check(entry), fences.entries)
-          .set(key, created)
-          .commit();
+        const committed = await withFenceChecks(kv.atomic().check(entry), fences.entries).set(key, created).commit();
         if (committed.ok) return { kind: "submit", record: created, tookOver: false };
       } catch {
         return { kind: "failure", code: "kv_unavailable" };
@@ -781,9 +741,7 @@ const claimTransaction = async (
     } catch {
       return { kind: "failure", code: "kv_unavailable" };
     }
-    return record.state === "claimed"
-      ? { kind: "submit", record: takenOver, tookOver: true }
-      : { kind: "reconcile", record: takenOver, tookOver: true };
+    return record.state === "claimed" ? { kind: "submit", record: takenOver, tookOver: true } : { kind: "reconcile", record: takenOver, tookOver: true };
   }
   return { kind: "failure", code: "kv_cas_exhausted" };
 };
@@ -792,7 +750,7 @@ const updateOwnedRecord = async (
   kv: Deno.Kv,
   context: ResetContext,
   expected: CodexResetRedemptionRecord,
-  mutate: (record: CodexResetRedemptionRecord) => CodexResetRedemptionRecord,
+  mutate: (record: CodexResetRedemptionRecord) => CodexResetRedemptionRecord
 ): Promise<CodexResetRedemptionRecord | null> => {
   const key = codexResetRedemptionKey(context.account.accountIdHash, context.account.quotaGeneration);
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
@@ -803,10 +761,7 @@ const updateOwnedRecord = async (
       return null;
     }
     const current = parseCodexResetRedemptionRecord(entry.value);
-    if (
-      !current || !matchesContext(current, context) || current.owner_token !== expected.owner_token ||
-      current.fence !== expected.fence
-    ) {
+    if (!current || !matchesContext(current, context) || current.owner_token !== expected.owner_token || current.fence !== expected.fence) {
       return null;
     }
     const next = mutate(current);
@@ -833,7 +788,7 @@ const prepareSubmission = async (
   nowMs: number,
   clock: () => number,
   maxGlobalPerDay: number,
-  keyId: string | undefined,
+  keyId: string | undefined
 ): Promise<SubmissionPreparation> => {
   const expiresAtMs = leaseUntil(nowMs);
   const day = utcDay(nowMs);
@@ -849,9 +804,13 @@ const prepareSubmission = async (
     }
     const current = parseCodexResetRedemptionRecord(entry.value);
     if (
-      !current || !matchesContext(current, context) || current.owner_token !== expected.owner_token ||
-      current.fence !== expected.fence || current.state !== "claimed"
-    ) return { kind: "failure", code: "stale_owner" };
+      !current ||
+      !matchesContext(current, context) ||
+      current.owner_token !== expected.owner_token ||
+      current.fence !== expected.fence ||
+      current.state !== "claimed"
+    )
+      return { kind: "failure", code: "stale_owner" };
     if (!claimedDuringCurrentUtcDay(current, nowMs)) return { kind: "failure", code: "claim_day_elapsed" };
     if (current.routing_generation !== candidate.routingGeneration || current.lease_expires_at_ms <= nowMs) {
       return { kind: "failure", code: "stale_owner" };
@@ -895,10 +854,7 @@ const prepareSubmission = async (
       updated_at_ms: nowMs,
     };
     try {
-      const committed = await withFenceChecks(kv.atomic().check(entry).check(dailyEntry), [
-        ...fences.entries,
-        ...usage.entries,
-      ])
+      const committed = await withFenceChecks(kv.atomic().check(entry).check(dailyEntry), [...fences.entries, ...usage.entries])
         .set(key, submitted)
         .set(dailyKey, nextDaily)
         .commit();
@@ -924,7 +880,7 @@ const renewSubmittedForRedeem = async (
   candidate: CodexBankedResetCandidate,
   expected: CodexResetRedemptionRecord,
   clock: () => number,
-  keyId: string | undefined,
+  keyId: string | undefined
 ): Promise<SubmissionRenewal> => {
   const key = codexResetRedemptionKey(context.account.accountIdHash, context.account.quotaGeneration);
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
@@ -940,9 +896,13 @@ const renewSubmittedForRedeem = async (
     }
     const current = parseCodexResetRedemptionRecord(entry.value);
     if (
-      !current || !matchesContext(current, context) || current.owner_token !== expected.owner_token ||
-      current.fence !== expected.fence || current.state !== "submitted" ||
-      current.routing_generation !== candidate.routingGeneration || current.lease_expires_at_ms <= nowBeforeRead
+      !current ||
+      !matchesContext(current, context) ||
+      current.owner_token !== expected.owner_token ||
+      current.fence !== expected.fence ||
+      current.state !== "submitted" ||
+      current.routing_generation !== candidate.routingGeneration ||
+      current.lease_expires_at_ms <= nowBeforeRead
     ) {
       return { kind: "failure", code: "stale_owner" };
     }
@@ -981,7 +941,8 @@ const renewSubmittedForRedeem = async (
     };
     try {
       const committed = await withFenceChecks(kv.atomic().check(entry), [...fences.entries, ...usage.entries])
-        .set(key, renewed).commit();
+        .set(key, renewed)
+        .commit();
       if (committed.ok) return { kind: "renewed", record: renewed };
     } catch {
       return { kind: "failure", code: "kv_unavailable" };
@@ -990,29 +951,30 @@ const renewSubmittedForRedeem = async (
   return { kind: "failure", code: "kv_cas_exhausted" };
 };
 
-const receiptId = (value: unknown): string | null => isNonEmptyText(value, 512) ? value : null;
+const receiptId = (value: unknown): string | null => (isNonEmptyText(value, 512) ? value : null);
 
 /**
  * Receipt identifiers are optional optimization hints: reconciliation is
  * required to work by deterministic idempotency key. Keep an unapproved
  * receipt in process memory only, never in the durable record or telemetry.
  */
-const durableReceiptId = (
-  provider: Pick<CodexUsageResetProvider, "contract">,
-  value: unknown,
-): string | null => providerReceiptIdsSafeToPersistAndLog(provider) ? receiptId(value) : null;
+const durableReceiptId = (provider: Pick<CodexUsageResetProvider, "contract">, value: unknown): string | null =>
+  providerReceiptIdsSafeToPersistAndLog(provider) ? receiptId(value) : null;
 
-const validInventory = (
-  inventory: unknown,
-  nowMs: number,
-): inventory is ResetInventory =>
-  isRecord(inventory) && isSafeNonnegativeInteger(inventory.availableCount) &&
-  isSafeMs(inventory.observedAtMs) && Array.isArray(inventory.credits) &&
-  inventory.observedAtMs <= nowMs && nowMs - inventory.observedAtMs <= CODEX_BANKED_RESET_INVENTORY_MAX_AGE_MS &&
-  inventory.credits.every((credit) =>
-    isRecord(credit) && isNonEmptyText(credit.id, 512) && isNonEmptyText(credit.status, 128) &&
-    isNonEmptyText(credit.resetType, 128) &&
-    (credit.expiresAtMs === null || isSafeMs(credit.expiresAtMs))
+const validInventory = (inventory: unknown, nowMs: number): inventory is ResetInventory =>
+  isRecord(inventory) &&
+  isSafeNonnegativeInteger(inventory.availableCount) &&
+  isSafeMs(inventory.observedAtMs) &&
+  Array.isArray(inventory.credits) &&
+  inventory.observedAtMs <= nowMs &&
+  nowMs - inventory.observedAtMs <= CODEX_BANKED_RESET_INVENTORY_MAX_AGE_MS &&
+  inventory.credits.every(
+    (credit) =>
+      isRecord(credit) &&
+      isNonEmptyText(credit.id, 512) &&
+      isNonEmptyText(credit.status, 128) &&
+      isNonEmptyText(credit.resetType, 128) &&
+      (credit.expiresAtMs === null || isSafeMs(credit.expiresAtMs))
   ) &&
   // The production adapter rejects duplicate opaque IDs. Retain that same
   // invariant at the evaluator boundary so an injected or future provider
@@ -1021,25 +983,21 @@ const validInventory = (
   inventory.credits.filter((credit) => credit.status === "available").length === inventory.availableCount;
 
 type InventoryCreditSelection =
-  | Readonly<{ kind: "selected"; credit: ResetInventoryCredit }>
-  | Readonly<{ kind: "empty" }>
-  | Readonly<{ kind: "no_eligible_credit" }>;
+  Readonly<{ kind: "selected"; credit: ResetInventoryCredit }> | Readonly<{ kind: "empty" }> | Readonly<{ kind: "no_eligible_credit" }>;
 
 /**
  * The only selectable credits are explicit, currently valid Codex
  * rate-limit credits. Finite expiry wins over non-expiring credits; callers
  * add the account slot as the next global tie-breaker.
  */
-const selectInventoryCredit = (
-  inventory: ResetInventory,
-  provider: CodexUsageResetProvider,
-  nowMs: number,
-): InventoryCreditSelection => {
+const selectInventoryCredit = (inventory: ResetInventory, provider: CodexUsageResetProvider, nowMs: number): InventoryCreditSelection => {
   if (inventory.availableCount === 0) return { kind: "empty" };
-  const candidates = inventory.credits.filter((credit) =>
-    credit.status === "available" && credit.resetType === "codex_rate_limits" &&
-    providerSupportsResetType(provider, credit.resetType) &&
-    (credit.expiresAtMs === null || credit.expiresAtMs > nowMs)
+  const candidates = inventory.credits.filter(
+    (credit) =>
+      credit.status === "available" &&
+      credit.resetType === "codex_rate_limits" &&
+      providerSupportsResetType(provider, credit.resetType) &&
+      (credit.expiresAtMs === null || credit.expiresAtMs > nowMs)
   );
   if (!candidates.length) return { kind: "no_eligible_credit" };
   candidates.sort((left, right) => {
@@ -1070,9 +1028,7 @@ const stateWith = (
   record: CodexResetRedemptionRecord,
   state: CodexResetRedemptionState,
   nowMs: number,
-  patch: Partial<
-    Pick<CodexResetRedemptionRecord, "provider_receipt_id" | "submitted_at_ms" | "verified_at_ms" | "last_error_code">
-  > = {},
+  patch: Partial<Pick<CodexResetRedemptionRecord, "provider_receipt_id" | "submitted_at_ms" | "verified_at_ms" | "last_error_code">> = {}
 ): CodexResetRedemptionRecord => ({
   ...record,
   ...patch,
@@ -1085,14 +1041,9 @@ const rejectOwned = async (
   context: ResetContext,
   record: CodexResetRedemptionRecord,
   nowMs: number,
-  code: string,
+  code: string
 ): Promise<CodexResetRedemptionRecord | null> =>
-  await updateOwnedRecord(
-    kv,
-    context,
-    record,
-    (current) => stateWith(current, "rejected", nowMs, { last_error_code: code }),
-  );
+  await updateOwnedRecord(kv, context, record, (current) => stateWith(current, "rejected", nowMs, { last_error_code: code }));
 
 const unknownOwned = async (
   kv: Deno.Kv,
@@ -1100,48 +1051,48 @@ const unknownOwned = async (
   record: CodexResetRedemptionRecord,
   nowMs: number,
   code: string,
-  providerReceiptId: string | null,
+  providerReceiptId: string | null
 ): Promise<CodexResetRedemptionRecord | null> =>
   await updateOwnedRecord(kv, context, record, (current) =>
     stateWith(current, "unknown", nowMs, {
       provider_receipt_id: providerReceiptId ?? current.provider_receipt_id,
       last_error_code: code,
-    }));
+    })
+  );
 
 const preserveReceipt = async (
   kv: Deno.Kv,
   context: ResetContext,
   record: CodexResetRedemptionRecord,
   nowMs: number,
-  providerReceiptId: string | null,
+  providerReceiptId: string | null
 ): Promise<CodexResetRedemptionRecord | null> =>
   await updateOwnedRecord(kv, context, record, (current) =>
     stateWith(current, "submitted", nowMs, {
       provider_receipt_id: providerReceiptId,
       submitted_at_ms: current.submitted_at_ms ?? nowMs,
       last_error_code: null,
-    }));
+    })
+  );
 
 const unknownOutcome = (
   telemetry: CodexBankedResetTelemetry,
   context: ResetContext,
   candidate: CodexBankedResetCandidate,
   reason: string,
-  record: CodexResetRedemptionRecord,
+  record: CodexResetRedemptionRecord
 ): CodexBankedResetOutcome => {
   emit(telemetry, "codex_reset_unknown", telemetryFields(context, candidate, { state: record.state, reason }));
   metric(telemetry, "codex_reset_unknown_total", 1, telemetryFields(context, candidate, {}));
   return outcome("pending", reason, context, record);
 };
 
-const liveSubmissionPolicyReason = (
-  dependencies: CodexBankedResetDependencies,
-): string | null => {
+const liveSubmissionPolicyReason = (dependencies: CodexBankedResetDependencies): string | null => {
   return loadLiveSubmissionConfig(dependencies).reason;
 };
 
 const loadLiveSubmissionConfig = (
-  dependencies: CodexBankedResetDependencies,
+  dependencies: CodexBankedResetDependencies
 ): Readonly<{ config: CodexBankedResetConfig; reason: null }> | Readonly<{ config: null; reason: string }> => {
   let config: CodexBankedResetConfig;
   try {
@@ -1150,9 +1101,7 @@ const loadLiveSubmissionConfig = (
     return { config: null, reason: "configuration_unavailable" };
   }
   const reason = policyReason(config) ?? providerPolicyReason(config, dependencies.provider);
-  return reason || config.mode !== "live"
-    ? { config: null, reason: reason ?? "mode_not_live" }
-    : { config, reason: null };
+  return reason || config.mode !== "live" ? { config: null, reason: reason ?? "mode_not_live" } : { config, reason: null };
 };
 
 const verifyOwned = async (
@@ -1162,7 +1111,7 @@ const verifyOwned = async (
   candidate: CodexBankedResetCandidate,
   provider: CodexUsageResetProvider,
   clock: () => number,
-  telemetry: CodexBankedResetTelemetry,
+  telemetry: CodexBankedResetTelemetry
 ): Promise<CodexBankedResetOutcome> => {
   if (candidate.signal?.aborted) return outcome("pending", "client_aborted_before_verification", context, record);
   const startedAt = performance.now();
@@ -1172,14 +1121,7 @@ const verifyOwned = async (
   } catch {
     const nowMs = readClock(clock);
     if (nowMs === null) return outcome("pending", "invalid_clock", context, record);
-    const unknown = await unknownOwned(
-      kv,
-      context,
-      record,
-      nowMs,
-      "verification_unavailable",
-      record.provider_receipt_id,
-    );
+    const unknown = await unknownOwned(kv, context, record, nowMs, "verification_unavailable", record.provider_receipt_id);
     return unknownOutcome(telemetry, context, candidate, "verification_unavailable", unknown ?? record);
   }
   const nowMs = readClock(clock);
@@ -1189,21 +1131,13 @@ const verifyOwned = async (
     const unknown = await unknownOwned(kv, context, record, nowMs, reason, record.provider_receipt_id);
     return unknownOutcome(telemetry, context, candidate, reason, unknown ?? record);
   }
-  const finalized = await updateOwnedRecord(
-    kv,
-    context,
-    record,
-    (current) => stateWith(current, "verified", nowMs, { verified_at_ms: nowMs, last_error_code: null }),
+  const finalized = await updateOwnedRecord(kv, context, record, (current) =>
+    stateWith(current, "verified", nowMs, { verified_at_ms: nowMs, last_error_code: null })
   );
   if (!finalized) return outcome("pending", "verification_cas_failed", context, record);
   emit(telemetry, "codex_reset_verified", telemetryFields(context, candidate, { state: "verified" }));
   metric(telemetry, "codex_reset_verified_total", 1, telemetryFields(context, candidate, {}));
-  metric(
-    telemetry,
-    "codex_reset_verification_latency_ms",
-    Math.max(0, Math.round(performance.now() - startedAt)),
-    telemetryFields(context, candidate, {}),
-  );
+  metric(telemetry, "codex_reset_verification_latency_ms", Math.max(0, Math.round(performance.now() - startedAt)), telemetryFields(context, candidate, {}));
   metric(telemetry, "codex_reset_estimated_spend_total", 1, telemetryFields(context, candidate, {}));
   return outcome("verified", "verified", context, finalized);
 };
@@ -1220,13 +1154,10 @@ const finalizeDocumentedRedeemOutcome = async (
   candidate: CodexBankedResetCandidate,
   nowMs: number,
   telemetry: CodexBankedResetTelemetry,
-  redeemOutcome: "reset" | "already_redeemed",
+  redeemOutcome: "reset" | "already_redeemed"
 ): Promise<CodexBankedResetOutcome> => {
-  const finalized = await updateOwnedRecord(
-    kv,
-    context,
-    record,
-    (current) => stateWith(current, "verified", nowMs, { verified_at_ms: nowMs, last_error_code: null }),
+  const finalized = await updateOwnedRecord(kv, context, record, (current) =>
+    stateWith(current, "verified", nowMs, { verified_at_ms: nowMs, last_error_code: null })
   );
   if (!finalized) return outcome("pending", "redeem_outcome_finalization_cas_failed", context, record);
   emit(
@@ -1236,7 +1167,7 @@ const finalizeDocumentedRedeemOutcome = async (
       state: "verified",
       verification_source: "redeem_outcome",
       redeem_outcome: redeemOutcome,
-    }),
+    })
   );
   metric(telemetry, "codex_reset_verified_total", 1, telemetryFields(context, candidate, {}));
   metric(telemetry, "codex_reset_verification_latency_ms", 0, telemetryFields(context, candidate, {}));
@@ -1251,15 +1182,16 @@ const reconcileOwned = async (
   candidate: CodexBankedResetCandidate,
   provider: CodexUsageResetProvider,
   clock: () => number,
-  telemetry: CodexBankedResetTelemetry,
+  telemetry: CodexBankedResetTelemetry
 ): Promise<CodexBankedResetOutcome> => {
   if (candidate.signal?.aborted) return outcome("pending", "client_aborted_before_reconciliation", context, record);
   let terminalOutcomeCannotReconcile: boolean;
   try {
-    terminalOutcomeCannotReconcile = providerTreatsRedeemOutcomeAsFinal(provider) &&
-      provider.contract.lookup?.byIdempotencyKey !== true &&
-      provider.contract.lookup?.byProviderReceiptId !== true &&
-      provider.contract.verification?.independentlyVerifiable !== true;
+    terminalOutcomeCannotReconcile =
+      providerTreatsRedeemOutcomeAsFinal(provider) &&
+      !provider.contract.lookup?.byIdempotencyKey &&
+      !provider.contract.lookup?.byProviderReceiptId &&
+      !provider.contract.verification?.independentlyVerifiable;
   } catch {
     return outcome("pending", "provider_contract_unproven", context, record);
   }
@@ -1270,7 +1202,7 @@ const reconcileOwned = async (
   try {
     lookedUp = await provider.lookup(
       { ...context.account, idempotencyKey: context.idempotencyKey, providerReceiptId: record.provider_receipt_id },
-      candidate.signal ?? new AbortController().signal,
+      candidate.signal ?? new AbortController().signal
     );
   } catch {
     const nowMs = readClock(clock);
@@ -1281,14 +1213,7 @@ const reconcileOwned = async (
   const nowMs = readClock(clock);
   if (nowMs === null) return outcome("pending", "invalid_clock", context, record);
   if (!validRedeemResult(lookedUp)) {
-    const unknown = await unknownOwned(
-      kv,
-      context,
-      record,
-      nowMs,
-      "lookup_response_invalid",
-      record.provider_receipt_id,
-    );
+    const unknown = await unknownOwned(kv, context, record, nowMs, "lookup_response_invalid", record.provider_receipt_id);
     return unknownOutcome(telemetry, context, candidate, "lookup_response_invalid", unknown ?? record);
   }
   if (lookedUp.kind === "rejected" || lookedUp.kind === "unknown") {
@@ -1299,14 +1224,7 @@ const reconcileOwned = async (
   }
   const receipt = receiptId(lookedUp.providerReceiptId);
   if (!receipt) {
-    const unknown = await unknownOwned(
-      kv,
-      context,
-      record,
-      nowMs,
-      "lookup_response_invalid",
-      record.provider_receipt_id,
-    );
+    const unknown = await unknownOwned(kv, context, record, nowMs, "lookup_response_invalid", record.provider_receipt_id);
     return unknownOutcome(telemetry, context, candidate, "lookup_response_invalid", unknown ?? record);
   }
   const submitted = await preserveReceipt(kv, context, record, nowMs, durableReceiptId(provider, receipt));
@@ -1321,7 +1239,7 @@ const submitClaimed = async (
   candidate: CodexBankedResetCandidate,
   dependencies: CodexBankedResetDependencies,
   clock: () => number,
-  telemetry: CodexBankedResetTelemetry,
+  telemetry: CodexBankedResetTelemetry
 ): Promise<CodexBankedResetOutcome> => {
   const initialPolicy = liveSubmissionPolicyReason(dependencies);
   if (initialPolicy) return outcome("pending", `new_submission_${initialPolicy}`, context, record);
@@ -1344,19 +1262,12 @@ const submitClaimed = async (
   if (!selectedCredit) {
     let inventory: ResetInventory;
     try {
-      inventory = await dependencies.provider.readInventory(
-        context.account,
-        boundedInventorySignal(candidate.signal),
-      );
+      inventory = await dependencies.provider.readInventory(context.account, boundedInventorySignal(candidate.signal));
     } catch {
       const nowMs = readClock(clock);
       if (nowMs === null) return outcome("pending", "invalid_clock", context, record);
       const rejected = await rejectOwned(kv, context, record, nowMs, "inventory_unavailable");
-      emit(
-        telemetry,
-        "codex_reset_rejected",
-        telemetryFields(context, candidate, { state: "rejected", reason: "inventory_unavailable" }),
-      );
+      emit(telemetry, "codex_reset_rejected", telemetryFields(context, candidate, { state: "rejected", reason: "inventory_unavailable" }));
       return outcome("rejected", "inventory_unavailable", context, rejected ?? record);
     }
     const observedAfterInventory = readClock(clock);
@@ -1371,18 +1282,8 @@ const submitClaimed = async (
       return outcome("rejected", "quota_window_expired", context, rejected ?? record);
     }
     if (!validInventory(inventory, nowAfterInventory)) {
-      const rejected = await rejectOwned(
-        kv,
-        context,
-        record,
-        nowAfterInventory,
-        "inventory_response_invalid_or_unsupported",
-      );
-      emit(
-        telemetry,
-        "codex_reset_rejected",
-        telemetryFields(context, candidate, { state: "rejected", reason: "inventory_response_invalid_or_unsupported" }),
-      );
+      const rejected = await rejectOwned(kv, context, record, nowAfterInventory, "inventory_response_invalid_or_unsupported");
+      emit(telemetry, "codex_reset_rejected", telemetryFields(context, candidate, { state: "rejected", reason: "inventory_response_invalid_or_unsupported" }));
       return outcome("rejected", "inventory_response_invalid_or_unsupported", context, rejected ?? record);
     }
     const selection = selectInventoryCredit(inventory, dependencies.provider, nowAfterInventory);
@@ -1395,18 +1296,15 @@ const submitClaimed = async (
     selectedCredit = selection.credit;
   }
   if (
-    !selectedCredit || !isNonEmptyText(selectedCredit.id, 512) || selectedCredit.status !== "available" ||
+    !selectedCredit ||
+    !isNonEmptyText(selectedCredit.id, 512) ||
+    selectedCredit.status !== "available" ||
     selectedCredit.resetType !== "codex_rate_limits" ||
     !providerSupportsResetType(dependencies.provider, selectedCredit.resetType) ||
-    (selectedCredit.expiresAtMs !== null &&
-      (!isSafeMs(selectedCredit.expiresAtMs) || selectedCredit.expiresAtMs <= nowAfterInventory))
+    (selectedCredit.expiresAtMs !== null && (!isSafeMs(selectedCredit.expiresAtMs) || selectedCredit.expiresAtMs <= nowAfterInventory))
   ) {
     const rejected = await rejectOwned(kv, context, record, nowAfterInventory, "selected_credit_invalid_or_expired");
-    emit(
-      telemetry,
-      "codex_reset_rejected",
-      telemetryFields(context, candidate, { state: "rejected", reason: "selected_credit_invalid_or_expired" }),
-    );
+    emit(telemetry, "codex_reset_rejected", telemetryFields(context, candidate, { state: "rejected", reason: "selected_credit_invalid_or_expired" }));
     return outcome("rejected", "selected_credit_invalid_or_expired", context, rejected ?? record);
   }
   if (!claimedDuringCurrentUtcDay(record, nowAfterInventory)) {
@@ -1438,16 +1336,7 @@ const submitClaimed = async (
     const rejected = await rejectOwned(kv, context, record, nowBeforePreparation, "quota_window_expired");
     return outcome("rejected", "quota_window_expired", context, rejected ?? record);
   }
-  const prepared = await prepareSubmission(
-    kv,
-    context,
-    candidate,
-    record,
-    nowBeforePreparation,
-    clock,
-    finalConfig.config.maxGlobalPerDay,
-    dependencies.keyId,
-  );
+  const prepared = await prepareSubmission(kv, context, candidate, record, nowBeforePreparation, clock, finalConfig.config.maxGlobalPerDay, dependencies.keyId);
   if (prepared.kind === "failure") {
     return outcome(prepared.code === "global_limit_reached" ? "skipped" : "pending", prepared.code, context, record);
   }
@@ -1497,7 +1386,7 @@ const submitClaimed = async (
     // kill-switch check above and starting the provider invocation.
     submittedPromise = dependencies.provider.redeem(
       { ...context.account, idempotencyKey: context.idempotencyKey, creditId: selectedCredit.id },
-      candidate.signal ?? new AbortController().signal,
+      candidate.signal ?? new AbortController().signal
     );
   } catch {
     const nowMs = readClock(clock);
@@ -1525,11 +1414,7 @@ const submitClaimed = async (
   }
   if (submittedResult.kind === "rejected") {
     const rejected = await rejectOwned(kv, context, renewed.record, nowAfterRedeem, "provider_rejected");
-    emit(
-      telemetry,
-      "codex_reset_rejected",
-      telemetryFields(context, candidate, { state: "rejected", reason: "provider_rejected" }),
-    );
+    emit(telemetry, "codex_reset_rejected", telemetryFields(context, candidate, { state: "rejected", reason: "provider_rejected" }));
     return outcome("rejected", "provider_rejected", context, rejected ?? renewed.record);
   }
   if (submittedResult.kind === "unknown") {
@@ -1539,19 +1424,12 @@ const submitClaimed = async (
       renewed.record,
       nowAfterRedeem,
       "provider_commit_unknown",
-      durableReceiptId(dependencies.provider, submittedResult.providerReceiptId),
+      durableReceiptId(dependencies.provider, submittedResult.providerReceiptId)
     );
     return unknownOutcome(telemetry, context, candidate, "provider_commit_unknown", unknown ?? renewed.record);
   }
-  if (
-    (submittedResult.kind === "completed" || submittedResult.kind === "already_redeemed") &&
-    providerTreatsRedeemOutcomeAsFinal(dependencies.provider)
-  ) {
-    emit(
-      telemetry,
-      "codex_reset_submitted",
-      telemetryFields(context, candidate, { state: "submitted", provider_receipt_id: null }),
-    );
+  if ((submittedResult.kind === "completed" || submittedResult.kind === "already_redeemed") && providerTreatsRedeemOutcomeAsFinal(dependencies.provider)) {
+    emit(telemetry, "codex_reset_submitted", telemetryFields(context, candidate, { state: "submitted", provider_receipt_id: null }));
     return await finalizeDocumentedRedeemOutcome(
       kv,
       context,
@@ -1559,7 +1437,7 @@ const submitClaimed = async (
       candidate,
       nowAfterRedeem,
       telemetry,
-      submittedResult.kind === "completed" ? "reset" : "already_redeemed",
+      submittedResult.kind === "completed" ? "reset" : "already_redeemed"
     );
   }
   const receipt = receiptId(submittedResult.providerReceiptId);
@@ -1567,13 +1445,7 @@ const submitClaimed = async (
     const unknown = await unknownOwned(kv, context, renewed.record, nowAfterRedeem, "submit_response_invalid", null);
     return unknownOutcome(telemetry, context, candidate, "submit_response_invalid", unknown ?? renewed.record);
   }
-  const persistedReceipt = await preserveReceipt(
-    kv,
-    context,
-    renewed.record,
-    nowAfterRedeem,
-    durableReceiptId(dependencies.provider, receipt),
-  );
+  const persistedReceipt = await preserveReceipt(kv, context, renewed.record, nowAfterRedeem, durableReceiptId(dependencies.provider, receipt));
   if (!persistedReceipt) return outcome("pending", "receipt_cas_failed", context, renewed.record);
   emit(
     telemetry,
@@ -1581,7 +1453,7 @@ const submitClaimed = async (
     telemetryFields(context, candidate, {
       state: "submitted",
       provider_receipt_id: durableReceiptId(dependencies.provider, receipt),
-    }),
+    })
   );
   return await verifyOwned(kv, context, persistedReceipt, candidate, dependencies.provider, clock, telemetry);
 };
@@ -1589,7 +1461,7 @@ const submitClaimed = async (
 const attemptInternal = async (
   candidate: CodexBankedResetCandidate,
   dependencies: CodexBankedResetDependencies,
-  reconcileOnly: boolean,
+  reconcileOnly: boolean
 ): Promise<CodexBankedResetOutcome> => {
   const hash = dependencies.hash ?? sha256Hex;
   const context = await makeResetContext(candidate, hash);
@@ -1622,25 +1494,17 @@ const attemptInternal = async (
           state: "verified",
           fence: existing.record.fence,
           reason: "routing_generation_stale",
-        }),
+        })
       );
       metric(telemetry, "codex_reset_duplicate_prevented_total", 1, fields);
       return outcome("skipped", "verified_routing_generation_stale", context, existing.record);
     }
-    emit(
-      telemetry,
-      "codex_reset_duplicate_prevented",
-      telemetryFields(context, candidate, { state: "verified", fence: existing.record.fence }),
-    );
+    emit(telemetry, "codex_reset_duplicate_prevented", telemetryFields(context, candidate, { state: "verified", fence: existing.record.fence }));
     metric(telemetry, "codex_reset_duplicate_prevented_total", 1, fields);
     return outcome("verified", "previously_verified", context, existing.record);
   }
   if (existing.record?.state === "rejected") {
-    emit(
-      telemetry,
-      "codex_reset_duplicate_prevented",
-      telemetryFields(context, candidate, { state: "rejected", fence: existing.record.fence }),
-    );
+    emit(telemetry, "codex_reset_duplicate_prevented", telemetryFields(context, candidate, { state: "rejected", fence: existing.record.fence }));
     metric(telemetry, "codex_reset_duplicate_prevented_total", 1, fields);
     return outcome("rejected", existing.record.last_error_code ?? "previously_rejected", context, existing.record);
   }
@@ -1679,11 +1543,7 @@ const attemptInternal = async (
 
   if (!providerSupportsLiveRedemption(dependencies.provider)) {
     if (!existing.record) {
-      emit(
-        telemetry,
-        "codex_reset_rejected",
-        telemetryFields(context, candidate, { state: "rejected", reason: "provider_contract_unproven" }),
-      );
+      emit(telemetry, "codex_reset_rejected", telemetryFields(context, candidate, { state: "rejected", reason: "provider_contract_unproven" }));
     }
     return outcome("skipped", "provider_contract_unproven", context, existing.record);
   }
@@ -1692,15 +1552,7 @@ const attemptInternal = async (
   if (nowMs === null) return outcome("skipped", "invalid_clock", context, existing.record);
   const ownerToken = safeOwnerToken(dependencies.newOwnerToken ?? (() => crypto.randomUUID()));
   if (!ownerToken) return outcome("skipped", "owner_token_unavailable", context, existing.record);
-  const claimed = await claimTransaction(
-    kv,
-    context,
-    candidate,
-    nowMs,
-    clock,
-    ownerToken,
-    allowNewSubmission,
-  );
+  const claimed = await claimTransaction(kv, context, candidate, nowMs, clock, ownerToken, allowNewSubmission);
   switch (claimed.kind) {
     case "failure":
       return outcome("skipped", claimed.code, context);
@@ -1709,27 +1561,15 @@ const attemptInternal = async (
     case "global_limit":
       return outcome("skipped", "global_limit_reached", context);
     case "in_progress":
-      emit(
-        telemetry,
-        "codex_reset_duplicate_prevented",
-        telemetryFields(context, candidate, { state: claimed.record.state, fence: claimed.record.fence }),
-      );
+      emit(telemetry, "codex_reset_duplicate_prevented", telemetryFields(context, candidate, { state: claimed.record.state, fence: claimed.record.fence }));
       metric(telemetry, "codex_reset_duplicate_prevented_total", 1, fields);
       return outcome("pending", "transaction_in_progress", context, claimed.record);
     case "rejected":
-      emit(
-        telemetry,
-        "codex_reset_duplicate_prevented",
-        telemetryFields(context, candidate, { state: "rejected", fence: claimed.record.fence }),
-      );
+      emit(telemetry, "codex_reset_duplicate_prevented", telemetryFields(context, candidate, { state: "rejected", fence: claimed.record.fence }));
       metric(telemetry, "codex_reset_duplicate_prevented_total", 1, fields);
       return outcome("rejected", claimed.record.last_error_code ?? "previously_rejected", context, claimed.record);
     case "verified":
-      emit(
-        telemetry,
-        "codex_reset_duplicate_prevented",
-        telemetryFields(context, candidate, { state: "verified", fence: claimed.record.fence }),
-      );
+      emit(telemetry, "codex_reset_duplicate_prevented", telemetryFields(context, candidate, { state: "verified", fence: claimed.record.fence }));
       metric(telemetry, "codex_reset_duplicate_prevented_total", 1, fields);
       return outcome("verified", "previously_verified", context, claimed.record);
     case "submit":
@@ -1740,7 +1580,7 @@ const attemptInternal = async (
           state: "claimed",
           fence: claimed.record.fence,
           takeover: claimed.tookOver,
-        }),
+        })
       );
       return await submitClaimed(kv, context, claimed.record, candidate, dependencies, clock, telemetry);
     case "reconcile":
@@ -1751,7 +1591,7 @@ const attemptInternal = async (
           state: claimed.record.state,
           fence: claimed.record.fence,
           takeover: claimed.tookOver,
-        }),
+        })
       );
       metric(telemetry, "codex_reset_duplicate_prevented_total", 1, fields);
       return await reconcileOwned(kv, context, claimed.record, candidate, dependencies.provider, clock, telemetry);
@@ -1766,7 +1606,7 @@ const attemptInternal = async (
  */
 export const attemptCodexBankedReset = async (
   candidate: CodexBankedResetCandidate,
-  dependencies: CodexBankedResetDependencies,
+  dependencies: CodexBankedResetDependencies
 ): Promise<CodexBankedResetOutcome> => await attemptInternal(candidate, dependencies, false);
 
 /**
@@ -1775,7 +1615,7 @@ export const attemptCodexBankedReset = async (
  */
 export const reconcileCodexBankedReset = async (
   candidate: CodexBankedResetCandidate,
-  dependencies: CodexBankedResetDependencies,
+  dependencies: CodexBankedResetDependencies
 ): Promise<CodexBankedResetOutcome> => await attemptInternal(candidate, dependencies, true);
 
 type ResolvedPoolCandidate = Readonly<{
@@ -1793,22 +1633,25 @@ const poolOutcome = (
   kind: CodexBankedResetPoolOutcome["kind"],
   reason: string,
   selected: CodexBankedResetPoolCandidate | null = null,
-  reset: CodexBankedResetOutcome | null = null,
+  reset: CodexBankedResetOutcome | null = null
 ): CodexBankedResetPoolOutcome => ({ kind, reason, selected, reset });
 
-const sameShadowFences = (
-  left: CodexResetShadowDecisionRecord["fences"],
-  right: CodexResetShadowDecisionRecord["fences"],
-): boolean =>
-  left.length === right.length && left.every((fence, index) => {
+const sameShadowFences = (left: CodexResetShadowDecisionRecord["fences"], right: CodexResetShadowDecisionRecord["fences"]): boolean =>
+  left.length === right.length &&
+  left.every((fence, index) => {
     const other = right[index];
-    return other !== undefined && fence.slot === other.slot && fence.account_id_hash === other.account_id_hash &&
-      fence.quota_generation === other.quota_generation && fence.routing_generation === other.routing_generation &&
-      fence.quota_reset_at_ms === other.quota_reset_at_ms;
+    return (
+      other !== undefined &&
+      fence.slot === other.slot &&
+      fence.account_id_hash === other.account_id_hash &&
+      fence.quota_generation === other.quota_generation &&
+      fence.routing_generation === other.routing_generation &&
+      fence.quota_reset_at_ms === other.quota_reset_at_ms
+    );
   });
 
 const loadCurrentPoolConfig = (
-  dependencies: CodexBankedResetDependencies,
+  dependencies: CodexBankedResetDependencies
 ): Readonly<{ config: CodexBankedResetConfig; reason: null }> | Readonly<{ config: null; reason: string }> => {
   try {
     const config = dependencies.reloadConfig?.() ?? dependencies.config;
@@ -1826,13 +1669,13 @@ const shadowDecisionRecord = async (
   kv: Deno.Kv,
   record: CodexResetShadowDecisionRecord,
   nowMs: number,
-  keyId: string | undefined,
+  keyId: string | undefined
 ): Promise<Readonly<{ kind: "written" | "duplicate"; record: CodexResetShadowDecisionRecord }> | null> => {
   const key = codexResetShadowDecisionKey(record.episode_hash);
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
     let entry: Deno.KvEntryMaybe<unknown>;
     try {
-      entry = await kv.get<unknown>(key, { consistency: "strong" });
+      entry = await kv.get(key, { consistency: "strong" });
     } catch {
       return null;
     }
@@ -1853,12 +1696,9 @@ const shadowDecisionRecord = async (
   return null;
 };
 
-const readShadowDecision = async (
-  kv: Deno.Kv,
-  episodeHash: string,
-): Promise<CodexResetShadowDecisionRecord | null> => {
+const readShadowDecision = async (kv: Deno.Kv, episodeHash: string): Promise<CodexResetShadowDecisionRecord | null> => {
   try {
-    const entry = await kv.get<unknown>(codexResetShadowDecisionKey(episodeHash), { consistency: "strong" });
+    const entry = await kv.get(codexResetShadowDecisionKey(episodeHash), { consistency: "strong" });
     return entry.value === null ? null : parseCodexResetShadowDecisionRecord(entry.value);
   } catch {
     return null;
@@ -1866,9 +1706,7 @@ const readShadowDecision = async (
 };
 
 /** Read-only, redacted administrative projection of recent shadow evidence. */
-export const listCodexResetShadowDecisions = async (
-  kvOverride?: Deno.Kv | null,
-): Promise<readonly CodexResetShadowDecisionRecord[] | null> => {
+export const listCodexResetShadowDecisions = async (kvOverride?: Deno.Kv | null): Promise<readonly CodexResetShadowDecisionRecord[] | null> => {
   let kv: Deno.Kv | null;
   try {
     kv = kvOverride === undefined ? await getKv() : kvOverride;
@@ -1878,16 +1716,14 @@ export const listCodexResetShadowDecisions = async (
   if (!kv) return null;
   const decisions: CodexResetShadowDecisionRecord[] = [];
   try {
-    for await (const entry of kv.list<unknown>({ prefix: CODEX_RESET_SHADOW_DECISION_KV_PREFIX }, { limit: 100 })) {
+    for await (const entry of kv.list({ prefix: CODEX_RESET_SHADOW_DECISION_KV_PREFIX }, { limit: 100 })) {
       const parsed = parseCodexResetShadowDecisionRecord(entry.value);
       if (parsed) decisions.push(parsed);
     }
   } catch {
     return null;
   }
-  decisions.sort((left, right) =>
-    right.created_at_ms - left.created_at_ms || left.episode_hash.localeCompare(right.episode_hash)
-  );
+  decisions.sort((left, right) => right.created_at_ms - left.created_at_ms || left.episode_hash.localeCompare(right.episode_hash));
   return decisions;
 };
 
@@ -1901,26 +1737,20 @@ export const listCodexResetShadowDecisions = async (
  */
 export const evaluateCodexBankedResetPool = async (
   candidates: readonly CodexBankedResetPoolCandidate[],
-  dependencies: CodexBankedResetDependencies,
+  dependencies: CodexBankedResetDependencies
 ): Promise<CodexBankedResetPoolOutcome> => {
   const clock = dependencies.now ?? Date.now;
   const nowMs = readClock(clock);
   if (nowMs === null) return poolOutcome("skipped", "invalid_clock");
   if (!candidates.length) return poolOutcome("skipped", "full_pool_missing");
   const ordered = [...candidates].sort((left, right) => left.slot - right.slot);
-  if (
-    ordered.some((candidate, index) =>
-      !isSafeNonnegativeInteger(candidate.slot) || (index > 0 && ordered[index - 1]!.slot === candidate.slot)
-    )
-  ) return poolOutcome("skipped", "full_pool_invalid");
+  if (ordered.some((candidate, index) => !isSafeNonnegativeInteger(candidate.slot) || (index > 0 && ordered[index - 1]!.slot === candidate.slot)))
+    return poolOutcome("skipped", "full_pool_invalid");
 
   const loadedConfig = loadCurrentPoolConfig(dependencies);
   if (!loadedConfig.config) return poolOutcome("skipped", loadedConfig.reason);
   const config = loadedConfig.config;
-  if (
-    config.mode === "live" && config.maxGlobalPerDay !== 1 &&
-    ordered.some(({ provider }) => providerTreatsRedeemOutcomeAsFinal(provider))
-  ) {
+  if (config.mode === "live" && config.maxGlobalPerDay !== 1 && ordered.some(({ provider }) => providerTreatsRedeemOutcomeAsFinal(provider))) {
     return poolOutcome("skipped", "terminal_outcome_global_limit_must_be_one");
   }
   let kv: Deno.Kv | null;
@@ -1940,10 +1770,12 @@ export const evaluateCodexBankedResetPool = async (
   }
 
   const hash = dependencies.hash ?? sha256Hex;
-  const resolved = await Promise.all(ordered.map(async (pool) => {
-    const context = await makeResetContext(pool.candidate, hash);
-    return context ? { pool, context } satisfies ResolvedPoolCandidate : null;
-  }));
+  const resolved = await Promise.all(
+    ordered.map(async (pool) => {
+      const context = await makeResetContext(pool.candidate, hash);
+      return context ? ({ pool, context } satisfies ResolvedPoolCandidate) : null;
+    })
+  );
   if (resolved.some((candidate) => candidate === null)) return poolOutcome("skipped", "invalid_quota_generation");
   const complete = resolved as ResolvedPoolCandidate[];
   if (complete.some(({ pool }) => !quotaWindowIsOpen(pool.candidate, nowMs))) {
@@ -1957,11 +1789,11 @@ export const evaluateCodexBankedResetPool = async (
     quota_reset_at_ms: pool.candidate.quotaResetAtMs,
   }));
   const episodeHash = await hash(
-    `uos_ai\u0000codex_reset_shadow_episode\u0000${
-      fences.map((fence) =>
-        `${fence.slot}\u0000${fence.account_id_hash}\u0000${fence.quota_generation}\u0000${fence.routing_generation}\u0000${fence.quota_reset_at_ms}`
-      ).join("\u0001")
-    }`,
+    `uos_ai\u0000codex_reset_shadow_episode\u0000${fences
+      .map(
+        (fence) => `${fence.slot}\u0000${fence.account_id_hash}\u0000${fence.quota_generation}\u0000${fence.routing_generation}\u0000${fence.quota_reset_at_ms}`
+      )
+      .join("\u0001")}`
   );
   if (!isNonEmptyText(episodeHash)) return poolOutcome("skipped", "episode_hash_unavailable");
 
@@ -1969,11 +1801,8 @@ export const evaluateCodexBankedResetPool = async (
   let liveNeedsArming = false;
   if (config.mode === "live" && !dependencies.allowLiveWithoutShadowForTest) {
     audited = await readShadowDecision(kv, episodeHash);
-    if (
-      audited &&
-      (audited.expires_at_ms <= nowMs || audited.decision_reason !== "selected" ||
-        !sameShadowFences(audited.fences, fences))
-    ) return poolOutcome("skipped", "shadow_decision_missing_or_expired");
+    if (audited && (audited.expires_at_ms <= nowMs || audited.decision_reason !== "selected" || !sameShadowFences(audited.fences, fences)))
+      return poolOutcome("skipped", "shadow_decision_missing_or_expired");
     liveNeedsArming = audited === null;
   }
 
@@ -1986,12 +1815,8 @@ export const evaluateCodexBankedResetPool = async (
 
   if (config.mode === "shadow") {
     const existing = await readShadowDecision(kv, episodeHash);
-    if (
-      existing && existing.expires_at_ms > nowMs && sameShadowFences(existing.fences, fences)
-    ) {
-      const selected = complete.find(({ context }) =>
-        context.account.accountIdHash === existing.selected_account_id_hash
-      ) ?? null;
+    if (existing && existing.expires_at_ms > nowMs && sameShadowFences(existing.fences, fences)) {
+      const selected = complete.find(({ context }) => context.account.accountIdHash === existing.selected_account_id_hash) ?? null;
       const telemetry = dependencies.telemetry ?? defaultTelemetry;
       const telemetryCandidate = selected ?? complete[0]!;
       const fields = telemetryFields(telemetryCandidate.context, telemetryCandidate.pool.candidate, {
@@ -2002,29 +1827,25 @@ export const evaluateCodexBankedResetPool = async (
       });
       emit(telemetry, "codex_reset_duplicate_prevented", { ...fields, reason: "shadow_decision_exists" });
       metric(telemetry, "codex_reset_duplicate_prevented_total", 1, fields);
-      const wouldSpend = existing.decision_reason === "selected" &&
-        existing.selected_account_id_hash !== null &&
-        existing.selected_credit_id_hash !== null &&
-        selected !== null;
-      return poolOutcome(
-        "shadow",
-        wouldSpend ? "already_would_spend_once" : existing.decision_reason,
-        wouldSpend ? selected.pool : null,
-      );
+      const wouldSpend =
+        existing.decision_reason === "selected" && existing.selected_account_id_hash !== null && existing.selected_credit_id_hash !== null && selected !== null;
+      return poolOutcome("shadow", wouldSpend ? "already_would_spend_once" : existing.decision_reason, wouldSpend ? selected.pool : null);
     }
   }
 
-  const inventoryResults = await Promise.all(complete.map(async (resolvedCandidate) => {
-    try {
-      const inventory = await resolvedCandidate.pool.provider.readInventory(
-        resolvedCandidate.context.account,
-        boundedInventorySignal(resolvedCandidate.pool.candidate.signal),
-      );
-      return { resolvedCandidate, inventory } as const;
-    } catch {
-      return { resolvedCandidate, inventory: null } as const;
-    }
-  }));
+  const inventoryResults = await Promise.all(
+    complete.map(async (resolvedCandidate) => {
+      try {
+        const inventory = await resolvedCandidate.pool.provider.readInventory(
+          resolvedCandidate.context.account,
+          boundedInventorySignal(resolvedCandidate.pool.candidate.signal)
+        );
+        return { resolvedCandidate, inventory } as const;
+      } catch {
+        return { resolvedCandidate, inventory: null } as const;
+      }
+    })
+  );
   const nowAfterInventory = readClock(clock);
   if (nowAfterInventory === null) return poolOutcome("skipped", "invalid_clock");
   if (inventoryResults.some(({ inventory }) => inventory === null)) {
@@ -2048,9 +1869,7 @@ export const evaluateCodexBankedResetPool = async (
     const inventory = result.inventory!;
     if (
       !validInventory(inventory, nowAfterInventory) ||
-      inventory.credits.some((credit) =>
-        credit.status === "available" && credit.expiresAtMs !== null && credit.expiresAtMs <= nowAfterInventory
-      )
+      inventory.credits.some((credit) => credit.status === "available" && credit.expiresAtMs !== null && credit.expiresAtMs <= nowAfterInventory)
     ) {
       decisionReason = "inventory_response_invalid_or_expired";
       selectedCredits.length = 0;
@@ -2068,17 +1887,13 @@ export const evaluateCodexBankedResetPool = async (
   selectedCredits.sort((left, right) => {
     const leftExpiry = left.credit.expiresAtMs ?? Number.POSITIVE_INFINITY;
     const rightExpiry = right.credit.expiresAtMs ?? Number.POSITIVE_INFINITY;
-    return leftExpiry - rightExpiry || left.resolved.pool.slot - right.resolved.pool.slot ||
-      left.credit.id.localeCompare(right.credit.id);
+    return leftExpiry - rightExpiry || left.resolved.pool.slot - right.resolved.pool.slot || left.credit.id.localeCompare(right.credit.id);
   });
   const selected = selectedCredits[0] ?? null;
   if (selected) decisionReason = "selected";
   else if (decisionReason === "inventory_empty") decisionReason = "no_eligible_credit";
 
-  const episodeExpiresAtMs = Math.min(
-    ...fences.map((fence) => fence.quota_reset_at_ms),
-    selected?.credit.expiresAtMs ?? Number.POSITIVE_INFINITY,
-  );
+  const episodeExpiresAtMs = Math.min(...fences.map((fence) => fence.quota_reset_at_ms), selected?.credit.expiresAtMs ?? Number.POSITIVE_INFINITY);
   if (!isSafeMs(episodeExpiresAtMs) || episodeExpiresAtMs <= nowAfterInventory) {
     return poolOutcome("skipped", "shadow_decision_expired");
   }
@@ -2131,7 +1946,8 @@ export const evaluateCodexBankedResetPool = async (
       persisted.record.selected_credit_id_hash !== selected.creditIdHash ||
       persisted.record.selected_credit_expires_at_ms !== selected.credit.expiresAtMs ||
       !sameShadowFences(persisted.record.fences, fences)
-    ) return poolOutcome("skipped", "shadow_decision_drift");
+    )
+      return poolOutcome("skipped", "shadow_decision_drift");
 
     const telemetry = dependencies.telemetry ?? defaultTelemetry;
     const fields = telemetryFields(selected.resolved.context, selected.resolved.pool.candidate, {
@@ -2153,11 +1969,13 @@ export const evaluateCodexBankedResetPool = async (
   }
   if (
     !dependencies.allowLiveWithoutShadowForTest &&
-    (!audited || audited.selected_account_id_hash !== selected.resolved.context.account.accountIdHash ||
+    (!audited ||
+      audited.selected_account_id_hash !== selected.resolved.context.account.accountIdHash ||
       audited.selected_credit_id_hash !== selected.creditIdHash ||
       audited.selected_credit_expires_at_ms !== selected.credit.expiresAtMs ||
       audited.expires_at_ms <= nowAfterInventory)
-  ) return poolOutcome("skipped", "shadow_decision_drift");
+  )
+    return poolOutcome("skipped", "shadow_decision_drift");
 
   // The durable claim/submission path must continue to fence every blocked
   // account that established the audited episode, not just the selected
@@ -2167,7 +1985,7 @@ export const evaluateCodexBankedResetPool = async (
 
   const reset = await attemptCodexBankedReset(
     { ...selected.resolved.pool.candidate, fences: fullPoolFences, selectedCredit: selected.credit },
-    { ...dependencies, provider: selected.resolved.pool.provider },
+    { ...dependencies, provider: selected.resolved.pool.provider }
   );
   return poolOutcome(reset.kind, reset.reason, selected.resolved.pool, reset);
 };

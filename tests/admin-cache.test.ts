@@ -11,7 +11,9 @@ Deno.test("admin cache retries IndexedDB after a temporary open failure", async 
     objectStore: () => { put: () => void };
   } = {
     objectStore: () => ({
-      put: () => queueMicrotask(() => transaction.oncomplete?.()),
+      put: () => {
+        queueMicrotask(() => transaction.oncomplete?.());
+      },
     }),
   };
   const database = { transaction: () => transaction };

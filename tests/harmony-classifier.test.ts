@@ -21,10 +21,7 @@ const OBSERVATION = {
   verificationEvidence: "passed",
 };
 
-const responseFor = (
-  content: string | null,
-  overrides: Partial<NormalizedAssistantResponse> = {},
-): NormalizedAssistantResponse => ({
+const responseFor = (content: string | null, overrides: Partial<NormalizedAssistantResponse> = {}): NormalizedAssistantResponse => ({
   id: "cmpl-1",
   model: "gpt-oss-120b",
   created: 1,
@@ -88,10 +85,10 @@ Deno.test("classifier request is zero-tool, unwrapped and small", () => {
   assert.equal("response_format" in body, false);
   assert.equal("reasoning_effort" in body, false);
   assert.equal(body.max_completion_tokens, BOOTSTRAP_CLASSIFIER_MAX_OUTPUT_TOKENS);
-  const messages = body.messages as Array<Record<string, unknown>>;
+  const messages = body.messages as Record<string, unknown>[];
   assert.deepEqual(
     messages.map((message) => message.role),
-    ["system", "developer", "user"],
+    ["system", "developer", "user"]
   );
   const system = messages[0].content as string;
   assert.match(system, /Reasoning: low/);
@@ -107,7 +104,7 @@ Deno.test("classifier request compares reasoning effort medium", () => {
     decisionDefinition: "x",
     reasoningEffort: "medium",
   });
-  const system = (body.messages as Array<Record<string, unknown>>)[0].content as string;
+  const system = (body.messages as Record<string, unknown>[])[0].content as string;
   assert.match(system, /Reasoning: medium/);
 });
 
@@ -117,9 +114,7 @@ Deno.test("verdictFromBootstrapResponse handles refusals, tool calls and missing
     raw: null,
     reason: "classifier request was refused",
   });
-  const withTool = verdictFromBootstrapResponse(
-    responseFor(null, { toolCalls: [{ id: "call-1", name: "x", arguments: "{}" }] }),
-  );
+  const withTool = verdictFromBootstrapResponse(responseFor(null, { toolCalls: [{ id: "call-1", name: "x", arguments: "{}" }] }));
   assert.equal(withTool.verdict, "unknown");
   assert.match("reason" in withTool ? withTool.reason : "", /tool call/);
   const noContent = verdictFromBootstrapResponse(responseFor(null));
@@ -131,8 +126,5 @@ Deno.test("verdictFromBootstrapResponse accepts literal true and false content o
   assert.equal(verdictFromBootstrapResponse(responseFor("False")).verdict, "false");
   assert.equal(verdictFromBootstrapResponse(responseFor("true.")).verdict, "unknown");
   // Reasoning may accompany the answer; the verdict still comes from final content.
-  assert.deepEqual(
-    verdictFromBootstrapResponse(responseFor("true", { analysis: ["The ledger advanced."] })),
-    { verdict: "true", raw: "true" },
-  );
+  assert.deepEqual(verdictFromBootstrapResponse(responseFor("true", { analysis: ["The ledger advanced."] })), { verdict: "true", raw: "true" });
 });

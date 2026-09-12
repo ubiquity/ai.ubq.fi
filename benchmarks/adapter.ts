@@ -48,12 +48,12 @@ import {
 // ---------------------------------------------------------------------------
 
 export class TrailMismatchError extends Error {
-  constructor(readonly stepIndex: number, readonly step: TrailStep, readonly result: ToolResult) {
-    super(
-      `trail step ${stepIndex + 1} (${step.tool}): expected ${describeExpectation(step)}, got ok=${result.ok} ${
-        result.error ?? ""
-      }`.trim(),
-    );
+  constructor(
+    readonly stepIndex: number,
+    readonly step: TrailStep,
+    readonly result: ToolResult
+  ) {
+    super(`trail step ${stepIndex + 1} (${step.tool}): expected ${describeExpectation(step)}, got ok=${result.ok} ${result.error ?? ""}`.trim());
     this.name = "TrailMismatchError";
   }
 }
@@ -82,7 +82,10 @@ export class CanonicalAdapterError extends Error {
 
 /** Canonical config C error: the reliability harness did not complete. */
 export class CanonicalHarnessError extends Error {
-  constructor(readonly reason: string | null, readonly failureClass: string | null) {
+  constructor(
+    readonly reason: string | null,
+    readonly failureClass: string | null
+  ) {
     super(`canonical harness failed: ${reason ?? "unknown"} (reliability class: ${failureClass ?? "none"})`);
     this.name = "CanonicalHarnessError";
   }
@@ -92,7 +95,7 @@ function describeExpectation(step: TrailStep): string {
   const exp = step.expect;
   if (!exp) return "no assertion";
   const parts: string[] = [];
-  const expectedOk = exp.ok ?? (exp.error_contains === undefined);
+  const expectedOk = exp.ok ?? exp.error_contains === undefined;
   parts.push(`ok=${expectedOk}`);
   for (const s of exp.output_contains ?? []) parts.push(`output contains ${JSON.stringify(s)}`);
   if (exp.error_contains !== undefined) parts.push(`error contains ${JSON.stringify(exp.error_contains)}`);
@@ -103,7 +106,7 @@ function describeExpectation(step: TrailStep): string {
 // Adapter contract
 // ---------------------------------------------------------------------------
 
-export interface AdapterRunContext {
+export type AdapterRunContext = {
   runId: string;
   task: TaskManifest;
   workspace: FixtureWorkspace;
@@ -114,9 +117,9 @@ export interface AdapterRunContext {
   /** Aborts when the whole-run timeout fired. */
   signal: AbortSignal;
   time(): string;
-}
+};
 
-export interface BenchmarkAdapter {
+export type BenchmarkAdapter = {
   /** Stable config id used in result records (A, B, C, D, reference, ...). */
   configId: string;
   name: string;
@@ -128,23 +131,23 @@ export interface BenchmarkAdapter {
    */
   requiresExternalInference: boolean;
   run(ctx: AdapterRunContext): Promise<void>;
-}
+};
 
 // ---------------------------------------------------------------------------
 // Tool layer (canonical m04 surface with m02-compatible views)
 // ---------------------------------------------------------------------------
 
-export interface ToolResult {
+export type ToolResult = {
   ok: boolean;
   output?: string;
   error?: string;
   error_code?: string;
-}
+};
 
-interface ToolSchema {
+type ToolSchema = {
   required: string[];
   types: Record<string, "string" | "boolean" | "string[]">;
-}
+};
 
 /** m02-compatible schema view derived from the canonical tool schemas. */
 export const TOOL_SCHEMAS: Record<string, ToolSchema> = Object.fromEntries(
@@ -154,7 +157,7 @@ export const TOOL_SCHEMAS: Record<string, ToolSchema> = Object.fromEntries(
       required: toolSchema.parameters.required as string[],
       types: { ...toolParameterTypes(toolSchema) },
     },
-  ]),
+  ])
 );
 
 export const CANONICAL_TOOL_NAMES: readonly string[] = [...canonicalToolNames].sort();
@@ -166,8 +169,7 @@ export function validateToolArgs(tool: string, args: Record<string, unknown>): {
 }
 
 const isNotFound = (err: unknown): boolean =>
-  typeof err === "object" && err !== null &&
-  ((err as { code?: unknown }).code === "ENOENT" || (err as { name?: unknown }).name === "NotFound");
+  typeof err === "object" && err !== null && ((err as { code?: unknown }).code === "ENOENT" || (err as { name?: unknown }).name === "NotFound");
 
 /** Maps a disposable FixtureWorkspace onto the canonical WorkspaceBackend. */
 class FixtureWorkspaceBackend implements WorkspaceBackend {
@@ -207,10 +209,7 @@ class FixtureWorkspaceBackend implements WorkspaceBackend {
     }
   }
 
-  applyPatch(
-    rel: string,
-    patch: { old: string; new: string; add: boolean },
-  ): { applied: true; detail: string } {
+  applyPatch(rel: string, patch: { old: string; new: string; add: boolean }): { applied: true; detail: string } {
     try {
       // Empty `old` prepends `new` at the start of the file; the workspace's
       // raw patch helper would treat it as ambiguous (empty matches everywhere).
@@ -222,18 +221,14 @@ class FixtureWorkspaceBackend implements WorkspaceBackend {
       return { applied: true, detail: result.detail };
     } catch (err) {
       if (err instanceof WriteScopeViolationError) throw new ToolExecutionError("write_scope", err.message);
-      const message = isNotFound(err)
-        ? `patch failed: ${rel} does not exist`
-        : err instanceof Error && err.message.length > 0
-        ? err.message
-        : String(err);
+      const message = isNotFound(err) ? `patch failed: ${rel} does not exist` : err instanceof Error && err.message.length > 0 ? err.message : String(err);
       throw new ToolExecutionError("patch_failed", message);
     }
   }
 
   async execShell(
     command: string,
-    opts: { timeoutMs: number; signal?: AbortSignal },
+    opts: { timeoutMs: number; signal?: AbortSignal }
   ): Promise<{ exit_code: number; stdout: string; stderr: string; timed_out: boolean }> {
     const result = await this.workspace.execShell(command, opts.timeoutMs, opts.signal);
     return { exit_code: result.code, stdout: result.stdout, stderr: result.stderr, timed_out: result.timedOut };
@@ -320,12 +315,10 @@ export const referenceAdapter: BenchmarkAdapter = {
         duration_ms: Date.now() - started,
       });
       if (step.expect) {
-        const expectedOk = step.expect.ok ?? (step.expect.error_contains === undefined);
+        const expectedOk = step.expect.ok ?? step.expect.error_contains === undefined;
         const okMatches = result.ok === expectedOk;
         const outputOk = (step.expect.output_contains ?? []).every((s) => (result.output ?? "").includes(s));
-        const errorOk = step.expect.error_contains === undefined
-          ? true
-          : !result.ok && (result.error ?? "").includes(step.expect.error_contains);
+        const errorOk = step.expect.error_contains === undefined ? true : !result.ok && (result.error ?? "").includes(step.expect.error_contains);
         if (!(okMatches && outputOk && errorOk)) throw new TrailMismatchError(i, step, result);
       }
     }
@@ -341,7 +334,7 @@ export function defaultAdapters(): BenchmarkAdapter[] {
 // Canonical configuration C (m05)
 // ---------------------------------------------------------------------------
 
-export interface CanonicalAdapterOptions {
+export type CanonicalAdapterOptions = {
   /** Stable config id; defaults to "C". */
   configId?: string;
   name?: string;
@@ -364,7 +357,7 @@ export interface CanonicalAdapterOptions {
   verificationPolicy?: VerificationPolicy;
   maxTurns?: number;
   maxCompletionTokens?: number;
-}
+};
 
 const parseArgumentsObject = (argumentsText: string): Record<string, unknown> => {
   try {
@@ -377,12 +370,7 @@ const parseArgumentsObject = (argumentsText: string): Record<string, unknown> =>
 };
 
 /** Maps one harness event onto the benchmark trajectory contract. */
-function recordHarnessEvent(
-  ctx: AdapterRunContext,
-  event: HarnessEvent,
-  toolCount: number,
-  requests: Map<number, ModelRequestEvent>,
-): void {
+function recordHarnessEvent(ctx: AdapterRunContext, event: HarnessEvent, toolCount: number, requests: Map<number, ModelRequestEvent>): void {
   switch (event.type) {
     case "model_request": {
       const request: ModelRequestEvent = {
@@ -472,7 +460,8 @@ export function createCanonicalAdapter(options: CanonicalAdapterOptions = {}): B
   return {
     configId,
     name: options.name ?? "canonical C",
-    description: options.description ??
+    description:
+      options.description ??
       `canonical Harmony harness (compact tool surface + m05 reliability guards); transport is injected, so hermetic tests drive it with a fake transport`,
     requiresExternalInference,
     async run(ctx: AdapterRunContext): Promise<void> {
@@ -480,7 +469,7 @@ export function createCanonicalAdapter(options: CanonicalAdapterOptions = {}): B
         throw new CanonicalAdapterError(
           "canonical config C: no transport was injected, so live inference is gated. " +
             "The runner refuses external-inference adapters; no environment variable, CLI flag or secret is read — " +
-            "construct the adapter with an approved or fake transport.",
+            "construct the adapter with an approved or fake transport."
         );
       }
       const tools = surface.definitions;
@@ -490,10 +479,9 @@ export function createCanonicalAdapter(options: CanonicalAdapterOptions = {}): B
           tools: tools.map((tool) => tool.name),
           budget: options.transcriptBudget ?? "medium",
         }),
-        userPrompt: `${ctx.task.title} — ${ctx.task.description}\n` +
-          `Verify your work before answering; the declared verification command is ${
-            JSON.stringify(ctx.task.verify?.command ?? null)
-          }.`,
+        userPrompt:
+          `${ctx.task.title} — ${ctx.task.description}\n` +
+          `Verify your work before answering; the declared verification command is ${JSON.stringify(ctx.task.verify?.command ?? null)}.`,
         transport: (body, requestOptions) =>
           options.transport!(body, {
             ...requestOptions,
@@ -510,7 +498,9 @@ export function createCanonicalAdapter(options: CanonicalAdapterOptions = {}): B
         maxTurns: options.maxTurns ?? 48,
         maxCompletionTokens: options.maxCompletionTokens ?? 512,
         maxToolCalls: ctx.task.max_tool_calls,
-        emit: (event) => recordHarnessEvent(ctx, event, tools.length, requests),
+        emit: (event) => {
+          recordHarnessEvent(ctx, event, tools.length, requests);
+        },
         signal: ctx.signal,
       });
       if (outcome.abortedReason === "signal") throw new TaskTimeoutError(ctx.task.timeout_ms);

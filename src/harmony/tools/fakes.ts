@@ -37,14 +37,14 @@ import { ToolExecutionError } from "./result.ts";
 // ---------------------------------------------------------------------------
 
 /** One scripted shell response. `command` matches exactly or by RegExp. */
-export interface FakeShellEntry {
+export type FakeShellEntry = {
   command: string | RegExp;
   exit_code?: number;
   stdout?: string;
   stderr?: string;
   /** Simulate a time-out instead of returning an exit code. */
   timed_out?: boolean;
-}
+};
 
 /** Deterministic scripted shell: first matching entry wins, unknown falls back. */
 export class FakeShell {
@@ -52,7 +52,7 @@ export class FakeShell {
 
   constructor(
     readonly entries: readonly FakeShellEntry[] = [],
-    fallback?: Readonly<Omit<FakeShellEntry, "command">>,
+    fallback?: Readonly<Omit<FakeShellEntry, "command">>
   ) {
     this.#fallback = fallback ?? { exit_code: 127 };
   }
@@ -83,7 +83,7 @@ export class FakeShell {
 // Fake workspace
 // ---------------------------------------------------------------------------
 
-export interface FakeWorkspaceOptions {
+export type FakeWorkspaceOptions = {
   /** Label used in error messages; default `fake-workspace`. */
   label?: string;
   /** Initial file tree, keyed by workspace-relative path. */
@@ -92,7 +92,7 @@ export interface FakeWorkspaceOptions {
   writeScope?: readonly string[];
   /** Scripted shell; default rejects every command with exit 127. */
   shell?: FakeShell;
-}
+};
 
 /** In-memory workspace backend with scripted shell and write-scope checks. */
 export class FakeWorkspaceBackend implements WorkspaceBackend {
@@ -138,24 +138,15 @@ export class FakeWorkspaceBackend implements WorkspaceBackend {
   write(rel: string, content: string): void {
     const path = this.#resolve(rel);
     if (!this.isAllowedWrite(path)) {
-      throw new ToolExecutionError(
-        "write_scope",
-        `write scope violation: ${path} is not writable (scope: ${this.describeWriteScope()})`,
-      );
+      throw new ToolExecutionError("write_scope", `write scope violation: ${path} is not writable (scope: ${this.describeWriteScope()})`);
     }
     this.#files.set(path, content);
   }
 
-  applyPatch(
-    rel: string,
-    patch: Readonly<{ old: string; new: string; add: boolean }>,
-  ): Readonly<{ applied: true; detail: string }> {
+  applyPatch(rel: string, patch: Readonly<{ old: string; new: string; add: boolean }>): Readonly<{ applied: true; detail: string }> {
     const path = this.#resolve(rel);
     if (!this.isAllowedWrite(path)) {
-      throw new ToolExecutionError(
-        "write_scope",
-        `write scope violation: ${path} is not writable (scope: ${this.describeWriteScope()})`,
-      );
+      throw new ToolExecutionError("write_scope", `write scope violation: ${path} is not writable (scope: ${this.describeWriteScope()})`);
     }
     if (patch.add) {
       if (this.#files.has(path)) {
@@ -178,17 +169,14 @@ export class FakeWorkspaceBackend implements WorkspaceBackend {
     if (first === -1) {
       throw new ToolExecutionError("patch_failed", `patch failed: ${path} does not contain the expected old text`);
     }
-    if (content.indexOf(patch.old, first + 1) !== -1) {
+    if (content.includes(patch.old, first + 1)) {
       throw new ToolExecutionError("patch_failed", `patch failed: old text occurs more than once in ${path}`);
     }
     this.#files.set(path, content.slice(0, first) + patch.new + content.slice(first + patch.old.length));
     return { applied: true, detail: `patched ${path}` };
   }
 
-  execShell(
-    command: string,
-    _opts: Readonly<{ timeoutMs: number; signal?: AbortSignal }>,
-  ): Promise<ShellExecResult> {
+  execShell(command: string, _opts: Readonly<{ timeoutMs: number; signal?: AbortSignal }>): Promise<ShellExecResult> {
     return Promise.resolve(this.#shell.exec(command));
   }
 
@@ -204,20 +192,20 @@ export class FakeWorkspaceBackend implements WorkspaceBackend {
 // Fake browser
 // ---------------------------------------------------------------------------
 
-export interface FakeBrowserSearchEntry {
+export type FakeBrowserSearchEntry = {
   /** Exact query, matched case-insensitively. */
   query: string;
   results: readonly BrowserSearchResult[];
-}
+};
 
-export interface FakeBrowserOptions {
+export type FakeBrowserOptions = {
   /** Pages reachable through browser.open, keyed by URL. */
   pages?: Readonly<Record<string, BrowserPage>>;
   /** Search index entries, matched case-insensitively by exact query. */
   search?: readonly FakeBrowserSearchEntry[];
   /** Results returned for any query without an index entry. */
   searchFallback?: readonly BrowserSearchResult[];
-}
+};
 
 /** Deterministic offline browser: page map, search index, current-page state. */
 export class FakeBrowserBackend implements BrowserBackend {
@@ -303,14 +291,14 @@ export const FAKE_BROWSER_SEARCH: readonly FakeBrowserSearchEntry[] = [
   },
 ];
 
-export interface FakeToolBackendsOptions {
+export type FakeToolBackendsOptions = {
   files?: Readonly<Record<string, string>>;
   writeScope?: readonly string[];
   shell?: FakeShell;
   browserPages?: Readonly<Record<string, BrowserPage>>;
   browserSearch?: readonly FakeBrowserSearchEntry[];
   browserSearchFallback?: readonly BrowserSearchResult[];
-}
+};
 
 /** Assembles a complete deterministic ToolBackends with default fake data. */
 export const createFakeToolBackends = (opts: FakeToolBackendsOptions = {}): ToolBackends => ({

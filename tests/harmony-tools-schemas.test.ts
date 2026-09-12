@@ -14,20 +14,17 @@ import {
 } from "../src/harmony/tools/schemas.ts";
 
 Deno.test("tool schemas: the canonical surface is exactly the nine compact tools", () => {
-  assert.deepEqual(
-    [...CANONICAL_TOOL_NAMES].sort(),
-    [
-      "browser.find",
-      "browser.open",
-      "browser.search",
-      "editor.apply_patch",
-      "filesystem.find",
-      "filesystem.read",
-      "filesystem.search",
-      "shell.exec",
-      "task.update_plan",
-    ],
-  );
+  assert.deepEqual([...CANONICAL_TOOL_NAMES].sort(), [
+    "browser.find",
+    "browser.open",
+    "browser.search",
+    "editor.apply_patch",
+    "filesystem.find",
+    "filesystem.read",
+    "filesystem.search",
+    "shell.exec",
+    "task.update_plan",
+  ]);
   assert.equal(lookupToolSchema("shell.exec")?.name, "shell.exec");
   assert.equal(lookupToolSchema("shell.execx"), null);
 });
@@ -118,7 +115,7 @@ Deno.test("tool schemas: every canonical tool validates its documented argument 
 });
 
 Deno.test("tool schemas: validation rejects unknown tools, unknown args, missing and mistyped args", () => {
-  const cases: ReadonlyArray<{ tool: string; args: unknown; reason: string }> = [
+  const cases: readonly { tool: string; args: unknown; reason: string }[] = [
     { tool: "ghost.action", args: {}, reason: "unknown tool" },
     { tool: "filesystem.read", args: 42, reason: "arguments must be an object" },
     { tool: "filesystem.read", args: { path: "a.txt", magic: 1 }, reason: "unexpected argument" },

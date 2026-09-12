@@ -31,17 +31,20 @@ const bounded = (value: string | null | undefined, fallback: string, maximum = 1
 };
 
 export const recordAdminError = async (
-  input:
-    & Omit<AdminErrorLogRecord, "version" | "terminal_type" | "failure_kind">
-    & Readonly<{ terminal_type: string | null; failure_kind: string | null }>,
-  kvOverride?: Deno.Kv | null,
+  input: Omit<AdminErrorLogRecord, "version" | "terminal_type" | "failure_kind"> & Readonly<{ terminal_type: string | null; failure_kind: string | null }>,
+  kvOverride?: Deno.Kv | null
 ): Promise<void> => {
   // Authentication failures are not inference failures and must retain the
   // request path's zero-KV budget.
   if (input.status === 401 && input.provider === "gateway") return;
-  const failed = input.status >= 400 || input.terminal_type === "error" || input.terminal_type === "eof" ||
-    input.terminal_type === "deadline" || input.terminal_type === "response.failed" ||
-    input.terminal_type === "response.incomplete" || input.failure_kind !== null;
+  const failed =
+    input.status >= 400 ||
+    input.terminal_type === "error" ||
+    input.terminal_type === "eof" ||
+    input.terminal_type === "deadline" ||
+    input.terminal_type === "response.failed" ||
+    input.terminal_type === "response.incomplete" ||
+    input.failure_kind !== null;
   if (!failed) return;
 
   const kv = kvOverride === undefined ? await getKv() : kvOverride;
@@ -59,22 +62,27 @@ export const recordAdminError = async (
   });
 };
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
 export const isAdminErrorLogRecord = (value: unknown): value is AdminErrorLogRecord => {
   if (!isRecord(value)) return false;
-  return value.version === 1 && typeof value.request_id === "string" && typeof value.route === "string" &&
-    typeof value.status === "number" && typeof value.provider === "string" &&
+  return (
+    value.version === 1 &&
+    typeof value.request_id === "string" &&
+    typeof value.route === "string" &&
+    typeof value.status === "number" &&
+    typeof value.provider === "string" &&
     (value.model === null || typeof value.model === "string") &&
     (value.reasoning === null || typeof value.reasoning === "string") &&
-    (value.stream === null || typeof value.stream === "boolean") && typeof value.terminal_type === "string" &&
+    (value.stream === null || typeof value.stream === "boolean") &&
+    typeof value.terminal_type === "string" &&
     typeof value.failure_kind === "string" &&
-    (value.delivery_outcome === "delivered" || value.delivery_outcome === "interrupted" ||
-      value.delivery_outcome === "unobserved") &&
+    (value.delivery_outcome === "delivered" || value.delivery_outcome === "interrupted" || value.delivery_outcome === "unobserved") &&
     typeof value.created_at_ms === "number" &&
-    typeof value.latency_ms === "number" && (value.git_sha === null || typeof value.git_sha === "string") &&
-    (value.deno_revision === null || typeof value.deno_revision === "string");
+    typeof value.latency_ms === "number" &&
+    (value.git_sha === null || typeof value.git_sha === "string") &&
+    (value.deno_revision === null || typeof value.deno_revision === "string")
+  );
 };
 
 // These deployments let partial-body framing override an authoritative
@@ -99,30 +107,32 @@ const LEGACY_INTERRUPTED_MISSING_SSE_TERMINAL_GIT_SHAS = new Set([
 ]);
 
 const isLegacyInterruptedMissingSseTerminal = (record: AdminErrorLogRecord): boolean =>
-  record.status === 200 && record.stream === true && record.terminal_type === "error" &&
-  record.failure_kind === "missing_sse_terminal" && record.delivery_outcome === "interrupted" &&
-  record.git_sha !== null && LEGACY_INTERRUPTED_MISSING_SSE_TERMINAL_GIT_SHAS.has(record.git_sha);
+  record.status === 200 &&
+  record.stream === true &&
+  record.terminal_type === "error" &&
+  record.failure_kind === "missing_sse_terminal" &&
+  record.delivery_outcome === "interrupted" &&
+  record.git_sha !== null &&
+  LEGACY_INTERRUPTED_MISSING_SSE_TERMINAL_GIT_SHAS.has(record.git_sha);
 
 export type AdminErrorHistory = Readonly<{
   data: AdminErrorLogRecord[];
-  five_xx_buckets: Array<{ bucket_start_at_ms: number; count: number }>;
+  five_xx_buckets: { bucket_start_at_ms: number; count: number }[];
 }>;
 
-export const listAdminErrorHistory = async (
-  limit = DEFAULT_LIMIT,
-  kvOverride?: Deno.Kv | null,
-): Promise<AdminErrorHistory> => {
+export const listAdminErrorHistory = async (limit = DEFAULT_LIMIT, kvOverride?: Deno.Kv | null): Promise<AdminErrorHistory> => {
   const kv = kvOverride === undefined ? await getKv() : kvOverride;
   if (!kv) return { data: [], five_xx_buckets: [] };
   const boundedLimit = Math.max(1, Math.min(MAX_LIMIT, Math.trunc(limit)));
   const data: AdminErrorLogRecord[] = [];
   const fiveXxCounts = new Map<number, number>();
-  for await (
-    const entry of kv.list<AdminErrorLogRecord>({ prefix: ADMIN_ERROR_LOG_PREFIX }, {
+  for await (const entry of kv.list<AdminErrorLogRecord>(
+    { prefix: ADMIN_ERROR_LOG_PREFIX },
+    {
       reverse: true,
       batchSize: MAX_LIMIT,
-    })
-  ) {
+    }
+  )) {
     if (!isAdminErrorLogRecord(entry.value)) continue;
     const record = entry.value;
     if (record.status >= 500 && record.status <= 599) {
@@ -133,9 +143,7 @@ export const listAdminErrorHistory = async (
   }
   return {
     data,
-    five_xx_buckets: [...fiveXxCounts.entries()]
-      .sort(([left], [right]) => left - right)
-      .map(([bucket_start_at_ms, count]) => ({ bucket_start_at_ms, count })),
+    five_xx_buckets: [...fiveXxCounts.entries()].sort(([left], [right]) => left - right).map(([bucket_start_at_ms, count]) => ({ bucket_start_at_ms, count })),
   };
 };
 
@@ -147,5 +155,5 @@ export const handleAdminErrors = async (req: Request): Promise<Response> => {
   }
   const kv = await getKv();
   if (!kv) return openaiError(503, "Error history storage is unavailable", "server_error");
-  return json(200, { object: "list", ...await listAdminErrorHistory(limit, kv) });
+  return json(200, { object: "list", ...(await listAdminErrorHistory(limit, kv)) });
 };

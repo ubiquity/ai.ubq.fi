@@ -33,7 +33,7 @@ export const GATEWAY_GPT_OSS_MODEL = CEREBRAS_GPT_OSS_120B_MODEL;
 export const GATEWAY_GPT_OSS_EFFORTS = ["low", "medium", "high"] as const;
 export type GatewayGptOssEffort = (typeof GATEWAY_GPT_OSS_EFFORTS)[number];
 
-export interface BaselineAOptions {
+export type BaselineAOptions = {
   /** Injected transport; defaults to the live gateway transport. */
   transport?: ChatTransport;
   /** Reasoning effort sent on every request; default `medium` like the gateway. */
@@ -42,10 +42,9 @@ export interface BaselineAOptions {
   toolStrictness?: boolean;
   maxCompletionTokens?: number;
   maxRequests?: number;
-}
+};
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
 const SYSTEM_MESSAGE =
   "You are a deterministic benchmark agent. Complete the user's task inside the disposable workspace " +
@@ -78,9 +77,9 @@ function normalizeGatewayCompletion(value: unknown): ParsedChatCompletion | { er
   const usageRaw = payload.usage;
   const usage = isRecord(usageRaw)
     ? {
-      inputTokens: typeof usageRaw.prompt_tokens === "number" ? usageRaw.prompt_tokens : 0,
-      outputTokens: typeof usageRaw.completion_tokens === "number" ? usageRaw.completion_tokens : 0,
-    }
+        inputTokens: typeof usageRaw.prompt_tokens === "number" ? usageRaw.prompt_tokens : 0,
+        outputTokens: typeof usageRaw.completion_tokens === "number" ? usageRaw.completion_tokens : 0,
+      }
     : null;
   return {
     content,
@@ -95,16 +94,10 @@ export function createBaselineA(options: BaselineAOptions = {}): BenchmarkAdapte
   // before any request is dispatched.
   const effortValue = (options.reasoningEffort ?? "medium") as string;
   if (effortValue === "none") {
-    throw new BaselineAdapterError(
-      "reasoning_effort 'none' is not supported for gpt-oss-120b. Use low, medium, or high.",
-      "invalid-config",
-    );
+    throw new BaselineAdapterError("reasoning_effort 'none' is not supported for gpt-oss-120b. Use low, medium, or high.", "invalid-config");
   }
   if (!(GATEWAY_GPT_OSS_EFFORTS as readonly string[]).includes(effortValue)) {
-    throw new BaselineAdapterError(
-      `reasoning_effort must be one of ${GATEWAY_GPT_OSS_EFFORTS.join(", ")} for gpt-oss-120b`,
-      "invalid-config",
-    );
+    throw new BaselineAdapterError(`reasoning_effort must be one of ${GATEWAY_GPT_OSS_EFFORTS.join(", ")} for gpt-oss-120b`, "invalid-config");
   }
   const effort = effortValue as GatewayGptOssEffort;
   const transport = options.transport ?? gatewayChatTransport();
@@ -114,7 +107,8 @@ export function createBaselineA(options: BaselineAOptions = {}): BenchmarkAdapte
   return {
     configId: "A",
     name: "gateway-gpt-oss-chat",
-    description: "Current gateway GPT-OSS Chat Completions behavior (gpt-oss-120b via the gateway transport, " +
+    description:
+      "Current gateway GPT-OSS Chat Completions behavior (gpt-oss-120b via the gateway transport, " +
       "official tools contract, reasoning_effort medium). Live calls require the approved inference gate.",
     requiresExternalInference: true,
     async run(ctx: AdapterRunContext): Promise<void> {

@@ -35,7 +35,15 @@ Deno.test("inference signal propagates downstream cancellation", () => {
 Deno.test("inference signal enforces its deadline", async () => {
   const signal = createInferenceSignal(new AbortController().signal, 1);
 
-  await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+  await new Promise<void>((resolve) => {
+    signal.addEventListener(
+      "abort",
+      () => {
+        resolve();
+      },
+      { once: true }
+    );
+  });
 
   assert.equal(signal.aborted, true);
   assert.equal(signal.reason?.name, "TimeoutError");
@@ -45,13 +53,29 @@ Deno.test("failover attempts share one pre-header deadline", async () => {
   const request = new AbortController();
   const shared = createStreamFirstEventDeadline(request.signal, 80);
   const primary = createStreamSemanticDeadline(shared.signal, 30);
-  await new Promise<void>((resolve) => primary.signal.addEventListener("abort", () => resolve(), { once: true }));
+  await new Promise<void>((resolve) => {
+    primary.signal.addEventListener(
+      "abort",
+      () => {
+        resolve();
+      },
+      { once: true }
+    );
+  });
   assert.equal(primary.signal.reason?.name, "TimeoutError");
   assert.equal(shared.signal.aborted, false);
   const remainingAtFallback = shared.remainingMs();
   assert.ok(remainingAtFallback > 0 && remainingAtFallback < 80);
   const fallback = createStreamSemanticDeadline(shared.signal, Math.ceil(remainingAtFallback) + 20);
-  await new Promise<void>((resolve) => fallback.signal.addEventListener("abort", () => resolve(), { once: true }));
+  await new Promise<void>((resolve) => {
+    fallback.signal.addEventListener(
+      "abort",
+      () => {
+        resolve();
+      },
+      { once: true }
+    );
+  });
   assert.equal(shared.signal.aborted, true);
   assert.equal(fallback.signal.reason?.name, "TimeoutError");
   primary.clear();

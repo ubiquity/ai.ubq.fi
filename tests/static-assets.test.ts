@@ -28,22 +28,20 @@ import privacyHtml from "../static/privacy.html" with { type: "text" };
 import styleCss from "../static/style.css" with { type: "text" };
 
 Deno.test("static assets register frontend module dependencies", () => {
-  for (
-    const path of [
-      "/admin.js",
-      "/admin.css",
-      "/auth.js",
-      "/auth-relay.js",
-      "/chat-stats.js",
-      "/foreground-refresh.js",
-      "/network.js",
-      "/models.js",
-      "/models.css",
-      "/reasoning-select.js",
-      "/admin-cache.js",
-      "/toast.js",
-    ]
-  ) {
+  for (const path of [
+    "/admin.js",
+    "/admin.css",
+    "/auth.js",
+    "/auth-relay.js",
+    "/chat-stats.js",
+    "/foreground-refresh.js",
+    "/network.js",
+    "/models.js",
+    "/models.css",
+    "/reasoning-select.js",
+    "/admin-cache.js",
+    "/toast.js",
+  ]) {
     assert.equal(hasStaticAsset(path), true, `${path} should be registered`);
   }
   assert.match(chatHtml, /<script type="module" src="\/chat\.js\?v=20260903-chat-motion-v1"><\/script>/);
@@ -53,10 +51,7 @@ Deno.test("static assets register frontend module dependencies", () => {
 
 Deno.test("chat response stats use one conversation bar below the composer", () => {
   assert.equal((chatHtml.match(/\bdata-chat-stats\b/g) ?? []).length, 1);
-  assert.match(
-    chatHtml,
-    /<\/form>\s*<div data-chat-stats role="status" aria-live="polite" aria-atomic="true" hidden><\/div>/,
-  );
+  assert.match(chatHtml, /<\/form>\s*<div data-chat-stats role="status" aria-live="polite" aria-atomic="true" hidden><\/div>/);
   assert.doesNotMatch(chatHtml, /data-message-stats/);
   assert.doesNotMatch(chatScript, /appendChatMessageStats|data-message-stats/);
   assert.match(chatScript, /recordCompletedChatResponse\(chatStats, sample\)/);
@@ -96,49 +91,35 @@ Deno.test("public console pages share versioned styles, canonical navigation, an
   ];
 
   for (const page of pages) {
-    const stylesheetHrefs = [...page.html.matchAll(/<link\b(?=[^>]*\brel="stylesheet")[^>]*\bhref="([^"]+)"[^>]*>/g)]
-      .map((match) => match[1]);
+    const stylesheetHrefs = [...page.html.matchAll(/<link\b(?=[^>]*\brel="stylesheet")[^>]*\bhref="([^"]+)"[^>]*>/g)].map((match) => match[1]);
     assert.deepEqual(
       stylesheetHrefs,
       [`/style.css?v=${assetVersion}`, `/${page.pageCss}?v=${assetVersion}`],
-      `${page.name} should load only the release-matched shared and page styles`,
+      `${page.name} should load only the release-matched shared and page styles`
     );
     for (const href of stylesheetHrefs) {
       assert.equal(hasStaticAsset(new URL(href, "https://ai.ubq.fi").pathname), true, `${href} should be registered`);
     }
 
-    assert.equal(
-      (page.html.match(/<header\b[^>]*\bdata-shared-header\b[^>]*>/g) ?? []).length,
-      1,
-      `${page.name} should have one shared header`,
-    );
-    assert.equal(
-      (page.html.match(/<nav\b[^>]*\bdata-actions\b[^>]*>/g) ?? []).length,
-      1,
-      `${page.name} should have one actions navigation`,
-    );
-    const primaryNavMatches = [
-      ...page.html.matchAll(
-        /<nav\b(?=[^>]*\bdata-actions\b)(?=[^>]*\baria-label="Primary")[^>]*>([\s\S]*?)<\/nav>/g,
-      ),
-    ];
+    assert.equal((page.html.match(/<header\b[^>]*\bdata-shared-header\b[^>]*>/g) ?? []).length, 1, `${page.name} should have one shared header`);
+    assert.equal((page.html.match(/<nav\b[^>]*\bdata-actions\b[^>]*>/g) ?? []).length, 1, `${page.name} should have one actions navigation`);
+    const primaryNavMatches = [...page.html.matchAll(/<nav\b(?=[^>]*\bdata-actions\b)(?=[^>]*\baria-label="Primary")[^>]*>([\s\S]*?)<\/nav>/g)];
     assert.equal(primaryNavMatches.length, 1, `${page.name} should have one actions primary navigation`);
     const primaryNav = primaryNavMatches[0]?.[1] ?? "";
-    assert.doesNotMatch(
-      primaryNav,
-      /<a\b[^>]*\bdata-variant="primary"/,
-      `${page.name} primary navigation must derive its active treatment from aria-current`,
-    );
+    assert.doesNotMatch(primaryNav, /<a\b[^>]*\bdata-variant="primary"/, `${page.name} primary navigation must derive its active treatment from aria-current`);
 
     const links = [...primaryNav.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/g)].map((match) => ({
       attributes: match[1] ?? "",
       href: match[1]?.match(/\bhref="([^"]+)"/)?.[1] ?? "",
-      label: (match[2] ?? "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim(),
+      label: (match[2] ?? "")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim(),
     }));
     assert.deepEqual(
       links.map(({ href, label }) => ({ href, label })),
       canonicalLinks,
-      `${page.name} should preserve the canonical primary navigation order and labels`,
+      `${page.name} should preserve the canonical primary navigation order and labels`
     );
     for (const link of links) {
       assert.match(link.attributes, /\bdata-button\b/, `${page.name} ${link.label} should use the shared nav control`);
@@ -148,12 +129,12 @@ Deno.test("public console pages share versioned styles, canonical navigation, an
     assert.equal(
       (primaryNav.match(/\baria-current=/g) ?? []).length,
       page.activeHref === null ? 0 : 1,
-      `${page.name} should not expose an alternate or duplicate primary current state`,
+      `${page.name} should not expose an alternate or duplicate primary current state`
     );
     assert.deepEqual(
       currentLinks.map(({ href }) => href),
       page.activeHref === null ? [] : [page.activeHref],
-      `${page.name} should mark only its matching canonical destination as current`,
+      `${page.name} should mark only its matching canonical destination as current`
     );
   }
 
@@ -161,7 +142,7 @@ Deno.test("public console pages share versioned styles, canonical navigation, an
   assert.match(
     adminHtml,
     /<nav data-actions aria-label="Primary">[\s\S]*href="\/models">Models<\/a>[\s\S]*href="\/developers">Developers<\/a>[\s\S]*href="\/docs">Docs<\/a>[\s\S]*href="\/chat">Chat<\/a>[\s\S]*href="\/admin">Admin<\/a>[\s\S]*<\/nav>/,
-    "admin should share the canonical primary navigation with the public pages",
+    "admin should share the canonical primary navigation with the public pages"
   );
 });
 
@@ -196,15 +177,18 @@ Deno.test("public console styles retain the bordered neutral admin surface witho
   const colorChannels = (literal: string): [number, number, number] | null => {
     if (literal.startsWith("#")) {
       const hex = literal.slice(1);
-      const rgb = hex.length === 3 || hex.length === 4
-        ? hex.slice(0, 3).split("").map((channel) => channel.repeat(2)).join("")
-        : hex.slice(0, 6);
+      const rgb =
+        hex.length === 3 || hex.length === 4
+          ? hex
+              .slice(0, 3)
+              .split("")
+              .map((channel) => channel.repeat(2))
+              .join("")
+          : hex.slice(0, 6);
       if (rgb.length !== 6) return null;
       return [0, 2, 4].map((offset) => Number.parseInt(rgb.slice(offset, offset + 2), 16)) as [number, number, number];
     }
-    const match = literal.match(
-      /^rgba?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)/i,
-    );
+    const match = /^rgba?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)/i.exec(literal);
     return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
   };
   const decorativeBlues = cssColorLiterals.filter((literal) => {
@@ -220,32 +204,17 @@ Deno.test("published guidance documents endpoint-specific output caps and reposi
   for (const publishedText of [readmeText, llmsFullText]) {
     assert.match(publishedText, /`max_completion_tokens` is the OpenAI Chat Completions cap/);
     assert.match(publishedText, /`max_output_tokens` is the OpenAI Responses cap/);
-    assert.match(
-      publishedText,
-      /Chat Completions to Codex[\s\S]*translated to the Codex Responses field `max_output_tokens`/,
-    );
-    assert.match(
-      publishedText,
-      /Responses to Codex[\s\S]*`max_output_tokens` is forwarded as `max_output_tokens`/,
-    );
-    assert.match(
-      publishedText,
-      /Chat Completions to Cerebras \(`gpt-oss-120b`\)[\s\S]*forwarded unchanged/,
-    );
-    assert.match(
-      publishedText,
-      /Paid fallback \(Metered or Surplus\)[\s\S]*Chat `max_completion_tokens` arrives as `max_output_tokens`/,
-    );
+    assert.match(publishedText, /Chat Completions to Codex[\s\S]*translated to the Codex Responses field `max_output_tokens`/);
+    assert.match(publishedText, /Responses to Codex[\s\S]*`max_output_tokens` is forwarded as `max_output_tokens`/);
+    assert.match(publishedText, /Chat Completions to Cerebras \(`gpt-oss-120b`\)[\s\S]*forwarded unchanged/);
+    assert.match(publishedText, /Paid fallback \(Metered or Surplus\)[\s\S]*Chat `max_completion_tokens` arrives as `max_output_tokens`/);
     assert.match(publishedText, /Do not swap these fields between endpoints/);
   }
 
   assert.doesNotMatch(readmeText, /cd lib\/ai\.ubq\.fi/);
   assert.match(readmeText, /git rev-parse --show-toplevel/);
   assert.match(llmsFullText, /scripts\/upload-codex-auth\.ts/);
-  assert.match(
-    llmsFullText,
-    /deno task upload:auth --url https:\/\/ai\.ubq\.fi --auth-json ~\/\.codex\/auth\.json/,
-  );
+  assert.match(llmsFullText, /deno task upload:auth --url https:\/\/ai\.ubq\.fi --auth-json ~\/\.codex\/auth\.json/);
 });
 
 Deno.test("models page labels provider counts as catalog entries, not inference availability", () => {
@@ -262,45 +231,37 @@ Deno.test("public brand logos are inline and inherit the page foreground", async
   const sourcePath = companyLogoSvg.match(/<path\b[\s\S]*?\bd="([^"]+)"/)?.[1];
   assert.ok(sourcePath, "the source logo must define a path");
 
-  for (
-    const [path, sourceHtml] of [
-      ["/about", aboutHtml],
-      ["/contact", contactHtml],
-      ["/developers", developersHtml],
-      ["/models", modelsHtml],
-      ["/privacy", privacyHtml],
-    ]
-  ) {
+  for (const [path, sourceHtml] of [
+    ["/about", aboutHtml],
+    ["/contact", contactHtml],
+    ["/developers", developersHtml],
+    ["/models", modelsHtml],
+    ["/privacy", privacyHtml],
+  ]) {
     const response = await handleStaticAsset(path);
     assert.equal(response?.status, 200, `${path} must be publicly served`);
     const html = await response!.text();
     assert.equal(html, sourceHtml, `${path} must serve the inline brand markup`);
     assert.doesNotMatch(html, /<img\b[^>]*(?:data-logo|data-models-logo)[^>]*>/, `${path} must not embed its logo`);
-    assert.match(
-      html,
-      /<svg\b(?=[^>]*\bdata-logo\b)[^>]*>[\s\S]*?<path\b[\s\S]*?fill="currentColor"/,
-      `${path} must use an inline currentColor logo`,
-    );
-    const inlinePath = html.match(/<svg\b(?=[^>]*\bdata-logo\b)[^>]*>[\s\S]*?<path\b[\s\S]*?\bd="([^"]+)"/)?.[1];
+    assert.match(html, /<svg\b(?=[^>]*\bdata-logo\b)[^>]*>[\s\S]*?<path\b[\s\S]*?fill="currentColor"/, `${path} must use an inline currentColor logo`);
+    const inlinePath = /<svg\b(?=[^>]*\bdata-logo\b)[^>]*>[\s\S]*?<path\b[\s\S]*?\bd="([^"]+)"/.exec(html)?.[1];
     assert.equal(inlinePath, sourcePath, `${path} must preserve the company logo path`);
   }
 });
 
 Deno.test("public agent-readiness pages and crawl artifacts are registered", () => {
-  for (
-    const path of [
-      "/developers",
-      "/developers.html",
-      "/about",
-      "/about.html",
-      "/contact",
-      "/contact.html",
-      "/privacy",
-      "/privacy.html",
-      "/robots.txt",
-      "/sitemap.xml",
-    ]
-  ) {
+  for (const path of [
+    "/developers",
+    "/developers.html",
+    "/about",
+    "/about.html",
+    "/contact",
+    "/contact.html",
+    "/privacy",
+    "/privacy.html",
+    "/robots.txt",
+    "/sitemap.xml",
+  ]) {
     assert.equal(hasStaticAsset(path), true, `${path} should be registered`);
   }
 });
@@ -331,20 +292,12 @@ Deno.test("admin provider view places capacity history before current providers"
   assert.match(adminScript, /Authorization: `Bearer \$\{token\}`/);
   assert.match(adminScript, /auth\.js\?v=passkey-relay-20260823-v5/);
   assert.match(adminScript, /credentials: "include"/);
-  assert.match(
-    adminScript,
-    /if \(!getAdminToken\(\) \|\| \(isRemoteRelayOrigin\(\) && relaySessionActive\)\) headers\.delete\("Authorization"\)/,
-  );
+  assert.match(adminScript, /if \(!getAdminToken\(\) \|\| \(isRemoteRelayOrigin\(\) && relaySessionActive\)\) headers\.delete\("Authorization"\)/);
   const cookieFirstIndex = adminScript.indexOf("authResult = await requestAuth({});");
-  const bearerFallbackIndex = adminScript.indexOf(
-    "authResult = await requestAuth({ Authorization: `Bearer ${token}` });",
-  );
+  const bearerFallbackIndex = adminScript.indexOf("authResult = await requestAuth({ Authorization: `Bearer ${token}` });");
   assert.ok(cookieFirstIndex >= 0);
   assert.ok(bearerFallbackIndex > cookieFirstIndex);
-  assert.match(
-    adminScript,
-    /relaySessionActive = false;\s+const authenticated = await testAdminToken\(\{ allowBearerFallback: false \}\)/,
-  );
+  assert.match(adminScript, /relaySessionActive = false;\s+const authenticated = await testAdminToken\(\{ allowBearerFallback: false \}\)/);
   assert.match(adminScript, /testAdminToken\(\{ allowBearerFallback: false \}\)/);
   assert.match(adminScript, /authResult\.data\?\.auth\?\.method\?\.kind === "passkey_session"/);
   assert.match(adminScript, /if \(relaySessionActive\) return ""/);
@@ -359,10 +312,7 @@ Deno.test("admin provider view places capacity history before current providers"
 });
 
 Deno.test("admin error tab opens its view", () => {
-  assert.match(
-    adminScript,
-    /viewTabErrors\.addEventListener\("click", \(\) => setAdminView\("errors", \{ hashMode: "push", focusAuth: true \}\)\)/,
-  );
+  assert.match(adminScript, /viewTabErrors\.addEventListener\("click", \(\) => setAdminView\("errors", \{ hashMode: "push", focusAuth: true \}\)\)/);
   assert.match(adminScript, /const loadId = \+\+errorsLoadId/);
   assert.match(adminScript, /if \(loadId !== errorsLoadId\) return/);
   assert.match(adminScript, /invalidateAdminErrors\("Sign in to load gateway errors\."\)/);
@@ -375,48 +325,33 @@ Deno.test("admin responses use a scoped IndexedDB stale cache", () => {
   assert.match(adminCacheScript, /objectStore\(STORE_NAME\)\.get/);
   assert.doesNotMatch(adminCacheScript, /localStorage|Authorization|Cookie/);
 
-  assert.match(
-    adminScript,
-    /import \{ createAdminSnapshotCache \} from "\.\/admin-cache\.js\?v=admin-indexeddb-cache-20260830-v7";/,
-  );
+  assert.match(adminScript, /import \{ createAdminSnapshotCache \} from "\.\/admin-cache\.js\?v=admin-indexeddb-cache-20260830-v7";/);
   assert.match(adminScript, /const cacheFreshAdminRead = \(response, cacheKey, scope, epoch\) =>/);
   assert.match(adminScript, /if \(!response\.ok \|\| !cacheKey \|\| !scope/);
   assert.match(adminScript, /const hydrateAdminSnapshots = async \(\) =>/);
   assert.match(
     adminScript,
-    /setAdminSnapshotScopeFromAuth\(data\.auth\);\s+setAdminAccessState\(\{ checked: true, isAdmin: true, isSuperAdmin \}\);\s+void hydrateAdminSnapshots\(\);/,
+    /setAdminSnapshotScopeFromAuth\(data\.auth\);\s+setAdminAccessState\(\{ checked: true, isAdmin: true, isSuperAdmin \}\);\s+void hydrateAdminSnapshots\(\);/
   );
   assert.match(adminScript, /globalThis\.requestAnimationFrame\(\(\) => \{\s+globalThis\.setTimeout/);
   assert.doesNotMatch(adminScript, /showPendingAdminViewAfterPrefetch/);
   assert.match(
     adminScript,
-    /adminAccessState\.checked && adminAccessState\.isAdmin && currentAdminView === ADMIN_VIEW_DEFAULT\) \{\s+setAdminView\(ADMIN_VIEW_AUTHENTICATED_DEFAULT, \{ allowInaccessible: false \}\);/,
+    /adminAccessState\.checked && adminAccessState\.isAdmin && currentAdminView === ADMIN_VIEW_DEFAULT\) \{\s+setAdminView\(ADMIN_VIEW_AUTHENTICATED_DEFAULT, \{ allowInaccessible: false \}\);/
   );
   assert.match(adminScript, /"Cached · refreshing"/);
   assert.match(adminScript, /setKeysBadge\("ok", view === "all" \? "No API keys" : `No \$\{view\} API keys`\);/);
   assert.match(adminScript, /const readCachedApiKeyRequestLogs = async \(keyId\) =>/);
   assert.match(adminScript, /renderApiKeyRequestLogs\(panel, list, summary, cached\.records, "Cached · refreshing"\);/);
   assert.match(adminScript, /const inFlightEntry = \{ scope, epoch, request: null \};/);
+  assert.match(adminScript, /isCurrentApiKeyRequestLogCacheEntry\(cached, scope, epoch\)[\s\S]*now - cached\.fetchedAt < API_KEY_REQUEST_LOGS_TTL_MS/);
+  assert.match(adminScript, /if \(isCurrentApiKeyRequestLogScope\(scope, epoch\)\) \{\s+apiKeyRequestLogCache\.set\(cacheKey, \{[\s\S]*scope,[\s\S]*epoch,/);
+  assert.match(adminScript, /if \(apiKeyRequestLogPromises\.get\(cacheKey\) === inFlightEntry\) \{\s+apiKeyRequestLogPromises\.delete\(cacheKey\);/);
   assert.match(
     adminScript,
-    /isCurrentApiKeyRequestLogCacheEntry\(cached, scope, epoch\)[\s\S]*now - cached\.fetchedAt < API_KEY_REQUEST_LOGS_TTL_MS/,
+    /const scope = adminCacheScope;\s+const epoch = adminCacheEpoch;\s+const isCurrentPanel = \(\) =>[\s\S]*isCurrentApiKeyRequestLogScope\(scope, epoch\);/
   );
-  assert.match(
-    adminScript,
-    /if \(isCurrentApiKeyRequestLogScope\(scope, epoch\)\) \{\s+apiKeyRequestLogCache\.set\(cacheKey, \{[\s\S]*scope,[\s\S]*epoch,/,
-  );
-  assert.match(
-    adminScript,
-    /if \(apiKeyRequestLogPromises\.get\(cacheKey\) === inFlightEntry\) \{\s+apiKeyRequestLogPromises\.delete\(cacheKey\);/,
-  );
-  assert.match(
-    adminScript,
-    /const scope = adminCacheScope;\s+const epoch = adminCacheEpoch;\s+const isCurrentPanel = \(\) =>[\s\S]*isCurrentApiKeyRequestLogScope\(scope, epoch\);/,
-  );
-  assert.match(
-    adminScript,
-    /const cached = await readCachedApiKeyRequestLogs\(currentKeyId\);\s+if \(!isCurrentPanel\(\)\)/,
-  );
+  assert.match(adminScript, /const cached = await readCachedApiKeyRequestLogs\(currentKeyId\);\s+if \(!isCurrentPanel\(\)\)/);
   assert.match(adminScript, /const response = await refresh;\s+if \(!isCurrentPanel\(\)\)/);
   assert.match(adminScript, /clearAdminSnapshotScope\(\);/);
 });
@@ -428,14 +363,8 @@ Deno.test("admin boot probes server auth mode without requiring a browser token"
 });
 
 Deno.test("expanded auth widget keeps its mobile toggle right-aligned", () => {
-  assert.match(
-    adminCss,
-    /\[data-auth-widget\]\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/,
-  );
-  assert.match(
-    adminCss,
-    /#auth-widget-toggle\s*\{[^}]*grid-column:\s*1;[^}]*justify-self:\s*end/,
-  );
+  assert.match(adminCss, /\[data-auth-widget\]\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/);
+  assert.match(adminCss, /#auth-widget-toggle\s*\{[^}]*grid-column:\s*1;[^}]*justify-self:\s*end/);
   assert.match(adminCss, /#auth-widget-panel\s*\{[^}]*grid-column:\s*1/);
 });
 
@@ -454,14 +383,8 @@ Deno.test("provider analytics graph reports inference 5xx buckets", () => {
 Deno.test("provider analytics graph preserves its SVG text aspect ratio", () => {
   assert.match(adminScript, /preserveAspectRatio: "xMinYMin meet"/);
   assert.match(adminScript, /viewBox: `0 0 \$\{width\} \$\{height\}`,[\s\S]*?width,[\s\S]*?height,/);
-  assert.match(
-    adminCss,
-    /\[data-capacity-chart-svg\]\s*\{[\s\S]*?height:\s*var\(--capacity-chart-height-px, 180px\)/,
-  );
-  assert.doesNotMatch(
-    adminCss,
-    /\[data-capacity-chart-svg\]\s*\{[^}]*height:\s*clamp\(/,
-  );
+  assert.match(adminCss, /\[data-capacity-chart-svg\]\s*\{[\s\S]*?height:\s*var\(--capacity-chart-height-px, 180px\)/);
+  assert.doesNotMatch(adminCss, /\[data-capacity-chart-svg\]\s*\{[^}]*height:\s*clamp\(/);
 });
 
 Deno.test("static assets register autonomous agent discovery documents", () => {
@@ -476,37 +399,23 @@ Deno.test("OpenAPI discovery contract describes the public inference API", () =>
   assert.equal(document.openapi, "3.1.0");
   assert.equal(document.servers[0].url, "https://ai.ubq.fi");
   assert.ok(document.components.securitySchemes.bearerAuth);
-  for (
-    const [path, method] of [
-      ["/health", "get"],
-      ["/v1/models", "get"],
-      ["/v1/chat/completions", "post"],
-      ["/v1/responses", "post"],
-      ["/v1/images/generations", "post"],
-      ["/v1/images/edits", "post"],
-      ["/uos/models/capabilities", "get"],
-    ]
-  ) {
+  for (const [path, method] of [
+    ["/health", "get"],
+    ["/v1/models", "get"],
+    ["/v1/chat/completions", "post"],
+    ["/v1/responses", "post"],
+    ["/v1/images/generations", "post"],
+    ["/v1/images/edits", "post"],
+    ["/uos/models/capabilities", "get"],
+  ]) {
     const operation = document.paths[path][method];
     assert.equal(typeof operation.operationId, "string", `${method.toUpperCase()} ${path} needs an operation id`);
     assert.ok(operation.description.length > 80, `${method.toUpperCase()} ${path} needs a useful description`);
   }
-  assert.equal(
-    document.components.schemas.ChatCompletionRequest.properties.tools.items.$ref,
-    "#/components/schemas/FunctionTool",
-  );
-  assert.equal(
-    document.components.schemas.ChatCompletionRequest.properties.tool_choice.$ref,
-    "#/components/schemas/ToolChoice",
-  );
-  assert.equal(
-    document.components.schemas.ResponseRequest.properties.tools.items.$ref,
-    "#/components/schemas/ResponseFunctionTool",
-  );
-  assert.equal(
-    document.components.schemas.ResponseRequest.properties.tool_choice.$ref,
-    "#/components/schemas/ResponseToolChoice",
-  );
+  assert.equal(document.components.schemas.ChatCompletionRequest.properties.tools.items.$ref, "#/components/schemas/FunctionTool");
+  assert.equal(document.components.schemas.ChatCompletionRequest.properties.tool_choice.$ref, "#/components/schemas/ToolChoice");
+  assert.equal(document.components.schemas.ResponseRequest.properties.tools.items.$ref, "#/components/schemas/ResponseFunctionTool");
+  assert.equal(document.components.schemas.ResponseRequest.properties.tool_choice.$ref, "#/components/schemas/ResponseToolChoice");
   assert.equal(document.components.schemas.ResponseRequest.required, undefined);
   const responseFunctionTool = document.components.schemas.ResponseFunctionTool;
   assert.deepEqual(responseFunctionTool.required, ["type", "name"]);
@@ -528,41 +437,20 @@ Deno.test("OpenAPI discovery contract describes the public inference API", () =>
   assert.equal(generation.operationId, "createImage");
   assert.equal(edit.operationId, "createImageEdit");
   assert.deepEqual(Object.keys(generation.requestBody.content), ["application/json"]);
-  assert.deepEqual(
-    Object.keys(edit.requestBody.content).sort(),
-    ["application/json", "multipart/form-data"],
-  );
-  assert.equal(
-    generation.requestBody.content["application/json"].schema.$ref,
-    "#/components/schemas/ImageGenerationRequest",
-  );
-  assert.equal(
-    edit.requestBody.content["application/json"].schema.$ref,
-    "#/components/schemas/ImageEditJsonRequest",
-  );
-  assert.equal(
-    edit.requestBody.content["multipart/form-data"].schema.$ref,
-    "#/components/schemas/ImageEditMultipartRequest",
-  );
+  assert.deepEqual(Object.keys(edit.requestBody.content).sort(), ["application/json", "multipart/form-data"]);
+  assert.equal(generation.requestBody.content["application/json"].schema.$ref, "#/components/schemas/ImageGenerationRequest");
+  assert.equal(edit.requestBody.content["application/json"].schema.$ref, "#/components/schemas/ImageEditJsonRequest");
+  assert.equal(edit.requestBody.content["multipart/form-data"].schema.$ref, "#/components/schemas/ImageEditMultipartRequest");
   assert.deepEqual(document.components.schemas.ImageGenerationRequest.required, ["prompt"]);
   assert.deepEqual(document.components.schemas.ImageEditJsonRequest.required, ["images", "prompt"]);
   assert.deepEqual(document.components.schemas.ImageEditMultipartRequest.required, ["prompt"]);
-  assert.deepEqual(document.components.schemas.ImageEditMultipartRequest.anyOf, [
-    { required: ["image"] },
-    { required: ["image[]"] },
-  ]);
+  assert.deepEqual(document.components.schemas.ImageEditMultipartRequest.anyOf, [{ required: ["image"] }, { required: ["image[]"] }]);
   assert.deepEqual(
     document.components.schemas.ImageEditMultipartRequest.properties["image[]"].oneOf,
-    document.components.schemas.ImageEditMultipartRequest.properties.image.oneOf,
+    document.components.schemas.ImageEditMultipartRequest.properties.image.oneOf
   );
-  assert.equal(
-    document.components.schemas.ImageEditJsonRequest.properties.images.items.$ref,
-    "#/components/schemas/ImageRef",
-  );
-  assert.equal(
-    document.components.schemas.ImageEditJsonRequest.properties.mask.$ref,
-    "#/components/schemas/ImageMaskRef",
-  );
+  assert.equal(document.components.schemas.ImageEditJsonRequest.properties.images.items.$ref, "#/components/schemas/ImageRef");
+  assert.equal(document.components.schemas.ImageEditJsonRequest.properties.mask.$ref, "#/components/schemas/ImageMaskRef");
   const imageRef = document.components.schemas.ImageRef;
   assert.deepEqual(imageRef.required, ["image_url"]);
   assert.equal(imageRef.anyOf, undefined);
@@ -573,7 +461,7 @@ Deno.test("OpenAPI discovery contract describes the public inference API", () =>
   assert.equal(imageRef.properties.image_url.maxLength, 20_971_520);
   assert.equal(
     imageRef.properties.image_url.pattern,
-    "^(?:[hH][tT][tT][pP][sS]?://|[dD][aA][tT][aA]:[iI][mM][aA][gG][eE]/(?:[pP][nN][gG]|[xX]-[pP][nN][gG]|[jJ][pP](?:[eE][gG]|[gG])|[wW][eE][bB][pP]);[bB][aA][sS][eE]64,)",
+    "^(?:[hH][tT][tT][pP][sS]?://|[dD][aA][tT][aA]:[iI][mM][aA][gG][eE]/(?:[pP][nN][gG]|[xX]-[pP][nN][gG]|[jJ][pP](?:[eE][gG]|[gG])|[wW][eE][bB][pP]);[bB][aA][sS][eE]64,)"
   );
   assert.equal(imageRef.properties.file_id, undefined);
   const imageMaskRef = document.components.schemas.ImageMaskRef;
@@ -582,10 +470,7 @@ Deno.test("OpenAPI discovery contract describes the public inference API", () =>
   assert.equal(imageMaskRef.not, undefined);
   assert.equal(imageMaskRef.additionalProperties, false);
   assert.equal(imageMaskRef.properties.image_url.maxLength, 20_971_520);
-  assert.equal(
-    imageMaskRef.properties.image_url.pattern,
-    "^[dD][aA][tT][aA]:[iI][mM][aA][gG][eE]/[pP][nN][gG];[bB][aA][sS][eE]64,",
-  );
+  assert.equal(imageMaskRef.properties.image_url.pattern, "^[dD][aA][tT][aA]:[iI][mM][aA][gG][eE]/[pP][nN][gG];[bB][aA][sS][eE]64,");
   assert.equal(imageMaskRef.properties.file_id, undefined);
   const generationSchema = document.components.schemas.ImageGenerationRequest;
   const editJsonSchema = document.components.schemas.ImageEditJsonRequest;
@@ -595,10 +480,7 @@ Deno.test("OpenAPI discovery contract describes the public inference API", () =>
   assert.equal(editJsonSchema.properties.model.default, "gpt-image-1.5");
   assert.equal(editMultipartSchema.properties.model.default, "gpt-image-1.5");
   assert.match(editMultipartSchema.description, /together they must total no more than 50 MiB/);
-  assert.deepEqual(editJsonSchema.properties.input_fidelity.type, [
-    "string",
-    "null",
-  ]);
+  assert.deepEqual(editJsonSchema.properties.input_fidelity.type, ["string", "null"]);
   for (const schema of [generationSchema, editJsonSchema, editMultipartSchema]) {
     assert.equal(schema.additionalProperties, false);
     assert.equal(schema.properties.prompt.maxLength, 32_000);
@@ -609,24 +491,15 @@ Deno.test("OpenAPI discovery contract describes the public inference API", () =>
   }
   assert.deepEqual(generationSchema.properties.response_format.enum, ["b64_json", null]);
   assert.equal(generationSchema.properties.style, undefined);
-  assert.deepEqual(
-    generationSchema.properties.quality.enum,
-    ["low", "medium", "high", "auto", null],
-  );
+  assert.deepEqual(generationSchema.properties.quality.enum, ["low", "medium", "high", "auto", null]);
   assert.deepEqual(editJsonSchema.properties.size.type, ["string", "null"]);
   assert.equal(editJsonSchema.properties.size.minLength, 1);
   assert.equal(editJsonSchema.properties.size.enum, undefined);
   assert.deepEqual(editJsonSchema.properties.quality.enum, ["low", "medium", "high", "auto", null]);
-  assert.deepEqual(
-    editMultipartSchema.properties.quality.enum,
-    ["low", "medium", "high", "auto", null],
-  );
+  assert.deepEqual(editMultipartSchema.properties.quality.enum, ["low", "medium", "high", "auto", null]);
   assert.equal(editMultipartSchema.properties.moderation, undefined);
   assert.deepEqual(editMultipartSchema.properties.response_format.enum, ["b64_json", null]);
-  assert.equal(
-    document.components.schemas.ImagesResponse.properties.data.items.$ref,
-    "#/components/schemas/Image",
-  );
+  assert.equal(document.components.schemas.ImagesResponse.properties.data.items.$ref, "#/components/schemas/Image");
   assert.ok(document.components.schemas.ImagesResponse.properties.output_format);
   assert.equal(document.components.schemas.Image.properties.output_format, undefined);
 });
@@ -644,10 +517,7 @@ Deno.test("published agent contracts distinguish bodyless catalog revalidation a
   assert.match(document.components.headers.ETag.description, /omitted from the unversioned/i);
   assert.equal(notModified.content, undefined);
   assert.match(notModified.description, /no response body; reuse the cached catalog/i);
-  assert.match(
-    developerText,
-    /matching If-None-Match request to GET \/v1\/models\?client_version=X\.Y\.Z can return 304 Not Modified with no body/i,
-  );
+  assert.match(developerText, /matching If-None-Match request to GET \/v1\/models\?client_version=X\.Y\.Z can return 304 Not Modified with no body/i);
   assert.match(llmsFullText, /matching `If-None-Match` requests receive `304 Not Modified`\s+with no body/i);
 
   for (const publishedText of [openApiText, llmsFullText]) {
@@ -687,7 +557,10 @@ Deno.test("homepage content negotiation serves server-rendered HTML, Markdown, a
   }
   const rawHtml = await html.text();
   assert.match(rawHtml, /<h1>UbiquityOS AI Gateway<\/h1>/);
-  const readableText = rawHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  const readableText = rawHtml
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   assert.ok(readableText.length >= 500);
   assert.ok(readableText.length / rawHtml.length >= 0.05, "homepage should keep readable text above 5% of HTML");
 
@@ -711,15 +584,13 @@ Deno.test("public HEAD routes preserve GET metadata without a response body", as
 
   for (const [path, headers] of routes) {
     const getResponse = await handler(new Request("https://ai.ubq.fi" + path, { headers }));
-    const headResponse = await handler(
-      new Request("https://ai.ubq.fi" + path, { method: "HEAD", headers }),
-    );
+    const headResponse = await handler(new Request("https://ai.ubq.fi" + path, { method: "HEAD", headers }));
 
     assert.equal(headResponse.status, getResponse.status, path);
     assert.deepEqual(
       [...headResponse.headers].filter(([name]) => name !== "x-uos-request-id"),
       [...getResponse.headers].filter(([name]) => name !== "x-uos-request-id"),
-      path,
+      path
     );
     assert.equal(await headResponse.text(), "", path);
   }
@@ -739,7 +610,7 @@ Deno.test("credentialed root responses retain content-negotiation Vary tokens", 
         Accept: "text/html",
         Origin: "https://agent-worker-4d2p9cx7m1ab.ubiquity-os.deno.net",
       },
-    }),
+    })
   );
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("vary"), "Accept, Accept-Encoding, Origin");
@@ -781,7 +652,13 @@ Deno.test("trust pages and crawl artifacts are public, substantial, and well for
     assert.equal(response?.status, 200, `${path} should be public`);
     assert.equal(response?.headers.get("content-type"), "text/html; charset=utf-8");
     const body = await response!.text();
-    assert.ok(body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().length >= 500, `${path} should have real text`);
+    assert.ok(
+      body
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim().length >= 500,
+      `${path} should have real text`
+    );
   }
 
   const robots = await handleStaticAsset("/robots.txt");

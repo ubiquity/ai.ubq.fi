@@ -62,7 +62,7 @@ const getKernelPublicKeyPems = async (): Promise<string[]> => {
 
   const kv = await getKv();
   if (kv) {
-    const kvEntry = await kv.get<Array<{ pem: string }>>(UOS_KERNEL_PUBKEYS_KEY);
+    const kvEntry = await kv.get<{ pem: string }[]>(UOS_KERNEL_PUBKEYS_KEY);
     if (kvEntry.value) {
       tokens.push(...kvEntry.value.map((p) => p.pem));
     }
@@ -72,30 +72,20 @@ const getKernelPublicKeyPems = async (): Promise<string[]> => {
 };
 
 const importRsaPublicKey = async (publicKeyPem: string): Promise<CryptoKey> => {
-  const pemContents = publicKeyPem
-    .replace("-----BEGIN PUBLIC KEY-----", "")
-    .replace("-----END PUBLIC KEY-----", "")
-    .trim()
-    .replace(/\s+/g, "");
+  const pemContents = publicKeyPem.replace("-----BEGIN PUBLIC KEY-----", "").replace("-----END PUBLIC KEY-----", "").trim().replace(/\s+/g, "");
 
   const binary = atob(pemContents);
   const binaryDer: Uint8Array<ArrayBuffer> = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) binaryDer[i] = binary.charCodeAt(i);
-  return await crypto.subtle.importKey(
-    "spki",
-    binaryDer,
-    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-    true,
-    ["verify"],
-  );
+  return await crypto.subtle.importKey("spki", binaryDer, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, true, ["verify"]);
 };
 
 const KERNEL_PUBLIC_KEYS_REFRESH_MS = 60_000;
 
-let kernelPublicKeysPromise: Promise<ReadonlyArray<CryptoKey>> | null = null;
+let kernelPublicKeysPromise: Promise<readonly CryptoKey[]> | null = null;
 let kernelPublicKeysLoadedAtMs = 0;
 
-const loadKernelPublicKeys = async (): Promise<ReadonlyArray<CryptoKey>> => {
+const loadKernelPublicKeys = async (): Promise<readonly CryptoKey[]> => {
   const pems = await getKernelPublicKeyPems();
   const keys: CryptoKey[] = [];
   for (const pem of pems) {
@@ -108,7 +98,7 @@ const loadKernelPublicKeys = async (): Promise<ReadonlyArray<CryptoKey>> => {
   return keys;
 };
 
-const getKernelPublicKeys = (forceReload = false): Promise<ReadonlyArray<CryptoKey>> => {
+const getKernelPublicKeys = (forceReload = false): Promise<readonly CryptoKey[]> => {
   const now = Date.now();
   if (!forceReload && kernelPublicKeysPromise && now - kernelPublicKeysLoadedAtMs < KERNEL_PUBLIC_KEYS_REFRESH_MS) {
     return kernelPublicKeysPromise;
@@ -169,11 +159,12 @@ const parseKernelAttestationPayload = (value: unknown): KernelAttestationPayload
   if (iat === null || exp === null) return null;
 
   const installationIdValue = value.installation_id;
-  const installationId = installationIdValue === null
-    ? null
-    : typeof installationIdValue === "number" && Number.isFinite(installationIdValue)
-    ? Math.trunc(installationIdValue)
-    : null;
+  const installationId =
+    installationIdValue === null
+      ? null
+      : typeof installationIdValue === "number" && Number.isFinite(installationIdValue)
+        ? Math.trunc(installationIdValue)
+        : null;
   if (installationIdValue !== null && installationId === null) return null;
 
   if (iss !== "ubiquity-os-kernel") return null;
@@ -216,17 +207,13 @@ const pruneKernelTokenJtiCache = () => {
 
 const verifyKernelAttestation = async (
   req: Request,
-  { token, owner, repo }: { token: string; owner?: string | null; repo?: string | null },
+  { token, owner, repo }: { token: string; owner?: string | null; repo?: string | null }
 ): Promise<{ ok: true; payload: KernelAttestationPayload } | { ok: false; response: Response }> => {
   const kernelToken = (req.headers.get("X-Ubiquity-Kernel-Token") ?? "").trim();
   if (!kernelToken) {
     return {
       ok: false,
-      response: openaiError(
-        401,
-        "Unauthorized: missing 'X-Ubiquity-Kernel-Token' header for kernel attestation",
-        "missing_kernel_token",
-      ),
+      response: openaiError(401, "Unauthorized: missing 'X-Ubiquity-Kernel-Token' header for kernel attestation", "missing_kernel_token"),
     };
   }
 
@@ -237,7 +224,7 @@ const verifyKernelAttestation = async (
       response: openaiError(
         500,
         "Server misconfigured: No kernel public keys loaded. Set 'UOS_AI_KERNEL_PUBLIC_KEY' or use admin endpoints to add pubkeys.",
-        "server_error",
+        "server_error"
       ),
     };
   }
@@ -246,11 +233,7 @@ const verifyKernelAttestation = async (
   if (parts.length !== 3) {
     return {
       ok: false,
-      response: openaiError(
-        401,
-        "Unauthorized: kernel attestation JWT MUST have 3 parts (header, payload, signature)",
-        "invalid_kernel_token",
-      ),
+      response: openaiError(401, "Unauthorized: kernel attestation JWT MUST have 3 parts (header, payload, signature)", "invalid_kernel_token"),
     };
   }
 
@@ -265,10 +248,8 @@ const verifyKernelAttestation = async (
       ok: false,
       response: openaiError(
         401,
-        `Unauthorized: failed to parse kernel attestation JWT parts: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-        "invalid_kernel_token",
+        `Unauthorized: failed to parse kernel attestation JWT parts: ${err instanceof Error ? err.message : String(err)}`,
+        "invalid_kernel_token"
       ),
     };
   }
@@ -278,10 +259,8 @@ const verifyKernelAttestation = async (
       ok: false,
       response: openaiError(
         401,
-        `Unauthorized: kernel attestation JWT 'alg' MUST be 'RS256', got '${
-          isRecord(header) ? header.alg : "undefined"
-        }'`,
-        "invalid_kernel_token",
+        `Unauthorized: kernel attestation JWT 'alg' MUST be 'RS256', got '${isRecord(header) ? header.alg : "undefined"}'`,
+        "invalid_kernel_token"
       ),
     };
   }
@@ -289,11 +268,7 @@ const verifyKernelAttestation = async (
   if (!payload) {
     return {
       ok: false,
-      response: openaiError(
-        401,
-        "Unauthorized: kernel attestation JWT payload is invalid or fields are missing/type-mismatched",
-        "invalid_kernel_token",
-      ),
+      response: openaiError(401, "Unauthorized: kernel attestation JWT payload is invalid or fields are missing/type-mismatched", "invalid_kernel_token"),
     };
   }
 
@@ -301,11 +276,7 @@ const verifyKernelAttestation = async (
   if (payload.exp < payload.iat) {
     return {
       ok: false,
-      response: openaiError(
-        401,
-        `Unauthorized: kernel attestation 'exp' (${payload.exp}) is before 'iat' (${payload.iat})`,
-        "invalid_kernel_token",
-      ),
+      response: openaiError(401, `Unauthorized: kernel attestation 'exp' (${payload.exp}) is before 'iat' (${payload.iat})`, "invalid_kernel_token"),
     };
   }
   if (payload.exp - payload.iat > KERNEL_ATTESTATION_MAX_TTL_SECONDS) {
@@ -313,31 +284,21 @@ const verifyKernelAttestation = async (
       ok: false,
       response: openaiError(
         401,
-        `Unauthorized: kernel attestation TTL is too long (${
-          payload.exp - payload.iat
-        }s > ${KERNEL_ATTESTATION_MAX_TTL_SECONDS}s)`,
-        "invalid_kernel_token",
+        `Unauthorized: kernel attestation TTL is too long (${payload.exp - payload.iat}s > ${KERNEL_ATTESTATION_MAX_TTL_SECONDS}s)`,
+        "invalid_kernel_token"
       ),
     };
   }
   if (payload.iat > now + KERNEL_ATTESTATION_CLOCK_SKEW_SECONDS) {
     return {
       ok: false,
-      response: openaiError(
-        401,
-        `Unauthorized: kernel attestation 'iat' (${payload.iat}) is in the future (server now: ${now})`,
-        "invalid_kernel_token",
-      ),
+      response: openaiError(401, `Unauthorized: kernel attestation 'iat' (${payload.iat}) is in the future (server now: ${now})`, "invalid_kernel_token"),
     };
   }
   if (payload.exp < now - KERNEL_ATTESTATION_CLOCK_SKEW_SECONDS) {
     return {
       ok: false,
-      response: openaiError(
-        401,
-        `Unauthorized: kernel attestation 'exp' (${payload.exp}) is in the past (server now: ${now})`,
-        "invalid_kernel_token",
-      ),
+      response: openaiError(401, `Unauthorized: kernel attestation 'exp' (${payload.exp}) is in the past (server now: ${now})`, "invalid_kernel_token"),
     };
   }
 
@@ -349,7 +310,7 @@ const verifyKernelAttestation = async (
       response: openaiError(
         401,
         `Unauthorized: kernel attestation repo mismatch. Expected '${expectedOwner}/${expectedRepo}', got '${payload.owner}/${payload.repo}'`,
-        "invalid_kernel_token",
+        "invalid_kernel_token"
       ),
     };
   }
@@ -362,7 +323,7 @@ const verifyKernelAttestation = async (
         response: openaiError(
           401,
           "Unauthorized: missing 'X-GitHub-Installation-Id' header, required for kernel attestation verification",
-          "missing_installation_id",
+          "missing_installation_id"
         ),
       };
     }
@@ -372,7 +333,7 @@ const verifyKernelAttestation = async (
         response: openaiError(
           401,
           `Unauthorized: kernel attestation installation_id mismatch. Expected '${installationId}', got '${payload.installation_id}'`,
-          "invalid_kernel_token",
+          "invalid_kernel_token"
         ),
       };
     }
@@ -385,7 +346,7 @@ const verifyKernelAttestation = async (
       response: openaiError(
         401,
         "Unauthorized: kernel attestation 'auth_token_sha256' mismatch. Verify kernel is hashing the current 'authToken'.",
-        "invalid_kernel_token",
+        "invalid_kernel_token"
       ),
     };
   }
@@ -400,15 +361,13 @@ const verifyKernelAttestation = async (
       ok: false,
       response: openaiError(
         401,
-        `Unauthorized: failed to decode kernel attestation signature: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-        "invalid_kernel_token",
+        `Unauthorized: failed to decode kernel attestation signature: ${err instanceof Error ? err.message : String(err)}`,
+        "invalid_kernel_token"
       ),
     };
   }
 
-  const verifySignature = async (candidateKeys: ReadonlyArray<CryptoKey>): Promise<boolean> => {
+  const verifySignature = async (candidateKeys: readonly CryptoKey[]): Promise<boolean> => {
     for (const key of candidateKeys) {
       try {
         const ok = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, signatureBytes, dataArray);
@@ -429,7 +388,7 @@ const verifyKernelAttestation = async (
         response: openaiError(
           500,
           "Server misconfigured: No kernel public keys loaded. Set 'UOS_AI_KERNEL_PUBLIC_KEY' or use admin endpoints to add pubkeys.",
-          "server_error",
+          "server_error"
         ),
       };
     }
@@ -458,10 +417,7 @@ const getGitHubRepoHeaders = (req: Request): { owner: string; repo: string } | n
   return { owner, repo };
 };
 
-export const getKernelAttestationContext = async (
-  req: Request,
-  token: string | null,
-): Promise<{ owner: string; repo: string } | null> => {
+export const getKernelAttestationContext = async (req: Request, token: string | null): Promise<{ owner: string; repo: string } | null> => {
   if (!token) return null;
   const kernelToken = (req.headers.get("X-Ubiquity-Kernel-Token") ?? "").trim();
   if (!kernelToken) return null;
@@ -475,20 +431,14 @@ export const getKernelAttestationContext = async (
   return { owner: attestation.payload.owner, repo: attestation.payload.repo };
 };
 
-type GitHubTokenRepoAccessResult =
-  | { ok: true }
-  | { ok: false; reason: "rejected" | "upstream_unavailable" };
+type GitHubTokenRepoAccessResult = { ok: true } | { ok: false; reason: "rejected" | "upstream_unavailable" };
 
-const verifyGitHubTokenRepoAccess = async (
-  token: string,
-  owner: string,
-  repo: string,
-): Promise<GitHubTokenRepoAccessResult> => {
+const verifyGitHubTokenRepoAccess = async (token: string, owner: string, repo: string): Promise<GitHubTokenRepoAccessResult> => {
   const res = await fetch(`${GITHUB_API_BASE_URL}/repos/${owner}/${repo}`, {
     method: "GET",
     headers: {
-      "Authorization": `Bearer ${token}`,
-      "Accept": "application/vnd.github+json",
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
       "X-GitHub-Api-Version": "2022-11-28",
       "User-Agent": "ai.ubq.fi",
     },
@@ -519,13 +469,9 @@ type ClientAuthMethod =
   | { kind: "deno_deploy_token" }
   | { kind: "passkey_session"; user_id: string; handle: string; is_admin: boolean; credential_count: number };
 
-type AuthenticateClientResult =
-  | { ok: true; token: string | null; method: ClientAuthMethod }
-  | { ok: false; response: Response };
+type AuthenticateClientResult = { ok: true; token: string | null; method: ClientAuthMethod } | { ok: false; response: Response };
 
-type CheckAdminTokenResult =
-  | { ok: true; kind: "admin_allowlist" | "deno_deploy_token" }
-  | { ok: false; response: Response | null };
+type CheckAdminTokenResult = { ok: true; kind: "admin_allowlist" | "deno_deploy_token" } | { ok: false; response: Response | null };
 
 type AdminAuthMethod =
   | { kind: "disabled" }
@@ -533,26 +479,21 @@ type AdminAuthMethod =
   | { kind: "deno_deploy_token" }
   | { kind: "passkey_session"; user_id: string; handle: string; is_admin: boolean; credential_count: number };
 
-export type AdminAuthResult =
-  | { ok: true; token: string; method: AdminAuthMethod; is_super_admin: boolean }
-  | { ok: false; response: Response };
+export type AdminAuthResult = { ok: true; token: string; method: AdminAuthMethod; is_super_admin: boolean } | { ok: false; response: Response };
 
 type GitHubBearerVerification =
   | Readonly<{
-    kind: "verified";
-    owner: string;
-    repo: string;
-    stateId: string;
-    cacheKey: string;
-    cacheHit: boolean;
-  }>
+      kind: "verified";
+      owner: string;
+      repo: string;
+      stateId: string;
+      cacheKey: string;
+      cacheHit: boolean;
+    }>
   | Readonly<{ kind: "rejected" | "unavailable"; response: Response }>
   | null;
 
-const verifyGitHubBearer = async (
-  req: Request,
-  token: string,
-): Promise<GitHubBearerVerification> => {
+const verifyGitHubBearer = async (req: Request, token: string): Promise<GitHubBearerVerification> => {
   if (!looksLikeGitHubToken(token)) return null;
   // An explicitly configured admin token remains an allowlisted credential,
   // even if its value happens to use a GitHub token prefix. Let the normal
@@ -611,7 +552,7 @@ const verifyGitHubBearer = async (
 
 const authenticateGitHubToken = async (
   req: Request,
-  token: string,
+  token: string
 ): Promise<{ ok: true; method: ClientAuthMethod } | { ok: false; response: Response } | null> => {
   const verification = await verifyGitHubBearer(req, token);
   if (!verification) return null;
@@ -702,9 +643,7 @@ const logAuthDecision = (req: Request, entry: AuthLogEntry): void => {
 const getPasskeyCookieSessionForRequest = (req: Request) => {
   const passkeyHeaders = new Headers(req.headers);
   passkeyHeaders.delete("authorization");
-  return getPasskeySessionForRequest(
-    new Request(req.url, { headers: passkeyHeaders }),
-  );
+  return getPasskeySessionForRequest(new Request(req.url, { headers: passkeyHeaders }));
 };
 
 export const authenticateClient = async (req: Request): Promise<AuthenticateClientResult> => {
@@ -715,13 +654,14 @@ export const authenticateClient = async (req: Request): Promise<AuthenticateClie
   const tokenShape = token ? classifyToken(token) : null;
   const githubHeaders = token ? getGitHubRepoHeaders(req) : null;
   const githubCandidate = token ? looksLikeGitHubToken(token) : false;
-  const logClientAuth = (entry: Omit<AuthLogEntry, "scope" | "token_present" | "token_shape">) =>
+  const logClientAuth = (entry: Omit<AuthLogEntry, "scope" | "token_present" | "token_shape">) => {
     logAuthDecision(req, {
       scope: "client",
       token_present: tokenPresent,
       token_shape: tokenShape,
       ...entry,
     });
+  };
   if (localAuthDisabled) {
     logClientAuth({ ok: true, method: "disabled" });
     return { ok: true, token, method: { kind: "disabled" } };
@@ -887,8 +827,8 @@ const fetchDenoApiOk = async (url: string, token: string): Promise<boolean> => {
   const res = await fetch(url, {
     method: "GET",
     headers: {
-      "Authorization": `Bearer ${token}`,
-      "Accept": "application/json",
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
     },
     redirect: "manual",
   });
@@ -907,8 +847,8 @@ const fetchDenoConsoleAppOk = async (orgSlug: string, appSlug: string, token: st
   const res = await fetch(url, {
     method: "GET",
     headers: {
-      "Accept": "text/html",
-      "Cookie": `token=${token}; deno_auth_ghid=force`,
+      Accept: "text/html",
+      Cookie: `token=${token}; deno_auth_ghid=force`,
     },
     redirect: "manual",
   });
@@ -923,7 +863,7 @@ const fetchDenoConsoleAppOk = async (orgSlug: string, appSlug: string, token: st
   }
 
   const body = await res.text();
-  const title = body.match(/<title[^>]*>([^<]*)<\/title>/i)?.[1] ?? "";
+  const title = /<title[^>]*>([^<]*)<\/title>/i.exec(body)?.[1] ?? "";
   return title.includes(`| ${appSlug} | Deploy`);
 };
 
@@ -933,7 +873,7 @@ const verifyDenoDeployTokenForThisDeployment = async (token: string): Promise<bo
     const appUrl = `${DENO_API_V2_BASE_URL}/apps/${encodeURIComponent(appSlug)}`;
     if (await fetchDenoApiOk(appUrl, token)) return true;
     const orgSlug = (getEnv("DENO_DEPLOY_ORG_SLUG") ?? "").trim();
-    if (orgSlug && await fetchDenoConsoleAppOk(orgSlug, appSlug, token)) return true;
+    if (orgSlug && (await fetchDenoConsoleAppOk(orgSlug, appSlug, token))) return true;
   }
 
   const deploymentId = (getEnv("DENO_DEPLOYMENT_ID") ?? "").trim();
@@ -943,9 +883,7 @@ const verifyDenoDeployTokenForThisDeployment = async (token: string): Promise<bo
   return await fetchDenoApiOk(url, token);
 };
 
-const verifyDenoDeployTokenCached = async (token: string): Promise<
-  { ok: true } | { ok: false; response: Response | null }
-> => {
+const verifyDenoDeployTokenCached = async (token: string): Promise<{ ok: true } | { ok: false; response: Response | null }> => {
   let keyHash: string | null = null;
   try {
     keyHash = await sha256Base64Url(token);
@@ -986,13 +924,14 @@ export const authenticateAdmin = async (req: Request): Promise<AdminAuthResult> 
   const token = getBearerToken(req);
   const tokenPresent = Boolean(token);
   const tokenShape = token ? classifyToken(token) : null;
-  const logAdminAuth = (entry: Omit<AuthLogEntry, "scope" | "token_present" | "token_shape">) =>
+  const logAdminAuth = (entry: Omit<AuthLogEntry, "scope" | "token_present" | "token_shape">) => {
     logAuthDecision(req, {
       scope: "admin",
       token_present: tokenPresent,
       token_shape: tokenShape,
       ...entry,
     });
+  };
   if (isAdminAuthDisabledForRequest(req)) {
     logAdminAuth({ ok: true, method: "disabled" });
     return {
@@ -1003,11 +942,7 @@ export const authenticateAdmin = async (req: Request): Promise<AdminAuthResult> 
     };
   }
   let passkeySession = await getPasskeySessionForRequest(req);
-  if (
-    !passkeySession && token && looksLikeGitHubToken(token) && !config.adminTokens.has(token) &&
-    !config.authTokens.has(token) &&
-    req.headers.has("cookie")
-  ) {
+  if (!passkeySession && token && looksLikeGitHubToken(token) && !config.adminTokens.has(token) && !config.authTokens.has(token) && req.headers.has("cookie")) {
     const githubVerification = await verifyGitHubBearer(req, token);
     if (githubVerification?.kind === "verified") {
       logAdminAuth({ ok: false, method: "github_token", status: 401, reason: "github_token_not_admin" });
@@ -1100,25 +1035,25 @@ export const handleV1Auth = async (req: Request): Promise<Response> => {
   const mode = localClientAuthDisabled
     ? "disabled"
     : config.isDeploy && config.authTokens.size === 0 && !kv
-    ? "misconfigured"
-    : config.isDeploy || config.authTokens.size > 0 || Boolean(kv)
-    ? "required"
-    : "disabled";
+      ? "misconfigured"
+      : config.isDeploy || config.authTokens.size > 0 || Boolean(kv)
+        ? "required"
+        : "disabled";
 
   const token = authResult.token;
   const tokenInfo = token
     ? {
-      present: true,
-      length: token.length,
-      shape: classifyToken(token),
-      sha256_12: (await sha256Hex(token)).slice(0, 12),
-    }
+        present: true,
+        length: token.length,
+        shape: classifyToken(token),
+        sha256_12: (await sha256Hex(token)).slice(0, 12),
+      }
     : {
-      present: false,
-      length: null,
-      shape: null,
-      sha256_12: null,
-    };
+        present: false,
+        length: null,
+        shape: null,
+        sha256_12: null,
+      };
 
   // Local client auth remains disabled for the development inference surface,
   // but admin access is resolved independently. This keeps localhost from
@@ -1127,7 +1062,9 @@ export const handleV1Auth = async (req: Request): Promise<Response> => {
   const localAdminAuth = localClientAuthDisabled ? await authenticateAdmin(req) : null;
   const reportingMethod = localAdminAuth?.ok ? localAdminAuth.method : authResult.method;
   const method: Record<string, unknown> = { kind: reportingMethod.kind };
-  const isAdmin = localAdminAuth?.ok === true || reportingMethod.kind === "admin_allowlist" ||
+  const isAdmin =
+    localAdminAuth?.ok === true ||
+    reportingMethod.kind === "admin_allowlist" ||
     reportingMethod.kind === "deno_deploy_token" ||
     (reportingMethod.kind === "passkey_session" && reportingMethod.is_admin);
   const isSuperAdmin = localAdminAuth?.ok
@@ -1192,6 +1129,6 @@ export const handleV1Auth = async (req: Request): Promise<Response> => {
         token: tokenInfo,
       },
     },
-    { "Cache-Control": "no-store" },
+    { "Cache-Control": "no-store" }
   );
 };

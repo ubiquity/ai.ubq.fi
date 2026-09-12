@@ -50,8 +50,7 @@ export const canonicalize = (value: unknown): unknown => {
 export const canonicalArgs = (args: Record<string, unknown>): string => JSON.stringify(canonicalize(args));
 
 /** Stable identity of one (tool, arguments) pair. */
-export const callIdentity = (tool: string, args: Record<string, unknown>): string =>
-  `${tool}\u0000${canonicalArgs(args)}`;
+export const callIdentity = (tool: string, args: Record<string, unknown>): string => `${tool}\u0000${canonicalArgs(args)}`;
 
 /** Digest of the model-visible effect of one result (deterministic). */
 export const effectDigest = (result: ResultLike): string => {
@@ -65,7 +64,7 @@ export const effectSignature = (tool: string, args: Record<string, unknown>, res
 
 export type DuplicateFlag = "exact_adjacent" | "repeat_after_success";
 
-export interface LoopFlags {
+export type LoopFlags = {
   /** Identity duplication detected (never qualifies a retry-after-failure). */
   duplicate: DuplicateFlag | null;
   /** True when this call closes a semantic loop within the window. */
@@ -73,16 +72,16 @@ export interface LoopFlags {
   loopKind: "pattern_recurrence" | "effect_repeat" | null;
   /** Consecutive calls flagged as semantic loops (after this call). */
   streak: number;
-}
+};
 
-export interface LoopDetectorOptions {
+export type LoopDetectorOptions = {
   /** Rolling window of remembered call signatures; default 8. */
   window?: number;
   /** Pattern length compared for sequence recurrence; default 4. */
   patternLength?: number;
   /** Repetitions of one effect signature that close a loop; default 3. */
   effectRepeatThreshold?: number;
-}
+};
 
 export const DEFAULT_LOOP_WINDOW = 8;
 export const DEFAULT_LOOP_PATTERN_LENGTH = 4;
@@ -123,11 +122,7 @@ export class LoopDetector {
    * of a guard (duplicate/repeated-failure rejection): its effect signature
    * is still recorded so repeated rejections close a loop.
    */
-  observe(
-    tool: string,
-    args: Record<string, unknown>,
-    result: ResultLike,
-  ): LoopFlags {
+  observe(tool: string, args: Record<string, unknown>, result: ResultLike): LoopFlags {
     const identity = callIdentity(tool, args);
     const effect = effectSignature(tool, args, result);
     this.#identities.push([identity, effect]);
@@ -151,9 +146,7 @@ export class LoopDetector {
     const semanticLoop = patternLoop || effectLoop;
     this.#streak = semanticLoop ? this.#streak + 1 : 0;
     const flags: LoopFlags = {
-      duplicate: this.#last !== null && this.#last.identity === identity
-        ? (this.#last.ok ? "repeat_after_success" : "exact_adjacent")
-        : null,
+      duplicate: this.#last !== null && this.#last.identity === identity ? (this.#last.ok ? "repeat_after_success" : "exact_adjacent") : null,
       semanticLoop,
       loopKind: patternLoop ? "pattern_recurrence" : effectLoop ? "effect_repeat" : null,
       streak: this.#streak,
@@ -178,8 +171,6 @@ export class LoopDetector {
 /** Renders a deterministic one-line loop rejection message. */
 export const renderLoopFeedback = (flags: LoopFlags): string => {
   if (!flags.semanticLoop) return "";
-  const kind = flags.loopKind === "pattern_recurrence"
-    ? "the same call sequence keeps repeating"
-    : "the same action produces the same result";
+  const kind = flags.loopKind === "pattern_recurrence" ? "the same call sequence keeps repeating" : "the same action produces the same result";
   return `semantic loop detected (${kind}); take a materially different action or verify the result — repeating this action will not change the outcome`;
 };

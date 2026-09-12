@@ -24,7 +24,7 @@ import { canonicalToolDefinitions } from "./tools.ts";
 export const CONTROL_MODEL_PLACEHOLDER = "<unapproved-control-model>";
 export const CONTROL_BASE_URL_PLACEHOLDER = "https://api.openai.com/v1";
 
-export interface StrongControlOptions {
+export type StrongControlOptions = {
   /** Model identifier; must be an owner-approved control model for live use. */
   model: string;
   /** Base URL of an OpenAI-compatible chat completions endpoint. */
@@ -42,10 +42,9 @@ export interface StrongControlOptions {
   reasoningEffort?: string;
   maxCompletionTokens?: number;
   maxRequests?: number;
-}
+};
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
 const SYSTEM_MESSAGE =
   "You are a strong control agent for a deterministic benchmark. Complete the user's task inside the " +
@@ -53,10 +52,7 @@ const SYSTEM_MESSAGE =
   "success, so do not claim completion in prose; keep working until the declared task is fully done, " +
   "then produce a short final answer.";
 
-export function normalizeOpenAICompatibleCompletion(
-  value: unknown,
-  model: string,
-): ParsedChatCompletion | { error: string } {
+export function normalizeOpenAICompatibleCompletion(value: unknown, model: string): ParsedChatCompletion | { error: string } {
   if (!isRecord(value)) return { error: "reply is not a Chat Completions object" };
   if (typeof value.model === "string" && value.model !== model) {
     return { error: `upstream returned model ${JSON.stringify(value.model)} instead of ${JSON.stringify(model)}` };
@@ -87,9 +83,9 @@ export function normalizeOpenAICompatibleCompletion(
   }
   const usage = isRecord(value.usage)
     ? {
-      inputTokens: typeof value.usage.prompt_tokens === "number" ? value.usage.prompt_tokens : 0,
-      outputTokens: typeof value.usage.completion_tokens === "number" ? value.usage.completion_tokens : 0,
-    }
+        inputTokens: typeof value.usage.prompt_tokens === "number" ? value.usage.prompt_tokens : 0,
+        outputTokens: typeof value.usage.completion_tokens === "number" ? value.usage.completion_tokens : 0,
+      }
     : null;
   return {
     content,
@@ -106,7 +102,8 @@ export function createBaselineD(options: StrongControlOptions): BenchmarkAdapter
   return {
     configId: "D",
     name: "strong-control",
-    description: "Generic strong control over an owner-approved OpenAI-compatible model; default instance refuses " +
+    description:
+      "Generic strong control over an owner-approved OpenAI-compatible model; default instance refuses " +
       "to run until the control model and transport are approved (no new secrets or env interfaces).",
     requiresExternalInference: true,
     async run(ctx: AdapterRunContext): Promise<void> {
@@ -114,7 +111,7 @@ export function createBaselineD(options: StrongControlOptions): BenchmarkAdapter
         throw new BaselineNotProvisionedError(
           "strong control is not provisioned: no transport was configured and the control model is not " +
             `approved. Configure createBaselineD with an approved model (current placeholder: ` +
-            `${JSON.stringify(options.model)}) and an explicit transport.`,
+            `${JSON.stringify(options.model)}) and an explicit transport.`
         );
       }
       await runChatAgentLoop(ctx, {
@@ -122,8 +119,7 @@ export function createBaselineD(options: StrongControlOptions): BenchmarkAdapter
         tools,
         transport,
         systemMessage: () => SYSTEM_MESSAGE,
-        userMessage: (run) =>
-          `${run.task.description}\n\nThe workspace is the current working directory for shell tools.`,
+        userMessage: (run) => `${run.task.description}\n\nThe workspace is the current working directory for shell tools.`,
         maxRequests: options.maxRequests,
         buildRequest: (_ctx, messages: readonly ChatMessage[]): Record<string, unknown> => {
           const body: Record<string, unknown> = {
@@ -161,9 +157,6 @@ export const adapterD: BenchmarkAdapter = createBaselineD({
 /** Policy note: the default D must stay unapproved until the owner acts. */
 export function assertControlModelApproved(model: string): void {
   if (model === CONTROL_MODEL_PLACEHOLDER || model.trim() === "" || model.startsWith("<")) {
-    throw new BaselineAdapterError(
-      `control model ${JSON.stringify(model)} is not an approved available model`,
-      "invalid-config",
-    );
+    throw new BaselineAdapterError(`control model ${JSON.stringify(model)} is not an approved available model`, "invalid-config");
   }
 }

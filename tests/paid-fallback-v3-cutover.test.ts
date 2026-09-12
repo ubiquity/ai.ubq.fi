@@ -8,8 +8,7 @@ type StoredEntry = {
 
 const encodeKey = (key: Deno.KvKey): string => JSON.stringify(key);
 const clone = <T>(value: T): T => structuredClone(value);
-const startsWithKey = (key: Deno.KvKey, prefix: Deno.KvKey): boolean =>
-  prefix.every((part, index) => key[index] === part);
+const startsWithKey = (key: Deno.KvKey, prefix: Deno.KvKey): boolean => prefix.every((part, index) => key[index] === part);
 
 class MemoryKv {
   readonly entries = new Map<string, StoredEntry>();
@@ -24,7 +23,7 @@ class MemoryKv {
     const entry = this.entries.get(encodeKey(key));
     return Promise.resolve({
       key: clone(key),
-      value: entry ? clone(entry.value) as T : null,
+      value: entry ? (clone(entry.value) as T) : null,
       versionstamp: entry?.versionstamp ?? null,
     } as Deno.KvEntryMaybe<T>);
   }
@@ -56,11 +55,8 @@ class MemoryKv {
   }
 
   atomic(): Deno.AtomicOperation {
-    const checks: Array<{ key: Deno.KvKey; versionstamp: string | null }> = [];
-    const mutations: Array<
-      | { type: "set"; key: Deno.KvKey; value: unknown }
-      | { type: "delete"; key: Deno.KvKey }
-    > = [];
+    const checks: { key: Deno.KvKey; versionstamp: string | null }[] = [];
+    const mutations: ({ type: "set"; key: Deno.KvKey; value: unknown } | { type: "delete"; key: Deno.KvKey })[] = [];
     const operation = {
       check: (entry: { key: Deno.KvKey; versionstamp: string | null }) => {
         checks.push({ key: clone(entry.key), versionstamp: entry.versionstamp });
@@ -75,9 +71,7 @@ class MemoryKv {
         return operation;
       },
       commit: (): Promise<Deno.KvCommitResult | Deno.KvCommitError> => {
-        const changed = checks.some((check) =>
-          (this.entries.get(encodeKey(check.key))?.versionstamp ?? null) !== check.versionstamp
-        );
+        const changed = checks.some((check) => (this.entries.get(encodeKey(check.key))?.versionstamp ?? null) !== check.versionstamp);
         if (changed) return Promise.resolve({ ok: false });
         const versionstamp = this.#nextVersionstamp();
         for (const mutation of mutations) {
@@ -115,12 +109,7 @@ const {
   recordSurplusUsage,
   reservePaidFallback,
 } = await import("../src/paid_fallback.ts");
-const {
-  paidFallbackPendingV3Key,
-  paidFallbackRequestV3Key,
-  paidFallbackWindowV3Key,
-  reconcilePaidFallbackV3,
-} = await import("../src/paid_fallback_ledger.ts");
+const { paidFallbackPendingV3Key, paidFallbackRequestV3Key, paidFallbackWindowV3Key, reconcilePaidFallbackV3 } = await import("../src/paid_fallback_ledger.ts");
 const { getKv } = await import("../src/kv.ts");
 await getKv();
 type ApiKeyRecord = import("../src/types.ts").ApiKeyRecord;
@@ -139,17 +128,18 @@ const countPrefix = async (prefix: Deno.KvKey): Promise<number> => {
   return count;
 };
 
-const reservationInput = (requestId: string, createdAtMs: number) => ({
-  keyId,
-  requestId,
-  createdAtMs,
-  model: "gpt-5-codex",
-  route: "responses",
-  path: "/v1/responses",
-  stream: true,
-  reasoning: "high",
-  reason: "primary_429",
-} as const);
+const reservationInput = (requestId: string, createdAtMs: number) =>
+  ({
+    keyId,
+    requestId,
+    createdAtMs,
+    model: "gpt-5-codex",
+    route: "responses",
+    path: "/v1/responses",
+    stream: true,
+    reasoning: "high",
+    reason: "primary_429",
+  }) as const;
 
 const reserve = async (requestId: string, createdAtMs: number) => {
   const decision = await reservePaidFallback(reservationInput(requestId, createdAtMs));
@@ -170,10 +160,7 @@ const assertLegacyStateUnchanged = async (expected: ApiKeyRecord): Promise<void>
   assert.deepEqual(idEntry.value, expected);
   assert.equal(hashEntry.value?.paid_fallback_spent_microcredits, expected.paid_fallback_spent_microcredits);
   assert.equal(hashEntry.value?.paid_fallback_reserved_microcredits, expected.paid_fallback_reserved_microcredits);
-  assert.equal(
-    hashEntry.value?.paid_fallback_reservation_request_id,
-    expected.paid_fallback_reservation_request_id,
-  );
+  assert.equal(hashEntry.value?.paid_fallback_reservation_request_id, expected.paid_fallback_reservation_request_id);
   assert.equal(await countPrefix(legacyRequestLogPrefix), 0);
 };
 
@@ -221,17 +208,12 @@ Deno.test("Metered runtime lifecycle hard-cuts legacy counters and request logs 
   await memoryKv.set(apiKeyHashKey(keyHash), hashRecord);
 
   const originalEnvGet = Deno.env.get;
-  Deno.env.get = (name: string): string | undefined =>
-    name === "METERED_API_KEY" ? "test-metered-key" : originalEnvGet.call(Deno.env, name);
+  Deno.env.get = (name: string): string | undefined => (name === "METERED_API_KEY" ? "test-metered-key" : originalEnvGet.call(Deno.env, name));
   try {
     const terminalReservation = await reserve("terminal-missing-id", now);
     assert.equal(terminalReservation.reserved_microcredits, 250_000);
     assert.equal(terminalReservation.quota_used_percent, 0);
-    await recordMeteredUpstreamResponse(
-      terminalReservation,
-      new Response(null, { status: 502 }),
-      null,
-    );
+    await recordMeteredUpstreamResponse(terminalReservation, new Response(null, { status: 502 }), null);
     await recordMeteredTerminal(terminalReservation, "incomplete");
     const terminal = await readRequest("terminal-missing-id");
     assert.equal(terminal.dispatch_state, "dispatched");
@@ -252,12 +234,7 @@ Deno.test("Metered runtime lifecycle hard-cuts legacy counters and request logs 
     assert.ok((await memoryKv.get(paidFallbackPendingV3Key(keyId, ambiguous.request_id))).value);
 
     const dispatchedReservation = await reserve("dispatched-http-error", now + 2);
-    await recordMeteredUpstreamResponse(
-      dispatchedReservation,
-      new Response(null, { status: 503 }),
-      "provider-request-id",
-      "surplus",
-    );
+    await recordMeteredUpstreamResponse(dispatchedReservation, new Response(null, { status: 503 }), "provider-request-id", "surplus");
     const dispatched = await readRequest("dispatched-http-error");
     assert.equal(dispatched.dispatch_state, "dispatched");
     assert.equal(dispatched.terminal_state, "pending");
@@ -275,9 +252,7 @@ Deno.test("Metered runtime lifecycle hard-cuts legacy counters and request logs 
     assert.equal(cancelled.spend_microcredits, 0);
     assert.equal((await memoryKv.get(paidFallbackPendingV3Key(keyId, cancelled.request_id))).value, null);
 
-    const window = await memoryKv.get<PaidFallbackWindowV3>(
-      paidFallbackWindowV3Key(keyId, terminalReservation.window_reset_at_ms),
-    );
+    const window = await memoryKv.get<PaidFallbackWindowV3>(paidFallbackWindowV3Key(keyId, terminalReservation.window_reset_at_ms));
     assert.equal(window.value?.settled_microcredits, 0);
     assert.equal(window.value?.reserved_microcredits, 750_000);
     assert.equal(window.value?.pending_count, 3);
@@ -331,16 +306,10 @@ Deno.test("Surplus usage settles cache read and write pricing, while incomplete 
   });
 
   const originalEnvGet = Deno.env.get;
-  Deno.env.get = (name: string): string | undefined =>
-    name === "METERED_API_KEY" ? "test-metered-key" : originalEnvGet.call(Deno.env, name);
+  Deno.env.get = (name: string): string | undefined => (name === "METERED_API_KEY" ? "test-metered-key" : originalEnvGet.call(Deno.env, name));
   try {
     const settledReservation = await reserve("surplus-settled", now);
-    await recordMeteredUpstreamResponse(
-      settledReservation,
-      new Response(null, { status: 200 }),
-      null,
-      "surplus",
-    );
+    await recordMeteredUpstreamResponse(settledReservation, new Response(null, { status: 200 }), null, "surplus");
     await recordMeteredTerminal(settledReservation, "completed", "surplus");
     const surplusSettlementId = `surplus:${settledReservation.request_id}`;
     await recordSurplusUsage(
@@ -358,16 +327,14 @@ Deno.test("Surplus usage settles cache read and write pricing, while incomplete 
         cache_read_price_per_token: 0.0000001,
         cache_write_price_per_token: 0.000002,
         output_price_per_token: 0.000003,
-      },
+      }
     );
     const settled = await readRequest("surplus-settled");
     assert.equal(settled.provider_request_id, null);
     assert.equal(settled.billing_state, "settled");
     assert.equal(settled.provider_quota, 86);
     assert.equal(settled.spend_microcredits, 172);
-    const settledWindowBeforeReplay = await memoryKv.get<PaidFallbackWindowV3>(
-      paidFallbackWindowV3Key(keyId, settledReservation.window_reset_at_ms),
-    );
+    const settledWindowBeforeReplay = await memoryKv.get<PaidFallbackWindowV3>(paidFallbackWindowV3Key(keyId, settledReservation.window_reset_at_ms));
     await recordSurplusUsage(
       settledReservation,
       surplusSettlementId,
@@ -383,36 +350,23 @@ Deno.test("Surplus usage settles cache read and write pricing, while incomplete 
         cache_read_price_per_token: 0.0000001,
         cache_write_price_per_token: 0.000002,
         output_price_per_token: 0.000003,
-      },
+      }
     );
     const settledAfterReplay = await readRequest("surplus-settled");
-    const settledWindowAfterReplay = await memoryKv.get<PaidFallbackWindowV3>(
-      paidFallbackWindowV3Key(keyId, settledReservation.window_reset_at_ms),
-    );
+    const settledWindowAfterReplay = await memoryKv.get<PaidFallbackWindowV3>(paidFallbackWindowV3Key(keyId, settledReservation.window_reset_at_ms));
     assert.equal(settledAfterReplay.spend_microcredits, settled.spend_microcredits);
-    assert.equal(
-      settledWindowAfterReplay.value?.settled_microcredits,
-      settledWindowBeforeReplay.value?.settled_microcredits,
-    );
-    assert.equal(
-      settledWindowAfterReplay.value?.reserved_microcredits,
-      settledWindowBeforeReplay.value?.reserved_microcredits,
-    );
+    assert.equal(settledWindowAfterReplay.value?.settled_microcredits, settledWindowBeforeReplay.value?.settled_microcredits);
+    assert.equal(settledWindowAfterReplay.value?.reserved_microcredits, settledWindowBeforeReplay.value?.reserved_microcredits);
 
     const incompleteReservation = await reserve("surplus-incomplete", now + 1);
-    await recordMeteredUpstreamResponse(
-      incompleteReservation,
-      new Response(null, { status: 200 }),
-      "surplus-incomplete-request",
-      "surplus",
-    );
+    await recordMeteredUpstreamResponse(incompleteReservation, new Response(null, { status: 200 }), "surplus-incomplete-request", "surplus");
     await recordMeteredTerminal(incompleteReservation, "completed", "surplus");
     await recordSurplusUsage(
       incompleteReservation,
       "surplus-incomplete-request",
       "gpt-5-codex",
       { input_tokens: null, cached_input_tokens: null, cache_write_input_tokens: null, output_tokens: 10 },
-      { input_price_per_token: 0.000001, output_price_per_token: 0.000003 },
+      { input_price_per_token: 0.000001, output_price_per_token: 0.000003 }
     );
 
     let meteredLogCalls = 0;

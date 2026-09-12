@@ -1,10 +1,5 @@
 import assert from "node:assert/strict";
-import {
-  fetchSurplusModels,
-  fetchSurplusResponses,
-  resetSurplusModelsCacheForTest,
-  type SurplusFetch,
-} from "../src/surplus.ts";
+import { fetchSurplusModels, fetchSurplusResponses, resetSurplusModelsCacheForTest, type SurplusFetch } from "../src/surplus.ts";
 
 const jsonResponse = (body: unknown, status = 200, headers: HeadersInit = {}): Response =>
   new Response(JSON.stringify(body), {
@@ -14,44 +9,46 @@ const jsonResponse = (body: unknown, status = 200, headers: HeadersInit = {}): R
 
 Deno.test("fetchSurplusModels preserves exact IDs and exposes text-capable routes only", async () => {
   resetSurplusModelsCacheForTest();
-  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const calls: { url: string; init?: RequestInit }[] = [];
   const fetcher: SurplusFetch = (input, init) => {
     calls.push({ url: input.toString(), init });
-    return Promise.resolve(jsonResponse({
-      object: "list",
-      data: [
-        {
-          id: "gpt-5.6-sol",
-          created: 1_735_000_000,
-          provider: "openai",
-          architecture: { modality: "text->text" },
-          supported_parameters: ["reasoning", "tools", "tool_choice", "parallel_tool_calls"],
-          supported_features: ["streaming", "tools", "reasoning"],
-          pricing: {
-            prompt: "0.000001",
-            completion: "0.000003",
-            input_cache_read: "0.0000001",
-            input_cache_write: "0.000002",
+    return Promise.resolve(
+      jsonResponse({
+        object: "list",
+        data: [
+          {
+            id: "gpt-5.6-sol",
+            created: 1_735_000_000,
+            provider: "openai",
+            architecture: { modality: "text->text" },
+            supported_parameters: ["reasoning", "tools", "tool_choice", "parallel_tool_calls"],
+            supported_features: ["streaming", "tools", "reasoning"],
+            pricing: {
+              prompt: "0.000001",
+              completion: "0.000003",
+              input_cache_read: "0.0000001",
+              input_cache_write: "0.000002",
+            },
           },
-        },
-        {
-          id: "image-model-that-must-not-route",
-          architecture: { output_modalities: ["image"] },
-        },
-        {
-          id: "audio-to-text-model-that-must-not-route",
-          architecture: { modality: "audio->text" },
-        },
-        {
-          id: "claude-opus-5",
-          provider: "anthropic",
-          architecture: { input_modalities: ["text"], output_modalities: ["text"] },
-          supported_parameters: ["tools"],
-          supported_features: ["tools"],
-          description: "test model",
-        },
-      ],
-    }));
+          {
+            id: "image-model-that-must-not-route",
+            architecture: { output_modalities: ["image"] },
+          },
+          {
+            id: "audio-to-text-model-that-must-not-route",
+            architecture: { modality: "audio->text" },
+          },
+          {
+            id: "claude-opus-5",
+            provider: "anthropic",
+            architecture: { input_modalities: ["text"], output_modalities: ["text"] },
+            supported_parameters: ["tools"],
+            supported_features: ["tools"],
+            description: "test model",
+          },
+        ],
+      })
+    );
   };
 
   const snapshot = await fetchSurplusModels({
@@ -60,7 +57,10 @@ Deno.test("fetchSurplusModels preserves exact IDs and exposes text-capable route
     force: true,
   });
 
-  assert.deepEqual(snapshot?.models.map((model) => model.id), ["gpt-5.6-sol", "claude-opus-5"]);
+  assert.deepEqual(
+    snapshot?.models.map((model) => model.id),
+    ["gpt-5.6-sol", "claude-opus-5"]
+  );
   assert.equal(snapshot?.models[0].owned_by, "openai");
   assert.equal(snapshot?.models[0].input_price_per_token, 0.000001);
   assert.equal(snapshot?.models[0].cache_read_price_per_token, 0.0000001);
@@ -84,14 +84,14 @@ Deno.test("fetchSurplusResponses omits unsupported parallel-tool control and ret
     stream: true,
     parallel_tool_calls: true,
   };
-  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const calls: { url: string; init?: RequestInit }[] = [];
   const fetcher: SurplusFetch = (input, init) => {
     calls.push({ url: input.toString(), init });
     return Promise.resolve(
       new Response("data: [DONE]\n\n", {
         status: 200,
         headers: { "X-Request-Id": " surplus-request-1 " },
-      }),
+      })
     );
   };
 
@@ -123,10 +123,7 @@ Deno.test("fetchSurplusResponses translates Codex ultra reasoning to the upstrea
     return Promise.resolve(new Response("{}", { status: 200 }));
   };
 
-  await fetchSurplusResponses(
-    { model: "gpt-5.6-sol", input: "hello", reasoning: { effort: "ultra" } },
-    { apiKey: "inf_test", fetcher },
-  );
+  await fetchSurplusResponses({ model: "gpt-5.6-sol", input: "hello", reasoning: { effort: "ultra" } }, { apiKey: "inf_test", fetcher });
 
   assert.deepEqual(forwarded, {
     model: "gpt-5.6-sol",
@@ -153,7 +150,7 @@ Deno.test("fetchSurplusResponses maps Codex developer messages to Surplus system
         forwardedInput = (JSON.parse(String(init?.body)) as Record<string, unknown>).input;
         return Promise.resolve(new Response(null, { status: 200 }));
       },
-    },
+    }
   );
 
   assert.deepEqual(forwardedInput, [
@@ -167,14 +164,16 @@ Deno.test("fetchSurplusResponses completes sparse Surplus text streams for Codex
     { type: "response.created", response: { id: "resp_test", status: "in_progress" } },
     { type: "response.output_text.delta", output_index: 0, content_index: 0, delta: "hello" },
     { type: "response.completed", response: { id: "resp_test", status: "completed" } },
-  ].map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
+  ]
+    .map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+    .join("");
 
   const result = await fetchSurplusResponses(
     { model: "deepseek-v4-flash", input: "hello", stream: true },
     {
       apiKey: "test-key",
       fetcher: () => Promise.resolve(new Response(sparse, { headers: { "Content-Type": "text/event-stream" } })),
-    },
+    }
   );
   const output = await result.response.text();
 
@@ -208,7 +207,7 @@ Deno.test("fetchSurplusResponses runs the quota hook immediately before transpor
             }),
         });
       },
-    },
+    }
   );
   assert.deepEqual(events, ["before-dispatch", "started", "fetch"]);
 });

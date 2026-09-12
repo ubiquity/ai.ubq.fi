@@ -1,12 +1,7 @@
 import { getString, isRecord } from "./utils.ts";
 import { STREAM_FIRST_EVENT_DEADLINE_MS, STREAM_INACTIVITY_DEADLINE_MS } from "./inference_deadline.ts";
 
-export const RESPONSES_TERMINAL_EVENT_TYPES = new Set([
-  "error",
-  "response.completed",
-  "response.failed",
-  "response.incomplete",
-]);
+export const RESPONSES_TERMINAL_EVENT_TYPES = new Set(["error", "response.completed", "response.failed", "response.incomplete"]);
 
 export type ResponsesStreamEvent = Readonly<{
   raw: string;
@@ -16,13 +11,7 @@ export type ResponsesStreamEvent = Readonly<{
 }>;
 
 export type ResponsesStreamFailureKind =
-  | "malformed_event"
-  | "premature_eof"
-  | "read_error"
-  | "inactivity_timeout"
-  | "event_too_large"
-  | "upstream_http_5xx"
-  | "empty_upstream_completion";
+  "malformed_event" | "premature_eof" | "read_error" | "inactivity_timeout" | "event_too_large" | "upstream_http_5xx" | "empty_upstream_completion";
 
 export const MAX_RESPONSES_SSE_EVENT_BYTES = 16 * 1024 * 1024;
 
@@ -79,13 +68,14 @@ const parseEventBlock = (raw: string): ResponsesStreamEvent | null => {
     });
   }
   const hasNestedError = Object.prototype.hasOwnProperty.call(value, "error");
-  const isFlatError = (value.code === null || (typeof value.code === "string" && value.code.trim())) &&
-    typeof value.message === "string" && value.message.trim() &&
+  const isFlatError =
+    (value.code === null || (typeof value.code === "string" && value.code.trim())) &&
+    typeof value.message === "string" &&
+    value.message.trim() &&
     (value.param === null || typeof value.param === "string");
   if (
     (type === "error" && (hasNestedError ? !isRecord(value.error) || Array.isArray(value.error) : !isFlatError)) ||
-    (type !== "error" && RESPONSES_TERMINAL_EVENT_TYPES.has(type) &&
-      (!isRecord(value.response) || Array.isArray(value.response)))
+    (type !== "error" && RESPONSES_TERMINAL_EVENT_TYPES.has(type) && (!isRecord(value.response) || Array.isArray(value.response)))
   ) {
     throw new ResponsesStreamError("Upstream emitted a Responses terminal event with an invalid payload.", {
       kind: "malformed_event",
@@ -102,7 +92,7 @@ export const readResponsesStream = async function* (
     inactivityTimeoutMs?: number;
     /** Runs for every non-empty raw read, including comments and partial SSE frames. */
     onActivity?: () => void | Promise<void>;
-  }> = {},
+  }> = {}
 ): ResponsesStreamIterator {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
@@ -122,7 +112,9 @@ export const readResponsesStream = async function* (
     cancelStarted = true;
     void reader.cancel(reason).catch(() => {});
   };
-  const abort = () => cancelReaderOnce(signal?.reason);
+  const abort = () => {
+    cancelReaderOnce(signal?.reason);
+  };
   signal?.addEventListener("abort", abort, { once: true });
   let sawEvent = false;
   const firstEventDeadlineAtMs = Date.now() + (options.firstEventTimeoutMs ?? STREAM_FIRST_EVENT_DEADLINE_MS);
@@ -134,10 +126,7 @@ export const readResponsesStream = async function* (
     const nextLength = eventLength + value.byteLength;
     if (nextLength > MAX_RESPONSES_SSE_EVENT_BYTES) throw oversizedEvent();
     if (nextLength > eventBuffer.byteLength) {
-      const nextCapacity = Math.min(
-        MAX_RESPONSES_SSE_EVENT_BYTES,
-        Math.max(nextLength, eventBuffer.byteLength * 2),
-      );
+      const nextCapacity = Math.min(MAX_RESPONSES_SSE_EVENT_BYTES, Math.max(nextLength, eventBuffer.byteLength * 2));
       const next = new Uint8Array(nextCapacity);
       next.set(eventBuffer.subarray(0, eventLength));
       eventBuffer = next;
@@ -157,8 +146,7 @@ export const readResponsesStream = async function* (
     // CRLF is one line terminator. The CR in CRLFCRLF must not terminate
     // early, while mixed LF+CRLF framing (\n\r\n) must still split.
     if (byte === 10) {
-      return previousByte === 10 ||
-        (previousByte === 13 && thirdPreviousByte === 13 && secondPreviousByte === 10);
+      return previousByte === 10 || (previousByte === 13 && thirdPreviousByte === 13 && secondPreviousByte === 10);
     }
     if (byte !== 13) return false;
     if (previousByte === 13) return true;
@@ -190,21 +178,20 @@ export const readResponsesStream = async function* (
     }
   };
   const readWithDeadline = async (): Promise<ReadableStreamReadResult<Uint8Array>> => {
-    const timeoutMs = sawEvent
-      ? options.inactivityTimeoutMs ?? STREAM_INACTIVITY_DEADLINE_MS
-      : Math.max(0, firstEventDeadlineAtMs - Date.now());
+    const timeoutMs = sawEvent ? (options.inactivityTimeoutMs ?? STREAM_INACTIVITY_DEADLINE_MS) : Math.max(0, firstEventDeadlineAtMs - Date.now());
     const timeout = AbortSignal.timeout(timeoutMs);
     let abortTimeout = (): void => {};
     try {
       return await Promise.race([
         reader.read(),
         new Promise<never>((_, reject) => {
-          abortTimeout = () =>
+          abortTimeout = () => {
             reject(
               new ResponsesStreamError("Upstream Responses stream became inactive.", {
                 kind: "inactivity_timeout",
-              }),
+              })
             );
+          };
           timeout.addEventListener("abort", abortTimeout, { once: true });
         }),
       ]);
@@ -265,7 +252,7 @@ export const readResponsesStream = async function* (
 export const preflightResponsesStream = async (
   upstream: ReadableStream<Uint8Array>,
   signal?: AbortSignal,
-  options: Readonly<{ onActivity?: () => void | Promise<void> }> = {},
+  options: Readonly<{ onActivity?: () => void | Promise<void> }> = {}
 ): Promise<PreflightedResponsesStream> => {
   const cancellation = new AbortController();
   const streamSignal = signal ? AbortSignal.any([signal, cancellation.signal]) : cancellation.signal;
@@ -316,7 +303,7 @@ type ProxyResponsesStreamOptions = Readonly<{
 export const proxyResponsesStreamIterator = (
   iterator: ResponsesStreamIterator,
   options: ProxyResponsesStreamOptions = {},
-  initialEvent?: ResponsesStreamEvent,
+  initialEvent?: ResponsesStreamEvent
 ): ReadableStream<Uint8Array> => {
   const localAbort = new AbortController();
   let pending = initialEvent;
@@ -373,10 +360,7 @@ export const proxyResponsesStreamIterator = (
  * source remains incremental: provider bytes are forwarded as soon as they
  * arrive, and the heartbeat is only a small connection-preserving burst.
  */
-export const withSseKeepalive = (
-  source: ReadableStream<Uint8Array>,
-  options: Readonly<{ intervalMs?: number }> = {},
-): ReadableStream<Uint8Array> => {
+export const withSseKeepalive = (source: ReadableStream<Uint8Array>, options: Readonly<{ intervalMs?: number }> = {}): ReadableStream<Uint8Array> => {
   const reader = source.getReader();
   const configuredIntervalMs = options.intervalMs ?? SSE_KEEPALIVE_INTERVAL_MS;
   const intervalMs = Number.isFinite(configuredIntervalMs) && configuredIntervalMs > 0 ? configuredIntervalMs : 0;
@@ -386,7 +370,9 @@ export const withSseKeepalive = (
   let resolveHeartbeat: (() => void) | null = null;
   const heartbeat = (): Promise<"heartbeat"> =>
     new Promise((resolve) => {
-      resolveHeartbeat = () => resolve("heartbeat");
+      resolveHeartbeat = () => {
+        resolve("heartbeat");
+      };
       heartbeatTimer = setTimeout(() => {
         heartbeatTimer = null;
         resolveHeartbeat = null;
@@ -405,12 +391,10 @@ export const withSseKeepalive = (
       if (closed) return;
       try {
         pendingRead ??= reader.read();
-        const outcome = intervalMs > 0
-          ? await Promise.race([
-            pendingRead.then((result) => ({ kind: "read" as const, result })),
-            heartbeat().then((kind) => ({ kind })),
-          ])
-          : { kind: "read" as const, result: await pendingRead };
+        const outcome =
+          intervalMs > 0
+            ? await Promise.race([pendingRead.then((result) => ({ kind: "read" as const, result })), heartbeat().then((kind) => ({ kind }))])
+            : { kind: "read" as const, result: await pendingRead };
         if (outcome.kind === "heartbeat") {
           controller.enqueue(SSE_KEEPALIVE_FRAME.slice());
           return;
@@ -441,11 +425,5 @@ export const withSseKeepalive = (
   });
 };
 
-export const proxyResponsesStream = (
-  upstream: ReadableStream<Uint8Array>,
-  options: ProxyResponsesStreamOptions = {},
-): ReadableStream<Uint8Array> =>
-  proxyResponsesStreamIterator(
-    readResponsesStream(upstream, options.signal),
-    options,
-  );
+export const proxyResponsesStream = (upstream: ReadableStream<Uint8Array>, options: ProxyResponsesStreamOptions = {}): ReadableStream<Uint8Array> =>
+  proxyResponsesStreamIterator(readResponsesStream(upstream, options.signal), options);

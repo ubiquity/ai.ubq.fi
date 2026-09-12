@@ -34,7 +34,7 @@ export const TASK_CATEGORIES = ["navigation", "coding", "sequential", "failure",
 export type TaskCategory = (typeof TASK_CATEGORIES)[number];
 
 /** A single step of a recorded (scripted) trail executed by the `reference` adapter. */
-export interface TrailStep {
+export type TrailStep = {
   /** Canonical tool name, e.g. filesystem.read, shell.exec, editor.apply_patch. */
   tool: string;
   /** Arguments passed to the tool. */
@@ -59,33 +59,33 @@ export interface TrailStep {
   repeat?: boolean;
   /** Mark the step as a recovery attempt following an earlier tool error. */
   recovery?: boolean;
-}
+};
 
 export type FileCheckKind = "exists" | "equals" | "contains" | "regex";
 
-export interface FileCheck {
+export type FileCheck = {
   path: string;
   kind: FileCheckKind;
   /** Required for equals/contains/regex. */
   value?: string;
   /** Invert the pass/fail decision. */
   invert?: boolean;
-}
+};
 
 export type GitCheckKind = "commit_count" | "head_message" | "worktree_clean" | "file_committed";
 
-export interface GitCheck {
+export type GitCheck = {
   kind: GitCheckKind;
   /** commit_count: minimum commit count; head_message/file_committed: expected string. */
   value?: string;
-}
+};
 
-export interface TaskOracle {
+export type TaskOracle = {
   file_checks?: FileCheck[];
   git_checks?: GitCheck[];
-}
+};
 
-export interface TaskManifest {
+export type TaskManifest = {
   /** Stable identifier, e.g. `nav-001`. */
   id: string;
   category: TaskCategory;
@@ -122,13 +122,13 @@ export interface TaskManifest {
   oracle?: TaskOracle;
   /** Optional recorded trail interpreted by the `reference` adapter. */
   scripted_trail?: TrailStep[];
-}
+};
 
 // ---------------------------------------------------------------------------
 // Trajectory events
 // ---------------------------------------------------------------------------
 
-export interface RunEvent {
+export type RunEvent = {
   type: "run";
   at: string;
   run_id: string;
@@ -138,9 +138,9 @@ export interface RunEvent {
   adapter_id: string;
   fixture: string;
   fixture_revision: string;
-}
+};
 
-export interface ModelRequestEvent {
+export type ModelRequestEvent = {
   type: "model_request";
   at: string;
   /** Monotonic request sequence number within the run. */
@@ -151,18 +151,18 @@ export interface ModelRequestEvent {
   output_tokens: number;
   /** Number of tools offered to the model. */
   tool_count: number;
-}
+};
 
-export interface ModelResponseEvent {
+export type ModelResponseEvent = {
   type: "model_response";
   at: string;
   request_id: number;
   content?: string;
   tool_calls?: { id: string; name: string; arguments: Record<string, unknown> }[];
   finish_reason?: string;
-}
+};
 
-export interface ToolCallEvent {
+export type ToolCallEvent = {
   type: "tool_call";
   at: string;
   id: string;
@@ -175,9 +175,9 @@ export interface ToolCallEvent {
   is_wrong_tool?: boolean;
   /** True when the call duplicates the previous call (explicit or detected). */
   is_repeated?: boolean;
-}
+};
 
-export interface ToolResultEvent {
+export type ToolResultEvent = {
   type: "tool_result";
   at: string;
   id: string;
@@ -189,9 +189,9 @@ export interface ToolResultEvent {
   /** Machine-readable error code: invalid_args, write_scope, exec_failed, unavailable, ... */
   error_code?: string;
   duration_ms?: number;
-}
+};
 
-export interface VerifyEvent {
+export type VerifyEvent = {
   type: "verify";
   at: string;
   command: string;
@@ -199,7 +199,7 @@ export interface VerifyEvent {
   exit_code?: number;
   timed_out: boolean;
   output?: string;
-}
+};
 
 /**
  * m05 additive event: a deterministic reliability-guard rejection (final
@@ -207,7 +207,7 @@ export interface VerifyEvent {
  * Readers that do not know this type must ignore the event; derivation always
  * tolerates unknown event types.
  */
-export interface GuardEvent {
+export type GuardEvent = {
   type: "guard";
   at: string;
   /** Machine-readable guard kind. */
@@ -218,16 +218,9 @@ export interface GuardEvent {
   attempt: number;
   /** Structured phase when the guard fired. */
   phase: string;
-}
+};
 
-export type TrajectoryEvent =
-  | RunEvent
-  | ModelRequestEvent
-  | ModelResponseEvent
-  | ToolCallEvent
-  | ToolResultEvent
-  | VerifyEvent
-  | GuardEvent;
+export type TrajectoryEvent = RunEvent | ModelRequestEvent | ModelResponseEvent | ToolCallEvent | ToolResultEvent | VerifyEvent | GuardEvent;
 
 // ---------------------------------------------------------------------------
 // Result record (one line in result.jsonl)
@@ -244,7 +237,7 @@ export const FAILURE_CLASSES = [
 
 export type FailureClass = (typeof FAILURE_CLASSES)[number];
 
-export interface RunMetrics {
+export type RunMetrics = {
   model_calls: number;
   tool_calls: number;
   invalid_tool_calls: number;
@@ -256,34 +249,34 @@ export interface RunMetrics {
   output_tokens: number;
   /** Largest observed request context (input + output tokens of one request). */
   context_size: number;
-}
+};
 
-export interface VerificationOutcome {
+export type VerificationOutcome = {
   ran: boolean;
   passed: boolean;
   command: string | null;
   exit_code: number | null;
   timed_out: boolean;
   output: string | null;
-}
+};
 
-export interface OracleCheckOutcome {
+export type OracleCheckOutcome = {
   kind: "file" | "git" | "required_calls";
   detail: string;
   passed: boolean;
-}
+};
 
-export interface OracleOutcome {
+export type OracleOutcome = {
   passed: boolean;
   checks: OracleCheckOutcome[];
-}
+};
 
 /**
  * m05 additive summary: the deterministic reliability evidence derived from
  * the event stream (never inferred from model text).  Optional so 1.0
  * artifacts written before m05 remain valid.
  */
-export interface ReliabilitySummary {
+export type ReliabilitySummary = {
   /** Structured task phase at the end of the run. */
   phase: string;
   final_accepted: boolean;
@@ -303,9 +296,9 @@ export interface ReliabilitySummary {
   failure_class: string | null;
   /** Canonical structured-state contract (deterministic JSON). */
   state_contract: string;
-}
+};
 
-export interface BenchmarkResult {
+export type BenchmarkResult = {
   schema_version: string;
   run_id: string;
   task_id: string;
@@ -334,13 +327,13 @@ export interface BenchmarkResult {
   /** Path of the trajectory JSONL file, relative to the runs root. */
   trajectory: string;
   created_at: string;
-}
+};
 
 // ---------------------------------------------------------------------------
 // Aggregated summary
 // ---------------------------------------------------------------------------
 
-export interface GroupMetrics {
+export type GroupMetrics = {
   runs: number;
   successes: number;
   failures: number;
@@ -355,19 +348,19 @@ export interface GroupMetrics {
   total_input_tokens: number;
   total_output_tokens: number;
   failure_classes: Record<string, number>;
-}
+};
 
-export interface ConfigGroup extends GroupMetrics {
+export type ConfigGroup = {
   config_id: string;
   task_count: number;
-}
+} & GroupMetrics;
 
-export interface TaskConfigGroup extends GroupMetrics {
+export type TaskConfigGroup = {
   task_id: string;
   config_id: string;
-}
+} & GroupMetrics;
 
-export interface BenchmarkSummary {
+export type BenchmarkSummary = {
   schema_version: string;
   generated_at: string;
   runs_root: string;
@@ -377,7 +370,7 @@ export interface BenchmarkSummary {
   success_rate: number;
   by_config: ConfigGroup[];
   by_task_config: TaskConfigGroup[];
-}
+};
 
 // ---------------------------------------------------------------------------
 // Validation helpers (dependency-free; fail fast with actionable messages)
@@ -441,9 +434,10 @@ export function validateTaskManifest(m: unknown): TaskManifest {
   if ((m.min_tool_calls as number) > (m.max_tool_calls as number)) {
     fail("min_tool_calls", "must not exceed max_tool_calls");
   }
-  const allowedWriteScope = Array.isArray(m.allowed_write_scope) && m.allowed_write_scope.length > 0
-    ? expectStringArray(m.allowed_write_scope, "allowed_write_scope")
-    : (fail("allowed_write_scope", "must be a non-empty array of glob patterns") as never);
+  const allowedWriteScope =
+    Array.isArray(m.allowed_write_scope) && m.allowed_write_scope.length > 0
+      ? expectStringArray(m.allowed_write_scope, "allowed_write_scope")
+      : (fail("allowed_write_scope", "must be a non-empty array of glob patterns") as never);
 
   // verify / oracle
   let verify: TaskManifest["verify"];
@@ -451,9 +445,7 @@ export function validateTaskManifest(m: unknown): TaskManifest {
     if (!isRecord(m.verify)) fail("verify", "expected object");
     verify = {
       command: expectString(m.verify.command, "verify.command"),
-      timeout_ms: m.verify.timeout_ms === undefined
-        ? undefined
-        : expectInt(m.verify.timeout_ms, "verify.timeout_ms", 1),
+      timeout_ms: m.verify.timeout_ms === undefined ? undefined : expectInt(m.verify.timeout_ms, "verify.timeout_ms", 1),
     };
   }
 
@@ -523,9 +515,8 @@ export function validateTaskManifest(m: unknown): TaskManifest {
         if (!isRecord(s.expect)) fail(`scripted_trail[${i}].expect`, "expected object");
         step.expect = {
           ok: s.expect.ok === undefined ? undefined : Boolean(s.expect.ok),
-          output_contains: s.expect.output_contains === undefined
-            ? undefined
-            : expectStringArray(s.expect.output_contains, `scripted_trail[${i}].expect.output_contains`),
+          output_contains:
+            s.expect.output_contains === undefined ? undefined : expectStringArray(s.expect.output_contains, `scripted_trail[${i}].expect.output_contains`),
           error_contains: expectOptionalString(s.expect.error_contains, `scripted_trail[${i}].expect.error_contains`),
         };
       }

@@ -51,7 +51,7 @@ export type CanonicalToolName = (typeof CANONICAL_TOOL_NAMES)[number];
 export const CANONICAL_TOOL_DEFAULT_STRICTNESS = false;
 
 /** One canonical tool: model-facing name, description and JSON Schema. */
-export interface CanonicalToolSchema {
+export type CanonicalToolSchema = {
   name: CanonicalToolName;
   description: string;
   /**
@@ -59,15 +59,11 @@ export interface CanonicalToolSchema {
    * `additionalProperties: false`; string/boolean/array-of-string types only.
    */
   parameters: Readonly<Record<string, unknown>>;
-}
+};
 
-const property = (
-  type: "string" | "boolean",
-  extra: Readonly<Record<string, unknown>> = {},
-): Readonly<Record<string, unknown>> => ({ type, ...extra });
+const property = (type: "string" | "boolean", extra: Readonly<Record<string, unknown>> = {}): Readonly<Record<string, unknown>> => ({ type, ...extra });
 
-const stringProperty = (extra: Readonly<Record<string, unknown>> = {}): Readonly<Record<string, unknown>> =>
-  property("string", extra);
+const stringProperty = (extra: Readonly<Record<string, unknown>> = {}): Readonly<Record<string, unknown>> => property("string", extra);
 
 const nonEmptyStringProperty = (extra: Readonly<Record<string, unknown>> = {}): Readonly<Record<string, unknown>> =>
   property("string", { minLength: 1, ...extra });
@@ -76,7 +72,7 @@ const schema = (
   name: CanonicalToolName,
   description: string,
   properties: Readonly<Record<string, Readonly<Record<string, unknown>>>>,
-  required: readonly string[],
+  required: readonly string[]
 ): CanonicalToolSchema => ({
   name,
   description,
@@ -94,7 +90,7 @@ export const TOOL_SCHEMAS: Readonly<Record<CanonicalToolName, CanonicalToolSchem
     "filesystem.read",
     "Read the UTF-8 text of a file inside the workspace. Returns the file content, or a not_found error when the path does not exist.",
     { path: nonEmptyStringProperty({ description: "Workspace-relative file path." }) },
-    ["path"],
+    ["path"]
   ),
   "filesystem.find": schema(
     "filesystem.find",
@@ -105,7 +101,7 @@ export const TOOL_SCHEMAS: Readonly<Record<CanonicalToolName, CanonicalToolSchem
         description: "Glob pattern; defaults to ** (all files under the directory).",
       }),
     },
-    ["path"],
+    ["path"]
   ),
   "filesystem.search": schema(
     "filesystem.search",
@@ -114,31 +110,31 @@ export const TOOL_SCHEMAS: Readonly<Record<CanonicalToolName, CanonicalToolSchem
       path: nonEmptyStringProperty({ description: "Workspace-relative directory path to search." }),
       query: nonEmptyStringProperty({ description: "Text to search for." }),
     },
-    ["path", "query"],
+    ["path", "query"]
   ),
   "browser.search": schema(
     "browser.search",
     "Search the web and return matching result titles, URLs and snippets. Returns (no results) when nothing matches.",
     { query: nonEmptyStringProperty({ description: "Search query." }) },
-    ["query"],
+    ["query"]
   ),
   "browser.open": schema(
     "browser.open",
     "Open a URL and return the page title and text content. The opened page becomes the current page for browser.find.",
     { url: nonEmptyStringProperty({ description: "URL to open, e.g. https://example.com/page." }) },
-    ["url"],
+    ["url"]
   ),
   "browser.find": schema(
     "browser.find",
     "Case-insensitive search for text in the currently-open browser page. Returns at most 200 matches as line:content.",
     { query: nonEmptyStringProperty({ description: "Text to find on the current page." }) },
-    ["query"],
+    ["query"]
   ),
   "shell.exec": schema(
     "shell.exec",
     "Run a shell command in the workspace with sh -c and return its exit code, standard output and standard error. Non-zero exit codes are errors.",
     { command: nonEmptyStringProperty({ description: "Shell command to execute." }) },
-    ["command"],
+    ["command"]
   ),
   "editor.apply_patch": schema(
     "editor.apply_patch",
@@ -151,7 +147,7 @@ export const TOOL_SCHEMAS: Readonly<Record<CanonicalToolName, CanonicalToolSchem
       new: stringProperty({ description: "Replacement text, or the file content when add is true." }),
       add: property("boolean", { description: "Create the file instead of patching an existing one." }),
     },
-    ["path"],
+    ["path"]
   ),
   "task.update_plan": schema(
     "task.update_plan",
@@ -163,7 +159,7 @@ export const TOOL_SCHEMAS: Readonly<Record<CanonicalToolName, CanonicalToolSchem
         description: "Ordered plan steps; each entry must be a non-empty string.",
       },
     },
-    ["plan"],
+    ["plan"]
   ),
 };
 
@@ -180,14 +176,11 @@ const NON_EMPTY_PARAMS: Readonly<Record<CanonicalToolName, readonly string[]>> =
 };
 
 /** Returns the canonical schema for a tool name, or null when unknown. */
-export const lookupToolSchema = (tool: string): CanonicalToolSchema | null =>
-  (TOOL_SCHEMAS as Readonly<Record<string, CanonicalToolSchema>>)[tool] ?? null;
+export const lookupToolSchema = (tool: string): CanonicalToolSchema | null => (TOOL_SCHEMAS as Readonly<Record<string, CanonicalToolSchema>>)[tool] ?? null;
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
-const describeExpected = (type: "string" | "boolean" | "string[]"): string =>
-  type === "string[]" ? "an array of non-empty strings" : `a ${type}`;
+const describeExpected = (type: "string" | "boolean" | "string[]"): string => (type === "string[]" ? "an array of non-empty strings" : `a ${type}`);
 
 /**
  * Type-checks and normalizes tool arguments against the canonical schema.
@@ -196,10 +189,7 @@ const describeExpected = (type: "string" | "boolean" | "string[]"): string =>
  * arguments are rejected, and required string parameters must be non-empty.
  * The returned `arguments` object preserves the caller's values unchanged.
  */
-export function validateToolArguments(
-  tool: string,
-  args: unknown,
-): { valid: true; arguments: Record<string, unknown> } | { valid: false; reason: string } {
+export function validateToolArguments(tool: string, args: unknown): { valid: true; arguments: Record<string, unknown> } | { valid: false; reason: string } {
   const toolSchema = lookupToolSchema(tool);
   if (toolSchema === null) return { valid: false, reason: `unknown tool ${JSON.stringify(tool)}` };
   if (!isRecord(args)) return { valid: false, reason: "arguments must be an object" };
@@ -241,9 +231,7 @@ export function validateToolArguments(
 }
 
 /** Parameter type view of a canonical schema, for tooling and compatibility shims. */
-export const toolParameterTypes = (
-  toolSchema: CanonicalToolSchema,
-): Readonly<Record<string, "string" | "boolean" | "string[]">> => {
+export const toolParameterTypes = (toolSchema: CanonicalToolSchema): Readonly<Record<string, "string" | "boolean" | "string[]">> => {
   const parameters = toolSchema.parameters.properties as Readonly<Record<string, Readonly<Record<string, unknown>>>>;
   const out: Record<string, "string" | "boolean" | "string[]"> = {};
   for (const [key, param] of Object.entries(parameters)) {
@@ -255,9 +243,7 @@ export const toolParameterTypes = (
 };
 
 /** Renders the whole canonical surface as m01 ToolDefinition entries. */
-export const toolDefinitions = (
-  opts: Readonly<{ strict?: boolean }> = {},
-): readonly ToolDefinition[] => {
+export const toolDefinitions = (opts: Readonly<{ strict?: boolean }> = {}): readonly ToolDefinition[] => {
   const strict = opts.strict ?? CANONICAL_TOOL_DEFAULT_STRICTNESS;
   return CANONICAL_TOOL_NAMES.map((name) => {
     const toolSchema = TOOL_SCHEMAS[name];
@@ -293,7 +279,7 @@ const isStrictSchemaNode = (value: unknown): boolean => {
  * optional parameters by design.
  */
 export const assertCanonicalToolSchemas = (
-  strict: boolean,
+  strict: boolean
 ): { ok: true; names: readonly CanonicalToolName[] } | { ok: false; name: string; reason: string } => {
   for (const toolSchema of Object.values(TOOL_SCHEMAS)) {
     const parameters = toolSchema.parameters;

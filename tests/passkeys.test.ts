@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 
-const encodeBase64Url = (value: string): string =>
-  btoa(value).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+const encodeBase64Url = (value: string): string => btoa(value).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 
 const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
 const kvVersions = new Map<string, number>();
@@ -23,18 +22,17 @@ class KvTestStore extends Map<string, unknown> {
 }
 
 const kvStore = new KvTestStore();
-const versionstampFor = (rawKey: string): string | null =>
-  kvStore.has(rawKey) ? String(kvVersions.get(rawKey) ?? 0).padStart(20, "0") : null;
+const versionstampFor = (rawKey: string): string | null => (kvStore.has(rawKey) ? String(kvVersions.get(rawKey) ?? 0).padStart(20, "0") : null);
 
 const kvStub = {
   get: async (key: Deno.KvKey) => {
     if (kvGetDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, kvGetDelayMs));
     const rawKey = keyToString(key);
-    return ({
+    return {
       key,
       value: kvStore.has(rawKey) ? kvStore.get(rawKey) : null,
       versionstamp: versionstampFor(rawKey),
-    }) as Deno.KvEntryMaybe<unknown>;
+    } as Deno.KvEntryMaybe<unknown>;
   },
   set: (key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }) => {
     kvStore.set(keyToString(key), value);
@@ -58,8 +56,8 @@ const kvStub = {
     }
   },
   atomic: () => {
-    const ops: Array<{ type: "set" | "delete"; key: Deno.KvKey; value?: unknown }> = [];
-    const checks: Array<{ key: Deno.KvKey; versionstamp: string | null }> = [];
+    const ops: { type: "set" | "delete"; key: Deno.KvKey; value?: unknown }[] = [];
+    const checks: { key: Deno.KvKey; versionstamp: string | null }[] = [];
     const chain = {
       check: (check: { key: Deno.KvKey; versionstamp: string | null }) => {
         checks.push(check);
@@ -137,10 +135,7 @@ const withEnv = async (updates: Record<string, string | null>, fn: () => Promise
   }
 };
 
-const seedPasskeySession = (
-  token = "uos_ai_session_test",
-  { isAdmin = true, audienceOrigin = "" }: { isAdmin?: boolean; audienceOrigin?: string } = {},
-) => {
+const seedPasskeySession = (token = "uos_ai_session_test", { isAdmin = true, audienceOrigin = "" }: { isAdmin?: boolean; audienceOrigin?: string } = {}) => {
   const now = Date.now();
   const user = {
     id: "user-test",
@@ -193,7 +188,7 @@ Deno.test("inference handler omits synthetic quota headers for passkey sessions"
             "Content-Type": "application/json",
           },
           body: "{}",
-        }),
+        })
       );
       assert.equal(response.status, 503);
       assert.equal(response.headers.get("x-codex-limit-name"), null);
@@ -239,7 +234,7 @@ Deno.test("passkey inference does not read a retained Metered snapshot", async (
           "Content-Type": "application/json",
         },
         body: "{}",
-      }),
+      })
     );
 
     assert.equal(response.status, 503);
@@ -273,8 +268,10 @@ Deno.test("passkey inference never waits for a Metered quota refresh", async () 
     new Promise((_resolve, reject) => {
       init?.signal?.addEventListener(
         "abort",
-        () => reject(init.signal?.reason ?? new DOMException("Aborted", "AbortError")),
-        { once: true },
+        () => {
+          reject(init.signal?.reason ?? new DOMException("Aborted", "AbortError"));
+        },
+        { once: true }
       );
     });
   try {
@@ -292,10 +289,12 @@ Deno.test("passkey inference never waits for a Metered quota refresh", async () 
               },
               body: "{}",
               signal: controller.signal,
-            }),
+            })
           ),
           new Promise<never>((_resolve, reject) => {
-            timeout = setTimeout(() => reject(new Error("handler waited for Metered quota refresh")), 500);
+            timeout = setTimeout(() => {
+              reject(new Error("handler waited for Metered quota refresh"));
+            }, 500);
           }),
         ]);
         assert.equal(response.status, 503);
@@ -353,11 +352,11 @@ Deno.test("admin passkey sessions cannot read the super-admin Stage 0 diagnostic
   const response = await handler(
     new Request("https://ai.ubq.fi/admin/providers/codex/cache-scope-experiment", {
       headers: { Authorization: `Bearer ${token}` },
-    }),
+    })
   );
 
   assert.equal(response.status, 403);
-  const body = await response.json() as { error?: { code?: unknown } };
+  const body = (await response.json()) as { error?: { code?: unknown } };
   assert.equal(body.error?.code, "forbidden");
 });
 
@@ -392,7 +391,7 @@ Deno.test("non-admin passkey session authenticates as client but not admin", asy
 Deno.test("Deno Deploy tokens are verified with the Deno API outside deployed runtime", async () => {
   kvStore.clear();
   const originalFetch = globalThis.fetch;
-  const requested: Array<{ url: string; authorization: string | null }> = [];
+  const requested: { url: string; authorization: string | null }[] = [];
   const token = "ddo_test_token_1234567890abcdefghijklmnopqrstuvwxyz";
 
   globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -405,7 +404,7 @@ Deno.test("Deno Deploy tokens are verified with the Deno API outside deployed ru
       new Response("{}", {
         status: 200,
         headers: { "Content-Type": "application/json" },
-      }),
+      })
     );
   };
 
@@ -443,7 +442,7 @@ Deno.test("Deno Deploy tokens are verified with the Deno API outside deployed ru
 Deno.test("Deno Deploy console tokens are verified against the app page", async () => {
   kvStore.clear();
   const originalFetch = globalThis.fetch;
-  const requested: Array<{ url: string; authorization: string | null; cookie: string | null }> = [];
+  const requested: { url: string; authorization: string | null; cookie: string | null }[] = [];
   const token = "ddo_console_token_1234567890abcdefghijklmnopqrstuvwxyz";
 
   globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -461,27 +460,30 @@ Deno.test("Deno Deploy console tokens are verified against the app page", async 
       new Response("<title>Overview | ai-ubq-fi | Deploy</title>", {
         status: 200,
         headers: { "Content-Type": "text/html" },
-      }),
+      })
     );
   };
 
   try {
-    await withEnv({
-      DENO_DEPLOY_APP_SLUG: "ai-ubq-fi",
-      DENO_DEPLOY_ORG_SLUG: "ubiquity-dao",
-    }, async () => {
-      const req = new Request("https://ai.ubq.fi/uos/auth", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const adminAuth = await authenticateAdmin(req);
-      assert.equal(adminAuth.ok, true);
-      if (adminAuth.ok) assert.equal(adminAuth.method.kind, "deno_deploy_token");
+    await withEnv(
+      {
+        DENO_DEPLOY_APP_SLUG: "ai-ubq-fi",
+        DENO_DEPLOY_ORG_SLUG: "ubiquity-dao",
+      },
+      async () => {
+        const req = new Request("https://ai.ubq.fi/uos/auth", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const adminAuth = await authenticateAdmin(req);
+        assert.equal(adminAuth.ok, true);
+        if (adminAuth.ok) assert.equal(adminAuth.method.kind, "deno_deploy_token");
 
-      assert.equal(requested.length, 2);
-      assert.equal(requested[0].authorization, `Bearer ${token}`);
-      assert.equal(requested[1].url, "https://console.deno.com/ubiquity-dao/ai-ubq-fi");
-      assert.equal(requested[1].cookie, `token=${token}; deno_auth_ghid=force`);
-    });
+        assert.equal(requested.length, 2);
+        assert.equal(requested[0].authorization, `Bearer ${token}`);
+        assert.equal(requested[1].url, "https://console.deno.com/ubiquity-dao/ai-ubq-fi");
+        assert.equal(requested[1].cookie, `token=${token}; deno_auth_ghid=force`);
+      }
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -501,23 +503,26 @@ Deno.test("Deno Deploy console fallback rejects path-only HTML", async () => {
       new Response("Sign in to view /ubiquity-dao/ai-ubq-fi", {
         status: 200,
         headers: { "Content-Type": "text/html" },
-      }),
+      })
     );
   };
 
   try {
-    await withEnv({
-      DENO_DEPLOY_APP_SLUG: "ai-ubq-fi",
-      DENO_DEPLOY_ORG_SLUG: "ubiquity-dao",
-      DENO_DEPLOYMENT_ID: null,
-    }, async () => {
-      const req = new Request("https://ai.ubq.fi/uos/auth", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const adminAuth = await authenticateAdmin(req);
-      assert.equal(adminAuth.ok, false);
-      if (!adminAuth.ok) assert.equal(adminAuth.response?.status, 401);
-    });
+    await withEnv(
+      {
+        DENO_DEPLOY_APP_SLUG: "ai-ubq-fi",
+        DENO_DEPLOY_ORG_SLUG: "ubiquity-dao",
+        DENO_DEPLOYMENT_ID: null,
+      },
+      async () => {
+        const req = new Request("https://ai.ubq.fi/uos/auth", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const adminAuth = await authenticateAdmin(req);
+        assert.equal(adminAuth.ok, false);
+        if (!adminAuth.ok) assert.equal(adminAuth.response?.status, 401);
+      }
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -536,20 +541,23 @@ Deno.test("Deno Deploy tokens do not fall back to the production app slug", asyn
   };
 
   try {
-    await withEnv({
-      DENO_DEPLOY_APP_SLUG: null,
-      DENO_DEPLOY_ORG_SLUG: null,
-      DENO_DEPLOYMENT_ID: "dep_test",
-    }, async () => {
-      const req = new Request("https://ai.ubq.fi/uos/auth", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const adminAuth = await authenticateAdmin(req);
-      assert.equal(adminAuth.ok, true);
-      if (adminAuth.ok) assert.equal(adminAuth.method.kind, "deno_deploy_token");
+    await withEnv(
+      {
+        DENO_DEPLOY_APP_SLUG: null,
+        DENO_DEPLOY_ORG_SLUG: null,
+        DENO_DEPLOYMENT_ID: "dep_test",
+      },
+      async () => {
+        const req = new Request("https://ai.ubq.fi/uos/auth", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const adminAuth = await authenticateAdmin(req);
+        assert.equal(adminAuth.ok, true);
+        if (adminAuth.ok) assert.equal(adminAuth.method.kind, "deno_deploy_token");
 
-      assert.deepEqual(requested, ["https://api.deno.com/v1/deployments/dep_test"]);
-    });
+        assert.deepEqual(requested, ["https://api.deno.com/v1/deployments/dep_test"]);
+      }
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -582,7 +590,7 @@ Deno.test("passkey RP ID follows browser origin behind Deno Deploy custom domain
   const req = new Request("https://ai-ubq-fi.ubiquity-dao.deno.net/api/auth/register/start", {
     method: "POST",
     headers: {
-      "Origin": "https://ai.ubq.fi",
+      Origin: "https://ai.ubq.fi",
       "Content-Type": "application/json",
     },
     body: "{}",
@@ -624,7 +632,7 @@ Deno.test("passkey RP ID ignores untrusted client origin", () => {
   const req = new Request("https://ai.ubq.fi/api/auth/register/start", {
     method: "POST",
     headers: {
-      "Origin": "https://evil.example",
+      Origin: "https://evil.example",
       "Content-Type": "application/json",
     },
     body: "{}",
@@ -640,7 +648,7 @@ Deno.test("passkey RP ID ignores opaque origins", () => {
   const req = new Request("https://ai.ubq.fi/api/auth/register/start", {
     method: "POST",
     headers: {
-      "Origin": "foo://bar",
+      Origin: "foo://bar",
       "Content-Type": "application/json",
     },
     body: "{}",
@@ -661,7 +669,7 @@ Deno.test("passkey registration start requires admin proof", async () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: "{}",
-    }),
+    })
   );
 
   assert.equal(response.status, 401);
@@ -678,11 +686,11 @@ Deno.test("passkey registration start can use an existing passkey session", asyn
     new Request("https://ai.ubq.fi/api/auth/register/start", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${token}`,
+        Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
       body: "{}",
-    }),
+    })
   );
 
   assert.equal(response.status, 200);
@@ -719,7 +727,7 @@ Deno.test("passkey JSON handlers reject oversized streamed bodies with 413", asy
 
     const response = await passkeyHandler(request);
     assert.equal(response.status, 413, name);
-    const payload = await response.json() as { error?: { code?: string } };
+    const payload = (await response.json()) as { error?: { code?: string } };
     assert.equal(payload.error?.code, "invalid_request_error", name);
     assert.equal(cancelled, true, name);
   }
@@ -742,7 +750,7 @@ Deno.test("passkey JSON handlers reject an oversized declared body before parsin
           cancelled = true;
         },
       }),
-    }),
+    })
   );
 
   assert.equal(response.status, 413);
@@ -769,11 +777,11 @@ Deno.test("passkey registration start rejects session claims for another user ha
     new Request("https://ai.ubq.fi/api/auth/register/start", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${token}`,
+        Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ handle: otherUser.handle }),
-    }),
+    })
   );
 
   assert.equal(response.status, 409);
@@ -800,12 +808,12 @@ Deno.test("passkey registration start rejects token bootstrap claims for another
     new Request("https://ai.ubq.fi/api/auth/register/start", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${token}`,
+        Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ handle: otherUser.handle }),
     }),
-    { defaultIsAdmin: true },
+    { defaultIsAdmin: true }
   );
 
   assert.equal(response.status, 409);
@@ -833,12 +841,12 @@ Deno.test("passkey registration start reuses an existing token-handle user", asy
     new Request("https://ai.ubq.fi/api/auth/register/start", {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${token}`,
+        Authorization: `Bearer ${token}`,
         "Content-Type": "application/json",
       },
       body: "{}",
     }),
-    { defaultIsAdmin: true },
+    { defaultIsAdmin: true }
   );
 
   assert.equal(response.status, 200);
@@ -879,14 +887,14 @@ Deno.test("passkey login start requires user verification for admin handles", as
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ handle: adminUser.handle }),
-    }),
+    })
   );
   const memberResponse = await handlePasskeyLoginStart(
     new Request("https://ai.ubq.fi/api/auth/login/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ handle: memberUser.handle }),
-    }),
+    })
   );
 
   assert.equal(adminResponse.status, 200);
@@ -903,7 +911,7 @@ Deno.test("passkey login start without username remains discoverable", async () 
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: "{}",
-    }),
+    })
   );
 
   assert.equal(response.status, 200);
@@ -926,51 +934,47 @@ Deno.test("passkey login start accepts an explicit zero-byte body only on the al
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: emptyBody(),
-    }),
+    })
   );
   assert.equal(loginStart.status, 200);
   const loginBody = await loginStart.json();
   assert.equal(loginBody.publicKey.allowCredentials, undefined);
   assert.equal(loginBody.publicKey.userVerification, "preferred");
 
-  for (
-    const [name, url, handler] of [
-      ["register start", "https://ai.ubq.fi/api/auth/register/start", handlePasskeyRegisterStart],
-      ["register finish", "https://ai.ubq.fi/api/auth/register/finish", handlePasskeyRegisterFinish],
-      ["login finish", "https://ai.ubq.fi/api/auth/login/finish", handlePasskeyLoginFinish],
-    ] as const
-  ) {
+  for (const [name, url, handler] of [
+    ["register start", "https://ai.ubq.fi/api/auth/register/start", handlePasskeyRegisterStart],
+    ["register finish", "https://ai.ubq.fi/api/auth/register/finish", handlePasskeyRegisterFinish],
+    ["login finish", "https://ai.ubq.fi/api/auth/login/finish", handlePasskeyLoginFinish],
+  ] as const) {
     const response = await handler(
       new Request(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: emptyBody(),
-      }),
+      })
     );
     assert.equal(response.status, 400, name);
-    const payload = await response.json() as { error?: { message?: unknown } };
+    const payload = (await response.json()) as { error?: { message?: unknown } };
     assert.equal(payload.error?.message, "Invalid JSON body", name);
   }
 });
 
 Deno.test("passkey login challenges bind only to exact trusted relay audiences", async () => {
   kvStore.clear();
-  for (
-    const audienceOrigin of [
-      "https://p-ai-ubq-fi-cv5fc93pzb5a.ubiquity-dao.deno.net",
-      "https://telegram-daily-exporter-4d2p9cx7m1ab.0x4007.deno.net",
-      "https://agent-worker.ubiquity-os.deno.net",
-    ]
-  ) {
+  for (const audienceOrigin of [
+    "https://p-ai-ubq-fi-cv5fc93pzb5a.ubiquity-dao.deno.net",
+    "https://telegram-daily-exporter-4d2p9cx7m1ab.0x4007.deno.net",
+    "https://agent-worker.ubiquity-os.deno.net",
+  ]) {
     const response = await handlePasskeyLoginStart(
       new Request("https://ai.ubq.fi/api/auth/login/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ relay_origin: audienceOrigin }),
-      }),
+      })
     );
     assert.equal(response.status, 200, audienceOrigin);
-    const body = await response.json() as { publicKey: { challenge: string } };
+    const body = (await response.json()) as { publicKey: { challenge: string } };
     const challenge = await kvStub.get(passkeyChallengeKey(body.publicKey.challenge));
     assert.equal((challenge.value as { audience_origin?: string } | null)?.audience_origin, audienceOrigin);
   }
@@ -981,13 +985,10 @@ Deno.test("passkey login challenges bind only to exact trusted relay audiences",
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ relay_origin: relayOrigin }),
-      }),
+      })
     );
     assert.equal(response.status, 400, relayOrigin);
-    assert.equal(
-      (await response.json() as { error?: { message?: string } }).error?.message,
-      "Invalid passkey relay origin",
-    );
+    assert.equal(((await response.json()) as { error?: { message?: string } }).error?.message, "Invalid passkey relay origin");
   }
 });
 
@@ -997,26 +998,20 @@ Deno.test("audience-bound relay cookies authenticate auth checks and admin actio
   const { token } = seedPasskeySession("uos_ai_session_relay_cookie", { audienceOrigin });
   const cookie = `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(token)}`;
 
-  const clientAuth = await authenticateClient(
-    new Request("https://ai.ubq.fi/v1/models", { headers: { Cookie: cookie, Origin: audienceOrigin } }),
-  );
+  const clientAuth = await authenticateClient(new Request("https://ai.ubq.fi/v1/models", { headers: { Cookie: cookie, Origin: audienceOrigin } }));
   assert.equal(clientAuth.ok, true);
   if (clientAuth.ok) {
     assert.equal(clientAuth.token, token);
     assert.equal(clientAuth.method.kind, "passkey_session");
   }
 
-  const adminAuth = await authenticateAdmin(
-    new Request("https://ai.ubq.fi/uos/auth", { headers: { Cookie: cookie, Origin: audienceOrigin } }),
-  );
+  const adminAuth = await authenticateAdmin(new Request("https://ai.ubq.fi/uos/auth", { headers: { Cookie: cookie, Origin: audienceOrigin } }));
   assert.equal(adminAuth.ok, true);
   if (adminAuth.ok) assert.equal(adminAuth.token, token);
 
   const { default: handler } = await import("../src/handler.ts");
   const encodedAudience = encodeURIComponent(audienceOrigin);
-  const authCheck = await handler(
-    new Request(`https://ai.ubq.fi/uos/auth?cors_origin=${encodedAudience}`, { headers: { Cookie: cookie } }),
-  );
+  const authCheck = await handler(new Request(`https://ai.ubq.fi/uos/auth?cors_origin=${encodedAudience}`, { headers: { Cookie: cookie } }));
   assert.equal(authCheck.status, 200);
   assert.equal(authCheck.headers.get("access-control-allow-origin"), audienceOrigin);
   assert.equal(authCheck.headers.get("access-control-allow-credentials"), "true");
@@ -1024,20 +1019,18 @@ Deno.test("audience-bound relay cookies authenticate auth checks and admin actio
   const adminAction = await handler(
     new Request(`https://ai.ubq.fi/admin/api-keys?include_usage=1&cors_origin=${encodedAudience}`, {
       headers: { Cookie: cookie },
-    }),
+    })
   );
   assert.equal(adminAction.status, 200);
 
   const conflictingOrigin = await handler(
     new Request(`https://ai.ubq.fi/uos/auth?cors_origin=${encodedAudience}`, {
       headers: { Cookie: cookie, Origin: "https://evil.example" },
-    }),
+    })
   );
   assert.equal(conflictingOrigin.status, 401);
 
-  const missingAudience = await getPasskeySessionForRequest(
-    new Request("https://ai.ubq.fi/uos/auth", { headers: { Cookie: cookie } }),
-  );
+  const missingAudience = await getPasskeySessionForRequest(new Request("https://ai.ubq.fi/uos/auth", { headers: { Cookie: cookie } }));
   assert.equal(missingAudience, null);
 });
 
@@ -1052,32 +1045,27 @@ Deno.test("relay logout clears the audience cookie and bound server session", as
         Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(token)}`,
         Origin: audienceOrigin,
       },
-    }),
+    })
   );
 
   assert.equal(response.status, 204);
-  assert.equal(
-    response.headers.get("set-cookie"),
-    `${PASSKEY_RELAY_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=None`,
-  );
+  assert.equal(response.headers.get("set-cookie"), `${PASSKEY_RELAY_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=None`);
   assert.equal((await kvStub.get(passkeySessionKey(token))).value, null);
 });
 
 Deno.test("credentialed CORS reflects only exact trusted relay origins", async () => {
   const { default: handler } = await import("../src/handler.ts");
-  for (
-    const audienceOrigin of [
-      "https://ai-ubq-fi-cv5fc93pzb5a.deno.dev",
-      "https://p-ai-ubq-fi.ubiquity-dao.deno.net",
-      "https://telegram-daily-exporter-4d2p9cx7m1ab.0x4007.deno.net",
-      "https://agent-worker.ubiquity-os.deno.net",
-    ]
-  ) {
+  for (const audienceOrigin of [
+    "https://ai-ubq-fi-cv5fc93pzb5a.deno.dev",
+    "https://p-ai-ubq-fi.ubiquity-dao.deno.net",
+    "https://telegram-daily-exporter-4d2p9cx7m1ab.0x4007.deno.net",
+    "https://agent-worker.ubiquity-os.deno.net",
+  ]) {
     const response = await handler(
       new Request("https://ai.ubq.fi/api/auth/session", {
         method: "OPTIONS",
         headers: { Origin: audienceOrigin, "Access-Control-Request-Method": "GET" },
-      }),
+      })
     );
     assert.equal(response.status, 204, audienceOrigin);
     assert.equal(response.headers.get("access-control-allow-origin"), audienceOrigin);
@@ -1090,7 +1078,7 @@ Deno.test("credentialed CORS reflects only exact trusted relay origins", async (
     new Request(`https://ai.ubq.fi/api/auth/session?cors_origin=${encodeURIComponent(fallbackOrigin)}`, {
       method: "OPTIONS",
       headers: { "Access-Control-Request-Method": "GET" },
-    }),
+    })
   );
   assert.equal(cloudflareFallback.headers.get("access-control-allow-origin"), fallbackOrigin);
   assert.equal(cloudflareFallback.headers.get("access-control-allow-credentials"), "true");
@@ -1100,7 +1088,7 @@ Deno.test("credentialed CORS reflects only exact trusted relay origins", async (
       new Request("https://ai.ubq.fi/api/auth/session", {
         method: "OPTIONS",
         headers: { Origin: origin, "Access-Control-Request-Method": "GET" },
-      }),
+      })
     );
     assert.equal(response.headers.get("access-control-allow-origin"), "*", origin);
     assert.equal(response.headers.get("access-control-allow-credentials"), null, origin);
@@ -1110,7 +1098,7 @@ Deno.test("credentialed CORS reflects only exact trusted relay origins", async (
     new Request(`https://ai.ubq.fi/api/auth/session?cors_origin=${encodeURIComponent(fallbackOrigin)}`, {
       method: "OPTIONS",
       headers: { Origin: "https://evil.example", "Access-Control-Request-Method": "GET" },
-    }),
+    })
   );
   assert.equal(conflictingOrigin.headers.get("access-control-allow-origin"), "*");
   assert.equal(conflictingOrigin.headers.get("access-control-allow-credentials"), null);
@@ -1162,18 +1150,20 @@ Deno.test("passkey login finish does not log raw user handles on assertion failu
             rawId: "credential-log",
             type: "public-key",
             response: {
-              clientDataJSON: encodeBase64Url(JSON.stringify({
-                type: "webauthn.get",
-                challenge,
-                origin: "https://ai.ubq.fi",
-              })),
+              clientDataJSON: encodeBase64Url(
+                JSON.stringify({
+                  type: "webauthn.get",
+                  challenge,
+                  origin: "https://ai.ubq.fi",
+                })
+              ),
               authenticatorData: encodeBase64Url("invalid authenticator data"),
               signature: encodeBase64Url("invalid signature"),
               userHandle: encodeBase64Url(user.id),
             },
           },
         }),
-      }),
+      })
     );
 
     assert.equal(response.status, 400);
@@ -1216,14 +1206,8 @@ Deno.test("passkey registration deletes stale handle mapping when a user handle 
   assert.equal(saved.user.handle, "new-name");
   assert.equal(kvStore.has(keyToString(passkeyHandleKey("old-name"))), false);
   assert.equal(kvStore.get(keyToString(passkeyHandleKey("new-name"))), user.id);
-  assert.deepEqual(
-    (kvStore.get(keyToString(passkeyUserKey(user.id))) as { credential_ids: string[] }).credential_ids,
-    ["credential-old", "credential-new"],
-  );
-  assert.equal(
-    (kvStore.get(keyToString(passkeyCredentialKey("credential-new"))) as { user_id: string }).user_id,
-    user.id,
-  );
+  assert.deepEqual((kvStore.get(keyToString(passkeyUserKey(user.id))) as { credential_ids: string[] }).credential_ids, ["credential-old", "credential-new"]);
+  assert.equal((kvStore.get(keyToString(passkeyCredentialKey("credential-new"))) as { user_id: string }).user_id, user.id);
 });
 
 Deno.test("passkey registration rejects concurrent handle claims", async () => {
@@ -1260,7 +1244,7 @@ Deno.test("passkey credential sign count update rejects concurrent writes", asyn
     transports: [],
     created_at_ms: Date.now(),
   });
-  const entry = await kvStub.get(credentialKey) as Deno.KvEntryMaybe<{
+  const entry = (await kvStub.get(credentialKey)) as Deno.KvEntryMaybe<{
     credential_id: string;
     user_id: string;
     public_key: string;
@@ -1273,11 +1257,15 @@ Deno.test("passkey credential sign count update rejects concurrent writes", asyn
     kvStore.set(keyToString(credentialKey), { ...entry.value, sign_count: 6 });
   };
 
-  const updated = await updatePasskeyCredentialSignCount(kvStub, {
-    key: entry.key,
-    value: entry.value,
-    versionstamp: entry.versionstamp,
-  }, 5);
+  const updated = await updatePasskeyCredentialSignCount(
+    kvStub,
+    {
+      key: entry.key,
+      value: entry.value,
+      versionstamp: entry.versionstamp,
+    },
+    5
+  );
 
   assert.equal(updated, false);
   assert.equal((kvStore.get(keyToString(credentialKey)) as { sign_count: number }).sign_count, 6);
@@ -1292,7 +1280,7 @@ Deno.test("passkey logout deletes the cached session", async () => {
     new Request("https://ai.ubq.fi/api/auth/logout", {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
-    }),
+    })
   );
 
   assert.equal(response.status, 204);
@@ -1320,7 +1308,7 @@ Deno.test("passkey user handlers list and toggle admin", async () => {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: user.id, is_admin: true }),
-    }),
+    })
   );
   assert.equal(update.status, 200);
   const updateBody = await update.json();
@@ -1333,7 +1321,7 @@ Deno.test("passkey user handlers list and toggle admin", async () => {
 Deno.test("unattested GitHub tokens never reach Deno verification", async () => {
   kvStore.clear();
   const originalFetch = globalThis.fetch;
-  const requested: Array<{ url: string; authorization: string | null; cookie: string | null }> = [];
+  const requested: { url: string; authorization: string | null; cookie: string | null }[] = [];
   const token = "ghp_unattested_github_token_1234567890abcdefghijklmnopqrstuvwxyz";
 
   globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -1347,30 +1335,39 @@ Deno.test("unattested GitHub tokens never reach Deno verification", async () => 
   };
 
   try {
-    await withEnv({
-      DENO_DEPLOY_APP_SLUG: "ai-ubq-fi",
-      DENO_DEPLOY_ORG_SLUG: "ubiquity-dao",
-      DENO_DEPLOYMENT_ID: "deployment-test",
-    }, async () => {
-      const req = new Request("https://ai.ubq.fi/uos/auth", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+    await withEnv(
+      {
+        DENO_DEPLOY_APP_SLUG: "ai-ubq-fi",
+        DENO_DEPLOY_ORG_SLUG: "ubiquity-dao",
+        DENO_DEPLOYMENT_ID: "deployment-test",
+      },
+      async () => {
+        const req = new Request("https://ai.ubq.fi/uos/auth", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
 
-      const clientAuth = await authenticateClient(req);
-      assert.equal(clientAuth.ok, false);
-      if (!clientAuth.ok) assert.equal(clientAuth.response.status, 401);
+        const clientAuth = await authenticateClient(req);
+        assert.equal(clientAuth.ok, false);
+        if (!clientAuth.ok) assert.equal(clientAuth.response.status, 401);
 
-      const adminAuth = await authenticateAdmin(req);
-      assert.equal(adminAuth.ok, false);
-      if (!adminAuth.ok) assert.equal(adminAuth.response.status, 401);
-    });
+        const adminAuth = await authenticateAdmin(req);
+        assert.equal(adminAuth.ok, false);
+        if (!adminAuth.ok) assert.equal(adminAuth.response.status, 401);
+      }
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }
 
   assert.equal(requested.length, 0);
-  assert.equal(requested.some(({ authorization }) => authorization === `Bearer ${token}`), false);
-  assert.equal(requested.some(({ cookie }) => cookie?.includes(`token=${token}`) ?? false), false);
+  assert.equal(
+    requested.some(({ authorization }) => authorization === `Bearer ${token}`),
+    false
+  );
+  assert.equal(
+    requested.some(({ cookie }) => cookie?.includes(`token=${token}`) ?? false),
+    false
+  );
 });
 
 Deno.test("relay passkey cookies survive an unattested GitHub bearer on /uos/auth", async () => {
@@ -1442,7 +1439,7 @@ Deno.test("relay passkey cookie fallback accepts raw forbidden Request methods",
       return new Response(result.ok ? result.method.kind : String(result.response.status), {
         status: result.ok ? 200 : result.response.status,
       });
-    },
+    }
   );
 
   assert.notEqual(port, 0);
@@ -1495,7 +1492,7 @@ Deno.test("allowlisted GitHub client bearers keep precedence over passkey cookie
           Authorization: `Bearer ${githubToken}`,
           Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(passkeyToken)}`,
         },
-      }),
+      })
     );
     assert.equal(response.status, 200);
     const body = await response.json();
@@ -1519,7 +1516,7 @@ Deno.test("allowlisted GitHub admin bearers keep precedence over passkey cookies
           Authorization: `Bearer ${githubToken}`,
           Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(passkeyToken)}`,
         },
-      }),
+      })
     );
     assert.equal(response.status, 200);
     const body = await response.json();
@@ -1544,9 +1541,7 @@ Deno.test("passkey lifecycle handlers prefer a relay cookie over a stale GitHub 
     Origin: audienceOrigin,
   };
 
-  const sessionResponse = await handler(
-    new Request("https://ai.ubq.fi/api/auth/session", { headers }),
-  );
+  const sessionResponse = await handler(new Request("https://ai.ubq.fi/api/auth/session", { headers }));
   assert.equal(sessionResponse.status, 200);
   const sessionBody = await sessionResponse.json();
   assert.equal(sessionBody.user.id, user.id);
@@ -1556,7 +1551,7 @@ Deno.test("passkey lifecycle handlers prefer a relay cookie over a stale GitHub 
       method: "POST",
       headers: { ...headers, "Content-Type": "application/json" },
       body: JSON.stringify({ handle: user.handle }),
-    }),
+    })
   );
   assert.equal(registerResponse.status, 200);
   const registerBody = await registerResponse.json();
@@ -1564,9 +1559,7 @@ Deno.test("passkey lifecycle handlers prefer a relay cookie over a stale GitHub 
   assert.equal(registerBody.publicKey.user.id, encodedUserId);
   assert.equal(registerBody.publicKey.user.name, user.handle);
 
-  const logoutResponse = await handler(
-    new Request("https://ai.ubq.fi/api/auth/logout", { method: "POST", headers }),
-  );
+  const logoutResponse = await handler(new Request("https://ai.ubq.fi/api/auth/logout", { method: "POST", headers }));
   assert.equal(logoutResponse.status, 204);
   assert.equal((await kvStub.get(passkeySessionKey(token))).value, null);
 });
@@ -1579,9 +1572,7 @@ Deno.test("passkey lifecycle handlers preserve configured bearer precedence", as
       audienceOrigin,
     });
     const configuredToken = `ghp_configured_${configuredKind}_lifecycle_1234567890abcdefghijklmnopqrstuvwxyz`;
-    const configuredTokens = configuredKind === "client"
-      ? config.authTokens as Set<string>
-      : config.adminTokens as Set<string>;
+    const configuredTokens = configuredKind === "client" ? (config.authTokens as Set<string>) : (config.adminTokens as Set<string>);
     configuredTokens.add(configuredToken);
     try {
       const { default: handler } = await import("../src/handler.ts");
@@ -1596,7 +1587,7 @@ Deno.test("passkey lifecycle handlers preserve configured bearer precedence", as
           method: "POST",
           headers: { ...headers, "Content-Type": "application/json" },
           body: JSON.stringify({ handle: registrationHandle }),
-        }),
+        })
       );
       assert.equal(registerResponse.status, configuredKind === "client" ? 401 : 200, configuredKind);
       if (configuredKind === "admin") {
@@ -1604,14 +1595,10 @@ Deno.test("passkey lifecycle handlers preserve configured bearer precedence", as
         assert.equal(registerBody.publicKey.user.name, registrationHandle);
       }
 
-      const sessionResponse = await handler(
-        new Request("https://ai.ubq.fi/api/auth/session", { headers }),
-      );
+      const sessionResponse = await handler(new Request("https://ai.ubq.fi/api/auth/session", { headers }));
       assert.equal(sessionResponse.status, 401, configuredKind);
 
-      const logoutResponse = await handler(
-        new Request("https://ai.ubq.fi/api/auth/logout", { method: "POST", headers }),
-      );
+      const logoutResponse = await handler(new Request("https://ai.ubq.fi/api/auth/logout", { method: "POST", headers }));
       assert.equal(logoutResponse.status, 204, configuredKind);
       assert.notEqual((await kvStub.get(passkeySessionKey(passkeyToken))).value, null, configuredKind);
     } finally {
@@ -1634,7 +1621,7 @@ Deno.test("passkey logout preserves valid bearer precedence over a relay cookie"
         Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(cookieToken)}`,
         Origin: audienceOrigin,
       },
-    }),
+    })
   );
 
   assert.equal(response.status, 204);
@@ -1652,7 +1639,7 @@ Deno.test("authenticated passkey token overrides remain bound to their relay aud
       headers: { "Content-Type": "application/json", Origin: "https://evil.example" },
       body: "{}",
     }),
-    { authenticatedPasskeyToken: token },
+    { authenticatedPasskeyToken: token }
   );
 
   assert.equal(response.status, 401);

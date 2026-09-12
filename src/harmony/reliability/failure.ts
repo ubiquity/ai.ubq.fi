@@ -41,12 +41,12 @@ export const RELIABILITY_FAILURE_CLASSES: readonly ReliabilityFailureClass[] = [
   "tool_call_limit",
 ];
 
-export interface ReliabilityClassification {
+export type ReliabilityClassification = {
   failure_class: ReliabilityFailureClass | null;
   detail: string | null;
-}
+};
 
-export interface ClassificationInput {
+export type ClassificationInput = {
   state: StructuredTaskState;
   invalidCallStreak: number;
   loopStreak: number;
@@ -54,7 +54,7 @@ export interface ClassificationInput {
   finalAccepted: boolean;
   /** Last run outcome when the harness aborted. */
   abortedReason?: string | null;
-}
+};
 
 /** Deterministic classifier over the structured state and harness counters. */
 export function classifyReliability(input: ClassificationInput): ReliabilityClassification {

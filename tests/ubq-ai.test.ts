@@ -43,7 +43,7 @@ const makeRuntime = (
     env?: Record<string, string>;
     readTextFile?: (path: string) => Promise<string>;
     fetch: (req: Request, recorded: RecordedRequest) => Promise<Response> | Response;
-  }>,
+  }>
 ): {
   runtime: UbqAiRuntime;
   requests: RecordedRequest[];
@@ -55,8 +55,7 @@ const makeRuntime = (
   const errChunks: Uint8Array[] = [];
 
   const env = options.env ?? {};
-  const readTextFile = options.readTextFile ??
-    ((_: string) => Promise.reject(new Error("readTextFile not implemented")));
+  const readTextFile = options.readTextFile ?? ((_: string) => Promise.reject(new Error("readTextFile not implemented")));
 
   const runtime: UbqAiRuntime = {
     fetch: async (req: Request) => {
@@ -231,9 +230,9 @@ Deno.test("ubq-ai: chat --stream does not consume prompt and prints deltas", asy
       assert.equal("model" in body, false);
       assert.equal(body.stream, true);
       assert.ok(Array.isArray(body.messages));
-      const first = (body.messages as Array<{ role?: unknown; content?: unknown }>)[0];
+      const first = (body.messages as { role?: unknown; content?: unknown }[])[0];
       assert.equal(first?.role, "system");
-      const last = (body.messages as Array<{ role?: unknown; content?: unknown }>).at(-1);
+      const last = (body.messages as { role?: unknown; content?: unknown }[]).at(-1);
       assert.equal(last?.role, "user");
       assert.equal(last?.content, "Say hello in 2 ways.");
 
@@ -243,15 +242,12 @@ Deno.test("ubq-ai: chat --stream does not consume prompt and prints deltas", asy
           `data: ${JSON.stringify({ choices: [{ delta: { content: " world" } }] })}\n\n`,
           "data: [DONE]\n\n",
         ]),
-        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        { status: 200, headers: { "Content-Type": "text/event-stream" } }
       );
     },
   });
 
-  const code = await runUbqAi(
-    ["chat", "--stream", "--system", "You are a helpful assistant.", "Say hello in 2 ways."],
-    runtime,
-  );
+  const code = await runUbqAi(["chat", "--stream", "--system", "You are a helpful assistant.", "Say hello in 2 ways."], runtime);
   assert.equal(code, 0);
   assert.equal(errText(), "");
   assert.equal(outText(), "Hello world\n");
@@ -300,10 +296,7 @@ Deno.test("ubq-ai: chat passes a Codex CLI reasoning tier through", async () => 
     },
   });
 
-  const code = await runUbqAi(
-    ["chat", "--reasoning-effort", "ultra", "--system", "You are a helpful assistant.", "Tell me a short joke."],
-    runtime,
-  );
+  const code = await runUbqAi(["chat", "--reasoning-effort", "ultra", "--system", "You are a helpful assistant.", "Tell me a short joke."], runtime);
   assert.equal(code, 0);
   assert.equal(errText(), "");
   assert.equal(outText(), "ok\n");
@@ -355,10 +348,7 @@ Deno.test("ubq-ai: responses (non-stream) prints extracted assistant text", asyn
     },
   });
 
-  const code = await runUbqAi(
-    ["responses", "--model", "gpt-5.2", "--instructions", "You are a helpful assistant.", "Summarize this."],
-    runtime,
-  );
+  const code = await runUbqAi(["responses", "--model", "gpt-5.2", "--instructions", "You are a helpful assistant.", "Summarize this."], runtime);
   assert.equal(code, 0);
   assert.equal(errText(), "");
   assert.equal(outText(), "Summary.\n");
@@ -386,10 +376,7 @@ Deno.test("ubq-ai: responses passes a Codex CLI reasoning tier through", async (
     },
   });
 
-  const code = await runUbqAi(
-    ["responses", "--reasoning-effort", "ultra", "--instructions", "You are a helpful assistant.", "Summarize this."],
-    runtime,
-  );
+  const code = await runUbqAi(["responses", "--reasoning-effort", "ultra", "--instructions", "You are a helpful assistant.", "Summarize this."], runtime);
   assert.equal(code, 0);
   assert.equal(errText(), "");
   assert.equal(outText(), "Done.\n");
@@ -418,10 +405,7 @@ Deno.test("ubq-ai: responses falls back to admin token when client token missing
     },
   });
 
-  const code = await runUbqAi(
-    ["responses", "--model", "gpt-5.2", "--instructions", "You are a helpful assistant.", "Summarize this."],
-    runtime,
-  );
+  const code = await runUbqAi(["responses", "--model", "gpt-5.2", "--instructions", "You are a helpful assistant.", "Summarize this."], runtime);
   assert.equal(code, 0);
   assert.equal(errText(), "");
   assert.equal(outText(), "Summary.\n");
@@ -516,10 +500,7 @@ Deno.test("ubq-ai: admin keys create errors when both expires flags are set", as
     },
   });
 
-  const code = await runUbqAi(
-    ["admin", "keys", "create", "bad key", "--expires", "week", "--expires-at-ms", "123"],
-    runtime,
-  );
+  const code = await runUbqAi(["admin", "keys", "create", "bad key", "--expires", "week", "--expires-at-ms", "123"], runtime);
   assert.equal(code, 2);
   assert.ok(errText().includes("Pass only one of --expires-at-ms or --expires"));
   assert.equal(requests.length, 0);
@@ -562,8 +543,7 @@ Deno.test("ubq-ai: admin keys revoke posts id", async () => {
   assert.equal(requests.length, 1);
 });
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
 Deno.test("ubq-ai: admin upload-auth reads file and posts JSON", async () => {
   const authObject = { tokens: { access_token: "a", refresh_token: "r", account_id: "acct" } };

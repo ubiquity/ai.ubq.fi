@@ -16,7 +16,7 @@ function configuredD(transport: ChatTransport) {
 Deno.test("D: implements the BenchmarkAdapter contract and is refused by default", () => {
   if (adapterD.configId !== "D") throw new Error(`configId must be D, got ${adapterD.configId}`);
   if (adapterD.name !== "strong-control") throw new Error(`unexpected name ${adapterD.name}`);
-  if (adapterD.requiresExternalInference !== true) throw new Error("D must require external inference");
+  if (!adapterD.requiresExternalInference) throw new Error("D must require external inference");
   if (typeof adapterD.run !== "function") throw new Error("run must be a function");
 });
 
@@ -39,9 +39,8 @@ Deno.test("D: default instance refuses to run (unapproved control model, no tran
 Deno.test("D: configured fake transport completes nav-001 under the control model", async () => {
   const opts = freshRunOptions();
   try {
-    const fake = scriptedTransport(
-      [{ toolCalls: [FIND, READ, PATCH] }, { content: "strong control done" }],
-      (step) => controlCompletionBody(step, CONTROL_MODEL),
+    const fake = scriptedTransport([{ toolCalls: [FIND, READ, PATCH] }, { content: "strong control done" }], (step) =>
+      controlCompletionBody(step, CONTROL_MODEL)
     );
     const adapter = configuredD(fake.transport);
     const { result, events } = await runOne(nav001(), adapter, opts);

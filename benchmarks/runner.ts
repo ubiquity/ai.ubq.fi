@@ -14,13 +14,7 @@
  * configuration surface; no environment variables are read.
  */
 
-import {
-  AdapterRunContext,
-  BenchmarkAdapter,
-  defaultAdapters,
-  TaskTimeoutError,
-  ToolCallLimitExceededError,
-} from "./adapter.ts";
+import { AdapterRunContext, BenchmarkAdapter, defaultAdapters, TaskTimeoutError, ToolCallLimitExceededError } from "./adapter.ts";
 import { computeFixtureRevision, FixtureRevisionMismatchError, FixtureWorkspace } from "./fixture.ts";
 import { loadTasks, selectTasks } from "./manifest.ts";
 import { aggregateResults, deriveMetrics, formatSummary } from "./metrics.ts";
@@ -42,7 +36,7 @@ import {
 // Options
 // ---------------------------------------------------------------------------
 
-export interface RunOptions {
+export type RunOptions = {
   /** Adapter config ids, or ["all"] for every registered adapter. */
   configs: string[];
   /** Task selectors: exact id, glob, `*`, or `category:<name>`. */
@@ -55,7 +49,7 @@ export interface RunOptions {
   fixturesDir: string;
   /** Adapter registry; defaults to defaultAdapters() (m03 registers A/B/D here). */
   adapters?: BenchmarkAdapter[];
-}
+};
 
 export function defaultRunOptions(): RunOptions {
   return {
@@ -85,15 +79,16 @@ export function parseRunArgs(argv: string[]): RunOptions | { help: true } {
   return opts;
 }
 
-export const RUN_HELP =
-  `usage: deno task benchmark:run -- [--configs=reference] [--tasks=*] [--limit=N] [--runs=benchmark-runs]
+export const RUN_HELP = `usage: deno task benchmark:run -- [--configs=reference] [--tasks=*] [--limit=N] [--runs=benchmark-runs]
 
   --configs    comma-separated adapter config ids, or "all" (default: reference)
   --tasks      comma-separated selectors: exact id, glob (* pattern), "category:<name>"
   --limit      cap the number of (task x config) pairs
   --runs       results root directory (default: benchmark-runs)
 
-registered configs: ${defaultAdapters().map((a) => a.configId).join(", ")}`;
+registered configs: ${defaultAdapters()
+  .map((a) => a.configId)
+  .join(", ")}`;
 
 // ---------------------------------------------------------------------------
 // Single run
@@ -104,7 +99,9 @@ function isoNow(): string {
 }
 
 function uniqueRunId(runsRoot: string, configId: string, taskId: string): string {
-  const stamp = isoNow().replace(/[^0-9]/g, "").slice(0, 14);
+  const stamp = isoNow()
+    .replace(/[^0-9]/g, "")
+    .slice(0, 14);
   const base = `${stamp}-${configId}-${taskId}`;
   let candidate = base;
   let n = 2;
@@ -128,18 +125,13 @@ function writeJsonl(path: string, records: unknown[]): void {
   Deno.writeTextFileSync(path, body);
 }
 
-export interface RunOneOutcome {
+export type RunOneOutcome = {
   result: BenchmarkResult;
   events: TrajectoryEvent[];
-}
+};
 
 /** Execute one task against one adapter configuration. */
-export async function runOne(
-  task: TaskManifest,
-  adapter: BenchmarkAdapter,
-  opts: RunOptions,
-  runIdHint = "",
-): Promise<RunOneOutcome> {
+export async function runOne(task: TaskManifest, adapter: BenchmarkAdapter, opts: RunOptions, runIdHint = ""): Promise<RunOneOutcome> {
   const runId = runIdHint || uniqueRunId(opts.runsRoot, adapter.configId, task.id);
   const runDir = `${opts.runsRoot}/runs/${runId}`;
   await Deno.mkdir(runDir, { recursive: true });
@@ -257,8 +249,7 @@ export async function runOne(
   if (failureClass === null) {
     if (!requiredCalls.met) {
       failureClass = "min_calls_not_met";
-      failureDetail =
-        `recorded ${metrics.tool_calls} tool calls (min ${task.min_tool_calls}) and ${metrics.model_calls} model calls (min ${task.min_model_calls})`;
+      failureDetail = `recorded ${metrics.tool_calls} tool calls (min ${task.min_tool_calls}) and ${metrics.model_calls} model calls (min ${task.min_model_calls})`;
     } else if (!verification.passed) {
       failureClass = "verification_failed";
       failureDetail = verification.timed_out
@@ -266,7 +257,10 @@ export async function runOne(
         : `verification command exited ${verification.exit_code}: ${verification.command}`;
     } else if (!oracle.passed) {
       failureClass = "verification_failed";
-      failureDetail = `oracle checks failed: ${oracle.checks.filter((c) => !c.passed).map((c) => c.detail).join("; ")}`;
+      failureDetail = `oracle checks failed: ${oracle.checks
+        .filter((c) => !c.passed)
+        .map((c) => c.detail)
+        .join("; ")}`;
     }
   }
 
@@ -316,15 +310,13 @@ export async function runBenchmarks(opts: RunOptions): Promise<BenchmarkResult[]
   const chosen = opts.configs.includes("all") ? adapters : adapters.filter((a) => opts.configs.includes(a.configId));
   const missing = opts.configs.filter((c) => c !== "all" && !adapters.some((a) => a.configId === c));
   if (missing.length > 0) {
-    throw new Error(
-      `unknown configs: ${missing.join(", ")} (registered: ${adapters.map((a) => a.configId).join(", ")})`,
-    );
+    throw new Error(`unknown configs: ${missing.join(", ")} (registered: ${adapters.map((a) => a.configId).join(", ")})`);
   }
   const external = chosen.filter((a) => a.requiresExternalInference);
   if (external.length > 0) {
     throw new Error(
       `refusing to run external-inference adapters (${external.map((a) => a.configId).join(", ")}): ` +
-        `the hermetic runner only executes deterministic adapters; live runs are staged and gated by m03/m05`,
+        `the hermetic runner only executes deterministic adapters; live runs are staged and gated by m03/m05`
     );
   }
 
@@ -343,7 +335,7 @@ export async function runBenchmarks(opts: RunOptions): Promise<BenchmarkResult[]
       console.log(
         `  ${icon} ${result.config_id} ${result.task_id} ${result.wall_time_ms}ms ` +
           `tools=${result.metrics.tool_calls} errs=${result.metrics.tool_errors}` +
-          (result.failure_class ? ` -> ${result.failure_class}: ${result.failure_detail}` : ""),
+          (result.failure_class ? ` -> ${result.failure_class}: ${result.failure_detail}` : "")
       );
     }
     if (opts.limit !== undefined && pairs >= opts.limit) break;
@@ -362,11 +354,7 @@ if (import.meta.main) {
       console.log(RUN_HELP);
       Deno.exit(0);
     }
-    console.log(
-      `benchmark run: configs=[${parsed.configs.join(",")}] tasks=[${
-        parsed.taskSelectors.join(",")
-      }] runs=${parsed.runsRoot}`,
-    );
+    console.log(`benchmark run: configs=[${parsed.configs.join(",")}] tasks=[${parsed.taskSelectors.join(",")}] runs=${parsed.runsRoot}`);
     const results = await runBenchmarks(parsed);
     const summary = aggregateResults(results, parsed.runsRoot);
     console.log("");

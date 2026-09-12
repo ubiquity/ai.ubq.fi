@@ -13,20 +13,14 @@ Deno.test("A: implements the BenchmarkAdapter contract and is refused by default
   });
   if (adapter.configId !== "A") throw new Error(`configId must be A, got ${adapter.configId}`);
   if (adapter.name !== "gateway-gpt-oss-chat") throw new Error(`unexpected name ${adapter.name}`);
-  if (adapter.requiresExternalInference !== true) throw new Error("A must require external inference");
+  if (!adapter.requiresExternalInference) throw new Error("A must require external inference");
   if (typeof adapter.run !== "function") throw new Error("run must be a function");
 });
 
 Deno.test("A: completes nav-001 through the fake transport with schema-valid events", async () => {
   const opts = freshRunOptions();
   try {
-    const fake = scriptedTransport(
-      [
-        { toolCalls: [FIND, READ, PATCH] },
-        { content: "docs/spec.txt is the largest document" },
-      ],
-      gatewayCompletionBody,
-    );
+    const fake = scriptedTransport([{ toolCalls: [FIND, READ, PATCH] }, { content: "docs/spec.txt is the largest document" }], gatewayCompletionBody);
     const adapter = createBaselineA({ transport: fake.transport });
     const { result, events } = await runOne(nav001(), adapter, opts);
     if (!result.success || result.failure_class !== null) {
@@ -111,13 +105,7 @@ Deno.test("A: sends the gateway wire shape (no stream, medium effort, official t
 Deno.test("A: invalid tool arguments become valid:false calls and continue the loop", async () => {
   const opts = freshRunOptions();
   try {
-    const fake = scriptedTransport(
-      [
-        { toolCalls: [{ name: "filesystem.read", args: { path: 42 } }] },
-        { content: "recovered" },
-      ],
-      gatewayCompletionBody,
-    );
+    const fake = scriptedTransport([{ toolCalls: [{ name: "filesystem.read", args: { path: 42 } }] }, { content: "recovered" }], gatewayCompletionBody);
     const adapter = createBaselineA({ transport: fake.transport });
     const { result, events } = await runOne(nav001(), adapter, opts);
     if (result.success) throw new Error("nav-001 must not succeed without the answer file");
@@ -145,7 +133,9 @@ Deno.test("A: mirrors the gateway rejection of reasoning_effort 'none'", () => {
       transport: () => Promise.resolve({ status: 200, ok: true, json: () => Promise.resolve({}) }),
     });
   } catch (err) {
-    threw = err instanceof BaselineAdapterError && err.code === "invalid-config" &&
+    threw =
+      err instanceof BaselineAdapterError &&
+      err.code === "invalid-config" &&
       String((err as Error).message).includes("'none' is not supported for gpt-oss-120b");
   }
   if (!threw) throw new Error("'none' must be rejected exactly like the gateway");
@@ -163,7 +153,7 @@ Deno.test("A: an upstream model mismatch becomes a classified adapter error", as
     if (result.success || result.failure_class !== "adapter_error") {
       throw new Error(`expected adapter_error, got ${result.failure_class}: ${result.failure_detail}`);
     }
-    if (String(result.failure_detail).includes("different model") === false) {
+    if (!String(result.failure_detail).includes("different model")) {
       throw new Error(`model mismatch must be reported, got ${result.failure_detail}`);
     }
   } finally {

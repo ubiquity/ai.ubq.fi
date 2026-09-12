@@ -69,7 +69,7 @@ export type BuiltHarmonyRequest = Readonly<{
     model: string;
     messageRoles: readonly string[];
     toolsRendered: "parameter" | "developer" | "none";
-    toolEntries: ReadonlyArray<{ name: string; strict: boolean }>;
+    toolEntries: readonly { name: string; strict: boolean }[];
     toolStrictnessValues: readonly boolean[];
     reasoningEffortTopLevel: HarmonyReasoningEffort | null;
     reasoningEffortInSystem: boolean;
@@ -85,15 +85,10 @@ export type BuiltHarmonyRequest = Readonly<{
 const toolStrictnessFor = (tool: ToolDefinition): boolean => tool.strict === true;
 
 /** Normalizes every tool to one strictness value (Cerebras requirement). */
-export const normalizeToolStrictness = (
-  tools: readonly ToolDefinition[],
-  strictness: boolean,
-): readonly ToolDefinition[] => tools.map((tool) => ({ ...tool, strict: strictness }));
+export const normalizeToolStrictness = (tools: readonly ToolDefinition[], strictness: boolean): readonly ToolDefinition[] =>
+  tools.map((tool) => ({ ...tool, strict: strictness }));
 
-const applyStrictnessMode = (
-  tools: readonly ToolDefinition[],
-  mode: ToolStrictnessMode,
-): readonly ToolDefinition[] => {
+const applyStrictnessMode = (tools: readonly ToolDefinition[], mode: ToolStrictnessMode): readonly ToolDefinition[] => {
   switch (mode) {
     case "normalize-false":
       return normalizeToolStrictness(tools, false);
@@ -124,26 +119,18 @@ export const buildCerebrasHarmonyRequest = (options: HarmonyRequestOptions): Bui
   const toolStrictnessMode = options.toolStrictnessMode ?? "normalize-false";
   const combinationPolicy = options.combinationPolicy ?? "error";
 
-  const toolsPlusFormat = tools.length > 0 &&
-    (options.responseFormat !== undefined || options.nativeResponseFormat !== undefined);
+  const toolsPlusFormat = tools.length > 0 && (options.responseFormat !== undefined || options.nativeResponseFormat !== undefined);
   if (toolsPlusFormat && combinationPolicy !== "probe") {
     throw new HarmonyAdapterError(
-      "Combining tools with a structured response format is not proven for gpt-oss-120b; " +
-        "use combinationPolicy 'probe' only for protocol evidence.",
-      "unproven-combination",
+      "Combining tools with a structured response format is not proven for gpt-oss-120b; " + "use combinationPolicy 'probe' only for protocol evidence.",
+      "unproven-combination"
     );
   }
   if (style === "generic" && options.nativeResponseFormat) {
-    throw new HarmonyAdapterError(
-      "nativeResponseFormat applies only to the native Harmony style.",
-      "invalid-request",
-    );
+    throw new HarmonyAdapterError("nativeResponseFormat applies only to the native Harmony style.", "invalid-request");
   }
   if (style === "native" && options.responseFormat) {
-    throw new HarmonyAdapterError(
-      "responseFormat applies only to the generic style; use nativeResponseFormat.",
-      "invalid-request",
-    );
+    throw new HarmonyAdapterError("responseFormat applies only to the generic style; use nativeResponseFormat.", "invalid-request");
   }
 
   const strictTools = applyStrictnessMode(tools, toolStrictnessMode);
@@ -176,9 +163,7 @@ export const buildCerebrasHarmonyRequest = (options: HarmonyRequestOptions): Bui
         parallelToolCalls: options.parallelToolCalls ?? null,
         maxCompletionTokens: options.maxCompletionTokens ?? null,
         analysisInWire: false,
-        assistantToolTurns: options.turns.filter(
-          (turn) => turn.role === "assistant" && turn.toolCalls.length > 0,
-        ).length,
+        assistantToolTurns: options.turns.filter((turn) => turn.role === "assistant" && turn.toolCalls.length > 0).length,
         toolResultTurns: options.turns.filter((turn) => turn.role === "tool").length,
       },
     };
@@ -250,15 +235,13 @@ export const buildCerebrasHarmonyRequest = (options: HarmonyRequestOptions): Bui
       parallelToolCalls: null,
       maxCompletionTokens: options.maxCompletionTokens ?? null,
       analysisInWire: false,
-      assistantToolTurns: options.turns.filter(
-        (turn) => turn.role === "assistant" && turn.toolCalls.length > 0,
-      ).length,
+      assistantToolTurns: options.turns.filter((turn) => turn.role === "assistant" && turn.toolCalls.length > 0).length,
       toolResultTurns,
     },
   };
 };
 
-const exactString = (value: unknown): string | null => typeof value === "string" && value.length > 0 ? value : null;
+const exactString = (value: unknown): string | null => (typeof value === "string" && value.length > 0 ? value : null);
 
 const nonNegativeInteger = (value: unknown): number | null => {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
@@ -303,11 +286,12 @@ const normalizeChoice = (value: unknown): NormalizedChoice | { error: string } =
   }
   const content = typeof message.content === "string" ? message.content : null;
   const refusal = typeof message.refusal === "string" ? message.refusal : null;
-  const reasoningField = typeof message.reasoning_content === "string"
-    ? ("reasoning_content" as const)
-    : typeof message.reasoning === "string"
-    ? ("reasoning" as const)
-    : ("none" as const);
+  const reasoningField =
+    typeof message.reasoning_content === "string"
+      ? ("reasoning_content" as const)
+      : typeof message.reasoning === "string"
+        ? ("reasoning" as const)
+        : ("none" as const);
   const reasoning = reasoningField === "none" ? null : String(message[reasoningField]);
 
   const toolCalls: ToolCall[] = [];
@@ -319,11 +303,8 @@ const normalizeChoice = (value: unknown): NormalizedChoice | { error: string } =
       toolCalls.push(normalized);
     }
   }
-  const finishReason = value.finish_reason === undefined || value.finish_reason === null
-    ? null
-    : typeof value.finish_reason === "string"
-    ? value.finish_reason
-    : null;
+  const finishReason =
+    value.finish_reason === undefined || value.finish_reason === null ? null : typeof value.finish_reason === "string" ? value.finish_reason : null;
   return { content, refusal, reasoning, toolCalls, finishReason, reasoningField };
 };
 
@@ -357,7 +338,7 @@ export const harmonyTurnsFromChoice = (choice: NormalizedChoice): readonly Harmo
  */
 export const normalizeHarmonyChatCompletion = (
   value: unknown,
-  requestedModel: string = CEREBRAS_GPT_OSS_120B_MODEL,
+  requestedModel: string = CEREBRAS_GPT_OSS_120B_MODEL
 ): NormalizedAssistantResponse | { error: string } => {
   if (!isRecord(value) || Array.isArray(value)) {
     return { error: "upstream reply is not a Chat Completion object" };
@@ -377,9 +358,7 @@ export const normalizeHarmonyChatCompletion = (
   if ("error" in choice) return { error: choice.error };
 
   const turns = harmonyTurnsFromChoice(choice);
-  const analysis = turns.filter((turn) => turn.kind === "reasoning").map((
-    turn,
-  ) => (turn.kind === "reasoning" ? turn.text : ""));
+  const analysis = turns.filter((turn) => turn.kind === "reasoning").map((turn) => (turn.kind === "reasoning" ? turn.text : ""));
   const visible = turns
     .filter((turn) => turn.kind === "commentary" || turn.kind === "final")
     .map((turn) => (turn.kind === "commentary" || turn.kind === "final" ? turn.text : ""));
@@ -421,10 +400,7 @@ export type HarmonyTransportRequestOptions = Readonly<{
   signal?: AbortSignal;
 }>;
 
-export type HarmonyTransport = (
-  body: Record<string, unknown>,
-  options?: HarmonyTransportRequestOptions,
-) => Promise<Response>;
+export type HarmonyTransport = (body: Record<string, unknown>, options?: HarmonyTransportRequestOptions) => Promise<Response>;
 
 export type HarmonyTransportOptions = Readonly<{
   apiKey?: string | null;
@@ -446,16 +422,16 @@ export const createCerebrasTransport = (options: HarmonyTransportOptions = {}): 
 
 export type RunTurnResult = Readonly<
   | {
-    ok: true;
-    status: number;
-    normalized: NormalizedAssistantResponse;
-  }
+      ok: true;
+      status: number;
+      normalized: NormalizedAssistantResponse;
+    }
   | {
-    ok: false;
-    status: number;
-    upstreamError: Readonly<{ code: string | null; message: string | null }> | null;
-    normalizationError: string | null;
-  }
+      ok: false;
+      status: number;
+      upstreamError: Readonly<{ code: string | null; message: string | null }> | null;
+      normalizationError: string | null;
+    }
 >;
 
 const upstreamErrorFromBody = (value: unknown): { code: string | null; message: string | null } | null => {
@@ -480,10 +456,7 @@ const upstreamErrorFromBody = (value: unknown): { code: string | null; message: 
  * the injected transport and normalizes the reply.  Upstream HTTP failures
  * are summarized (status + sanitized code/message) and never logged verbatim.
  */
-export const runHarmonyTurn = async (
-  options: HarmonyRequestOptions,
-  transport: HarmonyTransport,
-): Promise<RunTurnResult> => {
+export const runHarmonyTurn = async (options: HarmonyRequestOptions, transport: HarmonyTransport): Promise<RunTurnResult> => {
   const built = buildCerebrasHarmonyRequest(options);
   const response = await transport(built.body);
   const status = response.status;

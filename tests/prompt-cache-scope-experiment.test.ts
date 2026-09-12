@@ -69,10 +69,10 @@ class ExperimentKv {
 
   atomic(): Deno.AtomicOperation {
     this.atomicCalls += 1;
-    const checks: Array<{ key: Deno.KvKey; versionstamp: string | null }> = [];
+    const checks: { key: Deno.KvKey; versionstamp: string | null }[] = [];
     const writes: AtomicWrite[] = [];
     const chain = {
-      check: (...entries: Array<{ key: Deno.KvKey; versionstamp: string | null }>) => {
+      check: (...entries: { key: Deno.KvKey; versionstamp: string | null }[]) => {
         checks.push(...entries);
         return chain;
       },
@@ -105,12 +105,7 @@ const kv = new ExperimentKv();
 (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kv as unknown as Deno.Kv);
 
 const { setKvForTest } = await import("../src/kv.ts");
-const {
-  resetCodexAuthCacheForTest,
-  CODEX_AUTH_POOL_KV_KEY,
-  CODEX_MODELS_KV_KEY,
-  storeCodexModelsSnapshot,
-} = await import("../src/codex.ts");
+const { resetCodexAuthCacheForTest, CODEX_AUTH_POOL_KV_KEY, CODEX_MODELS_KV_KEY, storeCodexModelsSnapshot } = await import("../src/codex.ts");
 const { resetRuntimeConfigCacheForTest, RUNTIME_CONFIG_V2_KEY } = await import("../src/runtime_config.ts");
 const {
   PROMPT_CACHE_SCOPE_EXPERIMENT_KV_PREFIX,
@@ -125,10 +120,7 @@ const { promoteCodexPromptCacheScope } = await import("../src/codex_catalog.ts")
 const { resolvePromptCacheTelemetryCounterKeys } = await import("../src/prompt_cache_telemetry_gate.ts");
 const { getCodexProviderHealth, resetProviderHealthThrottleForTest } = await import("../src/provider_health.ts");
 const { loadPromptCacheScopeTargetInventory } = await import("../src/prompt_cache_scope_targets.ts");
-const {
-  handleAdminCodexCacheScopeExperiment,
-  handleAdminCodexCacheScopeExperimentTelemetryBaseline,
-} = await import("../src/admin.ts");
+const { handleAdminCodexCacheScopeExperiment, handleAdminCodexCacheScopeExperimentTelemetryBaseline } = await import("../src/admin.ts");
 
 const MODEL = "gpt-5.6-cache-scope-fixture";
 const TELEMETRY_RELEASE = "0123456789abcdef0123456789abcdef01234567";
@@ -139,16 +131,8 @@ const targetKeyParts = (model: string): readonly string[] => [
   "responses_implicit_input_text_keyed_cycle_isolated_v5",
   model,
 ];
-const evidenceKeyFor = (model: string): Deno.KvKey => [
-  ...PROMPT_CACHE_SCOPE_EXPERIMENT_KV_PREFIX,
-  "evidence",
-  ...targetKeyParts(model),
-];
-const stateKeyFor = (model: string): Deno.KvKey => [
-  ...PROMPT_CACHE_SCOPE_EXPERIMENT_KV_PREFIX,
-  "state",
-  ...targetKeyParts(model),
-];
+const evidenceKeyFor = (model: string): Deno.KvKey => [...PROMPT_CACHE_SCOPE_EXPERIMENT_KV_PREFIX, "evidence", ...targetKeyParts(model)];
+const stateKeyFor = (model: string): Deno.KvKey => [...PROMPT_CACHE_SCOPE_EXPERIMENT_KV_PREFIX, "state", ...targetKeyParts(model)];
 const evidenceKey = evidenceKeyFor(MODEL);
 const stateKey = stateKeyFor(MODEL);
 const leaseKey = (model: string): Deno.KvKey => [
@@ -242,10 +226,7 @@ const seed = (options: Readonly<{ models?: readonly string[]; defaultModel?: str
 };
 
 const seedStage0Baseline = async (model: string): Promise<void> => {
-  const counterKeys = await resolvePromptCacheTelemetryCounterKeys(
-    { provider: "chatgpt_codex", model },
-    { release: TELEMETRY_RELEASE },
-  );
+  const counterKeys = await resolvePromptCacheTelemetryCounterKeys({ provider: "chatgpt_codex", model }, { release: TELEMETRY_RELEASE });
   if (!counterKeys) throw new Error("missing Stage 0 counter keys");
   for (const route of counterKeys.routes) {
     kv.put(route.completed, new Deno.KvU64(5_000n));
@@ -262,15 +243,17 @@ const seedStage0Baseline = async (model: string): Promise<void> => {
 const scopeBaselineFor = async (model = MODEL) => {
   const inventory = await loadPromptCacheScopeTargetInventory({ kv: kv as unknown as Deno.Kv });
   if (inventory.status !== "ready") throw new Error("missing seeded target inventory");
-  const target = inventory.targets.find((candidate) =>
-    candidate.provider === "codex_chatgpt" && candidate.model === model
-  );
+  const target = inventory.targets.find((candidate) => candidate.provider === "codex_chatgpt" && candidate.model === model);
   const runtimeStamp = await runtimeVersionstamp();
   if (
-    !target || target.probeability.status !== "probeable" || !target.catalog_versionstamp ||
-    !target.codex_auth_pool_versionstamp || !target.codex_auth_pool_identity_fingerprint ||
+    !target ||
+    target.probeability.status !== "probeable" ||
+    !target.catalog_versionstamp ||
+    !target.codex_auth_pool_versionstamp ||
+    !target.codex_auth_pool_identity_fingerprint ||
     !inventory.inventory_fingerprint
-  ) throw new Error("missing seeded probeable target");
+  )
+    throw new Error("missing seeded probeable target");
   return {
     target: {
       id: target.id,
@@ -385,13 +368,7 @@ Deno.test("prompt-cache Stage 0 diagnostic does not expose target-selection fail
 
 Deno.test("a missing or mismatched pinned slot is an inconclusive scope result", async () => {
   const response = sseCompleted(0, 2_560);
-  const result = await readPromptCacheScopeExperimentCompletedUsage(
-    response,
-    1,
-    MODEL,
-    performance.now(),
-    new AbortController().signal,
-  );
+  const result = await readPromptCacheScopeExperimentCompletedUsage(response, 1, MODEL, performance.now(), new AbortController().signal);
 
   assert.deepEqual(result, { status: "inconclusive", reason: "slot_drift" });
 });
@@ -400,7 +377,7 @@ Deno.test("prompt-cache scope uses three fixed cycles, publishes canonical scope
   seed();
   resetProviderHealthThrottleForTest();
   const originalFetch = globalThis.fetch;
-  const requests: Array<{ account: string | null; conversation: string | null; body: string }> = [];
+  const requests: { account: string | null; conversation: string | null; body: string }[] = [];
   let responseIndex = 0;
   let refreshes = 0;
   globalThis.fetch = (input, init) => {
@@ -413,8 +390,8 @@ Deno.test("prompt-cache scope uses three fixed cycles, publishes canonical scope
             access_token: `access-refreshed-${refreshes}`,
             refresh_token: `refresh-refreshed-${refreshes}`,
           }),
-          { headers: { "Content-Type": "application/json" } },
-        ),
+          { headers: { "Content-Type": "application/json" } }
+        )
       );
     }
     requests.push({
@@ -458,32 +435,17 @@ Deno.test("prompt-cache scope uses three fixed cycles, publishes canonical scope
     const cycleNonces = new Set<string>();
     for (let cycle = 0; cycle < 3; cycle += 1) {
       const rows = requests.slice(cycle * 10, (cycle + 1) * 10);
-      assert.deepEqual(rows.map((row) => row.account), [
-        "account-one",
-        "account-one",
-        "account-two",
-        "account-two",
-        "account-one",
-        "account-one",
-        "account-one",
-        "account-one",
-        "account-one",
-        "account-one",
-      ]);
-      assert.equal(rows.every((row) => row.body === rows[0]?.body), true);
-      assert.equal(
-        new Set(rows.map((row) => (JSON.parse(row.body) as Record<string, unknown>).prompt_cache_key)).size,
-        1,
+      assert.deepEqual(
+        rows.map((row) => row.account),
+        ["account-one", "account-one", "account-two", "account-two", "account-one", "account-one", "account-one", "account-one", "account-one", "account-one"]
       );
+      assert.equal(
+        rows.every((row) => row.body === rows[0]?.body),
+        true
+      );
+      assert.equal(new Set(rows.map((row) => (JSON.parse(row.body) as Record<string, unknown>).prompt_cache_key)).size, 1);
       const body = JSON.parse(rows[0]?.body ?? "") as Record<string, unknown>;
-      assert.deepEqual(Object.keys(body).sort(), [
-        "input",
-        "model",
-        "prompt_cache_key",
-        "reasoning",
-        "store",
-        "stream",
-      ]);
+      assert.deepEqual(Object.keys(body).sort(), ["input", "model", "prompt_cache_key", "reasoning", "store", "stream"]);
       assert.equal(body.model, MODEL);
       assert.equal(body.store, false);
       assert.equal(body.stream, true);
@@ -492,18 +454,18 @@ Deno.test("prompt-cache scope uses three fixed cycles, publishes canonical scope
       assert.equal("prompt_cache_options" in body, false);
       assert.match(String(body.prompt_cache_key), /^uos-cache-scope-v5-[0-9a-f-]{36}$/);
       assert.equal("cache_affinity" in body, false);
-      const input = body.input as Array<Record<string, unknown>>;
+      const input = body.input as Record<string, unknown>[];
       assert.equal(input.length, 2);
       assert.deepEqual(input[0]?.type, "message");
       assert.deepEqual(input[0]?.role, "developer");
-      const prefix = input[0]?.content as Array<Record<string, unknown>>;
+      const prefix = input[0]?.content as Record<string, unknown>[];
       assert.deepEqual(prefix[0]?.type, "input_text");
       assert.equal("prompt_cache_breakpoint" in (prefix[0] ?? {}), false);
       const [cycleNonce, stablePrefix] = String(prefix[0]?.text).split("\n\n");
       assert.match(cycleNonce ?? "", /^cache-scope-cycle:/);
       cycleNonces.add(cycleNonce ?? "");
       assert.equal(stablePrefix.split(" ").length, 2_560);
-      const request = input[1]?.content as Array<Record<string, unknown>>;
+      const request = input[1]?.content as Record<string, unknown>[];
       assert.deepEqual(input[1]?.role, "user");
       assert.deepEqual(request, [{ type: "input_text", text: "Reply with exactly: cache scope experiment." }]);
       assert.equal(rows[0]?.conversation, rows[6]?.conversation);
@@ -513,9 +475,9 @@ Deno.test("prompt-cache scope uses three fixed cycles, publishes canonical scope
     assert.equal(cycleNonces.size, 3);
 
     const snapshot = kv.values.get(encodeKey(CODEX_MODELS_KV_KEY)) as {
-      models?: Array<{
-        prompt_cache?: { providers?: Array<{ id?: string; scope?: unknown }> };
-      }>;
+      models?: {
+        prompt_cache?: { providers?: { id?: string; scope?: unknown }[] };
+      }[];
     };
     const provider = snapshot.models?.[0]?.prompt_cache?.providers?.[0];
     assert.equal(provider?.id, "codex_chatgpt");
@@ -532,9 +494,9 @@ Deno.test("prompt-cache scope uses three fixed cycles, publishes canonical scope
 
     const runtime = kv.values.get(encodeKey(RUNTIME_CONFIG_V2_KEY)) as {
       codex_models?: {
-        models?: Array<{
-          prompt_cache?: { providers?: Array<{ scope?: unknown }> };
-        }>;
+        models?: {
+          prompt_cache?: { providers?: { scope?: unknown }[] };
+        }[];
       };
     };
     assert.equal(runtime.codex_models?.models?.[0]?.prompt_cache?.providers?.[0]?.scope, undefined);
@@ -543,28 +505,29 @@ Deno.test("prompt-cache scope uses three fixed cycles, publishes canonical scope
       await storeCodexModelsSnapshot({
         source: "admin-refresh",
         updated_at_ms: Date.now(),
-        models: [{
-          slug: MODEL,
-          supported_reasoning_levels: ["none"],
-          prompt_cache: { version: 1, providers: [{ id: "codex_chatgpt", controls: cacheControls }] },
-        }],
+        models: [
+          {
+            slug: MODEL,
+            supported_reasoning_levels: ["none"],
+            prompt_cache: { version: 1, providers: [{ id: "codex_chatgpt", controls: cacheControls }] },
+          },
+        ],
       }),
-      true,
+      true
     );
     const refreshedSnapshot = kv.values.get(encodeKey(CODEX_MODELS_KV_KEY)) as {
-      models?: Array<{
-        prompt_cache?: { providers?: Array<{ scope?: unknown }> };
-      }>;
+      models?: {
+        prompt_cache?: { providers?: { scope?: unknown }[] };
+      }[];
     };
     assert.equal(
-      (refreshedSnapshot.models?.[0]?.prompt_cache?.providers?.[0]?.scope as { account_slots?: string } | undefined)
-        ?.account_slots,
-      "account_scoped",
+      (refreshedSnapshot.models?.[0]?.prompt_cache?.providers?.[0]?.scope as { account_slots?: string } | undefined)?.account_slots,
+      "account_scoped"
     );
 
     const evidence = kv.values.get(encodeKey(evidenceKey)) as {
       outcome?: string;
-      cycles?: Array<{ samples?: Array<{ usage?: Record<string, unknown>; raw_usage?: Record<string, unknown> }> }>;
+      cycles?: { samples?: { usage?: Record<string, unknown>; raw_usage?: Record<string, unknown> }[] }[];
     };
     assert.equal(evidence.outcome, "completed");
     assert.equal(evidence.cycles?.length, 3);
@@ -572,14 +535,11 @@ Deno.test("prompt-cache scope uses three fixed cycles, publishes canonical scope
     assert.equal(samples.length, 30);
     for (const sample of samples) {
       assert.deepEqual(sample.raw_usage, sample.usage);
-      assert.deepEqual(Object.keys(sample.raw_usage ?? {}).sort(), [
-        "cache_write_tokens",
-        "cached_tokens",
-        "input_tokens",
-        "output_tokens",
-        "total_tokens",
-      ]);
-      assert.equal(Object.values(sample.raw_usage ?? {}).every((value) => typeof value === "number"), true);
+      assert.deepEqual(Object.keys(sample.raw_usage ?? {}).sort(), ["cache_write_tokens", "cached_tokens", "input_tokens", "output_tokens", "total_tokens"]);
+      assert.equal(
+        Object.values(sample.raw_usage ?? {}).every((value) => typeof value === "number"),
+        true
+      );
     }
     const serializedEvidence = JSON.stringify(evidence);
     assert.equal(serializedEvidence.includes("account-one"), false);
@@ -645,15 +605,13 @@ Deno.test("prompt-cache scope stops on an unexpected warm cache read", async () 
 });
 
 Deno.test("prompt-cache scope rejects sub-prefix, inconsistent, or impossible counter evidence before account-slot classification", async (t) => {
-  for (
-    const { name, cachedTokens, cacheWriteTokens } of [
-      { name: "small write", cachedTokens: 0, cacheWriteTokens: 1 },
-      { name: "small read beside a full write", cachedTokens: 1, cacheWriteTokens: 2_560 },
-      { name: "inconsistent prefix-scale write", cachedTokens: 0, cacheWriteTokens: 2_048 },
-      { name: "inconsistent prefix-scale read", cachedTokens: 2_048, cacheWriteTokens: 0 },
-      { name: "write larger than input", cachedTokens: 0, cacheWriteTokens: 3_001 },
-    ]
-  ) {
+  for (const { name, cachedTokens, cacheWriteTokens } of [
+    { name: "small write", cachedTokens: 0, cacheWriteTokens: 1 },
+    { name: "small read beside a full write", cachedTokens: 1, cacheWriteTokens: 2_560 },
+    { name: "inconsistent prefix-scale write", cachedTokens: 0, cacheWriteTokens: 2_048 },
+    { name: "inconsistent prefix-scale read", cachedTokens: 2_048, cacheWriteTokens: 0 },
+    { name: "write larger than input", cachedTokens: 0, cacheWriteTokens: 3_001 },
+  ]) {
     await t.step(name, async () => {
       seed();
       const originalFetch = globalThis.fetch;
@@ -687,13 +645,11 @@ Deno.test("prompt-cache scope rejects sub-prefix, inconsistent, or impossible co
 Deno.test("prompt-cache scope rejects mixed cache evidence on every discriminator sample", async (t) => {
   const expectedCachedTokens = [0, 2_560, 0, 2_560, 2_560, 2_560, 2_560, 2_560, 2_560, 2_560];
   const expectedCacheWriteTokens = [2_560, 2_560, 2_560, 0, 0, 0, 0, 0, 0, 0];
-  for (
-    const { name, index } of [
-      { name: "account-slot first sample", index: 2 },
-      { name: "post-refresh first sample", index: 5 },
-      { name: "changed-conversation first sample", index: 7 },
-    ]
-  ) {
+  for (const { name, index } of [
+    { name: "account-slot first sample", index: 2 },
+    { name: "post-refresh first sample", index: 5 },
+    { name: "changed-conversation first sample", index: 7 },
+  ]) {
     await t.step(name, async () => {
       seed();
       const originalFetch = globalThis.fetch;
@@ -709,16 +665,13 @@ Deno.test("prompt-cache scope rejects mixed cache evidence on every discriminato
                 access_token: `access-refreshed-${refreshes}`,
                 refresh_token: `refresh-refreshed-${refreshes}`,
               }),
-              { headers: { "Content-Type": "application/json" } },
-            ),
+              { headers: { "Content-Type": "application/json" } }
+            )
           );
         }
         const step = inferenceCalls++;
         if (step > index) throw new Error("scope experiment should stop at the mixed discriminator sample");
-        return Promise.resolve(sseCompleted(
-          step === index ? 2_560 : expectedCachedTokens[step]!,
-          step === index ? 2_560 : expectedCacheWriteTokens[step]!,
-        ));
+        return Promise.resolve(sseCompleted(step === index ? 2_560 : expectedCachedTokens[step]!, step === index ? 2_560 : expectedCacheWriteTokens[step]!));
       };
 
       try {
@@ -743,8 +696,13 @@ Deno.test("a target-scoped cycle lease blocks a concurrent same-target invocatio
   const originalFetch = globalThis.fetch;
   let releaseFirst = () => {};
   let markFirstDispatched = () => {};
-  const firstDispatched = new Promise<void>((resolve) => markFirstDispatched = resolve);
-  const heldResponse = new Promise<Response>((resolve) => releaseFirst = () => resolve(sseCompleted(0, 0)));
+  const firstDispatched = new Promise<void>((resolve) => (markFirstDispatched = resolve));
+  const heldResponse = new Promise<Response>(
+    (resolve) =>
+      (releaseFirst = () => {
+        resolve(sseCompleted(0, 0));
+      })
+  );
   let inferenceCalls = 0;
   globalThis.fetch = (input) => {
     const url = input instanceof Request ? input.url : input instanceof URL ? input.toString() : input;
@@ -788,10 +746,9 @@ Deno.test("a provider campaign lease blocks a sibling target between cycles and 
     if (request.url === "https://auth.openai.com/oauth/token") {
       refreshes += 1;
       return Promise.resolve(
-        new Response(
-          JSON.stringify({ access_token: `refresh-access-${refreshes}`, refresh_token: `refresh-token-${refreshes}` }),
-          { headers: { "Content-Type": "application/json" } },
-        ),
+        new Response(JSON.stringify({ access_token: `refresh-access-${refreshes}`, refresh_token: `refresh-token-${refreshes}` }), {
+          headers: { "Content-Type": "application/json" },
+        })
       );
     }
     const body = JSON.parse(String(init?.body ?? "")) as { model?: unknown };
@@ -885,8 +842,8 @@ Deno.test("an expired target session clears its prior evidence before starting a
             access_token: `expired-access-${refreshes}`,
             refresh_token: `expired-refresh-${refreshes}`,
           }),
-          { headers: { "Content-Type": "application/json" } },
-        ),
+          { headers: { "Content-Type": "application/json" } }
+        )
       );
     }
     const step = inferenceCalls++ % 10;
@@ -945,10 +902,12 @@ Deno.test("a same-account credential rotation during forced refresh is inconclus
     if (request.url === "https://auth.openai.com/oauth/token") {
       if (rotationApplied) throw new Error("the forced refresh must not retry after credential rotation");
       rotationApplied = true;
-      const pool = kv.values.get(encodeKey(CODEX_AUTH_POOL_KV_KEY)) as {
-        accounts: Array<ReturnType<typeof makeAuth>>;
-        updated_at_ms: number;
-      } | undefined;
+      const pool = kv.values.get(encodeKey(CODEX_AUTH_POOL_KV_KEY)) as
+        | {
+            accounts: ReturnType<typeof makeAuth>[];
+            updated_at_ms: number;
+          }
+        | undefined;
       const first = pool?.accounts[0];
       const second = pool?.accounts[1];
       if (!pool || !first || !second) throw new Error("missing seeded Codex auth pool");
@@ -966,10 +925,9 @@ Deno.test("a same-account credential rotation during forced refresh is inconclus
         updated_at_ms: Date.now(),
       });
       return Promise.resolve(
-        new Response(
-          JSON.stringify({ access_token: "experiment-refresh-access", refresh_token: "experiment-refresh-refresh" }),
-          { headers: { "Content-Type": "application/json" } },
-        ),
+        new Response(JSON.stringify({ access_token: "experiment-refresh-access", refresh_token: "experiment-refresh-refresh" }), {
+          headers: { "Content-Type": "application/json" },
+        })
       );
     }
 
@@ -1006,28 +964,27 @@ Deno.test("malformed v3 target state or evidence fails closed before any outboun
       seed();
       const baseline = await scopeBaselineFor();
       const key = kind === "state" ? stateKey : evidenceKey;
-      const malformed = kind === "state" ? { v: 3, target: baseline.target, next_cycle: 2 } : {
-        v: 3,
-        target: baseline.target,
-        outcome: "completed",
-        started_at_ms: Date.now(),
-        verified_at_ms: Date.now(),
-        cycles: [],
-      };
+      const malformed =
+        kind === "state"
+          ? { v: 3, target: baseline.target, next_cycle: 2 }
+          : {
+              v: 3,
+              target: baseline.target,
+              outcome: "completed",
+              started_at_ms: Date.now(),
+              verified_at_ms: Date.now(),
+              cycles: [],
+            };
       kv.put(key, malformed);
       const persisted = JSON.stringify(kv.values.get(encodeKey(key)));
 
       const response = await handleAdminCodexCacheScopeExperiment(
-        new Request("https://ai.ubq.fi/admin/providers/codex/cache-scope-experiment", { method: "POST" }),
+        new Request("https://ai.ubq.fi/admin/providers/codex/cache-scope-experiment", { method: "POST" })
       );
       assert.equal(response.status, 503, kind);
-      const body = await response.json() as { error?: { code?: string } };
+      const body = (await response.json()) as { error?: { code?: string } };
       assert.equal(body.error?.code, "prompt_cache_scope_experiment_unavailable", kind);
-      await assert.rejects(
-        () => runPromptCacheScopeExperiment(baseline),
-        PromptCacheScopeExperimentUnavailableError,
-        kind,
-      );
+      await assert.rejects(() => runPromptCacheScopeExperiment(baseline), PromptCacheScopeExperimentUnavailableError, kind);
       assert.equal(JSON.stringify(kv.values.get(encodeKey(key))), persisted, kind);
     }
     assert.equal(fetchCalls, 0);
@@ -1053,25 +1010,26 @@ Deno.test("semantically malformed v3 timestamps fail closed before any outbound 
       const now = Date.now();
       const owner = `timestamp-owner-${kind}`;
       const key = kind === "future_state" ? stateKey : evidenceKey;
-      const malformed = kind === "future_state"
-        ? {
-          v: 3,
-          target: baseline.target,
-          campaign_owner: owner,
-          started_at_ms: now + 60_000,
-          expires_at_ms: now + 120_000,
-          auth_pool_versionstamp: baseline.target.auth_pool_versionstamp,
-          next_cycle: 1,
-          classifications: [],
-        }
-        : {
-          v: 3,
-          target: baseline.target,
-          outcome: "failed",
-          started_at_ms: kind === "inverted_evidence" ? now : now + 60_000,
-          verified_at_ms: kind === "inverted_evidence" ? now - 1 : now + 120_000,
-          cycles: [],
-        };
+      const malformed =
+        kind === "future_state"
+          ? {
+              v: 3,
+              target: baseline.target,
+              campaign_owner: owner,
+              started_at_ms: now + 60_000,
+              expires_at_ms: now + 120_000,
+              auth_pool_versionstamp: baseline.target.auth_pool_versionstamp,
+              next_cycle: 1,
+              classifications: [],
+            }
+          : {
+              v: 3,
+              target: baseline.target,
+              outcome: "failed",
+              started_at_ms: kind === "inverted_evidence" ? now : now + 60_000,
+              verified_at_ms: kind === "inverted_evidence" ? now - 1 : now + 120_000,
+              cycles: [],
+            };
       kv.put(key, malformed);
       if (kind === "future_state") {
         kv.put(campaignLeaseKey, {
@@ -1090,13 +1048,9 @@ Deno.test("semantically malformed v3 timestamps fail closed before any outbound 
             release: TELEMETRY_RELEASE,
           }),
         PromptCacheScopeExperimentUnavailableError,
-        kind,
+        kind
       );
-      await assert.rejects(
-        () => runPromptCacheScopeExperiment(baseline),
-        PromptCacheScopeExperimentUnavailableError,
-        kind,
-      );
+      await assert.rejects(() => runPromptCacheScopeExperiment(baseline), PromptCacheScopeExperimentUnavailableError, kind);
       assert.equal(JSON.stringify(kv.values.get(encodeKey(key))), persisted, kind);
     }
     assert.equal(fetchCalls, 0);
@@ -1145,10 +1099,7 @@ Deno.test("semantically inconsistent ready-to-promote state cannot publish a sco
   };
 
   try {
-    await assert.rejects(
-      () => runPromptCacheScopeExperiment(baseline),
-      PromptCacheScopeExperimentUnavailableError,
-    );
+    await assert.rejects(() => runPromptCacheScopeExperiment(baseline), PromptCacheScopeExperimentUnavailableError);
     assert.equal(fetchCalls, 0);
     assert.equal(JSON.stringify(kv.values.get(encodeKey(CODEX_MODELS_KV_KEY))).includes('"scope"'), false);
   } finally {
@@ -1175,8 +1126,8 @@ Deno.test("a completed target advances the bodyless campaign to the next exact m
             access_token: `progress-access-${refreshes}`,
             refresh_token: `progress-refresh-${refreshes}`,
           }),
-          { headers: { "Content-Type": "application/json" } },
-        ),
+          { headers: { "Content-Type": "application/json" } }
+        )
       );
     }
     const body = JSON.parse(String(init?.body ?? "")) as { model?: unknown };
@@ -1255,8 +1206,8 @@ Deno.test("completed evidence survives token rotation but is reprobeable after a
             access_token: `identity-refresh-access-${refreshes}`,
             refresh_token: `identity-refresh-token-${refreshes}`,
           }),
-          { headers: { "Content-Type": "application/json" } },
-        ),
+          { headers: { "Content-Type": "application/json" } }
+        )
       );
     }
     const step = inferenceCalls++ % 10;
@@ -1271,30 +1222,34 @@ Deno.test("completed evidence survives token rotation but is reprobeable after a
     assert.equal((await runExperiment()).status, "completed");
     assert.equal(inferenceCalls, 30);
 
-    const tokenOnlyPool = kv.values.get(encodeKey(CODEX_AUTH_POOL_KV_KEY)) as {
-      accounts: Array<ReturnType<typeof makeAuth>>;
-      updated_at_ms: number;
-    } | undefined;
+    const tokenOnlyPool = kv.values.get(encodeKey(CODEX_AUTH_POOL_KV_KEY)) as
+      | {
+          accounts: ReturnType<typeof makeAuth>[];
+          updated_at_ms: number;
+        }
+      | undefined;
     const tokenOnlyFirst = tokenOnlyPool?.accounts[0];
     if (!tokenOnlyPool || !tokenOnlyFirst) throw new Error("missing seeded Codex auth pool");
     kv.put(CODEX_AUTH_POOL_KV_KEY, {
       ...tokenOnlyPool,
-      accounts: [{
-        ...tokenOnlyFirst,
-        access_token: "token-only-rotation-access",
-        refresh_token: "token-only-rotation-refresh",
-        updated_at_ms: Date.now(),
-      }, ...tokenOnlyPool.accounts.slice(1)],
+      accounts: [
+        {
+          ...tokenOnlyFirst,
+          access_token: "token-only-rotation-access",
+          refresh_token: "token-only-rotation-refresh",
+          updated_at_ms: Date.now(),
+        },
+        ...tokenOnlyPool.accounts.slice(1),
+      ],
       updated_at_ms: Date.now(),
     });
     const tokenOnlyBaseline = await scopeBaselineFor();
-    const completedEvidence = kv.values.get(encodeKey(evidenceKey)) as {
-      target?: { auth_pool_identity_fingerprint?: unknown };
-    } | undefined;
-    assert.equal(
-      completedEvidence?.target?.auth_pool_identity_fingerprint,
-      tokenOnlyBaseline.target.auth_pool_identity_fingerprint,
-    );
+    const completedEvidence = kv.values.get(encodeKey(evidenceKey)) as
+      | {
+          target?: { auth_pool_identity_fingerprint?: unknown };
+        }
+      | undefined;
+    assert.equal(completedEvidence?.target?.auth_pool_identity_fingerprint, tokenOnlyBaseline.target.auth_pool_identity_fingerprint);
     await seedStage0Baseline(MODEL);
     await assert.rejects(
       () =>
@@ -1302,35 +1257,37 @@ Deno.test("completed evidence survives token rotation but is reprobeable after a
           kv: kv as unknown as Deno.Kv,
           release: TELEMETRY_RELEASE,
         }),
-      PromptCacheScopeExperimentUnavailableError,
+      PromptCacheScopeExperimentUnavailableError
     );
     assert.equal(inferenceCalls, 30);
 
-    const membershipChangedPool = kv.values.get(encodeKey(CODEX_AUTH_POOL_KV_KEY)) as {
-      accounts: Array<ReturnType<typeof makeAuth>>;
-      updated_at_ms: number;
-    } | undefined;
+    const membershipChangedPool = kv.values.get(encodeKey(CODEX_AUTH_POOL_KV_KEY)) as
+      | {
+          accounts: ReturnType<typeof makeAuth>[];
+          updated_at_ms: number;
+        }
+      | undefined;
     const membershipFirst = membershipChangedPool?.accounts[0];
     if (!membershipChangedPool || !membershipFirst) throw new Error("missing Codex auth pool after token rotation");
     kv.put(CODEX_AUTH_POOL_KV_KEY, {
       ...membershipChangedPool,
-      accounts: [{
-        ...membershipFirst,
-        account_id: "replacement-account-id",
-        access_token: "membership-change-access",
-        refresh_token: "membership-change-refresh",
-        updated_at_ms: Date.now(),
-      }, ...membershipChangedPool.accounts.slice(1)],
+      accounts: [
+        {
+          ...membershipFirst,
+          account_id: "replacement-account-id",
+          access_token: "membership-change-access",
+          refresh_token: "membership-change-refresh",
+          updated_at_ms: Date.now(),
+        },
+        ...membershipChangedPool.accounts.slice(1),
+      ],
       updated_at_ms: Date.now(),
     });
     const membershipBaseline = await assertPromptCacheScopeExperimentTelemetryBaseline({
       kv: kv as unknown as Deno.Kv,
       release: TELEMETRY_RELEASE,
     });
-    assert.notEqual(
-      membershipBaseline.target.auth_pool_identity_fingerprint,
-      tokenOnlyBaseline.target.auth_pool_identity_fingerprint,
-    );
+    assert.notEqual(membershipBaseline.target.auth_pool_identity_fingerprint, tokenOnlyBaseline.target.auth_pool_identity_fingerprint);
     assert.equal((await runPromptCacheScopeExperiment(membershipBaseline)).status, "in_progress");
     assert.equal(inferenceCalls, 40);
   } finally {
@@ -1350,7 +1307,7 @@ Deno.test("prompt-cache scope admin trigger rejects request fields before any ou
       new Request("https://ai.ubq.fi/admin/providers/codex/cache-scope-experiment", {
         method: "POST",
         body: JSON.stringify({ model: "forbidden", cache_affinity: "forbidden" }),
-      }),
+      })
     );
     assert.equal(response.status, 400);
   } finally {
@@ -1368,10 +1325,10 @@ Deno.test("prompt-cache scope admin trigger requires a current-release Stage 0 b
   };
   try {
     const response = await handleAdminCodexCacheScopeExperiment(
-      new Request("https://ai.ubq.fi/admin/providers/codex/cache-scope-experiment", { method: "POST" }),
+      new Request("https://ai.ubq.fi/admin/providers/codex/cache-scope-experiment", { method: "POST" })
     );
     assert.equal(response.status, 503);
-    const body = await response.json() as { error?: { code?: string; message?: string } };
+    const body = (await response.json()) as { error?: { code?: string; message?: string } };
     assert.equal(body.error?.code, "prompt_cache_scope_experiment_unavailable");
     assert.match(body.error?.message ?? "", /Stage 0 telemetry baseline/);
     assert.equal(fetchCalls, 0);
@@ -1384,10 +1341,7 @@ Deno.test("prompt-cache scope admin trigger requires a current-release Stage 0 b
 
 Deno.test("prompt-cache scope Stage 0 baseline uses the Codex telemetry provider identity", async () => {
   seed();
-  const counterKeys = await resolvePromptCacheTelemetryCounterKeys(
-    { provider: "chatgpt_codex", model: MODEL },
-    { release: TELEMETRY_RELEASE },
-  );
+  const counterKeys = await resolvePromptCacheTelemetryCounterKeys({ provider: "chatgpt_codex", model: MODEL }, { release: TELEMETRY_RELEASE });
   assert.ok(counterKeys);
   for (const route of counterKeys.routes) {
     kv.put(route.completed, new Deno.KvU64(5_000n));
@@ -1405,10 +1359,7 @@ Deno.test("prompt-cache scope Stage 0 baseline uses the Codex telemetry provider
 
 Deno.test("prompt-cache scope Stage 0 baseline rejects reported usage without cache-write fields before any scope traffic", async () => {
   seed();
-  const counterKeys = await resolvePromptCacheTelemetryCounterKeys(
-    { provider: "chatgpt_codex", model: MODEL },
-    { release: TELEMETRY_RELEASE },
-  );
+  const counterKeys = await resolvePromptCacheTelemetryCounterKeys({ provider: "chatgpt_codex", model: MODEL }, { release: TELEMETRY_RELEASE });
   assert.ok(counterKeys);
   for (const route of counterKeys.routes) {
     kv.put(route.completed, new Deno.KvU64(5_000n));
@@ -1428,7 +1379,7 @@ Deno.test("prompt-cache scope Stage 0 baseline rejects reported usage without ca
           kv: kv as unknown as Deno.Kv,
           release: TELEMETRY_RELEASE,
         }),
-      PromptCacheScopeExperimentUnavailableError,
+      PromptCacheScopeExperimentUnavailableError
     );
     assert.equal(fetchCalls, 0);
   } finally {
@@ -1440,10 +1391,7 @@ Deno.test("prompt-cache scope Stage 0 baseline rejects reported usage without ca
 
 Deno.test("prompt-cache scope Stage 0 baseline requires Responses telemetry for its paid transport", async () => {
   seed();
-  const counterKeys = await resolvePromptCacheTelemetryCounterKeys(
-    { provider: "chatgpt_codex", model: MODEL },
-    { release: TELEMETRY_RELEASE },
-  );
+  const counterKeys = await resolvePromptCacheTelemetryCounterKeys({ provider: "chatgpt_codex", model: MODEL }, { release: TELEMETRY_RELEASE });
   assert.ok(counterKeys);
   const chat = counterKeys.routes.find((route) => route.route === "chat.completions");
   assert.ok(chat);
@@ -1465,7 +1413,7 @@ Deno.test("prompt-cache scope Stage 0 baseline requires Responses telemetry for 
           kv: kv as unknown as Deno.Kv,
           release: TELEMETRY_RELEASE,
         }),
-      PromptCacheScopeExperimentUnavailableError,
+      PromptCacheScopeExperimentUnavailableError
     );
     assert.equal(fetchCalls, 0);
   } finally {
@@ -1485,10 +1433,7 @@ Deno.test("a catalog roster change after the Stage 0 gate stops before paid scop
   };
 
   try {
-    const counterKeys = await resolvePromptCacheTelemetryCounterKeys(
-      { provider: "chatgpt_codex", model: MODEL },
-      { release: TELEMETRY_RELEASE },
-    );
+    const counterKeys = await resolvePromptCacheTelemetryCounterKeys({ provider: "chatgpt_codex", model: MODEL }, { release: TELEMETRY_RELEASE });
     assert.ok(counterKeys);
     for (const route of counterKeys.routes) {
       kv.put(route.completed, new Deno.KvU64(5_000n));
@@ -1505,7 +1450,7 @@ Deno.test("a catalog roster change after the Stage 0 gate stops before paid scop
       source: string;
       client_version: string;
       updated_at_ms: number;
-      models: Array<Record<string, unknown>>;
+      models: Record<string, unknown>[];
     };
     const snapshotWithAlternate = {
       ...snapshot,
@@ -1513,10 +1458,7 @@ Deno.test("a catalog roster change after the Stage 0 gate stops before paid scop
     };
     kv.put(CODEX_MODELS_KV_KEY, snapshotWithAlternate);
 
-    await assert.rejects(
-      () => runPromptCacheScopeExperiment(baseline),
-      PromptCacheScopeExperimentUnavailableError,
-    );
+    await assert.rejects(() => runPromptCacheScopeExperiment(baseline), PromptCacheScopeExperimentUnavailableError);
     assert.equal(fetchCalls, 0);
     assert.equal(kv.values.has(encodeKey(stateKey)), false);
   } finally {
@@ -1552,8 +1494,8 @@ Deno.test("a runtime default-only switch preserves a selected non-default target
             access_token: `refreshed-access-${refreshes}`,
             refresh_token: `refreshed-refresh-${refreshes}`,
           }),
-          { headers: { "Content-Type": "application/json" } },
-        ),
+          { headers: { "Content-Type": "application/json" } }
+        )
       );
     }
     const body = JSON.parse(String(init?.body ?? "")) as { model?: unknown };
@@ -1600,7 +1542,7 @@ Deno.test("a catalog roster drift during a scope cycle stops before the next pai
     source: string;
     client_version: string;
     updated_at_ms: number;
-    models: Array<Record<string, unknown>>;
+    models: Record<string, unknown>[];
   };
   const alternateModel = `${MODEL}-alternate-during-cycle`;
   const snapshotWithAlternate = {
@@ -1656,7 +1598,7 @@ Deno.test("a target capability drift stops before the next paid sample", async (
     source: string;
     client_version: string;
     updated_at_ms: number;
-    models: Array<Record<string, unknown>>;
+    models: Record<string, unknown>[];
   };
   globalThis.fetch = (input) => {
     const url = input instanceof Request ? input.url : input instanceof URL ? input.toString() : input;
@@ -1667,9 +1609,7 @@ Deno.test("a target capability drift stops before the next paid sample", async (
     if (inferenceCalls === 1) {
       kv.put(CODEX_MODELS_KV_KEY, {
         ...snapshot,
-        models: [
-          modelRecord(MODEL, { ...cacheControls, expected_usage_fields: ["cached_tokens"] }),
-        ],
+        models: [modelRecord(MODEL, { ...cacheControls, expected_usage_fields: ["cached_tokens"] })],
         updated_at_ms: Date.now(),
       });
     }
@@ -1697,7 +1637,7 @@ Deno.test("a catalog client-version drift stops before the next paid sample", as
     source: string;
     client_version: string;
     updated_at_ms: number;
-    models: Array<Record<string, unknown>>;
+    models: Record<string, unknown>[];
   };
   globalThis.fetch = (input) => {
     const url = input instanceof Request ? input.url : input instanceof URL ? input.toString() : input;
@@ -1781,11 +1721,11 @@ Deno.test("scope promotion publishes a non-default target and preserves the runt
     source: string;
     client_version: string;
     updated_at_ms: number;
-    models: Array<{
+    models: {
       slug: string;
       supported_reasoning_levels: string[];
       prompt_cache?: unknown;
-    }>;
+    }[];
   };
   const snapshotWithAlternate = {
     ...initialSnapshot,
@@ -1844,15 +1784,14 @@ Deno.test("scope promotion publishes a non-default target and preserves the runt
 
   assert.deepEqual(result, { status: "promoted" });
   const publishedSnapshot = kv.values.get(encodeKey(CODEX_MODELS_KV_KEY)) as {
-    models?: Array<{
+    models?: {
       slug?: unknown;
-      prompt_cache?: { providers?: Array<{ id?: unknown; scope?: unknown }> };
-    }>;
+      prompt_cache?: { providers?: { id?: unknown; scope?: unknown }[] };
+    }[];
   };
-  const publishedProvider = publishedSnapshot.models?.find((model) => model.slug === MODEL)?.prompt_cache?.providers
-    ?.find(
-      (provider) => provider.id === "codex_chatgpt",
-    );
+  const publishedProvider = publishedSnapshot.models
+    ?.find((model) => model.slug === MODEL)
+    ?.prompt_cache?.providers?.find((provider) => provider.id === "codex_chatgpt");
   assert.ok(publishedProvider?.scope);
   const publishedRuntime = kv.values.get(encodeKey(RUNTIME_CONFIG_V2_KEY)) as { default_model?: unknown };
   assert.equal(publishedRuntime.default_model, alternateModel);
@@ -1886,10 +1825,12 @@ Deno.test("successful scope promotion atomically extends its same-owner lease", 
   });
 
   assert.deepEqual(result, { status: "promoted" });
-  const renewedLease = kv.values.get(encodeKey(lease.key)) as {
-    owner?: unknown;
-    lease_until_ms?: unknown;
-  } | undefined;
+  const renewedLease = kv.values.get(encodeKey(lease.key)) as
+    | {
+        owner?: unknown;
+        lease_until_ms?: unknown;
+      }
+    | undefined;
   assert.equal(renewedLease?.owner, lease.owner);
   const renewedUntilMs = renewedLease?.lease_until_ms;
   if (typeof renewedUntilMs !== "number") throw new Error("successful promotion did not retain its lease");
@@ -1904,10 +1845,12 @@ Deno.test("scope promotion fences auth-pool drift before catalog publication", a
   kv.put(lease.key, { owner: lease.owner, lease_until_ms: Date.now() + 60_000 });
   const snapshotBeforePromotion = JSON.stringify(kv.values.get(encodeKey(CODEX_MODELS_KV_KEY)));
   const runtimeBeforePromotion = JSON.stringify(kv.values.get(encodeKey(RUNTIME_CONFIG_V2_KEY)));
-  const pool = kv.values.get(encodeKey(CODEX_AUTH_POOL_KV_KEY)) as {
-    accounts: Array<ReturnType<typeof makeAuth>>;
-    updated_at_ms: number;
-  } | undefined;
+  const pool = kv.values.get(encodeKey(CODEX_AUTH_POOL_KV_KEY)) as
+    | {
+        accounts: ReturnType<typeof makeAuth>[];
+        updated_at_ms: number;
+      }
+    | undefined;
   const first = pool?.accounts[0];
   const second = pool?.accounts[1];
   if (!pool || !first || !second) throw new Error("missing seeded Codex auth pool");

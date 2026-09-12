@@ -34,7 +34,7 @@ export const GUARD_ERROR_CODES = ["duplicate_call", "repeated_failure"] as const
 
 export type GuardErrorCode = (typeof GUARD_ERROR_CODES)[number];
 
-export interface VerificationPolicy {
+export type VerificationPolicy = {
   /** Reject finals while any write is unverified. Default true. */
   requireVerificationBeforeFinal: boolean;
   /** Reject finals while command/edit failures are unresolved. Default true. */
@@ -49,7 +49,7 @@ export interface VerificationPolicy {
   maxRepeatedFinals: number;
   /** Task-declared verification command (exact match satisfies all writes). */
   verificationCommand: string | null;
-}
+};
 
 export const DEFAULT_VERIFICATION_POLICY: VerificationPolicy = {
   requireVerificationBeforeFinal: true,
@@ -61,30 +61,30 @@ export const DEFAULT_VERIFICATION_POLICY: VerificationPolicy = {
   verificationCommand: null,
 };
 
-export interface PendingVerification {
+export type PendingVerification = {
   path: string;
   /** Written marker (the patch `new` value) the read must contain. */
   marker: string;
   add: boolean;
   since: number;
-}
+};
 
-export interface UnresolvedCommand {
+export type UnresolvedCommand = {
   command: string;
   code: string;
   since: number;
-}
+};
 
-export interface UnresolvedEdit {
+export type UnresolvedEdit = {
   path: string;
   since: number;
-}
+};
 
-export interface VerificationResolution {
+export type VerificationResolution = {
   kind: VerificationKind;
   /** Paths whose pending verification this call satisfied. */
   paths: readonly string[];
-}
+};
 
 export class VerificationTracker {
   readonly policy: VerificationPolicy;
@@ -200,31 +200,25 @@ export class VerificationTracker {
   }
 }
 
-export type FinalRequirementKind =
-  | "unverified_write"
-  | "unresolved_command"
-  | "unresolved_edit"
-  | "active_loop"
-  | "false_completion"
-  | "plan_required";
+export type FinalRequirementKind = "unverified_write" | "unresolved_command" | "unresolved_edit" | "active_loop" | "false_completion" | "plan_required";
 
-export interface FinalRequirement {
+export type FinalRequirement = {
   kind: FinalRequirementKind;
   message: string;
   path?: string;
   command?: string;
-}
+};
 
-export interface FinalAttempt {
+export type FinalAttempt = {
   content: string;
   rejected: boolean;
   /** Sequence of the last successful tool call before this final (0 = none). */
   lastActionSeq: number;
   /** How many times this exact content was attempted without intervening action. */
   repetitions: number;
-}
+};
 
-export interface FinalGuardInput {
+export type FinalGuardInput = {
   finalContent: string;
   /** Sequence of the last successful tool call before this final (0 = none). */
   lastActionSeq: number;
@@ -234,16 +228,16 @@ export interface FinalGuardInput {
   writes: number;
   tracker: VerificationTracker;
   policy: VerificationPolicy;
-}
+};
 
-export interface FinalGuardDecision {
+export type FinalGuardDecision = {
   allowed: boolean;
   requirements: readonly FinalRequirement[];
   /** True when the same final content was already rejected with no action between. */
   falseCompletion: boolean;
   /** Updated attempt bookkeeping for the harness. */
   attempt: FinalAttempt;
-}
+};
 
 /**
  * Deterministic final-answer gate.  Returns `allowed: false` with every
@@ -269,8 +263,7 @@ export function guardFinal(input: FinalGuardInput): FinalGuardDecision {
     for (const unresolved of input.tracker.unresolvedCommands()) {
       requirements.push({
         kind: "unresolved_command",
-        message:
-          `unresolved command failure: ${unresolved.command} — recover with a successful command before answering`,
+        message: `unresolved command failure: ${unresolved.command} — recover with a successful command before answering`,
         command: unresolved.command,
       });
     }
@@ -291,13 +284,10 @@ export function guardFinal(input: FinalGuardInput): FinalGuardDecision {
   if (falseCompletion && repetitions >= 1) {
     requirements.push({
       kind: "false_completion",
-      message:
-        "final answer repeated without any intervening action — the previous claim was rejected; perform a verification or a different action first",
+      message: "final answer repeated without any intervening action — the previous claim was rejected; perform a verification or a different action first",
     });
   }
-  if (
-    policy.requirePlanBeforeWrites && input.writes > 0 && !input.planUpdated
-  ) {
+  if (policy.requirePlanBeforeWrites && input.writes > 0 && !input.planUpdated) {
     requirements.push({
       kind: "plan_required",
       message: "writes happened without a plan — call task.update_plan before answering",

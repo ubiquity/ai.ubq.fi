@@ -18,14 +18,15 @@ const kvAvailable = typeof Deno.openKv === "function";
 
 const SUPER_ADMIN_TOKEN = "sentinel-request-capture-super-admin";
 const MARKER = "sentinel-request-capture-exact-bytes-marker-9f4c2b";
-const CAPTURE_BODY: Uint8Array<ArrayBuffer> = new TextEncoder().encode(JSON.stringify({
-  model: "gpt-5.6-sol",
-  stream: false,
-  input: MARKER,
-}));
+const CAPTURE_BODY: Uint8Array<ArrayBuffer> = new TextEncoder().encode(
+  JSON.stringify({
+    model: "gpt-5.6-sol",
+    stream: false,
+    input: MARKER,
+  })
+);
 
-const newSyntheticKey = (): Uint8Array<ArrayBuffer> =>
-  crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
+const newSyntheticKey = (): Uint8Array<ArrayBuffer> => crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
 
 const seedAuthenticatedKey = async (kv: Deno.Kv, token: string): Promise<void> => {
   const now = Date.now();
@@ -70,8 +71,7 @@ const captureRequest = (token: string | null): Request =>
     body: CAPTURE_BODY,
   });
 
-const exportUrl = (params: Record<string, string>): string =>
-  `https://ai.ubq.fi/admin/sentinel/replay-captures?${new URLSearchParams(params)}`;
+const exportUrl = (params: Record<string, string>): string => `https://ai.ubq.fi/admin/sentinel/replay-captures?${new URLSearchParams(params)}`;
 
 const countManifests = async (kv: Deno.Kv): Promise<number> => {
   let count = 0;
@@ -102,7 +102,7 @@ const successResponse = (): Response =>
       model: "gpt-5.6-sol",
       output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "ok" }] }],
     }),
-    { status: 200, headers: { "Content-Type": "application/json" } },
+    { status: 200, headers: { "Content-Type": "application/json" } }
   );
 
 const ignoredTerminalServices = {
@@ -159,10 +159,10 @@ Deno.test({
       const page = await handler(
         new Request(exportUrl({ after_ms: "0", before_ms: String(Date.now() + 1) }), {
           headers: { Authorization: `Bearer ${SUPER_ADMIN_TOKEN}` },
-        }),
+        })
       );
       assert.equal(page.status, 200);
-      const exported = await page.json() as {
+      const exported = (await page.json()) as {
         data: ExportedSentinelReplayCapture[];
         cursor: string | null;
       };
@@ -187,11 +187,11 @@ Deno.test({
       const incidents = await handler(
         new Request("https://ai.ubq.fi/admin/sentinel/incidents", {
           headers: { Authorization: `Bearer ${SUPER_ADMIN_TOKEN}` },
-        }),
+        })
       );
       assert.equal(incidents.status, 200);
-      const incidentsBody = await incidents.json() as {
-        data: Array<{
+      const incidentsBody = (await incidents.json()) as {
+        data: {
           incident_id: string;
           fingerprint: string;
           severity: string;
@@ -199,7 +199,7 @@ Deno.test({
           evidence_ref: { ref: string; digest: string | null } | null;
           evidence_expires_at_ms: number | null;
           provenance: { endpoint: string; captured_by: unknown };
-        }>;
+        }[];
         cursor: string | null;
       };
       const incidentsText = JSON.stringify(incidentsBody);
@@ -214,7 +214,7 @@ Deno.test({
       assert.equal(
         incident.evidence_ref?.ref,
         `artifact://sentinel/${incident.incident_id}/${capture.manifest.capture_id}`,
-        "wire evidence ref must bind the exact capture through the restricted artifact namespace",
+        "wire evidence ref must bind the exact capture through the restricted artifact namespace"
       );
       assert.equal(incident.evidence_expires_at_ms, capture.manifest.expires_at_ms);
 
@@ -225,11 +225,11 @@ Deno.test({
             before_ms: String(Date.now() + 1),
             incident_id: incident.incident_id,
           }),
-          { headers: { Authorization: `Bearer ${SUPER_ADMIN_TOKEN}` } },
-        ),
+          { headers: { Authorization: `Bearer ${SUPER_ADMIN_TOKEN}` } }
+        )
       );
       assert.equal(scoped.status, 200);
-      const scopedBody = await scoped.json() as { data: ExportedSentinelReplayCapture[] };
+      const scopedBody = (await scoped.json()) as { data: ExportedSentinelReplayCapture[] };
       assert.equal(scopedBody.data.length, 1, "the durable incident id must reach the bound capture");
       const scopedCapture = scopedBody.data[0]!;
       const ciphertextParts = scopedCapture.chunks.map(base64UrlDecode);
@@ -240,9 +240,7 @@ Deno.test({
         ciphertext.set(part, ciphertextOffset);
         ciphertextOffset += part.byteLength;
       }
-      const actualDigest = encodeHex(
-        new Uint8Array(await crypto.subtle.digest("SHA-256", ciphertext)),
-      );
+      const actualDigest = encodeHex(new Uint8Array(await crypto.subtle.digest("SHA-256", ciphertext)));
       assert.equal(incident.evidence_ref?.digest, actualDigest, "evidence digest is the actual ciphertext SHA-256");
       assert.deepEqual(scopedCapture.manifest, capture.manifest);
       const scopedPlaintext = await decryptExportedSentinelReplay(scopedCapture, keyBytes);
@@ -299,8 +297,14 @@ Deno.test("successful terminal responses are never persisted and release capture
     });
     assert.equal(response.status, 200);
     assert.equal(persistenceCalls, 0, "a successful response must never be persisted");
-    assert.ok(input.body.every((byte) => byte === 0), "captured bytes must be zeroed after terminal handling");
-    assert.deepEqual([...new Uint8Array(originalBytes.length)], originalBytes.map(() => 0));
+    assert.ok(
+      input.body.every((byte) => byte === 0),
+      "captured bytes must be zeroed after terminal handling"
+    );
+    assert.deepEqual(
+      [...new Uint8Array(originalBytes.length)],
+      originalBytes.map(() => 0)
+    );
   } finally {
     input.body.fill(0);
   }

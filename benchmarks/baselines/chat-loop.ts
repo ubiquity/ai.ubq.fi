@@ -22,25 +22,25 @@ import { BaselineAdapterError, BaselineUpstreamError, sanitizedUpstreamError } f
 import type { ChatTransport } from "./transport.ts";
 import { type CanonicalToolDefinition, executeBaselineTool, validateCanonicalToolArgs } from "./tools.ts";
 
-export interface ToolCallWire {
+export type ToolCallWire = {
   id: string;
   name: string;
   /** Opaque JSON arguments exactly as received on the wire. */
   arguments: string;
-}
+};
 
-export interface ParsedChatCompletion {
+export type ParsedChatCompletion = {
   content: string | null;
   toolCalls: ToolCallWire[];
   finishReason: string | null;
   usage: { inputTokens: number; outputTokens: number } | null;
-}
+};
 
 /** A request message pushed to the live model (OpenAI Chat shape). */
 export type ChatMessage = Record<string, unknown>;
 
 /** Adapter-specific pieces of one chat agent configuration. */
-export interface ChatAgentSpec {
+export type ChatAgentSpec = {
   model: string;
   tools: readonly CanonicalToolDefinition[];
   transport: ChatTransport;
@@ -52,12 +52,11 @@ export interface ChatAgentSpec {
   parseCompletion(value: unknown): ParsedChatCompletion | { error: string };
   /** Defensive cap so a run cannot spin forever (default 200). */
   maxRequests?: number;
-}
+};
 
 const DEFAULT_MAX_REQUESTS = 200;
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** Parses wire arguments into a record; invalid JSON never throws. */
 export function parseToolArguments(text: string): Record<string, unknown> {
@@ -86,10 +85,7 @@ export async function runChatAgentLoop(ctx: AdapterRunContext, spec: ChatAgentSp
   for (;;) {
     if (ctx.signal.aborted) throw new TaskTimeoutError(ctx.task.timeout_ms);
     if (seq >= maxRequests) {
-      throw new BaselineAdapterError(
-        `model request limit exceeded (${maxRequests}); the model never returned a final turn`,
-        "request-limit",
-      );
+      throw new BaselineAdapterError(`model request limit exceeded (${maxRequests}); the model never returned a final turn`, "request-limit");
     }
     seq += 1;
 
@@ -113,10 +109,7 @@ export async function runChatAgentLoop(ctx: AdapterRunContext, spec: ChatAgentSp
     }
     const parsed = spec.parseCompletion(body);
     if ("error" in parsed) {
-      throw new BaselineAdapterError(
-        `could not normalize the model response: ${parsed.error}`,
-        "invalid-upstream-response",
-      );
+      throw new BaselineAdapterError(`could not normalize the model response: ${parsed.error}`, "invalid-upstream-response");
     }
 
     const usage = parsed.usage ?? { inputTokens: 0, outputTokens: 0 };

@@ -67,11 +67,7 @@ const RP_NAME = "UbiquityOS AI Gateway";
 
 export const passkeyUserKey = (userId: string): Deno.KvKey => [...AUTH_PREFIX, "users", userId];
 export const passkeyHandleKey = (handle: string): Deno.KvKey => [...AUTH_PREFIX, "handles", handle];
-export const passkeyCredentialKey = (credentialId: string): Deno.KvKey => [
-  ...AUTH_PREFIX,
-  "credentials",
-  credentialId,
-];
+export const passkeyCredentialKey = (credentialId: string): Deno.KvKey => [...AUTH_PREFIX, "credentials", credentialId];
 export const passkeyChallengeKey = (challenge: string): Deno.KvKey => [...AUTH_PREFIX, "challenges", challenge];
 export const passkeySessionKey = (token: string): Deno.KvKey => [...AUTH_PREFIX, "sessions", token];
 
@@ -93,8 +89,7 @@ export const buildPasskeyHandle = async (seed: string): Promise<string> => {
   return `uos-passkey-${fingerprint}`;
 };
 
-export const isPasskeyUserAdmin = (user: Pick<PasskeyUserRecord, "is_admin"> | null | undefined): boolean =>
-  user?.is_admin === true;
+export const isPasskeyUserAdmin = (user: Pick<PasskeyUserRecord, "is_admin"> | null | undefined): boolean => user?.is_admin === true;
 
 const serializePasskeyUser = (user: PasskeyUserRecord): Record<string, unknown> => ({
   id: user.id,
@@ -137,8 +132,7 @@ const parseOriginFromHost = (host: string | null, protocol: string): string | nu
   }
 };
 
-const isLoopbackHost = (hostname: string): boolean =>
-  hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1";
+const isLoopbackHost = (hostname: string): boolean => hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]" || hostname === "::1";
 
 const isTrustedPasskeyOrigin = (origin: string): boolean => {
   try {
@@ -150,7 +144,7 @@ const isTrustedPasskeyOrigin = (origin: string): boolean => {
   }
 };
 
-const firstTrustedPasskeyOrigin = (origins: Array<string | null>): string => {
+const firstTrustedPasskeyOrigin = (origins: (string | null)[]): string => {
   for (const origin of origins) {
     if (origin && isTrustedPasskeyOrigin(origin)) return origin;
   }
@@ -181,10 +175,7 @@ const getKvOrError = async (): Promise<Deno.Kv | Response> => {
   return kv;
 };
 
-const readPasskeyJson = async (
-  req: Request,
-  options: Readonly<{ allowEmpty?: boolean }> = {},
-): Promise<Record<string, unknown> | Response> => {
+const readPasskeyJson = async (req: Request, options: Readonly<{ allowEmpty?: boolean }> = {}): Promise<Record<string, unknown> | Response> => {
   const result = await readJsonBodyWithLimit(req, PASSKEY_MAX_REQUEST_BODY_BYTES);
   if (!result.ok) {
     if (options.allowEmpty && result.kind === "empty") return {};
@@ -214,19 +205,17 @@ export const hasPasskeyUsers = async (): Promise<boolean> => {
 export const updatePasskeyCredentialSignCount = async (
   kv: Deno.Kv,
   entry: Readonly<{ key: Deno.KvKey; value: PasskeyCredentialRecord; versionstamp: string }>,
-  signCount: number,
+  signCount: number
 ): Promise<boolean> => {
-  const commit = await kv.atomic()
+  const commit = await kv
+    .atomic()
     .check({ key: entry.key, versionstamp: entry.versionstamp })
     .set(entry.key, { ...entry.value, sign_count: signCount })
     .commit();
   return commit.ok;
 };
 
-const saveChallenge = async (
-  kv: Deno.Kv,
-  input: Omit<PasskeyChallengeRecord, "created_at_ms" | "expires_at_ms">,
-): Promise<PasskeyChallengeRecord> => {
+const saveChallenge = async (kv: Deno.Kv, input: Omit<PasskeyChallengeRecord, "created_at_ms" | "expires_at_ms">): Promise<PasskeyChallengeRecord> => {
   const createdAtMs = nowMs();
   const record: PasskeyChallengeRecord = {
     ...input,
@@ -250,11 +239,7 @@ const consumeChallenge = async (kv: Deno.Kv, challenge: string): Promise<Passkey
   return entry.value;
 };
 
-const createSession = async (
-  kv: Deno.Kv,
-  userId: string,
-  audienceOrigin?: string,
-): Promise<PasskeySessionRecord> => {
+const createSession = async (kv: Deno.Kv, userId: string, audienceOrigin?: string): Promise<PasskeySessionRecord> => {
   const createdAtMs = nowMs();
   const token = `uos_ai_session_${crypto.randomUUID()}`;
   const record: PasskeySessionRecord = {
@@ -280,7 +265,7 @@ type SaveVerifiedPasskeyRegistrationInput = {
 
 export const saveVerifiedPasskeyRegistration = async (
   kv: Deno.Kv,
-  input: SaveVerifiedPasskeyRegistrationInput,
+  input: SaveVerifiedPasskeyRegistrationInput
 ): Promise<{ ok: true; user: PasskeyUserRecord } | { ok: false; response: Response }> => {
   const handleEntry = await kv.get<string>(passkeyHandleKey(input.handle));
   if (handleEntry.value && handleEntry.value !== input.userId) {
@@ -303,22 +288,23 @@ export const saveVerifiedPasskeyRegistration = async (
   const existingUserEntry = await kv.get<PasskeyUserRecord>(passkeyUserKey(input.userId));
   const userRecord: PasskeyUserRecord = existingUserEntry.value
     ? {
-      ...existingUserEntry.value,
-      handle: input.handle,
-      is_admin: isPasskeyUserAdmin(existingUserEntry.value),
-      credential_ids: Array.from(new Set([...existingUserEntry.value.credential_ids, input.credentialId])),
-      updated_at_ms: createdAtMs,
-    }
+        ...existingUserEntry.value,
+        handle: input.handle,
+        is_admin: isPasskeyUserAdmin(existingUserEntry.value),
+        credential_ids: Array.from(new Set([...existingUserEntry.value.credential_ids, input.credentialId])),
+        updated_at_ms: createdAtMs,
+      }
     : {
-      id: input.userId,
-      handle: input.handle,
-      is_admin: input.isAdmin,
-      credential_ids: [input.credentialId],
-      created_at_ms: createdAtMs,
-      updated_at_ms: createdAtMs,
-    };
+        id: input.userId,
+        handle: input.handle,
+        is_admin: input.isAdmin,
+        credential_ids: [input.credentialId],
+        created_at_ms: createdAtMs,
+        updated_at_ms: createdAtMs,
+      };
 
-  let atomic = kv.atomic()
+  let atomic = kv
+    .atomic()
     .check(existingUserEntry)
     .check(handleEntry)
     .set(passkeyUserKey(userRecord.id), userRecord)
@@ -370,13 +356,10 @@ const getCookieValue = (req: Request, name: string): string | null => {
 
 const buildRelayCookie = (token: string, expiresAtMs: number): string => {
   const maxAge = Math.max(0, Math.ceil((expiresAtMs - nowMs()) / 1000));
-  return `${PASSKEY_RELAY_COOKIE_NAME}=${
-    encodeURIComponent(token)
-  }; Path=/; Max-Age=${maxAge}; HttpOnly; Secure; SameSite=None`;
+  return `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; Max-Age=${maxAge}; HttpOnly; Secure; SameSite=None`;
 };
 
-const clearRelayCookie = (): string =>
-  `${PASSKEY_RELAY_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=None`;
+const clearRelayCookie = (): string => `${PASSKEY_RELAY_COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=None`;
 
 export const getPasskeySessionFromRequest = async (req: Request): Promise<PasskeySession | null> => {
   const token = getBearerToken(req) ?? getCookieValue(req, PASSKEY_RELAY_COOKIE_NAME);
@@ -389,20 +372,15 @@ const getRequestAudienceOrigin = (req: Request): string | null => {
   return parseTrustedAuthRelayOrigin(new URL(req.url).searchParams.get("cors_origin"));
 };
 
-export const getPasskeySessionForRequest = async (
-  req: Request,
-  authenticatedPasskeyToken?: string,
-): Promise<PasskeySession | null> => {
-  const session = authenticatedPasskeyToken
-    ? await getPasskeySession(authenticatedPasskeyToken)
-    : await getPasskeySessionFromRequest(req);
+export const getPasskeySessionForRequest = async (req: Request, authenticatedPasskeyToken?: string): Promise<PasskeySession | null> => {
+  const session = authenticatedPasskeyToken ? await getPasskeySession(authenticatedPasskeyToken) : await getPasskeySessionFromRequest(req);
   if (!session?.session.audience_origin) return session;
   return getRequestAudienceOrigin(req) === session.session.audience_origin ? session : null;
 };
 
 export const handlePasskeyRegisterStart = async (
   req: Request,
-  options: { defaultIsAdmin?: boolean; authenticatedPasskeyToken?: string } = {},
+  options: { defaultIsAdmin?: boolean; authenticatedPasskeyToken?: string } = {}
 ): Promise<Response> => {
   const raw = await readPasskeyJson(req);
   if (raw instanceof Response) return raw;
@@ -424,7 +402,7 @@ export const handlePasskeyRegisterStart = async (
   }
   const existingUser = existingSession?.user ?? tokenUser ?? requestedUser;
   const userId = existingUser?.id ?? crypto.randomUUID();
-  const handle = existingSession?.user.handle || requestedHandle || tokenHandle || await buildPasskeyHandle(userId);
+  const handle = existingSession?.user.handle || requestedHandle || tokenHandle || (await buildPasskeyHandle(userId));
   if (!handle) return openaiError(400, "username is required", "invalid_request_error");
   const isAdmin = existingUser ? isPasskeyUserAdmin(existingUser) : options.defaultIsAdmin === true;
   const { origin, rpId } = getPasskeyRequestMeta(req, raw.client_origin);
@@ -467,7 +445,7 @@ export const handlePasskeyRegisterStart = async (
       },
       handle,
     },
-    { "Cache-Control": "no-store" },
+    { "Cache-Control": "no-store" }
   );
 };
 
@@ -534,7 +512,7 @@ export const handlePasskeyRegisterFinish = async (req: Request): Promise<Respons
         credential_count: saved.user.credential_ids.length,
         expires_at_ms: session.expires_at_ms,
       },
-      { "Cache-Control": "no-store" },
+      { "Cache-Control": "no-store" }
     );
   } catch {
     return openaiError(400, "Invalid passkey attestation", "invalid_request_error");
@@ -555,7 +533,7 @@ export const handlePasskeyLoginStart = async (req: Request): Promise<Response> =
     return openaiError(400, "Invalid passkey relay origin", "invalid_request_error");
   }
 
-  let allowCredentials: Array<{ id: string; type: "public-key" }> | undefined;
+  let allowCredentials: { id: string; type: "public-key" }[] | undefined;
   let userVerification: "preferred" | "required" = "preferred";
   if (handle) {
     const user = await getUserByHandle(kv, handle);
@@ -631,11 +609,15 @@ export const handlePasskeyLoginFinish = async (req: Request): Promise<Response> 
       return openaiError(400, "Invalid passkey assertion", "invalid_request_error");
     }
 
-    const updated = await updatePasskeyCredentialSignCount(kv, {
-      key: credentialEntry.key,
-      value: credential,
-      versionstamp: credentialEntry.versionstamp,
-    }, verification.authenticationInfo.newCounter);
+    const updated = await updatePasskeyCredentialSignCount(
+      kv,
+      {
+        key: credentialEntry.key,
+        value: credential,
+        versionstamp: credentialEntry.versionstamp,
+      },
+      verification.authenticationInfo.newCounter
+    );
     if (!updated) {
       return openaiError(409, "Passkey credential was modified concurrently; retry", "invalid_request_error");
     }
@@ -654,7 +636,7 @@ export const handlePasskeyLoginFinish = async (req: Request): Promise<Response> 
       {
         "Cache-Control": "no-store",
         ...(relaySession ? { "Set-Cookie": buildRelayCookie(session.token, session.expires_at_ms) } : {}),
-      },
+      }
     );
   } catch (error) {
     console.warn("[ai.ubq.fi] passkey assertion verification failed", {
@@ -669,10 +651,7 @@ export const handlePasskeyLoginFinish = async (req: Request): Promise<Response> 
   }
 };
 
-export const handlePasskeySession = async (
-  req: Request,
-  options: { authenticatedPasskeyToken?: string } = {},
-): Promise<Response> => {
+export const handlePasskeySession = async (req: Request, options: { authenticatedPasskeyToken?: string } = {}): Promise<Response> => {
   const session = await getPasskeySessionForRequest(req, options.authenticatedPasskeyToken);
   if (!session) return openaiError(401, "Unauthorized", "invalid_api_key");
   return json(
@@ -689,14 +668,11 @@ export const handlePasskeySession = async (
         expires_at_ms: session.session.expires_at_ms,
       },
     },
-    { "Cache-Control": "no-store" },
+    { "Cache-Control": "no-store" }
   );
 };
 
-export const handlePasskeyLogout = async (
-  req: Request,
-  options: { authenticatedPasskeyToken?: string } = {},
-): Promise<Response> => {
+export const handlePasskeyLogout = async (req: Request, options: { authenticatedPasskeyToken?: string } = {}): Promise<Response> => {
   const session = await getPasskeySessionForRequest(req, options.authenticatedPasskeyToken);
   if (session) {
     const kv = await getKv();
@@ -725,7 +701,7 @@ export const handlePasskeyUsersList = async (): Promise<Response> => {
       object: "list",
       data: users.map(serializePasskeyUser),
     },
-    { "Cache-Control": "no-store" },
+    { "Cache-Control": "no-store" }
   );
 };
 

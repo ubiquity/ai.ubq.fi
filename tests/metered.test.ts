@@ -18,36 +18,40 @@ const jsonResponse = (body: unknown, status = 200, headers: HeadersInit = {}): R
   });
 
 Deno.test("initializeMeteredPricing intersects the current Codex catalog and returns a compact snapshot", async () => {
-  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const calls: { url: string; init?: RequestInit }[] = [];
   const fetcher: MeteredFetch = (input, init) => {
     const url = input.toString();
     calls.push({ url, init });
     if (url === "https://api.openlux.ai/api/ratio_config") {
-      return Promise.resolve(jsonResponse({
-        success: true,
-        message: "",
-        data: {
-          model_ratio: {
-            "gpt-5.6-sol": 2.5,
-            "not-in-codex": 1,
-            "disabled-model": 0,
+      return Promise.resolve(
+        jsonResponse({
+          success: true,
+          message: "",
+          data: {
+            model_ratio: {
+              "gpt-5.6-sol": 2.5,
+              "not-in-codex": 1,
+              "disabled-model": 0,
+            },
+            model_price: {
+              "gpt-fixed": 0.25,
+            },
           },
-          model_price: {
-            "gpt-fixed": 0.25,
-          },
-        },
-      }));
+        })
+      );
     }
     if (url === "https://api.openlux.ai/api/status") {
-      return Promise.resolve(jsonResponse({
-        success: true,
-        message: "",
-        data: {
-          setup: true,
-          quota_per_unit: 500_000,
-          server_name_en: "not retained",
-        },
-      }));
+      return Promise.resolve(
+        jsonResponse({
+          success: true,
+          message: "",
+          data: {
+            setup: true,
+            quota_per_unit: 500_000,
+            server_name_en: "not retained",
+          },
+        })
+      );
     }
     throw new Error(`Unexpected URL: ${url}`);
   };
@@ -67,10 +71,10 @@ Deno.test("initializeMeteredPricing intersects the current Codex catalog and ret
     },
     checked_at_ms: 1_234_567,
   });
-  assert.deepEqual(calls.map((call) => call.url), [
-    "https://api.openlux.ai/api/ratio_config",
-    "https://api.openlux.ai/api/status",
-  ]);
+  assert.deepEqual(
+    calls.map((call) => call.url),
+    ["https://api.openlux.ai/api/ratio_config", "https://api.openlux.ai/api/status"]
+  );
   for (const call of calls) {
     assert.equal(call.init?.method, "GET");
     assert.equal(new Headers(call.init?.headers).get("Accept"), "application/json");
@@ -82,20 +86,20 @@ Deno.test("initializeMeteredPricing fails closed and never returns an earlier sn
   let statusIsValid = true;
   const fetcher: MeteredFetch = (input) => {
     if (input.toString().endsWith("/api/ratio_config")) {
-      return Promise.resolve(jsonResponse({
-        success: true,
-        data: {
-          model_ratio: { "gpt-5.6-sol": 2.5 },
-          model_price: {},
-        },
-      }));
+      return Promise.resolve(
+        jsonResponse({
+          success: true,
+          data: {
+            model_ratio: { "gpt-5.6-sol": 2.5 },
+            model_price: {},
+          },
+        })
+      );
     }
     return Promise.resolve(
       jsonResponse(
-        statusIsValid
-          ? { success: true, data: { setup: true, quota_per_unit: 500_000 } }
-          : { success: true, data: { setup: true, quota_per_unit: "500000" } },
-      ),
+        statusIsValid ? { success: true, data: { setup: true, quota_per_unit: 500_000 } } : { success: true, data: { setup: true, quota_per_unit: "500000" } }
+      )
     );
   };
 
@@ -112,7 +116,7 @@ Deno.test("initializeMeteredPricing fails closed and never returns an earlier sn
         codexModelIds: ["gpt-5.6-sol"],
         fetcher,
       }),
-    (error: unknown) => error instanceof MeteredError && error.code === "metered_status_invalid",
+    (error: unknown) => error instanceof MeteredError && error.code === "metered_status_invalid"
   );
 });
 
@@ -124,7 +128,7 @@ Deno.test("fetchMeteredResponses applies Metered Sol reasoning suffixes and forw
     reasoning: { effort: "high" },
     stream: true,
   };
-  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const calls: { url: string; init?: RequestInit }[] = [];
   const fetcher: MeteredFetch = (input, init) => {
     calls.push({ url: input.toString(), init });
     return Promise.resolve(
@@ -135,7 +139,7 @@ Deno.test("fetchMeteredResponses applies Metered Sol reasoning suffixes and forw
           "X-Oneapi-Request-Id": " metered-fallback-request-1 ",
           "X-Api-Request-Id": " metered-request-1 ",
         },
-      }),
+      })
     );
   };
 
@@ -179,31 +183,32 @@ Deno.test("Metered billing correlation prefers provider IDs over generic trace I
             "X-Api-Request-Id": billingRequestId,
             "X-Oneapi-Request-Id": "openlux-legacy-request",
           },
-        }),
+        })
       );
     }
     if (url.startsWith("https://api.openlux.ai/api/log/token?")) {
-      return Promise.resolve(jsonResponse({
-        success: true,
-        data: {
-          items: [{
-            quota: 100,
-            prompt_tokens: 1,
-            completion_tokens: 1,
-            model_name: "gpt-5.6-sol",
-            created_at: 1_752_960_000,
-            other: JSON.stringify({ request_id: billingRequestId }),
-          }],
-        },
-      }));
+      return Promise.resolve(
+        jsonResponse({
+          success: true,
+          data: {
+            items: [
+              {
+                quota: 100,
+                prompt_tokens: 1,
+                completion_tokens: 1,
+                model_name: "gpt-5.6-sol",
+                created_at: 1_752_960_000,
+                other: JSON.stringify({ request_id: billingRequestId }),
+              },
+            ],
+          },
+        })
+      );
     }
     throw new Error(`Unexpected URL: ${url}`);
   };
 
-  const result = await fetchMeteredResponses(
-    { model: "gpt-5.6-sol", input: "hello" },
-    { apiKey: "test-metered-key", fetcher },
-  );
+  const result = await fetchMeteredResponses({ model: "gpt-5.6-sol", input: "hello" }, { apiKey: "test-metered-key", fetcher });
   const logs = await fetchMeteredTokenLogs({ apiKey: "test-metered-key", fetcher });
 
   assert.equal(result.request_id, billingRequestId);
@@ -218,14 +223,8 @@ Deno.test("fetchMeteredResponses maps no-reasoning and ultra Sol presets to live
     return Promise.resolve(new Response("{}", { status: 200 }));
   };
 
-  await fetchMeteredResponses(
-    { model: "gpt-5.6-sol", input: "hello", reasoning: { effort: "minimal" } },
-    { apiKey: "test-metered-key", fetcher },
-  );
-  await fetchMeteredResponses(
-    { model: "gpt-5.6-sol", input: "hello", reasoning: { effort: "ultra" } },
-    { apiKey: "test-metered-key", fetcher },
-  );
+  await fetchMeteredResponses({ model: "gpt-5.6-sol", input: "hello", reasoning: { effort: "minimal" } }, { apiKey: "test-metered-key", fetcher });
+  await fetchMeteredResponses({ model: "gpt-5.6-sol", input: "hello", reasoning: { effort: "ultra" } }, { apiKey: "test-metered-key", fetcher });
 
   assert.deepEqual(bodies, [
     { model: "gpt-5.6-sol-low", input: "hello" },
@@ -241,8 +240,10 @@ Deno.test("fetchMeteredResponses propagates client cancellation through the head
     return new Promise<Response>((_resolve, reject) => {
       observed.signal?.addEventListener(
         "abort",
-        () => reject(observed.signal?.reason ?? new DOMException("Aborted", "AbortError")),
-        { once: true },
+        () => {
+          reject(observed.signal?.reason ?? new DOMException("Aborted", "AbortError"));
+        },
+        { once: true }
       );
     });
   };
@@ -253,15 +254,12 @@ Deno.test("fetchMeteredResponses propagates client cancellation through the head
       apiKey: "test-metered-key",
       fetcher,
       signal: controller.signal,
-    },
+    }
   );
   const cancellation = new DOMException("Client disconnected", "AbortError");
   controller.abort(cancellation);
 
-  await assert.rejects(
-    pending,
-    (error: unknown) => error === cancellation,
-  );
+  await assert.rejects(pending, (error: unknown) => error === cancellation);
   const observedSignal = observed.signal;
   assert.ok(observedSignal);
   assert.equal(observedSignal.aborted, true);
@@ -274,37 +272,39 @@ Deno.test("fetchMeteredTokenLogs returns only strict allowlisted billing fields"
   const fetcher: MeteredFetch = (input, init) => {
     capturedUrl = input.toString();
     capturedInit = init;
-    return Promise.resolve(jsonResponse({
-      success: true,
-      message: "",
-      data: {
-        total: 2,
-        page: 1,
-        page_size: 100,
-        items: [
-          {
-            id: 9001,
-            quota: 2914,
-            prompt_tokens: 71,
-            completion_tokens: 231,
-            model_name: "gpt-5.6-sol",
-            created_at: 1_752_960_000,
-            username: "must-not-leak",
-            token_name: "must-not-leak",
-            ip: "must-not-leak",
-            other: '{"request_id":"request-abc","must":"not leak"}',
-          },
-          {
-            other: '{"request_id":"malformed-entry"}',
-            quota: "2914",
-            prompt_tokens: 71,
-            completion_tokens: 231,
-            model_name: "gpt-5.6-sol",
-            created_at: 1_752_960_000,
-          },
-        ],
-      },
-    }));
+    return Promise.resolve(
+      jsonResponse({
+        success: true,
+        message: "",
+        data: {
+          total: 2,
+          page: 1,
+          page_size: 100,
+          items: [
+            {
+              id: 9001,
+              quota: 2914,
+              prompt_tokens: 71,
+              completion_tokens: 231,
+              model_name: "gpt-5.6-sol",
+              created_at: 1_752_960_000,
+              username: "must-not-leak",
+              token_name: "must-not-leak",
+              ip: "must-not-leak",
+              other: '{"request_id":"request-abc","must":"not leak"}',
+            },
+            {
+              other: '{"request_id":"malformed-entry"}',
+              quota: "2914",
+              prompt_tokens: 71,
+              completion_tokens: 231,
+              model_name: "gpt-5.6-sol",
+              created_at: 1_752_960_000,
+            },
+          ],
+        },
+      })
+    );
   };
 
   const logs = await fetchMeteredTokenLogs({
@@ -321,31 +321,28 @@ Deno.test("fetchMeteredTokenLogs returns only strict allowlisted billing fields"
   const headers = new Headers(capturedInit?.headers);
   assert.equal(headers.get("Authorization"), null);
   assert.equal(headers.get("Accept"), "application/json");
-  assert.deepEqual(logs, [{
-    request_id: "request-abc",
-    quota: 2914,
-    prompt_tokens: 71,
-    completion_tokens: 231,
-    model: "gpt-5.6-sol",
-    created_at: 1_752_960_000,
-  }]);
-  assert.deepEqual(Object.keys(logs[0]), [
-    "request_id",
-    "quota",
-    "prompt_tokens",
-    "completion_tokens",
-    "model",
-    "created_at",
+  assert.deepEqual(logs, [
+    {
+      request_id: "request-abc",
+      quota: 2914,
+      prompt_tokens: 71,
+      completion_tokens: 231,
+      model: "gpt-5.6-sol",
+      created_at: 1_752_960_000,
+    },
   ]);
+  assert.deepEqual(Object.keys(logs[0]), ["request_id", "quota", "prompt_tokens", "completion_tokens", "model", "created_at"]);
 });
 
 Deno.test("fetchMeteredTokenLogs aborts a stalled provider fetch at the bounded timeout", async () => {
   const originalTimeout = AbortSignal.timeout;
   const timeoutController = new AbortController();
   let observedSignal: AbortSignal | null = null;
-  (AbortSignal as typeof AbortSignal & {
-    timeout: (milliseconds: number) => AbortSignal;
-  }).timeout = (milliseconds: number) => {
+  (
+    AbortSignal as typeof AbortSignal & {
+      timeout: (milliseconds: number) => AbortSignal;
+    }
+  ).timeout = (milliseconds: number) => {
     assert.equal(milliseconds, METERED_FETCH_TIMEOUT_MS);
     return timeoutController.signal;
   };
@@ -354,8 +351,10 @@ Deno.test("fetchMeteredTokenLogs aborts a stalled provider fetch at the bounded 
     return new Promise<Response>((_resolve, reject) => {
       observedSignal?.addEventListener(
         "abort",
-        () => reject(observedSignal?.reason ?? new DOMException("Timed out", "AbortError")),
-        { once: true },
+        () => {
+          reject(observedSignal?.reason ?? new DOMException("Timed out", "AbortError"));
+        },
+        { once: true }
       );
     });
   };
@@ -363,13 +362,12 @@ Deno.test("fetchMeteredTokenLogs aborts a stalled provider fetch at the bounded 
     const pending = fetchMeteredTokenLogs({ apiKey: "test-metered-key", fetcher });
     assert.equal(observedSignal, timeoutController.signal);
     timeoutController.abort(new DOMException("Billing log timeout", "TimeoutError"));
-    await assert.rejects(
-      pending,
-      (error: unknown) => error instanceof DOMException && error.name === "TimeoutError",
-    );
+    await assert.rejects(pending, (error: unknown) => error instanceof DOMException && error.name === "TimeoutError");
   } finally {
-    (AbortSignal as typeof AbortSignal & {
-      timeout: (milliseconds: number) => AbortSignal;
-    }).timeout = originalTimeout;
+    (
+      AbortSignal as typeof AbortSignal & {
+        timeout: (milliseconds: number) => AbortSignal;
+      }
+    ).timeout = originalTimeout;
   }
 });

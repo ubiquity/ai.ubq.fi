@@ -17,13 +17,7 @@
  * the same manifest through fake transports.
  */
 
-import {
-  buildCerebrasHarmonyRequest,
-  type HarmonyRequestOptions,
-  type HarmonyTransport,
-  normalizeHarmonyChatCompletion,
-  runHarmonyTurn,
-} from "./adapter.ts";
+import { buildCerebrasHarmonyRequest, type HarmonyRequestOptions, type HarmonyTransport, normalizeHarmonyChatCompletion, runHarmonyTurn } from "./adapter.ts";
 import {
   type BootstrapClassifierRequestOptions,
   type BootstrapClassifierVerdict,
@@ -48,14 +42,7 @@ import { HARMONY_CEREBRAS_MODEL } from "./types.ts";
 // Sanitized record shapes
 // ---------------------------------------------------------------------------
 
-export type ProbeGroup =
-  | "reasoning"
-  | "replay"
-  | "tools"
-  | "strictness"
-  | "structured"
-  | "parallel"
-  | "classifier";
+export type ProbeGroup = "reasoning" | "replay" | "tools" | "strictness" | "structured" | "parallel" | "classifier";
 
 export type ProbeOutcome = "ok" | "upstream_rejected" | "upstream_error" | "adapter_error" | "failed";
 
@@ -63,7 +50,7 @@ export type ProbeRequestSummary = Readonly<{
   style: HarmonyCallStyle | "classifier";
   model: string;
   roles: readonly string[];
-  tools: ReadonlyArray<{ name: string; strict: boolean | null }> | null;
+  tools: readonly { name: string; strict: boolean | null }[] | null;
   toolStrictnessValues: readonly boolean[];
   reasoningEffortTopLevel: string | null;
   reasoningInSystem: boolean;
@@ -83,7 +70,7 @@ export type ProbeResponseSummary = Readonly<{
   contentPreview: string | null;
   reasoningPresent: boolean;
   reasoningChars: number;
-  toolCalls: ReadonlyArray<{ id: string; name: string; argumentsChars: number; argumentsJsonValid: boolean }>;
+  toolCalls: readonly { id: string; name: string; argumentsChars: number; argumentsJsonValid: boolean }[];
   refusal: boolean;
   finishReason: string | null;
 }>;
@@ -215,16 +202,10 @@ const summarizeRawBody = (body: Record<string, unknown>): ProbeRequestSummary =>
     }
   }
   const messages = Array.isArray(body.messages) ? body.messages : [];
-  const roles = messages.map((message) =>
-    message && typeof message === "object" ? String((message as Record<string, unknown>).role ?? "?") : "?"
-  );
+  const roles = messages.map((message) => (message && typeof message === "object" ? String((message as Record<string, unknown>).role ?? "?") : "?"));
   const format = body.response_format;
   const formatType = format && typeof format === "object" ? (format as Record<string, unknown>).type : undefined;
-  const responseFormat = formatType === "json_object"
-    ? "json_object"
-    : formatType === "json_schema"
-    ? "json_schema"
-    : "none";
+  const responseFormat = formatType === "json_object" ? "json_object" : formatType === "json_schema" ? "json_schema" : "none";
   return {
     style: "generic",
     model: typeof body.model === "string" ? body.model : "?",
@@ -237,10 +218,8 @@ const summarizeRawBody = (body: Record<string, unknown>): ProbeRequestSummary =>
     parallelToolCalls: typeof body.parallel_tool_calls === "boolean" ? body.parallel_tool_calls : null,
     maxCompletionTokens: typeof body.max_completion_tokens === "number" ? body.max_completion_tokens : null,
     analysisInWire: roles.includes("assistant"),
-    assistantToolTurns:
-      messages.filter((message) =>
-        message && typeof message === "object" && Array.isArray((message as Record<string, unknown>).tool_calls)
-      ).length,
+    assistantToolTurns: messages.filter((message) => message && typeof message === "object" && Array.isArray((message as Record<string, unknown>).tool_calls))
+      .length,
     toolResultTurns: roles.filter((role) => role === "tool").length,
   };
 };
@@ -263,8 +242,7 @@ const responseSummary = (status: number, normalized: NormalizedAssistantResponse
   finishReason: normalized.finishReason,
 });
 
-const outcomeForStatus = (status: number): ProbeOutcome =>
-  status >= 400 && status < 500 ? "upstream_rejected" : "upstream_error";
+const outcomeForStatus = (status: number): ProbeOutcome => (status >= 400 && status < 500 ? "upstream_rejected" : "upstream_error");
 
 const upstreamErrorOf = (value: unknown): { code: string | null; message: string | null } | null => {
   const inner = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
@@ -274,10 +252,7 @@ const upstreamErrorOf = (value: unknown): { code: string | null; message: string
   };
 };
 
-export const createProbeContext = (
-  transport: HarmonyTransport,
-  now: () => Date = () => new Date(),
-): ProbeContext => {
+export const createProbeContext = (transport: HarmonyTransport, now: () => Date = () => new Date()): ProbeContext => {
   const record = (
     outcome: ProbeOutcome,
     status: number | null,
@@ -288,7 +263,7 @@ export const createProbeContext = (
     adapterError: { code: string; message: string } | null,
     conversation: Conversation | undefined,
     notes: readonly string[] = [],
-    verdict: BootstrapClassifierVerdict | null = null,
+    verdict: BootstrapClassifierVerdict | null = null
   ): ProbeTurnRecord => ({
     outcome,
     status,
@@ -328,52 +303,14 @@ export const createProbeContext = (
         const durationMs = now().getTime() - started;
         if (result.ok) {
           return {
-            record: record(
-              "ok",
-              result.status,
-              durationMs,
-              request,
-              responseSummary(result.status, result.normalized),
-              null,
-              null,
-              conversation,
-            ),
+            record: record("ok", result.status, durationMs, request, responseSummary(result.status, result.normalized), null, null, conversation),
             normalized: result.normalized,
             verdict: null,
           };
         }
         if (result.upstreamError) {
           return {
-            record: record(
-              outcomeForStatus(result.status),
-              result.status,
-              durationMs,
-              request,
-              null,
-              result.upstreamError,
-              null,
-              conversation,
-            ),
-            normalized: null,
-            verdict: null,
-          };
-        }
-        return {
-          record: record("failed", result.status, durationMs, request, null, null, {
-            code: "normalization_error",
-            message: result.normalizationError ?? "unknown",
-          }, conversation),
-          normalized: null,
-          verdict: null,
-        };
-      } catch (error) {
-        const durationMs = now().getTime() - started;
-        if (error instanceof Error && "code" in error) {
-          return {
-            record: record("adapter_error", null, durationMs, null, null, null, {
-              code: String((error as { code: unknown }).code),
-              message: error.message,
-            }, conversation),
+            record: record(outcomeForStatus(result.status), result.status, durationMs, request, null, result.upstreamError, null, conversation),
             normalized: null,
             verdict: null,
           };
@@ -381,14 +318,43 @@ export const createProbeContext = (
         return {
           record: record(
             "failed",
-            null,
+            result.status,
             durationMs,
+            request,
             null,
             null,
-            null,
-            { code: "probe_error", message: String(error) },
-            conversation,
+            {
+              code: "normalization_error",
+              message: result.normalizationError ?? "unknown",
+            },
+            conversation
           ),
+          normalized: null,
+          verdict: null,
+        };
+      } catch (error) {
+        const durationMs = now().getTime() - started;
+        if (error instanceof Error && "code" in error) {
+          return {
+            record: record(
+              "adapter_error",
+              null,
+              durationMs,
+              null,
+              null,
+              null,
+              {
+                code: String((error as { code: unknown }).code),
+                message: error.message,
+              },
+              conversation
+            ),
+            normalized: null,
+            verdict: null,
+          };
+        }
+        return {
+          record: record("failed", null, durationMs, null, null, null, { code: "probe_error", message: String(error) }, conversation),
           normalized: null,
           verdict: null,
         };
@@ -403,16 +369,7 @@ export const createProbeContext = (
         if (!response.ok) {
           const value = await response.json().catch(() => null);
           return {
-            record: record(
-              outcomeForStatus(status),
-              status,
-              now().getTime() - started,
-              request,
-              null,
-              upstreamErrorOf(value),
-              null,
-              conversation,
-            ),
+            record: record(outcomeForStatus(status), status, now().getTime() - started, request, null, upstreamErrorOf(value), null, conversation),
             normalized: null,
             verdict: null,
           };
@@ -420,10 +377,19 @@ export const createProbeContext = (
         const value = await response.json().catch(() => null);
         if (value === null) {
           return {
-            record: record("failed", status, now().getTime() - started, request, null, null, {
-              code: "non_json",
-              message: "upstream reply is not JSON",
-            }, conversation),
+            record: record(
+              "failed",
+              status,
+              now().getTime() - started,
+              request,
+              null,
+              null,
+              {
+                code: "non_json",
+                message: "upstream reply is not JSON",
+              },
+              conversation
+            ),
             normalized: null,
             verdict: null,
           };
@@ -431,34 +397,43 @@ export const createProbeContext = (
         const normalized = normalizeHarmonyChatCompletion(value);
         if ("error" in normalized) {
           return {
-            record: record("failed", status, now().getTime() - started, request, null, null, {
-              code: "normalization_error",
-              message: normalized.error,
-            }, conversation),
+            record: record(
+              "failed",
+              status,
+              now().getTime() - started,
+              request,
+              null,
+              null,
+              {
+                code: "normalization_error",
+                message: normalized.error,
+              },
+              conversation
+            ),
             normalized: null,
             verdict: null,
           };
         }
         return {
-          record: record(
-            "ok",
-            status,
-            now().getTime() - started,
-            request,
-            responseSummary(status, normalized),
-            null,
-            null,
-            conversation,
-          ),
+          record: record("ok", status, now().getTime() - started, request, responseSummary(status, normalized), null, null, conversation),
           normalized,
           verdict: null,
         };
       } catch (error) {
         return {
-          record: record("failed", null, now().getTime() - started, request, null, null, {
-            code: "probe_error",
-            message: String(error),
-          }, conversation),
+          record: record(
+            "failed",
+            null,
+            now().getTime() - started,
+            request,
+            null,
+            null,
+            {
+              code: "probe_error",
+              message: String(error),
+            },
+            conversation
+          ),
           normalized: null,
           verdict: null,
         };
@@ -503,7 +478,7 @@ export const createProbeContext = (
               null,
               undefined,
               [`verdict=unknown`],
-              unknown,
+              unknown
             ),
             normalized: null,
             verdict: unknown,
@@ -530,7 +505,7 @@ export const createProbeContext = (
               },
               undefined,
               [`verdict=unknown`],
-              unknown,
+              unknown
             ),
             normalized: null,
             verdict: unknown,
@@ -557,7 +532,7 @@ export const createProbeContext = (
               },
               undefined,
               [`verdict=unknown`],
-              unknown,
+              unknown
             ),
             normalized: null,
             verdict: unknown,
@@ -575,7 +550,7 @@ export const createProbeContext = (
             null,
             undefined,
             [`verdict=${verdict.verdict}`],
-            verdict,
+            verdict
           ),
           normalized,
           verdict,
@@ -600,7 +575,7 @@ export const createProbeContext = (
             },
             undefined,
             [`verdict=unknown`],
-            unknown,
+            unknown
           ),
           normalized: null,
           verdict: unknown,
@@ -639,7 +614,8 @@ const CLASSIFIER_OBSERVATION = {
   verificationEvidence: "verification command passed",
 } as const;
 
-const CLASSIFIER_DECISION = "Decide whether the run made material progress since the previous evaluation. " +
+const CLASSIFIER_DECISION =
+  "Decide whether the run made material progress since the previous evaluation. " +
   "Return true only if new durable evidence is present: a later verified milestone, " +
   "a new accepted Git identity, or a monotonic ledger advance tied to useful work. " +
   "Return false when nothing durable changed or the run cycles without advancement. " +
@@ -656,7 +632,7 @@ const scenarioResult = (
   startedAt: Date,
   runs: readonly ProbeTurnRun[],
   notes: readonly string[] = [],
-  failure: string | null = null,
+  failure: string | null = null
 ): ProbeScenarioResult => ({
   id: scenario.id,
   group: scenario.group,
@@ -747,13 +723,7 @@ export const PROBE_SCENARIOS: readonly ProbeScenario[] = [
         reasoningEffort: "low",
         maxCompletionTokens: MAX_TOKENS,
       });
-      return scenarioResult(
-        PROBE_SCENARIOS[3],
-        ctx,
-        started,
-        [t1, t2],
-        [`analysisLinesAfterFinal=${analysisLineCount(replayed)}`, "wireAnalysisEcho=false"],
-      );
+      return scenarioResult(PROBE_SCENARIOS[3], ctx, started, [t1, t2], [`analysisLinesAfterFinal=${analysisLineCount(replayed)}`, "wireAnalysisEcho=false"]);
     },
   },
   {
@@ -786,9 +756,10 @@ export const PROBE_SCENARIOS: readonly ProbeScenario[] = [
         max_completion_tokens: MAX_TOKENS,
       };
       const t2 = await ctx.runRaw(echoBody, first);
-      const note = t2.record.outcome === "upstream_rejected"
-        ? `boundary evidence: reasoning_content rejected with status ${t2.record.status}`
-        : `boundary evidence: reasoning_content accepted (status ${t2.record.status})`;
+      const note =
+        t2.record.outcome === "upstream_rejected"
+          ? `boundary evidence: reasoning_content rejected with status ${t2.record.status}`
+          : `boundary evidence: reasoning_content accepted (status ${t2.record.status})`;
       return scenarioResult(PROBE_SCENARIOS[4], ctx, started, [t1, t2], [note]);
     },
   },
@@ -809,12 +780,7 @@ export const PROBE_SCENARIOS: readonly ProbeScenario[] = [
       });
       const call = firstToolCallFrom(t1);
       if (call === null) return scenarioResult(PROBE_SCENARIOS[5], ctx, started, [t1], ["no tool call returned"]);
-      const withResult = appendToolResult(
-        advanceConversation(conversation, t1.normalized!),
-        call.id,
-        call.name,
-        WEATHER_RESULT,
-      );
+      const withResult = appendToolResult(advanceConversation(conversation, t1.normalized!), call.id, call.name, WEATHER_RESULT);
       const t2 = await ctx.runTurn(withResult, {
         style: "generic",
         tools: [WEATHER_TOOL],
@@ -834,8 +800,7 @@ export const PROBE_SCENARIOS: readonly ProbeScenario[] = [
     id: "tools.native.sequence",
     group: "tools",
     style: "native",
-    description:
-      "Native Harmony: tools rendered as Harmony types in the developer message, result replayed via tool role.",
+    description: "Native Harmony: tools rendered as Harmony types in the developer message, result replayed via tool role.",
     expectedOutcome: "ok",
     run: async (ctx) => {
       const started = ctx.now();
@@ -848,12 +813,7 @@ export const PROBE_SCENARIOS: readonly ProbeScenario[] = [
       });
       const call = firstToolCallFrom(t1);
       if (call === null) return scenarioResult(PROBE_SCENARIOS[6], ctx, started, [t1], ["no tool call returned"]);
-      const withResult = appendToolResult(
-        advanceConversation(conversation, t1.normalized!),
-        call.id,
-        call.name,
-        WEATHER_RESULT,
-      );
+      const withResult = appendToolResult(advanceConversation(conversation, t1.normalized!), call.id, call.name, WEATHER_RESULT);
       const t2 = await ctx.runTurn(withResult, {
         style: "native",
         tools: [WEATHER_TOOL],
@@ -870,7 +830,7 @@ export const PROBE_SCENARIOS: readonly ProbeScenario[] = [
           `toolCallsFromWire=${t1.record.response?.toolCalls.length ?? 0}`,
           `toolCallsParsedFromContent=${String(parsedFromContent)}`,
           "resultReplayStyle=tool-role",
-        ],
+        ]
       );
     },
   },
@@ -892,12 +852,7 @@ export const PROBE_SCENARIOS: readonly ProbeScenario[] = [
       });
       const call = firstToolCallFrom(t1);
       if (call === null) return scenarioResult(PROBE_SCENARIOS[7], ctx, started, [t1], ["no tool call returned"]);
-      const withResult = appendToolResult(
-        advanceConversation(conversation, t1.normalized!),
-        call.id,
-        call.name,
-        WEATHER_RESULT,
-      );
+      const withResult = appendToolResult(advanceConversation(conversation, t1.normalized!), call.id, call.name, WEATHER_RESULT);
       const t2 = await ctx.runTurn(withResult, {
         style: "native",
         tools: [WEATHER_TOOL],
@@ -916,9 +871,7 @@ export const PROBE_SCENARIOS: readonly ProbeScenario[] = [
     expectedOutcome: "ok",
     run: async (ctx) => {
       const started = ctx.now();
-      let conversation = user(
-        `${WEATHER_QUESTION} After you receive the weather, call save_note with the result.`,
-      );
+      let conversation = user(`${WEATHER_QUESTION} After you receive the weather, call save_note with the result.`);
       const t1 = await ctx.runTurn(conversation, {
         style: "generic",
         tools: [WEATHER_TOOL, NOTE_TOOL],
@@ -927,12 +880,7 @@ export const PROBE_SCENARIOS: readonly ProbeScenario[] = [
       });
       const call1 = firstToolCallFrom(t1);
       if (call1 === null) return scenarioResult(PROBE_SCENARIOS[8], ctx, started, [t1], ["no first tool call"]);
-      conversation = appendToolResult(
-        advanceConversation(conversation, t1.normalized!),
-        call1.id,
-        call1.name,
-        WEATHER_RESULT,
-      );
+      conversation = appendToolResult(advanceConversation(conversation, t1.normalized!), call1.id, call1.name, WEATHER_RESULT);
       const t2 = await ctx.runTurn(conversation, {
         style: "generic",
         tools: [WEATHER_TOOL, NOTE_TOOL],
@@ -941,12 +889,7 @@ export const PROBE_SCENARIOS: readonly ProbeScenario[] = [
       });
       const call2 = firstToolCallFrom(t2);
       if (call2 === null) return scenarioResult(PROBE_SCENARIOS[8], ctx, started, [t1, t2], ["no second tool call"]);
-      conversation = appendToolResult(
-        advanceConversation(conversation, t2.normalized!),
-        call2.id,
-        call2.name,
-        '{"text": "San Francisco: sunny, 20C"}',
-      );
+      conversation = appendToolResult(advanceConversation(conversation, t2.normalized!), call2.id, call2.name, '{"text": "San Francisco: sunny, 20C"}');
       const t3 = await ctx.runTurn(conversation, {
         style: "generic",
         tools: [WEATHER_TOOL, NOTE_TOOL],
@@ -972,7 +915,10 @@ export const PROBE_SCENARIOS: readonly ProbeScenario[] = [
       const conversation = user(WEATHER_QUESTION);
       const turn = await ctx.runTurn(conversation, {
         style: "generic",
-        tools: [{ ...WEATHER_TOOL, strict: true }, { ...NOTE_TOOL, strict: false }],
+        tools: [
+          { ...WEATHER_TOOL, strict: true },
+          { ...NOTE_TOOL, strict: false },
+        ],
         toolStrictnessMode: "preserve",
         reasoningEffort: "low",
         maxCompletionTokens: MAX_TOKENS,
@@ -1118,9 +1064,7 @@ export const PROBE_SCENARIOS: readonly ProbeScenario[] = [
     expectedOutcome: "ok",
     run: async (ctx) => {
       const started = ctx.now();
-      const conversation = user(
-        "Call get_weather twice in the same response: location San Francisco and location Tokyo.",
-      );
+      const conversation = user("Call get_weather twice in the same response: location San Francisco and location Tokyo.");
       const turn = await ctx.runTurn(conversation, {
         style: "native",
         tools: [WEATHER_TOOL],
@@ -1139,9 +1083,7 @@ export const PROBE_SCENARIOS: readonly ProbeScenario[] = [
     expectedOutcome: "ok",
     run: async (ctx) => {
       const started = ctx.now();
-      const conversation = user(
-        "Call get_weather twice in the same response: location San Francisco and location Tokyo.",
-      );
+      const conversation = user("Call get_weather twice in the same response: location San Francisco and location Tokyo.");
       const turn = await ctx.runTurn(conversation, {
         style: "generic",
         tools: [WEATHER_TOOL],
@@ -1150,10 +1092,7 @@ export const PROBE_SCENARIOS: readonly ProbeScenario[] = [
         maxCompletionTokens: MAX_TOKENS,
       });
       const count = turn.record.response?.toolCalls.length ?? 0;
-      return scenarioResult(PROBE_SCENARIOS[17], ctx, started, [turn], [
-        `toolCallCount=${count}`,
-        "parallelToolCalls=true",
-      ]);
+      return scenarioResult(PROBE_SCENARIOS[17], ctx, started, [turn], [`toolCallCount=${count}`, "parallelToolCalls=true"]);
     },
   },
   {

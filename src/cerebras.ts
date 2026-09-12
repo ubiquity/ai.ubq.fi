@@ -23,11 +23,7 @@ let cerebrasFetchTimeoutMs = BUFFERED_INFERENCE_DEADLINE_MS;
 
 export type CerebrasFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
-export type CerebrasErrorCode =
-  | "cerebras_api_key_missing"
-  | "cerebras_request_invalid"
-  | "cerebras_upstream_unreachable"
-  | "gateway_timeout";
+export type CerebrasErrorCode = "cerebras_api_key_missing" | "cerebras_request_invalid" | "cerebras_upstream_unreachable" | "gateway_timeout";
 
 export class CerebrasError extends Error {
   readonly code: CerebrasErrorCode;
@@ -52,9 +48,7 @@ export type CerebrasChatCompletionsOptions = Readonly<{
   sentinelUpstreamRecorder?: SentinelUpstreamRecorder;
 }>;
 
-type NormalizationResult<T> =
-  | Readonly<{ ok: true; value: T }>
-  | Readonly<{ ok: false; message: string }>;
+type NormalizationResult<T> = Readonly<{ ok: true; value: T }> | Readonly<{ ok: false; message: string }>;
 
 const nonEmptyString = (value: unknown): string | null => {
   const text = getString(value)?.trim();
@@ -80,9 +74,7 @@ export const normalizeCerebrasProviderRequestId = (value: unknown): string | nul
 
 export const getCerebrasProviderRequestId = (response: Response): string | null =>
   normalizeCerebrasProviderRequestId(
-    response.headers.get("X-Request-Id") ??
-      response.headers.get("X-Api-Request-Id") ??
-      response.headers.get("X-Cerebras-Request-Id"),
+    response.headers.get("X-Request-Id") ?? response.headers.get("X-Api-Request-Id") ?? response.headers.get("X-Cerebras-Request-Id")
   );
 
 const nonNegativeInteger = (value: unknown): number | null => {
@@ -99,12 +91,7 @@ const getEnv = (key: string): string | undefined => {
   }
 };
 
-const timeoutError = (): CerebrasError =>
-  new CerebrasError(
-    "Upstream request exceeded the gateway deadline.",
-    "gateway_timeout",
-    504,
-  );
+const timeoutError = (): CerebrasError => new CerebrasError("Upstream request exceeded the gateway deadline.", "gateway_timeout", 504);
 
 const abortError = (signal: AbortSignal): Error =>
   signal.reason instanceof Error ? signal.reason : new DOMException("The request was aborted.", "AbortError");
@@ -120,11 +107,7 @@ export const setCerebrasFetchTimeoutMsForTest = (timeoutMs: number | null): void
 const requireCerebrasApiKey = (supplied: string | null | undefined): string => {
   const apiKey = supplied === undefined ? readCerebrasApiKey() : nonEmptyString(supplied);
   if (apiKey) return apiKey;
-  throw new CerebrasError(
-    "The requested model is not configured.",
-    "cerebras_api_key_missing",
-    503,
-  );
+  throw new CerebrasError("The requested model is not configured.", "cerebras_api_key_missing", 503);
 };
 
 /**
@@ -151,10 +134,7 @@ const projectCerebrasSchemaValue = (value: unknown, inPropertiesMap = false): un
       projected.enum = [projectCerebrasSchemaValue(child, false)];
       continue;
     }
-    projected[key === "oneOf" && !inPropertiesMap ? "anyOf" : key] = projectCerebrasSchemaValue(
-      child,
-      key === "properties",
-    );
+    projected[key === "oneOf" && !inPropertiesMap ? "anyOf" : key] = projectCerebrasSchemaValue(child, key === "properties");
   }
   return projected;
 };
@@ -178,11 +158,12 @@ const collapseCerebrasRootObjectUnion = (value: unknown): unknown => {
   const variants = value.anyOf;
   if (
     !variants.length ||
-    variants.some((variant) =>
-      !isRecord(variant) || Array.isArray(variant) || variant.type !== "object" ||
-      !isRecord(variant.properties) || Array.isArray(variant.properties)
+    variants.some(
+      (variant) =>
+        !isRecord(variant) || Array.isArray(variant) || variant.type !== "object" || !isRecord(variant.properties) || Array.isArray(variant.properties)
     )
-  ) return value;
+  )
+    return value;
 
   const fields = new Map<string, unknown[]>();
   let requiredByEveryVariant: Set<string> | null = null;
@@ -194,9 +175,7 @@ const collapseCerebrasRootObjectUnion = (value: unknown): unknown => {
       fields.set(name, values);
     }
     const required = new Set<string>(
-      Array.isArray(variant.required)
-        ? variant.required.filter((name: unknown): name is string => typeof name === "string")
-        : [],
+      Array.isArray(variant.required) ? variant.required.filter((name: unknown): name is string => typeof name === "string") : []
     );
     requiredByEveryVariant = requiredByEveryVariant === null ? required : requiredByEveryVariant.intersection(required);
   }
@@ -208,14 +187,9 @@ const collapseCerebrasRootObjectUnion = (value: unknown): unknown => {
       properties[name] = distinct[0];
       continue;
     }
-    if (
-      name === "operationId" &&
-      distinct.every((candidate) => isRecord(candidate) && Array.isArray(candidate.enum))
-    ) {
+    if (name === "operationId" && distinct.every((candidate) => isRecord(candidate) && Array.isArray(candidate.enum))) {
       properties[name] = {
-        enum: distinctSchemas(
-          distinct.flatMap((candidate) => (candidate as Record<string, unknown>).enum as unknown[]),
-        ),
+        enum: distinctSchemas(distinct.flatMap((candidate) => (candidate as Record<string, unknown>).enum as unknown[])),
       };
       continue;
     }
@@ -229,8 +203,7 @@ const collapseCerebrasRootObjectUnion = (value: unknown): unknown => {
   };
 };
 
-export const projectCerebrasToolSchema = (value: unknown): unknown =>
-  collapseCerebrasRootObjectUnion(projectCerebrasSchemaValue(value));
+export const projectCerebrasToolSchema = (value: unknown): unknown => collapseCerebrasRootObjectUnion(projectCerebrasSchemaValue(value));
 
 const projectCerebrasRequest = (body: Record<string, unknown>): Record<string, unknown> => {
   if (!Array.isArray(body.tools)) return body;
@@ -244,9 +217,7 @@ const projectCerebrasRequest = (body: Record<string, unknown>): Record<string, u
         ...tool,
         function: {
           ...tool.function,
-          ...(tool.function.parameters === undefined
-            ? {}
-            : { parameters: projectCerebrasToolSchema(tool.function.parameters) }),
+          ...(tool.function.parameters === undefined ? {} : { parameters: projectCerebrasToolSchema(tool.function.parameters) }),
         },
       };
     }),
@@ -258,26 +229,15 @@ const projectCerebrasRequest = (body: Record<string, unknown>): Record<string, u
  * owns model selection; this transport never chooses or falls back to another
  * provider.
  */
-export const fetchCerebrasChatCompletions = async (
-  body: Record<string, unknown>,
-  options: CerebrasChatCompletionsOptions = {},
-): Promise<Response> => {
+export const fetchCerebrasChatCompletions = async (body: Record<string, unknown>, options: CerebrasChatCompletionsOptions = {}): Promise<Response> => {
   let encodedBody: string;
   try {
     encodedBody = JSON.stringify(projectCerebrasRequest(body));
   } catch {
-    throw new CerebrasError(
-      "Chat Completions requests must use a JSON-serializable body.",
-      "cerebras_request_invalid",
-      400,
-    );
+    throw new CerebrasError("Chat Completions requests must use a JSON-serializable body.", "cerebras_request_invalid", 400);
   }
   if (typeof encodedBody !== "string") {
-    throw new CerebrasError(
-      "Chat Completions requests must use a JSON-serializable body.",
-      "cerebras_request_invalid",
-      400,
-    );
+    throw new CerebrasError("Chat Completions requests must use a JSON-serializable body.", "cerebras_request_invalid", 400);
   }
 
   const apiKey = requireCerebrasApiKey(options.apiKey);
@@ -287,10 +247,9 @@ export const fetchCerebrasChatCompletions = async (
     "Content-Type": "application/json",
   });
   const deadline = new AbortController();
-  const timer = setTimeout(
-    () => deadline.abort(new DOMException("Cerebras response headers timed out.", "TimeoutError")),
-    cerebrasFetchTimeoutMs,
-  );
+  const timer = setTimeout(() => {
+    deadline.abort(new DOMException("Cerebras response headers timed out.", "TimeoutError"));
+  }, cerebrasFetchTimeoutMs);
   const signal = options.signal ? AbortSignal.any([options.signal, deadline.signal]) : deadline.signal;
 
   let upstreamAttempt: ReturnType<SentinelUpstreamRecorder["startAttempt"]> | null = null;
@@ -324,20 +283,13 @@ export const fetchCerebrasChatCompletions = async (
       throw abortError(options.signal);
     }
     if (deadline.signal.aborted || isTimeoutError(error)) throw timeoutError();
-    throw new CerebrasError(
-      "Upstream request could not be completed.",
-      "cerebras_upstream_unreachable",
-      502,
-    );
+    throw new CerebrasError("Upstream request could not be completed.", "cerebras_upstream_unreachable", 502);
   } finally {
     clearTimeout(timer);
   }
 };
 
-const normalizeToolCall = (
-  value: unknown,
-  index: number,
-): NormalizationResult<Record<string, unknown>> => {
+const normalizeToolCall = (value: unknown, index: number): NormalizationResult<Record<string, unknown>> => {
   if (!isRecord(value) || Array.isArray(value)) {
     return { ok: false, message: `Upstream tool call ${index} is not an object.` };
   }
@@ -367,10 +319,7 @@ const normalizeToolCall = (
   };
 };
 
-const normalizeChoice = (
-  value: unknown,
-  index: number,
-): NormalizationResult<Record<string, unknown>> => {
+const normalizeChoice = (value: unknown, index: number): NormalizationResult<Record<string, unknown>> => {
   if (!isRecord(value) || Array.isArray(value)) {
     return { ok: false, message: `Upstream choice ${index} is not an object.` };
   }
@@ -455,10 +404,7 @@ const normalizeUsage = (value: unknown): NormalizationResult<Record<string, numb
  * Assistant consumes. Unknown provider fields, including diagnostics, are not
  * relayed or logged.
  */
-export const normalizeCerebrasChatCompletion = (
-  value: unknown,
-  requestedModel: string,
-): NormalizationResult<Record<string, unknown>> => {
+export const normalizeCerebrasChatCompletion = (value: unknown, requestedModel: string): NormalizationResult<Record<string, unknown>> => {
   if (!isRecord(value) || Array.isArray(value)) {
     return { ok: false, message: "Upstream did not return a Chat Completions object." };
   }

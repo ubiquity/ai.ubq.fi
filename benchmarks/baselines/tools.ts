@@ -20,13 +20,13 @@ import { FixtureWorkspace, globMatch } from "../fixture.ts";
 export type { ToolResult };
 
 /** An OpenAI Chat Completions tool definition used by baseline requests. */
-export interface CanonicalToolDefinition {
+export type CanonicalToolDefinition = {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
   /** Cerebras requires one strictness value per request (m01 probe fact). */
   strict: boolean;
-}
+};
 
 export const TOOL_DESCRIPTIONS: Record<string, string> = {
   "filesystem.read": "Read a UTF-8 text file relative to the workspace root.",
@@ -55,9 +55,7 @@ export function canonicalToolDefinitions(strict: boolean): CanonicalToolDefiniti
       description: TOOL_DESCRIPTIONS[name] ?? `${name} tool`,
       parameters: {
         type: "object",
-        properties: Object.fromEntries(
-          Object.entries(schema.types).map(([key, t]) => [key, jsonSchemaType(t)]),
-        ),
+        properties: Object.fromEntries(Object.entries(schema.types).map(([key, t]) => [key, jsonSchemaType(t)])),
         required: schema.required,
         additionalProperties: false,
       },
@@ -75,12 +73,7 @@ function clip(s: string): string {
 }
 
 /** Executes one canonical tool in the disposable workspace (mirror of m02). */
-export async function executeBaselineTool(
-  workspace: FixtureWorkspace,
-  tool: string,
-  args: Record<string, unknown>,
-  signal?: AbortSignal,
-): Promise<ToolResult> {
+export async function executeBaselineTool(workspace: FixtureWorkspace, tool: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
   switch (tool) {
     case "filesystem.read": {
       const path = args.path as string;
@@ -160,9 +153,6 @@ export async function executeBaselineTool(
 }
 
 /** Validates tool arguments through the shared schema (single source). */
-export function validateCanonicalToolArgs(
-  tool: string,
-  args: Record<string, unknown>,
-): { valid: boolean; reason?: string } {
+export function validateCanonicalToolArgs(tool: string, args: Record<string, unknown>): { valid: boolean; reason?: string } {
   return validateToolArgs(tool, args);
 }

@@ -17,20 +17,15 @@ export const BUFFERED_INFERENCE_DEADLINE_MS = INFERENCE_DEADLINE_MS;
 
 let streamFirstEventDeadlineMs = STREAM_FIRST_EVENT_DEADLINE_MS;
 
-export const createInferenceSignal = (
-  requestSignal: AbortSignal,
-  timeoutMs = BUFFERED_INFERENCE_DEADLINE_MS,
-): AbortSignal => AbortSignal.any([requestSignal, AbortSignal.timeout(timeoutMs)]);
+export const createInferenceSignal = (requestSignal: AbortSignal, timeoutMs = BUFFERED_INFERENCE_DEADLINE_MS): AbortSignal =>
+  AbortSignal.any([requestSignal, AbortSignal.timeout(timeoutMs)]);
 
 /**
  * Bounds the period before the first upstream SSE event, including provider
  * dispatch and response headers. Once the caller observes that first event it
  * must clear this deadline; the stream reader then owns renewable inactivity.
  */
-export const createStreamFirstEventDeadline = (
-  requestSignal: AbortSignal,
-  timeoutMs = streamFirstEventDeadlineMs,
-): StreamDeadline => {
+export const createStreamFirstEventDeadline = (requestSignal: AbortSignal, timeoutMs = streamFirstEventDeadlineMs): StreamDeadline => {
   const deadline = new AbortController();
   const deadlineAtMs = performance.now() + timeoutMs;
   let active = true;
@@ -40,7 +35,9 @@ export const createStreamFirstEventDeadline = (
   }, timeoutMs);
   return {
     signal: AbortSignal.any([requestSignal, deadline.signal]),
-    abort: (reason) => deadline.abort(reason),
+    abort: (reason) => {
+      deadline.abort(reason);
+    },
     clear: () => {
       if (!active) return;
       active = false;
@@ -61,10 +58,7 @@ export type StreamDeadline = Readonly<{
  * Bounds one provider attempt until semantic Responses output or a valid
  * terminal event. Each failover attempt gets its own controller and timer.
  */
-export const createStreamSemanticDeadline = (
-  requestSignal: AbortSignal,
-  timeoutMs = streamFirstEventDeadlineMs,
-): StreamDeadline => {
+export const createStreamSemanticDeadline = (requestSignal: AbortSignal, timeoutMs = streamFirstEventDeadlineMs): StreamDeadline => {
   const deadline = new AbortController();
   const deadlineAtMs = performance.now() + timeoutMs;
   let active = true;
@@ -74,7 +68,9 @@ export const createStreamSemanticDeadline = (
   }, timeoutMs);
   return {
     signal: AbortSignal.any([requestSignal, deadline.signal]),
-    abort: (reason) => deadline.abort(reason),
+    abort: (reason) => {
+      deadline.abort(reason);
+    },
     clear: () => {
       if (!active) return;
       active = false;

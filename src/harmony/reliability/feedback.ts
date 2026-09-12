@@ -23,17 +23,10 @@ import { CANONICAL_TOOL_NAMES, TOOL_SCHEMAS } from "../tools/schemas.ts";
 
 /** Stable issue classes emitted by the detailed validator. */
 export type ArgumentIssueCode =
-  | "unknown_tool"
-  | "not_an_object"
-  | "unexpected_argument"
-  | "missing_required"
-  | "wrong_type"
-  | "non_empty"
-  | "undefined_value"
-  | "bad_array_item";
+  "unknown_tool" | "not_an_object" | "unexpected_argument" | "missing_required" | "wrong_type" | "non_empty" | "undefined_value" | "bad_array_item";
 
 /** One argument-validation issue with a corrective hint. */
-export interface ToolArgumentIssue {
+export type ToolArgumentIssue = {
   code: ArgumentIssueCode;
   /** Dotted property path, e.g. `arguments.path`. */
   location: string;
@@ -41,15 +34,14 @@ export interface ToolArgumentIssue {
   message: string;
   /** Short corrective hint for the model. */
   hint: string;
-}
+};
 
 export type DetailedValidationResult = Readonly<
   | { valid: true; arguments: Record<string, unknown>; issues: readonly ToolArgumentIssue[] }
   | { valid: false; arguments: Record<string, unknown>; issues: readonly ToolArgumentIssue[] }
 >;
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
 const typeLabel = (type: string): string => (type === "array" ? "an array of non-empty strings" : `a ${type}`);
 
@@ -70,26 +62,21 @@ const issue = (code: ArgumentIssueCode, location: string, message: string, hint:
 export function validateToolArgumentsDetailed(tool: string, args: unknown): DetailedValidationResult {
   const schema = TOOL_SCHEMAS[tool as keyof typeof TOOL_SCHEMAS];
   if (schema === undefined) {
-    const issues: ToolArgumentIssue[] = [{
-      code: "unknown_tool",
-      location: "tool",
-      message: `unknown tool ${JSON.stringify(tool)}`,
-      hint: `use one of: ${CANONICAL_TOOL_NAMES.join(", ")}`,
-    }];
+    const issues: ToolArgumentIssue[] = [
+      {
+        code: "unknown_tool",
+        location: "tool",
+        message: `unknown tool ${JSON.stringify(tool)}`,
+        hint: `use one of: ${CANONICAL_TOOL_NAMES.join(", ")}`,
+      },
+    ];
     return { valid: false, arguments: {}, issues };
   }
   if (!isRecord(args)) {
     return {
       valid: false,
       arguments: {},
-      issues: [
-        issue(
-          "not_an_object",
-          "arguments",
-          "arguments must be a JSON object",
-          "pass a JSON object with the tool's arguments",
-        ),
-      ],
+      issues: [issue("not_an_object", "arguments", "arguments must be a JSON object", "pass a JSON object with the tool's arguments")],
     };
   }
 
@@ -101,24 +88,28 @@ export function validateToolArgumentsDetailed(tool: string, args: unknown): Deta
   // 1. Unknown keys (stable order: input order, sorted for determinism).
   for (const key of Object.keys(args).sort()) {
     if (!(key in properties)) {
-      issues.push(issue(
-        "unexpected_argument",
-        `arguments.${key}`,
-        `unexpected argument ${JSON.stringify(key)}`,
-        `remove ${JSON.stringify(key)}; allowed: ${ordered.join(", ") || "(none)"}`,
-      ));
+      issues.push(
+        issue(
+          "unexpected_argument",
+          `arguments.${key}`,
+          `unexpected argument ${JSON.stringify(key)}`,
+          `remove ${JSON.stringify(key)}; allowed: ${ordered.join(", ") || "(none)"}`
+        )
+      );
     }
   }
   // 2. Missing required arguments (declared order).
   for (const key of required) {
     if (!(key in args) || args[key] === undefined) {
       const param = properties[key] ?? {};
-      issues.push(issue(
-        "missing_required",
-        `arguments.${key}`,
-        `missing required argument ${JSON.stringify(key)}`,
-        `provide ${JSON.stringify(key)} (${typeLabel(String(param.type ?? "string"))})`,
-      ));
+      issues.push(
+        issue(
+          "missing_required",
+          `arguments.${key}`,
+          `missing required argument ${JSON.stringify(key)}`,
+          `provide ${JSON.stringify(key)} (${typeLabel(String(param.type ?? "string"))})`
+        )
+      );
     }
   }
   // 3. Value problems (declared-property order).
@@ -129,55 +120,67 @@ export function validateToolArgumentsDetailed(tool: string, args: unknown): Deta
     const type = typeof param.type === "string" ? param.type : "string";
     const isNonEmpty = param.minLength === 1;
     if (value === undefined) {
-      issues.push(issue(
-        "undefined_value",
-        `arguments.${key}`,
-        `argument ${JSON.stringify(key)} must not be undefined`,
-        `omit ${JSON.stringify(key)} or pass a ${typeLabel(type)}`,
-      ));
+      issues.push(
+        issue(
+          "undefined_value",
+          `arguments.${key}`,
+          `argument ${JSON.stringify(key)} must not be undefined`,
+          `omit ${JSON.stringify(key)} or pass a ${typeLabel(type)}`
+        )
+      );
     } else if (type === "string") {
       if (typeof value !== "string") {
-        issues.push(issue(
-          "wrong_type",
-          `arguments.${key}`,
-          `argument ${JSON.stringify(key)} must be a string, got ${typeof value}`,
-          `pass a string for ${JSON.stringify(key)}`,
-        ));
+        issues.push(
+          issue(
+            "wrong_type",
+            `arguments.${key}`,
+            `argument ${JSON.stringify(key)} must be a string, got ${typeof value}`,
+            `pass a string for ${JSON.stringify(key)}`
+          )
+        );
       } else if (isNonEmpty && value.length === 0) {
-        issues.push(issue(
-          "non_empty",
-          `arguments.${key}`,
-          `argument ${JSON.stringify(key)} must be a non-empty string`,
-          `pass a non-empty string for ${JSON.stringify(key)}`,
-        ));
+        issues.push(
+          issue(
+            "non_empty",
+            `arguments.${key}`,
+            `argument ${JSON.stringify(key)} must be a non-empty string`,
+            `pass a non-empty string for ${JSON.stringify(key)}`
+          )
+        );
       }
     } else if (type === "boolean") {
       if (typeof value !== "boolean") {
-        issues.push(issue(
-          "wrong_type",
-          `arguments.${key}`,
-          `argument ${JSON.stringify(key)} must be a boolean, got ${typeof value}`,
-          `pass true or false for ${JSON.stringify(key)}`,
-        ));
+        issues.push(
+          issue(
+            "wrong_type",
+            `arguments.${key}`,
+            `argument ${JSON.stringify(key)} must be a boolean, got ${typeof value}`,
+            `pass true or false for ${JSON.stringify(key)}`
+          )
+        );
       }
     } else if (type === "array") {
       const items = Array.isArray(value) ? value : [];
       if (!Array.isArray(value)) {
-        issues.push(issue(
-          "wrong_type",
-          `arguments.${key}`,
-          `argument ${JSON.stringify(key)} must be an array of non-empty strings, got ${typeof value}`,
-          `pass an array of non-empty strings for ${JSON.stringify(key)}`,
-        ));
+        issues.push(
+          issue(
+            "wrong_type",
+            `arguments.${key}`,
+            `argument ${JSON.stringify(key)} must be an array of non-empty strings, got ${typeof value}`,
+            `pass an array of non-empty strings for ${JSON.stringify(key)}`
+          )
+        );
       } else {
         items.forEach((item, index) => {
           if (typeof item !== "string" || item.length === 0) {
-            issues.push(issue(
-              "bad_array_item",
-              `arguments.${key}[${index}]`,
-              `argument ${JSON.stringify(key)}[${index}] must be a non-empty string`,
-              `pass an array of non-empty strings for ${JSON.stringify(key)}`,
-            ));
+            issues.push(
+              issue(
+                "bad_array_item",
+                `arguments.${key}[${index}]`,
+                `argument ${JSON.stringify(key)}[${index}] must be a non-empty string`,
+                `pass an array of non-empty strings for ${JSON.stringify(key)}`
+              )
+            );
           }
         });
       }

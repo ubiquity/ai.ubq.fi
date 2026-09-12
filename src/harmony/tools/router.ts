@@ -27,19 +27,11 @@
  */
 
 import { globMatch, normalizeWorkspacePath, type ToolBackends, type WorkspaceBackend } from "./backend.ts";
-import {
-  clipToolText,
-  SEARCH_LINE_LIMIT,
-  SHELL_DEFAULT_TIMEOUT_MS,
-  TOOL_OUTPUT_LIMIT,
-  ToolExecutionError,
-  toolFailure,
-  type ToolResult,
-} from "./result.ts";
+import { clipToolText, SEARCH_LINE_LIMIT, SHELL_DEFAULT_TIMEOUT_MS, TOOL_OUTPUT_LIMIT, ToolExecutionError, toolFailure, type ToolResult } from "./result.ts";
 import { validateToolArguments } from "./schemas.ts";
 
 /** Per-dispatch options; all bounds have stable defaults. */
-export interface RunToolOptions {
+export type RunToolOptions = {
   /** Whole-run abort signal (also aborts in-flight shell commands). */
   signal?: AbortSignal;
   /** Shell command time bound; default 20s. */
@@ -48,18 +40,13 @@ export interface RunToolOptions {
   outputLimit?: number;
   /** Search/find line limit; default 200 lines. */
   searchLineLimit?: number;
-}
+};
 
 const pathError = (rel: string): ToolResult => toolFailure("path_escape", `path escapes workspace root: ${rel}`);
 
-const requiredPath = (args: Readonly<Record<string, unknown>>): string | null =>
-  normalizeWorkspacePath(String(args.path));
+const requiredPath = (args: Readonly<Record<string, unknown>>): string | null => normalizeWorkspacePath(String(args.path));
 
-const readFile = (
-  backend: WorkspaceBackend,
-  args: Readonly<Record<string, unknown>>,
-  outputLimit: number,
-): ToolResult => {
+const readFile = (backend: WorkspaceBackend, args: Readonly<Record<string, unknown>>, outputLimit: number): ToolResult => {
   const rel = requiredPath(args);
   if (rel === null) return pathError(String(args.path));
   return { ok: true, output: clipToolText(backend.read(rel), outputLimit) };
@@ -76,11 +63,7 @@ const findFiles = (backend: WorkspaceBackend, args: Readonly<Record<string, unkn
   return { ok: true, output: files.length === 0 ? "(no matches)" : files.join("\n") };
 };
 
-const searchFiles = (
-  backend: WorkspaceBackend,
-  args: Readonly<Record<string, unknown>>,
-  lineLimit: number,
-): ToolResult => {
+const searchFiles = (backend: WorkspaceBackend, args: Readonly<Record<string, unknown>>, lineLimit: number): ToolResult => {
   const rel = requiredPath(args);
   if (rel === null) return pathError(String(args.path));
   const query = String(args.query).toLowerCase();
@@ -96,11 +79,7 @@ const searchFiles = (
   return { ok: true, output: lines.length === 0 ? "(no matches)" : lines.join("\n") };
 };
 
-const execShell = async (
-  backend: WorkspaceBackend,
-  args: Readonly<Record<string, unknown>>,
-  opts: Readonly<RunToolOptions>,
-): Promise<ToolResult> => {
+const execShell = async (backend: WorkspaceBackend, args: Readonly<Record<string, unknown>>, opts: Readonly<RunToolOptions>): Promise<ToolResult> => {
   const command = String(args.command);
   const timeoutMs = opts.shellTimeoutMs ?? SHELL_DEFAULT_TIMEOUT_MS;
   const outputLimit = opts.outputLimit ?? TOOL_OUTPUT_LIMIT;
@@ -131,10 +110,7 @@ const applyPatch = (backend: WorkspaceBackend, args: Readonly<Record<string, unk
   const rel = requiredPath(args);
   if (rel === null) return pathError(String(args.path));
   if (!backend.isAllowedWrite(rel)) {
-    return toolFailure(
-      "write_scope",
-      `write scope violation: ${rel} is not writable (scope: ${backend.describeWriteScope()})`,
-    );
+    return toolFailure("write_scope", `write scope violation: ${rel} is not writable (scope: ${backend.describeWriteScope()})`);
   }
   const add = args.add === true;
   const old = typeof args.old === "string" ? args.old : "";
@@ -152,11 +128,7 @@ const updatePlan = (backends: ToolBackends, args: Readonly<Record<string, unknow
   return { ok: true, output: `plan updated (${stored.items} items)` };
 };
 
-const browserSearch = (
-  backends: ToolBackends,
-  args: Readonly<Record<string, unknown>>,
-  outputLimit: number,
-): ToolResult => {
+const browserSearch = (backends: ToolBackends, args: Readonly<Record<string, unknown>>, outputLimit: number): ToolResult => {
   const browser = backends.browser;
   if (browser === undefined) {
     return toolFailure("unavailable", "browser.search is not available in this configuration");
@@ -167,11 +139,7 @@ const browserSearch = (
   return { ok: true, output: clipToolText(text, outputLimit) };
 };
 
-const browserOpen = (
-  backends: ToolBackends,
-  args: Readonly<Record<string, unknown>>,
-  outputLimit: number,
-): ToolResult => {
+const browserOpen = (backends: ToolBackends, args: Readonly<Record<string, unknown>>, outputLimit: number): ToolResult => {
   const browser = backends.browser;
   if (browser === undefined) {
     return toolFailure("unavailable", "browser.open is not available in this configuration");
@@ -196,12 +164,7 @@ const browserFind = (backends: ToolBackends, args: Readonly<Record<string, unkno
  * result envelope. Never throws for tool-level failures; unexpected backend
  * exceptions become `internal` envelopes.
  */
-export const runTool = async (
-  backends: ToolBackends,
-  tool: string,
-  args: unknown,
-  opts: RunToolOptions = {},
-): Promise<ToolResult> => {
+export const runTool = async (backends: ToolBackends, tool: string, args: unknown, opts: RunToolOptions = {}): Promise<ToolResult> => {
   const outputLimit = opts.outputLimit ?? TOOL_OUTPUT_LIMIT;
   const validated = validateToolArguments(tool, args);
   if (!validated.valid) return toolFailure("invalid_args", `invalid arguments: ${validated.reason}`);

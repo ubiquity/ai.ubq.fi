@@ -21,9 +21,7 @@ export type MeteredQuotaBalanceWindowDays = (typeof METERED_QUOTA_BALANCE_WINDOW
 
 export const normalizeMeteredQuotaBalanceWindowDays = (value: string | null): MeteredQuotaBalanceWindowDays => {
   const parsed = Number(value);
-  return Number.isInteger(parsed) && METERED_QUOTA_BALANCE_WINDOW_DAYS.some((days) => days === parsed)
-    ? parsed as MeteredQuotaBalanceWindowDays
-    : 7;
+  return Number.isInteger(parsed) && METERED_QUOTA_BALANCE_WINDOW_DAYS.some((days) => days === parsed) ? (parsed as MeteredQuotaBalanceWindowDays) : 7;
 };
 
 const METERED_TOKEN_USAGE_URL = `${METERED_BASE_URL}/api/usage/token/`;
@@ -156,14 +154,12 @@ const isNonNegativeSafeInteger = (value: unknown): value is number => isSafeInte
 
 const isPositiveSafeInteger = (value: unknown): value is number => isSafeInteger(value) && value > 0;
 
-const isNonNegativeFiniteNumber = (value: unknown): value is number =>
-  typeof value === "number" && Number.isFinite(value) && value >= 0;
+const isNonNegativeFiniteNumber = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0;
 
 const isConfidence = (value: unknown): value is MeteredQuotaConfidence =>
   value === "provisional" || value === "refill_observed" || value === "inferred_adjustment";
 
-const isQuotaInvalidation = (value: unknown): value is QuotaInvalidation =>
-  isRecord(value) && isNonNegativeSafeInteger(value.invalidated_at_ms);
+const isQuotaInvalidation = (value: unknown): value is QuotaInvalidation => isRecord(value) && isNonNegativeSafeInteger(value.invalidated_at_ms);
 
 const parseCredentials = (credentials: MeteredAccountCredentials): MeteredAccountCredentials | null => {
   const apiKey = credentials.apiKey.trim();
@@ -189,9 +185,7 @@ export const readMeteredAccountCredentials = (): MeteredAccountCredentials | nul
  * history is namespaced by it so switching METERED_API_KEY starts a fresh
  * curve per account instead of corrupting the retained run-down history.
  */
-export const meterQuotaAccountFingerprint = async (
-  credentials: MeteredAccountCredentials | null,
-): Promise<string | null> => {
+export const meterQuotaAccountFingerprint = async (credentials: MeteredAccountCredentials | null): Promise<string | null> => {
   const parsed = parseCredentials(credentials ?? { apiKey: "" });
   if (!parsed) return null;
   try {
@@ -214,12 +208,7 @@ const successfulEnvelopeData = (value: unknown): JsonRecord | null => {
   return value.data;
 };
 
-const fetchJson = async (
-  url: string,
-  fetcher: MeteredFetch,
-  headers: Headers,
-  signal: AbortSignal,
-): Promise<unknown> => {
+const fetchJson = async (url: string, fetcher: MeteredFetch, headers: Headers, signal: AbortSignal): Promise<unknown> => {
   const response = await fetcher(url, {
     method: "GET",
     headers,
@@ -230,7 +219,7 @@ const fetchJson = async (
   const contentType = response.headers.get("Content-Type")?.toLowerCase() ?? "";
   if (!contentType.includes("application/json")) throw new Error("Metered account API returned non-JSON data");
   try {
-    return await response.json() as unknown;
+    return (await response.json()) as unknown;
   } catch {
     throw new Error("Metered account API returned invalid JSON");
   }
@@ -247,7 +236,7 @@ export const fetchMeteredQuotaObservation = async (
     fetcher?: MeteredFetch;
     now?: () => number;
     signal?: AbortSignal;
-  }> = {},
+  }> = {}
 ): Promise<MeteredQuotaObservation> => {
   const credentials = parseCredentials(credentialsInput);
   if (!credentials) throw new Error("Metered account credentials are invalid");
@@ -261,7 +250,8 @@ export const fetchMeteredQuotaObservation = async (
     !isSafeInteger(usage.total_available) ||
     !isSafeInteger(usage.total_granted) ||
     !isSafeInteger(usage.total_used)
-  ) throw new Error("Metered account API returned invalid token usage data");
+  )
+    throw new Error("Metered account API returned invalid token usage data");
   const observedAtMs = Math.trunc((options.now ?? Date.now)());
   if (!isNonNegativeSafeInteger(observedAtMs)) throw new Error("Metered quota observation clock is invalid");
   return {
@@ -277,12 +267,11 @@ export const fetchMeteredQuotaObservation = async (
   };
 };
 
-export const updateMeteredQuotaState = (
-  previous: MeteredQuotaState | null,
-  observation: MeteredQuotaObservation,
-): MeteredQuotaState => {
-  const tokenUsageObservation = observation.unlimited_quota !== undefined ||
-    observation.total_available !== undefined || observation.total_granted !== undefined ||
+export const updateMeteredQuotaState = (previous: MeteredQuotaState | null, observation: MeteredQuotaObservation): MeteredQuotaState => {
+  const tokenUsageObservation =
+    observation.unlimited_quota !== undefined ||
+    observation.total_available !== undefined ||
+    observation.total_granted !== undefined ||
     observation.total_used !== undefined;
   if (tokenUsageObservation) {
     if (
@@ -290,7 +279,8 @@ export const updateMeteredQuotaState = (
       !isSafeInteger(observation.total_available) ||
       !isSafeInteger(observation.total_granted) ||
       !isSafeInteger(observation.total_used)
-    ) throw new Error("Metered token usage observation is incomplete");
+    )
+      throw new Error("Metered token usage observation is incomplete");
     return {
       // Token usage is not a wallet refill cycle. Keep the legacy numeric
       // fields neutral so signed totals cannot become spendable credits.
@@ -313,17 +303,14 @@ export const updateMeteredQuotaState = (
       total_used: observation.total_used,
     };
   }
-  if (
-    observation.balance_quota === null || observation.used_quota === null ||
-    observation.quota_per_credit === null
-  ) throw new Error("Metered wallet observation is incomplete");
+  if (observation.balance_quota === null || observation.used_quota === null || observation.quota_per_credit === null)
+    throw new Error("Metered wallet observation is incomplete");
   if (!previous) {
-    const refillBaselineQuota = observation.latest_refill
-      ? Math.round(observation.latest_refill.amount_credits * observation.quota_per_credit)
-      : 0;
-    const postRefillBaselineQuota = Number.isSafeInteger(refillBaselineQuota) && refillBaselineQuota > 0
-      ? Math.max(observation.balance_quota, refillBaselineQuota)
-      : observation.balance_quota;
+    const refillBaselineQuota = observation.latest_refill ? Math.round(observation.latest_refill.amount_credits * observation.quota_per_credit) : 0;
+    const postRefillBaselineQuota =
+      Number.isSafeInteger(refillBaselineQuota) && refillBaselineQuota > 0
+        ? Math.max(observation.balance_quota, refillBaselineQuota)
+        : observation.balance_quota;
     return {
       current_balance_quota: observation.balance_quota,
       post_refill_baseline_quota: postRefillBaselineQuota,
@@ -347,23 +334,15 @@ export const updateMeteredQuotaState = (
   const inferredCredit = usedCounterAdvanced
     ? Math.max(0, observation.balance_quota - expectedBalance)
     : Math.max(0, observation.balance_quota - previous.current_balance_quota);
-  const newRefillObserved = Boolean(
-    observation.latest_refill && observation.latest_refill.id !== previous.latest_refill_id,
-  );
+  const newRefillObserved = Boolean(observation.latest_refill && observation.latest_refill.id !== previous.latest_refill_id);
   const creditObserved = inferredCredit > 0 || newRefillObserved;
-  const refillBaselineQuota = newRefillObserved && observation.latest_refill
-    ? Math.round(observation.latest_refill.amount_credits * observation.quota_per_credit)
-    : 0;
+  const refillBaselineQuota =
+    newRefillObserved && observation.latest_refill ? Math.round(observation.latest_refill.amount_credits * observation.quota_per_credit) : 0;
   const balancePlusKnownDebits = observation.balance_quota + knownDebits;
-  const reconstructedRefillCapacityQuota = newRefillObserved && knownDebits > 0 &&
-      Number.isSafeInteger(balancePlusKnownDebits)
-    ? balancePlusKnownDebits
-    : observation.balance_quota;
+  const reconstructedRefillCapacityQuota =
+    newRefillObserved && knownDebits > 0 && Number.isSafeInteger(balancePlusKnownDebits) ? balancePlusKnownDebits : observation.balance_quota;
   const postRefillBaselineQuota = creditObserved
-    ? Math.max(
-      reconstructedRefillCapacityQuota,
-      Number.isSafeInteger(refillBaselineQuota) && refillBaselineQuota > 0 ? refillBaselineQuota : 0,
-    )
+    ? Math.max(reconstructedRefillCapacityQuota, Number.isSafeInteger(refillBaselineQuota) && refillBaselineQuota > 0 ? refillBaselineQuota : 0)
     : previous.post_refill_baseline_quota;
 
   return {
@@ -372,24 +351,21 @@ export const updateMeteredQuotaState = (
     last_observed_used_quota: observation.used_quota,
     quota_per_credit: observation.quota_per_credit,
     observed_at_ms: observation.observed_at_ms,
-    cycle_started_at_ms: creditObserved
-      ? observation.latest_refill?.completed_at_ms ?? observation.observed_at_ms
-      : previous.cycle_started_at_ms,
+    cycle_started_at_ms: creditObserved ? (observation.latest_refill?.completed_at_ms ?? observation.observed_at_ms) : previous.cycle_started_at_ms,
     confidence: creditObserved ? (newRefillObserved ? "refill_observed" : "inferred_adjustment") : previous.confidence,
     last_known_debits_quota: knownDebits,
     last_inferred_credit_quota: creditObserved ? inferredCredit : 0,
     last_credit_at_ms: creditObserved ? observation.observed_at_ms : previous.last_credit_at_ms,
     latest_refill_id: observation.latest_refill?.id ?? previous.latest_refill_id,
-    latest_refill_amount_credits: observation.latest_refill?.amount_credits ??
-      previous.latest_refill_amount_credits,
-    latest_refill_completed_at_ms: observation.latest_refill?.completed_at_ms ??
-      previous.latest_refill_completed_at_ms,
+    latest_refill_amount_credits: observation.latest_refill?.amount_credits ?? previous.latest_refill_amount_credits,
+    latest_refill_completed_at_ms: observation.latest_refill?.completed_at_ms ?? previous.latest_refill_completed_at_ms,
   };
 };
 
 export const isMeteredQuotaState = (value: unknown): value is MeteredQuotaState => {
   if (!isRecord(value)) return false;
-  return isSafeInteger(value.current_balance_quota) &&
+  return (
+    isSafeInteger(value.current_balance_quota) &&
     isSafeInteger(value.post_refill_baseline_quota) &&
     isNonNegativeSafeInteger(value.last_observed_used_quota) &&
     isPositiveSafeInteger(value.quota_per_credit) &&
@@ -401,24 +377,24 @@ export const isMeteredQuotaState = (value: unknown): value is MeteredQuotaState 
     (value.last_credit_at_ms === null || isNonNegativeSafeInteger(value.last_credit_at_ms)) &&
     (value.latest_refill_id === null || typeof value.latest_refill_id === "string") &&
     (value.latest_refill_amount_credits === null || isNonNegativeFiniteNumber(value.latest_refill_amount_credits)) &&
-    (value.latest_refill_completed_at_ms === null ||
-      isNonNegativeSafeInteger(value.latest_refill_completed_at_ms)) &&
+    (value.latest_refill_completed_at_ms === null || isNonNegativeSafeInteger(value.latest_refill_completed_at_ms)) &&
     (value.unlimited_quota === undefined || typeof value.unlimited_quota === "boolean") &&
     (value.total_available === undefined || value.total_available === null || isSafeInteger(value.total_available)) &&
     (value.total_granted === undefined || value.total_granted === null || isSafeInteger(value.total_granted)) &&
-    (value.total_used === undefined || value.total_used === null || isSafeInteger(value.total_used));
+    (value.total_used === undefined || value.total_used === null || isSafeInteger(value.total_used))
+  );
 };
 
 const toSnapshot = (state: MeteredQuotaState, cacheState: MeteredQuotaCacheState): MeteredQuotaSnapshot => {
-  const tokenUsage = state.unlimited_quota !== undefined || state.total_available !== undefined ||
-    state.total_granted !== undefined || state.total_used !== undefined;
+  const tokenUsage =
+    state.unlimited_quota !== undefined || state.total_available !== undefined || state.total_granted !== undefined || state.total_used !== undefined;
   const balanceCredits = tokenUsage ? null : state.current_balance_quota / state.quota_per_credit;
   const baselineCredits = tokenUsage ? null : state.post_refill_baseline_quota / state.quota_per_credit;
   const remainingPercent = tokenUsage
     ? null
     : state.post_refill_baseline_quota > 0
-    ? Math.min(100, Math.max(0, state.current_balance_quota / state.post_refill_baseline_quota * 100))
-    : null;
+      ? Math.min(100, Math.max(0, (state.current_balance_quota / state.post_refill_baseline_quota) * 100))
+      : null;
   return {
     state,
     cache_state: cacheState,
@@ -434,36 +410,31 @@ const toSnapshot = (state: MeteredQuotaState, cacheState: MeteredQuotaCacheState
   };
 };
 
-const loadRetainedState = async (
-  kv: Deno.Kv,
-  nowMs: number,
-): Promise<Deno.KvEntryMaybe<MeteredQuotaState> | null> => {
+const loadRetainedState = async (kv: Deno.Kv, nowMs: number): Promise<Deno.KvEntryMaybe<MeteredQuotaState> | null> => {
   const entry = await kv.get<MeteredQuotaState>(METERED_QUOTA_STATE_KEY);
   if (!isMeteredQuotaState(entry.value)) return null;
   if (nowMs - entry.value.observed_at_ms >= METERED_QUOTA_RETENTION_MS) return null;
   return entry;
 };
 
-const loadInvalidation = (kv: Deno.Kv): Promise<Deno.KvEntryMaybe<unknown>> =>
-  Promise.resolve(kv.get<unknown>(METERED_QUOTA_INVALIDATION_KEY));
+const loadInvalidation = (kv: Deno.Kv): Promise<Deno.KvEntryMaybe<unknown>> => Promise.resolve(kv.get(METERED_QUOTA_INVALIDATION_KEY));
 
-const quotaInvalidationValue = (value: unknown): QuotaInvalidation | null => isQuotaInvalidation(value) ? value : null;
+const quotaInvalidationValue = (value: unknown): QuotaInvalidation | null => (isQuotaInvalidation(value) ? value : null);
 
 const isInvalidated = (state: MeteredQuotaState, invalidation: QuotaInvalidation | null): boolean =>
   Boolean(invalidation && invalidation.invalidated_at_ms >= state.observed_at_ms);
 
-const acquireRefreshLease = async (
-  kv: Deno.Kv,
-  owner: string,
-  nowMs: number,
-): Promise<boolean> => {
+const acquireRefreshLease = async (kv: Deno.Kv, owner: string, nowMs: number): Promise<boolean> => {
   const entry = await kv.get<RefreshLease>(METERED_QUOTA_REFRESH_LEASE_KEY);
   if (entry.value && entry.value.lease_until_ms > nowMs) return false;
   const lease: RefreshLease = { owner, lease_until_ms: nowMs + METERED_QUOTA_REFRESH_LEASE_MS };
-  return (await kv.atomic()
-    .check(entry)
-    .set(METERED_QUOTA_REFRESH_LEASE_KEY, lease, { expireIn: METERED_QUOTA_REFRESH_LEASE_MS * 2 })
-    .commit()).ok;
+  return (
+    await kv
+      .atomic()
+      .check(entry)
+      .set(METERED_QUOTA_REFRESH_LEASE_KEY, lease, { expireIn: METERED_QUOTA_REFRESH_LEASE_MS * 2 })
+      .commit()
+  ).ok;
 };
 
 const releaseRefreshLease = async (kv: Deno.Kv, owner: string): Promise<void> => {
@@ -489,7 +460,7 @@ const waitForColdState = async (kv: Deno.Kv): Promise<MeteredQuotaState | null> 
 
 export const getMeteredQuotaSnapshot = async (
   credentials: MeteredAccountCredentials,
-  options: GetMeteredQuotaSnapshotOptions = {},
+  options: GetMeteredQuotaSnapshotOptions = {}
 ): Promise<MeteredQuotaSnapshot | null> => {
   const kv = options.kv === undefined ? await getKv() : options.kv;
   if (!kv || !parseCredentials(credentials)) return null;
@@ -506,15 +477,8 @@ export const getMeteredQuotaSnapshot = async (
     }),
   ]);
   const cached = cachedEntry?.value ?? null;
-  const cachedInvalidated = cached
-    ? isInvalidated(cached, quotaInvalidationValue(cachedInvalidationEntry?.value))
-    : false;
-  if (
-    cached &&
-    !options.forceRefresh &&
-    !cachedInvalidated &&
-    nowMs - cached.observed_at_ms < METERED_QUOTA_FRESH_MS
-  ) {
+  const cachedInvalidated = cached ? isInvalidated(cached, quotaInvalidationValue(cachedInvalidationEntry?.value)) : false;
+  if (cached && !options.forceRefresh && !cachedInvalidated && nowMs - cached.observed_at_ms < METERED_QUOTA_FRESH_MS) {
     return toSnapshot(cached, "fresh");
   }
 
@@ -530,10 +494,7 @@ export const getMeteredQuotaSnapshot = async (
   }
 
   try {
-    const [stateEntry, refreshInvalidationEntry] = await Promise.all([
-      kv.get<MeteredQuotaState>(METERED_QUOTA_STATE_KEY),
-      loadInvalidation(kv),
-    ]);
+    const [stateEntry, refreshInvalidationEntry] = await Promise.all([kv.get<MeteredQuotaState>(METERED_QUOTA_STATE_KEY), loadInvalidation(kv)]);
     const observation = await fetchMeteredQuotaObservation(credentials, {
       fetcher: options.fetcher,
       now,
@@ -546,7 +507,8 @@ export const getMeteredQuotaSnapshot = async (
     }
     const previous = isMeteredQuotaState(stateEntry.value) ? stateEntry.value : null;
     const state = updateMeteredQuotaState(previous, observation);
-    const committed = await kv.atomic()
+    const committed = await kv
+      .atomic()
       .check(stateEntry)
       .check(refreshInvalidationEntry)
       .check(leaseEntry)
@@ -556,41 +518,31 @@ export const getMeteredQuotaSnapshot = async (
       .commit();
     if (committed.ok) {
       const accountFingerprint = await meterQuotaAccountFingerprint(credentials).catch(() => null);
-      await writeMeteredQuotaBalanceSample(kv, state, observation.observed_at_ms, accountFingerprint)
-        .catch((error) => {
-          console.warn("[ai.ubq.fi] Metered quota balance history write failed:", error);
-        });
+      await writeMeteredQuotaBalanceSample(kv, state, observation.observed_at_ms, accountFingerprint).catch((error) => {
+        console.warn("[ai.ubq.fi] Metered quota balance history write failed:", error);
+      });
       return toSnapshot(state, "refreshed");
     }
     const replacement = await loadRetainedState(kv, Date.now()).catch(() => null);
     return replacement?.value ? toSnapshot(replacement.value, "stale") : cached ? toSnapshot(cached, "stale") : null;
   } catch (error) {
     if (options.signal?.aborted) throw error;
-    console.warn(
-      "[ai.ubq.fi] Metered quota refresh failed:",
-      error instanceof Error ? error.message : String(error),
-    );
+    console.warn("[ai.ubq.fi] Metered quota refresh failed:", error instanceof Error ? error.message : String(error));
     return cached ? toSnapshot(cached, "stale") : null;
   } finally {
     await releaseRefreshLease(kv, owner);
   }
 };
 
-export const getCachedMeteredQuotaSnapshot = async (
-  options: Pick<GetMeteredQuotaSnapshotOptions, "kv" | "now"> = {},
-): Promise<MeteredQuotaSnapshot | null> => {
+export const getCachedMeteredQuotaSnapshot = async (options: Pick<GetMeteredQuotaSnapshotOptions, "kv" | "now"> = {}): Promise<MeteredQuotaSnapshot | null> => {
   const kv = options.kv === undefined ? await getKv() : options.kv;
   if (!kv) return null;
   const nowMs = Math.trunc((options.now ?? Date.now)());
   try {
-    const [stateEntry, invalidationEntry] = await Promise.all([
-      loadRetainedState(kv, nowMs),
-      loadInvalidation(kv),
-    ]);
+    const [stateEntry, invalidationEntry] = await Promise.all([loadRetainedState(kv, nowMs), loadInvalidation(kv)]);
     const state = stateEntry?.value ?? null;
     if (!state) return null;
-    const fresh = !isInvalidated(state, quotaInvalidationValue(invalidationEntry.value)) &&
-      nowMs - state.observed_at_ms < METERED_QUOTA_FRESH_MS;
+    const fresh = !isInvalidated(state, quotaInvalidationValue(invalidationEntry.value)) && nowMs - state.observed_at_ms < METERED_QUOTA_FRESH_MS;
     return toSnapshot(state, fresh ? "fresh" : "stale");
   } catch (error) {
     console.warn("[ai.ubq.fi] Metered quota cache peek failed:", error);
@@ -598,26 +550,22 @@ export const getCachedMeteredQuotaSnapshot = async (
   }
 };
 
-export const invalidateMeteredQuotaSnapshot = async (
-  options: Pick<GetMeteredQuotaSnapshotOptions, "kv" | "now"> = {},
-): Promise<void> => {
+export const invalidateMeteredQuotaSnapshot = async (options: Pick<GetMeteredQuotaSnapshotOptions, "kv" | "now"> = {}): Promise<void> => {
   const kv = options.kv === undefined ? await getKv() : options.kv;
   if (!kv) return;
   const invalidatedAtMs = Math.trunc((options.now ?? Date.now)());
   if (!isNonNegativeSafeInteger(invalidatedAtMs)) throw new Error("Metered quota invalidation clock is invalid");
-  const committed = await kv.atomic()
-    .set(
-      METERED_QUOTA_INVALIDATION_KEY,
-      { invalidated_at_ms: invalidatedAtMs } satisfies QuotaInvalidation,
-      { expireIn: METERED_QUOTA_RETENTION_MS },
-    )
+  const committed = await kv
+    .atomic()
+    .set(METERED_QUOTA_INVALIDATION_KEY, { invalidated_at_ms: invalidatedAtMs } satisfies QuotaInvalidation, { expireIn: METERED_QUOTA_RETENTION_MS })
     .commit();
   if (!committed.ok) throw new Error("Deno KV could not invalidate the Metered quota snapshot");
 };
 
 const isMeteredQuotaBalanceSample = (value: unknown): value is MeteredQuotaBalanceSample => {
   if (!isRecord(value)) return false;
-  return value.v === 1 &&
+  return (
+    value.v === 1 &&
     isNonNegativeSafeInteger(value.bucket_start_at_ms) &&
     isNonNegativeSafeInteger(value.observed_at_ms) &&
     isSafeInteger(value.balance_quota) &&
@@ -627,25 +575,22 @@ const isMeteredQuotaBalanceSample = (value: unknown): value is MeteredQuotaBalan
     (value.unlimited_quota === undefined || typeof value.unlimited_quota === "boolean") &&
     (value.total_available === undefined || value.total_available === null || isSafeInteger(value.total_available)) &&
     (value.total_granted === undefined || value.total_granted === null || isSafeInteger(value.total_granted)) &&
-    (value.total_used === undefined || value.total_used === null || isSafeInteger(value.total_used));
+    (value.total_used === undefined || value.total_used === null || isSafeInteger(value.total_used))
+  );
 };
 
-const balanceSampleFromState = (
-  state: MeteredQuotaState,
-  observedAtMs: number,
-): MeteredQuotaBalanceSample | null => {
+const balanceSampleFromState = (state: MeteredQuotaState, observedAtMs: number): MeteredQuotaBalanceSample | null => {
   if (!isNonNegativeSafeInteger(observedAtMs)) return null;
-  const tokenUsage = state.unlimited_quota !== undefined || state.total_available !== undefined ||
-    state.total_granted !== undefined || state.total_used !== undefined;
+  const tokenUsage =
+    state.unlimited_quota !== undefined || state.total_available !== undefined || state.total_granted !== undefined || state.total_used !== undefined;
   const remainingPercent = tokenUsage
     ? null
     : state.post_refill_baseline_quota > 0
-    ? Math.min(100, Math.max(0, state.current_balance_quota / state.post_refill_baseline_quota * 100))
-    : null;
+      ? Math.min(100, Math.max(0, (state.current_balance_quota / state.post_refill_baseline_quota) * 100))
+      : null;
   return {
     v: 1,
-    bucket_start_at_ms: Math.floor(observedAtMs / METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS) *
-      METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS,
+    bucket_start_at_ms: Math.floor(observedAtMs / METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS) * METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS,
     observed_at_ms: observedAtMs,
     balance_quota: state.current_balance_quota,
     baseline_quota: state.post_refill_baseline_quota,
@@ -653,11 +598,11 @@ const balanceSampleFromState = (
     remaining_percent: remainingPercent,
     ...(tokenUsage
       ? {
-        unlimited_quota: state.unlimited_quota === true,
-        total_available: state.total_available ?? null,
-        total_granted: state.total_granted ?? null,
-        total_used: state.total_used ?? null,
-      }
+          unlimited_quota: state.unlimited_quota === true,
+          total_available: state.total_available ?? null,
+          total_granted: state.total_granted ?? null,
+          total_used: state.total_used ?? null,
+        }
       : {}),
   };
 };
@@ -672,15 +617,11 @@ export const writeMeteredQuotaBalanceSample = async (
   kv: Deno.Kv,
   state: MeteredQuotaState,
   observedAtMs: number,
-  accountFingerprint: string | null,
+  accountFingerprint: string | null
 ): Promise<void> => {
   const sample = balanceSampleFromState(state, observedAtMs);
   if (!sample || !accountFingerprint) return;
-  const key = [
-    ...METERED_QUOTA_BALANCE_HISTORY_PREFIX,
-    accountFingerprint,
-    sample.bucket_start_at_ms,
-  ] as const;
+  const key = [...METERED_QUOTA_BALANCE_HISTORY_PREFIX, accountFingerprint, sample.bucket_start_at_ms] as const;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const entry = await kv.get<MeteredQuotaBalanceSample>(key, { consistency: "strong" });
     const existing = isMeteredQuotaBalanceSample(entry.value) ? entry.value : null;
@@ -693,7 +634,7 @@ export const writeMeteredQuotaBalanceSample = async (
 
 export const readMeteredQuotaBalanceHistory = async (
   kv: Deno.Kv | null,
-  options: Readonly<{ sinceMs: number; nowMs: number; accountFingerprint: string | null; limit?: number }>,
+  options: Readonly<{ sinceMs: number; nowMs: number; accountFingerprint: string | null; limit?: number }>
 ): Promise<MeteredQuotaBalanceSample[]> => {
   if (!kv || !options.accountFingerprint) return [];
   const limit = Math.max(1, Math.min(10_000, Math.trunc(options.limit ?? 10_000)));
@@ -701,22 +642,19 @@ export const readMeteredQuotaBalanceHistory = async (
   const sinceMs = Math.max(0, Math.trunc(options.sinceMs));
   const nowMs = Math.max(sinceMs, Math.trunc(options.nowMs));
   const prefix: Deno.KvKey = [...METERED_QUOTA_BALANCE_HISTORY_PREFIX, options.accountFingerprint];
-  const start: Deno.KvKey = [
-    ...prefix,
-    Math.floor(sinceMs / METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS) * METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS,
-  ];
+  const start: Deno.KvKey = [...prefix, Math.floor(sinceMs / METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS) * METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS];
   const end: Deno.KvKey = [
     ...prefix,
-    Math.floor(nowMs / METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS) * METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS +
-    METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS,
+    Math.floor(nowMs / METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS) * METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS + METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS,
   ];
   // Deno KV rejects selectors that combine a prefix with both range bounds.
   // These bounds already include the complete account-specific namespace.
-  for await (
-    const entry of kv.list<MeteredQuotaBalanceSample>({ start, end }, {
+  for await (const entry of kv.list<MeteredQuotaBalanceSample>(
+    { start, end },
+    {
       limit,
-    })
-  ) {
+    }
+  )) {
     const sample = isMeteredQuotaBalanceSample(entry.value) ? entry.value : null;
     if (sample && sample.observed_at_ms >= sinceMs && sample.observed_at_ms <= nowMs) samples.push(sample);
   }
@@ -731,7 +669,7 @@ export const readMeteredQuotaBalanceHistory = async (
 export const resampleMeteredQuotaBalanceHistory = (
   samples: readonly MeteredQuotaBalanceSample[],
   bucketMs: number,
-  limit: number,
+  limit: number
 ): MeteredQuotaBalanceSample[] => {
   if (!Number.isSafeInteger(bucketMs) || bucketMs <= 0 || !Number.isSafeInteger(limit) || limit <= 0) return [];
   const buckets = new Map<number, MeteredQuotaBalanceSample>();
@@ -739,32 +677,26 @@ export const resampleMeteredQuotaBalanceHistory = (
     const bucketStartAtMs = Math.floor(sample.observed_at_ms / bucketMs) * bucketMs;
     const existing = buckets.get(bucketStartAtMs);
     if (
-      !existing || sample.observed_at_ms > existing.observed_at_ms ||
+      !existing ||
+      sample.observed_at_ms > existing.observed_at_ms ||
       (sample.observed_at_ms === existing.observed_at_ms && sample.bucket_start_at_ms > existing.bucket_start_at_ms)
     ) {
       buckets.set(bucketStartAtMs, { ...sample, bucket_start_at_ms: bucketStartAtMs });
     }
   }
-  return [...buckets.values()]
-    .sort((left, right) => left.bucket_start_at_ms - right.bucket_start_at_ms)
-    .slice(-limit);
+  return [...buckets.values()].sort((left, right) => left.bucket_start_at_ms - right.bucket_start_at_ms).slice(-limit);
 };
 
-export const getConfiguredMeteredQuotaSnapshot = async (
-  options: GetMeteredQuotaSnapshotOptions = {},
-): Promise<MeteredQuotaSnapshot | null> => {
+export const getConfiguredMeteredQuotaSnapshot = async (options: GetMeteredQuotaSnapshotOptions = {}): Promise<MeteredQuotaSnapshot | null> => {
   const credentials = readMeteredAccountCredentials();
   return credentials ? await getMeteredQuotaSnapshot(credentials, options) : null;
 };
 
 export const getCachedConfiguredMeteredQuotaSnapshot = async (
-  options: Pick<GetMeteredQuotaSnapshotOptions, "kv" | "now"> = {},
-): Promise<MeteredQuotaSnapshot | null> =>
-  readMeteredAccountCredentials() ? await getCachedMeteredQuotaSnapshot(options) : null;
+  options: Pick<GetMeteredQuotaSnapshotOptions, "kv" | "now"> = {}
+): Promise<MeteredQuotaSnapshot | null> => (readMeteredAccountCredentials() ? await getCachedMeteredQuotaSnapshot(options) : null);
 
-export const invalidateConfiguredMeteredQuotaSnapshot = async (
-  options: Pick<GetMeteredQuotaSnapshotOptions, "kv" | "now"> = {},
-): Promise<void> => {
+export const invalidateConfiguredMeteredQuotaSnapshot = async (options: Pick<GetMeteredQuotaSnapshotOptions, "kv" | "now"> = {}): Promise<void> => {
   if (readMeteredAccountCredentials()) await invalidateMeteredQuotaSnapshot(options);
 };
 
@@ -791,9 +723,7 @@ const unavailableDiagnostics = (configured: boolean): MeteredQuotaDiagnostics =>
   total_used: null,
 });
 
-export const getMeteredQuotaDiagnostics = async (
-  options: GetMeteredQuotaSnapshotOptions = {},
-): Promise<MeteredQuotaDiagnostics> => {
+export const getMeteredQuotaDiagnostics = async (options: GetMeteredQuotaSnapshotOptions = {}): Promise<MeteredQuotaDiagnostics> => {
   const credentials = readMeteredAccountCredentials();
   if (!credentials) return unavailableDiagnostics(false);
   const snapshot = await getMeteredQuotaSnapshot(credentials, options);
@@ -810,9 +740,7 @@ export const getMeteredQuotaDiagnostics = async (
     used_percent: snapshot.used_percent,
     observed_at_ms: snapshot.state.observed_at_ms,
     cycle_started_at_ms: tokenUsage ? null : snapshot.state.cycle_started_at_ms,
-    last_known_debits_credits: tokenUsage
-      ? null
-      : snapshot.state.last_known_debits_quota / snapshot.state.quota_per_credit,
+    last_known_debits_credits: tokenUsage ? null : snapshot.state.last_known_debits_quota / snapshot.state.quota_per_credit,
     last_inferred_credit_credits: snapshot.last_inferred_credit_credits,
     last_credit_at_ms: tokenUsage ? null : snapshot.state.last_credit_at_ms,
     latest_refill_id: snapshot.state.latest_refill_id,

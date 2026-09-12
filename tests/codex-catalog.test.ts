@@ -9,12 +9,9 @@ let beforeAtomicCommit: ((ops: readonly AtomicTestOp[]) => void) | null = null;
 const nextVersion = (): string => String(++versionCounter).padStart(20, "0");
 const entryFor = (key: Deno.KvKey): Deno.KvEntryMaybe<unknown> => {
   const stored = kvStore.get(keyToString(key));
-  return stored
-    ? { key, value: stored.value, versionstamp: stored.versionstamp }
-    : { key, value: null, versionstamp: null };
+  return stored ? { key, value: stored.value, versionstamp: stored.versionstamp } : { key, value: null, versionstamp: null };
 };
-const matchesPrefix = (key: Deno.KvKey, prefix: Deno.KvKey): boolean =>
-  prefix.every((part, index) => key[index] === part);
+const matchesPrefix = (key: Deno.KvKey, prefix: Deno.KvKey): boolean => prefix.every((part, index) => key[index] === part);
 
 const kvStub = {
   get: (key: Deno.KvKey) => Promise.resolve(entryFor(key)),
@@ -83,22 +80,9 @@ const {
 } = await import("../src/codex_catalog.ts");
 const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
 const { handleModels } = await import("../src/openai.ts");
-const {
-  fetchMeteredModels,
-  METERED_MODELS_CACHE_TTL_MS,
-  resetMeteredModelsCacheForTest,
-  setMeteredModelsFetchForTest,
-} = await import("../src/metered.ts");
-const {
-  fetchSurplusModels,
-  resetSurplusModelsCacheForTest,
-  SURPLUS_MODELS_CACHE_TTL_MS,
-} = await import("../src/surplus.ts");
-const {
-  loadRuntimeConfig,
-  resetRuntimeConfigCacheForTest,
-  RUNTIME_CONFIG_V2_KEY,
-} = await import("../src/runtime_config.ts");
+const { fetchMeteredModels, METERED_MODELS_CACHE_TTL_MS, resetMeteredModelsCacheForTest, setMeteredModelsFetchForTest } = await import("../src/metered.ts");
+const { fetchSurplusModels, resetSurplusModelsCacheForTest, SURPLUS_MODELS_CACHE_TTL_MS } = await import("../src/surplus.ts");
+const { loadRuntimeConfig, resetRuntimeConfigCacheForTest, RUNTIME_CONFIG_V2_KEY } = await import("../src/runtime_config.ts");
 
 const AUTH_GENERATION = "auth-generation-test";
 const AUTH_KEY = ["ubq_ai", "codex_auth"] as const;
@@ -117,12 +101,14 @@ const seedBaseState = (snapshotVersion = "0.200.0"): void => {
   });
   kvStore.set(keyToString(AUTH_KEY), {
     value: {
-      accounts: [{
-        access_token: "server-access",
-        refresh_token: "server-refresh",
-        account_id: "server-account",
-        updated_at_ms: Date.now(),
-      }],
+      accounts: [
+        {
+          access_token: "server-access",
+          refresh_token: "server-refresh",
+          account_id: "server-account",
+          updated_at_ms: Date.now(),
+        },
+      ],
       updated_at_ms: Date.now(),
     },
     versionstamp: nextVersion(),
@@ -151,12 +137,14 @@ const seedBaseState = (snapshotVersion = "0.200.0"): void => {
 
 const catalogBody = (version: string, extra: Record<string, unknown> = {}): string =>
   JSON.stringify({
-    models: [{
-      slug: `gpt-${version}`,
-      display_name: `Rich ${version}`,
-      base_instructions: "must remain untouched",
-      supported_reasoning_levels: [{ effort: "high", description: "deep" }],
-    }],
+    models: [
+      {
+        slug: `gpt-${version}`,
+        display_name: `Rich ${version}`,
+        base_instructions: "must remain untouched",
+        supported_reasoning_levels: [{ effort: "high", description: "deep" }],
+      },
+    ],
     ...extra,
   });
 
@@ -169,7 +157,7 @@ Deno.test("codex catalog: unversioned models retain the exact OpenAI list shape"
   seedBaseState();
   const response = await handleModels(new Request("https://ai.ubq.fi/v1/models"));
   assert.equal(response.status, 200);
-  const payload = await response.json() as Record<string, unknown>;
+  const payload = (await response.json()) as Record<string, unknown>;
   assert.deepEqual(Object.keys(payload).sort(), ["data", "object"]);
   assert.equal(payload.object, "list");
 });
@@ -177,7 +165,7 @@ Deno.test("codex catalog: unversioned models retain the exact OpenAI list shape"
 Deno.test("codex catalog: exact versions preserve rich JSON, isolate caches, and forward ETags", async () => {
   seedBaseState("0.100.0");
   const originalFetch = globalThis.fetch;
-  const calls: Array<{ url: string; headers: Headers }> = [];
+  const calls: { url: string; headers: Headers }[] = [];
   globalThis.fetch = (input, init) => {
     const upstream = new Request(input, init);
     calls.push({ url: upstream.url, headers: upstream.headers });
@@ -186,7 +174,7 @@ Deno.test("codex catalog: exact versions preserve rich JSON, isolate caches, and
       new Response(catalogBody(version, { version_marker: version }), {
         status: 200,
         headers: { "Content-Type": "application/json; charset=utf-8", ETag: `"${version}"` },
-      }),
+      })
     );
   };
 
@@ -208,12 +196,9 @@ Deno.test("codex catalog: exact versions preserve rich JSON, isolate caches, and
     const secondVersion = await handleCodexCatalogModels(request("0.145.0"), "0.145.0");
     assert.equal(secondVersion.status, 200);
     assert.equal(calls.length, 2);
-    assert.equal((await secondVersion.json() as { version_marker?: string }).version_marker, "0.145.0");
+    assert.equal(((await secondVersion.json()) as { version_marker?: string }).version_marker, "0.145.0");
 
-    const notModified = await handleCodexCatalogModels(
-      request("0.144.3", { "If-None-Match": '"0.144.3"' }),
-      "0.144.3",
-    );
+    const notModified = await handleCodexCatalogModels(request("0.144.3", { "If-None-Match": '"0.144.3"' }), "0.144.3");
     assert.equal(notModified.status, 304);
     assert.equal(await notModified.text(), "");
     assert.equal(calls.length, 2);
@@ -263,7 +248,7 @@ Deno.test("codex catalog: stale catalogs survive refresh failures but expired ca
     const stale = await handleCodexCatalogModels(request(version), version, dependencies);
     assert.equal(stale.status, 200);
     assert.equal(stale.headers.get("x-uos-cache"), "stale");
-    assert.equal((await stale.json() as { models: Array<{ slug: string }> }).models[0].slug, `gpt-${version}`);
+    assert.equal(((await stale.json()) as { models: { slug: string }[] }).models[0].slug, `gpt-${version}`);
     assert.deepEqual(degradationSignals, [observedAtMs]);
 
     const metadata = kvStore.get(keyToString(CATALOG_KEY(version)))?.value as { fetched_at_ms: number };
@@ -312,7 +297,7 @@ Deno.test("codex catalog: account fallback signals the masked transport failure 
   const version = "0.150.3";
   const observedAtMs = Date.now();
   const authPool = kvStore.get(keyToString(AUTH_KEY))?.value as {
-    accounts: Array<Record<string, unknown>>;
+    accounts: Record<string, unknown>[];
   };
   authPool.accounts.push({
     access_token: "fallback-access",
@@ -326,9 +311,7 @@ Deno.test("codex catalog: account fallback signals the masked transport failure 
   globalThis.fetch = () => {
     upstreamCalls += 1;
     if (upstreamCalls === 1) throw new Error("first account connection reset");
-    return Promise.resolve(
-      new Response(catalogBody(version), { headers: { "Content-Type": "application/json" } }),
-    );
+    return Promise.resolve(new Response(catalogBody(version), { headers: { "Content-Type": "application/json" } }));
   };
   try {
     const response = await handleCodexCatalogModels(request(version), version, {
@@ -367,8 +350,8 @@ Deno.test("codex catalog: stale catalogs signal response body transport failures
             controller.error(new Error("body socket reset"));
           },
         }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      )
     );
   try {
     const response = await handleCodexCatalogModels(request(version), version, {
@@ -403,10 +386,7 @@ Deno.test("codex catalog: stale ETags revalidate upstream and matching clients r
     return Promise.resolve(new Response(null, { status: 304, headers: { ETag: '"catalog-etag"' } }));
   };
   try {
-    const response = await handleCodexCatalogModels(
-      request(version, { "If-None-Match": '"catalog-etag"' }),
-      version,
-    );
+    const response = await handleCodexCatalogModels(request(version, { "If-None-Match": '"catalog-etag"' }), version);
     assert.equal(response.status, 304);
     assert.equal(response.headers.get("x-uos-cache"), "revalidated");
     assert.equal(upstreamIfNoneMatch, '"catalog-etag"');
@@ -458,8 +438,8 @@ Deno.test("codex catalog: concurrent cold misses share one upstream refresh", as
   const originalFetch = globalThis.fetch;
   let resolveFetch!: (response: Response) => void;
   let markFetchStarted!: () => void;
-  const fetchStarted = new Promise<void>((resolve) => markFetchStarted = resolve);
-  const deferredResponse = new Promise<Response>((resolve) => resolveFetch = resolve);
+  const fetchStarted = new Promise<void>((resolve) => (markFetchStarted = resolve));
+  const deferredResponse = new Promise<Response>((resolve) => (resolveFetch = resolve));
   let calls = 0;
   globalThis.fetch = () => {
     calls += 1;
@@ -490,8 +470,8 @@ Deno.test("codex catalog: auth rotation discards an in-flight old-generation ref
   const originalFetch = globalThis.fetch;
   let resolveFetch!: (response: Response) => void;
   let markFetchStarted!: () => void;
-  const fetchStarted = new Promise<void>((resolve) => markFetchStarted = resolve);
-  const deferredResponse = new Promise<Response>((resolve) => resolveFetch = resolve);
+  const fetchStarted = new Promise<void>((resolve) => (markFetchStarted = resolve));
+  const deferredResponse = new Promise<Response>((resolve) => (resolveFetch = resolve));
   globalThis.fetch = () => {
     markFetchStarted();
     return deferredResponse;
@@ -519,21 +499,21 @@ Deno.test("codex catalog: auth rotation discards an in-flight old-generation ref
         authGeneration: replacementGeneration,
         body: replacementBody,
       }),
-      true,
+      true
     );
     resolveFetch(
       new Response(catalogBody(version, { account: "old" }), {
         headers: { "Content-Type": "application/json" },
-      }),
+      })
     );
 
     const response = await responsePromise;
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("x-uos-cache"), "rotated");
-    assert.equal((await response.json() as { account?: string }).account, "replacement");
+    assert.equal(((await response.json()) as { account?: string }).account, "replacement");
     const metadata = kvStore.get(keyToString(CATALOG_KEY(version)))?.value as { auth_generation?: string };
     assert.equal(metadata.auth_generation, replacementGeneration);
-    const snapshot = kvStore.get(keyToString(SNAPSHOT_KEY))?.value as { models?: Array<{ slug?: string }> };
+    const snapshot = kvStore.get(keyToString(SNAPSHOT_KEY))?.value as { models?: { slug?: string }[] };
     assert.equal(snapshot.models?.[0]?.slug, "replacement-snapshot");
   } finally {
     globalThis.fetch = originalFetch;
@@ -547,8 +527,8 @@ Deno.test("codex catalog: slow refreshes renew their lease", async () => {
   const originalFetch = globalThis.fetch;
   let resolveFetch!: (response: Response) => void;
   let markFetchStarted!: () => void;
-  const fetchStarted = new Promise<void>((resolve) => markFetchStarted = resolve);
-  const deferredResponse = new Promise<Response>((resolve) => resolveFetch = resolve);
+  const fetchStarted = new Promise<void>((resolve) => (markFetchStarted = resolve));
+  const deferredResponse = new Promise<Response>((resolve) => (resolveFetch = resolve));
   globalThis.fetch = () => {
     markFetchStarted();
     return deferredResponse;
@@ -582,7 +562,7 @@ Deno.test("codex catalog: gzip chunks are bounded and integrity failures force a
       authGeneration: AUTH_GENERATION,
       body,
     }),
-    true,
+    true
   );
   const chunkEntries = [...kvStore.entries()].filter(([encoded]) => {
     const key = JSON.parse(encoded) as Deno.KvKey;
@@ -621,15 +601,14 @@ Deno.test("codex catalog: replacing metadata reclaims superseded chunks", async 
       authGeneration: AUTH_GENERATION,
       body: catalogBody(version, { generation: "first" }),
     }),
-    true,
+    true
   );
   const firstMetadata = kvStore.get(keyToString(CATALOG_KEY(version)))?.value as {
     body_generation: string;
     chunk_count: number;
   };
-  const firstChunkKeys = Array.from(
-    { length: firstMetadata.chunk_count },
-    (_, index) => keyToString([...CODEX_CATALOG_CHUNK_PREFIX, version, firstMetadata.body_generation, index]),
+  const firstChunkKeys = Array.from({ length: firstMetadata.chunk_count }, (_, index) =>
+    keyToString([...CODEX_CATALOG_CHUNK_PREFIX, version, firstMetadata.body_generation, index])
   );
   assert.ok(firstChunkKeys.every((key) => kvStore.has(key)));
 
@@ -639,7 +618,7 @@ Deno.test("codex catalog: replacing metadata reclaims superseded chunks", async 
       authGeneration: AUTH_GENERATION,
       body: catalogBody(version, { generation: "second" }),
     }),
-    true,
+    true
   );
   const secondMetadata = kvStore.get(keyToString(CATALOG_KEY(version)))?.value as {
     body_generation: string;
@@ -648,15 +627,7 @@ Deno.test("codex catalog: replacing metadata reclaims superseded chunks", async 
   assert.notEqual(secondMetadata.body_generation, firstMetadata.body_generation);
   assert.ok(firstChunkKeys.every((key) => !kvStore.has(key)));
   for (let index = 0; index < secondMetadata.chunk_count; index += 1) {
-    assert.equal(
-      kvStore.has(keyToString([
-        ...CODEX_CATALOG_CHUNK_PREFIX,
-        version,
-        secondMetadata.body_generation,
-        index,
-      ])),
-      true,
-    );
+    assert.equal(kvStore.has(keyToString([...CODEX_CATALOG_CHUNK_PREFIX, version, secondMetadata.body_generation, index])), true);
   }
 });
 
@@ -669,7 +640,7 @@ Deno.test("codex catalog: rejected old-generation writes reclaim their chunks", 
       authGeneration: "superseded-generation",
       body: catalogBody(version),
     }),
-    false,
+    false
   );
   const orphanChunks = [...kvStore.keys()].filter((encoded) => {
     const key = JSON.parse(encoded) as Deno.KvKey;
@@ -691,7 +662,7 @@ Deno.test("codex catalog: version cache evicts the oldest catalog beyond its bou
         body: catalogBody(version),
         fetchedAtMs: Date.now() + index,
       }),
-      true,
+      true
     );
     const loaded = await handleCodexCatalogModels(request(version), version);
     assert.equal(loaded.status, 200);
@@ -700,8 +671,11 @@ Deno.test("codex catalog: version cache evicts the oldest catalog beyond its bou
 
   const metadataEntries = [...kvStore.entries()].filter(([encoded, stored]) => {
     const key = JSON.parse(encoded) as Deno.KvKey;
-    return matchesPrefix(key, CODEX_CATALOG_PREFIX) && key.length === CODEX_CATALOG_PREFIX.length + 1 &&
-      typeof (stored.value as { body_generation?: unknown }).body_generation === "string";
+    return (
+      matchesPrefix(key, CODEX_CATALOG_PREFIX) &&
+      key.length === CODEX_CATALOG_PREFIX.length + 1 &&
+      typeof (stored.value as { body_generation?: unknown }).body_generation === "string"
+    );
   });
   assert.equal(metadataEntries.length, CODEX_CATALOG_MAX_VERSIONS);
   for (let index = 0; index < totalVersions - CODEX_CATALOG_MAX_VERSIONS; index += 1) {
@@ -726,31 +700,33 @@ Deno.test("codex catalog: only same-or-newer clients update the normalized snaps
   seedBaseState("0.200.0");
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (input) => {
-    const version = new URL(input instanceof Request ? input.url : input.toString()).searchParams.get(
-      "client_version",
-    )!;
+    const version = new URL(input instanceof Request ? input.url : input.toString()).searchParams.get("client_version")!;
     return Promise.resolve(
       new Response(
         catalogBody(version, {
-          models: [{
-            slug: `gpt-${version}`,
-            display_name: `Rich ${version}`,
-            supported_reasoning_levels: [{ effort: "high", description: "deep" }],
-          }, {
-            slug: "codex-auto-review",
-            display_name: "Codex Auto Review",
-            visibility: "hide",
-            supported_in_api: true,
-          }, {
-            slug: "codex-internal-evals",
-            visibility: "hide",
-            supported_in_api: false,
-          }],
+          models: [
+            {
+              slug: `gpt-${version}`,
+              display_name: `Rich ${version}`,
+              supported_reasoning_levels: [{ effort: "high", description: "deep" }],
+            },
+            {
+              slug: "codex-auto-review",
+              display_name: "Codex Auto Review",
+              visibility: "hide",
+              supported_in_api: true,
+            },
+            {
+              slug: "codex-internal-evals",
+              visibility: "hide",
+              supported_in_api: false,
+            },
+          ],
         }),
         {
           headers: { "Content-Type": "application/json" },
-        },
-      ),
+        }
+      )
     );
   };
   try {
@@ -761,19 +737,25 @@ Deno.test("codex catalog: only same-or-newer clients update the normalized snaps
     assert.equal((await handleCodexCatalogModels(request("0.201.0"), "0.201.0")).status, 200);
     const snapshot = kvStore.get(keyToString(SNAPSHOT_KEY))?.value as {
       client_version: string;
-      models: Array<{ slug: string }>;
+      models: { slug: string }[];
     };
     assert.equal(snapshot.client_version, "0.201.0");
-    assert.deepEqual(snapshot.models.map((model) => model.slug), ["gpt-0.201.0", "codex-auto-review"]);
+    assert.deepEqual(
+      snapshot.models.map((model) => model.slug),
+      ["gpt-0.201.0", "codex-auto-review"]
+    );
     const runtime = kvStore.get(keyToString(RUNTIME_CONFIG_V2_KEY))?.value as {
       default_model: string;
       default_reasoning_effort: string;
-      codex_models: { client_version: string; models: Array<{ slug: string }> };
+      codex_models: { client_version: string; models: { slug: string }[] };
     };
     assert.equal(runtime.default_model, "gpt-0.201.0");
     assert.equal(runtime.default_reasoning_effort, "medium");
     assert.equal(runtime.codex_models.client_version, "0.201.0");
-    assert.deepEqual(runtime.codex_models.models.map((model) => model.slug), ["gpt-0.201.0", "codex-auto-review"]);
+    assert.deepEqual(
+      runtime.codex_models.models.map((model) => model.slug),
+      ["gpt-0.201.0", "codex-auto-review"]
+    );
 
     // The catalog publisher must seed the isolate cache with exactly the
     // compact configuration committed in the same transaction.
@@ -820,7 +802,7 @@ Deno.test("codex catalog: normalized snapshot retry preserves a concurrent admin
     Promise.resolve(
       new Response(catalogBody("0.201.0", { models: nextModels }), {
         headers: { "Content-Type": "application/json" },
-      }),
+      })
     );
 
   beforeAtomicCommit = (ops) => {
@@ -860,18 +842,20 @@ Deno.test("codex catalog: normalized refresh retries preserve same-slug prompt-c
   seedBaseState("0.200.0");
   const promptCache = {
     version: 1,
-    providers: [{
-      id: "codex_chatgpt",
-      scope: {
-        probe_profile: "responses_implicit_input_text_keyed_cycle_isolated_v5",
-        account_slots: "unknown",
-        token_refresh: "preserved",
-        conversation_id: "independent",
-        reproducible_cycles: 3,
-        source: "live_probe",
-        verified_at_ms: 2_000,
+    providers: [
+      {
+        id: "codex_chatgpt",
+        scope: {
+          probe_profile: "responses_implicit_input_text_keyed_cycle_isolated_v5",
+          account_slots: "unknown",
+          token_refresh: "preserved",
+          conversation_id: "independent",
+          reproducible_cycles: 3,
+          source: "live_probe",
+          verified_at_ms: 2_000,
+        },
       },
-    }],
+    ],
   };
   const existingSnapshot = {
     source: "chatgpt_codex",
@@ -899,8 +883,8 @@ Deno.test("codex catalog: normalized refresh retries preserve same-slug prompt-c
         catalogBody("0.201.0", {
           models: [{ slug: "gpt-cache-probe", supported_reasoning_levels: ["medium"] }],
         }),
-        { headers: { "Content-Type": "application/json" } },
-      ),
+        { headers: { "Content-Type": "application/json" } }
+      )
     );
 
   beforeAtomicCommit = (ops) => {
@@ -916,10 +900,10 @@ Deno.test("codex catalog: normalized refresh retries preserve same-slug prompt-c
     assert.equal((await handleCodexCatalogModels(request("0.201.0"), "0.201.0")).status, 200);
     const snapshot = kvStore.get(keyToString(SNAPSHOT_KEY))?.value as {
       client_version?: string;
-      models?: Array<{ slug?: string; prompt_cache?: unknown }>;
+      models?: { slug?: string; prompt_cache?: unknown }[];
     };
     const runtime = kvStore.get(keyToString(RUNTIME_CONFIG_V2_KEY))?.value as {
-      codex_models?: { models?: Array<{ slug?: string; prompt_cache?: unknown }> };
+      codex_models?: { models?: { slug?: string; prompt_cache?: unknown }[] };
     };
     assert.equal(snapshot.client_version, "0.201.0");
     assert.deepEqual(snapshot.models?.[0]?.prompt_cache, promptCache);
@@ -942,41 +926,45 @@ Deno.test("codex catalog: model picker receives the complete unique union of pai
   await fetchMeteredModels({
     force: true,
     fetcher: () =>
-      Promise.resolve(Response.json({
-        data: [
-          {
-            id: "shared-paid-model",
-            owned_by: "openlux",
-            supported_endpoint_types: ["openai-response"],
-            description: "OpenLux route",
-          },
-          {
-            id: "openlux-only-model",
-            owned_by: "openlux",
-            supported_endpoint_types: ["openai-response"],
-          },
-          {
-            id: "chat-only-model",
-            owned_by: "openlux",
-            supported_endpoint_types: ["openai"],
-          },
-        ],
-      })),
+      Promise.resolve(
+        Response.json({
+          data: [
+            {
+              id: "shared-paid-model",
+              owned_by: "openlux",
+              supported_endpoint_types: ["openai-response"],
+              description: "OpenLux route",
+            },
+            {
+              id: "openlux-only-model",
+              owned_by: "openlux",
+              supported_endpoint_types: ["openai-response"],
+            },
+            {
+              id: "chat-only-model",
+              owned_by: "openlux",
+              supported_endpoint_types: ["openai"],
+            },
+          ],
+        })
+      ),
   });
   await fetchSurplusModels({
     apiKey: "surplus-catalog-test-key",
     force: true,
     fetcher: () =>
-      Promise.resolve(Response.json({
-        data: [
-          { id: "shared-paid-model", provider: "surplus" },
-          { id: "surplus-only-model", provider: "surplus" },
-          { id: "deepseek-v4-flash", provider: "surplus" },
-          { id: "deepseek-v4-flash-0731", provider: "surplus" },
-          { id: "deepseek-v4-flash:web", provider: "surplus" },
-          { id: "minimax-m2.7", provider: "surplus" },
-        ],
-      })),
+      Promise.resolve(
+        Response.json({
+          data: [
+            { id: "shared-paid-model", provider: "surplus" },
+            { id: "surplus-only-model", provider: "surplus" },
+            { id: "deepseek-v4-flash", provider: "surplus" },
+            { id: "deepseek-v4-flash-0731", provider: "surplus" },
+            { id: "deepseek-v4-flash:web", provider: "surplus" },
+            { id: "minimax-m2.7", provider: "surplus" },
+          ],
+        })
+      ),
   });
   globalThis.fetch = (input) => {
     const version = new URL(String(input)).searchParams.get("client_version") ?? "missing";
@@ -986,7 +974,7 @@ Deno.test("codex catalog: model picker receives the complete unique union of pai
   try {
     const response = await handleCodexCatalogModels(request("0.148.0"), "0.148.0");
     assert.equal(response.status, 200);
-    const payload = await response.json() as { models: Array<Record<string, unknown>> };
+    const payload = (await response.json()) as { models: Record<string, unknown>[] };
     const slugs = payload.models.map((model) => model.slug);
     assert.deepEqual(slugs, [
       "gpt-0.148.0",
@@ -1000,21 +988,17 @@ Deno.test("codex catalog: model picker receives the complete unique union of pai
     ]);
     assert.equal(new Set(slugs).size, slugs.length);
     assert.equal(payload.models.find((model) => model.slug === "shared-paid-model")?.visibility, "list");
-    assert.deepEqual(
-      payload.models.find((model) => model.slug === "surplus-only-model")?.supported_reasoning_levels,
-      [{ effort: "none", description: "No reasoning" }],
-    );
+    assert.deepEqual(payload.models.find((model) => model.slug === "surplus-only-model")?.supported_reasoning_levels, [
+      { effort: "none", description: "No reasoning" },
+    ]);
     for (const slug of ["deepseek-v4-flash", "deepseek-v4-flash-0731", "deepseek-v4-flash:web"]) {
       const model = payload.models.find((candidate) => candidate.slug === slug);
-      assert.deepEqual(
-        model?.supported_reasoning_levels,
-        [
-          { effort: "none", description: "Disable optional reasoning" },
-          { effort: "low", description: "Reasoning effort: low" },
-          { effort: "high", description: "Reasoning effort: high" },
-          { effort: "max", description: "Maximum reasoning depth" },
-        ],
-      );
+      assert.deepEqual(model?.supported_reasoning_levels, [
+        { effort: "none", description: "Disable optional reasoning" },
+        { effort: "low", description: "Reasoning effort: low" },
+        { effort: "high", description: "Reasoning effort: high" },
+        { effort: "max", description: "Maximum reasoning depth" },
+      ]);
       assert.equal(model?.default_reasoning_level, "high");
       assert.equal(model?.context_window, 1_000_000);
       assert.equal(model?.max_context_window, 1_000_000);
@@ -1046,9 +1030,11 @@ Deno.test("codex catalog: cold provider caches cannot publish the incomplete Cod
   Deno.env.set("METERED_API_KEY", "metered-cold-catalog-test-key");
   Deno.env.set("SURPLUS_API_KEY", "surplus-cold-catalog-test-key");
   setMeteredModelsFetchForTest(() =>
-    Promise.resolve(Response.json({
-      data: [{ id: "cold-openlux-model", owned_by: "openlux", supported_endpoint_types: ["openai-response"] }],
-    }))
+    Promise.resolve(
+      Response.json({
+        data: [{ id: "cold-openlux-model", owned_by: "openlux", supported_endpoint_types: ["openai-response"] }],
+      })
+    )
   );
   globalThis.fetch = (input) => {
     const url = String(input);
@@ -1062,13 +1048,13 @@ Deno.test("codex catalog: cold provider caches cannot publish the incomplete Cod
   try {
     const response = await handleCodexCatalogModels(request("0.203.0"), "0.203.0");
     assert.equal(response.status, 200);
-    const payload = await response.json() as { models: Array<Record<string, unknown>> };
+    const payload = (await response.json()) as { models: Record<string, unknown>[] };
     const slugs = payload.models.map((model) => model.slug);
     assert.equal(slugs.includes("cold-openlux-model"), true);
     const deepseek = payload.models.find((model) => model.slug === "deepseek-v4-flash");
     assert.deepEqual(
-      (deepseek?.supported_reasoning_levels as Array<{ effort: string }>).map((level) => level.effort),
-      ["none", "low", "high", "max"],
+      (deepseek?.supported_reasoning_levels as { effort: string }[]).map((level) => level.effort),
+      ["none", "low", "high", "max"]
     );
   } finally {
     globalThis.fetch = originalFetch;
@@ -1089,8 +1075,8 @@ Deno.test("paid-provider model caches ignore out-of-order Metered refreshes", as
   let calls = 0;
   let resolveOlder!: (response: Response) => void;
   let resolveNewer!: (response: Response) => void;
-  const olderResponse = new Promise<Response>((resolve) => resolveOlder = resolve);
-  const newerResponse = new Promise<Response>((resolve) => resolveNewer = resolve);
+  const olderResponse = new Promise<Response>((resolve) => (resolveOlder = resolve));
+  const newerResponse = new Promise<Response>((resolve) => (resolveNewer = resolve));
   const fetcher = () => {
     calls += 1;
     return calls === 1 ? olderResponse : newerResponse;
@@ -1100,16 +1086,26 @@ Deno.test("paid-provider model caches ignore out-of-order Metered refreshes", as
     const older = fetchMeteredModels({ force: true, fetcher });
     const newer = fetchMeteredModels({ force: true, fetcher });
     assert.equal(calls, 2);
-    resolveNewer(Response.json({
-      data: [{ id: "new-metered-model", owned_by: "openlux", supported_endpoint_types: ["openai-response"] }],
-    }));
-    assert.deepEqual((await newer)?.models.map((model) => model.id), ["new-metered-model"]);
-    resolveOlder(Response.json({
-      data: [{ id: "old-metered-model", owned_by: "openlux", supported_endpoint_types: ["openai-response"] }],
-    }));
+    resolveNewer(
+      Response.json({
+        data: [{ id: "new-metered-model", owned_by: "openlux", supported_endpoint_types: ["openai-response"] }],
+      })
+    );
+    assert.deepEqual(
+      (await newer)?.models.map((model) => model.id),
+      ["new-metered-model"]
+    );
+    resolveOlder(
+      Response.json({
+        data: [{ id: "old-metered-model", owned_by: "openlux", supported_endpoint_types: ["openai-response"] }],
+      })
+    );
     await older;
     const cached = await fetchMeteredModels({ fetcher });
-    assert.deepEqual(cached?.models.map((model) => model.id), ["new-metered-model"]);
+    assert.deepEqual(
+      cached?.models.map((model) => model.id),
+      ["new-metered-model"]
+    );
     assert.equal(calls, 2);
   } finally {
     resetMeteredModelsCacheForTest();
@@ -1123,8 +1119,8 @@ Deno.test("paid-provider model caches ignore out-of-order Surplus refreshes", as
   let calls = 0;
   let resolveOlder!: (response: Response) => void;
   let resolveNewer!: (response: Response) => void;
-  const olderResponse = new Promise<Response>((resolve) => resolveOlder = resolve);
-  const newerResponse = new Promise<Response>((resolve) => resolveNewer = resolve);
+  const olderResponse = new Promise<Response>((resolve) => (resolveOlder = resolve));
+  const newerResponse = new Promise<Response>((resolve) => (resolveNewer = resolve));
   const fetcher = () => {
     calls += 1;
     return calls === 1 ? olderResponse : newerResponse;
@@ -1135,11 +1131,17 @@ Deno.test("paid-provider model caches ignore out-of-order Surplus refreshes", as
     const newer = fetchSurplusModels({ apiKey: "surplus-cache-race-test-key", force: true, fetcher });
     assert.equal(calls, 2);
     resolveNewer(Response.json({ data: [{ id: "new-surplus-model" }] }));
-    assert.deepEqual((await newer)?.models.map((model) => model.id), ["new-surplus-model"]);
+    assert.deepEqual(
+      (await newer)?.models.map((model) => model.id),
+      ["new-surplus-model"]
+    );
     resolveOlder(Response.json({ data: [{ id: "old-surplus-model" }] }));
     await older;
     const cached = await fetchSurplusModels({ apiKey: "surplus-cache-race-test-key", fetcher });
-    assert.deepEqual(cached?.models.map((model) => model.id), ["new-surplus-model"]);
+    assert.deepEqual(
+      cached?.models.map((model) => model.id),
+      ["new-surplus-model"]
+    );
     assert.equal(calls, 2);
   } finally {
     resetSurplusModelsCacheForTest();
@@ -1159,9 +1161,11 @@ Deno.test("paid-provider model refresh failures use a cooldown", async () => {
     await fetchMeteredModels({
       force: true,
       fetcher: () =>
-        Promise.resolve(Response.json({
-          data: [{ id: "stale-metered-model", owned_by: "openlux", supported_endpoint_types: ["openai-response"] }],
-        })),
+        Promise.resolve(
+          Response.json({
+            data: [{ id: "stale-metered-model", owned_by: "openlux", supported_endpoint_types: ["openai-response"] }],
+          })
+        ),
     });
     await fetchSurplusModels({
       apiKey: "surplus-cache-backoff-test-key",
@@ -1209,17 +1213,19 @@ Deno.test("codex catalog: expired paid-provider caches schedule background refre
   let surplusRefreshes = 0;
   let resolveMeteredRefresh!: (response: Response) => void;
   let resolveSurplusRefresh!: (response: Response) => void;
-  const meteredRefreshResponse = new Promise<Response>((resolve) => resolveMeteredRefresh = resolve);
-  const surplusRefreshResponse = new Promise<Response>((resolve) => resolveSurplusRefresh = resolve);
+  const meteredRefreshResponse = new Promise<Response>((resolve) => (resolveMeteredRefresh = resolve));
+  const surplusRefreshResponse = new Promise<Response>((resolve) => (resolveSurplusRefresh = resolve));
   Deno.env.set("METERED_API_KEY", "metered-catalog-stale-test-key");
   Deno.env.set("SURPLUS_API_KEY", "surplus-catalog-stale-test-key");
   Date.now = () => baseNow;
   await fetchMeteredModels({
     force: true,
     fetcher: () =>
-      Promise.resolve(Response.json({
-        data: [{ id: "stale-openlux-model", owned_by: "openlux", supported_endpoint_types: ["openai-response"] }],
-      })),
+      Promise.resolve(
+        Response.json({
+          data: [{ id: "stale-openlux-model", owned_by: "openlux", supported_endpoint_types: ["openai-response"] }],
+        })
+      ),
   });
   await fetchSurplusModels({
     apiKey: "surplus-catalog-stale-test-key",
@@ -1238,9 +1244,11 @@ Deno.test("codex catalog: expired paid-provider caches schedule background refre
     const url = String(input);
     if (url === "https://api.openlux.ai/v1/models") {
       meteredRefreshes += 1;
-      return Promise.resolve(Response.json({
-        data: [{ id: "fresh-openlux-model", owned_by: "openlux", supported_endpoint_types: ["openai-response"] }],
-      }));
+      return Promise.resolve(
+        Response.json({
+          data: [{ id: "fresh-openlux-model", owned_by: "openlux", supported_endpoint_types: ["openai-response"] }],
+        })
+      );
     }
     if (url === "https://api.surplusintelligence.ai/v1/models") {
       surplusRefreshes += 1;
@@ -1258,14 +1266,16 @@ Deno.test("codex catalog: expired paid-provider caches schedule background refre
     assert.equal(meteredRefreshes, 1);
     assert.equal(surplusRefreshes, 1);
 
-    resolveMeteredRefresh(Response.json({
-      data: [{ id: "fresh-openlux-model", owned_by: "openlux", supported_endpoint_types: ["openai-response"] }],
-    }));
+    resolveMeteredRefresh(
+      Response.json({
+        data: [{ id: "fresh-openlux-model", owned_by: "openlux", supported_endpoint_types: ["openai-response"] }],
+      })
+    );
     resolveSurplusRefresh(Response.json({ data: [{ id: "fresh-surplus-model" }] }));
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     const refreshed = await handleCodexCatalogModels(request("0.202.0"), "0.202.0");
-    const payload = await refreshed.json() as { models: Array<{ slug?: string }> };
+    const payload = (await refreshed.json()) as { models: { slug?: string }[] };
     const slugs = payload.models.map((model) => model.slug);
     assert.equal(slugs.includes("fresh-openlux-model"), true);
     assert.equal(slugs.includes("fresh-surplus-model"), true);

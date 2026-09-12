@@ -1,10 +1,4 @@
-import {
-  CODEX_AUTH_POOL_KV_KEY,
-  CODEX_MODELS_KV_KEY,
-  type CodexModelsSnapshot,
-  fetchCodexModels,
-  preserveCodexDefaultModel,
-} from "./codex.ts";
+import { CODEX_AUTH_POOL_KV_KEY, CODEX_MODELS_KV_KEY, type CodexModelsSnapshot, fetchCodexModels, preserveCodexDefaultModel } from "./codex.ts";
 import {
   CODEX_CHATGPT_PROMPT_CACHE_PROVIDER,
   compareCodexClientVersions,
@@ -19,13 +13,7 @@ import {
 } from "./codex_models.ts";
 import { openaiError } from "./http.ts";
 import { getKv } from "./kv.ts";
-import {
-  buildRuntimeConfig,
-  cacheRuntimeConfig,
-  normalizeRuntimeConfig,
-  RUNTIME_CONFIG_V2_KEY,
-  type RuntimeConfigV2,
-} from "./runtime_config.ts";
+import { buildRuntimeConfig, cacheRuntimeConfig, normalizeRuntimeConfig, RUNTIME_CONFIG_V2_KEY, type RuntimeConfigV2 } from "./runtime_config.ts";
 import { getString, isRecord, sha256Hex } from "./utils.ts";
 import { fetchMeteredModels, METERED_MODELS_CACHE_TTL_MS } from "./metered.ts";
 import type { recordSentinelProviderDegradationFromEnvironment } from "./sentinel_incident_outbox.ts";
@@ -75,22 +63,21 @@ export type PromptCacheScopePromotionLease = Readonly<{
 export type PromptCacheScopePromotionResult =
   | Readonly<{ status: "promoted" }>
   | Readonly<{
-    status: "inconclusive";
-    reason:
-      | "invalid_scope"
-      | "lease_lost"
-      | "snapshot_unavailable"
-      | "runtime_unavailable"
-      | "model_drift"
-      | "auth_pool_drift"
-      | "capability_changed"
-      | "catalog_drift"
-      | "runtime_drift"
-      | "cas_conflict";
-  }>;
+      status: "inconclusive";
+      reason:
+        | "invalid_scope"
+        | "lease_lost"
+        | "snapshot_unavailable"
+        | "runtime_unavailable"
+        | "model_drift"
+        | "auth_pool_drift"
+        | "capability_changed"
+        | "catalog_drift"
+        | "runtime_drift"
+        | "cas_conflict";
+    }>;
 
-const catalogMemoKey = (metadata: CodexCatalogMetadata): string =>
-  `${metadata.client_version}:${metadata.auth_generation}:${metadata.body_generation}`;
+const catalogMemoKey = (metadata: CodexCatalogMetadata): string => `${metadata.client_version}:${metadata.auth_generation}:${metadata.body_generation}`;
 
 const deleteCatalogMemoVersion = (version: string): void => {
   for (const [key, catalog] of catalogMemo) {
@@ -111,33 +98,24 @@ const memoizeCatalog = (catalog: LoadedCodexCatalog): void => {
   }
 };
 
-export const resetCodexCatalogMemoForTest = (): void => catalogMemo.clear();
+export const resetCodexCatalogMemoForTest = (): void => {
+  catalogMemo.clear();
+};
 
-export const getCodexCatalogMemoVersionsForTest = (): string[] =>
-  [...catalogMemo.values()].map((catalog) => catalog.metadata.client_version);
+export const getCodexCatalogMemoVersionsForTest = (): string[] => [...catalogMemo.values()].map((catalog) => catalog.metadata.client_version);
 
 const metadataKey = (version: string): Deno.KvKey => [...CODEX_CATALOG_PREFIX, version];
-const chunkKey = (version: string, generation: string, index: number): Deno.KvKey => [
-  ...CODEX_CATALOG_CHUNK_PREFIX,
-  version,
-  generation,
-  index,
-];
+const chunkKey = (version: string, generation: string, index: number): Deno.KvKey => [...CODEX_CATALOG_CHUNK_PREFIX, version, generation, index];
 const leaseKey = (version: string): Deno.KvKey => [...CODEX_CATALOG_LEASE_PREFIX, version];
 
-const deleteCatalogChunks = async (
-  kv: Deno.Kv,
-  version: string,
-  generation: string,
-  chunkCount: number,
-): Promise<void> => {
+const deleteCatalogChunks = async (kv: Deno.Kv, version: string, generation: string, chunkCount: number): Promise<void> => {
   for (let index = 0; index < chunkCount; index += 1) {
     await kv.delete(chunkKey(version, generation, index));
   }
 };
 
 const pruneCatalogVersions = async (kv: Deno.Kv, currentVersion: string): Promise<void> => {
-  const catalogs: Array<{ entry: Deno.KvEntry<CodexCatalogMetadata>; metadata: CodexCatalogMetadata }> = [];
+  const catalogs: { entry: Deno.KvEntry<CodexCatalogMetadata>; metadata: CodexCatalogMetadata }[] = [];
   for await (const entry of kv.list<CodexCatalogMetadata>({ prefix: CODEX_CATALOG_PREFIX })) {
     if (isCatalogMetadata(entry.value)) catalogs.push({ entry, metadata: entry.value });
   }
@@ -180,7 +158,8 @@ const parseCatalogBody = (body: string): Record<string, unknown> | null => {
       const id = getString(model.slug) ?? getString(model.id) ?? getString(model.model) ?? getString(model.name);
       return Boolean(id?.trim());
     })
-  ) return null;
+  )
+    return null;
   return parsed;
 };
 
@@ -200,12 +179,7 @@ const isCatalogMetadata = (value: unknown): value is CodexCatalogMetadata =>
   typeof value.body_bytes === "number" &&
   typeof value.sha256 === "string";
 
-const loadCatalog = async (
-  kv: Deno.Kv,
-  version: string,
-  authGeneration: string,
-  nowMs: number,
-): Promise<LoadedCodexCatalog | null> => {
+const loadCatalog = async (kv: Deno.Kv, version: string, authGeneration: string, nowMs: number): Promise<LoadedCodexCatalog | null> => {
   const entry = await kv.get<CodexCatalogMetadata>(metadataKey(version));
   const metadata = entry.value;
   if (!isCatalogMetadata(metadata) || metadata.auth_generation !== authGeneration) return null;
@@ -218,10 +192,7 @@ const loadCatalog = async (
   }
 
   const entries = await Promise.all(
-    Array.from(
-      { length: metadata.chunk_count },
-      (_, index) => kv.get<Uint8Array>(chunkKey(version, metadata.body_generation, index)),
-    ),
+    Array.from({ length: metadata.chunk_count }, (_, index) => kv.get<Uint8Array>(chunkKey(version, metadata.body_generation, index)))
   );
   const chunks: Uint8Array[] = [];
   let totalBytes = 0;
@@ -242,7 +213,7 @@ const loadCatalog = async (
   try {
     const body = await gunzip(compressed);
     if (new TextEncoder().encode(body).byteLength !== metadata.body_bytes) return null;
-    if (await sha256Hex(body) !== metadata.sha256) return null;
+    if ((await sha256Hex(body)) !== metadata.sha256) return null;
     const parsed = parseCatalogBody(body);
     if (!parsed) return null;
     const loaded = { metadata, body, parsed };
@@ -262,7 +233,7 @@ export const storeCodexCatalog = async (
     etag?: string | null;
     contentType?: string | null;
     fetchedAtMs?: number;
-  }>,
+  }>
 ): Promise<boolean> => {
   if (!parseCodexClientVersion(input.clientVersion) || !parseCatalogBody(input.body)) return false;
   const fetchedAtMs = input.fetchedAtMs ?? Date.now();
@@ -273,11 +244,7 @@ export const storeCodexCatalog = async (
 
   for (let index = 0; index < chunkCount; index += 1) {
     const start = index * CODEX_CATALOG_CHUNK_BYTES;
-    await kv.set(
-      chunkKey(input.clientVersion, bodyGeneration, index),
-      compressed.slice(start, start + CODEX_CATALOG_CHUNK_BYTES),
-      { expireIn },
-    );
+    await kv.set(chunkKey(input.clientVersion, bodyGeneration, index), compressed.slice(start, start + CODEX_CATALOG_CHUNK_BYTES), { expireIn });
   }
 
   const metadata: CodexCatalogMetadata = {
@@ -298,11 +265,7 @@ export const storeCodexCatalog = async (
     await deleteCatalogChunks(kv, input.clientVersion, bodyGeneration, chunkCount);
     return false;
   }
-  const published = (await kv.atomic()
-    .check(generation)
-    .check(metadataEntry)
-    .set(metadataKey(input.clientVersion), metadata, { expireIn })
-    .commit()).ok;
+  const published = (await kv.atomic().check(generation).check(metadataEntry).set(metadataKey(input.clientVersion), metadata, { expireIn }).commit()).ok;
   if (!published) {
     await deleteCatalogChunks(kv, input.clientVersion, bodyGeneration, chunkCount);
     return false;
@@ -331,17 +294,18 @@ const getAuthGeneration = async (kv: Deno.Kv): Promise<string> => {
   throw new Error("Deno KV could not initialize the Codex catalog auth generation");
 };
 
-const acquireRefreshLease = async (
-  kv: Deno.Kv,
-  version: string,
-  owner: string,
-  nowMs: number,
-): Promise<boolean> => {
+const acquireRefreshLease = async (kv: Deno.Kv, version: string, owner: string, nowMs: number): Promise<boolean> => {
   const key = leaseKey(version);
   const entry = await kv.get<RefreshLease>(key);
   if (entry.value && entry.value.lease_until_ms > nowMs) return false;
   const lease: RefreshLease = { owner, lease_until_ms: nowMs + CODEX_CATALOG_REFRESH_LEASE_MS };
-  return (await kv.atomic().check(entry).set(key, lease, { expireIn: CODEX_CATALOG_REFRESH_LEASE_MS * 2 }).commit()).ok;
+  return (
+    await kv
+      .atomic()
+      .check(entry)
+      .set(key, lease, { expireIn: CODEX_CATALOG_REFRESH_LEASE_MS * 2 })
+      .commit()
+  ).ok;
 };
 
 const renewRefreshLease = async (kv: Deno.Kv, version: string, owner: string): Promise<boolean> => {
@@ -349,10 +313,20 @@ const renewRefreshLease = async (kv: Deno.Kv, version: string, owner: string): P
   const entry = await kv.get<RefreshLease>(key);
   if (entry.value?.owner !== owner) return false;
   const lease: RefreshLease = { owner, lease_until_ms: Date.now() + CODEX_CATALOG_REFRESH_LEASE_MS };
-  return (await kv.atomic().check(entry).set(key, lease, { expireIn: CODEX_CATALOG_REFRESH_LEASE_MS * 2 }).commit()).ok;
+  return (
+    await kv
+      .atomic()
+      .check(entry)
+      .set(key, lease, { expireIn: CODEX_CATALOG_REFRESH_LEASE_MS * 2 })
+      .commit()
+  ).ok;
 };
 
-const startRefreshLeaseHeartbeat = (kv: Deno.Kv, version: string, owner: string): {
+const startRefreshLeaseHeartbeat = (
+  kv: Deno.Kv,
+  version: string,
+  owner: string
+): {
   lost: () => boolean;
   stop: () => Promise<void>;
 } => {
@@ -361,20 +335,23 @@ const startRefreshLeaseHeartbeat = (kv: Deno.Kv, version: string, owner: string)
   let timer: ReturnType<typeof setTimeout> | null = null;
   let renewal: Promise<void> | null = null;
   const schedule = (): void => {
-    timer = setTimeout(() => {
-      renewal = renewRefreshLease(kv, version, owner)
-        .then((renewed) => {
-          if (!renewed) lost = true;
-        })
-        .catch((error) => {
-          lost = true;
-          console.error(`[ai.ubq.fi] Codex catalog lease renewal failed for ${version}:`, error);
-        })
-        .finally(() => {
-          renewal = null;
-          if (!stopped && !lost) schedule();
-        });
-    }, Math.floor(CODEX_CATALOG_REFRESH_LEASE_MS / 3));
+    timer = setTimeout(
+      () => {
+        renewal = renewRefreshLease(kv, version, owner)
+          .then((renewed) => {
+            if (!renewed) lost = true;
+          })
+          .catch((error) => {
+            lost = true;
+            console.error(`[ai.ubq.fi] Codex catalog lease renewal failed for ${version}:`, error);
+          })
+          .finally(() => {
+            renewal = null;
+            if (!stopped && !lost) schedule();
+          });
+      },
+      Math.floor(CODEX_CATALOG_REFRESH_LEASE_MS / 3)
+    );
   };
   schedule();
   return {
@@ -418,8 +395,11 @@ const waitForColdCatalog = async (kv: Deno.Kv, version: string): Promise<LoadedC
 };
 
 const ownsPromptCacheScopePromotionLease = (value: unknown, owner: string): boolean =>
-  isRecord(value) && value.owner === owner && typeof value.lease_until_ms === "number" &&
-  Number.isFinite(value.lease_until_ms) && value.lease_until_ms > Date.now();
+  isRecord(value) &&
+  value.owner === owner &&
+  typeof value.lease_until_ms === "number" &&
+  Number.isFinite(value.lease_until_ms) &&
+  value.lease_until_ms > Date.now();
 
 /**
  * Publish a concrete live scope observation without replacing catalog-owned
@@ -442,12 +422,15 @@ export const promoteCodexPromptCacheScope = async (
     catalogVersionstamp: string;
     /** The same fence for the compact runtime/default-model configuration. */
     runtimeVersionstamp: string;
-  }>,
+  }>
 ): Promise<PromptCacheScopePromotionResult> => {
   const model = input.model.trim();
   if (
-    !model || !input.authPoolVersionstamp.trim() || !input.catalogVersionstamp.trim() ||
-    !input.runtimeVersionstamp.trim() || input.scope.effective_model?.trim() !== model ||
+    !model ||
+    !input.authPoolVersionstamp.trim() ||
+    !input.catalogVersionstamp.trim() ||
+    !input.runtimeVersionstamp.trim() ||
+    input.scope.effective_model?.trim() !== model ||
     !isConcretePromptCacheScope(input.scope, 3)
   ) {
     return { status: "inconclusive", reason: "invalid_scope" };
@@ -469,8 +452,11 @@ export const promoteCodexPromptCacheScope = async (
 
     const snapshot = snapshotEntry.value;
     if (
-      !snapshot || !Array.isArray(snapshot.models) || !getString(snapshot.source)?.trim() ||
-      !Number.isSafeInteger(snapshot.updated_at_ms) || snapshot.updated_at_ms <= 0
+      !snapshot ||
+      !Array.isArray(snapshot.models) ||
+      !getString(snapshot.source)?.trim() ||
+      !Number.isSafeInteger(snapshot.updated_at_ms) ||
+      snapshot.updated_at_ms <= 0
     ) {
       return { status: "inconclusive", reason: "snapshot_unavailable" };
     }
@@ -495,12 +481,7 @@ export const promoteCodexPromptCacheScope = async (
     const defaultModel = preserveCodexDefaultModel(snapshot, currentRuntime.default_model);
     if (!defaultModel) return { status: "inconclusive", reason: "runtime_unavailable" };
 
-    const nextSnapshot = withCodexModelPromptCacheScope(
-      snapshot,
-      model,
-      CODEX_CHATGPT_PROMPT_CACHE_PROVIDER,
-      input.scope,
-    );
+    const nextSnapshot = withCodexModelPromptCacheScope(snapshot, model, CODEX_CHATGPT_PROMPT_CACHE_PROVIDER, input.scope);
     if (!nextSnapshot) return { status: "inconclusive", reason: "model_drift" };
 
     let nextRuntime: RuntimeConfigV2;
@@ -518,7 +499,8 @@ export const promoteCodexPromptCacheScope = async (
       lease_until_ms: Date.now() + PROMPT_CACHE_SCOPE_PROMOTION_LEASE_MS,
     };
 
-    const commit = await kv.atomic()
+    const commit = await kv
+      .atomic()
       .check(snapshotEntry)
       .check(runtimeEntry)
       .check(leaseEntry)
@@ -539,7 +521,7 @@ const maybeUpdateNormalizedSnapshot = async (
   version: string,
   authGeneration: string,
   parsed: Record<string, unknown>,
-  updatedAtMs: number,
+  updatedAtMs: number
 ): Promise<void> => {
   const next = normalizeCodexModelsPayload(parsed, {
     source: "chatgpt_codex",
@@ -566,7 +548,8 @@ const maybeUpdateNormalizedSnapshot = async (
       defaultReasoningEffort: currentRuntime?.default_reasoning_effort,
       nowMs: updatedAtMs,
     });
-    const commit = await kv.atomic()
+    const commit = await kv
+      .atomic()
       .check(generation)
       .check(current)
       .check(runtimeEntry)
@@ -591,7 +574,7 @@ const meteredCodexModelRecord = (
     description?: string;
     owned_by: string;
     supported_endpoint_types: readonly string[];
-  }>,
+  }>
 ) => {
   const context = recentModelContextFor(model.id);
   return {
@@ -602,21 +585,21 @@ const meteredCodexModelRecord = (
     supported_endpoint_types: [...model.supported_endpoint_types],
     supported_reasoning_levels: /^deepseek-v4-flash(?:-0731|:web)?$/.test(model.id)
       ? [
-        { effort: "none", description: "Disable optional reasoning" },
-        { effort: "low", description: "Reasoning effort: low" },
-        { effort: "high", description: "Reasoning effort: high" },
-        { effort: "max", description: "Maximum reasoning depth" },
-      ]
+          { effort: "none", description: "Disable optional reasoning" },
+          { effort: "low", description: "Reasoning effort: low" },
+          { effort: "high", description: "Reasoning effort: high" },
+          { effort: "max", description: "Maximum reasoning depth" },
+        ]
       : [{ effort: "none", description: "No reasoning" }],
     default_reasoning_level: /^deepseek-v4-flash(?:-0731|:web)?$/.test(model.id) ? "high" : "none",
     ...(context
       ? {
-        model_class: context.model_class,
-        context_window: context.context_window_tokens,
-        max_context_window: context.max_context_window_tokens,
-        auto_compact_token_limit: context.auto_compact_token_limit_tokens,
-        effective_context_window_percent: context.effective_context_window_percent,
-      }
+          model_class: context.model_class,
+          context_window: context.context_window_tokens,
+          max_context_window: context.max_context_window_tokens,
+          auto_compact_token_limit: context.auto_compact_token_limit_tokens,
+          effective_context_window_percent: context.effective_context_window_percent,
+        }
       : {}),
     shell_type: "shell_command",
     visibility: "list",
@@ -640,7 +623,9 @@ const uniqueResponsesModels = <
     id: string;
     supported_endpoint_types: readonly string[];
   }>,
->(models: readonly T[]): T[] => {
+>(
+  models: readonly T[]
+): T[] => {
   const seen = new Set<string>();
   return models.filter((model) => {
     if (!model.supported_endpoint_types.includes("openai-response") || seen.has(model.id)) return false;
@@ -656,14 +641,8 @@ const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheS
     "x-uos-upstream": "chatgpt_codex",
     "x-uos-cache": cacheState,
   });
-  const [cachedMetered, cachedSurplus] = await Promise.all([
-    fetchMeteredModels({ cachedOnly: true }),
-    fetchSurplusModels({ cachedOnly: true }),
-  ]);
-  const [metered, surplus] = await Promise.all([
-    cachedMetered ?? fetchMeteredModels(),
-    cachedSurplus ?? fetchSurplusModels(),
-  ]);
+  const [cachedMetered, cachedSurplus] = await Promise.all([fetchMeteredModels({ cachedOnly: true }), fetchSurplusModels({ cachedOnly: true })]);
+  const [metered, surplus] = await Promise.all([cachedMetered ?? fetchMeteredModels(), cachedSurplus ?? fetchSurplusModels()]);
   const nowMs = Date.now();
   if (metered && nowMs - metered.updated_at_ms >= METERED_MODELS_CACHE_TTL_MS) {
     void fetchMeteredModels().catch(() => {});
@@ -684,11 +663,12 @@ const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheS
     models: [...(Array.isArray(catalog.parsed.models) ? catalog.parsed.models : [])],
   };
   const seen = new Set(
-    parsed.models.map((model) => {
-      if (!isRecord(model)) return null;
-      return (getString(model.slug) ?? getString(model.id) ?? getString(model.model) ?? getString(model.name))
-        ?.trim() ?? null;
-    }).filter((id): id is string => Boolean(id)),
+    parsed.models
+      .map((model) => {
+        if (!isRecord(model)) return null;
+        return (getString(model.slug) ?? getString(model.id) ?? getString(model.model) ?? getString(model.name))?.trim() ?? null;
+      })
+      .filter((id): id is string => Boolean(id))
   );
   for (const model of paidModels) {
     if (seen.has(model.id)) continue;
@@ -705,10 +685,7 @@ const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheS
 };
 
 const meteredCatalogResponse = async (): Promise<Response | null> => {
-  const [metered, surplus] = await Promise.all([
-    fetchMeteredModels({ force: true }),
-    fetchSurplusModels({ force: true }),
-  ]);
+  const [metered, surplus] = await Promise.all([fetchMeteredModels({ force: true }), fetchSurplusModels({ force: true })]);
   const paidModels = uniqueResponsesModels([...(metered?.models ?? []), ...(surplus?.models ?? [])]);
   if (!paidModels.length) return null;
   return new Response(
@@ -722,7 +699,7 @@ const meteredCatalogResponse = async (): Promise<Response | null> => {
         "Cache-Control": "private, max-age=300",
         "x-uos-upstream": "metered",
       },
-    },
+    }
   );
 };
 
@@ -731,24 +708,15 @@ type CodexCatalogDependencies = Readonly<{
   recordSentinelDegradation?: typeof recordSentinelProviderDegradationFromEnvironment;
 }>;
 
-const recordCatalogDegradation = async (
-  version: string,
-  dependencies: CodexCatalogDependencies,
-): Promise<void> => {
+const recordCatalogDegradation = async (version: string, dependencies: CodexCatalogDependencies): Promise<void> => {
   try {
-    await dependencies.recordSentinelDegradation?.(
-      dependencies.now?.() ?? Date.now(),
-    );
+    await dependencies.recordSentinelDegradation?.(dependencies.now?.() ?? Date.now());
   } catch (error) {
     console.error(`[ai.ubq.fi] Sentinel catalog degradation record failed for ${version}:`, error);
   }
 };
 
-export const handleCodexCatalogModels = async (
-  req: Request,
-  rawVersion: string,
-  dependencies: CodexCatalogDependencies = {},
-): Promise<Response> => {
+export const handleCodexCatalogModels = async (req: Request, rawVersion: string, dependencies: CodexCatalogDependencies = {}): Promise<Response> => {
   const version = rawVersion.trim();
   if (!parseCodexClientVersion(version)) {
     return openaiError(400, "client_version must be an exact X.Y.Z version", "invalid_client_version", {
@@ -757,8 +725,7 @@ export const handleCodexCatalogModels = async (
   }
   const kv = await getKv();
   if (!kv) {
-    return await meteredCatalogResponse() ??
-      openaiError(502, "Codex model catalog cache is unavailable", "codex_catalog_unavailable");
+    return (await meteredCatalogResponse()) ?? openaiError(502, "Codex model catalog cache is unavailable", "codex_catalog_unavailable");
   }
 
   let authGeneration: string;
@@ -766,8 +733,7 @@ export const handleCodexCatalogModels = async (
     authGeneration = await getAuthGeneration(kv);
   } catch (error) {
     console.error("[ai.ubq.fi] Codex catalog generation initialization failed:", error);
-    return await meteredCatalogResponse() ??
-      openaiError(502, "Codex model catalog cache is unavailable", "codex_catalog_unavailable");
+    return (await meteredCatalogResponse()) ?? openaiError(502, "Codex model catalog cache is unavailable", "codex_catalog_unavailable");
   }
   const nowMs = Date.now();
   const cached = await loadCatalog(kv, version, authGeneration, nowMs).catch((error) => {
@@ -790,8 +756,7 @@ export const handleCodexCatalogModels = async (
       return null;
     });
     if (waited) return catalogResponse(waited, req, "wait");
-    return await meteredCatalogResponse() ??
-      openaiError(502, "Codex model catalog refresh is already in progress", "codex_catalog_unavailable");
+    return (await meteredCatalogResponse()) ?? openaiError(502, "Codex model catalog refresh is already in progress", "codex_catalog_unavailable");
   }
 
   const leaseHeartbeat = startRefreshLeaseHeartbeat(kv, version, leaseOwner);
@@ -806,14 +771,14 @@ export const handleCodexCatalogModels = async (
     const upstream = await fetchCodexModels({
       clientVersion: version,
       ifNoneMatch: cached?.metadata.etag ?? null,
-      onProviderTransportFailure: () => providerDegradationObserved = true,
+      onProviderTransportFailure: () => (providerDegradationObserved = true),
     });
     if (upstream.status >= 500 && upstream.status <= 599) {
       providerDegradationObserved = true;
     }
     await recordObservedProviderDegradation();
     if (upstream.status === 304 && cached) {
-      if (leaseHeartbeat.lost() || !await authGenerationIsCurrent(kv, authGeneration)) {
+      if (leaseHeartbeat.lost() || !(await authGenerationIsCurrent(kv, authGeneration))) {
         const replacement = await loadCurrentGenerationCatalog(kv, version).catch(() => null);
         return replacement
           ? catalogResponse(replacement, req, "rotated")
@@ -827,7 +792,7 @@ export const handleCodexCatalogModels = async (
         contentType: cached.metadata.content_type,
         fetchedAtMs: nowMs,
       });
-      if (!revalidated || !await authGenerationIsCurrent(kv, authGeneration)) {
+      if (!revalidated || !(await authGenerationIsCurrent(kv, authGeneration))) {
         const replacement = await loadCurrentGenerationCatalog(kv, version).catch(() => null);
         return replacement
           ? catalogResponse(replacement, req, "rotated")
@@ -850,21 +815,20 @@ export const handleCodexCatalogModels = async (
     }
     const parsed = contentType?.toLowerCase().includes("application/json") ? parseCatalogBody(body) : null;
     if (!upstream.ok || !parsed) {
-      console.error(
-        `[ai.ubq.fi] Codex catalog refresh failed for ${version}: upstream ${upstream.status} ${body.slice(0, 240)}`,
-      );
+      console.error(`[ai.ubq.fi] Codex catalog refresh failed for ${version}: upstream ${upstream.status} ${body.slice(0, 240)}`);
       let recovery: Response;
-      if (cached && await authGenerationIsCurrent(kv, authGeneration)) {
+      if (cached && (await authGenerationIsCurrent(kv, authGeneration))) {
         recovery = await catalogResponse(cached, req, "stale");
       } else {
         const replacement = await loadCurrentGenerationCatalog(kv, version).catch(() => null);
-        recovery = replacement ? await catalogResponse(replacement, req, "rotated") : await meteredCatalogResponse() ??
-          openaiError(502, "Codex upstream did not return a valid model catalog", "codex_catalog_unavailable");
+        recovery = replacement
+          ? await catalogResponse(replacement, req, "rotated")
+          : ((await meteredCatalogResponse()) ?? openaiError(502, "Codex upstream did not return a valid model catalog", "codex_catalog_unavailable"));
       }
       return recovery;
     }
 
-    if (leaseHeartbeat.lost() || !await authGenerationIsCurrent(kv, authGeneration)) {
+    if (leaseHeartbeat.lost() || !(await authGenerationIsCurrent(kv, authGeneration))) {
       const replacement = await loadCurrentGenerationCatalog(kv, version).catch(() => null);
       return replacement
         ? catalogResponse(replacement, req, "rotated")
@@ -880,36 +844,37 @@ export const handleCodexCatalogModels = async (
       fetchedAtMs: nowMs,
     });
     if (!stored) {
-      if (cached && await authGenerationIsCurrent(kv, authGeneration)) {
+      if (cached && (await authGenerationIsCurrent(kv, authGeneration))) {
         return catalogResponse(cached, req, "stale");
       }
       const replacement = await loadCurrentGenerationCatalog(kv, version).catch(() => null);
-      return replacement ? catalogResponse(replacement, req, "rotated") : await meteredCatalogResponse() ??
-        openaiError(502, "Codex model catalog could not be cached", "codex_catalog_unavailable");
+      return replacement
+        ? catalogResponse(replacement, req, "rotated")
+        : ((await meteredCatalogResponse()) ?? openaiError(502, "Codex model catalog could not be cached", "codex_catalog_unavailable"));
     }
     await maybeUpdateNormalizedSnapshot(kv, version, authGeneration, parsed, nowMs).catch((error) => {
       console.error(`[ai.ubq.fi] Codex normalized snapshot update failed for ${version}:`, error);
     });
-    if (!await authGenerationIsCurrent(kv, authGeneration)) {
+    if (!(await authGenerationIsCurrent(kv, authGeneration))) {
       const replacement = await loadCurrentGenerationCatalog(kv, version).catch(() => null);
       return replacement
         ? catalogResponse(replacement, req, "rotated")
         : openaiError(502, "Codex authentication changed during catalog refresh", "codex_catalog_unavailable");
     }
     const storedCatalog = await loadCatalog(kv, version, authGeneration, nowMs);
-    return storedCatalog ? catalogResponse(storedCatalog, req, "miss") : await meteredCatalogResponse() ??
-      openaiError(502, "Codex model catalog could not be read after caching", "codex_catalog_unavailable");
+    return storedCatalog
+      ? catalogResponse(storedCatalog, req, "miss")
+      : ((await meteredCatalogResponse()) ?? openaiError(502, "Codex model catalog could not be read after caching", "codex_catalog_unavailable"));
   } catch (error) {
     console.error(`[ai.ubq.fi] Codex catalog refresh failed for ${version}:`, error);
     await recordObservedProviderDegradation();
     const generationCurrent = await authGenerationIsCurrent(kv, authGeneration).catch(() => false);
     const recovered = generationCurrent
-      ? cached ?? await loadCatalog(kv, version, authGeneration, Date.now()).catch(() => null)
+      ? (cached ?? (await loadCatalog(kv, version, authGeneration, Date.now()).catch(() => null)))
       : await loadCurrentGenerationCatalog(kv, version).catch(() => null);
     const recovery = recovered
       ? catalogResponse(recovered, req, generationCurrent ? (cached ? "stale" : "miss") : "rotated")
-      : await meteredCatalogResponse() ??
-        openaiError(502, "Codex upstream model catalog is unavailable", "codex_catalog_unavailable");
+      : ((await meteredCatalogResponse()) ?? openaiError(502, "Codex upstream model catalog is unavailable", "codex_catalog_unavailable"));
     return recovery;
   } finally {
     await leaseHeartbeat.stop();

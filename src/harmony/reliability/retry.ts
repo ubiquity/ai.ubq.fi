@@ -25,14 +25,14 @@ export const TRANSPORT_ERROR_CODE = "transport";
 
 export type RetryableCode = ToolErrorCode | typeof TRANSPORT_ERROR_CODE;
 
-export interface RetryPolicy {
+export type RetryPolicy = {
   /** Maximum retries of one identical call after a failure; default 1. */
   maxRetriesPerCall: number;
   /** Fixed delay before each retry, milliseconds; default 100. */
   backoffMs: number;
   /** Codes that allow an identical-call retry. */
   retryableCodes: readonly RetryableCode[];
-}
+};
 
 export const DEFAULT_RETRY_POLICY: RetryPolicy = {
   maxRetriesPerCall: 1,
@@ -40,14 +40,7 @@ export const DEFAULT_RETRY_POLICY: RetryPolicy = {
   retryableCodes: ["timeout", "internal", "unavailable", "transport"],
 };
 
-export const DEFAULT_DETERMINISTIC_CODES: readonly ToolErrorCode[] = [
-  "invalid_args",
-  "path_escape",
-  "write_scope",
-  "not_found",
-  "patch_failed",
-  "exec_failed",
-];
+export const DEFAULT_DETERMINISTIC_CODES: readonly ToolErrorCode[] = ["invalid_args", "path_escape", "write_scope", "not_found", "patch_failed", "exec_failed"];
 
 export type RetryDecision = Readonly<
   | { retry: true; delayMs: number; attempt: number; code: string; reason: "transient_code" }
@@ -74,7 +67,7 @@ export const decideRetry = (policy: RetryPolicy, code: string | null, priorAttem
 };
 
 /** One deterministic retry ledger: per-call-identity attempt accounting. */
-export interface RetryLedgerEntry {
+export type RetryLedgerEntry = {
   identity: string;
   attempts: number;
   failures: number;
@@ -84,15 +77,15 @@ export interface RetryLedgerEntry {
   recovered: boolean;
   lastOk: boolean;
   lastCode: string | null;
-}
+};
 
-export interface RetrySummary {
+export type RetrySummary = {
   attempts: number;
   retried: number;
   rejected: number;
   recovered: number;
   byReason: Record<string, number>;
-}
+};
 
 export class RetryLedger {
   readonly #entries = new Map<string, RetryLedgerEntry>();
@@ -108,11 +101,7 @@ export class RetryLedger {
    * identity was already attempted; pass 0 for first attempts.  The ledger
    * only tracks repeat attempts (identity seen before).
    */
-  observe(
-    identity: string,
-    result: Pick<ToolResult, "ok" | "error_code">,
-    priorAttempts: number,
-  ): RetryDecision | null {
+  observe(identity: string, result: Pick<ToolResult, "ok" | "error_code">, priorAttempts: number): RetryDecision | null {
     let entry = this.#entries.get(identity);
     if (entry === undefined) {
       entry = {
@@ -168,8 +157,6 @@ export class RetryLedger {
 /** Deterministic feedback for a blocked repeated call. */
 export const renderRepeatedFailureFeedback = (code: string | null, identity: string): string =>
   `repeated call blocked: an identical call with these arguments already failed (code: ${code ?? "none"}); ` +
-  `the same arguments in the same state will fail again — change the arguments or approach (call identity ${
-    digestLabel(identity)
-  })`;
+  `the same arguments in the same state will fail again — change the arguments or approach (call identity ${digestLabel(identity)})`;
 
 const digestLabel = (identity: string): string => digestShort(identity);

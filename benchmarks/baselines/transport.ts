@@ -15,21 +15,18 @@
 
 import { fetchCerebrasChatCompletions } from "../../src/cerebras.ts";
 
-export interface ChatTransportOptions {
+export type ChatTransportOptions = {
   signal?: AbortSignal;
-}
+};
 
 /** Minimal response shape; the native `Response` satisfies it. */
-export interface ChatTransportResponse {
+export type ChatTransportResponse = {
   readonly status: number;
   readonly ok: boolean;
   json(): Promise<unknown>;
-}
+};
 
-export type ChatTransport = (
-  body: Record<string, unknown>,
-  options?: ChatTransportOptions,
-) => Promise<ChatTransportResponse>;
+export type ChatTransport = (body: Record<string, unknown>, options?: ChatTransportOptions) => Promise<ChatTransportResponse>;
 
 /**
  * The live gateway transport for the current GPT-OSS Chat Completions

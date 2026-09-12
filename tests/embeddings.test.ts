@@ -46,77 +46,64 @@ const embeddingsProfileKey = (
   inputType: TestInputType = "document",
   dimensions: TestDimension = 1024,
   encodingFormat: TestEncodingFormat = "float",
-  truncation = true,
-): string =>
-  JSON.stringify([
-    "voyage-profile-v2",
-    "voyage-4-large",
-    inputType,
-    dimensions,
-    "float",
-    encodingFormat,
-    truncation,
-  ]);
+  truncation = true
+): string => JSON.stringify(["voyage-profile-v2", "voyage-4-large", inputType, dimensions, "float", encodingFormat, truncation]);
 
 const embeddingsCacheKey = (
   hash: string,
   inputType: TestInputType = "document",
   dimensions: TestDimension = 1024,
   encodingFormat: TestEncodingFormat = "float",
-  truncation = true,
-): Deno.KvKey => [
+  truncation = true
+): Deno.KvKey => ["embeddings", "v2", "cache", embeddingsProfileKey(inputType, dimensions, encodingFormat, truncation), hash];
+
+const embeddingsCacheGlobalIndexKey = (createdAtMs: number, cacheProfileKey: string, hash: string): Deno.KvKey => [
   "embeddings",
   "v2",
-  "cache",
-  embeddingsProfileKey(inputType, dimensions, encodingFormat, truncation),
+  "cache_index_global",
+  createdAtMs,
+  cacheProfileKey,
   hash,
 ];
 
-const embeddingsCacheGlobalIndexKey = (
-  createdAtMs: number,
-  cacheProfileKey: string,
-  hash: string,
-): Deno.KvKey => ["embeddings", "v2", "cache_index_global", createdAtMs, cacheProfileKey, hash];
-
-const embeddingsJobKey = (
-  tokenHash: string,
-  cacheProfileKey: string,
-  jobId: string,
-): Deno.KvKey => ["embeddings", "jobs", "v2", tokenHash, cacheProfileKey, jobId];
-
-const embeddingsJobLookupKey = (tokenHash: string, jobId: string): Deno.KvKey => [
+const embeddingsJobKey = (tokenHash: string, cacheProfileKey: string, jobId: string): Deno.KvKey => [
   "embeddings",
   "jobs",
   "v2",
-  "lookup",
   tokenHash,
+  cacheProfileKey,
   jobId,
 ];
 
-const testVector = (dimensions: TestDimension, seed = 0): number[] =>
-  Array.from({ length: dimensions }, (_, index) => seed + index / Math.max(1, dimensions));
+const embeddingsJobLookupKey = (tokenHash: string, jobId: string): Deno.KvKey => ["embeddings", "jobs", "v2", "lookup", tokenHash, jobId];
+
+const testVector = (dimensions: TestDimension, seed = 0): number[] => Array.from({ length: dimensions }, (_, index) => seed + index / Math.max(1, dimensions));
 // Keep these in sync with tests/openai-compat.test.ts so whichever test imports
 // src/openai.ts first doesn't change behavior.
 kvStore.set(keyToString(DEFAULT_REASONING_EFFORT_KEY), "low");
 kvStore.set(keyToString(["ubq_ai", "codex_auth"]), {
-  accounts: [{
-    access_token: "access",
-    refresh_token: "refresh",
-    account_id: "acct",
-    updated_at_ms: Date.now(),
-  }],
+  accounts: [
+    {
+      access_token: "access",
+      refresh_token: "refresh",
+      account_id: "acct",
+      updated_at_ms: Date.now(),
+    },
+  ],
   updated_at_ms: Date.now(),
 });
 kvStore.set(keyToString(["ubq_ai", "codex_models"]), {
   source: "chatgpt_codex",
   client_version: "0.125.0",
   updated_at_ms: Date.now(),
-  models: [{
-    slug: "gpt-5-fixture-default",
-    display_name: "GPT-5 Fixture Default",
-    default_reasoning_level: "medium",
-    supported_reasoning_levels: ["low", "medium", "high", "xhigh"],
-  }],
+  models: [
+    {
+      slug: "gpt-5-fixture-default",
+      display_name: "GPT-5 Fixture Default",
+      default_reasoning_level: "medium",
+      supported_reasoning_levels: ["low", "medium", "high", "xhigh"],
+    },
+  ],
 });
 kvStore.set(keyToString(["uos_ai", "voyage_api_key"]), "voyage_test_key");
 
@@ -124,15 +111,9 @@ const originalOpenKv = (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).
 const originalVoyageApiKey = Deno.env.get("VOYAGEAI_API_KEY");
 Deno.env.delete("VOYAGEAI_API_KEY");
 
-let failNextAtomicCommit:
-  | ((
-    checks: ReadonlyArray<Deno.KvEntryMaybe<unknown>>,
-    ops: ReadonlyArray<{ type: string; key: Deno.KvKey }>,
-  ) => boolean | Error)
-  | null = null;
+let failNextAtomicCommit: ((checks: readonly Deno.KvEntryMaybe<unknown>[], ops: readonly { type: string; key: Deno.KvKey }[]) => boolean | Error) | null = null;
 
-const kvVersionstamp = (rawKey: string): string | null =>
-  kvStore.has(rawKey) ? String(kvVersions.get(rawKey) ?? 1).padStart(20, "0") : null;
+const kvVersionstamp = (rawKey: string): string | null => (kvStore.has(rawKey) ? String(kvVersions.get(rawKey) ?? 1).padStart(20, "0") : null);
 
 const bumpKvVersion = (rawKey: string): void => {
   kvVersions.set(rawKey, (kvVersions.get(rawKey) ?? 0) + 1);
@@ -141,13 +122,11 @@ const bumpKvVersion = (rawKey: string): void => {
 const kvStub = {
   get: (key: Deno.KvKey) => {
     const rawKey = keyToString(key);
-    return Promise.resolve(
-      ({
-        key,
-        value: kvStore.get(rawKey) ?? null,
-        versionstamp: kvVersionstamp(rawKey),
-      }) as Deno.KvEntryMaybe<unknown>,
-    );
+    return Promise.resolve({
+      key,
+      value: kvStore.get(rawKey) ?? null,
+      versionstamp: kvVersionstamp(rawKey),
+    } as Deno.KvEntryMaybe<unknown>);
   },
   set: (key: Deno.KvKey, value: unknown, options?: { expireIn?: number }) => {
     const rawKey = keyToString(key);
@@ -170,7 +149,7 @@ const kvStub = {
       return;
     }
     const limit = Math.max(0, Math.trunc(options?.limit ?? Infinity));
-    const entries: Array<Deno.KvEntry<unknown>> = [];
+    const entries: Deno.KvEntry<unknown>[] = [];
     for (const [rawKey, value] of kvStore.entries()) {
       let key: unknown = null;
       try {
@@ -188,8 +167,8 @@ const kvStub = {
     }
   },
   atomic: () => {
-    const checks: Array<Deno.KvEntryMaybe<unknown>> = [];
-    const ops: Array<{ type: "set" | "delete"; key: Deno.KvKey; value?: unknown; expireIn?: number }> = [];
+    const checks: Deno.KvEntryMaybe<unknown>[] = [];
+    const ops: { type: "set" | "delete"; key: Deno.KvKey; value?: unknown; expireIn?: number }[] = [];
     const chain = {
       check: (entry: Deno.KvEntryMaybe<unknown>) => {
         checks.push(entry);
@@ -212,7 +191,7 @@ const kvStub = {
         if (failNextAtomicCommit) {
           const failure = failNextAtomicCommit(
             checks,
-            ops.map((op) => ({ type: op.type, key: op.key })),
+            ops.map((op) => ({ type: op.type, key: op.key }))
           );
           if (failure) {
             failNextAtomicCommit = null;
@@ -241,9 +220,7 @@ const kvStub = {
 
 (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kvStub);
 
-const { handleEmbeddingsJobCreate, handleEmbeddingsJobGet, handleUosEmbeddings } = await import(
-  "../src/openai.ts"
-);
+const { handleEmbeddingsJobCreate, handleEmbeddingsJobGet, handleUosEmbeddings } = await import("../src/openai.ts");
 const { getKv } = await import("../src/kv.ts");
 await getKv();
 
@@ -266,12 +243,14 @@ const fetchMockQueue: FetchMockQueue = (() => {
 
 const withFetchMock = async <T>(
   handler: (url: string, bodyText: string | null, headers: Headers) => Response | Promise<Response>,
-  fn: () => Promise<T>,
+  fn: () => Promise<T>
 ): Promise<T> => {
   const prev = fetchMockQueue.chain;
   let release = () => {};
   fetchMockQueue.chain = new Promise<void>((resolve) => {
-    release = () => resolve(undefined);
+    release = () => {
+      resolve(undefined);
+    };
   });
   await prev;
 
@@ -315,7 +294,7 @@ const uosIdempotentRequest = (
     input_type: TestInputType;
     dimensions: TestDimension;
     truncation: boolean;
-  }> = {},
+  }> = {}
 ): Request =>
   new Request("https://ai.ubq.fi/uos/embeddings", {
     method: "POST",
@@ -333,14 +312,11 @@ const uosIdempotentRequest = (
   });
 
 const responseErrorCode = async (response: Response): Promise<string | null> => {
-  const payload = await response.json() as { error?: { code?: unknown } };
+  const payload = (await response.json()) as { error?: { code?: unknown } };
   return typeof payload.error?.code === "string" ? payload.error.code : null;
 };
 
-const uosEmbeddingsIdempotencyRecordKey = async (
-  principal: string,
-  idempotencyKey: string,
-): Promise<Deno.KvKey> => [
+const uosEmbeddingsIdempotencyRecordKey = async (principal: string, idempotencyKey: string): Promise<Deno.KvKey> => [
   "embeddings",
   "idempotency",
   "v1",
@@ -348,10 +324,7 @@ const uosEmbeddingsIdempotencyRecordKey = async (
   await sha256Hex(`uos-embeddings-key-v1:${idempotencyKey}`),
 ];
 
-const uosEmbeddingsIdempotencyResponsePrefix = async (
-  principal: string,
-  idempotencyKey: string,
-): Promise<Deno.KvKey> => [
+const uosEmbeddingsIdempotencyResponsePrefix = async (principal: string, idempotencyKey: string): Promise<Deno.KvKey> => [
   "embeddings",
   "idempotency",
   "v1",
@@ -364,7 +337,7 @@ const uosEmbeddingsIdempotencyFingerprint = async (
   input: string[],
   inputType: TestInputType = "document",
   dimensions: TestDimension = 1024,
-  truncation = false,
+  truncation = false
 ): Promise<string> =>
   await sha256Hex(
     JSON.stringify([
@@ -377,7 +350,7 @@ const uosEmbeddingsIdempotencyFingerprint = async (
       "float",
       truncation,
       await Promise.all(input.map((item) => sha256Hex(item))),
-    ]),
+    ])
   );
 
 Deno.test("embeddings: normalizes string input", async () => {
@@ -406,15 +379,15 @@ Deno.test("embeddings: normalizes string input", async () => {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ model: "voyage-4-large", input: "hello", user: null }),
-        }),
-      ),
+        })
+      )
   );
 
   assert.equal(response.status, 200);
-  const payload = await response.json() as {
+  const payload = (await response.json()) as {
     object?: string;
     model?: string;
-    data?: Array<{ object?: string; index?: number; embedding?: unknown }>;
+    data?: { object?: string; index?: number; embedding?: unknown }[];
     usage?: { prompt_tokens?: unknown; total_tokens?: unknown };
   };
   assert.equal(payload.object, "list");
@@ -467,14 +440,14 @@ Deno.test("uos embeddings: forwards synchronous query and document profiles", as
               dimensions: item.dimensions,
               truncation: item.truncation,
             }),
-          }),
+          })
         );
         assert.equal(response.status, 200);
         assert.equal(response.headers.get("x-uos-upstream"), "voyage");
-        const payload = await response.json() as { data?: Array<{ embedding?: unknown }> };
+        const payload = (await response.json()) as { data?: { embedding?: unknown }[] };
         assert.equal((payload.data?.[0]?.embedding as unknown[]).length, item.dimensions);
       }
-    },
+    }
   );
 
   assert.equal(seenBodies.length, 2);
@@ -504,22 +477,16 @@ Deno.test("uos embeddings idempotency: replays the stored validated response wit
       return voyageOkResponse(1);
     },
     async () => {
-      const first = await handleUosEmbeddings(
-        uosIdempotentRequest(idempotencyKey, input),
-        usageContext,
-      );
+      const first = await handleUosEmbeddings(uosIdempotentRequest(idempotencyKey, input), usageContext);
       assert.equal(first.status, 200);
       assert.equal(first.headers.get("x-uos-idempotency-replayed"), null);
       const firstBody = await first.text();
 
-      const replay = await handleUosEmbeddings(
-        uosIdempotentRequest(idempotencyKey, input),
-        usageContext,
-      );
+      const replay = await handleUosEmbeddings(uosIdempotentRequest(idempotencyKey, input), usageContext);
       assert.equal(replay.status, 200);
       assert.equal(replay.headers.get("x-uos-idempotency-replayed"), "true");
       assert.equal(await replay.text(), firstBody);
-    },
+    }
   );
 
   assert.equal(upstreamCalls, 1);
@@ -537,19 +504,13 @@ Deno.test("uos embeddings idempotency: same principal and key reject a different
       return voyageOkResponse(2);
     },
     async () => {
-      const first = await handleUosEmbeddings(
-        uosIdempotentRequest(idempotencyKey, ["first", "second"]),
-        usageContext,
-      );
+      const first = await handleUosEmbeddings(uosIdempotentRequest(idempotencyKey, ["first", "second"]), usageContext);
       assert.equal(first.status, 200);
 
-      const conflict = await handleUosEmbeddings(
-        uosIdempotentRequest(idempotencyKey, ["second", "first"]),
-        usageContext,
-      );
+      const conflict = await handleUosEmbeddings(uosIdempotentRequest(idempotencyKey, ["second", "first"]), usageContext);
       assert.equal(conflict.status, 409);
       assert.equal(await responseErrorCode(conflict), "embedding_idempotency_conflict");
-    },
+    }
   );
 
   assert.equal(upstreamCalls, 1);
@@ -577,16 +538,10 @@ Deno.test("uos embeddings idempotency: a concurrent replay cannot dispatch Voyag
       return await upstreamResult;
     },
     async () => {
-      const firstPromise = handleUosEmbeddings(
-        uosIdempotentRequest(idempotencyKey, input),
-        usageContext,
-      );
+      const firstPromise = handleUosEmbeddings(uosIdempotentRequest(idempotencyKey, input), usageContext);
       await upstreamEntered;
 
-      const concurrent = await handleUosEmbeddings(
-        uosIdempotentRequest(idempotencyKey, input),
-        usageContext,
-      );
+      const concurrent = await handleUosEmbeddings(uosIdempotentRequest(idempotencyKey, input), usageContext);
       assert.equal(concurrent.status, 409);
       assert.equal(concurrent.headers.get("Retry-After"), "1");
       assert.equal(await responseErrorCode(concurrent), "embedding_idempotency_in_progress");
@@ -595,7 +550,7 @@ Deno.test("uos embeddings idempotency: a concurrent replay cannot dispatch Voyag
       releaseUpstream(voyageOkResponse(1));
       const first = await firstPromise;
       assert.equal(first.status, 200);
-    },
+    }
   );
 
   assert.equal(upstreamCalls, 1);
@@ -611,12 +566,7 @@ Deno.test("uos embeddings idempotency: keyed requests fail before Voyage when du
       upstreamCalls += 1;
       return voyageOkResponse(1);
     },
-    () =>
-      handleUosEmbeddings(
-        uosIdempotentRequest(idempotencyKey, `idempotency-no-kv-${crypto.randomUUID()}`),
-        usageContext,
-        { kv: null },
-      ),
+    () => handleUosEmbeddings(uosIdempotentRequest(idempotencyKey, `idempotency-no-kv-${crypto.randomUUID()}`), usageContext, { kv: null })
   );
 
   assert.equal(response.status, 503);
@@ -643,18 +593,12 @@ Deno.test("embeddings: quota dispatch failures release idempotency and promptly 
     },
     async () => {
       resetVoyageRateLimit();
-      const failed = await handleUosEmbeddings(
-        uosIdempotentRequest(idempotencyKey, input),
-        quotaFailureContext,
-      );
+      const failed = await handleUosEmbeddings(uosIdempotentRequest(idempotencyKey, input), quotaFailureContext);
       assert.equal(failed.status, 503);
       assert.equal(await responseErrorCode(failed), "api_key_quota_reservation_unavailable");
       assert.equal(upstreamCalls, 0);
 
-      const retried = await handleUosEmbeddings(
-        uosIdempotentRequest(idempotencyKey, input),
-        usageContext,
-      );
+      const retried = await handleUosEmbeddings(uosIdempotentRequest(idempotencyKey, input), usageContext);
       assert.equal(retried.status, 200);
       assert.equal(upstreamCalls, 1);
 
@@ -670,11 +614,11 @@ Deno.test("embeddings: quota dispatch failures release idempotency and promptly 
           }),
         }),
         jobToken,
-        quotaFailureContext,
+        quotaFailureContext
       );
       assert.equal(jobQueued.status, 202);
       assert.equal(jobQueued.headers.get("Retry-After"), "1");
-      const queuedJob = await jobQueued.json() as { id?: unknown; status?: unknown };
+      const queuedJob = (await jobQueued.json()) as { id?: unknown; status?: unknown };
       assert.equal(queuedJob.status, "queued");
       assert.equal(typeof queuedJob.id, "string");
       assert.equal(upstreamCalls, 1);
@@ -684,13 +628,13 @@ Deno.test("embeddings: quota dispatch failures release idempotency and promptly 
         new Request(`https://ai.ubq.fi/uos/embedding-jobs/${queuedJob.id}`),
         jobToken,
         queuedJob.id as string,
-        usageContext,
+        usageContext
       );
       assert.equal(completedJob.status, 200);
-      const completedPayload = await completedJob.json() as { status?: unknown };
+      const completedPayload = (await completedJob.json()) as { status?: unknown };
       assert.equal(completedPayload.status, "succeeded");
       assert.equal(upstreamCalls, 2);
-    },
+    }
   );
 });
 
@@ -707,20 +651,14 @@ Deno.test("uos embeddings idempotency: an outcome-unknown dispatch is durable an
       throw new TypeError("simulated connection loss after dispatch");
     },
     async () => {
-      const first = await handleUosEmbeddings(
-        uosIdempotentRequest(idempotencyKey, input),
-        usageContext,
-      );
+      const first = await handleUosEmbeddings(uosIdempotentRequest(idempotencyKey, input), usageContext);
       assert.equal(first.status, 409);
       assert.equal(await responseErrorCode(first), "embedding_idempotency_indeterminate");
 
-      const replay = await handleUosEmbeddings(
-        uosIdempotentRequest(idempotencyKey, input),
-        usageContext,
-      );
+      const replay = await handleUosEmbeddings(uosIdempotentRequest(idempotencyKey, input), usageContext);
       assert.equal(replay.status, 409);
       assert.equal(await responseErrorCode(replay), "embedding_idempotency_indeterminate");
-    },
+    }
   );
 
   assert.equal(upstreamCalls, 1);
@@ -755,11 +693,7 @@ Deno.test("uos embeddings idempotency: an abandoned dispatched ledger fails clos
         upstreamCalls += 1;
         return voyageOkResponse(1);
       },
-      () =>
-        handleUosEmbeddings(
-          uosIdempotentRequest(idempotencyKey, input),
-          uosIdempotencyUsageContext(principal),
-        ),
+      () => handleUosEmbeddings(uosIdempotentRequest(idempotencyKey, input), uosIdempotencyUsageContext(principal))
     );
 
     assert.equal(response.status, 409);
@@ -791,20 +725,14 @@ Deno.test("uos embeddings idempotency: confirmed HTTP failures re-arm the key fo
       return voyageOkResponse(1);
     },
     async () => {
-      const failed = await handleUosEmbeddings(
-        uosIdempotentRequest(idempotencyKey, input),
-        usageContext,
-      );
+      const failed = await handleUosEmbeddings(uosIdempotentRequest(idempotencyKey, input), usageContext);
       assert.equal(failed.status, 429);
       assert.equal(await responseErrorCode(failed), "rate_limit_exceeded");
 
-      const retry = await handleUosEmbeddings(
-        uosIdempotentRequest(idempotencyKey, input),
-        usageContext,
-      );
+      const retry = await handleUosEmbeddings(uosIdempotentRequest(idempotencyKey, input), usageContext);
       assert.equal(retry.status, 200);
       assert.equal(retry.headers.get("x-uos-idempotency-replayed"), null);
-    },
+    }
   );
 
   assert.equal(upstreamCalls, 4);
@@ -845,10 +773,7 @@ Deno.test("uos embeddings idempotency: an expired owner cannot overwrite the pub
         return voyageOkResponse(1);
       },
       async () => {
-        const first = await handleUosEmbeddings(
-          uosIdempotentRequest(idempotencyKey, input),
-          usageContext,
-        );
+        const first = await handleUosEmbeddings(uosIdempotentRequest(idempotencyKey, input), usageContext);
         assert.equal(first.status, 200);
         const firstBody = await first.text();
         const stored = kvStore.get(keyToString(ledgerKey)) as {
@@ -864,35 +789,20 @@ Deno.test("uos embeddings idempotency: an expired owner cannot overwrite the pub
         const publishedGeneration = stored.response_generation as string;
         const publishedChunkKey: Deno.KvKey = [...responsePrefix, publishedGeneration, 0];
         assert.equal(kvExpirations.get(keyToString(ledgerKey)), EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS);
-        assert.equal(
-          kvExpirations.get(keyToString(publishedChunkKey)),
-          EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS,
-        );
-        assert(
-          EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS > EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS,
-        );
+        assert.equal(kvExpirations.get(keyToString(publishedChunkKey)), EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS);
+        assert(EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS > EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS);
 
         // A late write from the expired owner lands in its own generation and
         // cannot corrupt the response generation already published by CAS.
         const expiredChunkKey: Deno.KvKey = [...responsePrefix, expiredGeneration, 0];
-        await kvStub.set(
-          expiredChunkKey,
-          "late stale owner body",
-          { expireIn: EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS },
-        );
-        assert.equal(
-          kvExpirations.get(keyToString(expiredChunkKey)),
-          EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS,
-        );
+        await kvStub.set(expiredChunkKey, "late stale owner body", { expireIn: EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS });
+        assert.equal(kvExpirations.get(keyToString(expiredChunkKey)), EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS);
 
-        const replay = await handleUosEmbeddings(
-          uosIdempotentRequest(idempotencyKey, input),
-          usageContext,
-        );
+        const replay = await handleUosEmbeddings(uosIdempotentRequest(idempotencyKey, input), usageContext);
         assert.equal(replay.status, 200);
         assert.equal(replay.headers.get("x-uos-idempotency-replayed"), "true");
         assert.equal(await replay.text(), firstBody);
-      },
+      }
     );
     assert.equal(upstreamCalls, 1);
   } finally {
@@ -937,11 +847,7 @@ Deno.test("uos embeddings idempotency: rejects an oversized stored response chun
         upstreamCalls += 1;
         return voyageOkResponse(1);
       },
-      () =>
-        handleUosEmbeddings(
-          uosIdempotentRequest(idempotencyKey, input),
-          uosIdempotencyUsageContext(principal),
-        ),
+      () => handleUosEmbeddings(uosIdempotentRequest(idempotencyKey, input), uosIdempotencyUsageContext(principal))
     );
 
     assert.equal(response.status, 409);
@@ -973,13 +879,7 @@ Deno.test("uos embeddings idempotency: a malformed stored value is not mistaken 
         return voyageOkResponse(1);
       },
       () =>
-        handleUosEmbeddings(
-          uosIdempotentRequest(
-            idempotencyKey,
-            `idempotency-malformed-ledger-${crypto.randomUUID()}`,
-          ),
-          uosIdempotencyUsageContext(principal),
-        ),
+        handleUosEmbeddings(uosIdempotentRequest(idempotencyKey, `idempotency-malformed-ledger-${crypto.randomUUID()}`), uosIdempotencyUsageContext(principal))
     );
 
     assert.equal(response.status, 409);
@@ -1018,22 +918,22 @@ Deno.test("uos embeddings: accepts every supported standard dimension with the c
               input: `v1-dim-${dimension}-${crypto.randomUUID()}`,
               dimensions: dimension,
             }),
-          }),
+          })
         );
         assert.equal(response.status, 200);
-        const payload = await response.json() as {
+        const payload = (await response.json()) as {
           model?: unknown;
-          data?: Array<{ embedding?: unknown }>;
+          data?: { embedding?: unknown }[];
         };
         assert.equal(payload.model, "voyage-4-large");
         assert.equal((payload.data?.[0]?.embedding as unknown[]).length, dimension);
       }
-    },
+    }
   );
 });
 
 Deno.test("uos embeddings: reject malformed synchronous fields", async () => {
-  const requests: Array<() => Promise<Response>> = [
+  const requests: (() => Promise<Response>)[] = [
     () =>
       handleUosEmbeddings(
         new Request("https://ai.ubq.fi/uos/embeddings", {
@@ -1043,7 +943,7 @@ Deno.test("uos embeddings: reject malformed synchronous fields", async () => {
             model: "voyage-3-large",
             input: "x",
           }),
-        }),
+        })
       ),
     () =>
       handleUosEmbeddings(
@@ -1051,7 +951,7 @@ Deno.test("uos embeddings: reject malformed synchronous fields", async () => {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ model: "voyage-4-large", input: "x", dimensions: 768 }),
-        }),
+        })
       ),
     () =>
       handleUosEmbeddings(
@@ -1059,7 +959,7 @@ Deno.test("uos embeddings: reject malformed synchronous fields", async () => {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ model: "voyage-4-large", input: "x", dimensions: 256.5 }),
-        }),
+        })
       ),
     () =>
       handleUosEmbeddings(
@@ -1067,7 +967,7 @@ Deno.test("uos embeddings: reject malformed synchronous fields", async () => {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ model: "voyage-4-large", input: "x", input_type: "index" }),
-        }),
+        })
       ),
     () =>
       handleUosEmbeddings(
@@ -1075,7 +975,7 @@ Deno.test("uos embeddings: reject malformed synchronous fields", async () => {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ model: "voyage-4-large", input: "x", encoding_format: "binary" }),
-        }),
+        })
       ),
     () =>
       handleUosEmbeddings(
@@ -1087,7 +987,7 @@ Deno.test("uos embeddings: reject malformed synchronous fields", async () => {
             input: "x",
             truncation: "false",
           }),
-        }),
+        })
       ),
     () =>
       handleUosEmbeddings(
@@ -1099,7 +999,7 @@ Deno.test("uos embeddings: reject malformed synchronous fields", async () => {
             input: "x",
             user: 42,
           }),
-        }),
+        })
       ),
     () =>
       handleUosEmbeddings(
@@ -1110,7 +1010,7 @@ Deno.test("uos embeddings: reject malformed synchronous fields", async () => {
             model: "voyage-4-large",
             input: [1],
           }),
-        }),
+        })
       ),
     () =>
       handleUosEmbeddings(
@@ -1118,7 +1018,7 @@ Deno.test("uos embeddings: reject malformed synchronous fields", async () => {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ model: "voyage-4-large", input: "x", unsupported: true }),
-        }),
+        })
       ),
   ];
 
@@ -1143,14 +1043,14 @@ Deno.test("uos embeddings: rejects OpenAI model names without dispatching Voyage
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ model, input: "must-not-dispatch" }),
-          }),
+          })
         );
         assert.equal(response.status, 400);
-        const payload = await response.json() as { error?: { code?: unknown; param?: unknown } };
+        const payload = (await response.json()) as { error?: { code?: unknown; param?: unknown } };
         assert.equal(payload.error?.code, "model_not_found");
         assert.equal(payload.error?.param, "model");
       }
-    },
+    }
   );
   assert.equal(upstreamCalls, 0);
 });
@@ -1177,12 +1077,12 @@ Deno.test("embedding jobs retain their strict Voyage float profile", async () =>
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
           }),
-          `jobs-strict-${crypto.randomUUID()}`,
+          `jobs-strict-${crypto.randomUUID()}`
         );
         assert.equal(response.status, 400);
         assert.equal(response.headers.get("x-uos-upstream"), "voyage");
       }
-    },
+    }
   );
 
   assert.equal(upstreamCalls, 0);
@@ -1208,12 +1108,12 @@ Deno.test("embeddings: serves cache hits without calling upstream", async () => 
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ model, input }),
-          }),
-        ),
+          })
+        )
     );
 
     assert.equal(response.status, 200);
-    const payload = await response.json() as { data?: Array<{ embedding?: unknown }> };
+    const payload = (await response.json()) as { data?: { embedding?: unknown }[] };
     assert.ok(Array.isArray(payload.data));
     assert.deepEqual(payload.data?.[0]?.embedding, cachedEmbedding);
   } finally {
@@ -1244,7 +1144,7 @@ Deno.test("embeddings cache: separates query, document, dimensions, encoding, an
               input_type: "query",
               dimensions: 256,
             }),
-          }),
+          })
         ),
     },
     {
@@ -1260,7 +1160,7 @@ Deno.test("embeddings cache: separates query, document, dimensions, encoding, an
               input_type: "document",
               dimensions: 256,
             }),
-          }),
+          })
         ),
     },
     {
@@ -1276,7 +1176,7 @@ Deno.test("embeddings cache: separates query, document, dimensions, encoding, an
               input_type: "query",
               dimensions: 512,
             }),
-          }),
+          })
         ),
     },
     {
@@ -1293,7 +1193,7 @@ Deno.test("embeddings cache: separates query, document, dimensions, encoding, an
               dimensions: 256,
               truncation: false,
             }),
-          }),
+          })
         ),
     },
     {
@@ -1309,7 +1209,7 @@ Deno.test("embeddings cache: separates query, document, dimensions, encoding, an
               dimensions: 256,
               encoding_format: "base64",
             }),
-          }),
+          })
         ),
     },
   ];
@@ -1333,7 +1233,7 @@ Deno.test("embeddings cache: separates query, document, dimensions, encoding, an
           resetVoyageRateLimit();
           assert.equal((await item.run()).status, 200);
         }
-      },
+      }
     );
 
     assert.equal(upstreamCalls, requests.length);
@@ -1374,13 +1274,13 @@ Deno.test("embeddings cache: ignores a cached vector with the wrong resolved dim
               input,
               dimensions: 512,
             }),
-          }),
-        ),
+          })
+        )
     );
 
     assert.equal(response.status, 200);
     assert.equal(upstreamCalls, 1);
-    const payload = await response.json() as { data?: Array<{ embedding?: unknown }> };
+    const payload = (await response.json()) as { data?: { embedding?: unknown }[] };
     assert.equal((payload.data?.[0]?.embedding as unknown[]).length, 512);
   } finally {
     kvStore.delete(keyToString(cacheKey));
@@ -1416,8 +1316,8 @@ Deno.test("embeddings: writes cache entries on upstream misses", async () => {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ model, input }),
-          }),
-        ),
+          })
+        )
     );
 
     assert.equal(response.status, 200);
@@ -1463,8 +1363,8 @@ Deno.test("embeddings cache: retries cache write when atomic commit fails", asyn
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ model, input }),
-          }),
-        ),
+          })
+        )
     );
     assert.equal(response.status, 200);
     const stored = kvStore.get(keyToString(cacheKey)) as { embedding?: unknown; created_at?: unknown } | undefined;
@@ -1524,12 +1424,7 @@ Deno.test("embeddings cache: eviction cleans stale duplicate index keys without 
     kvStore.set(keyToString(byHashKeyOld), createdAtMs);
     kvStore.set(keyToString(indexKeyOld), 1);
     kvStore.set(keyToString(globalIndexKeyOld), 1);
-    oldKeyStrings.push(
-      keyToString(cacheKeyOld),
-      keyToString(byHashKeyOld),
-      keyToString(indexKeyOld),
-      keyToString(globalIndexKeyOld),
-    );
+    oldKeyStrings.push(keyToString(cacheKeyOld), keyToString(byHashKeyOld), keyToString(indexKeyOld), keyToString(globalIndexKeyOld));
   }
 
   const originalNow = Date.now;
@@ -1549,9 +1444,7 @@ Deno.test("embeddings cache: eviction cleans stale duplicate index keys without 
   try {
     // Simulate KV storage quota failure on the first attempt to cache inputB.
     failNextAtomicCommit = (_checks, ops) => {
-      const hitsCacheWrite = ops.some(
-        (op) => op.type === "set" && keyToString(op.key) === keyToString(cacheKeyB),
-      );
+      const hitsCacheWrite = ops.some((op) => op.type === "set" && keyToString(op.key) === keyToString(cacheKeyB));
       return hitsCacheWrite ? new Error("KV quota exceeded") : false;
     };
 
@@ -1567,8 +1460,8 @@ Deno.test("embeddings cache: eviction cleans stale duplicate index keys without 
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ model, input: inputB }),
-          }),
-        ),
+          })
+        )
     );
     assert.equal(response.status, 200);
     assert.equal(kvStore.get(keyToString(indexKeyStale)), undefined);
@@ -1611,14 +1504,7 @@ Deno.test("embeddings cache: quota eviction frees entries owned by another profi
   const oldHash = await sha256Hex(`old-document-profile-${crypto.randomUUID()}`);
   const oldCacheKey = embeddingsCacheKey(oldHash, "document", 1024, "float", false);
   const oldByHashKey: Deno.KvKey = ["embeddings", "v2", "cache_index_by_hash", oldProfileKey, oldHash];
-  const oldProfileIndexKey: Deno.KvKey = [
-    "embeddings",
-    "v2",
-    "cache_index",
-    oldProfileKey,
-    oldCreatedAtMs,
-    oldHash,
-  ];
+  const oldProfileIndexKey: Deno.KvKey = ["embeddings", "v2", "cache_index", oldProfileKey, oldCreatedAtMs, oldHash];
   const oldGlobalIndexKey = embeddingsCacheGlobalIndexKey(oldCreatedAtMs, oldProfileKey, oldHash);
   kvStore.set(keyToString(oldCacheKey), {
     embedding: testVector(1024),
@@ -1632,23 +1518,14 @@ Deno.test("embeddings cache: quota eviction frees entries owned by another profi
   const newHash = await sha256Hex(input);
   const newCacheKey = embeddingsCacheKey(newHash, "query", 256, "float", false);
   const newByHashKey: Deno.KvKey = ["embeddings", "v2", "cache_index_by_hash", newProfileKey, newHash];
-  const newProfileIndexKey: Deno.KvKey = [
-    "embeddings",
-    "v2",
-    "cache_index",
-    newProfileKey,
-    newCreatedAtMs,
-    newHash,
-  ];
+  const newProfileIndexKey: Deno.KvKey = ["embeddings", "v2", "cache_index", newProfileKey, newCreatedAtMs, newHash];
   const newGlobalIndexKey = embeddingsCacheGlobalIndexKey(newCreatedAtMs, newProfileKey, newHash);
   const originalNow = Date.now;
   Date.now = () => newCreatedAtMs;
 
   try {
     failNextAtomicCommit = (_checks, ops) => {
-      const hitsNewProfileWrite = ops.some(
-        (op) => op.type === "set" && keyToString(op.key) === keyToString(newCacheKey),
-      );
+      const hitsNewProfileWrite = ops.some((op) => op.type === "set" && keyToString(op.key) === keyToString(newCacheKey));
       return hitsNewProfileWrite ? new Error("KV quota exceeded") : false;
     };
 
@@ -1666,8 +1543,8 @@ Deno.test("embeddings cache: quota eviction frees entries owned by another profi
               dimensions: 256,
               truncation: false,
             }),
-          }),
-        ),
+          })
+        )
     );
 
     assert.equal(response.status, 200);
@@ -1682,18 +1559,7 @@ Deno.test("embeddings cache: quota eviction frees entries owned by another profi
   } finally {
     Date.now = originalNow;
     failNextAtomicCommit = null;
-    for (
-      const key of [
-        oldCacheKey,
-        oldByHashKey,
-        oldProfileIndexKey,
-        oldGlobalIndexKey,
-        newCacheKey,
-        newByHashKey,
-        newProfileIndexKey,
-        newGlobalIndexKey,
-      ]
-    ) {
+    for (const key of [oldCacheKey, oldByHashKey, oldProfileIndexKey, oldGlobalIndexKey, newCacheKey, newByHashKey, newProfileIndexKey, newGlobalIndexKey]) {
       kvStore.delete(keyToString(key));
     }
   }
@@ -1713,12 +1579,12 @@ Deno.test("embeddings: returns one data item per array input", async () => {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ model: "voyage-4-large", input: ["a", "b"] }),
-        }),
-      ),
+        })
+      )
   );
 
   assert.equal(response.status, 200);
-  const payload = await response.json() as { data?: Array<{ index?: number }> };
+  const payload = (await response.json()) as { data?: { index?: number }[] };
   assert.ok(Array.isArray(payload.data));
   assert.equal(payload.data.length, 2);
   assert.equal(payload.data[0]?.index, 0);
@@ -1731,10 +1597,10 @@ Deno.test("embeddings: rejects non-string array inputs", async () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: "voyage-4-large", input: ["a", 2] }),
-    }),
+    })
   );
   assert.equal(response.status, 400);
-  const payload = await response.json() as { error?: { param?: unknown } };
+  const payload = (await response.json()) as { error?: { param?: unknown } };
   assert.equal(payload.error?.param, "input");
 });
 
@@ -1745,7 +1611,7 @@ Deno.test("embeddings: rejects too many inputs", async () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: "voyage-4-large", input: inputs }),
-    }),
+    })
   );
   assert.equal(response.status, 400);
 });
@@ -1757,7 +1623,7 @@ Deno.test("embeddings: rejects too-large inputs", async () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: "voyage-4-large", input: tooLarge }),
-    }),
+    })
   );
   assert.equal(response.status, 400);
 });
@@ -1773,13 +1639,11 @@ Deno.test("embeddings: encoding_format=base64 returns base64 string embeddings",
       const embedding = testVector(256);
       embedding[0] = 0.5;
       embedding[1] = -0.5;
-      return (
-        new Response(
-          JSON.stringify({
-            data: [{ embedding }],
-          }),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        )
+      return new Response(
+        JSON.stringify({
+          data: [{ embedding }],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
       );
     },
     () =>
@@ -1794,12 +1658,12 @@ Deno.test("embeddings: encoding_format=base64 returns base64 string embeddings",
             encoding_format: "base64",
             user: "migration-client",
           }),
-        }),
-      ),
+        })
+      )
   );
 
   assert.equal(response.status, 200);
-  const payload = await response.json() as { data?: Array<{ embedding?: unknown }> };
+  const payload = (await response.json()) as { data?: { embedding?: unknown }[] };
   const emb = payload.data?.[0]?.embedding;
   assert.equal(typeof emb, "string");
 
@@ -1821,11 +1685,11 @@ Deno.test("uos embeddings: rejects fractional dimensions", async () => {
         input: "fractional-dimensions",
         dimensions: 256.5,
       }),
-    }),
+    })
   );
 
   assert.equal(response.status, 400);
-  const payload = await response.json() as { error?: { message?: unknown; param?: unknown } };
+  const payload = (await response.json()) as { error?: { message?: unknown; param?: unknown } };
   assert.match(String(payload.error?.message), /integer/);
   assert.equal(payload.error?.param, "dimensions");
 });
@@ -1838,7 +1702,7 @@ Deno.test("uos embeddings: returns 502 when upstream vector length does not matc
         JSON.stringify({
           data: [{ embedding: Array.from({ length: 255 }, (_, index) => index / 255) }],
         }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
+        { status: 200, headers: { "Content-Type": "application/json" } }
       ),
     () =>
       handleUosEmbeddings(
@@ -1851,13 +1715,13 @@ Deno.test("uos embeddings: returns 502 when upstream vector length does not matc
             input_type: "query",
             dimensions: 256,
           }),
-        }),
-      ),
+        })
+      )
   );
 
   assert.equal(response.status, 502);
   assert.equal(response.headers.get("x-uos-upstream"), "voyage");
-  const payload = await response.json() as { error?: { code?: unknown; message?: unknown } };
+  const payload = (await response.json()) as { error?: { code?: unknown; message?: unknown } };
   assert.equal(payload.error?.code, "upstream_dimension_mismatch");
   assert.match(String(payload.error?.message), /length 255; expected 256/);
 });
@@ -1891,8 +1755,8 @@ Deno.test("uos embeddings: sync retry reuses the exact resolved Voyage options",
             dimensions: 512,
             truncation: false,
           }),
-        }),
-      ),
+        })
+      )
   );
 
   assert.equal(response.status, 200);
@@ -1933,8 +1797,8 @@ Deno.test("uos embeddings: exhausted upstream 429 preserves status and Retry-Aft
             dimensions: 512,
             truncation: false,
           }),
-        }),
-      ),
+        })
+      )
   );
 
   assert.equal(bodies.length, 3);
@@ -1942,7 +1806,7 @@ Deno.test("uos embeddings: exhausted upstream 429 preserves status and Retry-Aft
   assert.equal(response.status, 429);
   assert.equal(response.headers.get("Retry-After"), "1");
   assert.equal(response.headers.get("x-uos-upstream"), "voyage");
-  const payload = await response.json() as { error?: { type?: unknown; code?: unknown } };
+  const payload = (await response.json()) as { error?: { type?: unknown; code?: unknown } };
   assert.equal(payload.error?.type, "rate_limit_error");
   assert.equal(payload.error?.code, "rate_limit_exceeded");
 });
@@ -1962,8 +1826,8 @@ Deno.test("embeddings: 429 includes Retry-After when KV rate limited", async () 
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ model: "voyage-4-large", input: "rate-limit-test" }),
-          }),
-        ),
+          })
+        )
     );
     assert.equal(response.status, 429);
     const retryAfter = response.headers.get("Retry-After");
@@ -1993,12 +1857,12 @@ Deno.test("embedding jobs: create returns job + result when not rate limited", a
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ model: "voyage-4-large", input, input_type: "document" }),
         }),
-        "test_token",
-      ),
+        "test_token"
+      )
   );
 
   assert.equal(response.status, 200);
-  const payload = await response.json() as {
+  const payload = (await response.json()) as {
     id?: unknown;
     object?: unknown;
     status?: unknown;
@@ -2033,7 +1897,7 @@ Deno.test("embedding jobs: wrong-length upstream vector is a terminal failed job
         JSON.stringify({
           data: [{ embedding: Array.from({ length: 511 }, (_, index) => index / 511) }],
         }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
+        { status: 200, headers: { "Content-Type": "application/json" } }
       ),
     () =>
       handleEmbeddingsJobCreate(
@@ -2047,13 +1911,13 @@ Deno.test("embedding jobs: wrong-length upstream vector is a terminal failed job
             dimensions: 512,
           }),
         }),
-        authToken,
-      ),
+        authToken
+      )
   );
 
   assert.equal(created.status, 200);
   assert.equal(created.headers.get("x-uos-upstream"), "voyage");
-  const payload = await created.json() as {
+  const payload = (await created.json()) as {
     id?: unknown;
     status?: unknown;
     error?: { code?: unknown; message?: unknown };
@@ -2068,16 +1932,11 @@ Deno.test("embedding jobs: wrong-length upstream vector is a terminal failed job
     () => {
       throw new Error("A terminally failed job must not retry upstream");
     },
-    () =>
-      handleEmbeddingsJobGet(
-        new Request(`https://ai.ubq.fi/uos/embedding-jobs/${jobId}`),
-        authToken,
-        jobId,
-      ),
+    () => handleEmbeddingsJobGet(new Request(`https://ai.ubq.fi/uos/embedding-jobs/${jobId}`), authToken, jobId)
   );
   assert.equal(polled.status, 200);
   assert.equal(polled.headers.get("x-uos-upstream"), "voyage");
-  const polledPayload = await polled.json() as { status?: unknown; error?: { code?: unknown } };
+  const polledPayload = (await polled.json()) as { status?: unknown; error?: { code?: unknown } };
   assert.equal(polledPayload.status, "failed");
   assert.equal(polledPayload.error?.code, "embeddings_job_upstream_dimension_mismatch");
 });
@@ -2105,12 +1964,12 @@ Deno.test("embedding jobs: remain resolvable across token refresh when scoped to
           body: JSON.stringify({ model: "voyage-4-large", input, input_type: "document" }),
         }),
         "token_a",
-        usageContext,
-      ),
+        usageContext
+      )
   );
 
   assert.equal(created.status, 200);
-  const createdPayload = await created.json() as { id?: unknown; status?: unknown };
+  const createdPayload = (await created.json()) as { id?: unknown; status?: unknown };
   assert.equal(createdPayload.status, "succeeded");
   assert.equal(typeof createdPayload.id, "string");
   const jobId = createdPayload.id as string;
@@ -2119,17 +1978,11 @@ Deno.test("embedding jobs: remain resolvable across token refresh when scoped to
     () => {
       throw new Error("Embeddings job get should not hit upstream when already succeeded");
     },
-    () =>
-      handleEmbeddingsJobGet(
-        new Request(`https://ai.ubq.fi/uos/embedding-jobs/${jobId}`),
-        "token_b",
-        jobId,
-        usageContext,
-      ),
+    () => handleEmbeddingsJobGet(new Request(`https://ai.ubq.fi/uos/embedding-jobs/${jobId}`), "token_b", jobId, usageContext)
   );
 
   assert.equal(got.status, 200);
-  const gotPayload = await got.json() as { id?: unknown; status?: unknown };
+  const gotPayload = (await got.json()) as { id?: unknown; status?: unknown };
   assert.equal(gotPayload.id, jobId);
   assert.equal(gotPayload.status, "succeeded");
 });
@@ -2152,8 +2005,8 @@ Deno.test("embedding jobs: create queues with 202 + Retry-After when KV rate lim
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ model: "voyage-4-large", input, input_type: "query" }),
           }),
-          "test_token",
-        ),
+          "test_token"
+        )
     );
 
     assert.equal(response.status, 202);
@@ -2165,7 +2018,7 @@ Deno.test("embedding jobs: create queues with 202 + Retry-After when KV rate lim
     assert.ok(retryAfterSeconds >= 1);
     assert.ok(retryAfterSeconds <= 60);
 
-    const payload = await response.json() as { status?: unknown; id?: unknown };
+    const payload = (await response.json()) as { status?: unknown; id?: unknown };
     assert.equal(payload.status, "queued");
     assert.equal(typeof payload.id, "string");
   } finally {
@@ -2213,13 +2066,13 @@ Deno.test("embedding jobs: queued query and document profiles persist through po
                 truncation: item.truncation,
               }),
             }),
-            authToken,
-          ),
+            authToken
+          )
       );
 
       assert.equal(created.status, 202);
       assert.equal(created.headers.get("x-uos-upstream"), "voyage");
-      const body = await created.json() as {
+      const body = (await created.json()) as {
         id?: unknown;
         status?: unknown;
         upstream_model?: unknown;
@@ -2253,17 +2106,9 @@ Deno.test("embedding jobs: queued query and document profiles persist through po
       assert.equal(kvExpirations.get(keyToString(lookupKey)), EMBEDDINGS_JOB_TTL_MS);
 
       const other = cases[(index + 1) % cases.length]!;
-      const otherProfileKey = embeddingsProfileKey(
-        other.inputType,
-        other.dimensions,
-        "float",
-        other.truncation,
-      );
+      const otherProfileKey = embeddingsProfileKey(other.inputType, other.dimensions, "float", other.truncation);
       assert.equal(kvStore.has(keyToString(embeddingsJobKey(tokenHash, otherProfileKey, jobId))), false);
-      assert.equal(
-        kvStore.has(keyToString(["embeddings", "jobs", "v2", tokenHash, jobId])),
-        false,
-      );
+      assert.equal(kvStore.has(keyToString(["embeddings", "jobs", "v2", tokenHash, jobId])), false);
     }
 
     await kv.delete(VOYAGE_RATE_LIMIT_KEY);
@@ -2277,19 +2122,15 @@ Deno.test("embedding jobs: queued query and document profiles persist through po
       async () => {
         for (let index = 0; index < jobIds.length; index += 1) {
           const jobId = jobIds[index]!;
-          const polled = await handleEmbeddingsJobGet(
-            new Request(`https://ai.ubq.fi/uos/embedding-jobs/${jobId}`),
-            authToken,
-            jobId,
-          );
+          const polled = await handleEmbeddingsJobGet(new Request(`https://ai.ubq.fi/uos/embedding-jobs/${jobId}`), authToken, jobId);
           assert.equal(polled.status, 200);
           assert.equal(polled.headers.get("x-uos-upstream"), "voyage");
-          const payload = await polled.json() as {
+          const payload = (await polled.json()) as {
             status?: unknown;
             input_type?: unknown;
             dimensions?: unknown;
             truncation?: unknown;
-            result?: { data?: Array<{ embedding?: unknown }> };
+            result?: { data?: { embedding?: unknown }[] };
           };
           const expected = cases[index]!;
           assert.equal(payload.status, "succeeded");
@@ -2298,7 +2139,7 @@ Deno.test("embedding jobs: queued query and document profiles persist through po
           assert.equal(payload.truncation, expected.truncation);
           assert.equal((payload.result?.data?.[0]?.embedding as unknown[]).length, expected.dimensions);
         }
-      },
+      }
     );
 
     assert.equal(seenBodies.length, cases.length);
@@ -2351,13 +2192,13 @@ Deno.test("embedding jobs: retryable upstream failures requeue and preserve the 
               truncation: false,
             }),
           }),
-          authToken,
-        ),
+          authToken
+        )
     );
 
     assert.equal(created.status, 202);
     assert.ok(created.headers.get("Retry-After"));
-    const createdPayload = await created.json() as {
+    const createdPayload = (await created.json()) as {
       id?: unknown;
       status?: unknown;
       input_type?: unknown;
@@ -2378,16 +2219,11 @@ Deno.test("embedding jobs: retryable upstream failures requeue and preserve the 
         bodies.push(JSON.parse(bodyText ?? "null") as Record<string, unknown>);
         return voyageOkResponse(1, 512);
       },
-      () =>
-        handleEmbeddingsJobGet(
-          new Request(`https://ai.ubq.fi/uos/embedding-jobs/${jobId}`),
-          authToken,
-          jobId,
-        ),
+      () => handleEmbeddingsJobGet(new Request(`https://ai.ubq.fi/uos/embedding-jobs/${jobId}`), authToken, jobId)
     );
 
     assert.equal(polled.status, 200);
-    const polledPayload = await polled.json() as {
+    const polledPayload = (await polled.json()) as {
       status?: unknown;
       input_type?: unknown;
       dimensions?: unknown;
@@ -2430,10 +2266,10 @@ Deno.test("embedding jobs: locked and CAS-contention 202 responses identify Voya
             input_type: "query",
           }),
         }),
-        authToken,
-      ),
+        authToken
+      )
   );
-  const createdBody = await created.json() as { id?: unknown };
+  const createdBody = (await created.json()) as { id?: unknown };
   assert.equal(typeof createdBody.id, "string");
   const jobId = createdBody.id as string;
   const tokenHash = await sha256Hex(authToken);
@@ -2452,12 +2288,7 @@ Deno.test("embedding jobs: locked and CAS-contention 202 responses identify Voya
       () => {
         throw new Error("A locked job must not call upstream");
       },
-      () =>
-        handleEmbeddingsJobGet(
-          new Request(`https://ai.ubq.fi/uos/embedding-jobs/${jobId}`),
-          authToken,
-          jobId,
-        ),
+      () => handleEmbeddingsJobGet(new Request(`https://ai.ubq.fi/uos/embedding-jobs/${jobId}`), authToken, jobId)
     );
     assert.equal(locked.status, 202);
     assert.equal(locked.headers.get("x-uos-upstream"), "voyage");
@@ -2467,18 +2298,12 @@ Deno.test("embedding jobs: locked and CAS-contention 202 responses identify Voya
       status: "queued",
       locked_until_ms: null,
     });
-    failNextAtomicCommit = (_checks, ops) =>
-      ops.some((op) => op.type === "set" && keyToString(op.key) === keyToString(jobKey));
+    failNextAtomicCommit = (_checks, ops) => ops.some((op) => op.type === "set" && keyToString(op.key) === keyToString(jobKey));
     const contended = await withFetchMock(
       () => {
         throw new Error("A contended job lock must not call upstream");
       },
-      () =>
-        handleEmbeddingsJobGet(
-          new Request(`https://ai.ubq.fi/uos/embedding-jobs/${jobId}`),
-          authToken,
-          jobId,
-        ),
+      () => handleEmbeddingsJobGet(new Request(`https://ai.ubq.fi/uos/embedding-jobs/${jobId}`), authToken, jobId)
     );
     assert.equal(contended.status, 202);
     assert.equal(contended.headers.get("x-uos-upstream"), "voyage");
@@ -2512,11 +2337,11 @@ Deno.test("embedding jobs: poll runs queued job to completion", async () => {
             truncation: false,
           }),
         }),
-        "test_token",
-      ),
+        "test_token"
+      )
   );
   assert.equal(created.status, 202);
-  const createdPayload = await created.json() as { id?: unknown };
+  const createdPayload = (await created.json()) as { id?: unknown };
   assert.equal(typeof createdPayload.id, "string");
   const jobId = createdPayload.id as string;
 
@@ -2535,16 +2360,16 @@ Deno.test("embedding jobs: poll runs queued job to completion", async () => {
       const count = Array.isArray(body.input) ? body.input.length : 1;
       return voyageOkResponse(count, 512);
     },
-    () => handleEmbeddingsJobGet(new Request(`https://ai.ubq.fi/uos/embedding-jobs/${jobId}`), "test_token", jobId),
+    () => handleEmbeddingsJobGet(new Request(`https://ai.ubq.fi/uos/embedding-jobs/${jobId}`), "test_token", jobId)
   );
 
   assert.equal(polled.status, 200);
-  const payload = await polled.json() as {
+  const payload = (await polled.json()) as {
     status?: unknown;
     input_type?: unknown;
     dimensions?: unknown;
     truncation?: unknown;
-    result?: { data?: Array<{ embedding?: unknown }> };
+    result?: { data?: { embedding?: unknown }[] };
   };
   assert.equal(payload.status, "succeeded");
   assert.equal(payload.input_type, "query");
@@ -2565,7 +2390,7 @@ Deno.test("handler: /uos/embeddings reaches authentication instead of the 404 gu
         input: "route-reachability",
         input_type: "document",
       }),
-    }),
+    })
   );
 
   assert.equal(response.status, 401);
@@ -2581,15 +2406,13 @@ Deno.test("handler: embeddings preflight permits browser idempotency keys", asyn
         "Access-Control-Request-Method": "POST",
         "Access-Control-Request-Headers": "content-type,idempotency-key",
       },
-    }),
+    })
   );
 
   assert.equal(response.status, 204);
   assert.match(response.headers.get("access-control-allow-methods") ?? "", /POST/);
   assert.match(response.headers.get("access-control-allow-methods") ?? "", /HEAD/);
-  const allowedHeaders = (response.headers.get("access-control-allow-headers") ?? "")
-    .split(",")
-    .map((header) => header.trim().toLowerCase());
+  const allowedHeaders = (response.headers.get("access-control-allow-headers") ?? "").split(",").map((header) => header.trim().toLowerCase());
   assert.ok(allowedHeaders.includes("idempotency-key"));
 });
 
@@ -2607,10 +2430,10 @@ Deno.test("handler: an exhausted key still serves local embeddings paths but blo
         usage_limit_requests: 1,
         paid_fallback_enabled: false,
       }),
-    }),
+    })
   );
   assert.equal(created.status, 200);
-  const createdPayload = await created.json() as { id?: unknown };
+  const createdPayload = (await created.json()) as { id?: unknown };
   assert.equal(typeof createdPayload.id, "string");
   const keyId = createdPayload.id as string;
   const idempotencyKey = `exhausted-replay-${crypto.randomUUID()}`;
@@ -2622,10 +2445,7 @@ Deno.test("handler: an exhausted key still serves local embeddings paths but blo
   await withFetchMock(
     () => voyageOkResponse(1),
     async () => {
-      const seededReplay = await handleUosEmbeddings(
-        uosIdempotentRequest(idempotencyKey, idempotencyInput),
-        uosIdempotencyUsageContext(`api-key:${keyId}`),
-      );
+      const seededReplay = await handleUosEmbeddings(uosIdempotentRequest(idempotencyKey, idempotencyInput), uosIdempotencyUsageContext(`api-key:${keyId}`));
       assert.equal(seededReplay.status, 200);
       const seededJob = await handleEmbeddingsJobCreate(
         new Request("https://ai.ubq.fi/uos/embedding-jobs", {
@@ -2634,39 +2454,31 @@ Deno.test("handler: an exhausted key still serves local embeddings paths but blo
           body: JSON.stringify({ model: "voyage-4-large", input: jobInput, input_type: "document" }),
         }),
         token,
-        { keyId, kernelRepo: null, kernelOrg: null },
+        { keyId, kernelRepo: null, kernelOrg: null }
       );
       assert.equal(seededJob.status, 200);
-      const seededJobPayload = await seededJob.json() as { id?: unknown; status?: unknown };
+      const seededJobPayload = (await seededJob.json()) as { id?: unknown; status?: unknown };
       assert.equal(seededJobPayload.status, "succeeded");
       assert.equal(typeof seededJobPayload.id, "string");
       jobId = seededJobPayload.id as string;
-    },
+    }
   );
 
   const cacheInput = `exhausted-cache-${crypto.randomUUID()}`;
   const cacheHash = await sha256Hex(cacheInput);
-  kvStore.set(
-    keyToString(embeddingsCacheKey(cacheHash)),
-    { embedding: testVector(1024, 7.7), created_at: new Date().toISOString() },
-  );
+  kvStore.set(keyToString(embeddingsCacheKey(cacheHash)), { embedding: testVector(1024, 7.7), created_at: new Date().toISOString() });
   const quotaWindowPrefix: Deno.KvKey = ["uos_ai", "api_key_usage", "v3", "window", keyId];
-  const quotaEntry = [...kvStore.entries()].find(([rawKey]) =>
-    keyHasPrefix(JSON.parse(rawKey) as Deno.KvKey, quotaWindowPrefix)
-  );
+  const quotaEntry = [...kvStore.entries()].find(([rawKey]) => keyHasPrefix(JSON.parse(rawKey) as Deno.KvKey, quotaWindowPrefix));
   assert.ok(quotaEntry);
   const [rawQuotaKey, rawQuotaWindow] = quotaEntry;
   const quotaKv = await getKv();
   assert.ok(quotaKv);
-  await quotaKv.set(
-    JSON.parse(rawQuotaKey) as Deno.KvKey,
-    {
-      ...(rawQuotaWindow as Record<string, unknown>),
-      committed_requests: 1,
-      reserved_requests: 0,
-      updated_at_ms: Date.now(),
-    },
-  );
+  await quotaKv.set(JSON.parse(rawQuotaKey) as Deno.KvKey, {
+    ...(rawQuotaWindow as Record<string, unknown>),
+    committed_requests: 1,
+    reserved_requests: 0,
+    updated_at_ms: Date.now(),
+  });
 
   const embeddingsRequest = (input: string, replayKey?: string): Request =>
     new Request("https://ai.ubq.fi/uos/embeddings", {
@@ -2676,7 +2488,7 @@ Deno.test("handler: an exhausted key still serves local embeddings paths but blo
         "Content-Type": "application/json",
         ...(replayKey ? { "Idempotency-Key": replayKey } : {}),
       },
-      body: JSON.stringify({ model: "voyage-4-large", input, truncation: replayKey ? false : true }),
+      body: JSON.stringify({ model: "voyage-4-large", input, truncation: !replayKey }),
     });
 
   let voyageCalls = 0;
@@ -2698,10 +2510,10 @@ Deno.test("handler: an exhausted key still serves local embeddings paths but blo
         const terminalJob = await handler(
           new Request(`https://ai.ubq.fi/uos/embedding-jobs/${jobId}`, {
             headers: { Authorization: `Bearer ${token}` },
-          }),
+          })
         );
         assert.equal(terminalJob.status, 200);
-        assert.equal((await terminalJob.json() as { status?: unknown }).status, "succeeded");
+        assert.equal(((await terminalJob.json()) as { status?: unknown }).status, "succeeded");
 
         const blocked = await handler(embeddingsRequest(`exhausted-miss-${crypto.randomUUID()}`));
         assert.equal(blocked.status, 429);
@@ -2710,8 +2522,8 @@ Deno.test("handler: an exhausted key still serves local embeddings paths but blo
         assert.equal(blocked.headers.get("RateLimit-Remaining"), "0");
         assert.match(blocked.headers.get("RateLimit-Policy") ?? "", /^"api-key";q=1;w=\d+$/);
         assert.match(blocked.headers.get("RateLimit") ?? "", /^"api-key";r=0;t=\d+$/);
-        assert.equal((await blocked.json() as { error?: { type?: unknown } }).error?.type, "rate_limit_error");
-      },
+        assert.equal(((await blocked.json()) as { error?: { type?: unknown } }).error?.type, "rate_limit_error");
+      }
     );
     assert.equal(voyageCalls, 0);
   } finally {
@@ -2732,10 +2544,10 @@ Deno.test("handler: authenticated legacy v1 embeddings is a generic 404 without 
         usage_limit_requests: 1,
         paid_fallback_enabled: false,
       }),
-    }),
+    })
   );
   assert.equal(created.status, 200);
-  const createdPayload = await created.json() as { id?: unknown };
+  const createdPayload = (await created.json()) as { id?: unknown };
   assert.equal(typeof createdPayload.id, "string");
   const keyId = createdPayload.id as string;
   const quotaWindowPrefix: Deno.KvKey = ["uos_ai", "api_key_usage", "v3", "window", keyId];
@@ -2769,8 +2581,8 @@ Deno.test("handler: authenticated legacy v1 embeddings is a generic 404 without 
             "Content-Type": "application/json",
           },
           body: JSON.stringify({ model: "voyage-4-large", input: "must-not-dispatch" }),
-        }),
-      ),
+        })
+      )
   );
 
   assert.equal(response.status, 404);
@@ -2786,13 +2598,7 @@ Deno.test("handler: authenticated legacy v1 embeddings is a generic 404 without 
 Deno.test("handler: idempotency preserves account scopes", async () => {
   const { resolveIdempotencyPrincipal } = await import("../src/handler.ts");
 
-  for (
-    const kind of [
-      "auth_tokens_allowlist",
-      "admin_allowlist",
-      "deno_deploy_token",
-    ] as const
-  ) {
+  for (const kind of ["auth_tokens_allowlist", "admin_allowlist", "deno_deploy_token"] as const) {
     const first = await resolveIdempotencyPrincipal({
       token: "first-rotating-secret",
       method: { kind },
@@ -2814,7 +2620,7 @@ Deno.test("handler: idempotency preserves account scopes", async () => {
     await resolveIdempotencyPrincipal({
       token: "kv-secret-two",
       method: { kind: "kv_api_key", key_id: "stable-key-id" },
-    }),
+    })
   );
   assert.equal(
     await resolveIdempotencyPrincipal({
@@ -2827,7 +2633,7 @@ Deno.test("handler: idempotency preserves account scopes", async () => {
         limit_scope: "repo",
       },
     }),
-    "github-repo:ubiquity/ai.ubq.fi",
+    "github-repo:ubiquity/ai.ubq.fi"
   );
   assert.equal(
     await resolveIdempotencyPrincipal({
@@ -2840,7 +2646,7 @@ Deno.test("handler: idempotency preserves account scopes", async () => {
         credential_count: 1,
       },
     }),
-    "passkey-user:user-47",
+    "passkey-user:user-47"
   );
 });
 

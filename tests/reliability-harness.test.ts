@@ -1,12 +1,7 @@
 import assert from "node:assert/strict";
 
 import type { HarmonyTransport } from "../src/harmony/adapter.ts";
-import {
-  type HarnessEvent,
-  type HarnessOptions,
-  renderCanonicalPolicy,
-  runReliabilityHarness,
-} from "../src/harmony/reliability/harness.ts";
+import { type HarnessEvent, type HarnessOptions, renderCanonicalPolicy, runReliabilityHarness } from "../src/harmony/reliability/harness.ts";
 import { createFakeToolBackends, FakeShell } from "../src/harmony/tools/fakes.ts";
 import type { ToolBackends } from "../src/harmony/tools/backend.ts";
 import { broadToolSurface } from "../src/harmony/reliability/surfaces.ts";
@@ -28,13 +23,15 @@ const completion = (message: Record<string, unknown>): Response =>
       object: "chat.completion",
       created: 1,
       model: "gpt-oss-120b",
-      choices: [{
-        index: 0,
-        message: { role: "assistant", ...message },
-        finish_reason: message.tool_calls ? "tool_calls" : "stop",
-      }],
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", ...message },
+          finish_reason: message.tool_calls ? "tool_calls" : "stop",
+        },
+      ],
     }),
-    { status: 200, headers: { "Content-Type": "application/json" } },
+    { status: 200, headers: { "Content-Type": "application/json" } }
   );
 
 /** Deterministic scripted transport: one response per request. */
@@ -66,20 +63,20 @@ const baseOptions = (script: ScriptStep[], overrides: Partial<HarnessOptions> = 
 
 const evidence = (outcome: { events: readonly HarnessEvent[] }) => ({
   toolCalls: outcome.events.filter((e): e is Extract<HarnessEvent, { type: "tool_call" }> => e.type === "tool_call"),
-  toolResults: outcome.events.filter((e): e is Extract<HarnessEvent, { type: "tool_result" }> =>
-    e.type === "tool_result"
-  ),
+  toolResults: outcome.events.filter((e): e is Extract<HarnessEvent, { type: "tool_result" }> => e.type === "tool_result"),
   guards: outcome.events.filter((e): e is Extract<HarnessEvent, { type: "guard" }> => e.type === "guard"),
   finals: outcome.events.filter((e): e is Extract<HarnessEvent, { type: "final" }> => e.type === "final"),
 });
 
 Deno.test("harness: a clean scripted run completes with verified writes", async () => {
-  const outcome = await runReliabilityHarness(baseOptions([
-    { toolCalls: [{ name: "filesystem.read", arguments: { path: "a.txt" } }] },
-    { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "a.txt", old: "a=0", new: "a=1" } }] },
-    { toolCalls: [{ name: "filesystem.read", arguments: { path: "a.txt" } }] },
-    { content: "Fixed a.txt." },
-  ]));
+  const outcome = await runReliabilityHarness(
+    baseOptions([
+      { toolCalls: [{ name: "filesystem.read", arguments: { path: "a.txt" } }] },
+      { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "a.txt", old: "a=0", new: "a=1" } }] },
+      { toolCalls: [{ name: "filesystem.read", arguments: { path: "a.txt" } }] },
+      { content: "Fixed a.txt." },
+    ])
+  );
   assert.equal(outcome.phase, "completed");
   assert.equal(outcome.finalContent, "Fixed a.txt.");
   assert.equal(outcome.state.pendingVerification.length, 0);
@@ -90,11 +87,13 @@ Deno.test("harness: a clean scripted run completes with verified writes", async 
 });
 
 Deno.test("harness: invalid calls are never executed and feedback is deterministic", async () => {
-  const outcome = await runReliabilityHarness(baseOptions([
-    { toolCalls: [{ name: "filesystem.read", arguments: { path: 42 } }] },
-    { toolCalls: [{ name: "filesystem.read", arguments: { path: "notes.txt" } }] },
-    { content: "done" },
-  ]));
+  const outcome = await runReliabilityHarness(
+    baseOptions([
+      { toolCalls: [{ name: "filesystem.read", arguments: { path: 42 } }] },
+      { toolCalls: [{ name: "filesystem.read", arguments: { path: "notes.txt" } }] },
+      { content: "done" },
+    ])
+  );
   const ev = evidence(outcome);
   assert.equal(outcome.phase, "completed");
   const invalid = ev.toolCalls.find((c) => !c.valid)!;
@@ -106,13 +105,15 @@ Deno.test("harness: invalid calls are never executed and feedback is determinist
 });
 
 Deno.test("harness: exact duplicates after success are blocked, not re-executed", async () => {
-  const outcome = await runReliabilityHarness(baseOptions([
-    { toolCalls: [{ name: "filesystem.read", arguments: { path: "a.txt" } }] },
-    { toolCalls: [{ name: "filesystem.read", arguments: { path: "a.txt" } }] }, // duplicate
-    { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "a.txt", old: "a=0", new: "a=1" } }] },
-    { toolCalls: [{ name: "filesystem.read", arguments: { path: "a.txt" } }] },
-    { content: "done" },
-  ]));
+  const outcome = await runReliabilityHarness(
+    baseOptions([
+      { toolCalls: [{ name: "filesystem.read", arguments: { path: "a.txt" } }] },
+      { toolCalls: [{ name: "filesystem.read", arguments: { path: "a.txt" } }] }, // duplicate
+      { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "a.txt", old: "a=0", new: "a=1" } }] },
+      { toolCalls: [{ name: "filesystem.read", arguments: { path: "a.txt" } }] },
+      { content: "done" },
+    ])
+  );
   const ev = evidence(outcome);
   assert.equal(outcome.phase, "completed");
   const repeated = ev.toolCalls.find((c) => c.repeated !== null && c.repeated !== undefined)!;
@@ -124,13 +125,15 @@ Deno.test("harness: exact duplicates after success are blocked, not re-executed"
 });
 
 Deno.test("harness: repeated calls after deterministic failures are blocked as repeated_failure", async () => {
-  const outcome = await runReliabilityHarness(baseOptions([
-    { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "missing.txt", old: "x", new: "y" } }] },
-    { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "missing.txt", old: "x", new: "y" } }] }, // repeat after patch_failed
-    { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "missing.txt", add: true, new: "y" } }] }, // different args: recover
-    { toolCalls: [{ name: "filesystem.read", arguments: { path: "missing.txt" } }] },
-    { content: "done" },
-  ]));
+  const outcome = await runReliabilityHarness(
+    baseOptions([
+      { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "missing.txt", old: "x", new: "y" } }] },
+      { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "missing.txt", old: "x", new: "y" } }] }, // repeat after patch_failed
+      { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "missing.txt", add: true, new: "y" } }] }, // different args: recover
+      { toolCalls: [{ name: "filesystem.read", arguments: { path: "missing.txt" } }] },
+      { content: "done" },
+    ])
+  );
   const ev = evidence(outcome);
   assert.equal(outcome.phase, "completed");
   const first = ev.toolResults[0];
@@ -141,12 +144,14 @@ Deno.test("harness: repeated calls after deterministic failures are blocked as r
 });
 
 Deno.test("harness: a final without verification is rejected, then accepted after verification", async () => {
-  const outcome = await runReliabilityHarness(baseOptions([
-    { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "a.txt", old: "a=0", new: "a=1" } }] },
-    { content: "done" }, // rejected: unverified write
-    { toolCalls: [{ name: "filesystem.read", arguments: { path: "a.txt" } }] },
-    { content: "done" }, // accepted
-  ]));
+  const outcome = await runReliabilityHarness(
+    baseOptions([
+      { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "a.txt", old: "a=0", new: "a=1" } }] },
+      { content: "done" }, // rejected: unverified write
+      { toolCalls: [{ name: "filesystem.read", arguments: { path: "a.txt" } }] },
+      { content: "done" }, // accepted
+    ])
+  );
   const ev = evidence(outcome);
   assert.equal(outcome.phase, "completed");
   assert.ok(ev.guards.length === 1, `expected 1 guard, got ${ev.guards.length}`);
@@ -158,11 +163,16 @@ Deno.test("harness: a final without verification is rejected, then accepted afte
 });
 
 Deno.test("harness: two identical finals with no intervening action abort as false_completion", async () => {
-  const outcome = await runReliabilityHarness(baseOptions([
-    { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "a.txt", old: "a=0", new: "a=1" } }] },
-    { content: "done" },
-    { content: "done" }, // repeated, no action
-  ], { maxGuardRejections: 8 }));
+  const outcome = await runReliabilityHarness(
+    baseOptions(
+      [
+        { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "a.txt", old: "a=0", new: "a=1" } }] },
+        { content: "done" },
+        { content: "done" }, // repeated, no action
+      ],
+      { maxGuardRejections: 8 }
+    )
+  );
   assert.equal(outcome.phase, "failed");
   assert.equal(outcome.abortedReason, "false_completion");
   assert.equal(outcome.classification.failure_class, "false_completion");
@@ -175,59 +185,80 @@ Deno.test("harness: transient timeouts are auto-retried once, then blocked", asy
     { command: "slow-cmd", timed_out: true },
     { command: "true", exit_code: 0, stdout: "ok" },
   ]);
-  const outcome = await runReliabilityHarness(baseOptions([
-    { toolCalls: [{ name: "shell.exec", arguments: { command: "slow-cmd" } }] },
-    { toolCalls: [{ name: "shell.exec", arguments: { command: "slow-cmd" } }] }, // retry allowed
-    { toolCalls: [{ name: "shell.exec", arguments: { command: "slow-cmd" } }] }, // attempts exhausted
-    { toolCalls: [{ name: "shell.exec", arguments: { command: "true" } }] },
-    { content: "ok" },
-  ], {
-    backends: createFakeToolBackends({ files: { ...files }, shell }),
-    retryPolicy: {
-      maxRetriesPerCall: 1,
-      backoffMs: 0,
-      retryableCodes: ["timeout", "internal", "unavailable", "transport"],
-    },
-  }));
+  const outcome = await runReliabilityHarness(
+    baseOptions(
+      [
+        { toolCalls: [{ name: "shell.exec", arguments: { command: "slow-cmd" } }] },
+        { toolCalls: [{ name: "shell.exec", arguments: { command: "slow-cmd" } }] }, // retry allowed
+        { toolCalls: [{ name: "shell.exec", arguments: { command: "slow-cmd" } }] }, // attempts exhausted
+        { toolCalls: [{ name: "shell.exec", arguments: { command: "true" } }] },
+        { content: "ok" },
+      ],
+      {
+        backends: createFakeToolBackends({ files: { ...files }, shell }),
+        retryPolicy: {
+          maxRetriesPerCall: 1,
+          backoffMs: 0,
+          retryableCodes: ["timeout", "internal", "unavailable", "transport"],
+        },
+      }
+    )
+  );
   const ev = evidence(outcome);
   assert.equal(outcome.phase, "completed");
   const timeouts = ev.toolResults.filter((r) => String(r.result.error_code) === "timeout").length;
   assert.equal(timeouts, 2, "first attempt + one allowed retry");
   const blocked = ev.toolResults.filter((r) => String(r.result.error_code) === "repeated_failure").length;
   assert.equal(blocked, 1, "third identical call is blocked");
-  assert.notEqual(ev.toolResults.find((r) => String(r.result.error_code) === "timeout"), undefined);
+  assert.notEqual(
+    ev.toolResults.find((r) => String(r.result.error_code) === "timeout"),
+    undefined
+  );
 });
 
 Deno.test("harness: semantic loops are detected, guarded, and recoverable", async () => {
-  const outcome = await runReliabilityHarness(baseOptions([
-    { toolCalls: [{ name: "filesystem.read", arguments: { path: "a.txt" } }] },
-    { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "missing.txt", old: "x", new: "y" } }] },
-    { toolCalls: [{ name: "filesystem.read", arguments: { path: "a.txt" } }] },
-    { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "missing.txt", old: "x", new: "y" } }] },
-    { toolCalls: [{ name: "filesystem.read", arguments: { path: "a.txt" } }] },
-    { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "missing.txt", old: "x", new: "y" } }] },
-    { toolCalls: [{ name: "filesystem.read", arguments: { path: "a.txt" } }] },
-    { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "missing.txt", old: "x", new: "y" } }] },
-    { toolCalls: [{ name: "filesystem.read", arguments: { path: "a.txt" } }] },
-    { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "missing.txt", old: "x", new: "y" } }] },
-    // Break the loop: revise the plan (abandoning the failing edit), then finish.
-    { toolCalls: [{ name: "task.update_plan", arguments: { plan: ["created result.txt instead"] } }] },
-    { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "result.txt", add: true, new: "done" } }] },
-    { toolCalls: [{ name: "filesystem.read", arguments: { path: "result.txt" } }] },
-    { content: "done" },
-  ], { loopThreshold: 3, maxTurns: 30 }));
+  const outcome = await runReliabilityHarness(
+    baseOptions(
+      [
+        { toolCalls: [{ name: "filesystem.read", arguments: { path: "a.txt" } }] },
+        { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "missing.txt", old: "x", new: "y" } }] },
+        { toolCalls: [{ name: "filesystem.read", arguments: { path: "a.txt" } }] },
+        { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "missing.txt", old: "x", new: "y" } }] },
+        { toolCalls: [{ name: "filesystem.read", arguments: { path: "a.txt" } }] },
+        { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "missing.txt", old: "x", new: "y" } }] },
+        { toolCalls: [{ name: "filesystem.read", arguments: { path: "a.txt" } }] },
+        { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "missing.txt", old: "x", new: "y" } }] },
+        { toolCalls: [{ name: "filesystem.read", arguments: { path: "a.txt" } }] },
+        { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "missing.txt", old: "x", new: "y" } }] },
+        // Break the loop: revise the plan (abandoning the failing edit), then finish.
+        { toolCalls: [{ name: "task.update_plan", arguments: { plan: ["created result.txt instead"] } }] },
+        { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "result.txt", add: true, new: "done" } }] },
+        { toolCalls: [{ name: "filesystem.read", arguments: { path: "result.txt" } }] },
+        { content: "done" },
+      ],
+      { loopThreshold: 3, maxTurns: 30 }
+    )
+  );
   const ev = evidence(outcome);
   assert.ok(outcome.state.semanticLoops > 0, "loop must be recorded");
-  assert.ok(ev.guards.some((g) => g.kind === "loop"), "a loop guard must be emitted");
+  assert.ok(
+    ev.guards.some((g) => g.kind === "loop"),
+    "a loop guard must be emitted"
+  );
   assert.equal(outcome.phase, "completed");
 });
 
 Deno.test("harness: unknown experimental tools on the broad surface get deterministic feedback", async () => {
-  const outcome = await runReliabilityHarness(baseOptions([
-    { toolCalls: [{ name: "filesystem.write", arguments: { path: "a.txt", content: "x" } }] },
-    { toolCalls: [{ name: "filesystem.read", arguments: { path: "notes.txt" } }] },
-    { content: "done" },
-  ], { tools: broadToolSurface().definitions }));
+  const outcome = await runReliabilityHarness(
+    baseOptions(
+      [
+        { toolCalls: [{ name: "filesystem.write", arguments: { path: "a.txt", content: "x" } }] },
+        { toolCalls: [{ name: "filesystem.read", arguments: { path: "notes.txt" } }] },
+        { content: "done" },
+      ],
+      { tools: broadToolSurface().definitions }
+    )
+  );
   const ev = evidence(outcome);
   const invalid = ev.toolCalls.find((c) => c.tool === "filesystem.write")!;
   assert.equal(invalid.valid, false);
@@ -237,12 +268,17 @@ Deno.test("harness: unknown experimental tools on the broad surface get determin
 });
 
 Deno.test("harness: guard rejection budget exhausts deterministically", async () => {
-  const outcome = await runReliabilityHarness(baseOptions([
-    { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "a.txt", old: "a=0", new: "a=1" } }] },
-    { content: "first" },
-    { content: "second" },
-    { content: "third" },
-  ], { maxGuardRejections: 2, maxTurns: 12 }));
+  const outcome = await runReliabilityHarness(
+    baseOptions(
+      [
+        { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "a.txt", old: "a=0", new: "a=1" } }] },
+        { content: "first" },
+        { content: "second" },
+        { content: "third" },
+      ],
+      { maxGuardRejections: 2, maxTurns: 12 }
+    )
+  );
   assert.equal(outcome.phase, "failed");
   assert.equal(outcome.abortedReason, "guard_exhausted");
   assert.equal(outcome.classification.failure_class, "guard_exhausted");
@@ -250,22 +286,27 @@ Deno.test("harness: guard rejection budget exhausts deterministically", async ()
 });
 
 Deno.test("harness: configured final-attempt limit is enforced", async () => {
-  const outcome = await runReliabilityHarness(baseOptions([
-    { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "a.txt", old: "a=0", new: "a=1" } }] },
-    { content: "unverified" },
-    { content: "must not be requested" },
-  ], {
-    maxGuardRejections: 8,
-    verificationPolicy: {
-      requireVerificationBeforeFinal: true,
-      requireRecoveryBeforeFinal: true,
-      rejectFinalDuringLoop: true,
-      requirePlanBeforeWrites: false,
-      maxRepeatedFinals: 8,
-      maxFinalAttempts: 1,
-      verificationCommand: "sh tests/run.sh",
-    },
-  }));
+  const outcome = await runReliabilityHarness(
+    baseOptions(
+      [
+        { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "a.txt", old: "a=0", new: "a=1" } }] },
+        { content: "unverified" },
+        { content: "must not be requested" },
+      ],
+      {
+        maxGuardRejections: 8,
+        verificationPolicy: {
+          requireVerificationBeforeFinal: true,
+          requireRecoveryBeforeFinal: true,
+          rejectFinalDuringLoop: true,
+          requirePlanBeforeWrites: false,
+          maxRepeatedFinals: 8,
+          maxFinalAttempts: 1,
+          verificationCommand: "sh tests/run.sh",
+        },
+      }
+    )
+  );
   assert.equal(outcome.phase, "failed");
   assert.equal(outcome.abortedReason, "guard_exhausted");
   assert.equal(evidence(outcome).finals.length, 1);
@@ -273,13 +314,15 @@ Deno.test("harness: configured final-attempt limit is enforced", async () => {
 
 Deno.test("harness: deterministic HTTP failures are not retried", async () => {
   let calls = 0;
-  const outcome = await runReliabilityHarness(baseOptions([], {
-    transport: () => {
-      calls += 1;
-      return Promise.resolve(new Response("unauthorized", { status: 401 }));
-    },
-    retryPolicy: { maxRetriesPerCall: 3, backoffMs: 0, retryableCodes: ["transport"] },
-  }));
+  const outcome = await runReliabilityHarness(
+    baseOptions([], {
+      transport: () => {
+        calls += 1;
+        return Promise.resolve(new Response("unauthorized", { status: 401 }));
+      },
+      retryPolicy: { maxRetriesPerCall: 3, backoffMs: 0, retryableCodes: ["transport"] },
+    })
+  );
   assert.equal(calls, 1);
   assert.equal(outcome.abortedReason, "transport_failed");
   assert.equal(outcome.events.filter((event) => event.type === "model_request").length, 1);
@@ -297,20 +340,27 @@ Deno.test("harness: whole-run cancellation aborts a stalled injected transport",
         reject(signal.reason);
         return;
       }
-      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      signal.addEventListener(
+        "abort",
+        () => {
+          reject(signal.reason);
+        },
+        { once: true }
+      );
     });
   };
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
-    timeoutId = setTimeout(() => reject(new Error("stalled transport ignored cancellation")), 500);
+    timeoutId = setTimeout(() => {
+      reject(new Error("stalled transport ignored cancellation"));
+    }, 500);
   });
   const started = Date.now();
-  setTimeout(() => controller.abort(new DOMException("task deadline", "TimeoutError")), 20);
+  setTimeout(() => {
+    controller.abort(new DOMException("task deadline", "TimeoutError"));
+  }, 20);
   try {
-    const outcome = await Promise.race([
-      runReliabilityHarness(baseOptions([], { transport, signal: controller.signal })),
-      timeout,
-    ]);
+    const outcome = await Promise.race([runReliabilityHarness(baseOptions([], { transport, signal: controller.signal })), timeout]);
     assert.equal(observedSignal, controller.signal);
     assert.equal(outcome.phase, "aborted");
     assert.equal(outcome.abortedReason, "signal");
@@ -331,41 +381,35 @@ Deno.test("harness: structured mode requests carry deterministically fewer token
   script.push({ content: "done" });
   const bigBackends = createFakeToolBackends({ files: bigFiles, shell: new FakeShell([]) });
   const full = await runReliabilityHarness(baseOptions(script, { contextMode: "full", backends: bigBackends }));
-  const structured = await runReliabilityHarness(
-    baseOptions(script, { contextMode: "structured", backends: bigBackends }),
-  );
+  const structured = await runReliabilityHarness(baseOptions(script, { contextMode: "structured", backends: bigBackends }));
   assert.equal(full.phase, "completed");
   assert.equal(structured.phase, "completed");
-  const fullRequests = full.events.filter((e): e is Extract<HarnessEvent, { type: "model_request" }> =>
-    e.type === "model_request"
-  );
-  const structuredRequests = structured.events.filter((e): e is Extract<HarnessEvent, { type: "model_request" }> =>
-    e.type === "model_request"
-  );
+  const fullRequests = full.events.filter((e): e is Extract<HarnessEvent, { type: "model_request" }> => e.type === "model_request");
+  const structuredRequests = structured.events.filter((e): e is Extract<HarnessEvent, { type: "model_request" }> => e.type === "model_request");
   const lastFull = fullRequests[fullRequests.length - 1];
   const lastStructured = structuredRequests[structuredRequests.length - 1];
-  assert.ok(
-    lastStructured.estimatedTokens < lastFull.estimatedTokens,
-    `structured ${lastStructured.estimatedTokens} < full ${lastFull.estimatedTokens}`,
-  );
+  assert.ok(lastStructured.estimatedTokens < lastFull.estimatedTokens, `structured ${lastStructured.estimatedTokens} < full ${lastFull.estimatedTokens}`);
 });
 
 Deno.test("harness: verificationCommand declared in the harness option satisfies writes", async () => {
   const scriptedShell = new FakeShell([{ command: "sh tests/run.sh", exit_code: 0, stdout: "ok" }]);
-  const outcome = await runReliabilityHarness(baseOptions([
-    { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "a.txt", old: "a=0", new: "a=1" } }] },
-    { toolCalls: [{ name: "shell.exec", arguments: { command: "sh tests/run.sh" } }] },
-    { content: "done" },
-  ], { backends: createFakeToolBackends({ files: { ...files }, shell: scriptedShell }) }));
+  const outcome = await runReliabilityHarness(
+    baseOptions(
+      [
+        { toolCalls: [{ name: "editor.apply_patch", arguments: { path: "a.txt", old: "a=0", new: "a=1" } }] },
+        { toolCalls: [{ name: "shell.exec", arguments: { command: "sh tests/run.sh" } }] },
+        { content: "done" },
+      ],
+      { backends: createFakeToolBackends({ files: { ...files }, shell: scriptedShell }) }
+    )
+  );
   assert.equal(outcome.phase, "completed");
   assert.equal(outcome.state.writes[0].verified, true);
   assert.equal(outcome.state.writes[0].verifiedBy, "shell");
 });
 
 Deno.test("harness: maxTurns aborts as stalled turn_limit", async () => {
-  const outcome = await runReliabilityHarness(baseOptions([
-    { toolCalls: [{ name: "filesystem.read", arguments: { path: "a.txt" } }] },
-  ], { maxTurns: 2 }));
+  const outcome = await runReliabilityHarness(baseOptions([{ toolCalls: [{ name: "filesystem.read", arguments: { path: "a.txt" } }] }], { maxTurns: 2 }));
   assert.equal(outcome.phase, "failed");
   assert.equal(outcome.abortedReason, "turn_limit");
   assert.equal(outcome.classification.failure_class, "stalled");

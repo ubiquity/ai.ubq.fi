@@ -51,7 +51,7 @@ try {
     stderr: "null",
   }).output();
   if (registration.success) {
-    const oldPid = new TextDecoder().decode(registration.stdout).match(/\n\s*pid = (\d+)/)?.[1];
+    const oldPid = /\n\s*pid = (\d+)/.exec(new TextDecoder().decode(registration.stdout))?.[1];
     await command("launchctl", ["bootout", service]);
     // bootout returns before a draining process exits. Wait before registering its replacement.
     if (oldPid) {
@@ -68,13 +68,18 @@ try {
       const response = await fetch("http://127.0.0.1:8000/health", { signal: AbortSignal.timeout(2000) });
       const body = await response.json();
       if (
-        response.status === 200 && body.release?.git_sha === sha && body.release?.deployment_id === `mac-${sha}` &&
-        response.headers.get("x-uos-git-sha") === sha && response.headers.get("x-uos-deployment-id") === `mac-${sha}`
+        response.status === 200 &&
+        body.release?.git_sha === sha &&
+        body.release?.deployment_id === `mac-${sha}` &&
+        response.headers.get("x-uos-git-sha") === sha &&
+        response.headers.get("x-uos-deployment-id") === `mac-${sha}`
       ) {
         console.log(JSON.stringify({ git_sha: sha, deployment_id: `mac-${sha}`, health_verified: true }));
         Deno.exit(0);
       }
-    } catch { /* The listener is starting. */ }
+    } catch {
+      /* The listener is starting. */
+    }
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   throw new Error("The Mac service did not serve the expected release; inspect .data/mac.stderr.log");

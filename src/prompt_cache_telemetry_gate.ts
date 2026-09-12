@@ -15,8 +15,8 @@ export const PROMPT_CACHE_TELEMETRY_MIN_REPORTED_COVERAGE = 0.995;
 export const PROMPT_CACHE_TELEMETRY_PROVIDERS = ["chatgpt_codex", "metered", "surplus"] as const;
 export const PROMPT_CACHE_TELEMETRY_ROUTES = ["responses", "chat.completions"] as const;
 
-export type PromptCacheTelemetryProvider = typeof PROMPT_CACHE_TELEMETRY_PROVIDERS[number];
-export type PromptCacheTelemetryRoute = typeof PROMPT_CACHE_TELEMETRY_ROUTES[number];
+export type PromptCacheTelemetryProvider = (typeof PROMPT_CACHE_TELEMETRY_PROVIDERS)[number];
+export type PromptCacheTelemetryRoute = (typeof PROMPT_CACHE_TELEMETRY_ROUTES)[number];
 
 export type PromptCacheTelemetryEvent = Readonly<{
   provider: string | null;
@@ -38,14 +38,7 @@ export type PromptCacheTelemetryGateOptions = Readonly<{
 
 export type PromptCacheTelemetryRecordResult = Readonly<{
   status: "recorded" | "ignored" | "unavailable";
-  reason:
-    | "recorded"
-    | "unknown_release"
-    | "not_completed_2xx"
-    | "unsupported_provider"
-    | "unsupported_route"
-    | "invalid_model"
-    | "kv_unavailable";
+  reason: "recorded" | "unknown_release" | "not_completed_2xx" | "unsupported_provider" | "unsupported_route" | "invalid_model" | "kv_unavailable";
   release: string | null;
   provider: PromptCacheTelemetryProvider | null;
   route: PromptCacheTelemetryRoute | null;
@@ -89,9 +82,8 @@ export type PromptCacheTelemetryCounterSummary = Readonly<{
   cache_write_reported_coverage_passed: boolean;
 }>;
 
-export type PromptCacheTelemetryRouteBaseline =
-  & PromptCacheTelemetryCounterSummary
-  & Readonly<{
+export type PromptCacheTelemetryRouteBaseline = PromptCacheTelemetryCounterSummary &
+  Readonly<{
     route: PromptCacheTelemetryRoute;
     observed: boolean;
     completed_minimum_passed: boolean;
@@ -153,17 +145,13 @@ const normalizedModel = (value: unknown): string | null => {
 };
 
 const asProvider = (value: unknown): PromptCacheTelemetryProvider | null =>
-  typeof value === "string" && (PROMPT_CACHE_TELEMETRY_PROVIDERS as readonly string[]).includes(value)
-    ? value as PromptCacheTelemetryProvider
-    : null;
+  typeof value === "string" && (PROMPT_CACHE_TELEMETRY_PROVIDERS as readonly string[]).includes(value) ? (value as PromptCacheTelemetryProvider) : null;
 
 const asRoute = (value: unknown): PromptCacheTelemetryRoute | null =>
-  typeof value === "string" && (PROMPT_CACHE_TELEMETRY_ROUTES as readonly string[]).includes(value)
-    ? value as PromptCacheTelemetryRoute
-    : null;
+  typeof value === "string" && (PROMPT_CACHE_TELEMETRY_ROUTES as readonly string[]).includes(value) ? (value as PromptCacheTelemetryRoute) : null;
 
 const isCompleted2xx = (event: PromptCacheTelemetryEvent): boolean =>
-  event.completed === true && Number.isInteger(event.status) && event.status >= 200 && event.status < 300;
+  event.completed && Number.isInteger(event.status) && event.status >= 200 && event.status < 300;
 
 const resolveRelease = (options: PromptCacheTelemetryGateOptions): string | null =>
   normalizedRelease(options.release === undefined ? RELEASE_GIT_SHA : options.release);
@@ -176,23 +164,15 @@ const resolveKv = async (options: PromptCacheTelemetryGateOptions): Promise<Deno
   }
 };
 
-const modelHash = async (model: string): Promise<string> =>
-  await sha256Hex(`uos-prompt-cache-telemetry-model-v1\u0000${model}`);
+const modelHash = async (model: string): Promise<string> => await sha256Hex(`uos-prompt-cache-telemetry-model-v1\u0000${model}`);
 
 const counterKey = (
   release: string,
   provider: PromptCacheTelemetryProvider,
   modelHashValue: string,
   route: PromptCacheTelemetryRoute,
-  counter: "completed" | "reported" | "cache_write_reported" | "invalid",
-): Deno.KvKey => [
-  ...PROMPT_CACHE_TELEMETRY_GATE_KV_PREFIX,
-  release,
-  provider,
-  modelHashValue,
-  route,
-  counter,
-];
+  counter: "completed" | "reported" | "cache_write_reported" | "invalid"
+): Deno.KvKey => [...PROMPT_CACHE_TELEMETRY_GATE_KV_PREFIX, release, provider, modelHashValue, route, counter];
 
 const recordResult = (
   status: PromptCacheTelemetryRecordResult["status"],
@@ -202,7 +182,7 @@ const recordResult = (
     provider?: PromptCacheTelemetryProvider | null;
     route?: PromptCacheTelemetryRoute | null;
     modelHash?: string | null;
-  }> = {},
+  }> = {}
 ): PromptCacheTelemetryRecordResult => ({
   status,
   reason,
@@ -212,15 +192,9 @@ const recordResult = (
   model_hash: input.modelHash ?? null,
 });
 
-const isKvU64 = (value: unknown): value is Deno.KvU64 =>
-  value instanceof Deno.KvU64 && typeof value.value === "bigint" && value.value >= 0n;
+const isKvU64 = (value: unknown): value is Deno.KvU64 => value instanceof Deno.KvU64 && typeof value.value === "bigint" && value.value >= 0n;
 
-const counterPair = (
-  completedValue: unknown,
-  reportedValue: unknown,
-  cacheWriteReportedValue: unknown,
-  invalidValue: unknown,
-): CounterPair | null => {
+const counterPair = (completedValue: unknown, reportedValue: unknown, cacheWriteReportedValue: unknown, invalidValue: unknown): CounterPair | null => {
   const completedMissing = completedValue === null;
   const reportedMissing = reportedValue === null;
   const cacheWriteReportedMissing = cacheWriteReportedValue === null;
@@ -230,11 +204,7 @@ const counterPair = (
   }
   if (completedMissing || !isKvU64(completedValue)) return null;
   const reported = reportedMissing ? 0n : isKvU64(reportedValue) ? reportedValue.value : null;
-  const cacheWriteReported = cacheWriteReportedMissing
-    ? 0n
-    : isKvU64(cacheWriteReportedValue)
-    ? cacheWriteReportedValue.value
-    : null;
+  const cacheWriteReported = cacheWriteReportedMissing ? 0n : isKvU64(cacheWriteReportedValue) ? cacheWriteReportedValue.value : null;
   const invalid = invalidMissing ? 0n : isKvU64(invalidValue) ? invalidValue.value : null;
   if (reported === null || cacheWriteReported === null || invalid === null) return null;
   if (reported > completedValue.value || cacheWriteReported > reported || invalid > completedValue.value) return null;
@@ -260,15 +230,12 @@ const counterSummary = (counters: CounterPair): PromptCacheTelemetryCounterSumma
 });
 
 const unavailableBaseline = (
-  reason: Extract<
-    PromptCacheTelemetryBaselineResult["reason"],
-    "unknown_release" | "unsupported_target" | "kv_unavailable"
-  >,
+  reason: Extract<PromptCacheTelemetryBaselineResult["reason"], "unknown_release" | "unsupported_target" | "kv_unavailable">,
   input: Readonly<{
     release?: string | null;
     provider?: PromptCacheTelemetryProvider | null;
     modelHash?: string | null;
-  }> = {},
+  }> = {}
 ): PromptCacheTelemetryBaselineResult => ({
   status: reason === "kv_unavailable" ? "unavailable" : "not_ready",
   reason,
@@ -288,7 +255,7 @@ export const getCurrentPromptCacheTelemetryRelease = (): string | null => normal
  */
 export const resolvePromptCacheTelemetryCounterKeys = async (
   target: PromptCacheTelemetryBaselineTarget,
-  options: PromptCacheTelemetryGateOptions = {},
+  options: PromptCacheTelemetryGateOptions = {}
 ): Promise<PromptCacheTelemetryCounterKeys | null> => {
   const release = resolveRelease(options);
   const provider = asProvider(target.provider);
@@ -320,7 +287,7 @@ export const resolvePromptCacheTelemetryCounterKeys = async (
  */
 export const recordPromptCacheTelemetry = async (
   event: PromptCacheTelemetryEvent,
-  options: PromptCacheTelemetryGateOptions = {},
+  options: PromptCacheTelemetryGateOptions = {}
 ): Promise<PromptCacheTelemetryRecordResult> => {
   const release = resolveRelease(options);
   if (!release) return recordResult("ignored", "unknown_release");
@@ -379,7 +346,7 @@ export const recordPromptCacheTelemetry = async (
  */
 export const readPromptCacheTelemetryBaseline = async (
   target: PromptCacheTelemetryBaselineTarget,
-  options: PromptCacheTelemetryGateOptions = {},
+  options: PromptCacheTelemetryGateOptions = {}
 ): Promise<PromptCacheTelemetryBaselineResult> => {
   const release = resolveRelease(options);
   if (!release) return unavailableBaseline("unknown_release");
@@ -411,20 +378,17 @@ export const readPromptCacheTelemetryBaseline = async (
         const [completed, reported, cacheWriteReported, invalid] = await Promise.all([
           kv.get<Deno.KvU64>(counterKey(release, provider, hashedModel, route, "completed"), { consistency: "strong" }),
           kv.get<Deno.KvU64>(counterKey(release, provider, hashedModel, route, "reported"), { consistency: "strong" }),
-          kv.get<Deno.KvU64>(
-            counterKey(release, provider, hashedModel, route, "cache_write_reported"),
-            { consistency: "strong" },
-          ),
+          kv.get<Deno.KvU64>(counterKey(release, provider, hashedModel, route, "cache_write_reported"), { consistency: "strong" }),
           kv.get<Deno.KvU64>(counterKey(release, provider, hashedModel, route, "invalid"), { consistency: "strong" }),
         ]);
         return { route, completed, reported, cacheWriteReported, invalid };
-      }),
+      })
     );
   } catch {
     return unavailableBaseline("kv_unavailable", { release, provider, modelHash: hashedModel });
   }
 
-  const countersByRoute: Array<Readonly<{ route: PromptCacheTelemetryRoute; counters: CounterPair }>> = [];
+  const countersByRoute: Readonly<{ route: PromptCacheTelemetryRoute; counters: CounterPair }>[] = [];
   for (const { route, completed, reported, cacheWriteReported, invalid } of entriesByRoute) {
     const counters = counterPair(completed.value, reported.value, cacheWriteReported.value, invalid.value);
     if (!counters) {
@@ -444,37 +408,38 @@ export const readPromptCacheTelemetryBaseline = async (
       cacheWriteReported: total.cacheWriteReported + entry.counters.cacheWriteReported,
       invalid: total.invalid + entry.counters.invalid,
     }),
-    { completed: 0n, reported: 0n, cacheWriteReported: 0n, invalid: 0n },
+    { completed: 0n, reported: 0n, cacheWriteReported: 0n, invalid: 0n }
   );
-  const routes = countersByRoute.map(({ route, counters }) => ({
-    route,
-    observed: counters.completed > 0n,
-    ...counterSummary(counters),
-    completed_minimum_passed: counters.completed >= BigInt(PROMPT_CACHE_TELEMETRY_MIN_COMPLETED_PER_ROUTE),
-  } satisfies PromptCacheTelemetryRouteBaseline));
+  const routes = countersByRoute.map(
+    ({ route, counters }) =>
+      ({
+        route,
+        observed: counters.completed > 0n,
+        ...counterSummary(counters),
+        completed_minimum_passed: counters.completed >= BigInt(PROMPT_CACHE_TELEMETRY_MIN_COMPLETED_PER_ROUTE),
+      }) satisfies PromptCacheTelemetryRouteBaseline
+  );
 
   const aggregateSummary = counterSummary(aggregate);
   const aggregateCompletedPassed = aggregate.completed >= BigInt(PROMPT_CACHE_TELEMETRY_MIN_COMPLETED);
   const observedRoutes = routes.filter((route) => route.observed);
   const everyObservedRouteCompleted = observedRoutes.every((route) => route.completed_minimum_passed);
   const everyObservedRouteReported = observedRoutes.every((route) => route.reported_coverage_passed);
-  const everyObservedRouteCacheWriteReported = observedRoutes.every((route) =>
-    route.cache_write_reported_coverage_passed
-  );
+  const everyObservedRouteCacheWriteReported = observedRoutes.every((route) => route.cache_write_reported_coverage_passed);
 
   const reason = !aggregateCompletedPassed
     ? "aggregate_completed_below_minimum"
     : !everyObservedRouteCompleted
-    ? "route_completed_below_minimum"
-    : !aggregateSummary.reported_coverage_passed
-    ? "aggregate_reported_coverage_below_minimum"
-    : !everyObservedRouteReported
-    ? "route_reported_coverage_below_minimum"
-    : !aggregateSummary.cache_write_reported_coverage_passed
-    ? "aggregate_cache_write_reported_coverage_below_minimum"
-    : !everyObservedRouteCacheWriteReported
-    ? "route_cache_write_reported_coverage_below_minimum"
-    : "eligible";
+      ? "route_completed_below_minimum"
+      : !aggregateSummary.reported_coverage_passed
+        ? "aggregate_reported_coverage_below_minimum"
+        : !everyObservedRouteReported
+          ? "route_reported_coverage_below_minimum"
+          : !aggregateSummary.cache_write_reported_coverage_passed
+            ? "aggregate_cache_write_reported_coverage_below_minimum"
+            : !everyObservedRouteCacheWriteReported
+              ? "route_cache_write_reported_coverage_below_minimum"
+              : "eligible";
 
   return {
     status: reason === "eligible" ? "eligible" : "not_ready",

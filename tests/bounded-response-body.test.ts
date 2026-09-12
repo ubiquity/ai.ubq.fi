@@ -12,7 +12,7 @@ Deno.test("bounded response body reads fragmented complete bodies", async () => 
         controller.enqueue(encoder.encode("mented"));
         controller.close();
       },
-    }),
+    })
   );
 
   const result = await readBoundedResponseBody(response);
@@ -31,7 +31,7 @@ Deno.test("bounded response body recognizes EOF exactly at the byte limit", asyn
       cancel() {
         cancellations += 1;
       },
-    }),
+    })
   );
 
   const result = await readBoundedResponseBody(response);
@@ -50,13 +50,17 @@ Deno.test("bounded response body truncates and cancels oversized bodies", async 
       cancel() {
         cancellations += 1;
       },
-    }),
+    })
   );
 
   const result = await readBoundedResponseBody(response);
   assert.equal(result.complete, false);
   assert.equal(result.bytes.byteLength, BOUNDED_RESPONSE_BODY_MAX_BYTES);
-  await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
+  await new Promise<void>((resolve) => {
+    queueMicrotask(() => {
+      resolve();
+    });
+  });
   assert.equal(cancellations, 1);
 });
 
@@ -66,7 +70,7 @@ Deno.test("bounded response body respects timeout and caller abort", async (t) =
       new ReadableStream<Uint8Array>({
         pull: () => new Promise<void>(() => {}),
         cancel: onCancel,
-      }),
+      })
     );
 
   await t.step("timeout", async () => {
@@ -76,18 +80,24 @@ Deno.test("bounded response body respects timeout and caller abort", async (t) =
       pendingResponse(() => {
         cancellations += 1;
       }),
-      { timeoutMs: 10 },
+      { timeoutMs: 10 }
     );
     assert.equal(result.complete, false);
     assert.ok(performance.now() - startedAt < 500);
-    await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
+    await new Promise<void>((resolve) => {
+      queueMicrotask(() => {
+        resolve();
+      });
+    });
     assert.equal(cancellations, 1);
   });
 
   await t.step("caller abort", async () => {
     let cancellations = 0;
     const controller = new AbortController();
-    queueMicrotask(() => controller.abort("caller cancelled"));
+    queueMicrotask(() => {
+      controller.abort("caller cancelled");
+    });
     const result = await readBoundedResponseBody(
       pendingResponse(() => {
         cancellations += 1;
@@ -95,10 +105,14 @@ Deno.test("bounded response body respects timeout and caller abort", async (t) =
       {
         signal: controller.signal,
         timeoutMs: 1_000,
-      },
+      }
     );
     assert.equal(result.complete, false);
-    await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
+    await new Promise<void>((resolve) => {
+      queueMicrotask(() => {
+        resolve();
+      });
+    });
     assert.equal(cancellations, 1);
   });
 });
@@ -112,13 +126,17 @@ Deno.test("bounded response body releases an incomplete reader exactly once", as
       cancellations += 1;
       return Promise.resolve();
     },
-    releaseLock: () => releases += 1,
+    releaseLock: () => (releases += 1),
   };
   const response = { body: { getReader: () => reader } } as unknown as Response;
 
   const result = await readBoundedResponseBody(response, { maxBytes: 1 });
   assert.equal(result.complete, false);
-  await new Promise<void>((resolve) => queueMicrotask(() => resolve()));
+  await new Promise<void>((resolve) => {
+    queueMicrotask(() => {
+      resolve();
+    });
+  });
   assert.equal(cancellations, 1);
   assert.equal(releases, 1);
 });
@@ -132,7 +150,7 @@ Deno.test("bounded response body releases the reader when cancellation never set
       cancellations += 1;
       return new Promise<void>(() => {});
     },
-    releaseLock: () => releases += 1,
+    releaseLock: () => (releases += 1),
   };
   const response = { body: { getReader: () => reader } } as unknown as Response;
 

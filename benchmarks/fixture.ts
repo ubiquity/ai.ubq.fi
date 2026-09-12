@@ -13,11 +13,12 @@ import { TaskManifest } from "./schemas.ts";
 
 /** Thrown when the declared fixture_revision does not match the snapshot. */
 export class FixtureRevisionMismatchError extends Error {
-  constructor(readonly taskId: string, readonly expected: string, readonly actual: string) {
-    super(
-      `fixture revision mismatch for ${taskId}: manifest declares ${expected}, snapshot is ${actual}` +
-        ` (regenerate fixtures or update the manifest)`,
-    );
+  constructor(
+    readonly taskId: string,
+    readonly expected: string,
+    readonly actual: string
+  ) {
+    super(`fixture revision mismatch for ${taskId}: manifest declares ${expected}, snapshot is ${actual}` + ` (regenerate fixtures or update the manifest)`);
     this.name = "FixtureRevisionMismatchError";
   }
 }
@@ -31,9 +32,7 @@ async function sha256Hex(data: Uint8Array): Promise<string> {
 export async function computeFixtureRevision(fixtureDir: string): Promise<string> {
   const files: { rel: string; abspath: string }[] = [];
   const walk = (dir: string, rel: string) => {
-    const entries = [...Deno.readDirSync(dir)].filter((e) => e.isFile || e.isDirectory).sort((a, b) =>
-      a.name.localeCompare(b.name)
-    );
+    const entries = [...Deno.readDirSync(dir)].filter((e) => e.isFile || e.isDirectory).sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
       const childRel = rel === "" ? entry.name : `${rel}/${entry.name}`;
       if (entry.isDirectory) walk(`${dir}/${entry.name}`, childRel);
@@ -119,19 +118,22 @@ function normalizeLexically(p: string): string {
 }
 
 export class WriteScopeViolationError extends Error {
-  constructor(readonly path: string, readonly scope: string[]) {
+  constructor(
+    readonly path: string,
+    readonly scope: string[]
+  ) {
     super(`write scope violation: ${path} is not writable (scope: ${scope.join(", ")})`);
     this.name = "WriteScopeViolationError";
   }
 }
 
-export interface FixtureWorkspaceOptions {
+export type FixtureWorkspaceOptions = {
   fixtureDir: string;
   runId: string;
   /** Parent directory for disposable workspaces (must be writable, git-ignored). */
   tmpParent: string;
   task: TaskManifest;
-}
+};
 
 export class FixtureWorkspace {
   readonly root: string;
@@ -200,15 +202,7 @@ export class FixtureWorkspace {
       if (git?.init) {
         await gitCommand(this.root, ["init", "-q"]);
         await gitCommand(this.root, ["add", "-A"]);
-        await gitCommand(this.root, [
-          "-c",
-          "user.email=benchmark@invalid.invalid",
-          "-c",
-          "user.name=benchmark",
-          "commit",
-          "-qm",
-          "base",
-        ]);
+        await gitCommand(this.root, ["-c", "user.email=benchmark@invalid.invalid", "-c", "user.name=benchmark", "commit", "-qm", "base"]);
       }
     }
     this.prepared = true;
@@ -248,11 +242,11 @@ export class FixtureWorkspace {
       return { applied: true, detail: `created ${rel}` };
     }
     const absStat = statIfExists(abs);
-    if (absStat === null || !absStat.isFile) throw new Error(`patch failed: ${rel} does not exist`);
+    if (!absStat?.isFile) throw new Error(`patch failed: ${rel} does not exist`);
     const content = Deno.readTextFileSync(abs);
     const first = content.indexOf(old);
     if (first === -1) throw new Error(`patch failed: ${rel} does not contain the expected old text`);
-    if (content.indexOf(old, first + 1) !== -1) {
+    if (content.includes(old, first + 1)) {
       throw new Error(`patch failed: old text occurs more than once in ${rel}`);
     }
     const patched = content.slice(0, first) + next + content.slice(first + old.length);
@@ -266,9 +260,7 @@ export class FixtureWorkspace {
     const out: string[] = [];
     const start = rel === "" ? this.root : this.assertPath(rel);
     const walk = (dir: string, prefix: string) => {
-      const entries = [...Deno.readDirSync(dir)].filter((e) => e.isFile || e.isDirectory).sort((a, b) =>
-        a.name.localeCompare(b.name)
-      );
+      const entries = [...Deno.readDirSync(dir)].filter((e) => e.isFile || e.isDirectory).sort((a, b) => a.name.localeCompare(b.name));
       for (const entry of entries) {
         const child = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
         if (entry.isDirectory) walk(`${dir}/${entry.name}`, child);
@@ -282,11 +274,9 @@ export class FixtureWorkspace {
   /** Run a command in the workspace; used by oracles and verification. */
   async exec(
     cmd: string[],
-    opts: { timeoutMs: number; capture: boolean; signal?: AbortSignal },
+    opts: { timeoutMs: number; capture: boolean; signal?: AbortSignal }
   ): Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean }> {
-    const signal = opts.signal === undefined
-      ? AbortSignal.timeout(opts.timeoutMs)
-      : AbortSignal.any([AbortSignal.timeout(opts.timeoutMs), opts.signal]);
+    const signal = opts.signal === undefined ? AbortSignal.timeout(opts.timeoutMs) : AbortSignal.any([AbortSignal.timeout(opts.timeoutMs), opts.signal]);
     const proc = new Deno.Command(cmd[0], {
       args: cmd.slice(1),
       cwd: this.root,
@@ -316,11 +306,7 @@ export class FixtureWorkspace {
   }
 
   /** Run a shell command in the workspace. */
-  async execShell(
-    command: string,
-    timeoutMs: number,
-    signal?: AbortSignal,
-  ): Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean }> {
+  async execShell(command: string, timeoutMs: number, signal?: AbortSignal): Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean }> {
     this.assertRoot();
     if (Deno.build.os === "linux") {
       const root = Deno.realPathSync(this.root);
@@ -337,7 +323,7 @@ export class FixtureWorkspace {
           root,
           command,
         ],
-        { timeoutMs, capture: true, signal },
+        { timeoutMs, capture: true, signal }
       );
     }
     if (Deno.build.os !== "darwin") {
@@ -374,7 +360,7 @@ export class FixtureWorkspace {
         command,
         Deno.realPathSync(this.root),
       ],
-      { timeoutMs, capture: true, signal },
+      { timeoutMs, capture: true, signal }
     );
   }
 }
@@ -417,8 +403,6 @@ async function gitCommand(cwd: string, args: string[]): Promise<void> {
   const proc = new Deno.Command("git", { args, cwd, stdout: "piped", stderr: "piped" });
   const out = await proc.output();
   if (out.code !== 0) {
-    throw new Error(
-      `git ${args.join(" ")} failed (exit ${out.code}): ${new TextDecoder().decode(out.stderr).trim()}`,
-    );
+    throw new Error(`git ${args.join(" ")} failed (exit ${out.code}): ${new TextDecoder().decode(out.stderr).trim()}`);
   }
 }

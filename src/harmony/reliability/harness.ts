@@ -26,43 +26,19 @@
  * the same loop in focused tests and in the C-fake benchmark matrix.
  */
 
-import {
-  buildCerebrasHarmonyRequest,
-  type BuiltHarmonyRequest,
-  type HarmonyTransport,
-  normalizeHarmonyChatCompletion,
-} from "../adapter.ts";
+import { buildCerebrasHarmonyRequest, type BuiltHarmonyRequest, type HarmonyTransport, normalizeHarmonyChatCompletion } from "../adapter.ts";
 import { appendTurn, appendUser, type Conversation, createConversation } from "../conversation.ts";
 import type { HarmonyReasoningEffort, NormalizedAssistantResponse, ToolCall, ToolDefinition } from "../types.ts";
 import type { ToolBackends } from "../tools/backend.ts";
 import { type ToolErrorCode, toolFailure, type ToolResult } from "../tools/result.ts";
 import { runTool } from "../tools/router.ts";
 import { toolDefinitions } from "../tools/schemas.ts";
-import {
-  compactTranscript,
-  type ContextBudgetKind,
-  estimateRequestTokens,
-  renderStructuredContext,
-  serializeToolResultContent,
-} from "./context.ts";
+import { compactTranscript, type ContextBudgetKind, estimateRequestTokens, renderStructuredContext, serializeToolResultContent } from "./context.ts";
 import { classifyReliability, type ReliabilityClassification } from "./failure.ts";
 import { invalidCallLabel, renderValidationFeedback, validateToolArgumentsDetailed } from "./feedback.ts";
 import { callIdentity, LoopDetector, renderLoopFeedback } from "./loops.ts";
-import {
-  decideRetry,
-  DEFAULT_RETRY_POLICY,
-  renderRepeatedFailureFeedback,
-  RetryLedger,
-  type RetryPolicy,
-} from "./retry.ts";
-import {
-  emptyTaskState,
-  type FinalObservation,
-  reduceFinalAttempt,
-  reduceToolObservation,
-  type StructuredTaskState,
-  type TaskPhase,
-} from "./state.ts";
+import { decideRetry, DEFAULT_RETRY_POLICY, renderRepeatedFailureFeedback, RetryLedger, type RetryPolicy } from "./retry.ts";
+import { emptyTaskState, type FinalObservation, reduceFinalAttempt, reduceToolObservation, type StructuredTaskState, type TaskPhase } from "./state.ts";
 import {
   DEFAULT_VERIFICATION_POLICY,
   type FinalAttempt,
@@ -74,36 +50,31 @@ import {
   VerificationTracker,
 } from "./verify.ts";
 
-const isTransientHttpStatus = (status: number): boolean =>
-  status === 408 || status === 425 || status === 429 || status >= 500;
+const isTransientHttpStatus = (status: number): boolean => status === 408 || status === 425 || status === 429 || status >= 500;
 
 export type HarnessEvent =
-  | Readonly<
-    {
+  | Readonly<{
       type: "model_request";
       id: number;
       mode: "full" | "structured";
       built: BuiltHarmonyRequest;
       estimatedTokens: number;
-    }
-  >
-  | Readonly<
-    { type: "model_response"; requestId: number; normalized: NormalizedAssistantResponse; estimatedTokens: number }
-  >
+    }>
+  | Readonly<{ type: "model_response"; requestId: number; normalized: NormalizedAssistantResponse; estimatedTokens: number }>
   | Readonly<{
-    type: "tool_call";
-    id: string;
-    tool: string;
-    arguments: Record<string, unknown>;
-    valid: boolean;
-    invalidReason?: string;
-    repeated?: string | null;
-  }>
+      type: "tool_call";
+      id: string;
+      tool: string;
+      arguments: Record<string, unknown>;
+      valid: boolean;
+      invalidReason?: string;
+      repeated?: string | null;
+    }>
   | Readonly<{ type: "tool_result"; id: string; result: ToolResult; durationMs?: number }>
   | Readonly<{ type: "guard"; kind: FinalRequirementKind | "loop"; message: string; attempt: number; phase: TaskPhase }>
   | Readonly<{ type: "final"; content: string; accepted: boolean; attempt: number }>;
 
-export interface HarnessOptions {
+export type HarnessOptions = {
   systemPrompt: string;
   userPrompt: string;
   transport: HarmonyTransport;
@@ -125,9 +96,9 @@ export interface HarnessOptions {
   verificationCommand?: string | null;
   emit?: (event: HarnessEvent) => void;
   signal?: AbortSignal;
-}
+};
 
-export interface HarnessOutcome {
+export type HarnessOutcome = {
   phase: "completed" | "failed" | "aborted";
   finalContent: string | null;
   conversation: Conversation;
@@ -136,7 +107,7 @@ export interface HarnessOutcome {
   events: readonly HarnessEvent[];
   modelCalls: number;
   abortedReason: string | null;
-}
+};
 
 const TAIL_TURNS_FOR_BUDGET: Readonly<Record<ContextBudgetKind, number>> = {
   short: 2,
@@ -145,9 +116,7 @@ const TAIL_TURNS_FOR_BUDGET: Readonly<Record<ContextBudgetKind, number>> = {
 };
 
 /** Deterministic model-facing policy preamble (fixed text, no secrets). */
-export const renderCanonicalPolicy = (
-  opts: Readonly<{ tools: readonly string[]; budget: ContextBudgetKind }>,
-): string =>
+export const renderCanonicalPolicy = (opts: Readonly<{ tools: readonly string[]; budget: ContextBudgetKind }>): string =>
   [
     "You are a deterministic agent running inside the canonical reliability harness.",
     "Rules:",
@@ -191,8 +160,7 @@ export async function runReliabilityHarness(opts: HarnessOptions): Promise<Harne
     events.push(event);
     opts.emit?.(event);
   };
-  const sleep = (ms: number): Promise<void> =>
-    ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
+  const sleep = (ms: number): Promise<void> => (ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve());
 
   let conversation = createConversation();
   if (opts.systemPrompt) conversation = appendTurn(conversation, { role: "system", content: opts.systemPrompt });
@@ -305,10 +273,7 @@ export async function runReliabilityHarness(opts: HarnessOptions): Promise<Harne
         normalized,
         estimatedTokens: Math.max(
           1,
-          Math.ceil(
-            ((normalized.content ?? "").length +
-              normalized.toolCalls.reduce((n, call) => n + call.arguments.length, 0)) / 4,
-          ),
+          Math.ceil(((normalized.content ?? "").length + normalized.toolCalls.reduce((n, call) => n + call.arguments.length, 0)) / 4)
         ),
       });
       break;
@@ -360,7 +325,7 @@ export async function runReliabilityHarness(opts: HarnessOptions): Promise<Harne
       const first = decision.requirements[0];
       emit({
         type: "guard",
-        kind: decision.falseCompletion ? "false_completion" : first?.kind ?? "unverified_write",
+        kind: decision.falseCompletion ? "false_completion" : (first?.kind ?? "unverified_write"),
         message: renderGuardRequirements(decision.requirements),
         attempt: finalAttempts,
         phase: state.phase,
@@ -398,13 +363,17 @@ export async function runReliabilityHarness(opts: HarnessOptions): Promise<Harne
         appendToolPair(call, result, normalized.analysis);
         invalidStreak += 1;
         if (invalidStreak >= invalidCallStreakLimit) return abort("invalid_argument_loop");
-        state = reduceToolObservation(state, {
-          seq,
-          tool: call.name,
-          args: validation.arguments,
-          valid: false,
-          result,
-        }, { duplicate: null, semanticLoop: flags.semanticLoop, verification: null });
+        state = reduceToolObservation(
+          state,
+          {
+            seq,
+            tool: call.name,
+            args: validation.arguments,
+            valid: false,
+            result,
+          },
+          { duplicate: null, semanticLoop: flags.semanticLoop, verification: null }
+        );
         continue;
       }
 
@@ -412,18 +381,17 @@ export async function runReliabilityHarness(opts: HarnessOptions): Promise<Harne
       const priorAttempts = retryLedger.priorAttempts(identity);
       const previousCode = retryLedger.entry(identity)?.lastCode ?? null;
       const duplicate = detector.checkDuplicate(call.name, validation.arguments);
-      const retryDecision = duplicate !== null && priorAttempts > 0
-        ? decideRetry(retryPolicy, previousCode, priorAttempts)
-        : null;
+      const retryDecision = duplicate !== null && priorAttempts > 0 ? decideRetry(retryPolicy, previousCode, priorAttempts) : null;
 
       let result: ToolResult;
-      if (duplicate !== null && (retryDecision === null || !retryDecision.retry)) {
+      if (duplicate !== null && !retryDecision?.retry) {
         // Deterministic guard: never re-execute an identical call.
         const blockedCode = duplicate === "repeat_after_success" ? "duplicate_call" : "repeated_failure";
-        const message = blockedCode === "duplicate_call"
-          ? `duplicate of the previous call ${call.name}(${JSON.stringify(validation.arguments)}); ` +
-            "do not repeat it — read the existing result or take a different action"
-          : renderRepeatedFailureFeedback(previousCode, identity);
+        const message =
+          blockedCode === "duplicate_call"
+            ? `duplicate of the previous call ${call.name}(${JSON.stringify(validation.arguments)}); ` +
+              "do not repeat it — read the existing result or take a different action"
+            : renderRepeatedFailureFeedback(previousCode, identity);
         result = { ok: false, error: message, error_code: blockedCode as ToolErrorCode };
         emit({
           type: "tool_call",
@@ -458,13 +426,17 @@ export async function runReliabilityHarness(opts: HarnessOptions): Promise<Harne
       retryLedger.observe(identity, result, priorAttempts);
       const verification = tracker.observe(call.name, validation.arguments, result);
       const flags = detector.observe(call.name, validation.arguments, result);
-      state = reduceToolObservation(state, {
-        seq,
-        tool: call.name,
-        args: validation.arguments,
-        valid: true,
-        result,
-      }, { duplicate: flags.duplicate ?? duplicate ?? null, semanticLoop: flags.semanticLoop, verification });
+      state = reduceToolObservation(
+        state,
+        {
+          seq,
+          tool: call.name,
+          args: validation.arguments,
+          valid: true,
+          result,
+        },
+        { duplicate: flags.duplicate ?? duplicate ?? null, semanticLoop: flags.semanticLoop, verification }
+      );
       invalidStreak = 0;
       if (flags.semanticLoop && flags.streak >= loopThreshold && !loopGuardEmitted) {
         loopGuardEmitted = true;

@@ -49,7 +49,7 @@ export const CODEX_INFINITY_SOURCE_PIN = {
   retrievalDate: "2026-08-29",
 } as const;
 
-export interface CodexInfinityBridgeConfig {
+export type CodexInfinityBridgeConfig = {
   readonly sourcePin: Readonly<typeof CODEX_INFINITY_SOURCE_PIN>;
   /**
    * Local checkout of the pinned revision. The adapter never clones; when
@@ -69,7 +69,7 @@ export interface CodexInfinityBridgeConfig {
    * are excluded from baseline runs because they would never terminate.
    */
   extraArgs: string[];
-}
+};
 
 export const DEFAULT_BRIDGE_CONFIG: CodexInfinityBridgeConfig = {
   sourcePin: CODEX_INFINITY_SOURCE_PIN,
@@ -86,11 +86,11 @@ export const DEFAULT_BRIDGE_CONFIG: CodexInfinityBridgeConfig = {
 // ---------------------------------------------------------------------------
 
 /** One tool call inside a bridge model turn. */
-export interface BridgeToolCall {
+export type BridgeToolCall = {
   id: string;
   name: string;
   arguments: Record<string, unknown>;
-}
+};
 
 /**
  * Process-shaped events emitted by a codex-infinity run and translated by
@@ -100,55 +100,53 @@ export interface BridgeToolCall {
  */
 export type BridgeProcessEvent =
   | {
-    kind: "model_request";
-    id: number;
-    model: string;
-    message_count: number;
-    input_tokens: number;
-    output_tokens: number;
-    tool_count: number;
-  }
+      kind: "model_request";
+      id: number;
+      model: string;
+      message_count: number;
+      input_tokens: number;
+      output_tokens: number;
+      tool_count: number;
+    }
   | {
-    kind: "model_response";
-    request_id: number;
-    content: string | null;
-    tool_calls: readonly BridgeToolCall[];
-    finish_reason: string | null;
-  }
+      kind: "model_response";
+      request_id: number;
+      content: string | null;
+      tool_calls: readonly BridgeToolCall[];
+      finish_reason: string | null;
+    }
   | {
-    kind: "tool_call";
-    id: string;
-    tool: string;
-    arguments: Record<string, unknown>;
-    valid: boolean;
-    invalid_reason?: string;
-    is_wrong_tool?: boolean;
-    is_repeated?: boolean;
-  }
+      kind: "tool_call";
+      id: string;
+      tool: string;
+      arguments: Record<string, unknown>;
+      valid: boolean;
+      invalid_reason?: string;
+      is_wrong_tool?: boolean;
+      is_repeated?: boolean;
+    }
   | {
-    kind: "tool_result";
-    id: string;
-    ok: boolean;
-    output?: string;
-    error?: string;
-    error_code?: string;
-    duration_ms?: number;
-  };
+      kind: "tool_result";
+      id: string;
+      ok: boolean;
+      output?: string;
+      error?: string;
+      error_code?: string;
+      duration_ms?: number;
+    };
 
-export interface ProcessDriverInput {
+export type ProcessDriverInput = {
   task: TaskManifest;
   workspace: FixtureWorkspace;
   signal: AbortSignal;
-}
+};
 
 /** Translates a codex-infinity run into process events (injected in tests). */
-export interface ProcessDriver {
+export type ProcessDriver = {
   run(input: ProcessDriverInput): AsyncIterable<BridgeProcessEvent> | Iterable<BridgeProcessEvent>;
-}
+};
 
-async function* drain(
-  events: AsyncIterable<BridgeProcessEvent> | Iterable<BridgeProcessEvent>,
-): AsyncGenerator<BridgeProcessEvent> {
+async function* drain(events: AsyncIterable<BridgeProcessEvent> | Iterable<BridgeProcessEvent>): AsyncGenerator<BridgeProcessEvent> {
   yield* events;
 }
 
@@ -210,9 +208,7 @@ export function bridgeEventToTrajectory(event: BridgeProcessEvent, at: string): 
 // ---------------------------------------------------------------------------
 
 /** Builds a driver from a fixed list or a function (deterministic tests). */
-export function scriptedBridgeDriver(
-  events: readonly BridgeProcessEvent[] | ((input: ProcessDriverInput) => Iterable<BridgeProcessEvent>),
-): ProcessDriver {
+export function scriptedBridgeDriver(events: readonly BridgeProcessEvent[] | ((input: ProcessDriverInput) => Iterable<BridgeProcessEvent>)): ProcessDriver {
   return {
     *run(input: ProcessDriverInput): Iterable<BridgeProcessEvent> {
       if (typeof events === "function") yield* events(input);
@@ -225,7 +221,7 @@ function applyScriptedStep(
   workspace: FixtureWorkspace,
   step: TrailStep,
   signal: AbortSignal,
-  validated: { valid: boolean; reason?: string },
+  validated: { valid: boolean; reason?: string }
 ): Promise<ToolResult> {
   if (!validated.valid) {
     return Promise.resolve({ ok: false, error: `invalid arguments: ${validated.reason}`, error_code: "invalid_args" });
@@ -243,11 +239,7 @@ function applyScriptedStep(
   return executeScriptedTool(workspace, step, signal);
 }
 
-async function executeScriptedTool(
-  workspace: FixtureWorkspace,
-  step: TrailStep,
-  signal: AbortSignal,
-): Promise<ToolResult> {
+async function executeScriptedTool(workspace: FixtureWorkspace, step: TrailStep, signal: AbortSignal): Promise<ToolResult> {
   try {
     return await executeBaselineTool(workspace, step.tool, step.args, signal);
   } catch (err) {
@@ -262,9 +254,7 @@ async function executeScriptedTool(
  * final model turn. This stands in for a live process until the real output
  * format is verified.
  */
-export async function* synthesizeBridgeEvents(
-  input: ProcessDriverInput,
-): AsyncGenerator<BridgeProcessEvent> {
+export async function* synthesizeBridgeEvents(input: ProcessDriverInput): AsyncGenerator<BridgeProcessEvent> {
   const { task, workspace, signal } = input;
   const trail = task.scripted_trail ?? [];
   const toolCalls: BridgeToolCall[] = trail.map((step, index) => ({
@@ -378,10 +368,7 @@ export function parseCodexProcessLine(line: string): BridgeProcessEvent | null {
           return {
             id: String(call.id ?? `bridge-call-${index + 1}`),
             name: String(call.name ?? "(unknown)"),
-            arguments: (typeof call.arguments === "object" && call.arguments !== null ? call.arguments : {}) as Record<
-              string,
-              unknown
-            >,
+            arguments: (typeof call.arguments === "object" && call.arguments !== null ? call.arguments : {}) as Record<string, unknown>,
           };
         }),
         finish_reason: typeof record.finish_reason === "string" ? record.finish_reason : null,
@@ -392,11 +379,7 @@ export function parseCodexProcessLine(line: string): BridgeProcessEvent | null {
         kind: "tool_call",
         id: String(record.id ?? ""),
         tool: String(record.tool ?? "(unknown)"),
-        arguments:
-          (typeof record.arguments === "object" && record.arguments !== null ? record.arguments : {}) as Record<
-            string,
-            unknown
-          >,
+        arguments: (typeof record.arguments === "object" && record.arguments !== null ? record.arguments : {}) as Record<string, unknown>,
         valid: record.valid === true,
         invalid_reason: typeof record.invalid_reason === "string" ? record.invalid_reason : undefined,
         is_wrong_tool: record.is_wrong_tool === true ? true : undefined,
@@ -428,9 +411,8 @@ async function assertPinnedCheckout(checkoutPath: string): Promise<void> {
   const ref = new TextDecoder().decode(out.stdout).trim();
   if (out.code !== 0 || ref !== CODEX_INFINITY_SOURCE_PIN.pinnedRef) {
     throw new BaselineAdapterError(
-      `codex-infinity checkout at ${checkoutPath} is at ${ref || "(unknown)"}, expected ` +
-        `${CODEX_INFINITY_SOURCE_PIN.pinnedRef}`,
-      "invalid-config",
+      `codex-infinity checkout at ${checkoutPath} is at ${ref || "(unknown)"}, expected ` + CODEX_INFINITY_SOURCE_PIN.pinnedRef,
+      "invalid-config"
     );
   }
 }
@@ -452,14 +434,7 @@ export async function drainChildStream(stream: ReadableStream<Uint8Array>): Prom
 export function createLiveBridgeProcessDriver(config: CodexInfinityBridgeConfig): ProcessDriver {
   return {
     async *run(input: ProcessDriverInput): AsyncIterable<BridgeProcessEvent> {
-      const args = [
-        "-m",
-        config.modelSlug,
-        "--cd",
-        input.workspace.root,
-        ...config.extraArgs,
-        input.task.description,
-      ];
+      const args = ["-m", config.modelSlug, "--cd", input.workspace.root, ...config.extraArgs, input.task.description];
       const command = new Deno.Command(config.binary, {
         args,
         cwd: input.workspace.root,
@@ -496,16 +471,12 @@ export function createLiveBridgeProcessDriver(config: CodexInfinityBridgeConfig)
       }
       const status = await child.status;
       if (status.code !== 0) {
-        throw new BaselineAdapterError(
-          `codex-infinity exited with code ${status.code} (${skipped} skipped lines)`,
-          "bridge-parse",
-        );
+        throw new BaselineAdapterError(`codex-infinity exited with code ${status.code} (${skipped} skipped lines)`, "bridge-parse");
       }
       if (skipped > 0) {
         throw new BaselineAdapterError(
-          `codex-infinity output contained ${skipped} line(s) in an unverified format; ` +
-            "confirm the real JSONL schema before interpreting them",
-          "bridge-parse",
+          `codex-infinity output contained ${skipped} line(s) in an unverified format; ` + "confirm the real JSONL schema before interpreting them",
+          "bridge-parse"
         );
       }
     },
@@ -518,11 +489,11 @@ export function createLiveBridgeProcessDriver(config: CodexInfinityBridgeConfig)
 
 export type BaselineBDriver = ProcessDriver | "live" | null;
 
-export interface BaselineBOptions {
+export type BaselineBOptions = {
   config?: Partial<CodexInfinityBridgeConfig>;
   /** Deterministic driver for tests; `"live"` = opt-in subprocess path. */
   driver?: BaselineBDriver;
-}
+};
 
 export function createBaselineB(options: BaselineBOptions = {}): BenchmarkAdapter {
   const config: CodexInfinityBridgeConfig = { ...DEFAULT_BRIDGE_CONFIG, ...options.config };
@@ -531,7 +502,8 @@ export function createBaselineB(options: BaselineBOptions = {}): BenchmarkAdapte
   return {
     configId: "B",
     name: "codex-infinity-bridge",
-    description: "codex-infinity-compatible process/trajectory bridge (pinned source/provenance, no clone and no " +
+    description:
+      "codex-infinity-compatible process/trajectory bridge (pinned source/provenance, no clone and no " +
       "live process by default; live runs require allowLiveProcess and an approved gate).",
     requiresExternalInference: true,
     async run(ctx: AdapterRunContext): Promise<void> {
@@ -540,14 +512,11 @@ export function createBaselineB(options: BaselineBOptions = {}): BenchmarkAdapte
         throw new BaselineNotProvisionedError(
           "codex-infinity bridge is not provisioned: this adapter never clones or spawns a process by " +
             "default. Provide a deterministic driver (tests) or configure allowLiveProcess plus a pinned " +
-            `checkout at ${CODEX_INFINITY_SOURCE_PIN.pinnedRef}.`,
+            `checkout at ${CODEX_INFINITY_SOURCE_PIN.pinnedRef}.`
         );
       } else if (driver === "live") {
         if (!config.allowLiveProcess) {
-          throw new BaselineAdapterError(
-            "live codex-infinity process is refused: allowLiveProcess must be true before a subprocess may run",
-            "invalid-config",
-          );
+          throw new BaselineAdapterError("live codex-infinity process is refused: allowLiveProcess must be true before a subprocess may run", "invalid-config");
         }
         if (config.checkoutPath !== null) await assertPinnedCheckout(config.checkoutPath);
         active = createLiveBridgeProcessDriver(config);

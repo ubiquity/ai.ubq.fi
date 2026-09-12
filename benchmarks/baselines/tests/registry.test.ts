@@ -9,7 +9,7 @@ Deno.test("registry: exposes exactly A, B, D in stable order, all external", () 
   if (ids.join(",") !== "A,B,D") throw new Error(`unexpected registry ${ids.join(",")}`);
   if (BASELINE_CONFIG_IDS.join(",") !== "A,B,D") throw new Error("config id constant drifted");
   for (const adapter of adapters) {
-    if (adapter.requiresExternalInference !== true) {
+    if (!adapter.requiresExternalInference) {
       throw new Error(`${adapter.configId} must be refused by the runner by default`);
     }
   }
@@ -28,8 +28,7 @@ Deno.test("registry: the runner refuses every baseline adapter", async () => {
           adapters: baselineAdapters(),
         });
       } catch (err) {
-        refused = String((err as Error).message).includes("external-inference") &&
-          String((err as Error).message).includes(configId);
+        refused = String((err as Error).message).includes("external-inference") && String((err as Error).message).includes(configId);
       }
       if (!refused) throw new Error(`config ${configId} was not refused by the runner`);
     }

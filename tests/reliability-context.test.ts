@@ -13,19 +13,14 @@ import {
   serializeToolResultContent,
 } from "../src/harmony/reliability/context.ts";
 import { broadToolSurface, compactToolSurface, surfaceTokenCost } from "../src/harmony/reliability/surfaces.ts";
-import {
-  deriveStateWithMeta,
-  replayMeta,
-  stateContract,
-  type ToolObservation,
-} from "../src/harmony/reliability/state.ts";
+import { deriveStateWithMeta, replayMeta, stateContract, type ToolObservation } from "../src/harmony/reliability/state.ts";
 import { DEFAULT_VERIFICATION_POLICY } from "../src/harmony/reliability/verify.ts";
 
 let pairCounter = 0;
 const pairTurns = (
   tool: string,
   args: Record<string, unknown>,
-  result: { ok: boolean; output?: string; error?: string; error_code?: string },
+  result: { ok: boolean; output?: string; error?: string; error_code?: string }
 ): ConversationTurn[] => {
   const id = `ctx-${++pairCounter}`;
   return [
@@ -41,48 +36,68 @@ const pairTurns = (
 };
 
 const scaffold = (): Conversation => {
-  const turns: ConversationTurn[] = [
-    { role: "user", content: "Fix all files." },
-  ];
+  const turns: ConversationTurn[] = [{ role: "user", content: "Fix all files." }];
   const big = (path: string) => `${path}=1\n`.repeat(120); // ~720 chars per read
   turns.push(
-    ...pairTurns("task.update_plan", { plan: ["read", "edit", "verify"] }, {
-      ok: true,
-      output: "plan updated (3 items)",
-    }),
+    ...pairTurns(
+      "task.update_plan",
+      { plan: ["read", "edit", "verify"] },
+      {
+        ok: true,
+        output: "plan updated (3 items)",
+      }
+    )
   );
   turns.push(
-    ...pairTurns("editor.apply_patch", { path: "a.txt", old: "a=0", new: "a=1" }, {
-      ok: true,
-      output: "patched a.txt",
-    }),
+    ...pairTurns(
+      "editor.apply_patch",
+      { path: "a.txt", old: "a=0", new: "a=1" },
+      {
+        ok: true,
+        output: "patched a.txt",
+      }
+    )
   );
   for (let i = 0; i < 6; i++) {
     turns.push(...pairTurns("filesystem.read", { path: "a.txt" }, { ok: true, output: big("a") }));
   }
   turns.push(
-    ...pairTurns("editor.apply_patch", { path: "b.txt", old: "b=0", new: "b=1" }, {
-      ok: true,
-      output: "patched b.txt",
-    }),
+    ...pairTurns(
+      "editor.apply_patch",
+      { path: "b.txt", old: "b=0", new: "b=1" },
+      {
+        ok: true,
+        output: "patched b.txt",
+      }
+    )
   );
   turns.push(...pairTurns("shell.exec", { command: "sh tests/run.sh" }, { ok: true, output: "ok" }));
   turns.push(...pairTurns("filesystem.find", { path: ".", pattern: "*.txt" }, { ok: true, output: "a.txt\nb.txt" }));
   turns.push(...pairTurns("filesystem.search", { path: ".", query: "a=1" }, { ok: true, output: "a.txt:1:a=1" }));
   turns.push(
-    ...pairTurns("editor.apply_patch", { path: "c.txt", old: "c=0", new: "c=1" }, {
-      ok: true,
-      output: "patched c.txt",
-    }),
+    ...pairTurns(
+      "editor.apply_patch",
+      { path: "c.txt", old: "c=0", new: "c=1" },
+      {
+        ok: true,
+        output: "patched c.txt",
+      }
+    )
   );
   for (let i = 0; i < 3; i++) {
     turns.push(...pairTurns("filesystem.read", { path: "c.txt" }, { ok: true, output: big("c") }));
   }
-  turns.push(...pairTurns("shell.exec", { command: "grep -c c=1 c.txt" }, {
-    ok: false,
-    error_code: "exec_failed",
-    error: "grep: no match",
-  }));
+  turns.push(
+    ...pairTurns(
+      "shell.exec",
+      { command: "grep -c c=1 c.txt" },
+      {
+        ok: false,
+        error_code: "exec_failed",
+        error: "grep: no match",
+      }
+    )
+  );
   return createConversation(turns);
 };
 
@@ -104,7 +119,7 @@ function stateOf(conversation: Conversation) {
       seq,
       tool: call.name,
       args: JSON.parse(call.arguments) as Record<string, unknown>,
-      valid: parsed === null ? false : true,
+      valid: parsed !== null,
       result: parsed ?? { ok: false, error_code: "internal", error: "unparseable" },
     });
   }
@@ -136,7 +151,10 @@ Deno.test("context: short tier drops stale reads and old explore pairs", () => {
   assert.ok(kinds.includes("old_explore"), `expected old_explore drops in ${kinds.join(",")}`);
   assert.ok(result.droppedTurnCount > 0);
   const pairs = extractPairs(result.conversation);
-  assert.ok(pairs.some((p) => p.tool === "shell.exec" && p.parsed?.ok === false), "errors must never be dropped");
+  assert.ok(
+    pairs.some((p) => p.tool === "shell.exec" && p.parsed?.ok === false),
+    "errors must never be dropped"
+  );
   assert.ok(pairs.filter((p) => p.tool === "editor.apply_patch").length === 3, "patch pairs must never be dropped");
   assert.ok(result.estimatedTokens < estimateConversationTokens(conversation));
 });
@@ -155,10 +173,8 @@ Deno.test("context: compaction preserves the structured state contract at every 
 
 Deno.test("context: large keeps more reads per path than short", () => {
   const conversation = scaffold();
-  const shortReads =
-    compactTranscript(conversation, { budget: "short" }).drops.filter((d) => d.kind === "stale_read").length;
-  const largeReads =
-    compactTranscript(conversation, { budget: "large" }).drops.filter((d) => d.kind === "stale_read").length;
+  const shortReads = compactTranscript(conversation, { budget: "short" }).drops.filter((d) => d.kind === "stale_read").length;
+  const largeReads = compactTranscript(conversation, { budget: "large" }).drops.filter((d) => d.kind === "stale_read").length;
   assert.ok(shortReads > largeReads, `short ${shortReads} > large ${largeReads}`);
 });
 

@@ -1,9 +1,4 @@
-import {
-  API_KEY_NO_EXPIRATION_MS,
-  API_KEY_NO_USAGE_LIMIT,
-  apiKeyHashKey,
-  normalizeApiKeyWindowMs,
-} from "./api_keys.ts";
+import { API_KEY_NO_EXPIRATION_MS, API_KEY_NO_USAGE_LIMIT, apiKeyHashKey, normalizeApiKeyWindowMs } from "./api_keys.ts";
 import { openaiError, STANDARD_RATE_LIMIT_HEADERS } from "./http.ts";
 import { getKv } from "./kv.ts";
 import { hasStrictPaidFallbackPolicy } from "./paid_fallback.ts";
@@ -20,13 +15,7 @@ export const API_KEY_USAGE_V3_RESERVATION_LEASE_MS = 5 * 60_000;
 export const API_KEY_USAGE_V3_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const MAX_KV_RETRIES = 5;
 
-export type ApiKeyUsageProvider =
-  | "cerebras"
-  | "chatgpt_codex"
-  | "removed_provider"
-  | "metered"
-  | "surplus"
-  | "voyage";
+export type ApiKeyUsageProvider = "cerebras" | "chatgpt_codex" | "removed_provider" | "metered" | "surplus" | "voyage";
 
 export type ApiKeyProviderDispatch = Readonly<{
   markTransportStarted: () => void;
@@ -49,9 +38,7 @@ export type ApiKeyPolicy = Readonly<{
   paid_fallback_reservation_request_id: string | null;
 }>;
 
-export type ApiKeyPolicyDecision =
-  | Readonly<{ ok: true; policy: ApiKeyPolicy }>
-  | Readonly<{ ok: false; response: Response }>;
+export type ApiKeyPolicyDecision = Readonly<{ ok: true; policy: ApiKeyPolicy }> | Readonly<{ ok: false; response: Response }>;
 
 export type ApiKeyUsageReservation = Readonly<{
   policy: ApiKeyPolicy;
@@ -61,9 +48,7 @@ export type ApiKeyUsageReservation = Readonly<{
   release: (reason?: string) => Promise<void>;
 }>;
 
-export type ApiKeyUsageReservationDecision =
-  | Readonly<{ ok: true; reservation: ApiKeyUsageReservation }>
-  | Readonly<{ ok: false; response: Response }>;
+export type ApiKeyUsageReservationDecision = Readonly<{ ok: true; reservation: ApiKeyUsageReservation }> | Readonly<{ ok: false; response: Response }>;
 
 export class ApiKeyQuotaDispatchError extends Error {
   readonly status: number;
@@ -80,7 +65,7 @@ export class ApiKeyQuotaDispatchError extends Error {
       errorType?: string;
       retryAfter?: string | null;
       headers?: Readonly<Record<string, string>>;
-    }> = {},
+    }> = {}
   ) {
     super(message);
     this.name = "ApiKeyQuotaDispatchError";
@@ -99,11 +84,7 @@ const policyCache = new Map<string, CachedPolicy>();
 
 export const looksLikeUosApiKey = (token: string): boolean => /^u_[0-9a-f]{64}$/.test(token.trim());
 
-export const currentApiKeyUsageWindow = (
-  usageResetAtMs: number,
-  windowMs: number,
-  nowMs: number,
-): { start: number; reset: number } => {
+export const currentApiKeyUsageWindow = (usageResetAtMs: number, windowMs: number, nowMs: number): { start: number; reset: number } => {
   const initialStart = usageResetAtMs - windowMs;
   if (nowMs < usageResetAtMs) return { start: initialStart, reset: usageResetAtMs };
   const elapsedWindows = Math.floor((nowMs - initialStart) / windowMs);
@@ -115,11 +96,7 @@ const hasUsageQuotaV3 = (record: unknown): boolean => isRecord(record) && record
 
 const policyVersion = (record: ApiKeyHashRecord): string => `v3:${normalizeApiKeyWindowMs(record.window_ms)}`;
 
-export const apiKeyPolicyFromHashRecord = (
-  tokenHash: string,
-  record: ApiKeyHashRecord,
-  nowMs: number,
-): ApiKeyPolicy | null => {
+export const apiKeyPolicyFromHashRecord = (tokenHash: string, record: ApiKeyHashRecord, nowMs: number): ApiKeyPolicy | null => {
   if (!hasStrictPaidFallbackPolicy(record) || !hasUsageQuotaV3(record)) return null;
   const windowMs = normalizeApiKeyWindowMs(record.window_ms);
   const window = currentApiKeyUsageWindow(record.usage_reset_at_ms, windowMs, nowMs);
@@ -149,28 +126,18 @@ export const apiKeyUsageV2Key = (policy: Pick<ApiKeyPolicy, "key_id" | "policy_v
     policy.window_start_ms,
   ] as const;
 
-export const apiKeyUsageV3WindowKey = (
-  policy: Pick<ApiKeyPolicy, "key_id" | "policy_version" | "window_start_ms">,
-) => [...API_KEY_USAGE_V3_WINDOW_PREFIX, policy.key_id, policy.policy_version, policy.window_start_ms] as const;
+export const apiKeyUsageV3WindowKey = (policy: Pick<ApiKeyPolicy, "key_id" | "policy_version" | "window_start_ms">) =>
+  [...API_KEY_USAGE_V3_WINDOW_PREFIX, policy.key_id, policy.policy_version, policy.window_start_ms] as const;
 
-export const apiKeyUsageV3RequestKey = (
-  policy: Pick<ApiKeyPolicy, "key_id" | "policy_version" | "window_start_ms">,
-  requestId: string,
-) =>
-  [
-    ...API_KEY_USAGE_V3_REQUEST_PREFIX,
-    policy.key_id,
-    policy.policy_version,
-    policy.window_start_ms,
-    requestId,
-  ] as const;
+export const apiKeyUsageV3RequestKey = (policy: Pick<ApiKeyPolicy, "key_id" | "policy_version" | "window_start_ms">, requestId: string) =>
+  [...API_KEY_USAGE_V3_REQUEST_PREFIX, policy.key_id, policy.policy_version, policy.window_start_ms, requestId] as const;
 
 export const apiKeyUsageV3RetentionMs = (windowResetAtMs: number, nowMs = Date.now()): number =>
   Math.max(1, windowResetAtMs + API_KEY_USAGE_V3_RETENTION_MS - nowMs);
 
 export const makeApiKeyUsageWindowV3 = (
   policy: Pick<ApiKeyPolicy, "key_id" | "policy_version" | "window_start_ms" | "usage_reset_at_ms">,
-  nowMs = Date.now(),
+  nowMs = Date.now()
 ): ApiKeyUsageWindowV3 => ({
   v: 3,
   key_id: policy.key_id,
@@ -182,46 +149,63 @@ export const makeApiKeyUsageWindowV3 = (
   updated_at_ms: nowMs,
 });
 
-const isSafeNonNegativeInteger = (value: unknown): value is number =>
-  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+const isSafeNonNegativeInteger = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
 export const normalizeApiKeyUsageWindowV3 = (value: unknown): ApiKeyUsageWindowV3 | null => {
   if (!isRecord(value)) return null;
   if (
-    value.v !== 3 || typeof value.key_id !== "string" || !value.key_id || typeof value.policy_version !== "string" ||
-    !value.policy_version || !isSafeNonNegativeInteger(value.window_start_ms) ||
-    !isSafeNonNegativeInteger(value.window_reset_at_ms) || value.window_reset_at_ms <= value.window_start_ms ||
-    !isSafeNonNegativeInteger(value.committed_requests) || !isSafeNonNegativeInteger(value.reserved_requests) ||
+    value.v !== 3 ||
+    typeof value.key_id !== "string" ||
+    !value.key_id ||
+    typeof value.policy_version !== "string" ||
+    !value.policy_version ||
+    !isSafeNonNegativeInteger(value.window_start_ms) ||
+    !isSafeNonNegativeInteger(value.window_reset_at_ms) ||
+    value.window_reset_at_ms <= value.window_start_ms ||
+    !isSafeNonNegativeInteger(value.committed_requests) ||
+    !isSafeNonNegativeInteger(value.reserved_requests) ||
     !isSafeNonNegativeInteger(value.updated_at_ms)
-  ) return null;
+  )
+    return null;
   return value as ApiKeyUsageWindowV3;
 };
 
 export const normalizeApiKeyUsageRequestV3 = (value: unknown): ApiKeyUsageRequestV3 | null => {
   if (!isRecord(value)) return null;
   if (
-    value.v !== 3 || typeof value.key_id !== "string" || !value.key_id || typeof value.request_id !== "string" ||
-    !value.request_id || typeof value.route !== "string" || !value.route ||
+    value.v !== 3 ||
+    typeof value.key_id !== "string" ||
+    !value.key_id ||
+    typeof value.request_id !== "string" ||
+    !value.request_id ||
+    typeof value.route !== "string" ||
+    !value.route ||
     (value.state !== "reserved" && value.state !== "dispatched" && value.state !== "released") ||
-    !isSafeNonNegativeInteger(value.reserved_at_ms) || !isSafeNonNegativeInteger(value.lease_expires_at_ms) ||
-    !(value.provider === null || value.provider === "cerebras" || value.provider === "chatgpt_codex" ||
-      value.provider === "removed_provider" || value.provider === "metered" || value.provider === "surplus" ||
-      value.provider === "voyage") ||
+    !isSafeNonNegativeInteger(value.reserved_at_ms) ||
+    !isSafeNonNegativeInteger(value.lease_expires_at_ms) ||
+    !(
+      value.provider === null ||
+      value.provider === "cerebras" ||
+      value.provider === "chatgpt_codex" ||
+      value.provider === "removed_provider" ||
+      value.provider === "metered" ||
+      value.provider === "surplus" ||
+      value.provider === "voyage"
+    ) ||
     !(value.dispatched_at_ms === null || isSafeNonNegativeInteger(value.dispatched_at_ms)) ||
     !(value.released_at_ms === null || isSafeNonNegativeInteger(value.released_at_ms)) ||
     !(value.release_reason === null || typeof value.release_reason === "string")
-  ) return null;
+  )
+    return null;
   if (
     (value.state === "reserved" &&
-      (value.provider !== null || value.dispatched_at_ms !== null || value.released_at_ms !== null ||
-        value.release_reason !== null)) ||
+      (value.provider !== null || value.dispatched_at_ms !== null || value.released_at_ms !== null || value.release_reason !== null)) ||
     (value.state === "dispatched" &&
-      (value.provider === null || value.dispatched_at_ms === null || value.released_at_ms !== null ||
-        value.release_reason !== null)) ||
+      (value.provider === null || value.dispatched_at_ms === null || value.released_at_ms !== null || value.release_reason !== null)) ||
     (value.state === "released" &&
-      (value.provider !== null || value.dispatched_at_ms !== null || value.released_at_ms === null ||
-        value.release_reason === null))
-  ) return null;
+      (value.provider !== null || value.dispatched_at_ms !== null || value.released_at_ms === null || value.release_reason === null))
+  )
+    return null;
   return value as ApiKeyUsageRequestV3;
 };
 
@@ -238,9 +222,7 @@ const expiredPolicyResponse = (): ApiKeyUsageReservationDecision => ({
 export const apiKeyRateLimitPolicyHeaders = (policy: ApiKeyPolicy | null): Record<string, string> => {
   if (!policy || policy.usage_limit_requests === API_KEY_NO_USAGE_LIMIT) return {};
   return {
-    "RateLimit-Policy": `"api-key";q=${policy.usage_limit_requests};w=${
-      Math.max(1, Math.ceil(policy.window_ms / 1000))
-    }`,
+    "RateLimit-Policy": `"api-key";q=${policy.usage_limit_requests};w=${Math.max(1, Math.ceil(policy.window_ms / 1000))}`,
   };
 };
 
@@ -250,7 +232,7 @@ const rateLimitExceededHeaders = (window: ApiKeyUsageWindowV3, policy: ApiKeyPol
   const windowSeconds = Math.max(1, Math.ceil((window.window_reset_at_ms - window.window_start_ms) / 1000));
   return {
     "Retry-After": String(retryAfterSeconds),
-    "RateLimit": `"api-key";r=${remaining};t=${retryAfterSeconds}`,
+    RateLimit: `"api-key";r=${remaining};t=${retryAfterSeconds}`,
     "RateLimit-Policy": `"api-key";q=${policy.usage_limit_requests};w=${windowSeconds}`,
     // Older API clients still look for this de facto field family. Keep it in
     // addition to the active HTTPAPI RateLimit Internet-Draft fields.
@@ -265,20 +247,14 @@ const quotaExceededResponse = (window: ApiKeyUsageWindowV3, policy: ApiKeyPolicy
     ok: false,
     response: openaiError(
       429,
-      `Usage limit exceeded (${window.committed_requests}/${policy.usage_limit_requests}). Resets at ${
-        new Date(window.window_reset_at_ms).toISOString()
-      }`,
+      `Usage limit exceeded (${window.committed_requests}/${policy.usage_limit_requests}). Resets at ${new Date(window.window_reset_at_ms).toISOString()}`,
       "rate_limit_exceeded",
-      { type: "rate_limit_error", headers: rateLimitExceededHeaders(window, policy) },
+      { type: "rate_limit_error", headers: rateLimitExceededHeaders(window, policy) }
     ),
   };
 };
 
-const livePolicyFromEntry = (
-  tokenHash: string,
-  entry: Deno.KvEntryMaybe<ApiKeyHashRecord>,
-  nowMs: number,
-): ApiKeyPolicy | null => {
+const livePolicyFromEntry = (tokenHash: string, entry: Deno.KvEntryMaybe<ApiKeyHashRecord>, nowMs: number): ApiKeyPolicy | null => {
   if (!entry.value || entry.value.revoked_at_ms !== null) return null;
   const policy = apiKeyPolicyFromHashRecord(tokenHash, entry.value, nowMs);
   if (!policy) return null;
@@ -286,14 +262,13 @@ const livePolicyFromEntry = (
   return policy;
 };
 
-const matchingWindow = (
-  value: unknown,
-  policy: ApiKeyPolicy,
-): ApiKeyUsageWindowV3 | null => {
+const matchingWindow = (value: unknown, policy: ApiKeyPolicy): ApiKeyUsageWindowV3 | null => {
   const window = normalizeApiKeyUsageWindowV3(value);
   if (!window) return null;
-  return window.key_id === policy.key_id && window.policy_version === policy.policy_version &&
-      window.window_start_ms === policy.window_start_ms && window.window_reset_at_ms === policy.usage_reset_at_ms
+  return window.key_id === policy.key_id &&
+    window.policy_version === policy.policy_version &&
+    window.window_start_ms === policy.window_start_ms &&
+    window.window_reset_at_ms === policy.usage_reset_at_ms
     ? window
     : null;
 };
@@ -309,13 +284,12 @@ const matchingWindow = (
  */
 const apiKeyUsageWindowLocks = new Map<string, Promise<void>>();
 
-const apiKeyUsageWindowLockKey = (
-  policy: Pick<ApiKeyPolicy, "key_id" | "policy_version" | "window_start_ms">,
-): string => JSON.stringify(apiKeyUsageV3WindowKey(policy));
+const apiKeyUsageWindowLockKey = (policy: Pick<ApiKeyPolicy, "key_id" | "policy_version" | "window_start_ms">): string =>
+  JSON.stringify(apiKeyUsageV3WindowKey(policy));
 
 const withApiKeyUsageWindowLock = async <T>(
   policy: Pick<ApiKeyPolicy, "key_id" | "policy_version" | "window_start_ms">,
-  operation: () => Promise<T>,
+  operation: () => Promise<T>
 ): Promise<T> => {
   const lockKey = apiKeyUsageWindowLockKey(policy);
   const previous = apiKeyUsageWindowLocks.get(lockKey);
@@ -340,7 +314,7 @@ const releaseReservedRequest = async (
   requestId: string,
   reason: string,
   nowMs: number,
-  expectedRoute?: string,
+  expectedRoute?: string
 ): Promise<"released" | "settled" | "missing" | "invalid" | "conflict"> => {
   const requestKey = apiKeyUsageV3RequestKey(policy, requestId);
   const windowKey = apiKeyUsageV3WindowKey(policy);
@@ -350,10 +324,8 @@ const releaseReservedRequest = async (
   ]);
   const request = normalizeApiKeyUsageRequestV3(requestEntry.value);
   if (!request) return requestEntry.value === null ? "missing" : "invalid";
-  if (
-    request.key_id !== policy.key_id || request.request_id !== requestId ||
-    (expectedRoute !== undefined && request.route !== expectedRoute)
-  ) return "invalid";
+  if (request.key_id !== policy.key_id || request.request_id !== requestId || (expectedRoute !== undefined && request.route !== expectedRoute))
+    return "invalid";
   if (request.state !== "reserved") return "settled";
   const window = matchingWindow(windowEntry.value, policy);
   if (!window || window.reserved_requests < 1) return "invalid";
@@ -368,7 +340,8 @@ const releaseReservedRequest = async (
     reserved_requests: window.reserved_requests - 1,
     updated_at_ms: nowMs,
   };
-  const committed = await kv.atomic()
+  const committed = await kv
+    .atomic()
     .check(requestEntry)
     .check(windowEntry)
     .set(requestKey, released, { expireIn: apiKeyUsageV3RetentionMs(window.window_reset_at_ms, nowMs) })
@@ -383,7 +356,7 @@ const releaseDispatchedRequest = async (
   requestId: string,
   route: string,
   provider: ApiKeyUsageProvider,
-  nowMs: number,
+  nowMs: number
 ): Promise<"released" | "settled" | "missing" | "invalid" | "conflict"> => {
   const requestKey = apiKeyUsageV3RequestKey(policy, requestId);
   const windowKey = apiKeyUsageV3WindowKey(policy);
@@ -411,7 +384,8 @@ const releaseDispatchedRequest = async (
     committed_requests: window.committed_requests - 1,
     updated_at_ms: nowMs,
   };
-  const committed = await kv.atomic()
+  const committed = await kv
+    .atomic()
     .check(requestEntry)
     .check(windowEntry)
     .set(requestKey, released, { expireIn: apiKeyUsageV3RetentionMs(window.window_reset_at_ms, nowMs) })
@@ -425,7 +399,7 @@ const providerDispatchContext = (
   policy: ApiKeyPolicy,
   requestId: string,
   route: string,
-  provider: ApiKeyUsageProvider,
+  provider: ApiKeyUsageProvider
 ): ApiKeyProviderDispatch => {
   let transportStarted = false;
   let cancellation: Promise<void> | null = null;
@@ -440,14 +414,7 @@ const providerDispatchContext = (
           try {
             await withApiKeyUsageWindowLock(policy, async () => {
               for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt += 1) {
-                const outcome = await releaseDispatchedRequest(
-                  kv,
-                  policy,
-                  requestId,
-                  route,
-                  provider,
-                  Date.now(),
-                );
+                const outcome = await releaseDispatchedRequest(kv, policy, requestId, route, provider, Date.now());
                 if (outcome === "released" || outcome === "settled" || outcome === "missing") return;
                 if (outcome === "invalid") {
                   throw new ApiKeyQuotaDispatchError("API key quota reservation is malformed");
@@ -472,20 +439,13 @@ const providerDispatchContext = (
  * separate, retryable pass: Deno KV cannot list a dynamic set of request keys
  * inside the aggregate's atomic check.
  */
-const reclaimExpiredApiKeyUsageReservationsV3Unlocked = async (
-  kv: Deno.Kv,
-  policy: ApiKeyPolicy,
-  nowMs = Date.now(),
-): Promise<void> => {
+const reclaimExpiredApiKeyUsageReservationsV3Unlocked = async (kv: Deno.Kv, policy: ApiKeyPolicy, nowMs = Date.now()): Promise<void> => {
   const prefix = [...API_KEY_USAGE_V3_REQUEST_PREFIX, policy.key_id, policy.policy_version, policy.window_start_ms];
   const expired: string[] = [];
   for await (const entry of kv.list<ApiKeyUsageRequestV3>({ prefix })) {
     const request = normalizeApiKeyUsageRequestV3(entry.value);
     const requestId = entry.key.at(-1);
-    if (
-      !request || typeof requestId !== "string" || request.key_id !== policy.key_id ||
-      request.request_id !== requestId
-    ) {
+    if (!request || typeof requestId !== "string" || request.key_id !== policy.key_id || request.request_id !== requestId) {
       throw new Error("API key quota request is malformed");
     }
     if (request.state === "reserved" && request.lease_expires_at_ms <= nowMs) expired.push(request.request_id);
@@ -503,23 +463,11 @@ const reclaimExpiredApiKeyUsageReservationsV3Unlocked = async (
   }
 };
 
-export const reclaimExpiredApiKeyUsageReservationsV3 = async (
-  kv: Deno.Kv,
-  policy: ApiKeyPolicy,
-  nowMs = Date.now(),
-): Promise<void> => {
-  await withApiKeyUsageWindowLock(
-    policy,
-    () => reclaimExpiredApiKeyUsageReservationsV3Unlocked(kv, policy, nowMs),
-  );
+export const reclaimExpiredApiKeyUsageReservationsV3 = async (kv: Deno.Kv, policy: ApiKeyPolicy, nowMs = Date.now()): Promise<void> => {
+  await withApiKeyUsageWindowLock(policy, () => reclaimExpiredApiKeyUsageReservationsV3Unlocked(kv, policy, nowMs));
 };
 
-const reservationContext = (
-  kv: Deno.Kv,
-  policy: ApiKeyPolicy,
-  requestId: string,
-  route: string,
-): ApiKeyUsageReservation => {
+const reservationContext = (kv: Deno.Kv, policy: ApiKeyPolicy, requestId: string, route: string): ApiKeyUsageReservation => {
   // `release()` runs after every route. Once this exact reservation has
   // durably moved from reserved to dispatched, it cannot release a
   // reservation: the request row is no longer reserved. Remembering that
@@ -543,11 +491,8 @@ const reservationContext = (
               kv.get<ApiKeyUsageWindowV3>(windowKey, { consistency: "strong" }),
             ]);
             const request = normalizeApiKeyUsageRequestV3(requestEntry.value);
-            if (
-              !request || request.key_id !== policy.key_id || request.request_id !== requestId ||
-              request.route !== route ||
-              request.state === "released"
-            ) throw new ApiKeyQuotaDispatchError();
+            if (!request || request.key_id !== policy.key_id || request.request_id !== requestId || request.route !== route || request.state === "released")
+              throw new ApiKeyQuotaDispatchError();
             if (request.state === "dispatched") return;
             const window = matchingWindow(windowEntry.value, policy);
             if (!window || window.reserved_requests < 1) throw new ApiKeyQuotaDispatchError();
@@ -564,7 +509,8 @@ const reservationContext = (
               reserved_requests: window.reserved_requests - 1,
               updated_at_ms: nowMs,
             };
-            const committed = await kv.atomic()
+            const committed = await kv
+              .atomic()
               .check(requestEntry)
               .check(windowEntry)
               .set(requestKey, dispatched, { expireIn: apiKeyUsageV3RetentionMs(window.window_reset_at_ms, nowMs) })
@@ -606,11 +552,12 @@ const reservationContext = (
 };
 
 const quotaDispatchErrorFromResponse = async (response: Response): Promise<ApiKeyQuotaDispatchError> => {
-  const payload = await response.clone().json().catch(() => null) as unknown;
+  const payload = (await response
+    .clone()
+    .json()
+    .catch(() => null)) as unknown;
   const error = isRecord(payload) && isRecord(payload.error) ? payload.error : null;
-  const message = error && typeof error.message === "string"
-    ? error.message
-    : "API key quota reservation is no longer available";
+  const message = error && typeof error.message === "string" ? error.message : "API key quota reservation is no longer available";
   const headers: Record<string, string> = {};
   for (const name of ["Retry-After", ...STANDARD_RATE_LIMIT_HEADERS]) {
     const value = response.headers.get(name);
@@ -618,27 +565,14 @@ const quotaDispatchErrorFromResponse = async (response: Response): Promise<ApiKe
   }
   return new ApiKeyQuotaDispatchError(message, {
     status: response.status,
-    code: error && typeof error.code === "string"
-      ? error.code
-      : response.status === 429
-      ? "rate_limit_exceeded"
-      : "api_key_quota_reservation_unavailable",
-    errorType: error && typeof error.type === "string"
-      ? error.type
-      : response.status === 429
-      ? "rate_limit_error"
-      : "server_error",
+    code: error && typeof error.code === "string" ? error.code : response.status === 429 ? "rate_limit_exceeded" : "api_key_quota_reservation_unavailable",
+    errorType: error && typeof error.type === "string" ? error.type : response.status === 429 ? "rate_limit_error" : "server_error",
     retryAfter: response.headers.get("Retry-After"),
     headers,
   });
 };
 
-const deferredReservationContext = (
-  kv: Deno.Kv,
-  policy: ApiKeyPolicy,
-  requestId: string,
-  route: string,
-): ApiKeyUsageReservation => {
+const deferredReservationContext = (kv: Deno.Kv, policy: ApiKeyPolicy, requestId: string, route: string): ApiKeyUsageReservation => {
   let active: ApiKeyUsageReservation | null = null;
   let admission: Promise<ApiKeyUsageReservation> | null = null;
   const requireAdmission = async (): Promise<ApiKeyUsageReservation> => {
@@ -672,7 +606,7 @@ export const reserveApiKeyUsageV3 = async (
   policy: ApiKeyPolicy,
   requestId: string,
   route: string,
-  options: Readonly<{ kv?: Deno.Kv | null; nowMs?: number; deferWhenFull?: boolean }> = {},
+  options: Readonly<{ kv?: Deno.Kv | null; nowMs?: number; deferWhenFull?: boolean }> = {}
 ): Promise<ApiKeyUsageReservationDecision> => {
   try {
     const kv = options.kv === undefined ? await getKv() : options.kv;
@@ -686,10 +620,7 @@ export const reserveApiKeyUsageV3 = async (
         const policyEntry = await kv.get<ApiKeyHashRecord>(apiKeyHashKey(policy.token_hash), { consistency: "strong" });
         const livePolicy = livePolicyFromEntry(policy.token_hash, policyEntry, nowMs);
         if (!livePolicy) {
-          if (
-            policyEntry.value?.revoked_at_ms !== null ||
-            (typeof policyEntry.value?.expires_at_ms === "number" && policyEntry.value.expires_at_ms <= nowMs)
-          ) {
+          if (policyEntry.value?.revoked_at_ms !== null || (typeof policyEntry.value?.expires_at_ms === "number" && policyEntry.value.expires_at_ms <= nowMs)) {
             return expiredPolicyResponse();
           }
           return quotaUnavailable("API key quota policy is incomplete");
@@ -706,16 +637,12 @@ export const reserveApiKeyUsageV3 = async (
           return quotaUnavailable("API key quota request is malformed");
         }
         if (existingRequest) {
-          if (
-            existingRequest.key_id !== livePolicy.key_id || existingRequest.request_id !== requestId ||
-            existingRequest.route !== route
-          ) return quotaUnavailable("API key quota request identity conflicts");
+          if (existingRequest.key_id !== livePolicy.key_id || existingRequest.request_id !== requestId || existingRequest.route !== route)
+            return quotaUnavailable("API key quota request identity conflicts");
           return { ok: true, reservation: reservationContext(kv, livePolicy, requestId, route) };
         }
 
-        const window = windowEntry.value === null
-          ? makeApiKeyUsageWindowV3(livePolicy, nowMs)
-          : matchingWindow(windowEntry.value, livePolicy);
+        const window = windowEntry.value === null ? makeApiKeyUsageWindowV3(livePolicy, nowMs) : matchingWindow(windowEntry.value, livePolicy);
         if (!window) return quotaUnavailable("API key quota aggregate is malformed");
         if (
           livePolicy.usage_limit_requests !== API_KEY_NO_USAGE_LIMIT &&
@@ -758,7 +685,8 @@ export const reserveApiKeyUsageV3 = async (
           reserved_requests: window.reserved_requests + 1,
           updated_at_ms: nowMs,
         };
-        const committed = await kv.atomic()
+        const committed = await kv
+          .atomic()
           .check(policyEntry)
           .check(windowEntry)
           .check(requestEntry)
@@ -777,10 +705,7 @@ export const reserveApiKeyUsageV3 = async (
   }
 };
 
-export const getApiKeyUsageV3 = async (
-  policy: ApiKeyPolicy,
-  kvOverride?: Deno.Kv | null,
-): Promise<number> => {
+export const getApiKeyUsageV3 = async (policy: ApiKeyPolicy, kvOverride?: Deno.Kv | null): Promise<number> => {
   const kv = kvOverride === undefined ? await getKv() : kvOverride;
   if (!kv) return 0;
   const entry = await kv.get<ApiKeyUsageWindowV3>(apiKeyUsageV3WindowKey(policy), { consistency: "strong" });
@@ -790,25 +715,22 @@ export const getApiKeyUsageV3 = async (
 export const initializeApiKeyUsageWindowV3 = async (
   kv: Deno.Kv,
   policy: ApiKeyPolicy,
-  options: Readonly<{ overwrite?: boolean; nowMs?: number }> = {},
+  options: Readonly<{ overwrite?: boolean; nowMs?: number }> = {}
 ): Promise<boolean> => {
   const nowMs = options.nowMs ?? Date.now();
   const key = apiKeyUsageV3WindowKey(policy);
   const entry = await kv.get<ApiKeyUsageWindowV3>(key, { consistency: "strong" });
   if (entry.value !== null && !options.overwrite) return Boolean(matchingWindow(entry.value, policy));
   const window = makeApiKeyUsageWindowV3(policy, nowMs);
-  const committed = await kv.atomic()
+  const committed = await kv
+    .atomic()
     .check(entry)
     .set(key, window, { expireIn: apiKeyUsageV3RetentionMs(window.window_reset_at_ms, nowMs) })
     .commit();
   return committed.ok;
 };
 
-export const hasLiveApiKeyUsageReservationsV3 = async (
-  kv: Deno.Kv,
-  keyId: string,
-  nowMs = Date.now(),
-): Promise<boolean> => {
+export const hasLiveApiKeyUsageReservationsV3 = async (kv: Deno.Kv, keyId: string, nowMs = Date.now()): Promise<boolean> => {
   for await (const entry of kv.list<ApiKeyUsageRequestV3>({ prefix: [...API_KEY_USAGE_V3_REQUEST_PREFIX, keyId] })) {
     const request = normalizeApiKeyUsageRequestV3(entry.value);
     if (request?.state === "reserved" && request.lease_expires_at_ms > nowMs) return true;
@@ -816,11 +738,7 @@ export const hasLiveApiKeyUsageReservationsV3 = async (
   return false;
 };
 
-export const reclaimApiKeyUsageReservationsForKeyV3 = async (
-  kv: Deno.Kv,
-  keyId: string,
-  nowMs = Date.now(),
-): Promise<void> => {
+export const reclaimApiKeyUsageReservationsForKeyV3 = async (kv: Deno.Kv, keyId: string, nowMs = Date.now()): Promise<void> => {
   const policies = new Map<string, ApiKeyPolicy>();
   for await (const entry of kv.list<ApiKeyUsageRequestV3>({ prefix: [...API_KEY_USAGE_V3_REQUEST_PREFIX, keyId] })) {
     const request = normalizeApiKeyUsageRequestV3(entry.value);
@@ -865,7 +783,7 @@ export const deleteApiKeyUsageV3 = async (kv: Deno.Kv, keyId: string): Promise<v
 
 export const authenticateApiKeyToken = async (
   token: string,
-  options: Readonly<{ kv?: Deno.Kv | null; nowMs?: number }> = {},
+  options: Readonly<{ kv?: Deno.Kv | null; nowMs?: number }> = {}
 ): Promise<ApiKeyPolicyDecision> => {
   if (!looksLikeUosApiKey(token)) {
     return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
@@ -916,10 +834,12 @@ export const invalidateApiKeyPolicy = (keyId?: string): void => {
   }
 };
 
-export const resetApiKeyPolicyCacheForTest = (): void => policyCache.clear();
+export const resetApiKeyPolicyCacheForTest = (): void => {
+  policyCache.clear();
+};
 
 export const apiKeyQuotaUsedPercent = (policy: ApiKeyPolicy | null): number | null => {
   if (!policy?.paid_fallback_enabled || policy.paid_fallback_limit_microcredits <= 0) return null;
   const used = policy.paid_fallback_spent_microcredits + policy.paid_fallback_reserved_microcredits;
-  return Math.min(100, Math.max(0, used * 100 / policy.paid_fallback_limit_microcredits));
+  return Math.min(100, Math.max(0, (used * 100) / policy.paid_fallback_limit_microcredits));
 };

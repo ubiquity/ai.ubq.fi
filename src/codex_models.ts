@@ -68,22 +68,20 @@ export type PromptCacheProvider = Readonly<{
 export type PromptCacheCapabilities =
   | false
   | Readonly<{
-    version: 1;
-    providers: PromptCacheProvider[];
-  }>;
+      version: 1;
+      providers: PromptCacheProvider[];
+    }>;
 
 /** Runtime config retains cache controls only; probe scope remains full-catalog evidence. */
 export type RuntimePromptCacheCapabilities =
   | false
   | Readonly<{
-    version: 1;
-    providers: Array<
-      Readonly<{
+      version: 1;
+      providers: Readonly<{
         id: string;
         controls: PromptCacheControls;
-      }>
-    >;
-  }>;
+      }>[];
+    }>;
 
 const PROMPT_CACHE_CONTROL_SOURCES = new Set<PromptCacheControlSource>(["catalog", "live_probe", "inferred"]);
 const PROMPT_CACHE_SCOPE_SOURCES = new Set<PromptCacheScopeSource>(["live_probe"]);
@@ -111,8 +109,7 @@ const hasOnlyKeys = (value: Record<string, unknown>, allowed: readonly string[])
   return Object.keys(value).every((key) => allowedKeys.has(key));
 };
 
-const hasOwn = (value: Record<string, unknown>, key: string): boolean =>
-  Object.prototype.hasOwnProperty.call(value, key);
+const hasOwn = (value: Record<string, unknown>, key: string): boolean => Object.prototype.hasOwnProperty.call(value, key);
 
 const normalizePromptCacheString = (value: unknown): string | null => {
   const normalized = getString(value)?.trim();
@@ -164,12 +161,9 @@ const normalizePromptCacheEnumList = <T extends string>(value: unknown, allowed:
 const normalizePromptCacheTimestamp = (value: unknown): number | null =>
   typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
 
-const normalizePromptCacheCycles = (value: unknown): number | null =>
-  typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+const normalizePromptCacheCycles = (value: unknown): number | null => (typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null);
 
-const normalizePromptCacheBreakpointBlockTypes = (
-  value: unknown,
-): PromptCacheControls["breakpoint_block_types"] | null => {
+const normalizePromptCacheBreakpointBlockTypes = (value: unknown): PromptCacheControls["breakpoint_block_types"] | null => {
   if (!isObjectRecord(value) || !hasOnlyKeys(value, ["responses", "chat_completions"])) return null;
   const responses = hasOwn(value, "responses")
     ? normalizeGatewayPromptCacheStringList(value.responses, PROMPT_CACHE_RESPONSE_BREAKPOINT_BLOCK_TYPES)
@@ -204,7 +198,8 @@ const normalizePromptCacheControls = (value: unknown): PromptCacheControls | nul
       "source",
       "verified_at_ms",
     ])
-  ) return null;
+  )
+    return null;
   if (!PROMPT_CACHE_CONTROL_SOURCES.has(value.source as PromptCacheControlSource)) return null;
   const verifiedAtMs = normalizePromptCacheTimestamp(value.verified_at_ms);
   if (verifiedAtMs === null) return null;
@@ -219,9 +214,7 @@ const normalizePromptCacheControls = (value: unknown): PromptCacheControls | nul
   const legacyRetentions = hasOwn(value, "legacy_retentions")
     ? normalizeGatewayPromptCacheStringList(value.legacy_retentions, PROMPT_CACHE_LEGACY_RETENTIONS)
     : undefined;
-  const breakpointBlockTypes = hasOwn(value, "breakpoint_block_types")
-    ? normalizePromptCacheBreakpointBlockTypes(value.breakpoint_block_types)
-    : undefined;
+  const breakpointBlockTypes = hasOwn(value, "breakpoint_block_types") ? normalizePromptCacheBreakpointBlockTypes(value.breakpoint_block_types) : undefined;
   const expectedUsageFields = hasOwn(value, "expected_usage_fields")
     ? normalizePromptCacheEnumList(value.expected_usage_fields, PROMPT_CACHE_USAGE_FIELDS)
     : undefined;
@@ -231,7 +224,8 @@ const normalizePromptCacheControls = (value: unknown): PromptCacheControls | nul
     (hasOwn(value, "legacy_retentions") && !legacyRetentions) ||
     (hasOwn(value, "breakpoint_block_types") && !breakpointBlockTypes) ||
     (hasOwn(value, "expected_usage_fields") && !expectedUsageFields)
-  ) return null;
+  )
+    return null;
 
   return {
     ...(hasOwn(value, "key") ? { key: value.key as boolean } : {}),
@@ -260,7 +254,8 @@ const normalizePromptCacheScope = (value: unknown): PromptCacheScope | null => {
       "source",
       "verified_at_ms",
     ])
-  ) return null;
+  )
+    return null;
   if (value.probe_profile !== PROMPT_CACHE_SCOPE_PROBE_PROFILE) return null;
   if (!PROMPT_CACHE_ACCOUNT_SLOTS.has(value.account_slots as PromptCacheAccountSlots)) return null;
   if (!PROMPT_CACHE_TOKEN_REFRESH.has(value.token_refresh as PromptCacheTokenRefresh)) return null;
@@ -274,9 +269,7 @@ const normalizePromptCacheScope = (value: unknown): PromptCacheScope | null => {
   // an unverified "account_scoped" result, and callers should treat omitted
   // scope as unknown rather than consuming an early classification.
   if (reproducibleCycles < 3) return null;
-  const effectiveModel = hasOwn(value, "effective_model")
-    ? normalizePromptCacheString(value.effective_model)
-    : undefined;
+  const effectiveModel = hasOwn(value, "effective_model") ? normalizePromptCacheString(value.effective_model) : undefined;
   if (hasOwn(value, "effective_model") && !effectiveModel) return null;
   return {
     probe_profile: PROMPT_CACHE_SCOPE_PROBE_PROFILE,
@@ -326,7 +319,7 @@ export const normalizePromptCacheCapabilities = (value: unknown): PromptCacheCap
 export const compactPromptCacheCapabilities = (value: unknown): RuntimePromptCacheCapabilities | null => {
   const normalized = normalizePromptCacheCapabilities(value);
   if (normalized === null || normalized === false) return normalized;
-  const providers: Array<Readonly<{ id: string; controls: PromptCacheControls }>> = [];
+  const providers: Readonly<{ id: string; controls: PromptCacheControls }>[] = [];
   for (const provider of normalized.providers) {
     if (provider.controls) providers.push({ id: provider.id, controls: provider.controls });
   }
@@ -343,21 +336,14 @@ const modelSlug = (model: Record<string, unknown>): string | null => {
  * evidence. A duplicate or renamed entry is intentionally indistinguishable
  * from absence: neither is safe to update from a prior live observation.
  */
-export const getUniqueCodexModelBySlug = (
-  snapshot: CodexModelsSnapshot,
-  slug: string,
-): Record<string, unknown> | null => {
+export const getUniqueCodexModelBySlug = (snapshot: CodexModelsSnapshot, slug: string): Record<string, unknown> | null => {
   const target = slug.trim();
   if (!target || !Array.isArray(snapshot.models)) return null;
   const matches = snapshot.models.filter((model) => isObjectRecord(model) && modelSlug(model) === target);
   return matches.length === 1 ? matches[0]! : null;
 };
 
-export const getCodexModelPromptCacheProvider = (
-  snapshot: CodexModelsSnapshot,
-  slug: string,
-  providerId: string,
-): PromptCacheProvider | null => {
+export const getCodexModelPromptCacheProvider = (snapshot: CodexModelsSnapshot, slug: string, providerId: string): PromptCacheProvider | null => {
   const model = getUniqueCodexModelBySlug(snapshot, slug);
   if (!model) return null;
   const promptCache = normalizePromptCacheCapabilities(model.prompt_cache);
@@ -366,27 +352,21 @@ export const getCodexModelPromptCacheProvider = (
 };
 
 /** Exact controls required before the fixed plain-key scope matrix may dispatch. */
-export const isCodexModelPromptCacheScopeExperimentEligible = (
-  snapshot: CodexModelsSnapshot,
-  slug: string,
-): boolean => {
+export const isCodexModelPromptCacheScopeExperimentEligible = (snapshot: CodexModelsSnapshot, slug: string): boolean => {
   const controls = getCodexModelPromptCacheProvider(snapshot, slug, CODEX_CHATGPT_PROMPT_CACHE_PROVIDER)?.controls;
   return Boolean(
     controls?.key === true &&
-      controls.implicit !== false &&
-      // The fixed profile uses only prompt_cache_key. `modes` describes the
-      // optional prompt_cache_options field, so an explicit-only options
-      // declaration cannot disqualify this distinct request shape.
-      controls.expected_usage_fields?.includes("cached_tokens") &&
-      controls.expected_usage_fields?.includes("cache_write_tokens"),
+    controls.implicit !== false &&
+    // The fixed profile uses only prompt_cache_key. `modes` describes the
+    // optional prompt_cache_options field, so an explicit-only options
+    // declaration cannot disqualify this distinct request shape.
+    controls.expected_usage_fields?.includes("cached_tokens") &&
+    controls.expected_usage_fields?.includes("cache_write_tokens")
   );
 };
 
 /** A scope may be schema-valid but still unsafe to publish from a live probe. */
-export const isConcretePromptCacheScope = (
-  scope: PromptCacheScope,
-  reproducibleCycles = 3,
-): boolean =>
+export const isConcretePromptCacheScope = (scope: PromptCacheScope, reproducibleCycles = 3): boolean =>
   scope.probe_profile === PROMPT_CACHE_SCOPE_PROBE_PROFILE &&
   scope.account_slots !== "unknown" &&
   scope.token_refresh !== "unknown" &&
@@ -403,7 +383,7 @@ export const withCodexModelPromptCacheScope = (
   snapshot: CodexModelsSnapshot,
   slug: string,
   providerId: string,
-  scope: PromptCacheScope,
+  scope: PromptCacheScope
 ): CodexModelsSnapshot | null => {
   const target = slug.trim();
   const model = getUniqueCodexModelBySlug(snapshot, target);
@@ -431,10 +411,7 @@ export const withCodexModelPromptCacheScope = (
   return updated ? { ...snapshot, models } : null;
 };
 
-const mergePromptCacheProvider = (
-  previous: PromptCacheProvider | undefined,
-  next: PromptCacheProvider,
-): PromptCacheProvider => ({
+const mergePromptCacheProvider = (previous: PromptCacheProvider | undefined, next: PromptCacheProvider): PromptCacheProvider => ({
   id: next.id,
   ...(next.controls ? { controls: next.controls } : previous?.controls ? { controls: previous.controls } : {}),
   ...(next.scope ? { scope: next.scope } : previous?.scope ? { scope: previous.scope } : {}),
@@ -445,10 +422,7 @@ const mergePromptCacheProvider = (
  * cached evidence that a catalog refresh cannot know (for example a live
  * account-scope probe). Provider IDs are deliberately not collapsed.
  */
-export const mergePromptCacheCapabilities = (
-  previousRaw: unknown,
-  nextRaw: unknown,
-): PromptCacheCapabilities | null => {
+export const mergePromptCacheCapabilities = (previousRaw: unknown, nextRaw: unknown): PromptCacheCapabilities | null => {
   const previous = normalizePromptCacheCapabilities(previousRaw);
   const next = normalizePromptCacheCapabilities(nextRaw);
   if (next === false) return false;
@@ -469,10 +443,7 @@ export const mergePromptCacheCapabilities = (
  * can be written independently. Preserve valid evidence only for matching
  * model slugs so removed/renamed models do not inherit stale capabilities.
  */
-export const mergeCodexModelPromptCacheCapabilities = (
-  next: CodexModelsSnapshot,
-  previous: CodexModelsSnapshot | null | undefined,
-): CodexModelsSnapshot => {
+export const mergeCodexModelPromptCacheCapabilities = (next: CodexModelsSnapshot, previous: CodexModelsSnapshot | null | undefined): CodexModelsSnapshot => {
   if (!previous?.models?.length) return next;
   const previousBySlug = new Map<string, Record<string, unknown>>();
   for (const value of previous.models) {
@@ -545,7 +516,7 @@ const deriveReasoningEffortWireMap = (levels: unknown[]): Record<string, Reasoni
     const effort = reasoningLevelEffort(level);
     if (!effort) continue;
     const explicitWireEffort = isRecord(level) ? normalizeReasoningEffort(level.wire_effort) : null;
-    const wireEffort: ReasoningEffort = effort === "ultra" ? "max" : explicitWireEffort ?? effort;
+    const wireEffort: ReasoningEffort = effort === "ultra" ? "max" : (explicitWireEffort ?? effort);
     if (wireEffort !== effort) wireMap.set(effort, wireEffort);
   }
   return Object.fromEntries(wireMap);
@@ -553,7 +524,7 @@ const deriveReasoningEffortWireMap = (levels: unknown[]): Record<string, Reasoni
 
 export const normalizeCodexModelsPayload = (
   value: unknown,
-  overrides: Readonly<{ source?: string; clientVersion?: string | null; updatedAtMs?: number | null }> = {},
+  overrides: Readonly<{ source?: string; clientVersion?: string | null; updatedAtMs?: number | null }> = {}
 ): CodexModelsSnapshot | null => {
   let modelsRaw: unknown = null;
   let source = "codex_cli";
@@ -592,27 +563,17 @@ export const normalizeCodexModelsPayload = (
     const visibility = getString(item.visibility);
     if (visibility) normalized.visibility = visibility;
     if (typeof item.supported_in_api === "boolean") normalized.supported_in_api = item.supported_in_api;
-    for (
-      const key of [
-        "context_window",
-        "max_context_window",
-        "auto_compact_token_limit",
-        "effective_context_window_percent",
-      ]
-    ) {
+    for (const key of ["context_window", "max_context_window", "auto_compact_token_limit", "effective_context_window_percent"]) {
       if (item[key] === null) normalized[key] = null;
       else {
         const count = normalizeNonNegativeInteger(item[key]);
         if (count !== null) normalized[key] = count;
       }
     }
-    const defaultReasoning = item.default_reasoning_level === null
-      ? "none"
-      : normalizeReasoningEffort(item.default_reasoning_level);
+    const defaultReasoning = item.default_reasoning_level === null ? "none" : normalizeReasoningEffort(item.default_reasoning_level);
     if (defaultReasoning) normalized.default_reasoning_level = defaultReasoning;
     if (Array.isArray(item.supported_reasoning_levels)) {
-      const levels = item.supported_reasoning_levels.map(reasoningLevelEffort)
-        .filter((entry): entry is ReasoningEffort => entry !== null);
+      const levels = item.supported_reasoning_levels.map(reasoningLevelEffort).filter((entry): entry is ReasoningEffort => entry !== null);
       if (!levels.includes("none")) levels.unshift("none");
       if (levels.length) normalized.supported_reasoning_levels = levels;
       const wireMap = deriveReasoningEffortWireMap(item.supported_reasoning_levels);

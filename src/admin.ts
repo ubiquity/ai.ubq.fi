@@ -57,19 +57,9 @@ import {
   makeApiKeyUsageWindowV3,
   reclaimApiKeyUsageReservationsForKeyV3,
 } from "./api_key_policy.ts";
-import {
-  apiKeyRequestLogPrefix,
-  apiKeyUsageDailyKey,
-  apiKeyUsageKey,
-  legacyApiKeyRequestLogPrefix,
-} from "./analytics.ts";
+import { apiKeyRequestLogPrefix, apiKeyUsageDailyKey, apiKeyUsageKey, legacyApiKeyRequestLogPrefix } from "./analytics.ts";
 import { reloadKernelPublicKeys } from "./auth.ts";
-import {
-  defaultPaidFallbackPolicy,
-  hasStrictPaidFallbackKeyPolicy,
-  initializePaidFallbackPolicy,
-  paidFallbackHashFields,
-} from "./paid_fallback.ts";
+import { defaultPaidFallbackPolicy, hasStrictPaidFallbackKeyPolicy, initializePaidFallbackPolicy, paidFallbackHashFields } from "./paid_fallback.ts";
 import {
   backfillPaidFallbackUsageRollups,
   backfillPaidFallbackWindowTtls,
@@ -95,18 +85,9 @@ import {
   setKernelOrgUsageLimit,
   setKernelUsageLimit,
 } from "./kernel_usage.ts";
-import {
-  acquireKernelDefaultWindowCutover,
-  type KernelDefaultWindowCutoverGuard,
-  releaseKernelDefaultWindowCutover,
-} from "./kernel_quota_v2.ts";
+import { acquireKernelDefaultWindowCutover, type KernelDefaultWindowCutoverGuard, releaseKernelDefaultWindowCutover } from "./kernel_quota_v2.ts";
 import { listKernelPolicyQueue } from "./kernel_policy_queue.ts";
-import {
-  defaultIncludeLegacyForProfile,
-  importKvMigrationLines,
-  type KvMigrationProfile,
-  validateKvMigrationTarget,
-} from "./kv_migration.ts";
+import { defaultIncludeLegacyForProfile, importKvMigrationLines, type KvMigrationProfile, validateKvMigrationTarget } from "./kv_migration.ts";
 import { getKv } from "./kv.ts";
 import { listCodexResetShadowDecisions } from "./codex_banked_reset.ts";
 import {
@@ -133,13 +114,7 @@ import {
 } from "./runtime_config.ts";
 import { readJsonBody } from "./request.ts";
 import { getString, isRecord, sha256Base64Url } from "./utils.ts";
-import type {
-  ApiKeyHashRecord,
-  ApiKeyRecord,
-  ApiKeyUsageWindowV3,
-  CodexAuthPoolState,
-  CodexAuthState,
-} from "./types.ts";
+import type { ApiKeyHashRecord, ApiKeyRecord, ApiKeyUsageWindowV3, CodexAuthPoolState, CodexAuthState } from "./types.ts";
 import { MeteredError } from "./metered.ts";
 import {
   getConfiguredMeteredQuotaSnapshot,
@@ -152,18 +127,8 @@ import {
   resampleMeteredQuotaBalanceHistory,
 } from "./metered_quota.ts";
 import { listPaidFallbackUsageRollups, PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS } from "./paid_fallback_rollups.ts";
-import {
-  groupPaidFallbackUsageRollups,
-  meteredQuotaRunwayView,
-  projectPaidFallbackRunway,
-  summarizePaidFallbackUsage,
-} from "./quota_projection.ts";
-import {
-  DEBUG_ROUTING_MAX_DURATION_MS,
-  type DebugRoutingScenario,
-  loadDebugRoutingConfig,
-  setDebugRoutingConfig,
-} from "./debug_routing.ts";
+import { groupPaidFallbackUsageRollups, meteredQuotaRunwayView, projectPaidFallbackRunway, summarizePaidFallbackUsage } from "./quota_projection.ts";
+import { DEBUG_ROUTING_MAX_DURATION_MS, type DebugRoutingScenario, loadDebugRoutingConfig, setDebugRoutingConfig } from "./debug_routing.ts";
 
 const UOS_KERNEL_PUBKEYS_KEY = ["uos_ai", "kernel_pubkeys"];
 const UOS_CODEX_PROMPTS_KEY = ["uos_ai", "codex_instructions"] as const;
@@ -196,11 +161,7 @@ export const handleAdminDebugRouting = async (req: Request): Promise<Response> =
   try {
     return json(200, { routing: await setDebugRoutingConfig(scenario, durationMs) }, { "Cache-Control": "no-store" });
   } catch (error) {
-    return openaiError(
-      400,
-      error instanceof Error ? error.message : "Invalid debug routing scenario",
-      "invalid_request_error",
-    );
+    return openaiError(400, error instanceof Error ? error.message : "Invalid debug routing scenario", "invalid_request_error");
   }
 };
 
@@ -221,12 +182,10 @@ export const handleAdminCodexRecheck = async (slot: number): Promise<Response> =
 export const handleAdminCodexBankedResetShadowDecisions = async (): Promise<Response> => {
   const decisions = await listCodexResetShadowDecisions();
   if (decisions === null) {
-    return openaiError(
-      503,
-      "Codex banked-reset shadow decisions are unavailable",
-      "codex_banked_reset_shadow_unavailable",
-      { type: "server_error", headers: { "Cache-Control": "no-store" } },
-    );
+    return openaiError(503, "Codex banked-reset shadow decisions are unavailable", "codex_banked_reset_shadow_unavailable", {
+      type: "server_error",
+      headers: { "Cache-Control": "no-store" },
+    });
   }
   return json(200, { decisions }, { "Cache-Control": "no-store" });
 };
@@ -256,12 +215,7 @@ export const handleAdminCodexCacheScopeExperiment = async (req: Request): Promis
     // The experiment reads provider streams and OAuth responses; an unknown
     // thrown value might contain upstream/request material, so never log it.
     console.error("[ai.ubq.fi] Prompt-cache scope experiment could not run.");
-    return openaiError(
-      503,
-      "Prompt-cache scope experiment could not run.",
-      "prompt_cache_scope_experiment_failed",
-      { type: "server_error" },
-    );
+    return openaiError(503, "Prompt-cache scope experiment could not run.", "prompt_cache_scope_experiment_failed", { type: "server_error" });
   }
 };
 
@@ -271,8 +225,7 @@ export const handleAdminCodexCacheScopeExperiment = async (req: Request): Promis
  * not expose its model/hash or start any paid scope-probe work.
  */
 export const handleAdminCodexCacheScopeExperimentTelemetryBaseline = async (
-  readBaseline: () => ReturnType<typeof readPromptCacheScopeExperimentTelemetryBaseline> =
-    readPromptCacheScopeExperimentTelemetryBaseline,
+  readBaseline: () => ReturnType<typeof readPromptCacheScopeExperimentTelemetryBaseline> = readPromptCacheScopeExperimentTelemetryBaseline
 ): Promise<Response> => {
   try {
     const baseline = await readBaseline();
@@ -282,12 +235,10 @@ export const handleAdminCodexCacheScopeExperimentTelemetryBaseline = async (
     // Target-selection and KV failures can carry sensitive durable-key
     // material. This route is diagnostic-only, so return no thrown detail.
     console.error("[ai.ubq.fi] Prompt-cache Stage 0 telemetry baseline could not be read.");
-    return openaiError(
-      503,
-      "Prompt-cache Stage 0 telemetry baseline could not be read.",
-      "prompt_cache_scope_experiment_unavailable",
-      { type: "server_error", headers: { "Cache-Control": "no-store" } },
-    );
+    return openaiError(503, "Prompt-cache Stage 0 telemetry baseline could not be read.", "prompt_cache_scope_experiment_unavailable", {
+      type: "server_error",
+      headers: { "Cache-Control": "no-store" },
+    });
   }
 };
 
@@ -297,8 +248,7 @@ export const handleAdminCodexCacheScopeExperimentTelemetryBaseline = async (
  */
 export const handleAdminPromptCacheAnalytics = async (
   req: Request,
-  readAnalytics: (options: PromptCacheAnalyticsReadOptions) => Promise<PromptCacheAnalyticsView> =
-    readPromptCacheAnalytics,
+  readAnalytics: (options: PromptCacheAnalyticsReadOptions) => Promise<PromptCacheAnalyticsView> = readPromptCacheAnalytics
 ): Promise<Response> => {
   const url = new URL(req.url);
   for (const key of url.searchParams.keys()) {
@@ -318,19 +268,17 @@ export const handleAdminPromptCacheAnalytics = async (
       400,
       "group_by must contain up to two distinct values from provider, model, route, key_presence, mode, or fallback",
       "invalid_request_error",
-      { param: "group_by" },
+      { param: "group_by" }
     );
   }
   try {
     return json(200, await readAnalytics({ groupBy }), { "Cache-Control": "no-store" });
   } catch {
     console.error("[ai.ubq.fi] Prompt-cache analytics could not be read.");
-    return openaiError(
-      503,
-      "Prompt-cache analytics are unavailable",
-      "prompt_cache_analytics_unavailable",
-      { type: "server_error", headers: { "Cache-Control": "no-store" } },
-    );
+    return openaiError(503, "Prompt-cache analytics are unavailable", "prompt_cache_analytics_unavailable", {
+      type: "server_error",
+      headers: { "Cache-Control": "no-store" },
+    });
   }
 };
 
@@ -349,9 +297,7 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
   }
 
   const seed: CodexAuthState = { ...tokenData, updated_at_ms: Date.now() };
-  const clientVersion = isRecord(modelsPayload)
-    ? getString(modelsPayload.client_version) ?? getString(modelsPayload.clientVersion)
-    : null;
+  const clientVersion = isRecord(modelsPayload) ? (getString(modelsPayload.client_version) ?? getString(modelsPayload.clientVersion)) : null;
   let validated: Awaited<ReturnType<typeof validateCodexAuthJson>>;
   try {
     validated = await validateCodexAuthJson(seed, { clientVersion });
@@ -367,11 +313,7 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
 
   const authenticatedButLimited = !validated.ok && validated.status === 429;
   if (!validated.ok && !authenticatedButLimited) {
-    return openaiError(
-      401,
-      `Invalid Codex auth.json (upstream ${validated.status}): ${validated.body}`,
-      "invalid_api_key",
-    );
+    return openaiError(401, `Invalid Codex auth.json (upstream ${validated.status}): ${validated.body}`, "invalid_api_key");
   }
 
   const validatedAuth = validated.ok ? validated.auth : seed;
@@ -385,22 +327,14 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
       clientVersion: validatedClientVersion,
     });
     if (!snapshot) {
-      return openaiError(
-        502,
-        "Codex upstream models response did not include a non-empty model catalog",
-        "codex_upstream_unreachable",
-      );
+      return openaiError(502, "Codex upstream models response did not include a non-empty model catalog", "codex_upstream_unreachable");
     }
     const snapshotSize = estimateJsonSize(snapshot);
     if (snapshotSize === null) {
       return openaiError(400, "models payload could not be serialized", "invalid_request_error");
     }
     if (snapshotSize > SAFE_KV_BYTES) {
-      return openaiError(
-        413,
-        `models snapshot too large (${snapshotSize} bytes; max ${MAX_KV_BYTES}).`,
-        "invalid_request_error",
-      );
+      return openaiError(413, `models snapshot too large (${snapshotSize} bytes; max ${MAX_KV_BYTES}).`, "invalid_request_error");
     }
 
     authGeneration = crypto.randomUUID();
@@ -421,18 +355,12 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
       return openaiError(
         409,
         "Codex auth pool already contains two accounts; upload an auth.json for an existing account to rotate it",
-        "codex_auth_pool_full",
+        "codex_auth_pool_full"
       );
     }
-    const nextSnapshot = snapshot
-      ? mergeCodexModelPromptCacheCapabilities(snapshot, existingSnapshot.value)
-      : existingSnapshot.value;
+    const nextSnapshot = snapshot ? mergeCodexModelPromptCacheCapabilities(snapshot, existingSnapshot.value) : existingSnapshot.value;
     if (!nextSnapshot) {
-      return openaiError(
-        409,
-        "Cannot store rate-limited Codex auth without an existing model catalog",
-        "codex_catalog_required",
-      );
+      return openaiError(409, "Cannot store rate-limited Codex auth without an existing model catalog", "codex_catalog_required");
     }
     let nextRuntime: ReturnType<typeof buildRuntimeConfig> | null = null;
     if (snapshot && authGeneration) {
@@ -448,10 +376,7 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
         throw error;
       }
     }
-    let atomic = kv.atomic()
-      .check(existingPoolEntry)
-      .check(existingSnapshot)
-      .set(CODEX_AUTH_POOL_KV_KEY, nextPool);
+    let atomic = kv.atomic().check(existingPoolEntry).check(existingSnapshot).set(CODEX_AUTH_POOL_KV_KEY, nextPool);
     if (snapshot && nextRuntime && authGeneration) {
       atomic = atomic
         .check(existingRuntimeEntry)
@@ -473,19 +398,20 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
   cacheCodexAuthPool(storedPool);
   if (runtimeConfig) cacheRuntimeConfig(runtimeConfig);
 
-  const catalogSeeded = validated.ok && authGeneration
-    ? await storeCodexCatalog(kv, {
-      clientVersion: validated.clientVersion,
-      authGeneration,
-      body: validated.modelsBody,
-      etag: validated.etag,
-      contentType: validated.contentType,
-      fetchedAtMs: Date.now(),
-    }).catch((error) => {
-      console.error("[ai.ubq.fi] Codex catalog seed failed:", error);
-      return false;
-    })
-    : false;
+  const catalogSeeded =
+    validated.ok && authGeneration
+      ? await storeCodexCatalog(kv, {
+          clientVersion: validated.clientVersion,
+          authGeneration,
+          body: validated.modelsBody,
+          etag: validated.etag,
+          contentType: validated.contentType,
+          fetchedAtMs: Date.now(),
+        }).catch((error) => {
+          console.error("[ai.ubq.fi] Codex catalog seed failed:", error);
+          return false;
+        })
+      : false;
 
   const modelsStored = {
     count: storedSnapshot.models.length,
@@ -511,7 +437,7 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
       catalog_seeded: catalogSeeded,
       normalized_snapshot_updated: validated.ok,
     },
-    { "x-uos-upstream": "chatgpt_codex" },
+    { "x-uos-upstream": "chatgpt_codex" }
   );
 };
 
@@ -534,11 +460,7 @@ export const handleAdminCodexModelsSet = async (req: Request): Promise<Response>
     return openaiError(400, "models payload could not be serialized", "invalid_request_error");
   }
   if (size > SAFE_KV_BYTES) {
-    return openaiError(
-      413,
-      `models snapshot too large (${size} bytes; max ${MAX_KV_BYTES}).`,
-      "invalid_request_error",
-    );
+    return openaiError(413, `models snapshot too large (${size} bytes; max ${MAX_KV_BYTES}).`, "invalid_request_error");
   }
 
   let stored: boolean;
@@ -665,7 +587,7 @@ export const handleAdminDefaults = async (
   req: Request,
   dependencies: Readonly<{
     getMeteredQuotaDiagnostics?: typeof getMeteredQuotaDiagnostics;
-  }> = {},
+  }> = {}
 ): Promise<Response> => {
   const kv = await getKv();
   if (!kv) {
@@ -681,8 +603,7 @@ export const handleAdminDefaults = async (
     ]);
     const model = runtime?.default_model ?? "";
     const reasoningEffort = runtime?.default_reasoning_effort ?? DEFAULT_REASONING_EFFORT;
-    const kernelPolicyLimit = normalizeKernelUsageLimitInput(kernelLimitEntry.value) ??
-      DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS;
+    const kernelPolicyLimit = normalizeKernelUsageLimitInput(kernelLimitEntry.value) ?? DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS;
     const kernelPolicyWindow = normalizeKernelWindowMsInput(kernelWindowEntry.value) ?? DEFAULT_KERNEL_POLICY_WINDOW_MS;
     return json(200, {
       defaults: {
@@ -698,12 +619,7 @@ export const handleAdminDefaults = async (
   if (req.method === "POST") {
     const raw = await readJsonBody(req);
     if (!raw || !isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
-    const allowedFields = new Set([
-      "model",
-      "reasoning_effort",
-      "kernel_policy_limit_requests",
-      "kernel_policy_window_ms",
-    ]);
+    const allowedFields = new Set(["model", "reasoning_effort", "kernel_policy_limit_requests", "kernel_policy_window_ms"]);
     for (const field of Object.keys(raw)) {
       if (!allowedFields.has(field)) {
         return openaiError(400, `Unknown defaults field: ${field}`, "invalid_request_error", { param: field });
@@ -714,19 +630,11 @@ export const handleAdminDefaults = async (
     const wantsModelUpdate = writesModel || writesReasoning;
     const writesKernelLimit = Object.prototype.hasOwnProperty.call(raw, "kernel_policy_limit_requests");
     const writesKernelWindow = Object.prototype.hasOwnProperty.call(raw, "kernel_policy_window_ms");
-    const requestedKernelLimit = writesKernelLimit
-      ? normalizeKernelUsageLimitInput(raw.kernel_policy_limit_requests)
-      : undefined;
+    const requestedKernelLimit = writesKernelLimit ? normalizeKernelUsageLimitInput(raw.kernel_policy_limit_requests) : undefined;
     if (writesKernelLimit && requestedKernelLimit === null) {
-      return openaiError(
-        400,
-        "kernel_policy_limit_requests must be a non-negative number or -1 for unlimited",
-        "invalid_request_error",
-      );
+      return openaiError(400, "kernel_policy_limit_requests must be a non-negative number or -1 for unlimited", "invalid_request_error");
     }
-    const requestedKernelWindow = writesKernelWindow
-      ? normalizeKernelWindowMsInput(raw.kernel_policy_window_ms)
-      : undefined;
+    const requestedKernelWindow = writesKernelWindow ? normalizeKernelWindowMsInput(raw.kernel_policy_window_ms) : undefined;
     if (writesKernelWindow && requestedKernelWindow === null) {
       return openaiError(400, "kernel_policy_window_ms must be a positive number", "invalid_request_error");
     }
@@ -743,10 +651,8 @@ export const handleAdminDefaults = async (
       const runtime = normalizeRuntimeConfig(runtimeEntry.value);
       let model = runtime?.default_model ?? "";
       let reasoningEffort = runtime?.default_reasoning_effort ?? DEFAULT_REASONING_EFFORT;
-      const kernelPolicyLimit = requestedKernelLimit ??
-        normalizeKernelUsageLimitInput(kernelLimitEntry.value) ?? DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS;
-      const kernelPolicyWindow = requestedKernelWindow ??
-        normalizeKernelWindowMsInput(kernelWindowEntry.value) ?? DEFAULT_KERNEL_POLICY_WINDOW_MS;
+      const kernelPolicyLimit = requestedKernelLimit ?? normalizeKernelUsageLimitInput(kernelLimitEntry.value) ?? DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS;
+      const kernelPolicyWindow = requestedKernelWindow ?? normalizeKernelWindowMsInput(kernelWindowEntry.value) ?? DEFAULT_KERNEL_POLICY_WINDOW_MS;
       let nextRuntime = null as ReturnType<typeof buildRuntimeConfig> | null;
 
       if (wantsModelUpdate) {
@@ -758,20 +664,15 @@ export const handleAdminDefaults = async (
         if (!snapshot || !Array.isArray(snapshot.models) || snapshot.models.length === 0) {
           return openaiError(409, "No Codex model snapshot stored", "invalid_request_error");
         }
-        const modelRecord = snapshot.models.find((entry) => isRecord(entry) && getString(entry.slug) === nextModel) ??
-          null;
+        const modelRecord = snapshot.models.find((entry) => isRecord(entry) && getString(entry.slug) === nextModel) ?? null;
         if (!modelRecord) {
           return openaiError(400, "model is not in the stored Codex model list", "invalid_request_error");
         }
 
         const wantsReasoningUpdate = writesReasoning;
-        const modelDefault = modelRecord.default_reasoning_level === null
-          ? "none"
-          : normalizeReasoningEffort(modelRecord.default_reasoning_level);
+        const modelDefault = modelRecord.default_reasoning_level === null ? "none" : normalizeReasoningEffort(modelRecord.default_reasoning_level);
         const levels = extractModelReasoningLevels(modelRecord);
-        const nextReasoning = wantsReasoningUpdate
-          ? normalizeReasoningEffort(raw.reasoning_effort)
-          : modelDefault ?? levels[0] ?? "none";
+        const nextReasoning = wantsReasoningUpdate ? normalizeReasoningEffort(raw.reasoning_effort) : (modelDefault ?? levels[0] ?? "none");
         if (!nextReasoning) {
           return openaiError(400, "reasoning_effort must be a non-empty string", "invalid_request_error");
         }
@@ -801,17 +702,12 @@ export const handleAdminDefaults = async (
       }
 
       let cutoverGuard: KernelDefaultWindowCutoverGuard | null = null;
-      const currentKernelWindow = normalizeKernelWindowMsInput(kernelWindowEntry.value) ??
-        DEFAULT_KERNEL_POLICY_WINDOW_MS;
+      const currentKernelWindow = normalizeKernelWindowMsInput(kernelWindowEntry.value) ?? DEFAULT_KERNEL_POLICY_WINDOW_MS;
       if (writesKernelWindow && kernelPolicyWindow !== currentKernelWindow) {
         const cutover = await acquireKernelDefaultWindowCutover(kv, kernelLimitEntry, kernelWindowEntry);
         if (!cutover.ok) {
           if (cutover.reason === "active_reservations") {
-            return openaiError(
-              409,
-              "Active Kernel quota reservations must settle before changing the default window",
-              "invalid_request_error",
-            );
+            return openaiError(409, "Active Kernel quota reservations must settle before changing the default window", "invalid_request_error");
           }
           if (cutover.reason === "concurrent_change") continue;
           return openaiError(503, "Kernel quota ledger is unavailable", "server_error");
@@ -819,14 +715,9 @@ export const handleAdminDefaults = async (
         cutoverGuard = cutover.guard;
       }
 
-      let atomic = kv.atomic()
-        .check(runtimeEntry)
-        .check(kernelLimitEntry)
-        .check(kernelWindowEntry);
+      let atomic = kv.atomic().check(runtimeEntry).check(kernelLimitEntry).check(kernelWindowEntry);
       if (cutoverGuard) {
-        atomic = atomic
-          .check(cutoverGuard.entry)
-          .delete(cutoverGuard.key);
+        atomic = atomic.check(cutoverGuard.entry).delete(cutoverGuard.key);
       }
       if (nextRuntime) atomic = atomic.set(RUNTIME_CONFIG_V2_KEY, nextRuntime);
       if (writesKernelLimit) atomic = atomic.set(DEFAULT_KERNEL_POLICY_LIMIT_KEY, kernelPolicyLimit);
@@ -926,18 +817,9 @@ const paidFallbackInitializationError = (error: unknown): Response => {
   });
 };
 
-const paidFallbackPublicFields = async (
-  record: ApiKeyRecord,
-  kv: Deno.Kv,
-  windowResetAtMs = record.usage_reset_at_ms,
-) => {
+const paidFallbackPublicFields = async (record: ApiKeyRecord, kv: Deno.Kv, windowResetAtMs = record.usage_reset_at_ms) => {
   const [projection, providerUsage] = await Promise.all([
-    getPaidFallbackWindowProjectionV3(
-      record.id,
-      windowResetAtMs,
-      record.paid_fallback_limit_microcredits,
-      kv,
-    ),
+    getPaidFallbackWindowProjectionV3(record.id, windowResetAtMs, record.paid_fallback_limit_microcredits, kv),
     getPaidFallbackProviderUsageV3(record.id, windowResetAtMs, kv),
   ]);
   return {
@@ -1088,31 +970,19 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
 
   const providedToken = normalizeOptionalApiKeyToken(raw.token);
   if (raw.token !== undefined && raw.token !== null && providedToken === null) {
-    return openaiError(
-      400,
-      "token must use the u_ prefix followed by 64 lowercase hexadecimal characters",
-      "invalid_request_error",
-    );
+    return openaiError(400, "token must use the u_ prefix followed by 64 lowercase hexadecimal characters", "invalid_request_error");
   }
   const token = providedToken ?? generateApiKeyToken();
 
   const now = Date.now();
   const expiresAtMs = normalizeApiKeyExpiresAtMs(raw.expires_at_ms, now);
   if (expiresAtMs === null) {
-    return openaiError(
-      400,
-      "expires_at_ms must be a Unix epoch ms timestamp in the future, or -1",
-      "invalid_request_error",
-    );
+    return openaiError(400, "expires_at_ms must be a Unix epoch ms timestamp in the future, or -1", "invalid_request_error");
   }
 
   const usageLimitRequests = normalizeApiKeyUsageLimit(raw.usage_limit_requests);
   if (usageLimitRequests === null) {
-    return openaiError(
-      400,
-      "usage_limit_requests must be a positive number or -1 for unlimited",
-      "invalid_request_error",
-    );
+    return openaiError(400, "usage_limit_requests must be a positive number or -1 for unlimited", "invalid_request_error");
   }
   const windowMs = normalizeApiKeyWindowMsInput(raw.window_ms);
   if (raw.window_ms !== undefined && windowMs === null) {
@@ -1124,10 +994,7 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
     return openaiError(400, "banked_resets_enabled must be a boolean", "invalid_request_error");
   }
 
-  if (
-    Object.prototype.hasOwnProperty.call(raw, "paid_fallback_enabled") &&
-    typeof raw.paid_fallback_enabled !== "boolean"
-  ) {
+  if (Object.prototype.hasOwnProperty.call(raw, "paid_fallback_enabled") && typeof raw.paid_fallback_enabled !== "boolean") {
     return paidFallbackInputError("paid_fallback_enabled must be a boolean");
   }
   const paidFallbackEnabled = raw.paid_fallback_enabled === true;
@@ -1153,7 +1020,7 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
     try {
       paidFallbackPolicy = {
         ...paidFallbackPolicy,
-        ...await initializePaidFallbackPolicy(req.signal),
+        ...(await initializePaidFallbackPolicy(req.signal)),
         paid_fallback_enabled: true,
         paid_fallback_limit_microcredits: paidFallbackLimitMicrocredits,
       };
@@ -1202,7 +1069,8 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
   }
   const quotaWindow = makeApiKeyUsageWindowV3(quotaPolicy, now);
 
-  const commit = await kv.atomic()
+  const commit = await kv
+    .atomic()
     .check(hashEntry)
     .set(apiKeyIdKey(id), record)
     .set(hashKey, hashRecord)
@@ -1227,9 +1095,9 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
       usage_requests: record.usage_requests,
       usage_reset_at_ms: record.usage_reset_at_ms,
       window_ms: record.window_ms,
-      ...await paidFallbackPublicFields(record, kv),
+      ...(await paidFallbackPublicFields(record, kv)),
     },
-    { "x-uos-upstream": "chatgpt_codex" },
+    { "x-uos-upstream": "chatgpt_codex" }
   );
 };
 
@@ -1262,10 +1130,7 @@ export const handleAdminApiKeysList = async (req: Request): Promise<Response> =>
     };
     const policy = apiKeyPolicyFromHashRecord(record.hash, hashRecord, Date.now());
     if (policy) {
-      paidFallbackResetById.set(
-        record.id,
-        record.revoked_at_ms === null ? policy.usage_reset_at_ms : record.usage_reset_at_ms,
-      );
+      paidFallbackResetById.set(record.id, record.revoked_at_ms === null ? policy.usage_reset_at_ms : record.usage_reset_at_ms);
       if (includeUsage) {
         usageById.set(record.id, {
           request_count: await getApiKeyUsageV3(policy, kv),
@@ -1277,17 +1142,10 @@ export const handleAdminApiKeysList = async (req: Request): Promise<Response> =>
   }
   const paidFallbackById = new Map(
     await Promise.all(
-      records.map(async (record) =>
-        [
-          record.id,
-          await paidFallbackPublicFields(
-            record,
-            kv,
-            paidFallbackResetById.get(record.id) ?? record.usage_reset_at_ms,
-          ),
-        ] as const
-      ),
-    ),
+      records.map(
+        async (record) => [record.id, await paidFallbackPublicFields(record, kv, paidFallbackResetById.get(record.id) ?? record.usage_reset_at_ms)] as const
+      )
+    )
   );
 
   return json(
@@ -1302,26 +1160,22 @@ export const handleAdminApiKeysList = async (req: Request): Promise<Response> =>
         expires_at_ms: coerceApiKeyExpiresAtMs(r),
         revoked_at_ms: r.revoked_at_ms,
         usage_limit_requests: r.usage_limit_requests,
-        usage_reset_at_ms: includeUsage ? usageById.get(r.id)?.reset_at_ms ?? r.usage_reset_at_ms : r.usage_reset_at_ms,
+        usage_reset_at_ms: includeUsage ? (usageById.get(r.id)?.reset_at_ms ?? r.usage_reset_at_ms) : r.usage_reset_at_ms,
         window_ms: coerceApiKeyWindowMs(r),
         ...paidFallbackById.get(r.id),
         ...(includeUsage
           ? {
-            usage_requests: usageById.get(r.id)?.request_count ?? 0,
-            usage: usageById.get(r.id) ?? null,
-          }
+              usage_requests: usageById.get(r.id)?.request_count ?? 0,
+              usage: usageById.get(r.id) ?? null,
+            }
           : {}),
       })),
     },
-    { "x-uos-upstream": "chatgpt_codex" },
+    { "x-uos-upstream": "chatgpt_codex" }
   );
 };
 
-export const handleAdminApiKeysPaidFallbacks = async (
-  req: Request,
-  keyId: string,
-  kvOverride?: Deno.Kv | null,
-): Promise<Response> => {
+export const handleAdminApiKeysPaidFallbacks = async (req: Request, keyId: string, kvOverride?: Deno.Kv | null): Promise<Response> => {
   const kv = kvOverride === undefined ? await getKv() : kvOverride;
   if (!kv) {
     return openaiError(500, "Deno KV is not available; cannot load paid fallbacks", "server_error");
@@ -1347,11 +1201,7 @@ export const handleAdminApiKeysPaidFallbacks = async (
 
   try {
     const records = (await listPaidFallbackRequestsV3(normalizedKeyId, limit, kv)).map(paidFallbackHistoryRecord);
-    return json(
-      200,
-      { object: "list", data: records },
-      { "Cache-Control": "no-store" },
-    );
+    return json(200, { object: "list", data: records }, { "Cache-Control": "no-store" });
   } catch (error) {
     console.error("[ai.ubq.fi] Failed to load paid fallback ledger:", error);
     return openaiError(500, "Failed to load paid fallbacks", "server_error");
@@ -1413,11 +1263,7 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
   if (Object.prototype.hasOwnProperty.call(raw, "expires_at_ms")) {
     const expiresAtMs = normalizeApiKeyExpiresAtMs(raw.expires_at_ms, now);
     if (expiresAtMs === null) {
-      return openaiError(
-        400,
-        "expires_at_ms must be a Unix epoch ms timestamp in the future, or -1",
-        "invalid_request_error",
-      );
+      return openaiError(400, "expires_at_ms must be a Unix epoch ms timestamp in the future, or -1", "invalid_request_error");
     }
     nextExpiresAtMs = expiresAtMs;
   }
@@ -1425,11 +1271,7 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
   if (Object.prototype.hasOwnProperty.call(raw, "usage_limit_requests")) {
     const usageLimitRequests = normalizeApiKeyUsageLimit(raw.usage_limit_requests);
     if (usageLimitRequests === null) {
-      return openaiError(
-        400,
-        "usage_limit_requests must be a non-negative number or -1 for unlimited",
-        "invalid_request_error",
-      );
+      return openaiError(400, "usage_limit_requests must be a non-negative number or -1 for unlimited", "invalid_request_error");
     }
     nextUsageLimit = usageLimitRequests;
   }
@@ -1442,10 +1284,7 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
     nextWindowMs = windowMs;
   }
 
-  if (
-    Object.prototype.hasOwnProperty.call(raw, "paid_fallback_enabled") &&
-    typeof raw.paid_fallback_enabled !== "boolean"
-  ) {
+  if (Object.prototype.hasOwnProperty.call(raw, "paid_fallback_enabled") && typeof raw.paid_fallback_enabled !== "boolean") {
     return paidFallbackInputError("paid_fallback_enabled must be a boolean");
   }
   if (Object.prototype.hasOwnProperty.call(raw, "paid_fallback_enabled")) {
@@ -1490,7 +1329,8 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
     nextPaidFallbackSpentMicrocredits = 0;
   }
 
-  const hasChanges = nextName !== entry.value.name ||
+  const hasChanges =
+    nextName !== entry.value.name ||
     nextBankedResetsEnabled !== apiKeyBankedResetsEnabled(entry.value) ||
     nextExpiresAtMs !== currentExpiresAtMs ||
     nextUsageLimit !== entry.value.usage_limit_requests ||
@@ -1503,21 +1343,24 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
     nextPaidFallbackModelIds !== entry.value.paid_fallback_model_ids ||
     nextPaidFallbackQuotaPerCredit !== entry.value.paid_fallback_quota_per_credit ||
     nextPaidFallbackPricingCheckedAtMs !== entry.value.paid_fallback_pricing_checked_at_ms ||
-    (resetUsage &&
-      (nextUsageRequests !== entry.value.usage_requests || nextUsageResetAtMs !== entry.value.usage_reset_at_ms));
+    (resetUsage && (nextUsageRequests !== entry.value.usage_requests || nextUsageResetAtMs !== entry.value.usage_reset_at_ms));
 
   if (!hasChanges) {
-    const currentPolicy = apiKeyPolicyFromHashRecord(entry.value.hash, {
-      id: entry.value.id,
-      expires_at_ms: entry.value.expires_at_ms,
-      revoked_at_ms: entry.value.revoked_at_ms,
-      usage_limit_requests: entry.value.usage_limit_requests,
-      usage_requests: entry.value.usage_requests,
-      usage_reset_at_ms: entry.value.usage_reset_at_ms,
-      window_ms: entry.value.window_ms,
-      usage_quota_version: entry.value.usage_quota_version,
-      ...paidFallbackHashFields(entry.value),
-    }, now);
+    const currentPolicy = apiKeyPolicyFromHashRecord(
+      entry.value.hash,
+      {
+        id: entry.value.id,
+        expires_at_ms: entry.value.expires_at_ms,
+        revoked_at_ms: entry.value.revoked_at_ms,
+        usage_limit_requests: entry.value.usage_limit_requests,
+        usage_requests: entry.value.usage_requests,
+        usage_reset_at_ms: entry.value.usage_reset_at_ms,
+        window_ms: entry.value.window_ms,
+        usage_quota_version: entry.value.usage_quota_version,
+        ...paidFallbackHashFields(entry.value),
+      },
+      now
+    );
     return json(
       200,
       {
@@ -1531,9 +1374,9 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
         usage_requests: currentPolicy ? await getApiKeyUsageV3(currentPolicy, kv) : 0,
         usage_reset_at_ms: entry.value.usage_reset_at_ms,
         window_ms: currentWindowMs,
-        ...await paidFallbackPublicFields(entry.value, kv),
+        ...(await paidFallbackPublicFields(entry.value, kv)),
       },
-      { "x-uos-upstream": "chatgpt_codex" },
+      { "x-uos-upstream": "chatgpt_codex" }
     );
   }
 
@@ -1586,16 +1429,9 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
       // Read the old aggregate after reclaim and before the live scan. A
       // reservation before this read is included in the scan; one after it
       // mutates this checked entry and makes the reset conflict atomically.
-      currentQuotaWindowEntry = await kv.get<ApiKeyUsageWindowV3>(
-        apiKeyUsageV3WindowKey(currentQuotaPolicy!),
-        { consistency: "strong" },
-      );
+      currentQuotaWindowEntry = await kv.get<ApiKeyUsageWindowV3>(apiKeyUsageV3WindowKey(currentQuotaPolicy!), { consistency: "strong" });
       if (await hasLiveApiKeyUsageReservationsV3(kv, updated.id, now)) {
-        return openaiError(
-          409,
-          "Cannot reset API key quota while requests are reserved; retry after their five-minute lease expires",
-          "invalid_request_error",
-        );
+        return openaiError(409, "Cannot reset API key quota while requests are reserved; retry after their five-minute lease expires", "invalid_request_error");
       }
     } catch (error) {
       console.warn("[ai.ubq.fi] Failed to inspect API key quota reservations before reset:", error);
@@ -1604,15 +1440,9 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
   }
 
   const quotaWindow = replaceQuotaWindow ? makeApiKeyUsageWindowV3(quotaPolicy, now) : null;
-  const quotaWindowEntry = quotaWindow
-    ? await kv.get(apiKeyUsageV3WindowKey(quotaPolicy), { consistency: "strong" })
-    : null;
+  const quotaWindowEntry = quotaWindow ? await kv.get(apiKeyUsageV3WindowKey(quotaPolicy), { consistency: "strong" }) : null;
 
-  const atomic = kv.atomic()
-    .check(entry)
-    .check(hashEntry)
-    .set(idKey, updated)
-    .set(hashKey, updatedHash);
+  const atomic = kv.atomic().check(entry).check(hashEntry).set(idKey, updated).set(hashKey, updatedHash);
   if (quotaWindow && quotaWindowEntry) {
     atomic.check(quotaWindowEntry).set(apiKeyUsageV3WindowKey(quotaPolicy), quotaWindow, {
       expireIn: apiKeyUsageV3RetentionMs(quotaWindow.window_reset_at_ms, now),
@@ -1629,7 +1459,7 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
           return openaiError(
             409,
             "Cannot reset API key quota while requests are reserved; retry after their five-minute lease expires",
-            "invalid_request_error",
+            "invalid_request_error"
           );
         }
       } catch (error) {
@@ -1654,9 +1484,9 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
       usage_requests: await getApiKeyUsageV3(quotaPolicy, kv),
       usage_reset_at_ms: updated.usage_reset_at_ms,
       window_ms: updated.window_ms,
-      ...await paidFallbackPublicFields(updated, kv),
+      ...(await paidFallbackPublicFields(updated, kv)),
     },
-    { "x-uos-upstream": "chatgpt_codex" },
+    { "x-uos-upstream": "chatgpt_codex" }
   );
 };
 
@@ -1699,10 +1529,7 @@ export const handleAdminApiKeysRevoke = async (req: Request): Promise<Response> 
     ...paidFallbackHashFields(updated),
   };
 
-  const atomic = kv.atomic()
-    .check(entry)
-    .set(idKey, updated)
-    .set(hashKey, updatedHash);
+  const atomic = kv.atomic().check(entry).set(idKey, updated).set(hashKey, updatedHash);
   if (hashEntry.versionstamp) atomic.check(hashEntry);
 
   const commit = await atomic.commit();
@@ -1717,7 +1544,7 @@ export const handleAdminApiKeysRevoke = async (req: Request): Promise<Response> 
       id: updated.id,
       revoked_at_ms: updated.revoked_at_ms,
     },
-    { "x-uos-upstream": "chatgpt_codex" },
+    { "x-uos-upstream": "chatgpt_codex" }
   );
 };
 
@@ -1743,11 +1570,7 @@ export const handleAdminApiKeysUnrevoke = async (req: Request): Promise<Response
 
   const deletionGuard = await kv.get(paidFallbackDeletionGuardV3Key(id), { consistency: "strong" });
   if (deletionGuard.value) {
-    return openaiError(
-      409,
-      "API key deletion is in progress and cannot be reversed",
-      "paid_fallback_deletion_in_progress",
-    );
+    return openaiError(409, "API key deletion is in progress and cannot be reversed", "paid_fallback_deletion_in_progress");
   }
   if (!entry.value.revoked_at_ms) {
     return json(200, { id, revoked_at_ms: null }, { "x-uos-upstream": "chatgpt_codex" });
@@ -1769,11 +1592,7 @@ export const handleAdminApiKeysUnrevoke = async (req: Request): Promise<Response
     ...paidFallbackHashFields(updated),
   };
 
-  const atomic = kv.atomic()
-    .check(entry)
-    .check(deletionGuard)
-    .set(idKey, updated)
-    .set(hashKey, updatedHash);
+  const atomic = kv.atomic().check(entry).check(deletionGuard).set(idKey, updated).set(hashKey, updatedHash);
   if (hashEntry.versionstamp) atomic.check(hashEntry);
 
   const commit = await atomic.commit();
@@ -1788,7 +1607,7 @@ export const handleAdminApiKeysUnrevoke = async (req: Request): Promise<Response
       id: updated.id,
       revoked_at_ms: updated.revoked_at_ms,
     },
-    { "x-uos-upstream": "chatgpt_codex" },
+    { "x-uos-upstream": "chatgpt_codex" }
   );
 };
 
@@ -1814,11 +1633,7 @@ export const handleAdminApiKeysDelete = async (req: Request): Promise<Response> 
   const deletionGuardKey = paidFallbackDeletionGuardV3Key(id);
   const deletionGuard = await kv.get(deletionGuardKey, { consistency: "strong" });
   if (!deletionGuard.value) {
-    const guardCommit = await kv.atomic()
-      .check(entry)
-      .check(deletionGuard)
-      .set(deletionGuardKey, { created_at_ms: Date.now() })
-      .commit();
+    const guardCommit = await kv.atomic().check(entry).check(deletionGuard).set(deletionGuardKey, { created_at_ms: Date.now() }).commit();
     if (!guardCommit.ok) {
       return openaiError(409, "API key was modified concurrently; retry", "invalid_request_error");
     }
@@ -1844,16 +1659,11 @@ export const handleAdminApiKeysDelete = async (req: Request): Promise<Response> 
         `(pending=${outstandingPaidFallback.pending_requests}, ` +
         `unresolved=${outstandingPaidFallback.unresolved_requests}, ` +
         `markers=${outstandingPaidFallback.pending_markers})`,
-      "paid_fallback_billing_outstanding",
+      "paid_fallback_billing_outstanding"
     );
   }
 
-  const atomic = kv.atomic()
-    .check(entry)
-    .delete(idKey)
-    .delete(apiKeyHashKey(entry.value.hash))
-    .delete(apiKeyUsageKey(id))
-    .delete(apiKeyUsageDailyKey(id));
+  const atomic = kv.atomic().check(entry).delete(idKey).delete(apiKeyHashKey(entry.value.hash)).delete(apiKeyUsageKey(id)).delete(apiKeyUsageDailyKey(id));
 
   const commit = await atomic.commit();
   if (!commit.ok) {
@@ -1885,9 +1695,7 @@ const normalizePem = (raw: unknown): string | null => {
 export const handleAdminKernelPubKeysList = async (): Promise<Response> => {
   const kv = await getKv();
   if (!kv) return openaiError(500, "Deno KV is not available", "server_error");
-  const kvEntry = await kv.get<Array<{ app_id: number; pem: string; owner: string; added_at_ms: number }>>(
-    UOS_KERNEL_PUBKEYS_KEY,
-  );
+  const kvEntry = await kv.get<{ app_id: number; pem: string; owner: string; added_at_ms: number }[]>(UOS_KERNEL_PUBKEYS_KEY);
   return json(200, { data: kvEntry.value ?? [] });
 };
 
@@ -1906,9 +1714,7 @@ export const handleAdminKernelPubKeysCreate = async (req: Request): Promise<Resp
 
   const owner = getString(raw.owner) ?? "unknown";
 
-  const entry = await kv.get<Array<{ app_id: number; pem: string; owner: string; added_at_ms: number }>>(
-    UOS_KERNEL_PUBKEYS_KEY,
-  );
+  const entry = await kv.get<{ app_id: number; pem: string; owner: string; added_at_ms: number }[]>(UOS_KERNEL_PUBKEYS_KEY);
   const existing = entry.value ?? [];
   if (existing.some((p) => p.app_id === appId)) {
     return openaiError(409, `Public key for App ID ${appId} already exists`, "invalid_request_error");
@@ -1935,9 +1741,7 @@ export const handleAdminKernelPubKeysDelete = async (req: Request): Promise<Resp
     return openaiError(400, "app_id query parameter is required and must be a number", "invalid_request_error");
   }
 
-  const entry = await kv.get<Array<{ app_id: number; pem: string; owner: string; added_at_ms: number }>>(
-    UOS_KERNEL_PUBKEYS_KEY,
-  );
+  const entry = await kv.get<{ app_id: number; pem: string; owner: string; added_at_ms: number }[]>(UOS_KERNEL_PUBKEYS_KEY);
   const existing = entry.value ?? [];
   const updated = existing.filter((p) => p.app_id !== appId);
 
@@ -1966,7 +1770,7 @@ export const handleAdminKernelPolicyQueueList = async (): Promise<Response> => {
     owners.map(async (owner) => {
       const entry = await kv.get(kernelOrgLimitKey(owner));
       if (entry.value) orgPolicyOwners.add(owner);
-    }),
+    })
   );
 
   const repoPolicyPairs = new Set<string>();
@@ -1976,7 +1780,7 @@ export const handleAdminKernelPolicyQueueList = async (): Promise<Response> => {
       .map(async (record) => {
         const entry = await kv.get(kernelLimitKey(record.owner, record.repo));
         if (entry.value) repoPolicyPairs.add(`${record.owner}/${record.repo}`);
-      }),
+      })
   );
 
   const pending = records.filter((record) => {
@@ -2022,11 +1826,8 @@ export const handleAdminKernelUsageGet = async (req: Request): Promise<Response>
       if (includeUsage) {
         await Promise.all(
           limits.map(async (record) => {
-            usageByOwner.set(
-              record.owner,
-              await getKernelOrgUsage(record.owner, { includeDaily: true, dailyDays }),
-            );
-          }),
+            usageByOwner.set(record.owner, await getKernelOrgUsage(record.owner, { includeDaily: true, dailyDays }));
+          })
         );
       }
       return json(200, {
@@ -2048,11 +1849,8 @@ export const handleAdminKernelUsageGet = async (req: Request): Promise<Response>
       await Promise.all(
         limits.map(async (record) => {
           const key = `${record.owner}/${record.repo}`;
-          usageByRepo.set(
-            key,
-            await getKernelUsage(record.owner, record.repo, { includeDaily: true, dailyDays }),
-          );
-        }),
+          usageByRepo.set(key, await getKernelUsage(record.owner, record.repo, { includeDaily: true, dailyDays }));
+        })
       );
     }
     return json(200, {
@@ -2123,11 +1921,7 @@ export const handleAdminKernelUsageSet = async (req: Request): Promise<Response>
 
   const usageLimitRequests = normalizeKernelUsageLimitInput(raw.usage_limit_requests);
   if (usageLimitRequests === null) {
-    return openaiError(
-      400,
-      "usage_limit_requests must be a non-negative number, -1, or 'unlimited'",
-      "invalid_request_error",
-    );
+    return openaiError(400, "usage_limit_requests must be a non-negative number, -1, or 'unlimited'", "invalid_request_error");
   }
 
   const windowMs = normalizeKernelWindowMsInput(raw.window_ms);
@@ -2137,11 +1931,7 @@ export const handleAdminKernelUsageSet = async (req: Request): Promise<Response>
   const nowMs = Date.now();
   const expiresAtMs = normalizeKernelExpiresAtMsInput(raw.expires_at_ms, nowMs);
   if (raw.expires_at_ms !== undefined && expiresAtMs === null) {
-    return openaiError(
-      400,
-      "expires_at_ms must be a Unix epoch ms timestamp in the future, or -1",
-      "invalid_request_error",
-    );
+    return openaiError(400, "expires_at_ms must be a Unix epoch ms timestamp in the future, or -1", "invalid_request_error");
   }
   if (Object.prototype.hasOwnProperty.call(raw, "reset_usage") && typeof raw.reset_usage !== "boolean") {
     return openaiError(400, "reset_usage must be a boolean", "invalid_request_error");
@@ -2230,21 +2020,16 @@ const QUOTA_PROJECTION_MAX_BALANCE_SAMPLES = 365;
  * the full 90-day rollup history on every refresh.
  */
 export const handleAdminProvidersQuotaProjection = async (
-  request: Request = new Request("https://ai.ubq.fi/admin/providers/quota-projection"),
+  request: Request = new Request("https://ai.ubq.fi/admin/providers/quota-projection")
 ): Promise<Response> => {
   const kv = await getKv();
   const nowMs = Date.now();
-  const rawWindowDays = Number.parseInt(
-    new URL(request.url).searchParams.get("window_days") ?? "",
-    10,
-  );
-  const windowDays = Number.isInteger(rawWindowDays) &&
-      QUOTA_PROJECTION_ALLOWED_WINDOWS.has(rawWindowDays as 7 | 30 | 90)
-    ? rawWindowDays as 7 | 30 | 90
-    : QUOTA_PROJECTION_DEFAULT_WINDOW_DAYS;
-  const balanceWindowDays = normalizeMeteredQuotaBalanceWindowDays(
-    new URL(request.url).searchParams.get("balance_window_days"),
-  );
+  const rawWindowDays = Number.parseInt(new URL(request.url).searchParams.get("window_days") ?? "", 10);
+  const windowDays =
+    Number.isInteger(rawWindowDays) && QUOTA_PROJECTION_ALLOWED_WINDOWS.has(rawWindowDays as 7 | 30 | 90)
+      ? (rawWindowDays as 7 | 30 | 90)
+      : QUOTA_PROJECTION_DEFAULT_WINDOW_DAYS;
+  const balanceWindowDays = normalizeMeteredQuotaBalanceWindowDays(new URL(request.url).searchParams.get("balance_window_days"));
   const windowMs = windowDays * 24 * 60 * 60 * 1_000;
   const balanceWindowMs = balanceWindowDays * 24 * 60 * 60 * 1_000;
   // Keep the complete requested range while bounding every response to 365
@@ -2255,29 +2040,25 @@ export const handleAdminProvidersQuotaProjection = async (
     // A closed interval can intersect one more aligned bucket than its
     // duration alone implies. Reserve one response slot for that partial
     // boundary bucket so neither end of a 365-day range is truncated.
-    Math.ceil(balanceWindowDays * 24 / (QUOTA_PROJECTION_MAX_BALANCE_SAMPLES - 1)) *
-      METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS,
+    Math.ceil((balanceWindowDays * 24) / (QUOTA_PROJECTION_MAX_BALANCE_SAMPLES - 1)) * METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS
   );
   const accountFingerprint = await meterQuotaAccountFingerprint(readMeteredAccountCredentials()).catch(() => null);
   const [snapshot, rollups, sourceBalanceHistory] = await Promise.all([
     getConfiguredMeteredQuotaSnapshot({ kv }).catch(() => null),
-    kv
-      ? listPaidFallbackUsageRollups(kv, { sinceMs: nowMs - windowMs, nowMs }).catch(() => null)
-      : Promise.resolve(null),
+    kv ? listPaidFallbackUsageRollups(kv, { sinceMs: nowMs - windowMs, nowMs }).catch(() => null) : Promise.resolve(null),
     kv
       ? readMeteredQuotaBalanceHistory(kv, {
-        sinceMs: nowMs - balanceWindowMs,
-        nowMs,
-        accountFingerprint,
-      }).catch(() => null)
+          sinceMs: nowMs - balanceWindowMs,
+          nowMs,
+          accountFingerprint,
+        }).catch(() => null)
       : Promise.resolve(null),
   ]);
   const quota = meteredQuotaRunwayView(snapshot);
-  const balanceHistory = sourceBalanceHistory === null ? null : resampleMeteredQuotaBalanceHistory(
-    sourceBalanceHistory,
-    balanceHistoryBucketMs,
-    QUOTA_PROJECTION_MAX_BALANCE_SAMPLES,
-  );
+  const balanceHistory =
+    sourceBalanceHistory === null
+      ? null
+      : resampleMeteredQuotaBalanceHistory(sourceBalanceHistory, balanceHistoryBucketMs, QUOTA_PROJECTION_MAX_BALANCE_SAMPLES);
   const usage = summarizePaidFallbackUsage(groupPaidFallbackUsageRollups(rollups ?? []), nowMs);
   const models = usage.map((entry) => ({
     model: entry.model,
@@ -2286,25 +2067,29 @@ export const handleAdminProvidersQuotaProjection = async (
     usage: entry.windows.filter((window) => window.window_days === windowDays),
     estimates: projectPaidFallbackRunway(entry, quota, nowMs).filter((estimate) => estimate.window_days === windowDays),
   }));
-  return json(200, {
-    snapshot_at_ms: nowMs,
-    window_days: windowDays,
-    balance_window_days: balanceWindowDays,
-    retention: {
-      rollup_bucket_ms: PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS,
-      rollup_window_ms: windowMs,
-      balance_history_source_bucket_ms: METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS,
-      balance_history_bucket_ms: balanceHistoryBucketMs,
-      balance_history_window_ms: balanceWindowMs,
+  return json(
+    200,
+    {
+      snapshot_at_ms: nowMs,
+      window_days: windowDays,
+      balance_window_days: balanceWindowDays,
+      retention: {
+        rollup_bucket_ms: PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS,
+        rollup_window_ms: windowMs,
+        balance_history_source_bucket_ms: METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS,
+        balance_history_bucket_ms: balanceHistoryBucketMs,
+        balance_history_window_ms: balanceWindowMs,
+      },
+      quota,
+      models,
+      // A failed scan must not masquerade as zero history: operators need to
+      // distinguish "nothing settled" from "history could not be read".
+      rollup_scan: rollups === null ? "unavailable" : "ok",
+      balance_history_scan: balanceHistory === null ? "unavailable" : "ok",
+      balance_history: balanceHistory ?? [],
     },
-    quota,
-    models,
-    // A failed scan must not masquerade as zero history: operators need to
-    // distinguish "nothing settled" from "history could not be read".
-    rollup_scan: rollups === null ? "unavailable" : "ok",
-    balance_history_scan: balanceHistory === null ? "unavailable" : "ok",
-    balance_history: balanceHistory ?? [],
-  }, { "Cache-Control": "no-store" });
+    { "Cache-Control": "no-store" }
+  );
 };
 
 /**
@@ -2314,7 +2099,7 @@ export const handleAdminProvidersQuotaProjection = async (
  * resumable.
  */
 export const handleAdminProvidersQuotaProjectionBackfill = async (
-  request: Request = new Request("https://ai.ubq.fi/admin/providers/quota-projection/backfill"),
+  request: Request = new Request("https://ai.ubq.fi/admin/providers/quota-projection/backfill")
 ): Promise<Response> => {
   const kv = await getKv();
   if (!kv) return openaiError(503, "KV is unavailable", "server_error");
@@ -2329,10 +2114,6 @@ export const handleAdminProvidersQuotaProjectionBackfill = async (
       completed: !requests.truncated && !windows.truncated,
     });
   } catch (error) {
-    return openaiError(
-      500,
-      error instanceof Error ? error.message : "Paid fallback rollup backfill failed",
-      "server_error",
-    );
+    return openaiError(500, error instanceof Error ? error.message : "Paid fallback rollup backfill failed", "server_error");
   }
 };
