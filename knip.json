@@ -17,6 +17,33 @@
     "benchmarks/**/*.ts"
   ],
   "includeEntryExports": true,
-  "ignore": ["lib/**"],
-  "ignoreDependencies": ["prettier"]
+  "ignoreExportsUsedInFile": true,
+  "ignore": [
+    "lib/**"
+  ],
+  "ignoreDependencies": [
+    "prettier",
+    "@std/yaml",
+    "@deno/kv-utils",
+    "@deno/kv-utils/import-export",
+    "@deno/kv-utils/json",
+    "@simplewebauthn/server"
+  ],
+  "ignoreIssues": {
+    "serve.ts": [
+      "exports"
+    ],
+    "src/config.ts": [
+      "exports"
+    ],
+    "src/kv.ts": [
+      "exports"
+    ],
+    "src/local_admin_auth.ts": [
+      "exports"
+    ],
+    "src/provider_capacity.ts": [
+      "exports"
+    ]
+  }
 }
