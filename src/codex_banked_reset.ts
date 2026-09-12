@@ -109,6 +109,28 @@ export const parseCodexBankedResetConfig = (
 
 export const loadCodexBankedResetConfig = (): CodexBankedResetConfig => parseCodexBankedResetConfig();
 
+export const CODEX_BANKED_RESET_USAGE_KEY = ["uos_ai", "codex_banked_reset_usage", "v1"] as const;
+
+// Missing means preserve the deployment's existing behavior. Malformed data
+// must never authorize spending a credit.
+const usageAllowed = (value: unknown): boolean => value === null || value === true;
+
+export const getCodexBankedResetUsage = async (providedKv?: Deno.Kv | null): Promise<boolean> => {
+  const kv = providedKv === undefined ? await getKv() : providedKv;
+  if (!kv) throw new Error("Banked-reset settings are unavailable");
+  const entry = await kv.get<unknown>(CODEX_BANKED_RESET_USAGE_KEY, { consistency: "strong" });
+  if (entry.value !== null && typeof entry.value !== "boolean") {
+    throw new Error("Banked-reset settings are invalid");
+  }
+  return usageAllowed(entry.value);
+};
+
+export const setCodexBankedResetUsage = async (enabled: boolean): Promise<void> => {
+  const kv = await getKv();
+  if (!kv) throw new Error("Banked-reset settings are unavailable");
+  await kv.set(CODEX_BANKED_RESET_USAGE_KEY, enabled);
+};
+
 export type CodexBankedResetEvent =
   | "codex_reset_eligible"
   | "codex_reset_skipped_healthy_fallback"
@@ -843,6 +865,14 @@ const prepareSubmission = async (
     const fences = await readCurrentFences(kv, candidate);
     if (fences.kind === "failure") return { kind: "failure", code: fences.code };
     if (fences.kind === "stale") return { kind: "failure", code: "routing_fence_stale" };
+
+    let usageEntry: Deno.KvEntryMaybe<unknown>;
+    try {
+      usageEntry = await kv.get<unknown>(CODEX_BANKED_RESET_USAGE_KEY, { consistency: "strong" });
+    } catch {
+      return { kind: "failure", code: "configuration_unavailable" };
+    }
+    if (!usageAllowed(usageEntry.value)) return { kind: "failure", code: "usage_disabled" };
     let dailyEntry: Deno.KvEntryMaybe<CodexResetGlobalDailyRecord>;
     try {
       dailyEntry = await kv.get<CodexResetGlobalDailyRecord>(dailyKey, { consistency: "strong" });
@@ -872,6 +902,7 @@ const prepareSubmission = async (
     };
     try {
       const committed = await withFenceChecks(kv.atomic().check(entry).check(dailyEntry), fences.entries)
+        .check(usageEntry)
         .set(key, submitted)
         .set(dailyKey, nextDaily)
         .commit();
@@ -920,6 +951,14 @@ const renewSubmittedForRedeem = async (
     }
     if (!claimedDuringCurrentUtcDay(current, nowBeforeRead)) return { kind: "failure", code: "claim_day_elapsed" };
 
+    let usageEntry: Deno.KvEntryMaybe<unknown>;
+    try {
+      usageEntry = await kv.get<unknown>(CODEX_BANKED_RESET_USAGE_KEY, { consistency: "strong" });
+    } catch {
+      return { kind: "failure", code: "configuration_unavailable" };
+    }
+    if (!usageAllowed(usageEntry.value)) return { kind: "failure", code: "usage_disabled" };
+
     const fences = await readCurrentFences(kv, candidate);
     if (fences.kind === "failure") return { kind: "failure", code: fences.code };
     if (fences.kind === "stale") return { kind: "failure", code: "routing_fence_stale" };
@@ -944,7 +983,8 @@ const renewSubmittedForRedeem = async (
       updated_at_ms: nowBeforeCommit,
     };
     try {
-      const committed = await withFenceChecks(kv.atomic().check(entry), fences.entries).set(key, renewed).commit();
+      const committed = await withFenceChecks(kv.atomic().check(entry).check(usageEntry), fences.entries)
+        .set(key, renewed).commit();
       if (committed.ok) return { kind: "renewed", record: renewed };
     } catch {
       return { kind: "failure", code: "kv_unavailable" };
@@ -1612,6 +1652,7 @@ const attemptInternal = async (
   if (!existing.record) {
     if (reconcileOnly) return outcome("skipped", "no_existing_transaction", context);
     try {
+      if (!await getCodexBankedResetUsage(kv)) return outcome("skipped", "usage_disabled", context);
       configForClaim = dependencies.reloadConfig?.() ?? dependencies.config;
     } catch {
       return outcome("skipped", "configuration_unavailable", context);
@@ -1886,6 +1927,12 @@ export const evaluateCodexBankedResetPool = async (
     return poolOutcome("skipped", "kv_unavailable");
   }
   if (!kv) return poolOutcome("skipped", "kv_unavailable");
+
+  try {
+    if (!await getCodexBankedResetUsage(kv)) return poolOutcome("skipped", "usage_disabled");
+  } catch {
+    return poolOutcome("skipped", "configuration_unavailable");
+  }
 
   const hash = dependencies.hash ?? sha256Hex;
   const resolved = await Promise.all(ordered.map(async (pool) => {

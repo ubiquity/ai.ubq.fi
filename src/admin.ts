@@ -107,7 +107,12 @@ import {
   validateKvMigrationTarget,
 } from "./kv_migration.ts";
 import { getKv } from "./kv.ts";
-import { listCodexResetShadowDecisions } from "./codex_banked_reset.ts";
+import {
+  getCodexBankedResetUsage,
+  listCodexResetShadowDecisions,
+  loadCodexBankedResetConfig,
+  setCodexBankedResetUsage,
+} from "./codex_banked_reset.ts";
 import {
   assertPromptCacheScopeExperimentTelemetryBaseline,
   PromptCacheScopeExperimentBusyError,
@@ -216,11 +221,32 @@ export const handleAdminCodexRecheck = async (slot: number): Promise<Response> =
   return new Response(null, { status: 204 });
 };
 
-/**
- * Returns only the redacted shadow-decision ledger. It has no mutation or
- * redemption action, so operators can audit a canary without a manual
- * approval endpoint or access to raw account/credit identifiers.
- */
+/** Stores a gateway-wide permission; changing it never redeems a credit. */
+export const handleAdminCodexBankedResetUsage = async (req: Request): Promise<Response> => {
+  try {
+    if (req.method === "PATCH") {
+      const body: unknown = await req.json().catch(() => null);
+      if (!isRecord(body) || typeof body.enabled !== "boolean" || Object.keys(body).length !== 1) {
+        return openaiError(400, "Expected a single enabled boolean", "invalid_request_error");
+      }
+      await setCodexBankedResetUsage(body.enabled);
+    }
+    const enabled = await getCodexBankedResetUsage();
+    const config = loadCodexBankedResetConfig();
+    return json(200, {
+      enabled,
+      active: enabled && config.enabled && config.mode === "live" && config.maxGlobalPerDay === 1 &&
+        config.maxPerAccountPerWindow === 1,
+    }, { "Cache-Control": "no-store" });
+  } catch {
+    return openaiError(503, "Banked-reset settings are unavailable", "banked_reset_settings_unavailable", {
+      type: "server_error",
+      headers: { "Cache-Control": "no-store" },
+    });
+  }
+};
+
+/** Returns only the redacted shadow-decision ledger, without redeeming. */
 export const handleAdminCodexBankedResetShadowDecisions = async (): Promise<Response> => {
   const decisions = await listCodexResetShadowDecisions();
   if (decisions === null) {

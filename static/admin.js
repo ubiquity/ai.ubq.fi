@@ -2961,6 +2961,47 @@ const scheduleProviderCapacityChartResize = () => {
 
 globalThis.addEventListener("resize", scheduleProviderCapacityChartResize);
 
+const bankedResetEnabled = mustGet("banked-reset-enabled");
+const bankedResetStatus = mustGet("banked-reset-status");
+let bankedResetBusy = false;
+let savedBankedResetEnabled = false;
+
+const syncBankedResetUsage = async (enabled) => {
+  if (bankedResetBusy || !adminAccessState.isAdmin || !hasAdminCredential()) return;
+  bankedResetBusy = true;
+  bankedResetEnabled.disabled = true;
+  const saving = typeof enabled === "boolean";
+  bankedResetStatus.textContent = saving ? "Saving…" : "Loading setting…";
+  try {
+    const response = await fetch(apiUrl("/admin/providers/codex/banked-resets"), {
+      method: saving ? "PATCH" : "GET",
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${getAdminToken()}`, "Content-Type": "application/json" },
+      ...(saving ? { body: JSON.stringify({ enabled }) } : {}),
+    });
+    const payload = await response.json();
+    if (!response.ok || typeof payload.enabled !== "boolean" || typeof payload.active !== "boolean") {
+      throw new Error("Setting unavailable");
+    }
+    savedBankedResetEnabled = payload.enabled;
+    bankedResetEnabled.checked = payload.enabled;
+    bankedResetEnabled.disabled = false;
+    bankedResetStatus.textContent = !payload.enabled
+      ? "Off. Saved resets will not be used."
+      : payload.active
+      ? "On. Eligible saved resets can be used when Codex quota is exhausted."
+      : "On, but automatic use is paused by the server configuration.";
+  } catch {
+    bankedResetEnabled.checked = savedBankedResetEnabled;
+    bankedResetEnabled.disabled = !saving;
+    bankedResetStatus.textContent = saving ? "Could not confirm the change. Try again." : "Could not load the setting.";
+  } finally {
+    bankedResetBusy = false;
+  }
+};
+
+bankedResetEnabled.addEventListener("change", () => void syncBankedResetUsage(bankedResetEnabled.checked));
+
 const loadProviders = async () => {
   if (providersLoading) return;
   const token = getAdminToken();
@@ -2969,6 +3010,7 @@ const loadProviders = async () => {
   }
   const loadId = ++providersLoadId;
   providersLoading = true;
+  void syncBankedResetUsage();
   try {
     const response = await fetch(apiUrl("/admin/providers"), {
       cache: "no-store",
