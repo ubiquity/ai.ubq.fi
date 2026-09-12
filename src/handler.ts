@@ -14,6 +14,7 @@ import {
   handleAdminCodexModelsSet,
   handleAdminCodexPromptsPurge,
   handleAdminCodexRecheck,
+  handleAdminCodexResetSettings,
   handleAdminDebugRouting,
   handleAdminDefaults,
   handleAdminKernelPolicyQueueList,
@@ -880,6 +881,12 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     const authError = await requireAdminAuth(req);
     if (authError) return withCors(authError);
     return withCors(await handleAdminCodexAuth(req));
+  }
+
+  if ((req.method === "GET" || req.method === "PATCH") && path === "/admin/providers/codex/banked-resets") {
+    const authError = await requireAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminCodexResetSettings(req));
   }
 
   if (req.method === "GET" && path === "/admin/providers/codex/banked-resets/shadow-decisions") {

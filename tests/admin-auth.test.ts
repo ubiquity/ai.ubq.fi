@@ -118,6 +118,7 @@ const {
   handleAdminApiKeysPaidFallbacks,
   handleAdminApiKeysUnrevoke,
   handleAdminApiKeysUpdate,
+  handleAdminCodexResetSettings,
   handleAdminCodexAuth,
   handleAdminCodexModelsGet,
   handleAdminCodexModelsSet,
@@ -127,54 +128,13 @@ const {
   handleAdminKvMigrationImport,
 } = await import("../src/admin.ts");
 
-Deno.test("banked reset settings are independent per API key and survive unrelated edits", async () => {
-  kvStore.clear();
-  const url = "http://localhost/admin/api-keys";
-  const create = async (name: string, enabled?: boolean) => {
-    const response = await handleAdminApiKeysCreate(
-      new Request(url, {
-        method: "POST",
-        body: JSON.stringify({
-          name,
-          usage_limit_requests: -1,
-          ...(enabled === undefined ? {} : { banked_resets_enabled: enabled }),
-        }),
-      }),
-    );
-    assert.equal(response.status, 200);
-    return await response.json();
-  };
-  const first = await create("reset-disabled", false);
-  const second = await create("reset-enabled");
-  assert.equal(first.banked_resets_enabled, false);
-  assert.equal(second.banked_resets_enabled, true);
-  const update = async (body: unknown) =>
-    await handleAdminApiKeysUpdate(new Request(url, { method: "PATCH", body: JSON.stringify(body) }));
-  for (const enabled of [true, false]) {
-    const saved = await update({ id: first.id, banked_resets_enabled: enabled });
-    assert.equal(saved.status, 200);
-    assert.equal((await saved.json()).banked_resets_enabled, enabled);
-    const list = await handleAdminApiKeysList(new Request(url));
-    const data = await list.json();
-    assert.equal(data.data.find((key: { id: string }) => key.id === first.id).banked_resets_enabled, enabled);
-    assert.equal(data.data.find((key: { id: string }) => key.id === second.id).banked_resets_enabled, true);
-  }
-  const renamed = await update({ id: first.id, name: "still-disabled" });
-  assert.equal((await renamed.json()).banked_resets_enabled, false);
-  for (const value of ["true", null, 1]) {
-    assert.equal((await update({ id: first.id, banked_resets_enabled: value })).status, 400);
-    const invalidCreate = await handleAdminApiKeysCreate(
-      new Request(url, { method: "POST", body: JSON.stringify({ name: "invalid", banked_resets_enabled: value }) }),
-    );
-    assert.equal(invalidCreate.status, 400);
-  }
+Deno.test("subscription reset settings require admin authentication", async () => {
   const { default: handler } = await import("../src/handler.ts");
-  const unauthorized = await handler(
-    new Request(url, { method: "PATCH", body: JSON.stringify({ id: first.id, banked_resets_enabled: true }) }),
-  );
-  assert.equal(unauthorized.status, 401);
-  await unauthorized.body?.cancel();
-  kvStore.clear();
+  for (const method of ["GET", "PATCH"]) {
+    const response = await handler(new Request("http://localhost/admin/providers/codex/banked-resets", { method }));
+    assert.equal(response.status, 401);
+    await response.body?.cancel();
+  }
 });
 const {
   getKernelUsageLimitSnapshot,
@@ -1931,4 +1891,38 @@ Deno.test("deleting a revoked API key removes its mirrored policy and analytics"
   assert.equal(kvStore.has(keyToString(neighboringV3RequestKey)), true);
   assert.equal(kvStore.has(keyToString(neighboringLegacyLogKey)), true);
   assert.equal(kvStore.has(keyToString(neighboringCounterKey)), true);
+});
+
+Deno.test("subscription reset settings persist by account identity across slot reordering", async () => {
+  kvStore.clear();
+  const accounts = ["account-a", "account-b"].map((account_id) => ({
+    account_id,
+    access_token: "test-access",
+    refresh_token: "test-refresh",
+    updated_at_ms: 100,
+  }));
+  const poolKey = keyToString(["ubq_ai", "codex_auth"]);
+  kvStore.set(poolKey, { accounts, updated_at_ms: 100 });
+  const url = "http://localhost/admin/providers/codex/banked-resets";
+  const initial = await (await handleAdminCodexResetSettings(new Request(url))).json();
+  assert.equal(initial.data.length, 2);
+  assert.equal(initial.data[0].enabled, true);
+  const identity = initial.data[0].account_id_hash;
+  const update = (enabled: unknown, account_id_hash = identity) =>
+    handleAdminCodexResetSettings(
+      new Request(url, {
+        method: "PATCH",
+        body: JSON.stringify({ account_id_hash, enabled }),
+      }),
+    );
+  assert.equal((await update(false)).status, 200);
+  kvStore.set(poolKey, { accounts: [...accounts].reverse(), updated_at_ms: 101 });
+  const reordered = await (await handleAdminCodexResetSettings(new Request(url))).json();
+  assert.equal(reordered.data[0].enabled, true);
+  assert.equal(reordered.data[1].account_id_hash, identity);
+  assert.equal(reordered.data[1].enabled, false);
+  assert.equal((await update(true)).status, 200);
+  for (const value of ["true", null, 1]) assert.equal((await update(value)).status, 400);
+  assert.equal((await update(false, "removed-account")).status, 409);
+  kvStore.clear();
 });

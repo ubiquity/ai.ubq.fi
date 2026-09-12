@@ -88,8 +88,6 @@ export type ApiKeyRecord = Readonly<{
    * transport; V2 counters are migration input only.
    */
   usage_quota_version: 3;
-  /** Existing keys retain automatic reset eligibility until explicitly changed. */
-  banked_resets_enabled?: boolean;
   paid_fallback_enabled: boolean;
   paid_fallback_limit_microcredits: number;
   paid_fallback_spent_microcredits: number;

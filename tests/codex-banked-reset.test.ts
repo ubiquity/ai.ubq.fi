@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { apiKeyIdKey } from "../src/api_keys.ts";
+import { codexResetUsageKey } from "../src/codex_reset_settings.ts";
 import {
   attemptCodexBankedReset,
   CODEX_BANKED_RESET_INVENTORY_MAX_AGE_MS,
@@ -941,24 +941,24 @@ Deno.test("the persistent usage toggle blocks resets and re-enabling preserves n
   const reset = candidate();
   await seedFences(kv, reset);
   for (const disabled of [false, "true"]) {
-    await kv.set(apiKeyIdKey("key-a"), {
+    await kv.set(codexResetUsageKey(await testHash(reset.accountId)), {
       id: "key-a",
       revoked_at_ms: null,
       expires_at_ms: -1,
-      banked_resets_enabled: disabled,
+      enabled: disabled,
     });
-    const result = await attemptCodexBankedReset(reset, { ...dependencies(kv, provider, clock), keyId: "key-a" });
+    const result = await attemptCodexBankedReset(reset, { ...dependencies(kv, provider, clock) });
     assert.equal(result.kind, "skipped");
     assert.equal(provider.inventoryInputs.length, 0);
     assert.equal(provider.redeemInputs.length, 0);
   }
-  await kv.set(apiKeyIdKey("key-a"), {
+  await kv.set(codexResetUsageKey(await testHash(reset.accountId)), {
     id: "key-a",
     revoked_at_ms: null,
     expires_at_ms: -1,
-    banked_resets_enabled: true,
+    enabled: true,
   });
-  const result = await attemptCodexBankedReset(reset, { ...dependencies(kv, provider, clock), keyId: "key-a" });
+  const result = await attemptCodexBankedReset(reset, { ...dependencies(kv, provider, clock) });
   assert.equal(result.kind, "verified");
   assert.equal(provider.redeemInputs.length, 1);
 });
@@ -970,70 +970,70 @@ Deno.test("a saved disable races with either submission transaction without spen
     const clock = new TestClock();
     const reset = candidate();
     await seedFences(kv, reset);
-    await kv.set(apiKeyIdKey("key-a"), {
+    await kv.set(codexResetUsageKey(await testHash(reset.accountId)), {
       id: "key-a",
       revoked_at_ms: null,
       expires_at_ms: -1,
-      banked_resets_enabled: true,
+      enabled: true,
     });
+    const settingsKey = codexResetUsageKey(await testHash(reset.accountId));
     kv.beforeAtomicCommit = (commitNumber) => {
       if (commitNumber !== boundary) return;
       kv.beforeAtomicCommit = null;
-      void kv.set(apiKeyIdKey("key-a"), {
+      void kv.set(settingsKey, {
         id: "key-a",
         revoked_at_ms: null,
         expires_at_ms: -1,
-        banked_resets_enabled: false,
+        enabled: false,
       });
     };
-    const result = await attemptCodexBankedReset(reset, { ...dependencies(kv, provider, clock), keyId: "key-a" });
+    const result = await attemptCodexBankedReset(reset, { ...dependencies(kv, provider, clock) });
     assert.equal(result.reason, "usage_disabled");
     assert.equal(provider.redeemInputs.length, 0);
     assert.equal(provider.commitCount, 0);
   }
 });
 
-Deno.test("one disabled API key cannot select a reset while an enabled key can", async () => {
+Deno.test("a disabled subscription does not block another subscription", async () => {
   const kv = new MemoryKv();
   const provider = new FakeCodexUsageResetProvider();
+  const otherProvider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
   const reset = candidate();
+  const other = candidate({ accountId: "other-account" });
   await seedFences(kv, reset);
-  for (const [id, enabled] of [["key-a", false], ["key-b", true]] as const) {
-    await kv.set(apiKeyIdKey(id), { id, revoked_at_ms: null, expires_at_ms: -1, banked_resets_enabled: enabled });
-  }
-  const pool = [{ slot: 0, candidate: reset, provider }];
+  await seedFences(kv, other);
+  await kv.set(codexResetUsageKey(await testHash(reset.accountId)), { enabled: false });
+  const pool = [{ slot: 0, candidate: reset, provider }, { slot: 1, candidate: other, provider: otherProvider }];
   const deps = dependencies(kv, provider, clock, config({ mode: "shadow", maxGlobalPerDay: 1 }));
-  const blocked = await evaluateCodexBankedResetPool(pool, { ...deps, keyId: "key-a" });
-  assert.equal(blocked.reason, "usage_disabled");
-  assert.equal(provider.inventoryInputs.length, 0);
-  const allowed = await evaluateCodexBankedResetPool(pool, { ...deps, keyId: "key-b" });
+  const allowed = await evaluateCodexBankedResetPool(pool, deps);
   assert.equal(allowed.reason, "shadow_selected");
-  const blockedAgain = await evaluateCodexBankedResetPool(pool, { ...deps, keyId: "key-a" });
-  assert.equal(blockedAgain.reason, "usage_disabled");
-  assert.equal(provider.inventoryInputs.length, 1);
-  assert.equal(provider.redeemInputs.length, 0);
+  assert.equal(provider.inventoryInputs.length, 0);
+  assert.equal(otherProvider.inventoryInputs.length, 1);
+  assert.equal(otherProvider.redeemInputs.length, 0);
+  await kv.set(codexResetUsageKey(await testHash(other.accountId)), { enabled: false });
+  const blocked = await evaluateCodexBankedResetPool(pool, deps);
+  assert.equal(blocked.reason, "usage_disabled");
 });
 
-Deno.test("disabling a key during inventory prevents a late shadow or live-arm decision", async () => {
+Deno.test("disabling a subscription during inventory prevents a late shadow or live-arm decision", async () => {
   for (const mode of ["shadow", "live"] as const) {
     const kv = new MemoryKv();
     const provider = new FakeCodexUsageResetProvider();
     const clock = new TestClock();
     const reset = candidate();
     await seedFences(kv, reset);
-    const key = { id: "key-a", revoked_at_ms: null, expires_at_ms: -1, banked_resets_enabled: true };
-    await kv.set(apiKeyIdKey(key.id), key);
+    const key = { id: "key-a", revoked_at_ms: null, expires_at_ms: -1, enabled: true };
+    await kv.set(codexResetUsageKey(await testHash(reset.accountId)), key);
     const gate = new Deferred<void>();
     const entered = new Deferred<void>();
     provider.inventoryGate = gate.promise;
     provider.inventoryEntered = entered;
     const pending = evaluateCodexBankedResetPool([{ slot: 0, candidate: reset, provider }], {
       ...dependencies(kv, provider, clock, config({ mode, maxGlobalPerDay: 1 })),
-      keyId: key.id,
     });
     await entered.promise;
-    await kv.set(apiKeyIdKey(key.id), { ...key, banked_resets_enabled: false });
+    await kv.set(codexResetUsageKey(await testHash(reset.accountId)), { ...key, enabled: false });
     gate.resolve(undefined);
     const result = await pending;
     assert.equal(result.kind, "skipped");
