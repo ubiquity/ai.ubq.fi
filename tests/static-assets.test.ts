@@ -314,7 +314,7 @@ Deno.test("admin provider view places capacity history before current providers"
   assert.match(adminHtml, /id="card-provider-capacity">Providers/);
   assert.doesNotMatch(adminHtml, /Fifteen-minute capacity, cached-input, and cache-write history/);
   assert.match(adminHtml, /admin\.css\?v=app-minimal-20260912/);
-  assert.match(adminHtml, /admin\.js\?v=20260912-subscription-resets/);
+  assert.match(adminHtml, /admin\.js\?v=20260912-passkey-discovery/);
   assert.doesNotMatch(adminHtml, /removed_provider-failover|debug-routing/);
   assert.doesNotMatch(adminScript, /RemovedProviderFailover|refresh=live/);
   assert.match(adminScript, /fetch\(apiUrl\("\/admin\/providers\/capacity"\)/);
@@ -810,4 +810,11 @@ Deno.test("public delivery returns structured JSON errors and exposes rate-limit
   for (const header of ["RateLimit", "RateLimit-Policy", "RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset"]) {
     assert.match(exposed, new RegExp(header));
   }
+});
+
+Deno.test("admin passkey sign-in uses discoverable credentials instead of a saved username", () => {
+  const loginCall = adminScript.match(/const result = await signInWithPasskey\(\{([\s\S]*?)\}\);/);
+  assert.ok(loginCall);
+  assert.doesNotMatch(loginCall[1], /handle:|useHandle:/);
+  assert.match(loginCall[1], /baseUrl: getPasskeyBaseUrl\(\)/);
 });
