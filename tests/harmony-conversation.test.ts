@@ -43,7 +43,7 @@ Deno.test("analysis is preserved across an unfinished tool turn", () => {
     assistantResponse({
       analysis: ["Need to use function get_weather."],
       toolCalls: [{ id: "call-1", name: "get_weather", arguments: '{"location":"SF"}' }],
-    }),
+    })
   );
   assert.equal(analysisLineCount(conversation), 1);
   assert.equal(pendingToolCallCount(conversation), 1);
@@ -58,13 +58,10 @@ Deno.test("analysis is dropped after a completed final answer", () => {
     assistantResponse({
       analysis: ["Need to use function get_weather."],
       toolCalls: [{ id: "call-1", name: "get_weather", arguments: '{"location":"SF"}' }],
-    }),
+    })
   );
   const withResult = appendToolResult(withTool, "call-1", "get_weather", '{"sunny": true}');
-  const withAnswer = advanceConversation(
-    withResult,
-    assistantResponse({ analysis: ["Summarize the weather."], content: "It is sunny in San Francisco." }),
-  );
+  const withAnswer = advanceConversation(withResult, assistantResponse({ analysis: ["Summarize the weather."], content: "It is sunny in San Francisco." }));
   assert.equal(analysisLineCount(withAnswer), 2);
   const replayed = dropAnalysisBeforeCompletedFinal(withAnswer);
   assert.equal(analysisLineCount(replayed), 0);
@@ -78,7 +75,7 @@ Deno.test("wire view never carries analysis and replays tool calls in OpenAI sha
       analysis: ["Need to use function get_weather."],
       content: "Let me check the weather.",
       toolCalls: [{ id: "call-1", name: "get_weather", arguments: '{"location":"SF"}' }],
-    }),
+    })
   );
   const messages = wireMessagesFromConversation(conversation);
   assert.deepEqual(messages, [
@@ -86,23 +83,20 @@ Deno.test("wire view never carries analysis and replays tool calls in OpenAI sha
     {
       role: "assistant",
       content: "Let me check the weather.",
-      tool_calls: [{
-        id: "call-1",
-        type: "function",
-        function: { name: "get_weather", arguments: '{"location":"SF"}' },
-      }],
+      tool_calls: [
+        {
+          id: "call-1",
+          type: "function",
+          function: { name: "get_weather", arguments: '{"location":"SF"}' },
+        },
+      ],
     },
   ]);
   assert.ok(!JSON.stringify(messages).includes("Need to use function get_weather."));
 });
 
 Deno.test("wire view renders tool results with tool_call_id and no name field", () => {
-  const conversation = appendToolResult(
-    createConversation([{ role: "user", content: "Weather?" }]),
-    "call-1",
-    "get_weather",
-    '{"sunny": true}',
-  );
+  const conversation = appendToolResult(createConversation([{ role: "user", content: "Weather?" }]), "call-1", "get_weather", '{"sunny": true}');
   const messages = wireMessagesFromConversation(conversation);
   assert.deepEqual(messages[1], { role: "tool", tool_call_id: "call-1", content: '{"sunny": true}' });
 });
@@ -139,17 +133,17 @@ Deno.test("pendingToolCallCount counts only calls without a matching result", ()
               { id: "call-1", name: "get_weather", arguments: "{}" },
               { id: "call-2", name: "save_note", arguments: "{}" },
             ],
-          }),
+          })
         ),
         "call-1",
         "get_weather",
-        "{}",
+        "{}"
       ),
-      assistantResponse({ toolCalls: [{ id: "call-1", name: "get_weather", arguments: "{}" }] }),
+      assistantResponse({ toolCalls: [{ id: "call-1", name: "get_weather", arguments: "{}" }] })
     ),
     "call-1",
     "get_weather",
-    "{}",
+    "{}"
   );
   assert.equal(pendingToolCallCount(conversation), 1);
 });

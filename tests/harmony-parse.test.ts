@@ -1,16 +1,11 @@
 import assert from "node:assert/strict";
 
-import {
-  functionNameFromRecipient,
-  harmonyTurnsFromMessages,
-  normalizeToolArguments,
-  parseHarmonyOutput,
-} from "../src/harmony/parse.ts";
+import { functionNameFromRecipient, harmonyTurnsFromMessages, normalizeToolArguments, parseHarmonyOutput } from "../src/harmony/parse.ts";
 
 Deno.test("parses the documented analysis + final example", () => {
   const parsed = parseHarmonyOutput(
     '<|channel|>analysis<|message|>User asks: "What is 2 + 2?" Simple arithmetic. Provide answer.<|end|>\n' +
-      "<|start|>assistant<|channel|>final<|message|>2 + 2 = 4.<|return|>",
+      "<|start|>assistant<|channel|>final<|message|>2 + 2 = 4.<|return|>"
   );
   assert.equal(parsed.truncated, false);
   assert.deepEqual(parsed.turns, [
@@ -23,7 +18,7 @@ Deno.test("parses the documented function-call example (recipient in the channel
   const parsed = parseHarmonyOutput(
     "<|channel|>analysis<|message|>Need to use function get_weather.<|end|>" +
       "<|start|>assistant<|channel|>commentary to=functions.get_weather <|constrain|>json<|message|>" +
-      '{"location":"San Francisco"}<|call|>',
+      '{"location":"San Francisco"}<|call|>'
   );
   assert.deepEqual(parsed.turns, [
     { kind: "reasoning", text: "Need to use function get_weather." },
@@ -37,9 +32,7 @@ Deno.test("parses the documented function-call example (recipient in the channel
 });
 
 Deno.test("parses the recipient in the role section (alternative header order)", () => {
-  const parsed = parseHarmonyOutput(
-    '<|start|>assistant to=functions.get_weather <|constrain|>json<|message|>{"location":"SF"}<|call|>',
-  );
+  const parsed = parseHarmonyOutput('<|start|>assistant to=functions.get_weather <|constrain|>json<|message|>{"location":"SF"}<|call|>');
   assert.equal(parsed.messages.length, 1);
   assert.equal(parsed.turns.length, 1);
   assert.deepEqual(parsed.turns[0], {
@@ -51,15 +44,15 @@ Deno.test("parses the recipient in the role section (alternative header order)",
 });
 
 Deno.test("parses built-in tool recipients on the analysis channel", () => {
-  const parsed = parseHarmonyOutput(
-    '<|start|>assistant<|channel|>analysis to=browser.search<|message|>{"query":"Harmony"}<|call|>',
-  );
-  assert.deepEqual(parsed.turns, [{
-    kind: "tool_call",
-    recipient: "browser.search",
-    name: "browser.search",
-    arguments: '{"query":"Harmony"}',
-  }]);
+  const parsed = parseHarmonyOutput('<|start|>assistant<|channel|>analysis to=browser.search<|message|>{"query":"Harmony"}<|call|>');
+  assert.deepEqual(parsed.turns, [
+    {
+      kind: "tool_call",
+      recipient: "browser.search",
+      name: "browser.search",
+      arguments: '{"query":"Harmony"}',
+    },
+  ]);
 });
 
 Deno.test("parses commentary preambles followed by a call in one emission", () => {
@@ -67,11 +60,11 @@ Deno.test("parses commentary preambles followed by a call in one emission", () =
     "<|channel|>analysis<|message|>long chain of thought<|end|>" +
       "<|start|>assistant<|channel|>commentary<|message|>**Action plan**:<|end|>" +
       "<|start|>assistant<|channel|>commentary to=functions.generate_file <|constrain|>json<|message|>" +
-      '{"path":"index.html"}<|call|>',
+      '{"path":"index.html"}<|call|>'
   );
   assert.deepEqual(
     parsed.turns.map((turn) => turn.kind),
-    ["reasoning", "commentary", "tool_call"],
+    ["reasoning", "commentary", "tool_call"]
   );
   assert.equal(parsed.turns[2].kind === "tool_call" ? parsed.turns[2].name : null, "generate_file");
 });
@@ -90,9 +83,7 @@ Deno.test("plain text without Harmony markers yields no turns", () => {
 });
 
 Deno.test("tool-result messages are retained as raw messages but never become assistant turns", () => {
-  const parsed = parseHarmonyOutput(
-    '<|start|>functions.get_weather to=assistant<|channel|>commentary<|message|>{"sunny": true}<|end|>',
-  );
+  const parsed = parseHarmonyOutput('<|start|>functions.get_weather to=assistant<|channel|>commentary<|message|>{"sunny": true}<|end|>');
   assert.equal(parsed.messages.length, 1);
   assert.equal(parsed.messages[0].role, "functions.get_weather");
   assert.deepEqual(parsed.turns, []);
@@ -127,10 +118,7 @@ Deno.test("functionNameFromRecipient strips only the functions. namespace", () =
 });
 
 Deno.test("normalizeToolArguments compacts valid JSON and keeps invalid JSON verbatim", () => {
-  assert.equal(
-    normalizeToolArguments('{"location": "SF", "format": "celsius"}'),
-    '{"location":"SF","format":"celsius"}',
-  );
+  assert.equal(normalizeToolArguments('{"location": "SF", "format": "celsius"}'), '{"location":"SF","format":"celsius"}');
   assert.equal(normalizeToolArguments("{not json"), "{not json");
   assert.equal(normalizeToolArguments(""), "");
 });

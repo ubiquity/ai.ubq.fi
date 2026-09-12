@@ -21,10 +21,7 @@ Deno.test("a caller-handled rejecting fetch does not create an unhandled network
 
   try {
     installNetworkTrace();
-    await assert.rejects(
-      () => globalThis.fetch("https://trace.example/reject"),
-      /caller catches this fetch rejection/,
-    );
+    await assert.rejects(() => globalThis.fetch("https://trace.example/reject"), /caller catches this fetch rejection/);
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(unhandled.length, 0);
   } finally {

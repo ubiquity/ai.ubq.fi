@@ -65,12 +65,12 @@ Deno.test({
   async fn() {
     const baseUrl = getBaseUrl();
     const token = getToken();
-    const authHeaders = { "Authorization": `Bearer ${token}` };
+    const authHeaders = { Authorization: `Bearer ${token}` };
 
     const modelsPayload = await fetchJson(baseUrl, "/v1/models", { headers: authHeaders });
     const models = Array.isArray(modelsPayload.data) ? modelsPayload.data : [];
     const modelIds = models
-      .map((model) => typeof model === "object" && model !== null ? (model as { id?: unknown }).id : null)
+      .map((model) => (typeof model === "object" && model !== null ? (model as { id?: unknown }).id : null))
       .filter((id): id is string => typeof id === "string" && id.trim().length > 0);
     assert.ok(modelIds.length > 0, "/v1/models did not include any model IDs");
 

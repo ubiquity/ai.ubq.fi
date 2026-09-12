@@ -66,10 +66,7 @@ Deno.test("state: a verified edit run reaches phase done and a stable contract",
 
 Deno.test("state: unverified writes and unresolved failures surface in the contract", () => {
   const run: ReliabilityRun = {
-    observations: [
-      patch(1, "answer.txt", "", "answer", true),
-      exec(2, "curl https://example.invalid", false),
-    ],
+    observations: [patch(1, "answer.txt", "", "answer", true), exec(2, "curl https://example.invalid", false)],
     finals: [{ content: "done", accepted: false, seq: 3 }],
     modelCalls: 2,
   };

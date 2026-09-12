@@ -36,15 +36,12 @@ type HealthCheckOptions = Readonly<{
   error?: (message: string) => void;
 }>;
 
-export const runHealthCheck = async (
-  args: string[],
-  options: HealthCheckOptions = {},
-): Promise<number> => {
+export const runHealthCheck = async (args: string[], options: HealthCheckOptions = {}): Promise<number> => {
   const log = options.log ?? console.log;
   const logError = options.error ?? console.error;
   if (args.some((arg) => arg === "--auth" || arg.startsWith("--auth="))) {
     logError(
-      "--auth is no longer supported. /health is release liveness only; use authenticated /health/providers or /health/upstream for operational diagnostics.",
+      "--auth is no longer supported. /health is release liveness only; use authenticated /health/providers or /health/upstream for operational diagnostics."
     );
     return 2;
   }
@@ -61,7 +58,7 @@ export const runHealthCheck = async (
   let res: Response;
   try {
     res = await (options.fetcher ?? fetch)(endpoint, {
-      headers: { "Accept": "application/json" },
+      headers: { Accept: "application/json" },
       redirect: "manual",
     });
   } catch (error) {
@@ -73,7 +70,7 @@ export const runHealthCheck = async (
   const contentType = res.headers.get("Content-Type") ?? "";
   const isJson = contentType.includes("application/json");
   const payload = isJson ? await res.json().catch(() => null) : null;
-  const payloadRecord = payload && typeof payload === "object" ? payload as Record<string, unknown> : null;
+  const payloadRecord = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : null;
   const ok = res.ok;
 
   if (wantJson) {

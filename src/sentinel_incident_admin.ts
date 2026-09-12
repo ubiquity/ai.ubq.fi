@@ -14,13 +14,10 @@ const validPageLimit = (value: string | null): number | null => {
   if (value === null) return SENTINEL_INCIDENT_INDEX_DEFAULT_PAGE_LIMIT;
   if (!/^[0-9]+$/.test(value)) return null;
   const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= SENTINEL_INCIDENT_INDEX_MAX_PAGE_LIMIT
-    ? parsed
-    : null;
+  return Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= SENTINEL_INCIDENT_INDEX_MAX_PAGE_LIMIT ? parsed : null;
 };
 
-const validCursor = (value: string | null): boolean =>
-  value === null || (value.length > 0 && value.length <= 2_048 && INDEX_CURSOR.test(value));
+const validCursor = (value: string | null): boolean => value === null || (value.length > 0 && value.length <= 2_048 && INDEX_CURSOR.test(value));
 
 type SentinelIncidentAdminDependencies = Readonly<{
   getKv?: typeof getKv;
@@ -57,10 +54,7 @@ const wireProvenanceEndpoint = (endpoint: string): string => {
 const WIRE_EVIDENCE_REF_NAMESPACE = "sentinel";
 const WIRE_EVIDENCE_REF_CAPTURE_PREFIX = "capture:";
 
-const wireEvidenceRef = (
-  evidence: NonNullable<SentinelIncidentIndexRow["evidence_ref"]>,
-  incidentId: string,
-): { ref: string; digest: string | null } => {
+const wireEvidenceRef = (evidence: NonNullable<SentinelIncidentIndexRow["evidence_ref"]>, incidentId: string): { ref: string; digest: string | null } => {
   if (!evidence.ref.startsWith(WIRE_EVIDENCE_REF_CAPTURE_PREFIX)) {
     // The row reader validates `capture:<id>` refs before this projection; an
     // unexpected ref is an internal invariant violation and fails closed.
@@ -97,10 +91,7 @@ const rowToWire = (row: SentinelIncidentIndexRow): Record<string, unknown> => ({
   evidence_expires_at_ms: row.evidence_expires_at_ms,
 });
 
-export const handleAdminSentinelIncidents = async (
-  req: Request,
-  dependencies: SentinelIncidentAdminDependencies = {},
-): Promise<Response> => {
+export const handleAdminSentinelIncidents = async (req: Request, dependencies: SentinelIncidentAdminDependencies = {}): Promise<Response> => {
   const url = new URL(req.url);
   const limit = validPageLimit(url.searchParams.get("limit"));
   const cursor = url.searchParams.get("cursor");
@@ -109,20 +100,13 @@ export const handleAdminSentinelIncidents = async (
   // Frozen single-value semantics: a repeated query key is never resolved by
   // arbitrary first-value coercion; explicit empty values are malformed, not
   // silently defaulted or trimmed (optional means the key is absent).
-  const unknownKeys = [...url.searchParams.keys()].filter(
-    (key) => key !== "limit" && key !== "cursor" && key !== "incident_id",
-  );
-  const duplicatedKeys = [...url.searchParams.keys()].some(
-    (key) => url.searchParams.getAll(key).length !== 1,
-  );
-  if (
-    limit === null || !validCursor(cursor) || unknownKeys.length > 0 || duplicatedKeys ||
-    (incidentId !== null && !isSentinelIncidentId(incidentId))
-  ) {
+  const unknownKeys = [...url.searchParams.keys()].filter((key) => key !== "limit" && key !== "cursor" && key !== "incident_id");
+  const duplicatedKeys = [...url.searchParams.keys()].some((key) => url.searchParams.getAll(key).length !== 1);
+  if (limit === null || !validCursor(cursor) || unknownKeys.length > 0 || duplicatedKeys || (incidentId !== null && !isSentinelIncidentId(incidentId))) {
     return openaiError(
       400,
       "limit must be an integer from 1 to 100, cursor, and incident_id must be valid, and unknown query keys are rejected",
-      "invalid_request_error",
+      "invalid_request_error"
     );
   }
   try {
@@ -135,13 +119,17 @@ export const handleAdminSentinelIncidents = async (
       limit,
       cursor: cursor || undefined,
     });
-    return json(200, {
-      data: page.rows.map(rowToWire),
-      cursor: page.cursor || null,
-      // Every successful page read is complete; incomplete is reserved for a
-      // genuine source gap and never for ordinary pagination continuation.
-      coverage: { status: "complete" },
-    }, { "Cache-Control": "no-store" });
+    return json(
+      200,
+      {
+        data: page.rows.map(rowToWire),
+        cursor: page.cursor || null,
+        // Every successful page read is complete; incomplete is reserved for a
+        // genuine source gap and never for ordinary pagination continuation.
+        coverage: { status: "complete" },
+      },
+      { "Cache-Control": "no-store" }
+    );
   } catch {
     return openaiError(503, "Sentinel incident index is unavailable", "sentinel_incidents_unavailable");
   }

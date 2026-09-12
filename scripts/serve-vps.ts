@@ -22,7 +22,7 @@ if (!(await Deno.stat(database)).isFile) {
 const kv = await Deno.openKv(database.pathname);
 initializeKv(kv);
 
-const { default: handler } = await import(new URL("serve.ts", release).href) as typeof import("../serve.ts");
+const { default: handler } = (await import(new URL("serve.ts", release).href)) as typeof import("../serve.ts");
 const server = Deno.serve({ hostname: "127.0.0.1", port: 8001, onListen: handler.onListen }, handler.fetch);
 let stopping = false;
 const shutdown = () => {

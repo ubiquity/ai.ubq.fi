@@ -20,16 +20,10 @@
 
 import { readCerebrasApiKey } from "../../src/cerebras.ts";
 import { createCerebrasTransport } from "../../src/harmony/adapter.ts";
-import {
-  createProbeContext,
-  PROBE_SCENARIOS,
-  type ProbeContext,
-  type ProbeScenarioResult,
-} from "../../src/harmony/probes.ts";
+import { createProbeContext, PROBE_SCENARIOS, type ProbeContext, type ProbeScenarioResult } from "../../src/harmony/probes.ts";
 
 const OUTPUT_DIR = new URL("../../docs/probes/", import.meta.url);
-const API_KEY_MISSING_NOTICE =
-  "CEREBRAS_API_KEY is not set; live Harmony protocol probes are skipped (no live calls made).";
+const API_KEY_MISSING_NOTICE = "CEREBRAS_API_KEY is not set; live Harmony protocol probes are skipped (no live calls made).";
 
 const utcStamp = (date: Date): string => date.toISOString().replaceAll(":", "-").replaceAll(".", "-").slice(0, 19);
 
@@ -81,28 +75,14 @@ const finished = new Date();
 const path = new URL(`cerebras-harmony-protocol-${utcStamp(started)}.jsonl`, OUTPUT_DIR);
 await writeJsonl(path, results);
 
-const expectedMatches = results.filter((result) =>
-  result.expectedOutcome !== null && result.expectedOutcome === result.outcome
-);
+const expectedMatches = results.filter((result) => result.expectedOutcome !== null && result.expectedOutcome === result.outcome);
 console.log(``);
-console.log(
-  `Summary (${results.length} scenarios, ${expectedMatches.length} matched expectations, ${
-    finished.getTime() - started.getTime()
-  } ms total):`,
-);
+console.log(`Summary (${results.length} scenarios, ${expectedMatches.length} matched expectations, ${finished.getTime() - started.getTime()} ms total):`);
 for (const result of results) {
-  const expectation = result.expectedOutcome === null
-    ? "info"
-    : result.expectedOutcome === result.outcome
-    ? "matched"
-    : "DIVERGED";
-  const turns = result.turns.map((turn) =>
-    turn.outcome === "ok" ? "ok" : `${turn.outcome}${turn.status !== null ? `@${turn.status}` : ""}`
-  ).join(",");
+  const expectation = result.expectedOutcome === null ? "info" : result.expectedOutcome === result.outcome ? "matched" : "DIVERGED";
+  const turns = result.turns.map((turn) => (turn.outcome === "ok" ? "ok" : `${turn.outcome}${turn.status !== null ? `@${turn.status}` : ""}`)).join(",");
   console.log(
-    `  ${result.id.padEnd(32)} ${result.outcome.padEnd(17)} expected=${String(result.expectedOutcome).padEnd(17)} ${
-      expectation.padEnd(9)
-    } turns=[${turns}]`,
+    `  ${result.id.padEnd(32)} ${result.outcome.padEnd(17)} expected=${String(result.expectedOutcome).padEnd(17)} ${expectation.padEnd(9)} turns=[${turns}]`
   );
 }
 console.log(``);

@@ -18,16 +18,8 @@ import {
 } from "./codex_models.ts";
 import { getKv } from "./kv.ts";
 import { extractUsageTokens } from "./openai.ts";
-import {
-  type PromptCacheTelemetryBaselineResult,
-  type PromptCacheTelemetryProvider,
-  readPromptCacheTelemetryBaseline,
-} from "./prompt_cache_telemetry_gate.ts";
-import {
-  loadPromptCacheScopeTargetInventory,
-  type PromptCacheScopeTarget,
-  type PromptCacheScopeTargetInventory,
-} from "./prompt_cache_scope_targets.ts";
+import { type PromptCacheTelemetryBaselineResult, type PromptCacheTelemetryProvider, readPromptCacheTelemetryBaseline } from "./prompt_cache_telemetry_gate.ts";
+import { loadPromptCacheScopeTargetInventory, type PromptCacheScopeTarget, type PromptCacheScopeTargetInventory } from "./prompt_cache_scope_targets.ts";
 import { readResponsesStream } from "./responses_stream.ts";
 import { normalizeRuntimeConfig, RUNTIME_CONFIG_V2_KEY, type RuntimeConfigV2 } from "./runtime_config.ts";
 import { getString, isRecord } from "./utils.ts";
@@ -83,20 +75,9 @@ export type PromptCacheScopeExperimentTelemetryBaseline = Readonly<{
   target: PromptCacheScopeTargetBinding;
 }>;
 
-type CacheScopeStepName = typeof CACHE_SCOPE_STEP_NAMES[number];
+type CacheScopeStepName = (typeof CACHE_SCOPE_STEP_NAMES)[number];
 type CacheSignal = "read" | "write";
-const CACHE_SCOPE_EXPECTED_SIGNALS: readonly (CacheSignal | null)[] = [
-  "write",
-  "read",
-  null,
-  "read",
-  "read",
-  null,
-  "read",
-  null,
-  "read",
-  "read",
-];
+const CACHE_SCOPE_EXPECTED_SIGNALS: readonly (CacheSignal | null)[] = ["write", "read", null, "read", "read", null, "read", null, "read", "read"];
 type InconclusiveReason =
   | "auth_pool_drift"
   | "capability_changed"
@@ -236,50 +217,28 @@ export class PromptCacheScopeExperimentFailedError extends Error {
   }
 }
 
-const isSafeNonNegativeInteger = (value: unknown): value is number =>
-  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+const isSafeNonNegativeInteger = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
-const hasOwn = (value: Record<string, unknown>, key: string): boolean =>
-  Object.prototype.hasOwnProperty.call(value, key);
+const hasOwn = (value: Record<string, unknown>, key: string): boolean => Object.prototype.hasOwnProperty.call(value, key);
 
-const hasOnlyKeys = (value: Record<string, unknown>, allowed: readonly string[]): boolean =>
-  Object.keys(value).every((key) => allowed.includes(key));
+const hasOnlyKeys = (value: Record<string, unknown>, allowed: readonly string[]): boolean => Object.keys(value).every((key) => allowed.includes(key));
 
 const hasExactKeys = (value: Record<string, unknown>, expected: readonly string[]): boolean =>
   Object.keys(value).length === expected.length && expected.every((key) => hasOwn(value, key));
 
 const targetKeyParts = (
-  target: Pick<
-    PromptCacheScopeTargetBinding,
-    "provider" | "telemetry_provider" | "topology_kind" | "probe_profile" | "model"
-  >,
-): readonly string[] => [
-  target.provider,
-  target.telemetry_provider,
-  target.topology_kind,
-  target.probe_profile,
-  target.model,
-];
+  target: Pick<PromptCacheScopeTargetBinding, "provider" | "telemetry_provider" | "topology_kind" | "probe_profile" | "model">
+): readonly string[] => [target.provider, target.telemetry_provider, target.topology_kind, target.probe_profile, target.model];
 
-const stateKey = (target: PromptCacheScopeTargetBinding): Deno.KvKey => [
-  ...PROMPT_CACHE_SCOPE_EXPERIMENT_KV_PREFIX,
-  "state",
-  ...targetKeyParts(target),
-];
-const evidenceKey = (target: PromptCacheScopeTargetBinding): Deno.KvKey => [
-  ...PROMPT_CACHE_SCOPE_EXPERIMENT_KV_PREFIX,
-  "evidence",
-  ...targetKeyParts(target),
-];
+const stateKey = (target: PromptCacheScopeTargetBinding): Deno.KvKey => [...PROMPT_CACHE_SCOPE_EXPERIMENT_KV_PREFIX, "state", ...targetKeyParts(target)];
+const evidenceKey = (target: PromptCacheScopeTargetBinding): Deno.KvKey => [...PROMPT_CACHE_SCOPE_EXPERIMENT_KV_PREFIX, "evidence", ...targetKeyParts(target)];
 const cycleLeaseKey = (target: PromptCacheScopeTargetBinding): Deno.KvKey => [
   ...PROMPT_CACHE_SCOPE_EXPERIMENT_KV_PREFIX,
   "cycle_lease",
   ...targetKeyParts(target),
 ];
 /** OAuth refresh mutates a shared Codex pool, so this fence is provider-wide. */
-const campaignLeaseKey = (
-  target: Pick<PromptCacheScopeTargetBinding, "provider" | "telemetry_provider" | "probe_profile">,
-): Deno.KvKey => [
+const campaignLeaseKey = (target: Pick<PromptCacheScopeTargetBinding, "provider" | "telemetry_provider" | "probe_profile">): Deno.KvKey => [
   ...PROMPT_CACHE_SCOPE_EXPERIMENT_KV_PREFIX,
   "campaign",
   target.provider,
@@ -288,7 +247,8 @@ const campaignLeaseKey = (
 ];
 
 const isConcreteObservation = (value: unknown): value is ConcreteScopeObservation =>
-  isRecord(value) && !Array.isArray(value) &&
+  isRecord(value) &&
+  !Array.isArray(value) &&
   hasExactKeys(value, ["probe_profile", "account_slots", "token_refresh", "conversation_id", "effective_model"]) &&
   value.probe_profile === PROMPT_CACHE_SCOPE_PROBE_PROFILE &&
   (value.account_slots === "shared" || value.account_slots === "account_scoped") &&
@@ -298,7 +258,8 @@ const isConcreteObservation = (value: unknown): value is ConcreteScopeObservatio
 
 const parseTargetBinding = (value: unknown): PromptCacheScopeTargetBinding | null => {
   if (
-    !isRecord(value) || Array.isArray(value) ||
+    !isRecord(value) ||
+    Array.isArray(value) ||
     !hasExactKeys(value, [
       "id",
       "provider",
@@ -318,7 +279,8 @@ const parseTargetBinding = (value: unknown): PromptCacheScopeTargetBinding | nul
     value.telemetry_provider !== CODEX_CHATGPT_PROMPT_CACHE_TELEMETRY_PROVIDER ||
     value.topology_kind !== "codex_account_pool" ||
     value.probe_profile !== PROMPT_CACHE_SCOPE_PROBE_PROFILE
-  ) return null;
+  )
+    return null;
   const required = [
     value.id,
     value.model,
@@ -329,9 +291,7 @@ const parseTargetBinding = (value: unknown): PromptCacheScopeTargetBinding | nul
     value.auth_pool_versionstamp,
     value.auth_pool_identity_fingerprint,
   ].every((entry) => Boolean(getString(entry)?.trim()));
-  const clientVersion = value.catalog_client_version === null
-    ? null
-    : getString(value.catalog_client_version)?.trim() || null;
+  const clientVersion = value.catalog_client_version === null ? null : getString(value.catalog_client_version)?.trim() || null;
   if (!required || (value.catalog_client_version !== null && clientVersion === null)) return null;
   return {
     id: getString(value.id)!.trim(),
@@ -351,9 +311,13 @@ const parseTargetBinding = (value: unknown): PromptCacheScopeTargetBinding | nul
 };
 
 const sameTargetDefinition = (left: PromptCacheScopeTargetBinding, right: PromptCacheScopeTargetBinding): boolean =>
-  left.id === right.id && left.provider === right.provider && left.telemetry_provider === right.telemetry_provider &&
-  left.topology_kind === right.topology_kind && left.model === right.model &&
-  left.probe_profile === right.probe_profile && left.capability_fingerprint === right.capability_fingerprint &&
+  left.id === right.id &&
+  left.provider === right.provider &&
+  left.telemetry_provider === right.telemetry_provider &&
+  left.topology_kind === right.topology_kind &&
+  left.model === right.model &&
+  left.probe_profile === right.probe_profile &&
+  left.capability_fingerprint === right.capability_fingerprint &&
   left.inventory_fingerprint === right.inventory_fingerprint &&
   left.auth_pool_identity_fingerprint === right.auth_pool_identity_fingerprint;
 
@@ -366,7 +330,9 @@ const sameObservation = (left: ConcreteScopeObservation, right: ConcreteScopeObs
 
 const parseState = (value: unknown): ExperimentState | null => {
   if (
-    !isRecord(value) || value.v !== 3 || Array.isArray(value) ||
+    !isRecord(value) ||
+    value.v !== 3 ||
+    Array.isArray(value) ||
     !hasOnlyKeys(value, [
       "v",
       "target",
@@ -378,16 +344,11 @@ const parseState = (value: unknown): ExperimentState | null => {
       "classifications",
       "pending_scope",
     ]) ||
-    ![
-      "target",
-      "campaign_owner",
-      "started_at_ms",
-      "expires_at_ms",
-      "auth_pool_versionstamp",
-      "next_cycle",
-      "classifications",
-    ].every((key) => hasOwn(value, key))
-  ) return null;
+    !["target", "campaign_owner", "started_at_ms", "expires_at_ms", "auth_pool_versionstamp", "next_cycle", "classifications"].every((key) =>
+      hasOwn(value, key)
+    )
+  )
+    return null;
   const target = parseTargetBinding(value.target);
   const campaignOwner = getString(value.campaign_owner)?.trim();
   const authPoolVersionstamp = getString(value.auth_pool_versionstamp)?.trim();
@@ -396,14 +357,22 @@ const parseState = (value: unknown): ExperimentState | null => {
   const now = Date.now();
   if (typeof nextCycle !== "number" || !Number.isSafeInteger(nextCycle)) return null;
   if (
-    !target || !campaignOwner || !authPoolVersionstamp || authPoolVersionstamp !== target.auth_pool_versionstamp ||
-    !isSafeNonNegativeInteger(value.started_at_ms) || !isSafeNonNegativeInteger(value.expires_at_ms) ||
-    value.started_at_ms <= 0 || value.started_at_ms > now || value.expires_at_ms <= value.started_at_ms ||
+    !target ||
+    !campaignOwner ||
+    !authPoolVersionstamp ||
+    authPoolVersionstamp !== target.auth_pool_versionstamp ||
+    !isSafeNonNegativeInteger(value.started_at_ms) ||
+    !isSafeNonNegativeInteger(value.expires_at_ms) ||
+    value.started_at_ms <= 0 ||
+    value.started_at_ms > now ||
+    value.expires_at_ms <= value.started_at_ms ||
     nextCycle < 1 ||
     nextCycle > PROMPT_CACHE_SCOPE_EXPERIMENT_CYCLES + 1 ||
-    !classifications || !classifications.every(isConcreteObservation) ||
+    !classifications ||
+    !classifications.every(isConcreteObservation) ||
     classifications.some((classification) => classification.effective_model !== target.model)
-  ) return null;
+  )
+    return null;
   if (classifications.length !== Math.min(nextCycle - 1, PROMPT_CACHE_SCOPE_EXPERIMENT_CYCLES)) {
     return null;
   }
@@ -411,10 +380,12 @@ const parseState = (value: unknown): ExperimentState | null => {
   if (pending !== undefined && !isConcreteObservation(pending)) return null;
   if (
     nextCycle === PROMPT_CACHE_SCOPE_EXPERIMENT_CYCLES + 1 &&
-    (!isConcreteObservation(pending) || pending.effective_model !== target.model ||
+    (!isConcreteObservation(pending) ||
+      pending.effective_model !== target.model ||
       !classifications.every((classification) => sameObservation(classification, classifications[0]!)) ||
       !sameObservation(pending, classifications[0]!))
-  ) return null;
+  )
+    return null;
   if (nextCycle <= PROMPT_CACHE_SCOPE_EXPERIMENT_CYCLES && pending !== undefined) return null;
   return {
     v: 3,
@@ -430,13 +401,15 @@ const parseState = (value: unknown): ExperimentState | null => {
 };
 
 const ownsLease = (value: unknown, owner: string): boolean =>
-  isRecord(value) && value.owner === owner && isSafeNonNegativeInteger(value.lease_until_ms) &&
-  value.lease_until_ms > Date.now();
+  isRecord(value) && value.owner === owner && isSafeNonNegativeInteger(value.lease_until_ms) && value.lease_until_ms > Date.now();
 
 const ownsCampaignLease = (value: unknown, state: ExperimentState): boolean =>
-  isRecord(value) && value.owner === state.campaign_owner && value.target_id === state.target.id &&
+  isRecord(value) &&
+  value.owner === state.campaign_owner &&
+  value.target_id === state.target.id &&
   value.inventory_fingerprint === state.target.inventory_fingerprint &&
-  isSafeNonNegativeInteger(value.lease_until_ms) && value.lease_until_ms > Date.now();
+  isSafeNonNegativeInteger(value.lease_until_ms) &&
+  value.lease_until_ms > Date.now();
 
 const cancelResponse = (response: Response): void => {
   try {
@@ -458,10 +431,12 @@ const buildExperimentRequest = (model: string, cycleId: string, cacheKey: string
     {
       type: "message",
       role: "developer",
-      content: [{
-        type: "input_text",
-        text: `cache-scope-cycle:${cycleId}\n\n${staticPrefix}`,
-      }],
+      content: [
+        {
+          type: "input_text",
+          text: `cache-scope-cycle:${cycleId}\n\n${staticPrefix}`,
+        },
+      ],
     },
     {
       type: "message",
@@ -481,9 +456,7 @@ const buildExperimentRequest = (model: string, cycleId: string, cacheKey: string
 
 const rawUsageSample = (value: unknown): NormalizedUsage | null => {
   if (!isRecord(value) || Array.isArray(value)) return null;
-  const details = isRecord(value.input_tokens_details) && !Array.isArray(value.input_tokens_details)
-    ? value.input_tokens_details
-    : null;
+  const details = isRecord(value.input_tokens_details) && !Array.isArray(value.input_tokens_details) ? value.input_tokens_details : null;
   if (!details) return null;
   const inputTokens = value.input_tokens;
   const cachedTokens = details.cached_tokens;
@@ -491,10 +464,13 @@ const rawUsageSample = (value: unknown): NormalizedUsage | null => {
   const outputTokens = value.output_tokens;
   const totalTokens = value.total_tokens;
   if (
-    !isSafeNonNegativeInteger(inputTokens) || !isSafeNonNegativeInteger(cachedTokens) ||
-    !isSafeNonNegativeInteger(cacheWriteTokens) || !isSafeNonNegativeInteger(outputTokens) ||
+    !isSafeNonNegativeInteger(inputTokens) ||
+    !isSafeNonNegativeInteger(cachedTokens) ||
+    !isSafeNonNegativeInteger(cacheWriteTokens) ||
+    !isSafeNonNegativeInteger(outputTokens) ||
     !isSafeNonNegativeInteger(totalTokens)
-  ) return null;
+  )
+    return null;
   return {
     input_tokens: inputTokens,
     cached_tokens: cachedTokens,
@@ -517,7 +493,8 @@ const isPrefixScaleCounter = (tokens: number, inputTokens: number): boolean =>
 const hasMixedPrefixScaleCacheSignals = (usage: NormalizedUsage): boolean =>
   isPrefixScaleCounter(usage.cached_tokens, usage.input_tokens) &&
   isPrefixScaleCounter(usage.cache_write_tokens, usage.input_tokens) &&
-  usage.cached_tokens > 0 && usage.cache_write_tokens > 0;
+  usage.cached_tokens > 0 &&
+  usage.cache_write_tokens > 0;
 
 /**
  * The warm write is the cycle's observed counter for the server-owned prefix.
@@ -525,16 +502,12 @@ const hasMixedPrefixScaleCacheSignals = (usage: NormalizedUsage): boolean =>
  * evidence; a merely prefix-scale counter could describe another breakpoint.
  */
 const matchesCycleReusableCounter = (usage: NormalizedUsage, reusableTokens: number): boolean =>
-  (usage.cached_tokens === 0 || usage.cached_tokens === reusableTokens) &&
-  (usage.cache_write_tokens === 0 || usage.cache_write_tokens === reusableTokens);
+  (usage.cached_tokens === 0 || usage.cached_tokens === reusableTokens) && (usage.cache_write_tokens === 0 || usage.cache_write_tokens === reusableTokens);
 
 const cacheSignal = (usage: NormalizedUsage): CacheSignal | null => {
   // The probe has a fixed ~2,560-token reusable prefix. A smaller counter can
   // describe unrelated transient cache activity, not the tested prefix.
-  if (
-    !isPrefixScaleCounter(usage.cached_tokens, usage.input_tokens) ||
-    !isPrefixScaleCounter(usage.cache_write_tokens, usage.input_tokens)
-  ) return null;
+  if (!isPrefixScaleCounter(usage.cached_tokens, usage.input_tokens) || !isPrefixScaleCounter(usage.cache_write_tokens, usage.input_tokens)) return null;
   // OpenAI reports cache reads and writes as independent dimensions. A request
   // can read an earlier matching breakpoint while also writing a later one, so
   // a positive cached_tokens value is still conclusive cache-read evidence.
@@ -552,15 +525,13 @@ export const readPromptCacheScopeExperimentCompletedUsage = async (
   expectedSlot: number,
   expectedModel: string,
   startedAtMs: number,
-  signal: AbortSignal,
+  signal: AbortSignal
 ): Promise<ReadSampleResult> => {
   let responseCompleted = false;
   try {
     if (!response.ok || !response.body) {
       cancelResponse(response);
-      throw new CodexCacheScopeExperimentError(
-        "Prompt-cache scope experiment did not receive a readable upstream response.",
-      );
+      throw new CodexCacheScopeExperimentError("Prompt-cache scope experiment did not receive a readable upstream response.");
     }
     if (getCodexResponseSlot(response) !== expectedSlot) {
       cancelResponse(response);
@@ -568,9 +539,7 @@ export const readPromptCacheScopeExperimentCompletedUsage = async (
     }
     let terminalResponse: Record<string, unknown> | null = null;
     for await (const event of readResponsesStream(response.body, signal)) {
-      if (
-        event.type === "response.completed" && isRecord(event.value.response) && !Array.isArray(event.value.response)
-      ) {
+      if (event.type === "response.completed" && isRecord(event.value.response) && !Array.isArray(event.value.response)) {
         terminalResponse = event.value.response;
         responseCompleted = true;
         break;
@@ -578,9 +547,7 @@ export const readPromptCacheScopeExperimentCompletedUsage = async (
       if (event.terminal) break;
     }
     if (!terminalResponse) {
-      throw new CodexCacheScopeExperimentError(
-        "Prompt-cache scope experiment did not receive a completed terminal response.",
-      );
+      throw new CodexCacheScopeExperimentError("Prompt-cache scope experiment did not receive a completed terminal response.");
     }
     if (getString(terminalResponse.model)?.trim() !== expectedModel) {
       return { status: "inconclusive", reason: "effective_model_drift" };
@@ -588,10 +555,16 @@ export const readPromptCacheScopeExperimentCompletedUsage = async (
     const raw = rawUsageSample(terminalResponse.usage);
     const normalized = extractUsageTokens(terminalResponse.usage);
     if (
-      !raw || !normalized || normalized.status !== "reported" || normalized.inputTokens === null ||
-      normalized.cachedInputTokens === null || normalized.cacheWriteInputTokens === null ||
-      normalized.outputTokens === null || normalized.totalTokens === null
-    ) return { status: "inconclusive", reason: "incomplete_telemetry" };
+      !raw ||
+      !normalized ||
+      normalized.status !== "reported" ||
+      normalized.inputTokens === null ||
+      normalized.cachedInputTokens === null ||
+      normalized.cacheWriteInputTokens === null ||
+      normalized.outputTokens === null ||
+      normalized.totalTokens === null
+    )
+      return { status: "inconclusive", reason: "incomplete_telemetry" };
     const usage: NormalizedUsage = {
       input_tokens: normalized.inputTokens,
       cached_tokens: normalized.cachedInputTokens,
@@ -618,9 +591,7 @@ export const readPromptCacheScopeExperimentCompletedUsage = async (
   } catch (error) {
     if (error instanceof CodexCacheScopeExperimentError) throw error;
     throw new CodexCacheScopeExperimentError(
-      error instanceof Error
-        ? `Prompt-cache scope experiment stream failed: ${error.message}`
-        : "Prompt-cache scope experiment stream failed.",
+      error instanceof Error ? `Prompt-cache scope experiment stream failed: ${error.message}` : "Prompt-cache scope experiment stream failed."
     );
   } finally {
     try {
@@ -632,35 +603,21 @@ export const readPromptCacheScopeExperimentCompletedUsage = async (
   }
 };
 
-const classifyCycle = (
-  model: string,
-  samples: readonly PromptCacheScopeSample[],
-  signals: readonly CacheSignal[],
-): ConcreteScopeObservation | null => {
+const classifyCycle = (model: string, samples: readonly PromptCacheScopeSample[], signals: readonly CacheSignal[]): ConcreteScopeObservation | null => {
   if (samples.length !== PROMPT_CACHE_SCOPE_EXPERIMENT_SAMPLES_PER_CYCLE || signals.length !== samples.length) {
     return null;
   }
   if (
     samples.some((sample, index) => sample.slot !== CACHE_SCOPE_EXPECTED_SLOTS[index]) ||
     samples.some((sample) => sample.usage.input_tokens !== samples[0]?.usage.input_tokens)
-  ) return null;
+  )
+    return null;
   const reusableTokens = samples[0]?.usage.cache_write_tokens;
-  if (
-    reusableTokens === undefined || reusableTokens === 0 ||
-    samples.some((sample) => !matchesCycleReusableCounter(sample.usage, reusableTokens))
-  ) return null;
+  if (reusableTokens === undefined || reusableTokens === 0 || samples.some((sample) => !matchesCycleReusableCounter(sample.usage, reusableTokens))) return null;
   // A simultaneous read/write cannot attribute the tested prefix to either
   // side of a discriminator, so it must never authorize a concrete scope.
-  if (
-    samples.some((sample, index) =>
-      CACHE_SCOPE_DISCRIMINATOR_INDEXES.has(index) && hasMixedPrefixScaleCacheSignals(sample.usage)
-    )
-  ) return null;
-  if (
-    signals.some((signal, index) =>
-      CACHE_SCOPE_EXPECTED_SIGNALS[index] !== null && signal !== CACHE_SCOPE_EXPECTED_SIGNALS[index]
-    )
-  ) return null;
+  if (samples.some((sample, index) => CACHE_SCOPE_DISCRIMINATOR_INDEXES.has(index) && hasMixedPrefixScaleCacheSignals(sample.usage))) return null;
+  if (signals.some((signal, index) => CACHE_SCOPE_EXPECTED_SIGNALS[index] !== null && signal !== CACHE_SCOPE_EXPECTED_SIGNALS[index])) return null;
   const accountSlots = signals[2] === "read" ? "shared" : signals[2] === "write" ? "account_scoped" : null;
   const tokenRefresh = signals[5] === "read" ? "preserved" : signals[5] === "write" ? "changed" : null;
   const conversationId = signals[7] === "read" ? "independent" : signals[7] === "write" ? "scoped" : null;
@@ -694,7 +651,8 @@ const INCONCLUSIVE_REASONS = new Set<InconclusiveReason>([
 ]);
 
 const isNormalizedUsage = (value: unknown): value is NormalizedUsage =>
-  isRecord(value) && !Array.isArray(value) &&
+  isRecord(value) &&
+  !Array.isArray(value) &&
   hasExactKeys(value, ["input_tokens", "cached_tokens", "cache_write_tokens", "output_tokens", "total_tokens"]) &&
   isSafeNonNegativeInteger(value.input_tokens) &&
   isSafeNonNegativeInteger(value.cached_tokens) &&
@@ -704,37 +662,50 @@ const isNormalizedUsage = (value: unknown): value is NormalizedUsage =>
 
 const isPromptCacheScopeSample = (value: unknown): value is PromptCacheScopeSample => {
   if (
-    !isRecord(value) || Array.isArray(value) ||
+    !isRecord(value) ||
+    Array.isArray(value) ||
     !hasExactKeys(value, ["step", "slot", "raw_usage", "usage", "elapsed_ms"]) ||
-    typeof value.step !== "string" || !CACHE_SCOPE_STEP_NAMES.includes(value.step as CacheScopeStepName)
-  ) return false;
+    typeof value.step !== "string" ||
+    !CACHE_SCOPE_STEP_NAMES.includes(value.step as CacheScopeStepName)
+  )
+    return false;
   const stepIndex = CACHE_SCOPE_STEP_NAMES.indexOf(value.step as CacheScopeStepName);
-  return value.slot === CACHE_SCOPE_EXPECTED_SLOTS[stepIndex] &&
+  return (
+    value.slot === CACHE_SCOPE_EXPECTED_SLOTS[stepIndex] &&
     isNormalizedUsage(value.raw_usage) &&
     isNormalizedUsage(value.usage) &&
     sameUsage(value.raw_usage, value.usage) &&
-    isSafeNonNegativeInteger(value.elapsed_ms);
+    isSafeNonNegativeInteger(value.elapsed_ms)
+  );
 };
 
 const isCycleEvidence = (value: unknown, model: string): value is CycleEvidence => {
   if (
-    !isRecord(value) || Array.isArray(value) ||
+    !isRecord(value) ||
+    Array.isArray(value) ||
     !hasOnlyKeys(value, ["cycle", "samples", "classification", "inconclusive_reason"]) ||
-    !hasOwn(value, "cycle") || !hasOwn(value, "samples") ||
-    !isSafeNonNegativeInteger(value.cycle) || value.cycle < 1 || value.cycle > PROMPT_CACHE_SCOPE_EXPERIMENT_CYCLES ||
-    !Array.isArray(value.samples) || value.samples.length > PROMPT_CACHE_SCOPE_EXPERIMENT_SAMPLES_PER_CYCLE ||
+    !hasOwn(value, "cycle") ||
+    !hasOwn(value, "samples") ||
+    !isSafeNonNegativeInteger(value.cycle) ||
+    value.cycle < 1 ||
+    value.cycle > PROMPT_CACHE_SCOPE_EXPERIMENT_CYCLES ||
+    !Array.isArray(value.samples) ||
+    value.samples.length > PROMPT_CACHE_SCOPE_EXPERIMENT_SAMPLES_PER_CYCLE ||
     !value.samples.every(isPromptCacheScopeSample) ||
     value.samples.some((sample, index) => sample.step !== CACHE_SCOPE_STEP_NAMES[index])
-  ) return false;
+  )
+    return false;
 
   const hasClassification = hasOwn(value, "classification");
   const hasReason = hasOwn(value, "inconclusive_reason");
   if (hasClassification === hasReason) return false;
   if (!hasReason) {
     if (
-      !isConcreteObservation(value.classification) || value.classification.effective_model !== model ||
+      !isConcreteObservation(value.classification) ||
+      value.classification.effective_model !== model ||
       value.samples.length !== PROMPT_CACHE_SCOPE_EXPERIMENT_SAMPLES_PER_CYCLE
-    ) return false;
+    )
+      return false;
     const signals: CacheSignal[] = [];
     for (const sample of value.samples) {
       const signal = cacheSignal(sample.usage);
@@ -744,55 +715,52 @@ const isCycleEvidence = (value: unknown, model: string): value is CycleEvidence 
     const classification = classifyCycle(model, value.samples, signals);
     return classification !== null && sameObservation(value.classification, classification);
   }
-  return typeof value.inconclusive_reason === "string" &&
-    INCONCLUSIVE_REASONS.has(value.inconclusive_reason as InconclusiveReason);
+  return typeof value.inconclusive_reason === "string" && INCONCLUSIVE_REASONS.has(value.inconclusive_reason as InconclusiveReason);
 };
 
 const parseEvidence = (value: unknown): StoredEvidence | null => {
   if (
-    !isRecord(value) || Array.isArray(value) ||
-    !hasOnlyKeys(value, [
-      "v",
-      "target",
-      "outcome",
-      "started_at_ms",
-      "verified_at_ms",
-      "cycles",
-      "inconclusive_reason",
-    ]) ||
+    !isRecord(value) ||
+    Array.isArray(value) ||
+    !hasOnlyKeys(value, ["v", "target", "outcome", "started_at_ms", "verified_at_ms", "cycles", "inconclusive_reason"]) ||
     value.v !== 3
-  ) return null;
+  )
+    return null;
   const target = parseTargetBinding(value.target);
   const outcome = String(value.outcome) as StoredEvidence["outcome"];
   const hasInconclusiveReason = hasOwn(value, "inconclusive_reason");
   const now = Date.now();
   if (
-    !target || !isSafeNonNegativeInteger(value.started_at_ms) || !isSafeNonNegativeInteger(value.verified_at_ms) ||
-    value.started_at_ms <= 0 || value.verified_at_ms < value.started_at_ms || value.verified_at_ms > now ||
-    !Array.isArray(value.cycles) || value.cycles.length > PROMPT_CACHE_SCOPE_EXPERIMENT_CYCLES ||
+    !target ||
+    !isSafeNonNegativeInteger(value.started_at_ms) ||
+    !isSafeNonNegativeInteger(value.verified_at_ms) ||
+    value.started_at_ms <= 0 ||
+    value.verified_at_ms < value.started_at_ms ||
+    value.verified_at_ms > now ||
+    !Array.isArray(value.cycles) ||
+    value.cycles.length > PROMPT_CACHE_SCOPE_EXPERIMENT_CYCLES ||
     !["in_progress", "ready_to_promote", "completed", "inconclusive", "failed"].includes(outcome) ||
-    (hasInconclusiveReason &&
-      (typeof value.inconclusive_reason !== "string" ||
-        !INCONCLUSIVE_REASONS.has(value.inconclusive_reason as InconclusiveReason))) ||
+    (hasInconclusiveReason && (typeof value.inconclusive_reason !== "string" || !INCONCLUSIVE_REASONS.has(value.inconclusive_reason as InconclusiveReason))) ||
     !value.cycles.every((cycle, index) => isCycleEvidence(cycle, target.model) && cycle.cycle === index + 1)
-  ) return null;
+  )
+    return null;
   const cycles = value.cycles as readonly CycleEvidence[];
   const allClassified = cycles.every((cycle) => cycle.classification !== undefined);
-  const classificationsAgree = allClassified && cycles.length > 0 &&
-    cycles.every((cycle) => sameObservation(cycle.classification!, cycles[0]!.classification!));
+  const classificationsAgree =
+    allClassified && cycles.length > 0 && cycles.every((cycle) => sameObservation(cycle.classification!, cycles[0]!.classification!));
   const finalCycle = cycles.at(-1);
-  const inconclusiveCyclesCoherent = cycles.length === 0 ||
+  const inconclusiveCyclesCoherent =
+    cycles.length === 0 ||
     (cycles.slice(0, -1).every((cycle) => cycle.classification !== undefined) &&
-      (finalCycle?.classification !== undefined ||
-        finalCycle?.inconclusive_reason === value.inconclusive_reason));
+      (finalCycle?.classification !== undefined || finalCycle?.inconclusive_reason === value.inconclusive_reason));
   if (
-    (outcome === "in_progress" &&
-      (hasInconclusiveReason || !allClassified || cycles.length >= PROMPT_CACHE_SCOPE_EXPERIMENT_CYCLES)) ||
+    (outcome === "in_progress" && (hasInconclusiveReason || !allClassified || cycles.length >= PROMPT_CACHE_SCOPE_EXPERIMENT_CYCLES)) ||
     ((outcome === "ready_to_promote" || outcome === "completed") &&
       (hasInconclusiveReason || cycles.length !== PROMPT_CACHE_SCOPE_EXPERIMENT_CYCLES || !classificationsAgree)) ||
     (outcome === "inconclusive" && (!hasInconclusiveReason || !inconclusiveCyclesCoherent)) ||
     (outcome === "failed" && (hasInconclusiveReason || !allClassified))
-  ) return null;
+  )
+    return null;
   return {
     v: 3,
     target,
@@ -808,14 +776,14 @@ const parseEvidence = (value: unknown): StoredEvidence | null => {
 const activeStateEvidenceIsConsistent = (state: ExperimentState, evidence: StoredEvidence | null): boolean => {
   if (state.classifications.length === 0) return evidence === null;
   if (
-    !evidence || !sameTargetDefinition(evidence.target, state.target) ||
-    evidence.started_at_ms !== state.started_at_ms || evidence.cycles.length !== state.classifications.length ||
-    !evidence.cycles.every((cycle, index) =>
-      cycle.classification !== undefined && sameObservation(cycle.classification, state.classifications[index]!)
-    )
-  ) return false;
-  return evidence.outcome ===
-    (state.next_cycle === PROMPT_CACHE_SCOPE_EXPERIMENT_CYCLES + 1 ? "ready_to_promote" : "in_progress");
+    !evidence ||
+    !sameTargetDefinition(evidence.target, state.target) ||
+    evidence.started_at_ms !== state.started_at_ms ||
+    evidence.cycles.length !== state.classifications.length ||
+    !evidence.cycles.every((cycle, index) => cycle.classification !== undefined && sameObservation(cycle.classification, state.classifications[index]!))
+  )
+    return false;
+  return evidence.outcome === (state.next_cycle === PROMPT_CACHE_SCOPE_EXPERIMENT_CYCLES + 1 ? "ready_to_promote" : "in_progress");
 };
 
 const throwIfAborted = (signal: AbortSignal): void => {
@@ -826,9 +794,7 @@ const throwIfAborted = (signal: AbortSignal): void => {
 
 type RuntimeBinding = Readonly<{ versionstamp: string; default_model: string }>;
 type ResolvedScopeTarget = Readonly<{ binding: PromptCacheScopeTargetBinding }>;
-type ScopeTargetResolution =
-  | Readonly<{ status: "resolved"; value: ResolvedScopeTarget }>
-  | Readonly<{ status: "inconclusive"; reason: InconclusiveReason }>;
+type ScopeTargetResolution = Readonly<{ status: "resolved"; value: ResolvedScopeTarget }> | Readonly<{ status: "inconclusive"; reason: InconclusiveReason }>;
 
 const loadRuntimeBinding = async (kv: Deno.Kv): Promise<RuntimeBinding | null> => {
   const entry = await kv.get<RuntimeConfigV2>(RUNTIME_CONFIG_V2_KEY, { consistency: "strong" });
@@ -840,7 +806,7 @@ const loadRuntimeBinding = async (kv: Deno.Kv): Promise<RuntimeBinding | null> =
 const targetBindingFromInventory = (
   inventory: PromptCacheScopeTargetInventory,
   target: PromptCacheScopeTarget,
-  runtime: RuntimeBinding,
+  runtime: RuntimeBinding
 ): PromptCacheScopeTargetBinding | null => {
   const inventoryFingerprint = getString(inventory.inventory_fingerprint)?.trim();
   const catalogVersionstamp = getString(target.catalog_versionstamp)?.trim();
@@ -851,12 +817,20 @@ const targetBindingFromInventory = (
   const capabilityFingerprint = target.capability_fingerprint.trim();
   const clientVersion = target.catalog_client_version === null ? null : target.catalog_client_version.trim() || null;
   if (
-    inventory.status !== "ready" || !inventoryFingerprint || !catalogVersionstamp || !authPoolVersionstamp ||
-    !authPoolIdentityFingerprint || !model ||
-    !targetId || !capabilityFingerprint || target.provider !== PROMPT_CACHE_SCOPE_EXPERIMENT_PROVIDER ||
+    inventory.status !== "ready" ||
+    !inventoryFingerprint ||
+    !catalogVersionstamp ||
+    !authPoolVersionstamp ||
+    !authPoolIdentityFingerprint ||
+    !model ||
+    !targetId ||
+    !capabilityFingerprint ||
+    target.provider !== PROMPT_CACHE_SCOPE_EXPERIMENT_PROVIDER ||
     target.telemetry_provider !== CODEX_CHATGPT_PROMPT_CACHE_TELEMETRY_PROVIDER ||
-    target.topology.kind !== "codex_account_pool" || target.probeability.status !== "probeable"
-  ) return null;
+    target.topology.kind !== "codex_account_pool" ||
+    target.probeability.status !== "probeable"
+  )
+    return null;
   return {
     id: targetId,
     provider: PROMPT_CACHE_SCOPE_EXPERIMENT_PROVIDER,
@@ -875,19 +849,18 @@ const targetBindingFromInventory = (
 };
 
 const sameTargetCore = (left: PromptCacheScopeTargetBinding, right: PromptCacheScopeTargetBinding): boolean =>
-  left.id === right.id && left.provider === right.provider && left.telemetry_provider === right.telemetry_provider &&
-  left.topology_kind === right.topology_kind && left.model === right.model &&
-  left.probe_profile === right.probe_profile && left.capability_fingerprint === right.capability_fingerprint &&
+  left.id === right.id &&
+  left.provider === right.provider &&
+  left.telemetry_provider === right.telemetry_provider &&
+  left.topology_kind === right.topology_kind &&
+  left.model === right.model &&
+  left.probe_profile === right.probe_profile &&
+  left.capability_fingerprint === right.capability_fingerprint &&
   left.auth_pool_identity_fingerprint === right.auth_pool_identity_fingerprint &&
   left.catalog_client_version === right.catalog_client_version;
 
-const loadInventoryAndRuntime = async (
-  kv: Deno.Kv,
-): Promise<Readonly<{ inventory: PromptCacheScopeTargetInventory; runtime: RuntimeBinding }> | null> => {
-  const [inventory, runtime] = await Promise.all([
-    loadPromptCacheScopeTargetInventory({ kv }),
-    loadRuntimeBinding(kv),
-  ]);
+const loadInventoryAndRuntime = async (kv: Deno.Kv): Promise<Readonly<{ inventory: PromptCacheScopeTargetInventory; runtime: RuntimeBinding }> | null> => {
+  const [inventory, runtime] = await Promise.all([loadPromptCacheScopeTargetInventory({ kv }), loadRuntimeBinding(kv)]);
   if (inventory.status !== "ready" || !runtime) return null;
   return { inventory, runtime };
 };
@@ -897,10 +870,7 @@ const loadInventoryAndRuntime = async (
  * changes are harmless when the exact target is stable. Catalog capability,
  * inventory, auth-pool, and client-version bindings instead fence dispatch.
  */
-const resolveBoundTarget = async (
-  kv: Deno.Kv,
-  expected: PromptCacheScopeTargetBinding,
-): Promise<ScopeTargetResolution> => {
+const resolveBoundTarget = async (kv: Deno.Kv, expected: PromptCacheScopeTargetBinding): Promise<ScopeTargetResolution> => {
   const loaded = await loadInventoryAndRuntime(kv);
   if (!loaded) return { status: "inconclusive", reason: "target_catalog_drift" };
   const current = loaded.inventory.targets.find((target) => target.id === expected.id);
@@ -929,71 +899,57 @@ type SelectedCampaignTarget = Readonly<{ binding: PromptCacheScopeTargetBinding;
  * stable ordering. Malformed durable state/evidence is a hard no-dispatch
  * condition rather than an invitation to overwrite it.
  */
-const selectCampaignTarget = async (
-  kv: Deno.Kv,
-  inventory: PromptCacheScopeTargetInventory,
-  runtime: RuntimeBinding,
-): Promise<SelectedCampaignTarget> => {
+const selectCampaignTarget = async (kv: Deno.Kv, inventory: PromptCacheScopeTargetInventory, runtime: RuntimeBinding): Promise<SelectedCampaignTarget> => {
   const bindings = inventory.targets
     .map((target) => targetBindingFromInventory(inventory, target, runtime))
     .filter((target): target is PromptCacheScopeTargetBinding => target !== null);
   if (!bindings.length) {
-    throw new PromptCacheScopeExperimentUnavailableError(
-      "Prompt-cache scope experiment has no probeable Codex target in the current inventory.",
-    );
+    throw new PromptCacheScopeExperimentUnavailableError("Prompt-cache scope experiment has no probeable Codex target in the current inventory.");
   }
 
-  const records = await Promise.all(bindings.map(async (binding) => {
-    const [stateEntry, evidenceEntry] = await Promise.all([
-      kv.get<ExperimentState>(stateKey(binding), { consistency: "strong" }),
-      kv.get<StoredEvidence>(evidenceKey(binding), { consistency: "strong" }),
-    ]);
-    const state = stateEntry.value === null ? null : parseState(stateEntry.value);
-    const evidence = evidenceEntry.value === null ? null : parseEvidence(evidenceEntry.value);
-    if ((stateEntry.value !== null && !state) || (evidenceEntry.value !== null && !evidence)) {
-      throw new PromptCacheScopeExperimentUnavailableError(
-        "Prompt-cache scope experiment has malformed target-scoped durable state.",
-      );
-    }
-    if (state && !activeStateEvidenceIsConsistent(state, evidence)) {
-      throw new PromptCacheScopeExperimentUnavailableError(
-        "Prompt-cache scope experiment has inconsistent target-scoped durable evidence.",
-      );
-    }
-    return { binding, state, evidence };
-  }));
+  const records = await Promise.all(
+    bindings.map(async (binding) => {
+      const [stateEntry, evidenceEntry] = await Promise.all([
+        kv.get<ExperimentState>(stateKey(binding), { consistency: "strong" }),
+        kv.get<StoredEvidence>(evidenceKey(binding), { consistency: "strong" }),
+      ]);
+      const state = stateEntry.value === null ? null : parseState(stateEntry.value);
+      const evidence = evidenceEntry.value === null ? null : parseEvidence(evidenceEntry.value);
+      if ((stateEntry.value !== null && !state) || (evidenceEntry.value !== null && !evidence)) {
+        throw new PromptCacheScopeExperimentUnavailableError("Prompt-cache scope experiment has malformed target-scoped durable state.");
+      }
+      if (state && !activeStateEvidenceIsConsistent(state, evidence)) {
+        throw new PromptCacheScopeExperimentUnavailableError("Prompt-cache scope experiment has inconsistent target-scoped durable evidence.");
+      }
+      return { binding, state, evidence };
+    })
+  );
 
   const active = records.filter((record) => record.state && record.state.expires_at_ms > Date.now());
   if (active.length > 1) {
-    throw new PromptCacheScopeExperimentUnavailableError(
-      "Prompt-cache scope experiment found more than one active provider campaign.",
-    );
+    throw new PromptCacheScopeExperimentUnavailableError("Prompt-cache scope experiment found more than one active provider campaign.");
   }
   if (active.length === 1) {
     const record = active[0]!;
     const state = record.state!;
     if (!sameTargetCore(state.target, record.binding)) {
-      throw new PromptCacheScopeExperimentUnavailableError(
-        "Prompt-cache scope experiment target changed while its campaign was active.",
-      );
+      throw new PromptCacheScopeExperimentUnavailableError("Prompt-cache scope experiment target changed while its campaign was active.");
     }
     if (state.target.inventory_fingerprint !== record.binding.inventory_fingerprint) {
-      throw new PromptCacheScopeExperimentUnavailableError(
-        "Prompt-cache scope experiment inventory changed while its campaign was active.",
-      );
+      throw new PromptCacheScopeExperimentUnavailableError("Prompt-cache scope experiment inventory changed while its campaign was active.");
     }
     return { binding: record.binding, active_state: state };
   }
 
   for (const record of records) {
-    const terminal = record.evidence && record.evidence.started_at_ms > 0 &&
+    const terminal =
+      record.evidence &&
+      record.evidence.started_at_ms > 0 &&
       sameTargetDefinition(record.evidence.target, record.binding) &&
       record.evidence.outcome === "completed";
     if (!terminal) return { binding: record.binding };
   }
-  throw new PromptCacheScopeExperimentUnavailableError(
-    "Prompt-cache scope experiment has no nonterminal probeable Codex target in the current inventory.",
-  );
+  throw new PromptCacheScopeExperimentUnavailableError("Prompt-cache scope experiment has no nonterminal probeable Codex target in the current inventory.");
 };
 
 type ResolvedPromptCacheScopeExperimentTelemetryBaseline = Readonly<{
@@ -1008,7 +964,7 @@ type ResolvedPromptCacheScopeExperimentTelemetryBaseline = Readonly<{
  * paid dispatch.
  */
 const resolvePromptCacheScopeExperimentTelemetryBaseline = async (
-  options: PromptCacheScopeExperimentTelemetryBaselineTestOptions = {},
+  options: PromptCacheScopeExperimentTelemetryBaselineTestOptions = {}
 ): Promise<ResolvedPromptCacheScopeExperimentTelemetryBaseline> => {
   const kv = options.kv === undefined ? await getKv() : options.kv;
   if (!kv) {
@@ -1016,20 +972,16 @@ const resolvePromptCacheScopeExperimentTelemetryBaseline = async (
   }
   const loaded = await loadInventoryAndRuntime(kv);
   if (!loaded) {
-    throw new PromptCacheScopeExperimentUnavailableError(
-      "Prompt-cache scope experiment requires a current full target inventory and runtime configuration.",
-    );
+    throw new PromptCacheScopeExperimentUnavailableError("Prompt-cache scope experiment requires a current full target inventory and runtime configuration.");
   }
   const selected = await selectCampaignTarget(kv, loaded.inventory, loaded.runtime);
   const resolved = await resolveBoundTarget(kv, selected.binding);
   if (resolved.status !== "resolved") {
-    throw new PromptCacheScopeExperimentUnavailableError(
-      "Prompt-cache scope experiment target changed before its Stage 0 baseline could be checked.",
-    );
+    throw new PromptCacheScopeExperimentUnavailableError("Prompt-cache scope experiment target changed before its Stage 0 baseline could be checked.");
   }
   const baseline = await readPromptCacheTelemetryBaseline(
     { provider: CODEX_CHATGPT_PROMPT_CACHE_TELEMETRY_PROVIDER, model: resolved.value.binding.model },
-    { ...options, kv },
+    { ...options, kv }
   );
   return { target: resolved.value.binding, baseline };
 };
@@ -1040,9 +992,8 @@ const resolvePromptCacheScopeExperimentTelemetryBaseline = async (
  * attest a later paid request, which must repeat the fenced read itself.
  */
 export const readPromptCacheScopeExperimentTelemetryBaseline = async (
-  options: PromptCacheScopeExperimentTelemetryBaselineTestOptions = {},
-): Promise<PromptCacheTelemetryBaselineResult> =>
-  (await resolvePromptCacheScopeExperimentTelemetryBaseline(options)).baseline;
+  options: PromptCacheScopeExperimentTelemetryBaselineTestOptions = {}
+): Promise<PromptCacheTelemetryBaselineResult> => (await resolvePromptCacheScopeExperimentTelemetryBaseline(options)).baseline;
 
 /**
  * The live matrix is a paid, stateful control-plane action. Keep its Stage 0
@@ -1050,7 +1001,7 @@ export const readPromptCacheScopeExperimentTelemetryBaseline = async (
  * exercise the fenced runner without inventing a deployed release baseline.
  */
 export const assertPromptCacheScopeExperimentTelemetryBaseline = async (
-  options: PromptCacheScopeExperimentTelemetryBaselineTestOptions = {},
+  options: PromptCacheScopeExperimentTelemetryBaselineTestOptions = {}
 ): Promise<PromptCacheScopeExperimentTelemetryBaseline> => {
   const { target, baseline } = await resolvePromptCacheScopeExperimentTelemetryBaseline(options);
   // The live matrix uses the Responses transport. Aggregate telemetry or a
@@ -1058,26 +1009,21 @@ export const assertPromptCacheScopeExperimentTelemetryBaseline = async (
   // for paid Responses samples.
   const responsesRoute = baseline.routes.find((route) => route.route === "responses");
   if (
-    baseline.status !== "eligible" || !responsesRoute?.completed_minimum_passed ||
-    !responsesRoute.reported_coverage_passed || !responsesRoute.cache_write_reported_coverage_passed
+    baseline.status !== "eligible" ||
+    !responsesRoute?.completed_minimum_passed ||
+    !responsesRoute.reported_coverage_passed ||
+    !responsesRoute.cache_write_reported_coverage_passed
   ) {
-    throw new PromptCacheScopeExperimentUnavailableError(
-      "Prompt-cache scope experiment requires a passing current-release Stage 0 telemetry baseline.",
-    );
+    throw new PromptCacheScopeExperimentUnavailableError("Prompt-cache scope experiment requires a passing current-release Stage 0 telemetry baseline.");
   }
   return { target };
 };
 
 type AcquiredCycle = Readonly<{ state: ExperimentState; cycle_owner: string }>;
 
-const hasActiveLease = (value: unknown): boolean =>
-  isRecord(value) && isSafeNonNegativeInteger(value.lease_until_ms) && value.lease_until_ms > Date.now();
+const hasActiveLease = (value: unknown): boolean => isRecord(value) && isSafeNonNegativeInteger(value.lease_until_ms) && value.lease_until_ms > Date.now();
 
-const acquireCycle = async (
-  kv: Deno.Kv,
-  target: PromptCacheScopeTargetBinding,
-  authPoolVersionstamp: string,
-): Promise<AcquiredCycle> => {
+const acquireCycle = async (kv: Deno.Kv, target: PromptCacheScopeTargetBinding, authPoolVersionstamp: string): Promise<AcquiredCycle> => {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const [stateEntry, evidenceEntry, campaignEntry, cycleEntry] = await Promise.all([
       kv.get<ExperimentState>(stateKey(target), { consistency: "strong" }),
@@ -1088,22 +1034,16 @@ const acquireCycle = async (
     const existing = parseState(stateEntry.value);
     const existingEvidence = evidenceEntry.value === null ? null : parseEvidence(evidenceEntry.value);
     if (stateEntry.value !== null && !existing) {
-      throw new PromptCacheScopeExperimentUnavailableError(
-        "Prompt-cache scope experiment has malformed target-scoped state.",
-      );
+      throw new PromptCacheScopeExperimentUnavailableError("Prompt-cache scope experiment has malformed target-scoped state.");
     }
     if (evidenceEntry.value !== null && !existingEvidence) {
-      throw new PromptCacheScopeExperimentUnavailableError(
-        "Prompt-cache scope experiment has malformed target-scoped evidence.",
-      );
+      throw new PromptCacheScopeExperimentUnavailableError("Prompt-cache scope experiment has malformed target-scoped evidence.");
     }
     // An active campaign must never pick up evidence from another target or
     // session. Detect this before claiming a lease, so a corrupted durable
     // record cannot be overwritten after a paid dispatch has started.
     if (existing && !activeStateEvidenceIsConsistent(existing, existingEvidence)) {
-      throw new PromptCacheScopeExperimentUnavailableError(
-        "Prompt-cache scope experiment has inconsistent target-scoped durable evidence.",
-      );
+      throw new PromptCacheScopeExperimentUnavailableError("Prompt-cache scope experiment has inconsistent target-scoped durable evidence.");
     }
     const now = Date.now();
     const activeState = existing && existing.expires_at_ms > now ? existing : null;
@@ -1113,19 +1053,12 @@ const acquireCycle = async (
     let state: ExperimentState;
     let campaignOwner: string;
     if (activeState) {
-      if (
-        !sameTargetCore(activeState.target, target) ||
-        activeState.target.inventory_fingerprint !== target.inventory_fingerprint
-      ) {
-        throw new PromptCacheScopeExperimentUnavailableError(
-          "Prompt-cache scope experiment target changed while its campaign was active.",
-        );
+      if (!sameTargetCore(activeState.target, target) || activeState.target.inventory_fingerprint !== target.inventory_fingerprint) {
+        throw new PromptCacheScopeExperimentUnavailableError("Prompt-cache scope experiment target changed while its campaign was active.");
       }
       if (!ownsCampaignLease(campaignEntry.value, activeState)) {
         if (hasActiveLease(campaignEntry.value)) throw new PromptCacheScopeExperimentBusyError();
-        throw new PromptCacheScopeExperimentUnavailableError(
-          "Prompt-cache scope experiment lost its provider campaign lease.",
-        );
+        throw new PromptCacheScopeExperimentUnavailableError("Prompt-cache scope experiment lost its provider campaign lease.");
       }
       campaignOwner = activeState.campaign_owner;
       state = { ...activeState, target };
@@ -1151,16 +1084,15 @@ const acquireCycle = async (
       inventory_fingerprint: state.target.inventory_fingerprint,
       lease_until_ms: state.expires_at_ms,
     };
-    const atomic = kv.atomic()
+    const atomic = kv
+      .atomic()
       .check(stateEntry)
       .check(evidenceEntry)
       .check(campaignEntry)
       .check(cycleEntry)
-      .set(
-        cycleLeaseKey(target),
-        { owner: cycleOwner, lease_until_ms: now + PROMPT_CACHE_SCOPE_EXPERIMENT_LEASE_MS } satisfies ExperimentLease,
-        { expireIn: PROMPT_CACHE_SCOPE_EXPERIMENT_LEASE_MS * 2 },
-      )
+      .set(cycleLeaseKey(target), { owner: cycleOwner, lease_until_ms: now + PROMPT_CACHE_SCOPE_EXPERIMENT_LEASE_MS } satisfies ExperimentLease, {
+        expireIn: PROMPT_CACHE_SCOPE_EXPERIMENT_LEASE_MS * 2,
+      })
       .set(campaignLeaseKey(target), campaignLease, { expireIn: Math.max(1, state.expires_at_ms - now) })
       .set(stateKey(target), state, { expireIn: Math.max(1, state.expires_at_ms - now) });
     if (resettingPriorSession) atomic.delete(evidenceKey(target));
@@ -1182,14 +1114,13 @@ const renewLease = async (kv: Deno.Kv, state: ExperimentState, cycleOwner: strin
       throw new PromptCacheScopeExperimentFailedError("Prompt-cache scope experiment lost its lease.");
     }
     const now = Date.now();
-    const commit = await kv.atomic()
+    const commit = await kv
+      .atomic()
       .check(cycleEntry)
       .check(campaignEntry)
-      .set(
-        cycleKey,
-        { owner: cycleOwner, lease_until_ms: now + PROMPT_CACHE_SCOPE_EXPERIMENT_LEASE_MS } satisfies ExperimentLease,
-        { expireIn: PROMPT_CACHE_SCOPE_EXPERIMENT_LEASE_MS * 2 },
-      )
+      .set(cycleKey, { owner: cycleOwner, lease_until_ms: now + PROMPT_CACHE_SCOPE_EXPERIMENT_LEASE_MS } satisfies ExperimentLease, {
+        expireIn: PROMPT_CACHE_SCOPE_EXPERIMENT_LEASE_MS * 2,
+      })
       .set(
         campaignKey,
         {
@@ -1198,7 +1129,7 @@ const renewLease = async (kv: Deno.Kv, state: ExperimentState, cycleOwner: strin
           inventory_fingerprint: state.target.inventory_fingerprint,
           lease_until_ms: state.expires_at_ms,
         } satisfies CampaignLease,
-        { expireIn: Math.max(1, state.expires_at_ms - now) },
+        { expireIn: Math.max(1, state.expires_at_ms - now) }
       )
       .commit();
     if (commit.ok) return;
@@ -1219,7 +1150,7 @@ const persistIntermediate = async (
   state: ExperimentState,
   cycleOwner: string,
   cycle: CycleEvidence,
-  nextState: ExperimentState,
+  nextState: ExperimentState
 ): Promise<void> => {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const [stateEntry, evidenceEntry, cycleEntry, campaignEntry] = await Promise.all([
@@ -1233,8 +1164,10 @@ const persistIntermediate = async (
     }
     const persistedState = parseState(stateEntry.value);
     if (
-      !persistedState || persistedState.started_at_ms !== state.started_at_ms ||
-      persistedState.next_cycle !== state.next_cycle || persistedState.campaign_owner !== state.campaign_owner ||
+      !persistedState ||
+      persistedState.started_at_ms !== state.started_at_ms ||
+      persistedState.next_cycle !== state.next_cycle ||
+      persistedState.campaign_owner !== state.campaign_owner ||
       !sameTargetDefinition(persistedState.target, state.target)
     ) {
       throw new PromptCacheScopeExperimentFailedError("Prompt-cache scope experiment state changed concurrently.");
@@ -1248,17 +1181,14 @@ const persistIntermediate = async (
       verified_at_ms: Date.now(),
       cycles,
     };
-    const atomic = kv.atomic()
+    const atomic = kv
+      .atomic()
       .check(stateEntry)
       .check(evidenceEntry)
       .check(cycleEntry)
       .check(campaignEntry)
       .set(stateKey(nextState.target), nextState, { expireIn: Math.max(1, nextState.expires_at_ms - Date.now()) })
-      .set(
-        evidenceKey(nextState.target),
-        evidence,
-        { expireIn: Math.max(1, nextState.expires_at_ms - Date.now()) },
-      );
+      .set(evidenceKey(nextState.target), evidence, { expireIn: Math.max(1, nextState.expires_at_ms - Date.now()) });
     if (nextState.next_cycle <= PROMPT_CACHE_SCOPE_EXPERIMENT_CYCLES) atomic.delete(cycleLeaseKey(state.target));
     const commit = await atomic.commit();
     if (commit.ok) return;
@@ -1276,7 +1206,7 @@ const finalize = async (
     reason?: InconclusiveReason;
     cycle?: CycleEvidence;
     completedCycles?: number;
-  }> = {},
+  }> = {}
 ): Promise<PromptCacheScopeExperimentResult> => {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const [stateEntry, evidenceEntry, cycleEntry, campaignEntry] = await Promise.all([
@@ -1290,7 +1220,8 @@ const finalize = async (
     }
     const persistedState = parseState(stateEntry.value);
     if (
-      !persistedState || persistedState.started_at_ms !== state.started_at_ms ||
+      !persistedState ||
+      persistedState.started_at_ms !== state.started_at_ms ||
       persistedState.campaign_owner !== state.campaign_owner ||
       !sameTargetDefinition(persistedState.target, state.target)
     ) {
@@ -1300,10 +1231,7 @@ const finalize = async (
     if (!activeStateEvidenceIsConsistent(persistedState, prior)) {
       throw new PromptCacheScopeExperimentFailedError("Prompt-cache scope experiment evidence changed concurrently.");
     }
-    const cycles = [
-      ...(prior?.cycles ?? []),
-      ...(options.cycle ? [options.cycle] : []),
-    ];
+    const cycles = [...(prior?.cycles ?? []), ...(options.cycle ? [options.cycle] : [])];
     const evidence: StoredEvidence = {
       v: 3,
       target: state.target,
@@ -1313,7 +1241,8 @@ const finalize = async (
       cycles,
       ...(options.reason ? { inconclusive_reason: options.reason } : {}),
     };
-    const commit = await kv.atomic()
+    const commit = await kv
+      .atomic()
       .check(stateEntry)
       .check(evidenceEntry)
       .check(cycleEntry)
@@ -1334,8 +1263,7 @@ const finalize = async (
       target_id: state.target.id,
       model: state.target.model,
       status: outcome === "completed" ? "completed" : "inconclusive",
-      completed_cycles: options.completedCycles ??
-        state.classifications.length + (options.cycle?.classification ? 1 : 0),
+      completed_cycles: options.completedCycles ?? state.classifications.length + (options.cycle?.classification ? 1 : 0),
       verified_at_ms: evidence.verified_at_ms,
       ...(options.scope ? { scope: options.scope } : {}),
       ...(options.reason ? { inconclusive_reason: options.reason } : {}),
@@ -1349,7 +1277,7 @@ const runCycle = async (
   state: ExperimentState,
   cycleOwner: string,
   cycleNumber: number,
-  initialSession: Awaited<ReturnType<typeof beginCodexCacheScopeExperiment>>,
+  initialSession: Awaited<ReturnType<typeof beginCodexCacheScopeExperiment>>
 ): Promise<
   Readonly<{
     evidence: CycleEvidence;
@@ -1358,11 +1286,7 @@ const runCycle = async (
   }>
 > => {
   const cycleSignal = AbortSignal.timeout(PROMPT_CACHE_SCOPE_EXPERIMENT_CYCLE_DEADLINE_MS);
-  const body = buildExperimentRequest(
-    state.target.model,
-    crypto.randomUUID(),
-    `uos-cache-scope-v5-${crypto.randomUUID()}`,
-  );
+  const body = buildExperimentRequest(state.target.model, crypto.randomUUID(), `uos-cache-scope-v5-${crypto.randomUUID()}`);
   const expectedBody = JSON.stringify(body);
   const conversationA = crypto.randomUUID();
   const conversationB = crypto.randomUUID();
@@ -1382,7 +1306,9 @@ const runCycle = async (
   const signals: CacheSignal[] = [];
   let session = initialSession;
   let binding = state.target;
-  const inconclusive = (reason: InconclusiveReason): Readonly<{
+  const inconclusive = (
+    reason: InconclusiveReason
+  ): Readonly<{
     evidence: CycleEvidence;
     session: Awaited<ReturnType<typeof beginCodexCacheScopeExperiment>>;
     binding: PromptCacheScopeTargetBinding;
@@ -1416,10 +1342,7 @@ const runCycle = async (
       throw new PromptCacheScopeExperimentFailedError("Prompt-cache scope experiment request body drifted.");
     }
     const startedAtMs = performance.now();
-    const sampleSignal = AbortSignal.any([
-      cycleSignal,
-      AbortSignal.timeout(PROMPT_CACHE_SCOPE_EXPERIMENT_SAMPLE_DEADLINE_MS),
-    ]);
+    const sampleSignal = AbortSignal.any([cycleSignal, AbortSignal.timeout(PROMPT_CACHE_SCOPE_EXPERIMENT_SAMPLE_DEADLINE_MS)]);
     const response = await fetchCodexResponsesForCacheScopeExperiment(body, {
       session,
       slot: CACHE_SCOPE_EXPECTED_SLOTS[index]!,
@@ -1427,26 +1350,15 @@ const runCycle = async (
       clientVersion: binding.catalog_client_version,
       signal: sampleSignal,
     });
-    const parsed = await readPromptCacheScopeExperimentCompletedUsage(
-      response,
-      CACHE_SCOPE_EXPECTED_SLOTS[index]!,
-      binding.model,
-      startedAtMs,
-      sampleSignal,
-    );
+    const parsed = await readPromptCacheScopeExperimentCompletedUsage(response, CACHE_SCOPE_EXPECTED_SLOTS[index]!, binding.model, startedAtMs, sampleSignal);
     if (parsed.status === "inconclusive") return inconclusive(parsed.reason);
     const expectedSignal = CACHE_SCOPE_EXPECTED_SIGNALS[index] ?? null;
     if (expectedSignal !== null && parsed.signal !== expectedSignal) return inconclusive("invalid_cache_signal");
     const reusableTokens = samples[0]?.usage.cache_write_tokens;
-    if (
-      index > 0 && (reusableTokens === undefined || !matchesCycleReusableCounter(parsed.sample.usage, reusableTokens))
-    ) {
+    if (index > 0 && (reusableTokens === undefined || !matchesCycleReusableCounter(parsed.sample.usage, reusableTokens))) {
       return inconclusive("invalid_cache_signal");
     }
-    if (
-      CACHE_SCOPE_DISCRIMINATOR_INDEXES.has(index) &&
-      hasMixedPrefixScaleCacheSignals(parsed.sample.usage)
-    ) {
+    if (CACHE_SCOPE_DISCRIMINATOR_INDEXES.has(index) && hasMixedPrefixScaleCacheSignals(parsed.sample.usage)) {
       // Stop before another paid request: the mixed tuple cannot identify the
       // side of this discriminator that supplied the reusable prefix.
       return inconclusive("invalid_cache_signal");
@@ -1455,9 +1367,7 @@ const runCycle = async (
     signals.push(parsed.signal);
   }
   const classification = classifyCycle(binding.model, samples, signals);
-  return classification
-    ? { evidence: { cycle: cycleNumber, samples, classification }, session, binding }
-    : inconclusive("slot_drift");
+  return classification ? { evidence: { cycle: cycleNumber, samples, classification }, session, binding } : inconclusive("slot_drift");
 };
 
 const resultForIntermediate = (state: ExperimentState): PromptCacheScopeExperimentResult => ({
@@ -1477,7 +1387,7 @@ const resultForIntermediate = (state: ExperimentState): PromptCacheScopeExperime
  * fences target identity and refreshes only benign runtime-default changes.
  */
 export const runPromptCacheScopeExperiment = async (
-  telemetryBaseline: PromptCacheScopeExperimentTelemetryBaseline,
+  telemetryBaseline: PromptCacheScopeExperimentTelemetryBaseline
 ): Promise<PromptCacheScopeExperimentResult> => {
   const kv = await getKv();
   if (!kv) {
@@ -1485,17 +1395,13 @@ export const runPromptCacheScopeExperiment = async (
   }
   const baselineTarget = parseTargetBinding(telemetryBaseline.target);
   if (!baselineTarget) {
-    throw new PromptCacheScopeExperimentUnavailableError(
-      "Prompt-cache scope experiment requires a current-release Stage 0 telemetry baseline.",
-    );
+    throw new PromptCacheScopeExperimentUnavailableError("Prompt-cache scope experiment requires a current-release Stage 0 telemetry baseline.");
   }
   // Close the Stage 0 TOCTOU window before acquiring an OAuth-mutating
   // campaign lease. A bodyless request may never resolve a different target.
   const preflight = await resolveBoundTarget(kv, baselineTarget);
   if (preflight.status !== "resolved") {
-    throw new PromptCacheScopeExperimentUnavailableError(
-      "Prompt-cache scope experiment target changed after its Stage 0 telemetry baseline.",
-    );
+    throw new PromptCacheScopeExperimentUnavailableError("Prompt-cache scope experiment target changed after its Stage 0 telemetry baseline.");
   }
   const initialSession = await beginCodexCacheScopeExperiment();
   const acquired = await acquireCycle(kv, preflight.value.binding, initialSession.authPoolVersionstamp);
@@ -1540,24 +1446,18 @@ export const runPromptCacheScopeExperiment = async (
         return await finalize(kv, boundState, cycleOwner, "completed", { scope });
       }
       return await finalize(kv, boundState, cycleOwner, "inconclusive", {
-        reason: promotion.reason === "model_drift" || promotion.reason === "catalog_drift" ||
-            promotion.reason === "capability_changed"
-          ? "target_catalog_drift"
-          : promotion.reason === "auth_pool_drift"
-          ? "auth_pool_drift"
-          : promotion.reason === "runtime_drift"
-          ? "runtime_drift"
-          : "promotion_conflict",
+        reason:
+          promotion.reason === "model_drift" || promotion.reason === "catalog_drift" || promotion.reason === "capability_changed"
+            ? "target_catalog_drift"
+            : promotion.reason === "auth_pool_drift"
+              ? "auth_pool_drift"
+              : promotion.reason === "runtime_drift"
+                ? "runtime_drift"
+                : "promotion_conflict",
       });
     }
 
-    const cycle = await runCycle(
-      kv,
-      boundState,
-      cycleOwner,
-      boundState.next_cycle,
-      initialSession,
-    );
+    const cycle = await runCycle(kv, boundState, cycleOwner, boundState.next_cycle, initialSession);
     const classification = cycle.evidence.classification;
     if (!classification) {
       return await finalize(kv, boundState, cycleOwner, "inconclusive", {
@@ -1567,8 +1467,8 @@ export const runPromptCacheScopeExperiment = async (
     }
     const classifications = [...boundState.classifications, classification];
     const nextCycle = boundState.next_cycle + 1;
-    const agreed = classifications.length === PROMPT_CACHE_SCOPE_EXPERIMENT_CYCLES &&
-      classifications.every((entry) => sameObservation(entry, classifications[0]!));
+    const agreed =
+      classifications.length === PROMPT_CACHE_SCOPE_EXPERIMENT_CYCLES && classifications.every((entry) => sameObservation(entry, classifications[0]!));
     if (classifications.length === PROMPT_CACHE_SCOPE_EXPERIMENT_CYCLES && !agreed) {
       return await finalize(kv, boundState, cycleOwner, "inconclusive", {
         reason: "cycle_disagreement",
@@ -1605,29 +1505,25 @@ export const runPromptCacheScopeExperiment = async (
       return await finalize(kv, nextState, cycleOwner, "completed", { scope: classification });
     }
     return await finalize(kv, nextState, cycleOwner, "inconclusive", {
-      reason: promotion.reason === "model_drift" || promotion.reason === "catalog_drift" ||
-          promotion.reason === "capability_changed"
-        ? "target_catalog_drift"
-        : promotion.reason === "auth_pool_drift"
-        ? "auth_pool_drift"
-        : promotion.reason === "runtime_drift"
-        ? "runtime_drift"
-        : "promotion_conflict",
+      reason:
+        promotion.reason === "model_drift" || promotion.reason === "catalog_drift" || promotion.reason === "capability_changed"
+          ? "target_catalog_drift"
+          : promotion.reason === "auth_pool_drift"
+            ? "auth_pool_drift"
+            : promotion.reason === "runtime_drift"
+              ? "runtime_drift"
+              : "promotion_conflict",
     });
   } catch (error) {
-    if (
-      error instanceof PromptCacheScopeExperimentBusyError ||
-      error instanceof PromptCacheScopeExperimentUnavailableError
-    ) {
+    if (error instanceof PromptCacheScopeExperimentBusyError || error instanceof PromptCacheScopeExperimentUnavailableError) {
       throw error;
     }
-    const failure = error instanceof PromptCacheScopeExperimentFailedError
-      ? error
-      : error instanceof CodexCacheScopeExperimentError
-      ? new PromptCacheScopeExperimentFailedError(error.message)
-      : new PromptCacheScopeExperimentFailedError(
-        error instanceof Error ? error.message : "Prompt-cache scope experiment cycle failed.",
-      );
+    const failure =
+      error instanceof PromptCacheScopeExperimentFailedError
+        ? error
+        : error instanceof CodexCacheScopeExperimentError
+          ? new PromptCacheScopeExperimentFailedError(error.message)
+          : new PromptCacheScopeExperimentFailedError(error instanceof Error ? error.message : "Prompt-cache scope experiment cycle failed.");
     if (!promotionSucceeded) {
       try {
         await finalize(kv, state, cycleOwner, "failed");

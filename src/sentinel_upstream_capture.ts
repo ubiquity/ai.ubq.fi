@@ -71,7 +71,7 @@ const freezeTrace = (value: SentinelUpstreamTrace): SentinelUpstreamTrace => {
         ...attempt,
         chunks_base64: Object.freeze([...attempt.chunks_base64]),
       })
-    ),
+    )
   );
   return Object.freeze({ ...value, attempts });
 };
@@ -145,17 +145,11 @@ export const parseSentinelUpstreamTrace = (value: unknown): SentinelUpstreamTrac
   const record = value as Record<string, unknown>;
   const expectedKeys = ["version", "attempts", "attempts_truncated", "bytes_truncated", "chunks_truncated"];
   const actualKeys = Object.keys(record);
-  if (
-    actualKeys.length !== expectedKeys.length ||
-    actualKeys.some((key) => !expectedKeys.includes(key))
-  ) {
+  if (actualKeys.length !== expectedKeys.length || actualKeys.some((key) => !expectedKeys.includes(key))) {
     throw new Error("Sentinel upstream trace keys are invalid");
   }
   if (record.version !== 1) throw new Error("Sentinel upstream trace version is invalid");
-  if (
-    typeof record.attempts_truncated !== "boolean" || typeof record.bytes_truncated !== "boolean" ||
-    typeof record.chunks_truncated !== "boolean"
-  ) {
+  if (typeof record.attempts_truncated !== "boolean" || typeof record.bytes_truncated !== "boolean" || typeof record.chunks_truncated !== "boolean") {
     throw new Error("Sentinel upstream trace truncation flags are invalid");
   }
   if (!Array.isArray(record.attempts)) throw new Error("Sentinel upstream trace attempts are invalid");
@@ -170,29 +164,18 @@ export const parseSentinelUpstreamTrace = (value: unknown): SentinelUpstreamTrac
     for (let index = 0; index < record.attempts.length; index += 1) {
       const attempt = record.attempts[index];
       const required = ["provider", "status", "content_type", "chunks_base64", "terminal"];
-      const keys = attempt === null || typeof attempt !== "object" || Array.isArray(attempt)
-        ? []
-        : Object.keys(attempt);
-      if (
-        keys.length !== required.length ||
-        keys.some((key) => !required.includes(key))
-      ) {
+      const keys = attempt === null || typeof attempt !== "object" || Array.isArray(attempt) ? [] : Object.keys(attempt);
+      if (keys.length !== required.length || keys.some((key) => !required.includes(key))) {
         cloneIndex(attempt, index, "Sentinel upstream attempt keys are invalid");
       }
       const wire = attempt as Record<string, unknown>;
       if (typeof wire.provider !== "string" || !PROVIDER_SET.has(wire.provider)) {
         cloneIndex(attempt, index, "Sentinel upstream attempt provider is invalid");
       }
-      if (
-        wire.status !== null && (typeof wire.status !== "number" || !Number.isSafeInteger(wire.status) ||
-          wire.status < 100 || wire.status > 599)
-      ) {
+      if (wire.status !== null && (typeof wire.status !== "number" || !Number.isSafeInteger(wire.status) || wire.status < 100 || wire.status > 599)) {
         cloneIndex(attempt, index, "Sentinel upstream attempt status is invalid");
       }
-      if (
-        wire.content_type !== null && (typeof wire.content_type !== "string" ||
-          !CONTENT_TYPE_SET.has(wire.content_type))
-      ) {
+      if (wire.content_type !== null && (typeof wire.content_type !== "string" || !CONTENT_TYPE_SET.has(wire.content_type))) {
         cloneIndex(attempt, index, "Sentinel upstream attempt content type is invalid");
       }
       if (typeof wire.terminal !== "string" || !TERMINAL_SET.has(wire.terminal)) {
@@ -272,9 +255,7 @@ const canonicalValue = (value: unknown): string => {
   if (typeof value === "number" || typeof value === "boolean") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonicalValue).join(",")}]`;
   if (typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) =>
-      left < right ? -1 : left > right ? 1 : 0
-    );
+    const entries = Object.entries(value as Record<string, unknown>).sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
     return `{${entries.map(([key, child]) => `${JSON.stringify(key)}:${canonicalValue(child)}`).join(",")}}`;
   }
   throw new Error("Sentinel upstream trace contains an unsupported value");
@@ -352,51 +333,54 @@ export const createSentinelUpstreamRecorder = (): SentinelUpstreamRecorder => {
       return response;
     }
     const reader = response.body.getReader();
-    const stream = new ReadableStream<Uint8Array>({
-      async pull(controller) {
-        let result: ReadableStreamReadResult<Uint8Array>;
-        try {
-          result = await reader.read();
-        } catch (error) {
-          finishAttempt(attempt, "read_error");
+    const stream = new ReadableStream<Uint8Array>(
+      {
+        async pull(controller) {
+          let result: ReadableStreamReadResult<Uint8Array>;
           try {
-            controller.error(error);
-          } catch {
-            // The downstream may have cancelled while the upstream read failed.
+            result = await reader.read();
+          } catch (error) {
+            finishAttempt(attempt, "read_error");
+            try {
+              controller.error(error);
+            } catch {
+              // The downstream may have cancelled while the upstream read failed.
+            }
+            return;
           }
-          return;
-        }
-        if (attempt.terminal === "cancelled") return;
-        if (result.done) {
-          finishAttempt(attempt, "eof");
+          if (attempt.terminal === "cancelled") return;
+          if (result.done) {
+            finishAttempt(attempt, "eof");
+            try {
+              controller.close();
+            } catch {
+              // Concurrent consumer cancellation may have closed the wrapper first.
+            }
+            return;
+          }
           try {
-            controller.close();
+            retainChunk(attempt, result.value);
           } catch {
-            // Concurrent consumer cancellation may have closed the wrapper first.
+            // Recorder-side bookkeeping failure must never replace a valid
+            // original chunk: disable further retention for this attempt and
+            // leave it pending so the sealed trace truthfully reports
+            // incomplete coverage instead of inventing complete bytes.
+            attempt.bookkeepingFailed = true;
           }
-          return;
-        }
-        try {
-          retainChunk(attempt, result.value);
-        } catch {
-          // Recorder-side bookkeeping failure must never replace a valid
-          // original chunk: disable further retention for this attempt and
-          // leave it pending so the sealed trace truthfully reports
-          // incomplete coverage instead of inventing complete bytes.
-          attempt.bookkeepingFailed = true;
-        }
-        try {
-          controller.enqueue(result.value);
-        } catch {
-          // The downstream cancelled after the read; the cancel callback owns
-          // the terminal transition and underlying reader cancellation.
-        }
+          try {
+            controller.enqueue(result.value);
+          } catch {
+            // The downstream cancelled after the read; the cancel callback owns
+            // the terminal transition and underlying reader cancellation.
+          }
+        },
+        cancel(reason) {
+          finishAttempt(attempt, "cancelled");
+          return reader.cancel(reason);
+        },
       },
-      cancel(reason) {
-        finishAttempt(attempt, "cancelled");
-        return reader.cancel(reason);
-      },
-    }, { highWaterMark: 0 });
+      { highWaterMark: 0 }
+    );
     return new Response(stream, {
       status: response.status,
       statusText: response.statusText,

@@ -17,12 +17,7 @@
  */
 
 export type BaselineAdapterErrorCode =
-  | "not-provisioned"
-  | "invalid-config"
-  | "invalid-upstream-response"
-  | "unproven-format"
-  | "request-limit"
-  | "bridge-parse";
+  "not-provisioned" | "invalid-config" | "invalid-upstream-response" | "unproven-format" | "request-limit" | "bridge-parse";
 
 export class BaselineAdapterError extends Error {
   readonly code: BaselineAdapterErrorCode;

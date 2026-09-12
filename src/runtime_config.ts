@@ -62,10 +62,7 @@ const compactReasoningLevels = (model: Record<string, unknown>): ReasoningEffort
   return Array.from(new Set(levels));
 };
 
-const compactReasoningWireMap = (
-  model: Record<string, unknown>,
-  levels: readonly ReasoningEffort[],
-): Readonly<Record<string, ReasoningEffort>> | undefined => {
+const compactReasoningWireMap = (model: Record<string, unknown>, levels: readonly ReasoningEffort[]): Readonly<Record<string, ReasoningEffort>> | undefined => {
   const entries = new Map<string, ReasoningEffort>();
   if (isRecord(model.reasoning_effort_wire_map)) {
     for (const [effortRaw, wireRaw] of Object.entries(model.reasoning_effort_wire_map)) {
@@ -86,8 +83,7 @@ export const compactRuntimeCodexModels = (snapshot: CodexModelsSnapshot): Runtim
   const seen = new Set<string>();
   for (const value of snapshot.models) {
     if (!isRecord(value)) continue;
-    const slug = (getString(value.slug) ?? getString(value.id) ?? getString(value.model) ?? getString(value.name))
-      ?.trim();
+    const slug = (getString(value.slug) ?? getString(value.id) ?? getString(value.model) ?? getString(value.name))?.trim();
     if (!slug || seen.has(slug)) continue;
     const supportedReasoningLevels = compactReasoningLevels(value);
     const defaultReasoningLevel = reasoningLevel(value.default_reasoning_level);
@@ -108,9 +104,7 @@ export const compactRuntimeCodexModels = (snapshot: CodexModelsSnapshot): Runtim
   if (!models.length) throw new RuntimeConfigError("runtime config requires a non-empty Codex model catalog");
 
   const source = getString(snapshot.source)?.trim();
-  const updatedAtMs = typeof snapshot.updated_at_ms === "number" && Number.isFinite(snapshot.updated_at_ms)
-    ? Math.trunc(snapshot.updated_at_ms)
-    : 0;
+  const updatedAtMs = typeof snapshot.updated_at_ms === "number" && Number.isFinite(snapshot.updated_at_ms) ? Math.trunc(snapshot.updated_at_ms) : 0;
   const clientVersion = getString(snapshot.client_version)?.trim() || undefined;
   if (!source || updatedAtMs <= 0) {
     throw new RuntimeConfigError("runtime config requires valid Codex catalog metadata");
@@ -126,9 +120,7 @@ export const compactRuntimeCodexModels = (snapshot: CodexModelsSnapshot): Runtim
 const enforceRuntimeConfigSize = (config: RuntimeConfigV2): RuntimeConfigV2 => {
   const bytes = serializedSize(config);
   if (bytes > RUNTIME_CONFIG_MAX_BYTES) {
-    throw new RuntimeConfigError(
-      `runtime config is too large (${bytes} bytes; maximum ${RUNTIME_CONFIG_MAX_BYTES} bytes)`,
-    );
+    throw new RuntimeConfigError(`runtime config is too large (${bytes} bytes; maximum ${RUNTIME_CONFIG_MAX_BYTES} bytes)`);
   }
   return config;
 };
@@ -139,9 +131,7 @@ export const normalizeRuntimeConfig = (value: unknown): RuntimeConfigV2 | null =
     const snapshot = compactRuntimeCodexModels(value.codex_models as CodexModelsSnapshot);
     const defaultModel = typeof value.default_model === "string" ? value.default_model.trim() : "";
     const defaultReasoning = normalizeReasoningEffort(value.default_reasoning_effort);
-    const updatedAtMs = typeof value.updated_at_ms === "number" && Number.isFinite(value.updated_at_ms)
-      ? Math.trunc(value.updated_at_ms)
-      : 0;
+    const updatedAtMs = typeof value.updated_at_ms === "number" && Number.isFinite(value.updated_at_ms) ? Math.trunc(value.updated_at_ms) : 0;
     if (!defaultModel || !defaultReasoning || updatedAtMs <= 0) return null;
     if (!snapshot.models.some((model) => model.slug === defaultModel)) return null;
     return enforceRuntimeConfigSize({
@@ -158,7 +148,7 @@ export const normalizeRuntimeConfig = (value: unknown): RuntimeConfigV2 | null =
 
 export const buildRuntimeConfig = (
   fullSnapshot: CodexModelsSnapshot,
-  options: Readonly<{ defaultModel?: string | null; defaultReasoningEffort?: string | null; nowMs?: number }> = {},
+  options: Readonly<{ defaultModel?: string | null; defaultReasoningEffort?: string | null; nowMs?: number }> = {}
 ): RuntimeConfigV2 => {
   const snapshot = compactRuntimeCodexModels(fullSnapshot);
   const defaultModel = options.defaultModel?.trim() || getCodexModelsSnapshotDefaultModel(snapshot);
@@ -175,10 +165,7 @@ export const buildRuntimeConfig = (
   });
 };
 
-export const loadRuntimeConfig = async (
-  kvOverride?: Deno.Kv | null,
-  nowMs = Date.now(),
-): Promise<RuntimeConfigV2 | null> => {
+export const loadRuntimeConfig = async (kvOverride?: Deno.Kv | null, nowMs = Date.now()): Promise<RuntimeConfigV2 | null> => {
   if (cachedRuntimeConfig && cachedRuntimeConfig.expires_at_ms > nowMs) return cachedRuntimeConfig.value;
   if (runtimeConfigLoadInFlight) return await runtimeConfigLoadInFlight;
   const stale = cachedRuntimeConfig?.value ?? null;
@@ -204,10 +191,7 @@ export const loadRuntimeConfig = async (
   return await runtimeConfigLoadInFlight;
 };
 
-export const storeRuntimeConfig = async (
-  config: RuntimeConfigV2,
-  kvOverride?: Deno.Kv | null,
-): Promise<boolean> => {
+export const storeRuntimeConfig = async (config: RuntimeConfigV2, kvOverride?: Deno.Kv | null): Promise<boolean> => {
   const normalized = normalizeRuntimeConfig(config);
   if (!normalized) throw new RuntimeConfigError("runtime config is invalid or exceeds one 4 KiB read unit");
   const kv = kvOverride === undefined ? await getKv() : kvOverride;

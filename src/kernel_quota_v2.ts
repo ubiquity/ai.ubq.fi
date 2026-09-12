@@ -26,18 +26,12 @@ const KERNEL_QUOTA_SETTLEMENT_RETRY_MS = 1_000;
 
 const MAX_KV_RETRIES = 3;
 
-export const kernelRepoPolicyKey = (owner: string, repo: string) =>
-  [...KERNEL_REPO_POLICY_V2_PREFIX, owner, repo] as const;
+export const kernelRepoPolicyKey = (owner: string, repo: string) => [...KERNEL_REPO_POLICY_V2_PREFIX, owner, repo] as const;
 export const kernelOrgPolicyKey = (owner: string) => [...KERNEL_ORG_POLICY_V2_PREFIX, owner] as const;
-export const kernelRepoWindowKey = (owner: string, repo: string) =>
-  [...KERNEL_REPO_WINDOW_V2_PREFIX, owner, repo] as const;
+export const kernelRepoWindowKey = (owner: string, repo: string) => [...KERNEL_REPO_WINDOW_V2_PREFIX, owner, repo] as const;
 export const kernelOrgWindowKey = (owner: string) => [...KERNEL_ORG_WINDOW_V2_PREFIX, owner] as const;
-export const kernelRepoReservationKey = (
-  owner: string,
-  repo: string,
-  windowCreatedAtMs: number,
-  requestId: string,
-) => [...KERNEL_REPO_RESERVATION_V2_PREFIX, owner, repo, windowCreatedAtMs, requestId] as const;
+export const kernelRepoReservationKey = (owner: string, repo: string, windowCreatedAtMs: number, requestId: string) =>
+  [...KERNEL_REPO_RESERVATION_V2_PREFIX, owner, repo, windowCreatedAtMs, requestId] as const;
 export const kernelOrgReservationKey = (owner: string, windowCreatedAtMs: number, requestId: string) =>
   [...KERNEL_ORG_RESERVATION_V2_PREFIX, owner, windowCreatedAtMs, requestId] as const;
 
@@ -104,8 +98,7 @@ export type KernelDefaultWindowCutoverGuard = Readonly<{
 }>;
 
 export type KernelDefaultWindowCutoverDecision =
-  | Readonly<{ ok: true; guard: KernelDefaultWindowCutoverGuard }>
-  | Readonly<{ ok: false; reason: "active_reservations" | "concurrent_change" | "unavailable" }>;
+  Readonly<{ ok: true; guard: KernelDefaultWindowCutoverGuard }> | Readonly<{ ok: false; reason: "active_reservations" | "concurrent_change" | "unavailable" }>;
 
 export type KernelQuotaReservation = Readonly<{
   signal: AbortSignal;
@@ -113,13 +106,10 @@ export type KernelQuotaReservation = Readonly<{
   release: (reason?: string) => Promise<void>;
 }>;
 
-export type KernelQuotaReservationDecision =
-  | Readonly<{ ok: true; reservation: KernelQuotaReservation }>
-  | Readonly<{ ok: false; response: Response }>;
+export type KernelQuotaReservationDecision = Readonly<{ ok: true; reservation: KernelQuotaReservation }> | Readonly<{ ok: false; response: Response }>;
 
 export type KernelQuotaPolicyStateDecision =
-  | Readonly<{ ok: true; limit_scope: KernelQuotaScope; has_policy: boolean }>
-  | Readonly<{ ok: false; response: Response }>;
+  Readonly<{ ok: true; limit_scope: KernelQuotaScope; has_policy: boolean }> | Readonly<{ ok: false; response: Response }>;
 
 type KernelDefaults = Readonly<{
   limit: number;
@@ -128,10 +118,8 @@ type KernelDefaults = Readonly<{
   windowEntry: Deno.KvEntryMaybe<number>;
 }>;
 
-const positiveSafeInteger = (value: unknown): value is number =>
-  typeof value === "number" && Number.isSafeInteger(value) && value > 0;
-const nonNegativeSafeInteger = (value: unknown): value is number =>
-  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+const positiveSafeInteger = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+const nonNegativeSafeInteger = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
 const normalizeUsageLimit = (value: unknown, fallback: number): number => {
   if (typeof value === "string") value = Number(value);
@@ -167,21 +155,10 @@ const loadDefaults = async (kv: Deno.Kv): Promise<KernelDefaults> => {
   };
 };
 
-const validIdentity = (
-  scope: KernelQuotaScope,
-  owner: string,
-  repo: string | undefined,
-  value: Record<string, unknown>,
-): boolean =>
-  value.v === 2 && value.scope === scope && value.owner === owner &&
-  (scope === "org" ? value.repo === undefined || value.repo === null : value.repo === repo);
+const validIdentity = (scope: KernelQuotaScope, owner: string, repo: string | undefined, value: Record<string, unknown>): boolean =>
+  value.v === 2 && value.scope === scope && value.owner === owner && (scope === "org" ? value.repo === undefined || value.repo === null : value.repo === repo);
 
-export const normalizeKernelQuotaPolicyV2 = (
-  value: unknown,
-  scope: KernelQuotaScope,
-  owner: string,
-  repo: string | undefined,
-): KernelQuotaPolicyV2 | null => {
+export const normalizeKernelQuotaPolicyV2 = (value: unknown, scope: KernelQuotaScope, owner: string, repo: string | undefined): KernelQuotaPolicyV2 | null => {
   if (!isRecord(value) || !validIdentity(scope, owner, repo, value)) return null;
   if (!nonNegativeSafeInteger(value.created_at_ms) || !nonNegativeSafeInteger(value.updated_at_ms)) return null;
   const windowMs = normalizeWindow(value.window_ms, 0);
@@ -203,20 +180,18 @@ export const normalizeKernelQuotaPolicyV2 = (
   };
 };
 
-export const normalizeKernelQuotaWindowV2 = (
-  value: unknown,
-  scope: KernelQuotaScope,
-  owner: string,
-  repo: string | undefined,
-): KernelQuotaWindowV2 | null => {
+export const normalizeKernelQuotaWindowV2 = (value: unknown, scope: KernelQuotaScope, owner: string, repo: string | undefined): KernelQuotaWindowV2 | null => {
   if (!isRecord(value) || !validIdentity(scope, owner, repo, value)) return null;
   const reservedRequests = value.reserved_requests === undefined ? 0 : value.reserved_requests;
   if (
-    !nonNegativeSafeInteger(value.usage_requests) || !nonNegativeSafeInteger(reservedRequests) ||
+    !nonNegativeSafeInteger(value.usage_requests) ||
+    !nonNegativeSafeInteger(reservedRequests) ||
     !positiveSafeInteger(value.usage_reset_at_ms) ||
-    !positiveSafeInteger(value.applied_window_ms) || !nonNegativeSafeInteger(value.created_at_ms) ||
+    !positiveSafeInteger(value.applied_window_ms) ||
+    !nonNegativeSafeInteger(value.created_at_ms) ||
     !nonNegativeSafeInteger(value.updated_at_ms)
-  ) return null;
+  )
+    return null;
   return {
     v: 2,
     scope,
@@ -231,13 +206,7 @@ export const normalizeKernelQuotaWindowV2 = (
   };
 };
 
-const newWindow = (
-  scope: KernelQuotaScope,
-  owner: string,
-  repo: string | undefined,
-  windowMs: number,
-  nowMs: number,
-): KernelQuotaWindowV2 => ({
+const newWindow = (scope: KernelQuotaScope, owner: string, repo: string | undefined, windowMs: number, nowMs: number): KernelQuotaWindowV2 => ({
   v: 2,
   scope,
   owner,
@@ -256,7 +225,7 @@ const windowForEffectivePolicy = (
   owner: string,
   repo: string | undefined,
   effectiveWindowMs: number,
-  nowMs: number,
+  nowMs: number
 ): { window: KernelQuotaWindowV2; needsWrite: boolean } => {
   if (!existing || existing.applied_window_ms !== effectiveWindowMs || existing.usage_reset_at_ms <= nowMs) {
     return { window: newWindow(scope, owner, repo, effectiveWindowMs, nowMs), needsWrite: true };
@@ -269,7 +238,7 @@ const policyFor = (
   scope: KernelQuotaScope,
   owner: string,
   repo: string | undefined,
-  defaults: KernelDefaults,
+  defaults: KernelDefaults
 ): {
   policy: KernelQuotaPolicyV2 | null;
   limit: number;
@@ -301,15 +270,14 @@ const policyFor = (
   };
 };
 
-const isExpired = (expiresAtMs: number, nowMs: number): boolean =>
-  expiresAtMs !== API_KEY_NO_EXPIRATION_MS && expiresAtMs <= nowMs;
+const isExpired = (expiresAtMs: number, nowMs: number): boolean => expiresAtMs !== API_KEY_NO_EXPIRATION_MS && expiresAtMs <= nowMs;
 
 const repoRecord = (
   owner: string,
   repo: string,
   policy: { limit: number; windowMs: number; expiresAtMs: number },
   window: KernelQuotaWindowV2,
-  nowMs: number,
+  nowMs: number
 ): KernelAuthLimitRecord => ({
   owner,
   repo,
@@ -326,7 +294,7 @@ const orgRecord = (
   owner: string,
   policy: { limit: number; windowMs: number; expiresAtMs: number },
   window: KernelQuotaWindowV2,
-  nowMs: number,
+  nowMs: number
 ): KernelOrgLimitRecord => ({
   owner,
   usage_limit_requests: policy.limit,
@@ -344,7 +312,7 @@ export type KernelOrgLimitSnapshot = Readonly<{ record: KernelOrgLimitRecord; so
 const getSnapshot = async (
   scope: KernelQuotaScope,
   owner: string,
-  repo?: string,
+  repo?: string
 ): Promise<{ record: KernelAuthLimitRecord | KernelOrgLimitRecord; source: "default" | "kv" } | null> => {
   try {
     const kv = await getKv();
@@ -363,12 +331,10 @@ const getSnapshot = async (
       owner,
       repo,
       effective.windowMs,
-      Date.now(),
+      Date.now()
     ).window;
     return {
-      record: scope === "repo"
-        ? repoRecord(owner, repo!, effective, window, Date.now())
-        : orgRecord(owner, effective, window, Date.now()),
+      record: scope === "repo" ? repoRecord(owner, repo!, effective, window, Date.now()) : orgRecord(owner, effective, window, Date.now()),
       source: effective.source,
     };
   } catch (error) {
@@ -377,22 +343,17 @@ const getSnapshot = async (
   }
 };
 
-export const getKernelUsageLimitSnapshot = async (
-  owner: string,
-  repo: string,
-): Promise<KernelAuthLimitSnapshot | null> => {
+export const getKernelUsageLimitSnapshot = async (owner: string, repo: string): Promise<KernelAuthLimitSnapshot | null> => {
   const snapshot = await getSnapshot("repo", owner, repo);
-  return snapshot ? snapshot as KernelAuthLimitSnapshot : null;
+  return snapshot ? (snapshot as KernelAuthLimitSnapshot) : null;
 };
 
 export const getKernelOrgUsageLimitSnapshot = async (owner: string): Promise<KernelOrgLimitSnapshot | null> => {
   const snapshot = await getSnapshot("org", owner);
-  return snapshot ? snapshot as KernelOrgLimitSnapshot : null;
+  return snapshot ? (snapshot as KernelOrgLimitSnapshot) : null;
 };
 
-const listPolicies = async (
-  scope: KernelQuotaScope,
-): Promise<(KernelAuthLimitRecord | KernelOrgLimitRecord)[] | null> => {
+const listPolicies = async (scope: KernelQuotaScope): Promise<(KernelAuthLimitRecord | KernelOrgLimitRecord)[] | null> => {
   try {
     const kv = await getKv();
     if (!kv) return null;
@@ -415,28 +376,15 @@ const listPolicies = async (
         owner,
         repo,
         policy.window_ms,
-        Date.now(),
+        Date.now()
       ).window;
       rows.push(
         scope === "repo"
-          ? repoRecord(
-            owner,
-            repo!,
-            { limit: policy.usage_limit_requests, windowMs: policy.window_ms, expiresAtMs: policy.expires_at_ms },
-            window,
-            Date.now(),
-          )
-          : orgRecord(
-            owner,
-            { limit: policy.usage_limit_requests, windowMs: policy.window_ms, expiresAtMs: policy.expires_at_ms },
-            window,
-            Date.now(),
-          ),
+          ? repoRecord(owner, repo!, { limit: policy.usage_limit_requests, windowMs: policy.window_ms, expiresAtMs: policy.expires_at_ms }, window, Date.now())
+          : orgRecord(owner, { limit: policy.usage_limit_requests, windowMs: policy.window_ms, expiresAtMs: policy.expires_at_ms }, window, Date.now())
       );
     }
-    rows.sort((a, b) =>
-      a.owner.localeCompare(b.owner) || ("repo" in a && "repo" in b ? a.repo.localeCompare(b.repo) : 0)
-    );
+    rows.sort((a, b) => a.owner.localeCompare(b.owner) || ("repo" in a && "repo" in b ? a.repo.localeCompare(b.repo) : 0));
     return rows;
   } catch (error) {
     console.warn("[ai.ubq.fi] Failed to list kernel quota policies:", error);
@@ -459,7 +407,7 @@ const setPolicy = async (
   owner: string,
   repo: string | undefined,
   usageLimitRequests: number,
-  options: { resetUsage?: boolean; windowMs?: number; expiresAtMs?: number },
+  options: { resetUsage?: boolean; windowMs?: number; expiresAtMs?: number }
 ): Promise<KernelAuthLimitRecord | KernelOrgLimitRecord | null> => {
   try {
     const kv = await getKv();
@@ -469,29 +417,20 @@ const setPolicy = async (
       const windowKey = scope === "repo" ? kernelRepoWindowKey(owner, repo!) : kernelOrgWindowKey(owner);
       for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt += 1) {
         const nowMs = Date.now();
-        const [defaults, policyEntry, windowEntry, orgPolicyEntry, orgWindowEntry, defaultCutoverEntry] = await Promise
-          .all([
-            loadDefaults(kv),
-            kv.get<KernelQuotaPolicyV2>(policyKey, { consistency: "strong" }),
-            kv.get<KernelQuotaWindowV2>(windowKey, { consistency: "strong" }),
-            scope === "repo"
-              ? kv.get<KernelQuotaPolicyV2>(kernelOrgPolicyKey(owner), { consistency: "strong" })
-              : Promise.resolve(null),
-            scope === "repo"
-              ? kv.get<KernelQuotaWindowV2>(kernelOrgWindowKey(owner), { consistency: "strong" })
-              : Promise.resolve(null),
-            kv.get<KernelDefaultWindowCutoverV2>(KERNEL_DEFAULT_WINDOW_CUTOVER_V2_KEY, {
-              consistency: "strong",
-            }),
-          ]);
+        const [defaults, policyEntry, windowEntry, orgPolicyEntry, orgWindowEntry, defaultCutoverEntry] = await Promise.all([
+          loadDefaults(kv),
+          kv.get<KernelQuotaPolicyV2>(policyKey, { consistency: "strong" }),
+          kv.get<KernelQuotaWindowV2>(windowKey, { consistency: "strong" }),
+          scope === "repo" ? kv.get<KernelQuotaPolicyV2>(kernelOrgPolicyKey(owner), { consistency: "strong" }) : Promise.resolve(null),
+          scope === "repo" ? kv.get<KernelQuotaWindowV2>(kernelOrgWindowKey(owner), { consistency: "strong" }) : Promise.resolve(null),
+          kv.get<KernelDefaultWindowCutoverV2>(KERNEL_DEFAULT_WINDOW_CUTOVER_V2_KEY, {
+            consistency: "strong",
+          }),
+        ]);
         const current = policyFor(policyEntry, scope, owner, repo, defaults);
         if (current.source === "default" && defaultCutoverEntry.value !== null) return null;
-        const windowMs = options.windowMs === undefined
-          ? current.windowMs
-          : normalizeWindow(options.windowMs, current.windowMs);
-        const expiresAtMs = options.expiresAtMs === undefined
-          ? current.expiresAtMs
-          : normalizeExpiration(options.expiresAtMs);
+        const windowMs = options.windowMs === undefined ? current.windowMs : normalizeWindow(options.windowMs, current.windowMs);
+        const expiresAtMs = options.expiresAtMs === undefined ? current.expiresAtMs : normalizeExpiration(options.expiresAtMs);
         const policy: KernelQuotaPolicyV2 = {
           v: 2,
           scope,
@@ -507,42 +446,17 @@ const setPolicy = async (
         if (windowEntry.value !== null && !currentWindow) return null;
         if (scope === "repo" && policyEntry.value === null && orgPolicyEntry && orgWindowEntry) {
           policyFor(orgPolicyEntry, "org", owner, undefined, defaults);
-          const inheritedOrgWindow = await reconcileKernelQuotaWindowReservations(
-            kv,
-            orgWindowEntry,
-            "org",
-            owner,
-            undefined,
-          );
+          const inheritedOrgWindow = await reconcileKernelQuotaWindowReservations(kv, orgWindowEntry, "org", owner, undefined);
           if (orgWindowEntry.value !== null && !inheritedOrgWindow) return null;
-          if (
-            inheritedOrgWindow && inheritedOrgWindow.usage_reset_at_ms > nowMs &&
-            inheritedOrgWindow.reserved_requests > 0
-          ) {
-            const reclaimed = await reclaimExpiredKernelReservationUnlocked(
-              kv,
-              "org",
-              owner,
-              undefined,
-              inheritedOrgWindow,
-              nowMs,
-            );
+          if (inheritedOrgWindow && inheritedOrgWindow.usage_reset_at_ms > nowMs && inheritedOrgWindow.reserved_requests > 0) {
+            const reclaimed = await reclaimExpiredKernelReservationUnlocked(kv, "org", owner, undefined, inheritedOrgWindow, nowMs);
             if (reclaimed) continue;
             return null;
           }
         }
         const reset = options.resetUsage === true || current.windowMs !== windowMs;
-        if (
-          reset && currentWindow && currentWindow.usage_reset_at_ms > nowMs && currentWindow.reserved_requests > 0
-        ) {
-          const reclaimed = await reclaimExpiredKernelReservationUnlocked(
-            kv,
-            scope,
-            owner,
-            repo,
-            currentWindow,
-            nowMs,
-          );
+        if (reset && currentWindow && currentWindow.usage_reset_at_ms > nowMs && currentWindow.reserved_requests > 0) {
+          const reclaimed = await reclaimExpiredKernelReservationUnlocked(kv, scope, owner, repo, currentWindow, nowMs);
           if (reclaimed) continue;
           return null;
         }
@@ -550,24 +464,14 @@ const setPolicy = async (
           ? newWindow(scope, owner, repo, windowMs, nowMs)
           : windowForEffectivePolicy(currentWindow, scope, owner, repo, windowMs, nowMs).window;
         const window: KernelQuotaWindowV2 = reset ? baseWindow : { ...baseWindow, updated_at_ms: nowMs };
-        let atomic = kv.atomic()
-          .check(policyEntry)
-          .check(windowEntry);
+        let atomic = kv.atomic().check(policyEntry).check(windowEntry);
         if (current.source === "default") {
-          atomic = atomic
-            .check(defaults.limitEntry)
-            .check(defaults.windowEntry)
-            .check(defaultCutoverEntry);
+          atomic = atomic.check(defaults.limitEntry).check(defaults.windowEntry).check(defaultCutoverEntry);
         }
         if (scope === "repo" && policyEntry.value === null && orgPolicyEntry && orgWindowEntry) {
-          atomic = atomic
-            .check(orgPolicyEntry)
-            .check(orgWindowEntry);
+          atomic = atomic.check(orgPolicyEntry).check(orgWindowEntry);
         }
-        const committed = await atomic
-          .set(policyKey, policy)
-          .set(windowKey, window)
-          .commit();
+        const committed = await atomic.set(policyKey, policy).set(windowKey, window).commit();
         if (!committed.ok) continue;
         return scope === "repo"
           ? repoRecord(owner, repo!, { limit: policy.usage_limit_requests, windowMs, expiresAtMs }, window, nowMs)
@@ -585,22 +489,16 @@ export const setKernelUsageLimit = async (
   owner: string,
   repo: string,
   usageLimitRequests: number,
-  options: { resetUsage?: boolean; windowMs?: number; expiresAtMs?: number } = {},
-): Promise<KernelAuthLimitRecord | null> =>
-  await setPolicy("repo", owner, repo, usageLimitRequests, options) as KernelAuthLimitRecord | null;
+  options: { resetUsage?: boolean; windowMs?: number; expiresAtMs?: number } = {}
+): Promise<KernelAuthLimitRecord | null> => (await setPolicy("repo", owner, repo, usageLimitRequests, options)) as KernelAuthLimitRecord | null;
 
 export const setKernelOrgUsageLimit = async (
   owner: string,
   usageLimitRequests: number,
-  options: { resetUsage?: boolean; windowMs?: number; expiresAtMs?: number } = {},
-): Promise<KernelOrgLimitRecord | null> =>
-  await setPolicy("org", owner, undefined, usageLimitRequests, options) as KernelOrgLimitRecord | null;
+  options: { resetUsage?: boolean; windowMs?: number; expiresAtMs?: number } = {}
+): Promise<KernelOrgLimitRecord | null> => (await setPolicy("org", owner, undefined, usageLimitRequests, options)) as KernelOrgLimitRecord | null;
 
-const deletePolicy = async (
-  scope: KernelQuotaScope,
-  owner: string,
-  repo?: string,
-): Promise<boolean | "conflict" | null> => {
+const deletePolicy = async (scope: KernelQuotaScope, owner: string, repo?: string): Promise<boolean | "conflict" | null> => {
   try {
     const kv = await getKv();
     if (!kv) return null;
@@ -623,21 +521,16 @@ const deletePolicy = async (
         const oldWindow = await reconcileKernelQuotaWindowReservations(kv, windowEntry, scope, owner, repo);
         if (windowEntry.value !== null && !oldWindow) return null;
         if (oldWindow && oldWindow.usage_reset_at_ms > nowMs && oldWindow.reserved_requests > 0) {
-          const reclaimed = await reclaimExpiredKernelReservationUnlocked(
-            kv,
-            scope,
-            owner,
-            repo,
-            oldWindow,
-            nowMs,
-          );
+          const reclaimed = await reclaimExpiredKernelReservationUnlocked(kv, scope, owner, repo, oldWindow, nowMs);
           if (reclaimed) continue;
           return "conflict";
         }
-        const nextWindow = current.windowMs === defaults.windowMs
-          ? windowForEffectivePolicy(oldWindow, scope, owner, repo, defaults.windowMs, nowMs).window
-          : newWindow(scope, owner, repo, defaults.windowMs, nowMs);
-        const committed = await kv.atomic()
+        const nextWindow =
+          current.windowMs === defaults.windowMs
+            ? windowForEffectivePolicy(oldWindow, scope, owner, repo, defaults.windowMs, nowMs).window
+            : newWindow(scope, owner, repo, defaults.windowMs, nowMs);
+        const committed = await kv
+          .atomic()
           .check(policyEntry)
           .check(windowEntry)
           .check(defaults.limitEntry)
@@ -656,12 +549,8 @@ const deletePolicy = async (
   }
 };
 
-export const deleteKernelUsageLimit = async (
-  owner: string,
-  repo: string,
-): Promise<boolean | "conflict" | null> => await deletePolicy("repo", owner, repo);
-export const deleteKernelOrgUsageLimit = async (owner: string): Promise<boolean | "conflict" | null> =>
-  await deletePolicy("org", owner);
+export const deleteKernelUsageLimit = async (owner: string, repo: string): Promise<boolean | "conflict" | null> => await deletePolicy("repo", owner, repo);
+export const deleteKernelOrgUsageLimit = async (owner: string): Promise<boolean | "conflict" | null> => await deletePolicy("org", owner);
 
 const kernelQuotaUnavailableResponse = (message = "Kernel quota is unavailable"): Response =>
   openaiError(503, message, "server_error", { type: "server_error" });
@@ -674,7 +563,7 @@ const kernelQuotaUnavailable = (message = "Kernel quota is unavailable"): Kernel
 const readKernelQuotaPolicyState = async (
   kv: Deno.Kv,
   owner: string,
-  repo: string,
+  repo: string
 ): Promise<
   Readonly<{
     limit_scope: KernelQuotaScope;
@@ -707,7 +596,7 @@ const readKernelQuotaPolicyState = async (
 export const resolveKernelQuotaPolicyState = async (
   owner: string,
   repo: string,
-  options: Readonly<{ kv?: Deno.Kv | null }> = {},
+  options: Readonly<{ kv?: Deno.Kv | null }> = {}
 ): Promise<KernelQuotaPolicyStateDecision> => {
   try {
     const kv = options.kv === undefined ? await getKv() : options.kv;
@@ -723,55 +612,43 @@ export const resolveKernelQuotaPolicyState = async (
 const kernelReservationRetentionMs = (windowResetAtMs: number, nowMs: number): number =>
   Math.max(1, windowResetAtMs + KERNEL_QUOTA_RESERVATION_RETENTION_MS - nowMs);
 
-const kernelReservationKey = (
-  scope: KernelQuotaScope,
-  owner: string,
-  repo: string | undefined,
-  windowCreatedAtMs: number,
-  requestId: string,
-): Deno.KvKey =>
-  scope === "repo"
-    ? kernelRepoReservationKey(owner, repo!, windowCreatedAtMs, requestId)
-    : kernelOrgReservationKey(owner, windowCreatedAtMs, requestId);
+const kernelReservationKey = (scope: KernelQuotaScope, owner: string, repo: string | undefined, windowCreatedAtMs: number, requestId: string): Deno.KvKey =>
+  scope === "repo" ? kernelRepoReservationKey(owner, repo!, windowCreatedAtMs, requestId) : kernelOrgReservationKey(owner, windowCreatedAtMs, requestId);
 
-const kernelReservationWindowPrefix = (
-  scope: KernelQuotaScope,
-  owner: string,
-  repo: string | undefined,
-  windowCreatedAtMs: number,
-): Deno.KvKey =>
-  scope === "repo"
-    ? [...KERNEL_REPO_RESERVATION_V2_PREFIX, owner, repo!, windowCreatedAtMs]
-    : [...KERNEL_ORG_RESERVATION_V2_PREFIX, owner, windowCreatedAtMs];
+const kernelReservationWindowPrefix = (scope: KernelQuotaScope, owner: string, repo: string | undefined, windowCreatedAtMs: number): Deno.KvKey =>
+  scope === "repo" ? [...KERNEL_REPO_RESERVATION_V2_PREFIX, owner, repo!, windowCreatedAtMs] : [...KERNEL_ORG_RESERVATION_V2_PREFIX, owner, windowCreatedAtMs];
 
 export const normalizeKernelQuotaReservationRowV2 = (
   value: unknown,
   scope: KernelQuotaScope,
   owner: string,
-  repo: string | undefined,
+  repo: string | undefined
 ): KernelQuotaReservationRowV2 | null => {
   if (!isRecord(value) || !validIdentity(scope, owner, repo, value)) return null;
   const terminalIntent = value.terminal_intent === undefined ? null : value.terminal_intent;
   if (
-    typeof value.request_id !== "string" || !value.request_id || typeof value.route !== "string" || !value.route ||
-    !nonNegativeSafeInteger(value.window_created_at_ms) || !positiveSafeInteger(value.window_reset_at_ms) ||
+    typeof value.request_id !== "string" ||
+    !value.request_id ||
+    typeof value.route !== "string" ||
+    !value.route ||
+    !nonNegativeSafeInteger(value.window_created_at_ms) ||
+    !positiveSafeInteger(value.window_reset_at_ms) ||
     (value.state !== "reserved" && value.state !== "committed" && value.state !== "released") ||
     (terminalIntent !== null && terminalIntent !== "committed" && terminalIntent !== "released") ||
-    !nonNegativeSafeInteger(value.reserved_at_ms) || !positiveSafeInteger(value.lease_expires_at_ms) ||
+    !nonNegativeSafeInteger(value.reserved_at_ms) ||
+    !positiveSafeInteger(value.lease_expires_at_ms) ||
     !(value.committed_at_ms === null || nonNegativeSafeInteger(value.committed_at_ms)) ||
     !(value.released_at_ms === null || nonNegativeSafeInteger(value.released_at_ms)) ||
     !(value.release_reason === null || typeof value.release_reason === "string")
-  ) return null;
+  )
+    return null;
   if (
-    (value.state === "reserved" &&
-      (value.committed_at_ms !== null || value.released_at_ms !== null || value.release_reason !== null)) ||
+    (value.state === "reserved" && (value.committed_at_ms !== null || value.released_at_ms !== null || value.release_reason !== null)) ||
     (value.state === "committed" &&
-      (value.committed_at_ms === null || value.released_at_ms !== null || value.release_reason !== null ||
-        terminalIntent === "released")) ||
-    (value.state === "released" &&
-      (value.committed_at_ms !== null || value.released_at_ms === null || !value.release_reason ||
-        terminalIntent === "committed"))
-  ) return null;
+      (value.committed_at_ms === null || value.released_at_ms !== null || value.release_reason !== null || terminalIntent === "released")) ||
+    (value.state === "released" && (value.committed_at_ms !== null || value.released_at_ms === null || !value.release_reason || terminalIntent === "committed"))
+  )
+    return null;
   return { ...value, terminal_intent: terminalIntent } as KernelQuotaReservationRowV2;
 };
 
@@ -786,19 +663,17 @@ export const reconcileKernelQuotaWindowReservations = async (
   entry: Deno.KvEntryMaybe<KernelQuotaWindowV2>,
   scope: KernelQuotaScope,
   owner: string,
-  repo: string | undefined,
+  repo: string | undefined
 ): Promise<KernelQuotaWindowV2 | null> => {
   const window = normalizeKernelQuotaWindowV2(entry.value, scope, owner, repo);
-  if (!window || isRecord(entry.value) && Object.hasOwn(entry.value, "reserved_requests")) return window;
+  if (!window || (isRecord(entry.value) && Object.hasOwn(entry.value, "reserved_requests"))) return window;
   let reservedRequests = 0;
   const prefix = kernelReservationWindowPrefix(scope, owner, repo, window.created_at_ms);
   for await (const reservationEntry of kv.list<KernelQuotaReservationRowV2>({ prefix }, { consistency: "strong" })) {
     const reservation = normalizeKernelQuotaReservationRowV2(reservationEntry.value, scope, owner, repo);
     const requestId = reservationEntry.key.at(-1);
-    if (
-      !reservation || typeof requestId !== "string" || requestId !== reservation.request_id ||
-      reservation.window_created_at_ms !== window.created_at_ms
-    ) throw new Error("Kernel quota reservation is malformed");
+    if (!reservation || typeof requestId !== "string" || requestId !== reservation.request_id || reservation.window_created_at_ms !== window.created_at_ms)
+      throw new Error("Kernel quota reservation is malformed");
     if (reservation.state === "reserved") reservedRequests += 1;
   }
   return { ...window, reserved_requests: reservedRequests };
@@ -806,12 +681,7 @@ export const reconcileKernelQuotaWindowReservations = async (
 
 const kernelQuotaLocks = new Map<string, Promise<void>>();
 
-const withKernelQuotaLock = async <T>(
-  scope: KernelQuotaScope,
-  owner: string,
-  repo: string | undefined,
-  operation: () => Promise<T>,
-): Promise<T> => {
+const withKernelQuotaLock = async <T>(scope: KernelQuotaScope, owner: string, repo: string | undefined, operation: () => Promise<T>): Promise<T> => {
   const lockKey = JSON.stringify(scope === "repo" ? kernelRepoWindowKey(owner, repo!) : kernelOrgWindowKey(owner));
   const previous = kernelQuotaLocks.get(lockKey);
   let release!: () => void;
@@ -839,16 +709,13 @@ const recordKernelReservationTerminalIntentUnlocked = async (
   requestId: string,
   route: string,
   terminalState: "committed" | "released",
-  nowMs: number,
+  nowMs: number
 ): Promise<KernelReservationSettlement | number> => {
   const reservationKey = kernelReservationKey(scope, owner, repo, windowCreatedAtMs, requestId);
   const reservationEntry = await kv.get<KernelQuotaReservationRowV2>(reservationKey, { consistency: "strong" });
   const reservation = normalizeKernelQuotaReservationRowV2(reservationEntry.value, scope, owner, repo);
   if (!reservation) return reservationEntry.value === null ? "missing" : "invalid";
-  if (
-    reservation.request_id !== requestId || reservation.route !== route ||
-    reservation.window_created_at_ms !== windowCreatedAtMs
-  ) return "invalid";
+  if (reservation.request_id !== requestId || reservation.route !== route || reservation.window_created_at_ms !== windowCreatedAtMs) return "invalid";
   if (reservation.state !== "reserved") {
     return reservation.state === terminalState ? "settled" : "terminal_mismatch";
   }
@@ -861,7 +728,8 @@ const recordKernelReservationTerminalIntentUnlocked = async (
     terminal_intent: terminalState,
     lease_expires_at_ms: leaseExpiresAtMs,
   };
-  const committed = await kv.atomic()
+  const committed = await kv
+    .atomic()
     .check(reservationEntry)
     .set(reservationKey, pendingReservation, {
       expireIn: kernelReservationRetentionMs(reservation.window_reset_at_ms, nowMs),
@@ -878,7 +746,7 @@ const recordKernelReservationTerminalIntent = async (
   windowCreatedAtMs: number,
   requestId: string,
   route: string,
-  terminalState: "committed" | "released",
+  terminalState: "committed" | "released"
 ): Promise<number | null> => {
   return await withKernelQuotaLock(scope, owner, repo, async () => {
     let lastError: unknown = null;
@@ -893,19 +761,15 @@ const recordKernelReservationTerminalIntent = async (
           requestId,
           route,
           terminalState,
-          Date.now(),
+          Date.now()
         );
         if (typeof outcome === "number") return outcome;
         if (outcome === "settled") return null;
         if (outcome === "conflict") continue;
         if (outcome === "terminal_mismatch") {
-          throw new Error(
-            `Kernel quota reservation was already ${terminalState === "committed" ? "released" : "committed"}`,
-          );
+          throw new Error(`Kernel quota reservation was already ${terminalState === "committed" ? "released" : "committed"}`);
         }
-        throw new Error(
-          outcome === "missing" ? "Kernel quota reservation is missing" : "Kernel quota reservation is malformed",
-        );
+        throw new Error(outcome === "missing" ? "Kernel quota reservation is missing" : "Kernel quota reservation is malformed");
       } catch (error) {
         lastError = error;
       }
@@ -924,7 +788,7 @@ const settleKernelReservationUnlocked = async (
   route: string,
   terminalState: "committed" | "released",
   reason: string,
-  nowMs: number,
+  nowMs: number
 ): Promise<KernelReservationSettlement> => {
   const windowKey = scope === "repo" ? kernelRepoWindowKey(owner, repo!) : kernelOrgWindowKey(owner);
   const reservationKey = kernelReservationKey(scope, owner, repo, windowCreatedAtMs, requestId);
@@ -934,10 +798,7 @@ const settleKernelReservationUnlocked = async (
   ]);
   const reservation = normalizeKernelQuotaReservationRowV2(reservationEntry.value, scope, owner, repo);
   if (!reservation) return reservationEntry.value === null ? "missing" : "invalid";
-  if (
-    reservation.request_id !== requestId || reservation.route !== route ||
-    reservation.window_created_at_ms !== windowCreatedAtMs
-  ) return "invalid";
+  if (reservation.request_id !== requestId || reservation.route !== route || reservation.window_created_at_ms !== windowCreatedAtMs) return "invalid";
   if (reservation.state !== "reserved") {
     return reservation.state === terminalState ? "settled" : "terminal_mismatch";
   }
@@ -949,25 +810,22 @@ const settleKernelReservationUnlocked = async (
   if (windowEntry.value !== null && !normalizedWindow) return "invalid";
   const retentionMs = kernelReservationRetentionMs(reservation.window_reset_at_ms, nowMs);
   if (!normalizedWindow || normalizedWindow.created_at_ms !== reservation.window_created_at_ms) {
-    const settledReservation: KernelQuotaReservationRowV2 = terminalState === "committed"
-      ? {
-        ...reservation,
-        state: "committed",
-        terminal_intent: "committed",
-        committed_at_ms: nowMs,
-      }
-      : {
-        ...reservation,
-        state: "released",
-        terminal_intent: "released",
-        released_at_ms: nowMs,
-        release_reason: reason.slice(0, 120) || "request_incomplete",
-      };
-    const committed = await kv.atomic()
-      .check(windowEntry)
-      .check(reservationEntry)
-      .set(reservationKey, settledReservation, { expireIn: retentionMs })
-      .commit();
+    const settledReservation: KernelQuotaReservationRowV2 =
+      terminalState === "committed"
+        ? {
+            ...reservation,
+            state: "committed",
+            terminal_intent: "committed",
+            committed_at_ms: nowMs,
+          }
+        : {
+            ...reservation,
+            state: "released",
+            terminal_intent: "released",
+            released_at_ms: nowMs,
+            release_reason: reason.slice(0, 120) || "request_incomplete",
+          };
+    const committed = await kv.atomic().check(windowEntry).check(reservationEntry).set(reservationKey, settledReservation, { expireIn: retentionMs }).commit();
     return committed.ok ? "settled" : "conflict";
   }
   if (normalizedWindow.reserved_requests < 1) return "invalid";
@@ -978,21 +836,23 @@ const settleKernelReservationUnlocked = async (
     reserved_requests: normalizedWindow.reserved_requests - 1,
     updated_at_ms: nowMs,
   };
-  const settledReservation: KernelQuotaReservationRowV2 = terminalState === "committed"
-    ? {
-      ...reservation,
-      state: "committed",
-      terminal_intent: "committed",
-      committed_at_ms: nowMs,
-    }
-    : {
-      ...reservation,
-      state: "released",
-      terminal_intent: "released",
-      released_at_ms: nowMs,
-      release_reason: reason.slice(0, 120) || "request_incomplete",
-    };
-  const committed = await kv.atomic()
+  const settledReservation: KernelQuotaReservationRowV2 =
+    terminalState === "committed"
+      ? {
+          ...reservation,
+          state: "committed",
+          terminal_intent: "committed",
+          committed_at_ms: nowMs,
+        }
+      : {
+          ...reservation,
+          state: "released",
+          terminal_intent: "released",
+          released_at_ms: nowMs,
+          release_reason: reason.slice(0, 120) || "request_incomplete",
+        };
+  const committed = await kv
+    .atomic()
     .check(windowEntry)
     .check(reservationEntry)
     .set(windowKey, updatedWindow, { expireIn: retentionMs })
@@ -1010,34 +870,19 @@ const settleKernelReservation = async (
   requestId: string,
   route: string,
   terminalState: "committed" | "released",
-  reason: string,
+  reason: string
 ): Promise<void> => {
   await withKernelQuotaLock(scope, owner, repo, async () => {
     let lastError: unknown = null;
     for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt += 1) {
       try {
-        const outcome = await settleKernelReservationUnlocked(
-          kv,
-          scope,
-          owner,
-          repo,
-          windowCreatedAtMs,
-          requestId,
-          route,
-          terminalState,
-          reason,
-          Date.now(),
-        );
+        const outcome = await settleKernelReservationUnlocked(kv, scope, owner, repo, windowCreatedAtMs, requestId, route, terminalState, reason, Date.now());
         if (outcome === "settled") return;
         if (outcome === "conflict") continue;
         if (outcome === "terminal_mismatch") {
-          throw new Error(
-            `Kernel quota reservation was already ${terminalState === "committed" ? "released" : "committed"}`,
-          );
+          throw new Error(`Kernel quota reservation was already ${terminalState === "committed" ? "released" : "committed"}`);
         }
-        throw new Error(
-          outcome === "missing" ? "Kernel quota reservation is missing" : "Kernel quota reservation is malformed",
-        );
+        throw new Error(outcome === "missing" ? "Kernel quota reservation is missing" : "Kernel quota reservation is malformed");
       } catch (error) {
         lastError = error;
       }
@@ -1053,7 +898,7 @@ const renewKernelReservation = async (
   repo: string | undefined,
   windowCreatedAtMs: number,
   requestId: string,
-  route: string,
+  route: string
 ): Promise<number> => {
   let lastError: unknown = null;
   for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt += 1) {
@@ -1061,10 +906,8 @@ const renewKernelReservation = async (
       const reservationKey = kernelReservationKey(scope, owner, repo, windowCreatedAtMs, requestId);
       const entry = await kv.get<KernelQuotaReservationRowV2>(reservationKey, { consistency: "strong" });
       const reservation = normalizeKernelQuotaReservationRowV2(entry.value, scope, owner, repo);
-      if (
-        !reservation || reservation.request_id !== requestId || reservation.route !== route ||
-        reservation.window_created_at_ms !== windowCreatedAtMs
-      ) throw new Error("Kernel quota reservation is missing or malformed");
+      if (!reservation || reservation.request_id !== requestId || reservation.route !== route || reservation.window_created_at_ms !== windowCreatedAtMs)
+        throw new Error("Kernel quota reservation is missing or malformed");
       if (reservation.state !== "reserved") {
         throw new Error(`Kernel quota reservation was already ${reservation.state}`);
       }
@@ -1074,7 +917,8 @@ const renewKernelReservation = async (
         ...reservation,
         lease_expires_at_ms: leaseExpiresAtMs,
       };
-      const committed = await kv.atomic()
+      const committed = await kv
+        .atomic()
         .check(entry)
         .set(reservationKey, renewed, {
           expireIn: kernelReservationRetentionMs(reservation.window_reset_at_ms, nowMs),
@@ -1097,7 +941,7 @@ const kernelReservationContext = (
   requestId: string,
   route: string,
   initialLeaseExpiresAtMs: number,
-  renewalIntervalMs = KERNEL_QUOTA_RESERVATION_RENEWAL_MS,
+  renewalIntervalMs = KERNEL_QUOTA_RESERVATION_RENEWAL_MS
 ): KernelQuotaReservation => {
   const leaseAbort = new AbortController();
   let leaseExpiresAtMs = initialLeaseExpiresAtMs;
@@ -1131,20 +975,23 @@ const kernelReservationContext = (
   const scheduleLeaseExpiry = (): void => {
     clearLeaseExpiry();
     if (terminalSettled) return;
-    leaseExpiryTimer = setTimeout(() => {
-      leaseExpiryTimer = null;
-      if (terminalSettled) return;
-      if (Date.now() < leaseExpiresAtMs) {
-        scheduleLeaseExpiry();
-        return;
-      }
-      if (!leaseAbort.signal.aborted) {
-        leaseAbort.abort(new DOMException("Kernel quota reservation lease expired", "TimeoutError"));
-      }
-      // A terminal intent still needs lease renewal and durable settlement.
-      // For in-flight inference, abort is the fail-closed terminal condition.
-      if (!terminalIntent) stopRenewal();
-    }, Math.max(1, leaseExpiresAtMs - Date.now()));
+    leaseExpiryTimer = setTimeout(
+      () => {
+        leaseExpiryTimer = null;
+        if (terminalSettled) return;
+        if (Date.now() < leaseExpiresAtMs) {
+          scheduleLeaseExpiry();
+          return;
+        }
+        if (!leaseAbort.signal.aborted) {
+          leaseAbort.abort(new DOMException("Kernel quota reservation lease expired", "TimeoutError"));
+        }
+        // A terminal intent still needs lease renewal and durable settlement.
+        // For in-flight inference, abort is the fail-closed terminal condition.
+        if (!terminalIntent) stopRenewal();
+      },
+      Math.max(1, leaseExpiresAtMs - Date.now())
+    );
   };
   const updateLease = (nextLeaseExpiresAtMs: number): void => {
     leaseExpiresAtMs = nextLeaseExpiresAtMs;
@@ -1183,37 +1030,21 @@ const kernelReservationContext = (
     if (terminalInFlight) return terminalInFlight;
     const state = terminalIntent;
     const current = (async () => {
-      const nextLeaseExpiresAtMs = await recordKernelReservationTerminalIntent(
-        kv,
-        scope,
-        owner,
-        repo,
-        windowCreatedAtMs,
-        requestId,
-        route,
-        state,
-      );
+      const nextLeaseExpiresAtMs = await recordKernelReservationTerminalIntent(kv, scope, owner, repo, windowCreatedAtMs, requestId, route, state);
       if (nextLeaseExpiresAtMs !== null) updateLease(nextLeaseExpiresAtMs);
-      await settleKernelReservation(
-        kv,
-        scope,
-        owner,
-        repo,
-        windowCreatedAtMs,
-        requestId,
-        route,
-        state,
-        terminalReason,
-      );
-    })().then(() => {
-      terminalSettled = state;
-      stopAfterSettlement();
-    }).catch((error) => {
-      scheduleSettlementRetry();
-      throw error;
-    }).finally(() => {
-      if (terminalInFlight === current) terminalInFlight = null;
-    });
+      await settleKernelReservation(kv, scope, owner, repo, windowCreatedAtMs, requestId, route, state, terminalReason);
+    })()
+      .then(() => {
+        terminalSettled = state;
+        stopAfterSettlement();
+      })
+      .catch((error) => {
+        scheduleSettlementRetry();
+        throw error;
+      })
+      .finally(() => {
+        if (terminalInFlight === current) terminalInFlight = null;
+      });
     terminalInFlight = current;
     return current;
   }
@@ -1241,17 +1072,15 @@ const reclaimExpiredKernelReservationUnlocked = async (
   owner: string,
   repo: string | undefined,
   window: KernelQuotaWindowV2,
-  nowMs: number,
+  nowMs: number
 ): Promise<boolean> => {
   let sawExpired = false;
   const prefix = kernelReservationWindowPrefix(scope, owner, repo, window.created_at_ms);
   for await (const entry of kv.list<KernelQuotaReservationRowV2>({ prefix }, { consistency: "strong" })) {
     const reservation = normalizeKernelQuotaReservationRowV2(entry.value, scope, owner, repo);
     const requestId = entry.key.at(-1);
-    if (
-      !reservation || typeof requestId !== "string" || requestId !== reservation.request_id ||
-      reservation.window_created_at_ms !== window.created_at_ms
-    ) throw new Error("Kernel quota reservation is malformed");
+    if (!reservation || typeof requestId !== "string" || requestId !== reservation.request_id || reservation.window_created_at_ms !== window.created_at_ms)
+      throw new Error("Kernel quota reservation is malformed");
     if (reservation.state !== "reserved" || reservation.lease_expires_at_ms > nowMs) continue;
     sawExpired = true;
     const terminalState = reservation.terminal_intent ?? "released";
@@ -1266,7 +1095,7 @@ const reclaimExpiredKernelReservationUnlocked = async (
         reservation.route,
         terminalState,
         terminalState === "committed" ? "completed" : "lease_expired",
-        nowMs,
+        nowMs
       );
       if (outcome === "conflict") continue;
       if (outcome === "invalid") throw new Error("Kernel quota reservation is malformed");
@@ -1279,10 +1108,15 @@ const reclaimExpiredKernelReservationUnlocked = async (
 
 const normalizeKernelDefaultWindowCutoverV2 = (value: unknown): KernelDefaultWindowCutoverV2 | null => {
   if (
-    !isRecord(value) || value.v !== 2 || typeof value.id !== "string" || !value.id ||
-    !nonNegativeSafeInteger(value.created_at_ms) || !positiveSafeInteger(value.expires_at_ms) ||
+    !isRecord(value) ||
+    value.v !== 2 ||
+    typeof value.id !== "string" ||
+    !value.id ||
+    !nonNegativeSafeInteger(value.created_at_ms) ||
+    !positiveSafeInteger(value.expires_at_ms) ||
     value.expires_at_ms <= value.created_at_ms
-  ) return null;
+  )
+    return null;
   return value as KernelDefaultWindowCutoverV2;
 };
 
@@ -1312,7 +1146,7 @@ const hasLiveDefaultBackedKernelReservations = async (kv: Deno.Kv): Promise<bool
           const window = await reconcileKernelQuotaWindowReservations(kv, windowEntry, scope, owner, repo);
           if (windowEntry.value !== null && !window) throw new Error("Kernel quota window is malformed");
           if (!window || window.usage_reset_at_ms <= nowMs || window.reserved_requests === 0) return false;
-          if (!await reclaimExpiredKernelReservationUnlocked(kv, scope, owner, repo, window, nowMs)) return true;
+          if (!(await reclaimExpiredKernelReservationUnlocked(kv, scope, owner, repo, window, nowMs))) return true;
         }
         throw new Error("Kernel quota reservations changed concurrently");
       });
@@ -1322,15 +1156,9 @@ const hasLiveDefaultBackedKernelReservations = async (kv: Deno.Kv): Promise<bool
   return false;
 };
 
-export const releaseKernelDefaultWindowCutover = async (
-  kv: Deno.Kv,
-  guard: KernelDefaultWindowCutoverGuard,
-): Promise<void> => {
+export const releaseKernelDefaultWindowCutover = async (kv: Deno.Kv, guard: KernelDefaultWindowCutoverGuard): Promise<void> => {
   try {
-    await kv.atomic()
-      .check(guard.entry)
-      .delete(guard.key)
-      .commit();
+    await kv.atomic().check(guard.entry).delete(guard.key).commit();
   } catch (error) {
     console.warn("[ai.ubq.fi] Failed to release Kernel default-window cutover guard:", error);
   }
@@ -1339,7 +1167,7 @@ export const releaseKernelDefaultWindowCutover = async (
 export const acquireKernelDefaultWindowCutover = async (
   kv: Deno.Kv,
   expectedLimitEntry: Deno.KvEntryMaybe<number>,
-  expectedWindowEntry: Deno.KvEntryMaybe<number>,
+  expectedWindowEntry: Deno.KvEntryMaybe<number>
 ): Promise<KernelDefaultWindowCutoverDecision> => {
   let guard: KernelDefaultWindowCutoverGuard | null = null;
   try {
@@ -1359,7 +1187,8 @@ export const acquireKernelDefaultWindowCutover = async (
       created_at_ms: nowMs,
       expires_at_ms: nowMs + KERNEL_DEFAULT_WINDOW_CUTOVER_LEASE_MS,
     };
-    const acquired = await kv.atomic()
+    const acquired = await kv
+      .atomic()
       .check(markerEntry)
       .check(expectedLimitEntry)
       .check(expectedWindowEntry)
@@ -1389,19 +1218,14 @@ export const acquireKernelDefaultWindowCutover = async (
   }
 };
 
-const kernelLimitBlocked = (
-  message: string,
-  code = "rate_limit_exceeded",
-): KernelQuotaReservationDecision => ({
+const kernelLimitBlocked = (message: string, code = "rate_limit_exceeded"): KernelQuotaReservationDecision => ({
   ok: false,
   response: openaiError(429, message, code),
 });
 
 const quotaExceeded = (window: KernelQuotaWindowV2, limit: number): KernelQuotaReservationDecision => {
   const admitted = window.usage_requests + window.reserved_requests;
-  return kernelLimitBlocked(
-    `Usage limit exceeded (${admitted}/${limit}). Resets at ${new Date(window.usage_reset_at_ms).toISOString()}`,
-  );
+  return kernelLimitBlocked(`Usage limit exceeded (${admitted}/${limit}). Resets at ${new Date(window.usage_reset_at_ms).toISOString()}`);
 };
 
 const reserveLimit = async (
@@ -1416,7 +1240,7 @@ const reserveLimit = async (
     renewalIntervalMs?: number;
     expectedRepoPolicy?: "present" | "absent";
     guardedRepo?: string;
-  }> = {},
+  }> = {}
 ): Promise<KernelQuotaReservationDecision> => {
   try {
     const kv = options.kv === undefined ? await getKv() : options.kv;
@@ -1461,33 +1285,20 @@ const reserveLimit = async (
         const reservationKey = kernelReservationKey(scope, owner, repo, resolved.window.created_at_ms, requestId);
         const reservationEntry = await kv.get<KernelQuotaReservationRowV2>(reservationKey, { consistency: "strong" });
         if (reservationEntry.value !== null) {
-          const existingReservation = normalizeKernelQuotaReservationRowV2(
-            reservationEntry.value,
-            scope,
-            owner,
-            repo,
-          );
+          const existingReservation = normalizeKernelQuotaReservationRowV2(reservationEntry.value, scope, owner, repo);
           if (
-            !existingReservation || existingReservation.request_id !== requestId ||
+            !existingReservation ||
+            existingReservation.request_id !== requestId ||
             existingReservation.route !== route ||
             existingReservation.window_created_at_ms !== resolved.window.created_at_ms
-          ) return kernelQuotaUnavailable("Kernel quota request identity conflicts");
+          )
+            return kernelQuotaUnavailable("Kernel quota request identity conflicts");
           return kernelQuotaUnavailable("Kernel quota request already has a reservation");
         }
-        if (
-          effective.limit !== API_KEY_NO_USAGE_LIMIT &&
-          resolved.window.usage_requests + resolved.window.reserved_requests >= effective.limit
-        ) {
+        if (effective.limit !== API_KEY_NO_USAGE_LIMIT && resolved.window.usage_requests + resolved.window.reserved_requests >= effective.limit) {
           if (reclaimedExpiredReservation) return quotaExceeded(resolved.window, effective.limit);
           try {
-            const reclaimed = await reclaimExpiredKernelReservationUnlocked(
-              kv,
-              scope,
-              owner,
-              repo,
-              resolved.window,
-              nowMs,
-            );
+            const reclaimed = await reclaimExpiredKernelReservationUnlocked(kv, scope, owner, repo, resolved.window, nowMs);
             reclaimedExpiredReservation = true;
             if (!reclaimed) return quotaExceeded(resolved.window, effective.limit);
           } catch (error) {
@@ -1519,16 +1330,10 @@ const reserveLimit = async (
           updated_at_ms: nowMs,
         };
         const retentionMs = kernelReservationRetentionMs(reservedWindow.usage_reset_at_ms, nowMs);
-        let atomic = kv.atomic()
-          .check(policyEntry)
-          .check(windowEntry)
-          .check(reservationEntry);
+        let atomic = kv.atomic().check(policyEntry).check(windowEntry).check(reservationEntry);
         if (repoGuardEntry) atomic = atomic.check(repoGuardEntry);
         if (effective.source === "default") {
-          atomic = atomic
-            .check(defaults.limitEntry)
-            .check(defaults.windowEntry)
-            .check(defaultCutoverEntry);
+          atomic = atomic.check(defaults.limitEntry).check(defaults.windowEntry).check(defaultCutoverEntry);
         }
         const committed = await atomic
           .set(windowKey, reservedWindow, { expireIn: retentionMs })
@@ -1546,7 +1351,7 @@ const reserveLimit = async (
               requestId,
               route,
               reservation.lease_expires_at_ms,
-              options.renewalIntervalMs,
+              options.renewalIntervalMs
             ),
           };
         }
@@ -1564,14 +1369,14 @@ export const reserveKernelUsageLimit = async (
   repo: string,
   requestId: string,
   route: string,
-  options: Readonly<{ kv?: Deno.Kv | null; nowMs?: number; renewalIntervalMs?: number }> = {},
+  options: Readonly<{ kv?: Deno.Kv | null; nowMs?: number; renewalIntervalMs?: number }> = {}
 ): Promise<KernelQuotaReservationDecision> => await reserveLimit("repo", owner, repo, requestId, route, options);
 
 export const reserveKernelOrgUsageLimit = async (
   owner: string,
   requestId: string,
   route: string,
-  options: Readonly<{ kv?: Deno.Kv | null; nowMs?: number; renewalIntervalMs?: number }> = {},
+  options: Readonly<{ kv?: Deno.Kv | null; nowMs?: number; renewalIntervalMs?: number }> = {}
 ): Promise<KernelQuotaReservationDecision> => await reserveLimit("org", owner, undefined, requestId, route, options);
 
 export const reserveEffectiveKernelUsageLimit = async (
@@ -1579,7 +1384,7 @@ export const reserveEffectiveKernelUsageLimit = async (
   repo: string,
   requestId: string,
   route: string,
-  options: Readonly<{ kv?: Deno.Kv | null; nowMs?: number; renewalIntervalMs?: number }> = {},
+  options: Readonly<{ kv?: Deno.Kv | null; nowMs?: number; renewalIntervalMs?: number }> = {}
 ): Promise<KernelQuotaReservationDecision> => {
   try {
     const kv = options.kv === undefined ? await getKv() : options.kv;
@@ -1587,18 +1392,18 @@ export const reserveEffectiveKernelUsageLimit = async (
     const state = await readKernelQuotaPolicyState(kv, owner, repo);
     return state.limit_scope === "repo"
       ? await reserveLimit("repo", owner, repo, requestId, route, {
-        kv,
-        nowMs: options.nowMs,
-        renewalIntervalMs: options.renewalIntervalMs,
-        expectedRepoPolicy: "present",
-      })
+          kv,
+          nowMs: options.nowMs,
+          renewalIntervalMs: options.renewalIntervalMs,
+          expectedRepoPolicy: "present",
+        })
       : await reserveLimit("org", owner, undefined, requestId, route, {
-        kv,
-        nowMs: options.nowMs,
-        renewalIntervalMs: options.renewalIntervalMs,
-        expectedRepoPolicy: "absent",
-        guardedRepo: repo,
-      });
+          kv,
+          nowMs: options.nowMs,
+          renewalIntervalMs: options.renewalIntervalMs,
+          expectedRepoPolicy: "absent",
+          guardedRepo: repo,
+        });
   } catch (error) {
     console.warn("[ai.ubq.fi] Failed to reserve effective kernel quota:", error);
     return kernelQuotaUnavailable();

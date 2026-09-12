@@ -16,13 +16,7 @@
  * "normalized final state" the plan requires after a completed answer.
  */
 
-import type {
-  AssistantTurn,
-  ConversationTurn,
-  NormalizedAssistantResponse,
-  ToolCall,
-  ToolResultTurn,
-} from "./types.ts";
+import type { AssistantTurn, ConversationTurn, NormalizedAssistantResponse, ToolCall, ToolResultTurn } from "./types.ts";
 
 export type Conversation = Readonly<{ turns: readonly ConversationTurn[] }>;
 
@@ -32,24 +26,15 @@ export const appendTurn = (conversation: Conversation, turn: ConversationTurn): 
   turns: [...conversation.turns, turn],
 });
 
-export const appendUser = (conversation: Conversation, content: string): Conversation =>
-  appendTurn(conversation, { role: "user", content });
+export const appendUser = (conversation: Conversation, content: string): Conversation => appendTurn(conversation, { role: "user", content });
 
-export const appendToolResult = (
-  conversation: Conversation,
-  toolCallId: string,
-  name: string,
-  content: string,
-): Conversation => {
+export const appendToolResult = (conversation: Conversation, toolCallId: string, name: string, content: string): Conversation => {
   const result: ToolResultTurn = { role: "tool", toolCallId, name, content };
   return appendTurn(conversation, result);
 };
 
 /** Appends one normalized assistant turn produced by the adapter. */
-export const advanceConversation = (
-  conversation: Conversation,
-  response: NormalizedAssistantResponse,
-): Conversation => {
+export const advanceConversation = (conversation: Conversation, response: NormalizedAssistantResponse): Conversation => {
   const turn: AssistantTurn = {
     role: "assistant",
     content: response.content,
@@ -60,8 +45,7 @@ export const advanceConversation = (
   return appendTurn(conversation, turn);
 };
 
-const foldToolCalls = (turns: readonly ConversationTurn[]): readonly ToolCall[] =>
-  turns.flatMap((turn) => (turn.role === "assistant" ? turn.toolCalls : []));
+const foldToolCalls = (turns: readonly ConversationTurn[]): readonly ToolCall[] => turns.flatMap((turn) => (turn.role === "assistant" ? turn.toolCalls : []));
 
 /**
  * Returns the conversation with analysis dropped from every assistant turn
@@ -134,22 +118,15 @@ export const wireMessagesFromConversation = (conversation: Conversation): readon
 
 /** Counts analysis lines carried in the conversation state. */
 export const analysisLineCount = (conversation: Conversation): number =>
-  conversation.turns.reduce(
-    (count, turn) => count + (turn.role === "assistant" ? turn.analysis.length : 0),
-    0,
-  );
+  conversation.turns.reduce((count, turn) => count + (turn.role === "assistant" ? turn.analysis.length : 0), 0);
 
 /** Counts tool-call turns still waiting for a result (unfinished turns). */
 export const pendingToolCallCount = (conversation: Conversation): number => {
   const calls = foldToolCalls(conversation.turns);
-  const results = new Set(
-    conversation.turns.filter((turn): turn is ToolResultTurn => turn.role === "tool").map((turn) => turn.toolCallId),
-  );
+  const results = new Set(conversation.turns.filter((turn): turn is ToolResultTurn => turn.role === "tool").map((turn) => turn.toolCallId));
   return calls.filter((call) => !results.has(call.id)).length;
 };
 
 /** True when the conversation contains a completed final answer. */
 export const hasCompletedFinal = (conversation: Conversation): boolean =>
-  conversation.turns.some(
-    (turn) => turn.role === "assistant" && turn.toolCalls.length === 0 && turn.content !== null,
-  );
+  conversation.turns.some((turn) => turn.role === "assistant" && turn.toolCalls.length === 0 && turn.content !== null);

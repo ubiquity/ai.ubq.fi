@@ -153,7 +153,7 @@ try {
   Deno.exit(2);
 }
 const codexBinFlag = parsed["codex-bin"] as string | undefined;
-const clientVersion = await resolveCodexClientVersion(listCodexBinaryCandidates(codexBinFlag)) ?? undefined;
+const clientVersion = (await resolveCodexClientVersion(listCodexBinaryCandidates(codexBinFlag))) ?? undefined;
 const modelsPayload: Record<string, unknown> = {
   source: "chatgpt_codex",
   client_version: clientVersion,
@@ -166,9 +166,9 @@ const body = JSON.stringify(requestPayload);
 const res = await fetch(endpoint, {
   method: "POST",
   headers: {
-    "Authorization": `Bearer ${adminToken}`,
+    Authorization: `Bearer ${adminToken}`,
     "Content-Type": "application/json",
-    "Accept": "application/json",
+    Accept: "application/json",
   },
   body,
 });

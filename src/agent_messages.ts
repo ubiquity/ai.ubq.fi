@@ -195,6 +195,6 @@ export const handleAgentMessagesList = async (req: Request, deps: AgentMessagesD
       next_cursor: nextCursor,
       has_more: Boolean(nextCursor),
     },
-    { "Cache-Control": "no-store" },
+    { "Cache-Control": "no-store" }
   );
 };

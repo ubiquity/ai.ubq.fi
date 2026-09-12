@@ -1,10 +1,6 @@
 import assert from "node:assert/strict";
 
-import {
-  deriveRsaPublicKeyPemFromPrivateKey,
-  normalizeMultilineSecret,
-  runSetupInstance,
-} from "../scripts/setup-instance.ts";
+import { deriveRsaPublicKeyPemFromPrivateKey, normalizeMultilineSecret, runSetupInstance } from "../scripts/setup-instance.ts";
 
 const concatBytes = (...parts: readonly Uint8Array[]): Uint8Array => {
   const combined = new Uint8Array(parts.reduce((length, part) => length + part.byteLength, 0));
@@ -23,8 +19,7 @@ const derLength = (length: number): Uint8Array => {
   return Uint8Array.of(0x80 | octets.length, ...octets);
 };
 
-const derValue = (tag: number, value: Uint8Array): Uint8Array =>
-  concatBytes(Uint8Array.of(tag), derLength(value.byteLength), value);
+const derValue = (tag: number, value: Uint8Array): Uint8Array => concatBytes(Uint8Array.of(tag), derLength(value.byteLength), value);
 
 const base64ToBytes = (value: string): Uint8Array => {
   const decoded = atob(value.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (value.length % 4)) % 4));
@@ -69,8 +64,8 @@ const pkcs1FromPrivateKey = async (privateKey: CryptoKey): Promise<Uint8Array> =
       derInteger(requireJwkPart(jwk, "q")),
       derInteger(requireJwkPart(jwk, "dp")),
       derInteger(requireJwkPart(jwk, "dq")),
-      derInteger(requireJwkPart(jwk, "qi")),
-    ),
+      derInteger(requireJwkPart(jwk, "qi"))
+    )
   );
 };
 
@@ -83,7 +78,7 @@ const createRsaFixture = async (): Promise<Readonly<{ pkcs8Pem: string; pkcs1Pem
       hash: "SHA-256",
     },
     true,
-    ["sign", "verify"],
+    ["sign", "verify"]
   );
   assert.equal(pair.privateKey.type, "private");
   assert.equal(pair.publicKey.type, "public");
@@ -96,9 +91,7 @@ const createRsaFixture = async (): Promise<Readonly<{ pkcs8Pem: string; pkcs1Pem
 
 const fixture = await createRsaFixture();
 
-const logger = (): Readonly<
-  { logs: unknown[][]; errors: unknown[][]; log(...data: unknown[]): void; error(...data: unknown[]): void }
-> => {
+const logger = (): Readonly<{ logs: unknown[][]; errors: unknown[][]; log(...data: unknown[]): void; error(...data: unknown[]): void }> => {
   const logs: unknown[][] = [];
   const errors: unknown[][] = [];
   return {
@@ -109,9 +102,7 @@ const logger = (): Readonly<
   };
 };
 
-const environment = (
-  entries: Record<string, string | undefined>,
-): Readonly<{ get(name: string): string | undefined }> => ({
+const environment = (entries: Record<string, string | undefined>): Readonly<{ get(name: string): string | undefined }> => ({
   get: (name) => entries[name],
 });
 

@@ -33,10 +33,7 @@ export const deriveAutoCompactTokenLimit = (contextWindowTokens: number): number
   if (!Number.isSafeInteger(contextWindowTokens) || contextWindowTokens <= CONTEXT_COMPACTION_RESERVED_TOKENS) {
     throw new RangeError("contextWindowTokens must be a safe integer greater than the reserved token budget");
   }
-  return Math.min(
-    Math.floor(contextWindowTokens * CONTEXT_COMPACTION_TRIGGER_RATIO),
-    contextWindowTokens - CONTEXT_COMPACTION_RESERVED_TOKENS,
-  );
+  return Math.min(Math.floor(contextWindowTokens * CONTEXT_COMPACTION_TRIGGER_RATIO), contextWindowTokens - CONTEXT_COMPACTION_RESERVED_TOKENS);
 };
 
 // Model-native context windows for relevant classes released in the six months
@@ -173,10 +170,7 @@ const RECENT_MODEL_CONTEXT_RULES: readonly RecentModelContextRule[] = [
 const positiveSafeInteger = (value: number | null | undefined): number | null =>
   typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
 
-const resolvedAutoCompactTokenLimit = (
-  contextWindowTokens: number,
-  configuredLimit: number | null | undefined,
-): number => {
+const resolvedAutoCompactTokenLimit = (contextWindowTokens: number, configuredLimit: number | null | undefined): number => {
   const configured = positiveSafeInteger(configuredLimit);
   if (configured !== null && configured <= contextWindowTokens) return configured;
   if (contextWindowTokens > CONTEXT_COMPACTION_RESERVED_TOKENS) {
@@ -185,10 +179,7 @@ const resolvedAutoCompactTokenLimit = (
   return Math.max(1, Math.min(contextWindowTokens - 1, Math.floor(contextWindowTokens * 0.85)));
 };
 
-export const recentModelContextFor = (
-  modelId: string,
-  overrides: RecentModelContextOverrides = {},
-): RecentModelContext | null => {
+export const recentModelContextFor = (modelId: string, overrides: RecentModelContextOverrides = {}): RecentModelContext | null => {
   const normalized = modelId.trim().toLowerCase().split("/").at(-1) ?? "";
   if (!normalized) return null;
   const rule = RECENT_MODEL_CONTEXT_RULES.find((candidate) => candidate.pattern.test(normalized));
@@ -198,21 +189,19 @@ export const recentModelContextFor = (
   const nativeMaxContextWindow = positiveSafeInteger(overrides.max_context_window_tokens);
   const contextWindow = nativeContextWindow ?? nativeMaxContextWindow ?? rule.context_window_tokens;
   const maxContextWindow = Math.max(contextWindow, nativeMaxContextWindow ?? contextWindow);
-  const effectiveContextWindowPercent = typeof overrides.effective_context_window_percent === "number" &&
-      Number.isSafeInteger(overrides.effective_context_window_percent) &&
-      overrides.effective_context_window_percent >= 1 &&
-      overrides.effective_context_window_percent <= 100
-    ? overrides.effective_context_window_percent
-    : CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT;
+  const effectiveContextWindowPercent =
+    typeof overrides.effective_context_window_percent === "number" &&
+    Number.isSafeInteger(overrides.effective_context_window_percent) &&
+    overrides.effective_context_window_percent >= 1 &&
+    overrides.effective_context_window_percent <= 100
+      ? overrides.effective_context_window_percent
+      : CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT;
 
   return {
     model_class: rule.model_class,
     context_window_tokens: contextWindow,
     max_context_window_tokens: maxContextWindow,
-    auto_compact_token_limit_tokens: resolvedAutoCompactTokenLimit(
-      contextWindow,
-      overrides.auto_compact_token_limit_tokens,
-    ),
+    auto_compact_token_limit_tokens: resolvedAutoCompactTokenLimit(contextWindow, overrides.auto_compact_token_limit_tokens),
     effective_context_window_percent: effectiveContextWindowPercent,
   };
 };

@@ -1,9 +1,5 @@
 import assert from "node:assert/strict";
-import {
-  mergeCodexModelPromptCacheCapabilities,
-  normalizeCodexModelsPayload,
-  normalizePromptCacheCapabilities,
-} from "../src/codex_models.ts";
+import { mergeCodexModelPromptCacheCapabilities, normalizeCodexModelsPayload, normalizePromptCacheCapabilities } from "../src/codex_models.ts";
 
 const promptCacheEvidence = {
   version: 1,
@@ -58,10 +54,12 @@ Deno.test("Codex model normalization retains only versioned prompt-cache metadat
         slug: "gpt-cache-invalid",
         prompt_cache: {
           version: 1,
-          providers: [{
-            id: "codex_chatgpt",
-            controls: { source: "catalog", verified_at_ms: 1_003, modes: ["keyed"] },
-          }],
+          providers: [
+            {
+              id: "codex_chatgpt",
+              controls: { source: "catalog", verified_at_ms: 1_003, modes: ["keyed"] },
+            },
+          ],
         },
       },
     ],
@@ -81,127 +79,143 @@ Deno.test("prompt-cache metadata rejects unknown shape and duplicate provider id
       version: 1,
       providers: [{ id: "codex_chatgpt" }, { id: "codex_chatgpt" }],
     }),
-    null,
+    null
   );
   assert.equal(
     normalizePromptCacheCapabilities({
       version: 1,
       providers: [{ id: "codex_chatgpt", unknown: true }],
     }),
-    null,
+    null
   );
 });
 
 Deno.test("prompt-cache metadata exposes only gateway-supported cache controls", () => {
   const normalized = normalizePromptCacheCapabilities({
     version: 1,
-    providers: [{
-      id: "codex_chatgpt",
-      controls: {
-        ttls: ["5m", "30m", "1h"],
-        legacy_retentions: ["24h", "unsupported"],
-        breakpoint_block_types: {
-          responses: ["input_text", "input_audio"],
-          chat_completions: ["text", "input_audio", "refusal"],
+    providers: [
+      {
+        id: "codex_chatgpt",
+        controls: {
+          ttls: ["5m", "30m", "1h"],
+          legacy_retentions: ["24h", "unsupported"],
+          breakpoint_block_types: {
+            responses: ["input_text", "input_audio"],
+            chat_completions: ["text", "input_audio", "refusal"],
+          },
+          source: "catalog",
+          verified_at_ms: 1_010,
         },
-        source: "catalog",
-        verified_at_ms: 1_010,
       },
-    }],
+    ],
   });
 
   assert.deepEqual(normalized, {
     version: 1,
-    providers: [{
-      id: "codex_chatgpt",
-      controls: {
-        ttls: ["30m"],
-        legacy_retentions: ["24h"],
-        breakpoint_block_types: {
-          responses: ["input_text"],
-          chat_completions: ["text"],
+    providers: [
+      {
+        id: "codex_chatgpt",
+        controls: {
+          ttls: ["30m"],
+          legacy_retentions: ["24h"],
+          breakpoint_block_types: {
+            responses: ["input_text"],
+            chat_completions: ["text"],
+          },
+          source: "catalog",
+          verified_at_ms: 1_010,
         },
-        source: "catalog",
-        verified_at_ms: 1_010,
       },
-    }],
+    ],
   });
 });
 
 Deno.test("prompt-cache scope requires three reproducible cycles before publication", () => {
   const earlyScope = {
     version: 1,
-    providers: [{
-      id: "codex_chatgpt",
-      scope: {
-        probe_profile: "responses_implicit_input_text_keyed_cycle_isolated_v5",
-        account_slots: "shared",
-        token_refresh: "preserved",
-        conversation_id: "independent",
-        reproducible_cycles: 2,
-        source: "live_probe",
-        verified_at_ms: 1_100,
+    providers: [
+      {
+        id: "codex_chatgpt",
+        scope: {
+          probe_profile: "responses_implicit_input_text_keyed_cycle_isolated_v5",
+          account_slots: "shared",
+          token_refresh: "preserved",
+          conversation_id: "independent",
+          reproducible_cycles: 2,
+          source: "live_probe",
+          verified_at_ms: 1_100,
+        },
       },
-    }],
+    ],
   };
   assert.equal(normalizePromptCacheCapabilities(earlyScope), null);
 
   const earlyUnknown = {
     ...earlyScope,
-    providers: [{
-      ...earlyScope.providers[0],
-      scope: {
-        ...earlyScope.providers[0].scope,
-        account_slots: "unknown",
-        token_refresh: "unknown",
-        conversation_id: "unknown",
+    providers: [
+      {
+        ...earlyScope.providers[0],
+        scope: {
+          ...earlyScope.providers[0].scope,
+          account_slots: "unknown",
+          token_refresh: "unknown",
+          conversation_id: "unknown",
+        },
       },
-    }],
+    ],
   };
   assert.equal(normalizePromptCacheCapabilities(earlyUnknown), null);
 
   const verifiedScope = {
     ...earlyScope,
-    providers: [{
-      ...earlyScope.providers[0],
-      scope: { ...earlyScope.providers[0].scope, reproducible_cycles: 3 },
-    }],
+    providers: [
+      {
+        ...earlyScope.providers[0],
+        scope: { ...earlyScope.providers[0].scope, reproducible_cycles: 3 },
+      },
+    ],
   };
   assert.deepEqual(normalizePromptCacheCapabilities(verifiedScope), verifiedScope);
 
   const missingProfile = {
     ...verifiedScope,
-    providers: [{
-      ...verifiedScope.providers[0],
-      scope: {
-        ...verifiedScope.providers[0].scope,
-        probe_profile: undefined,
+    providers: [
+      {
+        ...verifiedScope.providers[0],
+        scope: {
+          ...verifiedScope.providers[0].scope,
+          probe_profile: undefined,
+        },
       },
-    }],
+    ],
   };
   assert.equal(normalizePromptCacheCapabilities(missingProfile), null);
 
   const wrongProfile = {
     ...verifiedScope,
-    providers: [{
-      ...verifiedScope.providers[0],
-      scope: {
-        ...verifiedScope.providers[0].scope,
-        probe_profile: "responses_explicit_input_text_keyed_30m",
+    providers: [
+      {
+        ...verifiedScope.providers[0],
+        scope: {
+          ...verifiedScope.providers[0].scope,
+          probe_profile: "responses_explicit_input_text_keyed_30m",
+        },
       },
-    }],
+    ],
   };
   assert.equal(normalizePromptCacheCapabilities(wrongProfile), null);
 
   const priorExperimentDefinition = {
     ...verifiedScope,
-    providers: [{
-      ...verifiedScope.providers[0],
-      scope: {
-        ...verifiedScope.providers[0].scope,
-        probe_profile: "responses_implicit_input_text_keyed",
+    providers: [
+      {
+        ...verifiedScope.providers[0],
+        scope: {
+          ...verifiedScope.providers[0].scope,
+          probe_profile: "responses_implicit_input_text_keyed",
+        },
       },
-    }],
+    ],
   };
   assert.equal(normalizePromptCacheCapabilities(priorExperimentDefinition), null);
 });
@@ -215,16 +229,20 @@ Deno.test("catalog prompt-cache merges retain same-slug provider evidence withou
   const next = normalizeCodexModelsPayload({
     source: "catalog",
     updated_at_ms: 1_300,
-    models: [{
-      slug: "gpt-cache-fixture",
-      prompt_cache: {
-        version: 1,
-        providers: [{
-          id: "codex_chatgpt",
-          controls: { implicit: false, source: "catalog", verified_at_ms: 1_300 },
-        }],
+    models: [
+      {
+        slug: "gpt-cache-fixture",
+        prompt_cache: {
+          version: 1,
+          providers: [
+            {
+              id: "codex_chatgpt",
+              controls: { implicit: false, source: "catalog", verified_at_ms: 1_300 },
+            },
+          ],
+        },
       },
-    }],
+    ],
   });
   assert.ok(previous);
   assert.ok(next);

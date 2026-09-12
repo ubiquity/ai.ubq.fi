@@ -24,13 +24,15 @@ function respond(message: Record<string, unknown>): Response {
       object: "chat.completion",
       created: 1,
       model: "gpt-oss-120b",
-      choices: [{
-        index: 0,
-        message: { role: "assistant", ...message },
-        finish_reason: "tool_calls" in message ? "tool_calls" : "stop",
-      }],
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", ...message },
+          finish_reason: "tool_calls" in message ? "tool_calls" : "stop",
+        },
+      ],
     }),
-    { status: 200, headers: { "Content-Type": "application/json" } },
+    { status: 200, headers: { "Content-Type": "application/json" } }
   );
 }
 
@@ -47,36 +49,48 @@ export function trailTransport(task: TaskManifest): HarmonyTransport {
     index += 1;
     if (index <= trail.length) {
       const step = trail[index - 1];
-      return Promise.resolve(respond({
-        content: `Step ${index}.`,
-        tool_calls: [{
-          id: `call-${index}`,
-          type: "function",
-          function: { name: step.tool, arguments: JSON.stringify(step.args) },
-        }],
-      }));
+      return Promise.resolve(
+        respond({
+          content: `Step ${index}.`,
+          tool_calls: [
+            {
+              id: `call-${index}`,
+              type: "function",
+              function: { name: step.tool, arguments: JSON.stringify(step.args) },
+            },
+          ],
+        })
+      );
     }
     if (index === trail.length + 1) return Promise.resolve(respond({ content: "Task complete." }));
     if (index === trail.length + 2) {
-      return Promise.resolve(respond({
-        content: "Verifying with the declared command.",
-        tool_calls: [{
-          id: `call-${index}`,
-          type: "function",
-          function: { name: "shell.exec", arguments: JSON.stringify({ command: task.verify?.command ?? "true" }) },
-        }],
-      }));
+      return Promise.resolve(
+        respond({
+          content: "Verifying with the declared command.",
+          tool_calls: [
+            {
+              id: `call-${index}`,
+              type: "function",
+              function: { name: "shell.exec", arguments: JSON.stringify({ command: task.verify?.command ?? "true" }) },
+            },
+          ],
+        })
+      );
     }
     if (index === trail.length + 3) {
       // Deterministic abandonment evidence when the guard still blocks.
-      return Promise.resolve(respond({
-        content: "Revising the plan after verification.",
-        tool_calls: [{
-          id: `call-${index}`,
-          type: "function",
-          function: { name: "task.update_plan", arguments: JSON.stringify({ plan: ["verified", "complete"] }) },
-        }],
-      }));
+      return Promise.resolve(
+        respond({
+          content: "Revising the plan after verification.",
+          tool_calls: [
+            {
+              id: `call-${index}`,
+              type: "function",
+              function: { name: "task.update_plan", arguments: JSON.stringify({ plan: ["verified", "complete"] }) },
+            },
+          ],
+        })
+      );
     }
     return Promise.resolve(respond({ content: "Task complete." }));
   };
@@ -166,10 +180,7 @@ Deno.test("canonical: the C-fake matrix succeeds on every manifest with determin
       });
       results.push(result);
       if (!result.success) {
-        throw new Error(
-          `${task.id}: ${result.failure_class}: ${result.failure_detail} ` +
-            `(reliability: ${JSON.stringify(result.reliability)})`,
-        );
+        throw new Error(`${task.id}: ${result.failure_class}: ${result.failure_detail} ` + `(reliability: ${JSON.stringify(result.reliability)})`);
       }
     }
     const byId = (id: string) => results.find((r) => r.task_id === id)!;

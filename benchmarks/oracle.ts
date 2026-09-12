@@ -8,14 +8,7 @@
  */
 
 import { FixtureWorkspace } from "./fixture.ts";
-import {
-  FileCheck,
-  GitCheck,
-  OracleCheckOutcome,
-  OracleOutcome,
-  TaskManifest,
-  VerificationOutcome,
-} from "./schemas.ts";
+import { FileCheck, GitCheck, OracleCheckOutcome, OracleOutcome, TaskManifest, VerificationOutcome } from "./schemas.ts";
 
 export const VERIFY_OUTPUT_LIMIT = 4000;
 
@@ -76,14 +69,7 @@ async function gitCheck(check: GitCheck, workspace: FixtureWorkspace): Promise<O
     return { kind: "git", detail: `${detail} (task has no git repository)`, passed: false };
   }
   const run = async (args: string[]): Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean }> => {
-    return await workspace.exec([
-      "git",
-      "-c",
-      "user.email=benchmark@invalid.invalid",
-      "-c",
-      "user.name=benchmark",
-      ...args,
-    ], {
+    return await workspace.exec(["git", "-c", "user.email=benchmark@invalid.invalid", "-c", "user.name=benchmark", ...args], {
       timeoutMs: 10_000,
       capture: true,
     });

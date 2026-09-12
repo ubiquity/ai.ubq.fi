@@ -48,10 +48,7 @@ export const renderSystemMessage = (options: SystemRenderOptions): string => {
   lines.push("");
   lines.push(`Reasoning: ${options.reasoningEffort}`);
   lines.push("");
-  lines.push(
-    `# Valid channels: ${channelList(options.channels ?? HARMONY_ASSISTANT_CHANNELS)}. ` +
-      "Channel must be included for every message.",
-  );
+  lines.push(`# Valid channels: ${channelList(options.channels ?? HARMONY_ASSISTANT_CHANNELS)}. ` + "Channel must be included for every message.");
   const toolNamespace = options.toolNamespace === undefined ? "functions" : options.toolNamespace;
   if (toolNamespace !== null) {
     lines.push(`Calls to these tools must go to the commentary channel: '${toolNamespace}'.`);
@@ -63,8 +60,7 @@ export const renderSystemMessage = (options: SystemRenderOptions): string => {
  * Escapes a string for a Harmony TS literal (double quotes, matching the
  * renderer's JSON-literal style for string enum values).
  */
-export const quoteString = (value: string): string =>
-  `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("\n", "\\n")}"`;
+export const quoteString = (value: string): string => `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("\n", "\\n")}"`;
 
 const jsonLiteral = (value: unknown): string => {
   if (typeof value === "string") return quoteString(value);
@@ -72,7 +68,10 @@ const jsonLiteral = (value: unknown): string => {
 };
 
 const indent = (text: string, level: number): string =>
-  text.split("\n").map((line) => (line.length ? "  ".repeat(level) + line : line)).join("\n");
+  text
+    .split("\n")
+    .map((line) => (line.length ? "  ".repeat(level) + line : line))
+    .join("\n");
 
 const commentPrefix = (text: string): string | null => {
   const comment = text.trim();
@@ -98,18 +97,14 @@ export const harmonyTypeFromJsonSchema = (schemaValue: unknown): string => {
 
   if (type === "object" || (type === undefined && schema.properties)) {
     const properties = schema.properties;
-    const required = new Set(
-      Array.isArray(schema.required) ? schema.required.filter((name): name is string => typeof name === "string") : [],
-    );
+    const required = new Set(Array.isArray(schema.required) ? schema.required.filter((name): name is string => typeof name === "string") : []);
     if (!properties || typeof properties !== "object" || Array.isArray(properties)) return "any";
     const fields = Object.entries(properties as Record<string, unknown>);
     if (fields.length === 0) return "{}";
     const lines: string[] = [];
     for (const [name, field] of fields) {
       const fieldSchema = field && typeof field === "object" ? (field as Record<string, unknown>) : {};
-      const description = commentPrefix(
-        typeof fieldSchema.description === "string" ? fieldSchema.description : "",
-      );
+      const description = commentPrefix(typeof fieldSchema.description === "string" ? fieldSchema.description : "");
       if (description) lines.push(description);
       const optional = required.has(name) ? "" : "?";
       const defaultValue = fieldSchema.default === undefined ? null : fieldSchema.default;
@@ -123,10 +118,7 @@ export const harmonyTypeFromJsonSchema = (schemaValue: unknown): string => {
     return `${harmonyTypeFromJsonSchema(schema.items)}[]`;
   }
 
-  if (
-    type === "string" || type === "number" || type === "integer" || type === "boolean" ||
-    typeof type === "string"
-  ) {
+  if (type === "string" || type === "number" || type === "integer" || type === "boolean" || typeof type === "string") {
     return type;
   }
   return "any";

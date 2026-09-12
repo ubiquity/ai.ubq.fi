@@ -2,11 +2,9 @@ import assert from "node:assert/strict";
 
 import { getCodexAccountEmail } from "../src/codex.ts";
 
-const encodeBase64Url = (value: unknown): string =>
-  btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+const encodeBase64Url = (value: unknown): string => btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 
-const tokenWithPayload = (payload: unknown): string =>
-  `${encodeBase64Url({ alg: "none" })}.${encodeBase64Url(payload)}.signature`;
+const tokenWithPayload = (payload: unknown): string => `${encodeBase64Url({ alg: "none" })}.${encodeBase64Url(payload)}.signature`;
 
 Deno.test("Codex account email is read from the provider profile claim", () => {
   const token = tokenWithPayload({

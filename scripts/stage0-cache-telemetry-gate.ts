@@ -33,53 +33,21 @@ const INFERENCE_PROVIDER_VALUES = ["chatgpt_codex", "metered", "surplus"] as con
 const INFERENCE_PROVIDERS = new Set(INFERENCE_PROVIDER_VALUES);
 const PROMPT_CACHE_MODE_VALUES = ["implicit", "explicit", "legacy_retention", "unspecified"] as const;
 const PROMPT_CACHE_MODES = new Set(PROMPT_CACHE_MODE_VALUES);
-const AFFINITY_OUTCOME_VALUES = [
-  "none",
-  "preferred",
-  "preferred_unavailable",
-  "remapped",
-  "failover",
-  "shadow_only",
-] as const;
+const AFFINITY_OUTCOME_VALUES = ["none", "preferred", "preferred_unavailable", "remapped", "failover", "shadow_only"] as const;
 const AFFINITY_OUTCOMES = new Set(AFFINITY_OUTCOME_VALUES);
 const INFERENCE_TERMINAL_OUTCOMES = ["completed", "failed", "incomplete", "cancelled"] as const;
 const MAX_MODEL_LABEL_CHARS = 128;
-const TERMINAL_ROUTES = new Set(
-  [
-    "responses",
-    "chat.completions",
-    "embeddings",
-    "embeddings.jobs.create",
-    "embeddings.jobs.get",
-  ] as const,
-);
-const STREAM_TERMINAL_TYPES = new Set(
-  [
-    "response.completed",
-    "response.failed",
-    "response.incomplete",
-    "error",
-    "eof",
-    "cancelled",
-    "deadline",
-  ] as const,
-);
+const TERMINAL_ROUTES = new Set(["responses", "chat.completions", "embeddings", "embeddings.jobs.create", "embeddings.jobs.get"] as const);
+const STREAM_TERMINAL_TYPES = new Set(["response.completed", "response.failed", "response.incomplete", "error", "eof", "cancelled", "deadline"] as const);
 
 type UsageTelemetryStatus = "missing" | "partial" | "reported" | "invalid";
-type InferenceProvider = typeof INFERENCE_PROVIDER_VALUES[number];
+type InferenceProvider = (typeof INFERENCE_PROVIDER_VALUES)[number];
 type TerminalRoute = "responses" | "chat.completions" | "embeddings" | "embeddings.jobs.create" | "embeddings.jobs.get";
 type InferenceRoute = "responses" | "chat.completions";
-type InferenceTerminalOutcome = typeof INFERENCE_TERMINAL_OUTCOMES[number];
+type InferenceTerminalOutcome = (typeof INFERENCE_TERMINAL_OUTCOMES)[number];
 type PromptCacheMode = "implicit" | "explicit" | "legacy_retention" | "unspecified";
-type AffinityOutcome = typeof AFFINITY_OUTCOME_VALUES[number];
-type StreamTerminalType =
-  | "response.completed"
-  | "response.failed"
-  | "response.incomplete"
-  | "error"
-  | "eof"
-  | "cancelled"
-  | "deadline";
+type AffinityOutcome = (typeof AFFINITY_OUTCOME_VALUES)[number];
+type StreamTerminalType = "response.completed" | "response.failed" | "response.incomplete" | "error" | "eof" | "cancelled" | "deadline";
 
 type ReleaseIdentity = Readonly<{
   git_sha: string;
@@ -377,11 +345,9 @@ type MutableInferenceOutcomeCohort = {
   cache_write_input_tokens: MutableCacheTokenSummary;
 };
 
-const hasOwn = (value: Record<string, unknown>, key: string): boolean =>
-  Object.prototype.hasOwnProperty.call(value, key);
+const hasOwn = (value: Record<string, unknown>, key: string): boolean => Object.prototype.hasOwnProperty.call(value, key);
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === "object" && !Array.isArray(value);
+const isRecord = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
 
 const fail = (lineNumber: number, detail: string): never => {
   throw new Stage0CacheTelemetryGateError(`line ${lineNumber}: ${detail}`);
@@ -403,12 +369,7 @@ const hasAsciiControlCharacter = (value: string): boolean => {
   return false;
 };
 
-const requireBoundedIdentifier = (
-  record: Record<string, unknown>,
-  key: string,
-  maxLength: number,
-  lineNumber: number,
-): string => {
+const requireBoundedIdentifier = (record: Record<string, unknown>, key: string, maxLength: number, lineNumber: number): string => {
   const value = requireNonEmptyString(record, key, lineNumber);
   if (value.length > maxLength || hasAsciiControlCharacter(value) || !SAFE_IDENTIFIER_PATTERN.test(value)) {
     return fail(lineNumber, `terminal event has an invalid ${key} field`);
@@ -445,11 +406,7 @@ const requireNullableString = (record: Record<string, unknown>, key: string, lin
   return value;
 };
 
-const requireNullableReleaseString = (
-  record: Record<string, unknown>,
-  key: string,
-  lineNumber: number,
-): string | null => {
+const requireNullableReleaseString = (record: Record<string, unknown>, key: string, lineNumber: number): string | null => {
   if (!hasOwn(record, key)) return fail(lineNumber, `terminal event has an invalid ${key} field`);
   const value = record[key];
   if (value === null) return null;
@@ -508,19 +465,13 @@ const requireStreamTerminalType = (record: Record<string, unknown>, lineNumber: 
 
 const requireStatus = (record: Record<string, unknown>, lineNumber: number): number => {
   const value = record.status;
-  if (
-    !hasOwn(record, "status") || typeof value !== "number" || !Number.isSafeInteger(value) || value < 100 || value > 599
-  ) {
+  if (!hasOwn(record, "status") || typeof value !== "number" || !Number.isSafeInteger(value) || value < 100 || value > 599) {
     return fail(lineNumber, "terminal event has an invalid status field");
   }
   return value;
 };
 
-const optionalNonNegativeSafeInteger = (
-  record: Record<string, unknown>,
-  key: string,
-  lineNumber: number,
-): number | null => {
+const optionalNonNegativeSafeInteger = (record: Record<string, unknown>, key: string, lineNumber: number): number | null => {
   if (!hasOwn(record, key) || record[key] === null) return null;
   const value = record[key];
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
@@ -541,10 +492,7 @@ const requireCacheToken = (record: Record<string, unknown>, key: string, lineNum
 
 const requireUsageTelemetryStatus = (record: Record<string, unknown>, lineNumber: number): UsageTelemetryStatus => {
   const value = record.usage_telemetry_status;
-  if (
-    !hasOwn(record, "usage_telemetry_status") || typeof value !== "string" ||
-    !USAGE_TELEMETRY_STATUSES.has(value as UsageTelemetryStatus)
-  ) {
+  if (!hasOwn(record, "usage_telemetry_status") || typeof value !== "string" || !USAGE_TELEMETRY_STATUSES.has(value as UsageTelemetryStatus)) {
     return fail(lineNumber, "terminal event has an invalid usage_telemetry_status field");
   }
   return value as UsageTelemetryStatus;
@@ -607,18 +555,13 @@ const requireNullableBoolean = (record: Record<string, unknown>, key: string, li
   return fail(lineNumber, `terminal event has an invalid ${key} field`);
 };
 
-const inferenceOutcomeFor = (
-  route: TerminalRoute,
-  streamTerminalType: StreamTerminalType | null,
-): InferenceTerminalOutcome | null => {
+const inferenceOutcomeFor = (route: TerminalRoute, streamTerminalType: StreamTerminalType | null): InferenceTerminalOutcome | null => {
   if (route !== "responses" && route !== "chat.completions") return null;
   if (streamTerminalType === "response.completed") return "completed";
   if (streamTerminalType === "response.incomplete") return "incomplete";
   if (streamTerminalType === "cancelled") return "cancelled";
-  if (
-    streamTerminalType === "response.failed" || streamTerminalType === "error" || streamTerminalType === "eof" ||
-    streamTerminalType === "deadline"
-  ) return "failed";
+  if (streamTerminalType === "response.failed" || streamTerminalType === "error" || streamTerminalType === "eof" || streamTerminalType === "deadline")
+    return "failed";
   return null;
 };
 
@@ -633,8 +576,8 @@ const terminalPayloadFromText = (text: string, lineNumber: number): string | nul
   const prefix = trimmed.startsWith(TERMINAL_LINE_PREFIX)
     ? TERMINAL_LINE_PREFIX
     : trimmed.startsWith(INFO_TERMINAL_LINE_PREFIX)
-    ? INFO_TERMINAL_LINE_PREFIX
-    : null;
+      ? INFO_TERMINAL_LINE_PREFIX
+      : null;
   if (prefix === null) {
     return fail(lineNumber, "request_terminal log text must begin with the canonical terminal marker");
   }
@@ -709,23 +652,14 @@ const parseTerminalEvent = (line: string, lineNumber: number): TerminalEvent | n
   if (inferenceOutcome === "completed" && (status < 200 || status >= 300)) {
     return fail(lineNumber, "completed inference event has a non-2xx status field");
   }
-  const provider = inferenceOutcome === "completed"
-    ? requireInferenceProvider(parsed, lineNumber)
-    : inferenceOutcome === null
-    ? null
-    : optionalInferenceProvider(parsed);
-  const model = inferenceOutcome === "completed"
-    ? requireBoundedModelLabel(parsed, lineNumber)
-    : inferenceOutcome === null
-    ? null
-    : optionalBoundedModelLabel(parsed);
+  const provider =
+    inferenceOutcome === "completed" ? requireInferenceProvider(parsed, lineNumber) : inferenceOutcome === null ? null : optionalInferenceProvider(parsed);
+  const model =
+    inferenceOutcome === "completed" ? requireBoundedModelLabel(parsed, lineNumber) : inferenceOutcome === null ? null : optionalBoundedModelLabel(parsed);
   if (usageObserved !== (usageTelemetryStatus !== "missing")) {
     return fail(lineNumber, "terminal event has inconsistent usage_observed and usage_telemetry_status fields");
   }
-  if (
-    inferenceOutcome !== null && usageTelemetryStatus === "reported" &&
-    (inputTokens === null || cachedInputTokens === null)
-  ) {
+  if (inferenceOutcome !== null && usageTelemetryStatus === "reported" && (inputTokens === null || cachedInputTokens === null)) {
     return fail(lineNumber, "reported inference terminal event is missing cache-read usage fields");
   }
 
@@ -813,15 +747,8 @@ const toLatencySummary = (summary: MutableLatencySummary): LatencySummary => {
   };
 };
 
-const addValidReportedCacheMetrics = (
-  metrics: MutableValidReportedCacheMetrics,
-  event: TerminalEvent,
-  lineNumber: number,
-): void => {
-  if (
-    event.usage_telemetry_status !== "reported" || event.input_tokens === null ||
-    event.cached_input_tokens === null
-  ) return;
+const addValidReportedCacheMetrics = (metrics: MutableValidReportedCacheMetrics, event: TerminalEvent, lineNumber: number): void => {
+  if (event.usage_telemetry_status !== "reported" || event.input_tokens === null || event.cached_input_tokens === null) return;
 
   metrics.reported_events = addSafely(metrics.reported_events, 1, lineNumber);
   metrics.input_tokens = addSafely(metrics.input_tokens, event.input_tokens, lineNumber);
@@ -829,21 +756,11 @@ const addValidReportedCacheMetrics = (
   if (event.cache_write_input_tokens === null) return;
 
   metrics.cache_write_observed_events = addSafely(metrics.cache_write_observed_events, 1, lineNumber);
-  metrics.cache_write_cached_input_tokens = addSafely(
-    metrics.cache_write_cached_input_tokens,
-    event.cached_input_tokens,
-    lineNumber,
-  );
-  metrics.cache_write_input_tokens = addSafely(
-    metrics.cache_write_input_tokens,
-    event.cache_write_input_tokens,
-    lineNumber,
-  );
+  metrics.cache_write_cached_input_tokens = addSafely(metrics.cache_write_cached_input_tokens, event.cached_input_tokens, lineNumber);
+  metrics.cache_write_input_tokens = addSafely(metrics.cache_write_input_tokens, event.cache_write_input_tokens, lineNumber);
 };
 
-const toValidReportedCacheMetrics = (
-  metrics: MutableValidReportedCacheMetrics,
-): ValidReportedCacheMetrics => ({
+const toValidReportedCacheMetrics = (metrics: MutableValidReportedCacheMetrics): ValidReportedCacheMetrics => ({
   reported_events: metrics.reported_events,
   cache_read: {
     aggregate_input_tokens: metrics.input_tokens,
@@ -854,58 +771,37 @@ const toValidReportedCacheMetrics = (
     observed_events: metrics.cache_write_observed_events,
     aggregate_cached_input_tokens: metrics.cache_write_cached_input_tokens,
     aggregate_cache_write_input_tokens: metrics.cache_write_input_tokens,
-    ratio: metrics.cache_write_input_tokens === 0
-      ? null
-      : metrics.cache_write_cached_input_tokens / metrics.cache_write_input_tokens,
+    ratio: metrics.cache_write_input_tokens === 0 ? null : metrics.cache_write_cached_input_tokens / metrics.cache_write_input_tokens,
   },
 });
 
 const toSortedCounts = <Key extends string>(counts: Map<Key, number>): Record<Key, number> =>
-  Object.fromEntries(
-    [...counts.entries()].sort(([left], [right]) => left.localeCompare(right)),
-  ) as Record<Key, number>;
+  Object.fromEntries([...counts.entries()].sort(([left], [right]) => left.localeCompare(right))) as Record<Key, number>;
 
 const toFixedCounts = <Key extends string>(keys: readonly Key[], counts: Map<Key, number>): Record<Key, number> =>
   Object.fromEntries(keys.map((key) => [key, counts.get(key) ?? 0])) as Record<Key, number>;
 
 const toOpaqueModelLabels = (models: Iterable<string>): Map<string, string> =>
-  new Map(
-    [...new Set(models)]
-      .sort((left, right) => left.localeCompare(right))
-      .map((model, index) => [model, `model_${index + 1}`] as const),
-  );
+  new Map([...new Set(models)].sort((left, right) => left.localeCompare(right)).map((model, index) => [model, `model_${index + 1}`] as const));
 
-const stableOpaqueLabel = (domain: string, value: string): string =>
-  createHash("sha256").update(`${domain}\u0000${value}`).digest("hex");
+const stableOpaqueLabel = (domain: string, value: string): string => createHash("sha256").update(`${domain}\u0000${value}`).digest("hex");
 
-const extendOpaqueModelLabels = (
-  labels: ReadonlyMap<string, string>,
-  models: Iterable<string>,
-): Map<string, string> => {
+const extendOpaqueModelLabels = (labels: ReadonlyMap<string, string>, models: Iterable<string>): Map<string, string> => {
   const extended = new Map(labels);
-  for (
-    const model of [...new Set(models)].filter((model) => !extended.has(model)).sort((left, right) =>
-      left.localeCompare(right)
-    )
-  ) {
+  for (const model of [...new Set(models)].filter((model) => !extended.has(model)).sort((left, right) => left.localeCompare(right))) {
     extended.set(model, `model_${extended.size + 1}`);
   }
   return extended;
 };
 
-const reportedOverCompleted = (
-  reported: number,
-  completed: number,
-): { reported: number; completed: number; ratio: number | null } => ({
+const reportedOverCompleted = (reported: number, completed: number): { reported: number; completed: number; ratio: number | null } => ({
   reported,
   completed,
   ratio: completed === 0 ? null : reported / completed,
 });
 
 const sameRelease = (left: ReleaseIdentity, right: ReleaseIdentity): boolean =>
-  left.git_sha === right.git_sha &&
-  left.deno_revision === right.deno_revision &&
-  left.router_revision === right.router_revision;
+  left.git_sha === right.git_sha && left.deno_revision === right.deno_revision && left.router_revision === right.router_revision;
 
 const toReleaseReportIdentity = (release: ReleaseIdentity): ReleaseReportIdentity => ({
   git_sha: release.git_sha,
@@ -965,8 +861,7 @@ class Stage0CacheTelemetryAccumulator {
 
     if (event.inference_outcome !== null) this.#addInferenceOutcome(event, lineNumber);
     if (event.inference_outcome !== "completed") return;
-    const provider = (event.provider ??
-      fail(lineNumber, "completed inference event is missing a provider or model")) as InferenceProvider;
+    const provider = (event.provider ?? fail(lineNumber, "completed inference event is missing a provider or model")) as InferenceProvider;
     const model = event.model ?? fail(lineNumber, "completed inference event is missing a provider or model");
     const route = event.route as InferenceRoute;
 
@@ -1039,11 +934,7 @@ class Stage0CacheTelemetryAccumulator {
       };
       this.#cacheDimensionCohorts.set(cacheDimensionKey, cacheDimensionCohort);
     } else cacheDimensionCohort = existingCacheDimensionCohort;
-    cacheDimensionCohort.completed_inference = addSafely(
-      cacheDimensionCohort.completed_inference,
-      1,
-      lineNumber,
-    );
+    cacheDimensionCohort.completed_inference = addSafely(cacheDimensionCohort.completed_inference, 1, lineNumber);
     increment(cacheDimensionCohort.status_totals, String(event.status), lineNumber);
     increment(cacheDimensionCohort.usage_telemetry_status_totals, event.usage_telemetry_status, lineNumber);
     addValidReportedCacheMetrics(cacheDimensionCohort.valid_reported_cache_metrics, event, lineNumber);
@@ -1056,11 +947,9 @@ class Stage0CacheTelemetryAccumulator {
     const outcome = event.inference_outcome ?? fail(lineNumber, "inference terminal event is missing an outcome");
     const provider = event.provider;
     const model = event.model;
-    const streamTerminalType = event.stream_terminal_type ??
-      fail(lineNumber, "inference terminal event is missing a stream_terminal_type");
-    const route: InferenceRoute = event.route === "responses" || event.route === "chat.completions"
-      ? event.route
-      : fail(lineNumber, "inference terminal event has an invalid route field");
+    const streamTerminalType = event.stream_terminal_type ?? fail(lineNumber, "inference terminal event is missing a stream_terminal_type");
+    const route: InferenceRoute =
+      event.route === "responses" || event.route === "chat.completions" ? event.route : fail(lineNumber, "inference terminal event has an invalid route field");
 
     this.#inferenceTerminalEvents = addSafely(this.#inferenceTerminalEvents, 1, lineNumber);
     increment(this.#inferenceOutcomeTotals, outcome, lineNumber);
@@ -1079,14 +968,7 @@ class Stage0CacheTelemetryAccumulator {
     }
     increment(this.#affinityOutcomeTotals, event.affinity_outcome, lineNumber);
 
-    const key = JSON.stringify([
-      provider,
-      model,
-      route,
-      event.stream,
-      outcome,
-      streamTerminalType,
-    ]);
+    const key = JSON.stringify([provider, model, route, event.stream, outcome, streamTerminalType]);
     const existingCohort = this.#inferenceOutcomeCohorts.get(key);
     let cohort: MutableInferenceOutcomeCohort;
     if (existingCohort === undefined) {
@@ -1128,28 +1010,16 @@ class Stage0CacheTelemetryAccumulator {
     const coverage = reportedOverCompleted(this.#reportedCompleted, this.#completedInference);
     const modelCohortLabels = toOpaqueModelLabels([...this.#cohorts.values()].map((cohort) => cohort.model));
     const accountSlotCohortLabels = new Map(
-      [
-        ...new Set(
-          [...this.#cacheDimensionCohorts.values()]
-            .map((cohort) => cohort.account_slot)
-            .filter((slot): slot is number => slot !== null),
-        ),
-      ]
+      [...new Set([...this.#cacheDimensionCohorts.values()].map((cohort) => cohort.account_slot).filter((slot): slot is number => slot !== null))]
         .sort((left, right) => left - right)
-        .map((slot, index) => [slot, `slot_${index + 1}`] as const),
+        .map((slot, index) => [slot, `slot_${index + 1}`] as const)
     );
     const outcomeModelCohortLabels = extendOpaqueModelLabels(
       modelCohortLabels,
-      [...this.#inferenceOutcomeCohorts.values()]
-        .map((cohort) => cohort.model)
-        .filter((model): model is string => model !== null),
+      [...this.#inferenceOutcomeCohorts.values()].map((cohort) => cohort.model).filter((model): model is string => model !== null)
     );
     const cohorts = [...this.#cohorts.values()]
-      .sort((left, right) =>
-        left.provider.localeCompare(right.provider) ||
-        left.model.localeCompare(right.model) ||
-        left.route.localeCompare(right.route)
-      )
+      .sort((left, right) => left.provider.localeCompare(right.provider) || left.model.localeCompare(right.model) || left.route.localeCompare(right.route))
       .map((cohort): Stage0CohortReport => {
         const cohortCoverage = reportedOverCompleted(cohort.reported, cohort.completed_inference);
         return {
@@ -1178,25 +1048,24 @@ class Stage0CacheTelemetryAccumulator {
         };
       });
     const cacheDimensionCohorts = [...this.#cacheDimensionCohorts.values()]
-      .sort((left, right) =>
-        left.provider.localeCompare(right.provider) ||
-        left.model.localeCompare(right.model) ||
-        left.route.localeCompare(right.route) ||
-        (left.account_slot === null ? "unassigned" : accountSlotCohortLabels.get(left.account_slot)!).localeCompare(
-          right.account_slot === null ? "unassigned" : accountSlotCohortLabels.get(right.account_slot)!,
-        ) ||
-        (left.account_cohort_id ?? "").localeCompare(right.account_cohort_id ?? "") ||
-        left.prompt_cache_mode.localeCompare(right.prompt_cache_mode) ||
-        Number(left.prompt_cache_key_present) - Number(right.prompt_cache_key_present)
+      .sort(
+        (left, right) =>
+          left.provider.localeCompare(right.provider) ||
+          left.model.localeCompare(right.model) ||
+          left.route.localeCompare(right.route) ||
+          (left.account_slot === null ? "unassigned" : accountSlotCohortLabels.get(left.account_slot)!).localeCompare(
+            right.account_slot === null ? "unassigned" : accountSlotCohortLabels.get(right.account_slot)!
+          ) ||
+          (left.account_cohort_id ?? "").localeCompare(right.account_cohort_id ?? "") ||
+          left.prompt_cache_mode.localeCompare(right.prompt_cache_mode) ||
+          Number(left.prompt_cache_key_present) - Number(right.prompt_cache_key_present)
       )
       .map((cohort): CacheDimensionCohortReport => ({
         provider: cohort.provider,
         model: modelCohortLabels.get(cohort.model)!,
         model_cohort_id: stableOpaqueLabel("uos-prompt-cache-telemetry-model-v1", cohort.model),
         route: cohort.route,
-        account_slot_cohort: cohort.account_slot === null
-          ? "unassigned"
-          : accountSlotCohortLabels.get(cohort.account_slot)!,
+        account_slot_cohort: cohort.account_slot === null ? "unassigned" : accountSlotCohortLabels.get(cohort.account_slot)!,
         account_cohort_id: cohort.account_cohort_id,
         prompt_cache_mode: cohort.prompt_cache_mode,
         prompt_cache_key_present: cohort.prompt_cache_key_present,
@@ -1209,13 +1078,14 @@ class Stage0CacheTelemetryAccumulator {
         completed_latency_ms: toLatencySummary(cohort.latency_ms),
       }));
     const inferenceOutcomeCohorts = [...this.#inferenceOutcomeCohorts.values()]
-      .sort((left, right) =>
-        (left.provider ?? "unknown").localeCompare(right.provider ?? "unknown") ||
-        (left.model ?? "").localeCompare(right.model ?? "") ||
-        left.route.localeCompare(right.route) ||
-        String(left.stream).localeCompare(String(right.stream)) ||
-        left.outcome.localeCompare(right.outcome) ||
-        left.stream_terminal_type.localeCompare(right.stream_terminal_type)
+      .sort(
+        (left, right) =>
+          (left.provider ?? "unknown").localeCompare(right.provider ?? "unknown") ||
+          (left.model ?? "").localeCompare(right.model ?? "") ||
+          left.route.localeCompare(right.route) ||
+          String(left.stream).localeCompare(String(right.stream)) ||
+          left.outcome.localeCompare(right.outcome) ||
+          left.stream_terminal_type.localeCompare(right.stream_terminal_type)
       )
       .map((cohort): InferenceOutcomeCohortReport => ({
         provider: cohort.provider ?? "unknown",
@@ -1274,8 +1144,7 @@ class Stage0CacheTelemetryAccumulator {
         },
         stage0_eligibility: {
           status: "not_evaluated",
-          reason:
-            "supported-model membership and materially-used cohort selection are not available in terminal events",
+          reason: "supported-model membership and materially-used cohort selection are not available in terminal events",
         },
       },
       cohorts,

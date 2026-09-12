@@ -15,7 +15,7 @@ const parseTokens = (raw: string | undefined | null): Set<string> => {
     raw
       .split(/[\n,]/g)
       .map((token) => token.trim())
-      .filter(Boolean),
+      .filter(Boolean)
   );
 };
 
@@ -53,7 +53,6 @@ export const runtimeGitSha = (): string => RELEASE_GIT_SHA;
 // Classic variable as a local/rollback fallback so older rollback artifacts
 // still identify themselves truthfully.
 export const runtimeDeploymentId = (): string =>
-  getEnv("DENO_DEPLOY_BUILD_ID")?.trim() || getEnv("DENO_DEPLOYMENT_ID")?.trim() ||
-  (!config.isDeploy && runtimeGitSha() !== "unknown"
-    ? `${Deno.build.os === "darwin" ? "mac" : "vps"}-${runtimeGitSha()}`
-    : "unknown");
+  getEnv("DENO_DEPLOY_BUILD_ID")?.trim() ||
+  getEnv("DENO_DEPLOYMENT_ID")?.trim() ||
+  (!config.isDeploy && runtimeGitSha() !== "unknown" ? `${Deno.build.os === "darwin" ? "mac" : "vps"}-${runtimeGitSha()}` : "unknown");

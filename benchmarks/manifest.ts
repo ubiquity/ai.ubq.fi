@@ -48,9 +48,11 @@ function globMatches(pattern: string, value: string): boolean {
   if (pattern === "*") return true;
   const re = new RegExp(
     "^" +
-      pattern.split("").map((c) => (c === "*" ? ".*" : c === "?" ? "." : c.replace(/[.+^${}()|[\]\\]/g, "\\$&"))).join(
-        "",
-      ) + "$",
+      pattern
+        .split("")
+        .map((c) => (c === "*" ? ".*" : c === "?" ? "." : c.replace(/[.+^${}()|[\]\\]/g, "\\$&")))
+        .join("") +
+      "$"
   );
   return re.test(value);
 }

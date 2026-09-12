@@ -1,10 +1,6 @@
 import assert from "node:assert/strict";
 
-import {
-  invalidCallLabel,
-  renderValidationFeedback,
-  validateToolArgumentsDetailed,
-} from "../src/harmony/reliability/feedback.ts";
+import { invalidCallLabel, renderValidationFeedback, validateToolArgumentsDetailed } from "../src/harmony/reliability/feedback.ts";
 
 Deno.test("feedback: a fully valid call has no issues", () => {
   const result = validateToolArgumentsDetailed("filesystem.read", { path: "docs/spec.txt" });

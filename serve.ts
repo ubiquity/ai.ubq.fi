@@ -2,11 +2,7 @@
 
 import { getKv } from "./src/kv.ts";
 import { config } from "./src/config.ts";
-import {
-  configureAdminAuthForListener,
-  configureAdminAuthPeerForRequest,
-  parseServeRuntimeOptions,
-} from "./src/local_admin_auth.ts";
+import { configureAdminAuthForListener, configureAdminAuthPeerForRequest, parseServeRuntimeOptions } from "./src/local_admin_auth.ts";
 import { reconcileDuePaidFallbacksV3 } from "./src/paid_fallback_ledger.ts";
 import { prunePromptCacheAnalytics } from "./src/prompt_cache_analytics.ts";
 import { sampleProviderCapacityForCron } from "./src/provider_capacity.ts";
@@ -23,10 +19,7 @@ Deno.cron("reconcile pending metered billing", "* * * * *", async () => {
     if (!kv) return;
     await reconcileDuePaidFallbacksV3(Date.now(), kv);
   } catch (error) {
-    console.error(
-      "[ai.ubq.fi] Scheduled paid fallback reconciliation failed:",
-      error instanceof Error ? error.message : String(error),
-    );
+    console.error("[ai.ubq.fi] Scheduled paid fallback reconciliation failed:", error instanceof Error ? error.message : String(error));
   }
 });
 
@@ -37,10 +30,7 @@ Deno.cron("sample Codex provider capacity", "*/15 * * * *", async () => {
     if (!kv) return;
     await sampleProviderCapacityForCron({ kv });
   } catch (error) {
-    console.error(
-      "[ai.ubq.fi] Provider capacity sampler failed:",
-      error instanceof Error ? error.message : String(error),
-    );
+    console.error("[ai.ubq.fi] Provider capacity sampler failed:", error instanceof Error ? error.message : String(error));
   }
 });
 
@@ -64,20 +54,18 @@ const runtimeOptions = parseServeRuntimeOptions(Deno.args, { isDeploy: config.is
 
 const server: Deno.ServeDefaultExport = runtimeOptions.disableAdminAuth
   ? {
-    fetch(request, info) {
-      configureAdminAuthPeerForRequest(info.remoteAddr);
-      return serveHandler(request, info);
-    },
-    onListen(address) {
-      configureAdminAuthForListener(runtimeOptions, address);
-      const netAddress = address as Deno.NetAddr;
-      const hostname = netAddress.hostname.includes(":") ? `[${netAddress.hostname}]` : netAddress.hostname;
-      console.log(`Listening on http://${hostname}:${netAddress.port}/`);
-      console.warn(
-        "[ai.ubq.fi] WARNING: admin authentication is disabled for this loopback development server.",
-      );
-    },
-  }
+      fetch(request, info) {
+        configureAdminAuthPeerForRequest(info.remoteAddr);
+        return serveHandler(request, info);
+      },
+      onListen(address) {
+        configureAdminAuthForListener(runtimeOptions, address);
+        const netAddress = address as Deno.NetAddr;
+        const hostname = netAddress.hostname.includes(":") ? `[${netAddress.hostname}]` : netAddress.hostname;
+        console.log(`Listening on http://${hostname}:${netAddress.port}/`);
+        console.warn("[ai.ubq.fi] WARNING: admin authentication is disabled for this loopback development server.");
+      },
+    }
   : { fetch: serveHandler };
 
 export default server;

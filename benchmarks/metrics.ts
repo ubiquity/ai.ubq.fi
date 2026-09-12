@@ -6,14 +6,7 @@
  * per-task×config groups consumed by the summarize command and later reports.
  */
 
-import {
-  BenchmarkResult,
-  BenchmarkSummary,
-  ConfigGroup,
-  RunMetrics,
-  TaskConfigGroup,
-  TrajectoryEvent,
-} from "./schemas.ts";
+import { BenchmarkResult, BenchmarkSummary, ConfigGroup, RunMetrics, TaskConfigGroup, TrajectoryEvent } from "./schemas.ts";
 
 /** Deterministic canonical form of tool arguments for duplicate detection. */
 export function canonicalArgs(args: Record<string, unknown>): string {
@@ -34,13 +27,8 @@ export function canonicalArgs(args: Record<string, unknown>): string {
 /** Derive run metrics from a complete event list. */
 export function deriveMetrics(events: TrajectoryEvent[]): RunMetrics {
   const calls = events.filter((e): e is Extract<TrajectoryEvent, { type: "tool_call" }> => e.type === "tool_call");
-  const results = new Map(
-    events.filter((e): e is Extract<TrajectoryEvent, { type: "tool_result" }> => e.type === "tool_result")
-      .map((e) => [e.id, e]),
-  );
-  const requests = events.filter((e): e is Extract<TrajectoryEvent, { type: "model_request" }> =>
-    e.type === "model_request"
-  );
+  const results = new Map(events.filter((e): e is Extract<TrajectoryEvent, { type: "tool_result" }> => e.type === "tool_result").map((e) => [e.id, e]));
+  const requests = events.filter((e): e is Extract<TrajectoryEvent, { type: "model_request" }> => e.type === "model_request");
 
   // Repeated: explicit flags plus consecutive identical calls whose
   // predecessor succeeded. Retries after failures count as recovery instead.
@@ -116,7 +104,10 @@ export function groupMetrics(results: BenchmarkResult[]): Omit<ConfigGroup, "con
     success_rate: results.length === 0 ? 0 : (results.length - failures.length) / results.length,
     wall_time_ms: {
       median: median(results.map((r) => r.wall_time_ms)),
-      p95: percentile(results.map((r) => r.wall_time_ms), 0.95),
+      p95: percentile(
+        results.map((r) => r.wall_time_ms),
+        0.95
+      ),
     },
     tool_calls: summarize((r) => r.metrics.tool_calls),
     model_calls: summarize((r) => r.metrics.model_calls),
@@ -139,15 +130,19 @@ export function aggregateResults(results: BenchmarkResult[], runsRoot: string): 
     const key = `${r.task_id}\u0000${r.config_id}`;
     byTaskConfig.set(key, [...(byTaskConfig.get(key) ?? []), r]);
   }
-  const configs: ConfigGroup[] = [...byConfig.entries()].map(([config_id, rs]) => ({
-    config_id,
-    task_count: new Set(rs.map((r) => r.task_id)).size,
-    ...groupMetrics(rs),
-  })).sort((a, b) => a.config_id.localeCompare(b.config_id));
-  const taskConfigs: TaskConfigGroup[] = [...byTaskConfig.entries()].map(([key, rs]) => {
-    const [task_id, config_id] = key.split("\u0000");
-    return { task_id, config_id, ...groupMetrics(rs) };
-  }).sort((a, b) => (a.task_id + a.config_id).localeCompare(b.task_id + b.config_id));
+  const configs: ConfigGroup[] = [...byConfig.entries()]
+    .map(([config_id, rs]) => ({
+      config_id,
+      task_count: new Set(rs.map((r) => r.task_id)).size,
+      ...groupMetrics(rs),
+    }))
+    .sort((a, b) => a.config_id.localeCompare(b.config_id));
+  const taskConfigs: TaskConfigGroup[] = [...byTaskConfig.entries()]
+    .map(([key, rs]) => {
+      const [task_id, config_id] = key.split("\u0000");
+      return { task_id, config_id, ...groupMetrics(rs) };
+    })
+    .sort((a, b) => (a.task_id + a.config_id).localeCompare(b.task_id + b.config_id));
   return {
     schema_version: "1.0",
     generated_at: new Date().toISOString(),
@@ -169,15 +164,20 @@ function pad(s: string, w: number): string {
 export function formatSummary(summary: BenchmarkSummary, verbose = false): string {
   const lines: string[] = [];
   const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
-  lines.push(
-    `runs: ${summary.run_count}  success: ${summary.success_count} (${
-      pct(summary.success_rate)
-    })  failures: ${summary.failure_count}`,
-  );
+  lines.push(`runs: ${summary.run_count}  success: ${summary.success_count} (${pct(summary.success_rate)})  failures: ${summary.failure_count}`);
   lines.push("");
   lines.push(
-    pad("config", 10) + pad("tasks", 8) + pad("runs", 7) + pad("ok", 7) + pad("rate", 9) + pad("wall med", 11) +
-      pad("wall p95", 11) + pad("tool med", 10) + pad("model med", 11) + pad("tool err", 9) + "failure classes",
+    pad("config", 10) +
+      pad("tasks", 8) +
+      pad("runs", 7) +
+      pad("ok", 7) +
+      pad("rate", 9) +
+      pad("wall med", 11) +
+      pad("wall p95", 11) +
+      pad("tool med", 10) +
+      pad("model med", 11) +
+      pad("tool err", 9) +
+      "failure classes"
   );
   for (const g of summary.by_config) {
     lines.push(
@@ -191,14 +191,23 @@ export function formatSummary(summary: BenchmarkSummary, verbose = false): strin
         pad(String(g.tool_calls.median), 10) +
         pad(String(g.model_calls.median), 11) +
         pad(String(g.total_tool_errors), 9) +
-        Object.entries(g.failure_classes).map(([k, v]) => `${k}:${v}`).join(" "),
+        Object.entries(g.failure_classes)
+          .map(([k, v]) => `${k}:${v}`)
+          .join(" ")
     );
   }
   if (verbose) {
     lines.push("", "per task × config:");
     lines.push(
-      pad("task", 12) + pad("config", 10) + pad("runs", 7) + pad("ok", 7) + pad("rate", 9) + pad("wall med", 11) +
-        pad("tool med", 10) + pad("tool err", 9) + "failure classes",
+      pad("task", 12) +
+        pad("config", 10) +
+        pad("runs", 7) +
+        pad("ok", 7) +
+        pad("rate", 9) +
+        pad("wall med", 11) +
+        pad("tool med", 10) +
+        pad("tool err", 9) +
+        "failure classes"
     );
     for (const g of summary.by_task_config) {
       lines.push(
@@ -210,7 +219,9 @@ export function formatSummary(summary: BenchmarkSummary, verbose = false): strin
           pad(`${g.wall_time_ms.median}ms`, 11) +
           pad(String(g.tool_calls.median), 10) +
           pad(String(g.total_tool_errors), 9) +
-          Object.entries(g.failure_classes).map(([k, v]) => `${k}:${v}`).join(" "),
+          Object.entries(g.failure_classes)
+            .map(([k, v]) => `${k}:${v}`)
+            .join(" ")
       );
     }
   }

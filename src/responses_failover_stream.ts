@@ -20,19 +20,9 @@ const reasoningTextProgressFields: ReadonlyMap<string, "delta" | "text"> = new M
   ["response.reasoning_text.delta", "delta"],
   ["response.reasoning_text.done", "text"],
 ]);
-const reasoningSummaryPartProgressTypes = new Set([
-  "response.reasoning_summary_part.added",
-  "response.reasoning_summary_part.done",
-]);
+const reasoningSummaryPartProgressTypes = new Set(["response.reasoning_summary_part.added", "response.reasoning_summary_part.done"]);
 const executableToolTypes = new Set(["function_call", "custom_tool_call"]);
-const hostedToolTypes = new Set([
-  "code_interpreter_call",
-  "computer_call",
-  "file_search_call",
-  "image_generation_call",
-  "mcp_call",
-  "web_search_call",
-]);
+const hostedToolTypes = new Set(["code_interpreter_call", "computer_call", "file_search_call", "image_generation_call", "mcp_call", "web_search_call"]);
 const hostedToolCompletedEventTypes = new Set([...hostedToolTypes].map((type) => `response.${type}.completed`));
 const hostedToolTerminalEventTypes = new Set([
   ...hostedToolCompletedEventTypes,
@@ -41,31 +31,24 @@ const hostedToolTerminalEventTypes = new Set([
 ]);
 const imagePartialEventType = "response.image_generation_call.partial_image";
 
-const nonEmptyText = (value: Record<string, unknown>): boolean =>
-  [value.delta, value.text].some((item) => typeof item === "string" && item.length > 0);
+const nonEmptyText = (value: Record<string, unknown>): boolean => [value.delta, value.text].some((item) => typeof item === "string" && item.length > 0);
 
-const semanticKindFromOutput = (
-  output: unknown,
-  ignoredOutputItemId: string | null = null,
-): ResponsesSemanticKind | null => {
+const semanticKindFromOutput = (output: unknown, ignoredOutputItemId: string | null = null): ResponsesSemanticKind | null => {
   if (!Array.isArray(output)) return null;
   for (const item of output) {
     if (!isRecord(item) || Array.isArray(item)) continue;
     if (ignoredOutputItemId !== null && getString(item.id)?.trim() === ignoredOutputItemId) continue;
     if (item.type === "function_call") {
-      if (
-        typeof item.call_id === "string" && item.call_id.trim() && typeof item.name === "string" &&
-        item.name.trim() && typeof item.arguments === "string"
-      ) return "tool_call";
+      if (typeof item.call_id === "string" && item.call_id.trim() && typeof item.name === "string" && item.name.trim() && typeof item.arguments === "string")
+        return "tool_call";
     }
     if (item.type === "custom_tool_call") {
-      if (
-        typeof item.call_id === "string" && item.call_id.trim() && typeof item.name === "string" &&
-        item.name.trim() && typeof item.input === "string"
-      ) return "tool_call";
+      if (typeof item.call_id === "string" && item.call_id.trim() && typeof item.name === "string" && item.name.trim() && typeof item.input === "string")
+        return "tool_call";
     }
     if (
-      typeof item.type === "string" && hostedToolTypes.has(item.type) &&
+      typeof item.type === "string" &&
+      hostedToolTypes.has(item.type) &&
       (item.status === "in_progress" || item.status === "completed" || item.status === "failed")
     ) {
       return "tool_call";
@@ -73,46 +56,35 @@ const semanticKindFromOutput = (
     if (item.type === "reasoning") continue;
     if (!Array.isArray(item.content)) continue;
     if (
-      item.content.some((part) =>
-        isRecord(part) && (
-          ((part.type === "output_text" || part.type === "text") &&
-            typeof part.text === "string" && part.text.length > 0) ||
-          (part.type === "refusal" && typeof part.refusal === "string" && part.refusal.length > 0)
-        )
+      item.content.some(
+        (part) =>
+          isRecord(part) &&
+          (((part.type === "output_text" || part.type === "text") && typeof part.text === "string" && part.text.length > 0) ||
+            (part.type === "refusal" && typeof part.refusal === "string" && part.refusal.length > 0))
       )
-    ) return "text";
+    )
+      return "text";
   }
   return null;
 };
 
-const responsesEventSemanticKindWithIgnoredOutputItem = (
-  event: ResponsesStreamEvent,
-  ignoredOutputItemId: string | null,
-): ResponsesSemanticKind | null => {
+const responsesEventSemanticKindWithIgnoredOutputItem = (event: ResponsesStreamEvent, ignoredOutputItemId: string | null): ResponsesSemanticKind | null => {
   if (textTypes.has(event.type)) return nonEmptyText(event.value) ? "text" : null;
   if (refusalTypes.has(event.type)) {
-    return (nonEmptyText(event.value) || (typeof event.value.refusal === "string" && event.value.refusal.length > 0))
-      ? "text"
-      : null;
+    return nonEmptyText(event.value) || (typeof event.value.refusal === "string" && event.value.refusal.length > 0) ? "text" : null;
   }
   if (event.type === "response.content_part.done" && isRecord(event.value.part)) {
     const part = event.value.part;
-    if (
-      (part.type === "output_text" || part.type === "text") && typeof part.text === "string" && part.text.length > 0
-    ) return "text";
+    if ((part.type === "output_text" || part.type === "text") && typeof part.text === "string" && part.text.length > 0) return "text";
     if (part.type === "refusal" && typeof part.refusal === "string" && part.refusal.length > 0) return "text";
   }
   if (hostedToolTerminalEventTypes.has(event.type)) return "tool_call";
   if (event.type === imagePartialEventType) {
-    return [event.value.partial_image_b64, event.value.partial_image, event.value.result]
-        .some((value) => typeof value === "string" && value.length > 0)
+    return [event.value.partial_image_b64, event.value.partial_image, event.value.result].some((value) => typeof value === "string" && value.length > 0)
       ? "tool_call"
       : null;
   }
-  if (
-    (event.type === "response.output_item.added" || event.type === "response.output_item.done") &&
-    isRecord(event.value.item)
-  ) {
+  if ((event.type === "response.output_item.added" || event.type === "response.output_item.done") && isRecord(event.value.item)) {
     const item = event.value.item;
     const itemType = getString(item.type) ?? "";
     if (event.type === "response.output_item.done" && executableToolTypes.has(itemType)) {
@@ -142,11 +114,8 @@ export const responsesEventReportsProgress = (event: ResponsesStreamEvent): bool
   const textField = reasoningTextProgressFields.get(event.type);
   if (textField) {
     const value = event.value[textField];
-    const index = event.type.startsWith("response.reasoning_summary_")
-      ? event.value.summary_index
-      : event.value.content_index;
-    return typeof value === "string" && value.length > 0 && typeof index === "number" &&
-      Number.isSafeInteger(index) && index >= 0;
+    const index = event.type.startsWith("response.reasoning_summary_") ? event.value.summary_index : event.value.content_index;
+    return typeof value === "string" && value.length > 0 && typeof index === "number" && Number.isSafeInteger(index) && index >= 0;
   }
   if (reasoningSummaryPartProgressTypes.has(event.type)) {
     const summaryIndex = event.value.summary_index;
@@ -154,11 +123,12 @@ export const responsesEventReportsProgress = (event: ResponsesStreamEvent): bool
   }
   if (
     (event.type === "response.output_item.added" || event.type === "response.output_item.done") &&
-    isRecord(event.value.item) && !Array.isArray(event.value.item) && event.value.item.type === "reasoning"
+    isRecord(event.value.item) &&
+    !Array.isArray(event.value.item) &&
+    event.value.item.type === "reasoning"
   ) {
     const itemId = getString(event.value.item.id)?.trim();
-    return Boolean(itemId) &&
-      (Array.isArray(event.value.item.summary) || Array.isArray(event.value.item.content));
+    return Boolean(itemId) && (Array.isArray(event.value.item.summary) || Array.isArray(event.value.item.content));
   }
   return false;
 };
@@ -169,7 +139,9 @@ const reasoningLifecycleProgressKey = (event: ResponsesStreamEvent): string | nu
   }
   if (
     (event.type === "response.output_item.added" || event.type === "response.output_item.done") &&
-    isRecord(event.value.item) && !Array.isArray(event.value.item) && event.value.item.type === "reasoning"
+    isRecord(event.value.item) &&
+    !Array.isArray(event.value.item) &&
+    event.value.item.type === "reasoning"
   ) {
     const itemId = getString(event.value.item.id)?.trim();
     return itemId ? `${event.type}:${itemId}` : null;
@@ -186,11 +158,7 @@ export type PreparedResponsesStream = Readonly<{
   terminal: ResponsesStreamEvent | null;
 }>;
 
-export const appendResponsesPrecommitEvent = (
-  buffered: ResponsesStreamEvent[],
-  event: ResponsesStreamEvent,
-  bufferedChars: number,
-): number => {
+export const appendResponsesPrecommitEvent = (buffered: ResponsesStreamEvent[], event: ResponsesStreamEvent, bufferedChars: number): number => {
   const nextChars = bufferedChars + event.raw.length;
   if (buffered.length >= MAX_RESPONSES_PRECOMMIT_EVENTS || nextChars > MAX_RESPONSES_PRECOMMIT_CHARS) {
     throw new ResponsesStreamError("Upstream Responses precommit buffer exceeded its limit.", {
@@ -208,7 +176,7 @@ export const prepareResponsesStreamForCommit = async (
     onEvent?: (event: ResponsesStreamEvent) => void;
     onProgress?: (event: ResponsesStreamEvent) => void;
     releaseOnProgress?: boolean;
-  }> = {},
+  }> = {}
 ): Promise<PreparedResponsesStream> => {
   const buffered: ResponsesStreamEvent[] = [];
   const reportedLifecycleProgress = new Set<string>();
@@ -261,8 +229,7 @@ export const prepareResponsesStreamForCommit = async (
   }
 };
 
-const sseRaw = (value: Record<string, unknown>): string =>
-  `event: ${getString(value.type) ?? "message"}\ndata: ${JSON.stringify(value)}\n\n`;
+const sseRaw = (value: Record<string, unknown>): string => `event: ${getString(value.type) ?? "message"}\ndata: ${JSON.stringify(value)}\n\n`;
 
 export const responseEventFromValue = (value: Record<string, unknown>): ResponsesStreamEvent => {
   const type = getString(value.type)?.trim();
@@ -275,13 +242,9 @@ export const responseEventFromValue = (value: Record<string, unknown>): Response
   };
 };
 
-const incrementOutputIndex = (value: unknown): unknown =>
-  typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value + 1 : value;
+const incrementOutputIndex = (value: unknown): unknown => (typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value + 1 : value);
 
-const withResponseOutputPrefix = (
-  response: Record<string, unknown>,
-  warningItem: Record<string, unknown>,
-): Record<string, unknown> => ({
+const withResponseOutputPrefix = (response: Record<string, unknown>, warningItem: Record<string, unknown>): Record<string, unknown> => ({
   ...response,
   output: [warningItem, ...(Array.isArray(response.output) ? response.output : [])],
 });
@@ -289,35 +252,32 @@ const withResponseOutputPrefix = (
 export const rewriteResponsesEventForWarning = (
   event: ResponsesStreamEvent,
   warningItem: Record<string, unknown>,
-  sequenceNumber: number,
+  sequenceNumber: number
 ): ResponsesStreamEvent => {
   const value: Record<string, unknown> = { ...event.value, sequence_number: sequenceNumber };
   if (Object.prototype.hasOwnProperty.call(value, "output_index")) {
     value.output_index = incrementOutputIndex(value.output_index);
   }
   if (
-    (event.type === "response.completed" || event.type === "response.failed" ||
-      event.type === "response.incomplete") &&
-    isRecord(value.response) && !Array.isArray(value.response)
+    (event.type === "response.completed" || event.type === "response.failed" || event.type === "response.incomplete") &&
+    isRecord(value.response) &&
+    !Array.isArray(value.response)
   ) {
     value.response = withResponseOutputPrefix(value.response, warningItem);
   }
   return responseEventFromValue(value);
 };
 
-export const rewriteResponsesEventSequence = (
-  event: ResponsesStreamEvent,
-  sequenceNumber: number,
-): ResponsesStreamEvent => responseEventFromValue({ ...event.value, sequence_number: sequenceNumber });
+export const rewriteResponsesEventSequence = (event: ResponsesStreamEvent, sequenceNumber: number): ResponsesStreamEvent =>
+  responseEventFromValue({ ...event.value, sequence_number: sequenceNumber });
 
 export const buildFailoverWarningEvents = (
   actualModel: string,
   responseId: string,
-  startingSequenceNumber = 0,
+  startingSequenceNumber = 0
 ): Readonly<{ item: Record<string, unknown>; events: ResponsesStreamEvent[] }> => {
   const itemId = `msg_failover_${crypto.randomUUID().replace(/-/g, "")}`;
-  const text =
-    `⚠ Failover active: this response is from \`removed_provider:${actualModel}\` because the Codex upstream was unavailable.`;
+  const text = `⚠ Failover active: this response is from \`removed_provider:${actualModel}\` because the Codex upstream was unavailable.`;
   const content = { type: "output_text", text, annotations: [] };
   const item: Record<string, unknown> = {
     id: itemId,
@@ -415,7 +375,7 @@ export const failureEventAfterCommit = (
   responseId: string,
   sequenceNumber: number,
   output: readonly Record<string, unknown>[] = [],
-  responseTemplate: Readonly<Record<string, unknown>> = {},
+  responseTemplate: Readonly<Record<string, unknown>> = {}
 ): ResponsesStreamEvent => {
   const event = responseEventFromValue({
     type: "response.failed",
@@ -462,8 +422,7 @@ const emptyCompletionEventAfterCommit = (sequenceNumber: number): ResponsesStrea
   return event;
 };
 
-export const isSyntheticResponsesFailureEvent = (event: ResponsesStreamEvent): boolean =>
-  syntheticFailureEvents.has(event);
+export const isSyntheticResponsesFailureEvent = (event: ResponsesStreamEvent): boolean => syntheticFailureEvents.has(event);
 
 type OwnedResponsesStreamOptions = Readonly<{
   initial: readonly ResponsesStreamEvent[];
@@ -489,9 +448,7 @@ const invoke = (callback: (() => void | Promise<void>) | undefined): void => {
 };
 
 /** Owns event ordering and guarantees at most one client-visible terminal event. */
-export const createOwnedResponsesStream = (
-  options: OwnedResponsesStreamOptions,
-): ReadableStream<Uint8Array> => {
+export const createOwnedResponsesStream = (options: OwnedResponsesStreamOptions): ReadableStream<Uint8Array> => {
   const encoder = new TextEncoder();
   const localAbort = new AbortController();
   const initial = [...options.initial];
@@ -499,10 +456,13 @@ export const createOwnedResponsesStream = (
   let responseId = options.responseId;
   let sequenceNumber = options.warning
     ? 0
-    : initial.reduce((max, event) =>
-      typeof event.value.sequence_number === "number" && Number.isSafeInteger(event.value.sequence_number)
-        ? Math.max(max, event.value.sequence_number + 1)
-        : max, 0);
+    : initial.reduce(
+        (max, event) =>
+          typeof event.value.sequence_number === "number" && Number.isSafeInteger(event.value.sequence_number)
+            ? Math.max(max, event.value.sequence_number + 1)
+            : max,
+        0
+      );
   let closed = false;
   let terminalEmitted = false;
   let responseCreatedObserved = false;
@@ -530,10 +490,7 @@ export const createOwnedResponsesStream = (
     originalUpstreamEvents.set(rewrittenCreated, created);
     queue.push(rewrittenCreated);
     const leadingSetup: ResponsesStreamEvent[] = [];
-    while (
-      initial.length &&
-      (initial[0]!.type === "response.in_progress" || initial[0]!.type === "response.queued")
-    ) leadingSetup.push(initial.shift()!);
+    while (initial.length && (initial[0]!.type === "response.in_progress" || initial[0]!.type === "response.queued")) leadingSetup.push(initial.shift()!);
     for (const event of leadingSetup) options.validateEvent?.(event);
     for (const event of leadingSetup) {
       const rewritten = rewriteResponsesEventSequence(event, sequenceNumber++);
@@ -555,7 +512,7 @@ export const createOwnedResponsesStream = (
     queue.push(...initial);
   }
 
-  const warningItemId = (): string | null => warningItem ? getString(warningItem.id)?.trim() ?? null : null;
+  const warningItemId = (): string | null => (warningItem ? (getString(warningItem.id)?.trim() ?? null) : null);
   const eventItemId = (event: ResponsesStreamEvent): string | null => {
     const direct = getString(event.value.item_id)?.trim();
     if (direct) return direct;
@@ -569,21 +526,22 @@ export const createOwnedResponsesStream = (
     return warningId !== null && eventItemId(event) === warningId;
   };
   const itemHasOutputText = (item: Record<string, unknown>): boolean =>
-    Array.isArray(item.content) && item.content.some((part) =>
-      isRecord(part) && !Array.isArray(part) &&
-      (part.type === "output_text" || part.type === "text") &&
-      typeof part.text === "string" && part.text.length > 0
+    Array.isArray(item.content) &&
+    item.content.some(
+      (part) =>
+        isRecord(part) && !Array.isArray(part) && (part.type === "output_text" || part.type === "text") && typeof part.text === "string" && part.text.length > 0
     );
   const rememberText = (event: ResponsesStreamEvent): void => {
     if (isWarningEvent(event)) return;
     const refusal = refusalTypes.has(event.type);
-    const text = event.type === "response.output_text.delta" || event.type === "response.refusal.delta"
-      ? getString(event.value.delta)
-      : event.type === "response.output_text.done"
-      ? getString(event.value.text)
-      : event.type === "response.refusal.done"
-      ? getString(event.value.refusal)
-      : null;
+    const text =
+      event.type === "response.output_text.delta" || event.type === "response.refusal.delta"
+        ? getString(event.value.delta)
+        : event.type === "response.output_text.done"
+          ? getString(event.value.text)
+          : event.type === "response.refusal.done"
+            ? getString(event.value.refusal)
+            : null;
     if (!text) return;
     const id = eventItemId(event) ?? `msg_recovered_${getString(event.value.output_index) ?? accumulatedText.size}`;
     const current = accumulatedText.get(id);
@@ -600,10 +558,7 @@ export const createOwnedResponsesStream = (
   };
   const observeVisibleEvent = (event: ResponsesStreamEvent): void => {
     if (event.type === "response.created") responseCreatedObserved = true;
-    if (
-      !isWarningEvent(event) &&
-      responsesEventSemanticKindWithIgnoredOutputItem(event, warningItemId())
-    ) semanticCommitmentObserved = true;
+    if (!isWarningEvent(event) && responsesEventSemanticKindWithIgnoredOutputItem(event, warningItemId())) semanticCommitmentObserved = true;
     const candidateResponseId = responseIdFromEvents([event]);
     if (candidateResponseId && responseId && candidateResponseId !== responseId) {
       throw new ResponsesStreamError("Upstream Responses stream changed response identifiers.", {
@@ -618,9 +573,8 @@ export const createOwnedResponsesStream = (
     rememberText(event);
     if (isWarningEvent(event)) return;
     let item: Record<string, unknown> | null = null;
-    const compatibilityOutput = event.type === "response.output"
-      ? event.value.output ?? (isRecord(valueResponse) ? valueResponse.output : undefined)
-      : undefined;
+    const compatibilityOutput =
+      event.type === "response.output" ? (event.value.output ?? (isRecord(valueResponse) ? valueResponse.output : undefined)) : undefined;
     if (Array.isArray(compatibilityOutput)) {
       for (const outputItem of compatibilityOutput) {
         if (!isRecord(outputItem)) continue;
@@ -635,7 +589,8 @@ export const createOwnedResponsesStream = (
     }
     if (
       (event.type === "response.output_item.added" || event.type === "response.output_item.done") &&
-      isRecord(event.value.item) && !Array.isArray(event.value.item)
+      isRecord(event.value.item) &&
+      !Array.isArray(event.value.item)
     ) {
       item = { ...event.value.item };
       if (event.type === "response.output_item.added") item.status = "incomplete";
@@ -679,9 +634,7 @@ export const createOwnedResponsesStream = (
         type: "message",
         status: recovered.completed ? "completed" : "incomplete",
         role: "assistant",
-        content: recovered.refusal
-          ? [{ type: "refusal", refusal: recovered.text }]
-          : [{ type: "output_text", text: recovered.text, annotations: [] }],
+        content: recovered.refusal ? [{ type: "refusal", refusal: recovered.text }] : [{ type: "output_text", text: recovered.text, annotations: [] }],
       };
       if (existingIndex === undefined) {
         outputById.set(recovered.id, output.length);
@@ -694,20 +647,14 @@ export const createOwnedResponsesStream = (
   };
   const syntheticFailure = (): ResponsesStreamEvent => {
     return semanticCommitmentObserved
-      ? failureEventAfterCommit(
-        responseId ?? `resp_${crypto.randomUUID().replace(/-/g, "")}`,
-        sequenceNumber++,
-        failureOutput(),
-        responseTemplate,
-      )
+      ? failureEventAfterCommit(responseId ?? `resp_${crypto.randomUUID().replace(/-/g, "")}`, sequenceNumber++, failureOutput(), responseTemplate)
       : errorEventAfterCommit(sequenceNumber++);
   };
-  const failureKindFor = (error: unknown): ResponsesStreamFailureKind =>
-    error instanceof ResponsesStreamError ? error.kind : "read_error";
+  const failureKindFor = (error: unknown): ResponsesStreamFailureKind => (error instanceof ResponsesStreamError ? error.kind : "read_error");
   const failureDetails = (
     error: unknown,
     syntheticTerminalType: OwnedResponsesStreamFailureDetails["syntheticTerminalType"],
-    upstreamTerminal: ResponsesStreamEvent | null = null,
+    upstreamTerminal: ResponsesStreamEvent | null = null
   ): OwnedResponsesStreamFailureDetails => ({
     failureKind: failureKindFor(error),
     responseCreatedObserved,
@@ -750,19 +697,14 @@ export const createOwnedResponsesStream = (
           const failure = syntheticFailure();
           const details = failureDetails(
             new ResponsesStreamError("Responses stream ended without a terminal.", { kind: "premature_eof" }),
-            failure.type === "response.failed" || failure.type === "error" ? failure.type : null,
+            failure.type === "response.failed" || failure.type === "error" ? failure.type : null
           );
           terminalEmitted = true;
           closed = true;
           controller.enqueue(encoder.encode(failure.raw));
           controller.close();
           invoke(() => options.onEvent?.(failure));
-          invoke(() =>
-            options.onFailure?.(
-              new ResponsesStreamError("Responses stream ended without a terminal.", { kind: "premature_eof" }),
-              details,
-            )
-          );
+          invoke(() => options.onFailure?.(new ResponsesStreamError("Responses stream ended without a terminal.", { kind: "premature_eof" }), details));
           return;
         }
         if (terminalEmitted) return;
@@ -801,10 +743,7 @@ export const createOwnedResponsesStream = (
           return;
         }
         const failure = syntheticFailure();
-        const details = failureDetails(
-          error,
-          failure.type === "response.failed" || failure.type === "error" ? failure.type : null,
-        );
+        const details = failureDetails(error, failure.type === "response.failed" || failure.type === "error" ? failure.type : null);
         terminalEmitted = true;
         closed = true;
         controller.enqueue(encoder.encode(failure.raw));

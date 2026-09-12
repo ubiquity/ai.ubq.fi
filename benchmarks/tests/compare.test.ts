@@ -32,20 +32,14 @@ Deno.test("compare: evidence runs deterministically without inference", async ()
       for (const budget of task.budgets) {
         assert.equal(budget.contract_preserved, true, `${task.task_id}@${budget.budget}`);
         assert.ok(budget.full_transcript_tokens >= budget.compaction_tokens);
-        assert.ok(
-          budget.structured_tokens >= compactSurface.tokens,
-          "structured totals must include the compact tool schema",
-        );
+        assert.ok(budget.structured_tokens >= compactSurface.tokens, "structured totals must include the compact tool schema");
       }
     }
     // Structured context costs strictly less than a full replay in the
     // long-horizon task, where the compaction/state-summary payoff is real.
     const long = evidence.tasks.find((t) => t.task_id === "long-003")!;
     const medium = long.budgets.find((b) => b.budget === "medium")!;
-    assert.ok(
-      medium.structured_tokens < medium.full_transcript_tokens,
-      `structured ${medium.structured_tokens} < full ${medium.full_transcript_tokens}`,
-    );
+    assert.ok(medium.structured_tokens < medium.full_transcript_tokens, `structured ${medium.structured_tokens} < full ${medium.full_transcript_tokens}`);
   } finally {
     Deno.removeSync(runsRoot, { recursive: true });
   }

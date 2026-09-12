@@ -51,9 +51,7 @@ const safelyScopedPrincipal = (principal: string | null | undefined): string | n
 };
 
 const nonblankExplicitCacheKey = (value: string | null | undefined): string | null =>
-  typeof value === "string" && value.trim().length > 0 && value.length <= 16_384 && !containsControlCharacter(value)
-    ? value
-    : null;
+  typeof value === "string" && value.trim().length > 0 && value.length <= 16_384 && !containsControlCharacter(value) ? value : null;
 
 /**
  * The key uses one digest over both caller-controlled inputs. Keeping the
@@ -62,13 +60,13 @@ const nonblankExplicitCacheKey = (value: string | null | undefined): string | nu
  */
 export const deriveCodexAccountAffinityIdentity = async (
   principal: string | null | undefined,
-  explicitPromptCacheKey: string | null | undefined,
+  explicitPromptCacheKey: string | null | undefined
 ): Promise<CodexAccountAffinityIdentity | null> => {
   const scopedPrincipal = safelyScopedPrincipal(principal);
   const cacheKey = nonblankExplicitCacheKey(explicitPromptCacheKey);
   if (scopedPrincipal === null || cacheKey === null) return null;
   const digest = await sha256Hex(
-    `uos_ai\u0000codex_account_affinity_identity_v1\u0000${scopedPrincipal.length}\u0000${scopedPrincipal}\u0000${cacheKey.length}\u0000${cacheKey}`,
+    `uos_ai\u0000codex_account_affinity_identity_v1\u0000${scopedPrincipal.length}\u0000${scopedPrincipal}\u0000${cacheKey.length}\u0000${cacheKey}`
   );
   return { kvKey: [...CODEX_ACCOUNT_AFFINITY_KV_PREFIX, digest] };
 };
@@ -79,8 +77,11 @@ const parseRecord = (value: unknown, now: number): CodexAccountAffinityRecord | 
   const accountCohortHash = record.account_cohort_hash;
   const expiresAtMs = record.expires_at_ms;
   if (
-    typeof accountCohortHash !== "string" || !OPAQUE_SHA256_HEX.test(accountCohortHash) ||
-    typeof expiresAtMs !== "number" || !Number.isSafeInteger(expiresAtMs) || expiresAtMs <= now
+    typeof accountCohortHash !== "string" ||
+    !OPAQUE_SHA256_HEX.test(accountCohortHash) ||
+    typeof expiresAtMs !== "number" ||
+    !Number.isSafeInteger(expiresAtMs) ||
+    expiresAtMs <= now
   ) {
     return null;
   }
@@ -88,10 +89,7 @@ const parseRecord = (value: unknown, now: number): CodexAccountAffinityRecord | 
 };
 
 /** Returns only the opaque cohort hash. KV outage or malformed data is a normal no-affinity result. */
-export const readCodexAccountAffinity = async (
-  identity: CodexAccountAffinityIdentity | null,
-  now = Date.now(),
-): Promise<string | null> => {
+export const readCodexAccountAffinity = async (identity: CodexAccountAffinityIdentity | null, now = Date.now()): Promise<string | null> => {
   if (!identity || !Number.isSafeInteger(now)) return null;
   try {
     const kv = await getKv();
@@ -111,11 +109,14 @@ export const readCodexAccountAffinity = async (
 export const recordCodexAccountAffinity = async (
   identity: CodexAccountAffinityIdentity | null,
   accountCohortHash: string | null | undefined,
-  now = Date.now(),
+  now = Date.now()
 ): Promise<void> => {
   if (
-    !identity || typeof accountCohortHash !== "string" || !OPAQUE_SHA256_HEX.test(accountCohortHash) ||
-    !Number.isSafeInteger(now) || now > Number.MAX_SAFE_INTEGER - CODEX_ACCOUNT_AFFINITY_TTL_MS
+    !identity ||
+    typeof accountCohortHash !== "string" ||
+    !OPAQUE_SHA256_HEX.test(accountCohortHash) ||
+    !Number.isSafeInteger(now) ||
+    now > Number.MAX_SAFE_INTEGER - CODEX_ACCOUNT_AFFINITY_TTL_MS
   ) {
     return;
   }
@@ -123,11 +124,7 @@ export const recordCodexAccountAffinity = async (
   try {
     const kv = await getKv();
     if (!kv) return;
-    await kv.set(
-      identity.kvKey,
-      { account_cohort_hash: accountCohortHash, expires_at_ms: expiresAtMs },
-      { expireIn: CODEX_ACCOUNT_AFFINITY_TTL_MS },
-    );
+    await kv.set(identity.kvKey, { account_cohort_hash: accountCohortHash, expires_at_ms: expiresAtMs }, { expireIn: CODEX_ACCOUNT_AFFINITY_TTL_MS });
   } catch {
     // Affinity is best effort. It must never delay or change inference routing.
   }

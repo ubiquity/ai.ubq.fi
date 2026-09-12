@@ -26,14 +26,7 @@ Deno.test("loops: call identity and effect digests are deterministic", () => {
   assert.notEqual(a, callIdentity("filesystem.read", { path: "y" }));
   assert.equal(effectDigest(ok("same")), effectDigest(ok("same")));
   assert.notEqual(effectDigest(ok("same")), effectDigest(ok("other")));
-  assert.equal(
-    effectSignature("filesystem.read", { path: "x" }, ok("c")),
-    effectSignature(
-      "filesystem.read",
-      { path: "x" },
-      ok("c"),
-    ),
-  );
+  assert.equal(effectSignature("filesystem.read", { path: "x" }, ok("c")), effectSignature("filesystem.read", { path: "x" }, ok("c")));
 });
 
 Deno.test("loops: adjacent identical call after success is flagged as repeat_after_success", () => {
@@ -80,8 +73,7 @@ Deno.test("loops: effect repetition inside the window closes a semantic loop", (
 Deno.test("loops: alternating pattern recurrence closes a loop and tracks streak", () => {
   const detector = new LoopDetector({ patternLength: 2, window: 8 });
   const reads = () => detector.observe("filesystem.read", { path: "x" }, ok("v"));
-  const patches = () =>
-    detector.observe("editor.apply_patch", { path: "y", old: "nope", new: "z" }, fail("patch_failed"));
+  const patches = () => detector.observe("editor.apply_patch", { path: "y", old: "nope", new: "z" }, fail("patch_failed"));
   // R P R P => at the 4th call the last-2 pattern repeats the previous 2.
   reads();
   patches();
@@ -97,8 +89,7 @@ Deno.test("loops: alternating pattern recurrence closes a loop and tracks streak
 Deno.test("loops: breaking the pattern resets the streak", () => {
   const detector = new LoopDetector({ patternLength: 2, window: 8 });
   const reads = () => detector.observe("filesystem.read", { path: "x" }, ok("v"));
-  const patches = () =>
-    detector.observe("editor.apply_patch", { path: "y", old: "nope", new: "z" }, fail("patch_failed"));
+  const patches = () => detector.observe("editor.apply_patch", { path: "y", old: "nope", new: "z" }, fail("patch_failed"));
   reads();
   patches();
   reads();
@@ -113,11 +104,15 @@ Deno.test("loops: repeated guard rejections are detected as a loop themselves", 
   detector.observe("filesystem.read", { path: "x" }, ok("v"));
   detector.observe("filesystem.read", { path: "x" }, { ok: false, error_code: "duplicate_call", error: "dup" });
   detector.observe("filesystem.read", { path: "x" }, { ok: false, error_code: "duplicate_call", error: "dup" });
-  const third = detector.observe("filesystem.read", { path: "x" }, {
-    ok: false,
-    error_code: "duplicate_call",
-    error: "dup",
-  });
+  const third = detector.observe(
+    "filesystem.read",
+    { path: "x" },
+    {
+      ok: false,
+      error_code: "duplicate_call",
+      error: "dup",
+    }
+  );
   assert.equal(third.semanticLoop, true);
 });
 

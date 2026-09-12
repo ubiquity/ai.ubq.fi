@@ -1,11 +1,4 @@
-import {
-  BENCHMARK_SCHEMA_VERSION,
-  SchemaError,
-  TrajectoryEvent,
-  validateBenchmarkResult,
-  validateTaskManifest,
-  validateTrajectoryEvent,
-} from "../schemas.ts";
+import { BENCHMARK_SCHEMA_VERSION, SchemaError, TrajectoryEvent, validateBenchmarkResult, validateTaskManifest, validateTrajectoryEvent } from "../schemas.ts";
 import { loadTasks, selectTasks, taskFamily } from "../manifest.ts";
 import { computeFixtureRevision } from "../fixture.ts";
 
@@ -220,7 +213,12 @@ Deno.test("manifests: long-horizon tasks exceed 10 and 20 tool calls", () => {
 
 Deno.test("manifests: selection supports id, glob, category, and rejects unknown", () => {
   const tasks = loadTasks(TASKS_DIR);
-  if (selectTasks(tasks, ["nav-001"]).map((t) => t.id).join(",") !== "nav-001") throw new Error("id selection failed");
+  if (
+    selectTasks(tasks, ["nav-001"])
+      .map((t) => t.id)
+      .join(",") !== "nav-001"
+  )
+    throw new Error("id selection failed");
   const globbed = selectTasks(tasks, ["code-*"]);
   if (!globbed.every((t) => t.id.startsWith("code-")) || globbed.length !== 5) throw new Error("glob selection failed");
   const cat = selectTasks(tasks, ["category:long"]);

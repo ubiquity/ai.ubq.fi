@@ -78,7 +78,7 @@ const decodeStandardBase64 = (encoded: string): Uint8Array<ArrayBuffer> => {
  */
 export const createRecordedUpstreamReplay = (
   trace: SentinelUpstreamTrace,
-  routes: Readonly<Record<SentinelUpstreamProvider, string>>,
+  routes: Readonly<Record<SentinelUpstreamProvider, string>>
 ): RecordedUpstreamReplay => {
   let parsed: SentinelUpstreamTrace;
   // The parser's own error text may embed indices; every helper-visible
@@ -157,40 +157,43 @@ export const createRecordedUpstreamReplay = (
       markCompleted(state);
       return new Response(null, { status });
     }
-    const stream = new ReadableStream<Uint8Array>({
-      pull(controller) {
-        if (state.nextChunk < state.chunks.length) {
-          // Exact recorded boundary: one original chunk per pull, zero
-          // read-ahead (highWaterMark 0).
-          controller.enqueue(state.chunks[state.nextChunk]!);
-          state.nextChunk += 1;
-          return;
-        }
-        if (attempt.terminal === "eof") {
-          // EOF closes only on the pull after the final chunk was delivered.
-          controller.close();
-          markCompleted(state);
-          return;
-        }
-        if (attempt.terminal === "read_error") {
-          controller.error(new TypeError(STREAM_READ_ERROR));
-          markCompleted(state);
-          return;
-        }
-        // Recorded cancelled prefix: reading past the captured prefix is a
-        // permanent failure and must error, never invent EOF.
-        failed = true;
-        controller.error(new TypeError(STREAM_OVERREAD));
-      },
-      cancel() {
-        if (attempt.terminal !== "cancelled") return;
-        if (state.nextChunk >= state.chunks.length) {
-          markCompleted(state);
-        } else {
+    const stream = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          if (state.nextChunk < state.chunks.length) {
+            // Exact recorded boundary: one original chunk per pull, zero
+            // read-ahead (highWaterMark 0).
+            controller.enqueue(state.chunks[state.nextChunk]!);
+            state.nextChunk += 1;
+            return;
+          }
+          if (attempt.terminal === "eof") {
+            // EOF closes only on the pull after the final chunk was delivered.
+            controller.close();
+            markCompleted(state);
+            return;
+          }
+          if (attempt.terminal === "read_error") {
+            controller.error(new TypeError(STREAM_READ_ERROR));
+            markCompleted(state);
+            return;
+          }
+          // Recorded cancelled prefix: reading past the captured prefix is a
+          // permanent failure and must error, never invent EOF.
           failed = true;
-        }
+          controller.error(new TypeError(STREAM_OVERREAD));
+        },
+        cancel() {
+          if (attempt.terminal !== "cancelled") return;
+          if (state.nextChunk >= state.chunks.length) {
+            markCompleted(state);
+          } else {
+            failed = true;
+          }
+        },
       },
-    }, { highWaterMark: 0 });
+      { highWaterMark: 0 }
+    );
     return new Response(stream, {
       status,
       headers: {

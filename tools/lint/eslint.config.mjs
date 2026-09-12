@@ -97,10 +97,7 @@ export default tsEslint.config(
       // of template literal expression`). Interpolating a number or a boolean is
       // unambiguous and safe; what this rule exists to catch is objects, symbols,
       // null/undefined and `any`/`unknown`, and those stay reported.
-      "@typescript-eslint/restrict-template-expressions": [
-        "error",
-        { allowNumber: true, allowBoolean: true },
-      ],
+      "@typescript-eslint/restrict-template-expressions": ["error", { allowNumber: true, allowBoolean: true }],
       // DIVERGENCE: OFF, with evidence. Its autofix removed 406 "unnecessary"
       // assertions; 7 of those removals then failed `deno check` / `deno test`,
       // because this lint project's type environment (.deno-types.d.ts + ES2022

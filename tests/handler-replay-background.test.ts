@@ -47,7 +47,7 @@ Deno.test("terminal logging reports admission busy failures to the admin error l
           code: "codex_admission_busy",
         },
       }),
-      { status: 503, headers: { "Content-Type": "application/json" } },
+      { status: 503, headers: { "Content-Type": "application/json" } }
     ),
     {
       route: "responses",
@@ -59,7 +59,7 @@ Deno.test("terminal logging reports admission busy failures to the admin error l
         recorded.push(error);
         return Promise.resolve();
       },
-    },
+    }
   );
 
   assert.equal(response.status, 503);
@@ -109,7 +109,7 @@ Deno.test("EdgeRuntime replay registration returns failure responses before defe
         },
         recordTelemetry: ignoredTelemetry,
         recordCacheAnalytics: ignoredAnalytics,
-      },
+      }
     );
 
     assert.equal(response.status, 502);

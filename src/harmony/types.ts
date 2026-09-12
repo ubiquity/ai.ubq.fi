@@ -87,11 +87,7 @@ export type ToolResultTurn = Readonly<{
 
 /** A conversation turn the adapter is allowed to hold in state. */
 export type ConversationTurn = Readonly<
-  | { role: "system"; content: string }
-  | { role: "developer"; content: string }
-  | { role: "user"; content: string }
-  | AssistantTurn
-  | ToolResultTurn
+  { role: "system"; content: string } | { role: "developer"; content: string } | { role: "user"; content: string } | AssistantTurn | ToolResultTurn
 >;
 
 /**
@@ -156,9 +152,9 @@ export type NormalizedAssistantResponse = Readonly<{
 export type ResponseFormatParam = Readonly<
   | { type: "json_object" }
   | {
-    type: "json_schema";
-    json_schema: { name: string; strict?: boolean; schema: Record<string, unknown>; description?: string };
-  }
+      type: "json_schema";
+      json_schema: { name: string; strict?: boolean; schema: Record<string, unknown>; description?: string };
+    }
 >;
 
 /** Structured-output description for the native (Harmony-rendered) style. */
@@ -176,11 +172,7 @@ export type CombinationPolicy = "error" | "probe";
  * local policy rejections from upstream failures.
  */
 export type HarmonyAdapterErrorCode =
-  | "unproven-combination"
-  | "mixed-strictness-requested"
-  | "invalid-request"
-  | "invalid-upstream-response"
-  | "no-model-output";
+  "unproven-combination" | "mixed-strictness-requested" | "invalid-request" | "invalid-upstream-response" | "no-model-output";
 
 export class HarmonyAdapterError extends Error {
   readonly code: HarmonyAdapterErrorCode;

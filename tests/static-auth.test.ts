@@ -9,9 +9,7 @@ const {
   signInWithPasskey,
   signOut,
   registerPasskey,
-} = await import(
-  "../static/auth.js"
-);
+} = await import("../static/auth.js");
 
 type Restore = () => void;
 
@@ -52,10 +50,7 @@ const withPasskeyBrowser = async (fn: () => Promise<void>): Promise<void> => {
   }
 };
 
-const withLocalStorage = async (
-  items: Record<string, string>,
-  fn: (store: Map<string, string>) => Promise<void>,
-): Promise<void> => {
+const withLocalStorage = async (items: Record<string, string>, fn: (store: Map<string, string>) => Promise<void>): Promise<void> => {
   const store = new Map(Object.entries(items));
   const restoreLocalStorage = setGlobal("localStorage", {
     getItem: (key: string) => store.get(key) ?? null,
@@ -77,10 +72,7 @@ const bufferFromText = (value: string): ArrayBuffer => new TextEncoder().encode(
 
 Deno.test("hasAuthPasskeyCredential recognizes passkey sessions and credential counts", () => {
   assert.equal(hasAuthPasskeyCredential({ method: { kind: "passkey_session" } }), true);
-  assert.equal(
-    hasAuthPasskeyCredential({ method: { kind: "passkey_session", user: { credential_count: 0 } } }),
-    true,
-  );
+  assert.equal(hasAuthPasskeyCredential({ method: { kind: "passkey_session", user: { credential_count: 0 } } }), true);
   assert.equal(hasAuthPasskeyCredential({ method: { kind: "admin_allowlist" } }), false);
   assert.equal(hasAuthPasskeyCredential({ method: { user: { credential_count: 1 } } }), true);
   assert.equal(hasAuthPasskeyCredential({ user: { credential_count: 1 } }), true);
@@ -117,9 +109,7 @@ Deno.test("local development auth is restricted to loopback HTTP origins", () =>
   restoreIpv6Loopback();
 });
 
-const captureRegisterStartBody = async (
-  input: { handle?: string; token: string; baseUrl?: string },
-): Promise<Record<string, unknown>> => {
+const captureRegisterStartBody = async (input: { handle?: string; token: string; baseUrl?: string }): Promise<Record<string, unknown>> => {
   let requestBody: Record<string, unknown> | null = null;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -128,7 +118,7 @@ const captureRegisterStartBody = async (
       new Response(JSON.stringify({ error: { message: "Unauthorized" } }), {
         status: 401,
         headers: { "Content-Type": "application/json" },
-      }),
+      })
     );
   };
   try {
@@ -140,9 +130,12 @@ const captureRegisterStartBody = async (
   }
 };
 
-const captureLoginStartBody = async (
-  input: { handle?: string; useHandle?: boolean; audienceOrigin?: string; baseUrl?: string },
-): Promise<Record<string, unknown>> => {
+const captureLoginStartBody = async (input: {
+  handle?: string;
+  useHandle?: boolean;
+  audienceOrigin?: string;
+  baseUrl?: string;
+}): Promise<Record<string, unknown>> => {
   let requestBody: Record<string, unknown> | null = null;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -151,7 +144,7 @@ const captureLoginStartBody = async (
       new Response(JSON.stringify({ error: { message: "Unauthorized" } }), {
         status: 401,
         headers: { "Content-Type": "application/json" },
-      }),
+      })
     );
   };
   try {
@@ -208,93 +201,99 @@ Deno.test("signOut clears a relay cookie without sending an empty bearer header"
 
 Deno.test("signInWithPasskey does not restrict discoverable login to cached credential ids", async () => {
   await withPasskeyBrowser(async () => {
-    await withLocalStorage({
-      [STORAGE_KEYS.passkeyCredentialIds]: JSON.stringify(["cached-credential-id"]),
-    }, async () => {
-      let requestOptions: Record<string, unknown> | null = null;
-      const restoreNavigator = setGlobal("navigator", {
-        credentials: {
-          get: ({ publicKey }: { publicKey: Record<string, unknown> }) => {
-            requestOptions = publicKey;
-            throw new Error("stop after credential options");
+    await withLocalStorage(
+      {
+        [STORAGE_KEYS.passkeyCredentialIds]: JSON.stringify(["cached-credential-id"]),
+      },
+      async () => {
+        let requestOptions: Record<string, unknown> | null = null;
+        const restoreNavigator = setGlobal("navigator", {
+          credentials: {
+            get: ({ publicKey }: { publicKey: Record<string, unknown> }) => {
+              requestOptions = publicKey;
+              throw new Error("stop after credential options");
+            },
+            create: () => {
+              throw new Error("test should not create credentials");
+            },
           },
-          create: () => {
-            throw new Error("test should not create credentials");
-          },
-        },
-      });
-      const originalFetch = globalThis.fetch;
-      globalThis.fetch = () =>
-        Promise.resolve(
-          new Response(JSON.stringify({ publicKey: { challenge: "AAAA", rpId: "localhost" } }), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          }),
-        );
-      try {
-        await assert.rejects(() => signInWithPasskey({ baseUrl: "https://ai.ubq.fi" }), /stop after credential/);
-        assert.ok(requestOptions);
-        assert.equal("allowCredentials" in requestOptions, false);
-      } finally {
-        globalThis.fetch = originalFetch;
-        restoreNavigator();
+        });
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = () =>
+          Promise.resolve(
+            new Response(JSON.stringify({ publicKey: { challenge: "AAAA", rpId: "localhost" } }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            })
+          );
+        try {
+          await assert.rejects(() => signInWithPasskey({ baseUrl: "https://ai.ubq.fi" }), /stop after credential/);
+          assert.ok(requestOptions);
+          assert.equal("allowCredentials" in requestOptions, false);
+        } finally {
+          globalThis.fetch = originalFetch;
+          restoreNavigator();
+        }
       }
-    });
+    );
   });
 });
 
 Deno.test("signInWithPasskey clears stale cached passkey metadata when server does not know the credential", async () => {
   await withPasskeyBrowser(async () => {
-    await withLocalStorage({
-      [STORAGE_KEYS.passkeyHandle]: "uos-passkey-stale",
-      [STORAGE_KEYS.passkeyCredentialIds]: JSON.stringify(["stale-credential-id"]),
-    }, async (store) => {
-      const restoreNavigator = setGlobal("navigator", {
-        credentials: {
-          get: () =>
-            Promise.resolve({
-              id: "stale-credential-id",
-              rawId: bufferFromText("stale-credential-id"),
-              type: "public-key",
-              response: {
-                clientDataJSON: bufferFromText("{}"),
-                authenticatorData: bufferFromText("authenticator"),
-                signature: bufferFromText("signature"),
-              },
-            }),
-          create: () => {
-            throw new Error("test should not create credentials");
+    await withLocalStorage(
+      {
+        [STORAGE_KEYS.passkeyHandle]: "uos-passkey-stale",
+        [STORAGE_KEYS.passkeyCredentialIds]: JSON.stringify(["stale-credential-id"]),
+      },
+      async (store) => {
+        const restoreNavigator = setGlobal("navigator", {
+          credentials: {
+            get: () =>
+              Promise.resolve({
+                id: "stale-credential-id",
+                rawId: bufferFromText("stale-credential-id"),
+                type: "public-key",
+                response: {
+                  clientDataJSON: bufferFromText("{}"),
+                  authenticatorData: bufferFromText("authenticator"),
+                  signature: bufferFromText("signature"),
+                },
+              }),
+            create: () => {
+              throw new Error("test should not create credentials");
+            },
           },
-        },
-      });
-      const originalFetch = globalThis.fetch;
-      let requestIndex = 0;
-      globalThis.fetch = () => {
-        requestIndex += 1;
-        if (requestIndex === 1) {
+        });
+        const originalFetch = globalThis.fetch;
+        let requestIndex = 0;
+        globalThis.fetch = () => {
+          requestIndex += 1;
+          if (requestIndex === 1) {
+            return Promise.resolve(
+              new Response(JSON.stringify({ publicKey: { challenge: "AAAA", rpId: "localhost" } }), {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+              })
+            );
+          }
           return Promise.resolve(
-            new Response(JSON.stringify({ publicKey: { challenge: "AAAA", rpId: "localhost" } }), {
-              status: 200,
+            new Response(JSON.stringify({ error: { message: "Unknown passkey" } }), {
+              status: 400,
               headers: { "Content-Type": "application/json" },
-            }),
+            })
           );
+        };
+        try {
+          await assert.rejects(() => signInWithPasskey({ baseUrl: "https://ai.ubq.fi" }), /Unknown passkey/);
+          assert.equal(store.has(STORAGE_KEYS.passkeyHandle), false);
+          assert.equal(store.has(STORAGE_KEYS.passkeyCredentialIds), false);
+        } finally {
+          globalThis.fetch = originalFetch;
+          restoreNavigator();
         }
-        return Promise.resolve(
-          new Response(JSON.stringify({ error: { message: "Unknown passkey" } }), {
-            status: 400,
-            headers: { "Content-Type": "application/json" },
-          }),
-        );
-      };
-      try {
-        await assert.rejects(() => signInWithPasskey({ baseUrl: "https://ai.ubq.fi" }), /Unknown passkey/);
-        assert.equal(store.has(STORAGE_KEYS.passkeyHandle), false);
-        assert.equal(store.has(STORAGE_KEYS.passkeyCredentialIds), false);
-      } finally {
-        globalThis.fetch = originalFetch;
-        restoreNavigator();
       }
-    });
+    );
   });
 });
 

@@ -33,11 +33,7 @@ export type CodexSessionObservation = Readonly<{
   continuation_only_candidate: boolean;
 }>;
 
-const unknownObservation = (
-  metadataPresent: boolean,
-  sessionIdHash: string | null = null,
-  sessionIdPresent = false,
-): CodexSessionObservation => ({
+const unknownObservation = (metadataPresent: boolean, sessionIdHash: string | null = null, sessionIdPresent = false): CodexSessionObservation => ({
   metadata_present: metadataPresent,
   session_id_present: sessionIdPresent,
   session_id_hash: sessionIdHash,
@@ -47,12 +43,7 @@ const unknownObservation = (
 });
 
 const keyActivityKey = (keyIdHash: string): Deno.KvKey => [...CODEX_SESSION_ACTIVITY_PREFIX, "key", keyIdHash];
-const sessionActivityKey = (keyIdHash: string, sessionIdHash: string): Deno.KvKey => [
-  ...CODEX_SESSION_ACTIVITY_PREFIX,
-  "session",
-  keyIdHash,
-  sessionIdHash,
-];
+const sessionActivityKey = (keyIdHash: string, sessionIdHash: string): Deno.KvKey => [...CODEX_SESSION_ACTIVITY_PREFIX, "session", keyIdHash, sessionIdHash];
 
 const normalizeSessionRecord = (value: unknown): CodexSessionRecord | null => {
   if (!isRecord(value) || value.v !== 1) return null;
@@ -61,9 +52,14 @@ const normalizeSessionRecord = (value: unknown): CodexSessionRecord | null => {
   const lastSeen = value.last_seen_at_ms;
   if (
     !sessionIdHash ||
-    typeof firstSeen !== "number" || !Number.isSafeInteger(firstSeen) || firstSeen < 0 ||
-    typeof lastSeen !== "number" || !Number.isSafeInteger(lastSeen) || lastSeen < 0
-  ) return null;
+    typeof firstSeen !== "number" ||
+    !Number.isSafeInteger(firstSeen) ||
+    firstSeen < 0 ||
+    typeof lastSeen !== "number" ||
+    !Number.isSafeInteger(lastSeen) ||
+    lastSeen < 0
+  )
+    return null;
   return {
     v: 1,
     session_id_hash: sessionIdHash,
@@ -77,9 +73,14 @@ const normalizeKeyActivityRecord = (value: unknown): CodexKeyActivityRecord | nu
   const lastRequest = value.last_request_at_ms;
   const lastNewSession = value.last_new_session_at_ms;
   if (
-    typeof lastRequest !== "number" || !Number.isSafeInteger(lastRequest) || lastRequest < 0 ||
-    typeof lastNewSession !== "number" || !Number.isSafeInteger(lastNewSession) || lastNewSession < 0
-  ) return null;
+    typeof lastRequest !== "number" ||
+    !Number.isSafeInteger(lastRequest) ||
+    lastRequest < 0 ||
+    typeof lastNewSession !== "number" ||
+    !Number.isSafeInteger(lastNewSession) ||
+    lastNewSession < 0
+  )
+    return null;
   return { v: 1, last_request_at_ms: lastRequest, last_new_session_at_ms: lastNewSession };
 };
 
@@ -94,7 +95,7 @@ const classifyWithState = (
   sessionIdHash: string,
   sessionRecord: CodexSessionRecord | null,
   keyActivity: CodexKeyActivityRecord | null,
-  nowMs: number,
+  nowMs: number
 ): CodexSessionObservation => {
   if (!sessionRecord || !keyActivity) {
     return {
@@ -122,11 +123,7 @@ const classifyWithState = (
  * metadata, unavailable KV, and malformed prior state all fail closed to
  * `unknown`; the request itself is never rejected for telemetry reasons.
  */
-export const observeCodexSession = async (
-  keyId: string | null | undefined,
-  clientMetadata: unknown,
-  nowMs = Date.now(),
-): Promise<CodexSessionObservation> => {
+export const observeCodexSession = async (keyId: string | null | undefined, clientMetadata: unknown, nowMs = Date.now()): Promise<CodexSessionObservation> => {
   const metadataPresent = clientMetadata !== undefined;
   const sessionId = sessionIdFromMetadata(clientMetadata);
   if (!sessionId) return unknownObservation(metadataPresent);
@@ -140,28 +137,26 @@ export const observeCodexSession = async (
     const keyIdHash = await sha256Hex(`uos-codex-api-key-v1\u0000${keyId}`);
     const key = keyActivityKey(keyIdHash);
     const sessionKey = sessionActivityKey(keyIdHash, sessionIdHash);
-    const [keyEntry, sessionEntry] = await kv.getMany<[CodexKeyActivityRecord, CodexSessionRecord]>([
-      key,
-      sessionKey,
-    ], { consistency: "strong" });
+    const [keyEntry, sessionEntry] = await kv.getMany<[CodexKeyActivityRecord, CodexSessionRecord]>([key, sessionKey], { consistency: "strong" });
     const existingKeyActivity = normalizeKeyActivityRecord(keyEntry.value);
     const existingSession = normalizeSessionRecord(sessionEntry.value);
-    const malformedState = (keyEntry.value !== null && existingKeyActivity === null) ||
-      (sessionEntry.value !== null && existingSession === null);
+    const malformedState = (keyEntry.value !== null && existingKeyActivity === null) || (sessionEntry.value !== null && existingSession === null);
     const isNewSession = !malformedState && existingSession === null;
-    const lastNewSessionAtMs = isNewSession ? nowMs : existingKeyActivity?.last_new_session_at_ms ?? null;
-    const observation = malformedState ? unknownObservation(metadataPresent, sessionIdHash, true) : isNewSession
-      ? {
-        metadata_present: metadataPresent,
-        session_id_present: true,
-        session_id_hash: sessionIdHash,
-        state: "new" as const,
-        continuation_age_ms: null,
-        continuation_only_candidate: false,
-      }
-      : existingKeyActivity && lastNewSessionAtMs !== null
-      ? classifyWithState(metadataPresent, sessionIdHash, existingSession, existingKeyActivity, nowMs)
-      : unknownObservation(metadataPresent);
+    const lastNewSessionAtMs = isNewSession ? nowMs : (existingKeyActivity?.last_new_session_at_ms ?? null);
+    const observation = malformedState
+      ? unknownObservation(metadataPresent, sessionIdHash, true)
+      : isNewSession
+        ? {
+            metadata_present: metadataPresent,
+            session_id_present: true,
+            session_id_hash: sessionIdHash,
+            state: "new" as const,
+            continuation_age_ms: null,
+            continuation_only_candidate: false,
+          }
+        : existingKeyActivity && lastNewSessionAtMs !== null
+          ? classifyWithState(metadataPresent, sessionIdHash, existingSession, existingKeyActivity, nowMs)
+          : unknownObservation(metadataPresent);
 
     const nextSession: CodexSessionRecord = {
       v: 1,
@@ -172,12 +167,11 @@ export const observeCodexSession = async (
     const nextKeyActivity: CodexKeyActivityRecord = {
       v: 1,
       last_request_at_ms: nowMs,
-      last_new_session_at_ms: isNewSession || malformedState
-        ? nowMs
-        : existingKeyActivity?.last_new_session_at_ms ?? nowMs,
+      last_new_session_at_ms: isNewSession || malformedState ? nowMs : (existingKeyActivity?.last_new_session_at_ms ?? nowMs),
     };
     const expireIn = CODEX_SESSION_ACTIVITY_TTL_MS;
-    const committed = await kv.atomic()
+    const committed = await kv
+      .atomic()
       .check(keyEntry)
       .check(sessionEntry)
       .set(key, nextKeyActivity, { expireIn })

@@ -62,9 +62,7 @@ if (!adminToken) {
   Deno.exit(2);
 }
 
-const doFetch = async (
-  req: Request,
-): Promise<{ ok: true; json: unknown } | { ok: false; status: number; body: string }> => {
+const doFetch = async (req: Request): Promise<{ ok: true; json: unknown } | { ok: false; status: number; body: string }> => {
   const res = await fetch(req);
   const contentType = res.headers.get("Content-Type") ?? "";
   const isJson = contentType.includes("application/json");
@@ -81,7 +79,10 @@ const endpoint = (path: string): URL => new URL(path, baseUrl);
 type ApiKeyExpiryPreset = "day" | "week" | "month" | "quarter" | "year" | "forever";
 
 const normalizeApiKeyExpiryPreset = (raw: string): ApiKeyExpiryPreset | null => {
-  const normalized = raw.trim().toLowerCase().replace(/[\s_-]+/g, "");
+  const normalized = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
   if (!normalized) return null;
 
   if (normalized === "day" || normalized === "1d" || normalized === "1day" || normalized === "oneday") return "day";
@@ -93,9 +94,7 @@ const normalizeApiKeyExpiryPreset = (raw: string): ApiKeyExpiryPreset | null => 
     return "quarter";
   }
   if (normalized === "year" || normalized === "1y" || normalized === "1year" || normalized === "oneyear") return "year";
-  if (
-    normalized === "forever" || normalized === "never" || normalized === "noexpiry" || normalized === "noexpiration"
-  ) {
+  if (normalized === "forever" || normalized === "never" || normalized === "noexpiry" || normalized === "noexpiration") {
     return "forever";
   }
   return null;
@@ -162,9 +161,9 @@ if (command === "create") {
   const req = new Request(endpoint("/admin/api-keys"), {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${adminToken}`,
+      Authorization: `Bearer ${adminToken}`,
       "Content-Type": "application/json",
-      "Accept": "application/json",
+      Accept: "application/json",
     },
     body: JSON.stringify(body),
   });
@@ -178,9 +177,7 @@ if (command === "create") {
 
   const tokenOnly = parsed["token-only"] === true;
   if (tokenOnly) {
-    const tokenValue = (result.json && typeof result.json === "object" && "token" in result.json)
-      ? (result.json as { token?: unknown }).token
-      : null;
+    const tokenValue = result.json && typeof result.json === "object" && "token" in result.json ? (result.json as { token?: unknown }).token : null;
     console.log(typeof tokenValue === "string" ? tokenValue : "");
   } else {
     console.log(JSON.stringify(result.json, null, 2));
@@ -192,8 +189,8 @@ if (command === "list") {
   const req = new Request(endpoint("/admin/api-keys"), {
     method: "GET",
     headers: {
-      "Authorization": `Bearer ${adminToken}`,
-      "Accept": "application/json",
+      Authorization: `Bearer ${adminToken}`,
+      Accept: "application/json",
     },
   });
   const result = await doFetch(req);
@@ -215,9 +212,9 @@ if (command === "revoke") {
   const req = new Request(endpoint("/admin/api-keys/revoke"), {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${adminToken}`,
+      Authorization: `Bearer ${adminToken}`,
       "Content-Type": "application/json",
-      "Accept": "application/json",
+      Accept: "application/json",
     },
     body: JSON.stringify({ id }),
   });

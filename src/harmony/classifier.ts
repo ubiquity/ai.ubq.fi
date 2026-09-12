@@ -38,9 +38,7 @@ export type BootstrapObservation = Readonly<{
 }>;
 
 export type BootstrapClassifierVerdict = Readonly<
-  | { verdict: "true"; raw: string }
-  | { verdict: "false"; raw: string }
-  | { verdict: "unknown"; raw: string | null; reason: string }
+  { verdict: "true"; raw: string } | { verdict: "false"; raw: string } | { verdict: "unknown"; raw: string | null; reason: string }
 >;
 
 /**
@@ -72,9 +70,7 @@ export type BootstrapClassifierRequestOptions = Readonly<{
  * small completion limit, and the observation carried as inert data in the
  * user message while the instruction and protocol live in system/developer.
  */
-export const buildBootstrapClassifierRequest = (
-  options: BootstrapClassifierRequestOptions,
-): Record<string, unknown> => {
+export const buildBootstrapClassifierRequest = (options: BootstrapClassifierRequestOptions): Record<string, unknown> => {
   const system = renderSystemMessage({
     currentDate: options.currentDate ?? "2026-01-01",
     reasoningEffort: options.reasoningEffort,
@@ -109,9 +105,7 @@ export const buildBootstrapClassifierRequest = (
  * by the normalizer) is `unknown`; a mismatch surfaces as `unknown` with the
  * reason attached.
  */
-export const verdictFromBootstrapResponse = (
-  response: NormalizedAssistantResponse,
-): BootstrapClassifierVerdict => {
+export const verdictFromBootstrapResponse = (response: NormalizedAssistantResponse): BootstrapClassifierVerdict => {
   if (response.refusal) {
     return { verdict: "unknown", raw: null, reason: "classifier request was refused" };
   }
@@ -122,9 +116,7 @@ export const verdictFromBootstrapResponse = (
     return {
       verdict: "unknown",
       raw: null,
-      reason: response.analysis.length > 0
-        ? "classifier produced only reasoning and no final content"
-        : "classifier produced no content",
+      reason: response.analysis.length > 0 ? "classifier produced only reasoning and no final content" : "classifier produced no content",
     };
   }
   return parseBootstrapClassifierVerdict(response.content);

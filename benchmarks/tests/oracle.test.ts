@@ -35,15 +35,9 @@ Deno.test("oracle: file checks pass, fail, and invert", async () => {
     };
     const out = await evaluateOracle({ ...nav, oracle }, ws);
     if (!out.passed || out.checks.length !== 4) throw new Error(`expected all checks to pass: ${JSON.stringify(out)}`);
-    const failing = await evaluateOracle(
-      { ...nav, oracle: { file_checks: [{ path: "answer.txt", kind: "equals", value: "wrong" }] } },
-      ws,
-    );
+    const failing = await evaluateOracle({ ...nav, oracle: { file_checks: [{ path: "answer.txt", kind: "equals", value: "wrong" }] } }, ws);
     if (failing.passed || failing.checks[0].passed) throw new Error("expected equals mismatch to fail");
-    const missing = await evaluateOracle(
-      { ...nav, oracle: { file_checks: [{ path: "nope.txt", kind: "exists" }] } },
-      ws,
-    );
+    const missing = await evaluateOracle({ ...nav, oracle: { file_checks: [{ path: "nope.txt", kind: "exists" }] } }, ws);
     if (missing.passed) throw new Error("expected missing file check to fail");
   });
 });
@@ -82,10 +76,7 @@ Deno.test("oracle: git checks on a disposable repository", async () => {
 Deno.test("oracle: git checks without a repository fail closed", async () => {
   const nav = loadTasks(TASKS_DIR).find((t) => t.id === "nav-001")!;
   await withWorkspace(nav, async (ws) => {
-    const out = await evaluateOracle(
-      { ...nav, oracle: { git_checks: [{ kind: "worktree_clean" }] } },
-      ws,
-    );
+    const out = await evaluateOracle({ ...nav, oracle: { git_checks: [{ kind: "worktree_clean" }] } }, ws);
     if (out.passed) throw new Error("expected git check to fail when task has no git repository");
   });
 });

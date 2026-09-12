@@ -28,16 +28,11 @@ try {
   const archive = `${staging}.tar`;
   await command("git", ["archive", "--format=tar", `--output=${archive}`, sha]);
   await command("tar", ["-xf", archive, "-C", staging]);
-  await Deno.writeTextFile(
-    `${staging}/src/release.ts`,
-    `// Generated for this immutable VPS release.\nexport const RELEASE_GIT_SHA = "${sha}";\n`,
-  );
+  await Deno.writeTextFile(`${staging}/src/release.ts`, `// Generated for this immutable VPS release.\nexport const RELEASE_GIT_SHA = "${sha}";\n`);
   const archiveDigest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await Deno.readFile(archive))))
-    .map((byte) => byte.toString(16).padStart(2, "0")).join("");
-  await Deno.writeTextFile(
-    `${staging}/.uos-release.json`,
-    JSON.stringify({ git_sha: sha, source_archive_sha256: archiveDigest }) + "\n",
-  );
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  await Deno.writeTextFile(`${staging}/.uos-release.json`, JSON.stringify({ git_sha: sha, source_archive_sha256: archiveDigest }) + "\n");
   await Deno.rename(staging, release);
   await Deno.remove(archive);
   const next = `.data/current-${crypto.randomUUID()}`;
@@ -50,7 +45,8 @@ try {
       const response = await fetch("http://127.0.0.1:8001/health", { signal: AbortSignal.timeout(2000) });
       const health = await response.json();
       if (
-        response.status === 200 && health.release?.git_sha === sha &&
+        response.status === 200 &&
+        health.release?.git_sha === sha &&
         health.release?.deployment_id === `vps-${sha}` &&
         response.headers.get("x-uos-git-sha") === sha &&
         response.headers.get("x-uos-deployment-id") === `vps-${sha}`
@@ -58,7 +54,9 @@ try {
         console.log(JSON.stringify({ git_sha: sha, deployment_id: `vps-${sha}`, release, health_verified: true }));
         Deno.exit(0);
       }
-    } catch { /* The listener may still be starting. */ }
+    } catch {
+      /* The listener may still be starting. */
+    }
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   throw new Error("The VPS did not serve the expected release; inspect journalctl -u ai-ubq-fi.service");

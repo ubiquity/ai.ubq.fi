@@ -28,14 +28,10 @@ export function baselineAdapters(): BenchmarkAdapter[] {
  * escapes the gate. Used by focused tests and by the orchestrator's
  * integration tests.
  */
-export function assertBaselinesRefusedByRunner(
-  registry: BenchmarkAdapter[],
-): void {
+export function assertBaselinesRefusedByRunner(registry: BenchmarkAdapter[]): void {
   for (const adapter of registry) {
     if (adapter.requiresExternalInference) {
-      throw new Error(
-        `refusing external-inference adapter ${adapter.configId} (${adapter.name}) outside the approved gate`,
-      );
+      throw new Error(`refusing external-inference adapter ${adapter.configId} (${adapter.name}) outside the approved gate`);
     }
   }
 }

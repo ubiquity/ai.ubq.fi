@@ -2,7 +2,7 @@ import handler from "./handler.ts";
 
 export const createRequestDeliveryLifecycle = (
   requestSignal: AbortSignal,
-  completed: Promise<void>,
+  completed: Promise<void>
 ): Readonly<{ signal: AbortSignal; handoff: () => void }> => {
   const downstream = new AbortController();
   let handedOff = false;
@@ -25,22 +25,18 @@ export const createRequestDeliveryLifecycle = (
   };
 };
 
-type DeliveryAwareHandler = (
-  request: Request,
-  delivery: Readonly<{ completed: Promise<void>; downstreamSignal: AbortSignal }>,
-) => Promise<Response>;
+type DeliveryAwareHandler = (request: Request, delivery: Readonly<{ completed: Promise<void>; downstreamSignal: AbortSignal }>) => Promise<Response>;
 
-export const createServeHandler = (
-  requestHandler: DeliveryAwareHandler = handler,
-): Deno.ServeHandler =>
-async (request, info) => {
-  const delivery = createRequestDeliveryLifecycle(request.signal, info.completed);
-  try {
-    return await requestHandler(request, {
-      completed: info.completed,
-      downstreamSignal: delivery.signal,
-    });
-  } finally {
-    delivery.handoff();
-  }
-};
+export const createServeHandler =
+  (requestHandler: DeliveryAwareHandler = handler): Deno.ServeHandler =>
+  async (request, info) => {
+    const delivery = createRequestDeliveryLifecycle(request.signal, info.completed);
+    try {
+      return await requestHandler(request, {
+        completed: info.completed,
+        downstreamSignal: delivery.signal,
+      });
+    } finally {
+      delivery.handoff();
+    }
+  };

@@ -17,20 +17,12 @@ Deno.test("codex session observer classifies first, continuing, and hour-idle re
     assert.equal(continuing.continuation_age_ms, 1);
     assert.equal(continuing.continuation_only_candidate, false);
 
-    const hourIdle = await observeCodexSession(
-      "key-a",
-      { session_id: "session-a" },
-      1_000_000 + 60 * 60 * 1000,
-    );
+    const hourIdle = await observeCodexSession("key-a", { session_id: "session-a" }, 1_000_000 + 60 * 60 * 1000);
     assert.equal(hourIdle.state, "continuation");
     assert.equal(hourIdle.continuation_age_ms, 60 * 60 * 1000);
     assert.equal(hourIdle.continuation_only_candidate, true);
 
-    const otherApiKey = await observeCodexSession(
-      "key-b",
-      { session_id: "session-a" },
-      1_000_000 + 60 * 60 * 1000,
-    );
+    const otherApiKey = await observeCodexSession("key-b", { session_id: "session-a" }, 1_000_000 + 60 * 60 * 1000);
     assert.equal(otherApiKey.state, "new");
     assert.equal(otherApiKey.continuation_only_candidate, false);
     for (const entry of kv.entries.values()) {
@@ -47,19 +39,11 @@ Deno.test("codex session observer resets the continuation window on a new sessio
   setKvForTest(kv as unknown as Deno.Kv);
   try {
     await observeCodexSession("key-a", { session_id: "session-a" }, 2_000_000);
-    const newSession = await observeCodexSession(
-      "key-a",
-      { session_id: "session-b" },
-      2_000_000 + 60 * 60 * 1000,
-    );
+    const newSession = await observeCodexSession("key-a", { session_id: "session-b" }, 2_000_000 + 60 * 60 * 1000);
     assert.equal(newSession.state, "new");
     assert.equal(newSession.continuation_only_candidate, false);
 
-    const oldSession = await observeCodexSession(
-      "key-a",
-      { session_id: "session-a" },
-      2_000_000 + 60 * 60 * 1000 + 1,
-    );
+    const oldSession = await observeCodexSession("key-a", { session_id: "session-a" }, 2_000_000 + 60 * 60 * 1000 + 1);
     assert.equal(oldSession.state, "continuation");
     assert.equal(oldSession.continuation_age_ms, 1);
     assert.equal(oldSession.continuation_only_candidate, false);

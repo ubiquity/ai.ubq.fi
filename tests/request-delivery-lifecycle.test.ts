@@ -14,10 +14,7 @@ const deferred = <T>() => {
 Deno.test("request delivery lifecycle switches from request aborts to server delivery completion", async () => {
   const beforeHandoffRequest = new AbortController();
   const beforeHandoffCompletion = deferred<void>();
-  const beforeHandoff = createRequestDeliveryLifecycle(
-    beforeHandoffRequest.signal,
-    beforeHandoffCompletion.promise,
-  );
+  const beforeHandoff = createRequestDeliveryLifecycle(beforeHandoffRequest.signal, beforeHandoffCompletion.promise);
   const requestAbort = new DOMException("client left before handoff", "AbortError");
   beforeHandoffRequest.abort(requestAbort);
   assert.equal(beforeHandoff.signal.aborted, true);

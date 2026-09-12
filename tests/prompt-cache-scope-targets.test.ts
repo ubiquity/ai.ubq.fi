@@ -1,8 +1,5 @@
 import assert from "node:assert/strict";
-import {
-  derivePromptCacheScopeTargetInventory,
-  loadPromptCacheScopeTargetInventory,
-} from "../src/prompt_cache_scope_targets.ts";
+import { derivePromptCacheScopeTargetInventory, loadPromptCacheScopeTargetInventory } from "../src/prompt_cache_scope_targets.ts";
 import { CODEX_AUTH_POOL_KV_KEY, CODEX_MODELS_KV_KEY, type CodexModelsSnapshot } from "../src/codex.ts";
 
 const encodeKey = (key: Deno.KvKey): string => JSON.stringify(key);
@@ -14,10 +11,7 @@ const qualifiedControls = {
   verified_at_ms: 1,
 };
 
-const makeModel = (
-  slug: string,
-  controls: Record<string, unknown> | null = qualifiedControls,
-): Record<string, unknown> => ({
+const makeModel = (slug: string, controls: Record<string, unknown> | null = qualifiedControls): Record<string, unknown> => ({
   slug,
   ...(controls ? { prompt_cache: { version: 1, providers: [{ id: "codex_chatgpt", controls }] } } : {}),
 });
@@ -68,8 +62,14 @@ Deno.test("target inventory sorts and de-duplicates catalog IDs without inferrin
   });
 
   assert.equal(first.status, "ready");
-  assert.deepEqual(first.targets.map((target) => target.model), ["gpt-5.6", "gpt-5.6-mini"]);
-  assert.deepEqual(first.targets.map((target) => target.id), second.targets.map((target) => target.id));
+  assert.deepEqual(
+    first.targets.map((target) => target.model),
+    ["gpt-5.6", "gpt-5.6-mini"]
+  );
+  assert.deepEqual(
+    first.targets.map((target) => target.id),
+    second.targets.map((target) => target.id)
+  );
   assert.equal(first.inventory_fingerprint, second.inventory_fingerprint);
   for (const target of first.targets) {
     assert.equal(target.model_family_id, target.model);
@@ -123,18 +123,9 @@ Deno.test("the Codex account-pool identity fences membership changes without ret
   assert.ok(tokenRotatedTarget);
   assert.ok(reorderedTarget);
   assert.ok(replacedTarget);
-  assert.equal(
-    tokenRotatedTarget.codex_auth_pool_identity_fingerprint,
-    initialTarget.codex_auth_pool_identity_fingerprint,
-  );
-  assert.notEqual(
-    reorderedTarget.codex_auth_pool_identity_fingerprint,
-    initialTarget.codex_auth_pool_identity_fingerprint,
-  );
-  assert.notEqual(
-    replacedTarget.codex_auth_pool_identity_fingerprint,
-    initialTarget.codex_auth_pool_identity_fingerprint,
-  );
+  assert.equal(tokenRotatedTarget.codex_auth_pool_identity_fingerprint, initialTarget.codex_auth_pool_identity_fingerprint);
+  assert.notEqual(reorderedTarget.codex_auth_pool_identity_fingerprint, initialTarget.codex_auth_pool_identity_fingerprint);
+  assert.notEqual(replacedTarget.codex_auth_pool_identity_fingerprint, initialTarget.codex_auth_pool_identity_fingerprint);
   assert.equal(tokenRotated.binding_fingerprint, initial.binding_fingerprint);
   assert.notEqual(reordered.binding_fingerprint, initial.binding_fingerprint);
   assert.notEqual(replaced.binding_fingerprint, initial.binding_fingerprint);
@@ -192,7 +183,10 @@ Deno.test("an authoritative metered roster creates only catalog intersections an
   });
   const meteredTargets = inventory.targets.filter((target) => target.provider === "metered");
 
-  assert.deepEqual(meteredTargets.map((target) => target.model), ["gpt-5.6-mini"]);
+  assert.deepEqual(
+    meteredTargets.map((target) => target.model),
+    ["gpt-5.6-mini"]
+  );
   assert.deepEqual(inventory.metered_fallback_roster, {
     status: "authoritative",
     model_ids: ["gpt-5.6-mini", "missing"],
@@ -234,7 +228,7 @@ Deno.test("the same exact model has isolated Codex and metered target identities
   assert.equal(metered.probeability.status, "unprobeable");
   assert.deepEqual(
     inventory.targets.filter((target) => target.probeability.status === "probeable").map((target) => target.provider),
-    ["codex_chatgpt", "codex_chatgpt"],
+    ["codex_chatgpt", "codex_chatgpt"]
   );
 });
 
@@ -244,31 +238,29 @@ Deno.test("published scope evidence does not change the dispatch capability or i
     ...makeModel("gpt-5.6"),
     prompt_cache: {
       version: 1,
-      providers: [{
-        id: "codex_chatgpt",
-        controls: qualifiedControls,
-        scope: {
-          probe_profile: "responses_implicit_input_text_keyed_cycle_isolated_v5",
-          account_slots: "account_scoped",
-          token_refresh: "preserved",
-          conversation_id: "independent",
-          effective_model: "gpt-5.6",
-          reproducible_cycles: 3,
-          source: "live_probe",
-          verified_at_ms: 2,
+      providers: [
+        {
+          id: "codex_chatgpt",
+          controls: qualifiedControls,
+          scope: {
+            probe_profile: "responses_implicit_input_text_keyed_cycle_isolated_v5",
+            account_slots: "account_scoped",
+            token_refresh: "preserved",
+            conversation_id: "independent",
+            effective_model: "gpt-5.6",
+            reproducible_cycles: 3,
+            source: "live_probe",
+            verified_at_ms: 2,
+          },
         },
-      }],
+      ],
     },
   };
   const published = await derive({
     snapshot: makeSnapshot([scopedModel, makeModel("gpt-5.6-mini")]),
   });
-  const baselineTarget = baseline.targets.find((target) =>
-    target.provider === "codex_chatgpt" && target.model === "gpt-5.6"
-  );
-  const publishedTarget = published.targets.find((target) =>
-    target.provider === "codex_chatgpt" && target.model === "gpt-5.6"
-  );
+  const baselineTarget = baseline.targets.find((target) => target.provider === "codex_chatgpt" && target.model === "gpt-5.6");
+  const publishedTarget = published.targets.find((target) => target.provider === "codex_chatgpt" && target.model === "gpt-5.6");
 
   assert.ok(baselineTarget);
   assert.ok(publishedTarget);
@@ -280,7 +272,10 @@ Deno.test("an unknown metered roster fails closed with no metered targets", asyn
   const inventory = await derive({ meteredFallbackRoster: { status: "unknown" } });
 
   assert.equal(inventory.metered_fallback_roster.status, "unknown");
-  assert.deepEqual(inventory.targets.filter((target) => target.provider === "metered"), []);
+  assert.deepEqual(
+    inventory.targets.filter((target) => target.provider === "metered"),
+    []
+  );
 });
 
 Deno.test("the inventory loader has a two-key read-only KV footprint", async () => {
@@ -332,23 +327,32 @@ Deno.test("missing or invalid catalogs fail closed", async () => {
     snapshot: { source: "chatgpt_codex", updated_at_ms: 1, models: [] },
   });
 
-  assert.deepEqual({ status: missing.status, reason: missing.reason, targets: missing.targets }, {
-    status: "unavailable",
-    reason: "catalog_unavailable",
-    targets: [],
-  });
-  assert.deepEqual({ status: invalid.status, reason: invalid.reason, targets: invalid.targets }, {
-    status: "unavailable",
-    reason: "catalog_invalid",
-    targets: [],
-  });
+  assert.deepEqual(
+    { status: missing.status, reason: missing.reason, targets: missing.targets },
+    {
+      status: "unavailable",
+      reason: "catalog_unavailable",
+      targets: [],
+    }
+  );
+  assert.deepEqual(
+    { status: invalid.status, reason: invalid.reason, targets: invalid.targets },
+    {
+      status: "unavailable",
+      reason: "catalog_invalid",
+      targets: [],
+    }
+  );
 
   const mixed = await derive({
     snapshot: makeSnapshot([makeModel("gpt-5.6"), {}]),
   });
-  assert.deepEqual({ status: mixed.status, reason: mixed.reason, targets: mixed.targets }, {
-    status: "unavailable",
-    reason: "catalog_invalid",
-    targets: [],
-  });
+  assert.deepEqual(
+    { status: mixed.status, reason: mixed.reason, targets: mixed.targets },
+    {
+      status: "unavailable",
+      reason: "catalog_invalid",
+      targets: [],
+    }
+  );
 });
