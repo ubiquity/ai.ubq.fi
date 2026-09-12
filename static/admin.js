@@ -935,7 +935,6 @@ const renderCapacityWindow = (container, label, window) => {
   usage.appendChild(progress);
   const facts = document.createElement("dl");
   facts.dataset.capacityFacts = "";
-  appendProviderFact(facts, "Used", formatCapacityPercent(window?.used_percent));
   appendProviderFact(
     facts,
     "Window",
@@ -1015,7 +1014,12 @@ const appendCapacitySourceMeta = (row, source, provider = null) => {
       source.wallet?.cache_state ?? provider?.quota?.cache_state ?? "Unavailable",
     );
   }
-  row.appendChild(facts);
+  const details = document.createElement("details");
+  details.dataset.providerDetails = "";
+  const summary = document.createElement("summary");
+  summary.textContent = "Diagnostics";
+  details.append(summary, facts);
+  row.appendChild(details);
 };
 
 const renderCodexCapacitySource = (source, provider = null) => {
@@ -1040,9 +1044,10 @@ const renderCodexCapacitySource = (source, provider = null) => {
   renderCapacityWindow(windows, "Primary window", source.windows?.primary);
   if (source.windows?.secondary) renderCapacityWindow(windows, "Secondary window", source.windows.secondary);
   const additionalLimits = Array.isArray(source.additional_rate_limits) ? source.additional_rate_limits : [];
-  for (const limit of additionalLimits) renderCapacityAdditionalLimit(windows, limit);
   row.append(header, windows);
   appendCapacitySourceMeta(row, source, provider);
+  const diagnostics = row.querySelector("details");
+  for (const limit of additionalLimits) renderCapacityAdditionalLimit(diagnostics, limit);
   return row;
 };
 
@@ -1104,6 +1109,11 @@ const renderMeteredCapacitySource = (source, provider = null) => {
   appendProviderFact(facts, "Reset", "Not provided for refill cycle");
   row.append(header, facts);
   appendCapacitySourceMeta(row, source, provider);
+  const diagnostics = row.querySelector("details");
+  const secondaryFacts = document.createElement("dl");
+  secondaryFacts.dataset.capacityFacts = "";
+  secondaryFacts.append(...Array.from(facts.children).slice(1));
+  diagnostics.appendChild(secondaryFacts);
   return row;
 };
 
@@ -1129,12 +1139,8 @@ const renderSurplusProviderHealthSource = (provider = null) => {
 
   const facts = document.createElement("dl");
   facts.dataset.capacityFacts = "";
-  appendProviderFact(facts, "Configured", configured ? "Yes" : "No");
-  appendProviderFact(facts, "Inference", configured ? providerStateLabel(provider?.health) : "Unavailable");
   appendProviderFact(facts, "Last response", formatDate(provider?.health?.last_observed_at_ms));
   appendProviderFact(facts, "Quota", provider?.quota?.available === true ? "Reported" : "Not reported");
-  appendProviderFact(facts, "Usage", "Shown per API key");
-  appendProviderFact(facts, "Settlement", "Response usage");
   row.append(header, facts);
   return row;
 };
@@ -1145,6 +1151,7 @@ const providerForCodexSlot = (slot) => {
 };
 
 const renderProviderCapacityList = (sources) => {
+  const expanded = Array.from(providerCapacityList.children, (row) => row.querySelector("details")?.open === true);
   providerCapacityList.replaceChildren();
   for (const source of sources) {
     providerCapacityList.appendChild(
@@ -1156,6 +1163,10 @@ const renderProviderCapacityList = (sources) => {
   if (latestProviderHealth?.surplus) {
     providerCapacityList.appendChild(renderSurplusProviderHealthSource(latestProviderHealth.surplus));
   }
+  Array.from(providerCapacityList.children).forEach((row, index) => {
+    const details = row.querySelector("details");
+    if (details) details.open = expanded[index] === true;
+  });
 };
 
 const unavailableCapacitySource = (source, slot = null) =>
@@ -1203,8 +1214,8 @@ const CAPACITY_CHART_PLOT_TOP = 24;
 const CAPACITY_CHART_PLOT_RIGHT = 12;
 const CAPACITY_CHART_PLOT_BOTTOM = 56;
 const CAPACITY_CHART_BUCKET_MS = 15 * CAPACITY_CHART_MINUTE_MS;
-const CAPACITY_CHART_MAX_PIXELS_PER_PERCENT = 4;
-const CAPACITY_CHART_MEDIUM_PIXELS_PER_PERCENT = 2;
+const CAPACITY_CHART_MAX_PIXELS_PER_PERCENT = 2;
+const CAPACITY_CHART_MEDIUM_PIXELS_PER_PERCENT = 1.5;
 const CAPACITY_CHART_MIN_PIXELS_PER_PERCENT = 1;
 const CAPACITY_CHART_VIEWPORT_GAP_PX = 16;
 const CAPACITY_CHART_FIGURE_OVERHEAD_PX = 48;
@@ -2066,10 +2077,10 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
   const chartHeader = document.createElement("div");
   chartHeader.dataset.capacityChartHeader = "";
   const title = document.createElement("h3");
-  title.textContent = "Capacity and prompt cache history";
+  title.textContent = "Capacity";
   const range = document.createElement("span");
   range.dataset.capacityChartRange = "";
-  range.textContent = "Trailing 7 days · 15-minute buckets";
+  range.textContent = "7 days";
   chartHeader.append(title, range);
   figure.appendChild(chartHeader);
 
@@ -2080,10 +2091,10 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
     const series of [
       { key: "cached-input", label: "Cached input share" },
       ...CAPACITY_CHART_SERIES,
-      { key: "rate-limit-reset", label: "OpenAI rate-limit reset" },
-      { key: "openai-downtime", label: "OpenAI downtime" },
-      { key: "inference-error", label: "Failed inference responses (HTTP 5xx)" },
-      { key: "optimal-spend", label: "Optimal token spend" },
+      { key: "rate-limit-reset", label: "Reset" },
+      { key: "openai-downtime", label: "Downtime" },
+      { key: "inference-error", label: "Errors (5xx)" },
+      { key: "optimal-spend", label: "Spend target" },
     ]
   ) {
     const item = document.createElement("span");
@@ -2098,10 +2109,6 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
     legend.appendChild(item);
   }
   figure.appendChild(legend);
-  const legendNote = document.createElement("p");
-  legendNote.dataset.capacityChartLegendNote = "";
-  legendNote.textContent = "Error markers identify 15-minute buckets; use the event list for counts and timestamps.";
-  figure.appendChild(legendNote);
 
   const svg = capacityChartSvgElement("svg", {
     viewBox: `0 0 ${width} ${height}`,
@@ -2500,7 +2507,13 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
   const chartPane = document.createElement("div");
   chartPane.dataset.capacityChartPane = "";
   chartPane.append(chartScroll, chartScrollControls);
-  chartBody.append(chartPane, renderCapacitySpendSummary(pacing, activeUsageWindow));
+  chartBody.append(chartPane);
+  const details = document.createElement("details");
+  details.dataset.providerDetails = "";
+  const detailsSummary = document.createElement("summary");
+  detailsSummary.textContent = "History details";
+  details.open = providerCapacityChart.querySelector("details")?.open === true;
+  details.append(detailsSummary, renderCapacitySpendSummary(pacing, activeUsageWindow));
   figure.appendChild(chartBody);
   if (visibleFiveXxBuckets.length) {
     const errorSummary = document.createElement("div");
@@ -2544,7 +2557,7 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
       errorNavigation.appendChild(button);
     }
     errorSummary.append(errorSummaryHeader, errorNavigation);
-    figure.appendChild(errorSummary);
+    details.appendChild(errorSummary);
   }
   if (rateLimitResetMarkers.length) {
     const navigation = document.createElement("nav");
@@ -2574,9 +2587,9 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
       });
       navigation.appendChild(button);
     }
-    figure.appendChild(navigation);
+    details.appendChild(navigation);
   }
-  const caption = document.createElement("figcaption");
+  const caption = document.createElement("p");
   caption.dataset.capacityChartMeta = "";
   const samples = history.filter((sample) => typeof sample?.sampled_at_ms === "number");
   const staleNotes = [
@@ -2627,7 +2640,8 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
       samples.length === 1 ? "" : "s"
     }${resetSuffix}${rateLimitResetSuffix}${downtimeSuffix}${fiveXxSuffix}${cacheSuffix}${staleSuffix}`
     : `No retained capacity samples yet · trailing seven-day window${resetSuffix}${rateLimitResetSuffix}${downtimeSuffix}${fiveXxSuffix}${cacheSuffix}${staleSuffix}`;
-  figure.appendChild(caption);
+  details.appendChild(caption);
+  figure.appendChild(details);
   providerCapacityChart.replaceChildren(figure);
   restoreCapacityChartScroll(chartScroll, chartWindow, plot);
   updateCapacityChartScrollControls(chartScroll, olderButton, newerButton);
@@ -2659,7 +2673,7 @@ const renderProviderCapacity = (snapshot, fiveXxBuckets = []) => {
   } else if (cacheAnalyticsUnavailable) {
     setBadge(providerCapacityBadge, "unknown", "Cache analytics unavailable");
   } else {
-    setBadge(providerCapacityBadge, "ok", "Snapshot ready");
+    setBadge(providerCapacityBadge, "ok", "Up to date");
   }
   const snapshotAt = typeof snapshot?.snapshot_at_ms === "number" ? snapshot.snapshot_at_ms : null;
   const cacheState = typeof snapshot?.cache_state === "string" ? snapshot.cache_state : "unavailable";

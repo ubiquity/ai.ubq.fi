@@ -11,7 +11,7 @@
     <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
     <link rel="icon" href="/favicon.png" type="image/png" sizes="256x256" />
     <link rel="stylesheet" href="/style.css?v=public-console-20260903-v7" />
-    <link rel="stylesheet" href="/admin.css?v=admin-polish-20260903-v6" />
+    <link rel="stylesheet" href="/admin.css?v=providers-minimal-20260912" />
   </head>
   <body data-page="admin" data-role="admin" data-auth-widget="collapsed" data-auth-scope="none">
     <div data-shell>
@@ -41,9 +41,7 @@
         <section data-hero>
           <div data-admin-heading>
             <div>
-              <span data-admin-eyebrow>Operations</span>
               <h1>Admin console</h1>
-              <p>Manage gateway access, defaults, provider health, and incident history.</p>
             </div>
           </div>
           <div data-tabs role="tablist" aria-label="Admin sections">
@@ -631,8 +629,7 @@
         >
           <article data-card aria-labelledby="card-provider-capacity">
             <header>
-              <h2 id="card-provider-capacity">Provider analytics</h2>
-              <p>Fifteen-minute capacity, cached-input, and cache-write history with current provider health below.</p>
+              <h2 id="card-provider-capacity">Providers</h2>
             </header>
             <div data-card-body>
               <div data-provider-heading>
@@ -644,24 +641,13 @@
                 data-capacity-chart
                 role="group"
                 aria-label="Provider capacity history"
-                aria-describedby="provider-capacity-chart-help"
               ></div>
-              <p id="provider-capacity-chart-help" data-chart-help>
-                Red diamonds mark 15-minute buckets containing failed inference responses (HTTP 5xx). Focus a marker
-                for its count and timestamp.
-              </p>
               <div id="provider-capacity-list" data-capacity-list role="list"></div>
             </div>
           </article>
 
-          <article data-card aria-labelledby="card-quota-runway">
-            <header>
-              <h2 id="card-quota-runway">Quota runway</h2>
-              <p>
-                Per-model paid-fallback consumption with an estimate of how long the current quota balance lasts,
-                from retained hourly usage rollups.
-              </p>
-            </header>
+          <details data-card data-provider-details>
+            <summary id="card-quota-runway">Quota forecast</summary>
             <div data-card-body>
               <div data-provider-heading>
                 <span id="quota-runway-badge" data-badge data-state="unknown">Not loaded</span>
@@ -671,7 +657,7 @@
               <div id="quota-runway-list" data-quota-runway-list role="list"></div>
               <p id="quota-runway-note" data-muted></p>
             </div>
-          </article>
+          </details>
         </section>
 
         <section
@@ -812,6 +798,6 @@
         </button>
       </section>
     </div>
-    <script type="module" src="/admin.js?v=per-key-banked-resets-20260912"></script>
+    <script type="module" src="/admin.js?v=providers-minimal-20260912"></script>
   </body>
 </html>
