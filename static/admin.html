@@ -624,6 +624,22 @@
           aria-labelledby="view-tab-providers"
           hidden
         >
+          <article data-card aria-labelledby="card-banked-resets">
+            <header>
+              <h2 id="card-banked-resets">Banked resets</h2>
+              <p>Control automatic use of saved Codex resets across the gateway.</p>
+            </header>
+            <div data-card-body>
+              <label data-check>
+                <span>Use banked resets</span>
+                <input id="banked-reset-enabled" type="checkbox" role="switch" aria-describedby="banked-reset-status"
+                  disabled />
+              </label>
+              <p id="banked-reset-status" role="status" data-muted>Loading setting…</p>
+              <p data-muted>Existing limits still apply. Turning this off cannot undo a reset already submitted.</p>
+            </div>
+          </article>
+
           <article data-card aria-labelledby="card-provider-capacity">
             <header>
               <h2 id="card-provider-capacity">Provider analytics</h2>
@@ -807,6 +823,6 @@
         </button>
       </section>
     </div>
-    <script type="module" src="/admin.js?v=admin-indexeddb-cache-20260903-v8"></script>
+    <script type="module" src="/admin.js?v=banked-reset-toggle-20260912"></script>
   </body>
 </html>

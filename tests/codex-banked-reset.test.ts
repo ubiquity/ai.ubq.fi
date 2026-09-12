@@ -4,6 +4,7 @@ import {
   CODEX_BANKED_RESET_INVENTORY_MAX_AGE_MS,
   CODEX_BANKED_RESET_INVENTORY_TIMEOUT_MS,
   CODEX_BANKED_RESET_LEASE_MS,
+  CODEX_BANKED_RESET_USAGE_KEY,
   type CodexBankedResetCandidate,
   type CodexBankedResetConfig,
   type CodexBankedResetDependencies,
@@ -931,6 +932,44 @@ Deno.test("a kill switch landing during the final renewal still blocks provider 
   assert.equal(provider.inventoryInputs.length, 1);
   assert.equal(provider.redeemInputs.length, 0);
   assert.equal(provider.commitCount, 0);
+});
+
+Deno.test("the persistent usage toggle blocks resets and re-enabling preserves normal redemption", async () => {
+  const kv = new MemoryKv();
+  const provider = new FakeCodexUsageResetProvider();
+  const clock = new TestClock();
+  const reset = candidate();
+  await seedFences(kv, reset);
+  for (const disabled of [false, "true"]) {
+    await kv.set(CODEX_BANKED_RESET_USAGE_KEY, disabled);
+    const result = await attemptCodexBankedReset(reset, dependencies(kv, provider, clock));
+    assert.equal(result.kind, "skipped");
+    assert.equal(provider.inventoryInputs.length, 0);
+    assert.equal(provider.redeemInputs.length, 0);
+  }
+  await kv.set(CODEX_BANKED_RESET_USAGE_KEY, true);
+  const result = await attemptCodexBankedReset(reset, dependencies(kv, provider, clock));
+  assert.equal(result.kind, "verified");
+  assert.equal(provider.redeemInputs.length, 1);
+});
+
+Deno.test("a saved disable races with either submission transaction without spending a credit", async () => {
+  for (const boundary of [2, 3]) {
+    const kv = new MemoryKv();
+    const provider = new FakeCodexUsageResetProvider();
+    const clock = new TestClock();
+    const reset = candidate();
+    await seedFences(kv, reset);
+    kv.beforeAtomicCommit = (commitNumber) => {
+      if (commitNumber !== boundary) return;
+      kv.beforeAtomicCommit = null;
+      void kv.set(CODEX_BANKED_RESET_USAGE_KEY, false);
+    };
+    const result = await attemptCodexBankedReset(reset, dependencies(kv, provider, clock));
+    assert.equal(result.reason, "usage_disabled");
+    assert.equal(provider.redeemInputs.length, 0);
+    assert.equal(provider.commitCount, 0);
+  }
 });
 
 Deno.test("an unapproved provider receipt stays out of the durable record and telemetry", async () => {

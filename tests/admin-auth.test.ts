@@ -119,6 +119,7 @@ const {
   handleAdminApiKeysUnrevoke,
   handleAdminApiKeysUpdate,
   handleAdminCodexAuth,
+  handleAdminCodexBankedResetUsage,
   handleAdminCodexModelsGet,
   handleAdminCodexModelsSet,
   handleAdminDefaults,
@@ -126,6 +127,52 @@ const {
   handleAdminKernelUsageSet,
   handleAdminKvMigrationImport,
 } = await import("../src/admin.ts");
+
+Deno.test("admin banked-reset usage persists strict booleans and rejects other setting changes", async () => {
+  kvStore.clear();
+  const url = "http://localhost/admin/providers/codex/banked-resets";
+  const initial = await handleAdminCodexBankedResetUsage(new Request(url));
+  assert.equal((await initial.json()).enabled, true);
+  for (const enabled of [false, true, false]) {
+    const saved = await handleAdminCodexBankedResetUsage(
+      new Request(url, {
+        method: "PATCH",
+        body: JSON.stringify({ enabled }),
+      }),
+    );
+    assert.equal(saved.status, 200);
+    const loaded = await handleAdminCodexBankedResetUsage(new Request(url));
+    assert.equal(loaded.headers.get("Cache-Control"), "no-store");
+    const payload = await loaded.json();
+    assert.equal(payload.enabled, enabled);
+    if (!enabled) assert.equal(payload.active, false);
+  }
+  for (const body of [{ enabled: "true" }, { enabled: true, mode: "live" }, {}, null]) {
+    const invalid = await handleAdminCodexBankedResetUsage(
+      new Request(url, {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      }),
+    );
+    assert.equal(invalid.status, 400);
+  }
+  const final = await handleAdminCodexBankedResetUsage(new Request(url));
+  assert.equal((await final.json()).enabled, false);
+  const { default: handler } = await import("../src/handler.ts");
+  for (const method of ["GET", "PATCH"]) {
+    const unauthorized = await handler(
+      new Request(url, {
+        method,
+        ...(method === "PATCH" ? { body: JSON.stringify({ enabled: true }) } : {}),
+      }),
+    );
+    assert.equal(unauthorized.status, 401);
+    await unauthorized.body?.cancel();
+  }
+  const unchanged = await handleAdminCodexBankedResetUsage(new Request(url));
+  assert.equal((await unchanged.json()).enabled, false);
+  kvStore.clear();
+});
 const {
   getKernelUsageLimitSnapshot,
   kernelRepoPolicyKey,

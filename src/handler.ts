@@ -8,6 +8,7 @@ import {
   handleAdminApiKeysUpdate,
   handleAdminCodexAuth,
   handleAdminCodexBankedResetShadowDecisions,
+  handleAdminCodexBankedResetUsage,
   handleAdminCodexCacheScopeExperiment,
   handleAdminCodexCacheScopeExperimentTelemetryBaseline,
   handleAdminCodexModelsGet,
@@ -880,6 +881,12 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     const authError = await requireAdminAuth(req);
     if (authError) return withCors(authError);
     return withCors(await handleAdminCodexAuth(req));
+  }
+
+  if ((req.method === "GET" || req.method === "PATCH") && path === "/admin/providers/codex/banked-resets") {
+    const authError = await requireAdminAuth(req);
+    if (authError) return withCors(authError);
+    return withCors(await handleAdminCodexBankedResetUsage(req));
   }
 
   if (req.method === "GET" && path === "/admin/providers/codex/banked-resets/shadow-decisions") {

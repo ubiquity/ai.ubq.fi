@@ -68,6 +68,14 @@ After a verified reset, the original inference request is the one recovery probe
 
 ## Configuration
 
+The admin console has a gateway-wide **Use banked resets** switch under **Providers**. It saves immediately in KV and
+survives restarts. The authenticated `GET` and `PATCH /admin/providers/codex/banked-resets` endpoint reads or updates
+it; PATCH accepts only `{ "enabled": true }` or `{ "enabled": false }`. Changing the switch never calls the reset
+provider. An absent setting preserves existing behavior. Turning it on retains the environment mode and caps below; the
+console shows when server configuration still pauses live use. Turning it off blocks new selection and submission,
+including a disable that wins the atomic check at the final submission renewal. A reset already authorized for
+submission cannot be cancelled or undone. Existing redemption and daily-cap records are retained.
+
 Settings are re-read on each gateway request and immediately before the consume boundary.
 
 | Variable                                        | Safe default | Canary requirement                                                  |
