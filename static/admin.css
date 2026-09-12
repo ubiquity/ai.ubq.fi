@@ -2033,3 +2033,53 @@ body[data-page="admin"] #view-providers > details[data-card] {
 body[data-page="admin"] [data-provider-details][open] > :not(summary) {
   margin-block: 12px;
 }
+
+body[data-page="admin"] main > [data-view] > details[data-disclosure],
+body[data-page="admin"] #view-keys > [data-card]:nth-child(n),
+body[data-page="admin"] #view-pubkeys > [data-card]:nth-child(n) {
+  grid-column: span 12;
+}
+
+body[data-page="admin"] main > [data-view] > details[data-disclosure] {
+  padding: 12px 20px;
+}
+
+body[data-page="admin"] details[data-disclosure] > [data-card-body] {
+  max-width: 760px;
+}
+
+body[data-page="admin"] [data-paid-fallback-header] {
+  justify-content: start;
+}
+
+body[data-page="admin"] details[data-paid-fallback-summary] {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+body[data-page="admin"] details[data-paid-fallback-summary] > summary {
+  display: list-item;
+}
+
+body[data-page="admin"] details[data-paid-fallback-summary] > summary [data-badge] {
+  margin-inline-start: 8px;
+}
+
+body[data-page="admin"] [data-key-main] > [data-key-info] {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+body[data-page="admin"] [data-card-body] > [data-badge] {
+  justify-self: start;
+}
+
+body[data-page="admin"] [data-empty] {
+  min-height: 48px;
+  padding: 12px 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}

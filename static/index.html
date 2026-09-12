@@ -57,8 +57,8 @@
     ]
     </script>
 
-    <link rel="stylesheet" href="/style.css?v=public-console-20260903-v7" />
-    <link rel="stylesheet" href="/home.css?v=public-console-20260903-v7" />
+    <link rel="stylesheet" href="/style.css?v=app-minimal-20260912" />
+    <link rel="stylesheet" href="/home.css?v=app-minimal-20260912" />
   </head>
   <body data-page="home" data-role="public">
     <div data-shell>
@@ -87,97 +87,39 @@
       <main>
         <section data-hero>
           <h1>UbiquityOS AI Gateway</h1>
-          <p data-lead>
-            AI.UBQ.FI is an OpenAI-compatible inference gateway for approved UbiquityOS applications and autonomous
-            agents. Discover the current model catalog at runtime, use Chat Completions or Responses, and start from
-            machine-readable API documentation instead of guessing an integration contract.
-          </p>
+          <p data-lead>One OpenAI-compatible API for your applications and agents.</p>
           <div data-layout="row">
-            <a data-button data-variant="primary" href="/developers">Developer portal</a>
-            <a data-button href="/docs">Read the full docs</a>
-            <a data-button href="/chat">Open the chat playground</a>
+            <a data-button data-variant="primary" href="/chat">Open chat</a>
+            <a data-button href="/developers">Get started</a>
           </div>
         </section>
+        <article data-card aria-labelledby="card-quickstart">
+          <header>
+            <h2 id="card-quickstart">Quickstart</h2>
+          </header>
+          <div data-card-body>
+            <p>Use your gateway token to discover models.</p>
+            <pre data-code><code>export UOS_AI_TOKEN="..."
 
-        <section data-layout="grid" role="list">
-          <article data-card data-span="half" role="listitem" aria-labelledby="card-quickstart">
-            <header>
-              <h2 id="card-quickstart">Quickstart (curl)</h2>
-              <p>Assumes <code>$UOS_AI_TOKEN</code> is set.</p>
-            </header>
-            <div data-card-body>
-              <pre
-                data-code
-              ><code>export UOS_AI_TOKEN="..."&#10;&#10;curl -sS https://ai.ubq.fi/v1/chat/completions \&#10;  -H "Authorization: Bearer $UOS_AI_TOKEN" \&#10;  -H "Content-Type: application/json" \&#10;  --data '{"messages":[{"role":"system","content":"You are a helpful assistant."},{"role":"user","content":"Tell me a short joke."}]}'</code></pre>
-              <div data-layout="row">
-                <a data-button data-variant="primary" href="/docs">Full LLMs &amp; agents docs</a>
-                <a data-button href="/health">Health check</a>
-              </div>
-            </div>
-          </article>
-
-          <article data-card data-span="half" role="listitem" aria-labelledby="card-status">
-            <header>
-              <h2 id="card-status">Status</h2>
-              <p>
-                Health endpoint:
-                <a href="/health">/health</a>
-              </p>
-            </header>
-            <div data-card-body>
-              <div data-layout="row">
-                <span id="status-badge" data-badge data-state="unknown">Checking...</span>
-                <a data-button href="/health">View JSON</a>
-              </div>
-            </div>
-          </article>
-
-          <article data-card data-span="half" role="listitem" aria-labelledby="card-agents">
-            <header>
-              <h2 id="card-agents">For developers and agents</h2>
-              <p>Use a documented, inspectable integration surface.</p>
-            </header>
-            <div data-card-body>
-              <p>
-                Start with the <a href="/developers">AI.UBQ.FI developer portal</a>, then read
-                <a href="/openapi.json">the OpenAPI contract</a> and <a href="/llms.txt">agent instructions</a>.
-                Configure an OpenAI-compatible SDK with <code>https://ai.ubq.fi/v1</code>, supply an approved
-                <code>UOS_AI_TOKEN</code>, and query <code>GET /v1/models</code> before choosing a model. The service
-                supports <code>POST /v1/chat/completions</code> and <code>POST /v1/responses</code>, including
-                streaming and documented function tools.
-              </p>
-              <p>
-                Use this gateway for inference from approved UbiquityOS workloads. Do not use it to create credentials,
-                administer keys, or access private operational routes. Never place bearer tokens in prompts, browser
-                URLs, source control, or agent transcripts; obtain them through the approved operator workflow.
-              </p>
-              <div data-layout="row">
-                <a data-button data-variant="primary" href="/openapi.json">OpenAPI</a>
-                <a data-button href="/llms-full.txt">Full agent guide</a>
-              </div>
-            </div>
-          </article>
-
-          <article data-card data-span="half" role="listitem" aria-labelledby="card-discovery">
-            <header>
-              <h2 id="card-discovery">Public service information</h2>
-              <p>Stable links for discovery, operational context, and policy information.</p>
-            </header>
-            <div data-card-body>
-              <p>
-                The public documentation is available without JavaScript. It explains authentication, error envelopes,
-                function tools, streaming, and rate-limit behavior. The interactive chat playground is a browser tool
-                for a token that you already hold; it is not a self-service credential issuer.
-              </p>
-              <div data-layout="row">
-                <a data-button href="/about">About</a>
-                <a data-button href="/contact">Contact</a>
-                <a data-button href="/privacy">Privacy</a>
-                <a data-button href="/sitemap.xml">Sitemap</a>
-              </div>
-            </div>
-          </article>
-        </section>
+curl -sS https://ai.ubq.fi/v1/models \
+  -H "Authorization: Bearer $UOS_AI_TOKEN"</code></pre>
+            <p>Base URL: <code>https://ai.ubq.fi/v1</code></p>
+          </div>
+        </article>
+        <footer data-home-footer>
+          <nav aria-label="Resources">
+            <a href="/openapi.json">OpenAPI</a>
+            <a href="/llms.txt">Agent instructions</a>
+            <a href="/llms-full.txt">Full agent guide</a>
+            <a href="/about">About</a>
+            <a href="/contact">Contact</a>
+            <a href="/privacy">Privacy</a>
+          </nav>
+          <a href="/health" data-home-status aria-label="Gateway health">
+            <span>Status</span>
+            <span id="status-badge" data-badge data-state="unknown">Checking...</span>
+          </a>
+        </footer>
       </main>
     </div>
     <script type="module" src="/app.js?v=health-available-v1"></script>

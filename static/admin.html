@@ -10,8 +10,8 @@
     />
     <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
     <link rel="icon" href="/favicon.png" type="image/png" sizes="256x256" />
-    <link rel="stylesheet" href="/style.css?v=public-console-20260903-v7" />
-    <link rel="stylesheet" href="/admin.css?v=providers-minimal-20260912" />
+    <link rel="stylesheet" href="/style.css?v=app-minimal-20260912" />
+    <link rel="stylesheet" href="/admin.css?v=app-minimal-20260912" />
   </head>
   <body data-page="admin" data-role="admin" data-auth-widget="collapsed" data-auth-scope="none">
     <div data-shell>
@@ -85,7 +85,7 @@
           <article data-card aria-labelledby="admin-loading-title">
             <header>
               <span data-admin-eyebrow>Restricted access</span>
-              <h2 id="admin-loading-title">Sign in to manage the gateway</h2>
+              <h2 id="admin-loading-title">Sign in</h2>
               <p id="admin-loading-summary">Sign in to prepare the admin views.</p>
             </header>
             <div data-card-body>
@@ -96,9 +96,9 @@
                       d="M7 14a5 5 0 1 1 4.9-6H22v4h-2v3h-3v3h-4.1A5 5 0 0 1 7 14Zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"
                     />
                   </svg>
-                  <span>Open secure sign-in</span>
+                  <span>Sign in</span>
                 </button>
-                <p>Use a passkey, or open the fallback token options for local administration.</p>
+                <p>Use a passkey or admin token.</p>
               </div>
               <div id="admin-loading-grid" data-loading-grid hidden>
                 <div data-loading-item>
@@ -170,11 +170,8 @@
           aria-labelledby="view-tab-keys"
           hidden
         >
-          <article data-card data-span="half" aria-labelledby="card-create-key">
-            <header>
-              <h2 id="card-create-key">Create API key</h2>
-              <p>Issue a gateway credential with an expiry and request limit.</p>
-            </header>
+          <details data-card data-span="half" data-disclosure>
+            <summary id="card-create-key">Create API key</summary>
             <div data-card-body>
               <label data-field>
                 <span data-label>Name</span>
@@ -216,7 +213,7 @@
                 <span>Use banked resets</span>
                 <input id="key-banked-resets-enabled" type="checkbox" role="switch" checked />
               </label>
-              <p>Allow this key's requests to use saved Codex resets. Existing reset limits still apply.</p>
+              <p>Allow saved Codex resets within existing limits.</p>
               <section data-paid-fallback-create aria-labelledby="create-paid-fallback-label">
                 <label data-check data-paid-fallback-toggle>
                   <span id="create-paid-fallback-label">
@@ -267,13 +264,12 @@
               </div>
               <pre id="create-result" data-code hidden></pre>
             </div>
-          </article>
+          </details>
 
           <article data-card aria-labelledby="card-keys">
             <header data-card-heading>
               <div>
                 <h2 id="card-keys">API keys</h2>
-                <p>Review, edit, revoke, or restore issued credentials.</p>
               </div>
               <span id="keys-badge" data-badge data-state="unknown" role="status" aria-live="polite">
                 Not loaded
@@ -316,13 +312,8 @@
           aria-labelledby="view-tab-kernel"
           hidden
         >
-          <article data-card aria-labelledby="card-access-overview">
-            <header>
-              <h2 id="card-access-overview">Access overview</h2>
-              <p>
-                GitHub tokens are managed in GitHub and never stored here. Use the tabs above to manage each surface.
-              </p>
-            </header>
+          <details data-card data-disclosure>
+            <summary id="card-access-overview">Access summary</summary>
             <div data-card-body>
               <div data-auth-grid>
                 <div data-auth-item>
@@ -371,11 +362,11 @@
                 </div>
               </div>
             </div>
-          </article>
+          </details>
           <article data-card aria-labelledby="card-kernel-queue">
             <header>
               <h2 id="card-kernel-queue">Rate limit queue</h2>
-              <p>Requests authenticated via GitHub tokens without an org or repo rate limit.</p>
+              <p>Requests waiting for an organization or repository rate limit.</p>
             </header>
             <div data-card-body>
               <span id="kernel-queue-badge" data-badge data-state="unknown">Not loaded</span>
@@ -384,7 +375,7 @@
           </article>
           <article data-card aria-labelledby="card-kernel-limits">
             <header>
-              <h2 id="card-kernel-limits">GitHub access: analytics &amp; rate limits</h2>
+              <h2 id="card-kernel-limits">GitHub rate limits</h2>
             </header>
             <div data-card-body>
               <div data-layout="row">
@@ -472,10 +463,8 @@
           aria-labelledby="view-tab-pubkeys"
           hidden
         >
-          <article data-card data-span="half" aria-labelledby="card-kernel-pubkey-create">
-            <header>
-              <h2 id="card-kernel-pubkey-create">Add kernel attestation key</h2>
-            </header>
+          <details data-card data-span="half" data-disclosure>
+            <summary id="card-kernel-pubkey-create">Add attestation key</summary>
             <div data-card-body>
               <label data-field>
                 <span data-label>App ID</span>
@@ -504,12 +493,11 @@
                 <span id="kernel-pubkey-create-badge" data-badge data-state="unknown">Idle</span>
               </div>
             </div>
-          </article>
+          </details>
 
           <article data-card aria-labelledby="card-kernel-pubkeys">
             <header>
               <h2 id="card-kernel-pubkeys">Kernel attestation keys</h2>
-              <p>Manage kernel attestation keys used to verify kernel-issued tokens.</p>
             </header>
             <div data-card-body>
               <span id="kernel-pubkeys-badge" data-badge data-state="unknown">Not loaded</span>
@@ -557,14 +545,8 @@
             </div>
           </article>
 
-          <article data-card data-span="half" aria-labelledby="card-metered-quota">
-            <header>
-              <h2 id="card-metered-quota">Metered 2 token usage</h2>
-              <p>
-                Non-billable token totals from the configured Metered 2 account. Metered 1 usage is shown on provider
-                and API-key cards; its upstream balance is not part of this quota snapshot.
-              </p>
-            </header>
+          <details data-card data-span="half" data-disclosure>
+            <summary id="card-metered-quota">Metered 2 usage</summary>
             <div data-card-body>
               <span id="metered-quota-badge" data-badge data-state="unknown">Idle</span>
               <div data-metered-quota-summary>
@@ -616,7 +598,7 @@
                 </div>
               </dl>
             </div>
-          </article>
+          </details>
         </section>
 
         <section
@@ -671,7 +653,7 @@
           <article data-card aria-labelledby="card-errors">
             <header>
               <h2 id="card-errors">Gateway errors</h2>
-              <p>Every failed inference terminal observed by the gateway, retained for seven days.</p>
+              <p>Failed requests from the last seven days.</p>
             </header>
             <div data-card-body>
               <div data-provider-heading>
@@ -687,7 +669,7 @@
       <section id="view-session" data-auth-widget aria-label="Admin authentication" aria-expanded="false">
         <article id="auth-widget-panel" data-card aria-labelledby="card-admin-auth" tabindex="-1" hidden>
           <header data-auth-widget-header>
-            <h2 id="card-admin-auth">Admin auth</h2>
+            <h2 id="card-admin-auth">Account</h2>
             <button id="auth-widget-close" type="button" data-icon-button aria-label="Collapse authentication">
               <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                 <path d="M6 6l12 12M18 6 6 18" />
@@ -739,7 +721,7 @@
             </div>
             <span id="admin-passkey-status" data-badge data-state="unknown">Passkey idle</span>
             <details data-passkey-advanced>
-              <summary>Advanced passkey options</summary>
+              <summary>Account name</summary>
               <div data-passkey-advanced-body>
                 <label data-field>
                   <span data-label>Username</span>
@@ -754,7 +736,7 @@
               </div>
             </details>
             <details data-token-fallback>
-              <summary>Fallback admin token</summary>
+              <summary>Use an admin token</summary>
               <div data-token-fallback-body>
                 <label data-field>
                   <span data-label>Admin token</span>
@@ -798,6 +780,6 @@
         </button>
       </section>
     </div>
-    <script type="module" src="/admin.js?v=providers-minimal-20260912"></script>
+    <script type="module" src="/admin.js?v=app-minimal-20260912"></script>
   </body>
 </html>

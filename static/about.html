@@ -13,8 +13,8 @@
     <meta property="og:type" content="website" />
     <meta property="og:title" content="About AI.UBQ.FI" />
     <meta property="og:image" content="https://ai.ubq.fi/favicon.png" />
-    <link rel="stylesheet" href="/style.css?v=public-console-20260903-v7" />
-    <link rel="stylesheet" href="/docs.css?v=public-console-20260903-v7" />
+    <link rel="stylesheet" href="/style.css?v=app-minimal-20260912" />
+    <link rel="stylesheet" href="/docs.css?v=app-minimal-20260912" />
   </head>
   <body data-page="docs" data-role="public">
     <div data-shell>
@@ -43,33 +43,17 @@
       <main>
         <section data-hero data-docs-hero>
           <div>
-            <h1>About the UbiquityOS AI Gateway</h1>
+            <h1>About</h1>
             <p data-lead>AI.UBQ.FI is the OpenAI-compatible inference service for approved UbiquityOS workloads.</p>
           </div>
         </section>
         <section data-docs-layout>
           <article data-card data-docs-content>
-            <h2>What this service is</h2>
-            <p>
-              The UbiquityOS AI Gateway provides one documented API base URL for approved applications and autonomous
-              agents that need model discovery, Chat Completions, or the Responses API. It is an integration service,
-              not a replacement for the public OpenAI API and not a promise that every public model alias is available.
-              Clients discover the current supported model catalog at runtime through <code>GET /v1/models</code>.
-            </p>
-            <p>
-              The public site is intentionally small and server-rendered so developers, search systems, and agents can
-              find the service contract without running client JavaScript. The authoritative entry points are the
-              <a href="/developers">developer portal</a>, the <a href="/openapi.json">OpenAPI 3.1 document</a>, and
-              <a href="/llms.txt">agent instructions</a>. They describe authentication, inference routes, streaming,
-              error handling, function tools, and safe integration boundaries.
-            </p>
-            <h2>How to use it responsibly</h2>
-            <p>
-              Access is authenticated. Integrators use an approved UbiquityOS gateway token and must protect it like a
-              password. The gateway does not forward a client bearer token upstream. Agents should use the published
-              contract, select models from the live catalog, respect rate-limit responses, and stop for operator help
-              when they do not have approved credentials or authority for an action.
-            </p>
+            <h2>One gateway</h2>
+            <p>One API for model discovery, Chat Completions, and Responses. Approved applications and agents use <code>GET /v1/models</code> to find supported models.</p>
+            <p>Start with the <a href="/developers">developer guide</a>, <a href="/openapi.json">OpenAPI contract</a>, or <a href="/llms.txt">agent instructions</a>.</p>
+            <h2>Access</h2>
+            <p>Use a gateway token issued by your operator. Keep it private and respect rate limits. Client tokens are not forwarded upstream. Model availability comes from the gateway catalog, not the public OpenAI catalog.</p>
           </article>
           <aside data-card data-docs-sidebar>
             <h2>Public pages</h2>

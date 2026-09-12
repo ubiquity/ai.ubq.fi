@@ -72,11 +72,11 @@ Deno.test("chat response stats use one conversation bar below the composer", () 
 Deno.test("public models page is registered", () => {
   assert.equal(hasStaticAsset("/models"), true);
   assert.equal(hasStaticAsset("/models.html"), true);
-  assert.match(modelsHtml, /<script type="module" src="\/models\.js\?v=20260903-recent-reasoning-v4"><\/script>/);
+  assert.match(modelsHtml, /<script type="module" src="\/models\.js\?v=app-minimal-20260912"><\/script>/);
 });
 
 Deno.test("public console pages share versioned styles, canonical navigation, and accurate active states", () => {
-  const assetVersion = "public-console-20260903-v7";
+  const assetVersion = "app-minimal-20260912";
   const canonicalLinks = [
     { href: "/models", label: "Models" },
     { href: "/developers", label: "Developers" },
@@ -249,8 +249,8 @@ Deno.test("published guidance documents endpoint-specific output caps and reposi
 });
 
 Deno.test("models page labels provider counts as catalog entries, not inference availability", () => {
-  assert.match(modelsHtml, /Cataloged text models and the providers that list them/);
-  assert.match(modelsHtml, /does not guarantee\s+inference availability or remaining quota/);
+  assert.match(modelsHtml, /Model catalog/);
+  assert.match(modelsHtml, /Availability and quota vary by provider/);
   assert.doesNotMatch(modelsHtml, /Live upstream catalog/);
   assert.match(modelsScript, /cataloged model/);
   assert.match(modelsScript, /cataloged models/);
@@ -313,8 +313,8 @@ Deno.test("admin provider view places capacity history before current providers"
 
   assert.match(adminHtml, /id="card-provider-capacity">Providers/);
   assert.doesNotMatch(adminHtml, /Fifteen-minute capacity, cached-input, and cache-write history/);
-  assert.match(adminHtml, /admin\.css\?v=providers-minimal-20260912/);
-  assert.match(adminHtml, /admin\.js\?v=providers-minimal-20260912/);
+  assert.match(adminHtml, /admin\.css\?v=app-minimal-20260912/);
+  assert.match(adminHtml, /admin\.js\?v=app-minimal-20260912/);
   assert.doesNotMatch(adminHtml, /removed_provider-failover|debug-routing/);
   assert.doesNotMatch(adminScript, /RemovedProviderFailover|refresh=live/);
   assert.match(adminScript, /fetch\(apiUrl\("\/admin\/providers\/capacity"\)/);

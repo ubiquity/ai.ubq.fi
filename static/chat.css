@@ -457,3 +457,11 @@ body[data-page="chat"] [data-chat-sidebar] select {
     transition: none;
   }
 }
+
+body[data-page="chat"] [data-panel-body] > details[data-disclosure] [data-layout="row"] {
+  margin-block: 12px;
+}
+
+body[data-page="chat"] [data-chat-form] button[data-tooltip]::after {
+  left: 0;
+}

@@ -4669,7 +4669,7 @@ const renderKernelList = (records, policyState = kernelPolicyState) => {
       const accordion = document.createElement("details");
       accordion.dataset.kernelRepos = group.owner || "unknown";
       const existing = kernelOrgRepoAccordionState.get(group.owner);
-      accordion.open = existing === undefined ? true : existing === true;
+      accordion.open = existing === true;
 
       const summary = document.createElement("summary");
       summary.dataset.kernelReposTitle = "title";
@@ -4823,9 +4823,7 @@ const renderKernelPubKeys = (records) => {
 
     const infoRow = document.createElement("div");
     infoRow.dataset.keyInfo = "info";
-    appendKeyInfo(infoRow, "App ID", appId ? String(appId) : "unknown", { mono: true });
     appendKeyInfo(infoRow, "Owner", formatOptionalText(owner));
-    appendKeyInfo(infoRow, "Key preview", formatPemPreview(pem) || "—", { mono: true });
     appendKeyInfo(infoRow, "Added", formatDate(addedAt));
 
     main.appendChild(header);
@@ -5918,10 +5916,11 @@ const renderKeys = (keys, view = "all") => {
     });
     const resetInfo = appendKeyInfo(infoRow, "Reset at", formatDate(key.usage_reset_at_ms));
 
-    const paidFallbackSummary = document.createElement("section");
+    const paidFallbackSummary = document.createElement("details");
+    paidFallbackSummary.dataset.disclosure = "";
     paidFallbackSummary.dataset.paidFallbackSummary = "summary";
 
-    const paidFallbackHeader = document.createElement("header");
+    const paidFallbackHeader = document.createElement("summary");
     paidFallbackHeader.dataset.paidFallbackHeader = "header";
     const paidFallbackTitle = document.createElement("span");
     paidFallbackTitle.dataset.paidFallbackTitle = "title";
@@ -6050,7 +6049,15 @@ const renderKeys = (keys, view = "all") => {
     header.appendChild(controls);
 
     main.appendChild(header);
-    main.appendChild(infoRow);
+    const primaryInfo = document.createElement("div");
+    primaryInfo.dataset.keyInfo = "info";
+    primaryInfo.append(usageInfo.item, expiresInfo.item);
+    const keyDetails = document.createElement("details");
+    keyDetails.dataset.disclosure = "";
+    const keyDetailsTitle = document.createElement("summary");
+    keyDetailsTitle.textContent = "Key details";
+    keyDetails.append(keyDetailsTitle, infoRow);
+    main.append(primaryInfo, keyDetails);
     main.appendChild(paidFallbackSummary);
 
     const editPanel = document.createElement("div");
@@ -6686,13 +6693,21 @@ const renderPasskeyUsers = (users) => {
 
     const infoRow = document.createElement("div");
     infoRow.dataset.keyInfo = "info";
-    appendKeyInfo(infoRow, "User ID", user.id ?? "unknown", { mono: true });
     appendKeyInfo(infoRow, "Passkeys", formatNumber(user.credential_count ?? 0));
     appendKeyInfo(infoRow, "Updated", formatDate(user.updated_at_ms));
-    appendKeyInfo(infoRow, "Created", formatDate(user.created_at_ms));
+    const userDetails = document.createElement("details");
+    userDetails.dataset.disclosure = "";
+    const userDetailsTitle = document.createElement("summary");
+    userDetailsTitle.textContent = "Account details";
+    const userFacts = document.createElement("div");
+    userFacts.dataset.keyInfo = "info";
+    appendKeyInfo(userFacts, "User ID", user.id ?? "unknown", { mono: true });
+    appendKeyInfo(userFacts, "Created", formatDate(user.created_at_ms));
+    userDetails.append(userDetailsTitle, userFacts);
 
     main.appendChild(header);
     main.appendChild(infoRow);
+    main.appendChild(userDetails);
     row.appendChild(main);
     passkeyUsersList.appendChild(row);
   });
@@ -6958,10 +6973,17 @@ const renderAdminErrors = (records) => {
     appendMetaItem(details, "Route", record.route || "unknown");
     appendMetaItem(details, "Provider", record.provider || "gateway");
     appendMetaItem(details, "Model", record.model || "—");
-    appendMetaItem(details, "Terminal", record.terminal_type || "error");
-    appendMetaItem(details, "Request", record.request_id || "—", { mono: true });
-    appendMetaItem(details, "Revision", record.deno_revision || "—", { mono: true });
-    row.append(header, details);
+    const diagnostics = document.createElement("details");
+    diagnostics.dataset.disclosure = "";
+    const summary = document.createElement("summary");
+    summary.textContent = "Request details";
+    const facts = document.createElement("div");
+    facts.dataset.meta = "usage";
+    appendMetaItem(facts, "Terminal", record.terminal_type || "error");
+    appendMetaItem(facts, "Request", record.request_id || "—", { mono: true });
+    appendMetaItem(facts, "Revision", record.deno_revision || "—", { mono: true });
+    diagnostics.append(summary, facts);
+    row.append(header, details, diagnostics);
     errorsList.appendChild(row);
   });
 };

@@ -16,8 +16,8 @@
     <meta property="og:description" content="OpenAI-compatible API documentation and agent integration guidance." />
     <meta property="og:url" content="https://ai.ubq.fi/developers" />
     <meta property="og:image" content="https://ai.ubq.fi/favicon.png" />
-    <link rel="stylesheet" href="/style.css?v=public-console-20260903-v7" />
-    <link rel="stylesheet" href="/docs.css?v=public-console-20260903-v7" />
+    <link rel="stylesheet" href="/style.css?v=app-minimal-20260912" />
+    <link rel="stylesheet" href="/docs.css?v=app-minimal-20260912" />
   </head>
   <body data-page="docs" data-role="public">
     <div data-shell>
@@ -46,9 +46,9 @@
       <main>
         <section data-hero data-docs-hero>
           <div>
-            <h1>AI.UBQ.FI Developer Portal</h1>
+            <h1>Developers</h1>
             <p data-lead>
-              Integrate approved UbiquityOS applications and agents with the OpenAI-compatible UbiquityOS AI Gateway.
+              Connect with an OpenAI-compatible client.
             </p>
           </div>
           <div data-layout="row">
@@ -60,58 +60,41 @@
         <section data-docs-layout>
           <article data-card data-docs-content>
             <h2>Quickstart</h2>
-            <p>
-              Set an approved UbiquityOS gateway token in <code>UOS_AI_TOKEN</code>. Configure an
-              OpenAI-compatible client with <code>https://ai.ubq.fi/v1</code> as its base URL. The gateway accepts
-              bearer authentication and does not forward a client bearer token upstream.
-            </p>
+            <p>Set your gateway token and use <code>https://ai.ubq.fi/v1</code> as the base URL.</p>
             <pre data-code><code>export UOS_AI_TOKEN="..."
 
 curl -sS https://ai.ubq.fi/v1/models \
   -H "Authorization: Bearer $UOS_AI_TOKEN"</code></pre>
-            <p>
-              Always query <code>GET /v1/models</code> before selecting a model. The returned catalog is the source of
-              truth for the account and runtime; do not assume that a public OpenAI model alias is available here.
-            </p>
+            <p>Choose a model returned by <code>GET /v1/models</code>.</p>
 
-            <h2>API keys and authentication</h2>
-            <p>
-              This portal documents an authenticated service, not a self-service key issuer. API keys are provisioned
-              through the authorized UbiquityOS operator workflow. If an agent or application does not already have an
-              approved token, it must stop and ask its operator for access rather than requesting a secret in chat,
-              logging it, or adding it to source code. Administrators use the separate protected administration flow to
-              create and revoke keys.
-            </p>
+            <details data-disclosure>
+              <summary>API keys and authentication</summary>
+              <p>Get an API key from your UbiquityOS operator. Use it as a bearer token; client tokens are not forwarded upstream. Keep tokens out of chat, logs, and source code. Administrators manage keys in the protected admin console.</p>
+            </details>
 
-            <h2>Endpoints and function tools</h2>
-            <p>
+            <details data-disclosure>
+              <summary>API behavior</summary>
+              <p>
               Use <code>POST /v1/chat/completions</code> for the Chat Completions API or
               <code>POST /v1/responses</code> for the Responses API. Both support streaming and documented function
               tools. The <a href="/openapi.json">OpenAPI 3.1 contract</a> contains typed request fields, unique
               operation identifiers, response envelopes, authentication, and rate-limit headers for tool-aware clients.
             </p>
-            <p>
+              <p>
               Parse JSON error responses as an <code>error</code> object with a message, type, and code. A matching
               <code>If-None-Match</code> request to <code>GET /v1/models?client_version=X.Y.Z</code> can return
               <code>304 Not Modified</code> with no body; reuse the cached catalog instead of parsing a response body.
               For a <code>429</code> error, honor <code>Retry-After</code> when present. When an enforced gateway key
               window is authoritative, the response also includes <code>RateLimit</code> fields for self-throttling.
             </p>
+            </details>
+            <h2>Try a request</h2>
+            <p>Open <a href="/chat">Chat</a> to test a request with your existing key.</p>
 
-            <h2>Interactive sandbox</h2>
-            <p>
-              The <a href="/chat">Chat playground</a> is an authenticated browser sandbox for testing a token that has
-              already been issued to you. It is useful for a small manual request before automating an integration. It
-              does not create credentials, expose server-side provider credentials, or replace the API contract.
-            </p>
-
-            <h2>Agent discovery</h2>
-            <p>
-              Autonomous agents should read <a href="/llms.txt">/llms.txt</a>, then the
-              <a href="/llms-full.txt">complete guide</a> and <a href="/openapi.json">OpenAPI document</a>. Use this
-              service for approved OpenAI-compatible inference, dynamic model discovery, and function calls. Do not use
-              it for key administration, private health probes, or unsupported product actions.
-            </p>
+            <details data-disclosure>
+              <summary>Agent setup</summary>
+              <p>Start with <a href="/llms.txt">agent instructions</a>, then the <a href="/llms-full.txt">full guide</a>. Use approved credentials and the documented inference endpoints.</p>
+            </details>
           </article>
 
           <aside data-card data-docs-sidebar>
