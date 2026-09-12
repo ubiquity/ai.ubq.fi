@@ -1988,3 +1988,40 @@ body[data-page="admin"] [data-auth-item] {
     transition: none;
   }
 }
+
+body[data-page="admin"] #view-providers [data-capacity-chart-body] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+body[data-page="admin"] #view-providers [data-capacity-chart] {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+body[data-page="admin"] #view-providers [data-capacity-window] {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+body[data-page="admin"] [data-provider-details] > summary {
+  padding-block: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+body[data-page="admin"] [data-provider-details] > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+
+body[data-page="admin"] #view-providers > details[data-card] {
+  display: block;
+  padding: 12px 20px;
+}
+
+body[data-page="admin"] [data-provider-details][open] > :not(summary) {
+  margin-block: 12px;
+}

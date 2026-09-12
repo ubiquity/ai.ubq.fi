@@ -311,10 +311,10 @@ Deno.test("admin provider view places capacity history before current providers"
   assert.ok(chartIndex >= 0);
   assert.ok(listIndex > chartIndex);
 
-  assert.match(adminHtml, /Provider analytics/);
-  assert.match(adminHtml, /Fifteen-minute capacity, cached-input, and cache-write history/);
-  assert.match(adminHtml, /admin\.css\?v=admin-polish-20260903-v6/);
-  assert.match(adminHtml, /admin\.js\?v=per-key-banked-resets-20260912/);
+  assert.match(adminHtml, /id="card-provider-capacity">Providers/);
+  assert.doesNotMatch(adminHtml, /Fifteen-minute capacity, cached-input, and cache-write history/);
+  assert.match(adminHtml, /admin\.css\?v=providers-minimal-20260912/);
+  assert.match(adminHtml, /admin\.js\?v=providers-minimal-20260912/);
   assert.doesNotMatch(adminHtml, /removed_provider-failover|debug-routing/);
   assert.doesNotMatch(adminScript, /RemovedProviderFailover|refresh=live/);
   assert.match(adminScript, /fetch\(apiUrl\("\/admin\/providers\/capacity"\)/);
@@ -440,7 +440,7 @@ Deno.test("expanded auth widget keeps its mobile toggle right-aligned", () => {
 });
 
 Deno.test("provider analytics graph reports inference 5xx buckets", () => {
-  assert.match(adminScript, /label: "Failed inference responses \(HTTP 5xx\)"/);
+  assert.match(adminScript, /label: "Errors \(5xx\)"/);
   assert.match(adminScript, /five_xx_buckets/);
   assert.match(adminScript, /marker\.dataset\.capacityInferenceError/);
   assert.doesNotMatch(adminScript, /marker\.dataset\.capacityInference5xx/);
@@ -448,7 +448,7 @@ Deno.test("provider analytics graph reports inference 5xx buckets", () => {
   assert.match(adminCss, /\[data-capacity-legend-item="inference-error"\]/);
   assert.match(adminScript, /15-minute bucket starting/);
   assert.match(adminScript, /Failed inference buckets/);
-  assert.match(adminHtml, /Red diamonds mark 15-minute buckets containing failed inference responses \(HTTP 5xx\)/);
+  assert.match(adminScript, /marker\.setAttribute\("tabindex", "0"\)/);
 });
 
 Deno.test("provider analytics graph preserves its SVG text aspect ratio", () => {
