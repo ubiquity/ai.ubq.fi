@@ -2083,3 +2083,17 @@ body[data-page="admin"] [data-empty] {
   background: transparent;
   text-align: left;
 }
+
+body[data-page="admin"] [data-key="gateway-error"] > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+body[data-page="admin"] [data-key="gateway-error"] [data-meta="usage"] {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 12px;
+}
