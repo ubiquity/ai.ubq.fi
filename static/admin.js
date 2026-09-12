@@ -689,8 +689,6 @@ const signInAdminWithPasskey = async () => {
 
   const result = await signInWithPasskey({
     baseUrl: getPasskeyBaseUrl(),
-    handle: getPasskeyHandle(),
-    useHandle: Boolean(getPasskeyHandle()),
     audienceOrigin: isAuthRelayMode ? authRelayOrigin : "",
   });
   if (result.handle) setPasskeyHandleValue(result.handle);
