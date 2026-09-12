@@ -1,4 +1,5 @@
 import { getKv } from "./kv.ts";
+import { apiKeyBankedResetsEnabled, apiKeyIdKey } from "./api_keys.ts";
 import {
   type CodexUsageResetProvider,
   providerReceiptIdsSafeToPersistAndLog,
@@ -109,26 +110,17 @@ export const parseCodexBankedResetConfig = (
 
 export const loadCodexBankedResetConfig = (): CodexBankedResetConfig => parseCodexBankedResetConfig();
 
-export const CODEX_BANKED_RESET_USAGE_KEY = ["uos_ai", "codex_banked_reset_usage", "v1"] as const;
-
-// Missing means preserve the deployment's existing behavior. Malformed data
-// must never authorize spending a credit.
-const usageAllowed = (value: unknown): boolean => value === null || value === true;
-
-export const getCodexBankedResetUsage = async (providedKv?: Deno.Kv | null): Promise<boolean> => {
-  const kv = providedKv === undefined ? await getKv() : providedKv;
-  if (!kv) throw new Error("Banked-reset settings are unavailable");
-  const entry = await kv.get<unknown>(CODEX_BANKED_RESET_USAGE_KEY, { consistency: "strong" });
-  if (entry.value !== null && typeof entry.value !== "boolean") {
-    throw new Error("Banked-reset settings are invalid");
-  }
-  return usageAllowed(entry.value);
-};
-
-export const setCodexBankedResetUsage = async (enabled: boolean): Promise<void> => {
-  const kv = await getKv();
-  if (!kv) throw new Error("Banked-reset settings are unavailable");
-  await kv.set(CODEX_BANKED_RESET_USAGE_KEY, enabled);
+const readBankedResetUsage = async (kv: Deno.Kv, keyId: string | undefined, nowMs: number) => {
+  // Non-key authentication continues to use the deployment policy.
+  if (keyId === undefined) return { allowed: true, entries: [] };
+  const entry = await kv.get<unknown>(apiKeyIdKey(keyId), { consistency: "strong" });
+  const value = entry.value;
+  return {
+    allowed: isRecord(value) && value.id === keyId && apiKeyBankedResetsEnabled(value) &&
+      value.revoked_at_ms === null &&
+      (value.expires_at_ms === -1 || (typeof value.expires_at_ms === "number" && value.expires_at_ms > nowMs)),
+    entries: [entry],
+  };
 };
 
 export type CodexBankedResetEvent =
@@ -212,6 +204,7 @@ export type CodexBankedResetFence = Readonly<{
 }>;
 
 export type CodexBankedResetDependencies = Readonly<{
+  keyId?: string;
   config: CodexBankedResetConfig;
   /** Re-read before a new submission so an operator kill switch wins mid-request. */
   reloadConfig?: () => CodexBankedResetConfig;
@@ -840,6 +833,7 @@ const prepareSubmission = async (
   nowMs: number,
   clock: () => number,
   maxGlobalPerDay: number,
+  keyId: string | undefined,
 ): Promise<SubmissionPreparation> => {
   const expiresAtMs = leaseUntil(nowMs);
   const day = utcDay(nowMs);
@@ -866,13 +860,13 @@ const prepareSubmission = async (
     if (fences.kind === "failure") return { kind: "failure", code: fences.code };
     if (fences.kind === "stale") return { kind: "failure", code: "routing_fence_stale" };
 
-    let usageEntry: Deno.KvEntryMaybe<unknown>;
+    let usage: Awaited<ReturnType<typeof readBankedResetUsage>>;
     try {
-      usageEntry = await kv.get<unknown>(CODEX_BANKED_RESET_USAGE_KEY, { consistency: "strong" });
+      usage = await readBankedResetUsage(kv, keyId, readClock(clock) ?? nowMs);
     } catch {
       return { kind: "failure", code: "configuration_unavailable" };
     }
-    if (!usageAllowed(usageEntry.value)) return { kind: "failure", code: "usage_disabled" };
+    if (!usage.allowed) return { kind: "failure", code: "usage_disabled" };
     let dailyEntry: Deno.KvEntryMaybe<CodexResetGlobalDailyRecord>;
     try {
       dailyEntry = await kv.get<CodexResetGlobalDailyRecord>(dailyKey, { consistency: "strong" });
@@ -901,8 +895,10 @@ const prepareSubmission = async (
       updated_at_ms: nowMs,
     };
     try {
-      const committed = await withFenceChecks(kv.atomic().check(entry).check(dailyEntry), fences.entries)
-        .check(usageEntry)
+      const committed = await withFenceChecks(kv.atomic().check(entry).check(dailyEntry), [
+        ...fences.entries,
+        ...usage.entries,
+      ])
         .set(key, submitted)
         .set(dailyKey, nextDaily)
         .commit();
@@ -928,6 +924,7 @@ const renewSubmittedForRedeem = async (
   candidate: CodexBankedResetCandidate,
   expected: CodexResetRedemptionRecord,
   clock: () => number,
+  keyId: string | undefined,
 ): Promise<SubmissionRenewal> => {
   const key = codexResetRedemptionKey(context.account.accountIdHash, context.account.quotaGeneration);
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
@@ -951,13 +948,13 @@ const renewSubmittedForRedeem = async (
     }
     if (!claimedDuringCurrentUtcDay(current, nowBeforeRead)) return { kind: "failure", code: "claim_day_elapsed" };
 
-    let usageEntry: Deno.KvEntryMaybe<unknown>;
+    let usage: Awaited<ReturnType<typeof readBankedResetUsage>>;
     try {
-      usageEntry = await kv.get<unknown>(CODEX_BANKED_RESET_USAGE_KEY, { consistency: "strong" });
+      usage = await readBankedResetUsage(kv, keyId, nowBeforeRead);
     } catch {
       return { kind: "failure", code: "configuration_unavailable" };
     }
-    if (!usageAllowed(usageEntry.value)) return { kind: "failure", code: "usage_disabled" };
+    if (!usage.allowed) return { kind: "failure", code: "usage_disabled" };
 
     const fences = await readCurrentFences(kv, candidate);
     if (fences.kind === "failure") return { kind: "failure", code: fences.code };
@@ -983,7 +980,7 @@ const renewSubmittedForRedeem = async (
       updated_at_ms: nowBeforeCommit,
     };
     try {
-      const committed = await withFenceChecks(kv.atomic().check(entry).check(usageEntry), fences.entries)
+      const committed = await withFenceChecks(kv.atomic().check(entry), [...fences.entries, ...usage.entries])
         .set(key, renewed).commit();
       if (committed.ok) return { kind: "renewed", record: renewed };
     } catch {
@@ -1449,6 +1446,7 @@ const submitClaimed = async (
     nowBeforePreparation,
     clock,
     finalConfig.config.maxGlobalPerDay,
+    dependencies.keyId,
   );
   if (prepared.kind === "failure") {
     return outcome(prepared.code === "global_limit_reached" ? "skipped" : "pending", prepared.code, context, record);
@@ -1465,7 +1463,7 @@ const submitClaimed = async (
     const unknown = await unknownOwned(kv, context, prepared.record, nowMs, "client_aborted_after_submission", null);
     return unknownOutcome(telemetry, context, candidate, "client_aborted_after_submission", unknown ?? prepared.record);
   }
-  const renewed = await renewSubmittedForRedeem(kv, context, candidate, prepared.record, clock);
+  const renewed = await renewSubmittedForRedeem(kv, context, candidate, prepared.record, clock, dependencies.keyId);
   if (renewed.kind === "failure") return outcome("pending", renewed.code, context, prepared.record);
   // The last lease/fence renewal itself awaits KV. Re-read the kill switch
   // synchronously after it returns so a disable that landed during that final
@@ -1652,7 +1650,9 @@ const attemptInternal = async (
   if (!existing.record) {
     if (reconcileOnly) return outcome("skipped", "no_existing_transaction", context);
     try {
-      if (!await getCodexBankedResetUsage(kv)) return outcome("skipped", "usage_disabled", context);
+      if (!(await readBankedResetUsage(kv, dependencies.keyId, (dependencies.now ?? Date.now)())).allowed) {
+        return outcome("skipped", "usage_disabled", context);
+      }
       configForClaim = dependencies.reloadConfig?.() ?? dependencies.config;
     } catch {
       return outcome("skipped", "configuration_unavailable", context);
@@ -1826,6 +1826,7 @@ const shadowDecisionRecord = async (
   kv: Deno.Kv,
   record: CodexResetShadowDecisionRecord,
   nowMs: number,
+  keyId: string | undefined,
 ): Promise<Readonly<{ kind: "written" | "duplicate"; record: CodexResetShadowDecisionRecord }> | null> => {
   const key = codexResetShadowDecisionKey(record.episode_hash);
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
@@ -1841,7 +1842,9 @@ const shadowDecisionRecord = async (
       return { kind: "duplicate", record: existing };
     }
     try {
-      const committed = await kv.atomic().check(entry).set(key, record).commit();
+      const usage = await readBankedResetUsage(kv, keyId, nowMs);
+      if (!usage.allowed) return null;
+      const committed = await withFenceChecks(kv.atomic().check(entry), usage.entries).set(key, record).commit();
       if (committed.ok) return { kind: "written", record };
     } catch {
       return null;
@@ -1929,7 +1932,9 @@ export const evaluateCodexBankedResetPool = async (
   if (!kv) return poolOutcome("skipped", "kv_unavailable");
 
   try {
-    if (!await getCodexBankedResetUsage(kv)) return poolOutcome("skipped", "usage_disabled");
+    if (!(await readBankedResetUsage(kv, dependencies.keyId, nowMs)).allowed) {
+      return poolOutcome("skipped", "usage_disabled");
+    }
   } catch {
     return poolOutcome("skipped", "configuration_unavailable");
   }
@@ -2090,7 +2095,7 @@ export const evaluateCodexBankedResetPool = async (
   };
 
   if (config.mode === "shadow") {
-    const persisted = await shadowDecisionRecord(kv, decision, nowAfterInventory);
+    const persisted = await shadowDecisionRecord(kv, decision, nowAfterInventory, dependencies.keyId);
     if (!persisted) return poolOutcome("skipped", "shadow_decision_unavailable");
     const telemetry = dependencies.telemetry ?? defaultTelemetry;
     const telemetryCandidate = selected?.resolved ?? complete[0]!;
@@ -2118,7 +2123,7 @@ export const evaluateCodexBankedResetPool = async (
   // itself was no longer eligible.
   if (!selected) return poolOutcome("skipped", decisionReason);
   if (liveNeedsArming) {
-    const persisted = await shadowDecisionRecord(kv, decision, nowAfterInventory);
+    const persisted = await shadowDecisionRecord(kv, decision, nowAfterInventory, dependencies.keyId);
     if (!persisted) return poolOutcome("skipped", "shadow_decision_unavailable");
     if (
       persisted.record.decision_reason !== "selected" ||
