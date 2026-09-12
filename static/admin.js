@@ -169,7 +169,6 @@ const keyNameInput = mustGet("key-name");
 const keyUsageLimitInput = mustGet("key-usage-limit");
 const keyUsageWindowInput = mustGet("key-usage-window");
 const keyExpiresSelect = mustGet("key-expires");
-const keyBankedResetsEnabledInput = mustGet("key-banked-resets-enabled");
 const keyPaidFallbackEnabledInput = mustGet("key-paid-fallback-enabled");
 const keyPaidFallbackLimitInput = mustGet("key-paid-fallback-limit");
 const keyPaidFallbackSettings = mustGet("key-paid-fallback-settings");
@@ -1022,6 +1021,12 @@ const appendCapacitySourceMeta = (row, source, provider = null) => {
   row.appendChild(details);
 };
 
+let codexResetSettings = [];
+let codexResetSettingsRevision = 0;
+const codexResetSaving = new Set();
+let codexResetSettingsTarget = "";
+let codexResetSettingsToken = "";
+
 const renderCodexCapacitySource = (source, provider = null) => {
   const row = document.createElement("article");
   row.dataset.capacitySource = "codex";
@@ -1038,6 +1043,59 @@ const renderCodexCapacitySource = (source, provider = null) => {
   const status = capacityProviderStatus(source, provider);
   setBadge(badge, status.badgeState, status.label);
   header.append(title, badge);
+  const setting = codexResetSettingsTarget === apiUrl("/admin/providers") && codexResetSettingsToken === getAdminToken()
+    ? codexResetSettings.find((entry) =>
+      entry.account_cohort_id === source.account_cohort_id && entry.slot === source.slot
+    )
+    : null;
+  const label = document.createElement("label");
+  label.dataset.check = "";
+  const copy = document.createElement("span");
+  copy.textContent = "Use banked resets";
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.setAttribute("role", "switch");
+  input.setAttribute("aria-label", "Use banked resets for " + title.textContent);
+  input.checked = setting?.enabled === true;
+  input.disabled = !setting || codexResetSaving.has(setting.account_id_hash);
+  label.append(copy, input);
+  header.append(label);
+  input.addEventListener("change", async () => {
+    if (!setting) return;
+    const target = apiUrl("/admin/providers");
+    const token = getAdminToken();
+    const enabled = input.checked;
+    input.disabled = true;
+    codexResetSaving.add(setting.account_id_hash);
+    codexResetSettingsRevision++;
+    try {
+      const response = await fetch(apiUrl("/admin/providers/codex/banked-resets"), {
+        method: "PATCH",
+        headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+        body: JSON.stringify({ account_id_hash: setting.account_id_hash, enabled }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error?.message || "Could not save banked resets setting");
+      if (target !== apiUrl("/admin/providers") || token !== getAdminToken()) return;
+      setting.enabled = data.enabled;
+      for (const entry of codexResetSettings) {
+        if (entry.account_id_hash === setting.account_id_hash) entry.enabled = data.enabled;
+      }
+    } catch (error) {
+      if (target === apiUrl("/admin/providers") && token === getAdminToken()) {
+        input.checked = setting.enabled;
+        toast.error("Save failed", { description: error.message });
+      }
+    } finally {
+      codexResetSaving.delete(setting.account_id_hash);
+      codexResetSettingsRevision++;
+      if (latestProviderCapacityChartState?.sources) {
+        renderProviderCapacityList(latestProviderCapacityChartState.sources);
+      }
+      input.disabled = false;
+      if (target === apiUrl("/admin/providers") && token === getAdminToken()) void loadProviders();
+    }
+  });
 
   const windows = document.createElement("div");
   windows.dataset.capacityWindows = "";
@@ -2983,6 +3041,8 @@ const loadProviders = async () => {
     return;
   }
   const loadId = ++providersLoadId;
+  const settingsTarget = apiUrl("/admin/providers");
+  const settingsRevision = codexResetSettingsRevision;
   providersLoading = true;
   try {
     const response = await fetch(apiUrl("/admin/providers"), {
@@ -3004,6 +3064,19 @@ const loadProviders = async () => {
       }
       return;
     }
+    const settingsResponse = await fetch(apiUrl("/admin/providers/codex/banked-resets"), {
+      cache: "no-store",
+      headers: { Authorization: "Bearer " + token },
+    });
+    const settingsPayload = await settingsResponse.json().catch(() => null);
+    if (loadId !== providersLoadId || token !== getAdminToken() || settingsTarget !== apiUrl("/admin/providers")) {
+      return;
+    }
+    if (settingsRevision === codexResetSettingsRevision && codexResetSaving.size === 0) {
+      codexResetSettings = settingsResponse.ok && Array.isArray(settingsPayload?.data) ? settingsPayload.data : [];
+    }
+    codexResetSettingsTarget = settingsTarget;
+    codexResetSettingsToken = token;
     latestProviderHealth = payload;
     if (latestProviderCapacityChartState?.sources) renderProviderCapacityList(latestProviderCapacityChartState.sources);
     providersLoadedAt = Date.now();
@@ -6128,16 +6201,6 @@ const renderKeys = (keys, view = "all") => {
     neverLabel.appendChild(neverInput);
     neverLabel.appendChild(neverText);
 
-    const bankedResetsToggle = document.createElement("label");
-    bankedResetsToggle.dataset.check = "true";
-    const bankedResetsCopy = document.createElement("span");
-    bankedResetsCopy.textContent = "Use banked resets";
-    const bankedResetsInput = document.createElement("input");
-    bankedResetsInput.type = "checkbox";
-    bankedResetsInput.setAttribute("role", "switch");
-    bankedResetsInput.checked = key.banked_resets_enabled !== false;
-    bankedResetsToggle.append(bankedResetsCopy, bankedResetsInput);
-
     const paidFallbackEditor = document.createElement("section");
     paidFallbackEditor.dataset.paidFallbackEditor = "editor";
 
@@ -6222,7 +6285,6 @@ const renderKeys = (keys, view = "all") => {
 
     editPanel.appendChild(presetRow);
     editPanel.appendChild(neverLabel);
-    editPanel.appendChild(bankedResetsToggle);
     editPanel.appendChild(paidFallbackEditor);
 
     const editBadge = document.createElement("span");
@@ -6244,7 +6306,6 @@ const renderKeys = (keys, view = "all") => {
       usage_limit_requests: typeof key.usage_limit_requests === "number" ? key.usage_limit_requests : -1,
       window_ms: resolveKeyWindowMs(),
       expires_at_ms: typeof key.expires_at_ms === "number" ? key.expires_at_ms : -1,
-      banked_resets_enabled: key.banked_resets_enabled !== false,
       paid_fallback_enabled: key.paid_fallback_enabled === true,
       paid_fallback_limit_credits: normalizeFiniteNumber(key.paid_fallback_limit_credits) ?? 0,
     };
@@ -6255,7 +6316,6 @@ const renderKeys = (keys, view = "all") => {
       window: windowInput.value,
       expires: expiresInput.value,
       never: neverInput.checked,
-      bankedResetsEnabled: bankedResetsInput.checked,
       paidFallbackEnabled: paidFallbackInput.checked,
       paidFallbackLimit: paidFallbackLimitInput.value,
     });
@@ -6266,7 +6326,6 @@ const renderKeys = (keys, view = "all") => {
       left.window === right.window &&
       left.expires === right.expires &&
       left.never === right.never &&
-      left.bankedResetsEnabled === right.bankedResetsEnabled &&
       left.paidFallbackEnabled === right.paidFallbackEnabled &&
       left.paidFallbackLimit === right.paidFallbackLimit;
 
@@ -6278,7 +6337,6 @@ const renderKeys = (keys, view = "all") => {
       expiresInput.disabled = neverInput.checked;
       expiresInput.value = neverInput.checked ? "" : toDateTimeLocalValue(key.expires_at_ms);
       paidFallbackInput.checked = key.paid_fallback_enabled === true;
-      bankedResetsInput.checked = key.banked_resets_enabled !== false;
       paidFallbackLimitInput.value = String(normalizeFiniteNumber(key.paid_fallback_limit_credits) ?? 0);
       syncPaidFallbackEditorVisibility();
     };
@@ -6369,11 +6427,6 @@ const renderKeys = (keys, view = "all") => {
       }
 
       const nextPaidFallbackEnabled = paidFallbackInput.checked;
-      const nextBankedResetsEnabled = bankedResetsInput.checked;
-      if (nextBankedResetsEnabled !== editSnapshot.banked_resets_enabled) {
-        payload.banked_resets_enabled = nextBankedResetsEnabled;
-        changed = true;
-      }
       const paidFallbackLimitRaw = paidFallbackLimitInput.value.trim();
       let nextPaidFallbackLimit = editSnapshot.paid_fallback_limit_credits;
       if (nextPaidFallbackEnabled && !paidFallbackLimitRaw) {
@@ -6420,7 +6473,6 @@ const renderKeys = (keys, view = "all") => {
           window_ms: nextWindowMs,
           expires_at_ms: nextExpiresAtMs,
           paid_fallback_enabled: nextPaidFallbackEnabled,
-          banked_resets_enabled: nextBankedResetsEnabled,
           paid_fallback_limit_credits: nextPaidFallbackLimit,
         },
       };
@@ -6489,9 +6541,6 @@ const renderKeys = (keys, view = "all") => {
         key.window_ms = updatedWindowMs;
         key.expires_at_ms = resolvedExpires;
         key.paid_fallback_enabled = updatedPaidFallbackEnabled;
-        key.banked_resets_enabled = typeof data?.banked_resets_enabled === "boolean"
-          ? data.banked_resets_enabled
-          : nextSnapshot.banked_resets_enabled;
         key.paid_fallback_limit_credits = updatedPaidFallbackLimit;
         if (typeof data?.usage_requests === "number") key.usage_requests = data.usage_requests;
         if (typeof data?.usage_reset_at_ms === "number") key.usage_reset_at_ms = data.usage_reset_at_ms;
@@ -6516,7 +6565,6 @@ const renderKeys = (keys, view = "all") => {
           usage_limit_requests: key.usage_limit_requests,
           window_ms: resolveKeyWindowMs(),
           expires_at_ms: key.expires_at_ms,
-          banked_resets_enabled: key.banked_resets_enabled !== false,
           paid_fallback_enabled: key.paid_fallback_enabled === true,
           paid_fallback_limit_credits: normalizeFiniteNumber(key.paid_fallback_limit_credits) ?? 0,
         };
@@ -6574,10 +6622,6 @@ const renderKeys = (keys, view = "all") => {
       expiresInput.disabled = neverInput.checked;
       if (neverInput.checked) expiresInput.value = "";
       markEditDirty();
-    });
-    bankedResetsInput.addEventListener("change", () => {
-      markEditDirty();
-      void saveEdits();
     });
     paidFallbackInput.addEventListener("change", () => {
       syncPaidFallbackEditorVisibility();
@@ -7418,7 +7462,6 @@ const createKey = async () => {
     expires_at_ms: expiresAtMs,
     usage_limit_requests: isNaN(usageLimit) ? 50 : usageLimit,
     paid_fallback_enabled: paidFallbackEnabled,
-    banked_resets_enabled: keyBankedResetsEnabledInput.checked,
     paid_fallback_limit_credits: paidFallbackLimitCredits,
   };
   if (windowResult.value !== null) payload.window_ms = windowResult.value;
@@ -7474,7 +7517,6 @@ const createKey = async () => {
     keyNameInput.value = "";
     keyUsageWindowInput.value = "";
     keyPaidFallbackEnabledInput.checked = false;
-    keyBankedResetsEnabledInput.checked = true;
     keyPaidFallbackLimitInput.value = "";
     syncCreatePaidFallbackControls();
     void refreshKeys();

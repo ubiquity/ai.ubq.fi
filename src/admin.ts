@@ -1,9 +1,11 @@
+import { codexResetUsageKey, readCodexResetUsage } from "./codex_reset_settings.ts";
 import {
   cacheCodexAuthPool,
   CODEX_AUTH_POOL_KV_KEY,
   CODEX_MODELS_KV_KEY,
   CodexError,
   type CodexModelsSnapshot,
+  getCodexCapacityAccounts,
   getJwtExpMs,
   loadCodexModelsSnapshot,
   loadFullCodexModelsSnapshot,
@@ -31,7 +33,6 @@ import {
   API_KEY_ID_PREFIX,
   API_KEY_NO_EXPIRATION_MS,
   API_KEY_NO_USAGE_LIMIT,
-  apiKeyBankedResetsEnabled,
   apiKeyHashKey,
   apiKeyIdKey,
   calculateNextResetMs,
@@ -132,7 +133,7 @@ import {
   RuntimeConfigError,
 } from "./runtime_config.ts";
 import { readJsonBody } from "./request.ts";
-import { getString, isRecord, sha256Base64Url } from "./utils.ts";
+import { getString, isRecord, sha256Base64Url, sha256Hex } from "./utils.ts";
 import type {
   ApiKeyHashRecord,
   ApiKeyRecord,
@@ -941,7 +942,6 @@ const paidFallbackPublicFields = async (
     getPaidFallbackProviderUsageV3(record.id, windowResetAtMs, kv),
   ]);
   return {
-    banked_resets_enabled: apiKeyBankedResetsEnabled(record),
     paid_fallback_enabled: record.paid_fallback_enabled,
     paid_fallback_limit_credits: paidFallbackMicrocreditsToCredits(record.paid_fallback_limit_microcredits),
     paid_fallback_spent_credits: paidFallbackMicrocreditsToCredits(projection?.settled_microcredits ?? 0),
@@ -1120,10 +1120,6 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
   }
   const resolvedWindowMs = windowMs ?? USAGE_RESET_PERIOD_MS;
 
-  if (Object.hasOwn(raw, "banked_resets_enabled") && typeof raw.banked_resets_enabled !== "boolean") {
-    return openaiError(400, "banked_resets_enabled must be a boolean", "invalid_request_error");
-  }
-
   if (
     Object.prototype.hasOwnProperty.call(raw, "paid_fallback_enabled") &&
     typeof raw.paid_fallback_enabled !== "boolean"
@@ -1182,7 +1178,6 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
     usage_reset_at_ms: usageResetAtMs,
     window_ms: resolvedWindowMs,
     usage_quota_version: 3,
-    banked_resets_enabled: apiKeyBankedResetsEnabled(raw),
     ...paidFallbackPolicy,
   };
   const hashRecord: ApiKeyHashRecord = {
@@ -1387,13 +1382,6 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
   let nextUsageRequests = entry.value.usage_requests;
   let nextUsageResetAtMs = entry.value.usage_reset_at_ms;
   let nextWindowMs = currentWindowMs;
-  let nextBankedResetsEnabled = apiKeyBankedResetsEnabled(entry.value);
-  if (Object.hasOwn(raw, "banked_resets_enabled")) {
-    if (typeof raw.banked_resets_enabled !== "boolean") {
-      return openaiError(400, "banked_resets_enabled must be a boolean", "invalid_request_error");
-    }
-    nextBankedResetsEnabled = raw.banked_resets_enabled;
-  }
   let nextPaidFallbackEnabled = entry.value.paid_fallback_enabled;
   let nextPaidFallbackLimitMicrocredits = entry.value.paid_fallback_limit_microcredits;
   let nextPaidFallbackSpentMicrocredits = entry.value.paid_fallback_spent_microcredits;
@@ -1491,7 +1479,6 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
   }
 
   const hasChanges = nextName !== entry.value.name ||
-    nextBankedResetsEnabled !== apiKeyBankedResetsEnabled(entry.value) ||
     nextExpiresAtMs !== currentExpiresAtMs ||
     nextUsageLimit !== entry.value.usage_limit_requests ||
     nextWindowMs !== currentWindowMs ||
@@ -1539,7 +1526,6 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
 
   const updated: ApiKeyRecord = {
     ...entry.value,
-    banked_resets_enabled: nextBankedResetsEnabled,
     name: nextName,
     expires_at_ms: nextExpiresAtMs,
     usage_limit_requests: nextUsageLimit,
@@ -2335,4 +2321,31 @@ export const handleAdminProvidersQuotaProjectionBackfill = async (
       "server_error",
     );
   }
+};
+
+export const handleAdminCodexResetSettings = async (request: Request): Promise<Response> => {
+  const kv = await getKv();
+  if (!kv) return openaiError(503, "Settings storage unavailable", "server_error");
+  const accounts = await getCodexCapacityAccounts();
+  const identities = await Promise.all(accounts.map(async (account) => ({
+    slot: account.slot,
+    account_id_hash: await sha256Hex(account.account_id),
+    account_cohort_id: await sha256Hex(`uos-prompt-cache-account-cohort-v1\u0000${account.account_id}`),
+  })));
+  if (request.method === "PATCH") {
+    const raw: unknown = await request.json().catch(() => null);
+    if (!isRecord(raw) || typeof raw.account_id_hash !== "string" || typeof raw.enabled !== "boolean") {
+      return openaiError(400, "account_id_hash and boolean enabled are required", "invalid_request_error");
+    }
+    if (!identities.some((account) => account.account_id_hash === raw.account_id_hash)) {
+      return openaiError(409, "Subscription changed. Reload Providers.", "invalid_request_error");
+    }
+    await kv.set(codexResetUsageKey(raw.account_id_hash), { enabled: raw.enabled });
+    return json(200, { account_id_hash: raw.account_id_hash, enabled: raw.enabled }, { "Cache-Control": "no-store" });
+  }
+  const data = await Promise.all(identities.map(async (account) => ({
+    ...account,
+    enabled: (await readCodexResetUsage(kv, account.account_id_hash)).allowed,
+  })));
+  return json(200, { data }, { "Cache-Control": "no-store" });
 };
