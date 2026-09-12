@@ -13,8 +13,8 @@
     <meta property="og:type" content="website" />
     <meta property="og:title" content="Contact AI.UBQ.FI" />
     <meta property="og:image" content="https://ai.ubq.fi/favicon.png" />
-    <link rel="stylesheet" href="/style.css?v=public-console-20260903-v7" />
-    <link rel="stylesheet" href="/docs.css?v=public-console-20260903-v7" />
+    <link rel="stylesheet" href="/style.css?v=app-minimal-20260912" />
+    <link rel="stylesheet" href="/docs.css?v=app-minimal-20260912" />
   </head>
   <body data-page="docs" data-role="public">
     <div data-shell>
@@ -43,34 +43,17 @@
       <main>
         <section data-hero data-docs-hero>
           <div>
-            <h1>Contact and support routing</h1>
-            <p data-lead>Use the authorized operator channel associated with your UbiquityOS AI Gateway access.</p>
+            <h1>Contact</h1>
+            <p data-lead>Contact the operator who issued your access.</p>
           </div>
         </section>
         <section data-docs-layout>
           <article data-card data-docs-content>
             <h2>Integration support</h2>
-            <p>
-              The UbiquityOS AI Gateway is a credentialed service. The correct support contact is the UbiquityOS
-              administrator or application owner that issued the gateway token or authorized the integration. They can
-              confirm whether an application should have access, provision or revoke a token through the protected
-              administration workflow, and route an operational issue to the responsible team. This public page never
-              asks you to publish, paste, or send a bearer token.
-            </p>
-            <p>
-              For a technical question, first read the <a href="/developers">developer portal</a>,
-              <a href="/openapi.json">OpenAPI contract</a>, and <a href="/llms-full.txt">full agent guide</a>.
-              Include the public request ID from a response header, the endpoint, HTTP status, and a redacted error
-              envelope when asking an authorized operator for help. Do not include prompts that contain private data,
-              authentication headers, API keys, cookies, or upstream credentials.
-            </p>
-            <h2>Security and access concerns</h2>
-            <p>
-              If a token may have been exposed, stop using it and contact the operator who provisioned it immediately
-              so they can revoke and replace it. If an agent does not have a token or clear authority, it must not try
-              alternate credentials or private routes. The public <a href="/health">health endpoint</a> is available
-              for release liveness; provider and administration endpoints remain protected by design.
-            </p>
+            <p>Your UbiquityOS administrator or application owner handles access, API keys, and service issues.</p>
+            <p>Include the request ID, endpoint, HTTP status, and a redacted error. Keep private prompts, tokens, cookies, and authentication headers out of support messages. Check the <a href="/developers">developer guide</a> and <a href="/openapi.json">API contract</a> first.</p>
+            <h2>Exposed key?</h2>
+            <p>Stop using the key and contact your operator immediately to revoke and replace it. Request access if you do not have an approved key.</p>
           </article>
           <aside data-card data-docs-sidebar>
             <h2>Start here</h2>

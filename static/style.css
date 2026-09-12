@@ -1375,3 +1375,30 @@ details[data-usage][open] summary[data-usage-title]::after {
     transform: none;
   }
 }
+
+/* Secondary information stays available without competing with the current task. */
+details[data-disclosure] > summary {
+  padding-block: 10px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+details[data-disclosure] > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+
+details[data-disclosure][open] > summary {
+  color: var(--text);
+}
+
+details[data-disclosure][open] > :not(summary) {
+  margin-block: 12px;
+}
+
+details[data-disclosure][data-card] {
+  display: block;
+}

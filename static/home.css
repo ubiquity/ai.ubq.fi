@@ -33,3 +33,26 @@ body[data-page="home"] [data-hero] [data-layout="row"] {
     animation: none;
   }
 }
+
+body[data-page="home"] main {
+  width: 100%;
+  max-width: 1040px;
+  margin-inline: auto;
+  align-content: start;
+  gap: 32px;
+}
+
+body[data-page="home"] [data-home-footer],
+body[data-page="home"] [data-home-footer] nav,
+body[data-page="home"] [data-home-status] {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+}
+
+body[data-page="home"] [data-home-footer] {
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 13px;
+}
