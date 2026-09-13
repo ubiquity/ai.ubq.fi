@@ -2917,7 +2917,10 @@ Deno.test("a sibling blocked during partial preflight is not dispatched from the
   await seedStableBankedResetBlock();
   const warmed = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, fixedStartMs);
   assert.equal(warmed.kind, "eligible");
-  assert.deepEqual(warmed.accounts.map((account) => account.auth.account_id), ["account-two"]);
+  assert.deepEqual(
+    warmed.accounts.map((account) => account.auth.account_id),
+    ["account-two"]
+  );
   const reset = scriptedResetProvider({
     onInventory: () => {
       // Simulate a different isolate writing the durable record directly. The

@@ -1566,7 +1566,6 @@ const prepareLiveSubmission = async (
   candidate: CodexBankedResetCandidate,
   dependencies: CodexBankedResetDependencies,
   clock: () => number,
-  telemetry: CodexBankedResetTelemetry,
   nowAfterInventory: number
 ): Promise<Readonly<{ kind: "prepared"; record: CodexResetRedemptionRecord }> | Readonly<{ kind: "outcome"; outcome: CodexBankedResetOutcome }>> => {
   // Re-read the kill switch after inventory and immediately before the fenced
@@ -1604,7 +1603,7 @@ const submitClaimed = async (
   if (preflight.kind === "outcome") return preflight.outcome;
   const resolution = await resolveSelectedCredit(kv, context, record, candidate, dependencies, clock, telemetry, preflight.nowMs);
   if (resolution.kind === "outcome") return resolution.outcome;
-  const preparation = await prepareLiveSubmission(kv, context, record, candidate, dependencies, clock, telemetry, resolution.nowMs);
+  const preparation = await prepareLiveSubmission(kv, context, record, candidate, dependencies, clock, resolution.nowMs);
   if (preparation.kind === "outcome") return preparation.outcome;
   return await renewAndRedeem(kv, context, candidate, dependencies, clock, telemetry, resolution.credit, preparation.record);
 };

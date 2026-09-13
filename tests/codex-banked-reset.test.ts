@@ -562,7 +562,8 @@ Deno.test("banked reset production owner token generator is called with its Cryp
   const reset = candidate();
   // The injected owner-token generator is deliberately dropped so the
   // production generator runs.
-  const { newOwnerToken, ...deps } = dependencies(kv, provider, clock);
+  const deps = dependencies(kv, provider, clock);
+  Reflect.deleteProperty(deps, "newOwnerToken");
   await seedFences(kv, reset);
 
   const result = await attemptCodexBankedReset(reset, deps);

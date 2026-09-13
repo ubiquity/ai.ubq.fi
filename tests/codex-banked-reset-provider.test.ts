@@ -194,7 +194,14 @@ Deno.test("display reset counts use only inventory GET and preserve zero and una
         accessToken: "test-token",
         userAgent: "test-agent",
         fetch: (url, init) => {
-          const requestedUrl = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+          let requestedUrl: string;
+          if (typeof url === "string") {
+            requestedUrl = url;
+          } else if (url instanceof URL) {
+            requestedUrl = url.href;
+          } else {
+            requestedUrl = url.url;
+          }
           assert.equal(requestedUrl, "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits");
           assert.equal(init?.method, "GET");
           assert.equal(new Headers(init.headers).get("ChatGPT-Account-ID"), "account-one");

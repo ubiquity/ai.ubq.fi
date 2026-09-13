@@ -35,13 +35,6 @@ export type SentinelIncidentDependencies = Readonly<{
   randomAckNonce?: () => string;
 }>;
 
-export class SentinelIncidentDeliveryError extends Error {
-  constructor(readonly code: string) {
-    super(code);
-    this.name = "SentinelIncidentDeliveryError";
-  }
-}
-
 const safeEnvironment: EnvironmentReader = {
   get(name) {
     try {

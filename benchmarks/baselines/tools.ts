@@ -138,13 +138,7 @@ const updatePlanTool = (args: Record<string, unknown>): ToolResult => {
 };
 
 /** Executes one canonical tool in the disposable workspace (mirror of m02). */
-export function executeBaselineTool(workspace: FixtureWorkspace, tool: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
-  // The Promise wrapper keeps every synchronous validation or applyPatch throw
-  // a rejection for callers that only handle a rejected tool promise.
-  return Promise.resolve().then(() => executeBaselineToolSync(workspace, tool, args, signal));
-}
-
-function executeBaselineToolSync(workspace: FixtureWorkspace, tool: string, args: Record<string, unknown>, signal?: AbortSignal): ToolResult {
+export async function executeBaselineTool(workspace: FixtureWorkspace, tool: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
   switch (tool) {
     case "filesystem.read": {
       const path = args.path as string;
@@ -155,7 +149,7 @@ function executeBaselineToolSync(workspace: FixtureWorkspace, tool: string, args
     case "filesystem.search":
       return searchFiles(workspace, args);
     case "shell.exec":
-      return execShellTool(workspace, args, signal);
+      return await execShellTool(workspace, args, signal);
     case "editor.apply_patch":
       return applyPatchTool(workspace, args);
     case "task.update_plan":
