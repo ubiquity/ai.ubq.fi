@@ -162,6 +162,7 @@ const DURABLE_PREFIXES: { group: string; prefix: Deno.KvKey }[] = [
     prefix: ["uos_ai", "paid_fallback", "v3", "deletion_guard"],
   },
   { group: "runtime_config_v2", prefix: ["uos_ai", "runtime_config", "v2"] },
+  { group: "codex_reset_usage", prefix: ["uos_ai", "codex_reset_usage"] },
   { group: "kernel_usage", prefix: ["ubq_ai", "kernel_auth", "usage"] },
   { group: "kernel_usage_daily", prefix: ["ubq_ai", "kernel_auth", "usage_daily"] },
   { group: "kernel_quota_v2_repo_policy", prefix: ["uos_ai", "kernel_quota", "v2", "repo_policy"] },

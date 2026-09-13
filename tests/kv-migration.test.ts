@@ -9,6 +9,7 @@ import {
   migrateKvReadIncidentV2,
   validateKvMigrationTarget,
 } from "../src/kv_migration.ts";
+import { codexResetUsageKey, readCodexResetUsage } from "../src/codex_reset_settings.ts";
 import { paidFallbackReconciliationGateV3Key } from "../src/paid_fallback_ledger.ts";
 
 if (typeof Deno.KvU64 !== "function") {
@@ -177,6 +178,7 @@ Deno.test("KV migration classifies v2 incident state and skips the transient cir
     "kernel_quota_v2_org_reservation"
   );
   assert.equal(classifyKvMigrationKey(["uos_ai", "runtime_config", "v2"], options).action, "import");
+  assert.equal(classifyKvMigrationKey(["uos_ai", "codex_reset_usage", "account", "v1", "account-hash"], options).group, "codex_reset_usage");
   assert.equal(classifyKvMigrationKey(["uos_ai", "codex_rate_limit"], options).group, "unknown");
 });
 
@@ -284,6 +286,26 @@ Deno.test("prod KV migration imports only modern durable rows by default", async
   assert.equal(store.has(keyToString(["ubq_ai", "codex_models"])), false);
   assert.equal(store.has(keyToString(["key", "config", "1"])), false);
   assert.equal(store.has(keyToString(["uos_ai", "auth", "sessions", "session-id"])), false);
+});
+
+Deno.test("KV migration preserves disabled Codex reset usage settings", async () => {
+  const store = new Map<string, unknown>();
+  const accountIdHash = "account-hash";
+  const resetUsageKey = codexResetUsageKey(accountIdHash);
+  const disabledSetting = { enabled: false };
+
+  const result = await importKvMigrationLines(makeKvStub(store), [entryLine(resetUsageKey, disabledSetting)], {
+    profile: "prod",
+    includeCache: false,
+    includeLegacy: false,
+    overwrite: true,
+    dryRun: false,
+  });
+
+  assert.equal(result.imported, 1);
+  assert.deepEqual(result.groups, { codex_reset_usage: 1 });
+  assert.deepEqual(store.get(keyToString(resetUsageKey)), disabledSetting);
+  assert.equal((await readCodexResetUsage(makeKvStub(store), accountIdHash)).allowed, false);
 });
 
 Deno.test("KV migration imports and validates the complete paid fallback V3 state", async () => {
