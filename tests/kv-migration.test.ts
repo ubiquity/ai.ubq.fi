@@ -10,6 +10,7 @@ import {
   validateKvMigrationTarget,
 } from "../src/kv_migration.ts";
 import { paidFallbackReconciliationGateV3Key } from "../src/paid_fallback_ledger.ts";
+import { codexResetUsageKey, readCodexResetUsage } from "../src/codex_reset_settings.ts";
 
 if (typeof Deno.KvU64 !== "function") {
   (Deno as unknown as { KvU64: typeof Deno.KvU64 }).KvU64 = class {
@@ -177,6 +178,8 @@ Deno.test("KV migration classifies v2 incident state and skips the transient cir
     "kernel_quota_v2_org_reservation"
   );
   assert.equal(classifyKvMigrationKey(["uos_ai", "runtime_config", "v2"], options).action, "import");
+  assert.equal(classifyKvMigrationKey(["uos_ai", "codex_reset_usage", "account", "v1", "account-hash"], options).action, "import");
+  assert.equal(classifyKvMigrationKey(["uos_ai", "codex_reset_usage", "account", "v1", "account-hash"], options).group, "codex_reset_usage");
   assert.equal(classifyKvMigrationKey(["uos_ai", "codex_rate_limit"], options).group, "unknown");
 });
 
@@ -1044,4 +1047,55 @@ Deno.test("KV incident validation retains historical revoked V3 windows", async 
   assert.equal(v3WindowExpireIn, API_KEY_USAGE_V3_RETENTION_MS);
   const validation = await validateKvMigrationTarget(makeKvStub(store));
   assert.deepEqual(validation.errors, []);
+});
+
+Deno.test("KV migration preserves explicit subscription reset choices and fences across migrations", async () => {
+  const store = new Map<string, unknown>();
+  const accountA = "account-disabled-hash";
+  const accountB = "account-enabled-hash";
+
+  const disabledKey = codexResetUsageKey(accountA);
+  const enabledKey = codexResetUsageKey(accountB);
+
+  // Seed minimal valid environment so validation can pass
+  seedUnlimitedIncidentApiKey(store, {
+    sharedOverrides: { paid_fallback_reservation_request_id: null },
+  });
+  await migrateKvReadIncidentV2(makeKvStub(store));
+
+  // An operator explicitly disabled account A (establishing a spend fence), while account B was enabled.
+  const result = await importKvMigrationLines(makeKvStub(store), [entryLine(disabledKey, { enabled: false }), entryLine(enabledKey, { enabled: true })], {
+    profile: "prod",
+    includeCache: false,
+    includeLegacy: false,
+    overwrite: true,
+    dryRun: false,
+  });
+
+  assert.equal(result.total, 2);
+  assert.equal(result.imported, 2);
+  assert.equal(result.groups.codex_reset_usage, 2);
+
+  // Disabled choice is preserved and fences banked reset redemptions.
+  const resetUsageA = await readCodexResetUsage(makeKvStub(store), accountA);
+  assert.equal(resetUsageA.allowed, false);
+
+  // Enabled choice is preserved.
+  const resetUsageB = await readCodexResetUsage(makeKvStub(store), accountB);
+  assert.equal(resetUsageB.allowed, true);
+
+  // Validation passes without errors and reports count.
+  const validation = await validateKvMigrationTarget(makeKvStub(store));
+  assert.deepEqual(validation.errors, []);
+  assert.equal(validation.counts.codex_reset_usage, 2);
+});
+
+Deno.test("KV migration validation rejects malformed codex reset usage records", async () => {
+  const store = new Map<string, unknown>();
+  store.set(keyToString(["uos_ai", "codex_reset_usage", "bad_key"]), { enabled: false });
+  store.set(keyToString(["uos_ai", "codex_reset_usage", "account", "v1", "bad_value"]), { enabled: "not_a_boolean" });
+
+  const result = await validateKvMigrationTarget(makeKvStub(store));
+  assert.match(result.errors.join("\n"), /codex reset usage key is malformed/);
+  assert.match(result.errors.join("\n"), /codex reset usage record is malformed/);
 });
