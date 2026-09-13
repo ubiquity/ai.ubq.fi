@@ -1,5 +1,4 @@
-export const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null;
+export const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 
 export const getString = (value: unknown): string | null => (typeof value === "string" ? value : null);
 
@@ -18,7 +17,12 @@ export const encodeHex = (bytes: Uint8Array): string => {
 export const base64UrlEncode = (bytes: Uint8Array): string => {
   let binary = "";
   for (const b of bytes) binary += String.fromCharCode(b);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  // btoa emits canonical base64, so the only '=' run is the 1-2 character
+  // padding suffix; bounding the quantifier keeps this match linear.
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/={1,2}$/, "");
 };
 
 export const base64UrlDecode = (value: string): Uint8Array<ArrayBuffer> => {

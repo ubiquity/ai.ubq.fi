@@ -16,7 +16,7 @@ Deno.test("foreground refresh coalesces focus events and ignores hidden pages", 
     () => {
       refreshes += 1;
     },
-    { windowTarget, documentTarget, delayMs: 0 },
+    { windowTarget, documentTarget, delayMs: 0 }
   );
 
   windowTarget.dispatchEvent(new Event("focus"));

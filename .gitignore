@@ -8,3 +8,12 @@
 logs/
 .sentinel/
 benchmark-runs/
+
+# generated: `deno task types`
+.deno-types.d.ts
+
+# dev tooling (see tools/lint/README.md)
+node_modules/
+.npm-cache/
+.bun-cache/
+.tmp/

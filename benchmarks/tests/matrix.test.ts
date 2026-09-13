@@ -13,15 +13,16 @@ Deno.test("matrix: every manifest completes successfully with the hermetic refer
     });
     const failures = results.filter((r) => !r.success);
     if (failures.length > 0) {
-      throw new Error(
-        `${failures.length} task(s) failed: ` +
-          failures.map((f) => `${f.task_id}: ${f.failure_class}: ${f.failure_detail}`).join("; "),
-      );
+      throw new Error(`${failures.length} task(s) failed: ` + failures.map((f) => `${f.task_id}: ${f.failure_class}: ${f.failure_detail}`).join("; "));
     }
     if (results.length !== 25) throw new Error(`expected 25 results, got ${results.length}`);
 
     // Injected-failure tasks expose the expected deterministic metric profile.
-    const byId = (id: string) => results.find((r) => r.task_id === id)!;
+    const byId = (id: string) => {
+      const result = results.find((r) => r.task_id === id);
+      if (!result) throw new Error(`missing benchmark result for ${id}`);
+      return result;
+    };
     const fail001 = byId("fail-001");
     if (fail001.metrics.tool_errors !== 1 || fail001.metrics.recovery_attempts !== 1) {
       throw new Error(`fail-001 metrics wrong: ${JSON.stringify(fail001.metrics)}`);
@@ -36,7 +37,7 @@ Deno.test("matrix: every manifest completes successfully with the hermetic refer
       if (byId(id).metrics.tool_calls < 21) throw new Error(`${id} did not exceed 20 tool calls`);
     }
     if (byId("long-001").metrics.tool_calls < 11) throw new Error("long-001 did not exceed 10 tool calls");
-    if (byId("nav-001").verification.passed !== true) throw new Error("nav-001 verification evidence missing");
+    if (!byId("nav-001").verification.passed) throw new Error("nav-001 verification evidence missing");
 
     // Trajectories for every run are persisted and parseable.
     for (const result of results) {

@@ -46,7 +46,10 @@ if (Deno.args.includes("--help") || Deno.args.includes("-h")) {
   Deno.exit(0);
 }
 
-const [commandRaw, ...rest] = Deno.args;
+// Deno.args is empty when the script is invoked without arguments, so the
+// first element is annotated as possibly absent.
+const commandRaw: string | undefined = Deno.args.at(0);
+const rest = Deno.args.slice(1);
 const command = commandRaw?.trim() ?? "";
 if (!command || command.startsWith("--")) {
   usage();
@@ -62,9 +65,7 @@ if (!adminToken) {
   Deno.exit(2);
 }
 
-const doFetch = async (
-  req: Request,
-): Promise<{ ok: true; json: unknown } | { ok: false; status: number; body: string }> => {
+const doFetch = async (req: Request): Promise<{ ok: true; json: unknown } | { ok: false; status: number; body: string }> => {
   const res = await fetch(req);
   const contentType = res.headers.get("Content-Type") ?? "";
   const isJson = contentType.includes("application/json");
@@ -81,7 +82,10 @@ const endpoint = (path: string): URL => new URL(path, baseUrl);
 type ApiKeyExpiryPreset = "day" | "week" | "month" | "quarter" | "year" | "forever";
 
 const normalizeApiKeyExpiryPreset = (raw: string): ApiKeyExpiryPreset | null => {
-  const normalized = raw.trim().toLowerCase().replace(/[\s_-]+/g, "");
+  const normalized = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "");
   if (!normalized) return null;
 
   if (normalized === "day" || normalized === "1d" || normalized === "1day" || normalized === "oneday") return "day";
@@ -93,9 +97,7 @@ const normalizeApiKeyExpiryPreset = (raw: string): ApiKeyExpiryPreset | null => 
     return "quarter";
   }
   if (normalized === "year" || normalized === "1y" || normalized === "1year" || normalized === "oneyear") return "year";
-  if (
-    normalized === "forever" || normalized === "never" || normalized === "noexpiry" || normalized === "noexpiration"
-  ) {
+  if (normalized === "forever" || normalized === "never" || normalized === "noexpiry" || normalized === "noexpiration") {
     return "forever";
   }
   return null;
@@ -129,7 +131,7 @@ if (command === "create") {
     Deno.exit(2);
   }
 
-  let expires_at_ms: number | undefined;
+  let expiresAtMsValue: number | undefined;
   if (typeof rawExpiresAtMs === "string") {
     const parsedNumber = Number(rawExpiresAtMs.trim());
     if (!Number.isFinite(parsedNumber)) {
@@ -137,7 +139,7 @@ if (command === "create") {
       Deno.exit(2);
     }
     const expiresAtMs = Math.trunc(parsedNumber);
-    if (expiresAtMs === -1) expires_at_ms = -1;
+    if (expiresAtMs === -1) expiresAtMsValue = -1;
     else if (expiresAtMs <= Date.now()) {
       console.error("--expires-at-ms must be in the future (or -1).");
       Deno.exit(2);
@@ -145,7 +147,7 @@ if (command === "create") {
       console.error("--expires-at-ms must be -1 or a future timestamp.");
       Deno.exit(2);
     } else {
-      expires_at_ms = expiresAtMs;
+      expiresAtMsValue = expiresAtMs;
     }
   } else if (typeof rawPreset === "string") {
     const preset = normalizeApiKeyExpiryPreset(rawPreset);
@@ -153,18 +155,18 @@ if (command === "create") {
       console.error("--expires must be one of: day, week, month, quarter, year, forever.");
       Deno.exit(2);
     }
-    expires_at_ms = apiKeyExpiresAtMsFromPreset(preset, Date.now());
+    expiresAtMsValue = apiKeyExpiresAtMsFromPreset(preset, Date.now());
   }
 
   const token = (parsed.token as string | undefined) ?? null;
   const body: Record<string, unknown> = token ? { name, token } : { name };
-  if (expires_at_ms !== undefined) body.expires_at_ms = expires_at_ms;
+  if (expiresAtMsValue !== undefined) body.expires_at_ms = expiresAtMsValue;
   const req = new Request(endpoint("/admin/api-keys"), {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${adminToken}`,
+      Authorization: `Bearer ${adminToken}`,
       "Content-Type": "application/json",
-      "Accept": "application/json",
+      Accept: "application/json",
     },
     body: JSON.stringify(body),
   });
@@ -178,9 +180,7 @@ if (command === "create") {
 
   const tokenOnly = parsed["token-only"] === true;
   if (tokenOnly) {
-    const tokenValue = (result.json && typeof result.json === "object" && "token" in result.json)
-      ? (result.json as { token?: unknown }).token
-      : null;
+    const tokenValue = result.json && typeof result.json === "object" && "token" in result.json ? (result.json as { token?: unknown }).token : null;
     console.log(typeof tokenValue === "string" ? tokenValue : "");
   } else {
     console.log(JSON.stringify(result.json, null, 2));
@@ -192,8 +192,8 @@ if (command === "list") {
   const req = new Request(endpoint("/admin/api-keys"), {
     method: "GET",
     headers: {
-      "Authorization": `Bearer ${adminToken}`,
-      "Accept": "application/json",
+      Authorization: `Bearer ${adminToken}`,
+      Accept: "application/json",
     },
   });
   const result = await doFetch(req);
@@ -215,9 +215,9 @@ if (command === "revoke") {
   const req = new Request(endpoint("/admin/api-keys/revoke"), {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${adminToken}`,
+      Authorization: `Bearer ${adminToken}`,
       "Content-Type": "application/json",
-      "Accept": "application/json",
+      Accept: "application/json",
     },
     body: JSON.stringify({ id }),
   });

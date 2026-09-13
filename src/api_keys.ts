@@ -78,10 +78,6 @@ export const calculateNextResetMs = (nowMs: number, windowMs = USAGE_RESET_PERIO
   return nowMs + windowMs;
 };
 
-export const shouldResetUsage = (resetAtMs: number, nowMs: number): boolean => {
-  return resetAtMs <= nowMs;
-};
-
 export const getDefaultExpiryMs = (nowMs: number): number => {
   return nowMs + DEFAULT_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
 };

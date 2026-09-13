@@ -2,13 +2,7 @@ import { parseTrustedAuthRelayOrigin } from "./auth_relay.ts";
 import { config, runtimeDeploymentId, runtimeGitSha } from "./config.ts";
 import { CEREBRAS_RATE_LIMIT_HEADERS } from "./cerebras_rate_limits.ts";
 
-export const STANDARD_RATE_LIMIT_HEADERS = [
-  "RateLimit",
-  "RateLimit-Policy",
-  "RateLimit-Limit",
-  "RateLimit-Remaining",
-  "RateLimit-Reset",
-] as const;
+export const STANDARD_RATE_LIMIT_HEADERS = ["RateLimit", "RateLimit-Policy", "RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset"] as const;
 
 const EXPOSED_RESPONSE_HEADERS = [
   "x-uos-warning",
@@ -40,17 +34,18 @@ const getRequestOrigin = (req?: Request): string | null => {
 export const corsHeaders = (req?: Request): HeadersInit => {
   const requestOrigin = getRequestOrigin(req);
   const configuredOrigin = config.allowOrigin;
-  const canUseCredentials = Boolean(requestOrigin) &&
-    (configuredOrigin === "*" || configuredOrigin === requestOrigin);
+  // Mirrors the previous `canUseCredentials ? requestOrigin : configuredOrigin`:
+  // a falsy requestOrigin (empty string) fell back to configuredOrigin there too.
+  const credentialsOrigin = requestOrigin && (configuredOrigin === "*" || configuredOrigin === requestOrigin) ? requestOrigin : null;
   return {
-    "Access-Control-Allow-Origin": canUseCredentials ? requestOrigin! : configuredOrigin,
+    "Access-Control-Allow-Origin": credentialsOrigin ?? configuredOrigin,
     "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,HEAD,OPTIONS",
     "Access-Control-Allow-Headers":
       "Authorization,Content-Type,Idempotency-Key,If-None-Match,OpenAI-Beta,OpenAI-Organization,OpenAI-Project,X-GitHub-Owner,X-GitHub-Repo,X-GitHub-Installation-Id,X-Ubiquity-Kernel-Token",
     // Allow browser clients to read quota state, gateway warnings, cache validators, and backoff hints.
     "Access-Control-Expose-Headers": EXPOSED_RESPONSE_HEADERS.join(","),
     "Access-Control-Max-Age": "86400",
-    ...(canUseCredentials ? { "Access-Control-Allow-Credentials": "true", Vary: "Origin" } : {}),
+    ...(credentialsOrigin ? { "Access-Control-Allow-Credentials": "true", Vary: "Origin" } : {}),
   };
 };
 
@@ -85,24 +80,21 @@ export const withoutBody = (response: Response): Response =>
     headers: response.headers,
   });
 
-export const json = (
-  status: number,
-  body: unknown,
-  extraHeaders: HeadersInit = {},
-): Response =>
-  new Response(JSON.stringify(body), {
+export const json = (status: number, body: unknown, extraHeaders: HeadersInit = {}): Response => {
+  const headers = new Headers(extraHeaders);
+  // extraHeaders wins over the JSON default, matching the previous object spread.
+  if (!headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  return new Response(JSON.stringify(body), {
     status,
-    headers: {
-      "Content-Type": "application/json",
-      ...extraHeaders,
-    },
+    headers,
   });
+};
 
 export const openaiError = (
   status: number,
   message: string,
   code?: string,
-  options: { type?: string; param?: string | null; headers?: HeadersInit } = {},
+  options: { type?: string; param?: string | null; headers?: HeadersInit } = {}
 ): Response => {
   const type = (options.type ?? "invalid_request_error").trim() || "invalid_request_error";
   const error: Record<string, unknown> = {
@@ -113,9 +105,13 @@ export const openaiError = (
   if (Object.prototype.hasOwnProperty.call(options, "param")) {
     error.param = options.param ?? null;
   }
-  return json(status, {
-    error,
-  }, options.headers);
+  return json(
+    status,
+    {
+      error,
+    },
+    options.headers
+  );
 };
 
 export const notFound = (): Response =>
@@ -130,6 +126,12 @@ export const notFound = (): Response =>
 export const getBearerToken = (req: Request): string | null => {
   const value = req.headers.get("Authorization");
   if (!value) return null;
-  const match = value.match(/^Bearer\s+(.+)$/i);
-  return match?.[1]?.trim() || null;
+  // Equivalent to /^Bearer\s+(.+)$/i but linear: the original had overlapping
+  // `\s+`/`.+` quantifiers, so an attacker-supplied value such as
+  // "Bearer <N spaces><M chars>\u2028" forced O(N*M) backtracking on every request.
+  // Because `\s+` is greedy, the captured token always starts with a
+  // non-whitespace character, which makes `\S` an exact, ambiguity-free prefix.
+  const match = /^Bearer\s+(\S[^\n\r\u2028\u2029]*)$/i.exec(value);
+  const token = match?.[1]?.trim() ?? "";
+  return token === "" ? null : token;
 };

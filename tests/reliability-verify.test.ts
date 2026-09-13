@@ -18,11 +18,7 @@ const readOk = (content: string) => ({ ok: true, output: content });
 const execOk = () => ({ ok: true, output: "done" });
 const execFail = () => ({ ok: false, output: "", error_code: "exec_failed", error: "exit 1" });
 
-function guard(
-  policy: VerificationPolicy,
-  tracker: VerificationTracker,
-  opts: Partial<Parameters<typeof guardFinal>[0]> = {},
-) {
+function guard(policy: VerificationPolicy, tracker: VerificationTracker, opts: Partial<Parameters<typeof guardFinal>[0]> = {}) {
   const previousFinals: readonly FinalAttempt[] = opts.previousFinals ?? [];
   return guardFinal({
     finalContent: opts.finalContent ?? "done",
@@ -71,11 +67,7 @@ Deno.test("verify: a failed shell command is unresolved until a later successful
 
 Deno.test("verify: a failed patch is unresolved until the same path is written successfully", () => {
   const tracker = new VerificationTracker();
-  tracker.observe(
-    "editor.apply_patch",
-    { path: "a.txt", old: "missing", new: "y" },
-    { ok: false, error_code: "patch_failed", error: "old text not found" },
-  );
+  tracker.observe("editor.apply_patch", { path: "a.txt", old: "missing", new: "y" }, { ok: false, error_code: "patch_failed", error: "old text not found" });
   assert.equal(tracker.unresolvedEdits().length, 1);
   tracker.observe("editor.apply_patch", { path: "a.txt", add: true, new: "y" }, patchOk("a.txt"));
   assert.equal(tracker.unresolvedEdits().length, 0);
@@ -103,11 +95,7 @@ Deno.test("verify: guard allows a final when everything is verified", () => {
 Deno.test("verify: unresolved command and edit failures block the final", () => {
   const tracker = new VerificationTracker();
   tracker.observe("shell.exec", { command: "curl example" }, execFail());
-  tracker.observe(
-    "editor.apply_patch",
-    { path: "b.txt", old: "nope", new: "y" },
-    { ok: false, error_code: "patch_failed", error: "not found" },
-  );
+  tracker.observe("editor.apply_patch", { path: "b.txt", old: "nope", new: "y" }, { ok: false, error_code: "patch_failed", error: "not found" });
   const decision = guard(DEFAULT_VERIFICATION_POLICY, tracker);
   assert.equal(decision.allowed, false);
   const kinds = decision.requirements.map((r) => r.kind);

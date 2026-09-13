@@ -12,8 +12,7 @@ export const apiKeyUsageKey = (id: string) => [...API_KEY_USAGE_PREFIX, id] as c
 export const apiKeyUsageDailyKey = (id: string) => [...API_KEY_USAGE_DAILY_PREFIX, id] as const;
 export const legacyApiKeyRequestLogPrefix = (id: string) => [...LEGACY_API_KEY_REQUEST_LOG_PREFIX, id] as const;
 export const apiKeyRequestLogPrefix = (id: string) => [...API_KEY_REQUEST_LOG_PREFIX, id] as const;
-export const apiKeyRequestLogKey = (id: string, createdAtMs: number, requestId: string) =>
-  [...apiKeyRequestLogPrefix(id), createdAtMs, requestId] as const;
+export const apiKeyRequestLogKey = (id: string, createdAtMs: number, requestId: string) => [...apiKeyRequestLogPrefix(id), createdAtMs, requestId] as const;
 
 export type ApiKeyRequestLogInput = Readonly<{
   id?: string;
@@ -46,23 +45,34 @@ export const API_KEY_REQUEST_LOG_RETENTION_MS = 365 * DAY_MS;
 const MAX_REQUEST_LOGS = 100;
 const MAX_PAID_FALLBACK_LEDGER_WRITE_RETRIES = 3;
 
-const integer = (value: unknown, fallback = 0): number =>
-  typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : fallback;
+const integer = (value: unknown, fallback = 0): number => (typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : fallback);
 const nullableInteger = (value: unknown): number | null => {
   const normalized = integer(value, -1);
   return normalized >= 0 ? normalized : null;
 };
 const text = (value: unknown, max = 120, fallback = ""): string => {
-  const normalized = getString(value)?.trim() || fallback;
+  const trimmed = getString(value)?.trim() ?? "";
+  // An empty trimmed string still counts as absent, so the fallback keeps winning.
+  const normalized = trimmed.length > 0 ? trimmed : fallback;
   return normalized.slice(0, max);
 };
 
-const normalize = (
-  value: unknown,
-  keyId: string,
-  requestId: string,
-  createdAtMs: number,
-): ApiKeyRequestLogRecord | null => {
+/**
+ * Provider names that survive a ledger read. Anything else (unknown, absent or
+ * non-string) normalizes to the primary Codex provider, exactly as the
+ * comparison chain it replaces did.
+ */
+const CATALOG_PROVIDERS = new Map<string, ApiKeyRequestLogRecord["provider"]>([
+  ["cerebras", "cerebras"],
+  ["voyage", "voyage"],
+  ["surplus", "surplus"],
+  ["metered", "metered"],
+]);
+
+const requestLogProvider = (value: unknown): ApiKeyRequestLogRecord["provider"] =>
+  typeof value === "string" ? (CATALOG_PROVIDERS.get(value) ?? "chatgpt_codex") : "chatgpt_codex";
+
+const normalize = (value: unknown, keyId: string, requestId: string, createdAtMs: number): ApiKeyRequestLogRecord | null => {
   if (!isRecord(value)) return null;
   const billing = value.billing_status;
   return {
@@ -76,15 +86,7 @@ const normalize = (
     model: text(value.model) || null,
     reasoning: text(value.reasoning) || null,
     created_at_ms: integer(value.created_at_ms, createdAtMs),
-    provider: value.provider === "cerebras"
-      ? "cerebras"
-      : value.provider === "voyage"
-      ? "voyage"
-      : value.provider === "surplus"
-      ? "surplus"
-      : value.provider === "metered"
-      ? "metered"
-      : "chatgpt_codex",
+    provider: requestLogProvider(value.provider),
     fallback_reason: text(value.fallback_reason) || null,
     provider_request_id: text(value.provider_request_id) || null,
     completed_at_ms: nullableInteger(value.completed_at_ms),
@@ -95,10 +97,7 @@ const normalize = (
     quota_per_credit: nullableInteger(value.quota_per_credit),
     spend_microcredits: nullableInteger(value.spend_microcredits),
     paid_fallback_window_reset_at_ms: nullableInteger(value.paid_fallback_window_reset_at_ms),
-    billing_status: billing === "pending" || billing === "reconciled" || billing === "not_billed" ||
-        billing === "unresolved"
-      ? billing
-      : "not_applicable",
+    billing_status: billing === "pending" || billing === "reconciled" || billing === "not_billed" || billing === "unresolved" ? billing : "not_applicable",
   };
 };
 
@@ -107,7 +106,7 @@ const mutateApiKeyRequestLog = async (
   createdAtMs: number,
   requestId: string,
   mutate: (existing: ApiKeyRequestLogRecord | null) => ApiKeyRequestLogInput | ApiKeyRequestLogRecord | null,
-  kvOverride?: Deno.Kv | null,
+  kvOverride?: Deno.Kv | null
 ): Promise<void> => {
   const kv = kvOverride === undefined ? await getKv() : kvOverride;
   if (!kv || !keyId.trim()) return;
@@ -118,17 +117,9 @@ const mutateApiKeyRequestLog = async (
     const existing = normalize(entry.value, keyId, requestId, createdAtMs);
     const next = mutate(existing);
     if (!next) return;
-    const record = normalize(
-      { ...next, id: requestId, key_id: keyId, created_at_ms: createdAtMs },
-      keyId,
-      requestId,
-      createdAtMs,
-    );
+    const record = normalize({ ...next, id: requestId, key_id: keyId, created_at_ms: createdAtMs }, keyId, requestId, createdAtMs);
     if (!record) return;
-    const expireIn = Math.max(
-      1,
-      createdAtMs + API_KEY_REQUEST_LOG_RETENTION_MS - Date.now(),
-    );
+    const expireIn = Math.max(1, createdAtMs + API_KEY_REQUEST_LOG_RETENTION_MS - Date.now());
     const committed = await kv.atomic().check(entry).set(key, record, { expireIn }).commit();
     if (committed.ok) return;
   }
@@ -136,33 +127,11 @@ const mutateApiKeyRequestLog = async (
   throw new Error(`paid fallback ledger changed concurrently: ${requestId}`);
 };
 
-export const recordApiKeyRequestLog = async (
-  keyId: string,
-  input: ApiKeyRequestLogInput,
-  kvOverride?: Deno.Kv | null,
-): Promise<void> => {
+export const recordApiKeyRequestLog = async (keyId: string, input: ApiKeyRequestLogInput, kvOverride?: Deno.Kv | null): Promise<void> => {
   const nowMs = Date.now();
   const requestId = text(input.id, 120, crypto.randomUUID());
   const createdAtMs = integer(input.created_at_ms, nowMs);
-  await mutateApiKeyRequestLog(
-    keyId,
-    createdAtMs,
-    requestId,
-    (existing) => ({ ...(existing ?? {}), ...input }),
-    kvOverride,
-  );
-};
-
-export const getApiKeyRequestLog = async (
-  keyId: string,
-  createdAtMs: number,
-  requestId: string,
-  kvOverride?: Deno.Kv | null,
-): Promise<ApiKeyRequestLogRecord | null> => {
-  const kv = kvOverride === undefined ? await getKv() : kvOverride;
-  if (!kv) return null;
-  const entry = await kv.get<ApiKeyRequestLogRecord>(apiKeyRequestLogKey(keyId, createdAtMs, requestId));
-  return normalize(entry.value, keyId, requestId, createdAtMs);
+  await mutateApiKeyRequestLog(keyId, createdAtMs, requestId, (existing) => ({ ...(existing ?? {}), ...input }), kvOverride);
 };
 
 export const updateApiKeyRequestLog = async (
@@ -170,34 +139,18 @@ export const updateApiKeyRequestLog = async (
   createdAtMs: number,
   requestId: string,
   patch: ApiKeyRequestLogPatch,
-  kvOverride?: Deno.Kv | null,
+  kvOverride?: Deno.Kv | null
 ): Promise<void> => {
-  await mutateApiKeyRequestLog(
-    keyId,
-    createdAtMs,
-    requestId,
-    (existing) => existing ? { ...existing, ...patch } : null,
-    kvOverride,
-  );
+  await mutateApiKeyRequestLog(keyId, createdAtMs, requestId, (existing) => (existing ? { ...existing, ...patch } : null), kvOverride);
 };
 
-export const listApiKeyRequestLogs = async (
-  keyId: string,
-  options: { limit?: number; kv?: Deno.Kv | null } = {},
-): Promise<ApiKeyRequestLogRecord[]> => {
+export const listApiKeyRequestLogs = async (keyId: string, options: { limit?: number; kv?: Deno.Kv | null } = {}): Promise<ApiKeyRequestLogRecord[]> => {
   const kv = options.kv === undefined ? await getKv() : options.kv;
   if (!kv || !keyId.trim()) return [];
   const limit = Math.max(1, Math.min(MAX_REQUEST_LOGS, Math.trunc(options.limit ?? 20)));
   const records: ApiKeyRequestLogRecord[] = [];
-  for await (
-    const entry of kv.list<ApiKeyRequestLogRecord>({ prefix: apiKeyRequestLogPrefix(keyId) }, { reverse: true, limit })
-  ) {
-    const record = normalize(
-      entry.value,
-      keyId,
-      text(entry.key.at(-1), 120, "request"),
-      integer(entry.key.at(-2), Date.now()),
-    );
+  for await (const entry of kv.list<ApiKeyRequestLogRecord>({ prefix: apiKeyRequestLogPrefix(keyId) }, { reverse: true, limit })) {
+    const record = normalize(entry.value, keyId, text(entry.key.at(-1), 120, "request"), integer(entry.key.at(-2), Date.now()));
     if (record) records.push(record);
   }
   return records;

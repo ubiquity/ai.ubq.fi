@@ -19,7 +19,9 @@ function freshOptions(): RunOptions & { runsRoot: string } {
 }
 
 function nav001(): TaskManifest {
-  return loadTasks(TASKS_DIR).find((t) => t.id === "nav-001")!;
+  const task = loadTasks(TASKS_DIR).find((t) => t.id === "nav-001");
+  if (!task) throw new Error(`benchmark task nav-001 is missing from ${TASKS_DIR}`);
+  return task;
 }
 
 Deno.test("runner: reference run succeeds with recorded trajectory and metrics", async () => {

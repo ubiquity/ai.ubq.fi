@@ -13,8 +13,7 @@ const kvStore = new HealthKvStore();
 let atomicCommitCount = 0;
 
 const kvStub = {
-  get: (key: Deno.KvKey) =>
-    Promise.resolve(({ key, value: kvStore.get(keyToString(key)) ?? null }) as Deno.KvEntryMaybe<unknown>),
+  get: (key: Deno.KvKey) => Promise.resolve({ key, value: kvStore.get(keyToString(key)) ?? null } as Deno.KvEntryMaybe<unknown>),
   set: (key: Deno.KvKey, value: unknown) => {
     kvStore.set(keyToString(key), value);
     return Promise.resolve({ ok: true } as const);
@@ -23,11 +22,11 @@ const kvStub = {
     kvStore.delete(keyToString(key));
     return Promise.resolve();
   },
-  list: async function* (_selector: Deno.KvListSelector, _options?: Deno.KvListOptions) {
+  list: function* (_selector: Deno.KvListSelector, _options?: Deno.KvListOptions) {
     yield* [];
   },
   atomic: () => {
-    const ops: Array<{ type: "set" | "delete"; key: Deno.KvKey; value?: unknown }> = [];
+    const ops: { type: "set" | "delete"; key: Deno.KvKey; value?: unknown }[] = [];
     const chain = {
       check: () => chain,
       set: (key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }) => {
@@ -54,14 +53,7 @@ const kvStub = {
 
 (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kvStub);
 
-const {
-  handleHealth,
-  handleHealthProviders,
-  handleHealthUpstream,
-  setActiveUpstreamHealthTimeoutMsForTest,
-} = await import(
-  "../src/health.ts"
-);
+const { handleHealth, handleHealthProviders, handleHealthUpstream, setActiveUpstreamHealthTimeoutMsForTest } = await import("../src/health.ts");
 const { default: handler } = await import("../src/handler.ts");
 const { config } = await import("../src/config.ts");
 const { getJwtExpMs, resetCodexAuthCacheForTest } = await import("../src/codex.ts");
@@ -76,7 +68,15 @@ const {
 } = await import("../src/provider_health.ts");
 resetAuthCache = resetCodexAuthCacheForTest;
 
-const base64Url = (value: string): string => btoa(value).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+// Base64url strips the "=" padding. A regex such as /=+$/g is super-linear: an
+// unanchored quantifier re-consumes the whole "=" run at every start position,
+// so strip the trailing run with a linear scan instead.
+const base64Url = (value: string): string => {
+  const encoded = btoa(value).replace(/\+/g, "-").replace(/\//g, "_");
+  let end = encoded.length;
+  while (end > 0 && encoded.charAt(end - 1) === "=") end -= 1;
+  return encoded.slice(0, end);
+};
 
 const makeJwt = (expSeconds: number | null): string => {
   const header = base64Url(JSON.stringify({ alg: "none", typ: "JWT" }));
@@ -84,7 +84,10 @@ const makeJwt = (expSeconds: number | null): string => {
   return `${header}.${payload}.`;
 };
 
-const makeAuthEntry = (accessTokenExpSeconds: number | null, accountId = "acct"): {
+const makeAuthEntry = (
+  accessTokenExpSeconds: number | null,
+  accountId = "acct"
+): {
   access_token: string;
   refresh_token: string;
   account_id: string;
@@ -103,10 +106,10 @@ const makeAuthPool = (...accounts: ReturnType<typeof makeAuthEntry>[]) => ({
 const CODEX_AUTH_KEY: Deno.KvKey = ["ubq_ai", "codex_auth"];
 
 Deno.test("getJwtExpMs ignores non-string, empty, and malformed tokens", () => {
-  for (
-    const token of [undefined, null, 42, {}, "", "not-a-jwt", "header.%%%.", "header.e30.signature.extra"] as unknown[]
-  ) {
-    assert.doesNotThrow(() => assert.equal(getJwtExpMs(token), null));
+  for (const token of [undefined, null, 42, {}, "", "not-a-jwt", "header.%%%.", "header.e30.signature.extra"] as unknown[]) {
+    assert.doesNotThrow(() => {
+      assert.equal(getJwtExpMs(token), null);
+    });
   }
 });
 
@@ -114,10 +117,7 @@ Deno.test("passive provider health returns every Codex slot without contacting u
   kvStore.clear();
   resetProviderHealthThrottleForTest();
   const future = Math.floor(Date.now() / 1000) + 3600;
-  kvStore.set(
-    keyToString(CODEX_AUTH_KEY),
-    makeAuthPool(makeAuthEntry(future, "private-account-a"), makeAuthEntry(future, "private-account-b")),
-  );
+  kvStore.set(keyToString(CODEX_AUTH_KEY), makeAuthPool(makeAuthEntry(future, "private-account-a"), makeAuthEntry(future, "private-account-b")));
   await recordCodexProviderHealth("private-account-a", "quota_exhausted", 429, () => 1_000);
   await recordCodexProviderHealth("private-account-b", "refresh_failed", 401, () => 2_000);
   await recordMeteredProviderHealth("success", 200, () => 3_000);
@@ -134,7 +134,7 @@ Deno.test("passive provider health returns every Codex slot without contacting u
       codex?: {
         account_count?: number;
         state?: string;
-        accounts?: Array<{ slot?: number; health?: { state?: string; last_status?: number | null } }>;
+        accounts?: { slot?: number; health?: { state?: string; last_status?: number | null } }[];
       };
       metered?: { health?: { state?: string; last_status?: number | null }; quota?: { balance_credits?: unknown } };
     };
@@ -142,13 +142,16 @@ Deno.test("passive provider health returns every Codex slot without contacting u
     assert.equal(response.status, 200);
     assert.equal(payload.mode, "passive");
     assert.equal(payload.codex?.account_count, 2);
-    assert.equal(payload.codex?.state, "degraded");
+    assert.equal(payload.codex.state, "degraded");
     assert.deepEqual(
-      payload.codex?.accounts?.map((account) => [account.slot, account.health?.state, account.health?.last_status]),
-      [[1, "exhausted", 429], [2, "invalid", 401]],
+      payload.codex.accounts?.map((account) => [account.slot, account.health?.state, account.health?.last_status]),
+      [
+        [1, "exhausted", 429],
+        [2, "invalid", 401],
+      ]
     );
     assert.equal(payload.metered?.health?.state, "healthy");
-    assert.equal("balance_credits" in (payload.metered?.quota ?? {}), false);
+    assert.equal("balance_credits" in (payload.metered.quota ?? {}), false);
     assert.equal(text.includes("private-account-a"), false);
     assert.equal(text.includes("private-account-b"), false);
   } finally {
@@ -169,13 +172,13 @@ Deno.test("passive provider health reports configured Cerebras without probing i
   };
   try {
     const response = await handleHealthProviders();
-    const payload = await response.json() as {
+    const payload = (await response.json()) as {
       cerebras?: { configured?: boolean; health?: { state?: string; last_status?: number | null } };
     };
     assert.equal(response.status, 200);
     assert.equal(payload.cerebras?.configured, true);
-    assert.equal(payload.cerebras?.health?.state, "healthy");
-    assert.equal(payload.cerebras?.health?.last_status, 200);
+    assert.equal(payload.cerebras.health?.state, "healthy");
+    assert.equal(payload.cerebras.health.last_status, 200);
     assert.equal((await getCerebrasProviderHealth(() => 4_001)).state, "healthy");
   } finally {
     globalThis.fetch = originalFetch;
@@ -193,7 +196,7 @@ Deno.test("admin provider health includes cached quota fields without an active 
   };
   try {
     const response = await handleHealthProviders({ includeQuota: true });
-    const payload = await response.json() as {
+    const payload = (await response.json()) as {
       metered?: { quota?: { available?: boolean; balance_credits?: unknown } };
     };
     assert.equal(response.status, 200);
@@ -213,7 +216,7 @@ Deno.test("admin provider health exposes Surplus identity and honest quota avail
   await recordSurplusProviderHealth("success", 200, () => 4_000);
   try {
     const response = await handleHealthProviders({ includeQuota: true });
-    const payload = await response.json() as {
+    const payload = (await response.json()) as {
       surplus?: {
         configured?: boolean;
         quota_monitoring_configured?: boolean;
@@ -223,10 +226,10 @@ Deno.test("admin provider health exposes Surplus identity and honest quota avail
     };
     assert.equal(response.status, 200);
     assert.equal(payload.surplus?.configured, true);
-    assert.equal(payload.surplus?.quota_monitoring_configured, false);
-    assert.equal(payload.surplus?.health?.state, "healthy");
-    assert.equal(payload.surplus?.quota?.available, false);
-    assert.equal(payload.surplus?.quota?.source, "not_reported");
+    assert.equal(payload.surplus.quota_monitoring_configured, false);
+    assert.equal(payload.surplus.health?.state, "healthy");
+    assert.equal(payload.surplus.quota?.available, false);
+    assert.equal(payload.surplus.quota.source, "not_reported");
   } finally {
     if (originalApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
     else Deno.env.set("SURPLUS_API_KEY", originalApiKey);
@@ -299,12 +302,7 @@ Deno.test("provider health coalesces identical quota observations without hiding
   kvStore.clear();
   resetProviderHealthThrottleForTest();
   atomicCommitCount = 0;
-  await Promise.all(
-    Array.from(
-      { length: 100 },
-      () => recordCodexProviderHealth("coalesced-account", "quota_exhausted", 429, () => 1_000),
-    ),
-  );
+  await Promise.all(Array.from({ length: 100 }, () => recordCodexProviderHealth("coalesced-account", "quota_exhausted", 429, () => 1_000)));
 
   const coalesced = await getCodexProviderHealth("coalesced-account", () => 1_001);
   assert.equal(coalesced.state, "exhausted");
@@ -341,7 +339,7 @@ Deno.test("public health is passive release provenance with zero upstream and KV
   let fetchCalls = 0;
   let kvCalls = 0;
   const originalFetch = globalThis.fetch;
-  const originalGet = kvStub.get;
+  const originalGet = kvStub.get.bind(kvStub);
   globalThis.fetch = () => {
     fetchCalls += 1;
     throw new Error("public health must not fetch");
@@ -352,8 +350,8 @@ Deno.test("public health is passive release provenance with zero upstream and KV
   };
 
   try {
-    const response = await handleHealth();
-    const payload = await response.json() as {
+    const response = handleHealth();
+    const payload = (await response.json()) as {
       status?: string;
       release?: { git_sha?: string; deployment_id?: string };
     };
@@ -386,16 +384,14 @@ Deno.test("obsolete auth health route is not exposed", async () => {
 });
 
 Deno.test("detailed provider health and recheck routes require admin authentication", async () => {
-  for (
-    const request of [
-      new Request("https://ai.ubq.fi/health/providers"),
-      new Request("https://ai.ubq.fi/health/upstream"),
-      new Request("https://ai.ubq.fi/admin/providers"),
-      new Request("https://ai.ubq.fi/admin/providers/codex/1/recheck", { method: "POST" }),
-      new Request("https://ai.ubq.fi/admin/providers/codex/cache-scope-experiment", { method: "GET" }),
-      new Request("https://ai.ubq.fi/admin/providers/codex/cache-scope-experiment", { method: "POST" }),
-    ]
-  ) {
+  for (const request of [
+    new Request("https://ai.ubq.fi/health/providers"),
+    new Request("https://ai.ubq.fi/health/upstream"),
+    new Request("https://ai.ubq.fi/admin/providers"),
+    new Request("https://ai.ubq.fi/admin/providers/codex/1/recheck", { method: "POST" }),
+    new Request("https://ai.ubq.fi/admin/providers/codex/cache-scope-experiment", { method: "GET" }),
+    new Request("https://ai.ubq.fi/admin/providers/codex/cache-scope-experiment", { method: "POST" }),
+  ]) {
     const response = await handler(request);
     assert.equal(response.status, 401);
   }
@@ -409,11 +405,11 @@ Deno.test("authenticated admin provider route is private and not cacheable", asy
     const response = await handler(
       new Request("https://ai.ubq.fi/admin/providers", {
         headers: { Authorization: `Bearer ${token}` },
-      }),
+      })
     );
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("Cache-Control"), "no-store");
-    const payload = await response.json() as { mode?: unknown };
+    const payload = (await response.json()) as { mode?: unknown };
     assert.equal(payload.mode, "passive");
   } finally {
     adminTokens.delete(token);
@@ -430,19 +426,16 @@ Deno.test("active upstream health retains detailed failure diagnostics", async (
       new Response("temporary error", {
         status: 503,
         headers: { "Content-Type": "text/plain" },
-      }),
+      })
     );
 
   try {
     const upstream = await handleHealthUpstream();
-    const upstreamPayload = await upstream.json() as Record<string, unknown>;
+    const upstreamPayload = (await upstream.json()) as Record<string, unknown>;
 
     assert.equal(upstream.status, 503);
     assert.equal(upstreamPayload.status, 503);
-    assert.equal(
-      (upstreamPayload.probes as { codex?: { provider?: string; status?: number } } | undefined)?.codex?.provider,
-      "chatgpt_codex",
-    );
+    assert.equal((upstreamPayload.probes as { codex?: { provider?: string; status?: number } } | undefined)?.codex?.provider, "chatgpt_codex");
     assert.equal((upstreamPayload.probes as { codex?: { status?: number } } | undefined)?.codex?.status, 503);
   } finally {
     globalThis.fetch = originalFetch;
@@ -457,11 +450,13 @@ Deno.test("active upstream health bounds malformed Codex auth metadata", async (
   const malformedRecords: unknown[] = [
     { tokens: { access_token: "legacy-access-token", refresh_token: "legacy-refresh-token" } },
     {
-      accounts: [{
-        access_token: "partial-access-token",
-        refresh_token: "partial-refresh-token",
-        account_id: "partial-account",
-      }],
+      accounts: [
+        {
+          access_token: "partial-access-token",
+          refresh_token: "partial-refresh-token",
+          account_id: "partial-account",
+        },
+      ],
       updated_at_ms: Date.now(),
     },
   ];
@@ -504,12 +499,13 @@ Deno.test("active upstream health preserves the provider that finishes before th
         reject(new Error("health probe did not pass an abort signal"));
         return;
       }
-      const rejectWithReason = () => reject(signal.reason);
+      const rejectWithReason = () => {
+        reject(new Error("health probe fetch was aborted", { cause: signal.reason }));
+      };
       if (signal.aborted) rejectWithReason();
       else signal.addEventListener("abort", rejectWithReason, { once: true });
     });
-  const jsonResponse = (value: unknown): Response =>
-    new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
+  const jsonResponse = (value: unknown): Response => new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
 
   try {
     for (const stalledProvider of ["codex", "metered"] as const) {
@@ -523,21 +519,23 @@ Deno.test("active upstream health preserves the provider that finishes before th
         }
         if (isCodex) return Promise.resolve(jsonResponse({ models: [{ slug: "gpt-health" }] }));
         if (url.pathname === "/api/usage/token/") {
-          return Promise.resolve(jsonResponse({
-            success: true,
-            data: {
-              total_available: 1_000_000,
-              total_granted: 1_000_000,
-              total_used: 10,
-              unlimited_quota: false,
-            },
-          }));
+          return Promise.resolve(
+            jsonResponse({
+              success: true,
+              data: {
+                total_available: 1_000_000,
+                total_granted: 1_000_000,
+                total_used: 10,
+                unlimited_quota: false,
+              },
+            })
+          );
         }
-        throw new Error(`Unexpected Metered URL: ${url}`);
+        throw new Error(`Unexpected Metered URL: ${url.href}`);
       };
 
       const response = await handleHealthUpstream();
-      const payload = await response.json() as {
+      const payload = (await response.json()) as {
         probes?: {
           codex?: { status?: number; error?: string };
           metered_quota?: { status?: number; error?: string } | null;
@@ -546,12 +544,12 @@ Deno.test("active upstream health preserves the provider that finishes before th
       assert.equal(response.status, 503, stalledProvider);
       if (stalledProvider === "codex") {
         assert.equal(payload.probes?.codex?.status, 503);
-        assert.equal(payload.probes?.codex?.error, "Codex models probe timed out.");
-        assert.equal(payload.probes?.metered_quota?.status, 200);
+        assert.equal(payload.probes.codex.error, "Codex models probe timed out.");
+        assert.equal(payload.probes.metered_quota?.status, 200);
       } else {
         assert.equal(payload.probes?.codex?.status, 200);
-        assert.equal(payload.probes?.metered_quota?.status, 503);
-        assert.equal(payload.probes?.metered_quota?.error, "Metered quota probe timed out.");
+        assert.equal(payload.probes.metered_quota?.status, 503);
+        assert.equal(payload.probes.metered_quota.error, "Metered quota probe timed out.");
       }
     }
   } finally {

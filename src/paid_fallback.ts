@@ -39,24 +39,18 @@ export type PaidFallbackReservation = Readonly<{
 export type PaidFallbackReservationDecision =
   | { kind: "reserved"; reservation: PaidFallbackReservation }
   | {
-    kind: "skip";
-    reason: "disabled" | "provider_unconfigured" | "model_not_priced";
-  }
+      kind: "skip";
+      reason: "disabled" | "provider_unconfigured" | "model_not_priced";
+    }
   | {
-    kind: "blocked";
-    reason: "limit_exceeded" | "reconciliation_pending" | "invalid_policy" | "concurrent_update";
-    reset_at_ms: number | null;
-  };
+      kind: "blocked";
+      reason: "limit_exceeded" | "reconciliation_pending" | "invalid_policy" | "concurrent_update";
+      reset_at_ms: number | null;
+    };
 
-type PaidFallbackEligibility =
-  | { kind: "eligible"; unlimited: boolean }
-  | Exclude<PaidFallbackReservationDecision, { kind: "reserved" }>;
+type PaidFallbackEligibility = { kind: "eligible"; unlimited: boolean } | Exclude<PaidFallbackReservationDecision, { kind: "reserved" }>;
 
-const evaluatePaidFallbackEligibility = (
-  record: ApiKeyRecord,
-  model: string,
-  allowUnrosteredModel = false,
-): PaidFallbackEligibility => {
+const evaluatePaidFallbackEligibility = (record: ApiKeyRecord, model: string, allowUnrosteredModel = false): PaidFallbackEligibility => {
   if (!record.paid_fallback_enabled) return { kind: "skip", reason: "disabled" };
   const unlimited = record.paid_fallback_limit_microcredits === PAID_FALLBACK_NO_LIMIT;
   if (!record.paid_fallback_model_ids.includes(model)) {
@@ -88,20 +82,15 @@ export const defaultPaidFallbackPolicy = (): PaidFallbackPolicyFields => ({
   paid_fallback_pricing_checked_at_ms: null,
 });
 
-const isNonNegativeSafeInteger = (value: unknown): value is number =>
-  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+const isNonNegativeSafeInteger = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
-const isNonNegativeFiniteNumber = (value: unknown): value is number =>
-  typeof value === "number" && Number.isFinite(value) && value >= 0;
+const isNonNegativeFiniteNumber = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0;
 
-const isPositiveSafeInteger = (value: unknown): value is number =>
-  typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+const isPositiveSafeInteger = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 
-const isPaidFallbackLimit = (value: unknown): value is number =>
-  value === PAID_FALLBACK_NO_LIMIT || isNonNegativeSafeInteger(value);
+const isPaidFallbackLimit = (value: unknown): value is number => value === PAID_FALLBACK_NO_LIMIT || isNonNegativeSafeInteger(value);
 
-const isNullableString = (value: unknown): value is string | null =>
-  value === null || (typeof value === "string" && value.trim().length > 0);
+const isNullableString = (value: unknown): value is string | null => value === null || (typeof value === "string" && value.trim().length > 0);
 
 export const hasStrictPaidFallbackPolicy = (value: unknown): boolean => {
   if (!isRecord(value)) return false;
@@ -118,17 +107,11 @@ export const hasStrictPaidFallbackPolicy = (value: unknown): boolean => {
 
 export const hasStrictPaidFallbackKeyPolicy = (value: unknown): boolean => {
   if (!hasStrictPaidFallbackPolicy(value) || !isRecord(value)) return false;
-  if (
-    !Array.isArray(value.paid_fallback_model_ids) ||
-    value.paid_fallback_model_ids.some((model) => typeof model !== "string" || !model.trim())
-  ) {
+  if (!Array.isArray(value.paid_fallback_model_ids) || value.paid_fallback_model_ids.some((model) => typeof model !== "string" || !model.trim())) {
     return false;
   }
   if (!isNonNegativeSafeInteger(value.paid_fallback_quota_per_credit)) return false;
-  if (
-    value.paid_fallback_pricing_checked_at_ms !== null &&
-    !isPositiveSafeInteger(value.paid_fallback_pricing_checked_at_ms)
-  ) {
+  if (value.paid_fallback_pricing_checked_at_ms !== null && !isPositiveSafeInteger(value.paid_fallback_pricing_checked_at_ms)) {
     return false;
   }
   if (value.paid_fallback_enabled) {
@@ -139,7 +122,9 @@ export const hasStrictPaidFallbackKeyPolicy = (value: unknown): boolean => {
   return true;
 };
 
-export const paidFallbackHashFields = (record: ApiKeyRecord): Pick<
+export const paidFallbackHashFields = (
+  record: ApiKeyRecord
+): Pick<
   ApiKeyHashRecord,
   | "paid_fallback_enabled"
   | "paid_fallback_limit_microcredits"
@@ -154,21 +139,26 @@ export const paidFallbackHashFields = (record: ApiKeyRecord): Pick<
   paid_fallback_reservation_request_id: record.paid_fallback_reservation_request_id,
 });
 
-export const initializePaidFallbackPolicy = async (signal?: AbortSignal): Promise<
+/**
+ * Maximum gateway exposure for one priced model, or null when that model's
+ * pricing inputs cannot produce a finite, positive credit bound.
+ */
+const maximumExposureForModel = (context: number | undefined, coefficient: number | undefined, quotaPerCredit: number): number | null => {
+  if (!context || typeof coefficient !== "number" || !Number.isFinite(coefficient) || coefficient <= 0) return null;
+  const exposure = Math.ceil((context * coefficient * MICROCREDITS_PER_CREDIT) / quotaPerCredit);
+  return Number.isSafeInteger(exposure) && exposure > 0 ? exposure : null;
+};
+
+export const initializePaidFallbackPolicy = async (
+  signal?: AbortSignal
+): Promise<
   Pick<
     PaidFallbackPolicyFields,
-    | "paid_fallback_model_ids"
-    | "paid_fallback_quota_per_credit"
-    | "paid_fallback_pricing_checked_at_ms"
-    | "paid_fallback_max_exposure_microcredits"
+    "paid_fallback_model_ids" | "paid_fallback_quota_per_credit" | "paid_fallback_pricing_checked_at_ms" | "paid_fallback_max_exposure_microcredits"
   >
 > => {
   if (!readMeteredApiKey() && !readSurplusApiKey()) {
-    throw new MeteredError(
-      "Metered paid fallback cannot be enabled because no paid provider API key is configured.",
-      "metered_api_key_missing",
-      503,
-    );
+    throw new MeteredError("Metered paid fallback cannot be enabled because no paid provider API key is configured.", "metered_api_key_missing", 503);
   }
 
   // The compact runtime catalog intentionally omits context bounds to fit one
@@ -183,41 +173,28 @@ export const initializePaidFallbackPolicy = async (signal?: AbortSignal): Promis
     if (!normalized || seen.has(normalized)) continue;
     seen.add(normalized);
     modelIds.push(normalized);
-    const context = [model.context_window, model.max_context_window, model.auto_compact_token_limit]
-      .filter((value): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0);
+    const context = [model.context_window, model.max_context_window, model.auto_compact_token_limit].filter(
+      (value): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0
+    );
     if (context.length) contextByModel.set(normalized, Math.max(...context));
   }
   if (!modelIds.length) {
-    throw new MeteredError(
-      "Metered paid fallback cannot be enabled before the Codex model catalog is initialized.",
-      "metered_pricing_invalid",
-      503,
-    );
+    throw new MeteredError("Metered paid fallback cannot be enabled before the Codex model catalog is initialized.", "metered_pricing_invalid", 503);
   }
 
   const pricing = await initializeMeteredPricing({ codexModelIds: modelIds, signal });
   if (!pricing.eligible_model_ids.length) {
-    throw new MeteredError(
-      "Metered paid fallback found no priced models in the current Codex catalog.",
-      "metered_pricing_invalid",
-      503,
-    );
+    throw new MeteredError("Metered paid fallback found no priced models in the current Codex catalog.", "metered_pricing_invalid", 503);
   }
   const maximumExposure: Record<string, number> = {};
   for (const model of pricing.eligible_model_ids) {
-    const context = contextByModel.get(model);
-    const coefficient = pricing.model_quota_coefficients[model];
-    if (!context || !Number.isFinite(coefficient) || coefficient <= 0) continue;
-    const exposure = Math.ceil(context * coefficient * MICROCREDITS_PER_CREDIT / pricing.quota_per_credit);
-    if (Number.isSafeInteger(exposure) && exposure > 0) maximumExposure[model] = exposure;
+    const exposure = maximumExposureForModel(contextByModel.get(model), pricing.model_quota_coefficients[model], pricing.quota_per_credit);
+    if (exposure === null) continue;
+    maximumExposure[model] = exposure;
   }
   const missingExposure = pricing.eligible_model_ids.some((model) => !isPositiveSafeInteger(maximumExposure[model]));
   if (missingExposure) {
-    throw new MeteredError(
-      "Metered paid fallback cannot be enabled because a priced Codex model has no finite context bound.",
-      "metered_pricing_invalid",
-      503,
-    );
+    throw new MeteredError("Metered paid fallback cannot be enabled because a priced Codex model has no finite context bound.", "metered_pricing_invalid", 503);
   }
   return {
     paid_fallback_model_ids: [...pricing.eligible_model_ids],
@@ -232,10 +209,7 @@ type PaidFallbackPolicyEntry = Readonly<{
   check: Readonly<{ key: Deno.KvKey; versionstamp: string | null }>;
 }>;
 
-const loadStrictKeyRecord = async (
-  kv: Deno.Kv,
-  keyId: string,
-): Promise<PaidFallbackPolicyEntry | null> => {
+const loadStrictKeyRecord = async (kv: Deno.Kv, keyId: string): Promise<PaidFallbackPolicyEntry | null> => {
   const idEntry = await kv.get<ApiKeyRecord>(apiKeyIdKey(keyId), { consistency: "strong" });
   if (!idEntry.value || !hasStrictPaidFallbackKeyPolicy(idEntry.value)) return null;
   return {
@@ -262,11 +236,8 @@ export const reservePaidFallback = async (
     stream: boolean;
     reasoning: string | null;
     allowUnrosteredModel?: boolean;
-    reason:
-      | "primary_429"
-      | "primary_quota_blocked"
-      | "dynamic_paid_model";
-  }>,
+    reason: "primary_429" | "primary_quota_blocked" | "dynamic_paid_model";
+  }>
 ): Promise<PaidFallbackReservationDecision> => {
   const kv = await getKv();
   if (!kv) return { kind: "blocked", reason: "invalid_policy", reset_at_ms: null };
@@ -307,7 +278,7 @@ export const recordMeteredUpstreamResponse = async (
   reservation: PaidFallbackReservation,
   _response: Response,
   providerRequestId: string | null,
-  provider: PaidFallbackProvider = "metered",
+  provider: PaidFallbackProvider = "metered"
 ): Promise<void> => {
   await updatePaidFallbackRequestV3(reservation, {
     provider,
@@ -319,7 +290,7 @@ export const recordMeteredUpstreamResponse = async (
 export const recordMeteredAmbiguousFailure = async (
   reservation: PaidFallbackReservation,
   provider: PaidFallbackProvider = "metered",
-  providerRequestId: string | null = null,
+  providerRequestId: string | null = null
 ): Promise<void> => {
   await updatePaidFallbackRequestV3(reservation, {
     provider,
@@ -329,22 +300,18 @@ export const recordMeteredAmbiguousFailure = async (
   await markPaidFallbackTerminalV3(reservation, "ambiguous");
 };
 
-export const recordMeteredUndispatchedCancellation = async (
-  reservation: PaidFallbackReservation,
-): Promise<void> => {
+export const recordMeteredUndispatchedCancellation = async (reservation: PaidFallbackReservation): Promise<void> => {
   await releasePaidFallbackBeforeProviderFetchV3(reservation);
 };
 
-export const recordMeteredPrefetchCancellation = async (
-  reservation: PaidFallbackReservation,
-): Promise<void> => {
+export const recordMeteredPrefetchCancellation = async (reservation: PaidFallbackReservation): Promise<void> => {
   await releasePaidFallbackBeforeProviderFetchV3(reservation);
 };
 
 export const recordMeteredTerminal = async (
   reservation: PaidFallbackReservation,
   terminalState: "completed" | "failed" | "incomplete" | "cancelled" | "ambiguous",
-  provider: PaidFallbackProvider = "metered",
+  provider: PaidFallbackProvider = "metered"
 ): Promise<void> => {
   await markPaidFallbackTerminalV3(reservation, terminalState, provider);
 };
@@ -375,27 +342,35 @@ export const recordSurplusUsage = async (
   settlementRequestId: string,
   model: string,
   usage: SurplusUsage,
-  pricing: SurplusBillingPricing,
+  pricing: SurplusBillingPricing
 ): Promise<void> => {
   if (
-    !settlementRequestId.trim() || !model.trim() ||
+    !settlementRequestId.trim() ||
+    !model.trim() ||
     !isNonNegativeSafeInteger(usage.input_tokens) ||
     !isNonNegativeSafeInteger(usage.output_tokens) ||
     !isNonNegativeFiniteNumber(pricing.input_price_per_token) ||
     !isNonNegativeFiniteNumber(pricing.output_price_per_token)
-  ) return;
-  const cachedInputTokens = usage.cached_input_tokens === null ? 0 : usage.cached_input_tokens;
-  const cacheWriteInputTokens = usage.cache_write_input_tokens === null ? 0 : usage.cache_write_input_tokens;
+  )
+    return;
+  // Absent cache counters settle as zero; non-null counts keep their exact value.
+  const cachedInputTokens = usage.cached_input_tokens ?? 0;
+  const cacheWriteInputTokens = usage.cache_write_input_tokens ?? 0;
   if (
-    !isNonNegativeSafeInteger(cachedInputTokens) || cachedInputTokens > usage.input_tokens ||
-    !isNonNegativeSafeInteger(cacheWriteInputTokens) || cacheWriteInputTokens > usage.input_tokens
-  ) return;
+    !isNonNegativeSafeInteger(cachedInputTokens) ||
+    cachedInputTokens > usage.input_tokens ||
+    !isNonNegativeSafeInteger(cacheWriteInputTokens) ||
+    cacheWriteInputTokens > usage.input_tokens
+  )
+    return;
   const uncachedInputTokens = usage.input_tokens - cachedInputTokens;
   const cacheReadPrice = pricing.cache_read_price_per_token ?? pricing.input_price_per_token;
   const cacheWritePrice = pricing.cache_write_price_per_token ?? pricing.input_price_per_token;
   if (!isNonNegativeFiniteNumber(cacheReadPrice) || !isNonNegativeFiniteNumber(cacheWritePrice)) return;
-  const chargedCredits = uncachedInputTokens * pricing.input_price_per_token +
-    cachedInputTokens * cacheReadPrice + cacheWriteInputTokens * cacheWritePrice +
+  const chargedCredits =
+    uncachedInputTokens * pricing.input_price_per_token +
+    cachedInputTokens * cacheReadPrice +
+    cacheWriteInputTokens * cacheWritePrice +
     usage.output_tokens * pricing.output_price_per_token;
   const providerQuota = Math.round(chargedCredits * reservation.quota_per_credit);
   if (!Number.isSafeInteger(providerQuota) || providerQuota < 0) return;

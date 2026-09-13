@@ -8,7 +8,8 @@ Deno.test({
   name: "fixture: shell writes cannot escape the disposable workspace",
   ignore: Deno.build.os !== "darwin" && Deno.build.os !== "linux",
   async fn() {
-    const task = loadTasks(TASKS_DIR).find((candidate) => candidate.id === "nav-001")!;
+    const task = loadTasks(TASKS_DIR).find((candidate) => candidate.id === "nav-001");
+    if (!task) throw new Error("fixture test requires the nav-001 benchmark task manifest");
     const tmpParent = Deno.makeTempDirSync({ dir: `${Deno.cwd()}/benchmark-runs` });
     const outside = Deno.makeTempDirSync({ dir: `${Deno.cwd()}/benchmark-runs` });
     const workspace = new FixtureWorkspace({
@@ -24,7 +25,7 @@ Deno.test({
       }).output();
       if (link.code !== 0) throw new Error("failed to create the escape-test symlink");
       const inside = await workspace.execShell("touch inside-workspace", 20_000);
-      if (inside.code !== 0 || !await exists(`${workspace.root}/inside-workspace`)) {
+      if (inside.code !== 0 || !(await exists(`${workspace.root}/inside-workspace`))) {
         throw new Error(`sandbox rejected an in-workspace write: ${inside.stderr}`);
       }
 
@@ -32,7 +33,7 @@ Deno.test({
       const symlink = await workspace.execShell("touch escape-link/symlink-escape", 20_000);
 
       if (absolute.code === 0 || symlink.code === 0) throw new Error("expected the attempted host writes to fail");
-      if (await exists(`${outside}/absolute-escape`) || await exists(`${outside}/symlink-escape`)) {
+      if ((await exists(`${outside}/absolute-escape`)) || (await exists(`${outside}/symlink-escape`))) {
         throw new Error("sandbox allowed a write outside the disposable workspace");
       }
     } finally {

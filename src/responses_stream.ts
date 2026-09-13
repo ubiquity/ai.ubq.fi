@@ -1,12 +1,7 @@
 import { getString, isRecord } from "./utils.ts";
 import { STREAM_FIRST_EVENT_DEADLINE_MS, STREAM_INACTIVITY_DEADLINE_MS } from "./inference_deadline.ts";
 
-export const RESPONSES_TERMINAL_EVENT_TYPES = new Set([
-  "error",
-  "response.completed",
-  "response.failed",
-  "response.incomplete",
-]);
+export const RESPONSES_TERMINAL_EVENT_TYPES = new Set(["error", "response.completed", "response.failed", "response.incomplete"]);
 
 export type ResponsesStreamEvent = Readonly<{
   raw: string;
@@ -16,13 +11,7 @@ export type ResponsesStreamEvent = Readonly<{
 }>;
 
 export type ResponsesStreamFailureKind =
-  | "malformed_event"
-  | "premature_eof"
-  | "read_error"
-  | "inactivity_timeout"
-  | "event_too_large"
-  | "upstream_http_5xx"
-  | "empty_upstream_completion";
+  "malformed_event" | "premature_eof" | "read_error" | "inactivity_timeout" | "event_too_large" | "upstream_http_5xx" | "empty_upstream_completion";
 
 export const MAX_RESPONSES_SSE_EVENT_BYTES = 16 * 1024 * 1024;
 
@@ -79,13 +68,14 @@ const parseEventBlock = (raw: string): ResponsesStreamEvent | null => {
     });
   }
   const hasNestedError = Object.prototype.hasOwnProperty.call(value, "error");
-  const isFlatError = (value.code === null || (typeof value.code === "string" && value.code.trim())) &&
-    typeof value.message === "string" && value.message.trim() &&
+  const isFlatError =
+    (value.code === null || (typeof value.code === "string" && value.code.trim())) &&
+    typeof value.message === "string" &&
+    value.message.trim() &&
     (value.param === null || typeof value.param === "string");
   if (
     (type === "error" && (hasNestedError ? !isRecord(value.error) || Array.isArray(value.error) : !isFlatError)) ||
-    (type !== "error" && RESPONSES_TERMINAL_EVENT_TYPES.has(type) &&
-      (!isRecord(value.response) || Array.isArray(value.response)))
+    (type !== "error" && RESPONSES_TERMINAL_EVENT_TYPES.has(type) && (!isRecord(value.response) || Array.isArray(value.response)))
   ) {
     throw new ResponsesStreamError("Upstream emitted a Responses terminal event with an invalid payload.", {
       kind: "malformed_event",
@@ -94,117 +84,156 @@ const parseEventBlock = (raw: string): ResponsesStreamEvent | null => {
   return { raw, value, type, terminal: RESPONSES_TERMINAL_EVENT_TYPES.has(type) };
 };
 
-export const readResponsesStream = async function* (
-  stream: ReadableStream<Uint8Array>,
-  signal?: AbortSignal,
-  options: Readonly<{
-    firstEventTimeoutMs?: number;
-    inactivityTimeoutMs?: number;
-    /** Runs for every non-empty raw read, including comments and partial SSE frames. */
-    onActivity?: () => void | Promise<void>;
-  }> = {},
-): ResponsesStreamIterator {
-  const reader = stream.getReader();
-  const decoder = new TextDecoder();
-  // The event buffer grows geometrically and never exceeds the protocol's
-  // ceiling. Unlike a string accumulator, this neither re-encodes every
-  // fragmented event nor allocates an unbounded intermediate string.
-  let eventBuffer = new Uint8Array(Math.min(4_096, MAX_RESPONSES_SSE_EVENT_BYTES));
-  let eventLength = 0;
+/**
+ * Incremental SSE framing state. Bytes accumulate into a reusable buffer that
+ * grows geometrically and never exceeds the protocol's ceiling; complete
+ * blocks are handed back one at a time so the reader can yield between them.
+ * Unlike a string accumulator, this neither re-encodes every fragmented event
+ * nor allocates an unbounded intermediate string.
+ */
+type SseEventFramer = Readonly<{
+  /** Raw text of every complete SSE block found in `chunk`, in wire order. */
+  frames(chunk: Uint8Array): Generator<string, void, unknown>;
+  /** Raw text of the trailing block that never received a closing boundary. */
+  flush(): string;
+  /** True while bytes belonging to an incomplete block are buffered. */
+  hasPending(): boolean;
+}>;
+
+const createSseEventFramer = (decoder: TextDecoder): SseEventFramer => {
+  let buffer = new Uint8Array(Math.min(4_096, MAX_RESPONSES_SSE_EVENT_BYTES));
+  let length = 0;
   let thirdPreviousByte = -1;
   let secondPreviousByte = -1;
   let previousByte = -1;
-  let terminal = false;
-  let readerDone = false;
-  let cancelStarted = false;
-  const cancelReaderOnce = (reason: unknown): void => {
-    if (cancelStarted || readerDone) return;
-    cancelStarted = true;
-    void reader.cancel(reason).catch(() => {});
-  };
-  const abort = () => cancelReaderOnce(signal?.reason);
-  signal?.addEventListener("abort", abort, { once: true });
-  let sawEvent = false;
-  const firstEventDeadlineAtMs = Date.now() + (options.firstEventTimeoutMs ?? STREAM_FIRST_EVENT_DEADLINE_MS);
-  const oversizedEvent = (): ResponsesStreamError =>
+
+  const oversized = (): ResponsesStreamError =>
     new ResponsesStreamError("Upstream emitted an oversized Responses SSE event.", {
       kind: "event_too_large",
     });
-  const appendEventBytes = (value: Uint8Array): void => {
-    const nextLength = eventLength + value.byteLength;
-    if (nextLength > MAX_RESPONSES_SSE_EVENT_BYTES) throw oversizedEvent();
-    if (nextLength > eventBuffer.byteLength) {
-      const nextCapacity = Math.min(
-        MAX_RESPONSES_SSE_EVENT_BYTES,
-        Math.max(nextLength, eventBuffer.byteLength * 2),
-      );
+
+  const append = (value: Uint8Array): void => {
+    const nextLength = length + value.byteLength;
+    if (nextLength > MAX_RESPONSES_SSE_EVENT_BYTES) throw oversized();
+    if (nextLength > buffer.byteLength) {
+      const nextCapacity = Math.min(MAX_RESPONSES_SSE_EVENT_BYTES, Math.max(nextLength, buffer.byteLength * 2));
       const next = new Uint8Array(nextCapacity);
-      next.set(eventBuffer.subarray(0, eventLength));
-      eventBuffer = next;
+      next.set(buffer.subarray(0, length));
+      buffer = next;
     }
-    eventBuffer.set(value, eventLength);
-    eventLength = nextLength;
+    buffer.set(value, length);
+    length = nextLength;
   };
-  const takeEvent = (): string => {
-    const raw = decoder.decode(eventBuffer.subarray(0, eventLength));
-    eventLength = 0;
+
+  const take = (): string => {
+    const raw = decoder.decode(buffer.subarray(0, length));
+    length = 0;
     thirdPreviousByte = -1;
     secondPreviousByte = -1;
     previousByte = -1;
     return raw;
   };
-  const isEventBoundary = (byte: number): boolean => {
+
+  const isBoundary = (byte: number): boolean => {
     // CRLF is one line terminator. The CR in CRLFCRLF must not terminate
     // early, while mixed LF+CRLF framing (\n\r\n) must still split.
     if (byte === 10) {
-      return previousByte === 10 ||
-        (previousByte === 13 && thirdPreviousByte === 13 && secondPreviousByte === 10);
+      return previousByte === 10 || (previousByte === 13 && thirdPreviousByte === 13 && secondPreviousByte === 10);
     }
     if (byte !== 13) return false;
     if (previousByte === 13) return true;
     return previousByte === 10 && secondPreviousByte !== 13;
   };
+
   const advanceBoundaryState = (byte: number): void => {
     thirdPreviousByte = secondPreviousByte;
     secondPreviousByte = previousByte;
     previousByte = byte;
   };
-  const markParsedEvent = (parsed: ResponsesStreamEvent): void => {
-    sawEvent = true;
-    if (parsed.terminal) {
-      terminal = true;
-      cancelReaderOnce("Responses terminal event received");
+
+  const ensurePendingWithinLimit = (pendingBytes: number): void => {
+    if (length + pendingBytes > MAX_RESPONSES_SSE_EVENT_BYTES) throw oversized();
+  };
+
+  function* frames(chunk: Uint8Array): Generator<string, void, unknown> {
+    let segmentStart = 0;
+    for (let index = 0; index < chunk.byteLength; index += 1) {
+      const byte = chunk[index];
+      ensurePendingWithinLimit(index - segmentStart + 1);
+      if (!isBoundary(byte)) {
+        advanceBoundaryState(byte);
+        continue;
+      }
+      append(chunk.subarray(segmentStart, index + 1));
+      segmentStart = index + 1;
+      yield take();
     }
+    if (segmentStart < chunk.byteLength) append(chunk.subarray(segmentStart));
+  }
+
+  return { frames, flush: take, hasPending: () => length > 0 };
+};
+
+const EMPTY_CHUNK = new Uint8Array(0);
+
+type ResponsesStreamChunk = Readonly<{
+  /** Bytes carried by one upstream read; empty when the read carried none. */
+  bytes: Uint8Array;
+  /** True when the upstream reader reported that the stream ended. */
+  done: boolean;
+}>;
+
+type ResponsesStreamSession = Readonly<{
+  nextChunk(): Promise<ResponsesStreamChunk>;
+  /** Complete events framed by `bytes`, in wire order. */
+  takeEvents(bytes: Uint8Array): Generator<ResponsesStreamEvent, void, unknown>;
+  /** Trailing event of a stream that ended without a closing boundary. */
+  takeTrailingEvent(): ResponsesStreamEvent | null;
+  cancel(reason: unknown): void;
+  /** Releases the upstream reader, cancelling it when no terminal event arrived. */
+  dispose(): void;
+}>;
+
+const createResponsesStreamSession = (
+  stream: ReadableStream<Uint8Array>,
+  signal: AbortSignal | undefined,
+  options: Readonly<{
+    firstEventTimeoutMs?: number;
+    inactivityTimeoutMs?: number;
+    /** Runs for every non-empty raw read, including comments and partial SSE frames. */
+    onActivity?: () => void | Promise<void>;
+  }>
+): ResponsesStreamSession => {
+  const reader = stream.getReader();
+  const framer = createSseEventFramer(new TextDecoder());
+  let readerDone = false;
+  let cancelStarted = false;
+  let sawEvent = false;
+  const cancelReaderOnce = (reason: unknown): void => {
+    if (cancelStarted || readerDone) return;
+    cancelStarted = true;
+    void reader.cancel(reason).catch(() => {});
   };
-  const processTrailingEvent = (): ResponsesStreamEvent | null => {
-    if (!eventLength) return null;
-    const parsed = parseEventBlock(takeEvent());
-    if (parsed) markParsedEvent(parsed);
-    return parsed;
+  const abort = (): void => {
+    cancelReaderOnce(signal?.reason);
   };
-  const ensurePendingSegmentWithinLimit = (pendingBytes: number): void => {
-    if (eventLength + pendingBytes > MAX_RESPONSES_SSE_EVENT_BYTES) {
-      throw new ResponsesStreamError("Upstream emitted an oversized Responses SSE event.", {
-        kind: "event_too_large",
-      });
-    }
-  };
+  signal?.addEventListener("abort", abort, { once: true });
+  const firstEventDeadlineAtMs = Date.now() + (options.firstEventTimeoutMs ?? STREAM_FIRST_EVENT_DEADLINE_MS);
   const readWithDeadline = async (): Promise<ReadableStreamReadResult<Uint8Array>> => {
-    const timeoutMs = sawEvent
-      ? options.inactivityTimeoutMs ?? STREAM_INACTIVITY_DEADLINE_MS
-      : Math.max(0, firstEventDeadlineAtMs - Date.now());
+    const timeoutMs = sawEvent ? (options.inactivityTimeoutMs ?? STREAM_INACTIVITY_DEADLINE_MS) : Math.max(0, firstEventDeadlineAtMs - Date.now());
     const timeout = AbortSignal.timeout(timeoutMs);
     let abortTimeout = (): void => {};
     try {
       return await Promise.race([
         reader.read(),
         new Promise<never>((_, reject) => {
-          abortTimeout = () =>
+          abortTimeout = () => {
             reject(
               new ResponsesStreamError("Upstream Responses stream became inactive.", {
                 kind: "inactivity_timeout",
-              }),
+              })
             );
+          };
           timeout.addEventListener("abort", abortTimeout, { once: true });
         }),
       ]);
@@ -212,60 +241,96 @@ export const readResponsesStream = async function* (
       timeout.removeEventListener("abort", abortTimeout);
     }
   };
-  try {
-    while (!terminal) {
-      if (signal?.aborted) throw signal.reason;
-      const { value, done } = await readWithDeadline();
-      if (signal?.aborted) throw signal.reason;
-      readerDone = done;
-      if (value?.byteLength) {
-        await options.onActivity?.();
-        if (signal?.aborted) throw signal.reason;
-        let segmentStart = 0;
-        for (let index = 0; index < value.byteLength; index += 1) {
-          const byte = value[index]!;
-          ensurePendingSegmentWithinLimit(index - segmentStart + 1);
-          if (!isEventBoundary(byte)) {
-            advanceBoundaryState(byte);
-            continue;
-          }
-          appendEventBytes(value.subarray(segmentStart, index + 1));
-          segmentStart = index + 1;
-          const parsed = parseEventBlock(takeEvent());
-          if (!parsed) continue;
-          markParsedEvent(parsed);
-          yield parsed;
-          if (parsed.terminal) return;
-        }
-        if (segmentStart < value.byteLength) appendEventBytes(value.subarray(segmentStart));
-      }
-      if (done) {
-        const parsed = processTrailingEvent();
-        if (parsed) {
-          yield parsed;
-          if (parsed.terminal) return;
-        }
-        throw new ResponsesStreamError("Upstream Responses stream ended before a terminal event.", {
-          kind: "premature_eof",
-        });
-      }
+  const markParsedEvent = (parsed: ResponsesStreamEvent): void => {
+    sawEvent = true;
+    if (parsed.terminal) cancelReaderOnce("Responses terminal event received");
+  };
+  function* takeEvents(bytes: Uint8Array): Generator<ResponsesStreamEvent, void, unknown> {
+    for (const frame of framer.frames(bytes)) {
+      const parsed = parseEventBlock(frame);
+      if (!parsed) continue;
+      markParsedEvent(parsed);
+      yield parsed;
     }
+  }
+  const takeTrailingEvent = (): ResponsesStreamEvent | null => {
+    if (!framer.hasPending()) return null;
+    const parsed = parseEventBlock(framer.flush());
+    if (!parsed) return null;
+    markParsedEvent(parsed);
+    return parsed;
+  };
+  const nextChunk = async (): Promise<ResponsesStreamChunk> => {
+    if (signal?.aborted) throw signal.reason;
+    const { value, done } = await readWithDeadline();
+    if (signal?.aborted) throw signal.reason;
+    readerDone = done;
+    const bytes = value ?? EMPTY_CHUNK;
+    if (!bytes.byteLength) return { bytes, done };
+    await options.onActivity?.();
+    if (signal?.aborted) throw signal.reason;
+    return { bytes, done };
+  };
+  const dispose = (): void => {
+    signal?.removeEventListener("abort", abort);
+    if (!readerDone) cancelReaderOnce("Responses stream consumer stopped before a terminal event");
+    reader.releaseLock();
+  };
+  return { nextChunk, takeEvents, takeTrailingEvent, cancel: cancelReaderOnce, dispose };
+};
+
+/**
+ * Forwards upstream events until a terminal one has been yielded, and reports
+ * whether that happened. `markParsedEvent` closes the reader as soon as it sees
+ * a terminal event, so `false` always means the upstream stream ended early.
+ */
+async function* consumeResponsesStream(session: ResponsesStreamSession): AsyncGenerator<ResponsesStreamEvent, boolean, unknown> {
+  for (;;) {
+    const { bytes, done } = await session.nextChunk();
+    for (const parsed of session.takeEvents(bytes)) {
+      yield parsed;
+      if (parsed.terminal) return true;
+    }
+    if (done) break;
+  }
+  const trailing = session.takeTrailingEvent();
+  if (trailing) {
+    yield trailing;
+    if (trailing.terminal) return true;
+  }
+  return false;
+}
+
+export async function* readResponsesStream(
+  stream: ReadableStream<Uint8Array>,
+  signal?: AbortSignal,
+  options: Readonly<{
+    firstEventTimeoutMs?: number;
+    inactivityTimeoutMs?: number;
+    /** Runs for every non-empty raw read, including comments and partial SSE frames. */
+    onActivity?: () => void | Promise<void>;
+  }> = {}
+): ResponsesStreamIterator {
+  const session = createResponsesStreamSession(stream, signal, options);
+  try {
+    if (yield* consumeResponsesStream(session)) return;
+    throw new ResponsesStreamError("Upstream Responses stream ended before a terminal event.", {
+      kind: "premature_eof",
+    });
   } catch (error) {
-    cancelReaderOnce(error);
+    session.cancel(error);
     if (signal?.aborted) throw signal.reason;
     if (error instanceof ResponsesStreamError) throw error;
     throw new ResponsesStreamError("Upstream Responses stream could not be read.", { cause: error });
   } finally {
-    signal?.removeEventListener("abort", abort);
-    if (!terminal && !readerDone) cancelReaderOnce("Responses stream consumer stopped before a terminal event");
-    reader.releaseLock();
+    session.dispose();
   }
-};
+}
 
 export const preflightResponsesStream = async (
   upstream: ReadableStream<Uint8Array>,
   signal?: AbortSignal,
-  options: Readonly<{ onActivity?: () => void | Promise<void> }> = {},
+  options: Readonly<{ onActivity?: () => void | Promise<void> }> = {}
 ): Promise<PreflightedResponsesStream> => {
   const cancellation = new AbortController();
   const streamSignal = signal ? AbortSignal.any([signal, cancellation.signal]) : cancellation.signal;
@@ -276,13 +341,14 @@ export const preflightResponsesStream = async (
   };
   try {
     const next = await iterator.next();
-    if (next.done || !next.value) {
+    const first: ResponsesStreamEvent | undefined = next.done ? undefined : next.value;
+    if (!first) {
       throw new ResponsesStreamError("Upstream Responses stream ended before its first event.", {
         kind: "premature_eof",
       });
     }
     return {
-      first: next.value,
+      first,
       iterator,
       cancel,
     };
@@ -316,11 +382,15 @@ type ProxyResponsesStreamOptions = Readonly<{
 export const proxyResponsesStreamIterator = (
   iterator: ResponsesStreamIterator,
   options: ProxyResponsesStreamOptions = {},
-  initialEvent?: ResponsesStreamEvent,
+  initialEvent?: ResponsesStreamEvent
 ): ReadableStream<Uint8Array> => {
   const localAbort = new AbortController();
   let pending = initialEvent;
   let closed = false;
+  // `cancel()` can flip this flag while `pull` is awaiting the upstream read, so
+  // the post-await check reads it through a call: a direct read would keep the
+  // value the checker narrowed before the await.
+  const isClosed = (): boolean => closed;
   const invoke = (callback: (() => void | Promise<void>) | undefined): void => {
     if (!callback) return;
     try {
@@ -335,7 +405,7 @@ export const proxyResponsesStreamIterator = (
       try {
         const next = pending ? { done: false as const, value: pending } : await iterator.next();
         pending = undefined;
-        if (closed) return;
+        if (isClosed()) return;
         if (next.done) {
           closed = true;
           controller.close();
@@ -373,29 +443,37 @@ export const proxyResponsesStreamIterator = (
  * source remains incremental: provider bytes are forwarded as soon as they
  * arrive, and the heartbeat is only a small connection-preserving burst.
  */
-export const withSseKeepalive = (
-  source: ReadableStream<Uint8Array>,
-  options: Readonly<{ intervalMs?: number }> = {},
-): ReadableStream<Uint8Array> => {
+export const withSseKeepalive = (source: ReadableStream<Uint8Array>, options: Readonly<{ intervalMs?: number }> = {}): ReadableStream<Uint8Array> => {
   const reader = source.getReader();
   const configuredIntervalMs = options.intervalMs ?? SSE_KEEPALIVE_INTERVAL_MS;
   const intervalMs = Number.isFinite(configuredIntervalMs) && configuredIntervalMs > 0 ? configuredIntervalMs : 0;
   let closed = false;
-  let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+  // `cancel()` can flip this flag while `pull` is waiting on the read race, so
+  // the post-wait check reads it through a call: a direct read would keep the
+  // value the checker narrowed before the await.
+  const isClosed = (): boolean => closed;
+  // The pending timer is tracked by the call that cancels it: Deno's timer
+  // handle type is not portable across the lint project's type environment.
+  let clearPendingHeartbeat: (() => void) | null = null;
   let pendingRead: Promise<ReadableStreamReadResult<Uint8Array>> | null = null;
   let resolveHeartbeat: (() => void) | null = null;
   const heartbeat = (): Promise<"heartbeat"> =>
     new Promise((resolve) => {
-      resolveHeartbeat = () => resolve("heartbeat");
-      heartbeatTimer = setTimeout(() => {
-        heartbeatTimer = null;
+      resolveHeartbeat = () => {
+        resolve("heartbeat");
+      };
+      const timer = setTimeout(() => {
+        clearPendingHeartbeat = null;
         resolveHeartbeat = null;
         resolve("heartbeat");
       }, intervalMs);
+      clearPendingHeartbeat = () => {
+        clearTimeout(timer);
+      };
     });
   const stopHeartbeat = (): void => {
-    if (heartbeatTimer !== null) clearTimeout(heartbeatTimer);
-    heartbeatTimer = null;
+    clearPendingHeartbeat?.();
+    clearPendingHeartbeat = null;
     resolveHeartbeat?.();
     resolveHeartbeat = null;
   };
@@ -405,12 +483,10 @@ export const withSseKeepalive = (
       if (closed) return;
       try {
         pendingRead ??= reader.read();
-        const outcome = intervalMs > 0
-          ? await Promise.race([
-            pendingRead.then((result) => ({ kind: "read" as const, result })),
-            heartbeat().then((kind) => ({ kind })),
-          ])
-          : { kind: "read" as const, result: await pendingRead };
+        const outcome =
+          intervalMs > 0
+            ? await Promise.race([pendingRead.then((result) => ({ kind: "read" as const, result })), heartbeat().then((kind) => ({ kind }))])
+            : { kind: "read" as const, result: await pendingRead };
         if (outcome.kind === "heartbeat") {
           controller.enqueue(SSE_KEEPALIVE_FRAME.slice());
           return;
@@ -418,7 +494,7 @@ export const withSseKeepalive = (
         stopHeartbeat();
         pendingRead = null;
         const { value, done } = outcome.result;
-        if (closed) return;
+        if (isClosed()) return;
         if (done) {
           closed = true;
           controller.close();
@@ -441,11 +517,5 @@ export const withSseKeepalive = (
   });
 };
 
-export const proxyResponsesStream = (
-  upstream: ReadableStream<Uint8Array>,
-  options: ProxyResponsesStreamOptions = {},
-): ReadableStream<Uint8Array> =>
-  proxyResponsesStreamIterator(
-    readResponsesStream(upstream, options.signal),
-    options,
-  );
+export const proxyResponsesStream = (upstream: ReadableStream<Uint8Array>, options: ProxyResponsesStreamOptions = {}): ReadableStream<Uint8Array> =>
+  proxyResponsesStreamIterator(readResponsesStream(upstream, options.signal), options);

@@ -25,13 +25,25 @@ export type ReadBoundedResponseBodyOptions = Readonly<{
 export const BOUNDED_RESPONSE_BODY_MAX_BYTES = 64 * 1024;
 export const BOUNDED_RESPONSE_BODY_TIMEOUT_MS = 1_000;
 
-const abortableRead = async <T>(
-  reader: ReadableStreamDefaultReader<T>,
-  signal: AbortSignal,
-): Promise<ReadableStreamReadResult<T>> => {
+/**
+ * `AbortSignal.reason` is untyped, so a caller can abort with an arbitrary
+ * value.  A promise rejection must carry an `Error`: when the reason already is
+ * one it is passed through unchanged, otherwise it is preserved as the abort
+ * error's `cause` instead of being rejected verbatim.
+ */
+const abortError = (reason: unknown): Error => {
+  if (reason instanceof Error) return reason;
+  const error = new Error("Upstream response body read aborted.", { cause: reason });
+  error.name = "AbortError";
+  return error;
+};
+
+const abortableRead = async <T>(reader: ReadableStreamDefaultReader<T>, signal: AbortSignal): Promise<ReadableStreamReadResult<T>> => {
   let onAbort = (): void => {};
   const aborted = new Promise<never>((_, reject) => {
-    onAbort = () => reject(signal.reason ?? new DOMException("Upstream response body read aborted.", "AbortError"));
+    onAbort = () => {
+      reject(abortError(signal.reason));
+    };
     signal.addEventListener("abort", onAbort, { once: true });
     if (signal.aborted) onAbort();
   });
@@ -48,10 +60,7 @@ const abortableRead = async <T>(
  * exactly once; incomplete streams are cancelled best-effort in the
  * background to preserve the bounded caller latency.
  */
-export const readBoundedResponseBody = async (
-  response: Response,
-  options: ReadBoundedResponseBodyOptions = {},
-): Promise<BoundedResponseBody> => {
+export const readBoundedResponseBody = async (response: Response, options: ReadBoundedResponseBodyOptions = {}): Promise<BoundedResponseBody> => {
   const maxBytes = options.maxBytes ?? BOUNDED_RESPONSE_BODY_MAX_BYTES;
   const timeoutMs = options.timeoutMs ?? BOUNDED_RESPONSE_BODY_TIMEOUT_MS;
   const reader = response.body?.getReader();
@@ -83,9 +92,7 @@ export const readBoundedResponseBody = async (
     }
   };
 
-  const deadline = options.signal
-    ? AbortSignal.any([options.signal, AbortSignal.timeout(timeoutMs)])
-    : AbortSignal.timeout(timeoutMs);
+  const deadline = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs);
   try {
     for (;;) {
       const next = await abortableRead(reader, deadline);

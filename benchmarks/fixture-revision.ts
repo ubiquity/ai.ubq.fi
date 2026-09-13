@@ -18,9 +18,7 @@ if (import.meta.main) {
     const actual = await computeFixtureRevision(`${BENCHMARK_ROOT}/fixtures/${task.fixture}`);
     const ok = actual === task.fixture_revision;
     if (!ok) failures++;
-    console.log(
-      `${task.id.padEnd(8)} ${actual}  ${task.fixture_revision}  ${ok ? "ok" : "MISMATCH"}`,
-    );
+    console.log(`${task.id.padEnd(8)} ${actual}  ${task.fixture_revision}  ${ok ? "ok" : "MISMATCH"}`);
   }
   if (failures > 0) {
     console.error(`\n${failures} fixture revision(s) mismatch; regenerate or update manifests`);

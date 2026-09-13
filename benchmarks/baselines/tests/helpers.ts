@@ -32,7 +32,9 @@ export function freshRunOptions(): RunOptions & { runsRoot: string } {
 }
 
 export function nav001(): TaskManifest {
-  return loadTasks(TASKS_DIR).find((t) => t.id === "nav-001")!;
+  const task = loadTasks(TASKS_DIR).find((t) => t.id === "nav-001");
+  if (task === undefined) throw new Error(`missing nav-001 task fixture in ${TASKS_DIR}`);
+  return task;
 }
 
 export function jsonResponse(status: number, body: unknown): ChatTransportResponse {
@@ -43,16 +45,16 @@ export function jsonResponse(status: number, body: unknown): ChatTransportRespon
   };
 }
 
-export interface ScriptToolCall {
+export type ScriptToolCall = {
   name: string;
   args: Record<string, unknown>;
-}
+};
 
-export interface GatewayScriptStep {
+export type GatewayScriptStep = {
   toolCalls?: ScriptToolCall[];
   content?: string;
   usage?: { prompt: number; completion: number };
-}
+};
 
 export function gatewayCompletionBody(step: GatewayScriptStep): Record<string, unknown> {
   const calls = step.toolCalls ?? [];
@@ -73,11 +75,13 @@ export function gatewayCompletionBody(step: GatewayScriptStep): Record<string, u
     object: "chat.completion",
     created: 0,
     model: "gpt-oss-120b",
-    choices: [{
-      index: 0,
-      message,
-      finish_reason: calls.length > 0 ? "tool_calls" : "stop",
-    }],
+    choices: [
+      {
+        index: 0,
+        message,
+        finish_reason: calls.length > 0 ? "tool_calls" : "stop",
+      },
+    ],
     usage: {
       prompt_tokens: usage.prompt,
       completion_tokens: usage.completion,
@@ -104,11 +108,13 @@ export function controlCompletionBody(step: GatewayScriptStep, model: string): R
     id: "chatcmpl-baseline-d",
     created: 0,
     model,
-    choices: [{
-      index: 0,
-      message,
-      finish_reason: calls.length > 0 ? "tool_calls" : "stop",
-    }],
+    choices: [
+      {
+        index: 0,
+        message,
+        finish_reason: calls.length > 0 ? "tool_calls" : "stop",
+      },
+    ],
     usage: {
       prompt_tokens: usage.prompt,
       completion_tokens: usage.completion,
@@ -117,20 +123,17 @@ export function controlCompletionBody(step: GatewayScriptStep, model: string): R
   };
 }
 
-export interface ScriptedTransport {
+export type ScriptedTransport = {
   transport: ChatTransport;
   /** Every request body in call order (deep copies are not made). */
   requests: Record<string, unknown>[];
-}
+};
 
 /**
  * Deterministic scripted transport: replays the scripted steps in order and
  * repeats the final step for any further calls, so a run always terminates.
  */
-export function scriptedTransport(
-  steps: GatewayScriptStep[],
-  build: (step: GatewayScriptStep, index: number) => Record<string, unknown>,
-): ScriptedTransport {
+export function scriptedTransport(steps: GatewayScriptStep[], build: (step: GatewayScriptStep, index: number) => Record<string, unknown>): ScriptedTransport {
   const requests: Record<string, unknown>[] = [];
   let index = 0;
   const transport: ChatTransport = (body) => {

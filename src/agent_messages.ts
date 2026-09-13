@@ -89,6 +89,38 @@ const parsePositiveInt = (value: string | null): number | null => {
   return Math.trunc(parsed);
 };
 
+type AgentMessagesListQuery = Readonly<{
+  since: number | null;
+  limit: number;
+  scanLimit: number;
+  cursor: string;
+  channel: string | null;
+  agentId: string | null;
+}>;
+
+/** Parses the bounded list parameters; the scan over-fetches only when a filter can discard entries. */
+const agentMessagesListQuery = (url: URL): AgentMessagesListQuery => {
+  const limit = Math.min(Math.max(parsePositiveInt(url.searchParams.get("limit")) ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
+  const channel = normalizeOptionalTag(url.searchParams.get("channel"), MAX_CHANNEL_LENGTH);
+  const agentId = normalizeOptionalTag(url.searchParams.get("agent_id"), MAX_AGENT_ID_LENGTH);
+  return {
+    since: parsePositiveInt(url.searchParams.get("since")),
+    limit,
+    scanLimit: channel || agentId ? Math.min(limit * 2, MAX_LIMIT) : limit,
+    cursor: getString(url.searchParams.get("cursor"))?.trim() ?? "",
+    channel,
+    agentId,
+  };
+};
+
+/** Whether one stored message satisfies every list filter. */
+const messageMatchesListQuery = (message: AgentMessageRecord, query: AgentMessagesListQuery): boolean => {
+  if (query.since !== null && message.created_at_ms < query.since) return false;
+  if (query.agentId && message.agent_id !== query.agentId) return false;
+  if (query.channel && message.channel !== query.channel) return false;
+  return true;
+};
+
 export const handleAgentMessagesPost = async (req: Request, deps: AgentMessagesDeps = {}): Promise<Response> => {
   const authResult = await (deps.authenticateClient ?? authenticateClient)(req);
   if (!authResult.ok) return authResult.response;
@@ -155,36 +187,25 @@ export const handleAgentMessagesList = async (req: Request, deps: AgentMessagesD
   if (!kv) return openaiError(503, "Deno KV unavailable", "server_error");
 
   const url = new URL(req.url);
-  const since = parsePositiveInt(url.searchParams.get("since"));
-  const limitRaw = parsePositiveInt(url.searchParams.get("limit"));
-  const limit = Math.min(Math.max(limitRaw ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
-  const cursor = getString(url.searchParams.get("cursor"))?.trim() ?? "";
-
-  const channel = normalizeOptionalTag(url.searchParams.get("channel"), MAX_CHANNEL_LENGTH);
-  const agentId = normalizeOptionalTag(url.searchParams.get("agent_id"), MAX_AGENT_ID_LENGTH);
+  const query = agentMessagesListQuery(url);
 
   const prefix = ["agent_messages", authResult.method.owner, authResult.method.repo, authResult.method.state_id];
-  const scanLimit = channel || agentId ? Math.min(limit * 2, MAX_LIMIT) : limit;
 
-  const options: Deno.KvListOptions = { limit: scanLimit };
-  if (cursor) {
-    options.cursor = cursor;
+  const options: Deno.KvListOptions = { limit: query.scanLimit };
+  if (query.cursor) {
+    options.cursor = query.cursor;
   }
 
   const iterator = kv.list<AgentMessageRecord>({ prefix }, options);
   const messages: AgentMessageRecord[] = [];
 
   for await (const entry of iterator) {
-    const value = entry.value;
-    if (since !== null && value.created_at_ms < since) continue;
-    if (agentId && value.agent_id !== agentId) continue;
-    if (channel && value.channel !== channel) continue;
-    messages.push(value);
-    if (messages.length >= limit) break;
+    if (!messageMatchesListQuery(entry.value, query)) continue;
+    messages.push(entry.value);
+    if (messages.length >= query.limit) break;
   }
 
-  const last = messages.length > 0 ? messages[messages.length - 1] : null;
-  const nextSince = last ? last.created_at_ms : null;
+  const nextSince = messages.at(-1)?.created_at_ms ?? null;
   const nextCursor = iterator.cursor && iterator.cursor.length > 0 ? iterator.cursor : null;
 
   return json(
@@ -195,6 +216,6 @@ export const handleAgentMessagesList = async (req: Request, deps: AgentMessagesD
       next_cursor: nextCursor,
       has_more: Boolean(nextCursor),
     },
-    { "Cache-Control": "no-store" },
+    { "Cache-Control": "no-store" }
   );
 };

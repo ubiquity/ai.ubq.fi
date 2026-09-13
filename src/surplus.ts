@@ -1,6 +1,6 @@
 import { STREAM_FIRST_EVENT_DEADLINE_MS } from "./inference_deadline.ts";
 import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
-import { readResponsesStream } from "./responses_stream.ts";
+import { readResponsesStream, type ResponsesStreamEvent } from "./responses_stream.ts";
 import type { SentinelUpstreamRecorder } from "./sentinel_upstream_capture.ts";
 
 export const SURPLUS_BASE_URL = "https://api.surplusintelligence.ai";
@@ -31,27 +31,16 @@ export type SurplusModelsSnapshot = Readonly<{
   updated_at_ms: number;
 }>;
 
-export type SurplusFetch = (
-  input: RequestInfo | URL,
-  init?: RequestInit,
-) => Promise<Response>;
+export type SurplusFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
-export type SurplusErrorCode =
-  | "surplus_api_key_missing"
-  | "surplus_request_invalid"
-  | "surplus_upstream_unreachable";
+export type SurplusErrorCode = "surplus_api_key_missing" | "surplus_request_invalid" | "surplus_upstream_unreachable";
 
 export class SurplusError extends Error {
   readonly code: SurplusErrorCode;
   readonly status: number;
   readonly upstream_status: number | null;
 
-  constructor(
-    message: string,
-    code: SurplusErrorCode,
-    status: number,
-    upstreamStatus: number | null = null,
-  ) {
+  constructor(message: string, code: SurplusErrorCode, status: number, upstreamStatus: number | null = null) {
     super(message);
     this.name = "SurplusError";
     this.code = code;
@@ -65,7 +54,12 @@ export type SurplusAuthenticatedFetchOptions = Readonly<{
   fetcher?: SurplusFetch;
   signal?: AbortSignal;
   supportsParallelToolCalls?: boolean;
-  beforeDispatch?: () => Promise<ApiKeyProviderDispatch | void>;
+  /**
+   * Optional pre-transport hook. It either resolves to a dispatch handle that can
+   * still cancel the admitted reservation, or resolves with no value at all, so
+   * the return type stays a plain `void` arm instead of a `void` union member.
+   */
+  beforeDispatch?: (() => Promise<ApiKeyProviderDispatch>) | (() => void);
   onDispatch?: () => void;
   /** Request-owned passive recorder; best effort, never required. */
   sentinelUpstreamRecorder?: SentinelUpstreamRecorder;
@@ -78,8 +72,7 @@ export type SurplusResponsesResult = Readonly<{
 
 type JsonRecord = Record<string, unknown>;
 
-const isRecord = (value: unknown): value is JsonRecord =>
-  value !== null && typeof value === "object" && !Array.isArray(value);
+const isRecord = (value: unknown): value is JsonRecord => value !== null && typeof value === "object" && !Array.isArray(value);
 
 const nonEmptyString = (value: unknown): string | null => {
   if (typeof value !== "string") return null;
@@ -87,8 +80,7 @@ const nonEmptyString = (value: unknown): string | null => {
   return trimmed || null;
 };
 
-const isNonNegativeSafeInteger = (value: unknown): value is number =>
-  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+const isNonNegativeSafeInteger = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
 const nonNegativeNumber = (value: unknown): number | null => {
   if (typeof value === "number" && Number.isFinite(value) && value >= 0) return value;
@@ -101,26 +93,24 @@ const readStringSet = (value: unknown): ReadonlySet<string> =>
   new Set(
     Array.isArray(value)
       ? value
-        .filter((entry): entry is string => typeof entry === "string")
-        .map((entry) => entry.trim())
-        .filter(Boolean)
-      : [],
+          .filter((entry): entry is string => typeof entry === "string")
+          .map((entry) => entry.trim())
+          .filter(Boolean)
+      : []
   );
 
-const readModelCapabilities = (
-  value: JsonRecord,
-): Readonly<{ supports_tools?: true; supports_parallel_tool_calls?: true }> => {
+const readModelCapabilities = (value: JsonRecord): Readonly<{ supports_tools?: true; supports_parallel_tool_calls?: true }> => {
   const parameters = readStringSet(value.supported_parameters);
   const features = readStringSet(value.supported_features);
   return {
-    ...(parameters.has("tools") && parameters.has("tool_choice") && features.has("tools")
-      ? { supports_tools: true as const }
-      : {}),
+    ...(parameters.has("tools") && parameters.has("tool_choice") && features.has("tools") ? { supports_tools: true as const } : {}),
     ...(parameters.has("parallel_tool_calls") ? { supports_parallel_tool_calls: true as const } : {}),
   };
 };
 
-const readTextModalities = (value: unknown): {
+const readTextModalities = (
+  value: unknown
+): {
   inputKnown: boolean;
   outputKnown: boolean;
   inputText: boolean;
@@ -131,23 +121,23 @@ const readTextModalities = (value: unknown): {
   let outputKnown = false;
   let inputText = false;
   let outputText = false;
-  const inputModalities = Array.isArray(value.input_modalities)
-    ? value.input_modalities.filter((entry): entry is string => typeof entry === "string")
-    : [];
+  const inputModalities = Array.isArray(value.input_modalities) ? value.input_modalities.filter((entry): entry is string => typeof entry === "string") : [];
   if (inputModalities.length) {
     inputKnown = true;
     inputText = inputModalities.includes("text");
   }
-  const outputModalities = Array.isArray(value.output_modalities)
-    ? value.output_modalities.filter((entry): entry is string => typeof entry === "string")
-    : [];
+  const outputModalities = Array.isArray(value.output_modalities) ? value.output_modalities.filter((entry): entry is string => typeof entry === "string") : [];
   if (outputModalities.length) {
     outputKnown = true;
     outputText = outputModalities.includes("text");
   }
   const modality = nonEmptyString(value.modality);
   if (modality) {
-    const hasTextModality = (part: string): boolean => part.split(/[+,]/).map((entry) => entry.trim()).includes("text");
+    const hasTextModality = (part: string): boolean =>
+      part
+        .split(/[+,]/)
+        .map((entry) => entry.trim())
+        .includes("text");
     const arrow = modality.lastIndexOf("->");
     if (arrow >= 0) {
       inputKnown = true;
@@ -177,7 +167,9 @@ const modelSupportsTextInput = (value: JsonRecord): boolean => {
   return !modalities.inputKnown || modalities.inputText;
 };
 
-const readPricing = (value: JsonRecord): Readonly<{
+const readPricing = (
+  value: JsonRecord
+): Readonly<{
   input_price_per_token?: number;
   output_price_per_token?: number;
   cache_read_price_per_token?: number;
@@ -186,12 +178,8 @@ const readPricing = (value: JsonRecord): Readonly<{
   if (!isRecord(value.pricing)) return {};
   const input = nonNegativeNumber(value.pricing.prompt ?? value.pricing.input);
   const output = nonNegativeNumber(value.pricing.completion ?? value.pricing.output);
-  const cacheRead = nonNegativeNumber(
-    value.pricing.input_cache_read ?? value.pricing.cache_read ?? value.pricing.cache_read_input,
-  );
-  const cacheWrite = nonNegativeNumber(
-    value.pricing.input_cache_write ?? value.pricing.cache_write ?? value.pricing.cache_write_input,
-  );
+  const cacheRead = nonNegativeNumber(value.pricing.input_cache_read ?? value.pricing.cache_read ?? value.pricing.cache_read_input);
+  const cacheWrite = nonNegativeNumber(value.pricing.input_cache_write ?? value.pricing.cache_write ?? value.pricing.cache_write_input);
   return {
     ...(input === null ? {} : { input_price_per_token: input }),
     ...(output === null ? {} : { output_price_per_token: output }),
@@ -251,21 +239,19 @@ export const fetchSurplusModels = async (
     force?: boolean;
     cachedOnly?: boolean;
     requireApiKey?: boolean;
-  }> = {},
+  }> = {}
 ): Promise<SurplusModelsSnapshot | null> => {
   const apiKey = options.apiKey === undefined ? readSurplusApiKey() : nonEmptyString(options.apiKey);
   if ((options.requireApiKey ?? true) && !apiKey) return null;
-  if (
-    !options.force && surplusModelsCache &&
-    Date.now() - surplusModelsCache.updated_at_ms < SURPLUS_MODELS_CACHE_TTL_MS
-  ) return surplusModelsCache;
+  if (!options.force && surplusModelsCache && Date.now() - surplusModelsCache.updated_at_ms < SURPLUS_MODELS_CACHE_TTL_MS) return surplusModelsCache;
   if (!options.force && Date.now() < surplusModelsRetryAfterMs) return surplusModelsCache;
   if (options.cachedOnly) return surplusModelsCache;
   // Only the ordinary discovery path shares an upstream request. Callers that
   // supply a signal, fetcher, API key, or force a refresh retain their own
-  // request semantics and do not join another caller's request.
-  const shouldCoalesce = !options.force && !options.cachedOnly && options.apiKey === undefined &&
-    options.fetcher === undefined && options.signal === undefined && options.requireApiKey === undefined;
+  // request semantics and do not join another caller's request. `cachedOnly` is
+  // already excluded by the early return above.
+  const shouldCoalesce =
+    !options.force && options.apiKey === undefined && options.fetcher === undefined && options.signal === undefined && options.requireApiKey === undefined;
   if (shouldCoalesce && surplusModelsFetchInFlight) return await surplusModelsFetchInFlight;
 
   const requestGeneration = ++surplusModelsFetchGeneration;
@@ -282,7 +268,7 @@ export const fetchSurplusModels = async (
         markSurplusModelsFetchFailure(requestGeneration);
         return surplusModelsCache;
       }
-      const payload = await response.json() as unknown;
+      const payload = (await response.json()) as unknown;
       if (!isRecord(payload) || !Array.isArray(payload.data)) {
         markSurplusModelsFetchFailure(requestGeneration);
         return surplusModelsCache;
@@ -328,12 +314,18 @@ export const resetSurplusModelsCacheForTest = (): void => {
 const requireSurplusApiKey = (supplied: string | null | undefined): string => {
   const apiKey = supplied === undefined ? readSurplusApiKey() : nonEmptyString(supplied);
   if (apiKey) return apiKey;
-  throw new SurplusError(
-    "Surplus paid fallback is unavailable because SURPLUS_API_KEY is not configured.",
-    "surplus_api_key_missing",
-    503,
-  );
+  throw new SurplusError("Surplus paid fallback is unavailable because SURPLUS_API_KEY is not configured.", "surplus_api_key_missing", 503);
 };
+
+// Rejection reasons must be Errors. Deno's DOMException is an Error, so a real
+// abort reason is always passed through unchanged; only a missing or exotic
+// reason becomes the canonical AbortError the call sites already expect.
+const abortRejectionReason = (reason: unknown): Error => (reason instanceof Error ? reason : new DOMException("Aborted", "AbortError"));
+
+// A failed upstream operation keeps its original Error so callers can still
+// match on it; anything else is wrapped, which leaves the failure classification
+// in fetchSurplusResponses unchanged.
+const requestFailureReason = (reason: unknown): Error => (reason instanceof Error ? reason : new Error("Surplus Responses request failed.", { cause: reason }));
 
 const awaitWithAbort = <T>(operation: PromiseLike<T>, signal: AbortSignal): Promise<T> =>
   new Promise<T>((resolve, reject) => {
@@ -345,7 +337,9 @@ const awaitWithAbort = <T>(operation: PromiseLike<T>, signal: AbortSignal): Prom
       callback();
     };
     const onAbort = (): void => {
-      finish(() => reject(signal.reason ?? new DOMException("Aborted", "AbortError")));
+      finish(() => {
+        reject(abortRejectionReason(signal.reason));
+      });
     };
     if (signal.aborted) {
       onAbort();
@@ -353,8 +347,16 @@ const awaitWithAbort = <T>(operation: PromiseLike<T>, signal: AbortSignal): Prom
     }
     signal.addEventListener("abort", onAbort, { once: true });
     Promise.resolve(operation).then(
-      (value) => finish(() => resolve(value)),
-      (error) => finish(() => reject(error)),
+      (value) => {
+        finish(() => {
+          resolve(value);
+        });
+      },
+      (error: unknown) => {
+        finish(() => {
+          reject(requestFailureReason(error));
+        });
+      }
     );
   });
 
@@ -368,14 +370,70 @@ const authenticatedHeaders = (apiKey: string): Headers => {
 };
 
 const responseRequestId = (response: Response): string | null =>
-  nonEmptyString(
-    response.headers.get("X-Request-Id") ??
-      response.headers.get("X-Api-Request-Id") ??
-      response.headers.get("X-Oneapi-Request-Id"),
-  );
+  nonEmptyString(response.headers.get("X-Request-Id") ?? response.headers.get("X-Api-Request-Id") ?? response.headers.get("X-Oneapi-Request-Id"));
 
-const encodeResponsesEvent = (value: JsonRecord): Uint8Array =>
-  new TextEncoder().encode(`event: ${String(value.type)}\ndata: ${JSON.stringify(value)}\n\n`);
+const encodeResponsesEvent = (value: JsonRecord): Uint8Array => new TextEncoder().encode(`event: ${String(value.type)}\ndata: ${JSON.stringify(value)}\n\n`);
+
+// Indices arrive as JSON primitives. Render only those explicitly: `String()` on
+// an object would silently produce "[object Object]" as a part key.
+const responsesPartIndex = (value: unknown): string => (typeof value === "number" || typeof value === "string" ? String(value) : "0");
+
+const responsesPartKey = (value: JsonRecord): string => `${responsesPartIndex(value.output_index)}:${responsesPartIndex(value.content_index)}`;
+
+type SurplusTextPartState = {
+  textParts: Map<string, string>;
+  doneTextParts: Set<string>;
+  sawMessageDone: boolean;
+};
+
+const applyResponsesTextEvent = (state: SurplusTextPartState, event: ResponsesStreamEvent): void => {
+  const value = event.value;
+  if (event.type === "response.output_text.delta") {
+    const key = responsesPartKey(value);
+    state.textParts.set(key, `${state.textParts.get(key) ?? ""}${typeof value.delta === "string" ? value.delta : ""}`);
+    return;
+  }
+  if (event.type === "response.output_text.done") {
+    state.doneTextParts.add(responsesPartKey(value));
+    return;
+  }
+  if (event.type === "response.output_item.done" && isRecord(value.item) && value.item.type === "message") {
+    state.sawMessageDone = true;
+  }
+};
+
+// Canonical events emitted for the terminal `response.completed` event: the
+// buffered text parts as `response.output_text.done`, then the item and the
+// completed event itself.
+const completedResponsesEvents = (state: SurplusTextPartState, value: JsonRecord): Uint8Array[] => {
+  const chunks: Uint8Array[] = [];
+  const orderedParts = [...state.textParts.entries()].sort(([left], [right]) => left.localeCompare(right));
+  for (const [key, text] of orderedParts) {
+    if (state.doneTextParts.has(key)) continue;
+    const [outputIndex, contentIndex] = key.split(":").map(Number);
+    chunks.push(
+      encodeResponsesEvent({
+        type: "response.output_text.done",
+        output_index: outputIndex,
+        content_index: contentIndex,
+        text,
+      })
+    );
+  }
+  const text = orderedParts.map(([, part]) => part).join("");
+  const message = {
+    type: "message",
+    role: "assistant",
+    status: "completed",
+    content: [{ type: "output_text", text, annotations: [] }],
+  };
+  if (text && !state.sawMessageDone) {
+    chunks.push(encodeResponsesEvent({ type: "response.output_item.done", output_index: 0, item: message }));
+  }
+  const completed = isRecord(value.response) ? { ...value, response: { ...value.response, ...(text ? { output: [message] } : {}) } } : value;
+  chunks.push(encodeResponsesEvent(completed));
+  return chunks;
+};
 
 const normalizeSurplusResponsesStream = (response: Response): Response => {
   if (!response.body || !response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
@@ -383,53 +441,17 @@ const normalizeSurplusResponsesStream = (response: Response): Response => {
   }
   const consumerAbort = new AbortController();
   const source = readResponsesStream(response.body, consumerAbort.signal);
-  const textParts = new Map<string, string>();
-  const doneTextParts = new Set<string>();
-  let sawMessageDone = false;
-  const partKey = (value: JsonRecord): string =>
-    `${String(value.output_index ?? 0)}:${String(value.content_index ?? 0)}`;
+  const state: SurplusTextPartState = { textParts: new Map<string, string>(), doneTextParts: new Set<string>(), sawMessageDone: false };
   const iterator = (async function* () {
     for await (const event of source) {
-      const value = event.value;
-      if (event.type === "response.output_text.delta") {
-        const key = partKey(value);
-        textParts.set(key, `${textParts.get(key) ?? ""}${typeof value.delta === "string" ? value.delta : ""}`);
-      } else if (event.type === "response.output_text.done") {
-        doneTextParts.add(partKey(value));
-      } else if (event.type === "response.output_item.done" && isRecord(value.item) && value.item.type === "message") {
-        sawMessageDone = true;
-      }
+      applyResponsesTextEvent(state, event);
 
       if (event.type !== "response.completed") {
-        yield encodeResponsesEvent(value);
+        yield encodeResponsesEvent(event.value);
         continue;
       }
 
-      const orderedParts = [...textParts.entries()].sort(([left], [right]) => left.localeCompare(right));
-      for (const [key, text] of orderedParts) {
-        if (doneTextParts.has(key)) continue;
-        const [outputIndex, contentIndex] = key.split(":").map(Number);
-        yield encodeResponsesEvent({
-          type: "response.output_text.done",
-          output_index: outputIndex,
-          content_index: contentIndex,
-          text,
-        });
-      }
-      const text = orderedParts.map(([, part]) => part).join("");
-      const message = {
-        type: "message",
-        role: "assistant",
-        status: "completed",
-        content: [{ type: "output_text", text, annotations: [] }],
-      };
-      if (text && !sawMessageDone) {
-        yield encodeResponsesEvent({ type: "response.output_item.done", output_index: 0, item: message });
-      }
-      const completed = isRecord(value.response)
-        ? { ...value, response: { ...value.response, ...(text ? { output: [message] } : {}) } }
-        : value;
-      yield encodeResponsesEvent(completed);
+      for (const chunk of completedResponsesEvents(state, event.value)) yield chunk;
     }
   })();
   return new Response(
@@ -444,20 +466,15 @@ const normalizeSurplusResponsesStream = (response: Response): Response => {
         await iterator.return(reason).catch(() => {});
       },
     }),
-    { status: response.status, statusText: response.statusText, headers: response.headers },
+    { status: response.status, statusText: response.statusText, headers: response.headers }
   );
 };
 
-const toSurplusResponsesBody = (
-  body: JsonRecord,
-  supportsParallelToolCalls: boolean | undefined,
-): JsonRecord => {
+const toSurplusResponsesBody = (body: JsonRecord, supportsParallelToolCalls: boolean | undefined): JsonRecord => {
   let forwardedBody = body;
   if (Array.isArray(body.input)) {
     const originalInput = body.input;
-    const input = originalInput.map((item) =>
-      isRecord(item) && item.type === "message" && item.role === "developer" ? { ...item, role: "system" } : item
-    );
+    const input = originalInput.map((item) => (isRecord(item) && item.type === "message" && item.role === "developer" ? { ...item, role: "system" } : item));
     if (input.some((item, index) => item !== originalInput[index])) {
       forwardedBody = { ...body, input };
     }
@@ -475,43 +492,38 @@ const toSurplusResponsesBody = (
   };
 };
 
-export const fetchSurplusResponses = async (
-  body: unknown,
-  options: SurplusAuthenticatedFetchOptions = {},
-): Promise<SurplusResponsesResult> => {
+// Classify a failed transport attempt: preserve the errors callers already
+// handle, rethrow an abort reason when a signal caused it, and otherwise report
+// the upstream as unreachable.
+const surplusTransportFailure = (error: unknown, signal: AbortSignal | undefined, headersDeadline: AbortController): unknown => {
+  if (error instanceof ApiKeyQuotaDispatchError) return error;
+  if (signal?.aborted) return signal.reason ?? error;
+  if (headersDeadline.signal.aborted) return headersDeadline.signal.reason ?? error;
+  if (error instanceof Error && error.name === "AbortError") return error;
+  return new SurplusError("Surplus Responses request could not reach the upstream service.", "surplus_upstream_unreachable", 502);
+};
+
+export const fetchSurplusResponses = async (body: unknown, options: SurplusAuthenticatedFetchOptions = {}): Promise<SurplusResponsesResult> => {
   if (!isRecord(body)) {
-    throw new SurplusError(
-      "Surplus Responses requests must use a canonical JSON object body.",
-      "surplus_request_invalid",
-      400,
-    );
+    throw new SurplusError("Surplus Responses requests must use a canonical JSON object body.", "surplus_request_invalid", 400);
   }
 
   let encodedBody: string;
   try {
     encodedBody = JSON.stringify(toSurplusResponsesBody(body, options.supportsParallelToolCalls));
   } catch {
-    throw new SurplusError(
-      "Surplus Responses requests must use a JSON-serializable body.",
-      "surplus_request_invalid",
-      400,
-    );
+    throw new SurplusError("Surplus Responses requests must use a JSON-serializable body.", "surplus_request_invalid", 400);
   }
   if (typeof encodedBody !== "string") {
-    throw new SurplusError(
-      "Surplus Responses requests must use a JSON-serializable body.",
-      "surplus_request_invalid",
-      400,
-    );
+    throw new SurplusError("Surplus Responses requests must use a JSON-serializable body.", "surplus_request_invalid", 400);
   }
 
   const apiKey = requireSurplusApiKey(options.apiKey);
   const headers = authenticatedHeaders(apiKey);
   const headersDeadline = new AbortController();
-  const headersTimer = setTimeout(
-    () => headersDeadline.abort(new DOMException("Surplus response headers timed out.", "TimeoutError")),
-    STREAM_FIRST_EVENT_DEADLINE_MS,
-  );
+  const headersTimer = setTimeout(() => {
+    headersDeadline.abort(new DOMException("Surplus response headers timed out.", "TimeoutError"));
+  }, STREAM_FIRST_EVENT_DEADLINE_MS);
   const signal = options.signal ? AbortSignal.any([options.signal, headersDeadline.signal]) : headersDeadline.signal;
   let response: Response;
   let upstreamAttempt: ReturnType<SentinelUpstreamRecorder["startAttempt"]> | null = null;
@@ -532,19 +544,11 @@ export const fetchSurplusResponses = async (
         redirect: "manual",
         signal,
       }),
-      signal,
+      signal
     );
   } catch (error) {
     upstreamAttempt?.recordFetchError();
-    if (error instanceof ApiKeyQuotaDispatchError) throw error;
-    if (options.signal?.aborted) throw options.signal.reason ?? error;
-    if (headersDeadline.signal.aborted) throw headersDeadline.signal.reason ?? error;
-    if (error instanceof Error && error.name === "AbortError") throw error;
-    throw new SurplusError(
-      "Surplus Responses request could not reach the upstream service.",
-      "surplus_upstream_unreachable",
-      502,
-    );
+    throw surplusTransportFailure(error, options.signal, headersDeadline);
   } finally {
     clearTimeout(headersTimer);
   }

@@ -15,9 +15,7 @@ type StoredEntry = {
   expiresAtMs: number | null;
 };
 
-type AtomicMutation =
-  | { type: "set"; key: Deno.KvKey; value: unknown; options?: { expireIn?: number } }
-  | { type: "delete"; key: Deno.KvKey };
+type AtomicMutation = { type: "set"; key: Deno.KvKey; value: unknown; options?: { expireIn?: number } } | { type: "delete"; key: Deno.KvKey };
 
 const encodeKey = (key: Deno.KvKey): string => JSON.stringify(key);
 const clone = <T>(value: T): T => structuredClone(value);
@@ -45,12 +43,7 @@ class MemoryKv {
     }
   }
 
-  #write(
-    key: Deno.KvKey,
-    value: unknown,
-    options: { expireIn?: number } | undefined,
-    versionstamp: string,
-  ): void {
+  #write(key: Deno.KvKey, value: unknown, options: { expireIn?: number } | undefined, versionstamp: string): void {
     this.entries.set(encodeKey(key), {
       key: clone(key),
       value: clone(value),
@@ -59,33 +52,24 @@ class MemoryKv {
     });
   }
 
-  get<T = unknown>(
-    key: Deno.KvKey,
-    _options?: { consistency?: Deno.KvConsistencyLevel },
-  ): Promise<Deno.KvEntryMaybe<T>> {
+  get<T = unknown>(key: Deno.KvKey, _options?: { consistency?: Deno.KvConsistencyLevel }): Promise<Deno.KvEntryMaybe<T>> {
     this.#purgeExpired();
     const entry = this.entries.get(encodeKey(key));
     return Promise.resolve({
       key: clone(key),
-      value: entry ? clone(entry.value) as T : null,
+      value: entry ? (clone(entry.value) as T) : null,
       versionstamp: entry?.versionstamp ?? null,
     } as Deno.KvEntryMaybe<T>);
   }
 
   getMany<T extends readonly unknown[]>(
     keys: readonly Deno.KvKey[],
-    options?: { consistency?: Deno.KvConsistencyLevel },
+    options?: { consistency?: Deno.KvConsistencyLevel }
   ): Promise<{ [K in keyof T]: Deno.KvEntryMaybe<T[K]> }> {
-    return Promise.all(keys.map((key) => this.get(key, options))) as Promise<
-      { [K in keyof T]: Deno.KvEntryMaybe<T[K]> }
-    >;
+    return Promise.all(keys.map((key) => this.get(key, options))) as Promise<{ [K in keyof T]: Deno.KvEntryMaybe<T[K]> }>;
   }
 
-  set(
-    key: Deno.KvKey,
-    value: unknown,
-    options?: { expireIn?: number },
-  ): Promise<Deno.KvCommitResult> {
+  set(key: Deno.KvKey, value: unknown, options?: { expireIn?: number }): Promise<Deno.KvCommitResult> {
     const versionstamp = this.#nextVersionstamp();
     this.#write(key, value, options, versionstamp);
     return Promise.resolve({ ok: true, versionstamp });
@@ -99,18 +83,14 @@ class MemoryKv {
   }
 
   atomic(): Deno.AtomicOperation {
-    const checks: Array<{ key: Deno.KvKey; versionstamp: string | null }> = [];
+    const checks: { key: Deno.KvKey; versionstamp: string | null }[] = [];
     const mutations: AtomicMutation[] = [];
     const operation = {
-      check: (...entries: Array<{ key: Deno.KvKey; versionstamp: string | null }>) => {
+      check: (...entries: { key: Deno.KvKey; versionstamp: string | null }[]) => {
         checks.push(...entries.map((entry) => ({ key: clone(entry.key), versionstamp: entry.versionstamp })));
         return operation;
       },
-      set: (
-        key: Deno.KvKey,
-        value: unknown,
-        options?: { expireIn?: number },
-      ) => {
+      set: (key: Deno.KvKey, value: unknown, options?: { expireIn?: number }) => {
         mutations.push({ type: "set", key: clone(key), value: clone(value), options });
         return operation;
       },
@@ -150,9 +130,7 @@ type HttpOutcome = Readonly<{
   status: number;
 }>;
 
-type TransportOutcome =
-  | Readonly<{ name: "timeout"; kind: "timeout" }>
-  | Readonly<{ name: "network"; kind: "network" }>;
+type TransportOutcome = Readonly<{ name: "timeout"; kind: "timeout" }> | Readonly<{ name: "network"; kind: "network" }>;
 
 type Outcome = HttpOutcome | TransportOutcome;
 
@@ -179,8 +157,7 @@ const CODEX_REFRESH_URL = "https://auth.openai.com/oauth/token";
 const METERED_RESPONSES_URL = `${METERED_BASE_URL}/v1/responses`;
 const encoder = new TextEncoder();
 
-const isFallbackOutcome = (outcome: Outcome): boolean =>
-  outcome.kind === "http" && ACCOUNT_FALLBACK_STATUSES.has(outcome.status);
+const isFallbackOutcome = (outcome: Outcome): boolean => outcome.kind === "http" && ACCOUNT_FALLBACK_STATUSES.has(outcome.status);
 
 const is401 = (outcome: Outcome): boolean => outcome.kind === "http" && outcome.status === 401;
 const is429 = (outcome: Outcome): boolean => outcome.kind === "http" && outcome.status === 429;
@@ -191,12 +168,18 @@ const directStatus = (outcome: Outcome): number => {
   return outcome.status;
 };
 
+const errorTypeForStatus = (status: number): string => {
+  if (status >= 500) return "server_error";
+  if (status === 429) return "rate_limit_error";
+  return "invalid_request_error";
+};
+
 const jsonErrorResponse = (status: number): Response =>
   new Response(
     JSON.stringify({
       error: {
         message: `Codex fixture ${status}`,
-        type: status >= 500 ? "server_error" : status === 429 ? "rate_limit_error" : "invalid_request_error",
+        type: errorTypeForStatus(status),
         code: status === 429 ? "rate_limit_exceeded" : `fixture_${status}`,
         param: null,
       },
@@ -204,27 +187,27 @@ const jsonErrorResponse = (status: number): Response =>
     {
       status,
       headers: { "Content-Type": "application/json" },
-    },
+    }
   );
 
 const meteredSuccessResponse = (): Response => {
   const chunks = [
     `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_matrix", created_at: 0 } })}\n\n`,
-    `data: ${
-      JSON.stringify({
-        type: "response.completed",
-        response: {
-          id: "resp_matrix",
-          model: MODEL,
-          output: [{
+    `data: ${JSON.stringify({
+      type: "response.completed",
+      response: {
+        id: "resp_matrix",
+        model: MODEL,
+        output: [
+          {
             type: "message",
             role: "assistant",
             content: [{ type: "output_text", text: "metered routing matrix" }],
-          }],
-          usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
-        },
-      })
-    }\n\n`,
+          },
+        ],
+        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      },
+    })}\n\n`,
   ];
   return new Response(
     new ReadableStream<Uint8Array>({
@@ -239,7 +222,7 @@ const meteredSuccessResponse = (): Response => {
         "Content-Type": "text/event-stream",
         "X-Oneapi-Request-Id": "metered-routing-matrix",
       },
-    },
+    }
   );
 };
 
@@ -275,11 +258,13 @@ const seedFixture = async (): Promise<void> => {
       source: "chatgpt_codex",
       client_version: "0.100.0",
       updated_at_ms: now,
-      models: [{
-        slug: MODEL,
-        default_reasoning_level: "low",
-        supported_reasoning_levels: ["none", "low", "medium", "high"],
-      }],
+      models: [
+        {
+          slug: MODEL,
+          default_reasoning_level: "low",
+          supported_reasoning_levels: ["none", "low", "medium", "high"],
+        },
+      ],
     },
     updated_at_ms: now,
   };
@@ -336,13 +321,19 @@ const accountForRefreshToken = (refreshToken: unknown): (typeof ACCOUNT_IDS)[num
   throw new Error(`Unexpected refresh token fixture: ${String(refreshToken)}`);
 };
 
+const requestUrl = (input: RequestInfo | URL): string => {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+};
+
 const mockedFetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   const run = activeRun;
   if (!run) throw new Error("Routing matrix fetch occurred without an active case.");
-  const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+  const url = requestUrl(input);
 
   if (url === CODEX_REFRESH_URL) {
-    const body = typeof init?.body === "string" ? JSON.parse(init.body) as { refresh_token?: unknown } : {};
+    const body = typeof init?.body === "string" ? (JSON.parse(init.body) as { refresh_token?: unknown }) : {};
     const accountId = accountForRefreshToken(body.refresh_token);
     run.refreshCalls[accountId] += 1;
     return Promise.resolve(
@@ -351,8 +342,8 @@ const mockedFetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Resp
           access_token: `refreshed-${accountId}`,
           refresh_token: body.refresh_token,
         }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      )
     );
   }
 
@@ -375,7 +366,7 @@ const mockedFetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Resp
   return Promise.resolve(jsonErrorResponse(outcome.status));
 };
 
-const retryLogs = (logs: readonly unknown[][]): Array<Record<string, unknown>> =>
+const retryLogs = (logs: readonly unknown[][]): Record<string, unknown>[] =>
   logs.flatMap((args) => {
     if (args[0] !== "[ai.ubq.fi] codex_routing" || typeof args[1] !== "string") return [];
     try {
@@ -388,11 +379,16 @@ const retryLogs = (logs: readonly unknown[][]): Array<Record<string, unknown>> =
 
 const drainBackgroundTasks = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
-const runCase = async (
-  first: Outcome,
-  second: Outcome,
-  sequence: number,
-): Promise<void> => {
+// The recorded Codex outcome whose status decides the client-visible response:
+// on the generic-429 replay path it is whichever account returned the 429,
+// otherwise it is the last account that was actually reached.
+const terminalOutcome = (first: Outcome, second: Outcome, replays429: boolean, reachesSecond: boolean): Outcome => {
+  if (replays429) return is429(first) ? first : second;
+  if (reachesSecond) return second;
+  return first;
+};
+
+const runCase = async (first: Outcome, second: Outcome, sequence: number): Promise<void> => {
   await seedFixture();
   const run: ActiveRun = {
     outcomes: [first, second],
@@ -418,51 +414,31 @@ const runCase = async (
         kernelOrg: null,
         requestId: `routing-matrix-${sequence}-${first.name}-${second.name}`,
         startedAtMs: Date.now(),
-      },
+      }
     );
 
     const reachesSecond = isFallbackOutcome(first);
     // Ambiguous transport failures are terminal and must not replay the
     // inference on a sibling account. Every 429 in this matrix is deliberately
     // non-authoritative.
-    const completesGeneric429Retry = isFallbackOutcome(first) && isFallbackOutcome(second) &&
-      (is429(first) || is429(second));
-    const terminalCodexOutcome = completesGeneric429Retry
-      ? (is429(first) ? first : second)
-      : reachesSecond
-      ? second
-      : first;
+    const completesGeneric429Retry = isFallbackOutcome(first) && isFallbackOutcome(second) && (is429(first) || is429(second));
+    const terminalCodexOutcome = terminalOutcome(first, second, completesGeneric429Retry, reachesSecond);
     const expectedStatus = is401(terminalCodexOutcome) ? 503 : directStatus(terminalCodexOutcome);
     assert.equal(response.status, expectedStatus, `${label}: final status`);
-    assert.equal(
-      response.headers.get("x-uos-upstream"),
-      "chatgpt_codex",
-      `${label}: selected upstream`,
-    );
+    assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex", `${label}: selected upstream`);
     assert.equal(run.meteredCalls, 0, `${label}: generic 429 must not reach Metered`);
-    assert.equal(
-      run.codexCalls["account-two"] > 0,
-      reachesSecond,
-      `${label}: account two reachability`,
-    );
-    assert.equal(
-      run.refreshCalls["account-one"],
-      is401(first) ? 1 : 0,
-      `${label}: account one refresh count`,
-    );
-    assert.equal(
-      run.refreshCalls["account-two"],
-      reachesSecond && is401(second) ? 1 : 0,
-      `${label}: account two refresh count`,
-    );
+    assert.equal(run.codexCalls["account-two"] > 0, reachesSecond, `${label}: account two reachability`);
+    assert.equal(run.refreshCalls["account-one"], is401(first) ? 1 : 0, `${label}: account one refresh count`);
+    assert.equal(run.refreshCalls["account-two"], reachesSecond && is401(second) ? 1 : 0, `${label}: account two refresh count`);
 
-    const expectedBaseCalls = 1 + (is401(first) ? 1 : 0) +
-      (reachesSecond ? 1 + (is401(second) ? 1 : 0) : 0);
+    const firstAccountRefresh = is401(first) ? 1 : 0;
+    const secondAccountRefresh = is401(second) ? 1 : 0;
+    const expectedBaseCalls = 1 + firstAccountRefresh + (reachesSecond ? 1 + secondAccountRefresh : 0);
     const expectsGlobal429Retry = completesGeneric429Retry;
     assert.equal(
       run.codexCalls["account-one"] + run.codexCalls["account-two"],
       expectedBaseCalls + (expectsGlobal429Retry ? 1 : 0),
-      `${label}: total Codex attempt count`,
+      `${label}: total Codex attempt count`
     );
     const retries = retryLogs(run.infoLogs);
     assert.equal(retries.length, expectsGlobal429Retry ? 1 : 0, `${label}: global 429 retry count`);

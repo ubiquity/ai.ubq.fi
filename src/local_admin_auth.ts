@@ -5,14 +5,9 @@ export type ServeRuntimeOptions = Readonly<{
 const DISABLE_ADMIN_AUTH_FLAG = "--disable-admin-auth";
 
 const formatArgumentError = (argument: string): Error =>
-  new Error(
-    `[ai.ubq.fi] Unknown server argument '${argument}'. Supported arguments: ${DISABLE_ADMIN_AUTH_FLAG}`,
-  );
+  new Error(`[ai.ubq.fi] Unknown server argument '${argument}'. Supported arguments: ${DISABLE_ADMIN_AUTH_FLAG}`);
 
-export const parseServeRuntimeOptions = (
-  args: readonly string[],
-  options: Readonly<{ isDeploy: boolean }>,
-): ServeRuntimeOptions => {
+export const parseServeRuntimeOptions = (args: readonly string[], options: Readonly<{ isDeploy: boolean }>): ServeRuntimeOptions => {
   let disableAdminAuth = false;
 
   for (const argument of args) {
@@ -39,15 +34,12 @@ const isIpv4Loopback = (hostname: string): boolean => {
   const octets = hostname.split(".");
   if (octets.length !== 4) return false;
   const parsed = octets.map((octet) => Number(octet));
-  return parsed.every((octet, index) =>
-    Number.isInteger(octet) && octet >= 0 && octet <= 255 && String(octet) === octets[index]
-  ) && parsed[0] === 127;
+  return parsed.every((octet, index) => Number.isInteger(octet) && octet >= 0 && octet <= 255 && String(octet) === octets[index]) && parsed[0] === 127;
 };
 
 export const isLoopbackHostname = (value: string): boolean => {
   const hostname = normalizeHostname(value);
-  return hostname === "localhost" || hostname === "::1" || hostname === "0:0:0:0:0:0:0:1" ||
-    isIpv4Loopback(hostname);
+  return hostname === "localhost" || hostname === "::1" || hostname === "0:0:0:0:0:0:0:1" || isIpv4Loopback(hostname);
 };
 
 const isNumericLoopbackHostname = (value: string): boolean => {
@@ -64,15 +56,10 @@ const formatListenerAddress = (address: Deno.Addr): string => {
   return address.transport;
 };
 
-export const shouldDisableAdminAuthForListener = (
-  options: ServeRuntimeOptions,
-  address: Deno.Addr,
-): boolean => {
+export const shouldDisableAdminAuthForListener = (options: ServeRuntimeOptions, address: Deno.Addr): boolean => {
   if (!options.disableAdminAuth) return false;
   if (address.transport !== "tcp" || !isNumericLoopbackHostname(address.hostname)) {
-    throw new Error(
-      `[ai.ubq.fi] ${DISABLE_ADMIN_AUTH_FLAG} requires a loopback TCP listener; got ${formatListenerAddress(address)}.`,
-    );
+    throw new Error(`[ai.ubq.fi] ${DISABLE_ADMIN_AUTH_FLAG} requires a loopback TCP listener; got ${formatListenerAddress(address)}.`);
   }
   return true;
 };
@@ -80,10 +67,7 @@ export const shouldDisableAdminAuthForListener = (
 let adminAuthDisabled = false;
 let adminAuthPeer: Deno.Addr | null = null;
 
-export const configureAdminAuthForListener = (
-  options: ServeRuntimeOptions,
-  address: Deno.Addr,
-): boolean => {
+export const configureAdminAuthForListener = (options: ServeRuntimeOptions, address: Deno.Addr): boolean => {
   const disabled = shouldDisableAdminAuthForListener(options, address);
   adminAuthDisabled = disabled;
   adminAuthPeer = null;
@@ -95,8 +79,7 @@ export const configureAdminAuthPeerForRequest = (peer: Deno.Addr | null): void =
   adminAuthPeer = peer;
 };
 
-const isLoopbackPeer = (peer: Deno.Addr): boolean =>
-  peer.transport === "tcp" && isNumericLoopbackHostname(peer.hostname);
+const isLoopbackPeer = (peer: Deno.Addr): boolean => peer.transport === "tcp" && isNumericLoopbackHostname(peer.hostname);
 
 export const isAdminAuthDisabledForRequest = (request: Request): boolean => {
   if (!adminAuthDisabled) return false;

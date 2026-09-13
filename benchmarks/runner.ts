@@ -14,13 +14,7 @@
  * configuration surface; no environment variables are read.
  */
 
-import {
-  AdapterRunContext,
-  BenchmarkAdapter,
-  defaultAdapters,
-  TaskTimeoutError,
-  ToolCallLimitExceededError,
-} from "./adapter.ts";
+import { AdapterRunContext, BenchmarkAdapter, defaultAdapters, TaskTimeoutError, ToolCallLimitExceededError } from "./adapter.ts";
 import { computeFixtureRevision, FixtureRevisionMismatchError, FixtureWorkspace } from "./fixture.ts";
 import { loadTasks, selectTasks } from "./manifest.ts";
 import { aggregateResults, deriveMetrics, formatSummary } from "./metrics.ts";
@@ -42,7 +36,7 @@ import {
 // Options
 // ---------------------------------------------------------------------------
 
-export interface RunOptions {
+export type RunOptions = {
   /** Adapter config ids, or ["all"] for every registered adapter. */
   configs: string[];
   /** Task selectors: exact id, glob, `*`, or `category:<name>`. */
@@ -55,7 +49,7 @@ export interface RunOptions {
   fixturesDir: string;
   /** Adapter registry; defaults to defaultAdapters() (m03 registers A/B/D here). */
   adapters?: BenchmarkAdapter[];
-}
+};
 
 export function defaultRunOptions(): RunOptions {
   return {
@@ -85,15 +79,16 @@ export function parseRunArgs(argv: string[]): RunOptions | { help: true } {
   return opts;
 }
 
-export const RUN_HELP =
-  `usage: deno task benchmark:run -- [--configs=reference] [--tasks=*] [--limit=N] [--runs=benchmark-runs]
+export const RUN_HELP = `usage: deno task benchmark:run -- [--configs=reference] [--tasks=*] [--limit=N] [--runs=benchmark-runs]
 
   --configs    comma-separated adapter config ids, or "all" (default: reference)
   --tasks      comma-separated selectors: exact id, glob (* pattern), "category:<name>"
   --limit      cap the number of (task x config) pairs
   --runs       results root directory (default: benchmark-runs)
 
-registered configs: ${defaultAdapters().map((a) => a.configId).join(", ")}`;
+registered configs: ${defaultAdapters()
+  .map((a) => a.configId)
+  .join(", ")}`;
 
 // ---------------------------------------------------------------------------
 // Single run
@@ -104,7 +99,7 @@ function isoNow(): string {
 }
 
 function uniqueRunId(runsRoot: string, configId: string, taskId: string): string {
-  const stamp = isoNow().replace(/[^0-9]/g, "").slice(0, 14);
+  const stamp = isoNow().replace(/\D/g, "").slice(0, 14);
   const base = `${stamp}-${configId}-${taskId}`;
   let candidate = base;
   let n = 2;
@@ -128,18 +123,62 @@ function writeJsonl(path: string, records: unknown[]): void {
   Deno.writeTextFileSync(path, body);
 }
 
-export interface RunOneOutcome {
+export type RunOneOutcome = {
   result: BenchmarkResult;
   events: TrajectoryEvent[];
+};
+
+/** Classifies a thrown adapter failure into the benchmark failure taxonomy; null means the adapter completed. */
+async function classifyAdapterFailure(
+  adapter: BenchmarkAdapter,
+  ctx: AdapterRunContext
+): Promise<{ failureClass: FailureClass; failureDetail: string } | null> {
+  try {
+    await adapter.run(ctx);
+    return null;
+  } catch (err) {
+    if (err instanceof TaskTimeoutError) return { failureClass: "timeout", failureDetail: err.message };
+    if (err instanceof ToolCallLimitExceededError) return { failureClass: "tool_call_limit", failureDetail: err.message };
+    return { failureClass: "adapter_error", failureDetail: (err as Error).message };
+  }
+}
+
+/** Maps the observed run onto the benchmark failure taxonomy; null means the run passed. */
+function classifyRunFailure(
+  task: TaskManifest,
+  metrics: ReturnType<typeof deriveMetrics>,
+  requiredCallsMet: boolean,
+  verification: Awaited<ReturnType<typeof runVerification>>,
+  oracle: Awaited<ReturnType<typeof evaluateOracle>>
+): { failureClass: FailureClass; failureDetail: string } | null {
+  if (!requiredCallsMet) {
+    return {
+      failureClass: "min_calls_not_met",
+      failureDetail: `recorded ${metrics.tool_calls} tool calls (min ${task.min_tool_calls}) and ${metrics.model_calls} model calls (min ${task.min_model_calls})`,
+    };
+  }
+  if (!verification.passed) {
+    return {
+      failureClass: "verification_failed",
+      failureDetail: verification.timed_out
+        ? `verification command timed out: ${verification.command}`
+        : `verification command exited ${verification.exit_code}: ${verification.command}`,
+    };
+  }
+  if (!oracle.passed) {
+    return {
+      failureClass: "verification_failed",
+      failureDetail: `oracle checks failed: ${oracle.checks
+        .filter((c) => !c.passed)
+        .map((c) => c.detail)
+        .join("; ")}`,
+    };
+  }
+  return null;
 }
 
 /** Execute one task against one adapter configuration. */
-export async function runOne(
-  task: TaskManifest,
-  adapter: BenchmarkAdapter,
-  opts: RunOptions,
-  runIdHint = "",
-): Promise<RunOneOutcome> {
+export async function runOne(task: TaskManifest, adapter: BenchmarkAdapter, opts: RunOptions, runIdHint = ""): Promise<RunOneOutcome> {
   const runId = runIdHint || uniqueRunId(opts.runsRoot, adapter.configId, task.id);
   const runDir = `${opts.runsRoot}/runs/${runId}`;
   await Deno.mkdir(runDir, { recursive: true });
@@ -154,7 +193,7 @@ export async function runOne(
     try {
       validateTrajectoryEvent(event);
     } catch (err) {
-      throw new Error(`invalid trajectory event: ${(err as Error).message}`);
+      throw new Error(`invalid trajectory event: ${(err as Error).message}`, { cause: err });
     }
     events.push(event);
   };
@@ -210,19 +249,10 @@ export async function runOne(
   }
 
   if (failureClass === null) {
-    try {
-      await adapter.run(ctx);
-    } catch (err) {
-      if (err instanceof TaskTimeoutError) {
-        failureClass = "timeout";
-        failureDetail = err.message;
-      } else if (err instanceof ToolCallLimitExceededError) {
-        failureClass = "tool_call_limit";
-        failureDetail = err.message;
-      } else {
-        failureClass = "adapter_error";
-        failureDetail = (err as Error).message;
-      }
+    const adapterFailure = await classifyAdapterFailure(adapter, ctx);
+    if (adapterFailure) {
+      failureClass = adapterFailure.failureClass;
+      failureDetail = adapterFailure.failureDetail;
     }
   }
 
@@ -255,18 +285,10 @@ export async function runOne(
   };
 
   if (failureClass === null) {
-    if (!requiredCalls.met) {
-      failureClass = "min_calls_not_met";
-      failureDetail =
-        `recorded ${metrics.tool_calls} tool calls (min ${task.min_tool_calls}) and ${metrics.model_calls} model calls (min ${task.min_model_calls})`;
-    } else if (!verification.passed) {
-      failureClass = "verification_failed";
-      failureDetail = verification.timed_out
-        ? `verification command timed out: ${verification.command}`
-        : `verification command exited ${verification.exit_code}: ${verification.command}`;
-    } else if (!oracle.passed) {
-      failureClass = "verification_failed";
-      failureDetail = `oracle checks failed: ${oracle.checks.filter((c) => !c.passed).map((c) => c.detail).join("; ")}`;
+    const runFailure = classifyRunFailure(task, metrics, requiredCalls.met, verification, oracle);
+    if (runFailure) {
+      failureClass = runFailure.failureClass;
+      failureDetail = runFailure.failureDetail;
     }
   }
 
@@ -309,44 +331,50 @@ export async function runOne(
 // Full matrix
 // ---------------------------------------------------------------------------
 
-export async function runBenchmarks(opts: RunOptions): Promise<BenchmarkResult[]> {
-  const tasks = loadTasks(opts.tasksDir);
-  const selected = selectTasks(tasks, opts.taskSelectors);
-  const adapters = opts.adapters ?? defaultAdapters();
+/** Resolves the adapters to execute, refusing unknown configs and external-inference adapters. */
+function selectAdapters(opts: RunOptions, adapters: BenchmarkAdapter[]): BenchmarkAdapter[] {
   const chosen = opts.configs.includes("all") ? adapters : adapters.filter((a) => opts.configs.includes(a.configId));
   const missing = opts.configs.filter((c) => c !== "all" && !adapters.some((a) => a.configId === c));
   if (missing.length > 0) {
-    throw new Error(
-      `unknown configs: ${missing.join(", ")} (registered: ${adapters.map((a) => a.configId).join(", ")})`,
-    );
+    throw new Error(`unknown configs: ${missing.join(", ")} (registered: ${adapters.map((a) => a.configId).join(", ")})`);
   }
   const external = chosen.filter((a) => a.requiresExternalInference);
   if (external.length > 0) {
     throw new Error(
       `refusing to run external-inference adapters (${external.map((a) => a.configId).join(", ")}): ` +
-        `the hermetic runner only executes deterministic adapters; live runs are staged and gated by m03/m05`,
+        `the hermetic runner only executes deterministic adapters; live runs are staged and gated by m03/m05`
     );
   }
+  return chosen;
+}
+
+/** One progress line per executed (task x config) pair. */
+function reportPairResult(result: BenchmarkResult): void {
+  const icon = result.success ? "ok " : "FAIL";
+  console.log(
+    `  ${icon} ${result.config_id} ${result.task_id} ${result.wall_time_ms}ms ` +
+      `tools=${result.metrics.tool_calls} errs=${result.metrics.tool_errors}` +
+      (result.failure_class ? ` -> ${result.failure_class}: ${result.failure_detail}` : "")
+  );
+}
+
+export async function runBenchmarks(opts: RunOptions): Promise<BenchmarkResult[]> {
+  const tasks = loadTasks(opts.tasksDir);
+  const selected = selectTasks(tasks, opts.taskSelectors);
+  const chosen = selectAdapters(opts, opts.adapters ?? defaultAdapters());
 
   await Deno.mkdir(`${opts.runsRoot}/runs`, { recursive: true });
   await Deno.mkdir(`${opts.runsRoot}/tmp`, { recursive: true });
 
-  let pairs = 0;
   const results: BenchmarkResult[] = [];
   for (const task of selected) {
     for (const adapter of chosen) {
-      if (opts.limit !== undefined && pairs >= opts.limit) break;
-      pairs++;
+      if (opts.limit !== undefined && results.length >= opts.limit) break;
       const { result } = await runOne(task, adapter, opts);
       results.push(result);
-      const icon = result.success ? "ok " : "FAIL";
-      console.log(
-        `  ${icon} ${result.config_id} ${result.task_id} ${result.wall_time_ms}ms ` +
-          `tools=${result.metrics.tool_calls} errs=${result.metrics.tool_errors}` +
-          (result.failure_class ? ` -> ${result.failure_class}: ${result.failure_detail}` : ""),
-      );
+      reportPairResult(result);
     }
-    if (opts.limit !== undefined && pairs >= opts.limit) break;
+    if (opts.limit !== undefined && results.length >= opts.limit) break;
   }
   return results;
 }
@@ -362,11 +390,7 @@ if (import.meta.main) {
       console.log(RUN_HELP);
       Deno.exit(0);
     }
-    console.log(
-      `benchmark run: configs=[${parsed.configs.join(",")}] tasks=[${
-        parsed.taskSelectors.join(",")
-      }] runs=${parsed.runsRoot}`,
-    );
+    console.log(`benchmark run: configs=[${parsed.configs.join(",")}] tasks=[${parsed.taskSelectors.join(",")}] runs=${parsed.runsRoot}`);
     const results = await runBenchmarks(parsed);
     const summary = aggregateResults(results, parsed.runsRoot);
     console.log("");

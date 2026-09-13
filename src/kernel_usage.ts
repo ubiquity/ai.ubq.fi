@@ -1,19 +1,9 @@
-import { API_KEY_NO_USAGE_LIMIT, shouldResetUsage } from "./api_keys.ts";
-import {
-  DEFAULT_KERNEL_POLICY_LIMIT_KEY,
-  DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS,
-  DEFAULT_KERNEL_POLICY_WINDOW_KEY,
-  DEFAULT_KERNEL_POLICY_WINDOW_MS,
-} from "./defaults.ts";
-import { openaiError } from "./http.ts";
 import { getKv } from "./kv.ts";
 import { getString, isRecord } from "./utils.ts";
 import type {
-  KernelAuthLimitRecord,
   KernelAuthUsageDailyRecord,
   KernelAuthUsageDay,
   KernelAuthUsageRecord,
-  KernelOrgLimitRecord,
   KernelOrgUsageDailyRecord,
   KernelOrgUsageDay,
   KernelOrgUsageRecord,
@@ -21,92 +11,17 @@ import type {
 
 export const KERNEL_AUTH_USAGE_PREFIX = ["ubq_ai", "kernel_auth", "usage"] as const;
 export const KERNEL_AUTH_USAGE_DAILY_PREFIX = ["ubq_ai", "kernel_auth", "usage_daily"] as const;
-export const KERNEL_AUTH_LIMIT_PREFIX = ["ubq_ai", "kernel_auth", "limits"] as const;
 export const KERNEL_AUTH_ORG_USAGE_PREFIX = ["ubq_ai", "kernel_auth", "org_usage"] as const;
 export const KERNEL_AUTH_ORG_USAGE_DAILY_PREFIX = ["ubq_ai", "kernel_auth", "org_usage_daily"] as const;
-export const KERNEL_AUTH_ORG_LIMIT_PREFIX = ["ubq_ai", "kernel_auth", "org_limits"] as const;
 
 const MAX_LABEL_LENGTH = 120;
-const MAX_KV_RETRIES = 3;
 const DAILY_SERIES_DAYS = 30;
-const DAILY_HISTORY_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
-const KERNEL_NO_EXPIRATION_MS = -1;
-
-const normalizeWindowMs = (value: unknown, fallback: number): number => {
-  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
-  const windowMs = Math.trunc(value);
-  if (windowMs <= 0) return fallback;
-  return windowMs;
-};
-
-const normalizeDefaultKernelLimit = (value: unknown): number => {
-  if (typeof value === "string") {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) value = parsed;
-  }
-  return normalizeUsageLimitRequests(value, DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS);
-};
-
-const normalizeDefaultKernelWindow = (value: unknown): number => {
-  if (typeof value === "string") {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) value = parsed;
-  }
-  return normalizeWindowMs(value, DEFAULT_KERNEL_POLICY_WINDOW_MS);
-};
-
-const loadKernelDefaultPolicy = async (
-  kv: Deno.Kv | null,
-): Promise<{ limit: number; windowMs: number }> => {
-  if (!kv) {
-    return { limit: DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS, windowMs: DEFAULT_KERNEL_POLICY_WINDOW_MS };
-  }
-  const [limitEntry, windowEntry] = await Promise.all([
-    kv.get<number>(DEFAULT_KERNEL_POLICY_LIMIT_KEY),
-    kv.get<number>(DEFAULT_KERNEL_POLICY_WINDOW_KEY),
-  ]);
-  return {
-    limit: normalizeDefaultKernelLimit(limitEntry.value),
-    windowMs: normalizeDefaultKernelWindow(windowEntry.value),
-  };
-};
-
-const calculateNextResetMsForWindow = (nowMs: number, windowMs: number): number => {
-  return nowMs + windowMs;
-};
-
-const normalizeUsageLimitRequests = (value: unknown, fallback: number): number => {
-  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
-  const limit = Math.trunc(value);
-  if (limit === API_KEY_NO_USAGE_LIMIT) return API_KEY_NO_USAGE_LIMIT;
-  if (limit < 0) return fallback;
-  return limit;
-};
 
 export const kernelUsageKey = (owner: string, repo: string) => [...KERNEL_AUTH_USAGE_PREFIX, owner, repo] as const;
-export const kernelUsageDailyKey = (owner: string, repo: string) =>
-  [...KERNEL_AUTH_USAGE_DAILY_PREFIX, owner, repo] as const;
-export const legacyKernelLimitKey = (owner: string, repo: string) =>
-  [...KERNEL_AUTH_LIMIT_PREFIX, owner, repo] as const;
+export const kernelUsageDailyKey = (owner: string, repo: string) => [...KERNEL_AUTH_USAGE_DAILY_PREFIX, owner, repo] as const;
 export const kernelOrgUsageKey = (owner: string) => [...KERNEL_AUTH_ORG_USAGE_PREFIX, owner] as const;
 export const kernelOrgUsageDailyKey = (owner: string) => [...KERNEL_AUTH_ORG_USAGE_DAILY_PREFIX, owner] as const;
-export const legacyKernelOrgLimitKey = (owner: string) => [...KERNEL_AUTH_ORG_LIMIT_PREFIX, owner] as const;
-
-type KernelUsageDelta = Readonly<{
-  request_count?: number;
-  stream_request_count?: number;
-  non_stream_request_count?: number;
-  completed_request_count?: number;
-  error_request_count?: number;
-  input_tokens?: number;
-  output_tokens?: number;
-  total_tokens?: number;
-  model?: string | null;
-  reasoning?: string | null;
-  route?: string | null;
-  seen_at_ms?: number;
-}>;
 
 const coerceNumber = (value: unknown, fallback = 0): number => {
   if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
@@ -152,11 +67,6 @@ const dayKeyToMs = (value: string): number | null => {
   return Date.UTC(year, month - 1, day);
 };
 
-const clampDelta = (value: unknown): number => {
-  const num = coerceNumber(value, 0);
-  return num > 0 ? num : 0;
-};
-
 const buildBaseUsageRecord = (owner: string, repo: string, nowMs: number): KernelAuthUsageRecord => ({
   owner,
   repo,
@@ -175,12 +85,7 @@ const buildBaseUsageRecord = (owner: string, repo: string, nowMs: number): Kerne
   last_route: null,
 });
 
-const normalizeUsageRecord = (
-  value: unknown,
-  owner: string,
-  repo: string,
-  nowMs: number,
-): KernelAuthUsageRecord => {
+const normalizeUsageRecord = (value: unknown, owner: string, repo: string, nowMs: number): KernelAuthUsageRecord => {
   if (!isRecord(value)) return buildBaseUsageRecord(owner, repo, nowMs);
   return {
     owner: normalizeOwnerRepo(value.owner, owner),
@@ -210,12 +115,7 @@ const normalizeDailyUsageDay = (value: unknown): KernelAuthUsageDay | null => {
   return { day, request_count: requestCount };
 };
 
-const normalizeDailyUsageRecord = (
-  value: unknown,
-  owner: string,
-  repo: string,
-  nowMs: number,
-): KernelAuthUsageDailyRecord => {
+const normalizeDailyUsageRecord = (value: unknown, owner: string, repo: string, nowMs: number): KernelAuthUsageDailyRecord => {
   if (!isRecord(value)) return { owner, repo, days: [], updated_at_ms: nowMs };
   const daysRaw = Array.isArray(value.days) ? value.days : [];
   const days: KernelAuthUsageDay[] = [];
@@ -231,11 +131,7 @@ const normalizeDailyUsageRecord = (
   };
 };
 
-const normalizeDailyOrgUsageRecord = (
-  value: unknown,
-  owner: string,
-  nowMs: number,
-): KernelOrgUsageDailyRecord => {
+const normalizeDailyOrgUsageRecord = (value: unknown, owner: string, nowMs: number): KernelOrgUsageDailyRecord => {
   if (!isRecord(value)) return { owner, days: [], updated_at_ms: nowMs };
   const daysRaw = Array.isArray(value.days) ? value.days : [];
   const days: KernelOrgUsageDay[] = [];
@@ -250,24 +146,7 @@ const normalizeDailyOrgUsageRecord = (
   };
 };
 
-const pruneDailyUsageDays = <T extends { day: string; request_count: number }>(
-  days: T[],
-  nowMs: number,
-): T[] => {
-  const cutoffMs = startOfDayUtcMs(nowMs) - (DAILY_HISTORY_DAYS - 1) * DAY_MS;
-  return days
-    .filter((entry) => {
-      const dayMs = dayKeyToMs(entry.day);
-      return dayMs !== null && dayMs >= cutoffMs;
-    })
-    .sort((a, b) => a.day.localeCompare(b.day));
-};
-
-const buildDailySeries = (
-  record: { days: Array<{ day: string; request_count: number }> },
-  nowMs: number,
-  days: number,
-): number[] => {
+const buildDailySeries = (record: { days: { day: string; request_count: number }[] }, nowMs: number, days: number): number[] => {
   const seriesDays = Math.max(1, Math.trunc(days));
   const startMs = startOfDayUtcMs(nowMs) - (seriesDays - 1) * DAY_MS;
   const countsByDay = new Map<string, number>();
@@ -283,94 +162,10 @@ const buildDailySeries = (
   return series;
 };
 
-const applyDelta = (record: KernelAuthUsageRecord, delta: KernelUsageDelta, nowMs: number): KernelAuthUsageRecord => {
-  const model = delta.model === undefined ? record.last_model : normalizeLabel(delta.model);
-  const reasoning = delta.reasoning === undefined ? record.last_reasoning : normalizeLabel(delta.reasoning);
-  const route = delta.route === undefined ? record.last_route : normalizeLabel(delta.route);
-  const seenAt = typeof delta.seen_at_ms === "number" && Number.isFinite(delta.seen_at_ms)
-    ? Math.trunc(delta.seen_at_ms)
-    : nowMs;
-
-  return {
-    owner: record.owner,
-    repo: record.repo,
-    total_requests: record.total_requests + clampDelta(delta.request_count),
-    stream_requests: record.stream_requests + clampDelta(delta.stream_request_count),
-    non_stream_requests: record.non_stream_requests + clampDelta(delta.non_stream_request_count),
-    completed_requests: record.completed_requests + clampDelta(delta.completed_request_count),
-    error_requests: record.error_requests + clampDelta(delta.error_request_count),
-    input_tokens: record.input_tokens + clampDelta(delta.input_tokens),
-    output_tokens: record.output_tokens + clampDelta(delta.output_tokens),
-    total_tokens: record.total_tokens + clampDelta(delta.total_tokens),
-    first_seen_at_ms: record.first_seen_at_ms > 0 ? record.first_seen_at_ms : seenAt,
-    last_seen_at_ms: seenAt,
-    last_model: model,
-    last_reasoning: reasoning,
-    last_route: route,
-  };
-};
-
-export const recordKernelUsage = async (owner: string, repo: string, delta: KernelUsageDelta): Promise<void> => {
-  try {
-    const kv = await getKv();
-    if (!kv) return;
-
-    const key = kernelUsageKey(owner, repo);
-    const nowMs = Date.now();
-    let usageUpdated = false;
-
-    for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt++) {
-      const entry = await kv.get<KernelAuthUsageRecord>(key);
-      const current = normalizeUsageRecord(entry.value, owner, repo, nowMs);
-      const updated = applyDelta(current, delta, nowMs);
-      const commit = await kv.atomic().check(entry).set(key, updated).commit();
-      if (commit.ok) {
-        usageUpdated = true;
-        break;
-      }
-    }
-
-    if (!usageUpdated) {
-      console.warn("[ai.ubq.fi] Failed to update kernel auth usage after retries:", `${owner}/${repo}`);
-      return;
-    }
-
-    const requestCount = clampDelta(delta.request_count);
-    if (requestCount > 0) {
-      const seenAt = typeof delta.seen_at_ms === "number" && Number.isFinite(delta.seen_at_ms)
-        ? Math.trunc(delta.seen_at_ms)
-        : nowMs;
-      const dayKey = dayKeyFromMs(seenAt);
-      for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt++) {
-        const entry = await kv.get<KernelAuthUsageDailyRecord>(kernelUsageDailyKey(owner, repo));
-        const current = normalizeDailyUsageRecord(entry.value, owner, repo, nowMs);
-        const nextDays = [...current.days];
-        const index = nextDays.findIndex((item) => item.day === dayKey);
-        if (index >= 0) {
-          const existing = nextDays[index]!;
-          nextDays[index] = { day: existing.day, request_count: existing.request_count + requestCount };
-        } else {
-          nextDays.push({ day: dayKey, request_count: requestCount });
-        }
-        const updated: KernelAuthUsageDailyRecord = {
-          owner,
-          repo,
-          days: pruneDailyUsageDays(nextDays, nowMs),
-          updated_at_ms: nowMs,
-        };
-        const commit = await kv.atomic().check(entry).set(kernelUsageDailyKey(owner, repo), updated).commit();
-        if (commit.ok) break;
-      }
-    }
-  } catch (error) {
-    console.warn("[ai.ubq.fi] Failed to record kernel auth usage:", error);
-  }
-};
-
 export const getKernelUsage = async (
   owner: string,
   repo: string,
-  options: { includeDaily?: boolean; dailyDays?: number } = {},
+  options: { includeDaily?: boolean; dailyDays?: number } = {}
 ): Promise<(KernelAuthUsageRecord & { daily_requests?: number[] }) | null> => {
   try {
     const kv = await getKv();
@@ -429,91 +224,9 @@ const normalizeOrgUsageRecord = (value: unknown, owner: string, nowMs: number): 
   };
 };
 
-const applyOrgDelta = (record: KernelOrgUsageRecord, delta: KernelUsageDelta, nowMs: number): KernelOrgUsageRecord => {
-  const model = delta.model === undefined ? record.last_model : normalizeLabel(delta.model);
-  const reasoning = delta.reasoning === undefined ? record.last_reasoning : normalizeLabel(delta.reasoning);
-  const route = delta.route === undefined ? record.last_route : normalizeLabel(delta.route);
-  const seenAt = typeof delta.seen_at_ms === "number" && Number.isFinite(delta.seen_at_ms)
-    ? Math.trunc(delta.seen_at_ms)
-    : nowMs;
-
-  return {
-    owner: record.owner,
-    total_requests: record.total_requests + clampDelta(delta.request_count),
-    stream_requests: record.stream_requests + clampDelta(delta.stream_request_count),
-    non_stream_requests: record.non_stream_requests + clampDelta(delta.non_stream_request_count),
-    completed_requests: record.completed_requests + clampDelta(delta.completed_request_count),
-    error_requests: record.error_requests + clampDelta(delta.error_request_count),
-    input_tokens: record.input_tokens + clampDelta(delta.input_tokens),
-    output_tokens: record.output_tokens + clampDelta(delta.output_tokens),
-    total_tokens: record.total_tokens + clampDelta(delta.total_tokens),
-    first_seen_at_ms: record.first_seen_at_ms > 0 ? record.first_seen_at_ms : seenAt,
-    last_seen_at_ms: seenAt,
-    last_model: model,
-    last_reasoning: reasoning,
-    last_route: route,
-  };
-};
-
-export const recordKernelOrgUsage = async (owner: string, delta: KernelUsageDelta): Promise<void> => {
-  try {
-    const kv = await getKv();
-    if (!kv) return;
-
-    const key = kernelOrgUsageKey(owner);
-    const nowMs = Date.now();
-    let usageUpdated = false;
-
-    for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt++) {
-      const entry = await kv.get<KernelOrgUsageRecord>(key);
-      const current = normalizeOrgUsageRecord(entry.value, owner, nowMs);
-      const updated = applyOrgDelta(current, delta, nowMs);
-      const commit = await kv.atomic().check(entry).set(key, updated).commit();
-      if (commit.ok) {
-        usageUpdated = true;
-        break;
-      }
-    }
-
-    if (!usageUpdated) {
-      console.warn("[ai.ubq.fi] Failed to update kernel org usage after retries:", owner);
-      return;
-    }
-
-    const requestCount = clampDelta(delta.request_count);
-    if (requestCount > 0) {
-      const seenAt = typeof delta.seen_at_ms === "number" && Number.isFinite(delta.seen_at_ms)
-        ? Math.trunc(delta.seen_at_ms)
-        : nowMs;
-      const dayKey = dayKeyFromMs(seenAt);
-      for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt++) {
-        const entry = await kv.get<KernelOrgUsageDailyRecord>(kernelOrgUsageDailyKey(owner));
-        const current = normalizeDailyOrgUsageRecord(entry.value, owner, nowMs);
-        const nextDays = [...current.days];
-        const index = nextDays.findIndex((item) => item.day === dayKey);
-        if (index >= 0) {
-          const existing = nextDays[index]!;
-          nextDays[index] = { day: existing.day, request_count: existing.request_count + requestCount };
-        } else {
-          nextDays.push({ day: dayKey, request_count: requestCount });
-        }
-        const updated: KernelOrgUsageDailyRecord = {
-          owner,
-          days: pruneDailyUsageDays(nextDays, nowMs),
-          updated_at_ms: nowMs,
-        };
-        const commit = await kv.atomic().check(entry).set(kernelOrgUsageDailyKey(owner), updated).commit();
-        if (commit.ok) break;
-      }
-    }
-  } catch (error) {
-    console.warn("[ai.ubq.fi] Failed to record kernel org usage:", error);
-  }
-};
-
 export const getKernelOrgUsage = async (
   owner: string,
-  options: { includeDaily?: boolean; dailyDays?: number } = {},
+  options: { includeDaily?: boolean; dailyDays?: number } = {}
 ): Promise<(KernelOrgUsageRecord & { daily_requests?: number[] }) | null> => {
   try {
     const kv = await getKv();
@@ -535,125 +248,14 @@ export const getKernelOrgUsage = async (
   }
 };
 
-const buildBaseLimitRecord = (
-  owner: string,
-  repo: string,
-  nowMs: number,
-  usageLimitRequests: number,
-  windowMs: number,
-): KernelAuthLimitRecord => ({
-  owner,
-  repo,
-  usage_limit_requests: usageLimitRequests,
-  usage_requests: 0,
-  usage_reset_at_ms: calculateNextResetMsForWindow(nowMs, windowMs),
-  window_ms: windowMs,
-  expires_at_ms: KERNEL_NO_EXPIRATION_MS,
-  created_at_ms: nowMs,
-  updated_at_ms: nowMs,
-});
-
-const normalizeResetAtMs = (value: unknown, nowMs: number, windowMs: number): number => {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return calculateNextResetMsForWindow(nowMs, windowMs);
-  }
-  const resetAtMs = Math.trunc(value);
-  if (resetAtMs <= 0) return calculateNextResetMsForWindow(nowMs, windowMs);
-  return resetAtMs;
-};
-
-const normalizeExpiresAtMs = (value: unknown): number => {
-  if (typeof value !== "number" || !Number.isFinite(value)) return KERNEL_NO_EXPIRATION_MS;
-  const expiresAtMs = Math.trunc(value);
-  if (expiresAtMs === KERNEL_NO_EXPIRATION_MS) return KERNEL_NO_EXPIRATION_MS;
-  if (expiresAtMs < 0) return KERNEL_NO_EXPIRATION_MS;
-  return expiresAtMs;
-};
-
-const isExpired = (expiresAtMs: number, nowMs: number): boolean =>
-  expiresAtMs !== KERNEL_NO_EXPIRATION_MS && expiresAtMs <= nowMs;
-
-const normalizeLimitRecord = (
-  value: unknown,
-  owner: string,
-  repo: string,
-  nowMs: number,
-  defaultLimit: number,
-  defaultWindowMs: number,
-): KernelAuthLimitRecord => {
-  if (!isRecord(value)) {
-    return buildBaseLimitRecord(owner, repo, nowMs, defaultLimit, defaultWindowMs);
-  }
-  const windowMs = normalizeWindowMs(value.window_ms, defaultWindowMs);
-  return {
-    owner: normalizeOwnerRepo(value.owner, owner),
-    repo: normalizeOwnerRepo(value.repo, repo),
-    usage_limit_requests: normalizeUsageLimitRequests(value.usage_limit_requests, defaultLimit),
-    usage_requests: Math.max(0, coerceNumber(value.usage_requests, 0)),
-    usage_reset_at_ms: normalizeResetAtMs(value.usage_reset_at_ms, nowMs, windowMs),
-    window_ms: windowMs,
-    expires_at_ms: normalizeExpiresAtMs(value.expires_at_ms),
-    created_at_ms: coerceNumber(value.created_at_ms, nowMs),
-    updated_at_ms: coerceNumber(value.updated_at_ms, nowMs),
-  };
-};
-
-export type LegacyKernelAuthLimitSnapshot = Readonly<{
-  record: KernelAuthLimitRecord;
-  source: "default" | "kv";
-}>;
-
-export const legacyGetKernelUsageLimitSnapshot = async (
-  owner: string,
-  repo: string,
-): Promise<LegacyKernelAuthLimitSnapshot | null> => {
-  try {
-    const kv = await getKv();
-    if (!kv) return null;
-    const defaults = await loadKernelDefaultPolicy(kv);
-    const nowMs = Date.now();
-    const entry = await kv.get<KernelAuthLimitRecord>(legacyKernelLimitKey(owner, repo));
-    const source = entry.value ? "kv" : "default";
-    const record = normalizeLimitRecord(entry.value, owner, repo, nowMs, defaults.limit, defaults.windowMs);
-    return { record, source };
-  } catch (error) {
-    console.warn("[ai.ubq.fi] Failed to load kernel auth usage limit:", error);
-    return null;
-  }
-};
-
-export const legacyListKernelUsageLimits = async (): Promise<KernelAuthLimitRecord[] | null> => {
-  try {
-    const kv = await getKv();
-    if (!kv) return null;
-    const defaults = await loadKernelDefaultPolicy(kv);
-    const nowMs = Date.now();
-    const records: KernelAuthLimitRecord[] = [];
-    for await (const entry of kv.list<KernelAuthLimitRecord>({ prefix: KERNEL_AUTH_LIMIT_PREFIX })) {
-      const keyOwner = typeof entry.key[3] === "string" ? entry.key[3] : "";
-      const keyRepo = typeof entry.key[4] === "string" ? entry.key[4] : "";
-      records.push(normalizeLimitRecord(entry.value, keyOwner, keyRepo, nowMs, defaults.limit, defaults.windowMs));
-    }
-    records.sort((a, b) => {
-      const ownerCmp = a.owner.localeCompare(b.owner);
-      if (ownerCmp !== 0) return ownerCmp;
-      return a.repo.localeCompare(b.repo);
-    });
-    return records;
-  } catch (error) {
-    console.warn("[ai.ubq.fi] Failed to list kernel auth usage limits:", error);
-    return null;
-  }
-};
-
 export const listKernelUsageRecords = async (
-  options: { includeDaily?: boolean; dailyDays?: number } = {},
+  options: { includeDaily?: boolean; dailyDays?: number } = {}
 ): Promise<(KernelAuthUsageRecord & { daily_requests?: number[] })[] | null> => {
   try {
     const kv = await getKv();
     if (!kv) return null;
     const nowMs = Date.now();
-    const records: Array<KernelAuthUsageRecord & { daily_requests?: number[] }> = [];
+    const records: (KernelAuthUsageRecord & { daily_requests?: number[] })[] = [];
     for await (const entry of kv.list<KernelAuthUsageRecord>({ prefix: KERNEL_AUTH_USAGE_PREFIX })) {
       const keyOwner = typeof entry.key[3] === "string" ? entry.key[3] : "";
       const keyRepo = typeof entry.key[4] === "string" ? entry.key[4] : "";
@@ -681,259 +283,14 @@ export const listKernelUsageRecords = async (
   }
 };
 
-export const legacySetKernelUsageLimit = async (
-  owner: string,
-  repo: string,
-  usageLimitRequests: number,
-  options: { resetUsage?: boolean; windowMs?: number; expiresAtMs?: number } = {},
-): Promise<KernelAuthLimitRecord | null> => {
-  try {
-    const kv = await getKv();
-    if (!kv) return null;
-    const defaults = await loadKernelDefaultPolicy(kv);
-    const key = legacyKernelLimitKey(owner, repo);
-    const nowMs = Date.now();
-    const entry = await kv.get<KernelAuthLimitRecord>(key);
-    const current = normalizeLimitRecord(entry.value, owner, repo, nowMs, defaults.limit, defaults.windowMs);
-    const windowMs = options.windowMs === undefined
-      ? current.window_ms
-      : normalizeWindowMs(options.windowMs, current.window_ms);
-    const expiresAtMs = options.expiresAtMs === undefined
-      ? current.expires_at_ms
-      : normalizeExpiresAtMs(options.expiresAtMs);
-    const nextResetAtMs = calculateNextResetMsForWindow(nowMs, windowMs);
-    const nextUsageRequests = 0;
-    const updated: KernelAuthLimitRecord = {
-      ...current,
-      usage_limit_requests: normalizeUsageLimitRequests(usageLimitRequests, current.usage_limit_requests),
-      usage_requests: nextUsageRequests,
-      usage_reset_at_ms: nextResetAtMs,
-      window_ms: windowMs,
-      expires_at_ms: expiresAtMs,
-      created_at_ms: entry.value ? current.created_at_ms : nowMs,
-      updated_at_ms: nowMs,
-    };
-    const commit = await kv.atomic().check(entry).set(key, updated).commit();
-    if (!commit.ok) return null;
-    return updated;
-  } catch (error) {
-    console.warn("[ai.ubq.fi] Failed to update kernel auth usage limit:", error);
-    return null;
-  }
-};
-
-export const legacyDeleteKernelUsageLimit = async (owner: string, repo: string): Promise<boolean | null> => {
-  try {
-    const kv = await getKv();
-    if (!kv) return null;
-    const key = legacyKernelLimitKey(owner, repo);
-    const entry = await kv.get<KernelAuthLimitRecord>(key);
-    if (!entry.value) return false;
-    const commit = await kv.atomic().check(entry).delete(key).commit();
-    return commit.ok;
-  } catch (error) {
-    console.warn("[ai.ubq.fi] Failed to delete kernel auth usage limit:", error);
-    return null;
-  }
-};
-
-export const legacyCheckKernelUsageLimit = async (
-  owner: string,
-  repo: string,
-): Promise<{ ok: true } | { ok: false; response: Response }> => {
-  try {
-    const kv = await getKv();
-    if (!kv) return { ok: true };
-    const defaults = await loadKernelDefaultPolicy(kv);
-    const key = legacyKernelLimitKey(owner, repo);
-    const nowMs = Date.now();
-
-    for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt++) {
-      const entry = await kv.get<KernelAuthLimitRecord>(key);
-      let record = normalizeLimitRecord(entry.value, owner, repo, nowMs, defaults.limit, defaults.windowMs);
-
-      if (isExpired(record.expires_at_ms, nowMs)) {
-        return {
-          ok: false,
-          response: openaiError(
-            429,
-            "GitHub access rate limit expired; update it via /admin/kernel-usage.",
-            "rate_limit_exceeded",
-          ),
-        };
-      }
-
-      if (record.usage_limit_requests === 0) {
-        return {
-          ok: false,
-          response: openaiError(
-            429,
-            "Kernel auth usage limit is 0; update it via /admin/kernel-usage.",
-            "rate_limit_exceeded",
-          ),
-        };
-      }
-
-      if (shouldResetUsage(record.usage_reset_at_ms, nowMs)) {
-        record = {
-          ...record,
-          usage_requests: 0,
-          usage_reset_at_ms: calculateNextResetMsForWindow(nowMs, record.window_ms),
-          updated_at_ms: nowMs,
-        };
-        if (entry.value) {
-          const commit = await kv.atomic().check(entry).set(key, record).commit();
-          if (!commit.ok) continue;
-        }
-      }
-
-      if (
-        record.usage_limit_requests !== API_KEY_NO_USAGE_LIMIT &&
-        record.usage_requests >= record.usage_limit_requests
-      ) {
-        return {
-          ok: false,
-          response: openaiError(
-            429,
-            `Usage limit exceeded (${record.usage_requests}/${record.usage_limit_requests}). Resets at ${
-              new Date(record.usage_reset_at_ms).toISOString()
-            }`,
-            "rate_limit_exceeded",
-          ),
-        };
-      }
-
-      return { ok: true };
-    }
-
-    console.warn("[ai.ubq.fi] Failed to refresh kernel auth usage limit after retries:", `${owner}/${repo}`);
-    return { ok: true };
-  } catch (error) {
-    console.warn("[ai.ubq.fi] Failed to check kernel auth usage limit:", error);
-    return { ok: true };
-  }
-};
-
-export const legacyIncrementKernelUsageLimit = async (owner: string, repo: string): Promise<void> => {
-  try {
-    const kv = await getKv();
-    if (!kv) return;
-    const defaults = await loadKernelDefaultPolicy(kv);
-    const key = legacyKernelLimitKey(owner, repo);
-    const nowMs = Date.now();
-
-    for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt++) {
-      const entry = await kv.get<KernelAuthLimitRecord>(key);
-      const current = normalizeLimitRecord(entry.value, owner, repo, nowMs, defaults.limit, defaults.windowMs);
-      const resetUsage = shouldResetUsage(current.usage_reset_at_ms, nowMs);
-      const updated: KernelAuthLimitRecord = {
-        ...current,
-        usage_requests: (resetUsage ? 0 : current.usage_requests) + 1,
-        usage_reset_at_ms: resetUsage
-          ? calculateNextResetMsForWindow(nowMs, current.window_ms)
-          : current.usage_reset_at_ms,
-        created_at_ms: entry.value ? current.created_at_ms : nowMs,
-        updated_at_ms: nowMs,
-      };
-      const commit = await kv.atomic().check(entry).set(key, updated).commit();
-      if (commit.ok) return;
-    }
-
-    console.warn("[ai.ubq.fi] Failed to increment kernel auth usage after retries:", `${owner}/${repo}`);
-  } catch (error) {
-    console.warn("[ai.ubq.fi] Failed to increment kernel auth usage:", error);
-  }
-};
-
-const buildBaseOrgLimitRecord = (
-  owner: string,
-  nowMs: number,
-  usageLimitRequests: number,
-  windowMs: number,
-): KernelOrgLimitRecord => ({
-  owner,
-  usage_limit_requests: usageLimitRequests,
-  usage_requests: 0,
-  usage_reset_at_ms: calculateNextResetMsForWindow(nowMs, windowMs),
-  window_ms: windowMs,
-  expires_at_ms: KERNEL_NO_EXPIRATION_MS,
-  created_at_ms: nowMs,
-  updated_at_ms: nowMs,
-});
-
-const normalizeOrgLimitRecord = (
-  value: unknown,
-  owner: string,
-  nowMs: number,
-  defaultLimit: number,
-  defaultWindowMs: number,
-): KernelOrgLimitRecord => {
-  if (!isRecord(value)) {
-    return buildBaseOrgLimitRecord(owner, nowMs, defaultLimit, defaultWindowMs);
-  }
-  const windowMs = normalizeWindowMs(value.window_ms, defaultWindowMs);
-  return {
-    owner: normalizeOwnerRepo(value.owner, owner),
-    usage_limit_requests: normalizeUsageLimitRequests(value.usage_limit_requests, defaultLimit),
-    usage_requests: Math.max(0, coerceNumber(value.usage_requests, 0)),
-    usage_reset_at_ms: normalizeResetAtMs(value.usage_reset_at_ms, nowMs, windowMs),
-    window_ms: windowMs,
-    expires_at_ms: normalizeExpiresAtMs(value.expires_at_ms),
-    created_at_ms: coerceNumber(value.created_at_ms, nowMs),
-    updated_at_ms: coerceNumber(value.updated_at_ms, nowMs),
-  };
-};
-
-export type LegacyKernelOrgLimitSnapshot = Readonly<{
-  record: KernelOrgLimitRecord;
-  source: "default" | "kv";
-}>;
-
-export const legacyGetKernelOrgUsageLimitSnapshot = async (
-  owner: string,
-): Promise<LegacyKernelOrgLimitSnapshot | null> => {
-  try {
-    const kv = await getKv();
-    if (!kv) return null;
-    const defaults = await loadKernelDefaultPolicy(kv);
-    const nowMs = Date.now();
-    const entry = await kv.get<KernelOrgLimitRecord>(legacyKernelOrgLimitKey(owner));
-    const source = entry.value ? "kv" : "default";
-    const record = normalizeOrgLimitRecord(entry.value, owner, nowMs, defaults.limit, defaults.windowMs);
-    return { record, source };
-  } catch (error) {
-    console.warn("[ai.ubq.fi] Failed to load kernel org usage limit:", error);
-    return null;
-  }
-};
-
-export const legacyListKernelOrgUsageLimits = async (): Promise<KernelOrgLimitRecord[] | null> => {
-  try {
-    const kv = await getKv();
-    if (!kv) return null;
-    const defaults = await loadKernelDefaultPolicy(kv);
-    const nowMs = Date.now();
-    const records: KernelOrgLimitRecord[] = [];
-    for await (const entry of kv.list<KernelOrgLimitRecord>({ prefix: KERNEL_AUTH_ORG_LIMIT_PREFIX })) {
-      const keyOwner = typeof entry.key[3] === "string" ? entry.key[3] : "";
-      records.push(normalizeOrgLimitRecord(entry.value, keyOwner, nowMs, defaults.limit, defaults.windowMs));
-    }
-    records.sort((a, b) => a.owner.localeCompare(b.owner));
-    return records;
-  } catch (error) {
-    console.warn("[ai.ubq.fi] Failed to list kernel org usage limits:", error);
-    return null;
-  }
-};
-
 export const listKernelOrgUsageRecords = async (
-  options: { includeDaily?: boolean; dailyDays?: number } = {},
+  options: { includeDaily?: boolean; dailyDays?: number } = {}
 ): Promise<(KernelOrgUsageRecord & { daily_requests?: number[] })[] | null> => {
   try {
     const kv = await getKv();
     if (!kv) return null;
     const nowMs = Date.now();
-    const records: Array<KernelOrgUsageRecord & { daily_requests?: number[] }> = [];
+    const records: (KernelOrgUsageRecord & { daily_requests?: number[] })[] = [];
     for await (const entry of kv.list<KernelOrgUsageRecord>({ prefix: KERNEL_AUTH_ORG_USAGE_PREFIX })) {
       const keyOwner = typeof entry.key[3] === "string" ? entry.key[3] : "";
       const usage = normalizeOrgUsageRecord(entry.value, keyOwner, nowMs);
@@ -956,207 +313,20 @@ export const listKernelOrgUsageRecords = async (
   }
 };
 
-export const legacySetKernelOrgUsageLimit = async (
-  owner: string,
-  usageLimitRequests: number,
-  options: { resetUsage?: boolean; windowMs?: number; expiresAtMs?: number } = {},
-): Promise<KernelOrgLimitRecord | null> => {
-  try {
-    const kv = await getKv();
-    if (!kv) return null;
-    const defaults = await loadKernelDefaultPolicy(kv);
-    const key = legacyKernelOrgLimitKey(owner);
-    const nowMs = Date.now();
-    const entry = await kv.get<KernelOrgLimitRecord>(key);
-    const current = normalizeOrgLimitRecord(entry.value, owner, nowMs, defaults.limit, defaults.windowMs);
-    const windowMs = options.windowMs === undefined
-      ? current.window_ms
-      : normalizeWindowMs(options.windowMs, current.window_ms);
-    const expiresAtMs = options.expiresAtMs === undefined
-      ? current.expires_at_ms
-      : normalizeExpiresAtMs(options.expiresAtMs);
-    const nextResetAtMs = calculateNextResetMsForWindow(nowMs, windowMs);
-    const nextUsageRequests = 0;
-    const updated: KernelOrgLimitRecord = {
-      ...current,
-      usage_limit_requests: normalizeUsageLimitRequests(usageLimitRequests, current.usage_limit_requests),
-      usage_requests: nextUsageRequests,
-      usage_reset_at_ms: nextResetAtMs,
-      window_ms: windowMs,
-      expires_at_ms: expiresAtMs,
-      created_at_ms: entry.value ? current.created_at_ms : nowMs,
-      updated_at_ms: nowMs,
-    };
-    const commit = await kv.atomic().check(entry).set(key, updated).commit();
-    if (!commit.ok) return null;
-    return updated;
-  } catch (error) {
-    console.warn("[ai.ubq.fi] Failed to update kernel org usage limit:", error);
-    return null;
-  }
-};
-
-export const legacyDeleteKernelOrgUsageLimit = async (owner: string): Promise<boolean | null> => {
-  try {
-    const kv = await getKv();
-    if (!kv) return null;
-    const key = legacyKernelOrgLimitKey(owner);
-    const entry = await kv.get<KernelOrgLimitRecord>(key);
-    if (!entry.value) return false;
-    const commit = await kv.atomic().check(entry).delete(key).commit();
-    return commit.ok;
-  } catch (error) {
-    console.warn("[ai.ubq.fi] Failed to delete kernel org usage limit:", error);
-    return null;
-  }
-};
-
-export const legacyCheckKernelOrgUsageLimit = async (
-  owner: string,
-): Promise<{ ok: true } | { ok: false; response: Response }> => {
-  try {
-    const kv = await getKv();
-    if (!kv) return { ok: true };
-    const defaults = await loadKernelDefaultPolicy(kv);
-    const key = legacyKernelOrgLimitKey(owner);
-    const nowMs = Date.now();
-
-    for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt++) {
-      const entry = await kv.get<KernelOrgLimitRecord>(key);
-      let record = normalizeOrgLimitRecord(entry.value, owner, nowMs, defaults.limit, defaults.windowMs);
-
-      if (isExpired(record.expires_at_ms, nowMs)) {
-        return {
-          ok: false,
-          response: openaiError(
-            429,
-            "GitHub org rate limit expired; update it via /admin/kernel-usage.",
-            "rate_limit_exceeded",
-          ),
-        };
-      }
-
-      if (record.usage_limit_requests === 0) {
-        return {
-          ok: false,
-          response: openaiError(
-            429,
-            "Kernel org usage limit is 0; update it via /admin/kernel-usage.",
-            "rate_limit_exceeded",
-          ),
-        };
-      }
-
-      if (shouldResetUsage(record.usage_reset_at_ms, nowMs)) {
-        record = {
-          ...record,
-          usage_requests: 0,
-          usage_reset_at_ms: calculateNextResetMsForWindow(nowMs, record.window_ms),
-          updated_at_ms: nowMs,
-        };
-        if (entry.value) {
-          const commit = await kv.atomic().check(entry).set(key, record).commit();
-          if (!commit.ok) continue;
-        }
-      }
-
-      if (
-        record.usage_limit_requests !== API_KEY_NO_USAGE_LIMIT &&
-        record.usage_requests >= record.usage_limit_requests
-      ) {
-        return {
-          ok: false,
-          response: openaiError(
-            429,
-            `Org usage limit exceeded (${record.usage_requests}/${record.usage_limit_requests}). Resets at ${
-              new Date(record.usage_reset_at_ms).toISOString()
-            }`,
-            "rate_limit_exceeded",
-          ),
-        };
-      }
-
-      return { ok: true };
-    }
-
-    console.warn("[ai.ubq.fi] Failed to refresh kernel org usage limit after retries:", owner);
-    return { ok: true };
-  } catch (error) {
-    console.warn("[ai.ubq.fi] Failed to check kernel org usage limit:", error);
-    return { ok: true };
-  }
-};
-
-export const legacyIncrementKernelOrgUsageLimit = async (owner: string): Promise<void> => {
-  try {
-    const kv = await getKv();
-    if (!kv) return;
-    const defaults = await loadKernelDefaultPolicy(kv);
-    const key = legacyKernelOrgLimitKey(owner);
-    const nowMs = Date.now();
-
-    for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt++) {
-      const entry = await kv.get<KernelOrgLimitRecord>(key);
-      const current = normalizeOrgLimitRecord(entry.value, owner, nowMs, defaults.limit, defaults.windowMs);
-      const resetUsage = shouldResetUsage(current.usage_reset_at_ms, nowMs);
-      const updated: KernelOrgLimitRecord = {
-        ...current,
-        usage_requests: (resetUsage ? 0 : current.usage_requests) + 1,
-        usage_reset_at_ms: resetUsage
-          ? calculateNextResetMsForWindow(nowMs, current.window_ms)
-          : current.usage_reset_at_ms,
-        created_at_ms: entry.value ? current.created_at_ms : nowMs,
-        updated_at_ms: nowMs,
-      };
-      const commit = await kv.atomic().check(entry).set(key, updated).commit();
-      if (commit.ok) return;
-    }
-
-    console.warn("[ai.ubq.fi] Failed to increment kernel org usage after retries:", owner);
-  } catch (error) {
-    console.warn("[ai.ubq.fi] Failed to increment kernel org usage:", error);
-  }
-};
-
-// V1 combined limit rows remain above only as migration input. Runtime callers
-// import the V2 split policy/window implementation below.
+// Runtime callers import the V2 split policy/window implementation through this
+// module.
 export {
   deleteKernelOrgUsageLimit,
   deleteKernelUsageLimit,
   getKernelOrgUsageLimitSnapshot,
   getKernelUsageLimitSnapshot,
-  KERNEL_ORG_POLICY_V2_PREFIX,
-  KERNEL_ORG_RESERVATION_V2_PREFIX,
-  KERNEL_ORG_WINDOW_V2_PREFIX,
-  KERNEL_QUOTA_RESERVATION_LEASE_MS,
-  KERNEL_QUOTA_RESERVATION_RENEWAL_MS,
-  KERNEL_QUOTA_V2_PREFIX,
-  KERNEL_REPO_POLICY_V2_PREFIX,
-  KERNEL_REPO_RESERVATION_V2_PREFIX,
-  KERNEL_REPO_WINDOW_V2_PREFIX,
   kernelLimitKey,
   kernelOrgLimitKey,
-  kernelOrgPolicyKey,
-  kernelOrgReservationKey,
-  kernelOrgWindowKey,
-  kernelRepoPolicyKey,
-  kernelRepoReservationKey,
-  kernelRepoWindowKey,
   listKernelOrgUsageLimits,
   listKernelUsageLimits,
   reserveEffectiveKernelUsageLimit,
-  reserveKernelOrgUsageLimit,
-  reserveKernelUsageLimit,
   resolveKernelQuotaPolicyState,
   setKernelOrgUsageLimit,
   setKernelUsageLimit,
 } from "./kernel_quota_v2.ts";
-export type {
-  KernelAuthLimitSnapshot,
-  KernelOrgLimitSnapshot,
-  KernelQuotaPolicyStateDecision,
-  KernelQuotaPolicyV2,
-  KernelQuotaReservation,
-  KernelQuotaReservationDecision,
-  KernelQuotaWindowV2,
-} from "./kernel_quota_v2.ts";
+export type { KernelQuotaReservation } from "./kernel_quota_v2.ts";

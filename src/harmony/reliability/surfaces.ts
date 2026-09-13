@@ -63,8 +63,7 @@ export const BROAD_EXPERIMENTAL_TOOLS: readonly ToolDefinition[] = [
   },
   {
     name: "task.complete",
-    description:
-      "Mark the current task complete (experimental, not routed; final answers are accepted by the harness instead).",
+    description: "Mark the current task complete (experimental, not routed; final answers are accepted by the harness instead).",
     parameters: {
       type: "object",
       properties: {
@@ -77,14 +76,12 @@ export const BROAD_EXPERIMENTAL_TOOLS: readonly ToolDefinition[] = [
   },
 ];
 
-export const BROAD_EXPERIMENTAL_NAMES: readonly string[] = BROAD_EXPERIMENTAL_TOOLS.map((t) => t.name);
-
 export type ToolSurfaceId = "compact" | "broad";
 
-export interface ToolSurface {
+export type ToolSurface = {
   id: ToolSurfaceId;
   definitions: readonly ToolDefinition[];
-}
+};
 
 /** The canonical (m04) compact surface. */
 export const compactToolSurface = (): ToolSurface => ({
@@ -100,13 +97,11 @@ export const broadToolSurface = (): ToolSurface => ({
 
 /** Deterministic estimated token cost of a surface's tool definitions. */
 export const surfaceTokenCost = (surface: ToolSurface): number =>
-  estimateJsonTokens(surface.definitions.map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    parameters: tool.parameters,
-    strict: tool.strict ?? false,
-  })));
-
-/** Deterministic one-line surface summary. */
-export const describeSurface = (surface: ToolSurface): string =>
-  `${surface.id}: ${surface.definitions.length} definitions, ${surfaceTokenCost(surface)} estimated tokens`;
+  estimateJsonTokens(
+    surface.definitions.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+      strict: tool.strict ?? false,
+    }))
+  );

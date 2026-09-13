@@ -30,6 +30,44 @@ import type { CodexAuthPoolState } from "../src/types.ts";
 
 const key = (value: Deno.KvKey): string => JSON.stringify(value);
 
+/** Canonical HTTP-date Retry-After quota fixture shared by the routing tests. */
+const httpDateQuotaResponse = (deadline: number) =>
+  new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+    status: 429,
+    headers: { "Content-Type": "application/json", "Retry-After": new Date(deadline).toUTCString() },
+  });
+
+/** Delta-seconds Retry-After quota fixture shared by the routing tests. */
+const deltaSecondsQuotaResponse = (retryAfter: string) =>
+  new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+    status: 429,
+    headers: { "Content-Type": "application/json", "Retry-After": retryAfter },
+  });
+
+/** Synthetic legacy class block written straight to KV to exercise migration. */
+const syntheticLegacyBlock = (blockedUntilMs: number, quotaSignalObservedAtMs: number) => ({
+  blocked_until_ms: blockedUntilMs,
+  source: "header_retry_after" as const,
+  quota_signal_observed_at_ms: quotaSignalObservedAtMs,
+  observed_reset_at_ms: null,
+  observed_reset_at_is_stable: false,
+  banked_reset_generation_ambiguous: false,
+  banked_reset_recovery_probe_pending: false,
+});
+
+/** Narrow a fixture value the test has already proven present. */
+const required = <T>(value: T | null | undefined, what: string): T => {
+  if (value === null || value === undefined) throw new Error(`expected ${what} to be present`);
+  return value;
+};
+
+/** The requested URL of a fetch input, whichever shape the caller passed. */
+const requestUrl = (input: string | URL | Request): string => {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+};
+
 class RoutingKv {
   values = new Map<string, unknown>();
   versions = new Map<string, number>();
@@ -54,10 +92,10 @@ class RoutingKv {
   }
 
   atomic(): Deno.AtomicOperation {
-    const writes: Array<{ key: Deno.KvKey; value: unknown }> = [];
-    const checks: Array<{ key: Deno.KvKey; versionstamp: string | null }> = [];
+    const writes: { key: Deno.KvKey; value: unknown }[] = [];
+    const checks: { key: Deno.KvKey; versionstamp: string | null }[] = [];
     const chain = {
-      check: (...entries: Array<{ key: Deno.KvKey; versionstamp: string | null }>) => {
+      check: (...entries: { key: Deno.KvKey; versionstamp: string | null }[]) => {
         checks.push(...entries);
         return chain;
       },
@@ -94,7 +132,7 @@ const pool: CodexAuthPoolState = {
 };
 
 const singlePool: CodexAuthPoolState = {
-  accounts: [pool.accounts[0]!],
+  accounts: [pool.accounts[0]],
   updated_at_ms: pool.updated_at_ms,
 };
 
@@ -104,21 +142,23 @@ Deno.test("v2 routing ignores the v1 key and rejects v1 payloads", async () => {
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
-    const credentialVersion = await codexCredentialVersion(singlePool.accounts[0]!);
+    const credentialVersion = await codexCredentialVersion(singlePool.accounts[0]);
     const v1State = {
       v: 1,
       updated_at_ms: now,
-      slots: [{
-        credential_version: credentialVersion,
-        quota_blocked_until_ms: now + 60_000,
-        quota_block_source: "cooldown",
-        invalid_credential_version: credentialVersion,
-        primary_used_percent: null,
-        secondary_used_percent: null,
-        observed_reset_at_ms: null,
-        generation: 1,
-        probe_lease: null,
-      }],
+      slots: [
+        {
+          credential_version: credentialVersion,
+          quota_blocked_until_ms: now + 60_000,
+          quota_block_source: "cooldown",
+          invalid_credential_version: credentialVersion,
+          primary_used_percent: null,
+          secondary_used_percent: null,
+          observed_reset_at_ms: null,
+          generation: 1,
+          probe_lease: null,
+        },
+      ],
     };
     await kv.set(["uos_ai", "codex_account_routing", "v1"], v1State);
 
@@ -140,85 +180,54 @@ Deno.test("quota circuits isolate Spark, GPT-OSS, and standard model pools", asy
     const now = 1_700_000_000_000;
     const sparkDeadline = now + 7 * 24 * 60 * 60_000;
     const standardDeadline = now + 60 * 60_000;
-    const exhausted = (deadline: number) =>
-      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
-        status: 429,
-        headers: { "Content-Type": "application/json", "Retry-After": new Date(deadline).toUTCString() },
-      });
 
-    const spark = await selectCodexRoutingAccounts(
-      singlePool,
-      singlePool.accounts,
-      now,
-      "gpt-5.3-codex-spark",
-    );
+    const spark = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now, "gpt-5.3-codex-spark");
     assert.equal(spark.kind, "eligible");
-    if (spark.kind !== "eligible") return;
-    await markCodexQuotaBlocked(spark.accounts[0]!, exhausted(sparkDeadline), now);
 
-    assert.equal(
-      (await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 1, "gpt-5.3-codex-spark")).kind,
-      "quota_blocked",
-    );
+    await markCodexQuotaBlocked(spark.accounts[0], httpDateQuotaResponse(sparkDeadline), now);
+
+    assert.equal((await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 1, "gpt-5.3-codex-spark")).kind, "quota_blocked");
     const luna = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 1, "gpt-5.6-luna");
     assert.equal(luna.kind, "eligible");
-    if (luna.kind !== "eligible") return;
-    await markCodexQuotaBlocked(luna.accounts[0]!, exhausted(standardDeadline), now + 1);
-    assert.equal(typeof await getCodexQuotaBlockFence(spark.accounts[0]!, sparkDeadline), "number");
-    assert.equal(typeof await getCodexQuotaBlockFence(luna.accounts[0]!, standardDeadline), "number");
 
-    assert.equal(
-      (await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 2, "gpt-5.6-terra")).kind,
-      "quota_blocked",
-    );
-    assert.equal(
-      (await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 2, "gpt-oss-120b")).kind,
-      "eligible",
-    );
-    const afterStandardReset = await selectCodexRoutingAccounts(
-      singlePool,
-      singlePool.accounts,
-      standardDeadline + 1,
-      "gpt-5.6-luna",
-    );
+    await markCodexQuotaBlocked(luna.accounts[0], httpDateQuotaResponse(standardDeadline), now + 1);
+    assert.equal(typeof (await getCodexQuotaBlockFence(spark.accounts[0], sparkDeadline)), "number");
+    assert.equal(typeof (await getCodexQuotaBlockFence(luna.accounts[0], standardDeadline)), "number");
+
+    assert.equal((await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 2, "gpt-5.6-terra")).kind, "quota_blocked");
+    assert.equal((await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 2, "gpt-oss-120b")).kind, "eligible");
+    const afterStandardReset = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, standardDeadline + 1, "gpt-5.6-luna");
     assert.equal(afterStandardReset.kind, "eligible");
-    assert.equal(
-      (await selectCodexRoutingAccounts(
-        singlePool,
-        singlePool.accounts,
-        standardDeadline + 1,
-        "gpt-5.3-codex-spark",
-      )).kind,
-      "quota_blocked",
-    );
+    assert.equal((await selectCodexRoutingAccounts(singlePool, singlePool.accounts, standardDeadline + 1, "gpt-5.3-codex-spark")).kind, "quota_blocked");
 
-    await recordCodexCapacityRoutingObservations([{
-      slot: 0,
-      account_id: "one",
-      state: "available",
-      source_observed_at_ms: now + 2,
-      snapshot_at_ms: now + 2,
-      windows: {
-        primary: { limit_window_seconds: 604_800, used_percent: 50, reset_at_ms: standardDeadline },
-        secondary: null,
-      },
-      additional_rate_limits: [{
-        limit_name: "GPT-5.3-Codex-Spark",
-        metered_feature: "codex_bengalfox",
-        windows: {
-          primary: { limit_window_seconds: 604_800, used_percent: 100, reset_at_ms: sparkDeadline },
-          secondary: null,
+    await recordCodexCapacityRoutingObservations(
+      [
+        {
+          slot: 0,
+          account_id: "one",
+          state: "available",
+          source_observed_at_ms: now + 2,
+          snapshot_at_ms: now + 2,
+          windows: {
+            primary: { limit_window_seconds: 604_800, used_percent: 50, reset_at_ms: standardDeadline },
+            secondary: null,
+          },
+          additional_rate_limits: [
+            {
+              limit_name: "GPT-5.3-Codex-Spark",
+              metered_feature: "codex_bengalfox",
+              windows: {
+                primary: { limit_window_seconds: 604_800, used_percent: 100, reset_at_ms: sparkDeadline },
+                secondary: null,
+              },
+            },
+          ],
         },
-      }],
-    }], now + 2);
-    assert.equal(
-      (await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 3, "gpt-5.6-luna")).kind,
-      "eligible",
+      ],
+      now + 2
     );
-    assert.equal(
-      (await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 3, "gpt-5.3-codex-spark")).kind,
-      "quota_blocked",
-    );
+    assert.equal((await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 3, "gpt-5.6-luna")).kind, "eligible");
+    assert.equal((await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 3, "gpt-5.3-codex-spark")).kind, "quota_blocked");
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
@@ -234,43 +243,29 @@ Deno.test("an unrelated class 429 is recorded while another class owns a probe l
     const sparkDeadline = now + 60_000;
     const standardDeadline = sparkDeadline + 60_000;
     const usageLimitResponse = (deadline: number) =>
-      new Response(
-        JSON.stringify({ error: { type: "usage_limit_reached", resets_at: Math.floor(deadline / 1_000) } }),
-        {
-          status: 429,
-          headers: { "Content-Type": "application/json" },
-        },
-      );
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached", resets_at: Math.floor(deadline / 1_000) } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json" },
+      });
     const spark = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now, "gpt-5.3-codex-spark");
     assert.equal(spark.kind, "eligible");
-    if (spark.kind !== "eligible") return;
-    await markCodexQuotaBlocked(spark.accounts[0]!, usageLimitResponse(sparkDeadline), now);
 
-    const expiredSpark = await selectCodexRoutingAccounts(
-      singlePool,
-      singlePool.accounts,
-      sparkDeadline + 1,
-      "gpt-5.3-codex-spark",
-    );
+    await markCodexQuotaBlocked(spark.accounts[0], usageLimitResponse(sparkDeadline), now);
+
+    const expiredSpark = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, sparkDeadline + 1, "gpt-5.3-codex-spark");
     assert.equal(expiredSpark.kind, "eligible");
-    if (expiredSpark.kind !== "eligible") return;
-    const claimed = await claimCodexRoutingProbe(singlePool, expiredSpark.accounts[0]!, sparkDeadline + 1);
-    assert.ok(claimed);
-    if (!claimed) return;
 
-    const standard = await selectCodexRoutingAccounts(
-      singlePool,
-      singlePool.accounts,
-      sparkDeadline + 2,
-      "gpt-5.6-luna",
-    );
+    const claimed = await claimCodexRoutingProbe(singlePool, expiredSpark.accounts[0], sparkDeadline + 1);
+    assert.ok(claimed);
+
+    const standard = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, sparkDeadline + 2, "gpt-5.6-luna");
     assert.equal(standard.kind, "eligible");
-    if (standard.kind !== "eligible") return;
-    await markCodexQuotaBlocked(standard.accounts[0]!, usageLimitResponse(standardDeadline), sparkDeadline + 2);
+
+    await markCodexQuotaBlocked(standard.accounts[0], usageLimitResponse(standardDeadline), sparkDeadline + 2);
 
     const state = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(state?.slots[0]?.quota_blocks_by_class?.standard?.blocked_until_ms, standardDeadline);
-    assert.equal(state?.slots[0]?.probe_lease?.quota_class, "spark");
+    assert.equal(state.slots[0]?.probe_lease?.quota_class, "spark");
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
@@ -286,40 +281,36 @@ Deno.test("legacy named class blocks remain enforced until migrated", async () =
     const deadline = now + 60_000;
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now, "gpt-5.6-luna");
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
+
     await kv.set(CODEX_ACCOUNT_ROUTING_KV_KEY, {
       v: 2,
       updated_at_ms: now,
       banked_reset_legacy_identity_unresolved: false,
-      slots: [{
-        account_id_hash: initial.accounts[0]!.accountIdHash,
-        credential_version: initial.accounts[0]!.credentialVersion,
-        quota_blocked_until_ms: deadline,
-        quota_block_source: "header_retry_after",
-        quota_blocked_classes: ["standard"],
-        invalid_credential_version: null,
-        primary_used_percent: null,
-        secondary_used_percent: null,
-        quota_signal_observed_at_ms: now,
-        capacity_observed_at_ms: null,
-        upstream_timeout_blocked_until_ms: null,
-        observed_reset_at_ms: null,
-        observed_reset_at_is_stable: false,
-        banked_reset_generation_ambiguous: false,
-        banked_reset_recovery_probe_pending: false,
-        generation: 1,
-        probe_lease: null,
-      }],
+      slots: [
+        {
+          account_id_hash: initial.accounts[0].accountIdHash,
+          credential_version: initial.accounts[0].credentialVersion,
+          quota_blocked_until_ms: deadline,
+          quota_block_source: "header_retry_after",
+          quota_blocked_classes: ["standard"],
+          invalid_credential_version: null,
+          primary_used_percent: null,
+          secondary_used_percent: null,
+          quota_signal_observed_at_ms: now,
+          capacity_observed_at_ms: null,
+          upstream_timeout_blocked_until_ms: null,
+          observed_reset_at_ms: null,
+          observed_reset_at_is_stable: false,
+          banked_reset_generation_ambiguous: false,
+          banked_reset_recovery_probe_pending: false,
+          generation: 1,
+          probe_lease: null,
+        },
+      ],
     });
     resetCodexAccountRoutingForTest();
-    assert.equal(
-      (await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 1, "gpt-5.6-luna")).kind,
-      "quota_blocked",
-    );
-    assert.equal(
-      (await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 1, "gpt-5.3-codex-spark")).kind,
-      "eligible",
-    );
+    assert.equal((await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 1, "gpt-5.6-luna")).kind, "quota_blocked");
+    assert.equal((await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 1, "gpt-5.3-codex-spark")).kind, "eligible");
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
@@ -336,51 +327,50 @@ Deno.test("a legacy class block survives migration when another class is exhaust
     const sparkDeadline = now + 120_000;
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now, "gpt-5.6-luna");
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
+
     await kv.set(CODEX_ACCOUNT_ROUTING_KV_KEY, {
       v: 2,
       updated_at_ms: now,
       banked_reset_legacy_identity_unresolved: false,
-      slots: [{
-        account_id_hash: initial.accounts[0]!.accountIdHash,
-        credential_version: initial.accounts[0]!.credentialVersion,
-        quota_blocked_until_ms: standardDeadline,
-        quota_block_source: "header_retry_after",
-        quota_blocked_classes: ["standard"],
-        quota_blocks_by_class: {},
-        invalid_credential_version: null,
-        primary_used_percent: null,
-        secondary_used_percent: null,
-        quota_signal_observed_at_ms: now,
-        capacity_observed_at_ms: null,
-        upstream_timeout_blocked_until_ms: null,
-        observed_reset_at_ms: null,
-        observed_reset_at_is_stable: false,
-        banked_reset_generation_ambiguous: false,
-        banked_reset_recovery_probe_pending: false,
-        generation: 1,
-        probe_lease: null,
-      }],
+      slots: [
+        {
+          account_id_hash: initial.accounts[0].accountIdHash,
+          credential_version: initial.accounts[0].credentialVersion,
+          quota_blocked_until_ms: standardDeadline,
+          quota_block_source: "header_retry_after",
+          quota_blocked_classes: ["standard"],
+          quota_blocks_by_class: {},
+          invalid_credential_version: null,
+          primary_used_percent: null,
+          secondary_used_percent: null,
+          quota_signal_observed_at_ms: now,
+          capacity_observed_at_ms: null,
+          upstream_timeout_blocked_until_ms: null,
+          observed_reset_at_ms: null,
+          observed_reset_at_is_stable: false,
+          banked_reset_generation_ambiguous: false,
+          banked_reset_recovery_probe_pending: false,
+          generation: 1,
+          probe_lease: null,
+        },
+      ],
     });
     resetCodexAccountRoutingForTest();
     const spark = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 1, "gpt-5.3-codex-spark");
     assert.equal(spark.kind, "eligible");
-    if (spark.kind !== "eligible") return;
+
     await markCodexQuotaBlocked(
-      spark.accounts[0]!,
+      spark.accounts[0],
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(sparkDeadline).toUTCString() },
       }),
-      now + 1,
+      now + 1
     );
     const migrated = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(migrated?.slots[0]?.quota_blocks_by_class?.standard?.blocked_until_ms, standardDeadline);
-    assert.equal(migrated?.slots[0]?.quota_blocks_by_class?.spark?.blocked_until_ms, sparkDeadline);
-    assert.equal(
-      (await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 2, "gpt-5.6-luna")).kind,
-      "quota_blocked",
-    );
+    assert.equal(migrated.slots[0]?.quota_blocks_by_class?.spark?.blocked_until_ms, sparkDeadline);
+    assert.equal((await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 2, "gpt-5.6-luna")).kind, "quota_blocked");
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
@@ -396,65 +386,68 @@ Deno.test("an unclassified legacy block stays on other classes after capacity cl
     const legacyDeadline = now + 60_000;
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now, "gpt-5.6-luna");
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
+
     await kv.set(CODEX_ACCOUNT_ROUTING_KV_KEY, {
       v: 2,
       updated_at_ms: now,
       banked_reset_legacy_identity_unresolved: false,
-      slots: [{
-        account_id_hash: initial.accounts[0]!.accountIdHash,
-        credential_version: initial.accounts[0]!.credentialVersion,
-        quota_blocked_until_ms: legacyDeadline,
-        quota_block_source: "header_retry_after",
-        quota_blocked_classes: [],
-        quota_blocks_by_class: {},
-        invalid_credential_version: null,
-        primary_used_percent: null,
-        secondary_used_percent: null,
-        quota_signal_observed_at_ms: now,
-        capacity_observed_at_ms: null,
-        upstream_timeout_blocked_until_ms: null,
-        observed_reset_at_ms: null,
-        observed_reset_at_is_stable: false,
-        banked_reset_generation_ambiguous: false,
-        banked_reset_recovery_probe_pending: false,
-        generation: 1,
-        probe_lease: null,
-      }],
+      slots: [
+        {
+          account_id_hash: initial.accounts[0].accountIdHash,
+          credential_version: initial.accounts[0].credentialVersion,
+          quota_blocked_until_ms: legacyDeadline,
+          quota_block_source: "header_retry_after",
+          quota_blocked_classes: [],
+          quota_blocks_by_class: {},
+          invalid_credential_version: null,
+          primary_used_percent: null,
+          secondary_used_percent: null,
+          quota_signal_observed_at_ms: now,
+          capacity_observed_at_ms: null,
+          upstream_timeout_blocked_until_ms: null,
+          observed_reset_at_ms: null,
+          observed_reset_at_is_stable: false,
+          banked_reset_generation_ambiguous: false,
+          banked_reset_recovery_probe_pending: false,
+          generation: 1,
+          probe_lease: null,
+        },
+      ],
     });
     resetCodexAccountRoutingForTest();
-    await recordCodexCapacityRoutingObservations([{
-      slot: 0,
-      account_id: "one",
-      state: "available",
-      source_observed_at_ms: now + 1,
-      snapshot_at_ms: now + 1,
-      windows: {
-        primary: { limit_window_seconds: 604_800, used_percent: 100, reset_at_ms: legacyDeadline },
-        secondary: null,
-      },
-      additional_rate_limits: [{
-        limit_name: "gpt-5.3-codex-spark",
-        metered_feature: "codex_bengalfox",
-        windows: {
-          primary: { limit_window_seconds: 604_800, used_percent: 50, reset_at_ms: legacyDeadline },
-          secondary: null,
+    await recordCodexCapacityRoutingObservations(
+      [
+        {
+          slot: 0,
+          account_id: "one",
+          state: "available",
+          source_observed_at_ms: now + 1,
+          snapshot_at_ms: now + 1,
+          windows: {
+            primary: { limit_window_seconds: 604_800, used_percent: 100, reset_at_ms: legacyDeadline },
+            secondary: null,
+          },
+          additional_rate_limits: [
+            {
+              limit_name: "gpt-5.3-codex-spark",
+              metered_feature: "codex_bengalfox",
+              windows: {
+                primary: { limit_window_seconds: 604_800, used_percent: 50, reset_at_ms: legacyDeadline },
+                secondary: null,
+              },
+            },
+          ],
         },
-      }],
-    }], now + 1);
-    assert.equal(
-      (await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 2, "gpt-5.3-codex-spark")).kind,
-      "eligible",
+      ],
+      now + 1
     );
+    assert.equal((await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 2, "gpt-5.3-codex-spark")).kind, "eligible");
     const migrated = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(migrated?.slots[0]?.quota_blocks_by_class?.spark, undefined);
     assert.equal(migrated?.slots[0]?.quota_blocks_by_class?.unknown, undefined);
     assert.equal(migrated?.slots[0]?.quota_blocks_by_class?.standard?.blocked_until_ms, legacyDeadline);
-    assert.equal(migrated?.slots[0]?.quota_blocks_by_class?.gpt_oss_120b?.blocked_until_ms, legacyDeadline);
-    assert.equal(
-      (await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 2, "gpt-5.6-luna")).kind,
-      "quota_blocked",
-    );
+    assert.equal(migrated.slots[0]?.quota_blocks_by_class?.gpt_oss_120b?.blocked_until_ms, legacyDeadline);
+    assert.equal((await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 2, "gpt-5.6-luna")).kind, "quota_blocked");
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
@@ -471,63 +464,61 @@ Deno.test("migrates an unmarked synthetic unknown block from the prior class rel
     const standardDeadline = now + 180_000;
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now, "gpt-5.6-luna");
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
+
     await markCodexQuotaBlocked(
-      initial.accounts[0]!,
+      initial.accounts[0],
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(standardDeadline).toUTCString() },
       }),
-      now,
+      now
     );
     const state = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.ok(state);
-    if (!state) return;
-    const legacyBlock = (blockedUntilMs: number) => ({
-      blocked_until_ms: blockedUntilMs,
-      source: "header_retry_after" as const,
-      quota_signal_observed_at_ms: now,
-      observed_reset_at_ms: null,
-      observed_reset_at_is_stable: false,
-      banked_reset_generation_ambiguous: false,
-      banked_reset_recovery_probe_pending: false,
-    });
+
     await kv.set(CODEX_ACCOUNT_ROUTING_KV_KEY, {
       ...state,
-      slots: [{
-        ...state.slots[0]!,
-        quota_blocked_until_ms: standardDeadline,
-        quota_block_source: "header_retry_after",
-        quota_blocked_classes: ["spark", "gpt_oss_120b", "standard", "unknown"],
-        quota_blocks_by_class: {
-          spark: legacyBlock(legacyDeadline),
-          gpt_oss_120b: legacyBlock(legacyDeadline),
-          standard: legacyBlock(legacyDeadline),
-          unknown: legacyBlock(legacyDeadline),
+      slots: [
+        {
+          ...state.slots[0],
+          quota_blocked_until_ms: standardDeadline,
+          quota_block_source: "header_retry_after",
+          quota_blocked_classes: ["spark", "gpt_oss_120b", "standard", "unknown"],
+          quota_blocks_by_class: {
+            spark: syntheticLegacyBlock(legacyDeadline, now),
+            gpt_oss_120b: syntheticLegacyBlock(legacyDeadline, now),
+            standard: syntheticLegacyBlock(legacyDeadline, now),
+            unknown: syntheticLegacyBlock(legacyDeadline, now),
+          },
+          quota_signal_observed_at_ms: now,
         },
-        quota_signal_observed_at_ms: now,
-      }],
+      ],
     });
     resetCodexAccountRoutingForTest();
-    await recordCodexCapacityRoutingObservations([{
-      slot: 0,
-      account_id: "one",
-      state: "available",
-      source_observed_at_ms: now + 1,
-      snapshot_at_ms: now + 1,
-      windows: {
-        primary: { limit_window_seconds: 604_800, used_percent: 50, reset_at_ms: standardDeadline },
-        secondary: null,
-      },
-      additional_rate_limits: [],
-    }], now + 1);
+    await recordCodexCapacityRoutingObservations(
+      [
+        {
+          slot: 0,
+          account_id: "one",
+          state: "available",
+          source_observed_at_ms: now + 1,
+          snapshot_at_ms: now + 1,
+          windows: {
+            primary: { limit_window_seconds: 604_800, used_percent: 50, reset_at_ms: standardDeadline },
+            secondary: null,
+          },
+          additional_rate_limits: [],
+        },
+      ],
+      now + 1
+    );
     await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 2, "gpt-5.6-luna");
 
     const migrated = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(migrated?.slots[0]?.quota_blocks_by_class?.standard, undefined);
     assert.equal(migrated?.slots[0]?.quota_blocks_by_class?.unknown, undefined);
     assert.equal(migrated?.slots[0]?.quota_blocks_by_class?.spark?.blocked_until_ms, legacyDeadline);
-    assert.equal(migrated?.slots[0]?.quota_blocks_by_class?.gpt_oss_120b?.blocked_until_ms, legacyDeadline);
+    assert.equal(migrated.slots[0]?.quota_blocks_by_class?.gpt_oss_120b?.blocked_until_ms, legacyDeadline);
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
@@ -537,29 +528,22 @@ Deno.test("migrates an unmarked synthetic unknown block from the prior class rel
 Deno.test("does not mark a coincidentally matching unknown block as synthetic", () => {
   const now = 1_700_000_000_000;
   const matchingDeadline = now + 60_000;
-  const block = (blockedUntilMs: number) => ({
-    blocked_until_ms: blockedUntilMs,
-    source: "header_retry_after" as const,
-    quota_signal_observed_at_ms: now,
-    observed_reset_at_ms: null,
-    observed_reset_at_is_stable: false,
-    banked_reset_generation_ambiguous: false,
-    banked_reset_recovery_probe_pending: false,
-  });
   const parsed = parseCodexAccountRoutingState({
     v: 2,
     updated_at_ms: now,
-    slots: [{
-      credential_version: "credential",
-      quota_block_source: null,
-      probe_lease: null,
-      quota_blocks_by_class: {
-        spark: block(matchingDeadline),
-        gpt_oss_120b: block(matchingDeadline + 1),
-        standard: block(matchingDeadline + 2),
-        unknown: block(matchingDeadline),
+    slots: [
+      {
+        credential_version: "credential",
+        quota_block_source: null,
+        probe_lease: null,
+        quota_blocks_by_class: {
+          spark: syntheticLegacyBlock(matchingDeadline, now),
+          gpt_oss_120b: syntheticLegacyBlock(matchingDeadline + 1, now),
+          standard: syntheticLegacyBlock(matchingDeadline + 2, now),
+          unknown: syntheticLegacyBlock(matchingDeadline, now),
+        },
       },
-    }],
+    ],
   });
   assert.equal(parsed?.slots[0]?.quota_blocks_by_class?.unknown?.legacy_fallback, false);
 });
@@ -573,23 +557,23 @@ Deno.test("an administrative recheck marks every class reset fence ambiguous", a
     const resetAtMs = now + 60_000;
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now, "gpt-5.3-codex-spark");
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
+
     await markCodexQuotaBlocked(
-      initial.accounts[0]!,
+      initial.accounts[0],
       new Response(
         JSON.stringify({
           error: { type: "usage_limit_reached", resets_at: Math.floor(resetAtMs / 1_000) },
         }),
-        { status: 429, headers: { "Content-Type": "application/json" } },
+        { status: 429, headers: { "Content-Type": "application/json" } }
       ),
-      now,
+      now
     );
     const before = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(before?.slots[0]?.quota_blocks_by_class?.spark?.banked_reset_generation_ambiguous, false);
     assert.equal(await recheckCodexRoutingSlot(1), true);
     const after = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(after?.slots[0]?.quota_blocks_by_class?.spark?.banked_reset_generation_ambiguous, true);
-    assert.equal(await getCodexQuotaBlockFence(initial.accounts[0]!, resetAtMs), null);
+    assert.equal(await getCodexQuotaBlockFence(initial.accounts[0], resetAtMs), null);
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
@@ -604,48 +588,37 @@ Deno.test("a successful class probe does not leave recovery pending on another c
     const now = 1_700_000_000_000;
     const sparkDeadline = now + 60_000;
     const standardDeadline = now + 120_000;
-    const exhausted = (deadline: number) =>
-      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
-        status: 429,
-        headers: { "Content-Type": "application/json", "Retry-After": new Date(deadline).toUTCString() },
-      });
     const spark = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now, "gpt-5.3-codex-spark");
     assert.equal(spark.kind, "eligible");
-    if (spark.kind !== "eligible") return;
-    await markCodexQuotaBlocked(spark.accounts[0]!, exhausted(sparkDeadline), now);
+
+    await markCodexQuotaBlocked(spark.accounts[0], httpDateQuotaResponse(sparkDeadline), now);
     const standard = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 1, "gpt-5.6-luna");
     assert.equal(standard.kind, "eligible");
-    if (standard.kind !== "eligible") return;
-    await markCodexQuotaBlocked(standard.accounts[0]!, exhausted(standardDeadline), now + 1);
-    const routingGeneration = await getCodexQuotaBlockFence(spark.accounts[0]!, sparkDeadline);
+
+    await markCodexQuotaBlocked(standard.accounts[0], httpDateQuotaResponse(standardDeadline), now + 1);
+    const routingGeneration = await getCodexQuotaBlockFence(spark.accounts[0], sparkDeadline);
     assert.equal(typeof routingGeneration, "number");
     if (routingGeneration === null) return;
-    const recovery = await reconcileCodexQuotaAfterVerifiedReset(spark.accounts[0]!, {
+    const recovery = await reconcileCodexQuotaAfterVerifiedReset(spark.accounts[0], {
       quotaResetAtMs: sparkDeadline,
       routingGeneration,
     });
     assert.ok(recovery);
-    if (!recovery) return;
+
     await markCodexSuccess(recovery);
     const afterSuccess = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(afterSuccess?.slots[0]?.banked_reset_recovery_probe_pending, false);
     const nextDeadline = standardDeadline + 60_000;
-    const standardProbe = await selectCodexRoutingAccounts(
-      singlePool,
-      singlePool.accounts,
-      standardDeadline + 1,
-      "gpt-5.6-luna",
-    );
+    const standardProbe = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, standardDeadline + 1, "gpt-5.6-luna");
     assert.equal(standardProbe.kind, "eligible");
-    if (standardProbe.kind !== "eligible") return;
-    const claimed = await claimCodexRoutingProbe(singlePool, standardProbe.accounts[0]!, standardDeadline + 1);
+
+    const claimed = await claimCodexRoutingProbe(singlePool, standardProbe.accounts[0], standardDeadline + 1);
     assert.ok(claimed);
-    if (!claimed) return;
-    await markCodexQuotaBlocked(claimed, exhausted(nextDeadline), standardDeadline + 1);
+
+    await markCodexQuotaBlocked(claimed, httpDateQuotaResponse(nextDeadline), standardDeadline + 1);
     assert.equal(
-      parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)))?.slots[0]
-        ?.quota_blocks_by_class?.standard?.blocked_until_ms,
-      nextDeadline,
+      parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)))?.slots[0]?.quota_blocks_by_class?.standard?.blocked_until_ms,
+      nextDeadline
     );
   } finally {
     setKvForTest(null);
@@ -661,28 +634,30 @@ Deno.test("legacy response-header timeout fences are ignored by live routing", a
     const now = 1_700_000_000_000;
     const initial = await selectCodexRoutingAccounts(pool, pool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
 
-    await markCodexUpstreamTimeout(initial.accounts[0]!, now);
+    await markCodexUpstreamTimeout(initial.accounts[0], now);
     const blocked = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
-    assert.equal(
-      blocked?.slots[0]?.upstream_timeout_blocked_until_ms,
-      now + CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS,
-    );
+    assert.equal(blocked?.slots[0]?.upstream_timeout_blocked_until_ms, now + CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS);
 
     resetCodexAccountRoutingForTest();
     const sibling = await selectCodexRoutingAccounts(pool, pool.accounts, now + 1);
     assert.equal(sibling.kind, "eligible");
-    if (sibling.kind !== "eligible") return;
-    assert.deepEqual(sibling.accounts.map((account) => account.slot), [0, 1]);
+
+    assert.deepEqual(
+      sibling.accounts.map((account) => account.slot),
+      [0, 1]
+    );
     assert.deepEqual(sibling.skippedSlots, []);
 
-    await markCodexUpstreamTimeout(sibling.accounts[1]!, now + 1);
+    await markCodexUpstreamTimeout(sibling.accounts[1], now + 1);
     resetCodexAccountRoutingForTest();
     const stillEligible = await selectCodexRoutingAccounts(pool, pool.accounts, now + 2);
     assert.equal(stillEligible.kind, "eligible");
-    if (stillEligible.kind !== "eligible") return;
-    assert.deepEqual(stillEligible.accounts.map((account) => account.slot), [0, 1]);
+
+    assert.deepEqual(
+      stillEligible.accounts.map((account) => account.slot),
+      [0, 1]
+    );
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
@@ -697,12 +672,12 @@ Deno.test("a held legacy timeout probe is discarded before live routing", async 
     const now = 1_700_000_000_000;
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
-    const account = initial.accounts[0]!;
+
+    const account = initial.accounts[0];
     await markCodexUpstreamTimeout(account, now - CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS - 1);
     const state = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.ok(state);
-    if (!state) return;
+
     const probeExpiresAtMs = now + 1_000;
     await kv.set(CODEX_ACCOUNT_ROUTING_KV_KEY, {
       ...state,
@@ -710,17 +685,17 @@ Deno.test("a held legacy timeout probe is discarded before live routing", async 
       slots: state.slots.map((slot, index) =>
         index === account.slot
           ? {
-            ...slot,
-            quota_blocked_until_ms: now - 1,
-            quota_block_source: "header_retry_after",
-            upstream_timeout_blocked_until_ms: now - 1,
-            probe_lease: {
-              token: "held-timeout-probe",
-              expires_at_ms: probeExpiresAtMs,
-              generation: slot.generation,
-              circuit: "upstream_timeout",
-            },
-          }
+              ...slot,
+              quota_blocked_until_ms: now - 1,
+              quota_block_source: "header_retry_after",
+              upstream_timeout_blocked_until_ms: now - 1,
+              probe_lease: {
+                token: "held-timeout-probe",
+                expires_at_ms: probeExpiresAtMs,
+                generation: slot.generation,
+                circuit: "upstream_timeout",
+              },
+            }
           : slot
       ),
     });
@@ -728,7 +703,7 @@ Deno.test("a held legacy timeout probe is discarded before live routing", async 
 
     const selected = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
     assert.equal(selected.kind, "eligible");
-    if (selected.kind !== "eligible") return;
+
     assert.equal(selected.accounts[0]?.probeRequired, true);
     assert.equal(selected.accounts[0]?.probeCircuit, "quota");
   } finally {
@@ -745,12 +720,12 @@ Deno.test("a held quota probe does not misclassify a stale timeout as upstream b
     const now = 1_700_000_000_000;
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
-    const account = initial.accounts[0]!;
+
+    const account = initial.accounts[0];
     await markCodexUpstreamTimeout(account, now - CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS - 1);
     const state = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.ok(state);
-    if (!state) return;
+
     const probeExpiresAtMs = now + 1_000;
     await kv.set(CODEX_ACCOUNT_ROUTING_KV_KEY, {
       ...state,
@@ -758,17 +733,17 @@ Deno.test("a held quota probe does not misclassify a stale timeout as upstream b
       slots: state.slots.map((slot, index) =>
         index === account.slot
           ? {
-            ...slot,
-            quota_blocked_until_ms: now - 1,
-            quota_block_source: "header_retry_after",
-            upstream_timeout_blocked_until_ms: now - 1,
-            probe_lease: {
-              token: "held-quota-probe",
-              expires_at_ms: probeExpiresAtMs,
-              generation: slot.generation,
-              circuit: "quota",
-            },
-          }
+              ...slot,
+              quota_blocked_until_ms: now - 1,
+              quota_block_source: "header_retry_after",
+              upstream_timeout_blocked_until_ms: now - 1,
+              probe_lease: {
+                token: "held-quota-probe",
+                expires_at_ms: probeExpiresAtMs,
+                generation: slot.generation,
+                circuit: "quota",
+              },
+            }
           : slot
       ),
     });
@@ -776,7 +751,7 @@ Deno.test("a held quota probe does not misclassify a stale timeout as upstream b
 
     const selected = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
     assert.equal(selected.kind, "quota_blocked");
-    if (selected.kind !== "quota_blocked") return;
+
     assert.equal(selected.retryAtMs, probeExpiresAtMs);
   } finally {
     setKvForTest(null);
@@ -792,25 +767,34 @@ Deno.test("a legacy timeout fence cannot hide a quota-blocked sibling", async ()
     const now = 1_700_000_000_000;
     const initial = await selectCodexRoutingAccounts(pool, pool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
+
     await markCodexQuotaBlocked(
-      initial.accounts.find((account) => account.auth.account_id === "one")!,
+      required(
+        initial.accounts.find((account) => account.auth.account_id === "one"),
+        "account one"
+      ),
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": "60" },
       }),
-      now,
+      now
     );
     await markCodexUpstreamTimeout(
-      initial.accounts.find((account) => account.auth.account_id === "two")!,
-      now,
+      required(
+        initial.accounts.find((account) => account.auth.account_id === "two"),
+        "account two"
+      ),
+      now
     );
 
     resetCodexAccountRoutingForTest();
     const selected = await selectCodexRoutingAccounts(pool, pool.accounts, now + 1);
     assert.equal(selected.kind, "eligible");
-    if (selected.kind !== "eligible") return;
-    assert.deepEqual(selected.accounts.map((account) => account.slot), [1]);
+
+    assert.deepEqual(
+      selected.accounts.map((account) => account.slot),
+      [1]
+    );
     assert.deepEqual(selected.skippedSlots, [1]);
   } finally {
     setKvForTest(null);
@@ -834,13 +818,14 @@ Deno.test("fetchCodexResponses does not gate the next request after a timeout", 
   await kv.set(CODEX_AUTH_POOL_KV_KEY, authPool);
   try {
     globalThis.fetch = (input, init): Promise<Response> => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const url = requestUrl(input);
       if (!url.endsWith("/responses")) throw new Error(`Unexpected Codex URL: ${url}`);
       const accountId = new Headers(init?.headers).get("ChatGPT-Account-ID");
       calls.push(accountId ?? "");
       if (calls.length === 1) {
         timeoutController.abort(new DOMException("Codex fixture timeout", "TimeoutError"));
-        return Promise.reject(timeoutController.signal.reason);
+        const reason: unknown = timeoutController.signal.reason;
+        return Promise.reject(reason instanceof Error ? reason : new Error("Codex fixture timeout", { cause: reason }));
       }
       return Promise.resolve(new Response(null, { status: 200 }));
     };
@@ -854,9 +839,9 @@ Deno.test("fetchCodexResponses does not gate the next request after a timeout", 
             dispatches += 1;
             return Promise.resolve();
           },
-        },
+        }
       ),
-      (error: unknown) => error instanceof CodexError && error.code === "gateway_timeout" && error.status === 504,
+      (error: unknown) => error instanceof CodexError && error.code === "gateway_timeout" && error.status === 504
     );
     assert.equal(dispatches, 1, "an expired request deadline must not dispatch or record a sibling attempt");
     resetCodexAccountRoutingForTest();
@@ -877,7 +862,7 @@ Deno.test("fetchCodexResponses preserves a JSON 429 without Retry-After when no 
   const originalFetch = globalThis.fetch;
   const now = Date.now();
   const authPool: CodexAuthPoolState = {
-    accounts: [{ ...pool.accounts[0]!, updated_at_ms: now }],
+    accounts: [{ ...pool.accounts[0], updated_at_ms: now }],
     updated_at_ms: now,
   };
   let calls = 0;
@@ -886,7 +871,7 @@ Deno.test("fetchCodexResponses preserves a JSON 429 without Retry-After when no 
   await kv.set(CODEX_AUTH_POOL_KV_KEY, authPool);
   try {
     globalThis.fetch = (input): Promise<Response> => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const url = requestUrl(input);
       if (!url.endsWith("/responses")) throw new Error(`Unexpected Codex URL: ${url}`);
       calls += 1;
       return Promise.resolve(
@@ -899,15 +884,12 @@ Deno.test("fetchCodexResponses preserves a JSON 429 without Retry-After when no 
               param: null,
             },
           }),
-          { status: 429, headers: { "Content-Type": "application/json" } },
-        ),
+          { status: 429, headers: { "Content-Type": "application/json" } }
+        )
       );
     };
 
-    const response = await fetchCodexResponses(
-      { model: "gpt-5-routing", input: "rate-limit" },
-      { retrySleep: async () => {} },
-    );
+    const response = await fetchCodexResponses({ model: "gpt-5-routing", input: "rate-limit" }, { retrySleep: async () => {} });
 
     assert.equal(calls, 2);
     assert.equal(response.status, 429);
@@ -951,13 +933,10 @@ Deno.test("ordinary and incomplete 429 variants never persist a quota block", as
     {
       name: "usage limit with string body reset",
       response: () =>
-        new Response(
-          JSON.stringify({ error: { type: "usage_limit_reached", resets_at: String(futureResetSeconds) } }),
-          {
-            status: 429,
-            headers: { "Content-Type": "application/json" },
-          },
-        ),
+        new Response(JSON.stringify({ error: { type: "usage_limit_reached", resets_at: String(futureResetSeconds) } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        }),
       usageLimitReached: true,
       retryAtMs: null,
     },
@@ -974,13 +953,10 @@ Deno.test("ordinary and incomplete 429 variants never persist a quota block", as
     {
       name: "usage limit with expired body reset",
       response: () =>
-        new Response(
-          JSON.stringify({ error: { type: "usage_limit_reached", resets_at: Math.floor(now / 1_000) - 1 } }),
-          {
-            status: 429,
-            headers: { "Content-Type": "application/json" },
-          },
-        ),
+        new Response(JSON.stringify({ error: { type: "usage_limit_reached", resets_at: Math.floor(now / 1_000) - 1 } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        }),
       usageLimitReached: true,
       retryAtMs: null,
     },
@@ -1017,13 +993,10 @@ Deno.test("ordinary and incomplete 429 variants never persist a quota block", as
     {
       name: "truncated usage limit with valid Retry-After",
       response: () =>
-        new Response(
-          JSON.stringify({ error: { type: "usage_limit_reached", detail: "x".repeat(70 * 1_024) } }),
-          {
-            status: 429,
-            headers: { "Content-Type": "application/json", "Retry-After": "60" },
-          },
-        ),
+        new Response(JSON.stringify({ error: { type: "usage_limit_reached", detail: "x".repeat(70 * 1_024) } }), {
+          status: 429,
+          headers: { "Content-Type": "application/json", "Retry-After": "60" },
+        }),
       usageLimitReached: false,
       retryAtMs: now + 60_000,
     },
@@ -1036,9 +1009,8 @@ Deno.test("ordinary and incomplete 429 variants never persist a quota block", as
     try {
       const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
       assert.equal(initial.kind, "eligible", testCase.name);
-      if (initial.kind !== "eligible") continue;
 
-      const classified = await markCodexQuotaBlocked(initial.accounts[0]!, testCase.response(), now);
+      const classified = await markCodexQuotaBlocked(initial.accounts[0], testCase.response(), now);
       assert.equal(classified.response.status, 429, testCase.name);
       assert.equal(classified.usageLimitReached, testCase.usageLimitReached, testCase.name);
       assert.equal(classified.retryAtMs, testCase.retryAtMs, testCase.name);
@@ -1064,10 +1036,9 @@ Deno.test("exact future body resets_at durably identifies the Codex quota window
     const resetAtMs = resetAtSeconds * 1_000;
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
 
     const classified = await markCodexQuotaBlocked(
-      initial.accounts[0]!,
+      initial.accounts[0],
       new Response(
         JSON.stringify({
           error: {
@@ -1082,9 +1053,9 @@ Deno.test("exact future body resets_at durably identifies the Codex quota window
             "Content-Type": "application/json",
             "x-codex-primary-reset-at": String(resetAtSeconds),
           },
-        },
+        }
       ),
-      now,
+      now
     );
     assert.equal(classified.usageLimitReached, true);
     assert.equal(classified.retryAtMs, resetAtMs);
@@ -1094,21 +1065,21 @@ Deno.test("exact future body resets_at durably identifies the Codex quota window
 
     const state = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(state?.slots[0]?.quota_blocked_until_ms, resetAtMs);
-    assert.equal(state?.slots[0]?.quota_block_source, "body_resets_at");
-    assert.equal(state?.slots[0]?.observed_reset_at_ms, resetAtMs);
-    assert.equal(state?.slots[0]?.observed_reset_at_is_stable, true);
-    assert.equal(state?.slots[0]?.banked_reset_generation_ambiguous, false);
+    assert.equal(state.slots[0]?.quota_block_source, "body_resets_at");
+    assert.equal(state.slots[0]?.observed_reset_at_ms, resetAtMs);
+    assert.equal(state.slots[0]?.observed_reset_at_is_stable, true);
+    assert.equal(state.slots[0]?.banked_reset_generation_ambiguous, false);
 
     resetCodexAccountRoutingForTest();
     const selected = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 1);
     assert.equal(selected.kind, "quota_blocked");
-    if (selected.kind !== "quota_blocked") return;
+
     assert.deepEqual(
       selected.blockedAccounts.map(({ quotaResetAtMs, routingGeneration }) => ({
         quotaResetAtMs,
         routingGeneration,
       })),
-      [{ quotaResetAtMs: resetAtMs, routingGeneration: state!.slots[0]!.generation }],
+      [{ quotaResetAtMs: resetAtMs, routingGeneration: required(state, "persisted routing state").slots[0].generation }]
     );
   } finally {
     setKvForTest(null);
@@ -1126,10 +1097,9 @@ Deno.test("an ordinary ambiguous deadline does not use the bounded recovery-prob
     const conflictingResetAtMs = now + 120_000;
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
 
     await markCodexQuotaBlocked(
-      initial.accounts[0]!,
+      initial.accounts[0],
       new Response(
         JSON.stringify({
           error: { type: "usage_limit_reached", resets_at: Math.floor(firstResetAtMs / 1_000) },
@@ -1140,20 +1110,20 @@ Deno.test("an ordinary ambiguous deadline does not use the bounded recovery-prob
             "Content-Type": "application/json",
             "Retry-After": new Date(conflictingResetAtMs).toUTCString(),
           },
-        },
+        }
       ),
-      now,
+      now
     );
     const conflicted = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(conflicted?.slots[0]?.banked_reset_generation_ambiguous, true);
-    assert.equal(conflicted?.slots[0]?.banked_reset_recovery_probe_pending, false);
+    assert.equal(conflicted.slots[0]?.banked_reset_recovery_probe_pending, false);
 
     const halfOpen = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, conflictingResetAtMs + 1);
     assert.equal(halfOpen.kind, "eligible");
-    if (halfOpen.kind !== "eligible") return;
-    const claimed = await claimCodexRoutingProbe(singlePool, halfOpen.accounts[0]!, conflictingResetAtMs + 1);
+
+    const claimed = await claimCodexRoutingProbe(singlePool, halfOpen.accounts[0], conflictingResetAtMs + 1);
     assert.ok(claimed);
-    if (!claimed) return;
+
     const longResetAtMs = conflictingResetAtMs + 120_000;
     await markCodexQuotaBlocked(
       claimed,
@@ -1161,11 +1131,11 @@ Deno.test("an ordinary ambiguous deadline does not use the bounded recovery-prob
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(longResetAtMs).toUTCString() },
       }),
-      conflictingResetAtMs + 1,
+      conflictingResetAtMs + 1
     );
     const afterProbe = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(afterProbe?.slots[0]?.quota_blocked_until_ms, longResetAtMs);
-    assert.equal(afterProbe?.slots[0]?.banked_reset_recovery_probe_pending, false);
+    assert.equal(afterProbe.slots[0]?.banked_reset_recovery_probe_pending, false);
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
@@ -1181,45 +1151,40 @@ Deno.test("a failed verified-reset probe uses a bounded retry instead of the old
     const resetAtMs = now + 60_000;
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now, "gpt-5.3-codex-spark");
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
 
     await markCodexQuotaBlocked(
-      initial.accounts[0]!,
+      initial.accounts[0],
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(resetAtMs).toUTCString() },
       }),
-      now,
+      now
     );
     const beforeReset = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     const routingGeneration = beforeReset?.slots[0]?.generation;
     assert.equal(typeof routingGeneration, "number");
 
-    const recovery = await reconcileCodexQuotaAfterVerifiedReset(initial.accounts[0]!, {
+    const recovery = await reconcileCodexQuotaAfterVerifiedReset(initial.accounts[0], {
       quotaResetAtMs: resetAtMs,
-      routingGeneration: routingGeneration as number,
+      routingGeneration: required(routingGeneration, "routing generation"),
     });
     assert.ok(recovery);
-    assert.equal(recovery?.probeCircuit, "quota");
-    assert.equal(
-      parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)))?.slots[0]?.probe_lease
-        ?.quota_class,
-      "spark",
-    );
+    assert.equal(recovery.probeCircuit, "quota");
+    assert.equal(parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)))?.slots[0]?.probe_lease?.quota_class, "spark");
 
     const failedProbe = await markCodexRecoveryProbeQuotaBlocked(
-      recovery!,
+      recovery,
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(resetAtMs).toUTCString() },
       }),
-      now,
+      now
     );
     assert.equal(failedProbe.retryAtMs, resetAtMs);
     const afterProbe = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(afterProbe?.slots[0]?.quota_blocked_until_ms, now + CODEX_HALF_OPEN_LEASE_MS);
-    assert.equal(afterProbe?.slots[0]?.banked_reset_generation_ambiguous, true);
-    assert.equal(afterProbe?.slots[0]?.banked_reset_recovery_probe_pending, true);
+    assert.equal(afterProbe.slots[0]?.banked_reset_generation_ambiguous, true);
+    assert.equal(afterProbe.slots[0]?.banked_reset_recovery_probe_pending, true);
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
@@ -1235,39 +1200,38 @@ Deno.test("a non-quota verified-reset probe clears recovery-pending evidence", a
     const resetAtMs = now + 60_000;
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now, "gpt-5.3-codex-spark");
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
 
     await markCodexQuotaBlocked(
-      initial.accounts[0]!,
+      initial.accounts[0],
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(resetAtMs).toUTCString() },
       }),
-      now,
+      now
     );
     const beforeReset = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     const routingGeneration = beforeReset?.slots[0]?.generation;
     assert.equal(typeof routingGeneration, "number");
 
-    const recovery = await reconcileCodexQuotaAfterVerifiedReset(initial.accounts[0]!, {
+    const recovery = await reconcileCodexQuotaAfterVerifiedReset(initial.accounts[0], {
       quotaResetAtMs: resetAtMs,
-      routingGeneration: routingGeneration as number,
+      routingGeneration: required(routingGeneration, "routing generation"),
     });
     assert.ok(recovery);
 
     const released = await markCodexRecoveryProbeQuotaBlocked(
-      recovery!,
+      recovery,
       new Response(JSON.stringify({ error: { type: "rate_limit_error" } }), {
         status: 429,
         headers: { "Content-Type": "application/json" },
       }),
-      now,
+      now
     );
     assert.equal(released.usageLimitReached, false);
     const afterProbe = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(afterProbe?.slots[0]?.quota_blocked_until_ms, null);
-    assert.equal(afterProbe?.slots[0]?.banked_reset_recovery_probe_pending, false);
-    assert.equal(afterProbe?.slots[0]?.probe_lease, null);
+    assert.equal(afterProbe.slots[0]?.banked_reset_recovery_probe_pending, false);
+    assert.equal(afterProbe.slots[0]?.probe_lease, null);
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
@@ -1283,39 +1247,40 @@ Deno.test("a stale verified reset opens a fenced probe without spending another 
     const resetAtMs = now + 60_000;
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
 
     await markCodexQuotaBlocked(
-      initial.accounts[0]!,
+      initial.accounts[0],
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(resetAtMs).toUTCString() },
       }),
-      now,
+      now
     );
     const beforeStaleRecovery = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.ok(beforeStaleRecovery);
-    const staleGeneration = beforeStaleRecovery!.slots[0]!.generation + 1;
+    const staleGeneration = beforeStaleRecovery.slots[0].generation + 1;
     await kv.set(CODEX_ACCOUNT_ROUTING_KV_KEY, {
       ...beforeStaleRecovery,
-      slots: [{
-        ...beforeStaleRecovery!.slots[0]!,
-        generation: staleGeneration,
-        banked_reset_generation_ambiguous: true,
-      }],
+      slots: [
+        {
+          ...beforeStaleRecovery.slots[0],
+          generation: staleGeneration,
+          banked_reset_generation_ambiguous: true,
+        },
+      ],
     });
     resetCodexAccountRoutingForTest();
 
-    const recovery = await reconcileCodexQuotaAfterStaleVerifiedReset(initial.accounts[0]!, {
+    const recovery = await reconcileCodexQuotaAfterStaleVerifiedReset(initial.accounts[0], {
       quotaResetAtMs: resetAtMs,
       routingGeneration: staleGeneration,
     });
     assert.ok(recovery);
-    assert.equal(recovery?.probeGeneration, staleGeneration + 1);
+    assert.equal(recovery.probeGeneration, staleGeneration + 1);
     const afterRecovery = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(afterRecovery?.slots[0]?.quota_blocked_until_ms, null);
-    assert.equal(afterRecovery?.slots[0]?.banked_reset_generation_ambiguous, true);
-    assert.ok(afterRecovery?.slots[0]?.probe_lease);
+    assert.equal(afterRecovery.slots[0]?.banked_reset_generation_ambiguous, true);
+    assert.ok(afterRecovery.slots[0]?.probe_lease);
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
@@ -1330,53 +1295,55 @@ Deno.test("legacy neutral v2 state permits its first canonical body resets_at fe
     const now = 1_700_000_000_000;
     const resetAtSeconds = Math.floor(now / 1_000) + 120;
     const resetAtMs = resetAtSeconds * 1_000;
-    const credentialVersion = await codexCredentialVersion(singlePool.accounts[0]!);
+    const credentialVersion = await codexCredentialVersion(singlePool.accounts[0]);
     await kv.set(CODEX_ACCOUNT_ROUTING_KV_KEY, {
       v: 2,
       updated_at_ms: now,
-      slots: [{
-        credential_version: credentialVersion,
-        quota_blocked_until_ms: null,
-        quota_block_source: null,
-        invalid_credential_version: null,
-        primary_used_percent: null,
-        secondary_used_percent: null,
-        observed_reset_at_ms: null,
-        generation: 0,
-        probe_lease: null,
-      }],
+      slots: [
+        {
+          credential_version: credentialVersion,
+          quota_blocked_until_ms: null,
+          quota_block_source: null,
+          invalid_credential_version: null,
+          primary_used_percent: null,
+          secondary_used_percent: null,
+          observed_reset_at_ms: null,
+          generation: 0,
+          probe_lease: null,
+        },
+      ],
     });
 
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
+
     await markCodexQuotaBlocked(
-      initial.accounts[0]!,
-      new Response(
-        JSON.stringify({ error: { type: "usage_limit_reached", resets_at: resetAtSeconds } }),
-        { status: 429, headers: { "Content-Type": "application/json" } },
-      ),
-      now,
+      initial.accounts[0],
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached", resets_at: resetAtSeconds } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json" },
+      }),
+      now
     );
 
     const state = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(state?.slots[0]?.generation, 1);
-    assert.equal(state?.slots[0]?.quota_block_source, "body_resets_at");
-    assert.equal(state?.slots[0]?.observed_reset_at_ms, resetAtMs);
-    assert.equal(state?.slots[0]?.observed_reset_at_is_stable, true);
-    assert.equal(state?.slots[0]?.banked_reset_generation_ambiguous, false);
-    assert.equal(await getCodexQuotaBlockFence(initial.accounts[0]!, resetAtMs), 1);
+    assert.equal(state.slots[0]?.quota_block_source, "body_resets_at");
+    assert.equal(state.slots[0]?.observed_reset_at_ms, resetAtMs);
+    assert.equal(state.slots[0]?.observed_reset_at_is_stable, true);
+    assert.equal(state.slots[0]?.banked_reset_generation_ambiguous, false);
+    assert.equal(await getCodexQuotaBlockFence(initial.accounts[0], resetAtMs), 1);
 
     resetCodexAccountRoutingForTest();
     const selected = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 1);
     assert.equal(selected.kind, "quota_blocked");
-    if (selected.kind !== "quota_blocked") return;
+
     assert.deepEqual(
       selected.blockedAccounts.map(({ quotaResetAtMs, routingGeneration }) => ({
         quotaResetAtMs,
         routingGeneration,
       })),
-      [{ quotaResetAtMs: resetAtMs, routingGeneration: 1 }],
+      [{ quotaResetAtMs: resetAtMs, routingGeneration: 1 }]
     );
   } finally {
     setKvForTest(null);
@@ -1393,8 +1360,8 @@ Deno.test("only the exact contaminated first body fence repairs legacy ambiguity
     const resetAtMs = now + 120_000;
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
-    const account = initial.accounts[0]!;
+
+    const account = initial.accounts[0];
     const contaminatedSlot = {
       account_id_hash: account.accountIdHash,
       credential_version: account.credentialVersion,
@@ -1471,21 +1438,17 @@ Deno.test("conflicting absolute body and header deadlines permanently fail close
     const headerResetAtMs = now + 120_000;
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
 
     const classified = await markCodexQuotaBlocked(
-      initial.accounts[0]!,
-      new Response(
-        JSON.stringify({ error: { type: "usage_limit_reached", resets_at: bodyResetAtSeconds } }),
-        {
-          status: 429,
-          headers: {
-            "Content-Type": "application/json",
-            "Retry-After": new Date(headerResetAtMs).toUTCString(),
-          },
+      initial.accounts[0],
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached", resets_at: bodyResetAtSeconds } }), {
+        status: 429,
+        headers: {
+          "Content-Type": "application/json",
+          "Retry-After": new Date(headerResetAtMs).toUTCString(),
         },
-      ),
-      now,
+      }),
+      now
     );
     assert.equal(classified.retryAtMs, headerResetAtMs);
     assert.equal(classified.quotaBlockSource, "body_resets_at");
@@ -1494,12 +1457,14 @@ Deno.test("conflicting absolute body and header deadlines permanently fail close
 
     const state = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(state?.slots[0]?.banked_reset_generation_ambiguous, true);
-    assert.equal(await getCodexQuotaBlockFence(initial.accounts[0]!, headerResetAtMs), null);
+    assert.equal(await getCodexQuotaBlockFence(initial.accounts[0], headerResetAtMs), null);
 
     resetCodexAccountRoutingForTest();
     const selected = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 1);
     assert.equal(selected.kind, "quota_blocked");
-    if (selected.kind === "quota_blocked") assert.deepEqual(selected.blockedAccounts, []);
+    {
+      assert.deepEqual(selected.blockedAccounts, []);
+    }
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
@@ -1509,22 +1474,17 @@ Deno.test("conflicting absolute body and header deadlines permanently fail close
 Deno.test("body resets_at preserves longer relative routing delays without authorizing redemption", async () => {
   const now = 1_700_000_000_000;
   const bodyResetAtSeconds = Math.floor(now / 1_000) + 60;
-  for (
-    const testCase of [
-      { name: "shorter", retryAfter: "30", expectedRetryAtMs: now + 60_000, stable: true, conflict: false },
-      { name: "equal", retryAfter: "60", expectedRetryAtMs: now + 60_000, stable: true, conflict: false },
-      { name: "longer", retryAfter: "120", expectedRetryAtMs: now + 120_000, stable: false, conflict: true },
-    ] as const
-  ) {
+  for (const testCase of [
+    { name: "shorter", retryAfter: "30", expectedRetryAtMs: now + 60_000, stable: true, conflict: false },
+    { name: "equal", retryAfter: "60", expectedRetryAtMs: now + 60_000, stable: true, conflict: false },
+    { name: "longer", retryAfter: "120", expectedRetryAtMs: now + 120_000, stable: false, conflict: true },
+  ] as const) {
     const classified = await readCodex429(
-      new Response(
-        JSON.stringify({ error: { type: "usage_limit_reached", resets_at: bodyResetAtSeconds } }),
-        {
-          status: 429,
-          headers: { "Content-Type": "application/json", "Retry-After": testCase.retryAfter },
-        },
-      ),
-      now,
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached", resets_at: bodyResetAtSeconds } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": testCase.retryAfter },
+      }),
+      now
     );
     assert.equal(classified.retryAtMs, testCase.expectedRetryAtMs, testCase.name);
     assert.equal(classified.quotaBlockSource, "body_resets_at", testCase.name);
@@ -1542,15 +1502,14 @@ Deno.test("valid delta Retry-After durably blocks a fully parsed usage limit", a
     const payload = JSON.stringify({ error: { type: "usage_limit_reached" } });
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
 
     const classified = await markCodexQuotaBlocked(
-      initial.accounts[0]!,
+      initial.accounts[0],
       new Response(payload, {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": "60" },
       }),
-      now,
+      now
     );
     assert.equal(classified.usageLimitReached, true);
     assert.equal(classified.retryAtMs, now + 60_000);
@@ -1558,7 +1517,7 @@ Deno.test("valid delta Retry-After durably blocks a fully parsed usage limit", a
 
     const state = kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)) as {
       v: number;
-      slots: Array<{ quota_blocked_until_ms: number | null; quota_block_source: string | null }>;
+      slots: { quota_blocked_until_ms: number | null; quota_block_source: string | null }[];
     };
     assert.equal(state.v, 2);
     assert.equal(state.slots[0]?.quota_blocked_until_ms, now + 60_000);
@@ -1581,15 +1540,15 @@ Deno.test("relative Retry-After blocks ordinary routing but cannot mint a banked
     const now = 1_700_000_000_000;
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
-    const account = initial.accounts[0]!;
+
+    const account = initial.accounts[0];
     const classified = await markCodexQuotaBlocked(
       account,
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": "60" },
       }),
-      now,
+      now
     );
 
     assert.equal(classified.retryAtMs, now + 60_000);
@@ -1597,7 +1556,7 @@ Deno.test("relative Retry-After blocks ordinary routing but cannot mint a banked
     assert.equal(await getCodexQuotaBlockFence(account, now + 60_000), null);
     const blocked = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 1);
     assert.equal(blocked.kind, "quota_blocked");
-    if (blocked.kind !== "quota_blocked") return;
+
     assert.deepEqual(blocked.blockedAccounts, []);
   } finally {
     setKvForTest(null);
@@ -1614,15 +1573,14 @@ Deno.test("valid HTTP-date Retry-After durably blocks a fully parsed usage limit
     const retryAtMs = now + 120_000;
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
 
     const classified = await markCodexQuotaBlocked(
-      initial.accounts[0]!,
+      initial.accounts[0],
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(retryAtMs).toUTCString() },
       }),
-      now,
+      now
     );
     assert.equal(classified.usageLimitReached, true);
     assert.equal(classified.retryAtMs, retryAtMs);
@@ -1645,10 +1603,9 @@ Deno.test("eligible routing exposes only stable blocked siblings to the banked-r
     const retryAtMs = now + 120_000;
     const initial = await selectCodexRoutingAccounts(pool, pool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
 
     const classified = await markCodexQuotaBlocked(
-      initial.accounts[0]!,
+      initial.accounts[0],
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
         status: 429,
         headers: {
@@ -1656,15 +1613,18 @@ Deno.test("eligible routing exposes only stable blocked siblings to the banked-r
           "Retry-After": new Date(retryAtMs).toUTCString(),
         },
       }),
-      now,
+      now
     );
     assert.equal(classified.resetDeadlineIsStable, true);
 
     resetCodexAccountRoutingForTest();
     const selected = await selectCodexRoutingAccounts(pool, pool.accounts, now + 1);
     assert.equal(selected.kind, "eligible");
-    if (selected.kind !== "eligible") return;
-    assert.deepEqual(selected.accounts.map((account) => account.slot), [1]);
+
+    assert.deepEqual(
+      selected.accounts.map((account) => account.slot),
+      [1]
+    );
     assert.equal(selected.accounts[0]?.probeRequired, false);
     assert.equal(selected.blockedAccounts.length, 1);
     assert.equal(selected.blockedAccounts[0]?.slot, 0);
@@ -1683,8 +1643,8 @@ Deno.test("quota circuits skip blocked slots and synthesize direct-fallback elig
     const now = Date.now();
     const initial = await selectCodexRoutingAccounts(pool, pool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
-    const first = initial.accounts[0]!;
+
+    const first = initial.accounts[0];
     const original = new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
       status: 429,
       headers: { "Content-Type": "application/json", "Retry-After": "60" },
@@ -1695,17 +1655,20 @@ Deno.test("quota circuits skip blocked slots and synthesize direct-fallback elig
 
     const afterOne = await selectCodexRoutingAccounts(pool, pool.accounts, now + 1);
     assert.equal(afterOne.kind, "eligible");
-    if (afterOne.kind !== "eligible") return;
-    assert.deepEqual(afterOne.accounts.map((account) => account.auth.account_id), ["two"]);
+
+    assert.deepEqual(
+      afterOne.accounts.map((account) => account.auth.account_id),
+      ["two"]
+    );
     assert.deepEqual(afterOne.blockedAccounts, []);
 
     await markCodexQuotaBlocked(
-      afterOne.accounts[0]!,
+      afterOne.accounts[0],
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": "60" },
       }),
-      now + 1,
+      now + 1
     );
     const allBlocked = await selectCodexRoutingAccounts(pool, pool.accounts, now + 2);
     assert.equal(allBlocked.kind, "quota_blocked");
@@ -1713,7 +1676,7 @@ Deno.test("quota circuits skip blocked slots and synthesize direct-fallback elig
     assert.equal(await recheckCodexRoutingSlot(1), true);
     const halfOpen = await selectCodexRoutingAccounts(pool, pool.accounts, Date.now());
     assert.equal(halfOpen.kind, "eligible");
-    if (halfOpen.kind === "eligible") {
+    {
       assert.equal(halfOpen.accounts.length, 1);
       assert.equal(halfOpen.accounts[0]?.probeRequired, true);
       assert.deepEqual(halfOpen.blockedAccounts, []);
@@ -1740,7 +1703,7 @@ Deno.test("429 classification reads fragmented JSON and preserves the response",
       status: 429,
       headers: { "Content-Type": "application/json", "Retry-After": "1" },
     }),
-    now,
+    now
   );
   assert.equal(parsed.usageLimitReached, true);
   assert.equal(parsed.retryAtMs, now + 1_000);
@@ -1761,7 +1724,7 @@ Deno.test("429 classification rejects malformed UTF-8 before recognizing a usage
       status: 429,
       headers: { "Content-Type": "application/json", "Retry-After": new Date(now + 60_000).toUTCString() },
     }),
-    now,
+    now
   );
 
   assert.equal(parsed.usageLimitReached, false);
@@ -1777,7 +1740,7 @@ Deno.test("429 classification rejects duplicate error keys before JSON last-key 
       status: 429,
       headers: { "Content-Type": "application/json", "Retry-After": new Date(now + 60_000).toUTCString() },
     }),
-    now,
+    now
   );
 
   assert.equal(parsed.usageLimitReached, false);
@@ -1786,9 +1749,7 @@ Deno.test("429 classification rejects duplicate error keys before JSON last-key 
 
 Deno.test("429 classification returns a valid error when capture is truncated", async () => {
   const oversized = JSON.stringify({ error: { type: "usage_limit_reached", detail: "x".repeat(70 * 1_024) } });
-  const parsed = await readCodex429(
-    new Response(oversized, { status: 429, headers: { "Content-Type": "application/json" } }),
-  );
+  const parsed = await readCodex429(new Response(oversized, { status: 429, headers: { "Content-Type": "application/json" } }));
   assert.equal(parsed.usageLimitReached, false);
   assert.equal(parsed.retryAtMs, null);
   assert.deepEqual(await parsed.response.json(), {
@@ -1809,36 +1770,28 @@ Deno.test("ordinary 429 clears only the current fenced probe from an expired cir
     const now = 1_700_000_000_000;
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
+
     await markCodexQuotaBlocked(
-      initial.accounts[0]!,
+      initial.accounts[0],
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": "1" },
       }),
-      now,
+      now
     );
 
     resetCodexAccountRoutingForTest();
     const firstSelection = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 1_001);
     assert.equal(firstSelection.kind, "eligible");
-    if (firstSelection.kind !== "eligible") return;
-    const staleProbe = await claimCodexRoutingProbe(singlePool, firstSelection.accounts[0]!, now + 1_001);
+
+    const staleProbe = await claimCodexRoutingProbe(singlePool, firstSelection.accounts[0], now + 1_001);
     assert.ok(staleProbe);
 
     resetCodexAccountRoutingForTest();
-    const secondSelection = await selectCodexRoutingAccounts(
-      singlePool,
-      singlePool.accounts,
-      now + 1_001 + 30_001,
-    );
+    const secondSelection = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 1_001 + 30_001);
     assert.equal(secondSelection.kind, "eligible");
-    if (secondSelection.kind !== "eligible") return;
-    const currentProbe = await claimCodexRoutingProbe(
-      singlePool,
-      secondSelection.accounts[0]!,
-      now + 1_001 + 30_001,
-    );
+
+    const currentProbe = await claimCodexRoutingProbe(singlePool, secondSelection.accounts[0], now + 1_001 + 30_001);
     assert.ok(currentProbe);
     assert.notEqual(staleProbe.probeToken, currentProbe.probeToken);
 
@@ -1848,14 +1801,10 @@ Deno.test("ordinary 429 clears only the current fenced probe from an expired cir
         status: 429,
         headers: { "Content-Type": "application/json" },
       }),
-      now + 1_001 + 30_002,
+      now + 1_001 + 30_002
     );
     resetCodexAccountRoutingForTest();
-    const afterStale = await selectCodexRoutingAccounts(
-      singlePool,
-      singlePool.accounts,
-      now + 1_001 + 30_002,
-    );
+    const afterStale = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 1_001 + 30_002);
     assert.equal(afterStale.kind, "quota_blocked");
 
     await markCodexQuotaBlocked(
@@ -1864,16 +1813,14 @@ Deno.test("ordinary 429 clears only the current fenced probe from an expired cir
         status: 429,
         headers: { "Content-Type": "application/json" },
       }),
-      now + 1_001 + 30_003,
+      now + 1_001 + 30_003
     );
     resetCodexAccountRoutingForTest();
-    const released = await selectCodexRoutingAccounts(
-      singlePool,
-      singlePool.accounts,
-      now + 1_001 + 30_003,
-    );
+    const released = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 1_001 + 30_003);
     assert.equal(released.kind, "eligible");
-    if (released.kind === "eligible") assert.equal(released.accounts[0]?.probeToken, null);
+    {
+      assert.equal(released.accounts[0]?.probeToken, null);
+    }
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
@@ -1888,33 +1835,31 @@ Deno.test("a stale ordinary usage-limit 429 cannot overwrite a foreign half-open
     const now = 1_700_000_000_000;
     const staleSelection = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
     assert.equal(staleSelection.kind, "eligible");
-    if (staleSelection.kind !== "eligible") return;
-    const staleAccount = staleSelection.accounts[0]!;
+
+    const staleAccount = staleSelection.accounts[0];
     assert.equal(staleAccount.probeGeneration, null);
 
     resetCodexAccountRoutingForTest();
     const blockingSelection = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
     assert.equal(blockingSelection.kind, "eligible");
-    if (blockingSelection.kind !== "eligible") return;
+
     await markCodexQuotaBlocked(
-      blockingSelection.accounts[0]!,
+      blockingSelection.accounts[0],
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": "1" },
       }),
-      now,
+      now
     );
 
     const probeAt = now + 1_001;
     resetCodexAccountRoutingForTest();
     const probeSelection = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, probeAt);
     assert.equal(probeSelection.kind, "eligible");
-    if (probeSelection.kind !== "eligible") return;
-    const currentProbe = await claimCodexRoutingProbe(singlePool, probeSelection.accounts[0]!, probeAt);
+
+    const currentProbe = await claimCodexRoutingProbe(singlePool, probeSelection.accounts[0], probeAt);
     assert.ok(currentProbe);
-    const beforeStale429 = parseCodexAccountRoutingState(
-      kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)),
-    );
+    const beforeStale429 = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(beforeStale429?.slots[0]?.probe_lease?.token, currentProbe.probeToken);
 
     resetCodexAccountRoutingForTest();
@@ -1925,22 +1870,14 @@ Deno.test("a stale ordinary usage-limit 429 cannot overwrite a foreign half-open
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": "1" },
       }),
-      stale429At,
+      stale429At
     );
-    const afterStale429 = parseCodexAccountRoutingState(
-      kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)),
-    );
-    assert.deepEqual(afterStale429?.slots[0], beforeStale429?.slots[0]);
+    const afterStale429 = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
+    assert.deepEqual(afterStale429?.slots[0], beforeStale429.slots[0]);
 
     resetCodexAccountRoutingForTest();
-    const secondSelection = await selectCodexRoutingAccounts(
-      singlePool,
-      singlePool.accounts,
-      stale429At + 1_001,
-    );
-    const secondProbe = secondSelection.kind === "eligible"
-      ? await claimCodexRoutingProbe(singlePool, secondSelection.accounts[0]!, stale429At + 1_001)
-      : null;
+    const secondSelection = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, stale429At + 1_001);
+    const secondProbe = secondSelection.kind === "eligible" ? await claimCodexRoutingProbe(singlePool, secondSelection.accounts[0], stale429At + 1_001) : null;
     assert.equal(secondProbe, null);
     assert.equal(secondSelection.kind, "quota_blocked");
   } finally {
@@ -1957,17 +1894,14 @@ Deno.test("expired circuits grant one fenced probe and reject stale completion",
     const now = Date.now();
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
+
     await markCodexQuotaBlocked(
-      initial.accounts[0]!,
-      new Response(
-        JSON.stringify({ error: { type: "usage_limit_reached" } }),
-        {
-          status: 429,
-          headers: { "Content-Type": "application/json", "Retry-After": "60" },
-        },
-      ),
-      now,
+      initial.accounts[0],
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": "60" },
+      }),
+      now
     );
 
     const expiry = now + 61_000;
@@ -1977,18 +1911,18 @@ Deno.test("expired circuits grant one fenced probe and reject stale completion",
         Array.from({ length: 50 }, async () => {
           const selection = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, expiry);
           if (selection.kind !== "eligible") return null;
-          return await claimCodexRoutingProbe(singlePool, selection.accounts[0]!, expiry);
-        }),
+          return await claimCodexRoutingProbe(singlePool, selection.accounts[0], expiry);
+        })
       )
     ).filter((probe) => probe !== null);
     assert.equal(probes.length, 1);
-    const firstProbe = probes[0]!;
+    const firstProbe = probes[0];
 
     resetCodexAccountRoutingForTest();
     const second = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, expiry + 30_001);
     assert.equal(second.kind, "eligible");
-    if (second.kind !== "eligible") return;
-    const secondProbe = await claimCodexRoutingProbe(singlePool, second.accounts[0]!, expiry + 30_001);
+
+    const secondProbe = await claimCodexRoutingProbe(singlePool, second.accounts[0], expiry + 30_001);
     assert.ok(secondProbe);
     assert.notEqual(firstProbe.probeToken, secondProbe.probeToken);
 
@@ -2015,27 +1949,27 @@ Deno.test("an expired circuit receives one half-open probe before a healthy sibl
     const now = Date.now();
     const initial = await selectCodexRoutingAccounts(pool, pool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
-    const blocked = initial.accounts.find((account) => account.auth.account_id === "one")!;
+
+    const blocked = required(
+      initial.accounts.find((account) => account.auth.account_id === "one"),
+      "account one"
+    );
     await markCodexQuotaBlocked(
       blocked,
-      new Response(
-        JSON.stringify({ error: { type: "usage_limit_reached" } }),
-        {
-          status: 429,
-          headers: { "Content-Type": "application/json", "Retry-After": "60" },
-        },
-      ),
-      now,
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": "60" },
+      }),
+      now
     );
 
     const selection = await selectCodexRoutingAccounts(pool, pool.accounts, now + 61_000);
     assert.equal(selection.kind, "eligible");
-    if (selection.kind !== "eligible") return;
+
     assert.equal(selection.accounts.length, 2);
     assert.equal(selection.accounts[0]?.auth.account_id, "one");
     assert.equal(selection.accounts[0]?.probeRequired, true);
-    const probe = await claimCodexRoutingProbe(pool, selection.accounts[0]!, now + 61_000);
+    const probe = await claimCodexRoutingProbe(pool, selection.accounts[0], now + 61_000);
     assert.ok(probe);
     assert.notEqual(probe.probeToken, null);
     assert.equal(selection.accounts[1]?.auth.account_id, "two");
@@ -2053,34 +1987,35 @@ Deno.test("an expired second-account circuit never jumps the healthy first accou
     const now = Date.now();
     const initial = await selectCodexRoutingAccounts(pool, pool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
-    const blocked = initial.accounts.find((account) => account.auth.account_id === "two")!;
+
+    const blocked = required(
+      initial.accounts.find((account) => account.auth.account_id === "two"),
+      "account two"
+    );
     await markCodexQuotaBlocked(
       blocked,
-      new Response(
-        JSON.stringify({ error: { type: "usage_limit_reached" } }),
-        {
-          status: 429,
-          headers: { "Content-Type": "application/json", "Retry-After": "60" },
-        },
-      ),
-      now,
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": "60" },
+      }),
+      now
     );
 
     const selection = await selectCodexRoutingAccounts(pool, pool.accounts, now + 61_000);
     assert.equal(selection.kind, "eligible");
-    if (selection.kind !== "eligible") return;
-    assert.deepEqual(selection.accounts.map((account) => account.auth.account_id), ["one", "two"]);
+
+    assert.deepEqual(
+      selection.accounts.map((account) => account.auth.account_id),
+      ["one", "two"]
+    );
     assert.equal(selection.accounts[0]?.probeToken, null);
     assert.equal(selection.accounts[0]?.probeRequired, false);
     assert.equal(selection.accounts[1]?.probeRequired, true);
     assert.equal(selection.accounts[1]?.probeToken, null);
-    const stateBeforeAttempt = parseCodexAccountRoutingState(
-      kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)),
-    );
+    const stateBeforeAttempt = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(stateBeforeAttempt?.slots[1]?.probe_lease, null);
 
-    const claimed = await claimCodexRoutingProbe(pool, selection.accounts[1]!, now + 61_000);
+    const claimed = await claimCodexRoutingProbe(pool, selection.accounts[1], now + 61_000);
     assert.ok(claimed);
     assert.notEqual(claimed.probeToken, null);
   } finally {
@@ -2097,23 +2032,20 @@ Deno.test("unchanged auth reconciliation preserves a single-account half-open su
     const now = Date.now();
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
+
     await markCodexQuotaBlocked(
-      initial.accounts[0]!,
-      new Response(
-        JSON.stringify({ error: { type: "usage_limit_reached" } }),
-        {
-          status: 429,
-          headers: { "Content-Type": "application/json", "Retry-After": "60" },
-        },
-      ),
-      now,
+      initial.accounts[0],
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": "60" },
+      }),
+      now
     );
 
     const selection = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 61_000);
     assert.equal(selection.kind, "eligible");
-    if (selection.kind !== "eligible") return;
-    const probe = await claimCodexRoutingProbe(singlePool, selection.accounts[0]!, now + 61_000);
+
+    const probe = await claimCodexRoutingProbe(singlePool, selection.accounts[0], now + 61_000);
     assert.ok(probe);
     assert.notEqual(probe.probeGeneration, null);
     assert.notEqual(probe.probeToken, null);
@@ -2126,7 +2058,7 @@ Deno.test("unchanged auth reconciliation preserves a single-account half-open su
     resetCodexAccountRoutingForTest();
     const recovered = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 61_001);
     assert.equal(recovered.kind, "eligible");
-    if (recovered.kind === "eligible") {
+    {
       assert.equal(recovered.accounts[0]?.probeGeneration, null);
       assert.equal(recovered.accounts[0]?.probeToken, null);
     }
@@ -2143,13 +2075,13 @@ Deno.test("credential rotation clears only the matching invalid circuit state", 
   try {
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
-    await markCodexCredentialInvalid(initial.accounts[0]!);
+
+    await markCodexCredentialInvalid(initial.accounts[0]);
     const invalid = await selectCodexRoutingAccounts(singlePool, singlePool.accounts);
     assert.equal(invalid.kind, "credentials_invalid");
 
     const rotated: CodexAuthPoolState = {
-      accounts: [{ ...singlePool.accounts[0]!, access_token: "rotated-access", updated_at_ms: Date.now() }],
+      accounts: [{ ...singlePool.accounts[0], access_token: "rotated-access", updated_at_ms: Date.now() }],
       updated_at_ms: Date.now(),
     };
     resetCodexAccountRoutingForTest();
@@ -2169,26 +2101,28 @@ Deno.test("fresh capacity cannot reopen a credential marked invalid", async () =
     const observedAtMs = Date.now();
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, observedAtMs, "gpt-5.6-luna");
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
-    await markCodexCredentialInvalid(initial.accounts[0]!);
 
-    await recordCodexCapacityRoutingObservations([{
-      slot: 0,
-      account_id: "one",
-      state: "available",
-      source_observed_at_ms: observedAtMs,
-      snapshot_at_ms: observedAtMs,
-      windows: {
-        primary: { limit_window_seconds: 604_800, used_percent: 50, reset_at_ms: observedAtMs + 604_800_000 },
-        secondary: null,
-      },
-      additional_rate_limits: [],
-    }], observedAtMs);
+    await markCodexCredentialInvalid(initial.accounts[0]);
 
-    assert.equal(
-      (await selectCodexRoutingAccounts(singlePool, singlePool.accounts, observedAtMs + 1, "gpt-5.6-luna")).kind,
-      "credentials_invalid",
+    await recordCodexCapacityRoutingObservations(
+      [
+        {
+          slot: 0,
+          account_id: "one",
+          state: "available",
+          source_observed_at_ms: observedAtMs,
+          snapshot_at_ms: observedAtMs,
+          windows: {
+            primary: { limit_window_seconds: 604_800, used_percent: 50, reset_at_ms: observedAtMs + 604_800_000 },
+            secondary: null,
+          },
+          additional_rate_limits: [],
+        },
+      ],
+      observedAtMs
     );
+
+    assert.equal((await selectCodexRoutingAccounts(singlePool, singlePool.accounts, observedAtMs + 1, "gpt-5.6-luna")).kind, "credentials_invalid");
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
@@ -2203,17 +2137,17 @@ Deno.test("same-account credential rotation discards a legacy timeout circuit", 
     const now = 1_700_000_000_000;
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
-    await markCodexUpstreamTimeout(initial.accounts[0]!, now);
+
+    await markCodexUpstreamTimeout(initial.accounts[0], now);
 
     const rotated: CodexAuthPoolState = {
-      accounts: [{ ...singlePool.accounts[0]!, access_token: "rotated-access", updated_at_ms: now + 1 }],
+      accounts: [{ ...singlePool.accounts[0], access_token: "rotated-access", updated_at_ms: now + 1 }],
       updated_at_ms: now + 1,
     };
     resetCodexAccountRoutingForTest();
     const selected = await selectCodexRoutingAccounts(rotated, rotated.accounts, now + 1);
     assert.equal(selected.kind, "eligible");
-    if (selected.kind !== "eligible") return;
+
     assert.equal(selected.accounts[0]?.probeRequired, false);
   } finally {
     setKvForTest(null);
@@ -2229,31 +2163,31 @@ Deno.test("credential refresh does not transfer a legacy timeout probe", async (
     const now = 1_700_000_000_000;
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
-    await markCodexUpstreamTimeout(initial.accounts[0]!, now - CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS - 1);
+
+    await markCodexUpstreamTimeout(initial.accounts[0], now - CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS - 1);
     resetCodexAccountRoutingForTest();
     const eligible = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
     assert.equal(eligible.kind, "eligible");
-    if (eligible.kind !== "eligible") return;
+
     assert.equal(eligible.accounts[0]?.probeRequired, false);
 
     const rotated = {
-      ...singlePool.accounts[0]!,
+      ...singlePool.accounts[0],
       access_token: "rotated-access",
       updated_at_ms: now + 1,
     };
-    const reconciled = await reconcileCodexRoutingAccount(eligible.accounts[0]!, rotated);
+    const reconciled = await reconcileCodexRoutingAccount(eligible.accounts[0], rotated);
     assert.equal(reconciled.probeCircuit, null);
     assert.equal(reconciled.probeToken, null);
     assert.equal(reconciled.probeGeneration, null);
     const transferred = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(transferred?.slots[0]?.upstream_timeout_blocked_until_ms, null);
-    assert.equal(transferred?.slots[0]?.probe_lease, null);
+    assert.equal(transferred.slots[0]?.probe_lease, null);
 
     await markCodexSuccess(reconciled);
     const recovered = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(recovered?.slots[0]?.upstream_timeout_blocked_until_ms, null);
-    assert.equal(recovered?.slots[0]?.probe_lease, null);
+    assert.equal(recovered.slots[0]?.probe_lease, null);
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
@@ -2267,25 +2201,27 @@ Deno.test("a stale refresh reconciliation cannot overwrite a newer credential ve
   try {
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
-    const accountA = initial.accounts[0]!;
+
+    const accountA = initial.accounts[0];
     const authB = { ...accountA.auth, access_token: "refresh-b", updated_at_ms: 2 };
     const authC = { ...accountA.auth, access_token: "rotation-c", updated_at_ms: 3 };
     const credentialC = await codexCredentialVersion(authC);
     const stateC = {
       v: 2 as const,
       updated_at_ms: Date.now(),
-      slots: [{
-        credential_version: credentialC,
-        quota_blocked_until_ms: null,
-        quota_block_source: null,
-        invalid_credential_version: credentialC,
-        primary_used_percent: null,
-        secondary_used_percent: null,
-        observed_reset_at_ms: null,
-        generation: 7,
-        probe_lease: null,
-      }],
+      slots: [
+        {
+          credential_version: credentialC,
+          quota_blocked_until_ms: null,
+          quota_block_source: null,
+          invalid_credential_version: credentialC,
+          primary_used_percent: null,
+          secondary_used_percent: null,
+          observed_reset_at_ms: null,
+          generation: 7,
+          probe_lease: null,
+        },
+      ],
     };
     await kv.set(CODEX_ACCOUNT_ROUTING_KV_KEY, stateC);
 
@@ -2293,8 +2229,8 @@ Deno.test("a stale refresh reconciliation cannot overwrite a newer credential ve
     assert.equal(reconciled.credentialVersion, await codexCredentialVersion(authB));
     const durable = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(durable?.slots[0]?.credential_version, credentialC);
-    assert.equal(durable?.slots[0]?.invalid_credential_version, credentialC);
-    assert.equal(durable?.slots[0]?.generation, 7);
+    assert.equal(durable.slots[0]?.invalid_credential_version, credentialC);
+    assert.equal(durable.slots[0]?.generation, 7);
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
@@ -2309,8 +2245,8 @@ Deno.test("a revised active stable Retry-After fails closed rather than minting 
     const now = 1_700_000_000_000;
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
-    const account = initial.accounts[0]!;
+
+    const account = initial.accounts[0];
     const firstResetAtMs = now + 60_000;
     await markCodexQuotaBlocked(
       account,
@@ -2318,7 +2254,7 @@ Deno.test("a revised active stable Retry-After fails closed rather than minting 
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(firstResetAtMs).toUTCString() },
       }),
-      now,
+      now
     );
     const firstFence = await getCodexQuotaBlockFence(account, firstResetAtMs);
     assert.equal(typeof firstFence, "number");
@@ -2334,37 +2270,37 @@ Deno.test("a revised active stable Retry-After fails closed rather than minting 
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(latestResetAtMs).toUTCString() },
       }),
-      now + 1,
+      now + 1
     );
     assert.equal(await getCodexQuotaBlockFence(account, firstResetAtMs), null);
     assert.equal(await getCodexQuotaBlockFence(account, latestResetAtMs), null);
     const revised = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(revised?.slots[0]?.quota_blocked_until_ms, latestResetAtMs);
-    assert.equal(revised?.slots[0]?.observed_reset_at_ms, firstResetAtMs);
-    assert.equal(revised?.slots[0]?.banked_reset_generation_ambiguous, true);
+    assert.equal(revised.slots[0]?.observed_reset_at_ms, firstResetAtMs);
+    assert.equal(revised.slots[0]?.banked_reset_generation_ambiguous, true);
     const blocked = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 2);
     assert.equal(blocked.kind, "quota_blocked");
-    if (blocked.kind !== "quota_blocked") return;
+
     assert.deepEqual(
       blocked.blockedAccounts.map((candidate) => ({
         quotaResetAtMs: candidate.quotaResetAtMs,
         routingGeneration: candidate.routingGeneration,
       })),
-      [{ quotaResetAtMs: firstResetAtMs, routingGeneration: revised!.slots[0]!.generation }],
+      [{ quotaResetAtMs: firstResetAtMs, routingGeneration: required(revised, "persisted routing state").slots[0].generation }]
     );
     assert.equal(
       await reconcileCodexQuotaAfterVerifiedReset(account, {
         quotaResetAtMs: firstResetAtMs,
         routingGeneration: firstFence,
       }),
-      null,
+      null
     );
     assert.equal(
       await reconcileCodexQuotaAfterVerifiedReset(account, {
         quotaResetAtMs: firstResetAtMs,
-        routingGeneration: revised!.slots[0]!.generation,
+        routingGeneration: required(revised, "persisted routing state").slots[0].generation,
       }),
-      null,
+      null
     );
   } finally {
     setKvForTest(null);
@@ -2380,10 +2316,10 @@ Deno.test("a post-reset recovery probe fences delayed 429s and clears ambiguity 
     const now = 1_700_000_000_000;
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
+
     // This request remains in flight while the first qualifying 429 is
     // reconciled, so its response must not create a new quota identity.
-    const account = initial.accounts[0]!;
+    const account = initial.accounts[0];
     const firstResetAtMs = now + 60_000;
     await markCodexQuotaBlocked(
       account,
@@ -2391,7 +2327,7 @@ Deno.test("a post-reset recovery probe fences delayed 429s and clears ambiguity 
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(firstResetAtMs).toUTCString() },
       }),
-      now,
+      now
     );
     const firstFence = await getCodexQuotaBlockFence(account, firstResetAtMs);
     assert.equal(typeof firstFence, "number");
@@ -2402,12 +2338,12 @@ Deno.test("a post-reset recovery probe fences delayed 429s and clears ambiguity 
       routingGeneration: firstFence,
     });
     assert.ok(recoveryProbe);
-    if (!recoveryProbe) return;
+
     assert.equal(recoveryProbe.probeGeneration, firstFence + 1);
     assert.ok(recoveryProbe.probeToken);
     const released = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 1);
     assert.equal(released.kind, "quota_blocked");
-    if (released.kind === "quota_blocked") {
+    {
       assert.ok(released.retryAtMs !== null && released.retryAtMs > now + 1);
     }
 
@@ -2418,36 +2354,36 @@ Deno.test("a post-reset recovery probe fences delayed 429s and clears ambiguity 
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(revisedResetAtMs).toUTCString() },
       }),
-      now + 1,
+      now + 1
     );
 
     assert.equal(await getCodexQuotaBlockFence(account, firstResetAtMs), null);
     assert.equal(await getCodexQuotaBlockFence(account, revisedResetAtMs), null);
     const delayed = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(delayed?.slots[0]?.quota_blocked_until_ms, null);
-    assert.equal(delayed?.slots[0]?.observed_reset_at_ms, firstResetAtMs);
-    assert.equal(delayed?.slots[0]?.observed_reset_at_is_stable, true);
-    assert.equal(delayed?.slots[0]?.banked_reset_generation_ambiguous, true);
-    assert.equal(delayed?.slots[0]?.probe_lease?.token, recoveryProbe.probeToken);
+    assert.equal(delayed.slots[0]?.observed_reset_at_ms, firstResetAtMs);
+    assert.equal(delayed.slots[0]?.observed_reset_at_is_stable, true);
+    assert.equal(delayed.slots[0]?.banked_reset_generation_ambiguous, true);
+    assert.equal(delayed.slots[0]?.probe_lease?.token, recoveryProbe.probeToken);
 
     await markCodexSuccess(recoveryProbe);
     const recovered = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(recovered?.slots[0]?.observed_reset_at_ms, null);
-    assert.equal(recovered?.slots[0]?.banked_reset_generation_ambiguous, false);
+    assert.equal(recovered.slots[0]?.banked_reset_generation_ambiguous, false);
 
     const postSuccess = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 2);
     assert.equal(postSuccess.kind, "eligible");
-    if (postSuccess.kind !== "eligible") return;
+
     const nextResetAtMs = now + 180_000;
     await markCodexQuotaBlocked(
-      postSuccess.accounts[0]!,
+      postSuccess.accounts[0],
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(nextResetAtMs).toUTCString() },
       }),
-      now + 2,
+      now + 2
     );
-    assert.equal(typeof await getCodexQuotaBlockFence(postSuccess.accounts[0]!, nextResetAtMs), "number");
+    assert.equal(typeof (await getCodexQuotaBlockFence(postSuccess.accounts[0], nextResetAtMs)), "number");
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
@@ -2462,16 +2398,10 @@ Deno.test("a relative Retry-After after a stable deadline cannot mint a later re
     const now = 1_700_000_000_000;
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
-    const account = initial.accounts[0]!;
-    const usageLimit = (retryAfter: string) =>
-      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
-        status: 429,
-        headers: { "Content-Type": "application/json", "Retry-After": retryAfter },
-      });
 
+    const account = initial.accounts[0];
     const firstDeadline = now + 120_000;
-    await markCodexQuotaBlocked(account, usageLimit(new Date(firstDeadline).toUTCString()), now);
+    await markCodexQuotaBlocked(account, deltaSecondsQuotaResponse(new Date(firstDeadline).toUTCString()), now);
     const firstFence = await getCodexQuotaBlockFence(account, firstDeadline);
     assert.equal(typeof firstFence, "number");
     if (firstFence === null) return;
@@ -2479,20 +2409,20 @@ Deno.test("a relative Retry-After after a stable deadline cannot mint a later re
     // A delta timeout can extend ordinary routing's block, but it cannot
     // revise a stable reset identity into a second redemption key.
     const relativeDeadline = now + 180_001;
-    await markCodexQuotaBlocked(account, usageLimit("180"), now + 1);
+    await markCodexQuotaBlocked(account, deltaSecondsQuotaResponse("180"), now + 1);
     assert.equal(await getCodexQuotaBlockFence(account, firstDeadline), null);
     assert.equal(await getCodexQuotaBlockFence(account, relativeDeadline), null);
 
     // A later canonical date remains fenced too: D1 -> relative -> D2 must
     // stay lookup-only rather than restore a new key based on D2.
     const laterDeadline = now + 240_000;
-    await markCodexQuotaBlocked(account, usageLimit(new Date(laterDeadline).toUTCString()), now + 2);
+    await markCodexQuotaBlocked(account, deltaSecondsQuotaResponse(new Date(laterDeadline).toUTCString()), now + 2);
     assert.equal(await getCodexQuotaBlockFence(account, laterDeadline), null);
     const durable = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(durable?.slots[0]?.quota_blocked_until_ms, laterDeadline);
-    assert.equal(durable?.slots[0]?.observed_reset_at_ms, firstDeadline);
-    assert.equal(durable?.slots[0]?.observed_reset_at_is_stable, true);
-    assert.equal(durable?.slots[0]?.banked_reset_generation_ambiguous, true);
+    assert.equal(durable.slots[0]?.observed_reset_at_ms, firstDeadline);
+    assert.equal(durable.slots[0]?.observed_reset_at_is_stable, true);
+    assert.equal(durable.slots[0]?.banked_reset_generation_ambiguous, true);
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
@@ -2505,68 +2435,54 @@ Deno.test("only a successful recovery probe clears reset-generation ambiguity", 
   resetCodexAccountRoutingForTest();
   try {
     const now = Math.floor(Date.now() / 1_000) * 1_000;
-    const usageLimit = (retryAfter: string) =>
-      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
-        status: 429,
-        headers: { "Content-Type": "application/json", "Retry-After": retryAfter },
-      });
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
-    const account = initial.accounts[0]!;
+
+    const account = initial.accounts[0];
     const firstDeadline = now + 60_000;
     const revisedDeadline = now + 120_000;
-    await markCodexQuotaBlocked(account, usageLimit(new Date(firstDeadline).toUTCString()), now);
-    await markCodexQuotaBlocked(account, usageLimit(new Date(revisedDeadline).toUTCString()), now + 1);
+    await markCodexQuotaBlocked(account, deltaSecondsQuotaResponse(new Date(firstDeadline).toUTCString()), now);
+    await markCodexQuotaBlocked(account, deltaSecondsQuotaResponse(new Date(revisedDeadline).toUTCString()), now + 1);
 
     // An administrative recheck opens a normal probe but cannot clear the
     // ambiguous generation on its own.
     assert.equal(await recheckCodexRoutingSlot(1), true);
     const afterRecheck = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, Date.now());
     assert.equal(afterRecheck.kind, "eligible");
-    if (afterRecheck.kind !== "eligible") return;
+
     assert.equal(afterRecheck.accounts[0]?.probeRequired, true);
-    const firstProbe = await claimCodexRoutingProbe(singlePool, afterRecheck.accounts[0]!, Date.now());
+    const firstProbe = await claimCodexRoutingProbe(singlePool, afterRecheck.accounts[0], Date.now());
     assert.ok(firstProbe);
-    if (!firstProbe) return;
 
     const thirdNow = Math.floor(Date.now() / 1_000) * 1_000;
     const laterDeadline = thirdNow + 180_000;
-    await markCodexQuotaBlocked(firstProbe, usageLimit(new Date(laterDeadline).toUTCString()), thirdNow);
+    await markCodexQuotaBlocked(firstProbe, deltaSecondsQuotaResponse(new Date(laterDeadline).toUTCString()), thirdNow);
     assert.equal(await getCodexQuotaBlockFence(firstProbe, laterDeadline), null);
     const stillAmbiguous = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(stillAmbiguous?.slots[0]?.observed_reset_at_ms, firstDeadline);
-    assert.equal(stillAmbiguous?.slots[0]?.banked_reset_generation_ambiguous, true);
+    assert.equal(stillAmbiguous.slots[0]?.banked_reset_generation_ambiguous, true);
 
     // Only an actual successful half-open probe resets the provisional
     // identity. The next stable observation can then establish a fresh fence.
     assert.equal(await recheckCodexRoutingSlot(1), true);
     const afterSecondRecheck = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, Date.now());
     assert.equal(afterSecondRecheck.kind, "eligible");
-    if (afterSecondRecheck.kind !== "eligible") return;
-    const successfulProbe = await claimCodexRoutingProbe(
-      singlePool,
-      afterSecondRecheck.accounts[0]!,
-      Date.now(),
-    );
+
+    const successfulProbe = await claimCodexRoutingProbe(singlePool, afterSecondRecheck.accounts[0], Date.now());
     assert.ok(successfulProbe);
-    if (!successfulProbe) return;
+
     await markCodexSuccess(successfulProbe);
     const recovered = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(recovered?.slots[0]?.observed_reset_at_ms, null);
-    assert.equal(recovered?.slots[0]?.banked_reset_generation_ambiguous, false);
+    assert.equal(recovered.slots[0]?.banked_reset_generation_ambiguous, false);
 
     const postSuccess = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, Date.now());
     assert.equal(postSuccess.kind, "eligible");
-    if (postSuccess.kind !== "eligible") return;
+
     const freshNow = Math.floor(Date.now() / 1_000) * 1_000;
     const freshDeadline = freshNow + 240_000;
-    await markCodexQuotaBlocked(
-      postSuccess.accounts[0]!,
-      usageLimit(new Date(freshDeadline).toUTCString()),
-      freshNow,
-    );
-    assert.equal(typeof await getCodexQuotaBlockFence(postSuccess.accounts[0]!, freshDeadline), "number");
+    await markCodexQuotaBlocked(postSuccess.accounts[0], deltaSecondsQuotaResponse(new Date(freshDeadline).toUTCString()), freshNow);
+    assert.equal(typeof (await getCodexQuotaBlockFence(postSuccess.accounts[0], freshDeadline)), "number");
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
@@ -2579,23 +2495,18 @@ Deno.test("same-account credential rotation and pool reordering retain reset amb
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
-    const usageLimit = (retryAfter: string) =>
-      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
-        status: 429,
-        headers: { "Content-Type": "application/json", "Retry-After": retryAfter },
-      });
-    const initial = await selectCodexRoutingAccounts(pool, [pool.accounts[0]!], now);
+    const initial = await selectCodexRoutingAccounts(pool, [pool.accounts[0]], now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
-    const account = initial.accounts[0]!;
+
+    const account = initial.accounts[0];
     const firstDeadline = now + 60_000;
     const revisedDeadline = now + 120_000;
-    await markCodexQuotaBlocked(account, usageLimit(new Date(firstDeadline).toUTCString()), now);
-    await markCodexQuotaBlocked(account, usageLimit(new Date(revisedDeadline).toUTCString()), now + 1);
+    await markCodexQuotaBlocked(account, deltaSecondsQuotaResponse(new Date(firstDeadline).toUTCString()), now);
+    await markCodexQuotaBlocked(account, deltaSecondsQuotaResponse(new Date(revisedDeadline).toUTCString()), now + 1);
 
-    const rotatedAccount = { ...pool.accounts[0]!, access_token: "rotated-access", updated_at_ms: now + 2 };
+    const rotatedAccount = { ...pool.accounts[0], access_token: "rotated-access", updated_at_ms: now + 2 };
     const reorderedPool: CodexAuthPoolState = {
-      accounts: [pool.accounts[1]!, rotatedAccount],
+      accounts: [pool.accounts[1], rotatedAccount],
       updated_at_ms: now + 2,
     };
     // Simulate a fresh isolate that sees the durable state only after the pool
@@ -2603,26 +2514,28 @@ Deno.test("same-account credential rotation and pool reordering retain reset amb
     resetCodexAccountRoutingForTest();
     const rotated = await selectCodexRoutingAccounts(reorderedPool, reorderedPool.accounts, now + 2);
     assert.equal(rotated.kind, "eligible");
-    if (rotated.kind !== "eligible") return;
+
     // The refreshed account becomes normally routable, and its sibling remains
     // routable after the pool order changes. The old stable identity is still
     // retained only as a banked-reset fence.
-    assert.deepEqual(rotated.accounts.map((candidate) => candidate.auth.account_id), ["two", "one"]);
-    assert.equal(rotated.accounts.every((candidate) => !candidate.probeRequired), true);
+    assert.deepEqual(
+      rotated.accounts.map((candidate) => candidate.auth.account_id),
+      ["two", "one"]
+    );
+    assert.equal(
+      rotated.accounts.every((candidate) => !candidate.probeRequired),
+      true
+    );
     const rotatedRouting = rotated.accounts.find((candidate) => candidate.auth.account_id === "one");
     assert.ok(rotatedRouting);
-    if (!rotatedRouting) return;
+
     const laterDeadline = revisedDeadline + 60_000;
-    await markCodexQuotaBlocked(
-      rotatedRouting,
-      usageLimit(new Date(laterDeadline).toUTCString()),
-      now + 2,
-    );
+    await markCodexQuotaBlocked(rotatedRouting, deltaSecondsQuotaResponse(new Date(laterDeadline).toUTCString()), now + 2);
     assert.equal(await getCodexQuotaBlockFence(rotatedRouting, laterDeadline), null);
     const durable = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(durable?.slots[1]?.observed_reset_at_ms, firstDeadline);
-    assert.equal(durable?.slots[1]?.banked_reset_generation_ambiguous, true);
-    assert.equal(durable?.slots[1]?.credential_version, await codexCredentialVersion(rotatedAccount));
+    assert.equal(durable.slots[1]?.banked_reset_generation_ambiguous, true);
+    assert.equal(durable.slots[1]?.credential_version, await codexCredentialVersion(rotatedAccount));
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
@@ -2635,24 +2548,26 @@ Deno.test("an unmappable legacy stable identity cannot migrate to a replacement 
   resetCodexAccountRoutingForTest();
   try {
     const now = 1_700_000_000_000;
-    const oldCredentialVersion = await codexCredentialVersion(singlePool.accounts[0]!);
+    const oldCredentialVersion = await codexCredentialVersion(singlePool.accounts[0]);
     const legacyDeadline = now + 60_000;
     await kv.set(CODEX_ACCOUNT_ROUTING_KV_KEY, {
       v: 2,
       updated_at_ms: now,
-      slots: [{
-        credential_version: oldCredentialVersion,
-        quota_blocked_until_ms: legacyDeadline,
-        quota_block_source: "header_retry_after",
-        invalid_credential_version: null,
-        primary_used_percent: null,
-        secondary_used_percent: null,
-        observed_reset_at_ms: legacyDeadline,
-        observed_reset_at_is_stable: true,
-        banked_reset_generation_ambiguous: true,
-        generation: 1,
-        probe_lease: null,
-      }],
+      slots: [
+        {
+          credential_version: oldCredentialVersion,
+          quota_blocked_until_ms: legacyDeadline,
+          quota_block_source: "header_retry_after",
+          invalid_credential_version: null,
+          primary_used_percent: null,
+          secondary_used_percent: null,
+          observed_reset_at_ms: legacyDeadline,
+          observed_reset_at_is_stable: true,
+          banked_reset_generation_ambiguous: true,
+          generation: 1,
+          probe_lease: null,
+        },
+      ],
     });
     const replacement = {
       access_token: "replacement-access",
@@ -2666,13 +2581,13 @@ Deno.test("an unmappable legacy stable identity cannot migrate to a replacement 
     // inherit the old circuit, but it must still stop a new reset key.
     const selected = await selectCodexRoutingAccounts(replacementPool, replacementPool.accounts, now + 1);
     assert.equal(selected.kind, "eligible");
-    if (selected.kind !== "eligible") return;
+
     // Exercise the warm-cache normalization path too: the global legacy guard
     // is monotonic and may not disappear after the old slot is neutralized.
     const warmSelected = await selectCodexRoutingAccounts(replacementPool, replacementPool.accounts, now + 2);
     assert.equal(warmSelected.kind, "eligible");
-    if (warmSelected.kind !== "eligible") return;
-    const replacementRouting = warmSelected.accounts[0]!;
+
+    const replacementRouting = warmSelected.accounts[0];
     const replacementDeadline = now + 120_000;
     await markCodexQuotaBlocked(
       replacementRouting,
@@ -2680,12 +2595,12 @@ Deno.test("an unmappable legacy stable identity cannot migrate to a replacement 
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(replacementDeadline).toUTCString() },
       }),
-      now + 1,
+      now + 1
     );
     assert.equal(await getCodexQuotaBlockFence(replacementRouting, replacementDeadline), null);
     const durable = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(durable?.banked_reset_legacy_identity_unresolved, true);
-    assert.equal(durable?.slots[0]?.observed_reset_at_ms, replacementDeadline);
+    assert.equal(durable.slots[0]?.observed_reset_at_ms, replacementDeadline);
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
@@ -2700,8 +2615,8 @@ Deno.test("an administrative recheck fences a stable reset identity until a succ
     const now = 1_700_000_000_000;
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
-    const account = initial.accounts[0]!;
+
+    const account = initial.accounts[0];
     const deadline = now + 60_000;
     await markCodexQuotaBlocked(
       account,
@@ -2709,15 +2624,15 @@ Deno.test("an administrative recheck fences a stable reset identity until a succ
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(deadline).toUTCString() },
       }),
-      now,
+      now
     );
-    assert.equal(typeof await getCodexQuotaBlockFence(account, deadline), "number");
+    assert.equal(typeof (await getCodexQuotaBlockFence(account, deadline)), "number");
 
     assert.equal(await recheckCodexRoutingSlot(1), true);
     assert.equal(await getCodexQuotaBlockFence(account, deadline), null);
     const durable = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(durable?.slots[0]?.observed_reset_at_ms, deadline);
-    assert.equal(durable?.slots[0]?.banked_reset_generation_ambiguous, true);
+    assert.equal(durable.slots[0]?.banked_reset_generation_ambiguous, true);
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
@@ -2732,7 +2647,7 @@ Deno.test("fresh Spark capacity reconciles a blocked account and sends it first"
     const now = 1_700_000_000_000;
     const initial = await selectCodexRoutingAccounts(pool, pool.accounts, now, "gpt-5.3-codex-spark");
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
+
     const accountTwo = initial.accounts.find((account) => account.auth.account_id === "two");
     assert.ok(accountTwo);
     const blockedUntil = now + 60_000;
@@ -2742,40 +2657,47 @@ Deno.test("fresh Spark capacity reconciles a blocked account and sends it first"
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(blockedUntil).toUTCString() },
       }),
-      now,
+      now
     );
 
-    await recordCodexCapacityRoutingObservations([{
-      slot: 1,
-      account_id: "two",
-      state: "available",
-      source_observed_at_ms: now + 1,
-      snapshot_at_ms: now + 1,
-      windows: {
-        primary: { limit_window_seconds: 604_800, used_percent: 100, reset_at_ms: now + 604_800_000 },
-        secondary: null,
-      },
-      additional_rate_limits: [{
-        limit_name: "GPT-5.3-Codex-Spark",
-        metered_feature: "codex_bengalfox",
-        windows: {
-          primary: { limit_window_seconds: 18_000, used_percent: 50, reset_at_ms: now + 18_000_000 },
-          secondary: null,
+    await recordCodexCapacityRoutingObservations(
+      [
+        {
+          slot: 1,
+          account_id: "two",
+          state: "available",
+          source_observed_at_ms: now + 1,
+          snapshot_at_ms: now + 1,
+          windows: {
+            primary: { limit_window_seconds: 604_800, used_percent: 100, reset_at_ms: now + 604_800_000 },
+            secondary: null,
+          },
+          additional_rate_limits: [
+            {
+              limit_name: "GPT-5.3-Codex-Spark",
+              metered_feature: "codex_bengalfox",
+              windows: {
+                primary: { limit_window_seconds: 18_000, used_percent: 50, reset_at_ms: now + 18_000_000 },
+                secondary: null,
+              },
+            },
+          ],
         },
-      }],
-    }], now + 1);
+      ],
+      now + 1
+    );
 
     const selected = await selectCodexRoutingAccounts(pool, pool.accounts, now + 2, "gpt-5.3-codex-spark");
     assert.equal(selected.kind, "eligible");
-    if (selected.kind !== "eligible") return;
+
     assert.equal(selected.accounts[0]?.auth.account_id, "two");
     assert.equal(selected.accounts[0]?.quotaHeadroom, 50);
     assert.equal(selected.blockedAccounts.length, 0);
 
     const state = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(state?.slots[1]?.quota_blocked_until_ms, null);
-    assert.equal(state?.slots[1]?.primary_used_percent, 100);
-    assert.equal(state?.slots[1]?.capacity_observed_at_ms, now + 1);
+    assert.equal(state.slots[1]?.primary_used_percent, 100);
+    assert.equal(state.slots[1]?.capacity_observed_at_ms, now + 1);
     const storedObservation = JSON.stringify(kv.values.get(key(CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY)));
     assert.equal(storedObservation.includes("account_id"), true);
     assert.equal(storedObservation.includes('"two"'), false);
@@ -2795,56 +2717,55 @@ Deno.test("class capacity freshness ignores a newer independent quota signal", a
     const standardDeadline = now + 120_000;
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now, "gpt-5.3-codex-spark");
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
+
     await markCodexQuotaBlocked(
-      initial.accounts[0]!,
+      initial.accounts[0],
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(sparkDeadline).toUTCString() },
       }),
-      now,
+      now
     );
     const standard = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 1, "gpt-5.6-luna");
     assert.equal(standard.kind, "eligible");
-    if (standard.kind !== "eligible") return;
+
     await markCodexQuotaBlocked(
-      standard.accounts[0]!,
+      standard.accounts[0],
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(standardDeadline).toUTCString() },
       }),
-      now + 1,
+      now + 1
     );
-    await recordCodexCapacityRoutingObservations([{
-      slot: 0,
-      account_id: "one",
-      state: "available",
-      source_observed_at_ms: now + 2,
-      snapshot_at_ms: now + 2,
-      windows: {
-        primary: { limit_window_seconds: 604_800, used_percent: 100, reset_at_ms: sparkDeadline },
-        secondary: null,
-      },
-      additional_rate_limits: [{
-        limit_name: "GPT-5.3-Codex-Spark",
-        metered_feature: "codex_bengalfox",
-        windows: {
-          primary: { limit_window_seconds: 604_800, used_percent: 50, reset_at_ms: sparkDeadline },
-          secondary: null,
+    await recordCodexCapacityRoutingObservations(
+      [
+        {
+          slot: 0,
+          account_id: "one",
+          state: "available",
+          source_observed_at_ms: now + 2,
+          snapshot_at_ms: now + 2,
+          windows: {
+            primary: { limit_window_seconds: 604_800, used_percent: 100, reset_at_ms: sparkDeadline },
+            secondary: null,
+          },
+          additional_rate_limits: [
+            {
+              limit_name: "GPT-5.3-Codex-Spark",
+              metered_feature: "codex_bengalfox",
+              windows: {
+                primary: { limit_window_seconds: 604_800, used_percent: 50, reset_at_ms: sparkDeadline },
+                secondary: null,
+              },
+            },
+          ],
         },
-      }],
-    }], now + 2);
-    const sparkAfterCapacity = await selectCodexRoutingAccounts(
-      singlePool,
-      singlePool.accounts,
-      now + 3,
-      "gpt-5.3-codex-spark",
+      ],
+      now + 2
     );
+    const sparkAfterCapacity = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 3, "gpt-5.3-codex-spark");
     assert.equal(sparkAfterCapacity.kind, "eligible");
-    assert.equal(
-      (await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 3, "gpt-5.6-luna")).kind,
-      "quota_blocked",
-    );
+    assert.equal((await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 3, "gpt-5.6-luna")).kind, "quota_blocked");
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
@@ -2861,18 +2782,18 @@ Deno.test("clearing a class preserves an independent unknown quota fence", async
     const unknownDeadline = now + 120_000;
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now, "gpt-5.6-luna");
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
+
     await markCodexQuotaBlocked(
-      initial.accounts[0]!,
+      initial.accounts[0],
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(standardDeadline).toUTCString() },
       }),
-      now,
+      now
     );
     const state = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.ok(state);
-    if (!state) return;
+
     const block = (blockedUntilMs: number) => ({
       blocked_until_ms: blockedUntilMs,
       source: "header_retry_after" as const,
@@ -2885,37 +2806,44 @@ Deno.test("clearing a class preserves an independent unknown quota fence", async
     });
     await kv.set(CODEX_ACCOUNT_ROUTING_KV_KEY, {
       ...state,
-      slots: [{
-        ...state.slots[0]!,
-        quota_blocked_until_ms: unknownDeadline,
-        quota_block_source: "header_retry_after",
-        quota_blocked_classes: ["standard", "unknown"],
-        quota_blocks_by_class: {
-          standard: block(standardDeadline),
-          unknown: block(unknownDeadline),
+      slots: [
+        {
+          ...state.slots[0],
+          quota_blocked_until_ms: unknownDeadline,
+          quota_block_source: "header_retry_after",
+          quota_blocked_classes: ["standard", "unknown"],
+          quota_blocks_by_class: {
+            standard: block(standardDeadline),
+            unknown: block(unknownDeadline),
+          },
+          quota_signal_observed_at_ms: now,
         },
-        quota_signal_observed_at_ms: now,
-      }],
+      ],
     });
     resetCodexAccountRoutingForTest();
-    await recordCodexCapacityRoutingObservations([{
-      slot: 0,
-      account_id: "one",
-      state: "available",
-      source_observed_at_ms: now + 1,
-      snapshot_at_ms: now + 1,
-      windows: {
-        primary: { limit_window_seconds: 604_800, used_percent: 50, reset_at_ms: standardDeadline },
-        secondary: null,
-      },
-      additional_rate_limits: [],
-    }], now + 1);
+    await recordCodexCapacityRoutingObservations(
+      [
+        {
+          slot: 0,
+          account_id: "one",
+          state: "available",
+          source_observed_at_ms: now + 1,
+          snapshot_at_ms: now + 1,
+          windows: {
+            primary: { limit_window_seconds: 604_800, used_percent: 50, reset_at_ms: standardDeadline },
+            secondary: null,
+          },
+          additional_rate_limits: [],
+        },
+      ],
+      now + 1
+    );
     await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 2, "gpt-5.6-luna");
 
     const migrated = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(migrated?.slots[0]?.quota_blocks_by_class?.standard, undefined);
     assert.equal(migrated?.slots[0]?.quota_blocks_by_class?.unknown?.blocked_until_ms, unknownDeadline);
-    assert.equal(migrated?.slots[0]?.quota_blocks_by_class?.unknown?.legacy_fallback, false);
+    assert.equal(migrated.slots[0]?.quota_blocks_by_class?.unknown?.legacy_fallback, false);
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
@@ -2930,22 +2858,27 @@ Deno.test("a newer inference 429 remains authoritative over an older positive ca
     const now = 1_700_000_000_000;
     const initial = await selectCodexRoutingAccounts(pool, pool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
-    await recordCodexCapacityRoutingObservations([{
-      slot: 1,
-      account_id: "two",
-      state: "available",
-      source_observed_at_ms: now + 1,
-      snapshot_at_ms: now + 1,
-      windows: {
-        primary: { limit_window_seconds: 10_800, used_percent: 50, reset_at_ms: now + 10_800_000 },
-        secondary: { limit_window_seconds: 86_400, used_percent: 50, reset_at_ms: now + 86_400_000 },
-      },
-      additional_rate_limits: [],
-    }], now + 1);
+
+    await recordCodexCapacityRoutingObservations(
+      [
+        {
+          slot: 1,
+          account_id: "two",
+          state: "available",
+          source_observed_at_ms: now + 1,
+          snapshot_at_ms: now + 1,
+          windows: {
+            primary: { limit_window_seconds: 10_800, used_percent: 50, reset_at_ms: now + 10_800_000 },
+            secondary: { limit_window_seconds: 86_400, used_percent: 50, reset_at_ms: now + 86_400_000 },
+          },
+          additional_rate_limits: [],
+        },
+      ],
+      now + 1
+    );
     const positive = await selectCodexRoutingAccounts(pool, pool.accounts, now + 2);
     assert.equal(positive.kind, "eligible");
-    if (positive.kind !== "eligible") return;
+
     const accountTwo = positive.accounts.find((account) => account.auth.account_id === "two");
     assert.ok(accountTwo);
     const blockedUntil = now + 60_000;
@@ -2955,17 +2888,23 @@ Deno.test("a newer inference 429 remains authoritative over an older positive ca
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(blockedUntil).toUTCString() },
       }),
-      now + 2,
+      now + 2
     );
 
     const selected = await selectCodexRoutingAccounts(pool, pool.accounts, now + 3);
     assert.equal(selected.kind, "eligible");
-    if (selected.kind !== "eligible") return;
-    assert.equal(selected.accounts.some((account) => account.auth.account_id === "two"), false);
-    assert.equal(selected.blockedAccounts.some((account) => account.auth.account_id === "two"), true);
+
+    assert.equal(
+      selected.accounts.some((account) => account.auth.account_id === "two"),
+      false
+    );
+    assert.equal(
+      selected.blockedAccounts.some((account) => account.auth.account_id === "two"),
+      true
+    );
     const state = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(state?.slots[1]?.quota_blocked_until_ms, blockedUntil);
-    assert.equal(state?.slots[1]?.quota_signal_observed_at_ms, now + 2);
+    assert.equal(state.slots[1]?.quota_signal_observed_at_ms, now + 2);
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
@@ -2980,28 +2919,33 @@ Deno.test("stale positive capacity cannot reopen a quota circuit", async () => {
     const now = 1_700_000_000_000;
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
+
     const deadline = now + 60_000;
     await markCodexQuotaBlocked(
-      initial.accounts[0]!,
+      initial.accounts[0],
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(deadline).toUTCString() },
       }),
-      now,
+      now
     );
-    await recordCodexCapacityRoutingObservations([{
-      slot: 0,
-      account_id: "one",
-      state: "available",
-      source_observed_at_ms: now - CODEX_CAPACITY_ROUTING_MAX_AGE_MS - 1,
-      snapshot_at_ms: now - CODEX_CAPACITY_ROUTING_MAX_AGE_MS - 1,
-      windows: {
-        primary: { limit_window_seconds: 10_800, used_percent: 50, reset_at_ms: now + 10_800_000 },
-        secondary: null,
-      },
-      additional_rate_limits: [],
-    }], now);
+    await recordCodexCapacityRoutingObservations(
+      [
+        {
+          slot: 0,
+          account_id: "one",
+          state: "available",
+          source_observed_at_ms: now - CODEX_CAPACITY_ROUTING_MAX_AGE_MS - 1,
+          snapshot_at_ms: now - CODEX_CAPACITY_ROUTING_MAX_AGE_MS - 1,
+          windows: {
+            primary: { limit_window_seconds: 10_800, used_percent: 50, reset_at_ms: now + 10_800_000 },
+            secondary: null,
+          },
+          additional_rate_limits: [],
+        },
+      ],
+      now
+    );
     const selected = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 1);
     assert.equal(selected.kind, "quota_blocked");
     const state = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
@@ -3020,7 +2964,7 @@ Deno.test("the persisted analytics snapshot reopens the matching account for its
     const now = 1_700_000_000_000;
     const initial = await selectCodexRoutingAccounts(pool, pool.accounts, now, "gpt-5.3-codex-spark");
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
+
     const accountTwo = initial.accounts.find((account) => account.auth.account_id === "two");
     assert.ok(accountTwo);
     const deadline = now + 60_000;
@@ -3030,34 +2974,38 @@ Deno.test("the persisted analytics snapshot reopens the matching account for its
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(deadline).toUTCString() },
       }),
-      now,
+      now
     );
     await kv.set(PROVIDER_CAPACITY_SNAPSHOT_KEY, {
       snapshot_at_ms: now + 1,
-      sources: [{
-        source: "codex",
-        slot: 2,
-        state: "available",
-        source_observed_at_ms: now + 1,
-        snapshot_at_ms: now + 1,
-        windows: {
-          primary: { limit_window_seconds: 604_800, used_percent: 100, reset_at_ms: now + 604_800_000 },
-          secondary: null,
-        },
-        additional_rate_limits: [{
-          limit_name: "GPT-5.3-Codex-Spark",
-          metered_feature: "codex_bengalfox",
+      sources: [
+        {
+          source: "codex",
+          slot: 2,
+          state: "available",
+          source_observed_at_ms: now + 1,
+          snapshot_at_ms: now + 1,
           windows: {
-            primary: { limit_window_seconds: 18_000, used_percent: 50, reset_at_ms: now + 18_000_000 },
+            primary: { limit_window_seconds: 604_800, used_percent: 100, reset_at_ms: now + 604_800_000 },
             secondary: null,
           },
-        }],
-      }],
+          additional_rate_limits: [
+            {
+              limit_name: "GPT-5.3-Codex-Spark",
+              metered_feature: "codex_bengalfox",
+              windows: {
+                primary: { limit_window_seconds: 18_000, used_percent: 50, reset_at_ms: now + 18_000_000 },
+                secondary: null,
+              },
+            },
+          ],
+        },
+      ],
     });
     resetCodexAccountRoutingForTest();
     const selected = await selectCodexRoutingAccounts(pool, pool.accounts, now + 2, "gpt-5.3-codex-spark");
     assert.equal(selected.kind, "eligible");
-    if (selected.kind !== "eligible") return;
+
     assert.equal(selected.accounts[0]?.auth.account_id, "two");
     assert.equal(selected.accounts[0]?.quotaHeadroom, 50);
     const state = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
@@ -3083,30 +3031,32 @@ Deno.test("a legacy slot-only dashboard snapshot cannot attach to a replacement 
     const replacementPool: CodexAuthPoolState = { accounts: [replacement], updated_at_ms: now + 1 };
     const initial = await selectCodexRoutingAccounts(replacementPool, replacementPool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
+
     const deadline = now + 60_000;
     await markCodexQuotaBlocked(
-      initial.accounts[0]!,
+      initial.accounts[0],
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(deadline).toUTCString() },
       }),
-      now + 1,
+      now + 1
     );
     await kv.set(PROVIDER_CAPACITY_SNAPSHOT_KEY, {
       snapshot_at_ms: now,
-      sources: [{
-        source: "codex",
-        slot: 1,
-        state: "available",
-        source_observed_at_ms: now,
-        snapshot_at_ms: now,
-        windows: {
-          primary: { limit_window_seconds: 10_800, used_percent: 50, reset_at_ms: now + 10_800_000 },
-          secondary: null,
+      sources: [
+        {
+          source: "codex",
+          slot: 1,
+          state: "available",
+          source_observed_at_ms: now,
+          snapshot_at_ms: now,
+          windows: {
+            primary: { limit_window_seconds: 10_800, used_percent: 50, reset_at_ms: now + 10_800_000 },
+            secondary: null,
+          },
+          additional_rate_limits: [],
         },
-        additional_rate_limits: [],
-      }],
+      ],
     });
     resetCodexAccountRoutingForTest();
     const selected = await selectCodexRoutingAccounts(replacementPool, replacementPool.accounts, now + 2);
@@ -3127,7 +3077,7 @@ Deno.test("capacity reconciliation uses the requested model instead of any addit
     const now = 1_700_000_000_000;
     const initial = await selectCodexRoutingAccounts(pool, pool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
+
     const accountTwo = initial.accounts.find((account) => account.auth.account_id === "two");
     assert.ok(accountTwo);
     const blockedUntil = now + 60_000;
@@ -3137,38 +3087,51 @@ Deno.test("capacity reconciliation uses the requested model instead of any addit
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(blockedUntil).toUTCString() },
       }),
-      now,
+      now
     );
 
-    await recordCodexCapacityRoutingObservations([{
-      slot: 1,
-      account_id: "two",
-      state: "available",
-      source_observed_at_ms: now + 1,
-      snapshot_at_ms: now + 1,
-      windows: {
-        primary: { limit_window_seconds: 10_800, used_percent: 100, reset_at_ms: now + 10_800_000 },
-        secondary: null,
-      },
-      additional_rate_limits: [{
-        limit_name: "GPT-5.3-Codex-Spark",
-        metered_feature: "codex_bengalfox",
-        windows: {
-          primary: { limit_window_seconds: 18_000, used_percent: 50, reset_at_ms: now + 18_000_000 },
-          secondary: null,
+    await recordCodexCapacityRoutingObservations(
+      [
+        {
+          slot: 1,
+          account_id: "two",
+          state: "available",
+          source_observed_at_ms: now + 1,
+          snapshot_at_ms: now + 1,
+          windows: {
+            primary: { limit_window_seconds: 10_800, used_percent: 100, reset_at_ms: now + 10_800_000 },
+            secondary: null,
+          },
+          additional_rate_limits: [
+            {
+              limit_name: "GPT-5.3-Codex-Spark",
+              metered_feature: "codex_bengalfox",
+              windows: {
+                primary: { limit_window_seconds: 18_000, used_percent: 50, reset_at_ms: now + 18_000_000 },
+                secondary: null,
+              },
+            },
+          ],
         },
-      }],
-    }], now + 1);
+      ],
+      now + 1
+    );
 
     const nonSpark = await selectCodexRoutingAccounts(pool, pool.accounts, now + 2, "gpt-5.2-codex");
     assert.equal(nonSpark.kind, "eligible");
-    if (nonSpark.kind !== "eligible") return;
-    assert.equal(nonSpark.accounts.some((account) => account.auth.account_id === "two"), false);
-    assert.equal(nonSpark.blockedAccounts.some((account) => account.auth.account_id === "two"), true);
+
+    assert.equal(
+      nonSpark.accounts.some((account) => account.auth.account_id === "two"),
+      false
+    );
+    assert.equal(
+      nonSpark.blockedAccounts.some((account) => account.auth.account_id === "two"),
+      true
+    );
 
     const spark = await selectCodexRoutingAccounts(pool, pool.accounts, now + 2, "gpt-5.3-codex-spark");
     assert.equal(spark.kind, "eligible");
-    if (spark.kind !== "eligible") return;
+
     assert.equal(spark.accounts[0]?.auth.account_id, "two");
     assert.equal(spark.accounts[0]?.quotaHeadroom, 50);
   } finally {
@@ -3185,8 +3148,8 @@ Deno.test("capacity reconciliation preserves reset ambiguity and an active recov
     const now = 1_700_000_000_000;
     const initial = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
-    const account = initial.accounts[0]!;
+
+    const account = initial.accounts[0];
     const resetAtMs = now + 60_000;
     await markCodexQuotaBlocked(
       account,
@@ -3194,7 +3157,7 @@ Deno.test("capacity reconciliation preserves reset ambiguity and an active recov
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(resetAtMs).toUTCString() },
       }),
-      now,
+      now
     );
     const routingGeneration = await getCodexQuotaBlockFence(account, resetAtMs);
     assert.equal(typeof routingGeneration, "number");
@@ -3204,31 +3167,36 @@ Deno.test("capacity reconciliation preserves reset ambiguity and an active recov
       routingGeneration,
     });
     assert.ok(recoveryProbe);
-    if (!recoveryProbe) return;
+
     const before = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(before?.slots[0]?.banked_reset_generation_ambiguous, true);
-    assert.equal(before?.slots[0]?.banked_reset_recovery_probe_pending, true);
-    assert.equal(before?.slots[0]?.probe_lease?.token, recoveryProbe.probeToken);
+    assert.equal(before.slots[0]?.banked_reset_recovery_probe_pending, true);
+    assert.equal(before.slots[0]?.probe_lease?.token, recoveryProbe.probeToken);
 
-    await recordCodexCapacityRoutingObservations([{
-      slot: 0,
-      account_id: "one",
-      state: "available",
-      source_observed_at_ms: now + 1,
-      snapshot_at_ms: now + 1,
-      windows: {
-        primary: { limit_window_seconds: 10_800, used_percent: 50, reset_at_ms: now + 10_800_000 },
-        secondary: null,
-      },
-      additional_rate_limits: [],
-    }], now + 1);
+    await recordCodexCapacityRoutingObservations(
+      [
+        {
+          slot: 0,
+          account_id: "one",
+          state: "available",
+          source_observed_at_ms: now + 1,
+          snapshot_at_ms: now + 1,
+          windows: {
+            primary: { limit_window_seconds: 10_800, used_percent: 50, reset_at_ms: now + 10_800_000 },
+            secondary: null,
+          },
+          additional_rate_limits: [],
+        },
+      ],
+      now + 1
+    );
 
     const after = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
     assert.equal(after?.slots[0]?.banked_reset_generation_ambiguous, true);
-    assert.equal(after?.slots[0]?.banked_reset_recovery_probe_pending, true);
-    assert.equal(after?.slots[0]?.observed_reset_at_ms, resetAtMs);
-    assert.equal(after?.slots[0]?.probe_lease?.token, recoveryProbe.probeToken);
-    assert.equal(after?.slots[0]?.generation, before?.slots[0]?.generation);
+    assert.equal(after.slots[0]?.banked_reset_recovery_probe_pending, true);
+    assert.equal(after.slots[0]?.observed_reset_at_ms, resetAtMs);
+    assert.equal(after.slots[0]?.probe_lease?.token, recoveryProbe.probeToken);
+    assert.equal(after.slots[0]?.generation, before.slots[0]?.generation);
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();
@@ -3258,12 +3226,14 @@ Deno.test("capacity observations expire old account identities from durable rout
     await recordCodexCapacityRoutingObservations([observation("replaced-account", firstAtMs, 20)], firstAtMs);
     await recordCodexCapacityRoutingObservations([observation("current-account", secondAtMs, 40)], secondAtMs);
 
-    const stored = kv.values.get(key(CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY)) as {
-      observations?: readonly { snapshot_at_ms?: number; windows?: { primary?: { used_percent?: number } } }[];
-    } | undefined;
+    const stored = kv.values.get(key(CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY)) as
+      | {
+          observations?: readonly { snapshot_at_ms?: number; windows?: { primary?: { used_percent?: number } } }[];
+        }
+      | undefined;
     assert.equal(stored?.observations?.length, 1);
-    assert.equal(stored?.observations?.[0]?.snapshot_at_ms, secondAtMs);
-    assert.equal(stored?.observations?.[0]?.windows?.primary?.used_percent, 40);
+    assert.equal(stored.observations[0]?.snapshot_at_ms, secondAtMs);
+    assert.equal(stored.observations[0]?.windows?.primary?.used_percent, 40);
   } finally {
     setKvForTest(null);
     resetCodexAccountRoutingForTest();

@@ -8,25 +8,10 @@ import { getKv } from "./kv.ts";
 import { isRecord } from "./utils.ts";
 
 /** Redacted, short-lived evidence used only to annotate the capacity chart. */
-export const PROVIDER_CAPACITY_RESET_EVENT_KV_PREFIX = [
-  "uos_ai",
-  "provider_capacity",
-  "v1",
-  "reset_event",
-] as const;
+export const PROVIDER_CAPACITY_RESET_EVENT_KV_PREFIX = ["uos_ai", "provider_capacity", "v1", "reset_event"] as const;
 export const PROVIDER_CAPACITY_RESET_EVENT_RETENTION_MS = 7 * 24 * 60 * 60_000;
-export const PROVIDER_CAPACITY_RATE_LIMIT_RESET_EVENT_KV_PREFIX = [
-  "uos_ai",
-  "provider_capacity",
-  "v1",
-  "rate_limit_reset_event",
-] as const;
-export const PROVIDER_CAPACITY_DOWNTIME_EVENT_KV_PREFIX = [
-  "uos_ai",
-  "provider_capacity",
-  "v1",
-  "downtime_event",
-] as const;
+export const PROVIDER_CAPACITY_RATE_LIMIT_RESET_EVENT_KV_PREFIX = ["uos_ai", "provider_capacity", "v1", "rate_limit_reset_event"] as const;
+export const PROVIDER_CAPACITY_DOWNTIME_EVENT_KV_PREFIX = ["uos_ai", "provider_capacity", "v1", "downtime_event"] as const;
 export const PROVIDER_CAPACITY_DOWNTIME_EVENT_RETENTION_MS = 7 * 24 * 60 * 60_000;
 
 export type ProviderCapacityDowntimeFailureKind = "upstream_error" | "unreachable";
@@ -62,29 +47,17 @@ export type ProviderCapacityDowntimeEvent = Readonly<{
   observed_at_ms: number;
 }>;
 
-export const providerCapacityResetEventKey = (eventId: string): Deno.KvKey => [
-  ...PROVIDER_CAPACITY_RESET_EVENT_KV_PREFIX,
-  eventId,
-];
+export const providerCapacityResetEventKey = (eventId: string): Deno.KvKey => [...PROVIDER_CAPACITY_RESET_EVENT_KV_PREFIX, eventId];
 
-export const providerCapacityRateLimitResetEventKey = (eventId: string): Deno.KvKey => [
-  ...PROVIDER_CAPACITY_RATE_LIMIT_RESET_EVENT_KV_PREFIX,
-  eventId,
-];
+export const providerCapacityRateLimitResetEventKey = (eventId: string): Deno.KvKey => [...PROVIDER_CAPACITY_RATE_LIMIT_RESET_EVENT_KV_PREFIX, eventId];
 
-export const providerCapacityDowntimeEventKey = (eventId: string): Deno.KvKey => [
-  ...PROVIDER_CAPACITY_DOWNTIME_EVENT_KV_PREFIX,
-  eventId,
-];
+export const providerCapacityDowntimeEventKey = (eventId: string): Deno.KvKey => [...PROVIDER_CAPACITY_DOWNTIME_EVENT_KV_PREFIX, eventId];
 
-const isSafeTimestamp = (value: unknown): value is number =>
-  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+const isSafeTimestamp = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
-const isNonEmptyText = (value: unknown): value is string =>
-  typeof value === "string" && value.length > 0 && value.length <= 512;
+const isNonEmptyText = (value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 512;
 
-const isPercent = (value: unknown): value is number =>
-  typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100;
+const isPercent = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100;
 
 export const parseProviderCapacityResetEvent = (value: unknown): ProviderCapacityResetEvent | null => {
   if (!isRecord(value) || value.v !== 1 || !isNonEmptyText(value.event_id)) return null;
@@ -97,24 +70,29 @@ export const parseProviderCapacityResetEvent = (value: unknown): ProviderCapacit
   };
 };
 
-export const parseProviderCapacityRateLimitResetEvent = (
-  value: unknown,
-): ProviderCapacityRateLimitResetEvent | null => {
+export const parseProviderCapacityRateLimitResetEvent = (value: unknown): ProviderCapacityRateLimitResetEvent | null => {
   if (
-    !isRecord(value) || value.v !== 1 || !isNonEmptyText(value.event_id) || value.provider !== "openai" ||
+    !isRecord(value) ||
+    value.v !== 1 ||
+    !isNonEmptyText(value.event_id) ||
+    value.provider !== "openai" ||
     (value.slot !== 1 && value.slot !== 2) ||
     (value.window !== "primary" && value.window !== "secondary") ||
-    !isSafeTimestamp(value.observed_at_ms) || !isSafeTimestamp(value.previous_sampled_at_ms) ||
-    !isSafeTimestamp(value.previous_reset_at_ms) || !isSafeTimestamp(value.reset_at_ms) ||
-    !isPercent(value.previous_used_percent) || !isPercent(value.current_used_percent) ||
+    !isSafeTimestamp(value.observed_at_ms) ||
+    !isSafeTimestamp(value.previous_sampled_at_ms) ||
+    !isSafeTimestamp(value.previous_reset_at_ms) ||
+    !isSafeTimestamp(value.reset_at_ms) ||
+    !isPercent(value.previous_used_percent) ||
+    !isPercent(value.current_used_percent) ||
     !isPercent(value.capacity_gain_percentage_points)
-  ) return null;
+  )
+    return null;
   if (
-    value.previous_sampled_at_ms >= value.observed_at_ms || value.previous_reset_at_ms >= value.reset_at_ms ||
-    Math.abs(
-        value.previous_used_percent - value.current_used_percent - value.capacity_gain_percentage_points,
-      ) > 0.001
-  ) return null;
+    value.previous_sampled_at_ms >= value.observed_at_ms ||
+    value.previous_reset_at_ms >= value.reset_at_ms ||
+    Math.abs(value.previous_used_percent - value.current_used_percent - value.capacity_gain_percentage_points) > 0.001
+  )
+    return null;
   return {
     v: 1,
     event_id: value.event_id,
@@ -134,11 +112,8 @@ export const parseProviderCapacityRateLimitResetEvent = (
 export const parseProviderCapacityDowntimeEvent = (value: unknown): ProviderCapacityDowntimeEvent | null => {
   if (!isRecord(value) || value.v !== 1 || !isNonEmptyText(value.event_id) || value.provider !== "openai") return null;
   if (value.failure_kind !== "upstream_error" && value.failure_kind !== "unreachable") return null;
-  if (
-    !(value.status === null ||
-      (typeof value.status === "number" && Number.isSafeInteger(value.status) && value.status >= 500 &&
-        value.status <= 599))
-  ) return null;
+  if (!(value.status === null || (typeof value.status === "number" && Number.isSafeInteger(value.status) && value.status >= 500 && value.status <= 599)))
+    return null;
   if (!isSafeTimestamp(value.observed_at_ms)) return null;
   return {
     v: 1,
@@ -164,17 +139,14 @@ const writeResetEvent = async (kv: Deno.Kv, event: ProviderCapacityResetEvent): 
   for (let attempt = 0; attempt < 4; attempt += 1) {
     let entry: Deno.KvEntryMaybe<unknown>;
     try {
-      entry = await kv.get<unknown>(key, { consistency: "strong" });
+      entry = await kv.get(key, { consistency: "strong" });
     } catch {
       return false;
     }
     const existing = entry.value === null ? null : parseProviderCapacityResetEvent(entry.value);
     if (existing) return existing.slot === event.slot && existing.observed_at_ms === event.observed_at_ms;
     try {
-      const committed = await kv.atomic()
-        .check(entry)
-        .set(key, event, { expireIn: PROVIDER_CAPACITY_RESET_EVENT_RETENTION_MS })
-        .commit();
+      const committed = await kv.atomic().check(entry).set(key, event, { expireIn: PROVIDER_CAPACITY_RESET_EVENT_RETENTION_MS }).commit();
       if (committed.ok) return true;
     } catch {
       return false;
@@ -183,16 +155,13 @@ const writeResetEvent = async (kv: Deno.Kv, event: ProviderCapacityResetEvent): 
   return false;
 };
 
-export const recordProviderCapacityResetEvent = async (
-  event: ProviderCapacityResetEvent,
-  kvOverride?: Deno.Kv | null,
-): Promise<boolean> => {
+export const recordProviderCapacityResetEvent = async (event: ProviderCapacityResetEvent, kvOverride?: Deno.Kv | null): Promise<boolean> => {
   const kv = await resolveKv(kvOverride);
   return kv ? await writeResetEvent(kv, event) : false;
 };
 
 export const listProviderCapacityRateLimitResetEvents = async (
-  options: Readonly<{ kv?: Deno.Kv | null; now?: () => number }> = {},
+  options: Readonly<{ kv?: Deno.Kv | null; now?: () => number }> = {}
 ): Promise<readonly ProviderCapacityRateLimitResetEvent[]> => {
   const kv = await resolveKv(options.kv);
   if (!kv) return [];
@@ -201,16 +170,14 @@ export const listProviderCapacityRateLimitResetEvents = async (
   const cutoffMs = Math.max(0, nowMs - PROVIDER_CAPACITY_RESET_EVENT_RETENTION_MS);
   const events: ProviderCapacityRateLimitResetEvent[] = [];
   try {
-    for await (const entry of kv.list<unknown>({ prefix: PROVIDER_CAPACITY_RATE_LIMIT_RESET_EVENT_KV_PREFIX })) {
+    for await (const entry of kv.list({ prefix: PROVIDER_CAPACITY_RATE_LIMIT_RESET_EVENT_KV_PREFIX })) {
       const event = parseProviderCapacityRateLimitResetEvent(entry.value);
       if (event && event.observed_at_ms >= cutoffMs && event.observed_at_ms <= nowMs) events.push(event);
     }
   } catch {
     return [];
   }
-  return events.sort((left, right) =>
-    left.observed_at_ms - right.observed_at_ms || left.event_id.localeCompare(right.event_id)
-  );
+  return events.sort((left, right) => left.observed_at_ms - right.observed_at_ms || left.event_id.localeCompare(right.event_id));
 };
 
 const writeDowntimeEvent = async (kv: Deno.Kv, event: ProviderCapacityDowntimeEvent): Promise<boolean> => {
@@ -218,16 +185,13 @@ const writeDowntimeEvent = async (kv: Deno.Kv, event: ProviderCapacityDowntimeEv
   for (let attempt = 0; attempt < 4; attempt += 1) {
     let entry: Deno.KvEntryMaybe<unknown>;
     try {
-      entry = await kv.get<unknown>(key, { consistency: "strong" });
+      entry = await kv.get(key, { consistency: "strong" });
     } catch {
       return false;
     }
     if (entry.value !== null) return parseProviderCapacityDowntimeEvent(entry.value) !== null;
     try {
-      const committed = await kv.atomic()
-        .check(entry)
-        .set(key, event, { expireIn: PROVIDER_CAPACITY_DOWNTIME_EVENT_RETENTION_MS })
-        .commit();
+      const committed = await kv.atomic().check(entry).set(key, event, { expireIn: PROVIDER_CAPACITY_DOWNTIME_EVENT_RETENTION_MS }).commit();
       if (committed.ok) return true;
     } catch {
       return false;
@@ -236,8 +200,7 @@ const writeDowntimeEvent = async (kv: Deno.Kv, event: ProviderCapacityDowntimeEv
   return false;
 };
 
-const downtimeBucketStartAtMs = (observedAtMs: number): number =>
-  Math.floor(observedAtMs / (15 * 60_000)) * 15 * 60_000;
+const downtimeBucketStartAtMs = (observedAtMs: number): number => Math.floor(observedAtMs / (15 * 60_000)) * 15 * 60_000;
 
 /**
  * Record one redacted OpenAI incident per 15-minute chart segment. The event
@@ -249,13 +212,10 @@ export const recordProviderCapacityDowntimeEvent = async (
     status: number | null;
     observed_at_ms: number;
   }>,
-  kvOverride?: Deno.Kv | null,
+  kvOverride?: Deno.Kv | null
 ): Promise<boolean> => {
   if (!isSafeTimestamp(input.observed_at_ms)) return false;
-  if (
-    input.status !== null &&
-    (!Number.isSafeInteger(input.status) || input.status < 500 || input.status > 599)
-  ) return false;
+  if (input.status !== null && (!Number.isSafeInteger(input.status) || input.status < 500 || input.status > 599)) return false;
   const event: ProviderCapacityDowntimeEvent = {
     v: 1,
     event_id: `openai-${downtimeBucketStartAtMs(input.observed_at_ms)}`,
@@ -269,7 +229,7 @@ export const recordProviderCapacityDowntimeEvent = async (
 };
 
 export const listProviderCapacityDowntimeEvents = async (
-  options: Readonly<{ kv?: Deno.Kv | null; now?: () => number }> = {},
+  options: Readonly<{ kv?: Deno.Kv | null; now?: () => number }> = {}
 ): Promise<readonly ProviderCapacityDowntimeEvent[]> => {
   const kv = await resolveKv(options.kv);
   if (!kv) return [];
@@ -278,16 +238,14 @@ export const listProviderCapacityDowntimeEvents = async (
   const cutoffMs = Math.max(0, nowMs - PROVIDER_CAPACITY_DOWNTIME_EVENT_RETENTION_MS);
   const events: ProviderCapacityDowntimeEvent[] = [];
   try {
-    for await (const entry of kv.list<unknown>({ prefix: PROVIDER_CAPACITY_DOWNTIME_EVENT_KV_PREFIX })) {
+    for await (const entry of kv.list({ prefix: PROVIDER_CAPACITY_DOWNTIME_EVENT_KV_PREFIX })) {
       const event = parseProviderCapacityDowntimeEvent(entry.value);
       if (event && event.observed_at_ms >= cutoffMs && event.observed_at_ms <= nowMs) events.push(event);
     }
   } catch {
     return [];
   }
-  return events.sort((left, right) =>
-    left.observed_at_ms - right.observed_at_ms || left.event_id.localeCompare(right.event_id)
-  );
+  return events.sort((left, right) => left.observed_at_ms - right.observed_at_ms || left.event_id.localeCompare(right.event_id));
 };
 
 type ResetShadowFence = Readonly<{
@@ -296,15 +254,11 @@ type ResetShadowFence = Readonly<{
   quota_generation: string;
 }>;
 
-const readBackfillableEvents = async (
-  kv: Deno.Kv,
-  cutoffMs: number,
-  nowMs: number,
-): Promise<ProviderCapacityResetEvent[]> => {
+const readBackfillableEvents = async (kv: Deno.Kv, cutoffMs: number, nowMs: number): Promise<ProviderCapacityResetEvent[]> => {
   const decisions: ResetShadowFence[] = [];
   const redemptions: ProviderCapacityResetEvent[] = [];
   try {
-    for await (const entry of kv.list<unknown>({ prefix: CODEX_RESET_SHADOW_DECISION_KV_PREFIX })) {
+    for await (const entry of kv.list({ prefix: CODEX_RESET_SHADOW_DECISION_KV_PREFIX })) {
       const decision = parseCodexResetShadowDecisionRecord(entry.value);
       if (!decision) continue;
       for (const fence of decision.fences) {
@@ -317,14 +271,11 @@ const readBackfillableEvents = async (
         }
       }
     }
-    for await (const entry of kv.list<unknown>({ prefix: CODEX_RESET_REDEMPTION_KV_PREFIX })) {
+    for await (const entry of kv.list({ prefix: CODEX_RESET_REDEMPTION_KV_PREFIX })) {
       const record = parseCodexResetRedemptionRecord(entry.value);
-      if (
-        !record || record.state !== "verified" || record.verified_at_ms === null ||
-        record.verified_at_ms < cutoffMs || record.verified_at_ms > nowMs
-      ) continue;
-      const fence = decisions.find((candidate) =>
-        candidate.account_id_hash === record.account_id_hash && candidate.quota_generation === record.quota_generation
+      if (record?.state !== "verified" || record.verified_at_ms === null || record.verified_at_ms < cutoffMs || record.verified_at_ms > nowMs) continue;
+      const fence = decisions.find(
+        (candidate) => candidate.account_id_hash === record.account_id_hash && candidate.quota_generation === record.quota_generation
       );
       if (!fence || (fence.slot !== 1 && fence.slot !== 2)) continue;
       redemptions.push({
@@ -346,7 +297,7 @@ const readBackfillableEvents = async (
  * unverified or unmapped redemption must never become a chart assertion.
  */
 export const listProviderCapacityResetEvents = async (
-  options: Readonly<{ kv?: Deno.Kv | null; now?: () => number }> = {},
+  options: Readonly<{ kv?: Deno.Kv | null; now?: () => number }> = {}
 ): Promise<readonly ProviderCapacityResetEvent[]> => {
   const kv = await resolveKv(options.kv);
   if (!kv) return [];
@@ -355,7 +306,7 @@ export const listProviderCapacityResetEvents = async (
   const cutoffMs = Math.max(0, nowMs - PROVIDER_CAPACITY_RESET_EVENT_RETENTION_MS);
   const events = new Map<string, ProviderCapacityResetEvent>();
   try {
-    for await (const entry of kv.list<unknown>({ prefix: PROVIDER_CAPACITY_RESET_EVENT_KV_PREFIX })) {
+    for await (const entry of kv.list({ prefix: PROVIDER_CAPACITY_RESET_EVENT_KV_PREFIX })) {
       const event = parseProviderCapacityResetEvent(entry.value);
       if (event && event.observed_at_ms >= cutoffMs && event.observed_at_ms <= nowMs) {
         events.set(event.event_id, event);
@@ -372,7 +323,5 @@ export const listProviderCapacityResetEvents = async (
     }
   }
 
-  return [...events.values()].sort((left, right) =>
-    left.observed_at_ms - right.observed_at_ms || left.event_id.localeCompare(right.event_id)
-  );
+  return [...events.values()].sort((left, right) => left.observed_at_ms - right.observed_at_ms || left.event_id.localeCompare(right.event_id));
 };

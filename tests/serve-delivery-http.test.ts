@@ -46,49 +46,41 @@ Deno.test({
     const serveHandler = createServeHandler(async (request, delivery) => {
       const requestId = new URL(request.url).pathname === "/delivered" ? "served-delivered" : "served-interrupted";
       signals.set(requestId, delivery.downstreamSignal);
-      const body = requestId === "served-delivered"
-        ? new ReadableStream<Uint8Array>({
-          start(controller) {
-            controller.enqueue(encoder.encode("data: delivered\n\n"));
-            controller.close();
-          },
-        })
-        : new ReadableStream<Uint8Array>({
-          start(controller) {
-            controller.enqueue(encoder.encode("data: interrupted\n\n"));
-          },
-          pull(controller) {
-            controller.enqueue(disconnectPressure);
-          },
-          cancel() {
-            interruptedSourceCancelled += 1;
-          },
-        });
-      return await withTerminalRequestLog(
-        new Response(body, { headers: { "Content-Type": "text/event-stream" } }),
-        {
-          route: "responses",
-          startedAtMonotonicMs: performance.now(),
-          requestId,
-          deliveryCompleted: delivery.completed,
-          deliverySignal: delivery.downstreamSignal,
-          recordTelemetry: ignoredTelemetry,
-        },
-      );
+      const body =
+        requestId === "served-delivered"
+          ? new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(encoder.encode("data: delivered\n\n"));
+                controller.close();
+              },
+            })
+          : new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(encoder.encode("data: interrupted\n\n"));
+              },
+              pull(controller) {
+                controller.enqueue(disconnectPressure);
+              },
+              cancel() {
+                interruptedSourceCancelled += 1;
+              },
+            });
+      return await withTerminalRequestLog(new Response(body, { headers: { "Content-Type": "text/event-stream" } }), {
+        route: "responses",
+        startedAtMonotonicMs: performance.now(),
+        requestId,
+        deliveryCompleted: delivery.completed,
+        deliverySignal: delivery.downstreamSignal,
+        recordTelemetry: ignoredTelemetry,
+      });
     });
-    const server = Deno.serve(
-      { hostname: "127.0.0.1", port: 0, onListen: () => {} },
-      serveHandler,
-    );
+    const server = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, serveHandler);
 
     try {
       const address = server.addr as Deno.NetAddr;
       const deliveredResponse = await fetch(`http://127.0.0.1:${address.port}/delivered`);
       assert.equal(await deliveredResponse.text(), "data: delivered\n\n");
-      await waitFor(
-        () => terminalPayloads(logs, "served-delivered").length === 1,
-        "delivered terminal event",
-      );
+      await waitFor(() => terminalPayloads(logs, "served-delivered").length === 1, "delivered terminal event");
       const deliveredTerminals = terminalPayloads(logs, "served-delivered");
       assert.equal(deliveredTerminals.length, 1);
       assert.equal(deliveredTerminals[0]?.delivery_outcome, "delivered");
@@ -107,10 +99,7 @@ Deno.test({
       await interruptedReader.cancel(interruptedClient.signal.reason).catch(() => {});
 
       await waitFor(() => interruptedSourceCancelled === 1, "upstream stream cancellation");
-      await waitFor(
-        () => terminalPayloads(logs, "served-interrupted").length === 1,
-        "interrupted terminal event",
-      );
+      await waitFor(() => terminalPayloads(logs, "served-interrupted").length === 1, "interrupted terminal event");
       const interruptedTerminals = terminalPayloads(logs, "served-interrupted");
       assert.equal(interruptedTerminals.length, 1);
       assert.equal(interruptedTerminals[0]?.delivery_outcome, "interrupted");

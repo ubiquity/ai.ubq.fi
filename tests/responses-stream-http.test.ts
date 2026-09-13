@@ -1,6 +1,30 @@
 import assert from "node:assert/strict";
 import { proxyResponsesStream } from "../src/responses_stream.ts";
 
+// Timer callbacks are hoisted out of the stream's `start` method so the nested
+// closure depth stays within the lint ceiling: the stream controller, the timer
+// registry, and the payload are passed in as parameters instead of captured.
+const scheduleEnqueue = (
+  timers: Set<ReturnType<typeof setTimeout>>,
+  controller: ReadableStreamDefaultController<Uint8Array>,
+  payload: Uint8Array,
+  delayMs: number
+): void => {
+  const timer = setTimeout(() => {
+    timers.delete(timer);
+    controller.enqueue(payload);
+  }, delayMs);
+  timers.add(timer);
+};
+
+const scheduleClose = (timers: Set<ReturnType<typeof setTimeout>>, controller: ReadableStreamDefaultController<Uint8Array>, delayMs: number): void => {
+  const timer = setTimeout(() => {
+    timers.delete(timer);
+    controller.close();
+  }, delayMs);
+  timers.add(timer);
+};
+
 const loopbackPermission = await Deno.permissions.query({ name: "net", host: "127.0.0.1" });
 
 Deno.test({
@@ -8,12 +32,8 @@ Deno.test({
   ignore: loopbackPermission.state !== "granted",
   async fn() {
     const encoder = new TextEncoder();
-    const delta = encoder.encode(
-      'data: {"type":"response.output_text.delta","delta":"real HTTP 🌍"}\n\n',
-    );
-    const terminal = encoder.encode(
-      'data: {"type":"response.completed","response":{"status":"completed"}}\r\n\r\n',
-    );
+    const delta = encoder.encode('data: {"type":"response.output_text.delta","delta":"real HTTP 🌍"}\n\n');
+    const terminal = encoder.encode('data: {"type":"response.completed","response":{"status":"completed"}}\r\n\r\n');
     const chunks = [
       delta.slice(0, delta.length - 3),
       delta.slice(delta.length - 3),
@@ -35,26 +55,10 @@ Deno.test({
           new ReadableStream<Uint8Array>({
             start(controller) {
               chunks.forEach((chunk, index) => {
-                const timer = setTimeout(() => {
-                  timers.delete(timer);
-                  controller.enqueue(chunk);
-                }, 5 * (index + 1));
-                timers.add(timer);
+                scheduleEnqueue(timers, controller, chunk, 5 * (index + 1));
               });
-              const trailing = setTimeout(() => {
-                timers.delete(trailing);
-                controller.enqueue(
-                  encoder.encode(
-                    'data: {"type":"response.output_text.delta","delta":"post-terminal"}\n\n',
-                  ),
-                );
-              }, 250);
-              timers.add(trailing);
-              const close = setTimeout(() => {
-                timers.delete(close);
-                controller.close();
-              }, 1_000);
-              timers.add(close);
+              scheduleEnqueue(timers, controller, encoder.encode('data: {"type":"response.output_text.delta","delta":"post-terminal"}\n\n'), 250);
+              scheduleClose(timers, controller, 1_000);
             },
             cancel() {
               upstreamCancelled = true;
@@ -63,8 +67,8 @@ Deno.test({
               resolveCancelled();
             },
           }),
-          { headers: { "Content-Type": "text/event-stream" } },
-        ),
+          { headers: { "Content-Type": "text/event-stream" } }
+        )
     );
 
     try {
@@ -82,7 +86,9 @@ Deno.test({
       await Promise.race([
         cancelled,
         new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("real HTTP upstream was not cancelled")), 200)
+          setTimeout(() => {
+            reject(new Error("real HTTP upstream was not cancelled"));
+          }, 200)
         ),
       ]);
       assert.equal(upstreamCancelled, true);

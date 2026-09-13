@@ -11,13 +11,22 @@ import {
   STREAM_INACTIVITY_DEADLINE_MS,
 } from "../src/inference_deadline.ts";
 
+/**
+ * Cloudflare's default proxy-read timeout: the 125-second edge limit that every
+ * inference deadline must stay inside.
+ */
+const EDGE_PROXY_READ_TIMEOUT_MS = 125_000;
+
+/** True when a deadline keeps its buffered work inside that edge limit. */
+const isInsideEdgeReadLimit = (deadlineMs: number): boolean => deadlineMs < EDGE_PROXY_READ_TIMEOUT_MS;
+
 Deno.test("inference deadlines retain guidance while buffered work stays inside the edge limit", () => {
   assert.equal(OPENAI_DEFAULT_REQUEST_TIMEOUT_MS, 10 * 60_000);
   assert.equal(OPENAI_FLEX_REQUEST_TIMEOUT_MS, 15 * 60_000);
   assert.equal(INFERENCE_DEADLINE_MS, STREAM_FIRST_EVENT_DEADLINE_MS);
   assert.equal(BUFFERED_INFERENCE_DEADLINE_MS, STREAM_FIRST_EVENT_DEADLINE_MS);
-  assert.ok(BUFFERED_INFERENCE_DEADLINE_MS < 125_000);
-  assert.ok(STREAM_FIRST_EVENT_DEADLINE_MS < 125_000);
+  assert.ok(isInsideEdgeReadLimit(BUFFERED_INFERENCE_DEADLINE_MS));
+  assert.ok(isInsideEdgeReadLimit(STREAM_FIRST_EVENT_DEADLINE_MS));
   assert.equal(STREAM_INACTIVITY_DEADLINE_MS, 120_000);
 });
 
@@ -35,7 +44,15 @@ Deno.test("inference signal propagates downstream cancellation", () => {
 Deno.test("inference signal enforces its deadline", async () => {
   const signal = createInferenceSignal(new AbortController().signal, 1);
 
-  await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+  await new Promise<void>((resolve) => {
+    signal.addEventListener(
+      "abort",
+      () => {
+        resolve();
+      },
+      { once: true }
+    );
+  });
 
   assert.equal(signal.aborted, true);
   assert.equal(signal.reason?.name, "TimeoutError");
@@ -45,13 +62,29 @@ Deno.test("failover attempts share one pre-header deadline", async () => {
   const request = new AbortController();
   const shared = createStreamFirstEventDeadline(request.signal, 80);
   const primary = createStreamSemanticDeadline(shared.signal, 30);
-  await new Promise<void>((resolve) => primary.signal.addEventListener("abort", () => resolve(), { once: true }));
+  await new Promise<void>((resolve) => {
+    primary.signal.addEventListener(
+      "abort",
+      () => {
+        resolve();
+      },
+      { once: true }
+    );
+  });
   assert.equal(primary.signal.reason?.name, "TimeoutError");
   assert.equal(shared.signal.aborted, false);
   const remainingAtFallback = shared.remainingMs();
   assert.ok(remainingAtFallback > 0 && remainingAtFallback < 80);
   const fallback = createStreamSemanticDeadline(shared.signal, Math.ceil(remainingAtFallback) + 20);
-  await new Promise<void>((resolve) => fallback.signal.addEventListener("abort", () => resolve(), { once: true }));
+  await new Promise<void>((resolve) => {
+    fallback.signal.addEventListener(
+      "abort",
+      () => {
+        resolve();
+      },
+      { once: true }
+    );
+  });
   assert.equal(shared.signal.aborted, true);
   assert.equal(fallback.signal.reason?.name, "TimeoutError");
   primary.clear();

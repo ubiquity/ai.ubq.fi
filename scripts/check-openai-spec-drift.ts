@@ -28,7 +28,7 @@ const readSpecText = async (location: string): Promise<string> => {
   return await Deno.readTextFile(location);
 };
 
-const sortedUnique = (values: Iterable<string>): string[] => Array.from(new Set(values)).sort();
+const sortedUnique = (values: Iterable<string>): string[] => Array.from(new Set(values)).sort((a, b) => a.localeCompare(b));
 
 const schemaNameFromRef = (ref: string): string => {
   const name = ref.split("/").pop();
@@ -36,11 +36,7 @@ const schemaNameFromRef = (ref: string): string => {
   return name;
 };
 
-const collectProperties = (
-  schema: unknown,
-  schemas: Record<string, unknown>,
-  seen = new Set<unknown>(),
-): Set<string> => {
+const collectProperties = (schema: unknown, schemas: Record<string, unknown>, seen = new Set<unknown>()): Set<string> => {
   const properties = new Set<string>();
   if (!isRecord(schema) || seen.has(schema)) return properties;
   seen.add(schema);
@@ -61,15 +57,9 @@ const collectProperties = (
   return properties;
 };
 
-const diff = (left: readonly string[], right: readonly string[]): string[] =>
-  left.filter((key) => !right.includes(key));
+const diff = (left: readonly string[], right: readonly string[]): string[] => left.filter((key) => !right.includes(key));
 
-const checkSurface = (
-  label: string,
-  schemaName: string,
-  localKeys: readonly string[],
-  schemas: Record<string, unknown>,
-): string[] => {
+const checkSurface = (label: string, schemaName: string, localKeys: readonly string[], schemas: Record<string, unknown>): string[] => {
   const officialKeys = sortedUnique(collectProperties(schemas[schemaName], schemas));
   const local = sortedUnique(localKeys);
   const missing = diff(officialKeys, local);

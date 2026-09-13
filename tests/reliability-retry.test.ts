@@ -1,11 +1,6 @@
 import assert from "node:assert/strict";
 
-import {
-  decideRetry,
-  DEFAULT_RETRY_POLICY,
-  renderRepeatedFailureFeedback,
-  RetryLedger,
-} from "../src/harmony/reliability/retry.ts";
+import { decideRetry, DEFAULT_RETRY_POLICY, renderRepeatedFailureFeedback, RetryLedger } from "../src/harmony/reliability/retry.ts";
 import { callIdentity } from "../src/harmony/reliability/loops.ts";
 
 Deno.test("retry: transient codes are retried up to maxRetriesPerCall with backoff", () => {
@@ -40,7 +35,8 @@ Deno.test("retry: the ledger counts retryable recoveries and rejected repeats", 
   // Second attempt with identical arguments: allowed (transient code).
   const allowed = ledger.observe(identity, { ok: true }, 1);
   assert.equal(allowed?.retry, true);
-  const entry = ledger.entry(identity)!;
+  const entry = ledger.entry(identity);
+  assert.ok(entry);
   assert.equal(entry.recovered, true);
   const summary = ledger.summary();
   assert.ok(summary.attempts >= 1 && summary.retried >= 1);
@@ -52,9 +48,9 @@ Deno.test("retry: the ledger rejects a repeat after a deterministic failure", ()
   ledger.observe(identity, { ok: false, error_code: "patch_failed" }, 0);
   const rejected = ledger.observe(identity, { ok: false, error_code: "patch_failed" }, 1);
   assert.equal(rejected?.retry, false);
-  assert.equal(rejected?.reason, "not_retryable");
+  assert.equal(rejected.reason, "not_retryable");
   const summary = ledger.summary();
-  assert.ok(summary.rejected >= 1 && summary.byReason["not_retryable"] === 1);
+  assert.ok(summary.rejected >= 1 && summary.byReason.not_retryable === 1);
 });
 
 Deno.test("retry: repeated-failure feedback names the deterministic code", () => {

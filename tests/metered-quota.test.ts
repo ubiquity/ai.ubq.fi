@@ -27,8 +27,8 @@ class MemoryKv {
     this.#values.set(keyString(key), { value, version: this.#nextVersion++ });
   }
 
-  value<T>(key: Deno.KvKey): T | null {
-    return (this.#values.get(keyString(key))?.value as T | undefined) ?? null;
+  value(key: Deno.KvKey): unknown {
+    return this.#values.get(keyString(key))?.value ?? null;
   }
 
   get<T>(key: Deno.KvKey): Promise<Deno.KvEntryMaybe<T>> {
@@ -42,7 +42,7 @@ class MemoryKv {
 
   atomic(): Deno.AtomicOperation {
     const checks: Deno.KvEntryMaybe<unknown>[] = [];
-    const mutations: Array<{ kind: "set" | "delete"; key: Deno.KvKey; value?: unknown }> = [];
+    const mutations: { kind: "set" | "delete"; key: Deno.KvKey; value?: unknown }[] = [];
     const operation = {
       check: (...entries: Deno.KvEntryMaybe<unknown>[]) => {
         checks.push(...entries);
@@ -132,33 +132,42 @@ const jsonResponse = (body: unknown): Response =>
     headers: { "Content-Type": "application/json; charset=utf-8" },
   });
 
+/** Request URL as text; `String(input)` would render a `Request` as "[object Object]". */
+const requestUrl = (input: RequestInfo | URL): string => {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+};
+
 const meteredFetcher =
-  (calls: Array<{ url: string; headers: Headers }>) =>
+  (calls: { url: string; headers: Headers }[]) =>
   (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = requestUrl(input);
     const headers = new Headers(init?.headers);
     calls.push({ url, headers });
     if (url === "https://api.openlux.ai/api/usage/token/") {
-      return Promise.resolve(jsonResponse({
-        success: true,
-        data: {
-          expires_at: 0,
-          model_limits: {},
-          model_limits_enabled: false,
-          name: "business-key",
-          object: "token_usage",
-          total_available: -53_413,
-          total_granted: -545,
-          total_used: 52_868,
-          unlimited_quota: true,
-        },
-      }));
+      return Promise.resolve(
+        jsonResponse({
+          success: true,
+          data: {
+            expires_at: 0,
+            model_limits: {},
+            model_limits_enabled: false,
+            name: "business-key",
+            object: "token_usage",
+            total_available: -53_413,
+            total_granted: -545,
+            total_used: 52_868,
+            unlimited_quota: true,
+          },
+        })
+      );
     }
     throw new Error(`Unexpected URL: ${url}`);
   };
 
 Deno.test("Metered account observation reads wallet balance and latest successful top-up", async () => {
-  const calls: Array<{ url: string; headers: Headers }> = [];
+  const calls: { url: string; headers: Headers }[] = [];
   const result = await fetchMeteredQuotaObservation(credentials, {
     fetcher: meteredFetcher(calls),
     now: () => 2_000_000,
@@ -216,7 +225,7 @@ Deno.test("Metered quota keeps the refill baseline across known and external deb
       balance_quota: 48_500_000,
       used_quota: 1_600_000,
       observed_at_ms: 2_000_000,
-    }),
+    })
   );
   assert.equal(next.post_refill_baseline_quota, 50_000_000);
   assert.equal(next.last_known_debits_quota, 1_500_000);
@@ -241,7 +250,7 @@ Deno.test("Metered quota detects a refill despite intervening debits and starts 
         amount_credits: 50,
         completed_at_ms: 1_900_000,
       },
-    }),
+    })
   );
   assert.equal(next.last_known_debits_quota, 1_000_000);
   assert.equal(next.last_inferred_credit_quota, 25_000_000);
@@ -268,7 +277,7 @@ Deno.test("Metered quota restores post-refill debits when the wallet carries a p
         amount_credits: 50,
         completed_at_ms: 1_900_000,
       },
-    }),
+    })
   );
   assert.equal(next.last_known_debits_quota, 5_000_000);
   assert.equal(next.last_inferred_credit_quota, 25_000_000);
@@ -292,7 +301,7 @@ Deno.test("Metered quota keeps reconstructed refill capacity within safe integer
         amount_credits: 1,
         completed_at_ms: 1_900_000,
       },
-    }),
+    })
   );
   assert.equal(next.post_refill_baseline_quota, Number.MAX_SAFE_INTEGER);
   assert.equal(Number.isSafeInteger(next.post_refill_baseline_quota), true);
@@ -315,7 +324,7 @@ Deno.test("Metered quota never starts a refill cycle below the observed top-up a
         amount_credits: 50,
         completed_at_ms: 1_900_000,
       },
-    }),
+    })
   );
   assert.equal(next.last_inferred_credit_quota, 0);
   assert.equal(next.post_refill_baseline_quota, 25_000_000);
@@ -330,7 +339,7 @@ Deno.test("Metered quota treats an unlisted positive adjustment as an inferred c
       balance_quota: 11_000_000,
       used_quota: previous.last_observed_used_quota,
       observed_at_ms: 2_000_000,
-    }),
+    })
   );
   assert.equal(next.last_inferred_credit_quota, 1_000_000);
   assert.equal(next.post_refill_baseline_quota, 11_000_000);
@@ -345,7 +354,7 @@ Deno.test("Metered quota ignores a reset used counter unless the wallet itself r
       balance_quota: 9_000_000,
       used_quota: 100,
       observed_at_ms: 2_000_000,
-    }),
+    })
   );
   assert.equal(debit.last_inferred_credit_quota, 0);
   assert.equal(debit.post_refill_baseline_quota, 50_000_000);
@@ -356,7 +365,7 @@ Deno.test("Metered quota ignores a reset used counter unless the wallet itself r
       balance_quota: 12_000_000,
       used_quota: 100,
       observed_at_ms: 2_000_000,
-    }),
+    })
   );
   assert.equal(credit.last_inferred_credit_quota, 2_000_000);
 });
@@ -376,14 +385,14 @@ Deno.test("Metered quota cache serves fresh state without an upstream request", 
   });
   assert.equal(fetches, 0);
   assert.equal(snapshot?.cache_state, "fresh");
-  assert.equal(snapshot?.remaining_percent, 100);
+  assert.equal(snapshot.remaining_percent, 100);
 });
 
 Deno.test("Metered quota forced refresh bypasses a fresh cached state", async () => {
   const kv = new MemoryKv();
   const now = 11_000_000;
   kv.seed(METERED_QUOTA_STATE_KEY, state({ observed_at_ms: now - 1_000 }));
-  const calls: Array<{ url: string; headers: Headers }> = [];
+  const calls: { url: string; headers: Headers }[] = [];
   const snapshot = await getMeteredQuotaSnapshot(credentials, {
     kv: kv as unknown as Deno.Kv,
     now: () => now,
@@ -407,7 +416,7 @@ Deno.test("Metered quota cache marks an invalidated observation stale", async ()
   });
 
   assert.equal(snapshot?.cache_state, "stale");
-  assert.equal(snapshot?.remaining_percent, 100);
+  assert.equal(snapshot.remaining_percent, 100);
 });
 
 Deno.test("Metered quota invalidation forces a fresh account observation", async () => {
@@ -418,7 +427,7 @@ Deno.test("Metered quota invalidation forces a fresh account observation", async
     kv: kv as unknown as Deno.Kv,
     now: () => now,
   });
-  const calls: Array<{ url: string; headers: Headers }> = [];
+  const calls: { url: string; headers: Headers }[] = [];
 
   const snapshot = await getMeteredQuotaSnapshot(credentials, {
     kv: kv as unknown as Deno.Kv,
@@ -443,9 +452,9 @@ Deno.test("Metered quota refresh stores a new observation and computes its perce
       last_observed_used_quota: 100_000,
       observed_at_ms: now - METERED_QUOTA_FRESH_MS,
       latest_refill_id: "10",
-    }),
+    })
   );
-  const calls: Array<{ url: string; headers: Headers }> = [];
+  const calls: { url: string; headers: Headers }[] = [];
   const snapshot = await getMeteredQuotaSnapshot(credentials, {
     kv: kv as unknown as Deno.Kv,
     now: () => now,
@@ -453,11 +462,11 @@ Deno.test("Metered quota refresh stores a new observation and computes its perce
     createLeaseOwner: () => "refresh-owner",
   });
   assert.equal(snapshot?.cache_state, "refreshed");
-  assert.equal(snapshot?.unlimited_quota, true);
-  assert.equal(snapshot?.state.total_available, -53_413);
-  assert.equal(snapshot?.total_used, 52_868);
-  assert.equal(snapshot?.balance_credits, null);
-  assert.equal(snapshot?.remaining_percent, null);
+  assert.equal(snapshot.unlimited_quota, true);
+  assert.equal(snapshot.state.total_available, -53_413);
+  assert.equal(snapshot.total_used, 52_868);
+  assert.equal(snapshot.balance_credits, null);
+  assert.equal(snapshot.remaining_percent, null);
   assert.equal(calls.length, 1);
 });
 
@@ -486,7 +495,7 @@ Deno.test("Metered quota refresh lease permits only one upstream refresh", async
   const kv = new MemoryKv();
   const now = 40_000_000;
   kv.seed(METERED_QUOTA_STATE_KEY, state({ observed_at_ms: now - METERED_QUOTA_FRESH_MS }));
-  const calls: Array<{ url: string; headers: Headers }> = [];
+  const calls: { url: string; headers: Headers }[] = [];
   let releaseFetch = (): void => {};
   const gate = new Promise<void>((resolve) => {
     releaseFetch = resolve;
@@ -503,7 +512,8 @@ Deno.test("Metered quota refresh lease permits only one upstream refresh", async
       now: () => now,
       fetcher,
       createLeaseOwner: () => `owner-${++owner}`,
-    }));
+    })
+  );
   await Promise.resolve();
   await Promise.resolve();
   releaseFetch();
@@ -595,7 +605,7 @@ Deno.test("Codex quota headers replace every parseable upstream family with cano
       "x-codex-safety-identifier": "safety-id",
       "x-uos-router-revision": "routing-revision",
     }),
-    quotaSnapshot(95),
+    quotaSnapshot(95)
   );
 
   assert.equal(headers.get("x-codex-limit-name"), METERED_CODEX_LIMIT_NAME);
@@ -630,14 +640,17 @@ Deno.test("Codex quota headers publish a healthy Metered balance canonically", (
 });
 
 Deno.test("Codex quota headers emit no percentage and strip every family without Metered state", () => {
-  const headers = buildCodexQuotaHeaders({
-    "x-codex-primary-used-percent": "42",
-    "x-codex-primary-window-minutes": "300",
-    "x-codex-spark-primary-used-percent": "25",
-    "x-openai-subscription-primary-used-percent": "42",
-    "x-metered-primary-used-percent": "50",
-    "x-codex-model": "gpt-5.6-sol",
-  }, null);
+  const headers = buildCodexQuotaHeaders(
+    {
+      "x-codex-primary-used-percent": "42",
+      "x-codex-primary-window-minutes": "300",
+      "x-codex-spark-primary-used-percent": "25",
+      "x-openai-subscription-primary-used-percent": "42",
+      "x-metered-primary-used-percent": "50",
+      "x-codex-model": "gpt-5.6-sol",
+    },
+    null
+  );
   assert.equal(headers.has("x-codex-primary-used-percent"), false);
   assert.equal(headers.has("x-codex-primary-window-minutes"), false);
   assert.equal(headers.has("x-codex-spark-primary-used-percent"), false);

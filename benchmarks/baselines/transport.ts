@@ -15,21 +15,18 @@
 
 import { fetchCerebrasChatCompletions } from "../../src/cerebras.ts";
 
-export interface ChatTransportOptions {
+export type ChatTransportOptions = {
   signal?: AbortSignal;
-}
+};
 
 /** Minimal response shape; the native `Response` satisfies it. */
-export interface ChatTransportResponse {
+export type ChatTransportResponse = {
   readonly status: number;
   readonly ok: boolean;
   json(): Promise<unknown>;
-}
+};
 
-export type ChatTransport = (
-  body: Record<string, unknown>,
-  options?: ChatTransportOptions,
-) => Promise<ChatTransportResponse>;
+export type ChatTransport = (body: Record<string, unknown>, options?: ChatTransportOptions) => Promise<ChatTransportResponse>;
 
 /**
  * The live gateway transport for the current GPT-OSS Chat Completions
@@ -47,13 +44,23 @@ export const gatewayChatTransport = (): ChatTransport => {
 };
 
 /**
+ * Removes every trailing `/`, equivalent to `value.replace(/\/+$/, "")` without
+ * the quadratic backtracking that pattern needs on a run of slashes.
+ */
+const stripTrailingSlashes = (value: string): string => {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") end -= 1;
+  return value.slice(0, end);
+};
+
+/**
  * Generic OpenAI-compatible transport used by the strong control adapter
  * (D). The API key is supplied by the configuration object; this helper
  * never reads process environment variables, so no new secret interface is
  * introduced without owner approval.
  */
-export const openAICompatibleTransport = (baseUrl: string, apiKey: string | null): ChatTransport => {
-  const url = `${baseUrl.replace(/\/+$/, "")}/chat/completions`;
+export const openAiCompatibleTransport = (baseUrl: string, apiKey: string | null): ChatTransport => {
+  const url = `${stripTrailingSlashes(baseUrl)}/chat/completions`;
   return async (body, options) => {
     const headers = new Headers({
       Accept: "application/json",

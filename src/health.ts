@@ -1,12 +1,6 @@
 import { config, runtimeDeploymentId, runtimeGitSha } from "./config.ts";
 import { readCerebrasApiKey } from "./cerebras.ts";
-import {
-  CODEX_AUTH_POOL_KV_KEY,
-  fetchCodexModels,
-  getJwtExpMs,
-  parseCodexAuthFromAuthJson,
-  parseCodexAuthPool,
-} from "./codex.ts";
+import { CODEX_AUTH_POOL_KV_KEY, fetchCodexModels, getJwtExpMs, parseCodexAuthFromAuthJson, parseCodexAuthPool } from "./codex.ts";
 import { json } from "./http.ts";
 import { getKv } from "./kv.ts";
 import {
@@ -39,23 +33,23 @@ type HealthAuthMetaBase = {
   updated_at_ms: number | null;
   access_token_exp_ms: number | null;
   account_count: number;
-  accounts: Array<{
+  accounts: {
     slot: number;
     updated_at_ms: number | null;
     access_token_exp_ms: number | null;
-  }>;
+  }[];
 };
 
 type HealthAuthMeta = HealthAuthMetaBase & {
   access_token_expired: boolean | null;
   refresh_recommended: boolean | null;
-  accounts: Array<{
+  accounts: {
     slot: number;
     updated_at_ms: number | null;
     access_token_exp_ms: number | null;
     access_token_expired: boolean | null;
     refresh_recommended: boolean | null;
-  }>;
+  }[];
 };
 
 type CodexAuthContext = Readonly<{
@@ -103,9 +97,7 @@ const enrichAuthMeta = (meta: HealthAuthMetaBase): HealthAuthMeta => {
     accounts: meta.accounts.map((account) => ({
       ...account,
       access_token_expired: typeof account.access_token_exp_ms === "number" ? account.access_token_exp_ms <= now : null,
-      refresh_recommended: typeof account.access_token_exp_ms === "number"
-        ? account.access_token_exp_ms - now < AUTH_REFRESH_WINDOW_MS
-        : null,
+      refresh_recommended: typeof account.access_token_exp_ms === "number" ? account.access_token_exp_ms - now < AUTH_REFRESH_WINDOW_MS : null,
     })),
   };
 };
@@ -124,11 +116,13 @@ const loadEnvCodexAuth = (): CodexAuthContext | null => {
         updated_at_ms: null,
         access_token_exp_ms: accessTokenExpMs,
         account_count: 1,
-        accounts: [{
-          slot: 1,
-          updated_at_ms: null,
-          access_token_exp_ms: accessTokenExpMs,
-        }],
+        accounts: [
+          {
+            slot: 1,
+            updated_at_ms: null,
+            access_token_exp_ms: accessTokenExpMs,
+          },
+        ],
       },
       account_ids: [auth.account_id],
     };
@@ -148,9 +142,7 @@ const getCodexAuthContext = async (): Promise<CodexAuthContext> => {
         updated_at_ms: account.updated_at_ms,
         access_token_exp_ms: getJwtExpMs(account.access_token),
       }));
-      const expirations = accounts
-        .map((account) => account.access_token_exp_ms)
-        .filter((value): value is number => typeof value === "number");
+      const expirations = accounts.map((account) => account.access_token_exp_ms).filter((value): value is number => typeof value === "number");
       return {
         meta: {
           source: "kv",
@@ -227,9 +219,7 @@ const quotaView = (snapshot: MeteredQuotaSnapshot | null) => {
   };
 };
 
-export const getPassiveProviderHealthSnapshot = async (
-  options: Readonly<{ includeQuota?: boolean }> = {},
-): Promise<Record<string, unknown>> => {
+export const getPassiveProviderHealthSnapshot = async (options: Readonly<{ includeQuota?: boolean }> = {}): Promise<Record<string, unknown>> => {
   const context = await getCodexAuthContext();
   const auth = enrichAuthMeta(context.meta);
   const [cerebrasHealth, codexHealth, meteredHealth, surplusHealth, meteredQuota] = await Promise.all([
@@ -263,13 +253,15 @@ export const getPassiveProviderHealthSnapshot = async (
       configured: readMeteredApiKey() !== null,
       quota_monitoring_configured: quotaMonitoringConfigured,
       health: meteredHealth,
-      ...(options.includeQuota ? { quota: quotaView(meteredQuota) } : {
-        quota: {
-          available: meteredQuota !== null,
-          cache_state: meteredQuota?.cache_state ?? null,
-          observed_at_ms: meteredQuota?.state.observed_at_ms ?? null,
-        },
-      }),
+      ...(options.includeQuota
+        ? { quota: quotaView(meteredQuota) }
+        : {
+            quota: {
+              available: meteredQuota !== null,
+              cache_state: meteredQuota?.cache_state ?? null,
+              observed_at_ms: meteredQuota?.state.observed_at_ms ?? null,
+            },
+          }),
     },
     surplus: {
       configured: readSurplusApiKey() !== null,
@@ -277,24 +269,22 @@ export const getPassiveProviderHealthSnapshot = async (
       health: surplusHealth,
       ...(options.includeQuota
         ? {
-          quota: {
-            ...quotaView(null),
-            source: "not_reported",
-          },
-        }
+            quota: {
+              ...quotaView(null),
+              source: "not_reported",
+            },
+          }
         : {
-          quota: {
-            available: false,
-            observed_at_ms: null,
-          },
-        }),
+            quota: {
+              available: false,
+              observed_at_ms: null,
+            },
+          }),
     },
   };
 };
 
-export const handleHealthProviders = async (
-  options: Readonly<{ includeQuota?: boolean }> = {},
-): Promise<Response> =>
+export const handleHealthProviders = async (options: Readonly<{ includeQuota?: boolean }> = {}): Promise<Response> =>
   json(200, await getPassiveProviderHealthSnapshot(options), {
     "Cache-Control": "no-store",
     "x-uos-git-sha": runtimeGitSha(),
@@ -329,10 +319,7 @@ const codexProbe = async (auth: HealthAuthMeta, signal: AbortSignal): Promise<Ac
 // This non-billable endpoint authenticates the monitoring account, which is
 // intentionally distinct from the inference API key. Name it accordingly so
 // a green quota check is never mistaken for paid-fallback availability.
-const meteredQuotaProbe = async (
-  credentials: MeteredAccountCredentials | null,
-  signal: AbortSignal,
-): Promise<ActiveProviderProbe | null> => {
+const meteredQuotaProbe = async (credentials: MeteredAccountCredentials | null, signal: AbortSignal): Promise<ActiveProviderProbe | null> => {
   if (!credentials) return null;
   try {
     await fetchMeteredQuotaObservation(credentials, { signal });
@@ -347,22 +334,18 @@ const meteredQuotaProbe = async (
   }
 };
 
-const aggregateUpstreamProbe = (
-  auth: HealthAuthMeta | null,
-  codex: ActiveProviderProbe,
-  meteredQuota: ActiveProviderProbe | null,
-): HealthUpstreamProbe => {
-  const failures = [codex, meteredQuota].filter((probe): probe is ActiveProviderProbe =>
-    probe !== null && probe.status >= 400
-  );
-  const status = failures.length === 0 ? 200 : failures.some((probe) => probe.status === 401) ? 401 : 503;
-  return { status, auth, probes: { codex, metered_quota: meteredQuota } };
+const aggregateUpstreamProbe = (auth: HealthAuthMeta | null, codex: ActiveProviderProbe, meteredQuota: ActiveProviderProbe | null): HealthUpstreamProbe => {
+  const failures = [codex, meteredQuota].filter((probe): probe is ActiveProviderProbe => probe !== null && probe.status >= 400);
+  const probes = { codex, metered_quota: meteredQuota };
+  if (failures.length === 0) return { status: 200, auth, probes };
+  const status = failures.some((probe) => probe.status === 401) ? 401 : 503;
+  return { status, auth, probes };
 };
 
 const probeUpstream = async (
   signal: AbortSignal,
   meteredCredentials: MeteredAccountCredentials | null,
-  progress: HealthProbeProgress,
+  progress: HealthProbeProgress
 ): Promise<HealthUpstreamProbe> => {
   let auth: HealthAuthMeta;
   try {
@@ -383,15 +366,13 @@ const probeUpstream = async (
     };
   }
   progress.auth = auth;
-  const codexPromise = codexProbe(auth, signal).then((probe) => progress.codex = probe);
-  const meteredPromise = meteredQuotaProbe(meteredCredentials, signal).then((probe) => progress.metered_quota = probe);
+  const codexPromise = codexProbe(auth, signal).then((probe) => (progress.codex = probe));
+  const meteredPromise = meteredQuotaProbe(meteredCredentials, signal).then((probe) => (progress.metered_quota = probe));
   const [codex, meteredQuota] = await Promise.all([codexPromise, meteredPromise]);
   return aggregateUpstreamProbe(auth, codex, meteredQuota);
 };
 
-const timedOutProviderProbe = (
-  provider: ActiveProviderProbe["provider"],
-): ActiveProviderProbe => ({
+const timedOutProviderProbe = (provider: ActiveProviderProbe["provider"]): ActiveProviderProbe => ({
   status: 503,
   provider,
   content_type: null,
@@ -402,7 +383,7 @@ const timeoutProbe = (progress: HealthProbeProgress): HealthUpstreamProbe =>
   aggregateUpstreamProbe(
     progress.auth,
     progress.codex ?? timedOutProviderProbe("chatgpt_codex"),
-    progress.metered_quota === undefined ? timedOutProviderProbe("metered_quota") : progress.metered_quota,
+    progress.metered_quota === undefined ? timedOutProviderProbe("metered_quota") : progress.metered_quota
   );
 
 const probeUpstreamCoalesced = async (): Promise<HealthUpstreamProbe> => {
@@ -414,18 +395,15 @@ const probeUpstreamCoalesced = async (): Promise<HealthUpstreamProbe> => {
     codex: undefined,
     metered_quota: meteredCredentials ? undefined : null,
   };
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let timeoutId: Parameters<typeof clearTimeout>[0];
   const timeout = new Promise<HealthUpstreamProbe>((resolve) => {
     timeoutId = setTimeout(() => {
       controller.abort(new DOMException("Active upstream health probe timed out.", "TimeoutError"));
       resolve(timeoutProbe(progress));
     }, activeUpstreamHealthTimeoutMs);
   });
-  upstreamProbeInFlight = Promise.race([
-    probeUpstream(controller.signal, meteredCredentials, progress),
-    timeout,
-  ]).finally(() => {
-    if (timeoutId !== null) clearTimeout(timeoutId);
+  upstreamProbeInFlight = Promise.race([probeUpstream(controller.signal, meteredCredentials, progress), timeout]).finally(() => {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
     upstreamProbeInFlight = null;
   });
   return await upstreamProbeInFlight;
@@ -436,24 +414,32 @@ export const handleHealth = (): Response => {
   const deploymentId = runtimeDeploymentId();
   // This endpoint is deliberately a release liveness signal, not an active
   // dependency check. It must remain available during provider/KV incidents.
-  return json(200, {
-    status: "available",
-    release: {
-      git_sha: gitSha,
-      deployment_id: deploymentId,
+  return json(
+    200,
+    {
+      status: "available",
+      release: {
+        git_sha: gitSha,
+        deployment_id: deploymentId,
+      },
     },
-  }, {
-    "Cache-Control": "no-store",
-    "x-uos-git-sha": gitSha,
-    "x-uos-deployment-id": deploymentId,
-  });
+    {
+      "Cache-Control": "no-store",
+      "x-uos-git-sha": gitSha,
+      "x-uos-deployment-id": deploymentId,
+    }
+  );
 };
 
 export const handleHealthUpstream = async (): Promise<Response> => {
   const probe = await probeUpstreamCoalesced();
-  return json(probe.status, {
-    status: probe.status,
-    probes: probe.probes,
-    auth: probe.auth,
-  }, { "x-uos-git-sha": runtimeGitSha(), "x-uos-deployment-id": runtimeDeploymentId() });
+  return json(
+    probe.status,
+    {
+      status: probe.status,
+      probes: probe.probes,
+      auth: probe.auth,
+    },
+    { "x-uos-git-sha": runtimeGitSha(), "x-uos-deployment-id": runtimeDeploymentId() }
+  );
 };

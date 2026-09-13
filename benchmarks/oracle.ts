@@ -8,14 +8,7 @@
  */
 
 import { FixtureWorkspace } from "./fixture.ts";
-import {
-  FileCheck,
-  GitCheck,
-  OracleCheckOutcome,
-  OracleOutcome,
-  TaskManifest,
-  VerificationOutcome,
-} from "./schemas.ts";
+import { FileCheck, GitCheck, OracleCheckOutcome, OracleOutcome, TaskManifest, VerificationOutcome } from "./schemas.ts";
 
 export const VERIFY_OUTPUT_LIMIT = 4000;
 
@@ -41,7 +34,8 @@ export async function runVerification(task: TaskManifest, workspace: FixtureWork
 }
 
 function checkFile(check: FileCheck, workspace: FixtureWorkspace): OracleCheckOutcome {
-  const detail = `${check.path}: ${check.kind}${check.value === undefined ? "" : ` ${JSON.stringify(check.value)}`}`;
+  const valueSuffix = check.value === undefined ? "" : ` ${JSON.stringify(check.value)}`;
+  const detail = `${check.path}: ${check.kind}${valueSuffix}`;
   let positive: boolean;
   let unreadable = "";
   try {
@@ -59,6 +53,10 @@ function checkFile(check: FileCheck, workspace: FixtureWorkspace): OracleCheckOu
       case "regex":
         positive = new RegExp(check.value ?? "").test(content);
         break;
+      default:
+        // Unknown check kinds cannot be confirmed, so the check fails closed.
+        positive = false;
+        break;
     }
   } catch (err) {
     // Missing or unreadable files pass the invert of a positive check.
@@ -71,19 +69,13 @@ function checkFile(check: FileCheck, workspace: FixtureWorkspace): OracleCheckOu
 
 async function gitCheck(check: GitCheck, workspace: FixtureWorkspace): Promise<OracleCheckOutcome> {
   const git = workspace.task.git;
-  const detail = `git: ${check.kind}${check.value === undefined ? "" : ` ${JSON.stringify(check.value)}`}`;
+  const valueSuffix = check.value === undefined ? "" : ` ${JSON.stringify(check.value)}`;
+  const detail = `git: ${check.kind}${valueSuffix}`;
   if (!git?.init) {
     return { kind: "git", detail: `${detail} (task has no git repository)`, passed: false };
   }
   const run = async (args: string[]): Promise<{ code: number; stdout: string; stderr: string; timedOut: boolean }> => {
-    return await workspace.exec([
-      "git",
-      "-c",
-      "user.email=benchmark@invalid.invalid",
-      "-c",
-      "user.name=benchmark",
-      ...args,
-    ], {
+    return await workspace.exec(["git", "-c", "user.email=benchmark@invalid.invalid", "-c", "user.name=benchmark", ...args], {
       timeoutMs: 10_000,
       capture: true,
     });
@@ -117,6 +109,9 @@ async function gitCheck(check: GitCheck, workspace: FixtureWorkspace): Promise<O
         passed: tracked.code === 0 && dirty.code === 0 && dirty.stdout.trim() === "",
       };
     }
+    default:
+      // Unknown check kinds cannot be evaluated, so the check fails closed.
+      return { kind: "git", detail: `${detail} (unsupported check kind)`, passed: false };
   }
 }
 

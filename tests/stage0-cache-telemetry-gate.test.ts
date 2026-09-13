@@ -12,30 +12,41 @@ const TERMINAL_MARKER = "[ai.ubq.fi] request_terminal";
 let nextRequestId = 0;
 
 const terminalLine = (overrides: Record<string, unknown> = {}): string =>
-  `${TERMINAL_MARKER} ${
-    JSON.stringify({
-      request_id: `req-input-only-${nextRequestId++}`,
-      route: "responses",
-      status: 200,
-      provider: "chatgpt_codex",
-      model: "gpt-cache-fixture",
-      input_tokens: 100,
-      cached_input_tokens: 0,
-      cache_write_input_tokens: 0,
-      usage_observed: true,
-      usage_telemetry_status: "reported",
-      prompt_cache_key_present: false,
-      prompt_cache_mode: "unspecified",
-      account_slot: null,
-      affinity_outcome: "none",
-      stream: false,
-      stream_terminal_type: "response.completed",
-      git_sha: "0123456789abcdef",
-      deno_revision: "deploy-a",
-      router_revision: null,
-      ...overrides,
-    })
-  }`;
+  `${TERMINAL_MARKER} ${JSON.stringify({
+    request_id: `req-input-only-${nextRequestId++}`,
+    route: "responses",
+    status: 200,
+    provider: "chatgpt_codex",
+    model: "gpt-cache-fixture",
+    input_tokens: 100,
+    cached_input_tokens: 0,
+    cache_write_input_tokens: 0,
+    usage_observed: true,
+    usage_telemetry_status: "reported",
+    prompt_cache_key_present: false,
+    prompt_cache_mode: "unspecified",
+    account_slot: null,
+    affinity_outcome: "none",
+    stream: false,
+    stream_terminal_type: "response.completed",
+    git_sha: "0123456789abcdef",
+    deno_revision: "deploy-a",
+    router_revision: null,
+    ...overrides,
+  })}`;
+
+/**
+ * Explicit form of the comparator `Array.prototype.sort` uses when none is
+ * supplied: both operands are stringified, then compared by UTF-16 code unit.
+ * Spelled out so the ordering is stated rather than implied.
+ */
+const compareAsText = (a: string | null, b: string | null): number => {
+  const left = String(a);
+  const right = String(b);
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+};
 
 Deno.test("Stage 0 cache telemetry analyzer groups completed inference and preserves null cache values", () => {
   const report = analyzeStage0CacheTelemetryLines([
@@ -126,8 +137,11 @@ Deno.test("Stage 0 cache telemetry analyzer emits stable privacy-safe model and 
 
   const codexCohorts = report.cache_dimension_cohorts.filter((cohort) => cohort.provider === "chatgpt_codex");
   assert.equal(codexCohorts.length, 2);
-  assert.deepEqual(codexCohorts.map((cohort) => cohort.completed_inference).sort(), [1, 2]);
-  assert.deepEqual(codexCohorts.map((cohort) => cohort.account_cohort_id).sort(), [accountA, accountB]);
+  assert.deepEqual(
+    codexCohorts.map((cohort) => cohort.completed_inference).sort((a, b) => a - b),
+    [1, 2]
+  );
+  assert.deepEqual(codexCohorts.map((cohort) => cohort.account_cohort_id).sort(compareAsText), [accountA, accountB]);
   assert.deepEqual([...new Set(codexCohorts.map((cohort) => cohort.model_cohort_id))].length, 1);
   assert.deepEqual([...new Set(codexCohorts.map((cohort) => cohort.account_slot_cohort))], ["slot_1"]);
 
@@ -137,24 +151,15 @@ Deno.test("Stage 0 cache telemetry analyzer emits stable privacy-safe model and 
   ]);
   const reorderedRawModel = reordered.cache_dimension_cohorts.find((cohort) => cohort.account_cohort_id === accountA);
   assert.ok(reorderedRawModel);
-  assert.equal(
-    reorderedRawModel.model_cohort_id,
-    codexCohorts[0]?.model_cohort_id,
-  );
+  assert.equal(reorderedRawModel.model_cohort_id, codexCohorts[0]?.model_cohort_id);
   assert.notEqual(reorderedRawModel.model, codexCohorts[0]?.model);
-  const movedAccount = analyzeStage0CacheTelemetryLines([
-    terminalLine({ model: rawModel, account_slot: 93, account_cohort_id: accountA }),
-  ]).cache_dimension_cohorts[0];
-  assert.equal(movedAccount?.account_cohort_id, accountA);
-  assert.equal(movedAccount?.model_cohort_id, codexCohorts[0]?.model_cohort_id);
+  const movedAccount = analyzeStage0CacheTelemetryLines([terminalLine({ model: rawModel, account_slot: 93, account_cohort_id: accountA })])
+    .cache_dimension_cohorts[0];
+  assert.equal(movedAccount.account_cohort_id, accountA);
+  assert.equal(movedAccount.model_cohort_id, codexCohorts[0]?.model_cohort_id);
   assert.doesNotMatch(JSON.stringify(movedAccount), /"account_slot":93/);
-  const differentModel = analyzeStage0CacheTelemetryLines([
-    terminalLine({ model: `${rawModel}-different`, account_slot: 17, account_cohort_id: accountA }),
-  ]);
-  assert.notEqual(
-    differentModel.cache_dimension_cohorts[0]?.model_cohort_id,
-    codexCohorts[0]?.model_cohort_id,
-  );
+  const differentModel = analyzeStage0CacheTelemetryLines([terminalLine({ model: `${rawModel}-different`, account_slot: 17, account_cohort_id: accountA })]);
+  assert.notEqual(differentModel.cache_dimension_cohorts[0]?.model_cohort_id, codexCohorts[0]?.model_cohort_id);
 
   const paidCohort = report.cache_dimension_cohorts.find((cohort) => cohort.provider === "surplus");
   assert.ok(paidCohort);
@@ -189,15 +194,11 @@ Deno.test("Stage 0 cache telemetry analyzer reports completed latency by cache d
   const latency = { observed_events: 3, min_ms: 10, p50_ms: 20, p95_ms: 100, max_ms: 100 };
   assert.deepEqual(report.completed_latency_ms, latency);
   assert.equal(report.cache_dimension_cohorts.length, 2);
-  const implicit = report.cache_dimension_cohorts.find((cohort) =>
-    cohort.prompt_cache_mode === "unspecified" && !cohort.prompt_cache_key_present
-  );
+  const implicit = report.cache_dimension_cohorts.find((cohort) => cohort.prompt_cache_mode === "unspecified" && !cohort.prompt_cache_key_present);
   assert.ok(implicit);
   assert.equal(implicit.completed_inference, 3);
   assert.deepEqual(implicit.completed_latency_ms, latency);
-  const explicit = report.cache_dimension_cohorts.find((cohort) =>
-    cohort.prompt_cache_mode === "explicit" && cohort.prompt_cache_key_present
-  );
+  const explicit = report.cache_dimension_cohorts.find((cohort) => cohort.prompt_cache_mode === "explicit" && cohort.prompt_cache_key_present);
   assert.ok(explicit);
   assert.equal(explicit.completed_inference, 1);
   assert.deepEqual(explicit.completed_latency_ms, {
@@ -319,12 +320,7 @@ Deno.test("Stage 0 cache telemetry analyzer reports bounded failed and incomplet
     failedWithoutUsage,
     incompleteWithUsage,
   ]);
-  const completedOnlyReport = analyzeStage0CacheTelemetryLines([
-    completed,
-    preferredUnavailable,
-    remapped,
-    invalidCompleted,
-  ]);
+  const completedOnlyReport = analyzeStage0CacheTelemetryLines([completed, preferredUnavailable, remapped, invalidCompleted]);
   const outcomes = report.inference_terminal_outcomes;
 
   // Failed and incomplete terminals are available for diagnosis but do not
@@ -360,9 +356,7 @@ Deno.test("Stage 0 cache telemetry analyzer reports bounded failed and incomplet
     shadow_only: 1,
   });
 
-  const failedCohort = outcomes.cohorts.find((cohort) =>
-    cohort.outcome === "failed" && cohort.usage_telemetry_status_totals.missing === 1
-  );
+  const failedCohort = outcomes.cohorts.find((cohort) => cohort.outcome === "failed" && cohort.usage_telemetry_status_totals.missing === 1);
   assert.ok(failedCohort);
   assert.equal(failedCohort.stream, true);
   assert.equal(failedCohort.terminal_events, 2);
@@ -419,22 +413,19 @@ Deno.test("Stage 0 cache telemetry analyzer retains every known inference termin
   });
   assert.equal(outcomes.terminal_without_usage, 4);
   assert.deepEqual(
-    outcomes.cohorts.map((cohort) => [cohort.outcome, cohort.stream_terminal_type]).sort(),
+    outcomes.cohorts.map((cohort) => [cohort.outcome, cohort.stream_terminal_type]).sort((a, b) => compareAsText(a.join(","), b.join(","))),
     [
       ["cancelled", "cancelled"],
       ["failed", "deadline"],
       ["failed", "eof"],
       ["failed", "error"],
-    ],
+    ]
   );
   assert.equal(outcomes.cohorts.find((cohort) => cohort.outcome === "cancelled")?.model, "model_unknown");
 });
 
 Deno.test("Stage 0 cache telemetry analyzer applies aggregate, observed-cohort, and coverage thresholds", () => {
-  const aggregateLines = Array.from(
-    { length: STAGE0_AGGREGATE_MIN_COMPLETED },
-    () => terminalLine({ model: "gpt-large-cohort" }),
-  );
+  const aggregateLines = Array.from({ length: STAGE0_AGGREGATE_MIN_COMPLETED }, () => terminalLine({ model: "gpt-large-cohort" }));
   const aggregateReport = analyzeStage0CacheTelemetryLines(aggregateLines);
 
   assert.equal(aggregateReport.gates.aggregate_completed_10k.passed, true);
@@ -445,18 +436,12 @@ Deno.test("Stage 0 cache telemetry analyzer applies aggregate, observed-cohort, 
   assert.equal(aggregateReport.gates.stage0_eligibility.status, "not_evaluated");
   assert.equal(aggregateReport.cohorts[0]?.completed_1k_gate.minimum_completed, STAGE0_COHORT_MIN_COMPLETED);
 
-  const belowAggregateReport = analyzeStage0CacheTelemetryLines(
-    aggregateLines.slice(0, STAGE0_AGGREGATE_MIN_COMPLETED - 1),
-  );
+  const belowAggregateReport = analyzeStage0CacheTelemetryLines(aggregateLines.slice(0, STAGE0_AGGREGATE_MIN_COMPLETED - 1));
   assert.equal(belowAggregateReport.gates.aggregate_completed_10k.passed, false);
 
-  const belowCohortReport = analyzeStage0CacheTelemetryLines(
-    aggregateLines.slice(0, STAGE0_COHORT_MIN_COMPLETED - 1),
-  );
+  const belowCohortReport = analyzeStage0CacheTelemetryLines(aggregateLines.slice(0, STAGE0_COHORT_MIN_COMPLETED - 1));
   assert.equal(belowCohortReport.cohorts[0]?.completed_1k_gate.passed, false);
-  const qualifyingCohortReport = analyzeStage0CacheTelemetryLines(
-    aggregateLines.slice(0, STAGE0_COHORT_MIN_COMPLETED),
-  );
+  const qualifyingCohortReport = analyzeStage0CacheTelemetryLines(aggregateLines.slice(0, STAGE0_COHORT_MIN_COMPLETED));
   assert.equal(qualifyingCohortReport.cohorts[0]?.completed_1k_gate.passed, true);
 
   const coverageReport = analyzeStage0CacheTelemetryLines([
@@ -466,11 +451,7 @@ Deno.test("Stage 0 cache telemetry analyzer applies aggregate, observed-cohort, 
   assert.equal(coverageReport.reported_over_completed.ratio, 0.995);
   assert.equal(coverageReport.gates.reported_coverage_99_5.observed_all_completed_passed, true);
   assert.equal(coverageReport.gates.reported_coverage_99_5.all_observed_cohorts_passed, false);
-  assert.equal(
-    coverageReport.cohorts.find((cohort) => cohort.usage_telemetry_status_totals.partial === 1)
-      ?.reported_coverage_99_5_gate.passed,
-    false,
-  );
+  assert.equal(coverageReport.cohorts.find((cohort) => cohort.usage_telemetry_status_totals.partial === 1)?.reported_coverage_99_5_gate.passed, false);
 
   const belowCoverageReport = analyzeStage0CacheTelemetryLines([
     ...Array.from({ length: 198 }, () => terminalLine()),
@@ -490,17 +471,11 @@ Deno.test("Stage 0 cache telemetry analyzer fails closed without echoing request
       assert.match(error.message, /malformed JSON/);
       assert.doesNotMatch(error.message, new RegExp(secret));
       return true;
-    },
+    }
   );
 
-  assert.throws(
-    () => analyzeStage0CacheTelemetryLines([terminalLine(), terminalLine({ deno_revision: "deploy-b" })]),
-    /release identity differs/,
-  );
-  assert.throws(
-    () => analyzeStage0CacheTelemetryLines([terminalLine({ git_sha: "unknown" })]),
-    /missing release identity/,
-  );
+  assert.throws(() => analyzeStage0CacheTelemetryLines([terminalLine(), terminalLine({ deno_revision: "deploy-b" })]), /release identity differs/);
+  assert.throws(() => analyzeStage0CacheTelemetryLines([terminalLine({ git_sha: "unknown" })]), /missing release identity/);
   assert.throws(
     () => analyzeStage0CacheTelemetryLines([terminalLine({ git_sha: secret })]),
     (error: unknown) => {
@@ -508,7 +483,7 @@ Deno.test("Stage 0 cache telemetry analyzer fails closed without echoing request
       assert.match(error.message, /invalid git_sha field/);
       assert.doesNotMatch(error.message, new RegExp(secret));
       return true;
-    },
+    }
   );
   assert.throws(
     () => analyzeStage0CacheTelemetryLines([terminalLine({ request_id: `${secret}\u0001` })]),
@@ -517,108 +492,52 @@ Deno.test("Stage 0 cache telemetry analyzer fails closed without echoing request
       assert.match(error.message, /invalid request_id field/);
       assert.doesNotMatch(error.message, new RegExp(secret));
       return true;
-    },
+    }
   );
-  assert.throws(
-    () => analyzeStage0CacheTelemetryLines([terminalLine({ request_id: "x".repeat(129) })]),
-    /invalid request_id field/,
-  );
+  assert.throws(() => analyzeStage0CacheTelemetryLines([terminalLine({ request_id: "x".repeat(129) })]), /invalid request_id field/);
   const releasePayload = "release-secret-must-not-appear";
-  const redactedReleaseReport = analyzeStage0CacheTelemetryLines([
-    terminalLine({ deno_revision: releasePayload, router_revision: releasePayload }),
-  ]);
+  const redactedReleaseReport = analyzeStage0CacheTelemetryLines([terminalLine({ deno_revision: releasePayload, router_revision: releasePayload })]);
   assert.deepEqual(redactedReleaseReport.release, {
     git_sha: "0123456789abcdef",
     deno_revision: "validated",
     router_revision: "validated",
   });
   assert.doesNotMatch(JSON.stringify(redactedReleaseReport), new RegExp(releasePayload));
-  assert.throws(
-    () => analyzeStage0CacheTelemetryLines([terminalLine({ provider: null })]),
-    /invalid provider field/,
-  );
-  assert.throws(
-    () => analyzeStage0CacheTelemetryLines([terminalLine({ model: null })]),
-    /invalid model field/,
-  );
-  assert.throws(
-    () => analyzeStage0CacheTelemetryLines([terminalLine({ route: "response_typo" })]),
-    /unsupported route field/,
-  );
+  assert.throws(() => analyzeStage0CacheTelemetryLines([terminalLine({ provider: null })]), /invalid provider field/);
+  assert.throws(() => analyzeStage0CacheTelemetryLines([terminalLine({ model: null })]), /invalid model field/);
+  assert.throws(() => analyzeStage0CacheTelemetryLines([terminalLine({ route: "response_typo" })]), /unsupported route field/);
   assert.throws(
     () => analyzeStage0CacheTelemetryLines([terminalLine({ stream_terminal_type: "response.finished" })]),
-    /unsupported stream_terminal_type field/,
+    /unsupported stream_terminal_type field/
   );
-  assert.throws(
-    () => analyzeStage0CacheTelemetryLines([terminalLine({ status: 500 })]),
-    /completed inference event has a non-2xx status field/,
-  );
+  assert.throws(() => analyzeStage0CacheTelemetryLines([terminalLine({ status: 500 })]), /completed inference event has a non-2xx status field/);
   assert.throws(
     () => analyzeStage0CacheTelemetryLines([terminalLine({ provider: "provider-secret" })]),
-    /inference terminal event has an unsupported provider field/,
+    /inference terminal event has an unsupported provider field/
   );
-  assert.throws(
-    () => analyzeStage0CacheTelemetryLines([terminalLine({ model: "x".repeat(129) })]),
-    /inference terminal event has an invalid model field/,
-  );
-  assert.throws(
-    () => analyzeStage0CacheTelemetryLines([terminalLine({ usage_observed: false })]),
-    /inconsistent usage_observed/,
-  );
+  assert.throws(() => analyzeStage0CacheTelemetryLines([terminalLine({ model: "x".repeat(129) })]), /inference terminal event has an invalid model field/);
+  assert.throws(() => analyzeStage0CacheTelemetryLines([terminalLine({ usage_observed: false })]), /inconsistent usage_observed/);
   assert.throws(
     () => analyzeStage0CacheTelemetryLines([terminalLine({ input_tokens: null })]),
-    /reported inference terminal event is missing cache-read usage fields/,
+    /reported inference terminal event is missing cache-read usage fields/
   );
-  assert.throws(
-    () => analyzeStage0CacheTelemetryLines([terminalLine({ cached_input_tokens: "0" })]),
-    /invalid cached_input_tokens field/,
-  );
-  assert.throws(
-    () => analyzeStage0CacheTelemetryLines([terminalLine({ cache_write_input_tokens: -1 })]),
-    /invalid cache_write_input_tokens field/,
-  );
-  assert.throws(
-    () => analyzeStage0CacheTelemetryLines([terminalLine({ prompt_cache_key_present: "yes" })]),
-    /invalid prompt_cache_key_present field/,
-  );
-  assert.throws(
-    () => analyzeStage0CacheTelemetryLines([terminalLine({ prompt_cache_mode: "unknown" })]),
-    /invalid prompt_cache_mode field/,
-  );
-  assert.throws(
-    () => analyzeStage0CacheTelemetryLines([terminalLine({ account_slot: -1 })]),
-    /invalid account_slot field/,
-  );
-  assert.throws(
-    () => analyzeStage0CacheTelemetryLines([terminalLine({ account_cohort_id: "not-a-sha256-digest" })]),
-    /invalid account_cohort_id field/,
-  );
-  assert.throws(
-    () => analyzeStage0CacheTelemetryLines([terminalLine({ affinity_outcome: "sticky" })]),
-    /invalid affinity_outcome field/,
-  );
-  assert.throws(
-    () => analyzeStage0CacheTelemetryLines([terminalLine({ stream: "true" })]),
-    /invalid stream field/,
-  );
-  assert.throws(
-    () => analyzeStage0CacheTelemetryLines([JSON.stringify({ message: terminalLine() })]),
-    /must use raw log text or a string body envelope/,
-  );
-  assert.throws(
-    () => analyzeStage0CacheTelemetryLines([`untrusted prefix ${terminalLine()}`]),
-    /must begin with the canonical terminal marker/,
-  );
+  assert.throws(() => analyzeStage0CacheTelemetryLines([terminalLine({ cached_input_tokens: "0" })]), /invalid cached_input_tokens field/);
+  assert.throws(() => analyzeStage0CacheTelemetryLines([terminalLine({ cache_write_input_tokens: -1 })]), /invalid cache_write_input_tokens field/);
+  assert.throws(() => analyzeStage0CacheTelemetryLines([terminalLine({ prompt_cache_key_present: "yes" })]), /invalid prompt_cache_key_present field/);
+  assert.throws(() => analyzeStage0CacheTelemetryLines([terminalLine({ prompt_cache_mode: "unknown" })]), /invalid prompt_cache_mode field/);
+  assert.throws(() => analyzeStage0CacheTelemetryLines([terminalLine({ account_slot: -1 })]), /invalid account_slot field/);
+  assert.throws(() => analyzeStage0CacheTelemetryLines([terminalLine({ account_cohort_id: "not-a-sha256-digest" })]), /invalid account_cohort_id field/);
+  assert.throws(() => analyzeStage0CacheTelemetryLines([terminalLine({ affinity_outcome: "sticky" })]), /invalid affinity_outcome field/);
+  assert.throws(() => analyzeStage0CacheTelemetryLines([terminalLine({ stream: "true" })]), /invalid stream field/);
+  assert.throws(() => analyzeStage0CacheTelemetryLines([JSON.stringify({ message: terminalLine() })]), /must use raw log text or a string body envelope/);
+  assert.throws(() => analyzeStage0CacheTelemetryLines([`untrusted prefix ${terminalLine()}`]), /must begin with the canonical terminal marker/);
   assert.throws(
     () => analyzeStage0CacheTelemetryLines([JSON.stringify({ body: `untrusted prefix ${terminalLine()}` })]),
-    /must begin with the canonical terminal marker/,
+    /must begin with the canonical terminal marker/
   );
 
   const duplicateRequestId = `req-${secret}`;
-  const duplicateLines = Array.from(
-    { length: STAGE0_AGGREGATE_MIN_COMPLETED },
-    () => terminalLine({ request_id: duplicateRequestId }),
-  );
+  const duplicateLines = Array.from({ length: STAGE0_AGGREGATE_MIN_COMPLETED }, () => terminalLine({ request_id: duplicateRequestId }));
   assert.throws(
     () => analyzeStage0CacheTelemetryLines(duplicateLines),
     (error: unknown) => {
@@ -626,7 +545,7 @@ Deno.test("Stage 0 cache telemetry analyzer fails closed without echoing request
       assert.match(error.message, /duplicate request_terminal event/);
       assert.doesNotMatch(error.message, new RegExp(secret));
       return true;
-    },
+    }
   );
 
   const report = analyzeStage0CacheTelemetryLines([
@@ -661,15 +580,10 @@ Deno.test("Stage 0 cache telemetry analyzer accepts strict JSON body log envelop
 
   const infoReport = analyzeStage0CacheTelemetryLines([`INFO ${terminalLine({ request_id: "req-info" })}`]);
   assert.equal(infoReport.completed_inference, 1);
-  const infoEnvelopeReport = analyzeStage0CacheTelemetryLines([
-    JSON.stringify({ body: `INFO ${terminalLine({ request_id: "req-info-envelope" })}` }),
-  ]);
+  const infoEnvelopeReport = analyzeStage0CacheTelemetryLines([JSON.stringify({ body: `INFO ${terminalLine({ request_id: "req-info-envelope" })}` })]);
   assert.equal(infoEnvelopeReport.completed_inference, 1);
 });
 
 Deno.test("Stage 0 cache telemetry analyzer rejects an empty input stream", () => {
-  assert.throws(
-    () => analyzeStage0CacheTelemetryLines([]),
-    /no request_terminal events/,
-  );
+  assert.throws(() => analyzeStage0CacheTelemetryLines([]), /no request_terminal events/);
 });

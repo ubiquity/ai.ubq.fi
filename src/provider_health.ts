@@ -6,14 +6,7 @@ export const PROVIDER_HEALTH_HEARTBEAT_WRITE_INTERVAL_MS = 60_000;
 export const PROVIDER_HEALTH_STALE_AFTER_MS = 30 * 60_000;
 
 export type ProviderHealthState = "healthy" | "degraded" | "exhausted" | "invalid" | "unknown";
-export type ProviderHealthEvent =
-  | "success"
-  | "reachable"
-  | "auth_invalid"
-  | "quota_exhausted"
-  | "upstream_error"
-  | "refresh_success"
-  | "refresh_failed";
+export type ProviderHealthEvent = "success" | "reachable" | "auth_invalid" | "quota_exhausted" | "upstream_error" | "refresh_success" | "refresh_failed";
 
 export type ProviderHealthObservation = Readonly<{
   event: ProviderHealthEvent;
@@ -41,15 +34,7 @@ export type ProviderHealthView = Readonly<{
 
 type RecordProvider = "cerebras" | "codex" | "metered" | "surplus";
 
-const PROVIDER_RECORDS = [
-  "current",
-  "success",
-  "reachable",
-  "auth_invalid",
-  "quota_exhausted",
-  "upstream_error",
-  "refresh",
-] as const;
+const PROVIDER_RECORDS = ["current", "success", "reachable", "auth_invalid", "quota_exhausted", "upstream_error", "refresh"] as const;
 
 const lastHeartbeatWriteAtMs = new Map<string, number>();
 const lastObservation = new Map<string, ProviderHealthObservation>();
@@ -76,11 +61,12 @@ const normalizedProviderRequestId = (value: unknown): string | null => {
   return requestId;
 };
 
-const providerHealthKey = (
-  provider: RecordProvider,
-  identity: string,
-  record: (typeof PROVIDER_RECORDS)[number],
-): Deno.KvKey => [...PROVIDER_HEALTH_KEY_PREFIX, provider, identity, record];
+const providerHealthKey = (provider: RecordProvider, identity: string, record: (typeof PROVIDER_RECORDS)[number]): Deno.KvKey => [
+  ...PROVIDER_HEALTH_KEY_PREFIX,
+  provider,
+  identity,
+  record,
+];
 
 const isProviderEvent = (value: unknown): value is ProviderHealthEvent =>
   value === "success" ||
@@ -110,9 +96,7 @@ const stateForObservation = (observation: ProviderHealthObservation): Exclude<Pr
   if (event === "success") return "healthy";
   if (event === "auth_invalid") return "invalid";
   if (event === "refresh_failed") {
-    return observation.status === 400 || observation.status === 401 || observation.status === 403
-      ? "invalid"
-      : "degraded";
+    return observation.status === 400 || observation.status === 401 || observation.status === 403 ? "invalid" : "degraded";
   }
   if (event === "quota_exhausted") return "exhausted";
   return "degraded";
@@ -124,7 +108,7 @@ const shouldThrottleObservation = (
   event: ProviderHealthEvent,
   status: number | null,
   providerRequestId: string | null,
-  nowMs: number,
+  nowMs: number
 ): boolean => {
   const throttleKey = `${provider}:${identity}`;
   const previousObservation = lastObservation.get(throttleKey);
@@ -133,10 +117,8 @@ const shouldThrottleObservation = (
   // correlation ID is also new evidence. Later IDs are sampled at the normal
   // heartbeat interval so per-request IDs do not turn this into a write path.
   const previousProviderRequestId = normalizedProviderRequestId(previousObservation?.provider_request_id);
-  if (
-    !previousObservation || previousObservation.event !== event || previousObservation.status !== status ||
-    (previousProviderRequestId === null && providerRequestId !== null)
-  ) {
+  if (!previousObservation) return false;
+  if (previousObservation.event !== event || previousObservation.status !== status || (previousProviderRequestId === null && providerRequestId !== null)) {
     return false;
   }
   const previous = lastHeartbeatWriteAtMs.get(throttleKey);
@@ -158,7 +140,7 @@ const persistProviderHealth = async (
   event: ProviderHealthEvent,
   status: number | null,
   observedAtMs: number,
-  providerRequestId: string | null,
+  providerRequestId: string | null
 ): Promise<void> => {
   try {
     if (shouldThrottleObservation(provider, identity, event, status, providerRequestId, observedAtMs)) return;
@@ -170,7 +152,8 @@ const persistProviderHealth = async (
       observed_at_ms: observedAtMs,
       provider_request_id: providerRequestId,
     } satisfies ProviderHealthObservation;
-    const commit = await kv.atomic()
+    const commit = await kv
+      .atomic()
       .set(providerHealthKey(provider, identity, "current"), observation)
       .set(providerHealthKey(provider, identity, historyRecordFor(event)), observation)
       .commit();
@@ -189,15 +172,12 @@ const recordProviderHealth = (
   event: ProviderHealthEvent,
   status: number | null,
   now: () => number,
-  providerRequestId: string | null,
+  providerRequestId: string | null
 ): Promise<void> => {
   const queueKey = `${provider}:${identity}`;
   const current = providerTransitionQueues.get(queueKey);
   const normalizedRequestId = normalizedProviderRequestId(providerRequestId);
-  if (
-    current?.event === event && current.status === status &&
-    (current.providerRequestId !== null || normalizedRequestId === null)
-  ) return current.tail;
+  if (current?.event === event && current.status === status && (current.providerRequestId !== null || normalizedRequestId === null)) return current.tail;
   let observedAtMs: number;
   try {
     observedAtMs = Math.trunc(now());
@@ -210,16 +190,7 @@ const recordProviderHealth = (
   // event or the first available correlation ID is appended in arrival order.
   const tail = (current?.tail ?? Promise.resolve())
     .catch(() => {})
-    .then(() =>
-      persistProviderHealth(
-        provider,
-        identity,
-        event,
-        status,
-        observedAtMs,
-        normalizedRequestId,
-      )
-    );
+    .then(() => persistProviderHealth(provider, identity, event, status, observedAtMs, normalizedRequestId));
   providerTransitionQueues.set(queueKey, { event, status, providerRequestId: normalizedRequestId, tail });
   void tail.finally(() => {
     if (providerTransitionQueues.get(queueKey)?.tail === tail) providerTransitionQueues.delete(queueKey);
@@ -232,28 +203,28 @@ export const recordCodexProviderHealth = (
   event: ProviderHealthEvent,
   status: number | null = null,
   now: () => number = Date.now,
-  providerRequestId: string | null = null,
+  providerRequestId: string | null = null
 ): Promise<void> => recordProviderHealth("codex", accountId, event, status, now, providerRequestId);
 
 export const recordMeteredProviderHealth = (
   event: ProviderHealthEvent,
   status: number | null = null,
   now: () => number = Date.now,
-  providerRequestId: string | null = null,
+  providerRequestId: string | null = null
 ): Promise<void> => recordProviderHealth("metered", "default", event, status, now, providerRequestId);
 
 export const recordSurplusProviderHealth = (
   event: ProviderHealthEvent,
   status: number | null = null,
   now: () => number = Date.now,
-  providerRequestId: string | null = null,
+  providerRequestId: string | null = null
 ): Promise<void> => recordProviderHealth("surplus", "default", event, status, now, providerRequestId);
 
 export const recordCerebrasProviderHealth = (
   event: ProviderHealthEvent,
   status: number | null = null,
   now: () => number = Date.now,
-  providerRequestId: string | null = null,
+  providerRequestId: string | null = null
 ): Promise<void> => recordProviderHealth("cerebras", "default", event, status, now, providerRequestId);
 
 const unknownView = (): ProviderHealthView => ({
@@ -272,23 +243,17 @@ const unknownView = (): ProviderHealthView => ({
   last_refresh_succeeded: null,
 });
 
-const latestObservation = (
-  observations: readonly ProviderHealthObservation[],
-  events?: readonly ProviderHealthEvent[],
-): ProviderHealthObservation | null => {
+const latestObservation = (observations: readonly ProviderHealthObservation[], events?: readonly ProviderHealthEvent[]): ProviderHealthObservation | null => {
   const allowed = events ? new Set(events) : null;
   return observations
     .filter((observation) => !allowed || allowed.has(observation.event))
     .reduce<ProviderHealthObservation | null>(
-      (latest, observation) => !latest || observation.observed_at_ms > latest.observed_at_ms ? observation : latest,
-      null,
+      (latest, observation) => (!latest || observation.observed_at_ms > latest.observed_at_ms ? observation : latest),
+      null
     );
 };
 
-const toView = (
-  observations: readonly ProviderHealthObservation[],
-  nowMs: number,
-): ProviderHealthView => {
+const toView = (observations: readonly ProviderHealthObservation[], nowMs: number): ProviderHealthView => {
   const latest = latestObservation(observations);
   if (!latest) return unknownView();
   const latestState = latestObservation(observations, [
@@ -305,9 +270,7 @@ const toView = (
   const exhausted = latestObservation(observations, ["quota_exhausted"]);
   const error = latestObservation(observations, ["upstream_error", "refresh_failed"]);
   const refresh = latestObservation(observations, ["refresh_success", "refresh_failed"]);
-  const providerRequest = latestObservation(
-    observations.filter((observation) => normalizedProviderRequestId(observation.provider_request_id) !== null),
-  );
+  const providerRequest = latestObservation(observations.filter((observation) => normalizedProviderRequestId(observation.provider_request_id) !== null));
   return {
     state: latestState ? stateForObservation(latestState) : "unknown",
     stale: nowMs - latest.observed_at_ms > PROVIDER_HEALTH_STALE_AFTER_MS,
@@ -325,38 +288,24 @@ const toView = (
   };
 };
 
-const readProviderHealth = async (
-  provider: RecordProvider,
-  identity: string,
-  now: () => number,
-): Promise<ProviderHealthView> => {
+const readProviderHealth = async (provider: RecordProvider, identity: string, now: () => number): Promise<ProviderHealthView> => {
   const kv = await getKv();
   if (!kv) return unknownView();
-  const entries = await Promise.all(
-    PROVIDER_RECORDS.map((record) => kv.get<ProviderHealthObservation>(providerHealthKey(provider, identity, record))),
-  );
+  const entries = await Promise.all(PROVIDER_RECORDS.map((record) => kv.get<ProviderHealthObservation>(providerHealthKey(provider, identity, record))));
   const observations = entries
     .map((entry) => parseProviderHealthObservation(entry.value))
     .filter((value): value is ProviderHealthObservation => value !== null);
   return toView(observations, Math.trunc(now()));
 };
 
-export const getCodexProviderHealth = (
-  accountId: string,
-  now: () => number = Date.now,
-): Promise<ProviderHealthView> => readProviderHealth("codex", accountId, now);
+export const getCodexProviderHealth = (accountId: string, now: () => number = Date.now): Promise<ProviderHealthView> =>
+  readProviderHealth("codex", accountId, now);
 
-export const getMeteredProviderHealth = (
-  now: () => number = Date.now,
-): Promise<ProviderHealthView> => readProviderHealth("metered", "default", now);
+export const getMeteredProviderHealth = (now: () => number = Date.now): Promise<ProviderHealthView> => readProviderHealth("metered", "default", now);
 
-export const getSurplusProviderHealth = (
-  now: () => number = Date.now,
-): Promise<ProviderHealthView> => readProviderHealth("surplus", "default", now);
+export const getSurplusProviderHealth = (now: () => number = Date.now): Promise<ProviderHealthView> => readProviderHealth("surplus", "default", now);
 
-export const getCerebrasProviderHealth = (
-  now: () => number = Date.now,
-): Promise<ProviderHealthView> => readProviderHealth("cerebras", "default", now);
+export const getCerebrasProviderHealth = (now: () => number = Date.now): Promise<ProviderHealthView> => readProviderHealth("cerebras", "default", now);
 
 export const resetProviderHealthThrottleForTest = (): void => {
   lastHeartbeatWriteAtMs.clear();

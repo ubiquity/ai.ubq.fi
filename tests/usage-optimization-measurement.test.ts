@@ -17,21 +17,21 @@ type UpstreamReply = Readonly<{
 const bytes = (value: string): number => textEncoder.encode(value).byteLength;
 
 const completedSse = (label: string): string =>
-  `data: ${
-    JSON.stringify({
-      type: "response.completed",
-      response: {
-        id: `resp-${label}`,
-        model: MODEL,
-        output: [{
+  `data: ${JSON.stringify({
+    type: "response.completed",
+    response: {
+      id: `resp-${label}`,
+      model: MODEL,
+      output: [
+        {
           type: "message",
           role: "assistant",
           content: [{ type: "output_text", text: `measurement ${label}` }],
-        }],
-        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
-      },
-    })
-  }\n\n`;
+        },
+      ],
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+    },
+  })}\n\n`;
 
 const sseReply = (label: string, options: Readonly<{ waitFor?: Promise<void> }> = {}): UpstreamReply => {
   const body = completedSse(label);
@@ -133,16 +133,15 @@ Deno.test("usage optimization fixture records per-auth KV commands, atomic commi
     const { default: handler } = await import("../src/handler.ts");
     const { sha256Base64Url } = await import("../src/utils.ts");
     const { RUNTIME_CONFIG_V2_KEY, resetRuntimeConfigCacheForTest } = await import("../src/runtime_config.ts");
-    const {
-      CODEX_AUTH_POOL_KV_KEY,
-      fetchCodexResponses,
-      resetCodexAuthCacheForTest,
-    } = await import("../src/codex.ts");
+    const { CODEX_AUTH_POOL_KV_KEY, fetchCodexResponses, resetCodexAuthCacheForTest } = await import("../src/codex.ts");
     const { resetApiKeyPolicyCacheForTest } = await import("../src/api_key_policy.ts");
     const { resetProviderHealthThrottleForTest } = await import("../src/provider_health.ts");
 
     globalThis.fetch = async (input, init): Promise<Response> => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      let url: string;
+      if (typeof input === "string") url = input;
+      else if (input instanceof URL) url = input.toString();
+      else url = input.url;
       assert.ok(url.endsWith("/responses"), `measurement fixture only permits Codex response requests, got ${url}`);
       assert.equal(typeof init?.body, "string", "Codex request must reach fetch as a serialized string");
       kv.recordSerializedRequestBytes(bytes(init?.body as string));
@@ -163,22 +162,26 @@ Deno.test("usage optimization fixture records per-auth KV commands, atomic commi
         source: "chatgpt_codex",
         client_version: "0.150.0",
         updated_at_ms: Date.now(),
-        models: [{
-          slug: MODEL,
-          default_reasoning_level: "medium",
-          supported_reasoning_levels: ["none", "low", "medium", "high"],
-        }],
+        models: [
+          {
+            slug: MODEL,
+            default_reasoning_level: "medium",
+            supported_reasoning_levels: ["none", "low", "medium", "high"],
+          },
+        ],
       },
       updated_at_ms: Date.now(),
     });
 
     const codexAuthPool = () => ({
-      accounts: [{
-        access_token: "measurement-access-token",
-        refresh_token: "measurement-refresh-token",
-        account_id: "measurement-account",
-        updated_at_ms: Date.now(),
-      }],
+      accounts: [
+        {
+          access_token: "measurement-access-token",
+          refresh_token: "measurement-refresh-token",
+          account_id: "measurement-account",
+          updated_at_ms: Date.now(),
+        },
+      ],
       updated_at_ms: Date.now(),
     });
 
@@ -238,47 +241,34 @@ Deno.test("usage optimization fixture records per-auth KV commands, atomic commi
     const boundedToken = `u_${"1".repeat(64)}`;
     await prepare({ token: boundedToken, id: "bounded-measurement", limit: 2 });
     queue(sseReply("bounded"));
-    const bounded = await runScenario(
-      { authKind: "bounded_api_key", outcome: "success" },
-      () => handler(inferenceRequest(boundedToken)),
-    );
+    const bounded = await runScenario({ authKind: "bounded_api_key", outcome: "success" }, () => handler(inferenceRequest(boundedToken)));
     assert.equal(bounded.status, 200);
     assert.equal(fetchCalls, 1);
 
     const unlimitedToken = `u_${"2".repeat(64)}`;
     await prepare({ token: unlimitedToken, id: "unlimited-measurement", limit: -1 });
     queue(sseReply("unlimited"));
-    const unlimited = await runScenario(
-      { authKind: "unlimited_api_key", outcome: "success" },
-      () => handler(inferenceRequest(unlimitedToken)),
-    );
+    const unlimited = await runScenario({ authKind: "unlimited_api_key", outcome: "success" }, () => handler(inferenceRequest(unlimitedToken)));
     assert.equal(unlimited.status, 200);
     assert.equal(fetchCalls, 1);
 
     await prepare();
     queue(sseReply("uos"));
-    const uos = await runScenario(
-      { authKind: "uos_allowlist", outcome: "success" },
-      () => handler(inferenceRequest(UOS_ALLOWLIST_TOKEN)),
-    );
+    const uos = await runScenario({ authKind: "uos_allowlist", outcome: "success" }, () => handler(inferenceRequest(UOS_ALLOWLIST_TOKEN)));
     assert.equal(uos.status, 200);
     assert.equal(fetchCalls, 1);
 
     await prepare();
     queue(sseReply("admin"));
-    const admin = await runScenario(
-      { authKind: "admin_allowlist", outcome: "success" },
-      () => handler(inferenceRequest(ADMIN_ALLOWLIST_TOKEN)),
-    );
+    const admin = await runScenario({ authKind: "admin_allowlist", outcome: "success" }, () => handler(inferenceRequest(ADMIN_ALLOWLIST_TOKEN)));
     assert.equal(admin.status, 200);
     assert.equal(fetchCalls, 1);
 
     const upstreamFailureToken = `u_${"3".repeat(64)}`;
     await prepare({ token: upstreamFailureToken, id: "upstream-failure-measurement", limit: 2 });
     queue(errorReply(503));
-    const upstreamFailure = await runScenario(
-      { authKind: "bounded_api_key", outcome: "upstream_failure" },
-      () => handler(inferenceRequest(upstreamFailureToken)),
+    const upstreamFailure = await runScenario({ authKind: "bounded_api_key", outcome: "upstream_failure" }, () =>
+      handler(inferenceRequest(upstreamFailureToken))
     );
     assert.equal(upstreamFailure.status, 503);
     assert.equal(fetchCalls, 1);
@@ -286,10 +276,7 @@ Deno.test("usage optimization fixture records per-auth KV commands, atomic commi
     await prepare();
     const retryBody = { model: MODEL, input: "retry must preserve the same serialized body" };
     queue(errorReply(429, "rate_limit_error", "1"), sseReply("retry"));
-    const retried = await runScenario(
-      { authKind: "codex_auth_pool", outcome: "retry" },
-      () => fetchCodexResponses(retryBody, { retrySleep: async () => {} }),
-    );
+    const retried = await runScenario({ authKind: "codex_auth_pool", outcome: "retry" }, () => fetchCodexResponses(retryBody, { retrySleep: async () => {} }));
     assert.equal(retried.status, 200);
     assert.equal(fetchCalls, 2, "bounded Codex retry must dispatch exactly twice");
 
@@ -316,15 +303,12 @@ Deno.test("usage optimization fixture records per-auth KV commands, atomic commi
     const firstFetch = new Promise<void>((resolve) => {
       onFetch = resolve;
     });
-    const concurrentResponses = await runScenario(
-      { authKind: "bounded_api_key", outcome: "concurrent_admission" },
-      async () => {
-        const pending = Array.from({ length: 8 }, () => handler(inferenceRequest(concurrentToken)));
-        await firstFetch;
-        releaseUpstream();
-        return await Promise.all(pending);
-      },
-    );
+    const concurrentResponses = await runScenario({ authKind: "bounded_api_key", outcome: "concurrent_admission" }, async () => {
+      const pending = Array.from({ length: 8 }, () => handler(inferenceRequest(concurrentToken)));
+      await firstFetch;
+      releaseUpstream();
+      return await Promise.all(pending);
+    });
     assert.equal(concurrentResponses.filter((response) => response.status === 200).length, 1);
     const quotaResponses = concurrentResponses.filter((response) => response.status === 429);
     assert.equal(quotaResponses.length, 7);
@@ -335,7 +319,7 @@ Deno.test("usage optimization fixture records per-auth KV commands, atomic commi
     assert.equal(
       kv.commands.some((record) => record.scenario === null),
       false,
-      "fixture commands must remain attributed to an auth-kind and outcome scenario",
+      "fixture commands must remain attributed to an auth-kind and outcome scenario"
     );
     const expectedScenarios = [
       "admin_allowlist:success",
@@ -347,7 +331,10 @@ Deno.test("usage optimization fixture records per-auth KV commands, atomic commi
       "unlimited_api_key:success",
       "uos_allowlist:success",
     ];
-    assert.deepEqual(budgets.map((budget) => budget.scenario), expectedScenarios);
+    assert.deepEqual(
+      budgets.map((budget) => budget.scenario),
+      expectedScenarios
+    );
 
     for (const budget of budgets) {
       assert.ok(budget.commands > 0, `${budget.scenario} must record KV commands`);
@@ -369,23 +356,20 @@ Deno.test("usage optimization fixture records per-auth KV commands, atomic commi
     assert.ok(uosSuccess.commands > 0, "UOS allowlist activity must remain measurable");
     assert.ok(adminSuccess.commands > 0, "admin allowlist activity must remain measurable");
     assert.equal(retry.serialized_request_bytes, bytes(JSON.stringify(retryBody)) * 2);
-    assert.equal(
-      disconnect.atomic_commits,
-      2,
-      "a post-dispatch disconnect must retain the V3 reservation and dispatch commits",
-    );
+    assert.equal(disconnect.atomic_commits, 2, "a post-dispatch disconnect must retain the V3 reservation and dispatch commits");
     assert.ok(concurrent.atomic_commits >= 2, "concurrent admission must retain the winning reservation and dispatch");
     assert.equal(
-      kv.commands.some((record) =>
-        (record.scenario === "uos_allowlist:success" || record.scenario === "admin_allowlist:success") &&
-        record.keys.some((key) => key[0] === "uos_ai" && key[1] === "api_key_usage")
+      kv.commands.some(
+        (record) =>
+          (record.scenario === "uos_allowlist:success" || record.scenario === "admin_allowlist:success") &&
+          record.keys.some((key) => key[0] === "uos_ai" && key[1] === "api_key_usage")
       ),
       false,
-      "allowlist paths must remain separate from V3 API-key ledger keys",
+      "allowlist paths must remain separate from V3 API-key ledger keys"
     );
     assert.ok(
       kv.commands.some((record) => record.command === "atomic.commit" && record.atomicResult === "committed"),
-      "fixture must retain atomic-commit records, not only aggregate counters",
+      "fixture must retain atomic-commit records, not only aggregate counters"
     );
 
     console.info(
@@ -401,8 +385,8 @@ Deno.test("usage optimization fixture records per-auth KV commands, atomic commi
           request_bytes: budget.serialized_request_bytes,
           response_bytes: budget.upstream_response_bytes,
           latency_ms: budget.latency_ms,
-        })),
-      ),
+        }))
+      )
     );
   } finally {
     globalThis.fetch = originalFetch;

@@ -14,7 +14,6 @@ const METERED_TOKEN_LOGS_URL = `${METERED_BASE_URL}/api/log/token`;
 // Billing reconciliation runs after the client response and must not hold a
 // queue delivery indefinitely when the provider stalls.
 export const METERED_FETCH_TIMEOUT_MS = 10_000;
-export const METERED_TOKEN_LOG_FETCH_TIMEOUT_MS = METERED_FETCH_TIMEOUT_MS;
 export const METERED_MODELS_CACHE_TTL_MS = 5 * 60_000;
 const METERED_MODELS_FAILURE_BACKOFF_MS = 30_000;
 
@@ -68,26 +67,69 @@ const markMeteredModelsFetchFailure = (requestGeneration: number): void => {
   meteredModelsRetryAfterMs = Date.now() + METERED_MODELS_FAILURE_BACKOFF_MS;
 };
 
+const meteredModelFromUpstream = (value: unknown): MeteredModel | null => {
+  if (!isRecord(value)) return null;
+  const id = nonEmptyString(value.id);
+  if (!id) return null;
+  const endpoints = Array.isArray(value.supported_endpoint_types)
+    ? value.supported_endpoint_types.filter((entry): entry is string => typeof entry === "string")
+    : [];
+  const created = isNonNegativeSafeInteger(value.created) ? value.created : 0;
+  const ownedBy = nonEmptyString(value.owned_by) ?? "openlux";
+  const modelType = nonEmptyString(value.model_type);
+  const description = nonEmptyString(value.description);
+  const tags = nonEmptyString(value.tags);
+  return {
+    id,
+    object: "model",
+    created,
+    owned_by: ownedBy,
+    supported_endpoint_types: endpoints,
+    ...(modelType ? { model_type: modelType } : {}),
+    ...(description ? { description } : {}),
+    ...(tags ? { tags } : {}),
+  };
+};
+
+const listedMeteredModels = (data: readonly unknown[]): MeteredModel[] => {
+  const models: MeteredModel[] = [];
+  const seen = new Set<string>();
+  for (const value of data) {
+    const model = meteredModelFromUpstream(value);
+    if (!model || seen.has(model.id)) continue;
+    seen.add(model.id);
+    models.push(model);
+  }
+  return models;
+};
+
+const publishMeteredModelsSnapshot = (requestGeneration: number, models: MeteredModel[]): MeteredModelsSnapshot | null => {
+  const snapshot = { models, updated_at_ms: Date.now() } satisfies MeteredModelsSnapshot;
+  if (requestGeneration > meteredModelsCacheGeneration) {
+    meteredModelsCacheGeneration = requestGeneration;
+    meteredModelsCache = snapshot;
+    meteredModelsRetryAfterMs = 0;
+  }
+  return meteredModelsCache;
+};
+
 export const fetchMeteredModels = async (
-  options: Readonly<{ fetcher?: MeteredFetch; signal?: AbortSignal; force?: boolean; cachedOnly?: boolean }> = {},
+  options: Readonly<{ fetcher?: MeteredFetch; signal?: AbortSignal; force?: boolean; cachedOnly?: boolean }> = {}
 ): Promise<MeteredModelsSnapshot | null> => {
-  if (
-    !options.force && meteredModelsCache && Date.now() - meteredModelsCache.updated_at_ms < METERED_MODELS_CACHE_TTL_MS
-  ) {
+  if (!options.force && meteredModelsCache && Date.now() - meteredModelsCache.updated_at_ms < METERED_MODELS_CACHE_TTL_MS) {
     return meteredModelsCache;
   }
   if (!options.force && Date.now() < meteredModelsRetryAfterMs) return meteredModelsCache;
   const apiKey = readModelDiscoveryApiKey();
   if (!apiKey) return meteredModelsCache;
   if (options.cachedOnly) return meteredModelsCache;
-  const fetcher = options.fetcher ?? meteredModelsFetchForTest ??
-    (globalThis.fetch === defaultMeteredFetch ? defaultMeteredFetch : null);
+  const fetcher = options.fetcher ?? meteredModelsFetchForTest ?? (globalThis.fetch === defaultMeteredFetch ? defaultMeteredFetch : null);
   if (!fetcher) return meteredModelsCache;
   // Only the ordinary discovery path shares an upstream request. Callers that
   // supply a signal, fetcher, or force a refresh retain their own request
-  // semantics and do not join a request owned by another caller.
-  const shouldCoalesce = !options.force && !options.cachedOnly && options.fetcher === undefined &&
-    options.signal === undefined;
+  // semantics and do not join a request owned by another caller. `cachedOnly`
+  // callers have already returned above, so it is not repeated here.
+  const shouldCoalesce = !options.force && options.fetcher === undefined && options.signal === undefined;
   if (shouldCoalesce && meteredModelsFetchInFlight) return await meteredModelsFetchInFlight;
 
   const requestGeneration = ++meteredModelsFetchGeneration;
@@ -100,56 +142,18 @@ export const fetchMeteredModels = async (
           headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
           signal,
         }),
-        signal,
+        signal
       );
       if (!response.ok) {
         markMeteredModelsFetchFailure(requestGeneration);
         return meteredModelsCache;
       }
-      const payload = await awaitWithAbort(response.json(), signal) as unknown;
+      const payload = (await awaitWithAbort(response.json(), signal)) as unknown;
       if (!isRecord(payload) || !Array.isArray(payload.data)) {
         markMeteredModelsFetchFailure(requestGeneration);
         return meteredModelsCache;
       }
-      const models: MeteredModel[] = [];
-      const seen = new Set<string>();
-      for (const value of payload.data) {
-        if (!isRecord(value)) continue;
-        const id = nonEmptyString(value.id);
-        const endpoints = Array.isArray(value.supported_endpoint_types)
-          ? value.supported_endpoint_types.filter((entry): entry is string => typeof entry === "string")
-          : [];
-        if (!id || seen.has(id)) continue;
-        const created = isNonNegativeSafeInteger(value.created) ? value.created : 0;
-        const ownedBy = nonEmptyString(value.owned_by) ?? "openlux";
-        models.push({
-          id,
-          object: "model",
-          created,
-          owned_by: ownedBy,
-          supported_endpoint_types: endpoints,
-          ...(nonEmptyString(value.model_type) ? { model_type: nonEmptyString(value.model_type)! } : {}),
-          ...(nonEmptyString(value.description) ? { description: nonEmptyString(value.description)! } : {}),
-          ...(nonEmptyString(value.tags) ? { tags: nonEmptyString(value.tags)! } : {}),
-        });
-        seen.add(id);
-      }
-      if (!models.length) {
-        const snapshot = { models: [], updated_at_ms: Date.now() } satisfies MeteredModelsSnapshot;
-        if (requestGeneration > meteredModelsCacheGeneration) {
-          meteredModelsCacheGeneration = requestGeneration;
-          meteredModelsCache = snapshot;
-          meteredModelsRetryAfterMs = 0;
-        }
-        return meteredModelsCache;
-      }
-      const snapshot = { models, updated_at_ms: Date.now() } satisfies MeteredModelsSnapshot;
-      if (requestGeneration > meteredModelsCacheGeneration) {
-        meteredModelsCacheGeneration = requestGeneration;
-        meteredModelsCache = snapshot;
-        meteredModelsRetryAfterMs = 0;
-      }
-      return meteredModelsCache;
+      return publishMeteredModelsSnapshot(requestGeneration, listedMeteredModels(payload.data));
     } catch {
       if (!(signal.aborted && options.signal?.aborted)) markMeteredModelsFetchFailure(requestGeneration);
       return meteredModelsCache;
@@ -176,10 +180,7 @@ export const setMeteredModelsFetchForTest = (fetcher: MeteredFetch | null): void
   meteredModelsFetchForTest = fetcher;
 };
 
-export type MeteredFetch = (
-  input: RequestInfo | URL,
-  init?: RequestInit,
-) => Promise<Response>;
+export type MeteredFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 export type MeteredErrorCode =
   | "metered_api_key_missing"
@@ -197,12 +198,7 @@ export class MeteredError extends Error {
   readonly status: number;
   readonly upstream_status: number | null;
 
-  constructor(
-    message: string,
-    code: MeteredErrorCode,
-    status: number,
-    upstreamStatus: number | null = null,
-  ) {
+  constructor(message: string, code: MeteredErrorCode, status: number, upstreamStatus: number | null = null) {
     super(message);
     this.name = "MeteredError";
     this.code = code;
@@ -229,15 +225,19 @@ export type MeteredAuthenticatedFetchOptions = Readonly<{
   apiKey?: string | null;
   fetcher?: MeteredFetch;
   signal?: AbortSignal;
-  beforeDispatch?: () => Promise<ApiKeyProviderDispatch | void>;
+  /**
+   * Quota hook. Producers fulfil with `undefined` when no dispatch result is
+   * available; `Promise.resolve(undefined)` at the call sites keeps that
+   * explicit, which is why this is not spelled `void`-in-a-union.
+   */
+  beforeDispatch?: () => Promise<ApiKeyProviderDispatch | undefined>;
   onDispatch?: () => void;
   /** Request-owned passive recorder; best effort, never required. */
   sentinelUpstreamRecorder?: SentinelUpstreamRecorder;
 }>;
 
-export type MeteredTokenLogFetchOptions =
-  & MeteredAuthenticatedFetchOptions
-  & Readonly<{
+export type MeteredTokenLogFetchOptions = MeteredAuthenticatedFetchOptions &
+  Readonly<{
     requestIds?: readonly string[];
     startAtMs?: number;
     endAtMs?: number;
@@ -255,7 +255,12 @@ const toMeteredResponsesBody = (body: JsonRecord): JsonRecord => {
   const reasoning = isRecord(body.reasoning) ? nonEmptyString(body.reasoning.effort) : null;
   if (!model || !reasoning || !METERED_REASONING_SUFFIX_MODELS.has(model)) return body;
 
-  const suffix = reasoning === "none" || reasoning === "minimal" ? "low" : reasoning === "ultra" ? "max" : reasoning;
+  let suffix = reasoning;
+  if (reasoning === "none" || reasoning === "minimal") {
+    suffix = "low";
+  } else if (reasoning === "ultra") {
+    suffix = "max";
+  }
   if (!["low", "medium", "high", "xhigh", "max"].includes(suffix)) return body;
 
   const result: JsonRecord = { ...body, model: `${model}-${suffix}` };
@@ -275,14 +280,11 @@ export type MeteredTokenLogEntry = Readonly<{
 
 type JsonRecord = Record<string, unknown>;
 
-const isRecord = (value: unknown): value is JsonRecord =>
-  value !== null && typeof value === "object" && !Array.isArray(value);
+const isRecord = (value: unknown): value is JsonRecord => value !== null && typeof value === "object" && !Array.isArray(value);
 
-const isPositiveFiniteNumber = (value: unknown): value is number =>
-  typeof value === "number" && Number.isFinite(value) && value > 0;
+const isPositiveFiniteNumber = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value > 0;
 
-const isNonNegativeSafeInteger = (value: unknown): value is number =>
-  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+const isNonNegativeSafeInteger = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
 const nonEmptyString = (value: unknown): string | null => {
   if (typeof value !== "string") return null;
@@ -299,6 +301,14 @@ const boundedTokenLogSignal = (signal: AbortSignal | undefined): AbortSignal => 
   return signal ? AbortSignal.any([signal, timeout]) : timeout;
 };
 
+/**
+ * Rejection reasons must be `Error` instances. Deno's `DOMException` already is
+ * one, so abort and timeout reasons (including `AbortSignal.timeout`'s
+ * `TimeoutError`) pass through unchanged; anything else is carried as `cause`
+ * so no information is lost.
+ */
+const asRejectionReason = (value: unknown): Error => (value instanceof Error ? value : new Error("Metered request failed", { cause: value }));
+
 const awaitWithAbort = <T>(operation: PromiseLike<T>, signal: AbortSignal): Promise<T> =>
   new Promise<T>((resolve, reject) => {
     let settled = false;
@@ -309,7 +319,9 @@ const awaitWithAbort = <T>(operation: PromiseLike<T>, signal: AbortSignal): Prom
       callback();
     };
     const onAbort = (): void => {
-      finish(() => reject(signal.reason ?? new DOMException("Aborted", "AbortError")));
+      finish(() => {
+        reject(asRejectionReason(signal.reason ?? new DOMException("Aborted", "AbortError")));
+      });
     };
     if (signal.aborted) {
       onAbort();
@@ -317,8 +329,16 @@ const awaitWithAbort = <T>(operation: PromiseLike<T>, signal: AbortSignal): Prom
     }
     signal.addEventListener("abort", onAbort, { once: true });
     Promise.resolve(operation).then(
-      (value) => finish(() => resolve(value)),
-      (error) => finish(() => reject(error)),
+      (value) => {
+        finish(() => {
+          resolve(value);
+        });
+      },
+      (error: unknown) => {
+        finish(() => {
+          reject(asRejectionReason(error));
+        });
+      }
     );
   });
 
@@ -333,11 +353,7 @@ export const readMeteredApiKey = (): string | null => {
 const requireMeteredApiKey = (supplied: string | null | undefined): string => {
   const apiKey = supplied === undefined ? readMeteredApiKey() : nonEmptyString(supplied);
   if (apiKey) return apiKey;
-  throw new MeteredError(
-    "Metered paid fallback is unavailable because METERED_API_KEY or OPENLUX_API_KEY is not configured.",
-    "metered_api_key_missing",
-    503,
-  );
+  throw new MeteredError("Metered paid fallback is unavailable because METERED_API_KEY or OPENLUX_API_KEY is not configured.", "metered_api_key_missing", 503);
 };
 
 const metadataHeaders = (): Headers => {
@@ -358,7 +374,7 @@ const fetchMetadataJson = async (
   fetcher: MeteredFetch,
   signal: AbortSignal | undefined,
   unavailableCode: "metered_pricing_unavailable" | "metered_status_unavailable",
-  invalidCode: "metered_pricing_invalid" | "metered_status_invalid",
+  invalidCode: "metered_pricing_invalid" | "metered_status_invalid"
 ): Promise<unknown> => {
   let response: Response;
   try {
@@ -370,44 +386,23 @@ const fetchMetadataJson = async (
     });
   } catch (error) {
     rethrowCancellation(error, signal);
-    throw new MeteredError(
-      "Metered pricing initialization could not reach the metadata service.",
-      unavailableCode,
-      502,
-    );
+    throw new MeteredError("Metered pricing initialization could not reach the metadata service.", unavailableCode, 502);
   }
 
   if (!response.ok) {
-    throw new MeteredError(
-      "Metered pricing initialization received an unsuccessful metadata response.",
-      unavailableCode,
-      502,
-      response.status,
-    );
+    throw new MeteredError("Metered pricing initialization received an unsuccessful metadata response.", unavailableCode, 502, response.status);
   }
 
   try {
-    return await response.json() as unknown;
+    return (await response.json()) as unknown;
   } catch {
-    throw new MeteredError(
-      "Metered pricing initialization received invalid metadata.",
-      invalidCode,
-      502,
-      response.status,
-    );
+    throw new MeteredError("Metered pricing initialization received invalid metadata.", invalidCode, 502, response.status);
   }
 };
 
-const unwrapSuccessfulEnvelope = (
-  value: unknown,
-  code: "metered_pricing_invalid" | "metered_status_invalid",
-): JsonRecord => {
+const unwrapSuccessfulEnvelope = (value: unknown, code: "metered_pricing_invalid" | "metered_status_invalid"): JsonRecord => {
   if (!isRecord(value) || value.success !== true || !isRecord(value.data)) {
-    throw new MeteredError(
-      "Metered pricing initialization received an invalid metadata envelope.",
-      code,
-      502,
-    );
+    throw new MeteredError("Metered pricing initialization received an invalid metadata envelope.", code, 502);
   }
   return value.data;
 };
@@ -416,11 +411,7 @@ const pricedModelIds = (pricing: JsonRecord): Set<string> => {
   const ratioMap = pricing.model_ratio;
   const fixedPriceMap = pricing.model_price;
   if (!isRecord(ratioMap) || !isRecord(fixedPriceMap)) {
-    throw new MeteredError(
-      "Metered pricing initialization received an invalid pricing configuration.",
-      "metered_pricing_invalid",
-      502,
-    );
+    throw new MeteredError("Metered pricing initialization received an invalid pricing configuration.", "metered_pricing_invalid", 502);
   }
 
   const result = new Set<string>();
@@ -437,18 +428,12 @@ const modelQuotaCoefficients = (pricing: JsonRecord): Record<string, number> => 
   const fixedPrices = pricing.model_price;
   const completionRatios = pricing.completion_ratio;
   if (!isRecord(ratios) || !isRecord(fixedPrices)) {
-    throw new MeteredError(
-      "Metered pricing initialization received an invalid pricing configuration.",
-      "metered_pricing_invalid",
-      502,
-    );
+    throw new MeteredError("Metered pricing initialization received an invalid pricing configuration.", "metered_pricing_invalid", 502);
   }
   const result: Record<string, number> = {};
   for (const [model, ratio] of Object.entries(ratios)) {
     if (!isPositiveFiniteNumber(ratio)) continue;
-    const completion = isRecord(completionRatios) && isPositiveFiniteNumber(completionRatios[model])
-      ? completionRatios[model]
-      : 1;
+    const completion = isRecord(completionRatios) && isPositiveFiniteNumber(completionRatios[model]) ? completionRatios[model] : 1;
     const coefficient = ratio * (1 + completion);
     if (Number.isFinite(coefficient) && coefficient > 0) result[model] = coefficient;
   }
@@ -460,11 +445,7 @@ const modelQuotaCoefficients = (pricing: JsonRecord): Record<string, number> => 
 
 const normalizeCodexModelIds = (value: readonly string[]): string[] => {
   if (!Array.isArray(value)) {
-    throw new MeteredError(
-      "Metered pricing initialization requires the current Codex model catalog.",
-      "metered_pricing_invalid",
-      502,
-    );
+    throw new MeteredError("Metered pricing initialization requires the current Codex model catalog.", "metered_pricing_invalid", 502);
   }
 
   const result: string[] = [];
@@ -472,11 +453,7 @@ const normalizeCodexModelIds = (value: readonly string[]): string[] => {
   for (const rawModelId of value) {
     const modelId = nonEmptyString(rawModelId);
     if (!modelId) {
-      throw new MeteredError(
-        "Metered pricing initialization received an invalid Codex model identifier.",
-        "metered_pricing_invalid",
-        502,
-      );
+      throw new MeteredError("Metered pricing initialization received an invalid Codex model identifier.", "metered_pricing_invalid", 502);
     }
     if (seen.has(modelId)) continue;
     seen.add(modelId);
@@ -485,91 +462,48 @@ const normalizeCodexModelIds = (value: readonly string[]): string[] => {
   return result;
 };
 
-export const initializeMeteredPricing = async (
-  options: InitializeMeteredPricingOptions,
-): Promise<MeteredPricingSnapshot> => {
+export const initializeMeteredPricing = async (options: InitializeMeteredPricingOptions): Promise<MeteredPricingSnapshot> => {
   const fetcher = options.fetcher ?? fetch;
   const [pricingEnvelope, statusEnvelope] = await Promise.all([
-    fetchMetadataJson(
-      METERED_RATIO_CONFIG_URL,
-      fetcher,
-      options.signal,
-      "metered_pricing_unavailable",
-      "metered_pricing_invalid",
-    ),
-    fetchMetadataJson(
-      METERED_STATUS_URL,
-      fetcher,
-      options.signal,
-      "metered_status_unavailable",
-      "metered_status_invalid",
-    ),
+    fetchMetadataJson(METERED_RATIO_CONFIG_URL, fetcher, options.signal, "metered_pricing_unavailable", "metered_pricing_invalid"),
+    fetchMetadataJson(METERED_STATUS_URL, fetcher, options.signal, "metered_status_unavailable", "metered_status_invalid"),
   ]);
 
   const pricing = unwrapSuccessfulEnvelope(pricingEnvelope, "metered_pricing_invalid");
   const status = unwrapSuccessfulEnvelope(statusEnvelope, "metered_status_invalid");
-  if (
-    status.setup !== true || !isPositiveFiniteNumber(status.quota_per_unit) ||
-    !Number.isSafeInteger(status.quota_per_unit)
-  ) {
-    throw new MeteredError(
-      "Metered pricing initialization received an invalid quota conversion.",
-      "metered_status_invalid",
-      502,
-    );
+  if (status.setup !== true || !isPositiveFiniteNumber(status.quota_per_unit) || !Number.isSafeInteger(status.quota_per_unit)) {
+    throw new MeteredError("Metered pricing initialization received an invalid quota conversion.", "metered_status_invalid", 502);
   }
 
   const availableModelIds = pricedModelIds(pricing);
   const coefficients = modelQuotaCoefficients(pricing);
-  const eligibleModelIds = normalizeCodexModelIds(options.codexModelIds)
-    .filter((modelId) => availableModelIds.has(modelId));
+  const eligibleModelIds = normalizeCodexModelIds(options.codexModelIds).filter((modelId) => availableModelIds.has(modelId));
   const checkedAtMs = Math.trunc((options.now ?? Date.now)());
   if (!Number.isSafeInteger(checkedAtMs) || checkedAtMs < 0) {
-    throw new MeteredError(
-      "Metered pricing initialization received an invalid clock value.",
-      "metered_status_invalid",
-      502,
-    );
+    throw new MeteredError("Metered pricing initialization received an invalid clock value.", "metered_status_invalid", 502);
   }
 
   return {
     eligible_model_ids: eligibleModelIds,
     quota_per_credit: status.quota_per_unit,
-    model_quota_coefficients: Object.fromEntries(
-      eligibleModelIds.flatMap((model) => coefficients[model] ? [[model, coefficients[model]]] : []),
-    ),
+    model_quota_coefficients: Object.fromEntries(eligibleModelIds.flatMap((model) => (coefficients[model] ? [[model, coefficients[model]]] : []))),
     checked_at_ms: checkedAtMs,
   };
 };
 
-export const fetchMeteredResponses = async (
-  body: unknown,
-  options: MeteredAuthenticatedFetchOptions = {},
-): Promise<MeteredResponsesResult> => {
+export const fetchMeteredResponses = async (body: unknown, options: MeteredAuthenticatedFetchOptions = {}): Promise<MeteredResponsesResult> => {
   if (!isRecord(body)) {
-    throw new MeteredError(
-      "Metered Responses requests must use a canonical JSON object body.",
-      "metered_request_invalid",
-      400,
-    );
+    throw new MeteredError("Metered Responses requests must use a canonical JSON object body.", "metered_request_invalid", 400);
   }
 
   let encodedBody: string;
   try {
     encodedBody = JSON.stringify(toMeteredResponsesBody(body));
   } catch {
-    throw new MeteredError(
-      "Metered Responses requests must use a JSON-serializable body.",
-      "metered_request_invalid",
-      400,
-    );
+    throw new MeteredError("Metered Responses requests must use a JSON-serializable body.", "metered_request_invalid", 400);
   }
   if (typeof encodedBody !== "string") {
-    throw new MeteredError(
-      "Metered Responses requests must use a JSON-serializable body.",
-      "metered_request_invalid",
-      400,
-    );
+    throw new MeteredError("Metered Responses requests must use a JSON-serializable body.", "metered_request_invalid", 400);
   }
 
   const apiKey = requireMeteredApiKey(options.apiKey);
@@ -579,10 +513,9 @@ export const fetchMeteredResponses = async (
   let response: Response;
   let upstreamAttempt: ReturnType<SentinelUpstreamRecorder["startAttempt"]> | null = null;
   const headersDeadline = new AbortController();
-  const headersTimer = setTimeout(
-    () => headersDeadline.abort(new DOMException("Metered response headers timed out.", "TimeoutError")),
-    STREAM_FIRST_EVENT_DEADLINE_MS,
-  );
+  const headersTimer = setTimeout(() => {
+    headersDeadline.abort(new DOMException("Metered response headers timed out.", "TimeoutError"));
+  }, STREAM_FIRST_EVENT_DEADLINE_MS);
   const signal = options.signal ? AbortSignal.any([options.signal, headersDeadline.signal]) : headersDeadline.signal;
   try {
     // Dispatch-based quota accounting must settle immediately before this
@@ -612,11 +545,7 @@ export const fetchMeteredResponses = async (
     if (options.signal?.aborted) throw options.signal.reason ?? error;
     if (headersDeadline.signal.aborted) throw headersDeadline.signal.reason ?? error;
     rethrowCancellation(error, signal);
-    throw new MeteredError(
-      "Metered Responses request could not reach the upstream service.",
-      "metered_upstream_unreachable",
-      502,
-    );
+    throw new MeteredError("Metered Responses request could not reach the upstream service.", "metered_upstream_unreachable", 502);
   } finally {
     // The deadline covers only request dispatch and response headers. Once a
     // streaming body exists, the shared SSE reader owns renewable inactivity.
@@ -625,7 +554,8 @@ export const fetchMeteredResponses = async (
 
   return {
     response: upstreamAttempt ? upstreamAttempt.wrap(response) : response,
-    request_id: nonEmptyString(response.headers.get("X-Api-Request-Id")) ??
+    request_id:
+      nonEmptyString(response.headers.get("X-Api-Request-Id")) ??
       nonEmptyString(response.headers.get("X-Oneapi-Request-Id")) ??
       nonEmptyString(response.headers.get("X-Request-Id")),
   };
@@ -658,18 +588,80 @@ const normalizeTokenLogEntry = (value: unknown): MeteredTokenLogEntry | null => 
     request_id: requestId,
     quota: value.quota,
     prompt_tokens: value.prompt_tokens,
-    ...(isNonNegativeSafeInteger(value.cached_prompt_tokens)
-      ? { cached_prompt_tokens: value.cached_prompt_tokens }
-      : {}),
+    ...(isNonNegativeSafeInteger(value.cached_prompt_tokens) ? { cached_prompt_tokens: value.cached_prompt_tokens } : {}),
     completion_tokens: value.completion_tokens,
     model,
     created_at: value.created_at,
   };
 };
 
-export const fetchMeteredTokenLogs = async (
-  options: MeteredTokenLogFetchOptions = {},
-): Promise<readonly MeteredTokenLogEntry[]> => {
+const meteredTokenLogPageUrl = (apiKey: string, page: number, pageSize: number, startAtMs: number | undefined, endAtMs: number | undefined): URL => {
+  const url = new URL(METERED_TOKEN_LOGS_URL);
+  url.searchParams.set("key", apiKey);
+  url.searchParams.set("page", String(page));
+  url.searchParams.set("page_size", String(pageSize));
+  if (typeof startAtMs === "number" && Number.isFinite(startAtMs)) {
+    url.searchParams.set("start_timestamp", String(Math.max(0, Math.floor(startAtMs / 1_000))));
+  }
+  if (typeof endAtMs === "number" && Number.isFinite(endAtMs)) {
+    url.searchParams.set("end_timestamp", String(Math.max(0, Math.ceil(endAtMs / 1_000))));
+  }
+  return url;
+};
+
+const envelopeItems = (data: unknown): readonly unknown[] | null => {
+  if (Array.isArray(data)) return data;
+  if (isRecord(data) && Array.isArray(data.items)) return data.items;
+  return null;
+};
+
+type MeteredTokenLogPage = Readonly<{ items: readonly unknown[]; total: number }>;
+
+const fetchMeteredTokenLogPage = async (
+  apiKey: string,
+  page: number,
+  pageSize: number,
+  options: MeteredTokenLogFetchOptions,
+  signal: AbortSignal
+): Promise<MeteredTokenLogPage> => {
+  const url = meteredTokenLogPageUrl(apiKey, page, pageSize, options.startAtMs, options.endAtMs);
+  let response: Response;
+  try {
+    const responsePromise = (options.fetcher ?? fetch)(url, {
+      method: "GET",
+      headers: metadataHeaders(),
+      redirect: "manual",
+      signal,
+    });
+    response = await awaitWithAbort(responsePromise, signal);
+  } catch (error) {
+    rethrowCancellation(error, signal);
+    throw new MeteredError("Metered billing logs could not be reached.", "metered_logs_unavailable", 502);
+  }
+
+  if (!response.ok) {
+    throw new MeteredError("Metered billing logs returned an unsuccessful response.", "metered_logs_unavailable", 502, response.status);
+  }
+
+  let envelope: unknown;
+  try {
+    envelope = (await awaitWithAbort(response.json(), signal)) as unknown;
+  } catch (error) {
+    rethrowCancellation(error, signal);
+    throw new MeteredError("Metered billing logs returned invalid JSON.", "metered_logs_invalid", 502, response.status);
+  }
+  if (!isRecord(envelope) || envelope.success !== true) {
+    throw new MeteredError("Metered billing logs returned an invalid response envelope.", "metered_logs_invalid", 502, response.status);
+  }
+  const data = envelope.data;
+  const items = envelopeItems(data);
+  if (!items) {
+    throw new MeteredError("Metered billing logs returned an invalid response envelope.", "metered_logs_invalid", 502, response.status);
+  }
+  return { items, total: isRecord(data) && isNonNegativeSafeInteger(data.total) ? data.total : items.length };
+};
+
+export const fetchMeteredTokenLogs = async (options: MeteredTokenLogFetchOptions = {}): Promise<readonly MeteredTokenLogEntry[]> => {
   const apiKey = requireMeteredApiKey(options.apiKey);
   const signal = boundedTokenLogSignal(options.signal);
   const requestedIds = new Set(options.requestIds?.map((id) => id.trim()).filter(Boolean) ?? []);
@@ -678,77 +670,7 @@ export const fetchMeteredTokenLogs = async (
   const pageSize = 100;
 
   for (let page = 1; page <= 100; page += 1) {
-    const url = new URL(METERED_TOKEN_LOGS_URL);
-    url.searchParams.set("key", apiKey);
-    url.searchParams.set("page", String(page));
-    url.searchParams.set("page_size", String(pageSize));
-    if (Number.isFinite(options.startAtMs)) {
-      url.searchParams.set("start_timestamp", String(Math.max(0, Math.floor(options.startAtMs! / 1_000))));
-    }
-    if (Number.isFinite(options.endAtMs)) {
-      url.searchParams.set("end_timestamp", String(Math.max(0, Math.ceil(options.endAtMs! / 1_000))));
-    }
-
-    let response: Response;
-    try {
-      const responsePromise = (options.fetcher ?? fetch)(url, {
-        method: "GET",
-        headers: metadataHeaders(),
-        redirect: "manual",
-        signal,
-      });
-      response = await awaitWithAbort(
-        responsePromise,
-        signal,
-      );
-    } catch (error) {
-      rethrowCancellation(error, signal);
-      throw new MeteredError(
-        "Metered billing logs could not be reached.",
-        "metered_logs_unavailable",
-        502,
-      );
-    }
-
-    if (!response.ok) {
-      throw new MeteredError(
-        "Metered billing logs returned an unsuccessful response.",
-        "metered_logs_unavailable",
-        502,
-        response.status,
-      );
-    }
-
-    let envelope: unknown;
-    try {
-      envelope = await awaitWithAbort(response.json(), signal) as unknown;
-    } catch (error) {
-      rethrowCancellation(error, signal);
-      throw new MeteredError(
-        "Metered billing logs returned invalid JSON.",
-        "metered_logs_invalid",
-        502,
-        response.status,
-      );
-    }
-    if (!isRecord(envelope) || envelope.success !== true) {
-      throw new MeteredError(
-        "Metered billing logs returned an invalid response envelope.",
-        "metered_logs_invalid",
-        502,
-        response.status,
-      );
-    }
-    const data = envelope.data;
-    const items = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.items) ? data.items : null;
-    if (!items) {
-      throw new MeteredError(
-        "Metered billing logs returned an invalid response envelope.",
-        "metered_logs_invalid",
-        502,
-        response.status,
-      );
-    }
+    const { items, total } = await fetchMeteredTokenLogPage(apiKey, page, pageSize, options, signal);
     for (const item of items) {
       const log = normalizeTokenLogEntry(item);
       if (!log) continue;
@@ -756,7 +678,6 @@ export const fetchMeteredTokenLogs = async (
       if (requestedIds.has(log.request_id)) foundIds.add(log.request_id);
     }
     if (requestedIds.size > 0 && foundIds.size === requestedIds.size) break;
-    const total = isRecord(data) && isNonNegativeSafeInteger(data.total) ? data.total : items.length;
     if (page * pageSize >= total || items.length === 0) break;
   }
   return logs;

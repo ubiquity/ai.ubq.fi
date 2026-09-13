@@ -24,13 +24,13 @@ class MemoryKv {
   get<T>(key: Deno.KvKey): Promise<Deno.KvEntryMaybe<T>> {
     return Promise.resolve({
       key,
-      value: this.values.get(encodeKey(key)) as T | undefined ?? null,
+      value: (this.values.get(encodeKey(key)) as T | undefined) ?? null,
       versionstamp: this.values.has(encodeKey(key)) ? "00000000000000000001" : null,
     } as Deno.KvEntryMaybe<T>);
   }
 
   atomic(): Deno.AtomicOperation {
-    const sums: Array<Readonly<{ key: Deno.KvKey; amount: bigint }>> = [];
+    const sums: Readonly<{ key: Deno.KvKey; amount: bigint }>[] = [];
     const operation = {
       sum: (key: Deno.KvKey, amount: bigint) => {
         sums.push({ key, amount });
@@ -95,22 +95,16 @@ Deno.test("prompt-cache telemetry gate atomically stores only redacted completed
     assert.equal(value.value, 1n);
   }
 
-  const incomplete = await recordPromptCacheTelemetry(
-    event({ completed: false, usageTelemetryStatus: "reported" }),
-    { kv: kv as unknown as Deno.Kv, release: RELEASE },
-  );
-  const failed = await recordPromptCacheTelemetry(
-    event({ status: 503, usageTelemetryStatus: "reported" }),
-    { kv: kv as unknown as Deno.Kv, release: RELEASE },
-  );
+  const incomplete = await recordPromptCacheTelemetry(event({ completed: false, usageTelemetryStatus: "reported" }), {
+    kv: kv as unknown as Deno.Kv,
+    release: RELEASE,
+  });
+  const failed = await recordPromptCacheTelemetry(event({ status: 503, usageTelemetryStatus: "reported" }), { kv: kv as unknown as Deno.Kv, release: RELEASE });
   assert.deepEqual([incomplete.reason, failed.reason], ["not_completed_2xx", "not_completed_2xx"]);
   assert.equal(kv.atomicCommits, 1);
 
   kv.failNextCommit = true;
-  const unavailable = await recordPromptCacheTelemetry(
-    event({ model: rawModel }),
-    { kv: kv as unknown as Deno.Kv, release: RELEASE },
-  );
+  const unavailable = await recordPromptCacheTelemetry(event({ model: rawModel }), { kv: kv as unknown as Deno.Kv, release: RELEASE });
   assert.equal(unavailable.status, "unavailable");
   assert.equal(unavailable.reason, "kv_unavailable");
   assert.doesNotMatch(JSON.stringify(unavailable), new RegExp(rawModel));
@@ -137,8 +131,8 @@ Deno.test("prompt-cache telemetry gate records invalid usage separately from rep
   const baseline = await readPromptCacheTelemetryBaseline(target, options);
   assert.equal(baseline.aggregate?.invalid, "1");
   assert.equal(baseline.routes.find((route) => route.route === "responses")?.invalid, "1");
-  assert.equal(baseline.aggregate?.reported, "0");
-  assert.equal(baseline.aggregate?.cache_write_reported, "0");
+  assert.equal(baseline.aggregate.reported, "0");
+  assert.equal(baseline.aggregate.cache_write_reported, "0");
 });
 
 Deno.test("prompt-cache telemetry gate fails closed for an unknown release and malformed durable counters", async () => {
@@ -200,15 +194,13 @@ Deno.test("prompt-cache telemetry gate requires aggregate volume, every observed
   assert.equal(eligible.status, "eligible");
   assert.equal(eligible.reason, "eligible");
   assert.equal(eligible.aggregate?.completed, "11000");
-  assert.equal(eligible.aggregate?.reported_coverage, 1);
+  assert.equal(eligible.aggregate.reported_coverage, 1);
   assert.deepEqual(
-    eligible.routes.map((route) => [
-      route.route,
-      route.completed,
-      route.reported_coverage_passed,
-      route.cache_write_reported_coverage_passed,
-    ]),
-    [["responses", "10000", true, true], ["chat.completions", "1000", true, true]],
+    eligible.routes.map((route) => [route.route, route.completed, route.reported_coverage_passed, route.cache_write_reported_coverage_passed]),
+    [
+      ["responses", "10000", true, true],
+      ["chat.completions", "1000", true, true],
+    ]
   );
 
   for (let index = 0; index < 6; index += 1) {
@@ -219,8 +211,8 @@ Deno.test("prompt-cache telemetry gate requires aggregate volume, every observed
   assert.equal(incompleteCoverage.reason, "route_reported_coverage_below_minimum");
   const chatRoute = incompleteCoverage.routes.find((route) => route.route === "chat.completions");
   assert.equal(chatRoute?.completed, "1006");
-  assert.equal(chatRoute?.reported, "1000");
-  assert.equal(chatRoute?.reported_coverage_passed, false);
+  assert.equal(chatRoute.reported, "1000");
+  assert.equal(chatRoute.reported_coverage_passed, false);
 });
 
 Deno.test("prompt-cache telemetry gate requires complete cache-write coverage and counts a valid zero as present", async () => {
@@ -275,29 +267,23 @@ Deno.test("terminal telemetry failures do not change non-stream or SSE responses
   };
 
   try {
-    const nonStream = await withTerminalRequestLog(
-      new Response("complete", { status: 200, headers: { "Content-Type": "application/json" } }),
-      {
-        route: "responses",
-        startedAtMonotonicMs: performance.now(),
-        requestId: "telemetry-failure-non-stream",
-        recordCacheAnalytics: failAnalytics,
-        recordTelemetry: failTelemetry,
-      },
-    );
+    const nonStream = await withTerminalRequestLog(new Response("complete", { status: 200, headers: { "Content-Type": "application/json" } }), {
+      route: "responses",
+      startedAtMonotonicMs: performance.now(),
+      requestId: "telemetry-failure-non-stream",
+      recordCacheAnalytics: failAnalytics,
+      recordTelemetry: failTelemetry,
+    });
     assert.equal(nonStream.status, 200);
     assert.equal(await nonStream.text(), "complete");
 
-    const stream = await withTerminalRequestLog(
-      new Response("data: complete\n\n", { status: 200, headers: { "Content-Type": "text/event-stream" } }),
-      {
-        route: "responses",
-        startedAtMonotonicMs: performance.now(),
-        requestId: "telemetry-failure-sse",
-        recordCacheAnalytics: failAnalytics,
-        recordTelemetry: failTelemetry,
-      },
-    );
+    const stream = await withTerminalRequestLog(new Response("data: complete\n\n", { status: 200, headers: { "Content-Type": "text/event-stream" } }), {
+      route: "responses",
+      startedAtMonotonicMs: performance.now(),
+      requestId: "telemetry-failure-sse",
+      recordCacheAnalytics: failAnalytics,
+      recordTelemetry: failTelemetry,
+    });
     assert.equal(stream.status, 200);
     assert.equal(await stream.text(), "data: complete\n\n");
     assert.equal(telemetryAttempts, 2, "both injected telemetry writes must have failed");
@@ -316,10 +302,7 @@ Deno.test("quota accounting warnings expose only error classes", () => {
     warnings.push(args);
   };
   try {
-    warnQuotaAccountingFailure(
-      { route: "responses", requestId: "quota-warning-redaction" },
-      new TypeError(secret),
-    );
+    warnQuotaAccountingFailure({ route: "responses", requestId: "quota-warning-redaction" }, new TypeError(secret));
     const serialized = JSON.stringify(warnings);
     assert.doesNotMatch(serialized, new RegExp(secret));
     assert.match(serialized, /TypeError/);

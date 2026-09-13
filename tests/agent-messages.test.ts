@@ -21,12 +21,14 @@ const jsonRequest = (url: string, body: unknown): Request =>
     body: JSON.stringify(body),
   });
 
-const makeAuth = (owner = "acme", repo = "demo", stateId = "state-1") => (_req: Request) =>
-  Promise.resolve({
-    ok: true as const,
-    token: "ghs_test_token",
-    method: { kind: "github_token" as const, owner, repo, state_id: stateId, limit_scope: "org" as const },
-  });
+const makeAuth =
+  (owner = "acme", repo = "demo", stateId = "state-1") =>
+  (_req: Request) =>
+    Promise.resolve({
+      ok: true as const,
+      token: "ghs_test_token",
+      method: { kind: "github_token" as const, owner, repo, state_id: stateId, limit_scope: "org" as const },
+    });
 
 const compareKvKeyPart = (left: Deno.KvKeyPart, right: Deno.KvKeyPart): number => {
   if (left === right) return 0;
@@ -49,12 +51,11 @@ const compareKvKey = (left: Deno.KvKey, right: Deno.KvKey): number => {
   return 0;
 };
 
-const matchesPrefix = (key: Deno.KvKey, prefix: Deno.KvKey): boolean =>
-  prefix.every((part, index) => key[index] === part);
+const matchesPrefix = (key: Deno.KvKey, prefix: Deno.KvKey): boolean => prefix.every((part, index) => key[index] === part);
 
 class MemoryKv {
   #counter = 0;
-  entries: Array<Deno.KvEntry<unknown>> = [];
+  entries: Deno.KvEntry<unknown>[] = [];
 
   set(key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }): Promise<{ ok: true }> {
     this.#counter += 1;
@@ -68,7 +69,9 @@ class MemoryKv {
     results = results.sort((a, b) => compareKvKey(a.key, b.key));
 
     if ("start" in selector) {
-      results = results.filter((entry) => compareKvKey(entry.key, selector.start ?? []) >= 0);
+      // `"start" in selector` narrows Deno.KvListSelector to a variant whose
+      // `start` is a required Deno.KvKey, so it can never be nullish here.
+      results = results.filter((entry) => compareKvKey(entry.key, selector.start) >= 0);
     }
 
     const limit = options.limit ?? results.length;
@@ -142,14 +145,18 @@ Deno.test("agent-messages: list returns messages and cursor info", async () => {
   const kv = new MemoryKv();
   const auth = makeAuth();
 
-  await handleAgentMessagesPost(
-    jsonRequest("https://ai.ubq.fi/uos/agent-messages", { agent_id: "agent-1", body: "one" }),
-    { authenticateClient: auth, kv, now: () => 1000, uuid: () => "msg-1" },
-  );
-  await handleAgentMessagesPost(
-    jsonRequest("https://ai.ubq.fi/uos/agent-messages", { agent_id: "agent-1", body: "two" }),
-    { authenticateClient: auth, kv, now: () => 2000, uuid: () => "msg-2" },
-  );
+  await handleAgentMessagesPost(jsonRequest("https://ai.ubq.fi/uos/agent-messages", { agent_id: "agent-1", body: "one" }), {
+    authenticateClient: auth,
+    kv,
+    now: () => 1000,
+    uuid: () => "msg-1",
+  });
+  await handleAgentMessagesPost(jsonRequest("https://ai.ubq.fi/uos/agent-messages", { agent_id: "agent-1", body: "two" }), {
+    authenticateClient: auth,
+    kv,
+    now: () => 2000,
+    uuid: () => "msg-2",
+  });
 
   const res = await handleAgentMessagesList(new Request("https://ai.ubq.fi/uos/agent-messages?limit=1"), {
     authenticateClient: auth,

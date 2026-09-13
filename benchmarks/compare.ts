@@ -36,28 +36,17 @@ import {
   serializeToolResultContent,
 } from "../src/harmony/reliability/context.ts";
 import { broadToolSurface, compactToolSurface, surfaceTokenCost } from "../src/harmony/reliability/surfaces.ts";
-import {
-  deriveStateWithMeta,
-  type ReliabilityRun,
-  replayMeta,
-  stateContract,
-} from "../src/harmony/reliability/state.ts";
+import { deriveStateWithMeta, type ReliabilityRun, replayMeta, stateContract } from "../src/harmony/reliability/state.ts";
 import { DEFAULT_VERIFICATION_POLICY, type VerificationPolicy } from "../src/harmony/reliability/verify.ts";
 import { referenceAdapter } from "./adapter.ts";
 import { loadTasks, selectTasks } from "./manifest.ts";
 import { finalsFromEvents, observationsFromEvents } from "./reliability.ts";
 import { runOne } from "./runner.ts";
-import {
-  BENCHMARK_ROOT,
-  BENCHMARK_SCHEMA_VERSION,
-  DEFAULT_RUNS_ROOT,
-  TaskManifest,
-  TrajectoryEvent,
-} from "./schemas.ts";
+import { BENCHMARK_ROOT, BENCHMARK_SCHEMA_VERSION, DEFAULT_RUNS_ROOT, TaskManifest, TrajectoryEvent } from "./schemas.ts";
 
 const TAIL_TURNS: Readonly<Record<ContextBudgetKind, number>> = { short: 2, medium: 4, large: 8 };
 
-export interface BudgetEvidence {
+export type BudgetEvidence = {
   budget: ContextBudgetKind;
   target_tokens: number;
   full_transcript_tokens: number;
@@ -67,52 +56,55 @@ export interface BudgetEvidence {
   compaction_met_budget: boolean;
   structured_met_budget: boolean;
   contract_preserved: boolean;
-}
+};
 
-export interface TaskContextEvidence {
+export type TaskContextEvidence = {
   task_id: string;
   tool_calls: number;
   full_transcript_tokens: number;
   surfaces: { id: string; tools: number; tokens: number }[];
   budgets: BudgetEvidence[];
-}
+};
 
-export interface ContextEvidence {
+export type ContextEvidence = {
   schema_version: string;
   mode: "deterministic";
   generated_at: string;
   tasks: TaskContextEvidence[];
-  aggregate: Record<ContextBudgetKind, {
-    tasks: number;
-    contract_preserved: number;
-    compaction_met_budget: number;
-    structured_met_budget: number;
-    full_tokens: number;
-    compaction_tokens: number;
-    structured_tokens: number;
-    compaction_ratio: number;
-    structured_ratio: number;
-  }>;
+  aggregate: Record<
+    ContextBudgetKind,
+    {
+      tasks: number;
+      contract_preserved: number;
+      compaction_met_budget: number;
+      structured_met_budget: number;
+      full_tokens: number;
+      compaction_tokens: number;
+      structured_tokens: number;
+      compaction_ratio: number;
+      structured_ratio: number;
+    }
+  >;
   surfaces: { id: string; tools: number; tokens: number }[];
-}
+};
 
 /** Builds the model-facing conversation from a recorded trajectory. */
 export function conversationFromEvents(events: readonly TrajectoryEvent[]): Conversation {
   const turns: ConversationTurn[] = [];
   for (const event of events) {
     if (event.type !== "tool_call") continue;
-    const result = events.find((e): e is Extract<TrajectoryEvent, { type: "tool_result" }> =>
-      e.type === "tool_result" && e.id === event.id
-    );
+    const result = events.find((e): e is Extract<TrajectoryEvent, { type: "tool_result" }> => e.type === "tool_result" && e.id === event.id);
     turns.push({
       role: "assistant",
       content: null,
       analysis: [],
-      toolCalls: [{
-        id: event.id,
-        name: event.tool,
-        arguments: JSON.stringify(event.arguments),
-      }],
+      toolCalls: [
+        {
+          id: event.id,
+          name: event.tool,
+          arguments: JSON.stringify(event.arguments),
+        },
+      ],
       finishReason: "tool_calls",
     });
     turns.push({
@@ -139,8 +131,8 @@ export function observationsFromConversation(conversation: Conversation): Return
     const turn = turns[i];
     if (turn.role !== "assistant" || turn.toolCalls.length !== 1) continue;
     const call = turn.toolCalls[0];
-    const next = turns[i + 1];
-    if (next === undefined || next.role !== "tool" || next.toolCallId !== call.id) continue;
+    const next = turns.at(i + 1);
+    if (next?.role !== "tool" || next.toolCallId !== call.id) continue;
     const parsed = parseToolResultContent(next.content);
     seq += 1;
     observations.push({
@@ -198,10 +190,7 @@ export function buildTaskEvidence(task: TaskManifest, events: readonly Trajector
     const policyFor = COMPACTION_POLICIES[kind];
     const compacted = compactTranscript(conversation, { budget: kind });
     const compactedObservations = observationsFromConversation(compacted.conversation);
-    const compactedState = deriveStateWithMeta(
-      { observations: compactedObservations, finals, modelCalls },
-      replayMeta(compactedObservations, policy),
-    );
+    const compactedState = deriveStateWithMeta({ observations: compactedObservations, finals, modelCalls }, replayMeta(compactedObservations, policy));
     const structured = renderStructuredContext(fullState, conversation, { maxTailTurns: TAIL_TURNS[kind] });
     const structuredTokens = estimateTokens(structured) + surfaceTokenCost(compactToolSurface());
     const reads = compacted.drops.filter((d) => d.kind === "stale_read").length;
@@ -229,10 +218,7 @@ export function buildTaskEvidence(task: TaskManifest, events: readonly Trajector
 }
 
 /** Builds the full evidence document for a set of tasks (hermetic). */
-export async function buildContextEvidence(
-  tasks: readonly TaskManifest[],
-  runsRoot: string = DEFAULT_RUNS_ROOT,
-): Promise<ContextEvidence> {
+export async function buildContextEvidence(tasks: readonly TaskManifest[], runsRoot: string = DEFAULT_RUNS_ROOT): Promise<ContextEvidence> {
   const fixturesDir = `${BENCHMARK_ROOT}/fixtures`;
   const tasksDir = `${BENCHMARK_ROOT}/tasks`;
   const evidence: TaskContextEvidence[] = [];
@@ -249,8 +235,12 @@ export async function buildContextEvidence(
 
   const aggregate = {} as ContextEvidence["aggregate"];
   for (const kind of ["short", "medium", "large"] as const) {
-    const perKind = evidence.map((t) => t.budgets.find((b) => b.budget === kind)!);
-    const sum = (fn: (b: typeof perKind[number]) => number) => perKind.reduce((n, b) => n + fn(b), 0);
+    const perKind = evidence.map((t) => {
+      const budget = t.budgets.find((b) => b.budget === kind);
+      if (budget === undefined) throw new Error(`task ${t.task_id} has no ${kind} budget evidence`);
+      return budget;
+    });
+    const sum = (fn: (b: (typeof perKind)[number]) => number) => perKind.reduce((n, b) => n + fn(b), 0);
     aggregate[kind] = {
       tasks: perKind.length,
       contract_preserved: sum((b) => (b.contract_preserved ? 1 : 0)),
@@ -259,12 +249,8 @@ export async function buildContextEvidence(
       full_tokens: sum((b) => b.full_transcript_tokens),
       compaction_tokens: sum((b) => b.compaction_tokens),
       structured_tokens: sum((b) => b.structured_tokens),
-      compaction_ratio: sum((b) => b.full_transcript_tokens) === 0
-        ? 0
-        : sum((b) => b.compaction_tokens) / sum((b) => b.full_transcript_tokens),
-      structured_ratio: sum((b) => b.full_transcript_tokens) === 0
-        ? 0
-        : sum((b) => b.structured_tokens) / sum((b) => b.full_transcript_tokens),
+      compaction_ratio: sum((b) => b.full_transcript_tokens) === 0 ? 0 : sum((b) => b.compaction_tokens) / sum((b) => b.full_transcript_tokens),
+      structured_ratio: sum((b) => b.full_transcript_tokens) === 0 ? 0 : sum((b) => b.structured_tokens) / sum((b) => b.full_transcript_tokens),
     };
   }
   return {
@@ -291,23 +277,18 @@ export async function buildContextEvidence(
 function formatEvidence(evidence: ContextEvidence): string {
   const lines: string[] = [];
   lines.push(`mode: ${evidence.mode}  tasks: ${evidence.tasks.length}`);
-  const surface = evidence.surfaces.find((s) => s.id === "compact")!;
-  const broad = evidence.surfaces.find((s) => s.id === "broad")!;
-  lines.push(
-    `surfaces: compact ${surface.tools} tools / ${surface.tokens} tok; broad ${broad.tools} tools / ${broad.tokens} tok`,
-  );
+  const surface = evidence.surfaces.find((s) => s.id === "compact");
+  const broad = evidence.surfaces.find((s) => s.id === "broad");
+  if (surface === undefined || broad === undefined) throw new Error("context evidence is missing its compact or broad tool-surface entry");
+  lines.push(`surfaces: compact ${surface.tools} tools / ${surface.tokens} tok; broad ${broad.tools} tools / ${broad.tokens} tok`);
   lines.push("");
   lines.push("budget  contract  comp-met  struct-met  full  comp   struct  comp/full  struct/full");
   for (const kind of ["short", "medium", "large"] as const) {
     const a = evidence.aggregate[kind];
     lines.push(
       `${kind.padEnd(7)} ${String(a.contract_preserved).padEnd(8)} ${String(a.compaction_met_budget).padEnd(9)} ` +
-        `${String(a.structured_met_budget).padEnd(10)} ${String(a.full_tokens).padEnd(7)} ${
-          String(a.compaction_tokens).padEnd(6)
-        } ` +
-        `${String(a.structured_tokens).padEnd(7)} ${(a.compaction_ratio * 100).toFixed(0).padEnd(9)}% ${
-          (a.structured_ratio * 100).toFixed(0)
-        }%`,
+        `${String(a.structured_met_budget).padEnd(10)} ${String(a.full_tokens).padEnd(7)} ${String(a.compaction_tokens).padEnd(6)} ` +
+        `${String(a.structured_tokens).padEnd(7)} ${(a.compaction_ratio * 100).toFixed(0).padEnd(9)}% ${(a.structured_ratio * 100).toFixed(0)}%`
     );
   }
   return lines.join("\n");
@@ -332,10 +313,7 @@ export function parseCompareArgs(argv: string[]): { taskSelectors: string[]; run
 if (import.meta.main) {
   const parsed = parseCompareArgs(Deno.args);
   if ("help" in parsed) {
-    console.log(
-      "usage: deno run --allow-read --allow-write=benchmark-runs --allow-run=sh,git " +
-        "benchmarks/compare.ts [--tasks=*] [--runs=benchmark-runs]",
-    );
+    console.log("usage: deno run --allow-read --allow-write=benchmark-runs --allow-run=sh,git " + "benchmarks/compare.ts [--tasks=*] [--runs=benchmark-runs]");
     Deno.exit(0);
   }
   const tasks = loadTasks(`${BENCHMARK_ROOT}/tasks`);

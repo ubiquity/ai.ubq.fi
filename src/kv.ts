@@ -13,9 +13,21 @@ export const initializeKv = (kv: Deno.Kv): void => {
   openedKv = kv;
 };
 
+/**
+ * Uniform value in `[0, 1)` with the same 53-bit resolution as `Math.random`.
+ * The reconnect jitter below is the only consumer: it spreads the retries of
+ * independent hosts across time, so predictability costs nothing -- but the
+ * platform CSPRNG is free here and keeps a reproducible sequence out of the
+ * reconnect schedule.
+ */
+const randomUnitInterval = (): number => {
+  const [high = 0, low = 0] = crypto.getRandomValues(new Uint32Array(2));
+  return (high * 2 ** 21 + (low >>> 11)) / 2 ** 53;
+};
+
 const retryDelayMs = (failureCount: number): number => {
   const capped = Math.min(5_000, 250 * 2 ** Math.min(5, Math.max(0, failureCount - 1)));
-  return Math.trunc(capped * (0.75 + Math.random() * 0.5));
+  return Math.trunc(capped * (0.75 + randomUnitInterval() * 0.5));
 };
 
 const openKv = async (): Promise<Deno.Kv | null> => {

@@ -38,7 +38,7 @@ export const canonicalize = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(canonicalize);
   if (typeof value === "object" && value !== null) {
     const out: Record<string, unknown> = {};
-    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+    for (const key of Object.keys(value as Record<string, unknown>).sort((a, b) => a.localeCompare(b))) {
       out[key] = canonicalize((value as Record<string, unknown>)[key]);
     }
     return out;
@@ -50,8 +50,7 @@ export const canonicalize = (value: unknown): unknown => {
 export const canonicalArgs = (args: Record<string, unknown>): string => JSON.stringify(canonicalize(args));
 
 /** Stable identity of one (tool, arguments) pair. */
-export const callIdentity = (tool: string, args: Record<string, unknown>): string =>
-  `${tool}\u0000${canonicalArgs(args)}`;
+export const callIdentity = (tool: string, args: Record<string, unknown>): string => `${tool}\u0000${canonicalArgs(args)}`;
 
 /** Digest of the model-visible effect of one result (deterministic). */
 export const effectDigest = (result: ResultLike): string => {
@@ -65,7 +64,7 @@ export const effectSignature = (tool: string, args: Record<string, unknown>, res
 
 export type DuplicateFlag = "exact_adjacent" | "repeat_after_success";
 
-export interface LoopFlags {
+export type LoopFlags = {
   /** Identity duplication detected (never qualifies a retry-after-failure). */
   duplicate: DuplicateFlag | null;
   /** True when this call closes a semantic loop within the window. */
@@ -73,16 +72,16 @@ export interface LoopFlags {
   loopKind: "pattern_recurrence" | "effect_repeat" | null;
   /** Consecutive calls flagged as semantic loops (after this call). */
   streak: number;
-}
+};
 
-export interface LoopDetectorOptions {
+export type LoopDetectorOptions = {
   /** Rolling window of remembered call signatures; default 8. */
   window?: number;
   /** Pattern length compared for sequence recurrence; default 4. */
   patternLength?: number;
   /** Repetitions of one effect signature that close a loop; default 3. */
   effectRepeatThreshold?: number;
-}
+};
 
 export const DEFAULT_LOOP_WINDOW = 8;
 export const DEFAULT_LOOP_PATTERN_LENGTH = 4;
@@ -123,16 +122,15 @@ export class LoopDetector {
    * of a guard (duplicate/repeated-failure rejection): its effect signature
    * is still recorded so repeated rejections close a loop.
    */
-  observe(
-    tool: string,
-    args: Record<string, unknown>,
-    result: ResultLike,
-  ): LoopFlags {
+  observe(tool: string, args: Record<string, unknown>, result: ResultLike): LoopFlags {
     const identity = callIdentity(tool, args);
     const effect = effectSignature(tool, args, result);
     this.#identities.push([identity, effect]);
     while (this.#identities.length > this.#window) {
-      const evicted = this.#identities.shift()!;
+      const evicted = this.#identities.shift();
+      if (evicted === undefined) {
+        throw new Error("loop detector: cannot evict a call identity from an empty history (window must not be negative)");
+      }
       this.#effects[evicted[1]] = Math.max(0, (this.#effects[evicted[1]] ?? 1) - 1);
     }
     this.#effects[effect] = (this.#effects[effect] ?? 0) + 1;
@@ -150,12 +148,21 @@ export class LoopDetector {
 
     const semanticLoop = patternLoop || effectLoop;
     this.#streak = semanticLoop ? this.#streak + 1 : 0;
+    // Adjacency of this call to the immediately previous one; reported
+    // independently of the loop verdict (retry.ts decides on allowances).
+    let duplicate: DuplicateFlag | null = null;
+    if (this.#last !== null && this.#last.identity === identity) {
+      duplicate = this.#last.ok ? "repeat_after_success" : "exact_adjacent";
+    }
+    // Pattern recurrence outranks effect repetition when both fire.
+    let loopKind: LoopFlags["loopKind"] = null;
+    if (patternLoop) loopKind = "pattern_recurrence";
+    else if (effectLoop) loopKind = "effect_repeat";
+
     const flags: LoopFlags = {
-      duplicate: this.#last !== null && this.#last.identity === identity
-        ? (this.#last.ok ? "repeat_after_success" : "exact_adjacent")
-        : null,
+      duplicate,
       semanticLoop,
-      loopKind: patternLoop ? "pattern_recurrence" : effectLoop ? "effect_repeat" : null,
+      loopKind,
       streak: this.#streak,
     };
     this.#last = { identity, ok: result.ok };
@@ -178,8 +185,6 @@ export class LoopDetector {
 /** Renders a deterministic one-line loop rejection message. */
 export const renderLoopFeedback = (flags: LoopFlags): string => {
   if (!flags.semanticLoop) return "";
-  const kind = flags.loopKind === "pattern_recurrence"
-    ? "the same call sequence keeps repeating"
-    : "the same action produces the same result";
+  const kind = flags.loopKind === "pattern_recurrence" ? "the same call sequence keeps repeating" : "the same action produces the same result";
   return `semantic loop detected (${kind}); take a materially different action or verify the result — repeating this action will not change the outcome`;
 };

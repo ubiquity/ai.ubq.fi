@@ -14,7 +14,7 @@ Deno.test("B: implements the BenchmarkAdapter contract and is refused by default
   const adapter = createBaselineB();
   if (adapter.configId !== "B") throw new Error(`configId must be B, got ${adapter.configId}`);
   if (adapter.name !== "codex-infinity-bridge") throw new Error(`unexpected name ${adapter.name}`);
-  if (adapter.requiresExternalInference !== true) throw new Error("B must require external inference");
+  if (!adapter.requiresExternalInference) throw new Error("B must require external inference");
   if (typeof adapter.run !== "function") throw new Error("run must be a function");
 });
 
@@ -66,7 +66,10 @@ Deno.test("B: scripted driver completes nav-001 and records bridge events", asyn
     const callIds = events.filter((e) => e.type === "tool_call").map((e) => (e as { id: string }).id);
     const resultIds = events.filter((e) => e.type === "tool_result").map((e) => (e as { id: string }).id);
     if (callIds.join(",") !== resultIds.join(",")) throw new Error("tool_call/tool_result ids must be paired");
-    const requestIds = events.filter((e) => e.type === "model_request").map((e) => (e as { id: number }).id).join(",");
+    const requestIds = events
+      .filter((e) => e.type === "model_request")
+      .map((e) => (e as { id: number }).id)
+      .join(",");
     if (requestIds !== "1,2") throw new Error(`expected monotonic bridge request ids, got ${requestIds}`);
   } finally {
     Deno.removeSync(opts.runsRoot, { recursive: true });
@@ -74,7 +77,10 @@ Deno.test("B: scripted driver completes nav-001 and records bridge events", asyn
 });
 
 Deno.test("B: pinned provenance record matches the live primary-source facts", () => {
-  const pin = CODEX_INFINITY_SOURCE_PIN;
+  // Read through a widened view on purpose: the pin's own fields are literal
+  // types, so a literal-vs-literal comparison is decided statically and would
+  // stop catching drift the moment the pin is edited.
+  const pin: Readonly<Record<string, string>> = CODEX_INFINITY_SOURCE_PIN;
   if (pin.repositoryUrl !== "https://github.com/lee101/codex-infinity") {
     throw new Error("repository URL drifted");
   }
@@ -87,9 +93,7 @@ Deno.test("B: pinned provenance record matches the live primary-source facts", (
 });
 
 Deno.test("B: assumed JSONL parser maps events and skips unverified lines", () => {
-  const request = parseCodexProcessLine(
-    JSON.stringify({ type: "model_request", id: 1, model: "cerebras/gpt-oss-120b", message_count: 2 }),
-  );
+  const request = parseCodexProcessLine(JSON.stringify({ type: "model_request", id: 1, model: "cerebras/gpt-oss-120b", message_count: 2 }));
   if (request?.kind !== "model_request" || request.id !== 1 || request.model !== "cerebras/gpt-oss-120b") {
     throw new Error("model_request line did not map");
   }
@@ -100,7 +104,7 @@ Deno.test("B: assumed JSONL parser maps events and skips unverified lines", () =
       content: "text",
       tool_calls: [{ id: "call-1", name: "filesystem.read", arguments: { path: "a.txt" } }],
       finish_reason: "tool_calls",
-    }),
+    })
   );
   if (response?.kind !== "model_response" || response.tool_calls[0]?.name !== "filesystem.read") {
     throw new Error("model_response line did not map");
@@ -112,21 +116,24 @@ Deno.test("B: assumed JSONL parser maps events and skips unverified lines", () =
 });
 
 Deno.test("B: bridge event mapping produces schema-valid trajectory events", () => {
-  const event = bridgeEventToTrajectory({
-    kind: "tool_call",
-    id: "c1",
-    tool: "filesystem.read",
-    arguments: { path: "docs/spec.txt" },
-    valid: true,
-  }, "2026-08-29T00:00:00.000Z");
+  const event = bridgeEventToTrajectory(
+    {
+      kind: "tool_call",
+      id: "c1",
+      tool: "filesystem.read",
+      arguments: { path: "docs/spec.txt" },
+      valid: true,
+    },
+    "2026-08-29T00:00:00.000Z"
+  );
   validateTrajectoryEvent(event);
-  if (event.type !== "tool_call" || event.valid !== true) throw new Error("tool_call mapping failed");
+  if (event.type !== "tool_call" || !event.valid) throw new Error("tool_call mapping failed");
 });
 
 Deno.test("B: child stderr is drained without waiting for stdout", async () => {
   let stderrPulls = 0;
   let releaseStdout!: () => void;
-  const stderrReady = new Promise<void>((resolve) => releaseStdout = resolve);
+  const stderrReady = new Promise<void>((resolve) => (releaseStdout = resolve));
   const stderr = new ReadableStream<Uint8Array>({
     pull(controller) {
       controller.enqueue(new Uint8Array(64 * 1024));
@@ -149,7 +156,11 @@ Deno.test("B: child stderr is drained without waiting for stdout", async () => {
   const stdoutRead = stdout.getReader().read();
   const result = await Promise.race([
     stdoutRead,
-    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("stream drain deadlocked")), 1_000)),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => {
+        reject(new Error("stream drain deadlocked"));
+      }, 1_000)
+    ),
   ]);
   await drain;
 

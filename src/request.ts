@@ -4,9 +4,7 @@ const rawBodyObservers = new WeakMap<Request, RawBodyObserver>();
 
 export const MAX_ACCEPTED_JSON_BODY_BYTES = 32 * 1_024 * 1_024;
 
-export type JsonBodyReadResult =
-  | Readonly<{ ok: true; value: unknown }>
-  | Readonly<{ ok: false; kind: "empty" | "invalid" | "too_large" }>;
+export type JsonBodyReadResult = Readonly<{ ok: true; value: unknown }> | Readonly<{ ok: false; kind: "empty" | "invalid" | "too_large" }>;
 
 class RequestBodyTooLargeError extends Error {
   constructor() {
@@ -35,16 +33,13 @@ export const discardRawBodyObserverOnce = (req: Request): void => {
 const declaredContentLength = (req: Request): number | null => {
   const raw = req.headers.get("content-length");
   if (raw === null) return null;
-  if (!/^(?:0|[1-9][0-9]*)$/.test(raw)) throw new Error("Request Content-Length is invalid");
+  if (!/^(?:0|[1-9]\d*)$/.test(raw)) throw new Error("Request Content-Length is invalid");
   const parsed = Number(raw);
   if (!Number.isSafeInteger(parsed)) throw new Error("Request Content-Length is invalid");
   return parsed;
 };
 
-const readBoundedRequestBody = async (
-  req: Request,
-  maxBytes: number,
-): Promise<Uint8Array<ArrayBuffer>> => {
+const readBoundedRequestBody = async (req: Request, maxBytes: number): Promise<Uint8Array<ArrayBuffer>> => {
   const declared = declaredContentLength(req);
   if (declared !== null && declared > maxBytes) {
     await req.body?.cancel().catch(() => {});
@@ -82,10 +77,7 @@ const readBoundedRequestBody = async (
   }
 };
 
-export const readJsonBodyWithLimit = async (
-  req: Request,
-  maxBytes: number,
-): Promise<JsonBodyReadResult> => {
+export const readJsonBodyWithLimit = async (req: Request, maxBytes: number): Promise<JsonBodyReadResult> => {
   let bytes: Uint8Array<ArrayBuffer> | null = null;
   let captured = false;
   try {
@@ -104,10 +96,7 @@ export const readJsonBodyWithLimit = async (
   }
 };
 
-export const readJsonBody = async (
-  req: Request,
-  maxBytes = MAX_ACCEPTED_JSON_BODY_BYTES,
-): Promise<unknown> => {
+export const readJsonBody = async (req: Request, maxBytes = MAX_ACCEPTED_JSON_BODY_BYTES): Promise<unknown> => {
   const result = await readJsonBodyWithLimit(req, maxBytes);
   return result.ok ? result.value : null;
 };

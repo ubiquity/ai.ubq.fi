@@ -32,14 +32,7 @@ import {
 } from "./admin.ts";
 import { handleAdminErrors, recordAdminError } from "./admin_error_log.ts";
 import { handleAgentMessagesList, handleAgentMessagesPost } from "./agent_messages.ts";
-import {
-  authenticateAdmin,
-  authenticateClient,
-  getKernelAttestationContext,
-  handleV1Auth,
-  requireAdminAuth,
-  requireSuperAdminAuth,
-} from "./auth.ts";
+import { authenticateAdmin, authenticateClient, getKernelAttestationContext, handleV1Auth, requireAdminAuth, requireSuperAdminAuth } from "./auth.ts";
 import {
   type ApiKeyPolicy,
   ApiKeyQuotaDispatchError,
@@ -103,10 +96,8 @@ import { handleAdminSentinelReplayCaptures } from "./sentinel_replay_admin.ts";
 import { handleAdminSentinelIncidents } from "./sentinel_incident_admin.ts";
 import type { recordSentinelProviderDegradationFromEnvironment } from "./sentinel_incident_outbox.ts";
 
-type AuthenticatedClientResult = Extract<
-  Awaited<ReturnType<typeof authenticateClient>>,
-  { ok: true }
->;
+type ClientAuthResult = Awaited<ReturnType<typeof authenticateClient>>;
+type AuthenticatedClientResult = Extract<ClientAuthResult, { ok: true }>;
 
 type RequestDeliveryInfo = Readonly<{
   completed: Promise<void>;
@@ -131,10 +122,7 @@ const sentinelBackgroundTaskRegistrar = (): SentinelBackgroundTaskRegistrar | nu
   return null;
 };
 
-const scheduleSentinelBackgroundTask = (
-  task: Promise<void>,
-  registrar: SentinelBackgroundTaskRegistrar | undefined,
-): boolean => {
+const scheduleSentinelBackgroundTask = (task: Promise<void>, registrar: SentinelBackgroundTaskRegistrar | undefined): boolean => {
   const waitUntil = registrar ?? sentinelBackgroundTaskRegistrar();
   if (!waitUntil) return false;
   try {
@@ -146,16 +134,18 @@ const scheduleSentinelBackgroundTask = (
 };
 
 export const shouldSignalSentinelProviderDegradation = (
-  input: Readonly<{ status: number; completed: boolean; removedProviderTriggerClass: string | null }>,
-): boolean =>
-  input.status >= 200 && input.status < 400 && input.completed && input.removedProviderTriggerClass !== null;
+  input: Readonly<{ status: number; completed: boolean; removedProviderTriggerClass: string | null }>
+): boolean => input.status >= 200 && input.status < 400 && input.completed && input.removedProviderTriggerClass !== null;
 
 type PrincipalAuthResult = Readonly<{
   token: string | null;
-  method:
-    | Readonly<{ kind: "kv_api_key"; key_id: string }>
-    | Exclude<AuthenticatedClientResult["method"], { kind: "kv_api_key" }>;
+  method: Readonly<{ kind: "kv_api_key"; key_id: string }> | Exclude<AuthenticatedClientResult["method"], { kind: "kv_api_key" }>;
 }>;
+
+/** Exhaustiveness guard for authentication method kinds; unreachable at runtime. */
+const assertNeverAuthMethod = (method: never): never => {
+  throw new Error(`Unhandled authentication method: ${JSON.stringify(method)}`);
+};
 
 export const resolveIdempotencyPrincipal = async (authResult: PrincipalAuthResult): Promise<string> => {
   switch (authResult.method.kind) {
@@ -171,12 +161,19 @@ export const resolveIdempotencyPrincipal = async (authResult: PrincipalAuthResul
       return `auth-method:${authResult.method.kind}`;
     case "disabled":
       return authResult.token ? `bearer-sha256:${await sha256Hex(authResult.token)}` : "local-auth-disabled";
+    default:
+      // Every known method kind is handled above; this keeps the switch total.
+      return assertNeverAuthMethod(authResult.method);
   }
 };
 
 const normalizePath = (path: string): string => {
   if (path === "/") return path;
-  return path.replace(/\/+$/, "");
+  // Equivalent to `path.replace(/\/+$/, "")`, without the quadratic
+  // backtracking that pattern needs when a request path ends in many slashes.
+  let end = path.length;
+  while (end > 0 && path[end - 1] === "/") end -= 1;
+  return path.slice(0, end);
 };
 
 const withRequestId = (response: Response, requestId: string): Response => {
@@ -189,14 +186,8 @@ const withRequestId = (response: Response, requestId: string): Response => {
   });
 };
 
-const decorateInferenceQuota = (
-  response: Response,
-  policy: ApiKeyPolicy | null,
-  telemetry: ResponseTelemetry | null,
-): Response => {
-  const usedPercent = telemetry?.quotaUsedPercent !== undefined
-    ? telemetry.quotaUsedPercent
-    : apiKeyQuotaUsedPercent(policy);
+const decorateInferenceQuota = (response: Response, policy: ApiKeyPolicy | null, telemetry: ResponseTelemetry | null): Response => {
+  const usedPercent = telemetry?.quotaUsedPercent !== undefined ? telemetry.quotaUsedPercent : apiKeyQuotaUsedPercent(policy);
   const codexDecorated = withCodexQuotaHeaders(response, usedPercent === null ? null : { used_percent: usedPercent });
   const headers = new Headers(codexDecorated.headers);
   for (const [name, value] of Object.entries(apiKeyRateLimitPolicyHeaders(policy))) headers.set(name, value);
@@ -252,22 +243,19 @@ const logTerminalRequest = async (
     recordAdminError?: typeof recordAdminError;
     streamReadFailure?: boolean;
     suppressSentinelReplay?: boolean;
-    resolveClientBodyObservation?: () =>
-      | SentinelClientBodyObservation
-      | null
-      | Promise<SentinelClientBodyObservation | null>;
-  }>,
+    resolveClientBodyObservation?: () => SentinelClientBodyObservation | null | Promise<SentinelClientBodyObservation | null>;
+  }>
 ): Promise<void> => {
   const telemetry = getResponseTelemetry(input.telemetryResponse ?? input.response);
   const accountCohortId = getResponseAccountCohortId(input.telemetryResponse ?? input.response);
   const latencyMs = Math.max(0, Math.round(performance.now() - input.startedAtMonotonicMs));
-  const downstreamDrainMs = telemetry?.stream === true && telemetry.firstSemanticCommitmentMs !== null &&
-      telemetry.streamTerminalMs !== null && input.downstreamDrainedAtMonotonicMs !== undefined
-    ? Math.max(
-      0,
-      Math.round(input.downstreamDrainedAtMonotonicMs - input.startedAtMonotonicMs) - telemetry.streamTerminalMs,
-    )
-    : null;
+  const downstreamDrainMs =
+    telemetry?.stream === true &&
+    telemetry.firstSemanticCommitmentMs !== null &&
+    telemetry.streamTerminalMs !== null &&
+    input.downstreamDrainedAtMonotonicMs !== undefined
+      ? Math.max(0, Math.round(input.downstreamDrainedAtMonotonicMs - input.startedAtMonotonicMs) - telemetry.streamTerminalMs)
+      : null;
   const terminal = {
     request_id: input.requestId,
     route: input.route,
@@ -303,13 +291,9 @@ const logTerminalRequest = async (
     fallback_reason: telemetry?.fallbackReason ?? null,
     semantic_output_observed: telemetry?.semanticOutputObserved ?? null,
     upstream_event_kinds: telemetry?.upstreamEventKinds ?? [],
-    stream: input.streamReadFailure ? telemetry?.stream ?? true : telemetry?.stream ?? null,
-    stream_terminal_type: input.streamReadFailure
-      ? telemetry?.streamTerminalType ?? "error"
-      : telemetry?.streamTerminalType ?? null,
-    failure_kind: input.streamReadFailure
-      ? telemetry?.failureKind ?? "gateway_stream_read_error"
-      : telemetry?.failureKind ?? null,
+    stream: input.streamReadFailure ? (telemetry?.stream ?? true) : (telemetry?.stream ?? null),
+    stream_terminal_type: input.streamReadFailure ? (telemetry?.streamTerminalType ?? "error") : (telemetry?.streamTerminalType ?? null),
+    failure_kind: input.streamReadFailure ? (telemetry?.failureKind ?? "gateway_stream_read_error") : (telemetry?.failureKind ?? null),
     response_created_observed: telemetry?.responseCreatedObserved ?? false,
     synthetic_terminal_type: telemetry?.syntheticTerminalType ?? null,
     attempted_providers: telemetry?.attemptedProviders ?? [],
@@ -330,7 +314,7 @@ const logTerminalRequest = async (
     model: terminal.model,
     route: terminal.route,
     status: terminal.status,
-    completed: input.streamReadFailure ? false : telemetry?.completed ?? false,
+    completed: input.streamReadFailure ? false : (telemetry?.completed ?? false),
     usageTelemetryStatus: terminal.usage_telemetry_status,
     cacheWriteTokensPresent: terminal.cache_write_input_tokens !== null,
   });
@@ -339,7 +323,7 @@ const logTerminalRequest = async (
     model: terminal.model,
     route: terminal.route,
     status: terminal.status,
-    completed: input.streamReadFailure ? false : telemetry?.completed ?? false,
+    completed: input.streamReadFailure ? false : (telemetry?.completed ?? false),
     usageTelemetryStatus: terminal.usage_telemetry_status,
     inputTokens: terminal.input_tokens,
     cachedInputTokens: terminal.cached_input_tokens,
@@ -351,28 +335,24 @@ const logTerminalRequest = async (
   const replayObservation: SentinelFailureObservation = {
     status: terminal.status,
     stream: terminal.stream,
-    completed: input.streamReadFailure ? false : telemetry?.completed ?? false,
+    completed: input.streamReadFailure ? false : (telemetry?.completed ?? false),
     terminal_type: terminal.stream_terminal_type,
     failure_kind: terminal.failure_kind,
     synthetic_terminal_type: terminal.synthetic_terminal_type,
     provider_route: terminal.provider,
   };
   try {
-    const clientBodyObservation = await input.resolveClientBodyObservation?.() ?? null;
+    const clientBodyObservation = (await input.resolveClientBodyObservation?.()) ?? null;
     const clientObservation = resolveSentinelClientFailureObservation(replayObservation, clientBodyObservation);
-    const replayWrite = input.sentinelReplayInput && !input.suppressSentinelReplay &&
-        shouldPersistSentinelReplay(replayObservation, clientObservation)
-      ? (input.persistSentinelReplay ?? persistSentinelReplayFromEnvironment)(
-        input.sentinelReplayInput,
-        replayObservation,
-        clientObservation,
-      )
-      : Promise.resolve();
+    const replayWrite =
+      input.sentinelReplayInput && !input.suppressSentinelReplay && shouldPersistSentinelReplay(replayObservation, clientObservation)
+        ? (input.persistSentinelReplay ?? persistSentinelReplayFromEnvironment)(input.sentinelReplayInput, replayObservation, clientObservation)
+        : Promise.resolve();
     const degradationWrite = shouldSignalSentinelProviderDegradation({
-        status: terminal.status,
-        completed: telemetry?.completed ?? false,
-        removedProviderTriggerClass: terminal.removed_provider_trigger_class,
-      })
+      status: terminal.status,
+      completed: telemetry?.completed ?? false,
+      removedProviderTriggerClass: terminal.removed_provider_trigger_class,
+    })
       ? input.recordSentinelDegradation?.(Date.now())
       : Promise.resolve();
     const adminErrorWrite = (input.recordAdminError ?? recordAdminError)({
@@ -397,10 +377,7 @@ const logTerminalRequest = async (
   }
 };
 
-export const warnQuotaAccountingFailure = (
-  input: Readonly<{ route: string; requestId: string }>,
-  error: unknown,
-): void => {
+export const warnQuotaAccountingFailure = (input: Readonly<{ route: string; requestId: string }>, error: unknown): void => {
   const errors = error instanceof AggregateError ? error.errors : [error];
   try {
     console.warn(
@@ -411,11 +388,30 @@ export const warnQuotaAccountingFailure = (
         errors: errors.map((item) => ({
           class: item instanceof Error ? item.name : typeof item,
         })),
-      }),
+      })
     );
   } catch {
     // Accounting and its warning are both best-effort after completion. Neither
     // may replace an upstream response that is already ready for the client.
+  }
+};
+
+/**
+ * Runs one best-effort Sentinel replay write.  A synchronous throw from the
+ * persistence call and a rejected write both settle as success, so capture
+ * persistence can never replace a response that is already ready for the
+ * client.
+ */
+const persistSentinelReplayBestEffort = async (
+  persist: typeof persistSentinelReplayFromEnvironment,
+  input: AcceptedSentinelReplayInput,
+  observation: SentinelFailureObservation,
+  clientObservation: ReturnType<typeof resolveSentinelClientFailureObservation>
+): Promise<void> => {
+  try {
+    await persist(input, observation, clientObservation);
+  } catch {
+    // Capture persistence is best effort and must not replace the response.
   }
 };
 
@@ -439,7 +435,7 @@ export const withTerminalRequestLog = (
     recordSentinelDegradation?: typeof recordSentinelProviderDegradationFromEnvironment;
     recordAdminError?: typeof recordAdminError;
     waitUntil?: SentinelBackgroundTaskRegistrar;
-  }>,
+  }>
 ): Promise<Response> => {
   const contentType = response.headers.get("Content-Type")?.toLowerCase() ?? "";
   const isSse = contentType.includes("text/event-stream");
@@ -447,11 +443,13 @@ export const withTerminalRequestLog = (
   let clientBodyObservation: SentinelClientBodyObservation | null = null;
   let bufferedObservation: Promise<SentinelClientBodyObservation | null> | null = null;
   if (
-    !isSse && response.body &&
-    (response.status >= 400 || response.status === 202 || input.route.startsWith("embeddings.jobs.") ||
+    !isSse &&
+    response.body &&
+    (response.status >= 400 ||
+      response.status === 202 ||
+      input.route.startsWith("embeddings.jobs.") ||
       (initialTelemetry?.completed === false &&
-        (initialTelemetry.streamTerminalType !== null || initialTelemetry.failureKind !== null ||
-          initialTelemetry.syntheticTerminalType !== null)))
+        (initialTelemetry.streamTerminalType !== null || initialTelemetry.failureKind !== null || initialTelemetry.syntheticTerminalType !== null)))
   ) {
     bufferedObservation = inspectSentinelBufferedResponseBody(response);
   }
@@ -474,55 +472,43 @@ export const withTerminalRequestLog = (
       const telemetry = getResponseTelemetry(input.telemetryResponse ?? response);
       const observation: SentinelFailureObservation = {
         status: response.status,
-        stream: streamReadFailure ? telemetry?.stream ?? true : telemetry?.stream ?? null,
-        completed: streamReadFailure ? false : telemetry?.completed ?? false,
-        terminal_type: streamReadFailure
-          ? telemetry?.streamTerminalType ?? "error"
-          : telemetry?.streamTerminalType ?? null,
-        failure_kind: streamReadFailure
-          ? telemetry?.failureKind ?? "gateway_stream_read_error"
-          : telemetry?.failureKind ?? null,
+        stream: streamReadFailure ? (telemetry?.stream ?? true) : (telemetry?.stream ?? null),
+        completed: streamReadFailure ? false : (telemetry?.completed ?? false),
+        terminal_type: streamReadFailure ? (telemetry?.streamTerminalType ?? "error") : (telemetry?.streamTerminalType ?? null),
+        failure_kind: streamReadFailure ? (telemetry?.failureKind ?? "gateway_stream_read_error") : (telemetry?.failureKind ?? null),
         synthetic_terminal_type: telemetry?.syntheticTerminalType ?? null,
         provider_route: telemetry?.provider ?? response.headers.get("x-uos-upstream") ?? "gateway",
       };
-      const startReplayPersistence = (
-        clientObservation: ReturnType<typeof resolveSentinelClientFailureObservation>,
-      ): Promise<void> => {
+      const startReplayPersistence = (clientObservation: ReturnType<typeof resolveSentinelClientFailureObservation>): Promise<void> => {
         if (!shouldPersistSentinelReplay(observation, clientObservation)) return Promise.resolve();
-        try {
-          return Promise.resolve(
-            (input.persistSentinelReplay ?? persistSentinelReplayFromEnvironment)(
-              backgroundReplayInput,
-              observation,
-              clientObservation,
-            ),
-          ).then(() => undefined);
-        } catch {
-          return Promise.resolve();
-        }
+        return persistSentinelReplayBestEffort(
+          input.persistSentinelReplay ?? persistSentinelReplayFromEnvironment,
+          backgroundReplayInput,
+          observation,
+          clientObservation
+        );
       };
       const fallbackClientObservation = resolveSentinelClientFailureObservation(observation);
       // An HTTP failure is already sufficient to decide that the capture is
       // persistable. Start the best-effort write before waiting for the body
       // clone so a stalled inspection or delivery cannot delay its handoff.
-      if (
-        input.deliveryCompleted !== undefined && !isSse &&
-        shouldPersistSentinelReplay(observation, fallbackClientObservation)
-      ) {
+      if (input.deliveryCompleted !== undefined && !isSse && shouldPersistSentinelReplay(observation, fallbackClientObservation)) {
         const replayWrite = startReplayPersistence(fallbackClientObservation);
         zeroSentinelReplayInput(originalReplayInput);
         await replayWrite;
         return;
       }
-      const bodyObservation = clientBodyObservation ?? await bufferedObservation;
+      const bodyObservation = clientBodyObservation ?? (await bufferedObservation);
       const clientObservation = resolveSentinelClientFailureObservation(observation, bodyObservation);
       await startReplayPersistence(clientObservation);
-    })().catch(() => {
-      // Capture persistence is best effort and must not replace the response.
-    }).finally(() => {
-      zeroSentinelReplayInput(backgroundReplayInput);
-      zeroSentinelReplayInput(originalReplayInput);
-    });
+    })()
+      .catch(() => {
+        // Capture persistence is best effort and must not replace the response.
+      })
+      .finally(() => {
+        zeroSentinelReplayInput(backgroundReplayInput);
+        zeroSentinelReplayInput(originalReplayInput);
+      });
     return replayFinalization;
   };
   let terminalLog: Promise<void> | null = null;
@@ -533,7 +519,7 @@ export const withTerminalRequestLog = (
     downstreamDrainedAtMonotonicMs?: number,
     deliveryOutcome: DeliveryOutcome = "unobserved",
     streamReadFailure = false,
-    suppressSentinelReplay = false,
+    suppressSentinelReplay = false
   ): Promise<void> => {
     if (terminalLog) return terminalLog;
     terminalLog = logTerminalRequest({
@@ -546,7 +532,7 @@ export const withTerminalRequestLog = (
       deliveryOutcome,
       streamReadFailure,
       suppressSentinelReplay: suppressSentinelReplay || replayFinalization !== null,
-      resolveClientBodyObservation: async () => clientBodyObservation ?? await bufferedObservation,
+      resolveClientBodyObservation: async () => clientBodyObservation ?? (await bufferedObservation),
     }).catch(() => {
       // Terminal logging and its durable baseline counters are best effort;
       // neither may replace a response that is already ready for the client.
@@ -555,9 +541,9 @@ export const withTerminalRequestLog = (
   };
   const deliveryOutcome = input.deliveryCompleted
     ? input.deliveryCompleted.then(
-      () => input.deliverySignal?.aborted ? "interrupted" as const : "delivered" as const,
-      () => "interrupted" as const,
-    )
+        () => (input.deliverySignal?.aborted ? ("interrupted" as const) : ("delivered" as const)),
+        () => "interrupted" as const
+      )
     : null;
   const finalizeTerminal = (outcome: "completed" | "incomplete", reason?: string): Promise<void> => {
     const onTerminal = input.onTerminal;
@@ -567,7 +553,7 @@ export const withTerminalRequestLog = (
     if (terminalSettled) return Promise.resolve();
     if (terminalFinalization) {
       const pending = terminalFinalization;
-      return pending.then(() => terminalSettled ? undefined : finalizeTerminal(outcome, reason));
+      return pending.then(() => (terminalSettled ? undefined : finalizeTerminal(outcome, reason)));
     }
     const intended = terminalIntent;
     const current = (async () => {
@@ -644,80 +630,89 @@ export const withTerminalRequestLog = (
   let downstreamCancelled = false;
   const bodyOutcome = deliveryOutcome
     ? new Promise<BodyOutcome>((resolve) => {
-      settleBody = (outcome) => {
-        if (bodyDidSettle) return;
-        bodyDidSettle = true;
-        resolve(outcome);
-      };
-    })
+        settleBody = (outcome) => {
+          if (bodyDidSettle) return;
+          bodyDidSettle = true;
+          resolve(outcome);
+        };
+      })
     : null;
   if (bodyOutcome && deliveryOutcome) {
     void Promise.all([bodyOutcome, deliveryOutcome]).then(([bodyResult, deliveryResult]) =>
-      log(
-        downstreamDrainedAtMonotonicMs,
-        bodyResult === "drained" ? deliveryResult : "interrupted",
-        bodyResult === "failed",
-        bodyResult === "interrupted",
-      )
+      log(downstreamDrainedAtMonotonicMs, bodyResult === "drained" ? deliveryResult : "interrupted", bodyResult === "failed", bodyResult === "interrupted")
     );
   }
+  /** Releases the request-owned replay capture before terminal cleanup runs. */
+  const releaseReplayOwnership = (): void => {
+    zeroSentinelReplayInput(input.sentinelReplayInput);
+    disposeSentinelUpstreamRecorder(input.sentinelReplayInput);
+  };
+  /** Records an interrupted wrapper body and settles the body-outcome observer. */
+  const settleInterruptedBody = async (): Promise<void> => {
+    if (!deliveryOutcome) await log(undefined, "interrupted", false, true);
+    settleBody?.("interrupted");
+  };
+  /** Cleans up after a failed provider read, then surfaces that error downstream. */
+  const handleProviderReadFailure = async (error: unknown, controller: ReadableStreamDefaultController<Uint8Array>): Promise<void> => {
+    clientBodyObservation = finishSseInspection("read_error");
+    const downstreamAborted = downstreamCancelled || input.deliverySignal?.aborted === true;
+    await finalizeFromTelemetry(downstreamAborted ? "downstream_cancelled" : "stream_read_error");
+    if (downstreamAborted) {
+      releaseReplayOwnership();
+    } else {
+      await persistReplayAtApplicationTerminal(true);
+    }
+    if (!deliveryOutcome) await log(undefined, "interrupted", !downstreamAborted, true);
+    try {
+      controller.error(error);
+    } catch {
+      // The downstream may have cancelled while the provider read failed.
+    }
+    settleBody?.(downstreamAborted ? "interrupted" : "failed");
+  };
+  /** Finishes the wrapper body once the provider stream reports EOF. */
+  const finishProviderStream = async (controller: ReadableStreamDefaultController<Uint8Array>): Promise<void> => {
+    clientBodyObservation = finishSseInspection();
+    const downstreamAborted = downstreamCancelled || input.deliverySignal?.aborted === true;
+    if (downstreamAborted) {
+      await finalizeFromTelemetry("downstream_cancelled");
+      releaseReplayOwnership();
+      try {
+        controller.close();
+      } catch {
+        // The downstream cancellation may already have closed the wrapper.
+      }
+      await settleInterruptedBody();
+      return;
+    }
+    // Snapshot the downstream drain before finalization. Accounting can
+    // wait on KV and belongs in total latency, not drain telemetry.
+    downstreamDrainedAtMonotonicMs = performance.now();
+    // The application stream has drained, but Deno still owns delivery.
+    // Finish one-shot usage accounting before closing this wrapper, then
+    // let `completed` classify the separate delivery outcome.
+    await finalizeFromTelemetry("stream_eof_without_completion");
+    await persistReplayAtApplicationTerminal();
+    try {
+      controller.close();
+    } catch {
+      await settleInterruptedBody();
+      return;
+    }
+    if (!deliveryOutcome) await log(downstreamDrainedAtMonotonicMs, "unobserved", false, true);
+    settleBody?.("drained");
+  };
   const body = new ReadableStream<Uint8Array>({
     async pull(controller) {
       let result: ReadableStreamReadResult<Uint8Array>;
       try {
         result = await reader.read();
       } catch (error) {
-        clientBodyObservation = finishSseInspection("read_error");
-        const downstreamAborted = downstreamCancelled || input.deliverySignal?.aborted === true;
-        await finalizeFromTelemetry(downstreamAborted ? "downstream_cancelled" : "stream_read_error");
-        if (downstreamAborted) {
-          zeroSentinelReplayInput(input.sentinelReplayInput);
-          disposeSentinelUpstreamRecorder(input.sentinelReplayInput);
-        } else {
-          await persistReplayAtApplicationTerminal(true);
-        }
-        if (!deliveryOutcome) await log(undefined, "interrupted", !downstreamAborted, true);
-        try {
-          controller.error(error);
-        } catch {
-          // The downstream may have cancelled while the provider read failed.
-        }
-        settleBody?.(downstreamAborted ? "interrupted" : "failed");
+        await handleProviderReadFailure(error, controller);
         return;
       }
       if (result.done) {
-        clientBodyObservation = finishSseInspection();
-        const downstreamAborted = downstreamCancelled || input.deliverySignal?.aborted === true;
-        if (downstreamAborted) {
-          await finalizeFromTelemetry("downstream_cancelled");
-          zeroSentinelReplayInput(input.sentinelReplayInput);
-          disposeSentinelUpstreamRecorder(input.sentinelReplayInput);
-          try {
-            controller.close();
-          } catch {
-            // The downstream cancellation may already have closed the wrapper.
-          }
-          if (!deliveryOutcome) await log(undefined, "interrupted", false, true);
-          settleBody?.("interrupted");
-          return;
-        }
-        // Snapshot the downstream drain before finalization. Accounting can
-        // wait on KV and belongs in total latency, not drain telemetry.
-        downstreamDrainedAtMonotonicMs = performance.now();
-        // The application stream has drained, but Deno still owns delivery.
-        // Finish one-shot usage accounting before closing this wrapper, then
-        // let `completed` classify the separate delivery outcome.
-        await finalizeFromTelemetry("stream_eof_without_completion");
-        await persistReplayAtApplicationTerminal();
-        try {
-          controller.close();
-        } catch {
-          if (!deliveryOutcome) await log(undefined, "interrupted", false, true);
-          settleBody?.("interrupted");
-          return;
-        }
-        if (!deliveryOutcome) await log(downstreamDrainedAtMonotonicMs, "unobserved", false, true);
-        settleBody?.("drained");
+        await finishProviderStream(controller);
         return;
       }
       // The OpenAI stream observer marks response.completed before yielding
@@ -731,10 +726,8 @@ export const withTerminalRequestLog = (
         downstreamCancelled = true;
         void reader.cancel().catch(() => {});
         void finalizeFromTelemetry("downstream_enqueue_failed");
-        zeroSentinelReplayInput(input.sentinelReplayInput);
-        disposeSentinelUpstreamRecorder(input.sentinelReplayInput);
-        if (!deliveryOutcome) await log(undefined, "interrupted", false, true);
-        settleBody?.("interrupted");
+        releaseReplayOwnership();
+        await settleInterruptedBody();
       }
     },
     cancel(reason) {
@@ -743,8 +736,7 @@ export const withTerminalRequestLog = (
       downstreamCancelled = true;
       void reader.cancel(reason).catch(() => {});
       void finalizeFromTelemetry("downstream_cancelled");
-      zeroSentinelReplayInput(input.sentinelReplayInput);
-      disposeSentinelUpstreamRecorder(input.sentinelReplayInput);
+      releaseReplayOwnership();
       if (!deliveryOutcome) void log(undefined, "interrupted", false, true);
       settleBody?.("interrupted");
     },
@@ -754,7 +746,7 @@ export const withTerminalRequestLog = (
       status: response.status,
       statusText: response.statusText,
       headers: response.headers,
-    }),
+    })
   );
 };
 
@@ -779,424 +771,349 @@ const kernelQuotaRouteForRequest = (method: string, path: string): string | null
   return null;
 };
 
-export default async function handler(req: Request, delivery?: RequestDeliveryInfo): Promise<Response> {
-  const requestStartedAtMs = Date.now();
-  const requestStartedAtMonotonicMs = performance.now();
-  const requestId = crypto.randomUUID();
-  const withCors = (response: Response): Response => withCorsHeaders(response, req);
-  if (req.method === "OPTIONS") {
-    return withCors(new Response(null, { status: 204, headers: corsHeaders(req) }));
-  }
+// ---------------------------------------------------------------------------
+// Request routing groups.  Each group returns the response it owns without CORS
+// decoration, or null when the request belongs to a later group; the default
+// export keeps the original order between the groups.
+// ---------------------------------------------------------------------------
 
-  const url = new URL(req.url);
-  const path = normalizePath(url.pathname);
+/** A route whose HTTP method and path are matched exactly. */
+type ExactRouteEntry = Readonly<{
+  methods: readonly string[];
+  path: string;
+  run: (req: Request) => Response | Promise<Response>;
+}>;
 
+/** An admin route, optionally restricted to super admins. */
+type AdminRouteEntry = ExactRouteEntry & Readonly<{ superAdmin?: true }>;
+
+/** The first exact-path route matching this request, if any. */
+const matchExactRoute = <TRoute extends ExactRouteEntry>(routes: readonly TRoute[], req: Request, path: string): TRoute | undefined =>
+  routes.find((entry) => entry.methods.includes(req.method) && entry.path === path);
+
+/** Reads the optional client authentication used by the session and logout routes. */
+const optionalClientAuth = async (req: Request): Promise<ClientAuthResult | null> =>
+  req.headers.has("authorization") && req.headers.has("cookie") ? await authenticateClient(req) : null;
+
+/** The passkey token to relay for an opportunistic client authentication. */
+const passkeyTokenFrom = (auth: ClientAuthResult | null): string | undefined => {
+  if (!auth?.ok) return undefined;
+  return auth.method.kind === "passkey_session" ? (auth.token ?? undefined) : undefined;
+};
+
+/** Exact-path passkey routes whose own handlers perform authentication. */
+const AUTH_ROUTES: readonly ExactRouteEntry[] = [
+  { methods: ["POST"], path: "/api/auth/register/finish", run: (req) => handlePasskeyRegisterFinish(req) },
+  { methods: ["POST"], path: "/api/auth/login/start", run: (req) => handlePasskeyLoginStart(req) },
+  { methods: ["POST"], path: "/api/auth/login/finish", run: (req) => handlePasskeyLoginFinish(req) },
+];
+
+/** Admin API routes in wire order; every one authenticates before dispatch. */
+const ADMIN_ROUTES: readonly AdminRouteEntry[] = [
+  { methods: ["GET"], path: "/admin/passkey-users", superAdmin: true, run: () => handlePasskeyUsersList() },
+  { methods: ["PATCH"], path: "/admin/passkey-users", superAdmin: true, run: (req) => handlePasskeyUsersUpdate(req) },
+  { methods: ["POST"], path: "/admin/codex/auth", run: (req) => handleAdminCodexAuth(req) },
+  { methods: ["GET", "PATCH"], path: "/admin/providers/codex/banked-resets", run: (req) => handleAdminCodexResetSettings(req) },
+  { methods: ["GET"], path: "/admin/providers/codex/banked-resets/shadow-decisions", run: () => handleAdminCodexBankedResetShadowDecisions() },
+  {
+    methods: ["GET"],
+    path: "/admin/providers/codex/cache-scope-experiment",
+    superAdmin: true,
+    run: () => handleAdminCodexCacheScopeExperimentTelemetryBaseline(),
+  },
+  { methods: ["POST"], path: "/admin/providers/codex/cache-scope-experiment", superAdmin: true, run: (req) => handleAdminCodexCacheScopeExperiment(req) },
+  { methods: ["GET"], path: "/admin/codex/models", run: () => handleAdminCodexModelsGet() },
+  { methods: ["POST"], path: "/admin/codex/models", run: (req) => handleAdminCodexModelsSet(req) },
+  { methods: ["POST"], path: "/admin/codex/prompts/purge", run: () => handleAdminCodexPromptsPurge() },
+  { methods: ["POST"], path: "/admin/kv-migration/import", superAdmin: true, run: (req) => handleAdminKvMigrationImport(req) },
+  { methods: ["GET"], path: "/admin/kv-migration/validate", superAdmin: true, run: () => handleAdminKvMigrationValidate() },
+  { methods: ["GET"], path: "/admin/sentinel/replay-captures", superAdmin: true, run: (req) => handleAdminSentinelReplayCaptures(req) },
+  { methods: ["GET"], path: "/admin/sentinel/incidents", superAdmin: true, run: (req) => handleAdminSentinelIncidents(req) },
+  { methods: ["GET"], path: "/admin/errors", run: (req) => handleAdminErrors(req) },
+  { methods: ["GET", "POST"], path: "/admin/defaults", run: (req) => handleAdminDefaults(req) },
+  { methods: ["GET", "POST", "DELETE"], path: "/admin/debug/routing", run: (req) => handleAdminDebugRouting(req) },
+  { methods: ["GET"], path: "/admin/providers", run: () => handleHealthProviders({ includeQuota: true }) },
+  { methods: ["GET"], path: "/admin/providers/capacity", run: (req) => handleProviderCapacity(req) },
+  { methods: ["GET"], path: "/admin/providers/quota-projection", run: (req) => handleAdminProvidersQuotaProjection(req) },
+  { methods: ["POST"], path: "/admin/providers/quota-projection/backfill", run: (req) => handleAdminProvidersQuotaProjectionBackfill(req) },
+  { methods: ["GET"], path: "/admin/prompt-cache-analytics", run: (req) => handleAdminPromptCacheAnalytics(req) },
+  { methods: ["POST"], path: "/admin/api-keys", run: (req) => handleAdminApiKeysCreate(req) },
+  { methods: ["GET"], path: "/admin/api-keys", run: (req) => handleAdminApiKeysList(req) },
+  { methods: ["PATCH"], path: "/admin/api-keys", run: (req) => handleAdminApiKeysUpdate(req) },
+  { methods: ["POST"], path: "/admin/api-keys/revoke", run: (req) => handleAdminApiKeysRevoke(req) },
+  { methods: ["POST"], path: "/admin/api-keys/unrevoke", run: (req) => handleAdminApiKeysUnrevoke(req) },
+  { methods: ["DELETE"], path: "/admin/api-keys", run: (req) => handleAdminApiKeysDelete(req) },
+  { methods: ["GET"], path: "/admin/kernel-usage", run: (req) => handleAdminKernelUsageGet(req) },
+  { methods: ["GET"], path: "/admin/kernel-policy-queue", run: () => handleAdminKernelPolicyQueueList() },
+  { methods: ["POST"], path: "/admin/kernel-usage", run: (req) => handleAdminKernelUsageSet(req) },
+  { methods: ["DELETE"], path: "/admin/kernel-usage", run: (req) => handleAdminKernelUsageDelete(req) },
+  { methods: ["GET"], path: "/admin/kernel-pubkeys", run: () => handleAdminKernelPubKeysList() },
+  { methods: ["POST"], path: "/admin/kernel-pubkeys", run: (req) => handleAdminKernelPubKeysCreate(req) },
+  { methods: ["DELETE"], path: "/admin/kernel-pubkeys", run: (req) => handleAdminKernelPubKeysDelete(req) },
+];
+
+/** Serves the root document and static assets; null when nothing matches. */
+const handleStaticRoute = async (req: Request, path: string): Promise<Response | null> => {
   if ((req.method === "GET" || req.method === "HEAD") && (path === "/" || path === "/index.html")) {
     const rootResponse = await handleRoot(req);
-    return withCors(req.method === "HEAD" ? withoutBody(rootResponse) : rootResponse);
+    return req.method === "HEAD" ? withoutBody(rootResponse) : rootResponse;
   }
-
   if (req.method === "GET" || req.method === "HEAD") {
     const staticResponse = await handleStaticAsset(path);
-    if (staticResponse) return withCors(req.method === "HEAD" ? withoutBody(staticResponse) : staticResponse);
+    if (staticResponse) return req.method === "HEAD" ? withoutBody(staticResponse) : staticResponse;
   }
+  return null;
+};
 
+/** Serves the liveness endpoints; null when no health path matches. */
+const handleHealthRoute = async (req: Request, path: string): Promise<Response | null> => {
   if ((req.method === "GET" || req.method === "HEAD") && path === "/health") {
-    const health = await handleHealth();
+    const health = handleHealth();
     // Keep HEAD semantically equivalent to public GET liveness while correctly
     // omitting the body.
-    return withCors(req.method === "HEAD" ? withoutBody(health) : health);
+    return req.method === "HEAD" ? withoutBody(health) : health;
   }
-
-  if (req.method === "GET" && path === "/health/providers") {
+  if (req.method !== "GET") return null;
+  if (path === "/health/providers") {
     const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleHealthProviders());
+    if (authError) return authError;
+    return await handleHealthProviders();
   }
-
-  if (req.method === "GET" && path === "/health/upstream") {
+  if (path === "/health/upstream") {
     const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleHealthUpstream());
+    if (authError) return authError;
+    return await handleHealthUpstream();
   }
+  return null;
+};
 
+/** Serves the passkey and session routes; null when no auth route matches. */
+const handleAuthRoute = async (req: Request, path: string): Promise<Response | null> => {
   if (req.method === "POST" && path === "/api/auth/register/start") {
     const auth = await authenticateAdmin(req);
-    if (!auth.ok) return withCors(auth.response);
-    return withCors(
-      await handlePasskeyRegisterStart(req, {
-        defaultIsAdmin: auth.is_super_admin,
-        authenticatedPasskeyToken: auth.method.kind === "passkey_session" ? auth.token : undefined,
-      }),
-    );
+    if (!auth.ok) return auth.response;
+    return await handlePasskeyRegisterStart(req, {
+      defaultIsAdmin: auth.is_super_admin,
+      authenticatedPasskeyToken: auth.method.kind === "passkey_session" ? auth.token : undefined,
+    });
   }
-
-  if (req.method === "POST" && path === "/api/auth/register/finish") {
-    return withCors(await handlePasskeyRegisterFinish(req));
-  }
-
-  if (req.method === "POST" && path === "/api/auth/login/start") {
-    return withCors(await handlePasskeyLoginStart(req));
-  }
-
-  if (req.method === "POST" && path === "/api/auth/login/finish") {
-    return withCors(await handlePasskeyLoginFinish(req));
-  }
-
+  const route = matchExactRoute(AUTH_ROUTES, req, path);
+  if (route) return await route.run(req);
   if (req.method === "GET" && path === "/api/auth/session") {
-    const auth = req.headers.has("authorization") && req.headers.has("cookie") ? await authenticateClient(req) : null;
-    return withCors(
-      await handlePasskeySession(req, {
-        authenticatedPasskeyToken: auth?.ok && auth.method.kind === "passkey_session"
-          ? auth.token ?? undefined
-          : undefined,
-      }),
-    );
+    return await handlePasskeySession(req, { authenticatedPasskeyToken: passkeyTokenFrom(await optionalClientAuth(req)) });
   }
-
   if (req.method === "POST" && path === "/api/auth/logout") {
-    const auth = req.headers.has("authorization") && req.headers.has("cookie") ? await authenticateClient(req) : null;
-    return withCors(
-      await handlePasskeyLogout(req, {
-        authenticatedPasskeyToken: auth?.ok && auth.method.kind === "passkey_session"
-          ? auth.token ?? undefined
-          : undefined,
-      }),
-    );
+    return await handlePasskeyLogout(req, { authenticatedPasskeyToken: passkeyTokenFrom(await optionalClientAuth(req)) });
   }
+  return null;
+};
 
-  if (req.method === "GET" && path === "/admin/passkey-users") {
-    const authError = await requireSuperAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handlePasskeyUsersList());
+/** Serves the API-key paid-fallback routes, including their method-not-allowed reply. */
+const handleApiKeyPaidFallbacksRoute = async (req: Request, path: string): Promise<Response | null> => {
+  const match = /^\/admin\/api-keys\/([^/]+)\/paid-fallbacks$/.exec(path);
+  if (!match) return null;
+  if (req.method !== "GET") return openaiError(405, "Method not allowed", "method_not_allowed");
+  const authError = await requireAdminAuth(req);
+  if (authError) return authError;
+  let keyId: string;
+  try {
+    keyId = decodeURIComponent(match[1]);
+  } catch {
+    return openaiError(400, "Invalid API key id", "invalid_request_error");
   }
+  return await handleAdminApiKeysPaidFallbacks(req, keyId);
+};
 
-  if (req.method === "PATCH" && path === "/admin/passkey-users") {
-    const authError = await requireSuperAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handlePasskeyUsersUpdate(req));
+/** Serves the admin API surface; null when no admin route matches. */
+const handleAdminRoute = async (req: Request, path: string): Promise<Response | null> => {
+  const route = matchExactRoute(ADMIN_ROUTES, req, path);
+  if (route) {
+    const authError = route.superAdmin ? await requireSuperAdminAuth(req) : await requireAdminAuth(req);
+    if (authError) return authError;
+    return await route.run(req);
   }
-
-  if (req.method === "POST" && path === "/admin/codex/auth") {
+  const recheckMatch = /^\/admin\/providers\/codex\/(\d+)\/recheck$/.exec(path);
+  if (req.method === "POST" && recheckMatch) {
     const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminCodexAuth(req));
+    if (authError) return authError;
+    return await handleAdminCodexRecheck(Number(recheckMatch[1]));
   }
+  return await handleApiKeyPaidFallbacksRoute(req, path);
+};
 
-  if ((req.method === "GET" || req.method === "PATCH") && path === "/admin/providers/codex/banked-resets") {
-    const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminCodexResetSettings(req));
-  }
-
-  if (req.method === "GET" && path === "/admin/providers/codex/banked-resets/shadow-decisions") {
-    const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminCodexBankedResetShadowDecisions());
-  }
-
-  if (req.method === "GET" && path === "/admin/providers/codex/cache-scope-experiment") {
-    const authError = await requireSuperAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminCodexCacheScopeExperimentTelemetryBaseline());
-  }
-
-  if (req.method === "POST" && path === "/admin/providers/codex/cache-scope-experiment") {
-    const authError = await requireSuperAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminCodexCacheScopeExperiment(req));
-  }
-
-  const codexRecheckMatch = path.match(/^\/admin\/providers\/codex\/(\d+)\/recheck$/);
-  if (req.method === "POST" && codexRecheckMatch) {
-    const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminCodexRecheck(Number(codexRecheckMatch[1])));
-  }
-
-  if (req.method === "GET" && path === "/admin/codex/models") {
-    const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminCodexModelsGet());
-  }
-
-  if (req.method === "POST" && path === "/admin/codex/models") {
-    const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminCodexModelsSet(req));
-  }
-
-  if (req.method === "POST" && path === "/admin/codex/prompts/purge") {
-    const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminCodexPromptsPurge());
-  }
-
-  if (req.method === "POST" && path === "/admin/kv-migration/import") {
-    const authError = await requireSuperAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminKvMigrationImport(req));
-  }
-
-  if (req.method === "GET" && path === "/admin/kv-migration/validate") {
-    const authError = await requireSuperAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminKvMigrationValidate());
-  }
-
-  if (req.method === "GET" && path === "/admin/sentinel/replay-captures") {
-    const authError = await requireSuperAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminSentinelReplayCaptures(req));
-  }
-
-  if (req.method === "GET" && path === "/admin/sentinel/incidents") {
-    const authError = await requireSuperAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminSentinelIncidents(req));
-  }
-
-  if (req.method === "GET" && path === "/admin/errors") {
-    const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminErrors(req));
-  }
-
-  if ((req.method === "GET" || req.method === "POST") && path === "/admin/defaults") {
-    const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminDefaults(req));
-  }
-
-  if ((req.method === "GET" || req.method === "POST" || req.method === "DELETE") && path === "/admin/debug/routing") {
-    const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminDebugRouting(req));
-  }
-
-  if (req.method === "GET" && path === "/admin/providers") {
-    const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleHealthProviders({ includeQuota: true }));
-  }
-
-  if (req.method === "GET" && path === "/admin/providers/capacity") {
-    const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleProviderCapacity(req));
-  }
-
-  if (req.method === "GET" && path === "/admin/providers/quota-projection") {
-    const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminProvidersQuotaProjection(req));
-  }
-
-  if (req.method === "POST" && path === "/admin/providers/quota-projection/backfill") {
-    const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminProvidersQuotaProjectionBackfill(req));
-  }
-
-  if (req.method === "GET" && path === "/admin/prompt-cache-analytics") {
-    const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminPromptCacheAnalytics(req));
-  }
-
-  if (req.method === "POST" && path === "/admin/api-keys") {
-    const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminApiKeysCreate(req));
-  }
-
-  if (req.method === "GET" && path === "/admin/api-keys") {
-    const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminApiKeysList(req));
-  }
-
-  const apiKeyPaidFallbacksPathMatch = path.match(/^\/admin\/api-keys\/([^/]+)\/paid-fallbacks$/);
-  if (apiKeyPaidFallbacksPathMatch && req.method === "GET") {
-    const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    const pathKeyId = apiKeyPaidFallbacksPathMatch[1] ?? "";
-    let keyId: string;
-    try {
-      keyId = decodeURIComponent(pathKeyId);
-    } catch {
-      return withCors(openaiError(400, "Invalid API key id", "invalid_request_error"));
-    }
-
-    return withCors(await handleAdminApiKeysPaidFallbacks(req, keyId));
-  }
-
-  if (apiKeyPaidFallbacksPathMatch) {
-    return withCors(openaiError(405, "Method not allowed", "method_not_allowed"));
-  }
-
-  if (req.method === "PATCH" && path === "/admin/api-keys") {
-    const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminApiKeysUpdate(req));
-  }
-
-  if (req.method === "POST" && path === "/admin/api-keys/revoke") {
-    const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminApiKeysRevoke(req));
-  }
-
-  if (req.method === "POST" && path === "/admin/api-keys/unrevoke") {
-    const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminApiKeysUnrevoke(req));
-  }
-
-  if (req.method === "DELETE" && path === "/admin/api-keys") {
-    const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminApiKeysDelete(req));
-  }
-
-  if (req.method === "GET" && path === "/admin/kernel-usage") {
-    const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminKernelUsageGet(req));
-  }
-
-  if (req.method === "GET" && path === "/admin/kernel-policy-queue") {
-    const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminKernelPolicyQueueList());
-  }
-
-  if (req.method === "POST" && path === "/admin/kernel-usage") {
-    const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminKernelUsageSet(req));
-  }
-
-  if (req.method === "DELETE" && path === "/admin/kernel-usage") {
-    const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminKernelUsageDelete(req));
-  }
-
-  if (req.method === "GET" && path === "/admin/kernel-pubkeys") {
-    const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminKernelPubKeysList());
-  }
-
-  if (req.method === "POST" && path === "/admin/kernel-pubkeys") {
-    const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminKernelPubKeysCreate(req));
-  }
-
-  if (req.method === "DELETE" && path === "/admin/kernel-pubkeys") {
-    const authError = await requireAdminAuth(req);
-    if (authError) return withCors(authError);
-    return withCors(await handleAdminKernelPubKeysDelete(req));
-  }
-
-  if (req.method === "GET" && path === "/uos/auth") {
-    return withCors(await handleV1Auth(req));
-  }
-
-  if (req.method === "GET" && path === "/uos/models/catalog") {
-    return withCors(await handlePublicModelCatalog());
-  }
-
+/** Serves the UOS catalog and agent-message routes; null when none matches. */
+const handleUosRoute = async (req: Request, path: string): Promise<Response | null> => {
+  if (req.method === "GET" && path === "/uos/auth") return await handleV1Auth(req);
+  if (req.method === "GET" && path === "/uos/models/catalog") return await handlePublicModelCatalog();
   if (req.method === "GET" && path === "/uos/models/capabilities") {
     const authResult = await authenticateClient(req);
-    if (!authResult.ok) return withCors(authResult.response);
-    return withCors(await handleModelCapabilities());
+    if (!authResult.ok) return authResult.response;
+    return await handleModelCapabilities();
   }
+  if (path === "/uos/agent-messages" && req.method === "GET") return await handleAgentMessagesList(req);
+  if (path === "/uos/agent-messages" && req.method === "POST") return await handleAgentMessagesPost(req);
+  if (path === "/uos/agent-messages") return openaiError(405, "Method not allowed", "method_not_allowed");
+  return null;
+};
 
-  if (path === "/uos/agent-messages") {
-    if (req.method === "GET") return withCors(await handleAgentMessagesList(req));
-    if (req.method === "POST") return withCors(await handleAgentMessagesPost(req));
-    return withCors(openaiError(405, "Method not allowed", "method_not_allowed"));
+/** True when the path belongs to the authenticated terminal inference surface. */
+const isTerminalInferencePath = (path: string): boolean =>
+  path.startsWith("/v1/") || path === "/uos/embeddings" || path === "/uos/embedding-jobs" || path.startsWith("/uos/embedding-jobs/");
+
+/** Terminal-logs a response that never reached a provider; a null route skips logging. */
+const withRejectionTerminalLog = (
+  response: Response,
+  route: string | null,
+  input: Readonly<{ requestId: string; startedAtMonotonicMs: number; delivery?: RequestDeliveryInfo }>
+): Promise<Response> => {
+  if (!route) return Promise.resolve(response);
+  return withTerminalRequestLog(response, {
+    route,
+    startedAtMonotonicMs: input.startedAtMonotonicMs,
+    requestId: input.requestId,
+    deliveryCompleted: input.delivery?.completed,
+    deliverySignal: input.delivery?.downstreamSignal,
+  });
+};
+
+/** The API-key id that usage telemetry attributes this request to, if any. */
+const apiKeyIdFrom = (authResult: AuthenticatedClientResult): string | null => (authResult.method.kind === "kv_api_key" ? authResult.method.key_id : null);
+
+/** The API-key policy that applies to this request, if it authenticated with one. */
+const apiKeyPolicyFrom = (authResult: AuthenticatedClientResult): ApiKeyPolicy | null =>
+  authResult.method.kind === "kv_api_key" ? authResult.method.policy : null;
+
+/** Resolves the GitHub repository that owns kernel quota for this request. */
+const resolveKernelRepo = async (req: Request, authResult: AuthenticatedClientResult): Promise<Readonly<{ owner: string; repo: string }> | null> => {
+  if (authResult.method.kind === "github_token") return { owner: authResult.method.owner, repo: authResult.method.repo };
+  const attestation = await getKernelAttestationContext(req, authResult.token);
+  if (!attestation) return null;
+  return { owner: attestation.owner, repo: attestation.repo };
+};
+
+/** Signal handed to an inference handler: an active kernel reservation also aborts it. */
+const downstreamSignalFor = (req: Request, delivery: RequestDeliveryInfo | undefined, reservation: KernelQuotaReservation | null): AbortSignal | undefined =>
+  reservation ? AbortSignal.any([delivery?.downstreamSignal ?? req.signal, reservation.signal]) : delivery?.downstreamSignal;
+
+/** Reserves API-key usage for a terminal route; a refusal is returned as a response. */
+const reserveUsageAdmission = async (
+  req: Request,
+  policy: ApiKeyPolicy,
+  requestId: string,
+  route: string,
+  startedAtMonotonicMs: number,
+  delivery: RequestDeliveryInfo | undefined
+): Promise<Readonly<{ reservation: ApiKeyUsageReservation } | { rejection: Response }>> => {
+  const admission = await reserveApiKeyUsageV3(policy, requestId, route, { deferWhenFull: true });
+  if (admission.ok) return { reservation: admission.reservation };
+  const response = withCorsHeaders(withRequestId(admission.response, requestId), req);
+  return { rejection: await withRejectionTerminalLog(response, route, { requestId, startedAtMonotonicMs, delivery }) };
+};
+
+/** Reserves kernel usage for a repository-scoped route; a refusal is returned as a response. */
+const reserveKernelAdmission = async (
+  input: Readonly<{
+    req: Request;
+    repo: Readonly<{ owner: string; repo: string }>;
+    route: string;
+    requestId: string;
+    startedAtMonotonicMs: number;
+    delivery?: RequestDeliveryInfo;
+    usageReservation: ApiKeyUsageReservation | null;
+  }>
+): Promise<Readonly<{ reservation: KernelQuotaReservation } | { rejection: Response }>> => {
+  const admission = await reserveEffectiveKernelUsageLimit(input.repo.owner, input.repo.repo, input.requestId, input.route);
+  if (admission.ok) return { reservation: admission.reservation };
+  try {
+    await input.usageReservation?.release("kernel_quota_rejected");
+  } catch (error) {
+    warnQuotaAccountingFailure({ route: input.route, requestId: input.requestId }, error);
   }
+  const response = withCorsHeaders(withRequestId(admission.response, input.requestId), input.req);
+  const rejection = await withRejectionTerminalLog(response, input.route, {
+    requestId: input.requestId,
+    startedAtMonotonicMs: input.startedAtMonotonicMs,
+    delivery: input.delivery,
+  });
+  return { rejection };
+};
 
-  const isUosEmbeddingPath = path === "/uos/embeddings" || path === "/uos/embedding-jobs" ||
-    path.startsWith("/uos/embedding-jobs/");
-  if (!path.startsWith("/v1/") && !isUosEmbeddingPath) {
-    const response = notFound();
-    return withCors(req.method === "HEAD" ? withoutBody(response) : response);
+/**
+ * Persists the Sentinel replay capture for a thrown inference exception.
+ * Snapshotting happens before the try block, exactly as the inline capture did:
+ * a snapshot failure propagates instead of being swallowed as a capture failure.
+ */
+const persistInferenceExceptionReplay = async (sentinelReplayInput: AcceptedSentinelReplayInput, runError: unknown): Promise<void> => {
+  const observation: SentinelFailureObservation = {
+    status: 500,
+    stream: null,
+    completed: false,
+    terminal_type: "error",
+    failure_kind: runError instanceof Error ? runError.name : "unknown_exception",
+    synthetic_terminal_type: null,
+    provider_route: "gateway",
+  };
+  // Snapshot body and upstream recorder together before persistence:
+  // the recorder is sealed and disposed here, and the same immutable
+  // trace feeds HMAC and encryption.
+  const replaySnapshot = snapshotSentinelReplayInput(sentinelReplayInput);
+  try {
+    await persistSentinelReplayFromEnvironment(replaySnapshot, observation);
+  } catch {
+    // Replay persistence is best effort and cannot replace the original
+    // gateway exception or expose its request body in logs.
+  } finally {
+    zeroSentinelReplayInput(sentinelReplayInput);
+    zeroSentinelReplayInput(replaySnapshot);
   }
+};
 
+/**
+ * Authenticates, admits, and dispatches one terminal inference request.  Every
+ * response that leaves here already carries CORS headers, the request id, quota
+ * decoration, and the terminal accounting handoff.
+ */
+const handleTerminalRoute = async (
+  req: Request,
+  path: string,
+  delivery: RequestDeliveryInfo | undefined,
+  requestId: string,
+  requestStartedAtMs: number,
+  requestStartedAtMonotonicMs: number
+): Promise<Response> => {
+  const withCors = (response: Response): Response => withCorsHeaders(response, req);
   const terminalRoute = terminalRouteForRequest(req.method, path);
   const authResult = await authenticateClient(req);
   if (!authResult.ok) {
     const response = withCors(withRequestId(authResult.response, requestId));
-    return terminalRoute
-      ? await withTerminalRequestLog(response, {
-        route: terminalRoute,
-        startedAtMonotonicMs: requestStartedAtMonotonicMs,
-        requestId,
-        deliveryCompleted: delivery?.completed,
-        deliverySignal: delivery?.downstreamSignal,
-      })
-      : response;
+    return await withRejectionTerminalLog(response, terminalRoute, { requestId, startedAtMonotonicMs: requestStartedAtMonotonicMs, delivery });
   }
-  const usageKeyId = authResult.method.kind === "kv_api_key" ? authResult.method.key_id : null;
-  let usagePolicy = authResult.method.kind === "kv_api_key" ? authResult.method.policy : null;
+  let usagePolicy = apiKeyPolicyFrom(authResult);
   let usageReservation: ApiKeyUsageReservation | null = null;
   if (usagePolicy && terminalRoute) {
-    const admission = await reserveApiKeyUsageV3(usagePolicy, requestId, terminalRoute, { deferWhenFull: true });
-    if (!admission.ok) {
-      const response = withCors(withRequestId(admission.response, requestId));
-      return await withTerminalRequestLog(response, {
-        route: terminalRoute,
-        startedAtMonotonicMs: requestStartedAtMonotonicMs,
-        requestId,
-        deliveryCompleted: delivery?.completed,
-        deliverySignal: delivery?.downstreamSignal,
-      });
-    }
+    const admission = await reserveUsageAdmission(req, usagePolicy, requestId, terminalRoute, requestStartedAtMonotonicMs, delivery);
+    if ("rejection" in admission) return admission.rejection;
     usageReservation = admission.reservation;
     // Admission re-reads the strict hash policy, so downstream quota headers
     // and paid fallback use the policy that actually reserved this request.
     usagePolicy = admission.reservation.policy;
   }
   const idempotencyPrincipal = await resolveIdempotencyPrincipal(authResult);
-  let kernelRepo = authResult.method.kind === "github_token"
-    ? { owner: authResult.method.owner, repo: authResult.method.repo }
-    : null;
-  if (!kernelRepo) {
-    const attestation = await getKernelAttestationContext(req, authResult.token);
-    if (attestation) {
-      kernelRepo = { owner: attestation.owner, repo: attestation.repo };
-    }
-  }
+  const kernelRepo = await resolveKernelRepo(req, authResult);
   const kernelOrg = kernelRepo ? { owner: kernelRepo.owner } : null;
   let kernelReservation: KernelQuotaReservation | null = null;
   const kernelQuotaRoute = kernelQuotaRouteForRequest(req.method, path);
   if (kernelRepo && kernelQuotaRoute) {
-    const admission = await reserveEffectiveKernelUsageLimit(
-      kernelRepo.owner,
-      kernelRepo.repo,
+    const admission = await reserveKernelAdmission({
+      req,
+      repo: kernelRepo,
+      route: kernelQuotaRoute,
       requestId,
-      kernelQuotaRoute,
-    );
-    if (!admission.ok) {
-      try {
-        await usageReservation?.release("kernel_quota_rejected");
-      } catch (error) {
-        warnQuotaAccountingFailure({ route: kernelQuotaRoute, requestId }, error);
-      }
-      const response = withCors(withRequestId(admission.response, requestId));
-      return await withTerminalRequestLog(response, {
-        route: kernelQuotaRoute,
-        startedAtMonotonicMs: requestStartedAtMonotonicMs,
-        requestId,
-        deliveryCompleted: delivery?.completed,
-        deliverySignal: delivery?.downstreamSignal,
-      });
-    }
+      startedAtMonotonicMs: requestStartedAtMonotonicMs,
+      delivery,
+      usageReservation,
+    });
+    if ("rejection" in admission) return admission.rejection;
     kernelReservation = admission.reservation;
   }
   // One request-owned passive upstream recorder for accepted terminal
@@ -1204,7 +1121,7 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
   // global, and is sealed/disposed at the application-terminal handoff.
   const sentinelUpstreamRecorder = terminalRoute ? createSentinelUpstreamRecorder() : null;
   const usageContext = {
-    keyId: usageKeyId,
+    keyId: apiKeyIdFrom(authResult),
     kernelRepo,
     kernelOrg,
     paidFallbackEnabled: usagePolicy?.paid_fallback_enabled === true,
@@ -1212,9 +1129,7 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     requestId,
     startedAtMs: requestStartedAtMs,
     startedAtMonotonicMs: requestStartedAtMonotonicMs,
-    downstreamSignal: kernelReservation
-      ? AbortSignal.any([delivery?.downstreamSignal ?? req.signal, kernelReservation.signal])
-      : delivery?.downstreamSignal,
+    downstreamSignal: downstreamSignalFor(req, delivery, kernelReservation),
     beforeProviderDispatch: usageReservation?.beforeProviderDispatch,
     ...(sentinelUpstreamRecorder ? { sentinelUpstreamRecorder } : {}),
   };
@@ -1226,7 +1141,7 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
         route: terminalRoute,
         git_sha: runtimeGitSha(),
         deno_revision: runtimeDeploymentId(),
-      }),
+      })
     );
   }
   const sentinelReplayCandidate = terminalRoute ? captureAcceptedSentinelReplayInput(req, requestId) : null;
@@ -1239,30 +1154,19 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     }
     return sentinelUpstreamRecorder ? { ...materialized, upstreamRecorder: sentinelUpstreamRecorder } : materialized;
   };
-  const settleKernelQuota = async (
-    outcome: "completed" | "incomplete",
-    reason = "request_incomplete",
-  ): Promise<void> => {
+  const settleKernelQuota = async (outcome: "completed" | "incomplete", reason = "request_incomplete"): Promise<void> => {
     if (!kernelReservation) return;
     if (outcome === "completed") await kernelReservation.commit();
     else await kernelReservation.release(reason);
   };
-  const bestEffortSettleKernelQuota = async (
-    outcome: "completed" | "incomplete",
-    reason = "request_incomplete",
-  ): Promise<void> => {
+  const bestEffortSettleKernelQuota = async (outcome: "completed" | "incomplete", reason = "request_incomplete"): Promise<void> => {
     try {
       await settleKernelQuota(outcome, reason);
     } catch (error) {
       warnQuotaAccountingFailure({ route: terminalRoute ?? "inference", requestId }, error);
     }
   };
-  const finishTerminalResponse = async (
-    response: Response,
-    route: string,
-    includeQuota = false,
-    trackKernelTerminal = false,
-  ): Promise<Response> => {
+  const finishTerminalResponse = async (response: Response, route: string, includeQuota = false, trackKernelTerminal = false): Promise<Response> => {
     const telemetry = getResponseTelemetry(response);
     const correlated = withProviderRequestId(response, telemetry?.providerRequestId ?? null);
     const decorated = includeQuota ? decorateInferenceQuota(correlated, usagePolicy, telemetry) : correlated;
@@ -1300,14 +1204,9 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     } catch (error) {
       await bestEffortSettleKernelQuota("incomplete", "api_key_quota_accounting_error");
       if (runError) {
-        warnQuotaAccountingFailure(
-          { route: terminalRoute ?? "inference", requestId },
-          runError,
-        );
+        warnQuotaAccountingFailure({ route: terminalRoute ?? "inference", requestId }, runError);
       }
-      const quotaError = error instanceof ApiKeyQuotaDispatchError
-        ? error
-        : new ApiKeyQuotaDispatchError("API key quota reservation is unavailable");
+      const quotaError = error instanceof ApiKeyQuotaDispatchError ? error : new ApiKeyQuotaDispatchError("API key quota reservation is unavailable");
       return openaiError(quotaError.status, quotaError.message, quotaError.code, {
         type: quotaError.errorType,
         headers: quotaError.headers,
@@ -1323,31 +1222,10 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     if (runError) {
       await bestEffortSettleKernelQuota("incomplete", "inference_exception");
       const sentinelReplayInput = takeSentinelReplayInput();
-      if (sentinelReplayInput) {
-        const observation: SentinelFailureObservation = {
-          status: 500,
-          stream: null,
-          completed: false,
-          terminal_type: "error",
-          failure_kind: runError instanceof Error ? runError.name : "unknown_exception",
-          synthetic_terminal_type: null,
-          provider_route: "gateway",
-        };
-        // Snapshot body and upstream recorder together before persistence:
-        // the recorder is sealed and disposed here, and the same immutable
-        // trace feeds HMAC and encryption.
-        const replaySnapshot = snapshotSentinelReplayInput(sentinelReplayInput);
-        try {
-          await persistSentinelReplayFromEnvironment(replaySnapshot, observation);
-        } catch {
-          // Replay persistence is best effort and cannot replace the original
-          // gateway exception or expose its request body in logs.
-        } finally {
-          zeroSentinelReplayInput(sentinelReplayInput);
-          zeroSentinelReplayInput(replaySnapshot);
-        }
-      }
-      throw runError;
+      if (sentinelReplayInput) await persistInferenceExceptionReplay(sentinelReplayInput, runError);
+      // `only-throw-error` requires an Error: an Error run failure is rethrown
+      // unchanged, and any other value is preserved as the cause.
+      throw runError instanceof Error ? runError : new Error("Inference handler threw a non-Error value", { cause: runError });
     }
     if (!response) {
       await bestEffortSettleKernelQuota("incomplete", "missing_inference_response");
@@ -1355,25 +1233,20 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     }
     return response;
   };
-
-  if (req.method === "GET" && path === "/v1/models") {
-    return withCors(await handleModels(req));
-  }
-
-  if (req.method === "POST" && path === "/uos/embeddings") {
+  const runModelsRoute = async (): Promise<Response> => withCors(await handleModels(req));
+  const runEmbeddingsRoute = async (): Promise<Response> => {
     const response = await executeInference(() => handleUosEmbeddings(req, usageContext));
     if (response.ok && response.headers.get("x-uos-idempotency-replayed") !== "true") {
       await bestEffortSettleKernelQuota("completed");
     } else {
       await bestEffortSettleKernelQuota(
         "incomplete",
-        response.headers.get("x-uos-idempotency-replayed") === "true" ? "idempotency_replay" : "embedding_failed",
+        response.headers.get("x-uos-idempotency-replayed") === "true" ? "idempotency_replay" : "embedding_failed"
       );
     }
     return await finishTerminalResponse(response, "embeddings");
-  }
-
-  if (req.method === "POST" && path === "/uos/embedding-jobs") {
+  };
+  const runEmbeddingJobCreateRoute = async (): Promise<Response> => {
     const response = await executeInference(() => handleEmbeddingsJobCreate(req, authResult.token, usageContext));
     if (response.ok) {
       await bestEffortSettleKernelQuota("completed");
@@ -1381,9 +1254,8 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
       await bestEffortSettleKernelQuota("incomplete", "embedding_job_create_failed");
     }
     return await finishTerminalResponse(response, "embeddings.jobs.create");
-  }
-
-  if (req.method === "GET" && path.startsWith("/uos/embedding-jobs/")) {
+  };
+  const runEmbeddingJobGetRoute = async (): Promise<Response> => {
     const jobId = path.slice("/uos/embedding-jobs/".length).trim();
     if (!jobId) {
       await bestEffortSettleKernelQuota("incomplete", "missing_embedding_job_id");
@@ -1392,24 +1264,68 @@ export default async function handler(req: Request, delivery?: RequestDeliveryIn
     const response = await executeInference(() => handleEmbeddingsJobGet(req, authResult.token, jobId, usageContext));
     await bestEffortSettleKernelQuota("incomplete", "embedding_job_read_not_counted");
     return await finishTerminalResponse(response, "embeddings.jobs.get");
-  }
-
-  if (req.method === "POST" && (path === "/v1/images/generations" || path === "/v1/images/edits")) {
+  };
+  const runImagesRoute = async (): Promise<Response> => {
     const kind = path === "/v1/images/edits" ? "edits" : "generations";
     const response = await executeInference(() => handleImages(req, kind, usageContext));
     return await finishTerminalResponse(response, `images.${kind}`, true, true);
-  }
-
-  if (req.method === "POST" && path === "/v1/chat/completions") {
+  };
+  const runChatCompletionsRoute = async (): Promise<Response> => {
     const response = await executeInference(() => handleChatCompletions(req, usageContext));
     return await finishTerminalResponse(response, "chat.completions", true, true);
-  }
-
-  if (req.method === "POST" && path === "/v1/responses") {
+  };
+  const runResponsesRoute = async (): Promise<Response> => {
     const response = await executeInference(() => handleResponses(req, usageContext));
     return await finishTerminalResponse(response, "responses", true, true);
+  };
+  // Terminal routes in wire order. The conditions are pure, so the first match
+  // owns the response exactly as the original if/else chain did.
+  const dispatchTerminalRoute = async (): Promise<Response> => {
+    const terminalRoutes: readonly (readonly [boolean, () => Promise<Response>])[] = [
+      [req.method === "GET" && path === "/v1/models", runModelsRoute],
+      [req.method === "POST" && path === "/uos/embeddings", runEmbeddingsRoute],
+      [req.method === "POST" && path === "/uos/embedding-jobs", runEmbeddingJobCreateRoute],
+      [req.method === "GET" && path.startsWith("/uos/embedding-jobs/"), runEmbeddingJobGetRoute],
+      [req.method === "POST" && (path === "/v1/images/generations" || path === "/v1/images/edits"), runImagesRoute],
+      [req.method === "POST" && path === "/v1/chat/completions", runChatCompletionsRoute],
+      [req.method === "POST" && path === "/v1/responses", runResponsesRoute],
+    ];
+    for (const [matches, run] of terminalRoutes) {
+      if (matches) return await run();
+    }
+    const response = openaiError(404, "Not found", "not_found");
+    return withCors(req.method === "HEAD" ? withoutBody(response) : response);
+  };
+  return await dispatchTerminalRoute();
+};
+
+export default async function handler(req: Request, delivery?: RequestDeliveryInfo): Promise<Response> {
+  const requestStartedAtMs = Date.now();
+  const requestStartedAtMonotonicMs = performance.now();
+  const requestId = crypto.randomUUID();
+  const withCors = (response: Response): Response => withCorsHeaders(response, req);
+  if (req.method === "OPTIONS") {
+    return withCors(new Response(null, { status: 204, headers: corsHeaders(req) }));
   }
 
-  const response = openaiError(404, "Not found", "not_found");
-  return withCors(req.method === "HEAD" ? withoutBody(response) : response);
+  const url = new URL(req.url);
+  const path = normalizePath(url.pathname);
+
+  const staticResponse = await handleStaticRoute(req, path);
+  if (staticResponse) return withCors(staticResponse);
+  const healthResponse = await handleHealthRoute(req, path);
+  if (healthResponse) return withCors(healthResponse);
+  const authRouteResponse = await handleAuthRoute(req, path);
+  if (authRouteResponse) return withCors(authRouteResponse);
+  const adminResponse = await handleAdminRoute(req, path);
+  if (adminResponse) return withCors(adminResponse);
+  const uosResponse = await handleUosRoute(req, path);
+  if (uosResponse) return withCors(uosResponse);
+
+  if (!isTerminalInferencePath(path)) {
+    const response = notFound();
+    return withCors(req.method === "HEAD" ? withoutBody(response) : response);
+  }
+
+  return await handleTerminalRoute(req, path, delivery, requestId, requestStartedAtMs, requestStartedAtMonotonicMs);
 }

@@ -2,11 +2,7 @@ import assert from "node:assert/strict";
 
 import { normalizeCodexModelsPayload } from "../src/codex_models.ts";
 
-import {
-  CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT,
-  deriveAutoCompactTokenLimit,
-  recentModelContextFor,
-} from "../src/recent_model_context.ts";
+import { CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT, deriveAutoCompactTokenLimit, recentModelContextFor } from "../src/recent_model_context.ts";
 
 type ContextCase = readonly [model: string, modelClass: string, contextWindow: number, autoCompact: number];
 
@@ -48,10 +44,10 @@ Deno.test("recent model context resolves provider aliases by model class", () =>
   for (const [model, modelClass, contextWindow, autoCompact] of cases) {
     const resolved = recentModelContextFor(model);
     assert.equal(resolved?.model_class, modelClass, model);
-    assert.equal(resolved?.context_window_tokens, contextWindow, model);
-    assert.equal(resolved?.max_context_window_tokens, contextWindow, model);
-    assert.equal(resolved?.auto_compact_token_limit_tokens, autoCompact, model);
-    assert.equal(resolved?.effective_context_window_percent, CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT, model);
+    assert.equal(resolved.context_window_tokens, contextWindow, model);
+    assert.equal(resolved.max_context_window_tokens, contextWindow, model);
+    assert.equal(resolved.auto_compact_token_limit_tokens, autoCompact, model);
+    assert.equal(resolved.effective_context_window_percent, CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT, model);
   }
 });
 
@@ -77,9 +73,9 @@ Deno.test("native context metadata takes precedence over class fallbacks", () =>
     effective_context_window_percent: 95,
   });
   assert.equal(resolved?.context_window_tokens, 272_000);
-  assert.equal(resolved?.max_context_window_tokens, 1_000_000);
-  assert.equal(resolved?.auto_compact_token_limit_tokens, 222_000);
-  assert.equal(resolved?.effective_context_window_percent, 95);
+  assert.equal(resolved.max_context_window_tokens, 1_000_000);
+  assert.equal(resolved.auto_compact_token_limit_tokens, 222_000);
+  assert.equal(resolved.effective_context_window_percent, 95);
 });
 
 Deno.test("native auto-compaction thresholds stay within the active window", () => {
@@ -98,13 +94,15 @@ Deno.test("native auto-compaction thresholds stay within the active window", () 
 
 Deno.test("Codex snapshot normalization preserves native effective context percentage", () => {
   const snapshot = normalizeCodexModelsPayload({
-    models: [{
-      slug: "gpt-5.6-terra",
-      context_window: 272_000,
-      max_context_window: 1_000_000,
-      auto_compact_token_limit: null,
-      effective_context_window_percent: 91,
-    }],
+    models: [
+      {
+        slug: "gpt-5.6-terra",
+        context_window: 272_000,
+        max_context_window: 1_000_000,
+        auto_compact_token_limit: null,
+        effective_context_window_percent: 91,
+      },
+    ],
   });
   assert.equal(snapshot?.models[0]?.effective_context_window_percent, 91);
 });

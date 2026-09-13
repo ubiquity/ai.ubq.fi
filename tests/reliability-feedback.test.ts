@@ -1,10 +1,6 @@
 import assert from "node:assert/strict";
 
-import {
-  invalidCallLabel,
-  renderValidationFeedback,
-  validateToolArgumentsDetailed,
-} from "../src/harmony/reliability/feedback.ts";
+import { invalidCallLabel, renderValidationFeedback, validateToolArgumentsDetailed } from "../src/harmony/reliability/feedback.ts";
 
 Deno.test("feedback: a fully valid call has no issues", () => {
   const result = validateToolArgumentsDetailed("filesystem.read", { path: "docs/spec.txt" });
@@ -19,9 +15,11 @@ Deno.test("feedback: reports every issue at once with stable codes and hints", (
   const codes = result.issues.map((i) => i.code);
   assert.ok(codes.includes("wrong_type"), `expected wrong_type, got ${codes.join(",")}`);
   assert.ok(codes.includes("unexpected_argument"), `expected unexpected_argument, got ${codes.join(",")}`);
-  const unexpected = result.issues.find((i) => i.code === "unexpected_argument")!;
+  const unexpected = result.issues.find((i) => i.code === "unexpected_argument");
+  assert.ok(unexpected, "expected an unexpected_argument issue");
   assert.match(unexpected.hint, /allowed: path/);
-  const wrongType = result.issues.find((i) => i.code === "wrong_type")!;
+  const wrongType = result.issues.find((i) => i.code === "wrong_type");
+  assert.ok(wrongType, "expected a wrong_type issue");
   assert.match(wrongType.message, /must be a string/);
 });
 

@@ -1,0 +1,34 @@
+# Prettier owns TypeScript only in this repo.
+#
+# `deno fmt` keeps JSON, Markdown, CSS, HTML and the static browser JS that CI
+# already gates with `deno fmt --check`. Two formatters must never share a file
+# (LINTING.md 2.6), so those types are excluded here and `*.ts` is excluded from
+# deno fmt's config in deno.json.
+*.json
+*.jsonc
+*.md
+*.js
+*.cjs
+*.css
+*.html
+*.yml
+*.yaml
+*.sh
+
+# Generated: `deno task types`
+.deno-types.d.ts
+
+# Vendored: openai/codex git submodule
+lib/
+
+# Dev scratch, generated output and immutable release copies
+node_modules/
+.codex-worktrees/
+.data/
+.release/
+.kv-migration/
+.sentinel/
+.diagnostics/
+logs/
+benchmark-runs/
+.git/

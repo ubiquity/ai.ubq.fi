@@ -72,7 +72,7 @@ export const meteredQuotaRunwayView = (snapshot: MeteredQuotaSnapshot | null): M
     available: true,
     cache_state: snapshot.cache_state,
     confidence: tokenUsage ? null : state.confidence,
-    unlimited_quota: tokenUsage ? snapshot.unlimited_quota === true : false,
+    unlimited_quota: tokenUsage ? snapshot.unlimited_quota : false,
     balance_quota: tokenUsage ? null : state.current_balance_quota,
     baseline_quota: tokenUsage ? null : state.post_refill_baseline_quota,
     quota_per_credit: state.quota_per_credit,
@@ -97,9 +97,7 @@ export type PaidFallbackModelSeries = Readonly<{
   buckets: readonly PaidFallbackUsageRollup[];
 }>;
 
-export const groupPaidFallbackUsageRollups = (
-  rollups: readonly PaidFallbackUsageRollup[],
-): PaidFallbackModelSeries[] => {
+export const groupPaidFallbackUsageRollups = (rollups: readonly PaidFallbackUsageRollup[]): PaidFallbackModelSeries[] => {
   const byModelProvider = new Map<string, PaidFallbackUsageRollup[]>();
   for (const rollup of rollups) {
     const identity = `${rollup.model}\u0000${rollup.provider}`;
@@ -109,11 +107,16 @@ export const groupPaidFallbackUsageRollups = (
   }
   return [...byModelProvider.entries()]
     .map(([identity, buckets]) => {
-      const [model, provider] = identity.split("\u0000");
+      // The identity was built in this function from the two rollup fields, so
+      // the split always yields both parts; the defaults are type-level only.
+      const [model = "", provider = ""] = identity.split("\u0000");
+      // `buckets` is the array this call created above, so sorting it in place
+      // stays local: the caller only ever sees the returned series.
+      buckets.sort((left, right) => left.bucket_start_at_ms - right.bucket_start_at_ms);
       return {
-        model: model ?? "",
-        provider: provider ?? "",
-        buckets: buckets.sort((left, right) => left.bucket_start_at_ms - right.bucket_start_at_ms),
+        model,
+        provider,
+        buckets,
       } satisfies PaidFallbackModelSeries;
     })
     .sort((left, right) => left.model.localeCompare(right.model) || left.provider.localeCompare(right.provider));
@@ -134,19 +137,15 @@ export type PaidFallbackModelUsageWindow = Readonly<{
   last_bucket_start_at_ms: number | null;
 }>;
 
-const summarizeWindow = (
-  buckets: readonly PaidFallbackUsageRollup[],
-  windowDays: QuotaProjectionWindowDays,
-  nowMs: number,
-): PaidFallbackModelUsageWindow => {
+const summarizeWindow = (buckets: readonly PaidFallbackUsageRollup[], windowDays: QuotaProjectionWindowDays, nowMs: number): PaidFallbackModelUsageWindow => {
   // Floor to the hour boundary so the window includes the bucket that
   // contains its start (hourly bucket-level precision is documented).
   const windowStartMs = Math.floor((nowMs - windowDays * DAY_MS) / HOUR_MS) * HOUR_MS;
   const inWindow = buckets.filter((bucket) => bucket.bucket_start_at_ms >= windowStartMs);
   const requestCount = inWindow.reduce((sum, bucket) => sum + bucket.request_count, 0);
   const quotaSum = inWindow.reduce((sum, bucket) => sum + bucket.quota_sum, 0);
-  const firstBucket = inWindow.length ? inWindow[0]?.bucket_start_at_ms ?? null : null;
-  const lastBucket = inWindow.length ? inWindow[inWindow.length - 1]?.bucket_start_at_ms ?? null : null;
+  const firstBucket = inWindow.length ? (inWindow[0]?.bucket_start_at_ms ?? null) : null;
+  const lastBucket = inWindow.length ? (inWindow[inWindow.length - 1]?.bucket_start_at_ms ?? null) : null;
   // The rate covers the entire selected window, idle hours included: a model
   // used once in the final day of a 30-day window is one request per 30 days,
   // not a daily rate. Labeling it otherwise would overstate the runway.
@@ -171,17 +170,10 @@ const summarizeWindow = (
 export type PaidFallbackModelUsage = Readonly<{
   model: string;
   provider: string;
-  windows: readonly [
-    PaidFallbackModelUsageWindow,
-    PaidFallbackModelUsageWindow,
-    PaidFallbackModelUsageWindow,
-  ];
+  windows: readonly [PaidFallbackModelUsageWindow, PaidFallbackModelUsageWindow, PaidFallbackModelUsageWindow];
 }>;
 
-export const summarizePaidFallbackUsage = (
-  series: readonly PaidFallbackModelSeries[],
-  nowMs: number,
-): PaidFallbackModelUsage[] =>
+export const summarizePaidFallbackUsage = (series: readonly PaidFallbackModelSeries[], nowMs: number): PaidFallbackModelUsage[] =>
   series.map((entry) => ({
     model: entry.model,
     provider: entry.provider,
@@ -202,8 +194,7 @@ export type PaidFallbackRunwayEstimate = Readonly<{
   percent_per_request_vs_baseline: number | null;
 }>;
 
-const positiveFinite = (value: number | null | undefined): value is number =>
-  typeof value === "number" && Number.isFinite(value) && value > 0;
+const positiveFinite = (value: number | null | undefined): value is number => typeof value === "number" && Number.isFinite(value) && value > 0;
 
 /**
  * Balance the projection is drawn against. Wallet mode uses the live wallet
@@ -232,15 +223,11 @@ const runwayBaseline = (quota: MeteredQuotaRunwayView): number | null => {
  * no quota snapshot in this gateway. Returning no estimate for other
  * providers avoids reporting Surplus history against the OpenLux balance.
  */
-export const projectPaidFallbackRunway = (
-  usage: PaidFallbackModelUsage,
-  quota: MeteredQuotaRunwayView,
-  nowMs: number,
-): PaidFallbackRunwayEstimate[] => {
+export const projectPaidFallbackRunway = (usage: PaidFallbackModelUsage, quota: MeteredQuotaRunwayView, nowMs: number): PaidFallbackRunwayEstimate[] => {
   if (usage.provider !== "metered") return [];
   const balanceQuota = runwayBalance(quota);
   const baselineQuota = runwayBaseline(quota);
-  const unlimited = quota.unlimited_quota === true;
+  const unlimited = quota.unlimited_quota;
   const staleBalance = quota.cache_state === "stale";
   return usage.windows.map((window) => {
     if (unlimited) {
@@ -257,12 +244,8 @@ export const projectPaidFallbackRunway = (
     }
     const avgQuota = window.avg_quota_per_request;
     const quotaPerHour = window.quota_per_hour;
-    const requestsRemaining = balanceQuota !== null && positiveFinite(avgQuota)
-      ? Math.floor(balanceQuota / avgQuota)
-      : null;
-    const timeRemainingMs = balanceQuota !== null && positiveFinite(quotaPerHour)
-      ? Math.trunc(balanceQuota / quotaPerHour * HOUR_MS)
-      : null;
+    const requestsRemaining = balanceQuota !== null && positiveFinite(avgQuota) ? Math.floor(balanceQuota / avgQuota) : null;
+    const timeRemainingMs = balanceQuota !== null && positiveFinite(quotaPerHour) ? Math.trunc((balanceQuota / quotaPerHour) * HOUR_MS) : null;
     return {
       window_days: window.window_days,
       unlimited: false,
@@ -270,12 +253,8 @@ export const projectPaidFallbackRunway = (
       requests_remaining: requestsRemaining,
       time_remaining_ms: timeRemainingMs,
       exhausted_at_ms: timeRemainingMs !== null ? nowMs + timeRemainingMs : null,
-      percent_per_request_vs_balance: balanceQuota !== null && positiveFinite(avgQuota) && balanceQuota > 0
-        ? avgQuota / balanceQuota * 100
-        : null,
-      percent_per_request_vs_baseline: baselineQuota !== null && positiveFinite(avgQuota) && baselineQuota > 0
-        ? avgQuota / baselineQuota * 100
-        : null,
+      percent_per_request_vs_balance: balanceQuota !== null && positiveFinite(avgQuota) && balanceQuota > 0 ? (avgQuota / balanceQuota) * 100 : null,
+      percent_per_request_vs_baseline: baselineQuota !== null && positiveFinite(avgQuota) && baselineQuota > 0 ? (avgQuota / baselineQuota) * 100 : null,
     };
   });
 };

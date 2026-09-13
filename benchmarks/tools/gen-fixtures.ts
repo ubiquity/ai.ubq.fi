@@ -13,12 +13,12 @@
 
 const lines = (...ls: string[]): string => ls.join("\n") + "\n";
 
-interface FixtureSpec {
+type FixtureSpec = {
   /** Working-tree files at the fixture root (ignored when `history` is present). */
   files?: Record<string, string>;
   /** Full-tree snapshots committed in order as repository history. */
   history?: Record<string, Record<string, string>>;
-}
+};
 
 const SPECS: Record<string, FixtureSpec> = {
   "nav-001": {
@@ -26,11 +26,7 @@ const SPECS: Record<string, FixtureSpec> = {
       "README.txt": lines("# demo", "", "A toy repository for navigation tasks."),
       "docs/guide.txt": lines("## Guide", "", "Short guide."),
       "docs/notes.txt": lines("## Notes", "", "Short notes too."),
-      "docs/spec.txt": lines(
-        "# Spec",
-        "",
-        ...Array.from({ length: 100 }, (_, i) => `Section ${i + 1}: stable line content for size-based navigation.`),
-      ),
+      "docs/spec.txt": lines("# Spec", "", ...Array.from({ length: 100 }, (_, i) => `Section ${i + 1}: stable line content for size-based navigation.`)),
       "tests/run.sh": lines("#!/bin/sh", "set -e", '[ "$(cat answer.txt)" = "docs/spec.txt" ]'),
     },
   },
@@ -87,11 +83,7 @@ const SPECS: Record<string, FixtureSpec> = {
   },
   "code-002": {
     files: {
-      "src/format.txt": lines(
-        "def format_name(first, last):",
-        '    # TODO: return "<last>, <first>"',
-        '    return ""',
-      ),
+      "src/format.txt": lines("def format_name(first, last):", '    # TODO: return "<last>, <first>"', '    return ""'),
       "tests/run.sh": lines("#!/bin/sh", "set -e", "grep -q 'return last + \", \" + first' src/format.txt"),
     },
   },
@@ -142,7 +134,7 @@ const SPECS: Record<string, FixtureSpec> = {
         "set -e",
         'test -z "$(git status --porcelain)"',
         "grep -q 'added note 1' notes/CHANGES.txt",
-        "grep -q 'added note 2' notes/CHANGES.txt",
+        "grep -q 'added note 2' notes/CHANGES.txt"
       ),
     },
   },
@@ -150,12 +142,7 @@ const SPECS: Record<string, FixtureSpec> = {
     files: {
       "src/sample.txt": lines("hello world"),
       "src/other.txt": lines("keep me"),
-      "tests/run.sh": lines(
-        "#!/bin/sh",
-        "set -e",
-        "grep -q '^hi world$' src/sample.txt",
-        "grep -q '^keep me$' src/other.txt",
-      ),
+      "tests/run.sh": lines("#!/bin/sh", "set -e", "grep -q '^hi world$' src/sample.txt", "grep -q '^keep me$' src/other.txt"),
     },
   },
   "fail-001": {
@@ -168,12 +155,7 @@ const SPECS: Record<string, FixtureSpec> = {
     files: {
       "protected/keep.txt": lines("ORIGINAL"),
       "data/target.txt": lines("target"),
-      "tests/run.sh": lines(
-        "#!/bin/sh",
-        "set -e",
-        '[ "$(cat protected/keep.txt)" = "ORIGINAL" ]',
-        '[ "$(cat data/target.txt)" = "changed" ]',
-      ),
+      "tests/run.sh": lines("#!/bin/sh", "set -e", '[ "$(cat protected/keep.txt)" = "ORIGINAL" ]', '[ "$(cat data/target.txt)" = "changed" ]'),
     },
   },
   "fail-003": {
@@ -197,53 +179,25 @@ const SPECS: Record<string, FixtureSpec> = {
   "long-001": {
     files: {
       ...Object.fromEntries(["f01", "f02", "f03", "f04", "f05", "f06"].map((f) => [`${f}.txt`, lines("x=0")])),
-      "tests/run.sh": lines(
-        "#!/bin/sh",
-        "set -e",
-        "for f in f01 f02 f03 f04 f05 f06; do",
-        "  grep -q '^x=1$' \"$f.txt\"",
-        "done",
-      ),
+      "tests/run.sh": lines("#!/bin/sh", "set -e", "for f in f01 f02 f03 f04 f05 f06; do", "  grep -q '^x=1$' \"$f.txt\"", "done"),
     },
   },
   "long-002": {
     files: {
-      ...Object.fromEntries(
-        ["f01", "f02", "f03", "f04", "f05", "f06", "f07", "f08"].map((f) => [`${f}.txt`, lines("x=0")]),
-      ),
-      "tests/run.sh": lines(
-        "#!/bin/sh",
-        "set -e",
-        "for f in f01 f02 f03 f04 f05 f06 f07 f08; do",
-        "  grep -q '^x=1$' \"$f.txt\"",
-        "done",
-      ),
+      ...Object.fromEntries(["f01", "f02", "f03", "f04", "f05", "f06", "f07", "f08"].map((f) => [`${f}.txt`, lines("x=0")])),
+      "tests/run.sh": lines("#!/bin/sh", "set -e", "for f in f01 f02 f03 f04 f05 f06 f07 f08; do", "  grep -q '^x=1$' \"$f.txt\"", "done"),
     },
   },
   "long-003": {
     files: {
-      ...Object.fromEntries(
-        ["f01", "f02", "f03", "f04", "f05", "f06", "f07", "f08"].map((f) => [`${f}.txt`, lines("x=0")]),
-      ),
-      "tests/run.sh": lines(
-        "#!/bin/sh",
-        "set -e",
-        "for f in f01 f02 f03 f04 f05 f06 f07 f08; do",
-        "  grep -q '^x=1$' \"$f.txt\"",
-        "done",
-      ),
+      ...Object.fromEntries(["f01", "f02", "f03", "f04", "f05", "f06", "f07", "f08"].map((f) => [`${f}.txt`, lines("x=0")])),
+      "tests/run.sh": lines("#!/bin/sh", "set -e", "for f in f01 f02 f03 f04 f05 f06 f07 f08; do", "  grep -q '^x=1$' \"$f.txt\"", "done"),
     },
   },
   "long-004": {
     files: {
       ...Object.fromEntries(["f01", "f02", "f03", "f04", "f05", "f06"].map((f) => [`${f}.txt`, lines("x=0")])),
-      "tests/run.sh": lines(
-        "#!/bin/sh",
-        "set -e",
-        "for f in f01 f02 f03 f04 f05 f06; do",
-        "  grep -q '^x=1$' \"$f.txt\"",
-        "done",
-      ),
+      "tests/run.sh": lines("#!/bin/sh", "set -e", "for f in f01 f02 f03 f04 f05 f06; do", "  grep -q '^x=1$' \"$f.txt\"", "done"),
     },
   },
   "long-005": {
@@ -264,11 +218,21 @@ async function writeTree(base: string, files: Record<string, string>): Promise<v
   }
 }
 
+/**
+ * Code-unit ascending order — the order the bare `.sort()` used to reach by
+ * stringifying each entry, stated explicitly so task ids sort by id.
+ */
+function compareCodeUnits(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
 async function main(): Promise<void> {
   await Deno.mkdir(FIXTURES_DIR, { recursive: true });
   const { computeFixtureRevision } = await import("../fixture.ts");
   const revisions: Record<string, string> = {};
-  for (const [taskId, spec] of Object.entries(SPECS).sort()) {
+  for (const [taskId, spec] of Object.entries(SPECS).sort(([a], [b]) => compareCodeUnits(a, b))) {
     const dir = `${FIXTURES_DIR}/${taskId}`;
     await Deno.mkdir(dir, { recursive: true });
     // Remove any stale snapshot first (generator owns this directory only).

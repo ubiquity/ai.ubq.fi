@@ -16,11 +16,7 @@ import {
   readCodexAccountAffinity,
   recordCodexAccountAffinity,
 } from "../src/codex_account_affinity.ts";
-import {
-  markCodexQuotaBlocked,
-  resetCodexAccountRoutingForTest,
-  selectCodexRoutingAccounts,
-} from "../src/codex_account_routing.ts";
+import { markCodexQuotaBlocked, resetCodexAccountRoutingForTest, selectCodexRoutingAccounts } from "../src/codex_account_routing.ts";
 import { setKvForTest } from "../src/kv.ts";
 import type { CodexAuthPoolState, CodexAuthState } from "../src/types.ts";
 
@@ -71,15 +67,16 @@ class AffinityKv {
     }
     if (options?.expireIn !== undefined) this.expireIns.push(options.expireIn);
     this.put(key, value, options?.expireIn);
-    const stored = this.values.get(keyOf(key))!;
+    const stored = this.values.get(keyOf(key));
+    assert.ok(stored);
     return { ok: true, versionstamp: versionstamp(stored.version) };
   }
 
   atomic(): Deno.AtomicOperation {
-    const checks: Array<{ key: Deno.KvKey; versionstamp: string | null }> = [];
-    const writes: Array<{ type: "delete" | "set"; key: Deno.KvKey; value?: unknown; expireIn?: number }> = [];
+    const checks: { key: Deno.KvKey; versionstamp: string | null }[] = [];
+    const writes: { type: "delete" | "set"; key: Deno.KvKey; value?: unknown; expireIn?: number }[] = [];
     const chain = {
-      check: (...entries: Array<{ key: Deno.KvKey; versionstamp: string | null }>) => {
+      check: (...entries: { key: Deno.KvKey; versionstamp: string | null }[]) => {
         checks.push(...entries);
         return chain;
       },
@@ -109,13 +106,12 @@ class AffinityKv {
     return chain as unknown as Deno.AtomicOperation;
   }
 
-  affinityRecords(): Array<Readonly<{ key: Deno.KvKey; value: unknown }>> {
+  affinityRecords(): Readonly<{ key: Deno.KvKey; value: unknown }>[] {
     return [...this.values.entries()]
       .map(([encoded, stored]) => ({ key: JSON.parse(encoded) as Deno.KvKey, value: stored.value }))
-      .filter(({ key }) =>
-        key[0] === CODEX_ACCOUNT_AFFINITY_KV_PREFIX[0] &&
-        key[1] === CODEX_ACCOUNT_AFFINITY_KV_PREFIX[1] &&
-        key[2] === CODEX_ACCOUNT_AFFINITY_KV_PREFIX[2]
+      .filter(
+        ({ key }) =>
+          key[0] === CODEX_ACCOUNT_AFFINITY_KV_PREFIX[0] && key[1] === CODEX_ACCOUNT_AFFINITY_KV_PREFIX[1] && key[2] === CODEX_ACCOUNT_AFFINITY_KV_PREFIX[2]
       );
   }
 }
@@ -123,7 +119,10 @@ class AffinityKv {
 let nowMs = 1_700_000_000_000;
 
 const base64Url = (value: unknown): string =>
-  btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  btoa(JSON.stringify(value))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/={1,2}$/, "");
 
 const auth = (label: string, tokenLabel = label): CodexAuthState => ({
   access_token: `${base64Url({ alg: "none" })}.${base64Url({ exp: (nowMs + 60 * 60_000) / 1_000 })}.${tokenLabel}`,
@@ -139,9 +138,7 @@ const installPool = (kv: AffinityKv, next: CodexAuthPoolState): void => {
   cacheCodexAuthPool(next);
 };
 
-const withFixture = async (
-  callback: (fixture: Readonly<{ kv: AffinityKv; advance: (milliseconds: number) => void }>) => Promise<void>,
-): Promise<void> => {
+const withFixture = async (callback: (fixture: Readonly<{ kv: AffinityKv; advance: (milliseconds: number) => void }>) => Promise<void>): Promise<void> => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   nowMs = 1_700_000_000_000;
@@ -151,7 +148,7 @@ const withFixture = async (
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
   try {
-    await callback({ kv, advance: (milliseconds) => nowMs += milliseconds });
+    await callback({ kv, advance: (milliseconds) => (nowMs += milliseconds) });
   } finally {
     globalThis.fetch = originalFetch;
     Date.now = originalNow;
@@ -189,20 +186,20 @@ Deno.test("Codex account-affinity stores only bounded opaque data and separates 
 
     const firstCohort = "a".repeat(64);
     const secondCohort = "b".repeat(64);
-    await Promise.all([
-      recordCodexAccountAffinity(identity, firstCohort),
-      recordCodexAccountAffinity(identity, secondCohort),
-    ]);
+    await Promise.all([recordCodexAccountAffinity(identity, firstCohort), recordCodexAccountAffinity(identity, secondCohort)]);
     const stored = kv.affinityRecords();
     assert.equal(stored.length, 1);
-    assert.deepEqual(Object.keys(stored[0]!.value as Record<string, unknown>).sort(), [
-      "account_cohort_hash",
-      "expires_at_ms",
-    ]);
+    assert.deepEqual(
+      Object.keys(stored[0].value as Record<string, unknown>).sort((a, b) => a.localeCompare(b)),
+      ["account_cohort_hash", "expires_at_ms"]
+    );
     assert.equal(JSON.stringify(stored[0]).includes(principal), false);
     assert.equal(JSON.stringify(stored[0]).includes(cacheKey), false);
-    assert.equal(kv.expireIns.every((expireIn) => expireIn === CODEX_ACCOUNT_AFFINITY_TTL_MS), true);
-    assert.match(String((stored[0]!.value as { account_cohort_hash?: unknown }).account_cohort_hash), /^[a-f0-9]{64}$/);
+    assert.equal(
+      kv.expireIns.every((expireIn) => expireIn === CODEX_ACCOUNT_AFFINITY_TTL_MS),
+      true
+    );
+    assert.match(String((stored[0].value as { account_cohort_hash?: unknown }).account_cohort_hash), /^[a-f0-9]{64}$/);
     const observedCohort = await readCodexAccountAffinity(identity);
     assert.ok(observedCohort === firstCohort || observedCohort === secondCohort);
 
@@ -242,9 +239,12 @@ Deno.test("Codex account-affinity prefers the completed keyed account, separates
         cacheScope: "api-key:principal-one",
       });
       const otherPrincipal = await fetchCodexResponses(cacheableBody(), { cacheScope: "api-key:principal-two" });
-      const unkeyed = await fetchCodexResponses({ model: "gpt-5.6-luna", input: "unkeyed" }, {
-        cacheScope: "api-key:principal-one",
-      });
+      const unkeyed = await fetchCodexResponses(
+        { model: "gpt-5.6-luna", input: "unkeyed" },
+        {
+          cacheScope: "api-key:principal-one",
+        }
+      );
       assert.equal(getCodexResponseAffinityOutcome(otherKey), "none");
       assert.equal(getCodexResponseAffinityOutcome(otherPrincipal), "none");
       assert.equal(getCodexResponseAffinityOutcome(unkeyed), "none");
@@ -275,7 +275,7 @@ Deno.test("Codex account-affinity remaps only after authoritative quota failure 
           new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
             status: 429,
             headers: { "Content-Type": "application/json", "Retry-After": new Date(nowMs + 60_000).toUTCString() },
-          }),
+          })
         );
       }
       return Promise.resolve(new Response("{}", { status: 200 }));
@@ -336,65 +336,61 @@ Deno.test("Codex account-affinity remaps after an authoritative credential failu
   });
 });
 
-Deno.test("Codex account-affinity does not turn transient failures into quota, remaps removed accounts, and honors same-account credential rotation", async () => {
-  await withFixture(async ({ kv }) => {
-    const one = auth("one");
-    const two = auth("two");
-    installPool(kv, pool(one, two));
-    const accountIds: string[] = [];
-    let responseMode: "network" | "ok" | "server_error" = "ok";
-    globalThis.fetch = (input, init) => {
-      const request = new Request(input, init);
-      accountIds.push(request.headers.get("ChatGPT-Account-ID") ?? "");
-      if (responseMode === "network") return Promise.reject(new TypeError("fixture network failure"));
-      if (responseMode === "server_error") return Promise.resolve(new Response("upstream failure", { status: 503 }));
-      return Promise.resolve(new Response("{}", { status: 200 }));
-    };
+Deno.test(
+  "Codex account-affinity does not turn transient failures into quota, remaps removed accounts, and honors same-account credential rotation",
+  async () => {
+    await withFixture(async ({ kv }) => {
+      const one = auth("one");
+      const two = auth("two");
+      installPool(kv, pool(one, two));
+      const accountIds: string[] = [];
+      let responseMode: "network" | "ok" | "server_error" = "ok";
+      globalThis.fetch = (input, init) => {
+        const request = new Request(input, init);
+        accountIds.push(request.headers.get("ChatGPT-Account-ID") ?? "");
+        if (responseMode === "network") return Promise.reject(new TypeError("fixture network failure"));
+        if (responseMode === "server_error") return Promise.resolve(new Response("upstream failure", { status: 503 }));
+        return Promise.resolve(new Response("{}", { status: 200 }));
+      };
 
-    const established = await fetchCodexResponses(cacheableBody(), { cacheScope: "api-key:rotation-principal" });
-    await markCodexResponseCompleted(established);
+      const established = await fetchCodexResponses(cacheableBody(), { cacheScope: "api-key:rotation-principal" });
+      await markCodexResponseCompleted(established);
 
-    responseMode = "network";
-    await assert.rejects(
-      () => fetchCodexResponses(cacheableBody(), { cacheScope: "api-key:rotation-principal" }),
-      (error: unknown) => error instanceof CodexError && error.code === "codex_upstream_unreachable",
-    );
-    responseMode = "server_error";
-    const serverError = await fetchCodexResponses(cacheableBody(), { cacheScope: "api-key:rotation-principal" });
-    assert.equal(serverError.status, 503);
-    assert.equal(getCodexResponseAffinityOutcome(serverError), "preferred");
-    responseMode = "ok";
+      responseMode = "network";
+      await assert.rejects(
+        () => fetchCodexResponses(cacheableBody(), { cacheScope: "api-key:rotation-principal" }),
+        (error: unknown) => error instanceof CodexError && error.code === "codex_upstream_unreachable"
+      );
+      responseMode = "server_error";
+      const serverError = await fetchCodexResponses(cacheableBody(), { cacheScope: "api-key:rotation-principal" });
+      assert.equal(serverError.status, 503);
+      assert.equal(getCodexResponseAffinityOutcome(serverError), "preferred");
+      responseMode = "ok";
 
-    // A new token for the same account keeps the same opaque account cohort.
-    installPool(kv, pool({ ...auth("one", "rotated"), account_id: one.account_id }, two));
-    const afterCredentialRotation = await fetchCodexResponses(cacheableBody(), {
-      cacheScope: "api-key:rotation-principal",
+      // A new token for the same account keeps the same opaque account cohort.
+      installPool(kv, pool({ ...auth("one", "rotated"), account_id: one.account_id }, two));
+      const afterCredentialRotation = await fetchCodexResponses(cacheableBody(), {
+        cacheScope: "api-key:rotation-principal",
+      });
+      assert.equal(getCodexResponseAffinityOutcome(afterCredentialRotation), "preferred");
+      await markCodexResponseCompleted(afterCredentialRotation);
+
+      // Removing the preferred account makes it unavailable. A failed alternate
+      // reports that state without overwriting affinity; a later successful one
+      // is the only operation that remaps it.
+      installPool(kv, pool(two));
+      responseMode = "server_error";
+      const unavailable = await fetchCodexResponses(cacheableBody(), { cacheScope: "api-key:rotation-principal" });
+      assert.equal(getCodexResponseAffinityOutcome(unavailable), "preferred_unavailable");
+      responseMode = "ok";
+      const remapped = await fetchCodexResponses(cacheableBody(), { cacheScope: "api-key:rotation-principal" });
+      assert.equal(getCodexResponseAffinityOutcome(remapped), "remapped");
+      await markCodexResponseCompleted(remapped);
+
+      assert.deepEqual(accountIds, ["account-one", "account-one", "account-one", "account-one", "account-two", "account-two"]);
     });
-    assert.equal(getCodexResponseAffinityOutcome(afterCredentialRotation), "preferred");
-    await markCodexResponseCompleted(afterCredentialRotation);
-
-    // Removing the preferred account makes it unavailable. A failed alternate
-    // reports that state without overwriting affinity; a later successful one
-    // is the only operation that remaps it.
-    installPool(kv, pool(two));
-    responseMode = "server_error";
-    const unavailable = await fetchCodexResponses(cacheableBody(), { cacheScope: "api-key:rotation-principal" });
-    assert.equal(getCodexResponseAffinityOutcome(unavailable), "preferred_unavailable");
-    responseMode = "ok";
-    const remapped = await fetchCodexResponses(cacheableBody(), { cacheScope: "api-key:rotation-principal" });
-    assert.equal(getCodexResponseAffinityOutcome(remapped), "remapped");
-    await markCodexResponseCompleted(remapped);
-
-    assert.deepEqual(accountIds, [
-      "account-one",
-      "account-one",
-      "account-one",
-      "account-one",
-      "account-two",
-      "account-two",
-    ]);
-  });
-});
+  }
+);
 
 Deno.test("Codex account-affinity does not replay an ambiguous sibling transport", async () => {
   await withFixture(async ({ kv }) => {
@@ -424,7 +420,7 @@ Deno.test("Codex account-affinity does not replay an ambiguous sibling transport
     failPreferredTransport = true;
     await assert.rejects(
       () => fetchCodexResponses(cacheableBody(), { cacheScope }),
-      (error: unknown) => error instanceof CodexError && error.code === "codex_upstream_unreachable",
+      (error: unknown) => error instanceof CodexError && error.code === "codex_upstream_unreachable"
     );
     assert.equal(await readCodexAccountAffinity(identity), priorCohort);
     failPreferredTransport = false;
@@ -461,7 +457,7 @@ Deno.test("Codex account-affinity keeps the prior account after all sibling tran
     accountIds.length = 0;
     await assert.rejects(
       () => fetchCodexResponses(cacheableBody(), { cacheScope }),
-      (error: unknown) => error instanceof CodexError && error.code === "codex_upstream_unreachable",
+      (error: unknown) => error instanceof CodexError && error.code === "codex_upstream_unreachable"
     );
     assert.deepEqual(accountIds, [one.account_id]);
     assert.equal(await readCodexAccountAffinity(identity), priorCohort);
@@ -494,7 +490,7 @@ Deno.test("Codex account-affinity ignores 5xx, progress cancellation, and empty 
           new Response('data: {"type":"response.reasoning_summary_text.delta","delta":"thinking"}\n\n', {
             status: 200,
             headers: { "Content-Type": "text/event-stream" },
-          }),
+          })
         );
       }
       if (responseMode === "remapped_empty") {
@@ -502,7 +498,7 @@ Deno.test("Codex account-affinity ignores 5xx, progress cancellation, and empty 
           new Response('data: {"type":"response.completed","response":{"output":[]}}\n\n', {
             status: 200,
             headers: { "Content-Type": "text/event-stream" },
-          }),
+          })
         );
       }
       return Promise.resolve(new Response("{}", { status: 200 }));
@@ -527,14 +523,14 @@ Deno.test("Codex account-affinity ignores 5xx, progress cancellation, and empty 
     responseMode = "remapped_progress";
     await assert.rejects(
       () => fetchCodexResponses(cacheableBody(), { cacheScope }),
-      (error: unknown) => error instanceof CodexError && error.code === "codex_upstream_unreachable",
+      (error: unknown) => error instanceof CodexError && error.code === "codex_upstream_unreachable"
     );
     assert.equal(await readCodexAccountAffinity(identity), priorCohort);
 
     responseMode = "remapped_empty";
     await assert.rejects(
       () => fetchCodexResponses(cacheableBody(), { cacheScope }),
-      (error: unknown) => error instanceof CodexError && error.code === "codex_upstream_unreachable",
+      (error: unknown) => error instanceof CodexError && error.code === "codex_upstream_unreachable"
     );
     assert.equal(await readCodexAccountAffinity(identity), priorCohort);
   });
@@ -556,14 +552,16 @@ Deno.test("Codex account-affinity never bypasses an existing quota or banked-res
     await markCodexResponseCompleted(established);
     const initial = await selectCodexRoutingAccounts(pool(one, two), [one, two], nowMs, "gpt-5.6-luna");
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
+
+    const blockedAccount = initial.accounts.find((account) => account.auth.account_id === "account-one");
+    assert.ok(blockedAccount);
     await markCodexQuotaBlocked(
-      initial.accounts.find((account) => account.auth.account_id === "account-one")!,
+      blockedAccount,
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(nowMs + 60_000).toUTCString() },
       }),
-      nowMs,
+      nowMs
     );
 
     const fenced = await fetchCodexResponses(cacheableBody(), { cacheScope: "api-key:fenced-principal" });
@@ -579,14 +577,14 @@ Deno.test("completed half-open probes clear routing before slow affinity persist
     installPool(kv, pool(one));
     const initial = await selectCodexRoutingAccounts(pool(one), [one], nowMs, "gpt-5.6-luna");
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
+
     await markCodexQuotaBlocked(
-      initial.accounts[0]!,
+      initial.accounts[0],
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(nowMs + 1_000).toUTCString() },
       }),
-      nowMs,
+      nowMs
     );
     advance(1_001);
 

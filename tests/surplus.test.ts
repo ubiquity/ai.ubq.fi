@@ -1,57 +1,72 @@
 import assert from "node:assert/strict";
-import {
-  fetchSurplusModels,
-  fetchSurplusResponses,
-  resetSurplusModelsCacheForTest,
-  type SurplusFetch,
-} from "../src/surplus.ts";
+import { fetchSurplusModels, fetchSurplusResponses, resetSurplusModelsCacheForTest, type SurplusFetch } from "../src/surplus.ts";
 
-const jsonResponse = (body: unknown, status = 200, headers: HeadersInit = {}): Response =>
+/**
+ * `jsonResponse` only composes extra plain headers on top of the JSON
+ * content type, so it takes a record rather than a full `HeadersInit` (object
+ * spread over a `Headers` instance or a `string[][]` silently loses entries).
+ */
+const jsonResponse = (body: unknown, status = 200, headers: Record<string, string> = {}): Response =>
   new Response(JSON.stringify(body), {
     status,
     headers: { "Content-Type": "application/json", ...headers },
   });
 
+/** Request URL as text; `String(input)` would render a `Request` as "[object Object]". */
+const fetchUrl = (input: RequestInfo | URL): string => {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.href;
+  return input.url;
+};
+
+/** Request body as text; the gateway always encodes it as a JSON string. */
+const bodyText = (body: BodyInit | null | undefined): string => {
+  if (typeof body === "string") return body;
+  return JSON.stringify(body);
+};
+
 Deno.test("fetchSurplusModels preserves exact IDs and exposes text-capable routes only", async () => {
   resetSurplusModelsCacheForTest();
-  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const calls: { url: string; init?: RequestInit }[] = [];
   const fetcher: SurplusFetch = (input, init) => {
-    calls.push({ url: input.toString(), init });
-    return Promise.resolve(jsonResponse({
-      object: "list",
-      data: [
-        {
-          id: "gpt-5.6-sol",
-          created: 1_735_000_000,
-          provider: "openai",
-          architecture: { modality: "text->text" },
-          supported_parameters: ["reasoning", "tools", "tool_choice", "parallel_tool_calls"],
-          supported_features: ["streaming", "tools", "reasoning"],
-          pricing: {
-            prompt: "0.000001",
-            completion: "0.000003",
-            input_cache_read: "0.0000001",
-            input_cache_write: "0.000002",
+    calls.push({ url: fetchUrl(input), init });
+    return Promise.resolve(
+      jsonResponse({
+        object: "list",
+        data: [
+          {
+            id: "gpt-5.6-sol",
+            created: 1_735_000_000,
+            provider: "openai",
+            architecture: { modality: "text->text" },
+            supported_parameters: ["reasoning", "tools", "tool_choice", "parallel_tool_calls"],
+            supported_features: ["streaming", "tools", "reasoning"],
+            pricing: {
+              prompt: "0.000001",
+              completion: "0.000003",
+              input_cache_read: "0.0000001",
+              input_cache_write: "0.000002",
+            },
           },
-        },
-        {
-          id: "image-model-that-must-not-route",
-          architecture: { output_modalities: ["image"] },
-        },
-        {
-          id: "audio-to-text-model-that-must-not-route",
-          architecture: { modality: "audio->text" },
-        },
-        {
-          id: "claude-opus-5",
-          provider: "anthropic",
-          architecture: { input_modalities: ["text"], output_modalities: ["text"] },
-          supported_parameters: ["tools"],
-          supported_features: ["tools"],
-          description: "test model",
-        },
-      ],
-    }));
+          {
+            id: "image-model-that-must-not-route",
+            architecture: { output_modalities: ["image"] },
+          },
+          {
+            id: "audio-to-text-model-that-must-not-route",
+            architecture: { modality: "audio->text" },
+          },
+          {
+            id: "claude-opus-5",
+            provider: "anthropic",
+            architecture: { input_modalities: ["text"], output_modalities: ["text"] },
+            supported_parameters: ["tools"],
+            supported_features: ["tools"],
+            description: "test model",
+          },
+        ],
+      })
+    );
   };
 
   const snapshot = await fetchSurplusModels({
@@ -60,17 +75,20 @@ Deno.test("fetchSurplusModels preserves exact IDs and exposes text-capable route
     force: true,
   });
 
-  assert.deepEqual(snapshot?.models.map((model) => model.id), ["gpt-5.6-sol", "claude-opus-5"]);
-  assert.equal(snapshot?.models[0].owned_by, "openai");
-  assert.equal(snapshot?.models[0].input_price_per_token, 0.000001);
-  assert.equal(snapshot?.models[0].cache_read_price_per_token, 0.0000001);
-  assert.equal(snapshot?.models[0].cache_write_price_per_token, 0.000002);
-  assert.equal(snapshot?.models[0].supports_tools, true);
-  assert.equal(snapshot?.models[0].supports_parallel_tool_calls, true);
-  assert.deepEqual(snapshot?.models[0].supported_endpoint_types, ["openai", "openai-response"]);
-  assert.equal(snapshot?.models[1].description, "test model");
-  assert.equal(snapshot?.models[1].supports_tools, undefined);
-  assert.equal(snapshot?.models[1].supports_parallel_tool_calls, undefined);
+  assert.deepEqual(
+    snapshot?.models.map((model) => model.id),
+    ["gpt-5.6-sol", "claude-opus-5"]
+  );
+  assert.equal(snapshot.models[0].owned_by, "openai");
+  assert.equal(snapshot.models[0].input_price_per_token, 0.000001);
+  assert.equal(snapshot.models[0].cache_read_price_per_token, 0.0000001);
+  assert.equal(snapshot.models[0].cache_write_price_per_token, 0.000002);
+  assert.equal(snapshot.models[0].supports_tools, true);
+  assert.equal(snapshot.models[0].supports_parallel_tool_calls, true);
+  assert.deepEqual(snapshot.models[0].supported_endpoint_types, ["openai", "openai-response"]);
+  assert.equal(snapshot.models[1].description, "test model");
+  assert.equal(snapshot.models[1].supports_tools, undefined);
+  assert.equal(snapshot.models[1].supports_parallel_tool_calls, undefined);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, "https://api.surplusintelligence.ai/v1/models");
   assert.equal(new Headers(calls[0].init?.headers).get("Accept"), "application/json");
@@ -84,14 +102,14 @@ Deno.test("fetchSurplusResponses omits unsupported parallel-tool control and ret
     stream: true,
     parallel_tool_calls: true,
   };
-  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  const calls: { url: string; init?: RequestInit }[] = [];
   const fetcher: SurplusFetch = (input, init) => {
-    calls.push({ url: input.toString(), init });
+    calls.push({ url: fetchUrl(input), init });
     return Promise.resolve(
       new Response("data: [DONE]\n\n", {
         status: 200,
         headers: { "X-Request-Id": " surplus-request-1 " },
-      }),
+      })
     );
   };
 
@@ -104,12 +122,12 @@ Deno.test("fetchSurplusResponses omits unsupported parallel-tool control and ret
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, "https://api.surplusintelligence.ai/v1/responses");
   assert.equal(calls[0].init?.method, "POST");
-  assert.deepEqual(JSON.parse(String(calls[0].init?.body)), {
+  assert.deepEqual(JSON.parse(bodyText(calls[0].init.body)), {
     model: "claude-opus-5",
     input: [{ role: "user", content: [{ type: "input_text", text: "hello" }] }],
     stream: true,
   });
-  const headers = new Headers(calls[0].init?.headers);
+  const headers = new Headers(calls[0].init.headers);
   assert.equal(headers.get("Authorization"), "Bearer inf_test");
   assert.equal(headers.get("Accept"), "text/event-stream");
   assert.equal(headers.get("Content-Type"), "application/json");
@@ -119,14 +137,11 @@ Deno.test("fetchSurplusResponses omits unsupported parallel-tool control and ret
 Deno.test("fetchSurplusResponses translates Codex ultra reasoning to the upstream max preset", async () => {
   let forwarded: Record<string, unknown> | null = null;
   const fetcher: SurplusFetch = (_input, init) => {
-    forwarded = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    forwarded = JSON.parse(bodyText(init?.body)) as Record<string, unknown>;
     return Promise.resolve(new Response("{}", { status: 200 }));
   };
 
-  await fetchSurplusResponses(
-    { model: "gpt-5.6-sol", input: "hello", reasoning: { effort: "ultra" } },
-    { apiKey: "inf_test", fetcher },
-  );
+  await fetchSurplusResponses({ model: "gpt-5.6-sol", input: "hello", reasoning: { effort: "ultra" } }, { apiKey: "inf_test", fetcher });
 
   assert.deepEqual(forwarded, {
     model: "gpt-5.6-sol",
@@ -150,10 +165,10 @@ Deno.test("fetchSurplusResponses maps Codex developer messages to Surplus system
     {
       apiKey: "test-key",
       fetcher: (_input, init) => {
-        forwardedInput = (JSON.parse(String(init?.body)) as Record<string, unknown>).input;
+        forwardedInput = (JSON.parse(bodyText(init?.body)) as Record<string, unknown>).input;
         return Promise.resolve(new Response(null, { status: 200 }));
       },
-    },
+    }
   );
 
   assert.deepEqual(forwardedInput, [
@@ -167,14 +182,16 @@ Deno.test("fetchSurplusResponses completes sparse Surplus text streams for Codex
     { type: "response.created", response: { id: "resp_test", status: "in_progress" } },
     { type: "response.output_text.delta", output_index: 0, content_index: 0, delta: "hello" },
     { type: "response.completed", response: { id: "resp_test", status: "completed" } },
-  ].map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("");
+  ]
+    .map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+    .join("");
 
   const result = await fetchSurplusResponses(
     { model: "deepseek-v4-flash", input: "hello", stream: true },
     {
       apiKey: "test-key",
       fetcher: () => Promise.resolve(new Response(sparse, { headers: { "Content-Type": "text/event-stream" } })),
-    },
+    }
   );
   const output = await result.response.text();
 
@@ -208,7 +225,7 @@ Deno.test("fetchSurplusResponses runs the quota hook immediately before transpor
             }),
         });
       },
-    },
+    }
   );
   assert.deepEqual(events, ["before-dispatch", "started", "fetch"]);
 });

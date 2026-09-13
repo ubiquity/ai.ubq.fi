@@ -29,10 +29,7 @@ const formatPercent = (value: number): string => {
   return String(rounded);
 };
 
-export const buildCodexQuotaHeaders = (
-  input: HeadersInit,
-  snapshot: ClientQuotaSnapshot | null,
-): Headers => {
+export const buildCodexQuotaHeaders = (input: HeadersInit, snapshot: ClientQuotaSnapshot | null): Headers => {
   const headers = new Headers(input);
 
   // Codex discovers named limit families from any x-*-primary-used-percent header. Version 0.144.6
@@ -40,10 +37,7 @@ export const buildCodexQuotaHeaders = (
   // multiple families makes whichever name sorts last overwrite the others. Remove every parseable
   // family before publishing the one client-specific capacity source this gateway can measure.
   for (const name of [...headers.keys()]) {
-    if (
-      name.startsWith("x-") &&
-      RATE_LIMIT_FAMILY_SUFFIXES.some((suffix) => name.endsWith(suffix))
-    ) {
+    if (name.startsWith("x-") && RATE_LIMIT_FAMILY_SUFFIXES.some((suffix) => name.endsWith(suffix))) {
       headers.delete(name);
     }
   }
@@ -57,10 +51,7 @@ export const buildCodexQuotaHeaders = (
   return headers;
 };
 
-export const withCodexQuotaHeaders = (
-  response: Response,
-  snapshot: ClientQuotaSnapshot | null,
-): Response =>
+export const withCodexQuotaHeaders = (response: Response, snapshot: ClientQuotaSnapshot | null): Response =>
   new Response(response.body, {
     status: response.status,
     statusText: response.statusText,

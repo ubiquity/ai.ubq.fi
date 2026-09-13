@@ -2,6 +2,43 @@ import assert from "node:assert/strict";
 
 import { createAdminSnapshotCache } from "../static/admin-cache.js";
 
+type StorageTransaction = Readonly<{ oncomplete?: () => void }>;
+
+type CursorRequest = {
+  onerror?: () => void;
+  onsuccess?: () => void;
+  result?: null;
+};
+
+/** IndexedDB settles a transaction one microtask after its request completes. */
+const completeTransactionSoon = (transaction: StorageTransaction): void => {
+  queueMicrotask(() => transaction.oncomplete?.());
+};
+
+/** Empties the store through an empty cursor and settles the transaction. */
+const emptyCursorRequest = (records: Map<string, unknown>, transaction: StorageTransaction): CursorRequest => {
+  const request: CursorRequest = {};
+  queueMicrotask(() => {
+    records.clear();
+    request.result = null;
+    request.onsuccess?.();
+    completeTransactionSoon(transaction);
+  });
+  return request;
+};
+
+/** Same as {@link emptyCursorRequest}, settled after a delay (deferred invalidation). */
+const deferredEmptyCursorRequest = (records: Map<string, unknown>, transaction: StorageTransaction): CursorRequest => {
+  const request: CursorRequest = {};
+  setTimeout(() => {
+    records.clear();
+    request.result = null;
+    request.onsuccess?.();
+    completeTransactionSoon(transaction);
+  }, 10);
+  return request;
+};
+
 Deno.test("admin cache retries IndexedDB after a temporary open failure", async () => {
   let openCalls = 0;
   const transaction: {
@@ -11,11 +48,13 @@ Deno.test("admin cache retries IndexedDB after a temporary open failure", async 
     objectStore: () => { put: () => void };
   } = {
     objectStore: () => ({
-      put: () => queueMicrotask(() => transaction.oncomplete?.()),
+      put: () => {
+        queueMicrotask(() => transaction.oncomplete?.());
+      },
     }),
   };
   const database = { transaction: () => transaction };
-  const indexedDB = {
+  const indexedDb = {
     open: () => {
       openCalls += 1;
       if (openCalls === 1) {
@@ -34,7 +73,7 @@ Deno.test("admin cache retries IndexedDB after a temporary open failure", async 
       return request;
     },
   };
-  const cache = createAdminSnapshotCache({ indexedDB });
+  const cache = createAdminSnapshotCache({ indexedDB: indexedDb });
 
   assert.equal(await cache.write("scope", "key", { cached: true }), false);
   assert.equal(await cache.write("scope", "key", { cached: true }), true);
@@ -70,26 +109,13 @@ Deno.test("admin cache serializes invalidation behind a pending write", async ()
           }, 10);
         },
         index: () => ({
-          openCursor: () => {
-            const request: {
-              onerror?: () => void;
-              onsuccess?: () => void;
-              result?: null;
-            } = {};
-            queueMicrotask(() => {
-              records.clear();
-              request.result = null;
-              request.onsuccess?.();
-              queueMicrotask(() => transaction.oncomplete?.());
-            });
-            return request;
-          },
+          openCursor: () => emptyCursorRequest(records, transaction),
         }),
       };
       return transaction;
     },
   };
-  const indexedDB = {
+  const indexedDb = {
     open: () => {
       const request = {
         onsuccess: undefined as (() => void) | undefined,
@@ -100,7 +126,7 @@ Deno.test("admin cache serializes invalidation behind a pending write", async ()
     },
   };
   const cache = createAdminSnapshotCache({
-    indexedDB,
+    indexedDB: indexedDb,
     keyRange: { only: (scope: string) => scope },
   });
 
@@ -148,35 +174,22 @@ Deno.test("admin cache reads wait for a queued invalidation", async () => {
           queueMicrotask(() => {
             request.result = records.get(id);
             request.onsuccess?.();
-            queueMicrotask(() => transaction.oncomplete?.());
+            completeTransactionSoon(transaction);
           });
           return request;
         },
         index: () => ({
-          openCursor: () => {
-            const request: {
-              onerror?: () => void;
-              onsuccess?: () => void;
-              result?: null;
-            } = {};
-            setTimeout(() => {
-              records.clear();
-              request.result = null;
-              request.onsuccess?.();
-              queueMicrotask(() => transaction.oncomplete?.());
-            }, 10);
-            return request;
-          },
+          openCursor: () => deferredEmptyCursorRequest(records, transaction),
         }),
         put: (record: { id: string }) => {
           records.set(record.id, record);
-          queueMicrotask(() => transaction.oncomplete?.());
+          completeTransactionSoon(transaction);
         },
       };
       return transaction;
     },
   };
-  const indexedDB = {
+  const indexedDb = {
     open: () => {
       const request = {
         onsuccess: undefined as (() => void) | undefined,
@@ -187,7 +200,7 @@ Deno.test("admin cache reads wait for a queued invalidation", async () => {
     },
   };
   const cache = createAdminSnapshotCache({
-    indexedDB,
+    indexedDB: indexedDb,
     keyRange: { only: (scope: string) => scope },
   });
 

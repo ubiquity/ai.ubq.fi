@@ -15,8 +15,6 @@ import { adapterB } from "./adapter-b.ts";
 import { adapterD } from "./adapter-d.ts";
 
 export const BASELINE_CONFIG_IDS = ["A", "B", "D"] as const;
-export type BaselineConfigId = (typeof BASELINE_CONFIG_IDS)[number];
-
 /** A/B/D in stable config-id order. */
 export function baselineAdapters(): BenchmarkAdapter[] {
   return [adapterA, adapterB, adapterD];
@@ -28,14 +26,10 @@ export function baselineAdapters(): BenchmarkAdapter[] {
  * escapes the gate. Used by focused tests and by the orchestrator's
  * integration tests.
  */
-export function assertBaselinesRefusedByRunner(
-  registry: BenchmarkAdapter[],
-): void {
+export function assertBaselinesRefusedByRunner(registry: BenchmarkAdapter[]): void {
   for (const adapter of registry) {
     if (adapter.requiresExternalInference) {
-      throw new Error(
-        `refusing external-inference adapter ${adapter.configId} (${adapter.name}) outside the approved gate`,
-      );
+      throw new Error(`refusing external-inference adapter ${adapter.configId} (${adapter.name}) outside the approved gate`);
     }
   }
 }

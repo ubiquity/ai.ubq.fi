@@ -10,13 +10,17 @@ if (typeof Deno.KvU64 !== "function") {
 const encodeKey = (key: Deno.KvKey): string => JSON.stringify(key);
 const textEncoder = new TextEncoder();
 
-const kvFingerprint = (value: unknown): string =>
-  JSON.stringify(value, (_key, item) => typeof item === "bigint" ? `${item}n` : item);
+const kvFingerprint = (value: unknown): string => JSON.stringify(value, (_key, item) => (typeof item === "bigint" ? `${item}n` : item));
 
 const encodeBase64Url = (bytes: Uint8Array): string => {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  let encoded = btoa(binary).replace(/\+/g, "-").replace(/\//g, "_");
+  // base64 padding is a trailing run of "=". Stripping it one character at a
+  // time is linear and removes exactly what the former `/=+$/g` replacement did,
+  // which eslint's sonarjs/super-linear-regex flagged for backtracking.
+  while (encoded.endsWith("=")) encoded = encoded.slice(0, -1);
+  return encoded;
 };
 
 const encodeJsonBase64Url = (value: unknown): string => encodeBase64Url(textEncoder.encode(JSON.stringify(value)));
@@ -28,10 +32,44 @@ const toPublicKeyPem = (spki: Uint8Array): string => {
   return `-----BEGIN PUBLIC KEY-----\n${lines.join("\n")}\n-----END PUBLIC KEY-----`;
 };
 
+type CountingKvMutation =
+  { kind: "set"; key: Deno.KvKey; value: unknown } | { kind: "delete"; key: Deno.KvKey } | { kind: "sum"; key: Deno.KvKey; value: bigint };
+
+const isSumMutation = (mutation: CountingKvMutation): boolean => mutation.kind === "sum";
+
+const isKernelReservationMutation = (mutation: CountingKvMutation): boolean =>
+  mutation.kind === "set" &&
+  mutation.key[0] === "uos_ai" &&
+  mutation.key[1] === "kernel_quota" &&
+  mutation.key[2] === "v2" &&
+  String(mutation.key[3]).endsWith("reservation") &&
+  typeof mutation.value === "object" &&
+  mutation.value !== null &&
+  (mutation.value as { state?: unknown }).state === "reserved";
+
+const isKernelSettlementMutation = (mutation: CountingKvMutation): boolean =>
+  mutation.kind === "set" &&
+  mutation.key[0] === "uos_ai" &&
+  mutation.key[1] === "kernel_quota" &&
+  mutation.key[2] === "v2" &&
+  String(mutation.key[3]).endsWith("reservation") &&
+  typeof mutation.value === "object" &&
+  mutation.value !== null &&
+  ((mutation.value as { state?: unknown }).state === "committed" || (mutation.value as { state?: unknown }).state === "released");
+
+const isApiKeyV3DispatchMutation = (mutation: CountingKvMutation): boolean =>
+  mutation.kind === "set" &&
+  mutation.key[0] === "uos_ai" &&
+  mutation.key[1] === "api_key_usage" &&
+  mutation.key[2] === "v3" &&
+  typeof mutation.value === "object" &&
+  mutation.value !== null &&
+  (mutation.value as { state?: unknown }).state === "dispatched";
+
 class CountingKv {
   readonly values = new Map<string, unknown>();
-  private readonly versions = new Map<string, { fingerprint: string; revision: number }>();
-  private nextRevision = 1;
+  private readonly _versions = new Map<string, { fingerprint: string; revision: number }>();
+  private _nextRevision = 1;
   reads = 0;
   readUnits = 0;
   writes = 0;
@@ -52,30 +90,30 @@ class CountingKv {
   readonly readKeys: Deno.KvKey[] = [];
   readonly writeKeys: Deno.KvKey[] = [];
 
-  private versionstamp(key: Deno.KvKey): string | null {
+  private _versionstamp(key: Deno.KvKey): string | null {
     const encoded = encodeKey(key);
     if (!this.values.has(encoded)) return null;
     const fingerprint = kvFingerprint(this.values.get(encoded));
-    const existing = this.versions.get(encoded);
-    if (!existing || existing.fingerprint !== fingerprint) {
-      const revision = this.nextRevision++;
-      this.versions.set(encoded, { fingerprint, revision });
+    const existing = this._versions.get(encoded);
+    if (existing?.fingerprint !== fingerprint) {
+      const revision = this._nextRevision++;
+      this._versions.set(encoded, { fingerprint, revision });
       return String(revision).padStart(20, "0");
     }
     return String(existing.revision).padStart(20, "0");
   }
 
-  private write(key: Deno.KvKey, value: unknown): void {
+  private _write(key: Deno.KvKey, value: unknown): void {
     const encoded = encodeKey(key);
     this.values.set(encoded, value);
-    this.versions.set(encoded, { fingerprint: kvFingerprint(value), revision: this.nextRevision++ });
+    this._versions.set(encoded, { fingerprint: kvFingerprint(value), revision: this._nextRevision++ });
   }
 
-  private remove(key: Deno.KvKey): void {
+  private _remove(key: Deno.KvKey): void {
     const encoded = encodeKey(key);
     this.values.delete(encoded);
-    this.versions.delete(encoded);
-    this.nextRevision += 1;
+    this._versions.delete(encoded);
+    this._nextRevision += 1;
   }
 
   resetCounts(): void {
@@ -100,72 +138,60 @@ class CountingKv {
   }
 
   async get<T>(key: Deno.KvKey, _options?: { consistency?: "strong" | "eventual" }): Promise<Deno.KvEntryMaybe<T>> {
-    if (
-      this.kernelQuotaReadGate && key[0] === "uos_ai" && key[1] === "kernel_quota" && key[2] === "v2"
-    ) {
+    if (this.kernelQuotaReadGate && key[0] === "uos_ai" && key[1] === "kernel_quota" && key[2] === "v2") {
       await this.kernelQuotaReadGate;
     }
-    if (
-      this.failApiKeyV3Reads && key[0] === "uos_ai" && key[1] === "api_key_usage" && key[2] === "v3"
-    ) {
+    if (this.failApiKeyV3Reads && key[0] === "uos_ai" && key[1] === "api_key_usage" && key[2] === "v3") {
       return Promise.reject(new Error("injected API-key V3 ledger read failure"));
     }
-    if (
-      this.failKernelQuotaReads && key[0] === "uos_ai" && key[1] === "kernel_quota" && key[2] === "v2"
-    ) {
+    if (this.failKernelQuotaReads && key[0] === "uos_ai" && key[1] === "kernel_quota" && key[2] === "v2") {
       return Promise.reject(new Error("injected Kernel quota read failure"));
     }
     this.reads += 1;
     this.readKeys.push(key);
     const value = this.values.get(encodeKey(key)) as T | undefined;
-    const bytes = value === undefined
-      ? 0
-      : new TextEncoder().encode(JSON.stringify(value, (_, item) => typeof item === "bigint" ? item.toString() : item))
-        .length;
+    const bytes =
+      value === undefined ? 0 : new TextEncoder().encode(JSON.stringify(value, (_, item) => (typeof item === "bigint" ? item.toString() : item))).length;
     this.readUnits += Math.max(1, Math.ceil(bytes / 4096));
     return {
       key,
       value: value ?? null,
-      versionstamp: this.versionstamp(key),
+      versionstamp: this._versionstamp(key),
     } as Deno.KvEntryMaybe<T>;
   }
 
   getMany<T extends readonly unknown[]>(
     keys: readonly Deno.KvKey[],
-    _options?: { consistency?: "strong" | "eventual" },
+    _options?: { consistency?: "strong" | "eventual" }
   ): Promise<{ [K in keyof T]: Deno.KvEntryMaybe<T[K]> }> {
-    if (
-      this.failApiKeyV3Reads &&
-      keys.some((key) => key[0] === "uos_ai" && key[1] === "api_key_usage" && key[2] === "v3")
-    ) {
+    if (this.failApiKeyV3Reads && keys.some((key) => key[0] === "uos_ai" && key[1] === "api_key_usage" && key[2] === "v3")) {
       return Promise.reject(new Error("injected API-key V3 ledger read failure"));
     }
     this.reads += 1;
     this.readKeys.push(...keys);
     const entries = keys.map((key) => {
       const value = this.values.get(encodeKey(key));
-      const bytes = value === undefined ? 0 : new TextEncoder().encode(
-        JSON.stringify(value, (_, item) => typeof item === "bigint" ? item.toString() : item),
-      ).length;
+      const bytes =
+        value === undefined ? 0 : new TextEncoder().encode(JSON.stringify(value, (_, item) => (typeof item === "bigint" ? item.toString() : item))).length;
       this.readUnits += Math.max(1, Math.ceil(bytes / 4096));
       return {
         key,
         value: value ?? null,
-        versionstamp: this.versionstamp(key),
+        versionstamp: this._versionstamp(key),
       };
     });
     return Promise.resolve(entries as { [K in keyof T]: Deno.KvEntryMaybe<T[K]> });
   }
 
   set(key: Deno.KvKey, value: unknown): Promise<Deno.KvCommitResult> {
-    this.write(key, value);
+    this._write(key, value);
     this.writes += 1;
     this.writeKeys.push(key);
     return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" });
   }
 
   delete(key: Deno.KvKey): Promise<void> {
-    this.remove(key);
+    this._remove(key);
     this.writes += 1;
     this.writeKeys.push(key);
     return Promise.resolve();
@@ -178,7 +204,7 @@ class CountingKv {
       const key = JSON.parse(encoded) as Deno.KvKey;
       return prefix.every((part, index) => part === key[index]);
     });
-    return (async function* () {
+    return (function* () {
       for (const [encoded, value] of entries) {
         const key = JSON.parse(encoded) as Deno.KvKey;
         yield { key, value, versionstamp: "00000000000000000001" } as Deno.KvEntry<T>;
@@ -188,11 +214,7 @@ class CountingKv {
 
   atomic(): Deno.AtomicOperation {
     const checks: Deno.KvEntryMaybe<unknown>[] = [];
-    const mutations: Array<
-      | { kind: "set"; key: Deno.KvKey; value: unknown }
-      | { kind: "delete"; key: Deno.KvKey }
-      | { kind: "sum"; key: Deno.KvKey; value: bigint }
-    > = [];
+    const mutations: CountingKvMutation[] = [];
     const operation = {
       check: (entry: Deno.KvEntryMaybe<unknown>) => {
         checks.push(entry);
@@ -215,73 +237,54 @@ class CountingKv {
           this.failNextCommits -= 1;
           return { ok: false, versionstamp: null };
         }
-        const kernelReservation = mutations.some((mutation) =>
-          mutation.kind === "set" && mutation.key[0] === "uos_ai" && mutation.key[1] === "kernel_quota" &&
-          mutation.key[2] === "v2" && String(mutation.key[3]).endsWith("reservation") &&
-          typeof mutation.value === "object" && mutation.value !== null &&
-          (mutation.value as { state?: unknown }).state === "reserved"
-        );
-        if (kernelReservation && this.onKernelReservationCommit) {
+        if (mutations.some(isKernelReservationMutation) && this.onKernelReservationCommit) {
           const callback = this.onKernelReservationCommit;
           this.onKernelReservationCommit = null;
           callback();
         }
-        for (const entry of checks) {
-          if (this.versionstamp(entry.key) !== entry.versionstamp) {
-            return { ok: false, versionstamp: null };
-          }
+        if (checks.some((entry) => this._versionstamp(entry.key) !== entry.versionstamp)) {
+          return { ok: false, versionstamp: null };
         }
-        const hasSum = mutations.some((mutation) => mutation.kind === "sum");
-        if (hasSum) {
-          this.sumCommitAttempts += 1;
-          if (this.failNextSumCommits > 0) {
-            this.failNextSumCommits -= 1;
-            throw new Error("injected API-key usage sum failure");
-          }
+        if (mutations.some(isSumMutation)) {
+          await this._commitSumMutation();
         }
-        if (hasSum && this.sumCommitDelayMs > 0) {
-          await new Promise<void>((resolve) => setTimeout(resolve, this.sumCommitDelayMs));
-        }
-        const kernelSettlement = mutations.some((mutation) =>
-          mutation.kind === "set" && mutation.key[0] === "uos_ai" && mutation.key[1] === "kernel_quota" &&
-          mutation.key[2] === "v2" && String(mutation.key[3]).endsWith("reservation") &&
-          typeof mutation.value === "object" && mutation.value !== null &&
-          ((mutation.value as { state?: unknown }).state === "committed" ||
-            (mutation.value as { state?: unknown }).state === "released")
-        );
-        if (kernelSettlement && this.failNextKernelSettlementCommits > 0) {
+        if (mutations.some(isKernelSettlementMutation) && this.failNextKernelSettlementCommits > 0) {
           this.failNextKernelSettlementCommits -= 1;
           throw new Error("injected Kernel quota settlement failure");
         }
-        const apiKeyV3Dispatch = mutations.some((mutation) =>
-          mutation.kind === "set" &&
-          mutation.key[0] === "uos_ai" &&
-          mutation.key[1] === "api_key_usage" &&
-          mutation.key[2] === "v3" &&
-          typeof mutation.value === "object" &&
-          mutation.value !== null &&
-          (mutation.value as { state?: unknown }).state === "dispatched"
-        );
-        if (apiKeyV3Dispatch) {
+        if (mutations.some(isApiKeyV3DispatchMutation)) {
           this.onApiKeyV3DispatchCommit?.();
           if (this.apiKeyV3DispatchCommitGate) await this.apiKeyV3DispatchCommitGate;
         }
-        for (const mutation of mutations) {
-          const encoded = encodeKey(mutation.key);
-          if (mutation.kind === "delete") this.remove(mutation.key);
-          else if (mutation.kind === "set") this.write(mutation.key, mutation.value);
-          else {
-            const current = this.values.get(encoded) as Deno.KvU64 | undefined;
-            this.write(mutation.key, new Deno.KvU64((current?.value ?? 0n) + mutation.value));
-            this.sums += 1;
-          }
-          this.writes += 1;
-          this.writeKeys.push(mutation.key);
-        }
+        for (const mutation of mutations) this._applyMutation(mutation);
         return { ok: true, versionstamp: "00000000000000000001" };
       },
     };
     return operation as unknown as Deno.AtomicOperation;
+  }
+
+  private async _commitSumMutation(): Promise<void> {
+    this.sumCommitAttempts += 1;
+    if (this.failNextSumCommits > 0) {
+      this.failNextSumCommits -= 1;
+      throw new Error("injected API-key usage sum failure");
+    }
+    if (this.sumCommitDelayMs > 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, this.sumCommitDelayMs));
+    }
+  }
+
+  private _applyMutation(mutation: CountingKvMutation): void {
+    const encoded = encodeKey(mutation.key);
+    if (mutation.kind === "delete") this._remove(mutation.key);
+    else if (mutation.kind === "set") this._write(mutation.key, mutation.value);
+    else {
+      const current = this.values.get(encoded) as Deno.KvU64 | undefined;
+      this._write(mutation.key, new Deno.KvU64((current?.value ?? 0n) + mutation.value));
+      this.sums += 1;
+    }
+    this.writes += 1;
+    this.writeKeys.push(mutation.key);
   }
 }
 
@@ -293,11 +296,7 @@ Object.defineProperty(Deno, "openKv", {
 
 const { default: handler } = await import("../src/handler.ts");
 const { authenticateAdmin, authenticateClient } = await import("../src/auth.ts");
-const {
-  PASSKEY_RELAY_COOKIE_NAME,
-  passkeySessionKey,
-  passkeyUserKey,
-} = await import("../src/passkeys.ts");
+const { PASSKEY_RELAY_COOKIE_NAME, passkeySessionKey, passkeyUserKey } = await import("../src/passkeys.ts");
 const { createRequestDeliveryLifecycle } = await import("../src/serve_handler.ts");
 const { handleResponses, setImageBaseModelForTest } = await import("../src/openai.ts");
 const {
@@ -324,27 +323,14 @@ const {
   setKernelUsageLimit,
 } = await import("../src/kernel_quota_v2.ts");
 const { handleAdminDefaults } = await import("../src/admin.ts");
-const {
-  DEFAULT_KERNEL_POLICY_LIMIT_KEY,
-  DEFAULT_KERNEL_POLICY_WINDOW_KEY,
-} = await import("../src/defaults.ts");
+const { DEFAULT_KERNEL_POLICY_LIMIT_KEY, DEFAULT_KERNEL_POLICY_WINDOW_KEY } = await import("../src/defaults.ts");
 const { paidFallbackRequestV3Key } = await import("../src/paid_fallback_ledger.ts");
 const { setStreamFirstEventDeadlineMsForTest } = await import("../src/inference_deadline.ts");
-const {
-  loadRuntimeConfig,
-  RUNTIME_CONFIG_CACHE_TTL_MS,
-  RUNTIME_CONFIG_V2_KEY,
-  resetRuntimeConfigCacheForTest,
-} = await import("../src/runtime_config.ts");
-const {
-  resetCodexAuthCacheForTest,
-} = await import("../src/codex.ts");
+const { loadRuntimeConfig, RUNTIME_CONFIG_CACHE_TTL_MS, RUNTIME_CONFIG_V2_KEY, resetRuntimeConfigCacheForTest } = await import("../src/runtime_config.ts");
+const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
 const { fetchMeteredModels, resetMeteredModelsCacheForTest } = await import("../src/metered.ts");
 const { resetSurplusModelsCacheForTest } = await import("../src/surplus.ts");
-const {
-  getCodexProviderHealth,
-  resetProviderHealthThrottleForTest,
-} = await import("../src/provider_health.ts");
+const { getCodexProviderHealth, resetProviderHealthThrottleForTest } = await import("../src/provider_health.ts");
 
 const MODEL = "gpt-5-kv-budget";
 const now = Date.now();
@@ -356,11 +342,13 @@ const runtime = {
     source: "chatgpt_codex",
     client_version: "0.150.0",
     updated_at_ms: now,
-    models: [{
-      slug: MODEL,
-      default_reasoning_level: "medium",
-      supported_reasoning_levels: ["none", "low", "medium", "high"],
-    }],
+    models: [
+      {
+        slug: MODEL,
+        default_reasoning_level: "medium",
+        supported_reasoning_levels: ["none", "low", "medium", "high"],
+      },
+    ],
   },
   updated_at_ms: now,
 };
@@ -436,84 +424,81 @@ const request = (token: string): Request =>
   });
 
 const streamingRequest = (token: string, route: "responses" | "chat"): Request =>
-  new Request(
-    route === "responses" ? "https://ai.ubq.fi/v1/responses" : "https://ai.ubq.fi/v1/chat/completions",
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify(
-        route === "responses"
-          ? { input: "ping", stream: true }
-          : { messages: [{ role: "user", content: "ping" }], stream: true },
-      ),
-    },
-  );
+  new Request(route === "responses" ? "https://ai.ubq.fi/v1/responses" : "https://ai.ubq.fi/v1/chat/completions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(route === "responses" ? { input: "ping", stream: true } : { messages: [{ role: "user", content: "ping" }], stream: true }),
+  });
+
+const fetchInputUrl = (input: string | URL | Request): string => {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+};
 
 const completedSseEvent = (inputTokens = 1, outputTokens = 1): string =>
-  `data: ${
-    JSON.stringify({
-      type: "response.completed",
-      response: {
-        model: MODEL,
-        output: [{
+  `data: ${JSON.stringify({
+    type: "response.completed",
+    response: {
+      model: MODEL,
+      output: [
+        {
           type: "message",
           role: "assistant",
           content: [{ type: "output_text", text: "fixture output" }],
-        }],
-        usage: {
-          input_tokens: inputTokens,
-          output_tokens: outputTokens,
-          total_tokens: inputTokens + outputTokens,
         },
+      ],
+      usage: {
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        total_tokens: inputTokens + outputTokens,
       },
-    })
-  }\n\n`;
+    },
+  })}\n\n`;
 
 // Responses precommit now waits for semantic output before returning a
 // provider stream to the caller. These fixtures intentionally keep the
 // upstream open so the tests can exercise completion, truncation, and
 // cancellation after dispatch; emit a small semantic delta before that
 // lifecycle action instead of leaving the stream at setup-only response.created.
-const semanticSseEvent = (text = "fixture output"): string =>
-  `data: ${JSON.stringify({ type: "response.output_text.delta", delta: text })}\n\n`;
+const semanticSseEvent = (text = "fixture output"): string => `data: ${JSON.stringify({ type: "response.output_text.delta", delta: text })}\n\n`;
 
-const sse = (
-  usage: Record<string, unknown> = { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
-): Response =>
+const sse = (usage: Record<string, unknown> = { input_tokens: 1, output_tokens: 1, total_tokens: 2 }): Response =>
   new Response(
-    `data: ${
-      JSON.stringify({
-        type: "response.completed",
-        response: {
-          model: MODEL,
-          output: [{
+    `data: ${JSON.stringify({
+      type: "response.completed",
+      response: {
+        model: MODEL,
+        output: [
+          {
             type: "message",
             role: "assistant",
             content: [{ type: "output_text", text: "fixture output" }],
-          }],
-          usage,
-        },
-      })
-    }\n\n`,
-    { status: 200, headers: { "Content-Type": "text/event-stream" } },
+          },
+        ],
+        usage,
+      },
+    })}\n\n`,
+    { status: 200, headers: { "Content-Type": "text/event-stream" } }
   );
 
 const authoritativeCodexQuotaResponse = (): Response =>
-  new Response(
-    JSON.stringify({ error: { message: "Primary limited", type: "usage_limit_reached" } }),
-    {
-      status: 429,
-      headers: {
-        "Content-Type": "application/json",
-        "Retry-After": new Date((Math.floor(Date.now() / 1_000) + 60) * 1_000).toUTCString(),
-      },
+  new Response(JSON.stringify({ error: { message: "Primary limited", type: "usage_limit_reached" } }), {
+    status: 429,
+    headers: {
+      "Content-Type": "application/json",
+      "Retry-After": new Date((Math.floor(Date.now() / 1_000) + 60) * 1_000).toUTCString(),
     },
-  );
+  });
 
-const deferred = <T>() => {
-  let resolve!: (value: T | PromiseLike<T>) => void;
+// A completion latch whose `resolve()` takes no value. It is deliberately not
+// generic: `deferred<void>()` would spell `void` at a call-site type-argument
+// position, which @typescript-eslint/no-invalid-void-type rejects, and `void` is
+// the only instantiation these tests use.
+const deferred = () => {
+  let resolve!: () => void;
   let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+  const promise = new Promise<void>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise;
     reject = rejectPromise;
   });
@@ -529,7 +514,7 @@ const waitFor = async (predicate: () => boolean, label: string, timeoutMs = 2_00
 };
 
 const usageWindow = (
-  policy: NonNullable<ReturnType<typeof apiKeyPolicyFromHashRecord>>,
+  policy: NonNullable<ReturnType<typeof apiKeyPolicyFromHashRecord>>
 ): { committed_requests: number; reserved_requests: number; window_reset_at_ms: number } => {
   const value = kv.values.get(encodeKey(apiKeyUsageV3WindowKey(policy)));
   assert.ok(value, "V3 aggregate must exist");
@@ -563,7 +548,7 @@ const kernelTestKeyPair = await crypto.subtle.generateKey(
     hash: "SHA-256",
   },
   true,
-  ["sign", "verify"],
+  ["sign", "verify"]
 );
 
 const seedKernelTestPublicKey = async (): Promise<void> => {
@@ -571,11 +556,7 @@ const seedKernelTestPublicKey = async (): Promise<void> => {
   kv.values.set(encodeKey(["uos_ai", "kernel_pubkeys"]), [{ pem: toPublicKeyPem(publicKey) }]);
 };
 
-const makeKernelTestToken = async (
-  apiToken: string,
-  owner: string,
-  repo: string,
-): Promise<string> => {
+const makeKernelTestToken = async (apiToken: string, owner: string, repo: string): Promise<string> => {
   const nowSeconds = Math.floor(Date.now() / 1000);
   const header = encodeJsonBase64Url({ alg: "RS256", typ: "JWT" });
   const payload = encodeJsonBase64Url({
@@ -591,18 +572,11 @@ const makeKernelTestToken = async (
     state_id: `state_${crypto.randomUUID()}`,
   });
   const signingInput = `${header}.${payload}`;
-  const signature = new Uint8Array(
-    await crypto.subtle.sign("RSASSA-PKCS1-v1_5", kernelTestKeyPair.privateKey, textEncoder.encode(signingInput)),
-  );
+  const signature = new Uint8Array(await crypto.subtle.sign("RSASSA-PKCS1-v1_5", kernelTestKeyPair.privateKey, textEncoder.encode(signingInput)));
   return `${signingInput}.${encodeBase64Url(signature)}`;
 };
 
-const withKernelTestToken = async (
-  request: Request,
-  apiToken: string,
-  owner: string,
-  repo: string,
-): Promise<Request> => {
+const withKernelTestToken = async (request: Request, apiToken: string, owner: string, repo: string): Promise<Request> => {
   const headers = new Headers(request.headers);
   headers.set("X-Ubiquity-Kernel-Token", await makeKernelTestToken(apiToken, owner, repo));
   return new Request(request, { headers });
@@ -645,19 +619,23 @@ Deno.test("GitHub quota lookup failures do not fall back to relay passkey cookie
       }),
       githubToken,
       owner,
-      repo,
+      repo
     );
   const originalFetch = globalThis.fetch;
   globalThis.fetch = () => Promise.resolve(new Response(null, { status: 200 }));
   try {
     const initial = await authenticateClient(await request());
     assert.equal(initial.ok, true);
-    if (initial.ok) assert.equal(initial.method.kind, "github_token");
+    {
+      assert.equal(initial.method.kind, "github_token");
+    }
 
     kv.failKernelQuotaReads = true;
     const unavailable = await authenticateClient(await request());
     assert.equal(unavailable.ok, false);
-    if (!unavailable.ok) assert.equal(unavailable.response.status, 503);
+    {
+      assert.equal(unavailable.response.status, 503);
+    }
   } finally {
     kv.failKernelQuotaReads = false;
     globalThis.fetch = originalFetch;
@@ -705,39 +683,47 @@ Deno.test("GitHub HTTP verification failures do not fall back to relay passkey c
         }),
         githubToken,
         owner,
-        repo,
+        repo
       );
     };
 
     const rejected = await authenticateClient(await request("rejected"));
     assert.equal(rejected.ok, true);
-    if (rejected.ok) assert.equal(rejected.method.kind, "passkey_session");
+    {
+      assert.equal(rejected.method.kind, "passkey_session");
+    }
 
     const adminRejected = await authenticateAdmin(await request("admin_rejected"));
     assert.equal(adminRejected.ok, true);
-    if (adminRejected.ok) assert.equal(adminRejected.method.kind, "passkey_session");
+    {
+      assert.equal(adminRejected.method.kind, "passkey_session");
+    }
 
     githubResponse = new Response(null, { status: 200 });
     kv.resetCounts();
     const adminValidRequest = await request("admin_valid");
     const adminValid = await authenticateAdmin(adminValidRequest);
     assert.equal(adminValid.ok, false);
-    if (!adminValid.ok) assert.equal(adminValid.response.status, 401);
+    {
+      assert.equal(adminValid.response.status, 401);
+    }
     assert.equal(
       kv.readKeys.some((key) => key[0] === "uos_ai" && key[1] === "kernel_quota" && key[2] === "v2"),
       false,
-      "Admin bearer validation must not read kernel quota policy",
+      "Admin bearer validation must not read kernel quota policy"
     );
     assert.equal(
       kv.writeKeys.some((key) => encodeKey(key) === encodeKey(["uos_ai", "kernel_policy_queue"])),
       false,
-      "Admin bearer validation must not enqueue kernel policy work",
+      "Admin bearer validation must not enqueue kernel policy work"
     );
 
     githubResponse = new Response(null, { status: 503 });
     const uncachedClient = await authenticateClient(await request("admin_valid"));
     assert.equal(uncachedClient.ok, false);
-    if (!uncachedClient.ok) assert.equal(uncachedClient.response.status, 502);
+    {
+      assert.equal(uncachedClient.response.status, 502);
+    }
 
     const unavailableResponses = [
       new Response(null, { status: 408 }),
@@ -755,11 +741,13 @@ Deno.test("GitHub HTTP verification failures do not fall back to relay passkey c
       githubResponse = response;
       const unavailable = await authenticateClient(await request(`unavailable_${index}`));
       assert.equal(unavailable.ok, false, `GitHub status ${response.status}`);
-      if (!unavailable.ok) assert.equal(unavailable.response.status, 502, `GitHub status ${response.status}`);
+      {
+        assert.equal(unavailable.response.status, 502, `GitHub status ${response.status}`);
+      }
 
       const adminUnavailable = await authenticateAdmin(await request(`admin_unavailable_${index}`));
       assert.equal(adminUnavailable.ok, false, `Admin GitHub status ${response.status}`);
-      if (!adminUnavailable.ok) {
+      {
         assert.equal(adminUnavailable.response.status, 502, `Admin GitHub status ${response.status}`);
       }
     }
@@ -774,11 +762,10 @@ const seedKernelDefaultLimit = (limit: number, windowMs = 60_000): void => {
 };
 
 const validStreamingSse = (): Response =>
-  new Response(
-    `data: ${JSON.stringify({ type: "response.created", response: { id: crypto.randomUUID() } })}\n\n` +
-      semanticSseEvent() + completedSseEvent(),
-    { status: 200, headers: { "Content-Type": "text/event-stream" } },
-  );
+  new Response(`data: ${JSON.stringify({ type: "response.created", response: { id: crypto.randomUUID() } })}\n\n` + semanticSseEvent() + completedSseEvent(), {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream" },
+  });
 
 const requiredTerminalTiming = (terminal: Record<string, unknown>, field: string): number => {
   const value = terminal[field];
@@ -788,10 +775,7 @@ const requiredTerminalTiming = (terminal: Record<string, unknown>, field: string
   return value;
 };
 
-const assertOrderedTerminalTimings = (
-  terminal: Record<string, unknown>,
-  expectsDownstreamDrain: boolean,
-): void => {
+const assertOrderedTerminalTimings = (terminal: Record<string, unknown>, expectsDownstreamDrain: boolean): void => {
   const ordered = [
     "first_codex_dispatch_ms",
     "first_codex_headers_ms",
@@ -801,14 +785,14 @@ const assertOrderedTerminalTimings = (
     "latency_ms",
   ].map((field) => requiredTerminalTiming(terminal, field));
   for (let index = 1; index < ordered.length; index += 1) {
-    assert.ok(ordered[index - 1]! <= ordered[index]!, "terminal timing fields must be ordered");
+    assert.ok(ordered[index - 1] <= ordered[index], "terminal timing fields must be ordered");
   }
   if (!expectsDownstreamDrain) {
     assert.equal(terminal.downstream_drain_ms, null);
     return;
   }
   const downstreamDrain = requiredTerminalTiming(terminal, "downstream_drain_ms");
-  assert.ok(ordered[4]! + downstreamDrain <= ordered[5]!);
+  assert.ok(ordered[4] + downstreamDrain <= ordered[5]);
 };
 
 Deno.test("V3 dispatch ledger commits unlimited API-key requests exactly once", async () => {
@@ -826,7 +810,7 @@ Deno.test("V3 dispatch ledger commits unlimited API-key requests exactly once", 
     assert.equal(
       [...kv.values.keys()].some((key) => key.includes('"api_key_usage","v2"')),
       false,
-      "runtime inference must not write V2 counters",
+      "runtime inference must not write V2 counters"
     );
   } finally {
     globalThis.fetch = originalFetch;
@@ -839,13 +823,11 @@ Deno.test("V3 unlimited concurrent reservations avoid local CAS exhaustion and l
   kv.resetCounts();
 
   const admissions = await Promise.all(
-    Array.from(
-      { length: concurrency },
-      (_, index) =>
-        reserveApiKeyUsageV3(policy, `unlimited-concurrent-${index}`, "responses", {
-          kv: kv as unknown as Deno.Kv,
-        }),
-    ),
+    Array.from({ length: concurrency }, (_, index) =>
+      reserveApiKeyUsageV3(policy, `unlimited-concurrent-${index}`, "responses", {
+        kv: kv as unknown as Deno.Kv,
+      })
+    )
   );
   const reservations = admissions.map((admission) => {
     if (!admission.ok) throw new Error(`unexpected quota admission status ${admission.response.status}`);
@@ -884,11 +866,10 @@ Deno.test("V3 reservations release validation failures before any provider dispa
       reserved_requests: 0,
       window_reset_at_ms: policy.usage_reset_at_ms,
     });
-    const released = [...kv.values.entries()].find(([key]) =>
-      key.includes(JSON.stringify(API_KEY_USAGE_V3_REQUEST_PREFIX).slice(1, -1))
-    )?.[1] as { state?: string; release_reason?: string } | undefined;
+    const released = [...kv.values.entries()].find(([key]) => key.includes(JSON.stringify(API_KEY_USAGE_V3_REQUEST_PREFIX).slice(1, -1)))?.[1] as
+      { state?: string; release_reason?: string } | undefined;
     assert.equal(released?.state, "released");
-    assert.equal(released?.release_reason, "route_completed_without_provider_dispatch");
+    assert.equal(released.release_reason, "route_completed_without_provider_dispatch");
 
     assert.equal((await handler(request(token))).status, 200);
     assert.equal(fetchCalls, 1);
@@ -905,7 +886,6 @@ Deno.test("V3 dispatch is idempotent across retries and remains consumed after p
     kv: kv as unknown as Deno.Kv,
   });
   assert.equal(admission.ok, true);
-  if (!admission.ok) return;
 
   await admission.reservation.beforeProviderDispatch("chatgpt_codex");
   await admission.reservation.beforeProviderDispatch("metered");
@@ -916,12 +896,11 @@ Deno.test("V3 dispatch is idempotent across retries and remains consumed after p
     reserved_requests: 0,
     window_reset_at_ms: policy.usage_reset_at_ms,
   });
-  const requestRecord = kv.values.get(
-    encodeKey(apiKeyUsageV3RequestKey(policy, "request-dispatch-once")),
-  ) as { state?: string; provider?: string; dispatched_at_ms?: number | null } | undefined;
+  const requestRecord = kv.values.get(encodeKey(apiKeyUsageV3RequestKey(policy, "request-dispatch-once"))) as
+    { state?: string; provider?: string; dispatched_at_ms?: number | null } | undefined;
   assert.equal(requestRecord?.state, "dispatched");
-  assert.equal(requestRecord?.provider, "chatgpt_codex");
-  assert.equal(typeof requestRecord?.dispatched_at_ms, "number");
+  assert.equal(requestRecord.provider, "chatgpt_codex");
+  assert.equal(typeof requestRecord.dispatched_at_ms, "number");
 });
 
 Deno.test("V3 cancellation during the Codex dispatch commit releases quota before fetch", async () => {
@@ -953,7 +932,7 @@ Deno.test("V3 cancellation during the Codex dispatch commit releases quota befor
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ input: "cancel before transport" }),
         signal: controller.signal,
-      }),
+      })
     );
     await dispatchCommitStartedPromise;
     controller.abort(new DOMException("cancelled", "AbortError"));
@@ -986,10 +965,7 @@ Deno.test("V3 admission reclaims expired reservations and preserves dispatch ide
   const { policy } = await prepareApiKeyInference("c", "expired-lease", 1);
   const expiredRequestId = "expired-request";
   const nowMs = Date.now();
-  kv.values.set(
-    encodeKey(apiKeyUsageV3WindowKey(policy)),
-    { ...makeApiKeyUsageWindowV3(policy, nowMs), reserved_requests: 1 },
-  );
+  kv.values.set(encodeKey(apiKeyUsageV3WindowKey(policy)), { ...makeApiKeyUsageWindowV3(policy, nowMs), reserved_requests: 1 });
   kv.values.set(encodeKey(apiKeyUsageV3RequestKey(policy, expiredRequestId)), {
     v: 3,
     key_id: policy.key_id,
@@ -1009,12 +985,10 @@ Deno.test("V3 admission reclaims expired reservations and preserves dispatch ide
     nowMs,
   });
   assert.equal(admission.ok, true);
-  if (!admission.ok) return;
-  const expired = kv.values.get(
-    encodeKey(apiKeyUsageV3RequestKey(policy, expiredRequestId)),
-  ) as { state?: string; release_reason?: string } | undefined;
+
+  const expired = kv.values.get(encodeKey(apiKeyUsageV3RequestKey(policy, expiredRequestId))) as { state?: string; release_reason?: string } | undefined;
   assert.equal(expired?.state, "released");
-  assert.equal(expired?.release_reason, "lease_expired");
+  assert.equal(expired.release_reason, "lease_expired");
   assert.equal(usageWindow(policy).reserved_requests, 1);
 
   await admission.reservation.release();
@@ -1039,14 +1013,11 @@ Deno.test("V3 dispatch CAS failure prevents a provider fetch and exhausted quota
     assert.equal(fetchCalls, 0);
 
     kv.failNextCommits = 0;
-    kv.values.set(
-      encodeKey(apiKeyUsageV3WindowKey(policy)),
-      { ...makeApiKeyUsageWindowV3(policy), committed_requests: 1 },
-    );
+    kv.values.set(encodeKey(apiKeyUsageV3WindowKey(policy)), { ...makeApiKeyUsageWindowV3(policy), committed_requests: 1 });
     const models = await handler(
       new Request("https://ai.ubq.fi/v1/models", {
         headers: { Authorization: `Bearer ${token}` },
-      }),
+      })
     );
     assert.equal(models.status, 200);
     assert.equal(fetchCalls, 0);
@@ -1073,7 +1044,10 @@ Deno.test("streaming V3 quota is committed at dispatch, including premature and 
   };
 
   try {
-    for (const [route, tokenDigit] of [["responses", "a"], ["chat", "b"]] as const) {
+    for (const [route, tokenDigit] of [
+      ["responses", "a"],
+      ["chat", "b"],
+    ] as const) {
       const { token, policy } = await prepare(tokenDigit, `stream-completed-${route}`);
       const upstream = { controller: null as ReadableStreamDefaultController<Uint8Array> | null };
       globalThis.fetch = () =>
@@ -1082,20 +1056,19 @@ Deno.test("streaming V3 quota is committed at dispatch, including premature and 
             new ReadableStream<Uint8Array>({
               start(controller) {
                 upstream.controller = controller;
-                controller.enqueue(
-                  encoder.encode(`data: ${JSON.stringify({ type: "response.created", response: { id: route } })}\n\n`),
-                );
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "response.created", response: { id: route } })}\n\n`));
                 controller.enqueue(encoder.encode(semanticSseEvent()));
               },
             }),
-            { status: 200, headers: { "Content-Type": "text/event-stream" } },
-          ),
+            { status: 200, headers: { "Content-Type": "text/event-stream" } }
+          )
         );
 
       const response = await handler(streamingRequest(token, route));
       assert.equal(response.status, 200);
       assert.equal(usageWindow(policy).committed_requests, 1, `${route} did not commit at provider dispatch`);
-      const reader = response.body!.getReader();
+      assert.ok(response.body, `${route} streaming response must expose a body`);
+      const reader = response.body.getReader();
       if (route === "responses") {
         const created = await reader.read();
         assert.equal(created.done, false);
@@ -1103,9 +1076,11 @@ Deno.test("streaming V3 quota is committed at dispatch, including premature and 
       }
 
       const completedChunk = reader.read();
-      upstream.controller!.enqueue(encoder.encode(completedSseEvent(3, 4)));
-      upstream.controller!.enqueue(encoder.encode(completedSseEvent(5, 6)));
-      upstream.controller!.close();
+      const upstreamController = upstream.controller;
+      assert.ok(upstreamController, `${route} upstream stream controller must be captured`);
+      upstreamController.enqueue(encoder.encode(completedSseEvent(3, 4)));
+      upstreamController.enqueue(encoder.encode(completedSseEvent(5, 6)));
+      upstreamController.close();
       assert.equal((await completedChunk).done, false);
       while (!(await reader.read()).done) {
         // Drain any trailing [DONE] or duplicate upstream completion chunks.
@@ -1114,14 +1089,17 @@ Deno.test("streaming V3 quota is committed at dispatch, including premature and 
       assert.equal(usageWindow(policy).reserved_requests, 0);
     }
 
-    for (const [route, tokenDigit] of [["responses", "c"], ["chat", "d"]] as const) {
+    for (const [route, tokenDigit] of [
+      ["responses", "c"],
+      ["chat", "d"],
+    ] as const) {
       const { token, policy } = await prepare(tokenDigit, `stream-truncated-${route}`);
       globalThis.fetch = () =>
         Promise.resolve(
-          new Response(
-            `data: ${JSON.stringify({ type: "response.created", response: { id: route } })}\n\n${semanticSseEvent()}`,
-            { status: 200, headers: { "Content-Type": "text/event-stream" } },
-          ),
+          new Response(`data: ${JSON.stringify({ type: "response.created", response: { id: route } })}\n\n${semanticSseEvent()}`, {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream" },
+          })
         );
       const response = await handler(streamingRequest(token, route));
       assert.equal(response.status, 200);
@@ -1130,7 +1108,10 @@ Deno.test("streaming V3 quota is committed at dispatch, including premature and 
       assert.equal(usageWindow(policy).reserved_requests, 0);
     }
 
-    for (const [route, tokenDigit] of [["responses", "e"], ["chat", "f"]] as const) {
+    for (const [route, tokenDigit] of [
+      ["responses", "e"],
+      ["chat", "f"],
+    ] as const) {
       const { token, policy } = await prepare(tokenDigit, `stream-cancelled-${route}`);
       const upstream = { controller: null as ReadableStreamDefaultController<Uint8Array> | null };
       globalThis.fetch = () =>
@@ -1139,23 +1120,22 @@ Deno.test("streaming V3 quota is committed at dispatch, including premature and 
             new ReadableStream<Uint8Array>({
               start(controller) {
                 upstream.controller = controller;
-                controller.enqueue(
-                  encoder.encode(`data: ${JSON.stringify({ type: "response.created", response: { id: route } })}\n\n`),
-                );
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "response.created", response: { id: route } })}\n\n`));
                 controller.enqueue(encoder.encode(semanticSseEvent()));
               },
             }),
-            { status: 200, headers: { "Content-Type": "text/event-stream" } },
-          ),
+            { status: 200, headers: { "Content-Type": "text/event-stream" } }
+          )
         );
       const response = await handler(streamingRequest(token, route));
       assert.equal(response.status, 200);
+      assert.ok(response.body, `${route} cancelled response must expose a body`);
       if (route === "responses") {
-        const reader = response.body!.getReader();
+        const reader = response.body.getReader();
         assert.equal((await reader.read()).done, false);
         await reader.cancel("test cancelled before completion");
       } else {
-        await response.body!.cancel("test cancelled before completion");
+        await response.body.cancel("test cancelled before completion");
       }
       try {
         upstream.controller?.close();
@@ -1173,20 +1153,20 @@ Deno.test("streaming V3 quota is committed at dispatch, including premature and 
 Deno.test("Codex terminal health distinguishes completion, post-header failure, and cancellation", async () => {
   const originalFetch = globalThis.fetch;
   const currentHealthKey = encodeKey(["uos_ai", "provider_health", "v1", "codex", "acct-1", "current"]);
-  const currentHealth = () =>
-    kv.values.get(currentHealthKey) as
-      | { event?: string; status?: number | null; provider_request_id?: string | null }
-      | undefined;
+  const currentHealth = () => kv.values.get(currentHealthKey) as { event?: string; status?: number | null; provider_request_id?: string | null } | undefined;
   const waitForHealth = async (event: string, providerRequestId: string) => {
     await waitFor(
       () => currentHealth()?.event === event && currentHealth()?.provider_request_id === providerRequestId,
-      `${event} health for ${providerRequestId}`,
+      `${event} health for ${providerRequestId}`
     );
     return await getCodexProviderHealth("acct-1");
   };
 
   try {
-    for (const [route, tokenDigit] of [["responses", "2"], ["chat", "3"]] as const) {
+    for (const [route, tokenDigit] of [
+      ["responses", "2"],
+      ["chat", "3"],
+    ] as const) {
       const { token } = await prepareApiKeyInference(tokenDigit, `terminal-health-${route}`, 20);
       resetProviderHealthThrottleForTest();
 
@@ -1196,7 +1176,7 @@ Deno.test("Codex terminal health distinguishes completion, post-header failure, 
           new Response(`${route === "chat" ? semanticSseEvent() : ""}${completedSseEvent()}`, {
             status: 200,
             headers: { "Content-Type": "text/event-stream", "X-Request-Id": firstSuccessId },
-          }),
+          })
         );
       const firstSuccess = await handler(streamingRequest(token, route));
       assert.equal(firstSuccess.status, 200);
@@ -1208,15 +1188,10 @@ Deno.test("Codex terminal health distinguishes completion, post-header failure, 
       const failureId = `${route}-post-header-failure`;
       globalThis.fetch = () =>
         Promise.resolve(
-          new Response(
-            `data: ${
-              JSON.stringify({ type: "response.created", response: { id: failureId } })
-            }\n\n${semanticSseEvent()}`,
-            {
-              status: 200,
-              headers: { "Content-Type": "text/event-stream", "X-Request-Id": failureId },
-            },
-          ),
+          new Response(`data: ${JSON.stringify({ type: "response.created", response: { id: failureId } })}\n\n${semanticSseEvent()}`, {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream", "X-Request-Id": failureId },
+          })
         );
       const failed = await handler(streamingRequest(token, route));
       assert.equal(failed.status, 200);
@@ -1231,7 +1206,7 @@ Deno.test("Codex terminal health distinguishes completion, post-header failure, 
           new Response(`${route === "chat" ? semanticSseEvent() : ""}${completedSseEvent()}`, {
             status: 200,
             headers: { "Content-Type": "text/event-stream", "X-Request-Id": recoveredId },
-          }),
+          })
         );
       const recoveredResponse = await handler(streamingRequest(token, route));
       assert.equal(recoveredResponse.status, 200);
@@ -1243,17 +1218,15 @@ Deno.test("Codex terminal health distinguishes completion, post-header failure, 
       globalThis.fetch = () =>
         Promise.resolve(
           new Response(
-            `data: ${
-              JSON.stringify({
-                type: "response.failed",
-                response: { id: terminalFailureId, error: { code: "fixture_failure" } },
-              })
-            }\n\n`,
+            `data: ${JSON.stringify({
+              type: "response.failed",
+              response: { id: terminalFailureId, error: { code: "fixture_failure" } },
+            })}\n\n`,
             {
               status: 200,
               headers: { "Content-Type": "text/event-stream", "X-Request-Id": terminalFailureId },
-            },
-          ),
+            }
+          )
         );
       const terminalFailure = await handler(streamingRequest(token, route));
       await terminalFailure.text();
@@ -1266,7 +1239,7 @@ Deno.test("Codex terminal health distinguishes completion, post-header failure, 
           new Response(`${route === "chat" ? semanticSseEvent() : ""}${completedSseEvent()}`, {
             status: 200,
             headers: { "Content-Type": "text/event-stream", "X-Request-Id": finalRecoveryId },
-          }),
+          })
         );
       const finalRecoveryResponse = await handler(streamingRequest(token, route));
       assert.equal(finalRecoveryResponse.status, 200);
@@ -1279,13 +1252,10 @@ Deno.test("Codex terminal health distinguishes completion, post-header failure, 
         const malformedId = `${route}-${malformedTerminal}-array`;
         globalThis.fetch = () =>
           Promise.resolve(
-            new Response(
-              `data: ${JSON.stringify({ type: malformedTerminal, response: [] })}\n\n`,
-              {
-                status: 200,
-                headers: { "Content-Type": "text/event-stream", "X-Request-Id": malformedId },
-              },
-            ),
+            new Response(`data: ${JSON.stringify({ type: malformedTerminal, response: [] })}\n\n`, {
+              status: 200,
+              headers: { "Content-Type": "text/event-stream", "X-Request-Id": malformedId },
+            })
           );
         const malformed = await handler(streamingRequest(token, route));
         assert.equal(malformed.status, 502);
@@ -1299,7 +1269,7 @@ Deno.test("Codex terminal health distinguishes completion, post-header failure, 
             new Response(`${route === "chat" ? semanticSseEvent() : ""}${completedSseEvent()}`, {
               status: 200,
               headers: { "Content-Type": "text/event-stream", "X-Request-Id": lastHealthyId },
-            }),
+            })
           );
         const malformedRecovery = await handler(streamingRequest(token, route));
         assert.equal(malformedRecovery.status, 200);
@@ -1311,13 +1281,10 @@ Deno.test("Codex terminal health distinguishes completion, post-header failure, 
       const incompleteId = `${route}-incomplete`;
       globalThis.fetch = () =>
         Promise.resolve(
-          new Response(
-            `data: ${JSON.stringify({ type: "response.incomplete", response: { id: incompleteId } })}\n\n`,
-            {
-              status: 200,
-              headers: { "Content-Type": "text/event-stream", "X-Request-Id": incompleteId },
-            },
-          ),
+          new Response(`data: ${JSON.stringify({ type: "response.incomplete", response: { id: incompleteId } })}\n\n`, {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream", "X-Request-Id": incompleteId },
+          })
         );
       const incomplete = await handler(streamingRequest(token, route));
       await incomplete.text();
@@ -1328,16 +1295,13 @@ Deno.test("Codex terminal health distinguishes completion, post-header failure, 
       assert.equal(afterIncomplete.last_provider_request_id, lastHealthyId);
 
       let upstreamCancelled = 0;
+      const cancelledRequestId = `${route}-cancelled`;
       globalThis.fetch = () =>
         Promise.resolve(
           new Response(
             new ReadableStream<Uint8Array>({
               start(controller) {
-                controller.enqueue(
-                  textEncoder.encode(
-                    `data: ${JSON.stringify({ type: "response.created", response: { id: `${route}-cancelled` } })}\n\n`,
-                  ),
-                );
+                controller.enqueue(textEncoder.encode(`data: ${JSON.stringify({ type: "response.created", response: { id: cancelledRequestId } })}\n\n`));
                 controller.enqueue(textEncoder.encode(semanticSseEvent()));
               },
               cancel() {
@@ -1346,18 +1310,19 @@ Deno.test("Codex terminal health distinguishes completion, post-header failure, 
             }),
             {
               status: 200,
-              headers: { "Content-Type": "text/event-stream", "X-Request-Id": `${route}-cancelled` },
-            },
-          ),
+              headers: { "Content-Type": "text/event-stream", "X-Request-Id": cancelledRequestId },
+            }
+          )
         );
       const cancelled = await handler(streamingRequest(token, route));
       assert.equal(cancelled.status, 200);
+      assert.ok(cancelled.body, `${route} cancelled response must expose a body`);
       if (route === "responses") {
-        const reader = cancelled.body!.getReader();
+        const reader = cancelled.body.getReader();
         assert.equal((await reader.read()).done, false);
         await reader.cancel("client cancelled");
       } else {
-        await cancelled.body!.cancel("client cancelled");
+        await cancelled.body.cancel("client cancelled");
       }
       await waitFor(() => upstreamCancelled === 1, `${route} upstream cancellation`);
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -1384,7 +1349,7 @@ Deno.test("provider dispatch commits API-key V3 while kernel completion writes o
       hash: "SHA-256",
     },
     true,
-    ["sign", "verify"],
+    ["sign", "verify"]
   );
   const publicKey = new Uint8Array(await crypto.subtle.exportKey("spki", keyPair.publicKey));
   kv.values.set(encodeKey(["uos_ai", "kernel_pubkeys"]), [{ pem: toPublicKeyPem(publicKey) }]);
@@ -1404,9 +1369,7 @@ Deno.test("provider dispatch commits API-key V3 while kernel completion writes o
       state_id: "state_lifecycle",
     });
     const signingInput = `${header}.${payload}`;
-    const signature = new Uint8Array(
-      await crypto.subtle.sign("RSASSA-PKCS1-v1_5", keyPair.privateKey, textEncoder.encode(signingInput)),
-    );
+    const signature = new Uint8Array(await crypto.subtle.sign("RSASSA-PKCS1-v1_5", keyPair.privateKey, textEncoder.encode(signingInput)));
     return `${signingInput}.${encodeBase64Url(signature)}`;
   };
   const kernelToken = await makeKernelToken();
@@ -1419,16 +1382,12 @@ Deno.test("provider dispatch commits API-key V3 while kernel completion writes o
         new ReadableStream<Uint8Array>({
           start(controller) {
             upstream.controller = controller;
-            controller.enqueue(
-              textEncoder.encode(
-                `data: ${JSON.stringify({ type: "response.created", response: { id: "kernel" } })}\n\n`,
-              ),
-            );
+            controller.enqueue(textEncoder.encode(`data: ${JSON.stringify({ type: "response.created", response: { id: "kernel" } })}\n\n`));
             controller.enqueue(textEncoder.encode(semanticSseEvent()));
           },
         }),
-        { status: 200, headers: { "Content-Type": "text/event-stream" } },
-      ),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } }
+      )
     );
   try {
     const baseRequest = streamingRequest(token, "responses");
@@ -1438,49 +1397,55 @@ Deno.test("provider dispatch commits API-key V3 while kernel completion writes o
     assert.equal(response.status, 200);
     const orgWindowKey = kernelOrgWindowKey("lifecycle-org");
     assert.equal(usageWindow(policy).committed_requests, 1);
-    const reservedKernelWindow = kv.values.get(encodeKey(orgWindowKey)) as {
-      usage_requests?: number;
-      reserved_requests?: number;
-    } | undefined;
+    const reservedKernelWindow = kv.values.get(encodeKey(orgWindowKey)) as
+      | {
+          usage_requests?: number;
+          reserved_requests?: number;
+        }
+      | undefined;
     assert.equal(reservedKernelWindow?.usage_requests, 0);
-    assert.equal(reservedKernelWindow?.reserved_requests, 1);
+    assert.equal(reservedKernelWindow.reserved_requests, 1);
 
     const body = response.text();
-    upstream.controller!.enqueue(textEncoder.encode(completedSseEvent(2, 3)));
-    upstream.controller!.enqueue(textEncoder.encode(completedSseEvent(4, 5)));
-    upstream.controller!.close();
+    const upstreamController = upstream.controller;
+    assert.ok(upstreamController, "upstream stream controller must be captured");
+    upstreamController.enqueue(textEncoder.encode(completedSseEvent(2, 3)));
+    upstreamController.enqueue(textEncoder.encode(completedSseEvent(4, 5)));
+    upstreamController.close();
     await body;
 
     assert.equal(usageWindow(policy).committed_requests, 1);
-    const kernelWindow = kv.values.get(encodeKey(orgWindowKey)) as {
-      usage_requests?: number;
-      reserved_requests?: number;
-    } | undefined;
+    const kernelWindow = kv.values.get(encodeKey(orgWindowKey)) as
+      | {
+          usage_requests?: number;
+          reserved_requests?: number;
+        }
+      | undefined;
     assert.equal(kernelWindow?.usage_requests, 1);
-    assert.equal(kernelWindow?.reserved_requests, 0);
+    assert.equal(kernelWindow.reserved_requests, 0);
 
     let imageFetches = 0;
     globalThis.fetch = () => {
       imageFetches += 1;
       return Promise.resolve(
         new Response(
-          `data: ${
-            JSON.stringify({
-              type: "response.completed",
-              response: {
-                model: MODEL,
-                created_at: 1787431659,
-                output: [{
+          `data: ${JSON.stringify({
+            type: "response.completed",
+            response: {
+              model: MODEL,
+              created_at: 1787431659,
+              output: [
+                {
                   type: "image_generation_call",
                   status: "completed",
                   result: "SU1BR0U=",
-                }],
-                usage: { input_tokens: 3, output_tokens: 4, total_tokens: 7 },
-              },
-            })
-          }\n\n`,
-          { status: 200, headers: { "Content-Type": "text/event-stream" } },
-        ),
+                },
+              ],
+              usage: { input_tokens: 3, output_tokens: 4, total_tokens: 7 },
+            },
+          })}\n\n`,
+          { status: 200, headers: { "Content-Type": "text/event-stream" } }
+        )
       );
     };
     const pendingImageResponse = handler(
@@ -1492,7 +1457,7 @@ Deno.test("provider dispatch commits API-key V3 while kernel completion writes o
           "X-Ubiquity-Kernel-Token": kernelToken,
         },
         body: JSON.stringify({ prompt: "five telemetry regression images", n: 5, user: "kernel-image-user" }),
-      }),
+      })
     );
     const imageResponse = await pendingImageResponse;
     assert.equal(imageResponse.status, 200);
@@ -1506,12 +1471,14 @@ Deno.test("provider dispatch commits API-key V3 while kernel completion writes o
     assert.equal(imageResponse.headers.get("x-uos-warning"), "user_ignored");
     assert.equal(imageFetches, 5);
     assert.equal(usageWindow(policy).committed_requests, 2);
-    const kernelWindowAfterImage = kv.values.get(encodeKey(orgWindowKey)) as {
-      usage_requests?: number;
-      reserved_requests?: number;
-    } | undefined;
+    const kernelWindowAfterImage = kv.values.get(encodeKey(orgWindowKey)) as
+      | {
+          usage_requests?: number;
+          reserved_requests?: number;
+        }
+      | undefined;
     assert.equal(kernelWindowAfterImage?.usage_requests, 2);
-    assert.equal(kernelWindowAfterImage?.reserved_requests, 0);
+    assert.equal(kernelWindowAfterImage.reserved_requests, 0);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1533,30 +1500,21 @@ Deno.test("Kernel quota reserves one concurrent limit-one request and commits on
         new ReadableStream<Uint8Array>({
           start(controller) {
             upstream.controller = controller;
-            controller.enqueue(
-              textEncoder.encode(
-                `data: ${JSON.stringify({ type: "response.created", response: { id: "kernel-concurrent" } })}\n\n`,
-              ),
-            );
+            controller.enqueue(textEncoder.encode(`data: ${JSON.stringify({ type: "response.created", response: { id: "kernel-concurrent" } })}\n\n`));
             controller.enqueue(textEncoder.encode(semanticSseEvent()));
           },
         }),
-        { status: 200, headers: { "Content-Type": "text/event-stream" } },
-      ),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } }
+      )
     );
   };
   try {
-    const requests = await Promise.all(
-      Array.from(
-        { length: 8 },
-        () => withKernelTestToken(streamingRequest(token, "responses"), token, owner, repo),
-      ),
-    );
+    const requests = await Promise.all(Array.from({ length: 8 }, () => withKernelTestToken(streamingRequest(token, "responses"), token, owner, repo)));
     const responses = await Promise.all(requests.map((request) => handler(request)));
     assert.equal(fetchCalls, 1);
     assert.deepEqual(
       responses.map((response) => response.status).sort((left, right) => left - right),
-      [200, 429, 429, 429, 429, 429, 429, 429],
+      [200, 429, 429, 429, 429, 429, 429, 429]
     );
     const windowKey = kernelOrgWindowKey(owner);
     const reserved = kv.values.get(encodeKey(windowKey)) as {
@@ -1569,14 +1527,18 @@ Deno.test("Kernel quota reserves one concurrent limit-one request and commits on
     const admitted = responses.find((response) => response.status === 200);
     assert.ok(admitted);
     const body = admitted.text();
-    upstream.controller!.enqueue(textEncoder.encode(completedSseEvent()));
-    upstream.controller!.close();
+    const upstreamController = upstream.controller;
+    assert.ok(upstreamController, "upstream stream controller must be captured");
+    upstreamController.enqueue(textEncoder.encode(completedSseEvent()));
+    upstreamController.close();
     await body;
     await waitFor(() => {
-      const window = kv.values.get(encodeKey(windowKey)) as {
-        usage_requests?: number;
-        reserved_requests?: number;
-      } | undefined;
+      const window = kv.values.get(encodeKey(windowKey)) as
+        | {
+            usage_requests?: number;
+            reserved_requests?: number;
+          }
+        | undefined;
       return window?.usage_requests === 1 && window.reserved_requests === 0;
     }, "Kernel semantic completion commit");
   } finally {
@@ -1593,12 +1555,16 @@ Deno.test("Kernel quota reconstructs reservations after an older writer erases t
     kv: kv as unknown as Deno.Kv,
   });
   assert.equal(first.ok, true);
-  if (!first.ok) return;
+
   const windowKey = kernelOrgWindowKey(owner);
   const reservedWindow = kv.values.get(encodeKey(windowKey)) as Record<string, unknown>;
   assert.equal(reservedWindow.reserved_requests, 1);
 
-  const { reserved_requests: _erased, ...olderWriterWindow } = reservedWindow;
+  // The older writer must not carry the aggregate reservation field forward; an
+  // unused destructuring target for it is rejected by sonarjs/no-unused-vars, so
+  // the copy is built and the field erased explicitly.
+  const olderWriterWindow: Record<string, unknown> = { ...reservedWindow };
+  delete olderWriterWindow.reserved_requests;
   kv.values.set(encodeKey(windowKey), {
     ...olderWriterWindow,
     usage_requests: 1,
@@ -1609,7 +1575,9 @@ Deno.test("Kernel quota reconstructs reservations after an older writer erases t
     kv: kv as unknown as Deno.Kv,
   });
   assert.equal(blocked.ok, false);
-  if (!blocked.ok) assert.equal(blocked.response.status, 429);
+  {
+    assert.equal(blocked.response.status, 429);
+  }
 
   await first.reservation.release("mixed_revision_test_complete");
   const repairedWindow = kv.values.get(encodeKey(windowKey)) as {
@@ -1636,25 +1604,22 @@ Deno.test("Kernel quota releases a cancelled stream before admitting its replace
       new Response(
         new ReadableStream<Uint8Array>({
           start(controller) {
-            controller.enqueue(
-              textEncoder.encode(
-                `data: ${JSON.stringify({ type: "response.created", response: { id: "kernel-cancel" } })}\n\n`,
-              ),
-            );
+            controller.enqueue(textEncoder.encode(`data: ${JSON.stringify({ type: "response.created", response: { id: "kernel-cancel" } })}\n\n`));
             controller.enqueue(textEncoder.encode(semanticSseEvent()));
           },
           cancel() {
             upstreamCancelled += 1;
           },
         }),
-        { status: 200, headers: { "Content-Type": "text/event-stream" } },
-      ),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } }
+      )
     );
   };
   try {
     const first = await handler(await withKernelTestToken(streamingRequest(token, "responses"), token, owner, repo));
     assert.equal(first.status, 200);
-    await first.body!.cancel("client cancelled");
+    assert.ok(first.body, "cancelled Kernel response must expose a body");
+    await first.body.cancel("client cancelled");
     const windowKey = kernelOrgWindowKey(owner);
     await waitFor(() => {
       const window = kv.values.get(encodeKey(windowKey)) as { reserved_requests?: number } | undefined;
@@ -1662,9 +1627,7 @@ Deno.test("Kernel quota releases a cancelled stream before admitting its replace
     }, "Kernel cancellation release");
     await waitFor(() => upstreamCancelled === 1, "Kernel upstream cancellation");
 
-    const replacement = await handler(
-      await withKernelTestToken(streamingRequest(token, "responses"), token, owner, repo),
-    );
+    const replacement = await handler(await withKernelTestToken(streamingRequest(token, "responses"), token, owner, repo));
     assert.equal(replacement.status, 200);
     await replacement.text();
     const committed = kv.values.get(encodeKey(windowKey)) as {
@@ -1708,9 +1671,7 @@ Deno.test("Kernel quota releases validation failures and admits a later valid re
     assert.equal(released.usage_requests, 0);
     assert.equal(released.reserved_requests, 0);
 
-    const replacement = await handler(
-      await withKernelTestToken(streamingRequest(token, "responses"), token, owner, repo),
-    );
+    const replacement = await handler(await withKernelTestToken(streamingRequest(token, "responses"), token, owner, repo));
     assert.equal(replacement.status, 200);
     await replacement.text();
     const committed = kv.values.get(encodeKey(windowKey)) as {
@@ -1766,9 +1727,7 @@ Deno.test("Kernel quota reclaims an expired reservation lease before admission",
   const originalFetch = globalThis.fetch;
   globalThis.fetch = () => Promise.resolve(validStreamingSse());
   try {
-    const response = await handler(
-      await withKernelTestToken(streamingRequest(token, "responses"), token, owner, repo),
-    );
+    const response = await handler(await withKernelTestToken(streamingRequest(token, "responses"), token, owner, repo));
     assert.equal(response.status, 200);
     await response.text();
     const expired = kv.values.get(encodeKey(expiredReservationKey)) as {
@@ -1793,7 +1752,7 @@ Deno.test("Kernel quota reservation fails closed when KV is unavailable", async 
     kv: null,
   });
   assert.equal(decision.ok, false);
-  if (decision.ok) return;
+
   assert.equal(decision.response.status, 503);
 });
 
@@ -1814,7 +1773,7 @@ Deno.test("Kernel quota rejects malformed effective-scope policy records", async
     kv: kv as unknown as Deno.Kv,
   });
   assert.equal(decision.ok, false);
-  if (decision.ok) return;
+
   assert.equal(decision.response.status, 503);
   assert.equal(kv.values.has(encodeKey(kernelOrgWindowKey(owner))), false);
 });
@@ -1843,7 +1802,7 @@ Deno.test("Kernel quota CAS-checks repo-policy absence before org admission", as
     kv: kv as unknown as Deno.Kv,
   });
   assert.equal(decision.ok, false);
-  if (decision.ok) return;
+
   assert.equal(decision.response.status, 503);
   assert.equal(kv.values.has(encodeKey(kernelOrgWindowKey(owner))), false);
 });
@@ -1860,7 +1819,7 @@ Deno.test("Kernel quota CAS-checks default policy entries before admission", asy
     kv: kv as unknown as Deno.Kv,
   });
   assert.equal(decision.ok, false);
-  if (decision.ok) return;
+
   assert.equal(decision.response.status, 429);
   assert.equal(kv.values.has(encodeKey(kernelOrgWindowKey(owner))), false);
 });
@@ -1878,33 +1837,27 @@ Deno.test("Kernel quota renews an active reservation and aborts if renewal canno
     renewalIntervalMs: 5,
   });
   assert.equal(decision.ok, true);
-  if (!decision.ok) return;
+
   const window = kv.values.get(encodeKey(kernelOrgWindowKey(owner))) as { created_at_ms: number };
   const reservationKey = kernelOrgReservationKey(owner, window.created_at_ms, requestId);
-  const initialLease = (kv.values.get(encodeKey(reservationKey)) as { lease_expires_at_ms: number })
-    .lease_expires_at_ms;
-  await waitFor(() =>
-    (kv.values.get(encodeKey(reservationKey)) as { lease_expires_at_ms?: number } | undefined)
-      ?.lease_expires_at_ms !== initialLease, "Kernel lease renewal");
+  const initialLease = (kv.values.get(encodeKey(reservationKey)) as { lease_expires_at_ms: number }).lease_expires_at_ms;
+  await waitFor(
+    () => (kv.values.get(encodeKey(reservationKey)) as { lease_expires_at_ms?: number } | undefined)?.lease_expires_at_ms !== initialLease,
+    "Kernel lease renewal"
+  );
   assert.equal(decision.reservation.signal.aborted, false);
-  const renewedLease = (kv.values.get(encodeKey(reservationKey)) as { lease_expires_at_ms: number })
-    .lease_expires_at_ms;
+  const renewedLease = (kv.values.get(encodeKey(reservationKey)) as { lease_expires_at_ms: number }).lease_expires_at_ms;
   assert.ok(renewedLease > initialLease);
   await decision.reservation.release("test_cleanup");
 
   const failingOwner = "kernel-renewal-failure-org";
-  const failingDecision = await reserveKernelOrgUsageLimit(
-    failingOwner,
-    "kernel-renewal-failure-request",
-    "responses",
-    {
-      kv: kv as unknown as Deno.Kv,
-      nowMs: Date.now() - KERNEL_QUOTA_RESERVATION_LEASE_MS + 30,
-      renewalIntervalMs: 5,
-    },
-  );
+  const failingDecision = await reserveKernelOrgUsageLimit(failingOwner, "kernel-renewal-failure-request", "responses", {
+    kv: kv as unknown as Deno.Kv,
+    nowMs: Date.now() - KERNEL_QUOTA_RESERVATION_LEASE_MS + 30,
+    renewalIntervalMs: 5,
+  });
   assert.equal(failingDecision.ok, true);
-  if (!failingDecision.ok) return;
+
   kv.failKernelQuotaReads = true;
   await waitFor(() => failingDecision.reservation.signal.aborted, "Kernel lease renewal fail-closed abort");
   kv.failKernelQuotaReads = false;
@@ -1915,18 +1868,13 @@ Deno.test("Kernel quota lease expiry aborts independently while a renewal read h
   kv.values.clear();
   kv.resetCounts();
   seedKernelDefaultLimit(1, KERNEL_QUOTA_RESERVATION_LEASE_MS * 2);
-  const decision = await reserveKernelOrgUsageLimit(
-    "kernel-hung-renewal-org",
-    "kernel-hung-renewal-request",
-    "responses",
-    {
-      kv: kv as unknown as Deno.Kv,
-      nowMs: Date.now() - KERNEL_QUOTA_RESERVATION_LEASE_MS + 80,
-      renewalIntervalMs: 5,
-    },
-  );
+  const decision = await reserveKernelOrgUsageLimit("kernel-hung-renewal-org", "kernel-hung-renewal-request", "responses", {
+    kv: kv as unknown as Deno.Kv,
+    nowMs: Date.now() - KERNEL_QUOTA_RESERVATION_LEASE_MS + 80,
+    renewalIntervalMs: 5,
+  });
   assert.equal(decision.ok, true);
-  if (!decision.ok) return;
+
   let unblockRead!: () => void;
   let readUnblocked = false;
   kv.kernelQuotaReadGate = new Promise<void>((resolve) => {
@@ -1953,7 +1901,7 @@ Deno.test("Kernel quota retries failed settlement and rejects terminal-state cha
     nowMs: Date.now() - KERNEL_QUOTA_RESERVATION_LEASE_MS + 80,
   });
   assert.equal(decision.ok, true);
-  if (!decision.ok) return;
+
   const window = kv.values.get(encodeKey(kernelOrgWindowKey(owner))) as {
     created_at_ms: number;
     usage_requests?: number;
@@ -1973,10 +1921,12 @@ Deno.test("Kernel quota retries failed settlement and rejects terminal-state cha
   await new Promise<void>((resolve) => setTimeout(resolve, 120));
   assert.equal(decision.reservation.signal.aborted, false, "terminal intent must renew the near-expiry lease");
   await waitFor(() => {
-    const current = kv.values.get(encodeKey(kernelOrgWindowKey(owner))) as {
-      usage_requests?: number;
-      reserved_requests?: number;
-    } | undefined;
+    const current = kv.values.get(encodeKey(kernelOrgWindowKey(owner))) as
+      | {
+          usage_requests?: number;
+          reserved_requests?: number;
+        }
+      | undefined;
     return current?.usage_requests === 1 && current.reserved_requests === 0;
   }, "Kernel background settlement retry");
   await decision.reservation.commit();
@@ -2000,7 +1950,7 @@ Deno.test("Kernel quota blocks reset and deletion while a reservation is active"
     kv: kv as unknown as Deno.Kv,
   });
   assert.equal(decision.ok, true);
-  if (!decision.ok) return;
+
   assert.equal(await setKernelOrgUsageLimit(owner, 5, { resetUsage: true }), null);
   assert.equal(await deleteKernelOrgUsageLimit(owner), "conflict");
   await decision.reservation.release("test_cleanup");
@@ -2018,7 +1968,7 @@ Deno.test("Kernel quota blocks repo override creation while its effective org re
     kv: kv as unknown as Deno.Kv,
   });
   assert.equal(decision.ok, true);
-  if (!decision.ok) return;
+
   assert.equal(await setKernelUsageLimit(owner, repo, 1), null);
   assert.equal(kv.values.has(encodeKey(kernelRepoPolicyKey(owner, repo))), false);
   await decision.reservation.release("test_cleanup");
@@ -2029,21 +1979,18 @@ Deno.test("Kernel default-window cutover blocks active default-backed reservatio
   kv.values.clear();
   kv.resetCounts();
   seedKernelDefaultLimit(2, 60_000);
-  const decision = await reserveKernelOrgUsageLimit(
-    "kernel-default-window-cutover-org",
-    "default-window-cutover-request",
-    "responses",
-    { kv: kv as unknown as Deno.Kv },
-  );
+  const decision = await reserveKernelOrgUsageLimit("kernel-default-window-cutover-org", "default-window-cutover-request", "responses", {
+    kv: kv as unknown as Deno.Kv,
+  });
   assert.equal(decision.ok, true);
-  if (!decision.ok) return;
+
   const updateDefaults = () =>
     handleAdminDefaults(
       new Request("https://ai.ubq.fi/admin/defaults", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ kernel_policy_window_ms: 120_000 }),
-      }),
+      })
     );
   const blocked = await updateDefaults();
   assert.equal(blocked.status, 409);
@@ -2064,7 +2011,7 @@ Deno.test("Kernel quota preserves the requested terminal state after natural win
     kv: kv as unknown as Deno.Kv,
   });
   assert.equal(decision.ok, true);
-  if (!decision.ok) return;
+
   const originalWindow = kv.values.get(encodeKey(kernelOrgWindowKey(owner))) as Record<string, unknown> & {
     created_at_ms: number;
   };
@@ -2116,10 +2063,11 @@ Deno.test("KV budget: warm kernel inference writes no ordinary usage aggregates"
     assert.equal((await handleResponses(kernelRequest(), kernelContext)).status, 200);
     assert.equal(kv.writes, 0);
     assert.ok(
-      kv.readKeys.every((key) =>
-        JSON.stringify(key) === JSON.stringify(["uos_ai", "debug_routing", "v1"]) ||
-        JSON.stringify(key) === JSON.stringify(["uos_ai", "removed_provider_failover", "circuit", "v1"])
-      ),
+      kv.readKeys.every(
+        (key) =>
+          JSON.stringify(key) === JSON.stringify(["uos_ai", "debug_routing", "v1"]) ||
+          JSON.stringify(key) === JSON.stringify(["uos_ai", "removed_provider_failover", "circuit", "v1"])
+      )
     );
   } finally {
     globalThis.fetch = originalFetch;
@@ -2143,12 +2091,14 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
   const originalDeploymentId = Deno.env.get("DENO_DEPLOYMENT_ID");
   const logs: unknown[][] = [];
   globalThis.fetch = () =>
-    Promise.resolve(sse({
-      input_tokens: 1,
-      input_tokens_details: { cached_tokens: 0, cache_write_tokens: 1 },
-      output_tokens: 1,
-      total_tokens: 2,
-    }));
+    Promise.resolve(
+      sse({
+        input_tokens: 1,
+        input_tokens_details: { cached_tokens: 0, cache_write_tokens: 1 },
+        output_tokens: 1,
+        total_tokens: 2,
+      })
+    );
   console.info = (...args: unknown[]) => logs.push(args);
   Deno.env.delete("GIT_REVISION");
   Deno.env.delete("GITHUB_SHA");
@@ -2161,7 +2111,7 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ input: "ping", prompt_cache_key: promptCacheKey }),
-      }),
+      })
     );
     assert.equal(response.status, 200);
     const terminal = logs.find((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
@@ -2233,18 +2183,20 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
     assert.equal(Object.prototype.hasOwnProperty.call(acceptedPayload, "key_id"), false);
 
     globalThis.fetch = () =>
-      Promise.resolve(sse({
-        input_tokens: 1,
-        input_tokens_details: { cached_tokens: 2, cache_write_tokens: 0 },
-        output_tokens: 0,
-        total_tokens: 1,
-      }));
+      Promise.resolve(
+        sse({
+          input_tokens: 1,
+          input_tokens_details: { cached_tokens: 2, cache_write_tokens: 0 },
+          output_tokens: 0,
+          total_tokens: 1,
+        })
+      );
     const invalidCacheRead = await handler(
       new Request("https://ai.ubq.fi/v1/responses", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ input: "invalid cache telemetry" }),
-      }),
+      })
     );
     assert.equal(invalidCacheRead.status, 200);
     const terminalEvents = logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
@@ -2259,17 +2211,19 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
     // event so downstream counter aggregation does not turn missing telemetry
     // into a false zero-token observation.
     globalThis.fetch = () =>
-      Promise.resolve(sse({
-        input_tokens: 1,
-        output_tokens: 0,
-        total_tokens: 1,
-      }));
+      Promise.resolve(
+        sse({
+          input_tokens: 1,
+          output_tokens: 0,
+          total_tokens: 1,
+        })
+      );
     const partial = await handler(
       new Request("https://ai.ubq.fi/v1/responses", {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ input: "cache details omitted" }),
-      }),
+      })
     );
     assert.equal(partial.status, 200);
     const partialTerminalEvents = logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
@@ -2318,19 +2272,17 @@ Deno.test("streaming inference emits one terminal log only after the response bo
         new ReadableStream<Uint8Array>({
           start(controller) {
             resolveUpstreamController(controller);
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify({ type: "response.created", response: { id: "stream" } })}\n\n`),
-            );
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "response.created", response: { id: "stream" } })}\n\n`));
             controller.enqueue(encoder.encode(semanticSseEvent()));
           },
         }),
-        { status: 200, headers: { "Content-Type": "text/event-stream" } },
-      ),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } }
+      )
     );
   console.info = (...args: unknown[]) => logs.push(args);
   try {
     const requestController = new AbortController();
-    const completed = deferred<void>();
+    const completed = deferred();
     const delivery = createRequestDeliveryLifecycle(requestController.signal, completed.promise);
     const response = await handler(
       new Request("https://ai.ubq.fi/v1/responses", {
@@ -2339,7 +2291,7 @@ Deno.test("streaming inference emits one terminal log only after the response bo
         body: JSON.stringify({ input: "ping", stream: true }),
         signal: requestController.signal,
       }),
-      { completed: completed.promise, downstreamSignal: delivery.signal },
+      { completed: completed.promise, downstreamSignal: delivery.signal }
     );
     delivery.handoff();
     requestController.abort(new DOMException("legacy success abort", "AbortError"));
@@ -2351,22 +2303,17 @@ Deno.test("streaming inference emits one terminal log only after the response bo
     const upstreamController = await upstreamControllerPromise;
     upstreamController.enqueue(
       encoder.encode(
-        `data: ${
-          JSON.stringify({
-            type: "response.completed",
-            response: { model: MODEL, output: [], usage: { input_tokens: 3, output_tokens: 4, total_tokens: 7 } },
-          })
-        }\n\n`,
-      ),
+        `data: ${JSON.stringify({
+          type: "response.completed",
+          response: { model: MODEL, output: [], usage: { input_tokens: 3, output_tokens: 4, total_tokens: 7 } },
+        })}\n\n`
+      )
     );
     upstreamController.close();
     await bodyPromise;
     assert.equal(logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal").length, 0);
     completed.resolve();
-    await waitFor(
-      () => logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal").length === 1,
-      "delivered terminal telemetry",
-    );
+    await waitFor(() => logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal").length === 1, "delivered terminal telemetry");
 
     const terminalLogs = logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
     assert.equal(terminalLogs.length, 1);
@@ -2406,34 +2353,26 @@ Deno.test("streaming timeout after dispatch emits one delivered terminal and kee
       new Response(
         new ReadableStream<Uint8Array>({
           start(controller) {
-            controller.enqueue(encoder.encode(
-              "data: " + JSON.stringify({ type: "response.created", response: { id: "presemantic-timeout" } }) + "\n\n",
-            ));
+            controller.enqueue(encoder.encode("data: " + JSON.stringify({ type: "response.created", response: { id: "presemantic-timeout" } }) + "\n\n"));
           },
         }),
         {
           status: 200,
           headers: { "Content-Type": "text/event-stream" },
-        },
-      ),
+        }
+      )
     );
   console.info = (...args: unknown[]) => logs.push(args);
   try {
-    const completed = deferred<void>();
+    const completed = deferred();
     const delivery = createRequestDeliveryLifecycle(new AbortController().signal, completed.promise);
-    const response = await handler(
-      streamingRequest(token, "responses"),
-      { completed: completed.promise, downstreamSignal: delivery.signal },
-    );
+    const response = await handler(streamingRequest(token, "responses"), { completed: completed.promise, downstreamSignal: delivery.signal });
     delivery.handoff();
     assert.equal(response.status, 504);
     await response.text();
     assert.equal(logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal").length, 0);
     completed.resolve();
-    await waitFor(
-      () => logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal").length === 1,
-      "deadline terminal telemetry",
-    );
+    await waitFor(() => logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal").length === 1, "deadline terminal telemetry");
     const terminalLogs = logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
     assert.equal(terminalLogs.length, 1);
     const terminal = JSON.parse(String(terminalLogs[0]?.[1])) as Record<string, unknown>;
@@ -2484,14 +2423,12 @@ Deno.test("streaming drain timing remains separate from V3 dispatch accounting",
         new ReadableStream<Uint8Array>({
           start(controller) {
             resolveUpstreamController(controller);
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify({ type: "response.created", response: { id: "stream" } })}\n\n`),
-            );
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "response.created", response: { id: "stream" } })}\n\n`));
             controller.enqueue(encoder.encode(semanticSseEvent()));
           },
         }),
-        { status: 200, headers: { "Content-Type": "text/event-stream" } },
-      ),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } }
+      )
     );
   console.info = (...args: unknown[]) => logs.push(args);
   try {
@@ -2515,8 +2452,7 @@ Deno.test("streaming drain timing remains separate from V3 dispatch accounting",
     assert.equal(terminalLogs.length, 1);
     const terminal = JSON.parse(String(terminalLogs[0]?.[1])) as Record<string, unknown>;
     assertOrderedTerminalTimings(terminal, true);
-    const postTerminalMs = requiredTerminalTiming(terminal, "latency_ms") -
-      requiredTerminalTiming(terminal, "stream_terminal_ms");
+    const postTerminalMs = requiredTerminalTiming(terminal, "latency_ms") - requiredTerminalTiming(terminal, "stream_terminal_ms");
     const downstreamDrainMs = requiredTerminalTiming(terminal, "downstream_drain_ms");
     assert.ok(postTerminalMs >= downstreamDrainMs, "downstream drain must be part of terminal latency");
   } finally {
@@ -2547,15 +2483,17 @@ Deno.test("semantic Responses stream drops without response.created emit one fai
         new ReadableStream<Uint8Array>({
           start(controller) {
             controller.enqueue(encoder.encode(semanticSseEvent("partial")));
-            setTimeout(() => controller.error(new Error("provider socket reset")), 5);
+            setTimeout(() => {
+              controller.error(new Error("provider socket reset"));
+            }, 5);
           },
         }),
-        { status: 200, headers: { "Content-Type": "text/event-stream" } },
-      ),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } }
+      )
     );
   console.info = (...args: unknown[]) => logs.push(args);
   try {
-    const completed = deferred<void>();
+    const completed = deferred();
     const delivery = createRequestDeliveryLifecycle(new AbortController().signal, completed.promise);
     const response = await handler(
       new Request("https://ai.ubq.fi/v1/responses", {
@@ -2563,20 +2501,19 @@ Deno.test("semantic Responses stream drops without response.created emit one fai
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ input: "ping", stream: true }),
       }),
-      { completed: completed.promise, downstreamSignal: delivery.signal },
+      { completed: completed.promise, downstreamSignal: delivery.signal }
     );
     delivery.handoff();
     assert.equal(response.status, 200);
     const text = await response.text();
-    const values = [...text.matchAll(/^data: (.+)$/gm)]
-      .map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
-    assert.deepEqual(values.map((value) => value.type), ["response.output_text.delta", "response.failed"]);
+    const values = [...text.matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]) as Record<string, unknown>);
+    assert.deepEqual(
+      values.map((value) => value.type),
+      ["response.output_text.delta", "response.failed"]
+    );
     assert.equal(logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal").length, 0);
     completed.resolve();
-    await waitFor(
-      () => logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal").length === 1,
-      "post-commit failure terminal telemetry",
-    );
+    await waitFor(() => logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal").length === 1, "post-commit failure terminal telemetry");
     const terminalLogs = logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
     assert.equal(terminalLogs.length, 1);
     const terminal = JSON.parse(String(terminalLogs[0]?.[1])) as Record<string, unknown>;
@@ -2614,7 +2551,7 @@ Deno.test("Chat streaming terminal telemetry reports ordered timings once", asyn
       new Response(`${semanticSseEvent()}${completedSseEvent()}`, {
         status: 200,
         headers: { "Content-Type": "text/event-stream" },
-      }),
+      })
     );
   console.info = (...args: unknown[]) => logs.push(args);
   try {
@@ -2672,7 +2609,7 @@ Deno.test("first bounded paid fallback response exposes settled spend and consum
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ input: "ping", stream: true }),
-      }),
+      })
     );
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("x-codex-primary-used-percent"), "0");
@@ -2716,9 +2653,11 @@ Deno.test("Images preserve Codex quota responses without hidden-model paid fallb
   await fetchMeteredModels({
     force: true,
     fetcher: () =>
-      Promise.resolve(Response.json({
-        data: [{ id: MODEL, supported_endpoint_types: ["openai-response"] }],
-      })),
+      Promise.resolve(
+        Response.json({
+          data: [{ id: MODEL, supported_endpoint_types: ["openai-response"] }],
+        })
+      ),
   });
   globalThis.fetch = (input, init) => {
     const request = new Request(input, init);
@@ -2735,8 +2674,8 @@ Deno.test("Images preserve Codex quota responses without hidden-model paid fallb
         {
           status: 429,
           headers: { "Content-Type": "application/json", "Retry-After": "29" },
-        },
-      ),
+        }
+      )
     );
   };
   try {
@@ -2745,7 +2684,7 @@ Deno.test("Images preserve Codex quota responses without hidden-model paid fallb
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ prompt: "a blue square" }),
-      }),
+      })
     );
     assert.equal(response.status, 429);
     assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
@@ -2784,7 +2723,7 @@ Deno.test("paid fallback releases its dispatch intent when metered quota admissi
   let meteredCalls = 0;
   Deno.env.set("METERED_API_KEY", "metered-test-key");
   globalThis.fetch = (input) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = fetchInputUrl(input);
     if (url === "https://api.openlux.ai/v1/responses") {
       meteredCalls += 1;
       return Promise.reject(new Error("Metered transport must not start"));
@@ -2805,26 +2744,25 @@ Deno.test("paid fallback releases its dispatch intent when metered quota admissi
         requestId: "fallback-pre-dispatch-quota-failure-request",
         startedAtMs: Date.now(),
         beforeProviderDispatch: (provider) =>
-          provider === "metered"
-            ? Promise.reject(new ApiKeyQuotaDispatchError("API key quota reservation is unavailable"))
-            : Promise.resolve(),
-      },
+          provider === "metered" ? Promise.reject(new ApiKeyQuotaDispatchError("API key quota reservation is unavailable")) : Promise.resolve(undefined),
+      }
     );
     assert.equal(response.status, 503);
     assert.equal(meteredCalls, 0);
-    const stored = [...kv.values.entries()].find(([key]) => key.includes(`"paid_fallback","v3","request","${keyId}"`))
-      ?.[1] as {
-        dispatch_state?: string;
-        terminal_state?: string;
-        billing_state?: string;
-      } | undefined;
+    const stored = [...kv.values.entries()].find(([key]) => key.includes(`"paid_fallback","v3","request","${keyId}"`))?.[1] as
+      | {
+          dispatch_state?: string;
+          terminal_state?: string;
+          billing_state?: string;
+        }
+      | undefined;
     assert.equal(stored?.dispatch_state, "not_dispatched");
-    assert.equal(stored?.terminal_state, "cancelled");
-    assert.equal(stored?.billing_state, "not_billed");
-    const window = [...kv.values.entries()].find(([key]) => key.includes(`"paid_fallback","v3","window","${keyId}"`))
-      ?.[1] as { reserved_microcredits?: number; pending_count?: number } | undefined;
+    assert.equal(stored.terminal_state, "cancelled");
+    assert.equal(stored.billing_state, "not_billed");
+    const window = [...kv.values.entries()].find(([key]) => key.includes(`"paid_fallback","v3","window","${keyId}"`))?.[1] as
+      { reserved_microcredits?: number; pending_count?: number } | undefined;
     assert.equal(window?.reserved_microcredits, 0);
-    assert.equal(window?.pending_count, 0);
+    assert.equal(window.pending_count, 0);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
@@ -2860,7 +2798,7 @@ Deno.test("expired Codex credentials exhaust both accounts and fail closed witho
         new Response('{"error":"invalid_grant","error_description":"refresh token reused"}', {
           status: 401,
           headers: { "Content-Type": "application/json" },
-        }),
+        })
       );
     }
     if (request.url === "https://api.openlux.ai/v1/responses") {
@@ -2872,7 +2810,7 @@ Deno.test("expired Codex credentials exhaust both accounts and fail closed witho
       new Response(JSON.stringify({ error: { message: "Access token expired" } }), {
         status: 401,
         headers: { "Content-Type": "application/json" },
-      }),
+      })
     );
   };
   console.info = (...args: unknown[]) => logs.push(args);
@@ -2883,7 +2821,7 @@ Deno.test("expired Codex credentials exhaust both accounts and fail closed witho
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ input: "ping", stream: true }),
-      }),
+      })
     );
     assert.equal(response.status, 503);
     await response.text();
@@ -2891,10 +2829,7 @@ Deno.test("expired Codex credentials exhaust both accounts and fail closed witho
     assert.equal(new Set(accountIds).size, 2);
     assert.equal(refreshCalls, 2);
     assert.equal(meteredCalls, 0);
-    assert.deepEqual(
-      await Promise.all(["acct-1", "acct-2"].map(async (accountId) => (await getCodexProviderHealth(accountId)).state)),
-      ["invalid", "invalid"],
-    );
+    assert.deepEqual(await Promise.all(["acct-1", "acct-2"].map(async (accountId) => (await getCodexProviderHealth(accountId)).state)), ["invalid", "invalid"]);
 
     const terminalLogs = logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
     assert.equal(terminalLogs.length, 1);
@@ -2927,9 +2862,13 @@ Deno.test("paid fallback terminal telemetry records Metered lifecycle", async ()
   const logs: unknown[][] = [];
   Deno.env.set("METERED_API_KEY", "metered-test-key");
   globalThis.fetch = (input) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = fetchInputUrl(input);
     if (url === "https://api.openlux.ai/v1/responses") {
-      return new Promise<Response>((resolve) => setTimeout(() => resolve(sse()), 30));
+      return new Promise<Response>((resolve) =>
+        setTimeout(() => {
+          resolve(sse());
+        }, 30)
+      );
     }
     return Promise.resolve(authoritativeCodexQuotaResponse());
   };
@@ -2948,10 +2887,7 @@ Deno.test("paid fallback terminal telemetry records Metered lifecycle", async ()
     const firstCodexHeadersMs = requiredTerminalTiming(terminal, "first_codex_headers_ms");
     const firstUpstreamSseEventMs = requiredTerminalTiming(terminal, "first_upstream_sse_event_ms");
     requiredTerminalTiming(terminal, "first_semantic_commitment_ms");
-    assert.ok(
-      firstUpstreamSseEventMs >= firstCodexHeadersMs + 10,
-      "Metered upstream SSE time must remain outside first Codex timing",
-    );
+    assert.ok(firstUpstreamSseEventMs >= firstCodexHeadersMs + 10, "Metered upstream SSE time must remain outside first Codex timing");
     assert.equal(Object.prototype.hasOwnProperty.call(terminal, "upstream_headers_ms"), false);
   } finally {
     console.info = originalInfo;
@@ -2982,25 +2918,21 @@ Deno.test("paid fallback cancellation telemetry records a cancelled Metered life
   let upstreamCancellations = 0;
   Deno.env.set("METERED_API_KEY", "metered-test-key");
   globalThis.fetch = (input) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = fetchInputUrl(input);
     if (url === "https://api.openlux.ai/v1/responses") {
       return Promise.resolve(
         new Response(
           new ReadableStream<Uint8Array>({
             start(controller) {
-              controller.enqueue(
-                encoder.encode(
-                  `data: ${JSON.stringify({ type: "response.created", response: { id: "cancelled" } })}\n\n`,
-                ),
-              );
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "response.created", response: { id: "cancelled" } })}\n\n`));
               controller.enqueue(encoder.encode(semanticSseEvent()));
             },
             cancel() {
               upstreamCancellations += 1;
             },
           }),
-          { status: 200, headers: { "Content-Type": "text/event-stream" } },
-        ),
+          { status: 200, headers: { "Content-Type": "text/event-stream" } }
+        )
       );
     }
     return Promise.resolve(authoritativeCodexQuotaResponse());
@@ -3008,12 +2940,12 @@ Deno.test("paid fallback cancellation telemetry records a cancelled Metered life
   console.info = (...args: unknown[]) => logs.push(args);
   try {
     const requestController = new AbortController();
-    const completed = deferred<void>();
+    const completed = deferred();
     const delivery = createRequestDeliveryLifecycle(requestController.signal, completed.promise);
-    const response = await handler(
-      new Request(streamingRequest(token, "responses"), { signal: requestController.signal }),
-      { completed: completed.promise, downstreamSignal: delivery.signal },
-    );
+    const response = await handler(new Request(streamingRequest(token, "responses"), { signal: requestController.signal }), {
+      completed: completed.promise,
+      downstreamSignal: delivery.signal,
+    });
     delivery.handoff();
     assert.equal(response.status, 200);
     assert.ok(response.body);
@@ -3023,10 +2955,7 @@ Deno.test("paid fallback cancellation telemetry records a cancelled Metered life
     const deliveryFailure = new DOMException("client disconnected", "AbortError");
     completed.reject(deliveryFailure);
     await completed.promise.catch(() => {});
-    await waitFor(
-      () => logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal").length === 1,
-      "cancelled terminal telemetry",
-    );
+    await waitFor(() => logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal").length === 1, "cancelled terminal telemetry");
 
     const terminalLogs = logs.filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal");
     assert.equal(terminalLogs.length, 1);
@@ -3042,10 +2971,8 @@ Deno.test("paid fallback cancellation telemetry records a cancelled Metered life
     assert.ok(requestId);
     const requestKey = paidFallbackRequestV3Key(keyId, requestId);
     await waitFor(
-      () =>
-        (kv.values.get(encodeKey(requestKey)) as { terminal_state?: unknown } | undefined)?.terminal_state ===
-          "cancelled",
-      "cancelled paid-fallback ledger state",
+      () => (kv.values.get(encodeKey(requestKey)) as { terminal_state?: unknown } | undefined)?.terminal_state === "cancelled",
+      "cancelled paid-fallback ledger state"
     );
     const stored = kv.values.get(encodeKey(requestKey)) as {
       dispatch_state?: unknown;
@@ -3055,11 +2982,7 @@ Deno.test("paid fallback cancellation telemetry records a cancelled Metered life
     assert.equal(stored.dispatch_state, "dispatched");
     assert.equal(stored.terminal_state, "cancelled");
     assert.equal(stored.billing_state, "pending");
-    assert.equal(
-      [...kv.values.keys()].filter((key) => key.includes('"paid_fallback","v3","request"') && key.includes(keyId))
-        .length,
-      1,
-    );
+    assert.equal([...kv.values.keys()].filter((key) => key.includes('"paid_fallback","v3","request"') && key.includes(keyId)).length, 1);
     assert.deepEqual(usageWindow(policy), {
       committed_requests: 1,
       reserved_requests: 0,
@@ -3080,10 +3003,7 @@ Deno.test("V3 limit-only changes preserve the active aggregate identity and comm
   const lowered = apiKeyPolicyFromHashRecord(hash, { ...record, usage_limit_requests: 10 }, now);
   assert.ok(original && lowered);
   assert.deepEqual(apiKeyUsageV3WindowKey(lowered), apiKeyUsageV3WindowKey(original));
-  kv.values.set(
-    encodeKey(apiKeyUsageV3WindowKey(original)),
-    { ...makeApiKeyUsageWindowV3(original), committed_requests: 12 },
-  );
+  kv.values.set(encodeKey(apiKeyUsageV3WindowKey(original)), { ...makeApiKeyUsageWindowV3(original), committed_requests: 12 });
   kv.values.set(encodeKey(["ubq_ai", "api_keys", "hash", hash]), { ...record, usage_limit_requests: 10 });
   resetApiKeyPolicyCacheForTest();
   const decision = await authenticateApiKeyToken(token, { kv: kv as unknown as Deno.Kv, nowMs: now });
@@ -3093,10 +3013,7 @@ Deno.test("V3 limit-only changes preserve the active aggregate identity and comm
 
 Deno.test("/uos/auth projects committed V3 usage while models stay quota-ledger independent", async () => {
   const { token, hash, record, policy } = await prepareApiKeyInference("5", "auth-projection", 10);
-  kv.values.set(
-    encodeKey(apiKeyUsageV3WindowKey(policy)),
-    { ...makeApiKeyUsageWindowV3(policy), committed_requests: 7, reserved_requests: 1 },
-  );
+  kv.values.set(encodeKey(apiKeyUsageV3WindowKey(policy)), { ...makeApiKeyUsageWindowV3(policy), committed_requests: 7, reserved_requests: 1 });
   kv.values.set(encodeKey(["ubq_ai", "api_keys", "id", policy.key_id]), {
     ...record,
     id: policy.key_id,
@@ -3109,23 +3026,17 @@ Deno.test("/uos/auth projects committed V3 usage while models stay quota-ledger 
     paid_fallback_pricing_checked_at_ms: null,
   });
 
-  const auth = await handler(
-    new Request("https://ai.ubq.fi/uos/auth", { headers: { Authorization: `Bearer ${token}` } }),
-  );
+  const auth = await handler(new Request("https://ai.ubq.fi/uos/auth", { headers: { Authorization: `Bearer ${token}` } }));
   assert.equal(auth.status, 200);
-  const authBody = await auth.json() as { auth?: { method?: { key?: { usage_requests?: number } } } };
+  const authBody = (await auth.json()) as { auth?: { method?: { key?: { usage_requests?: number } } } };
   assert.equal(authBody.auth?.method?.key?.usage_requests, 7);
 
   kv.failApiKeyV3Reads = true;
   try {
-    const models = await handler(
-      new Request("https://ai.ubq.fi/v1/models", { headers: { Authorization: `Bearer ${token}` } }),
-    );
+    const models = await handler(new Request("https://ai.ubq.fi/v1/models", { headers: { Authorization: `Bearer ${token}` } }));
     assert.equal(models.status, 200, "non-inference routes must not read the V3 quota aggregate");
 
-    const unavailableProjection = await handler(
-      new Request("https://ai.ubq.fi/uos/auth", { headers: { Authorization: `Bearer ${token}` } }),
-    );
+    const unavailableProjection = await handler(new Request("https://ai.ubq.fi/uos/auth", { headers: { Authorization: `Bearer ${token}` } }));
     assert.equal(unavailableProjection.status, 503, "/uos/auth must fail rather than report stale usage");
   } finally {
     kv.failApiKeyV3Reads = false;
@@ -3138,16 +3049,8 @@ Deno.test("V3 automatic window advancement changes aggregate identity only when 
   const expired = { ...record, usage_reset_at_ms: now - 1 };
   const beforeAdvance = apiKeyPolicyFromHashRecord(hash, expired, now);
   assert.ok(beforeAdvance);
-  const afterAdvance = apiKeyPolicyFromHashRecord(
-    hash,
-    { ...expired, usage_reset_at_ms: beforeAdvance.usage_reset_at_ms },
-    now,
-  );
-  const explicitlyReset = apiKeyPolicyFromHashRecord(
-    hash,
-    { ...expired, usage_reset_at_ms: now + expired.window_ms },
-    now,
-  );
+  const afterAdvance = apiKeyPolicyFromHashRecord(hash, { ...expired, usage_reset_at_ms: beforeAdvance.usage_reset_at_ms }, now);
+  const explicitlyReset = apiKeyPolicyFromHashRecord(hash, { ...expired, usage_reset_at_ms: now + expired.window_ms }, now);
   assert.ok(afterAdvance && explicitlyReset);
   assert.deepEqual(apiKeyUsageV3WindowKey(afterAdvance), apiKeyUsageV3WindowKey(beforeAdvance));
   assert.notDeepEqual(apiKeyUsageV3WindowKey(explicitlyReset), apiKeyUsageV3WindowKey(beforeAdvance));
@@ -3161,11 +3064,13 @@ Deno.test("KV budget: runtime configuration revalidates after the bounded isolat
     default_model: "gpt-5-kv-budget-next",
     codex_models: {
       ...runtime.codex_models,
-      models: [{
-        slug: "gpt-5-kv-budget-next",
-        default_reasoning_level: "high",
-        supported_reasoning_levels: ["none", "high"],
-      }],
+      models: [
+        {
+          slug: "gpt-5-kv-budget-next",
+          default_reasoning_level: "high",
+          supported_reasoning_levels: ["none", "high"],
+        },
+      ],
     },
     updated_at_ms: now + 1,
   };
@@ -3173,16 +3078,8 @@ Deno.test("KV budget: runtime configuration revalidates after the bounded isolat
   kv.resetCounts();
   assert.equal((await loadRuntimeConfig(kv as unknown as Deno.Kv, now))?.default_model, MODEL);
   kv.values.set(encodeKey(RUNTIME_CONFIG_V2_KEY), second);
-  assert.equal(
-    (await loadRuntimeConfig(kv as unknown as Deno.Kv, now + RUNTIME_CONFIG_CACHE_TTL_MS - 1))?.default_model,
-    MODEL,
-  );
-  const refreshed = await Promise.all(
-    Array.from(
-      { length: 20 },
-      () => loadRuntimeConfig(kv as unknown as Deno.Kv, now + RUNTIME_CONFIG_CACHE_TTL_MS + 1),
-    ),
-  );
+  assert.equal((await loadRuntimeConfig(kv as unknown as Deno.Kv, now + RUNTIME_CONFIG_CACHE_TTL_MS - 1))?.default_model, MODEL);
+  const refreshed = await Promise.all(Array.from({ length: 20 }, () => loadRuntimeConfig(kv as unknown as Deno.Kv, now + RUNTIME_CONFIG_CACHE_TTL_MS + 1)));
   assert.ok(refreshed.every((config) => config?.default_model === second.default_model));
   assert.equal(kv.reads, 2);
 });
@@ -3199,14 +3096,8 @@ Deno.test("KV budget: failed runtime configuration refresh backs off with stale 
       return Promise.reject(new Error("runtime config KV unavailable"));
     },
   } as unknown as Deno.Kv;
-  assert.equal(
-    (await loadRuntimeConfig(unavailableKv, now + RUNTIME_CONFIG_CACHE_TTL_MS + 1))?.default_model,
-    MODEL,
-  );
-  assert.equal(
-    (await loadRuntimeConfig(unavailableKv, now + RUNTIME_CONFIG_CACHE_TTL_MS * 2))?.default_model,
-    MODEL,
-  );
+  assert.equal((await loadRuntimeConfig(unavailableKv, now + RUNTIME_CONFIG_CACHE_TTL_MS + 1))?.default_model, MODEL);
+  assert.equal((await loadRuntimeConfig(unavailableKv, now + RUNTIME_CONFIG_CACHE_TTL_MS * 2))?.default_model, MODEL);
   assert.equal(failedReads, 1);
 });
 
@@ -3240,13 +3131,7 @@ Deno.test("KV budget: malformed tokens are rejected without KV and policy expiry
   resetApiKeyPolicyCacheForTest();
   assert.equal((await authenticateApiKeyToken(token, { kv: kv as unknown as Deno.Kv, nowMs: now })).ok, true);
   kv.values.set(encodeKey(["ubq_ai", "api_keys", "hash", hash]), { ...record, revoked_at_ms: now + 1 });
-  assert.equal(
-    (await authenticateApiKeyToken(token, { kv: kv as unknown as Deno.Kv, nowMs: now + 29_999 })).ok,
-    true,
-  );
-  assert.equal(
-    (await authenticateApiKeyToken(token, { kv: kv as unknown as Deno.Kv, nowMs: now + 30_001 })).ok,
-    false,
-  );
+  assert.equal((await authenticateApiKeyToken(token, { kv: kv as unknown as Deno.Kv, nowMs: now + 29_999 })).ok, true);
+  assert.equal((await authenticateApiKeyToken(token, { kv: kv as unknown as Deno.Kv, nowMs: now + 30_001 })).ok, false);
   invalidateApiKeyPolicy("revoked");
 });

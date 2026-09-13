@@ -210,17 +210,20 @@ export const normalizeSentinelCompatibilityHeaders = (headers: Headers): Sentine
   return normalized;
 };
 
-export const captureAcceptedSentinelReplayInput = (
-  req: Request,
-  requestId: string,
-): SentinelReplayCaptureCandidate | null => {
+/** A blank Content-Type header is treated as absent. */
+const optionalContentType = (value: string | null): string | null => {
+  const trimmed = value?.trim();
+  return trimmed === undefined || trimmed === "" ? null : trimmed;
+};
+
+export const captureAcceptedSentinelReplayInput = (req: Request, requestId: string): SentinelReplayCaptureCandidate | null => {
   if (req.method !== "POST") return null;
   const url = new URL(req.url);
   const candidate: SentinelReplayCaptureCandidate = {
     endpoint: `${url.pathname}${url.search}`,
     method: req.method,
     body: null,
-    content_type: req.headers.get("content-type")?.trim() || null,
+    content_type: optionalContentType(req.headers.get("content-type")),
     compatibility_headers: normalizeSentinelCompatibilityHeaders(req.headers),
     request_id: requestId,
     git_sha: runtimeGitSha(),
@@ -232,9 +235,7 @@ export const captureAcceptedSentinelReplayInput = (
   return candidate;
 };
 
-export const materializeSentinelReplayInput = (
-  candidate: SentinelReplayCaptureCandidate | null,
-): AcceptedSentinelReplayInput | null => {
+export const materializeSentinelReplayInput = (candidate: SentinelReplayCaptureCandidate | null): AcceptedSentinelReplayInput | null => {
   if (!candidate?.body) return null;
   const body = candidate.body;
   candidate.body = null;
@@ -263,7 +264,7 @@ export const zeroSentinelReplayInput = (input: AcceptedSentinelReplayInput | nul
  */
 export const snapshotSentinelReplayInput = (input: AcceptedSentinelReplayInput): AcceptedSentinelReplayInput => {
   const recorder = input.upstreamRecorder;
-  const upstream = recorder ? recorder.snapshotAndSeal() : input.upstream ?? emptySentinelUpstreamTrace();
+  const upstream = recorder ? recorder.snapshotAndSeal() : (input.upstream ?? emptySentinelUpstreamTrace());
   recorder?.dispose();
   return {
     endpoint: input.endpoint,
@@ -279,15 +280,11 @@ export const snapshotSentinelReplayInput = (input: AcceptedSentinelReplayInput):
 };
 
 /** Discard a recorder that never reached a snapshot (zero retained bytes). */
-export const disposeSentinelUpstreamRecorder = (
-  input: AcceptedSentinelReplayInput | null | undefined,
-): void => {
+export const disposeSentinelUpstreamRecorder = (input: AcceptedSentinelReplayInput | null | undefined): void => {
   input?.upstreamRecorder?.dispose();
 };
 
-export const discardSentinelReplayCaptureCandidate = (
-  candidate: SentinelReplayCaptureCandidate | null | undefined,
-): void => {
+export const discardSentinelReplayCaptureCandidate = (candidate: SentinelReplayCaptureCandidate | null | undefined): void => {
   candidate?.body?.fill(0);
   if (candidate) candidate.body = null;
 };
@@ -303,31 +300,40 @@ export const sentinelFailureSignature = (observation: SentinelClientFailureObser
     provider_route: observation.provider_route,
   });
 
-const boundedFailureKind = (value: unknown): string | null =>
-  typeof value === "string" && /^[A-Za-z0-9_.:-]{1,128}$/.test(value) ? value : null;
+const boundedFailureKind = (value: unknown): string | null => (typeof value === "string" && /^[A-Za-z0-9_.:-]{1,128}$/.test(value) ? value : null);
 
 const errorKind = (value: unknown): string | null => {
   if (!isRecord(value)) return null;
   return boundedFailureKind(value.code) ?? boundedFailureKind(value.type);
 };
 
+/** Semantic terminal of an embeddings-job payload, or null for other statuses. */
+const embeddingsJobObservation = (
+  semanticStatus: string | null,
+  nestedError: string | null
+): Omit<SentinelClientBodyObservation, "stream" | "framing_valid"> | null => {
+  if (semanticStatus === "failed") {
+    return { completed: false, terminal_type: "job.failed", failure_kind: nestedError ?? "job_failed" };
+  }
+  if (semanticStatus === "queued" || semanticStatus === "running" || semanticStatus === "in_progress") {
+    return { completed: false, terminal_type: "job.queued", failure_kind: nestedError };
+  }
+  if (semanticStatus === "succeeded" || semanticStatus === "completed") {
+    return { completed: true, terminal_type: "job.succeeded", failure_kind: null };
+  }
+  return null;
+};
+
 const responseSemanticObservation = (
   status: number,
-  parsed: Record<string, unknown>,
+  parsed: Record<string, unknown>
 ): Omit<SentinelClientBodyObservation, "stream" | "framing_valid"> | null => {
   const semanticStatus = typeof parsed.status === "string" ? parsed.status.trim().toLowerCase() : null;
   const object = typeof parsed.object === "string" ? parsed.object.trim().toLowerCase() : null;
   const nestedError = errorKind(parsed.error);
   if (object === "embeddings.job") {
-    if (semanticStatus === "failed") {
-      return { completed: false, terminal_type: "job.failed", failure_kind: nestedError ?? "job_failed" };
-    }
-    if (semanticStatus === "queued" || semanticStatus === "running" || semanticStatus === "in_progress") {
-      return { completed: false, terminal_type: "job.queued", failure_kind: nestedError };
-    }
-    if (semanticStatus === "succeeded" || semanticStatus === "completed") {
-      return { completed: true, terminal_type: "job.succeeded", failure_kind: null };
-    }
+    const job = embeddingsJobObservation(semanticStatus, nestedError);
+    if (job !== null) return job;
   }
   if (semanticStatus === "failed") {
     return { completed: false, terminal_type: "response.failed", failure_kind: nestedError ?? "response_failed" };
@@ -350,11 +356,7 @@ const responseSemanticObservation = (
   return null;
 };
 
-export const inspectSentinelBufferedResponse = (
-  status: number,
-  contentType: string,
-  bytes: Uint8Array,
-): SentinelClientBodyObservation => {
+export const inspectSentinelBufferedResponse = (status: number, contentType: string, bytes: Uint8Array): SentinelClientBodyObservation => {
   let semantic: Omit<SentinelClientBodyObservation, "stream" | "framing_valid"> | null = null;
   if (contentType.toLowerCase().includes("json")) {
     try {
@@ -365,35 +367,37 @@ export const inspectSentinelBufferedResponse = (
     }
   }
   if (semantic) return { stream: false, framing_valid: true, ...semantic };
-  return status >= 400
-    ? {
+  if (status >= 400) {
+    return {
       stream: false,
       completed: false,
       terminal_type: "http.error",
       failure_kind: null,
       framing_valid: true,
-    }
-    : status === 202
-    ? {
+    };
+  }
+  if (status === 202) {
+    return {
       stream: false,
       completed: false,
       terminal_type: "http.accepted",
       failure_kind: null,
       framing_valid: true,
-    }
-    : {
-      stream: false,
-      completed: true,
-      terminal_type: "http.completed",
-      failure_kind: null,
-      framing_valid: true,
     };
+  }
+  return {
+    stream: false,
+    completed: true,
+    terminal_type: "http.completed",
+    failure_kind: null,
+    framing_valid: true,
+  };
 };
 
 const boundedContentLength = (headers: Headers): number | null => {
   const raw = headers.get("content-length");
   if (raw === null) return null;
-  if (!/^(?:0|[1-9][0-9]*)$/.test(raw)) throw new Error("Response Content-Length is invalid");
+  if (!/^(?:0|[1-9]\d*)$/.test(raw)) throw new Error("Response Content-Length is invalid");
   const parsed = Number(raw);
   if (!Number.isSafeInteger(parsed)) throw new Error("Response Content-Length is invalid");
   return parsed;
@@ -427,17 +431,11 @@ const readBoundedResponseClone = async (response: Response): Promise<Uint8Array<
   }
 };
 
-export const inspectSentinelBufferedResponseBody = async (
-  response: Response,
-): Promise<SentinelClientBodyObservation | null> => {
+export const inspectSentinelBufferedResponseBody = async (response: Response): Promise<SentinelClientBodyObservation | null> => {
   let bytes: Uint8Array<ArrayBuffer> | null = null;
   try {
     bytes = await readBoundedResponseClone(response);
-    return inspectSentinelBufferedResponse(
-      response.status,
-      response.headers.get("content-type")?.toLowerCase() ?? "",
-      bytes,
-    );
+    return inspectSentinelBufferedResponse(response.status, response.headers.get("content-type")?.toLowerCase() ?? "", bytes);
   } catch {
     return null;
   } finally {
@@ -452,19 +450,33 @@ const terminalRank = (terminalType: string | null): number => {
   return 0;
 };
 
-const sseEventObservation = (
-  rawEvent: string,
-): Omit<SentinelClientBodyObservation, "stream" | "framing_valid"> | null => {
+const SSE_KNOWN_FIELDS = new Set(["event", "data", "id", "retry"]);
+
+type SseEventFields = Readonly<{
+  eventName: string | null;
+  data: readonly string[];
+  hasUnknownField: boolean;
+}>;
+
+/** Splits one raw SSE event into its `event` name, `data` lines and field check. */
+const parseSseEventFields = (rawEvent: string): SseEventFields => {
   const data: string[] = [];
   let eventName: string | null = null;
+  let hasUnknownField = false;
   for (const line of rawEvent.split("\n")) {
     if (!line || line.startsWith(":")) continue;
     const separator = line.indexOf(":");
     const field = separator < 0 ? line : line.slice(0, separator);
     const value = separator < 0 ? "" : line.slice(separator + 1).replace(/^ /, "");
+    if (!SSE_KNOWN_FIELDS.has(field)) hasUnknownField = true;
     if (field === "event") eventName = value;
     else if (field === "data") data.push(value);
   }
+  return { eventName, data, hasUnknownField };
+};
+
+const sseEventObservation = (rawEvent: string): Omit<SentinelClientBodyObservation, "stream" | "framing_valid"> | null => {
+  const { eventName, data } = parseSseEventFields(rawEvent);
   if (!data.length) return null;
   const joined = data.join("\n");
   if (joined === "[DONE]") return { completed: true, terminal_type: "[DONE]", failure_kind: null };
@@ -502,6 +514,13 @@ const sseEventObservation = (
   return null;
 };
 
+/** Failure kind used when no terminal SSE frame was observed. */
+const missingTerminalFailureKind = (framingValid: boolean, terminalMissing: boolean, termination: "eof" | "read_error"): string | null => {
+  if (framingValid) return null;
+  if (!terminalMissing) return "invalid_sse_framing";
+  return termination === "read_error" ? "stream_read_error" : "missing_sse_terminal";
+};
+
 export type SentinelSseInspector = Readonly<{
   push: (bytes: Uint8Array) => void;
   finish: (termination?: "eof" | "read_error") => SentinelClientBodyObservation;
@@ -517,15 +536,8 @@ export const createSentinelSseInspector = (): SentinelSseInspector => {
   let terminal: Omit<SentinelClientBodyObservation, "stream" | "framing_valid"> | null = null;
 
   const observeEvent = (rawEvent: string): void => {
-    const data: string[] = [];
-    for (const line of rawEvent.split("\n")) {
-      if (!line || line.startsWith(":")) continue;
-      const separator = line.indexOf(":");
-      const field = separator < 0 ? line : line.slice(0, separator);
-      const value = separator < 0 ? "" : line.slice(separator + 1).replace(/^ /, "");
-      if (field !== "event" && field !== "data" && field !== "id" && field !== "retry") framingValid = false;
-      if (field === "data") data.push(value);
-    }
+    const { data, hasUnknownField } = parseSseEventFields(rawEvent);
+    if (hasUnknownField) framingValid = false;
     if (data.length && data.join("\n") !== "[DONE]") {
       try {
         const parsed: unknown = JSON.parse(data.join("\n"));
@@ -583,12 +595,7 @@ export const createSentinelSseInspector = (): SentinelSseInspector => {
         stream: true,
         completed: terminal?.completed ?? false,
         terminal_type: terminal?.terminal_type ?? null,
-        failure_kind: terminal?.failure_kind ??
-          (framingValid
-            ? null
-            : terminalMissing
-            ? termination === "read_error" ? "stream_read_error" : "missing_sse_terminal"
-            : "invalid_sse_framing"),
+        failure_kind: terminal?.failure_kind ?? missingTerminalFailureKind(framingValid, terminalMissing, termination),
         framing_valid: framingValid,
       };
     },
@@ -601,41 +608,48 @@ export const inspectSentinelSse = (bytes: Uint8Array): SentinelClientBodyObserva
   return inspector.finish();
 };
 
+/** Terminal type used when the internal observation carries no authoritative one. */
+const fallbackTerminalType = (internal: SentinelFailureObservation, cancelled: boolean): string | null => {
+  if (
+    internal.terminal_type === "response.completed" ||
+    internal.terminal_type === "response.failed" ||
+    internal.terminal_type === "response.incomplete" ||
+    internal.terminal_type === "error" ||
+    cancelled
+  ) {
+    return internal.terminal_type;
+  }
+  if (internal.status >= 400) return "http.error";
+  if (internal.completed) return "http.completed";
+  return internal.terminal_type;
+};
+
 export const resolveSentinelClientFailureObservation = (
   internal: SentinelFailureObservation,
-  body?: SentinelClientBodyObservation | null,
+  body?: SentinelClientBodyObservation | null
 ): SentinelClientFailureObservation => {
   const cancelled = internal.terminal_type === "cancelled";
   const syntheticTerminal = cancelled ? null : internal.synthetic_terminal_type;
-  const fallbackTerminal = syntheticTerminal ??
-    (internal.terminal_type === "response.completed" || internal.terminal_type === "response.failed" ||
-        internal.terminal_type === "response.incomplete" || internal.terminal_type === "error" || cancelled
-      ? internal.terminal_type
-      : internal.status >= 400
-      ? "http.error"
-      : internal.completed
-      ? "http.completed"
-      : internal.terminal_type);
-  const fallbackFailureKind = cancelled ? null : syntheticTerminal ? "server_error" : internal.failure_kind;
+  const fallbackTerminal = syntheticTerminal ?? fallbackTerminalType(internal, cancelled);
+  const syntheticFailureKind = syntheticTerminal ? "server_error" : internal.failure_kind;
+  const fallbackFailureKind = cancelled ? null : syntheticFailureKind;
+  const bodyTerminalType = body ? body.terminal_type : fallbackTerminal;
+  const bodyFailureKind = body ? body.failure_kind : fallbackFailureKind;
   return {
     status: internal.status,
-    stream: body ? body.stream : internal.stream ?? false,
+    stream: body ? body.stream : (internal.stream ?? false),
     completed: body ? body.completed : internal.completed,
-    terminal_type: cancelled ? fallbackTerminal : body ? body.terminal_type : fallbackTerminal,
-    failure_kind: cancelled ? fallbackFailureKind : body ? body.failure_kind : fallbackFailureKind,
+    terminal_type: cancelled ? fallbackTerminal : bodyTerminalType,
+    failure_kind: cancelled ? fallbackFailureKind : bodyFailureKind,
     framing_valid: body?.framing_valid ?? internal.stream !== true,
     provider_route: internal.provider_route,
   };
 };
 
 const isGatewayOrProviderIncompleteReason = (value: string | null): boolean =>
-  value !== null &&
-  /^(?:response_incomplete:)?(?:gateway|provider|upstream|server|network|timeout|deadline)[A-Za-z0-9_.:-]*$/i
-    .test(value);
+  value !== null && /^(?:response_incomplete:)?(?:gateway|provider|upstream|server|network|timeout|deadline)[a-z0-9_.:-]*$/i.test(value);
 
-const isPersistableSentinelFailure = (
-  observation: SentinelFailureObservation | SentinelClientFailureObservation,
-): boolean => {
+const isPersistableSentinelFailure = (observation: SentinelFailureObservation | SentinelClientFailureObservation): boolean => {
   if (observation.terminal_type === "cancelled") return false;
   if ("framing_valid" in observation && observation.stream && !observation.framing_valid) return true;
   if (observation.status < 400 && observation.completed && observation.terminal_type === "response.completed") {
@@ -643,32 +657,29 @@ const isPersistableSentinelFailure = (
   }
   if (observation.status >= 400) return true;
   if (observation.terminal_type === "response.incomplete") {
-    return isGatewayOrProviderIncompleteReason(observation.failure_kind) ||
-      ("synthetic_terminal_type" in observation && observation.synthetic_terminal_type !== null);
+    return (
+      isGatewayOrProviderIncompleteReason(observation.failure_kind) ||
+      ("synthetic_terminal_type" in observation && observation.synthetic_terminal_type !== null)
+    );
   }
   if (observation.failure_kind !== null) return true;
   if ("synthetic_terminal_type" in observation && observation.synthetic_terminal_type !== null) return true;
   if (
-    observation.terminal_type === "deadline" || observation.terminal_type === "eof" ||
-    observation.terminal_type === "error" || observation.terminal_type === "response.failed"
-  ) return true;
-  return observation.stream === true && !observation.completed && observation.terminal_type !== null &&
-    observation.terminal_type !== "cancelled";
+    observation.terminal_type === "deadline" ||
+    observation.terminal_type === "eof" ||
+    observation.terminal_type === "error" ||
+    observation.terminal_type === "response.failed"
+  )
+    return true;
+  return observation.stream === true && !observation.completed && observation.terminal_type !== null && observation.terminal_type !== "cancelled";
 };
 
-export const shouldPersistSentinelReplay = (
-  observation: SentinelFailureObservation,
-  clientObservation?: SentinelClientFailureObservation,
-): boolean => {
+export const shouldPersistSentinelReplay = (observation: SentinelFailureObservation, clientObservation?: SentinelClientFailureObservation): boolean => {
   if (observation.terminal_type === "cancelled") return false;
-  return isPersistableSentinelFailure(observation) ||
-    (clientObservation !== undefined && isPersistableSentinelFailure(clientObservation));
+  return isPersistableSentinelFailure(observation) || (clientObservation !== undefined && isPersistableSentinelFailure(clientObservation));
 };
 
-export const shouldSignalSentinelIncident = (
-  observation: SentinelFailureObservation,
-  clientObservation: SentinelClientFailureObservation,
-): boolean => {
+export const shouldSignalSentinelIncident = (observation: SentinelFailureObservation, clientObservation: SentinelClientFailureObservation): boolean => {
   if (observation.terminal_type === "cancelled") return false;
   if (clientObservation.stream && !clientObservation.framing_valid) return true;
   if (observation.status < 400 && observation.completed && observation.terminal_type === "response.completed") {
@@ -677,14 +688,14 @@ export const shouldSignalSentinelIncident = (
   if (observation.status >= 500) return true;
   if (isGatewayOrProviderIncompleteReason(clientObservation.failure_kind)) return true;
   if (observation.terminal_type === "response.incomplete") {
-    return isGatewayOrProviderIncompleteReason(observation.failure_kind) ||
+    return (
+      isGatewayOrProviderIncompleteReason(observation.failure_kind) ||
       observation.synthetic_terminal_type !== null ||
-      (clientObservation.terminal_type === "response.incomplete" &&
-        isGatewayOrProviderIncompleteReason(clientObservation.failure_kind));
+      (clientObservation.terminal_type === "response.incomplete" && isGatewayOrProviderIncompleteReason(clientObservation.failure_kind))
+    );
   }
   if (observation.synthetic_terminal_type !== null || observation.failure_kind !== null) return true;
-  return observation.terminal_type === "deadline" || observation.terminal_type === "eof" ||
-    observation.terminal_type === "error";
+  return observation.terminal_type === "deadline" || observation.terminal_type === "eof" || observation.terminal_type === "error";
 };
 
 export const decodeSentinelReplayKey = (raw: string): Uint8Array<ArrayBuffer> | null => {
@@ -697,10 +708,7 @@ export const decodeSentinelReplayKey = (raw: string): Uint8Array<ArrayBuffer> | 
   }
 };
 
-const deriveKeyBytes = async (
-  keyBytes: Uint8Array<ArrayBuffer>,
-  purpose: "encryption" | "fingerprint" | "case-group",
-): Promise<ArrayBuffer> => {
+const deriveKeyBytes = async (keyBytes: Uint8Array<ArrayBuffer>, purpose: "encryption" | "fingerprint" | "case-group"): Promise<ArrayBuffer> => {
   const material = await crypto.subtle.importKey("raw", keyBytes, "HKDF", false, ["deriveBits"]);
   return await crypto.subtle.deriveBits(
     {
@@ -710,36 +718,17 @@ const deriveKeyBytes = async (
       info: TEXT_ENCODER.encode(purpose),
     },
     material,
-    256,
+    256
   );
 };
 
 const importAesKey = async (keyBytes: Uint8Array<ArrayBuffer>): Promise<CryptoKey> =>
-  await crypto.subtle.importKey(
-    "raw",
-    await deriveKeyBytes(keyBytes, "encryption"),
-    { name: "AES-GCM" },
-    false,
-    ["encrypt", "decrypt"],
-  );
+  await crypto.subtle.importKey("raw", await deriveKeyBytes(keyBytes, "encryption"), { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
 
-const importHmacKey = async (
-  keyBytes: Uint8Array<ArrayBuffer>,
-  purpose: "fingerprint" | "case-group",
-): Promise<CryptoKey> =>
-  await crypto.subtle.importKey(
-    "raw",
-    await deriveKeyBytes(keyBytes, purpose),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
+const importHmacKey = async (keyBytes: Uint8Array<ArrayBuffer>, purpose: "fingerprint" | "case-group"): Promise<CryptoKey> =>
+  await crypto.subtle.importKey("raw", await deriveKeyBytes(keyBytes, purpose), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
 
-const hmacHex = async (
-  keyBytes: Uint8Array<ArrayBuffer>,
-  purpose: "fingerprint" | "case-group",
-  parts: readonly Uint8Array[],
-): Promise<string> => {
+const hmacHex = async (keyBytes: Uint8Array<ArrayBuffer>, purpose: "fingerprint" | "case-group", parts: readonly Uint8Array[]): Promise<string> => {
   const key = await importHmacKey(keyBytes, purpose);
   const message = concatBytes(parts);
   try {
@@ -801,29 +790,33 @@ const decodePlaintext = (bytes: Uint8Array<ArrayBuffer>): SentinelReplayPlaintex
   return { ...parsed, body: cloneBytes(bytes.subarray(bodyOffset)) };
 };
 
-const isStringRecord = (value: unknown): value is Record<string, string> =>
-  isRecord(value) && Object.values(value).every((item) => typeof item === "string");
+const isStringRecord = (value: unknown): value is Record<string, string> => isRecord(value) && Object.values(value).every((item) => typeof item === "string");
 
 const isCompatibilityHeaders = (value: unknown): value is SentinelCompatibilityHeaders =>
   isStringRecord(value) &&
-  Object.entries(value).every(([name, headerValue]) =>
-    COMPATIBILITY_HEADER_NAME_SET.has(name) && headerValue.length > 0 && headerValue.trim() === headerValue
-  );
+  Object.entries(value).every(([name, headerValue]) => COMPATIBILITY_HEADER_NAME_SET.has(name) && headerValue.length > 0 && headerValue.trim() === headerValue);
 
 const isFailureObservation = (value: unknown): value is SentinelFailureObservation =>
-  isRecord(value) && typeof value.status === "number" && Number.isSafeInteger(value.status) &&
-  (value.stream === null || typeof value.stream === "boolean") && typeof value.completed === "boolean" &&
+  isRecord(value) &&
+  typeof value.status === "number" &&
+  Number.isSafeInteger(value.status) &&
+  (value.stream === null || typeof value.stream === "boolean") &&
+  typeof value.completed === "boolean" &&
   (value.terminal_type === null || typeof value.terminal_type === "string") &&
   (value.failure_kind === null || typeof value.failure_kind === "string") &&
   (value.synthetic_terminal_type === null || typeof value.synthetic_terminal_type === "string") &&
   typeof value.provider_route === "string";
 
 const isClientFailureObservation = (value: unknown): value is SentinelClientFailureObservation =>
-  isRecord(value) && typeof value.status === "number" && Number.isSafeInteger(value.status) &&
-  typeof value.stream === "boolean" && typeof value.completed === "boolean" &&
+  isRecord(value) &&
+  typeof value.status === "number" &&
+  Number.isSafeInteger(value.status) &&
+  typeof value.stream === "boolean" &&
+  typeof value.completed === "boolean" &&
   (value.terminal_type === null || typeof value.terminal_type === "string") &&
   (value.failure_kind === null || typeof value.failure_kind === "string") &&
-  typeof value.framing_valid === "boolean" && typeof value.provider_route === "string";
+  typeof value.framing_valid === "boolean" &&
+  typeof value.provider_route === "string";
 
 const REPLAY_METADATA_KEYS = [
   "version",
@@ -870,8 +863,7 @@ const isReplayMetadata = (value: unknown): value is ReplayMetadata => {
 
 const randomBytes = (length: number): Uint8Array<ArrayBuffer> => crypto.getRandomValues(new Uint8Array(length));
 
-const encryptionAdditionalData = (fingerprint: string): Uint8Array<ArrayBuffer> =>
-  TEXT_ENCODER.encode(`uos-sentinel-replay-v1\0${fingerprint}`);
+const encryptionAdditionalData = (fingerprint: string): Uint8Array<ArrayBuffer> => TEXT_ENCODER.encode(`uos-sentinel-replay-v1\0${fingerprint}`);
 
 const splitChunks = (bytes: Uint8Array<ArrayBuffer>): Uint8Array<ArrayBuffer>[] => {
   const chunks: Uint8Array<ArrayBuffer>[] = [];
@@ -885,7 +877,7 @@ const fingerprintParts = (
   input: AcceptedSentinelReplayInput,
   failureSignature: string,
   purpose: "fingerprint" | "case-group",
-  upstream?: SentinelUpstreamTrace,
+  upstream?: SentinelUpstreamTrace
 ): Uint8Array<ArrayBuffer>[] => {
   const frame = (value: Uint8Array<ArrayBuffer>): Uint8Array<ArrayBuffer>[] => {
     const length = new Uint8Array(8);
@@ -903,11 +895,11 @@ const fingerprintParts = (
   // different partial/complete traces cannot suppress one another.
   return purpose === "fingerprint"
     ? [
-      ...common,
-      ...frame(input.body),
-      ...frame(TEXT_ENCODER.encode(failureSignature)),
-      ...frame(TEXT_ENCODER.encode(upstream ? canonicalSentinelUpstreamJson(upstream) : "")),
-    ]
+        ...common,
+        ...frame(input.body),
+        ...frame(TEXT_ENCODER.encode(failureSignature)),
+        ...frame(TEXT_ENCODER.encode(upstream ? canonicalSentinelUpstreamJson(upstream) : "")),
+      ]
     : [...common, ...frame(input.body)];
 };
 
@@ -916,8 +908,7 @@ const dedupeManifestKey = (value: unknown): Deno.KvKey | null => {
   return value.manifest_key as Deno.KvKey;
 };
 
-const ciphertextDigest = async (bytes: Uint8Array<ArrayBuffer>): Promise<string> =>
-  encodeHex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
+const ciphertextDigest = async (bytes: Uint8Array<ArrayBuffer>): Promise<string> => encodeHex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)));
 
 /**
  * Read and validate the winning manifest/chunks of an existing capture, then
@@ -935,22 +926,21 @@ const bindWinnerIndexEvidence = async (
   observedAtMs: number,
   referenceFingerprint: string,
   manifestKey: Deno.KvKey,
-  keyBytes: Uint8Array<ArrayBuffer>,
+  keyBytes: Uint8Array<ArrayBuffer>
 ): Promise<void> => {
   const manifestEntry = await kv.get<SentinelReplayManifest>(manifestKey);
   if (
-    !manifestEntry.value || !isSentinelReplayManifest(manifestEntry.value) ||
+    !manifestEntry.value ||
+    !isSentinelReplayManifest(manifestEntry.value) ||
     manifestEntry.value.fingerprint !== referenceFingerprint ||
     !manifestMatchesKey(manifestKey, manifestEntry.value)
-  ) throw new Error("Sentinel incident replay manifest is unavailable");
+  )
+    throw new Error("Sentinel incident replay manifest is unavailable");
   const chunks = await getChunks(kv, manifestEntry.value);
   let plaintext: SentinelReplayPlaintext | null = null;
   try {
     const digest = await ciphertextDigest(concatBytes(chunks));
-    plaintext = await decryptExportedSentinelReplay(
-      { manifest: manifestEntry.value, chunks: chunks.map(base64UrlEncode) },
-      keyBytes,
-    );
+    plaintext = await decryptExportedSentinelReplay({ manifest: manifestEntry.value, chunks: chunks.map(base64UrlEncode) }, keyBytes);
     await bindSentinelIncidentIndexEvidence(kv, indexFingerprint, {
       observedAtMs,
       captureId: manifestEntry.value.capture_id,
@@ -972,13 +962,210 @@ const completeReplayIncidentEvent = async (
   kv: Deno.Kv,
   event: Deno.KvEntry<SentinelIncidentFailureEvent> | undefined,
   readyAtMs: number,
-  capture:
-    | Readonly<{ status: "stored" | "duplicate"; fingerprint: string; manifestKey: Deno.KvKey }>
-    | Readonly<{ status: "unavailable" }>,
+  capture: Readonly<{ status: "stored" | "duplicate"; fingerprint: string; manifestKey: Deno.KvKey }> | Readonly<{ status: "unavailable" }>
 ): Promise<void> => {
   if (!event) return;
-  if (!await completeSentinelIncidentFailureEvent(kv, event, readyAtMs, capture)) {
+  if (!(await completeSentinelIncidentFailureEvent(kv, event, readyAtMs, capture))) {
     throw new Error("Sentinel incident capture completion conflicted");
+  }
+};
+
+const resolveIndexFingerprint = async (input: AcceptedSentinelReplayInput, clientObservation: SentinelClientFailureObservation): Promise<string | null> => {
+  try {
+    return await sentinelIncidentFingerprint({
+      endpoint: input.endpoint,
+      method: input.method,
+      observation: clientObservation,
+    });
+  } catch {
+    // The index is best-effort for direct callers: the environment producer
+    // already recorded this observation before the key lookup.
+    return null;
+  }
+};
+
+/**
+ * Settles a capture that already exists (or lost the CAS race): the durable
+ * index row, when present, is bound to the winning capture, and the incident
+ * outbox event is completed. Nothing pretends the duplicate created evidence.
+ */
+const completeDuplicateCapture = async (
+  dependencies: PersistDependencies,
+  duplicate: Readonly<{ fingerprint: string; manifestKey: Deno.KvKey; indexKey: Deno.KvKey | null; indexFingerprint: string | null }>,
+  now: number
+): Promise<SentinelReplayPersistResult> => {
+  if (duplicate.indexKey !== null && duplicate.indexFingerprint !== null) {
+    const indexEntry = await dependencies.kv.get<SentinelIncidentIndexRow>(duplicate.indexKey);
+    if (indexEntry.value !== null) {
+      if (!isSentinelIncidentIndexRow(indexEntry.value)) {
+        throw new Error("Sentinel incident index record is invalid");
+      }
+      await bindWinnerIndexEvidence(dependencies.kv, duplicate.indexFingerprint, now, duplicate.fingerprint, duplicate.manifestKey, dependencies.keyBytes);
+    }
+  }
+  await completeReplayIncidentEvent(dependencies.kv, dependencies.incidentEvent, now, {
+    status: "duplicate",
+    fingerprint: duplicate.fingerprint,
+    manifestKey: duplicate.manifestKey,
+  });
+  return { status: "duplicate", fingerprint: duplicate.fingerprint, manifest_key: duplicate.manifestKey };
+};
+
+/** Encrypts the replay plaintext envelope under the request key. */
+const encryptReplayPlaintext = async (
+  metadata: ReplayMetadata,
+  bodySnapshot: Uint8Array<ArrayBuffer>,
+  iv: Uint8Array<ArrayBuffer>,
+  keyBytes: Uint8Array<ArrayBuffer>,
+  fingerprint: string
+): Promise<Uint8Array<ArrayBuffer>> => {
+  const encodedPlaintext = encodePlaintext(metadata, bodySnapshot);
+  let compressed: Uint8Array<ArrayBuffer>;
+  try {
+    compressed = await gzip(encodedPlaintext);
+  } finally {
+    encodedPlaintext.fill(0);
+  }
+  if (compressed.byteLength + 16 > MAX_REPLAY_CIPHERTEXT_BYTES) {
+    compressed.fill(0);
+    throw new Error("Sentinel replay compressed payload is too large");
+  }
+  try {
+    return new Uint8Array(
+      await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: encryptionAdditionalData(fingerprint) }, await importAesKey(keyBytes), compressed)
+    );
+  } finally {
+    compressed.fill(0);
+  }
+};
+
+/** The dedupe/manifest/incident-event writes every store attempt starts from. */
+const replayStoreOperation = (
+  dependencies: PersistDependencies,
+  dedupeKey: Deno.KvKey,
+  manifestKey: Deno.KvKey,
+  manifest: SentinelReplayManifest,
+  fingerprint: string,
+  now: number
+): Deno.AtomicOperation => {
+  let operation = dependencies.kv
+    .atomic()
+    .check({ key: dedupeKey, versionstamp: null })
+    .set(dedupeKey, { manifest_key: manifestKey }, { expireIn: SENTINEL_REPLAY_TTL_MS })
+    .set(manifestKey, manifest, { expireIn: SENTINEL_REPLAY_TTL_MS });
+  if (dependencies.incidentEvent) {
+    const readyEvent = readySentinelIncidentFailureEvent(dependencies.incidentEvent, now, {
+      status: "stored",
+      fingerprint,
+      manifestKey,
+    });
+    operation = operation
+      .check({ key: dependencies.incidentEvent.key, versionstamp: dependencies.incidentEvent.versionstamp })
+      .set(dependencies.incidentEvent.key, readyEvent, { expireIn: SENTINEL_INCIDENT_TTL_MS });
+  }
+  return operation;
+};
+
+/** Adds the evidence row and capture reference for an existing index observation. */
+const withIncidentIndexEvidence = (
+  operation: Deno.AtomicOperation,
+  indexRow: Readonly<{ key: Deno.KvKey; entry: Deno.KvEntry<SentinelIncidentIndexRow> }>,
+  context: Readonly<{
+    gitSha: string;
+    captureId: string;
+    evidenceDigest: string;
+    manifestKey: Deno.KvKey;
+    capturedAtMs: number;
+    expiresAtMs: number;
+    now: number;
+    fingerprint: string;
+  }>
+): Deno.AtomicOperation => {
+  if (!isSentinelIncidentIndexRow(indexRow.entry.value)) {
+    throw new Error("Sentinel incident index record is invalid");
+  }
+  const next: SentinelIncidentIndexRow = {
+    ...indexRow.entry.value,
+    failing_revision: /^[0-9a-f]{40}$/.test(context.gitSha) ? context.gitSha : null,
+    provenance: { ...indexRow.entry.value.provenance, captured_at_ms: context.capturedAtMs },
+    evidence_ref: { ref: `capture:${context.captureId}`, digest: context.evidenceDigest },
+    evidence_expires_at_ms: context.expiresAtMs,
+  };
+  if (!isSentinelIncidentIndexRow(next)) throw new Error("Sentinel incident index record is invalid");
+  const reference: SentinelIncidentCaptureReference = { version: 1, manifest_key: [...context.manifestKey] };
+  return operation
+    .check({ key: indexRow.key, versionstamp: indexRow.entry.versionstamp })
+    .set([...SENTINEL_INCIDENT_CAPTURE_REF_PREFIX, next.incident_id, context.fingerprint], reference, { expireIn: context.expiresAtMs - context.now })
+    .set(indexRow.key, next);
+};
+
+/** Reads the durable index observation once, when one exists. */
+const readIncidentIndexEntry = async (
+  kv: Deno.Kv,
+  indexKey: Deno.KvKey | null
+): Promise<Readonly<{ key: Deno.KvKey; entry: Deno.KvEntry<SentinelIncidentIndexRow> }> | null> => {
+  if (indexKey === null) return null;
+  const entry = await kv.get<SentinelIncidentIndexRow>(indexKey);
+  return entry.value === null ? null : { key: indexKey, entry };
+};
+
+/** Writes the chunks, then commits the envelope with a bounded CAS retry loop. */
+const storeReplayEnvelope = async (
+  context: Readonly<{
+    dependencies: PersistDependencies;
+    gitSha: string;
+    chunks: readonly Uint8Array<ArrayBuffer>[];
+    dedupeKey: Deno.KvKey;
+    manifestKey: Deno.KvKey;
+    manifest: SentinelReplayManifest;
+    indexKey: Deno.KvKey | null;
+    indexFingerprint: string | null;
+    captureId: string;
+    evidenceDigest: string;
+    now: number;
+    expiresAtMs: number;
+  }>
+): Promise<SentinelReplayPersistResult> => {
+  const { dependencies, chunks, dedupeKey, manifestKey, manifest, indexKey, indexFingerprint, captureId, evidenceDigest, now, expiresAtMs } = context;
+  const fingerprint = manifest.fingerprint;
+  const cleanupChunks = async (): Promise<void> => {
+    await Promise.all(chunks.map((_chunk, index) => dependencies.kv.delete([...SENTINEL_REPLAY_CHUNK_PREFIX, captureId, index])));
+  };
+  try {
+    await Promise.all(
+      chunks.map((chunk, index) =>
+        dependencies.kv.set([...SENTINEL_REPLAY_CHUNK_PREFIX, captureId, index], chunk, {
+          expireIn: SENTINEL_REPLAY_TTL_MS,
+        })
+      )
+    );
+    let committed: Deno.KvCommitResult | Deno.KvCommitError | null = null;
+    for (let attempt = 0; attempt < SENTINEL_INCIDENT_INDEX_MAX_CAS_ATTEMPTS; attempt += 1) {
+      const indexRow = await readIncidentIndexEntry(dependencies.kv, indexKey);
+      let operation = replayStoreOperation(dependencies, dedupeKey, manifestKey, manifest, fingerprint, now);
+      if (indexRow !== null) {
+        operation = withIncidentIndexEvidence(operation, indexRow, {
+          gitSha: context.gitSha,
+          captureId,
+          evidenceDigest,
+          manifestKey,
+          capturedAtMs: manifest.captured_at_ms,
+          expiresAtMs,
+          now,
+          fingerprint,
+        });
+      }
+      committed = await operation.commit();
+      if (committed.ok) return { status: "stored", manifest, manifest_key: manifestKey };
+    }
+    await cleanupChunks().catch(() => {});
+    const winningDedupe = await dependencies.kv.get(dedupeKey);
+    const winningManifestKey = dedupeManifestKey(winningDedupe.value);
+    if (!winningManifestKey) throw new Error("Sentinel replay dedupe winner is unavailable");
+    return await completeDuplicateCapture(dependencies, { fingerprint, manifestKey: winningManifestKey, indexKey, indexFingerprint }, now);
+  } catch (error) {
+    await cleanupChunks().catch(() => {});
+    throw error;
   }
 };
 
@@ -986,7 +1173,7 @@ export const persistEncryptedSentinelReplay = async (
   input: AcceptedSentinelReplayInput,
   observation: SentinelFailureObservation,
   dependencies: PersistDependencies,
-  clientObservation: SentinelClientFailureObservation = resolveSentinelClientFailureObservation(observation),
+  clientObservation: SentinelClientFailureObservation = resolveSentinelClientFailureObservation(observation)
 ): Promise<SentinelReplayPersistResult> => {
   if (!shouldPersistSentinelReplay(observation, clientObservation)) {
     throw new Error("A successful request cannot be persisted as a sentinel replay");
@@ -1001,68 +1188,22 @@ export const persistEncryptedSentinelReplay = async (
   // the digests and encrypted envelope so a capture cannot disagree with its
   // own manifest. Request-only callers emit the required empty upstream trace
   // with all truncation flags false; it is never labeled captured coverage.
-  const upstreamTrace = input.upstream !== undefined
-    ? parseSentinelUpstreamTrace(input.upstream)
-    : emptySentinelUpstreamTrace();
+  const upstreamTrace = input.upstream !== undefined ? parseSentinelUpstreamTrace(input.upstream) : emptySentinelUpstreamTrace();
   const bodySnapshot = cloneBytes(input.body);
   const snapshotInput: AcceptedSentinelReplayInput = { ...input, body: bodySnapshot };
   try {
     const now = dependencies.now?.() ?? Date.now();
     const failureSignature = sentinelFailureSignature(clientObservation);
-    const fingerprint = await hmacHex(
-      dependencies.keyBytes,
-      "fingerprint",
-      fingerprintParts(snapshotInput, failureSignature, "fingerprint", upstreamTrace),
-    );
-    const caseGroupDigest = await hmacHex(
-      dependencies.keyBytes,
-      "case-group",
-      fingerprintParts(snapshotInput, failureSignature, "case-group"),
-    );
+    const fingerprint = await hmacHex(dependencies.keyBytes, "fingerprint", fingerprintParts(snapshotInput, failureSignature, "fingerprint", upstreamTrace));
+    const caseGroupDigest = await hmacHex(dependencies.keyBytes, "case-group", fingerprintParts(snapshotInput, failureSignature, "case-group"));
     const dedupeKey = [...SENTINEL_REPLAY_DEDUPE_PREFIX, fingerprint] as const;
-    let indexFingerprint: string | null = null;
-    try {
-      indexFingerprint = await sentinelIncidentFingerprint({
-        endpoint: input.endpoint,
-        method: input.method,
-        observation: clientObservation,
-      });
-    } catch {
-      // The index is best-effort for direct callers: the environment producer
-      // already recorded this observation before the key lookup.
-      indexFingerprint = null;
-    }
-    const indexKey: Deno.KvKey | null = indexFingerprint === null
-      ? null
-      : [...SENTINEL_INCIDENT_INDEX_PREFIX, indexFingerprint];
+    const indexFingerprint = await resolveIndexFingerprint(input, clientObservation);
+    const indexKey: Deno.KvKey | null = indexFingerprint === null ? null : [...SENTINEL_INCIDENT_INDEX_PREFIX, indexFingerprint];
     const existingDedupe = await dependencies.kv.get(dedupeKey);
     if (existingDedupe.value !== null) {
       const manifestKey = dedupeManifestKey(existingDedupe.value);
       if (!manifestKey) throw new Error("Sentinel replay dedupe record is invalid");
-      if (indexKey !== null) {
-        // Attach only to an actually recorded index observation: direct
-        // callers with no durable index row keep plain duplicate behavior.
-        const indexEntry = await dependencies.kv.get<SentinelIncidentIndexRow>(indexKey);
-        if (indexEntry.value !== null) {
-          if (!isSentinelIncidentIndexRow(indexEntry.value)) {
-            throw new Error("Sentinel incident index record is invalid");
-          }
-          await bindWinnerIndexEvidence(
-            dependencies.kv,
-            indexFingerprint!,
-            now,
-            fingerprint,
-            manifestKey,
-            dependencies.keyBytes,
-          );
-        }
-      }
-      await completeReplayIncidentEvent(dependencies.kv, dependencies.incidentEvent, now, {
-        status: "duplicate",
-        fingerprint,
-        manifestKey,
-      });
-      return { status: "duplicate", fingerprint, manifest_key: manifestKey };
+      return await completeDuplicateCapture(dependencies, { fingerprint, manifestKey, indexKey, indexFingerprint }, now);
     }
 
     const captureId = dependencies.randomUuid?.() ?? crypto.randomUUID();
@@ -1083,134 +1224,46 @@ export const persistEncryptedSentinelReplay = async (
       deno_revision: input.deno_revision,
       upstream: upstreamTrace,
     };
-    const encodedPlaintext = encodePlaintext(metadata, bodySnapshot);
-    let compressed: Uint8Array<ArrayBuffer>;
+    const encrypted = await encryptReplayPlaintext(metadata, bodySnapshot, iv, dependencies.keyBytes, fingerprint);
     try {
-      compressed = await gzip(encodedPlaintext);
-    } finally {
-      encodedPlaintext.fill(0);
-    }
-    if (compressed.byteLength + 16 > MAX_REPLAY_CIPHERTEXT_BYTES) {
-      compressed.fill(0);
-      throw new Error("Sentinel replay compressed payload is too large");
-    }
-    let encrypted: Uint8Array<ArrayBuffer>;
-    try {
-      encrypted = new Uint8Array(
-        await crypto.subtle.encrypt(
-          { name: "AES-GCM", iv, additionalData: encryptionAdditionalData(fingerprint) },
-          await importAesKey(dependencies.keyBytes),
-          compressed,
-        ),
-      );
-    } finally {
-      compressed.fill(0);
-    }
-    const chunks = splitChunks(encrypted);
-    const expiresAtMs = now + SENTINEL_REPLAY_TTL_MS;
-    const manifest: SentinelReplayManifest = {
-      version: ENVELOPE_VERSION,
-      capture_id: captureId,
-      fingerprint,
-      case_group_digest: caseGroupDigest,
-      captured_at_ms: now,
-      expires_at_ms: expiresAtMs,
-      algorithm: "AES-256-GCM",
-      compression: "gzip",
-      iv: base64UrlEncode(iv),
-      chunk_count: chunks.length,
-      ciphertext_bytes: encrypted.byteLength,
-    };
-
-    const manifestKey = [...SENTINEL_REPLAY_MANIFEST_PREFIX, now, fingerprint, captureId] as const;
-    const evidenceDigest = await ciphertextDigest(encrypted);
-    const cleanupChunks = async (): Promise<void> => {
-      await Promise.all(
-        chunks.map((_chunk, index) => dependencies.kv.delete([...SENTINEL_REPLAY_CHUNK_PREFIX, captureId, index])),
-      );
-    };
-    try {
-      await Promise.all(
-        chunks.map((chunk, index) =>
-          dependencies.kv.set([...SENTINEL_REPLAY_CHUNK_PREFIX, captureId, index], chunk, {
-            expireIn: SENTINEL_REPLAY_TTL_MS,
-          })
-        ),
-      );
-      let committed: Deno.KvCommitResult | Deno.KvCommitError | null = null;
-      for (let attempt = 0; attempt < SENTINEL_INCIDENT_INDEX_MAX_CAS_ATTEMPTS; attempt += 1) {
-        const indexEntry = indexKey === null ? null : await dependencies.kv.get<SentinelIncidentIndexRow>(indexKey);
-        let operation = dependencies.kv.atomic()
-          .check({ key: dedupeKey, versionstamp: null })
-          .set(dedupeKey, { manifest_key: manifestKey }, { expireIn: SENTINEL_REPLAY_TTL_MS })
-          .set(manifestKey, manifest, { expireIn: SENTINEL_REPLAY_TTL_MS });
-        if (dependencies.incidentEvent) {
-          const readyEvent = readySentinelIncidentFailureEvent(dependencies.incidentEvent, now, {
-            status: "stored",
-            fingerprint,
-            manifestKey,
-          });
-          operation = operation
-            .check({ key: dependencies.incidentEvent.key, versionstamp: dependencies.incidentEvent.versionstamp })
-            .set(dependencies.incidentEvent.key, readyEvent, { expireIn: SENTINEL_INCIDENT_TTL_MS });
-        }
-        if (indexEntry !== null && indexEntry.value !== null && indexKey !== null) {
-          if (!isSentinelIncidentIndexRow(indexEntry.value)) {
-            throw new Error("Sentinel incident index record is invalid");
-          }
-          const next: SentinelIncidentIndexRow = {
-            ...indexEntry.value,
-            failing_revision: /^[0-9a-f]{40}$/.test(input.git_sha) ? input.git_sha : null,
-            provenance: { ...indexEntry.value.provenance, captured_at_ms: manifest.captured_at_ms },
-            evidence_ref: { ref: `capture:${captureId}`, digest: evidenceDigest },
-            evidence_expires_at_ms: expiresAtMs,
-          };
-          if (!isSentinelIncidentIndexRow(next)) throw new Error("Sentinel incident index record is invalid");
-          const reference: SentinelIncidentCaptureReference = { version: 1, manifest_key: [...manifestKey] };
-          operation = operation
-            .check({ key: indexKey, versionstamp: indexEntry.versionstamp })
-            .set(
-              [...SENTINEL_INCIDENT_CAPTURE_REF_PREFIX, next.incident_id, fingerprint],
-              reference,
-              { expireIn: expiresAtMs - now },
-            )
-            .set(indexKey, next);
-        }
-        committed = await operation.commit();
-        if (committed.ok) return { status: "stored", manifest, manifest_key: manifestKey };
-      }
-      await cleanupChunks().catch(() => {});
-      const winningDedupe = await dependencies.kv.get(dedupeKey);
-      const winningManifestKey = dedupeManifestKey(winningDedupe.value);
-      if (!winningManifestKey) throw new Error("Sentinel replay dedupe winner is unavailable");
-      if (indexKey !== null) {
-        const indexEntry = await dependencies.kv.get<SentinelIncidentIndexRow>(indexKey);
-        if (indexEntry.value !== null) {
-          if (!isSentinelIncidentIndexRow(indexEntry.value)) {
-            throw new Error("Sentinel incident index record is invalid");
-          }
-          await bindWinnerIndexEvidence(
-            dependencies.kv,
-            indexFingerprint!,
-            now,
-            fingerprint,
-            winningManifestKey,
-            dependencies.keyBytes,
-          );
-        }
-      }
-      await completeReplayIncidentEvent(dependencies.kv, dependencies.incidentEvent, now, {
-        status: "duplicate",
+      const chunks = splitChunks(encrypted);
+      const expiresAtMs = now + SENTINEL_REPLAY_TTL_MS;
+      const manifest: SentinelReplayManifest = {
+        version: ENVELOPE_VERSION,
+        capture_id: captureId,
         fingerprint,
-        manifestKey: winningManifestKey,
-      });
-      return { status: "duplicate", fingerprint, manifest_key: winningManifestKey };
-    } catch (error) {
-      await cleanupChunks().catch(() => {});
-      throw error;
+        case_group_digest: caseGroupDigest,
+        captured_at_ms: now,
+        expires_at_ms: expiresAtMs,
+        algorithm: "AES-256-GCM",
+        compression: "gzip",
+        iv: base64UrlEncode(iv),
+        chunk_count: chunks.length,
+        ciphertext_bytes: encrypted.byteLength,
+      };
+
+      const manifestKey = [...SENTINEL_REPLAY_MANIFEST_PREFIX, now, fingerprint, captureId] as const;
+      const evidenceDigest = await ciphertextDigest(encrypted);
+      try {
+        return await storeReplayEnvelope({
+          dependencies,
+          gitSha: input.git_sha,
+          chunks,
+          dedupeKey,
+          manifestKey,
+          manifest,
+          indexKey,
+          indexFingerprint,
+          captureId,
+          evidenceDigest,
+          now,
+          expiresAtMs,
+        });
+      } finally {
+        for (const chunk of chunks) chunk.fill(0);
+      }
     } finally {
       encrypted.fill(0);
-      for (const chunk of chunks) chunk.fill(0);
     }
   } finally {
     bodySnapshot.fill(0);
@@ -1229,10 +1282,10 @@ const readReplayKeyFromEnvironment = (): Uint8Array<ArrayBuffer> | null => {
 export const persistSentinelReplayFromEnvironment = async (
   input: AcceptedSentinelReplayInput,
   observation: SentinelFailureObservation,
-  clientObservation?: SentinelClientFailureObservation,
+  clientObservation?: SentinelClientFailureObservation
 ): Promise<SentinelReplayPersistResult> => {
   let keyBytes: Uint8Array<ArrayBuffer> | null = null;
-  let kv: Deno.Kv | null = null;
+  let kv: Deno.Kv | null;
   let incidentEvent: Deno.KvEntry<SentinelIncidentFailureEvent> | undefined;
   const resolvedClientObservation = clientObservation ?? resolveSentinelClientFailureObservation(observation);
   const now = Date.now();
@@ -1257,18 +1310,12 @@ export const persistSentinelReplayFromEnvironment = async (
           observation: resolvedClientObservation,
         });
       } catch {
-        console.warn(
-          "[ai.ubq.fi] sentinel_incident",
-          JSON.stringify({ status: "deferred", reason: "index_write_failed" }),
-        );
+        console.warn("[ai.ubq.fi] sentinel_incident", JSON.stringify({ status: "deferred", reason: "index_write_failed" }));
       }
       try {
         incidentEvent = (await createSentinelIncidentFailureEventFromEnvironment(kv, now)) ?? undefined;
       } catch {
-        console.warn(
-          "[ai.ubq.fi] sentinel_incident",
-          JSON.stringify({ status: "deferred", reason: "outbox_write_failed" }),
-        );
+        console.warn("[ai.ubq.fi] sentinel_incident", JSON.stringify({ status: "deferred", reason: "outbox_write_failed" }));
       }
     }
     keyBytes = readReplayKeyFromEnvironment();
@@ -1276,34 +1323,22 @@ export const persistSentinelReplayFromEnvironment = async (
       try {
         await completeReplayIncidentEvent(kv, incidentEvent, now, { status: "unavailable" });
       } catch {
-        console.warn(
-          "[ai.ubq.fi] sentinel_incident",
-          JSON.stringify({ status: "deferred", reason: "capture_completion_failed" }),
-        );
+        console.warn("[ai.ubq.fi] sentinel_incident", JSON.stringify({ status: "deferred", reason: "capture_completion_failed" }));
       }
       return { status: "disabled", reason: "key_missing" };
     }
     try {
-      return await persistEncryptedSentinelReplay(
-        input,
-        observation,
-        { kv, keyBytes, now: () => now, incidentEvent },
-        resolvedClientObservation,
-      );
+      return await persistEncryptedSentinelReplay(input, observation, { kv, keyBytes, now: () => now, incidentEvent }, resolvedClientObservation);
     } catch (error) {
       try {
         await completeReplayIncidentEvent(kv, incidentEvent, Date.now(), { status: "unavailable" });
       } catch {
-        console.warn(
-          "[ai.ubq.fi] sentinel_incident",
-          JSON.stringify({ status: "deferred", reason: "capture_completion_failed" }),
-        );
+        console.warn("[ai.ubq.fi] sentinel_incident", JSON.stringify({ status: "deferred", reason: "capture_completion_failed" }));
       }
       throw error;
     }
   } finally {
     keyBytes?.fill(0);
-    keyBytes = null;
     zeroSentinelReplayInput(input);
   }
 };
@@ -1319,29 +1354,42 @@ const decodedIvIsValid = (value: string): boolean => {
 
 export const isSentinelReplayManifest = (value: unknown): value is SentinelReplayManifest => {
   if (
-    !isRecord(value) || value.version !== ENVELOPE_VERSION || typeof value.capture_id !== "string" ||
-    value.capture_id.length < 1 || value.capture_id.length > MAX_CAPTURE_ID_CHARS ||
+    !isRecord(value) ||
+    value.version !== ENVELOPE_VERSION ||
+    typeof value.capture_id !== "string" ||
+    value.capture_id.length < 1 ||
+    value.capture_id.length > MAX_CAPTURE_ID_CHARS ||
     !CAPTURE_ID.test(value.capture_id) ||
-    typeof value.fingerprint !== "string" || !HEX_DIGEST.test(value.fingerprint) ||
-    typeof value.case_group_digest !== "string" || !HEX_DIGEST.test(value.case_group_digest) ||
-    typeof value.captured_at_ms !== "number" || !Number.isSafeInteger(value.captured_at_ms) ||
-    value.captured_at_ms < 0 || typeof value.expires_at_ms !== "number" || !Number.isSafeInteger(value.expires_at_ms) ||
-    value.expires_at_ms !== value.captured_at_ms + SENTINEL_REPLAY_TTL_MS || value.algorithm !== "AES-256-GCM" ||
-    value.compression !== "gzip" || typeof value.iv !== "string" || !decodedIvIsValid(value.iv) ||
-    typeof value.chunk_count !== "number" || !Number.isSafeInteger(value.chunk_count) || value.chunk_count < 1 ||
-    value.chunk_count > MAX_REPLAY_CHUNKS || typeof value.ciphertext_bytes !== "number" ||
-    !Number.isSafeInteger(value.ciphertext_bytes) || value.ciphertext_bytes < 16 ||
+    typeof value.fingerprint !== "string" ||
+    !HEX_DIGEST.test(value.fingerprint) ||
+    typeof value.case_group_digest !== "string" ||
+    !HEX_DIGEST.test(value.case_group_digest) ||
+    typeof value.captured_at_ms !== "number" ||
+    !Number.isSafeInteger(value.captured_at_ms) ||
+    value.captured_at_ms < 0 ||
+    typeof value.expires_at_ms !== "number" ||
+    !Number.isSafeInteger(value.expires_at_ms) ||
+    value.expires_at_ms !== value.captured_at_ms + SENTINEL_REPLAY_TTL_MS ||
+    value.algorithm !== "AES-256-GCM" ||
+    value.compression !== "gzip" ||
+    typeof value.iv !== "string" ||
+    !decodedIvIsValid(value.iv) ||
+    typeof value.chunk_count !== "number" ||
+    !Number.isSafeInteger(value.chunk_count) ||
+    value.chunk_count < 1 ||
+    value.chunk_count > MAX_REPLAY_CHUNKS ||
+    typeof value.ciphertext_bytes !== "number" ||
+    !Number.isSafeInteger(value.ciphertext_bytes) ||
+    value.ciphertext_bytes < 16 ||
     value.ciphertext_bytes > MAX_REPLAY_CIPHERTEXT_BYTES
-  ) return false;
+  )
+    return false;
   const minimumBytes = (value.chunk_count - 1) * SENTINEL_REPLAY_CHUNK_BYTES + 1;
-  return value.ciphertext_bytes >= minimumBytes &&
-    value.ciphertext_bytes <= value.chunk_count * SENTINEL_REPLAY_CHUNK_BYTES;
+  return value.ciphertext_bytes >= minimumBytes && value.ciphertext_bytes <= value.chunk_count * SENTINEL_REPLAY_CHUNK_BYTES;
 };
 
 const expectedChunkBytes = (manifest: SentinelReplayManifest, index: number): number =>
-  index < manifest.chunk_count - 1
-    ? SENTINEL_REPLAY_CHUNK_BYTES
-    : manifest.ciphertext_bytes - (manifest.chunk_count - 1) * SENTINEL_REPLAY_CHUNK_BYTES;
+  index < manifest.chunk_count - 1 ? SENTINEL_REPLAY_CHUNK_BYTES : manifest.ciphertext_bytes - (manifest.chunk_count - 1) * SENTINEL_REPLAY_CHUNK_BYTES;
 
 const assertChunkSize = (manifest: SentinelReplayManifest, index: number, bytes: Uint8Array): void => {
   if (bytes.byteLength !== expectedChunkBytes(manifest, index)) {
@@ -1356,10 +1404,12 @@ export const isExportedSentinelReplayCapture = (value: unknown): value is Export
     for (let index = 0; index < value.chunks.length; index++) {
       const encoded = value.chunks[index];
       if (
-        typeof encoded !== "string" || encoded.length < 1 ||
+        typeof encoded !== "string" ||
+        encoded.length < 1 ||
         encoded.length > Math.ceil(SENTINEL_REPLAY_CHUNK_BYTES / 3) * 4 ||
         !/^[A-Za-z0-9_-]+$/.test(encoded)
-      ) return false;
+      )
+        return false;
       assertChunkSize(value.manifest, index, base64UrlDecode(encoded));
     }
     return true;
@@ -1373,11 +1423,11 @@ const getChunks = async (kv: Deno.Kv, manifest: SentinelReplayManifest): Promise
   for (let offset = 0; offset < manifest.chunk_count; offset += 10) {
     const keys = Array.from(
       { length: Math.min(10, manifest.chunk_count - offset) },
-      (_, index) => [...SENTINEL_REPLAY_CHUNK_PREFIX, manifest.capture_id, offset + index] as Deno.KvKey,
+      (_, index) => [...SENTINEL_REPLAY_CHUNK_PREFIX, manifest.capture_id, offset + index] as Deno.KvKey
     );
     const entries = await kv.getMany<readonly Uint8Array[]>(keys);
     for (let entryIndex = 0; entryIndex < entries.length; entryIndex++) {
-      const entry = entries[entryIndex]!;
+      const entry = entries[entryIndex];
       if (!(entry.value instanceof Uint8Array)) throw new Error("Sentinel replay chunk is missing");
       assertChunkSize(manifest, offset + entryIndex, entry.value);
       chunks.push(cloneBytes(entry.value));
@@ -1389,36 +1439,34 @@ const getChunks = async (kv: Deno.Kv, manifest: SentinelReplayManifest): Promise
 const manifestEntryMatchesKey = (entry: Deno.KvEntry<SentinelReplayManifest>): boolean => {
   if (!SENTINEL_REPLAY_MANIFEST_PREFIX.every((part, index) => entry.key[index] === part)) return false;
   const suffix = entry.key.slice(SENTINEL_REPLAY_MANIFEST_PREFIX.length);
-  return suffix.length === 3 && suffix[0] === entry.value.captured_at_ms &&
-    suffix[1] === entry.value.fingerprint && suffix[2] === entry.value.capture_id;
+  return suffix.length === 3 && suffix[0] === entry.value.captured_at_ms && suffix[1] === entry.value.fingerprint && suffix[2] === entry.value.capture_id;
 };
 
 const manifestMatchesKey = (key: Deno.KvKey, manifest: SentinelReplayManifest): boolean => {
   const suffix = key.slice(SENTINEL_REPLAY_MANIFEST_PREFIX.length);
-  return SENTINEL_REPLAY_MANIFEST_PREFIX.every((part, index) => key[index] === part) && suffix.length === 3 &&
-    suffix[0] === manifest.captured_at_ms && suffix[1] === manifest.fingerprint && suffix[2] === manifest.capture_id;
+  return (
+    SENTINEL_REPLAY_MANIFEST_PREFIX.every((part, index) => key[index] === part) &&
+    suffix.length === 3 &&
+    suffix[0] === manifest.captured_at_ms &&
+    suffix[1] === manifest.fingerprint &&
+    suffix[2] === manifest.capture_id
+  );
 };
 
 export const listEncryptedSentinelReplays = async (
   kv: Deno.Kv,
-  options: Readonly<{ afterMs: number; beforeMs: number; cursor?: string; limit?: number }>,
+  options: Readonly<{ afterMs: number; beforeMs: number; cursor?: string; limit?: number }>
 ): Promise<Readonly<{ captures: ExportedSentinelReplayCapture[]; cursor: string }>> => {
   if (!Number.isSafeInteger(options.afterMs) || options.afterMs < 0) {
     throw new Error("Sentinel replay export start is invalid");
   }
-  if (
-    !Number.isSafeInteger(options.beforeMs) || options.beforeMs < options.afterMs ||
-    options.beforeMs >= Number.MAX_SAFE_INTEGER
-  ) {
+  if (!Number.isSafeInteger(options.beforeMs) || options.beforeMs < options.afterMs || options.beforeMs >= Number.MAX_SAFE_INTEGER) {
     throw new Error("Sentinel replay export end is invalid");
   }
   if (options.limit !== undefined && options.limit !== SENTINEL_REPLAY_EXPORT_PAGE_LIMIT) {
     throw new Error("Sentinel replay export limit must be one");
   }
-  if (
-    options.cursor !== undefined &&
-    (options.cursor.length < 1 || options.cursor.length > 2_048 || !KV_CURSOR.test(options.cursor))
-  ) {
+  if (options.cursor !== undefined && (options.cursor.length < 1 || options.cursor.length > 2_048 || !KV_CURSOR.test(options.cursor))) {
     throw new Error("Sentinel replay export cursor is invalid");
   }
   const iterator = kv.list<SentinelReplayManifest>(
@@ -1426,7 +1474,7 @@ export const listEncryptedSentinelReplays = async (
       prefix: SENTINEL_REPLAY_MANIFEST_PREFIX,
       start: [...SENTINEL_REPLAY_MANIFEST_PREFIX, options.afterMs],
     },
-    { cursor: options.cursor, limit: SENTINEL_REPLAY_EXPORT_PAGE_LIMIT },
+    { cursor: options.cursor, limit: SENTINEL_REPLAY_EXPORT_PAGE_LIMIT }
   );
   const captures: ExportedSentinelReplayCapture[] = [];
   let rangeExhausted = false;
@@ -1448,34 +1496,34 @@ export const listEncryptedSentinelReplays = async (
 
 export const listEncryptedSentinelIncidentReplays = async (
   kv: Deno.Kv,
-  options: Readonly<{ incidentId: string; cursor?: string; limit?: number }>,
+  options: Readonly<{ incidentId: string; cursor?: string; limit?: number }>
 ): Promise<Readonly<{ captures: ExportedSentinelReplayCapture[]; cursor: string }>> => {
   if (!isSentinelIncidentId(options.incidentId)) throw new Error("Sentinel incident ID is invalid");
   if (options.limit !== undefined && options.limit !== SENTINEL_REPLAY_EXPORT_PAGE_LIMIT) {
     throw new Error("Sentinel replay export limit must be one");
   }
-  if (
-    options.cursor !== undefined &&
-    (options.cursor.length < 1 || options.cursor.length > 2_048 || !KV_CURSOR.test(options.cursor))
-  ) throw new Error("Sentinel replay export cursor is invalid");
+  if (options.cursor !== undefined && (options.cursor.length < 1 || options.cursor.length > 2_048 || !KV_CURSOR.test(options.cursor)))
+    throw new Error("Sentinel replay export cursor is invalid");
   const prefix = [...SENTINEL_INCIDENT_CAPTURE_REF_PREFIX, options.incidentId] as const;
-  const iterator = kv.list(
-    { prefix },
-    { cursor: options.cursor, limit: SENTINEL_REPLAY_EXPORT_PAGE_LIMIT },
-  );
+  const iterator = kv.list({ prefix }, { cursor: options.cursor, limit: SENTINEL_REPLAY_EXPORT_PAGE_LIMIT });
   const captures: ExportedSentinelReplayCapture[] = [];
   for await (const entry of iterator) {
     const fingerprint = entry.key.at(-1);
     if (
-      entry.key.length !== prefix.length + 1 || typeof fingerprint !== "string" ||
-      !/^[0-9a-f]{64}$/.test(fingerprint) || !isSentinelIncidentCaptureReference(entry.value)
-    ) throw new Error("Sentinel incident replay reference is invalid");
+      entry.key.length !== prefix.length + 1 ||
+      typeof fingerprint !== "string" ||
+      !/^[0-9a-f]{64}$/.test(fingerprint) ||
+      !isSentinelIncidentCaptureReference(entry.value)
+    )
+      throw new Error("Sentinel incident replay reference is invalid");
     const manifestEntry = await kv.get<SentinelReplayManifest>(entry.value.manifest_key);
     if (
-      !manifestEntry.value || !isSentinelReplayManifest(manifestEntry.value) ||
+      !manifestEntry.value ||
+      !isSentinelReplayManifest(manifestEntry.value) ||
       manifestEntry.value.fingerprint !== fingerprint ||
       !manifestMatchesKey(entry.value.manifest_key, manifestEntry.value)
-    ) throw new Error("Sentinel incident replay manifest is unavailable");
+    )
+      throw new Error("Sentinel incident replay manifest is unavailable");
     const chunks = await getChunks(kv, manifestEntry.value);
     captures.push({ manifest: manifestEntry.value, chunks: chunks.map(base64UrlEncode) });
     break;
@@ -1485,7 +1533,7 @@ export const listEncryptedSentinelIncidentReplays = async (
 
 export const decryptExportedSentinelReplay = async (
   exported: ExportedSentinelReplayCapture,
-  keyBytes: Uint8Array<ArrayBuffer>,
+  keyBytes: Uint8Array<ArrayBuffer>
 ): Promise<SentinelReplayPlaintext> => {
   if (keyBytes.byteLength !== REPLAY_KEY_BYTES) throw new Error("Sentinel replay key must be 32 bytes");
   if (!isExportedSentinelReplayCapture(exported)) throw new Error("Sentinel replay export is invalid");
@@ -1503,8 +1551,8 @@ export const decryptExportedSentinelReplay = async (
       await crypto.subtle.decrypt(
         { name: "AES-GCM", iv, additionalData: encryptionAdditionalData(exported.manifest.fingerprint) },
         await importAesKey(keyBytes),
-        ciphertext,
-      ),
+        ciphertext
+      )
     );
   } finally {
     ciphertext.fill(0);
@@ -1533,18 +1581,11 @@ export const decryptExportedSentinelReplay = async (
     deno_revision: plaintext.deno_revision,
   };
   try {
-    const fingerprint = await hmacHex(
-      keyBytes,
-      "fingerprint",
-      fingerprintParts(accepted, plaintext.failure_signature, "fingerprint", plaintext.upstream),
-    );
-    const caseGroupDigest = await hmacHex(
-      keyBytes,
-      "case-group",
-      fingerprintParts(accepted, plaintext.failure_signature, "case-group"),
-    );
+    const fingerprint = await hmacHex(keyBytes, "fingerprint", fingerprintParts(accepted, plaintext.failure_signature, "fingerprint", plaintext.upstream));
+    const caseGroupDigest = await hmacHex(keyBytes, "case-group", fingerprintParts(accepted, plaintext.failure_signature, "case-group"));
     if (
-      fingerprint !== exported.manifest.fingerprint || caseGroupDigest !== exported.manifest.case_group_digest ||
+      fingerprint !== exported.manifest.fingerprint ||
+      caseGroupDigest !== exported.manifest.case_group_digest ||
       plaintext.captured_at_ms !== exported.manifest.captured_at_ms ||
       sentinelFailureSignature(plaintext.client_observation) !== plaintext.failure_signature
     ) {

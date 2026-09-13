@@ -55,10 +55,7 @@ import {
 } from "../src/sentinel_upstream_capture.ts";
 import { fetchSurplusResponses, SURPLUS_BASE_URL } from "../src/surplus.ts";
 import { getString, isRecord } from "../src/utils.ts";
-import {
-  createRecordedUpstreamReplay,
-  type RecordedUpstreamReplay,
-} from "../tests/helpers/sentinel-recorded-upstream.ts";
+import { createRecordedUpstreamReplay, type RecordedUpstreamReplay } from "../tests/helpers/sentinel-recorded-upstream.ts";
 
 const METADATA_FILE = ".sentinel-replay-input.json";
 const METADATA_MAX_BYTES = 16 * 1024;
@@ -223,10 +220,7 @@ const readDispatchInput = (cwd: string): DispatchInput => {
 
 /** Existing request envelope: `{ body: string, ...sanitized envelope }` with a Responses-shaped body. */
 const readRequestEnvelope = (cwd: string, requestPath: string): RequestEnvelope => {
-  const bytes = readBoundedFile(
-    requireRegularFile(cwd, relativeSegments(requestPath)),
-    MAX_ACCEPTED_JSON_BODY_BYTES,
-  );
+  const bytes = readBoundedFile(requireRegularFile(cwd, relativeSegments(requestPath)), MAX_ACCEPTED_JSON_BODY_BYTES);
   const parsed = parseJson(decodeUtf8(bytes));
   if (!isPlainRecord(parsed) || typeof parsed.body !== "string") unavailable();
   const bodyText = parsed.body;
@@ -244,10 +238,7 @@ const readRequestEnvelope = (cwd: string, requestPath: string): RequestEnvelope 
 
 /** Existing recorded upstream trace with truncation flags and the parser's own bounds enforced. */
 const readUpstreamTrace = (cwd: string, upstreamPath: string): SentinelUpstreamTrace => {
-  const bytes = readBoundedFile(
-    requireRegularFile(cwd, relativeSegments(upstreamPath)),
-    UPSTREAM_FILE_MAX_BYTES,
-  );
+  const bytes = readBoundedFile(requireRegularFile(cwd, relativeSegments(upstreamPath)), UPSTREAM_FILE_MAX_BYTES);
   const parsed = parseJson(decodeUtf8(bytes));
   try {
     return parseSentinelUpstreamTrace(parsed);
@@ -257,12 +248,10 @@ const readUpstreamTrace = (cwd: string, upstreamPath: string): SentinelUpstreamT
 };
 
 /** Exactly one complete untruncated supported attempt; everything else is unavailable. */
-const selectSupportedAttempt = (
-  trace: SentinelUpstreamTrace,
-): Readonly<{ provider: SupportedProvider; terminal: SupportedTerminal }> => {
+const selectSupportedAttempt = (trace: SentinelUpstreamTrace): Readonly<{ provider: SupportedProvider; terminal: SupportedTerminal }> => {
   if (trace.attempts_truncated || trace.bytes_truncated || trace.chunks_truncated) unavailable();
   if (trace.attempts.length !== 1) unavailable();
-  const attempt = trace.attempts[0]!;
+  const attempt = trace.attempts[0];
   // Cerebras is a chat-completions transport and is never replayed here.
   if (attempt.provider !== "chatgpt_codex" && attempt.provider !== "surplus" && attempt.provider !== "metered") {
     unavailable();
@@ -280,11 +269,7 @@ const selectSupportedAttempt = (
  * recorded fetcher and an explicit synthetic key, preserving their real
  * normalization. No host key is ever read.
  */
-const openRecordedResponse = async (
-  provider: SupportedProvider,
-  request: RequestEnvelope,
-  replay: RecordedUpstreamReplay,
-): Promise<Response> => {
+const openRecordedResponse = async (provider: SupportedProvider, request: RequestEnvelope, replay: RecordedUpstreamReplay): Promise<Response> => {
   let response: Response;
   try {
     if (provider === "chatgpt_codex") {
@@ -294,15 +279,19 @@ const openRecordedResponse = async (
         body: request.bodyText,
       });
     } else if (provider === "surplus") {
-      response = (await fetchSurplusResponses(request.body, {
-        apiKey: SYNTHETIC_PAID_API_KEY,
-        fetcher: replay.fetch,
-      })).response;
+      response = (
+        await fetchSurplusResponses(request.body, {
+          apiKey: SYNTHETIC_PAID_API_KEY,
+          fetcher: replay.fetch,
+        })
+      ).response;
     } else {
-      response = (await fetchMeteredResponses(request.body, {
-        apiKey: SYNTHETIC_PAID_API_KEY,
-        fetcher: replay.fetch,
-      })).response;
+      response = (
+        await fetchMeteredResponses(request.body, {
+          apiKey: SYNTHETIC_PAID_API_KEY,
+          fetcher: replay.fetch,
+        })
+      ).response;
     }
   } catch {
     return unavailable();
@@ -342,13 +331,10 @@ const emptyParserEvidence = (): ParserEvidence => ({
  * error object rethrown to the converter, and the identical iterator cleanup.
  * The only added effect is the structured parser evidence above.
  */
-const observeParserIterator = (
-  iterator: ResponsesStreamIterator,
-  evidence: ParserEvidence,
-): ResponsesStreamIterator =>
+const observeParserIterator = (iterator: ResponsesStreamIterator, evidence: ParserEvidence): ResponsesStreamIterator =>
   (async function* (): AsyncGenerator<ResponsesStreamEvent, unknown, unknown> {
     try {
-      while (true) {
+      for (;;) {
         let next: IteratorResult<ResponsesStreamEvent, unknown>;
         try {
           next = await iterator.next();
@@ -357,9 +343,12 @@ const observeParserIterator = (
           else evidence.otherFailure = true;
           throw error;
         }
-        if (next.done || !next.value) {
+        // `done` is a discriminant, but what the iterator produced stays unknown:
+        // a falsy value is exhaustion, not an event to hand to the converter.
+        const { value } = next;
+        if (next.done || !value) {
           if (evidence.upstreamTerminalType === null) evidence.exhaustedWithoutTerminal = true;
-          return next.value;
+          return value;
         }
         if (next.value.terminal) evidence.upstreamTerminalType ??= next.value.type;
         yield next.value;
@@ -452,10 +441,7 @@ const consumeOwnedResponses = async (prepared: PreparedResponsesStream): Promise
  * response or its exact fixed failure body. That body is only recorded as an
  * observed converter output, never as a classification.
  */
-const consumeBufferedResponses = async (
-  prepared: PreparedResponsesStream,
-  provider: SupportedProvider,
-): Promise<ConverterOutcome> => {
+const consumeBufferedResponses = async (prepared: PreparedResponsesStream, provider: SupportedProvider): Promise<ConverterOutcome> => {
   const observedResponseId = responseIdFromEvents(prepared.buffered);
   const response = await collectBufferedResponses({ provider, responseId: observedResponseId, prepared });
   const parsed = parseJson(await response.text());
@@ -477,10 +463,7 @@ const consumeBufferedResponses = async (
  * actual end-of-stream signal, no upstream terminal or other failure was
  * declared, and the converter produced its exact fixed failure output.
  */
-const classifyConverterFailure = (
-  terminal: SupportedTerminal,
-  evidence: ParserEvidence,
-): ReplayOutcome => {
+const classifyConverterFailure = (terminal: SupportedTerminal, evidence: ParserEvidence): ReplayOutcome => {
   if (terminal !== "eof") return "unavailable";
   if (evidence.upstreamTerminalType !== null) return "unavailable";
   if (evidence.otherFailure) return "unavailable";
@@ -493,11 +476,14 @@ const runReplaySequence = async (
   provider: SupportedProvider,
   terminal: SupportedTerminal,
   response: Response,
-  body: Record<string, unknown>,
+  body: Record<string, unknown>
 ): Promise<ReplayOutcome> => {
   let prepared: PreparedResponsesStream;
   try {
-    const preflight = await preflightResponsesStream(response.body!);
+    // The owned response always carries a body (see openRecordedResponse); this
+    // keeps the precommit classification of that impossible case unchanged.
+    if (!response.body) unavailable();
+    const preflight = await preflightResponsesStream(response.body);
     const replayed = (async function* (): AsyncGenerator<ResponsesStreamEvent> {
       try {
         yield preflight.first;
@@ -513,9 +499,7 @@ const runReplaySequence = async (
     // consuming it) ended the recorded body before a terminal and before any
     // semantic output. A recorded eof plus its recognized premature_eof kind
     // is the causal failure; every other precommit failure is unavailable.
-    return terminal === "eof" && error instanceof ResponsesStreamError && error.kind === "premature_eof"
-      ? "causal"
-      : "unavailable";
+    return terminal === "eof" && error instanceof ResponsesStreamError && error.kind === "premature_eof" ? "causal" : "unavailable";
   }
   const evidence = emptyParserEvidence();
   // Mirror the gateway's own empty-semantic-completion guard
@@ -529,9 +513,7 @@ const runReplaySequence = async (
     ...prepared,
     iterator: observeParserIterator(prepared.iterator, evidence),
   };
-  const outcome = body.stream === true
-    ? await consumeOwnedResponses(observed)
-    : await consumeBufferedResponses(observed, provider);
+  const outcome = body.stream === true ? await consumeOwnedResponses(observed) : await consumeBufferedResponses(observed, provider);
   return outcome === "premature_eof_output" ? classifyConverterFailure(terminal, evidence) : outcome;
 };
 
@@ -539,7 +521,7 @@ const runAttempt = async (
   provider: SupportedProvider,
   terminal: SupportedTerminal,
   response: Response,
-  body: Record<string, unknown>,
+  body: Record<string, unknown>
 ): Promise<ReplayOutcome> => {
   try {
     return await runReplaySequence(provider, terminal, response, body);

@@ -16,21 +16,18 @@ Deno.test("a caller-handled rejecting fetch does not create an unhandled network
   };
 
   globalThis.addEventListener("unhandledrejection", onUnhandled);
-  delete traceGlobal[INSTALL_FLAG];
+  Reflect.deleteProperty(traceGlobal, INSTALL_FLAG);
   globalThis.fetch = () => Promise.reject(new TypeError("caller catches this fetch rejection"));
 
   try {
     installNetworkTrace();
-    await assert.rejects(
-      () => globalThis.fetch("https://trace.example/reject"),
-      /caller catches this fetch rejection/,
-    );
+    await assert.rejects(() => globalThis.fetch("https://trace.example/reject"), /caller catches this fetch rejection/);
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(unhandled.length, 0);
   } finally {
     globalThis.fetch = originalFetch;
     globalThis.removeEventListener("unhandledrejection", onUnhandled);
     if (hadInstallFlag) traceGlobal[INSTALL_FLAG] = originalInstallFlag;
-    else delete traceGlobal[INSTALL_FLAG];
+    else Reflect.deleteProperty(traceGlobal, INSTALL_FLAG);
   }
 });

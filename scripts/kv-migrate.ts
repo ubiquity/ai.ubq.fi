@@ -11,7 +11,10 @@ import {
   validateKvMigrationTarget,
 } from "../src/kv_migration.ts";
 
-type Args = Record<string, string | boolean>;
+// Parsed CLI flags. Index access can miss -- the lint project does not enable
+// noUncheckedIndexedAccess -- so a value is possibly `undefined`; `hasFlag`
+// depends on exactly that to report a missing flag as false (`undefined !== false`).
+type Args = Record<string, string | boolean | undefined>;
 
 const DEFAULT_EXPORT_PATH = ".kv-migration/deno1.ndjson";
 const DEFAULT_LOCAL_DB_PATH = ".kv-migration/deno1.sqlite3";
@@ -131,14 +134,7 @@ const probeCommand = async (flags: Args): Promise<void> => {
   const source = getRequiredFlagString(flags, "source");
   const kv = await openKv(source);
   try {
-    const prefixes = [
-      [],
-      ["ubq_ai"],
-      ["uos_ai"],
-      ["default"],
-      ["embeddings"],
-      ["agent_messages"],
-    ] as Deno.KvKey[];
+    const prefixes = [[], ["ubq_ai"], ["uos_ai"], ["default"], ["embeddings"], ["agent_messages"]] as Deno.KvKey[];
     const result = [];
     for (const prefix of prefixes) {
       let count = 0;
@@ -155,15 +151,23 @@ const probeCommand = async (flags: Args): Promise<void> => {
   }
 };
 
+/**
+ * Compares two strings by UTF-16 code unit, reproducing the default `Array#sort`
+ * order exactly. `localeCompare` is locale-dependent and would reorder the
+ * export-controlled value types (e.g. "Array" ahead of "array").
+ */
+const compareCodeUnits = (a: string, b: string): number => {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+};
+
 const analyzeCommand = async (flags: Args): Promise<void> => {
   const input = getFlagString(flags, "in", DEFAULT_EXPORT_PATH);
   const profile = getProfile(flags);
   const includeCache = hasFlag(flags, "include-cache");
   const includeLegacy = getIncludeLegacy(flags, profile);
-  const groups = new Map<
-    string,
-    { count: number; action: KvMigrationDecisionAction; reason: string; valueTypes: Set<string> }
-  >();
+  const groups = new Map<string, { count: number; action: KvMigrationDecisionAction; reason: string; valueTypes: Set<string> }>();
   const firstParts = new Map<string, number>();
   let total = 0;
   let errors = 0;
@@ -194,24 +198,26 @@ const analyzeCommand = async (flags: Args): Promise<void> => {
       count: data.count,
       action: data.action,
       reason: data.reason,
-      value_types: Array.from(data.valueTypes).sort(),
+      value_types: Array.from(data.valueTypes).sort(compareCodeUnits),
     }))
     .sort((a, b) => b.count - a.count || a.group.localeCompare(b.group));
 
-  console.log(JSON.stringify(
-    {
-      input,
-      profile,
-      include_cache: includeCache,
-      include_legacy: includeLegacy,
-      total,
-      parse_errors: errors,
-      first_key_parts: Object.fromEntries(Array.from(firstParts.entries()).sort((a, b) => b[1] - a[1])),
-      groups: groupRows,
-    },
-    null,
-    2,
-  ));
+  console.log(
+    JSON.stringify(
+      {
+        input,
+        profile,
+        include_cache: includeCache,
+        include_legacy: includeLegacy,
+        total,
+        parse_errors: errors,
+        first_key_parts: Object.fromEntries(Array.from(firstParts.entries()).sort((a, b) => b[1] - a[1])),
+        groups: groupRows,
+      },
+      null,
+      2
+    )
+  );
 };
 
 type ImportOptions = Readonly<{
@@ -241,20 +247,22 @@ const importCommand = async (flags: Args, options: ImportOptions): Promise<void>
       dryRun,
     });
 
-    console.log(JSON.stringify(
-      {
-        input,
-        [options.targetName]: options.target,
-        profile,
-        include_cache: includeCache,
-        include_legacy: includeLegacy,
-        overwrite,
-        dry_run: dryRun,
-        ...result,
-      },
-      null,
-      2,
-    ));
+    console.log(
+      JSON.stringify(
+        {
+          input,
+          [options.targetName]: options.target,
+          profile,
+          include_cache: includeCache,
+          include_legacy: includeLegacy,
+          overwrite,
+          dry_run: dryRun,
+          ...result,
+        },
+        null,
+        2
+      )
+    );
     if (result.errors > 0) Deno.exit(1);
   } finally {
     kv?.close();
@@ -312,8 +320,11 @@ const incidentV2Command = async (flags: Args): Promise<void> => {
 };
 
 const getAuthToken = (flags: Args): string => {
-  const token = getFlagString(flags, "token") || Deno.env.get("DENO_DEPLOY_TOKEN")?.trim() ||
-    Deno.env.get("UOS_AI_TOKEN")?.trim() || "";
+  // Candidates are tried in order and an empty value means "not provided", exactly
+  // as the previous `||` chain treated it: `??` would accept an empty `--token=`
+  // and reject a run that DENO_DEPLOY_TOKEN could have served.
+  const candidates = [getFlagString(flags, "token"), Deno.env.get("DENO_DEPLOY_TOKEN")?.trim(), Deno.env.get("UOS_AI_TOKEN")?.trim()];
+  const token = candidates.find((value) => value !== undefined && value !== "") ?? "";
   if (!token) throw new Error("--token or DENO_DEPLOY_TOKEN is required for HTTP migration commands");
   return token;
 };
@@ -331,13 +342,18 @@ const parseJsonOrText = (text: string): unknown => {
 };
 
 const importSummaryHasErrors = (value: unknown): boolean =>
-  typeof value === "object" && value !== null &&
-  typeof (value as { errors?: unknown }).errors === "number" &&
-  (value as { errors: number }).errors > 0;
+  typeof value === "object" && value !== null && typeof (value as { errors?: unknown }).errors === "number" && (value as { errors: number }).errors > 0;
+
+/** Removes every trailing `/`, equivalent to `value.replace(/\/+$/, "")` via an explicit linear scan. */
+const stripTrailingSlashes = (value: string): string => {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") end -= 1;
+  return value.slice(0, end);
+};
 
 const importHttpCommand = async (flags: Args): Promise<void> => {
   const input = getFlagString(flags, "in", DEFAULT_EXPORT_PATH);
-  const baseUrl = getRequiredFlagString(flags, "base-url").replace(/\/+$/, "");
+  const baseUrl = stripTrailingSlashes(getRequiredFlagString(flags, "base-url"));
   const token = getAuthToken(flags);
   const profile = getProfile(flags, "prod");
   const includeCache = hasFlag(flags, "include-cache");
@@ -356,46 +372,50 @@ const importHttpCommand = async (flags: Args): Promise<void> => {
   const response = await fetch(url, {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${token}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/x-ndjson",
     },
     body,
   });
   const text = await response.text();
   const parsed = parseJsonOrText(text);
-  console.log(JSON.stringify(
-    {
-      input,
-      url: url.toString(),
-      status: response.status,
-      dry_run: dryRun,
-      response: parsed,
-    },
-    null,
-    2,
-  ));
+  console.log(
+    JSON.stringify(
+      {
+        input,
+        url: url.toString(),
+        status: response.status,
+        dry_run: dryRun,
+        response: parsed,
+      },
+      null,
+      2
+    )
+  );
   if (!response.ok || importSummaryHasErrors(parsed)) Deno.exit(1);
 };
 
 const validateHttpCommand = async (flags: Args): Promise<void> => {
-  const baseUrl = getRequiredFlagString(flags, "base-url").replace(/\/+$/, "");
+  const baseUrl = stripTrailingSlashes(getRequiredFlagString(flags, "base-url"));
   const token = getAuthToken(flags);
   const strict = hasFlag(flags, "strict");
   const url = new URL("/admin/kv-migration/validate", baseUrl);
   const response = await fetch(url, {
-    headers: { "Authorization": `Bearer ${token}` },
+    headers: { Authorization: `Bearer ${token}` },
   });
   const text = await response.text();
   const body = parseJsonOrText(text);
-  console.log(JSON.stringify(
-    {
-      url: url.toString(),
-      status: response.status,
-      response: body,
-    },
-    null,
-    2,
-  ));
+  console.log(
+    JSON.stringify(
+      {
+        url: url.toString(),
+        status: response.status,
+        response: body,
+      },
+      null,
+      2
+    )
+  );
   if (!response.ok) Deno.exit(1);
   if (strict && typeof body === "object" && body && Array.isArray((body as { errors?: unknown }).errors)) {
     if ((body as { errors: unknown[] }).errors.length) Deno.exit(1);
@@ -440,15 +460,42 @@ const main = async (): Promise<void> => {
     usage();
     return;
   }
-  if (command === "probe") return await probeCommand(flags);
-  if (command === "export") return await exportCommand(flags);
-  if (command === "analyze") return await analyzeCommand(flags);
-  if (command === "import-local") return await importLocalCommand(flags);
-  if (command === "import-remote") return await importRemoteCommand(flags);
-  if (command === "validate") return await validateCommand(flags);
-  if (command === "incident-v2") return await incidentV2Command(flags);
-  if (command === "import-http") return await importHttpCommand(flags);
-  if (command === "validate-http") return await validateHttpCommand(flags);
+  if (command === "probe") {
+    await probeCommand(flags);
+    return;
+  }
+  if (command === "export") {
+    await exportCommand(flags);
+    return;
+  }
+  if (command === "analyze") {
+    await analyzeCommand(flags);
+    return;
+  }
+  if (command === "import-local") {
+    await importLocalCommand(flags);
+    return;
+  }
+  if (command === "import-remote") {
+    await importRemoteCommand(flags);
+    return;
+  }
+  if (command === "validate") {
+    await validateCommand(flags);
+    return;
+  }
+  if (command === "incident-v2") {
+    await incidentV2Command(flags);
+    return;
+  }
+  if (command === "import-http") {
+    await importHttpCommand(flags);
+    return;
+  }
+  if (command === "validate-http") {
+    await validateHttpCommand(flags);
+    return;
+  }
   usage();
   throw new Error(`Unknown command: ${command}`);
 };

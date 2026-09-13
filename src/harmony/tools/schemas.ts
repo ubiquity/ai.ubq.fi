@@ -51,7 +51,7 @@ export type CanonicalToolName = (typeof CANONICAL_TOOL_NAMES)[number];
 export const CANONICAL_TOOL_DEFAULT_STRICTNESS = false;
 
 /** One canonical tool: model-facing name, description and JSON Schema. */
-export interface CanonicalToolSchema {
+export type CanonicalToolSchema = {
   name: CanonicalToolName;
   description: string;
   /**
@@ -59,15 +59,11 @@ export interface CanonicalToolSchema {
    * `additionalProperties: false`; string/boolean/array-of-string types only.
    */
   parameters: Readonly<Record<string, unknown>>;
-}
+};
 
-const property = (
-  type: "string" | "boolean",
-  extra: Readonly<Record<string, unknown>> = {},
-): Readonly<Record<string, unknown>> => ({ type, ...extra });
+const property = (type: "string" | "boolean", extra: Readonly<Record<string, unknown>> = {}): Readonly<Record<string, unknown>> => ({ type, ...extra });
 
-const stringProperty = (extra: Readonly<Record<string, unknown>> = {}): Readonly<Record<string, unknown>> =>
-  property("string", extra);
+const stringProperty = (extra: Readonly<Record<string, unknown>> = {}): Readonly<Record<string, unknown>> => property("string", extra);
 
 const nonEmptyStringProperty = (extra: Readonly<Record<string, unknown>> = {}): Readonly<Record<string, unknown>> =>
   property("string", { minLength: 1, ...extra });
@@ -76,7 +72,7 @@ const schema = (
   name: CanonicalToolName,
   description: string,
   properties: Readonly<Record<string, Readonly<Record<string, unknown>>>>,
-  required: readonly string[],
+  required: readonly string[]
 ): CanonicalToolSchema => ({
   name,
   description,
@@ -94,7 +90,7 @@ export const TOOL_SCHEMAS: Readonly<Record<CanonicalToolName, CanonicalToolSchem
     "filesystem.read",
     "Read the UTF-8 text of a file inside the workspace. Returns the file content, or a not_found error when the path does not exist.",
     { path: nonEmptyStringProperty({ description: "Workspace-relative file path." }) },
-    ["path"],
+    ["path"]
   ),
   "filesystem.find": schema(
     "filesystem.find",
@@ -105,7 +101,7 @@ export const TOOL_SCHEMAS: Readonly<Record<CanonicalToolName, CanonicalToolSchem
         description: "Glob pattern; defaults to ** (all files under the directory).",
       }),
     },
-    ["path"],
+    ["path"]
   ),
   "filesystem.search": schema(
     "filesystem.search",
@@ -114,31 +110,31 @@ export const TOOL_SCHEMAS: Readonly<Record<CanonicalToolName, CanonicalToolSchem
       path: nonEmptyStringProperty({ description: "Workspace-relative directory path to search." }),
       query: nonEmptyStringProperty({ description: "Text to search for." }),
     },
-    ["path", "query"],
+    ["path", "query"]
   ),
   "browser.search": schema(
     "browser.search",
     "Search the web and return matching result titles, URLs and snippets. Returns (no results) when nothing matches.",
     { query: nonEmptyStringProperty({ description: "Search query." }) },
-    ["query"],
+    ["query"]
   ),
   "browser.open": schema(
     "browser.open",
     "Open a URL and return the page title and text content. The opened page becomes the current page for browser.find.",
     { url: nonEmptyStringProperty({ description: "URL to open, e.g. https://example.com/page." }) },
-    ["url"],
+    ["url"]
   ),
   "browser.find": schema(
     "browser.find",
     "Case-insensitive search for text in the currently-open browser page. Returns at most 200 matches as line:content.",
     { query: nonEmptyStringProperty({ description: "Text to find on the current page." }) },
-    ["query"],
+    ["query"]
   ),
   "shell.exec": schema(
     "shell.exec",
     "Run a shell command in the workspace with sh -c and return its exit code, standard output and standard error. Non-zero exit codes are errors.",
     { command: nonEmptyStringProperty({ description: "Shell command to execute." }) },
-    ["command"],
+    ["command"]
   ),
   "editor.apply_patch": schema(
     "editor.apply_patch",
@@ -151,7 +147,7 @@ export const TOOL_SCHEMAS: Readonly<Record<CanonicalToolName, CanonicalToolSchem
       new: stringProperty({ description: "Replacement text, or the file content when add is true." }),
       add: property("boolean", { description: "Create the file instead of patching an existing one." }),
     },
-    ["path"],
+    ["path"]
   ),
   "task.update_plan": schema(
     "task.update_plan",
@@ -163,7 +159,7 @@ export const TOOL_SCHEMAS: Readonly<Record<CanonicalToolName, CanonicalToolSchem
         description: "Ordered plan steps; each entry must be a non-empty string.",
       },
     },
-    ["plan"],
+    ["plan"]
   ),
 };
 
@@ -180,14 +176,59 @@ const NON_EMPTY_PARAMS: Readonly<Record<CanonicalToolName, readonly string[]>> =
 };
 
 /** Returns the canonical schema for a tool name, or null when unknown. */
-export const lookupToolSchema = (tool: string): CanonicalToolSchema | null =>
-  (TOOL_SCHEMAS as Readonly<Record<string, CanonicalToolSchema>>)[tool] ?? null;
+export const lookupToolSchema = (tool: string): CanonicalToolSchema | null => (TOOL_SCHEMAS as Readonly<Record<string, CanonicalToolSchema>>)[tool] ?? null;
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
-const describeExpected = (type: "string" | "boolean" | "string[]"): string =>
-  type === "string[]" ? "an array of non-empty strings" : `a ${type}`;
+type ExpectedParameterType = "string" | "boolean" | "string[]";
+
+type SchemaParameterRecord = Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+
+const describeExpected = (type: ExpectedParameterType): string => (type === "string[]" ? "an array of non-empty strings" : `a ${type}`);
+
+/** Returns the first argument key the schema does not declare, or null. */
+const unexpectedArgumentReason = (args: Record<string, unknown>, parameters: SchemaParameterRecord): string | null => {
+  for (const key of Object.keys(args)) {
+    if (!(key in parameters)) return `unexpected argument ${JSON.stringify(key)}`;
+  }
+  return null;
+};
+
+/** Returns the first missing required argument, or null. */
+const missingRequiredArgumentReason = (args: Record<string, unknown>, required: readonly string[]): string | null => {
+  for (const key of required) {
+    if (!(key in args) || args[key] === undefined) {
+      return `missing required argument ${JSON.stringify(key)}`;
+    }
+  }
+  return null;
+};
+
+/** Validates one string parameter against its declared non-empty constraint. */
+const stringArgumentReason = (key: string, value: unknown, nonEmpty: boolean): string | null => {
+  if (typeof value !== "string") return `argument ${JSON.stringify(key)} must be a string`;
+  if (nonEmpty && value.length === 0) return `argument ${JSON.stringify(key)} must be a non-empty string`;
+  return null;
+};
+
+/** Validates one array-of-non-empty-strings parameter. */
+const arrayArgumentReason = (key: string, value: unknown): string | null => {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || (item as string).length === 0)) {
+    return `argument ${JSON.stringify(key)} must be ${describeExpected("string[]")}`;
+  }
+  return null;
+};
+
+/** Validates one present argument against the type its schema declares. */
+const argumentValueReason = (key: string, value: unknown, parameters: SchemaParameterRecord, nonEmpty: readonly string[]): string | null => {
+  if (value === undefined) return `argument ${JSON.stringify(key)} must not be undefined`;
+  const param = parameters[key];
+  const type = typeof param.type === "string" ? param.type : "";
+  if (type === "string") return stringArgumentReason(key, value, nonEmpty.includes(key));
+  if (type === "boolean") return typeof value === "boolean" ? null : `argument ${JSON.stringify(key)} must be a boolean`;
+  if (type === "array") return arrayArgumentReason(key, value);
+  return null;
+};
 
 /**
  * Type-checks and normalizes tool arguments against the canonical schema.
@@ -196,54 +237,27 @@ const describeExpected = (type: "string" | "boolean" | "string[]"): string =>
  * arguments are rejected, and required string parameters must be non-empty.
  * The returned `arguments` object preserves the caller's values unchanged.
  */
-export function validateToolArguments(
-  tool: string,
-  args: unknown,
-): { valid: true; arguments: Record<string, unknown> } | { valid: false; reason: string } {
+export function validateToolArguments(tool: string, args: unknown): { valid: true; arguments: Record<string, unknown> } | { valid: false; reason: string } {
   const toolSchema = lookupToolSchema(tool);
   if (toolSchema === null) return { valid: false, reason: `unknown tool ${JSON.stringify(tool)}` };
   if (!isRecord(args)) return { valid: false, reason: "arguments must be an object" };
 
-  const parameters = toolSchema.parameters.properties as Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+  const parameters = toolSchema.parameters.properties as SchemaParameterRecord;
   const required = toolSchema.parameters.required as readonly string[];
   const nonEmpty = NON_EMPTY_PARAMS[toolSchema.name];
 
-  for (const key of Object.keys(args)) {
-    if (!(key in parameters)) return { valid: false, reason: `unexpected argument ${JSON.stringify(key)}` };
-  }
-  for (const key of required) {
-    if (!(key in args) || args[key] === undefined) {
-      return { valid: false, reason: `missing required argument ${JSON.stringify(key)}` };
-    }
-  }
+  const structuralReason = unexpectedArgumentReason(args, parameters) ?? missingRequiredArgumentReason(args, required);
+  if (structuralReason !== null) return { valid: false, reason: structuralReason };
+
   for (const [key, value] of Object.entries(args)) {
-    if (value === undefined) return { valid: false, reason: `argument ${JSON.stringify(key)} must not be undefined` };
-    const param = parameters[key];
-    const type = typeof param.type === "string" ? param.type : "";
-    if (type === "string") {
-      if (typeof value !== "string") {
-        return { valid: false, reason: `argument ${JSON.stringify(key)} must be a string` };
-      }
-      if (nonEmpty.includes(key) && (value as string).length === 0) {
-        return { valid: false, reason: `argument ${JSON.stringify(key)} must be a non-empty string` };
-      }
-    } else if (type === "boolean") {
-      if (typeof value !== "boolean") {
-        return { valid: false, reason: `argument ${JSON.stringify(key)} must be a boolean` };
-      }
-    } else if (type === "array") {
-      if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || (item as string).length === 0)) {
-        return { valid: false, reason: `argument ${JSON.stringify(key)} must be ${describeExpected("string[]")}` };
-      }
-    }
+    const reason = argumentValueReason(key, value, parameters, nonEmpty);
+    if (reason !== null) return { valid: false, reason };
   }
   return { valid: true, arguments: args };
 }
 
 /** Parameter type view of a canonical schema, for tooling and compatibility shims. */
-export const toolParameterTypes = (
-  toolSchema: CanonicalToolSchema,
-): Readonly<Record<string, "string" | "boolean" | "string[]">> => {
+export const toolParameterTypes = (toolSchema: CanonicalToolSchema): Readonly<Record<string, "string" | "boolean" | "string[]">> => {
   const parameters = toolSchema.parameters.properties as Readonly<Record<string, Readonly<Record<string, unknown>>>>;
   const out: Record<string, "string" | "boolean" | "string[]"> = {};
   for (const [key, param] of Object.entries(parameters)) {
@@ -255,9 +269,7 @@ export const toolParameterTypes = (
 };
 
 /** Renders the whole canonical surface as m01 ToolDefinition entries. */
-export const toolDefinitions = (
-  opts: Readonly<{ strict?: boolean }> = {},
-): readonly ToolDefinition[] => {
+export const toolDefinitions = (opts: Readonly<{ strict?: boolean }> = {}): readonly ToolDefinition[] => {
   const strict = opts.strict ?? CANONICAL_TOOL_DEFAULT_STRICTNESS;
   return CANONICAL_TOOL_NAMES.map((name) => {
     const toolSchema = TOOL_SCHEMAS[name];
@@ -284,6 +296,29 @@ const isStrictSchemaNode = (value: unknown): boolean => {
   return true;
 };
 
+/** Returns the first well-formedness violation of one canonical schema, or null. */
+const canonicalSchemaReason = (toolSchema: CanonicalToolSchema, strict: boolean): string | null => {
+  const parameters = toolSchema.parameters;
+  if (parameters.type !== "object") return "parameters root must be an object schema";
+  if (parameters.additionalProperties !== false) return "additionalProperties must be false";
+  const properties = parameters.properties;
+  if (typeof properties !== "object" || properties === null || Array.isArray(properties)) return "properties must be an object";
+  const propertyNames = Object.keys(properties as Record<string, unknown>);
+  const required = Array.isArray(parameters.required) ? (parameters.required as unknown[]) : [];
+  if (required.some((key) => typeof key !== "string" || !(key in (properties as Record<string, unknown>)))) {
+    return "required entries must name declared properties";
+  }
+  if (strict && (required as string[]).length !== propertyNames.length) {
+    return "strict mode requires every property to be required";
+  }
+  for (const key of propertyNames) {
+    const param = (properties as Record<string, unknown>)[key];
+    if (!isStrictSchemaNode(param)) return `property ${key} is not strict-mode compatible`;
+  }
+  if (!isStrictSchemaNode(parameters)) return "parameters schema contains non-strict constructs";
+  return null;
+};
+
 /**
  * Well-formedness proof for the canonical surface (used by focused tests).
  *
@@ -293,37 +328,11 @@ const isStrictSchemaNode = (value: unknown): boolean => {
  * optional parameters by design.
  */
 export const assertCanonicalToolSchemas = (
-  strict: boolean,
+  strict: boolean
 ): { ok: true; names: readonly CanonicalToolName[] } | { ok: false; name: string; reason: string } => {
   for (const toolSchema of Object.values(TOOL_SCHEMAS)) {
-    const parameters = toolSchema.parameters;
-    if (parameters.type !== "object") {
-      return { ok: false, name: toolSchema.name, reason: "parameters root must be an object schema" };
-    }
-    if (parameters.additionalProperties !== false) {
-      return { ok: false, name: toolSchema.name, reason: "additionalProperties must be false" };
-    }
-    const properties = parameters.properties;
-    if (typeof properties !== "object" || properties === null || Array.isArray(properties)) {
-      return { ok: false, name: toolSchema.name, reason: "properties must be an object" };
-    }
-    const required = Array.isArray(parameters.required) ? (parameters.required as unknown[]) : [];
-    if (required.some((key) => typeof key !== "string" || !(key in (properties as Record<string, unknown>)))) {
-      return { ok: false, name: toolSchema.name, reason: "required entries must name declared properties" };
-    }
-    const propertyNames = Object.keys(properties as Record<string, unknown>);
-    if (strict && (required as string[]).length !== propertyNames.length) {
-      return { ok: false, name: toolSchema.name, reason: "strict mode requires every property to be required" };
-    }
-    for (const key of propertyNames) {
-      const param = (properties as Record<string, unknown>)[key];
-      if (!isStrictSchemaNode(param)) {
-        return { ok: false, name: toolSchema.name, reason: `property ${key} is not strict-mode compatible` };
-      }
-    }
-    if (!isStrictSchemaNode(parameters)) {
-      return { ok: false, name: toolSchema.name, reason: "parameters schema contains non-strict constructs" };
-    }
+    const reason = canonicalSchemaReason(toolSchema, strict);
+    if (reason !== null) return { ok: false, name: toolSchema.name, reason };
   }
   return { ok: true, names: CANONICAL_TOOL_NAMES };
 };

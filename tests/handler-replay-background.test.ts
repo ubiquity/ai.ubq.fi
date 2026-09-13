@@ -7,6 +7,8 @@ type ReplayPersistence = NonNullable<TerminalLogInput["persistSentinelReplay"]>;
 type RecordTelemetry = NonNullable<TerminalLogInput["recordTelemetry"]>;
 type RecordAnalytics = NonNullable<TerminalLogInput["recordCacheAnalytics"]>;
 type RecordAdminError = NonNullable<TerminalLogInput["recordAdminError"]>;
+/** `void` may not appear as a call-site type argument, so name the deferred shape. */
+type VoidDeferred = PromiseWithResolvers<void>;
 
 const acceptedInput = (): ReplayInput => ({
   endpoint: "/v1/responses",
@@ -47,7 +49,7 @@ Deno.test("terminal logging reports admission busy failures to the admin error l
           code: "codex_admission_busy",
         },
       }),
-      { status: 503, headers: { "Content-Type": "application/json" } },
+      { status: 503, headers: { "Content-Type": "application/json" } }
     ),
     {
       route: "responses",
@@ -59,7 +61,7 @@ Deno.test("terminal logging reports admission busy failures to the admin error l
         recorded.push(error);
         return Promise.resolve();
       },
-    },
+    }
   );
 
   assert.equal(response.status, 503);
@@ -79,7 +81,7 @@ Deno.test("EdgeRuntime replay registration returns failure responses before defe
   const previousEdgeRuntime = globals.EdgeRuntime;
   const registeredTasks: Promise<unknown>[] = [];
   const persistence = Promise.withResolvers<Awaited<ReturnType<ReplayPersistence>>>();
-  const persistenceStarted = Promise.withResolvers<void>();
+  const persistenceStarted: VoidDeferred = Promise.withResolvers();
   let persistenceSettled = false;
   let persistedSnapshot: ReplayInput | null = null;
   const capture = acceptedInput();
@@ -109,7 +111,7 @@ Deno.test("EdgeRuntime replay registration returns failure responses before defe
         },
         recordTelemetry: ignoredTelemetry,
         recordCacheAnalytics: ignoredAnalytics,
-      },
+      }
     );
 
     assert.equal(response.status, 502);
@@ -129,7 +131,6 @@ Deno.test("EdgeRuntime replay registration returns failure responses before defe
     assert.ok(capture.body.every((byte) => byte === 0));
   } finally {
     if (!persistenceSettled) {
-      persistenceSettled = true;
       persistence.resolve({ status: "disabled", reason: "kv_unavailable" });
     }
     await Promise.allSettled(registeredTasks);

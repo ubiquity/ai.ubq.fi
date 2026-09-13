@@ -20,18 +20,15 @@ Deno.test("homepage renders OK for the passive available health contract", async
   const badge = makeBadge();
   const requests: unknown[][] = [];
 
-  await refreshHealthBadge(
-    (...args: unknown[]) => {
-      requests.push(args);
-      return Promise.resolve(
-        new Response(JSON.stringify({ status: "available" }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }),
-      );
-    },
-    badge,
-  );
+  await refreshHealthBadge((...args: unknown[]) => {
+    requests.push(args);
+    return Promise.resolve(
+      new Response(JSON.stringify({ status: "available" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+  }, badge);
 
   assert.deepEqual(requests, [["/health", { cache: "no-store" }]]);
   assert.equal(badge.dataset.state, "ok");
@@ -39,19 +36,17 @@ Deno.test("homepage renders OK for the passive available health contract", async
 });
 
 Deno.test("homepage renders Degraded for obsolete, unsuccessful, or malformed health", async () => {
-  for (
-    const response of [
-      new Response(JSON.stringify({ ok: true }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }),
-      new Response(JSON.stringify({ status: "available" }), {
-        status: 503,
-        headers: { "Content-Type": "application/json" },
-      }),
-      new Response("not JSON", { status: 200 }),
-    ]
-  ) {
+  for (const response of [
+    new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }),
+    new Response(JSON.stringify({ status: "available" }), {
+      status: 503,
+      headers: { "Content-Type": "application/json" },
+    }),
+    new Response("not JSON", { status: 200 }),
+  ]) {
     const badge = makeBadge();
     await refreshHealthBadge(() => Promise.resolve(response), badge);
     assert.equal(badge.dataset.state, "bad");

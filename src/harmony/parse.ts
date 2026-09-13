@@ -92,36 +92,148 @@ const parseHeader = (sections: readonly HeaderSection[]): Header => {
   };
 };
 
+/**
+ * Maps one assistant message to its adapter turn, or null when the message
+ * carries no turn at all (no content, or a channel that never becomes one).
+ */
+const turnFromAssistantMessage = (message: HarmonyRawMessage): HarmonyTurn | null => {
+  if (message.recipient) {
+    // Function calls travel on the commentary channel; built-in tools
+    // (browser/python) travel on the analysis channel.  Either way the
+    // recipient identifies the call.
+    if (!message.content) return null;
+    return {
+      kind: "tool_call",
+      recipient: message.recipient,
+      name: functionNameFromRecipient(message.recipient),
+      arguments: normalizeToolArguments(message.content),
+    };
+  }
+  if (!message.content) return null;
+  if (message.channel === "analysis") return { kind: "reasoning", text: message.content };
+  if (message.channel === "final" || (message.channel === null && message.stoppedBy === "<|return|>")) {
+    return { kind: "final", text: message.content };
+  }
+  if (message.channel === "commentary") return { kind: "commentary", text: message.content };
+  return null;
+};
+
 /** Normalizes raw Harmony messages into adapter turns. */
 export const harmonyTurnsFromMessages = (messages: readonly HarmonyRawMessage[]): readonly HarmonyTurn[] => {
   const turns: HarmonyTurn[] = [];
   for (const message of messages) {
     if (message.role !== "assistant") continue;
-    if (message.recipient) {
-      // Function calls travel on the commentary channel; built-in tools
-      // (browser/python) travel on the analysis channel.  Either way the
-      // recipient identifies the call.
-      if (message.content) {
-        turns.push({
-          kind: "tool_call",
-          recipient: message.recipient,
-          name: functionNameFromRecipient(message.recipient),
-          arguments: normalizeToolArguments(message.content),
-        });
-      }
-      continue;
-    }
-    if (message.channel === "analysis") {
-      if (message.content) turns.push({ kind: "reasoning", text: message.content });
-      continue;
-    }
-    if (message.channel === "final" || (message.channel === null && message.stoppedBy === "<|return|>")) {
-      if (message.content) turns.push({ kind: "final", text: message.content });
-    } else if (message.channel === "commentary") {
-      if (message.content) turns.push({ kind: "commentary", text: message.content });
-    }
+    const turn = turnFromAssistantMessage(message);
+    if (turn) turns.push(turn);
   }
   return turns;
+};
+
+/** One recognized special token. */
+type Marker = (typeof MARKERS)[number];
+
+/** Scanner state for one completion: the parser's former local variables. */
+type ScannerState = {
+  header: Header;
+  sections: HeaderSection[];
+  currentSection: HeaderSection;
+  contentStarted: boolean;
+  content: string;
+  messages: HarmonyRawMessage[];
+  truncated: boolean;
+};
+
+const freshScannerState = (): ScannerState => ({
+  header: { ...FRESH_HEADER },
+  sections: [],
+  currentSection: { kind: "start", text: "" },
+  contentStarted: false,
+  content: "",
+  messages: [],
+  truncated: false,
+});
+
+/** Drops the pending header sections and whatever they collected. */
+const resetScannerHeader = (state: ScannerState): void => {
+  state.header = { ...FRESH_HEADER };
+  state.sections = [];
+  state.currentSection = { kind: "start", text: "" };
+  state.contentStarted = false;
+  state.content = "";
+};
+
+/** Appends text to the open content or, before `<|message|>`, to the header section. */
+const appendScannerText = (state: ScannerState, text: string): void => {
+  if (!text) return;
+  if (state.contentStarted) state.content += text;
+  else state.currentSection.text += text;
+};
+
+/** Emits the pending message when it carries anything, then starts a fresh header. */
+const emitScannerMessage = (state: ScannerState, stoppedBy: HarmonyRawMessage["stoppedBy"]): void => {
+  const headerHasText = state.sections.some((section) => section.text.trim()) || state.currentSection.text.trim();
+  if (state.content || headerHasText) {
+    state.messages.push({
+      role: state.header.role,
+      channel: state.header.channel,
+      recipient: state.header.recipient,
+      constrain: state.header.constrain,
+      content: state.content,
+      stoppedBy,
+    });
+  }
+  if (stoppedBy === "truncated") state.truncated = true;
+  resetScannerHeader(state);
+};
+
+/** Applies one special token to the scanner state. */
+const applyScannerMarker = (state: ScannerState, marker: Marker): void => {
+  switch (marker) {
+    case START:
+      if (state.contentStarted && state.content) emitScannerMessage(state, "truncated");
+      resetScannerHeader(state);
+      return;
+    case CHANNEL:
+      state.sections.push(state.currentSection);
+      state.currentSection = { kind: "channel", text: "" };
+      return;
+    case CONSTRAIN:
+      state.sections.push(state.currentSection);
+      state.currentSection = { kind: "constrain", text: "" };
+      return;
+    case END:
+      state.header = parseHeader(state.sections.concat(state.currentSection));
+      emitScannerMessage(state, "<|end|>");
+      return;
+    case CALL:
+      state.header = parseHeader(state.sections.concat(state.currentSection));
+      emitScannerMessage(state, "<|call|>");
+      return;
+    case RETURN:
+      state.header = parseHeader(state.sections.concat(state.currentSection));
+      emitScannerMessage(state, "<|return|>");
+      return;
+    case MESSAGE:
+      state.header = parseHeader(state.sections.concat(state.currentSection));
+      state.contentStarted = true;
+      return;
+    default:
+      return;
+  }
+};
+
+/** The earliest special token at or after `position`, or null when none remains. */
+const nextMarkerAt = (text: string, position: number): Readonly<{ index: number; marker: Marker }> | null => {
+  let markerIndex = -1;
+  let marker: Marker | null = null;
+  for (const candidate of MARKERS) {
+    const index = text.indexOf(candidate, position);
+    if (index === -1) continue;
+    if (markerIndex !== -1 && index >= markerIndex) continue;
+    markerIndex = index;
+    marker = candidate;
+  }
+  return marker === null || markerIndex === -1 ? null : { index: markerIndex, marker };
 };
 
 /**
@@ -130,109 +242,24 @@ export const harmonyTurnsFromMessages = (messages: readonly HarmonyRawMessage[])
  * interpreted.
  */
 export const parseHarmonyOutput = (text: string): HarmonyParseResult => {
-  const messages: HarmonyRawMessage[] = [];
-  let header: Header = { ...FRESH_HEADER };
-  let sections: HeaderSection[] = [];
-  let currentSection: HeaderSection = { kind: "start", text: "" };
-  let contentStarted = false;
-  let content = "";
-  let truncated = false;
-
-  const resetHeader = (): void => {
-    header = { ...FRESH_HEADER };
-    sections = [];
-    currentSection = { kind: "start", text: "" };
-    contentStarted = false;
-    content = "";
-  };
-
-  const emit = (stoppedBy: HarmonyRawMessage["stoppedBy"]): void => {
-    const headerHasText = sections.some((section) => section.text.trim()) || currentSection.text.trim();
-    if (content || headerHasText) {
-      messages.push({
-        role: header.role,
-        channel: header.channel,
-        recipient: header.recipient,
-        constrain: header.constrain,
-        content,
-        stoppedBy,
-      });
-    }
-    if (stoppedBy === "truncated") truncated = true;
-    resetHeader();
-  };
+  const state = freshScannerState();
 
   let position = 0;
   while (position < text.length) {
-    let markerIndex = -1;
-    let marker: (typeof MARKERS)[number] | null = null;
-    for (const candidate of MARKERS) {
-      const index = text.indexOf(candidate, position);
-      if (index !== -1 && (markerIndex === -1 || index < markerIndex)) {
-        markerIndex = index;
-        marker = candidate;
-      }
-    }
-
-    if (marker === null || markerIndex === -1) {
-      const tail = text.slice(position);
-      if (tail) {
-        if (contentStarted) content += tail;
-        else currentSection.text += tail;
-      }
-      if (contentStarted && content) {
-        emit("truncated");
-      } else if (currentSection.text.trim()) {
-        emit("truncated");
-      }
+    const found = nextMarkerAt(text, position);
+    if (found === null) {
+      appendScannerText(state, text.slice(position));
+      if ((state.contentStarted && state.content) || state.currentSection.text.trim()) emitScannerMessage(state, "truncated");
       break;
     }
 
-    const before = text.slice(position, markerIndex);
-    if (before) {
-      if (contentStarted) content += before;
-      else currentSection.text += before;
-    }
-
-    switch (marker) {
-      case START:
-        if (contentStarted && content) emit("truncated");
-        resetHeader();
-        break;
-      case CHANNEL:
-        sections.push(currentSection);
-        currentSection = { kind: "channel", text: "" };
-        break;
-      case CONSTRAIN:
-        sections.push(currentSection);
-        currentSection = { kind: "constrain", text: "" };
-        break;
-      case END: {
-        header = parseHeader(sections.concat(currentSection));
-        emit("<|end|>");
-        break;
-      }
-      case CALL: {
-        header = parseHeader(sections.concat(currentSection));
-        emit("<|call|>");
-        break;
-      }
-      case RETURN: {
-        header = parseHeader(sections.concat(currentSection));
-        emit("<|return|>");
-        break;
-      }
-      case MESSAGE: {
-        header = parseHeader(sections.concat(currentSection));
-        contentStarted = true;
-        break;
-      }
-    }
-    position = markerIndex + marker.length;
+    appendScannerText(state, text.slice(position, found.index));
+    applyScannerMarker(state, found.marker);
+    position = found.index + found.marker.length;
   }
 
-  if (messages.length === 0 && text.trim()) {
-    messages.push({
+  if (state.messages.length === 0 && text.trim()) {
+    state.messages.push({
       role: "assistant",
       channel: null,
       recipient: null,
@@ -240,8 +267,8 @@ export const parseHarmonyOutput = (text: string): HarmonyParseResult => {
       content: text,
       stoppedBy: "truncated",
     });
-    truncated = true;
+    state.truncated = true;
   }
 
-  return { messages, turns: harmonyTurnsFromMessages(messages), truncated };
+  return { messages: state.messages, turns: harmonyTurnsFromMessages(state.messages), truncated: state.truncated };
 };

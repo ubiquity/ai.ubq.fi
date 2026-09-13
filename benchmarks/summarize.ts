@@ -12,11 +12,11 @@
 import { aggregateResults, formatSummary } from "./metrics.ts";
 import { BenchmarkResult, DEFAULT_RUNS_ROOT, validateBenchmarkResult } from "./schemas.ts";
 
-export interface SummarizeOptions {
+export type SummarizeOptions = {
   runsRoot: string;
   jsonOnly: boolean;
   outPath: string | null;
-}
+};
 
 export function parseSummarizeArgs(argv: string[]): SummarizeOptions | { help: true } {
   // `deno task benchmark:summary -- args` forwards a literal "--"; accept both forms.
@@ -46,7 +46,9 @@ export function loadResults(runsRoot: string): BenchmarkResult[] {
       const p = `${dir}/${entry.name}`;
       if (entry.isDirectory) walk(p);
       else if (entry.isFile && entry.name === "result.jsonl") {
-        const line = Deno.readTextFileSync(p).split("\n").find((l) => l.trim() !== "");
+        const line = Deno.readTextFileSync(p)
+          .split("\n")
+          .find((l) => l.trim() !== "");
         if (line === undefined) throw new Error(`${p}: empty result.jsonl`);
         results.push(validateBenchmarkResult(JSON.parse(line)));
       }

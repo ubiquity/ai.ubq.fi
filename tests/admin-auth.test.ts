@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import { keyToJSON } from "@deno/kv-utils/json";
 
 const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
+const urlOf = (input: RequestInfo | URL): string => {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+};
 const stringEntryLine = (key: Deno.KvKey, value: string): string =>
   JSON.stringify({
     key: keyToJSON(key),
@@ -43,14 +48,11 @@ const compareKvKeys = (left: Deno.KvKey, right: Deno.KvKey): number => {
   return 0;
 };
 
-const matchesPrefix = (key: Deno.KvKey, prefix: Deno.KvKey): boolean =>
-  prefix.every((part, index) => key[index] === part);
-const kvStoreHasPrefix = (prefix: Deno.KvKey): boolean =>
-  [...kvStore.keys()].some((encodedKey) => matchesPrefix(JSON.parse(encodedKey) as Deno.KvKey, prefix));
+const matchesPrefix = (key: Deno.KvKey, prefix: Deno.KvKey): boolean => prefix.every((part, index) => key[index] === part);
+const kvStoreHasPrefix = (prefix: Deno.KvKey): boolean => [...kvStore.keys()].some((encodedKey) => matchesPrefix(JSON.parse(encodedKey) as Deno.KvKey, prefix));
 
 const kvStub = {
-  get: (key: Deno.KvKey) =>
-    Promise.resolve(({ key, value: kvStore.get(keyToString(key)) ?? null }) as Deno.KvEntryMaybe<unknown>),
+  get: (key: Deno.KvKey) => Promise.resolve({ key, value: kvStore.get(keyToString(key)) ?? null } as Deno.KvEntryMaybe<unknown>),
   set: (key: Deno.KvKey, value: unknown) => {
     kvStore.set(keyToString(key), value);
     return Promise.resolve({ ok: true } as const);
@@ -59,7 +61,7 @@ const kvStub = {
     kvStore.delete(keyToString(key));
     return Promise.resolve();
   },
-  list: async function* (selector: Deno.KvListSelector, options: Deno.KvListOptions = {}) {
+  list: function* (selector: Deno.KvListSelector, options: Deno.KvListOptions = {}) {
     const prefix = "prefix" in selector ? selector.prefix : [];
     let entries = [...kvStore.entries()]
       .map(([encodedKey, value]) => ({
@@ -74,7 +76,7 @@ const kvStub = {
     for (const entry of entries) yield entry;
   },
   atomic: () => {
-    const ops: Array<{ type: "set" | "delete"; key: Deno.KvKey; value?: unknown }> = [];
+    const ops: { type: "set" | "delete"; key: Deno.KvKey; value?: unknown }[] = [];
     const chain = {
       check: () => chain,
       set: (key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }) => {
@@ -136,16 +138,10 @@ Deno.test("subscription reset settings require admin authentication", async () =
     await response.body?.cancel();
   }
 });
-const {
-  getKernelUsageLimitSnapshot,
-  kernelRepoPolicyKey,
-  kernelRepoWindowKey,
-} = await import("../src/kernel_quota_v2.ts");
+const { getKernelUsageLimitSnapshot, kernelRepoPolicyKey, kernelRepoWindowKey } = await import("../src/kernel_quota_v2.ts");
 const { listApiKeyRequestLogs, recordApiKeyRequestLog } = await import("../src/analytics.ts");
 const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
-const { buildRuntimeConfig, cacheRuntimeConfig, resetRuntimeConfigCacheForTest } = await import(
-  "../src/runtime_config.ts"
-);
+const { buildRuntimeConfig, cacheRuntimeConfig, resetRuntimeConfigCacheForTest } = await import("../src/runtime_config.ts");
 resetRuntimeCache = resetRuntimeConfigCacheForTest;
 resetAuthCache = resetCodexAuthCacheForTest;
 
@@ -203,40 +199,30 @@ Deno.test("API key list reports committed V3 usage and ignores legacy counters",
     paid_fallback_quota_per_credit: 0,
     paid_fallback_pricing_checked_at_ms: null,
   });
-  kvStore.set(
-    keyToString(["uos_ai", "api_key_usage", "v2", id, String(windowMs), windowStartMs]),
-    { value: 3n } as Deno.KvU64,
-  );
-  kvStore.set(
-    keyToString(["uos_ai", "api_key_usage", "v3", "window", id, `v3:${windowMs}`, windowStartMs]),
-    {
-      v: 3,
-      key_id: id,
-      policy_version: `v3:${windowMs}`,
-      window_start_ms: windowStartMs,
-      window_reset_at_ms: usageResetAtMs,
-      committed_requests: 4,
-      reserved_requests: 1,
-      updated_at_ms: windowStartMs,
-    },
-  );
+  kvStore.set(keyToString(["uos_ai", "api_key_usage", "v2", id, String(windowMs), windowStartMs]), { value: 3n } as Deno.KvU64);
+  kvStore.set(keyToString(["uos_ai", "api_key_usage", "v3", "window", id, `v3:${windowMs}`, windowStartMs]), {
+    v: 3,
+    key_id: id,
+    policy_version: `v3:${windowMs}`,
+    window_start_ms: windowStartMs,
+    window_reset_at_ms: usageResetAtMs,
+    committed_requests: 4,
+    reserved_requests: 1,
+    updated_at_ms: windowStartMs,
+  });
 
-  const withoutUsage = await handleAdminApiKeysList(
-    new Request("https://ai.ubq.fi/admin/api-keys"),
-  );
+  const withoutUsage = await handleAdminApiKeysList(new Request("https://ai.ubq.fi/admin/api-keys"));
   assert.equal(withoutUsage.status, 200);
-  const withoutPayload = await withoutUsage.json() as { data?: Array<Record<string, unknown>> };
+  const withoutPayload = (await withoutUsage.json()) as { data?: Record<string, unknown>[] };
   assert.equal(Object.prototype.hasOwnProperty.call(withoutPayload.data?.[0] ?? {}, "usage_requests"), false);
 
-  const withUsage = await handleAdminApiKeysList(
-    new Request("https://ai.ubq.fi/admin/api-keys?include_usage=1"),
-  );
+  const withUsage = await handleAdminApiKeysList(new Request("https://ai.ubq.fi/admin/api-keys?include_usage=1"));
   assert.equal(withUsage.status, 200);
-  const withPayload = await withUsage.json() as {
-    data?: Array<{ usage_requests?: number; usage?: { request_count?: number } }>;
+  const withPayload = (await withUsage.json()) as {
+    data?: { usage_requests?: number; usage?: { request_count?: number } }[];
   };
   assert.equal(withPayload.data?.[0]?.usage_requests, 4);
-  assert.equal(withPayload.data?.[0]?.usage?.request_count, 4);
+  assert.equal(withPayload.data[0]?.usage?.request_count, 4);
 });
 
 Deno.test("API key list projects current paid fallback totals from V3 only", async () => {
@@ -299,8 +285,8 @@ Deno.test("API key list projects current paid fallback totals from V3 only", asy
 
   const response = await handleAdminApiKeysList(new Request("https://ai.ubq.fi/admin/api-keys"));
   assert.equal(response.status, 200);
-  const payload = await response.json() as {
-    data?: Array<{
+  const payload = (await response.json()) as {
+    data?: {
       paid_fallback_limit_credits?: number;
       paid_fallback_spent_credits?: number;
       paid_fallback_reserved_credits?: number;
@@ -309,18 +295,18 @@ Deno.test("API key list projects current paid fallback totals from V3 only", asy
         metered?: { request_count?: number; total_tokens?: number; spend_microcredits?: number };
         surplus?: { request_count?: number; total_tokens?: number; spend_microcredits?: number };
       };
-    }>;
+    }[];
   };
   assert.equal(payload.data?.[0]?.paid_fallback_limit_credits, 2);
-  assert.equal(payload.data?.[0]?.paid_fallback_spent_credits, 0.028992);
-  assert.equal(payload.data?.[0]?.paid_fallback_reserved_credits, 0.125);
-  assert.equal(payload.data?.[0]?.paid_fallback_pending_count, 1);
-  assert.equal(payload.data?.[0]?.paid_fallback_provider_usage?.metered?.request_count, 1);
-  assert.equal(payload.data?.[0]?.paid_fallback_provider_usage?.metered?.total_tokens, 7);
-  assert.equal(payload.data?.[0]?.paid_fallback_provider_usage?.metered?.spend_microcredits, 500);
-  assert.equal(payload.data?.[0]?.paid_fallback_provider_usage?.surplus?.request_count, 1);
-  assert.equal(payload.data?.[0]?.paid_fallback_provider_usage?.surplus?.total_tokens, 18);
-  assert.equal(payload.data?.[0]?.paid_fallback_provider_usage?.surplus?.spend_microcredits, 700);
+  assert.equal(payload.data[0]?.paid_fallback_spent_credits, 0.028992);
+  assert.equal(payload.data[0]?.paid_fallback_reserved_credits, 0.125);
+  assert.equal(payload.data[0]?.paid_fallback_pending_count, 1);
+  assert.equal(payload.data[0]?.paid_fallback_provider_usage?.metered?.request_count, 1);
+  assert.equal(payload.data[0]?.paid_fallback_provider_usage?.metered?.total_tokens, 7);
+  assert.equal(payload.data[0]?.paid_fallback_provider_usage?.metered?.spend_microcredits, 500);
+  assert.equal(payload.data[0]?.paid_fallback_provider_usage?.surplus?.request_count, 1);
+  assert.equal(payload.data[0]?.paid_fallback_provider_usage?.surplus?.total_tokens, 18);
+  assert.equal(payload.data[0]?.paid_fallback_provider_usage?.surplus?.spend_microcredits, 700);
 });
 
 Deno.test("API key limit edits retain V3 usage while resets create a fresh aggregate and reject live leases", async () => {
@@ -331,25 +317,17 @@ Deno.test("API key limit edits retain V3 usage while resets create a fresh aggre
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "V3 reset", token, usage_limit_requests: 8, window_ms: 60_000 }),
-    }),
+    })
   );
   assert.equal(createdResponse.status, 200);
-  const created = await createdResponse.json() as { id: string };
+  const created = (await createdResponse.json()) as { id: string };
   const stored = kvStore.get(keyToString(["ubq_ai", "api_keys", "id", created.id])) as {
     hash: string;
     window_ms: number;
     usage_reset_at_ms: number;
   };
   const oldStart = stored.usage_reset_at_ms - stored.window_ms;
-  const oldWindowKey = [
-    "uos_ai",
-    "api_key_usage",
-    "v3",
-    "window",
-    created.id,
-    `v3:${stored.window_ms}`,
-    oldStart,
-  ] as const;
+  const oldWindowKey = ["uos_ai", "api_key_usage", "v3", "window", created.id, `v3:${stored.window_ms}`, oldStart] as const;
   const oldWindow = kvStore.get(keyToString(oldWindowKey)) as Record<string, unknown>;
   kvStore.set(keyToString(oldWindowKey), { ...oldWindow, committed_requests: 2 });
 
@@ -358,10 +336,10 @@ Deno.test("API key limit edits retain V3 usage while resets create a fresh aggre
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: created.id, usage_limit_requests: 5 }),
-    }),
+    })
   );
   assert.equal(limitOnly.status, 200);
-  const limitPayload = await limitOnly.json() as { usage_requests?: number };
+  const limitPayload = (await limitOnly.json()) as { usage_requests?: number };
   assert.equal(limitPayload.usage_requests, 2);
   assert.equal((kvStore.get(keyToString(oldWindowKey)) as { committed_requests?: number }).committed_requests, 2);
 
@@ -370,10 +348,10 @@ Deno.test("API key limit edits retain V3 usage while resets create a fresh aggre
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: created.id, reset_usage: true }),
-    }),
+    })
   );
   assert.equal(reset.status, 200);
-  const resetPayload = await reset.json() as { usage_requests?: number; usage_reset_at_ms?: number };
+  const resetPayload = (await reset.json()) as { usage_requests?: number; usage_reset_at_ms?: number };
   assert.equal(resetPayload.usage_requests, 0);
   assert.notEqual(resetPayload.usage_reset_at_ms, stored.usage_reset_at_ms);
 
@@ -382,48 +360,28 @@ Deno.test("API key limit edits retain V3 usage while resets create a fresh aggre
     usage_reset_at_ms: number;
   };
   const resetStart = resetRecord.usage_reset_at_ms - resetRecord.window_ms;
-  const resetWindowKey = [
-    "uos_ai",
-    "api_key_usage",
-    "v3",
-    "window",
-    created.id,
-    `v3:${resetRecord.window_ms}`,
-    resetStart,
-  ] as const;
+  const resetWindowKey = ["uos_ai", "api_key_usage", "v3", "window", created.id, `v3:${resetRecord.window_ms}`, resetStart] as const;
   const resetWindow = kvStore.get(keyToString(resetWindowKey)) as Record<string, unknown>;
   kvStore.set(keyToString(resetWindowKey), { ...resetWindow, reserved_requests: 1 });
-  kvStore.set(
-    keyToString([
-      "uos_ai",
-      "api_key_usage",
-      "v3",
-      "request",
-      created.id,
-      `v3:${resetRecord.window_ms}`,
-      resetStart,
-      "live-reset-lease",
-    ]),
-    {
-      v: 3,
-      key_id: created.id,
-      request_id: "live-reset-lease",
-      route: "responses",
-      state: "reserved",
-      reserved_at_ms: Date.now(),
-      lease_expires_at_ms: Date.now() + 60_000,
-      provider: null,
-      dispatched_at_ms: null,
-      released_at_ms: null,
-      release_reason: null,
-    },
-  );
+  kvStore.set(keyToString(["uos_ai", "api_key_usage", "v3", "request", created.id, `v3:${resetRecord.window_ms}`, resetStart, "live-reset-lease"]), {
+    v: 3,
+    key_id: created.id,
+    request_id: "live-reset-lease",
+    route: "responses",
+    state: "reserved",
+    reserved_at_ms: Date.now(),
+    lease_expires_at_ms: Date.now() + 60_000,
+    provider: null,
+    dispatched_at_ms: null,
+    released_at_ms: null,
+    release_reason: null,
+  });
   const blocked = await handleAdminApiKeysUpdate(
     new Request("https://ai.ubq.fi/admin/api-keys", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: created.id, reset_usage: true }),
-    }),
+    })
   );
   assert.equal(blocked.status, 409);
 });
@@ -431,13 +389,15 @@ Deno.test("API key limit edits retain V3 usage while resets create a fresh aggre
 Deno.test("admin Codex model GET returns the full catalog rather than the compact runtime record", async () => {
   kvStore.clear();
   seedCodexSnapshot({
-    models: [{
-      slug: "gpt-admin-full-catalog",
-      display_name: "GPT Admin Full Catalog",
-      description: "full catalog description",
-      context_window: 272_000,
-      supported_reasoning_levels: ["none", "high"],
-    }],
+    models: [
+      {
+        slug: "gpt-admin-full-catalog",
+        display_name: "GPT Admin Full Catalog",
+        description: "full catalog description",
+        context_window: 272_000,
+        supported_reasoning_levels: ["none", "high"],
+      },
+    ],
     source: "chatgpt_codex",
     client_version: "0.201.0",
     updated_at_ms: Date.now(),
@@ -445,11 +405,11 @@ Deno.test("admin Codex model GET returns the full catalog rather than the compac
 
   const response = await handleAdminCodexModelsGet();
   assert.equal(response.status, 200);
-  const payload = await response.json() as {
-    data?: { models?: Array<{ description?: string; context_window?: number }> };
+  const payload = (await response.json()) as {
+    data?: { models?: { description?: string; context_window?: number }[] };
   };
   assert.equal(payload.data?.models?.[0]?.description, "full catalog description");
-  assert.equal(payload.data?.models?.[0]?.context_window, 272_000);
+  assert.equal(payload.data.models[0]?.context_window, 272_000);
 });
 
 Deno.test("admin Codex model update rejects a catalog whose compact runtime record exceeds 4 KiB", async () => {
@@ -462,51 +422,48 @@ Deno.test("admin Codex model update rejects a catalog whose compact runtime reco
         slug: `gpt-admin-runtime-${String(index).padStart(3, "0")}`,
         supported_reasoning_levels: ["none", "low", "medium", "high", "xhigh", "ultra"],
       })),
-    }),
+    })
   );
 
   assert.equal(response.status, 413);
-  const payload = await response.json() as { error?: { code?: string; message?: string } };
+  const payload = (await response.json()) as { error?: { code?: string; message?: string } };
   assert.equal(payload.error?.code, "runtime_config_invalid");
-  assert.match(payload.error?.message ?? "", /runtime config is too large/);
+  assert.match(payload.error.message ?? "", /runtime config is too large/);
   assert.equal(kvStore.has(keyToString(["ubq_ai", "codex_models"])), false);
   assert.equal(kvStore.has(keyToString(["uos_ai", "runtime_config", "v2"])), false);
 });
 
 Deno.test("admin defaults includes serializable Metered quota diagnostics without credentials", async () => {
   kvStore.clear();
-  const response = await handleAdminDefaults(
-    new Request("https://ai.ubq.fi/admin/defaults"),
-    {
-      getMeteredQuotaDiagnostics: () =>
-        Promise.resolve({
-          configured: true,
-          available: true,
-          cache_state: "fresh",
-          confidence: "refill_observed",
-          balance_credits: 75,
-          baseline_credits: 100,
-          remaining_percent: 75,
-          used_percent: 25,
-          observed_at_ms: 2_000_000,
-          cycle_started_at_ms: 1_000_000,
-          last_known_debits_credits: 1,
-          last_inferred_credit_credits: 50,
-          last_credit_at_ms: 1_500_000,
-          latest_refill_id: "refill-2",
-          latest_refill_amount_credits: 50,
-          latest_refill_completed_at_ms: 1_400_000,
-        }),
-    },
-  );
+  const response = await handleAdminDefaults(new Request("https://ai.ubq.fi/admin/defaults"), {
+    getMeteredQuotaDiagnostics: () =>
+      Promise.resolve({
+        configured: true,
+        available: true,
+        cache_state: "fresh",
+        confidence: "refill_observed",
+        balance_credits: 75,
+        baseline_credits: 100,
+        remaining_percent: 75,
+        used_percent: 25,
+        observed_at_ms: 2_000_000,
+        cycle_started_at_ms: 1_000_000,
+        last_known_debits_credits: 1,
+        last_inferred_credit_credits: 50,
+        last_credit_at_ms: 1_500_000,
+        latest_refill_id: "refill-2",
+        latest_refill_amount_credits: 50,
+        latest_refill_completed_at_ms: 1_400_000,
+      }),
+  });
 
   assert.equal(response.status, 200);
-  const payload = await response.json() as Record<string, unknown> & {
+  const payload = (await response.json()) as Record<string, unknown> & {
     metered_quota?: Record<string, unknown>;
   };
   assert.equal(Object.prototype.hasOwnProperty.call(payload, "ok"), false);
   assert.equal(payload.metered_quota?.remaining_percent, 75);
-  assert.equal(payload.metered_quota?.latest_refill_id, "refill-2");
+  assert.equal(payload.metered_quota.latest_refill_id, "refill-2");
   assert.equal(Object.prototype.hasOwnProperty.call(payload.metered_quota ?? {}, "system_token"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(payload.metered_quota ?? {}, "user_id"), false);
 });
@@ -522,11 +479,11 @@ Deno.test("admin defaults permits kernel-only updates without runtime configurat
         kernel_policy_limit_requests: 17,
         kernel_policy_window_ms: 60_000,
       }),
-    }),
+    })
   );
 
   assert.equal(response.status, 200);
-  const payload = await response.json() as {
+  const payload = (await response.json()) as {
     defaults?: {
       model?: string;
       reasoning_effort?: string;
@@ -550,7 +507,7 @@ Deno.test("admin defaults permits kernel-only updates without runtime configurat
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
-      }),
+      })
     );
     assert.equal(guardedResponse.status, 503);
   }
@@ -561,12 +518,14 @@ Deno.test("admin defaults rejects late invalid fields without partial writes", a
   seedCodexSnapshot({
     source: "codex_cli",
     updated_at_ms: 123,
-    models: [{
-      slug: "gpt-5.5",
-      display_name: "GPT-5.5",
-      default_reasoning_level: "medium",
-      supported_reasoning_levels: ["none", "medium"],
-    }],
+    models: [
+      {
+        slug: "gpt-5.5",
+        display_name: "GPT-5.5",
+        default_reasoning_level: "medium",
+        supported_reasoning_levels: ["none", "medium"],
+      },
+    ],
   });
   const before = JSON.stringify([...kvStore.entries()]);
 
@@ -575,7 +534,7 @@ Deno.test("admin defaults rejects late invalid fields without partial writes", a
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: "gpt-5.5", kernel_policy_window_ms: 0 }),
-    }),
+    })
   );
 
   assert.equal(response.status, 400);
@@ -596,7 +555,7 @@ Deno.test("admin kernel quota policies preserve usage until an explicit reset an
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ owner, repo, usage_limit_requests: 5, window_ms: 60_000 }),
-    }),
+    })
   );
   assert.equal(set.status, 200);
   const initialWindow = kvStore.get(keyToString(windowKey)) as Record<string, unknown>;
@@ -607,7 +566,7 @@ Deno.test("admin kernel quota policies preserve usage until an explicit reset an
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ owner, repo, usage_limit_requests: 3, reset_usage: false }),
-    }),
+    })
   );
   assert.equal(limitOnly.status, 200);
   assert.equal((kvStore.get(keyToString(policyKey)) as { usage_limit_requests?: number }).usage_limit_requests, 3);
@@ -618,7 +577,7 @@ Deno.test("admin kernel quota policies preserve usage until an explicit reset an
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ owner, repo, usage_limit_requests: 3, reset_usage: "false" }),
-    }),
+    })
   );
   assert.equal(invalidReset.status, 400);
   assert.equal((kvStore.get(keyToString(windowKey)) as { usage_requests?: number }).usage_requests, 4);
@@ -628,7 +587,7 @@ Deno.test("admin kernel quota policies preserve usage until an explicit reset an
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ owner, repo, usage_limit_requests: 3, reset_usage: true }),
-    }),
+    })
   );
   assert.equal(reset.status, 200);
   assert.equal((kvStore.get(keyToString(windowKey)) as { usage_requests?: number }).usage_requests, 0);
@@ -640,15 +599,15 @@ Deno.test("admin kernel quota policies preserve usage until an explicit reset an
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ owner, repo }),
-    }),
+    })
   );
   assert.equal(deleted.status, 200);
   assert.equal(kvStore.has(keyToString(policyKey)), false);
   assert.equal((kvStore.get(keyToString(windowKey)) as { usage_requests?: number }).usage_requests, 2);
   const snapshot = await getKernelUsageLimitSnapshot(owner, repo);
   assert.equal(snapshot?.source, "default");
-  assert.equal(snapshot?.record.usage_requests, 2);
-  assert.equal(snapshot?.record.usage_limit_requests, 9);
+  assert.equal(snapshot.record.usage_requests, 2);
+  assert.equal(snapshot.record.usage_limit_requests, 9);
 });
 
 const meteredMetadataResponse = (url: string): Response => {
@@ -664,7 +623,7 @@ const meteredMetadataResponse = (url: string): Response => {
           model_price: {},
         },
       }),
-      { status: 200, headers: { "Content-Type": "application/json" } },
+      { status: 200, headers: { "Content-Type": "application/json" } }
     );
   }
   if (url === "https://api.openlux.ai/api/status") {
@@ -673,7 +632,7 @@ const meteredMetadataResponse = (url: string): Response => {
         success: true,
         data: { setup: true, quota_per_unit: 500_000 },
       }),
-      { status: 200, headers: { "Content-Type": "application/json" } },
+      { status: 200, headers: { "Content-Type": "application/json" } }
     );
   }
   throw new Error(`Unexpected Metered metadata URL: ${url}`);
@@ -685,41 +644,45 @@ Deno.test("admin codex auth stores live upstream model catalog as source of trut
   const fetchUrls: string[] = [];
 
   globalThis.fetch = (input: RequestInfo | URL) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = urlOf(input);
     fetchUrls.push(url);
     return Promise.resolve(
       new Response(
         JSON.stringify({
-          models: [{
-            slug: "gpt-5.3-codex-spark",
-            display_name: "GPT-5.3-Codex-Spark",
-            visibility: "list",
-            supported_in_api: false,
-            default_reasoning_level: "high",
-            supported_reasoning_levels: [
-              { effort: "low", description: "Fast responses" },
-              { effort: "medium", description: "Balanced reasoning" },
-              { effort: "high", description: "Greater reasoning depth" },
-              { effort: "xhigh", description: "Extra high reasoning depth" },
-              { effort: "max", description: "Maximum reasoning depth" },
-              { effort: "ultra", description: "Maximum reasoning with automatic task delegation" },
-            ],
-          }, {
-            slug: "codex-auto-review",
-            display_name: "Codex Auto Review",
-            visibility: "hide",
-            supported_in_api: true,
-          }, {
-            slug: "codex-internal-evals",
-            visibility: "hide",
-            supported_in_api: false,
-          }],
+          models: [
+            {
+              slug: "gpt-5.3-codex-spark",
+              display_name: "GPT-5.3-Codex-Spark",
+              visibility: "list",
+              supported_in_api: false,
+              default_reasoning_level: "high",
+              supported_reasoning_levels: [
+                { effort: "low", description: "Fast responses" },
+                { effort: "medium", description: "Balanced reasoning" },
+                { effort: "high", description: "Greater reasoning depth" },
+                { effort: "xhigh", description: "Extra high reasoning depth" },
+                { effort: "max", description: "Maximum reasoning depth" },
+                { effort: "ultra", description: "Maximum reasoning with automatic task delegation" },
+              ],
+            },
+            {
+              slug: "codex-auto-review",
+              display_name: "Codex Auto Review",
+              visibility: "hide",
+              supported_in_api: true,
+            },
+            {
+              slug: "codex-internal-evals",
+              visibility: "hide",
+              supported_in_api: false,
+            },
+          ],
         }),
         {
           status: 200,
           headers: { "Content-Type": "application/json" },
-        },
-      ),
+        }
+      )
     );
   };
 
@@ -731,63 +694,61 @@ Deno.test("admin codex auth stores live upstream model catalog as source of trut
           source: "codex_cli",
           client_version: "0.126.0",
           updated_at_ms: 123,
-          models: [{
-            slug: "stale-local-model",
-            display_name: "Stale Local Model",
-            context_window: 272000,
-            max_context_window: 1000000,
-            auto_compact_token_limit: null,
-            supported_reasoning_levels: [{ effort: null }, "low", "medium", "high", "xhigh"],
-          }, {
-            slug: "codex-auto-review",
-            display_name: "Codex Auto Review",
-            visibility: "hide",
-            supported_in_api: true,
-          }],
+          models: [
+            {
+              slug: "stale-local-model",
+              display_name: "Stale Local Model",
+              context_window: 272000,
+              max_context_window: 1000000,
+              auto_compact_token_limit: null,
+              supported_reasoning_levels: [{ effort: null }, "low", "medium", "high", "xhigh"],
+            },
+            {
+              slug: "codex-auto-review",
+              display_name: "Codex Auto Review",
+              visibility: "hide",
+              supported_in_api: true,
+            },
+          ],
         },
-      }),
+      })
     );
 
     assert.equal(response.status, 200);
-    const payload = await response.json() as { models?: { count?: number; source?: string } };
+    const payload = (await response.json()) as { models?: { count?: number; source?: string } };
     assert.equal(payload.models?.count, 2);
-    assert.equal(payload.models?.source, "chatgpt_codex");
+    assert.equal(payload.models.source, "chatgpt_codex");
     assert.equal(fetchUrls.length, 1);
 
     const stored = kvStore.get(keyToString(["ubq_ai", "codex_models"])) as
       | {
-        source?: string;
-        client_version?: string;
-        models?: Array<{
-          slug?: string;
-          context_window?: number;
-          max_context_window?: number;
-          auto_compact_token_limit?: number | null;
-          supported_in_api?: boolean;
-          visibility?: string;
-          default_reasoning_level?: string;
-          supported_reasoning_levels?: string[];
-          reasoning_effort_wire_map?: Record<string, string>;
-        }>;
-      }
+          source?: string;
+          client_version?: string;
+          models?: {
+            slug?: string;
+            context_window?: number;
+            max_context_window?: number;
+            auto_compact_token_limit?: number | null;
+            supported_in_api?: boolean;
+            visibility?: string;
+            default_reasoning_level?: string;
+            supported_reasoning_levels?: string[];
+            reasoning_effort_wire_map?: Record<string, string>;
+          }[];
+        }
       | undefined;
     assert.equal(stored?.source, "chatgpt_codex");
-    assert.equal(stored?.client_version, "0.126.0");
-    assert.deepEqual(stored?.models?.map((model) => model.slug), ["gpt-5.3-codex-spark", "codex-auto-review"]);
-    assert.equal(stored?.models?.[0]?.supported_in_api, false);
-    assert.equal(stored?.models?.[0]?.default_reasoning_level, "high");
-    assert.deepEqual(stored?.models?.[0]?.supported_reasoning_levels, [
-      "none",
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max",
-      "ultra",
-    ]);
-    assert.deepEqual(stored?.models?.[0]?.reasoning_effort_wire_map, { ultra: "max" });
-    assert.equal(stored?.models?.[1]?.visibility, "hide");
-    assert.equal(stored?.models?.[1]?.supported_in_api, true);
+    assert.equal(stored.client_version, "0.126.0");
+    assert.deepEqual(
+      stored.models?.map((model) => model.slug),
+      ["gpt-5.3-codex-spark", "codex-auto-review"]
+    );
+    assert.equal(stored.models[0]?.supported_in_api, false);
+    assert.equal(stored.models[0]?.default_reasoning_level, "high");
+    assert.deepEqual(stored.models[0]?.supported_reasoning_levels, ["none", "low", "medium", "high", "xhigh", "max", "ultra"]);
+    assert.deepEqual(stored.models[0]?.reasoning_effort_wire_map, { ultra: "max" });
+    assert.equal(stored.models[1]?.visibility, "hide");
+    assert.equal(stored.models[1]?.supported_in_api, true);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -801,14 +762,17 @@ Deno.test("admin codex auth stores live model catalog without caller model snaps
       new Response(JSON.stringify({ models: [{ slug: "gpt-5.3-codex-spark", visibility: "list" }] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
-      }),
+      })
     );
 
   try {
     const response = await handleAdminCodexAuth(makeRequest({ auth: authPayload }));
     assert.equal(response.status, 200);
-    const stored = kvStore.get(keyToString(["ubq_ai", "codex_models"])) as { models?: Array<{ slug?: string }> };
-    assert.deepEqual(stored?.models?.map((model) => model.slug), ["gpt-5.3-codex-spark"]);
+    const stored = kvStore.get(keyToString(["ubq_ai", "codex_models"])) as { models?: { slug?: string }[] };
+    assert.deepEqual(
+      stored.models?.map((model) => model.slug),
+      ["gpt-5.3-codex-spark"]
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -825,12 +789,14 @@ Deno.test("admin Codex auth accepts authenticated 429 and preserves the last kno
   seedCodexSnapshot(snapshot);
   kvStore.set(keyToString(["ubq_ai", "codex_catalog_auth_generation"]), "existing-generation");
   kvStore.set(keyToString(["ubq_ai", "codex_auth"]), {
-    accounts: [{
-      access_token: "limited-access",
-      refresh_token: "limited-refresh",
-      account_id: "limited-account",
-      updated_at_ms: 100,
-    }],
+    accounts: [
+      {
+        access_token: "limited-access",
+        refresh_token: "limited-refresh",
+        account_id: "limited-account",
+        updated_at_ms: 100,
+      },
+    ],
     updated_at_ms: 100,
   });
 
@@ -840,13 +806,13 @@ Deno.test("admin Codex auth accepts authenticated 429 and preserves the last kno
       new Response('{"statusCode":429,"description":"Too Many Requests"}', {
         status: 429,
         headers: { "Content-Type": "application/json" },
-      }),
+      })
     );
 
   try {
     const response = await handleAdminCodexAuth(makeRequest({ auth: authPayload }));
     assert.equal(response.status, 200);
-    const payload = await response.json() as {
+    const payload = (await response.json()) as {
       account_count?: number;
       upstream_status?: number;
       catalog_seeded?: boolean;
@@ -857,10 +823,7 @@ Deno.test("admin Codex auth accepts authenticated 429 and preserves the last kno
     assert.equal(payload.catalog_seeded, false);
     assert.equal(payload.normalized_snapshot_updated, false);
     assert.deepEqual(kvStore.get(keyToString(["ubq_ai", "codex_models"])), snapshot);
-    assert.equal(
-      kvStore.get(keyToString(["ubq_ai", "codex_catalog_auth_generation"])),
-      "existing-generation",
-    );
+    assert.equal(kvStore.get(keyToString(["ubq_ai", "codex_catalog_auth_generation"])), "existing-generation");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -874,7 +837,7 @@ Deno.test("admin Codex auth adds, rotates, and caps the two-account pool", async
       new Response(JSON.stringify({ models: [{ slug: "gpt-5.5" }] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
-      }),
+      })
     );
   const upload = (accountId: string, accessToken: string) =>
     handleAdminCodexAuth(
@@ -886,36 +849,39 @@ Deno.test("admin Codex auth adds, rotates, and caps the two-account pool", async
             account_id: accountId,
           },
         },
-      }),
+      })
     );
 
   try {
     assert.equal((await upload("account-one", "access-one")).status, 200);
     const second = await upload("account-two", "access-two");
     assert.equal(second.status, 200);
-    const secondPayload = await second.json() as { account_count?: number; account_ids?: string[] };
+    const secondPayload = (await second.json()) as { account_count?: number; account_ids?: string[] };
     assert.equal(secondPayload.account_count, 2);
     assert.deepEqual(secondPayload.account_ids, ["account-one", "account-two"]);
 
     assert.equal((await upload("account-one", "access-one-rotated")).status, 200);
     const poolAfterRotation = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as {
-      accounts?: Array<{ account_id?: string; access_token?: string }>;
+      accounts?: { account_id?: string; access_token?: string }[];
     };
-    assert.deepEqual(poolAfterRotation.accounts?.map((account) => account.account_id), [
-      "account-one",
-      "account-two",
-    ]);
-    assert.equal(poolAfterRotation.accounts?.[0]?.access_token, "access-one-rotated");
-    assert.equal(poolAfterRotation.accounts?.[1]?.access_token, "access-two");
+    assert.deepEqual(
+      poolAfterRotation.accounts?.map((account) => account.account_id),
+      ["account-one", "account-two"]
+    );
+    assert.equal(poolAfterRotation.accounts[0]?.access_token, "access-one-rotated");
+    assert.equal(poolAfterRotation.accounts[1]?.access_token, "access-two");
 
     const third = await upload("account-three", "access-three");
     assert.equal(third.status, 409);
-    const thirdPayload = await third.json() as { error?: { code?: string } };
+    const thirdPayload = (await third.json()) as { error?: { code?: string } };
     assert.equal(thirdPayload.error?.code, "codex_auth_pool_full");
     const poolAfterThird = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as {
-      accounts?: Array<{ account_id?: string }>;
+      accounts?: { account_id?: string }[];
     };
-    assert.deepEqual(poolAfterThird.accounts?.map((account) => account.account_id), ["account-one", "account-two"]);
+    assert.deepEqual(
+      poolAfterThird.accounts?.map((account) => account.account_id),
+      ["account-one", "account-two"]
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -925,31 +891,35 @@ Deno.test("admin codex auth rotation replaces a prior account snapshot even at a
   kvStore.clear();
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (input: RequestInfo | URL) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = urlOf(input);
     const version = new URL(url).searchParams.get("client_version") ?? "missing";
     return Promise.resolve(
       new Response(JSON.stringify({ models: [{ slug: `gpt-${version}`, rich_field: { preserved: true } }] }), {
         status: 200,
         headers: { "Content-Type": "application/json", ETag: `"${version}"` },
-      }),
+      })
     );
   };
 
   try {
-    const newer = await handleAdminCodexAuth(makeRequest({
-      auth: authPayload,
-      models: { client_version: "0.201.0" },
-    }));
+    const newer = await handleAdminCodexAuth(
+      makeRequest({
+        auth: authPayload,
+        models: { client_version: "0.201.0" },
+      })
+    );
     assert.equal(newer.status, 200);
     const firstGeneration = kvStore.get(keyToString(["ubq_ai", "codex_catalog_auth_generation"]));
     assert.equal(typeof firstGeneration, "string");
 
-    const older = await handleAdminCodexAuth(makeRequest({
-      auth: authPayload,
-      models: { client_version: "0.200.0" },
-    }));
+    const older = await handleAdminCodexAuth(
+      makeRequest({
+        auth: authPayload,
+        models: { client_version: "0.200.0" },
+      })
+    );
     assert.equal(older.status, 200);
-    const olderPayload = await older.json() as { normalized_snapshot_updated?: boolean; ok?: boolean };
+    const olderPayload = (await older.json()) as { normalized_snapshot_updated?: boolean; ok?: boolean };
     assert.equal(olderPayload.normalized_snapshot_updated, true);
     assert.equal(Object.prototype.hasOwnProperty.call(olderPayload, "ok"), false);
 
@@ -958,7 +928,7 @@ Deno.test("admin codex auth rotation replaces a prior account snapshot even at a
     assert.notEqual(secondGeneration, firstGeneration);
     const snapshot = kvStore.get(keyToString(["ubq_ai", "codex_models"])) as {
       client_version?: string;
-      models?: Array<{ slug?: string }>;
+      models?: { slug?: string }[];
     };
     assert.equal(snapshot.client_version, "0.200.0");
     assert.equal(snapshot.models?.[0]?.slug, "gpt-0.200.0");
@@ -983,7 +953,7 @@ Deno.test("admin codex auth retries transient snapshot contention", async () => 
       new Response(JSON.stringify({ models: [{ slug: "gpt-5.5" }] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
-      }),
+      })
     );
 
   try {
@@ -996,7 +966,7 @@ Deno.test("admin codex auth retries transient snapshot contention", async () => 
           updated_at_ms: 123,
           models: [{ slug: "gpt-5.5", display_name: "GPT-5.5" }],
         },
-      }),
+      })
     );
 
     assert.equal(response.status, 200);
@@ -1017,7 +987,7 @@ Deno.test("admin codex auth fails atomically after snapshot contention retries a
       new Response(JSON.stringify({ models: [{ slug: "gpt-5.5" }] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
-      }),
+      })
     );
 
   try {
@@ -1025,7 +995,7 @@ Deno.test("admin codex auth fails atomically after snapshot contention retries a
       makeRequest({
         auth: authPayload,
         models: { client_version: "0.126.0" },
-      }),
+      })
     );
 
     assert.equal(response.status, 500);
@@ -1044,11 +1014,11 @@ Deno.test("admin KV migration import stays dry-run unless write is explicit", as
     new Request("https://ai.ubq.fi/admin/kv-migration/import?profile=prod&dry_run=false&overwrite=true", {
       method: "POST",
       body: stringEntryLine(["default", "model"], "gpt-5.5"),
-    }),
+    })
   );
 
   assert.equal(response.status, 200);
-  const payload = await response.json() as { dry_run?: boolean; imported?: number };
+  const payload = (await response.json()) as { dry_run?: boolean; imported?: number };
   assert.equal(payload.dry_run, true);
   assert.equal(payload.imported, 1);
   assert.equal(kvStore.has(keyToString(["default", "model"])), false);
@@ -1060,11 +1030,11 @@ Deno.test("admin KV migration import reports partial writes with HTTP 422", asyn
     new Request("https://ai.ubq.fi/admin/kv-migration/import?profile=prod&write=1&overwrite=true", {
       method: "POST",
       body: `${stringEntryLine(["default", "model"], "gpt-5.5")}\n{not-json}`,
-    }),
+    })
   );
 
   assert.equal(response.status, 422);
-  const payload = await response.json() as { imported?: number; errors?: number };
+  const payload = (await response.json()) as { imported?: number; errors?: number };
   assert.equal(payload.imported, 1);
   assert.equal(payload.errors, 1);
   assert.equal(kvStore.get(keyToString(["default", "model"])), "gpt-5.5");
@@ -1075,12 +1045,14 @@ Deno.test("admin defaults accepts none when the model supports none", async () =
   seedCodexSnapshot({
     source: "codex_cli",
     updated_at_ms: 123,
-    models: [{
-      slug: "gpt-5.5",
-      display_name: "GPT-5.5",
-      default_reasoning_level: "medium",
-      supported_reasoning_levels: ["none", "low", "medium", "high", "xhigh"],
-    }],
+    models: [
+      {
+        slug: "gpt-5.5",
+        display_name: "GPT-5.5",
+        default_reasoning_level: "medium",
+        supported_reasoning_levels: ["none", "low", "medium", "high", "xhigh"],
+      },
+    ],
   });
 
   const response = await handleAdminDefaults(
@@ -1091,17 +1063,13 @@ Deno.test("admin defaults accepts none when the model supports none", async () =
         model: "gpt-5.5",
         reasoning_effort: "none",
       }),
-    }),
+    })
   );
 
   assert.equal(response.status, 200);
-  const payload = await response.json() as { defaults?: { reasoning_effort?: string } };
+  const payload = (await response.json()) as { defaults?: { reasoning_effort?: string } };
   assert.equal(payload.defaults?.reasoning_effort, "none");
-  assert.equal(
-    (kvStore.get(keyToString(["uos_ai", "runtime_config", "v2"])) as { default_reasoning_effort?: string })
-      .default_reasoning_effort,
-    "none",
-  );
+  assert.equal((kvStore.get(keyToString(["uos_ai", "runtime_config", "v2"])) as { default_reasoning_effort?: string }).default_reasoning_effort, "none");
 });
 
 Deno.test("admin defaults accepts a tier advertised by the Codex CLI catalog", async () => {
@@ -1109,12 +1077,14 @@ Deno.test("admin defaults accepts a tier advertised by the Codex CLI catalog", a
   seedCodexSnapshot({
     source: "codex_cli",
     updated_at_ms: 123,
-    models: [{
-      slug: "gpt-5.6-sol",
-      display_name: "GPT-5.6 Sol",
-      default_reasoning_level: "medium",
-      supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max", "ultra"],
-    }],
+    models: [
+      {
+        slug: "gpt-5.6-sol",
+        display_name: "GPT-5.6 Sol",
+        default_reasoning_level: "medium",
+        supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max", "ultra"],
+      },
+    ],
   });
 
   const response = await handleAdminDefaults(
@@ -1125,17 +1095,13 @@ Deno.test("admin defaults accepts a tier advertised by the Codex CLI catalog", a
         model: "gpt-5.6-sol",
         reasoning_effort: "ultra",
       }),
-    }),
+    })
   );
 
   assert.equal(response.status, 200);
-  const payload = await response.json() as { defaults?: { reasoning_effort?: string } };
+  const payload = (await response.json()) as { defaults?: { reasoning_effort?: string } };
   assert.equal(payload.defaults?.reasoning_effort, "ultra");
-  assert.equal(
-    (kvStore.get(keyToString(["uos_ai", "runtime_config", "v2"])) as { default_reasoning_effort?: string })
-      .default_reasoning_effort,
-    "ultra",
-  );
+  assert.equal((kvStore.get(keyToString(["uos_ai", "runtime_config", "v2"])) as { default_reasoning_effort?: string }).default_reasoning_effort, "ultra");
 });
 
 Deno.test("admin defaults does not reject an unlisted reasoning tier", async () => {
@@ -1143,12 +1109,14 @@ Deno.test("admin defaults does not reject an unlisted reasoning tier", async () 
   seedCodexSnapshot({
     source: "codex_cli",
     updated_at_ms: 123,
-    models: [{
-      slug: "gpt-5.5",
-      display_name: "GPT-5.5",
-      default_reasoning_level: "medium",
-      supported_reasoning_levels: ["low", "medium", "high", "xhigh"],
-    }],
+    models: [
+      {
+        slug: "gpt-5.5",
+        display_name: "GPT-5.5",
+        default_reasoning_level: "medium",
+        supported_reasoning_levels: ["low", "medium", "high", "xhigh"],
+      },
+    ],
   });
 
   const response = await handleAdminDefaults(
@@ -1159,17 +1127,13 @@ Deno.test("admin defaults does not reject an unlisted reasoning tier", async () 
         model: "gpt-5.5",
         reasoning_effort: "future-tier",
       }),
-    }),
+    })
   );
 
   assert.equal(response.status, 200);
-  const payload = await response.json() as { defaults?: { reasoning_effort?: string } };
+  const payload = (await response.json()) as { defaults?: { reasoning_effort?: string } };
   assert.equal(payload.defaults?.reasoning_effort, "future-tier");
-  assert.equal(
-    (kvStore.get(keyToString(["uos_ai", "runtime_config", "v2"])) as { default_reasoning_effort?: string })
-      .default_reasoning_effort,
-    "future-tier",
-  );
+  assert.equal((kvStore.get(keyToString(["uos_ai", "runtime_config", "v2"])) as { default_reasoning_effort?: string }).default_reasoning_effort, "future-tier");
 });
 
 Deno.test("admin defaults rejects null reasoning effort", async () => {
@@ -1177,12 +1141,14 @@ Deno.test("admin defaults rejects null reasoning effort", async () => {
   seedCodexSnapshot({
     source: "codex_cli",
     updated_at_ms: 123,
-    models: [{
-      slug: "gpt-5.5",
-      display_name: "GPT-5.5",
-      default_reasoning_level: "medium",
-      supported_reasoning_levels: ["none", "low", "medium", "high", "xhigh"],
-    }],
+    models: [
+      {
+        slug: "gpt-5.5",
+        display_name: "GPT-5.5",
+        default_reasoning_level: "medium",
+        supported_reasoning_levels: ["none", "low", "medium", "high", "xhigh"],
+      },
+    ],
   });
 
   const response = await handleAdminDefaults(
@@ -1193,11 +1159,11 @@ Deno.test("admin defaults rejects null reasoning effort", async () => {
         model: "gpt-5.5",
         reasoning_effort: null,
       }),
-    }),
+    })
   );
 
   assert.equal(response.status, 400);
-  const payload = await response.json() as { error?: { message?: string } };
+  const payload = (await response.json()) as { error?: { message?: string } };
   assert.match(payload.error?.message ?? "", /reasoning_effort must be a non-empty string/);
   assert.equal(kvStore.has(keyToString(["default", "reasoning_effort"])), false);
 });
@@ -1207,10 +1173,7 @@ Deno.test("paid fallback pricing initializes only when a key becomes enabled", a
   seedCodexSnapshot({
     source: "chatgpt_codex",
     updated_at_ms: Date.now(),
-    models: [
-      { slug: "gpt-5.6-sol", context_window: 272_000 },
-      { slug: "codex-only-model" },
-    ],
+    models: [{ slug: "gpt-5.6-sol", context_window: 272_000 }, { slug: "codex-only-model" }],
   });
 
   const originalFetch = globalThis.fetch;
@@ -1218,7 +1181,7 @@ Deno.test("paid fallback pricing initializes only when a key becomes enabled", a
   const metadataUrls: string[] = [];
   Deno.env.set("METERED_API_KEY", "metered-test-key");
   globalThis.fetch = (input: RequestInfo | URL) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = urlOf(input);
     metadataUrls.push(url);
     return Promise.resolve(meteredMetadataResponse(url));
   };
@@ -1234,11 +1197,11 @@ Deno.test("paid fallback pricing initializes only when a key becomes enabled", a
           paid_fallback_enabled: false,
           paid_fallback_limit_credits: 2,
         }),
-      }),
+      })
     );
     assert.equal(createResponse.status, 200);
     assert.equal(metadataUrls.length, 0);
-    const created = await createResponse.json() as {
+    const created = (await createResponse.json()) as {
       id: string;
       paid_fallback_enabled: boolean;
       paid_fallback_limit_credits: number;
@@ -1253,14 +1216,14 @@ Deno.test("paid fallback pricing initializes only when a key becomes enabled", a
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: created.id, paid_fallback_enabled: true }),
-      }),
+      })
     );
     assert.equal(enableResponse.status, 200);
-    assert.deepEqual(metadataUrls.sort(), [
-      "https://api.openlux.ai/api/ratio_config",
-      "https://api.openlux.ai/api/status",
-    ]);
-    const enabled = await enableResponse.json() as {
+    assert.deepEqual(
+      metadataUrls.toSorted((left, right) => left.localeCompare(right)),
+      ["https://api.openlux.ai/api/ratio_config", "https://api.openlux.ai/api/status"]
+    );
+    const enabled = (await enableResponse.json()) as {
       paid_fallback_enabled: boolean;
       paid_fallback_model_ids: string[];
       paid_fallback_pricing_checked_at_ms: number | null;
@@ -1275,19 +1238,19 @@ Deno.test("paid fallback pricing initializes only when a key becomes enabled", a
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: created.id, paid_fallback_limit_credits: -1 }),
-      }),
+      })
     );
     assert.equal(capResponse.status, 200);
     assert.equal(metadataUrls.length, 0);
-    const unlimited = await capResponse.json() as { paid_fallback_limit_credits: number };
+    const unlimited = (await capResponse.json()) as { paid_fallback_limit_credits: number };
     assert.equal(unlimited.paid_fallback_limit_credits, -1);
     const storedUnlimitedId = kvStore.get(keyToString(["ubq_ai", "api_keys", "id", created.id])) as {
       hash: string;
       paid_fallback_limit_microcredits: number;
     };
-    const storedUnlimitedHash = kvStore.get(
-      keyToString(["ubq_ai", "api_keys", "hash", storedUnlimitedId.hash]),
-    ) as { paid_fallback_limit_microcredits: number };
+    const storedUnlimitedHash = kvStore.get(keyToString(["ubq_ai", "api_keys", "hash", storedUnlimitedId.hash])) as {
+      paid_fallback_limit_microcredits: number;
+    };
     assert.equal(storedUnlimitedId.paid_fallback_limit_microcredits, -1);
     assert.equal(storedUnlimitedHash.paid_fallback_limit_microcredits, -1);
 
@@ -1296,7 +1259,7 @@ Deno.test("paid fallback pricing initializes only when a key becomes enabled", a
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: created.id, paid_fallback_enabled: false }),
-      }),
+      })
     );
     assert.equal(disableResponse.status, 200);
     assert.equal(metadataUrls.length, 0);
@@ -1306,13 +1269,13 @@ Deno.test("paid fallback pricing initializes only when a key becomes enabled", a
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: created.id, paid_fallback_enabled: true }),
-      }),
+      })
     );
     assert.equal(reenableResponse.status, 200);
-    assert.deepEqual(metadataUrls.sort(), [
-      "https://api.openlux.ai/api/ratio_config",
-      "https://api.openlux.ai/api/status",
-    ]);
+    assert.deepEqual(
+      metadataUrls.toSorted((left, right) => left.localeCompare(right)),
+      ["https://api.openlux.ai/api/ratio_config", "https://api.openlux.ai/api/status"]
+    );
   } finally {
     globalThis.fetch = originalFetch;
     if (originalApiKey === undefined) Deno.env.delete("METERED_API_KEY");
@@ -1330,12 +1293,15 @@ Deno.test("API key creation rejects custom tokens outside the v2 routable shape"
         name: "Legacy custom token",
         token: "legacy_custom_token_that_was_previously_accepted",
       }),
-    }),
+    })
   );
   assert.equal(response.status, 400);
-  const payload = await response.json() as { error?: { message?: string } };
+  const payload = (await response.json()) as { error?: { message?: string } };
   assert.match(payload.error?.message ?? "", /u_ prefix followed by 64 lowercase hexadecimal/);
-  assert.equal([...kvStore.keys()].some((key) => key.includes('"api_keys"')), false);
+  assert.equal(
+    [...kvStore.keys()].some((key) => key.includes('"api_keys"')),
+    false
+  );
 });
 
 Deno.test("API key creation generates a v2 token when token is null", async () => {
@@ -1348,11 +1314,11 @@ Deno.test("API key creation generates a v2 token when token is null", async () =
         name: "Generated token",
         token: null,
       }),
-    }),
+    })
   );
 
   assert.equal(response.status, 200);
-  const payload = await response.json() as { token?: string; prefix?: string };
+  const payload = (await response.json()) as { token?: string; prefix?: string };
   assert.match(payload.token ?? "", /^u_[0-9a-f]{64}$/);
   assert.equal(payload.prefix, payload.token?.slice(0, 12));
 });
@@ -1370,7 +1336,7 @@ Deno.test("enabled key creation initializes once and failed enable leaves the ke
   Deno.env.set("METERED_API_KEY", "metered-test-key");
   let metadataCalls = 0;
   globalThis.fetch = (input: RequestInfo | URL) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = urlOf(input);
     metadataCalls += 1;
     return Promise.resolve(meteredMetadataResponse(url));
   };
@@ -1386,11 +1352,11 @@ Deno.test("enabled key creation initializes once and failed enable leaves the ke
           paid_fallback_enabled: true,
           paid_fallback_limit_credits: 1,
         }),
-      }),
+      })
     );
     assert.equal(enabledCreate.status, 200);
     assert.equal(metadataCalls, 2);
-    const enabledPayload = await enabledCreate.json() as Record<string, unknown>;
+    const enabledPayload = (await enabledCreate.json()) as Record<string, unknown>;
     assert.equal(Object.prototype.hasOwnProperty.call(enabledPayload, "ok"), false);
     assert.deepEqual(enabledPayload.paid_fallback_model_ids, ["gpt-5.6-sol"]);
 
@@ -1405,7 +1371,7 @@ Deno.test("enabled key creation initializes once and failed enable leaves the ke
           paid_fallback_enabled: true,
           paid_fallback_limit_credits: 1,
         }),
-      }),
+      })
     );
     assert.equal(duplicateCreate.status, 409);
     assert.equal(metadataCalls, 0);
@@ -1420,12 +1386,12 @@ Deno.test("enabled key creation initializes once and failed enable leaves the ke
           paid_fallback_enabled: false,
           paid_fallback_limit_credits: 1,
         }),
-      }),
+      })
     );
-    const disabledPayload = await disabledCreate.json() as { id: string };
+    const disabledPayload = (await disabledCreate.json()) as { id: string };
 
     globalThis.fetch = (input: RequestInfo | URL) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const url = urlOf(input);
       if (url.endsWith("/api/status")) {
         return Promise.resolve(new Response("upstream unavailable", { status: 503 }));
       }
@@ -1436,7 +1402,7 @@ Deno.test("enabled key creation initializes once and failed enable leaves the ke
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: disabledPayload.id, paid_fallback_enabled: true }),
-      }),
+      })
     );
     assert.equal(failedEnable.status, 502);
     const stored = kvStore.get(keyToString(["ubq_ai", "api_keys", "id", disabledPayload.id])) as {
@@ -1517,21 +1483,15 @@ Deno.test("admin paid fallback history exposes V3 request lifecycle and billing 
     created_at_ms: 1_000,
     updated_at_ms: 2_500,
   } as const;
-  kvStore.set(
-    keyToString(["uos_ai", "paid_fallback", "v3", "request", keyId, settledRequest.request_id]),
-    settledRequest,
-  );
+  kvStore.set(keyToString(["uos_ai", "paid_fallback", "v3", "request", keyId, settledRequest.request_id]), settledRequest);
 
-  const response = await handleAdminApiKeysPaidFallbacks(
-    new Request(`https://ai.ubq.fi/admin/api-keys/${keyId}/paid-fallbacks?limit=20`),
-    keyId,
-  );
+  const response = await handleAdminApiKeysPaidFallbacks(new Request(`https://ai.ubq.fi/admin/api-keys/${keyId}/paid-fallbacks?limit=20`), keyId);
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("cache-control"), "no-store");
-  const payload = await response.json() as {
+  const payload = (await response.json()) as {
     ok?: boolean;
     object?: string;
-    data?: Array<{
+    data?: {
       created_at_ms?: number;
       request_id?: string;
       model?: string | null;
@@ -1551,29 +1511,29 @@ Deno.test("admin paid fallback history exposes V3 request lifecycle and billing 
       dispatched_at_ms?: number | null;
       terminal_at_ms?: number | null;
       settled_at_ms?: number | null;
-    }>;
+    }[];
   };
   assert.equal(Object.prototype.hasOwnProperty.call(payload, "ok"), false);
   assert.equal(payload.object, "list");
   assert.equal(payload.data?.length, 1);
-  assert.equal(payload.data?.[0]?.request_id, settledRequest.request_id);
-  assert.equal(payload.data?.[0]?.model, "gpt-5.6-sol");
-  assert.equal(payload.data?.[0]?.reasoning, "max");
-  assert.equal(payload.data?.[0]?.provider, "surplus");
-  assert.equal(payload.data?.[0]?.reserved_microcredits, 125_000);
-  assert.equal(payload.data?.[0]?.dispatch_state, "dispatched");
-  assert.equal(payload.data?.[0]?.terminal_state, "completed");
-  assert.equal(payload.data?.[0]?.billing_state, "settled");
-  assert.equal(payload.data?.[0]?.provider_request_id, "provider-v3-settled");
-  assert.equal(payload.data?.[0]?.provider_quota, 14.496);
-  assert.equal(payload.data?.[0]?.input_tokens, 31);
-  assert.equal(payload.data?.[0]?.output_tokens, 17);
-  assert.equal(payload.data?.[0]?.reconciliation_attempts, 2);
-  assert.equal(payload.data?.[0]?.last_reconciliation_at_ms, 2_500);
-  assert.equal(payload.data?.[0]?.spend_microcredits, 28_992);
-  assert.equal(payload.data?.[0]?.dispatched_at_ms, 1_100);
-  assert.equal(payload.data?.[0]?.terminal_at_ms, 2_000);
-  assert.equal(payload.data?.[0]?.settled_at_ms, 2_500);
+  assert.equal(payload.data[0]?.request_id, settledRequest.request_id);
+  assert.equal(payload.data[0]?.model, "gpt-5.6-sol");
+  assert.equal(payload.data[0]?.reasoning, "max");
+  assert.equal(payload.data[0]?.provider, "surplus");
+  assert.equal(payload.data[0]?.reserved_microcredits, 125_000);
+  assert.equal(payload.data[0]?.dispatch_state, "dispatched");
+  assert.equal(payload.data[0]?.terminal_state, "completed");
+  assert.equal(payload.data[0]?.billing_state, "settled");
+  assert.equal(payload.data[0]?.provider_request_id, "provider-v3-settled");
+  assert.equal(payload.data[0]?.provider_quota, 14.496);
+  assert.equal(payload.data[0]?.input_tokens, 31);
+  assert.equal(payload.data[0]?.output_tokens, 17);
+  assert.equal(payload.data[0]?.reconciliation_attempts, 2);
+  assert.equal(payload.data[0]?.last_reconciliation_at_ms, 2_500);
+  assert.equal(payload.data[0]?.spend_microcredits, 28_992);
+  assert.equal(payload.data[0]?.dispatched_at_ms, 1_100);
+  assert.equal(payload.data[0]?.terminal_at_ms, 2_000);
+  assert.equal(payload.data[0]?.settled_at_ms, 2_500);
 });
 
 Deno.test("authenticated UOS embeddings do not write ordinary request history", async () => {
@@ -1590,16 +1550,16 @@ Deno.test("authenticated UOS embeddings do not write ordinary request history", 
         usage_limit_requests: -1,
         paid_fallback_enabled: false,
       }),
-    }),
+    })
   );
   assert.equal(createdResponse.status, 200);
-  const created = await createdResponse.json() as { id?: unknown };
+  const created = (await createdResponse.json()) as { id?: unknown };
   assert.equal(typeof created.id, "string");
   const keyId = created.id as string;
 
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = urlOf(input);
     assert.equal(url, "https://api.voyageai.com/v1/embeddings");
     const body = JSON.parse(typeof init?.body === "string" ? init.body : "null") as Record<string, unknown>;
     assert.equal(body.model, "voyage-4-large");
@@ -1613,8 +1573,8 @@ Deno.test("authenticated UOS embeddings do not write ordinary request history", 
           data: [{ embedding: Array.from({ length: 1024 }, (_, index) => index / 1024) }],
           usage: { total_tokens: 3 },
         }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      )
     );
   };
 
@@ -1624,7 +1584,7 @@ Deno.test("authenticated UOS embeddings do not write ordinary request history", 
       new Request("https://ai.ubq.fi/uos/embeddings", {
         method: "POST",
         headers: {
-          "Authorization": `Bearer ${token}`,
+          Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -1635,7 +1595,7 @@ Deno.test("authenticated UOS embeddings do not write ordinary request history", 
           truncation: false,
           encoding_format: "float",
         }),
-      }),
+      })
     );
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("x-uos-upstream"), "voyage");
@@ -1648,18 +1608,12 @@ Deno.test("authenticated UOS embeddings do not write ordinary request history", 
 
 Deno.test("API key request log endpoint validates key existence and limit", async () => {
   kvStore.clear();
-  const missing = await handleAdminApiKeysPaidFallbacks(
-    new Request("https://ai.ubq.fi/admin/api-keys/missing/paid-fallbacks?limit=20"),
-    "missing",
-  );
+  const missing = await handleAdminApiKeysPaidFallbacks(new Request("https://ai.ubq.fi/admin/api-keys/missing/paid-fallbacks?limit=20"), "missing");
   assert.equal(missing.status, 404);
 
   const keyId = "existing";
   kvStore.set(keyToString(["ubq_ai", "api_keys", "id", keyId]), { id: keyId });
-  const invalidLimit = await handleAdminApiKeysPaidFallbacks(
-    new Request(`https://ai.ubq.fi/admin/api-keys/${keyId}/paid-fallbacks?limit=not-a-number`),
-    keyId,
-  );
+  const invalidLimit = await handleAdminApiKeysPaidFallbacks(new Request(`https://ai.ubq.fi/admin/api-keys/${keyId}/paid-fallbacks?limit=not-a-number`), keyId);
   assert.equal(invalidLimit.status, 400);
 });
 
@@ -1704,85 +1658,39 @@ Deno.test("deleting a revoked API key removes its mirrored policy and analytics"
   });
   kvStore.set(keyToString(["ubq_ai", "api_keys", "usage", keyId]), { key_id: keyId });
   kvStore.set(keyToString(["ubq_ai", "api_keys", "usage_daily", keyId]), { key_id: keyId, days: [] });
-  kvStore.set(
-    keyToString(["uos_ai", "paid_fallback", "ledger", keyId, Date.now(), "request-delete"]),
-    { id: "request-delete", key_id: keyId },
-  );
-  kvStore.set(
-    keyToString(["ubq_ai", "api_keys", "request_log", keyId, Date.now(), "legacy-request-delete"]),
-    { id: "legacy-request-delete", key_id: keyId },
-  );
-  kvStore.set(
-    keyToString(["uos_ai", "api_key_usage", "v2", keyId, "policy", Date.now()]),
-    { value: 1n } as Deno.KvU64,
-  );
+  kvStore.set(keyToString(["uos_ai", "paid_fallback", "ledger", keyId, Date.now(), "request-delete"]), { id: "request-delete", key_id: keyId });
+  kvStore.set(keyToString(["ubq_ai", "api_keys", "request_log", keyId, Date.now(), "legacy-request-delete"]), { id: "legacy-request-delete", key_id: keyId });
+  kvStore.set(keyToString(["uos_ai", "api_key_usage", "v2", keyId, "policy", Date.now()]), { value: 1n } as Deno.KvU64);
   const v3WindowResetAtMs = Date.now() + 60_000;
-  kvStore.set(
-    keyToString(["uos_ai", "paid_fallback", "v3", "request", keyId, "request-v3-settled"]),
-    {
-      v: 3,
-      key_id: keyId,
-      request_id: "request-v3-settled",
-      billing_state: "settled",
-    },
-  );
-  kvStore.set(
-    keyToString(["uos_ai", "paid_fallback", "v3", "request", keyId, "request-v3-not-billed"]),
-    {
-      v: 3,
-      key_id: keyId,
-      request_id: "request-v3-not-billed",
-      billing_state: "not_billed",
-    },
-  );
-  kvStore.set(
-    keyToString(["uos_ai", "paid_fallback", "v3", "window", keyId, v3WindowResetAtMs]),
-    {
-      v: 3,
-      key_id: keyId,
-      window_reset_at_ms: v3WindowResetAtMs,
-      settled_microcredits: 28_992,
-      reserved_microcredits: 0,
-      pending_count: 0,
-    },
-  );
-  kvStore.set(
-    keyToString(["uos_ai", "paid_fallback", "v3", "reconciliation_lease", keyId]),
-    { token: "stale-delete-lease", expires_at_ms: Date.now() + 60_000 },
-  );
+  kvStore.set(keyToString(["uos_ai", "paid_fallback", "v3", "request", keyId, "request-v3-settled"]), {
+    v: 3,
+    key_id: keyId,
+    request_id: "request-v3-settled",
+    billing_state: "settled",
+  });
+  kvStore.set(keyToString(["uos_ai", "paid_fallback", "v3", "request", keyId, "request-v3-not-billed"]), {
+    v: 3,
+    key_id: keyId,
+    request_id: "request-v3-not-billed",
+    billing_state: "not_billed",
+  });
+  kvStore.set(keyToString(["uos_ai", "paid_fallback", "v3", "window", keyId, v3WindowResetAtMs]), {
+    v: 3,
+    key_id: keyId,
+    window_reset_at_ms: v3WindowResetAtMs,
+    settled_microcredits: 28_992,
+    reserved_microcredits: 0,
+    pending_count: 0,
+  });
+  kvStore.set(keyToString(["uos_ai", "paid_fallback", "v3", "reconciliation_lease", keyId]), {
+    token: "stale-delete-lease",
+    expires_at_ms: Date.now() + 60_000,
+  });
 
-  const neighboringPaidFallbackKey = [
-    "uos_ai",
-    "paid_fallback",
-    "ledger",
-    neighboringKeyId,
-    Date.now(),
-    "request-neighbor",
-  ] as const;
-  const neighboringLegacyLogKey = [
-    "ubq_ai",
-    "api_keys",
-    "request_log",
-    neighboringKeyId,
-    Date.now(),
-    "legacy-request-neighbor",
-  ] as const;
-  const neighboringCounterKey = [
-    "uos_ai",
-    "api_key_usage",
-    "v2",
-    neighboringKeyId,
-    "policy",
-    Date.now(),
-  ] as const;
-  const neighboringV3RequestKey = [
-    "uos_ai",
-    "paid_fallback",
-    "v3",
-    "request",
-    neighboringKeyId,
-    "request-v3-neighbor",
-  ] as const;
+  const neighboringPaidFallbackKey = ["uos_ai", "paid_fallback", "ledger", neighboringKeyId, Date.now(), "request-neighbor"] as const;
+  const neighboringLegacyLogKey = ["ubq_ai", "api_keys", "request_log", neighboringKeyId, Date.now(), "legacy-request-neighbor"] as const;
+  const neighboringCounterKey = ["uos_ai", "api_key_usage", "v2", neighboringKeyId, "policy", Date.now()] as const;
+  const neighboringV3RequestKey = ["uos_ai", "paid_fallback", "v3", "request", neighboringKeyId, "request-v3-neighbor"] as const;
   kvStore.set(keyToString(neighboringPaidFallbackKey), { id: "request-neighbor", key_id: neighboringKeyId });
   kvStore.set(keyToString(neighboringLegacyLogKey), { id: "legacy-request-neighbor", key_id: neighboringKeyId });
   kvStore.set(keyToString(neighboringCounterKey), { value: 1n } as Deno.KvU64);
@@ -1799,25 +1707,11 @@ Deno.test("deleting a revoked API key removes its mirrored policy and analytics"
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: keyId }),
-      }),
+      })
     );
 
-  const unresolvedRequestKey = [
-    "uos_ai",
-    "paid_fallback",
-    "v3",
-    "request",
-    keyId,
-    "request-v3-unresolved",
-  ] as const;
-  const unresolvedPendingKey = [
-    "uos_ai",
-    "paid_fallback",
-    "v3",
-    "pending",
-    keyId,
-    "request-v3-unresolved",
-  ] as const;
+  const unresolvedRequestKey = ["uos_ai", "paid_fallback", "v3", "request", keyId, "request-v3-unresolved"] as const;
+  const unresolvedPendingKey = ["uos_ai", "paid_fallback", "v3", "pending", keyId, "request-v3-unresolved"] as const;
   kvStore.set(keyToString(unresolvedRequestKey), {
     v: 3,
     key_id: keyId,
@@ -1837,12 +1731,12 @@ Deno.test("deleting a revoked API key removes its mirrored policy and analytics"
 
   const blocked = await deleteRequest();
   assert.equal(blocked.status, 409);
-  const blockedPayload = await blocked.json() as {
+  const blockedPayload = (await blocked.json()) as {
     error?: { code?: string; message?: string };
   };
   assert.equal(blockedPayload.error?.code, "paid_fallback_billing_outstanding");
-  assert.match(blockedPayload.error?.message ?? "", /unresolved=1/);
-  assert.match(blockedPayload.error?.message ?? "", /markers=1/);
+  assert.match(blockedPayload.error.message ?? "", /unresolved=1/);
+  assert.match(blockedPayload.error.message ?? "", /markers=1/);
   assert.equal(kvStore.has(keyToString(["ubq_ai", "api_keys", "id", keyId])), true);
   assert.equal(kvStoreHasPrefix(["uos_ai", "paid_fallback", "v3", "deletion_guard", keyId]), true);
   kvStore.delete(keyToString(unresolvedRequestKey));
@@ -1866,10 +1760,10 @@ Deno.test("deleting a revoked API key removes its mirrored policy and analytics"
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id: keyId }),
-    }),
+    })
   );
   assert.equal(unrevoke.status, 409);
-  const unrevokePayload = await unrevoke.json() as { error?: { code?: string } };
+  const unrevokePayload = (await unrevoke.json()) as { error?: { code?: string } };
   assert.equal(unrevokePayload.error?.code, "paid_fallback_deletion_in_progress");
 
   const response = await deleteRequest();
@@ -1895,8 +1789,8 @@ Deno.test("deleting a revoked API key removes its mirrored policy and analytics"
 
 Deno.test("subscription reset settings persist by account identity across slot reordering", async () => {
   kvStore.clear();
-  const accounts = ["account-a", "account-b"].map((account_id) => ({
-    account_id,
+  const accounts = ["account-a", "account-b"].map((accountId) => ({
+    account_id: accountId,
     access_token: "test-access",
     refresh_token: "test-refresh",
     updated_at_ms: 100,
@@ -1908,12 +1802,12 @@ Deno.test("subscription reset settings persist by account identity across slot r
   assert.equal(initial.data.length, 2);
   assert.equal(initial.data[0].enabled, true);
   const identity = initial.data[0].account_id_hash;
-  const update = (enabled: unknown, account_id_hash = identity) =>
+  const update = (enabled: unknown, accountIdHash = identity) =>
     handleAdminCodexResetSettings(
       new Request(url, {
         method: "PATCH",
-        body: JSON.stringify({ account_id_hash, enabled }),
-      }),
+        body: JSON.stringify({ account_id_hash: accountIdHash, enabled }),
+      })
     );
   assert.equal((await update(false)).status, 200);
   kvStore.set(poolKey, { accounts: [...accounts].reverse(), updated_at_ms: 101 });

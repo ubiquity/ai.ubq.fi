@@ -65,11 +65,7 @@ Deno.test("recent model reasoning resolves provider aliases by model class", () 
     ["deepseek-v4-flash", "deepseek-v4", ["none", "low", "high", "max"]],
     ["deepseek-v4-pro", "deepseek-v4", ["none", "low", "high", "max"]],
     ["glm-5.3", "glm-5.3", ["low", "high", "max"]],
-    [
-      "glm-5.2-fast-preview",
-      "glm-5.2",
-      ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
-    ],
+    ["glm-5.2-fast-preview", "glm-5.2", ["none", "minimal", "low", "medium", "high", "xhigh", "max"]],
     ["glm-5.1", "glm-5.1", ["none", "thinking"]],
     ["glm-5.1-non-thinking", "glm-5.1-non-thinking", ["none"]],
     ["glm-5.1-non-thinking:web", "glm-5.1-non-thinking", ["none"]],
@@ -100,44 +96,58 @@ Deno.test("recent model reasoning resolves provider aliases by model class", () 
 Deno.test("reasoning select preserves every tier advertised by the model catalog", () => {
   withFakeDocument(() => {
     const select = createSelect();
-    const selected = updateReasoningSelectForModel(select, {
-      default_reasoning_level: "medium",
-      supported_reasoning_levels: [{ effort: null }, "low", "medium", "high", "xhigh", "max", "ultra"],
-    }, "none");
+    const selected = updateReasoningSelectForModel(
+      select,
+      {
+        default_reasoning_level: "medium",
+        supported_reasoning_levels: [{ effort: null }, "low", "medium", "high", "xhigh", "max", "ultra"],
+      },
+      "none"
+    );
 
     assert.equal(selected, "none");
     assert.equal(select.disabled, false);
-    assert.deepEqual(select.options.map((option) => [option.value, option.textContent]), [
-      ["", "Default"],
-      ["none", "None"],
-      ["low", "low"],
-      ["medium", "medium"],
-      ["high", "high"],
-      ["xhigh", "xhigh"],
-      ["max", "max"],
-      ["ultra", "ultra"],
-    ]);
+    assert.deepEqual(
+      select.options.map((option) => [option.value, option.textContent]),
+      [
+        ["", "Default"],
+        ["none", "None"],
+        ["low", "low"],
+        ["medium", "medium"],
+        ["high", "high"],
+        ["xhigh", "xhigh"],
+        ["max", "max"],
+        ["ultra", "ultra"],
+      ]
+    );
   });
 });
 
 Deno.test("reasoning select preserves none when model levels omit it", () => {
   withFakeDocument(() => {
     const select = createSelect();
-    const selected = updateReasoningSelectForModel(select, {
-      default_reasoning_level: "medium",
-      supported_reasoning_levels: ["low", "medium", "high", "xhigh"],
-    }, "none");
+    const selected = updateReasoningSelectForModel(
+      select,
+      {
+        default_reasoning_level: "medium",
+        supported_reasoning_levels: ["low", "medium", "high", "xhigh"],
+      },
+      "none"
+    );
 
     assert.equal(selected, "none");
     assert.equal(select.disabled, false);
-    assert.deepEqual(select.options.map((option) => [option.value, option.textContent]), [
-      ["", "Default"],
-      ["none", "None"],
-      ["low", "low"],
-      ["medium", "medium"],
-      ["high", "high"],
-      ["xhigh", "xhigh"],
-    ]);
+    assert.deepEqual(
+      select.options.map((option) => [option.value, option.textContent]),
+      [
+        ["", "Default"],
+        ["none", "None"],
+        ["low", "low"],
+        ["medium", "medium"],
+        ["high", "high"],
+        ["xhigh", "xhigh"],
+      ]
+    );
   });
 });
 
@@ -157,32 +167,42 @@ Deno.test("reasoning select resets none for Cerebras GPT-OSS", () => {
     assert.equal(modelSupportsReasoningNone(model.id), false);
     assert.equal(selected, "");
     assert.equal(select.disabled, false);
-    assert.deepEqual(select.options.map((option) => [option.value, option.textContent]), [
-      ["", "Default"],
-      ["low", "low"],
-      ["medium", "medium"],
-      ["high", "high"],
-    ]);
+    assert.deepEqual(
+      select.options.map((option) => [option.value, option.textContent]),
+      [
+        ["", "Default"],
+        ["low", "low"],
+        ["medium", "medium"],
+        ["high", "high"],
+      ]
+    );
   });
 });
 
 Deno.test("reasoning select shows none when model default is none", () => {
   withFakeDocument(() => {
     const select = createSelect();
-    const selected = updateReasoningSelectForModel(select, {
-      default_reasoning_level: null,
-      supported_reasoning_levels: ["low", "medium", "high"],
-    }, "none");
+    const selected = updateReasoningSelectForModel(
+      select,
+      {
+        default_reasoning_level: null,
+        supported_reasoning_levels: ["low", "medium", "high"],
+      },
+      "none"
+    );
 
     assert.equal(selected, "none");
     assert.equal(select.disabled, false);
-    assert.deepEqual(select.options.map((option) => [option.value, option.textContent]), [
-      ["", "Default"],
-      ["none", "None"],
-      ["low", "low"],
-      ["medium", "medium"],
-      ["high", "high"],
-    ]);
+    assert.deepEqual(
+      select.options.map((option) => [option.value, option.textContent]),
+      [
+        ["", "Default"],
+        ["none", "None"],
+        ["low", "low"],
+        ["medium", "medium"],
+        ["high", "high"],
+      ]
+    );
   });
 });
 

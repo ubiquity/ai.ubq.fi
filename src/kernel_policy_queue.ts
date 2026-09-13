@@ -36,11 +36,7 @@ const normalizeQueueItem = (value: unknown, nowMs: number): KernelPolicyQueueIte
   };
 };
 
-export const recordKernelPolicyQueue = async (
-  owner: string,
-  repo: string,
-  route: string,
-): Promise<void> => {
+export const recordKernelPolicyQueue = async (owner: string, repo: string, route: string): Promise<void> => {
   try {
     const ownerName = normalizeOwnerRepo(owner);
     const repoName = normalizeOwnerRepo(repo);
@@ -55,9 +51,7 @@ export const recordKernelPolicyQueue = async (
     for (let attempt = 0; attempt < MAX_KV_RETRIES; attempt += 1) {
       const entry = await kv.get<KernelPolicyQueueItem[]>(UOS_KERNEL_POLICY_QUEUE_KEY);
       const existing = Array.isArray(entry.value) ? entry.value : [];
-      const normalized = existing
-        .map((item) => normalizeQueueItem(item, nowMs))
-        .filter((item): item is KernelPolicyQueueItem => Boolean(item));
+      const normalized = existing.map((item) => normalizeQueueItem(item, nowMs)).filter((item): item is KernelPolicyQueueItem => Boolean(item));
       const index = normalized.findIndex((item) => item.owner === ownerName && item.repo === repoName);
       let next = normalized;
 
@@ -107,9 +101,7 @@ export const listKernelPolicyQueue = async (): Promise<KernelPolicyQueueItem[] |
     const nowMs = Date.now();
     const entry = await kv.get<KernelPolicyQueueItem[]>(UOS_KERNEL_POLICY_QUEUE_KEY);
     const existing = Array.isArray(entry.value) ? entry.value : [];
-    const normalized = existing
-      .map((item) => normalizeQueueItem(item, nowMs))
-      .filter((item): item is KernelPolicyQueueItem => Boolean(item));
+    const normalized = existing.map((item) => normalizeQueueItem(item, nowMs)).filter((item): item is KernelPolicyQueueItem => Boolean(item));
     normalized.sort((a, b) => b.last_seen_at_ms - a.last_seen_at_ms);
     return normalized;
   } catch (error) {

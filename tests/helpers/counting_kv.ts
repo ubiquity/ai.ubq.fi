@@ -4,10 +4,7 @@ type StoredEntry = {
   versionstamp: string;
 };
 
-type AtomicMutation =
-  | { kind: "set"; key: Deno.KvKey; value: unknown }
-  | { kind: "delete"; key: Deno.KvKey }
-  | { kind: "sum"; key: Deno.KvKey; value: bigint };
+type AtomicMutation = { kind: "set"; key: Deno.KvKey; value: unknown } | { kind: "delete"; key: Deno.KvKey } | { kind: "sum"; key: Deno.KvKey; value: bigint };
 
 export type KvMeasurementClassification = "mandatory_correctness" | "optional_telemetry" | "background";
 
@@ -57,8 +54,7 @@ const clone = <T>(value: T): T => {
   }
 };
 
-const startsWithKey = (key: Deno.KvKey, prefix: Deno.KvKey): boolean =>
-  prefix.every((part, index) => Object.is(part, key[index]));
+const startsWithKey = (key: Deno.KvKey, prefix: Deno.KvKey): boolean => prefix.every((part, index) => Object.is(part, key[index]));
 
 const keyPartText = (part: Deno.KvKeyPart): string => {
   if (typeof part === "string" || typeof part === "number" || typeof part === "bigint" || typeof part === "boolean") {
@@ -76,15 +72,15 @@ const keyPartText = (part: Deno.KvKeyPart): string => {
 export const classifyKvKey = (key: Deno.KvKey): KvMeasurementClassification => {
   const parts = key.map(keyPartText);
   const joined = parts.join("/").toLowerCase();
-  if (
-    joined.includes("prompt_cache") || joined.includes("telemetry") || joined.includes("provider_health") ||
-    joined.includes("provider_capacity")
-  ) {
+  if (joined.includes("prompt_cache") || joined.includes("telemetry") || joined.includes("provider_health") || joined.includes("provider_capacity")) {
     return "optional_telemetry";
   }
   if (
-    joined.includes("api_key_usage") || joined.includes("api_keys") || joined.includes("runtime_config") ||
-    joined.includes("codex_auth") || joined.includes("kernel") ||
+    joined.includes("api_key_usage") ||
+    joined.includes("api_keys") ||
+    joined.includes("runtime_config") ||
+    joined.includes("codex_auth") ||
+    joined.includes("kernel") ||
     joined.includes("idempotency")
   ) {
     return "mandatory_correctness";
@@ -92,14 +88,8 @@ export const classifyKvKey = (key: Deno.KvKey): KvMeasurementClassification => {
   return "background";
 };
 
-const atomicClassification = (
-  checks: Array<{ key: Deno.KvKey }>,
-  mutations: AtomicMutation[],
-): KvMeasurementClassification => {
-  const classifications = [
-    ...checks.map((entry) => classifyKvKey(entry.key)),
-    ...mutations.map((mutation) => classifyKvKey(mutation.key)),
-  ];
+const atomicClassification = (checks: { key: Deno.KvKey }[], mutations: AtomicMutation[]): KvMeasurementClassification => {
+  const classifications = [...checks.map((entry) => classifyKvKey(entry.key)), ...mutations.map((mutation) => classifyKvKey(mutation.key))];
   if (classifications.includes("mandatory_correctness")) return "mandatory_correctness";
   if (classifications.includes("optional_telemetry")) return "optional_telemetry";
   return "background";
@@ -184,28 +174,21 @@ export class CountingKv {
     return [...this.#budgets.values()].sort((left, right) => left.scenario.localeCompare(right.scenario));
   }
 
-  get<T = unknown>(
-    key: Deno.KvKey,
-    _options?: Readonly<{ consistency?: "strong" | "eventual" }>,
-  ): Promise<Deno.KvEntryMaybe<T>> {
+  get<T = unknown>(key: Deno.KvKey, _options?: Readonly<{ consistency?: "strong" | "eventual" }>): Promise<Deno.KvEntryMaybe<T>> {
     this.#record("get", classifyKvKey(key), [key]);
     const entry = this.entries.get(encodeKey(key));
     return Promise.resolve({
       key: clone(key),
-      value: entry ? clone(entry.value) as T : null,
+      value: entry ? (clone(entry.value) as T) : null,
       versionstamp: entry?.versionstamp ?? null,
     } as Deno.KvEntryMaybe<T>);
   }
 
   getMany<T extends readonly unknown[]>(
     keys: readonly Deno.KvKey[],
-    _options?: Readonly<{ consistency?: "strong" | "eventual" }>,
+    _options?: Readonly<{ consistency?: "strong" | "eventual" }>
   ): Promise<{ [K in keyof T]: Deno.KvEntryMaybe<T[K]> }> {
-    const classification = keys.some((key) => classifyKvKey(key) === "mandatory_correctness")
-      ? "mandatory_correctness"
-      : keys.some((key) => classifyKvKey(key) === "optional_telemetry")
-      ? "optional_telemetry"
-      : "background";
+    const classification = this.#classifyCommands(keys);
     this.#record("getMany", classification, keys);
     return Promise.resolve(
       keys.map((key) => {
@@ -215,7 +198,7 @@ export class CountingKv {
           value: entry ? clone(entry.value) : null,
           versionstamp: entry?.versionstamp ?? null,
         };
-      }) as { [K in keyof T]: Deno.KvEntryMaybe<T[K]> },
+      }) as { [K in keyof T]: Deno.KvEntryMaybe<T[K]> }
     );
   }
 
@@ -239,7 +222,7 @@ export class CountingKv {
     const selected = [...this.entries.values()]
       .filter((entry) => startsWithKey(entry.key, prefix))
       .sort((left, right) => encodeKey(left.key).localeCompare(encodeKey(right.key)));
-    const iterator = (async function* (): AsyncGenerator<Deno.KvEntry<T>> {
+    const iterator = (function* (): Generator<Deno.KvEntry<T>> {
       for (const entry of selected) {
         yield {
           key: clone(entry.key),
@@ -253,7 +236,7 @@ export class CountingKv {
   }
 
   atomic(): Deno.AtomicOperation {
-    const checks: Array<{ key: Deno.KvKey; versionstamp: string | null }> = [];
+    const checks: { key: Deno.KvKey; versionstamp: string | null }[] = [];
     const mutations: AtomicMutation[] = [];
     const operation = {
       check: (entry: { key: Deno.KvKey; versionstamp: string | null }) => {
@@ -279,10 +262,7 @@ export class CountingKv {
           return (current?.versionstamp ?? null) !== check.versionstamp;
         });
         if (changed) {
-          this.#record("atomic.commit", classification, [
-            ...checks.map((check) => check.key),
-            ...mutations.map((mutation) => mutation.key),
-          ], {
+          this.#record("atomic.commit", classification, [...checks.map((check) => check.key), ...mutations.map((mutation) => mutation.key)], {
             atomicChecks: checks.length,
             atomicMutations: mutations.length,
             atomicResult: "conflict",
@@ -306,10 +286,7 @@ export class CountingKv {
             });
           }
         }
-        this.#record("atomic.commit", classification, [
-          ...checks.map((check) => check.key),
-          ...mutations.map((mutation) => mutation.key),
-        ], {
+        this.#record("atomic.commit", classification, [...checks.map((check) => check.key), ...mutations.map((mutation) => mutation.key)], {
           writeMutations: mutations.length,
           atomicChecks: checks.length,
           atomicMutations: mutations.length,
@@ -323,13 +300,19 @@ export class CountingKv {
 
   close(): void {}
 
+  #classifyCommands(keys: readonly Deno.KvKey[]): KvMeasurementClassification {
+    if (keys.some((key) => classifyKvKey(key) === "mandatory_correctness")) return "mandatory_correctness";
+    if (keys.some((key) => classifyKvKey(key) === "optional_telemetry")) return "optional_telemetry";
+    return "background";
+  }
+
   #nextVersionstamp(): string {
     this.#nextVersion += 1;
     return String(this.#nextVersion).padStart(20, "0");
   }
 
   #activeBudget(): KvOperationBudget | null {
-    return this.#activeScenario ? this.#budgets.get(this.#activeScenario) ?? null : null;
+    return this.#activeScenario ? (this.#budgets.get(this.#activeScenario) ?? null) : null;
   }
 
   #addBytes(field: "serialized_request_bytes" | "upstream_response_bytes", bytes: number): void {
@@ -348,7 +331,7 @@ export class CountingKv {
       atomicChecks?: number;
       atomicMutations?: number;
       atomicResult?: "committed" | "conflict" | "failed";
-    }> = {},
+    }> = {}
   ): void {
     this.commands.push({
       scenario: this.#activeScenario,
@@ -365,16 +348,13 @@ export class CountingKv {
     const next = {
       ...budget,
       commands: budget.commands + 1,
-      read_commands: budget.read_commands +
-        (command === "get" || command === "getMany" || command === "list" ? keys.length : 0),
+      read_commands: budget.read_commands + (command === "get" || command === "getMany" || command === "list" ? keys.length : 0),
       write_mutations: budget.write_mutations + (details.writeMutations ?? 0),
       atomic_commits: budget.atomic_commits + (command === "atomic.commit" ? 1 : 0),
       atomic_checks: budget.atomic_checks + (details.atomicChecks ?? 0),
       atomic_mutations: budget.atomic_mutations + (details.atomicMutations ?? 0),
-      mandatory_correctness_commands: budget.mandatory_correctness_commands +
-        (classification === "mandatory_correctness" ? 1 : 0),
-      optional_telemetry_commands: budget.optional_telemetry_commands +
-        (classification === "optional_telemetry" ? 1 : 0),
+      mandatory_correctness_commands: budget.mandatory_correctness_commands + (classification === "mandatory_correctness" ? 1 : 0),
+      optional_telemetry_commands: budget.optional_telemetry_commands + (classification === "optional_telemetry" ? 1 : 0),
       background_commands: budget.background_commands + (classification === "background" ? 1 : 0),
     };
     this.#budgets.set(budget.scenario, next);

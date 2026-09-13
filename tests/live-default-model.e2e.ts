@@ -1,22 +1,25 @@
 import assert from "node:assert/strict";
 
 const getBaseUrl = (): URL => {
-  const value = Deno.env.get("BASE_URL")?.trim() || "https://ai.ubq.fi";
+  // A missing or empty BASE_URL falls back to the public gateway origin.
+  const rawBaseUrl = Deno.env.get("BASE_URL")?.trim();
+  const value = rawBaseUrl === undefined || rawBaseUrl === "" ? "https://ai.ubq.fi" : rawBaseUrl;
   return new URL(value);
 };
 
 const getToken = (): string => {
-  const token = Deno.env.get("UOS_AI_TOKEN")?.trim() || Deno.env.get("DENO_DEPLOY_TOKEN")?.trim() || "";
-  if (!token) {
-    throw new Error("Set UOS_AI_TOKEN or DENO_DEPLOY_TOKEN to run the live default-model e2e test.");
-  }
-  return token;
+  // An empty or whitespace-only variable falls through to the next source.
+  const uosToken = Deno.env.get("UOS_AI_TOKEN")?.trim();
+  if (uosToken) return uosToken;
+  const deployToken = Deno.env.get("DENO_DEPLOY_TOKEN")?.trim();
+  if (deployToken) return deployToken;
+  throw new Error("Set UOS_AI_TOKEN or DENO_DEPLOY_TOKEN to run the live default-model e2e test.");
 };
 
 const fetchJson = async (baseUrl: URL, path: string, init: RequestInit): Promise<Record<string, unknown>> => {
   const response = await fetch(new URL(path, baseUrl), init);
   const text = await response.text();
-  let payload: unknown = null;
+  let payload: unknown;
   try {
     payload = text ? JSON.parse(text) : null;
   } catch {
@@ -65,12 +68,12 @@ Deno.test({
   async fn() {
     const baseUrl = getBaseUrl();
     const token = getToken();
-    const authHeaders = { "Authorization": `Bearer ${token}` };
+    const authHeaders = { Authorization: `Bearer ${token}` };
 
     const modelsPayload = await fetchJson(baseUrl, "/v1/models", { headers: authHeaders });
     const models = Array.isArray(modelsPayload.data) ? modelsPayload.data : [];
     const modelIds = models
-      .map((model) => typeof model === "object" && model !== null ? (model as { id?: unknown }).id : null)
+      .map((model) => (typeof model === "object" && model !== null ? (model as { id?: unknown }).id : null))
       .filter((id): id is string => typeof id === "string" && id.trim().length > 0);
     assert.ok(modelIds.length > 0, "/v1/models did not include any model IDs");
 

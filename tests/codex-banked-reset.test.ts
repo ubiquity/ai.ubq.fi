@@ -49,7 +49,7 @@ class MemoryKv {
   readonly atomicCheckBatches: Deno.KvKey[][] = [];
   atomicCommitCount = 0;
   beforeAtomicCommit: ((commitNumber: number) => void) | null = null;
-  beforeGet: ((key: Deno.KvKey, getNumber: number) => Promise<void> | null) | null = null;
+  beforeGet: ((key: Deno.KvKey, getNumber: number) => Promise<void> | null | undefined) | null = null;
   getFailure: Error | null = null;
   getCount = 0;
   #version = 0;
@@ -78,7 +78,7 @@ class MemoryKv {
     const entry = this.entries.get(encodeKey(key));
     return {
       key: clone(key),
-      value: entry ? clone(entry.value) as T : null,
+      value: entry ? (clone(entry.value) as T) : null,
       versionstamp: entry?.versionstamp ?? null,
     } as Deno.KvEntryMaybe<T>;
   }
@@ -89,14 +89,14 @@ class MemoryKv {
     return Promise.resolve({ ok: true, versionstamp });
   }
 
-  value<T>(key: Deno.KvKey): T | null {
+  redemptionRecord(key: Deno.KvKey): CodexResetRedemptionRecord | null {
     const value = this.entries.get(encodeKey(key))?.value;
-    return value === undefined ? null : clone(value) as T;
+    return value === undefined ? null : (clone(value) as CodexResetRedemptionRecord);
   }
 
   atomic(): Deno.AtomicOperation {
-    const checks: Array<Readonly<{ key: Deno.KvKey; versionstamp: string | null }>> = [];
-    const writes: Array<Readonly<{ key: Deno.KvKey; value: unknown }>> = [];
+    const checks: Readonly<{ key: Deno.KvKey; versionstamp: string | null }>[] = [];
+    const writes: Readonly<{ key: Deno.KvKey; value: unknown }>[] = [];
     const operation = {
       check: (entry: Readonly<{ key: Deno.KvKey; versionstamp: string | null }>) => {
         checks.push({ key: clone(entry.key), versionstamp: entry.versionstamp });
@@ -175,9 +175,7 @@ const sanitizedProviderFixtures = Object.freeze({
   }),
   redemption_completed: Object.freeze({ kind: "completed", providerReceiptId: "fixture-completed" } as const),
   redemption_accepted: Object.freeze({ kind: "accepted", providerReceiptId: "fixture-accepted" } as const),
-  redemption_already_redeemed: Object.freeze(
-    { kind: "already_redeemed", providerReceiptId: "fixture-replay" } as const,
-  ),
+  redemption_already_redeemed: Object.freeze({ kind: "already_redeemed", providerReceiptId: "fixture-replay" } as const),
   redemption_rejected: Object.freeze({ kind: "rejected", reason: "fixture-definitive-rejection" } as const),
   authentication_error: Object.freeze({ kind: "rejected", reason: "fixture-authentication-error" } as const),
   rate_limit: Object.freeze({ kind: "unknown", providerReceiptId: null } as const),
@@ -225,15 +223,14 @@ class FakeCodexUsageResetProvider implements CodexUsageResetProvider {
   }
 
   get callCount(): number {
-    return this.inventoryInputs.length + this.redeemInputs.length + this.lookupInputs.length +
-      this.verificationInputs.length;
+    return this.inventoryInputs.length + this.redeemInputs.length + this.lookupInputs.length + this.verificationInputs.length;
   }
 
   #record(
     method: FakeProviderCall["method"],
     input: ResetAccountContext | RedeemResetInput | LookupRedeemResetInput,
     providerReceiptId: string | null = null,
-    timeoutStage: FakeProviderCall["timeoutStage"] = null,
+    timeoutStage: FakeProviderCall["timeoutStage"] = null
   ): void {
     const withKey = input as Partial<RedeemResetInput>;
     this.calls.push({
@@ -268,9 +265,7 @@ class FakeCodexUsageResetProvider implements CodexUsageResetProvider {
     }
     const result = clone(this.redeemResult);
     if (this.commitOnRedeem ?? (result.kind === "completed" || result.kind === "accepted")) this.commitCount += 1;
-    const receipt = "providerReceiptId" in result && typeof result.providerReceiptId === "string"
-      ? result.providerReceiptId
-      : null;
+    const receipt = "providerReceiptId" in result && typeof result.providerReceiptId === "string" ? result.providerReceiptId : null;
     if (this.redeemFailureAfterCommit) {
       this.#record("redeem", input, receipt, "after_provider_commit");
       throw this.redeemFailureAfterCommit;
@@ -281,9 +276,8 @@ class FakeCodexUsageResetProvider implements CodexUsageResetProvider {
 
   lookup(input: LookupRedeemResetInput, _signal: AbortSignal): Promise<RedeemResetResult> {
     this.lookupInputs.push(clone(input));
-    const receipt = "providerReceiptId" in this.lookupResult && typeof this.lookupResult.providerReceiptId === "string"
-      ? this.lookupResult.providerReceiptId
-      : null;
+    const receipt =
+      "providerReceiptId" in this.lookupResult && typeof this.lookupResult.providerReceiptId === "string" ? this.lookupResult.providerReceiptId : null;
     this.#record("lookup", input, receipt);
     if (this.lookupFailure) return Promise.reject(this.lookupFailure);
     return Promise.resolve(clone(this.lookupResult));
@@ -322,25 +316,19 @@ const testHash = (value: string): Promise<string> => {
   return Promise.resolve(`test-hash-${(hash >>> 0).toString(16)}-${value.length}`);
 };
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 
 const routingFenceKey = (accountId: string): Deno.KvKey => ["test", "codex-banked-reset", "routing", accountId];
 const credentialFenceKey = (accountId: string): Deno.KvKey => ["test", "codex-banked-reset", "credential", accountId];
 
-const bankedResetFences = (
-  accountId: string,
-  routingGeneration: number,
-  credentialVersion: string,
-): readonly CodexBankedResetFence[] => [
+const bankedResetFences = (accountId: string, routingGeneration: number, credentialVersion: string): readonly CodexBankedResetFence[] => [
   {
     key: routingFenceKey(accountId),
     isCurrent: (value) => isRecord(value) && value.kind === "routing" && value.routing_generation === routingGeneration,
   },
   {
     key: credentialFenceKey(accountId),
-    isCurrent: (value) =>
-      isRecord(value) && value.kind === "credential" && value.credential_version === credentialVersion,
+    isCurrent: (value) => isRecord(value) && value.kind === "credential" && value.credential_version === credentialVersion,
   },
 ];
 
@@ -371,8 +359,7 @@ const seedFences = async (kv: MemoryKv, input: CodexBankedResetCandidate): Promi
   });
 };
 
-const hasKey = (keys: readonly Deno.KvKey[], expected: Deno.KvKey): boolean =>
-  keys.some((key) => encodeKey(key) === encodeKey(expected));
+const hasKey = (keys: readonly Deno.KvKey[], expected: Deno.KvKey): boolean => keys.some((key) => encodeKey(key) === encodeKey(expected));
 
 const config = (overrides: Partial<CodexBankedResetConfig> = {}): CodexBankedResetConfig => ({
   enabled: true,
@@ -388,7 +375,7 @@ const dependencies = (
   clock: TestClock,
   configured = config(),
   telemetry: CodexBankedResetTelemetry = {},
-  reloadConfig?: () => CodexBankedResetConfig,
+  reloadConfig?: () => CodexBankedResetConfig
 ): CodexBankedResetDependencies => {
   let owner = 0;
   return {
@@ -407,7 +394,7 @@ const fullPool = (
   first: CodexBankedResetCandidate,
   firstProvider: CodexUsageResetProvider,
   second: CodexBankedResetCandidate,
-  secondProvider: CodexUsageResetProvider,
+  secondProvider: CodexUsageResetProvider
 ) =>
   [
     { slot: 0, candidate: first, provider: firstProvider },
@@ -420,24 +407,30 @@ const inventory = (id: string, expiresAtMs: number | null): ResetInventory => ({
   credits: [{ id, status: "available", resetType: "codex_rate_limits", expiresAtMs }],
 });
 
+/** The account hash of a reset result the test has already asserted is present. */
+const requiredHash = (value: string | null): string => {
+  assert.ok(value, "expected the reset result to carry an account hash");
+  return value;
+};
+
 const shadowDecisionFrom = (kv: MemoryKv) => {
   const decisions = [...kv.entries.values()]
     .map((entry) => parseCodexResetShadowDecisionRecord(entry.value))
     .filter((decision): decision is NonNullable<typeof decision> => decision !== null);
   assert.equal(decisions.length, 1);
-  return decisions[0]!;
+  const decision = decisions.at(0);
+  assert.ok(decision, "expected exactly one shadow decision");
+  return decision;
 };
 
 Deno.test("banked reset disabled, shadow, and invalid limits make zero provider calls", async () => {
   const clock = new TestClock();
-  const cases: Array<
-    Readonly<{
-      name: string;
-      configured: CodexBankedResetConfig;
-      reason: string;
-      expectShadowEvent?: boolean;
-    }>
-  > = [
+  const cases: Readonly<{
+    name: string;
+    configured: CodexBankedResetConfig;
+    reason: string;
+    expectShadowEvent?: boolean;
+  }>[] = [
     {
       name: "feature disabled",
       configured: config({ enabled: false }),
@@ -471,10 +464,7 @@ Deno.test("banked reset disabled, shadow, and invalid limits make zero provider 
     const kv = new MemoryKv();
     const provider = new FakeCodexUsageResetProvider();
     const events: string[] = [];
-    const result = await attemptCodexBankedReset(
-      candidate(),
-      dependencies(kv, provider, clock, testCase.configured, { event: (event) => events.push(event) }),
-    );
+    const result = await attemptCodexBankedReset(candidate(), dependencies(kv, provider, clock, testCase.configured, { event: (event) => events.push(event) }));
 
     assert.equal(result.kind, "skipped", testCase.name);
     assert.equal(result.reason, testCase.reason, testCase.name);
@@ -492,10 +482,7 @@ Deno.test("banked reset accepts any account ID or stable account hash", async ()
   const allowedKv = new MemoryKv();
   const allowedProvider = new FakeCodexUsageResetProvider();
   await seedFences(allowedKv, reset);
-  const allowed = await attemptCodexBankedReset(
-    reset,
-    dependencies(allowedKv, allowedProvider, clock, config({})),
-  );
+  const allowed = await attemptCodexBankedReset(reset, dependencies(allowedKv, allowedProvider, clock, config({})));
   assert.equal(allowed.kind, "verified");
   assert.equal(allowed.accountIdHash, accountIdHash);
   assert.equal(allowedProvider.commitCount, 1);
@@ -520,24 +507,21 @@ Deno.test("banked reset live happy path commits exactly once with a stable durab
   assert.ok(first.quotaGeneration);
   assert.ok(first.idempotencyKeyHash);
   assert.equal(first.record?.state, "verified");
-  assert.equal(first.record?.idempotency_key_hash, first.idempotencyKeyHash);
+  assert.equal(first.record.idempotency_key_hash, first.idempotencyKeyHash);
   assert.equal(provider.redeemInputs[0]?.accountId, "test-account-a");
   assert.match(provider.redeemInputs[0]?.idempotencyKey ?? "", /^uos_ai_codex_reset_v1_/);
 
   const redemptionKey = codexResetRedemptionKey(first.accountIdHash, first.quotaGeneration);
   const durable = await kv.get<CodexResetRedemptionRecord>(redemptionKey);
   assert.equal(durable.value?.state, "verified");
-  assert.equal(durable.value?.provider_receipt_id, "receipt-completed");
-  assert.equal(durable.value?.idempotency_key_hash, first.idempotencyKeyHash);
+  assert.equal(durable.value.provider_receipt_id, "receipt-completed");
+  assert.equal(durable.value.idempotency_key_hash, first.idempotencyKeyHash);
 
   const day = new Date(clock.nowMs).toISOString().slice(0, 10);
   const daily = await kv.get<{ submission_count: number }>(codexResetGlobalDailyKey(day));
   assert.equal(daily.value?.submission_count, 1);
 
-  const duplicate = await attemptCodexBankedReset(
-    candidate({ requestId: "same-window-later-request" }),
-    deps,
-  );
+  const duplicate = await attemptCodexBankedReset(candidate({ requestId: "same-window-later-request" }), deps);
   assert.equal(duplicate.kind, "verified");
   assert.equal(duplicate.reason, "previously_verified");
   assert.equal(duplicate.idempotencyKeyHash, first.idempotencyKeyHash);
@@ -566,7 +550,7 @@ Deno.test("a verified reset from an older routing generation is not reusable", a
   assert.equal(later.kind, "skipped");
   assert.equal(later.reason, "verified_routing_generation_stale");
   assert.ok(later.record);
-  assert.equal(later.record?.routing_generation, firstCandidate.routingGeneration);
+  assert.equal(later.record.routing_generation, firstCandidate.routingGeneration);
   assert.equal(provider.redeemInputs.length, 1);
   assert.equal(provider.commitCount, 1);
 });
@@ -576,16 +560,16 @@ Deno.test("banked reset production owner token generator is called with its Cryp
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
   const reset = candidate();
-  const { newOwnerToken: _injectedOwnerToken, ...deps } = dependencies(kv, provider, clock);
+  // The injected owner-token generator is deliberately dropped so the
+  // production generator runs.
+  const deps = dependencies(kv, provider, clock);
+  Reflect.deleteProperty(deps, "newOwnerToken");
   await seedFences(kv, reset);
 
   const result = await attemptCodexBankedReset(reset, deps);
 
   assert.equal(result.kind, "verified");
-  assert.match(
-    result.record?.owner_token ?? "",
-    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-  );
+  assert.match(result.record?.owner_token ?? "", /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   assert.equal(provider.commitCount, 1);
 });
 
@@ -610,15 +594,12 @@ Deno.test("unknown provider outcome is recovered through lookup with the same ke
 
   provider.lookupResult = { kind: "already_redeemed", providerReceiptId: "receipt-recovered" };
   clock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
-  const recovered = await attemptCodexBankedReset(
-    candidate({ requestId: "recovery-request" }),
-    deps,
-  );
+  const recovered = await attemptCodexBankedReset(candidate({ requestId: "recovery-request" }), deps);
 
   assert.equal(recovered.kind, "verified");
   assert.equal(recovered.reason, "verified");
   assert.equal(recovered.record?.state, "verified");
-  assert.equal(recovered.record?.fence, 3);
+  assert.equal(recovered.record.fence, 3);
   assert.equal(provider.redeemInputs.length, 1);
   assert.equal(provider.commitCount, 1);
   assert.equal(provider.lookupInputs.length, 1);
@@ -641,10 +622,7 @@ Deno.test("concurrent claims for one generation permit one provider submission a
 
   const firstPromise = attemptCodexBankedReset(reset, deps);
   await entered.promise;
-  const duplicate = await attemptCodexBankedReset(
-    candidate({ requestId: "concurrent-request" }),
-    deps,
-  );
+  const duplicate = await attemptCodexBankedReset(candidate({ requestId: "concurrent-request" }), deps);
 
   assert.equal(duplicate.kind, "pending");
   assert.equal(duplicate.reason, "transaction_in_progress");
@@ -676,10 +654,7 @@ Deno.test("an expired recovery lookup rejection stays unknown while the original
   clock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
   provider.lookupResult = { kind: "rejected", reason: "not yet visible" };
   provider.verifyResult = false;
-  const recovery = await reconcileCodexBankedReset(
-    candidate({ requestId: "in-flight-negative-lookup" }),
-    deps,
-  );
+  const recovery = await reconcileCodexBankedReset(candidate({ requestId: "in-flight-negative-lookup" }), deps);
 
   assert.equal(recovery.kind, "pending");
   assert.equal(recovery.reason, "verification_not_applied");
@@ -692,12 +667,7 @@ Deno.test("an expired recovery lookup rejection stays unknown while the original
   assert.equal(originalOutcome.kind, "pending");
   assert.equal(originalOutcome.reason, "receipt_cas_failed");
   assert.equal(provider.redeemInputs.length, 1);
-  assert.equal(
-    kv.value<CodexResetRedemptionRecord>(
-      codexResetRedemptionKey(recovery.accountIdHash!, recovery.quotaGeneration!),
-    )?.state,
-    "unknown",
-  );
+  assert.equal(kv.redemptionRecord(codexResetRedemptionKey(requiredHash(recovery.accountIdHash), requiredHash(recovery.quotaGeneration)))?.state, "unknown");
 });
 
 Deno.test("live claims require seeded current fences and CAS-check both routing and credential records", async () => {
@@ -722,10 +692,8 @@ Deno.test("live claims require seeded current fences and CAS-check both routing 
   assert.equal(verified.kind, "verified");
   assert.equal(provider.commitCount, 1);
   assert.equal(
-    kv.atomicCheckBatches.filter((batch) =>
-      hasKey(batch, routingFenceKey(reset.accountId)) && hasKey(batch, credentialFenceKey(reset.accountId))
-    ).length,
-    3,
+    kv.atomicCheckBatches.filter((batch) => hasKey(batch, routingFenceKey(reset.accountId)) && hasKey(batch, credentialFenceKey(reset.accountId))).length,
+    3
   );
 });
 
@@ -741,7 +709,7 @@ Deno.test("a malformed truthy verification result remains unknown and cannot aut
   assert.equal(result.kind, "pending");
   assert.equal(result.reason, "verification_response_invalid");
   assert.equal(result.record?.state, "unknown");
-  assert.equal(result.record?.last_error_code, "verification_response_invalid");
+  assert.equal(result.record.last_error_code, "verification_response_invalid");
   assert.equal(provider.commitCount, 1);
   assert.equal(provider.redeemInputs.length, 1);
   assert.equal(provider.verificationInputs.length, 1);
@@ -799,10 +767,8 @@ Deno.test("inventory that returns after the quota deadline cannot cross the subm
   assert.equal(provider.redeemInputs.length, 0);
   assert.equal(provider.commitCount, 0);
   assert.equal(
-    kv.atomicCheckBatches.filter((batch) =>
-      hasKey(batch, routingFenceKey(reset.accountId)) && hasKey(batch, credentialFenceKey(reset.accountId))
-    ).length,
-    1,
+    kv.atomicCheckBatches.filter((batch) => hasKey(batch, routingFenceKey(reset.accountId)) && hasKey(batch, credentialFenceKey(reset.accountId))).length,
+    1
   );
 });
 
@@ -833,10 +799,10 @@ Deno.test("a quota deadline crossing during submission preparation cannot reserv
   const day = new Date(clock.nowMs).toISOString().slice(0, 10);
   const dailyKey = codexResetGlobalDailyKey(day);
   kv.beforeGet = (key) => {
-    if (encodeKey(key) !== encodeKey(dailyKey)) return null;
-    kv.beforeGet = null;
-    clock.advance(1);
-    return null;
+    if (encodeKey(key) === encodeKey(dailyKey)) {
+      kv.beforeGet = null;
+      clock.advance(1);
+    }
   };
 
   const result = await attemptCodexBankedReset(reset, dependencies(kv, provider, clock));
@@ -1004,7 +970,10 @@ Deno.test("a disabled subscription does not block another subscription", async (
   await seedFences(kv, reset);
   await seedFences(kv, other);
   await kv.set(codexResetUsageKey(await testHash(reset.accountId)), { enabled: false });
-  const pool = [{ slot: 0, candidate: reset, provider }, { slot: 1, candidate: other, provider: otherProvider }];
+  const pool = [
+    { slot: 0, candidate: reset, provider },
+    { slot: 1, candidate: other, provider: otherProvider },
+  ];
   const deps = dependencies(kv, provider, clock, config({ mode: "shadow", maxGlobalPerDay: 1 }));
   const allowed = await evaluateCodexBankedResetPool(pool, deps);
   assert.equal(allowed.reason, "shadow_selected");
@@ -1037,7 +1006,10 @@ Deno.test("disabling a subscription during inventory prevents a late shadow or l
     gate.resolve(undefined);
     const result = await pending;
     assert.equal(result.kind, "skipped");
-    assert.equal([...kv.entries.values()].some((entry) => parseCodexResetShadowDecisionRecord(entry.value)), false);
+    assert.equal(
+      [...kv.entries.values()].some((entry) => parseCodexResetShadowDecisionRecord(entry.value)),
+      false
+    );
     assert.equal(provider.redeemInputs.length, 0);
   }
 });
@@ -1058,27 +1030,26 @@ Deno.test("an unapproved provider receipt stays out of the durable record and te
       event: (event, fields) => {
         if (event === "codex_reset_submitted") submittedFields.push(fields);
       },
-    }),
+    })
   );
 
   assert.equal(result.kind, "verified");
   assert.equal(result.record?.provider_receipt_id, null);
   assert.equal(
-    kv.value<CodexResetRedemptionRecord>(
-      codexResetRedemptionKey(result.accountIdHash!, result.quotaGeneration!),
-    )?.provider_receipt_id,
-    null,
+    kv.redemptionRecord(codexResetRedemptionKey(requiredHash(result.accountIdHash), requiredHash(result.quotaGeneration)))?.provider_receipt_id,
+    null
   );
-  assert.deepEqual(submittedFields.map((fields) => fields.provider_receipt_id), [null]);
+  assert.deepEqual(
+    submittedFields.map((fields) => fields.provider_receipt_id),
+    [null]
+  );
 });
 
 Deno.test("documented terminal outcomes enable one-shot redemption and retain the exact safe result", async (t) => {
-  for (
-    const testCase of [
-      { providerKind: "completed", telemetryKind: "reset" },
-      { providerKind: "already_redeemed", telemetryKind: "already_redeemed" },
-    ] as const
-  ) {
+  for (const testCase of [
+    { providerKind: "completed", telemetryKind: "reset" },
+    { providerKind: "already_redeemed", telemetryKind: "already_redeemed" },
+  ] as const) {
     await t.step(testCase.telemetryKind, async () => {
       const kv = new MemoryKv();
       const provider = new FakeCodexUsageResetProvider({
@@ -1105,14 +1076,17 @@ Deno.test("documented terminal outcomes enable one-shot redemption and retain th
           event: (event, fields) => {
             if (event === "codex_reset_verified") verified.push(fields);
           },
-        }),
+        })
       );
 
       assert.equal(result.kind, "verified");
       assert.equal(result.reason, `redeem_outcome_${testCase.telemetryKind}`);
       assert.equal(result.record?.state, "verified");
-      assert.equal(result.record?.provider_receipt_id, null);
-      assert.deepEqual(verified.map((fields) => fields.redeem_outcome), [testCase.telemetryKind]);
+      assert.equal(result.record.provider_receipt_id, null);
+      assert.deepEqual(
+        verified.map((fields) => fields.redeem_outcome),
+        [testCase.telemetryKind]
+      );
       assert.equal(provider.redeemInputs.length, 1);
       assert.equal(provider.verificationInputs.length, 0);
       assert.equal(provider.lookupInputs.length, 0);
@@ -1134,16 +1108,10 @@ Deno.test("a terminal-only provider requires an exact global daily cap of one", 
     const reset = candidate({ requestId: `terminal-cap-${maxGlobalPerDay}` });
     await seedFences(kv, reset);
 
-    const result = await attemptCodexBankedReset(
-      reset,
-      dependencies(kv, provider, new TestClock(), config({ maxGlobalPerDay })),
-    );
+    const result = await attemptCodexBankedReset(reset, dependencies(kv, provider, new TestClock(), config({ maxGlobalPerDay })));
 
     assert.equal(result.kind, "skipped");
-    assert.equal(
-      result.reason,
-      maxGlobalPerDay === 0 ? "global_limit_disabled" : "terminal_outcome_global_limit_must_be_one",
-    );
+    assert.equal(result.reason, maxGlobalPerDay === 0 ? "global_limit_disabled" : "terminal_outcome_global_limit_must_be_one");
     assert.equal(provider.callCount, 0);
   }
 });
@@ -1175,7 +1143,7 @@ Deno.test("an ambiguous one-shot outcome stays unknown and never submits again",
   clock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
   const reconciled = await reconcileCodexBankedReset(
     candidate({ ...reset, requestId: "one-shot-ambiguous-reconcile" }),
-    dependencies(kv, provider, clock, oneShotConfig),
+    dependencies(kv, provider, clock, oneShotConfig)
   );
   assert.equal(reconciled.kind, "pending");
   assert.equal(reconciled.reason, "terminal_outcome_ambiguous");
@@ -1219,7 +1187,7 @@ Deno.test("a malformed terminal reconciliation capability fails closed without p
   clock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
   const reconciled = await reconcileCodexBankedReset(
     candidate({ ...reset, requestId: "malformed-terminal-reconciliation-retry" }),
-    dependencies(kv, provider, clock, oneShotConfig),
+    dependencies(kv, provider, clock, oneShotConfig)
   );
   assert.equal(reconciled.kind, "pending");
   assert.equal(reconciled.reason, "provider_contract_unproven");
@@ -1242,7 +1210,7 @@ Deno.test("banked-reset telemetry retains only safe correlation fields", async (
   });
   await seedFences(kv, reset);
   provider.redeemResult = { kind: "completed", providerReceiptId: "unapproved-provider-receipt" };
-  const events: Array<Readonly<{ event: string; fields: CodexBankedResetTelemetryFields }>> = [];
+  const events: Readonly<{ event: string; fields: CodexBankedResetTelemetryFields }>[] = [];
   const metrics: CodexBankedResetTelemetryFields[] = [];
 
   const result = await attemptCodexBankedReset(
@@ -1250,7 +1218,7 @@ Deno.test("banked-reset telemetry retains only safe correlation fields", async (
     dependencies(kv, provider, clock, config({}), {
       event: (event, fields) => events.push({ event, fields }),
       metric: (_metric, _value, fields) => metrics.push(fields),
-    }),
+    })
   );
 
   assert.equal(result.kind, "verified");
@@ -1261,12 +1229,9 @@ Deno.test("banked-reset telemetry retains only safe correlation fields", async (
   assert.ok(events.some(({ event }) => event === "codex_reset_verified"));
   assert.ok(events.every(({ fields }) => typeof fields.account_id_hash === "string"));
 
-  const rawValues = [
-    reset.accountId,
-    reset.credentialVersion,
-    provider.redeemInputs[0]!.idempotencyKey,
-    "unapproved-provider-receipt",
-  ];
+  const firstRedeemInput = provider.redeemInputs.at(0);
+  assert.ok(firstRedeemInput, "expected one provider redemption");
+  const rawValues = [reset.accountId, reset.credentialVersion, firstRedeemInput.idempotencyKey, "unapproved-provider-receipt"];
   for (const fields of [...events.map(({ fields }) => fields), ...metrics]) {
     const serialized = JSON.stringify(fields);
     for (const raw of rawValues) assert.equal(serialized.includes(raw), false, `telemetry leaked ${raw}`);
@@ -1350,10 +1315,10 @@ Deno.test("a quota deadline crossing during claimed-takeover fence reads leaves 
   await inventoryEntered.promise;
   clock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
   kv.beforeGet = (key) => {
-    if (encodeKey(key) !== encodeKey(credentialFenceKey(reset.accountId))) return null;
-    kv.beforeGet = null;
-    clock.advance(1);
-    return null;
+    if (encodeKey(key) === encodeKey(credentialFenceKey(reset.accountId))) {
+      kv.beforeGet = null;
+      clock.advance(1);
+    }
   };
 
   const takeover = await attemptCodexBankedReset(candidate({ ...reset, requestId: "claim-takeover-deadline" }), deps);
@@ -1393,15 +1358,12 @@ Deno.test("a post-submission lease takeover fences the paused owner before provi
   clock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
   provider.lookupResult = { kind: "unknown", providerReceiptId: null };
   provider.verifyResult = false;
-  const takeover = await reconcileCodexBankedReset(
-    candidate({ requestId: "post-submission-takeover" }),
-    deps,
-  );
+  const takeover = await reconcileCodexBankedReset(candidate({ requestId: "post-submission-takeover" }), deps);
 
   assert.equal(takeover.kind, "pending");
   assert.equal(takeover.reason, "verification_not_applied");
   assert.equal(takeover.record?.state, "unknown");
-  assert.equal(takeover.record?.fence, 2);
+  assert.equal(takeover.record.fence, 2);
   assert.equal(provider.redeemInputs.length, 0);
 
   renewalGate.resolve(undefined);
@@ -1531,7 +1493,7 @@ Deno.test("a durable unknown reset is reconciled while live configuration is dis
   const disabledConfig = config({ enabled: false });
   const recovered = await reconcileCodexBankedReset(
     candidate({ requestId: "disabled-recovery" }),
-    dependencies(kv, provider, clock, disabledConfig, {}, () => disabledConfig),
+    dependencies(kv, provider, clock, disabledConfig, {}, () => disabledConfig)
   );
 
   assert.equal(recovered.kind, "verified");
@@ -1589,39 +1551,161 @@ Deno.test("seeded state-machine invariant: one account/window never reaches more
   }
 });
 
-Deno.test("generated banked-reset event sequences retain the durable state-machine invariants", async () => {
-  type Event =
-    | "request"
-    | "qualifying_429"
-    | "non_qualifying_429"
-    | "claim"
-    | "submit"
-    | "provider_commit"
-    | "response_loss"
-    | "lookup"
-    | "verify"
-    | "retry"
-    | "crash"
-    | "lease_expire"
-    | "credential_rotate"
-    | "kv_failure";
+type BankedResetGeneratedEvent =
+  | "request"
+  | "qualifying_429"
+  | "non_qualifying_429"
+  | "claim"
+  | "submit"
+  | "provider_commit"
+  | "response_loss"
+  | "lookup"
+  | "verify"
+  | "retry"
+  | "crash"
+  | "lease_expire"
+  | "credential_rotate"
+  | "kv_failure";
 
-  const allEvents: readonly Event[] = [
-    "request",
-    "qualifying_429",
-    "non_qualifying_429",
-    "claim",
-    "submit",
-    "provider_commit",
-    "response_loss",
-    "lookup",
-    "verify",
-    "retry",
-    "crash",
-    "lease_expire",
-    "credential_rotate",
-    "kv_failure",
-  ];
+const BANKED_RESET_GENERATED_EVENTS: readonly BankedResetGeneratedEvent[] = [
+  "request",
+  "qualifying_429",
+  "non_qualifying_429",
+  "claim",
+  "submit",
+  "provider_commit",
+  "response_loss",
+  "lookup",
+  "verify",
+  "retry",
+  "crash",
+  "lease_expire",
+  "credential_rotate",
+  "kv_failure",
+];
+
+/** Mutable state carried across one generated event sequence. */
+type GeneratedResetScenario = {
+  reset: CodexBankedResetCandidate;
+  deps: CodexBankedResetDependencies;
+  provider: FakeCodexUsageResetProvider;
+  kv: MemoryKv;
+  clock: TestClock;
+  sequenceSeed: number;
+  qualifyingObservationIsCurrent: boolean;
+  lastOutcome: Awaited<ReturnType<typeof attemptCodexBankedReset>> | null;
+  postResetInferenceRetries: number;
+  credentialWasRotated: boolean;
+};
+
+/** Applies one generated event to the scenario. */
+const applyBankedResetEvent = async (scenario: GeneratedResetScenario, event: BankedResetGeneratedEvent, label: string): Promise<void> => {
+  switch (event) {
+    case "request":
+    case "non_qualifying_429":
+      // A generic, malformed, or otherwise non-qualifying 429 never
+      // enters the state machine's submission path.
+      scenario.qualifyingObservationIsCurrent = false;
+      scenario.lastOutcome = null;
+      break;
+    case "qualifying_429":
+      scenario.qualifyingObservationIsCurrent = true;
+      scenario.lastOutcome = await attemptCodexBankedReset(scenario.reset, scenario.deps);
+      break;
+    case "claim":
+    case "submit":
+      if (scenario.qualifyingObservationIsCurrent) scenario.lastOutcome = await attemptCodexBankedReset(scenario.reset, scenario.deps);
+      break;
+    case "provider_commit":
+      scenario.provider.redeemResult = clone(sanitizedProviderFixtures.rate_limit);
+      scenario.provider.commitOnRedeem = true;
+      if (scenario.qualifyingObservationIsCurrent) scenario.lastOutcome = await attemptCodexBankedReset(scenario.reset, scenario.deps);
+      break;
+    case "response_loss":
+      scenario.provider.redeemFailureAfterCommit = new Error(`response loss ${scenario.sequenceSeed}`);
+      if (scenario.qualifyingObservationIsCurrent) scenario.lastOutcome = await attemptCodexBankedReset(scenario.reset, scenario.deps);
+      scenario.provider.redeemFailureAfterCommit = null;
+      break;
+    case "lookup":
+      scenario.clock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
+      scenario.provider.lookupResult = clone(sanitizedProviderFixtures.lookup_pending);
+      scenario.lastOutcome = await reconcileCodexBankedReset(scenario.reset, scenario.deps);
+      break;
+    case "verify":
+      scenario.clock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
+      scenario.provider.lookupResult = clone(sanitizedProviderFixtures.lookup_completed);
+      scenario.provider.verifyResult = true;
+      scenario.lastOutcome = await reconcileCodexBankedReset(scenario.reset, scenario.deps);
+      break;
+    case "retry": {
+      const retriesBefore = scenario.postResetInferenceRetries;
+      const outcome = scenario.lastOutcome;
+      let retryPermitted = false;
+      // The model can execute its one retry only from a verified durable
+      // outcome; it never treats an unknown or rejected state as a permit.
+      if (outcome?.kind === "verified" && retriesBefore === 0) {
+        retryPermitted = true;
+        assert.equal(outcome.record?.state, "verified", label);
+        // This is the generated model's post-reset transport. The public
+        // Responses/Chat matrix separately drives the real gateway transport;
+        // here it makes the retry permit an executable state transition rather
+        // than a bookkeeping increment.
+        scenario.postResetInferenceRetries += 1;
+      }
+      assert.equal(scenario.postResetInferenceRetries > retriesBefore, retryPermitted, `${label}: retry must be granted only after verification`);
+      assert.ok(scenario.postResetInferenceRetries <= 1, label);
+      break;
+    }
+    case "crash":
+    case "lease_expire":
+      scenario.clock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
+      break;
+    case "credential_rotate":
+      scenario.credentialWasRotated = true;
+      await scenario.kv.set(credentialFenceKey(scenario.reset.accountId), {
+        kind: "credential",
+        credential_version: `rotated-${scenario.sequenceSeed}`,
+      });
+      break;
+    case "kv_failure": {
+      scenario.kv.getFailure = new Error(`generated KV outage ${scenario.sequenceSeed}`);
+      const failure = await attemptCodexBankedReset(scenario.reset, scenario.deps);
+      assert.notEqual(failure.kind, "verified", label);
+      scenario.kv.getFailure = null;
+      break;
+    }
+    default:
+      // Every generated event is modelled above; this keeps the switch total.
+      assert.fail(`${label}: unmodelled generated event`);
+  }
+};
+
+/** Asserts the durable invariants that must hold after every generated event. */
+const assertBankedResetInvariants = (
+  scenario: GeneratedResetScenario,
+  label: string,
+  submissionsBefore: number,
+  mode: CodexBankedResetConfig["mode"]
+): void => {
+  const idempotencyKeys = new Set(scenario.provider.redeemInputs.map((input) => input.idempotencyKey));
+  assert.ok(scenario.provider.commitCount <= 1, `${label}: more than one provider commit`);
+  assert.ok(scenario.provider.redeemInputs.length <= 1, `${label}: more than one submission`);
+  assert.ok(idempotencyKeys.size <= 1, `${label}: different idempotency keys`);
+  if (!scenario.qualifyingObservationIsCurrent) {
+    assert.equal(scenario.provider.redeemInputs.length, submissionsBefore, `${label}: a non-qualifying response reached submission`);
+  }
+  if (mode === "disabled" || mode === "shadow") {
+    assert.equal(scenario.provider.commitCount, 0, `${label}: inactive mode committed`);
+  }
+  if (scenario.credentialWasRotated) {
+    // A rotated fence may still permit provider-level reconciliation of a
+    // prior unknown record, but it cannot start a submission under the
+    // stale candidate fence.
+    assert.equal(scenario.provider.redeemInputs.length, submissionsBefore, `${label}: stale fence submitted again`);
+  }
+};
+
+Deno.test("generated banked-reset event sequences retain the durable state-machine invariants", async () => {
   const sequenceCount = 48;
   let seed = 0x41c6_0de5;
   const next = (): number => {
@@ -1639,12 +1723,12 @@ Deno.test("generated banked-reset event sequences retain the durable state-machi
     // Each reproducible sequence includes the full model alphabet before a
     // deterministic shuffle/repetition, so a failing seed identifies the
     // exact interleaving without relying on a flaky random test runner.
-    const sequence = [...allEvents];
+    const sequence = [...BANKED_RESET_GENERATED_EVENTS];
     for (let index = sequence.length - 1; index > 0; index -= 1) {
       const swap = choose() % (index + 1);
-      [sequence[index], sequence[swap]] = [sequence[swap]!, sequence[index]!];
+      [sequence[index], sequence[swap]] = [sequence[swap], sequence[index]];
     }
-    for (let index = 0; index < 11; index += 1) sequence.push(allEvents[choose() % allEvents.length]!);
+    for (let index = 0; index < 11; index += 1) sequence.push(BANKED_RESET_GENERATED_EVENTS[choose() % BANKED_RESET_GENERATED_EVENTS.length]);
 
     const accountId = `generated-account-${sequenceIndex}`;
     const reset = candidate({
@@ -1658,7 +1742,7 @@ Deno.test("generated banked-reset event sequences retain the durable state-machi
     const provider = new FakeCodexUsageResetProvider();
     const clock = new TestClock();
     const modes: readonly CodexBankedResetConfig["mode"][] = ["live", "shadow", "disabled"];
-    const mode = modes[sequenceSeed % modes.length]!;
+    const mode = modes[sequenceSeed % modes.length];
     const configured = config({
       mode,
       enabled: mode === "live" || mode === "shadow",
@@ -1668,119 +1752,24 @@ Deno.test("generated banked-reset event sequences retain the durable state-machi
     provider.redeemResult = clone(sanitizedProviderFixtures.rate_limit);
     provider.commitOnRedeem = true;
 
-    let lastOutcome: Awaited<ReturnType<typeof attemptCodexBankedReset>> | null = null;
-    let postResetInferenceRetries = 0;
-    let credentialWasRotated = false;
-    let qualifyingObservationIsCurrent = false;
-    const dispatchVerifiedInferenceRetry = (): void => {
-      // This is the generated model's post-reset transport. The public
-      // Responses/Chat matrix separately drives the real gateway transport;
-      // here it makes the retry permit an executable state transition rather
-      // than a bookkeeping increment.
-      postResetInferenceRetries += 1;
+    const scenario: GeneratedResetScenario = {
+      reset,
+      deps,
+      provider,
+      kv,
+      clock,
+      sequenceSeed,
+      qualifyingObservationIsCurrent: false,
+      lastOutcome: null,
+      postResetInferenceRetries: 0,
+      credentialWasRotated: false,
     };
 
     for (const event of sequence) {
       const label = `seed ${sequenceSeed} event ${event}`;
       const submissionsBefore = provider.redeemInputs.length;
-      switch (event) {
-        case "request":
-          qualifyingObservationIsCurrent = false;
-          lastOutcome = null;
-          break;
-        case "qualifying_429":
-          qualifyingObservationIsCurrent = true;
-          lastOutcome = await attemptCodexBankedReset(reset, deps);
-          break;
-        case "claim":
-        case "submit":
-          if (qualifyingObservationIsCurrent) lastOutcome = await attemptCodexBankedReset(reset, deps);
-          break;
-        case "non_qualifying_429":
-          // A generic, malformed, or otherwise non-qualifying 429 never
-          // enters the state machine's submission path.
-          qualifyingObservationIsCurrent = false;
-          lastOutcome = null;
-          break;
-        case "provider_commit":
-          provider.redeemResult = clone(sanitizedProviderFixtures.rate_limit);
-          provider.commitOnRedeem = true;
-          if (qualifyingObservationIsCurrent) lastOutcome = await attemptCodexBankedReset(reset, deps);
-          break;
-        case "response_loss":
-          provider.redeemFailureAfterCommit = new Error(`response loss ${sequenceSeed}`);
-          if (qualifyingObservationIsCurrent) lastOutcome = await attemptCodexBankedReset(reset, deps);
-          provider.redeemFailureAfterCommit = null;
-          break;
-        case "lookup":
-          clock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
-          provider.lookupResult = clone(sanitizedProviderFixtures.lookup_pending);
-          lastOutcome = await reconcileCodexBankedReset(reset, deps);
-          break;
-        case "verify":
-          clock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
-          provider.lookupResult = clone(sanitizedProviderFixtures.lookup_completed);
-          provider.verifyResult = true;
-          lastOutcome = await reconcileCodexBankedReset(reset, deps);
-          break;
-        case "retry": {
-          const retriesBefore = postResetInferenceRetries;
-          let retryPermitted = false;
-          // The model can execute its one retry only from a verified durable
-          // outcome; it never treats an unknown or rejected state as a permit.
-          if (lastOutcome?.kind === "verified" && retriesBefore === 0) {
-            retryPermitted = true;
-            assert.equal(lastOutcome.record?.state, "verified", label);
-            dispatchVerifiedInferenceRetry();
-          }
-          assert.equal(
-            postResetInferenceRetries > retriesBefore,
-            retryPermitted,
-            `${label}: retry must be granted only after verification`,
-          );
-          assert.ok(postResetInferenceRetries <= 1, label);
-          break;
-        }
-        case "crash":
-        case "lease_expire":
-          clock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
-          break;
-        case "credential_rotate":
-          credentialWasRotated = true;
-          await kv.set(credentialFenceKey(accountId), {
-            kind: "credential",
-            credential_version: `rotated-${sequenceSeed}`,
-          });
-          break;
-        case "kv_failure": {
-          kv.getFailure = new Error(`generated KV outage ${sequenceSeed}`);
-          const failure = await attemptCodexBankedReset(reset, deps);
-          assert.notEqual(failure.kind, "verified", label);
-          kv.getFailure = null;
-          break;
-        }
-      }
-
-      const idempotencyKeys = new Set(provider.redeemInputs.map((input) => input.idempotencyKey));
-      assert.ok(provider.commitCount <= 1, `${label}: more than one provider commit`);
-      assert.ok(provider.redeemInputs.length <= 1, `${label}: more than one submission`);
-      assert.ok(idempotencyKeys.size <= 1, `${label}: different idempotency keys`);
-      if (!qualifyingObservationIsCurrent) {
-        assert.equal(
-          provider.redeemInputs.length,
-          submissionsBefore,
-          `${label}: a non-qualifying response reached submission`,
-        );
-      }
-      if (mode === "disabled" || mode === "shadow") {
-        assert.equal(provider.commitCount, 0, `${label}: inactive mode committed`);
-      }
-      if (credentialWasRotated) {
-        // A rotated fence may still permit provider-level reconciliation of a
-        // prior unknown record, but it cannot start a submission under the
-        // stale candidate fence.
-        assert.equal(provider.redeemInputs.length, submissionsBefore, `${label}: stale fence submitted again`);
-      }
+      await applyBankedResetEvent(scenario, event, label);
+      assertBankedResetInvariants(scenario, label, submissionsBefore, mode);
     }
   }
 });
@@ -1796,10 +1785,7 @@ Deno.test("global daily cap stops a second account before it reaches the provide
   await seedFences(kv, firstCandidate);
   await seedFences(kv, secondCandidate);
   const first = await attemptCodexBankedReset(firstCandidate, deps);
-  const second = await attemptCodexBankedReset(
-    secondCandidate,
-    deps,
-  );
+  const second = await attemptCodexBankedReset(secondCandidate, deps);
 
   assert.equal(first.kind, "verified");
   assert.equal(second.kind, "skipped");
@@ -1845,12 +1831,7 @@ Deno.test("a claim held across UTC midnight cannot bypass the next day's global 
   });
   await seedFences(kv, firstCandidate);
   await seedFences(kv, secondCandidate);
-  const deps = dependencies(
-    kv,
-    provider,
-    clock,
-    config({ maxGlobalPerDay: 1 }),
-  );
+  const deps = dependencies(kv, provider, clock, config({ maxGlobalPerDay: 1 }));
   const inventoryGate = new Deferred<void>();
   const inventoryEntered = new Deferred<void>();
   provider.inventoryGate = inventoryGate.promise;
@@ -1872,21 +1853,16 @@ Deno.test("a claim held across UTC midnight cannot bypass the next day's global 
   assert.equal(provider.redeemInputs.length, 1);
   assert.equal(provider.commitCount, 1);
   const currentDay = new Date(clock.nowMs).toISOString().slice(0, 10);
-  assert.equal(
-    (await kv.get<{ submission_count: number }>(codexResetGlobalDailyKey(currentDay))).value?.submission_count,
-    1,
-  );
+  assert.equal((await kv.get<{ submission_count: number }>(codexResetGlobalDailyKey(currentDay))).value?.submission_count, 1);
 });
 
 Deno.test("empty or unsupported inventory and provider rejection become durable terminal rejections", async () => {
-  const scenarios: Array<
-    Readonly<{
-      name: string;
-      configure: (provider: FakeCodexUsageResetProvider) => void;
-      reason: string;
-      redeemCalls: number;
-    }>
-  > = [
+  const scenarios: Readonly<{
+    name: string;
+    configure: (provider: FakeCodexUsageResetProvider) => void;
+    reason: string;
+    redeemCalls: number;
+  }>[] = [
     {
       name: "empty inventory",
       configure: (provider) => {
@@ -1930,10 +1906,7 @@ Deno.test("empty or unsupported inventory and provider rejection become durable 
     const reset = candidate();
     await seedFences(kv, reset);
     const first = await attemptCodexBankedReset(reset, deps);
-    const repeat = await attemptCodexBankedReset(
-      candidate({ requestId: "repeat-rejection" }),
-      deps,
-    );
+    const repeat = await attemptCodexBankedReset(candidate({ requestId: "repeat-rejection" }), deps);
 
     assert.equal(first.kind, "rejected", scenario.name);
     assert.equal(first.reason, scenario.reason, scenario.name);
@@ -1945,7 +1918,7 @@ Deno.test("empty or unsupported inventory and provider rejection become durable 
 });
 
 Deno.test("stale or future inventory cannot authorize a redemption", async () => {
-  const cases: Array<Readonly<{ name: string; observedAtDeltaMs: number }>> = [
+  const cases: Readonly<{ name: string; observedAtDeltaMs: number }>[] = [
     { name: "stale", observedAtDeltaMs: -(CODEX_BANKED_RESET_INVENTORY_MAX_AGE_MS + 1) },
     { name: "future", observedAtDeltaMs: 1 },
   ];
@@ -1977,10 +1950,7 @@ Deno.test("KV outage and claim CAS exhaustion fail closed before any provider in
   await seedFences(unavailableKv, unavailableCandidate);
   unavailableKv.getFailure = new Error("in-memory KV unavailable");
   const unavailableProvider = new FakeCodexUsageResetProvider();
-  const unavailable = await attemptCodexBankedReset(
-    unavailableCandidate,
-    dependencies(unavailableKv, unavailableProvider, clock),
-  );
+  const unavailable = await attemptCodexBankedReset(unavailableCandidate, dependencies(unavailableKv, unavailableProvider, clock));
   assert.equal(unavailable.kind, "skipped");
   assert.equal(unavailable.reason, "kv_unavailable");
   assert.equal(unavailableProvider.callCount, 0);
@@ -2019,11 +1989,7 @@ Deno.test("a transient CAS conflict at every happy-path transition retains one l
     assert.equal(result.kind, "verified", `failed durable commit ${failedCommit}`);
     assert.equal(provider.commitCount, 1, `failed durable commit ${failedCommit}`);
     assert.equal(provider.redeemInputs.length, 1, `failed durable commit ${failedCommit}`);
-    assert.equal(
-      new Set(provider.redeemInputs.map((input) => input.idempotencyKey)).size,
-      1,
-      `failed durable commit ${failedCommit}`,
-    );
+    assert.equal(new Set(provider.redeemInputs.map((input) => input.idempotencyKey)).size, 1, `failed durable commit ${failedCommit}`);
   }
 });
 
@@ -2108,13 +2074,10 @@ Deno.test("a stale owner cannot finalize verified after a lease-takeover reconci
   clock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
   provider.lookupResult = clone(sanitizedProviderFixtures.lookup_pending);
   provider.verifyResult = false;
-  const takeover = await reconcileCodexBankedReset(
-    candidate({ requestId: "stale-owner-verify-takeover" }),
-    deps,
-  );
+  const takeover = await reconcileCodexBankedReset(candidate({ requestId: "stale-owner-verify-takeover" }), deps);
   assert.equal(takeover.kind, "pending");
   assert.equal(takeover.record?.state, "unknown");
-  assert.equal(takeover.record?.fence, 3);
+  assert.equal(takeover.record.fence, 3);
 
   provider.verifyResult = true;
   verifyGate.resolve(undefined);
@@ -2122,12 +2085,7 @@ Deno.test("a stale owner cannot finalize verified after a lease-takeover reconci
   assert.equal(stale.kind, "pending");
   assert.equal(stale.reason, "verification_cas_failed");
   assert.equal(provider.redeemInputs.length, 1);
-  assert.equal(
-    kv.value<CodexResetRedemptionRecord>(
-      codexResetRedemptionKey(takeover.accountIdHash!, takeover.quotaGeneration!),
-    )?.state,
-    "unknown",
-  );
+  assert.equal(kv.redemptionRecord(codexResetRedemptionKey(requiredHash(takeover.accountIdHash), requiredHash(takeover.quotaGeneration)))?.state, "unknown");
 });
 
 Deno.test("receipt CAS loss leaves the transaction pending and recovery uses lookup instead of resubmission", async () => {
@@ -2150,10 +2108,7 @@ Deno.test("receipt CAS loss leaves the transaction pending and recovery uses loo
 
   clock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
   provider.lookupResult = { kind: "completed", providerReceiptId: "receipt-after-cas-recovery" };
-  const recovered = await attemptCodexBankedReset(
-    candidate({ requestId: "cas-recovery" }),
-    deps,
-  );
+  const recovered = await attemptCodexBankedReset(candidate({ requestId: "cas-recovery" }), deps);
   assert.equal(recovered.kind, "verified");
   assert.equal(provider.redeemInputs.length, 1);
   assert.equal(provider.lookupInputs.length, 1);
@@ -2161,14 +2116,12 @@ Deno.test("receipt CAS loss leaves the transaction pending and recovery uses loo
 });
 
 Deno.test("sanitized provider fixtures accept only complete known boundary results", async () => {
-  const successfulFixtures: Array<
-    Readonly<{
-      name: string;
-      result: RedeemResetResult;
-      expectedCommitCount: number;
-      expectedReceipt: string;
-    }>
-  > = [
+  const successfulFixtures: Readonly<{
+    name: string;
+    result: RedeemResetResult;
+    expectedCommitCount: number;
+    expectedReceipt: string;
+  }>[] = [
     {
       name: "completed",
       result: sanitizedProviderFixtures.redemption_completed,
@@ -2205,12 +2158,7 @@ Deno.test("sanitized provider fixtures accept only complete known boundary resul
     assert.equal(provider.redeemInputs.length, 1, fixture.name);
   }
 
-  for (
-    const fixture of [
-      sanitizedProviderFixtures.malformed_success,
-      sanitizedProviderFixtures.schema_drift,
-    ]
-  ) {
+  for (const fixture of [sanitizedProviderFixtures.malformed_success, sanitizedProviderFixtures.schema_drift]) {
     const kv = new MemoryKv();
     const provider = new FakeCodexUsageResetProvider();
     const clock = new TestClock();
@@ -2225,13 +2173,11 @@ Deno.test("sanitized provider fixtures accept only complete known boundary resul
     assert.equal(provider.verificationInputs.length, 0, fixture.kind);
   }
 
-  for (
-    const lookupFixture of [
-      sanitizedProviderFixtures.lookup_pending,
-      sanitizedProviderFixtures.lookup_rejected,
-      sanitizedProviderFixtures.lookup_not_found,
-    ]
-  ) {
+  for (const lookupFixture of [
+    sanitizedProviderFixtures.lookup_pending,
+    sanitizedProviderFixtures.lookup_rejected,
+    sanitizedProviderFixtures.lookup_not_found,
+  ]) {
     const kv = new MemoryKv();
     const provider = new FakeCodexUsageResetProvider();
     const clock = new TestClock();
@@ -2247,7 +2193,7 @@ Deno.test("sanitized provider fixtures accept only complete known boundary resul
     provider.verifyResult = false;
     const recovered = await reconcileCodexBankedReset(
       candidate({ requestId: `fixture-lookup-recovery-${lookupFixture.kind}` }),
-      dependencies(kv, provider, clock),
+      dependencies(kv, provider, clock)
     );
 
     assert.equal(recovered.kind, "pending", lookupFixture.kind);
@@ -2258,15 +2204,13 @@ Deno.test("sanitized provider fixtures accept only complete known boundary resul
 });
 
 Deno.test("provider rejection matrix keeps definitive failures terminal and ambiguous failures unknown", async () => {
-  const cases: Array<
-    Readonly<{
-      name: string;
-      configure: (provider: FakeCodexUsageResetProvider) => void;
-      expectedKind: "pending" | "rejected";
-      expectedState: "unknown" | "rejected";
-      expectedReason: string;
-    }>
-  > = [
+  const cases: Readonly<{
+    name: string;
+    configure: (provider: FakeCodexUsageResetProvider) => void;
+    expectedKind: "pending" | "rejected";
+    expectedState: "unknown" | "rejected";
+    expectedReason: string;
+  }>[] = [
     {
       name: "reset allowance exhausted",
       configure: (provider) => {
@@ -2328,10 +2272,7 @@ Deno.test("provider rejection matrix keeps definitive failures terminal and ambi
     testCase.configure(provider);
     const deps = dependencies(kv, provider, clock);
     const first = await attemptCodexBankedReset(reset, deps);
-    const repeat = await attemptCodexBankedReset(
-      candidate({ requestId: `rejection-repeat-${testCase.name}` }),
-      deps,
-    );
+    const repeat = await attemptCodexBankedReset(candidate({ requestId: `rejection-repeat-${testCase.name}` }), deps);
 
     assert.equal(first.kind, testCase.expectedKind, testCase.name);
     assert.equal(first.reason, testCase.expectedReason, testCase.name);
@@ -2343,15 +2284,13 @@ Deno.test("provider rejection matrix keeps definitive failures terminal and ambi
 });
 
 Deno.test("timeout and crash matrix never creates a second logical redemption", async () => {
-  const timeoutCases: Array<
-    Readonly<{
-      name: string;
-      configure: (provider: FakeCodexUsageResetProvider) => void;
-      expectedTimeoutStage: FakeProviderCall["timeoutStage"];
-      expectedReason: string;
-      expectedCommitCount: number;
-    }>
-  > = [
+  const timeoutCases: Readonly<{
+    name: string;
+    configure: (provider: FakeCodexUsageResetProvider) => void;
+    expectedTimeoutStage: FakeProviderCall["timeoutStage"];
+    expectedReason: string;
+    expectedCommitCount: number;
+  }>[] = [
     {
       name: "timeout before provider receives a commit",
       configure: (provider) => {
@@ -2406,10 +2345,7 @@ Deno.test("timeout and crash matrix never creates a second logical redemption", 
     provider.lookupResult = clone(sanitizedProviderFixtures.lookup_completed);
     provider.verifyResult = true;
     clock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
-    const recovered = await reconcileCodexBankedReset(
-      candidate({ requestId: `timeout-recovery-${testCase.name}` }),
-      deps,
-    );
+    const recovered = await reconcileCodexBankedReset(candidate({ requestId: `timeout-recovery-${testCase.name}` }), deps);
 
     assert.equal(recovered.kind, "verified", testCase.name);
     assert.equal(provider.redeemInputs.length, 1, testCase.name);
@@ -2431,19 +2367,14 @@ Deno.test("timeout and crash matrix never creates a second logical redemption", 
   const deps = dependencies(kv, provider, clock);
   const original = attemptCodexBankedReset(reset, deps);
   await verifyEntered.promise;
-  const persisted = [...kv.entries.values()]
-    .map((entry) => entry.value)
-    .find((value) => isRecord(value) && value.state === "submitted");
+  const persisted = [...kv.entries.values()].map((entry) => entry.value).find((value) => isRecord(value) && value.state === "submitted");
   assert.equal((persisted as { provider_receipt_id?: unknown } | undefined)?.provider_receipt_id, "receipt-completed");
   assert.equal(provider.commitCount, 1);
   assert.equal(provider.redeemInputs.length, 1);
   clock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
   provider.lookupResult = clone(sanitizedProviderFixtures.lookup_completed);
   provider.verifyResult = false;
-  const recovery = await reconcileCodexBankedReset(
-    candidate({ requestId: "receipt-persisted-recovery" }),
-    deps,
-  );
+  const recovery = await reconcileCodexBankedReset(candidate({ requestId: "receipt-persisted-recovery" }), deps);
   assert.equal(recovery.kind, "pending");
   assert.equal(provider.redeemInputs.length, 1);
   provider.verifyResult = true;
@@ -2464,7 +2395,7 @@ Deno.test("client aborts before submission and after a possible commit fail clos
   beforeController.abort(new DOMException("client cancelled", "AbortError"));
   const before = await attemptCodexBankedReset(
     candidate({ ...beforeReset, signal: beforeController.signal }),
-    dependencies(beforeKv, beforeProvider, beforeClock),
+    dependencies(beforeKv, beforeProvider, beforeClock)
   );
   assert.equal(before.kind, "rejected");
   assert.equal(before.reason, "client_aborted_before_submission");
@@ -2481,10 +2412,7 @@ Deno.test("client aborts before submission and after a possible commit fail clos
   afterProvider.redeemEntered = entered;
   afterProvider.redeemGate = gate.promise;
   const afterDeps = dependencies(afterKv, afterProvider, afterClock);
-  const original = attemptCodexBankedReset(
-    candidate({ ...afterReset, signal: afterController.signal }),
-    afterDeps,
-  );
+  const original = attemptCodexBankedReset(candidate({ ...afterReset, signal: afterController.signal }), afterDeps);
   await entered.promise;
   afterController.abort(new DOMException("client cancelled after submit", "AbortError"));
   gate.resolve(undefined);
@@ -2495,21 +2423,20 @@ Deno.test("client aborts before submission and after a possible commit fail clos
 
   afterClock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
   afterProvider.lookupResult = clone(sanitizedProviderFixtures.lookup_completed);
-  const recovered = await reconcileCodexBankedReset(
-    candidate({ requestId: "abort-after-recovery" }),
-    afterDeps,
-  );
+  const recovered = await reconcileCodexBankedReset(candidate({ requestId: "abort-after-recovery" }), afterDeps);
   assert.equal(recovered.kind, "verified");
   assert.equal(afterProvider.redeemInputs.length, 1);
 });
 
 Deno.test("a stalled blocked-cohort inventory is bounded before healthy routing resumes", async () => {
-  const originalTimeout = AbortSignal.timeout;
+  const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
   const timeoutController = new AbortController();
   let observedSignal: AbortSignal | null = null;
-  (AbortSignal as typeof AbortSignal & {
-    timeout: (milliseconds: number) => AbortSignal;
-  }).timeout = (milliseconds: number) => {
+  (
+    AbortSignal as typeof AbortSignal & {
+      timeout: (milliseconds: number) => AbortSignal;
+    }
+  ).timeout = (milliseconds: number) => {
     assert.equal(milliseconds, CODEX_BANKED_RESET_INVENTORY_TIMEOUT_MS);
     return timeoutController.signal;
   };
@@ -2525,8 +2452,11 @@ Deno.test("a stalled blocked-cohort inventory is bounded before healthy routing 
     return new Promise<ResetInventory>((_resolve, reject) => {
       signal.addEventListener(
         "abort",
-        () => reject(signal.reason ?? new DOMException("Inventory timed out", "TimeoutError")),
-        { once: true },
+        () => {
+          const abortReason: Error = signal.reason instanceof Error ? signal.reason : new DOMException("Inventory timed out", "TimeoutError");
+          reject(abortReason);
+        },
+        { once: true }
       );
     });
   };
@@ -2534,12 +2464,7 @@ Deno.test("a stalled blocked-cohort inventory is bounded before healthy routing 
   try {
     const pending = evaluateCodexBankedResetPool(
       [{ slot: 0, candidate: reset, provider }],
-      dependencies(
-        kv,
-        provider,
-        clock,
-        config({ mode: "shadow", maxGlobalPerDay: 1 }),
-      ),
+      dependencies(kv, provider, clock, config({ mode: "shadow", maxGlobalPerDay: 1 }))
     );
     await inventoryEntered.promise;
     assert.equal(observedSignal, timeoutController.signal);
@@ -2549,9 +2474,11 @@ Deno.test("a stalled blocked-cohort inventory is bounded before healthy routing 
     assert.equal(result.reason, "inventory_unavailable");
     assert.equal(provider.redeemInputs.length, 0);
   } finally {
-    (AbortSignal as typeof AbortSignal & {
-      timeout: (milliseconds: number) => AbortSignal;
-    }).timeout = originalTimeout;
+    (
+      AbortSignal as typeof AbortSignal & {
+        timeout: (milliseconds: number) => AbortSignal;
+      }
+    ).timeout = originalTimeout;
   }
 });
 
@@ -2574,7 +2501,7 @@ Deno.test("full-pool shadow reads each account inventory, selects the earliest e
 
   const result = await evaluateCodexBankedResetPool(
     fullPool(first, firstProvider, second, secondProvider),
-    dependencies(kv, firstProvider, clock, shadow, { event: (event) => events.push(event) }),
+    dependencies(kv, firstProvider, clock, shadow, { event: (event) => events.push(event) })
   );
   assert.equal(result.kind, "shadow");
   assert.equal(result.reason, "shadow_selected");
@@ -2634,10 +2561,7 @@ Deno.test("a new persistent-live episode auto-arms without spending, then consum
   assert.equal(provider.redeemInputs.length, 1);
   assert.equal(provider.redeemInputs[0]?.creditId, "expiring-credit");
   assert.equal(provider.commitCount, 1);
-  assert.equal(
-    (await kv.get<{ submission_count: number }>(codexResetGlobalDailyKey(day))).value?.submission_count,
-    1,
-  );
+  assert.equal((await kv.get<{ submission_count: number }>(codexResetGlobalDailyKey(day))).value?.submission_count, 1);
 
   const repeated = await evaluateCodexBankedResetPool(pool, deps);
   assert.equal(repeated.kind, "verified");
@@ -2676,8 +2600,14 @@ Deno.test("concurrent initial persistent-live evaluations only arm before a late
   inventoryGate.resolve(undefined);
   const initial = await Promise.all([first, second]);
 
-  assert.deepEqual(initial.map(({ kind }) => kind), ["shadow", "shadow"]);
-  assert.deepEqual(initial.map(({ reason }) => reason), ["live_armed", "live_armed"]);
+  assert.deepEqual(
+    initial.map(({ kind }) => kind),
+    ["shadow", "shadow"]
+  );
+  assert.deepEqual(
+    initial.map(({ reason }) => reason),
+    ["live_armed", "live_armed"]
+  );
   assert.equal(provider.redeemInputs.length, 0);
   assert.equal(provider.commitCount, 0);
   assert.equal(shadowDecisionFrom(kv).decision_reason, "selected");
@@ -2691,53 +2621,48 @@ Deno.test("concurrent initial persistent-live evaluations only arm before a late
   assert.equal(provider.redeemInputs.length, 1);
   assert.equal(provider.redeemInputs[0]?.creditId, "expiring-credit");
   assert.equal(provider.commitCount, 1);
-  assert.equal(
-    (await kv.get<{ submission_count: number }>(codexResetGlobalDailyKey(day))).value?.submission_count,
-    1,
-  );
+  assert.equal((await kv.get<{ submission_count: number }>(codexResetGlobalDailyKey(day))).value?.submission_count, 1);
 });
 
 Deno.test("invalid or ineligible live inventory cannot arm or consume", async (t) => {
-  for (
-    const scenario of [
-      {
-        name: "invalid",
-        inventory: {
-          availableCount: 2,
-          observedAtMs: 1_700_000_000_000,
-          credits: [
-            {
-              id: "incomplete-credit",
-              status: "available",
-              resetType: "codex_rate_limits",
-              expiresAtMs: null,
-            },
-          ],
-        },
-        reason: "inventory_response_invalid_or_expired",
+  for (const scenario of [
+    {
+      name: "invalid",
+      inventory: {
+        availableCount: 2,
+        observedAtMs: 1_700_000_000_000,
+        credits: [
+          {
+            id: "incomplete-credit",
+            status: "available",
+            resetType: "codex_rate_limits",
+            expiresAtMs: null,
+          },
+        ],
       },
-      {
-        name: "ineligible",
-        inventory: {
-          availableCount: 1,
-          observedAtMs: 1_700_000_000_000,
-          credits: [
-            {
-              id: "unsupported-credit",
-              status: "available",
-              resetType: "unsupported_reset",
-              expiresAtMs: null,
-            },
-          ],
-        },
-        reason: "inventory_no_eligible_codex_credit",
+      reason: "inventory_response_invalid_or_expired",
+    },
+    {
+      name: "ineligible",
+      inventory: {
+        availableCount: 1,
+        observedAtMs: 1_700_000_000_000,
+        credits: [
+          {
+            id: "unsupported-credit",
+            status: "available",
+            resetType: "unsupported_reset",
+            expiresAtMs: null,
+          },
+        ],
       },
-    ] satisfies readonly {
-      name: string;
-      inventory: ResetInventory;
-      reason: string;
-    }[]
-  ) {
+      reason: "inventory_no_eligible_codex_credit",
+    },
+  ] satisfies readonly {
+    name: string;
+    inventory: ResetInventory;
+    reason: string;
+  }[]) {
     await t.step(scenario.name, async () => {
       const clock = new TestClock();
       const kv = new MemoryKv();
@@ -2753,7 +2678,7 @@ Deno.test("invalid or ineligible live inventory cannot arm or consume", async (t
 
       const result = await evaluateCodexBankedResetPool(
         [{ slot: 0, candidate: reset, provider }],
-        dependencies(kv, provider, clock, live, { event: (event) => events.push(event) }),
+        dependencies(kv, provider, clock, live, { event: (event) => events.push(event) })
       );
 
       assert.equal(result.kind, "skipped");
@@ -2826,10 +2751,7 @@ Deno.test("concurrent shadow observations deduplicate one episode, and live cons
   const shadowDependencies = dependencies(kv, firstProvider, clock, shadow, {
     event: (event) => telemetry.push(event),
   });
-  const [one, two] = await Promise.all([
-    evaluateCodexBankedResetPool(pool, shadowDependencies),
-    evaluateCodexBankedResetPool(pool, shadowDependencies),
-  ]);
+  const [one, two] = await Promise.all([evaluateCodexBankedResetPool(pool, shadowDependencies), evaluateCodexBankedResetPool(pool, shadowDependencies)]);
   assert.deepEqual([one.kind, two.kind], ["shadow", "shadow"]);
   assert.equal([one.reason, two.reason].includes("already_would_spend_once"), true);
   assert.equal(telemetry.includes("codex_reset_duplicate_prevented"), true);
@@ -2840,10 +2762,7 @@ Deno.test("concurrent shadow observations deduplicate one episode, and live cons
     mode: "live",
     maxGlobalPerDay: 1,
   });
-  const liveResult = await evaluateCodexBankedResetPool(
-    pool,
-    dependencies(kv, firstProvider, clock, live),
-  );
+  const liveResult = await evaluateCodexBankedResetPool(pool, dependencies(kv, firstProvider, clock, live));
   assert.equal(liveResult.kind, "verified");
   assert.equal(liveResult.selected?.slot, 1);
   assert.equal(firstProvider.redeemInputs.length, 0);
@@ -2870,10 +2789,7 @@ Deno.test("one blocked candidate promotes from shadow to one concurrent live red
     maxGlobalPerDay: 1,
   });
 
-  const audited = await evaluateCodexBankedResetPool(
-    pool,
-    dependencies(kv, provider, clock, shadow),
-  );
+  const audited = await evaluateCodexBankedResetPool(pool, dependencies(kv, provider, clock, shadow));
   assert.equal(audited.kind, "shadow");
   assert.equal(audited.reason, "shadow_selected");
   assert.equal(audited.selected?.slot, 0);
@@ -2900,10 +2816,7 @@ Deno.test("one blocked candidate promotes from shadow to one concurrent live red
   assert.equal(provider.redeemInputs.length, 1);
   assert.equal(provider.commitCount, 1);
   const day = new Date(clock.nowMs).toISOString().slice(0, 10);
-  assert.equal(
-    (await kv.get<{ submission_count: number }>(codexResetGlobalDailyKey(day))).value?.submission_count,
-    1,
-  );
+  assert.equal((await kv.get<{ submission_count: number }>(codexResetGlobalDailyKey(day))).value?.submission_count, 1);
 });
 
 Deno.test("incomplete, duplicate, expired, and changed inventories never select or consume a shadow-audited credit", async (t) => {
@@ -2928,12 +2841,13 @@ Deno.test("incomplete, duplicate, expired, and changed inventories never select 
         secondProvider.inventory = {
           availableCount: scenario === "incomplete" ? 2 : 1,
           observedAtMs: clock.nowMs,
-          credits: scenario === "incomplete"
-            ? [{ id: "credit-b", status: "available", resetType: "codex_rate_limits", expiresAtMs: null }]
-            : [
-              { id: "credit-b", status: "available", resetType: "codex_rate_limits", expiresAtMs: null },
-              { id: "credit-b", status: "unavailable", resetType: "codex_rate_limits", expiresAtMs: null },
-            ],
+          credits:
+            scenario === "incomplete"
+              ? [{ id: "credit-b", status: "available", resetType: "codex_rate_limits", expiresAtMs: null }]
+              : [
+                  { id: "credit-b", status: "available", resetType: "codex_rate_limits", expiresAtMs: null },
+                  { id: "credit-b", status: "unavailable", resetType: "codex_rate_limits", expiresAtMs: null },
+                ],
         };
         const result = await evaluateCodexBankedResetPool(pool, dependencies(kv, firstProvider, clock, shadow));
         assert.equal(result.kind, "shadow");
@@ -2977,7 +2891,7 @@ Deno.test("config and durable-record parsers are strict, and an unproven provide
       maxGlobalPerDay: defaults.maxGlobalPerDay,
       maxPerAccountPerWindow: defaults.maxPerAccountPerWindow,
     },
-    { enabled: true, mode: "shadow", maxGlobalPerDay: 0, maxPerAccountPerWindow: 1 },
+    { enabled: true, mode: "shadow", maxGlobalPerDay: 0, maxPerAccountPerWindow: 1 }
   );
 
   const environment = new Map<string, string>([
@@ -2994,6 +2908,7 @@ Deno.test("config and durable-record parsers are strict, and an unproven provide
   assert.equal(parseCodexBankedResetConfig(() => "1").enabled, false);
   assert.equal(parseCodexBankedResetConfig(() => "1.5").maxGlobalPerDay, 0);
 
+  const submittedAtMs = 1_700_000_000_001;
   const validRecord: CodexResetRedemptionRecord = {
     v: 1,
     account_id_hash: "account-hash",
@@ -3008,7 +2923,7 @@ Deno.test("config and durable-record parsers are strict, and an unproven provide
     provider_receipt_id: "receipt",
     created_at_ms: 1_700_000_000_000,
     updated_at_ms: 1_700_000_000_001,
-    submitted_at_ms: 1_700_000_000_001,
+    submitted_at_ms: submittedAtMs,
     verified_at_ms: null,
     last_error_code: null,
   };
@@ -3017,7 +2932,7 @@ Deno.test("config and durable-record parsers are strict, and an unproven provide
   assert.equal(parseCodexResetRedemptionRecord({ ...validRecord, provider_receipt_id: "" }), null);
   assert.equal(parseCodexResetRedemptionRecord({ ...validRecord, state: "future_state" }), null);
 
-  const semanticInvalidRecords: Array<Readonly<{ name: string; value: Record<string, unknown> }>> = [
+  const semanticInvalidRecords: Readonly<{ name: string; value: Record<string, unknown> }>[] = [
     {
       name: "claimed cannot carry a submission timestamp",
       value: {
@@ -3045,7 +2960,7 @@ Deno.test("config and durable-record parsers are strict, and an unproven provide
     },
     {
       name: "verified cannot predate submission",
-      value: { ...validRecord, state: "verified", verified_at_ms: validRecord.submitted_at_ms! - 1 },
+      value: { ...validRecord, state: "verified", verified_at_ms: submittedAtMs - 1 },
     },
     {
       name: "rejected requires a stable error code",
@@ -3090,7 +3005,7 @@ Deno.test("config and durable-record parsers are strict, and an unproven provide
 
   const malformedResult = await attemptCodexBankedReset(
     candidate({ requestId: "malformed-provider-contract" }),
-    dependencies(new MemoryKv(), malformedContractProvider, new TestClock()),
+    dependencies(new MemoryKv(), malformedContractProvider, new TestClock())
   );
   assert.equal(malformedResult.kind, "skipped");
   assert.equal(malformedResult.reason, "provider_contract_unproven");

@@ -24,7 +24,7 @@ export type ToolErrorCode =
   | "internal"; // unexpected backend failure
 
 /** One canonical tool result. */
-export interface ToolResult {
+export type ToolResult = {
   ok: boolean;
   /** Model-facing text on success (clipped to the output limit). */
   output?: string;
@@ -38,7 +38,7 @@ export interface ToolResult {
   stdout?: string;
   /** shell.exec: captured standard error (clipped). */
   stderr?: string;
-}
+};
 
 /** Maximum characters of any single result output/error field. */
 export const TOOL_OUTPUT_LIMIT = 8_000;
@@ -48,14 +48,13 @@ export const SEARCH_LINE_LIMIT = 200;
 export const SHELL_DEFAULT_TIMEOUT_MS = 20_000;
 
 /** Clips long tool text with a stable, indexable suffix. */
-export const clipToolText = (text: string, limit: number = TOOL_OUTPUT_LIMIT): string =>
-  text.length > limit ? `${text.slice(0, limit)}…[truncated]` : text;
+export const clipToolText = (text: string, limit: number = TOOL_OUTPUT_LIMIT): string => (text.length > limit ? `${text.slice(0, limit)}…[truncated]` : text);
 
 /** Builds a failure envelope. */
-export const toolFailure = (error_code: ToolErrorCode, error: string): ToolResult => ({
+export const toolFailure = (errorCode: ToolErrorCode, error: string): ToolResult => ({
   ok: false,
   error,
-  error_code,
+  error_code: errorCode,
 });
 
 /** Backend failure carrying a canonical, machine-readable code. */

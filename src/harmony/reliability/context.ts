@@ -40,12 +40,10 @@ export const estimateTokens = (text: string): number => Math.max(1, Math.ceil(te
 export const estimateJsonTokens = (value: unknown): number => estimateTokens(JSON.stringify(value));
 
 /** Deterministic model-facing message payload of a conversation. */
-export const wireMessages = (conversation: Conversation): readonly Record<string, unknown>[] =>
-  wireMessagesFromConversation(conversation);
+export const wireMessages = (conversation: Conversation): readonly Record<string, unknown>[] => wireMessagesFromConversation(conversation);
 
 /** Estimated tokens of a full wire transcript (messages only). */
-export const estimateConversationTokens = (conversation: Conversation): number =>
-  estimateJsonTokens(wireMessages(conversation));
+export const estimateConversationTokens = (conversation: Conversation): number => estimateJsonTokens(wireMessages(conversation));
 
 /** Estimated tokens of one request body (messages + tools + overhead). */
 export const estimateRequestTokens = (body: Readonly<Record<string, unknown>>): number => estimateJsonTokens(body) + 4;
@@ -54,12 +52,12 @@ export const estimateRequestTokens = (body: Readonly<Record<string, unknown>>): 
 // Machine-readable tool-result content (conversation storage format)
 // ---------------------------------------------------------------------------
 
-export interface ParsedToolResult {
+export type ParsedToolResult = {
   ok: boolean;
   output?: string | null;
   error?: string | null;
   error_code?: string | null;
-}
+};
 
 /** Serializes one result envelope as the deterministic conversation line. */
 export const serializeToolResultContent = (result: ParsedToolResult): string =>
@@ -93,7 +91,7 @@ export const parseToolResultContent = (content: string): ParsedToolResult | null
 
 export type ContextBudgetKind = "short" | "medium" | "large";
 
-export interface CompactionPolicy {
+export type CompactionPolicy = {
   kind: ContextBudgetKind;
   /** Deterministic token budget the tier targets. */
   targetTokens: number;
@@ -105,7 +103,7 @@ export interface CompactionPolicy {
   dropOldExplore: boolean;
   /** Analysis outside the last N turns is dropped locally. */
   analysisWindow: number;
-}
+};
 
 export const COMPACTION_POLICIES: Readonly<Record<ContextBudgetKind, CompactionPolicy>> = {
   short: {
@@ -141,21 +139,19 @@ export const policyForBudget = (budget: ContextBudgetKind): CompactionPolicy => 
 // Pair extraction
 // ---------------------------------------------------------------------------
 
-interface ConversationPair {
+type ConversationPair = {
   assistantIndex: number;
   resultIndex: number;
   callId: string;
   tool: string;
   args: Record<string, unknown>;
   parsed: ParsedToolResult | null;
-}
+};
 
 const isGuardPair = (pair: ConversationPair): boolean =>
-  pair.parsed !== null &&
-  (pair.parsed.error_code === "duplicate_call" || pair.parsed.error_code === "repeated_failure");
+  pair.parsed !== null && (pair.parsed.error_code === "duplicate_call" || pair.parsed.error_code === "repeated_failure");
 
-const isErrorPair = (pair: ConversationPair): boolean =>
-  pair.parsed !== null ? !pair.parsed.ok || isGuardPair(pair) : true;
+const isErrorPair = (pair: ConversationPair): boolean => (pair.parsed !== null ? !pair.parsed.ok || isGuardPair(pair) : true);
 
 /** Extracts (assistant tool_call, tool result) pairs from a conversation. */
 export function extractPairs(conversation: Conversation): readonly ConversationPair[] {
@@ -165,8 +161,11 @@ export function extractPairs(conversation: Conversation): readonly ConversationP
     const turn = turns[i];
     if (turn.role !== "assistant" || turn.toolCalls.length !== 1) continue;
     const call = turn.toolCalls[0];
-    const next = turns[i + 1];
-    if (next === undefined || next.role !== "tool" || next.toolCallId !== call.id) continue;
+    // `.at()` keeps the out-of-bounds case honest: the last turn of a
+    // conversation may be an assistant call whose result turn never arrived.
+    const next = turns.at(i + 1);
+    if (next === undefined) continue;
+    if (next.role !== "tool" || next.toolCallId !== call.id) continue;
     pairs.push({
       assistantIndex: i,
       resultIndex: i + 1,
@@ -189,29 +188,26 @@ function parseStoredArguments(argumentsText: string): Record<string, unknown> {
   return {};
 }
 
-export type CompactionDropKind =
-  | "stale_read"
-  | "old_explore"
-  | "analysis";
+export type CompactionDropKind = "stale_read" | "old_explore" | "analysis";
 
-export interface CompactionDrop {
+export type CompactionDrop = {
   kind: CompactionDropKind;
   detail: string;
-}
+};
 
-export interface CompactionResult {
+export type CompactionResult = {
   conversation: Conversation;
   drops: readonly CompactionDrop[];
   estimatedTokens: number;
   metBudget: boolean;
   droppedTurnCount: number;
-}
+};
 
-export interface CompactOptions {
+export type CompactOptions = {
   budget: ContextBudgetKind;
   /** Kept in the compaction tests; harness defaults to the tier policy. */
   policy?: CompactionPolicy;
-}
+};
 
 /**
  * Compacts the model-facing view of one conversation for a budget tier.
@@ -260,10 +256,7 @@ export function compactTranscript(conversation: Conversation, opts: CompactOptio
   const kept: ConversationTurn[] = [];
   let droppedTurns = 0;
   for (let i = 0; i < turns.length; i++) {
-    const inDroppedPair = pairs.some((pair, pi) =>
-      droppedPairIndexes.has(pi) &&
-      (pair.assistantIndex === i || pair.resultIndex === i)
-    );
+    const inDroppedPair = pairs.some((pair, pi) => droppedPairIndexes.has(pi) && (pair.assistantIndex === i || pair.resultIndex === i));
     if (inDroppedPair) {
       droppedTurns += 1;
       continue;
@@ -292,10 +285,10 @@ export function compactTranscript(conversation: Conversation, opts: CompactOptio
 // Structured context rendering
 // ---------------------------------------------------------------------------
 
-export interface StructuredContextOptions {
+export type StructuredContextOptions = {
   /** Recent transcript turns appended after the state summary. */
   maxTailTurns?: number;
-}
+};
 
 const isSystemish = (turn: ConversationTurn): boolean => turn.role === "system" || turn.role === "developer";
 
@@ -304,11 +297,7 @@ const isSystemish = (turn: ConversationTurn): boolean => turn.role === "system" 
  * the recent transcript tail.  This is the model-facing replacement for a
  * full transcript replay at any budget tier.
  */
-export function renderStructuredContext(
-  state: StructuredTaskState,
-  conversation: Conversation,
-  opts: StructuredContextOptions = {},
-): string {
+export function renderStructuredContext(state: StructuredTaskState, conversation: Conversation, opts: StructuredContextOptions = {}): string {
   const tail: ConversationTurn[] = [];
   for (let i = conversation.turns.length - 1; i >= 0 && tail.length < (opts.maxTailTurns ?? 6); i--) {
     const turn = conversation.turns[i];
@@ -324,5 +313,3 @@ export function renderStructuredContext(
   ].join("\n");
   return body;
 }
-
-export const estimateStructuredContextTokens = (text: string): number => estimateTokens(text);

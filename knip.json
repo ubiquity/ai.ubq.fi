@@ -1,0 +1,51 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "serve.ts",
+    "scripts/**/*.ts",
+    "ops/**/*.ts",
+    "benchmarks/**/*.ts",
+    "tests/**/*.test.ts",
+    "tests/**/*.e2e.ts"
+  ],
+  "project": [
+    "src/**/*.ts",
+    "tests/**/*.ts",
+    "scripts/**/*.ts",
+    "ops/**/*.ts",
+    "benchmarks/**/*.ts"
+  ],
+  "includeEntryExports": true,
+  "ignoreExportsUsedInFile": true,
+  "ignoreDependencies": [
+    "@std/yaml",
+    "@deno/kv-utils",
+    "@simplewebauthn/server"
+  ],
+  "ignoreIssues": {
+    "serve.ts": [
+      "exports"
+    ],
+    "src/config.ts": [
+      "exports"
+    ],
+    "src/kv.ts": [
+      "exports"
+    ],
+    "src/local_admin_auth.ts": [
+      "exports"
+    ],
+    "src/provider_capacity.ts": [
+      "duplicates"
+    ],
+    "src/inference_deadline.ts": [
+      "duplicates"
+    ],
+    "src/kernel_quota_v2.ts": [
+      "duplicates"
+    ],
+    "src/metered.ts": [
+      "duplicates"
+    ]
+  }
+}

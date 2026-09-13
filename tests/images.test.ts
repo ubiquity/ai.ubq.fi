@@ -1,11 +1,7 @@
 import assert from "node:assert/strict";
 import { STANDARD_RATE_LIMIT_HEADERS } from "../src/http.ts";
 import { MAX_ACCEPTED_JSON_BODY_BYTES } from "../src/request.ts";
-import {
-  captureAcceptedSentinelReplayInput,
-  materializeSentinelReplayInput,
-  zeroSentinelReplayInput,
-} from "../src/sentinel_replay_capture.ts";
+import { captureAcceptedSentinelReplayInput, materializeSentinelReplayInput, zeroSentinelReplayInput } from "../src/sentinel_replay_capture.ts";
 import {
   buildImageResponsesRequest,
   createImageFanoutDispatchCoordinator,
@@ -31,22 +27,32 @@ const imagesRequest = (body: unknown, path = "/v1/images/generations"): Request 
     body: JSON.stringify(body),
   });
 
-const imageResponse = (
-  result: string,
-  options: Readonly<{ createdAt?: number; headers?: HeadersInit; revisedPrompt?: string }> = {},
-): Response =>
+const imageResponse = (result: string, options: Readonly<{ createdAt?: number; headers?: HeadersInit; revisedPrompt?: string }> = {}): Response =>
   new Response(
     JSON.stringify({
       created_at: options.createdAt ?? 1787431659,
-      output: [{
-        type: "image_generation_call",
-        result,
-        output_format: "png",
-        ...(options.revisedPrompt ? { revised_prompt: options.revisedPrompt } : {}),
-      }],
+      output: [
+        {
+          type: "image_generation_call",
+          result,
+          output_format: "png",
+          ...(options.revisedPrompt ? { revised_prompt: options.revisedPrompt } : {}),
+        },
+      ],
     }),
-    { status: 200, headers: options.headers },
+    { status: 200, headers: options.headers }
   );
+
+/** Reject with an Error once `signal` aborts, keeping the abort reason as the cause. */
+const rejectWhenAborted = (signal: AbortSignal): Promise<never> =>
+  new Promise<never>((_, reject) => {
+    const rejectOnAbort = () => {
+      const reason: unknown = signal.reason;
+      reject(reason instanceof Error ? reason : new Error("image fan-out child aborted", { cause: reason }));
+    };
+    signal.addEventListener("abort", rejectOnAbort, { once: true });
+    if (signal.aborted) rejectOnAbort();
+  });
 
 Deno.test("an images request forces one image-generation tool call", () => {
   const built = buildImageResponsesRequest(
@@ -59,17 +65,19 @@ Deno.test("an images request forces one image-generation tool call", () => {
       input_fidelity: "high",
     },
     "gpt-5.6-sol",
-    "generations",
+    "generations"
   );
   assert.equal(built.model, "gpt-5.6-sol");
   assert.equal(built.input, "a green triangle");
-  assert.deepEqual(built.tools, [{
-    type: "image_generation",
-    action: "generate",
-    model: "gpt-image-2",
-    size: "1024x1024",
-    quality: "high",
-  }]);
+  assert.deepEqual(built.tools, [
+    {
+      type: "image_generation",
+      action: "generate",
+      model: "gpt-image-2",
+      size: "1024x1024",
+      quality: "high",
+    },
+  ]);
   assert.deepEqual(built.tool_choice, { type: "image_generation" });
 });
 
@@ -78,28 +86,30 @@ Deno.test("JSON edits preserve image URL references and user", () => {
     {
       prompt: "make it blue",
       user: "customer-1",
-      images: [
-        { image_url: "https://example.com/source.png" },
-      ],
+      images: [{ image_url: "https://example.com/source.png" }],
       mask: { image_url: "data:image/png;base64,BA==" },
     },
     "gpt-5.6-sol",
-    "edits",
+    "edits"
   );
   assert.equal(built.user, "customer-1");
-  assert.deepEqual(built.input, [{
-    role: "user",
-    content: [
-      { type: "input_text", text: "make it blue" },
-      { type: "input_image", image_url: "https://example.com/source.png" },
-    ],
-  }]);
-  assert.deepEqual(built.tools, [{
-    type: "image_generation",
-    action: "edit",
-    model: "gpt-image-1.5",
-    input_image_mask: { image_url: "data:image/png;base64,BA==" },
-  }]);
+  assert.deepEqual(built.input, [
+    {
+      role: "user",
+      content: [
+        { type: "input_text", text: "make it blue" },
+        { type: "input_image", image_url: "https://example.com/source.png" },
+      ],
+    },
+  ]);
+  assert.deepEqual(built.tools, [
+    {
+      type: "image_generation",
+      action: "edit",
+      model: "gpt-image-1.5",
+      input_image_mask: { image_url: "data:image/png;base64,BA==" },
+    },
+  ]);
   assert.deepEqual(built.tool_choice, { type: "image_generation" });
 });
 
@@ -126,7 +136,7 @@ Deno.test("image response items preserve revised_prompt but omit output_format",
 
 Deno.test("a successful generation returns the OpenAI Images shape", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
-    const seen: Array<Record<string, unknown>> = [];
+    const seen: Record<string, unknown>[] = [];
     const dispatch = async (request: Request): Promise<Response> => {
       assert.equal(request.headers.get("content-type"), "application/json");
       assert.equal(request.headers.get("content-length"), null);
@@ -146,7 +156,7 @@ Deno.test("a successful generation returns the OpenAI Images shape", async () =>
       }),
       "generations",
       undefined,
-      { dispatch },
+      { dispatch }
     );
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
@@ -160,7 +170,7 @@ Deno.test("a successful generation returns the OpenAI Images shape", async () =>
     assert.equal(seen[0]?.model, "gpt-5.6-sol", "dispatch must target the base text model");
     assert.equal(seen[0]?.user, "customer-1");
     assert.equal(seen[0]?.response_format, undefined);
-    assert.equal((seen[0]?.tools as Array<Record<string, unknown>>)?.[0]?.output_compression, 50);
+    assert.equal((seen[0]?.tools as Record<string, unknown>[] | undefined)?.[0]?.output_compression, 50);
   });
 });
 
@@ -168,17 +178,12 @@ Deno.test("image prompt limits count Unicode code points", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
     const prompt = "😀".repeat(20_000);
     let nestedPrompt: unknown = null;
-    const response = await handleImages(
-      imagesRequest({ prompt }),
-      "generations",
-      undefined,
-      {
-        dispatch: async (request) => {
-          nestedPrompt = (await request.json() as Record<string, unknown>).input;
-          return imageResponse("VU5JQ09ERQ==");
-        },
+    const response = await handleImages(imagesRequest({ prompt }), "generations", undefined, {
+      dispatch: async (request) => {
+        nestedPrompt = ((await request.json()) as Record<string, unknown>).input;
+        return imageResponse("VU5JQ09ERQ==");
       },
-    );
+    });
     assert.equal(response.status, 200);
     assert.equal(nestedPrompt, prompt);
   });
@@ -190,10 +195,7 @@ Deno.test("multipart edits become JSON Responses input with a binary mask", asyn
     form.append("model", "gpt-image-2");
     form.append("prompt", "combine these images");
     form.append("image", new File([new Uint8Array([1, 2, 3])], "first.png"));
-    form.append(
-      "image[]",
-      new File([new Uint8Array([5, 6])], "second.webp", { type: "application/octet-stream" }),
-    );
+    form.append("image[]", new File([new Uint8Array([5, 6])], "second.webp", { type: "application/octet-stream" }));
     form.append("image", new File([new Uint8Array([7])], "third.png", { type: "image/png" }));
     form.append("mask", new File([new Uint8Array([4])], "mask.png"));
     form.append("input_fidelity", "high");
@@ -203,42 +205,41 @@ Deno.test("multipart edits become JSON Responses input with a binary mask", asyn
     form.append("stream", "false");
     form.append("user", "customer-2");
 
-    const nestedBodies: Array<Record<string, unknown>> = [];
-    const response = await handleImages(
-      new Request("http://127.0.0.1/v1/images/edits", { method: "POST", body: form }),
-      "edits",
-      undefined,
-      {
-        dispatch: async (request) => {
-          assert.equal(request.headers.get("content-type"), "application/json");
-          assert.equal(request.headers.get("content-length"), null);
-          nestedBodies.push(await request.json());
-          return imageResponse("CCCC");
-        },
+    const nestedBodies: Record<string, unknown>[] = [];
+    const response = await handleImages(new Request("http://127.0.0.1/v1/images/edits", { method: "POST", body: form }), "edits", undefined, {
+      dispatch: async (request) => {
+        assert.equal(request.headers.get("content-type"), "application/json");
+        assert.equal(request.headers.get("content-length"), null);
+        nestedBodies.push(await request.json());
+        return imageResponse("CCCC");
       },
-    );
+    });
     assert.equal(response.status, 200);
     assert.equal(nestedBodies.length, 1);
     const nested = nestedBodies[0];
-    assert.equal(nested?.user, "customer-2");
-    assert.deepEqual(nested?.input, [{
-      role: "user",
-      content: [
-        { type: "input_text", text: "combine these images" },
-        { type: "input_image", image_url: "data:image/png;base64,AQID" },
-        { type: "input_image", image_url: "data:image/webp;base64,BQY=" },
-        { type: "input_image", image_url: "data:image/png;base64,Bw==" },
-      ],
-    }]);
-    assert.deepEqual(nested?.tools, [{
-      type: "image_generation",
-      action: "edit",
-      model: "gpt-image-2",
-      input_fidelity: "high",
-      quality: "high",
-      output_compression: 50,
-      input_image_mask: { image_url: "data:image/png;base64,BA==" },
-    }]);
+    assert.equal(nested.user, "customer-2");
+    assert.deepEqual(nested.input, [
+      {
+        role: "user",
+        content: [
+          { type: "input_text", text: "combine these images" },
+          { type: "input_image", image_url: "data:image/png;base64,AQID" },
+          { type: "input_image", image_url: "data:image/webp;base64,BQY=" },
+          { type: "input_image", image_url: "data:image/png;base64,Bw==" },
+        ],
+      },
+    ]);
+    assert.deepEqual(nested.tools, [
+      {
+        type: "image_generation",
+        action: "edit",
+        model: "gpt-image-2",
+        input_fidelity: "high",
+        quality: "high",
+        output_compression: 50,
+        input_image_mask: { image_url: "data:image/png;base64,BA==" },
+      },
+    ]);
   });
 });
 
@@ -248,17 +249,12 @@ Deno.test("multipart edits reject DALL-E-only quality before Responses dispatch"
   form.append("image", new File([new Uint8Array([1])], "source.png", { type: "image/png" }));
   form.append("quality", "standard");
   let dispatches = 0;
-  const response = await handleImages(
-    new Request("http://127.0.0.1/v1/images/edits", { method: "POST", body: form }),
-    "edits",
-    undefined,
-    {
-      dispatch: () => {
-        dispatches += 1;
-        return Promise.resolve(imageResponse("VU5SRUFDSFJFRA=="));
-      },
+  const response = await handleImages(new Request("http://127.0.0.1/v1/images/edits", { method: "POST", body: form }), "edits", undefined, {
+    dispatch: () => {
+      dispatches += 1;
+      return Promise.resolve(imageResponse("VU5SRUFDSFJFRA=="));
     },
-  );
+  });
   assert.equal(response.status, 400);
   assert.equal((await response.json()).error?.param, "quality");
   assert.equal(dispatches, 0);
@@ -270,17 +266,12 @@ Deno.test("multipart edits reject JSON-only moderation before dispatch", async (
   form.append("image", new File([new Uint8Array([1])], "source.png", { type: "image/png" }));
   form.append("moderation", "auto");
   let dispatches = 0;
-  const response = await handleImages(
-    new Request("http://127.0.0.1/v1/images/edits", { method: "POST", body: form }),
-    "edits",
-    undefined,
-    {
-      dispatch: () => {
-        dispatches += 1;
-        return Promise.resolve(imageResponse("VU5SRUFDSFJFRA=="));
-      },
+  const response = await handleImages(new Request("http://127.0.0.1/v1/images/edits", { method: "POST", body: form }), "edits", undefined, {
+    dispatch: () => {
+      dispatches += 1;
+      return Promise.resolve(imageResponse("VU5SRUFDSFJFRA=="));
     },
-  );
+  });
   assert.equal(response.status, 400);
   assert.equal((await response.json()).error?.param, "moderation");
   assert.equal(dispatches, 0);
@@ -305,17 +296,12 @@ Deno.test("multipart edits reject unsupported source and mask files before dispa
     form.append("prompt", "edit the source");
     form.append("image", testCase.source);
     if (testCase.mask) form.append("mask", testCase.mask);
-    const response = await handleImages(
-      new Request("http://127.0.0.1/v1/images/edits", { method: "POST", body: form }),
-      "edits",
-      undefined,
-      {
-        dispatch: () => {
-          dispatches += 1;
-          return Promise.resolve(imageResponse("VU5SRUFDSFJFRA=="));
-        },
+    const response = await handleImages(new Request("http://127.0.0.1/v1/images/edits", { method: "POST", body: form }), "edits", undefined, {
+      dispatch: () => {
+        dispatches += 1;
+        return Promise.resolve(imageResponse("VU5SRUFDSFJFRA=="));
       },
-    );
+    });
     assert.equal(response.status, 400);
     assert.equal((await response.json()).error?.param, testCase.param);
   }
@@ -327,22 +313,14 @@ Deno.test("multipart edits accept PNG masks above the legacy 4 MiB limit", async
     const form = new FormData();
     form.append("prompt", "edit with a larger mask");
     form.append("image", new File([new Uint8Array([1])], "source.png", { type: "image/png" }));
-    form.append(
-      "mask",
-      new File([new Uint8Array(5 * 1_024 * 1_024)], "mask.png", { type: "image/png" }),
-    );
+    form.append("mask", new File([new Uint8Array(5 * 1_024 * 1_024)], "mask.png", { type: "image/png" }));
     let dispatches = 0;
-    const response = await handleImages(
-      new Request("http://127.0.0.1/v1/images/edits", { method: "POST", body: form }),
-      "edits",
-      undefined,
-      {
-        dispatch: () => {
-          dispatches += 1;
-          return Promise.resolve(imageResponse("TEFSR0VfTUFTSw=="));
-        },
+    const response = await handleImages(new Request("http://127.0.0.1/v1/images/edits", { method: "POST", body: form }), "edits", undefined, {
+      dispatch: () => {
+        dispatches += 1;
+        return Promise.resolve(imageResponse("TEFSR0VfTUFTSw=="));
       },
-    );
+    });
     assert.equal(response.status, 200);
     assert.equal(dispatches, 1);
   });
@@ -352,7 +330,7 @@ Deno.test("multipart edits validate file limits before reading file bytes", asyn
   await withBaseModel("gpt-5.6-sol", async () => {
     const originalSize = Object.getOwnPropertyDescriptor(Blob.prototype, "size");
     const originalArrayBuffer = Object.getOwnPropertyDescriptor(Blob.prototype, "arrayBuffer");
-    assert.ok(originalSize?.get);
+    assert.ok(originalSize && "get" in originalSize);
     assert.ok(originalArrayBuffer?.value);
     let arrayBufferReads = 0;
     const withFileGuards = async (request: Request, reportedSize?: number): Promise<Response> => {
@@ -383,9 +361,7 @@ Deno.test("multipart edits validate file limits before reading file bytes", asyn
 
     const missingPrompt = new FormData();
     missingPrompt.append("image", new File(["small fixture"], "source.png", { type: "image/png" }));
-    const missingPromptResponse = await withFileGuards(
-      new Request("http://127.0.0.1/v1/images/edits", { method: "POST", body: missingPrompt }),
-    );
+    const missingPromptResponse = await withFileGuards(new Request("http://127.0.0.1/v1/images/edits", { method: "POST", body: missingPrompt }));
     assert.equal(missingPromptResponse.status, 400);
     assert.equal(arrayBufferReads, 0);
 
@@ -393,9 +369,7 @@ Deno.test("multipart edits validate file limits before reading file bytes", asyn
     invalidCount.append("prompt", "invalid count");
     invalidCount.append("n", "11");
     invalidCount.append("image", new File(["small fixture"], "source.png", { type: "image/png" }));
-    const invalidCountResponse = await withFileGuards(
-      new Request("http://127.0.0.1/v1/images/edits", { method: "POST", body: invalidCount }),
-    );
+    const invalidCountResponse = await withFileGuards(new Request("http://127.0.0.1/v1/images/edits", { method: "POST", body: invalidCount }));
     assert.equal(invalidCountResponse.status, 400);
     assert.equal(arrayBufferReads, 0);
 
@@ -404,9 +378,7 @@ Deno.test("multipart edits validate file limits before reading file bytes", asyn
     for (let index = 0; index < 17; index += 1) {
       tooMany.append("image[]", new File([String(index)], `${index}.png`, { type: "image/png" }));
     }
-    const tooManyResponse = await withFileGuards(
-      new Request("http://127.0.0.1/v1/images/edits", { method: "POST", body: tooMany }),
-    );
+    const tooManyResponse = await withFileGuards(new Request("http://127.0.0.1/v1/images/edits", { method: "POST", body: tooMany }));
     assert.equal(tooManyResponse.status, 400);
     assert.equal(arrayBufferReads, 0);
 
@@ -429,10 +401,7 @@ Deno.test("multipart edits validate file limits before reading file bytes", asyn
       method: "POST",
       body: aggregateTooLarge,
     });
-    const aggregateTooLargeResponse = await withFileGuards(
-      aggregateTooLargeRequest,
-      26 * 1_024 * 1_024,
-    );
+    const aggregateTooLargeResponse = await withFileGuards(aggregateTooLargeRequest, 26 * 1_024 * 1_024);
     assert.equal(aggregateTooLargeResponse.status, 400);
     assert.equal((await aggregateTooLargeResponse.json()).error?.param, "image");
     assert.equal(arrayBufferReads, 0);
@@ -467,22 +436,14 @@ Deno.test("multipart edits retain the documented file allowance after internal b
   await withBaseModel("gpt-5.6-sol", async () => {
     const form = new FormData();
     form.append("prompt", "preserve a large source image");
-    form.append(
-      "image",
-      new File([new Uint8Array(16 * 1_024 * 1_024)], "large.png", { type: "image/png" }),
-    );
+    form.append("image", new File([new Uint8Array(16 * 1_024 * 1_024)], "large.png", { type: "image/png" }));
     let dispatches = 0;
-    const response = await handleImages(
-      new Request("http://127.0.0.1/v1/images/edits", { method: "POST", body: form }),
-      "edits",
-      undefined,
-      {
-        dispatch: () => {
-          dispatches += 1;
-          return Promise.resolve(imageResponse("TEFSR0U="));
-        },
+    const response = await handleImages(new Request("http://127.0.0.1/v1/images/edits", { method: "POST", body: form }), "edits", undefined, {
+      dispatch: () => {
+        dispatches += 1;
+        return Promise.resolve(imageResponse("TEFSR0U="));
       },
-    );
+    });
     assert.equal(response.status, 200);
     assert.equal(dispatches, 1);
   });
@@ -503,7 +464,7 @@ Deno.test("multipart image failures retain raw bodies within the Sentinel replay
           new Response(JSON.stringify({ error: { message: "upstream failed" } }), {
             status: 502,
             headers: { "content-type": "application/json" },
-          }),
+          })
         ),
     });
     assert.equal(response.status, 502);
@@ -534,15 +495,18 @@ Deno.test("malformed multipart image bodies are not retained for Sentinel replay
 
 Deno.test("JSON edits normalize case-insensitive inline image data URLs", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
-    const nestedBodies: Array<Record<string, unknown>> = [];
+    const nestedBodies: Record<string, unknown>[] = [];
     const response = await handleImages(
-      imagesRequest({
-        model: "gpt-image-2",
-        prompt: "add a window",
-        size: "2048x2048",
-        images: [{ image_url: "DATA:IMAGE/PNG;BASE64,AQID" }],
-        mask: { image_url: "DATA:IMAGE/PNG;BASE64,BA==" },
-      }, "/v1/images/edits"),
+      imagesRequest(
+        {
+          model: "gpt-image-2",
+          prompt: "add a window",
+          size: "2048x2048",
+          images: [{ image_url: "DATA:IMAGE/PNG;BASE64,AQID" }],
+          mask: { image_url: "DATA:IMAGE/PNG;BASE64,BA==" },
+        },
+        "/v1/images/edits"
+      ),
       "edits",
       undefined,
       {
@@ -550,16 +514,16 @@ Deno.test("JSON edits normalize case-insensitive inline image data URLs", async 
           nestedBodies.push(await request.json());
           return imageResponse("Tk9STUFMSVpFRA==");
         },
-      },
+      }
     );
     assert.equal(response.status, 200);
-    assert.deepEqual((nestedBodies[0]?.input as Array<Record<string, unknown>>)?.[0]?.content, [
+    assert.deepEqual((nestedBodies[0]?.input as Record<string, unknown>[] | undefined)?.[0]?.content, [
       { type: "input_text", text: "add a window" },
       { type: "input_image", image_url: "data:image/png;base64,AQID" },
     ]);
-    const tool = (nestedBodies[0]?.tools as Array<Record<string, unknown>>)?.[0];
+    const tool: Record<string, unknown> | undefined = (nestedBodies[0]?.tools as Record<string, unknown>[] | undefined)?.[0];
     assert.equal(tool?.size, "2048x2048");
-    assert.deepEqual(tool?.input_image_mask, {
+    assert.deepEqual(tool.input_image_mask, {
       image_url: "data:image/png;base64,BA==",
     });
   });
@@ -571,32 +535,34 @@ Deno.test("JSON edits reject remote masks and unbound file IDs before dispatch",
     dispatches += 1;
     return Promise.resolve(imageResponse("VU5SRUFDSFJFRA=="));
   };
-  for (
-    const [body, param] of [
-      [{ prompt: "edit", images: [{ file_id: "file-source" }] }, "images"],
-      [{
+  for (const [body, param] of [
+    [{ prompt: "edit", images: [{ file_id: "file-source" }] }, "images"],
+    [
+      {
         prompt: "edit",
         images: [{ image_url: "https://example.com/source.png" }],
         mask: { file_id: "file-mask" },
-      }, "mask"],
-      [{
+      },
+      "mask",
+    ],
+    [
+      {
         prompt: "edit",
         images: [{ image_url: "https://example.com/source.png" }],
         mask: { image_url: "https://example.com/mask.png" },
-      }, "mask"],
-      [{
+      },
+      "mask",
+    ],
+    [
+      {
         prompt: "edit",
         images: [{ image_url: "https://example.com/source.png" }],
         mask: { image_url: "data:image/webp;base64,BA==" },
-      }, "mask"],
-    ] as const
-  ) {
-    const response = await handleImages(
-      imagesRequest(body, "/v1/images/edits"),
-      "edits",
-      undefined,
-      { dispatch },
-    );
+      },
+      "mask",
+    ],
+  ] as const) {
+    const response = await handleImages(imagesRequest(body, "/v1/images/edits"), "edits", undefined, { dispatch });
     assert.equal(response.status, 400);
     assert.equal((await response.json()).error?.param, param);
   }
@@ -609,20 +575,10 @@ Deno.test("JSON edits reject malformed source image URLs before dispatch", async
     dispatches += 1;
     return Promise.resolve(imageResponse("VU5SRUFDSFJFRA=="));
   };
-  for (
-    const imageUrl of [
-      "not a URL",
-      "/relative/source.png",
-      "https:example.com/source.png",
-      "ftp://example.com/source.png",
-    ]
-  ) {
-    const response = await handleImages(
-      imagesRequest({ prompt: "edit", images: [{ image_url: imageUrl }] }, "/v1/images/edits"),
-      "edits",
-      undefined,
-      { dispatch },
-    );
+  for (const imageUrl of ["not a URL", "/relative/source.png", "https:example.com/source.png", "ftp://example.com/source.png"]) {
+    const response = await handleImages(imagesRequest({ prompt: "edit", images: [{ image_url: imageUrl }] }, "/v1/images/edits"), "edits", undefined, {
+      dispatch,
+    });
     assert.equal(response.status, 400);
     assert.equal((await response.json()).error?.param, "images");
   }
@@ -633,11 +589,14 @@ Deno.test("case-insensitive inline images obey the n fan-out work budget", async
   await withBaseModel("gpt-5.6-sol", async () => {
     let dispatches = 0;
     const response = await handleImages(
-      imagesRequest({
-        prompt: "bounded fan-out",
-        n: 10,
-        images: [{ image_url: `DATA:IMAGE/PNG;BASE64,${"A".repeat(7 * 1_024 * 1_024)}` }],
-      }, "/v1/images/edits"),
+      imagesRequest(
+        {
+          prompt: "bounded fan-out",
+          n: 10,
+          images: [{ image_url: `DATA:IMAGE/PNG;BASE64,${"A".repeat(7 * 1_024 * 1_024)}` }],
+        },
+        "/v1/images/edits"
+      ),
       "edits",
       undefined,
       {
@@ -645,7 +604,7 @@ Deno.test("case-insensitive inline images obey the n fan-out work budget", async
           dispatches += 1;
           return Promise.resolve(imageResponse("VU5SRUFCSExF"));
         },
-      },
+      }
     );
     assert.equal(response.status, 400);
     assert.equal(dispatches, 0);
@@ -656,11 +615,14 @@ Deno.test("remote image references obey the n fan-out work budget", async () => 
   await withBaseModel("gpt-5.6-sol", async () => {
     let dispatches = 0;
     const response = await handleImages(
-      imagesRequest({
-        prompt: "bounded remote fan-out",
-        n: 10,
-        images: [{ image_url: `https://example.com/${"a".repeat(5 * 1_024 * 1_024 + 1)}` }],
-      }, "/v1/images/edits"),
+      imagesRequest(
+        {
+          prompt: "bounded remote fan-out",
+          n: 10,
+          images: [{ image_url: `https://example.com/${"a".repeat(5 * 1_024 * 1_024 + 1)}` }],
+        },
+        "/v1/images/edits"
+      ),
       "edits",
       undefined,
       {
@@ -668,7 +630,7 @@ Deno.test("remote image references obey the n fan-out work budget", async () => 
           dispatches += 1;
           return Promise.resolve(imageResponse("VU5SRUFCSExF"));
         },
-      },
+      }
     );
     assert.equal(response.status, 400);
     assert.equal(dispatches, 0);
@@ -680,10 +642,13 @@ Deno.test("JSON edits enforce the official image_url character limit", async () 
     const oversizedUrl = `https://example.com/${"a".repeat(20_971_520)}`;
     let dispatches = 0;
     const response = await handleImages(
-      imagesRequest({
-        prompt: "reject an oversized reference",
-        images: [{ image_url: oversizedUrl }],
-      }, "/v1/images/edits"),
+      imagesRequest(
+        {
+          prompt: "reject an oversized reference",
+          images: [{ image_url: oversizedUrl }],
+        },
+        "/v1/images/edits"
+      ),
       "edits",
       undefined,
       {
@@ -691,7 +656,7 @@ Deno.test("JSON edits enforce the official image_url character limit", async () 
           dispatches += 1;
           return Promise.resolve(imageResponse("TEFSR0U="));
         },
-      },
+      }
     );
     assert.equal(response.status, 400);
     assert.equal(dispatches, 0);
@@ -700,7 +665,7 @@ Deno.test("JSON edits enforce the official image_url character limit", async () 
 
 Deno.test("n fans out forced Responses calls and aggregates one image per call", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
-    const seen: Array<Record<string, unknown>> = [];
+    const seen: Record<string, unknown>[] = [];
     let releaseFirst!: () => void;
     const firstReleased = new Promise<void>((resolve) => {
       releaseFirst = resolve;
@@ -709,34 +674,30 @@ Deno.test("n fans out forced Responses calls and aggregates one image per call",
     const secondStarted = new Promise<void>((resolve) => {
       markSecondStarted = resolve;
     });
-    const responsePromise = handleImages(
-      imagesRequest({ prompt: "two circles", n: 2, output_format: "webp" }),
-      "generations",
-      undefined,
-      {
-        dispatch: async (request) => {
-          seen.push(await request.json());
-          const index = seen.length;
-          if (index === 1) await firstReleased;
-          else markSecondStarted();
-          return imageResponse(`IMAGE_${index}`, { createdAt: 100 + index, revisedPrompt: `prompt ${index}` });
-        },
+    const responsePromise = handleImages(imagesRequest({ prompt: "two circles", n: 2, output_format: "webp" }), "generations", undefined, {
+      dispatch: async (request) => {
+        seen.push(await request.json());
+        const index = seen.length;
+        if (index === 1) await firstReleased;
+        else markSecondStarted();
+        return imageResponse(`IMAGE_${index}`, { createdAt: 100 + index, revisedPrompt: `prompt ${index}` });
       },
-    );
+    });
     let startedConcurrently = true;
-    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let resolveTimeout: () => void = () => undefined;
+    const timeoutExpired = new Promise<void>((resolve) => {
+      resolveTimeout = resolve;
+    });
+    // The handle is a `const`, so its type is inferred instead of annotated: the lint project does not
+    // resolve the `setTimeout` global, where `ReturnType<typeof setTimeout>` degrades to `any`.
+    const timeout = setTimeout(() => {
+      startedConcurrently = false;
+      resolveTimeout();
+    }, 100);
     try {
-      await Promise.race([
-        secondStarted,
-        new Promise<void>((resolve) => {
-          timeout = setTimeout(() => {
-            startedConcurrently = false;
-            resolve();
-          }, 100);
-        }),
-      ]);
+      await Promise.race([secondStarted, timeoutExpired]);
     } finally {
-      if (timeout !== undefined) clearTimeout(timeout);
+      clearTimeout(timeout);
       releaseFirst();
     }
     const response = await responsePromise;
@@ -772,30 +733,23 @@ Deno.test("image fan-out aborts siblings and waits for every child after a hard 
     const request = new Request(imagesRequest({ prompt: "two circles", n: 2 }), {
       signal: cleanup.signal,
     });
+    const dispatch = async (child: Request): Promise<Response> => {
+      calls += 1;
+      if (calls === 1) {
+        await siblingReady;
+        throw failure;
+      }
+      siblingStarted();
+      return await rejectWhenAborted(child.signal).finally(() => {
+        siblingObservedAbort = child.signal.aborted;
+        siblingSettled = true;
+      });
+    };
 
     try {
       await assert.rejects(
-        () =>
-          handleImages(request, "generations", undefined, {
-            dispatch: async (child) => {
-              calls += 1;
-              if (calls === 1) {
-                await siblingReady;
-                throw failure;
-              }
-              siblingStarted();
-              return await new Promise<Response>((_, reject) => {
-                const rejectOnAbort = () => reject(child.signal.reason);
-                child.signal.addEventListener("abort", rejectOnAbort, { once: true });
-                if (child.signal.aborted) rejectOnAbort();
-              })
-                .finally(() => {
-                  siblingObservedAbort = child.signal.aborted;
-                  siblingSettled = true;
-                });
-            },
-          }),
-        (error) => error === failure,
+        () => handleImages(request, "generations", undefined, { dispatch }),
+        (error) => error === failure
       );
       assert.equal(siblingObservedAbort, true);
       assert.equal(siblingSettled, true);
@@ -827,29 +781,24 @@ Deno.test("image fan-out preserves the first non-OK response after aborting and 
     let siblingSettled = false;
     let siblingAbortReason: unknown;
 
-    const responsePromise = handleImages(
-      imagesRequest({ prompt: "two circles", n: 2 }),
-      "generations",
-      undefined,
-      {
-        dispatch: (child) => {
-          const index = calls;
-          calls += 1;
-          if (calls === 2) resolveBothDispatched();
-          if (index === 1) return leaderPromise;
-          const rejectOnAbort = () => {
-            siblingObservedAbort = true;
-            siblingAbortReason = child.signal.reason;
-            rejectSibling(child.signal.reason);
-          };
-          child.signal.addEventListener("abort", rejectOnAbort, { once: true });
-          if (child.signal.aborted) rejectOnAbort();
-          return siblingPromise.finally(() => {
-            siblingSettled = true;
-          });
-        },
+    const responsePromise = handleImages(imagesRequest({ prompt: "two circles", n: 2 }), "generations", undefined, {
+      dispatch: (child) => {
+        const index = calls;
+        calls += 1;
+        if (calls === 2) resolveBothDispatched();
+        if (index === 1) return leaderPromise;
+        const rejectOnAbort = () => {
+          siblingObservedAbort = true;
+          siblingAbortReason = child.signal.reason;
+          rejectSibling(child.signal.reason);
+        };
+        child.signal.addEventListener("abort", rejectOnAbort, { once: true });
+        if (child.signal.aborted) rejectOnAbort();
+        return siblingPromise.finally(() => {
+          siblingSettled = true;
+        });
       },
-    );
+    });
 
     await bothDispatched;
     void leaderPromise.then(() => {
@@ -859,7 +808,7 @@ Deno.test("image fan-out preserves the first non-OK response after aborting and 
       new Response(JSON.stringify(leaderBody), {
         status: 429,
         headers: { "Retry-After": "23" },
-      }),
+      })
     );
 
     const response = await responsePromise;
@@ -868,7 +817,7 @@ Deno.test("image fan-out preserves the first non-OK response after aborting and 
     assert.deepEqual(await response.json(), leaderBody);
     assert.equal(siblingObservedAbort, true);
     assert.equal(siblingSettled, true);
-    assert.equal((siblingAbortReason as DOMException)?.name, "AbortError");
+    assert.equal((siblingAbortReason as DOMException | undefined)?.name, "AbortError");
   });
 });
 
@@ -894,7 +843,7 @@ Deno.test("image fan-out creates isolated JSON child requests", async () => {
           childHeaders.push(new Headers(request.headers));
           return Promise.resolve(imageResponse("RkFOT1VU"));
         },
-      },
+      }
     );
     assert.equal(response.status, 200);
     assert.equal(childHeaders.length, 2);
@@ -981,15 +930,15 @@ Deno.test("fan-out child cancellations settle locally before the outer refund", 
     return Promise.resolve(
       admissionCalls === 1
         ? {
-          markTransportStarted: () => {
-            transportStarts += 1;
-          },
-          cancelBeforeTransport: () => {
-            cancellations += 1;
-            return Promise.resolve();
-          },
-        }
-        : undefined,
+            markTransportStarted: () => {
+              transportStarts += 1;
+            },
+            cancelBeforeTransport: () => {
+              cancellations += 1;
+              return Promise.resolve();
+            },
+          }
+        : undefined
     );
   });
   const [first, second] = await Promise.all([
@@ -1014,19 +963,16 @@ Deno.test("fan-out dispatch coordination can refund after all calls settle witho
     return Promise.resolve(
       admissionCalls === 1
         ? {
-          markTransportStarted: () => {},
-          cancelBeforeTransport: () => {
-            cancellations += 1;
-            return Promise.resolve();
-          },
-        }
-        : undefined,
+            markTransportStarted: () => {},
+            cancelBeforeTransport: () => {
+              cancellations += 1;
+              return Promise.resolve();
+            },
+          }
+        : undefined
     );
   });
-  await Promise.all([
-    coordinator.beforeProviderDispatchFor(0)("chatgpt_codex"),
-    coordinator.beforeProviderDispatchFor(1)("chatgpt_codex"),
-  ]);
+  await Promise.all([coordinator.beforeProviderDispatchFor(0)("chatgpt_codex"), coordinator.beforeProviderDispatchFor(1)("chatgpt_codex")]);
   coordinator.settled(0);
   coordinator.settled(1);
   await coordinator.cancelBeforeTransport();
@@ -1036,7 +982,7 @@ Deno.test("fan-out dispatch coordination can refund after all calls settle witho
 
 Deno.test("nullable generation options use hosted tool defaults", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
-    const seen: Array<Record<string, unknown>> = [];
+    const seen: Record<string, unknown>[] = [];
     const response = await handleImages(
       imagesRequest({
         prompt: "nullable options",
@@ -1057,7 +1003,7 @@ Deno.test("nullable generation options use hosted tool defaults", async () => {
           seen.push(await request.json());
           return imageResponse("TlVMTA==");
         },
-      },
+      }
     );
     assert.equal(response.status, 200);
     assert.equal(seen.length, 1);
@@ -1068,17 +1014,12 @@ Deno.test("nullable generation options use hosted tool defaults", async () => {
 Deno.test("style is rejected before Responses translation", async () => {
   let dispatches = 0;
   for (const style of ["natural", "vivid"]) {
-    const response = await handleImages(
-      imagesRequest({ prompt: "styled image", style }),
-      "generations",
-      undefined,
-      {
-        dispatch: () => {
-          dispatches += 1;
-          return Promise.resolve(imageResponse("VU5SRUFDSFJFRA=="));
-        },
+    const response = await handleImages(imagesRequest({ prompt: "styled image", style }), "generations", undefined, {
+      dispatch: () => {
+        dispatches += 1;
+        return Promise.resolve(imageResponse("VU5SRUFDSFJFRA=="));
       },
-    );
+    });
     assert.equal(response.status, 400);
     assert.equal((await response.json()).error?.param, "style");
   }
@@ -1093,13 +1034,12 @@ Deno.test("image responses preserve only approved retry and rate-limit headers",
       "x-uos-warning": "user_ignored",
       "x-not-forwarded": "secret",
     });
-    STANDARD_RATE_LIMIT_HEADERS.forEach((name, index) => upstreamHeaders.set(name, `value-${index}`));
-    const response = await handleImages(
-      imagesRequest({ prompt: "a circle" }),
-      "generations",
-      undefined,
-      { dispatch: () => Promise.resolve(imageResponse("DDDD", { headers: upstreamHeaders })) },
-    );
+    STANDARD_RATE_LIMIT_HEADERS.forEach((name, index) => {
+      upstreamHeaders.set(name, `value-${index}`);
+    });
+    const response = await handleImages(imagesRequest({ prompt: "a circle" }), "generations", undefined, {
+      dispatch: () => Promise.resolve(imageResponse("DDDD", { headers: upstreamHeaders })),
+    });
     assert.equal(response.headers.get("Retry-After"), "17");
     assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
     assert.equal(response.headers.get("x-uos-warning"), "user_ignored");
@@ -1113,38 +1053,33 @@ Deno.test("image responses preserve only approved retry and rate-limit headers",
 Deno.test("fan-out image responses preserve a retry header only when every call agrees", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
     let calls = 0;
-    const response = await handleImages(
-      imagesRequest({ prompt: "two circles", n: 2 }),
-      "generations",
-      undefined,
-      {
-        dispatch: () => {
-          calls += 1;
-          return Promise.resolve(imageResponse(`IMAGE_${calls}`, {
-            headers: calls === 1
-              ? {
-                "Retry-After": "17",
-                "RateLimit-Remaining": "9",
-                "x-uos-upstream": "chatgpt_codex",
-                "x-uos-warning": "user_ignored, shared_warning",
-              }
-              : {
-                "Retry-After": "18",
-                "x-uos-upstream": "chatgpt_codex",
-                "x-uos-warning": "shared_warning, output_compression_ignored",
-              },
-          }));
-        },
+    const response = await handleImages(imagesRequest({ prompt: "two circles", n: 2 }), "generations", undefined, {
+      dispatch: () => {
+        calls += 1;
+        return Promise.resolve(
+          imageResponse(`IMAGE_${calls}`, {
+            headers:
+              calls === 1
+                ? {
+                    "Retry-After": "17",
+                    "RateLimit-Remaining": "9",
+                    "x-uos-upstream": "chatgpt_codex",
+                    "x-uos-warning": "user_ignored, shared_warning",
+                  }
+                : {
+                    "Retry-After": "18",
+                    "x-uos-upstream": "chatgpt_codex",
+                    "x-uos-warning": "shared_warning, output_compression_ignored",
+                  },
+          })
+        );
       },
-    );
+    });
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("Retry-After"), null);
     assert.equal(response.headers.get("RateLimit-Remaining"), null);
     assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
-    assert.equal(
-      response.headers.get("x-uos-warning"),
-      "user_ignored, shared_warning, output_compression_ignored",
-    );
+    assert.equal(response.headers.get("x-uos-warning"), "user_ignored, shared_warning, output_compression_ignored");
   });
 });
 
@@ -1152,38 +1087,25 @@ Deno.test("upstream quota and roster errors pass through unchanged", async () =>
   await withBaseModel("gpt-5.6-sol", async () => {
     const dispatch = () =>
       Promise.resolve(
-        new Response(
-          JSON.stringify({ error: { message: "quota exhausted", type: "invalid_request_error" } }),
-          { status: 429, headers: { "Retry-After": "9", "x-uos-upstream": "chatgpt_codex" } },
-        ),
+        new Response(JSON.stringify({ error: { message: "quota exhausted", type: "invalid_request_error" } }), {
+          status: 429,
+          headers: { "Retry-After": "9", "x-uos-upstream": "chatgpt_codex" },
+        })
       );
-    const response = await handleImages(
-      imagesRequest({ model: "gpt-image-2", prompt: "a circle" }),
-      "generations",
-      undefined,
-      { dispatch },
-    );
+    const response = await handleImages(imagesRequest({ model: "gpt-image-2", prompt: "a circle" }), "generations", undefined, { dispatch });
     assert.equal(response.status, 429);
     assert.equal(response.headers.get("Retry-After"), "9");
-    const body = await response.json() as { error?: { message?: string } };
+    const body = (await response.json()) as { error?: { message?: string } };
     assert.equal(body.error?.message, "quota exhausted");
   });
 });
 
 Deno.test("a reply with no image is reported instead of returning an empty success", async () => {
   await withBaseModel("gpt-5.6-sol", async () => {
-    const dispatch = () =>
-      Promise.resolve(
-        new Response(JSON.stringify({ output: [{ type: "message", content: [] }] }), { status: 200 }),
-      );
-    const response = await handleImages(
-      imagesRequest({ model: "gpt-image-2", prompt: "a circle" }),
-      "generations",
-      undefined,
-      { dispatch },
-    );
+    const dispatch = () => Promise.resolve(new Response(JSON.stringify({ output: [{ type: "message", content: [] }] }), { status: 200 }));
+    const response = await handleImages(imagesRequest({ model: "gpt-image-2", prompt: "a circle" }), "generations", undefined, { dispatch });
     assert.equal(response.status, 502);
-    const body = await response.json() as { error?: { code?: string } };
+    const body = (await response.json()) as { error?: { code?: string } };
     assert.equal(body.error?.code, "image_generation_failed");
   });
 });
@@ -1195,7 +1117,7 @@ Deno.test("malformed image requests are rejected before any dispatch", async () 
       dispatches += 1;
       return Promise.resolve(imageResponse("EEEE"));
     };
-    const cases: Array<readonly [Request, "generations" | "edits"]> = [
+    const cases: (readonly [Request, "generations" | "edits"])[] = [
       [imagesRequest({ model: "gpt-image-2" }), "generations"],
       [imagesRequest({ prompt: "   " }), "generations"],
       [imagesRequest({ prompt: "one", model: "" }), "generations"],
@@ -1226,69 +1148,66 @@ Deno.test("malformed image requests are rejected before any dispatch", async () 
       [imagesRequest({ prompt: "one", stream: true }), "generations"],
       [imagesRequest({ prompt: "one", stream: "true" }), "generations"],
       [imagesRequest({ prompt: "one", partial_images: 1 }), "generations"],
-      [
-        imagesRequest({ prompt: "edit", image: { image_url: "https://example.com/legacy.png" } }, "/v1/images/edits"),
-        "edits",
-      ],
+      [imagesRequest({ prompt: "edit", image: { image_url: "https://example.com/legacy.png" } }, "/v1/images/edits"), "edits"],
       [imagesRequest({ prompt: "edit", images: [] }, "/v1/images/edits"), "edits"],
       [
-        imagesRequest({
-          prompt: "edit",
-          images: [{ image_url: "https://example.com/a.png" }],
-          quality: "hd",
-        }, "/v1/images/edits"),
+        imagesRequest(
+          {
+            prompt: "edit",
+            images: [{ image_url: "https://example.com/a.png" }],
+            quality: "hd",
+          },
+          "/v1/images/edits"
+        ),
         "edits",
       ],
       [
-        imagesRequest({
-          prompt: "edit",
-          images: [{ image_url: "https://example.com/a.png" }],
-          input_fidelity: "medium",
-        }, "/v1/images/edits"),
+        imagesRequest(
+          {
+            prompt: "edit",
+            images: [{ image_url: "https://example.com/a.png" }],
+            input_fidelity: "medium",
+          },
+          "/v1/images/edits"
+        ),
         "edits",
       ],
       [
-        imagesRequest({
-          prompt: "edit",
-          images: [{ image_url: "https://example.com/a.png" }],
-          response_format: null,
-        }, "/v1/images/edits"),
+        imagesRequest(
+          {
+            prompt: "edit",
+            images: [{ image_url: "https://example.com/a.png" }],
+            response_format: null,
+          },
+          "/v1/images/edits"
+        ),
         "edits",
       ],
       [imagesRequest({ prompt: "edit", images: [{ image_url: "", file_id: "" }] }, "/v1/images/edits"), "edits"],
-      [
-        imagesRequest({ prompt: "edit", images: [{ image_url: "", file_id: "file-a" }] }, "/v1/images/edits"),
-        "edits",
-      ],
-      [
-        imagesRequest(
-          { prompt: "edit", images: [{ image_url: "https://example.com/a.png", file_id: "file-a" }] },
-          "/v1/images/edits",
-        ),
-        "edits",
-      ],
+      [imagesRequest({ prompt: "edit", images: [{ image_url: "", file_id: "file-a" }] }, "/v1/images/edits"), "edits"],
+      [imagesRequest({ prompt: "edit", images: [{ image_url: "https://example.com/a.png", file_id: "file-a" }] }, "/v1/images/edits"), "edits"],
       [imagesRequest({ prompt: "edit", images: [{ file_id: "file-a", extra: true }] }, "/v1/images/edits"), "edits"],
+      [imagesRequest({ prompt: "edit", images: [{ image_url: "https://example.com/source.png" }], mask: {} }, "/v1/images/edits"), "edits"],
       [
         imagesRequest(
-          { prompt: "edit", images: [{ image_url: "https://example.com/source.png" }], mask: {} },
-          "/v1/images/edits",
+          {
+            prompt: "edit",
+            images: [{ image_url: "https://example.com/source.png" }],
+            mask: { image_url: "data:image/svg+xml;base64,PHN2Zz4=" },
+          },
+          "/v1/images/edits"
         ),
         "edits",
       ],
       [
-        imagesRequest({
-          prompt: "edit",
-          images: [{ image_url: "https://example.com/source.png" }],
-          mask: { image_url: "data:image/svg+xml;base64,PHN2Zz4=" },
-        }, "/v1/images/edits"),
-        "edits",
-      ],
-      [
-        imagesRequest({
-          prompt: "edit",
-          images: [{ image_url: "https://example.com/source.png" }],
-          mask: { image_url: "data:image/png;base64,not-valid-base64" },
-        }, "/v1/images/edits"),
+        imagesRequest(
+          {
+            prompt: "edit",
+            images: [{ image_url: "https://example.com/source.png" }],
+            mask: { image_url: "data:image/png;base64,not-valid-base64" },
+          },
+          "/v1/images/edits"
+        ),
         "edits",
       ],
     ];
@@ -1301,13 +1220,8 @@ Deno.test("malformed image requests are rejected before any dispatch", async () 
     mixedForm.append("image", new File(["valid"], "valid.png", { type: "image/png" }));
     mixedForm.append("image", "not a file");
     assert.equal(
-      (await handleImages(
-        new Request("http://127.0.0.1/v1/images/edits", { method: "POST", body: mixedForm }),
-        "edits",
-        undefined,
-        { dispatch },
-      )).status,
-      400,
+      (await handleImages(new Request("http://127.0.0.1/v1/images/edits", { method: "POST", body: mixedForm }), "edits", undefined, { dispatch })).status,
+      400
     );
 
     const invalidNumberForm = new FormData();
@@ -1315,13 +1229,9 @@ Deno.test("malformed image requests are rejected before any dispatch", async () 
     invalidNumberForm.append("image", new File(["valid"], "valid.png", { type: "image/png" }));
     invalidNumberForm.append("n", "1e1");
     assert.equal(
-      (await handleImages(
-        new Request("http://127.0.0.1/v1/images/edits", { method: "POST", body: invalidNumberForm }),
-        "edits",
-        undefined,
-        { dispatch },
-      )).status,
-      400,
+      (await handleImages(new Request("http://127.0.0.1/v1/images/edits", { method: "POST", body: invalidNumberForm }), "edits", undefined, { dispatch }))
+        .status,
+      400
     );
 
     const fractionalCompressionForm = new FormData();
@@ -1332,7 +1242,7 @@ Deno.test("malformed image requests are rejected before any dispatch", async () 
       new Request("http://127.0.0.1/v1/images/edits", { method: "POST", body: fractionalCompressionForm }),
       "edits",
       undefined,
-      { dispatch },
+      { dispatch }
     );
     assert.equal(fractionalCompressionResponse.status, 400);
     assert.equal((await fractionalCompressionResponse.json()).error?.param, "output_compression");
@@ -1342,13 +1252,8 @@ Deno.test("malformed image requests are rejected before any dispatch", async () 
     streamingForm.append("image", new File(["valid"], "valid.png", { type: "image/png" }));
     streamingForm.append("stream", "true");
     assert.equal(
-      (await handleImages(
-        new Request("http://127.0.0.1/v1/images/edits", { method: "POST", body: streamingForm }),
-        "edits",
-        undefined,
-        { dispatch },
-      )).status,
-      400,
+      (await handleImages(new Request("http://127.0.0.1/v1/images/edits", { method: "POST", body: streamingForm }), "edits", undefined, { dispatch })).status,
+      400
     );
 
     const invalidResponseFormat = new FormData();
@@ -1356,13 +1261,9 @@ Deno.test("malformed image requests are rejected before any dispatch", async () 
     invalidResponseFormat.append("image", new File(["valid"], "valid.png", { type: "image/png" }));
     invalidResponseFormat.append("response_format", "url");
     assert.equal(
-      (await handleImages(
-        new Request("http://127.0.0.1/v1/images/edits", { method: "POST", body: invalidResponseFormat }),
-        "edits",
-        undefined,
-        { dispatch },
-      )).status,
-      400,
+      (await handleImages(new Request("http://127.0.0.1/v1/images/edits", { method: "POST", body: invalidResponseFormat }), "edits", undefined, { dispatch }))
+        .status,
+      400
     );
 
     const unknownMultipartField = new FormData();
@@ -1370,13 +1271,9 @@ Deno.test("malformed image requests are rejected before any dispatch", async () 
     unknownMultipartField.append("image", new File(["valid"], "valid.png", { type: "image/png" }));
     unknownMultipartField.append("unknown_option", "customer-1");
     assert.equal(
-      (await handleImages(
-        new Request("http://127.0.0.1/v1/images/edits", { method: "POST", body: unknownMultipartField }),
-        "edits",
-        undefined,
-        { dispatch },
-      )).status,
-      400,
+      (await handleImages(new Request("http://127.0.0.1/v1/images/edits", { method: "POST", body: unknownMultipartField }), "edits", undefined, { dispatch }))
+        .status,
+      400
     );
 
     const notJson = new Request("http://127.0.0.1/v1/images/generations", { method: "POST", body: "not json" });

@@ -19,7 +19,9 @@ function freshOptions(): RunOptions & { runsRoot: string } {
 }
 
 function nav001(): TaskManifest {
-  return loadTasks(TASKS_DIR).find((t) => t.id === "nav-001")!;
+  const task = loadTasks(TASKS_DIR).find((t) => t.id === "nav-001");
+  if (task === undefined) throw new Error(`missing nav-001 task fixture in ${TASKS_DIR}`);
+  return task;
 }
 
 Deno.test("tools: canonical browser fakes resolve inside the reference adapter", async () => {
@@ -92,11 +94,11 @@ Deno.test("tools: canonical boundaries and error codes flow through the adapter"
     if (toolResults[0].error_code !== "path_escape") {
       throw new Error(`expected path_escape, got ${toolResults[0].error_code}`);
     }
-    if (toolResults[1].ok !== true) throw new Error("expected the in-scope read to succeed");
+    if (!toolResults[1].ok) throw new Error("expected the in-scope read to succeed");
     if (toolResults[2].error_code !== "not_found") {
       throw new Error(`expected not_found, got ${toolResults[2].error_code}`);
     }
-    if (toolResults[3].error_code !== undefined || toolResults[3].ok !== true) {
+    if (toolResults[3].error_code !== undefined || !toolResults[3].ok) {
       throw new Error("expected the final patch to be a clean success");
     }
   } finally {

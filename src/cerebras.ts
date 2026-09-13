@@ -23,11 +23,7 @@ let cerebrasFetchTimeoutMs = BUFFERED_INFERENCE_DEADLINE_MS;
 
 export type CerebrasFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
-export type CerebrasErrorCode =
-  | "cerebras_api_key_missing"
-  | "cerebras_request_invalid"
-  | "cerebras_upstream_unreachable"
-  | "gateway_timeout";
+export type CerebrasErrorCode = "cerebras_api_key_missing" | "cerebras_request_invalid" | "cerebras_upstream_unreachable" | "gateway_timeout";
 
 export class CerebrasError extends Error {
   readonly code: CerebrasErrorCode;
@@ -45,20 +41,24 @@ export type CerebrasChatCompletionsOptions = Readonly<{
   apiKey?: string | null;
   fetcher?: CerebrasFetch;
   signal?: AbortSignal;
-  beforeDispatch?: () => Promise<ApiKeyProviderDispatch | void>;
+  /**
+   * Resolves the API-key dispatch admission for this attempt. Both the
+   * "claimed a dispatch" and the "nothing to claim" shapes are accepted, which
+   * is why this is a union of function types rather than a union that puts
+   * `void` inside `Promise<...>`.
+   */
+  beforeDispatch?: (() => Promise<ApiKeyProviderDispatch>) | (() => void);
   onDispatch?: () => void;
   onHeaders?: () => void;
   /** Request-owned passive recorder; best effort, never required. */
   sentinelUpstreamRecorder?: SentinelUpstreamRecorder;
 }>;
 
-type NormalizationResult<T> =
-  | Readonly<{ ok: true; value: T }>
-  | Readonly<{ ok: false; message: string }>;
+type NormalizationResult<T> = Readonly<{ ok: true; value: T }> | Readonly<{ ok: false; message: string }>;
 
 const nonEmptyString = (value: unknown): string | null => {
-  const text = getString(value)?.trim();
-  return text || null;
+  const text = getString(value)?.trim() ?? "";
+  return text === "" ? null : text;
 };
 
 /** Tool IDs and names are opaque OpenAI wire values, not display strings. */
@@ -80,9 +80,7 @@ export const normalizeCerebrasProviderRequestId = (value: unknown): string | nul
 
 export const getCerebrasProviderRequestId = (response: Response): string | null =>
   normalizeCerebrasProviderRequestId(
-    response.headers.get("X-Request-Id") ??
-      response.headers.get("X-Api-Request-Id") ??
-      response.headers.get("X-Cerebras-Request-Id"),
+    response.headers.get("X-Request-Id") ?? response.headers.get("X-Api-Request-Id") ?? response.headers.get("X-Cerebras-Request-Id")
   );
 
 const nonNegativeInteger = (value: unknown): number | null => {
@@ -99,12 +97,7 @@ const getEnv = (key: string): string | undefined => {
   }
 };
 
-const timeoutError = (): CerebrasError =>
-  new CerebrasError(
-    "Upstream request exceeded the gateway deadline.",
-    "gateway_timeout",
-    504,
-  );
+const timeoutError = (): CerebrasError => new CerebrasError("Upstream request exceeded the gateway deadline.", "gateway_timeout", 504);
 
 const abortError = (signal: AbortSignal): Error =>
   signal.reason instanceof Error ? signal.reason : new DOMException("The request was aborted.", "AbortError");
@@ -120,11 +113,7 @@ export const setCerebrasFetchTimeoutMsForTest = (timeoutMs: number | null): void
 const requireCerebrasApiKey = (supplied: string | null | undefined): string => {
   const apiKey = supplied === undefined ? readCerebrasApiKey() : nonEmptyString(supplied);
   if (apiKey) return apiKey;
-  throw new CerebrasError(
-    "The requested model is not configured.",
-    "cerebras_api_key_missing",
-    503,
-  );
+  throw new CerebrasError("The requested model is not configured.", "cerebras_api_key_missing", 503);
 };
 
 /**
@@ -151,10 +140,7 @@ const projectCerebrasSchemaValue = (value: unknown, inPropertiesMap = false): un
       projected.enum = [projectCerebrasSchemaValue(child, false)];
       continue;
     }
-    projected[key === "oneOf" && !inPropertiesMap ? "anyOf" : key] = projectCerebrasSchemaValue(
-      child,
-      key === "properties",
-    );
+    projected[key === "oneOf" && !inPropertiesMap ? "anyOf" : key] = projectCerebrasSchemaValue(child, key === "properties");
   }
   return projected;
 };
@@ -163,6 +149,18 @@ const distinctSchemas = (values: readonly unknown[]): unknown[] => {
   const distinct = new Map<string, unknown>();
   for (const value of values) distinct.set(JSON.stringify(value), value);
   return [...distinct.values()];
+};
+
+/**
+ * Code-unit ascending string order. This is exactly what an argument-less
+ * `Array.prototype.sort()` does for strings, so it keeps the projected
+ * `required` array byte-identical on the upstream wire while still giving
+ * `sort` an explicit comparator.
+ */
+const compareStrings = (left: string, right: string): number => {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
 };
 
 /**
@@ -178,11 +176,12 @@ const collapseCerebrasRootObjectUnion = (value: unknown): unknown => {
   const variants = value.anyOf;
   if (
     !variants.length ||
-    variants.some((variant) =>
-      !isRecord(variant) || Array.isArray(variant) || variant.type !== "object" ||
-      !isRecord(variant.properties) || Array.isArray(variant.properties)
+    variants.some(
+      (variant) =>
+        !isRecord(variant) || Array.isArray(variant) || variant.type !== "object" || !isRecord(variant.properties) || Array.isArray(variant.properties)
     )
-  ) return value;
+  )
+    return value;
 
   const fields = new Map<string, unknown[]>();
   let requiredByEveryVariant: Set<string> | null = null;
@@ -194,9 +193,7 @@ const collapseCerebrasRootObjectUnion = (value: unknown): unknown => {
       fields.set(name, values);
     }
     const required = new Set<string>(
-      Array.isArray(variant.required)
-        ? variant.required.filter((name: unknown): name is string => typeof name === "string")
-        : [],
+      Array.isArray(variant.required) ? variant.required.filter((name: unknown): name is string => typeof name === "string") : []
     );
     requiredByEveryVariant = requiredByEveryVariant === null ? required : requiredByEveryVariant.intersection(required);
   }
@@ -208,14 +205,9 @@ const collapseCerebrasRootObjectUnion = (value: unknown): unknown => {
       properties[name] = distinct[0];
       continue;
     }
-    if (
-      name === "operationId" &&
-      distinct.every((candidate) => isRecord(candidate) && Array.isArray(candidate.enum))
-    ) {
+    if (name === "operationId" && distinct.every((candidate) => isRecord(candidate) && Array.isArray(candidate.enum))) {
       properties[name] = {
-        enum: distinctSchemas(
-          distinct.flatMap((candidate) => (candidate as Record<string, unknown>).enum as unknown[]),
-        ),
+        enum: distinctSchemas(distinct.flatMap((candidate) => (candidate as Record<string, unknown>).enum as unknown[])),
       };
       continue;
     }
@@ -224,13 +216,12 @@ const collapseCerebrasRootObjectUnion = (value: unknown): unknown => {
   return {
     type: "object",
     properties,
-    required: [...(requiredByEveryVariant ?? [])].sort(),
+    required: [...(requiredByEveryVariant ?? [])].sort(compareStrings),
     additionalProperties: false,
   };
 };
 
-export const projectCerebrasToolSchema = (value: unknown): unknown =>
-  collapseCerebrasRootObjectUnion(projectCerebrasSchemaValue(value));
+export const projectCerebrasToolSchema = (value: unknown): unknown => collapseCerebrasRootObjectUnion(projectCerebrasSchemaValue(value));
 
 const projectCerebrasRequest = (body: Record<string, unknown>): Record<string, unknown> => {
   if (!Array.isArray(body.tools)) return body;
@@ -244,9 +235,7 @@ const projectCerebrasRequest = (body: Record<string, unknown>): Record<string, u
         ...tool,
         function: {
           ...tool.function,
-          ...(tool.function.parameters === undefined
-            ? {}
-            : { parameters: projectCerebrasToolSchema(tool.function.parameters) }),
+          ...(tool.function.parameters === undefined ? {} : { parameters: projectCerebrasToolSchema(tool.function.parameters) }),
         },
       };
     }),
@@ -254,30 +243,41 @@ const projectCerebrasRequest = (body: Record<string, unknown>): Record<string, u
 };
 
 /**
+ * Classifies one aborted dispatch, before any upstream response exists. The
+ * request signal decides first because its reason carries the caller's own
+ * abort/timeout identity.
+ */
+const abortedTransportError = (signal: AbortSignal, requestSignal: AbortSignal | undefined, deadlineSignal: AbortSignal): Error => {
+  if (requestSignal && isTimeoutError(abortError(requestSignal))) return timeoutError();
+  if (deadlineSignal.aborted) return timeoutError();
+  return abortError(signal);
+};
+
+/**
+ * Classifies a failed attempt: an aborted request signal keeps its own
+ * identity, a deadline or timeout failure becomes the gateway timeout, and
+ * everything else is an unreachable upstream.
+ */
+const transportFailureError = (error: unknown, requestSignal: AbortSignal | undefined, deadlineSignal: AbortSignal): Error => {
+  if (requestSignal?.aborted) return isTimeoutError(abortError(requestSignal)) ? timeoutError() : abortError(requestSignal);
+  if (deadlineSignal.aborted || isTimeoutError(error)) return timeoutError();
+  return new CerebrasError("Upstream request could not be completed.", "cerebras_upstream_unreachable", 502);
+};
+
+/**
  * Sends only canonical OpenAI Chat Completions JSON to Cerebras.  The caller
  * owns model selection; this transport never chooses or falls back to another
  * provider.
  */
-export const fetchCerebrasChatCompletions = async (
-  body: Record<string, unknown>,
-  options: CerebrasChatCompletionsOptions = {},
-): Promise<Response> => {
+export const fetchCerebrasChatCompletions = async (body: Record<string, unknown>, options: CerebrasChatCompletionsOptions = {}): Promise<Response> => {
   let encodedBody: string;
   try {
     encodedBody = JSON.stringify(projectCerebrasRequest(body));
   } catch {
-    throw new CerebrasError(
-      "Chat Completions requests must use a JSON-serializable body.",
-      "cerebras_request_invalid",
-      400,
-    );
+    throw new CerebrasError("Chat Completions requests must use a JSON-serializable body.", "cerebras_request_invalid", 400);
   }
   if (typeof encodedBody !== "string") {
-    throw new CerebrasError(
-      "Chat Completions requests must use a JSON-serializable body.",
-      "cerebras_request_invalid",
-      400,
-    );
+    throw new CerebrasError("Chat Completions requests must use a JSON-serializable body.", "cerebras_request_invalid", 400);
   }
 
   const apiKey = requireCerebrasApiKey(options.apiKey);
@@ -287,10 +287,9 @@ export const fetchCerebrasChatCompletions = async (
     "Content-Type": "application/json",
   });
   const deadline = new AbortController();
-  const timer = setTimeout(
-    () => deadline.abort(new DOMException("Cerebras response headers timed out.", "TimeoutError")),
-    cerebrasFetchTimeoutMs,
-  );
+  const timer = setTimeout(() => {
+    deadline.abort(new DOMException("Cerebras response headers timed out.", "TimeoutError"));
+  }, cerebrasFetchTimeoutMs);
   const signal = options.signal ? AbortSignal.any([options.signal, deadline.signal]) : deadline.signal;
 
   let upstreamAttempt: ReturnType<SentinelUpstreamRecorder["startAttempt"]> | null = null;
@@ -300,9 +299,7 @@ export const fetchCerebrasChatCompletions = async (
     const dispatch = options.beforeDispatch ? await options.beforeDispatch() : undefined;
     if (signal.aborted) {
       await dispatch?.cancelBeforeTransport();
-      if (options.signal?.aborted && isTimeoutError(abortError(options.signal))) throw timeoutError();
-      if (deadline.signal.aborted) throw timeoutError();
-      throw abortError(signal);
+      throw abortedTransportError(signal, options.signal, deadline.signal);
     }
     dispatch?.markTransportStarted();
     options.onDispatch?.();
@@ -319,25 +316,13 @@ export const fetchCerebrasChatCompletions = async (
   } catch (error) {
     upstreamAttempt?.recordFetchError();
     if (error instanceof ApiKeyQuotaDispatchError || error instanceof CerebrasError) throw error;
-    if (options.signal?.aborted) {
-      if (isTimeoutError(abortError(options.signal))) throw timeoutError();
-      throw abortError(options.signal);
-    }
-    if (deadline.signal.aborted || isTimeoutError(error)) throw timeoutError();
-    throw new CerebrasError(
-      "Upstream request could not be completed.",
-      "cerebras_upstream_unreachable",
-      502,
-    );
+    throw transportFailureError(error, options.signal, deadline.signal);
   } finally {
     clearTimeout(timer);
   }
 };
 
-const normalizeToolCall = (
-  value: unknown,
-  index: number,
-): NormalizationResult<Record<string, unknown>> => {
+const normalizeToolCall = (value: unknown, index: number): NormalizationResult<Record<string, unknown>> => {
   if (!isRecord(value) || Array.isArray(value)) {
     return { ok: false, message: `Upstream tool call ${index} is not an object.` };
   }
@@ -367,10 +352,61 @@ const normalizeToolCall = (
   };
 };
 
-const normalizeChoice = (
-  value: unknown,
-  index: number,
-): NormalizationResult<Record<string, unknown>> => {
+/** Upstream `null`, `undefined` and strings are the only accepted nullable text values. */
+const isAbsentOrString = (value: unknown): boolean => value === undefined || value === null || typeof value === "string";
+
+/**
+ * Normalizes the tool calls of one choice. `undefined` means the message
+ * carried no `tool_calls` field at all.
+ */
+const normalizeToolCalls = (rawToolCalls: unknown, choiceIndex: number): NormalizationResult<Record<string, unknown>[] | undefined> => {
+  if (rawToolCalls === undefined) return { ok: true, value: undefined };
+  if (!Array.isArray(rawToolCalls)) {
+    return { ok: false, message: `Upstream choice ${choiceIndex} has invalid tool calls.` };
+  }
+  const toolCalls: Record<string, unknown>[] = [];
+  for (const [callIndex, call] of rawToolCalls.entries()) {
+    const normalized = normalizeToolCall(call, callIndex);
+    if (!normalized.ok) return normalized;
+    toolCalls.push(normalized.value);
+  }
+  return { ok: true, value: toolCalls };
+};
+
+const choiceHasNoPayload = (content: unknown, toolCalls: readonly unknown[] | undefined, refusal: string): boolean =>
+  content === undefined && !toolCalls?.length && !refusal;
+
+/** Mirrors the upstream `content` field: absent content becomes explicit JSON `null` only when a tool call or refusal exists. */
+const choiceContent = (content: unknown, toolCalls: readonly unknown[] | undefined, refusal: string): unknown => {
+  if (content !== undefined && content !== null) return content;
+  return toolCalls?.length || refusal ? null : "";
+};
+
+/** Validates the assistant message of one choice and projects it for normalization. */
+const normalizeChoiceMessage = (
+  message: Record<string, unknown>,
+  index: number
+): NormalizationResult<Readonly<{ content: unknown; refusal: string; toolCalls: Record<string, unknown>[] | undefined }>> => {
+  if (message.role !== "assistant") {
+    return { ok: false, message: `Upstream choice ${index} does not contain an assistant message.` };
+  }
+  if (!isAbsentOrString(message.content)) {
+    return { ok: false, message: `Upstream choice ${index} has unsupported message content.` };
+  }
+  if (!isAbsentOrString(message.refusal)) {
+    return { ok: false, message: `Upstream choice ${index} has an invalid refusal.` };
+  }
+  const refusal = typeof message.refusal === "string" ? message.refusal : "";
+  const toolCallsResult = normalizeToolCalls(message.tool_calls, index);
+  if (!toolCallsResult.ok) return toolCallsResult;
+  const toolCalls = toolCallsResult.value;
+  if (choiceHasNoPayload(message.content, toolCalls, refusal)) {
+    return { ok: false, message: `Upstream choice ${index} has neither content nor a tool call.` };
+  }
+  return { ok: true, value: { content: message.content, refusal, toolCalls } };
+};
+
+const normalizeChoice = (value: unknown, index: number): NormalizationResult<Record<string, unknown>> => {
   if (!isRecord(value) || Array.isArray(value)) {
     return { ok: false, message: `Upstream choice ${index} is not an object.` };
   }
@@ -380,40 +416,17 @@ const normalizeChoice = (
     return { ok: false, message: `Upstream choice ${index} is missing an assistant message.` };
   }
   const message = value.message;
-  if (message.role !== "assistant") {
-    return { ok: false, message: `Upstream choice ${index} does not contain an assistant message.` };
-  }
-  if (!(message.content === undefined || message.content === null || typeof message.content === "string")) {
-    return { ok: false, message: `Upstream choice ${index} has unsupported message content.` };
-  }
-  if (!(message.refusal === undefined || message.refusal === null || typeof message.refusal === "string")) {
-    return { ok: false, message: `Upstream choice ${index} has an invalid refusal.` };
-  }
-  const refusal = typeof message.refusal === "string" ? message.refusal : "";
-
-  let toolCalls: Record<string, unknown>[] | undefined;
-  if (message.tool_calls !== undefined) {
-    if (!Array.isArray(message.tool_calls)) {
-      return { ok: false, message: `Upstream choice ${index} has invalid tool calls.` };
-    }
-    toolCalls = [];
-    for (const [callIndex, call] of message.tool_calls.entries()) {
-      const normalized = normalizeToolCall(call, callIndex);
-      if (!normalized.ok) return normalized;
-      toolCalls.push(normalized.value);
-    }
-  }
-  if (message.content === undefined && !toolCalls?.length && !refusal) {
-    return { ok: false, message: `Upstream choice ${index} has neither content nor a tool call.` };
-  }
+  const normalizedMessagePart = normalizeChoiceMessage(message, index);
+  if (!normalizedMessagePart.ok) return normalizedMessagePart;
+  const { content, refusal, toolCalls } = normalizedMessagePart.value;
 
   const finishReason = value.finish_reason;
-  if (!(finishReason === undefined || finishReason === null || typeof finishReason === "string")) {
+  if (!isAbsentOrString(finishReason)) {
     return { ok: false, message: `Upstream choice ${index} has an invalid finish reason.` };
   }
   const normalizedMessage: Record<string, unknown> = {
     role: "assistant",
-    content: message.content ?? (toolCalls?.length || refusal ? null : ""),
+    content: choiceContent(content, toolCalls, refusal),
   };
   // 1:1 with native Cerebras (compliance D1, measured 2026-08-29): the
   // upstream reasoning field must reach clients unchanged. The gateway
@@ -455,10 +468,7 @@ const normalizeUsage = (value: unknown): NormalizationResult<Record<string, numb
  * Assistant consumes. Unknown provider fields, including diagnostics, are not
  * relayed or logged.
  */
-export const normalizeCerebrasChatCompletion = (
-  value: unknown,
-  requestedModel: string,
-): NormalizationResult<Record<string, unknown>> => {
+export const normalizeCerebrasChatCompletion = (value: unknown, requestedModel: string): NormalizationResult<Record<string, unknown>> => {
   if (!isRecord(value) || Array.isArray(value)) {
     return { ok: false, message: "Upstream did not return a Chat Completions object." };
   }

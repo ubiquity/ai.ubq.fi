@@ -24,13 +24,15 @@ function respond(message: Record<string, unknown>): Response {
       object: "chat.completion",
       created: 1,
       model: "gpt-oss-120b",
-      choices: [{
-        index: 0,
-        message: { role: "assistant", ...message },
-        finish_reason: "tool_calls" in message ? "tool_calls" : "stop",
-      }],
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", ...message },
+          finish_reason: "tool_calls" in message ? "tool_calls" : "stop",
+        },
+      ],
     }),
-    { status: 200, headers: { "Content-Type": "application/json" } },
+    { status: 200, headers: { "Content-Type": "application/json" } }
   );
 }
 
@@ -47,36 +49,48 @@ export function trailTransport(task: TaskManifest): HarmonyTransport {
     index += 1;
     if (index <= trail.length) {
       const step = trail[index - 1];
-      return Promise.resolve(respond({
-        content: `Step ${index}.`,
-        tool_calls: [{
-          id: `call-${index}`,
-          type: "function",
-          function: { name: step.tool, arguments: JSON.stringify(step.args) },
-        }],
-      }));
+      return Promise.resolve(
+        respond({
+          content: `Step ${index}.`,
+          tool_calls: [
+            {
+              id: `call-${index}`,
+              type: "function",
+              function: { name: step.tool, arguments: JSON.stringify(step.args) },
+            },
+          ],
+        })
+      );
     }
     if (index === trail.length + 1) return Promise.resolve(respond({ content: "Task complete." }));
     if (index === trail.length + 2) {
-      return Promise.resolve(respond({
-        content: "Verifying with the declared command.",
-        tool_calls: [{
-          id: `call-${index}`,
-          type: "function",
-          function: { name: "shell.exec", arguments: JSON.stringify({ command: task.verify?.command ?? "true" }) },
-        }],
-      }));
+      return Promise.resolve(
+        respond({
+          content: "Verifying with the declared command.",
+          tool_calls: [
+            {
+              id: `call-${index}`,
+              type: "function",
+              function: { name: "shell.exec", arguments: JSON.stringify({ command: task.verify?.command ?? "true" }) },
+            },
+          ],
+        })
+      );
     }
     if (index === trail.length + 3) {
       // Deterministic abandonment evidence when the guard still blocks.
-      return Promise.resolve(respond({
-        content: "Revising the plan after verification.",
-        tool_calls: [{
-          id: `call-${index}`,
-          type: "function",
-          function: { name: "task.update_plan", arguments: JSON.stringify({ plan: ["verified", "complete"] }) },
-        }],
-      }));
+      return Promise.resolve(
+        respond({
+          content: "Revising the plan after verification.",
+          tool_calls: [
+            {
+              id: `call-${index}`,
+              type: "function",
+              function: { name: "task.update_plan", arguments: JSON.stringify({ plan: ["verified", "complete"] }) },
+            },
+          ],
+        })
+      );
     }
     return Promise.resolve(respond({ content: "Task complete." }));
   };
@@ -109,7 +123,8 @@ Deno.test("canonical: registered C is external-inference by default and inert wi
 Deno.test("canonical: a fake-transport C run completes a task with guard evidence", async () => {
   const { runsRoot } = freshOptions();
   try {
-    const task = loadTasks(TASKS_DIR).find((t) => t.id === "nav-001")!;
+    const task = loadTasks(TASKS_DIR).find((t) => t.id === "nav-001");
+    assert.ok(task, "nav-001 must exist in the benchmark manifest");
     const adapter = createCanonicalAdapter({
       transport: trailTransport(task),
       configId: "C-fake",
@@ -127,10 +142,10 @@ Deno.test("canonical: a fake-transport C run completes a task with guard evidenc
     // The fake model writes without verifying first: the guard rejects the
     // first final and the verification-command recovery satisfies it.
     assert.equal(result.reliability?.final_accepted, true);
-    assert.ok((result.reliability?.guard_rejections ?? 0) >= 1);
-    assert.equal(result.reliability?.unverified_writes, 0);
-    assert.equal(result.reliability?.verification.required, 1);
-    assert.equal(result.reliability?.verification.satisfied, 1);
+    assert.ok(result.reliability.guard_rejections >= 1);
+    assert.equal(result.reliability.unverified_writes, 0);
+    assert.equal(result.reliability.verification.required, 1);
+    assert.equal(result.reliability.verification.satisfied, 1);
     assert.ok(result.metrics.model_calls >= 6);
     assert.ok(result.metrics.output_tokens > 0, "model response tokens must be included in metrics");
     for (const event of events) validateTrajectoryEvent(event);
@@ -166,20 +181,21 @@ Deno.test("canonical: the C-fake matrix succeeds on every manifest with determin
       });
       results.push(result);
       if (!result.success) {
-        throw new Error(
-          `${task.id}: ${result.failure_class}: ${result.failure_detail} ` +
-            `(reliability: ${JSON.stringify(result.reliability)})`,
-        );
+        throw new Error(`${task.id}: ${result.failure_class}: ${result.failure_detail} ` + `(reliability: ${JSON.stringify(result.reliability)})`);
       }
     }
-    const byId = (id: string) => results.find((r) => r.task_id === id)!;
+    const byId = (id: string): BenchmarkResult => {
+      const found = results.find((r) => r.task_id === id);
+      assert.ok(found, `${id} must have produced a result`);
+      return found;
+    };
     // Guard evidence profiles are deterministic.
     assert.ok((byId("nav-001").reliability?.guard_rejections ?? 0) >= 1);
     assert.equal(byId("fail-001").reliability?.duplicate_calls, 1); // identical exec retry blocked
     assert.ok(byId("fail-003").metrics.invalid_tool_calls >= 1); // path: 42 rejected before execution
     for (const result of results) {
       assert.equal(result.reliability?.final_accepted, true, `${result.task_id} final must be accepted`);
-      assert.equal(typeof result.reliability?.state_contract, "string");
+      assert.equal(typeof result.reliability.state_contract, "string");
     }
   } finally {
     Deno.removeSync(runsRoot, { recursive: true });
@@ -189,7 +205,8 @@ Deno.test("canonical: the C-fake matrix succeeds on every manifest with determin
 Deno.test("canonical: the compact surface never exposes experimental broad tools", async () => {
   const { runsRoot } = freshOptions();
   try {
-    const task = loadTasks(TASKS_DIR).find((t) => t.id === "nav-001")!;
+    const task = loadTasks(TASKS_DIR).find((t) => t.id === "nav-001");
+    assert.ok(task, "nav-001 must exist in the benchmark manifest");
     const adapter = createCanonicalAdapter({
       transport: trailTransport(task),
       configId: "C-fake",

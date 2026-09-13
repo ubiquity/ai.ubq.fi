@@ -20,19 +20,9 @@ const reasoningTextProgressFields: ReadonlyMap<string, "delta" | "text"> = new M
   ["response.reasoning_text.delta", "delta"],
   ["response.reasoning_text.done", "text"],
 ]);
-const reasoningSummaryPartProgressTypes = new Set([
-  "response.reasoning_summary_part.added",
-  "response.reasoning_summary_part.done",
-]);
+const reasoningSummaryPartProgressTypes = new Set(["response.reasoning_summary_part.added", "response.reasoning_summary_part.done"]);
 const executableToolTypes = new Set(["function_call", "custom_tool_call"]);
-const hostedToolTypes = new Set([
-  "code_interpreter_call",
-  "computer_call",
-  "file_search_call",
-  "image_generation_call",
-  "mcp_call",
-  "web_search_call",
-]);
+const hostedToolTypes = new Set(["code_interpreter_call", "computer_call", "file_search_call", "image_generation_call", "mcp_call", "web_search_call"]);
 const hostedToolCompletedEventTypes = new Set([...hostedToolTypes].map((type) => `response.${type}.completed`));
 const hostedToolTerminalEventTypes = new Set([
   ...hostedToolCompletedEventTypes,
@@ -41,97 +31,118 @@ const hostedToolTerminalEventTypes = new Set([
 ]);
 const imagePartialEventType = "response.image_generation_call.partial_image";
 
-const nonEmptyText = (value: Record<string, unknown>): boolean =>
-  [value.delta, value.text].some((item) => typeof item === "string" && item.length > 0);
+const nonEmptyText = (value: Record<string, unknown>): boolean => [value.delta, value.text].some((item) => typeof item === "string" && item.length > 0);
 
-const semanticKindFromOutput = (
-  output: unknown,
-  ignoredOutputItemId: string | null = null,
-): ResponsesSemanticKind | null => {
+const nonEmptyString = (value: unknown): boolean => typeof value === "string" && value.length > 0;
+
+const nonEmptyTrimmedString = (value: unknown): boolean => typeof value === "string" && value.trim().length > 0;
+
+/** An executable tool call is only semantic once its identity and payload are both present. */
+const executableToolCallKind = (item: Record<string, unknown>): ResponsesSemanticKind | null => {
+  const itemType = item.type;
+  if (typeof itemType !== "string" || !executableToolTypes.has(itemType)) return null;
+  if (!nonEmptyTrimmedString(item.call_id) || !nonEmptyTrimmedString(item.name)) return null;
+  if (itemType === "function_call") return typeof item.arguments === "string" ? "tool_call" : null;
+  return typeof item.input === "string" ? "tool_call" : null;
+};
+
+/** A hosted tool call item is semantic once it carries one of the three lifecycle statuses. */
+const hostedToolItemKind = (item: Record<string, unknown>): ResponsesSemanticKind | null => {
+  if (typeof item.type !== "string" || !hostedToolTypes.has(item.type)) return null;
+  if (item.status !== "in_progress" && item.status !== "completed" && item.status !== "failed") return null;
+  return "tool_call";
+};
+
+const outputContentPartHasText = (part: unknown): boolean =>
+  isRecord(part) &&
+  (((part.type === "output_text" || part.type === "text") && nonEmptyString(part.text)) || (part.type === "refusal" && nonEmptyString(part.refusal)));
+
+/** Classifies one `output` entry exactly as the upstream providers shape them. */
+const semanticKindFromOutputItem = (item: unknown, ignoredOutputItemId: string | null): ResponsesSemanticKind | null => {
+  if (!isRecord(item) || Array.isArray(item)) return null;
+  if (ignoredOutputItemId !== null && getString(item.id)?.trim() === ignoredOutputItemId) return null;
+  const executableKind = executableToolCallKind(item);
+  if (executableKind) return executableKind;
+  const hostedKind = hostedToolItemKind(item);
+  if (hostedKind) return hostedKind;
+  if (item.type === "reasoning") return null;
+  const content = item.content;
+  if (!Array.isArray(content)) return null;
+  if (content.some(outputContentPartHasText)) return "text";
+  return null;
+};
+
+const semanticKindFromOutput = (output: unknown, ignoredOutputItemId: string | null = null): ResponsesSemanticKind | null => {
   if (!Array.isArray(output)) return null;
   for (const item of output) {
-    if (!isRecord(item) || Array.isArray(item)) continue;
-    if (ignoredOutputItemId !== null && getString(item.id)?.trim() === ignoredOutputItemId) continue;
-    if (item.type === "function_call") {
-      if (
-        typeof item.call_id === "string" && item.call_id.trim() && typeof item.name === "string" &&
-        item.name.trim() && typeof item.arguments === "string"
-      ) return "tool_call";
-    }
-    if (item.type === "custom_tool_call") {
-      if (
-        typeof item.call_id === "string" && item.call_id.trim() && typeof item.name === "string" &&
-        item.name.trim() && typeof item.input === "string"
-      ) return "tool_call";
-    }
-    if (
-      typeof item.type === "string" && hostedToolTypes.has(item.type) &&
-      (item.status === "in_progress" || item.status === "completed" || item.status === "failed")
-    ) {
-      return "tool_call";
-    }
-    if (item.type === "reasoning") continue;
-    if (!Array.isArray(item.content)) continue;
-    if (
-      item.content.some((part) =>
-        isRecord(part) && (
-          ((part.type === "output_text" || part.type === "text") &&
-            typeof part.text === "string" && part.text.length > 0) ||
-          (part.type === "refusal" && typeof part.refusal === "string" && part.refusal.length > 0)
-        )
-      )
-    ) return "text";
+    const kind = semanticKindFromOutputItem(item, ignoredOutputItemId);
+    if (kind) return kind;
   }
   return null;
 };
 
-const responsesEventSemanticKindWithIgnoredOutputItem = (
-  event: ResponsesStreamEvent,
-  ignoredOutputItemId: string | null,
-): ResponsesSemanticKind | null => {
-  if (textTypes.has(event.type)) return nonEmptyText(event.value) ? "text" : null;
-  if (refusalTypes.has(event.type)) {
-    return (nonEmptyText(event.value) || (typeof event.value.refusal === "string" && event.value.refusal.length > 0))
-      ? "text"
-      : null;
-  }
-  if (event.type === "response.content_part.done" && isRecord(event.value.part)) {
-    const part = event.value.part;
-    if (
-      (part.type === "output_text" || part.type === "text") && typeof part.text === "string" && part.text.length > 0
-    ) return "text";
-    if (part.type === "refusal" && typeof part.refusal === "string" && part.refusal.length > 0) return "text";
-  }
-  if (hostedToolTerminalEventTypes.has(event.type)) return "tool_call";
-  if (event.type === imagePartialEventType) {
-    return [event.value.partial_image_b64, event.value.partial_image, event.value.result]
-        .some((value) => typeof value === "string" && value.length > 0)
-      ? "tool_call"
-      : null;
-  }
-  if (
-    (event.type === "response.output_item.added" || event.type === "response.output_item.done") &&
-    isRecord(event.value.item)
-  ) {
-    const item = event.value.item;
-    const itemType = getString(item.type) ?? "";
-    if (event.type === "response.output_item.done" && executableToolTypes.has(itemType)) {
-      const callId = getString(item.call_id)?.trim();
-      const name = getString(item.name)?.trim();
-      if (!callId || !name) return null;
-      if (itemType === "function_call") return typeof item.arguments === "string" ? "tool_call" : null;
-      return typeof item.input === "string" ? "tool_call" : null;
-    }
-    if (hostedToolTypes.has(itemType)) return semanticKindFromOutput([item], ignoredOutputItemId);
-    if (event.type === "response.output_item.added") return null;
-    return semanticKindFromOutput([item], ignoredOutputItemId);
-  }
-  if (isRecord(event.value.response) && !Array.isArray(event.value.response)) {
-    return semanticKindFromOutput(event.value.response.output, ignoredOutputItemId);
-  }
-  const topLevelOutputKind = semanticKindFromOutput(event.value.output, ignoredOutputItemId);
-  if (topLevelOutputKind) return topLevelOutputKind;
+const contentPartSemanticKind = (part: Record<string, unknown>): ResponsesSemanticKind | null => {
+  if ((part.type === "output_text" || part.type === "text") && nonEmptyString(part.text)) return "text";
+  if (part.type === "refusal" && nonEmptyString(part.refusal)) return "text";
   return null;
+};
+
+const imagePartialSemanticKind = (value: Record<string, unknown>): ResponsesSemanticKind | null =>
+  [value.partial_image_b64, value.partial_image, value.result].some(nonEmptyString) ? "tool_call" : null;
+
+/** Text-bearing events decide their kind from their own fields; `undefined` means undecided. */
+const textBearingEventSemanticKind = (event: ResponsesStreamEvent): ResponsesSemanticKind | null | undefined => {
+  if (textTypes.has(event.type)) return nonEmptyText(event.value) ? "text" : null;
+  if (refusalTypes.has(event.type)) return nonEmptyText(event.value) || nonEmptyString(event.value.refusal) ? "text" : null;
+  if (event.type !== "response.content_part.done") return undefined;
+  const part = event.value.part;
+  if (!isRecord(part)) return undefined;
+  const partKind = contentPartSemanticKind(part);
+  if (partKind !== null) return partKind;
+  return undefined;
+};
+
+/** Decides a kind from the event itself, without inspecting any output payload. */
+const directResponsesEventSemanticKind = (event: ResponsesStreamEvent): ResponsesSemanticKind | null | undefined => {
+  const textKind = textBearingEventSemanticKind(event);
+  if (textKind !== undefined) return textKind;
+  if (hostedToolTerminalEventTypes.has(event.type)) return "tool_call";
+  if (event.type === imagePartialEventType) return imagePartialSemanticKind(event.value);
+  return undefined;
+};
+
+const outputItemEventSemanticKind = (
+  event: ResponsesStreamEvent,
+  item: Record<string, unknown>,
+  ignoredOutputItemId: string | null
+): ResponsesSemanticKind | null => {
+  const itemType = getString(item.type) ?? "";
+  if (event.type === "response.output_item.done" && executableToolTypes.has(itemType)) return executableToolCallKind(item);
+  if (hostedToolTypes.has(itemType)) return semanticKindFromOutput([item], ignoredOutputItemId);
+  if (event.type === "response.output_item.added") return null;
+  return semanticKindFromOutput([item], ignoredOutputItemId);
+};
+
+/** Lifecycle output items decide their kind from the item alone; `undefined` means undecided. */
+const outputItemResponsesEventSemanticKind = (event: ResponsesStreamEvent, ignoredOutputItemId: string | null): ResponsesSemanticKind | null | undefined => {
+  const isOutputItemEvent = event.type === "response.output_item.added" || event.type === "response.output_item.done";
+  const item = event.value.item;
+  if (!isOutputItemEvent || !isRecord(item)) return undefined;
+  return outputItemEventSemanticKind(event, item, ignoredOutputItemId);
+};
+
+const outputPayloadSemanticKind = (event: ResponsesStreamEvent, ignoredOutputItemId: string | null): ResponsesSemanticKind | null => {
+  const valueResponse = event.value.response;
+  if (isRecord(valueResponse) && !Array.isArray(valueResponse)) return semanticKindFromOutput(valueResponse.output, ignoredOutputItemId);
+  return semanticKindFromOutput(event.value.output, ignoredOutputItemId);
+};
+
+const responsesEventSemanticKindWithIgnoredOutputItem = (event: ResponsesStreamEvent, ignoredOutputItemId: string | null): ResponsesSemanticKind | null => {
+  const directKind = directResponsesEventSemanticKind(event);
+  if (directKind !== undefined) return directKind;
+  const itemKind = outputItemResponsesEventSemanticKind(event, ignoredOutputItemId);
+  if (itemKind !== undefined) return itemKind;
+  return outputPayloadSemanticKind(event, ignoredOutputItemId);
 };
 
 export const responsesEventSemanticKind = (event: ResponsesStreamEvent): ResponsesSemanticKind | null =>
@@ -142,11 +153,8 @@ export const responsesEventReportsProgress = (event: ResponsesStreamEvent): bool
   const textField = reasoningTextProgressFields.get(event.type);
   if (textField) {
     const value = event.value[textField];
-    const index = event.type.startsWith("response.reasoning_summary_")
-      ? event.value.summary_index
-      : event.value.content_index;
-    return typeof value === "string" && value.length > 0 && typeof index === "number" &&
-      Number.isSafeInteger(index) && index >= 0;
+    const index = event.type.startsWith("response.reasoning_summary_") ? event.value.summary_index : event.value.content_index;
+    return typeof value === "string" && value.length > 0 && typeof index === "number" && Number.isSafeInteger(index) && index >= 0;
   }
   if (reasoningSummaryPartProgressTypes.has(event.type)) {
     const summaryIndex = event.value.summary_index;
@@ -154,11 +162,12 @@ export const responsesEventReportsProgress = (event: ResponsesStreamEvent): bool
   }
   if (
     (event.type === "response.output_item.added" || event.type === "response.output_item.done") &&
-    isRecord(event.value.item) && !Array.isArray(event.value.item) && event.value.item.type === "reasoning"
+    isRecord(event.value.item) &&
+    !Array.isArray(event.value.item) &&
+    event.value.item.type === "reasoning"
   ) {
     const itemId = getString(event.value.item.id)?.trim();
-    return Boolean(itemId) &&
-      (Array.isArray(event.value.item.summary) || Array.isArray(event.value.item.content));
+    return Boolean(itemId) && (Array.isArray(event.value.item.summary) || Array.isArray(event.value.item.content));
   }
   return false;
 };
@@ -169,7 +178,9 @@ const reasoningLifecycleProgressKey = (event: ResponsesStreamEvent): string | nu
   }
   if (
     (event.type === "response.output_item.added" || event.type === "response.output_item.done") &&
-    isRecord(event.value.item) && !Array.isArray(event.value.item) && event.value.item.type === "reasoning"
+    isRecord(event.value.item) &&
+    !Array.isArray(event.value.item) &&
+    event.value.item.type === "reasoning"
   ) {
     const itemId = getString(event.value.item.id)?.trim();
     return itemId ? `${event.type}:${itemId}` : null;
@@ -186,11 +197,7 @@ export type PreparedResponsesStream = Readonly<{
   terminal: ResponsesStreamEvent | null;
 }>;
 
-export const appendResponsesPrecommitEvent = (
-  buffered: ResponsesStreamEvent[],
-  event: ResponsesStreamEvent,
-  bufferedChars: number,
-): number => {
+export const appendResponsesPrecommitEvent = (buffered: ResponsesStreamEvent[], event: ResponsesStreamEvent, bufferedChars: number): number => {
   const nextChars = bufferedChars + event.raw.length;
   if (buffered.length >= MAX_RESPONSES_PRECOMMIT_EVENTS || nextChars > MAX_RESPONSES_PRECOMMIT_CHARS) {
     throw new ResponsesStreamError("Upstream Responses precommit buffer exceeded its limit.", {
@@ -201,6 +208,30 @@ export const appendResponsesPrecommitEvent = (
   return nextChars;
 };
 
+/** Reads the next upstream event, normalizing iterator exhaustion to `null`. */
+const nextUpstreamEvent = async (iterator: ResponsesStreamIterator): Promise<ResponsesStreamEvent | null> => {
+  const next = await iterator.next();
+  if (next.done) return null;
+  return next.value;
+};
+
+/**
+ * Reports lifecycle progress at most once per key. Returns whether the caller must
+ * release the stream now, which is only requested while `releaseOnProgress` is set.
+ */
+const reportProgressOnce = (
+  event: ResponsesStreamEvent,
+  reportedLifecycleProgress: Set<string>,
+  options: { onProgress?: (event: ResponsesStreamEvent) => void; releaseOnProgress?: boolean }
+): boolean => {
+  if (!responsesEventReportsProgress(event)) return false;
+  const lifecycleKey = reasoningLifecycleProgressKey(event);
+  if (lifecycleKey !== null && reportedLifecycleProgress.has(lifecycleKey)) return false;
+  if (lifecycleKey !== null) reportedLifecycleProgress.add(lifecycleKey);
+  options.onProgress?.(event);
+  return Boolean(options.releaseOnProgress);
+};
+
 /** Holds all provider events until semantic output or a valid terminal owns the attempt. */
 export const prepareResponsesStreamForCommit = async (
   iterator: ResponsesStreamIterator,
@@ -208,51 +239,44 @@ export const prepareResponsesStreamForCommit = async (
     onEvent?: (event: ResponsesStreamEvent) => void;
     onProgress?: (event: ResponsesStreamEvent) => void;
     releaseOnProgress?: boolean;
-  }> = {},
+  }> = {}
 ): Promise<PreparedResponsesStream> => {
   const buffered: ResponsesStreamEvent[] = [];
   const reportedLifecycleProgress = new Set<string>();
   let bufferedChars = 0;
   try {
-    while (true) {
-      const next = await iterator.next();
-      if (next.done || !next.value) {
+    for (;;) {
+      const event = await nextUpstreamEvent(iterator);
+      if (!event) {
         throw new ResponsesStreamError("Upstream Responses stream ended before semantic output.", {
           kind: "premature_eof",
         });
       }
-      bufferedChars = appendResponsesPrecommitEvent(buffered, next.value, bufferedChars);
-      options.onEvent?.(next.value);
-      if (responsesEventReportsProgress(next.value)) {
-        const lifecycleKey = reasoningLifecycleProgressKey(next.value);
-        if (lifecycleKey === null || !reportedLifecycleProgress.has(lifecycleKey)) {
-          if (lifecycleKey !== null) reportedLifecycleProgress.add(lifecycleKey);
-          options.onProgress?.(next.value);
-          if (options.releaseOnProgress) {
-            return {
-              iterator,
-              buffered,
-              bufferedChars,
-              semantic: null,
-              semanticKind: null,
-              terminal: null,
-            };
-          }
-        }
+      bufferedChars = appendResponsesPrecommitEvent(buffered, event, bufferedChars);
+      options.onEvent?.(event);
+      if (reportProgressOnce(event, reportedLifecycleProgress, options)) {
+        return {
+          iterator,
+          buffered,
+          bufferedChars,
+          semantic: null,
+          semanticKind: null,
+          terminal: null,
+        };
       }
-      const semanticKind = responsesEventSemanticKind(next.value);
+      const semanticKind = responsesEventSemanticKind(event);
       if (semanticKind) {
         return {
           iterator,
           buffered,
           bufferedChars,
-          semantic: next.value,
+          semantic: event,
           semanticKind,
-          terminal: next.value.terminal ? next.value : null,
+          terminal: event.terminal ? event : null,
         };
       }
-      if (next.value.terminal) {
-        return { iterator, buffered, bufferedChars, semantic: null, semanticKind: null, terminal: next.value };
+      if (event.terminal) {
+        return { iterator, buffered, bufferedChars, semantic: null, semanticKind: null, terminal: event };
       }
     }
   } catch (error) {
@@ -261,8 +285,7 @@ export const prepareResponsesStreamForCommit = async (
   }
 };
 
-const sseRaw = (value: Record<string, unknown>): string =>
-  `event: ${getString(value.type) ?? "message"}\ndata: ${JSON.stringify(value)}\n\n`;
+const sseRaw = (value: Record<string, unknown>): string => `event: ${getString(value.type) ?? "message"}\ndata: ${JSON.stringify(value)}\n\n`;
 
 export const responseEventFromValue = (value: Record<string, unknown>): ResponsesStreamEvent => {
   const type = getString(value.type)?.trim();
@@ -275,13 +298,9 @@ export const responseEventFromValue = (value: Record<string, unknown>): Response
   };
 };
 
-const incrementOutputIndex = (value: unknown): unknown =>
-  typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value + 1 : value;
+const incrementOutputIndex = (value: unknown): unknown => (typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value + 1 : value);
 
-const withResponseOutputPrefix = (
-  response: Record<string, unknown>,
-  warningItem: Record<string, unknown>,
-): Record<string, unknown> => ({
+const withResponseOutputPrefix = (response: Record<string, unknown>, warningItem: Record<string, unknown>): Record<string, unknown> => ({
   ...response,
   output: [warningItem, ...(Array.isArray(response.output) ? response.output : [])],
 });
@@ -289,35 +308,32 @@ const withResponseOutputPrefix = (
 export const rewriteResponsesEventForWarning = (
   event: ResponsesStreamEvent,
   warningItem: Record<string, unknown>,
-  sequenceNumber: number,
+  sequenceNumber: number
 ): ResponsesStreamEvent => {
   const value: Record<string, unknown> = { ...event.value, sequence_number: sequenceNumber };
   if (Object.prototype.hasOwnProperty.call(value, "output_index")) {
     value.output_index = incrementOutputIndex(value.output_index);
   }
   if (
-    (event.type === "response.completed" || event.type === "response.failed" ||
-      event.type === "response.incomplete") &&
-    isRecord(value.response) && !Array.isArray(value.response)
+    (event.type === "response.completed" || event.type === "response.failed" || event.type === "response.incomplete") &&
+    isRecord(value.response) &&
+    !Array.isArray(value.response)
   ) {
     value.response = withResponseOutputPrefix(value.response, warningItem);
   }
   return responseEventFromValue(value);
 };
 
-export const rewriteResponsesEventSequence = (
-  event: ResponsesStreamEvent,
-  sequenceNumber: number,
-): ResponsesStreamEvent => responseEventFromValue({ ...event.value, sequence_number: sequenceNumber });
+export const rewriteResponsesEventSequence = (event: ResponsesStreamEvent, sequenceNumber: number): ResponsesStreamEvent =>
+  responseEventFromValue({ ...event.value, sequence_number: sequenceNumber });
 
 export const buildFailoverWarningEvents = (
   actualModel: string,
   responseId: string,
-  startingSequenceNumber = 0,
+  startingSequenceNumber = 0
 ): Readonly<{ item: Record<string, unknown>; events: ResponsesStreamEvent[] }> => {
   const itemId = `msg_failover_${crypto.randomUUID().replace(/-/g, "")}`;
-  const text =
-    `⚠ Failover active: this response is from \`removed_provider:${actualModel}\` because the Codex upstream was unavailable.`;
+  const text = `⚠ Failover active: this response is from \`removed_provider:${actualModel}\` because the Codex upstream was unavailable.`;
   const content = { type: "output_text", text, annotations: [] };
   const item: Record<string, unknown> = {
     id: itemId,
@@ -415,7 +431,7 @@ export const failureEventAfterCommit = (
   responseId: string,
   sequenceNumber: number,
   output: readonly Record<string, unknown>[] = [],
-  responseTemplate: Readonly<Record<string, unknown>> = {},
+  responseTemplate: Readonly<Record<string, unknown>> = {}
 ): ResponsesStreamEvent => {
   const event = responseEventFromValue({
     type: "response.failed",
@@ -462,8 +478,7 @@ const emptyCompletionEventAfterCommit = (sequenceNumber: number): ResponsesStrea
   return event;
 };
 
-export const isSyntheticResponsesFailureEvent = (event: ResponsesStreamEvent): boolean =>
-  syntheticFailureEvents.has(event);
+export const isSyntheticResponsesFailureEvent = (event: ResponsesStreamEvent): boolean => syntheticFailureEvents.has(event);
 
 type OwnedResponsesStreamOptions = Readonly<{
   initial: readonly ResponsesStreamEvent[];
@@ -488,10 +503,87 @@ const invoke = (callback: (() => void | Promise<void>) | undefined): void => {
   }
 };
 
+/** Maps delta/done event types onto the field that carries their text payload. */
+const textFieldForEventType = (eventType: string): "delta" | "text" | "refusal" | null => {
+  if (eventType === "response.output_text.delta" || eventType === "response.refusal.delta") return "delta";
+  if (eventType === "response.output_text.done") return "text";
+  if (eventType === "response.refusal.done") return "refusal";
+  return null;
+};
+
+/** Setup events that may precede the failover warning instead of following it. */
+const isLeadingSetupEvent = (event: ResponsesStreamEvent): boolean => event.type === "response.in_progress" || event.type === "response.queued";
+
+/** The trailing lifecycle segment of a hosted-tool event type (`response.<tool>.<lifecycle>`). */
+const hostedToolLifecycle = (eventType: string): string => eventType.slice(eventType.lastIndexOf(".") + 1);
+
+/** Maps a hosted-tool lifecycle segment onto the recovered output item status. */
+const hostedToolItemStatus = (lifecycle: string): string => {
+  if (lifecycle === "completed") return "completed";
+  if (lifecycle === "failed") return "failed";
+  return "in_progress";
+};
+
+/** The synthetic terminal type reported with a failure event, when it is one. */
+const syntheticTerminalTypeOf = (event: ResponsesStreamEvent): "response.failed" | "error" | null =>
+  event.type === "response.failed" || event.type === "error" ? event.type : null;
+
+/** Builds the error reported when the upstream stream ended without a terminal. */
+const prematureEofError = (): ResponsesStreamError =>
+  new ResponsesStreamError("Responses stream ended without a terminal.", {
+    kind: "premature_eof",
+  });
+
+type WarningPreambleContext = {
+  initial: ResponsesStreamEvent[];
+  queue: ResponsesStreamEvent[];
+  responseId: string;
+  warningModel: string;
+  sequenceNumber: number;
+  validateEvent?: (event: ResponsesStreamEvent) => void;
+  originalUpstreamEvents: WeakMap<ResponsesStreamEvent, ResponsesStreamEvent>;
+};
+
+/**
+ * Consumes the RemovedProvider preamble: `response.created` is re-sequenced first, the leading
+ * setup events follow it, the failover warning is inserted, and everything else is rewritten.
+ */
+const queueWarningPreamble = (context: WarningPreambleContext): Readonly<{ item: Record<string, unknown>; sequenceNumber: number }> => {
+  const { initial, queue, originalUpstreamEvents } = context;
+  let sequenceNumber = context.sequenceNumber;
+  const created = initial.find((event) => event.type === "response.created");
+  if (!created) {
+    throw new ResponsesStreamError("RemovedProvider stream omitted response.created.", { kind: "malformed_event" });
+  }
+  initial.splice(initial.indexOf(created), 1);
+  context.validateEvent?.(created);
+  const rewrittenCreated = rewriteResponsesEventSequence(created, sequenceNumber++);
+  originalUpstreamEvents.set(rewrittenCreated, created);
+  queue.push(rewrittenCreated);
+
+  const leadingCount = initial.findIndex((event) => !isLeadingSetupEvent(event));
+  const leadingSetup = initial.splice(0, leadingCount < 0 ? initial.length : leadingCount);
+  for (const event of leadingSetup) context.validateEvent?.(event);
+  for (const event of leadingSetup) {
+    const rewritten = rewriteResponsesEventSequence(event, sequenceNumber++);
+    originalUpstreamEvents.set(rewritten, event);
+    queue.push(rewritten);
+  }
+
+  const warning = buildFailoverWarningEvents(context.warningModel, context.responseId, sequenceNumber);
+  queue.push(...warning.events);
+  sequenceNumber += warning.events.length;
+  for (const event of initial) context.validateEvent?.(event);
+  for (const event of initial) {
+    const rewritten = rewriteResponsesEventForWarning(event, warning.item, sequenceNumber++);
+    originalUpstreamEvents.set(rewritten, event);
+    queue.push(rewritten);
+  }
+  return { item: warning.item, sequenceNumber };
+};
+
 /** Owns event ordering and guarantees at most one client-visible terminal event. */
-export const createOwnedResponsesStream = (
-  options: OwnedResponsesStreamOptions,
-): ReadableStream<Uint8Array> => {
+export const createOwnedResponsesStream = (options: OwnedResponsesStreamOptions): ReadableStream<Uint8Array> => {
   const encoder = new TextEncoder();
   const localAbort = new AbortController();
   const initial = [...options.initial];
@@ -499,10 +591,13 @@ export const createOwnedResponsesStream = (
   let responseId = options.responseId;
   let sequenceNumber = options.warning
     ? 0
-    : initial.reduce((max, event) =>
-      typeof event.value.sequence_number === "number" && Number.isSafeInteger(event.value.sequence_number)
-        ? Math.max(max, event.value.sequence_number + 1)
-        : max, 0);
+    : initial.reduce(
+        (max, event) =>
+          typeof event.value.sequence_number === "number" && Number.isSafeInteger(event.value.sequence_number)
+            ? Math.max(max, event.value.sequence_number + 1)
+            : max,
+        0
+      );
   let closed = false;
   let terminalEmitted = false;
   let responseCreatedObserved = false;
@@ -520,42 +615,23 @@ export const createOwnedResponsesStream = (
         kind: "malformed_event",
       });
     }
-    const createdIndex = initial.findIndex((event) => event.type === "response.created");
-    if (createdIndex < 0) {
-      throw new ResponsesStreamError("RemovedProvider stream omitted response.created.", { kind: "malformed_event" });
-    }
-    const created = initial.splice(createdIndex, 1)[0]!;
-    options.validateEvent?.(created);
-    const rewrittenCreated = rewriteResponsesEventSequence(created, sequenceNumber++);
-    originalUpstreamEvents.set(rewrittenCreated, created);
-    queue.push(rewrittenCreated);
-    const leadingSetup: ResponsesStreamEvent[] = [];
-    while (
-      initial.length &&
-      (initial[0]!.type === "response.in_progress" || initial[0]!.type === "response.queued")
-    ) leadingSetup.push(initial.shift()!);
-    for (const event of leadingSetup) options.validateEvent?.(event);
-    for (const event of leadingSetup) {
-      const rewritten = rewriteResponsesEventSequence(event, sequenceNumber++);
-      originalUpstreamEvents.set(rewritten, event);
-      queue.push(rewritten);
-    }
-    const warning = buildFailoverWarningEvents(options.warning.model, responseId, sequenceNumber);
-    warningItem = warning.item;
-    queue.push(...warning.events);
-    sequenceNumber += warning.events.length;
-    for (const event of initial) options.validateEvent?.(event);
-    for (const event of initial) {
-      const rewritten = rewriteResponsesEventForWarning(event, warning.item, sequenceNumber++);
-      originalUpstreamEvents.set(rewritten, event);
-      queue.push(rewritten);
-    }
+    const preamble = queueWarningPreamble({
+      initial,
+      queue,
+      responseId,
+      warningModel: options.warning.model,
+      sequenceNumber,
+      validateEvent: options.validateEvent,
+      originalUpstreamEvents,
+    });
+    warningItem = preamble.item;
+    sequenceNumber = preamble.sequenceNumber;
   } else {
     for (const event of initial) options.validateEvent?.(event);
     queue.push(...initial);
   }
 
-  const warningItemId = (): string | null => warningItem ? getString(warningItem.id)?.trim() ?? null : null;
+  const warningItemId = (): string | null => (warningItem ? (getString(warningItem.id)?.trim() ?? null) : null);
   const eventItemId = (event: ResponsesStreamEvent): string | null => {
     const direct = getString(event.value.item_id)?.trim();
     if (direct) return direct;
@@ -569,21 +645,16 @@ export const createOwnedResponsesStream = (
     return warningId !== null && eventItemId(event) === warningId;
   };
   const itemHasOutputText = (item: Record<string, unknown>): boolean =>
-    Array.isArray(item.content) && item.content.some((part) =>
-      isRecord(part) && !Array.isArray(part) &&
-      (part.type === "output_text" || part.type === "text") &&
-      typeof part.text === "string" && part.text.length > 0
+    Array.isArray(item.content) &&
+    item.content.some(
+      (part) =>
+        isRecord(part) && !Array.isArray(part) && (part.type === "output_text" || part.type === "text") && typeof part.text === "string" && part.text.length > 0
     );
   const rememberText = (event: ResponsesStreamEvent): void => {
     if (isWarningEvent(event)) return;
     const refusal = refusalTypes.has(event.type);
-    const text = event.type === "response.output_text.delta" || event.type === "response.refusal.delta"
-      ? getString(event.value.delta)
-      : event.type === "response.output_text.done"
-      ? getString(event.value.text)
-      : event.type === "response.refusal.done"
-      ? getString(event.value.refusal)
-      : null;
+    const textField = textFieldForEventType(event.type);
+    const text = textField === null ? null : getString(event.value[textField]);
     if (!text) return;
     const id = eventItemId(event) ?? `msg_recovered_${getString(event.value.output_index) ?? accumulatedText.size}`;
     const current = accumulatedText.get(id);
@@ -598,12 +669,7 @@ export const createOwnedResponsesStream = (
       refusal,
     });
   };
-  const observeVisibleEvent = (event: ResponsesStreamEvent): void => {
-    if (event.type === "response.created") responseCreatedObserved = true;
-    if (
-      !isWarningEvent(event) &&
-      responsesEventSemanticKindWithIgnoredOutputItem(event, warningItemId())
-    ) semanticCommitmentObserved = true;
+  const observeResponseIdentity = (event: ResponsesStreamEvent): void => {
     const candidateResponseId = responseIdFromEvents([event]);
     if (candidateResponseId && responseId && candidateResponseId !== responseId) {
       throw new ResponsesStreamError("Upstream Responses stream changed response identifiers.", {
@@ -615,99 +681,113 @@ export const createOwnedResponsesStream = (
     if (isRecord(valueResponse) && !Array.isArray(valueResponse)) {
       responseTemplate = { ...responseTemplate, ...valueResponse };
     }
+  };
+  const compatibilityOutputOf = (event: ResponsesStreamEvent): unknown => {
+    if (event.type !== "response.output") return undefined;
+    const explicit = event.value.output;
+    if (explicit !== undefined && explicit !== null) return explicit;
+    const valueResponse = event.value.response;
+    if (!isRecord(valueResponse)) return undefined;
+    return valueResponse.output;
+  };
+  const recordCompatibilityOutput = (output: unknown): void => {
+    if (!Array.isArray(output)) return;
+    for (const outputItem of output) {
+      if (!isRecord(outputItem)) continue;
+      const id = getString(outputItem.id)?.trim();
+      const existingIndex = id ? completedOutputItemIds.get(id) : undefined;
+      if (existingIndex !== undefined) {
+        completedOutputItems[existingIndex] = { ...outputItem };
+        continue;
+      }
+      if (id) completedOutputItemIds.set(id, completedOutputItems.length);
+      completedOutputItems.push({ ...outputItem });
+    }
+  };
+  const visibleItemFromEvent = (event: ResponsesStreamEvent): Record<string, unknown> | null => {
+    const valueItem = event.value.item;
+    if ((event.type === "response.output_item.added" || event.type === "response.output_item.done") && isRecord(valueItem) && !Array.isArray(valueItem)) {
+      const item = { ...valueItem };
+      if (event.type === "response.output_item.added") item.status = "incomplete";
+      return item;
+    }
+    if (!hostedToolTerminalEventTypes.has(event.type)) return null;
+    const lifecycle = hostedToolLifecycle(event.type);
+    const type = event.type.slice("response.".length, -(lifecycle.length + 1));
+    const existingId = eventItemId(event);
+    const existing = existingId ? completedOutputItems[completedOutputItemIds.get(existingId) ?? -1] : undefined;
+    return {
+      ...(existing ?? {}),
+      id: eventItemId(event) ?? `tool_recovered_${completedOutputItems.length}`,
+      type,
+      status: hostedToolItemStatus(lifecycle),
+    };
+  };
+  const observeVisibleEvent = (event: ResponsesStreamEvent): void => {
+    if (event.type === "response.created") responseCreatedObserved = true;
+    if (!isWarningEvent(event) && responsesEventSemanticKindWithIgnoredOutputItem(event, warningItemId())) semanticCommitmentObserved = true;
+    observeResponseIdentity(event);
     rememberText(event);
     if (isWarningEvent(event)) return;
-    let item: Record<string, unknown> | null = null;
-    const compatibilityOutput = event.type === "response.output"
-      ? event.value.output ?? (isRecord(valueResponse) ? valueResponse.output : undefined)
-      : undefined;
-    if (Array.isArray(compatibilityOutput)) {
-      for (const outputItem of compatibilityOutput) {
-        if (!isRecord(outputItem)) continue;
-        const id = getString(outputItem.id)?.trim();
-        if (id && completedOutputItemIds.has(id)) {
-          completedOutputItems[completedOutputItemIds.get(id)!] = { ...outputItem };
-        } else {
-          if (id) completedOutputItemIds.set(id, completedOutputItems.length);
-          completedOutputItems.push({ ...outputItem });
-        }
-      }
-    }
-    if (
-      (event.type === "response.output_item.added" || event.type === "response.output_item.done") &&
-      isRecord(event.value.item) && !Array.isArray(event.value.item)
-    ) {
-      item = { ...event.value.item };
-      if (event.type === "response.output_item.added") item.status = "incomplete";
-    } else if (hostedToolTerminalEventTypes.has(event.type)) {
-      const lifecycle = event.type.split(".").at(-1)!;
-      const type = event.type.slice("response.".length, -(lifecycle.length + 1));
-      const existingId = eventItemId(event);
-      const existing = existingId ? completedOutputItems[completedOutputItemIds.get(existingId) ?? -1] : undefined;
-      item = {
-        ...(existing ?? {}),
-        id: eventItemId(event) ?? `tool_recovered_${completedOutputItems.length}`,
-        type,
-        status: lifecycle === "completed" ? "completed" : lifecycle === "failed" ? "failed" : "in_progress",
-      };
-    }
+    recordCompatibilityOutput(compatibilityOutputOf(event));
+    const item = visibleItemFromEvent(event);
     if (!item) return;
     const id = getString(item.id)?.trim();
-    if (id && completedOutputItemIds.has(id)) {
-      completedOutputItems[completedOutputItemIds.get(id)!] = item;
+    const existingIndex = id ? completedOutputItemIds.get(id) : undefined;
+    if (existingIndex !== undefined) {
+      completedOutputItems[existingIndex] = item;
       return;
     }
     if (id) completedOutputItemIds.set(id, completedOutputItems.length);
     completedOutputItems.push(item);
   };
-  const failureOutput = (): Record<string, unknown>[] => {
-    const output = warningItem ? [{ ...warningItem }] : [];
-    const outputById = new Map<string, number>();
-    const warningId = warningItemId();
-    if (warningId) outputById.set(warningId, 0);
+  const mergeCompletedOutputItems = (output: Record<string, unknown>[], outputById: Map<string, number>): void => {
     for (const item of completedOutputItems) {
       const id = getString(item.id)?.trim();
       if (id && outputById.has(id)) continue;
       if (id) outputById.set(id, output.length);
       output.push({ ...item });
     }
+  };
+  const mergeRecoveredText = (output: Record<string, unknown>[], outputById: Map<string, number>): void => {
     for (const recovered of accumulatedText.values()) {
       const existingIndex = outputById.get(recovered.id);
-      if (existingIndex !== undefined && itemHasOutputText(output[existingIndex]!)) continue;
+      const existingItem = existingIndex === undefined ? undefined : output[existingIndex];
+      if (existingItem !== undefined && itemHasOutputText(existingItem)) continue;
       const message = {
         id: recovered.id,
         type: "message",
         status: recovered.completed ? "completed" : "incomplete",
         role: "assistant",
-        content: recovered.refusal
-          ? [{ type: "refusal", refusal: recovered.text }]
-          : [{ type: "output_text", text: recovered.text, annotations: [] }],
+        content: recovered.refusal ? [{ type: "refusal", refusal: recovered.text }] : [{ type: "output_text", text: recovered.text, annotations: [] }],
       };
       if (existingIndex === undefined) {
         outputById.set(recovered.id, output.length);
         output.push(message);
-      } else {
-        output[existingIndex] = { ...output[existingIndex], ...message };
+        continue;
       }
+      output[existingIndex] = { ...existingItem, ...message };
     }
+  };
+  const failureOutput = (): Record<string, unknown>[] => {
+    const output = warningItem ? [{ ...warningItem }] : [];
+    const outputById = new Map<string, number>();
+    const warningId = warningItemId();
+    if (warningId) outputById.set(warningId, 0);
+    mergeCompletedOutputItems(output, outputById);
+    mergeRecoveredText(output, outputById);
     return output;
   };
   const syntheticFailure = (): ResponsesStreamEvent => {
     return semanticCommitmentObserved
-      ? failureEventAfterCommit(
-        responseId ?? `resp_${crypto.randomUUID().replace(/-/g, "")}`,
-        sequenceNumber++,
-        failureOutput(),
-        responseTemplate,
-      )
+      ? failureEventAfterCommit(responseId ?? `resp_${crypto.randomUUID().replace(/-/g, "")}`, sequenceNumber++, failureOutput(), responseTemplate)
       : errorEventAfterCommit(sequenceNumber++);
   };
-  const failureKindFor = (error: unknown): ResponsesStreamFailureKind =>
-    error instanceof ResponsesStreamError ? error.kind : "read_error";
+  const failureKindFor = (error: unknown): ResponsesStreamFailureKind => (error instanceof ResponsesStreamError ? error.kind : "read_error");
   const failureDetails = (
     error: unknown,
     syntheticTerminalType: OwnedResponsesStreamFailureDetails["syntheticTerminalType"],
-    upstreamTerminal: ResponsesStreamEvent | null = null,
+    upstreamTerminal: ResponsesStreamEvent | null = null
   ): OwnedResponsesStreamFailureDetails => ({
     failureKind: failureKindFor(error),
     responseCreatedObserved,
@@ -723,95 +803,96 @@ export const createOwnedResponsesStream = (
   };
 
   const nextVisible = async (): Promise<ResponsesStreamEvent | null> => {
-    if (queue.length) return queue.shift()!;
-    const next = await options.iterator.next();
-    if (next.done || !next.value) return null;
-    options.validateEvent?.(next.value);
-    const candidate = responseIdFromEvents([next.value]);
+    const queued = queue.shift();
+    if (queued) return queued;
+    const event = await nextUpstreamEvent(options.iterator);
+    if (!event) return null;
+    options.validateEvent?.(event);
+    const candidate = responseIdFromEvents([event]);
     if (candidate && responseId && candidate !== responseId) {
       throw new ResponsesStreamError("Upstream Responses stream changed response identifiers.", {
         kind: "malformed_event",
       });
     }
     responseId ??= candidate;
-    if (!warningItem) return next.value;
-    const rewritten = rewriteResponsesEventForWarning(next.value, warningItem, sequenceNumber++);
-    originalUpstreamEvents.set(rewritten, next.value);
+    if (!warningItem) return event;
+    const rewritten = rewriteResponsesEventForWarning(event, warningItem, sequenceNumber++);
+    originalUpstreamEvents.set(rewritten, event);
     return rewritten;
+  };
+
+  /** Closes the stream with a synthetic terminal, releases the iterator, then reports the failure. */
+  const emitFailureTerminal = async (
+    controller: ReadableStreamDefaultController<Uint8Array>,
+    failure: ResponsesStreamEvent,
+    error: unknown,
+    upstreamTerminal: ResponsesStreamEvent | null
+  ): Promise<void> => {
+    const details = failureDetails(error, syntheticTerminalTypeOf(failure), upstreamTerminal);
+    terminalEmitted = true;
+    closed = true;
+    controller.enqueue(encoder.encode(failure.raw));
+    controller.close();
+    await options.iterator.return(error).catch(() => {});
+    invoke(() => options.onEvent?.(failure));
+    invoke(() => options.onFailure?.(error, details));
+  };
+
+  /** Delivers one visible event, or the synthetic failure that replaces a missing one. */
+  const deliverNextEvent = async (controller: ReadableStreamDefaultController<Uint8Array>, event: ResponsesStreamEvent | null): Promise<void> => {
+    if (closed) return;
+    if (!event) {
+      const failure = syntheticFailure();
+      const details = failureDetails(prematureEofError(), syntheticTerminalTypeOf(failure));
+      terminalEmitted = true;
+      closed = true;
+      controller.enqueue(encoder.encode(failure.raw));
+      controller.close();
+      invoke(() => options.onEvent?.(failure));
+      invoke(() => options.onFailure?.(prematureEofError(), details));
+      return;
+    }
+    if (terminalEmitted) return;
+    observeVisibleEvent(event);
+    advanceSequence(event);
+    if (event.type === "response.completed" && !semanticCommitmentObserved) {
+      const error = new ResponsesStreamError(EMPTY_UPSTREAM_COMPLETION_MESSAGE, {
+        kind: "empty_upstream_completion",
+      });
+      const failure = emptyCompletionEventAfterCommit(sequenceNumber++);
+      await emitFailureTerminal(controller, failure, error, originalUpstreamEvents.get(event) ?? event);
+      return;
+    }
+    terminalEmitted = event.terminal;
+    controller.enqueue(encoder.encode(event.raw));
+    invoke(() => options.onEvent?.(event));
+    if (event.terminal) {
+      closed = true;
+      controller.close();
+      await options.iterator.return("Responses terminal event forwarded").catch(() => {});
+    }
+  };
+
+  /** Handles a pull failure: a cancelled stream closes quietly, anything else reports a failure. */
+  const handlePullFailure = async (controller: ReadableStreamDefaultController<Uint8Array>, error: unknown): Promise<void> => {
+    if (closed) return;
+    if (options.downstreamSignal?.aborted || options.signal?.aborted || localAbort.signal.aborted) {
+      closed = true;
+      controller.close();
+      await options.iterator.return(error).catch(() => {});
+      invoke(() => options.onFailure?.(error, failureDetails(error, null)));
+      return;
+    }
+    await emitFailureTerminal(controller, syntheticFailure(), error, null);
   };
 
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
       if (closed) return;
       try {
-        const event = await nextVisible();
-        if (closed) return;
-        if (!event) {
-          const failure = syntheticFailure();
-          const details = failureDetails(
-            new ResponsesStreamError("Responses stream ended without a terminal.", { kind: "premature_eof" }),
-            failure.type === "response.failed" || failure.type === "error" ? failure.type : null,
-          );
-          terminalEmitted = true;
-          closed = true;
-          controller.enqueue(encoder.encode(failure.raw));
-          controller.close();
-          invoke(() => options.onEvent?.(failure));
-          invoke(() =>
-            options.onFailure?.(
-              new ResponsesStreamError("Responses stream ended without a terminal.", { kind: "premature_eof" }),
-              details,
-            )
-          );
-          return;
-        }
-        if (terminalEmitted) return;
-        observeVisibleEvent(event);
-        advanceSequence(event);
-        if (event.type === "response.completed" && !semanticCommitmentObserved) {
-          const error = new ResponsesStreamError(EMPTY_UPSTREAM_COMPLETION_MESSAGE, {
-            kind: "empty_upstream_completion",
-          });
-          const failure = emptyCompletionEventAfterCommit(sequenceNumber++);
-          const details = failureDetails(error, "error", originalUpstreamEvents.get(event) ?? event);
-          terminalEmitted = true;
-          closed = true;
-          controller.enqueue(encoder.encode(failure.raw));
-          controller.close();
-          await options.iterator.return(error).catch(() => {});
-          invoke(() => options.onEvent?.(failure));
-          invoke(() => options.onFailure?.(error, details));
-          return;
-        }
-        terminalEmitted = event.terminal;
-        controller.enqueue(encoder.encode(event.raw));
-        invoke(() => options.onEvent?.(event));
-        if (event.terminal) {
-          closed = true;
-          controller.close();
-          await options.iterator.return("Responses terminal event forwarded").catch(() => {});
-        }
+        await deliverNextEvent(controller, await nextVisible());
       } catch (error) {
-        if (closed) return;
-        if (options.downstreamSignal?.aborted || options.signal?.aborted || localAbort.signal.aborted) {
-          closed = true;
-          controller.close();
-          await options.iterator.return(error).catch(() => {});
-          invoke(() => options.onFailure?.(error, failureDetails(error, null)));
-          return;
-        }
-        const failure = syntheticFailure();
-        const details = failureDetails(
-          error,
-          failure.type === "response.failed" || failure.type === "error" ? failure.type : null,
-        );
-        terminalEmitted = true;
-        closed = true;
-        controller.enqueue(encoder.encode(failure.raw));
-        controller.close();
-        await options.iterator.return(error).catch(() => {});
-        invoke(() => options.onEvent?.(failure));
-        invoke(() => options.onFailure?.(error, details));
+        await handlePullFailure(controller, error);
       }
     },
     cancel(reason) {

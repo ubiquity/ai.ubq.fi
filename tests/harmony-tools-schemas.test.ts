@@ -15,7 +15,7 @@ import {
 
 Deno.test("tool schemas: the canonical surface is exactly the nine compact tools", () => {
   assert.deepEqual(
-    [...CANONICAL_TOOL_NAMES].sort(),
+    [...CANONICAL_TOOL_NAMES].sort((left, right) => left.localeCompare(right)),
     [
       "browser.find",
       "browser.open",
@@ -26,7 +26,7 @@ Deno.test("tool schemas: the canonical surface is exactly the nine compact tools
       "filesystem.search",
       "shell.exec",
       "task.update_plan",
-    ],
+    ]
   );
   assert.equal(lookupToolSchema("shell.exec")?.name, "shell.exec");
   assert.equal(lookupToolSchema("shell.execx"), null);
@@ -37,7 +37,7 @@ Deno.test("tool schemas: every schema is well-formed, bounded and strict-compati
   // Optional parameters (apply_patch old/new/add, filesystem.find pattern) are
   // intentional, so the strict-mode proof must fail exactly on those two.
   assert.equal(proof.ok, false);
-  if (proof.ok) throw new Error("unexpected");
+
   assert.ok(["editor.apply_patch", "filesystem.find"].includes(proof.name));
 
   const nonStrict = assertCanonicalToolSchemas(false);
@@ -107,7 +107,9 @@ Deno.test("tool schemas: every canonical tool validates its documented argument 
   for (const [tool, args] of Object.entries(validExamples)) {
     const result = validateToolArguments(tool, args);
     assert.equal(result.valid, true, `${tool} should accept ${JSON.stringify(args)}`);
-    if (result.valid) assert.deepEqual(result.arguments, args);
+    {
+      assert.deepEqual(result.arguments, args);
+    }
   }
   // Optional parameters stay optional.
   assert.equal(validateToolArguments("editor.apply_patch", { path: "a.txt", add: true, new: "x" }).valid, true);
@@ -118,7 +120,7 @@ Deno.test("tool schemas: every canonical tool validates its documented argument 
 });
 
 Deno.test("tool schemas: validation rejects unknown tools, unknown args, missing and mistyped args", () => {
-  const cases: ReadonlyArray<{ tool: string; args: unknown; reason: string }> = [
+  const cases: readonly { tool: string; args: unknown; reason: string }[] = [
     { tool: "ghost.action", args: {}, reason: "unknown tool" },
     { tool: "filesystem.read", args: 42, reason: "arguments must be an object" },
     { tool: "filesystem.read", args: { path: "a.txt", magic: 1 }, reason: "unexpected argument" },
@@ -134,6 +136,8 @@ Deno.test("tool schemas: validation rejects unknown tools, unknown args, missing
   for (const { tool, args, reason } of cases) {
     const result = validateToolArguments(tool, args);
     assert.equal(result.valid, false, `${tool} should reject ${JSON.stringify(args)}`);
-    if (!result.valid) assert.ok(result.reason.includes(reason), `expected ${reason} in ${result.reason}`);
+    {
+      assert.ok(result.reason.includes(reason), `expected ${reason} in ${result.reason}`);
+    }
   }
 });

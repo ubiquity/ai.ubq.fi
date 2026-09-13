@@ -1,12 +1,7 @@
 import assert from "node:assert/strict";
 
 import { normalizeToolStrictness } from "../src/harmony/adapter.ts";
-import {
-  harmonyTypeFromJsonSchema,
-  quoteString,
-  renderDeveloperMessage,
-  renderSystemMessage,
-} from "../src/harmony/render.ts";
+import { harmonyTypeFromJsonSchema, quoteString, renderDeveloperMessage, renderSystemMessage } from "../src/harmony/render.ts";
 import { ANSWER_SCHEMA, NOTE_TOOL, WEATHER_TOOL } from "../src/harmony/probes.ts";
 
 Deno.test("system message renders identity, dates, reasoning effort, channels and the tool note", () => {
@@ -18,10 +13,7 @@ Deno.test("system message renders identity, dates, reasoning effort, channels an
   assert.match(rendered, /Knowledge cutoff: 2024-06/);
   assert.match(rendered, /Current date: 2025-06-28/);
   assert.match(rendered, /Reasoning: high/);
-  assert.match(
-    rendered,
-    /# Valid channels: analysis, commentary, final\. Channel must be included for every message\./,
-  );
+  assert.match(rendered, /# Valid channels: analysis, commentary, final\. Channel must be included for every message\./);
   assert.match(rendered, /Calls to these tools must go to the commentary channel: 'functions'\./);
 });
 
@@ -86,10 +78,7 @@ Deno.test("harmonyTypeFromJsonSchema covers enums, arrays, anyOf and nested obje
   assert.equal(harmonyTypeFromJsonSchema({ type: "integer" }), "integer");
   assert.equal(harmonyTypeFromJsonSchema({ type: "string", enum: ["a", "b"] }), '"a" | "b"');
   assert.equal(harmonyTypeFromJsonSchema({ type: "array", items: { type: "string" } }), "string[]");
-  assert.equal(
-    harmonyTypeFromJsonSchema({ anyOf: [{ type: "string" }, { type: "integer" }] }),
-    "string | integer",
-  );
+  assert.equal(harmonyTypeFromJsonSchema({ anyOf: [{ type: "string" }, { type: "integer" }] }), "string | integer");
   const nested = harmonyTypeFromJsonSchema({
     type: "object",
     properties: { inner: { type: "object", properties: { value: { type: "boolean" } }, required: ["value"] } },
