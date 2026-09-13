@@ -68,7 +68,7 @@ Deno.test("Codex model normalization retains only versioned prompt-cache metadat
   assert.ok(snapshot);
   assert.deepEqual(snapshot.models[0]?.prompt_cache, promptCacheEvidence);
   assert.equal(snapshot.models[1]?.prompt_cache, false);
-  assert.equal(Object.prototype.hasOwnProperty.call(snapshot.models[2]!, "prompt_cache"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(snapshot.models[2], "prompt_cache"), false);
 });
 
 Deno.test("prompt-cache metadata rejects unknown shape and duplicate provider identities", () => {

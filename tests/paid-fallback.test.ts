@@ -124,15 +124,15 @@ class MemoryKv {
       .filter((entry) => {
         const prefix = "prefix" in selector ? selector.prefix : [];
         if (!startsWithKey(entry.key, prefix)) return false;
-        if ("start" in selector && selector.start && compareKeys(entry.key, selector.start) < 0) return false;
-        if ("end" in selector && selector.end && compareKeys(entry.key, selector.end) >= 0) return false;
+        if ("start" in selector && Array.isArray(selector.start) && compareKeys(entry.key, selector.start) < 0) return false;
+        if ("end" in selector && Array.isArray(selector.end) && compareKeys(entry.key, selector.end) >= 0) return false;
         return true;
       })
       .sort((left, right) => compareKeys(left.key, right.key));
     if (options.reverse) entries = entries.reverse();
     if (typeof options.limit === "number") entries = entries.slice(0, options.limit);
 
-    const iterator = (async function* (): AsyncGenerator<Deno.KvEntry<T>> {
+    const iterator = (function* (): Generator<Deno.KvEntry<T>> {
       for (const entry of entries) {
         yield {
           key: clone(entry.key),
@@ -275,8 +275,8 @@ const seedStrictKey = async (overrides: Record<string, unknown> = {}): Promise<R
 };
 
 const withMeteredApiKey = async (fn: () => Promise<void>): Promise<void> => {
-  const originalGet = Deno.env.get;
-  Deno.env.get = (key: string): string | undefined => (key === "METERED_API_KEY" ? "metered-test-key" : originalGet.call(Deno.env, key));
+  const originalGet = Deno.env.get.bind(Deno.env);
+  Deno.env.get = (key: string): string | undefined => (key === "METERED_API_KEY" ? "metered-test-key" : originalGet(key));
   try {
     await fn();
   } finally {
@@ -924,9 +924,12 @@ Deno.test("V3 bounded policy edits preserve exposure, admit concurrently, and re
       )
     )
   );
-  assert.deepEqual(concurrent.map((decision) => decision.kind).sort(), ["blocked", "reserved"]);
+  assert.deepEqual(
+    concurrent.map((decision) => decision.kind).sort((a, b) => a.localeCompare(b)),
+    ["blocked", "reserved"]
+  );
   const second = concurrent.find((decision) => decision.kind === "reserved");
-  if (!second || second.kind !== "reserved") throw new Error("expected concurrent reservation");
+  if (second?.kind !== "reserved") throw new Error("expected concurrent reservation");
 
   const lowered = await admitPaidFallbackV3(
     v3AdmissionInput(keyId, "policy-lowered", {
@@ -947,13 +950,15 @@ Deno.test("V3 bounded policy edits preserve exposure, admit concurrently, and re
     [second.reservation.request_id, "provider-policy-second"],
   ]);
   await Promise.all(
-    [first.reservation, second.reservation].map((reservation) =>
-      updatePaidFallbackRequestV3(reservation, {
-        provider_request_id: providerIds.get(reservation.request_id)!,
+    [first.reservation, second.reservation].map((reservation) => {
+      const providerRequestId = providerIds.get(reservation.request_id);
+      if (providerRequestId === undefined) throw new Error(`missing provider request id fixture for ${reservation.request_id}`);
+      return updatePaidFallbackRequestV3(reservation, {
+        provider_request_id: providerRequestId,
         dispatch_state: "dispatched",
         terminal_state: "completed",
-      })
-    )
+      });
+    })
   );
   globalThis.fetch = () =>
     Promise.resolve(
@@ -1392,8 +1397,9 @@ Deno.test("V3 unresolved rows remain queue-reconcilable when late provider billi
   const unresolved = await memoryKv.get<Record<string, unknown>>(paidFallbackRequestV3Key(keyId, requestId));
   assert.equal(unresolved.value?.billing_state, "unresolved");
   const pending = await memoryKv.get<Record<string, unknown>>(paidFallbackPendingV3Key(keyId, requestId));
+  if (pending.value === null) throw new Error("expected a pending reconciliation record");
   await memoryKv.set(paidFallbackPendingV3Key(keyId, requestId), {
-    ...pending.value!,
+    ...pending.value,
     next_reconciliation_at_ms: Date.now() - 1,
   });
   globalThis.fetch = () =>

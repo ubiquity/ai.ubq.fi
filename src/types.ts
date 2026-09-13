@@ -87,7 +87,10 @@ export type ApiKeyRecord = Readonly<{
    * route handling and commits it immediately before the first provider
    * transport; V2 counters are migration input only.
    */
-  usage_quota_version: 3;
+  // Read back from KV, where rows written before the V2 -> V3 quota-ledger
+  // migration still carry their old version. Typing this as the literal 3 made
+  // the migration's own `!== 3` upgrade and validation checks look dead.
+  usage_quota_version: number;
   /** Existing keys retain automatic reset eligibility until explicitly changed. */
   banked_resets_enabled?: boolean;
   paid_fallback_enabled: boolean;
@@ -109,7 +112,10 @@ export type ApiKeyHashRecord = Readonly<{
   usage_requests: number;
   usage_reset_at_ms: number;
   window_ms: number;
-  usage_quota_version: 3;
+  // Read back from KV, where rows written before the V2 -> V3 quota-ledger
+  // migration still carry their old version. Typing this as the literal 3 made
+  // the migration's own `!== 3` upgrade and validation checks look dead.
+  usage_quota_version: number;
   paid_fallback_enabled: boolean;
   paid_fallback_limit_microcredits: number;
   paid_fallback_spent_microcredits: number;
@@ -150,41 +156,6 @@ export type PaidFallbackProviderUsageV3 = Readonly<{
   output_tokens: number;
   total_tokens: number;
   spend_microcredits: number;
-}>;
-
-export type ApiKeyUsageRecord = Readonly<{
-  key_id: string;
-  total_requests: number;
-  stream_requests: number;
-  non_stream_requests: number;
-  completed_requests: number;
-  error_requests: number;
-  input_tokens: number;
-  output_tokens: number;
-  total_tokens: number;
-  first_seen_at_ms: number;
-  last_seen_at_ms: number;
-  last_model: string | null;
-  last_reasoning: string | null;
-  last_route: string | null;
-  metered_fallback_requests: number;
-  metered_input_tokens: number;
-  metered_output_tokens: number;
-  metered_total_tokens: number;
-  metered_spend_microcredits: number;
-}>;
-
-export type ApiKeyUsageDay = Readonly<{
-  day: string;
-  request_count: number;
-  metered_fallback_requests: number;
-  metered_spend_microcredits: number;
-}>;
-
-export type ApiKeyUsageDailyRecord = Readonly<{
-  key_id: string;
-  days: ApiKeyUsageDay[];
-  updated_at_ms: number;
 }>;
 
 export type ApiKeyRequestLogRecord = Readonly<{

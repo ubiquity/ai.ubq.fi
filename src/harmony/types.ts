@@ -17,9 +17,6 @@ export const HARMONY_CEREBRAS_MODEL = CEREBRAS_GPT_OSS_120B_MODEL;
 /** Reasoning efforts the plan is allowed to experiment with. */
 export type HarmonyReasoningEffort = "low" | "medium" | "high";
 
-/** Default effort used when a request does not specify one. */
-export const HARMONY_DEFAULT_REASONING_EFFORT: HarmonyReasoningEffort = "medium";
-
 /** Harmony assistant channels. */
 export type HarmonyChannel = "analysis" | "commentary" | "final";
 

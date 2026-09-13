@@ -25,7 +25,9 @@ const sampleCapacity = async () => {
     console.error("[ai.ubq.fi] Mac provider capacity sampler failed:", error);
   }
 };
-Deno.cron("sample Mac provider capacity", "*/15 * * * *", sampleCapacity);
+// The registration promise only surfaces registration errors; awaiting it would
+// delay startup and the job runs in the background for the process lifetime.
+void Deno.cron("sample Mac provider capacity", "*/15 * * * *", sampleCapacity);
 await sampleCapacity();
 const { configureAdminAuthForListener, configureAdminAuthPeerForRequest } = await import(new URL("src/local_admin_auth.ts", release).href);
 const server = Deno.serve(

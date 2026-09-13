@@ -42,7 +42,8 @@ Deno.test("loopback detection accepts local TCP hostnames only", () => {
   for (const hostname of ["localhost", "LOCALHOST", "127.0.0.1", "127.42.9.3", "::1", "[::1]"]) {
     assert.equal(isLoopbackHostname(hostname), true, hostname);
   }
-  for (const hostname of ["0.0.0.0", "::", "192.168.1.10", "10.0.0.1", "ai.ubq.fi", "127.0.0.1.example"]) {
+  // RFC 5737 documentation addresses stand in for non-loopback peers.
+  for (const hostname of ["0.0.0.0", "::", "192.0.2.10", "198.51.100.1", "ai.ubq.fi", "127.0.0.1.example"]) {
     assert.equal(isLoopbackHostname(hostname), false, hostname);
   }
 });
@@ -57,7 +58,8 @@ Deno.test("admin auth can only be disabled on a loopback TCP listener", () => {
     () =>
       shouldDisableAdminAuthForListener(enabledOptions, {
         transport: "unix",
-        path: "/tmp/ai-ubq-fi.sock",
+        // A socket path fixture, not a temporary file: nothing is created at it.
+        path: "/run/ai-ubq-fi.sock",
       }),
     /requires a loopback TCP listener/
   );
@@ -75,13 +77,13 @@ Deno.test("guarded runtime bypass grants local super-admin access only to loopba
 
   // A forwarded or port-forwarded request has a non-loopback peer and must
   // never receive the bypass, regardless of its (client-controlled) URL host.
-  configureAdminAuthPeerForRequest(tcpAddress("192.168.1.10"));
+  configureAdminAuthPeerForRequest(tcpAddress("192.0.2.10"));
   assert.equal(isAdminAuthDisabledForRequest(localRequest), false);
   const localAuthForwarded = await authenticateAdmin(localRequest);
   assert.equal(localAuthForwarded.ok, false);
 
   // A unix-socket peer never qualifies.
-  configureAdminAuthPeerForRequest({ transport: "unix", path: "/tmp/ai-ubq-fi.sock" });
+  configureAdminAuthPeerForRequest({ transport: "unix", path: "/run/ai-ubq-fi.sock" });
   assert.equal(isAdminAuthDisabledForRequest(localRequest), false);
 
   configureAdminAuthPeerForRequest(tcpAddress("127.0.0.1"));

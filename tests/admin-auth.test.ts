@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import { keyToJSON } from "@deno/kv-utils/json";
 
 const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
+const urlOf = (input: RequestInfo | URL): string => {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+};
 const stringEntryLine = (key: Deno.KvKey, value: string): string =>
   JSON.stringify({
     key: keyToJSON(key),
@@ -56,7 +61,7 @@ const kvStub = {
     kvStore.delete(keyToString(key));
     return Promise.resolve();
   },
-  list: async function* (selector: Deno.KvListSelector, options: Deno.KvListOptions = {}) {
+  list: function* (selector: Deno.KvListSelector, options: Deno.KvListOptions = {}) {
     const prefix = "prefix" in selector ? selector.prefix : [];
     let entries = [...kvStore.entries()]
       .map(([encodedKey, value]) => ({
@@ -676,7 +681,7 @@ Deno.test("admin codex auth stores live upstream model catalog as source of trut
   const fetchUrls: string[] = [];
 
   globalThis.fetch = (input: RequestInfo | URL) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = urlOf(input);
     fetchUrls.push(url);
     return Promise.resolve(
       new Response(
@@ -802,7 +807,7 @@ Deno.test("admin codex auth stores live model catalog without caller model snaps
     assert.equal(response.status, 200);
     const stored = kvStore.get(keyToString(["ubq_ai", "codex_models"])) as { models?: { slug?: string }[] };
     assert.deepEqual(
-      stored?.models?.map((model) => model.slug),
+      stored.models?.map((model) => model.slug),
       ["gpt-5.3-codex-spark"]
     );
   } finally {
@@ -923,7 +928,7 @@ Deno.test("admin codex auth rotation replaces a prior account snapshot even at a
   kvStore.clear();
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (input: RequestInfo | URL) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = urlOf(input);
     const version = new URL(url).searchParams.get("client_version") ?? "missing";
     return Promise.resolve(
       new Response(JSON.stringify({ models: [{ slug: `gpt-${version}`, rich_field: { preserved: true } }] }), {
@@ -1213,7 +1218,7 @@ Deno.test("paid fallback pricing initializes only when a key becomes enabled", a
   const metadataUrls: string[] = [];
   Deno.env.set("METERED_API_KEY", "metered-test-key");
   globalThis.fetch = (input: RequestInfo | URL) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = urlOf(input);
     metadataUrls.push(url);
     return Promise.resolve(meteredMetadataResponse(url));
   };
@@ -1251,7 +1256,10 @@ Deno.test("paid fallback pricing initializes only when a key becomes enabled", a
       })
     );
     assert.equal(enableResponse.status, 200);
-    assert.deepEqual(metadataUrls.sort(), ["https://api.openlux.ai/api/ratio_config", "https://api.openlux.ai/api/status"]);
+    assert.deepEqual(
+      metadataUrls.toSorted((left, right) => left.localeCompare(right)),
+      ["https://api.openlux.ai/api/ratio_config", "https://api.openlux.ai/api/status"]
+    );
     const enabled = (await enableResponse.json()) as {
       paid_fallback_enabled: boolean;
       paid_fallback_model_ids: string[];
@@ -1301,7 +1309,10 @@ Deno.test("paid fallback pricing initializes only when a key becomes enabled", a
       })
     );
     assert.equal(reenableResponse.status, 200);
-    assert.deepEqual(metadataUrls.sort(), ["https://api.openlux.ai/api/ratio_config", "https://api.openlux.ai/api/status"]);
+    assert.deepEqual(
+      metadataUrls.toSorted((left, right) => left.localeCompare(right)),
+      ["https://api.openlux.ai/api/ratio_config", "https://api.openlux.ai/api/status"]
+    );
   } finally {
     globalThis.fetch = originalFetch;
     if (originalApiKey === undefined) Deno.env.delete("METERED_API_KEY");
@@ -1362,7 +1373,7 @@ Deno.test("enabled key creation initializes once and failed enable leaves the ke
   Deno.env.set("METERED_API_KEY", "metered-test-key");
   let metadataCalls = 0;
   globalThis.fetch = (input: RequestInfo | URL) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = urlOf(input);
     metadataCalls += 1;
     return Promise.resolve(meteredMetadataResponse(url));
   };
@@ -1417,7 +1428,7 @@ Deno.test("enabled key creation initializes once and failed enable leaves the ke
     const disabledPayload = (await disabledCreate.json()) as { id: string };
 
     globalThis.fetch = (input: RequestInfo | URL) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const url = urlOf(input);
       if (url.endsWith("/api/status")) {
         return Promise.resolve(new Response("upstream unavailable", { status: 503 }));
       }
@@ -1585,7 +1596,7 @@ Deno.test("authenticated UOS embeddings do not write ordinary request history", 
 
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = urlOf(input);
     assert.equal(url, "https://api.voyageai.com/v1/embeddings");
     const body = JSON.parse(typeof init?.body === "string" ? init.body : "null") as Record<string, unknown>;
     assert.equal(body.model, "voyage-4-large");

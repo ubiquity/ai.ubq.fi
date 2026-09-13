@@ -43,6 +43,17 @@ const imageResponse = (result: string, options: Readonly<{ createdAt?: number; h
     { status: 200, headers: options.headers }
   );
 
+/** Reject with an Error once `signal` aborts, keeping the abort reason as the cause. */
+const rejectWhenAborted = (signal: AbortSignal): Promise<never> =>
+  new Promise<never>((_, reject) => {
+    const rejectOnAbort = () => {
+      const reason: unknown = signal.reason;
+      reject(reason instanceof Error ? reason : new Error("image fan-out child aborted", { cause: reason }));
+    };
+    signal.addEventListener("abort", rejectOnAbort, { once: true });
+    if (signal.aborted) rejectOnAbort();
+  });
+
 Deno.test("an images request forces one image-generation tool call", () => {
   const built = buildImageResponsesRequest(
     {
@@ -159,7 +170,7 @@ Deno.test("a successful generation returns the OpenAI Images shape", async () =>
     assert.equal(seen[0]?.model, "gpt-5.6-sol", "dispatch must target the base text model");
     assert.equal(seen[0]?.user, "customer-1");
     assert.equal(seen[0]?.response_format, undefined);
-    assert.equal((seen[0]?.tools as Record<string, unknown>[])?.[0]?.output_compression, 50);
+    assert.equal((seen[0]?.tools as Record<string, unknown>[] | undefined)?.[0]?.output_compression, 50);
   });
 });
 
@@ -206,8 +217,8 @@ Deno.test("multipart edits become JSON Responses input with a binary mask", asyn
     assert.equal(response.status, 200);
     assert.equal(nestedBodies.length, 1);
     const nested = nestedBodies[0];
-    assert.equal(nested?.user, "customer-2");
-    assert.deepEqual(nested?.input, [
+    assert.equal(nested.user, "customer-2");
+    assert.deepEqual(nested.input, [
       {
         role: "user",
         content: [
@@ -218,7 +229,7 @@ Deno.test("multipart edits become JSON Responses input with a binary mask", asyn
         ],
       },
     ]);
-    assert.deepEqual(nested?.tools, [
+    assert.deepEqual(nested.tools, [
       {
         type: "image_generation",
         action: "edit",
@@ -319,7 +330,7 @@ Deno.test("multipart edits validate file limits before reading file bytes", asyn
   await withBaseModel("gpt-5.6-sol", async () => {
     const originalSize = Object.getOwnPropertyDescriptor(Blob.prototype, "size");
     const originalArrayBuffer = Object.getOwnPropertyDescriptor(Blob.prototype, "arrayBuffer");
-    assert.ok(originalSize?.get);
+    assert.ok(originalSize && "get" in originalSize);
     assert.ok(originalArrayBuffer?.value);
     let arrayBufferReads = 0;
     const withFileGuards = async (request: Request, reportedSize?: number): Promise<Response> => {
@@ -506,11 +517,11 @@ Deno.test("JSON edits normalize case-insensitive inline image data URLs", async 
       }
     );
     assert.equal(response.status, 200);
-    assert.deepEqual((nestedBodies[0]?.input as Record<string, unknown>[])?.[0]?.content, [
+    assert.deepEqual((nestedBodies[0]?.input as Record<string, unknown>[] | undefined)?.[0]?.content, [
       { type: "input_text", text: "add a window" },
       { type: "input_image", image_url: "data:image/png;base64,AQID" },
     ]);
-    const tool = (nestedBodies[0]?.tools as Record<string, unknown>[])?.[0];
+    const tool: Record<string, unknown> | undefined = (nestedBodies[0]?.tools as Record<string, unknown>[] | undefined)?.[0];
     assert.equal(tool?.size, "2048x2048");
     assert.deepEqual(tool?.input_image_mask, {
       image_url: "data:image/png;base64,BA==",
@@ -673,19 +684,20 @@ Deno.test("n fans out forced Responses calls and aggregates one image per call",
       },
     });
     let startedConcurrently = true;
-    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let resolveTimeout: () => void = () => undefined;
+    const timeoutExpired = new Promise<void>((resolve) => {
+      resolveTimeout = resolve;
+    });
+    // The handle is a `const`, so its type is inferred instead of annotated: the lint project does not
+    // resolve the `setTimeout` global, where `ReturnType<typeof setTimeout>` degrades to `any`.
+    const timeout = setTimeout(() => {
+      startedConcurrently = false;
+      resolveTimeout();
+    }, 100);
     try {
-      await Promise.race([
-        secondStarted,
-        new Promise<void>((resolve) => {
-          timeout = setTimeout(() => {
-            startedConcurrently = false;
-            resolve();
-          }, 100);
-        }),
-      ]);
+      await Promise.race([secondStarted, timeoutExpired]);
     } finally {
-      if (timeout !== undefined) clearTimeout(timeout);
+      clearTimeout(timeout);
       releaseFirst();
     }
     const response = await responsePromise;
@@ -721,30 +733,22 @@ Deno.test("image fan-out aborts siblings and waits for every child after a hard 
     const request = new Request(imagesRequest({ prompt: "two circles", n: 2 }), {
       signal: cleanup.signal,
     });
+    const dispatch = async (child: Request): Promise<Response> => {
+      calls += 1;
+      if (calls === 1) {
+        await siblingReady;
+        throw failure;
+      }
+      siblingStarted();
+      return await rejectWhenAborted(child.signal).finally(() => {
+        siblingObservedAbort = child.signal.aborted;
+        siblingSettled = true;
+      });
+    };
 
     try {
       await assert.rejects(
-        () =>
-          handleImages(request, "generations", undefined, {
-            dispatch: async (child) => {
-              calls += 1;
-              if (calls === 1) {
-                await siblingReady;
-                throw failure;
-              }
-              siblingStarted();
-              return await new Promise<Response>((_, reject) => {
-                const rejectOnAbort = () => {
-                  reject(child.signal.reason);
-                };
-                child.signal.addEventListener("abort", rejectOnAbort, { once: true });
-                if (child.signal.aborted) rejectOnAbort();
-              }).finally(() => {
-                siblingObservedAbort = child.signal.aborted;
-                siblingSettled = true;
-              });
-            },
-          }),
+        () => handleImages(request, "generations", undefined, { dispatch }),
         (error) => error === failure
       );
       assert.equal(siblingObservedAbort, true);
@@ -813,7 +817,7 @@ Deno.test("image fan-out preserves the first non-OK response after aborting and 
     assert.deepEqual(await response.json(), leaderBody);
     assert.equal(siblingObservedAbort, true);
     assert.equal(siblingSettled, true);
-    assert.equal((siblingAbortReason as DOMException)?.name, "AbortError");
+    assert.equal((siblingAbortReason as DOMException | undefined)?.name, "AbortError");
   });
 });
 

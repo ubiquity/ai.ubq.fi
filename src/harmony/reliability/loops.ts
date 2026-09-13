@@ -38,7 +38,7 @@ export const canonicalize = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(canonicalize);
   if (typeof value === "object" && value !== null) {
     const out: Record<string, unknown> = {};
-    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+    for (const key of Object.keys(value as Record<string, unknown>).sort((a, b) => a.localeCompare(b))) {
       out[key] = canonicalize((value as Record<string, unknown>)[key]);
     }
     return out;
@@ -127,7 +127,10 @@ export class LoopDetector {
     const effect = effectSignature(tool, args, result);
     this.#identities.push([identity, effect]);
     while (this.#identities.length > this.#window) {
-      const evicted = this.#identities.shift()!;
+      const evicted = this.#identities.shift();
+      if (evicted === undefined) {
+        throw new Error("loop detector: cannot evict a call identity from an empty history (window must not be negative)");
+      }
       this.#effects[evicted[1]] = Math.max(0, (this.#effects[evicted[1]] ?? 1) - 1);
     }
     this.#effects[effect] = (this.#effects[effect] ?? 0) + 1;
@@ -145,10 +148,21 @@ export class LoopDetector {
 
     const semanticLoop = patternLoop || effectLoop;
     this.#streak = semanticLoop ? this.#streak + 1 : 0;
+    // Adjacency of this call to the immediately previous one; reported
+    // independently of the loop verdict (retry.ts decides on allowances).
+    let duplicate: DuplicateFlag | null = null;
+    if (this.#last !== null && this.#last.identity === identity) {
+      duplicate = this.#last.ok ? "repeat_after_success" : "exact_adjacent";
+    }
+    // Pattern recurrence outranks effect repetition when both fire.
+    let loopKind: LoopFlags["loopKind"] = null;
+    if (patternLoop) loopKind = "pattern_recurrence";
+    else if (effectLoop) loopKind = "effect_repeat";
+
     const flags: LoopFlags = {
-      duplicate: this.#last !== null && this.#last.identity === identity ? (this.#last.ok ? "repeat_after_success" : "exact_adjacent") : null,
+      duplicate,
       semanticLoop,
-      loopKind: patternLoop ? "pattern_recurrence" : effectLoop ? "effect_repeat" : null,
+      loopKind,
       streak: this.#streak,
     };
     this.#last = { identity, ok: result.ok };

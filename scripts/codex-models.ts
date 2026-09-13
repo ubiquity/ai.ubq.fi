@@ -9,23 +9,21 @@ const looksLikeCodexWrapper = (text: string): boolean => {
   return text.includes("vendorRoot") && text.includes("targetTriple") && text.includes("codexBinaryName");
 };
 
+/** Platform-to-target-triple table; every combination not listed resolves to `null`. */
+const TARGET_TRIPLES_BY_PLATFORM = new Map<string, string>([
+  ["darwin:x86_64", "x86_64-apple-darwin"],
+  ["darwin:aarch64", "aarch64-apple-darwin"],
+  ["linux:x86_64", "x86_64-unknown-linux-musl"],
+  ["linux:aarch64", "aarch64-unknown-linux-musl"],
+  ["android:x86_64", "x86_64-unknown-linux-musl"],
+  ["android:aarch64", "aarch64-unknown-linux-musl"],
+  ["windows:x86_64", "x86_64-pc-windows-msvc"],
+  ["windows:aarch64", "aarch64-pc-windows-msvc"],
+]);
+
 const detectTargetTriple = (os: string, arch: string): string | null => {
   const normalizedArch = arch === "arm64" ? "aarch64" : arch;
-  if (os === "darwin") {
-    if (normalizedArch === "x86_64") return "x86_64-apple-darwin";
-    if (normalizedArch === "aarch64") return "aarch64-apple-darwin";
-    return null;
-  }
-  if (os === "linux" || os === "android") {
-    if (normalizedArch === "x86_64") return "x86_64-unknown-linux-musl";
-    if (normalizedArch === "aarch64") return "aarch64-unknown-linux-musl";
-    return null;
-  }
-  if (os === "windows") {
-    if (normalizedArch === "x86_64") return "x86_64-pc-windows-msvc";
-    if (normalizedArch === "aarch64") return "aarch64-pc-windows-msvc";
-  }
-  return null;
+  return TARGET_TRIPLES_BY_PLATFORM.get(`${os}:${normalizedArch}`) ?? null;
 };
 
 const platformPackageName = (targetTriple: string): string | null => {
@@ -73,7 +71,9 @@ const normalizePath = (path: string, sep: string): string => {
     stack.push(part);
   }
   const joined = stack.join(sep);
-  const prefix = drivePrefix ? `${drivePrefix}${sep}` : isAbsolute ? sep : "";
+  let prefix = "";
+  if (drivePrefix) prefix = `${drivePrefix}${sep}`;
+  else if (isAbsolute) prefix = sep;
   return `${prefix}${joined}`;
 };
 
@@ -85,8 +85,38 @@ const dirname = (path: string, sep: string): string => {
 };
 
 const joinPath = (sep: string, ...parts: string[]): string => {
-  const filtered = parts.filter((part) => part && part.trim());
+  // Blank and whitespace-only segments are dropped; trimming is only the test.
+  const filtered = parts.filter((part) => part.trim());
   return normalizePath(filtered.join(sep), sep);
+};
+
+/** The binary inside the `@openai/<platform package>` layout, or `null` when the platform has no package. */
+const resolvePlatformPackageBinary = async (
+  wrapperDir: string,
+  sep: string,
+  targetTriple: string,
+  binaryName: string,
+  fileExists?: (path: string) => Promise<boolean>
+): Promise<string | null> => {
+  const packageName = platformPackageName(targetTriple);
+  if (!packageName) return null;
+  const packageRoot = joinPath(sep, wrapperDir, "..");
+  const nodeModulesRoot = joinPath(sep, wrapperDir, "..", "..", "..");
+  const nestedPath = joinPath(sep, packageRoot, "node_modules", "@openai", packageName, "vendor", targetTriple, "codex", binaryName);
+  const siblingPath = joinPath(sep, nodeModulesRoot, "@openai", packageName, "vendor", targetTriple, "codex", binaryName);
+  if (fileExists) {
+    if (await fileExists(nestedPath)) return nestedPath;
+    if (await fileExists(siblingPath)) return siblingPath;
+  }
+  return siblingPath;
+};
+
+const readTextFileOrNull = async (readTextFile: (path: string) => Promise<string>, path: string): Promise<string | null> => {
+  try {
+    return await readTextFile(path);
+  } catch {
+    return null;
+  }
 };
 
 export const resolveCodexBinaryPath = async (
@@ -106,12 +136,7 @@ export const resolveCodexBinaryPath = async (
     }
   }
 
-  let wrapperText: string | null = null;
-  try {
-    wrapperText = await readTextFile(resolvedPath);
-  } catch {
-    return codexPath;
-  }
+  const wrapperText = await readTextFileOrNull(readTextFile, resolvedPath);
   if (!wrapperText || !looksLikeCodexWrapper(wrapperText)) return codexPath;
 
   const targetTriple = detectTargetTriple(os, arch);
@@ -121,46 +146,37 @@ export const resolveCodexBinaryPath = async (
   const wrapperDir = dirname(resolvedPath, sep);
   const binaryName = os === "windows" ? "codex.exe" : "codex";
   if (wrapperText.includes("PLATFORM_PACKAGE_BY_TARGET")) {
-    const packageName = platformPackageName(targetTriple);
-    if (packageName) {
-      const packageRoot = joinPath(sep, wrapperDir, "..");
-      const nodeModulesRoot = joinPath(sep, wrapperDir, "..", "..", "..");
-      const nestedPath = joinPath(sep, packageRoot, "node_modules", "@openai", packageName, "vendor", targetTriple, "codex", binaryName);
-      const siblingPath = joinPath(sep, nodeModulesRoot, "@openai", packageName, "vendor", targetTriple, "codex", binaryName);
-      if (fileExists) {
-        if (await fileExists(nestedPath)) return nestedPath;
-        if (await fileExists(siblingPath)) return siblingPath;
-      }
-      return siblingPath;
-    }
+    const packageBinary = await resolvePlatformPackageBinary(wrapperDir, sep, targetTriple, binaryName, fileExists);
+    if (packageBinary) return packageBinary;
   }
 
   const vendorRoot = joinPath(sep, wrapperDir, "..", "vendor");
   return joinPath(sep, vendorRoot, targetTriple, "codex", binaryName);
 };
 
+/** String-literal scan state, so braces inside quoted text are never counted. */
+type CodexScanState = Readonly<{ inString: boolean; escape: boolean }>;
+
+const advanceCodexScanState = (state: CodexScanState, ch: string): CodexScanState => {
+  if (state.escape) return { inString: state.inString, escape: false };
+  if (state.inString) {
+    if (ch === "\\") return { inString: true, escape: true };
+    if (ch === '"') return { inString: false, escape: false };
+    return state;
+  }
+  if (ch === '"') return { inString: true, escape: false };
+  return state;
+};
+
 const findMatchingBrace = (text: string, start: number): number | null => {
   let depth = 0;
-  let inString = false;
-  let escape = false;
+  let state: CodexScanState = { inString: false, escape: false };
   for (let i = start; i < text.length; i++) {
     const ch = text[i];
-    if (inString) {
-      if (escape) {
-        escape = false;
-        continue;
-      }
-      if (ch === "\\") {
-        escape = true;
-        continue;
-      }
-      if (ch === '"') inString = false;
-      continue;
-    }
-    if (ch === '"') {
-      inString = true;
-      continue;
-    }
+    const wasInString = state.inString;
+    state = advanceCodexScanState(state, ch);
+    // Quotes and quoted text are skipped: only structural braces affect depth.
+    if (wasInString || ch === '"') continue;
     if (ch === "{") {
       depth++;
       continue;
@@ -198,8 +214,51 @@ const getNonNegativeInteger = (value: unknown): number | null => {
 const isHiddenCodexModel = (value: Record<string, unknown>): boolean =>
   getString(value.visibility)?.trim().toLowerCase() === "hide" && value.supported_in_api !== true;
 
+const getReasoningLevelString = (entry: unknown): string | null => {
+  if (entry === null) return "none";
+  if (typeof entry === "string") return entry;
+  if (isRecord(entry)) return entry.effort === null ? "none" : getString(entry.effort);
+  return null;
+};
+
+/** Parses the JSON object whose opening brace precedes `index`, or `null` when it does not parse. */
+const parseCodexModelObjectAt = (text: string, index: number): Record<string, unknown> | null => {
+  const objectText = extractJsonObjectAt(text, index);
+  if (!objectText) return null;
+  try {
+    const parsed: unknown = JSON.parse(objectText);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
+const normalizeExtractedCodexModel = (parsed: Record<string, unknown>, slug: string): Record<string, unknown> => {
+  const normalized: Record<string, unknown> = { slug };
+  const displayName = getString(parsed.display_name) ?? getString(parsed.displayName) ?? getString(parsed.name);
+  if (displayName) normalized.display_name = displayName;
+  const description = getString(parsed.description);
+  if (description) normalized.description = description;
+  for (const key of ["context_window", "max_context_window", "auto_compact_token_limit"]) {
+    if (parsed[key] === null) {
+      normalized[key] = null;
+      continue;
+    }
+    const count = getNonNegativeInteger(parsed[key]);
+    if (count !== null) normalized[key] = count;
+  }
+  const defaultReasoning = parsed.default_reasoning_level === null ? "none" : getString(parsed.default_reasoning_level);
+  if (defaultReasoning) normalized.default_reasoning_level = defaultReasoning;
+  const rawLevels = parsed.supported_reasoning_levels;
+  if (Array.isArray(rawLevels)) {
+    const levels = rawLevels.map(getReasoningLevelString).filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
+    if (levels.length) normalized.supported_reasoning_levels = levels;
+  }
+  return normalized;
+};
+
 export const extractCodexModelsFromText = (text: string): ExtractedCodexModels | null => {
-  const versionMatch = /codex_cli_rs\/([0-9]+(?:\.[0-9]+){1,2})/.exec(text);
+  const versionMatch = /codex_cli_rs\/(\d+(?:\.\d+){1,2})/.exec(text);
   const clientVersion = versionMatch ? versionMatch[1] : null;
 
   const slugRegex = /"slug"\s*:\s*"([^"]+)"/g;
@@ -208,47 +267,12 @@ export const extractCodexModelsFromText = (text: string): ExtractedCodexModels |
   let match: RegExpExecArray | null;
   while ((match = slugRegex.exec(text))) {
     const slug = match[1];
-    if (!slug) continue;
-    if (seen.has(slug)) continue;
-    const objectText = extractJsonObjectAt(text, match.index);
-    if (!objectText) continue;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(objectText);
-    } catch {
-      continue;
-    }
-    if (!isRecord(parsed)) continue;
-    if (isHiddenCodexModel(parsed)) continue;
+    if (!slug || seen.has(slug)) continue;
+    const parsed = parseCodexModelObjectAt(text, match.index);
+    if (!parsed || isHiddenCodexModel(parsed)) continue;
     const normalizedSlug = getString(parsed.slug) ?? getString(parsed.id) ?? getString(parsed.model) ?? slug;
     if (!normalizedSlug || seen.has(normalizedSlug)) continue;
-    const normalized: Record<string, unknown> = { slug: normalizedSlug };
-    const displayName = getString(parsed.display_name) ?? getString(parsed.displayName) ?? getString(parsed.name);
-    if (displayName) normalized.display_name = displayName;
-    const description = getString(parsed.description);
-    if (description) normalized.description = description;
-    for (const key of ["context_window", "max_context_window", "auto_compact_token_limit"]) {
-      if (parsed[key] === null) {
-        normalized[key] = null;
-        continue;
-      }
-      const count = getNonNegativeInteger(parsed[key]);
-      if (count !== null) normalized[key] = count;
-    }
-    const defaultReasoning = parsed.default_reasoning_level === null ? "none" : getString(parsed.default_reasoning_level);
-    if (defaultReasoning) normalized.default_reasoning_level = defaultReasoning;
-    if (Array.isArray(parsed.supported_reasoning_levels)) {
-      const levels = parsed.supported_reasoning_levels
-        .map((entry) => {
-          if (entry === null) return "none";
-          if (typeof entry === "string") return entry;
-          if (isRecord(entry)) return entry.effort === null ? "none" : getString(entry.effort);
-          return null;
-        })
-        .filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
-      if (levels.length) normalized.supported_reasoning_levels = levels;
-    }
-    models.push(normalized);
+    models.push(normalizeExtractedCodexModel(parsed, normalizedSlug));
     seen.add(normalizedSlug);
   }
 

@@ -73,11 +73,19 @@ export const passkeySessionKey = (token: string): Deno.KvKey => [...AUTH_PREFIX,
 
 const nowMs = () => Date.now();
 
+// Strip leading and trailing separators without a backtracking-prone regex.
+// Equivalent to `.replace(/^-+|-+$/g, "")` for every input.
+const trimPasskeyHandleSeparators = (value: string): string => {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value[start] === "-") start += 1;
+  while (end > start && value[end - 1] === "-") end -= 1;
+  return value.slice(start, end);
+};
+
 export const normalizePasskeyHandle = (value: unknown): string => {
   const text = getString(value)?.trim().toLowerCase() ?? "";
-  return text
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+  return trimPasskeyHandleSeparators(text.replace(/[^a-z0-9._-]+/g, "-"))
     .replace(/-{2,}/g, "-")
     .slice(0, 96);
 };
@@ -106,6 +114,25 @@ const parseClientChallenge = (encoded: string): string => {
   const parsed = JSON.parse(jsonText) as { challenge?: unknown };
   return getString(parsed.challenge)?.trim() ?? "";
 };
+
+// `null` distinguishes a malformed clientDataJSON payload from a well-formed one
+// that carries no usable challenge, which callers report separately.
+const parseClientChallengeOrNull = (encoded: string): string | null => {
+  try {
+    return parseClientChallenge(encoded);
+  } catch {
+    return null;
+  }
+};
+
+// The request body is untrusted JSON: only a non-null object can carry the
+// WebAuthn response shape that the server verifier validates field by field.
+const isWebauthnResponseObject = (value: unknown): boolean => typeof value === "object" && value !== null;
+
+// Deno types a listed value as present, but a stored record can still be absent.
+// Widening the read keeps the storage-boundary guard meaningful, so a missing
+// record is dropped instead of serialized.
+const readStoredPasskeyUser = (entry: Deno.KvEntry<PasskeyUserRecord>): PasskeyUserRecord | null => entry.value;
 
 const firstHeaderValue = (value: string | null): string | null => {
   const first = value?.split(",")[0]?.trim() ?? "";
@@ -154,7 +181,7 @@ const firstTrustedPasskeyOrigin = (origins: (string | null)[]): string => {
 export const getPasskeyRequestMeta = (req: Request, clientOrigin?: unknown): { origin: string; rpId: string } => {
   const url = new URL(req.url);
   const forwardedProtocol = firstHeaderValue(req.headers.get("x-forwarded-proto"));
-  const protocol = forwardedProtocol || url.protocol.replace(/:$/, "");
+  const protocol = forwardedProtocol ?? url.protocol.replace(/:$/, "");
   const forwardedHost = firstHeaderValue(req.headers.get("x-forwarded-host"));
   const host = firstHeaderValue(req.headers.get("host"));
   const origin = firstTrustedPasskeyOrigin([
@@ -196,10 +223,10 @@ const getUserByHandle = async (kv: Deno.Kv, handle: string): Promise<PasskeyUser
 export const hasPasskeyUsers = async (): Promise<boolean> => {
   const kv = await getKv();
   if (!kv) return false;
-  for await (const _entry of kv.list({ prefix: [...AUTH_PREFIX, "users"] }, { limit: 1 })) {
-    return true;
-  }
-  return false;
+  // One entry is enough to answer the question, and `limit: 1` keeps the scan
+  // bounded; materializing it avoids an unused loop binding.
+  const users = await Array.fromAsync(kv.list({ prefix: [...AUTH_PREFIX, "users"] }, { limit: 1 }));
+  return users.length > 0;
 };
 
 export const updatePasskeyCredentialSignCount = async (
@@ -402,7 +429,10 @@ export const handlePasskeyRegisterStart = async (
   }
   const existingUser = existingSession?.user ?? tokenUser ?? requestedUser;
   const userId = existingUser?.id ?? crypto.randomUUID();
-  const handle = existingSession?.user.handle || requestedHandle || tokenHandle || (await buildPasskeyHandle(userId));
+  // First non-empty candidate wins, so an empty stored or requested handle still
+  // falls through to the next source.
+  const handleCandidates = [existingSession?.user.handle, requestedHandle, tokenHandle];
+  const handle = handleCandidates.find((candidate) => candidate) ?? (await buildPasskeyHandle(userId));
   if (!handle) return openaiError(400, "username is required", "invalid_request_error");
   const isAdmin = existingUser ? isPasskeyUserAdmin(existingUser) : options.defaultIsAdmin === true;
   const { origin, rpId } = getPasskeyRequestMeta(req, raw.client_origin);
@@ -456,20 +486,16 @@ export const handlePasskeyRegisterFinish = async (req: Request): Promise<Respons
   if (kvOrError instanceof Response) return kvOrError;
   const kv = kvOrError;
 
-  const response = raw.response as RegistrationResponseJSON | undefined;
+  const storedResponse: unknown = raw.response;
+  const response = isWebauthnResponseObject(storedResponse) ? (storedResponse as RegistrationResponseJSON) : undefined;
   const clientDataJson = response?.response?.clientDataJSON;
   if (!clientDataJson) return openaiError(400, "Invalid passkey response", "invalid_request_error");
 
-  let challenge = "";
-  try {
-    challenge = parseClientChallenge(clientDataJson);
-  } catch {
-    return openaiError(400, "Invalid passkey response", "invalid_request_error");
-  }
+  const challenge = parseClientChallengeOrNull(clientDataJson);
   if (!challenge) return openaiError(400, "Invalid passkey response", "invalid_request_error");
 
   const challengeRecord = await consumeChallenge(kv, challenge);
-  if (!challengeRecord || challengeRecord.type !== "registration" || !challengeRecord.user_id) {
+  if (challengeRecord?.type !== "registration" || !challengeRecord.user_id) {
     return openaiError(400, "Invalid passkey challenge", "invalid_request_error");
   }
 
@@ -561,6 +587,18 @@ export const handlePasskeyLoginStart = async (req: Request): Promise<Response> =
   return json(200, { publicKey }, { "Cache-Control": "no-store" });
 };
 
+// A usable assertion credential needs both its stored record and the versionstamp
+// that makes the later sign-count update conditional on an unchanged record.
+const readPasskeyAssertionCredential = async (
+  kv: Deno.Kv,
+  credentialId: string
+): Promise<Readonly<{ key: Deno.KvKey; credential: PasskeyCredentialRecord; versionstamp: string }> | null> => {
+  const entry = await kv.get<PasskeyCredentialRecord>(passkeyCredentialKey(credentialId));
+  const credential = entry.value;
+  if (!credential || !entry.versionstamp) return null;
+  return { key: entry.key, credential, versionstamp: entry.versionstamp };
+};
+
 export const handlePasskeyLoginFinish = async (req: Request): Promise<Response> => {
   const raw = await readPasskeyJson(req);
   if (raw instanceof Response) return raw;
@@ -568,27 +606,24 @@ export const handlePasskeyLoginFinish = async (req: Request): Promise<Response> 
   if (kvOrError instanceof Response) return kvOrError;
   const kv = kvOrError;
 
-  const response = raw.response as AuthenticationResponseJSON | undefined;
+  const storedResponse: unknown = raw.response;
+  const response = isWebauthnResponseObject(storedResponse) ? (storedResponse as AuthenticationResponseJSON) : undefined;
   const clientDataJson = response?.response?.clientDataJSON;
   if (!response?.id || !clientDataJson) return openaiError(400, "Invalid passkey response", "invalid_request_error");
 
-  let challenge = "";
-  try {
-    challenge = parseClientChallenge(clientDataJson);
-  } catch {
-    return openaiError(400, "Invalid passkey response", "invalid_request_error");
-  }
+  const challenge = parseClientChallengeOrNull(clientDataJson);
+  if (challenge === null) return openaiError(400, "Invalid passkey response", "invalid_request_error");
 
   const challengeRecord = await consumeChallenge(kv, challenge);
-  if (!challengeRecord || challengeRecord.type !== "authentication") {
+  if (challengeRecord?.type !== "authentication") {
     return openaiError(400, "Invalid passkey challenge", "invalid_request_error");
   }
 
-  const credentialEntry = await kv.get<PasskeyCredentialRecord>(passkeyCredentialKey(response.id));
-  const credential = credentialEntry.value;
-  if (!credential || !credentialEntry.versionstamp) {
+  const storedCredential = await readPasskeyAssertionCredential(kv, response.id);
+  if (!storedCredential) {
     return openaiError(400, "Unknown passkey", "invalid_request_error");
   }
+  const { key: credentialKey, credential, versionstamp } = storedCredential;
   const userEntry = await kv.get<PasskeyUserRecord>(passkeyUserKey(credential.user_id));
   if (!userEntry.value) return openaiError(401, "Unauthorized", "invalid_api_key");
 
@@ -612,9 +647,9 @@ export const handlePasskeyLoginFinish = async (req: Request): Promise<Response> 
     const updated = await updatePasskeyCredentialSignCount(
       kv,
       {
-        key: credentialEntry.key,
+        key: credentialKey,
         value: credential,
-        versionstamp: credentialEntry.versionstamp,
+        versionstamp,
       },
       verification.authenticationInfo.newCounter
     );
@@ -692,7 +727,8 @@ export const handlePasskeyUsersList = async (): Promise<Response> => {
   if (kvOrError instanceof Response) return kvOrError;
   const users: PasskeyUserRecord[] = [];
   for await (const entry of kvOrError.list<PasskeyUserRecord>({ prefix: [...AUTH_PREFIX, "users"] })) {
-    if (entry.value) users.push(entry.value);
+    const user = readStoredPasskeyUser(entry);
+    if (user) users.push(user);
   }
   users.sort((a, b) => b.updated_at_ms - a.updated_at_ms);
   return json(
@@ -710,7 +746,7 @@ export const handlePasskeyUsersUpdate = async (req: Request): Promise<Response> 
   if (kvOrError instanceof Response) return kvOrError;
   const kv = kvOrError;
 
-  let raw: unknown = null;
+  let raw: unknown;
   try {
     raw = await req.json();
   } catch {

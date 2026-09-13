@@ -1,8 +1,36 @@
 import assert from "node:assert/strict";
 
-const encodeBase64Url = (value: string): string => btoa(value).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+// Removes every trailing `=`, equivalent to `value.replace(/=+$/g, "")` with an
+// explicit linear scan (same idiom as tests/codex-account-email.test.ts and
+// `normalizePath` in src/handler.ts:169).
+const stripBase64Padding = (value: string): string => {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "=") end -= 1;
+  return value.slice(0, end);
+};
+
+// Base64url encoding of `value`.
+const encodeBase64Url = (value: string): string => stripBase64Padding(btoa(value)).replace(/\+/g, "-").replace(/\//g, "_");
 
 const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
+// `String(input)` cannot render every accepted `RequestInfo` shape as a request URL:
+// a `Request` stringifies to "[object Request]". The fetch stubs below assert on
+// exact request URLs, so each accepted form is normalised to its URL string.
+const requestUrl = (input: RequestInfo | URL): string => {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.href;
+  return input.url;
+};
+// `AbortSignal.reason` is untyped, so a caller can abort with an arbitrary value. A
+// promise rejection must carry an `Error`: when the reason already is one it is
+// passed through unchanged, otherwise it is preserved as the abort error's `cause`
+// instead of being rejected verbatim.
+const abortError = (reason: unknown): Error => {
+  if (reason instanceof Error) return reason;
+  const error = new Error("Aborted", { cause: reason });
+  error.name = "AbortError";
+  return error;
+};
 const kvVersions = new Map<string, number>();
 let beforeAtomicCommit: (() => void) | null = null;
 let kvGetDelayMs = 0;
@@ -42,7 +70,7 @@ const kvStub = {
     kvStore.delete(keyToString(key));
     return Promise.resolve();
   },
-  list: async function* (selector: Deno.KvListSelector, options?: Deno.KvListOptions) {
+  list: function* (selector: Deno.KvListSelector, options?: Deno.KvListOptions) {
     const prefix = "prefix" in selector ? selector.prefix : [];
     let yielded = 0;
     const limit = typeof options?.limit === "number" ? options.limit : Infinity;
@@ -123,7 +151,7 @@ const { config } = await import("../src/config.ts");
 const { METERED_QUOTA_FRESH_MS, METERED_QUOTA_STATE_KEY } = await import("../src/metered_quota.ts");
 
 const withEnv = async (updates: Record<string, string | null>, fn: () => Promise<void>): Promise<void> => {
-  const originalGet = Deno.env.get;
+  const originalGet = Deno.env.get.bind(Deno.env);
   Deno.env.get = (key: string): string | undefined => {
     if (Object.prototype.hasOwnProperty.call(updates, key)) return updates[key] ?? undefined;
     return originalGet.call(Deno.env, key);
@@ -269,7 +297,7 @@ Deno.test("passkey inference never waits for a Metered quota refresh", async () 
       init?.signal?.addEventListener(
         "abort",
         () => {
-          reject(init.signal?.reason ?? new DOMException("Aborted", "AbortError"));
+          reject(abortError(init.signal?.reason));
         },
         { once: true }
       );
@@ -277,7 +305,7 @@ Deno.test("passkey inference never waits for a Metered quota refresh", async () 
   try {
     await withEnv({ METERED_API_KEY: "metered-api-key" }, async () => {
       const { default: handler } = await import("../src/handler.ts");
-      let timeout: ReturnType<typeof setTimeout> | undefined;
+      let cancelTimeout = (): void => {};
       try {
         const response = await Promise.race([
           handler(
@@ -292,15 +320,16 @@ Deno.test("passkey inference never waits for a Metered quota refresh", async () 
             })
           ),
           new Promise<never>((_resolve, reject) => {
-            timeout = setTimeout(() => {
+            const timer = setTimeout(() => {
               reject(new Error("handler waited for Metered quota refresh"));
             }, 500);
+            cancelTimeout = () => clearTimeout(timer);
           }),
         ]);
         assert.equal(response.status, 503);
         assert.equal(response.headers.get("x-codex-primary-used-percent"), null);
       } finally {
-        if (timeout !== undefined) clearTimeout(timeout);
+        cancelTimeout();
       }
     });
   } finally {
@@ -397,7 +426,7 @@ Deno.test("Deno Deploy tokens are verified with the Deno API outside deployed ru
   globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const headers = new Headers(init?.headers);
     requested.push({
-      url: String(input),
+      url: requestUrl(input),
       authorization: headers.get("authorization"),
     });
     return Promise.resolve(
@@ -447,7 +476,7 @@ Deno.test("Deno Deploy console tokens are verified against the app page", async 
 
   globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const headers = new Headers(init?.headers);
-    const url = String(input);
+    const url = requestUrl(input);
     requested.push({
       url,
       authorization: headers.get("authorization"),
@@ -495,7 +524,7 @@ Deno.test("Deno Deploy console fallback rejects path-only HTML", async () => {
   const token = "ddo_console_path_token_1234567890abcdefghijklmnopqrstuvwxyz";
 
   globalThis.fetch = (input: RequestInfo | URL): Promise<Response> => {
-    const url = String(input);
+    const url = requestUrl(input);
     if (url.includes("https://api.deno.com/v2/apps/")) {
       return Promise.resolve(new Response("{}", { status: 401 }));
     }
@@ -520,7 +549,7 @@ Deno.test("Deno Deploy console fallback rejects path-only HTML", async () => {
         });
         const adminAuth = await authenticateAdmin(req);
         assert.equal(adminAuth.ok, false);
-        if (!adminAuth.ok) assert.equal(adminAuth.response?.status, 401);
+        if (!adminAuth.ok) assert.equal(adminAuth.response.status, 401);
       }
     );
   } finally {
@@ -535,7 +564,7 @@ Deno.test("Deno Deploy tokens do not fall back to the production app slug", asyn
   const token = "ddo_deployment_token_1234567890abcdefghijklmnopqrstuvwxyz";
 
   globalThis.fetch = (input: RequestInfo | URL): Promise<Response> => {
-    const url = String(input);
+    const url = requestUrl(input);
     requested.push(url);
     return Promise.resolve(new Response("{}", { status: url.includes("/v1/deployments/dep_test") ? 200 : 401 }));
   };
@@ -695,7 +724,7 @@ Deno.test("passkey registration start can use an existing passkey session", asyn
 
   assert.equal(response.status, 200);
   const body = await response.json();
-  const encodedUserId = btoa(user.id).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  const encodedUserId = encodeBase64Url(user.id);
   assert.equal(body.handle, user.handle);
   assert.equal(body.publicKey.user.id, encodedUserId);
   assert.equal(body.publicKey.user.name, user.handle);
@@ -851,7 +880,7 @@ Deno.test("passkey registration start reuses an existing token-handle user", asy
 
   assert.equal(response.status, 200);
   const body = await response.json();
-  const encodedUserId = btoa(user.id).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  const encodedUserId = encodeBase64Url(user.id);
   assert.equal(body.handle, handle);
   assert.equal(body.publicKey.user.id, encodedUserId);
   assert.equal(body.publicKey.authenticatorSelection.userVerification, "required");
@@ -1327,7 +1356,7 @@ Deno.test("unattested GitHub tokens never reach Deno verification", async () => 
   globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const headers = new Headers(init?.headers);
     requested.push({
-      url: String(input),
+      url: requestUrl(input),
       authorization: headers.get("authorization"),
       cookie: headers.get("cookie"),
     });
@@ -1378,7 +1407,7 @@ Deno.test("relay passkey cookies survive an unattested GitHub bearer on /uos/aut
   const originalFetch = globalThis.fetch;
   const requests: string[] = [];
   globalThis.fetch = (input: RequestInfo | URL): Promise<Response> => {
-    requests.push(String(input));
+    requests.push(requestUrl(input));
     return Promise.resolve(new Response("{}", { status: 401 }));
   };
 
@@ -1555,7 +1584,7 @@ Deno.test("passkey lifecycle handlers prefer a relay cookie over a stale GitHub 
   );
   assert.equal(registerResponse.status, 200);
   const registerBody = await registerResponse.json();
-  const encodedUserId = btoa(user.id).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  const encodedUserId = encodeBase64Url(user.id);
   assert.equal(registerBody.publicKey.user.id, encodedUserId);
   assert.equal(registerBody.publicKey.user.name, user.handle);
 

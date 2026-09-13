@@ -68,11 +68,44 @@ const bytesToBase64 = (value: Uint8Array): string => {
   return btoa(binary);
 };
 
+/**
+ * Removes every trailing `/`, equivalent to `value.replace(/\/+$/, "")` without
+ * the quadratic backtracking that pattern needs on a run of slashes.
+ */
+const stripTrailingSlashes = (value: string): string => {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") end -= 1;
+  return value.slice(0, end);
+};
+
+/**
+ * `||` fallback for a trimmed environment value, stated explicitly: an UNSET or
+ * EMPTY variable falls back, which a lone `??` would not do for the empty
+ * string (the original `value || fallback` semantics are preserved exactly).
+ */
+const trimmedEnvOr = (value: string | undefined, fallback: string): string => (value === undefined || value === "" ? fallback : value);
+
+/** Default gateway URL used when `UOS_AI_URL` is unset or empty. */
+const DEFAULT_AI_URL = "https://ai.ubq.fi";
+
+/** PEM header of each supported private-key encoding, in match order. */
+const PRIVATE_KEY_FORMATS: readonly (readonly [string, PrivateKeyFormat])[] = [
+  ["-----BEGIN PRIVATE KEY-----", "pkcs8"],
+  ["-----BEGIN RSA PRIVATE KEY-----", "pkcs1"],
+];
+
+const privateKeyFormatOf = (begin: string | undefined): PrivateKeyFormat | null => {
+  for (const [header, format] of PRIVATE_KEY_FORMATS) {
+    if (begin === header) return format;
+  }
+  return null;
+};
+
 const decodePrivateKeyPem = (value: string): Readonly<{ format: PrivateKeyFormat; der: Uint8Array }> => {
   const lines = normalizeMultilineSecret(value).split("\n").filter(Boolean);
   const begin = lines.shift();
   const end = lines.pop();
-  const format = begin === "-----BEGIN PRIVATE KEY-----" ? "pkcs8" : begin === "-----BEGIN RSA PRIVATE KEY-----" ? "pkcs1" : null;
+  const format = privateKeyFormatOf(begin);
   const expectedEnd = format === "pkcs8" ? "-----END PRIVATE KEY-----" : "-----END RSA PRIVATE KEY-----";
   if (!format || end !== expectedEnd || lines.length === 0) {
     throw new Error("APP_PRIVATE_KEY must be an unencrypted PKCS#8 or PKCS#1 RSA PEM private key.");
@@ -132,8 +165,8 @@ export const runSetupInstance = async (dependencies: SetupInstanceDependencies =
   const privateKeyRaw = env.get("APP_PRIVATE_KEY");
   const deployToken = env.get("DENO_DEPLOY_TOKEN")?.trim();
   const configuredAiUrl = env.get("UOS_AI_URL")?.trim();
-  const aiUrl = (configuredAiUrl || "https://ai.ubq.fi").replace(/\/+$/, "");
-  const owner = env.get("UOS_OWNER")?.trim() || "unknown";
+  const aiUrl = stripTrailingSlashes(trimmedEnvOr(configuredAiUrl, DEFAULT_AI_URL));
+  const owner = trimmedEnvOr(env.get("UOS_OWNER")?.trim(), "unknown");
 
   if (appId === null || !privateKeyRaw || !deployToken) {
     log.error("APP_ID, APP_PRIVATE_KEY, and DENO_DEPLOY_TOKEN are required.");

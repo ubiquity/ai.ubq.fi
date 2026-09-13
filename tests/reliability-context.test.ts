@@ -111,8 +111,9 @@ function stateOf(conversation: Conversation) {
     const turn = turns[i];
     if (turn.role !== "assistant" || turn.toolCalls.length !== 1) continue;
     const call = turn.toolCalls[0];
-    const next = turns[i + 1];
-    if (next === undefined || next.role !== "tool" || next.toolCallId !== call.id) continue;
+    const next = turns.at(i + 1);
+    if (next === undefined) continue;
+    if (next.role !== "tool" || next.toolCallId !== call.id) continue;
     const parsed = parseToolResultContent(next.content);
     seq += 1;
     observations.push({
@@ -136,7 +137,8 @@ Deno.test("context: token estimation is deterministic and monotone", () => {
 
 Deno.test("context: tool-result serialization round-trips", () => {
   const line = serializeToolResultContent({ ok: false, error_code: "duplicate_call", error: "dup", output: null });
-  const parsed = parseToolResultContent(line)!;
+  const parsed = parseToolResultContent(line);
+  assert.ok(parsed);
   assert.equal(parsed.ok, false);
   assert.equal(parsed.error_code, "duplicate_call");
   assert.equal(parsed.error, "dup");
@@ -189,9 +191,9 @@ Deno.test("context: structured context is cheaper than a full transcript replay"
   const conversation = scaffold();
   const state = stateOf(conversation);
   const full = estimateConversationTokens(conversation);
+  const tailTurnsByKind = { short: 2, medium: 4, large: 8 } as const;
   for (const kind of ["short", "medium", "large"] as const) {
-    const tailTurns = kind === "short" ? 2 : kind === "medium" ? 4 : 8;
-    const structured = renderStructuredContext(state, conversation, { maxTailTurns: tailTurns });
+    const structured = renderStructuredContext(state, conversation, { maxTailTurns: tailTurnsByKind[kind] });
     const structuredTokens = estimateTokens(structured);
     assert.ok(structuredTokens < full, `${kind}: structured ${structuredTokens} < full ${full}`);
     assert.match(structured, /\[structured task state\]/);

@@ -96,10 +96,11 @@ Deno.test("extractCodexModelsFromText trims large fields", () => {
   const text =
     'codex_cli_rs/0.99.0 {"slug":"gpt-5.2-codex","display_name":"Codex","description":"desc","base_instructions":"big","supported_reasoning_levels":["low"]}';
   const extracted = extractCodexModelsFromText(text);
-  const model = extracted?.models[0]!;
-  assert.equal(model?.slug, "gpt-5.2-codex");
-  assert.equal(model?.display_name, "Codex");
-  assert.equal(model?.description, "desc");
+  const model = extracted?.models[0];
+  assert.ok(model);
+  assert.equal(model.slug, "gpt-5.2-codex");
+  assert.equal(model.display_name, "Codex");
+  assert.equal(model.description, "desc");
   assert.equal("base_instructions" in model, false);
 });
 

@@ -113,9 +113,6 @@ export const normalizeWorkspacePath = (rel: string): string | null => {
   return parts.join("/");
 };
 
-/** True when the path could traverse outside the workspace root. */
-export const workspacePathEscapes = (rel: string): boolean => normalizeWorkspacePath(rel) === null;
-
 const patternToRegExp = (pattern: string): RegExp => {
   let re = "^";
   let i = 0;

@@ -218,11 +218,21 @@ async function writeTree(base: string, files: Record<string, string>): Promise<v
   }
 }
 
+/**
+ * Code-unit ascending order — the order the bare `.sort()` used to reach by
+ * stringifying each entry, stated explicitly so task ids sort by id.
+ */
+function compareCodeUnits(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
 async function main(): Promise<void> {
   await Deno.mkdir(FIXTURES_DIR, { recursive: true });
   const { computeFixtureRevision } = await import("../fixture.ts");
   const revisions: Record<string, string> = {};
-  for (const [taskId, spec] of Object.entries(SPECS).sort()) {
+  for (const [taskId, spec] of Object.entries(SPECS).sort(([a], [b]) => compareCodeUnits(a, b))) {
     const dir = `${FIXTURES_DIR}/${taskId}`;
     await Deno.mkdir(dir, { recursive: true });
     // Remove any stale snapshot first (generator owns this directory only).

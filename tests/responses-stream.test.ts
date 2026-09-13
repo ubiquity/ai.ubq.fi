@@ -75,16 +75,12 @@ Deno.test("Responses SSE parser accepts an LF then CRLF event boundary", async (
 
 Deno.test("Responses SSE parser rejects malformed JSON and EOF before terminal", async () => {
   const malformed = await captureError(async () => {
-    for await (const _ of readResponsesStream(chunked("data: nope\n\n", []))) {
-      // consume
-    }
+    await Array.fromAsync(readResponsesStream(chunked("data: nope\n\n", [])));
   });
   assert.ok(malformed instanceof ResponsesStreamError);
   assert.equal(malformed.kind, "malformed_event");
   const eof = await captureError(async () => {
-    for await (const _ of readResponsesStream(chunked('data: {"type":"response.output_text.delta","delta":"x"}\n\n', []))) {
-      // consume
-    }
+    await Array.fromAsync(readResponsesStream(chunked('data: {"type":"response.output_text.delta","delta":"x"}\n\n', [])));
   });
   assert.ok(eof instanceof ResponsesStreamError);
   assert.match(eof.message, /before a terminal event/);
@@ -93,9 +89,7 @@ Deno.test("Responses SSE parser rejects malformed JSON and EOF before terminal",
 
 Deno.test("Responses parser rejects terminal events without their protocol payload", async () => {
   const error = await captureError(async () => {
-    for await (const _ of readResponsesStream(chunked('data: {"type":"response.completed"}\n\n', []))) {
-      // consume
-    }
+    await Array.fromAsync(readResponsesStream(chunked('data: {"type":"response.completed"}\n\n', [])));
   });
   assert.ok(error instanceof ResponsesStreamError);
   assert.equal(error.kind, "malformed_event");
@@ -104,9 +98,7 @@ Deno.test("Responses parser rejects terminal events without their protocol paylo
 Deno.test("Responses parser rejects array-valued terminal response payloads", async () => {
   for (const type of ["response.completed", "response.failed", "response.incomplete"]) {
     const error = await captureError(async () => {
-      for await (const _ of readResponsesStream(chunked(`data: ${JSON.stringify({ type, response: [] })}\n\n`, []))) {
-        // consume
-      }
+      await Array.fromAsync(readResponsesStream(chunked(`data: ${JSON.stringify({ type, response: [] })}\n\n`, [])));
     });
     assert.ok(error instanceof ResponsesStreamError, type);
     assert.equal(error.kind, "malformed_event", type);
@@ -115,9 +107,7 @@ Deno.test("Responses parser rejects array-valued terminal response payloads", as
 
 Deno.test("Responses parser rejects an array-valued nested error payload", async () => {
   const error = await captureError(async () => {
-    for await (const _ of readResponsesStream(chunked('data: {"type":"error","error":[]}\n\n', []))) {
-      // consume
-    }
+    await Array.fromAsync(readResponsesStream(chunked('data: {"type":"error","error":[]}\n\n', [])));
   });
   assert.ok(error instanceof ResponsesStreamError);
   assert.equal(error.kind, "malformed_event");
@@ -125,11 +115,9 @@ Deno.test("Responses parser rejects an array-valued nested error payload", async
 
 Deno.test("Responses parser rejects an array-valued nested error despite valid flat fields", async () => {
   const error = await captureError(async () => {
-    for await (const _ of readResponsesStream(
-      chunked('data: {"type":"error","error":[],"code":"provider_error","message":"Provider stopped.","param":null}\n\n', [])
-    )) {
-      // consume
-    }
+    await Array.fromAsync(
+      readResponsesStream(chunked('data: {"type":"error","error":[],"code":"provider_error","message":"Provider stopped.","param":null}\n\n', []))
+    );
   });
   assert.ok(error instanceof ResponsesStreamError);
   assert.equal(error.kind, "malformed_event");
@@ -200,9 +188,7 @@ Deno.test("Responses parser wraps reader exceptions and releases its lock", asyn
     },
   });
   const error = await captureError(async () => {
-    for await (const _ of readResponsesStream(source)) {
-      // consume
-    }
+    await Array.fromAsync(readResponsesStream(source));
   });
   assert.ok(error instanceof ResponsesStreamError);
   assert.equal(error.kind, "read_error");
@@ -224,9 +210,8 @@ Deno.test("Responses parser keeps one absolute first-event deadline across non-e
     },
   });
   const error = await captureError(async () => {
-    for await (const _ of readResponsesStream(source, undefined, { firstEventTimeoutMs: 12 })) {
-      // No data event is ever emitted.
-    }
+    // No data event is ever emitted.
+    await Array.fromAsync(readResponsesStream(source, undefined, { firstEventTimeoutMs: 12 }));
   });
   assert.ok(error instanceof ResponsesStreamError);
   assert.equal(error.kind, "inactivity_timeout");
@@ -248,9 +233,7 @@ Deno.test("Responses parser rejects one fragmented oversized SSE event and cance
     },
   });
   const error = await captureError(async () => {
-    for await (const _ of readResponsesStream(source)) {
-      // consume
-    }
+    await Array.fromAsync(readResponsesStream(source));
   });
   assert.ok(error instanceof ResponsesStreamError);
   assert.equal(error.kind, "event_too_large");

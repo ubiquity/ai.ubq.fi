@@ -187,25 +187,45 @@ const stateSnapshot = (conversation: Conversation | undefined): ProbeStateSnapsh
   };
 };
 
-const summarizeRawBody = (body: Record<string, unknown>): ProbeRequestSummary => {
-  const toolsValue = body.tools;
+/** Summarizes a raw `tools` array, ignoring entries that are not tool objects. */
+const summarizeRawTools = (toolsValue: unknown): { name: string; strict: boolean | null }[] => {
+  if (!Array.isArray(toolsValue)) return [];
   const tools: { name: string; strict: boolean | null }[] = [];
-  if (Array.isArray(toolsValue)) {
-    for (const tool of toolsValue) {
-      if (!tool || typeof tool !== "object") continue;
-      const fn = (tool as Record<string, unknown>).function;
-      if (!fn || typeof fn !== "object") continue;
-      const functionRecord = fn as Record<string, unknown>;
-      const name = typeof functionRecord.name === "string" ? functionRecord.name : "?";
-      const strict = typeof functionRecord.strict === "boolean" ? functionRecord.strict : null;
-      tools.push({ name, strict });
-    }
+  for (const tool of toolsValue) {
+    if (!tool || typeof tool !== "object") continue;
+    const fn = (tool as Record<string, unknown>).function;
+    if (!fn || typeof fn !== "object") continue;
+    const functionRecord = fn as Record<string, unknown>;
+    const name = typeof functionRecord.name === "string" ? functionRecord.name : "?";
+    const strict = typeof functionRecord.strict === "boolean" ? functionRecord.strict : null;
+    tools.push({ name, strict });
   }
-  const messages = Array.isArray(body.messages) ? body.messages : [];
-  const roles = messages.map((message) => (message && typeof message === "object" ? String((message as Record<string, unknown>).role ?? "?") : "?"));
+  return tools;
+};
+
+/** Renders one wire message role, never falling back to Object's default stringification. */
+const rawMessageRole = (message: unknown): string => {
+  if (!message || typeof message !== "object") return "?";
+  const role = (message as Record<string, unknown>).role;
+  if (typeof role === "string") return role;
+  if (typeof role === "number" || typeof role === "boolean" || typeof role === "bigint") return String(role);
+  if (role === null || role === undefined) return "?";
+  return JSON.stringify(role);
+};
+
+/** Reads the wire `response_format.type` as the probe summary vocabulary. */
+const responseFormatOf = (body: Record<string, unknown>): ProbeRequestSummary["responseFormat"] => {
   const format = body.response_format;
   const formatType = format && typeof format === "object" ? (format as Record<string, unknown>).type : undefined;
-  const responseFormat = formatType === "json_object" ? "json_object" : formatType === "json_schema" ? "json_schema" : "none";
+  if (formatType === "json_object") return "json_object";
+  if (formatType === "json_schema") return "json_schema";
+  return "none";
+};
+
+const summarizeRawBody = (body: Record<string, unknown>): ProbeRequestSummary => {
+  const tools = summarizeRawTools(body.tools);
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  const roles = messages.map(rawMessageRole);
   return {
     style: "generic",
     model: typeof body.model === "string" ? body.model : "?",
@@ -214,7 +234,7 @@ const summarizeRawBody = (body: Record<string, unknown>): ProbeRequestSummary =>
     toolStrictnessValues: tools.map((tool) => tool.strict ?? false),
     reasoningEffortTopLevel: typeof body.reasoning_effort === "string" ? body.reasoning_effort : null,
     reasoningInSystem: false,
-    responseFormat,
+    responseFormat: responseFormatOf(body),
     parallelToolCalls: typeof body.parallel_tool_calls === "boolean" ? body.parallel_tool_calls : null,
     maxCompletionTokens: typeof body.max_completion_tokens === "number" ? body.max_completion_tokens : null,
     analysisInWire: roles.includes("assistant"),
@@ -779,8 +799,8 @@ export const PROBE_SCENARIOS: readonly ProbeScenario[] = [
         maxCompletionTokens: MAX_TOKENS,
       });
       const call = firstToolCallFrom(t1);
-      if (call === null) return scenarioResult(PROBE_SCENARIOS[5], ctx, started, [t1], ["no tool call returned"]);
-      const withResult = appendToolResult(advanceConversation(conversation, t1.normalized!), call.id, call.name, WEATHER_RESULT);
+      if (call === null || t1.normalized === null) return scenarioResult(PROBE_SCENARIOS[5], ctx, started, [t1], ["no tool call returned"]);
+      const withResult = appendToolResult(advanceConversation(conversation, t1.normalized), call.id, call.name, WEATHER_RESULT);
       const t2 = await ctx.runTurn(withResult, {
         style: "generic",
         tools: [WEATHER_TOOL],
@@ -812,8 +832,8 @@ export const PROBE_SCENARIOS: readonly ProbeScenario[] = [
         maxCompletionTokens: MAX_TOKENS,
       });
       const call = firstToolCallFrom(t1);
-      if (call === null) return scenarioResult(PROBE_SCENARIOS[6], ctx, started, [t1], ["no tool call returned"]);
-      const withResult = appendToolResult(advanceConversation(conversation, t1.normalized!), call.id, call.name, WEATHER_RESULT);
+      if (call === null || t1.normalized === null) return scenarioResult(PROBE_SCENARIOS[6], ctx, started, [t1], ["no tool call returned"]);
+      const withResult = appendToolResult(advanceConversation(conversation, t1.normalized), call.id, call.name, WEATHER_RESULT);
       const t2 = await ctx.runTurn(withResult, {
         style: "native",
         tools: [WEATHER_TOOL],
@@ -851,8 +871,8 @@ export const PROBE_SCENARIOS: readonly ProbeScenario[] = [
         maxCompletionTokens: MAX_TOKENS,
       });
       const call = firstToolCallFrom(t1);
-      if (call === null) return scenarioResult(PROBE_SCENARIOS[7], ctx, started, [t1], ["no tool call returned"]);
-      const withResult = appendToolResult(advanceConversation(conversation, t1.normalized!), call.id, call.name, WEATHER_RESULT);
+      if (call === null || t1.normalized === null) return scenarioResult(PROBE_SCENARIOS[7], ctx, started, [t1], ["no tool call returned"]);
+      const withResult = appendToolResult(advanceConversation(conversation, t1.normalized), call.id, call.name, WEATHER_RESULT);
       const t2 = await ctx.runTurn(withResult, {
         style: "native",
         tools: [WEATHER_TOOL],
@@ -879,8 +899,8 @@ export const PROBE_SCENARIOS: readonly ProbeScenario[] = [
         maxCompletionTokens: MAX_TOKENS,
       });
       const call1 = firstToolCallFrom(t1);
-      if (call1 === null) return scenarioResult(PROBE_SCENARIOS[8], ctx, started, [t1], ["no first tool call"]);
-      conversation = appendToolResult(advanceConversation(conversation, t1.normalized!), call1.id, call1.name, WEATHER_RESULT);
+      if (call1 === null || t1.normalized === null) return scenarioResult(PROBE_SCENARIOS[8], ctx, started, [t1], ["no first tool call"]);
+      conversation = appendToolResult(advanceConversation(conversation, t1.normalized), call1.id, call1.name, WEATHER_RESULT);
       const t2 = await ctx.runTurn(conversation, {
         style: "generic",
         tools: [WEATHER_TOOL, NOTE_TOOL],
@@ -888,8 +908,8 @@ export const PROBE_SCENARIOS: readonly ProbeScenario[] = [
         maxCompletionTokens: MAX_TOKENS,
       });
       const call2 = firstToolCallFrom(t2);
-      if (call2 === null) return scenarioResult(PROBE_SCENARIOS[8], ctx, started, [t1, t2], ["no second tool call"]);
-      conversation = appendToolResult(advanceConversation(conversation, t2.normalized!), call2.id, call2.name, '{"text": "San Francisco: sunny, 20C"}');
+      if (call2 === null || t2.normalized === null) return scenarioResult(PROBE_SCENARIOS[8], ctx, started, [t1, t2], ["no second tool call"]);
+      conversation = appendToolResult(advanceConversation(conversation, t2.normalized), call2.id, call2.name, '{"text": "San Francisco: sunny, 20C"}');
       const t3 = await ctx.runTurn(conversation, {
         style: "generic",
         tools: [WEATHER_TOOL, NOTE_TOOL],
@@ -985,7 +1005,7 @@ export const PROBE_SCENARIOS: readonly ProbeScenario[] = [
         JSON.parse(preview ?? "");
         jsonOk = true;
       } catch {
-        jsonOk = false;
+        // Unparseable content leaves jsonOk at its initial false.
       }
       return scenarioResult(PROBE_SCENARIOS[12], ctx, started, [turn], [`contentJsonValid=${jsonOk}`]);
     },
@@ -1129,7 +1149,11 @@ export const PROBE_SCENARIOS: readonly ProbeScenario[] = [
   },
 ];
 
-/** Finds the newest tool call inside a freshly executed turn's normalized response. */
+/**
+ * Finds the newest tool call inside a freshly executed turn's normalized
+ * response.  A non-null call therefore always comes with a non-null
+ * `normalized` response on the same run.
+ */
 const firstToolCallFrom = (run: ProbeTurnRun) => {
   if (run.normalized === null) return null;
   return run.normalized.toolCalls.length > 0 ? run.normalized.toolCalls[0] : null;

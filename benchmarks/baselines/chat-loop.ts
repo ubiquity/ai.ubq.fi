@@ -83,13 +83,12 @@ export async function runChatAgentLoop(ctx: AdapterRunContext, spec: ChatAgentSp
   let seq = 0;
 
   for (;;) {
-    if (ctx.signal.aborted) throw new TaskTimeoutError(ctx.task.timeout_ms);
+    throwIfAborted(ctx);
     if (seq >= maxRequests) {
       throw new BaselineAdapterError(`model request limit exceeded (${maxRequests}); the model never returned a final turn`, "request-limit");
     }
     seq += 1;
 
-    if (ctx.signal.aborted) throw new TaskTimeoutError(ctx.task.timeout_ms);
     const request: ModelRequestEvent = {
       type: "model_request",
       at: ctx.time(),
@@ -142,44 +141,54 @@ export async function runChatAgentLoop(ctx: AdapterRunContext, spec: ChatAgentSp
 
     for (const call of parsed.toolCalls) {
       ctx.checkToolLimit();
-      if (ctx.signal.aborted) throw new TaskTimeoutError(ctx.task.timeout_ms);
-      const args = parseToolArguments(call.arguments);
-      const validated = validateCanonicalToolArgs(call.name, args);
-      ctx.record({
-        type: "tool_call",
-        at: ctx.time(),
-        id: call.id,
-        tool: call.name,
-        arguments: args,
-        valid: validated.valid,
-        invalid_reason: validated.valid ? undefined : validated.reason,
-      });
-      const started = Date.now();
-      let result: ToolResult;
-      if (!validated.valid) {
-        result = { ok: false, error: `invalid arguments: ${validated.reason}`, error_code: "invalid_args" };
-      } else {
-        try {
-          result = await executeBaselineTool(ctx.workspace, call.name, args, ctx.signal);
-        } catch (err) {
-          result = { ok: false, error: (err as Error).message, error_code: "exec_failed" };
-        }
-      }
-      ctx.record({
-        type: "tool_result",
-        at: ctx.time(),
-        id: call.id,
-        ok: result.ok,
-        output: result.output,
-        error: result.error,
-        error_code: result.error_code,
-        duration_ms: Date.now() - started,
-      });
-      messages.push({
-        role: "tool",
-        tool_call_id: call.id,
-        content: result.ok ? (result.output ?? "") : `error: ${result.error ?? "unknown error"}`,
-      });
+      await runToolCall(ctx, call, messages);
     }
   }
+}
+
+/** Throws the run's timeout error when the whole-run signal has already aborted. */
+function throwIfAborted(ctx: AdapterRunContext): void {
+  if (ctx.signal.aborted) throw new TaskTimeoutError(ctx.task.timeout_ms);
+}
+
+/** Executes one tool call, records the call and its result, and appends the tool message. */
+async function runToolCall(ctx: AdapterRunContext, call: ToolCallWire, messages: ChatMessage[]): Promise<void> {
+  throwIfAborted(ctx);
+  const args = parseToolArguments(call.arguments);
+  const validated = validateCanonicalToolArgs(call.name, args);
+  ctx.record({
+    type: "tool_call",
+    at: ctx.time(),
+    id: call.id,
+    tool: call.name,
+    arguments: args,
+    valid: validated.valid,
+    invalid_reason: validated.valid ? undefined : validated.reason,
+  });
+  const started = Date.now();
+  let result: ToolResult;
+  if (!validated.valid) {
+    result = { ok: false, error: `invalid arguments: ${validated.reason}`, error_code: "invalid_args" };
+  } else {
+    try {
+      result = await executeBaselineTool(ctx.workspace, call.name, args, ctx.signal);
+    } catch (err) {
+      result = { ok: false, error: (err as Error).message, error_code: "exec_failed" };
+    }
+  }
+  ctx.record({
+    type: "tool_result",
+    at: ctx.time(),
+    id: call.id,
+    ok: result.ok,
+    output: result.output,
+    error: result.error,
+    error_code: result.error_code,
+    duration_ms: Date.now() - started,
+  });
+  messages.push({
+    role: "tool",
+    tool_call_id: call.id,
+    content: result.ok ? (result.output ?? "") : `error: ${result.error ?? "unknown error"}`,
+  });
 }

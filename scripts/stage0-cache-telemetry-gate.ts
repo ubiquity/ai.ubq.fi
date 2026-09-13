@@ -565,6 +565,24 @@ const inferenceOutcomeFor = (route: TerminalRoute, streamTerminalType: StreamTer
   return null;
 };
 
+/**
+ * Provider field for one terminal event: a completed inference must carry a
+ * supported provider, a non-inference terminal event carries none, and every
+ * other terminal type accepts the optional form.
+ */
+const inferenceProviderFor = (outcome: InferenceTerminalOutcome | null, record: Record<string, unknown>, lineNumber: number): string | null => {
+  if (outcome === "completed") return requireInferenceProvider(record, lineNumber);
+  if (outcome === null) return null;
+  return optionalInferenceProvider(record);
+};
+
+/** Model field for one terminal event; same three-way rule as the provider. */
+const inferenceModelFor = (outcome: InferenceTerminalOutcome | null, record: Record<string, unknown>, lineNumber: number): string | null => {
+  if (outcome === "completed") return requireBoundedModelLabel(record, lineNumber);
+  if (outcome === null) return null;
+  return optionalBoundedModelLabel(record);
+};
+
 const terminalPayloadFromText = (text: string, lineNumber: number): string | null => {
   const trimmed = text.trim();
   if (!trimmed.includes(TERMINAL_MARKER)) return null;
@@ -573,11 +591,8 @@ const terminalPayloadFromText = (text: string, lineNumber: number): string | nul
   // prompt or other user text embedded in an unrelated log line from
   // impersonating a terminal event. Structured exports must put one of these
   // exact console bodies in their `body` field below.
-  const prefix = trimmed.startsWith(TERMINAL_LINE_PREFIX)
-    ? TERMINAL_LINE_PREFIX
-    : trimmed.startsWith(INFO_TERMINAL_LINE_PREFIX)
-      ? INFO_TERMINAL_LINE_PREFIX
-      : null;
+  const acceptedPrefixes: readonly string[] = [TERMINAL_LINE_PREFIX, INFO_TERMINAL_LINE_PREFIX];
+  const prefix = acceptedPrefixes.find((candidate) => trimmed.startsWith(candidate)) ?? null;
   if (prefix === null) {
     return fail(lineNumber, "request_terminal log text must begin with the canonical terminal marker");
   }
@@ -652,10 +667,8 @@ const parseTerminalEvent = (line: string, lineNumber: number): TerminalEvent | n
   if (inferenceOutcome === "completed" && (status < 200 || status >= 300)) {
     return fail(lineNumber, "completed inference event has a non-2xx status field");
   }
-  const provider =
-    inferenceOutcome === "completed" ? requireInferenceProvider(parsed, lineNumber) : inferenceOutcome === null ? null : optionalInferenceProvider(parsed);
-  const model =
-    inferenceOutcome === "completed" ? requireBoundedModelLabel(parsed, lineNumber) : inferenceOutcome === null ? null : optionalBoundedModelLabel(parsed);
+  const provider: string | null = inferenceProviderFor(inferenceOutcome, parsed, lineNumber);
+  const model: string | null = inferenceModelFor(inferenceOutcome, parsed, lineNumber);
   if (usageObserved !== (usageTelemetryStatus !== "missing")) {
     return fail(lineNumber, "terminal event has inconsistent usage_observed and usage_telemetry_status fields");
   }
@@ -710,7 +723,7 @@ const addSafely = (left: number, right: number, lineNumber: number): number => {
   return sum;
 };
 
-const increment = <Key extends string>(counts: Map<Key, number>, key: Key, lineNumber: number): void => {
+const increment = <TKey extends string>(counts: Map<TKey, number>, key: TKey, lineNumber: number): void => {
   counts.set(key, addSafely(counts.get(key) ?? 0, 1, lineNumber));
 };
 
@@ -737,13 +750,13 @@ const toLatencySummary = (summary: MutableLatencySummary): LatencySummary => {
     return { observed_events: 0, min_ms: null, p50_ms: null, p95_ms: null, max_ms: null };
   }
   const sorted = [...summary].sort((left, right) => left - right);
-  const percentile = (ratio: number): number => sorted[Math.max(0, Math.ceil(sorted.length * ratio) - 1)]!;
+  const percentile = (ratio: number): number => sorted[Math.max(0, Math.ceil(sorted.length * ratio) - 1)];
   return {
     observed_events: sorted.length,
-    min_ms: sorted[0]!,
+    min_ms: sorted[0],
     p50_ms: percentile(0.5),
     p95_ms: percentile(0.95),
-    max_ms: sorted[sorted.length - 1]!,
+    max_ms: sorted[sorted.length - 1],
   };
 };
 
@@ -775,16 +788,27 @@ const toValidReportedCacheMetrics = (metrics: MutableValidReportedCacheMetrics):
   },
 });
 
-const toSortedCounts = <Key extends string>(counts: Map<Key, number>): Record<Key, number> =>
-  Object.fromEntries([...counts.entries()].sort(([left], [right]) => left.localeCompare(right))) as Record<Key, number>;
+const toSortedCounts = <TKey extends string>(counts: Map<TKey, number>): Record<TKey, number> =>
+  Object.fromEntries([...counts.entries()].sort(([left], [right]) => left.localeCompare(right))) as Record<TKey, number>;
 
-const toFixedCounts = <Key extends string>(keys: readonly Key[], counts: Map<Key, number>): Record<Key, number> =>
-  Object.fromEntries(keys.map((key) => [key, counts.get(key) ?? 0])) as Record<Key, number>;
+const toFixedCounts = <TKey extends string>(keys: readonly TKey[], counts: Map<TKey, number>): Record<TKey, number> =>
+  Object.fromEntries(keys.map((key) => [key, counts.get(key) ?? 0])) as Record<TKey, number>;
 
 const toOpaqueModelLabels = (models: Iterable<string>): Map<string, string> =>
   new Map([...new Set(models)].sort((left, right) => left.localeCompare(right)).map((model, index) => [model, `model_${index + 1}`] as const));
 
 const stableOpaqueLabel = (domain: string, value: string): string => createHash("sha256").update(`${domain}\u0000${value}`).digest("hex");
+
+/**
+ * Reads an opaque cohort label this pass already registered.  A miss is an
+ * internal invariant violation, and it must never fall back to the raw label:
+ * these labels exist to keep provider model names and account slots opaque.
+ */
+const requireOpaqueLabel = <TKey>(labels: ReadonlyMap<TKey, string>, key: TKey): string => {
+  const label = labels.get(key);
+  if (label === undefined) throw new Error("opaque cohort label is missing for an observed cohort");
+  return label;
+};
 
 const extendOpaqueModelLabels = (labels: ReadonlyMap<string, string>, models: Iterable<string>): Map<string, string> => {
   const extended = new Map(labels);
@@ -1024,7 +1048,7 @@ class Stage0CacheTelemetryAccumulator {
         const cohortCoverage = reportedOverCompleted(cohort.reported, cohort.completed_inference);
         return {
           provider: cohort.provider,
-          model: modelCohortLabels.get(cohort.model)!,
+          model: requireOpaqueLabel(modelCohortLabels, cohort.model),
           route: cohort.route,
           completed_inference: cohort.completed_inference,
           status_totals: toSortedCounts(cohort.status_totals),
@@ -1053,8 +1077,8 @@ class Stage0CacheTelemetryAccumulator {
           left.provider.localeCompare(right.provider) ||
           left.model.localeCompare(right.model) ||
           left.route.localeCompare(right.route) ||
-          (left.account_slot === null ? "unassigned" : accountSlotCohortLabels.get(left.account_slot)!).localeCompare(
-            right.account_slot === null ? "unassigned" : accountSlotCohortLabels.get(right.account_slot)!
+          (left.account_slot === null ? "unassigned" : requireOpaqueLabel(accountSlotCohortLabels, left.account_slot)).localeCompare(
+            right.account_slot === null ? "unassigned" : requireOpaqueLabel(accountSlotCohortLabels, right.account_slot)
           ) ||
           (left.account_cohort_id ?? "").localeCompare(right.account_cohort_id ?? "") ||
           left.prompt_cache_mode.localeCompare(right.prompt_cache_mode) ||
@@ -1062,10 +1086,10 @@ class Stage0CacheTelemetryAccumulator {
       )
       .map((cohort): CacheDimensionCohortReport => ({
         provider: cohort.provider,
-        model: modelCohortLabels.get(cohort.model)!,
+        model: requireOpaqueLabel(modelCohortLabels, cohort.model),
         model_cohort_id: stableOpaqueLabel("uos-prompt-cache-telemetry-model-v1", cohort.model),
         route: cohort.route,
-        account_slot_cohort: cohort.account_slot === null ? "unassigned" : accountSlotCohortLabels.get(cohort.account_slot)!,
+        account_slot_cohort: cohort.account_slot === null ? "unassigned" : requireOpaqueLabel(accountSlotCohortLabels, cohort.account_slot),
         account_cohort_id: cohort.account_cohort_id,
         prompt_cache_mode: cohort.prompt_cache_mode,
         prompt_cache_key_present: cohort.prompt_cache_key_present,
@@ -1089,7 +1113,7 @@ class Stage0CacheTelemetryAccumulator {
       )
       .map((cohort): InferenceOutcomeCohortReport => ({
         provider: cohort.provider ?? "unknown",
-        model: cohort.model === null ? "model_unknown" : outcomeModelCohortLabels.get(cohort.model)!,
+        model: cohort.model === null ? "model_unknown" : requireOpaqueLabel(outcomeModelCohortLabels, cohort.model),
         route: cohort.route,
         stream: cohort.stream,
         outcome: cohort.outcome,

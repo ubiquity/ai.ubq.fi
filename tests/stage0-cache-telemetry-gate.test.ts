@@ -35,6 +35,19 @@ const terminalLine = (overrides: Record<string, unknown> = {}): string =>
     ...overrides,
   })}`;
 
+/**
+ * Explicit form of the comparator `Array.prototype.sort` uses when none is
+ * supplied: both operands are stringified, then compared by UTF-16 code unit.
+ * Spelled out so the ordering is stated rather than implied.
+ */
+const compareAsText = (a: string | null, b: string | null): number => {
+  const left = String(a);
+  const right = String(b);
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+};
+
 Deno.test("Stage 0 cache telemetry analyzer groups completed inference and preserves null cache values", () => {
   const report = analyzeStage0CacheTelemetryLines([
     "an unrelated log line",
@@ -124,8 +137,11 @@ Deno.test("Stage 0 cache telemetry analyzer emits stable privacy-safe model and 
 
   const codexCohorts = report.cache_dimension_cohorts.filter((cohort) => cohort.provider === "chatgpt_codex");
   assert.equal(codexCohorts.length, 2);
-  assert.deepEqual(codexCohorts.map((cohort) => cohort.completed_inference).sort(), [1, 2]);
-  assert.deepEqual(codexCohorts.map((cohort) => cohort.account_cohort_id).sort(), [accountA, accountB]);
+  assert.deepEqual(
+    codexCohorts.map((cohort) => cohort.completed_inference).sort((a, b) => a - b),
+    [1, 2]
+  );
+  assert.deepEqual(codexCohorts.map((cohort) => cohort.account_cohort_id).sort(compareAsText), [accountA, accountB]);
   assert.deepEqual([...new Set(codexCohorts.map((cohort) => cohort.model_cohort_id))].length, 1);
   assert.deepEqual([...new Set(codexCohorts.map((cohort) => cohort.account_slot_cohort))], ["slot_1"]);
 
@@ -139,8 +155,8 @@ Deno.test("Stage 0 cache telemetry analyzer emits stable privacy-safe model and 
   assert.notEqual(reorderedRawModel.model, codexCohorts[0]?.model);
   const movedAccount = analyzeStage0CacheTelemetryLines([terminalLine({ model: rawModel, account_slot: 93, account_cohort_id: accountA })])
     .cache_dimension_cohorts[0];
-  assert.equal(movedAccount?.account_cohort_id, accountA);
-  assert.equal(movedAccount?.model_cohort_id, codexCohorts[0]?.model_cohort_id);
+  assert.equal(movedAccount.account_cohort_id, accountA);
+  assert.equal(movedAccount.model_cohort_id, codexCohorts[0]?.model_cohort_id);
   assert.doesNotMatch(JSON.stringify(movedAccount), /"account_slot":93/);
   const differentModel = analyzeStage0CacheTelemetryLines([terminalLine({ model: `${rawModel}-different`, account_slot: 17, account_cohort_id: accountA })]);
   assert.notEqual(differentModel.cache_dimension_cohorts[0]?.model_cohort_id, codexCohorts[0]?.model_cohort_id);
@@ -396,12 +412,15 @@ Deno.test("Stage 0 cache telemetry analyzer retains every known inference termin
     cancelled: 1,
   });
   assert.equal(outcomes.terminal_without_usage, 4);
-  assert.deepEqual(outcomes.cohorts.map((cohort) => [cohort.outcome, cohort.stream_terminal_type]).sort(), [
-    ["cancelled", "cancelled"],
-    ["failed", "deadline"],
-    ["failed", "eof"],
-    ["failed", "error"],
-  ]);
+  assert.deepEqual(
+    outcomes.cohorts.map((cohort) => [cohort.outcome, cohort.stream_terminal_type]).sort((a, b) => compareAsText(a.join(","), b.join(","))),
+    [
+      ["cancelled", "cancelled"],
+      ["failed", "deadline"],
+      ["failed", "eof"],
+      ["failed", "error"],
+    ]
+  );
   assert.equal(outcomes.cohorts.find((cohort) => cohort.outcome === "cancelled")?.model, "model_unknown");
 });
 

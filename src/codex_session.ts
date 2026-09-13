@@ -87,7 +87,9 @@ const normalizeKeyActivityRecord = (value: unknown): CodexKeyActivityRecord | nu
 const sessionIdFromMetadata = (metadata: unknown): string | null => {
   if (!isRecord(metadata) || Array.isArray(metadata)) return null;
   const sessionId = getString(metadata.session_id)?.trim();
-  return sessionId || null;
+  // An empty or whitespace-only id is absent, not a session named "".
+  if (!sessionId) return null;
+  return sessionId;
 };
 
 const classifyWithState = (
@@ -118,6 +120,39 @@ const classifyWithState = (
   };
 };
 
+const newSessionObservation = (metadataPresent: boolean, sessionIdHash: string): CodexSessionObservation => ({
+  metadata_present: metadataPresent,
+  session_id_present: true,
+  session_id_hash: sessionIdHash,
+  state: "new",
+  continuation_age_ms: null,
+  continuation_only_candidate: false,
+});
+
+type CodexSessionClassification = Readonly<{
+  metadataPresent: boolean;
+  sessionIdHash: string;
+  malformedState: boolean;
+  isNewSession: boolean;
+  existingSession: CodexSessionRecord | null;
+  existingKeyActivity: CodexKeyActivityRecord | null;
+  lastNewSessionAtMs: number | null;
+  nowMs: number;
+}>;
+
+/**
+ * Precedence is unchanged from the inline classification: malformed prior state
+ * fails closed to `unknown`, a first observation is `new`, recorded key activity
+ * is a continuation, and anything else is unknown.
+ */
+const classifyObservation = (classification: CodexSessionClassification): CodexSessionObservation => {
+  const { metadataPresent, sessionIdHash, malformedState, isNewSession, existingSession, existingKeyActivity, lastNewSessionAtMs, nowMs } = classification;
+  if (malformedState) return unknownObservation(metadataPresent, sessionIdHash, true);
+  if (isNewSession) return newSessionObservation(metadataPresent, sessionIdHash);
+  if (existingKeyActivity && lastNewSessionAtMs !== null) return classifyWithState(metadataPresent, sessionIdHash, existingSession, existingKeyActivity, nowMs);
+  return unknownObservation(metadataPresent);
+};
+
 /**
  * Observe one Responses request. Missing API-key identity, missing session
  * metadata, unavailable KV, and malformed prior state all fail closed to
@@ -143,20 +178,16 @@ export const observeCodexSession = async (keyId: string | null | undefined, clie
     const malformedState = (keyEntry.value !== null && existingKeyActivity === null) || (sessionEntry.value !== null && existingSession === null);
     const isNewSession = !malformedState && existingSession === null;
     const lastNewSessionAtMs = isNewSession ? nowMs : (existingKeyActivity?.last_new_session_at_ms ?? null);
-    const observation = malformedState
-      ? unknownObservation(metadataPresent, sessionIdHash, true)
-      : isNewSession
-        ? {
-            metadata_present: metadataPresent,
-            session_id_present: true,
-            session_id_hash: sessionIdHash,
-            state: "new" as const,
-            continuation_age_ms: null,
-            continuation_only_candidate: false,
-          }
-        : existingKeyActivity && lastNewSessionAtMs !== null
-          ? classifyWithState(metadataPresent, sessionIdHash, existingSession, existingKeyActivity, nowMs)
-          : unknownObservation(metadataPresent);
+    const observation = classifyObservation({
+      metadataPresent,
+      sessionIdHash,
+      malformedState,
+      isNewSession,
+      existingSession,
+      existingKeyActivity,
+      lastNewSessionAtMs,
+      nowMs,
+    });
 
     const nextSession: CodexSessionRecord = {
       v: 1,

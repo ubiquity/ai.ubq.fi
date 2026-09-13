@@ -6,10 +6,16 @@ import { TaskManifest, TaskOracle } from "../schemas.ts";
 const TASKS_DIR = `${Deno.cwd()}/benchmarks/tasks`;
 const FIXTURES_DIR = `${Deno.cwd()}/benchmarks/fixtures`;
 
+function requiredTask(id: string): TaskManifest {
+  const task = loadTasks(TASKS_DIR).find((candidate) => candidate.id === id);
+  if (!task) throw new Error(`missing benchmark task manifest: ${id}`);
+  return task;
+}
+
 async function withWorkspace(task: TaskManifest, fn: (ws: FixtureWorkspace) => Promise<void>): Promise<void> {
   const ws = new FixtureWorkspace({
     fixtureDir: `${FIXTURES_DIR}/${task.fixture}`,
-    runId: `oracle-test-${task.id}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
+    runId: `oracle-test-${task.id}-${Date.now()}-${crypto.randomUUID()}`,
     tmpParent: `${Deno.cwd()}/benchmark-runs/tmp`,
     task,
   });
@@ -22,7 +28,7 @@ async function withWorkspace(task: TaskManifest, fn: (ws: FixtureWorkspace) => P
 }
 
 Deno.test("oracle: file checks pass, fail, and invert", async () => {
-  const nav = loadTasks(TASKS_DIR).find((t) => t.id === "nav-001")!;
+  const nav = requiredTask("nav-001");
   await withWorkspace(nav, async (ws) => {
     ws.write("answer.txt", "docs/spec.txt");
     const oracle: TaskOracle = {
@@ -43,7 +49,7 @@ Deno.test("oracle: file checks pass, fail, and invert", async () => {
 });
 
 Deno.test("oracle: verification passes, fails, and times out", async () => {
-  const nav = loadTasks(TASKS_DIR).find((t) => t.id === "nav-001")!;
+  const nav = requiredTask("nav-001");
   await withWorkspace(nav, async (ws) => {
     ws.write("answer.txt", "docs/spec.txt");
     const ok = await runVerification({ ...nav, verify: { command: "true" } }, ws);
@@ -58,7 +64,7 @@ Deno.test("oracle: verification passes, fails, and times out", async () => {
 });
 
 Deno.test("oracle: git checks on a disposable repository", async () => {
-  const seq004 = loadTasks(TASKS_DIR).find((t) => t.id === "seq-004")!;
+  const seq004 = requiredTask("seq-004");
   await withWorkspace(seq004, async (ws) => {
     const oracle: TaskOracle = {
       git_checks: [
@@ -74,7 +80,7 @@ Deno.test("oracle: git checks on a disposable repository", async () => {
 });
 
 Deno.test("oracle: git checks without a repository fail closed", async () => {
-  const nav = loadTasks(TASKS_DIR).find((t) => t.id === "nav-001")!;
+  const nav = requiredTask("nav-001");
   await withWorkspace(nav, async (ws) => {
     const out = await evaluateOracle({ ...nav, oracle: { git_checks: [{ kind: "worktree_clean" }] } }, ws);
     if (out.passed) throw new Error("expected git check to fail when task has no git repository");

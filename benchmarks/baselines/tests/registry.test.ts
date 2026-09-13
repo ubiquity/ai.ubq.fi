@@ -28,7 +28,8 @@ Deno.test("registry: the runner refuses every baseline adapter", async () => {
           adapters: baselineAdapters(),
         });
       } catch (err) {
-        refused = String((err as Error).message).includes("external-inference") && String((err as Error).message).includes(configId);
+        const message = (err as Error).message;
+        refused = message.includes("external-inference") && message.includes(configId);
       }
       if (!refused) throw new Error(`config ${configId} was not refused by the runner`);
     }
@@ -50,7 +51,7 @@ Deno.test("registry: mixed reference + baseline selection still refuses the live
         adapters: [referenceAdapter, ...baselineAdapters()],
       });
     } catch (err) {
-      refused = String((err as Error).message).includes("external-inference");
+      refused = (err as Error).message.includes("external-inference");
     }
     if (!refused) throw new Error("the external-inference refusal must win over hermetic configs");
   } finally {

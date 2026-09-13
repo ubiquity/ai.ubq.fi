@@ -11,13 +11,22 @@ import {
   STREAM_INACTIVITY_DEADLINE_MS,
 } from "../src/inference_deadline.ts";
 
+/**
+ * Cloudflare's default proxy-read timeout: the 125-second edge limit that every
+ * inference deadline must stay inside.
+ */
+const EDGE_PROXY_READ_TIMEOUT_MS = 125_000;
+
+/** True when a deadline keeps its buffered work inside that edge limit. */
+const isInsideEdgeReadLimit = (deadlineMs: number): boolean => deadlineMs < EDGE_PROXY_READ_TIMEOUT_MS;
+
 Deno.test("inference deadlines retain guidance while buffered work stays inside the edge limit", () => {
   assert.equal(OPENAI_DEFAULT_REQUEST_TIMEOUT_MS, 10 * 60_000);
   assert.equal(OPENAI_FLEX_REQUEST_TIMEOUT_MS, 15 * 60_000);
   assert.equal(INFERENCE_DEADLINE_MS, STREAM_FIRST_EVENT_DEADLINE_MS);
   assert.equal(BUFFERED_INFERENCE_DEADLINE_MS, STREAM_FIRST_EVENT_DEADLINE_MS);
-  assert.ok(BUFFERED_INFERENCE_DEADLINE_MS < 125_000);
-  assert.ok(STREAM_FIRST_EVENT_DEADLINE_MS < 125_000);
+  assert.ok(isInsideEdgeReadLimit(BUFFERED_INFERENCE_DEADLINE_MS));
+  assert.ok(isInsideEdgeReadLimit(STREAM_FIRST_EVENT_DEADLINE_MS));
   assert.equal(STREAM_INACTIVITY_DEADLINE_MS, 120_000);
 });
 

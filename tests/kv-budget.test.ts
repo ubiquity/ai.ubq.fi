@@ -15,7 +15,12 @@ const kvFingerprint = (value: unknown): string => JSON.stringify(value, (_key, i
 const encodeBase64Url = (bytes: Uint8Array): string => {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  let encoded = btoa(binary).replace(/\+/g, "-").replace(/\//g, "_");
+  // base64 padding is a trailing run of "=". Stripping it one character at a
+  // time is linear and removes exactly what the former `/=+$/g` replacement did,
+  // which eslint's sonarjs/super-linear-regex flagged for backtracking.
+  while (encoded.endsWith("=")) encoded = encoded.slice(0, -1);
+  return encoded;
 };
 
 const encodeJsonBase64Url = (value: unknown): string => encodeBase64Url(textEncoder.encode(JSON.stringify(value)));
@@ -27,10 +32,44 @@ const toPublicKeyPem = (spki: Uint8Array): string => {
   return `-----BEGIN PUBLIC KEY-----\n${lines.join("\n")}\n-----END PUBLIC KEY-----`;
 };
 
+type CountingKvMutation =
+  { kind: "set"; key: Deno.KvKey; value: unknown } | { kind: "delete"; key: Deno.KvKey } | { kind: "sum"; key: Deno.KvKey; value: bigint };
+
+const isSumMutation = (mutation: CountingKvMutation): boolean => mutation.kind === "sum";
+
+const isKernelReservationMutation = (mutation: CountingKvMutation): boolean =>
+  mutation.kind === "set" &&
+  mutation.key[0] === "uos_ai" &&
+  mutation.key[1] === "kernel_quota" &&
+  mutation.key[2] === "v2" &&
+  String(mutation.key[3]).endsWith("reservation") &&
+  typeof mutation.value === "object" &&
+  mutation.value !== null &&
+  (mutation.value as { state?: unknown }).state === "reserved";
+
+const isKernelSettlementMutation = (mutation: CountingKvMutation): boolean =>
+  mutation.kind === "set" &&
+  mutation.key[0] === "uos_ai" &&
+  mutation.key[1] === "kernel_quota" &&
+  mutation.key[2] === "v2" &&
+  String(mutation.key[3]).endsWith("reservation") &&
+  typeof mutation.value === "object" &&
+  mutation.value !== null &&
+  ((mutation.value as { state?: unknown }).state === "committed" || (mutation.value as { state?: unknown }).state === "released");
+
+const isApiKeyV3DispatchMutation = (mutation: CountingKvMutation): boolean =>
+  mutation.kind === "set" &&
+  mutation.key[0] === "uos_ai" &&
+  mutation.key[1] === "api_key_usage" &&
+  mutation.key[2] === "v3" &&
+  typeof mutation.value === "object" &&
+  mutation.value !== null &&
+  (mutation.value as { state?: unknown }).state === "dispatched";
+
 class CountingKv {
   readonly values = new Map<string, unknown>();
-  private readonly versions = new Map<string, { fingerprint: string; revision: number }>();
-  private nextRevision = 1;
+  private readonly _versions = new Map<string, { fingerprint: string; revision: number }>();
+  private _nextRevision = 1;
   reads = 0;
   readUnits = 0;
   writes = 0;
@@ -51,30 +90,30 @@ class CountingKv {
   readonly readKeys: Deno.KvKey[] = [];
   readonly writeKeys: Deno.KvKey[] = [];
 
-  private versionstamp(key: Deno.KvKey): string | null {
+  private _versionstamp(key: Deno.KvKey): string | null {
     const encoded = encodeKey(key);
     if (!this.values.has(encoded)) return null;
     const fingerprint = kvFingerprint(this.values.get(encoded));
-    const existing = this.versions.get(encoded);
-    if (!existing || existing.fingerprint !== fingerprint) {
-      const revision = this.nextRevision++;
-      this.versions.set(encoded, { fingerprint, revision });
+    const existing = this._versions.get(encoded);
+    if (existing?.fingerprint !== fingerprint) {
+      const revision = this._nextRevision++;
+      this._versions.set(encoded, { fingerprint, revision });
       return String(revision).padStart(20, "0");
     }
     return String(existing.revision).padStart(20, "0");
   }
 
-  private write(key: Deno.KvKey, value: unknown): void {
+  private _write(key: Deno.KvKey, value: unknown): void {
     const encoded = encodeKey(key);
     this.values.set(encoded, value);
-    this.versions.set(encoded, { fingerprint: kvFingerprint(value), revision: this.nextRevision++ });
+    this._versions.set(encoded, { fingerprint: kvFingerprint(value), revision: this._nextRevision++ });
   }
 
-  private remove(key: Deno.KvKey): void {
+  private _remove(key: Deno.KvKey): void {
     const encoded = encodeKey(key);
     this.values.delete(encoded);
-    this.versions.delete(encoded);
-    this.nextRevision += 1;
+    this._versions.delete(encoded);
+    this._nextRevision += 1;
   }
 
   resetCounts(): void {
@@ -117,7 +156,7 @@ class CountingKv {
     return {
       key,
       value: value ?? null,
-      versionstamp: this.versionstamp(key),
+      versionstamp: this._versionstamp(key),
     } as Deno.KvEntryMaybe<T>;
   }
 
@@ -138,21 +177,21 @@ class CountingKv {
       return {
         key,
         value: value ?? null,
-        versionstamp: this.versionstamp(key),
+        versionstamp: this._versionstamp(key),
       };
     });
     return Promise.resolve(entries as { [K in keyof T]: Deno.KvEntryMaybe<T[K]> });
   }
 
   set(key: Deno.KvKey, value: unknown): Promise<Deno.KvCommitResult> {
-    this.write(key, value);
+    this._write(key, value);
     this.writes += 1;
     this.writeKeys.push(key);
     return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" });
   }
 
   delete(key: Deno.KvKey): Promise<void> {
-    this.remove(key);
+    this._remove(key);
     this.writes += 1;
     this.writeKeys.push(key);
     return Promise.resolve();
@@ -165,7 +204,7 @@ class CountingKv {
       const key = JSON.parse(encoded) as Deno.KvKey;
       return prefix.every((part, index) => part === key[index]);
     });
-    return (async function* () {
+    return (function* () {
       for (const [encoded, value] of entries) {
         const key = JSON.parse(encoded) as Deno.KvKey;
         yield { key, value, versionstamp: "00000000000000000001" } as Deno.KvEntry<T>;
@@ -175,9 +214,7 @@ class CountingKv {
 
   atomic(): Deno.AtomicOperation {
     const checks: Deno.KvEntryMaybe<unknown>[] = [];
-    const mutations: (
-      { kind: "set"; key: Deno.KvKey; value: unknown } | { kind: "delete"; key: Deno.KvKey } | { kind: "sum"; key: Deno.KvKey; value: bigint }
-    )[] = [];
+    const mutations: CountingKvMutation[] = [];
     const operation = {
       check: (entry: Deno.KvEntryMaybe<unknown>) => {
         checks.push(entry);
@@ -200,83 +237,54 @@ class CountingKv {
           this.failNextCommits -= 1;
           return { ok: false, versionstamp: null };
         }
-        const kernelReservation = mutations.some(
-          (mutation) =>
-            mutation.kind === "set" &&
-            mutation.key[0] === "uos_ai" &&
-            mutation.key[1] === "kernel_quota" &&
-            mutation.key[2] === "v2" &&
-            String(mutation.key[3]).endsWith("reservation") &&
-            typeof mutation.value === "object" &&
-            mutation.value !== null &&
-            (mutation.value as { state?: unknown }).state === "reserved"
-        );
-        if (kernelReservation && this.onKernelReservationCommit) {
+        if (mutations.some(isKernelReservationMutation) && this.onKernelReservationCommit) {
           const callback = this.onKernelReservationCommit;
           this.onKernelReservationCommit = null;
           callback();
         }
-        for (const entry of checks) {
-          if (this.versionstamp(entry.key) !== entry.versionstamp) {
-            return { ok: false, versionstamp: null };
-          }
+        if (checks.some((entry) => this._versionstamp(entry.key) !== entry.versionstamp)) {
+          return { ok: false, versionstamp: null };
         }
-        const hasSum = mutations.some((mutation) => mutation.kind === "sum");
-        if (hasSum) {
-          this.sumCommitAttempts += 1;
-          if (this.failNextSumCommits > 0) {
-            this.failNextSumCommits -= 1;
-            throw new Error("injected API-key usage sum failure");
-          }
+        if (mutations.some(isSumMutation)) {
+          await this._commitSumMutation();
         }
-        if (hasSum && this.sumCommitDelayMs > 0) {
-          await new Promise<void>((resolve) => setTimeout(resolve, this.sumCommitDelayMs));
-        }
-        const kernelSettlement = mutations.some(
-          (mutation) =>
-            mutation.kind === "set" &&
-            mutation.key[0] === "uos_ai" &&
-            mutation.key[1] === "kernel_quota" &&
-            mutation.key[2] === "v2" &&
-            String(mutation.key[3]).endsWith("reservation") &&
-            typeof mutation.value === "object" &&
-            mutation.value !== null &&
-            ((mutation.value as { state?: unknown }).state === "committed" || (mutation.value as { state?: unknown }).state === "released")
-        );
-        if (kernelSettlement && this.failNextKernelSettlementCommits > 0) {
+        if (mutations.some(isKernelSettlementMutation) && this.failNextKernelSettlementCommits > 0) {
           this.failNextKernelSettlementCommits -= 1;
           throw new Error("injected Kernel quota settlement failure");
         }
-        const apiKeyV3Dispatch = mutations.some(
-          (mutation) =>
-            mutation.kind === "set" &&
-            mutation.key[0] === "uos_ai" &&
-            mutation.key[1] === "api_key_usage" &&
-            mutation.key[2] === "v3" &&
-            typeof mutation.value === "object" &&
-            mutation.value !== null &&
-            (mutation.value as { state?: unknown }).state === "dispatched"
-        );
-        if (apiKeyV3Dispatch) {
+        if (mutations.some(isApiKeyV3DispatchMutation)) {
           this.onApiKeyV3DispatchCommit?.();
           if (this.apiKeyV3DispatchCommitGate) await this.apiKeyV3DispatchCommitGate;
         }
-        for (const mutation of mutations) {
-          const encoded = encodeKey(mutation.key);
-          if (mutation.kind === "delete") this.remove(mutation.key);
-          else if (mutation.kind === "set") this.write(mutation.key, mutation.value);
-          else {
-            const current = this.values.get(encoded) as Deno.KvU64 | undefined;
-            this.write(mutation.key, new Deno.KvU64((current?.value ?? 0n) + mutation.value));
-            this.sums += 1;
-          }
-          this.writes += 1;
-          this.writeKeys.push(mutation.key);
-        }
+        for (const mutation of mutations) this._applyMutation(mutation);
         return { ok: true, versionstamp: "00000000000000000001" };
       },
     };
     return operation as unknown as Deno.AtomicOperation;
+  }
+
+  private async _commitSumMutation(): Promise<void> {
+    this.sumCommitAttempts += 1;
+    if (this.failNextSumCommits > 0) {
+      this.failNextSumCommits -= 1;
+      throw new Error("injected API-key usage sum failure");
+    }
+    if (this.sumCommitDelayMs > 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, this.sumCommitDelayMs));
+    }
+  }
+
+  private _applyMutation(mutation: CountingKvMutation): void {
+    const encoded = encodeKey(mutation.key);
+    if (mutation.kind === "delete") this._remove(mutation.key);
+    else if (mutation.kind === "set") this._write(mutation.key, mutation.value);
+    else {
+      const current = this.values.get(encoded) as Deno.KvU64 | undefined;
+      this._write(mutation.key, new Deno.KvU64((current?.value ?? 0n) + mutation.value));
+      this.sums += 1;
+    }
+    this.writes += 1;
+    this.writeKeys.push(mutation.key);
   }
 }
 
@@ -422,6 +430,12 @@ const streamingRequest = (token: string, route: "responses" | "chat"): Request =
     body: JSON.stringify(route === "responses" ? { input: "ping", stream: true } : { messages: [{ role: "user", content: "ping" }], stream: true }),
   });
 
+const fetchInputUrl = (input: string | URL | Request): string => {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+};
+
 const completedSseEvent = (inputTokens = 1, outputTokens = 1): string =>
   `data: ${JSON.stringify({
     type: "response.completed",
@@ -477,10 +491,14 @@ const authoritativeCodexQuotaResponse = (): Response =>
     },
   });
 
-const deferred = <T>() => {
-  let resolve!: (value: T | PromiseLike<T>) => void;
+// A completion latch whose `resolve()` takes no value. It is deliberately not
+// generic: `deferred<void>()` would spell `void` at a call-site type-argument
+// position, which @typescript-eslint/no-invalid-void-type rejects, and `void` is
+// the only instantiation these tests use.
+const deferred = () => {
+  let resolve!: () => void;
   let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+  const promise = new Promise<void>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise;
     reject = rejectPromise;
   });
@@ -753,14 +771,14 @@ const assertOrderedTerminalTimings = (terminal: Record<string, unknown>, expects
     "latency_ms",
   ].map((field) => requiredTerminalTiming(terminal, field));
   for (let index = 1; index < ordered.length; index += 1) {
-    assert.ok(ordered[index - 1]! <= ordered[index]!, "terminal timing fields must be ordered");
+    assert.ok(ordered[index - 1] <= ordered[index], "terminal timing fields must be ordered");
   }
   if (!expectsDownstreamDrain) {
     assert.equal(terminal.downstream_drain_ms, null);
     return;
   }
   const downstreamDrain = requiredTerminalTiming(terminal, "downstream_drain_ms");
-  assert.ok(ordered[4]! + downstreamDrain <= ordered[5]!);
+  assert.ok(ordered[4] + downstreamDrain <= ordered[5]);
 };
 
 Deno.test("V3 dispatch ledger commits unlimited API-key requests exactly once", async () => {
@@ -1036,7 +1054,8 @@ Deno.test("streaming V3 quota is committed at dispatch, including premature and 
       const response = await handler(streamingRequest(token, route));
       assert.equal(response.status, 200);
       assert.equal(usageWindow(policy).committed_requests, 1, `${route} did not commit at provider dispatch`);
-      const reader = response.body!.getReader();
+      assert.ok(response.body, `${route} streaming response must expose a body`);
+      const reader = response.body.getReader();
       if (route === "responses") {
         const created = await reader.read();
         assert.equal(created.done, false);
@@ -1044,9 +1063,11 @@ Deno.test("streaming V3 quota is committed at dispatch, including premature and 
       }
 
       const completedChunk = reader.read();
-      upstream.controller!.enqueue(encoder.encode(completedSseEvent(3, 4)));
-      upstream.controller!.enqueue(encoder.encode(completedSseEvent(5, 6)));
-      upstream.controller!.close();
+      const upstreamController = upstream.controller;
+      assert.ok(upstreamController, `${route} upstream stream controller must be captured`);
+      upstreamController.enqueue(encoder.encode(completedSseEvent(3, 4)));
+      upstreamController.enqueue(encoder.encode(completedSseEvent(5, 6)));
+      upstreamController.close();
       assert.equal((await completedChunk).done, false);
       while (!(await reader.read()).done) {
         // Drain any trailing [DONE] or duplicate upstream completion chunks.
@@ -1095,12 +1116,13 @@ Deno.test("streaming V3 quota is committed at dispatch, including premature and 
         );
       const response = await handler(streamingRequest(token, route));
       assert.equal(response.status, 200);
+      assert.ok(response.body, `${route} cancelled response must expose a body`);
       if (route === "responses") {
-        const reader = response.body!.getReader();
+        const reader = response.body.getReader();
         assert.equal((await reader.read()).done, false);
         await reader.cancel("test cancelled before completion");
       } else {
-        await response.body!.cancel("test cancelled before completion");
+        await response.body.cancel("test cancelled before completion");
       }
       try {
         upstream.controller?.close();
@@ -1260,12 +1282,13 @@ Deno.test("Codex terminal health distinguishes completion, post-header failure, 
       assert.equal(afterIncomplete.last_provider_request_id, lastHealthyId);
 
       let upstreamCancelled = 0;
+      const cancelledRequestId = `${route}-cancelled`;
       globalThis.fetch = () =>
         Promise.resolve(
           new Response(
             new ReadableStream<Uint8Array>({
               start(controller) {
-                controller.enqueue(textEncoder.encode(`data: ${JSON.stringify({ type: "response.created", response: { id: `${route}-cancelled` } })}\n\n`));
+                controller.enqueue(textEncoder.encode(`data: ${JSON.stringify({ type: "response.created", response: { id: cancelledRequestId } })}\n\n`));
                 controller.enqueue(textEncoder.encode(semanticSseEvent()));
               },
               cancel() {
@@ -1274,18 +1297,19 @@ Deno.test("Codex terminal health distinguishes completion, post-header failure, 
             }),
             {
               status: 200,
-              headers: { "Content-Type": "text/event-stream", "X-Request-Id": `${route}-cancelled` },
+              headers: { "Content-Type": "text/event-stream", "X-Request-Id": cancelledRequestId },
             }
           )
         );
       const cancelled = await handler(streamingRequest(token, route));
       assert.equal(cancelled.status, 200);
+      assert.ok(cancelled.body, `${route} cancelled response must expose a body`);
       if (route === "responses") {
-        const reader = cancelled.body!.getReader();
+        const reader = cancelled.body.getReader();
         assert.equal((await reader.read()).done, false);
         await reader.cancel("client cancelled");
       } else {
-        await cancelled.body!.cancel("client cancelled");
+        await cancelled.body.cancel("client cancelled");
       }
       await waitFor(() => upstreamCancelled === 1, `${route} upstream cancellation`);
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -1370,9 +1394,11 @@ Deno.test("provider dispatch commits API-key V3 while kernel completion writes o
     assert.equal(reservedKernelWindow?.reserved_requests, 1);
 
     const body = response.text();
-    upstream.controller!.enqueue(textEncoder.encode(completedSseEvent(2, 3)));
-    upstream.controller!.enqueue(textEncoder.encode(completedSseEvent(4, 5)));
-    upstream.controller!.close();
+    const upstreamController = upstream.controller;
+    assert.ok(upstreamController, "upstream stream controller must be captured");
+    upstreamController.enqueue(textEncoder.encode(completedSseEvent(2, 3)));
+    upstreamController.enqueue(textEncoder.encode(completedSseEvent(4, 5)));
+    upstreamController.close();
     await body;
 
     assert.equal(usageWindow(policy).committed_requests, 1);
@@ -1488,8 +1514,10 @@ Deno.test("Kernel quota reserves one concurrent limit-one request and commits on
     const admitted = responses.find((response) => response.status === 200);
     assert.ok(admitted);
     const body = admitted.text();
-    upstream.controller!.enqueue(textEncoder.encode(completedSseEvent()));
-    upstream.controller!.close();
+    const upstreamController = upstream.controller;
+    assert.ok(upstreamController, "upstream stream controller must be captured");
+    upstreamController.enqueue(textEncoder.encode(completedSseEvent()));
+    upstreamController.close();
     await body;
     await waitFor(() => {
       const window = kv.values.get(encodeKey(windowKey)) as
@@ -1519,7 +1547,11 @@ Deno.test("Kernel quota reconstructs reservations after an older writer erases t
   const reservedWindow = kv.values.get(encodeKey(windowKey)) as Record<string, unknown>;
   assert.equal(reservedWindow.reserved_requests, 1);
 
-  const { reserved_requests: _erased, ...olderWriterWindow } = reservedWindow;
+  // The older writer must not carry the aggregate reservation field forward; an
+  // unused destructuring target for it is rejected by sonarjs/no-unused-vars, so
+  // the copy is built and the field erased explicitly.
+  const olderWriterWindow: Record<string, unknown> = { ...reservedWindow };
+  delete olderWriterWindow.reserved_requests;
   kv.values.set(encodeKey(windowKey), {
     ...olderWriterWindow,
     usage_requests: 1,
@@ -1571,7 +1603,8 @@ Deno.test("Kernel quota releases a cancelled stream before admitting its replace
   try {
     const first = await handler(await withKernelTestToken(streamingRequest(token, "responses"), token, owner, repo));
     assert.equal(first.status, 200);
-    await first.body!.cancel("client cancelled");
+    assert.ok(first.body, "cancelled Kernel response must expose a body");
+    await first.body.cancel("client cancelled");
     const windowKey = kernelOrgWindowKey(owner);
     await waitFor(() => {
       const window = kv.values.get(encodeKey(windowKey)) as { reserved_requests?: number } | undefined;
@@ -2234,7 +2267,7 @@ Deno.test("streaming inference emits one terminal log only after the response bo
   console.info = (...args: unknown[]) => logs.push(args);
   try {
     const requestController = new AbortController();
-    const completed = deferred<void>();
+    const completed = deferred();
     const delivery = createRequestDeliveryLifecycle(requestController.signal, completed.promise);
     const response = await handler(
       new Request("https://ai.ubq.fi/v1/responses", {
@@ -2316,7 +2349,7 @@ Deno.test("streaming timeout after dispatch emits one delivered terminal and kee
     );
   console.info = (...args: unknown[]) => logs.push(args);
   try {
-    const completed = deferred<void>();
+    const completed = deferred();
     const delivery = createRequestDeliveryLifecycle(new AbortController().signal, completed.promise);
     const response = await handler(streamingRequest(token, "responses"), { completed: completed.promise, downstreamSignal: delivery.signal });
     delivery.handoff();
@@ -2445,7 +2478,7 @@ Deno.test("semantic Responses stream drops without response.created emit one fai
     );
   console.info = (...args: unknown[]) => logs.push(args);
   try {
-    const completed = deferred<void>();
+    const completed = deferred();
     const delivery = createRequestDeliveryLifecycle(new AbortController().signal, completed.promise);
     const response = await handler(
       new Request("https://ai.ubq.fi/v1/responses", {
@@ -2458,7 +2491,7 @@ Deno.test("semantic Responses stream drops without response.created emit one fai
     delivery.handoff();
     assert.equal(response.status, 200);
     const text = await response.text();
-    const values = [...text.matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
+    const values = [...text.matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]) as Record<string, unknown>);
     assert.deepEqual(
       values.map((value) => value.type),
       ["response.output_text.delta", "response.failed"]
@@ -2675,7 +2708,7 @@ Deno.test("paid fallback releases its dispatch intent when metered quota admissi
   let meteredCalls = 0;
   Deno.env.set("METERED_API_KEY", "metered-test-key");
   globalThis.fetch = (input) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = fetchInputUrl(input);
     if (url === "https://api.openlux.ai/v1/responses") {
       meteredCalls += 1;
       return Promise.reject(new Error("Metered transport must not start"));
@@ -2696,7 +2729,7 @@ Deno.test("paid fallback releases its dispatch intent when metered quota admissi
         requestId: "fallback-pre-dispatch-quota-failure-request",
         startedAtMs: Date.now(),
         beforeProviderDispatch: (provider) =>
-          provider === "metered" ? Promise.reject(new ApiKeyQuotaDispatchError("API key quota reservation is unavailable")) : Promise.resolve(),
+          provider === "metered" ? Promise.reject(new ApiKeyQuotaDispatchError("API key quota reservation is unavailable")) : Promise.resolve(undefined),
       }
     );
     assert.equal(response.status, 503);
@@ -2814,7 +2847,7 @@ Deno.test("paid fallback terminal telemetry records Metered lifecycle", async ()
   const logs: unknown[][] = [];
   Deno.env.set("METERED_API_KEY", "metered-test-key");
   globalThis.fetch = (input) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = fetchInputUrl(input);
     if (url === "https://api.openlux.ai/v1/responses") {
       return new Promise<Response>((resolve) =>
         setTimeout(() => {
@@ -2870,7 +2903,7 @@ Deno.test("paid fallback cancellation telemetry records a cancelled Metered life
   let upstreamCancellations = 0;
   Deno.env.set("METERED_API_KEY", "metered-test-key");
   globalThis.fetch = (input) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = fetchInputUrl(input);
     if (url === "https://api.openlux.ai/v1/responses") {
       return Promise.resolve(
         new Response(
@@ -2892,7 +2925,7 @@ Deno.test("paid fallback cancellation telemetry records a cancelled Metered life
   console.info = (...args: unknown[]) => logs.push(args);
   try {
     const requestController = new AbortController();
-    const completed = deferred<void>();
+    const completed = deferred();
     const delivery = createRequestDeliveryLifecycle(requestController.signal, completed.promise);
     const response = await handler(new Request(streamingRequest(token, "responses"), { signal: requestController.signal }), {
       completed: completed.promise,

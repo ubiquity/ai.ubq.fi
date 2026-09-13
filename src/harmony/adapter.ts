@@ -96,6 +96,7 @@ const applyStrictnessMode = (tools: readonly ToolDefinition[], mode: ToolStrictn
       return normalizeToolStrictness(tools, true);
     case "preserve":
       return tools;
+    // no default
   }
 };
 
@@ -108,6 +109,116 @@ const jsonSchemaTool = (tool: ToolDefinition): Record<string, unknown> => ({
     ...(tool.strict === undefined ? {} : { strict: tool.strict }),
   },
 });
+
+/** Generic style: the gateway's existing Chat Completions shape. */
+const buildGenericHarmonyRequest = (options: HarmonyRequestOptions, strictTools: readonly ToolDefinition[]): BuiltHarmonyRequest => {
+  const messages = wireMessagesFromConversation({ turns: options.turns });
+  const body: Record<string, unknown> = {
+    model: CEREBRAS_GPT_OSS_120B_MODEL,
+    messages,
+    stream: false,
+  };
+  if (strictTools.length > 0) body.tools = strictTools.map(jsonSchemaTool);
+  if (options.reasoningEffort) body.reasoning_effort = options.reasoningEffort;
+  if (options.responseFormat) body.response_format = options.responseFormat;
+  if (options.parallelToolCalls !== undefined) body.parallel_tool_calls = options.parallelToolCalls;
+  if (options.maxCompletionTokens !== undefined) body.max_completion_tokens = options.maxCompletionTokens;
+
+  return {
+    style: "generic",
+    body,
+    metadata: {
+      model: CEREBRAS_GPT_OSS_120B_MODEL,
+      messageRoles: messages.map((message) => String(message.role)),
+      toolsRendered: strictTools.length > 0 ? "parameter" : "none",
+      toolEntries: strictTools.map((tool) => ({ name: tool.name, strict: toolStrictnessFor(tool) })),
+      toolStrictnessValues: strictTools.map(toolStrictnessFor),
+      reasoningEffortTopLevel: options.reasoningEffort ?? null,
+      reasoningEffortInSystem: false,
+      responseFormat: options.responseFormat ? options.responseFormat.type : "none",
+      parallelToolCalls: options.parallelToolCalls ?? null,
+      maxCompletionTokens: options.maxCompletionTokens ?? null,
+      analysisInWire: false,
+      assistantToolTurns: options.turns.filter((turn) => turn.role === "assistant" && turn.toolCalls.length > 0).length,
+      toolResultTurns: options.turns.filter((turn) => turn.role === "tool").length,
+    },
+  };
+};
+
+/** One native-style wire message, or null when the turn is not replayed. */
+const nativeHarmonyMessage = (turn: ConversationTurn, toolResultStyle: "tool-role" | "user-role"): Record<string, unknown> | null => {
+  if (turn.role === "system" || turn.role === "developer") return null;
+  if (turn.role === "assistant") {
+    if (turn.content === null && turn.toolCalls.length === 0) return null;
+    const message: Record<string, unknown> = {
+      role: "assistant",
+      content: turn.content ?? "",
+    };
+    if (turn.toolCalls.length > 0) {
+      message.tool_calls = turn.toolCalls.map((call) => ({
+        id: call.id,
+        type: "function",
+        function: { name: call.name, arguments: call.arguments },
+      }));
+    }
+    return message;
+  }
+  if (turn.role === "tool") {
+    if (toolResultStyle === "tool-role") {
+      return { role: "tool", tool_call_id: turn.toolCallId, content: turn.content };
+    }
+    return {
+      role: "user",
+      content: `Tool result from ${turn.name}:\n${turn.content}`,
+    };
+  }
+  return { role: "user", content: turn.content };
+};
+
+/** Native style: identity/meta/reasoning render into the system and developer messages. */
+const buildNativeHarmonyRequest = (options: HarmonyRequestOptions, strictTools: readonly ToolDefinition[]): BuiltHarmonyRequest => {
+  const systemContent = renderSystemMessage({
+    currentDate: options.currentDate ?? "2026-01-01",
+    reasoningEffort: options.reasoningEffort ?? "medium",
+  });
+  const developerContent = renderDeveloperMessage({
+    instructions: options.instructions ?? "Follow the user's request.",
+    tools: strictTools,
+    responseFormat: options.nativeResponseFormat,
+    namespace: options.namespace,
+  });
+  const toolResultStyle = options.nativeToolResultStyle ?? "tool-role";
+  const messages: Record<string, unknown>[] = [
+    { role: "system", content: systemContent },
+    { role: "developer", content: developerContent },
+  ];
+  for (const turn of options.turns) {
+    const message = nativeHarmonyMessage(turn, toolResultStyle);
+    if (message !== null) messages.push(message);
+  }
+  const result: Record<string, unknown> = { model: CEREBRAS_GPT_OSS_120B_MODEL, messages, stream: false };
+  if (options.maxCompletionTokens !== undefined) result.max_completion_tokens = options.maxCompletionTokens;
+
+  return {
+    style: "native",
+    body: result,
+    metadata: {
+      model: CEREBRAS_GPT_OSS_120B_MODEL,
+      messageRoles: messages.map((message) => String(message.role)),
+      toolsRendered: strictTools.length > 0 ? "developer" : "none",
+      toolEntries: strictTools.map((tool) => ({ name: tool.name, strict: toolStrictnessFor(tool) })),
+      toolStrictnessValues: strictTools.map(toolStrictnessFor),
+      reasoningEffortTopLevel: null,
+      reasoningEffortInSystem: true,
+      responseFormat: options.nativeResponseFormat ? "developer" : "none",
+      parallelToolCalls: null,
+      maxCompletionTokens: options.maxCompletionTokens ?? null,
+      analysisInWire: false,
+      assistantToolTurns: options.turns.filter((turn) => turn.role === "assistant" && turn.toolCalls.length > 0).length,
+      toolResultTurns: options.turns.filter((turn) => turn.role === "tool").length,
+    },
+  };
+};
 
 /**
  * Builds the request body for one model turn.  Never emits reasoning/analysis
@@ -134,111 +245,8 @@ export const buildCerebrasHarmonyRequest = (options: HarmonyRequestOptions): Bui
   }
 
   const strictTools = applyStrictnessMode(tools, toolStrictnessMode);
-
-  if (style === "generic") {
-    const messages = wireMessagesFromConversation({ turns: options.turns });
-    const body: Record<string, unknown> = {
-      model: CEREBRAS_GPT_OSS_120B_MODEL,
-      messages,
-      stream: false,
-    };
-    if (strictTools.length > 0) body.tools = strictTools.map(jsonSchemaTool);
-    if (options.reasoningEffort) body.reasoning_effort = options.reasoningEffort;
-    if (options.responseFormat) body.response_format = options.responseFormat;
-    if (options.parallelToolCalls !== undefined) body.parallel_tool_calls = options.parallelToolCalls;
-    if (options.maxCompletionTokens !== undefined) body.max_completion_tokens = options.maxCompletionTokens;
-
-    return {
-      style,
-      body,
-      metadata: {
-        model: CEREBRAS_GPT_OSS_120B_MODEL,
-        messageRoles: messages.map((message) => String(message.role)),
-        toolsRendered: strictTools.length > 0 ? "parameter" : "none",
-        toolEntries: strictTools.map((tool) => ({ name: tool.name, strict: toolStrictnessFor(tool) })),
-        toolStrictnessValues: strictTools.map(toolStrictnessFor),
-        reasoningEffortTopLevel: options.reasoningEffort ?? null,
-        reasoningEffortInSystem: false,
-        responseFormat: options.responseFormat ? options.responseFormat.type : "none",
-        parallelToolCalls: options.parallelToolCalls ?? null,
-        maxCompletionTokens: options.maxCompletionTokens ?? null,
-        analysisInWire: false,
-        assistantToolTurns: options.turns.filter((turn) => turn.role === "assistant" && turn.toolCalls.length > 0).length,
-        toolResultTurns: options.turns.filter((turn) => turn.role === "tool").length,
-      },
-    };
-  }
-
-  const systemContent = renderSystemMessage({
-    currentDate: options.currentDate ?? "2026-01-01",
-    reasoningEffort: options.reasoningEffort ?? "medium",
-  });
-  const developerContent = renderDeveloperMessage({
-    instructions: options.instructions ?? "Follow the user's request.",
-    tools: strictTools,
-    responseFormat: options.nativeResponseFormat,
-    namespace: options.namespace,
-  });
-  const toolResultStyle = options.nativeToolResultStyle ?? "tool-role";
-  const messages: Record<string, unknown>[] = [
-    { role: "system", content: systemContent },
-    { role: "developer", content: developerContent },
-  ];
-  let toolResultTurns = 0;
-  for (const turn of options.turns) {
-    if (turn.role === "system" || turn.role === "developer") continue;
-    if (turn.role === "assistant") {
-      if (turn.content === null && turn.toolCalls.length === 0) continue;
-      const message: Record<string, unknown> = {
-        role: "assistant",
-        content: turn.content ?? "",
-      };
-      if (turn.toolCalls.length > 0) {
-        message.tool_calls = turn.toolCalls.map((call) => ({
-          id: call.id,
-          type: "function",
-          function: { name: call.name, arguments: call.arguments },
-        }));
-      }
-      messages.push(message);
-      continue;
-    }
-    if (turn.role === "tool") {
-      toolResultTurns += 1;
-      if (toolResultStyle === "tool-role") {
-        messages.push({ role: "tool", tool_call_id: turn.toolCallId, content: turn.content });
-      } else {
-        messages.push({
-          role: "user",
-          content: `Tool result from ${turn.name}:\n${turn.content}`,
-        });
-      }
-      continue;
-    }
-    messages.push({ role: "user", content: turn.content });
-  }
-  const result: Record<string, unknown> = { model: CEREBRAS_GPT_OSS_120B_MODEL, messages, stream: false };
-  if (options.maxCompletionTokens !== undefined) result.max_completion_tokens = options.maxCompletionTokens;
-
-  return {
-    style,
-    body: result,
-    metadata: {
-      model: CEREBRAS_GPT_OSS_120B_MODEL,
-      messageRoles: messages.map((message) => String(message.role)),
-      toolsRendered: strictTools.length > 0 ? "developer" : "none",
-      toolEntries: strictTools.map((tool) => ({ name: tool.name, strict: toolStrictnessFor(tool) })),
-      toolStrictnessValues: strictTools.map(toolStrictnessFor),
-      reasoningEffortTopLevel: null,
-      reasoningEffortInSystem: true,
-      responseFormat: options.nativeResponseFormat ? "developer" : "none",
-      parallelToolCalls: null,
-      maxCompletionTokens: options.maxCompletionTokens ?? null,
-      analysisInWire: false,
-      assistantToolTurns: options.turns.filter((turn) => turn.role === "assistant" && turn.toolCalls.length > 0).length,
-      toolResultTurns,
-    },
-  };
+  if (style === "generic") return buildGenericHarmonyRequest(options, strictTools);
+  return buildNativeHarmonyRequest(options, strictTools);
 };
 
 const exactString = (value: unknown): string | null => (typeof value === "string" && value.length > 0 ? value : null);
@@ -270,6 +278,26 @@ const normalizeToolCallWire = (value: unknown, index: number): ToolCall | null =
   return { id, name: providerName, arguments: normalizeToolArguments(argumentsText) };
 };
 
+const reasoningFieldOf = (message: Record<string, unknown>): NormalizedChoice["reasoningField"] => {
+  if (typeof message.reasoning_content === "string") return "reasoning_content";
+  if (typeof message.reasoning === "string") return "reasoning";
+  return "none";
+};
+
+const finishReasonOf = (value: unknown): string | null => (typeof value === "string" ? value : null);
+
+const normalizeToolCallsWire = (value: unknown): readonly ToolCall[] | { error: string } => {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) return { error: "tool_calls is not an array" };
+  const toolCalls: ToolCall[] = [];
+  for (const [index, call] of value.entries()) {
+    const normalized = normalizeToolCallWire(call, index);
+    if (!normalized) return { error: `tool call ${index} is invalid` };
+    toolCalls.push(normalized);
+  }
+  return toolCalls;
+};
+
 const normalizeChoice = (value: unknown): NormalizedChoice | { error: string } => {
   if (!isRecord(value) || Array.isArray(value)) {
     return { error: "choice is not an object" };
@@ -286,26 +314,11 @@ const normalizeChoice = (value: unknown): NormalizedChoice | { error: string } =
   }
   const content = typeof message.content === "string" ? message.content : null;
   const refusal = typeof message.refusal === "string" ? message.refusal : null;
-  const reasoningField =
-    typeof message.reasoning_content === "string"
-      ? ("reasoning_content" as const)
-      : typeof message.reasoning === "string"
-        ? ("reasoning" as const)
-        : ("none" as const);
+  const reasoningField = reasoningFieldOf(message);
   const reasoning = reasoningField === "none" ? null : String(message[reasoningField]);
-
-  const toolCalls: ToolCall[] = [];
-  if (message.tool_calls !== undefined && message.tool_calls !== null) {
-    if (!Array.isArray(message.tool_calls)) return { error: "tool_calls is not an array" };
-    for (const [index, call] of message.tool_calls.entries()) {
-      const normalized = normalizeToolCallWire(call, index);
-      if (!normalized) return { error: `tool call ${index} is invalid` };
-      toolCalls.push(normalized);
-    }
-  }
-  const finishReason =
-    value.finish_reason === undefined || value.finish_reason === null ? null : typeof value.finish_reason === "string" ? value.finish_reason : null;
-  return { content, refusal, reasoning, toolCalls, finishReason, reasoningField };
+  const toolCalls = normalizeToolCallsWire(message.tool_calls);
+  if ("error" in toolCalls) return { error: toolCalls.error };
+  return { content, refusal, reasoning, toolCalls, finishReason: finishReasonOf(value.finish_reason), reasoningField };
 };
 
 /** Builds the ordered Harmony turns from a normalized choice. */
@@ -358,10 +371,8 @@ export const normalizeHarmonyChatCompletion = (
   if ("error" in choice) return { error: choice.error };
 
   const turns = harmonyTurnsFromChoice(choice);
-  const analysis = turns.filter((turn) => turn.kind === "reasoning").map((turn) => (turn.kind === "reasoning" ? turn.text : ""));
-  const visible = turns
-    .filter((turn) => turn.kind === "commentary" || turn.kind === "final")
-    .map((turn) => (turn.kind === "commentary" || turn.kind === "final" ? turn.text : ""));
+  const analysis = turns.filter((turn) => turn.kind === "reasoning").map((turn) => turn.text);
+  const visible = turns.filter((turn) => turn.kind === "commentary" || turn.kind === "final").map((turn) => turn.text);
   const content = visible.length > 0 ? visible.join("\n") : null;
   const toolCalls = turns
     .filter((turn): turn is Extract<HarmonyTurn, { kind: "tool_call" }> => turn.kind === "tool_call")
@@ -434,22 +445,25 @@ export type RunTurnResult = Readonly<
     }
 >;
 
-const upstreamErrorFromBody = (value: unknown): { code: string | null; message: string | null } | null => {
-  if (!isRecord(value) || Array.isArray(value)) return null;
-  const code = typeof value.code === "string" ? value.code : typeof value.error === "string" ? value.error : null;
-  const message = typeof value.message === "string" ? value.message : null;
-  if (code === null && message === null) {
-    const inner = value.error;
-    if (isRecord(inner) && !Array.isArray(inner)) {
-      return {
-        code: typeof inner.code === "string" ? inner.code : null,
-        message: typeof inner.message === "string" ? inner.message : null,
-      };
-    }
-    return null;
-  }
-  return { code, message };
+const upstreamErrorCode = (value: Record<string, unknown>): string | null => {
+  if (typeof value.code === "string") return value.code;
+  return typeof value.error === "string" ? value.error : null;
 };
+
+const upstreamErrorFromRecord = (value: Record<string, unknown>): { code: string | null; message: string | null } | null => {
+  const code = upstreamErrorCode(value);
+  const message = typeof value.message === "string" ? value.message : null;
+  if (code !== null || message !== null) return { code, message };
+  const inner = value.error;
+  if (!isRecord(inner) || Array.isArray(inner)) return null;
+  return {
+    code: typeof inner.code === "string" ? inner.code : null,
+    message: typeof inner.message === "string" ? inner.message : null,
+  };
+};
+
+const upstreamErrorFromBody = (value: unknown): { code: string | null; message: string | null } | null =>
+  isRecord(value) && !Array.isArray(value) ? upstreamErrorFromRecord(value) : null;
 
 /**
  * Executes one bounded model turn: builds the request, dispatches it through

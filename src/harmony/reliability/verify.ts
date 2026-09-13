@@ -20,7 +20,7 @@
  * This module performs no I/O and never executes tools.
  */
 
-import { canonicalArgs, type ResultLike } from "./loops.ts";
+import { type ResultLike } from "./loops.ts";
 
 export type VerificationKind = "read" | "shell";
 
@@ -31,8 +31,6 @@ export type VerificationKind = "read" | "shell";
  * state derivation treat them as guards, never as real tool errors.
  */
 export const GUARD_ERROR_CODES = ["duplicate_call", "repeated_failure"] as const;
-
-export type GuardErrorCode = (typeof GUARD_ERROR_CODES)[number];
 
 export type VerificationPolicy = {
   /** Reject finals while any write is unverified. Default true. */
@@ -107,64 +105,77 @@ export class VerificationTracker {
     if (tool === "task.update_plan" && result.ok) {
       // A new plan is deterministic abandonment evidence: unsolved
       // command/edit failures of the previous approach no longer block.
-      this.#unresolvedCommands.clear();
-      this.#unresolvedEdits.clear();
+      this.#abandonUnresolved();
       return null;
     }
-    if (tool === "editor.apply_patch") {
-      if (result.ok && path !== null) {
-        const marker = typeof args.new === "string" ? args.new : "";
-        this.#required += 1;
-        this.#pending.set(path, { path, marker, add: args.add === true, since: Date.now() });
-        this.#unresolvedEdits.delete(path);
-        return null;
-      }
-      if (!result.ok && path !== null) {
-        this.#unresolvedEdits.set(path, { path, since: Date.now() });
-      }
-      return null;
-    }
-    if (tool === "filesystem.read" && result.ok && path !== null) {
-      // Reading a path whose edit failed is deterministic review evidence:
-      // the model inspected the actual state before moving on.
+    if (tool === "editor.apply_patch") return this.#observeEdit(path, args, result);
+    if (tool === "filesystem.read" && result.ok && path !== null) return this.#observeRead(path, result);
+    if (tool === "shell.exec") return this.#observeExec(args, result);
+    return null;
+  }
+
+  /** Forgets every unsolved command and edit failure of the previous approach. */
+  #abandonUnresolved(): void {
+    this.#unresolvedCommands.clear();
+    this.#unresolvedEdits.clear();
+  }
+
+  /**
+   * A successful patch becomes a pending verification; a failed one becomes
+   * an unresolved edit that must be recovered before a final answer.
+   */
+  #observeEdit(path: string | null, args: Record<string, unknown>, result: ResultLike): VerificationResolution | null {
+    if (path === null) return null;
+    if (result.ok) {
+      const marker = typeof args.new === "string" ? args.new : "";
+      this.#required += 1;
+      this.#pending.set(path, { path, marker, add: args.add === true, since: Date.now() });
       this.#unresolvedEdits.delete(path);
-      const pending = this.#pending.get(path);
-      if (pending !== undefined) {
-        const output = result.output ?? "";
-        if (pending.marker === "" || output.includes(pending.marker)) {
-          this.#pending.delete(path);
-          this.#satisfied += 1;
-          return { kind: "read", paths: [path] };
-        }
-      }
       return null;
     }
-    if (tool === "shell.exec") {
-      const command = typeof args.command === "string" ? args.command : "";
-      if (result.ok) {
-        // Any successful command is recovery evidence for earlier failures.
-        this.#unresolvedCommands.clear();
-        const declared = this.policy.verificationCommand?.trim();
-        if (declared !== undefined && declared !== null && declared !== "" && command.trim() === declared) {
-          const paths = [...this.#pending.keys()];
-          this.#pending.clear();
-          this.#satisfied += paths.length;
-          return paths.length === 0 ? null : { kind: "shell", paths };
-        }
-        for (const pendingPath of [...this.#pending.keys()]) {
-          if (command.includes(pendingPath)) {
-            this.#pending.delete(pendingPath);
-            this.#satisfied += 1;
-            return { kind: "shell", paths: [pendingPath] };
-          }
-        }
-        return null;
-      }
+    this.#unresolvedEdits.set(path, { path, since: Date.now() });
+    return null;
+  }
+
+  /** A read of the written marker satisfies that path's pending verification. */
+  #observeRead(path: string, result: ResultLike): VerificationResolution | null {
+    // Reading a path whose edit failed is deterministic review evidence:
+    // the model inspected the actual state before moving on.
+    this.#unresolvedEdits.delete(path);
+    const pending = this.#pending.get(path);
+    if (pending === undefined) return null;
+    const output = result.output ?? "";
+    if (pending.marker !== "" && !output.includes(pending.marker)) return null;
+    this.#pending.delete(path);
+    this.#satisfied += 1;
+    return { kind: "read", paths: [path] };
+  }
+
+  /** A successful command recovers failures; a failed one is recorded. */
+  #observeExec(args: Record<string, unknown>, result: ResultLike): VerificationResolution | null {
+    const command = typeof args.command === "string" ? args.command : "";
+    if (!result.ok) {
       if (command !== "") {
         // Replace the previous failure record for the same command.
         this.#unresolvedCommands.set(command, { command, code: result.error_code ?? "failure", since: Date.now() });
       }
       return null;
+    }
+    // Any successful command is recovery evidence for earlier failures.
+    this.#unresolvedCommands.clear();
+    const declared = this.policy.verificationCommand?.trim() ?? "";
+    if (declared !== "" && command.trim() === declared) {
+      const paths = [...this.#pending.keys()];
+      this.#pending.clear();
+      this.#satisfied += paths.length;
+      return paths.length === 0 ? null : { kind: "shell", paths };
+    }
+    for (const pendingPath of [...this.#pending.keys()]) {
+      if (command.includes(pendingPath)) {
+        this.#pending.delete(pendingPath);
+        this.#satisfied += 1;
+        return { kind: "shell", paths: [pendingPath] };
+      }
     }
     return null;
   }
@@ -239,6 +250,39 @@ export type FinalGuardDecision = {
   attempt: FinalAttempt;
 };
 
+/** Requirements raised by writes that still await verification. */
+const unverifiedWriteRequirements = (tracker: VerificationTracker): FinalRequirement[] => {
+  const requirements: FinalRequirement[] = [];
+  for (const pending of tracker.pending()) {
+    requirements.push({
+      kind: "unverified_write",
+      message: `unverified write: ${pending.path} — verify it before answering`,
+      path: pending.path,
+    });
+  }
+  return requirements;
+};
+
+/** Requirements raised by command and edit failures that were never recovered. */
+const unresolvedFailureRequirements = (tracker: VerificationTracker): FinalRequirement[] => {
+  const requirements: FinalRequirement[] = [];
+  for (const unresolved of tracker.unresolvedCommands()) {
+    requirements.push({
+      kind: "unresolved_command",
+      message: `unresolved command failure: ${unresolved.command} — recover with a successful command before answering`,
+      command: unresolved.command,
+    });
+  }
+  for (const unresolved of tracker.unresolvedEdits()) {
+    requirements.push({
+      kind: "unresolved_edit",
+      message: `unresolved edit: ${unresolved.path} — apply the change or verify the path before answering`,
+      path: unresolved.path,
+    });
+  }
+  return requirements;
+};
+
 /**
  * Deterministic final-answer gate.  Returns `allowed: false` with every
  * blocking requirement when the claim is not yet supported by evidence.
@@ -248,32 +292,13 @@ export function guardFinal(input: FinalGuardInput): FinalGuardDecision {
   const requirements: FinalRequirement[] = [];
   const prior = [...input.previousFinals].reverse().find((f) => f.content === input.finalContent);
   const repetitions = prior === undefined ? 0 : prior.repetitions + 1;
-  const falseCompletion = prior !== undefined && prior.lastActionSeq === input.lastActionSeq;
+  const falseCompletion = prior?.lastActionSeq === input.lastActionSeq;
 
   if (policy.requireVerificationBeforeFinal) {
-    for (const pending of input.tracker.pending()) {
-      requirements.push({
-        kind: "unverified_write",
-        message: `unverified write: ${pending.path} — verify it before answering`,
-        path: pending.path,
-      });
-    }
+    requirements.push(...unverifiedWriteRequirements(input.tracker));
   }
   if (policy.requireRecoveryBeforeFinal) {
-    for (const unresolved of input.tracker.unresolvedCommands()) {
-      requirements.push({
-        kind: "unresolved_command",
-        message: `unresolved command failure: ${unresolved.command} — recover with a successful command before answering`,
-        command: unresolved.command,
-      });
-    }
-    for (const unresolved of input.tracker.unresolvedEdits()) {
-      requirements.push({
-        kind: "unresolved_edit",
-        message: `unresolved edit: ${unresolved.path} — apply the change or verify the path before answering`,
-        path: unresolved.path,
-      });
-    }
+    requirements.push(...unresolvedFailureRequirements(input.tracker));
   }
   if (policy.rejectFinalDuringLoop && input.semanticLoopStreak >= 3) {
     requirements.push({
@@ -309,6 +334,3 @@ export const renderGuardRequirements = (requirements: readonly FinalRequirement[
 
 /** Stable prefix of every harness guard message handed back to the model. */
 export const GUARD_PREFIX = "[guard] final answer rejected";
-
-/** Deterministic canonical label of a call, for guard messages. */
-export const callLabel = (tool: string, args: Record<string, unknown>): string => `${tool}(${canonicalArgs(args)})`;

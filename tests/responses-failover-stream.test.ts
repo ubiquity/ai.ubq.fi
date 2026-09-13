@@ -16,10 +16,23 @@ import type { ResponsesStreamEvent, ResponsesStreamIterator } from "../src/respo
 
 const event = (value: Record<string, unknown>): ResponsesStreamEvent => responseEventFromValue(value);
 
+// `ResponsesStreamIterator` is an `AsyncGenerator`: callers await both `next()` and
+// `return()`, so the fixture drains its events through an asynchronous source.
 const iterator = (events: ResponsesStreamEvent[]): ResponsesStreamIterator =>
   (async function* () {
-    yield* events;
+    yield* ReadableStream.from(events);
   })();
+
+// Reads through an explicitly `unknown` parameter: the failure callbacks below assign
+// their observers inside a closure, where flow analysis would narrow them to `null`.
+const isUnset = (value: unknown): boolean => value === null;
+
+const parseSseData = (payload: string | undefined): Record<string, unknown> => {
+  if (payload === undefined) throw new Error("SSE data line carried no JSON payload");
+  return JSON.parse(payload) as Record<string, unknown>;
+};
+
+const responseValues = (text: string): Record<string, unknown>[] => [...text.matchAll(/^data: (.+)$/gm)].map((match) => parseSseData(match[1]));
 
 Deno.test("Responses semantic detector ignores setup and empty deltas", () => {
   assert.equal(responsesEventSemanticKind(event({ type: "response.created", response: { id: "resp_1" } })), null);
@@ -323,8 +336,8 @@ Deno.test("Owned stream rewrites a post-release reasoning-only completion as emp
       observedUpstreamTerminal = details.upstreamTerminal;
     },
   });
-  const values = [...(await new Response(body).text()).matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
-  for (let attempt = 0; attempt < 10 && observedFailure === null; attempt += 1) {
+  const values = responseValues(await new Response(body).text());
+  for (let attempt = 0; attempt < 10 && isUnset(observedFailure); attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
   assert.deepEqual(
@@ -373,7 +386,7 @@ Deno.test("Owned stream forwards a completion whose terminal contains visible ou
       failureCount += 1;
     },
   });
-  const values = [...(await new Response(body).text()).matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
+  const values = responseValues(await new Response(body).text());
   assert.equal(values.at(-1)?.type, "response.completed");
   assert.equal(
     values.some((value) => value.type === "error"),
@@ -406,8 +419,8 @@ Deno.test("Failover warning output does not hide an empty provider completion", 
       observedUpstreamTerminal = details.upstreamTerminal;
     },
   });
-  const values = [...(await new Response(body).text()).matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
-  for (let attempt = 0; attempt < 10 && semanticCommitmentObserved === null; attempt += 1) {
+  const values = responseValues(await new Response(body).text());
+  for (let attempt = 0; attempt < 10 && isUnset(semanticCommitmentObserved); attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
   assert.equal(
@@ -451,7 +464,7 @@ Deno.test("Owned failover stream emits warning first, shifts output, and emits o
     warning: { model: "google/gemini" },
   });
   const text = await new Response(body).text();
-  const values = [...text.matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
+  const values = responseValues(text);
   assert.equal(values[0]?.type, "response.created");
   assert.match(JSON.stringify(values[3]), /Failover active/);
   const hello = values.find((value) => value.delta === "hello");
@@ -503,7 +516,7 @@ Deno.test("Owned failover stream preserves a legitimate incomplete terminal", as
     iterator: iterator([event({ type: "response.incomplete", sequence_number: 2, response: incomplete })]),
     responseId: "resp_incomplete",
   });
-  const values = [...(await new Response(body).text()).matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
+  const values = responseValues(await new Response(body).text());
   assert.equal(values.filter((value) => value.type === "response.incomplete").length, 1);
   assert.equal(values.filter((value) => value.type === "response.failed").length, 0);
   const terminal = values.at(-1)?.response as Record<string, unknown>;
@@ -539,7 +552,7 @@ Deno.test("Owned stream forwards a committed upstream error terminal", async () 
     iterator: iterator([upstreamError]),
     responseId: "resp_error",
   });
-  const values = [...(await new Response(body).text()).matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
+  const values = responseValues(await new Response(body).text());
   assert.equal(values.at(-1)?.type, "error");
   assert.equal(values.at(-1)?.code, "provider_stream_error");
   assert.equal(values.at(-1)?.message, "Provider stopped generation.");
@@ -586,12 +599,13 @@ Deno.test("Owned stream synthetic failure preserves template, text, tools, and s
     iterator: iterator([]),
     responseId: "resp_broken",
   });
-  const values = [...(await new Response(body).text()).matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
+  const values = responseValues(await new Response(body).text());
   assert.deepEqual(
     values.map((value) => value.sequence_number),
     [4, 5, 6, 7]
   );
-  const terminal = values.at(-1)!;
+  const terminal = values.at(-1);
+  assert.ok(terminal, "the synthetic failure stream emitted no terminal event");
   assert.equal(terminal.type, "response.failed");
   const response = terminal.response as Record<string, unknown>;
   assert.equal(response.created_at, 42);
@@ -627,7 +641,7 @@ Deno.test("Owned stream synthesizes a Codex failure after semantic output withou
       }),
     ],
     iterator: (async function* (): ResponsesStreamIterator {
-      yield* [];
+      yield* iterator([]);
       throw new Error("provider socket reset");
     })(),
     responseId: null,
@@ -635,13 +649,14 @@ Deno.test("Owned stream synthesizes a Codex failure after semantic output withou
       observedFailure = details;
     },
   });
-  const values = [...(await new Response(body).text()).matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
+  const values = responseValues(await new Response(body).text());
   assert.deepEqual(
     values.map((value) => value.type),
     ["response.output_text.delta", "response.failed"]
   );
   assert.equal(values.filter((value) => value.type === "error").length, 0);
-  const terminal = values.at(-1)!;
+  const terminal = values.at(-1);
+  assert.ok(terminal, "the synthesized Codex failure emitted no terminal event");
   assert.equal((terminal.response as Record<string, unknown>).id, "resp_without_created");
   assert.deepEqual(observedFailure, {
     failureKind: "read_error",
@@ -664,6 +679,10 @@ Deno.test("Owned stream closes its iterator after a post-commit validation failu
     } finally {
       returned = true;
     }
+    // The fixture supplies no further events, so the remainder of the async upstream
+    // is drained here; `yield*` over an async iterator is what keeps this stub's
+    // `AsyncGenerator` contract real (callers await both `next()` and `return()`).
+    yield* iterator([]);
     return undefined;
   })();
   let validations = 0;
@@ -706,7 +725,7 @@ Deno.test("Owned stream preserves refusal text in synthetic failure output", asy
     iterator: iterator([]),
     responseId: "resp_refusal",
   });
-  const values = [...(await new Response(body).text()).matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
+  const values = responseValues(await new Response(body).text());
   assert.match(JSON.stringify(values.at(-1)?.response), /"type":"refusal"/);
   assert.match(JSON.stringify(values.at(-1)?.response), /I cannot help with that/);
 });
@@ -745,7 +764,7 @@ Deno.test("Owned stream marks recovered text completed only after a done event",
     iterator: iterator([]),
     responseId: "resp_done_text",
   });
-  const values = [...(await new Response(body).text()).matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]!) as Record<string, unknown>);
+  const values = responseValues(await new Response(body).text());
   const response = values.at(-1)?.response as Record<string, unknown>;
   const output = response.output as Record<string, unknown>[];
   assert.equal(output.find((item) => item.id === "msg_done_text")?.status, "completed");

@@ -27,13 +27,12 @@ import { BaselineAdapterError } from "./errors.ts";
 import { type ChatTransport, gatewayChatTransport } from "./transport.ts";
 import { canonicalToolDefinitions } from "./tools.ts";
 
-export const GATEWAY_GPT_OSS_MODEL = CEREBRAS_GPT_OSS_120B_MODEL;
-
 /** Efforts accepted by the gateway for GPT-OSS (m01 probe scope). */
 export const GATEWAY_GPT_OSS_EFFORTS = ["low", "medium", "high"] as const;
 export type GatewayGptOssEffort = (typeof GATEWAY_GPT_OSS_EFFORTS)[number];
 
-export type BaselineAOptions = {
+/** Options for the gateway GPT-OSS baseline: the "A" configuration. */
+export type BaselineAlphaOptions = {
   /** Injected transport; defaults to the live gateway transport. */
   transport?: ChatTransport;
   /** Reasoning effort sent on every request; default `medium` like the gateway. */
@@ -55,6 +54,41 @@ function userMessage(ctx: AdapterRunContext): string {
   return `${ctx.task.description}\n\nThe workspace is the current working directory for shell tools.`;
 }
 
+/** `value` when it is a string, otherwise `null`. */
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+/** `value` when it is a string, otherwise `fallback`. */
+function stringOr(value: unknown, fallback: string): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+/** One wire tool call, field by field: a non-object `function` has no readable fields. */
+function toToolCall(raw: Record<string, unknown>, index: number): ToolCallWire {
+  const fn = isRecord(raw.function) ? raw.function : undefined;
+  return {
+    id: stringOr(raw.id, `gateway-call-${index + 1}`),
+    name: stringOr(fn?.name, "(unknown)"),
+    arguments: stringOr(fn?.arguments, "{}"),
+  };
+}
+
+/** Tool calls of a normalized choice; anything that is not an array means none. */
+function toToolCalls(value: unknown): ToolCallWire[] {
+  if (!Array.isArray(value)) return [];
+  return (value as Record<string, unknown>[]).map((raw, index) => toToolCall(raw, index));
+}
+
+/** Token usage of a normalized completion, or `null` when it is not a record. */
+function toUsage(value: unknown): ParsedChatCompletion["usage"] {
+  if (!isRecord(value)) return null;
+  return {
+    inputTokens: typeof value.prompt_tokens === "number" ? value.prompt_tokens : 0,
+    outputTokens: typeof value.completion_tokens === "number" ? value.completion_tokens : 0,
+  };
+}
+
 function normalizeGatewayCompletion(value: unknown): ParsedChatCompletion | { error: string } {
   const normalized = normalizeCerebrasChatCompletion(value, CEREBRAS_GPT_OSS_120B_MODEL);
   if (!normalized.ok) return { error: normalized.message };
@@ -62,34 +96,15 @@ function normalizeGatewayCompletion(value: unknown): ParsedChatCompletion | { er
   const choices = payload.choices as Record<string, unknown>[];
   const choice = choices[0] as Record<string, unknown>;
   const message = choice.message as Record<string, unknown>;
-  const content = typeof message.content === "string" ? message.content : null;
-  const toolCalls: ToolCallWire[] = [];
-  if (Array.isArray(message.tool_calls)) {
-    for (const raw of message.tool_calls as Record<string, unknown>[]) {
-      const fn = raw.function as Record<string, unknown>;
-      toolCalls.push({
-        id: typeof raw.id === "string" ? raw.id : `gateway-call-${toolCalls.length + 1}`,
-        name: typeof fn?.name === "string" ? fn.name : "(unknown)",
-        arguments: typeof fn?.arguments === "string" ? fn.arguments : "{}",
-      });
-    }
-  }
-  const usageRaw = payload.usage;
-  const usage = isRecord(usageRaw)
-    ? {
-        inputTokens: typeof usageRaw.prompt_tokens === "number" ? usageRaw.prompt_tokens : 0,
-        outputTokens: typeof usageRaw.completion_tokens === "number" ? usageRaw.completion_tokens : 0,
-      }
-    : null;
   return {
-    content,
-    toolCalls,
-    finishReason: typeof choice.finish_reason === "string" ? choice.finish_reason : null,
-    usage,
+    content: stringOrNull(message.content),
+    toolCalls: toToolCalls(message.tool_calls),
+    finishReason: stringOrNull(choice.finish_reason),
+    usage: toUsage(payload.usage),
   };
 }
 
-export function createBaselineA(options: BaselineAOptions = {}): BenchmarkAdapter {
+export function createBaselineA(options: BaselineAlphaOptions = {}): BenchmarkAdapter {
   // Runtime value may be anything; the gateway's own rule rejects "none"
   // before any request is dispatched.
   const effortValue = (options.reasoningEffort ?? "medium") as string;

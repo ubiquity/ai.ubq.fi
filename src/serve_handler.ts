@@ -12,7 +12,7 @@ export const createRequestDeliveryLifecycle = (
   };
   if (requestSignal.aborted) abortBeforeHandoff();
   else requestSignal.addEventListener("abort", abortBeforeHandoff, { once: true });
-  void completed.catch((reason) => {
+  void completed.catch((reason: unknown) => {
     if (!downstream.signal.aborted) downstream.abort(reason);
   });
   return {

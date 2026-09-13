@@ -139,13 +139,27 @@ const AUTH_POOL_IDENTITY_FINGERPRINT_VERSION = "codex-auth-pool-identity-v1";
 
 const normalizedString = (value: unknown): string | null => {
   const normalized = getString(value)?.trim();
-  return normalized || null;
+  // A whitespace-only value is absent, not an empty authoritative string.
+  if (!normalized) return null;
+  return normalized;
 };
 
 const normalizedVersionstamp = (value: unknown): string | null => normalizedString(value);
 
 const canonicalModelId = (value: Record<string, unknown>): string | null =>
   normalizedString(value.slug) ?? normalizedString(value.id) ?? normalizedString(value.model) ?? normalizedString(value.name);
+
+/**
+ * Code-unit ascending string order. This is exactly what an argument-less
+ * `Array.prototype.sort()` does for strings, so it keeps every existing
+ * ordering (and therefore every existing fingerprint) byte-identical while
+ * still giving `sort` an explicit comparator.
+ */
+const compareStrings = (left: string, right: string): number => {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+};
 
 /** JSON-like canonicalization keeps fingerprints independent of object key insertion order. */
 const canonicalJson = (value: unknown, ancestors = new WeakSet<object>()): string => {
@@ -159,7 +173,7 @@ const canonicalJson = (value: unknown, ancestors = new WeakSet<object>()): strin
     if (ancestors.has(value)) return JSON.stringify("[cycle]");
     ancestors.add(value);
     const serialized = Object.keys(value)
-      .sort()
+      .sort(compareStrings)
       .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key], ancestors)}`)
       .join(",");
     ancestors.delete(value);
@@ -169,7 +183,7 @@ const canonicalJson = (value: unknown, ancestors = new WeakSet<object>()): strin
 };
 
 const normalizeMeteredFallbackRoster = (value: MeteredFallbackRoster | undefined): MeteredFallbackRoster => {
-  if (!value || value.status !== "authoritative" || !Array.isArray(value.model_ids)) return UNKNOWN_METERED_ROSTER;
+  if (value?.status !== "authoritative" || !Array.isArray(value.model_ids)) return UNKNOWN_METERED_ROSTER;
   const modelIds = new Set<string>();
   for (const rawModelId of value.model_ids) {
     const modelId = normalizedString(rawModelId);
@@ -177,7 +191,7 @@ const normalizeMeteredFallbackRoster = (value: MeteredFallbackRoster | undefined
     if (!modelId) return UNKNOWN_METERED_ROSTER;
     modelIds.add(modelId);
   }
-  return { status: "authoritative", model_ids: [...modelIds].sort() };
+  return { status: "authoritative", model_ids: [...modelIds].sort(compareStrings) };
 };
 
 const normalizeCatalog = (value: unknown): Catalog | null => {
@@ -202,20 +216,28 @@ const normalizeCatalog = (value: unknown): Catalog | null => {
   const models = [...recordsById.entries()]
     .map(([id, records]): CatalogModel => ({
       id,
-      record: records.length === 1 ? records[0]! : null,
+      // `records` is dense, so a single entry always has an element at index 0.
+      record: records.length === 1 ? records[0] : null,
       ambiguous: records.length !== 1,
     }))
-    .sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
+    .sort((left, right) => compareStrings(left.id, right.id));
   return { snapshot: value as CodexModelsSnapshot, models };
+};
+
+/** Only a one- or two-account pool is representable; anything else counts as none. */
+const configuredSlotCountFrom = (accountCount: number): 0 | 1 | 2 => {
+  if (accountCount === 1) return 1;
+  if (accountCount === 2) return 2;
+  return 0;
 };
 
 const inspectCodexAuthPoolBinding = async (value: unknown): Promise<CodexAuthPoolBinding> => {
   const rawAccounts = isRecord(value) && Array.isArray(value.accounts) ? value.accounts : [];
-  const configuredSlotCount: 0 | 1 | 2 = rawAccounts.length === 1 ? 1 : rawAccounts.length === 2 ? 2 : 0;
+  const configuredSlotCount: 0 | 1 | 2 = configuredSlotCountFrom(rawAccounts.length);
   const parsed = parseCodexAuthPool(value);
   return {
     configuredSlotCount,
-    usableTwoSlotBinding: Boolean(parsed && parsed.accounts.length === 2),
+    usableTwoSlotBinding: parsed?.accounts.length === 2,
     identityFingerprint: parsed
       ? `sha256:${await sha256Hex(
           canonicalJson({
@@ -303,6 +325,14 @@ const targetCapabilityFingerprint = async (
 };
 
 /**
+ * Catalog-owned Codex prompt-cache qualification for one canonical catalog
+ * model. An ambiguous catalog entry is never qualified, whatever the published
+ * capability says.
+ */
+const codexCacheQualification = (snapshot: CodexModelsSnapshot, model: CatalogModel): PromptCacheScopeTarget["codex_cache_qualification"] =>
+  !model.ambiguous && isCodexModelPromptCacheScopeExperimentEligible(snapshot, model.id) ? "qualified" : "unqualified";
+
+/**
  * Pure, read-only target derivation. Identity and capability fingerprints are
  * stable across refreshes; versionstamps stay separate so a future dispatcher
  * can fence every transition without silently retargeting a campaign.
@@ -327,7 +357,7 @@ export const derivePromptCacheScopeTargetInventory = async (input: DerivePromptC
     qualification: PromptCacheScopeTarget["codex_cache_qualification"];
   }>[] = [];
   for (const model of catalog.models) {
-    const qualification = !model.ambiguous && isCodexModelPromptCacheScopeExperimentEligible(catalog.snapshot, model.id) ? "qualified" : "unqualified";
+    const qualification = codexCacheQualification(catalog.snapshot, model);
     targetDrafts.push({
       provider: PROMPT_CACHE_SCOPE_TARGET_CODEX_PROVIDER,
       telemetryProvider: PROMPT_CACHE_SCOPE_TARGET_CODEX_TELEMETRY_PROVIDER,
@@ -338,7 +368,7 @@ export const derivePromptCacheScopeTargetInventory = async (input: DerivePromptC
   for (const modelId of meteredModelIds) {
     const model = catalog.models.find((candidate) => candidate.id === modelId);
     if (!model) continue;
-    const qualification = !model.ambiguous && isCodexModelPromptCacheScopeExperimentEligible(catalog.snapshot, model.id) ? "qualified" : "unqualified";
+    const qualification = codexCacheQualification(catalog.snapshot, model);
     targetDrafts.push({
       provider: PROMPT_CACHE_SCOPE_TARGET_METERED_PROVIDER,
       telemetryProvider: PROMPT_CACHE_SCOPE_TARGET_METERED_TELEMETRY_PROVIDER,
@@ -405,7 +435,7 @@ export const derivePromptCacheScopeTargetInventory = async (input: DerivePromptC
       };
     })
   );
-  targets.sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
+  targets.sort((left, right) => compareStrings(left.id, right.id));
 
   const inventoryMaterial = canonicalJson({
     version: FINGERPRINT_VERSION,

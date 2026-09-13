@@ -104,14 +104,14 @@ class MemoryKv {
       .filter((entry) => {
         const prefix = "prefix" in selector ? selector.prefix : [];
         if (!startsWithKey(entry.key, prefix)) return false;
-        if ("start" in selector && selector.start && compareKeys(entry.key, selector.start) < 0) return false;
-        if ("end" in selector && selector.end && compareKeys(entry.key, selector.end) >= 0) return false;
+        if ("start" in selector && Array.isArray(selector.start) && compareKeys(entry.key, selector.start) < 0) return false;
+        if ("end" in selector && Array.isArray(selector.end) && compareKeys(entry.key, selector.end) >= 0) return false;
         return true;
       })
       .sort((left, right) => compareKeys(left.key, right.key));
     if (options.reverse) entries = entries.reverse();
     if (typeof options.limit === "number") entries = entries.slice(0, options.limit);
-    const iterator = (async function* (): AsyncGenerator<Deno.KvEntry<T>> {
+    const iterator = (function* (): Generator<Deno.KvEntry<T>> {
       for (const entry of entries) {
         yield {
           key: clone(entry.key),
@@ -233,8 +233,8 @@ const seedKeyRecord = (): void => {
     paid_fallback_pricing_checked_at_ms: now - 30_000,
   };
   memoryKv.entries.clear();
-  memoryKv.set(apiKeyIdKey(keyId), record);
-  memoryKv.set(apiKeyHashKey(keyHash), {
+  void memoryKv.set(apiKeyIdKey(keyId), record);
+  void memoryKv.set(apiKeyHashKey(keyHash), {
     id: record.id,
     expires_at_ms: record.expires_at_ms,
     revoked_at_ms: record.revoked_at_ms,
@@ -289,8 +289,8 @@ const settleSurplus = async (reservation: Awaited<ReturnType<typeof reserve>>): 
 };
 
 const withMeteredEnv = async (run: () => Promise<void>): Promise<void> => {
-  const originalEnvGet = Deno.env.get;
-  Deno.env.get = (name: string): string | undefined => (name === "METERED_API_KEY" ? "test-metered-key" : originalEnvGet.call(Deno.env, name));
+  const originalEnvGet = Deno.env.get.bind(Deno.env);
+  Deno.env.get = (name: string): string | undefined => (name === "METERED_API_KEY" ? "test-metered-key" : originalEnvGet(name));
   try {
     await run();
   } finally {
@@ -309,7 +309,7 @@ Deno.test("settlement writes an hourly rollup and retains the raw row for one ye
 
     const rollups = await listPaidFallbackUsageRollups(kv, { sinceMs: now - 30 * DAY_MS, nowMs: now });
     assert.equal(rollups.length, 1);
-    const rollup = rollups[0]!;
+    const rollup = rollups[0];
     assert.equal(rollup.model, "gpt-5.6-sol");
     assert.equal(rollup.provider, "surplus");
     assert.equal(rollup.request_count, 1);
@@ -523,8 +523,8 @@ Deno.test("summarize and project offer per-window rates and exhaustion estimates
   ]);
   const usage = summarizePaidFallbackUsage(series, now);
   assert.equal(usage.length, 1);
-  const windows = usage[0]!.windows;
-  const sevenDay = windows[0]!;
+  const windows = usage[0].windows;
+  const sevenDay = windows[0];
   assert.equal(sevenDay.request_count, 4);
   assert.equal(sevenDay.quota_sum, 240);
   assert.equal(sevenDay.avg_quota_per_request, 60);
@@ -562,7 +562,7 @@ Deno.test("summarize and project offer per-window rates and exhaustion estimates
   const quota = meteredQuotaRunwayView(walletSnapshot);
   assert.equal(quota.available, true);
   assert.equal(quota.balance_quota, 600);
-  const estimates = projectPaidFallbackRunway(usage[0]!, quota, now);
+  const estimates = projectPaidFallbackRunway(usage[0], quota, now);
   const thirtyDay = estimates.find((estimate) => estimate.window_days === 30);
   assert.ok(thirtyDay);
   assert.equal(thirtyDay.unlimited, false);
@@ -633,8 +633,9 @@ Deno.test("token-usage and unlimited quota modes do not fabricate estimates", ()
     total_used: tokenSnapshot.total_used,
   };
   const tokenQuota = meteredQuotaRunwayView(tokenSnapshotFull);
-  const tokenEstimates = projectPaidFallbackRunway(entry[0]!, tokenQuota, now);
-  const token30 = tokenEstimates.find((estimate) => estimate.window_days === 30)!;
+  const tokenEstimates = projectPaidFallbackRunway(entry[0], tokenQuota, now);
+  const token30 = tokenEstimates.find((estimate) => estimate.window_days === 30);
+  if (token30 === undefined) throw new Error("expected a 30-day token estimate");
   // total_available is the remaining inventory ("Available tokens"), so the
   // balance is 1000 quota units at 30 quota per request → 33 requests.
   // Subtracting total_used again would double-count consumption.
@@ -642,7 +643,7 @@ Deno.test("token-usage and unlimited quota modes do not fabricate estimates", ()
   assert.equal(token30.stale_balance, false);
 
   const staleQuota = meteredQuotaRunwayView({ ...tokenSnapshotFull, cache_state: "stale" });
-  const staleEstimates = projectPaidFallbackRunway(entry[0]!, staleQuota, now);
+  const staleEstimates = projectPaidFallbackRunway(entry[0], staleQuota, now);
   assert.equal(staleEstimates.find((estimate) => estimate.window_days === 30)?.stale_balance, true);
 
   // Surplus has its own billing and no monitored quota; never project it
@@ -665,7 +666,7 @@ Deno.test("token-usage and unlimited quota modes do not fabricate estimates", ()
     },
   ]);
   const surplusUsage = summarizePaidFallbackUsage(surplusSeries, now);
-  assert.equal(projectPaidFallbackRunway(surplusUsage[0]!, tokenQuota, now).length, 0);
+  assert.equal(projectPaidFallbackRunway(surplusUsage[0], tokenQuota, now).length, 0);
 
   const unlimitedSnapshotFull: MeteredQuotaSnapshot = {
     ...tokenSnapshotFull,
@@ -673,7 +674,7 @@ Deno.test("token-usage and unlimited quota modes do not fabricate estimates", ()
     unlimited_quota: true,
   };
   const unlimitedQuota = meteredQuotaRunwayView(unlimitedSnapshotFull);
-  const unlimitedEstimates = projectPaidFallbackRunway(entry[0]!, unlimitedQuota, now);
+  const unlimitedEstimates = projectPaidFallbackRunway(entry[0], unlimitedQuota, now);
   assert.equal(unlimitedEstimates[0]?.unlimited, true);
   assert.equal(unlimitedEstimates[0]?.requests_remaining, null);
 

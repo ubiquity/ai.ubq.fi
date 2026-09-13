@@ -200,6 +200,25 @@ const parseDetailedCredits = (value: unknown, availableCount: number): readonly 
 };
 
 /**
+ * Removes the trailing run of "/" characters. Equivalent to
+ * `value.replace(/\/+$/, "")`, but linear: that pattern backtracked over the
+ * whole trailing run at every offset, so an operator-supplied base URL such as
+ * `https://host////...////x` cost O(n^2) during configuration resolution.
+ */
+const stripTrailingSlashes = (value: string): string => {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") end--;
+  return value.slice(0, end);
+};
+
+/** The pinned Codex layouts that expose the rate-limit-reset-credit endpoints. */
+const creditPathForCodexLayout = (pathname: string): string | null => {
+  if (pathname === "/backend-api" || pathname === "/backend-api/codex") return "/backend-api/wham/rate-limit-reset-credits";
+  if (pathname === "/" || pathname === "/api/codex") return "/api/codex/rate-limit-reset-credits";
+  return null;
+};
+
+/**
  * Resolve the approved reset-credit routes from the existing Codex base. An
  * unknown layout fails closed instead of appending a speculative suffix.
  */
@@ -217,13 +236,8 @@ export const resolveCodexUsageResetCreditEndpoints = (codexBaseUrl: string): Cod
   if (base.username || base.password || base.search || base.hash) {
     throw new CodexUsageResetProviderConfigurationError("codexBaseUrl must not include credentials, a query string, or a fragment.");
   }
-  const pathname = base.pathname.replace(/\/+$/, "") || "/";
-  const creditPath =
-    pathname === "/backend-api" || pathname === "/backend-api/codex"
-      ? "/backend-api/wham/rate-limit-reset-credits"
-      : pathname === "/" || pathname === "/api/codex"
-        ? "/api/codex/rate-limit-reset-credits"
-        : null;
+  const pathname = stripTrailingSlashes(base.pathname) || "/";
+  const creditPath = creditPathForCodexLayout(pathname);
   if (!creditPath) {
     throw new CodexUsageResetProviderConfigurationError("codexBaseUrl must use the /backend-api[/codex] or /api/codex layout.");
   }
@@ -377,6 +391,16 @@ const isPositiveSafeInteger = (value: unknown): value is number => typeof value 
 const hasNonEmptyResetType = (value: unknown): value is string => typeof value === "string" && value.trim().length > 0;
 
 /**
+ * Re-reads an injected provider's contract through a nullable view.
+ *
+ * The production boundary is typed, but an adapter is still an external
+ * integration and tests inject arbitrary JavaScript (see the malformed-contract
+ * case in tests/codex-banked-reset.test.ts). The receiver is therefore treated
+ * as possibly absent here rather than trusting the declaration.
+ */
+const injectedProviderContract = (provider: Pick<CodexUsageResetProvider, "contract"> | null | undefined): unknown => provider?.contract;
+
+/**
  * Runtime validation for an injected provider's advertised capabilities.
  *
  * The production boundary is intentionally typed, but an adapter is still an
@@ -386,7 +410,7 @@ const hasNonEmptyResetType = (value: unknown): value is string => typeof value =
  */
 export const providerSupportsResetType = (provider: Pick<CodexUsageResetProvider, "contract">, resetType: unknown): boolean => {
   try {
-    const contract = provider?.contract;
+    const contract = injectedProviderContract(provider);
     return (
       isRecord(contract) &&
       Array.isArray(contract.supportedResetTypes) &&
@@ -401,7 +425,8 @@ export const providerSupportsResetType = (provider: Pick<CodexUsageResetProvider
 /** Returns whether receipt identifiers are explicitly approved for retention. */
 export const providerReceiptIdsSafeToPersistAndLog = (provider: Pick<CodexUsageResetProvider, "contract">): boolean => {
   try {
-    return provider?.contract?.receiptIdsSafeToPersistAndLog;
+    const contract = injectedProviderContract(provider);
+    return isRecord(contract) && contract.receiptIdsSafeToPersistAndLog === true;
   } catch {
     return false;
   }
@@ -410,7 +435,8 @@ export const providerReceiptIdsSafeToPersistAndLog = (provider: Pick<CodexUsageR
 /** Returns true only for a provider with documented terminal redeem outcomes. */
 export const providerTreatsRedeemOutcomeAsFinal = (provider: Pick<CodexUsageResetProvider, "contract">): boolean => {
   try {
-    return provider?.contract?.redeemOutcomeIsFinal === true;
+    const contract = injectedProviderContract(provider);
+    return isRecord(contract) && contract.redeemOutcomeIsFinal === true;
   } catch {
     return false;
   }
@@ -424,14 +450,18 @@ export const providerTreatsRedeemOutcomeAsFinal = (provider: Pick<CodexUsageRese
  */
 export const providerSupportsLiveRedemption = (provider: Pick<CodexUsageResetProvider, "contract">): boolean => {
   try {
-    const contract = provider?.contract;
+    const contract = injectedProviderContract(provider);
     if (!isRecord(contract) || !isRecord(contract.idempotency) || !isRecord(contract.lookup) || !isRecord(contract.verification)) {
       return false;
     }
     const supportsResetType = Array.isArray(contract.supportedResetTypes) && contract.supportedResetTypes.some(hasNonEmptyResetType);
     if (!supportsResetType || !contract.idempotency.callerSupplied) return false;
     if (contract.redeemOutcomeIsFinal === true) return true;
-    return isPositiveSafeInteger(contract.idempotency.retentionMs) && contract.lookup.byIdempotencyKey && contract.verification.independentlyVerifiable;
+    return (
+      isPositiveSafeInteger(contract.idempotency.retentionMs) &&
+      Boolean(contract.lookup.byIdempotencyKey) &&
+      Boolean(contract.verification.independentlyVerifiable)
+    );
   } catch {
     return false;
   }

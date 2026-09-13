@@ -83,6 +83,17 @@ export class FakeShell {
 // Fake workspace
 // ---------------------------------------------------------------------------
 
+/**
+ * Code-unit ascending order — the exact order `Array.prototype.sort` applies by
+ * default, stated explicitly so fake listings stay deterministic and locale
+ * independent (`README.md` keeps sorting before `docs/x`).
+ */
+const compareCodeUnits = (a: string, b: string): number => {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+};
+
 export type FakeWorkspaceOptions = {
   /** Label used in error messages; default `fake-workspace`. */
   label?: string;
@@ -118,7 +129,9 @@ export class FakeWorkspaceBackend implements WorkspaceBackend {
   listFiles(rel: string): string[] {
     const path = this.#resolve(rel);
     const prefix = path === "" ? "" : `${path}/`;
-    return [...this.#files.keys()].filter((file) => file.startsWith(prefix)).sort();
+    // Code-unit order (the default `sort` order), stated explicitly so the fake
+    // keeps returning the same listing regardless of locale.
+    return [...this.#files.keys()].filter((file) => file.startsWith(prefix)).sort(compareCodeUnits);
   }
 
   isAllowedWrite(rel: string): boolean {

@@ -67,7 +67,7 @@ const RECENT_MODEL_CONTEXT_RULES: readonly RecentModelContextRule[] = [
   },
   {
     model_class: "claude-4.6-4.8",
-    pattern: /^claude-(?:opus|sonnet)-4[.-](?:6|7|8)(?:-|:|$)/,
+    pattern: /^claude-(?:opus|sonnet)-4[.-][678](?:-|:|$)/,
     context_window_tokens: 1_000_000,
   },
   {
@@ -77,7 +77,7 @@ const RECENT_MODEL_CONTEXT_RULES: readonly RecentModelContextRule[] = [
   },
   {
     model_class: "glm-5.2-5.3",
-    pattern: /^(?:e2ee-)?glm-5\.(?:2|3)(?:-|:|$)/,
+    pattern: /^(?:e2ee-)?glm-5\.[23](?:-|:|$)/,
     context_window_tokens: 1_000_000,
   },
   {
@@ -87,7 +87,7 @@ const RECENT_MODEL_CONTEXT_RULES: readonly RecentModelContextRule[] = [
   },
   {
     model_class: "gemini-3.x",
-    pattern: /^gemini-3(?:[.-](?:1|5|6|7))?-(?:flash(?:-lite)?|pro)(?:-|:|$)/,
+    pattern: /^gemini-3(?:[.-][1567])?-(?:flash(?:-lite)?|pro)(?:-|:|$)/,
     context_window_tokens: 1_048_576,
   },
   {
@@ -102,7 +102,7 @@ const RECENT_MODEL_CONTEXT_RULES: readonly RecentModelContextRule[] = [
   },
   {
     model_class: "grok-4.5-4.6",
-    pattern: /^grok-4\.(?:5|6)(?:-|:|$)/,
+    pattern: /^grok-4\.[56](?:-|:|$)/,
     context_window_tokens: 500_000,
   },
   {
@@ -117,7 +117,7 @@ const RECENT_MODEL_CONTEXT_RULES: readonly RecentModelContextRule[] = [
   },
   {
     model_class: "kimi-k2.5-2.7",
-    pattern: /^kimi-k2\.(?:5|6|7)(?:-code)?(?:-|:|$)/,
+    pattern: /^kimi-k2\.[567](?:-code)?(?:-|:|$)/,
     context_window_tokens: 262_144,
   },
   {
@@ -162,7 +162,7 @@ const RECENT_MODEL_CONTEXT_RULES: readonly RecentModelContextRule[] = [
   },
   {
     model_class: "minimax-m2.5-2.7",
-    pattern: /^minimax-m2\.(?:5|7)(?:-|:|$)/,
+    pattern: /^minimax-m2\.[57](?:-|:|$)/,
     context_window_tokens: 204_800,
   },
 ];

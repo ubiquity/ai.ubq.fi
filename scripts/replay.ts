@@ -251,7 +251,7 @@ const readUpstreamTrace = (cwd: string, upstreamPath: string): SentinelUpstreamT
 const selectSupportedAttempt = (trace: SentinelUpstreamTrace): Readonly<{ provider: SupportedProvider; terminal: SupportedTerminal }> => {
   if (trace.attempts_truncated || trace.bytes_truncated || trace.chunks_truncated) unavailable();
   if (trace.attempts.length !== 1) unavailable();
-  const attempt = trace.attempts[0]!;
+  const attempt = trace.attempts[0];
   // Cerebras is a chat-completions transport and is never replayed here.
   if (attempt.provider !== "chatgpt_codex" && attempt.provider !== "surplus" && attempt.provider !== "metered") {
     unavailable();
@@ -334,7 +334,7 @@ const emptyParserEvidence = (): ParserEvidence => ({
 const observeParserIterator = (iterator: ResponsesStreamIterator, evidence: ParserEvidence): ResponsesStreamIterator =>
   (async function* (): AsyncGenerator<ResponsesStreamEvent, unknown, unknown> {
     try {
-      while (true) {
+      for (;;) {
         let next: IteratorResult<ResponsesStreamEvent, unknown>;
         try {
           next = await iterator.next();
@@ -343,9 +343,12 @@ const observeParserIterator = (iterator: ResponsesStreamIterator, evidence: Pars
           else evidence.otherFailure = true;
           throw error;
         }
-        if (next.done || !next.value) {
+        // `done` is a discriminant, but what the iterator produced stays unknown:
+        // a falsy value is exhaustion, not an event to hand to the converter.
+        const { value } = next;
+        if (next.done || !value) {
           if (evidence.upstreamTerminalType === null) evidence.exhaustedWithoutTerminal = true;
-          return next.value;
+          return value;
         }
         if (next.value.terminal) evidence.upstreamTerminalType ??= next.value.type;
         yield next.value;
@@ -477,7 +480,10 @@ const runReplaySequence = async (
 ): Promise<ReplayOutcome> => {
   let prepared: PreparedResponsesStream;
   try {
-    const preflight = await preflightResponsesStream(response.body!);
+    // The owned response always carries a body (see openRecordedResponse); this
+    // keeps the precommit classification of that impossible case unchanged.
+    if (!response.body) unavailable();
+    const preflight = await preflightResponsesStream(response.body);
     const replayed = (async function* (): AsyncGenerator<ResponsesStreamEvent> {
       try {
         yield preflight.first;

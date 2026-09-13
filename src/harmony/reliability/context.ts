@@ -161,8 +161,11 @@ export function extractPairs(conversation: Conversation): readonly ConversationP
     const turn = turns[i];
     if (turn.role !== "assistant" || turn.toolCalls.length !== 1) continue;
     const call = turn.toolCalls[0];
-    const next = turns[i + 1];
-    if (next === undefined || next.role !== "tool" || next.toolCallId !== call.id) continue;
+    // `.at()` keeps the out-of-bounds case honest: the last turn of a
+    // conversation may be an assistant call whose result turn never arrived.
+    const next = turns.at(i + 1);
+    if (next === undefined) continue;
+    if (next.role !== "tool" || next.toolCallId !== call.id) continue;
     pairs.push({
       assistantIndex: i,
       resultIndex: i + 1,
@@ -310,5 +313,3 @@ export function renderStructuredContext(state: StructuredTaskState, conversation
   ].join("\n");
   return body;
 }
-
-export const estimateStructuredContextTokens = (text: string): number => estimateTokens(text);

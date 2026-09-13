@@ -16,7 +16,7 @@ Deno.test("a caller-handled rejecting fetch does not create an unhandled network
   };
 
   globalThis.addEventListener("unhandledrejection", onUnhandled);
-  delete traceGlobal[INSTALL_FLAG];
+  Reflect.deleteProperty(traceGlobal, INSTALL_FLAG);
   globalThis.fetch = () => Promise.reject(new TypeError("caller catches this fetch rejection"));
 
   try {
@@ -28,6 +28,6 @@ Deno.test("a caller-handled rejecting fetch does not create an unhandled network
     globalThis.fetch = originalFetch;
     globalThis.removeEventListener("unhandledrejection", onUnhandled);
     if (hadInstallFlag) traceGlobal[INSTALL_FLAG] = originalInstallFlag;
-    else delete traceGlobal[INSTALL_FLAG];
+    else Reflect.deleteProperty(traceGlobal, INSTALL_FLAG);
   }
 });

@@ -10,7 +10,6 @@ import { sha256Hex } from "./utils.ts";
 export const PROMPT_CACHE_TELEMETRY_GATE_KV_PREFIX = ["uos_ai", "prompt_cache_telemetry_gate", "v1"] as const;
 export const PROMPT_CACHE_TELEMETRY_MIN_COMPLETED = 10_000;
 export const PROMPT_CACHE_TELEMETRY_MIN_COMPLETED_PER_ROUTE = 1_000;
-export const PROMPT_CACHE_TELEMETRY_MIN_REPORTED_COVERAGE = 0.995;
 
 export const PROMPT_CACHE_TELEMETRY_PROVIDERS = ["chatgpt_codex", "metered", "surplus"] as const;
 export const PROMPT_CACHE_TELEMETRY_ROUTES = ["responses", "chat.completions"] as const;
@@ -153,8 +152,7 @@ const asRoute = (value: unknown): PromptCacheTelemetryRoute | null =>
 const isCompleted2xx = (event: PromptCacheTelemetryEvent): boolean =>
   event.completed && Number.isInteger(event.status) && event.status >= 200 && event.status < 300;
 
-const resolveRelease = (options: PromptCacheTelemetryGateOptions): string | null =>
-  normalizedRelease(options.release === undefined ? RELEASE_GIT_SHA : options.release);
+const resolveRelease = (options: PromptCacheTelemetryGateOptions): string | null => normalizedRelease(options.release ?? RELEASE_GIT_SHA);
 
 const resolveKv = async (options: PromptCacheTelemetryGateOptions): Promise<Deno.Kv | null> => {
   try {
@@ -194,6 +192,12 @@ const recordResult = (
 
 const isKvU64 = (value: unknown): value is Deno.KvU64 => value instanceof Deno.KvU64 && typeof value.value === "bigint" && value.value >= 0n;
 
+/** A missing sibling counter counts as zero; a present but malformed one is invalid. */
+const siblingCounter = (missing: boolean, value: unknown): bigint | null => {
+  if (missing) return 0n;
+  return isKvU64(value) ? value.value : null;
+};
+
 const counterPair = (completedValue: unknown, reportedValue: unknown, cacheWriteReportedValue: unknown, invalidValue: unknown): CounterPair | null => {
   const completedMissing = completedValue === null;
   const reportedMissing = reportedValue === null;
@@ -203,9 +207,9 @@ const counterPair = (completedValue: unknown, reportedValue: unknown, cacheWrite
     return { completed: 0n, reported: 0n, cacheWriteReported: 0n, invalid: 0n };
   }
   if (completedMissing || !isKvU64(completedValue)) return null;
-  const reported = reportedMissing ? 0n : isKvU64(reportedValue) ? reportedValue.value : null;
-  const cacheWriteReported = cacheWriteReportedMissing ? 0n : isKvU64(cacheWriteReportedValue) ? cacheWriteReportedValue.value : null;
-  const invalid = invalidMissing ? 0n : isKvU64(invalidValue) ? invalidValue.value : null;
+  const reported = siblingCounter(reportedMissing, reportedValue);
+  const cacheWriteReported = siblingCounter(cacheWriteReportedMissing, cacheWriteReportedValue);
+  const invalid = siblingCounter(invalidMissing, invalidValue);
   if (reported === null || cacheWriteReported === null || invalid === null) return null;
   if (reported > completedValue.value || cacheWriteReported > reported || invalid > completedValue.value) return null;
   if (reported + invalid > completedValue.value) return null;
@@ -245,9 +249,6 @@ const unavailableBaseline = (
   aggregate: null,
   routes: [],
 });
-
-/** Returns the current immutable release identity, or null when this artifact is not deploy-attested. */
-export const getCurrentPromptCacheTelemetryRelease = (): string | null => normalizedRelease(RELEASE_GIT_SHA);
 
 /**
  * Resolves only opaque Deno KV counter keys for a valid target. It performs no
@@ -427,19 +428,17 @@ export const readPromptCacheTelemetryBaseline = async (
   const everyObservedRouteReported = observedRoutes.every((route) => route.reported_coverage_passed);
   const everyObservedRouteCacheWriteReported = observedRoutes.every((route) => route.cache_write_reported_coverage_passed);
 
-  const reason = !aggregateCompletedPassed
-    ? "aggregate_completed_below_minimum"
-    : !everyObservedRouteCompleted
-      ? "route_completed_below_minimum"
-      : !aggregateSummary.reported_coverage_passed
-        ? "aggregate_reported_coverage_below_minimum"
-        : !everyObservedRouteReported
-          ? "route_reported_coverage_below_minimum"
-          : !aggregateSummary.cache_write_reported_coverage_passed
-            ? "aggregate_cache_write_reported_coverage_below_minimum"
-            : !everyObservedRouteCacheWriteReported
-              ? "route_cache_write_reported_coverage_below_minimum"
-              : "eligible";
+  // Ordered fail-closed gate list: the first unmet threshold names the reason.
+  const eligibilityGates: readonly Readonly<{ passed: boolean; reason: PromptCacheTelemetryBaselineResult["reason"] }>[] = [
+    { passed: aggregateCompletedPassed, reason: "aggregate_completed_below_minimum" },
+    { passed: everyObservedRouteCompleted, reason: "route_completed_below_minimum" },
+    { passed: aggregateSummary.reported_coverage_passed, reason: "aggregate_reported_coverage_below_minimum" },
+    { passed: everyObservedRouteReported, reason: "route_reported_coverage_below_minimum" },
+    { passed: aggregateSummary.cache_write_reported_coverage_passed, reason: "aggregate_cache_write_reported_coverage_below_minimum" },
+    { passed: everyObservedRouteCacheWriteReported, reason: "route_cache_write_reported_coverage_below_minimum" },
+  ];
+  const failedGate = eligibilityGates.find((gate) => !gate.passed);
+  const reason: PromptCacheTelemetryBaselineResult["reason"] = failedGate ? failedGate.reason : "eligible";
 
   return {
     status: reason === "eligible" ? "eligible" : "not_ready",

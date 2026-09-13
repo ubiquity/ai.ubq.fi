@@ -18,7 +18,8 @@ function freshOptions() {
 Deno.test("reliability: derives evidence from a recorded reference trajectory", async () => {
   const { runsRoot } = freshOptions();
   try {
-    const task = loadTasks(TASKS_DIR).find((t) => t.id === "nav-001")!;
+    const task = loadTasks(TASKS_DIR).find((t) => t.id === "nav-001");
+    assert.ok(task);
     const { events } = await runOne(task, referenceAdapter, {
       configs: ["reference"],
       taskSelectors: ["nav-001"],
@@ -111,7 +112,8 @@ Deno.test("reliability: trailing invalid streak is counted deterministically", (
 Deno.test("reliability: the runner attaches a validated summary to every result", async () => {
   const { runsRoot } = freshOptions();
   try {
-    const task = loadTasks(TASKS_DIR).find((t) => t.id === "nav-001")!;
+    const task = loadTasks(TASKS_DIR).find((t) => t.id === "nav-001");
+    assert.ok(task);
     const { result } = await runOne(task, referenceAdapter, {
       configs: ["reference"],
       taskSelectors: ["nav-001"],

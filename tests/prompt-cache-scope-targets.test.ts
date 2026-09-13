@@ -34,10 +34,10 @@ const makePool = (slots: number): unknown => ({
 });
 
 const makeNamedPool = (accountIds: readonly string[], tokenVersion: string): unknown => ({
-  accounts: accountIds.map((account_id, index) => ({
+  accounts: accountIds.map((accountId, index) => ({
     access_token: `access-${tokenVersion}-${index + 1}`,
     refresh_token: `refresh-${tokenVersion}-${index + 1}`,
-    account_id,
+    account_id: accountId,
     updated_at_ms: tokenVersion.length + index,
   })),
   updated_at_ms: tokenVersion.length,

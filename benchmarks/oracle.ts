@@ -34,7 +34,8 @@ export async function runVerification(task: TaskManifest, workspace: FixtureWork
 }
 
 function checkFile(check: FileCheck, workspace: FixtureWorkspace): OracleCheckOutcome {
-  const detail = `${check.path}: ${check.kind}${check.value === undefined ? "" : ` ${JSON.stringify(check.value)}`}`;
+  const valueSuffix = check.value === undefined ? "" : ` ${JSON.stringify(check.value)}`;
+  const detail = `${check.path}: ${check.kind}${valueSuffix}`;
   let positive: boolean;
   let unreadable = "";
   try {
@@ -52,6 +53,10 @@ function checkFile(check: FileCheck, workspace: FixtureWorkspace): OracleCheckOu
       case "regex":
         positive = new RegExp(check.value ?? "").test(content);
         break;
+      default:
+        // Unknown check kinds cannot be confirmed, so the check fails closed.
+        positive = false;
+        break;
     }
   } catch (err) {
     // Missing or unreadable files pass the invert of a positive check.
@@ -64,7 +69,8 @@ function checkFile(check: FileCheck, workspace: FixtureWorkspace): OracleCheckOu
 
 async function gitCheck(check: GitCheck, workspace: FixtureWorkspace): Promise<OracleCheckOutcome> {
   const git = workspace.task.git;
-  const detail = `git: ${check.kind}${check.value === undefined ? "" : ` ${JSON.stringify(check.value)}`}`;
+  const valueSuffix = check.value === undefined ? "" : ` ${JSON.stringify(check.value)}`;
+  const detail = `git: ${check.kind}${valueSuffix}`;
   if (!git?.init) {
     return { kind: "git", detail: `${detail} (task has no git repository)`, passed: false };
   }
@@ -103,6 +109,9 @@ async function gitCheck(check: GitCheck, workspace: FixtureWorkspace): Promise<O
         passed: tracked.code === 0 && dirty.code === 0 && dirty.stdout.trim() === "",
       };
     }
+    default:
+      // Unknown check kinds cannot be evaluated, so the check fails closed.
+      return { kind: "git", detail: `${detail} (unsupported check kind)`, passed: false };
   }
 }
 

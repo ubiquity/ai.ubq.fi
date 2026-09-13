@@ -273,8 +273,7 @@ const readBackfillableEvents = async (kv: Deno.Kv, cutoffMs: number, nowMs: numb
     }
     for await (const entry of kv.list({ prefix: CODEX_RESET_REDEMPTION_KV_PREFIX })) {
       const record = parseCodexResetRedemptionRecord(entry.value);
-      if (!record || record.state !== "verified" || record.verified_at_ms === null || record.verified_at_ms < cutoffMs || record.verified_at_ms > nowMs)
-        continue;
+      if (record?.state !== "verified" || record.verified_at_ms === null || record.verified_at_ms < cutoffMs || record.verified_at_ms > nowMs) continue;
       const fence = decisions.find(
         (candidate) => candidate.account_id_hash === record.account_id_hash && candidate.quota_generation === record.quota_generation
       );

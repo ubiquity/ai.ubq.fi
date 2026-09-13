@@ -35,9 +35,9 @@ import { runTool } from "../tools/router.ts";
 import { toolDefinitions } from "../tools/schemas.ts";
 import { compactTranscript, type ContextBudgetKind, estimateRequestTokens, renderStructuredContext, serializeToolResultContent } from "./context.ts";
 import { classifyReliability, type ReliabilityClassification } from "./failure.ts";
-import { invalidCallLabel, renderValidationFeedback, validateToolArgumentsDetailed } from "./feedback.ts";
-import { callIdentity, LoopDetector, renderLoopFeedback } from "./loops.ts";
-import { decideRetry, DEFAULT_RETRY_POLICY, renderRepeatedFailureFeedback, RetryLedger, type RetryPolicy } from "./retry.ts";
+import { invalidCallLabel, renderValidationFeedback, validateToolArgumentsDetailed, type DetailedValidationResult } from "./feedback.ts";
+import { callIdentity, type DuplicateFlag, LoopDetector, renderLoopFeedback } from "./loops.ts";
+import { decideRetry, DEFAULT_RETRY_POLICY, renderRepeatedFailureFeedback, RetryLedger, type RetryDecision, type RetryPolicy } from "./retry.ts";
 import { emptyTaskState, type FinalObservation, reduceFinalAttempt, reduceToolObservation, type StructuredTaskState, type TaskPhase } from "./state.ts";
 import {
   DEFAULT_VERIFICATION_POLICY,
@@ -129,13 +129,58 @@ export const renderCanonicalPolicy = (opts: Readonly<{ tools: readonly string[];
     "- Answer only when everything is verified.",
   ].join("\n");
 
-/**
- * Runs the canonical reliability loop to completion (or a deterministic
- * failure).  Every attempt is emitted through {@link HarnessOptions.emit} and
- * persisted in {@link HarnessOutcome.events}; the authoritative conversation
- * is kept in full and only the model-facing view is compacted.
- */
-export async function runReliabilityHarness(opts: HarnessOptions): Promise<HarnessOutcome> {
+/** Mutable state of one harness run: resolved options, counters, transcript. */
+type HarnessRun = {
+  readonly tools: readonly ToolDefinition[];
+  readonly retryPolicy: RetryPolicy;
+  readonly verificationPolicy: VerificationPolicy;
+  readonly budget: ContextBudgetKind;
+  readonly mode: "full" | "structured";
+  readonly maxTurns: number;
+  readonly maxToolCalls: number;
+  readonly invalidCallStreakLimit: number;
+  readonly loopThreshold: number;
+  readonly maxGuardRejections: number;
+  readonly maxCompletionTokens: number;
+  readonly detector: LoopDetector;
+  readonly tracker: VerificationTracker;
+  readonly retryLedger: RetryLedger;
+  readonly events: HarnessEvent[];
+  readonly finals: FinalObservation[];
+  readonly finalAttemptLog: FinalAttempt[];
+  conversation: Conversation;
+  state: StructuredTaskState;
+  seq: number;
+  modelCalls: number;
+  requestCounter: number;
+  invalidStreak: number;
+  guardRejections: number;
+  finalAttempts: number;
+  emittedToolCalls: number;
+  loopGuardEmitted: boolean;
+};
+
+/** Every deterministic abort reason the loop can report. */
+type HarnessAbortReason =
+  | "signal"
+  | "tool_call_limit"
+  | "invalid_config"
+  | "transport_failed"
+  | "no_model_output"
+  | "invalid_argument_loop"
+  | "false_completion"
+  | "guard_exhausted"
+  | "turn_limit";
+
+/** One transport attempt outcome inside the bounded retry loop. */
+type ModelTransportAttempt =
+  | Readonly<{ kind: "aborted" }>
+  | Readonly<{ kind: "retry" }>
+  | Readonly<{ kind: "stop" }>
+  | Readonly<{ kind: "response"; normalized: NormalizedAssistantResponse }>;
+
+/** Resolves every option default and seeds the transcript and counters. */
+const createHarnessRun = (opts: HarnessOptions): HarnessRun => {
   const tools = opts.tools ?? toolDefinitions();
   const retryPolicy = opts.retryPolicy ?? DEFAULT_RETRY_POLICY;
   const verificationPolicy: VerificationPolicy = {
@@ -155,297 +200,411 @@ export async function runReliabilityHarness(opts: HarnessOptions): Promise<Harne
   const detector = new LoopDetector();
   const tracker = new VerificationTracker(verificationPolicy);
   const retryLedger = new RetryLedger(retryPolicy);
-  const events: HarnessEvent[] = [];
-  const emit = (event: HarnessEvent): void => {
-    events.push(event);
-    opts.emit?.(event);
-  };
-  const sleep = (ms: number): Promise<void> => (ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve());
 
   let conversation = createConversation();
   if (opts.systemPrompt) conversation = appendTurn(conversation, { role: "system", content: opts.systemPrompt });
   conversation = appendUser(conversation, opts.userPrompt);
 
-  let state: StructuredTaskState = emptyTaskState();
-  let seq = 0;
-  let modelCalls = 0;
-  let requestCounter = 0;
-  let invalidStreak = 0;
-  let guardRejections = 0;
-  let finalAttempts = 0;
-  let emittedToolCalls = 0;
-  let loopGuardEmitted = false;
-  const finals: FinalObservation[] = [];
-  const finalAttemptLog: FinalAttempt[] = [];
-
-  const classify = (abortedReason: string | null): ReliabilityClassification =>
-    classifyReliability({
-      state,
-      invalidCallStreak: invalidStreak,
-      loopStreak: state.semanticLoopStreak,
-      guardRejections,
-      finalAccepted: finals.some((f) => f.accepted),
-      abortedReason,
-    });
-
-  const abort = (reason: string): HarnessOutcome => ({
-    phase: reason === "signal" ? "aborted" : "failed",
-    finalContent: null,
+  return {
+    tools,
+    retryPolicy,
+    verificationPolicy,
+    budget,
+    mode,
+    maxTurns,
+    maxToolCalls,
+    invalidCallStreakLimit,
+    loopThreshold,
+    maxGuardRejections,
+    maxCompletionTokens,
+    detector,
+    tracker,
+    retryLedger,
+    events: [],
+    finals: [],
+    finalAttemptLog: [],
     conversation,
-    state,
-    classification: classify(reason),
-    events,
-    modelCalls,
-    abortedReason: reason,
+    state: emptyTaskState(),
+    seq: 0,
+    modelCalls: 0,
+    requestCounter: 0,
+    invalidStreak: 0,
+    guardRejections: 0,
+    finalAttempts: 0,
+    emittedToolCalls: 0,
+    loopGuardEmitted: false,
+  };
+};
+
+/** Records one event in the run and forwards it to the caller's sink. */
+const emitHarnessEvent = (run: HarnessRun, opts: HarnessOptions, event: HarnessEvent): void => {
+  run.events.push(event);
+  opts.emit?.(event);
+};
+
+/** Deterministic backoff sleep (a zero delay resolves without a timer). */
+const sleepMs = (ms: number): Promise<void> => (ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve());
+
+/** Advisory reliability classification of the state reached so far. */
+const classifyRun = (run: HarnessRun, abortedReason: string | null): ReliabilityClassification =>
+  classifyReliability({
+    state: run.state,
+    invalidCallStreak: run.invalidStreak,
+    loopStreak: run.state.semanticLoopStreak,
+    guardRejections: run.guardRejections,
+    finalAccepted: run.finals.some((f) => f.accepted),
+    abortedReason,
   });
 
-  const requestConversationFor = (): Conversation => {
-    if (mode === "full") return compactTranscript(conversation, { budget }).conversation;
-    const text = renderStructuredContext(state, conversation, {
-      maxTailTurns: TAIL_TURNS_FOR_BUDGET[budget],
+/** Terminates the run with a deterministic failure/abort outcome. */
+const abortRun = (run: HarnessRun, reason: HarnessAbortReason): HarnessOutcome => ({
+  phase: reason === "signal" ? "aborted" : "failed",
+  finalContent: null,
+  conversation: run.conversation,
+  state: run.state,
+  classification: classifyRun(run, reason),
+  events: run.events,
+  modelCalls: run.modelCalls,
+  abortedReason: reason,
+});
+
+/** Terminates the run with an accepted final answer. */
+const completeRun = (run: HarnessRun, content: string): HarnessOutcome => ({
+  phase: "completed",
+  finalContent: content,
+  conversation: run.conversation,
+  state: run.state,
+  classification: classifyRun(run, null),
+  events: run.events,
+  modelCalls: run.modelCalls,
+  abortedReason: null,
+});
+
+/** The model-facing conversation of the next request (full or structured). */
+const requestConversationFor = (run: HarnessRun, opts: HarnessOptions): Conversation => {
+  if (run.mode === "full") return compactTranscript(run.conversation, { budget: run.budget }).conversation;
+  const text = renderStructuredContext(run.state, run.conversation, {
+    maxTailTurns: TAIL_TURNS_FOR_BUDGET[run.budget],
+  });
+  const head = run.conversation.turns.filter((turn) => turn.role === "system" || turn.role === "developer");
+  return createConversation([...head, { role: "user", content: `${opts.userPrompt}\n\n${text}` }]);
+};
+
+/** Appends the assistant tool-call turn and its recorded tool result. */
+const appendToolPair = (run: HarnessRun, call: ToolCall, result: ToolResult, analysis: readonly string[]): void => {
+  run.conversation = appendTurn(run.conversation, assistantTurn(call, analysis));
+  run.conversation = appendTurn(run.conversation, {
+    role: "tool",
+    toolCallId: call.id,
+    name: call.name,
+    content: serializeToolResultContent(result),
+  });
+};
+
+/** Builds one Harmony request, or null when the configuration is unusable. */
+const buildHarnessRequest = (run: HarnessRun, opts: HarnessOptions): BuiltHarmonyRequest | null => {
+  try {
+    return buildCerebrasHarmonyRequest({
+      style: "generic",
+      turns: requestConversationFor(run, opts).turns,
+      tools: run.tools,
+      reasoningEffort: opts.reasoningEffort ?? "low",
+      maxCompletionTokens: run.maxCompletionTokens,
     });
-    const head = conversation.turns.filter((turn) => turn.role === "system" || turn.role === "developer");
-    return createConversation([...head, { role: "user", content: `${opts.userPrompt}\n\n${text}` }]);
-  };
-
-  const appendToolPair = (call: ToolCall, result: ToolResult, analysis: readonly string[]): void => {
-    conversation = appendTurn(conversation, assistantTurn(call, analysis));
-    conversation = appendTurn(conversation, {
-      role: "tool",
-      toolCallId: call.id,
-      name: call.name,
-      content: serializeToolResultContent(result),
-    });
-  };
-
-  for (let turn = 0; turn < maxTurns; turn++) {
-    if (opts.signal?.aborted) return abort("signal");
-    if (emittedToolCalls >= maxToolCalls) return abort("tool_call_limit");
-
-    let built: BuiltHarmonyRequest;
-    try {
-      built = buildCerebrasHarmonyRequest({
-        style: "generic",
-        turns: requestConversationFor().turns,
-        tools,
-        reasoningEffort: opts.reasoningEffort ?? "low",
-        maxCompletionTokens,
-      });
-    } catch {
-      return abort("invalid_config");
-    }
-
-    // Transport with deterministic retry (transient only).
-    let normalized: NormalizedAssistantResponse | null = null;
-    for (let attempt = 0; attempt <= retryPolicy.maxRetriesPerCall; attempt++) {
-      if (opts.signal?.aborted) return abort("signal");
-      requestCounter += 1;
-      const requestId = requestCounter;
-      emit({ type: "model_request", id: requestId, mode, built, estimatedTokens: estimateRequestTokens(built.body) });
-      let response: Response;
-      try {
-        response = await opts.transport(built.body, { signal: opts.signal });
-      } catch {
-        if (opts.signal?.aborted) return abort("signal");
-        await sleep(retryPolicy.backoffMs);
-        continue;
-      }
-      if (!response.ok) {
-        await response.body?.cancel().catch(() => undefined);
-        if (!isTransientHttpStatus(response.status)) break;
-        await sleep(retryPolicy.backoffMs);
-        continue;
-      }
-      const body = await response.json().catch(() => null);
-      if (body === null) {
-        await sleep(retryPolicy.backoffMs);
-        continue;
-      }
-      const candidate = normalizeHarmonyChatCompletion(body);
-      if ("error" in candidate) {
-        await sleep(retryPolicy.backoffMs);
-        continue;
-      }
-      normalized = candidate;
-      emit({
-        type: "model_response",
-        requestId,
-        normalized,
-        estimatedTokens: Math.max(
-          1,
-          Math.ceil(((normalized.content ?? "").length + normalized.toolCalls.reduce((n, call) => n + call.arguments.length, 0)) / 4)
-        ),
-      });
-      break;
-    }
-    if (normalized === null) return abort(opts.signal?.aborted ? "signal" : "transport_failed");
-    modelCalls += 1;
-    state = { ...state, modelCalls };
-
-    // --- Final answer attempt.
-    if (normalized.toolCalls.length === 0) {
-      const content = normalized.content ?? "";
-      if (content.trim() === "") return abort("no_model_output");
-      finalAttempts += 1;
-      const decision = guardFinal({
-        finalContent: content,
-        lastActionSeq: state.lastActionSeq,
-        previousFinals: finalAttemptLog,
-        semanticLoopStreak: state.semanticLoopStreak,
-        planUpdated: state.plan.seq !== null,
-        writes: state.writes.length,
-        tracker,
-        policy: verificationPolicy,
-      });
-      finalAttemptLog.push(decision.attempt);
-      finals.push({ content, accepted: decision.allowed, seq: seq + 1 });
-      conversation = appendTurn(conversation, {
-        role: "assistant",
-        content,
-        analysis: normalized.analysis,
-        toolCalls: [],
-        finishReason: normalized.finishReason,
-      });
-      state = reduceFinalAttempt(state, { content, accepted: decision.allowed, seq: seq + 1 });
-      if (decision.allowed) {
-        emit({ type: "final", content, accepted: true, attempt: finalAttempts });
-        return {
-          phase: "completed",
-          finalContent: content,
-          conversation,
-          state,
-          classification: classify(null),
-          events,
-          modelCalls,
-          abortedReason: null,
-        };
-      }
-      emit({ type: "final", content, accepted: false, attempt: finalAttempts });
-      guardRejections += 1;
-      const first = decision.requirements[0];
-      emit({
-        type: "guard",
-        kind: decision.falseCompletion ? "false_completion" : (first?.kind ?? "unverified_write"),
-        message: renderGuardRequirements(decision.requirements),
-        attempt: finalAttempts,
-        phase: state.phase,
-      });
-      conversation = appendUser(conversation, `${GUARD_PREFIX}: ${renderGuardRequirements(decision.requirements)}`);
-      if (decision.falseCompletion && decision.attempt.repetitions >= verificationPolicy.maxRepeatedFinals) {
-        return abort("false_completion");
-      }
-      if (finalAttempts >= verificationPolicy.maxFinalAttempts) return abort("guard_exhausted");
-      if (guardRejections >= maxGuardRejections) return abort("guard_exhausted");
-      continue;
-    }
-
-    // --- Tool calls (parallel calls are processed sequentially in order).
-    for (const call of normalized.toolCalls) {
-      if (emittedToolCalls >= maxToolCalls) return abort("tool_call_limit");
-      emittedToolCalls += 1;
-      seq += 1;
-      const id = `t${seq}`;
-      const validation = validateToolArgumentsDetailed(call.name, parseArguments(call.arguments));
-
-      if (!validation.valid) {
-        // Deterministic feedback; the call is never executed.
-        const result = toolFailure("invalid_args", renderValidationFeedback(call.name, validation));
-        const flags = detector.observe(call.name, validation.arguments, result);
-        emit({
-          type: "tool_call",
-          id,
-          tool: call.name,
-          arguments: validation.arguments,
-          valid: false,
-          invalidReason: invalidCallLabel(validation),
-        });
-        emit({ type: "tool_result", id, result });
-        appendToolPair(call, result, normalized.analysis);
-        invalidStreak += 1;
-        if (invalidStreak >= invalidCallStreakLimit) return abort("invalid_argument_loop");
-        state = reduceToolObservation(
-          state,
-          {
-            seq,
-            tool: call.name,
-            args: validation.arguments,
-            valid: false,
-            result,
-          },
-          { duplicate: null, semanticLoop: flags.semanticLoop, verification: null }
-        );
-        continue;
-      }
-
-      const identity = callIdentity(call.name, validation.arguments);
-      const priorAttempts = retryLedger.priorAttempts(identity);
-      const previousCode = retryLedger.entry(identity)?.lastCode ?? null;
-      const duplicate = detector.checkDuplicate(call.name, validation.arguments);
-      const retryDecision = duplicate !== null && priorAttempts > 0 ? decideRetry(retryPolicy, previousCode, priorAttempts) : null;
-
-      let result: ToolResult;
-      if (duplicate !== null && !retryDecision?.retry) {
-        // Deterministic guard: never re-execute an identical call.
-        const blockedCode = duplicate === "repeat_after_success" ? "duplicate_call" : "repeated_failure";
-        const message =
-          blockedCode === "duplicate_call"
-            ? `duplicate of the previous call ${call.name}(${JSON.stringify(validation.arguments)}); ` +
-              "do not repeat it — read the existing result or take a different action"
-            : renderRepeatedFailureFeedback(previousCode, identity);
-        result = { ok: false, error: message, error_code: blockedCode as ToolErrorCode };
-        emit({
-          type: "tool_call",
-          id,
-          tool: call.name,
-          arguments: validation.arguments,
-          valid: true,
-          repeated: duplicate,
-        });
-        emit({ type: "tool_result", id, result });
-        appendToolPair(call, result, normalized.analysis);
-      } else {
-        if (retryDecision?.retry === true && retryDecision.delayMs > 0) await sleep(retryDecision.delayMs);
-        emit({
-          type: "tool_call",
-          id,
-          tool: call.name,
-          arguments: validation.arguments,
-          valid: true,
-          repeated: duplicate ?? null,
-        });
-        const started = Date.now();
-        try {
-          result = await runTool(opts.backends, call.name, validation.arguments, { signal: opts.signal });
-        } catch (err) {
-          result = toolFailure("internal", err instanceof Error ? err.message : String(err));
-        }
-        emit({ type: "tool_result", id, result, durationMs: Date.now() - started });
-        appendToolPair(call, result, normalized.analysis);
-      }
-
-      retryLedger.observe(identity, result, priorAttempts);
-      const verification = tracker.observe(call.name, validation.arguments, result);
-      const flags = detector.observe(call.name, validation.arguments, result);
-      state = reduceToolObservation(
-        state,
-        {
-          seq,
-          tool: call.name,
-          args: validation.arguments,
-          valid: true,
-          result,
-        },
-        { duplicate: flags.duplicate ?? duplicate ?? null, semanticLoop: flags.semanticLoop, verification }
-      );
-      invalidStreak = 0;
-      if (flags.semanticLoop && flags.streak >= loopThreshold && !loopGuardEmitted) {
-        loopGuardEmitted = true;
-        emit({ type: "guard", kind: "loop", message: renderLoopFeedback(flags), attempt: 0, phase: state.phase });
-      }
-      if (!flags.semanticLoop) loopGuardEmitted = false;
-    }
+  } catch {
+    return null;
   }
-  return abort("turn_limit");
+};
+
+/** One transport attempt, classified for the bounded retry loop. */
+const attemptModelTransport = async (run: HarnessRun, opts: HarnessOptions, built: BuiltHarmonyRequest): Promise<ModelTransportAttempt> => {
+  run.requestCounter += 1;
+  const requestId = run.requestCounter;
+  emitHarnessEvent(run, opts, { type: "model_request", id: requestId, mode: run.mode, built, estimatedTokens: estimateRequestTokens(built.body) });
+  let response: Response;
+  try {
+    response = await opts.transport(built.body, { signal: opts.signal });
+  } catch {
+    if (opts.signal?.aborted) return { kind: "aborted" };
+    await sleepMs(run.retryPolicy.backoffMs);
+    return { kind: "retry" };
+  }
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => undefined);
+    if (!isTransientHttpStatus(response.status)) return { kind: "stop" };
+    await sleepMs(run.retryPolicy.backoffMs);
+    return { kind: "retry" };
+  }
+  const body = await response.json().catch(() => null);
+  if (body === null) {
+    await sleepMs(run.retryPolicy.backoffMs);
+    return { kind: "retry" };
+  }
+  const normalized = normalizeHarmonyChatCompletion(body);
+  if ("error" in normalized) {
+    await sleepMs(run.retryPolicy.backoffMs);
+    return { kind: "retry" };
+  }
+  emitHarnessEvent(run, opts, {
+    type: "model_response",
+    requestId,
+    normalized,
+    estimatedTokens: Math.max(1, Math.ceil(((normalized.content ?? "").length + normalized.toolCalls.reduce((n, call) => n + call.arguments.length, 0)) / 4)),
+  });
+  return { kind: "response", normalized };
+};
+
+/** Transport with deterministic retry (transient failures only). */
+const requestModelResponse = async (run: HarnessRun, opts: HarnessOptions, built: BuiltHarmonyRequest): Promise<NormalizedAssistantResponse | null> => {
+  for (let attempt = 0; attempt <= run.retryPolicy.maxRetriesPerCall; attempt++) {
+    if (opts.signal?.aborted) return null;
+    const outcome = await attemptModelTransport(run, opts, built);
+    if (outcome.kind === "aborted") return null;
+    if (outcome.kind === "response") return outcome.normalized;
+    if (outcome.kind === "stop") break;
+  }
+  return null;
+};
+
+/** Deterministic guard envelope for an identical repeat that must not run. */
+const blockedDuplicateResult = (
+  call: ToolCall,
+  args: Record<string, unknown>,
+  duplicate: DuplicateFlag,
+  previousCode: string | null,
+  identity: string
+): ToolResult => {
+  const blockedCode = duplicate === "repeat_after_success" ? "duplicate_call" : "repeated_failure";
+  const message =
+    blockedCode === "duplicate_call"
+      ? `duplicate of the previous call ${call.name}(${JSON.stringify(args)}); ` + "do not repeat it — read the existing result or take a different action"
+      : renderRepeatedFailureFeedback(previousCode, identity);
+  return { ok: false, error: message, error_code: blockedCode as ToolErrorCode };
+};
+
+/** Records a guarded duplicate call without executing it. */
+const recordBlockedDuplicate = (
+  run: HarnessRun,
+  opts: HarnessOptions,
+  id: string,
+  call: ToolCall,
+  args: Record<string, unknown>,
+  analysis: readonly string[],
+  duplicate: DuplicateFlag,
+  previousCode: string | null,
+  identity: string
+): ToolResult => {
+  // Deterministic guard: never re-execute an identical call.
+  const result = blockedDuplicateResult(call, args, duplicate, previousCode, identity);
+  emitHarnessEvent(run, opts, { type: "tool_call", id, tool: call.name, arguments: args, valid: true, repeated: duplicate });
+  emitHarnessEvent(run, opts, { type: "tool_result", id, result });
+  appendToolPair(run, call, result, analysis);
+  return result;
+};
+
+/** Executes one validated call through the canonical tool router. */
+const executeToolCall = async (
+  run: HarnessRun,
+  opts: HarnessOptions,
+  id: string,
+  call: ToolCall,
+  args: Record<string, unknown>,
+  analysis: readonly string[],
+  duplicate: DuplicateFlag | null,
+  retryDecision: RetryDecision | null
+): Promise<ToolResult> => {
+  if (retryDecision?.retry === true && retryDecision.delayMs > 0) await sleepMs(retryDecision.delayMs);
+  emitHarnessEvent(run, opts, { type: "tool_call", id, tool: call.name, arguments: args, valid: true, repeated: duplicate ?? null });
+  const started = Date.now();
+  let result: ToolResult;
+  try {
+    result = await runTool(opts.backends, call.name, args, { signal: opts.signal });
+  } catch (err) {
+    result = toolFailure("internal", err instanceof Error ? err.message : String(err));
+  }
+  emitHarnessEvent(run, opts, { type: "tool_result", id, result, durationMs: Date.now() - started });
+  appendToolPair(run, call, result, analysis);
+  return result;
+};
+
+/** Records one invalid call: deterministic feedback, never executed. */
+const recordInvalidToolCall = (
+  run: HarnessRun,
+  opts: HarnessOptions,
+  id: string,
+  call: ToolCall,
+  validation: DetailedValidationResult,
+  analysis: readonly string[]
+): HarnessOutcome | null => {
+  // Deterministic feedback; the call is never executed.
+  const result = toolFailure("invalid_args", renderValidationFeedback(call.name, validation));
+  const flags = run.detector.observe(call.name, validation.arguments, result);
+  emitHarnessEvent(run, opts, {
+    type: "tool_call",
+    id,
+    tool: call.name,
+    arguments: validation.arguments,
+    valid: false,
+    invalidReason: invalidCallLabel(validation),
+  });
+  emitHarnessEvent(run, opts, { type: "tool_result", id, result });
+  appendToolPair(run, call, result, analysis);
+  run.invalidStreak += 1;
+  if (run.invalidStreak >= run.invalidCallStreakLimit) return abortRun(run, "invalid_argument_loop");
+  run.state = reduceToolObservation(
+    run.state,
+    {
+      seq: run.seq,
+      tool: call.name,
+      args: validation.arguments,
+      valid: false,
+      result,
+    },
+    { duplicate: null, semanticLoop: flags.semanticLoop, verification: null }
+  );
+  return null;
+};
+
+/** Processes one model tool call; a non-null result terminates the run. */
+const processToolCall = async (run: HarnessRun, opts: HarnessOptions, call: ToolCall, analysis: readonly string[]): Promise<HarnessOutcome | null> => {
+  const id = `t${run.seq}`;
+  const validation = validateToolArgumentsDetailed(call.name, parseArguments(call.arguments));
+
+  if (!validation.valid) return recordInvalidToolCall(run, opts, id, call, validation, analysis);
+
+  const identity = callIdentity(call.name, validation.arguments);
+  const priorAttempts = run.retryLedger.priorAttempts(identity);
+  const previousCode = run.retryLedger.entry(identity)?.lastCode ?? null;
+  const duplicate = run.detector.checkDuplicate(call.name, validation.arguments);
+  const retryDecision = duplicate !== null && priorAttempts > 0 ? decideRetry(run.retryPolicy, previousCode, priorAttempts) : null;
+  const result =
+    duplicate !== null && !retryDecision?.retry
+      ? recordBlockedDuplicate(run, opts, id, call, validation.arguments, analysis, duplicate, previousCode, identity)
+      : await executeToolCall(run, opts, id, call, validation.arguments, analysis, duplicate, retryDecision);
+
+  run.retryLedger.observe(identity, result, priorAttempts);
+  const verification = run.tracker.observe(call.name, validation.arguments, result);
+  const flags = run.detector.observe(call.name, validation.arguments, result);
+  run.state = reduceToolObservation(
+    run.state,
+    {
+      seq: run.seq,
+      tool: call.name,
+      args: validation.arguments,
+      valid: true,
+      result,
+    },
+    { duplicate: flags.duplicate ?? duplicate ?? null, semanticLoop: flags.semanticLoop, verification }
+  );
+  run.invalidStreak = 0;
+  if (flags.semanticLoop && flags.streak >= run.loopThreshold && !run.loopGuardEmitted) {
+    run.loopGuardEmitted = true;
+    emitHarnessEvent(run, opts, { type: "guard", kind: "loop", message: renderLoopFeedback(flags), attempt: 0, phase: run.state.phase });
+  }
+  if (!flags.semanticLoop) run.loopGuardEmitted = false;
+  return null;
+};
+
+/** Runs every tool call of one model response (sequentially, in order). */
+const runToolCalls = async (run: HarnessRun, opts: HarnessOptions, normalized: NormalizedAssistantResponse): Promise<HarnessOutcome | null> => {
+  // Tool calls (parallel calls are processed sequentially in order).
+  for (const call of normalized.toolCalls) {
+    if (run.emittedToolCalls >= run.maxToolCalls) return abortRun(run, "tool_call_limit");
+    run.emittedToolCalls += 1;
+    run.seq += 1;
+    const outcome = await processToolCall(run, opts, call, normalized.analysis);
+    if (outcome !== null) return outcome;
+  }
+  return null;
+};
+
+/** Handles a final answer attempt: guard decision, transcript and outcome. */
+const runFinalAttempt = (run: HarnessRun, opts: HarnessOptions, normalized: NormalizedAssistantResponse): HarnessOutcome | null => {
+  // --- Final answer attempt.
+  const content = normalized.content ?? "";
+  if (content.trim() === "") return abortRun(run, "no_model_output");
+  run.finalAttempts += 1;
+  const decision = guardFinal({
+    finalContent: content,
+    lastActionSeq: run.state.lastActionSeq,
+    previousFinals: run.finalAttemptLog,
+    semanticLoopStreak: run.state.semanticLoopStreak,
+    planUpdated: run.state.plan.seq !== null,
+    writes: run.state.writes.length,
+    tracker: run.tracker,
+    policy: run.verificationPolicy,
+  });
+  run.finalAttemptLog.push(decision.attempt);
+  run.finals.push({ content, accepted: decision.allowed, seq: run.seq + 1 });
+  run.conversation = appendTurn(run.conversation, {
+    role: "assistant",
+    content,
+    analysis: normalized.analysis,
+    toolCalls: [],
+    finishReason: normalized.finishReason,
+  });
+  run.state = reduceFinalAttempt(run.state, { content, accepted: decision.allowed, seq: run.seq + 1 });
+  if (decision.allowed) {
+    emitHarnessEvent(run, opts, { type: "final", content, accepted: true, attempt: run.finalAttempts });
+    return completeRun(run, content);
+  }
+  emitHarnessEvent(run, opts, { type: "final", content, accepted: false, attempt: run.finalAttempts });
+  run.guardRejections += 1;
+  // `guardFinal` reports `allowed: requirements.length === 0`, so a rejected
+  // final always carries at least one blocking requirement here.
+  const first = decision.requirements[0];
+  emitHarnessEvent(run, opts, {
+    type: "guard",
+    kind: decision.falseCompletion ? "false_completion" : first.kind,
+    message: renderGuardRequirements(decision.requirements),
+    attempt: run.finalAttempts,
+    phase: run.state.phase,
+  });
+  run.conversation = appendUser(run.conversation, `${GUARD_PREFIX}: ${renderGuardRequirements(decision.requirements)}`);
+  if (decision.falseCompletion && decision.attempt.repetitions >= run.verificationPolicy.maxRepeatedFinals) {
+    return abortRun(run, "false_completion");
+  }
+  if (run.finalAttempts >= run.verificationPolicy.maxFinalAttempts) return abortRun(run, "guard_exhausted");
+  if (run.guardRejections >= run.maxGuardRejections) return abortRun(run, "guard_exhausted");
+  return null;
+};
+
+/** Pre-turn guards: the abort signal, then the hard tool-call budget. */
+const turnAbortReason = (run: HarnessRun, opts: HarnessOptions): HarnessAbortReason | null => {
+  if (opts.signal?.aborted) return "signal";
+  if (run.emittedToolCalls >= run.maxToolCalls) return "tool_call_limit";
+  return null;
+};
+
+/** One full model turn: request, transport, then final answer or tool calls. */
+const runHarnessTurn = async (run: HarnessRun, opts: HarnessOptions): Promise<HarnessOutcome | null> => {
+  const abortReason = turnAbortReason(run, opts);
+  if (abortReason !== null) return abortRun(run, abortReason);
+
+  const built = buildHarnessRequest(run, opts);
+  if (built === null) return abortRun(run, "invalid_config");
+  const normalized = await requestModelResponse(run, opts, built);
+  if (normalized === null) return abortRun(run, opts.signal?.aborted ? "signal" : "transport_failed");
+  run.modelCalls += 1;
+  run.state = { ...run.state, modelCalls: run.modelCalls };
+
+  if (normalized.toolCalls.length === 0) return runFinalAttempt(run, opts, normalized);
+  return await runToolCalls(run, opts, normalized);
+};
+
+/**
+ * Runs the canonical reliability loop to completion (or a deterministic
+ * failure).  Every attempt is emitted through {@link HarnessOptions.emit} and
+ * persisted in {@link HarnessOutcome.events}; the authoritative conversation
+ * is kept in full and only the model-facing view is compacted.
+ */
+export async function runReliabilityHarness(opts: HarnessOptions): Promise<HarnessOutcome> {
+  const run = createHarnessRun(opts);
+  for (let turn = 0; turn < run.maxTurns; turn++) {
+    const outcome = await runHarnessTurn(run, opts);
+    if (outcome !== null) return outcome;
+  }
+  return abortRun(run, "turn_limit");
 }
 
 function parseArguments(argumentsText: string): Record<string, unknown> | null {

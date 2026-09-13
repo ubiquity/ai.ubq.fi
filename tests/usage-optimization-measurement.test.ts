@@ -138,7 +138,10 @@ Deno.test("usage optimization fixture records per-auth KV commands, atomic commi
     const { resetProviderHealthThrottleForTest } = await import("../src/provider_health.ts");
 
     globalThis.fetch = async (input, init): Promise<Response> => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      let url: string;
+      if (typeof input === "string") url = input;
+      else if (input instanceof URL) url = input.toString();
+      else url = input.url;
       assert.ok(url.endsWith("/responses"), `measurement fixture only permits Codex response requests, got ${url}`);
       assert.equal(typeof init?.body, "string", "Codex request must reach fetch as a serialized string");
       kv.recordSerializedRequestBytes(bytes(init?.body as string));

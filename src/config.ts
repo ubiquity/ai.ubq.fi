@@ -27,6 +27,13 @@ const getEnv = (key: string): string | undefined => {
   }
 };
 
+const firstNonEmpty = (...values: readonly (string | undefined)[]): string | undefined => {
+  for (const value of values) {
+    if (value) return value;
+  }
+  return undefined;
+};
+
 const loadConfig = (): Config => {
   const isDeploy = Boolean(getEnv("DENO_DEPLOY") ?? getEnv("DENO_DEPLOYMENT_ID") ?? getEnv("DENO_REGION"));
   const authTokens = parseTokens(getEnv("UOS_AI_TOKEN"));
@@ -52,7 +59,11 @@ export const runtimeGitSha = (): string => RELEASE_GIT_SHA;
 // Deploy 2 exposes the routed revision as DENO_DEPLOY_BUILD_ID. Keep the
 // Classic variable as a local/rollback fallback so older rollback artifacts
 // still identify themselves truthfully.
-export const runtimeDeploymentId = (): string =>
-  getEnv("DENO_DEPLOY_BUILD_ID")?.trim() ||
-  getEnv("DENO_DEPLOYMENT_ID")?.trim() ||
-  (!config.isDeploy && runtimeGitSha() !== "unknown" ? `${Deno.build.os === "darwin" ? "mac" : "vps"}-${runtimeGitSha()}` : "unknown");
+export const runtimeDeploymentId = (): string => {
+  // A configured-but-blank variable must still fall through to the next
+  // source, so this cannot use nullish coalescing.
+  const configured = firstNonEmpty(getEnv("DENO_DEPLOY_BUILD_ID")?.trim(), getEnv("DENO_DEPLOYMENT_ID")?.trim());
+  if (configured) return configured;
+  if (config.isDeploy || runtimeGitSha() === "unknown") return "unknown";
+  return `${Deno.build.os === "darwin" ? "mac" : "vps"}-${runtimeGitSha()}`;
+};

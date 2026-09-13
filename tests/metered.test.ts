@@ -8,19 +8,29 @@ import {
   type MeteredFetch,
 } from "../src/metered.ts";
 
-const jsonResponse = (body: unknown, status = 200, headers: HeadersInit = {}): Response =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      "Content-Type": "application/json",
-      ...headers,
-    },
-  });
+const jsonResponse = (body: unknown, status = 200, headers: HeadersInit = {}): Response => {
+  const responseHeaders = new Headers(headers);
+  if (!responseHeaders.has("Content-Type")) responseHeaders.set("Content-Type", "application/json");
+  return new Response(JSON.stringify(body), { status, headers: responseHeaders });
+};
+
+/** The URL text of a Metered fetch input. */
+const requestUrl = (input: RequestInfo | URL): string => {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+};
+
+/** The captured request body, which these transports always send as a JSON string. */
+const requestBodyText = (body: BodyInit | null | undefined): string => {
+  if (typeof body !== "string") throw new Error(`expected a JSON string request body, received ${typeof body}`);
+  return body;
+};
 
 Deno.test("initializeMeteredPricing intersects the current Codex catalog and returns a compact snapshot", async () => {
   const calls: { url: string; init?: RequestInit }[] = [];
   const fetcher: MeteredFetch = (input, init) => {
-    const url = input.toString();
+    const url = requestUrl(input);
     calls.push({ url, init });
     if (url === "https://api.openlux.ai/api/ratio_config") {
       return Promise.resolve(
@@ -85,7 +95,7 @@ Deno.test("initializeMeteredPricing intersects the current Codex catalog and ret
 Deno.test("initializeMeteredPricing fails closed and never returns an earlier snapshot", async () => {
   let statusIsValid = true;
   const fetcher: MeteredFetch = (input) => {
-    if (input.toString().endsWith("/api/ratio_config")) {
+    if (requestUrl(input).endsWith("/api/ratio_config")) {
       return Promise.resolve(
         jsonResponse({
           success: true,
@@ -130,7 +140,7 @@ Deno.test("fetchMeteredResponses applies Metered Sol reasoning suffixes and forw
   };
   const calls: { url: string; init?: RequestInit }[] = [];
   const fetcher: MeteredFetch = (input, init) => {
-    calls.push({ url: input.toString(), init });
+    calls.push({ url: requestUrl(input), init });
     return Promise.resolve(
       new Response("rate limited", {
         status: 429,
@@ -156,7 +166,7 @@ Deno.test("fetchMeteredResponses applies Metered Sol reasoning suffixes and forw
   // composed signal rather than the caller's signal by reference.
   assert.ok(calls[0].init?.signal);
   assert.equal(calls[0].init?.signal.aborted, false);
-  assert.deepEqual(JSON.parse(String(calls[0].init?.body)), {
+  assert.deepEqual(JSON.parse(requestBodyText(calls[0].init?.body)), {
     model: "gpt-5.6-sol-high",
     input: canonicalBody.input,
     stream: true,
@@ -172,7 +182,7 @@ Deno.test("fetchMeteredResponses applies Metered Sol reasoning suffixes and forw
 Deno.test("Metered billing correlation prefers provider IDs over generic trace IDs", async () => {
   const billingRequestId = "openlux-billing-request";
   const fetcher: MeteredFetch = (input) => {
-    const url = input.toString();
+    const url = requestUrl(input);
     if (url === "https://api.openlux.ai/v1/responses") {
       return Promise.resolve(
         new Response("{}", {
@@ -219,7 +229,7 @@ Deno.test("Metered billing correlation prefers provider IDs over generic trace I
 Deno.test("fetchMeteredResponses maps no-reasoning and ultra Sol presets to live aliases", async () => {
   const bodies: Record<string, unknown>[] = [];
   const fetcher: MeteredFetch = (_input, init) => {
-    bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    bodies.push(JSON.parse(requestBodyText(init?.body)) as Record<string, unknown>);
     return Promise.resolve(new Response("{}", { status: 200 }));
   };
 
@@ -241,7 +251,8 @@ Deno.test("fetchMeteredResponses propagates client cancellation through the head
       observed.signal?.addEventListener(
         "abort",
         () => {
-          reject(observed.signal?.reason ?? new DOMException("Aborted", "AbortError"));
+          const reason: unknown = observed.signal?.reason;
+          reject(reason instanceof Error ? reason : new DOMException("Aborted", "AbortError"));
         },
         { once: true }
       );
@@ -270,7 +281,7 @@ Deno.test("fetchMeteredTokenLogs returns only strict allowlisted billing fields"
   let capturedUrl = "";
   let capturedInit: RequestInit | undefined;
   const fetcher: MeteredFetch = (input, init) => {
-    capturedUrl = input.toString();
+    capturedUrl = requestUrl(input);
     capturedInit = init;
     return Promise.resolve(
       jsonResponse({
@@ -335,7 +346,7 @@ Deno.test("fetchMeteredTokenLogs returns only strict allowlisted billing fields"
 });
 
 Deno.test("fetchMeteredTokenLogs aborts a stalled provider fetch at the bounded timeout", async () => {
-  const originalTimeout = AbortSignal.timeout;
+  const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
   const timeoutController = new AbortController();
   let observedSignal: AbortSignal | null = null;
   (
@@ -352,7 +363,8 @@ Deno.test("fetchMeteredTokenLogs aborts a stalled provider fetch at the bounded 
       observedSignal?.addEventListener(
         "abort",
         () => {
-          reject(observedSignal?.reason ?? new DOMException("Timed out", "AbortError"));
+          const reason: unknown = observedSignal?.reason;
+          reject(reason instanceof Error ? reason : new DOMException("Timed out", "AbortError"));
         },
         { once: true }
       );

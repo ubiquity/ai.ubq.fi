@@ -110,7 +110,7 @@ Deno.test("runtime config keeps prompt-cache controls compact and excludes probe
   });
   assert.equal(
     Object.prototype.hasOwnProperty.call(
-      (runtime.codex_models.models[0]?.prompt_cache as { providers?: Record<string, unknown>[] })?.providers?.[0] ?? {},
+      (runtime.codex_models.models[0]?.prompt_cache as { providers?: Record<string, unknown>[] }).providers?.[0] ?? {},
       "scope"
     ),
     false

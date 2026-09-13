@@ -35,7 +35,8 @@ Deno.test("retry: the ledger counts retryable recoveries and rejected repeats", 
   // Second attempt with identical arguments: allowed (transient code).
   const allowed = ledger.observe(identity, { ok: true }, 1);
   assert.equal(allowed?.retry, true);
-  const entry = ledger.entry(identity)!;
+  const entry = ledger.entry(identity);
+  assert.ok(entry);
   assert.equal(entry.recovered, true);
   const summary = ledger.summary();
   assert.ok(summary.attempts >= 1 && summary.retried >= 1);

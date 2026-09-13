@@ -83,7 +83,7 @@ const makeKvStub = (store: Map<string, unknown>, options: Readonly<{ onAtomicSet
       };
       return operation;
     },
-    list: async function* (selector: Deno.KvListSelector, options?: Deno.KvListOptions) {
+    list: function* (selector: Deno.KvListSelector, options?: Deno.KvListOptions) {
       const prefix = "prefix" in selector ? selector.prefix : [];
       const limit = typeof options?.limit === "number" ? options.limit : Infinity;
       let yielded = 0;
@@ -245,7 +245,8 @@ Deno.test("KV migration validates Kernel quota reservation aggregates", async ()
 
   store.set(keyToString(windowKey), windowWithAggregate);
   store.set(keyToString(reservationKey), reservedReservation);
-  const { reserved_requests: _legacyMissingField, ...legacyWindow } = windowWithAggregate;
+  const legacyWindow = { ...windowWithAggregate };
+  delete legacyWindow.reserved_requests;
   store.set(keyToString(windowKey), legacyWindow);
   const compatibleLegacyWindow = await validateKvMigrationTarget(makeKvStub(store));
   assert.doesNotMatch(compatibleLegacyWindow.errors.join("\n"), /kernel quota V2/);

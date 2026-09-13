@@ -9,7 +9,7 @@ import { sampleProviderCapacityForCron } from "./src/provider_capacity.ts";
 import { createServeHandler } from "./src/serve_handler.ts";
 const isProductionRuntime = (): boolean => Deno.env.get("DENO_TIMELINE") === "production";
 
-Deno.cron("reconcile pending metered billing", "* * * * *", async () => {
+void Deno.cron("reconcile pending metered billing", "* * * * *", async () => {
   if (!isProductionRuntime()) return;
   try {
     // KV is optional at process boot. Resolve it only when the scheduled
@@ -23,7 +23,7 @@ Deno.cron("reconcile pending metered billing", "* * * * *", async () => {
   }
 });
 
-Deno.cron("sample Codex provider capacity", "*/15 * * * *", async () => {
+void Deno.cron("sample Codex provider capacity", "*/15 * * * *", async () => {
   if (!isProductionRuntime()) return;
   try {
     const kv = await getKv();
@@ -34,7 +34,7 @@ Deno.cron("sample Codex provider capacity", "*/15 * * * *", async () => {
   }
 });
 
-Deno.cron("prune prompt cache analytics", "7 * * * *", async () => {
+void Deno.cron("prune prompt cache analytics", "7 * * * *", async () => {
   if (!isProductionRuntime()) return;
   try {
     const kv = await getKv();

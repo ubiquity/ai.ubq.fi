@@ -156,7 +156,15 @@ export default tsEslint.config(
       "no-var": "error",
       "no-self-compare": "error",
       "no-useless-escape": "error",
-      "max-lines": ["warn", { max: 1000 }],
+      // DIVERGENCE: OFF, measured. The template's 1000-line ceiling flagged 34
+      // files, and not marginally: src/openai.ts is 9597 lines,
+      // tests/openai-compat.test.ts is 13595, and 20 more are over 1200. This is
+      // a deliberate architecture decision in both the gateway core and its
+      // compatibility suite; satisfying the rule means splitting those modules,
+      // which is a refactor project rather than a lint fix. A warning nobody can
+      // ever clear only trains people to ignore lint output. Revisit as its own
+      // change if the modules are ever decomposed.
+      "max-lines": "off",
       // ---------------------------------------------------------------------
       // SONARJS/TS OVERLAP: the type-aware TS rule supersedes the sonarjs one,
       // so turn the sonarjs copy off to avoid reporting one problem twice.
@@ -178,6 +186,14 @@ export default tsEslint.config(
       "sonarjs/no-element-overwrite": "error",
       "sonarjs/no-identical-conditions": "error",
       "sonarjs/no-identical-expressions": "error",
+      // DIVERGENCE: allow arrow functions globally, not just in tests. Of the 94
+      // findings, the overwhelming majority are two deliberate idioms:
+      // `.catch(() => {})` for fire-and-forget settlements whose failure is
+      // already accounted for, and `let onAbort = (): void => {}` placeholders
+      // assigned immediately afterwards. Empty function DECLARATIONS, methods and
+      // generators are still reported -- that is where accidental emptiness
+      // actually hides -- and core `no-empty` still covers empty blocks.
+      "@typescript-eslint/no-empty-function": ["error", { allow: ["arrowFunctions"] }],
       "@typescript-eslint/naming-convention": [
         "error",
         {
@@ -255,5 +271,57 @@ export default tsEslint.config(
     rules: {
       "@typescript-eslint/no-empty-function": ["error", { allow: ["methods", "arrowFunctions"] }],
     },
+  },
+  {
+    // ---------------------------------------------------------------------
+    // DELIBERATE-BY-DESIGN exemptions. These tests assert that the gateway
+    // rejects or relays fake credentials, so the credential-shaped values are
+    // the subject under test. Verified placeholders, not leaked secrets:
+    // `ghp_relay_fallback_quota_1234567890abcdefghijklmnopqrstuvwxyz`,
+    // `u_${tokenDigit.repeat(64)}`, and bare env-var NAMES such as
+    // "DENO_DEPLOY_TOKEN" used as lookup keys. sonarjs flags them by identifier
+    // name, so renaming them would only hide the intent.
+    // ---------------------------------------------------------------------
+    files: ["**/tests/kv-budget.test.ts", "**/tests/passkeys.test.ts", "**/tests/ubq-ai.test.ts"],
+    rules: { "sonarjs/no-hardcoded-secrets": "off" },
+  },
+  {
+    // ---------------------------------------------------------------------
+    // DELIBERATE-BY-DESIGN exemptions, each measured, each file-scoped.
+    // ---------------------------------------------------------------------
+    // `export type ReasoningEffort = string` is a documentary domain alias, not
+    // a redundant one: AGENTS.md forbids constraining reasoning tiers to a
+    // hard-coded allowlist, so `string` is the correct underlying type, and the
+    // name is referenced from 93 sites across 15 files. sonarjs's rule has no
+    // options and no exemption for exported aliases, and every in-file escape
+    // (`string & {}`, `${string}`, NonNullable<string>) is a no-op type trick
+    // whose only purpose is to evade the rule -- `string & {}` is itself
+    // rejected by sonarjs/no-useless-intersection on the same line.
+    files: ["**/src/defaults.ts"],
+    rules: { "sonarjs/redundant-type-aliases": "off" },
+  },
+  {
+    // The prompt-cache capability helpers return the documented tri-state
+    // `false | Readonly<{version: 1; providers: ...}> | null`, where `false` is
+    // an explicit "verified unsupported" result and `null` means "unknown".
+    // sonarjs/function-return-type fires whenever a declared union mixes type
+    // categories (false -> boolean, record -> object) and the returns mix them
+    // too, which is unavoidable while that sentinel exists. Its only built-in
+    // escape is a `@returns` JSDoc tag; collapsing the sentinel would mean
+    // changing the wire contract in src/openai.ts, src/codex_catalog.ts and
+    // src/admin.ts. Measured: 3 findings, all three of these functions.
+    files: ["**/src/codex_models.ts"],
+    rules: { "sonarjs/function-return-type": "off" },
+  },
+  {
+    // DELIBERATE: the clear-text URL is the SUBJECT UNDER TEST. This asserts
+    // that the gateway rejects a non-HTTPS Codex base before any
+    // credential-bearing request, which src/codex_banked_reset_provider.ts
+    // enforces on the protocol check. The rule has no options and its only
+    // exemptions are hard-coded localhost/example host regexes, so silencing it
+    // here would mean either changing the fixture host or splitting the literal
+    // -- both would delete the case under test.
+    files: ["**/tests/codex-banked-reset-provider.test.ts"],
+    rules: { "sonarjs/no-clear-text-protocols": "off" },
   }
 );

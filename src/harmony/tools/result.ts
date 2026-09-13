@@ -51,10 +51,10 @@ export const SHELL_DEFAULT_TIMEOUT_MS = 20_000;
 export const clipToolText = (text: string, limit: number = TOOL_OUTPUT_LIMIT): string => (text.length > limit ? `${text.slice(0, limit)}…[truncated]` : text);
 
 /** Builds a failure envelope. */
-export const toolFailure = (error_code: ToolErrorCode, error: string): ToolResult => ({
+export const toolFailure = (errorCode: ToolErrorCode, error: string): ToolResult => ({
   ok: false,
   error,
-  error_code,
+  error_code: errorCode,
 });
 
 /** Backend failure carrying a canonical, machine-readable code. */

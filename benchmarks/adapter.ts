@@ -160,7 +160,19 @@ export const TOOL_SCHEMAS: Record<string, ToolSchema> = Object.fromEntries(
   ])
 );
 
-export const CANONICAL_TOOL_NAMES: readonly string[] = [...canonicalToolNames].sort();
+/**
+ * The comparator `Array.prototype.sort` uses when none is supplied: UTF-16 code
+ * unit order. Spelled out because the default is easy to mistake for a missing
+ * argument, and because `localeCompare` would collate in the host's locale
+ * (making this exported constant's order environment-dependent).
+ */
+function compareUtf16CodeUnits(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
+export const CANONICAL_TOOL_NAMES: readonly string[] = [...canonicalToolNames].sort(compareUtf16CodeUnits);
 
 /** Validate tool arguments against the canonical schema (m02-compatible shape). */
 export function validateToolArgs(tool: string, args: Record<string, unknown>): { valid: boolean; reason?: string } {
@@ -170,6 +182,11 @@ export function validateToolArgs(tool: string, args: Record<string, unknown>): {
 
 const isNotFound = (err: unknown): boolean =>
   typeof err === "object" && err !== null && ((err as { code?: unknown }).code === "ENOENT" || (err as { name?: unknown }).name === "NotFound");
+
+/** Best-effort message for an unknown thrown value; never renders "[object Object]". */
+function errorMessage(err: unknown): string {
+  return err instanceof Error && err.message.length > 0 ? err.message : String(err);
+}
 
 /** Maps a disposable FixtureWorkspace onto the canonical WorkspaceBackend. */
 class FixtureWorkspaceBackend implements WorkspaceBackend {
@@ -181,7 +198,7 @@ class FixtureWorkspaceBackend implements WorkspaceBackend {
     try {
       return this.workspace.read(rel);
     } catch (err) {
-      throw this.mapFileError(rel, err);
+      throw this._mapFileError(rel, err);
     }
   }
 
@@ -189,7 +206,7 @@ class FixtureWorkspaceBackend implements WorkspaceBackend {
     try {
       return this.workspace.listFiles(rel);
     } catch (err) {
-      throw this.mapFileError(rel, err);
+      throw this._mapFileError(rel, err);
     }
   }
 
@@ -205,7 +222,7 @@ class FixtureWorkspaceBackend implements WorkspaceBackend {
     try {
       this.workspace.write(rel, content);
     } catch (err) {
-      throw this.mapFileError(rel, err);
+      throw this._mapFileError(rel, err);
     }
   }
 
@@ -221,7 +238,7 @@ class FixtureWorkspaceBackend implements WorkspaceBackend {
       return { applied: true, detail: result.detail };
     } catch (err) {
       if (err instanceof WriteScopeViolationError) throw new ToolExecutionError("write_scope", err.message);
-      const message = isNotFound(err) ? `patch failed: ${rel} does not exist` : err instanceof Error && err.message.length > 0 ? err.message : String(err);
+      const message = isNotFound(err) ? `patch failed: ${rel} does not exist` : errorMessage(err);
       throw new ToolExecutionError("patch_failed", message);
     }
   }
@@ -234,11 +251,10 @@ class FixtureWorkspaceBackend implements WorkspaceBackend {
     return { exit_code: result.code, stdout: result.stdout, stderr: result.stderr, timed_out: result.timedOut };
   }
 
-  private mapFileError(rel: string, err: unknown): ToolExecutionError {
+  private _mapFileError(rel: string, err: unknown): ToolExecutionError {
     if (err instanceof WriteScopeViolationError) return new ToolExecutionError("write_scope", err.message);
     if (isNotFound(err)) return new ToolExecutionError("not_found", `file not found: ${rel}`);
-    const message = err instanceof Error && err.message.length > 0 ? err.message : String(err);
-    return new ToolExecutionError("internal", message);
+    return new ToolExecutionError("internal", errorMessage(err));
   }
 }
 
@@ -252,6 +268,45 @@ function referenceBackends(workspace: FixtureWorkspace): ToolBackends {
   };
 }
 
+type ValidatedToolArgs = { valid: boolean; reason?: string };
+
+/** Resolves one scripted step to its result without touching the trajectory. */
+async function executeScriptedStep(backends: ToolBackends, ctx: AdapterRunContext, step: TrailStep, validated: ValidatedToolArgs): Promise<ToolResult> {
+  if (!validated.valid) return { ok: false, error: `invalid arguments: ${validated.reason}`, error_code: "invalid_args" };
+  if (step.inject) return { ok: false, error: step.inject.error, error_code: step.inject.error_code ?? "injected_failure" };
+  if (step.wrong) return { ok: false, error: "wrong tool for this task step", error_code: "wrong_tool" };
+  try {
+    return await runTool(backends, step.tool, step.args, { signal: ctx.signal });
+  } catch (err) {
+    return toolFailure("internal", err instanceof Error ? err.message : String(err));
+  }
+}
+
+function recordScriptedToolCall(ctx: AdapterRunContext, id: string, step: TrailStep, validated: ValidatedToolArgs): void {
+  ctx.record({
+    type: "tool_call",
+    at: ctx.time(),
+    id,
+    tool: step.tool,
+    arguments: step.args,
+    valid: validated.valid,
+    invalid_reason: validated.valid ? undefined : validated.reason,
+    is_wrong_tool: step.wrong === true ? true : undefined,
+    is_repeated: step.repeat === true ? true : undefined,
+  });
+}
+
+/** Throws `TrailMismatchError` when the recorded result contradicts the step's assertion. */
+function assertScriptedStepExpectation(stepIndex: number, step: TrailStep, result: ToolResult): void {
+  const expect = step.expect;
+  if (!expect) return;
+  const expectedOk = expect.ok ?? expect.error_contains === undefined;
+  const okMatches = result.ok === expectedOk;
+  const outputOk = (expect.output_contains ?? []).every((s) => (result.output ?? "").includes(s));
+  const errorOk = expect.error_contains === undefined ? true : !result.ok && (result.error ?? "").includes(expect.error_contains);
+  if (!(okMatches && outputOk && errorOk)) throw new TrailMismatchError(stepIndex, step, result);
+}
+
 // ---------------------------------------------------------------------------
 // Reference (scripted) adapter
 // ---------------------------------------------------------------------------
@@ -263,7 +318,8 @@ export const referenceAdapter: BenchmarkAdapter = {
   requiresExternalInference: false,
   async run(ctx: AdapterRunContext): Promise<void> {
     const { task } = ctx;
-    if (!task.scripted_trail) {
+    const trail = task.scripted_trail;
+    if (!trail) {
       throw new TrailMismatchError(-1, { tool: "(none)", args: {} } as TrailStep, {
         ok: false,
         error: `task ${task.id} declares no scripted_trail; the reference adapter can only replay recorded trails`,
@@ -272,38 +328,15 @@ export const referenceAdapter: BenchmarkAdapter = {
     }
     const backends = referenceBackends(ctx.workspace);
     let seq = 0;
-    for (let i = 0; i < task.scripted_trail.length; i++) {
+    for (let i = 0; i < trail.length; i++) {
       ctx.checkToolLimit();
       if (ctx.signal.aborted) throw new TaskTimeoutError(task.timeout_ms);
-      const step = task.scripted_trail[i];
+      const step = trail[i];
       const id = `t${++seq}`;
       const validated = validateToolArgs(step.tool, step.args);
-      ctx.record({
-        type: "tool_call",
-        at: ctx.time(),
-        id,
-        tool: step.tool,
-        arguments: step.args,
-        valid: validated.valid,
-        invalid_reason: validated.valid ? undefined : validated.reason,
-        is_wrong_tool: step.wrong === true ? true : undefined,
-        is_repeated: step.repeat === true ? true : undefined,
-      });
+      recordScriptedToolCall(ctx, id, step, validated);
       const started = Date.now();
-      let result: ToolResult;
-      if (!validated.valid) {
-        result = { ok: false, error: `invalid arguments: ${validated.reason}`, error_code: "invalid_args" };
-      } else if (step.inject) {
-        result = { ok: false, error: step.inject.error, error_code: step.inject.error_code ?? "injected_failure" };
-      } else if (step.wrong) {
-        result = { ok: false, error: "wrong tool for this task step", error_code: "wrong_tool" };
-      } else {
-        try {
-          result = await runTool(backends, step.tool, step.args, { signal: ctx.signal });
-        } catch (err) {
-          result = toolFailure("internal", err instanceof Error ? err.message : String(err));
-        }
-      }
+      const result = await executeScriptedStep(backends, ctx, step, validated);
       ctx.record({
         type: "tool_result",
         at: ctx.time(),
@@ -314,13 +347,7 @@ export const referenceAdapter: BenchmarkAdapter = {
         error_code: result.error_code,
         duration_ms: Date.now() - started,
       });
-      if (step.expect) {
-        const expectedOk = step.expect.ok ?? step.expect.error_contains === undefined;
-        const okMatches = result.ok === expectedOk;
-        const outputOk = (step.expect.output_contains ?? []).every((s) => (result.output ?? "").includes(s));
-        const errorOk = step.expect.error_contains === undefined ? true : !result.ok && (result.error ?? "").includes(step.expect.error_contains);
-        if (!(okMatches && outputOk && errorOk)) throw new TrailMismatchError(i, step, result);
-      }
+      assertScriptedStepExpectation(i, step, result);
     }
   },
 };
@@ -443,6 +470,10 @@ function recordHarnessEvent(ctx: AdapterRunContext, event: HarnessEvent, toolCou
       // The final content is already recorded by the preceding
       // model_response event; no extra trajectory event is needed.
       break;
+    default:
+      // Every HarnessEvent type is handled above; this keeps the switch total
+      // if the union ever grows a member.
+      break;
   }
 }
 
@@ -465,7 +496,8 @@ export function createCanonicalAdapter(options: CanonicalAdapterOptions = {}): B
       `canonical Harmony harness (compact tool surface + m05 reliability guards); transport is injected, so hermetic tests drive it with a fake transport`,
     requiresExternalInference,
     async run(ctx: AdapterRunContext): Promise<void> {
-      if (options.transport === undefined) {
+      const transport = options.transport;
+      if (transport === undefined) {
         throw new CanonicalAdapterError(
           "canonical config C: no transport was injected, so live inference is gated. " +
             "The runner refuses external-inference adapters; no environment variable, CLI flag or secret is read — " +
@@ -483,7 +515,7 @@ export function createCanonicalAdapter(options: CanonicalAdapterOptions = {}): B
           `${ctx.task.title} — ${ctx.task.description}\n` +
           `Verify your work before answering; the declared verification command is ${JSON.stringify(ctx.task.verify?.command ?? null)}.`,
         transport: (body, requestOptions) =>
-          options.transport!(body, {
+          transport(body, {
             ...requestOptions,
             signal: ctx.signal,
           }),

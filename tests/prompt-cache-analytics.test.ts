@@ -328,8 +328,9 @@ Deno.test("prompt-cache analytics distinguishes reported zeroes from missing and
 
   const view = await readPromptCacheAnalytics({ ...options(kv), groupBy: ["key_presence"] });
   const bucket = view.buckets[0];
+  assert.ok(bucket, "key_presence grouping must produce a bucket");
   assert.deepEqual(
-    bucket && {
+    {
       input: bucket.input_tokens,
       cached: bucket.cached_input_tokens,
       samples: bucket.sample_count,

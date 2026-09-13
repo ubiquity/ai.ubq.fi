@@ -163,7 +163,7 @@ export const createRecordedUpstreamReplay = (
           if (state.nextChunk < state.chunks.length) {
             // Exact recorded boundary: one original chunk per pull, zero
             // read-ahead (highWaterMark 0).
-            controller.enqueue(state.chunks[state.nextChunk]!);
+            controller.enqueue(state.chunks[state.nextChunk]);
             state.nextChunk += 1;
             return;
           }
@@ -211,7 +211,9 @@ export const createRecordedUpstreamReplay = (
       failed = true;
       return Promise.reject(new TypeError(DISPATCH_MISMATCH));
     }
-    const state = replayAttempts[dispatchedCount];
+    // `at` keeps the out-of-range read visible to the type checker, so the
+    // DISPATCH_EXTRA guard below validates a genuinely optional element.
+    const state = replayAttempts.at(dispatchedCount);
     if (state === undefined) {
       failed = true;
       return Promise.reject(new TypeError(DISPATCH_EXTRA));

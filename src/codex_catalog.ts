@@ -77,6 +77,40 @@ export type PromptCacheScopePromotionResult =
         | "cas_conflict";
     }>;
 
+/** The inconclusive half of a promotion result. */
+type PromptCacheScopePromotionFailure = Extract<PromptCacheScopePromotionResult, { status: "inconclusive" }>;
+
+/** The values a validated promotion attempt needs to run its compare-and-swap. */
+type PromptCacheScopePromotionReady = Readonly<{
+  status: "ready";
+  nextSnapshot: CodexModelsSnapshot;
+  nextRuntime: RuntimeConfigV2;
+}>;
+
+/** The inputs one promotion attempt validates against the stored catalog state. */
+type PromptCacheScopePromotionInput = Readonly<{
+  model: string;
+  scope: PromptCacheScope;
+  lease: PromptCacheScopePromotionLease;
+  authPoolVersionstamp: string;
+  /**
+   * The scope runner binds a campaign to one exact full-catalog revision.
+   * A model may be non-default, but it may never publish against a catalog
+   * revision other than the one whose controls it actually probed.
+   */
+  catalogVersionstamp: string;
+  /** The same fence for the compact runtime/default-model configuration. */
+  runtimeVersionstamp: string;
+}>;
+
+/** The strong reads one promotion attempt validates against each other. */
+type PromptCacheScopePromotionEntries = Readonly<{
+  snapshot: Deno.KvEntryMaybe<CodexModelsSnapshot>;
+  runtime: Deno.KvEntryMaybe<RuntimeConfigV2>;
+  lease: Deno.KvEntryMaybe<unknown>;
+  authPool: Deno.KvEntryMaybe<unknown>;
+}>;
+
 const catalogMemoKey = (metadata: CodexCatalogMetadata): string => `${metadata.client_version}:${metadata.auth_generation}:${metadata.body_generation}`;
 
 const deleteCatalogMemoVersion = (version: string): void => {
@@ -224,6 +258,17 @@ const loadCatalog = async (kv: Deno.Kv, version: string, authGeneration: string,
   }
 };
 
+/**
+ * Trim an optional header value, treating a missing or blank value as absent.
+ * A non-empty value is returned verbatim, so blank input can never be stored as
+ * if it were a real header.
+ */
+const trimmedHeaderValue = (value: string | null | undefined): string | null => {
+  const trimmed = value?.trim();
+  if (trimmed === undefined || trimmed === "") return null;
+  return trimmed;
+};
+
 export const storeCodexCatalog = async (
   kv: Deno.Kv,
   input: Readonly<{
@@ -251,8 +296,8 @@ export const storeCodexCatalog = async (
     client_version: input.clientVersion,
     auth_generation: input.authGeneration,
     body_generation: bodyGeneration,
-    content_type: input.contentType?.trim() || "application/json",
-    etag: input.etag?.trim() || null,
+    content_type: trimmedHeaderValue(input.contentType) ?? "application/json",
+    etag: trimmedHeaderValue(input.etag),
     fetched_at_ms: fetchedAtMs,
     chunk_count: chunkCount,
     compressed_bytes: compressed.byteLength,
@@ -275,7 +320,7 @@ export const storeCodexCatalog = async (
   if (isCatalogMetadata(previous) && previous.body_generation !== bodyGeneration) {
     await deleteCatalogChunks(kv, input.clientVersion, previous.body_generation, previous.chunk_count);
   }
-  await pruneCatalogVersions(kv, input.clientVersion).catch((error) => {
+  await pruneCatalogVersions(kv, input.clientVersion).catch((error: unknown) => {
     console.error("[ai.ubq.fi] Codex catalog version pruning failed:", error);
   });
   return true;
@@ -332,7 +377,7 @@ const startRefreshLeaseHeartbeat = (
 } => {
   let stopped = false;
   let lost = false;
-  let timer: ReturnType<typeof setTimeout> | null = null;
+  let timer: Parameters<typeof clearTimeout>[0];
   let renewal: Promise<void> | null = null;
   const schedule = (): void => {
     timer = setTimeout(
@@ -341,7 +386,7 @@ const startRefreshLeaseHeartbeat = (
           .then((renewed) => {
             if (!renewed) lost = true;
           })
-          .catch((error) => {
+          .catch((error: unknown) => {
             lost = true;
             console.error(`[ai.ubq.fi] Codex catalog lease renewal failed for ${version}:`, error);
           })
@@ -358,7 +403,7 @@ const startRefreshLeaseHeartbeat = (
     lost: () => lost,
     stop: async () => {
       stopped = true;
-      if (timer !== null) clearTimeout(timer);
+      if (timer !== undefined) clearTimeout(timer);
       await renewal;
     },
   };
@@ -402,28 +447,76 @@ const ownsPromptCacheScopePromotionLease = (value: unknown, owner: string): bool
   value.lease_until_ms > Date.now();
 
 /**
+ * Evaluate one promotion attempt without writing anything: every fence, every
+ * drift check and both rebuilt views, in their original order. The caller owns
+ * the compare-and-swap, so a failure here leaves the store untouched.
+ */
+const planPromptCacheScopePromotion = (
+  input: PromptCacheScopePromotionInput,
+  model: string,
+  entries: PromptCacheScopePromotionEntries
+): PromptCacheScopePromotionReady | PromptCacheScopePromotionFailure => {
+  const { snapshot: snapshotEntry, runtime: runtimeEntry, lease: leaseEntry, authPool: authPoolEntry } = entries;
+  if (!ownsPromptCacheScopePromotionLease(leaseEntry.value, input.lease.owner)) {
+    return { status: "inconclusive", reason: "lease_lost" };
+  }
+  if (authPoolEntry.versionstamp !== input.authPoolVersionstamp) {
+    return { status: "inconclusive", reason: "auth_pool_drift" };
+  }
+
+  const snapshot = snapshotEntry.value;
+  if (
+    !snapshot ||
+    !Array.isArray(snapshot.models) ||
+    !getString(snapshot.source)?.trim() ||
+    !Number.isSafeInteger(snapshot.updated_at_ms) ||
+    snapshot.updated_at_ms <= 0
+  ) {
+    return { status: "inconclusive", reason: "snapshot_unavailable" };
+  }
+  if (snapshotEntry.versionstamp !== input.catalogVersionstamp) {
+    return { status: "inconclusive", reason: "catalog_drift" };
+  }
+  if (!getUniqueCodexModelBySlug(snapshot, model)) {
+    return { status: "inconclusive", reason: "model_drift" };
+  }
+  if (!isCodexModelPromptCacheScopeExperimentEligible(snapshot, model)) {
+    return { status: "inconclusive", reason: "capability_changed" };
+  }
+
+  const currentRuntime = normalizeRuntimeConfig(runtimeEntry.value);
+  if (!currentRuntime) return { status: "inconclusive", reason: "runtime_unavailable" };
+  if (runtimeEntry.versionstamp !== input.runtimeVersionstamp) {
+    return { status: "inconclusive", reason: "runtime_drift" };
+  }
+  // Scope evidence belongs to a catalog model, not necessarily the active
+  // default. Rebuilding the compact view must retain the configured default
+  // verbatim when the probed model is non-default.
+  const defaultModel = preserveCodexDefaultModel(snapshot, currentRuntime.default_model);
+  if (!defaultModel) return { status: "inconclusive", reason: "runtime_unavailable" };
+
+  const nextSnapshot = withCodexModelPromptCacheScope(snapshot, model, CODEX_CHATGPT_PROMPT_CACHE_PROVIDER, input.scope);
+  if (!nextSnapshot) return { status: "inconclusive", reason: "model_drift" };
+
+  try {
+    const nextRuntime = buildRuntimeConfig(nextSnapshot, {
+      defaultModel,
+      defaultReasoningEffort: currentRuntime.default_reasoning_effort,
+      nowMs: input.scope.verified_at_ms,
+    });
+    return { status: "ready", nextSnapshot, nextRuntime };
+  } catch {
+    return { status: "inconclusive", reason: "runtime_unavailable" };
+  }
+};
+
+/**
  * Publish a concrete live scope observation without replacing catalog-owned
  * controls or another model's evidence. The catalog and compact runtime view
  * are committed together, and the warm runtime cache changes only after that
  * compare-and-swap succeeds.
  */
-export const promoteCodexPromptCacheScope = async (
-  kv: Deno.Kv,
-  input: Readonly<{
-    model: string;
-    scope: PromptCacheScope;
-    lease: PromptCacheScopePromotionLease;
-    authPoolVersionstamp: string;
-    /**
-     * The scope runner binds a campaign to one exact full-catalog revision.
-     * A model may be non-default, but it may never publish against a catalog
-     * revision other than the one whose controls it actually probed.
-     */
-    catalogVersionstamp: string;
-    /** The same fence for the compact runtime/default-model configuration. */
-    runtimeVersionstamp: string;
-  }>
-): Promise<PromptCacheScopePromotionResult> => {
+export const promoteCodexPromptCacheScope = async (kv: Deno.Kv, input: PromptCacheScopePromotionInput): Promise<PromptCacheScopePromotionResult> => {
   const model = input.model.trim();
   if (
     !model ||
@@ -443,74 +536,30 @@ export const promoteCodexPromptCacheScope = async (
       kv.get(input.lease.key, { consistency: "strong" }),
       kv.get(CODEX_AUTH_POOL_KV_KEY, { consistency: "strong" }),
     ]);
-    if (!ownsPromptCacheScopePromotionLease(leaseEntry.value, input.lease.owner)) {
-      return { status: "inconclusive", reason: "lease_lost" };
-    }
-    if (authPoolEntry.versionstamp !== input.authPoolVersionstamp) {
-      return { status: "inconclusive", reason: "auth_pool_drift" };
-    }
+    const attemptPlan = planPromptCacheScopePromotion(input, model, {
+      snapshot: snapshotEntry,
+      runtime: runtimeEntry,
+      lease: leaseEntry,
+      authPool: authPoolEntry,
+    });
+    if (attemptPlan.status === "inconclusive") return attemptPlan;
 
-    const snapshot = snapshotEntry.value;
-    if (
-      !snapshot ||
-      !Array.isArray(snapshot.models) ||
-      !getString(snapshot.source)?.trim() ||
-      !Number.isSafeInteger(snapshot.updated_at_ms) ||
-      snapshot.updated_at_ms <= 0
-    ) {
-      return { status: "inconclusive", reason: "snapshot_unavailable" };
-    }
-    if (snapshotEntry.versionstamp !== input.catalogVersionstamp) {
-      return { status: "inconclusive", reason: "catalog_drift" };
-    }
-    if (!getUniqueCodexModelBySlug(snapshot, model)) {
-      return { status: "inconclusive", reason: "model_drift" };
-    }
-    if (!isCodexModelPromptCacheScopeExperimentEligible(snapshot, model)) {
-      return { status: "inconclusive", reason: "capability_changed" };
-    }
-
-    const currentRuntime = normalizeRuntimeConfig(runtimeEntry.value);
-    if (!currentRuntime) return { status: "inconclusive", reason: "runtime_unavailable" };
-    if (runtimeEntry.versionstamp !== input.runtimeVersionstamp) {
-      return { status: "inconclusive", reason: "runtime_drift" };
-    }
-    // Scope evidence belongs to a catalog model, not necessarily the active
-    // default. Rebuilding the compact view must retain the configured default
-    // verbatim when the probed model is non-default.
-    const defaultModel = preserveCodexDefaultModel(snapshot, currentRuntime.default_model);
-    if (!defaultModel) return { status: "inconclusive", reason: "runtime_unavailable" };
-
-    const nextSnapshot = withCodexModelPromptCacheScope(snapshot, model, CODEX_CHATGPT_PROMPT_CACHE_PROVIDER, input.scope);
-    if (!nextSnapshot) return { status: "inconclusive", reason: "model_drift" };
-
-    let nextRuntime: RuntimeConfigV2;
-    try {
-      nextRuntime = buildRuntimeConfig(nextSnapshot, {
-        defaultModel,
-        defaultReasoningEffort: currentRuntime.default_reasoning_effort,
-        nowMs: input.scope.verified_at_ms,
-      });
-    } catch {
-      return { status: "inconclusive", reason: "runtime_unavailable" };
-    }
     const renewedLease: RefreshLease = {
       owner: input.lease.owner,
       lease_until_ms: Date.now() + PROMPT_CACHE_SCOPE_PROMOTION_LEASE_MS,
     };
-
     const commit = await kv
       .atomic()
       .check(snapshotEntry)
       .check(runtimeEntry)
       .check(leaseEntry)
       .check(authPoolEntry)
-      .set(CODEX_MODELS_KV_KEY, nextSnapshot)
-      .set(RUNTIME_CONFIG_V2_KEY, nextRuntime)
+      .set(CODEX_MODELS_KV_KEY, attemptPlan.nextSnapshot)
+      .set(RUNTIME_CONFIG_V2_KEY, attemptPlan.nextRuntime)
       .set(input.lease.key, renewedLease, { expireIn: PROMPT_CACHE_SCOPE_PROMOTION_LEASE_MS * 2 })
       .commit();
     if (!commit.ok) continue;
-    cacheRuntimeConfig(nextRuntime);
+    cacheRuntimeConfig(attemptPlan.nextRuntime);
     return { status: "promoted" };
   }
   return { status: "inconclusive", reason: "cas_conflict" };
@@ -634,6 +683,35 @@ const uniqueResponsesModels = <
   });
 };
 
+/** Trimmed model slugs advertised by a catalog body, in their stored order. */
+const catalogModelIds = (models: readonly unknown[]): Set<string> => {
+  const ids = models
+    .map((model) => {
+      if (!isRecord(model)) return null;
+      return (getString(model.slug) ?? getString(model.id) ?? getString(model.model) ?? getString(model.name))?.trim() ?? null;
+    })
+    .filter((id): id is string => Boolean(id));
+  return new Set(ids);
+};
+
+/** ETag for a response body, reusing the stored tag when the bytes are unchanged. */
+const catalogBodyEtag = async (body: string, catalog: LoadedCodexCatalog): Promise<string | null> =>
+  body === catalog.body ? catalog.metadata.etag : `"uos-catalog-${(await sha256Hex(body)).slice(0, 32)}"`;
+
+/** Answer with the stored catalog alone, honoring the request's conditional headers. */
+const catalogOnlyResponse = (catalog: LoadedCodexCatalog, req: Request, headers: Headers): Response => {
+  if (catalog.metadata.etag) headers.set("ETag", catalog.metadata.etag);
+  if (etagMatches(req.headers.get("If-None-Match"), catalog.metadata.etag)) {
+    return new Response(null, { status: 304, headers });
+  }
+  return new Response(catalog.body, { status: 200, headers });
+};
+
+/** Refresh a paid-tier model list in the background once its cache entry expired. */
+const refreshExpiredModelList = (nowMs: number, updatedAtMs: number, ttlMs: number, refresh: () => Promise<unknown>): void => {
+  if (nowMs - updatedAtMs >= ttlMs) void refresh().catch(() => {});
+};
+
 const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheState: string): Promise<Response> => {
   const headers = new Headers({
     "Content-Type": catalog.metadata.content_type,
@@ -644,39 +722,22 @@ const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheS
   const [cachedMetered, cachedSurplus] = await Promise.all([fetchMeteredModels({ cachedOnly: true }), fetchSurplusModels({ cachedOnly: true })]);
   const [metered, surplus] = await Promise.all([cachedMetered ?? fetchMeteredModels(), cachedSurplus ?? fetchSurplusModels()]);
   const nowMs = Date.now();
-  if (metered && nowMs - metered.updated_at_ms >= METERED_MODELS_CACHE_TTL_MS) {
-    void fetchMeteredModels().catch(() => {});
-  }
-  if (surplus && nowMs - surplus.updated_at_ms >= SURPLUS_MODELS_CACHE_TTL_MS) {
-    void fetchSurplusModels().catch(() => {});
-  }
+  if (metered) refreshExpiredModelList(nowMs, metered.updated_at_ms, METERED_MODELS_CACHE_TTL_MS, fetchMeteredModels);
+  if (surplus) refreshExpiredModelList(nowMs, surplus.updated_at_ms, SURPLUS_MODELS_CACHE_TTL_MS, fetchSurplusModels);
   const paidModels = uniqueResponsesModels([...(metered?.models ?? []), ...(surplus?.models ?? [])]);
-  if (!paidModels.length) {
-    if (catalog.metadata.etag) headers.set("ETag", catalog.metadata.etag);
-    if (etagMatches(req.headers.get("If-None-Match"), catalog.metadata.etag)) {
-      return new Response(null, { status: 304, headers });
-    }
-    return new Response(catalog.body, { status: 200, headers });
-  }
+  if (!paidModels.length) return catalogOnlyResponse(catalog, req, headers);
   const parsed = {
     ...catalog.parsed,
     models: [...(Array.isArray(catalog.parsed.models) ? catalog.parsed.models : [])],
   };
-  const seen = new Set(
-    parsed.models
-      .map((model) => {
-        if (!isRecord(model)) return null;
-        return (getString(model.slug) ?? getString(model.id) ?? getString(model.model) ?? getString(model.name))?.trim() ?? null;
-      })
-      .filter((id): id is string => Boolean(id))
-  );
+  const seen = catalogModelIds(parsed.models);
   for (const model of paidModels) {
     if (seen.has(model.id)) continue;
     parsed.models.push(meteredCodexModelRecord(model));
     seen.add(model.id);
   }
   const body = JSON.stringify(parsed);
-  const etag = body === catalog.body ? catalog.metadata.etag : `"uos-catalog-${(await sha256Hex(body)).slice(0, 32)}"`;
+  const etag = await catalogBodyEtag(body, catalog);
   if (etag) headers.set("ETag", etag);
   if (etagMatches(req.headers.get("If-None-Match"), etag)) {
     return new Response(null, { status: 304, headers });
@@ -716,6 +777,154 @@ const recordCatalogDegradation = async (version: string, dependencies: CodexCata
   }
 };
 
+/** State shared by the helpers of one lease-holding catalog refresh. */
+type CodexCatalogRefreshContext = Readonly<{
+  kv: Deno.Kv;
+  req: Request;
+  version: string;
+  authGeneration: string;
+  cached: LoadedCodexCatalog | null;
+  nowMs: number;
+  leaseLost: () => boolean;
+  observeProviderDegradation: () => void;
+  recordObservedProviderDegradation: () => Promise<void>;
+}>;
+
+/** The upstream catalog a refresh attempt parsed, plus the headers it arrived with. */
+type RefreshedCatalogPayload = Readonly<{
+  body: string;
+  parsed: Record<string, unknown>;
+  contentType: string | null;
+  etag: string | null;
+}>;
+
+/** The upstream catalog body and whether reading it failed. */
+type CodexUpstreamBodyRead = Readonly<{ body: string; readFailed: boolean }>;
+
+/** Answer with the metered catalog, or report the Codex catalog as unavailable. */
+const meteredCatalogOrError = async (message: string): Promise<Response> =>
+  (await meteredCatalogResponse()) ?? openaiError(502, message, "codex_catalog_unavailable");
+
+/** Serve the catalog of the current authentication generation after a rotation. */
+const rotatedCatalogResponse = async (kv: Deno.Kv, req: Request, version: string): Promise<Response> => {
+  const replacement = await loadCurrentGenerationCatalog(kv, version).catch(() => null);
+  if (replacement) return catalogResponse(replacement, req, "rotated");
+  return openaiError(502, "Codex authentication changed during catalog refresh", "codex_catalog_unavailable");
+};
+
+/** Fall back to the cached, rotated, or metered catalog when a refresh step fails. */
+const staleOrRotatedOrUnavailable = async (context: CodexCatalogRefreshContext, unavailableMessage: string): Promise<Response> => {
+  if (context.cached && (await authGenerationIsCurrent(context.kv, context.authGeneration))) {
+    return catalogResponse(context.cached, context.req, "stale");
+  }
+  const replacement = await loadCurrentGenerationCatalog(context.kv, context.version).catch(() => null);
+  if (replacement) return catalogResponse(replacement, context.req, "rotated");
+  return meteredCatalogOrError(unavailableMessage);
+};
+
+/** Read the upstream catalog body, reporting a failed read instead of throwing. */
+const readUpstreamCatalogBody = async (upstream: Response, version: string): Promise<CodexUpstreamBodyRead> => {
+  let readFailed = false;
+  const body = await upstream.text().catch((error: unknown) => {
+    readFailed = true;
+    console.error(`[ai.ubq.fi] Codex catalog response read failed for ${version}:`, error);
+    return "";
+  });
+  return { body, readFailed };
+};
+
+/** Re-store the catalog the upstream confirmed with a 304, or fall back to a replacement. */
+const revalidateCachedCatalog = async (context: CodexCatalogRefreshContext, cached: LoadedCodexCatalog): Promise<Response> => {
+  if (context.leaseLost() || !(await authGenerationIsCurrent(context.kv, context.authGeneration))) {
+    return rotatedCatalogResponse(context.kv, context.req, context.version);
+  }
+  const revalidated = await storeCodexCatalog(context.kv, {
+    clientVersion: context.version,
+    authGeneration: context.authGeneration,
+    body: cached.body,
+    etag: cached.metadata.etag,
+    contentType: cached.metadata.content_type,
+    fetchedAtMs: context.nowMs,
+  });
+  if (!revalidated || !(await authGenerationIsCurrent(context.kv, context.authGeneration))) {
+    return rotatedCatalogResponse(context.kv, context.req, context.version);
+  }
+  const refreshed = await loadCatalog(context.kv, context.version, context.authGeneration, context.nowMs);
+  return catalogResponse(refreshed ?? cached, context.req, "revalidated");
+};
+
+/** Store a freshly parsed upstream catalog and answer with what the cache now holds. */
+const storeRefreshedCatalog = async (context: CodexCatalogRefreshContext, payload: RefreshedCatalogPayload): Promise<Response> => {
+  if (context.leaseLost() || !(await authGenerationIsCurrent(context.kv, context.authGeneration))) {
+    return rotatedCatalogResponse(context.kv, context.req, context.version);
+  }
+  const stored = await storeCodexCatalog(context.kv, {
+    clientVersion: context.version,
+    authGeneration: context.authGeneration,
+    body: payload.body,
+    etag: payload.etag,
+    contentType: payload.contentType,
+    fetchedAtMs: context.nowMs,
+  });
+  if (!stored) return staleOrRotatedOrUnavailable(context, "Codex model catalog could not be cached");
+  await maybeUpdateNormalizedSnapshot(context.kv, context.version, context.authGeneration, payload.parsed, context.nowMs).catch((error: unknown) => {
+    console.error(`[ai.ubq.fi] Codex normalized snapshot update failed for ${context.version}:`, error);
+  });
+  if (!(await authGenerationIsCurrent(context.kv, context.authGeneration))) {
+    return rotatedCatalogResponse(context.kv, context.req, context.version);
+  }
+  const storedCatalog = await loadCatalog(context.kv, context.version, context.authGeneration, context.nowMs);
+  if (storedCatalog) return catalogResponse(storedCatalog, context.req, "miss");
+  return meteredCatalogOrError("Codex model catalog could not be read after caching");
+};
+
+/** Run one upstream refresh for a caller that holds the catalog refresh lease. */
+const refreshCodexCatalog = async (context: CodexCatalogRefreshContext): Promise<Response> => {
+  const upstream = await fetchCodexModels({
+    clientVersion: context.version,
+    ifNoneMatch: context.cached?.metadata.etag ?? null,
+    onProviderTransportFailure: () => {
+      context.observeProviderDegradation();
+    },
+  });
+  if (upstream.status >= 500 && upstream.status <= 599) {
+    context.observeProviderDegradation();
+  }
+  await context.recordObservedProviderDegradation();
+  if (upstream.status === 304 && context.cached) {
+    return revalidateCachedCatalog(context, context.cached);
+  }
+
+  const contentType = upstream.headers.get("Content-Type");
+  const { body, readFailed } = await readUpstreamCatalogBody(upstream, context.version);
+  if (readFailed) {
+    context.observeProviderDegradation();
+    await context.recordObservedProviderDegradation();
+  }
+  const parsed = contentType?.toLowerCase().includes("application/json") ? parseCatalogBody(body) : null;
+  if (!upstream.ok || !parsed) {
+    console.error(`[ai.ubq.fi] Codex catalog refresh failed for ${context.version}: upstream ${upstream.status} ${body.slice(0, 240)}`);
+    return staleOrRotatedOrUnavailable(context, "Codex upstream did not return a valid model catalog");
+  }
+  return storeRefreshedCatalog(context, { body, parsed, contentType, etag: upstream.headers.get("ETag") });
+};
+
+/** Cache state label for a catalog recovered after a failed refresh. */
+const recoveredCacheState = (generationCurrent: boolean, cached: LoadedCodexCatalog | null): string => {
+  if (!generationCurrent) return "rotated";
+  return cached ? "stale" : "miss";
+};
+
+/** Recover the best available catalog after a refresh threw. */
+const recoverFailedCatalogRefresh = async (context: CodexCatalogRefreshContext): Promise<Response> => {
+  const generationCurrent = await authGenerationIsCurrent(context.kv, context.authGeneration).catch(() => false);
+  const recovered = generationCurrent
+    ? (context.cached ?? (await loadCatalog(context.kv, context.version, context.authGeneration, Date.now()).catch(() => null)))
+    : await loadCurrentGenerationCatalog(context.kv, context.version).catch(() => null);
+  if (!recovered) return meteredCatalogOrError("Codex upstream model catalog is unavailable");
+  return catalogResponse(recovered, context.req, recoveredCacheState(generationCurrent, context.cached));
+};
+
 export const handleCodexCatalogModels = async (req: Request, rawVersion: string, dependencies: CodexCatalogDependencies = {}): Promise<Response> => {
   const version = rawVersion.trim();
   if (!parseCodexClientVersion(version)) {
@@ -725,7 +934,7 @@ export const handleCodexCatalogModels = async (req: Request, rawVersion: string,
   }
   const kv = await getKv();
   if (!kv) {
-    return (await meteredCatalogResponse()) ?? openaiError(502, "Codex model catalog cache is unavailable", "codex_catalog_unavailable");
+    return meteredCatalogOrError("Codex model catalog cache is unavailable");
   }
 
   let authGeneration: string;
@@ -733,10 +942,10 @@ export const handleCodexCatalogModels = async (req: Request, rawVersion: string,
     authGeneration = await getAuthGeneration(kv);
   } catch (error) {
     console.error("[ai.ubq.fi] Codex catalog generation initialization failed:", error);
-    return (await meteredCatalogResponse()) ?? openaiError(502, "Codex model catalog cache is unavailable", "codex_catalog_unavailable");
+    return meteredCatalogOrError("Codex model catalog cache is unavailable");
   }
   const nowMs = Date.now();
-  const cached = await loadCatalog(kv, version, authGeneration, nowMs).catch((error) => {
+  const cached = await loadCatalog(kv, version, authGeneration, nowMs).catch((error: unknown) => {
     console.error(`[ai.ubq.fi] Codex catalog cache read failed for ${version}:`, error);
     return null;
   });
@@ -745,18 +954,18 @@ export const handleCodexCatalogModels = async (req: Request, rawVersion: string,
   }
 
   const leaseOwner = crypto.randomUUID();
-  const acquired = await acquireRefreshLease(kv, version, leaseOwner, nowMs).catch((error) => {
+  const acquired = await acquireRefreshLease(kv, version, leaseOwner, nowMs).catch((error: unknown) => {
     console.error(`[ai.ubq.fi] Codex catalog lease acquisition failed for ${version}:`, error);
     return false;
   });
   if (!acquired) {
     if (cached) return catalogResponse(cached, req, "stale");
-    const waited = await waitForColdCatalog(kv, version).catch((error) => {
+    const waited = await waitForColdCatalog(kv, version).catch((error: unknown) => {
       console.error(`[ai.ubq.fi] Codex catalog cold-cache wait failed for ${version}:`, error);
       return null;
     });
     if (waited) return catalogResponse(waited, req, "wait");
-    return (await meteredCatalogResponse()) ?? openaiError(502, "Codex model catalog refresh is already in progress", "codex_catalog_unavailable");
+    return meteredCatalogOrError("Codex model catalog refresh is already in progress");
   }
 
   const leaseHeartbeat = startRefreshLeaseHeartbeat(kv, version, leaseOwner);
@@ -767,115 +976,25 @@ export const handleCodexCatalogModels = async (req: Request, rawVersion: string,
     providerDegradationRecorded = true;
     await recordCatalogDegradation(version, dependencies);
   };
+  const context: CodexCatalogRefreshContext = {
+    kv,
+    req,
+    version,
+    authGeneration,
+    cached,
+    nowMs,
+    leaseLost: () => leaseHeartbeat.lost(),
+    observeProviderDegradation: () => {
+      providerDegradationObserved = true;
+    },
+    recordObservedProviderDegradation,
+  };
   try {
-    const upstream = await fetchCodexModels({
-      clientVersion: version,
-      ifNoneMatch: cached?.metadata.etag ?? null,
-      onProviderTransportFailure: () => (providerDegradationObserved = true),
-    });
-    if (upstream.status >= 500 && upstream.status <= 599) {
-      providerDegradationObserved = true;
-    }
-    await recordObservedProviderDegradation();
-    if (upstream.status === 304 && cached) {
-      if (leaseHeartbeat.lost() || !(await authGenerationIsCurrent(kv, authGeneration))) {
-        const replacement = await loadCurrentGenerationCatalog(kv, version).catch(() => null);
-        return replacement
-          ? catalogResponse(replacement, req, "rotated")
-          : openaiError(502, "Codex authentication changed during catalog refresh", "codex_catalog_unavailable");
-      }
-      const revalidated = await storeCodexCatalog(kv, {
-        clientVersion: version,
-        authGeneration,
-        body: cached.body,
-        etag: cached.metadata.etag,
-        contentType: cached.metadata.content_type,
-        fetchedAtMs: nowMs,
-      });
-      if (!revalidated || !(await authGenerationIsCurrent(kv, authGeneration))) {
-        const replacement = await loadCurrentGenerationCatalog(kv, version).catch(() => null);
-        return replacement
-          ? catalogResponse(replacement, req, "rotated")
-          : openaiError(502, "Codex authentication changed during catalog refresh", "codex_catalog_unavailable");
-      }
-      const refreshed = await loadCatalog(kv, version, authGeneration, nowMs);
-      return catalogResponse(refreshed ?? cached, req, "revalidated");
-    }
-
-    const contentType = upstream.headers.get("Content-Type");
-    let bodyReadFailed = false;
-    const body = await upstream.text().catch((error) => {
-      bodyReadFailed = true;
-      console.error(`[ai.ubq.fi] Codex catalog response read failed for ${version}:`, error);
-      return "";
-    });
-    if (bodyReadFailed) {
-      providerDegradationObserved = true;
-      await recordObservedProviderDegradation();
-    }
-    const parsed = contentType?.toLowerCase().includes("application/json") ? parseCatalogBody(body) : null;
-    if (!upstream.ok || !parsed) {
-      console.error(`[ai.ubq.fi] Codex catalog refresh failed for ${version}: upstream ${upstream.status} ${body.slice(0, 240)}`);
-      let recovery: Response;
-      if (cached && (await authGenerationIsCurrent(kv, authGeneration))) {
-        recovery = await catalogResponse(cached, req, "stale");
-      } else {
-        const replacement = await loadCurrentGenerationCatalog(kv, version).catch(() => null);
-        recovery = replacement
-          ? await catalogResponse(replacement, req, "rotated")
-          : ((await meteredCatalogResponse()) ?? openaiError(502, "Codex upstream did not return a valid model catalog", "codex_catalog_unavailable"));
-      }
-      return recovery;
-    }
-
-    if (leaseHeartbeat.lost() || !(await authGenerationIsCurrent(kv, authGeneration))) {
-      const replacement = await loadCurrentGenerationCatalog(kv, version).catch(() => null);
-      return replacement
-        ? catalogResponse(replacement, req, "rotated")
-        : openaiError(502, "Codex authentication changed during catalog refresh", "codex_catalog_unavailable");
-    }
-
-    const stored = await storeCodexCatalog(kv, {
-      clientVersion: version,
-      authGeneration,
-      body,
-      etag: upstream.headers.get("ETag"),
-      contentType,
-      fetchedAtMs: nowMs,
-    });
-    if (!stored) {
-      if (cached && (await authGenerationIsCurrent(kv, authGeneration))) {
-        return catalogResponse(cached, req, "stale");
-      }
-      const replacement = await loadCurrentGenerationCatalog(kv, version).catch(() => null);
-      return replacement
-        ? catalogResponse(replacement, req, "rotated")
-        : ((await meteredCatalogResponse()) ?? openaiError(502, "Codex model catalog could not be cached", "codex_catalog_unavailable"));
-    }
-    await maybeUpdateNormalizedSnapshot(kv, version, authGeneration, parsed, nowMs).catch((error) => {
-      console.error(`[ai.ubq.fi] Codex normalized snapshot update failed for ${version}:`, error);
-    });
-    if (!(await authGenerationIsCurrent(kv, authGeneration))) {
-      const replacement = await loadCurrentGenerationCatalog(kv, version).catch(() => null);
-      return replacement
-        ? catalogResponse(replacement, req, "rotated")
-        : openaiError(502, "Codex authentication changed during catalog refresh", "codex_catalog_unavailable");
-    }
-    const storedCatalog = await loadCatalog(kv, version, authGeneration, nowMs);
-    return storedCatalog
-      ? catalogResponse(storedCatalog, req, "miss")
-      : ((await meteredCatalogResponse()) ?? openaiError(502, "Codex model catalog could not be read after caching", "codex_catalog_unavailable"));
+    return await refreshCodexCatalog(context);
   } catch (error) {
     console.error(`[ai.ubq.fi] Codex catalog refresh failed for ${version}:`, error);
     await recordObservedProviderDegradation();
-    const generationCurrent = await authGenerationIsCurrent(kv, authGeneration).catch(() => false);
-    const recovered = generationCurrent
-      ? (cached ?? (await loadCatalog(kv, version, authGeneration, Date.now()).catch(() => null)))
-      : await loadCurrentGenerationCatalog(kv, version).catch(() => null);
-    const recovery = recovered
-      ? catalogResponse(recovered, req, generationCurrent ? (cached ? "stale" : "miss") : "rotated")
-      : ((await meteredCatalogResponse()) ?? openaiError(502, "Codex upstream model catalog is unavailable", "codex_catalog_unavailable"));
-    return recovery;
+    return await recoverFailedCatalogRefresh(context);
   } finally {
     await leaseHeartbeat.stop();
     await releaseRefreshLease(kv, version, leaseOwner);
@@ -884,5 +1003,7 @@ export const handleCodexCatalogModels = async (req: Request, rawVersion: string,
 
 export const getCatalogClientVersion = (req: Request): string | null => {
   const values = new URL(req.url).searchParams.getAll("client_version");
-  return values.length === 1 ? values[0] : values.length === 0 ? null : "";
+  if (values.length === 1) return values[0];
+  if (values.length === 0) return null;
+  return "";
 };

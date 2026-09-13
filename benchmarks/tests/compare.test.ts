@@ -12,6 +12,11 @@ function freshOptions() {
   return { runsRoot };
 }
 
+function requireFound<T>(value: T | undefined, description: string): T {
+  if (value === undefined) throw new Error(`missing compare evidence: ${description}`);
+  return value;
+}
+
 Deno.test("compare: evidence runs deterministically without inference", async () => {
   const { runsRoot } = freshOptions();
   try {
@@ -21,8 +26,14 @@ Deno.test("compare: evidence runs deterministically without inference", async ()
     assert.equal(evidence.schema_version, "1.0");
     assert.equal(evidence.mode, "deterministic");
     assert.equal(evidence.tasks.length, 3);
-    const compactSurface = evidence.surfaces.find((s) => s.id === "compact")!;
-    const broadSurface = evidence.surfaces.find((s) => s.id === "broad")!;
+    const compactSurface = requireFound(
+      evidence.surfaces.find((s) => s.id === "compact"),
+      "compact surface"
+    );
+    const broadSurface = requireFound(
+      evidence.surfaces.find((s) => s.id === "broad"),
+      "broad surface"
+    );
     assert.equal(compactSurface.tools, 9);
     assert.equal(broadSurface.tools, 13);
     assert.ok(broadSurface.tokens > compactSurface.tokens);
@@ -37,8 +48,14 @@ Deno.test("compare: evidence runs deterministically without inference", async ()
     }
     // Structured context costs strictly less than a full replay in the
     // long-horizon task, where the compaction/state-summary payoff is real.
-    const long = evidence.tasks.find((t) => t.task_id === "long-003")!;
-    const medium = long.budgets.find((b) => b.budget === "medium")!;
+    const long = requireFound(
+      evidence.tasks.find((t) => t.task_id === "long-003"),
+      "long-003 task"
+    );
+    const medium = requireFound(
+      long.budgets.find((b) => b.budget === "medium"),
+      "long-003 medium budget"
+    );
     assert.ok(medium.structured_tokens < medium.full_transcript_tokens, `structured ${medium.structured_tokens} < full ${medium.full_transcript_tokens}`);
   } finally {
     Deno.removeSync(runsRoot, { recursive: true });

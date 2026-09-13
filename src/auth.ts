@@ -159,12 +159,10 @@ const parseKernelAttestationPayload = (value: unknown): KernelAttestationPayload
   if (iat === null || exp === null) return null;
 
   const installationIdValue = value.installation_id;
-  const installationId =
-    installationIdValue === null
-      ? null
-      : typeof installationIdValue === "number" && Number.isFinite(installationIdValue)
-        ? Math.trunc(installationIdValue)
-        : null;
+  let installationId: number | null = null;
+  if (installationIdValue !== null && typeof installationIdValue === "number" && Number.isFinite(installationIdValue)) {
+    installationId = Math.trunc(installationIdValue);
+  }
   if (installationIdValue !== null && installationId === null) return null;
 
   if (iss !== "ubiquity-os-kernel") return null;
@@ -187,6 +185,160 @@ const parseKernelAttestationPayload = (value: unknown): KernelAttestationPayload
 
 const KERNEL_ATTESTATION_CLOCK_SKEW_SECONDS = 60;
 const KERNEL_ATTESTATION_MAX_TTL_SECONDS = 60 * 60;
+
+type KernelAttestationFailure = { ok: false; response: Response };
+
+const kernelAttestationClockFailure = (payload: KernelAttestationPayload, now: number): KernelAttestationFailure | null => {
+  if (payload.exp < payload.iat) {
+    return {
+      ok: false,
+      response: openaiError(401, `Unauthorized: kernel attestation 'exp' (${payload.exp}) is before 'iat' (${payload.iat})`, "invalid_kernel_token"),
+    };
+  }
+  if (payload.exp - payload.iat > KERNEL_ATTESTATION_MAX_TTL_SECONDS) {
+    return {
+      ok: false,
+      response: openaiError(
+        401,
+        `Unauthorized: kernel attestation TTL is too long (${payload.exp - payload.iat}s > ${KERNEL_ATTESTATION_MAX_TTL_SECONDS}s)`,
+        "invalid_kernel_token"
+      ),
+    };
+  }
+  if (payload.iat > now + KERNEL_ATTESTATION_CLOCK_SKEW_SECONDS) {
+    return {
+      ok: false,
+      response: openaiError(401, `Unauthorized: kernel attestation 'iat' (${payload.iat}) is in the future (server now: ${now})`, "invalid_kernel_token"),
+    };
+  }
+  if (payload.exp < now - KERNEL_ATTESTATION_CLOCK_SKEW_SECONDS) {
+    return {
+      ok: false,
+      response: openaiError(401, `Unauthorized: kernel attestation 'exp' (${payload.exp}) is in the past (server now: ${now})`, "invalid_kernel_token"),
+    };
+  }
+  return null;
+};
+
+const kernelAttestationRepoFailure = (
+  payload: KernelAttestationPayload,
+  owner: string | null | undefined,
+  repo: string | null | undefined
+): KernelAttestationFailure | null => {
+  const expectedOwner = typeof owner === "string" ? owner.trim() : "";
+  const expectedRepo = typeof repo === "string" ? repo.trim() : "";
+  if (expectedOwner && expectedRepo && (payload.owner !== expectedOwner || payload.repo !== expectedRepo)) {
+    return {
+      ok: false,
+      response: openaiError(
+        401,
+        `Unauthorized: kernel attestation repo mismatch. Expected '${expectedOwner}/${expectedRepo}', got '${payload.owner}/${payload.repo}'`,
+        "invalid_kernel_token"
+      ),
+    };
+  }
+  return null;
+};
+
+const kernelAttestationInstallationFailure = (req: Request, payload: KernelAttestationPayload): KernelAttestationFailure | null => {
+  if (payload.installation_id === null) return null;
+  const installationId = parseInstallationIdHeader(req);
+  if (installationId === null) {
+    return {
+      ok: false,
+      response: openaiError(
+        401,
+        "Unauthorized: missing 'X-GitHub-Installation-Id' header, required for kernel attestation verification",
+        "missing_installation_id"
+      ),
+    };
+  }
+  if (payload.installation_id !== installationId) {
+    return {
+      ok: false,
+      response: openaiError(
+        401,
+        `Unauthorized: kernel attestation installation_id mismatch. Expected '${installationId}', got '${payload.installation_id}'`,
+        "invalid_kernel_token"
+      ),
+    };
+  }
+  return null;
+};
+
+const parseKernelAttestationParts = (
+  parts: readonly string[]
+): { ok: true; header: unknown; payload: KernelAttestationPayload | null } | KernelAttestationFailure => {
+  try {
+    return {
+      ok: true,
+      header: decodeBase64UrlToJson(parts[0]),
+      payload: parseKernelAttestationPayload(decodeBase64UrlToJson(parts[1])),
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      response: openaiError(
+        401,
+        `Unauthorized: failed to parse kernel attestation JWT parts: ${err instanceof Error ? err.message : String(err)}`,
+        "invalid_kernel_token"
+      ),
+    };
+  }
+};
+
+const kernelAttestationSignatureFailure = async (parts: readonly string[], keys: readonly CryptoKey[]): Promise<KernelAttestationFailure | null> => {
+  const signingInput = `${parts[0]}.${parts[1]}`;
+  const dataArray = new TextEncoder().encode(signingInput) as Uint8Array<ArrayBuffer>;
+  let signatureBytes: Uint8Array<ArrayBuffer>;
+  try {
+    signatureBytes = decodeBase64UrlToBytes(parts[2]);
+  } catch (err) {
+    return {
+      ok: false,
+      response: openaiError(
+        401,
+        `Unauthorized: failed to decode kernel attestation signature: ${err instanceof Error ? err.message : String(err)}`,
+        "invalid_kernel_token"
+      ),
+    };
+  }
+
+  const verifySignature = async (candidateKeys: readonly CryptoKey[]): Promise<boolean> => {
+    for (const key of candidateKeys) {
+      try {
+        const ok = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, signatureBytes, dataArray);
+        if (ok) return true;
+      } catch {
+        // ignore and try next key
+      }
+    }
+    return false;
+  };
+
+  let signatureValid = await verifySignature(keys);
+  if (!signatureValid) {
+    const refreshedKeys = await getKernelPublicKeys(true);
+    if (refreshedKeys.length === 0) {
+      return {
+        ok: false,
+        response: openaiError(
+          500,
+          "Server misconfigured: No kernel public keys loaded. Set 'UOS_AI_KERNEL_PUBLIC_KEY' or use admin endpoints to add pubkeys.",
+          "server_error"
+        ),
+      };
+    }
+    signatureValid = await verifySignature(refreshedKeys);
+  }
+  if (!signatureValid) {
+    return {
+      ok: false,
+      response: openaiError(401, "Unauthorized (invalid kernel attestation)", "invalid_kernel_token"),
+    };
+  }
+  return null;
+};
 
 const parseInstallationIdHeader = (req: Request): number | null => {
   const raw = (req.headers.get("X-GitHub-Installation-Id") ?? "").trim();
@@ -237,29 +389,19 @@ const verifyKernelAttestation = async (
     };
   }
 
-  let header: unknown;
-  let payload: KernelAttestationPayload | null = null;
+  const parsed = parseKernelAttestationParts(parts);
+  if (!parsed.ok) return parsed;
+  const { header, payload } = parsed;
 
-  try {
-    header = decodeBase64UrlToJson(parts[0]);
-    payload = parseKernelAttestationPayload(decodeBase64UrlToJson(parts[1]));
-  } catch (err) {
+  // The diagnostic keeps the original shape: a JSON scalar renders the way plain
+  // interpolation would, and a non-record header renders 'undefined'.
+  const headerAlgorithm: unknown = isRecord(header) ? header.alg : "undefined";
+  if (getString(headerAlgorithm) !== "RS256") {
     return {
       ok: false,
       response: openaiError(
         401,
-        `Unauthorized: failed to parse kernel attestation JWT parts: ${err instanceof Error ? err.message : String(err)}`,
-        "invalid_kernel_token"
-      ),
-    };
-  }
-
-  if (!isRecord(header) || getString(header.alg) !== "RS256") {
-    return {
-      ok: false,
-      response: openaiError(
-        401,
-        `Unauthorized: kernel attestation JWT 'alg' MUST be 'RS256', got '${isRecord(header) ? header.alg : "undefined"}'`,
+        `Unauthorized: kernel attestation JWT 'alg' MUST be 'RS256', got '${typeof headerAlgorithm === "string" ? headerAlgorithm : JSON.stringify(headerAlgorithm)}'`,
         "invalid_kernel_token"
       ),
     };
@@ -273,71 +415,14 @@ const verifyKernelAttestation = async (
   }
 
   const now = Math.floor(Date.now() / 1000);
-  if (payload.exp < payload.iat) {
-    return {
-      ok: false,
-      response: openaiError(401, `Unauthorized: kernel attestation 'exp' (${payload.exp}) is before 'iat' (${payload.iat})`, "invalid_kernel_token"),
-    };
-  }
-  if (payload.exp - payload.iat > KERNEL_ATTESTATION_MAX_TTL_SECONDS) {
-    return {
-      ok: false,
-      response: openaiError(
-        401,
-        `Unauthorized: kernel attestation TTL is too long (${payload.exp - payload.iat}s > ${KERNEL_ATTESTATION_MAX_TTL_SECONDS}s)`,
-        "invalid_kernel_token"
-      ),
-    };
-  }
-  if (payload.iat > now + KERNEL_ATTESTATION_CLOCK_SKEW_SECONDS) {
-    return {
-      ok: false,
-      response: openaiError(401, `Unauthorized: kernel attestation 'iat' (${payload.iat}) is in the future (server now: ${now})`, "invalid_kernel_token"),
-    };
-  }
-  if (payload.exp < now - KERNEL_ATTESTATION_CLOCK_SKEW_SECONDS) {
-    return {
-      ok: false,
-      response: openaiError(401, `Unauthorized: kernel attestation 'exp' (${payload.exp}) is in the past (server now: ${now})`, "invalid_kernel_token"),
-    };
-  }
+  const clockFailure = kernelAttestationClockFailure(payload, now);
+  if (clockFailure) return clockFailure;
 
-  const expectedOwner = typeof owner === "string" ? owner.trim() : "";
-  const expectedRepo = typeof repo === "string" ? repo.trim() : "";
-  if (expectedOwner && expectedRepo && (payload.owner !== expectedOwner || payload.repo !== expectedRepo)) {
-    return {
-      ok: false,
-      response: openaiError(
-        401,
-        `Unauthorized: kernel attestation repo mismatch. Expected '${expectedOwner}/${expectedRepo}', got '${payload.owner}/${payload.repo}'`,
-        "invalid_kernel_token"
-      ),
-    };
-  }
+  const repoFailure = kernelAttestationRepoFailure(payload, owner, repo);
+  if (repoFailure) return repoFailure;
 
-  if (payload.installation_id !== null) {
-    const installationId = parseInstallationIdHeader(req);
-    if (installationId === null) {
-      return {
-        ok: false,
-        response: openaiError(
-          401,
-          "Unauthorized: missing 'X-GitHub-Installation-Id' header, required for kernel attestation verification",
-          "missing_installation_id"
-        ),
-      };
-    }
-    if (payload.installation_id !== installationId) {
-      return {
-        ok: false,
-        response: openaiError(
-          401,
-          `Unauthorized: kernel attestation installation_id mismatch. Expected '${installationId}', got '${payload.installation_id}'`,
-          "invalid_kernel_token"
-        ),
-      };
-    }
-  }
+  const installationFailure = kernelAttestationInstallationFailure(req, payload);
+  if (installationFailure) return installationFailure;
 
   const expectedTokenSha = await sha256Base64Url(token);
   if (payload.auth_token_sha256 !== expectedTokenSha) {
@@ -351,55 +436,8 @@ const verifyKernelAttestation = async (
     };
   }
 
-  const signingInput = `${parts[0]}.${parts[1]}`;
-  const dataArray = new TextEncoder().encode(signingInput) as Uint8Array<ArrayBuffer>;
-  let signatureBytes: Uint8Array<ArrayBuffer>;
-  try {
-    signatureBytes = decodeBase64UrlToBytes(parts[2]);
-  } catch (err) {
-    return {
-      ok: false,
-      response: openaiError(
-        401,
-        `Unauthorized: failed to decode kernel attestation signature: ${err instanceof Error ? err.message : String(err)}`,
-        "invalid_kernel_token"
-      ),
-    };
-  }
-
-  const verifySignature = async (candidateKeys: readonly CryptoKey[]): Promise<boolean> => {
-    for (const key of candidateKeys) {
-      try {
-        const ok = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, signatureBytes, dataArray);
-        if (ok) return true;
-      } catch {
-        // ignore and try next key
-      }
-    }
-    return false;
-  };
-
-  let signatureValid = await verifySignature(keys);
-  if (!signatureValid) {
-    const refreshedKeys = await getKernelPublicKeys(true);
-    if (refreshedKeys.length === 0) {
-      return {
-        ok: false,
-        response: openaiError(
-          500,
-          "Server misconfigured: No kernel public keys loaded. Set 'UOS_AI_KERNEL_PUBLIC_KEY' or use admin endpoints to add pubkeys.",
-          "server_error"
-        ),
-      };
-    }
-    signatureValid = await verifySignature(refreshedKeys);
-  }
-  if (!signatureValid) {
-    return {
-      ok: false,
-      response: openaiError(401, "Unauthorized (invalid kernel attestation)", "invalid_kernel_token"),
-    };
-  }
+  const signatureFailure = await kernelAttestationSignatureFailure(parts, keys);
+  if (signatureFailure) return signatureFailure;
 
   pruneKernelTokenJtiCache();
   // This token is expected to be re-used within its TTL (e.g. Codex tool-calling
@@ -646,6 +684,111 @@ const getPasskeyCookieSessionForRequest = (req: Request) => {
   return getPasskeySessionForRequest(new Request(req.url, { headers: passkeyHeaders }));
 };
 
+type ClientAuthLogger = (entry: Omit<AuthLogEntry, "scope" | "token_present" | "token_shape">) => void;
+
+type ClientPasskeySession = NonNullable<Awaited<ReturnType<typeof getPasskeySessionForRequest>>>;
+
+const passkeyClientResult = (token: string | null, passkeySession: ClientPasskeySession): AuthenticateClientResult => ({
+  ok: true,
+  token,
+  method: {
+    kind: "passkey_session",
+    user_id: passkeySession.user.id,
+    handle: passkeySession.user.handle,
+    is_admin: isPasskeyUserAdmin(passkeySession.user),
+    credential_count: passkeySession.user.credential_ids.length,
+  },
+});
+
+const authenticateClientWithoutToken = async (req: Request, logClientAuth: ClientAuthLogger): Promise<AuthenticateClientResult> => {
+  const passkeySession = await getPasskeySessionForRequest(req);
+  if (passkeySession) {
+    logClientAuth({ ok: true, method: "passkey_session" });
+    return passkeyClientResult(passkeySession.token, passkeySession);
+  }
+  logClientAuth({ ok: false, method: "missing", status: 401, reason: "missing_token" });
+  return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
+};
+
+const authenticateClientSessionToken = async (req: Request, token: string, logClientAuth: ClientAuthLogger): Promise<AuthenticateClientResult> => {
+  const passkeySession = await getPasskeySessionForRequest(req);
+  if (!passkeySession) {
+    logClientAuth({ ok: false, method: "passkey_session", status: 401, reason: "invalid_api_key" });
+    return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
+  }
+  logClientAuth({ ok: true, method: "passkey_session" });
+  return passkeyClientResult(token, passkeySession);
+};
+
+const authenticateClientGitHubToken = async (req: Request, token: string, logClientAuth: ClientAuthLogger): Promise<AuthenticateClientResult | null> => {
+  const githubResult = await authenticateGitHubToken(req, token);
+  if (githubResult?.ok) {
+    logClientAuth({ ok: true, method: "github_token" });
+    return { ok: true, token, method: githubResult.method };
+  }
+  if (!githubResult) return null;
+  // A rejected GitHub credential may still be accompanied by a browser session
+  // cookie, which is then accepted as the passkey session.
+  if (githubResult.response.status === 401 && req.headers.has("cookie")) {
+    const passkeySession = await getPasskeyCookieSessionForRequest(req);
+    if (passkeySession) {
+      logClientAuth({ ok: true, method: "passkey_session" });
+      return passkeyClientResult(passkeySession.token, passkeySession);
+    }
+  }
+  logClientAuth({ ok: false, method: "github_token", status: githubResult.response.status, reason: "github_token_rejected" });
+  return { ok: false, response: githubResult.response };
+};
+
+const authenticateClientKvApiKey = async (
+  token: string,
+  kv: Awaited<ReturnType<typeof getKv>>,
+  logClientAuth: ClientAuthLogger
+): Promise<AuthenticateClientResult | null> => {
+  if (!looksLikeUosApiKey(token)) return null;
+  const result = await authenticateApiKeyToken(token, { kv });
+  if (!result.ok) {
+    logClientAuth({ ok: false, method: "kv_api_key", status: result.response.status, reason: "invalid_or_limited" });
+    return result;
+  }
+  logClientAuth({ ok: true, method: "kv_api_key" });
+  return {
+    ok: true,
+    token,
+    method: {
+      kind: "kv_api_key",
+      key_id: result.policy.key_id,
+      policy: result.policy,
+    },
+  };
+};
+
+const authenticateClientAdminToken = async (token: string, logClientAuth: ClientAuthLogger): Promise<AuthenticateClientResult | null> => {
+  const adminResult = await checkAdminToken(token);
+  if (adminResult.ok) {
+    logClientAuth({ ok: true, method: adminResult.kind });
+    return { ok: true, token, method: { kind: adminResult.kind } };
+  }
+  if (!adminResult.response) return null;
+  logClientAuth({
+    ok: false,
+    method: "deno_deploy_token",
+    status: adminResult.response.status,
+    reason: "admin_token_verification_failed",
+  });
+  return { ok: false, response: adminResult.response };
+};
+
+const logUnknownClientAuth = (logClientAuth: ClientAuthLogger, githubCandidate: boolean, githubHeaders: { owner: string; repo: string } | null): void => {
+  const method = githubCandidate && !githubHeaders ? "github_token" : "unknown";
+  logClientAuth({
+    ok: false,
+    method,
+    status: 401,
+    reason: method === "github_token" ? "missing_repo_headers" : "invalid_api_key",
+  });
+};
+
 export const authenticateClient = async (req: Request): Promise<AuthenticateClientResult> => {
   const kv = await getKv();
   const localAuthDisabled = isLocalClientAuthDisabledRequest(req);
@@ -654,7 +797,7 @@ export const authenticateClient = async (req: Request): Promise<AuthenticateClie
   const tokenShape = token ? classifyToken(token) : null;
   const githubHeaders = token ? getGitHubRepoHeaders(req) : null;
   const githubCandidate = token ? looksLikeGitHubToken(token) : false;
-  const logClientAuth = (entry: Omit<AuthLogEntry, "scope" | "token_present" | "token_shape">) => {
+  const logClientAuth: ClientAuthLogger = (entry) => {
     logAuthDecision(req, {
       scope: "client",
       token_present: tokenPresent,
@@ -667,125 +810,26 @@ export const authenticateClient = async (req: Request): Promise<AuthenticateClie
     return { ok: true, token, method: { kind: "disabled" } };
   }
 
-  if (!token) {
-    const passkeySession = await getPasskeySessionForRequest(req);
-    if (passkeySession) {
-      logClientAuth({ ok: true, method: "passkey_session" });
-      return {
-        ok: true,
-        token: passkeySession.token,
-        method: {
-          kind: "passkey_session",
-          user_id: passkeySession.user.id,
-          handle: passkeySession.user.handle,
-          is_admin: isPasskeyUserAdmin(passkeySession.user),
-          credential_count: passkeySession.user.credential_ids.length,
-        },
-      };
-    }
-    logClientAuth({ ok: false, method: "missing", status: 401, reason: "missing_token" });
-    return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
-  }
+  if (!token) return await authenticateClientWithoutToken(req, logClientAuth);
 
   if (config.authTokens.has(token)) {
     logClientAuth({ ok: true, method: "auth_tokens_allowlist" });
     return { ok: true, token, method: { kind: "auth_tokens_allowlist" } };
   }
 
-  if (token.startsWith("uos_ai_session_")) {
-    const passkeySession = await getPasskeySessionForRequest(req);
-    if (!passkeySession) {
-      logClientAuth({ ok: false, method: "passkey_session", status: 401, reason: "invalid_api_key" });
-      return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
-    }
-    logClientAuth({ ok: true, method: "passkey_session" });
-    return {
-      ok: true,
-      token,
-      method: {
-        kind: "passkey_session",
-        user_id: passkeySession.user.id,
-        handle: passkeySession.user.handle,
-        is_admin: isPasskeyUserAdmin(passkeySession.user),
-        credential_count: passkeySession.user.credential_ids.length,
-      },
-    };
-  }
+  if (token.startsWith("uos_ai_session_")) return await authenticateClientSessionToken(req, token, logClientAuth);
 
-  const githubResult = await authenticateGitHubToken(req, token);
-  if (githubResult?.ok) {
-    logClientAuth({ ok: true, method: "github_token" });
-    return { ok: true, token, method: githubResult.method };
-  }
+  const githubClient = await authenticateClientGitHubToken(req, token, logClientAuth);
+  if (githubClient) return githubClient;
 
-  if (githubResult && !githubResult.ok && githubResult.response.status === 401 && req.headers.has("cookie")) {
-    const passkeySession = await getPasskeyCookieSessionForRequest(req);
-    if (passkeySession) {
-      logClientAuth({ ok: true, method: "passkey_session" });
-      return {
-        ok: true,
-        token: passkeySession.token,
-        method: {
-          kind: "passkey_session",
-          user_id: passkeySession.user.id,
-          handle: passkeySession.user.handle,
-          is_admin: isPasskeyUserAdmin(passkeySession.user),
-          credential_count: passkeySession.user.credential_ids.length,
-        },
-      };
-    }
-  }
+  const kvApiKeyClient = await authenticateClientKvApiKey(token, kv, logClientAuth);
+  if (kvApiKeyClient) return kvApiKeyClient;
 
-  if (githubResult) {
-    logClientAuth({
-      ok: false,
-      method: "github_token",
-      status: githubResult.response.status,
-      reason: "github_token_rejected",
-    });
-    return { ok: false, response: githubResult.response };
-  }
-
-  if (looksLikeUosApiKey(token)) {
-    const result = await authenticateApiKeyToken(token, { kv });
-    if (!result.ok) {
-      logClientAuth({ ok: false, method: "kv_api_key", status: result.response.status, reason: "invalid_or_limited" });
-      return result;
-    }
-    logClientAuth({ ok: true, method: "kv_api_key" });
-    return {
-      ok: true,
-      token,
-      method: {
-        kind: "kv_api_key",
-        key_id: result.policy.key_id,
-        policy: result.policy,
-      },
-    };
-  }
-
-  const adminResult = await checkAdminToken(token);
-  if (adminResult.ok) {
-    logClientAuth({ ok: true, method: adminResult.kind });
-    return { ok: true, token, method: { kind: adminResult.kind } };
-  }
-  if (adminResult.response) {
-    logClientAuth({
-      ok: false,
-      method: "deno_deploy_token",
-      status: adminResult.response.status,
-      reason: "admin_token_verification_failed",
-    });
-    return { ok: false, response: adminResult.response };
-  }
+  const adminTokenClient = await authenticateClientAdminToken(token, logClientAuth);
+  if (adminTokenClient) return adminTokenClient;
 
   if (kv) {
-    logClientAuth({
-      ok: false,
-      method: githubCandidate && !githubHeaders ? "github_token" : "unknown",
-      status: 401,
-      reason: githubCandidate && !githubHeaders ? "missing_repo_headers" : "invalid_api_key",
-    });
+    logUnknownClientAuth(logClientAuth, githubCandidate, githubHeaders);
     return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
   }
 
@@ -799,11 +843,6 @@ export const authenticateClient = async (req: Request): Promise<AuthenticateClie
 
   logClientAuth({ ok: false, method: "unknown", status: 401, reason: "invalid_api_key" });
   return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
-};
-
-export const requireClientAuth = async (req: Request): Promise<Response | null> => {
-  const result = await authenticateClient(req);
-  return result.ok ? null : result.response;
 };
 
 const DENO_API_V1_BASE_URL = "https://api.deno.com/v1";
@@ -920,72 +959,46 @@ const checkAdminToken = async (token: string): Promise<CheckAdminTokenResult> =>
   return verified;
 };
 
-export const authenticateAdmin = async (req: Request): Promise<AdminAuthResult> => {
-  const token = getBearerToken(req);
-  const tokenPresent = Boolean(token);
-  const tokenShape = token ? classifyToken(token) : null;
-  const logAdminAuth = (entry: Omit<AuthLogEntry, "scope" | "token_present" | "token_shape">) => {
-    logAuthDecision(req, {
-      scope: "admin",
-      token_present: tokenPresent,
-      token_shape: tokenShape,
-      ...entry,
-    });
-  };
-  if (isAdminAuthDisabledForRequest(req)) {
-    logAdminAuth({ ok: true, method: "disabled" });
-    return {
-      ok: true,
-      token: token ?? "local-dev-admin",
-      is_super_admin: true,
-      method: { kind: "disabled" },
-    };
-  }
-  let passkeySession = await getPasskeySessionForRequest(req);
-  if (!passkeySession && token && looksLikeGitHubToken(token) && !config.adminTokens.has(token) && !config.authTokens.has(token) && req.headers.has("cookie")) {
-    const githubVerification = await verifyGitHubBearer(req, token);
-    if (githubVerification?.kind === "verified") {
-      logAdminAuth({ ok: false, method: "github_token", status: 401, reason: "github_token_not_admin" });
-      return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
-    }
-    if (githubVerification?.kind === "unavailable") {
-      logAdminAuth({
-        ok: false,
-        method: "github_token",
-        status: githubVerification.response.status,
-        reason: "github_token_verification_failed",
-      });
-      return { ok: false, response: githubVerification.response };
-    }
-    if (githubVerification?.kind === "rejected") {
-      passkeySession = await getPasskeyCookieSessionForRequest(req);
-    }
-  }
-  if (passkeySession) {
-    if (!isPasskeyUserAdmin(passkeySession.user)) {
-      logAdminAuth({ ok: false, method: "passkey_session", status: 403, reason: "passkey_user_not_admin" });
-      return { ok: false, response: openaiError(403, "Forbidden", "forbidden") };
-    }
-    logAdminAuth({ ok: true, method: "passkey_session" });
-    return {
-      ok: true,
-      token: passkeySession.token,
-      is_super_admin: false,
-      method: {
-        kind: "passkey_session",
-        user_id: passkeySession.user.id,
-        handle: passkeySession.user.handle,
-        is_admin: true,
-        credential_count: passkeySession.user.credential_ids.length,
-      },
-    };
-  }
+type AdminAuthLogger = (entry: Omit<AuthLogEntry, "scope" | "token_present" | "token_shape">) => void;
 
-  if (!token) {
-    logAdminAuth({ ok: false, method: "missing", status: 401, reason: "missing_token" });
+const adminGitHubVerificationRejection = (githubVerification: GitHubBearerVerification, logAdminAuth: AdminAuthLogger): AdminAuthResult | null => {
+  if (githubVerification?.kind === "verified") {
+    logAdminAuth({ ok: false, method: "github_token", status: 401, reason: "github_token_not_admin" });
     return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
   }
+  if (githubVerification?.kind === "unavailable") {
+    logAdminAuth({
+      ok: false,
+      method: "github_token",
+      status: githubVerification.response.status,
+      reason: "github_token_verification_failed",
+    });
+    return { ok: false, response: githubVerification.response };
+  }
+  return null;
+};
 
+const adminPasskeyResult = (passkeySession: ClientPasskeySession, logAdminAuth: AdminAuthLogger): AdminAuthResult => {
+  if (!isPasskeyUserAdmin(passkeySession.user)) {
+    logAdminAuth({ ok: false, method: "passkey_session", status: 403, reason: "passkey_user_not_admin" });
+    return { ok: false, response: openaiError(403, "Forbidden", "forbidden") };
+  }
+  logAdminAuth({ ok: true, method: "passkey_session" });
+  return {
+    ok: true,
+    token: passkeySession.token,
+    is_super_admin: false,
+    method: {
+      kind: "passkey_session",
+      user_id: passkeySession.user.id,
+      handle: passkeySession.user.handle,
+      is_admin: true,
+      credential_count: passkeySession.user.credential_ids.length,
+    },
+  };
+};
+
+const authenticateAdminTokenResult = async (token: string, logAdminAuth: AdminAuthLogger): Promise<AdminAuthResult> => {
   if (looksLikeGitHubToken(token) && !config.adminTokens.has(token)) {
     logAdminAuth({ ok: false, method: "github_token", status: 401, reason: "missing_github_attestation" });
     return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
@@ -1014,6 +1027,46 @@ export const authenticateAdmin = async (req: Request): Promise<AdminAuthResult> 
   return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
 };
 
+export const authenticateAdmin = async (req: Request): Promise<AdminAuthResult> => {
+  const token = getBearerToken(req);
+  const tokenPresent = Boolean(token);
+  const tokenShape = token ? classifyToken(token) : null;
+  const logAdminAuth: AdminAuthLogger = (entry) => {
+    logAuthDecision(req, {
+      scope: "admin",
+      token_present: tokenPresent,
+      token_shape: tokenShape,
+      ...entry,
+    });
+  };
+  if (isAdminAuthDisabledForRequest(req)) {
+    logAdminAuth({ ok: true, method: "disabled" });
+    return {
+      ok: true,
+      token: token ?? "local-dev-admin",
+      is_super_admin: true,
+      method: { kind: "disabled" },
+    };
+  }
+  let passkeySession = await getPasskeySessionForRequest(req);
+  if (!passkeySession && token && looksLikeGitHubToken(token) && !config.adminTokens.has(token) && !config.authTokens.has(token) && req.headers.has("cookie")) {
+    const githubVerification = await verifyGitHubBearer(req, token);
+    const rejection = adminGitHubVerificationRejection(githubVerification, logAdminAuth);
+    if (rejection) return rejection;
+    if (githubVerification?.kind === "rejected") {
+      passkeySession = await getPasskeyCookieSessionForRequest(req);
+    }
+  }
+  if (passkeySession) return adminPasskeyResult(passkeySession, logAdminAuth);
+
+  if (!token) {
+    logAdminAuth({ ok: false, method: "missing", status: 401, reason: "missing_token" });
+    return { ok: false, response: openaiError(401, "Unauthorized", "invalid_api_key") };
+  }
+
+  return await authenticateAdminTokenResult(token, logAdminAuth);
+};
+
 export const requireAdminAuth = async (req: Request): Promise<Response | null> => {
   const result = await authenticateAdmin(req);
   return result.ok ? null : result.response;
@@ -1026,42 +1079,35 @@ export const requireSuperAdminAuth = async (req: Request): Promise<Response | nu
   return openaiError(403, "Super admin token required", "forbidden");
 };
 
-export const handleV1Auth = async (req: Request): Promise<Response> => {
-  const authResult = await authenticateClient(req);
-  if (!authResult.ok) return authResult.response;
+type ReportedAuthMethod = AdminAuthMethod | ClientAuthMethod;
 
-  const kv = await getKv();
-  const localClientAuthDisabled = isLocalClientAuthDisabledRequest(req);
-  const mode = localClientAuthDisabled
-    ? "disabled"
-    : config.isDeploy && config.authTokens.size === 0 && !kv
-      ? "misconfigured"
-      : config.isDeploy || config.authTokens.size > 0 || Boolean(kv)
-        ? "required"
-        : "disabled";
+type V1ApiKeyMethodResult = Readonly<{ ok: true; key: Record<string, unknown> }> | Readonly<{ ok: false; response: Response }>;
 
-  const token = authResult.token;
-  const tokenInfo = token
-    ? {
-        present: true,
-        length: token.length,
-        shape: classifyToken(token),
-        sha256_12: (await sha256Hex(token)).slice(0, 12),
-      }
-    : {
-        present: false,
-        length: null,
-        shape: null,
-        sha256_12: null,
-      };
+const resolveV1AuthMode = (localClientAuthDisabled: boolean, kv: Awaited<ReturnType<typeof getKv>>): "disabled" | "misconfigured" | "required" => {
+  if (localClientAuthDisabled) return "disabled";
+  if (config.isDeploy && config.authTokens.size === 0 && !kv) return "misconfigured";
+  if (config.isDeploy || config.authTokens.size > 0 || Boolean(kv)) return "required";
+  return "disabled";
+};
 
-  // Local client auth remains disabled for the development inference surface,
-  // but admin access is resolved independently. This keeps localhost from
-  // implicitly becoming an admin while still recognizing an explicit admin
-  // credential when the CLI bypass is off.
-  const localAdminAuth = localClientAuthDisabled ? await authenticateAdmin(req) : null;
-  const reportingMethod = localAdminAuth?.ok ? localAdminAuth.method : authResult.method;
-  const method: Record<string, unknown> = { kind: reportingMethod.kind };
+const v1AuthTokenInfo = async (token: string | null): Promise<Record<string, unknown>> => {
+  if (!token) {
+    return {
+      present: false,
+      length: null,
+      shape: null,
+      sha256_12: null,
+    };
+  }
+  return {
+    present: true,
+    length: token.length,
+    shape: classifyToken(token),
+    sha256_12: (await sha256Hex(token)).slice(0, 12),
+  };
+};
+
+const v1AdminFlags = (localAdminAuth: AdminAuthResult | null, reportingMethod: ReportedAuthMethod): Readonly<{ isAdmin: boolean; isSuperAdmin: boolean }> => {
   const isAdmin =
     localAdminAuth?.ok === true ||
     reportingMethod.kind === "admin_allowlist" ||
@@ -1070,6 +1116,61 @@ export const handleV1Auth = async (req: Request): Promise<Response> => {
   const isSuperAdmin = localAdminAuth?.ok
     ? localAdminAuth.is_super_admin
     : reportingMethod.kind === "admin_allowlist" || reportingMethod.kind === "deno_deploy_token";
+  return { isAdmin, isSuperAdmin };
+};
+
+const v1ApiKeyMethodResult = async (
+  reportingMethod: Extract<ReportedAuthMethod, { kind: "kv_api_key" }>,
+  kv: Awaited<ReturnType<typeof getKv>>
+): Promise<V1ApiKeyMethodResult> => {
+  const id = reportingMethod.key_id;
+  let key: Record<string, unknown> = { id };
+  if (kv) {
+    const entry = await kv.get<ApiKeyRecord>(apiKeyIdKey(id));
+    if (entry.value) {
+      let usageRequests: number;
+      try {
+        usageRequests = await getApiKeyUsageV3(reportingMethod.policy, kv);
+      } catch (error) {
+        console.warn("[ai.ubq.fi] Failed to read API key quota usage for /uos/auth:", error);
+        return { ok: false, response: openaiError(503, "API key quota ledger is unavailable", "server_error", { type: "server_error" }) };
+      }
+      key = {
+        id: entry.value.id,
+        name: entry.value.name,
+        prefix: entry.value.prefix,
+        created_at_ms: entry.value.created_at_ms,
+        expires_at_ms: coerceApiKeyExpiresAtMs(entry.value),
+        revoked_at_ms: entry.value.revoked_at_ms,
+        usage_limit_requests: reportingMethod.policy.usage_limit_requests,
+        usage_requests: usageRequests,
+        usage_reset_at_ms: reportingMethod.policy.usage_reset_at_ms,
+        window_ms: reportingMethod.policy.window_ms,
+      };
+    }
+  }
+  return { ok: true, key };
+};
+
+export const handleV1Auth = async (req: Request): Promise<Response> => {
+  const authResult = await authenticateClient(req);
+  if (!authResult.ok) return authResult.response;
+
+  const kv = await getKv();
+  const localClientAuthDisabled = isLocalClientAuthDisabledRequest(req);
+  const mode = resolveV1AuthMode(localClientAuthDisabled, kv);
+
+  const token = authResult.token;
+  const tokenInfo = await v1AuthTokenInfo(token);
+
+  // Local client auth remains disabled for the development inference surface,
+  // but admin access is resolved independently. This keeps localhost from
+  // implicitly becoming an admin while still recognizing an explicit admin
+  // credential when the CLI bypass is off.
+  const localAdminAuth = localClientAuthDisabled ? await authenticateAdmin(req) : null;
+  const reportingMethod = localAdminAuth?.ok ? localAdminAuth.method : authResult.method;
+  const method: Record<string, unknown> = { kind: reportingMethod.kind };
+  const { isAdmin, isSuperAdmin } = v1AdminFlags(localAdminAuth, reportingMethod);
 
   if (reportingMethod.kind === "github_token") {
     method.repo = { owner: reportingMethod.owner, repo: reportingMethod.repo };
@@ -1078,33 +1179,9 @@ export const handleV1Auth = async (req: Request): Promise<Response> => {
   }
 
   if (reportingMethod.kind === "kv_api_key") {
-    const id = reportingMethod.key_id;
-    let key: Record<string, unknown> = { id };
-    if (kv) {
-      const entry = await kv.get<ApiKeyRecord>(apiKeyIdKey(id));
-      if (entry.value) {
-        let usageRequests: number;
-        try {
-          usageRequests = await getApiKeyUsageV3(reportingMethod.policy, kv);
-        } catch (error) {
-          console.warn("[ai.ubq.fi] Failed to read API key quota usage for /uos/auth:", error);
-          return openaiError(503, "API key quota ledger is unavailable", "server_error", { type: "server_error" });
-        }
-        key = {
-          id: entry.value.id,
-          name: entry.value.name,
-          prefix: entry.value.prefix,
-          created_at_ms: entry.value.created_at_ms,
-          expires_at_ms: coerceApiKeyExpiresAtMs(entry.value),
-          revoked_at_ms: entry.value.revoked_at_ms,
-          usage_limit_requests: reportingMethod.policy.usage_limit_requests,
-          usage_requests: usageRequests,
-          usage_reset_at_ms: reportingMethod.policy.usage_reset_at_ms,
-          window_ms: reportingMethod.policy.window_ms,
-        };
-      }
-    }
-    method.key = key;
+    const keyResult = await v1ApiKeyMethodResult(reportingMethod, kv);
+    if (!keyResult.ok) return keyResult.response;
+    method.key = keyResult.key;
   }
 
   if (reportingMethod.kind === "passkey_session") {

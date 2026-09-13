@@ -86,42 +86,49 @@ export const harmonyTypeFromJsonSchema = (schemaValue: unknown): string => {
   if (!schemaValue || typeof schemaValue !== "object") return "any";
   const schema = schemaValue as Record<string, unknown>;
 
-  const constEnum = schema.enum;
-  if (Array.isArray(constEnum) && constEnum.length > 0) {
-    return constEnum.map((entry) => jsonLiteral(entry)).join(" | ");
-  }
+  const enumType = enumUnionType(schema);
+  if (enumType !== null) return enumType;
+
+  const unionType = anyOfUnionType(schema);
+  if (unionType !== null) return unionType;
 
   const type = typeof schema.type === "string" ? schema.type : undefined;
-  const anyOf = Array.isArray(schema.anyOf) ? schema.anyOf : Array.isArray(schema.oneOf) ? schema.oneOf : null;
-  if (anyOf && anyOf.length > 0) return anyOf.map((entry) => harmonyTypeFromJsonSchema(entry)).join(" | ");
+  if (type === "object" || (type === undefined && schema.properties)) return objectTypeFromJsonSchema(schema);
+  if (type === "array" || (type === undefined && schema.items)) return `${harmonyTypeFromJsonSchema(schema.items)}[]`;
+  return typeof type === "string" ? type : "any";
+};
 
-  if (type === "object" || (type === undefined && schema.properties)) {
-    const properties = schema.properties;
-    const required = new Set(Array.isArray(schema.required) ? schema.required.filter((name): name is string => typeof name === "string") : []);
-    if (!properties || typeof properties !== "object" || Array.isArray(properties)) return "any";
-    const fields = Object.entries(properties as Record<string, unknown>);
-    if (fields.length === 0) return "{}";
-    const lines: string[] = [];
-    for (const [name, field] of fields) {
-      const fieldSchema = field && typeof field === "object" ? (field as Record<string, unknown>) : {};
-      const description = commentPrefix(typeof fieldSchema.description === "string" ? fieldSchema.description : "");
-      if (description) lines.push(description);
-      const optional = required.has(name) ? "" : "?";
-      const defaultValue = fieldSchema.default === undefined ? null : fieldSchema.default;
-      const suffix = defaultValue === null ? "," : `, // default: ${jsonLiteral(defaultValue)}`;
-      lines.push(`${name}${optional}: ${harmonyTypeFromJsonSchema(field)}${suffix}`);
-    }
-    return `{\n${indent(lines.join("\n"), 1)}\n}`;
-  }
+const enumUnionType = (schema: Record<string, unknown>): string | null => {
+  const constEnum = schema.enum;
+  if (!Array.isArray(constEnum) || constEnum.length === 0) return null;
+  return constEnum.map((entry) => jsonLiteral(entry)).join(" | ");
+};
 
-  if (type === "array" || (type === undefined && schema.items)) {
-    return `${harmonyTypeFromJsonSchema(schema.items)}[]`;
-  }
+const anyOfUnionType = (schema: Record<string, unknown>): string | null => {
+  const candidate = Array.isArray(schema.anyOf) ? schema.anyOf : schema.oneOf;
+  const anyOf = Array.isArray(candidate) ? candidate : null;
+  if (!anyOf || anyOf.length === 0) return null;
+  return anyOf.map((entry) => harmonyTypeFromJsonSchema(entry)).join(" | ");
+};
 
-  if (type === "string" || type === "number" || type === "integer" || type === "boolean" || typeof type === "string") {
-    return type;
-  }
-  return "any";
+/** One or two lines: the optional `// comment` and the rendered field. */
+const objectFieldLines = (name: string, field: unknown, required: ReadonlySet<string>): string[] => {
+  const fieldSchema = field && typeof field === "object" ? (field as Record<string, unknown>) : {};
+  const description = commentPrefix(typeof fieldSchema.description === "string" ? fieldSchema.description : "");
+  const defaultValue = fieldSchema.default === undefined ? null : fieldSchema.default;
+  const suffix = defaultValue === null ? "," : `, // default: ${jsonLiteral(defaultValue)}`;
+  const line = `${name}${required.has(name) ? "" : "?"}: ${harmonyTypeFromJsonSchema(field)}${suffix}`;
+  return description ? [description, line] : [line];
+};
+
+const objectTypeFromJsonSchema = (schema: Record<string, unknown>): string => {
+  const properties = schema.properties;
+  const required = new Set(Array.isArray(schema.required) ? schema.required.filter((name): name is string => typeof name === "string") : []);
+  if (!properties || typeof properties !== "object" || Array.isArray(properties)) return "any";
+  const fields = Object.entries(properties as Record<string, unknown>);
+  if (fields.length === 0) return "{}";
+  const lines = fields.flatMap(([name, field]) => objectFieldLines(name, field, required));
+  return `{\n${indent(lines.join("\n"), 1)}\n}`;
 };
 
 /**
@@ -137,7 +144,7 @@ export const harmonyTypeFromJsonSchema = (schemaValue: unknown): string => {
 export const renderToolDefinition = (tool: ToolDefinition): string => {
   const description = commentPrefix(tool.description);
   const name = tool.name;
-  const parameters = tool.parameters ?? {};
+  const parameters = tool.parameters;
   if (harmonyTypeFromJsonSchema(parameters) === "any") {
     return `${description ? description + "\n" : ""}type ${name} = () => any;`;
   }

@@ -17,55 +17,39 @@ const scriptedCompletion = (message: Record<string, unknown>, finishReason = "st
 
 const errorResponse = (code: string, message: string): string => JSON.stringify({ error: { code, message } });
 
+const scriptedPayloadOf = (body: Record<string, unknown>, messages: readonly WireMessage[]): string => {
+  if (String(body.max_completion_tokens) === "128") return scriptedCompletion({ content: "true", reasoning_content: "The ledger advanced." });
+  if (messages.some((message) => message.role === "assistant" && "reasoning_content" in message)) {
+    return errorResponse("invalid_request_error", "messages.1.assistant.reasoning_content is unsupported");
+  }
+  if (mixedStrictnessOf(body)) return errorResponse("invalid_request_error", "Tools with mixed values for 'strict' are not allowed");
+  if (toolsWithFormatOf(body)) return errorResponse("invalid_request_error", "Unsupported: tools with response_format");
+  if (hasToolResult(messages)) return scriptedCompletion({ content: "San Francisco is sunny today.", reasoning_content: "Summarize the weather." });
+  if (!toolsOf(body)) {
+    return responseFormatsOf(body)
+      ? scriptedCompletion({ content: '{"answer": 4}' })
+      : scriptedCompletion({ content: "4", reasoning_content: "Simple arithmetic." });
+  }
+  const toolCallCount = promptOf(messages).includes("twice") ? 2 : 1;
+  const calls =
+    toolCallCount === 2
+      ? [
+          { id: "call_a", type: "function", function: { name: "get_weather", arguments: '{"location":"San Francisco"}' } },
+          { id: "call_b", type: "function", function: { name: "get_weather", arguments: '{"location":"Tokyo"}' } },
+        ]
+      : [{ id: "call_a", type: "function", function: { name: "get_weather", arguments: '{"location":"San Francisco"}' } }];
+  return scriptedCompletion(
+    { content: null, reasoning_content: toolCallCount === 2 ? undefined : "Private chain of thought.", tool_calls: calls },
+    "tool_calls"
+  );
+};
+
 const scriptedTransport = (): { transport: HarmonyTransport; bodies: Record<string, unknown>[] } => {
   const bodies: Record<string, unknown>[] = [];
   const transport: HarmonyTransport = (body) => {
     bodies.push(body);
     const messages = Array.isArray(body.messages) ? (body.messages as WireMessage[]) : [];
-    const payload =
-      String(body.max_completion_tokens) === "128"
-        ? scriptedCompletion({ content: "true", reasoning_content: "The ledger advanced." })
-        : messages.some((message) => message.role === "assistant" && "reasoning_content" in message)
-          ? errorResponse("invalid_request_error", "messages.1.assistant.reasoning_content is unsupported")
-          : mixedStrictnessOf(body)
-            ? errorResponse("invalid_request_error", "Tools with mixed values for 'strict' are not allowed")
-            : toolsWithFormatOf(body)
-              ? errorResponse("invalid_request_error", "Unsupported: tools with response_format")
-              : hasToolResult(messages)
-                ? scriptedCompletion({ content: "San Francisco is sunny today.", reasoning_content: "Summarize the weather." })
-                : toolsOf(body)
-                  ? promptOf(messages).includes("twice")
-                    ? scriptedCompletion(
-                        {
-                          content: null,
-                          tool_calls: [
-                            {
-                              id: "call_a",
-                              type: "function",
-                              function: { name: "get_weather", arguments: '{"location":"San Francisco"}' },
-                            },
-                            { id: "call_b", type: "function", function: { name: "get_weather", arguments: '{"location":"Tokyo"}' } },
-                          ],
-                        },
-                        "tool_calls"
-                      )
-                    : scriptedCompletion(
-                        {
-                          content: null,
-                          reasoning_content: "Private chain of thought.",
-                          tool_calls: [
-                            {
-                              id: "call_a",
-                              type: "function",
-                              function: { name: "get_weather", arguments: '{"location":"San Francisco"}' },
-                            },
-                          ],
-                        },
-                        "tool_calls"
-                      )
-                  : responseFormatsOf(body)
-                    ? scriptedCompletion({ content: '{"answer": 4}' })
-                    : scriptedCompletion({ content: "4", reasoning_content: "Simple arithmetic." });
+    const payload = scriptedPayloadOf(body, messages);
     const status = payload.startsWith('{"error"') ? 400 : 200;
     return Promise.resolve(
       new Response(payload, {
@@ -115,15 +99,10 @@ const responseFormatsOf = (body: Record<string, unknown>): boolean => {
 Deno.test("the manifest covers every required protocol question exactly once", () => {
   const ids = PROBE_SCENARIOS.map((scenario) => scenario.id);
   assert.equal(new Set(ids).size, ids.length);
-  assert.deepEqual([...new Set(PROBE_SCENARIOS.map((scenario) => scenario.group))].sort(), [
-    "classifier",
-    "parallel",
-    "reasoning",
-    "replay",
-    "strictness",
-    "structured",
-    "tools",
-  ]);
+  assert.deepEqual(
+    [...new Set(PROBE_SCENARIOS.map((scenario) => scenario.group))].sort((left, right) => left.localeCompare(right)),
+    ["classifier", "parallel", "reasoning", "replay", "strictness", "structured", "tools"]
+  );
   const byId = new Map(PROBE_SCENARIOS.map((scenario) => [scenario.id, scenario]));
   for (const requiredId of [
     "reasoning.effort.low",

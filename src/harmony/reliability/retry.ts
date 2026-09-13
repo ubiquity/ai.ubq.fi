@@ -40,8 +40,6 @@ export const DEFAULT_RETRY_POLICY: RetryPolicy = {
   retryableCodes: ["timeout", "internal", "unavailable", "transport"],
 };
 
-export const DEFAULT_DETERMINISTIC_CODES: readonly ToolErrorCode[] = ["invalid_args", "path_escape", "write_scope", "not_found", "patch_failed", "exec_failed"];
-
 export type RetryDecision = Readonly<
   | { retry: true; delayMs: number; attempt: number; code: string; reason: "transient_code" }
   | { retry: false; delayMs: 0; attempt: number; code: string | null; reason: "not_retryable" | "attempts_exhausted" }
@@ -63,7 +61,7 @@ export const decideRetry = (policy: RetryPolicy, code: string | null, priorAttem
   if (priorAttempts > policy.maxRetriesPerCall) {
     return { retry: false, delayMs: 0, attempt, code, reason: "attempts_exhausted" };
   }
-  return { retry: true, delayMs: policy.backoffMs, attempt, code: code ?? "unknown", reason: "transient_code" };
+  return { retry: true, delayMs: policy.backoffMs, attempt, code, reason: "transient_code" };
 };
 
 /** One deterministic retry ledger: per-call-identity attempt accounting. */

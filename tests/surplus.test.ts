@@ -1,17 +1,35 @@
 import assert from "node:assert/strict";
 import { fetchSurplusModels, fetchSurplusResponses, resetSurplusModelsCacheForTest, type SurplusFetch } from "../src/surplus.ts";
 
-const jsonResponse = (body: unknown, status = 200, headers: HeadersInit = {}): Response =>
+/**
+ * `jsonResponse` only composes extra plain headers on top of the JSON
+ * content type, so it takes a record rather than a full `HeadersInit` (object
+ * spread over a `Headers` instance or a `string[][]` silently loses entries).
+ */
+const jsonResponse = (body: unknown, status = 200, headers: Record<string, string> = {}): Response =>
   new Response(JSON.stringify(body), {
     status,
     headers: { "Content-Type": "application/json", ...headers },
   });
 
+/** Request URL as text; `String(input)` would render a `Request` as "[object Object]". */
+const fetchUrl = (input: RequestInfo | URL): string => {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.href;
+  return input.url;
+};
+
+/** Request body as text; the gateway always encodes it as a JSON string. */
+const bodyText = (body: BodyInit | null | undefined): string => {
+  if (typeof body === "string") return body;
+  return JSON.stringify(body);
+};
+
 Deno.test("fetchSurplusModels preserves exact IDs and exposes text-capable routes only", async () => {
   resetSurplusModelsCacheForTest();
   const calls: { url: string; init?: RequestInit }[] = [];
   const fetcher: SurplusFetch = (input, init) => {
-    calls.push({ url: input.toString(), init });
+    calls.push({ url: fetchUrl(input), init });
     return Promise.resolve(
       jsonResponse({
         object: "list",
@@ -86,7 +104,7 @@ Deno.test("fetchSurplusResponses omits unsupported parallel-tool control and ret
   };
   const calls: { url: string; init?: RequestInit }[] = [];
   const fetcher: SurplusFetch = (input, init) => {
-    calls.push({ url: input.toString(), init });
+    calls.push({ url: fetchUrl(input), init });
     return Promise.resolve(
       new Response("data: [DONE]\n\n", {
         status: 200,
@@ -104,7 +122,7 @@ Deno.test("fetchSurplusResponses omits unsupported parallel-tool control and ret
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, "https://api.surplusintelligence.ai/v1/responses");
   assert.equal(calls[0].init?.method, "POST");
-  assert.deepEqual(JSON.parse(String(calls[0].init?.body)), {
+  assert.deepEqual(JSON.parse(bodyText(calls[0].init?.body)), {
     model: "claude-opus-5",
     input: [{ role: "user", content: [{ type: "input_text", text: "hello" }] }],
     stream: true,
@@ -119,7 +137,7 @@ Deno.test("fetchSurplusResponses omits unsupported parallel-tool control and ret
 Deno.test("fetchSurplusResponses translates Codex ultra reasoning to the upstream max preset", async () => {
   let forwarded: Record<string, unknown> | null = null;
   const fetcher: SurplusFetch = (_input, init) => {
-    forwarded = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    forwarded = JSON.parse(bodyText(init?.body)) as Record<string, unknown>;
     return Promise.resolve(new Response("{}", { status: 200 }));
   };
 
@@ -147,7 +165,7 @@ Deno.test("fetchSurplusResponses maps Codex developer messages to Surplus system
     {
       apiKey: "test-key",
       fetcher: (_input, init) => {
-        forwardedInput = (JSON.parse(String(init?.body)) as Record<string, unknown>).input;
+        forwardedInput = (JSON.parse(bodyText(init?.body)) as Record<string, unknown>).input;
         return Promise.resolve(new Response(null, { status: 200 }));
       },
     }

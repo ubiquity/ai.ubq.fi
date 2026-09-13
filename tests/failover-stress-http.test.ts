@@ -21,19 +21,28 @@ const listEntries = async <T>(kv: Deno.Kv, prefix: Deno.KvKey): Promise<Deno.KvE
   return entries;
 };
 
+/** URL text of a fetch input, used to route the stress-test transport. */
+const fetchInputUrl = (input: RequestInfo | URL): string => {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+};
+
 const awaitWithin = async (promise: Promise<void>, milliseconds: number, message: () => string): Promise<void> => {
-  let timeout: ReturnType<typeof setTimeout> | undefined;
+  // The timer handle is a `const` so its type is inferred: the lint project does
+  // not resolve the `setTimeout` global, where `ReturnType<typeof setTimeout>`
+  // degrades to `any` and cannot be named in a union.
+  let rejectTimeout: (error: Error) => void = (_error: Error): void => undefined;
+  const timeoutExpired = new Promise<never>((_, reject) => {
+    rejectTimeout = reject;
+  });
+  const timeout = setTimeout(() => {
+    rejectTimeout(new Error(message()));
+  }, milliseconds);
   try {
-    await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        timeout = setTimeout(() => {
-          reject(new Error(message()));
-        }, milliseconds);
-      }),
-    ]);
+    await Promise.race([promise, timeoutExpired]);
   } finally {
-    if (timeout !== undefined) clearTimeout(timeout);
+    clearTimeout(timeout);
   }
 };
 
@@ -273,7 +282,7 @@ Deno.test({
       const providerAddress = providerServer.addr as Deno.NetAddr;
       const providerBaseUrl = `http://127.0.0.1:${providerAddress.port}`;
       globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-        const sourceUrl = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        const sourceUrl = fetchInputUrl(input);
         if (sourceUrl === "https://chatgpt.com/backend-api/codex/responses") {
           return originalFetch(`${providerBaseUrl}/codex/responses`, init);
         }
@@ -338,7 +347,7 @@ Deno.test({
       const results = await pendingResults;
       if (dispatchBarrierError) {
         throw new Error(
-          `${dispatchBarrierError instanceof Error ? dispatchBarrierError.message : String(dispatchBarrierError)}; ` +
+          `${dispatchBarrierError instanceof Error ? dispatchBarrierError.message : JSON.stringify(dispatchBarrierError)}; ` +
             `Codex calls: ${codexCalls}; first results: ${JSON.stringify(results.slice(0, 3))}; ` +
             `warnings: ${JSON.stringify(warnings.slice(0, 5))}`,
           { cause: dispatchBarrierError }

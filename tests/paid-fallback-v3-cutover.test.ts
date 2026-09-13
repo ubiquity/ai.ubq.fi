@@ -41,7 +41,7 @@ class MemoryKv {
   list<T = unknown>(selector: Deno.KvListSelector): Deno.KvListIterator<T> {
     const prefix = "prefix" in selector ? selector.prefix : [];
     const entries = [...this.entries.values()].filter((entry) => startsWithKey(entry.key, prefix));
-    const iterator = (async function* (): AsyncGenerator<Deno.KvEntry<T>> {
+    const iterator = (function* (): Generator<Deno.KvEntry<T>> {
       for (const entry of entries) {
         yield {
           key: clone(entry.key),
@@ -123,9 +123,9 @@ const keyHash = "v3-cutover-hash";
 const legacyRequestLogPrefix: Deno.KvKey = ["ubq_ai", "api_keys", "request_log", keyId];
 
 const countPrefix = async (prefix: Deno.KvKey): Promise<number> => {
-  let count = 0;
-  for await (const _entry of memoryKv.list({ prefix })) count += 1;
-  return count;
+  const keys: Deno.KvKey[] = [];
+  for await (const entry of memoryKv.list({ prefix })) keys.push(entry.key);
+  return keys.length;
 };
 
 const reservationInput = (requestId: string, createdAtMs: number) =>
@@ -207,8 +207,8 @@ Deno.test("Metered runtime lifecycle hard-cuts legacy counters and request logs 
   await memoryKv.set(apiKeyIdKey(keyId), record);
   await memoryKv.set(apiKeyHashKey(keyHash), hashRecord);
 
-  const originalEnvGet = Deno.env.get;
-  Deno.env.get = (name: string): string | undefined => (name === "METERED_API_KEY" ? "test-metered-key" : originalEnvGet.call(Deno.env, name));
+  const originalEnvGet = Deno.env.get.bind(Deno.env);
+  Deno.env.get = (name: string): string | undefined => (name === "METERED_API_KEY" ? "test-metered-key" : originalEnvGet(name));
   try {
     const terminalReservation = await reserve("terminal-missing-id", now);
     assert.equal(terminalReservation.reserved_microcredits, 250_000);
@@ -305,8 +305,8 @@ Deno.test("Surplus usage settles cache read and write pricing, while incomplete 
     paid_fallback_reservation_request_id: record.paid_fallback_reservation_request_id,
   });
 
-  const originalEnvGet = Deno.env.get;
-  Deno.env.get = (name: string): string | undefined => (name === "METERED_API_KEY" ? "test-metered-key" : originalEnvGet.call(Deno.env, name));
+  const originalEnvGet = Deno.env.get.bind(Deno.env);
+  Deno.env.get = (name: string): string | undefined => (name === "METERED_API_KEY" ? "test-metered-key" : originalEnvGet(name));
   try {
     const settledReservation = await reserve("surplus-settled", now);
     await recordMeteredUpstreamResponse(settledReservation, new Response(null, { status: 200 }), null, "surplus");

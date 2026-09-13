@@ -282,142 +282,239 @@ export const handleAdminPromptCacheAnalytics = async (
   }
 };
 
+type CodexAuthValidation = Awaited<ReturnType<typeof validateCodexAuthJson>>;
+type ValidatedCodexAuth = Extract<CodexAuthValidation, { ok: true }>;
+
+/** Runs upstream validation and maps every failure mode to its original response. */
+const validateUploadedCodexAuth = async (
+  seed: CodexAuthState,
+  clientVersion: string | null
+): Promise<{ ok: true; validated: CodexAuthValidation } | { ok: false; response: Response }> => {
+  try {
+    return { ok: true, validated: await validateCodexAuthJson(seed, { clientVersion }) };
+  } catch (error) {
+    console.error("[ai.ubq.fi] Codex auth validation failed:", error);
+    if (error instanceof CodexError) {
+      return { ok: false, response: openaiError(error.status, error.message, error.code) };
+    }
+    const detail = error instanceof Error ? error.message : String(error);
+    const message = detail ? `Upstream validation request failed: ${detail}` : "Upstream validation request failed.";
+    return { ok: false, response: openaiError(502, message, "codex_upstream_unreachable") };
+  }
+};
+
+/**
+ * Normalizes the upstream catalog and mints the auth generation that fences the
+ * stored snapshot. `crypto.randomUUID()` is called only for a valid snapshot,
+ * after the size thresholds have passed.
+ */
+const prepareCodexAuthSnapshot = (
+  validated: ValidatedCodexAuth
+): { ok: true; snapshot: CodexModelsSnapshot; authGeneration: string } | { ok: false; response: Response } => {
+  const snapshot = normalizeCodexModelsPayload(validated.models, {
+    source: "chatgpt_codex",
+    clientVersion: validated.clientVersion,
+  });
+  if (!snapshot) {
+    return { ok: false, response: openaiError(502, "Codex upstream models response did not include a non-empty model catalog", "codex_upstream_unreachable") };
+  }
+  const snapshotSize = estimateJsonSize(snapshot);
+  if (snapshotSize === null) {
+    return { ok: false, response: openaiError(400, "models payload could not be serialized", "invalid_request_error") };
+  }
+  if (snapshotSize > SAFE_KV_BYTES) {
+    return { ok: false, response: openaiError(413, `models snapshot too large (${snapshotSize} bytes; max ${MAX_KV_BYTES}).`, "invalid_request_error") };
+  }
+  return { ok: true, snapshot, authGeneration: crypto.randomUUID() };
+};
+
+/** Builds the runtime config that accompanies a new model snapshot. */
+const buildCodexAuthRuntimeConfig = (
+  snapshot: CodexModelsSnapshot,
+  existingRuntime: unknown
+): { ok: true; runtime: ReturnType<typeof buildRuntimeConfig> } | { ok: false; response: Response } => {
+  const currentRuntime = normalizeRuntimeConfig(existingRuntime);
+  try {
+    return {
+      ok: true,
+      runtime: buildRuntimeConfig(snapshot, {
+        defaultModel: preserveCodexDefaultModel(snapshot, currentRuntime?.default_model),
+        defaultReasoningEffort: currentRuntime?.default_reasoning_effort,
+      }),
+    };
+  } catch (error) {
+    const response = runtimeConfigErrorResponse(error);
+    if (response) return { ok: false, response };
+    throw error;
+  }
+};
+
+/** Commits the account pool, and — only for a full snapshot — the catalog keys. */
+const commitCodexAuthState = async (
+  kv: Deno.Kv,
+  input: Readonly<{
+    poolEntry: Deno.KvEntryMaybe<CodexAuthPoolState>;
+    snapshotEntry: Deno.KvEntryMaybe<CodexModelsSnapshot>;
+    runtimeEntry: Deno.KvEntryMaybe<unknown>;
+    pool: CodexAuthPoolState;
+    snapshot: CodexModelsSnapshot;
+    runtime: ReturnType<typeof buildRuntimeConfig> | null;
+    authGeneration: string | null;
+    hasSnapshot: boolean;
+  }>
+): Promise<boolean> => {
+  let atomic = kv.atomic().check(input.poolEntry).check(input.snapshotEntry).set(CODEX_AUTH_POOL_KV_KEY, input.pool);
+  if (input.hasSnapshot && input.runtime && input.authGeneration) {
+    atomic = atomic
+      .check(input.runtimeEntry)
+      .set(CODEX_CATALOG_AUTH_GENERATION_KEY, input.authGeneration)
+      .set(CODEX_MODELS_KV_KEY, input.snapshot)
+      .set(RUNTIME_CONFIG_V2_KEY, input.runtime);
+  }
+  return (await atomic.commit()).ok;
+};
+
+type CodexAuthPersistAttempt =
+  | { kind: "stored"; pool: CodexAuthPoolState; snapshot: CodexModelsSnapshot; runtimeConfig: ReturnType<typeof buildRuntimeConfig> | null }
+  | { kind: "retry" }
+  | { kind: "response"; response: Response };
+
+const persistCodexAuthStateAttempt = async (
+  kv: Deno.Kv,
+  input: Readonly<{ validatedAuth: CodexAuthState; snapshot: CodexModelsSnapshot | null; authGeneration: string | null }>
+): Promise<CodexAuthPersistAttempt> => {
+  const [existingPoolEntry, existingSnapshot, existingRuntimeEntry] = await Promise.all([
+    kv.get<CodexAuthPoolState>(CODEX_AUTH_POOL_KV_KEY),
+    kv.get<CodexModelsSnapshot>(CODEX_MODELS_KV_KEY),
+    kv.get(RUNTIME_CONFIG_V2_KEY),
+  ]);
+  const existingPool = parseCodexAuthPool(existingPoolEntry.value);
+  const nextPool = upsertCodexAuthAccount(existingPool, input.validatedAuth);
+  if (!nextPool) {
+    return {
+      kind: "response",
+      response: openaiError(
+        409,
+        "Codex auth pool already contains two accounts; upload an auth.json for an existing account to rotate it",
+        "codex_auth_pool_full"
+      ),
+    };
+  }
+  const nextSnapshot = input.snapshot ? mergeCodexModelPromptCacheCapabilities(input.snapshot, existingSnapshot.value) : existingSnapshot.value;
+  if (!nextSnapshot) {
+    return { kind: "response", response: openaiError(409, "Cannot store rate-limited Codex auth without an existing model catalog", "codex_catalog_required") };
+  }
+  const built = input.snapshot && input.authGeneration ? buildCodexAuthRuntimeConfig(nextSnapshot, existingRuntimeEntry.value) : null;
+  if (built && !built.ok) return { kind: "response", response: built.response };
+  const stored = await commitCodexAuthState(kv, {
+    poolEntry: existingPoolEntry,
+    snapshotEntry: existingSnapshot,
+    runtimeEntry: existingRuntimeEntry,
+    pool: nextPool,
+    snapshot: nextSnapshot,
+    runtime: built?.ok ? built.runtime : null,
+    authGeneration: input.authGeneration,
+    hasSnapshot: input.snapshot !== null,
+  });
+  if (!stored) return { kind: "retry" };
+  return { kind: "stored", pool: nextPool, snapshot: nextSnapshot, runtimeConfig: built?.ok ? built.runtime : null };
+};
+
+const persistCodexAuthState = async (
+  kv: Deno.Kv,
+  input: Readonly<{ validatedAuth: CodexAuthState; snapshot: CodexModelsSnapshot | null; authGeneration: string | null }>
+): Promise<
+  | { ok: true; pool: CodexAuthPoolState; snapshot: CodexModelsSnapshot; runtimeConfig: ReturnType<typeof buildRuntimeConfig> | null }
+  | { ok: false; response: Response }
+> => {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const attemptResult = await persistCodexAuthStateAttempt(kv, input);
+    if (attemptResult.kind === "retry") continue;
+    if (attemptResult.kind === "response") return { ok: false, response: attemptResult.response };
+    return { ok: true, pool: attemptResult.pool, snapshot: attemptResult.snapshot, runtimeConfig: attemptResult.runtimeConfig };
+  }
+  return { ok: false, response: openaiError(500, "Deno KV could not persist Codex auth and models", "server_error") };
+};
+
+/**
+ * Seeds the versioned upstream catalog. A seed failure is reported as `false`
+ * and never fails the upload itself.
+ */
+const seedCodexAuthCatalog = async (kv: Deno.Kv, validated: CodexAuthValidation, authGeneration: string | null): Promise<boolean> => {
+  if (!validated.ok || !authGeneration) return false;
+  return await storeCodexCatalog(kv, {
+    clientVersion: validated.clientVersion,
+    authGeneration,
+    body: validated.modelsBody,
+    etag: validated.etag,
+    contentType: validated.contentType,
+    fetchedAtMs: Date.now(),
+  }).catch((error: unknown) => {
+    console.error("[ai.ubq.fi] Codex catalog seed failed:", error);
+    return false;
+  });
+};
+
+type CodexAuthUpload = Readonly<{ seed: CodexAuthState; clientVersion: string | null }>;
+
+/** Accepts either the wrapped `{ auth, models }` upload or a bare auth.json. */
+const parseCodexAuthUpload = (body: unknown): CodexAuthUpload | null => {
+  const authPayload = isRecord(body) && "auth" in body ? (body.auth as unknown) : body;
+  const modelsPayload = isRecord(body) && "models" in body ? (body.models as unknown) : undefined;
+  const tokenData = parseCodexAuthFromAuthJson(authPayload);
+  if (!tokenData) return null;
+  const seed: CodexAuthState = { ...tokenData, updated_at_ms: Date.now() };
+  const clientVersion = isRecord(modelsPayload) ? (getString(modelsPayload.client_version) ?? getString(modelsPayload.clientVersion)) : null;
+  return { seed, clientVersion };
+};
+
+/** Maps an upstream validation result to its original 401, or `null` when acceptable. */
+const codexAuthUpstreamErrorResponse = (validated: CodexAuthValidation): Response | null => {
+  const authenticatedButLimited = !validated.ok && validated.status === 429;
+  if (validated.ok || authenticatedButLimited) return null;
+  return openaiError(401, `Invalid Codex auth.json (upstream ${validated.status}): ${validated.body}`, "invalid_api_key");
+};
+
 export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
   const kv = await getKv();
   if (!kv) {
     return openaiError(500, "Deno KV is not available; cannot persist Codex auth", "server_error");
   }
 
-  const body = await readJsonBody(req);
-  const authPayload = isRecord(body) && "auth" in body ? (body.auth as unknown) : body;
-  const modelsPayload = isRecord(body) && "models" in body ? (body.models as unknown) : undefined;
-  const tokenData = parseCodexAuthFromAuthJson(authPayload);
-  if (!tokenData) {
+  const upload = parseCodexAuthUpload(await readJsonBody(req));
+  if (!upload) {
     return openaiError(400, "Body does not look like a Codex auth.json", "invalid_request_error");
   }
 
-  const seed: CodexAuthState = { ...tokenData, updated_at_ms: Date.now() };
-  const clientVersion = isRecord(modelsPayload) ? (getString(modelsPayload.client_version) ?? getString(modelsPayload.clientVersion)) : null;
-  let validated: Awaited<ReturnType<typeof validateCodexAuthJson>>;
-  try {
-    validated = await validateCodexAuthJson(seed, { clientVersion });
-  } catch (error) {
-    console.error("[ai.ubq.fi] Codex auth validation failed:", error);
-    if (error instanceof CodexError) {
-      return openaiError(error.status, error.message, error.code);
-    }
-    const detail = error instanceof Error ? error.message : String(error);
-    const message = detail ? `Upstream validation request failed: ${detail}` : "Upstream validation request failed.";
-    return openaiError(502, message, "codex_upstream_unreachable");
-  }
+  const validation = await validateUploadedCodexAuth(upload.seed, upload.clientVersion);
+  if (!validation.ok) return validation.response;
+  const validated = validation.validated;
 
-  const authenticatedButLimited = !validated.ok && validated.status === 429;
-  if (!validated.ok && !authenticatedButLimited) {
-    return openaiError(401, `Invalid Codex auth.json (upstream ${validated.status}): ${validated.body}`, "invalid_api_key");
-  }
+  const upstreamError = codexAuthUpstreamErrorResponse(validated);
+  if (upstreamError) return upstreamError;
 
-  const validatedAuth = validated.ok ? validated.auth : seed;
-  const validatedClientVersion = validated.ok ? validated.clientVersion : clientVersion;
+  const validatedAuth = validated.ok ? validated.auth : upload.seed;
   let snapshot: CodexModelsSnapshot | null = null;
-  let runtimeConfig: ReturnType<typeof buildRuntimeConfig> | null = null;
   let authGeneration: string | null = null;
   if (validated.ok) {
-    snapshot = normalizeCodexModelsPayload(validated.models, {
-      source: "chatgpt_codex",
-      clientVersion: validatedClientVersion,
-    });
-    if (!snapshot) {
-      return openaiError(502, "Codex upstream models response did not include a non-empty model catalog", "codex_upstream_unreachable");
-    }
-    const snapshotSize = estimateJsonSize(snapshot);
-    if (snapshotSize === null) {
-      return openaiError(400, "models payload could not be serialized", "invalid_request_error");
-    }
-    if (snapshotSize > SAFE_KV_BYTES) {
-      return openaiError(413, `models snapshot too large (${snapshotSize} bytes; max ${MAX_KV_BYTES}).`, "invalid_request_error");
-    }
-
-    authGeneration = crypto.randomUUID();
+    const prepared = prepareCodexAuthSnapshot(validated);
+    if (!prepared.ok) return prepared.response;
+    snapshot = prepared.snapshot;
+    authGeneration = prepared.authGeneration;
   }
 
-  let stored = false;
-  let storedPool: CodexAuthPoolState | null = null;
-  let storedSnapshot: CodexModelsSnapshot | null = null;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const [existingPoolEntry, existingSnapshot, existingRuntimeEntry] = await Promise.all([
-      kv.get<CodexAuthPoolState>(CODEX_AUTH_POOL_KV_KEY),
-      kv.get<CodexModelsSnapshot>(CODEX_MODELS_KV_KEY),
-      kv.get(RUNTIME_CONFIG_V2_KEY),
-    ]);
-    const existingPool = parseCodexAuthPool(existingPoolEntry.value);
-    const nextPool = upsertCodexAuthAccount(existingPool, validatedAuth);
-    if (!nextPool) {
-      return openaiError(
-        409,
-        "Codex auth pool already contains two accounts; upload an auth.json for an existing account to rotate it",
-        "codex_auth_pool_full"
-      );
-    }
-    const nextSnapshot = snapshot ? mergeCodexModelPromptCacheCapabilities(snapshot, existingSnapshot.value) : existingSnapshot.value;
-    if (!nextSnapshot) {
-      return openaiError(409, "Cannot store rate-limited Codex auth without an existing model catalog", "codex_catalog_required");
-    }
-    let nextRuntime: ReturnType<typeof buildRuntimeConfig> | null = null;
-    if (snapshot && authGeneration) {
-      const currentRuntime = normalizeRuntimeConfig(existingRuntimeEntry.value);
-      try {
-        nextRuntime = buildRuntimeConfig(nextSnapshot, {
-          defaultModel: preserveCodexDefaultModel(nextSnapshot, currentRuntime?.default_model),
-          defaultReasoningEffort: currentRuntime?.default_reasoning_effort,
-        });
-      } catch (error) {
-        const response = runtimeConfigErrorResponse(error);
-        if (response) return response;
-        throw error;
-      }
-    }
-    let atomic = kv.atomic().check(existingPoolEntry).check(existingSnapshot).set(CODEX_AUTH_POOL_KV_KEY, nextPool);
-    if (snapshot && nextRuntime && authGeneration) {
-      atomic = atomic
-        .check(existingRuntimeEntry)
-        .set(CODEX_CATALOG_AUTH_GENERATION_KEY, authGeneration)
-        .set(CODEX_MODELS_KV_KEY, nextSnapshot)
-        .set(RUNTIME_CONFIG_V2_KEY, nextRuntime);
-    }
-    if ((await atomic.commit()).ok) {
-      stored = true;
-      storedPool = nextPool;
-      storedSnapshot = nextSnapshot;
-      runtimeConfig = nextRuntime;
-      break;
-    }
-  }
-  if (!stored || !storedPool || !storedSnapshot) {
-    return openaiError(500, "Deno KV could not persist Codex auth and models", "server_error");
-  }
-  cacheCodexAuthPool(storedPool);
-  if (runtimeConfig) cacheRuntimeConfig(runtimeConfig);
+  const persisted = await persistCodexAuthState(kv, { validatedAuth, snapshot, authGeneration });
+  if (!persisted.ok) return persisted.response;
+  cacheCodexAuthPool(persisted.pool);
+  if (persisted.runtimeConfig) cacheRuntimeConfig(persisted.runtimeConfig);
 
-  const catalogSeeded =
-    validated.ok && authGeneration
-      ? await storeCodexCatalog(kv, {
-          clientVersion: validated.clientVersion,
-          authGeneration,
-          body: validated.modelsBody,
-          etag: validated.etag,
-          contentType: validated.contentType,
-          fetchedAtMs: Date.now(),
-        }).catch((error) => {
-          console.error("[ai.ubq.fi] Codex catalog seed failed:", error);
-          return false;
-        })
-      : false;
+  const catalogSeeded = await seedCodexAuthCatalog(kv, validated, authGeneration);
 
   const modelsStored = {
-    count: storedSnapshot.models.length,
-    source: storedSnapshot.source,
-    updated_at_ms: storedSnapshot.updated_at_ms,
-    client_version: storedSnapshot.client_version ?? null,
+    count: persisted.snapshot.models.length,
+    source: persisted.snapshot.source,
+    updated_at_ms: persisted.snapshot.updated_at_ms,
+    client_version: persisted.snapshot.client_version ?? null,
   };
 
   const expMs = getJwtExpMs(validatedAuth.access_token);
@@ -427,8 +524,8 @@ export const handleAdminCodexAuth = async (req: Request): Promise<Response> => {
       stored: true,
       refreshed: validated.ok ? validated.refreshed : false,
       account_id: validatedAuth.account_id,
-      account_count: storedPool.accounts.length,
-      account_ids: storedPool.accounts.map((account) => account.account_id),
+      account_count: persisted.pool.accounts.length,
+      account_ids: persisted.pool.accounts.map((account) => account.account_id),
       access_token_expires_at_ms: expMs,
       updated_at_ms: validatedAuth.updated_at_ms,
       upstream_status: validated.status,
@@ -516,8 +613,11 @@ const parseBooleanParam = (url: URL, name: string): boolean | null => {
 };
 
 const parseMigrationProfile = (url: URL): KvMigrationProfile | null => {
-  const profile = url.searchParams.get("profile")?.trim() || "prod";
-  if (profile === "local" || profile === "prod") return profile;
+  // A missing, blank, or whitespace-only profile must still select "prod", so
+  // this is an explicit comparison instead of a `||` default.
+  const profile = url.searchParams.get("profile")?.trim();
+  if (profile === "local") return "local";
+  if (profile === undefined || profile === "" || profile === "prod") return "prod";
   return null;
 };
 
@@ -583,6 +683,239 @@ export const handleAdminKvMigrationValidate = async (): Promise<Response> => {
   return json(200, await validateKvMigrationTarget(kv));
 };
 
+type AdminDefaultsDependencies = Readonly<{
+  getMeteredQuotaDiagnostics?: typeof getMeteredQuotaDiagnostics;
+}>;
+
+type AdminDefaultsIntent = Readonly<{
+  writesModel: boolean;
+  writesReasoning: boolean;
+  wantsModelUpdate: boolean;
+  writesKernelLimit: boolean;
+  writesKernelWindow: boolean;
+  requestedKernelLimit: number | null | undefined;
+  requestedKernelWindow: number | null | undefined;
+}>;
+
+const defaultsBody = (model: string, reasoningEffort: ReasoningEffort, kernelPolicyLimit: number, kernelPolicyWindow: number) => ({
+  defaults: {
+    model,
+    reasoning_effort: reasoningEffort,
+    kernel_policy_limit_requests: kernelPolicyLimit,
+    kernel_policy_window_ms: kernelPolicyWindow,
+  },
+});
+
+/** Single shared response builder so every defaults JSON response stays byte-identical. */
+const defaultsJson = (model: string, reasoningEffort: ReasoningEffort, kernelPolicyLimit: number, kernelPolicyWindow: number): Response =>
+  json(200, defaultsBody(model, reasoningEffort, kernelPolicyLimit, kernelPolicyWindow));
+
+const adminDefaultsGetResponse = async (kv: Deno.Kv, dependencies: AdminDefaultsDependencies): Promise<Response> => {
+  const [runtime, kernelLimitEntry, kernelWindowEntry, meteredQuota] = await Promise.all([
+    loadRuntimeConfig(kv),
+    kv.get<number>(DEFAULT_KERNEL_POLICY_LIMIT_KEY),
+    kv.get<number>(DEFAULT_KERNEL_POLICY_WINDOW_KEY),
+    (dependencies.getMeteredQuotaDiagnostics ?? getMeteredQuotaDiagnostics)(),
+  ]);
+  const model = runtime?.default_model ?? "";
+  const reasoningEffort = runtime?.default_reasoning_effort ?? DEFAULT_REASONING_EFFORT;
+  const kernelPolicyLimit = normalizeKernelUsageLimitInput(kernelLimitEntry.value) ?? DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS;
+  const kernelPolicyWindow = normalizeKernelWindowMsInput(kernelWindowEntry.value) ?? DEFAULT_KERNEL_POLICY_WINDOW_MS;
+  return json(200, { ...defaultsBody(model, reasoningEffort, kernelPolicyLimit, kernelPolicyWindow), metered_quota: meteredQuota });
+};
+
+/** Resolves the model/reasoning pair and its runtime config, or the original error response. */
+const resolveDefaultsModelUpdate = async (
+  raw: Record<string, unknown>,
+  intent: AdminDefaultsIntent,
+  runtime: ReturnType<typeof normalizeRuntimeConfig>,
+  currentModel: string
+): Promise<
+  { ok: true; model: string; reasoningEffort: ReasoningEffort; nextRuntime: ReturnType<typeof buildRuntimeConfig> | null } | { ok: false; response: Response }
+> => {
+  if (!runtime) return { ok: false, response: openaiError(503, "Runtime configuration is unavailable", "server_error") };
+  const nextModel = intent.writesModel ? normalizeDefaultModel(raw.model) : currentModel;
+  if (!nextModel) return { ok: false, response: openaiError(400, "model must be a non-empty string", "invalid_request_error") };
+
+  const snapshot = await loadCodexModelsSnapshot();
+  if (!snapshot || !Array.isArray(snapshot.models) || snapshot.models.length === 0) {
+    return { ok: false, response: openaiError(409, "No Codex model snapshot stored", "invalid_request_error") };
+  }
+  const modelRecord = snapshot.models.find((entry) => isRecord(entry) && getString(entry.slug) === nextModel) ?? null;
+  if (!modelRecord) {
+    return { ok: false, response: openaiError(400, "model is not in the stored Codex model list", "invalid_request_error") };
+  }
+
+  const modelDefault = modelRecord.default_reasoning_level === null ? "none" : normalizeReasoningEffort(modelRecord.default_reasoning_level);
+  const levels = extractModelReasoningLevels(modelRecord);
+  const nextReasoning = intent.writesReasoning ? normalizeReasoningEffort(raw.reasoning_effort) : (modelDefault ?? levels.at(0) ?? "none");
+  if (!nextReasoning) {
+    return { ok: false, response: openaiError(400, "reasoning_effort must be a non-empty string", "invalid_request_error") };
+  }
+
+  try {
+    const nextRuntime = buildRuntimeConfig(snapshot, { defaultModel: nextModel, defaultReasoningEffort: nextReasoning });
+    return { ok: true, model: nextModel, reasoningEffort: nextReasoning, nextRuntime };
+  } catch (error) {
+    const response = runtimeConfigErrorResponse(error);
+    if (response) return { ok: false, response };
+    throw error;
+  }
+};
+
+type AdminDefaultsCutover =
+  { kind: "none" } | { kind: "guard"; guard: KernelDefaultWindowCutoverGuard } | { kind: "retry" } | { kind: "response"; response: Response };
+
+/** Acquires the default-window cutover guard when (and only when) it is required. */
+const resolveDefaultsCutover = async (
+  kv: Deno.Kv,
+  kernelLimitEntry: Deno.KvEntryMaybe<number>,
+  kernelWindowEntry: Deno.KvEntryMaybe<number>,
+  intent: AdminDefaultsIntent,
+  kernelPolicyWindow: number
+): Promise<AdminDefaultsCutover> => {
+  const currentKernelWindow = normalizeKernelWindowMsInput(kernelWindowEntry.value) ?? DEFAULT_KERNEL_POLICY_WINDOW_MS;
+  if (!intent.writesKernelWindow || kernelPolicyWindow === currentKernelWindow) return { kind: "none" };
+  const cutover = await acquireKernelDefaultWindowCutover(kv, kernelLimitEntry, kernelWindowEntry);
+  if (cutover.ok) return { kind: "guard", guard: cutover.guard };
+  if (cutover.reason === "active_reservations") {
+    return {
+      kind: "response",
+      response: openaiError(409, "Active Kernel quota reservations must settle before changing the default window", "invalid_request_error"),
+    };
+  }
+  if (cutover.reason === "concurrent_change") return { kind: "retry" };
+  return { kind: "response", response: openaiError(503, "Kernel quota ledger is unavailable", "server_error") };
+};
+
+const commitDefaultsUpdate = async (
+  kv: Deno.Kv,
+  input: Readonly<{
+    runtimeEntry: Deno.KvEntryMaybe<unknown>;
+    kernelLimitEntry: Deno.KvEntryMaybe<number>;
+    kernelWindowEntry: Deno.KvEntryMaybe<number>;
+    cutoverGuard: KernelDefaultWindowCutoverGuard | null;
+    nextRuntime: ReturnType<typeof buildRuntimeConfig> | null;
+    writesKernelLimit: boolean;
+    kernelPolicyLimit: number;
+    writesKernelWindow: boolean;
+    kernelPolicyWindow: number;
+  }>
+): Promise<{ ok: boolean }> => {
+  let atomic = kv.atomic().check(input.runtimeEntry).check(input.kernelLimitEntry).check(input.kernelWindowEntry);
+  if (input.cutoverGuard) {
+    atomic = atomic.check(input.cutoverGuard.entry).delete(input.cutoverGuard.key);
+  }
+  if (input.nextRuntime) atomic = atomic.set(RUNTIME_CONFIG_V2_KEY, input.nextRuntime);
+  if (input.writesKernelLimit) atomic = atomic.set(DEFAULT_KERNEL_POLICY_LIMIT_KEY, input.kernelPolicyLimit);
+  if (input.writesKernelWindow) atomic = atomic.set(DEFAULT_KERNEL_POLICY_WINDOW_KEY, input.kernelPolicyWindow);
+  try {
+    if ((await atomic.commit()).ok) return { ok: true };
+  } catch (error) {
+    if (input.cutoverGuard) await releaseKernelDefaultWindowCutover(kv, input.cutoverGuard);
+    throw error;
+  }
+  if (input.cutoverGuard) await releaseKernelDefaultWindowCutover(kv, input.cutoverGuard);
+  return { ok: false };
+};
+
+/** One read-modify-write attempt; the caller owns the three-attempt retry bound. */
+const applyDefaultsUpdateAttempt = async (
+  kv: Deno.Kv,
+  raw: Record<string, unknown>,
+  intent: AdminDefaultsIntent
+): Promise<{ kind: "retry" } | { kind: "response"; response: Response }> => {
+  const [runtimeEntry, kernelLimitEntry, kernelWindowEntry] = await Promise.all([
+    kv.get(RUNTIME_CONFIG_V2_KEY, { consistency: "strong" }),
+    kv.get<number>(DEFAULT_KERNEL_POLICY_LIMIT_KEY, { consistency: "strong" }),
+    kv.get<number>(DEFAULT_KERNEL_POLICY_WINDOW_KEY, { consistency: "strong" }),
+  ]);
+  const runtime = normalizeRuntimeConfig(runtimeEntry.value);
+  let model = runtime?.default_model ?? "";
+  let reasoningEffort = runtime?.default_reasoning_effort ?? DEFAULT_REASONING_EFFORT;
+  const kernelPolicyLimit = intent.requestedKernelLimit ?? normalizeKernelUsageLimitInput(kernelLimitEntry.value) ?? DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS;
+  const kernelPolicyWindow = intent.requestedKernelWindow ?? normalizeKernelWindowMsInput(kernelWindowEntry.value) ?? DEFAULT_KERNEL_POLICY_WINDOW_MS;
+  let nextRuntime = null as ReturnType<typeof buildRuntimeConfig> | null;
+
+  if (intent.wantsModelUpdate) {
+    const resolved = await resolveDefaultsModelUpdate(raw, intent, runtime, model);
+    if (!resolved.ok) return { kind: "response", response: resolved.response };
+    model = resolved.model;
+    reasoningEffort = resolved.reasoningEffort;
+    nextRuntime = resolved.nextRuntime;
+  }
+
+  if (!nextRuntime && !intent.writesKernelLimit && !intent.writesKernelWindow) {
+    return { kind: "response", response: defaultsJson(model, reasoningEffort, kernelPolicyLimit, kernelPolicyWindow) };
+  }
+
+  const cutover = await resolveDefaultsCutover(kv, kernelLimitEntry, kernelWindowEntry, intent, kernelPolicyWindow);
+  if (cutover.kind === "retry") return { kind: "retry" };
+  if (cutover.kind === "response") return { kind: "response", response: cutover.response };
+
+  const committed = await commitDefaultsUpdate(kv, {
+    runtimeEntry,
+    kernelLimitEntry,
+    kernelWindowEntry,
+    cutoverGuard: cutover.kind === "guard" ? cutover.guard : null,
+    nextRuntime,
+    writesKernelLimit: intent.writesKernelLimit,
+    kernelPolicyLimit,
+    writesKernelWindow: intent.writesKernelWindow,
+    kernelPolicyWindow,
+  });
+  if (!committed.ok) return { kind: "retry" };
+  if (nextRuntime) cacheRuntimeConfig(nextRuntime);
+  return { kind: "response", response: defaultsJson(model, reasoningEffort, kernelPolicyLimit, kernelPolicyWindow) };
+};
+
+/**
+ * Everything is parsed and every candidate is built before the one atomic
+ * commit. In particular, a late kernel field error or a runtime-size error
+ * cannot leave a model/defaults half-update behind, so a lost race simply
+ * re-reads and rebuilds.
+ */
+const applyDefaultsUpdate = async (kv: Deno.Kv, raw: Record<string, unknown>, intent: AdminDefaultsIntent): Promise<Response> => {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const attemptResult = await applyDefaultsUpdateAttempt(kv, raw, intent);
+    if (attemptResult.kind === "retry") continue;
+    return attemptResult.response;
+  }
+  return openaiError(409, "Defaults were modified concurrently; retry", "invalid_request_error");
+};
+
+const adminDefaultsPostResponse = async (kv: Deno.Kv, req: Request): Promise<Response> => {
+  const raw = await readJsonBody(req);
+  if (!raw || !isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
+  const allowedFields = new Set(["model", "reasoning_effort", "kernel_policy_limit_requests", "kernel_policy_window_ms"]);
+  for (const field of Object.keys(raw)) {
+    if (!allowedFields.has(field)) {
+      return openaiError(400, `Unknown defaults field: ${field}`, "invalid_request_error", { param: field });
+    }
+  }
+  const writesModel = Object.prototype.hasOwnProperty.call(raw, "model");
+  const writesReasoning = Object.prototype.hasOwnProperty.call(raw, "reasoning_effort");
+  const writesKernelLimit = Object.prototype.hasOwnProperty.call(raw, "kernel_policy_limit_requests");
+  const writesKernelWindow = Object.prototype.hasOwnProperty.call(raw, "kernel_policy_window_ms");
+  const requestedKernelLimit = writesKernelLimit ? normalizeKernelUsageLimitInput(raw.kernel_policy_limit_requests) : undefined;
+  if (writesKernelLimit && requestedKernelLimit === null) {
+    return openaiError(400, "kernel_policy_limit_requests must be a non-negative number or -1 for unlimited", "invalid_request_error");
+  }
+  const requestedKernelWindow = writesKernelWindow ? normalizeKernelWindowMsInput(raw.kernel_policy_window_ms) : undefined;
+  if (writesKernelWindow && requestedKernelWindow === null) {
+    return openaiError(400, "kernel_policy_window_ms must be a positive number", "invalid_request_error");
+  }
+  return await applyDefaultsUpdate(kv, raw, {
+    writesModel,
+    writesReasoning,
+    wantsModelUpdate: writesModel || writesReasoning,
+    writesKernelLimit,
+    writesKernelWindow,
+    requestedKernelLimit,
+    requestedKernelWindow,
+  });
+};
+
 export const handleAdminDefaults = async (
   req: Request,
   dependencies: Readonly<{
@@ -594,157 +927,8 @@ export const handleAdminDefaults = async (
     return openaiError(500, "Deno KV is not available; cannot manage defaults", "server_error");
   }
 
-  if (req.method === "GET") {
-    const [runtime, kernelLimitEntry, kernelWindowEntry, meteredQuota] = await Promise.all([
-      loadRuntimeConfig(kv),
-      kv.get<number>(DEFAULT_KERNEL_POLICY_LIMIT_KEY),
-      kv.get<number>(DEFAULT_KERNEL_POLICY_WINDOW_KEY),
-      (dependencies.getMeteredQuotaDiagnostics ?? getMeteredQuotaDiagnostics)(),
-    ]);
-    const model = runtime?.default_model ?? "";
-    const reasoningEffort = runtime?.default_reasoning_effort ?? DEFAULT_REASONING_EFFORT;
-    const kernelPolicyLimit = normalizeKernelUsageLimitInput(kernelLimitEntry.value) ?? DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS;
-    const kernelPolicyWindow = normalizeKernelWindowMsInput(kernelWindowEntry.value) ?? DEFAULT_KERNEL_POLICY_WINDOW_MS;
-    return json(200, {
-      defaults: {
-        model,
-        reasoning_effort: reasoningEffort,
-        kernel_policy_limit_requests: kernelPolicyLimit,
-        kernel_policy_window_ms: kernelPolicyWindow,
-      },
-      metered_quota: meteredQuota,
-    });
-  }
-
-  if (req.method === "POST") {
-    const raw = await readJsonBody(req);
-    if (!raw || !isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
-    const allowedFields = new Set(["model", "reasoning_effort", "kernel_policy_limit_requests", "kernel_policy_window_ms"]);
-    for (const field of Object.keys(raw)) {
-      if (!allowedFields.has(field)) {
-        return openaiError(400, `Unknown defaults field: ${field}`, "invalid_request_error", { param: field });
-      }
-    }
-    const writesModel = Object.prototype.hasOwnProperty.call(raw, "model");
-    const writesReasoning = Object.prototype.hasOwnProperty.call(raw, "reasoning_effort");
-    const wantsModelUpdate = writesModel || writesReasoning;
-    const writesKernelLimit = Object.prototype.hasOwnProperty.call(raw, "kernel_policy_limit_requests");
-    const writesKernelWindow = Object.prototype.hasOwnProperty.call(raw, "kernel_policy_window_ms");
-    const requestedKernelLimit = writesKernelLimit ? normalizeKernelUsageLimitInput(raw.kernel_policy_limit_requests) : undefined;
-    if (writesKernelLimit && requestedKernelLimit === null) {
-      return openaiError(400, "kernel_policy_limit_requests must be a non-negative number or -1 for unlimited", "invalid_request_error");
-    }
-    const requestedKernelWindow = writesKernelWindow ? normalizeKernelWindowMsInput(raw.kernel_policy_window_ms) : undefined;
-    if (writesKernelWindow && requestedKernelWindow === null) {
-      return openaiError(400, "kernel_policy_window_ms must be a positive number", "invalid_request_error");
-    }
-
-    // Everything is parsed and every candidate is built before the one atomic
-    // commit. In particular, a late kernel field error or a runtime-size error
-    // cannot leave a model/defaults half-update behind.
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const [runtimeEntry, kernelLimitEntry, kernelWindowEntry] = await Promise.all([
-        kv.get(RUNTIME_CONFIG_V2_KEY, { consistency: "strong" }),
-        kv.get<number>(DEFAULT_KERNEL_POLICY_LIMIT_KEY, { consistency: "strong" }),
-        kv.get<number>(DEFAULT_KERNEL_POLICY_WINDOW_KEY, { consistency: "strong" }),
-      ]);
-      const runtime = normalizeRuntimeConfig(runtimeEntry.value);
-      let model = runtime?.default_model ?? "";
-      let reasoningEffort = runtime?.default_reasoning_effort ?? DEFAULT_REASONING_EFFORT;
-      const kernelPolicyLimit = requestedKernelLimit ?? normalizeKernelUsageLimitInput(kernelLimitEntry.value) ?? DEFAULT_KERNEL_POLICY_LIMIT_REQUESTS;
-      const kernelPolicyWindow = requestedKernelWindow ?? normalizeKernelWindowMsInput(kernelWindowEntry.value) ?? DEFAULT_KERNEL_POLICY_WINDOW_MS;
-      let nextRuntime = null as ReturnType<typeof buildRuntimeConfig> | null;
-
-      if (wantsModelUpdate) {
-        if (!runtime) return openaiError(503, "Runtime configuration is unavailable", "server_error");
-        const nextModel = writesModel ? normalizeDefaultModel(raw.model) : model;
-        if (!nextModel) return openaiError(400, "model must be a non-empty string", "invalid_request_error");
-
-        const snapshot = await loadCodexModelsSnapshot();
-        if (!snapshot || !Array.isArray(snapshot.models) || snapshot.models.length === 0) {
-          return openaiError(409, "No Codex model snapshot stored", "invalid_request_error");
-        }
-        const modelRecord = snapshot.models.find((entry) => isRecord(entry) && getString(entry.slug) === nextModel) ?? null;
-        if (!modelRecord) {
-          return openaiError(400, "model is not in the stored Codex model list", "invalid_request_error");
-        }
-
-        const wantsReasoningUpdate = writesReasoning;
-        const modelDefault = modelRecord.default_reasoning_level === null ? "none" : normalizeReasoningEffort(modelRecord.default_reasoning_level);
-        const levels = extractModelReasoningLevels(modelRecord);
-        const nextReasoning = wantsReasoningUpdate ? normalizeReasoningEffort(raw.reasoning_effort) : (modelDefault ?? levels[0] ?? "none");
-        if (!nextReasoning) {
-          return openaiError(400, "reasoning_effort must be a non-empty string", "invalid_request_error");
-        }
-        model = nextModel;
-        reasoningEffort = nextReasoning;
-        try {
-          nextRuntime = buildRuntimeConfig(snapshot, {
-            defaultModel: model,
-            defaultReasoningEffort: reasoningEffort,
-          });
-        } catch (error) {
-          const response = runtimeConfigErrorResponse(error);
-          if (response) return response;
-          throw error;
-        }
-      }
-
-      if (!nextRuntime && !writesKernelLimit && !writesKernelWindow) {
-        return json(200, {
-          defaults: {
-            model,
-            reasoning_effort: reasoningEffort,
-            kernel_policy_limit_requests: kernelPolicyLimit,
-            kernel_policy_window_ms: kernelPolicyWindow,
-          },
-        });
-      }
-
-      let cutoverGuard: KernelDefaultWindowCutoverGuard | null = null;
-      const currentKernelWindow = normalizeKernelWindowMsInput(kernelWindowEntry.value) ?? DEFAULT_KERNEL_POLICY_WINDOW_MS;
-      if (writesKernelWindow && kernelPolicyWindow !== currentKernelWindow) {
-        const cutover = await acquireKernelDefaultWindowCutover(kv, kernelLimitEntry, kernelWindowEntry);
-        if (!cutover.ok) {
-          if (cutover.reason === "active_reservations") {
-            return openaiError(409, "Active Kernel quota reservations must settle before changing the default window", "invalid_request_error");
-          }
-          if (cutover.reason === "concurrent_change") continue;
-          return openaiError(503, "Kernel quota ledger is unavailable", "server_error");
-        }
-        cutoverGuard = cutover.guard;
-      }
-
-      let atomic = kv.atomic().check(runtimeEntry).check(kernelLimitEntry).check(kernelWindowEntry);
-      if (cutoverGuard) {
-        atomic = atomic.check(cutoverGuard.entry).delete(cutoverGuard.key);
-      }
-      if (nextRuntime) atomic = atomic.set(RUNTIME_CONFIG_V2_KEY, nextRuntime);
-      if (writesKernelLimit) atomic = atomic.set(DEFAULT_KERNEL_POLICY_LIMIT_KEY, kernelPolicyLimit);
-      if (writesKernelWindow) atomic = atomic.set(DEFAULT_KERNEL_POLICY_WINDOW_KEY, kernelPolicyWindow);
-      let committed: Awaited<ReturnType<Deno.AtomicOperation["commit"]>>;
-      try {
-        committed = await atomic.commit();
-      } catch (error) {
-        if (cutoverGuard) await releaseKernelDefaultWindowCutover(kv, cutoverGuard);
-        throw error;
-      }
-      if (!committed.ok) {
-        if (cutoverGuard) await releaseKernelDefaultWindowCutover(kv, cutoverGuard);
-        continue;
-      }
-      if (nextRuntime) cacheRuntimeConfig(nextRuntime);
-      return json(200, {
-        defaults: {
-          model,
-          reasoning_effort: reasoningEffort,
-          kernel_policy_limit_requests: kernelPolicyLimit,
-          kernel_policy_window_ms: kernelPolicyWindow,
-        },
-      });
-    }
-    return openaiError(409, "Defaults were modified concurrently; retry", "invalid_request_error");
-  }
+  if (req.method === "GET") return await adminDefaultsGetResponse(kv, dependencies);
+  if (req.method === "POST") return await adminDefaultsPostResponse(kv, req);
 
   return openaiError(405, "Method not allowed", "method_not_allowed");
 };
@@ -790,7 +974,7 @@ const normalizeApiKeyUsageLimit = (value: unknown): number | null => {
   return limit;
 };
 
-const normalizeApiKeyWindowMsInput = (value: unknown): number | null => {
+const normalizeWindowMsInput = (value: unknown): number | null => {
   if (value === undefined || value === null) return null;
   if (typeof value === "string") {
     const trimmed = value.trim();
@@ -804,6 +988,10 @@ const normalizeApiKeyWindowMsInput = (value: unknown): number | null => {
   if (windowMs <= 0) return null;
   return windowMs;
 };
+
+/** API-key quota windows and Kernel policy windows share this positive-number validation. */
+const normalizeApiKeyWindowMsInput = normalizeWindowMsInput;
+const normalizeKernelWindowMsInput = normalizeWindowMsInput;
 
 const paidFallbackInputError = (message: string): Response => openaiError(400, message, "invalid_request_error");
 
@@ -880,21 +1068,6 @@ const normalizeKernelUsageLimitInput = (value: unknown): number | null => {
   return limit;
 };
 
-const normalizeKernelWindowMsInput = (value: unknown): number | null => {
-  if (value === undefined || value === null) return null;
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    const parsed = Number(trimmed);
-    if (!Number.isFinite(parsed)) return null;
-    value = parsed;
-  }
-  if (typeof value !== "number" || !Number.isFinite(value)) return null;
-  const windowMs = Math.trunc(value);
-  if (windowMs <= 0) return null;
-  return windowMs;
-};
-
 const normalizeKernelExpiresAtMsInput = (value: unknown, nowMs: number): number | null => {
   if (value === undefined || value === null) return null;
   if (typeof value === "string") {
@@ -934,7 +1107,7 @@ const extractModelReasoningLevels = (model: Record<string, unknown> | null): Rea
   if (!model) return [];
   const raw = Array.isArray(model.supported_reasoning_levels) ? model.supported_reasoning_levels : [];
   const levels = raw
-    .map((entry) => {
+    .map((entry): ReasoningEffort | null => {
       if (entry === null) return "none";
       if (typeof entry === "string") return normalizeReasoningEffort(entry);
       if (isRecord(entry)) return entry.effort === null ? "none" : normalizeReasoningEffort(entry.effort);
@@ -956,6 +1129,112 @@ const estimateJsonSize = (value: unknown): number | null => {
 const MAX_KV_BYTES = 65_536;
 const SAFE_KV_BYTES = 60_000;
 
+type ApiKeyCreateFields = Readonly<{
+  expiresAtMs: number;
+  usageLimitRequests: number;
+  windowMs: number;
+  bankedResetsEnabled: boolean;
+  paidFallbackEnabled: boolean;
+  paidFallbackLimitMicrocredits: number;
+}>;
+
+/** Resolves the caller-supplied token, or mints one when it is absent. */
+const resolveApiKeyCreateToken = (raw: Record<string, unknown>): { ok: true; token: string } | { ok: false; response: Response } => {
+  const providedToken = normalizeOptionalApiKeyToken(raw.token);
+  if (raw.token !== undefined && raw.token !== null && providedToken === null) {
+    return { ok: false, response: openaiError(400, "token must use the u_ prefix followed by 64 lowercase hexadecimal characters", "invalid_request_error") };
+  }
+  return { ok: true, token: providedToken ?? generateApiKeyToken() };
+};
+
+/** `paid_fallback_enabled` and `paid_fallback_limit_credits`, validated in that order. */
+const resolveApiKeyCreatePaidFallback = (
+  raw: Record<string, unknown>
+): { ok: true; paidFallbackEnabled: boolean; paidFallbackLimitMicrocredits: number } | { ok: false; response: Response } => {
+  if (Object.prototype.hasOwnProperty.call(raw, "paid_fallback_enabled") && typeof raw.paid_fallback_enabled !== "boolean") {
+    return { ok: false, response: paidFallbackInputError("paid_fallback_enabled must be a boolean") };
+  }
+  const paidFallbackEnabled = raw.paid_fallback_enabled === true;
+  const paidFallbackLimitMicrocredits = Object.prototype.hasOwnProperty.call(raw, "paid_fallback_limit_credits")
+    ? paidFallbackCreditsToMicrocredits(raw.paid_fallback_limit_credits)
+    : 0;
+  if (paidFallbackLimitMicrocredits === null) {
+    return { ok: false, response: paidFallbackInputError("paid_fallback_limit_credits must be a non-negative number or -1") };
+  }
+  if (paidFallbackEnabled && paidFallbackLimitMicrocredits === 0) {
+    return { ok: false, response: paidFallbackInputError("paid_fallback_limit_credits must be positive or -1 when paid fallback is enabled") };
+  }
+  return { ok: true, paidFallbackEnabled, paidFallbackLimitMicrocredits };
+};
+
+/** Every create-time field except `name` and `token`, validated in the original order. */
+const resolveApiKeyCreateFields = (
+  raw: Record<string, unknown>,
+  nowMs: number
+): { ok: true; fields: ApiKeyCreateFields } | { ok: false; response: Response } => {
+  const expiresAtMs = normalizeApiKeyExpiresAtMs(raw.expires_at_ms, nowMs);
+  if (expiresAtMs === null) {
+    return { ok: false, response: openaiError(400, "expires_at_ms must be a Unix epoch ms timestamp in the future, or -1", "invalid_request_error") };
+  }
+
+  const usageLimitRequests = normalizeApiKeyUsageLimit(raw.usage_limit_requests);
+  if (usageLimitRequests === null) {
+    return { ok: false, response: openaiError(400, "usage_limit_requests must be a positive number or -1 for unlimited", "invalid_request_error") };
+  }
+
+  const windowMs = normalizeApiKeyWindowMsInput(raw.window_ms);
+  if (raw.window_ms !== undefined && windowMs === null) {
+    return { ok: false, response: openaiError(400, "window_ms must be a positive number", "invalid_request_error") };
+  }
+
+  if (Object.hasOwn(raw, "banked_resets_enabled") && typeof raw.banked_resets_enabled !== "boolean") {
+    return { ok: false, response: openaiError(400, "banked_resets_enabled must be a boolean", "invalid_request_error") };
+  }
+
+  const paidFallback = resolveApiKeyCreatePaidFallback(raw);
+  if (!paidFallback.ok) return paidFallback;
+
+  return {
+    ok: true,
+    fields: {
+      expiresAtMs,
+      usageLimitRequests,
+      windowMs: windowMs ?? USAGE_RESET_PERIOD_MS,
+      bankedResetsEnabled: apiKeyBankedResetsEnabled(raw),
+      paidFallbackEnabled: paidFallback.paidFallbackEnabled,
+      paidFallbackLimitMicrocredits: paidFallback.paidFallbackLimitMicrocredits,
+    },
+  };
+};
+
+/**
+ * Starts from the strict default policy. An enabled key additionally inherits
+ * the Metered-owned pricing fields, and an initialization failure is reported
+ * before anything is written.
+ */
+const resolveApiKeyCreatePolicy = async (
+  signal: AbortSignal,
+  fields: ApiKeyCreateFields
+): Promise<{ ok: true; policy: ReturnType<typeof defaultPaidFallbackPolicy> } | { ok: false; response: Response }> => {
+  const paidFallbackPolicy = defaultPaidFallbackPolicy();
+  if (!fields.paidFallbackEnabled) {
+    return { ok: true, policy: { ...paidFallbackPolicy, paid_fallback_limit_microcredits: fields.paidFallbackLimitMicrocredits } };
+  }
+  try {
+    return {
+      ok: true,
+      policy: {
+        ...paidFallbackPolicy,
+        ...(await initializePaidFallbackPolicy(signal)),
+        paid_fallback_enabled: true,
+        paid_fallback_limit_microcredits: fields.paidFallbackLimitMicrocredits,
+      },
+    };
+  } catch (error) {
+    return { ok: false, response: paidFallbackInitializationError(error) };
+  }
+};
+
 export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> => {
   const kv = await getKv();
   if (!kv) {
@@ -968,45 +1247,14 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
   const name = normalizeApiKeyName(raw.name);
   if (!name) return openaiError(400, "name must be a non-empty string (<=80 chars)", "invalid_request_error");
 
-  const providedToken = normalizeOptionalApiKeyToken(raw.token);
-  if (raw.token !== undefined && raw.token !== null && providedToken === null) {
-    return openaiError(400, "token must use the u_ prefix followed by 64 lowercase hexadecimal characters", "invalid_request_error");
-  }
-  const token = providedToken ?? generateApiKeyToken();
+  const tokenResult = resolveApiKeyCreateToken(raw);
+  if (!tokenResult.ok) return tokenResult.response;
+  const { token } = tokenResult;
 
   const now = Date.now();
-  const expiresAtMs = normalizeApiKeyExpiresAtMs(raw.expires_at_ms, now);
-  if (expiresAtMs === null) {
-    return openaiError(400, "expires_at_ms must be a Unix epoch ms timestamp in the future, or -1", "invalid_request_error");
-  }
-
-  const usageLimitRequests = normalizeApiKeyUsageLimit(raw.usage_limit_requests);
-  if (usageLimitRequests === null) {
-    return openaiError(400, "usage_limit_requests must be a positive number or -1 for unlimited", "invalid_request_error");
-  }
-  const windowMs = normalizeApiKeyWindowMsInput(raw.window_ms);
-  if (raw.window_ms !== undefined && windowMs === null) {
-    return openaiError(400, "window_ms must be a positive number", "invalid_request_error");
-  }
-  const resolvedWindowMs = windowMs ?? USAGE_RESET_PERIOD_MS;
-
-  if (Object.hasOwn(raw, "banked_resets_enabled") && typeof raw.banked_resets_enabled !== "boolean") {
-    return openaiError(400, "banked_resets_enabled must be a boolean", "invalid_request_error");
-  }
-
-  if (Object.prototype.hasOwnProperty.call(raw, "paid_fallback_enabled") && typeof raw.paid_fallback_enabled !== "boolean") {
-    return paidFallbackInputError("paid_fallback_enabled must be a boolean");
-  }
-  const paidFallbackEnabled = raw.paid_fallback_enabled === true;
-  const paidFallbackLimitMicrocredits = Object.prototype.hasOwnProperty.call(raw, "paid_fallback_limit_credits")
-    ? paidFallbackCreditsToMicrocredits(raw.paid_fallback_limit_credits)
-    : 0;
-  if (paidFallbackLimitMicrocredits === null) {
-    return paidFallbackInputError("paid_fallback_limit_credits must be a non-negative number or -1");
-  }
-  if (paidFallbackEnabled && paidFallbackLimitMicrocredits === 0) {
-    return paidFallbackInputError("paid_fallback_limit_credits must be positive or -1 when paid fallback is enabled");
-  }
+  const createFields = resolveApiKeyCreateFields(raw, now);
+  if (!createFields.ok) return createFields.response;
+  const { expiresAtMs, usageLimitRequests, windowMs, bankedResetsEnabled } = createFields.fields;
 
   const hash = await sha256Base64Url(token);
   const hashKey = apiKeyHashKey(hash);
@@ -1015,27 +1263,11 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
     return openaiError(409, "API key already exists", "invalid_request_error");
   }
 
-  let paidFallbackPolicy = defaultPaidFallbackPolicy();
-  if (paidFallbackEnabled) {
-    try {
-      paidFallbackPolicy = {
-        ...paidFallbackPolicy,
-        ...(await initializePaidFallbackPolicy(req.signal)),
-        paid_fallback_enabled: true,
-        paid_fallback_limit_microcredits: paidFallbackLimitMicrocredits,
-      };
-    } catch (error) {
-      return paidFallbackInitializationError(error);
-    }
-  } else {
-    paidFallbackPolicy = {
-      ...paidFallbackPolicy,
-      paid_fallback_limit_microcredits: paidFallbackLimitMicrocredits,
-    };
-  }
+  const policy = await resolveApiKeyCreatePolicy(req.signal, createFields.fields);
+  if (!policy.ok) return policy.response;
 
   const id = crypto.randomUUID();
-  const usageResetAtMs = calculateNextResetMs(now, resolvedWindowMs);
+  const usageResetAtMs = calculateNextResetMs(now, windowMs);
   const record: ApiKeyRecord = {
     id,
     name,
@@ -1047,10 +1279,10 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
     usage_limit_requests: usageLimitRequests,
     usage_requests: 0,
     usage_reset_at_ms: usageResetAtMs,
-    window_ms: resolvedWindowMs,
+    window_ms: windowMs,
     usage_quota_version: 3,
-    banked_resets_enabled: apiKeyBankedResetsEnabled(raw),
-    ...paidFallbackPolicy,
+    banked_resets_enabled: bankedResetsEnabled,
+    ...policy.policy,
   };
   const hashRecord: ApiKeyHashRecord = {
     id,
@@ -1059,7 +1291,7 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
     usage_limit_requests: usageLimitRequests,
     usage_requests: 0,
     usage_reset_at_ms: usageResetAtMs,
-    window_ms: resolvedWindowMs,
+    window_ms: windowMs,
     usage_quota_version: 3,
     ...paidFallbackHashFields(record),
   };
@@ -1108,8 +1340,10 @@ export const handleAdminApiKeysList = async (req: Request): Promise<Response> =>
   }
 
   const records: ApiKeyRecord[] = [];
-  for await (const entry of kv.list<ApiKeyRecord>({ prefix: API_KEY_ID_PREFIX })) {
-    if (entry.value) records.push(entry.value);
+  // A listed record may be missing its value; only well-formed records are listed.
+  for await (const entry of kv.list<ApiKeyRecord | null>({ prefix: API_KEY_ID_PREFIX })) {
+    const record = entry.value;
+    if (record) records.push(record);
   }
   records.sort((a, b) => b.created_at_ms - a.created_at_ms);
 
@@ -1208,6 +1442,444 @@ export const handleAdminApiKeysPaidFallbacks = async (req: Request, keyId: strin
   }
 };
 
+type ApiKeyUpdateTarget = Readonly<{
+  ok: true;
+  id: string;
+  idKey: Deno.KvKey;
+  entry: Deno.KvEntryMaybe<ApiKeyRecord>;
+  record: ApiKeyRecord;
+}>;
+
+/** Reads the target key and enforces the paid-fallback migration policy. */
+const resolveApiKeyUpdateTarget = async (kv: Deno.Kv, raw: Record<string, unknown>): Promise<ApiKeyUpdateTarget | { ok: false; response: Response }> => {
+  const id = getString(raw.id);
+  if (!id) return { ok: false, response: openaiError(400, "id is required", "invalid_request_error") };
+
+  const idKey = apiKeyIdKey(id);
+  const entry = await kv.get<ApiKeyRecord>(idKey);
+  const record = entry.value;
+  if (!record) return { ok: false, response: openaiError(404, "Not found", "not_found") };
+  if (!hasStrictPaidFallbackKeyPolicy(record)) {
+    return {
+      ok: false,
+      response: openaiError(503, "API key paid fallback migration is incomplete", "server_error", {
+        type: "server_error",
+      }),
+    };
+  }
+  return { ok: true, id, idKey, entry, record };
+};
+
+type ApiKeyUpdateFields = Readonly<{
+  bankedResetsEnabled: boolean;
+  name: string;
+  expiresAtMs: number;
+  usageLimitRequests: number;
+  windowMs: number;
+  paidFallbackEnabled: boolean;
+  paidFallbackLimitMicrocredits: number;
+  paidFallbackModelIds: string[];
+  paidFallbackQuotaPerCredit: number;
+  paidFallbackMaxExposureMicrocredits: Record<string, number>;
+  paidFallbackPricingCheckedAtMs: number | null;
+  resetUsage: boolean;
+}>;
+
+type ApiKeyUpdateIdentity = Pick<ApiKeyUpdateFields, "bankedResetsEnabled" | "name" | "expiresAtMs">;
+type ApiKeyUpdateQuota = Pick<ApiKeyUpdateFields, "usageLimitRequests" | "windowMs">;
+type ApiKeyUpdatePaidFallback = Pick<
+  ApiKeyUpdateFields,
+  | "paidFallbackEnabled"
+  | "paidFallbackLimitMicrocredits"
+  | "paidFallbackModelIds"
+  | "paidFallbackQuotaPerCredit"
+  | "paidFallbackMaxExposureMicrocredits"
+  | "paidFallbackPricingCheckedAtMs"
+>;
+
+/** `banked_resets_enabled`, `name`, and `expires_at_ms`, validated in that order. */
+const resolveApiKeyUpdateIdentity = (
+  raw: Record<string, unknown>,
+  record: ApiKeyRecord,
+  currentExpiresAtMs: number,
+  nowMs: number
+): { ok: true; identity: ApiKeyUpdateIdentity } | { ok: false; response: Response } => {
+  let bankedResetsEnabled = apiKeyBankedResetsEnabled(record);
+  if (Object.hasOwn(raw, "banked_resets_enabled")) {
+    if (typeof raw.banked_resets_enabled !== "boolean") {
+      return { ok: false, response: openaiError(400, "banked_resets_enabled must be a boolean", "invalid_request_error") };
+    }
+    bankedResetsEnabled = raw.banked_resets_enabled;
+  }
+
+  let name = record.name;
+  if (Object.prototype.hasOwnProperty.call(raw, "name")) {
+    const normalized = normalizeApiKeyName(raw.name);
+    if (!normalized) return { ok: false, response: openaiError(400, "name must be a non-empty string (<=80 chars)", "invalid_request_error") };
+    name = normalized;
+  }
+
+  let expiresAtMs = currentExpiresAtMs;
+  if (Object.prototype.hasOwnProperty.call(raw, "expires_at_ms")) {
+    const normalized = normalizeApiKeyExpiresAtMs(raw.expires_at_ms, nowMs);
+    if (normalized === null) {
+      return {
+        ok: false,
+        response: openaiError(400, "expires_at_ms must be a Unix epoch ms timestamp in the future, or -1", "invalid_request_error"),
+      };
+    }
+    expiresAtMs = normalized;
+  }
+
+  return { ok: true, identity: { bankedResetsEnabled, name, expiresAtMs } };
+};
+
+/** `usage_limit_requests` and `window_ms`, validated in that order. */
+const resolveApiKeyUpdateQuota = (
+  raw: Record<string, unknown>,
+  record: ApiKeyRecord
+): { ok: true; quota: ApiKeyUpdateQuota } | { ok: false; response: Response } => {
+  let usageLimitRequests = record.usage_limit_requests;
+  if (Object.prototype.hasOwnProperty.call(raw, "usage_limit_requests")) {
+    const normalized = normalizeApiKeyUsageLimit(raw.usage_limit_requests);
+    if (normalized === null) {
+      return { ok: false, response: openaiError(400, "usage_limit_requests must be a non-negative number or -1 for unlimited", "invalid_request_error") };
+    }
+    usageLimitRequests = normalized;
+  }
+
+  let windowMs = coerceApiKeyWindowMs(record);
+  if (Object.prototype.hasOwnProperty.call(raw, "window_ms")) {
+    const normalized = normalizeApiKeyWindowMsInput(raw.window_ms);
+    if (normalized === null) {
+      return { ok: false, response: openaiError(400, "window_ms must be a positive number", "invalid_request_error") };
+    }
+    windowMs = normalized;
+  }
+
+  return { ok: true, quota: { usageLimitRequests, windowMs } };
+};
+
+/**
+ * The paid-fallback patch, including the one-shot Metered policy initialization
+ * that only runs when the key is being enabled for the first time.
+ */
+const resolveApiKeyUpdatePaidFallback = async (
+  raw: Record<string, unknown>,
+  record: ApiKeyRecord,
+  signal: AbortSignal
+): Promise<{ ok: true; paidFallback: ApiKeyUpdatePaidFallback } | { ok: false; response: Response }> => {
+  if (Object.prototype.hasOwnProperty.call(raw, "paid_fallback_enabled") && typeof raw.paid_fallback_enabled !== "boolean") {
+    return { ok: false, response: paidFallbackInputError("paid_fallback_enabled must be a boolean") };
+  }
+  let paidFallbackEnabled = record.paid_fallback_enabled;
+  if (Object.prototype.hasOwnProperty.call(raw, "paid_fallback_enabled")) {
+    paidFallbackEnabled = raw.paid_fallback_enabled === true;
+  }
+
+  let paidFallbackLimitMicrocredits = record.paid_fallback_limit_microcredits;
+  if (Object.prototype.hasOwnProperty.call(raw, "paid_fallback_limit_credits")) {
+    const limitMicrocredits = paidFallbackCreditsToMicrocredits(raw.paid_fallback_limit_credits);
+    if (limitMicrocredits === null) {
+      return { ok: false, response: paidFallbackInputError("paid_fallback_limit_credits must be a non-negative number or -1") };
+    }
+    paidFallbackLimitMicrocredits = limitMicrocredits;
+  }
+  if (paidFallbackEnabled && paidFallbackLimitMicrocredits === 0) {
+    return { ok: false, response: paidFallbackInputError("paid_fallback_limit_credits must be positive or -1 when paid fallback is enabled") };
+  }
+
+  const paidFallback: ApiKeyUpdatePaidFallback = {
+    paidFallbackEnabled,
+    paidFallbackLimitMicrocredits,
+    paidFallbackModelIds: record.paid_fallback_model_ids,
+    paidFallbackQuotaPerCredit: record.paid_fallback_quota_per_credit,
+    paidFallbackMaxExposureMicrocredits: record.paid_fallback_max_exposure_microcredits ?? {},
+    paidFallbackPricingCheckedAtMs: record.paid_fallback_pricing_checked_at_ms,
+  };
+  if (record.paid_fallback_enabled || !paidFallbackEnabled) return { ok: true, paidFallback };
+
+  try {
+    const initialized = await initializePaidFallbackPolicy(signal);
+    return {
+      ok: true,
+      paidFallback: {
+        ...paidFallback,
+        paidFallbackModelIds: [...initialized.paid_fallback_model_ids],
+        paidFallbackQuotaPerCredit: initialized.paid_fallback_quota_per_credit,
+        paidFallbackMaxExposureMicrocredits: initialized.paid_fallback_max_exposure_microcredits ?? {},
+        paidFallbackPricingCheckedAtMs: initialized.paid_fallback_pricing_checked_at_ms,
+      },
+    };
+  } catch (error) {
+    return { ok: false, response: paidFallbackInitializationError(error) };
+  }
+};
+
+const resolveApiKeyUpdateFields = async (
+  raw: Record<string, unknown>,
+  record: ApiKeyRecord,
+  currentExpiresAtMs: number,
+  nowMs: number,
+  signal: AbortSignal
+): Promise<{ ok: true; fields: ApiKeyUpdateFields } | { ok: false; response: Response }> => {
+  const identity = resolveApiKeyUpdateIdentity(raw, record, currentExpiresAtMs, nowMs);
+  if (!identity.ok) return identity;
+
+  const quota = resolveApiKeyUpdateQuota(raw, record);
+  if (!quota.ok) return quota;
+
+  const paidFallback = await resolveApiKeyUpdatePaidFallback(raw, record, signal);
+  if (!paidFallback.ok) return paidFallback;
+
+  if (Object.prototype.hasOwnProperty.call(raw, "reset_usage") && typeof raw.reset_usage !== "boolean") {
+    return { ok: false, response: openaiError(400, "reset_usage must be a boolean", "invalid_request_error") };
+  }
+
+  return {
+    ok: true,
+    fields: {
+      ...identity.identity,
+      ...quota.quota,
+      ...paidFallback.paidFallback,
+      resetUsage: normalizeOptionalBoolean(raw.reset_usage),
+    },
+  };
+};
+
+/**
+ * Merges the patch into the stored record. A reset (explicit, or implied by a
+ * window change) must always select a distinct V3 aggregate identity: a create
+ * followed by an immediate reset can otherwise share the same millisecond start
+ * and overwrite the current window instead of opening a fresh one.
+ */
+const buildApiKeyUpdateRecord = (
+  record: ApiKeyRecord,
+  fields: ApiKeyUpdateFields,
+  nowMs: number,
+  currentWindowMs: number
+): { updated: ApiKeyRecord; resetUsage: boolean; replaceQuotaWindow: boolean } => {
+  const replaceQuotaWindow = fields.resetUsage || fields.windowMs !== currentWindowMs;
+  let usageRequests = record.usage_requests;
+  let usageResetAtMs = record.usage_reset_at_ms;
+  let paidFallbackSpentMicrocredits = record.paid_fallback_spent_microcredits;
+  if (replaceQuotaWindow) {
+    usageRequests = 0;
+    const currentWindowStartMs = record.usage_reset_at_ms - currentWindowMs;
+    const freshWindowStartMs = Math.max(nowMs, currentWindowStartMs + 1);
+    usageResetAtMs = freshWindowStartMs + fields.windowMs;
+    paidFallbackSpentMicrocredits = 0;
+  }
+  return {
+    updated: {
+      ...record,
+      banked_resets_enabled: fields.bankedResetsEnabled,
+      name: fields.name,
+      expires_at_ms: fields.expiresAtMs,
+      usage_limit_requests: fields.usageLimitRequests,
+      usage_requests: usageRequests,
+      usage_reset_at_ms: usageResetAtMs,
+      window_ms: fields.windowMs,
+      paid_fallback_enabled: fields.paidFallbackEnabled,
+      paid_fallback_limit_microcredits: fields.paidFallbackLimitMicrocredits,
+      paid_fallback_spent_microcredits: paidFallbackSpentMicrocredits,
+      paid_fallback_reserved_microcredits: record.paid_fallback_reserved_microcredits,
+      paid_fallback_reservation_request_id: record.paid_fallback_reservation_request_id,
+      paid_fallback_model_ids: fields.paidFallbackModelIds,
+      paid_fallback_quota_per_credit: fields.paidFallbackQuotaPerCredit,
+      paid_fallback_max_exposure_microcredits: fields.paidFallbackMaxExposureMicrocredits,
+      paid_fallback_pricing_checked_at_ms: fields.paidFallbackPricingCheckedAtMs,
+    },
+    resetUsage: fields.resetUsage,
+    replaceQuotaWindow,
+  };
+};
+
+const apiKeyUpdateIdentityChanged = (record: ApiKeyRecord, updated: ApiKeyRecord, currentExpiresAtMs: number): boolean =>
+  updated.name !== record.name || updated.banked_resets_enabled !== apiKeyBankedResetsEnabled(record) || updated.expires_at_ms !== currentExpiresAtMs;
+
+const apiKeyUpdateQuotaChanged = (record: ApiKeyRecord, updated: ApiKeyRecord, currentWindowMs: number, resetUsage: boolean): boolean =>
+  updated.usage_limit_requests !== record.usage_limit_requests ||
+  updated.window_ms !== currentWindowMs ||
+  (resetUsage && (updated.usage_requests !== record.usage_requests || updated.usage_reset_at_ms !== record.usage_reset_at_ms));
+
+const apiKeyUpdatePaidFallbackChanged = (record: ApiKeyRecord, updated: ApiKeyRecord): boolean =>
+  updated.paid_fallback_enabled !== record.paid_fallback_enabled ||
+  updated.paid_fallback_limit_microcredits !== record.paid_fallback_limit_microcredits ||
+  updated.paid_fallback_spent_microcredits !== record.paid_fallback_spent_microcredits ||
+  updated.paid_fallback_reserved_microcredits !== record.paid_fallback_reserved_microcredits ||
+  updated.paid_fallback_reservation_request_id !== record.paid_fallback_reservation_request_id ||
+  updated.paid_fallback_model_ids !== record.paid_fallback_model_ids ||
+  updated.paid_fallback_quota_per_credit !== record.paid_fallback_quota_per_credit ||
+  updated.paid_fallback_pricing_checked_at_ms !== record.paid_fallback_pricing_checked_at_ms;
+
+/** Every comparison is pure, so this matches the original short-circuit chain. */
+const apiKeyUpdateChanged = (record: ApiKeyRecord, updated: ApiKeyRecord, currentExpiresAtMs: number, currentWindowMs: number, resetUsage: boolean): boolean =>
+  apiKeyUpdateIdentityChanged(record, updated, currentExpiresAtMs) ||
+  apiKeyUpdateQuotaChanged(record, updated, currentWindowMs, resetUsage) ||
+  apiKeyUpdatePaidFallbackChanged(record, updated);
+
+/** The no-op response, which reports the live usage counter of the stored policy. */
+const apiKeyUpdateUnchangedResponse = async (
+  kv: Deno.Kv,
+  record: ApiKeyRecord,
+  currentExpiresAtMs: number,
+  currentWindowMs: number,
+  nowMs: number
+): Promise<Response> => {
+  const currentPolicy = apiKeyPolicyFromHashRecord(
+    record.hash,
+    {
+      id: record.id,
+      expires_at_ms: record.expires_at_ms,
+      revoked_at_ms: record.revoked_at_ms,
+      usage_limit_requests: record.usage_limit_requests,
+      usage_requests: record.usage_requests,
+      usage_reset_at_ms: record.usage_reset_at_ms,
+      window_ms: record.window_ms,
+      usage_quota_version: record.usage_quota_version,
+      ...paidFallbackHashFields(record),
+    },
+    nowMs
+  );
+  return json(
+    200,
+    {
+      id: record.id,
+      name: record.name,
+      prefix: record.prefix,
+      created_at_ms: record.created_at_ms,
+      expires_at_ms: currentExpiresAtMs,
+      revoked_at_ms: record.revoked_at_ms,
+      usage_limit_requests: record.usage_limit_requests,
+      usage_requests: currentPolicy ? await getApiKeyUsageV3(currentPolicy, kv) : 0,
+      usage_reset_at_ms: record.usage_reset_at_ms,
+      window_ms: currentWindowMs,
+      ...(await paidFallbackPublicFields(record, kv)),
+    },
+    { "x-uos-upstream": "chatgpt_codex" }
+  );
+};
+
+/**
+ * Reads the superseded V3 aggregate after reclaim and before the live scan. A
+ * reservation before this read is included in the scan; one after it mutates
+ * this checked entry and makes the reset conflict atomically.
+ */
+const inspectApiKeyQuotaResetReservations = async (
+  kv: Deno.Kv,
+  input: Readonly<{ keyId: string; currentQuotaPolicy: NonNullable<ReturnType<typeof apiKeyPolicyFromHashRecord>>; nowMs: number }>
+): Promise<{ ok: true; windowEntry: Deno.KvEntryMaybe<ApiKeyUsageWindowV3> } | { ok: false; response: Response }> => {
+  try {
+    await reclaimApiKeyUsageReservationsForKeyV3(kv, input.keyId, input.nowMs);
+    const windowEntry = await kv.get<ApiKeyUsageWindowV3>(apiKeyUsageV3WindowKey(input.currentQuotaPolicy), { consistency: "strong" });
+    if (await hasLiveApiKeyUsageReservationsV3(kv, input.keyId, input.nowMs)) {
+      return {
+        ok: false,
+        response: openaiError(
+          409,
+          "Cannot reset API key quota while requests are reserved; retry after their five-minute lease expires",
+          "invalid_request_error"
+        ),
+      };
+    }
+    return { ok: true, windowEntry };
+  } catch (error) {
+    console.warn("[ai.ubq.fi] Failed to inspect API key quota reservations before reset:", error);
+    return { ok: false, response: openaiError(503, "API key quota ledger is unavailable", "server_error", { type: "server_error" }) };
+  }
+};
+
+/** Rechecks reservations after a lost commit race, then reports the conflict. */
+const resolveApiKeyUpdateCommitConflict = async (
+  kv: Deno.Kv,
+  input: Readonly<{ keyId: string; nowMs: number; replaceQuotaWindow: boolean }>
+): Promise<Response> => {
+  if (!input.replaceQuotaWindow) return openaiError(409, "API key was modified concurrently; retry", "invalid_request_error");
+  try {
+    await reclaimApiKeyUsageReservationsForKeyV3(kv, input.keyId, input.nowMs);
+    if (await hasLiveApiKeyUsageReservationsV3(kv, input.keyId, input.nowMs)) {
+      return openaiError(409, "Cannot reset API key quota while requests are reserved; retry after their five-minute lease expires", "invalid_request_error");
+    }
+  } catch (error) {
+    console.warn("[ai.ubq.fi] Failed to recheck API key quota reservations after reset conflict:", error);
+    return openaiError(503, "API key quota ledger is unavailable", "server_error", { type: "server_error" });
+  }
+  return openaiError(409, "API key was modified concurrently; retry", "invalid_request_error");
+};
+
+/** Writes the record, hash record, and (when the window is replaced) quota windows atomically. */
+const persistApiKeyUpdate = async (
+  kv: Deno.Kv,
+  input: Readonly<{
+    idKey: Deno.KvKey;
+    entry: Deno.KvEntryMaybe<ApiKeyRecord>;
+    record: ApiKeyRecord;
+    updated: ApiKeyRecord;
+    replaceQuotaWindow: boolean;
+    nowMs: number;
+  }>
+): Promise<
+  { ok: true; updated: ApiKeyRecord; quotaPolicy: NonNullable<ReturnType<typeof apiKeyPolicyFromHashRecord>> } | { ok: false; response: Response }
+> => {
+  const hashKey = apiKeyHashKey(input.record.hash);
+  const hashEntry = await kv.get<ApiKeyHashRecord>(hashKey);
+  const updatedHash: ApiKeyHashRecord = {
+    id: input.updated.id,
+    expires_at_ms: input.updated.expires_at_ms,
+    revoked_at_ms: input.updated.revoked_at_ms,
+    usage_limit_requests: input.updated.usage_limit_requests,
+    usage_requests: input.updated.usage_requests,
+    usage_reset_at_ms: input.updated.usage_reset_at_ms,
+    window_ms: input.updated.window_ms,
+    usage_quota_version: input.updated.usage_quota_version,
+    ...paidFallbackHashFields(input.updated),
+  };
+
+  const quotaPolicy = apiKeyPolicyFromHashRecord(input.updated.hash, updatedHash, input.nowMs);
+  if (!quotaPolicy) {
+    return { ok: false, response: openaiError(503, "API key quota migration is incomplete", "server_error", { type: "server_error" }) };
+  }
+
+  let currentQuotaWindowEntry: Deno.KvEntryMaybe<ApiKeyUsageWindowV3> | null = null;
+  if (input.replaceQuotaWindow) {
+    // The guard lives here so control-flow narrowing proves `currentQuotaPolicy`
+    // is non-null for `apiKeyUsageV3WindowKey` below.
+    const currentQuotaPolicy = apiKeyPolicyFromHashRecord(input.record.hash, input.record, input.nowMs);
+    if (!currentQuotaPolicy) {
+      return { ok: false, response: openaiError(503, "API key quota migration is incomplete", "server_error", { type: "server_error" }) };
+    }
+    const inspected = await inspectApiKeyQuotaResetReservations(kv, { keyId: input.updated.id, currentQuotaPolicy, nowMs: input.nowMs });
+    if (!inspected.ok) return inspected;
+    currentQuotaWindowEntry = inspected.windowEntry;
+  }
+
+  const quotaWindow = input.replaceQuotaWindow ? makeApiKeyUsageWindowV3(quotaPolicy, input.nowMs) : null;
+  const quotaWindowEntry = quotaWindow ? await kv.get(apiKeyUsageV3WindowKey(quotaPolicy), { consistency: "strong" }) : null;
+
+  const atomic = kv.atomic().check(input.entry).check(hashEntry).set(input.idKey, input.updated).set(hashKey, updatedHash);
+  if (quotaWindow && quotaWindowEntry) {
+    atomic.check(quotaWindowEntry).set(apiKeyUsageV3WindowKey(quotaPolicy), quotaWindow, {
+      expireIn: apiKeyUsageV3RetentionMs(quotaWindow.window_reset_at_ms, input.nowMs),
+    });
+  }
+  if (currentQuotaWindowEntry) atomic.check(currentQuotaWindowEntry);
+
+  const commit = await atomic.commit();
+  if (!commit.ok) {
+    return {
+      ok: false,
+      response: await resolveApiKeyUpdateCommitConflict(kv, {
+        keyId: input.updated.id,
+        nowMs: input.nowMs,
+        replaceQuotaWindow: input.replaceQuotaWindow,
+      }),
+    };
+  }
+  invalidateApiKeyPolicy(input.updated.id);
+  return { ok: true, updated: input.updated, quotaPolicy };
+};
+
 export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> => {
   const kv = await getKv();
   if (!kv) {
@@ -1216,275 +1888,39 @@ export const handleAdminApiKeysUpdate = async (req: Request): Promise<Response> 
 
   const raw = await readJsonBody(req);
   if (!raw || !isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
-  const id = getString(raw.id);
-  if (!id) return openaiError(400, "id is required", "invalid_request_error");
 
-  const idKey = apiKeyIdKey(id);
-  const entry = await kv.get<ApiKeyRecord>(idKey);
-  if (!entry.value) return openaiError(404, "Not found", "not_found");
-  if (!hasStrictPaidFallbackKeyPolicy(entry.value)) {
-    return openaiError(503, "API key paid fallback migration is incomplete", "server_error", {
-      type: "server_error",
-    });
-  }
+  const target = await resolveApiKeyUpdateTarget(kv, raw);
+  if (!target.ok) return target.response;
+  const { idKey, entry, record } = target;
 
   const now = Date.now();
-  const currentExpiresAtMs = coerceApiKeyExpiresAtMs(entry.value);
-  const currentWindowMs = coerceApiKeyWindowMs(entry.value);
-  let nextName = entry.value.name;
-  let nextExpiresAtMs = currentExpiresAtMs;
-  let nextUsageLimit = entry.value.usage_limit_requests;
-  let nextUsageRequests = entry.value.usage_requests;
-  let nextUsageResetAtMs = entry.value.usage_reset_at_ms;
-  let nextWindowMs = currentWindowMs;
-  let nextBankedResetsEnabled = apiKeyBankedResetsEnabled(entry.value);
-  if (Object.hasOwn(raw, "banked_resets_enabled")) {
-    if (typeof raw.banked_resets_enabled !== "boolean") {
-      return openaiError(400, "banked_resets_enabled must be a boolean", "invalid_request_error");
-    }
-    nextBankedResetsEnabled = raw.banked_resets_enabled;
-  }
-  let nextPaidFallbackEnabled = entry.value.paid_fallback_enabled;
-  let nextPaidFallbackLimitMicrocredits = entry.value.paid_fallback_limit_microcredits;
-  let nextPaidFallbackSpentMicrocredits = entry.value.paid_fallback_spent_microcredits;
-  const nextPaidFallbackReservedMicrocredits = entry.value.paid_fallback_reserved_microcredits;
-  const nextPaidFallbackReservationRequestId = entry.value.paid_fallback_reservation_request_id;
-  let nextPaidFallbackModelIds = entry.value.paid_fallback_model_ids;
-  let nextPaidFallbackQuotaPerCredit = entry.value.paid_fallback_quota_per_credit;
-  let nextPaidFallbackMaxExposureMicrocredits = entry.value.paid_fallback_max_exposure_microcredits ?? {};
-  let nextPaidFallbackPricingCheckedAtMs = entry.value.paid_fallback_pricing_checked_at_ms;
+  const currentExpiresAtMs = coerceApiKeyExpiresAtMs(record);
+  const currentWindowMs = coerceApiKeyWindowMs(record);
+  const fields = await resolveApiKeyUpdateFields(raw, record, currentExpiresAtMs, now, req.signal);
+  if (!fields.ok) return fields.response;
 
-  if (Object.prototype.hasOwnProperty.call(raw, "name")) {
-    const name = normalizeApiKeyName(raw.name);
-    if (!name) return openaiError(400, "name must be a non-empty string (<=80 chars)", "invalid_request_error");
-    nextName = name;
+  const { updated, resetUsage, replaceQuotaWindow } = buildApiKeyUpdateRecord(record, fields.fields, now, currentWindowMs);
+  if (!apiKeyUpdateChanged(record, updated, currentExpiresAtMs, currentWindowMs, resetUsage)) {
+    return await apiKeyUpdateUnchangedResponse(kv, record, currentExpiresAtMs, currentWindowMs, now);
   }
 
-  if (Object.prototype.hasOwnProperty.call(raw, "expires_at_ms")) {
-    const expiresAtMs = normalizeApiKeyExpiresAtMs(raw.expires_at_ms, now);
-    if (expiresAtMs === null) {
-      return openaiError(400, "expires_at_ms must be a Unix epoch ms timestamp in the future, or -1", "invalid_request_error");
-    }
-    nextExpiresAtMs = expiresAtMs;
-  }
-
-  if (Object.prototype.hasOwnProperty.call(raw, "usage_limit_requests")) {
-    const usageLimitRequests = normalizeApiKeyUsageLimit(raw.usage_limit_requests);
-    if (usageLimitRequests === null) {
-      return openaiError(400, "usage_limit_requests must be a non-negative number or -1 for unlimited", "invalid_request_error");
-    }
-    nextUsageLimit = usageLimitRequests;
-  }
-
-  if (Object.prototype.hasOwnProperty.call(raw, "window_ms")) {
-    const windowMs = normalizeApiKeyWindowMsInput(raw.window_ms);
-    if (windowMs === null) {
-      return openaiError(400, "window_ms must be a positive number", "invalid_request_error");
-    }
-    nextWindowMs = windowMs;
-  }
-
-  if (Object.prototype.hasOwnProperty.call(raw, "paid_fallback_enabled") && typeof raw.paid_fallback_enabled !== "boolean") {
-    return paidFallbackInputError("paid_fallback_enabled must be a boolean");
-  }
-  if (Object.prototype.hasOwnProperty.call(raw, "paid_fallback_enabled")) {
-    nextPaidFallbackEnabled = raw.paid_fallback_enabled === true;
-  }
-  if (Object.prototype.hasOwnProperty.call(raw, "paid_fallback_limit_credits")) {
-    const limitMicrocredits = paidFallbackCreditsToMicrocredits(raw.paid_fallback_limit_credits);
-    if (limitMicrocredits === null) {
-      return paidFallbackInputError("paid_fallback_limit_credits must be a non-negative number or -1");
-    }
-    nextPaidFallbackLimitMicrocredits = limitMicrocredits;
-  }
-  if (nextPaidFallbackEnabled && nextPaidFallbackLimitMicrocredits === 0) {
-    return paidFallbackInputError("paid_fallback_limit_credits must be positive or -1 when paid fallback is enabled");
-  }
-
-  const initializePaidFallback = !entry.value.paid_fallback_enabled && nextPaidFallbackEnabled;
-  if (initializePaidFallback) {
-    try {
-      const initialized = await initializePaidFallbackPolicy(req.signal);
-      nextPaidFallbackModelIds = [...initialized.paid_fallback_model_ids];
-      nextPaidFallbackQuotaPerCredit = initialized.paid_fallback_quota_per_credit;
-      nextPaidFallbackMaxExposureMicrocredits = initialized.paid_fallback_max_exposure_microcredits ?? {};
-      nextPaidFallbackPricingCheckedAtMs = initialized.paid_fallback_pricing_checked_at_ms;
-    } catch (error) {
-      return paidFallbackInitializationError(error);
-    }
-  }
-
-  if (Object.prototype.hasOwnProperty.call(raw, "reset_usage") && typeof raw.reset_usage !== "boolean") {
-    return openaiError(400, "reset_usage must be a boolean", "invalid_request_error");
-  }
-  const resetUsage = normalizeOptionalBoolean(raw.reset_usage);
-  if (resetUsage || nextWindowMs !== currentWindowMs) {
-    nextUsageRequests = 0;
-    // A reset must always select a distinct V3 aggregate identity. A create
-    // followed by an immediate reset can otherwise share the same millisecond
-    // start and overwrite the current window instead of opening a fresh one.
-    const currentWindowStartMs = entry.value.usage_reset_at_ms - currentWindowMs;
-    const freshWindowStartMs = Math.max(now, currentWindowStartMs + 1);
-    nextUsageResetAtMs = freshWindowStartMs + nextWindowMs;
-    nextPaidFallbackSpentMicrocredits = 0;
-  }
-
-  const hasChanges =
-    nextName !== entry.value.name ||
-    nextBankedResetsEnabled !== apiKeyBankedResetsEnabled(entry.value) ||
-    nextExpiresAtMs !== currentExpiresAtMs ||
-    nextUsageLimit !== entry.value.usage_limit_requests ||
-    nextWindowMs !== currentWindowMs ||
-    nextPaidFallbackEnabled !== entry.value.paid_fallback_enabled ||
-    nextPaidFallbackLimitMicrocredits !== entry.value.paid_fallback_limit_microcredits ||
-    nextPaidFallbackSpentMicrocredits !== entry.value.paid_fallback_spent_microcredits ||
-    nextPaidFallbackReservedMicrocredits !== entry.value.paid_fallback_reserved_microcredits ||
-    nextPaidFallbackReservationRequestId !== entry.value.paid_fallback_reservation_request_id ||
-    nextPaidFallbackModelIds !== entry.value.paid_fallback_model_ids ||
-    nextPaidFallbackQuotaPerCredit !== entry.value.paid_fallback_quota_per_credit ||
-    nextPaidFallbackPricingCheckedAtMs !== entry.value.paid_fallback_pricing_checked_at_ms ||
-    (resetUsage && (nextUsageRequests !== entry.value.usage_requests || nextUsageResetAtMs !== entry.value.usage_reset_at_ms));
-
-  if (!hasChanges) {
-    const currentPolicy = apiKeyPolicyFromHashRecord(
-      entry.value.hash,
-      {
-        id: entry.value.id,
-        expires_at_ms: entry.value.expires_at_ms,
-        revoked_at_ms: entry.value.revoked_at_ms,
-        usage_limit_requests: entry.value.usage_limit_requests,
-        usage_requests: entry.value.usage_requests,
-        usage_reset_at_ms: entry.value.usage_reset_at_ms,
-        window_ms: entry.value.window_ms,
-        usage_quota_version: entry.value.usage_quota_version,
-        ...paidFallbackHashFields(entry.value),
-      },
-      now
-    );
-    return json(
-      200,
-      {
-        id: entry.value.id,
-        name: entry.value.name,
-        prefix: entry.value.prefix,
-        created_at_ms: entry.value.created_at_ms,
-        expires_at_ms: currentExpiresAtMs,
-        revoked_at_ms: entry.value.revoked_at_ms,
-        usage_limit_requests: entry.value.usage_limit_requests,
-        usage_requests: currentPolicy ? await getApiKeyUsageV3(currentPolicy, kv) : 0,
-        usage_reset_at_ms: entry.value.usage_reset_at_ms,
-        window_ms: currentWindowMs,
-        ...(await paidFallbackPublicFields(entry.value, kv)),
-      },
-      { "x-uos-upstream": "chatgpt_codex" }
-    );
-  }
-
-  const updated: ApiKeyRecord = {
-    ...entry.value,
-    banked_resets_enabled: nextBankedResetsEnabled,
-    name: nextName,
-    expires_at_ms: nextExpiresAtMs,
-    usage_limit_requests: nextUsageLimit,
-    usage_requests: nextUsageRequests,
-    usage_reset_at_ms: nextUsageResetAtMs,
-    window_ms: nextWindowMs,
-    paid_fallback_enabled: nextPaidFallbackEnabled,
-    paid_fallback_limit_microcredits: nextPaidFallbackLimitMicrocredits,
-    paid_fallback_spent_microcredits: nextPaidFallbackSpentMicrocredits,
-    paid_fallback_reserved_microcredits: nextPaidFallbackReservedMicrocredits,
-    paid_fallback_reservation_request_id: nextPaidFallbackReservationRequestId,
-    paid_fallback_model_ids: nextPaidFallbackModelIds,
-    paid_fallback_quota_per_credit: nextPaidFallbackQuotaPerCredit,
-    paid_fallback_max_exposure_microcredits: nextPaidFallbackMaxExposureMicrocredits,
-    paid_fallback_pricing_checked_at_ms: nextPaidFallbackPricingCheckedAtMs,
-  };
-  const hashKey = apiKeyHashKey(entry.value.hash);
-  const hashEntry = await kv.get<ApiKeyHashRecord>(hashKey);
-  const updatedHash: ApiKeyHashRecord = {
-    id: updated.id,
-    expires_at_ms: updated.expires_at_ms,
-    revoked_at_ms: updated.revoked_at_ms,
-    usage_limit_requests: updated.usage_limit_requests,
-    usage_requests: updated.usage_requests,
-    usage_reset_at_ms: updated.usage_reset_at_ms,
-    window_ms: updated.window_ms,
-    usage_quota_version: updated.usage_quota_version,
-    ...paidFallbackHashFields(updated),
-  };
-
-  const quotaPolicy = apiKeyPolicyFromHashRecord(updated.hash, updatedHash, now);
-  if (!quotaPolicy) {
-    return openaiError(503, "API key quota migration is incomplete", "server_error", { type: "server_error" });
-  }
-  const replaceQuotaWindow = resetUsage || nextWindowMs !== currentWindowMs;
-  const currentQuotaPolicy = replaceQuotaWindow ? apiKeyPolicyFromHashRecord(entry.value.hash, entry.value, now) : null;
-  if (replaceQuotaWindow && !currentQuotaPolicy) {
-    return openaiError(503, "API key quota migration is incomplete", "server_error", { type: "server_error" });
-  }
-  let currentQuotaWindowEntry: Deno.KvEntryMaybe<ApiKeyUsageWindowV3> | null = null;
-  if (replaceQuotaWindow) {
-    try {
-      await reclaimApiKeyUsageReservationsForKeyV3(kv, updated.id, now);
-      // Read the old aggregate after reclaim and before the live scan. A
-      // reservation before this read is included in the scan; one after it
-      // mutates this checked entry and makes the reset conflict atomically.
-      currentQuotaWindowEntry = await kv.get<ApiKeyUsageWindowV3>(apiKeyUsageV3WindowKey(currentQuotaPolicy!), { consistency: "strong" });
-      if (await hasLiveApiKeyUsageReservationsV3(kv, updated.id, now)) {
-        return openaiError(409, "Cannot reset API key quota while requests are reserved; retry after their five-minute lease expires", "invalid_request_error");
-      }
-    } catch (error) {
-      console.warn("[ai.ubq.fi] Failed to inspect API key quota reservations before reset:", error);
-      return openaiError(503, "API key quota ledger is unavailable", "server_error", { type: "server_error" });
-    }
-  }
-
-  const quotaWindow = replaceQuotaWindow ? makeApiKeyUsageWindowV3(quotaPolicy, now) : null;
-  const quotaWindowEntry = quotaWindow ? await kv.get(apiKeyUsageV3WindowKey(quotaPolicy), { consistency: "strong" }) : null;
-
-  const atomic = kv.atomic().check(entry).check(hashEntry).set(idKey, updated).set(hashKey, updatedHash);
-  if (quotaWindow && quotaWindowEntry) {
-    atomic.check(quotaWindowEntry).set(apiKeyUsageV3WindowKey(quotaPolicy), quotaWindow, {
-      expireIn: apiKeyUsageV3RetentionMs(quotaWindow.window_reset_at_ms, now),
-    });
-  }
-  if (currentQuotaWindowEntry) atomic.check(currentQuotaWindowEntry);
-
-  const commit = await atomic.commit();
-  if (!commit.ok) {
-    if (replaceQuotaWindow) {
-      try {
-        await reclaimApiKeyUsageReservationsForKeyV3(kv, updated.id, now);
-        if (await hasLiveApiKeyUsageReservationsV3(kv, updated.id, now)) {
-          return openaiError(
-            409,
-            "Cannot reset API key quota while requests are reserved; retry after their five-minute lease expires",
-            "invalid_request_error"
-          );
-        }
-      } catch (error) {
-        console.warn("[ai.ubq.fi] Failed to recheck API key quota reservations after reset conflict:", error);
-        return openaiError(503, "API key quota ledger is unavailable", "server_error", { type: "server_error" });
-      }
-    }
-    return openaiError(409, "API key was modified concurrently; retry", "invalid_request_error");
-  }
-  invalidateApiKeyPolicy(updated.id);
+  const persisted = await persistApiKeyUpdate(kv, { idKey, entry, record, updated, replaceQuotaWindow, nowMs: now });
+  if (!persisted.ok) return persisted.response;
 
   return json(
     200,
     {
-      id: updated.id,
-      name: updated.name,
-      prefix: updated.prefix,
-      created_at_ms: updated.created_at_ms,
-      expires_at_ms: coerceApiKeyExpiresAtMs(updated),
-      revoked_at_ms: updated.revoked_at_ms,
-      usage_limit_requests: updated.usage_limit_requests,
-      usage_requests: await getApiKeyUsageV3(quotaPolicy, kv),
-      usage_reset_at_ms: updated.usage_reset_at_ms,
-      window_ms: updated.window_ms,
-      ...(await paidFallbackPublicFields(updated, kv)),
+      id: persisted.updated.id,
+      name: persisted.updated.name,
+      prefix: persisted.updated.prefix,
+      created_at_ms: persisted.updated.created_at_ms,
+      expires_at_ms: coerceApiKeyExpiresAtMs(persisted.updated),
+      revoked_at_ms: persisted.updated.revoked_at_ms,
+      usage_limit_requests: persisted.updated.usage_limit_requests,
+      usage_requests: await getApiKeyUsageV3(persisted.quotaPolicy, kv),
+      usage_reset_at_ms: persisted.updated.usage_reset_at_ms,
+      window_ms: persisted.updated.window_ms,
+      ...(await paidFallbackPublicFields(persisted.updated, kv)),
     },
     { "x-uos-upstream": "chatgpt_codex" }
   );
@@ -1791,6 +2227,102 @@ export const handleAdminKernelPolicyQueueList = async (): Promise<Response> => {
   return json(200, { data: pending });
 };
 
+const KERNEL_USAGE_DAILY_DAYS = 30;
+
+const kernelUsageInventoryResponse = async (scope: "repo" | "org"): Promise<Response> => {
+  if (scope === "org") {
+    const orgRecords = await listKernelOrgUsageRecords({ includeDaily: true, dailyDays: KERNEL_USAGE_DAILY_DAYS });
+    if (!orgRecords) {
+      return openaiError(500, "Failed to load kernel org usage inventory", "server_error");
+    }
+    return json(200, { ok: true, scope, usage: orgRecords });
+  }
+
+  const records = await listKernelUsageRecords({ includeDaily: true, dailyDays: KERNEL_USAGE_DAILY_DAYS });
+  if (!records) {
+    return openaiError(500, "Failed to load kernel usage inventory", "server_error");
+  }
+  return json(200, { ok: true, scope, usage: records });
+};
+
+const kernelOrgUsageLimitsResponse = async (scope: "repo" | "org", includeUsage: boolean): Promise<Response> => {
+  const limits = await listKernelOrgUsageLimits();
+  if (!limits) {
+    return openaiError(500, "Failed to load kernel org usage limits", "server_error");
+  }
+  const usageByOwner = new Map<string, Awaited<ReturnType<typeof getKernelOrgUsage>>>();
+  if (includeUsage) {
+    await Promise.all(
+      limits.map(async (record) => {
+        usageByOwner.set(record.owner, await getKernelOrgUsage(record.owner, { includeDaily: true, dailyDays: KERNEL_USAGE_DAILY_DAYS }));
+      })
+    );
+  }
+  return json(200, {
+    ok: true,
+    scope,
+    limits: limits.map((record) => ({
+      ...record,
+      ...(includeUsage ? { usage: usageByOwner.get(record.owner) ?? null } : {}),
+    })),
+  });
+};
+
+const kernelRepoUsageLimitsResponse = async (scope: "repo" | "org", includeUsage: boolean): Promise<Response> => {
+  const limits = await listKernelUsageLimits();
+  if (!limits) {
+    return openaiError(500, "Failed to load kernel usage limits", "server_error");
+  }
+  const usageByRepo = new Map<string, Awaited<ReturnType<typeof getKernelUsage>>>();
+  if (includeUsage) {
+    await Promise.all(
+      limits.map(async (record) => {
+        const key = `${record.owner}/${record.repo}`;
+        usageByRepo.set(key, await getKernelUsage(record.owner, record.repo, { includeDaily: true, dailyDays: KERNEL_USAGE_DAILY_DAYS }));
+      })
+    );
+  }
+  return json(200, {
+    ok: true,
+    scope,
+    limits: limits.map((record) => ({
+      ...record,
+      ...(includeUsage ? { usage: usageByRepo.get(`${record.owner}/${record.repo}`) ?? null } : {}),
+    })),
+  });
+};
+
+const kernelUsageListResponse = async (scope: "repo" | "org", includeUsage: boolean): Promise<Response> =>
+  scope === "org" ? await kernelOrgUsageLimitsResponse(scope, includeUsage) : await kernelRepoUsageLimitsResponse(scope, includeUsage);
+
+const kernelOrgUsageSnapshotResponse = async (owner: string, includeUsage: boolean): Promise<Response> => {
+  const limitSnapshot = await getKernelOrgUsageLimitSnapshot(owner);
+  if (!limitSnapshot) {
+    return openaiError(500, "Failed to load kernel org usage limit", "server_error");
+  }
+  const usage = await getKernelOrgUsage(owner, { includeDaily: includeUsage, dailyDays: KERNEL_USAGE_DAILY_DAYS });
+  return json(200, {
+    ok: true,
+    org: { owner },
+    limit: { ...limitSnapshot.record, source: limitSnapshot.source },
+    usage: usage ?? null,
+  });
+};
+
+const kernelRepoUsageSnapshotResponse = async (owner: string, repo: string, includeUsage: boolean): Promise<Response> => {
+  const limitSnapshot = await getKernelUsageLimitSnapshot(owner, repo);
+  if (!limitSnapshot) {
+    return openaiError(500, "Failed to load kernel usage limit", "server_error");
+  }
+  const usage = await getKernelUsage(owner, repo, { includeDaily: includeUsage, dailyDays: KERNEL_USAGE_DAILY_DAYS });
+  return json(200, {
+    ok: true,
+    repo: { owner, repo },
+    limit: { ...limitSnapshot.record, source: limitSnapshot.source },
+    usage: usage ?? null,
+  });
+};
+
 export const handleAdminKernelUsageGet = async (req: Request): Promise<Response> => {
   const kv = await getKv();
   if (!kv) return openaiError(500, "Deno KV is not available", "server_error");
@@ -1800,105 +2332,76 @@ export const handleAdminKernelUsageGet = async (req: Request): Promise<Response>
   const listRequested = shouldIncludeUsage(url.searchParams.get("list"));
   const inventoryRequested = shouldIncludeUsage(url.searchParams.get("inventory"));
   const includeUsage = shouldIncludeUsage(url.searchParams.get("include_usage"));
-  const dailyDays = 30;
-  if (inventoryRequested) {
-    if (scope === "org") {
-      const records = await listKernelOrgUsageRecords({ includeDaily: true, dailyDays });
-      if (!records) {
-        return openaiError(500, "Failed to load kernel org usage inventory", "server_error");
-      }
-      return json(200, { ok: true, scope, usage: records });
-    }
-
-    const records = await listKernelUsageRecords({ includeDaily: true, dailyDays });
-    if (!records) {
-      return openaiError(500, "Failed to load kernel usage inventory", "server_error");
-    }
-    return json(200, { ok: true, scope, usage: records });
-  }
-  if (listRequested) {
-    if (scope === "org") {
-      const limits = await listKernelOrgUsageLimits();
-      if (!limits) {
-        return openaiError(500, "Failed to load kernel org usage limits", "server_error");
-      }
-      const usageByOwner = new Map<string, Awaited<ReturnType<typeof getKernelOrgUsage>>>();
-      if (includeUsage) {
-        await Promise.all(
-          limits.map(async (record) => {
-            usageByOwner.set(record.owner, await getKernelOrgUsage(record.owner, { includeDaily: true, dailyDays }));
-          })
-        );
-      }
-      return json(200, {
-        ok: true,
-        scope,
-        limits: limits.map((record) => ({
-          ...record,
-          ...(includeUsage ? { usage: usageByOwner.get(record.owner) ?? null } : {}),
-        })),
-      });
-    }
-
-    const limits = await listKernelUsageLimits();
-    if (!limits) {
-      return openaiError(500, "Failed to load kernel usage limits", "server_error");
-    }
-    const usageByRepo = new Map<string, Awaited<ReturnType<typeof getKernelUsage>>>();
-    if (includeUsage) {
-      await Promise.all(
-        limits.map(async (record) => {
-          const key = `${record.owner}/${record.repo}`;
-          usageByRepo.set(key, await getKernelUsage(record.owner, record.repo, { includeDaily: true, dailyDays }));
-        })
-      );
-    }
-    return json(200, {
-      ok: true,
-      scope,
-      limits: limits.map((record) => ({
-        ...record,
-        ...(includeUsage ? { usage: usageByRepo.get(`${record.owner}/${record.repo}`) ?? null } : {}),
-      })),
-    });
-  }
+  if (inventoryRequested) return await kernelUsageInventoryResponse(scope);
+  if (listRequested) return await kernelUsageListResponse(scope, includeUsage);
 
   const owner = normalizeKernelRepoPart(url.searchParams.get("owner"));
   if (!owner) {
     return openaiError(400, "owner query parameter is required", "invalid_request_error");
   }
 
-  if (scope === "org") {
-    const limitSnapshot = await getKernelOrgUsageLimitSnapshot(owner);
-    if (!limitSnapshot) {
-      return openaiError(500, "Failed to load kernel org usage limit", "server_error");
-    }
-    const usage = await getKernelOrgUsage(owner, { includeDaily: includeUsage, dailyDays });
-    return json(200, {
-      ok: true,
-      org: { owner },
-      limit: { ...limitSnapshot.record, source: limitSnapshot.source },
-      usage: usage ?? null,
-    });
-  }
+  if (scope === "org") return await kernelOrgUsageSnapshotResponse(owner, includeUsage);
 
   const repo = normalizeKernelRepoPart(url.searchParams.get("repo"));
   if (!repo) {
     return openaiError(400, "repo query parameter is required", "invalid_request_error");
   }
 
-  const limitSnapshot = await getKernelUsageLimitSnapshot(owner, repo);
-  if (!limitSnapshot) {
-    return openaiError(500, "Failed to load kernel usage limit", "server_error");
-  }
-  const usage = await getKernelUsage(owner, repo, { includeDaily: includeUsage, dailyDays });
+  return await kernelRepoUsageSnapshotResponse(owner, repo, includeUsage);
+};
 
-  return json(200, {
-    ok: true,
-    repo: { owner, repo },
-    limit: { ...limitSnapshot.record, source: limitSnapshot.source },
-    usage: usage ?? null,
+type KernelUsageTarget = { ok: true; scope: "org"; owner: string; repo: null } | { ok: true; scope: "repo"; owner: string; repo: string };
+
+/** The shared `owner`/`repo`/`scope` validation for the Kernel usage writers. */
+const resolveKernelUsageTarget = (raw: Record<string, unknown>): KernelUsageTarget | { ok: false; response: Response } => {
+  const owner = normalizeKernelRepoPart(raw.owner);
+  const repo = normalizeKernelRepoPart(raw.repo);
+  if (!owner) return { ok: false, response: openaiError(400, "owner is required", "invalid_request_error") };
+  const scope = normalizeKernelScope(raw.scope ?? (repo ? "repo" : "org"));
+  if (scope === "repo") {
+    if (!repo) return { ok: false, response: openaiError(400, "repo is required for scope=repo", "invalid_request_error") };
+    return { ok: true, scope: "repo", owner, repo };
+  }
+  if (repo) return { ok: false, response: openaiError(400, "repo must be omitted for scope=org", "invalid_request_error") };
+  return { ok: true, scope: "org", owner, repo: null };
+};
+
+type KernelUsageLimits = Readonly<{ usageLimitRequests: number; windowMs: number | null; expiresAtMs: number | null; resetUsage: boolean }>;
+
+const resolveKernelUsageLimits = (raw: Record<string, unknown>): { ok: true; limits: KernelUsageLimits } | { ok: false; response: Response } => {
+  const usageLimitRequests = normalizeKernelUsageLimitInput(raw.usage_limit_requests);
+  if (usageLimitRequests === null) {
+    return { ok: false, response: openaiError(400, "usage_limit_requests must be a non-negative number, -1, or 'unlimited'", "invalid_request_error") };
+  }
+
+  const windowMs = normalizeKernelWindowMsInput(raw.window_ms);
+  if (raw.window_ms !== undefined && windowMs === null) {
+    return { ok: false, response: openaiError(400, "window_ms must be a positive number", "invalid_request_error") };
+  }
+
+  const nowMs = Date.now();
+  const expiresAtMs = normalizeKernelExpiresAtMsInput(raw.expires_at_ms, nowMs);
+  if (raw.expires_at_ms !== undefined && expiresAtMs === null) {
+    return { ok: false, response: openaiError(400, "expires_at_ms must be a Unix epoch ms timestamp in the future, or -1", "invalid_request_error") };
+  }
+
+  if (Object.prototype.hasOwnProperty.call(raw, "reset_usage") && typeof raw.reset_usage !== "boolean") {
+    return { ok: false, response: openaiError(400, "reset_usage must be a boolean", "invalid_request_error") };
+  }
+
+  return { ok: true, limits: { usageLimitRequests, windowMs, expiresAtMs, resetUsage: raw.reset_usage === true } };
+};
+
+const kernelOrgUsageLimitSetResponse = async (owner: string, limits: KernelUsageLimits): Promise<Response> => {
+  const updated = await setKernelOrgUsageLimit(owner, limits.usageLimitRequests, {
+    windowMs: limits.windowMs ?? undefined,
+    expiresAtMs: limits.expiresAtMs ?? undefined,
+    resetUsage: limits.resetUsage,
   });
+  if (!updated) {
+    return openaiError(409, "Concurrent modification; retry", "invalid_request_error");
+  }
+  return json(200, { ok: true, scope: "org", org: { owner }, limit: { ...updated, source: "kv" } });
 };
 
 export const handleAdminKernelUsageSet = async (req: Request): Promise<Response> => {
@@ -1908,93 +2411,42 @@ export const handleAdminKernelUsageSet = async (req: Request): Promise<Response>
   const raw = await readJsonBody(req);
   if (!raw || !isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
 
-  const owner = normalizeKernelRepoPart(raw.owner);
-  const repo = normalizeKernelRepoPart(raw.repo);
-  if (!owner) return openaiError(400, "owner is required", "invalid_request_error");
-  const scope = normalizeKernelScope(raw.scope ?? (repo ? "repo" : "org"));
-  if (scope === "repo" && !repo) {
-    return openaiError(400, "repo is required for scope=repo", "invalid_request_error");
-  }
-  if (scope === "org" && repo) {
-    return openaiError(400, "repo must be omitted for scope=org", "invalid_request_error");
-  }
+  const target = resolveKernelUsageTarget(raw);
+  if (!target.ok) return target.response;
 
-  const usageLimitRequests = normalizeKernelUsageLimitInput(raw.usage_limit_requests);
-  if (usageLimitRequests === null) {
-    return openaiError(400, "usage_limit_requests must be a non-negative number, -1, or 'unlimited'", "invalid_request_error");
-  }
+  const resolved = resolveKernelUsageLimits(raw);
+  if (!resolved.ok) return resolved.response;
 
-  const windowMs = normalizeKernelWindowMsInput(raw.window_ms);
-  if (raw.window_ms !== undefined && windowMs === null) {
-    return openaiError(400, "window_ms must be a positive number", "invalid_request_error");
-  }
-  const nowMs = Date.now();
-  const expiresAtMs = normalizeKernelExpiresAtMsInput(raw.expires_at_ms, nowMs);
-  if (raw.expires_at_ms !== undefined && expiresAtMs === null) {
-    return openaiError(400, "expires_at_ms must be a Unix epoch ms timestamp in the future, or -1", "invalid_request_error");
-  }
-  if (Object.prototype.hasOwnProperty.call(raw, "reset_usage") && typeof raw.reset_usage !== "boolean") {
-    return openaiError(400, "reset_usage must be a boolean", "invalid_request_error");
-  }
-  const resetUsage = raw.reset_usage === true;
+  if (target.scope === "org") return await kernelOrgUsageLimitSetResponse(target.owner, resolved.limits);
 
-  if (scope === "org") {
-    const updated = await setKernelOrgUsageLimit(owner, usageLimitRequests, {
-      windowMs: windowMs ?? undefined,
-      expiresAtMs: expiresAtMs ?? undefined,
-      resetUsage,
-    });
-    if (!updated) {
-      return openaiError(409, "Concurrent modification; retry", "invalid_request_error");
-    }
-    return json(200, { ok: true, scope, org: { owner }, limit: { ...updated, source: "kv" } });
-  }
-
-  const updated = await setKernelUsageLimit(owner, repo!, usageLimitRequests, {
-    windowMs: windowMs ?? undefined,
-    expiresAtMs: expiresAtMs ?? undefined,
-    resetUsage,
+  const updated = await setKernelUsageLimit(target.owner, target.repo, resolved.limits.usageLimitRequests, {
+    windowMs: resolved.limits.windowMs ?? undefined,
+    expiresAtMs: resolved.limits.expiresAtMs ?? undefined,
+    resetUsage: resolved.limits.resetUsage,
   });
   if (!updated) {
     return openaiError(409, "Concurrent modification; retry", "invalid_request_error");
   }
 
-  return json(200, { ok: true, scope, repo: { owner, repo }, limit: { ...updated, source: "kv" } });
+  return json(200, { ok: true, scope: target.scope, repo: { owner: target.owner, repo: target.repo }, limit: { ...updated, source: "kv" } });
 };
 
-export const handleAdminKernelUsageDelete = async (req: Request): Promise<Response> => {
-  const kv = await getKv();
-  if (!kv) return openaiError(500, "Deno KV is not available", "server_error");
-
-  const raw = await readJsonBody(req);
-  if (!raw || !isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
-
-  const owner = normalizeKernelRepoPart(raw.owner);
-  const repo = normalizeKernelRepoPart(raw.repo);
-  if (!owner) return openaiError(400, "owner is required", "invalid_request_error");
-  const scope = normalizeKernelScope(raw.scope ?? (repo ? "repo" : "org"));
-  if (scope === "repo" && !repo) {
-    return openaiError(400, "repo is required for scope=repo", "invalid_request_error");
+const kernelOrgUsageLimitDeleteResponse = async (owner: string): Promise<Response> => {
+  const deleted = await deleteKernelOrgUsageLimit(owner);
+  if (deleted === "conflict") {
+    return openaiError(409, "Active Kernel quota reservations must settle before deletion", "invalid_request_error");
   }
-  if (scope === "org" && repo) {
-    return openaiError(400, "repo must be omitted for scope=org", "invalid_request_error");
+  if (deleted === null) {
+    return openaiError(500, "Failed to delete kernel org usage limit", "server_error");
   }
-
-  if (scope === "org") {
-    const deleted = await deleteKernelOrgUsageLimit(owner);
-    if (deleted === "conflict") {
-      return openaiError(409, "Active Kernel quota reservations must settle before deletion", "invalid_request_error");
-    }
-    if (deleted === null) {
-      return openaiError(500, "Failed to delete kernel org usage limit", "server_error");
-    }
-    if (!deleted) {
-      return openaiError(404, "Kernel org usage limit not found", "not_found");
-    }
-    return json(200, { ok: true, scope, org: { owner }, deleted: true });
+  if (!deleted) {
+    return openaiError(404, "Kernel org usage limit not found", "not_found");
   }
+  return json(200, { ok: true, scope: "org", org: { owner }, deleted: true });
+};
 
-  const deleted = await deleteKernelUsageLimit(owner, repo!);
+const kernelRepoUsageLimitDeleteResponse = async (owner: string, repo: string): Promise<Response> => {
+  const deleted = await deleteKernelUsageLimit(owner, repo);
   if (deleted === "conflict") {
     return openaiError(409, "Active Kernel quota reservations must settle before deletion", "invalid_request_error");
   }
@@ -2004,8 +2456,21 @@ export const handleAdminKernelUsageDelete = async (req: Request): Promise<Respon
   if (!deleted) {
     return openaiError(404, "Kernel usage limit not found", "not_found");
   }
+  return json(200, { ok: true, scope: "repo", repo: { owner, repo }, deleted: true });
+};
 
-  return json(200, { ok: true, scope, repo: { owner, repo }, deleted: true });
+export const handleAdminKernelUsageDelete = async (req: Request): Promise<Response> => {
+  const kv = await getKv();
+  if (!kv) return openaiError(500, "Deno KV is not available", "server_error");
+
+  const raw = await readJsonBody(req);
+  if (!raw || !isRecord(raw)) return openaiError(400, "Invalid JSON body", "invalid_request_error");
+
+  const target = resolveKernelUsageTarget(raw);
+  if (!target.ok) return target.response;
+
+  if (target.scope === "org") return await kernelOrgUsageLimitDeleteResponse(target.owner);
+  return await kernelRepoUsageLimitDeleteResponse(target.owner, target.repo);
 };
 
 const QUOTA_PROJECTION_ALLOWED_WINDOWS = new Set([7, 30, 90] as const);

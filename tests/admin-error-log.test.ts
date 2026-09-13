@@ -76,7 +76,7 @@ Deno.test("admin error history hides only affected cancellations and collects an
   let listOptions: Deno.KvListOptions | undefined;
   const kv = {
     list: (_selector: Deno.KvListSelector, options?: Deno.KvListOptions) => ({
-      async *[Symbol.asyncIterator]() {
+      *[Symbol.asyncIterator]() {
         listCalls += 1;
         listOptions = options;
         yield* records;
@@ -116,7 +116,7 @@ Deno.test("admin error history preserves records outside the exact legacy cancel
   ].map((value) => ({ value: { ...value, version: 1 } }));
   const kv = {
     list: () => ({
-      async *[Symbol.asyncIterator]() {
+      *[Symbol.asyncIterator]() {
         yield* records;
       },
     }),
@@ -137,7 +137,7 @@ Deno.test("admin error analytics counts every inference 5xx in fifteen-minute bu
   ].map((value) => ({ value: { ...value, version: 1 } }));
   const kv = {
     list: () => ({
-      async *[Symbol.asyncIterator]() {
+      *[Symbol.asyncIterator]() {
         yield* records;
       },
     }),

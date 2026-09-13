@@ -135,24 +135,25 @@ const notFoundResponse = (): Response =>
     },
   });
 
-const htmlSecurityHeaders = (): HeadersInit => ({
-  "Cache-Control": staticCacheControl,
-  "Content-Security-Policy":
-    "default-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self' https://ai.ubq.fi",
-  "Referrer-Policy": "no-referrer",
-  "X-Content-Type-Options": "nosniff",
-});
+const htmlSecurityHeaders = (): Headers =>
+  new Headers({
+    "Cache-Control": staticCacheControl,
+    "Content-Security-Policy":
+      "default-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self' https://ai.ubq.fi",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+  });
 
-const staticHeaders = (asset: StaticAsset, extra: HeadersInit = {}): HeadersInit => ({
-  "Content-Type": asset.contentType,
-  ...(asset.security === "html"
-    ? htmlSecurityHeaders()
-    : {
-        "Cache-Control": staticCacheControl,
-        "X-Content-Type-Options": "nosniff",
-      }),
-  ...extra,
-});
+// Spread order preserved exactly: Content-Type first, then the per-security
+// defaults, then `extra` (which therefore wins on any collision).
+const staticHeaders = (asset: StaticAsset, extra: HeadersInit = {}): Headers => {
+  const headers = new Headers({ "Content-Type": asset.contentType });
+  const securityHeaders =
+    asset.security === "html" ? htmlSecurityHeaders() : new Headers({ "Cache-Control": staticCacheControl, "X-Content-Type-Options": "nosniff" });
+  for (const [name, value] of securityHeaders) headers.set(name, value);
+  for (const [name, value] of new Headers(extra)) headers.set(name, value);
+  return headers;
+};
 
 const serveAsset = async (asset: StaticAsset, extraHeaders?: HeadersInit): Promise<Response> => {
   const body = await readAsset(asset);
@@ -180,26 +181,36 @@ type MediaPreference = Readonly<{
   index: number;
 }>;
 
+const mediaSpecificity = (rangeType: string, rangeSubtype: string): number => {
+  if (rangeType === "*") return 0;
+  if (rangeSubtype === "*") return 1;
+  return 2;
+};
+
+const parseMediaEntry = (entry: string, index: number, targetType: string, targetSubtype: string): MediaPreference | null => {
+  const [rawRange, ...rawParameters] = entry.trim().toLowerCase().split(";");
+  const [rangeType, rangeSubtype] = rawRange.trim().split("/");
+  if (!rangeType || !rangeSubtype) return null;
+  if (rangeType !== "*" && rangeType !== targetType) return null;
+  if (rangeSubtype !== "*" && rangeSubtype !== targetSubtype) return null;
+
+  const rawQuality = rawParameters.map((parameter) => parameter.trim().split("=", 2)).find(([name]) => name === "q")?.[1];
+  const parsedQuality = rawQuality === undefined ? 1 : Number(rawQuality);
+  const quality = Number.isFinite(parsedQuality) && parsedQuality >= 0 && parsedQuality <= 1 ? parsedQuality : 0;
+  return { quality, specificity: mediaSpecificity(rangeType, rangeSubtype), index };
+};
+
+const isBetterPreference = (candidate: MediaPreference, best: MediaPreference | null): boolean =>
+  !best || candidate.specificity > best.specificity || (candidate.specificity === best.specificity && candidate.index < best.index);
+
 const mediaPreference = (accept: string, target: string): MediaPreference | null => {
   const [targetType, targetSubtype] = target.split("/");
   if (!targetType || !targetSubtype) return null;
 
   let best: MediaPreference | null = null;
   for (const [index, rawEntry] of accept.split(",").entries()) {
-    const [rawRange, ...rawParameters] = rawEntry.trim().toLowerCase().split(";");
-    const [rangeType, rangeSubtype] = rawRange.trim().split("/");
-    if (!rangeType || !rangeSubtype) continue;
-    if (rangeType !== "*" && rangeType !== targetType) continue;
-    if (rangeSubtype !== "*" && rangeSubtype !== targetSubtype) continue;
-
-    const rawQuality = rawParameters.map((parameter) => parameter.trim().split("=", 2)).find(([name]) => name === "q")?.[1];
-    const parsedQuality = rawQuality === undefined ? 1 : Number(rawQuality);
-    const quality = Number.isFinite(parsedQuality) && parsedQuality >= 0 && parsedQuality <= 1 ? parsedQuality : 0;
-    const specificity = rangeType === "*" ? 0 : rangeSubtype === "*" ? 1 : 2;
-    const candidate = { quality, specificity, index };
-    if (!best || candidate.specificity > best.specificity || (candidate.specificity === best.specificity && candidate.index < best.index)) {
-      best = candidate;
-    }
+    const candidate = parseMediaEntry(rawEntry, index, targetType, targetSubtype);
+    if (candidate && isBetterPreference(candidate, best)) best = candidate;
   }
   return best;
 };
@@ -239,7 +250,7 @@ const rootRepresentation = (accept: string): RootRepresentation | null => {
       left.preference.index - right.preference.index ||
       right.defaultPriority - left.defaultPriority
   );
-  return candidates[0]!.representation;
+  return candidates[0].representation;
 };
 
 const rootVaryHeaders = { Vary: "Accept, Accept-Encoding" };
@@ -257,6 +268,12 @@ const notAcceptable = (): Response =>
     rootVaryHeaders
   );
 
+const resolveAuthMode = (isDeploy: boolean, hasAuthTokens: boolean, hasKv: boolean): string => {
+  if (isDeploy && !hasAuthTokens && !hasKv) return "misconfigured";
+  if (isDeploy || hasAuthTokens || hasKv) return "required";
+  return "disabled (local only)";
+};
+
 export const handleRoot = async (req: Request): Promise<Response> => {
   const url = new URL(req.url);
   const path = url.pathname;
@@ -269,12 +286,7 @@ export const handleRoot = async (req: Request): Promise<Response> => {
   if (representation === "markdown") return await serveAsset(indexMarkdownAsset, rootVaryHeaders);
 
   const kv = await getKv();
-  const auth =
-    config.isDeploy && config.authTokens.size === 0 && !kv
-      ? "misconfigured"
-      : config.isDeploy || config.authTokens.size > 0 || Boolean(kv)
-        ? "required"
-        : "disabled (local only)";
+  const auth = resolveAuthMode(config.isDeploy, config.authTokens.size > 0, Boolean(kv));
 
   return json(
     200,

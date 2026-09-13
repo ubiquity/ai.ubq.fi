@@ -72,7 +72,9 @@ export function finalsFromEvents(events: readonly TrajectoryEvent[]): FinalObser
   for (const event of events) {
     if (event.type !== "model_response") continue;
     if (event.tool_calls !== undefined && event.tool_calls.length > 0) continue;
-    if (event.content === undefined || event.content === null || event.content.length === 0) continue;
+    // `content` is optional (`string | undefined`); the optional chain keeps the
+    // same "absent or empty" skip without an always-false `=== null` comparison.
+    if (!event.content?.length) continue;
     seq += 1;
     const index = events.indexOf(event);
     const accepted = index > lastCallIndex && !events.slice(index + 1).some((e) => e.type === "guard" || e.type === "tool_call");

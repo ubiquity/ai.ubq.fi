@@ -8,6 +8,26 @@ import type { CodexAuthPoolState, CodexAuthState } from "../src/types.ts";
 
 const AUTH_KEY = ["ubq_ai", "codex_auth"] as const;
 
+type FakeKvWrite = { type: "set" | "delete"; key: Deno.KvKey; value?: unknown };
+
+/** `void` may not appear as a call-site type argument, so name the deferred shape. */
+type VoidDeferred = PromiseWithResolvers<void>;
+
+const isAuthKey = (key: Deno.KvKey): boolean => JSON.stringify(key) === JSON.stringify(AUTH_KEY);
+
+/** Upstream error type a banked-reset probe status maps to. */
+const probeErrorType = (status: number): string => {
+  if (status === 429) return "usage_limit_reached";
+  if (status === 401) return "authentication_error";
+  return "forbidden";
+};
+
+const isProviderHealthSuccessWrite = (write: FakeKvWrite): boolean =>
+  write.key[0] === "uos_ai" &&
+  write.key[1] === "provider_health" &&
+  write.key[2] === "v1" &&
+  (write.value as { event?: unknown } | undefined)?.event === "success";
+
 class AuthKv {
   auth: CodexAuthPoolState;
   reads = 0;
@@ -69,7 +89,7 @@ class AuthKv {
 
   atomic(): Deno.AtomicOperation {
     const checks: { key: Deno.KvKey; versionstamp: string | null }[] = [];
-    const writes: { type: "set" | "delete"; key: Deno.KvKey; value?: unknown }[] = [];
+    const writes: FakeKvWrite[] = [];
     const chain = {
       check: (...entries: { key: Deno.KvKey; versionstamp: string | null }[]) => {
         checks.push(...entries);
@@ -84,52 +104,63 @@ class AuthKv {
         return chain;
       },
       commit: async () => {
-        const providerHealthSuccess = writes.some(
-          (write) =>
-            write.key[0] === "uos_ai" &&
-            write.key[1] === "provider_health" &&
-            write.key[2] === "v1" &&
-            (write.value as { event?: unknown } | undefined)?.event === "success"
-        );
+        const providerHealthSuccess = writes.some(isProviderHealthSuccessWrite);
         if (providerHealthSuccess) {
           this.onProviderHealthSuccessCommit?.();
           await this.providerHealthSuccessCommitGate;
         }
-        if (this.routingCommitFailures > 0 && writes.some((write) => JSON.stringify(write.key) !== JSON.stringify(AUTH_KEY))) {
+        if (this.routingCommitFailures > 0 && writes.some((write) => !isAuthKey(write.key))) {
           this.routingCommitFailures -= 1;
           return Promise.resolve({ ok: false } as const);
         }
         for (const check of checks) {
-          const isAuth = JSON.stringify(check.key) === JSON.stringify(AUTH_KEY);
-          const version = isAuth
-            ? String(this.authVersion).padStart(20, "0")
-            : this.extra.has(JSON.stringify(check.key))
-              ? String(this.extra.get(JSON.stringify(check.key))!.version).padStart(20, "0")
-              : null;
-          if (version !== check.versionstamp) return Promise.resolve({ ok: false } as const);
+          if (this.#checkVersion(check.key) !== check.versionstamp) return Promise.resolve({ ok: false } as const);
         }
-        for (const write of writes) {
-          const isAuth = JSON.stringify(write.key) === JSON.stringify(AUTH_KEY);
-          if (isAuth) {
-            if (write.type === "set") this.auth = write.value as CodexAuthPoolState;
-            this.authVersion += 1;
-            continue;
-          }
-          const encoded = JSON.stringify(write.key);
-          if (write.type === "delete") this.extra.delete(encoded);
-          else this.extra.set(encoded, { value: write.value, version: (this.extra.get(encoded)?.version ?? 0) + 1 });
-        }
+        for (const write of writes) this.#applyWrite(write);
         if (providerHealthSuccess) this.onProviderHealthSuccessCommitted?.();
         return Promise.resolve({ ok: true, versionstamp: "00000000000000000001" } as const);
       },
     };
     return chain as unknown as Deno.AtomicOperation;
   }
+
+  /** Versionstamp the atomic check for `key` must match, or null when absent. */
+  #checkVersion(key: Deno.KvKey): string | null {
+    if (isAuthKey(key)) return String(this.authVersion).padStart(20, "0");
+    const encoded = JSON.stringify(key);
+    const entry = this.extra.get(encoded);
+    return entry === undefined ? null : String(entry.version).padStart(20, "0");
+  }
+
+  /** Applies one committed atomic write to the in-memory store. */
+  #applyWrite(write: FakeKvWrite): void {
+    if (isAuthKey(write.key)) {
+      if (write.type === "set") this.auth = write.value as CodexAuthPoolState;
+      this.authVersion += 1;
+      return;
+    }
+    const encoded = JSON.stringify(write.key);
+    if (write.type === "delete") this.extra.delete(encoded);
+    else this.extra.set(encoded, { value: write.value, version: (this.extra.get(encoded)?.version ?? 0) + 1 });
+  }
 }
 
 const fixedStartMs = 1_000_000;
 const utf8ByteLength = (value: string): number => new TextEncoder().encode(value).byteLength;
-const encodeBase64Url = (value: unknown): string => btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+/** URL of a fetch input, for the request-shape fixtures below. */
+const requestUrl = (input: RequestInfo | URL): string => {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+};
+
+/** A transport rejection reason as an Error; a DOMException already is one. */
+const abortReasonError = (reason: unknown): Error => (reason instanceof Error ? reason : new Error(`transport aborted: ${String(reason)}`, { cause: reason }));
+const encodeBase64Url = (value: unknown): string =>
+  btoa(JSON.stringify(value))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/={1,2}$/, "");
 const accessToken = (label: string): string => `${encodeBase64Url({ alg: "none" })}.${encodeBase64Url({ exp: (fixedStartMs + 60 * 60_000) / 1000 })}.${label}`;
 const auth = (label: string): CodexAuthState => ({
   access_token: accessToken(label),
@@ -208,7 +239,7 @@ Deno.test("repeated requests preserve subscription account order", async () => {
   };
 
   try {
-    for (const _ of [0, 1]) {
+    for (let iteration = 0; iteration < 2; iteration += 1) {
       const response = await fetchCodexResponses({ model: "gpt-5.6-luna", input: "stable routing order" }, {});
       assert.equal(response.status, 200);
       await markCodexResponseCompleted(response);
@@ -426,7 +457,7 @@ Deno.test("Codex responses use the native prompt-cache wire contract and stable 
     assert.deepEqual(cacheableBody, originalBody);
     assert.equal(requests.length, 8);
     const bodies = await Promise.all(requests.map((request) => request.clone().json() as Promise<Record<string, unknown>>));
-    const firstBody = bodies[0]!;
+    const firstBody = bodies[0];
     assert.equal(firstBody.prompt_cache_key, "stable-cache-key");
     assert.equal("prompt_cache_options" in firstBody, false);
     assert.equal("prompt_cache_retention" in firstBody, false);
@@ -434,27 +465,27 @@ Deno.test("Codex responses use the native prompt-cache wire contract and stable 
     assert.equal("max_completion_tokens" in firstBody, false);
     const input = firstBody.input as Record<string, unknown>[];
     const content = input[0]?.content as Record<string, unknown>[];
-    assert.equal("prompt_cache_breakpoint" in content[0]!, false);
+    assert.equal("prompt_cache_breakpoint" in content[0], false);
     const tools = firstBody.tools as Record<string, unknown>[];
     assert.deepEqual(tools[0], cacheableBody.tools[0]);
     assert.deepEqual(bodies[1], firstBody);
 
     const identityHeaders = ["conversation_id", "session-id", "thread-id", "x-client-request-id"] as const;
-    const stableIdentity = requests[0]!.headers.get("conversation_id");
+    const stableIdentity = requests[0].headers.get("conversation_id");
     assert.match(stableIdentity ?? "", /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     for (const header of identityHeaders) {
-      assert.equal(requests[0]!.headers.get(header), stableIdentity);
-      assert.equal(requests[1]!.headers.get(header), stableIdentity);
-      assert.notEqual(requests[2]!.headers.get(header), stableIdentity);
-      assert.notEqual(requests[3]!.headers.get(header), stableIdentity);
+      assert.equal(requests[0].headers.get(header), stableIdentity);
+      assert.equal(requests[1].headers.get(header), stableIdentity);
+      assert.notEqual(requests[2].headers.get(header), stableIdentity);
+      assert.notEqual(requests[3].headers.get(header), stableIdentity);
     }
     for (const request of requests.slice(4)) {
       assert.equal(request.headers.get("session-id"), null);
       assert.equal(request.headers.get("thread-id"), null);
       assert.equal(request.headers.get("x-client-request-id"), null);
     }
-    assert.notEqual(requests[4]!.headers.get("conversation_id"), requests[5]!.headers.get("conversation_id"));
-    assert.notEqual(requests[6]!.headers.get("conversation_id"), requests[7]!.headers.get("conversation_id"));
+    assert.notEqual(requests[4].headers.get("conversation_id"), requests[5].headers.get("conversation_id"));
+    assert.notEqual(requests[6].headers.get("conversation_id"), requests[7].headers.get("conversation_id"));
 
     const expectedWarnings = ["prompt_cache_options_ignored", "prompt_cache_retention_ignored", "max_output_tokens_ignored", "prompt_cache_breakpoint_ignored"];
     for (const response of [first, second, differentKey, differentPrincipal]) {
@@ -690,7 +721,7 @@ Deno.test("post-dispatch client cancellation stops Codex transport", async () =>
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
   const originalDeployFlag = config.isDeploy;
-  const transportStarted = Promise.withResolvers<void>();
+  const transportStarted: VoidDeferred = Promise.withResolvers();
   const requestAbort = new AbortController();
   Date.now = () => fixedStartMs;
   (config as { isDeploy: boolean }).isDeploy = true;
@@ -703,7 +734,7 @@ Deno.test("post-dispatch client cancellation stops Codex transport", async () =>
       assert.ok(signal);
       transportStarted.resolve();
       const rejectFromSignal = (): void => {
-        reject(signal.reason);
+        reject(abortReasonError(signal.reason));
       };
       if (signal.aborted) rejectFromSignal();
       else signal.addEventListener("abort", rejectFromSignal, { once: true });
@@ -1212,7 +1243,7 @@ Deno.test("concurrent proactive refreshes share one OAuth exchange", async () =>
   kv.extra.clear();
   resetCodexAuthCacheForTest();
   globalThis.fetch = async (input) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = requestUrl(input);
     if (url.includes("auth.openai.com/oauth/token")) {
       refreshCalls += 1;
       await refreshGate;
@@ -1257,7 +1288,7 @@ Deno.test("a deterministic proactive refresh rejection quarantines the credentia
   kv.extra.clear();
   resetCodexAuthCacheForTest();
   globalThis.fetch = (input) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = requestUrl(input);
     if (url.includes("auth.openai.com/oauth/token")) {
       refreshCalls += 1;
       return Promise.resolve(new Response(JSON.stringify({ error: "invalid_grant" }), { status: 401 }));
@@ -1295,7 +1326,7 @@ Deno.test("refresh-token reuse returns an actionable re-auth warning without exp
   kv.extra.clear();
   resetCodexAuthCacheForTest();
   globalThis.fetch = (input) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = requestUrl(input);
     if (url.includes("auth.openai.com/oauth/token")) {
       return Promise.resolve(
         new Response(
@@ -1380,7 +1411,7 @@ Deno.test("a malformed successful refresh is transient and does not quarantine t
   kv.extra.clear();
   resetCodexAuthCacheForTest();
   globalThis.fetch = (input) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = requestUrl(input);
     if (url.includes("auth.openai.com/oauth/token")) {
       refreshCalls += 1;
       if (refreshCalls === 1) {
@@ -1443,7 +1474,7 @@ Deno.test("direct failures release quota probes and timeouts do not gate the nex
         assert.equal(initial.kind, "eligible");
         if (initial.kind !== "eligible") return;
         await markCodexQuotaBlocked(
-          initial.accounts[0]!,
+          initial.accounts[0],
           new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
             status: 429,
             headers: { "Content-Type": "application/json", "Retry-After": "1" },
@@ -1460,16 +1491,17 @@ Deno.test("direct failures release quota probes and timeouts do not gate the nex
           if (testCase.timeout) {
             const reason = new DOMException("timed out", "TimeoutError");
             timeoutController?.abort(reason);
-            return Promise.reject(init?.signal?.reason ?? reason);
+            return Promise.reject(abortReasonError(init?.signal?.reason ?? reason));
           }
           if (testCase.status === null) return Promise.reject(new TypeError("network fixture"));
           return Promise.resolve(new Response("{}", { status: testCase.status }));
         };
 
         if (testCase.timeout) {
-          timeoutController = new AbortController();
+          const abortController = new AbortController();
+          timeoutController = abortController;
           await assert.rejects(
-            () => fetchCodexResponses({ input: testCase.name }, { signal: timeoutController!.signal }),
+            () => fetchCodexResponses({ input: testCase.name }, { signal: abortController.signal }),
             (error: unknown) => error instanceof Error && "status" in error && error.status === 504
           );
         } else if (testCase.status === null) {
@@ -1516,7 +1548,7 @@ Deno.test("cache-scope dispatch timeouts remain request-scoped", async () => {
   globalThis.fetch = (_input, init) => {
     inferenceCalls += 1;
     controller.abort(new DOMException("cache-scope timeout", "TimeoutError"));
-    return Promise.reject(init?.signal?.reason ?? controller.signal.reason);
+    return Promise.reject(abortReasonError(init?.signal?.reason ?? controller.signal.reason));
   };
 
   try {
@@ -1534,7 +1566,7 @@ Deno.test("cache-scope dispatch timeouts remain request-scoped", async () => {
       (error: unknown) => error instanceof CodexError && error.code === "gateway_timeout" && error.status === 504
     );
     resetCodexAccountRoutingForTest();
-    const selected = await selectCodexRoutingAccounts(kv.auth, [kv.auth.accounts[0]!], fixedStartMs);
+    const selected = await selectCodexRoutingAccounts(kv.auth, [kv.auth.accounts[0]], fixedStartMs);
     assert.equal(selected.kind, "eligible");
     if (selected.kind !== "eligible") return;
     assert.equal(selected.accounts[0]?.probeRequired, false);
@@ -1562,7 +1594,7 @@ Deno.test("a legacy timeout probe cannot block provider transport", async () => 
   const initial = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, fixedStartMs);
   assert.equal(initial.kind, "eligible");
   if (initial.kind !== "eligible") return;
-  await markCodexUpstreamTimeout(initial.accounts[0]!, fixedStartMs - CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS - 1);
+  await markCodexUpstreamTimeout(initial.accounts[0], fixedStartMs - CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS - 1);
   kv.routingCommitFailures = 3;
   globalThis.fetch = () => {
     inferenceCalls += 1;
@@ -1599,7 +1631,7 @@ Deno.test("a timeout probe that returns quota retags its bounded retry as quota"
   const initial = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, fixedStartMs);
   assert.equal(initial.kind, "eligible");
   if (initial.kind !== "eligible") return;
-  await markCodexUpstreamTimeout(initial.accounts[0]!, fixedStartMs - CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS - 1);
+  await markCodexUpstreamTimeout(initial.accounts[0], fixedStartMs - CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS - 1);
   globalThis.fetch = async () => {
     inferenceCalls += 1;
     if (inferenceCalls === 1) {
@@ -1646,7 +1678,7 @@ Deno.test("a timeout during bounded retry refresh preserves only the quota fence
   resetCodexAuthCacheForTest();
   resetCodexAccountRoutingForTest();
   globalThis.fetch = (input, init) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = requestUrl(input);
     if (url.includes("auth.openai.com/oauth/token")) {
       refreshCalls += 1;
       return Promise.resolve(
@@ -1667,7 +1699,7 @@ Deno.test("a timeout during bounded retry refresh preserves only the quota fence
     }
     if (inferenceCalls === 2) return Promise.resolve(new Response("{}", { status: 401 }));
     controller.abort(new DOMException("bounded retry timeout", "TimeoutError"));
-    return Promise.reject(init?.signal?.reason ?? controller.signal.reason);
+    return Promise.reject(abortReasonError(init?.signal?.reason ?? controller.signal.reason));
   };
 
   try {
@@ -1748,7 +1780,7 @@ Deno.test("a 429 retry that proves invalid credentials remains quarantined", asy
   assert.equal(initial.kind, "eligible");
   if (initial.kind !== "eligible") return;
   await markCodexQuotaBlocked(
-    initial.accounts[0]!,
+    initial.accounts[0],
     new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
       status: 429,
       headers: { "Content-Type": "application/json", "Retry-After": "1" },
@@ -1757,7 +1789,7 @@ Deno.test("a 429 retry that proves invalid credentials remains quarantined", asy
   );
   now += 1_001;
   globalThis.fetch = (input) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = requestUrl(input);
     if (url.includes("auth.openai.com/oauth/token")) {
       refreshCalls += 1;
       return Promise.resolve(new Response('{"error":"invalid_grant"}', { status: 401 }));
@@ -1801,7 +1833,7 @@ Deno.test("a 401 after proactive refresh does not refresh the same account twice
   kv.extra.clear();
   resetCodexAuthCacheForTest();
   globalThis.fetch = (input) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = requestUrl(input);
     if (url.includes("auth.openai.com/oauth/token")) {
       refreshCalls += 1;
       return Promise.resolve(
@@ -2021,11 +2053,9 @@ const scriptedResetProvider = (
       redeemAccountIds.push(input.accountId);
       options.onRedeem?.();
       if (options.redeemGate) await options.redeemGate;
-      return options.redeemKind === "unknown"
-        ? { kind: "unknown", providerReceiptId: null }
-        : options.redeemKind === "already_redeemed"
-          ? { kind: "already_redeemed", providerReceiptId: "receipt-sanitized" }
-          : { kind: "completed", providerReceiptId: "receipt-sanitized" };
+      if (options.redeemKind === "unknown") return { kind: "unknown", providerReceiptId: null };
+      if (options.redeemKind === "already_redeemed") return { kind: "already_redeemed", providerReceiptId: "receipt-sanitized" };
+      return { kind: "completed", providerReceiptId: "receipt-sanitized" };
     },
     lookup: (input) => {
       calls.push("lookup");
@@ -2372,7 +2402,10 @@ Deno.test("persistent live auto-arms an all-blocked cohort before one later cons
     const armed = await fetchCodexResponses({ input: "persistent-live-all-blocked-arm" }, options("persistent-live-all-blocked-arm"));
     assert.equal(armed.status, 429);
     assert.equal((await armed.json()).error.code, "codex_quota_blocked");
-    assert.deepEqual([...inventoryAccountIds].sort(), ["account-one", "account-two"]);
+    assert.deepEqual(
+      [...inventoryAccountIds].sort((a, b) => a.localeCompare(b)),
+      ["account-one", "account-two"]
+    );
     assert.deepEqual(consumeAccountIds, []);
     assert.deepEqual(inferenceAccountIds, []);
 
@@ -2897,7 +2930,6 @@ Deno.test("a sibling blocked during partial preflight is not dispatched from the
       if (!state) throw new Error("expected durable routing state");
       const sibling = state.slots[1];
       assert.ok(sibling);
-      if (!sibling) throw new Error("expected sibling routing slot");
       const retryAtMs = Date.parse(stableBankedResetRetryAfter);
       const slots = [...state.slots];
       slots[1] = {
@@ -2975,7 +3007,6 @@ Deno.test("a sibling legacy timeout during partial preflight does not gate fallb
       if (!state) throw new Error("expected durable routing state");
       const sibling = state.slots[1];
       assert.ok(sibling);
-      if (!sibling) throw new Error("expected sibling routing slot");
       const slots = [...state.slots];
       slots[1] = {
         ...sibling,
@@ -3225,7 +3256,7 @@ Deno.test("definitive partial-cohort probe failures fall through once to the hea
             new Response(
               JSON.stringify({
                 error: {
-                  type: status === 429 ? "usage_limit_reached" : status === 401 ? "authentication_error" : "forbidden",
+                  type: probeErrorType(status),
                 },
               }),
               { status, headers }
@@ -3807,7 +3838,7 @@ Deno.test("only a complete stable usage-limit response can reach the banked-rese
       resetCodexAccountRoutingForTest();
       const reset = scriptedResetProvider();
       globalThis.fetch = (input) => {
-        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        const url = requestUrl(input);
         if (url.includes("oauth/token")) {
           return Promise.resolve(new Response(JSON.stringify({ error: "invalid_grant" }), { status: 401 }));
         }
@@ -4059,14 +4090,14 @@ Deno.test("a stale verified reset recovers the existing account without another 
 
     const routingKey = JSON.stringify(CODEX_ACCOUNT_ROUTING_KV_KEY);
     const current = parseCodexAccountRoutingState(kv.extra.get(routingKey)?.value);
-    assert.ok(current);
+    if (current === null) throw new Error("expected durable routing state");
     await kv.set(CODEX_ACCOUNT_ROUTING_KV_KEY, {
       ...current,
       slots: [
         {
-          ...current!.slots[0]!,
+          ...current.slots[0],
           quota_blocked_until_ms: delayedResetAtMs,
-          generation: current!.slots[0]!.generation + 1,
+          generation: current.slots[0].generation + 1,
           probe_lease: null,
           banked_reset_generation_ambiguous: true,
         },

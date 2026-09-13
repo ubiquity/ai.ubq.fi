@@ -117,12 +117,8 @@ const shouldThrottleObservation = (
   // correlation ID is also new evidence. Later IDs are sampled at the normal
   // heartbeat interval so per-request IDs do not turn this into a write path.
   const previousProviderRequestId = normalizedProviderRequestId(previousObservation?.provider_request_id);
-  if (
-    !previousObservation ||
-    previousObservation.event !== event ||
-    previousObservation.status !== status ||
-    (previousProviderRequestId === null && providerRequestId !== null)
-  ) {
+  if (!previousObservation) return false;
+  if (previousObservation.event !== event || previousObservation.status !== status || (previousProviderRequestId === null && providerRequestId !== null)) {
     return false;
   }
   const previous = lastHeartbeatWriteAtMs.get(throttleKey);

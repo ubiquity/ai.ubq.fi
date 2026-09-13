@@ -116,8 +116,10 @@ const attempt = (
   overrides: Readonly<{ status?: number | null; content_type?: string | null }> = {}
 ): FixtureAttempt => ({
   provider,
-  status: "status" in overrides ? overrides.status! : 200,
-  content_type: "content_type" in overrides ? overrides.content_type! : "text/event-stream",
+  // An explicitly absent override falls back to the default; an explicit null
+  // is a meaningful fixture value and is preserved.
+  status: overrides.status === undefined ? 200 : overrides.status,
+  content_type: overrides.content_type === undefined ? "text/event-stream" : overrides.content_type,
   chunks_base64: chunks.map((chunk) => btoa(chunk)),
   terminal,
 });

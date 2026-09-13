@@ -143,7 +143,9 @@ export const listAdminErrorHistory = async (limit = DEFAULT_LIMIT, kvOverride?: 
   }
   return {
     data,
-    five_xx_buckets: [...fiveXxCounts.entries()].sort(([left], [right]) => left - right).map(([bucket_start_at_ms, count]) => ({ bucket_start_at_ms, count })),
+    five_xx_buckets: [...fiveXxCounts.entries()]
+      .sort(([left], [right]) => left - right)
+      .map(([bucketStartAtMs, count]) => ({ bucket_start_at_ms: bucketStartAtMs, count })),
   };
 };
 

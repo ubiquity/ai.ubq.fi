@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { createRequestDeliveryLifecycle } from "../src/serve_handler.ts";
 
-const deferred = <T>() => {
-  let resolve!: (value: T | PromiseLike<T>) => void;
+const deferred = () => {
+  let resolve!: () => void;
   let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+  const promise = new Promise<void>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise;
     reject = rejectPromise;
   });
@@ -13,7 +13,7 @@ const deferred = <T>() => {
 
 Deno.test("request delivery lifecycle switches from request aborts to server delivery completion", async () => {
   const beforeHandoffRequest = new AbortController();
-  const beforeHandoffCompletion = deferred<void>();
+  const beforeHandoffCompletion = deferred();
   const beforeHandoff = createRequestDeliveryLifecycle(beforeHandoffRequest.signal, beforeHandoffCompletion.promise);
   const requestAbort = new DOMException("client left before handoff", "AbortError");
   beforeHandoffRequest.abort(requestAbort);
@@ -22,7 +22,7 @@ Deno.test("request delivery lifecycle switches from request aborts to server del
   beforeHandoffCompletion.resolve();
 
   const deliveredRequest = new AbortController();
-  const deliveredCompletion = deferred<void>();
+  const deliveredCompletion = deferred();
   const delivered = createRequestDeliveryLifecycle(deliveredRequest.signal, deliveredCompletion.promise);
   delivered.handoff();
   deliveredRequest.abort(new DOMException("legacy post-handoff abort", "AbortError"));
@@ -33,7 +33,7 @@ Deno.test("request delivery lifecycle switches from request aborts to server del
   assert.equal(delivered.signal.aborted, false);
 
   const interruptedRequest = new AbortController();
-  const interruptedCompletion = deferred<void>();
+  const interruptedCompletion = deferred();
   const interrupted = createRequestDeliveryLifecycle(interruptedRequest.signal, interruptedCompletion.promise);
   interrupted.handoff();
   const deliveryFailure = new DOMException("response delivery failed", "AbortError");

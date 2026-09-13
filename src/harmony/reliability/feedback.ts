@@ -19,7 +19,7 @@
  * This module performs no I/O and never executes tools.
  */
 
-import { CANONICAL_TOOL_NAMES, TOOL_SCHEMAS } from "../tools/schemas.ts";
+import { CANONICAL_TOOL_NAMES, type CanonicalToolSchema, TOOL_SCHEMAS } from "../tools/schemas.ts";
 
 /** Stable issue classes emitted by the detailed validator. */
 export type ArgumentIssueCode =
@@ -52,6 +52,140 @@ const issue = (code: ArgumentIssueCode, location: string, message: string, hint:
   hint,
 });
 
+/** Declared parameters of one canonical tool schema. */
+type SchemaProperties = Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+
+/**
+ * Code-unit ascending order: the exact order `Array.prototype.sort` already
+ * applies by default.  Stated explicitly so the ordering stays deterministic
+ * (and locale independent) rather than depending on the engine default.
+ */
+const compareCodeUnits = (a: string, b: string): number => {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+};
+
+/**
+ * The canonical table is a total record over `CanonicalToolName`, but `tool`
+ * arrives from the model, so an unknown name yields `undefined` at runtime.
+ * The lookup is therefore typed partial instead of pretending it is total.
+ */
+const schemaForTool = (tool: string): CanonicalToolSchema | undefined => (TOOL_SCHEMAS as Readonly<Record<string, CanonicalToolSchema | undefined>>)[tool];
+
+/** Declared JSON-Schema `type` of one parameter, defaulting to `string`. */
+const schemaTypeOf = (param: Readonly<Record<string, unknown>>): string => (typeof param.type === "string" ? param.type : "string");
+
+/** Unknown keys (stable order: input order, sorted for determinism). */
+const collectUnexpectedArguments = (
+  args: Record<string, unknown>,
+  properties: SchemaProperties,
+  ordered: readonly string[],
+  issues: ToolArgumentIssue[]
+): void => {
+  for (const key of Object.keys(args).sort(compareCodeUnits)) {
+    if (key in properties) continue;
+    issues.push(
+      issue(
+        "unexpected_argument",
+        `arguments.${key}`,
+        `unexpected argument ${JSON.stringify(key)}`,
+        `remove ${JSON.stringify(key)}; allowed: ${ordered.join(", ") || "(none)"}`
+      )
+    );
+  }
+};
+
+/** Missing required arguments (declared order). */
+const collectMissingRequired = (
+  args: Record<string, unknown>,
+  properties: SchemaProperties,
+  required: readonly string[],
+  issues: ToolArgumentIssue[]
+): void => {
+  for (const key of required) {
+    if (!(key in args) || args[key] === undefined) {
+      const param = properties[key] ?? {};
+      issues.push(
+        issue(
+          "missing_required",
+          `arguments.${key}`,
+          `missing required argument ${JSON.stringify(key)}`,
+          `provide ${JSON.stringify(key)} (${typeLabel(schemaTypeOf(param))})`
+        )
+      );
+    }
+  }
+};
+
+const collectStringIssue = (key: string, value: unknown, isNonEmpty: boolean, issues: ToolArgumentIssue[]): void => {
+  if (typeof value !== "string") {
+    issues.push(
+      issue(
+        "wrong_type",
+        `arguments.${key}`,
+        `argument ${JSON.stringify(key)} must be a string, got ${typeof value}`,
+        `pass a string for ${JSON.stringify(key)}`
+      )
+    );
+  } else if (isNonEmpty && value.length === 0) {
+    issues.push(
+      issue("non_empty", `arguments.${key}`, `argument ${JSON.stringify(key)} must be a non-empty string`, `pass a non-empty string for ${JSON.stringify(key)}`)
+    );
+  }
+};
+
+const collectBooleanIssue = (key: string, value: unknown, issues: ToolArgumentIssue[]): void => {
+  if (typeof value !== "boolean") {
+    issues.push(
+      issue(
+        "wrong_type",
+        `arguments.${key}`,
+        `argument ${JSON.stringify(key)} must be a boolean, got ${typeof value}`,
+        `pass true or false for ${JSON.stringify(key)}`
+      )
+    );
+  }
+};
+
+const collectArrayIssues = (key: string, value: unknown, issues: ToolArgumentIssue[]): void => {
+  if (!Array.isArray(value)) {
+    issues.push(
+      issue(
+        "wrong_type",
+        `arguments.${key}`,
+        `argument ${JSON.stringify(key)} must be an array of non-empty strings, got ${typeof value}`,
+        `pass an array of non-empty strings for ${JSON.stringify(key)}`
+      )
+    );
+    return;
+  }
+  value.forEach((item, index) => {
+    if (typeof item !== "string" || item.length === 0) {
+      issues.push(
+        issue(
+          "bad_array_item",
+          `arguments.${key}[${index}]`,
+          `argument ${JSON.stringify(key)}[${index}] must be a non-empty string`,
+          `pass an array of non-empty strings for ${JSON.stringify(key)}`
+        )
+      );
+    }
+  });
+};
+
+/** One value problem (declared-property order is handled by the caller). */
+const collectValueIssue = (key: string, value: unknown, param: Readonly<Record<string, unknown>>, issues: ToolArgumentIssue[]): void => {
+  const type = schemaTypeOf(param);
+  if (type === "string") {
+    collectStringIssue(key, value, param.minLength === 1, issues);
+  } else if (type === "boolean") {
+    collectBooleanIssue(key, value, issues);
+  } else if (type === "array") {
+    collectArrayIssues(key, value, issues);
+  }
+};
+
 /**
  * Validates a tool call against the canonical schema and reports EVERY
  * problem deterministically.  Unknown tools produce one `unknown_tool` issue;
@@ -60,7 +194,7 @@ const issue = (code: ArgumentIssueCode, location: string, message: string, hint:
  * declared-property order) so output is reproducible.
  */
 export function validateToolArgumentsDetailed(tool: string, args: unknown): DetailedValidationResult {
-  const schema = TOOL_SCHEMAS[tool as keyof typeof TOOL_SCHEMAS];
+  const schema = schemaForTool(tool);
   if (schema === undefined) {
     const issues: ToolArgumentIssue[] = [
       {
@@ -81,109 +215,29 @@ export function validateToolArgumentsDetailed(tool: string, args: unknown): Deta
   }
 
   const issues: ToolArgumentIssue[] = [];
-  const properties = schema.parameters.properties as Readonly<Record<string, Readonly<Record<string, unknown>>>>;
-  const required = (schema.parameters.required as readonly string[]) ?? [];
+  const properties = schema.parameters.properties as SchemaProperties;
+  const required = (schema.parameters.required as readonly string[] | undefined) ?? [];
   const ordered = Object.keys(properties);
 
-  // 1. Unknown keys (stable order: input order, sorted for determinism).
-  for (const key of Object.keys(args).sort()) {
-    if (!(key in properties)) {
-      issues.push(
-        issue(
-          "unexpected_argument",
-          `arguments.${key}`,
-          `unexpected argument ${JSON.stringify(key)}`,
-          `remove ${JSON.stringify(key)}; allowed: ${ordered.join(", ") || "(none)"}`
-        )
-      );
-    }
-  }
-  // 2. Missing required arguments (declared order).
-  for (const key of required) {
-    if (!(key in args) || args[key] === undefined) {
-      const param = properties[key] ?? {};
-      issues.push(
-        issue(
-          "missing_required",
-          `arguments.${key}`,
-          `missing required argument ${JSON.stringify(key)}`,
-          `provide ${JSON.stringify(key)} (${typeLabel(String(param.type ?? "string"))})`
-        )
-      );
-    }
-  }
-  // 3. Value problems (declared-property order).
+  collectUnexpectedArguments(args, properties, ordered, issues);
+  collectMissingRequired(args, properties, required, issues);
   for (const key of ordered) {
     if (!(key in args) || args[key] === undefined) continue;
-    const value = args[key];
+    // Argument values are untrusted, so `value` stays `unknown` here even
+    // though the guard above already skipped the `undefined` it observed.
+    const value: unknown = args[key];
     const param = properties[key] ?? {};
-    const type = typeof param.type === "string" ? param.type : "string";
-    const isNonEmpty = param.minLength === 1;
     if (value === undefined) {
       issues.push(
         issue(
           "undefined_value",
           `arguments.${key}`,
           `argument ${JSON.stringify(key)} must not be undefined`,
-          `omit ${JSON.stringify(key)} or pass a ${typeLabel(type)}`
+          `omit ${JSON.stringify(key)} or pass a ${typeLabel(schemaTypeOf(param))}`
         )
       );
-    } else if (type === "string") {
-      if (typeof value !== "string") {
-        issues.push(
-          issue(
-            "wrong_type",
-            `arguments.${key}`,
-            `argument ${JSON.stringify(key)} must be a string, got ${typeof value}`,
-            `pass a string for ${JSON.stringify(key)}`
-          )
-        );
-      } else if (isNonEmpty && value.length === 0) {
-        issues.push(
-          issue(
-            "non_empty",
-            `arguments.${key}`,
-            `argument ${JSON.stringify(key)} must be a non-empty string`,
-            `pass a non-empty string for ${JSON.stringify(key)}`
-          )
-        );
-      }
-    } else if (type === "boolean") {
-      if (typeof value !== "boolean") {
-        issues.push(
-          issue(
-            "wrong_type",
-            `arguments.${key}`,
-            `argument ${JSON.stringify(key)} must be a boolean, got ${typeof value}`,
-            `pass true or false for ${JSON.stringify(key)}`
-          )
-        );
-      }
-    } else if (type === "array") {
-      const items = Array.isArray(value) ? value : [];
-      if (!Array.isArray(value)) {
-        issues.push(
-          issue(
-            "wrong_type",
-            `arguments.${key}`,
-            `argument ${JSON.stringify(key)} must be an array of non-empty strings, got ${typeof value}`,
-            `pass an array of non-empty strings for ${JSON.stringify(key)}`
-          )
-        );
-      } else {
-        items.forEach((item, index) => {
-          if (typeof item !== "string" || item.length === 0) {
-            issues.push(
-              issue(
-                "bad_array_item",
-                `arguments.${key}[${index}]`,
-                `argument ${JSON.stringify(key)}[${index}] must be a non-empty string`,
-                `pass an array of non-empty strings for ${JSON.stringify(key)}`
-              )
-            );
-          }
-        });
-      }
+    } else {
+      collectValueIssue(key, value, param, issues);
     }
   }
 
@@ -203,6 +257,7 @@ export const renderValidationFeedback = (tool: string, result: DetailedValidatio
 
 /** Short stable label for one invalid call (used in event bookkeeping). */
 export const invalidCallLabel = (result: DetailedValidationResult): string => {
-  const first = result.issues[0];
+  // A valid result carries an empty issue list, so the head is genuinely optional.
+  const first = result.issues.at(0);
   return first === undefined ? "invalid_args" : `${first.code}:${first.location}`;
 };

@@ -67,7 +67,8 @@ class AffinityKv {
     }
     if (options?.expireIn !== undefined) this.expireIns.push(options.expireIn);
     this.put(key, value, options?.expireIn);
-    const stored = this.values.get(keyOf(key))!;
+    const stored = this.values.get(keyOf(key));
+    assert.ok(stored);
     return { ok: true, versionstamp: versionstamp(stored.version) };
   }
 
@@ -117,7 +118,11 @@ class AffinityKv {
 
 let nowMs = 1_700_000_000_000;
 
-const base64Url = (value: unknown): string => btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+const base64Url = (value: unknown): string =>
+  btoa(JSON.stringify(value))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/={1,2}$/, "");
 
 const auth = (label: string, tokenLabel = label): CodexAuthState => ({
   access_token: `${base64Url({ alg: "none" })}.${base64Url({ exp: (nowMs + 60 * 60_000) / 1_000 })}.${tokenLabel}`,
@@ -184,14 +189,17 @@ Deno.test("Codex account-affinity stores only bounded opaque data and separates 
     await Promise.all([recordCodexAccountAffinity(identity, firstCohort), recordCodexAccountAffinity(identity, secondCohort)]);
     const stored = kv.affinityRecords();
     assert.equal(stored.length, 1);
-    assert.deepEqual(Object.keys(stored[0]!.value as Record<string, unknown>).sort(), ["account_cohort_hash", "expires_at_ms"]);
+    assert.deepEqual(
+      Object.keys(stored[0].value as Record<string, unknown>).sort((a, b) => a.localeCompare(b)),
+      ["account_cohort_hash", "expires_at_ms"]
+    );
     assert.equal(JSON.stringify(stored[0]).includes(principal), false);
     assert.equal(JSON.stringify(stored[0]).includes(cacheKey), false);
     assert.equal(
       kv.expireIns.every((expireIn) => expireIn === CODEX_ACCOUNT_AFFINITY_TTL_MS),
       true
     );
-    assert.match(String((stored[0]!.value as { account_cohort_hash?: unknown }).account_cohort_hash), /^[a-f0-9]{64}$/);
+    assert.match(String((stored[0].value as { account_cohort_hash?: unknown }).account_cohort_hash), /^[a-f0-9]{64}$/);
     const observedCohort = await readCodexAccountAffinity(identity);
     assert.ok(observedCohort === firstCohort || observedCohort === secondCohort);
 
@@ -545,8 +553,10 @@ Deno.test("Codex account-affinity never bypasses an existing quota or banked-res
     const initial = await selectCodexRoutingAccounts(pool(one, two), [one, two], nowMs, "gpt-5.6-luna");
     assert.equal(initial.kind, "eligible");
     if (initial.kind !== "eligible") return;
+    const blockedAccount = initial.accounts.find((account) => account.auth.account_id === "account-one");
+    assert.ok(blockedAccount);
     await markCodexQuotaBlocked(
-      initial.accounts.find((account) => account.auth.account_id === "account-one")!,
+      blockedAccount,
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(nowMs + 60_000).toUTCString() },
@@ -569,7 +579,7 @@ Deno.test("completed half-open probes clear routing before slow affinity persist
     assert.equal(initial.kind, "eligible");
     if (initial.kind !== "eligible") return;
     await markCodexQuotaBlocked(
-      initial.accounts[0]!,
+      initial.accounts[0],
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
         status: 429,
         headers: { "Content-Type": "application/json", "Retry-After": new Date(nowMs + 1_000).toUTCString() },

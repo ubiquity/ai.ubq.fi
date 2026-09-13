@@ -32,7 +32,9 @@ export function freshRunOptions(): RunOptions & { runsRoot: string } {
 }
 
 export function nav001(): TaskManifest {
-  return loadTasks(TASKS_DIR).find((t) => t.id === "nav-001")!;
+  const task = loadTasks(TASKS_DIR).find((t) => t.id === "nav-001");
+  if (task === undefined) throw new Error(`missing nav-001 task fixture in ${TASKS_DIR}`);
+  return task;
 }
 
 export function jsonResponse(status: number, body: unknown): ChatTransportResponse {

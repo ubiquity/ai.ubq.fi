@@ -71,6 +71,40 @@ export const dropAnalysisBeforeCompletedFinal = (conversation: Conversation): Co
   };
 };
 
+/** Renders one conversation turn as its wire message, or null when it has none. */
+const wireMessageFromTurn = (turn: ConversationTurn): Record<string, unknown> | null => {
+  switch (turn.role) {
+    case "system":
+    case "developer":
+    case "user":
+      return turn.content ? { role: turn.role, content: turn.content } : null;
+    case "assistant": {
+      const hasCalls = turn.toolCalls.length > 0;
+      if (turn.content === null && !hasCalls) return null;
+      const message: Record<string, unknown> = {
+        role: "assistant",
+        content: turn.content ?? (hasCalls ? null : ""),
+      };
+      if (hasCalls) {
+        message.tool_calls = turn.toolCalls.map((call) => ({
+          id: call.id,
+          type: "function",
+          function: { name: call.name, arguments: call.arguments },
+        }));
+      }
+      return message;
+    }
+    case "tool":
+      return {
+        role: "tool",
+        tool_call_id: turn.toolCallId,
+        content: turn.content,
+      };
+    default:
+      return null;
+  }
+};
+
 /**
  * The OpenAI Chat Completions wire shape for the adapter's conversation view.
  * Analysis is never emitted: Cerebras rejects `reasoning_content` in request
@@ -79,39 +113,8 @@ export const dropAnalysisBeforeCompletedFinal = (conversation: Conversation): Co
 export const wireMessagesFromConversation = (conversation: Conversation): readonly Record<string, unknown>[] => {
   const messages: Record<string, unknown>[] = [];
   for (const turn of conversation.turns) {
-    switch (turn.role) {
-      case "system":
-      case "developer":
-      case "user":
-        if (turn.content) messages.push({ role: turn.role, content: turn.content });
-        break;
-      case "assistant": {
-        const hasCalls = turn.toolCalls.length > 0;
-        if (turn.content === null && !hasCalls) break;
-        const message: Record<string, unknown> = {
-          role: "assistant",
-          content: turn.content ?? (hasCalls ? null : ""),
-        };
-        if (hasCalls) {
-          message.tool_calls = turn.toolCalls.map((call) => ({
-            id: call.id,
-            type: "function",
-            function: { name: call.name, arguments: call.arguments },
-          }));
-        }
-        messages.push(message);
-        break;
-      }
-      case "tool": {
-        const message: Record<string, unknown> = {
-          role: "tool",
-          tool_call_id: turn.toolCallId,
-          content: turn.content,
-        };
-        messages.push(message);
-        break;
-      }
-    }
+    const message = wireMessageFromTurn(turn);
+    if (message !== null) messages.push(message);
   }
   return messages;
 };

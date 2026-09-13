@@ -22,13 +22,28 @@ const setGlobal = (key: string, value: unknown): Restore => {
   });
   return () => {
     if (original) Object.defineProperty(globalThis, key, original);
-    else delete (globalThis as Record<string, unknown>)[key];
+    else Reflect.deleteProperty(globalThis, key);
   };
+};
+
+/** The client under test serializes request bodies with JSON.stringify, so only a string body is meaningful here. */
+const parseCapturedJsonBody = (body: BodyInit | null | undefined): Record<string, unknown> => {
+  if (body === null || body === undefined) return {};
+  if (typeof body !== "string") throw new TypeError("expected a JSON string request body");
+  return JSON.parse(body) as Record<string, unknown>;
+};
+
+/** RequestInfo stringification that never renders a Request object as "[object Request]". */
+const requestUrlOf = (input: RequestInfo | URL): string => {
+  if (input instanceof Request) return input.url;
+  if (input instanceof URL) return input.href;
+  return input;
 };
 
 const withPasskeyBrowser = async (fn: () => Promise<void>): Promise<void> => {
   const restoreSecureContext = setGlobal("isSecureContext", true);
-  const restorePublicKeyCredential = setGlobal("PublicKeyCredential", function PublicKeyCredential() {});
+  // static/auth.js only gates passkeys on Boolean(globalThis.PublicKeyCredential), so the stub just has to be truthy.
+  const restorePublicKeyCredential = setGlobal("PublicKeyCredential", () => undefined);
   const restoreLocation = setGlobal("location", { origin: "http://localhost:8000" });
   const restoreNavigator = setGlobal("navigator", {
     credentials: {
@@ -113,7 +128,7 @@ const captureRegisterStartBody = async (input: { handle?: string; token: string;
   let requestBody: Record<string, unknown> | null = null;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    requestBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+    requestBody = parseCapturedJsonBody(init?.body);
     return Promise.resolve(
       new Response(JSON.stringify({ error: { message: "Unauthorized" } }), {
         status: 401,
@@ -139,7 +154,7 @@ const captureLoginStartBody = async (input: {
   let requestBody: Record<string, unknown> | null = null;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    requestBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+    requestBody = parseCapturedJsonBody(init?.body);
     return Promise.resolve(
       new Response(JSON.stringify({ error: { message: "Unauthorized" } }), {
         status: 401,
@@ -184,7 +199,7 @@ Deno.test("signOut clears a relay cookie without sending an empty bearer header"
   let requestInit: RequestInit | undefined;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    requestUrl = String(input);
+    requestUrl = requestUrlOf(input);
     requestInit = init;
     return Promise.resolve(new Response(null, { status: 204 }));
   };
@@ -229,7 +244,8 @@ Deno.test("signInWithPasskey does not restrict discoverable login to cached cred
         try {
           await assert.rejects(() => signInWithPasskey({ baseUrl: "https://ai.ubq.fi" }), /stop after credential/);
           assert.ok(requestOptions);
-          assert.equal("allowCredentials" in requestOptions, false);
+          const credentialOptions = requestOptions as Record<string, unknown>;
+          assert.equal("allowCredentials" in credentialOptions, false);
         } finally {
           globalThis.fetch = originalFetch;
           restoreNavigator();

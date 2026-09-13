@@ -139,6 +139,16 @@ export const paidFallbackHashFields = (
   paid_fallback_reservation_request_id: record.paid_fallback_reservation_request_id,
 });
 
+/**
+ * Maximum gateway exposure for one priced model, or null when that model's
+ * pricing inputs cannot produce a finite, positive credit bound.
+ */
+const maximumExposureForModel = (context: number | undefined, coefficient: number | undefined, quotaPerCredit: number): number | null => {
+  if (!context || typeof coefficient !== "number" || !Number.isFinite(coefficient) || coefficient <= 0) return null;
+  const exposure = Math.ceil((context * coefficient * MICROCREDITS_PER_CREDIT) / quotaPerCredit);
+  return Number.isSafeInteger(exposure) && exposure > 0 ? exposure : null;
+};
+
 export const initializePaidFallbackPolicy = async (
   signal?: AbortSignal
 ): Promise<
@@ -178,11 +188,9 @@ export const initializePaidFallbackPolicy = async (
   }
   const maximumExposure: Record<string, number> = {};
   for (const model of pricing.eligible_model_ids) {
-    const context = contextByModel.get(model);
-    const coefficient = pricing.model_quota_coefficients[model];
-    if (!context || !Number.isFinite(coefficient) || coefficient <= 0) continue;
-    const exposure = Math.ceil((context * coefficient * MICROCREDITS_PER_CREDIT) / pricing.quota_per_credit);
-    if (Number.isSafeInteger(exposure) && exposure > 0) maximumExposure[model] = exposure;
+    const exposure = maximumExposureForModel(contextByModel.get(model), pricing.model_quota_coefficients[model], pricing.quota_per_credit);
+    if (exposure === null) continue;
+    maximumExposure[model] = exposure;
   }
   const missingExposure = pricing.eligible_model_ids.some((model) => !isPositiveSafeInteger(maximumExposure[model]));
   if (missingExposure) {
@@ -345,8 +353,9 @@ export const recordSurplusUsage = async (
     !isNonNegativeFiniteNumber(pricing.output_price_per_token)
   )
     return;
-  const cachedInputTokens = usage.cached_input_tokens === null ? 0 : usage.cached_input_tokens;
-  const cacheWriteInputTokens = usage.cache_write_input_tokens === null ? 0 : usage.cache_write_input_tokens;
+  // Absent cache counters settle as zero; non-null counts keep their exact value.
+  const cachedInputTokens = usage.cached_input_tokens ?? 0;
+  const cacheWriteInputTokens = usage.cache_write_input_tokens ?? 0;
   if (
     !isNonNegativeSafeInteger(cachedInputTokens) ||
     cachedInputTokens > usage.input_tokens ||

@@ -9,7 +9,6 @@
     "tests/**/*.e2e.ts"
   ],
   "project": [
-    "serve.ts",
     "src/**/*.ts",
     "tests/**/*.ts",
     "scripts/**/*.ts",
@@ -18,15 +17,8 @@
   ],
   "includeEntryExports": true,
   "ignoreExportsUsedInFile": true,
-  "ignore": [
-    "lib/**"
-  ],
   "ignoreDependencies": [
-    "prettier",
     "@std/yaml",
-    "@deno/kv-utils",
-    "@deno/kv-utils/import-export",
-    "@deno/kv-utils/json",
     "@simplewebauthn/server"
   ],
   "ignoreIssues": {
@@ -43,7 +35,16 @@
       "exports"
     ],
     "src/provider_capacity.ts": [
-      "exports"
+      "duplicates"
+    ],
+    "src/inference_deadline.ts": [
+      "duplicates"
+    ],
+    "src/kernel_quota_v2.ts": [
+      "duplicates"
+    ],
+    "src/metered.ts": [
+      "duplicates"
     ]
   }
 }

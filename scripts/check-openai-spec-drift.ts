@@ -28,7 +28,7 @@ const readSpecText = async (location: string): Promise<string> => {
   return await Deno.readTextFile(location);
 };
 
-const sortedUnique = (values: Iterable<string>): string[] => Array.from(new Set(values)).sort();
+const sortedUnique = (values: Iterable<string>): string[] => Array.from(new Set(values)).sort((a, b) => a.localeCompare(b));
 
 const schemaNameFromRef = (ref: string): string => {
   const name = ref.split("/").pop();

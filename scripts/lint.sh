@@ -12,4 +12,7 @@
 set -eu
 . "$(dirname -- "$0")/_bootstrap.sh"
 ensure_deps
+# Regenerate the ambient Deno type declarations before linting: the type-aware
+# rules silently lose findings when .deno-types.d.ts is missing or stale.
+deno task types
 exec "$TOOLS/node_modules/.bin/eslint" --config "$TOOLS/eslint.config.mjs" "$@"

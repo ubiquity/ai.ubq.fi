@@ -12,7 +12,7 @@ const INDEX_CURSOR = /^[A-Za-z0-9_-]+={0,2}$/;
 
 const validPageLimit = (value: string | null): number | null => {
   if (value === null) return SENTINEL_INCIDENT_INDEX_DEFAULT_PAGE_LIMIT;
-  if (!/^[0-9]+$/.test(value)) return null;
+  if (!/^\d+$/.test(value)) return null;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= SENTINEL_INCIDENT_INDEX_MAX_PAGE_LIMIT ? parsed : null;
 };
@@ -117,13 +117,16 @@ export const handleAdminSentinelIncidents = async (req: Request, dependencies: S
     const page = await (dependencies.listSentinelIncidentIndexRows ?? listSentinelIncidentIndexRows)(kv, {
       incidentId: incidentId ?? undefined,
       limit,
-      cursor: cursor || undefined,
+      // `validCursor` above already rejects an empty cursor, so `cursor` is
+      // either null or a non-empty string here.
+      cursor: cursor ?? undefined,
     });
     return json(
       200,
       {
         data: page.rows.map(rowToWire),
-        cursor: page.cursor || null,
+        // The index reader already normalizes an empty iterator cursor to null.
+        cursor: page.cursor ?? null,
         // Every successful page read is complete; incomplete is reserved for a
         // genuine source gap and never for ordinary pagination continuation.
         coverage: { status: "complete" },

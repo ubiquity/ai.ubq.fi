@@ -230,7 +230,9 @@ Deno.test("manifests: selection supports id, glob, category, and rejects unknown
     threw = true;
   }
   if (!threw) throw new Error("expected unknown selector rejection");
-  if (taskFamily(loadTasks(TASKS_DIR).find((t) => t.id === "nav-001")!) !== "nav") {
+  const navTask = loadTasks(TASKS_DIR).find((t) => t.id === "nav-001");
+  if (navTask === undefined) throw new Error("nav-001 must be present in the task manifests");
+  if (taskFamily(navTask) !== "nav") {
     throw new Error("taskFamily derived wrong family");
   }
 });

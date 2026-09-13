@@ -247,7 +247,10 @@ Deno.test("runHarmonyTurn completes a tool call then a final answer through the 
   const transport = createCerebrasTransport({
     apiKey: "test-key",
     fetcher: (_input, init) => {
-      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      // The adapter always sends a JSON string body; anything else would parse
+      // as "[object Object]" and hide the request under test.
+      const rawBody = init?.body;
+      const body = JSON.parse(typeof rawBody === "string" ? rawBody : "{}") as Record<string, unknown>;
       requestBodies.push(body);
       const payload =
         requestBodies.length === 1

@@ -49,7 +49,7 @@ class MemoryKv {
   readonly atomicCheckBatches: Deno.KvKey[][] = [];
   atomicCommitCount = 0;
   beforeAtomicCommit: ((commitNumber: number) => void) | null = null;
-  beforeGet: ((key: Deno.KvKey, getNumber: number) => Promise<void> | null) | null = null;
+  beforeGet: ((key: Deno.KvKey, getNumber: number) => Promise<void> | null | undefined) | null = null;
   getFailure: Error | null = null;
   getCount = 0;
   #version = 0;
@@ -89,9 +89,9 @@ class MemoryKv {
     return Promise.resolve({ ok: true, versionstamp });
   }
 
-  value<T>(key: Deno.KvKey): T | null {
+  redemptionRecord(key: Deno.KvKey): CodexResetRedemptionRecord | null {
     const value = this.entries.get(encodeKey(key))?.value;
-    return value === undefined ? null : (clone(value) as T);
+    return value === undefined ? null : (clone(value) as CodexResetRedemptionRecord);
   }
 
   atomic(): Deno.AtomicOperation {
@@ -407,12 +407,20 @@ const inventory = (id: string, expiresAtMs: number | null): ResetInventory => ({
   credits: [{ id, status: "available", resetType: "codex_rate_limits", expiresAtMs }],
 });
 
+/** The account hash of a reset result the test has already asserted is present. */
+const requiredHash = (value: string | null): string => {
+  assert.ok(value, "expected the reset result to carry an account hash");
+  return value;
+};
+
 const shadowDecisionFrom = (kv: MemoryKv) => {
   const decisions = [...kv.entries.values()]
     .map((entry) => parseCodexResetShadowDecisionRecord(entry.value))
     .filter((decision): decision is NonNullable<typeof decision> => decision !== null);
   assert.equal(decisions.length, 1);
-  return decisions[0]!;
+  const decision = decisions.at(0);
+  assert.ok(decision, "expected exactly one shadow decision");
+  return decision;
 };
 
 Deno.test("banked reset disabled, shadow, and invalid limits make zero provider calls", async () => {
@@ -552,7 +560,9 @@ Deno.test("banked reset production owner token generator is called with its Cryp
   const provider = new FakeCodexUsageResetProvider();
   const clock = new TestClock();
   const reset = candidate();
-  const { newOwnerToken: _injectedOwnerToken, ...deps } = dependencies(kv, provider, clock);
+  // The injected owner-token generator is deliberately dropped so the
+  // production generator runs.
+  const { newOwnerToken, ...deps } = dependencies(kv, provider, clock);
   await seedFences(kv, reset);
 
   const result = await attemptCodexBankedReset(reset, deps);
@@ -656,7 +666,7 @@ Deno.test("an expired recovery lookup rejection stays unknown while the original
   assert.equal(originalOutcome.kind, "pending");
   assert.equal(originalOutcome.reason, "receipt_cas_failed");
   assert.equal(provider.redeemInputs.length, 1);
-  assert.equal(kv.value<CodexResetRedemptionRecord>(codexResetRedemptionKey(recovery.accountIdHash!, recovery.quotaGeneration!))?.state, "unknown");
+  assert.equal(kv.redemptionRecord(codexResetRedemptionKey(requiredHash(recovery.accountIdHash), requiredHash(recovery.quotaGeneration)))?.state, "unknown");
 });
 
 Deno.test("live claims require seeded current fences and CAS-check both routing and credential records", async () => {
@@ -788,10 +798,10 @@ Deno.test("a quota deadline crossing during submission preparation cannot reserv
   const day = new Date(clock.nowMs).toISOString().slice(0, 10);
   const dailyKey = codexResetGlobalDailyKey(day);
   kv.beforeGet = (key) => {
-    if (encodeKey(key) !== encodeKey(dailyKey)) return null;
-    kv.beforeGet = null;
-    clock.advance(1);
-    return null;
+    if (encodeKey(key) === encodeKey(dailyKey)) {
+      kv.beforeGet = null;
+      clock.advance(1);
+    }
   };
 
   const result = await attemptCodexBankedReset(reset, dependencies(kv, provider, clock));
@@ -1024,7 +1034,10 @@ Deno.test("an unapproved provider receipt stays out of the durable record and te
 
   assert.equal(result.kind, "verified");
   assert.equal(result.record?.provider_receipt_id, null);
-  assert.equal(kv.value<CodexResetRedemptionRecord>(codexResetRedemptionKey(result.accountIdHash!, result.quotaGeneration!))?.provider_receipt_id, null);
+  assert.equal(
+    kv.redemptionRecord(codexResetRedemptionKey(requiredHash(result.accountIdHash), requiredHash(result.quotaGeneration)))?.provider_receipt_id,
+    null
+  );
   assert.deepEqual(
     submittedFields.map((fields) => fields.provider_receipt_id),
     [null]
@@ -1215,7 +1228,9 @@ Deno.test("banked-reset telemetry retains only safe correlation fields", async (
   assert.ok(events.some(({ event }) => event === "codex_reset_verified"));
   assert.ok(events.every(({ fields }) => typeof fields.account_id_hash === "string"));
 
-  const rawValues = [reset.accountId, reset.credentialVersion, provider.redeemInputs[0]!.idempotencyKey, "unapproved-provider-receipt"];
+  const firstRedeemInput = provider.redeemInputs.at(0);
+  assert.ok(firstRedeemInput, "expected one provider redemption");
+  const rawValues = [reset.accountId, reset.credentialVersion, firstRedeemInput.idempotencyKey, "unapproved-provider-receipt"];
   for (const fields of [...events.map(({ fields }) => fields), ...metrics]) {
     const serialized = JSON.stringify(fields);
     for (const raw of rawValues) assert.equal(serialized.includes(raw), false, `telemetry leaked ${raw}`);
@@ -1299,10 +1314,10 @@ Deno.test("a quota deadline crossing during claimed-takeover fence reads leaves 
   await inventoryEntered.promise;
   clock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
   kv.beforeGet = (key) => {
-    if (encodeKey(key) !== encodeKey(credentialFenceKey(reset.accountId))) return null;
-    kv.beforeGet = null;
-    clock.advance(1);
-    return null;
+    if (encodeKey(key) === encodeKey(credentialFenceKey(reset.accountId))) {
+      kv.beforeGet = null;
+      clock.advance(1);
+    }
   };
 
   const takeover = await attemptCodexBankedReset(candidate({ ...reset, requestId: "claim-takeover-deadline" }), deps);
@@ -1535,39 +1550,161 @@ Deno.test("seeded state-machine invariant: one account/window never reaches more
   }
 });
 
-Deno.test("generated banked-reset event sequences retain the durable state-machine invariants", async () => {
-  type Event =
-    | "request"
-    | "qualifying_429"
-    | "non_qualifying_429"
-    | "claim"
-    | "submit"
-    | "provider_commit"
-    | "response_loss"
-    | "lookup"
-    | "verify"
-    | "retry"
-    | "crash"
-    | "lease_expire"
-    | "credential_rotate"
-    | "kv_failure";
+type BankedResetGeneratedEvent =
+  | "request"
+  | "qualifying_429"
+  | "non_qualifying_429"
+  | "claim"
+  | "submit"
+  | "provider_commit"
+  | "response_loss"
+  | "lookup"
+  | "verify"
+  | "retry"
+  | "crash"
+  | "lease_expire"
+  | "credential_rotate"
+  | "kv_failure";
 
-  const allEvents: readonly Event[] = [
-    "request",
-    "qualifying_429",
-    "non_qualifying_429",
-    "claim",
-    "submit",
-    "provider_commit",
-    "response_loss",
-    "lookup",
-    "verify",
-    "retry",
-    "crash",
-    "lease_expire",
-    "credential_rotate",
-    "kv_failure",
-  ];
+const BANKED_RESET_GENERATED_EVENTS: readonly BankedResetGeneratedEvent[] = [
+  "request",
+  "qualifying_429",
+  "non_qualifying_429",
+  "claim",
+  "submit",
+  "provider_commit",
+  "response_loss",
+  "lookup",
+  "verify",
+  "retry",
+  "crash",
+  "lease_expire",
+  "credential_rotate",
+  "kv_failure",
+];
+
+/** Mutable state carried across one generated event sequence. */
+type GeneratedResetScenario = {
+  reset: CodexBankedResetCandidate;
+  deps: CodexBankedResetDependencies;
+  provider: FakeCodexUsageResetProvider;
+  kv: MemoryKv;
+  clock: TestClock;
+  sequenceSeed: number;
+  qualifyingObservationIsCurrent: boolean;
+  lastOutcome: Awaited<ReturnType<typeof attemptCodexBankedReset>> | null;
+  postResetInferenceRetries: number;
+  credentialWasRotated: boolean;
+};
+
+/** Applies one generated event to the scenario. */
+const applyBankedResetEvent = async (scenario: GeneratedResetScenario, event: BankedResetGeneratedEvent, label: string): Promise<void> => {
+  switch (event) {
+    case "request":
+    case "non_qualifying_429":
+      // A generic, malformed, or otherwise non-qualifying 429 never
+      // enters the state machine's submission path.
+      scenario.qualifyingObservationIsCurrent = false;
+      scenario.lastOutcome = null;
+      break;
+    case "qualifying_429":
+      scenario.qualifyingObservationIsCurrent = true;
+      scenario.lastOutcome = await attemptCodexBankedReset(scenario.reset, scenario.deps);
+      break;
+    case "claim":
+    case "submit":
+      if (scenario.qualifyingObservationIsCurrent) scenario.lastOutcome = await attemptCodexBankedReset(scenario.reset, scenario.deps);
+      break;
+    case "provider_commit":
+      scenario.provider.redeemResult = clone(sanitizedProviderFixtures.rate_limit);
+      scenario.provider.commitOnRedeem = true;
+      if (scenario.qualifyingObservationIsCurrent) scenario.lastOutcome = await attemptCodexBankedReset(scenario.reset, scenario.deps);
+      break;
+    case "response_loss":
+      scenario.provider.redeemFailureAfterCommit = new Error(`response loss ${scenario.sequenceSeed}`);
+      if (scenario.qualifyingObservationIsCurrent) scenario.lastOutcome = await attemptCodexBankedReset(scenario.reset, scenario.deps);
+      scenario.provider.redeemFailureAfterCommit = null;
+      break;
+    case "lookup":
+      scenario.clock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
+      scenario.provider.lookupResult = clone(sanitizedProviderFixtures.lookup_pending);
+      scenario.lastOutcome = await reconcileCodexBankedReset(scenario.reset, scenario.deps);
+      break;
+    case "verify":
+      scenario.clock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
+      scenario.provider.lookupResult = clone(sanitizedProviderFixtures.lookup_completed);
+      scenario.provider.verifyResult = true;
+      scenario.lastOutcome = await reconcileCodexBankedReset(scenario.reset, scenario.deps);
+      break;
+    case "retry": {
+      const retriesBefore = scenario.postResetInferenceRetries;
+      const outcome = scenario.lastOutcome;
+      let retryPermitted = false;
+      // The model can execute its one retry only from a verified durable
+      // outcome; it never treats an unknown or rejected state as a permit.
+      if (outcome?.kind === "verified" && retriesBefore === 0) {
+        retryPermitted = true;
+        assert.equal(outcome.record?.state, "verified", label);
+        // This is the generated model's post-reset transport. The public
+        // Responses/Chat matrix separately drives the real gateway transport;
+        // here it makes the retry permit an executable state transition rather
+        // than a bookkeeping increment.
+        scenario.postResetInferenceRetries += 1;
+      }
+      assert.equal(scenario.postResetInferenceRetries > retriesBefore, retryPermitted, `${label}: retry must be granted only after verification`);
+      assert.ok(scenario.postResetInferenceRetries <= 1, label);
+      break;
+    }
+    case "crash":
+    case "lease_expire":
+      scenario.clock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
+      break;
+    case "credential_rotate":
+      scenario.credentialWasRotated = true;
+      await scenario.kv.set(credentialFenceKey(scenario.reset.accountId), {
+        kind: "credential",
+        credential_version: `rotated-${scenario.sequenceSeed}`,
+      });
+      break;
+    case "kv_failure": {
+      scenario.kv.getFailure = new Error(`generated KV outage ${scenario.sequenceSeed}`);
+      const failure = await attemptCodexBankedReset(scenario.reset, scenario.deps);
+      assert.notEqual(failure.kind, "verified", label);
+      scenario.kv.getFailure = null;
+      break;
+    }
+    default:
+      // Every generated event is modelled above; this keeps the switch total.
+      assert.fail(`${label}: unmodelled generated event`);
+  }
+};
+
+/** Asserts the durable invariants that must hold after every generated event. */
+const assertBankedResetInvariants = (
+  scenario: GeneratedResetScenario,
+  label: string,
+  submissionsBefore: number,
+  mode: CodexBankedResetConfig["mode"]
+): void => {
+  const idempotencyKeys = new Set(scenario.provider.redeemInputs.map((input) => input.idempotencyKey));
+  assert.ok(scenario.provider.commitCount <= 1, `${label}: more than one provider commit`);
+  assert.ok(scenario.provider.redeemInputs.length <= 1, `${label}: more than one submission`);
+  assert.ok(idempotencyKeys.size <= 1, `${label}: different idempotency keys`);
+  if (!scenario.qualifyingObservationIsCurrent) {
+    assert.equal(scenario.provider.redeemInputs.length, submissionsBefore, `${label}: a non-qualifying response reached submission`);
+  }
+  if (mode === "disabled" || mode === "shadow") {
+    assert.equal(scenario.provider.commitCount, 0, `${label}: inactive mode committed`);
+  }
+  if (scenario.credentialWasRotated) {
+    // A rotated fence may still permit provider-level reconciliation of a
+    // prior unknown record, but it cannot start a submission under the
+    // stale candidate fence.
+    assert.equal(scenario.provider.redeemInputs.length, submissionsBefore, `${label}: stale fence submitted again`);
+  }
+};
+
+Deno.test("generated banked-reset event sequences retain the durable state-machine invariants", async () => {
   const sequenceCount = 48;
   let seed = 0x41c6_0de5;
   const next = (): number => {
@@ -1585,12 +1722,12 @@ Deno.test("generated banked-reset event sequences retain the durable state-machi
     // Each reproducible sequence includes the full model alphabet before a
     // deterministic shuffle/repetition, so a failing seed identifies the
     // exact interleaving without relying on a flaky random test runner.
-    const sequence = [...allEvents];
+    const sequence = [...BANKED_RESET_GENERATED_EVENTS];
     for (let index = sequence.length - 1; index > 0; index -= 1) {
       const swap = choose() % (index + 1);
-      [sequence[index], sequence[swap]] = [sequence[swap]!, sequence[index]!];
+      [sequence[index], sequence[swap]] = [sequence[swap], sequence[index]];
     }
-    for (let index = 0; index < 11; index += 1) sequence.push(allEvents[choose() % allEvents.length]!);
+    for (let index = 0; index < 11; index += 1) sequence.push(BANKED_RESET_GENERATED_EVENTS[choose() % BANKED_RESET_GENERATED_EVENTS.length]);
 
     const accountId = `generated-account-${sequenceIndex}`;
     const reset = candidate({
@@ -1604,7 +1741,7 @@ Deno.test("generated banked-reset event sequences retain the durable state-machi
     const provider = new FakeCodexUsageResetProvider();
     const clock = new TestClock();
     const modes: readonly CodexBankedResetConfig["mode"][] = ["live", "shadow", "disabled"];
-    const mode = modes[sequenceSeed % modes.length]!;
+    const mode = modes[sequenceSeed % modes.length];
     const configured = config({
       mode,
       enabled: mode === "live" || mode === "shadow",
@@ -1614,111 +1751,24 @@ Deno.test("generated banked-reset event sequences retain the durable state-machi
     provider.redeemResult = clone(sanitizedProviderFixtures.rate_limit);
     provider.commitOnRedeem = true;
 
-    let lastOutcome: Awaited<ReturnType<typeof attemptCodexBankedReset>> | null = null;
-    let postResetInferenceRetries = 0;
-    let credentialWasRotated = false;
-    let qualifyingObservationIsCurrent = false;
-    const dispatchVerifiedInferenceRetry = (): void => {
-      // This is the generated model's post-reset transport. The public
-      // Responses/Chat matrix separately drives the real gateway transport;
-      // here it makes the retry permit an executable state transition rather
-      // than a bookkeeping increment.
-      postResetInferenceRetries += 1;
+    const scenario: GeneratedResetScenario = {
+      reset,
+      deps,
+      provider,
+      kv,
+      clock,
+      sequenceSeed,
+      qualifyingObservationIsCurrent: false,
+      lastOutcome: null,
+      postResetInferenceRetries: 0,
+      credentialWasRotated: false,
     };
 
     for (const event of sequence) {
       const label = `seed ${sequenceSeed} event ${event}`;
       const submissionsBefore = provider.redeemInputs.length;
-      switch (event) {
-        case "request":
-          qualifyingObservationIsCurrent = false;
-          lastOutcome = null;
-          break;
-        case "qualifying_429":
-          qualifyingObservationIsCurrent = true;
-          lastOutcome = await attemptCodexBankedReset(reset, deps);
-          break;
-        case "claim":
-        case "submit":
-          if (qualifyingObservationIsCurrent) lastOutcome = await attemptCodexBankedReset(reset, deps);
-          break;
-        case "non_qualifying_429":
-          // A generic, malformed, or otherwise non-qualifying 429 never
-          // enters the state machine's submission path.
-          qualifyingObservationIsCurrent = false;
-          lastOutcome = null;
-          break;
-        case "provider_commit":
-          provider.redeemResult = clone(sanitizedProviderFixtures.rate_limit);
-          provider.commitOnRedeem = true;
-          if (qualifyingObservationIsCurrent) lastOutcome = await attemptCodexBankedReset(reset, deps);
-          break;
-        case "response_loss":
-          provider.redeemFailureAfterCommit = new Error(`response loss ${sequenceSeed}`);
-          if (qualifyingObservationIsCurrent) lastOutcome = await attemptCodexBankedReset(reset, deps);
-          provider.redeemFailureAfterCommit = null;
-          break;
-        case "lookup":
-          clock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
-          provider.lookupResult = clone(sanitizedProviderFixtures.lookup_pending);
-          lastOutcome = await reconcileCodexBankedReset(reset, deps);
-          break;
-        case "verify":
-          clock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
-          provider.lookupResult = clone(sanitizedProviderFixtures.lookup_completed);
-          provider.verifyResult = true;
-          lastOutcome = await reconcileCodexBankedReset(reset, deps);
-          break;
-        case "retry": {
-          const retriesBefore = postResetInferenceRetries;
-          let retryPermitted = false;
-          // The model can execute its one retry only from a verified durable
-          // outcome; it never treats an unknown or rejected state as a permit.
-          if (lastOutcome?.kind === "verified" && retriesBefore === 0) {
-            retryPermitted = true;
-            assert.equal(lastOutcome.record?.state, "verified", label);
-            dispatchVerifiedInferenceRetry();
-          }
-          assert.equal(postResetInferenceRetries > retriesBefore, retryPermitted, `${label}: retry must be granted only after verification`);
-          assert.ok(postResetInferenceRetries <= 1, label);
-          break;
-        }
-        case "crash":
-        case "lease_expire":
-          clock.advance(CODEX_BANKED_RESET_LEASE_MS + 1);
-          break;
-        case "credential_rotate":
-          credentialWasRotated = true;
-          await kv.set(credentialFenceKey(accountId), {
-            kind: "credential",
-            credential_version: `rotated-${sequenceSeed}`,
-          });
-          break;
-        case "kv_failure": {
-          kv.getFailure = new Error(`generated KV outage ${sequenceSeed}`);
-          const failure = await attemptCodexBankedReset(reset, deps);
-          assert.notEqual(failure.kind, "verified", label);
-          kv.getFailure = null;
-          break;
-        }
-      }
-
-      const idempotencyKeys = new Set(provider.redeemInputs.map((input) => input.idempotencyKey));
-      assert.ok(provider.commitCount <= 1, `${label}: more than one provider commit`);
-      assert.ok(provider.redeemInputs.length <= 1, `${label}: more than one submission`);
-      assert.ok(idempotencyKeys.size <= 1, `${label}: different idempotency keys`);
-      if (!qualifyingObservationIsCurrent) {
-        assert.equal(provider.redeemInputs.length, submissionsBefore, `${label}: a non-qualifying response reached submission`);
-      }
-      if (mode === "disabled" || mode === "shadow") {
-        assert.equal(provider.commitCount, 0, `${label}: inactive mode committed`);
-      }
-      if (credentialWasRotated) {
-        // A rotated fence may still permit provider-level reconciliation of a
-        // prior unknown record, but it cannot start a submission under the
-        // stale candidate fence.
-        assert.equal(provider.redeemInputs.length, submissionsBefore, `${label}: stale fence submitted again`);
-      }
+      await applyBankedResetEvent(scenario, event, label);
+      assertBankedResetInvariants(scenario, label, submissionsBefore, mode);
     }
   }
 });
@@ -2034,7 +2084,7 @@ Deno.test("a stale owner cannot finalize verified after a lease-takeover reconci
   assert.equal(stale.kind, "pending");
   assert.equal(stale.reason, "verification_cas_failed");
   assert.equal(provider.redeemInputs.length, 1);
-  assert.equal(kv.value<CodexResetRedemptionRecord>(codexResetRedemptionKey(takeover.accountIdHash!, takeover.quotaGeneration!))?.state, "unknown");
+  assert.equal(kv.redemptionRecord(codexResetRedemptionKey(requiredHash(takeover.accountIdHash), requiredHash(takeover.quotaGeneration)))?.state, "unknown");
 });
 
 Deno.test("receipt CAS loss leaves the transaction pending and recovery uses lookup instead of resubmission", async () => {
@@ -2378,7 +2428,7 @@ Deno.test("client aborts before submission and after a possible commit fail clos
 });
 
 Deno.test("a stalled blocked-cohort inventory is bounded before healthy routing resumes", async () => {
-  const originalTimeout = AbortSignal.timeout;
+  const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
   const timeoutController = new AbortController();
   let observedSignal: AbortSignal | null = null;
   (
@@ -2402,7 +2452,8 @@ Deno.test("a stalled blocked-cohort inventory is bounded before healthy routing 
       signal.addEventListener(
         "abort",
         () => {
-          reject(signal.reason ?? new DOMException("Inventory timed out", "TimeoutError"));
+          const abortReason: Error = signal.reason instanceof Error ? signal.reason : new DOMException("Inventory timed out", "TimeoutError");
+          reject(abortReason);
         },
         { once: true }
       );
@@ -2856,6 +2907,7 @@ Deno.test("config and durable-record parsers are strict, and an unproven provide
   assert.equal(parseCodexBankedResetConfig(() => "1").enabled, false);
   assert.equal(parseCodexBankedResetConfig(() => "1.5").maxGlobalPerDay, 0);
 
+  const submittedAtMs = 1_700_000_000_001;
   const validRecord: CodexResetRedemptionRecord = {
     v: 1,
     account_id_hash: "account-hash",
@@ -2870,7 +2922,7 @@ Deno.test("config and durable-record parsers are strict, and an unproven provide
     provider_receipt_id: "receipt",
     created_at_ms: 1_700_000_000_000,
     updated_at_ms: 1_700_000_000_001,
-    submitted_at_ms: 1_700_000_000_001,
+    submitted_at_ms: submittedAtMs,
     verified_at_ms: null,
     last_error_code: null,
   };
@@ -2907,7 +2959,7 @@ Deno.test("config and durable-record parsers are strict, and an unproven provide
     },
     {
       name: "verified cannot predate submission",
-      value: { ...validRecord, state: "verified", verified_at_ms: validRecord.submitted_at_ms! - 1 },
+      value: { ...validRecord, state: "verified", verified_at_ms: submittedAtMs - 1 },
     },
     {
       name: "rejected requires a stable error code",

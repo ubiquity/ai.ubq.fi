@@ -10,6 +10,8 @@ import {
   SENTINEL_UPSTREAM_MAX_ATTEMPTS,
   SENTINEL_UPSTREAM_MAX_BYTES,
   SENTINEL_UPSTREAM_MAX_CHUNKS,
+  type SentinelUpstreamAttempt,
+  type SentinelUpstreamTrace,
 } from "../src/sentinel_upstream_capture.ts";
 import {
   type AcceptedSentinelReplayInput,
@@ -24,6 +26,20 @@ import { base64UrlDecode, base64UrlEncode } from "../src/utils.ts";
 const kvAvailable = typeof Deno.openKv === "function";
 
 const encoder = new TextEncoder();
+
+/** The wrapped response body, which every wrapped response in this file must expose. */
+const responseBody = (response: Response): ReadableStream<Uint8Array> => {
+  const body = response.body;
+  assert.ok(body, "the wrapped response must expose a body stream");
+  return body;
+};
+
+/** The single captured attempt of a trace that must contain one. */
+const firstAttempt = (trace: SentinelUpstreamTrace): SentinelUpstreamAttempt => {
+  const attempt = trace.attempts[0];
+  assert.ok(attempt, "the trace must contain at least one attempt");
+  return attempt;
+};
 
 const invalidTrace = (attempt: Record<string, unknown>): Record<string, unknown> => ({
   version: 1,
@@ -197,7 +213,7 @@ Deno.test("recorder wrapper is lazy, forwards bytes, and records a complete EOF 
   assert.equal(wrapped.status, 200);
   assert.equal(wrapped.statusText, "OK");
   assert.equal(wrapped.headers.get("Content-Type"), "text/event-stream; charset=utf-8");
-  const reader = wrapped.body!.getReader();
+  const reader = responseBody(wrapped).getReader();
   assert.equal(sourcePulls, 0, "getReader must not pull");
   const collected: string[] = [];
   for (;;) {
@@ -214,7 +230,7 @@ Deno.test("recorder wrapper is lazy, forwards bytes, and records a complete EOF 
     trace.attempts.map((attempt) => attempt.provider),
     ["surplus"]
   );
-  const attempt = trace.attempts[0]!;
+  const attempt = firstAttempt(trace);
   assert.equal(attempt.status, 200);
   assert.equal(attempt.content_type, "text/event-stream");
   assert.equal(attempt.terminal, "eof");
@@ -234,7 +250,7 @@ Deno.test("recorder maps missing Content-Type on a real response to other and bo
   assert.equal(bodyless.status, 204);
   const trace = recorder.snapshotAndSeal();
   assert.deepEqual(
-    trace.attempts.map(({ status, content_type, terminal }) => ({ status, content_type, terminal })),
+    trace.attempts.map(({ status, content_type: contentType, terminal }) => ({ status, content_type: contentType, terminal })),
     [{ status: 204, content_type: "other", terminal: "eof" }]
   );
   recorder.dispose();
@@ -253,11 +269,11 @@ Deno.test("recorder preserves the original read error object and marks the trace
     { highWaterMark: 0 }
   );
   const wrapped = recorder.startAttempt("metered").wrap(new Response(source, { status: 200, headers: { "Content-Type": "application/json" } }));
-  const reader = wrapped.body!.getReader();
+  const reader = responseBody(wrapped).getReader();
   const first = await reader.read();
   assert.equal(new TextDecoder().decode(first.value), "partial-async");
   await assert.rejects(reader.read(), (error: unknown) => error === readError);
-  const attempt = recorder.snapshotAndSeal().attempts[0]!;
+  const attempt = firstAttempt(recorder.snapshotAndSeal());
   assert.equal(attempt.terminal, "read_error");
   assert.equal(attempt.status, 200);
   assert.deepEqual(
@@ -284,9 +300,9 @@ Deno.test("recorder forwards cancellation with the exact reason and surfaces rea
   );
   const reason = new DOMException("client cancelled the stream", "AbortError");
   const wrapped = recorder.startAttempt("cerebras").wrap(new Response(blocking, { status: 200, headers: { "Content-Type": "text/event-stream" } }));
-  await wrapped.body!.cancel(reason);
+  await responseBody(wrapped).cancel(reason);
   assert.equal(sourceCancelReason, reason, "the exact cancellation reason must reach the original reader");
-  const attempt = recorder.snapshotAndSeal().attempts[0]!;
+  const attempt = firstAttempt(recorder.snapshotAndSeal());
   assert.equal(attempt.terminal, "cancelled");
   assert.equal(attempt.status, 200);
   recorder.dispose();
@@ -305,7 +321,7 @@ Deno.test("recorder forwards cancellation with the exact reason and surfaces rea
   const wrappedReject = recorderReject
     .startAttempt("chatgpt_codex")
     .wrap(new Response(rejecting, { status: 200, headers: { "Content-Type": "application/json" } }));
-  await assert.rejects(wrappedReject.body!.cancel(new DOMException("abort", "AbortError")), (error: unknown) => error === cancelFailure);
+  await assert.rejects(responseBody(wrappedReject).cancel(new DOMException("abort", "AbortError")), (error: unknown) => error === cancelFailure);
   assert.equal(recorderReject.snapshotAndSeal().attempts[0]?.terminal, "cancelled");
   recorderReject.dispose();
 });
@@ -314,7 +330,9 @@ Deno.test("recorder bounds: attempts, chunks, and bytes with permanent truncatio
   const recorder = createSentinelUpstreamRecorder();
   const handles = Array.from({ length: SENTINEL_UPSTREAM_MAX_ATTEMPTS + 1 }, () => recorder.startAttempt("surplus"));
   const response = new Response(null, { status: 200 });
-  assert.equal(handles.at(-1)!.wrap(response), response, "over-bound attempts must be no-ops");
+  const lastHandle = handles.at(-1);
+  assert.ok(lastHandle, "the recorder must return a handle for every attempt");
+  assert.equal(lastHandle.wrap(response), response, "over-bound attempts must be no-ops");
   const traced = recorder.snapshotAndSeal();
   assert.equal(traced.attempts.length, SENTINEL_UPSTREAM_MAX_ATTEMPTS);
   assert.equal(traced.attempts_truncated, true);
@@ -322,11 +340,10 @@ Deno.test("recorder bounds: attempts, chunks, and bytes with permanent truncatio
 
   const byteRecorder = createSentinelUpstreamRecorder();
   const bigChunks = [new Uint8Array(70_000).fill(0x61), new Uint8Array(70_000).fill(0x62)];
-  let byteIndex = 0;
   const bigSource = new ReadableStream<Uint8Array>(
     {
       pull(controller) {
-        const next = bigChunks[byteIndex++];
+        const next = bigChunks.shift();
         if (next === undefined) controller.close();
         else controller.enqueue(next);
       },
@@ -334,7 +351,7 @@ Deno.test("recorder bounds: attempts, chunks, and bytes with permanent truncatio
     { highWaterMark: 0 }
   );
   const bigWrapped = byteRecorder.startAttempt("chatgpt_codex").wrap(new Response(bigSource, { status: 200, headers: { "Content-Type": "application/json" } }));
-  const bigReader = bigWrapped.body!.getReader();
+  const bigReader = responseBody(bigWrapped).getReader();
   for (;;) {
     const { done } = await bigReader.read();
     if (done) break;
@@ -342,10 +359,10 @@ Deno.test("recorder bounds: attempts, chunks, and bytes with permanent truncatio
   const byteTrace = byteRecorder.snapshotAndSeal();
   assert.equal(byteTrace.bytes_truncated, true);
   assert.equal(
-    byteTrace.attempts[0]!.chunks_base64.reduce((sum, chunk) => sum + base64UrlDecode(chunk).byteLength, 0),
+    firstAttempt(byteTrace).chunks_base64.reduce((sum, chunk) => sum + base64UrlDecode(chunk).byteLength, 0),
     SENTINEL_UPSTREAM_MAX_BYTES
   );
-  assert.equal(byteTrace.attempts[0]!.chunks_base64.length, 2);
+  assert.equal(firstAttempt(byteTrace).chunks_base64.length, 2);
   assert.equal(byteTrace.chunks_truncated, false);
   byteRecorder.dispose();
 
@@ -360,7 +377,7 @@ Deno.test("recorder bounds: attempts, chunks, and bytes with permanent truncatio
     { highWaterMark: 0 }
   );
   const manyWrapped = chunkRecorder.startAttempt("metered").wrap(new Response(manyChunks, { status: 200, headers: { "Content-Type": "text/event-stream" } }));
-  const manyReader = manyWrapped.body!.getReader();
+  const manyReader = responseBody(manyWrapped).getReader();
   let readCount = 0;
   while (readCount < SENTINEL_UPSTREAM_MAX_CHUNKS + 1) {
     const { done } = await manyReader.read();
@@ -369,11 +386,11 @@ Deno.test("recorder bounds: attempts, chunks, and bytes with permanent truncatio
   }
   await manyReader.cancel(new DOMException("test complete", "AbortError"));
   const chunkTrace = chunkRecorder.snapshotAndSeal();
-  assert.equal(chunkTrace.attempts[0]!.chunks_base64.length, SENTINEL_UPSTREAM_MAX_CHUNKS);
+  assert.equal(firstAttempt(chunkTrace).chunks_base64.length, SENTINEL_UPSTREAM_MAX_CHUNKS);
   assert.equal(chunkTrace.chunks_truncated, true);
   chunkRecorder.dispose();
   // The sealed trace survives disposal (the base64 snapshot is immutable).
-  assert.equal(byteTrace.attempts[0]!.chunks_base64.length, 2);
+  assert.equal(firstAttempt(byteTrace).chunks_base64.length, 2);
 });
 
 Deno.test("recorder bounds: simultaneous chunk and byte exhaustion discloses both limits", async () => {
@@ -394,7 +411,7 @@ Deno.test("recorder bounds: simultaneous chunk and byte exhaustion discloses bot
   const delivered = await wrapped.arrayBuffer();
   assert.equal(delivered.byteLength, SENTINEL_UPSTREAM_MAX_BYTES + 1, "capture bounds must not truncate the original response");
   const trace = recorder.snapshotAndSeal();
-  const attempt = trace.attempts[0]!;
+  const attempt = firstAttempt(trace);
   assert.equal(attempt.chunks_base64.length, SENTINEL_UPSTREAM_MAX_CHUNKS);
   assert.equal(
     attempt.chunks_base64.reduce((sum, chunk) => sum + base64UrlDecode(chunk).byteLength, 0),
@@ -438,7 +455,7 @@ Deno.test("canonical upstream JSON is deterministic and matches the v2 frame enc
     { highWaterMark: 0 }
   );
   const wrapped = recorder.startAttempt("chatgpt_codex").wrap(new Response(source, { status: 200, headers: { "Content-Type": "application/json" } }));
-  const reader = wrapped.body!.getReader();
+  const reader = responseBody(wrapped).getReader();
   for (;;) {
     const { done } = await reader.read();
     if (done) break;
@@ -506,7 +523,7 @@ const buildRecordedTrace = async (terminal: "eof" | "cancelled"): Promise<Return
     { highWaterMark: 0 }
   );
   const wrapped = recorder.startAttempt("chatgpt_codex").wrap(new Response(source, { status: 200, headers: { "Content-Type": "text/event-stream" } }));
-  const reader = wrapped.body!.getReader();
+  const reader = responseBody(wrapped).getReader();
   if (terminal === "eof") {
     for (;;) {
       const { done } = await reader.read();
@@ -533,8 +550,8 @@ Deno.test({
     try {
       const complete = await buildRecordedTrace("eof");
       const partial = await buildRecordedTrace("cancelled");
-      assert.equal(complete.attempts[0]!.terminal, "eof");
-      assert.equal(partial.attempts[0]!.terminal, "cancelled");
+      assert.equal(firstAttempt(complete).terminal, "eof");
+      assert.equal(firstAttempt(partial).terminal, "cancelled");
       assert.notEqual(canonicalSentinelUpstreamJson(complete), canonicalSentinelUpstreamJson(partial));
       const storedComplete = await persistEncryptedSentinelReplay({ ...input, upstream: complete }, failureObservation(), {
         kv,
@@ -562,7 +579,7 @@ Deno.test({
       const partialPlaintext = await decryptExportedSentinelReplay(await exportRoundTrip(storedPartial, kv), keyBytes);
       assert.deepEqual(partialPlaintext.upstream, partial);
     } finally {
-      await kv.close();
+      kv.close();
       setKvForTest(null);
     }
   },
@@ -630,7 +647,7 @@ Deno.test({
       };
       await assert.rejects(decryptExportedSentinelReplay(tampered, keyBytes));
     } finally {
-      await kv.close();
+      kv.close();
       setKvForTest(null);
     }
   },
@@ -663,7 +680,7 @@ Deno.test({
       const plaintext = await decryptExportedSentinelReplay(await exportRoundTrip(stored, kv), keyBytes);
       assert.deepEqual(plaintext.upstream, empty);
     } finally {
-      await kv.close();
+      kv.close();
       setKvForTest(null);
     }
   },

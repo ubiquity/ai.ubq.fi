@@ -415,6 +415,126 @@ function expectOptionalString(v: unknown, path: string): string | undefined {
   return expectString(v, path);
 }
 
+/** Validates the declared verification command, when present. */
+function validateVerify(value: unknown): TaskManifest["verify"] {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) fail("verify", "expected object");
+  return {
+    command: expectString(value.command, "verify.command"),
+    timeout_ms: value.timeout_ms === undefined ? undefined : expectInt(value.timeout_ms, "verify.timeout_ms", 1),
+  };
+}
+
+/** Validates the non-empty write-scope glob list. */
+function validateWriteScope(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length === 0) fail("allowed_write_scope", "must be a non-empty array of glob patterns");
+  return expectStringArray(value, "allowed_write_scope");
+}
+
+/** Validates one declared oracle file check. */
+function validateFileCheck(check: unknown, index: number): FileCheck {
+  const path = `oracle.file_checks[${index}]`;
+  if (!isRecord(check)) fail(path, "expected object");
+  const kind = expectString(check.kind, `${path}.kind`);
+  if (!["exists", "equals", "contains", "regex"].includes(kind)) {
+    fail(`${path}.kind`, `unknown kind ${kind}`);
+  }
+  if (kind !== "exists" && check.value === undefined) {
+    fail(`${path}.value`, `required for kind ${kind}`);
+  }
+  if (check.invert !== undefined && typeof check.invert !== "boolean") {
+    fail(`${path}.invert`, "expected boolean");
+  }
+  return {
+    path: expectString(check.path, `${path}.path`),
+    kind: kind as FileCheckKind,
+    value: expectOptionalString(check.value, `${path}.value`),
+    invert: check.invert === undefined ? undefined : (check.invert as boolean),
+  };
+}
+
+/** Validates one declared oracle git check. */
+function validateGitCheck(check: unknown, index: number): GitCheck {
+  const path = `oracle.git_checks[${index}]`;
+  if (!isRecord(check)) fail(path, "expected object");
+  const kind = expectString(check.kind, `${path}.kind`);
+  if (!["commit_count", "head_message", "worktree_clean", "file_committed"].includes(kind)) {
+    fail(`${path}.kind`, `unknown kind ${kind}`);
+  }
+  return {
+    kind: kind as GitCheckKind,
+    value: expectOptionalString(check.value, `${path}.value`),
+  };
+}
+
+/** Validates the declared success oracle, when present. */
+function validateOracle(value: unknown): TaskOracle | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) fail("oracle", "expected object");
+  const oracle: TaskOracle = {};
+  if (value.file_checks !== undefined) {
+    if (!Array.isArray(value.file_checks)) fail("oracle.file_checks", "expected array");
+    oracle.file_checks = value.file_checks.map((check, index) => validateFileCheck(check, index));
+  }
+  if (value.git_checks !== undefined) {
+    if (!Array.isArray(value.git_checks)) fail("oracle.git_checks", "expected array");
+    oracle.git_checks = value.git_checks.map((check, index) => validateGitCheck(check, index));
+  }
+  return oracle;
+}
+
+/** Validates the disposable git repository declaration, when present. */
+function validateGit(value: unknown): TaskManifest["git"] {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) fail("git", "expected object");
+  return {
+    init: Boolean(value.init),
+    history: value.history === undefined ? undefined : expectStringArray(value.history, "git.history"),
+  };
+}
+
+/** Validates one scripted-trail step's deterministic expectation, when present. */
+function validateTrailExpect(value: unknown, path: string): TrailStep["expect"] {
+  if (!isRecord(value)) fail(`${path}.expect`, "expected object");
+  return {
+    ok: value.ok === undefined ? undefined : Boolean(value.ok),
+    output_contains: value.output_contains === undefined ? undefined : expectStringArray(value.output_contains, `${path}.expect.output_contains`),
+    error_contains: expectOptionalString(value.error_contains, `${path}.expect.error_contains`),
+  };
+}
+
+/** Validates one scripted-trail step's injected failure, when present. */
+function validateTrailInject(value: unknown, path: string): TrailStep["inject"] {
+  if (!isRecord(value)) fail(`${path}.inject`, "expected object");
+  return {
+    error: expectString(value.error, `${path}.inject.error`),
+    error_code: expectOptionalString(value.error_code, `${path}.inject.error_code`),
+  };
+}
+
+/** Validates one recorded trail step. */
+function validateTrailStep(step: unknown, index: number): TrailStep {
+  const path = `scripted_trail[${index}]`;
+  if (!isRecord(step)) fail(path, "expected object");
+  const validated: TrailStep = {
+    tool: expectString(step.tool, `${path}.tool`),
+    args: isRecord(step.args) ? step.args : fail(`${path}.args`, "expected object"),
+  };
+  if (step.expect !== undefined) validated.expect = validateTrailExpect(step.expect, path);
+  if (step.inject !== undefined) validated.inject = validateTrailInject(step.inject, path);
+  if (step.wrong !== undefined) validated.wrong = Boolean(step.wrong);
+  if (step.repeat !== undefined) validated.repeat = Boolean(step.repeat);
+  if (step.recovery !== undefined) validated.recovery = Boolean(step.recovery);
+  return validated;
+}
+
+/** Validates the recorded scripted trail, when present. */
+function validateTrail(value: unknown): TrailStep[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) fail("scripted_trail", "expected array");
+  return value.map((step, index) => validateTrailStep(step, index));
+}
+
 export function validateTaskManifest(m: unknown): TaskManifest {
   if (!isRecord(m)) fail("task", "expected object");
   const id = expectString(m.id, "id");
@@ -424,7 +544,9 @@ export function validateTaskManifest(m: unknown): TaskManifest {
     fail("category", `expected one of ${TASK_CATEGORIES.join(", ")}, got ${JSON.stringify(m.category)}`);
   }
   const fixture = expectString(m.fixture, "fixture");
-  if (!/^sha256:[0-9a-f]{64}$/.test(String(m.fixture_revision ?? ""))) {
+  // The revision never renders as text: only a string can satisfy the check.
+  const fixtureRevision = typeof m.fixture_revision === "string" ? m.fixture_revision : "";
+  if (!/^sha256:[0-9a-f]{64}$/.test(fixtureRevision)) {
     fail("fixture_revision", `expected sha256:<hex>, got ${JSON.stringify(m.fixture_revision)}`);
   }
   expectInt(m.timeout_ms, "timeout_ms", 1);
@@ -434,105 +556,11 @@ export function validateTaskManifest(m: unknown): TaskManifest {
   if ((m.min_tool_calls as number) > (m.max_tool_calls as number)) {
     fail("min_tool_calls", "must not exceed max_tool_calls");
   }
-  const allowedWriteScope =
-    Array.isArray(m.allowed_write_scope) && m.allowed_write_scope.length > 0
-      ? expectStringArray(m.allowed_write_scope, "allowed_write_scope")
-      : (fail("allowed_write_scope", "must be a non-empty array of glob patterns") as never);
-
-  // verify / oracle
-  let verify: TaskManifest["verify"];
-  if (m.verify !== undefined) {
-    if (!isRecord(m.verify)) fail("verify", "expected object");
-    verify = {
-      command: expectString(m.verify.command, "verify.command"),
-      timeout_ms: m.verify.timeout_ms === undefined ? undefined : expectInt(m.verify.timeout_ms, "verify.timeout_ms", 1),
-    };
-  }
-
-  let oracle: TaskOracle | undefined;
-  if (m.oracle !== undefined) {
-    if (!isRecord(m.oracle)) fail("oracle", "expected object");
-    oracle = {};
-    if (m.oracle.file_checks !== undefined) {
-      if (!Array.isArray(m.oracle.file_checks)) fail("oracle.file_checks", "expected array");
-      oracle.file_checks = m.oracle.file_checks.map((c, i) => {
-        if (!isRecord(c)) fail(`oracle.file_checks[${i}]`, "expected object");
-        const kind = expectString(c.kind, `oracle.file_checks[${i}].kind`);
-        if (!["exists", "equals", "contains", "regex"].includes(kind)) {
-          fail(`oracle.file_checks[${i}].kind`, `unknown kind ${kind}`);
-        }
-        if (kind !== "exists" && c.value === undefined) {
-          fail(`oracle.file_checks[${i}].value`, `required for kind ${kind}`);
-        }
-        if (c.invert !== undefined && typeof c.invert !== "boolean") {
-          fail(`oracle.file_checks[${i}].invert`, "expected boolean");
-        }
-        return {
-          path: expectString(c.path, `oracle.file_checks[${i}].path`),
-          kind: kind as FileCheckKind,
-          value: expectOptionalString(c.value, `oracle.file_checks[${i}].value`),
-          invert: c.invert === undefined ? undefined : (c.invert as boolean),
-        };
-      });
-    }
-    if (m.oracle.git_checks !== undefined) {
-      if (!Array.isArray(m.oracle.git_checks)) fail("oracle.git_checks", "expected array");
-      oracle.git_checks = m.oracle.git_checks.map((c, i) => {
-        if (!isRecord(c)) fail(`oracle.git_checks[${i}]`, "expected object");
-        const kind = expectString(c.kind, `oracle.git_checks[${i}].kind`);
-        if (!["commit_count", "head_message", "worktree_clean", "file_committed"].includes(kind)) {
-          fail(`oracle.git_checks[${i}].kind`, `unknown kind ${kind}`);
-        }
-        return {
-          kind: kind as GitCheckKind,
-          value: expectOptionalString(c.value, `oracle.git_checks[${i}].value`),
-        };
-      });
-    }
-  }
-
-  // git
-  let git: TaskManifest["git"];
-  if (m.git !== undefined) {
-    if (!isRecord(m.git)) fail("git", "expected object");
-    git = {
-      init: Boolean(m.git.init),
-      history: m.git.history === undefined ? undefined : expectStringArray(m.git.history, "git.history"),
-    };
-  }
-
-  // trail
-  let trail: TrailStep[] | undefined;
-  if (m.scripted_trail !== undefined) {
-    if (!Array.isArray(m.scripted_trail)) fail("scripted_trail", "expected array");
-    trail = m.scripted_trail.map((s, i) => {
-      if (!isRecord(s)) fail(`scripted_trail[${i}]`, "expected object");
-      const step: TrailStep = {
-        tool: expectString(s.tool, `scripted_trail[${i}].tool`),
-        args: isRecord(s.args) ? s.args : fail(`scripted_trail[${i}].args`, "expected object"),
-      };
-      if (s.expect !== undefined) {
-        if (!isRecord(s.expect)) fail(`scripted_trail[${i}].expect`, "expected object");
-        step.expect = {
-          ok: s.expect.ok === undefined ? undefined : Boolean(s.expect.ok),
-          output_contains:
-            s.expect.output_contains === undefined ? undefined : expectStringArray(s.expect.output_contains, `scripted_trail[${i}].expect.output_contains`),
-          error_contains: expectOptionalString(s.expect.error_contains, `scripted_trail[${i}].expect.error_contains`),
-        };
-      }
-      if (s.inject !== undefined) {
-        if (!isRecord(s.inject)) fail(`scripted_trail[${i}].inject`, "expected object");
-        step.inject = {
-          error: expectString(s.inject.error, `scripted_trail[${i}].inject.error`),
-          error_code: expectOptionalString(s.inject.error_code, `scripted_trail[${i}].inject.error_code`),
-        };
-      }
-      if (s.wrong !== undefined) step.wrong = Boolean(s.wrong);
-      if (s.repeat !== undefined) step.repeat = Boolean(s.repeat);
-      if (s.recovery !== undefined) step.recovery = Boolean(s.recovery);
-      return step;
-    });
-  }
+  const allowedWriteScope = validateWriteScope(m.allowed_write_scope);
+  const verify = validateVerify(m.verify);
+  const oracle = validateOracle(m.oracle);
+  const git = validateGit(m.git);
+  const trail = validateTrail(m.scripted_trail);
 
   return {
     id,

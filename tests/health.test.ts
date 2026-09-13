@@ -22,7 +22,7 @@ const kvStub = {
     kvStore.delete(keyToString(key));
     return Promise.resolve();
   },
-  list: async function* (_selector: Deno.KvListSelector, _options?: Deno.KvListOptions) {
+  list: function* (_selector: Deno.KvListSelector, _options?: Deno.KvListOptions) {
     yield* [];
   },
   atomic: () => {
@@ -68,7 +68,15 @@ const {
 } = await import("../src/provider_health.ts");
 resetAuthCache = resetCodexAuthCacheForTest;
 
-const base64Url = (value: string): string => btoa(value).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+// Base64url strips the "=" padding. A regex such as /=+$/g is super-linear: an
+// unanchored quantifier re-consumes the whole "=" run at every start position,
+// so strip the trailing run with a linear scan instead.
+const base64Url = (value: string): string => {
+  const encoded = btoa(value).replace(/\+/g, "-").replace(/\//g, "_");
+  let end = encoded.length;
+  while (end > 0 && encoded.charAt(end - 1) === "=") end -= 1;
+  return encoded.slice(0, end);
+};
 
 const makeJwt = (expSeconds: number | null): string => {
   const header = base64Url(JSON.stringify({ alg: "none", typ: "JWT" }));
@@ -329,7 +337,7 @@ Deno.test("public health is passive release provenance with zero upstream and KV
   let fetchCalls = 0;
   let kvCalls = 0;
   const originalFetch = globalThis.fetch;
-  const originalGet = kvStub.get;
+  const originalGet = kvStub.get.bind(kvStub);
   globalThis.fetch = () => {
     fetchCalls += 1;
     throw new Error("public health must not fetch");
@@ -340,7 +348,7 @@ Deno.test("public health is passive release provenance with zero upstream and KV
   };
 
   try {
-    const response = await handleHealth();
+    const response = handleHealth();
     const payload = (await response.json()) as {
       status?: string;
       release?: { git_sha?: string; deployment_id?: string };
@@ -490,7 +498,7 @@ Deno.test("active upstream health preserves the provider that finishes before th
         return;
       }
       const rejectWithReason = () => {
-        reject(signal.reason);
+        reject(new Error("health probe fetch was aborted", { cause: signal.reason }));
       };
       if (signal.aborted) rejectWithReason();
       else signal.addEventListener("abort", rejectWithReason, { once: true });
@@ -521,7 +529,7 @@ Deno.test("active upstream health preserves the provider that finishes before th
             })
           );
         }
-        throw new Error(`Unexpected Metered URL: ${url}`);
+        throw new Error(`Unexpected Metered URL: ${url.href}`);
       };
 
       const response = await handleHealthUpstream();

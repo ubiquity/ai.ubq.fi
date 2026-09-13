@@ -71,12 +71,12 @@ const captureRequest = (token: string | null): Request =>
     body: CAPTURE_BODY,
   });
 
-const exportUrl = (params: Record<string, string>): string => `https://ai.ubq.fi/admin/sentinel/replay-captures?${new URLSearchParams(params)}`;
+const exportUrl = (params: Record<string, string>): string => `https://ai.ubq.fi/admin/sentinel/replay-captures?${new URLSearchParams(params).toString()}`;
 
 const countManifests = async (kv: Deno.Kv): Promise<number> => {
-  let count = 0;
-  for await (const _entry of kv.list({ prefix: SENTINEL_REPLAY_MANIFEST_PREFIX })) count += 1;
-  return count;
+  const manifestKeys: Deno.KvKey[] = [];
+  for await (const entry of kv.list({ prefix: SENTINEL_REPLAY_MANIFEST_PREFIX })) manifestKeys.push(entry.key);
+  return manifestKeys.length;
 };
 
 type TerminalLogInput = Parameters<typeof withTerminalRequestLog>[1];
@@ -206,7 +206,7 @@ Deno.test({
       assert.equal(incidentsText.includes(MARKER), false, "index leaks request plaintext");
       assert.equal(incidentsBody.cursor, null);
       assert.equal(incidentsBody.data.length, 1);
-      const incident = incidentsBody.data[0]!;
+      const incident = incidentsBody.data[0];
       assert.equal(incident.severity, "P2");
       assert.equal(incident.count, 1);
       assert.equal(incident.provenance.endpoint, "https://ai.ubq.fi/v1/responses");
@@ -231,7 +231,7 @@ Deno.test({
       assert.equal(scoped.status, 200);
       const scopedBody = (await scoped.json()) as { data: ExportedSentinelReplayCapture[] };
       assert.equal(scopedBody.data.length, 1, "the durable incident id must reach the bound capture");
-      const scopedCapture = scopedBody.data[0]!;
+      const scopedCapture = scopedBody.data[0];
       const ciphertextParts = scopedCapture.chunks.map(base64UrlDecode);
       const ciphertextLength = ciphertextParts.reduce((sum, part) => sum + part.byteLength, 0);
       const ciphertext = new Uint8Array(ciphertextLength);
@@ -248,7 +248,7 @@ Deno.test({
     } finally {
       Deno.env.delete("SENTINEL_REPLAY_KEY");
       adminTokens.delete(SUPER_ADMIN_TOKEN);
-      await kv.close();
+      kv.close();
       setKvForTest(null);
     }
   },
@@ -272,7 +272,7 @@ Deno.test({
       assert.equal(invalid.status, 401);
       assert.equal(await countManifests(kv), 0);
     } finally {
-      await kv.close();
+      kv.close();
       setKvForTest(null);
     }
   },

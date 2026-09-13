@@ -118,17 +118,23 @@ Deno.test("metrics: aggregates results into config and task groups", () => {
     }),
   ];
   const summary = aggregateResults(results, runsRoot);
-  if (summary.run_count !== 3 || summary.success_count !== 2 || summary.success_rate !== 2 / 3) {
+  // Exact SameValue comparison is intentional: the aggregate computes this same
+  // quotient (success_count / run_count), so the two doubles are bit-identical
+  // and a tolerance range would only mask a real regression.
+  const expectedSuccessRate = 2 / 3;
+  if (summary.run_count !== 3 || summary.success_count !== 2 || !Object.is(summary.success_rate, expectedSuccessRate)) {
     throw new Error(`summary counts ${summary.run_count}/${summary.success_count}`);
   }
-  const config = summary.by_config.find((g) => g.config_id === "reference")!;
-  if (config.task_count !== 2 || config.failures !== 1 || config.success_rate !== 2 / 3) {
+  const config = summary.by_config.find((g) => g.config_id === "reference");
+  if (config === undefined) throw new Error("reference config group missing");
+  if (config.task_count !== 2 || config.failures !== 1 || !Object.is(config.success_rate, expectedSuccessRate)) {
     throw new Error("config group wrong");
   }
   if (config.wall_time_ms.median !== 20 || config.wall_time_ms.p95 !== 30) throw new Error("wall stats wrong");
   if (config.failure_classes.verification_failed !== 1) throw new Error("failure class breakdown wrong");
   if (config.total_tool_errors !== 2) throw new Error("totals wrong");
-  const task = summary.by_task_config.find((g) => g.task_id === "t-001")!;
+  const task = summary.by_task_config.find((g) => g.task_id === "t-001");
+  if (task === undefined) throw new Error("t-001 task group missing");
   if (task.runs !== 2 || task.failures !== 1) throw new Error("task group wrong");
   if (!formatSummary(summary).includes("runs: 3")) throw new Error("summary formatting broken");
 });

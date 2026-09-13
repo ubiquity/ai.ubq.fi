@@ -20,7 +20,7 @@ export function loadTasks(tasksDir: string): TaskManifest[] {
   for (const entry of Deno.readDirSync(tasksDir)) {
     if (entry.isFile && entry.name.endsWith(".json")) files.push(entry.name);
   }
-  files.sort();
+  files.sort((a, b) => a.localeCompare(b));
   const tasks = files.map((name) => {
     const raw = Deno.readTextFileSync(`${tasksDir}/${name}`);
     let parsed: unknown;
@@ -43,18 +43,29 @@ export function loadTasks(tasksDir: string): TaskManifest[] {
   return tasks;
 }
 
+/** One pattern character as a regex fragment: a glob wildcard or the escaped literal. */
+function globCharToRegex(c: string): string {
+  if (c === "*") return ".*";
+  if (c === "?") return ".";
+  return c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+}
+
 /** Simple glob matcher for `*` and `?` (no `**`; segment-aligned). */
 function globMatches(pattern: string, value: string): boolean {
   if (pattern === "*") return true;
-  const re = new RegExp(
-    "^" +
-      pattern
-        .split("")
-        .map((c) => (c === "*" ? ".*" : c === "?" ? "." : c.replace(/[.+^${}()|[\]\\]/g, "\\$&")))
-        .join("") +
-      "$"
-  );
+  const re = new RegExp("^" + pattern.split("").map(globCharToRegex).join("") + "$");
   return re.test(value);
+}
+
+/** Ids matched by one selector, or `null` when that selector matches no task. */
+function selectByOneSelector(tasks: TaskManifest[], selector: string): string[] | null {
+  if (selector.startsWith("category:")) {
+    const cat = selector.slice("category:".length) as TaskCategory;
+    const inCategory = tasks.filter((t) => t.category === cat);
+    return inCategory.length === 0 ? null : inCategory.map((t) => t.id);
+  }
+  const matched = tasks.filter((t) => globMatches(selector, t.id));
+  return matched.length === 0 ? null : matched.map((t) => t.id);
 }
 
 /**
@@ -66,18 +77,12 @@ export function selectTasks(tasks: TaskManifest[], selectors: string[]): TaskMan
   const chosen = new Set<string>();
   const unknown: string[] = [];
   for (const sel of selectors) {
-    if (sel.startsWith("category:")) {
-      const cat = sel.slice("category:".length) as TaskCategory;
-      if (!tasks.some((t) => t.category === cat)) {
-        unknown.push(sel);
-        continue;
-      }
-      for (const t of tasks) if (t.category === cat) chosen.add(t.id);
+    const ids = selectByOneSelector(tasks, sel);
+    if (ids === null) {
+      unknown.push(sel);
       continue;
     }
-    const matched = tasks.filter((t) => globMatches(sel, t.id));
-    if (matched.length === 0) unknown.push(sel);
-    for (const t of matched) chosen.add(t.id);
+    for (const id of ids) chosen.add(id);
   }
   if (unknown.length > 0) {
     const known = tasks.map((t) => t.id);

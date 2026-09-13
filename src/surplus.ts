@@ -1,6 +1,6 @@
 import { STREAM_FIRST_EVENT_DEADLINE_MS } from "./inference_deadline.ts";
 import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
-import { readResponsesStream } from "./responses_stream.ts";
+import { readResponsesStream, type ResponsesStreamEvent } from "./responses_stream.ts";
 import type { SentinelUpstreamRecorder } from "./sentinel_upstream_capture.ts";
 
 export const SURPLUS_BASE_URL = "https://api.surplusintelligence.ai";
@@ -54,7 +54,12 @@ export type SurplusAuthenticatedFetchOptions = Readonly<{
   fetcher?: SurplusFetch;
   signal?: AbortSignal;
   supportsParallelToolCalls?: boolean;
-  beforeDispatch?: () => Promise<ApiKeyProviderDispatch | void>;
+  /**
+   * Optional pre-transport hook. It either resolves to a dispatch handle that can
+   * still cancel the admitted reservation, or resolves with no value at all, so
+   * the return type stays a plain `void` arm instead of a `void` union member.
+   */
+  beforeDispatch?: (() => Promise<ApiKeyProviderDispatch>) | (() => void);
   onDispatch?: () => void;
   /** Request-owned passive recorder; best effort, never required. */
   sentinelUpstreamRecorder?: SentinelUpstreamRecorder;
@@ -243,14 +248,10 @@ export const fetchSurplusModels = async (
   if (options.cachedOnly) return surplusModelsCache;
   // Only the ordinary discovery path shares an upstream request. Callers that
   // supply a signal, fetcher, API key, or force a refresh retain their own
-  // request semantics and do not join another caller's request.
+  // request semantics and do not join another caller's request. `cachedOnly` is
+  // already excluded by the early return above.
   const shouldCoalesce =
-    !options.force &&
-    !options.cachedOnly &&
-    options.apiKey === undefined &&
-    options.fetcher === undefined &&
-    options.signal === undefined &&
-    options.requireApiKey === undefined;
+    !options.force && options.apiKey === undefined && options.fetcher === undefined && options.signal === undefined && options.requireApiKey === undefined;
   if (shouldCoalesce && surplusModelsFetchInFlight) return await surplusModelsFetchInFlight;
 
   const requestGeneration = ++surplusModelsFetchGeneration;
@@ -316,6 +317,16 @@ const requireSurplusApiKey = (supplied: string | null | undefined): string => {
   throw new SurplusError("Surplus paid fallback is unavailable because SURPLUS_API_KEY is not configured.", "surplus_api_key_missing", 503);
 };
 
+// Rejection reasons must be Errors. Deno's DOMException is an Error, so a real
+// abort reason is always passed through unchanged; only a missing or exotic
+// reason becomes the canonical AbortError the call sites already expect.
+const abortRejectionReason = (reason: unknown): Error => (reason instanceof Error ? reason : new DOMException("Aborted", "AbortError"));
+
+// A failed upstream operation keeps its original Error so callers can still
+// match on it; anything else is wrapped, which leaves the failure classification
+// in fetchSurplusResponses unchanged.
+const requestFailureReason = (reason: unknown): Error => (reason instanceof Error ? reason : new Error("Surplus Responses request failed.", { cause: reason }));
+
 const awaitWithAbort = <T>(operation: PromiseLike<T>, signal: AbortSignal): Promise<T> =>
   new Promise<T>((resolve, reject) => {
     let settled = false;
@@ -327,7 +338,7 @@ const awaitWithAbort = <T>(operation: PromiseLike<T>, signal: AbortSignal): Prom
     };
     const onAbort = (): void => {
       finish(() => {
-        reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+        reject(abortRejectionReason(signal.reason));
       });
     };
     if (signal.aborted) {
@@ -341,9 +352,9 @@ const awaitWithAbort = <T>(operation: PromiseLike<T>, signal: AbortSignal): Prom
           resolve(value);
         });
       },
-      (error) => {
+      (error: unknown) => {
         finish(() => {
-          reject(error);
+          reject(requestFailureReason(error));
         });
       }
     );
@@ -363,56 +374,84 @@ const responseRequestId = (response: Response): string | null =>
 
 const encodeResponsesEvent = (value: JsonRecord): Uint8Array => new TextEncoder().encode(`event: ${String(value.type)}\ndata: ${JSON.stringify(value)}\n\n`);
 
+// Indices arrive as JSON primitives. Render only those explicitly: `String()` on
+// an object would silently produce "[object Object]" as a part key.
+const responsesPartIndex = (value: unknown): string => (typeof value === "number" || typeof value === "string" ? String(value) : "0");
+
+const responsesPartKey = (value: JsonRecord): string => `${responsesPartIndex(value.output_index)}:${responsesPartIndex(value.content_index)}`;
+
+type SurplusTextPartState = {
+  textParts: Map<string, string>;
+  doneTextParts: Set<string>;
+  sawMessageDone: boolean;
+};
+
+const applyResponsesTextEvent = (state: SurplusTextPartState, event: ResponsesStreamEvent): void => {
+  const value = event.value;
+  if (event.type === "response.output_text.delta") {
+    const key = responsesPartKey(value);
+    state.textParts.set(key, `${state.textParts.get(key) ?? ""}${typeof value.delta === "string" ? value.delta : ""}`);
+    return;
+  }
+  if (event.type === "response.output_text.done") {
+    state.doneTextParts.add(responsesPartKey(value));
+    return;
+  }
+  if (event.type === "response.output_item.done" && isRecord(value.item) && value.item.type === "message") {
+    state.sawMessageDone = true;
+  }
+};
+
+// Canonical events emitted for the terminal `response.completed` event: the
+// buffered text parts as `response.output_text.done`, then the item and the
+// completed event itself.
+const completedResponsesEvents = (state: SurplusTextPartState, value: JsonRecord): Uint8Array[] => {
+  const chunks: Uint8Array[] = [];
+  const orderedParts = [...state.textParts.entries()].sort(([left], [right]) => left.localeCompare(right));
+  for (const [key, text] of orderedParts) {
+    if (state.doneTextParts.has(key)) continue;
+    const [outputIndex, contentIndex] = key.split(":").map(Number);
+    chunks.push(
+      encodeResponsesEvent({
+        type: "response.output_text.done",
+        output_index: outputIndex,
+        content_index: contentIndex,
+        text,
+      })
+    );
+  }
+  const text = orderedParts.map(([, part]) => part).join("");
+  const message = {
+    type: "message",
+    role: "assistant",
+    status: "completed",
+    content: [{ type: "output_text", text, annotations: [] }],
+  };
+  if (text && !state.sawMessageDone) {
+    chunks.push(encodeResponsesEvent({ type: "response.output_item.done", output_index: 0, item: message }));
+  }
+  const completed = isRecord(value.response) ? { ...value, response: { ...value.response, ...(text ? { output: [message] } : {}) } } : value;
+  chunks.push(encodeResponsesEvent(completed));
+  return chunks;
+};
+
 const normalizeSurplusResponsesStream = (response: Response): Response => {
   if (!response.body || !response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")) {
     return response;
   }
   const consumerAbort = new AbortController();
   const source = readResponsesStream(response.body, consumerAbort.signal);
-  const textParts = new Map<string, string>();
-  const doneTextParts = new Set<string>();
-  let sawMessageDone = false;
-  const partKey = (value: JsonRecord): string => `${String(value.output_index ?? 0)}:${String(value.content_index ?? 0)}`;
+  const state: SurplusTextPartState = { textParts: new Map<string, string>(), doneTextParts: new Set<string>(), sawMessageDone: false };
   const iterator = (async function* () {
     for await (const event of source) {
-      const value = event.value;
-      if (event.type === "response.output_text.delta") {
-        const key = partKey(value);
-        textParts.set(key, `${textParts.get(key) ?? ""}${typeof value.delta === "string" ? value.delta : ""}`);
-      } else if (event.type === "response.output_text.done") {
-        doneTextParts.add(partKey(value));
-      } else if (event.type === "response.output_item.done" && isRecord(value.item) && value.item.type === "message") {
-        sawMessageDone = true;
-      }
+      applyResponsesTextEvent(state, event);
 
       if (event.type !== "response.completed") {
-        yield encodeResponsesEvent(value);
+        yield encodeResponsesEvent(event.value);
         continue;
       }
 
-      const orderedParts = [...textParts.entries()].sort(([left], [right]) => left.localeCompare(right));
-      for (const [key, text] of orderedParts) {
-        if (doneTextParts.has(key)) continue;
-        const [outputIndex, contentIndex] = key.split(":").map(Number);
-        yield encodeResponsesEvent({
-          type: "response.output_text.done",
-          output_index: outputIndex,
-          content_index: contentIndex,
-          text,
-        });
-      }
-      const text = orderedParts.map(([, part]) => part).join("");
-      const message = {
-        type: "message",
-        role: "assistant",
-        status: "completed",
-        content: [{ type: "output_text", text, annotations: [] }],
-      };
-      if (text && !sawMessageDone) {
-        yield encodeResponsesEvent({ type: "response.output_item.done", output_index: 0, item: message });
-      }
-      const completed = isRecord(value.response) ? { ...value, response: { ...value.response, ...(text ? { output: [message] } : {}) } } : value;
-      yield encodeResponsesEvent(completed);
+      for (const chunk of completedResponsesEvents(state, event.value)) yield chunk;
     }
   })();
   return new Response(
@@ -451,6 +490,17 @@ const toSurplusResponsesBody = (body: JsonRecord, supportsParallelToolCalls: boo
     ...forwardedBody,
     reasoning: { ...forwardedBody.reasoning, effort: "max" },
   };
+};
+
+// Classify a failed transport attempt: preserve the errors callers already
+// handle, rethrow an abort reason when a signal caused it, and otherwise report
+// the upstream as unreachable.
+const surplusTransportFailure = (error: unknown, signal: AbortSignal | undefined, headersDeadline: AbortController): unknown => {
+  if (error instanceof ApiKeyQuotaDispatchError) return error;
+  if (signal?.aborted) return signal.reason ?? error;
+  if (headersDeadline.signal.aborted) return headersDeadline.signal.reason ?? error;
+  if (error instanceof Error && error.name === "AbortError") return error;
+  return new SurplusError("Surplus Responses request could not reach the upstream service.", "surplus_upstream_unreachable", 502);
 };
 
 export const fetchSurplusResponses = async (body: unknown, options: SurplusAuthenticatedFetchOptions = {}): Promise<SurplusResponsesResult> => {
@@ -498,11 +548,7 @@ export const fetchSurplusResponses = async (body: unknown, options: SurplusAuthe
     );
   } catch (error) {
     upstreamAttempt?.recordFetchError();
-    if (error instanceof ApiKeyQuotaDispatchError) throw error;
-    if (options.signal?.aborted) throw options.signal.reason ?? error;
-    if (headersDeadline.signal.aborted) throw headersDeadline.signal.reason ?? error;
-    if (error instanceof Error && error.name === "AbortError") throw error;
-    throw new SurplusError("Surplus Responses request could not reach the upstream service.", "surplus_upstream_unreachable", 502);
+    throw surplusTransportFailure(error, options.signal, headersDeadline);
   } finally {
     clearTimeout(headersTimer);
   }

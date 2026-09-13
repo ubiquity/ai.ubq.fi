@@ -1,5 +1,5 @@
-const parseArgs = (args: string[]): Record<string, string | boolean> => {
-  const out: Record<string, string | boolean> = {};
+const parseArgs = (args: string[]): Record<string, string | boolean | undefined> => {
+  const out: Record<string, string | boolean | undefined> = {};
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (!arg.startsWith("--")) continue;
@@ -61,7 +61,7 @@ const readCodexVersionFile = async (): Promise<string | null> => {
 
 const readCodexPackageVersion = async (codexPath: string): Promise<string | null> => {
   if (!codexPath) return null;
-  let realPath = codexPath;
+  let realPath: string;
   try {
     realPath = await Deno.realPath(codexPath);
   } catch {
@@ -127,7 +127,7 @@ const parsed = parseArgs(Deno.args);
 const baseUrl = (parsed.url as string | undefined) ?? "https://ai.ubq.fi";
 const authJsonPath = expandTilde((parsed["auth-json"] as string | undefined) ?? "~/.codex/auth.json");
 const adminToken = (parsed["admin-token"] as string | undefined) ?? Deno.env.get("DENO_DEPLOY_TOKEN") ?? "";
-if (parsed["skip-models"] !== undefined || parsed["no-models"] !== undefined) {
+if (Object.hasOwn(parsed, "skip-models") || Object.hasOwn(parsed, "no-models")) {
   console.error("--skip-models is obsolete; upload-auth always stores the live upstream Codex model catalog.");
   Deno.exit(2);
 }

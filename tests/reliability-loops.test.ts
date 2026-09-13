@@ -11,7 +11,8 @@ import {
 } from "../src/harmony/reliability/loops.ts";
 
 const ok = (output = "content") => ({ ok: true, output });
-const fail = (error_code: string, error = "boom") => ({ ok: false, error_code, error });
+// The wire field stays `error_code`; the parameter itself follows the repo's naming convention.
+const fail = (errorCode: string, error = "boom") => ({ ok: false, error_code: errorCode, error });
 
 Deno.test("loops: canonical arguments are order-independent and nested", () => {
   assert.equal(canonicalArgs({ b: 1, a: 2 }), canonicalArgs({ a: 2, b: 1 }));

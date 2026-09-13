@@ -33,7 +33,7 @@ export const discardRawBodyObserverOnce = (req: Request): void => {
 const declaredContentLength = (req: Request): number | null => {
   const raw = req.headers.get("content-length");
   if (raw === null) return null;
-  if (!/^(?:0|[1-9][0-9]*)$/.test(raw)) throw new Error("Request Content-Length is invalid");
+  if (!/^(?:0|[1-9]\d*)$/.test(raw)) throw new Error("Request Content-Length is invalid");
   const parsed = Number(raw);
   if (!Number.isSafeInteger(parsed)) throw new Error("Request Content-Length is invalid");
   return parsed;

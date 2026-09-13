@@ -123,7 +123,8 @@ Deno.test("canonical: registered C is external-inference by default and inert wi
 Deno.test("canonical: a fake-transport C run completes a task with guard evidence", async () => {
   const { runsRoot } = freshOptions();
   try {
-    const task = loadTasks(TASKS_DIR).find((t) => t.id === "nav-001")!;
+    const task = loadTasks(TASKS_DIR).find((t) => t.id === "nav-001");
+    assert.ok(task, "nav-001 must exist in the benchmark manifest");
     const adapter = createCanonicalAdapter({
       transport: trailTransport(task),
       configId: "C-fake",
@@ -183,7 +184,11 @@ Deno.test("canonical: the C-fake matrix succeeds on every manifest with determin
         throw new Error(`${task.id}: ${result.failure_class}: ${result.failure_detail} ` + `(reliability: ${JSON.stringify(result.reliability)})`);
       }
     }
-    const byId = (id: string) => results.find((r) => r.task_id === id)!;
+    const byId = (id: string): BenchmarkResult => {
+      const found = results.find((r) => r.task_id === id);
+      assert.ok(found, `${id} must have produced a result`);
+      return found;
+    };
     // Guard evidence profiles are deterministic.
     assert.ok((byId("nav-001").reliability?.guard_rejections ?? 0) >= 1);
     assert.equal(byId("fail-001").reliability?.duplicate_calls, 1); // identical exec retry blocked
@@ -200,7 +205,8 @@ Deno.test("canonical: the C-fake matrix succeeds on every manifest with determin
 Deno.test("canonical: the compact surface never exposes experimental broad tools", async () => {
   const { runsRoot } = freshOptions();
   try {
-    const task = loadTasks(TASKS_DIR).find((t) => t.id === "nav-001")!;
+    const task = loadTasks(TASKS_DIR).find((t) => t.id === "nav-001");
+    assert.ok(task, "nav-001 must exist in the benchmark manifest");
     const adapter = createCanonicalAdapter({
       transport: trailTransport(task),
       configId: "C-fake",

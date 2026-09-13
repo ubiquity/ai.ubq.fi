@@ -13,6 +13,11 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "forceConsistentCasingInFileNames": true,
+    // The pinned @types/node in tools/lint matches the Node declarations the
+    // Deno checker itself uses, and TypeScript's default typeRoots walk cannot
+    // see them from the repository root, so both are declared explicitly.
+    "typeRoots": ["./tools/lint/node_modules/@types"],
+    "types": ["node"],
     "skipLibCheck": true
   },
   "include": [

@@ -37,19 +37,26 @@ type StoredValue = {
 
 const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
 
+// `String(input)` would render a `Request` as "[object Request]" instead of its URL.
+const requestUrl = (input: RequestInfo | URL): string => {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.href;
+  return input.url;
+};
+
 class CapacityKvStore extends Map<string, StoredValue> {
-  private nextVersion = 0;
+  private _nextVersion = 0;
 
   clearStore(): void {
     super.clear();
-    this.nextVersion = 0;
+    this._nextVersion = 0;
     resetCodexAuthCacheForTest();
     resetCodexAccountRoutingForTest();
   }
 
   put(key: Deno.KvKey, value: unknown): void {
-    this.nextVersion += 1;
-    this.set(keyToString(key), { value, versionstamp: `v${this.nextVersion}` });
+    this._nextVersion += 1;
+    this.set(keyToString(key), { value, versionstamp: `v${this._nextVersion}` });
   }
 
   remove(key: Deno.KvKey): void {
@@ -78,7 +85,7 @@ const kvStub = {
   delete: (key: Deno.KvKey) => {
     kvStore.remove(key);
   },
-  list: async function* (selector?: { prefix?: Deno.KvKey }) {
+  list: function* (selector?: { prefix?: Deno.KvKey }) {
     const prefix = selector?.prefix;
     for (const [encodedKey, stored] of kvStore.entries()) {
       const key = JSON.parse(encodedKey) as Deno.KvKey;
@@ -210,7 +217,7 @@ const createFetcher =
   ) =>
   (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const headers = new Headers(init?.headers);
-    const url = String(input);
+    const url = requestUrl(input);
     const account = headers.get("ChatGPT-Account-ID");
     calls.push({ account, authorization: headers.get("Authorization"), url });
     if (url === "https://api.openlux.ai/api/usage/token/") {
@@ -416,8 +423,14 @@ Deno.test("sampler creates one fixed combined bucket and redacts account credent
   const meteredCalls = calls.filter((call) => call.url.startsWith("https://api.openlux.ai/api/"));
   assert.equal(codexCalls.length, 2);
   assert.equal(meteredCalls.length, 1);
-  assert.deepEqual(codexCalls.map((call) => call.account).sort(), ["account-one", "account-two"]);
-  assert.deepEqual(codexCalls.map((call) => call.authorization).sort(), ["Bearer token-one", "Bearer token-two"]);
+  assert.deepEqual(
+    codexCalls.map((call) => call.account).sort((left, right) => (left ?? "").localeCompare(right ?? "")),
+    ["account-one", "account-two"]
+  );
+  assert.deepEqual(
+    codexCalls.map((call) => call.authorization).sort((left, right) => (left ?? "").localeCompare(right ?? "")),
+    ["Bearer token-one", "Bearer token-two"]
+  );
   assert.equal(live.history.length, 1);
   assert.equal(live.history[0]?.bucket_start_at_ms, Math.floor(nowMs / PROVIDER_CAPACITY_HISTORY_BUCKET_MS) * PROVIDER_CAPACITY_HISTORY_BUCKET_MS);
   assert.equal(live.history[0]?.sources.length, 3);
@@ -507,12 +520,18 @@ Deno.test("sampler records a substantial rate-limit reset and preserves both sam
     [],
     null,
     {},
-    (account) => (account === "account-one" ? (phase === 0 ? [80, 35] : [20, 35]) : [45, 55]),
+    (account) => {
+      if (account !== "account-one") return [45, 55];
+      return phase === 0 ? [80, 35] : [20, 35];
+    },
     false,
     1_800_011_000,
     503,
     null,
-    (account) => (account === "account-one" ? (phase === 0 ? [1_800_010_000, 1_800_020_000] : [1_800_020_000, 1_800_020_000]) : [1_800_010_000, 1_800_020_000])
+    (account) => {
+      if (account !== "account-one") return [1_800_010_000, 1_800_020_000];
+      return phase === 0 ? [1_800_010_000, 1_800_020_000] : [1_800_020_000, 1_800_020_000];
+    }
   );
 
   await refreshProviderCapacity({ kv: kvStub, fetcher, now: () => nowMs });
@@ -608,19 +627,24 @@ Deno.test("rejected comparison read preserves the coherent durable reset evidenc
     [],
     null,
     {},
-    (account) => (account === "account-one" ? (phase === 0 ? [80, 35] : [10, 35]) : [45, 55]),
+    (account) => {
+      if (account !== "account-one") return [45, 55];
+      return phase === 0 ? [80, 35] : [10, 35];
+    },
     false,
     1_800_011_000,
     503,
     null,
-    (account) => (account === "account-one" ? (phase === 0 ? [1_800_010_000, 1_800_020_000] : [1_800_020_000, 1_800_020_000]) : [1_800_010_000, 1_800_020_000])
+    (account) => {
+      if (account !== "account-one") return [1_800_010_000, 1_800_020_000];
+      return phase === 0 ? [1_800_010_000, 1_800_020_000] : [1_800_020_000, 1_800_020_000];
+    }
   );
   await refreshProviderCapacity({ kv: kvStub, fetcher, now: () => nowMs });
   const bucketKey = providerCapacityHistoryKey(nowMs);
   const lastAvailableKey = ["uos_ai", "provider_capacity", "v1", "last_available", 1] as const;
   let rejectedHistoryRead = false;
   const failingKv = {
-    ...kvStub,
     get: (key: Deno.KvKey, options?: { consistency?: "strong" | "eventual" }) => {
       if (!rejectedHistoryRead && options?.consistency === "strong" && keyToString(key) === keyToString(bucketKey)) {
         rejectedHistoryRead = true;
@@ -628,6 +652,11 @@ Deno.test("rejected comparison read preserves the coherent durable reset evidenc
       }
       return kvStub.get(key, options);
     },
+    set: kvStub.set.bind(kvStub),
+    delete: kvStub.delete.bind(kvStub),
+    list: kvStub.list.bind(kvStub),
+    atomic: kvStub.atomic.bind(kvStub),
+    close: kvStub.close.bind(kvStub),
   } as unknown as Deno.Kv;
 
   phase = 1;
@@ -637,9 +666,9 @@ Deno.test("rejected comparison read preserves the coherent durable reset evidenc
     live.history.map((point) => point.sampled_at_ms),
     [nowMs, nowMs + 1_000]
   );
-  assert.equal((kvStore.get(keyToString(PROVIDER_CAPACITY_SNAPSHOT_KEY))?.value as { snapshot_at_ms?: number })?.snapshot_at_ms, nowMs);
-  assert.equal((kvStore.get(keyToString(bucketKey))?.value as { sampled_at_ms?: number })?.sampled_at_ms, nowMs);
-  assert.equal((kvStore.get(keyToString(lastAvailableKey))?.value as { sampled_at_ms?: number })?.sampled_at_ms, nowMs);
+  assert.equal((kvStore.get(keyToString(PROVIDER_CAPACITY_SNAPSHOT_KEY))?.value as { snapshot_at_ms?: number } | undefined)?.snapshot_at_ms, nowMs);
+  assert.equal((kvStore.get(keyToString(bucketKey))?.value as { sampled_at_ms?: number } | undefined)?.sampled_at_ms, nowMs);
+  assert.equal((kvStore.get(keyToString(lastAvailableKey))?.value as { sampled_at_ms?: number } | undefined)?.sampled_at_ms, nowMs);
   assert.equal(kvStore.get(keyToString(PROVIDER_CAPACITY_LEASE_KEY)), undefined);
 
   const retried = await refreshProviderCapacity({ kv: kvStub, fetcher, now: () => nowMs + 2_000 });
@@ -658,17 +687,23 @@ Deno.test("sampler detects a reset when the healthy sample follows a 401 outage"
     calls,
     null,
     {},
-    (account) => (account === "account-one" ? (phase === 2 ? [10, 35] : [80, 35]) : [45, 55]),
+    (account) => {
+      if (account !== "account-one") return [45, 55];
+      return phase === 2 ? [10, 35] : [80, 35];
+    },
     false,
     1_800_011_000,
     503,
     null,
-    (account) => (account === "account-one" ? (phase === 2 ? [1_800_020_000, 1_800_020_000] : [1_800_010_000, 1_800_020_000]) : [1_800_010_000, 1_800_020_000])
+    (account) => {
+      if (account !== "account-one") return [1_800_010_000, 1_800_020_000];
+      return phase === 2 ? [1_800_020_000, 1_800_020_000] : [1_800_010_000, 1_800_020_000];
+    }
   );
   const fetcher = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const account = new Headers(init?.headers).get("ChatGPT-Account-ID");
     if (phase === 1 && account === "account-one") {
-      calls.push({ account, authorization: new Headers(init?.headers).get("Authorization"), url: String(input) });
+      calls.push({ account, authorization: new Headers(init?.headers).get("Authorization"), url: requestUrl(input) });
       return Promise.resolve(new Response("unauthorized", { status: 401 }));
     }
     return baseFetcher(input, init);
@@ -711,7 +746,7 @@ Deno.test("sampler detects a reset when the healthy sample follows a 401 outage"
     },
   ]);
   assert.deepEqual(
-    recovered.history.map((point) => [point.sampled_at_ms, point.sources[0]?.state]),
+    recovered.history.map((point) => [point.sampled_at_ms, point.sources[0].state]),
     [
       [nowMs, "available"],
       [outageAtMs, "unavailable"],
@@ -729,7 +764,11 @@ Deno.test("sampler does not backfill an outage reset across an account replaceme
     calls,
     null,
     {},
-    (account) => (account === "replacement-account" ? [10, 35] : account === "account-one" ? [80, 35] : [45, 55]),
+    (account) => {
+      if (account === "replacement-account") return [10, 35];
+      if (account === "account-one") return [80, 35];
+      return [45, 55];
+    },
     false,
     1_800_011_000,
     503,
@@ -742,7 +781,7 @@ Deno.test("sampler does not backfill an outage reset across an account replaceme
       calls.push({
         account: "account-one",
         authorization: headers.get("Authorization"),
-        url: String(input),
+        url: requestUrl(input),
       });
       return Promise.resolve(new Response("unauthorized", { status: 401 }));
     }
@@ -784,7 +823,10 @@ Deno.test("sampler does not record a capacity gain when the reset timer does not
     [],
     null,
     {},
-    (account) => (account === "account-one" ? (phase === 0 ? [80, 35] : [20, 35]) : [45, 55]),
+    (account) => {
+      if (account !== "account-one") return [45, 55];
+      return phase === 0 ? [80, 35] : [20, 35];
+    },
     false,
     1_800_011_000,
     503,
@@ -807,12 +849,18 @@ Deno.test("sampler does not record a timer advance below the substantial-gain th
     [],
     null,
     {},
-    (account) => (account === "account-one" ? (phase === 0 ? [60, 35] : [60 - belowThreshold, 35]) : [45, 55]),
+    (account) => {
+      if (account !== "account-one") return [45, 55];
+      return phase === 0 ? [60, 35] : [60 - belowThreshold, 35];
+    },
     false,
     1_800_011_000,
     503,
     null,
-    (account) => (account === "account-one" ? (phase === 0 ? [1_800_010_000, 1_800_020_000] : [1_800_020_000, 1_800_020_000]) : [1_800_010_000, 1_800_020_000])
+    (account) => {
+      if (account !== "account-one") return [1_800_010_000, 1_800_020_000];
+      return phase === 0 ? [1_800_010_000, 1_800_020_000] : [1_800_020_000, 1_800_020_000];
+    }
   );
 
   await refreshProviderCapacity({ kv: kvStub, fetcher, now: () => nowMs });
@@ -1025,6 +1073,18 @@ Deno.test("capacity endpoint reads persisted state by default and probes only fo
   assert.equal(calls, 3);
 });
 
+// Both concurrent-refresh tests hold their provider calls open until the test releases them.
+const createGatedFetcher =
+  (
+    baseFetcher: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
+    gate: Promise<void>
+  ): ((input: RequestInfo | URL, init?: RequestInit) => Promise<Response>) =>
+  async (input, init) => {
+    const response = await baseFetcher(input, init);
+    await gate;
+    return response;
+  };
+
 Deno.test("concurrent live refreshes coalesce through the durable lease", async () => {
   seed();
   const calls: { account: string | null; authorization: string | null; url: string }[] = [];
@@ -1035,11 +1095,7 @@ Deno.test("concurrent live refreshes coalesce through the durable lease", async 
     };
   });
   const baseFetcher = createFetcher(calls);
-  const fetcher = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const response = await baseFetcher(input, init);
-    await fetchReleased;
-    return response;
-  };
+  const fetcher = createGatedFetcher(baseFetcher, fetchReleased);
 
   const firstPromise = refreshProviderCapacity({
     kv: kvStub,
@@ -1308,11 +1364,7 @@ Deno.test("concurrent cron samplers keep one provider probe under the durable le
       releaseFetch = resolve;
     });
     const baseFetcher = createFetcher(calls);
-    const fetcher = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-      const response = await baseFetcher(input, init);
-      await fetchReleased;
-      return response;
-    };
+    const fetcher = createGatedFetcher(baseFetcher, fetchReleased);
 
     const first = sampleProviderCapacityForCron({
       kv: countingKv as unknown as Deno.Kv,

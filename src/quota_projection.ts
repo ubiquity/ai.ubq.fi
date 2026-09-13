@@ -107,11 +107,16 @@ export const groupPaidFallbackUsageRollups = (rollups: readonly PaidFallbackUsag
   }
   return [...byModelProvider.entries()]
     .map(([identity, buckets]) => {
-      const [model, provider] = identity.split("\u0000");
+      // The identity was built in this function from the two rollup fields, so
+      // the split always yields both parts; the defaults are type-level only.
+      const [model = "", provider = ""] = identity.split("\u0000");
+      // `buckets` is the array this call created above, so sorting it in place
+      // stays local: the caller only ever sees the returned series.
+      buckets.sort((left, right) => left.bucket_start_at_ms - right.bucket_start_at_ms);
       return {
-        model: model ?? "",
-        provider: provider ?? "",
-        buckets: buckets.sort((left, right) => left.bucket_start_at_ms - right.bucket_start_at_ms),
+        model,
+        provider,
+        buckets,
       } satisfies PaidFallbackModelSeries;
     })
     .sort((left, right) => left.model.localeCompare(right.model) || left.provider.localeCompare(right.provider));

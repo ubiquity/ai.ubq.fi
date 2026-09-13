@@ -27,6 +27,32 @@ import openApiText from "../static/openapi.json" with { type: "text" };
 import privacyHtml from "../static/privacy.html" with { type: "text" };
 import styleCss from "../static/style.css" with { type: "text" };
 
+/**
+ * Linear equivalent of `html.replace(/<[^>]+>/g, " ")`: every run from a "<" to the next ">" that has
+ * at least one character between them becomes a single space. A regex here is super-linearly
+ * backtracking (sonarjs/super-linear-regex), and every candidate rewrite changes which runs match.
+ */
+const stripHtmlTags = (html: string): string => {
+  let text = "";
+  let cursor = 0;
+  let search = 0;
+  while (search < html.length) {
+    const open = html.indexOf("<", search);
+    if (open === -1) break;
+    const close = html.indexOf(">", open + 1);
+    if (close === -1) break;
+    if (close === open + 1) {
+      // "<>" has no tag content, so the regex cannot match here: keep the "<" and keep scanning after it.
+      search = open + 1;
+      continue;
+    }
+    text += `${html.slice(cursor, open)} `;
+    cursor = close + 1;
+    search = cursor;
+  }
+  return text + html.slice(cursor);
+};
+
 Deno.test("static assets register frontend module dependencies", () => {
   for (const path of [
     "/admin.js",
@@ -111,8 +137,7 @@ Deno.test("public console pages share versioned styles, canonical navigation, an
     const links = [...primaryNav.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a>/g)].map((match) => ({
       attributes: match[1] ?? "",
       href: match[1]?.match(/\bhref="([^"]+)"/)?.[1] ?? "",
-      label: (match[2] ?? "")
-        .replace(/<[^>]+>/g, " ")
+      label: stripHtmlTags(match[2] ?? "")
         .replace(/\s+/g, " ")
         .trim(),
     }));
@@ -149,7 +174,7 @@ Deno.test("public console pages share versioned styles, canonical navigation, an
 Deno.test("public console styles retain the bordered neutral admin surface without decorative Models blue", () => {
   const ruleBodies = (css: string, selector: string): string[] => {
     const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return [...css.matchAll(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`, "g"))].map((match) => match[1] ?? "");
+    return [...css.matchAll(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`, "g"))].map((match) => match[1]);
   };
   const ruleBodyContaining = (css: string, selector: string, declaration: string): string => {
     const body = ruleBodies(css, selector).find((candidate) => candidate.includes(declaration));
@@ -240,7 +265,8 @@ Deno.test("public brand logos are inline and inherit the page foreground", async
   ]) {
     const response = await handleStaticAsset(path);
     assert.equal(response?.status, 200, `${path} must be publicly served`);
-    const html = await response!.text();
+    assert.ok(response, `${path} must be publicly served`);
+    const html = await response.text();
     assert.equal(html, sourceHtml, `${path} must serve the inline brand markup`);
     assert.doesNotMatch(html, /<img\b[^>]*(?:data-logo|data-models-logo)[^>]*>/, `${path} must not embed its logo`);
     assert.match(html, /<svg\b(?=[^>]*\bdata-logo\b)[^>]*>[\s\S]*?<path\b[\s\S]*?fill="currentColor"/, `${path} must use an inline currentColor logo`);
@@ -437,7 +463,10 @@ Deno.test("OpenAPI discovery contract describes the public inference API", () =>
   assert.equal(generation.operationId, "createImage");
   assert.equal(edit.operationId, "createImageEdit");
   assert.deepEqual(Object.keys(generation.requestBody.content), ["application/json"]);
-  assert.deepEqual(Object.keys(edit.requestBody.content).sort(), ["application/json", "multipart/form-data"]);
+  assert.deepEqual(
+    Object.keys(edit.requestBody.content).sort((a, b) => a.localeCompare(b)),
+    ["application/json", "multipart/form-data"]
+  );
   assert.equal(generation.requestBody.content["application/json"].schema.$ref, "#/components/schemas/ImageGenerationRequest");
   assert.equal(edit.requestBody.content["application/json"].schema.$ref, "#/components/schemas/ImageEditJsonRequest");
   assert.equal(edit.requestBody.content["multipart/form-data"].schema.$ref, "#/components/schemas/ImageEditMultipartRequest");
@@ -506,7 +535,7 @@ Deno.test("OpenAPI discovery contract describes the public inference API", () =>
 
 Deno.test("published agent contracts distinguish bodyless catalog revalidation and conditional rate limits", () => {
   const document = JSON.parse(openApiText);
-  const developerText = developersHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+  const developerText = stripHtmlTags(developersHtml).replace(/\s+/g, " ");
   const modelResponses = document.paths["/v1/models"].get.responses;
   const modelList = modelResponses["200"];
   const notModified = document.paths["/v1/models"].get.responses["304"];
@@ -538,7 +567,8 @@ Deno.test("agent discovery documents are served with useful media types", async 
 
   assert.equal(llms?.status, 200);
   assert.equal(llms?.headers.get("content-type"), "text/plain; charset=utf-8");
-  assert.match(await llms!.text(), /https:\/\/ai\.ubq\.fi\/openapi\.json/);
+  assert.ok(llms, "/llms.txt must be publicly served");
+  assert.match(await llms.text(), /https:\/\/ai\.ubq\.fi\/openapi\.json/);
   assert.equal(llmsFull?.headers.get("content-type"), "text/plain; charset=utf-8");
   assert.equal(markdown?.headers.get("content-type"), "text/markdown; charset=utf-8");
   assert.equal(openapi?.headers.get("content-type"), "application/json; charset=utf-8");
@@ -557,10 +587,7 @@ Deno.test("homepage content negotiation serves server-rendered HTML, Markdown, a
   }
   const rawHtml = await html.text();
   assert.match(rawHtml, /<h1>UbiquityOS AI Gateway<\/h1>/);
-  const readableText = rawHtml
-    .replace(/<[^>]+>/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  const readableText = stripHtmlTags(rawHtml).replace(/\s+/g, " ").trim();
   assert.ok(readableText.length >= 500);
   assert.ok(readableText.length / rawHtml.length >= 0.05, "homepage should keep readable text above 5% of HTML");
 
@@ -637,9 +664,9 @@ Deno.test("homepage metadata and agent guidance expose the canonical service ide
   for (const path of ["/developers", "/openapi.json", "/llms.txt", "/llms-full.txt"]) {
     assert.match(indexHtml, new RegExp(`href="${path}"`), `homepage should link ${path}`);
   }
-  const jsonLdMatch = indexHtml.match(/<script type="application\/ld\+json">\s*([\s\S]*?)\s*<\/script>/);
-  if (!jsonLdMatch?.[1]) throw new Error("homepage should include JSON-LD");
-  const jsonLd = JSON.parse(jsonLdMatch[1]);
+  const jsonLdText = indexHtml.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)?.[1]?.trim();
+  if (!jsonLdText) throw new Error("homepage should include JSON-LD");
+  const jsonLd = JSON.parse(jsonLdText);
   assert.ok(jsonLd.some((entry: { "@type"?: string }) => entry["@type"] === "SoftwareApplication"));
   assert.ok(jsonLd.some((entry: { "@type"?: string }) => entry["@type"] === "Organization"));
   assert.match(llmsText, /## When to use this service/);
@@ -651,22 +678,19 @@ Deno.test("trust pages and crawl artifacts are public, substantial, and well for
     const response = await handleStaticAsset(path);
     assert.equal(response?.status, 200, `${path} should be public`);
     assert.equal(response?.headers.get("content-type"), "text/html; charset=utf-8");
-    const body = await response!.text();
-    assert.ok(
-      body
-        .replace(/<[^>]+>/g, " ")
-        .replace(/\s+/g, " ")
-        .trim().length >= 500,
-      `${path} should have real text`
-    );
+    assert.ok(response, `${path} should be public`);
+    const body = await response.text();
+    assert.ok(stripHtmlTags(body).replace(/\s+/g, " ").trim().length >= 500, `${path} should have real text`);
   }
 
   const robots = await handleStaticAsset("/robots.txt");
   const sitemap = await handleStaticAsset("/sitemap.xml");
+  assert.ok(robots, "/robots.txt should be public");
+  assert.ok(sitemap, "/sitemap.xml should be public");
   assert.equal(robots?.headers.get("content-type"), "text/plain; charset=utf-8");
-  assert.match(await robots!.text(), /Sitemap: https:\/\/ai\.ubq\.fi\/sitemap\.xml/);
+  assert.match(await robots.text(), /Sitemap: https:\/\/ai\.ubq\.fi\/sitemap\.xml/);
   assert.equal(sitemap?.headers.get("content-type"), "application/xml; charset=utf-8");
-  const sitemapText = await sitemap!.text();
+  const sitemapText = await sitemap.text();
   assert.match(sitemapText, /^<\?xml version="1\.0" encoding="UTF-8"\?>/);
   for (const path of ["", "/developers", "/docs", "/about", "/contact", "/privacy"]) {
     const sitemapPath = path || "/";

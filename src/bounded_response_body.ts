@@ -25,11 +25,24 @@ export type ReadBoundedResponseBodyOptions = Readonly<{
 export const BOUNDED_RESPONSE_BODY_MAX_BYTES = 64 * 1024;
 export const BOUNDED_RESPONSE_BODY_TIMEOUT_MS = 1_000;
 
+/**
+ * `AbortSignal.reason` is untyped, so a caller can abort with an arbitrary
+ * value.  A promise rejection must carry an `Error`: when the reason already is
+ * one it is passed through unchanged, otherwise it is preserved as the abort
+ * error's `cause` instead of being rejected verbatim.
+ */
+const abortError = (reason: unknown): Error => {
+  if (reason instanceof Error) return reason;
+  const error = new Error("Upstream response body read aborted.", { cause: reason });
+  error.name = "AbortError";
+  return error;
+};
+
 const abortableRead = async <T>(reader: ReadableStreamDefaultReader<T>, signal: AbortSignal): Promise<ReadableStreamReadResult<T>> => {
   let onAbort = (): void => {};
   const aborted = new Promise<never>((_, reject) => {
     onAbort = () => {
-      reject(signal.reason ?? new DOMException("Upstream response body read aborted.", "AbortError"));
+      reject(abortError(signal.reason));
     };
     signal.addEventListener("abort", onAbort, { once: true });
     if (signal.aborted) onAbort();

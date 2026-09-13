@@ -8,43 +8,78 @@ if (typeof Deno.KvU64 !== "function") {
 
 const encodeKey = (key: Deno.KvKey): string => JSON.stringify(key);
 
+/** Deterministic per-step cache telemetry cycles for these transport stubs. */
+const CACHE_READ_CYCLE = [0, 2_560, 0, 2_560, 2_560, 2_560, 2_560, 2_560, 2_560, 2_560] as const;
+/** Writes lead with three hits (the mixed-discriminator fixtures). */
+const CACHE_WRITE_CYCLE_LEADING = [2_560, 2_560, 2_560, 0, 0, 0, 0, 0, 0, 0] as const;
+/** Writes alternate hit and miss (the refresh/rotation fixtures). */
+const CACHE_WRITE_CYCLE_ALTERNATING = [2_560, 0, 2_560, 0, 0, 0, 0, 0, 0, 0] as const;
+
+/** Code-unit ascending string order: exactly what an argument-less `Array.prototype.sort()` does. */
+const compareStrings = (left: string, right: string): number => {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+};
+
+/** Total lookup into a fixed telemetry cycle; these fixtures never exceed one cycle. */
+const cycleValue = (cycle: readonly number[], step: number): number => {
+  const value = cycle.at(step);
+  if (value === undefined) throw new Error(`cache telemetry cycle has no step ${step}`);
+  return value;
+};
+
+/** URL text of a fetch input, matching the transport's own routing. */
+const fetchInputUrl = (input: RequestInfo | URL): string => {
+  if (input instanceof Request) return input.url;
+  if (input instanceof URL) return input.toString();
+  return input;
+};
+
+/** The captured request body, which these transports always send as a JSON string. */
+const requestBodyText = (init?: RequestInit): string => {
+  const body = init?.body ?? "";
+  if (typeof body !== "string") throw new Error("scope experiment requests must send a JSON string body");
+  return body;
+};
+
 type AtomicWrite = Readonly<{ type: "set" | "delete"; key: Deno.KvKey; value?: unknown }>;
 
 class ExperimentKv {
   readonly values = new Map<string, unknown>();
-  private readonly revisions = new Map<string, number>();
-  private nextRevision = 1;
+  private readonly _revisions = new Map<string, number>();
+  private _nextRevision = 1;
   atomicCalls = 0;
   beforeGet: ((key: Deno.KvKey) => void | Promise<void>) | null = null;
   afterAtomicCommit: ((writes: readonly AtomicWrite[]) => void) | null = null;
 
   clear(): void {
     this.values.clear();
-    this.revisions.clear();
-    this.nextRevision = 1;
+    this._revisions.clear();
+    this._nextRevision = 1;
     this.atomicCalls = 0;
     this.beforeGet = null;
     this.afterAtomicCommit = null;
   }
 
   put(key: Deno.KvKey, value: unknown): void {
-    this.write(key, value);
+    this._write(key, value);
   }
 
-  private versionstamp(key: Deno.KvKey): string | null {
-    const revision = this.revisions.get(encodeKey(key));
+  private _versionstamp(key: Deno.KvKey): string | null {
+    const revision = this._revisions.get(encodeKey(key));
     return revision === undefined ? null : String(revision).padStart(20, "0");
   }
 
-  private write(key: Deno.KvKey, value: unknown, revision = this.nextRevision++): void {
+  private _write(key: Deno.KvKey, value: unknown, revision = this._nextRevision++): void {
     const encoded = encodeKey(key);
     this.values.set(encoded, value);
-    this.revisions.set(encoded, revision);
+    this._revisions.set(encoded, revision);
   }
 
-  private remove(key: Deno.KvKey, _revision = this.nextRevision++): void {
+  private _remove(key: Deno.KvKey, _revision = this._nextRevision++): void {
     this.values.delete(encodeKey(key));
-    this.revisions.delete(encodeKey(key));
+    this._revisions.delete(encodeKey(key));
   }
 
   async get<T>(key: Deno.KvKey, options?: { consistency?: "strong" | "eventual" }): Promise<Deno.KvEntryMaybe<T>> {
@@ -53,17 +88,19 @@ class ExperimentKv {
     return {
       key,
       value: (this.values.get(encodeKey(key)) ?? null) as T | null,
-      versionstamp: this.versionstamp(key),
+      versionstamp: this._versionstamp(key),
     } as Deno.KvEntryMaybe<T>;
   }
 
   set(key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }): Promise<Deno.KvCommitResult> {
-    this.write(key, value);
-    return Promise.resolve({ ok: true, versionstamp: this.versionstamp(key)! });
+    this._write(key, value);
+    const versionstamp = this._versionstamp(key);
+    assert.ok(versionstamp, "a written key must expose a versionstamp");
+    return Promise.resolve({ ok: true, versionstamp });
   }
 
   delete(key: Deno.KvKey): Promise<void> {
-    this.remove(key);
+    this._remove(key);
     return Promise.resolve();
   }
 
@@ -85,13 +122,13 @@ class ExperimentKv {
         return chain;
       },
       commit: () => {
-        if (checks.some((entry) => this.versionstamp(entry.key) !== entry.versionstamp)) {
+        if (checks.some((entry) => this._versionstamp(entry.key) !== entry.versionstamp)) {
           return Promise.resolve({ ok: false, versionstamp: null } as const);
         }
-        const revision = this.nextRevision++;
+        const revision = this._nextRevision++;
         for (const write of writes) {
-          if (write.type === "set") this.write(write.key, write.value, revision);
-          else this.remove(write.key, revision);
+          if (write.type === "set") this._write(write.key, write.value, revision);
+          else this._remove(write.key, revision);
         }
         this.afterAtomicCommit?.(writes);
         return Promise.resolve({ ok: true, versionstamp: String(revision).padStart(20, "0") } as const);
@@ -245,8 +282,8 @@ const scopeBaselineFor = async (model = MODEL) => {
   if (inventory.status !== "ready") throw new Error("missing seeded target inventory");
   const target = inventory.targets.find((candidate) => candidate.provider === "codex_chatgpt" && candidate.model === model);
   const runtimeStamp = await runtimeVersionstamp();
+  if (!target) throw new Error("missing seeded probeable target");
   if (
-    !target ||
     target.probeability.status !== "probeable" ||
     !target.catalog_versionstamp ||
     !target.codex_auth_pool_versionstamp ||
@@ -397,13 +434,13 @@ Deno.test("prompt-cache scope uses three fixed cycles, publishes canonical scope
     requests.push({
       account: request.headers.get("chatgpt-account-id"),
       conversation: request.headers.get("conversation_id"),
-      body: String(init?.body ?? ""),
+      body: requestBodyText(init),
     });
     const step = responseIndex++ % 10;
-    const cachedTokens = [0, 2_560, 0, 2_560, 2_560, 2_560, 2_560, 2_560, 2_560, 2_560][step]!;
+    const cachedTokens = cycleValue(CACHE_READ_CYCLE, step);
     // A cache read and a cache write may be reported together. The scope
     // probe must still treat cached_tokens as a conclusive read signal.
-    const cacheWriteTokens = [2_560, 2_560, 2_560, 0, 0, 0, 0, 0, 0, 0][step]!;
+    const cacheWriteTokens = cycleValue(CACHE_WRITE_CYCLE_LEADING, step);
     return Promise.resolve(sseCompleted(cachedTokens, cacheWriteTokens));
   };
 
@@ -445,7 +482,7 @@ Deno.test("prompt-cache scope uses three fixed cycles, publishes canonical scope
       );
       assert.equal(new Set(rows.map((row) => (JSON.parse(row.body) as Record<string, unknown>).prompt_cache_key)).size, 1);
       const body = JSON.parse(rows[0]?.body ?? "") as Record<string, unknown>;
-      assert.deepEqual(Object.keys(body).sort(), ["input", "model", "prompt_cache_key", "reasoning", "store", "stream"]);
+      assert.deepEqual(Object.keys(body).sort(compareStrings), ["input", "model", "prompt_cache_key", "reasoning", "store", "stream"]);
       assert.equal(body.model, MODEL);
       assert.equal(body.store, false);
       assert.equal(body.stream, true);
@@ -462,8 +499,8 @@ Deno.test("prompt-cache scope uses three fixed cycles, publishes canonical scope
       assert.deepEqual(prefix[0]?.type, "input_text");
       assert.equal("prompt_cache_breakpoint" in (prefix[0] ?? {}), false);
       const [cycleNonce, stablePrefix] = String(prefix[0]?.text).split("\n\n");
-      assert.match(cycleNonce ?? "", /^cache-scope-cycle:/);
-      cycleNonces.add(cycleNonce ?? "");
+      assert.match(cycleNonce, /^cache-scope-cycle:/);
+      cycleNonces.add(cycleNonce);
       assert.equal(stablePrefix.split(" ").length, 2_560);
       const request = input[1]?.content as Record<string, unknown>[];
       assert.deepEqual(input[1]?.role, "user");
@@ -535,7 +572,13 @@ Deno.test("prompt-cache scope uses three fixed cycles, publishes canonical scope
     assert.equal(samples.length, 30);
     for (const sample of samples) {
       assert.deepEqual(sample.raw_usage, sample.usage);
-      assert.deepEqual(Object.keys(sample.raw_usage ?? {}).sort(), ["cache_write_tokens", "cached_tokens", "input_tokens", "output_tokens", "total_tokens"]);
+      assert.deepEqual(Object.keys(sample.raw_usage ?? {}).sort(compareStrings), [
+        "cache_write_tokens",
+        "cached_tokens",
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+      ]);
       assert.equal(
         Object.values(sample.raw_usage ?? {}).every((value) => typeof value === "number"),
         true
@@ -559,7 +602,7 @@ Deno.test("prompt-cache scope makes a sample with neither read nor write telemet
   const originalFetch = globalThis.fetch;
   let inferenceCalls = 0;
   globalThis.fetch = (input) => {
-    const url = input instanceof Request ? input.url : input instanceof URL ? input.toString() : input;
+    const url = fetchInputUrl(input);
     if (url === "https://auth.openai.com/oauth/token") throw new Error("refresh must not run");
     inferenceCalls += 1;
     return Promise.resolve(sseCompleted(0, 0));
@@ -584,7 +627,7 @@ Deno.test("prompt-cache scope stops on an unexpected warm cache read", async () 
   const originalFetch = globalThis.fetch;
   let inferenceCalls = 0;
   globalThis.fetch = (input) => {
-    const url = input instanceof Request ? input.url : input instanceof URL ? input.toString() : input;
+    const url = fetchInputUrl(input);
     if (url === "https://auth.openai.com/oauth/token") throw new Error("refresh must not run");
     inferenceCalls += 1;
     return Promise.resolve(sseCompleted(2_560, 0));
@@ -617,7 +660,7 @@ Deno.test("prompt-cache scope rejects sub-prefix, inconsistent, or impossible co
       const originalFetch = globalThis.fetch;
       let inferenceCalls = 0;
       globalThis.fetch = (input) => {
-        const url = input instanceof Request ? input.url : input instanceof URL ? input.toString() : input;
+        const url = fetchInputUrl(input);
         if (url === "https://auth.openai.com/oauth/token") throw new Error("refresh must not run");
         const step = inferenceCalls++;
         if (step === 0) return Promise.resolve(sseCompleted(0, 2_560));
@@ -656,7 +699,7 @@ Deno.test("prompt-cache scope rejects mixed cache evidence on every discriminato
       let inferenceCalls = 0;
       let refreshes = 0;
       globalThis.fetch = (input) => {
-        const url = input instanceof Request ? input.url : input instanceof URL ? input.toString() : input;
+        const url = fetchInputUrl(input);
         if (url === "https://auth.openai.com/oauth/token") {
           refreshes += 1;
           return Promise.resolve(
@@ -671,7 +714,9 @@ Deno.test("prompt-cache scope rejects mixed cache evidence on every discriminato
         }
         const step = inferenceCalls++;
         if (step > index) throw new Error("scope experiment should stop at the mixed discriminator sample");
-        return Promise.resolve(sseCompleted(step === index ? 2_560 : expectedCachedTokens[step]!, step === index ? 2_560 : expectedCacheWriteTokens[step]!));
+        return Promise.resolve(
+          sseCompleted(step === index ? 2_560 : cycleValue(expectedCachedTokens, step), step === index ? 2_560 : cycleValue(expectedCacheWriteTokens, step))
+        );
       };
 
       try {
@@ -705,7 +750,7 @@ Deno.test("a target-scoped cycle lease blocks a concurrent same-target invocatio
   );
   let inferenceCalls = 0;
   globalThis.fetch = (input) => {
-    const url = input instanceof Request ? input.url : input instanceof URL ? input.toString() : input;
+    const url = fetchInputUrl(input);
     if (url === "https://auth.openai.com/oauth/token") throw new Error("refresh must not run");
     inferenceCalls += 1;
     if (inferenceCalls === 1) {
@@ -751,11 +796,11 @@ Deno.test("a provider campaign lease blocks a sibling target between cycles and 
         })
       );
     }
-    const body = JSON.parse(String(init?.body ?? "")) as { model?: unknown };
+    const body = JSON.parse(requestBodyText(init)) as { model?: unknown };
     if (typeof body.model !== "string") throw new Error("scope request lost its target model");
     const step = inferenceCalls++ % 10;
-    const cachedTokens = [0, 2_560, 0, 2_560, 2_560, 2_560, 2_560, 2_560, 2_560, 2_560][step]!;
-    const cacheWriteTokens = [2_560, 0, 2_560, 0, 0, 0, 0, 0, 0, 0][step]!;
+    const cachedTokens = cycleValue(CACHE_READ_CYCLE, step);
+    const cacheWriteTokens = cycleValue(CACHE_WRITE_CYCLE_ALTERNATING, step);
     return Promise.resolve(sseCompleted(cachedTokens, cacheWriteTokens, body.model));
   };
 
@@ -808,7 +853,7 @@ Deno.test("a v4 campaign lease cannot block the v5 plain-key experiment", async 
   const originalFetch = globalThis.fetch;
   let inferenceCalls = 0;
   globalThis.fetch = (input) => {
-    const url = input instanceof Request ? input.url : input instanceof URL ? input.toString() : input;
+    const url = fetchInputUrl(input);
     if (url === "https://auth.openai.com/oauth/token") throw new Error("refresh must not run");
     inferenceCalls += 1;
     return Promise.resolve(sseCompleted(0, 0));
@@ -847,8 +892,8 @@ Deno.test("an expired target session clears its prior evidence before starting a
       );
     }
     const step = inferenceCalls++ % 10;
-    const cachedTokens = [0, 2_560, 0, 2_560, 2_560, 2_560, 2_560, 2_560, 2_560, 2_560][step]!;
-    const cacheWriteTokens = [2_560, 0, 2_560, 0, 0, 0, 0, 0, 0, 0][step]!;
+    const cachedTokens = cycleValue(CACHE_READ_CYCLE, step);
+    const cacheWriteTokens = cycleValue(CACHE_WRITE_CYCLE_ALTERNATING, step);
     return Promise.resolve(sseCompleted(cachedTokens, cacheWriteTokens));
   };
 
@@ -932,8 +977,8 @@ Deno.test("a same-account credential rotation during forced refresh is inconclus
     }
 
     const step = inferenceCalls++ % 10;
-    const cachedTokens = [0, 2_560, 0, 2_560, 2_560, 2_560, 2_560, 2_560, 2_560, 2_560][step]!;
-    const cacheWriteTokens = [2_560, 0, 2_560, 0, 0, 0, 0, 0, 0, 0][step]!;
+    const cachedTokens = cycleValue(CACHE_READ_CYCLE, step);
+    const cacheWriteTokens = cycleValue(CACHE_WRITE_CYCLE_ALTERNATING, step);
     return Promise.resolve(sseCompleted(cachedTokens, cacheWriteTokens));
   };
 
@@ -1130,11 +1175,11 @@ Deno.test("a completed target advances the bodyless campaign to the next exact m
         )
       );
     }
-    const body = JSON.parse(String(init?.body ?? "")) as { model?: unknown };
+    const body = JSON.parse(requestBodyText(init)) as { model?: unknown };
     if (typeof body.model !== "string") throw new Error("scope request lost its target model");
     const step = inferenceCalls++ % 10;
-    const cachedTokens = [0, 2_560, 0, 2_560, 2_560, 2_560, 2_560, 2_560, 2_560, 2_560][step]!;
-    const cacheWriteTokens = [2_560, 0, 2_560, 0, 0, 0, 0, 0, 0, 0][step]!;
+    const cachedTokens = cycleValue(CACHE_READ_CYCLE, step);
+    const cacheWriteTokens = cycleValue(CACHE_WRITE_CYCLE_ALTERNATING, step);
     return Promise.resolve(sseCompleted(cachedTokens, cacheWriteTokens, body.model));
   };
 
@@ -1167,7 +1212,7 @@ Deno.test("an inconclusive target is retried before the campaign advances to ano
   seed({ models: [modelB, modelA], defaultModel: modelB });
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (input) => {
-    const url = input instanceof Request ? input.url : input instanceof URL ? input.toString() : input;
+    const url = fetchInputUrl(input);
     if (url === "https://auth.openai.com/oauth/token") throw new Error("refresh must not run");
     return Promise.resolve(sseCompleted(0, 0, modelA));
   };
@@ -1211,8 +1256,8 @@ Deno.test("completed evidence survives token rotation but is reprobeable after a
       );
     }
     const step = inferenceCalls++ % 10;
-    const cachedTokens = [0, 2_560, 0, 2_560, 2_560, 2_560, 2_560, 2_560, 2_560, 2_560][step]!;
-    const cacheWriteTokens = [2_560, 0, 2_560, 0, 0, 0, 0, 0, 0, 0][step]!;
+    const cachedTokens = cycleValue(CACHE_READ_CYCLE, step);
+    const cacheWriteTokens = cycleValue(CACHE_WRITE_CYCLE_ALTERNATING, step);
     return Promise.resolve(sseCompleted(cachedTokens, cacheWriteTokens));
   };
 
@@ -1498,7 +1543,7 @@ Deno.test("a runtime default-only switch preserves a selected non-default target
         )
       );
     }
-    const body = JSON.parse(String(init?.body ?? "")) as { model?: unknown };
+    const body = JSON.parse(requestBodyText(init)) as { model?: unknown };
     if (typeof body.model !== "string") throw new Error("scope request did not preserve the selected model");
     requestedModels.push(body.model);
     const step = inferenceCalls++;
@@ -1512,8 +1557,8 @@ Deno.test("a runtime default-only switch preserves a selected non-default target
       };
       kv.put(RUNTIME_CONFIG_V2_KEY, { ...runtime, default_model: secondDefault, updated_at_ms: Date.now() });
     }
-    const cachedTokens = [0, 2_560, 0, 2_560, 2_560, 2_560, 2_560, 2_560, 2_560, 2_560][step]!;
-    const cacheWriteTokens = [2_560, 0, 2_560, 0, 0, 0, 0, 0, 0, 0][step]!;
+    const cachedTokens = cycleValue(CACHE_READ_CYCLE, step);
+    const cacheWriteTokens = cycleValue(CACHE_WRITE_CYCLE_ALTERNATING, step);
     return Promise.resolve(sseCompleted(cachedTokens, cacheWriteTokens, body.model));
   };
 
@@ -1601,7 +1646,7 @@ Deno.test("a target capability drift stops before the next paid sample", async (
     models: Record<string, unknown>[];
   };
   globalThis.fetch = (input) => {
-    const url = input instanceof Request ? input.url : input instanceof URL ? input.toString() : input;
+    const url = fetchInputUrl(input);
     if (url === "https://auth.openai.com/oauth/token") {
       throw new Error("capability drift must stop before credential refresh");
     }
@@ -1640,7 +1685,7 @@ Deno.test("a catalog client-version drift stops before the next paid sample", as
     models: Record<string, unknown>[];
   };
   globalThis.fetch = (input) => {
-    const url = input instanceof Request ? input.url : input instanceof URL ? input.toString() : input;
+    const url = fetchInputUrl(input);
     if (url === "https://auth.openai.com/oauth/token") {
       throw new Error("client-version drift must stop before credential refresh");
     }

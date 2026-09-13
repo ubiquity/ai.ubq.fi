@@ -17,7 +17,6 @@ import { isRecord } from "./utils.ts";
 export const PAID_FALLBACK_USAGE_ROLLUP_PREFIX = ["uos_ai", "paid_fallback", "v3", "usage_rollup"] as const;
 export const PAID_FALLBACK_USAGE_ROLLUP_BUCKET_MS = 60 * 60 * 1_000;
 export const PAID_FALLBACK_USAGE_ROLLUP_SHARD_COUNT = 16;
-const MAX_ROLLUP_CAS_ATTEMPTS = 8;
 
 const FNV_PRIME = 0x01000193;
 
@@ -120,28 +119,6 @@ export const mergePaidFallbackUsageRollup = (existing: PaidFallbackUsageRollup |
     last_request_at_ms: lastRequestAtMs,
     updated_at_ms: input.updated_at_ms,
   };
-};
-
-/**
- * Adds one settled request to its hourly bucket. Settlements perform this
- * merge inline inside the same atomic that settles the raw row; this helper
- * is the standalone writer for independent callers.
- */
-export const addPaidFallbackUsageRollup = async (kv: Deno.Kv, input: PaidFallbackUsageRollupInput): Promise<void> => {
-  const model = typeof input.model === "string" ? input.model.trim() : "";
-  const provider = typeof input.provider === "string" ? input.provider.trim() : "";
-  if (!model || !provider) return;
-  const bucketStartAtMs = Math.trunc(input.bucket_start_at_ms);
-  if (!safeInteger(bucketStartAtMs, 0)) return;
-  const key = paidFallbackUsageRollupKey(bucketStartAtMs, model, provider, paidFallbackUsageRollupShard(input.request_id));
-  for (let attempt = 0; attempt < MAX_ROLLUP_CAS_ATTEMPTS; attempt += 1) {
-    const entry = await kv.get<PaidFallbackUsageRollup>(key, { consistency: "strong" });
-    const existing = isPaidFallbackUsageRollup(entry.value) ? entry.value : null;
-    const next = mergePaidFallbackUsageRollup(existing, { ...input, model, provider });
-    const committed = await kv.atomic().check(entry).set(key, next).commit();
-    if (committed.ok) return;
-  }
-  throw new Error(`Paid fallback usage rollup changed concurrently: ${model}/${provider}`);
 };
 
 export const listPaidFallbackUsageRollups = async (

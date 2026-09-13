@@ -70,7 +70,7 @@ Deno.test("A: records a model request before an upstream failure", async () => {
       throw new Error(`failed dispatch must count one model call, got ${result.metrics.model_calls}`);
     }
     const request = events.find((event) => event.type === "model_request");
-    if (request === undefined || request.input_tokens !== 0 || request.output_tokens !== 0) {
+    if (request?.input_tokens !== 0 || request.output_tokens !== 0) {
       throw new Error("failed dispatch must retain its zero-usage model_request event");
     }
   } finally {
@@ -133,10 +133,7 @@ Deno.test("A: mirrors the gateway rejection of reasoning_effort 'none'", () => {
       transport: () => Promise.resolve({ status: 200, ok: true, json: () => Promise.resolve({}) }),
     });
   } catch (err) {
-    threw =
-      err instanceof BaselineAdapterError &&
-      err.code === "invalid-config" &&
-      String((err as Error).message).includes("'none' is not supported for gpt-oss-120b");
+    threw = err instanceof BaselineAdapterError && err.code === "invalid-config" && (err as Error).message.includes("'none' is not supported for gpt-oss-120b");
   }
   if (!threw) throw new Error("'none' must be rejected exactly like the gateway");
 });

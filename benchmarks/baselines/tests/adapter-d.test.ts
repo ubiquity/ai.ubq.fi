@@ -79,7 +79,8 @@ Deno.test("D: a mismatched upstream model is rejected deterministically", async 
 });
 
 Deno.test("D: control model approval gate stays closed for the placeholder", () => {
-  if (assertControlModelApproved(CONTROL_MODEL) !== undefined) throw new Error("approved name must pass");
+  // The approved name must pass: assertControlModelApproved returns void, so passing means not throwing.
+  assertControlModelApproved(CONTROL_MODEL);
   let threw = false;
   try {
     assertControlModelApproved(CONTROL_MODEL_PLACEHOLDER);

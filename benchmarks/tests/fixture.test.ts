@@ -8,7 +8,8 @@ Deno.test({
   name: "fixture: shell writes cannot escape the disposable workspace",
   ignore: Deno.build.os !== "darwin" && Deno.build.os !== "linux",
   async fn() {
-    const task = loadTasks(TASKS_DIR).find((candidate) => candidate.id === "nav-001")!;
+    const task = loadTasks(TASKS_DIR).find((candidate) => candidate.id === "nav-001");
+    if (!task) throw new Error("fixture test requires the nav-001 benchmark task manifest");
     const tmpParent = Deno.makeTempDirSync({ dir: `${Deno.cwd()}/benchmark-runs` });
     const outside = Deno.makeTempDirSync({ dir: `${Deno.cwd()}/benchmark-runs` });
     const workspace = new FixtureWorkspace({

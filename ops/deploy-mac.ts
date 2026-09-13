@@ -51,7 +51,7 @@ try {
     stderr: "null",
   }).output();
   if (registration.success) {
-    const oldPid = /\n\s*pid = (\d+)/.exec(new TextDecoder().decode(registration.stdout))?.[1];
+    const oldPid = /\n[^\S\n]*pid = (\d+)/.exec(new TextDecoder().decode(registration.stdout))?.[1];
     await command("launchctl", ["bootout", service]);
     // bootout returns before a draining process exits. Wait before registering its replacement.
     if (oldPid) {

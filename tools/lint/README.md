@@ -90,9 +90,11 @@ Two traps worth knowing, both measured on Deno 2.9.6 and both contrary to the gu
 
 `deno task types` writes `.deno-types.d.ts` (~23k lines, gitignored) from `deno types`. The type-aware rules need it:
 Deno does not ship `node:` or Web API typings any other way, and when the file is missing those rules lose type
-information and report **fewer** findings without erroring. `scripts/verify.sh` regenerates it before linting.
+information and report **fewer** findings without erroring. Both `scripts/verify.sh` and `scripts/lint.sh` regenerate it
+before ESLint runs, so a standalone `deno task lint:eslint` cannot silently lose coverage either.
 
-`@types/node` is pinned to `^26` because Deno 2.9.6's Node compatibility level is 26.3.0.
+`@types/node` is pinned to the exact `25.6.0` that the Deno checker itself resolves (verified with `deno info`), so the
+ESLint program sees the same Node declarations as `deno check` and `deno test`.
 
 ## knip
 
@@ -101,7 +103,7 @@ the `*_test.ts` / `*.e2e.ts` files) with `includeEntryExports: true`.
 
 Two accommodations, both with evidence:
 
-- `ignoreDependencies` lists the Deno import-map specifiers (`@std/yaml`, `@deno/kv-utils`, `@deno/kv-utils/json`,
+- `ignoreDependencies` lists the two Deno import-map specifiers knip cannot resolve (`@std/yaml`,
   `@simplewebauthn/server`). knip does not read `deno.json#imports`, so it would otherwise report them as unlisted.
 - `ignoreIssues` suppresses `exports` findings in the five files whose exports are loaded through
   `await import(new URL("src/kv.ts", release).href)` in `scripts/serve-vps.ts` and `scripts/serve-mac.ts`. knip cannot
@@ -138,3 +140,33 @@ Each is marked `DIVERGENCE` in `tools/lint/eslint.config.mjs` with its measureme
 | `sonarjs/no-empty-test-file`                                   | Off. It looks for `describe`/`it`/`test`; all 1148 of this repo's tests are `Deno.test`, so it flagged 97 real test files as empty.                    |
 | `no-empty`                                                     | `allowEmptyCatch`, and `deno lint`'s `no-empty` is excluded to match (section 2.6).                                                                    |
 | `no-nested-ternary`                                            | Dropped; `sonarjs/no-nested-conditional` reports the same lines.                                                                                       |
+
+## `node:` types in the lint program
+
+`@types/node` is installed in `tools/lint/node_modules`, and TypeScript's default `typeRoots` walk up from the
+tsconfig's own directory cannot see it, so `tsconfig.lint.json` declares both entries explicitly:
+
+    "typeRoots": ["./tools/lint/node_modules/@types"],
+    "types": ["node"]
+
+The pinned version matches the Node declarations the Deno checker uses, so `node:assert/strict`, `node:crypto`, the
+`NodeJS` namespace and `setTimeout`/`clearTimeout` resolve to the same types in both programs. Turning this on re-types
+the fixtures and adds further `no-unnecessary-condition` findings (measured: **624**, mostly fixture literals such as
+`"eligible" !== "eligible"`). Those typed findings are handled as their own assignment: an unresolved type silently
+drops findings instead of failing, which is the worse failure mode.
+
+`ReturnType<typeof setTimeout>` still degrades to `any` in the lint program while `deno check` types it as the opaque
+`Timeout` (`const x: number = setTimeout(() => {}, 1)` is `TS2322` there), so **prefer
+`Parameters<typeof clearTimeout>[0]`** when a timer handle needs a name -- it satisfies ESLint and `deno check` at once,
+and that is the idiom adopted in `src/health.ts` and `src/codex_catalog.ts`.
+
+## Deliberate-by-design exemptions added for this repo
+
+Beyond the rule divergences above, `tools/lint/eslint.config.mjs` carries three file-scoped exemptions, each with its
+measurement inline:
+
+| File                                        | Rule                              | Why it is deliberate                                                                                                                                                                                                                                                                                                           |
+| ------------------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/defaults.ts`                           | `sonarjs/redundant-type-aliases`  | `export type ReasoningEffort = string` is a documentary domain alias referenced from 93 sites across 15 files; AGENTS.md forbids constraining reasoning tiers to an allowlist, so `string` is correct, and every in-file escape is a no-op type trick (`string & {}` is itself rejected by `sonarjs/no-useless-intersection`). |
+| `src/codex_models.ts`                       | `sonarjs/function-return-type`    | The documented tri-state `false \| Readonly<{version: 1; providers: ...}> \| null`, where `false` means "verified unsupported"; the rule fires whenever a declared union mixes type categories and the returns mix them too.                                                                                                   |
+| `tests/codex-banked-reset-provider.test.ts` | `sonarjs/no-clear-text-protocols` | The clear-text URL is the subject under test: it pins that a non-HTTPS Codex base is rejected before any credential-bearing request.                                                                                                                                                                                           |

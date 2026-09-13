@@ -13,6 +13,13 @@ const entryFor = (key: Deno.KvKey): Deno.KvEntryMaybe<unknown> => {
 };
 const matchesPrefix = (key: Deno.KvKey, prefix: Deno.KvKey): boolean => prefix.every((part, index) => key[index] === part);
 
+/** URL text of a fetch input (the transports under test always pass a string URL). */
+const fetchUrl = (input: RequestInfo | URL): string => {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+};
+
 const kvStub = {
   get: (key: Deno.KvKey) => Promise.resolve(entryFor(key)),
   set: (key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }) => {
@@ -25,6 +32,9 @@ const kvStub = {
   },
   list: async function* (selector: Deno.KvListSelector) {
     const prefix = "prefix" in selector ? selector.prefix : [];
+    // A real Deno.KV list suspends before its first entry; keep that
+    // asynchronous boundary so no consumer can rely on synchronous iteration.
+    await Promise.resolve();
     for (const [encodedKey, stored] of kvStore) {
       const key = JSON.parse(encodedKey) as Deno.KvKey;
       if (matchesPrefix(key, prefix)) yield { key, value: stored.value, versionstamp: stored.versionstamp };
@@ -87,7 +97,14 @@ const { loadRuntimeConfig, resetRuntimeConfigCacheForTest, RUNTIME_CONFIG_V2_KEY
 const AUTH_GENERATION = "auth-generation-test";
 const AUTH_KEY = ["ubq_ai", "codex_auth"] as const;
 const SNAPSHOT_KEY = ["ubq_ai", "codex_models"] as const;
-const CATALOG_KEY = (version: string): Deno.KvKey => ["ubq_ai", "codex_catalog", version];
+const catalogKey = (version: string): Deno.KvKey => ["ubq_ai", "codex_catalog", version];
+
+/** Code-unit ascending string order: exactly what an argument-less `Array.prototype.sort()` does. */
+const compareStrings = (left: string, right: string): number => {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+};
 
 const seedBaseState = (snapshotVersion = "0.200.0"): void => {
   kvStore.clear();
@@ -148,17 +165,18 @@ const catalogBody = (version: string, extra: Record<string, unknown> = {}): stri
     ...extra,
   });
 
-const request = (version: string, headers: HeadersInit = {}): Request =>
-  new Request(`https://ai.ubq.fi/v1/models?client_version=${version}`, {
-    headers: { Authorization: "Bearer gateway-client-token", Cookie: "incoming=secret", ...headers },
-  });
+const request = (version: string, headers: HeadersInit = {}): Request => {
+  const requestHeaders = new Headers({ Authorization: "Bearer gateway-client-token", Cookie: "incoming=secret" });
+  for (const [name, value] of new Headers(headers)) requestHeaders.set(name, value);
+  return new Request(`https://ai.ubq.fi/v1/models?client_version=${version}`, { headers: requestHeaders });
+};
 
 Deno.test("codex catalog: unversioned models retain the exact OpenAI list shape", async () => {
   seedBaseState();
   const response = await handleModels(new Request("https://ai.ubq.fi/v1/models"));
   assert.equal(response.status, 200);
   const payload = (await response.json()) as Record<string, unknown>;
-  assert.deepEqual(Object.keys(payload).sort(), ["data", "object"]);
+  assert.deepEqual(Object.keys(payload).sort(compareStrings), ["data", "object"]);
   assert.equal(payload.object, "list");
 });
 
@@ -251,7 +269,7 @@ Deno.test("codex catalog: stale catalogs survive refresh failures but expired ca
     assert.equal(((await stale.json()) as { models: { slug: string }[] }).models[0].slug, `gpt-${version}`);
     assert.deepEqual(degradationSignals, [observedAtMs]);
 
-    const metadata = kvStore.get(keyToString(CATALOG_KEY(version)))?.value as { fetched_at_ms: number };
+    const metadata = kvStore.get(keyToString(catalogKey(version)))?.value as { fetched_at_ms: number };
     metadata.fetched_at_ms = observedAtMs - CODEX_CATALOG_RETENTION_MS - 1;
     const expired = await handleCodexCatalogModels(request(version), version, dependencies);
     assert.equal(expired.status, 502);
@@ -511,7 +529,7 @@ Deno.test("codex catalog: auth rotation discards an in-flight old-generation ref
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("x-uos-cache"), "rotated");
     assert.equal(((await response.json()) as { account?: string }).account, "replacement");
-    const metadata = kvStore.get(keyToString(CATALOG_KEY(version)))?.value as { auth_generation?: string };
+    const metadata = kvStore.get(keyToString(catalogKey(version)))?.value as { auth_generation?: string };
     assert.equal(metadata.auth_generation, replacementGeneration);
     const snapshot = kvStore.get(keyToString(SNAPSHOT_KEY))?.value as { models?: { slug?: string }[] };
     assert.equal(snapshot.models?.[0]?.slug, "replacement-snapshot");
@@ -603,7 +621,7 @@ Deno.test("codex catalog: replacing metadata reclaims superseded chunks", async 
     }),
     true
   );
-  const firstMetadata = kvStore.get(keyToString(CATALOG_KEY(version)))?.value as {
+  const firstMetadata = kvStore.get(keyToString(catalogKey(version)))?.value as {
     body_generation: string;
     chunk_count: number;
   };
@@ -620,7 +638,7 @@ Deno.test("codex catalog: replacing metadata reclaims superseded chunks", async 
     }),
     true
   );
-  const secondMetadata = kvStore.get(keyToString(CATALOG_KEY(version)))?.value as {
+  const secondMetadata = kvStore.get(keyToString(catalogKey(version)))?.value as {
     body_generation: string;
     chunk_count: number;
   };
@@ -647,7 +665,7 @@ Deno.test("codex catalog: rejected old-generation writes reclaim their chunks", 
     return matchesPrefix(key, [...CODEX_CATALOG_CHUNK_PREFIX, version]);
   });
   assert.equal(orphanChunks.length, 0);
-  assert.equal(kvStore.has(keyToString(CATALOG_KEY(version))), false);
+  assert.equal(kvStore.has(keyToString(catalogKey(version))), false);
 });
 
 Deno.test("codex catalog: version cache evicts the oldest catalog beyond its bound", async () => {
@@ -680,14 +698,14 @@ Deno.test("codex catalog: version cache evicts the oldest catalog beyond its bou
   assert.equal(metadataEntries.length, CODEX_CATALOG_MAX_VERSIONS);
   for (let index = 0; index < totalVersions - CODEX_CATALOG_MAX_VERSIONS; index += 1) {
     const version = `1.0.${index}`;
-    assert.equal(kvStore.has(keyToString(CATALOG_KEY(version))), false);
+    assert.equal(kvStore.has(keyToString(catalogKey(version))), false);
     const chunks = [...kvStore.keys()].filter((encoded) => {
       const key = JSON.parse(encoded) as Deno.KvKey;
       return matchesPrefix(key, [...CODEX_CATALOG_CHUNK_PREFIX, version]);
     });
     assert.equal(chunks.length, 0);
   }
-  assert.equal(kvStore.has(keyToString(CATALOG_KEY(`1.0.${totalVersions - 1}`))), true);
+  assert.equal(kvStore.has(keyToString(catalogKey(`1.0.${totalVersions - 1}`))), true);
   const memoVersions = getCodexCatalogMemoVersionsForTest();
   assert.equal(memoVersions.length, CODEX_CATALOG_MAX_VERSIONS);
   for (let index = 0; index < totalVersions - CODEX_CATALOG_MAX_VERSIONS; index += 1) {
@@ -700,7 +718,8 @@ Deno.test("codex catalog: only same-or-newer clients update the normalized snaps
   seedBaseState("0.200.0");
   const originalFetch = globalThis.fetch;
   globalThis.fetch = (input) => {
-    const version = new URL(input instanceof Request ? input.url : input.toString()).searchParams.get("client_version")!;
+    const version = new URL(input instanceof Request ? input.url : input.toString()).searchParams.get("client_version");
+    assert.ok(version, "the client_version query parameter must be present");
     return Promise.resolve(
       new Response(
         catalogBody(version, {
@@ -808,7 +827,9 @@ Deno.test("codex catalog: normalized snapshot retry preserves a concurrent admin
   beforeAtomicCommit = (ops) => {
     if (!ops.some((op) => keyToString(op.key) === keyToString(RUNTIME_CONFIG_V2_KEY))) return;
     beforeAtomicCommit = null;
-    const current = kvStore.get(keyToString(RUNTIME_CONFIG_V2_KEY))!.value as Record<string, unknown>;
+    const currentEntry = kvStore.get(keyToString(RUNTIME_CONFIG_V2_KEY));
+    assert.ok(currentEntry, "the runtime config must already be stored");
+    const current = currentEntry.value as Record<string, unknown>;
     kvStore.set(keyToString(RUNTIME_CONFIG_V2_KEY), {
       value: {
         ...current,
@@ -967,7 +988,7 @@ Deno.test("codex catalog: model picker receives the complete unique union of pai
       ),
   });
   globalThis.fetch = (input) => {
-    const version = new URL(String(input)).searchParams.get("client_version") ?? "missing";
+    const version = new URL(fetchUrl(input)).searchParams.get("client_version") ?? "missing";
     return Promise.resolve(new Response(catalogBody(version), { headers: { "Content-Type": "application/json" } }));
   };
 
@@ -1037,7 +1058,7 @@ Deno.test("codex catalog: cold provider caches cannot publish the incomplete Cod
     )
   );
   globalThis.fetch = (input) => {
-    const url = String(input);
+    const url = fetchUrl(input);
     if (url === "https://api.surplusintelligence.ai/v1/models") {
       return Promise.resolve(Response.json({ data: [{ id: "deepseek-v4-flash", provider: "surplus" }] }));
     }
@@ -1234,14 +1255,14 @@ Deno.test("codex catalog: expired paid-provider caches schedule background refre
   });
   Date.now = () => staleNow;
   setMeteredModelsFetchForTest((input) => {
-    if (String(input) !== "https://api.openlux.ai/v1/models") {
+    if (fetchUrl(input) !== "https://api.openlux.ai/v1/models") {
       return Promise.resolve(new Response("unexpected Metered URL", { status: 500 }));
     }
     meteredRefreshes += 1;
     return meteredRefreshResponse;
   });
   globalThis.fetch = (input) => {
-    const url = String(input);
+    const url = fetchUrl(input);
     if (url === "https://api.openlux.ai/v1/models") {
       meteredRefreshes += 1;
       return Promise.resolve(

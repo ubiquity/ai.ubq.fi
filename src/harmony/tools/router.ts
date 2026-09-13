@@ -55,7 +55,9 @@ const readFile = (backend: WorkspaceBackend, args: Readonly<Record<string, unkno
 const findFiles = (backend: WorkspaceBackend, args: Readonly<Record<string, unknown>>): ToolResult => {
   const rel = requiredPath(args);
   if (rel === null) return pathError(String(args.path));
-  const pattern = String(args.pattern ?? "**");
+  // Validation (schemas.ts) guarantees `pattern` is a non-empty string when
+  // present, so the absent case is the only one the default applies to.
+  const pattern = typeof args.pattern === "string" ? args.pattern : "**";
   const files = backend.listFiles(rel).filter((path) => {
     const base = path.split("/").pop() ?? path;
     return globMatch(pattern, path) || (!pattern.includes("/") && globMatch(pattern, base));

@@ -19,7 +19,7 @@ const normalize = (value: unknown): DebugRoutingConfig | null => {
   const scenario = getString(value.scenario)?.trim() as DebugRoutingScenario | undefined;
   if (!scenario || !SCENARIOS.has(scenario)) return null;
   const expires = value.expires_at_ms;
-  const expiresAtMs = expires === null ? null : typeof expires === "number" && Number.isSafeInteger(expires) && expires > 0 ? expires : null;
+  const expiresAtMs = typeof expires === "number" && Number.isSafeInteger(expires) && expires > 0 ? expires : null;
   const updated = value.updated_at_ms;
   const updatedAtMs = typeof updated === "number" && Number.isSafeInteger(updated) && updated > 0 ? updated : 0;
   if (!updatedAtMs) return null;

@@ -27,6 +27,8 @@ run "deno fmt" deno fmt --check
 run "deno lint" deno lint
 run "deno check" deno task build
 run "deno test" deno task test
+# Mirrors CI's remaining gate, so a green verify cannot still fail the pipeline.
+run "deno test (sentinel local)" deno task sentinel:test-local
 
 printf '\n'
 if [ "$fail" -ne 0 ]; then

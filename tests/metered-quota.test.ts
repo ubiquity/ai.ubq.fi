@@ -27,8 +27,8 @@ class MemoryKv {
     this.#values.set(keyString(key), { value, version: this.#nextVersion++ });
   }
 
-  value<T>(key: Deno.KvKey): T | null {
-    return (this.#values.get(keyString(key))?.value as T | undefined) ?? null;
+  value(key: Deno.KvKey): unknown {
+    return this.#values.get(keyString(key))?.value ?? null;
   }
 
   get<T>(key: Deno.KvKey): Promise<Deno.KvEntryMaybe<T>> {
@@ -132,10 +132,17 @@ const jsonResponse = (body: unknown): Response =>
     headers: { "Content-Type": "application/json; charset=utf-8" },
   });
 
+/** Request URL as text; `String(input)` would render a `Request` as "[object Object]". */
+const requestUrl = (input: RequestInfo | URL): string => {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+};
+
 const meteredFetcher =
   (calls: { url: string; headers: Headers }[]) =>
   (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = requestUrl(input);
     const headers = new Headers(init?.headers);
     calls.push({ url, headers });
     if (url === "https://api.openlux.ai/api/usage/token/") {

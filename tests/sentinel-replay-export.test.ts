@@ -51,7 +51,25 @@ const expectStored = (result: Awaited<ReturnType<typeof persistEncryptedSentinel
 
 const superAdminHeaders = { Authorization: `Bearer ${SUPER_ADMIN_TOKEN}` };
 
-const exportUrl = (params: Record<string, string>): string => `https://ai.ubq.fi/admin/sentinel/replay-captures?${new URLSearchParams(params)}`;
+const exportUrl = (params: Record<string, string>): string => `https://ai.ubq.fi/admin/sentinel/replay-captures?${new URLSearchParams(params).toString()}`;
+
+/**
+ * Code-unit ascending string order: exactly what an argument-less
+ * `Array.prototype.sort()` does for strings, stated explicitly so these
+ * order-insensitive comparisons keep their byte-identical ordering.
+ */
+const compareStrings = (left: string, right: string): number => {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
+};
+
+/** The first exported capture, which every one of these assertions expects. */
+const firstCapture = (body: { data: ExportedSentinelReplayCapture[] }): ExportedSentinelReplayCapture => {
+  const capture = body.data[0];
+  assert.ok(capture, "the export must return at least one capture");
+  return capture;
+};
 
 /** Simulates a runtime with no Deno KV available, without touching the filesystem. */
 const runWithoutKv = async <T>(fn: () => Promise<T>): Promise<T> => {
@@ -126,7 +144,7 @@ Deno.test({
       assert.equal(payload.error?.message, "Super admin token required");
       assert.equal(payload.error?.code, "forbidden");
     } finally {
-      await kv.close();
+      kv.close();
       setKvForTest(null);
     }
   },
@@ -177,7 +195,7 @@ Deno.test({
       // The exported payload is encrypted only: no plaintext bytes may appear.
       assert.equal(body.data[0]?.chunks.join("").includes("synthetic replay bytes for export round trip"), false);
 
-      const plaintext = await decryptExportedSentinelReplay(body.data[0]!, keyBytes);
+      const plaintext = await decryptExportedSentinelReplay(firstCapture(body), keyBytes);
       assert.equal(plaintext.endpoint, input.endpoint);
       assert.equal(plaintext.method, input.method);
       assert.equal(plaintext.content_type, input.content_type);
@@ -188,7 +206,7 @@ Deno.test({
       assert.equal(new TextDecoder().decode(plaintext.body), new TextDecoder().decode(exactBytes));
     } finally {
       adminTokens.delete(SUPER_ADMIN_TOKEN);
-      await kv.close();
+      kv.close();
       setKvForTest(null);
     }
   },
@@ -267,10 +285,10 @@ Deno.test({
         const plaintext = await decryptExportedSentinelReplay(capture, keyBytes);
         decryptedRequestIds.add(plaintext.request_id);
       }
-      assert.deepEqual([...decryptedRequestIds].sort(), [...requestIds].sort());
+      assert.deepEqual([...decryptedRequestIds].sort(compareStrings), [...requestIds].sort(compareStrings));
     } finally {
       adminTokens.delete(SUPER_ADMIN_TOKEN);
-      await kv.close();
+      kv.close();
       setKvForTest(null);
     }
   },
@@ -304,7 +322,9 @@ Deno.test({
           randomBytes: twelveByteIv,
         })
       );
-      await linkSentinelReplayToIncident(kv, INCIDENT_ID, stored.manifest.fingerprint, stored.manifest_key!);
+      const manifestKey = stored.manifest_key;
+      assert.ok(manifestKey, "a stored capture must expose its manifest key");
+      await linkSentinelReplayToIncident(kv, INCIDENT_ID, stored.manifest.fingerprint, manifestKey);
 
       const response = await handler(
         new Request(
@@ -323,7 +343,7 @@ Deno.test({
       };
       assert.equal(body.data.length, 1);
       assert.equal(body.data[0]?.manifest.fingerprint, stored.manifest.fingerprint);
-      const plaintext = await decryptExportedSentinelReplay(body.data[0]!, keyBytes);
+      const plaintext = await decryptExportedSentinelReplay(firstCapture(body), keyBytes);
       assert.equal(plaintext.request_id, "synthetic-incident-request");
       assert.deepEqual([...plaintext.body], [...bytes]);
 
@@ -344,7 +364,7 @@ Deno.test({
       assert.deepEqual(foreignBody.data, []);
     } finally {
       adminTokens.delete(SUPER_ADMIN_TOKEN);
-      await kv.close();
+      kv.close();
       setKvForTest(null);
     }
   },

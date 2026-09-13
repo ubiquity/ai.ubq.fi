@@ -14,17 +14,20 @@ import {
 } from "../src/harmony/tools/schemas.ts";
 
 Deno.test("tool schemas: the canonical surface is exactly the nine compact tools", () => {
-  assert.deepEqual([...CANONICAL_TOOL_NAMES].sort(), [
-    "browser.find",
-    "browser.open",
-    "browser.search",
-    "editor.apply_patch",
-    "filesystem.find",
-    "filesystem.read",
-    "filesystem.search",
-    "shell.exec",
-    "task.update_plan",
-  ]);
+  assert.deepEqual(
+    [...CANONICAL_TOOL_NAMES].sort((left, right) => left.localeCompare(right)),
+    [
+      "browser.find",
+      "browser.open",
+      "browser.search",
+      "editor.apply_patch",
+      "filesystem.find",
+      "filesystem.read",
+      "filesystem.search",
+      "shell.exec",
+      "task.update_plan",
+    ]
+  );
   assert.equal(lookupToolSchema("shell.exec")?.name, "shell.exec");
   assert.equal(lookupToolSchema("shell.execx"), null);
 });

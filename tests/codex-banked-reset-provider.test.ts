@@ -25,6 +25,13 @@ const redeem = (accountId = "account-one"): RedeemResetInput => ({
 
 const signal = (): AbortSignal => new AbortController().signal;
 
+/** Resolve a captured fetch target exactly as its overloads expose it: string, URL, or Request. */
+const requestUrl = (input: RequestInfo | URL): string => {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+};
+
 const provider = (fetch: CodexUsageResetFetch) =>
   createUpstreamCodexUsageResetProvider({
     codexBaseUrl: "https://chatgpt.com/backend-api/codex",
@@ -69,7 +76,7 @@ Deno.test("upstream reset adapter parses inventory and sends the selected credit
     new Response(JSON.stringify({ code: "reset", windows_reset: 2 }), { status: 201 }),
   ];
   const resetProvider = provider((input, init) => {
-    calls.push({ url: String(input), init });
+    calls.push({ url: requestUrl(input), init });
     const response = responses.shift();
     assert.ok(response, "unexpected provider request");
     return Promise.resolve(response);
@@ -110,9 +117,9 @@ Deno.test("upstream reset adapter maps documented 2xx codes and preserves the ex
     [200, "no_credit", { kind: "rejected", reason: "no_credit" }],
   ] as const) {
     await t.step(`${status} ${code}`, async () => {
-      let body = "";
+      let body: string | null = null;
       const resetProvider = provider((_input, init) => {
-        body = String(init?.body);
+        body = typeof init?.body === "string" ? init.body : null;
         return Promise.resolve(new Response(JSON.stringify({ code }), { status }));
       });
       assert.deepEqual(await resetProvider.redeem({ ...redeem(), idempotencyKey: "  stable-id  " }, signal()), expected);

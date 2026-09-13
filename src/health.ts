@@ -336,8 +336,10 @@ const meteredQuotaProbe = async (credentials: MeteredAccountCredentials | null, 
 
 const aggregateUpstreamProbe = (auth: HealthAuthMeta | null, codex: ActiveProviderProbe, meteredQuota: ActiveProviderProbe | null): HealthUpstreamProbe => {
   const failures = [codex, meteredQuota].filter((probe): probe is ActiveProviderProbe => probe !== null && probe.status >= 400);
-  const status = failures.length === 0 ? 200 : failures.some((probe) => probe.status === 401) ? 401 : 503;
-  return { status, auth, probes: { codex, metered_quota: meteredQuota } };
+  const probes = { codex, metered_quota: meteredQuota };
+  if (failures.length === 0) return { status: 200, auth, probes };
+  const status = failures.some((probe) => probe.status === 401) ? 401 : 503;
+  return { status, auth, probes };
 };
 
 const probeUpstream = async (
@@ -393,7 +395,7 @@ const probeUpstreamCoalesced = async (): Promise<HealthUpstreamProbe> => {
     codex: undefined,
     metered_quota: meteredCredentials ? undefined : null,
   };
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let timeoutId: Parameters<typeof clearTimeout>[0];
   const timeout = new Promise<HealthUpstreamProbe>((resolve) => {
     timeoutId = setTimeout(() => {
       controller.abort(new DOMException("Active upstream health probe timed out.", "TimeoutError"));
@@ -401,7 +403,7 @@ const probeUpstreamCoalesced = async (): Promise<HealthUpstreamProbe> => {
     }, activeUpstreamHealthTimeoutMs);
   });
   upstreamProbeInFlight = Promise.race([probeUpstream(controller.signal, meteredCredentials, progress), timeout]).finally(() => {
-    if (timeoutId !== null) clearTimeout(timeoutId);
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
     upstreamProbeInFlight = null;
   });
   return await upstreamProbeInFlight;

@@ -131,8 +131,8 @@ export function observationsFromConversation(conversation: Conversation): Return
     const turn = turns[i];
     if (turn.role !== "assistant" || turn.toolCalls.length !== 1) continue;
     const call = turn.toolCalls[0];
-    const next = turns[i + 1];
-    if (next === undefined || next.role !== "tool" || next.toolCallId !== call.id) continue;
+    const next = turns.at(i + 1);
+    if (next?.role !== "tool" || next.toolCallId !== call.id) continue;
     const parsed = parseToolResultContent(next.content);
     seq += 1;
     observations.push({
@@ -235,7 +235,11 @@ export async function buildContextEvidence(tasks: readonly TaskManifest[], runsR
 
   const aggregate = {} as ContextEvidence["aggregate"];
   for (const kind of ["short", "medium", "large"] as const) {
-    const perKind = evidence.map((t) => t.budgets.find((b) => b.budget === kind)!);
+    const perKind = evidence.map((t) => {
+      const budget = t.budgets.find((b) => b.budget === kind);
+      if (budget === undefined) throw new Error(`task ${t.task_id} has no ${kind} budget evidence`);
+      return budget;
+    });
     const sum = (fn: (b: (typeof perKind)[number]) => number) => perKind.reduce((n, b) => n + fn(b), 0);
     aggregate[kind] = {
       tasks: perKind.length,
@@ -273,8 +277,9 @@ export async function buildContextEvidence(tasks: readonly TaskManifest[], runsR
 function formatEvidence(evidence: ContextEvidence): string {
   const lines: string[] = [];
   lines.push(`mode: ${evidence.mode}  tasks: ${evidence.tasks.length}`);
-  const surface = evidence.surfaces.find((s) => s.id === "compact")!;
-  const broad = evidence.surfaces.find((s) => s.id === "broad")!;
+  const surface = evidence.surfaces.find((s) => s.id === "compact");
+  const broad = evidence.surfaces.find((s) => s.id === "broad");
+  if (surface === undefined || broad === undefined) throw new Error("context evidence is missing its compact or broad tool-surface entry");
   lines.push(`surfaces: compact ${surface.tools} tools / ${surface.tokens} tok; broad ${broad.tools} tools / ${broad.tokens} tok`);
   lines.push("");
   lines.push("budget  contract  comp-met  struct-met  full  comp   struct  comp/full  struct/full");

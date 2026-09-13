@@ -63,16 +63,30 @@ const decodeChunks = (trace: ReturnType<ReturnType<typeof createSentinelUpstream
     .flatMap((attempt) => attempt.chunks_base64.map((chunk) => base64UrlDecode(chunk)))
     .reduce((text, bytes) => text + new TextDecoder().decode(bytes), "");
 
+/**
+ * Base64url of a JSON fixture value. Padding is stripped by one backward scan
+ * from the end instead of a quantified matcher anchored to the end of the
+ * subject, which re-tried every start position and was non-linear on a long run
+ * of padding characters. The result is the same for every input: only the
+ * trailing run of `=` is ever removed.
+ */
+const base64Url = (value: unknown): string => {
+  const encoded = btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_");
+  let end = encoded.length;
+  while (end > 0 && encoded[end - 1] === "=") end -= 1;
+  return encoded.slice(0, end);
+};
+
 const replayAttempt = (
   provider: SentinelUpstreamProvider,
   status: number | null,
-  content_type: SentinelUpstreamContentType | null,
+  contentType: SentinelUpstreamContentType | null,
   terminal: SentinelUpstreamTerminal,
   chunksText: readonly string[] = []
 ): SentinelUpstreamAttempt => ({
   provider,
   status,
-  content_type,
+  content_type: contentType,
   chunks_base64: chunksText.map((text) => btoa(text)),
   terminal,
 });
@@ -111,7 +125,7 @@ Deno.test({
             {
               pull(controller) {
                 pulls += 1;
-                const next = pending.length ? pending.shift()! : null;
+                const next = pending.shift() ?? null;
                 if (next === null) {
                   controller.close();
                   return;
@@ -139,7 +153,7 @@ Deno.test({
     assert.equal(pulls, rawChunks.length, "each raw chunk is read exactly once");
     const trace = recorder.snapshotAndSeal();
     assert.equal(trace.attempts.length, 1);
-    const attempt = trace.attempts[0]!;
+    const attempt = trace.attempts[0];
     assert.equal(attempt.provider, "surplus");
     assert.equal(attempt.status, 200);
     assert.equal(attempt.content_type, "text/event-stream");
@@ -173,11 +187,11 @@ Deno.test("actual Surplus no-header fetch failure records fetch_error without in
   const trace = recorder.snapshotAndSeal();
   assert.equal(trace.attempts.length, 1);
   assert.deepEqual(
-    trace.attempts.map(({ status, content_type, terminal, chunks_base64 }) => ({
+    trace.attempts.map(({ status, content_type: contentType, terminal, chunks_base64: chunksBase64 }) => ({
       status,
-      content_type,
+      content_type: contentType,
       terminal,
-      chunks_base64,
+      chunks_base64: chunksBase64,
     })),
     [{ status: null, content_type: null, terminal: "fetch_error", chunks_base64: [] }]
   );
@@ -262,7 +276,8 @@ Deno.test("actual Metered dispatch returns the exact upstream body and bounded h
   assert.equal(result.request_id, "metered-id-1");
   assert.equal(result.response.status, 200);
   assert.equal(await result.response.text(), rawSse);
-  const attempt = recorder.snapshotAndSeal().attempts[0]!;
+  const attempt = recorder.snapshotAndSeal().attempts[0];
+  assert.ok(attempt, "a dispatched provider must record its attempt");
   assert.equal(attempt.provider, "metered");
   assert.equal(attempt.status, 200);
   assert.equal(attempt.content_type, "text/event-stream");
@@ -295,7 +310,8 @@ Deno.test("actual Cerebras dispatch returns the exact upstream body and records 
   );
   assert.equal(response.status, 200);
   assert.equal(await response.text(), rawJson);
-  const attempt = recorder.snapshotAndSeal().attempts[0]!;
+  const attempt = recorder.snapshotAndSeal().attempts[0];
+  assert.ok(attempt, "a dispatched provider must record its attempt");
   assert.equal(attempt.provider, "cerebras");
   assert.equal(attempt.status, 200);
   assert.equal(attempt.content_type, "application/json");
@@ -330,7 +346,6 @@ Deno.test({
     const originalNow = Date.now;
     const nowMs = 1_700_000_000_000;
     Date.now = () => nowMs;
-    const base64Url = (value: unknown): string => btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
     const auth = (label: string): CodexAuthState => ({
       access_token: `${base64Url({ alg: "none" })}.${base64Url({ exp: (nowMs + 60 * 60_000) / 1_000 })}.${label}`,
       refresh_token: `refresh-${label}`,
@@ -342,7 +357,6 @@ Deno.test({
     resetCodexAuthCacheForTest();
     resetCodexAccountRoutingForTest();
     resetProviderHealthThrottleForTest();
-    const accountIds: string[] = [];
     let shouldQuotaFailOne = false;
     globalThis.fetch = (input, init) => {
       const request = new Request(input, init);
@@ -350,7 +364,6 @@ Deno.test({
         return Promise.resolve(new Response(JSON.stringify({ access_token: "refreshed-one" }), { status: 200 }));
       }
       const accountId = request.headers.get("ChatGPT-Account-ID") ?? "";
-      accountIds.push(accountId);
       if (shouldQuotaFailOne && accountId === "account-one") {
         return Promise.resolve(
           new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
@@ -393,7 +406,7 @@ Deno.test({
         ],
         "each intermediate retry counts as its own attempt in dispatch order"
       );
-      assert.equal(trace.attempts[0]!.chunks_base64.length > 0, true, "the 429 body read for classification is raw evidence");
+      assert.equal(trace.attempts[0].chunks_base64.length > 0, true, "the 429 body read for classification is raw evidence");
       remapRecorder.dispose();
     } finally {
       globalThis.fetch = originalFetch;
@@ -401,7 +414,7 @@ Deno.test({
       resetCodexAuthCacheForTest();
       resetCodexAccountRoutingForTest();
       resetProviderHealthThrottleForTest();
-      await kv.close();
+      kv.close();
       setKvForTest(null);
     }
   },
@@ -420,7 +433,7 @@ const CAPTURE_BODY = new TextEncoder().encode(
   })
 );
 
-const exportUrl = (params: Record<string, string>): string => `https://ai.ubq.fi/admin/sentinel/replay-captures?${new URLSearchParams(params)}`;
+const exportUrl = (params: Record<string, string>): string => `https://ai.ubq.fi/admin/sentinel/replay-captures?${new URLSearchParams(params).toString()}`;
 
 const seedAuthenticatedKey = async (kv: Deno.Kv, token: string): Promise<void> => {
   const now = Date.now();
@@ -472,7 +485,6 @@ Deno.test({
     const originalNow = Date.now;
     const nowMs = 1_700_000_000_000;
     Date.now = () => nowMs;
-    const base64Url = (value: unknown): string => btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
     const accessToken = `${base64Url({ alg: "none" })}.${base64Url({ exp: (nowMs + 60 * 60_000) / 1_000 })}.handler-fixture`;
     const authState: CodexAuthState = {
       access_token: accessToken,
@@ -546,7 +558,7 @@ Deno.test({
       assert.equal(page.status, 200);
       const exported = (await page.json()) as { data: ExportedSentinelReplayCapture[]; cursor: string | null };
       assert.equal(exported.data.length, 1);
-      const capture = exported.data[0]!;
+      const capture = exported.data[0];
       const plaintext = await decryptExportedSentinelReplay(capture, keyBytes);
       assert.equal(plaintext.version, 2);
       assert.equal(plaintext.endpoint, "/v1/responses");
@@ -555,7 +567,7 @@ Deno.test({
       assert.equal(new TextDecoder().decode(plaintext.body), new TextDecoder().decode(CAPTURE_BODY));
       assert.equal(plaintext.observation.status, 500);
       assert.equal(plaintext.upstream.attempts.length, 1);
-      const attempt = plaintext.upstream.attempts[0]!;
+      const attempt = plaintext.upstream.attempts[0];
       assert.equal(attempt.provider, "chatgpt_codex");
       assert.equal(attempt.status, 500);
       assert.equal(attempt.content_type, "application/json");
@@ -576,7 +588,7 @@ Deno.test({
       resetCodexAccountRoutingForTest();
       resetRuntimeConfigCacheForTest();
       resetProviderHealthThrottleForTest();
-      await kv.close();
+      kv.close();
       setKvForTest(null);
     }
   },
@@ -590,7 +602,8 @@ Deno.test("recorded upstream replay preserves exact chunk order and boundaries a
   const response = await replay.fetch(REPLAY_ROUTES.metered);
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("content-type"), "application/json");
-  const reader = response.body!.getReader();
+  const reader = response.body?.getReader();
+  assert.ok(reader, "the recorded replay must expose a body stream");
   const chunks: string[] = [];
   for (;;) {
     const { done, value } = await reader.read();
@@ -608,7 +621,8 @@ Deno.test("recorded upstream read_error delivers the prefix then errors on the n
   const replay = createRecordedUpstreamReplay(replayTrace([replayAttempt("surplus", 200, "text/event-stream", "read_error", ["x"])]), REPLAY_ROUTES);
   const response = await replay.fetch(REPLAY_ROUTES.surplus);
   assert.equal(response.headers.get("content-type"), "text/event-stream");
-  const reader = response.body!.getReader();
+  const reader = response.body?.getReader();
+  assert.ok(reader, "the recorded replay must expose a body stream");
   const first = await reader.read();
   assert.equal(first.done, false);
   assert.equal(new TextDecoder().decode(first.value), "x");
@@ -627,7 +641,8 @@ Deno.test("recorded upstream fetch_error rejects with no headers or chunks and c
 Deno.test("recorded upstream cancelled completes only when the consumer cancels after the full prefix", async () => {
   const replay = createRecordedUpstreamReplay(replayTrace([replayAttempt("surplus", 200, "text/event-stream", "cancelled", ["data:", "x\n"])]), REPLAY_ROUTES);
   const response = await replay.fetch(REPLAY_ROUTES.surplus);
-  const reader = response.body!.getReader();
+  const reader = response.body?.getReader();
+  assert.ok(reader, "the recorded replay must expose a body stream");
   assert.equal(new TextDecoder().decode((await reader.read()).value), "data:");
   assert.equal(new TextDecoder().decode((await reader.read()).value), "x\n");
   assert.deepEqual(replay.snapshot(), { attemptsDispatched: 1, attemptsCompleted: 0, failed: false });
@@ -639,7 +654,8 @@ Deno.test("recorded upstream cancelled completes only when the consumer cancels 
 Deno.test("recorded upstream cancelled prefix rejects when read beyond it, never inventing EOF", async () => {
   const replay = createRecordedUpstreamReplay(replayTrace([replayAttempt("surplus", 200, "text/event-stream", "cancelled", ["data:"])]), REPLAY_ROUTES);
   const response = await replay.fetch(REPLAY_ROUTES.surplus);
-  const reader = response.body!.getReader();
+  const reader = response.body?.getReader();
+  assert.ok(reader, "the recorded replay must expose a body stream");
   assert.equal(new TextDecoder().decode((await reader.read()).value), "data:");
   await assert.rejects(reader.read(), (error: unknown) => error instanceof TypeError);
   assert.throws(() => {
@@ -652,7 +668,8 @@ Deno.test("recorded upstream cancelled prefix rejects when read beyond it, never
 Deno.test("recorded upstream cancelled prefix refuses early consumer cancellation", async () => {
   const replay = createRecordedUpstreamReplay(replayTrace([replayAttempt("surplus", 200, "text/event-stream", "cancelled", ["data:", "x\n"])]), REPLAY_ROUTES);
   const response = await replay.fetch(REPLAY_ROUTES.surplus);
-  const reader = response.body!.getReader();
+  const reader = response.body?.getReader();
+  assert.ok(reader, "the recorded replay must expose a body stream");
   await reader.read();
   await reader.cancel();
   assert.throws(() => {
@@ -680,7 +697,8 @@ Deno.test("recorded upstream enforces exact ordered provider routes and permanen
   // Order mismatch: the second codex call cannot satisfy the surplus attempt.
   const wrongOrder = createRecordedUpstreamReplay(twoAttempts, REPLAY_ROUTES);
   const first = await wrongOrder.fetch(REPLAY_ROUTES.chatgpt_codex);
-  const firstReader = first.body!.getReader();
+  const firstReader = first.body?.getReader();
+  assert.ok(firstReader, "the recorded replay must expose a body stream");
   await firstReader.read();
   await firstReader.read();
   await assert.rejects(wrongOrder.fetch(REPLAY_ROUTES.chatgpt_codex), TypeError);
@@ -757,7 +775,6 @@ Deno.test({
     const originalNow = Date.now;
     const nowMs = 1_700_000_000_000;
     Date.now = () => nowMs;
-    const base64Url = (value: unknown): string => btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
     const accessToken = `${base64Url({ alg: "none" })}.${base64Url({ exp: (nowMs + 60 * 60_000) / 1_000 })}.handler-fixture`;
     const authState: CodexAuthState = {
       access_token: accessToken,
@@ -831,7 +848,7 @@ Deno.test({
       assert.equal(page.status, 200);
       const exported = (await page.json()) as { data: ExportedSentinelReplayCapture[]; cursor: string | null };
       assert.equal(exported.data.length, 1);
-      const capture = exported.data[0]!;
+      const capture = exported.data[0];
       const plaintext = await decryptExportedSentinelReplay(capture, keyBytes);
       assert.equal(plaintext.endpoint, "/v1/responses");
       assert.equal(plaintext.method, "POST");
@@ -898,7 +915,7 @@ Deno.test({
       resetCodexAccountRoutingForTest();
       resetRuntimeConfigCacheForTest();
       resetProviderHealthThrottleForTest();
-      await kv.close();
+      kv.close();
       setKvForTest(null);
     }
   },
@@ -946,11 +963,11 @@ const assertClientStreamSemantics = (text: string): { event: string; value: Reco
   const parseFrame = (frame: string): { event: string; value: Record<string, unknown> } => {
     const lines = frame.split("\n");
     assert.equal(lines.length, 2, `client frame must be exactly one event+data pair: ${JSON.stringify(frame)}`);
-    assert.equal(lines[0]!.startsWith("event: "), true);
-    assert.equal(lines[1]!.startsWith("data: "), true);
+    assert.equal(lines[0].startsWith("event: "), true);
+    assert.equal(lines[1].startsWith("data: "), true);
     return {
-      event: lines[0]!.slice("event: ".length),
-      value: JSON.parse(lines[1]!.slice("data: ".length)) as Record<string, unknown>,
+      event: lines[0].slice("event: ".length),
+      value: JSON.parse(lines[1].slice("data: ".length)) as Record<string, unknown>,
     };
   };
   const events = frames.map(parseFrame);
@@ -964,10 +981,10 @@ const assertClientStreamSemantics = (text: string): { event: string; value: Reco
     1,
     "exactly one pre-terminal text delta must be forwarded, never the unterminated suffix delta"
   );
-  assert.equal((events[1]!.value as { delta?: unknown }).delta, "fixture text");
-  assert.equal((events[2]!.value as { text?: unknown }).text, "fixture text", "the synthesized output_text.done must carry the exact fixture text");
-  assert.equal((events[3]!.value.item as { type?: unknown }).type, "message", "exactly one output_item.done message must be forwarded");
-  assert.equal((events[4]!.value.response as { status?: unknown }).status, "completed", "response.completed must be the terminal client event");
+  assert.equal((events[1].value as { delta?: unknown }).delta, "fixture text");
+  assert.equal((events[2].value as { text?: unknown }).text, "fixture text", "the synthesized output_text.done must carry the exact fixture text");
+  assert.equal((events[3].value.item as { type?: unknown }).type, "message", "exactly one output_item.done message must be forwarded");
+  assert.equal((events[4].value.response as { status?: unknown }).status, "completed", "response.completed must be the terminal client event");
   return events;
 };
 
@@ -1157,10 +1174,10 @@ Deno.test("historical framing fixture replays through the real Surplus fetch wit
   assert.equal(framingFixture.upstream.attempts_truncated, false);
   assert.equal(framingFixture.upstream.bytes_truncated, false);
   assert.equal(framingFixture.upstream.chunks_truncated, false);
-  assert.equal(framingFixture.upstream.attempts[0]!.terminal, "eof");
+  assert.equal(framingFixture.upstream.attempts[0].terminal, "eof");
   assert.equal(framingFixture.upstream.attempts.length, 1, "the fixture must carry exactly one recorded attempt");
-  assert.equal(framingFixture.upstream.attempts[0]!.provider, "surplus");
-  assert.equal(framingFixture.upstream.attempts[0]!.status, 200);
+  assert.equal(framingFixture.upstream.attempts[0].provider, "surplus");
+  assert.equal(framingFixture.upstream.attempts[0].status, 200);
 
   // The recorded upstream is sparse: created, one text delta, completed, then
   // a parseable but unterminated SSE suffix event (no blank-line terminator).

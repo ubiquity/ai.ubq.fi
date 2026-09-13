@@ -46,7 +46,10 @@ if (Deno.args.includes("--help") || Deno.args.includes("-h")) {
   Deno.exit(0);
 }
 
-const [commandRaw, ...rest] = Deno.args;
+// Deno.args is empty when the script is invoked without arguments, so the
+// first element is annotated as possibly absent.
+const commandRaw: string | undefined = Deno.args.at(0);
+const rest = Deno.args.slice(1);
 const command = commandRaw?.trim() ?? "";
 if (!command || command.startsWith("--")) {
   usage();
@@ -128,7 +131,7 @@ if (command === "create") {
     Deno.exit(2);
   }
 
-  let expires_at_ms: number | undefined;
+  let expiresAtMsValue: number | undefined;
   if (typeof rawExpiresAtMs === "string") {
     const parsedNumber = Number(rawExpiresAtMs.trim());
     if (!Number.isFinite(parsedNumber)) {
@@ -136,7 +139,7 @@ if (command === "create") {
       Deno.exit(2);
     }
     const expiresAtMs = Math.trunc(parsedNumber);
-    if (expiresAtMs === -1) expires_at_ms = -1;
+    if (expiresAtMs === -1) expiresAtMsValue = -1;
     else if (expiresAtMs <= Date.now()) {
       console.error("--expires-at-ms must be in the future (or -1).");
       Deno.exit(2);
@@ -144,7 +147,7 @@ if (command === "create") {
       console.error("--expires-at-ms must be -1 or a future timestamp.");
       Deno.exit(2);
     } else {
-      expires_at_ms = expiresAtMs;
+      expiresAtMsValue = expiresAtMs;
     }
   } else if (typeof rawPreset === "string") {
     const preset = normalizeApiKeyExpiryPreset(rawPreset);
@@ -152,12 +155,12 @@ if (command === "create") {
       console.error("--expires must be one of: day, week, month, quarter, year, forever.");
       Deno.exit(2);
     }
-    expires_at_ms = apiKeyExpiresAtMsFromPreset(preset, Date.now());
+    expiresAtMsValue = apiKeyExpiresAtMsFromPreset(preset, Date.now());
   }
 
   const token = (parsed.token as string | undefined) ?? null;
   const body: Record<string, unknown> = token ? { name, token } : { name };
-  if (expires_at_ms !== undefined) body.expires_at_ms = expires_at_ms;
+  if (expiresAtMsValue !== undefined) body.expires_at_ms = expiresAtMsValue;
   const req = new Request(endpoint("/admin/api-keys"), {
     method: "POST",
     headers: {

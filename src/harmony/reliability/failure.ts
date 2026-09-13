@@ -26,21 +26,6 @@ export type ReliabilityFailureClass =
   | "no_model_output"
   | "tool_call_limit";
 
-export const RELIABILITY_FAILURE_CLASSES: readonly ReliabilityFailureClass[] = [
-  "invalid_argument_loop",
-  "duplicate_loop",
-  "semantic_loop",
-  "stalled",
-  "unverified_write",
-  "unresolved_command",
-  "unresolved_edit",
-  "false_completion",
-  "guard_exhausted",
-  "transport_failed",
-  "no_model_output",
-  "tool_call_limit",
-];
-
 export type ReliabilityClassification = {
   failure_class: ReliabilityFailureClass | null;
   detail: string | null;
@@ -56,39 +41,46 @@ export type ClassificationInput = {
   abortedReason?: string | null;
 };
 
+/** One harness abort reason: its reliability class and detail renderer. */
+type AbortRule = {
+  failureClass: ReliabilityFailureClass;
+  detail: (input: ClassificationInput) => string;
+};
+
+/**
+ * Harness abort reasons that classify deterministically.  Kept in one table so
+ * the classifier reads as a lookup instead of a long branch chain; the original
+ * `detail` strings are preserved verbatim.
+ */
+const ABORT_RULES: ReadonlyMap<string, AbortRule> = new Map<string, AbortRule>([
+  ["false_completion", { failureClass: "false_completion", detail: () => "final answer repeated without intervening action" }],
+  ["transport_failed", { failureClass: "transport_failed", detail: () => "all transport retries exhausted" }],
+  ["no_model_output", { failureClass: "no_model_output", detail: () => "model produced neither tool calls nor final content" }],
+  ["tool_call_limit", { failureClass: "tool_call_limit", detail: () => "recorded tool calls exceeded the task cap" }],
+  ["guard_exhausted", { failureClass: "guard_exhausted", detail: (input) => `final guard rejected ${input.guardRejections} attempts` }],
+  ["invalid_argument_loop", { failureClass: "invalid_argument_loop", detail: (input) => `invalid tool calls repeated (streak ${input.invalidCallStreak})` }],
+  ["turn_limit", { failureClass: "stalled", detail: () => "max turns reached without completion" }],
+]);
+
+/** Classifies an explicit harness abort reason, or `null` when none applies. */
+const classifyAbortReason = (input: ClassificationInput): ReliabilityClassification | null => {
+  const reason = input.abortedReason;
+  if (reason === null || reason === undefined) return null;
+  const rule = ABORT_RULES.get(reason);
+  if (rule === undefined) return null;
+  return { failure_class: rule.failureClass, detail: rule.detail(input) };
+};
+
 /** Deterministic classifier over the structured state and harness counters. */
 export function classifyReliability(input: ClassificationInput): ReliabilityClassification {
   const state = input.state;
-  if (input.abortedReason !== null && input.abortedReason !== undefined) {
-    if (input.abortedReason === "false_completion") {
-      return { failure_class: "false_completion", detail: "final answer repeated without intervening action" };
-    }
-    if (input.abortedReason === "transport_failed") {
-      return { failure_class: "transport_failed", detail: "all transport retries exhausted" };
-    }
-    if (input.abortedReason === "no_model_output") {
-      return { failure_class: "no_model_output", detail: "model produced neither tool calls nor final content" };
-    }
-    if (input.abortedReason === "tool_call_limit") {
-      return { failure_class: "tool_call_limit", detail: "recorded tool calls exceeded the task cap" };
-    }
-    if (input.abortedReason === "guard_exhausted") {
-      return { failure_class: "guard_exhausted", detail: `final guard rejected ${input.guardRejections} attempts` };
-    }
-    if (input.abortedReason === "invalid_argument_loop") {
-      return {
-        failure_class: "invalid_argument_loop",
-        detail: `invalid tool calls repeated (streak ${input.invalidCallStreak})`,
-      };
-    }
-    if (input.abortedReason === "turn_limit") {
-      return { failure_class: "stalled", detail: "max turns reached without completion" };
-    }
-  }
+  const aborted = classifyAbortReason(input);
+  if (aborted !== null) return aborted;
   if (input.loopStreak >= 3 || state.semanticLoopStreak >= 3) {
     return { failure_class: "semantic_loop", detail: "semantic loop detected while finalizing" };
   }
-  const lastFinal = state.finals[state.finals.length - 1];
+  // `finals` may be empty, so the tail read is genuinely optional.
+  const lastFinal = state.finals.at(-1);
   if (lastFinal !== undefined && !lastFinal.accepted && state.finalAttempts >= 2) {
     return { failure_class: "false_completion", detail: "final answer rejected; no evidence the task is complete" };
   }

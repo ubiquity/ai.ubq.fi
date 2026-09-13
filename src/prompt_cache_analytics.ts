@@ -54,6 +54,12 @@ type PromptCacheAnalyticsCohort = Readonly<{
 type StoredCounters = Partial<Record<Counter, number>>;
 type CounterDeltas = Partial<Record<Counter, bigint>>;
 
+/** Usage evidence carried by one recorded outcome. */
+type PromptCacheAnalyticsUsage = Readonly<{
+  kind: "reported" | "missing" | "invalid";
+  deltas: CounterDeltas;
+}>;
+
 export type PromptCacheAnalyticsEvent = Readonly<{
   provider: string | null;
   /** Raw model text is accepted only long enough to derive an opaque cohort hash. */
@@ -224,6 +230,16 @@ const recordResult = (
   bucketStartAtMs: number | null = null
 ): PromptCacheAnalyticsRecordResult => ({ status, reason, bucket_start_at_ms: bucketStartAtMs });
 
+/** The reason string that reports which kind of usage evidence was recorded. */
+const recordedReason = (usage: PromptCacheAnalyticsUsage): PromptCacheAnalyticsRecordResult["reason"] => {
+  if (usage.kind === "reported") return "recorded";
+  if (usage.kind === "invalid") return "recorded_invalid_usage";
+  return "recorded_without_usage";
+};
+
+const recordedResult = (bucketStartAtMs: number, usage: PromptCacheAnalyticsUsage): PromptCacheAnalyticsRecordResult =>
+  recordResult("recorded", recordedReason(usage), bucketStartAtMs);
+
 const resolveKv = async (options: PromptCacheAnalyticsOptions): Promise<Deno.Kv | null> => {
   try {
     return options.kv === undefined ? await getKv() : options.kv;
@@ -292,7 +308,7 @@ const incrementCounters = (operation: Deno.AtomicOperation, keys: (counter: Coun
   return next;
 };
 
-const recordUsage = (event: PromptCacheAnalyticsEvent): Readonly<{ kind: "reported" | "missing" | "invalid"; deltas: CounterDeltas }> => {
+const recordUsage = (event: PromptCacheAnalyticsEvent): PromptCacheAnalyticsUsage => {
   const base: CounterDeltas = { sample_count: 1n };
   if (event.usageTelemetryStatus === "reported") {
     if (
@@ -322,10 +338,15 @@ const recordUsage = (event: PromptCacheAnalyticsEvent): Readonly<{ kind: "report
   return { kind: "missing", deltas: base };
 };
 
-const resolveCohort = async (event: PromptCacheAnalyticsEvent): Promise<PromptCacheAnalyticsCohort | null> => {
-  const provider = asProvider(event.provider);
-  const route = asRoute(event.route);
-  if (!provider || !route) return null;
+/**
+ * Builds the bounded cohort for an event whose provider and route were already
+ * validated by the caller, so this cannot fail to produce a cohort.
+ */
+const resolveCohort = async (
+  provider: PromptCacheAnalyticsProvider,
+  route: PromptCacheAnalyticsRoute,
+  event: PromptCacheAnalyticsEvent
+): Promise<PromptCacheAnalyticsCohort> => {
   const model = normalizedModel(event.model);
   let modelHash = "unknown";
   if (model) modelHash = await sha256Hex(`uos-prompt-cache-analytics-model-v2\u0000${model}`);
@@ -349,6 +370,72 @@ const commitAggregateAndOverflow = async (kv: Deno.Kv, bucketStartAtMs: number, 
   }
 };
 
+/** Adds this cohort's dimension counters and the shared aggregate counters. */
+const addCohortCounters = (
+  operation: Deno.AtomicOperation,
+  bucketStartAtMs: number,
+  cohort: PromptCacheAnalyticsCohort,
+  deltas: CounterDeltas
+): Deno.AtomicOperation => {
+  let next = incrementCounters(operation, (counter) => dimensionCounterKey(bucketStartAtMs, cohort, counter), deltas);
+  next = incrementCounters(next, (counter) => promptCacheAnalyticsCounterKey(bucketStartAtMs, counter), deltas);
+  return next;
+};
+
+const commitCohortCounters = async (kv: Deno.Kv, bucketStartAtMs: number, cohort: PromptCacheAnalyticsCohort, deltas: CounterDeltas): Promise<boolean> => {
+  const operation = addCohortCounters(kv.atomic(), bucketStartAtMs, cohort, deltas);
+  return (await operation.commit()).ok;
+};
+
+/** Records a cohort that arrived after the per-bucket cohort cap was reached. */
+const commitCappedCohort = async (kv: Deno.Kv, bucketStartAtMs: number, deltas: CounterDeltas): Promise<PromptCacheAnalyticsRecordResult> => {
+  const cappedDeltas: CounterDeltas = {
+    ...deltas,
+    dimension_cardinality_limited_sample_count: 1n,
+  };
+  if (!(await commitAggregateAndOverflow(kv, bucketStartAtMs, cappedDeltas))) {
+    return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
+  }
+  return recordResult("recorded", "recorded_cardinality_capped", bucketStartAtMs);
+};
+
+type CohortAdmission = Readonly<{
+  kv: Deno.Kv;
+  bucketStartAtMs: number;
+  cohort: PromptCacheAnalyticsCohort;
+  usage: PromptCacheAnalyticsUsage;
+  markerKey: Deno.KvKey;
+  bucketCardinalityKey: Deno.KvKey;
+}>;
+
+/**
+ * One bounded admission attempt for a cohort inside the current bucket. Returns
+ * the recorded outcome, or `null` when the caller must retry with fresh state.
+ */
+const admitCohort = async (admission: CohortAdmission): Promise<PromptCacheAnalyticsRecordResult | null> => {
+  const { kv, bucketStartAtMs, cohort, usage, markerKey, bucketCardinalityKey } = admission;
+  const [marker, cardinality] = await kv.getMany<[boolean, number]>([markerKey, bucketCardinalityKey]);
+  if (marker.value === true) {
+    if (!(await commitCohortCounters(kv, bucketStartAtMs, cohort, usage.deltas))) return null;
+    return recordedResult(bucketStartAtMs, usage);
+  }
+
+  const cardinalityValue = cardinality.value === null ? 0 : storedCardinality(cardinality.value);
+  if (cardinalityValue === null) return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
+  if (cardinalityValue >= PROMPT_CACHE_ANALYTICS_MAX_COHORTS_PER_BUCKET) return commitCappedCohort(kv, bucketStartAtMs, usage.deltas);
+
+  const retentionMs = PROMPT_CACHE_ANALYTICS_RETENTION_MS;
+  let operation = kv
+    .atomic()
+    .check(marker)
+    .check(cardinality)
+    .set(markerKey, true, { expireIn: retentionMs })
+    .set(bucketCardinalityKey, cardinalityValue + 1, { expireIn: retentionMs });
+  operation = addCohortCounters(operation, bucketStartAtMs, cohort, usage.deltas);
+  if (!(await operation.commit()).ok) return null;
+  return recordedResult(bucketStartAtMs, usage);
+};
+
 /**
  * Adds one completed inference outcome to aggregate and bounded cohort
  * counters. The model is hashed before it reaches a durable KV key. A full
@@ -358,11 +445,13 @@ export const recordPromptCacheAnalytics = async (
   event: PromptCacheAnalyticsEvent,
   options: PromptCacheAnalyticsOptions = {}
 ): Promise<PromptCacheAnalyticsRecordResult> => {
-  const release = options.release === undefined ? RELEASE_GIT_SHA : options.release;
+  const release = options.release ?? RELEASE_GIT_SHA;
   if (!knownRelease(release)) return recordResult("ignored", "unknown_release");
   if (!event.completed || !Number.isInteger(event.status) || event.status < 200 || event.status >= 300) return recordResult("ignored", "not_completed_2xx");
-  if (!asProvider(event.provider)) return recordResult("ignored", "unsupported_provider");
-  if (!asRoute(event.route)) return recordResult("ignored", "unsupported_route");
+  const provider = asProvider(event.provider);
+  if (!provider) return recordResult("ignored", "unsupported_provider");
+  const route = asRoute(event.route);
+  if (!route) return recordResult("ignored", "unsupported_route");
 
   const nowMs = safeNow(options.now ?? Date.now);
   const bucketStartAtMs = alignedBucketStart(nowMs);
@@ -371,67 +460,29 @@ export const recordPromptCacheAnalytics = async (
 
   let cohort: PromptCacheAnalyticsCohort;
   try {
-    cohort = (await resolveCohort(event))!;
+    cohort = await resolveCohort(provider, route, event);
   } catch {
     return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
   }
-  const usage = recordUsage(event);
-  const markerKey = dimensionMarkerKey(bucketStartAtMs, cohort);
-  const bucketCardinalityKey = cardinalityKey(bucketStartAtMs);
+  const admission: CohortAdmission = {
+    kv,
+    bucketStartAtMs,
+    cohort,
+    usage: recordUsage(event),
+    markerKey: dimensionMarkerKey(bucketStartAtMs, cohort),
+    bucketCardinalityKey: cardinalityKey(bucketStartAtMs),
+  };
 
   // Each failed admission CAS means this cohort was admitted concurrently or
   // another cohort advanced the shared cardinality row. One extra read after
   // the maximum number of conflicts must therefore observe this marker or cap.
-  for (let attempt = 0; attempt <= PROMPT_CACHE_ANALYTICS_MAX_COHORTS_PER_BUCKET; attempt += 1) {
-    try {
-      const [marker, cardinality] = await kv.getMany<[boolean, number]>([markerKey, bucketCardinalityKey]);
-      if (marker.value === true) {
-        let operation = incrementCounters(kv.atomic(), (counter) => dimensionCounterKey(bucketStartAtMs, cohort, counter), usage.deltas);
-        operation = incrementCounters(operation, (counter) => promptCacheAnalyticsCounterKey(bucketStartAtMs, counter), usage.deltas);
-        if ((await operation.commit()).ok) {
-          return recordResult(
-            "recorded",
-            usage.kind === "reported" ? "recorded" : usage.kind === "invalid" ? "recorded_invalid_usage" : "recorded_without_usage",
-            bucketStartAtMs
-          );
-        }
-        continue;
-      }
-
-      const cardinalityValue = cardinality.value === null ? 0 : storedCardinality(cardinality.value);
-      if (cardinalityValue === null) {
-        return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
-      }
-      if (cardinalityValue >= PROMPT_CACHE_ANALYTICS_MAX_COHORTS_PER_BUCKET) {
-        const cappedDeltas: CounterDeltas = {
-          ...usage.deltas,
-          dimension_cardinality_limited_sample_count: 1n,
-        };
-        if (!(await commitAggregateAndOverflow(kv, bucketStartAtMs, cappedDeltas))) {
-          return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
-        }
-        return recordResult("recorded", "recorded_cardinality_capped", bucketStartAtMs);
-      }
-
-      const retentionMs = PROMPT_CACHE_ANALYTICS_RETENTION_MS;
-      let operation = kv
-        .atomic()
-        .check(marker)
-        .check(cardinality)
-        .set(markerKey, true, { expireIn: retentionMs })
-        .set(bucketCardinalityKey, cardinalityValue + 1, { expireIn: retentionMs });
-      operation = incrementCounters(operation, (counter) => dimensionCounterKey(bucketStartAtMs, cohort, counter), usage.deltas);
-      operation = incrementCounters(operation, (counter) => promptCacheAnalyticsCounterKey(bucketStartAtMs, counter), usage.deltas);
-      if ((await operation.commit()).ok) {
-        return recordResult(
-          "recorded",
-          usage.kind === "reported" ? "recorded" : usage.kind === "invalid" ? "recorded_invalid_usage" : "recorded_without_usage",
-          bucketStartAtMs
-        );
-      }
-    } catch {
-      return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
+  try {
+    for (let attempt = 0; attempt <= PROMPT_CACHE_ANALYTICS_MAX_COHORTS_PER_BUCKET; attempt += 1) {
+      const outcome = await admitCohort(admission);
+      if (outcome !== null) return outcome;
     }
+  } catch {
+    return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
   }
 
   return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
@@ -583,20 +634,70 @@ const parsedOverflowCounter = (key: Deno.KvKey): Readonly<{ bucketStartAtMs: num
   return { bucketStartAtMs, counter };
 };
 
+// Synthetic control-plane fixtures may use the aggregate helper directly.
+// Both token counters are sufficient evidence of reported usage in that case.
+const inferredUsageReportedSampleCount = (counters: StoredCounters, sampleCount: number, hasInputCounters: boolean): number =>
+  hasInputCounters && safeCounter(counters.input_tokens) && safeCounter(counters.cached_input_tokens) ? sampleCount : 0;
+
+type ProjectedTokenCounters = Readonly<{
+  inputTokens: number | null;
+  cachedInputTokens: number | null;
+}>;
+
+const projectedTokenCounters = (counters: StoredCounters, usageReportedSampleCount: number, hasInputCounters: boolean): ProjectedTokenCounters | null => {
+  if (usageReportedSampleCount > 0) {
+    if (!safeCounter(counters.input_tokens) || !safeCounter(counters.cached_input_tokens) || counters.cached_input_tokens > counters.input_tokens) return null;
+    return { inputTokens: counters.input_tokens, cachedInputTokens: counters.cached_input_tokens };
+  }
+  if (hasInputCounters) return null;
+  return { inputTokens: null, cachedInputTokens: null };
+};
+
+type ProjectedCacheWriteCounters = Readonly<{
+  inputTokens: number | null;
+  reportedSampleCount: number;
+}>;
+
+const projectedCacheWriteCounters = (counters: StoredCounters, usageReportedSampleCount: number): ProjectedCacheWriteCounters | null => {
+  const cacheWriteInputTokens = counters.cache_write_input_tokens;
+  const cacheWriteReportedSampleCount = counters.cache_write_reported_sample_count;
+  if (cacheWriteInputTokens === undefined && cacheWriteReportedSampleCount === undefined) {
+    return { inputTokens: null, reportedSampleCount: 0 };
+  }
+  if (
+    !safeCounter(cacheWriteInputTokens) ||
+    !safeCounter(cacheWriteReportedSampleCount) ||
+    cacheWriteReportedSampleCount === 0 ||
+    cacheWriteReportedSampleCount > usageReportedSampleCount
+  )
+    return null;
+  return { inputTokens: cacheWriteInputTokens, reportedSampleCount: cacheWriteReportedSampleCount };
+};
+
+type ProjectedHitCounters = Readonly<{
+  requestCacheHitSampleCount: number;
+  cardinalityLimitedSampleCount: number;
+}>;
+
+const projectedHitCounters = (counters: StoredCounters, sampleCount: number, usageReportedSampleCount: number): ProjectedHitCounters | null => {
+  const requestCacheHitSampleCount = counters.request_cache_hit_sample_count ?? 0;
+  const cardinalityLimitedSampleCount = counters.dimension_cardinality_limited_sample_count ?? 0;
+  if (
+    !safeCounter(requestCacheHitSampleCount) ||
+    requestCacheHitSampleCount > usageReportedSampleCount ||
+    !safeCounter(cardinalityLimitedSampleCount) ||
+    cardinalityLimitedSampleCount > sampleCount
+  )
+    return null;
+  return { requestCacheHitSampleCount, cardinalityLimitedSampleCount };
+};
+
 const projectedBucket = (bucketStartAtMs: number, counters: StoredCounters, group: PromptCacheAnalyticsGroup | null): PromptCacheAnalyticsBucket | null => {
   const sampleCount = counters.sample_count;
   if (!safeCounter(sampleCount)) return null;
 
-  const explicitReported = counters.usage_reported_sample_count;
   const hasInputCounters = counters.input_tokens !== undefined || counters.cached_input_tokens !== undefined;
-  // Synthetic control-plane fixtures may use the aggregate helper directly.
-  // Both token counters are sufficient evidence of reported usage in that case.
-  const usageReportedSampleCount =
-    explicitReported === undefined
-      ? hasInputCounters && safeCounter(counters.input_tokens) && safeCounter(counters.cached_input_tokens)
-        ? sampleCount
-        : 0
-      : explicitReported;
+  const usageReportedSampleCount = counters.usage_reported_sample_count ?? inferredUsageReportedSampleCount(counters, sampleCount, hasInputCounters);
   const usageInvalidSampleCount = counters.usage_invalid_sample_count ?? 0;
   if (
     !safeCounter(usageReportedSampleCount) ||
@@ -607,52 +708,24 @@ const projectedBucket = (bucketStartAtMs: number, counters: StoredCounters, grou
   )
     return null;
 
-  let inputTokens: number | null = null;
-  let cachedInputTokens: number | null = null;
-  if (usageReportedSampleCount > 0) {
-    if (!safeCounter(counters.input_tokens) || !safeCounter(counters.cached_input_tokens) || counters.cached_input_tokens > counters.input_tokens) return null;
-    inputTokens = counters.input_tokens;
-    cachedInputTokens = counters.cached_input_tokens;
-  } else if (hasInputCounters) {
-    return null;
-  }
+  const tokens = projectedTokenCounters(counters, usageReportedSampleCount, hasInputCounters);
+  if (!tokens) return null;
+  const cacheWrite = projectedCacheWriteCounters(counters, usageReportedSampleCount);
+  if (!cacheWrite) return null;
+  const hitCounters = projectedHitCounters(counters, sampleCount, usageReportedSampleCount);
+  if (!hitCounters) return null;
 
-  const cacheWriteInputTokens = counters.cache_write_input_tokens;
-  const cacheWriteReportedSampleCount = counters.cache_write_reported_sample_count;
-  let projectedCacheWriteInputTokens: number | null = null;
-  let projectedCacheWriteReportedSampleCount = 0;
-  if (cacheWriteInputTokens !== undefined || cacheWriteReportedSampleCount !== undefined) {
-    if (
-      !safeCounter(cacheWriteInputTokens) ||
-      !safeCounter(cacheWriteReportedSampleCount) ||
-      cacheWriteReportedSampleCount === 0 ||
-      cacheWriteReportedSampleCount > usageReportedSampleCount
-    )
-      return null;
-    projectedCacheWriteInputTokens = cacheWriteInputTokens;
-    projectedCacheWriteReportedSampleCount = cacheWriteReportedSampleCount;
-  }
-
-  const requestCacheHitSampleCount = counters.request_cache_hit_sample_count ?? 0;
-  const cardinalityLimitedSampleCount = counters.dimension_cardinality_limited_sample_count ?? 0;
-  if (
-    !safeCounter(requestCacheHitSampleCount) ||
-    requestCacheHitSampleCount > usageReportedSampleCount ||
-    !safeCounter(cardinalityLimitedSampleCount) ||
-    cardinalityLimitedSampleCount > sampleCount
-  )
-    return null;
-
-  const tokenHitPercentage = inputTokens === null || cachedInputTokens === null ? null : roundedPercentage(cachedInputTokens, inputTokens);
-  const requestHitPercentage = roundedPercentage(requestCacheHitSampleCount, usageReportedSampleCount);
+  const tokenHitPercentage =
+    tokens.inputTokens === null || tokens.cachedInputTokens === null ? null : roundedPercentage(tokens.cachedInputTokens, tokens.inputTokens);
+  const requestHitPercentage = roundedPercentage(hitCounters.requestCacheHitSampleCount, usageReportedSampleCount);
   const usageMissingSampleCount = sampleCount - usageReportedSampleCount - usageInvalidSampleCount;
   const compact: PromptCacheAnalyticsBucket = {
     bucket_start_at_ms: bucketStartAtMs,
     bucket_end_at_ms: bucketStartAtMs + PROMPT_CACHE_ANALYTICS_BUCKET_MS,
-    input_tokens: inputTokens,
-    cached_input_tokens: cachedInputTokens,
-    cache_write_input_tokens: projectedCacheWriteInputTokens,
-    cache_write_reported_sample_count: projectedCacheWriteReportedSampleCount,
+    input_tokens: tokens.inputTokens,
+    cached_input_tokens: tokens.cachedInputTokens,
+    cache_write_input_tokens: cacheWrite.inputTokens,
+    cache_write_reported_sample_count: cacheWrite.reportedSampleCount,
     cached_percentage: tokenHitPercentage,
     sample_count: sampleCount,
   };
@@ -661,27 +734,27 @@ const projectedBucket = (bucketStartAtMs: number, counters: StoredCounters, grou
     ...compact,
     group,
     token_hit_percentage: tokenHitPercentage,
-    request_cache_hit_sample_count: requestCacheHitSampleCount,
+    request_cache_hit_sample_count: hitCounters.requestCacheHitSampleCount,
     request_hit_percentage: requestHitPercentage,
     cache_reads_per_write:
-      inputTokens === null || cachedInputTokens === null || projectedCacheWriteInputTokens === null
+      tokens.inputTokens === null || tokens.cachedInputTokens === null || cacheWrite.inputTokens === null
         ? null
-        : roundedRatio(cachedInputTokens, projectedCacheWriteInputTokens),
+        : roundedRatio(tokens.cachedInputTokens, cacheWrite.inputTokens),
     usage_reported_sample_count: usageReportedSampleCount,
     usage_invalid_sample_count: usageInvalidSampleCount,
     usage_missing_sample_count: usageMissingSampleCount,
     usage_telemetry_coverage_percentage: roundedPercentage(usageReportedSampleCount, sampleCount),
-    dimension_cardinality_limited_sample_count: cardinalityLimitedSampleCount,
+    dimension_cardinality_limited_sample_count: hitCounters.cardinalityLimitedSampleCount,
   };
 };
 
-const viewWindow = (
-  now: () => number
-): Readonly<{
+type PromptCacheAnalyticsWindow = Readonly<{
   currentBucketStartAtMs: number;
   windowStartAtMs: number;
   windowEndAtMs: number;
-}> => {
+}>;
+
+const viewWindow = (now: () => number): PromptCacheAnalyticsWindow => {
   const currentBucketStartAtMs = alignedBucketStart(safeNow(now));
   const windowEndAtMs = currentBucketStartAtMs + PROMPT_CACHE_ANALYTICS_BUCKET_MS;
   return {
@@ -693,6 +766,106 @@ const viewWindow = (
 
 const inWindow = (bucketStartAtMs: number, window: Readonly<{ currentBucketStartAtMs: number; windowStartAtMs: number }>): boolean =>
   bucketStartAtMs >= window.windowStartAtMs && bucketStartAtMs <= window.currentBucketStartAtMs;
+
+type PromptCacheAnalyticsStoredBucket = Readonly<{
+  bucketStartAtMs: number;
+  group: PromptCacheAnalyticsGroup | null;
+  counters: StoredCounters;
+}>;
+
+type PromptCacheAnalyticsStoredBuckets = Map<string, PromptCacheAnalyticsStoredBucket>;
+
+/** Sums one stored counter into its bucket/group row; a saturated row is left as it was. */
+const accumulateCounter = (
+  storedBuckets: PromptCacheAnalyticsStoredBuckets,
+  identity: string,
+  bucketStartAtMs: number,
+  group: PromptCacheAnalyticsGroup | null,
+  counter: Counter,
+  value: number
+): void => {
+  const existing = storedBuckets.get(identity) ?? { bucketStartAtMs, group, counters: {} };
+  const previous = existing.counters[counter] ?? 0;
+  if (previous > Number.MAX_SAFE_INTEGER - value) return;
+  existing.counters[counter] = previous + value;
+  storedBuckets.set(identity, existing);
+};
+
+const accumulateAggregateEntry = (
+  storedBuckets: PromptCacheAnalyticsStoredBuckets,
+  entry: Deno.KvEntry<Deno.KvU64>,
+  window: PromptCacheAnalyticsWindow
+): void => {
+  const parsed = parsedAggregateCounter(entry.key);
+  if (!parsed || !inWindow(parsed.bucketStartAtMs, window)) return;
+  const value = storedCounter(entry.value);
+  if (value === null) return;
+  accumulateCounter(storedBuckets, String(parsed.bucketStartAtMs), parsed.bucketStartAtMs, null, parsed.counter, value);
+};
+
+const accumulateDimensionEntry = (
+  storedBuckets: PromptCacheAnalyticsStoredBuckets,
+  entry: Deno.KvEntry<Deno.KvU64>,
+  window: PromptCacheAnalyticsWindow,
+  groupBy: readonly PromptCacheAnalyticsDimension[]
+): void => {
+  const bucketStartAtMs = entry.key[dimensionPrefix.length];
+  if (!safeCounter(bucketStartAtMs) || !inWindow(bucketStartAtMs, window)) return;
+  const cohort = parsedDimensionValues(entry.key);
+  const counter = counterFromDimensionKey(entry.key);
+  const value = storedCounter(entry.value);
+  if (!cohort || !counter || value === null) return;
+  const group = groupForCohort(cohort, groupBy);
+  accumulateCounter(storedBuckets, groupIdentity(bucketStartAtMs, group), bucketStartAtMs, group, counter, value);
+};
+
+/** Returns true when the entry counts as cardinality-limited traffic for the view. */
+const accumulateOverflowEntry = (
+  storedBuckets: PromptCacheAnalyticsStoredBuckets,
+  entry: Deno.KvEntry<Deno.KvU64>,
+  window: PromptCacheAnalyticsWindow
+): boolean => {
+  const parsed = parsedOverflowCounter(entry.key);
+  if (!parsed || !inWindow(parsed.bucketStartAtMs, window)) return false;
+  const value = storedCounter(entry.value);
+  if (value === null) return false;
+  const group: PromptCacheAnalyticsGroup = { cardinality_limited: true };
+  accumulateCounter(storedBuckets, groupIdentity(parsed.bucketStartAtMs, group), parsed.bucketStartAtMs, group, parsed.counter, value);
+  return true;
+};
+
+type PromptCacheAnalyticsStoredRead = Readonly<{
+  storedBuckets: PromptCacheAnalyticsStoredBuckets;
+  /** At least one in-window entry was recorded past the per-bucket cohort cap. */
+  cardinalityLimited: boolean;
+}>;
+
+/**
+ * Reads this window's counters into per-bucket rows. The compact aggregate view
+ * lists only the aggregate prefix; a grouped view lists the dimension prefix
+ * plus the overflow prefix that carries capped cohorts.
+ */
+const readStoredBuckets = async (
+  kv: Deno.Kv,
+  groupBy: readonly PromptCacheAnalyticsDimension[],
+  window: PromptCacheAnalyticsWindow
+): Promise<PromptCacheAnalyticsStoredRead> => {
+  const storedBuckets: PromptCacheAnalyticsStoredBuckets = new Map();
+  if (groupBy.length === 0) {
+    for await (const entry of kv.list<Deno.KvU64>({ prefix: aggregatePrefix })) {
+      accumulateAggregateEntry(storedBuckets, entry, window);
+    }
+    return { storedBuckets, cardinalityLimited: false };
+  }
+  let cardinalityLimited = false;
+  for await (const entry of kv.list<Deno.KvU64>({ prefix: dimensionPrefix })) {
+    accumulateDimensionEntry(storedBuckets, entry, window, groupBy);
+  }
+  for await (const entry of kv.list<Deno.KvU64>({ prefix: overflowPrefix })) {
+    if (accumulateOverflowEntry(storedBuckets, entry, window)) cardinalityLimited = true;
+  }
+  return { storedBuckets, cardinalityLimited };
+};
 
 /**
  * Reads the compact aggregate used by capacity history or a bounded grouped
@@ -721,63 +894,7 @@ export const readPromptCacheAnalytics = async (options: PromptCacheAnalyticsRead
   if (!kv) return unavailable();
 
   try {
-    const storedBuckets = new Map<
-      string,
-      Readonly<{
-        bucketStartAtMs: number;
-        group: PromptCacheAnalyticsGroup | null;
-        counters: StoredCounters;
-      }>
-    >();
-    let cardinalityLimited = false;
-    if (groupBy.length === 0) {
-      for await (const entry of kv.list<Deno.KvU64>({ prefix: aggregatePrefix })) {
-        const parsed = parsedAggregateCounter(entry.key);
-        if (!parsed || !inWindow(parsed.bucketStartAtMs, window)) continue;
-        const value = storedCounter(entry.value);
-        if (value === null) continue;
-        const identity = String(parsed.bucketStartAtMs);
-        const existing = storedBuckets.get(identity) ?? {
-          bucketStartAtMs: parsed.bucketStartAtMs,
-          group: null,
-          counters: {},
-        };
-        const previous = existing.counters[parsed.counter] ?? 0;
-        if (previous > Number.MAX_SAFE_INTEGER - value) continue;
-        existing.counters[parsed.counter] = previous + value;
-        storedBuckets.set(identity, existing);
-      }
-    } else {
-      for await (const entry of kv.list<Deno.KvU64>({ prefix: dimensionPrefix })) {
-        const bucketStartAtMs = entry.key[dimensionPrefix.length];
-        if (!safeCounter(bucketStartAtMs) || !inWindow(bucketStartAtMs, window)) continue;
-        const cohort = parsedDimensionValues(entry.key);
-        const counter = counterFromDimensionKey(entry.key);
-        const value = storedCounter(entry.value);
-        if (!cohort || !counter || value === null) continue;
-        const group = groupForCohort(cohort, groupBy);
-        const identity = groupIdentity(bucketStartAtMs, group);
-        const existing = storedBuckets.get(identity) ?? { bucketStartAtMs, group, counters: {} };
-        const previous = existing.counters[counter] ?? 0;
-        if (previous > Number.MAX_SAFE_INTEGER - value) continue;
-        existing.counters[counter] = previous + value;
-        storedBuckets.set(identity, existing);
-      }
-      for await (const entry of kv.list<Deno.KvU64>({ prefix: overflowPrefix })) {
-        const parsed = parsedOverflowCounter(entry.key);
-        if (!parsed || !inWindow(parsed.bucketStartAtMs, window)) continue;
-        const value = storedCounter(entry.value);
-        if (value === null) continue;
-        cardinalityLimited = true;
-        const group: PromptCacheAnalyticsGroup = { cardinality_limited: true };
-        const identity = groupIdentity(parsed.bucketStartAtMs, group);
-        const existing = storedBuckets.get(identity) ?? { bucketStartAtMs: parsed.bucketStartAtMs, group, counters: {} };
-        const previous = existing.counters[parsed.counter] ?? 0;
-        if (previous > Number.MAX_SAFE_INTEGER - value) continue;
-        existing.counters[parsed.counter] = previous + value;
-        storedBuckets.set(identity, existing);
-      }
-    }
+    const { storedBuckets, cardinalityLimited } = await readStoredBuckets(kv, groupBy, window);
 
     const projected = [...storedBuckets.values()]
       .map(({ bucketStartAtMs, group, counters }) => projectedBucket(bucketStartAtMs, counters, group))

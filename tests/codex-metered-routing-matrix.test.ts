@@ -168,12 +168,18 @@ const directStatus = (outcome: Outcome): number => {
   return outcome.status;
 };
 
+const errorTypeForStatus = (status: number): string => {
+  if (status >= 500) return "server_error";
+  if (status === 429) return "rate_limit_error";
+  return "invalid_request_error";
+};
+
 const jsonErrorResponse = (status: number): Response =>
   new Response(
     JSON.stringify({
       error: {
         message: `Codex fixture ${status}`,
-        type: status >= 500 ? "server_error" : status === 429 ? "rate_limit_error" : "invalid_request_error",
+        type: errorTypeForStatus(status),
         code: status === 429 ? "rate_limit_exceeded" : `fixture_${status}`,
         param: null,
       },
@@ -315,10 +321,16 @@ const accountForRefreshToken = (refreshToken: unknown): (typeof ACCOUNT_IDS)[num
   throw new Error(`Unexpected refresh token fixture: ${String(refreshToken)}`);
 };
 
+const requestUrl = (input: RequestInfo | URL): string => {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+};
+
 const mockedFetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   const run = activeRun;
   if (!run) throw new Error("Routing matrix fetch occurred without an active case.");
-  const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+  const url = requestUrl(input);
 
   if (url === CODEX_REFRESH_URL) {
     const body = typeof init?.body === "string" ? (JSON.parse(init.body) as { refresh_token?: unknown }) : {};
@@ -367,6 +379,15 @@ const retryLogs = (logs: readonly unknown[][]): Record<string, unknown>[] =>
 
 const drainBackgroundTasks = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
+// The recorded Codex outcome whose status decides the client-visible response:
+// on the generic-429 replay path it is whichever account returned the 429,
+// otherwise it is the last account that was actually reached.
+const terminalOutcome = (first: Outcome, second: Outcome, replays429: boolean, reachesSecond: boolean): Outcome => {
+  if (replays429) return is429(first) ? first : second;
+  if (reachesSecond) return second;
+  return first;
+};
+
 const runCase = async (first: Outcome, second: Outcome, sequence: number): Promise<void> => {
   await seedFixture();
   const run: ActiveRun = {
@@ -401,7 +422,7 @@ const runCase = async (first: Outcome, second: Outcome, sequence: number): Promi
     // inference on a sibling account. Every 429 in this matrix is deliberately
     // non-authoritative.
     const completesGeneric429Retry = isFallbackOutcome(first) && isFallbackOutcome(second) && (is429(first) || is429(second));
-    const terminalCodexOutcome = completesGeneric429Retry ? (is429(first) ? first : second) : reachesSecond ? second : first;
+    const terminalCodexOutcome = terminalOutcome(first, second, completesGeneric429Retry, reachesSecond);
     const expectedStatus = is401(terminalCodexOutcome) ? 503 : directStatus(terminalCodexOutcome);
     assert.equal(response.status, expectedStatus, `${label}: final status`);
     assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex", `${label}: selected upstream`);
@@ -410,7 +431,9 @@ const runCase = async (first: Outcome, second: Outcome, sequence: number): Promi
     assert.equal(run.refreshCalls["account-one"], is401(first) ? 1 : 0, `${label}: account one refresh count`);
     assert.equal(run.refreshCalls["account-two"], reachesSecond && is401(second) ? 1 : 0, `${label}: account two refresh count`);
 
-    const expectedBaseCalls = 1 + (is401(first) ? 1 : 0) + (reachesSecond ? 1 + (is401(second) ? 1 : 0) : 0);
+    const firstAccountRefresh = is401(first) ? 1 : 0;
+    const secondAccountRefresh = is401(second) ? 1 : 0;
+    const expectedBaseCalls = 1 + firstAccountRefresh + (reachesSecond ? 1 + secondAccountRefresh : 0);
     const expectsGlobal429Retry = completesGeneric429Retry;
     assert.equal(
       run.codexCalls["account-one"] + run.codexCalls["account-two"],

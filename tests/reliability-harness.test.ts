@@ -96,9 +96,11 @@ Deno.test("harness: invalid calls are never executed and feedback is determinist
   );
   const ev = evidence(outcome);
   assert.equal(outcome.phase, "completed");
-  const invalid = ev.toolCalls.find((c) => !c.valid)!;
+  const invalid = ev.toolCalls.find((c) => !c.valid);
+  assert.ok(invalid);
   assert.equal(invalid.invalidReason, "wrong_type:arguments.path");
-  const invalidResult = ev.toolResults.find((r) => r.id === invalid.id)!;
+  const invalidResult = ev.toolResults.find((r) => r.id === invalid.id);
+  assert.ok(invalidResult);
   assert.equal(String(invalidResult.result.error_code), "invalid_args");
   assert.match(invalidResult.result.error ?? "", /invalid arguments \(1 issue\(s\)\)/);
   assert.equal(outcome.state.invalidCalls, 1);
@@ -116,9 +118,11 @@ Deno.test("harness: exact duplicates after success are blocked, not re-executed"
   );
   const ev = evidence(outcome);
   assert.equal(outcome.phase, "completed");
-  const repeated = ev.toolCalls.find((c) => c.repeated !== null && c.repeated !== undefined)!;
+  const repeated = ev.toolCalls.find((c) => c.repeated !== null && c.repeated !== undefined);
+  assert.ok(repeated);
   assert.equal(repeated.repeated, "repeat_after_success");
-  const result = ev.toolResults.find((r) => r.id === repeated.id)!;
+  const result = ev.toolResults.find((r) => r.id === repeated.id);
+  assert.ok(result);
   assert.equal(String(result.result.error_code), "duplicate_call");
   assert.match(result.result.error ?? "", /duplicate of the previous call/);
   assert.equal(outcome.state.duplicateCalls, 1);
@@ -260,10 +264,12 @@ Deno.test("harness: unknown experimental tools on the broad surface get determin
     )
   );
   const ev = evidence(outcome);
-  const invalid = ev.toolCalls.find((c) => c.tool === "filesystem.write")!;
+  const invalid = ev.toolCalls.find((c) => c.tool === "filesystem.write");
+  assert.ok(invalid);
   assert.equal(invalid.valid, false);
   assert.equal(invalid.invalidReason, "unknown_tool:tool");
-  const result = ev.toolResults.find((r) => r.id === invalid.id)!;
+  const result = ev.toolResults.find((r) => r.id === invalid.id);
+  assert.ok(result);
   assert.match(result.result.error ?? "", /unknown_tool/);
 });
 
@@ -337,23 +343,27 @@ Deno.test("harness: whole-run cancellation aborts a stalled injected transport",
       const signal = options?.signal;
       if (signal === undefined) return;
       if (signal.aborted) {
-        reject(signal.reason);
+        reject(new Error("stalled transport aborted before dispatch", { cause: signal.reason }));
         return;
       }
       signal.addEventListener(
         "abort",
         () => {
-          reject(signal.reason);
+          reject(new Error("stalled transport aborted while awaiting the response", { cause: signal.reason }));
         },
         { once: true }
       );
     });
   };
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  // The timer is created by the promise executor, which runs synchronously, and
+  // recorded in a list so cleanup needs no nullish sentinel.
+  const timeoutTimers: ReturnType<typeof setTimeout>[] = [];
   const timeout = new Promise<never>((_resolve, reject) => {
-    timeoutId = setTimeout(() => {
-      reject(new Error("stalled transport ignored cancellation"));
-    }, 500);
+    timeoutTimers.push(
+      setTimeout(() => {
+        reject(new Error("stalled transport ignored cancellation"));
+      }, 500)
+    );
   });
   const started = Date.now();
   setTimeout(() => {
@@ -366,7 +376,7 @@ Deno.test("harness: whole-run cancellation aborts a stalled injected transport",
     assert.equal(outcome.abortedReason, "signal");
     assert.ok(Date.now() - started < 500, "transport should stop at the run deadline");
   } finally {
-    if (timeoutId !== undefined) clearTimeout(timeoutId);
+    for (const timer of timeoutTimers) clearTimeout(timer);
   }
 });
 

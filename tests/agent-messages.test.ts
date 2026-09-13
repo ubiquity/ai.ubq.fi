@@ -69,7 +69,9 @@ class MemoryKv {
     results = results.sort((a, b) => compareKvKey(a.key, b.key));
 
     if ("start" in selector) {
-      results = results.filter((entry) => compareKvKey(entry.key, selector.start ?? []) >= 0);
+      // `"start" in selector` narrows Deno.KvListSelector to a variant whose
+      // `start` is a required Deno.KvKey, so it can never be nullish here.
+      results = results.filter((entry) => compareKvKey(entry.key, selector.start) >= 0);
     }
 
     const limit = options.limit ?? results.length;

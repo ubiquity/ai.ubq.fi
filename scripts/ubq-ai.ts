@@ -79,12 +79,7 @@ const readCodexVersionFile = async (runtime: UbqAiRuntime, homeDir: string | und
 
 const readCodexPackageVersion = async (runtime: UbqAiRuntime, codexPath: string | null): Promise<string | null> => {
   if (!codexPath) return null;
-  let realPath = codexPath;
-  try {
-    realPath = await Deno.realPath(codexPath);
-  } catch {
-    realPath = codexPath;
-  }
+  const realPath = await Deno.realPath(codexPath).catch(() => codexPath);
   const normalized = realPath.replace(/\\/g, "/");
   const marker = "/node_modules/@openai/codex/";
   const index = normalized.lastIndexOf(marker);
@@ -127,8 +122,11 @@ const listCodexBinaryCandidates = (runtime: UbqAiRuntime, codexBinFlag: string |
   return candidates;
 };
 
+/** A flag value, or undefined when the flag was never passed. */
+const lookupFlag = (flags: Record<string, FlagValue>, key: string): FlagValue | undefined => flags[key];
+
 const pushFlag = (flags: Record<string, FlagValue>, key: string, value: string | boolean): void => {
-  const existing = flags[key];
+  const existing = lookupFlag(flags, key);
   if (existing === undefined) {
     flags[key] = value;
     return;
@@ -143,6 +141,48 @@ const pushFlag = (flags: Record<string, FlagValue>, key: string, value: string |
 };
 
 const BOOLEAN_FLAGS = new Set(["help", "json", "raw", "reset-usage", "stream", "token-only", "verbose"]);
+
+/** Normalizes a `--boolean-flag=<value>` payload exactly as this CLI always has. */
+const coerceBooleanFlagValue = (value: string): boolean => {
+  const normalized = value.trim().toLowerCase();
+  return !(normalized === "0" || normalized === "false" || normalized === "no");
+};
+
+/** Applies a `--key=value` argument, reporting whether the argument carried an equals sign. */
+const applyEqualsFlag = (flags: Record<string, FlagValue>, arg: string): boolean => {
+  const eq = arg.indexOf("=");
+  if (eq === -1) return false;
+  const key = arg.slice(2, eq);
+  if (key) {
+    const value = arg.slice(eq + 1);
+    pushFlag(flags, key, BOOLEAN_FLAGS.has(key) ? coerceBooleanFlagValue(value) : value);
+  }
+  return true;
+};
+
+/**
+ * Detects whether the token after a flag is itself a new flag: it must start with a double dash, or
+ * be one of the known short flags. This avoids misinterpreting PEM content, which starts with five
+ * dashes, as a flag.
+ */
+const isFlagToken = (next: string | undefined): boolean => !!next && (next.startsWith("--") || next === "-h" || next === "-v");
+
+/**
+ * Applies a bare `--key [value]` argument and returns how many argv entries it consumed: one when
+ * the key is boolean or has no value, two when it took the following token as its value.
+ */
+const applySpaceFlag = (flags: Record<string, FlagValue>, key: string, next: string | undefined): number => {
+  if (BOOLEAN_FLAGS.has(key)) {
+    pushFlag(flags, key, true);
+    return 1;
+  }
+  if (!next || isFlagToken(next)) {
+    if (key) pushFlag(flags, key, true);
+    return 1;
+  }
+  if (key) pushFlag(flags, key, next);
+  return 2;
+};
 
 export const parseArgs = (args: string[]): ParsedArgs => {
   const flags: Record<string, FlagValue> = {};
@@ -163,40 +203,8 @@ export const parseArgs = (args: string[]): ParsedArgs => {
       positional.push(arg);
       continue;
     }
-
-    const eq = arg.indexOf("=");
-    if (eq !== -1) {
-      const key = arg.slice(2, eq);
-      const value = arg.slice(eq + 1);
-      if (key) {
-        if (BOOLEAN_FLAGS.has(key)) {
-          const normalized = value.trim().toLowerCase();
-          pushFlag(flags, key, !(normalized === "0" || normalized === "false" || normalized === "no"));
-        } else {
-          pushFlag(flags, key, value);
-        }
-      }
-      continue;
-    }
-
-    const key = arg.slice(2);
-    if (BOOLEAN_FLAGS.has(key)) {
-      pushFlag(flags, key, true);
-      continue;
-    }
-    const next = args[i + 1];
-
-    // Smarter flag detection: "next" is only a new flag if it starts with "--"
-    // OR it's a known short flag (like -h, -v).
-    // This avoids misinterpreting PEM content (starts with "-----") as a flag.
-    const isNextFlag = !!next && (next.startsWith("--") || next === "-h" || next === "-v");
-
-    if (!next || isNextFlag) {
-      if (key) pushFlag(flags, key, true);
-      continue;
-    }
-    if (key) pushFlag(flags, key, next);
-    i++;
+    if (applyEqualsFlag(flags, arg)) continue;
+    i += applySpaceFlag(flags, arg.slice(2), args[i + 1]) - 1;
   }
 
   return { _: positional, flags };
@@ -221,8 +229,13 @@ const tryReadTextFile = async (runtime: UbqAiRuntime, path: string): Promise<str
 
 const parseGitDirFromDotGitFile = (content: string): string | null => {
   const firstLine = (content.split(/\r?\n/, 1)[0] ?? "").trim();
-  const match = /^gitdir:\s*(.+)\s*$/i.exec(firstLine);
-  return match?.[1]?.trim() || null;
+  // Linear equivalent of /^gitdir:\s*(.+)\s*$/i: `firstLine` is already trimmed,
+  // so the greedy capture always starts at the first non-whitespace character and
+  // the two overlapping quantifiers only added quadratic backtracking.
+  const match = /^gitdir:\s*(\S.*)$/i.exec(firstLine);
+  const gitDir = (match?.[1] ?? "").trim();
+  if (gitDir === "") return null;
+  return gitDir;
 };
 
 const isAbsolutePath = (path: string): boolean => path.startsWith("/") || path.startsWith("\\") || /^[a-zA-Z]:[\\/]/.test(path);
@@ -232,10 +245,11 @@ const readGitHeadShortRevision = async (runtime: UbqAiRuntime, gitDir: string): 
   if (!head) return null;
   const trimmedHead = head.trim();
 
-  const refMatch = /^ref:\s*(.+)\s*$/.exec(trimmedHead);
+  // Linear equivalent of /^ref:\s*(.+)\s*$/ for the already-trimmed HEAD text.
+  const refMatch = /^ref:\s*(\S.*)$/.exec(trimmedHead);
   if (!refMatch) return toShortGitRevision(trimmedHead);
 
-  const refPath = refMatch[1]?.trim();
+  const refPath = refMatch[1].trim();
   if (!refPath) return null;
 
   const ref = await tryReadTextFile(runtime, `${gitDir}/${refPath}`);
@@ -279,7 +293,7 @@ const gitShortRevision = async (runtime: UbqAiRuntime): Promise<string | null> =
 };
 
 const renderUbqLogo = (revision: string | null): string => {
-  const revLabel = revision ? revision : "";
+  const revLabel = revision ?? "";
   return `⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣤⣾⣷⣤⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⠀⠀⠀⣀⣴⣾⡿⠛⠉⠉⠛⢿⣷⣦⣀⠀⠀⠀⠀⠀⠀
 ⠀⠀⠀⣠⣴⣿⠿⠛⠁⠀⠀⠀⠀⠀⠀⠈⠛⠿⣿⣦⣄⠀⠀⠀
@@ -336,11 +350,11 @@ Admin key expiration:
   --expires-at-ms <ms>         Unix epoch ms timestamp; -1 means does not expire
 
 Examples:
-  UOS_AI_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts chat --system \"You are a helpful assistant.\" \"Tell me a short joke.\"
-  UOS_AI_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts chat --system \"You are a helpful assistant.\" --stream \"Say hello in 5 different ways.\"
+  UOS_AI_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts chat --system "You are a helpful assistant." "Tell me a short joke."
+  UOS_AI_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts chat --system "You are a helpful assistant." --stream "Say hello in 5 different ways."
   DENO_DEPLOY_TOKEN=... deno run --allow-env --allow-net --allow-read scripts/ubq-ai.ts admin upload-auth
-  DENO_DEPLOY_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts admin keys create \"example key\"
-  DENO_DEPLOY_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts admin keys create \"tmp key\" --expires week
+  DENO_DEPLOY_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts admin keys create "example key"
+  DENO_DEPLOY_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts admin keys create "tmp key" --expires week
   UOS_AI_TOKEN=... deno run --allow-env --allow-net scripts/ubq-ai.ts whoami | jq
 
 `;
@@ -363,14 +377,26 @@ const writeErrText = async (runtime: UbqAiRuntime, text: string): Promise<void> 
   await runtime.err(TEXT_ENCODER.encode(text));
 };
 
+/** Renders a caught value for CLI diagnostics without ever printing "[object Object]". */
+const errorText = (error: unknown): string => (error instanceof Error ? String(error) : JSON.stringify(error));
+
+/** Parses CLI JSON text, returning null when it is not valid JSON. */
+const parseJsonOrNull = (raw: string): unknown => {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+};
+
 const readStdin = async (): Promise<string> => {
   const chunks: Uint8Array[] = [];
   const reader = Deno.stdin.readable.getReader();
   try {
-    while (true) {
+    for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
-      if (value) chunks.push(value);
+      chunks.push(value);
     }
   } finally {
     try {
@@ -416,10 +442,10 @@ const doFetch = async (
 const streamToOut = async (runtime: UbqAiRuntime, body: ReadableStream<Uint8Array>): Promise<void> => {
   const reader = body.getReader();
   try {
-    while (true) {
+    for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
-      if (value) await runtime.out(value);
+      await runtime.out(value);
     }
   } finally {
     try {
@@ -430,32 +456,36 @@ const streamToOut = async (runtime: UbqAiRuntime, body: ReadableStream<Uint8Arra
   }
 };
 
-const parseSseEvents = async function* (stream: ReadableStream<Uint8Array>): AsyncGenerator {
+/** Parses one SSE frame into the value to yield, or null when the frame carries nothing to yield. */
+const parseSseFrame = (part: string): { value: unknown } | null => {
+  if (!part.trim()) return null;
+  const lines = part.split("\n");
+  const dataLines = lines.filter((line) => line.startsWith("data:"));
+  const data = dataLines.map((line) => line.slice(5).trim()).join("\n");
+  if (!data) return null;
+  if (data === "[DONE]") return { value: "[DONE]" };
+  try {
+    return { value: JSON.parse(data) };
+  } catch {
+    return null;
+  }
+};
+
+async function* parseSseEvents(stream: ReadableStream<Uint8Array>): AsyncGenerator {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
   try {
-    while (true) {
+    for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
       const parts = buffer.split("\n\n");
       buffer = parts.pop() ?? "";
       for (const part of parts) {
-        if (!part.trim()) continue;
-        const lines = part.split("\n");
-        const dataLines = lines.filter((line) => line.startsWith("data:"));
-        const data = dataLines.map((line) => line.slice(5).trim()).join("\n");
-        if (!data) continue;
-        if (data === "[DONE]") {
-          yield "[DONE]";
-          continue;
-        }
-        try {
-          yield JSON.parse(data);
-        } catch {
-          continue;
-        }
+        const frame = parseSseFrame(part);
+        if (frame === null) continue;
+        yield frame.value;
       }
     }
   } finally {
@@ -465,7 +495,7 @@ const parseSseEvents = async function* (stream: ReadableStream<Uint8Array>): Asy
       // ignore
     }
   }
-};
+}
 
 const extractChatDelta = (ev: unknown): string => {
   if (!isRecord(ev)) return "";
@@ -498,26 +528,38 @@ const extractChatContent = (json: unknown): string | null => {
   return content;
 };
 
+/** Extracts the text of one `output_text`/`text` content part; empty when the part carries none. */
+const extractOutputTextPart = (part: unknown): string => {
+  if (!isRecord(part)) return "";
+  const partType = getString(part.type);
+  if (partType !== "output_text" && partType !== "text") return "";
+  return getString(part.text) ?? "";
+};
+
+/** Collects the text parts of one assistant message item; null when the item is not an assistant message. */
+const extractAssistantMessageParts = (item: unknown): string[] | null => {
+  if (!isRecord(item)) return null;
+  if (getString(item.type) !== "message") return null;
+  if (getString(item.role) !== "assistant") return null;
+  const content = Array.isArray(item.content) ? item.content : null;
+  if (!content) return null;
+  const parts: string[] = [];
+  for (const part of content) {
+    const text = extractOutputTextPart(part);
+    if (text) parts.push(text);
+  }
+  return parts;
+};
+
 const extractResponseText = (json: unknown): string | null => {
   if (!isRecord(json)) return null;
   const output = Array.isArray(json.output) ? json.output : null;
   if (!output) return null;
   const messages: string[] = [];
   for (const item of output) {
-    if (!isRecord(item)) continue;
-    if (getString(item.type) !== "message") continue;
-    if (getString(item.role) !== "assistant") continue;
-    const content = Array.isArray(item.content) ? item.content : null;
-    if (!content) continue;
-    const parts: string[] = [];
-    for (const part of content) {
-      if (!isRecord(part)) continue;
-      const partType = getString(part.type);
-      if (partType !== "output_text" && partType !== "text") continue;
-      const text = getString(part.text);
-      if (text) parts.push(text);
-    }
-    if (parts.length > 0) messages.push(parts.join(""));
+    const parts = extractAssistantMessageParts(item);
+    if (!parts || parts.length === 0) continue;
+    messages.push(parts.join(""));
   }
   if (messages.length === 0) return null;
   return messages.join("\n");
@@ -570,6 +612,19 @@ const apiKeyExpiresAtMsFromPreset = (preset: ApiKeyExpiryPreset, nowMs: number):
   return nowMs + durations[preset];
 };
 
+/** Parses the numeric `--expires-at-ms` payload. */
+const parseExpiresAtMsValue = (raw: string): { ok: true; value: number } | { ok: false; message: string } => {
+  const trimmed = raw.trim();
+  if (!trimmed) return { ok: false, message: "--expires-at-ms must be a number (Unix epoch ms) or -1." };
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed)) return { ok: false, message: "--expires-at-ms must be a finite number." };
+  const expiresAtMs = Math.trunc(parsed);
+  if (expiresAtMs === -1) return { ok: true, value: -1 };
+  if (expiresAtMs < 0) return { ok: false, message: "--expires-at-ms must be -1 or a future timestamp." };
+  if (expiresAtMs <= Date.now()) return { ok: false, message: "--expires-at-ms must be in the future (or -1)." };
+  return { ok: true, value: expiresAtMs };
+};
+
 const parseApiKeyExpiresAtMs = (flags: Record<string, FlagValue>): { ok: true; value: number | undefined } | { ok: false; message: string } => {
   const rawExpiresAtMs = getFlagString(flags, "expires-at-ms");
   const rawPreset = getFlagString(flags, "expires");
@@ -577,17 +632,7 @@ const parseApiKeyExpiresAtMs = (flags: Record<string, FlagValue>): { ok: true; v
     return { ok: false, message: "Pass only one of --expires-at-ms or --expires." };
   }
 
-  if (rawExpiresAtMs) {
-    const trimmed = rawExpiresAtMs.trim();
-    if (!trimmed) return { ok: false, message: "--expires-at-ms must be a number (Unix epoch ms) or -1." };
-    const parsed = Number(trimmed);
-    if (!Number.isFinite(parsed)) return { ok: false, message: "--expires-at-ms must be a finite number." };
-    const expiresAtMs = Math.trunc(parsed);
-    if (expiresAtMs === -1) return { ok: true, value: -1 };
-    if (expiresAtMs < 0) return { ok: false, message: "--expires-at-ms must be -1 or a future timestamp." };
-    if (expiresAtMs <= Date.now()) return { ok: false, message: "--expires-at-ms must be in the future (or -1)." };
-    return { ok: true, value: expiresAtMs };
-  }
+  if (rawExpiresAtMs) return parseExpiresAtMsValue(rawExpiresAtMs);
 
   if (rawPreset) {
     const preset = normalizeApiKeyExpiryPreset(rawPreset);
@@ -615,6 +660,806 @@ const resolveAdminToken = (flags: Record<string, FlagValue>, runtime: UbqAiRunti
   return token || null;
 };
 
+/** Describes where a resolved token came from, for the `--verbose` diagnostics. */
+const describeTokenSource = (
+  runtime: UbqAiRuntime,
+  flags: Record<string, FlagValue>,
+  options: Readonly<{ flag: string; env: string; fallback?: () => string | null }>
+): string => {
+  if (getFlagString(flags, options.flag)) return `--${options.flag}`;
+  if ((runtime.envGet(options.env) ?? "").trim()) return options.env;
+  if (options.fallback?.()) return "(admin fallback)";
+  return "(unset)";
+};
+
+/** Shared, already-resolved CLI state handed to every command implementation. */
+type UbqAiCommandContext = Readonly<{
+  runtime: UbqAiRuntime;
+  flags: Record<string, FlagValue>;
+  args: readonly string[];
+  baseUrl: string;
+  homeDir: string | undefined;
+  endpoint: (path: string) => URL;
+  wantsJson: boolean;
+  wantsStream: boolean;
+  wantsRaw: boolean;
+  debug: (line: string) => Promise<void>;
+  doFetchWithDebug: (req: Request) => Promise<Awaited<ReturnType<typeof doFetch>>>;
+}>;
+
+/** Admin state on top of the shared context: the resolved admin token and the args after `admin`. */
+type UbqAiAdminContext = UbqAiCommandContext & Readonly<{ adminToken: string; subArgs: readonly string[] }>;
+
+/** Writes the "unknown command" diagnostics plus the usage text, and returns the usage exit code. */
+const writeUsageError = async (runtime: UbqAiRuntime, message: string): Promise<number> => {
+  await writeErrText(runtime, message);
+  await writeOutText(runtime, await usageText(runtime));
+  return 2;
+};
+
+/** Writes the standard request-failure diagnostics and returns the request-failure exit code. */
+const writeRequestFailure = async (runtime: UbqAiRuntime, status: number, body: string): Promise<number> => {
+  await writeErrText(runtime, `Request failed (${status}).\n`);
+  await writeErrText(runtime, `${body}\n`);
+  return 1;
+};
+
+/** Reads a JSON flag file, printing the same diagnostics the inline branches used to print. */
+const readJsonFileFlag = async (runtime: UbqAiRuntime, path: string, label: string): Promise<{ ok: true; value: unknown } | { ok: false }> => {
+  let text: string;
+  try {
+    text = await runtime.readTextFile(path);
+  } catch (error) {
+    await writeErrText(runtime, `Failed to read ${label}: ${path}\n`);
+    await writeErrText(runtime, `${errorText(error)}\n`);
+    return { ok: false };
+  }
+  const parsed = parseJsonOrNull(text);
+  if (parsed === null) {
+    await writeErrText(runtime, `Invalid JSON in ${label}: ${path}\n`);
+    return { ok: false };
+  }
+  return { ok: true, value: parsed };
+};
+
+/** Parses `--usage-limit`: `unlimited` and `-1` both mean no limit. */
+const parseUsageLimitRequests = (raw: string): { ok: true; value: number } | { ok: false } => {
+  const trimmed = raw.trim();
+  if (trimmed === "unlimited" || trimmed === "-1") return { ok: true, value: -1 };
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed) || parsed < 0) return { ok: false };
+  return { ok: true, value: Math.trunc(parsed) };
+};
+
+/** Parses the optional `--window-ms` override. */
+const parseWindowMs = (raw: string): { ok: true; value: number } | { ok: false } => {
+  const parsed = Number(raw.trim());
+  if (!Number.isFinite(parsed) || parsed <= 0) return { ok: false };
+  return { ok: true, value: Math.trunc(parsed) };
+};
+
+/** Extracts the created API key's token for `--token-only` output; null when the response has none. */
+const extractCreatedToken = (json: unknown): string | null => {
+  if (!isRecord(json)) return null;
+  const tokenValue = json.token;
+  return typeof tokenValue === "string" && tokenValue.trim() ? tokenValue : null;
+};
+
+/** Builds the chat messages for a positional prompt (or stdin); null when no prompt is available. */
+const buildPromptMessages = async (
+  runtime: UbqAiRuntime,
+  args: readonly string[],
+  system: string,
+  developer: string
+): Promise<{ role: string; content: string }[] | null> => {
+  let prompt = args.join(" ").trim();
+  if (!prompt && !runtime.stdinIsTerminal) {
+    prompt = (await runtime.readStdin()).trim();
+  }
+  if (!prompt) {
+    await writeErrText(runtime, "Missing prompt. Pass it as an argument, or pipe via stdin.\n");
+    return null;
+  }
+
+  const messages: { role: string; content: string }[] = [];
+  if (system.trim()) messages.push({ role: "system", content: system });
+  if (developer.trim()) messages.push({ role: "developer", content: developer });
+  messages.push({ role: "user", content: prompt });
+  return messages;
+};
+
+/** Resolves the chat request `messages` from `--messages-json`, `--messages-file`, a prompt, or stdin. */
+const resolveChatMessages = async (ctx: UbqAiCommandContext): Promise<{ ok: true; messages: unknown } | { ok: false; exitCode: number }> => {
+  const { runtime, flags, homeDir, args } = ctx;
+  const messagesJson = getFlagString(flags, "messages-json");
+  const messagesFile = getFlagString(flags, "messages-file");
+  if (typeof messagesJson === "string") {
+    const parsed = parseJsonOrNull(messagesJson);
+    if (parsed === null) {
+      await writeErrText(runtime, "Invalid JSON in --messages-json\n");
+      return { ok: false, exitCode: 2 };
+    }
+    return { ok: true, messages: parsed };
+  }
+  if (typeof messagesFile === "string") {
+    const path = expandTilde(messagesFile, homeDir);
+    const file = await readJsonFileFlag(runtime, path, "messages file");
+    if (!file.ok) return { ok: false, exitCode: 2 };
+    return { ok: true, messages: file.value };
+  }
+
+  const system = getFlagString(flags, "system") ?? "";
+  const developer = getFlagString(flags, "developer") ?? "";
+  const messages = await buildPromptMessages(runtime, args, system, developer);
+  if (!messages) return { ok: false, exitCode: 2 };
+  return { ok: true, messages };
+};
+
+/** Resolves the responses request `input` from `--input-json`, `--input-file`, a positional value, or stdin. */
+const resolveResponsesInput = async (ctx: UbqAiCommandContext): Promise<{ ok: true; input: unknown } | { ok: false; exitCode: number }> => {
+  const { runtime, flags, homeDir, args } = ctx;
+  const inputJson = getFlagString(flags, "input-json");
+  const inputFile = getFlagString(flags, "input-file");
+  if (typeof inputJson === "string") {
+    const parsed = parseJsonOrNull(inputJson);
+    if (parsed === null) {
+      await writeErrText(runtime, "Invalid JSON in --input-json\n");
+      return { ok: false, exitCode: 2 };
+    }
+    return { ok: true, input: parsed };
+  }
+  if (typeof inputFile === "string") {
+    const path = expandTilde(inputFile, homeDir);
+    const file = await readJsonFileFlag(runtime, path, "input file");
+    if (!file.ok) return { ok: false, exitCode: 2 };
+    return { ok: true, input: file.value };
+  }
+
+  let text = args.join(" ").trim();
+  if (!text && !runtime.stdinIsTerminal) {
+    text = (await runtime.readStdin()).trim();
+  }
+  if (!text) {
+    await writeErrText(runtime, "Missing input. Pass it as an argument, or pipe via stdin.\n");
+    return { ok: false, exitCode: 2 };
+  }
+  return { ok: true, input: text };
+};
+
+/** Streams one chat SSE event to stdout; returns true when the stream is finished. */
+const handleChatStreamEvent = async (ctx: UbqAiCommandContext, ev: unknown): Promise<boolean> => {
+  const { runtime, wantsJson } = ctx;
+  if (ev === "[DONE]") return true;
+  if (wantsJson) {
+    await writeOutText(runtime, `${JSON.stringify(ev)}\n`);
+    return false;
+  }
+  const delta = extractChatDelta(ev);
+  if (delta) await runtime.out(TEXT_ENCODER.encode(delta));
+  return false;
+};
+
+/** Streams one responses SSE event to stdout; returns true when the stream is finished. */
+const handleResponsesStreamEvent = async (ctx: UbqAiCommandContext, ev: unknown): Promise<boolean> => {
+  const { runtime, wantsJson } = ctx;
+  if (ev === "[DONE]") return true;
+  if (wantsJson) {
+    await writeOutText(runtime, `${JSON.stringify(ev)}\n`);
+    return false;
+  }
+  if (isRecord(ev) && getString(ev.type) === "response.completed") return true;
+  const delta = extractResponseDelta(ev);
+  if (delta) await runtime.out(TEXT_ENCODER.encode(delta));
+  return false;
+};
+
+/** Streams a chat completions response body to stdout. */
+const streamChatResponse = async (ctx: UbqAiCommandContext, req: Request): Promise<number> => {
+  const { runtime, wantsJson, wantsRaw, debug } = ctx;
+  await debug(`[ubq-ai] -> ${req.method} ${req.url} (stream)\n`);
+  const res = await runtime.fetch(req);
+  await debug(`[ubq-ai] <- ${res.status}\n`);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    await writeErrText(runtime, `Request failed (${res.status}).\n`);
+    await writeErrText(runtime, `${text || res.statusText}\n`);
+    return 1;
+  }
+  if (!res.body) {
+    await writeErrText(runtime, "Stream response missing body.\n");
+    return 1;
+  }
+
+  if (wantsRaw) {
+    await streamToOut(runtime, res.body);
+    return 0;
+  }
+
+  for await (const ev of parseSseEvents(res.body)) {
+    if (await handleChatStreamEvent(ctx, ev)) break;
+  }
+  if (!wantsJson) await runtime.out(TEXT_ENCODER.encode("\n"));
+  return 0;
+};
+
+/** Streams a responses API response body to stdout. */
+const streamResponsesResponse = async (ctx: UbqAiCommandContext, req: Request): Promise<number> => {
+  const { runtime, wantsJson, wantsRaw, debug } = ctx;
+  await debug(`[ubq-ai] -> ${req.method} ${req.url} (stream)\n`);
+  const res = await runtime.fetch(req);
+  await debug(`[ubq-ai] <- ${res.status}\n`);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    await writeErrText(runtime, `Request failed (${res.status}).\n`);
+    await writeErrText(runtime, `${text || res.statusText}\n`);
+    return 1;
+  }
+  if (!res.body) {
+    await writeErrText(runtime, "Stream response missing body.\n");
+    return 1;
+  }
+
+  if (wantsRaw) {
+    await streamToOut(runtime, res.body);
+    return 0;
+  }
+
+  for await (const ev of parseSseEvents(res.body)) {
+    if (await handleResponsesStreamEvent(ctx, ev)) break;
+  }
+  if (!wantsJson) await runtime.out(TEXT_ENCODER.encode("\n"));
+  return 0;
+};
+
+const runHealthCommand = async (ctx: UbqAiCommandContext): Promise<number> => {
+  const { runtime, endpoint, doFetchWithDebug } = ctx;
+  const req = new Request(endpoint("/health"), { method: "GET", headers: { Accept: "application/json" } });
+  const result = await doFetchWithDebug(req);
+  if (!result.ok) return await writeRequestFailure(runtime, result.status, result.body);
+  await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+  return 0;
+};
+
+const runInfoCommand = async (ctx: UbqAiCommandContext): Promise<number> => {
+  const { runtime, endpoint, doFetchWithDebug } = ctx;
+  const req = new Request(endpoint("/"), { method: "GET", headers: { Accept: "application/json" } });
+  const result = await doFetchWithDebug(req);
+  if (!result.ok) return await writeRequestFailure(runtime, result.status, result.body);
+  await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+  return 0;
+};
+
+const runWhoamiCommand = async (ctx: UbqAiCommandContext): Promise<number> => {
+  const { runtime, flags, endpoint, doFetchWithDebug } = ctx;
+  const token = resolveClientToken(flags, runtime);
+  if (!token) {
+    await writeErrText(runtime, "Missing client token. Set UOS_AI_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n");
+    return 2;
+  }
+  const req = new Request(endpoint("/uos/auth"), {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+    },
+  });
+  const result = await doFetchWithDebug(req);
+  if (!result.ok) return await writeRequestFailure(runtime, result.status, result.body);
+  await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+  return 0;
+};
+
+const runModelsCommand = async (ctx: UbqAiCommandContext): Promise<number> => {
+  const { runtime, flags, endpoint, doFetchWithDebug } = ctx;
+  const token = resolveClientToken(flags, runtime);
+  if (!token) {
+    await writeErrText(runtime, "Missing client token. Set UOS_AI_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n");
+    return 2;
+  }
+  const req = new Request(endpoint("/v1/models"), {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+    },
+  });
+  const result = await doFetchWithDebug(req);
+  if (!result.ok) return await writeRequestFailure(runtime, result.status, result.body);
+  await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+  return 0;
+};
+
+const runChatCommand = async (ctx: UbqAiCommandContext): Promise<number> => {
+  const { runtime, flags, endpoint, wantsJson, wantsStream, doFetchWithDebug } = ctx;
+  const token = resolveClientToken(flags, runtime);
+  if (!token) {
+    await writeErrText(runtime, "Missing client token. Set UOS_AI_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n");
+    return 2;
+  }
+  const model = (getFlagString(flags, "model") ?? "").trim();
+
+  const resolved = await resolveChatMessages(ctx);
+  if (!resolved.ok) return resolved.exitCode;
+  const messages = resolved.messages;
+
+  const body: Record<string, unknown> = { messages, stream: wantsStream };
+  if (model) body.model = model;
+
+  const reasoningEffortRaw = (getFlagString(flags, "reasoning-effort") ?? "").trim();
+  if (reasoningEffortRaw) {
+    body.reasoning_effort = reasoningEffortRaw;
+  }
+
+  const req = new Request(endpoint("/v1/chat/completions"), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      Accept: wantsStream ? "text/event-stream" : "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (wantsStream) return await streamChatResponse(ctx, req);
+
+  const result = await doFetchWithDebug(req);
+  if (!result.ok) return await writeRequestFailure(runtime, result.status, result.body);
+
+  if (wantsJson) {
+    await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+    return 0;
+  }
+
+  const content = extractChatContent(result.json);
+  if (content !== null) {
+    await writeOutText(runtime, `${content}\n`);
+    return 0;
+  }
+  await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+  return 0;
+};
+
+const runResponsesCommand = async (ctx: UbqAiCommandContext): Promise<number> => {
+  const { runtime, flags, endpoint, wantsJson, wantsStream, doFetchWithDebug } = ctx;
+  const token = resolveClientToken(flags, runtime);
+  if (!token) {
+    await writeErrText(runtime, "Missing client token. Set UOS_AI_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n");
+    return 2;
+  }
+  const model = (getFlagString(flags, "model") ?? "").trim();
+  const instructionsRaw = getFlagString(flags, "instructions");
+  const instructions = typeof instructionsRaw === "string" ? instructionsRaw.trim() : "";
+
+  const resolved = await resolveResponsesInput(ctx);
+  if (!resolved.ok) return resolved.exitCode;
+  const input = resolved.input;
+
+  const body: Record<string, unknown> = { input, stream: wantsStream };
+  if (model) body.model = model;
+  body.instructions = instructions;
+
+  const reasoningEffortRaw = (getFlagString(flags, "reasoning-effort") ?? "").trim();
+  if (reasoningEffortRaw) {
+    body.reasoning = { effort: reasoningEffortRaw };
+  }
+
+  const req = new Request(endpoint("/v1/responses"), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      Accept: wantsStream ? "text/event-stream" : "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (wantsStream) return await streamResponsesResponse(ctx, req);
+
+  const result = await doFetchWithDebug(req);
+  if (!result.ok) return await writeRequestFailure(runtime, result.status, result.body);
+
+  if (wantsJson) {
+    await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+    return 0;
+  }
+
+  const text = extractResponseText(result.json);
+  if (text !== null) {
+    await writeOutText(runtime, `${text}\n`);
+    return 0;
+  }
+  await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+  return 0;
+};
+
+const runAdminUploadAuthCommand = async (ctx: UbqAiAdminContext): Promise<number> => {
+  const { runtime, flags, homeDir, endpoint, adminToken, doFetchWithDebug } = ctx;
+  const authJsonPath = expandTilde(getFlagString(flags, "auth-json") ?? "~/.codex/auth.json", homeDir);
+  let authJsonText: string;
+  try {
+    authJsonText = await runtime.readTextFile(authJsonPath);
+  } catch (error) {
+    await writeErrText(runtime, `Failed to read auth.json at ${authJsonPath}:\n`);
+    await writeErrText(runtime, `${errorText(error)}\n`);
+    return 2;
+  }
+
+  let authJson: unknown;
+  try {
+    authJson = JSON.parse(authJsonText) as unknown;
+  } catch (error) {
+    await writeErrText(runtime, `auth.json at ${authJsonPath} is not valid JSON:\n`);
+    await writeErrText(runtime, `${errorText(error)}\n`);
+    return 2;
+  }
+
+  const skipModelsFlag = lookupFlag(flags, "skip-models");
+  const noModelsFlag = lookupFlag(flags, "no-models");
+  if (skipModelsFlag !== undefined || noModelsFlag !== undefined) {
+    await writeErrText(runtime, "--skip-models is obsolete; upload-auth always stores the live upstream Codex model catalog.\n");
+    return 2;
+  }
+  const codexBinFlag = getFlagString(flags, "codex-bin");
+  const clientVersion = (await resolveCodexClientVersion(runtime, listCodexBinaryCandidates(runtime, codexBinFlag, homeDir), homeDir)) ?? undefined;
+  const modelsPayload: Record<string, unknown> = {
+    source: "chatgpt_codex",
+    client_version: clientVersion,
+    updated_at_ms: Date.now(),
+  };
+
+  const payload = { auth: authJson, models: modelsPayload };
+  const req = new Request(endpoint("/admin/codex/auth"), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${adminToken}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const result = await doFetchWithDebug(req);
+  if (!result.ok) return await writeRequestFailure(runtime, result.status, result.body);
+  await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+  return 0;
+};
+
+const runAdminKeysCreateCommand = async (ctx: UbqAiAdminContext): Promise<number> => {
+  const { runtime, flags, endpoint, wantsJson, adminToken, subArgs, doFetchWithDebug } = ctx;
+  const positionalName = subArgs.slice(1).join(" ").trim();
+  const name = (getFlagString(flags, "name") ?? positionalName).trim();
+  if (!name.trim()) {
+    await writeErrText(runtime, "Missing key name. Pass it as an argument or via --name.\n");
+    return 2;
+  }
+  const token = (getFlagString(flags, "token") ?? "").trim();
+  const tokenOnlyFlag = flags["token-only"];
+  const tokenOnly = !wantsJson && tokenOnlyFlag !== false;
+
+  const expiresAt = parseApiKeyExpiresAtMs(flags);
+  if (!expiresAt.ok) {
+    await writeErrText(runtime, `${expiresAt.message}\n`);
+    return 2;
+  }
+
+  const usageLimitRaw = getFlagString(flags, "usage-limit");
+  let usageLimit: number | undefined;
+  if (usageLimitRaw) {
+    const parsedLimit = parseUsageLimitRequests(usageLimitRaw);
+    if (!parsedLimit.ok) {
+      await writeErrText(runtime, "--usage-limit must be a positive number, -1, or 'unlimited'\n");
+      return 2;
+    }
+    usageLimit = parsedLimit.value;
+  }
+
+  const body: Record<string, unknown> = token ? { name, token } : { name };
+  if (expiresAt.value !== undefined) body.expires_at_ms = expiresAt.value;
+  if (usageLimit !== undefined) body.usage_limit_requests = usageLimit;
+
+  const req = new Request(endpoint("/admin/api-keys"), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${adminToken}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  const result = await doFetchWithDebug(req);
+  if (!result.ok) return await writeRequestFailure(runtime, result.status, result.body);
+
+  if (tokenOnly) {
+    const tokenValue = extractCreatedToken(result.json);
+    if (tokenValue !== null) {
+      await writeOutText(runtime, `${tokenValue}\n`);
+      return 0;
+    }
+    await writeErrText(runtime, "Create succeeded but response was missing token.\n");
+    return 1;
+  }
+
+  await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+  return 0;
+};
+
+const runAdminKeysListCommand = async (ctx: UbqAiAdminContext): Promise<number> => {
+  const { runtime, endpoint, adminToken, doFetchWithDebug } = ctx;
+  const req = new Request(endpoint("/admin/api-keys"), {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${adminToken}`,
+      Accept: "application/json",
+    },
+  });
+  const result = await doFetchWithDebug(req);
+  if (!result.ok) return await writeRequestFailure(runtime, result.status, result.body);
+  await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+  return 0;
+};
+
+const runAdminKeysRevokeCommand = async (ctx: UbqAiAdminContext): Promise<number> => {
+  const { runtime, flags, endpoint, adminToken, doFetchWithDebug } = ctx;
+  const id = (getFlagString(flags, "id") ?? "").trim();
+  if (!id) {
+    await writeErrText(runtime, "Missing --id\n");
+    return 2;
+  }
+  const req = new Request(endpoint("/admin/api-keys/revoke"), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${adminToken}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ id }),
+  });
+  const result = await doFetchWithDebug(req);
+  if (!result.ok) return await writeRequestFailure(runtime, result.status, result.body);
+  await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+  return 0;
+};
+
+const runAdminKeysCommand = async (ctx: UbqAiAdminContext): Promise<number> => {
+  const { runtime, subArgs } = ctx;
+  const action = subArgs[0] ?? "";
+
+  if (action === "create") return await runAdminKeysCreateCommand(ctx);
+  if (action === "list") return await runAdminKeysListCommand(ctx);
+  if (action === "revoke") return await runAdminKeysRevokeCommand(ctx);
+
+  return await writeUsageError(runtime, `Unknown admin keys command: ${action || "(missing)"}\n`);
+};
+
+/** Parses `--app-id`, printing the diagnostics for a missing or non-numeric value. */
+const resolveAppIdFlag = async (ctx: UbqAiAdminContext): Promise<{ ok: true; value: number } | { ok: false }> => {
+  const { runtime, flags } = ctx;
+  const appIdRaw = getFlagString(flags, "app-id");
+  if (!appIdRaw) {
+    await writeErrText(runtime, "Missing --app-id\n");
+    return { ok: false };
+  }
+  const appId = parseInt(appIdRaw, 10);
+  if (isNaN(appId)) {
+    await writeErrText(runtime, "--app-id must be a number\n");
+    return { ok: false };
+  }
+  return { ok: true, value: appId };
+};
+
+const runAdminKernelPubkeysListCommand = async (ctx: UbqAiAdminContext): Promise<number> => {
+  const { runtime, endpoint, adminToken, doFetchWithDebug } = ctx;
+  const req = new Request(endpoint("/admin/kernel-pubkeys"), {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${adminToken}`,
+      Accept: "application/json",
+    },
+  });
+  const result = await doFetchWithDebug(req);
+  if (!result.ok) return await writeRequestFailure(runtime, result.status, result.body);
+  await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+  return 0;
+};
+
+const runAdminKernelPubkeysAddCommand = async (ctx: UbqAiAdminContext): Promise<number> => {
+  const { runtime, flags, endpoint, adminToken, doFetchWithDebug } = ctx;
+  const appIdResult = await resolveAppIdFlag(ctx);
+  if (!appIdResult.ok) return 2;
+
+  let pem = getFlagString(flags, "pem");
+  if (!pem && !runtime.stdinIsTerminal) {
+    pem = (await runtime.readStdin()).trim();
+  }
+  if (!pem) {
+    await writeErrText(runtime, "Missing --pem. Pass it as a flag or pipe via stdin.\n");
+    return 2;
+  }
+
+  const owner = getFlagString(flags, "owner") ?? "cli";
+
+  const req = new Request(endpoint("/admin/kernel-pubkeys"), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${adminToken}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ app_id: appIdResult.value, pem, owner }),
+  });
+  const result = await doFetchWithDebug(req);
+  if (!result.ok) return await writeRequestFailure(runtime, result.status, result.body);
+  await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+  return 0;
+};
+
+const runAdminKernelPubkeysRemoveCommand = async (ctx: UbqAiAdminContext): Promise<number> => {
+  const { runtime, endpoint, adminToken, doFetchWithDebug } = ctx;
+  const appIdResult = await resolveAppIdFlag(ctx);
+  if (!appIdResult.ok) return 2;
+
+  const url = endpoint("/admin/kernel-pubkeys");
+  url.searchParams.set("app_id", String(appIdResult.value));
+
+  const req = new Request(url, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${adminToken}`,
+      Accept: "application/json",
+    },
+  });
+  const result = await doFetchWithDebug(req);
+  if (!result.ok) return await writeRequestFailure(runtime, result.status, result.body);
+  await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+  return 0;
+};
+
+const runAdminKernelPubkeysCommand = async (ctx: UbqAiAdminContext): Promise<number> => {
+  const { runtime, subArgs } = ctx;
+  const action = subArgs[0] ?? "";
+
+  if (action === "list") return await runAdminKernelPubkeysListCommand(ctx);
+  if (action === "add") return await runAdminKernelPubkeysAddCommand(ctx);
+  if (action === "remove") return await runAdminKernelPubkeysRemoveCommand(ctx);
+
+  return await writeUsageError(runtime, `Unknown admin kernel-pubkeys command: ${action || "(missing)"}\n`);
+};
+
+/**
+ * Resolves `--owner`, `--repo` and `--scope` for the kernel-usage commands.
+ * With no `defaultScope` the scope falls back to repo only when `--repo` was passed.
+ */
+const resolveKernelUsageTarget = async (
+  ctx: UbqAiAdminContext,
+  defaultScope?: "repo" | "org"
+): Promise<Readonly<{ owner: string; repo: string; scope: "repo" | "org" }> | null> => {
+  const { runtime, flags } = ctx;
+  const owner = (getFlagString(flags, "owner") ?? "").trim();
+  const repo = (getFlagString(flags, "repo") ?? "").trim();
+  const fallbackScope = defaultScope ?? (repo ? "repo" : "org");
+  const scopeRaw = (getFlagString(flags, "scope") ?? fallbackScope).trim().toLowerCase();
+  const scope = scopeRaw === "org" ? "org" : "repo";
+  if (!owner) {
+    await writeErrText(runtime, "Missing --owner\n");
+    return null;
+  }
+  if (scope === "repo" && !repo) {
+    await writeErrText(runtime, "Missing --repo for scope=repo\n");
+    return null;
+  }
+  if (scope === "org" && repo) {
+    await writeErrText(runtime, "--repo must be omitted for scope=org\n");
+    return null;
+  }
+  return { owner, repo, scope };
+};
+
+const runAdminKernelUsageGetCommand = async (ctx: UbqAiAdminContext): Promise<number> => {
+  const { runtime, endpoint, adminToken, doFetchWithDebug } = ctx;
+  const target = await resolveKernelUsageTarget(ctx, "repo");
+  if (!target) return 2;
+
+  const url = endpoint("/admin/kernel-usage");
+  url.searchParams.set("owner", target.owner);
+  url.searchParams.set("scope", target.scope);
+  if (target.scope === "repo") url.searchParams.set("repo", target.repo);
+
+  const req = new Request(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${adminToken}`,
+      Accept: "application/json",
+    },
+  });
+  const result = await doFetchWithDebug(req);
+  if (!result.ok) return await writeRequestFailure(runtime, result.status, result.body);
+  await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+  return 0;
+};
+
+const runAdminKernelUsageSetCommand = async (ctx: UbqAiAdminContext): Promise<number> => {
+  const { runtime, flags, endpoint, adminToken, doFetchWithDebug } = ctx;
+  const target = await resolveKernelUsageTarget(ctx);
+  if (!target) return 2;
+
+  const usageLimitRaw = getFlagString(flags, "usage-limit");
+  if (!usageLimitRaw) {
+    await writeErrText(runtime, "Missing --usage-limit\n");
+    return 2;
+  }
+  const parsedLimit = parseUsageLimitRequests(usageLimitRaw);
+  if (!parsedLimit.ok) {
+    await writeErrText(runtime, "--usage-limit must be a non-negative number, -1, or 'unlimited'\n");
+    return 2;
+  }
+  const usageLimit = parsedLimit.value;
+
+  const resetUsage = flags["reset-usage"] === true;
+  const windowMsRaw = getFlagString(flags, "window-ms");
+  let windowMs: number | undefined;
+  if (windowMsRaw) {
+    const parsedWindow = parseWindowMs(windowMsRaw);
+    if (!parsedWindow.ok) {
+      await writeErrText(runtime, "--window-ms must be a positive number\n");
+      return 2;
+    }
+    windowMs = parsedWindow.value;
+  }
+
+  const body: Record<string, unknown> = {
+    owner: target.owner,
+    usage_limit_requests: usageLimit,
+    reset_usage: resetUsage,
+    scope: target.scope,
+  };
+  if (target.scope === "repo") body.repo = target.repo;
+  if (windowMs !== undefined) body.window_ms = windowMs;
+
+  const req = new Request(endpoint("/admin/kernel-usage"), {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${adminToken}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  const result = await doFetchWithDebug(req);
+  if (!result.ok) return await writeRequestFailure(runtime, result.status, result.body);
+  await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
+  return 0;
+};
+
+const runAdminKernelUsageCommand = async (ctx: UbqAiAdminContext): Promise<number> => {
+  const { runtime, subArgs } = ctx;
+  const action = subArgs[0] ?? "";
+
+  if (action === "get") return await runAdminKernelUsageGetCommand(ctx);
+  if (action === "set") return await runAdminKernelUsageSetCommand(ctx);
+
+  return await writeUsageError(runtime, `Unknown admin kernel-usage command: ${action || "(missing)"}\n`);
+};
+
+const runAdminCommand = async (ctx: UbqAiCommandContext): Promise<number> => {
+  const { runtime, flags } = ctx;
+  const adminToken = resolveAdminToken(flags, runtime);
+  if (!adminToken) {
+    await writeErrText(runtime, "Missing admin token. Set DENO_DEPLOY_TOKEN or pass --admin-token.\n");
+    return 2;
+  }
+
+  const sub = ctx.args[0] ?? "";
+  const adminContext: UbqAiAdminContext = { ...ctx, adminToken, subArgs: ctx.args.slice(1) };
+
+  if (sub === "upload-auth") return await runAdminUploadAuthCommand(adminContext);
+  if (sub === "keys") return await runAdminKeysCommand(adminContext);
+  if (sub === "kernel-pubkeys") return await runAdminKernelPubkeysCommand(adminContext);
+  if (sub === "kernel-usage") return await runAdminKernelUsageCommand(adminContext);
+
+  return await writeUsageError(runtime, `Unknown admin command: ${sub || "(missing)"}\n`);
+};
+
 export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<number> => {
   const parsed = parseArgs(argv);
   const flags = parsed.flags;
@@ -638,20 +1483,11 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
 
   await debug(`[ubq-ai] url=${baseUrl}\n`);
   await debug(`[ubq-ai] env UOS_AI_TOKEN=${await describeSecret(runtime.envGet("UOS_AI_TOKEN"))}\n`);
+  // The DENO_DEPLOY_TOKEN line is emitted twice by the original CLI; kept verbatim so `-v` output stays byte-identical.
   await debug(`[ubq-ai] env DENO_DEPLOY_TOKEN=${await describeSecret(runtime.envGet("DENO_DEPLOY_TOKEN"))}\n`);
   await debug(`[ubq-ai] env DENO_DEPLOY_TOKEN=${await describeSecret(runtime.envGet("DENO_DEPLOY_TOKEN"))}\n`);
-  const clientSource = getFlagString(flags, "token")
-    ? "--token"
-    : (runtime.envGet("UOS_AI_TOKEN") ?? "").trim()
-      ? "UOS_AI_TOKEN"
-      : resolveAdminToken(flags, runtime)
-        ? "(admin fallback)"
-        : "(unset)";
-  const adminSource = getFlagString(flags, "admin-token")
-    ? "--admin-token"
-    : (runtime.envGet("DENO_DEPLOY_TOKEN") ?? "").trim()
-      ? "DENO_DEPLOY_TOKEN"
-      : "(unset)";
+  const clientSource = describeTokenSource(runtime, flags, { flag: "token", env: "UOS_AI_TOKEN", fallback: () => resolveAdminToken(flags, runtime) });
+  const adminSource = describeTokenSource(runtime, flags, { flag: "admin-token", env: "DENO_DEPLOY_TOKEN" });
   await debug(`[ubq-ai] token_sources client=${clientSource} admin=${adminSource}\n`);
   const resolvedClientToken = resolveClientToken(flags, runtime) ?? undefined;
   const resolvedAdminToken = resolveAdminToken(flags, runtime) ?? undefined;
@@ -673,755 +1509,29 @@ export const runUbqAi = async (argv: string[], runtime: UbqAiRuntime): Promise<n
     return result;
   };
 
-  if (cmd === "health") {
-    const req = new Request(endpoint("/health"), { method: "GET", headers: { Accept: "application/json" } });
-    const result = await doFetchWithDebug(req);
-    if (!result.ok) {
-      await writeErrText(runtime, `Request failed (${result.status}).\n`);
-      await writeErrText(runtime, `${result.body}\n`);
-      return 1;
-    }
-    await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
-    return 0;
-  }
-
-  if (cmd === "info") {
-    const req = new Request(endpoint("/"), { method: "GET", headers: { Accept: "application/json" } });
-    const result = await doFetchWithDebug(req);
-    if (!result.ok) {
-      await writeErrText(runtime, `Request failed (${result.status}).\n`);
-      await writeErrText(runtime, `${result.body}\n`);
-      return 1;
-    }
-    await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
-    return 0;
-  }
-
-  if (cmd === "whoami") {
-    const token = resolveClientToken(flags, runtime);
-    if (!token) {
-      await writeErrText(runtime, "Missing client token. Set UOS_AI_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n");
-      return 2;
-    }
-    const req = new Request(endpoint("/uos/auth"), {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/json",
-      },
-    });
-    const result = await doFetchWithDebug(req);
-    if (!result.ok) {
-      await writeErrText(runtime, `Request failed (${result.status}).\n`);
-      await writeErrText(runtime, `${result.body}\n`);
-      return 1;
-    }
-    await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
-    return 0;
-  }
-
-  if (cmd === "models") {
-    const token = resolveClientToken(flags, runtime);
-    if (!token) {
-      await writeErrText(runtime, "Missing client token. Set UOS_AI_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n");
-      return 2;
-    }
-    const req = new Request(endpoint("/v1/models"), {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/json",
-      },
-    });
-    const result = await doFetchWithDebug(req);
-    if (!result.ok) {
-      await writeErrText(runtime, `Request failed (${result.status}).\n`);
-      await writeErrText(runtime, `${result.body}\n`);
-      return 1;
-    }
-    await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
-    return 0;
-  }
-
-  if (cmd === "chat") {
-    const token = resolveClientToken(flags, runtime);
-    if (!token) {
-      await writeErrText(runtime, "Missing client token. Set UOS_AI_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n");
-      return 2;
-    }
-    const model = (getFlagString(flags, "model") ?? "").trim();
-
-    const messagesFromJson = (raw: string): unknown | null => {
-      try {
-        return JSON.parse(raw);
-      } catch {
-        return null;
-      }
-    };
-
-    let messages: unknown;
-    const messagesJson = getFlagString(flags, "messages-json");
-    const messagesFile = getFlagString(flags, "messages-file");
-    if (typeof messagesJson === "string") {
-      const parsed = messagesFromJson(messagesJson);
-      if (parsed === null) {
-        await writeErrText(runtime, "Invalid JSON in --messages-json\n");
-        return 2;
-      }
-      messages = parsed;
-    } else if (typeof messagesFile === "string") {
-      const path = expandTilde(messagesFile, homeDir);
-      let text: string;
-      try {
-        text = await runtime.readTextFile(path);
-      } catch (error) {
-        await writeErrText(runtime, `Failed to read messages file: ${path}\n`);
-        await writeErrText(runtime, `${error}\n`);
-        return 2;
-      }
-      const parsed = messagesFromJson(text);
-      if (parsed === null) {
-        await writeErrText(runtime, `Invalid JSON in messages file: ${path}\n`);
-        return 2;
-      }
-      messages = parsed;
-    } else {
-      const system = getFlagString(flags, "system") ?? "";
-      const developer = getFlagString(flags, "developer") ?? "";
-      let prompt = rest.join(" ").trim();
-      if (!prompt && !runtime.stdinIsTerminal) {
-        prompt = (await runtime.readStdin()).trim();
-      }
-      if (!prompt) {
-        await writeErrText(runtime, "Missing prompt. Pass it as an argument, or pipe via stdin.\n");
-        return 2;
-      }
-
-      const m: { role: string; content: string }[] = [];
-      if (system.trim()) m.push({ role: "system", content: system });
-      if (developer.trim()) m.push({ role: "developer", content: developer });
-      m.push({ role: "user", content: prompt });
-      messages = m;
-    }
-
-    const body: Record<string, unknown> = { messages, stream: wantsStream };
-    if (model) body.model = model;
-
-    const reasoningEffortRaw = (getFlagString(flags, "reasoning-effort") ?? "").trim();
-    if (reasoningEffortRaw) {
-      body.reasoning_effort = reasoningEffortRaw;
-    }
-
-    const req = new Request(endpoint("/v1/chat/completions"), {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        Accept: wantsStream ? "text/event-stream" : "application/json",
-      },
-      body: JSON.stringify(body),
-    });
-
-    if (wantsStream) {
-      await debug(`[ubq-ai] -> ${req.method} ${req.url} (stream)\n`);
-      const res = await runtime.fetch(req);
-      await debug(`[ubq-ai] <- ${res.status}\n`);
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        await writeErrText(runtime, `Request failed (${res.status}).\n`);
-        await writeErrText(runtime, `${text || res.statusText}\n`);
-        return 1;
-      }
-      if (!res.body) {
-        await writeErrText(runtime, "Stream response missing body.\n");
-        return 1;
-      }
-
-      if (wantsRaw) {
-        await streamToOut(runtime, res.body);
-        return 0;
-      }
-
-      for await (const ev of parseSseEvents(res.body)) {
-        if (ev === "[DONE]") break;
-        if (wantsJson) {
-          await writeOutText(runtime, `${JSON.stringify(ev)}\n`);
-          continue;
-        }
-        const delta = extractChatDelta(ev);
-        if (delta) await runtime.out(TEXT_ENCODER.encode(delta));
-      }
-      if (!wantsJson) await runtime.out(TEXT_ENCODER.encode("\n"));
-      return 0;
-    }
-
-    const result = await doFetchWithDebug(req);
-    if (!result.ok) {
-      await writeErrText(runtime, `Request failed (${result.status}).\n`);
-      await writeErrText(runtime, `${result.body}\n`);
-      return 1;
-    }
-
-    if (wantsJson) {
-      await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
-      return 0;
-    }
-
-    const content = extractChatContent(result.json);
-    if (content !== null) {
-      await writeOutText(runtime, `${content}\n`);
-      return 0;
-    }
-    await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
-    return 0;
-  }
-
-  if (cmd === "responses") {
-    const token = resolveClientToken(flags, runtime);
-    if (!token) {
-      await writeErrText(runtime, "Missing client token. Set UOS_AI_TOKEN (or DENO_DEPLOY_TOKEN) or pass --token/--admin-token.\n");
-      return 2;
-    }
-    const model = (getFlagString(flags, "model") ?? "").trim();
-    const instructionsRaw = getFlagString(flags, "instructions");
-    const instructions = typeof instructionsRaw === "string" ? instructionsRaw.trim() : "";
-
-    const inputFromJson = (raw: string): unknown | null => {
-      try {
-        return JSON.parse(raw);
-      } catch {
-        return null;
-      }
-    };
-
-    let input: unknown;
-    const inputJson = getFlagString(flags, "input-json");
-    const inputFile = getFlagString(flags, "input-file");
-    if (typeof inputJson === "string") {
-      const parsed = inputFromJson(inputJson);
-      if (parsed === null) {
-        await writeErrText(runtime, "Invalid JSON in --input-json\n");
-        return 2;
-      }
-      input = parsed;
-    } else if (typeof inputFile === "string") {
-      const path = expandTilde(inputFile, homeDir);
-      let text: string;
-      try {
-        text = await runtime.readTextFile(path);
-      } catch (error) {
-        await writeErrText(runtime, `Failed to read input file: ${path}\n`);
-        await writeErrText(runtime, `${error}\n`);
-        return 2;
-      }
-      const parsed = inputFromJson(text);
-      if (parsed === null) {
-        await writeErrText(runtime, `Invalid JSON in input file: ${path}\n`);
-        return 2;
-      }
-      input = parsed;
-    } else {
-      let text = rest.join(" ").trim();
-      if (!text && !runtime.stdinIsTerminal) {
-        text = (await runtime.readStdin()).trim();
-      }
-      if (!text) {
-        await writeErrText(runtime, "Missing input. Pass it as an argument, or pipe via stdin.\n");
-        return 2;
-      }
-      input = text;
-    }
-
-    const body: Record<string, unknown> = { input, stream: wantsStream };
-    if (model) body.model = model;
-    if (instructionsRaw !== undefined) {
-      body.instructions = instructions;
-    }
-
-    const reasoningEffortRaw = (getFlagString(flags, "reasoning-effort") ?? "").trim();
-    if (reasoningEffortRaw) {
-      body.reasoning = { effort: reasoningEffortRaw };
-    }
-
-    const req = new Request(endpoint("/v1/responses"), {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        Accept: wantsStream ? "text/event-stream" : "application/json",
-      },
-      body: JSON.stringify(body),
-    });
-
-    if (wantsStream) {
-      await debug(`[ubq-ai] -> ${req.method} ${req.url} (stream)\n`);
-      const res = await runtime.fetch(req);
-      await debug(`[ubq-ai] <- ${res.status}\n`);
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        await writeErrText(runtime, `Request failed (${res.status}).\n`);
-        await writeErrText(runtime, `${text || res.statusText}\n`);
-        return 1;
-      }
-      if (!res.body) {
-        await writeErrText(runtime, "Stream response missing body.\n");
-        return 1;
-      }
-
-      if (wantsRaw) {
-        await streamToOut(runtime, res.body);
-        return 0;
-      }
-
-      for await (const ev of parseSseEvents(res.body)) {
-        if (ev === "[DONE]") break;
-        if (wantsJson) {
-          await writeOutText(runtime, `${JSON.stringify(ev)}\n`);
-          continue;
-        }
-        if (isRecord(ev) && getString(ev.type) === "response.completed") break;
-        const delta = extractResponseDelta(ev);
-        if (delta) await runtime.out(TEXT_ENCODER.encode(delta));
-      }
-      if (!wantsJson) await runtime.out(TEXT_ENCODER.encode("\n"));
-      return 0;
-    }
-
-    const result = await doFetchWithDebug(req);
-    if (!result.ok) {
-      await writeErrText(runtime, `Request failed (${result.status}).\n`);
-      await writeErrText(runtime, `${result.body}\n`);
-      return 1;
-    }
-
-    if (wantsJson) {
-      await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
-      return 0;
-    }
-
-    const text = extractResponseText(result.json);
-    if (text !== null) {
-      await writeOutText(runtime, `${text}\n`);
-      return 0;
-    }
-    await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
-    return 0;
-  }
-
-  if (cmd === "admin") {
-    const adminToken = resolveAdminToken(flags, runtime);
-    if (!adminToken) {
-      await writeErrText(runtime, "Missing admin token. Set DENO_DEPLOY_TOKEN or pass --admin-token.\n");
-      return 2;
-    }
-
-    const sub = rest[0] ?? "";
-    const subRest = rest.slice(1);
-
-    if (sub === "upload-auth") {
-      const authJsonPath = expandTilde(getFlagString(flags, "auth-json") ?? "~/.codex/auth.json", homeDir);
-      let authJsonText: string;
-      try {
-        authJsonText = await runtime.readTextFile(authJsonPath);
-      } catch (error) {
-        await writeErrText(runtime, `Failed to read auth.json at ${authJsonPath}:\n`);
-        await writeErrText(runtime, `${error}\n`);
-        return 2;
-      }
-
-      let authJson: unknown;
-      try {
-        authJson = JSON.parse(authJsonText) as unknown;
-      } catch (error) {
-        await writeErrText(runtime, `auth.json at ${authJsonPath} is not valid JSON:\n`);
-        await writeErrText(runtime, `${error}\n`);
-        return 2;
-      }
-
-      if (flags["skip-models"] !== undefined || flags["no-models"] !== undefined) {
-        await writeErrText(runtime, "--skip-models is obsolete; upload-auth always stores the live upstream Codex model catalog.\n");
-        return 2;
-      }
-      const codexBinFlag = getFlagString(flags, "codex-bin");
-      const clientVersion = (await resolveCodexClientVersion(runtime, listCodexBinaryCandidates(runtime, codexBinFlag, homeDir), homeDir)) ?? undefined;
-      const modelsPayload: Record<string, unknown> = {
-        source: "chatgpt_codex",
-        client_version: clientVersion,
-        updated_at_ms: Date.now(),
-      };
-
-      const payload = { auth: authJson, models: modelsPayload };
-      const req = new Request(endpoint("/admin/codex/auth"), {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${adminToken}`,
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
-
-      const result = await doFetchWithDebug(req);
-      if (!result.ok) {
-        await writeErrText(runtime, `Request failed (${result.status}).\n`);
-        await writeErrText(runtime, `${result.body}\n`);
-        return 1;
-      }
-      await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
-      return 0;
-    }
-
-    if (sub === "keys") {
-      const action = subRest[0] ?? "";
-
-      if (action === "create") {
-        const positionalName = subRest.slice(1).join(" ").trim();
-        const name = (getFlagString(flags, "name") ?? positionalName).trim();
-        if (!name.trim()) {
-          await writeErrText(runtime, "Missing key name. Pass it as an argument or via --name.\n");
-          return 2;
-        }
-        const token = (getFlagString(flags, "token") ?? "").trim();
-        const tokenOnlyFlag = flags["token-only"];
-        const tokenOnly = !wantsJson && tokenOnlyFlag !== false;
-
-        const expiresAt = parseApiKeyExpiresAtMs(flags);
-        if (!expiresAt.ok) {
-          await writeErrText(runtime, `${expiresAt.message}\n`);
-          return 2;
-        }
-
-        const usageLimitRaw = getFlagString(flags, "usage-limit");
-        let usageLimit: number | undefined;
-        if (usageLimitRaw) {
-          const trimmed = usageLimitRaw.trim();
-          if (trimmed === "unlimited" || trimmed === "-1") {
-            usageLimit = -1;
-          } else {
-            const parsed = Number(trimmed);
-            if (!Number.isFinite(parsed) || parsed < 0) {
-              await writeErrText(runtime, "--usage-limit must be a positive number, -1, or 'unlimited'\n");
-              return 2;
-            }
-            usageLimit = Math.trunc(parsed);
-          }
-        }
-
-        const body: Record<string, unknown> = token ? { name, token } : { name };
-        if (expiresAt.value !== undefined) body.expires_at_ms = expiresAt.value;
-        if (usageLimit !== undefined) body.usage_limit_requests = usageLimit;
-
-        const req = new Request(endpoint("/admin/api-keys"), {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${adminToken}`,
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-          body: JSON.stringify(body),
-        });
-
-        const result = await doFetchWithDebug(req);
-        if (!result.ok) {
-          await writeErrText(runtime, `Request failed (${result.status}).\n`);
-          await writeErrText(runtime, `${result.body}\n`);
-          return 1;
-        }
-
-        if (tokenOnly) {
-          const tokenValue = result.json && typeof result.json === "object" && "token" in result.json ? (result.json as { token?: unknown }).token : null;
-          if (typeof tokenValue === "string" && tokenValue.trim()) {
-            await writeOutText(runtime, `${tokenValue}\n`);
-            return 0;
-          }
-          await writeErrText(runtime, "Create succeeded but response was missing token.\n");
-          return 1;
-        }
-
-        await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
-        return 0;
-      }
-
-      if (action === "list") {
-        const req = new Request(endpoint("/admin/api-keys"), {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${adminToken}`,
-            Accept: "application/json",
-          },
-        });
-        const result = await doFetchWithDebug(req);
-        if (!result.ok) {
-          await writeErrText(runtime, `Request failed (${result.status}).\n`);
-          await writeErrText(runtime, `${result.body}\n`);
-          return 1;
-        }
-        await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
-        return 0;
-      }
-
-      if (action === "revoke") {
-        const id = (getFlagString(flags, "id") ?? "").trim();
-        if (!id) {
-          await writeErrText(runtime, "Missing --id\n");
-          return 2;
-        }
-        const req = new Request(endpoint("/admin/api-keys/revoke"), {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${adminToken}`,
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-          body: JSON.stringify({ id }),
-        });
-        const result = await doFetchWithDebug(req);
-        if (!result.ok) {
-          await writeErrText(runtime, `Request failed (${result.status}).\n`);
-          await writeErrText(runtime, `${result.body}\n`);
-          return 1;
-        }
-        await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
-        return 0;
-      }
-
-      await writeErrText(runtime, `Unknown admin keys command: ${action || "(missing)"}\n`);
-      await writeOutText(runtime, await usageText(runtime));
-      return 2;
-    }
-
-    if (sub === "kernel-pubkeys") {
-      const action = subRest[0] ?? "";
-
-      if (action === "list") {
-        const req = new Request(endpoint("/admin/kernel-pubkeys"), {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${adminToken}`,
-            Accept: "application/json",
-          },
-        });
-        const result = await doFetchWithDebug(req);
-        if (!result.ok) {
-          await writeErrText(runtime, `Request failed (${result.status}).\n`);
-          await writeErrText(runtime, `${result.body}\n`);
-          return 1;
-        }
-        await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
-        return 0;
-      }
-
-      if (action === "add") {
-        const appIdRaw = getFlagString(flags, "app-id");
-        if (!appIdRaw) {
-          await writeErrText(runtime, "Missing --app-id\n");
-          return 2;
-        }
-        const appId = parseInt(appIdRaw, 10);
-        if (isNaN(appId)) {
-          await writeErrText(runtime, "--app-id must be a number\n");
-          return 2;
-        }
-
-        let pem = getFlagString(flags, "pem");
-        if (!pem && !runtime.stdinIsTerminal) {
-          pem = (await runtime.readStdin()).trim();
-        }
-        if (!pem) {
-          await writeErrText(runtime, "Missing --pem. Pass it as a flag or pipe via stdin.\n");
-          return 2;
-        }
-
-        const owner = getFlagString(flags, "owner") ?? "cli";
-
-        const req = new Request(endpoint("/admin/kernel-pubkeys"), {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${adminToken}`,
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-          body: JSON.stringify({ app_id: appId, pem, owner }),
-        });
-        const result = await doFetchWithDebug(req);
-        if (!result.ok) {
-          await writeErrText(runtime, `Request failed (${result.status}).\n`);
-          await writeErrText(runtime, `${result.body}\n`);
-          return 1;
-        }
-        await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
-        return 0;
-      }
-
-      if (action === "remove") {
-        const appIdRaw = getFlagString(flags, "app-id");
-        if (!appIdRaw) {
-          await writeErrText(runtime, "Missing --app-id\n");
-          return 2;
-        }
-        const appId = parseInt(appIdRaw, 10);
-        if (isNaN(appId)) {
-          await writeErrText(runtime, "--app-id must be a number\n");
-          return 2;
-        }
-
-        const url = endpoint("/admin/kernel-pubkeys");
-        url.searchParams.set("app_id", String(appId));
-
-        const req = new Request(url, {
-          method: "DELETE",
-          headers: {
-            Authorization: `Bearer ${adminToken}`,
-            Accept: "application/json",
-          },
-        });
-        const result = await doFetchWithDebug(req);
-        if (!result.ok) {
-          await writeErrText(runtime, `Request failed (${result.status}).\n`);
-          await writeErrText(runtime, `${result.body}\n`);
-          return 1;
-        }
-        await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
-        return 0;
-      }
-
-      await writeErrText(runtime, `Unknown admin kernel-pubkeys command: ${action || "(missing)"}\n`);
-      await writeOutText(runtime, await usageText(runtime));
-      return 2;
-    }
-
-    if (sub === "kernel-usage") {
-      const action = subRest[0] ?? "";
-
-      if (action === "get") {
-        const owner = (getFlagString(flags, "owner") ?? "").trim();
-        const repo = (getFlagString(flags, "repo") ?? "").trim();
-        const scopeRaw = (getFlagString(flags, "scope") ?? "repo").trim().toLowerCase();
-        const scope = scopeRaw === "org" ? "org" : "repo";
-        if (!owner) {
-          await writeErrText(runtime, "Missing --owner\n");
-          return 2;
-        }
-        if (scope === "repo" && !repo) {
-          await writeErrText(runtime, "Missing --repo for scope=repo\n");
-          return 2;
-        }
-        if (scope === "org" && repo) {
-          await writeErrText(runtime, "--repo must be omitted for scope=org\n");
-          return 2;
-        }
-
-        const url = endpoint("/admin/kernel-usage");
-        url.searchParams.set("owner", owner);
-        url.searchParams.set("scope", scope);
-        if (scope === "repo") url.searchParams.set("repo", repo);
-
-        const req = new Request(url, {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${adminToken}`,
-            Accept: "application/json",
-          },
-        });
-        const result = await doFetchWithDebug(req);
-        if (!result.ok) {
-          await writeErrText(runtime, `Request failed (${result.status}).\n`);
-          await writeErrText(runtime, `${result.body}\n`);
-          return 1;
-        }
-        await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
-        return 0;
-      }
-
-      if (action === "set") {
-        const owner = (getFlagString(flags, "owner") ?? "").trim();
-        const repo = (getFlagString(flags, "repo") ?? "").trim();
-        const scopeRaw = (getFlagString(flags, "scope") ?? (repo ? "repo" : "org")).trim().toLowerCase();
-        const scope = scopeRaw === "org" ? "org" : "repo";
-        if (!owner) {
-          await writeErrText(runtime, "Missing --owner\n");
-          return 2;
-        }
-        if (scope === "repo" && !repo) {
-          await writeErrText(runtime, "Missing --repo for scope=repo\n");
-          return 2;
-        }
-        if (scope === "org" && repo) {
-          await writeErrText(runtime, "--repo must be omitted for scope=org\n");
-          return 2;
-        }
-
-        const usageLimitRaw = getFlagString(flags, "usage-limit");
-        if (!usageLimitRaw) {
-          await writeErrText(runtime, "Missing --usage-limit\n");
-          return 2;
-        }
-        const trimmed = usageLimitRaw.trim();
-        let usageLimit: number;
-        if (trimmed === "unlimited" || trimmed === "-1") {
-          usageLimit = -1;
-        } else {
-          const parsed = Number(trimmed);
-          if (!Number.isFinite(parsed) || parsed < 0) {
-            await writeErrText(runtime, "--usage-limit must be a non-negative number, -1, or 'unlimited'\n");
-            return 2;
-          }
-          usageLimit = Math.trunc(parsed);
-        }
-
-        const resetUsage = flags["reset-usage"] === true;
-        const windowMsRaw = getFlagString(flags, "window-ms");
-        let windowMs: number | undefined;
-        if (windowMsRaw) {
-          const parsed = Number(windowMsRaw.trim());
-          if (!Number.isFinite(parsed) || parsed <= 0) {
-            await writeErrText(runtime, "--window-ms must be a positive number\n");
-            return 2;
-          }
-          windowMs = Math.trunc(parsed);
-        }
-
-        const body: Record<string, unknown> = {
-          owner,
-          usage_limit_requests: usageLimit,
-          reset_usage: resetUsage,
-          scope,
-        };
-        if (scope === "repo") body.repo = repo;
-        if (windowMs !== undefined) body.window_ms = windowMs;
-
-        const req = new Request(endpoint("/admin/kernel-usage"), {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${adminToken}`,
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-          body: JSON.stringify(body),
-        });
-        const result = await doFetchWithDebug(req);
-        if (!result.ok) {
-          await writeErrText(runtime, `Request failed (${result.status}).\n`);
-          await writeErrText(runtime, `${result.body}\n`);
-          return 1;
-        }
-        await writeOutText(runtime, `${JSON.stringify(result.json, null, 2)}\n`);
-        return 0;
-      }
-
-      await writeErrText(runtime, `Unknown admin kernel-usage command: ${action || "(missing)"}\n`);
-      await writeOutText(runtime, await usageText(runtime));
-      return 2;
-    }
-
-    await writeErrText(runtime, `Unknown admin command: ${sub || "(missing)"}\n`);
-    await writeOutText(runtime, await usageText(runtime));
-    return 2;
-  }
-
-  await writeErrText(runtime, `Unknown command: ${cmd}\n`);
-  await writeOutText(runtime, await usageText(runtime));
-  return 2;
+  const context: UbqAiCommandContext = {
+    runtime,
+    flags,
+    args: rest,
+    baseUrl,
+    homeDir,
+    endpoint,
+    wantsJson,
+    wantsStream,
+    wantsRaw,
+    debug,
+    doFetchWithDebug,
+  };
+
+  if (cmd === "health") return await runHealthCommand(context);
+  if (cmd === "info") return await runInfoCommand(context);
+  if (cmd === "whoami") return await runWhoamiCommand(context);
+  if (cmd === "models") return await runModelsCommand(context);
+  if (cmd === "chat") return await runChatCommand(context);
+  if (cmd === "responses") return await runResponsesCommand(context);
+  if (cmd === "admin") return await runAdminCommand(context);
+
+  return await writeUsageError(runtime, `Unknown command: ${cmd}\n`);
 };
 
 const getDefaultRuntime = (): UbqAiRuntime => ({

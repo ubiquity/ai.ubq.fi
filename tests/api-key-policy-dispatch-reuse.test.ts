@@ -13,7 +13,7 @@ import {
 import type { ApiKeyHashRecord, ApiKeyUsageRequestV3, ApiKeyUsageWindowV3 } from "../src/types.ts";
 import { CountingKv } from "./helpers/counting_kv.ts";
 
-const storedValue = <T>(kv: CountingKv, key: Deno.KvKey): T | null => (kv.entries.get(JSON.stringify(key))?.value as T | undefined) ?? null;
+const storedValue = (kv: CountingKv, key: Deno.KvKey): unknown => kv.entries.get(JSON.stringify(key))?.value ?? null;
 
 const setupPolicy = (id: string, usageLimitRequests: number, nowMs = Date.now()): { kv: CountingKv; policy: ApiKeyPolicy } => {
   const tokenHash = `dispatch-reuse-${id}`;
@@ -49,13 +49,13 @@ const reserve = async (kv: CountingKv, policy: ApiKeyPolicy, requestId: string, 
 };
 
 const windowFor = (kv: CountingKv, policy: ApiKeyPolicy): ApiKeyUsageWindowV3 => {
-  const window = storedValue<ApiKeyUsageWindowV3>(kv, apiKeyUsageV3WindowKey(policy));
+  const window = storedValue(kv, apiKeyUsageV3WindowKey(policy)) as ApiKeyUsageWindowV3 | null;
   if (!window) throw new Error("expected V3 aggregate window");
   return window;
 };
 
 const requestFor = (kv: CountingKv, policy: ApiKeyPolicy, requestId: string): ApiKeyUsageRequestV3 => {
-  const request = storedValue<ApiKeyUsageRequestV3>(kv, apiKeyUsageV3RequestKey(policy, requestId));
+  const request = storedValue(kv, apiKeyUsageV3RequestKey(policy, requestId)) as ApiKeyUsageRequestV3 | null;
   if (!request) throw new Error("expected V3 request row");
   return request;
 };
@@ -76,7 +76,7 @@ Deno.test("V3 local dispatch state skips only the redundant post-dispatch releas
     finish();
   }
 
-  const [budget] = kv.budgets();
+  const budget = kv.budgets().at(0);
   assert.deepEqual(
     {
       commands: budget?.commands,
@@ -194,7 +194,7 @@ Deno.test("V3 duplicate admission and concurrent bounded admission preserve one 
   );
   const admitted = decisions.filter((decision) => decision.ok);
   assert.equal(admitted.length, 1, "only one bounded request may reserve the last slot");
-  const winner = admitted[0];
+  const winner = admitted.at(0);
   if (!winner?.ok) throw new Error("expected a concurrent admission winner");
   const winnerDispatch = await winner.reservation.beforeProviderDispatch("voyage");
   if (!winnerDispatch) throw new Error("the winning reservation must dispatch");

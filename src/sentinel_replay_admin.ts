@@ -23,7 +23,12 @@ export const handleAdminSentinelReplayCaptures = async (req: Request, dependenci
   const beforeMs = nonNegativeInteger(url.searchParams.get("before_ms"), -1);
   const limit = nonNegativeInteger(url.searchParams.get("limit"), SENTINEL_REPLAY_EXPORT_PAGE_LIMIT);
   const cursor = url.searchParams.get("cursor");
-  const incidentId = url.searchParams.get("incident_id")?.trim() || null;
+  // A missing parameter and one that trims to "" both mean "absent" here: `??`
+  // would forward the empty value, so the emptiness is spelled out.
+  const trimmedIncidentId = url.searchParams.get("incident_id")?.trim() ?? "";
+  const incidentId = trimmedIncidentId === "" ? null : trimmedIncidentId;
+  // An empty cursor is absent as well, so it must never be forwarded upstream.
+  const requestCursor = cursor === null || cursor === "" ? undefined : cursor;
   if (
     afterMs === null ||
     beforeMs === null ||
@@ -43,13 +48,13 @@ export const handleAdminSentinelReplayCaptures = async (req: Request, dependenci
       ? await (dependencies.listEncryptedSentinelIncidentReplays ?? listEncryptedSentinelIncidentReplays)(kv, {
           incidentId,
           limit,
-          cursor: cursor || undefined,
+          cursor: requestCursor,
         })
       : await (dependencies.listEncryptedSentinelReplays ?? listEncryptedSentinelReplays)(kv, {
           afterMs,
           beforeMs,
           limit,
-          cursor: cursor || undefined,
+          cursor: requestCursor,
         });
     return json(
       200,

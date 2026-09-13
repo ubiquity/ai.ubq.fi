@@ -37,7 +37,9 @@ const EMBEDDINGS_JOB_TTL_MS = 24 * 60 * 60_000;
 const EMBEDDINGS_IDEMPOTENCY_MAX_RESPONSE_CHUNKS = 256;
 const EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS = 7 * 24 * 60 * 60_000;
 const EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS = EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS + 24 * 60 * 60_000;
-const resetVoyageRateLimit = () => void kvStore.delete(keyToString(VOYAGE_RATE_LIMIT_KEY));
+const resetVoyageRateLimit = (): void => {
+  kvStore.delete(keyToString(VOYAGE_RATE_LIMIT_KEY));
+};
 type TestInputType = "query" | "document";
 type TestDimension = 256 | 512 | 1024 | 2048;
 type TestEncodingFormat = "float" | "base64";
@@ -142,7 +144,7 @@ const kvStub = {
     bumpKvVersion(rawKey);
     return Promise.resolve();
   },
-  list: async function* (selector: Deno.KvListSelector, options?: Deno.KvListOptions) {
+  list: function* (selector: Deno.KvListSelector, options?: Deno.KvListOptions) {
     const prefix = "prefix" in selector ? selector.prefix : null;
     if (!prefix) {
       yield* [];
@@ -151,7 +153,7 @@ const kvStub = {
     const limit = Math.max(0, Math.trunc(options?.limit ?? Infinity));
     const entries: Deno.KvEntry<unknown>[] = [];
     for (const [rawKey, value] of kvStore.entries()) {
-      let key: unknown = null;
+      let key: unknown;
       try {
         key = JSON.parse(rawKey);
       } catch {
@@ -241,6 +243,12 @@ const fetchMockQueue: FetchMockQueue = (() => {
   return created;
 })();
 
+const requestInputUrl = (input: RequestInfo | URL): string => {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+};
+
 const withFetchMock = async <T>(
   handler: (url: string, bodyText: string | null, headers: Headers) => Response | Promise<Response>,
   fn: () => Promise<T>
@@ -256,7 +264,7 @@ const withFetchMock = async <T>(
 
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = requestInputUrl(input);
     const bodyText = typeof init?.body === "string" ? init.body : null;
     const headers = new Headers(init?.headers);
     return await handler(url, bodyText, headers);
@@ -452,8 +460,10 @@ Deno.test("uos embeddings: forwards synchronous query and document profiles", as
 
   assert.equal(seenBodies.length, 2);
   for (let index = 0; index < cases.length; index += 1) {
-    const expected = cases[index]!;
-    const body = seenBodies[index]!;
+    const expected = cases[index];
+    const body = seenBodies[index];
+    assert.ok(expected);
+    assert.ok(body);
     assert.equal(body.model, "voyage-4-large");
     assert.equal(body.input_type, expected.inputType);
     assert.equal(body.output_dimension, expected.dimensions);
@@ -621,13 +631,14 @@ Deno.test("embeddings: quota dispatch failures release idempotency and promptly 
       const queuedJob = (await jobQueued.json()) as { id?: unknown; status?: unknown };
       assert.equal(queuedJob.status, "queued");
       assert.equal(typeof queuedJob.id, "string");
+      const queuedJobId = queuedJob.id as string;
       assert.equal(upstreamCalls, 1);
 
       resetVoyageRateLimit();
       const completedJob = await handleEmbeddingsJobGet(
-        new Request(`https://ai.ubq.fi/uos/embedding-jobs/${queuedJob.id}`),
+        new Request(`https://ai.ubq.fi/uos/embedding-jobs/${queuedJobId}`),
         jobToken,
-        queuedJob.id as string,
+        queuedJobId,
         usageContext
       );
       assert.equal(completedJob.status, 200);
@@ -788,9 +799,13 @@ Deno.test("uos embeddings idempotency: an expired owner cannot overwrite the pub
 
         const publishedGeneration = stored.response_generation as string;
         const publishedChunkKey: Deno.KvKey = [...responsePrefix, publishedGeneration, 0];
-        assert.equal(kvExpirations.get(keyToString(ledgerKey)), EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS);
-        assert.equal(kvExpirations.get(keyToString(publishedChunkKey)), EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS);
-        assert(EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS > EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS);
+        const ledgerExpiresInMs = kvExpirations.get(keyToString(ledgerKey));
+        const publishedChunkExpiresInMs = kvExpirations.get(keyToString(publishedChunkKey));
+        assert.equal(ledgerExpiresInMs, EMBEDDINGS_IDEMPOTENCY_LEDGER_TTL_MS);
+        assert.equal(publishedChunkExpiresInMs, EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS);
+        // The response chunks the gateway actually wrote must outlive the ledger
+        // record, otherwise a replay could resurrect an expired ledger entry.
+        assert((publishedChunkExpiresInMs ?? 0) > (ledgerExpiresInMs ?? 0));
 
         // A late write from the expired owner lands in its own generation and
         // cannot corrupt the response generation already published by CAS.
@@ -2095,8 +2110,10 @@ Deno.test("embedding jobs: queued query and document profiles persist through po
 
     const tokenHash = await sha256Hex(authToken);
     for (let index = 0; index < jobIds.length; index += 1) {
-      const jobId = jobIds[index]!;
-      const item = cases[index]!;
+      const jobId = jobIds[index];
+      const item = cases[index];
+      assert.ok(jobId);
+      assert.ok(item);
       const profileKey = embeddingsProfileKey(item.inputType, item.dimensions, "float", item.truncation);
       const jobKey = embeddingsJobKey(tokenHash, profileKey, jobId);
       const lookupKey = embeddingsJobLookupKey(tokenHash, jobId);
@@ -2105,7 +2122,8 @@ Deno.test("embedding jobs: queued query and document profiles persist through po
       assert.equal(kvExpirations.get(keyToString(jobKey)), EMBEDDINGS_JOB_TTL_MS);
       assert.equal(kvExpirations.get(keyToString(lookupKey)), EMBEDDINGS_JOB_TTL_MS);
 
-      const other = cases[(index + 1) % cases.length]!;
+      const other = cases[(index + 1) % cases.length];
+      assert.ok(other);
       const otherProfileKey = embeddingsProfileKey(other.inputType, other.dimensions, "float", other.truncation);
       assert.equal(kvStore.has(keyToString(embeddingsJobKey(tokenHash, otherProfileKey, jobId))), false);
       assert.equal(kvStore.has(keyToString(["embeddings", "jobs", "v2", tokenHash, jobId])), false);
@@ -2121,7 +2139,8 @@ Deno.test("embedding jobs: queued query and document profiles persist through po
       },
       async () => {
         for (let index = 0; index < jobIds.length; index += 1) {
-          const jobId = jobIds[index]!;
+          const jobId = jobIds[index];
+          assert.ok(jobId);
           const polled = await handleEmbeddingsJobGet(new Request(`https://ai.ubq.fi/uos/embedding-jobs/${jobId}`), authToken, jobId);
           assert.equal(polled.status, 200);
           assert.equal(polled.headers.get("x-uos-upstream"), "voyage");
@@ -2132,7 +2151,8 @@ Deno.test("embedding jobs: queued query and document profiles persist through po
             truncation?: unknown;
             result?: { data?: { embedding?: unknown }[] };
           };
-          const expected = cases[index]!;
+          const expected = cases[index];
+          assert.ok(expected);
           assert.equal(payload.status, "succeeded");
           assert.equal(payload.input_type, expected.inputType);
           assert.equal(payload.dimensions, expected.dimensions);
@@ -2144,7 +2164,8 @@ Deno.test("embedding jobs: queued query and document profiles persist through po
 
     assert.equal(seenBodies.length, cases.length);
     for (let index = 0; index < cases.length; index += 1) {
-      const expected = cases[index]!;
+      const expected = cases[index];
+      assert.ok(expected);
       assert.deepEqual(seenBodies[index], {
         model: "voyage-4-large",
         input: expected.input,

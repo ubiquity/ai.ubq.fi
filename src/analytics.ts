@@ -51,9 +51,26 @@ const nullableInteger = (value: unknown): number | null => {
   return normalized >= 0 ? normalized : null;
 };
 const text = (value: unknown, max = 120, fallback = ""): string => {
-  const normalized = getString(value)?.trim() || fallback;
+  const trimmed = getString(value)?.trim() ?? "";
+  // An empty trimmed string still counts as absent, so the fallback keeps winning.
+  const normalized = trimmed.length > 0 ? trimmed : fallback;
   return normalized.slice(0, max);
 };
+
+/**
+ * Provider names that survive a ledger read. Anything else (unknown, absent or
+ * non-string) normalizes to the primary Codex provider, exactly as the
+ * comparison chain it replaces did.
+ */
+const CATALOG_PROVIDERS = new Map<string, ApiKeyRequestLogRecord["provider"]>([
+  ["cerebras", "cerebras"],
+  ["voyage", "voyage"],
+  ["surplus", "surplus"],
+  ["metered", "metered"],
+]);
+
+const requestLogProvider = (value: unknown): ApiKeyRequestLogRecord["provider"] =>
+  typeof value === "string" ? (CATALOG_PROVIDERS.get(value) ?? "chatgpt_codex") : "chatgpt_codex";
 
 const normalize = (value: unknown, keyId: string, requestId: string, createdAtMs: number): ApiKeyRequestLogRecord | null => {
   if (!isRecord(value)) return null;
@@ -69,16 +86,7 @@ const normalize = (value: unknown, keyId: string, requestId: string, createdAtMs
     model: text(value.model) || null,
     reasoning: text(value.reasoning) || null,
     created_at_ms: integer(value.created_at_ms, createdAtMs),
-    provider:
-      value.provider === "cerebras"
-        ? "cerebras"
-        : value.provider === "voyage"
-          ? "voyage"
-          : value.provider === "surplus"
-            ? "surplus"
-            : value.provider === "metered"
-              ? "metered"
-              : "chatgpt_codex",
+    provider: requestLogProvider(value.provider),
     fallback_reason: text(value.fallback_reason) || null,
     provider_request_id: text(value.provider_request_id) || null,
     completed_at_ms: nullableInteger(value.completed_at_ms),
@@ -124,18 +132,6 @@ export const recordApiKeyRequestLog = async (keyId: string, input: ApiKeyRequest
   const requestId = text(input.id, 120, crypto.randomUUID());
   const createdAtMs = integer(input.created_at_ms, nowMs);
   await mutateApiKeyRequestLog(keyId, createdAtMs, requestId, (existing) => ({ ...(existing ?? {}), ...input }), kvOverride);
-};
-
-export const getApiKeyRequestLog = async (
-  keyId: string,
-  createdAtMs: number,
-  requestId: string,
-  kvOverride?: Deno.Kv | null
-): Promise<ApiKeyRequestLogRecord | null> => {
-  const kv = kvOverride === undefined ? await getKv() : kvOverride;
-  if (!kv) return null;
-  const entry = await kv.get<ApiKeyRequestLogRecord>(apiKeyRequestLogKey(keyId, createdAtMs, requestId));
-  return normalize(entry.value, keyId, requestId, createdAtMs);
 };
 
 export const updateApiKeyRequestLog = async (

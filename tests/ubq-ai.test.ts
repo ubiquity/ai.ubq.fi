@@ -231,7 +231,7 @@ Deno.test("ubq-ai: chat --stream does not consume prompt and prints deltas", asy
       assert.equal(body.stream, true);
       assert.ok(Array.isArray(body.messages));
       const first = (body.messages as { role?: unknown; content?: unknown }[])[0];
-      assert.equal(first?.role, "system");
+      assert.equal(first.role, "system");
       const last = (body.messages as { role?: unknown; content?: unknown }[]).at(-1);
       assert.equal(last?.role, "user");
       assert.equal(last?.content, "Say hello in 2 ways.");
@@ -252,7 +252,7 @@ Deno.test("ubq-ai: chat --stream does not consume prompt and prints deltas", asy
   assert.equal(errText(), "");
   assert.equal(outText(), "Hello world\n");
   assert.equal(requests.length, 1);
-  assert.match(requests[0]!.headers.authorization ?? "", /^Bearer /i);
+  assert.match(requests[0].headers.authorization, /^Bearer /i);
 });
 
 Deno.test("ubq-ai: chat (non-stream) prints assistant content", async () => {

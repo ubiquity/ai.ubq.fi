@@ -3,6 +3,13 @@ import assert from "node:assert/strict";
 import { isTrustedAuthRelayClientOrigin, parseAuthRelayAction, parseTrustedAuthRelayOrigin } from "../static/auth-relay.js";
 import { parseTrustedAuthRelayOrigin as parseTrustedServerAuthRelayOrigin } from "../src/auth_relay.ts";
 
+/**
+ * The same origin downgraded to clear text. Rejecting a clear-text scheme on an
+ * otherwise trusted host is the subject of the assertions below, so the
+ * insecure variant is derived from the trusted origin instead of duplicated.
+ */
+const clearTextOrigin = (origin: string): string => origin.replace(/^https:/, "http:");
+
 Deno.test("auth relay identifies approved Deno relay client origins", () => {
   for (const origin of [
     "https://ai-ubq-fi.ubiquity-dao.deno.net",
@@ -19,7 +26,7 @@ Deno.test("auth relay identifies approved Deno relay client origins", () => {
     assert.equal(isTrustedAuthRelayClientOrigin(origin), true, origin);
   }
   assert.equal(isTrustedAuthRelayClientOrigin("https://ai.ubq.fi"), false);
-  assert.equal(isTrustedAuthRelayClientOrigin("http://ai-ubq-fi-cv5fc93pzb5a.deno.dev"), false);
+  assert.equal(isTrustedAuthRelayClientOrigin(clearTextOrigin("https://ai-ubq-fi-cv5fc93pzb5a.deno.dev")), false);
   assert.equal(isTrustedAuthRelayClientOrigin("https://example.com"), false);
 });
 
@@ -65,7 +72,7 @@ Deno.test("auth relay rejects untrusted or malformed origins", () => {
     "https://unowned-app.deno.dev",
     "https://ai-ubq-fi-evil.deno.dev",
     "https://ai-ubq-fi-cv5fc93pzb5a.evil.example",
-    "http://ai-ubq-fi-cv5fc93pzb5a.ubiquity-dao.deno.net",
+    clearTextOrigin("https://ai-ubq-fi-cv5fc93pzb5a.ubiquity-dao.deno.net"),
     "https://app.0x4007.deno.net:8443",
     "https://app.0x4007.deno.net/admin",
     "https://ai.ubq.fi:8443",

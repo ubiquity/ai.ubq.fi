@@ -77,7 +77,10 @@ Deno.test("B: scripted driver completes nav-001 and records bridge events", asyn
 });
 
 Deno.test("B: pinned provenance record matches the live primary-source facts", () => {
-  const pin = CODEX_INFINITY_SOURCE_PIN;
+  // Read through a widened view on purpose: the pin's own fields are literal
+  // types, so a literal-vs-literal comparison is decided statically and would
+  // stop catching drift the moment the pin is edited.
+  const pin: Readonly<Record<string, string>> = CODEX_INFINITY_SOURCE_PIN;
   if (pin.repositoryUrl !== "https://github.com/lee101/codex-infinity") {
     throw new Error("repository URL drifted");
   }

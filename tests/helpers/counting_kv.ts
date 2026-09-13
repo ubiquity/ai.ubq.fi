@@ -188,11 +188,7 @@ export class CountingKv {
     keys: readonly Deno.KvKey[],
     _options?: Readonly<{ consistency?: "strong" | "eventual" }>
   ): Promise<{ [K in keyof T]: Deno.KvEntryMaybe<T[K]> }> {
-    const classification = keys.some((key) => classifyKvKey(key) === "mandatory_correctness")
-      ? "mandatory_correctness"
-      : keys.some((key) => classifyKvKey(key) === "optional_telemetry")
-        ? "optional_telemetry"
-        : "background";
+    const classification = this.#classifyCommands(keys);
     this.#record("getMany", classification, keys);
     return Promise.resolve(
       keys.map((key) => {
@@ -226,7 +222,7 @@ export class CountingKv {
     const selected = [...this.entries.values()]
       .filter((entry) => startsWithKey(entry.key, prefix))
       .sort((left, right) => encodeKey(left.key).localeCompare(encodeKey(right.key)));
-    const iterator = (async function* (): AsyncGenerator<Deno.KvEntry<T>> {
+    const iterator = (function* (): Generator<Deno.KvEntry<T>> {
       for (const entry of selected) {
         yield {
           key: clone(entry.key),
@@ -303,6 +299,12 @@ export class CountingKv {
   }
 
   close(): void {}
+
+  #classifyCommands(keys: readonly Deno.KvKey[]): KvMeasurementClassification {
+    if (keys.some((key) => classifyKvKey(key) === "mandatory_correctness")) return "mandatory_correctness";
+    if (keys.some((key) => classifyKvKey(key) === "optional_telemetry")) return "optional_telemetry";
+    return "background";
+  }
 
   #nextVersionstamp(): string {
     this.#nextVersion += 1;

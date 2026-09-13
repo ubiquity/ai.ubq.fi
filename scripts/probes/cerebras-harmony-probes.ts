@@ -76,11 +76,22 @@ const path = new URL(`cerebras-harmony-protocol-${utcStamp(started)}.jsonl`, OUT
 await writeJsonl(path, results);
 
 const expectedMatches = results.filter((result) => result.expectedOutcome !== null && result.expectedOutcome === result.outcome);
+const expectationLabel = (result: ProbeScenarioResult): string => {
+  if (result.expectedOutcome === null) return "info";
+  if (result.expectedOutcome === result.outcome) return "matched";
+  return "DIVERGED";
+};
 console.log(``);
 console.log(`Summary (${results.length} scenarios, ${expectedMatches.length} matched expectations, ${finished.getTime() - started.getTime()} ms total):`);
 for (const result of results) {
-  const expectation = result.expectedOutcome === null ? "info" : result.expectedOutcome === result.outcome ? "matched" : "DIVERGED";
-  const turns = result.turns.map((turn) => (turn.outcome === "ok" ? "ok" : `${turn.outcome}${turn.status !== null ? `@${turn.status}` : ""}`)).join(",");
+  const expectation = expectationLabel(result);
+  const turns = result.turns
+    .map((turn) => {
+      if (turn.outcome === "ok") return "ok";
+      const statusSuffix = turn.status === null ? "" : `@${turn.status}`;
+      return `${turn.outcome}${statusSuffix}`;
+    })
+    .join(",");
   console.log(
     `  ${result.id.padEnd(32)} ${result.outcome.padEnd(17)} expected=${String(result.expectedOutcome).padEnd(17)} ${expectation.padEnd(9)} turns=[${turns}]`
   );

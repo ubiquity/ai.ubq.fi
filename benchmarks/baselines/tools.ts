@@ -72,73 +72,94 @@ function clip(s: string): string {
   return s.length > OUTPUT_LIMIT ? `${s.slice(0, OUTPUT_LIMIT)}…[truncated]` : s;
 }
 
+const findFiles = (workspace: FixtureWorkspace, args: Record<string, unknown>): ToolResult => {
+  const rel = args.path as string;
+  const pattern = (args.pattern as string | undefined) ?? "**";
+  const files = workspace.listFiles(rel).filter((p) => {
+    const base = p.split("/").pop() ?? p;
+    return globMatch(pattern, p) || (!pattern.includes("/") && globMatch(pattern, base));
+  });
+  return { ok: true, output: files.length === 0 ? "(no matches)" : files.join("\n") };
+};
+
+const searchFiles = (workspace: FixtureWorkspace, args: Record<string, unknown>): ToolResult => {
+  const rel = args.path as string;
+  const query = (args.query as string).toLowerCase();
+  const lines: string[] = [];
+  for (const file of workspace.listFiles(rel)) {
+    if (lines.length >= SEARCH_LINE_LIMIT) break;
+    const content = workspace.read(file);
+    content.split("\n").forEach((line, i) => {
+      if (lines.length < SEARCH_LINE_LIMIT && line.toLowerCase().includes(query)) {
+        lines.push(`${file}:${i + 1}:${line}`);
+      }
+    });
+  }
+  return { ok: true, output: lines.length === 0 ? "(no matches)" : lines.join("\n") };
+};
+
+const execShellTool = async (workspace: FixtureWorkspace, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> => {
+  const command = args.command as string;
+  const res = await workspace.execShell(command, SHELL_TIMEOUT_MS, signal);
+  const output = [res.stdout, res.stderr].filter((s) => s.trim() !== "").join("\n");
+  if (res.timedOut) {
+    return { ok: false, error: `command timed out after ${SHELL_TIMEOUT_MS}ms`, error_code: "timeout" };
+  }
+  if (res.code !== 0) {
+    return { ok: false, error: clip(output || `exit code ${res.code}`), error_code: "exec_failed" };
+  }
+  return { ok: true, output: clip(output) };
+};
+
+const applyPatchTool = (workspace: FixtureWorkspace, args: Record<string, unknown>): ToolResult => {
+  const path = args.path as string;
+  try {
+    const add = args.add === true;
+    const old = (args.old as string | undefined) ?? "";
+    const next = (args.new as string | undefined) ?? "";
+    const out = workspace.applyPatch(path, old, next, add);
+    return { ok: true, output: out.detail };
+  } catch (err) {
+    const error = err as Error;
+    return {
+      ok: false,
+      error: error.message,
+      error_code: "patch_failed",
+    };
+  }
+};
+
+const updatePlanTool = (args: Record<string, unknown>): ToolResult => {
+  const plan = args.plan as string[];
+  if (!plan.every((p) => typeof p === "string" && p.length > 0)) {
+    return { ok: false, error: "plan entries must be non-empty strings", error_code: "invalid_args" };
+  }
+  return { ok: true, output: `plan updated (${plan.length} items)` };
+};
+
 /** Executes one canonical tool in the disposable workspace (mirror of m02). */
-export async function executeBaselineTool(workspace: FixtureWorkspace, tool: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
+export function executeBaselineTool(workspace: FixtureWorkspace, tool: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> {
+  // The Promise wrapper keeps every synchronous validation or applyPatch throw
+  // a rejection for callers that only handle a rejected tool promise.
+  return Promise.resolve().then(() => executeBaselineToolSync(workspace, tool, args, signal));
+}
+
+function executeBaselineToolSync(workspace: FixtureWorkspace, tool: string, args: Record<string, unknown>, signal?: AbortSignal): ToolResult {
   switch (tool) {
     case "filesystem.read": {
       const path = args.path as string;
       return { ok: true, output: clip(workspace.read(path)) };
     }
-    case "filesystem.find": {
-      const rel = args.path as string;
-      const pattern = (args.pattern as string | undefined) ?? "**";
-      const files = workspace.listFiles(rel).filter((p) => {
-        const base = p.split("/").pop() ?? p;
-        return globMatch(pattern, p) || (!pattern.includes("/") && globMatch(pattern, base));
-      });
-      return { ok: true, output: files.length === 0 ? "(no matches)" : files.join("\n") };
-    }
-    case "filesystem.search": {
-      const rel = args.path as string;
-      const query = (args.query as string).toLowerCase();
-      const lines: string[] = [];
-      for (const file of workspace.listFiles(rel)) {
-        if (lines.length >= SEARCH_LINE_LIMIT) break;
-        const content = workspace.read(file);
-        content.split("\n").forEach((line, i) => {
-          if (lines.length < SEARCH_LINE_LIMIT && line.toLowerCase().includes(query)) {
-            lines.push(`${file}:${i + 1}:${line}`);
-          }
-        });
-      }
-      return { ok: true, output: lines.length === 0 ? "(no matches)" : lines.join("\n") };
-    }
-    case "shell.exec": {
-      const command = args.command as string;
-      const res = await workspace.execShell(command, SHELL_TIMEOUT_MS, signal);
-      const output = [res.stdout, res.stderr].filter((s) => s.trim() !== "").join("\n");
-      if (res.timedOut) {
-        return { ok: false, error: `command timed out after ${SHELL_TIMEOUT_MS}ms`, error_code: "timeout" };
-      }
-      if (res.code !== 0) {
-        return { ok: false, error: clip(output || `exit code ${res.code}`), error_code: "exec_failed" };
-      }
-      return { ok: true, output: clip(output) };
-    }
-    case "editor.apply_patch": {
-      const path = args.path as string;
-      try {
-        const add = args.add === true;
-        const old = (args.old as string | undefined) ?? "";
-        const next = (args.new as string | undefined) ?? "";
-        const out = workspace.applyPatch(path, old, next, add);
-        return { ok: true, output: out.detail };
-      } catch (err) {
-        const error = err as Error;
-        return {
-          ok: false,
-          error: error.message,
-          error_code: "patch_failed",
-        };
-      }
-    }
-    case "task.update_plan": {
-      const plan = args.plan as string[];
-      if (!plan.every((p) => typeof p === "string" && p.length > 0)) {
-        return { ok: false, error: "plan entries must be non-empty strings", error_code: "invalid_args" };
-      }
-      return { ok: true, output: `plan updated (${plan.length} items)` };
-    }
+    case "filesystem.find":
+      return findFiles(workspace, args);
+    case "filesystem.search":
+      return searchFiles(workspace, args);
+    case "shell.exec":
+      return execShellTool(workspace, args, signal);
+    case "editor.apply_patch":
+      return applyPatchTool(workspace, args);
+    case "task.update_plan":
+      return updatePlanTool(args);
     case "browser.search":
     case "browser.open":
     case "browser.find":
