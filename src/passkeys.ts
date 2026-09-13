@@ -556,13 +556,15 @@ export const handlePasskeyLoginStart = async (req: Request): Promise<Response> =
   }
 
   let allowCredentials: Array<{ id: string; type: "public-key" }> | undefined;
-  let userVerification: "preferred" | "required" = "preferred";
+  // Discoverable credentials may belong to an admin; request the verification
+  // that the finish handler will require once the account is identified.
+  let userVerification: "preferred" | "required" = "required";
   if (handle) {
     const user = await getUserByHandle(kv, handle);
     if (!user) return openaiError(404, "Passkey account not found", "not_found");
     if (!user.credential_ids.length) return openaiError(404, "No passkeys registered", "not_found");
     allowCredentials = user.credential_ids.map((id) => ({ id, type: "public-key" }));
-    if (isPasskeyUserAdmin(user)) userVerification = "required";
+    userVerification = isPasskeyUserAdmin(user) ? "required" : "preferred";
   }
 
   const { origin, rpId } = getPasskeyRequestMeta(req, raw.client_origin);
