@@ -932,7 +932,7 @@ Deno.test("passkey login start requires user verification for admin handles", as
   assert.equal((await memberResponse.json()).publicKey.userVerification, "preferred");
 });
 
-Deno.test("passkey login start without username remains discoverable", async () => {
+Deno.test("passkey login start without username requires verification and remains discoverable", async () => {
   kvStore.clear();
 
   const response = await handlePasskeyLoginStart(
@@ -946,7 +946,7 @@ Deno.test("passkey login start without username remains discoverable", async () 
   assert.equal(response.status, 200);
   const body = await response.json();
   assert.equal(body.publicKey.allowCredentials, undefined);
-  assert.equal(body.publicKey.userVerification, "preferred");
+  assert.equal(body.publicKey.userVerification, "required");
 });
 
 Deno.test("passkey login start accepts an explicit zero-byte body only on the allow-empty route", async () => {
@@ -968,7 +968,7 @@ Deno.test("passkey login start accepts an explicit zero-byte body only on the al
   assert.equal(loginStart.status, 200);
   const loginBody = await loginStart.json();
   assert.equal(loginBody.publicKey.allowCredentials, undefined);
-  assert.equal(loginBody.publicKey.userVerification, "preferred");
+  assert.equal(loginBody.publicKey.userVerification, "required");
 
   for (const [name, url, handler] of [
     ["register start", "https://ai.ubq.fi/api/auth/register/start", handlePasskeyRegisterStart],

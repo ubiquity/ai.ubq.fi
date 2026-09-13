@@ -169,7 +169,6 @@ const keyNameInput = mustGet("key-name");
 const keyUsageLimitInput = mustGet("key-usage-limit");
 const keyUsageWindowInput = mustGet("key-usage-window");
 const keyExpiresSelect = mustGet("key-expires");
-const keyBankedResetsEnabledInput = mustGet("key-banked-resets-enabled");
 const keyPaidFallbackEnabledInput = mustGet("key-paid-fallback-enabled");
 const keyPaidFallbackLimitInput = mustGet("key-paid-fallback-limit");
 const keyPaidFallbackSettings = mustGet("key-paid-fallback-settings");
@@ -690,8 +689,6 @@ const signInAdminWithPasskey = async () => {
 
   const result = await signInWithPasskey({
     baseUrl: getPasskeyBaseUrl(),
-    handle: getPasskeyHandle(),
-    useHandle: Boolean(getPasskeyHandle()),
     audienceOrigin: isAuthRelayMode ? authRelayOrigin : "",
   });
   if (result.handle) setPasskeyHandleValue(result.handle);
@@ -935,7 +932,6 @@ const renderCapacityWindow = (container, label, window) => {
   usage.appendChild(progress);
   const facts = document.createElement("dl");
   facts.dataset.capacityFacts = "";
-  appendProviderFact(facts, "Used", formatCapacityPercent(window?.used_percent));
   appendProviderFact(
     facts,
     "Window",
@@ -1015,8 +1011,19 @@ const appendCapacitySourceMeta = (row, source, provider = null) => {
       source.wallet?.cache_state ?? provider?.quota?.cache_state ?? "Unavailable",
     );
   }
-  row.appendChild(facts);
+  const details = document.createElement("details");
+  details.dataset.providerDetails = "";
+  const summary = document.createElement("summary");
+  summary.textContent = "Diagnostics";
+  details.append(summary, facts);
+  row.appendChild(details);
 };
+
+let codexResetSettings = [];
+let codexResetSettingsRevision = 0;
+const codexResetSaving = new Set();
+let codexResetSettingsTarget = "";
+let codexResetSettingsToken = "";
 
 const renderCodexCapacitySource = (source, provider = null) => {
   const row = document.createElement("article");
@@ -1034,15 +1041,76 @@ const renderCodexCapacitySource = (source, provider = null) => {
   const status = capacityProviderStatus(source, provider);
   setBadge(badge, status.badgeState, status.label);
   header.append(title, badge);
+  const setting = codexResetSettingsTarget === apiUrl("/admin/providers") && codexResetSettingsToken === getAdminToken()
+    ? codexResetSettings.find((entry) =>
+      entry.account_cohort_id === source.account_cohort_id && entry.slot === source.slot
+    )
+    : null;
+  const label = document.createElement("label");
+  label.dataset.check = "";
+  const copy = document.createElement("span");
+  const count = setting?.available_count;
+  copy.textContent = "Use banked resets";
+  const countLabel = document.createElement("small");
+  countLabel.textContent = Number.isSafeInteger(count) && count >= 0 ? count + " available" : "Count unavailable";
+  countLabel.setAttribute(
+    "aria-label",
+    Number.isSafeInteger(count) && count >= 0 ? count + " banked resets available" : "Banked reset count unavailable",
+  );
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.setAttribute("role", "switch");
+  input.setAttribute("aria-label", "Use banked resets for " + title.textContent);
+  input.checked = setting?.enabled === true;
+  input.disabled = !setting || codexResetSaving.has(setting.account_id_hash);
+  label.append(copy, input, countLabel);
+  header.append(label);
+  input.addEventListener("change", async () => {
+    if (!setting) return;
+    const target = apiUrl("/admin/providers");
+    const token = getAdminToken();
+    const enabled = input.checked;
+    input.disabled = true;
+    codexResetSaving.add(setting.account_id_hash);
+    codexResetSettingsRevision++;
+    try {
+      const response = await fetch(apiUrl("/admin/providers/codex/banked-resets"), {
+        method: "PATCH",
+        headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+        body: JSON.stringify({ account_id_hash: setting.account_id_hash, enabled }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error?.message || "Could not save banked resets setting");
+      if (target !== apiUrl("/admin/providers") || token !== getAdminToken()) return;
+      setting.enabled = data.enabled;
+      for (const entry of codexResetSettings) {
+        if (entry.account_id_hash === setting.account_id_hash) entry.enabled = data.enabled;
+      }
+    } catch (error) {
+      if (target === apiUrl("/admin/providers") && token === getAdminToken()) {
+        input.checked = setting.enabled;
+        toast.error("Save failed", { description: error.message });
+      }
+    } finally {
+      codexResetSaving.delete(setting.account_id_hash);
+      codexResetSettingsRevision++;
+      if (latestProviderCapacityChartState?.sources) {
+        renderProviderCapacityList(latestProviderCapacityChartState.sources);
+      }
+      input.disabled = false;
+      if (target === apiUrl("/admin/providers") && token === getAdminToken()) void loadProviders();
+    }
+  });
 
   const windows = document.createElement("div");
   windows.dataset.capacityWindows = "";
   renderCapacityWindow(windows, "Primary window", source.windows?.primary);
   if (source.windows?.secondary) renderCapacityWindow(windows, "Secondary window", source.windows.secondary);
   const additionalLimits = Array.isArray(source.additional_rate_limits) ? source.additional_rate_limits : [];
-  for (const limit of additionalLimits) renderCapacityAdditionalLimit(windows, limit);
   row.append(header, windows);
   appendCapacitySourceMeta(row, source, provider);
+  const diagnostics = row.querySelector("details");
+  for (const limit of additionalLimits) renderCapacityAdditionalLimit(diagnostics, limit);
   return row;
 };
 
@@ -1104,6 +1172,11 @@ const renderMeteredCapacitySource = (source, provider = null) => {
   appendProviderFact(facts, "Reset", "Not provided for refill cycle");
   row.append(header, facts);
   appendCapacitySourceMeta(row, source, provider);
+  const diagnostics = row.querySelector("details");
+  const secondaryFacts = document.createElement("dl");
+  secondaryFacts.dataset.capacityFacts = "";
+  secondaryFacts.append(...Array.from(facts.children).slice(1));
+  diagnostics.appendChild(secondaryFacts);
   return row;
 };
 
@@ -1129,12 +1202,8 @@ const renderSurplusProviderHealthSource = (provider = null) => {
 
   const facts = document.createElement("dl");
   facts.dataset.capacityFacts = "";
-  appendProviderFact(facts, "Configured", configured ? "Yes" : "No");
-  appendProviderFact(facts, "Inference", configured ? providerStateLabel(provider?.health) : "Unavailable");
   appendProviderFact(facts, "Last response", formatDate(provider?.health?.last_observed_at_ms));
   appendProviderFact(facts, "Quota", provider?.quota?.available === true ? "Reported" : "Not reported");
-  appendProviderFact(facts, "Usage", "Shown per API key");
-  appendProviderFact(facts, "Settlement", "Response usage");
   row.append(header, facts);
   return row;
 };
@@ -1145,6 +1214,7 @@ const providerForCodexSlot = (slot) => {
 };
 
 const renderProviderCapacityList = (sources) => {
+  const expanded = Array.from(providerCapacityList.children, (row) => row.querySelector("details")?.open === true);
   providerCapacityList.replaceChildren();
   for (const source of sources) {
     providerCapacityList.appendChild(
@@ -1156,6 +1226,10 @@ const renderProviderCapacityList = (sources) => {
   if (latestProviderHealth?.surplus) {
     providerCapacityList.appendChild(renderSurplusProviderHealthSource(latestProviderHealth.surplus));
   }
+  Array.from(providerCapacityList.children).forEach((row, index) => {
+    const details = row.querySelector("details");
+    if (details) details.open = expanded[index] === true;
+  });
 };
 
 const unavailableCapacitySource = (source, slot = null) =>
@@ -1203,8 +1277,8 @@ const CAPACITY_CHART_PLOT_TOP = 24;
 const CAPACITY_CHART_PLOT_RIGHT = 12;
 const CAPACITY_CHART_PLOT_BOTTOM = 56;
 const CAPACITY_CHART_BUCKET_MS = 15 * CAPACITY_CHART_MINUTE_MS;
-const CAPACITY_CHART_MAX_PIXELS_PER_PERCENT = 4;
-const CAPACITY_CHART_MEDIUM_PIXELS_PER_PERCENT = 2;
+const CAPACITY_CHART_MAX_PIXELS_PER_PERCENT = 2;
+const CAPACITY_CHART_MEDIUM_PIXELS_PER_PERCENT = 1.5;
 const CAPACITY_CHART_MIN_PIXELS_PER_PERCENT = 1;
 const CAPACITY_CHART_VIEWPORT_GAP_PX = 16;
 const CAPACITY_CHART_FIGURE_OVERHEAD_PX = 48;
@@ -2066,10 +2140,10 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
   const chartHeader = document.createElement("div");
   chartHeader.dataset.capacityChartHeader = "";
   const title = document.createElement("h3");
-  title.textContent = "Capacity and prompt cache history";
+  title.textContent = "Capacity";
   const range = document.createElement("span");
   range.dataset.capacityChartRange = "";
-  range.textContent = "Trailing 7 days · 15-minute buckets";
+  range.textContent = "7 days";
   chartHeader.append(title, range);
   figure.appendChild(chartHeader);
 
@@ -2080,10 +2154,10 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
     const series of [
       { key: "cached-input", label: "Cached input share" },
       ...CAPACITY_CHART_SERIES,
-      { key: "rate-limit-reset", label: "OpenAI rate-limit reset" },
-      { key: "openai-downtime", label: "OpenAI downtime" },
-      { key: "inference-error", label: "Failed inference responses (HTTP 5xx)" },
-      { key: "optimal-spend", label: "Optimal token spend" },
+      { key: "rate-limit-reset", label: "Reset" },
+      { key: "openai-downtime", label: "Downtime" },
+      { key: "inference-error", label: "Errors (5xx)" },
+      { key: "optimal-spend", label: "Spend target" },
     ]
   ) {
     const item = document.createElement("span");
@@ -2098,10 +2172,6 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
     legend.appendChild(item);
   }
   figure.appendChild(legend);
-  const legendNote = document.createElement("p");
-  legendNote.dataset.capacityChartLegendNote = "";
-  legendNote.textContent = "Error markers identify 15-minute buckets; use the event list for counts and timestamps.";
-  figure.appendChild(legendNote);
 
   const svg = capacityChartSvgElement("svg", {
     viewBox: `0 0 ${width} ${height}`,
@@ -2500,7 +2570,13 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
   const chartPane = document.createElement("div");
   chartPane.dataset.capacityChartPane = "";
   chartPane.append(chartScroll, chartScrollControls);
-  chartBody.append(chartPane, renderCapacitySpendSummary(pacing, activeUsageWindow));
+  chartBody.append(chartPane);
+  const details = document.createElement("details");
+  details.dataset.providerDetails = "";
+  const detailsSummary = document.createElement("summary");
+  detailsSummary.textContent = "History details";
+  details.open = providerCapacityChart.querySelector("details")?.open === true;
+  details.append(detailsSummary, renderCapacitySpendSummary(pacing, activeUsageWindow));
   figure.appendChild(chartBody);
   if (visibleFiveXxBuckets.length) {
     const errorSummary = document.createElement("div");
@@ -2544,7 +2620,7 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
       errorNavigation.appendChild(button);
     }
     errorSummary.append(errorSummaryHeader, errorNavigation);
-    figure.appendChild(errorSummary);
+    details.appendChild(errorSummary);
   }
   if (rateLimitResetMarkers.length) {
     const navigation = document.createElement("nav");
@@ -2574,9 +2650,9 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
       });
       navigation.appendChild(button);
     }
-    figure.appendChild(navigation);
+    details.appendChild(navigation);
   }
-  const caption = document.createElement("figcaption");
+  const caption = document.createElement("p");
   caption.dataset.capacityChartMeta = "";
   const samples = history.filter((sample) => typeof sample?.sampled_at_ms === "number");
   const staleNotes = [
@@ -2627,7 +2703,8 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
       samples.length === 1 ? "" : "s"
     }${resetSuffix}${rateLimitResetSuffix}${downtimeSuffix}${fiveXxSuffix}${cacheSuffix}${staleSuffix}`
     : `No retained capacity samples yet · trailing seven-day window${resetSuffix}${rateLimitResetSuffix}${downtimeSuffix}${fiveXxSuffix}${cacheSuffix}${staleSuffix}`;
-  figure.appendChild(caption);
+  details.appendChild(caption);
+  figure.appendChild(details);
   providerCapacityChart.replaceChildren(figure);
   restoreCapacityChartScroll(chartScroll, chartWindow, plot);
   updateCapacityChartScrollControls(chartScroll, olderButton, newerButton);
@@ -2659,7 +2736,7 @@ const renderProviderCapacity = (snapshot, fiveXxBuckets = []) => {
   } else if (cacheAnalyticsUnavailable) {
     setBadge(providerCapacityBadge, "unknown", "Cache analytics unavailable");
   } else {
-    setBadge(providerCapacityBadge, "ok", "Snapshot ready");
+    setBadge(providerCapacityBadge, "ok", "Up to date");
   }
   const snapshotAt = typeof snapshot?.snapshot_at_ms === "number" ? snapshot.snapshot_at_ms : null;
   const cacheState = typeof snapshot?.cache_state === "string" ? snapshot.cache_state : "unavailable";
@@ -2969,6 +3046,8 @@ const loadProviders = async () => {
     return;
   }
   const loadId = ++providersLoadId;
+  const settingsTarget = apiUrl("/admin/providers");
+  const settingsRevision = codexResetSettingsRevision;
   providersLoading = true;
   try {
     const response = await fetch(apiUrl("/admin/providers"), {
@@ -2990,6 +3069,19 @@ const loadProviders = async () => {
       }
       return;
     }
+    const settingsResponse = await fetch(apiUrl("/admin/providers/codex/banked-resets"), {
+      cache: "no-store",
+      headers: { Authorization: "Bearer " + token },
+    });
+    const settingsPayload = await settingsResponse.json().catch(() => null);
+    if (loadId !== providersLoadId || token !== getAdminToken() || settingsTarget !== apiUrl("/admin/providers")) {
+      return;
+    }
+    if (settingsRevision === codexResetSettingsRevision && codexResetSaving.size === 0) {
+      codexResetSettings = settingsResponse.ok && Array.isArray(settingsPayload?.data) ? settingsPayload.data : [];
+    }
+    codexResetSettingsTarget = settingsTarget;
+    codexResetSettingsToken = token;
     latestProviderHealth = payload;
     if (latestProviderCapacityChartState?.sources) renderProviderCapacityList(latestProviderCapacityChartState.sources);
     providersLoadedAt = Date.now();
@@ -4655,7 +4747,7 @@ const renderKernelList = (records, policyState = kernelPolicyState) => {
       const accordion = document.createElement("details");
       accordion.dataset.kernelRepos = group.owner || "unknown";
       const existing = kernelOrgRepoAccordionState.get(group.owner);
-      accordion.open = existing === undefined ? true : existing === true;
+      accordion.open = existing === true;
 
       const summary = document.createElement("summary");
       summary.dataset.kernelReposTitle = "title";
@@ -4809,9 +4901,7 @@ const renderKernelPubKeys = (records) => {
 
     const infoRow = document.createElement("div");
     infoRow.dataset.keyInfo = "info";
-    appendKeyInfo(infoRow, "App ID", appId ? String(appId) : "unknown", { mono: true });
     appendKeyInfo(infoRow, "Owner", formatOptionalText(owner));
-    appendKeyInfo(infoRow, "Key preview", formatPemPreview(pem) || "—", { mono: true });
     appendKeyInfo(infoRow, "Added", formatDate(addedAt));
 
     main.appendChild(header);
@@ -5904,10 +5994,11 @@ const renderKeys = (keys, view = "all") => {
     });
     const resetInfo = appendKeyInfo(infoRow, "Reset at", formatDate(key.usage_reset_at_ms));
 
-    const paidFallbackSummary = document.createElement("section");
+    const paidFallbackSummary = document.createElement("details");
+    paidFallbackSummary.dataset.disclosure = "";
     paidFallbackSummary.dataset.paidFallbackSummary = "summary";
 
-    const paidFallbackHeader = document.createElement("header");
+    const paidFallbackHeader = document.createElement("summary");
     paidFallbackHeader.dataset.paidFallbackHeader = "header";
     const paidFallbackTitle = document.createElement("span");
     paidFallbackTitle.dataset.paidFallbackTitle = "title";
@@ -6036,7 +6127,15 @@ const renderKeys = (keys, view = "all") => {
     header.appendChild(controls);
 
     main.appendChild(header);
-    main.appendChild(infoRow);
+    const primaryInfo = document.createElement("div");
+    primaryInfo.dataset.keyInfo = "info";
+    primaryInfo.append(usageInfo.item, expiresInfo.item);
+    const keyDetails = document.createElement("details");
+    keyDetails.dataset.disclosure = "";
+    const keyDetailsTitle = document.createElement("summary");
+    keyDetailsTitle.textContent = "Key details";
+    keyDetails.append(keyDetailsTitle, infoRow);
+    main.append(primaryInfo, keyDetails);
     main.appendChild(paidFallbackSummary);
 
     const editPanel = document.createElement("div");
@@ -6106,16 +6205,6 @@ const renderKeys = (keys, view = "all") => {
     neverText.textContent = "Never expires";
     neverLabel.appendChild(neverInput);
     neverLabel.appendChild(neverText);
-
-    const bankedResetsToggle = document.createElement("label");
-    bankedResetsToggle.dataset.check = "true";
-    const bankedResetsCopy = document.createElement("span");
-    bankedResetsCopy.textContent = "Use banked resets";
-    const bankedResetsInput = document.createElement("input");
-    bankedResetsInput.type = "checkbox";
-    bankedResetsInput.setAttribute("role", "switch");
-    bankedResetsInput.checked = key.banked_resets_enabled !== false;
-    bankedResetsToggle.append(bankedResetsCopy, bankedResetsInput);
 
     const paidFallbackEditor = document.createElement("section");
     paidFallbackEditor.dataset.paidFallbackEditor = "editor";
@@ -6201,7 +6290,6 @@ const renderKeys = (keys, view = "all") => {
 
     editPanel.appendChild(presetRow);
     editPanel.appendChild(neverLabel);
-    editPanel.appendChild(bankedResetsToggle);
     editPanel.appendChild(paidFallbackEditor);
 
     const editBadge = document.createElement("span");
@@ -6223,7 +6311,6 @@ const renderKeys = (keys, view = "all") => {
       usage_limit_requests: typeof key.usage_limit_requests === "number" ? key.usage_limit_requests : -1,
       window_ms: resolveKeyWindowMs(),
       expires_at_ms: typeof key.expires_at_ms === "number" ? key.expires_at_ms : -1,
-      banked_resets_enabled: key.banked_resets_enabled !== false,
       paid_fallback_enabled: key.paid_fallback_enabled === true,
       paid_fallback_limit_credits: normalizeFiniteNumber(key.paid_fallback_limit_credits) ?? 0,
     };
@@ -6234,7 +6321,6 @@ const renderKeys = (keys, view = "all") => {
       window: windowInput.value,
       expires: expiresInput.value,
       never: neverInput.checked,
-      bankedResetsEnabled: bankedResetsInput.checked,
       paidFallbackEnabled: paidFallbackInput.checked,
       paidFallbackLimit: paidFallbackLimitInput.value,
     });
@@ -6245,7 +6331,6 @@ const renderKeys = (keys, view = "all") => {
       left.window === right.window &&
       left.expires === right.expires &&
       left.never === right.never &&
-      left.bankedResetsEnabled === right.bankedResetsEnabled &&
       left.paidFallbackEnabled === right.paidFallbackEnabled &&
       left.paidFallbackLimit === right.paidFallbackLimit;
 
@@ -6257,7 +6342,6 @@ const renderKeys = (keys, view = "all") => {
       expiresInput.disabled = neverInput.checked;
       expiresInput.value = neverInput.checked ? "" : toDateTimeLocalValue(key.expires_at_ms);
       paidFallbackInput.checked = key.paid_fallback_enabled === true;
-      bankedResetsInput.checked = key.banked_resets_enabled !== false;
       paidFallbackLimitInput.value = String(normalizeFiniteNumber(key.paid_fallback_limit_credits) ?? 0);
       syncPaidFallbackEditorVisibility();
     };
@@ -6348,11 +6432,6 @@ const renderKeys = (keys, view = "all") => {
       }
 
       const nextPaidFallbackEnabled = paidFallbackInput.checked;
-      const nextBankedResetsEnabled = bankedResetsInput.checked;
-      if (nextBankedResetsEnabled !== editSnapshot.banked_resets_enabled) {
-        payload.banked_resets_enabled = nextBankedResetsEnabled;
-        changed = true;
-      }
       const paidFallbackLimitRaw = paidFallbackLimitInput.value.trim();
       let nextPaidFallbackLimit = editSnapshot.paid_fallback_limit_credits;
       if (nextPaidFallbackEnabled && !paidFallbackLimitRaw) {
@@ -6399,7 +6478,6 @@ const renderKeys = (keys, view = "all") => {
           window_ms: nextWindowMs,
           expires_at_ms: nextExpiresAtMs,
           paid_fallback_enabled: nextPaidFallbackEnabled,
-          banked_resets_enabled: nextBankedResetsEnabled,
           paid_fallback_limit_credits: nextPaidFallbackLimit,
         },
       };
@@ -6468,9 +6546,6 @@ const renderKeys = (keys, view = "all") => {
         key.window_ms = updatedWindowMs;
         key.expires_at_ms = resolvedExpires;
         key.paid_fallback_enabled = updatedPaidFallbackEnabled;
-        key.banked_resets_enabled = typeof data?.banked_resets_enabled === "boolean"
-          ? data.banked_resets_enabled
-          : nextSnapshot.banked_resets_enabled;
         key.paid_fallback_limit_credits = updatedPaidFallbackLimit;
         if (typeof data?.usage_requests === "number") key.usage_requests = data.usage_requests;
         if (typeof data?.usage_reset_at_ms === "number") key.usage_reset_at_ms = data.usage_reset_at_ms;
@@ -6495,7 +6570,6 @@ const renderKeys = (keys, view = "all") => {
           usage_limit_requests: key.usage_limit_requests,
           window_ms: resolveKeyWindowMs(),
           expires_at_ms: key.expires_at_ms,
-          banked_resets_enabled: key.banked_resets_enabled !== false,
           paid_fallback_enabled: key.paid_fallback_enabled === true,
           paid_fallback_limit_credits: normalizeFiniteNumber(key.paid_fallback_limit_credits) ?? 0,
         };
@@ -6553,10 +6627,6 @@ const renderKeys = (keys, view = "all") => {
       expiresInput.disabled = neverInput.checked;
       if (neverInput.checked) expiresInput.value = "";
       markEditDirty();
-    });
-    bankedResetsInput.addEventListener("change", () => {
-      markEditDirty();
-      void saveEdits();
     });
     paidFallbackInput.addEventListener("change", () => {
       syncPaidFallbackEditorVisibility();
@@ -6672,13 +6742,21 @@ const renderPasskeyUsers = (users) => {
 
     const infoRow = document.createElement("div");
     infoRow.dataset.keyInfo = "info";
-    appendKeyInfo(infoRow, "User ID", user.id ?? "unknown", { mono: true });
     appendKeyInfo(infoRow, "Passkeys", formatNumber(user.credential_count ?? 0));
     appendKeyInfo(infoRow, "Updated", formatDate(user.updated_at_ms));
-    appendKeyInfo(infoRow, "Created", formatDate(user.created_at_ms));
+    const userDetails = document.createElement("details");
+    userDetails.dataset.disclosure = "";
+    const userDetailsTitle = document.createElement("summary");
+    userDetailsTitle.textContent = "Account details";
+    const userFacts = document.createElement("div");
+    userFacts.dataset.keyInfo = "info";
+    appendKeyInfo(userFacts, "User ID", user.id ?? "unknown", { mono: true });
+    appendKeyInfo(userFacts, "Created", formatDate(user.created_at_ms));
+    userDetails.append(userDetailsTitle, userFacts);
 
     main.appendChild(header);
     main.appendChild(infoRow);
+    main.appendChild(userDetails);
     row.appendChild(main);
     passkeyUsersList.appendChild(row);
   });
@@ -6944,10 +7022,17 @@ const renderAdminErrors = (records) => {
     appendMetaItem(details, "Route", record.route || "unknown");
     appendMetaItem(details, "Provider", record.provider || "gateway");
     appendMetaItem(details, "Model", record.model || "—");
-    appendMetaItem(details, "Terminal", record.terminal_type || "error");
-    appendMetaItem(details, "Request", record.request_id || "—", { mono: true });
-    appendMetaItem(details, "Revision", record.deno_revision || "—", { mono: true });
-    row.append(header, details);
+    const diagnostics = document.createElement("details");
+    diagnostics.dataset.disclosure = "";
+    const summary = document.createElement("summary");
+    summary.textContent = "Request details";
+    const facts = document.createElement("div");
+    facts.dataset.meta = "usage";
+    appendMetaItem(facts, "Terminal", record.terminal_type || "error");
+    appendMetaItem(facts, "Request", record.request_id || "—", { mono: true });
+    appendMetaItem(facts, "Revision", record.deno_revision || "—", { mono: true });
+    diagnostics.append(summary, facts);
+    row.append(header, details, diagnostics);
     errorsList.appendChild(row);
   });
 };
@@ -7382,7 +7467,6 @@ const createKey = async () => {
     expires_at_ms: expiresAtMs,
     usage_limit_requests: isNaN(usageLimit) ? 50 : usageLimit,
     paid_fallback_enabled: paidFallbackEnabled,
-    banked_resets_enabled: keyBankedResetsEnabledInput.checked,
     paid_fallback_limit_credits: paidFallbackLimitCredits,
   };
   if (windowResult.value !== null) payload.window_ms = windowResult.value;
@@ -7438,7 +7522,6 @@ const createKey = async () => {
     keyNameInput.value = "";
     keyUsageWindowInput.value = "";
     keyPaidFallbackEnabledInput.checked = false;
-    keyBankedResetsEnabledInput.checked = true;
     keyPaidFallbackLimitInput.value = "";
     syncCreatePaidFallbackControls();
     void refreshKeys();

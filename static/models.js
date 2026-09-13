@@ -81,6 +81,11 @@ const render = () => {
       providers.append(badge);
     }
     article.append(heading, providers);
+    const details = document.createElement("details");
+    details.dataset.disclosure = "";
+    const detailsTitle = document.createElement("summary");
+    detailsTitle.textContent = "Model details";
+    details.append(detailsTitle);
 
     const reasoning = reasoningFor(model);
     if (reasoning?.levels.length) {
@@ -89,7 +94,7 @@ const render = () => {
       const classLabel = reasoning.modelClass ? `${reasoning.modelClass}: ` : "";
       levels.textContent = `Reasoning · ${classLabel}${reasoning.levels.join(", ")}`;
       if (reasoning.defaultLevel) levels.title = `Default: ${reasoning.defaultLevel}`;
-      article.append(levels);
+      details.append(levels);
     }
 
     const contextWindow = positiveTokenCount(model.context_window_tokens);
@@ -110,8 +115,9 @@ const render = () => {
       compact.dataset.autoCompact = "";
       compact.textContent = `Auto-compact · ${tokenNumber.format(autoCompact)} tokens`;
       compact.title = "Summarize older conversation state before the physical context window fills";
-      article.append(compact);
+      details.append(compact);
     }
+    if (details.children.length > 1) article.append(details);
     return article;
   }));
 };

@@ -188,3 +188,29 @@ body[data-page="models"] [data-auto-compact] {
     flex-direction: column;
   }
 }
+
+body[data-page="models"] [data-source-summary] {
+  margin-top: 0;
+}
+
+body[data-page="models"] [data-source-summary] article {
+  grid-template-columns: auto auto 1fr;
+  align-items: baseline;
+  gap: 8px;
+  padding: 12px;
+}
+
+body[data-page="models"] [data-source-summary] h2,
+body[data-page="models"] [data-source-summary] strong {
+  font-size: 14px;
+}
+
+body[data-page="models"] [data-catalog-controls] {
+  margin-top: 8px;
+}
+
+body[data-page="models"] [data-model-list] article {
+  align-content: start;
+  gap: 10px;
+  box-shadow: none;
+}

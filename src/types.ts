@@ -91,8 +91,6 @@ export type ApiKeyRecord = Readonly<{
   // migration still carry their old version. Typing this as the literal 3 made
   // the migration's own `!== 3` upgrade and validation checks look dead.
   usage_quota_version: number;
-  /** Existing keys retain automatic reset eligibility until explicitly changed. */
-  banked_resets_enabled?: boolean;
   paid_fallback_enabled: boolean;
   paid_fallback_limit_microcredits: number;
   paid_fallback_spent_microcredits: number;

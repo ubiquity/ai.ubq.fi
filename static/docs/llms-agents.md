@@ -5,19 +5,7 @@ kernel-driven workflows. This page focuses on LLM usage and agent messages.
 
 ## Base URL
 
-All requests are served from:
-
-```
-https://ai.ubq.fi
-```
-
-The gateway is also available via the Deno Deploy default domain:
-
-```
-https://ai-ubq-fi.deno.dev
-```
-
-OpenAI client base URL (example):
+Use this base URL with an OpenAI-compatible client:
 
 ```
 https://ai.ubq.fi/v1

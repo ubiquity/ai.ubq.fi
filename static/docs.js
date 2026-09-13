@@ -166,6 +166,7 @@ const renderToc = (toc) => {
     return;
   }
   tocEl.innerHTML = toc
+    .filter((entry) => entry.level === 2)
     .map((entry) => {
       const label = escapeHtml(entry.text);
       const id = escapeAttr(entry.id);
@@ -189,6 +190,7 @@ const loadDocs = async () => {
     const text = await res.text();
     const { html, toc } = parseMarkdown(text);
     contentEl.innerHTML = html;
+    contentEl.querySelector("h1")?.remove();
     renderToc(toc);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

@@ -1,5 +1,5 @@
 import { getKv } from "./kv.ts";
-import { apiKeyBankedResetsEnabled, apiKeyIdKey } from "./api_keys.ts";
+import { readCodexResetUsage as readBankedResetUsage } from "./codex_reset_settings.ts";
 import {
   type CodexUsageResetProvider,
   providerReceiptIdsSafeToPersistAndLog,
@@ -97,34 +97,18 @@ export const parseCodexBankedResetConfig = (readEnv: (key: string) => string | u
 
 export const loadCodexBankedResetConfig = (): CodexBankedResetConfig => parseCodexBankedResetConfig();
 
-const readBankedResetUsage = async (kv: Deno.Kv, keyId: string | undefined, nowMs: number) => {
-  // Non-key authentication continues to use the deployment policy.
-  if (keyId === undefined) return { allowed: true, entries: [] };
-  const entry = await kv.get(apiKeyIdKey(keyId), { consistency: "strong" });
-  const value = entry.value;
-  return {
-    allowed:
-      isRecord(value) &&
-      value.id === keyId &&
-      apiKeyBankedResetsEnabled(value) &&
-      value.revoked_at_ms === null &&
-      (value.expires_at_ms === -1 || (typeof value.expires_at_ms === "number" && value.expires_at_ms > nowMs)),
-    entries: [entry],
-  };
-};
-
 /**
  * The usage gate that every path writing a durable submission passes through.
- * An unavailable configuration and a disabled key both stop the caller.
+ * An unavailable configuration and a disabled subscription both stop the
+ * caller. Reset settings are owned by the account, never by an API key.
  */
 const readUsageGate = async (
   kv: Deno.Kv,
-  keyId: string | undefined,
-  nowMs: number
+  accountIdHash: string
 ): Promise<Readonly<{ kind: "allowed"; entries: readonly Deno.KvEntryMaybe<unknown>[] }> | Readonly<{ kind: "failure"; code: string }>> => {
   let usage: Awaited<ReturnType<typeof readBankedResetUsage>>;
   try {
-    usage = await readBankedResetUsage(kv, keyId, nowMs);
+    usage = await readBankedResetUsage(kv, accountIdHash);
   } catch {
     return { kind: "failure", code: "configuration_unavailable" };
   }
@@ -213,7 +197,6 @@ export type CodexBankedResetFence = Readonly<{
 }>;
 
 export type CodexBankedResetDependencies = Readonly<{
-  keyId?: string;
   config: CodexBankedResetConfig;
   /** Re-read before a new submission so an operator kill switch wins mid-request. */
   reloadConfig?: () => CodexBankedResetConfig;
@@ -960,7 +943,6 @@ const prepareSubmissionAttempt = async (
   nowMs: number,
   clock: () => number,
   maxGlobalPerDay: number,
-  keyId: string | undefined,
   expiresAtMs: number,
   day: string,
   key: Deno.KvKey,
@@ -981,7 +963,7 @@ const prepareSubmissionAttempt = async (
   const fences = await readRequiredFences(kv, candidate);
   if (fences.kind === "failure") return { kind: "failure", code: fences.code };
 
-  const usage = await readUsageGate(kv, keyId, readClock(clock) ?? nowMs);
+  const usage = await readUsageGate(kv, context.account.accountIdHash);
   if (usage.kind === "failure") return { kind: "failure", code: usage.code };
   const budget = await readDailySubmissionBudget(kv, dailyKey, day, maxGlobalPerDay);
   if (budget.kind === "failure") return { kind: "failure", code: budget.code };
@@ -1022,8 +1004,7 @@ const prepareSubmission = async (
   expected: CodexResetRedemptionRecord,
   nowMs: number,
   clock: () => number,
-  maxGlobalPerDay: number,
-  keyId: string | undefined
+  maxGlobalPerDay: number
 ): Promise<SubmissionPreparation> => {
   const expiresAtMs = leaseUntil(nowMs);
   const day = utcDay(nowMs);
@@ -1031,7 +1012,7 @@ const prepareSubmission = async (
   const key = codexResetRedemptionKey(context.account.accountIdHash, context.account.quotaGeneration);
   const dailyKey = codexResetGlobalDailyKey(day);
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
-    const prepared = await prepareSubmissionAttempt(kv, context, candidate, expected, nowMs, clock, maxGlobalPerDay, keyId, expiresAtMs, day, key, dailyKey);
+    const prepared = await prepareSubmissionAttempt(kv, context, candidate, expected, nowMs, clock, maxGlobalPerDay, expiresAtMs, day, key, dailyKey);
     if (prepared) return prepared;
   }
   return { kind: "failure", code: "kv_cas_exhausted" };
@@ -1086,7 +1067,6 @@ const renewSubmittedAttempt = async (
   candidate: CodexBankedResetCandidate,
   expected: CodexResetRedemptionRecord,
   clock: () => number,
-  keyId: string | undefined,
   key: Deno.KvKey
 ): Promise<SubmissionRenewal | null> => {
   const nowBeforeRead = readClock(clock);
@@ -1106,7 +1086,7 @@ const renewSubmittedAttempt = async (
   }
   if (!claimedDuringCurrentUtcDay(current, nowBeforeRead)) return { kind: "failure", code: "claim_day_elapsed" };
 
-  const usage = await readUsageGate(kv, keyId, nowBeforeRead);
+  const usage = await readUsageGate(kv, context.account.accountIdHash);
   if (usage.kind === "failure") return { kind: "failure", code: usage.code };
 
   const fences = await readRequiredFences(kv, candidate);
@@ -1140,12 +1120,11 @@ const renewSubmittedForRedeem = async (
   context: ResetContext,
   candidate: CodexBankedResetCandidate,
   expected: CodexResetRedemptionRecord,
-  clock: () => number,
-  keyId: string | undefined
+  clock: () => number
 ): Promise<SubmissionRenewal> => {
   const key = codexResetRedemptionKey(context.account.accountIdHash, context.account.quotaGeneration);
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
-    const renewed = await renewSubmittedAttempt(kv, context, candidate, expected, clock, keyId, key);
+    const renewed = await renewSubmittedAttempt(kv, context, candidate, expected, clock, key);
     if (renewed) return renewed;
   }
   return { kind: "failure", code: "kv_cas_exhausted" };
@@ -1605,7 +1584,7 @@ const prepareLiveSubmission = async (
   if (nowBeforePreparation === null) return { kind: "outcome", outcome: outcome("pending", "invalid_clock", context, record) };
   const closed = await rejectIfClaimWindowClosed(kv, context, record, candidate, nowBeforePreparation);
   if (closed) return { kind: "outcome", outcome: closed };
-  const prepared = await prepareSubmission(kv, context, candidate, record, nowBeforePreparation, clock, finalConfig.config.maxGlobalPerDay, dependencies.keyId);
+  const prepared = await prepareSubmission(kv, context, candidate, record, nowBeforePreparation, clock, finalConfig.config.maxGlobalPerDay);
   if (prepared.kind === "failure") {
     return { kind: "outcome", outcome: outcome(prepared.code === "global_limit_reached" ? "skipped" : "pending", prepared.code, context, record) };
   }
@@ -1797,7 +1776,7 @@ const renewAndRedeem = async (
     const unknown = await unknownOwned(kv, context, preparedRecord, nowMs, "client_aborted_after_submission", null);
     return unknownOutcome(telemetry, context, candidate, "client_aborted_after_submission", unknown ?? preparedRecord);
   }
-  const renewed = await renewSubmittedForRedeem(kv, context, candidate, preparedRecord, clock, dependencies.keyId);
+  const renewed = await renewSubmittedForRedeem(kv, context, candidate, preparedRecord, clock);
   if (renewed.kind === "failure") return outcome("pending", renewed.code, context, preparedRecord);
   // The last lease/fence renewal itself awaits KV. Re-read the kill switch
   // synchronously after it returns so a disable that landed during that final
@@ -1880,7 +1859,7 @@ const resolveNewSubmissionAllowance = async (
   if (reconcileOnly) return { kind: "outcome", outcome: outcome("skipped", "no_existing_transaction", context) };
   let configForClaim: CodexBankedResetConfig;
   try {
-    if (!(await readBankedResetUsage(kv, dependencies.keyId, (dependencies.now ?? Date.now)())).allowed) {
+    if (!(await readBankedResetUsage(kv, context.account.accountIdHash)).allowed) {
       return { kind: "outcome", outcome: outcome("skipped", "usage_disabled", context) };
     }
     configForClaim = dependencies.reloadConfig?.() ?? dependencies.config;
@@ -2111,7 +2090,7 @@ const shadowDecisionRecord = async (
   kv: Deno.Kv,
   record: CodexResetShadowDecisionRecord,
   nowMs: number,
-  keyId: string | undefined
+  settingsEntries: Deno.KvEntryMaybe<unknown>[]
 ): Promise<Readonly<{ kind: "written" | "duplicate"; record: CodexResetShadowDecisionRecord }> | null> => {
   const key = codexResetShadowDecisionKey(record.episode_hash);
   for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
@@ -2123,9 +2102,11 @@ const shadowDecisionRecord = async (
     }
     if (entry.value !== null) return duplicateShadowDecision(entry.value, record, nowMs);
     try {
-      const usage = await readBankedResetUsage(kv, keyId, nowMs);
+      const usage = record.selected_account_id_hash ? await readBankedResetUsage(kv, record.selected_account_id_hash) : { allowed: true, entries: [] };
       if (!usage.allowed) return null;
-      const committed = await withFenceChecks(kv.atomic().check(entry), usage.entries).set(key, record).commit();
+      const committed = await withFenceChecks(kv.atomic().check(entry), [...usage.entries, ...settingsEntries])
+        .set(key, record)
+        .commit();
       if (committed.ok) return { kind: "written", record };
     } catch {
       return null;
@@ -2237,9 +2218,13 @@ const poolFences = (complete: readonly ResolvedPoolCandidate[]): CodexResetShado
   }));
 
 /** Episode hash, or null when the hash cannot be used as an audit key. */
-const poolEpisodeHash = async (fences: CodexResetShadowDecisionRecord["fences"], hash: (value: string) => Promise<string>): Promise<string | null> => {
+const poolEpisodeHash = async (
+  settingsVersion: string,
+  fences: CodexResetShadowDecisionRecord["fences"],
+  hash: (value: string) => Promise<string>
+): Promise<string | null> => {
   const episodeHash = await hash(
-    `uos_ai\u0000codex_reset_shadow_episode\u0000${fences
+    `uos_ai\u0000codex_reset_shadow_episode\u0000${settingsVersion}\u0000${fences
       .map(
         (fence) => `${fence.slot}\u0000${fence.account_id_hash}\u0000${fence.quota_generation}\u0000${fence.routing_generation}\u0000${fence.quota_reset_at_ms}`
       )
@@ -2296,6 +2281,8 @@ const preparePoolEpisode = async (
   | Readonly<{
       kind: "episode";
       complete: ResolvedPoolCandidate[];
+      eligible: ResolvedPoolCandidate[];
+      settingsEntries: Deno.KvEntryMaybe<unknown>[];
       fences: CodexResetShadowDecisionRecord["fences"];
       episodeHash: string;
       audited: CodexResetShadowDecisionRecord | null;
@@ -2308,12 +2295,34 @@ const preparePoolEpisode = async (
   if (complete.some(({ pool }) => !quotaWindowIsOpen(pool.candidate, nowMs))) {
     return { kind: "outcome", outcome: poolOutcome("skipped", "quota_window_expired") };
   }
+  // Reset settings are owned by the subscription: a disabled account is removed
+  // from this episode's candidate list, while an unreadable record fails the
+  // whole episode closed instead of silently spending.
+  let settings: { entry: ResolvedPoolCandidate; usage: Awaited<ReturnType<typeof readBankedResetUsage>> }[];
+  try {
+    settings = await Promise.all(complete.map(async (entry) => ({ entry, usage: await readBankedResetUsage(kv, entry.context.account.accountIdHash) })));
+  } catch {
+    return { kind: "outcome", outcome: poolOutcome("skipped", "configuration_unavailable") };
+  }
+  const eligible = settings.filter(({ usage }) => usage.allowed).map(({ entry }) => entry);
+  if (!eligible.length) return { kind: "outcome", outcome: poolOutcome("skipped", "usage_disabled") };
+  const settingsEntries = settings.flatMap(({ usage }) => usage.entries);
+  const settingsVersion = settingsEntries.map((entry) => entry.versionstamp ?? "unset").join(",");
   const fences = poolFences(complete);
-  const episodeHash = await poolEpisodeHash(fences, hash);
+  const episodeHash = await poolEpisodeHash(settingsVersion, fences, hash);
   if (!episodeHash) return { kind: "outcome", outcome: poolOutcome("skipped", "episode_hash_unavailable") };
   const arming = await resolveLiveArmingState(kv, config, dependencies, episodeHash, fences, nowMs);
   if (arming.kind === "outcome") return { kind: "outcome", outcome: arming.outcome };
-  return { kind: "episode", complete, fences, episodeHash, audited: arming.audited, liveNeedsArming: arming.liveNeedsArming };
+  return {
+    kind: "episode",
+    complete,
+    eligible,
+    settingsEntries,
+    fences,
+    episodeHash,
+    audited: arming.audited,
+    liveNeedsArming: arming.liveNeedsArming,
+  };
 };
 
 /** The pool was already rejected as `full_pool_missing`, so it is never empty. */
@@ -2339,6 +2348,11 @@ const existingShadowDecisionOutcome = async (
   if (existing.expires_at_ms <= nowMs) return null;
   if (!sameShadowFences(existing.fences, fences)) return null;
   const selected = complete.find(({ context }) => context.account.accountIdHash === existing.selected_account_id_hash) ?? null;
+  // A subscription disabled after its decision was persisted must not report a
+  // duplicate would-spend, let alone arm a live spend.
+  if (selected && !(await readBankedResetUsage(kv, selected.context.account.accountIdHash)).allowed) {
+    return poolOutcome("skipped", "usage_disabled");
+  }
   const telemetry = dependencies.telemetry ?? defaultTelemetry;
   const telemetryCandidate = selected ?? firstResolvedPoolCandidate(complete);
   const fields = telemetryFields(telemetryCandidate.context, telemetryCandidate.pool.candidate, {
@@ -2377,9 +2391,6 @@ export const evaluateCodexBankedResetPool = async (
   const config = configResult.config;
   const kv = await openResetKv(dependencies);
   if (!kv) return poolOutcome("skipped", "kv_unavailable");
-  const usage = await readUsageGate(kv, dependencies.keyId, nowMs);
-  if (usage.kind === "failure") return poolOutcome("skipped", usage.code);
-
   const hash = dependencies.hash ?? sha256Hex;
   const episode = await preparePoolEpisode(kv, ordered, config, dependencies, hash, nowMs);
   if (episode.kind === "outcome") return episode.outcome;
@@ -2388,7 +2399,7 @@ export const evaluateCodexBankedResetPool = async (
   const duplicateShadow = await existingShadowDecisionOutcome(kv, config, dependencies, episode.complete, episode.episodeHash, episode.fences, nowMs);
   if (duplicateShadow) return duplicateShadow;
 
-  const observed = await observePoolInventories(kv, episode.complete, clock);
+  const observed = await observePoolInventories(kv, episode.eligible, clock);
   if (observed.kind === "outcome") return observed.outcome;
   const selection = await selectPoolCredits(observed.inventoryResults, observed.nowMs, hash);
   if (selection.kind === "outcome") return selection.outcome;
@@ -2396,7 +2407,16 @@ export const evaluateCodexBankedResetPool = async (
   if (decisionResult.kind === "outcome") return decisionResult.outcome;
   const decision = decisionResult.decision;
   if (config.mode === "shadow") {
-    return await persistShadowDecisionOutcome(kv, decision, episode.episodeHash, dependencies, episode.complete, selection, observed.nowMs);
+    return await persistShadowDecisionOutcome(
+      kv,
+      decision,
+      episode.episodeHash,
+      dependencies,
+      episode.complete,
+      episode.settingsEntries,
+      selection,
+      observed.nowMs
+    );
   }
   return await runLivePoolSubmission(kv, dependencies, episode, decision, selection, observed.nowMs);
 };
@@ -2532,11 +2552,12 @@ const persistShadowDecisionOutcome = async (
   episodeHash: string,
   dependencies: CodexBankedResetDependencies,
   complete: readonly ResolvedPoolCandidate[],
+  settingsEntries: Deno.KvEntryMaybe<unknown>[],
   selection: Readonly<{ selected: SelectedPoolCredit | null; decisionReason: string }>,
   nowMs: number
 ): Promise<CodexBankedResetPoolOutcome> => {
   const selected = selection.selected;
-  const persisted = await shadowDecisionRecord(kv, decision, nowMs, dependencies.keyId);
+  const persisted = await shadowDecisionRecord(kv, decision, nowMs, settingsEntries);
   if (!persisted) return poolOutcome("skipped", "shadow_decision_unavailable");
   const telemetry = dependencies.telemetry ?? defaultTelemetry;
   const telemetryCandidate = selected?.resolved ?? firstResolvedPoolCandidate(complete);
@@ -2563,10 +2584,11 @@ const armLiveWithShadowDecision = async (
   kv: Deno.Kv,
   decision: CodexResetShadowDecisionRecord,
   dependencies: CodexBankedResetDependencies,
+  settingsEntries: Deno.KvEntryMaybe<unknown>[],
   selected: SelectedPoolCredit,
   nowMs: number
 ): Promise<CodexBankedResetPoolOutcome> => {
-  const persisted = await shadowDecisionRecord(kv, decision, nowMs, dependencies.keyId);
+  const persisted = await shadowDecisionRecord(kv, decision, nowMs, settingsEntries);
   if (!persisted) return poolOutcome("skipped", "shadow_decision_unavailable");
   if (
     persisted.record.decision_reason !== "selected" ||
@@ -2613,6 +2635,7 @@ const runLivePoolSubmission = async (
   dependencies: CodexBankedResetDependencies,
   episode: Readonly<{
     complete: ResolvedPoolCandidate[];
+    settingsEntries: Deno.KvEntryMaybe<unknown>[];
     episodeHash: string;
     audited: CodexResetShadowDecisionRecord | null;
     liveNeedsArming: boolean;
@@ -2627,7 +2650,7 @@ const runLivePoolSubmission = async (
   // itself was no longer eligible.
   const selected = selection.selected;
   if (!selected) return poolOutcome("skipped", selection.decisionReason);
-  if (episode.liveNeedsArming) return await armLiveWithShadowDecision(kv, decision, dependencies, selected, nowMs);
+  if (episode.liveNeedsArming) return await armLiveWithShadowDecision(kv, decision, dependencies, episode.settingsEntries, selected, nowMs);
   if (!dependencies.allowLiveWithoutShadowForTest && !liveAuditMatches(episode.audited, selected, nowMs)) {
     return poolOutcome("skipped", "shadow_decision_drift");
   }

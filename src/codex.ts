@@ -1727,7 +1727,6 @@ const prepareCodexSubscriptionRequest = async (body: unknown, cacheScope: string
 type CodexAttemptPhase = "initial" | "post_refresh" | "two_second_retry" | "post_retry_refresh" | "post_banked_reset";
 
 type CodexBankedResetOptions = Readonly<{
-  keyId?: string;
   /** Test seam; normal traffic creates an account-bound upstream adapter only for a live reset candidate. */
   config?: CodexBankedResetConfig;
   /** Test seam for proving a live configuration change stops a pending submission. */
@@ -1915,7 +1914,6 @@ const fetchPreparedCodexResponses = async (
   // environment stays authoritative on every reload.
   const reloadConfiguredBankedResetConfig = (): CodexBankedResetConfig => configuredBankedResetConfig ?? loadCodexBankedResetConfig();
   const bankedResetDependencies: CodexBankedResetDependencies = {
-    keyId: configuredBankedReset?.keyId,
     config: configuredBankedResetConfig ?? loadCodexBankedResetConfig(),
     reloadConfig: configuredBankedReset?.reloadConfig ?? (configuredBankedResetConfig ? reloadConfiguredBankedResetConfig : loadCodexBankedResetConfig),
     provider: configuredBankedReset?.provider ?? unavailableCodexUsageResetProvider,

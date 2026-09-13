@@ -1,9 +1,13 @@
+import { config } from "./config.ts";
+import { readCodexResetAvailableCount } from "./codex_banked_reset_provider.ts";
+import { codexResetUsageKey, readCodexResetUsage } from "./codex_reset_settings.ts";
 import {
   cacheCodexAuthPool,
   CODEX_AUTH_POOL_KV_KEY,
   CODEX_MODELS_KV_KEY,
   CodexError,
   type CodexModelsSnapshot,
+  getCodexCapacityAccounts,
   getJwtExpMs,
   loadCodexModelsSnapshot,
   loadFullCodexModelsSnapshot,
@@ -31,7 +35,6 @@ import {
   API_KEY_ID_PREFIX,
   API_KEY_NO_EXPIRATION_MS,
   API_KEY_NO_USAGE_LIMIT,
-  apiKeyBankedResetsEnabled,
   apiKeyHashKey,
   apiKeyIdKey,
   calculateNextResetMs,
@@ -113,7 +116,7 @@ import {
   RuntimeConfigError,
 } from "./runtime_config.ts";
 import { readJsonBody } from "./request.ts";
-import { getString, isRecord, sha256Base64Url } from "./utils.ts";
+import { getString, isRecord, sha256Base64Url, sha256Hex } from "./utils.ts";
 import type { ApiKeyHashRecord, ApiKeyRecord, ApiKeyUsageWindowV3, CodexAuthPoolState, CodexAuthState } from "./types.ts";
 import { MeteredError } from "./metered.ts";
 import {
@@ -1011,7 +1014,6 @@ const paidFallbackPublicFields = async (record: ApiKeyRecord, kv: Deno.Kv, windo
     getPaidFallbackProviderUsageV3(record.id, windowResetAtMs, kv),
   ]);
   return {
-    banked_resets_enabled: apiKeyBankedResetsEnabled(record),
     paid_fallback_enabled: record.paid_fallback_enabled,
     paid_fallback_limit_credits: paidFallbackMicrocreditsToCredits(record.paid_fallback_limit_microcredits),
     paid_fallback_spent_credits: paidFallbackMicrocreditsToCredits(projection?.settled_microcredits ?? 0),
@@ -1133,7 +1135,6 @@ type ApiKeyCreateFields = Readonly<{
   expiresAtMs: number;
   usageLimitRequests: number;
   windowMs: number;
-  bankedResetsEnabled: boolean;
   paidFallbackEnabled: boolean;
   paidFallbackLimitMicrocredits: number;
 }>;
@@ -1187,10 +1188,6 @@ const resolveApiKeyCreateFields = (
     return { ok: false, response: openaiError(400, "window_ms must be a positive number", "invalid_request_error") };
   }
 
-  if (Object.hasOwn(raw, "banked_resets_enabled") && typeof raw.banked_resets_enabled !== "boolean") {
-    return { ok: false, response: openaiError(400, "banked_resets_enabled must be a boolean", "invalid_request_error") };
-  }
-
   const paidFallback = resolveApiKeyCreatePaidFallback(raw);
   if (!paidFallback.ok) return paidFallback;
 
@@ -1200,7 +1197,6 @@ const resolveApiKeyCreateFields = (
       expiresAtMs,
       usageLimitRequests,
       windowMs: windowMs ?? USAGE_RESET_PERIOD_MS,
-      bankedResetsEnabled: apiKeyBankedResetsEnabled(raw),
       paidFallbackEnabled: paidFallback.paidFallbackEnabled,
       paidFallbackLimitMicrocredits: paidFallback.paidFallbackLimitMicrocredits,
     },
@@ -1254,7 +1250,7 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
   const now = Date.now();
   const createFields = resolveApiKeyCreateFields(raw, now);
   if (!createFields.ok) return createFields.response;
-  const { expiresAtMs, usageLimitRequests, windowMs, bankedResetsEnabled } = createFields.fields;
+  const { expiresAtMs, usageLimitRequests, windowMs } = createFields.fields;
 
   const hash = await sha256Base64Url(token);
   const hashKey = apiKeyHashKey(hash);
@@ -1281,7 +1277,6 @@ export const handleAdminApiKeysCreate = async (req: Request): Promise<Response> 
     usage_reset_at_ms: usageResetAtMs,
     window_ms: windowMs,
     usage_quota_version: 3,
-    banked_resets_enabled: bankedResetsEnabled,
     ...policy.policy,
   };
   const hashRecord: ApiKeyHashRecord = {
@@ -1471,7 +1466,6 @@ const resolveApiKeyUpdateTarget = async (kv: Deno.Kv, raw: Record<string, unknow
 };
 
 type ApiKeyUpdateFields = Readonly<{
-  bankedResetsEnabled: boolean;
   name: string;
   expiresAtMs: number;
   usageLimitRequests: number;
@@ -1485,7 +1479,7 @@ type ApiKeyUpdateFields = Readonly<{
   resetUsage: boolean;
 }>;
 
-type ApiKeyUpdateIdentity = Pick<ApiKeyUpdateFields, "bankedResetsEnabled" | "name" | "expiresAtMs">;
+type ApiKeyUpdateIdentity = Pick<ApiKeyUpdateFields, "name" | "expiresAtMs">;
 type ApiKeyUpdateQuota = Pick<ApiKeyUpdateFields, "usageLimitRequests" | "windowMs">;
 type ApiKeyUpdatePaidFallback = Pick<
   ApiKeyUpdateFields,
@@ -1497,21 +1491,13 @@ type ApiKeyUpdatePaidFallback = Pick<
   | "paidFallbackPricingCheckedAtMs"
 >;
 
-/** `banked_resets_enabled`, `name`, and `expires_at_ms`, validated in that order. */
+/** `name` and `expires_at_ms`, validated in that order. */
 const resolveApiKeyUpdateIdentity = (
   raw: Record<string, unknown>,
   record: ApiKeyRecord,
   currentExpiresAtMs: number,
   nowMs: number
 ): { ok: true; identity: ApiKeyUpdateIdentity } | { ok: false; response: Response } => {
-  let bankedResetsEnabled = apiKeyBankedResetsEnabled(record);
-  if (Object.hasOwn(raw, "banked_resets_enabled")) {
-    if (typeof raw.banked_resets_enabled !== "boolean") {
-      return { ok: false, response: openaiError(400, "banked_resets_enabled must be a boolean", "invalid_request_error") };
-    }
-    bankedResetsEnabled = raw.banked_resets_enabled;
-  }
-
   let name = record.name;
   if (Object.prototype.hasOwnProperty.call(raw, "name")) {
     const normalized = normalizeApiKeyName(raw.name);
@@ -1531,7 +1517,7 @@ const resolveApiKeyUpdateIdentity = (
     expiresAtMs = normalized;
   }
 
-  return { ok: true, identity: { bankedResetsEnabled, name, expiresAtMs } };
+  return { ok: true, identity: { name, expiresAtMs } };
 };
 
 /** `usage_limit_requests` and `window_ms`, validated in that order. */
@@ -1673,7 +1659,6 @@ const buildApiKeyUpdateRecord = (
   return {
     updated: {
       ...record,
-      banked_resets_enabled: fields.bankedResetsEnabled,
       name: fields.name,
       expires_at_ms: fields.expiresAtMs,
       usage_limit_requests: fields.usageLimitRequests,
@@ -1696,7 +1681,7 @@ const buildApiKeyUpdateRecord = (
 };
 
 const apiKeyUpdateIdentityChanged = (record: ApiKeyRecord, updated: ApiKeyRecord, currentExpiresAtMs: number): boolean =>
-  updated.name !== record.name || updated.banked_resets_enabled !== apiKeyBankedResetsEnabled(record) || updated.expires_at_ms !== currentExpiresAtMs;
+  updated.name !== record.name || updated.expires_at_ms !== currentExpiresAtMs;
 
 const apiKeyUpdateQuotaChanged = (record: ApiKeyRecord, updated: ApiKeyRecord, currentWindowMs: number, resetUsage: boolean): boolean =>
   updated.usage_limit_requests !== record.usage_limit_requests ||
@@ -2581,4 +2566,50 @@ export const handleAdminProvidersQuotaProjectionBackfill = async (
   } catch (error) {
     return openaiError(500, error instanceof Error ? error.message : "Paid fallback rollup backfill failed", "server_error");
   }
+};
+
+export const handleAdminCodexResetSettings = async (request: Request): Promise<Response> => {
+  const kv = await getKv();
+  if (!kv) return openaiError(503, "Settings storage unavailable", "server_error");
+  const accounts = await getCodexCapacityAccounts();
+  const identities = await Promise.all(
+    accounts.map(async (account) => ({
+      slot: account.slot,
+      account_id_hash: await sha256Hex(account.account_id),
+      account_cohort_id: await sha256Hex(`uos-prompt-cache-account-cohort-v1\u0000${account.account_id}`),
+    }))
+  );
+  if (request.method === "PATCH") {
+    const raw: unknown = await request.json().catch(() => null);
+    if (!isRecord(raw) || typeof raw.account_id_hash !== "string" || typeof raw.enabled !== "boolean") {
+      return openaiError(400, "account_id_hash and boolean enabled are required", "invalid_request_error");
+    }
+    if (!identities.some((account) => account.account_id_hash === raw.account_id_hash)) {
+      return openaiError(409, "Subscription changed. Reload Providers.", "invalid_request_error");
+    }
+    await kv.set(codexResetUsageKey(raw.account_id_hash), { enabled: raw.enabled });
+    return json(200, { account_id_hash: raw.account_id_hash, enabled: raw.enabled }, { "Cache-Control": "no-store" });
+  }
+  const data = await Promise.all(
+    identities.map(async (account, index) => {
+      const enabled = (await readCodexResetUsage(kv, account.account_id_hash)).allowed;
+      let availableCount: number | null = null;
+      try {
+        const credentials = accounts[index]!;
+        availableCount = await readCodexResetAvailableCount(
+          {
+            codexBaseUrl: config.codexBaseUrl,
+            accountId: credentials.account_id,
+            accessToken: credentials.access_token,
+            userAgent: "codex_cli_rs/0.100.0 (ai.ubq.fi)",
+          },
+          AbortSignal.any([request.signal, AbortSignal.timeout(5000)])
+        );
+      } catch {
+        /* An unavailable count must not appear as zero or block the switch. */
+      }
+      return { ...account, enabled, available_count: availableCount };
+    })
+  );
+  return json(200, { data }, { "Cache-Control": "no-store" });
 };

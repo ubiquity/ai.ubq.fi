@@ -10,8 +10,8 @@
     />
     <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
     <link rel="icon" href="/favicon.png" type="image/png" sizes="256x256" />
-    <link rel="stylesheet" href="/style.css?v=public-console-20260903-v7" />
-    <link rel="stylesheet" href="/chat.css?v=public-console-20260903-v7" />
+    <link rel="stylesheet" href="/style.css?v=app-minimal-20260912" />
+    <link rel="stylesheet" href="/chat.css?v=app-minimal-20260912" />
   </head>
   <body data-page="chat" data-role="public">
     <div data-chat-shell>
@@ -54,7 +54,7 @@
 
         <div data-chat-sidebar-body>
           <details data-chat-panel data-panel-key="auth" open>
-            <summary>Auth</summary>
+            <summary>Account</summary>
             <div data-panel-body>
               <div data-layout="row">
                 <button
@@ -92,7 +92,7 @@
               </div>
               <span id="passkey-status" data-badge data-state="unknown">Passkey idle</span>
               <details data-passkey-advanced>
-                <summary>Advanced passkey options</summary>
+                <summary>Account name</summary>
                 <div data-passkey-advanced-body>
                   <label data-field>
                     <span data-label>Username</span>
@@ -107,7 +107,7 @@
                 </div>
               </details>
               <details data-token-fallback>
-                <summary>Fallback gateway token</summary>
+                <summary>Use an API key</summary>
                 <div data-token-fallback-body>
                   <label data-field>
                     <span data-label>Gateway token</span>
@@ -136,7 +136,7 @@
           </details>
 
           <details data-chat-panel data-panel-key="request" open>
-            <summary>Request</summary>
+            <summary>Model</summary>
             <div data-panel-body>
               <label data-field>
                 <span data-label>Model</span>
@@ -150,17 +150,20 @@
                   <option value="">Loading models...</option>
                 </select>
               </label>
-              <div data-layout="row">
-                <label data-check>
-                  <input id="stream" type="checkbox" checked />
-                  <span>Stream response</span>
+              <details data-disclosure>
+                <summary>Request options</summary>
+                <div data-layout="row">
+                  <label data-check>
+                    <input id="stream" type="checkbox" checked />
+                    <span>Stream response</span>
+                  </label>
+                  <span id="stream-hint" data-muted hidden>GPT-OSS 120B requires streaming off</span>
+                </div>
+                <label data-field>
+                  <span data-label>System prompt (optional)</span>
+                  <textarea id="system" rows="4" placeholder="You are a helpful assistant."></textarea>
                 </label>
-                <span id="stream-hint" data-muted hidden>GPT-OSS 120B requires streaming off</span>
-              </div>
-              <label data-field>
-                <span data-label>System prompt (optional)</span>
-                <textarea id="system" rows="4" placeholder="You are a helpful assistant."></textarea>
-              </label>
+              </details>
             </div>
           </details>
         </div>
@@ -169,8 +172,7 @@
       <main data-chat-main>
         <header data-chat-topbar>
           <div>
-            <h1>AI Chat Playground</h1>
-            <p data-chat-subtitle>Test <code>/v1/chat/completions</code> from your browser.</p>
+            <h1>Chat</h1>
           </div>
         </header>
 
@@ -181,7 +183,9 @@
             <textarea
               id="prompt"
               rows="3"
-              placeholder="Message... (Enter to send, Shift+Enter for newline)"
+              placeholder="Message…"
+              aria-label="Message"
+              title="Enter to send · Shift+Enter for a new line"
             ></textarea>
             <div data-chat-compose-actions>
               <button

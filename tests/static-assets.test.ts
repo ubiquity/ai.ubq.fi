@@ -93,11 +93,11 @@ Deno.test("chat response stats use one conversation bar below the composer", () 
 Deno.test("public models page is registered", () => {
   assert.equal(hasStaticAsset("/models"), true);
   assert.equal(hasStaticAsset("/models.html"), true);
-  assert.match(modelsHtml, /<script type="module" src="\/models\.js\?v=20260903-recent-reasoning-v4"><\/script>/);
+  assert.match(modelsHtml, /<script type="module" src="\/models\.js\?v=app-minimal-20260912"><\/script>/);
 });
 
 Deno.test("public console pages share versioned styles, canonical navigation, and accurate active states", () => {
-  const assetVersion = "public-console-20260903-v7";
+  const assetVersion = "app-minimal-20260912";
   const canonicalLinks = [
     { href: "/models", label: "Models" },
     { href: "/developers", label: "Developers" },
@@ -243,8 +243,8 @@ Deno.test("published guidance documents endpoint-specific output caps and reposi
 });
 
 Deno.test("models page labels provider counts as catalog entries, not inference availability", () => {
-  assert.match(modelsHtml, /Cataloged text models and the providers that list them/);
-  assert.match(modelsHtml, /does not guarantee\s+inference availability or remaining quota/);
+  assert.match(modelsHtml, /Model catalog/);
+  assert.match(modelsHtml, /Availability and quota vary by provider/);
   assert.doesNotMatch(modelsHtml, /Live upstream catalog/);
   assert.match(modelsScript, /cataloged model/);
   assert.match(modelsScript, /cataloged models/);
@@ -298,10 +298,10 @@ Deno.test("admin provider view places capacity history before current providers"
   assert.ok(chartIndex >= 0);
   assert.ok(listIndex > chartIndex);
 
-  assert.match(adminHtml, /Provider analytics/);
-  assert.match(adminHtml, /Fifteen-minute capacity, cached-input, and cache-write history/);
-  assert.match(adminHtml, /admin\.css\?v=admin-polish-20260903-v6/);
-  assert.match(adminHtml, /admin\.js\?v=per-key-banked-resets-20260912/);
+  assert.match(adminHtml, /id="card-provider-capacity">Providers/);
+  assert.doesNotMatch(adminHtml, /Fifteen-minute capacity, cached-input, and cache-write history/);
+  assert.match(adminHtml, /admin\.css\?v=app-minimal-20260912/);
+  assert.match(adminHtml, /admin\.js\?v=20260913-reset-count/);
   assert.doesNotMatch(adminHtml, /removed_provider-failover|debug-routing/);
   assert.doesNotMatch(adminScript, /RemovedProviderFailover|refresh=live/);
   assert.match(adminScript, /fetch\(apiUrl\("\/admin\/providers\/capacity"\)/);
@@ -395,7 +395,7 @@ Deno.test("expanded auth widget keeps its mobile toggle right-aligned", () => {
 });
 
 Deno.test("provider analytics graph reports inference 5xx buckets", () => {
-  assert.match(adminScript, /label: "Failed inference responses \(HTTP 5xx\)"/);
+  assert.match(adminScript, /label: "Errors \(5xx\)"/);
   assert.match(adminScript, /five_xx_buckets/);
   assert.match(adminScript, /marker\.dataset\.capacityInferenceError/);
   assert.doesNotMatch(adminScript, /marker\.dataset\.capacityInference5xx/);
@@ -403,7 +403,7 @@ Deno.test("provider analytics graph reports inference 5xx buckets", () => {
   assert.match(adminCss, /\[data-capacity-legend-item="inference-error"\]/);
   assert.match(adminScript, /15-minute bucket starting/);
   assert.match(adminScript, /Failed inference buckets/);
-  assert.match(adminHtml, /Red diamonds mark 15-minute buckets containing failed inference responses \(HTTP 5xx\)/);
+  assert.match(adminScript, /marker\.setAttribute\("tabindex", "0"\)/);
 });
 
 Deno.test("provider analytics graph preserves its SVG text aspect ratio", () => {
@@ -711,4 +711,11 @@ Deno.test("public delivery returns structured JSON errors and exposes rate-limit
   for (const header of ["RateLimit", "RateLimit-Policy", "RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset"]) {
     assert.match(exposed, new RegExp(header));
   }
+});
+
+Deno.test("admin passkey sign-in uses discoverable credentials instead of a saved username", () => {
+  const loginCall = adminScript.match(/const result = await signInWithPasskey\(\{([\s\S]*?)\}\);/);
+  assert.ok(loginCall);
+  assert.doesNotMatch(loginCall[1], /handle:|useHandle:/);
+  assert.match(loginCall[1], /baseUrl: getPasskeyBaseUrl\(\)/);
 });

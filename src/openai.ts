@@ -2792,7 +2792,7 @@ const dispatchCodexPrimaryResponse = async (
         },
       },
       beforeDispatch: () => options.usageContext?.beforeProviderDispatch?.("chatgpt_codex") ?? Promise.resolve(undefined),
-      bankedReset: { ...codexBankedResetOptionsForTest, keyId: options.usageContext?.keyId ?? undefined },
+      bankedReset: codexBankedResetOptionsForTest ?? undefined,
       sentinelUpstreamRecorder: options.usageContext?.sentinelUpstreamRecorder,
     });
   } catch (error) {

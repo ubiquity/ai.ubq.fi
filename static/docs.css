@@ -24,9 +24,18 @@ body[data-page="docs"] [data-docs-layout] {
 }
 
 body[data-page="docs"] [data-docs-content] {
+  display: block;
   gap: 16px;
   font-size: clamp(14px, 1.7vw, 16px);
   line-height: 1.75;
+}
+
+body[data-page="docs"] [data-docs-layout] > [data-card] {
+  grid-column: auto;
+}
+
+body[data-page="docs"] [data-docs-content] > :first-child {
+  margin-top: 0;
 }
 
 body[data-page="docs"] [data-docs-content] > * + * {
@@ -136,5 +145,31 @@ body[data-page="docs"] [data-docs-toc] a[data-level="4"] {
 
   body[data-page="docs"] [data-docs-sidebar] {
     position: static;
+  }
+}
+
+body[data-page="docs"] [data-docs-content] {
+  font-size: 15px;
+  line-height: 1.65;
+  box-shadow: none;
+}
+
+body[data-page="docs"] [data-docs-content] details[data-disclosure] {
+  padding-block: 4px;
+}
+
+body[data-page="docs"] [data-docs-content] details[data-disclosure] > summary {
+  font-size: 15px;
+}
+
+body[data-page="docs"] [data-docs-sidebar] {
+  max-height: calc(100svh - 48px);
+  overflow-y: auto;
+  box-shadow: none;
+}
+
+@media (max-width: 960px) {
+  body[data-page="docs"] [data-docs-sidebar] {
+    max-height: none;
   }
 }

@@ -5,6 +5,7 @@ import {
   CodexUsageResetProviderHttpError,
   createUpstreamCodexUsageResetProvider,
   providerSupportsLiveRedemption,
+  readCodexResetAvailableCount,
   type RedeemResetInput,
   type ResetAccountContext,
   resolveCodexUsageResetCreditEndpoints,
@@ -181,5 +182,42 @@ Deno.test("upstream reset adapter rejects summary-only, capped, malformed, or du
       const resetProvider = provider(() => Promise.resolve(new Response(JSON.stringify(payload), { status: 200 })));
       await assert.rejects(() => resetProvider.readInventory(context(), signal()), CodexUsageResetProviderConfigurationError);
     });
+  }
+});
+
+Deno.test("display reset counts use only inventory GET and preserve zero and unavailable", async () => {
+  for (const count of [0, 3]) {
+    const result = await readCodexResetAvailableCount(
+      {
+        codexBaseUrl: "https://chatgpt.com/backend-api/codex",
+        accountId: "account-one",
+        accessToken: "test-token",
+        userAgent: "test-agent",
+        fetch: (url, init) => {
+          assert.equal(String(url), "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits");
+          assert.equal(init?.method, "GET");
+          assert.equal(new Headers(init?.headers).get("ChatGPT-Account-ID"), "account-one");
+          return Promise.resolve(Response.json({ available_count: count }));
+        },
+      },
+      signal()
+    );
+    assert.equal(result, count);
+  }
+  for (const payload of [{}, { available_count: -1 }, { available_count: "3" }]) {
+    await assert.rejects(
+      () =>
+        readCodexResetAvailableCount(
+          {
+            codexBaseUrl: "https://chatgpt.com/backend-api/codex",
+            accountId: "account-one",
+            accessToken: "test-token",
+            userAgent: "test-agent",
+            fetch: () => Promise.resolve(Response.json(payload)),
+          },
+          signal()
+        ),
+      /count was invalid/
+    );
   }
 });
