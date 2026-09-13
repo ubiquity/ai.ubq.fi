@@ -268,13 +268,13 @@ Deno.test("successful account affinity is persisted only after terminal completi
   const promptCacheKey = "terminal-affinity-key";
   const identity = await deriveCodexAccountAffinityIdentity(cacheScope, promptCacheKey);
   assert.ok(identity);
-  if (!identity) return;
+
   const originalSelection = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, fixedStartMs);
   assert.equal(originalSelection.kind, "eligible");
-  if (originalSelection.kind !== "eligible") return;
+
   const originalPreferred = originalSelection.accounts.find((candidate) => candidate.auth.account_id === "account-one");
   assert.ok(originalPreferred);
-  if (!originalPreferred) return;
+
   await recordCodexAccountAffinity(identity, originalPreferred.accountIdHash, fixedStartMs);
   const originalAffinity = kv.extra.get(JSON.stringify(identity.kvKey));
 
@@ -283,7 +283,7 @@ Deno.test("successful account affinity is persisted only after terminal completi
   resetCodexAccountRoutingForTest();
   const replacementSelection = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, fixedStartMs);
   assert.equal(replacementSelection.kind, "eligible");
-  if (replacementSelection.kind !== "eligible") return;
+
   const replacementHash = replacementSelection.accounts[0]?.accountIdHash;
   assert.ok(replacementHash);
   globalThis.fetch = () => Promise.resolve(new Response("{}", { status: 200 }));
@@ -554,10 +554,10 @@ Deno.test("Codex responses dispatch the fresh positive dashboard account first",
   try {
     const initial = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, fixedStartMs);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
+
     const accountTwo = initial.accounts.find((account) => account.auth.account_id === "account-two");
     assert.ok(accountTwo);
-    if (!accountTwo) return;
+
     const blockedUntil = fixedStartMs + 60_000;
     await markCodexQuotaBlocked(
       accountTwo,
@@ -683,13 +683,13 @@ Deno.test("transport failures preserve affinity and provider health", async () =
   const promptCacheKey = "transport-failure-affinity-key";
   const identity = await deriveCodexAccountAffinityIdentity(cacheScope, promptCacheKey);
   assert.ok(identity);
-  if (!identity) return;
+
   const selected = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, fixedStartMs);
   assert.equal(selected.kind, "eligible");
-  if (selected.kind !== "eligible") return;
+
   const preferred = selected.accounts.find((candidate) => candidate.auth.account_id === "account-one");
   assert.ok(preferred);
-  if (!preferred) return;
+
   await recordCodexAccountAffinity(identity, preferred.accountIdHash, fixedStartMs);
   const affinityBefore = kv.extra.get(JSON.stringify(identity.kvKey));
   globalThis.fetch = (_input, init) => {
@@ -1350,8 +1350,8 @@ Deno.test("refresh-token reuse returns an actionable re-auth warning without exp
     assert.equal(response.headers.get("x-uos-warning"), CODEX_AUTH_REAUTH_WARNING);
     const payload = (await response.json()) as { error?: { message?: string; code?: string } };
     assert.equal(payload.error?.code, "refresh_token_reused");
-    assert.match(payload.error?.message ?? "", /already used/i);
-    assert.equal((payload.error?.message ?? "").includes("provider secret"), false);
+    assert.match(payload.error.message ?? "", /already used/i);
+    assert.equal((payload.error.message ?? "").includes("provider secret"), false);
     assert.equal(inferenceCalls, 0);
   } finally {
     resetCodexAuthCacheForTest();
@@ -1472,7 +1472,7 @@ Deno.test("direct failures release quota probes and timeouts do not gate the nex
         resetCodexAuthCacheForTest();
         const initial = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, now);
         assert.equal(initial.kind, "eligible");
-        if (initial.kind !== "eligible") return;
+
         await markCodexQuotaBlocked(
           initial.accounts[0],
           new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
@@ -1568,7 +1568,7 @@ Deno.test("cache-scope dispatch timeouts remain request-scoped", async () => {
     resetCodexAccountRoutingForTest();
     const selected = await selectCodexRoutingAccounts(kv.auth, [kv.auth.accounts[0]], fixedStartMs);
     assert.equal(selected.kind, "eligible");
-    if (selected.kind !== "eligible") return;
+
     assert.equal(selected.accounts[0]?.probeRequired, false);
     assert.equal(inferenceCalls, 1);
   } finally {
@@ -1593,7 +1593,7 @@ Deno.test("a legacy timeout probe cannot block provider transport", async () => 
   resetCodexAccountRoutingForTest();
   const initial = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, fixedStartMs);
   assert.equal(initial.kind, "eligible");
-  if (initial.kind !== "eligible") return;
+
   await markCodexUpstreamTimeout(initial.accounts[0], fixedStartMs - CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS - 1);
   kv.routingCommitFailures = 3;
   globalThis.fetch = () => {
@@ -1630,7 +1630,7 @@ Deno.test("a timeout probe that returns quota retags its bounded retry as quota"
   resetCodexAccountRoutingForTest();
   const initial = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, fixedStartMs);
   assert.equal(initial.kind, "eligible");
-  if (initial.kind !== "eligible") return;
+
   await markCodexUpstreamTimeout(initial.accounts[0], fixedStartMs - CODEX_UPSTREAM_TIMEOUT_CIRCUIT_MS - 1);
   globalThis.fetch = async () => {
     inferenceCalls += 1;
@@ -1778,7 +1778,7 @@ Deno.test("a 429 retry that proves invalid credentials remains quarantined", asy
   resetCodexAuthCacheForTest();
   const initial = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, now);
   assert.equal(initial.kind, "eligible");
-  if (initial.kind !== "eligible") return;
+
   await markCodexQuotaBlocked(
     initial.accounts[0],
     new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
@@ -2001,7 +2001,7 @@ const stableBankedResetRetryAfter = new Date(fixedStartMs + 60_000).toUTCString(
 const seedStableBankedResetBlock = async (accountId = "account-one"): Promise<void> => {
   const initial = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, fixedStartMs);
   assert.equal(initial.kind, "eligible");
-  if (initial.kind !== "eligible") throw new Error("expected an eligible routing pool");
+
   const account = initial.accounts.find((candidate) => candidate.auth.account_id === accountId);
   assert.ok(account);
   await markCodexQuotaBlocked(
@@ -2446,7 +2446,7 @@ Deno.test("post-reset response probes retain their tombstone until an explicit c
   const assertTombstone = () => {
     const slot = routingSlot();
     assert.equal(slot?.banked_reset_generation_ambiguous, true);
-    assert.notEqual(slot?.observed_reset_at_ms, null);
+    assert.notEqual(slot.observed_reset_at_ms, null);
   };
   const fetchPostResetResponse = async (owner: string): Promise<Response> => {
     const reset = scriptedResetProvider();
@@ -2521,8 +2521,8 @@ Deno.test("post-reset response probes retain their tombstone until an explicit c
     await completion;
     const slot = routingSlot();
     assert.equal(slot?.banked_reset_generation_ambiguous, false);
-    assert.equal(slot?.observed_reset_at_ms, null);
-    assert.equal(slot?.probe_lease, null);
+    assert.equal(slot.observed_reset_at_ms, null);
+    assert.equal(slot.probe_lease, null);
   } finally {
     releaseProviderHealthCommit();
     if (providerHealthCommitted) await providerHealthCommitted;
@@ -2917,7 +2917,7 @@ Deno.test("a sibling blocked during partial preflight is not dispatched from the
   await seedStableBankedResetBlock();
   const warmed = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, fixedStartMs);
   assert.equal(warmed.kind, "eligible");
-  assert.deepEqual(warmed.kind === "eligible" ? warmed.accounts.map((account) => account.auth.account_id) : [], ["account-two"]);
+  assert.deepEqual(warmed.accounts.map((account) => account.auth.account_id), ["account-two"]);
   const reset = scriptedResetProvider({
     onInventory: () => {
       // Simulate a different isolate writing the durable record directly. The
@@ -2927,7 +2927,7 @@ Deno.test("a sibling blocked during partial preflight is not dispatched from the
       assert.ok(entry);
       const state = structuredClone(parseCodexAccountRoutingState(entry.value));
       assert.ok(state);
-      if (!state) throw new Error("expected durable routing state");
+
       const sibling = state.slots[1];
       assert.ok(sibling);
       const retryAtMs = Date.parse(stableBankedResetRetryAfter);
@@ -3004,7 +3004,7 @@ Deno.test("a sibling legacy timeout during partial preflight does not gate fallb
       assert.ok(entry);
       const state = structuredClone(parseCodexAccountRoutingState(entry.value));
       assert.ok(state);
-      if (!state) throw new Error("expected durable routing state");
+
       const sibling = state.slots[1];
       assert.ok(sibling);
       const slots = [...state.slots];
@@ -3421,10 +3421,10 @@ Deno.test("a skipped half-open probe prevents a sibling banked-reset redemption"
   try {
     const initial = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, now);
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
+
     const second = initial.accounts.find((account) => account.auth.account_id === "account-two");
     assert.ok(second);
-    if (!second) return;
+
     const expiredAtMs = now + 1_000;
     await markCodexQuotaBlocked(
       second,
@@ -3439,10 +3439,9 @@ Deno.test("a skipped half-open probe prevents a sibling banked-reset redemption"
     resetCodexAccountRoutingForTest();
     const halfOpen = await selectCodexRoutingAccounts(kv.auth, kv.auth.accounts, now);
     assert.equal(halfOpen.kind, "eligible");
-    if (halfOpen.kind !== "eligible") return;
+
     const foreignProbeCandidate = halfOpen.accounts.find((account) => account.auth.account_id === "account-two");
     assert.ok(foreignProbeCandidate?.probeRequired);
-    if (!foreignProbeCandidate) return;
 
     // Force a fresh selection, then have another isolate claim the half-open
     // slot immediately after that selection and before this request reaches it.
@@ -4028,7 +4027,7 @@ Deno.test("a failed banked-reset probe gets a bounded retry and eventually reope
       assert.equal(inferenceAccounts.at(-1), "account-one");
       const routingAfterProbe = parseCodexAccountRoutingState((await kv.get(CODEX_ACCOUNT_ROUTING_KV_KEY, { consistency: "strong" })).value);
       assert.equal(routingAfterProbe?.slots[0]?.quota_blocked_until_ms, now + CODEX_HALF_OPEN_LEASE_MS);
-      assert.equal(routingAfterProbe?.slots[0]?.banked_reset_generation_ambiguous, true);
+      assert.equal(routingAfterProbe.slots[0]?.banked_reset_generation_ambiguous, true);
       assert.deepEqual(reset.calls, resetCallsAfterFirst);
     }
 
@@ -4039,8 +4038,8 @@ Deno.test("a failed banked-reset probe gets a bounded retry and eventually reope
     await markCodexResponseCompleted(recovered);
     const routing = parseCodexAccountRoutingState((await kv.get(CODEX_ACCOUNT_ROUTING_KV_KEY, { consistency: "strong" })).value);
     assert.equal(routing?.slots[0]?.quota_blocked_until_ms, null);
-    assert.equal(routing?.slots[0]?.banked_reset_generation_ambiguous, false);
-    assert.equal(routing?.slots[1]?.quota_blocked_until_ms, delayedPropagationResetAtMs);
+    assert.equal(routing.slots[0]?.banked_reset_generation_ambiguous, false);
+    assert.equal(routing.slots[1]?.quota_blocked_until_ms, delayedPropagationResetAtMs);
   } finally {
     resetCodexAuthCacheForTest();
     resetCodexAccountRoutingForTest();

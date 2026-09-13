@@ -222,7 +222,7 @@ Deno.test("API key list reports committed V3 usage and ignores legacy counters",
     data?: { usage_requests?: number; usage?: { request_count?: number } }[];
   };
   assert.equal(withPayload.data?.[0]?.usage_requests, 4);
-  assert.equal(withPayload.data?.[0]?.usage?.request_count, 4);
+  assert.equal(withPayload.data[0]?.usage?.request_count, 4);
 });
 
 Deno.test("API key list projects current paid fallback totals from V3 only", async () => {
@@ -298,15 +298,15 @@ Deno.test("API key list projects current paid fallback totals from V3 only", asy
     }[];
   };
   assert.equal(payload.data?.[0]?.paid_fallback_limit_credits, 2);
-  assert.equal(payload.data?.[0]?.paid_fallback_spent_credits, 0.028992);
-  assert.equal(payload.data?.[0]?.paid_fallback_reserved_credits, 0.125);
-  assert.equal(payload.data?.[0]?.paid_fallback_pending_count, 1);
-  assert.equal(payload.data?.[0]?.paid_fallback_provider_usage?.metered?.request_count, 1);
-  assert.equal(payload.data?.[0]?.paid_fallback_provider_usage?.metered?.total_tokens, 7);
-  assert.equal(payload.data?.[0]?.paid_fallback_provider_usage?.metered?.spend_microcredits, 500);
-  assert.equal(payload.data?.[0]?.paid_fallback_provider_usage?.surplus?.request_count, 1);
-  assert.equal(payload.data?.[0]?.paid_fallback_provider_usage?.surplus?.total_tokens, 18);
-  assert.equal(payload.data?.[0]?.paid_fallback_provider_usage?.surplus?.spend_microcredits, 700);
+  assert.equal(payload.data[0]?.paid_fallback_spent_credits, 0.028992);
+  assert.equal(payload.data[0]?.paid_fallback_reserved_credits, 0.125);
+  assert.equal(payload.data[0]?.paid_fallback_pending_count, 1);
+  assert.equal(payload.data[0]?.paid_fallback_provider_usage?.metered?.request_count, 1);
+  assert.equal(payload.data[0]?.paid_fallback_provider_usage?.metered?.total_tokens, 7);
+  assert.equal(payload.data[0]?.paid_fallback_provider_usage?.metered?.spend_microcredits, 500);
+  assert.equal(payload.data[0]?.paid_fallback_provider_usage?.surplus?.request_count, 1);
+  assert.equal(payload.data[0]?.paid_fallback_provider_usage?.surplus?.total_tokens, 18);
+  assert.equal(payload.data[0]?.paid_fallback_provider_usage?.surplus?.spend_microcredits, 700);
 });
 
 Deno.test("API key limit edits retain V3 usage while resets create a fresh aggregate and reject live leases", async () => {
@@ -409,7 +409,7 @@ Deno.test("admin Codex model GET returns the full catalog rather than the compac
     data?: { models?: { description?: string; context_window?: number }[] };
   };
   assert.equal(payload.data?.models?.[0]?.description, "full catalog description");
-  assert.equal(payload.data?.models?.[0]?.context_window, 272_000);
+  assert.equal(payload.data.models[0]?.context_window, 272_000);
 });
 
 Deno.test("admin Codex model update rejects a catalog whose compact runtime record exceeds 4 KiB", async () => {
@@ -428,7 +428,7 @@ Deno.test("admin Codex model update rejects a catalog whose compact runtime reco
   assert.equal(response.status, 413);
   const payload = (await response.json()) as { error?: { code?: string; message?: string } };
   assert.equal(payload.error?.code, "runtime_config_invalid");
-  assert.match(payload.error?.message ?? "", /runtime config is too large/);
+  assert.match(payload.error.message ?? "", /runtime config is too large/);
   assert.equal(kvStore.has(keyToString(["ubq_ai", "codex_models"])), false);
   assert.equal(kvStore.has(keyToString(["uos_ai", "runtime_config", "v2"])), false);
 });
@@ -463,7 +463,7 @@ Deno.test("admin defaults includes serializable Metered quota diagnostics withou
   };
   assert.equal(Object.prototype.hasOwnProperty.call(payload, "ok"), false);
   assert.equal(payload.metered_quota?.remaining_percent, 75);
-  assert.equal(payload.metered_quota?.latest_refill_id, "refill-2");
+  assert.equal(payload.metered_quota.latest_refill_id, "refill-2");
   assert.equal(Object.prototype.hasOwnProperty.call(payload.metered_quota ?? {}, "system_token"), false);
   assert.equal(Object.prototype.hasOwnProperty.call(payload.metered_quota ?? {}, "user_id"), false);
 });
@@ -606,8 +606,8 @@ Deno.test("admin kernel quota policies preserve usage until an explicit reset an
   assert.equal((kvStore.get(keyToString(windowKey)) as { usage_requests?: number }).usage_requests, 2);
   const snapshot = await getKernelUsageLimitSnapshot(owner, repo);
   assert.equal(snapshot?.source, "default");
-  assert.equal(snapshot?.record.usage_requests, 2);
-  assert.equal(snapshot?.record.usage_limit_requests, 9);
+  assert.equal(snapshot.record.usage_requests, 2);
+  assert.equal(snapshot.record.usage_limit_requests, 9);
 });
 
 const meteredMetadataResponse = (url: string): Response => {
@@ -717,7 +717,7 @@ Deno.test("admin codex auth stores live upstream model catalog as source of trut
     assert.equal(response.status, 200);
     const payload = (await response.json()) as { models?: { count?: number; source?: string } };
     assert.equal(payload.models?.count, 2);
-    assert.equal(payload.models?.source, "chatgpt_codex");
+    assert.equal(payload.models.source, "chatgpt_codex");
     assert.equal(fetchUrls.length, 1);
 
     const stored = kvStore.get(keyToString(["ubq_ai", "codex_models"])) as
@@ -738,17 +738,17 @@ Deno.test("admin codex auth stores live upstream model catalog as source of trut
         }
       | undefined;
     assert.equal(stored?.source, "chatgpt_codex");
-    assert.equal(stored?.client_version, "0.126.0");
+    assert.equal(stored.client_version, "0.126.0");
     assert.deepEqual(
-      stored?.models?.map((model) => model.slug),
+      stored.models?.map((model) => model.slug),
       ["gpt-5.3-codex-spark", "codex-auto-review"]
     );
-    assert.equal(stored?.models?.[0]?.supported_in_api, false);
-    assert.equal(stored?.models?.[0]?.default_reasoning_level, "high");
-    assert.deepEqual(stored?.models?.[0]?.supported_reasoning_levels, ["none", "low", "medium", "high", "xhigh", "max", "ultra"]);
-    assert.deepEqual(stored?.models?.[0]?.reasoning_effort_wire_map, { ultra: "max" });
-    assert.equal(stored?.models?.[1]?.visibility, "hide");
-    assert.equal(stored?.models?.[1]?.supported_in_api, true);
+    assert.equal(stored.models[0]?.supported_in_api, false);
+    assert.equal(stored.models[0]?.default_reasoning_level, "high");
+    assert.deepEqual(stored.models[0]?.supported_reasoning_levels, ["none", "low", "medium", "high", "xhigh", "max", "ultra"]);
+    assert.deepEqual(stored.models[0]?.reasoning_effort_wire_map, { ultra: "max" });
+    assert.equal(stored.models[1]?.visibility, "hide");
+    assert.equal(stored.models[1]?.supported_in_api, true);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -868,8 +868,8 @@ Deno.test("admin Codex auth adds, rotates, and caps the two-account pool", async
       poolAfterRotation.accounts?.map((account) => account.account_id),
       ["account-one", "account-two"]
     );
-    assert.equal(poolAfterRotation.accounts?.[0]?.access_token, "access-one-rotated");
-    assert.equal(poolAfterRotation.accounts?.[1]?.access_token, "access-two");
+    assert.equal(poolAfterRotation.accounts[0]?.access_token, "access-one-rotated");
+    assert.equal(poolAfterRotation.accounts[1]?.access_token, "access-two");
 
     const third = await upload("account-three", "access-three");
     assert.equal(third.status, 409);
@@ -1516,24 +1516,24 @@ Deno.test("admin paid fallback history exposes V3 request lifecycle and billing 
   assert.equal(Object.prototype.hasOwnProperty.call(payload, "ok"), false);
   assert.equal(payload.object, "list");
   assert.equal(payload.data?.length, 1);
-  assert.equal(payload.data?.[0]?.request_id, settledRequest.request_id);
-  assert.equal(payload.data?.[0]?.model, "gpt-5.6-sol");
-  assert.equal(payload.data?.[0]?.reasoning, "max");
-  assert.equal(payload.data?.[0]?.provider, "surplus");
-  assert.equal(payload.data?.[0]?.reserved_microcredits, 125_000);
-  assert.equal(payload.data?.[0]?.dispatch_state, "dispatched");
-  assert.equal(payload.data?.[0]?.terminal_state, "completed");
-  assert.equal(payload.data?.[0]?.billing_state, "settled");
-  assert.equal(payload.data?.[0]?.provider_request_id, "provider-v3-settled");
-  assert.equal(payload.data?.[0]?.provider_quota, 14.496);
-  assert.equal(payload.data?.[0]?.input_tokens, 31);
-  assert.equal(payload.data?.[0]?.output_tokens, 17);
-  assert.equal(payload.data?.[0]?.reconciliation_attempts, 2);
-  assert.equal(payload.data?.[0]?.last_reconciliation_at_ms, 2_500);
-  assert.equal(payload.data?.[0]?.spend_microcredits, 28_992);
-  assert.equal(payload.data?.[0]?.dispatched_at_ms, 1_100);
-  assert.equal(payload.data?.[0]?.terminal_at_ms, 2_000);
-  assert.equal(payload.data?.[0]?.settled_at_ms, 2_500);
+  assert.equal(payload.data[0]?.request_id, settledRequest.request_id);
+  assert.equal(payload.data[0]?.model, "gpt-5.6-sol");
+  assert.equal(payload.data[0]?.reasoning, "max");
+  assert.equal(payload.data[0]?.provider, "surplus");
+  assert.equal(payload.data[0]?.reserved_microcredits, 125_000);
+  assert.equal(payload.data[0]?.dispatch_state, "dispatched");
+  assert.equal(payload.data[0]?.terminal_state, "completed");
+  assert.equal(payload.data[0]?.billing_state, "settled");
+  assert.equal(payload.data[0]?.provider_request_id, "provider-v3-settled");
+  assert.equal(payload.data[0]?.provider_quota, 14.496);
+  assert.equal(payload.data[0]?.input_tokens, 31);
+  assert.equal(payload.data[0]?.output_tokens, 17);
+  assert.equal(payload.data[0]?.reconciliation_attempts, 2);
+  assert.equal(payload.data[0]?.last_reconciliation_at_ms, 2_500);
+  assert.equal(payload.data[0]?.spend_microcredits, 28_992);
+  assert.equal(payload.data[0]?.dispatched_at_ms, 1_100);
+  assert.equal(payload.data[0]?.terminal_at_ms, 2_000);
+  assert.equal(payload.data[0]?.settled_at_ms, 2_500);
 });
 
 Deno.test("authenticated UOS embeddings do not write ordinary request history", async () => {
@@ -1735,8 +1735,8 @@ Deno.test("deleting a revoked API key removes its mirrored policy and analytics"
     error?: { code?: string; message?: string };
   };
   assert.equal(blockedPayload.error?.code, "paid_fallback_billing_outstanding");
-  assert.match(blockedPayload.error?.message ?? "", /unresolved=1/);
-  assert.match(blockedPayload.error?.message ?? "", /markers=1/);
+  assert.match(blockedPayload.error.message ?? "", /unresolved=1/);
+  assert.match(blockedPayload.error.message ?? "", /markers=1/);
   assert.equal(kvStore.has(keyToString(["ubq_ai", "api_keys", "id", keyId])), true);
   assert.equal(kvStoreHasPrefix(["uos_ai", "paid_fallback", "v3", "deletion_guard", keyId]), true);
   kvStore.delete(keyToString(unresolvedRequestKey));
@@ -1789,8 +1789,8 @@ Deno.test("deleting a revoked API key removes its mirrored policy and analytics"
 
 Deno.test("subscription reset settings persist by account identity across slot reordering", async () => {
   kvStore.clear();
-  const accounts = ["account-a", "account-b"].map((account_id) => ({
-    account_id,
+  const accounts = ["account-a", "account-b"].map((accountId) => ({
+    account_id: accountId,
     access_token: "test-access",
     refresh_token: "test-refresh",
     updated_at_ms: 100,
@@ -1802,11 +1802,11 @@ Deno.test("subscription reset settings persist by account identity across slot r
   assert.equal(initial.data.length, 2);
   assert.equal(initial.data[0].enabled, true);
   const identity = initial.data[0].account_id_hash;
-  const update = (enabled: unknown, account_id_hash = identity) =>
+  const update = (enabled: unknown, accountIdHash = identity) =>
     handleAdminCodexResetSettings(
       new Request(url, {
         method: "PATCH",
-        body: JSON.stringify({ account_id_hash, enabled }),
+        body: JSON.stringify({ account_id_hash: accountIdHash, enabled }),
       })
     );
   assert.equal((await update(false)).status, 200);

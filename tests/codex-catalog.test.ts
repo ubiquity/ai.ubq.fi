@@ -1020,15 +1020,15 @@ Deno.test("codex catalog: model picker receives the complete unique union of pai
         { effort: "high", description: "Reasoning effort: high" },
         { effort: "max", description: "Maximum reasoning depth" },
       ]);
-      assert.equal(model?.default_reasoning_level, "high");
-      assert.equal(model?.context_window, 1_000_000);
-      assert.equal(model?.max_context_window, 1_000_000);
-      assert.equal(model?.auto_compact_token_limit, 850_000);
-      assert.equal(model?.effective_context_window_percent, 95);
+      assert.equal(model.default_reasoning_level, "high");
+      assert.equal(model.context_window, 1_000_000);
+      assert.equal(model.max_context_window, 1_000_000);
+      assert.equal(model.auto_compact_token_limit, 850_000);
+      assert.equal(model.effective_context_window_percent, 95);
     }
     const minimax = payload.models.find((model) => model.slug === "minimax-m2.7");
     assert.equal(minimax?.context_window, 204_800);
-    assert.equal(minimax?.auto_compact_token_limit, 154_800);
+    assert.equal(minimax.auto_compact_token_limit, 154_800);
     assert.equal(slugs.includes("chat-only-model"), false);
   } finally {
     globalThis.fetch = originalFetch;

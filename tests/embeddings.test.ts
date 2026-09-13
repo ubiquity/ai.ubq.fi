@@ -403,7 +403,7 @@ Deno.test("embeddings: normalizes string input", async () => {
   assert.equal(typeof payload.usage?.prompt_tokens, "number");
   assert.equal(typeof payload.usage?.total_tokens, "number");
   assert.equal(payload.usage?.prompt_tokens, 5);
-  assert.equal(payload.usage?.total_tokens, 5);
+  assert.equal(payload.usage.total_tokens, 5);
   assert.ok(Array.isArray(payload.data));
   assert.equal(payload.data.length, 1);
   assert.equal(payload.data[0]?.object, "embedding");
@@ -805,7 +805,7 @@ Deno.test("uos embeddings idempotency: an expired owner cannot overwrite the pub
         assert.equal(publishedChunkExpiresInMs, EMBEDDINGS_IDEMPOTENCY_RESPONSE_TTL_MS);
         // The response chunks the gateway actually wrote must outlive the ledger
         // record, otherwise a replay could resurrect an expired ledger entry.
-        assert((publishedChunkExpiresInMs ?? 0) > (ledgerExpiresInMs ?? 0));
+        assert(publishedChunkExpiresInMs > ledgerExpiresInMs);
 
         // A late write from the expired owner lands in its own generation and
         // cannot corrupt the response generation already published by CAS.
@@ -1063,7 +1063,7 @@ Deno.test("uos embeddings: rejects OpenAI model names without dispatching Voyage
         assert.equal(response.status, 400);
         const payload = (await response.json()) as { error?: { code?: unknown; param?: unknown } };
         assert.equal(payload.error?.code, "model_not_found");
-        assert.equal(payload.error?.param, "model");
+        assert.equal(payload.error.param, "model");
       }
     }
   );
@@ -1130,7 +1130,7 @@ Deno.test("embeddings: serves cache hits without calling upstream", async () => 
     assert.equal(response.status, 200);
     const payload = (await response.json()) as { data?: { embedding?: unknown }[] };
     assert.ok(Array.isArray(payload.data));
-    assert.deepEqual(payload.data?.[0]?.embedding, cachedEmbedding);
+    assert.deepEqual(payload.data[0]?.embedding, cachedEmbedding);
   } finally {
     kvStore.delete(keyToString(cacheKey));
   }
@@ -1738,7 +1738,7 @@ Deno.test("uos embeddings: returns 502 when upstream vector length does not matc
   assert.equal(response.headers.get("x-uos-upstream"), "voyage");
   const payload = (await response.json()) as { error?: { code?: unknown; message?: unknown } };
   assert.equal(payload.error?.code, "upstream_dimension_mismatch");
-  assert.match(String(payload.error?.message), /length 255; expected 256/);
+  assert.match(String(payload.error.message), /length 255; expected 256/);
 });
 
 Deno.test("uos embeddings: sync retry reuses the exact resolved Voyage options", async () => {
@@ -1823,7 +1823,7 @@ Deno.test("uos embeddings: exhausted upstream 429 preserves status and Retry-Aft
   assert.equal(response.headers.get("x-uos-upstream"), "voyage");
   const payload = (await response.json()) as { error?: { type?: unknown; code?: unknown } };
   assert.equal(payload.error?.type, "rate_limit_error");
-  assert.equal(payload.error?.code, "rate_limit_exceeded");
+  assert.equal(payload.error.code, "rate_limit_exceeded");
 });
 
 Deno.test("embeddings: 429 includes Retry-After when KV rate limited", async () => {
@@ -1899,8 +1899,8 @@ Deno.test("embedding jobs: create returns job + result when not rate limited", a
   assert.equal(payload.encoding_format, "float");
   assert.equal(payload.truncation, true);
   assert.equal(payload.result?.object, "list");
-  assert.equal(payload.result?.model, "voyage-4-large");
-  assert.ok(Array.isArray(payload.result?.data));
+  assert.equal(payload.result.model, "voyage-4-large");
+  assert.ok(Array.isArray(payload.result.data));
 });
 
 Deno.test("embedding jobs: wrong-length upstream vector is a terminal failed job", async () => {
@@ -1939,7 +1939,7 @@ Deno.test("embedding jobs: wrong-length upstream vector is a terminal failed job
   };
   assert.equal(payload.status, "failed");
   assert.equal(payload.error?.code, "embeddings_job_upstream_dimension_mismatch");
-  assert.match(String(payload.error?.message), /length 511; expected 512/);
+  assert.match(String(payload.error.message), /length 511; expected 512/);
   assert.equal(typeof payload.id, "string");
 
   const jobId = payload.id as string;
@@ -2397,7 +2397,7 @@ Deno.test("embedding jobs: poll runs queued job to completion", async () => {
   assert.equal(payload.dimensions, 512);
   assert.equal(payload.truncation, false);
   assert.ok(Array.isArray(payload.result?.data));
-  assert.equal((payload.result?.data?.[0]?.embedding as unknown[]).length, 512);
+  assert.equal((payload.result.data[0]?.embedding as unknown[]).length, 512);
 });
 
 Deno.test("handler: /uos/embeddings reaches authentication instead of the 404 guard", async () => {

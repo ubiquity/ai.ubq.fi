@@ -2595,7 +2595,8 @@ export const handleAdminCodexResetSettings = async (request: Request): Promise<R
       const enabled = (await readCodexResetUsage(kv, account.account_id_hash)).allowed;
       let availableCount: number | null = null;
       try {
-        const credentials = accounts[index]!;
+        const credentials = accounts.at(index);
+        if (!credentials) throw new Error("codex reset settings account disappeared");
         availableCount = await readCodexResetAvailableCount(
           {
             codexBaseUrl: config.codexBaseUrl,

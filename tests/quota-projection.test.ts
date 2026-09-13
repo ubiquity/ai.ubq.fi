@@ -267,7 +267,7 @@ const reservationInput = (requestId: string, createdAtMs: number) =>
 const reserve = async (requestId: string, createdAtMs: number) => {
   const decision = await reservePaidFallback(reservationInput(requestId, createdAtMs));
   assert.equal(decision.kind, "reserved");
-  if (decision.kind !== "reserved") throw new Error("expected paid fallback reservation");
+
   return decision.reservation;
 };
 

@@ -518,7 +518,7 @@ Deno.test("prompt-cache scope uses three fixed cycles, publishes canonical scope
     };
     const provider = snapshot.models?.[0]?.prompt_cache?.providers?.[0];
     assert.equal(provider?.id, "codex_chatgpt");
-    assert.deepEqual(provider?.scope, {
+    assert.deepEqual(provider.scope, {
       probe_profile: "responses_implicit_input_text_keyed_cycle_isolated_v5",
       account_slots: "account_scoped",
       token_refresh: "preserved",
@@ -526,7 +526,7 @@ Deno.test("prompt-cache scope uses three fixed cycles, publishes canonical scope
       effective_model: MODEL,
       reproducible_cycles: 3,
       source: "live_probe",
-      verified_at_ms: provider?.scope && (provider.scope as { verified_at_ms?: unknown }).verified_at_ms,
+      verified_at_ms: provider.scope && (provider.scope as { verified_at_ms?: unknown }).verified_at_ms,
     });
 
     const runtime = kv.values.get(encodeKey(RUNTIME_CONFIG_V2_KEY)) as {
@@ -568,7 +568,7 @@ Deno.test("prompt-cache scope uses three fixed cycles, publishes canonical scope
     };
     assert.equal(evidence.outcome, "completed");
     assert.equal(evidence.cycles?.length, 3);
-    const samples = evidence.cycles?.flatMap((cycle) => cycle.samples ?? []) ?? [];
+    const samples = evidence.cycles.flatMap((cycle) => cycle.samples ?? []);
     assert.equal(samples.length, 30);
     for (const sample of samples) {
       assert.deepEqual(sample.raw_usage, sample.usage);
@@ -1375,7 +1375,7 @@ Deno.test("prompt-cache scope admin trigger requires a current-release Stage 0 b
     assert.equal(response.status, 503);
     const body = (await response.json()) as { error?: { code?: string; message?: string } };
     assert.equal(body.error?.code, "prompt_cache_scope_experiment_unavailable");
-    assert.match(body.error?.message ?? "", /Stage 0 telemetry baseline/);
+    assert.match(body.error.message ?? "", /Stage 0 telemetry baseline/);
     assert.equal(fetchCalls, 0);
   } finally {
     globalThis.fetch = originalFetch;
@@ -1877,7 +1877,7 @@ Deno.test("successful scope promotion atomically extends its same-owner lease", 
       }
     | undefined;
   assert.equal(renewedLease?.owner, lease.owner);
-  const renewedUntilMs = renewedLease?.lease_until_ms;
+  const renewedUntilMs = renewedLease.lease_until_ms;
   if (typeof renewedUntilMs !== "number") throw new Error("successful promotion did not retain its lease");
   assert.equal(renewedUntilMs >= beforePromotionMs + 90_000, true);
   assert.equal(renewedUntilMs > nearExpiryMs, true);

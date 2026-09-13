@@ -323,7 +323,9 @@ Deno.test("passkey inference never waits for a Metered quota refresh", async () 
             const timer = setTimeout(() => {
               reject(new Error("handler waited for Metered quota refresh"));
             }, 500);
-            cancelTimeout = () => clearTimeout(timer);
+            cancelTimeout = () => {
+              clearTimeout(timer);
+            };
           }),
         ]);
         assert.equal(response.status, 503);
@@ -348,7 +350,7 @@ Deno.test("passkey session authenticates as client and admin", async () => {
 
   const clientAuth = await authenticateClient(req);
   assert.equal(clientAuth.ok, true);
-  if (clientAuth.ok) {
+  {
     assert.equal(clientAuth.method.kind, "passkey_session");
     assert.equal(clientAuth.method.handle, user.handle);
     assert.equal(clientAuth.method.credential_count, 1);
@@ -398,7 +400,7 @@ Deno.test("non-admin passkey session authenticates as client but not admin", asy
 
   const clientAuth = await authenticateClient(req);
   assert.equal(clientAuth.ok, true);
-  if (clientAuth.ok) {
+  {
     assert.equal(clientAuth.method.kind, "passkey_session");
     assert.equal(clientAuth.method.handle, user.handle);
     assert.equal(clientAuth.method.is_admin, false);
@@ -444,14 +446,16 @@ Deno.test("Deno Deploy tokens are verified with the Deno API outside deployed ru
       });
       const adminAuth = await authenticateAdmin(req);
       assert.equal(adminAuth.ok, true);
-      if (adminAuth.ok) {
+      {
         assert.equal(adminAuth.is_super_admin, true);
         assert.equal(adminAuth.method.kind, "deno_deploy_token");
       }
 
       const clientAuth = await authenticateClient(req);
       assert.equal(clientAuth.ok, true);
-      if (clientAuth.ok) assert.equal(clientAuth.method.kind, "deno_deploy_token");
+      {
+        assert.equal(clientAuth.method.kind, "deno_deploy_token");
+      }
 
       const whoami = await handleV1Auth(req);
       assert.equal(whoami.status, 200);
@@ -505,7 +509,9 @@ Deno.test("Deno Deploy console tokens are verified against the app page", async 
         });
         const adminAuth = await authenticateAdmin(req);
         assert.equal(adminAuth.ok, true);
-        if (adminAuth.ok) assert.equal(adminAuth.method.kind, "deno_deploy_token");
+        {
+          assert.equal(adminAuth.method.kind, "deno_deploy_token");
+        }
 
         assert.equal(requested.length, 2);
         assert.equal(requested[0].authorization, `Bearer ${token}`);
@@ -549,7 +555,9 @@ Deno.test("Deno Deploy console fallback rejects path-only HTML", async () => {
         });
         const adminAuth = await authenticateAdmin(req);
         assert.equal(adminAuth.ok, false);
-        if (!adminAuth.ok) assert.equal(adminAuth.response.status, 401);
+        {
+          assert.equal(adminAuth.response.status, 401);
+        }
       }
     );
   } finally {
@@ -582,7 +590,9 @@ Deno.test("Deno Deploy tokens do not fall back to the production app slug", asyn
         });
         const adminAuth = await authenticateAdmin(req);
         assert.equal(adminAuth.ok, true);
-        if (adminAuth.ok) assert.equal(adminAuth.method.kind, "deno_deploy_token");
+        {
+          assert.equal(adminAuth.method.kind, "deno_deploy_token");
+        }
 
         assert.deepEqual(requested, ["https://api.deno.com/v1/deployments/dep_test"]);
       }
@@ -1029,14 +1039,16 @@ Deno.test("audience-bound relay cookies authenticate auth checks and admin actio
 
   const clientAuth = await authenticateClient(new Request("https://ai.ubq.fi/v1/models", { headers: { Cookie: cookie, Origin: audienceOrigin } }));
   assert.equal(clientAuth.ok, true);
-  if (clientAuth.ok) {
+  {
     assert.equal(clientAuth.token, token);
     assert.equal(clientAuth.method.kind, "passkey_session");
   }
 
   const adminAuth = await authenticateAdmin(new Request("https://ai.ubq.fi/uos/auth", { headers: { Cookie: cookie, Origin: audienceOrigin } }));
   assert.equal(adminAuth.ok, true);
-  if (adminAuth.ok) assert.equal(adminAuth.token, token);
+  {
+    assert.equal(adminAuth.token, token);
+  }
 
   const { default: handler } = await import("../src/handler.ts");
   const encodedAudience = encodeURIComponent(audienceOrigin);
@@ -1231,7 +1243,7 @@ Deno.test("passkey registration deletes stale handle mapping when a user handle 
   });
 
   assert.equal(saved.ok, true);
-  if (!saved.ok) throw new Error("registration save failed");
+
   assert.equal(saved.user.handle, "new-name");
   assert.equal(kvStore.has(keyToString(passkeyHandleKey("old-name"))), false);
   assert.equal(kvStore.get(keyToString(passkeyHandleKey("new-name"))), user.id);
@@ -1256,7 +1268,7 @@ Deno.test("passkey registration rejects concurrent handle claims", async () => {
   });
 
   assert.equal(saved.ok, false);
-  if (saved.ok) throw new Error("registration save unexpectedly succeeded");
+
   assert.equal(saved.response.status, 409);
   assert.equal(kvStore.has(keyToString(passkeyUserKey("user-race"))), false);
   assert.equal(kvStore.get(keyToString(passkeyHandleKey("race-name"))), "user-other");
@@ -1377,11 +1389,15 @@ Deno.test("unattested GitHub tokens never reach Deno verification", async () => 
 
         const clientAuth = await authenticateClient(req);
         assert.equal(clientAuth.ok, false);
-        if (!clientAuth.ok) assert.equal(clientAuth.response.status, 401);
+        {
+          assert.equal(clientAuth.response.status, 401);
+        }
 
         const adminAuth = await authenticateAdmin(req);
         assert.equal(adminAuth.ok, false);
-        if (!adminAuth.ok) assert.equal(adminAuth.response.status, 401);
+        {
+          assert.equal(adminAuth.response.status, 401);
+        }
       }
     );
   } finally {
@@ -1424,7 +1440,7 @@ Deno.test("relay passkey cookies survive an unattested GitHub bearer on /uos/aut
 
     const adminResult = await authenticateAdmin(request());
     assert.equal(adminResult.ok, true);
-    if (adminResult.ok) {
+    {
       assert.equal(adminResult.method.kind, "passkey_session");
       assert.equal(adminResult.is_super_admin, false);
       assert.equal(adminResult.token, passkeyToken);

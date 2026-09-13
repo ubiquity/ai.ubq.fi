@@ -131,8 +131,8 @@ Deno.test("prompt-cache telemetry gate records invalid usage separately from rep
   const baseline = await readPromptCacheTelemetryBaseline(target, options);
   assert.equal(baseline.aggregate?.invalid, "1");
   assert.equal(baseline.routes.find((route) => route.route === "responses")?.invalid, "1");
-  assert.equal(baseline.aggregate?.reported, "0");
-  assert.equal(baseline.aggregate?.cache_write_reported, "0");
+  assert.equal(baseline.aggregate.reported, "0");
+  assert.equal(baseline.aggregate.cache_write_reported, "0");
 });
 
 Deno.test("prompt-cache telemetry gate fails closed for an unknown release and malformed durable counters", async () => {
@@ -194,7 +194,7 @@ Deno.test("prompt-cache telemetry gate requires aggregate volume, every observed
   assert.equal(eligible.status, "eligible");
   assert.equal(eligible.reason, "eligible");
   assert.equal(eligible.aggregate?.completed, "11000");
-  assert.equal(eligible.aggregate?.reported_coverage, 1);
+  assert.equal(eligible.aggregate.reported_coverage, 1);
   assert.deepEqual(
     eligible.routes.map((route) => [route.route, route.completed, route.reported_coverage_passed, route.cache_write_reported_coverage_passed]),
     [
@@ -211,8 +211,8 @@ Deno.test("prompt-cache telemetry gate requires aggregate volume, every observed
   assert.equal(incompleteCoverage.reason, "route_reported_coverage_below_minimum");
   const chatRoute = incompleteCoverage.routes.find((route) => route.route === "chat.completions");
   assert.equal(chatRoute?.completed, "1006");
-  assert.equal(chatRoute?.reported, "1000");
-  assert.equal(chatRoute?.reported_coverage_passed, false);
+  assert.equal(chatRoute.reported, "1000");
+  assert.equal(chatRoute.reported_coverage_passed, false);
 });
 
 Deno.test("prompt-cache telemetry gate requires complete cache-write coverage and counts a valid zero as present", async () => {

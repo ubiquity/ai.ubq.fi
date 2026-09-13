@@ -507,15 +507,15 @@ Deno.test("banked reset live happy path commits exactly once with a stable durab
   assert.ok(first.quotaGeneration);
   assert.ok(first.idempotencyKeyHash);
   assert.equal(first.record?.state, "verified");
-  assert.equal(first.record?.idempotency_key_hash, first.idempotencyKeyHash);
+  assert.equal(first.record.idempotency_key_hash, first.idempotencyKeyHash);
   assert.equal(provider.redeemInputs[0]?.accountId, "test-account-a");
   assert.match(provider.redeemInputs[0]?.idempotencyKey ?? "", /^uos_ai_codex_reset_v1_/);
 
   const redemptionKey = codexResetRedemptionKey(first.accountIdHash, first.quotaGeneration);
   const durable = await kv.get<CodexResetRedemptionRecord>(redemptionKey);
   assert.equal(durable.value?.state, "verified");
-  assert.equal(durable.value?.provider_receipt_id, "receipt-completed");
-  assert.equal(durable.value?.idempotency_key_hash, first.idempotencyKeyHash);
+  assert.equal(durable.value.provider_receipt_id, "receipt-completed");
+  assert.equal(durable.value.idempotency_key_hash, first.idempotencyKeyHash);
 
   const day = new Date(clock.nowMs).toISOString().slice(0, 10);
   const daily = await kv.get<{ submission_count: number }>(codexResetGlobalDailyKey(day));
@@ -550,7 +550,7 @@ Deno.test("a verified reset from an older routing generation is not reusable", a
   assert.equal(later.kind, "skipped");
   assert.equal(later.reason, "verified_routing_generation_stale");
   assert.ok(later.record);
-  assert.equal(later.record?.routing_generation, firstCandidate.routingGeneration);
+  assert.equal(later.record.routing_generation, firstCandidate.routingGeneration);
   assert.equal(provider.redeemInputs.length, 1);
   assert.equal(provider.commitCount, 1);
 });
@@ -598,7 +598,7 @@ Deno.test("unknown provider outcome is recovered through lookup with the same ke
   assert.equal(recovered.kind, "verified");
   assert.equal(recovered.reason, "verified");
   assert.equal(recovered.record?.state, "verified");
-  assert.equal(recovered.record?.fence, 3);
+  assert.equal(recovered.record.fence, 3);
   assert.equal(provider.redeemInputs.length, 1);
   assert.equal(provider.commitCount, 1);
   assert.equal(provider.lookupInputs.length, 1);
@@ -708,7 +708,7 @@ Deno.test("a malformed truthy verification result remains unknown and cannot aut
   assert.equal(result.kind, "pending");
   assert.equal(result.reason, "verification_response_invalid");
   assert.equal(result.record?.state, "unknown");
-  assert.equal(result.record?.last_error_code, "verification_response_invalid");
+  assert.equal(result.record.last_error_code, "verification_response_invalid");
   assert.equal(provider.commitCount, 1);
   assert.equal(provider.redeemInputs.length, 1);
   assert.equal(provider.verificationInputs.length, 1);
@@ -1081,7 +1081,7 @@ Deno.test("documented terminal outcomes enable one-shot redemption and retain th
       assert.equal(result.kind, "verified");
       assert.equal(result.reason, `redeem_outcome_${testCase.telemetryKind}`);
       assert.equal(result.record?.state, "verified");
-      assert.equal(result.record?.provider_receipt_id, null);
+      assert.equal(result.record.provider_receipt_id, null);
       assert.deepEqual(
         verified.map((fields) => fields.redeem_outcome),
         [testCase.telemetryKind]
@@ -1362,7 +1362,7 @@ Deno.test("a post-submission lease takeover fences the paused owner before provi
   assert.equal(takeover.kind, "pending");
   assert.equal(takeover.reason, "verification_not_applied");
   assert.equal(takeover.record?.state, "unknown");
-  assert.equal(takeover.record?.fence, 2);
+  assert.equal(takeover.record.fence, 2);
   assert.equal(provider.redeemInputs.length, 0);
 
   renewalGate.resolve(undefined);
@@ -2076,7 +2076,7 @@ Deno.test("a stale owner cannot finalize verified after a lease-takeover reconci
   const takeover = await reconcileCodexBankedReset(candidate({ requestId: "stale-owner-verify-takeover" }), deps);
   assert.equal(takeover.kind, "pending");
   assert.equal(takeover.record?.state, "unknown");
-  assert.equal(takeover.record?.fence, 3);
+  assert.equal(takeover.record.fence, 3);
 
   provider.verifyResult = true;
   verifyGate.resolve(undefined);

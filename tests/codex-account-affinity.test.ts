@@ -552,7 +552,7 @@ Deno.test("Codex account-affinity never bypasses an existing quota or banked-res
     await markCodexResponseCompleted(established);
     const initial = await selectCodexRoutingAccounts(pool(one, two), [one, two], nowMs, "gpt-5.6-luna");
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
+
     const blockedAccount = initial.accounts.find((account) => account.auth.account_id === "account-one");
     assert.ok(blockedAccount);
     await markCodexQuotaBlocked(
@@ -577,7 +577,7 @@ Deno.test("completed half-open probes clear routing before slow affinity persist
     installPool(kv, pool(one));
     const initial = await selectCodexRoutingAccounts(pool(one), [one], nowMs, "gpt-5.6-luna");
     assert.equal(initial.kind, "eligible");
-    if (initial.kind !== "eligible") return;
+
     await markCodexQuotaBlocked(
       initial.accounts[0],
       new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {

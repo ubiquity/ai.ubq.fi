@@ -265,7 +265,7 @@ Deno.test("sampler carries named Codex model limits alongside null secondary win
   const accountOne = live.sources.find((source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === 1);
   const accountTwo = live.sources.find((source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === 2);
   assert.equal(accountOne?.windows.secondary, null);
-  assert.deepEqual(accountOne?.additional_rate_limits, [
+  assert.deepEqual(accountOne.additional_rate_limits, [
     {
       limit_name: "GPT-5.3-Codex-Spark",
       metered_feature: "codex_bengalfox",
@@ -297,8 +297,8 @@ Deno.test("sampler carries named Codex model limits alongside null secondary win
   const persisted = await getPersistedProviderCapacityView({ kv: kvStub, now: () => nowMs });
   const persistedAccount = persisted.sources.find((source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === 1);
   const persistedAccountTwo = persisted.sources.find((source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === 2);
-  assert.deepEqual(persistedAccount?.additional_rate_limits, accountOne?.additional_rate_limits);
-  assert.deepEqual(persistedAccountTwo?.additional_rate_limits, accountTwo?.additional_rate_limits);
+  assert.deepEqual(persistedAccount?.additional_rate_limits, accountOne.additional_rate_limits);
+  assert.deepEqual(persistedAccountTwo?.additional_rate_limits, accountTwo.additional_rate_limits);
   assert.equal(JSON.stringify(live).includes("must-not-escape"), false);
   const routingObservation = JSON.stringify(kvStore.get(keyToString(CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY)));
   assert.equal(routingObservation.includes("account-one"), false);
@@ -342,7 +342,7 @@ Deno.test("sampler mirrors a reported Spark limit to an available sibling for th
   const accountOne = live.sources.find((source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === 1);
   const accountTwo = live.sources.find((source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === 2);
   assert.equal(accountOne?.additional_rate_limits.length, 1);
-  assert.deepEqual(accountTwo?.additional_rate_limits, accountOne?.additional_rate_limits);
+  assert.deepEqual(accountTwo?.additional_rate_limits, accountOne.additional_rate_limits);
 
   const storedSnapshot = kvStore.get(keyToString(PROVIDER_CAPACITY_SNAPSHOT_KEY))?.value as
     | {
@@ -353,7 +353,7 @@ Deno.test("sampler mirrors a reported Spark limit to an available sibling for th
 
   const persisted = await getPersistedProviderCapacityView({ kv: kvStub, now: () => nowMs });
   const persistedAccountTwo = persisted.sources.find((source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === 2);
-  assert.deepEqual(persistedAccountTwo?.additional_rate_limits, accountTwo?.additional_rate_limits);
+  assert.deepEqual(persistedAccountTwo?.additional_rate_limits, accountTwo.additional_rate_limits);
   const routingStore = kvStore.get(keyToString(CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY))?.value as
     | {
         observations?: readonly { slot: number; additional_rate_limits: readonly unknown[] }[];
@@ -485,8 +485,8 @@ Deno.test("sampler refresh observes Metered token usage", async () => {
   });
   const current = topup.sources.find((source) => source.source === "metered");
   assert.equal(current?.state, "available");
-  assert.equal(current?.wallet.total_available, 1_750);
-  assert.equal(current?.wallet.total_used, 250);
+  assert.equal(current.wallet.total_available, 1_750);
+  assert.equal(current.wallet.total_used, 250);
   assert.equal(topup.history.length, 2);
   assert.equal(topup.history[0]?.sources[2]?.wallet.total_available, 750);
   assert.equal(topup.history[1]?.sources[2]?.wallet.total_available, 1_750);
@@ -1053,8 +1053,8 @@ Deno.test("capacity endpoint reads persisted state by default and probes only fo
   };
   assert.equal(passiveBody.cache_state, "unavailable");
   assert.equal(passiveBody.prompt_cache?.bucket_ms, PROMPT_CACHE_ANALYTICS_BUCKET_MS);
-  assert.equal(passiveBody.prompt_cache?.buckets?.[0]?.cached_percentage, 50);
-  assert.equal(passiveBody.prompt_cache?.buckets?.[0]?.cache_write_input_tokens, 50);
+  assert.equal(passiveBody.prompt_cache.buckets?.[0]?.cached_percentage, 50);
+  assert.equal(passiveBody.prompt_cache.buckets[0]?.cache_write_input_tokens, 50);
   assert.equal(calls, 0);
 
   const live = await handleProviderCapacity(new Request("https://ai.ubq.fi/admin/providers/capacity?refresh=live"), { kv: kvStub, fetcher, now: () => nowMs });

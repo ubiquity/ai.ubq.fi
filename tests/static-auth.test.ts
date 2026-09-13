@@ -208,7 +208,7 @@ Deno.test("signOut clears a relay cookie without sending an empty bearer header"
     await signOut({ baseUrl: "https://ai.ubq.fi", corsOrigin: audienceOrigin });
     assert.equal(new URL(requestUrl).searchParams.get("cors_origin"), audienceOrigin);
     assert.equal(requestInit?.credentials, "include");
-    assert.equal(new Headers(requestInit?.headers).has("Authorization"), false);
+    assert.equal(new Headers(requestInit.headers).has("Authorization"), false);
   } finally {
     globalThis.fetch = originalFetch;
   }

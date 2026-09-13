@@ -523,7 +523,7 @@ Deno.test("JSON edits normalize case-insensitive inline image data URLs", async 
     ]);
     const tool: Record<string, unknown> | undefined = (nestedBodies[0]?.tools as Record<string, unknown>[] | undefined)?.[0];
     assert.equal(tool?.size, "2048x2048");
-    assert.deepEqual(tool?.input_image_mask, {
+    assert.deepEqual(tool.input_image_mask, {
       image_url: "data:image/png;base64,BA==",
     });
   });

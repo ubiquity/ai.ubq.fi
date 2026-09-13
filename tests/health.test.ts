@@ -107,7 +107,9 @@ const CODEX_AUTH_KEY: Deno.KvKey = ["ubq_ai", "codex_auth"];
 
 Deno.test("getJwtExpMs ignores non-string, empty, and malformed tokens", () => {
   for (const token of [undefined, null, 42, {}, "", "not-a-jwt", "header.%%%.", "header.e30.signature.extra"] as unknown[]) {
-    assert.doesNotThrow(() => assert.equal(getJwtExpMs(token), null));
+    assert.doesNotThrow(() => {
+      assert.equal(getJwtExpMs(token), null);
+    });
   }
 });
 
@@ -140,16 +142,16 @@ Deno.test("passive provider health returns every Codex slot without contacting u
     assert.equal(response.status, 200);
     assert.equal(payload.mode, "passive");
     assert.equal(payload.codex?.account_count, 2);
-    assert.equal(payload.codex?.state, "degraded");
+    assert.equal(payload.codex.state, "degraded");
     assert.deepEqual(
-      payload.codex?.accounts?.map((account) => [account.slot, account.health?.state, account.health?.last_status]),
+      payload.codex.accounts?.map((account) => [account.slot, account.health?.state, account.health?.last_status]),
       [
         [1, "exhausted", 429],
         [2, "invalid", 401],
       ]
     );
     assert.equal(payload.metered?.health?.state, "healthy");
-    assert.equal("balance_credits" in (payload.metered?.quota ?? {}), false);
+    assert.equal("balance_credits" in (payload.metered.quota ?? {}), false);
     assert.equal(text.includes("private-account-a"), false);
     assert.equal(text.includes("private-account-b"), false);
   } finally {
@@ -175,8 +177,8 @@ Deno.test("passive provider health reports configured Cerebras without probing i
     };
     assert.equal(response.status, 200);
     assert.equal(payload.cerebras?.configured, true);
-    assert.equal(payload.cerebras?.health?.state, "healthy");
-    assert.equal(payload.cerebras?.health?.last_status, 200);
+    assert.equal(payload.cerebras.health?.state, "healthy");
+    assert.equal(payload.cerebras.health.last_status, 200);
     assert.equal((await getCerebrasProviderHealth(() => 4_001)).state, "healthy");
   } finally {
     globalThis.fetch = originalFetch;
@@ -224,10 +226,10 @@ Deno.test("admin provider health exposes Surplus identity and honest quota avail
     };
     assert.equal(response.status, 200);
     assert.equal(payload.surplus?.configured, true);
-    assert.equal(payload.surplus?.quota_monitoring_configured, false);
-    assert.equal(payload.surplus?.health?.state, "healthy");
-    assert.equal(payload.surplus?.quota?.available, false);
-    assert.equal(payload.surplus?.quota?.source, "not_reported");
+    assert.equal(payload.surplus.quota_monitoring_configured, false);
+    assert.equal(payload.surplus.health?.state, "healthy");
+    assert.equal(payload.surplus.quota?.available, false);
+    assert.equal(payload.surplus.quota.source, "not_reported");
   } finally {
     if (originalApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
     else Deno.env.set("SURPLUS_API_KEY", originalApiKey);
@@ -542,12 +544,12 @@ Deno.test("active upstream health preserves the provider that finishes before th
       assert.equal(response.status, 503, stalledProvider);
       if (stalledProvider === "codex") {
         assert.equal(payload.probes?.codex?.status, 503);
-        assert.equal(payload.probes?.codex?.error, "Codex models probe timed out.");
-        assert.equal(payload.probes?.metered_quota?.status, 200);
+        assert.equal(payload.probes.codex.error, "Codex models probe timed out.");
+        assert.equal(payload.probes.metered_quota?.status, 200);
       } else {
         assert.equal(payload.probes?.codex?.status, 200);
-        assert.equal(payload.probes?.metered_quota?.status, 503);
-        assert.equal(payload.probes?.metered_quota?.error, "Metered quota probe timed out.");
+        assert.equal(payload.probes.metered_quota?.status, 503);
+        assert.equal(payload.probes.metered_quota.error, "Metered quota probe timed out.");
       }
     }
   } finally {

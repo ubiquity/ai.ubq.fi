@@ -45,7 +45,7 @@ const twelveByteIv = (): Uint8Array<ArrayBuffer> => new Uint8Array([1, 2, 3, 4, 
 
 const expectStored = (result: Awaited<ReturnType<typeof persistEncryptedSentinelReplay>>) => {
   assert.equal(result.status, "stored");
-  if (result.status !== "stored") throw new Error("expected a stored replay capture");
+
   return result;
 };
 
@@ -142,7 +142,7 @@ Deno.test({
       assert.equal(response.status, 403);
       const payload = (await response.json()) as { error?: { message?: string; code?: string } };
       assert.equal(payload.error?.message, "Super admin token required");
-      assert.equal(payload.error?.code, "forbidden");
+      assert.equal(payload.error.code, "forbidden");
     } finally {
       kv.close();
       setKvForTest(null);

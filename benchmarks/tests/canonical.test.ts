@@ -142,10 +142,10 @@ Deno.test("canonical: a fake-transport C run completes a task with guard evidenc
     // The fake model writes without verifying first: the guard rejects the
     // first final and the verification-command recovery satisfies it.
     assert.equal(result.reliability?.final_accepted, true);
-    assert.ok((result.reliability?.guard_rejections ?? 0) >= 1);
-    assert.equal(result.reliability?.unverified_writes, 0);
-    assert.equal(result.reliability?.verification.required, 1);
-    assert.equal(result.reliability?.verification.satisfied, 1);
+    assert.ok(result.reliability.guard_rejections >= 1);
+    assert.equal(result.reliability.unverified_writes, 0);
+    assert.equal(result.reliability.verification.required, 1);
+    assert.equal(result.reliability.verification.satisfied, 1);
     assert.ok(result.metrics.model_calls >= 6);
     assert.ok(result.metrics.output_tokens > 0, "model response tokens must be included in metrics");
     for (const event of events) validateTrajectoryEvent(event);
@@ -195,7 +195,7 @@ Deno.test("canonical: the C-fake matrix succeeds on every manifest with determin
     assert.ok(byId("fail-003").metrics.invalid_tool_calls >= 1); // path: 42 rejected before execution
     for (const result of results) {
       assert.equal(result.reliability?.final_accepted, true, `${result.task_id} final must be accepted`);
-      assert.equal(typeof result.reliability?.state_contract, "string");
+      assert.equal(typeof result.reliability.state_contract, "string");
     }
   } finally {
     Deno.removeSync(runsRoot, { recursive: true });

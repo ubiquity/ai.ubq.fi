@@ -113,7 +113,7 @@ Deno.test("guarded runtime bypass grants local super-admin access only to loopba
 
     const localAuth = await authenticateAdmin(localRequest);
     assert.equal(localAuth.ok, true);
-    if (localAuth.ok) {
+    {
       assert.equal(localAuth.method.kind, "disabled");
       assert.equal(localAuth.is_super_admin, true);
     }
@@ -122,11 +122,15 @@ Deno.test("guarded runtime bypass grants local super-admin access only to loopba
     // Explicit listener bypass also covers clients outside the legacy dev-host list.
     const loopbackClient = await authenticateClient(new Request("http://127.42.9.3/v1/models"));
     assert.equal(loopbackClient.ok, true);
-    if (loopbackClient.ok) assert.equal(loopbackClient.method.kind, "disabled");
+    {
+      assert.equal(loopbackClient.method.kind, "disabled");
+    }
 
     const remoteAuth = await authenticateAdmin(remoteRequest);
     assert.equal(remoteAuth.ok, false);
-    if (!remoteAuth.ok) assert.equal(remoteAuth.response.status, 401);
+    {
+      assert.equal(remoteAuth.response.status, 401);
+    }
 
     const whoami = await handleV1Auth(new Request("http://127.0.0.1/uos/auth"));
     assert.equal(whoami.status, 200);
@@ -141,7 +145,9 @@ Deno.test("guarded runtime bypass grants local super-admin access only to loopba
   assert.equal(isAdminAuthDisabledForRequest(localRequest), false);
   const defaultAuth = await authenticateAdmin(localRequest);
   assert.equal(defaultAuth.ok, false);
-  if (!defaultAuth.ok) assert.equal(defaultAuth.response.status, 401);
+  {
+    assert.equal(defaultAuth.response.status, 401);
+  }
 
   const defaultWhoami = await handleV1Auth(new Request("http://127.0.0.1/uos/auth"));
   assert.equal(defaultWhoami.status, 200);
@@ -151,5 +157,7 @@ Deno.test("guarded runtime bypass grants local super-admin access only to loopba
 
   const otherLoopbackClient = await authenticateClient(new Request("http://127.42.9.3/v1/models"));
   assert.equal(otherLoopbackClient.ok, false);
-  if (!otherLoopbackClient.ok) assert.equal(otherLoopbackClient.response.status, 401);
+  {
+    assert.equal(otherLoopbackClient.response.status, 401);
+  }
 });

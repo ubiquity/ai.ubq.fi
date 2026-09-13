@@ -341,7 +341,7 @@ Deno.test({
         clientObservation
       );
       assert.equal(stored.status, "stored");
-      if (stored.status !== "stored") throw new Error("expected a stored capture");
+
       const originalExpiry = stored.manifest.expires_at_ms;
 
       const duplicate = await persistEncryptedSentinelReplay(
@@ -357,7 +357,7 @@ Deno.test({
         clientObservation
       );
       assert.equal(duplicate.status, "duplicate");
-      if (duplicate.status !== "duplicate") throw new Error("expected a duplicate capture");
+
       assert.deepEqual(duplicate.manifest_key, stored.manifest_key, "a duplicate must reference the winning manifest");
 
       const manifestKeys: Deno.KvKey[] = [];
@@ -438,7 +438,7 @@ Deno.test({
         clientObservation
       );
       assert.equal(stored.status, "stored");
-      if (stored.status !== "stored") throw new Error("expected a stored capture");
+
       const { rows } = await listSentinelIncidentIndexRows(kv, { limit: 20 });
       assert.equal(rows.length, 1);
       const row = rows[0];
@@ -544,7 +544,6 @@ Deno.test({
         clientObservation
       );
       assert.equal(storedA.status, "stored");
-      if (storedA.status !== "stored") throw new Error("expected a stored capture A");
 
       await recordSentinelIncidentIndexObservation(kv, {
         endpoint: inputB.endpoint,
@@ -566,7 +565,6 @@ Deno.test({
         clientObservation
       );
       assert.equal(storedB.status, "stored");
-      if (storedB.status !== "stored") throw new Error("expected a stored capture B");
 
       const afterB = (await listSentinelIncidentIndexRows(kv, { limit: 1 })).rows[0];
       assert.equal(afterB.failing_revision, shaB, "freshly captured evidence carries its own revision");
@@ -596,7 +594,7 @@ Deno.test({
         clientObservation
       );
       assert.equal(duplicateA.status, "duplicate");
-      if (duplicateA.status !== "duplicate") throw new Error("expected a duplicate of capture A");
+
       assert.deepEqual(duplicateA.manifest_key, storedA.manifest_key, "duplicate must reference the winning A manifest");
 
       const row = (await listSentinelIncidentIndexRows(kv, { limit: 1 })).rows[0];
@@ -622,7 +620,7 @@ Deno.test({
         offset += part.byteLength;
       }
       const digestA = encodeHex(new Uint8Array(await crypto.subtle.digest("SHA-256", merged)));
-      assert.equal(row.evidence_ref?.digest, digestA, "duplicate digest must be capture A's exact ciphertext digest");
+      assert.equal(row.evidence_ref.digest, digestA, "duplicate digest must be capture A's exact ciphertext digest");
 
       // Missing winning evidence fails closed and never erases useful evidence.
       const manifestKeyA = storedA.manifest_key;
@@ -681,7 +679,7 @@ Deno.test({
         clientObservation
       );
       assert.equal(stored.status, "stored");
-      if (stored.status !== "stored") throw new Error("expected a stored capture");
+
       const duplicate = await persistEncryptedSentinelReplay(
         input,
         observation,
@@ -1106,7 +1104,6 @@ Deno.test({
         clientObservationFor(cases[0].status)
       );
       assert.equal(stored.status, "stored");
-      if (stored.status !== "stored") throw new Error("expected a stored capture");
 
       // Actual authenticated handler read: even a hostile admin request origin
       // cannot influence the emitted provenance.

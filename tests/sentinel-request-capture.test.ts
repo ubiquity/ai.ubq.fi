@@ -241,7 +241,7 @@ Deno.test({
         ciphertextOffset += part.byteLength;
       }
       const actualDigest = encodeHex(new Uint8Array(await crypto.subtle.digest("SHA-256", ciphertext)));
-      assert.equal(incident.evidence_ref?.digest, actualDigest, "evidence digest is the actual ciphertext SHA-256");
+      assert.equal(incident.evidence_ref.digest, actualDigest, "evidence digest is the actual ciphertext SHA-256");
       assert.deepEqual(scopedCapture.manifest, capture.manifest);
       const scopedPlaintext = await decryptExportedSentinelReplay(scopedCapture, keyBytes);
       assert.deepEqual([...scopedPlaintext.body], [...CAPTURE_BODY]);

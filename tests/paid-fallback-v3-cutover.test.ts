@@ -144,7 +144,7 @@ const reservationInput = (requestId: string, createdAtMs: number) =>
 const reserve = async (requestId: string, createdAtMs: number) => {
   const decision = await reservePaidFallback(reservationInput(requestId, createdAtMs));
   assert.equal(decision.kind, "reserved");
-  if (decision.kind !== "reserved") throw new Error("expected paid fallback reservation");
+
   return decision.reservation;
 };
 
@@ -159,8 +159,8 @@ const assertLegacyStateUnchanged = async (expected: ApiKeyRecord): Promise<void>
   const hashEntry = await memoryKv.get<Record<string, unknown>>(apiKeyHashKey(keyHash));
   assert.deepEqual(idEntry.value, expected);
   assert.equal(hashEntry.value?.paid_fallback_spent_microcredits, expected.paid_fallback_spent_microcredits);
-  assert.equal(hashEntry.value?.paid_fallback_reserved_microcredits, expected.paid_fallback_reserved_microcredits);
-  assert.equal(hashEntry.value?.paid_fallback_reservation_request_id, expected.paid_fallback_reservation_request_id);
+  assert.equal(hashEntry.value.paid_fallback_reserved_microcredits, expected.paid_fallback_reserved_microcredits);
+  assert.equal(hashEntry.value.paid_fallback_reservation_request_id, expected.paid_fallback_reservation_request_id);
   assert.equal(await countPrefix(legacyRequestLogPrefix), 0);
 };
 
@@ -254,8 +254,8 @@ Deno.test("Metered runtime lifecycle hard-cuts legacy counters and request logs 
 
     const window = await memoryKv.get<PaidFallbackWindowV3>(paidFallbackWindowV3Key(keyId, terminalReservation.window_reset_at_ms));
     assert.equal(window.value?.settled_microcredits, 0);
-    assert.equal(window.value?.reserved_microcredits, 750_000);
-    assert.equal(window.value?.pending_count, 3);
+    assert.equal(window.value.reserved_microcredits, 750_000);
+    assert.equal(window.value.pending_count, 3);
     await assertLegacyStateUnchanged(record);
   } finally {
     Deno.env.get = originalEnvGet;

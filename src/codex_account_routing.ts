@@ -2532,6 +2532,30 @@ type CodexRoutingAccumulation = Readonly<{
   hasUpstreamTimeoutBlock: boolean;
 }>;
 
+type CodexRoutingAccumulator = {
+  available: RoutingAccount[];
+  blockedAccounts: CodexBlockedRoutingAccount[];
+  skipped: number[];
+  retryAt: number | null;
+  hasQuotaBlock: boolean;
+  hasUpstreamTimeoutBlock: boolean;
+};
+
+/** Fold one evaluated account into the running selection accumulator. */
+const foldCodexRoutingEvaluation = (accumulator: CodexRoutingAccumulator, evaluated: CodexRoutingAccountEvaluation): void => {
+  if (evaluated.routedAccount !== null) {
+    accumulator.available.push(evaluated.routedAccount);
+    return;
+  }
+  if (evaluated.skippedSlot !== null) accumulator.skipped.push(evaluated.skippedSlot);
+  if (evaluated.blockedCircuit === "upstream_timeout") accumulator.hasUpstreamTimeoutBlock = true;
+  if (evaluated.blockedCircuit === "quota") accumulator.hasQuotaBlock = true;
+  if (evaluated.retryAtMs !== null) {
+    accumulator.retryAt = accumulator.retryAt === null ? evaluated.retryAtMs : Math.min(accumulator.retryAt, evaluated.retryAtMs);
+  }
+  if (evaluated.blockedAccount !== null) accumulator.blockedAccounts.push(evaluated.blockedAccount);
+};
+
 /** Accumulate every ordered account's routing outcome, preserving selection order. */
 const accumulateCodexRoutingAccounts = (
   state: CodexAccountRoutingState,
@@ -2541,28 +2565,21 @@ const accumulateCodexRoutingAccounts = (
   observationsByAccount: ReadonlyMap<string, CodexCapacityRoutingObservation>,
   now: number
 ): CodexRoutingAccumulation => {
-  const available: RoutingAccount[] = [];
-  const blockedAccounts: CodexBlockedRoutingAccount[] = [];
-  const skipped: number[] = [];
-  let retryAt: number | null = null;
-  let hasQuotaBlock = false;
-  let hasUpstreamTimeoutBlock = false;
+  const accumulator: CodexRoutingAccumulator = {
+    available: [],
+    blockedAccounts: [],
+    skipped: [],
+    retryAt: null,
+    hasQuotaBlock: false,
+    hasUpstreamTimeoutBlock: false,
+  };
   for (const auth of orderedAccounts) {
     const mapped = byId.get(auth.account_id);
     if (!mapped) continue;
-    const evaluated = evaluateCodexRoutingAccount(state, auth, mapped, model, observationsByAccount, now);
-    if (evaluated.routedAccount !== null) {
-      available.push(evaluated.routedAccount);
-      continue;
-    }
-    if (evaluated.skippedSlot !== null) skipped.push(evaluated.skippedSlot);
-    if (evaluated.blockedCircuit === "upstream_timeout") hasUpstreamTimeoutBlock = true;
-    if (evaluated.blockedCircuit === "quota") hasQuotaBlock = true;
-    if (evaluated.retryAtMs !== null) retryAt = retryAt === null ? evaluated.retryAtMs : Math.min(retryAt, evaluated.retryAtMs);
-    if (evaluated.blockedAccount !== null) blockedAccounts.push(evaluated.blockedAccount);
+    foldCodexRoutingEvaluation(accumulator, evaluateCodexRoutingAccount(state, auth, mapped, model, observationsByAccount, now));
   }
-  available.sort(compareRoutingAccountsByHeadroom);
-  return { available, blockedAccounts, skipped, retryAt, hasQuotaBlock, hasUpstreamTimeoutBlock };
+  accumulator.available.sort(compareRoutingAccountsByHeadroom);
+  return { ...accumulator };
 };
 
 const classifyCodexRouteSelection = (accumulated: CodexRoutingAccumulation): RouteSelection => {

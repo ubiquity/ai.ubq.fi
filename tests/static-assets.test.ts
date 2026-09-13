@@ -566,7 +566,7 @@ Deno.test("agent discovery documents are served with useful media types", async 
   const openapi = await handleStaticAsset("/openapi.json");
 
   assert.equal(llms?.status, 200);
-  assert.equal(llms?.headers.get("content-type"), "text/plain; charset=utf-8");
+  assert.equal(llms.headers.get("content-type"), "text/plain; charset=utf-8");
   assert.ok(llms, "/llms.txt must be publicly served");
   assert.match(await llms.text(), /https:\/\/ai\.ubq\.fi\/openapi\.json/);
   assert.equal(llmsFull?.headers.get("content-type"), "text/plain; charset=utf-8");
@@ -677,7 +677,7 @@ Deno.test("trust pages and crawl artifacts are public, substantial, and well for
   for (const path of ["/developers", "/about", "/contact", "/privacy"]) {
     const response = await handleStaticAsset(path);
     assert.equal(response?.status, 200, `${path} should be public`);
-    assert.equal(response?.headers.get("content-type"), "text/html; charset=utf-8");
+    assert.equal(response.headers.get("content-type"), "text/html; charset=utf-8");
     assert.ok(response, `${path} should be public`);
     const body = await response.text();
     assert.ok(stripHtmlTags(body).replace(/\s+/g, " ").trim().length >= 500, `${path} should have real text`);
@@ -687,9 +687,9 @@ Deno.test("trust pages and crawl artifacts are public, substantial, and well for
   const sitemap = await handleStaticAsset("/sitemap.xml");
   assert.ok(robots, "/robots.txt should be public");
   assert.ok(sitemap, "/sitemap.xml should be public");
-  assert.equal(robots?.headers.get("content-type"), "text/plain; charset=utf-8");
+  assert.equal(robots.headers.get("content-type"), "text/plain; charset=utf-8");
   assert.match(await robots.text(), /Sitemap: https:\/\/ai\.ubq\.fi\/sitemap\.xml/);
-  assert.equal(sitemap?.headers.get("content-type"), "application/xml; charset=utf-8");
+  assert.equal(sitemap.headers.get("content-type"), "application/xml; charset=utf-8");
   const sitemapText = await sitemap.text();
   assert.match(sitemapText, /^<\?xml version="1\.0" encoding="UTF-8"\?>/);
   for (const path of ["", "/developers", "/docs", "/about", "/contact", "/privacy"]) {

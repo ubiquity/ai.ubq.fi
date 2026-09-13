@@ -122,7 +122,7 @@ Deno.test("reliability: the runner attaches a validated summary to every result"
       fixturesDir: FIXTURES_DIR,
     });
     assert.equal(result.reliability?.phase, "verifying");
-    assert.equal(result.reliability?.verification.required, 1);
+    assert.equal(result.reliability.verification.required, 1);
     // The result record round-trips through the schema validator.
     validateBenchmarkResult(result);
   } finally {

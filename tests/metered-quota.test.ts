@@ -385,7 +385,7 @@ Deno.test("Metered quota cache serves fresh state without an upstream request", 
   });
   assert.equal(fetches, 0);
   assert.equal(snapshot?.cache_state, "fresh");
-  assert.equal(snapshot?.remaining_percent, 100);
+  assert.equal(snapshot.remaining_percent, 100);
 });
 
 Deno.test("Metered quota forced refresh bypasses a fresh cached state", async () => {
@@ -416,7 +416,7 @@ Deno.test("Metered quota cache marks an invalidated observation stale", async ()
   });
 
   assert.equal(snapshot?.cache_state, "stale");
-  assert.equal(snapshot?.remaining_percent, 100);
+  assert.equal(snapshot.remaining_percent, 100);
 });
 
 Deno.test("Metered quota invalidation forces a fresh account observation", async () => {
@@ -462,11 +462,11 @@ Deno.test("Metered quota refresh stores a new observation and computes its perce
     createLeaseOwner: () => "refresh-owner",
   });
   assert.equal(snapshot?.cache_state, "refreshed");
-  assert.equal(snapshot?.unlimited_quota, true);
-  assert.equal(snapshot?.state.total_available, -53_413);
-  assert.equal(snapshot?.total_used, 52_868);
-  assert.equal(snapshot?.balance_credits, null);
-  assert.equal(snapshot?.remaining_percent, null);
+  assert.equal(snapshot.unlimited_quota, true);
+  assert.equal(snapshot.state.total_available, -53_413);
+  assert.equal(snapshot.total_used, 52_868);
+  assert.equal(snapshot.balance_credits, null);
+  assert.equal(snapshot.remaining_percent, null);
   assert.equal(calls.length, 1);
 });
 

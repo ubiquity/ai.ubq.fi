@@ -48,7 +48,7 @@ Deno.test("retry: the ledger rejects a repeat after a deterministic failure", ()
   ledger.observe(identity, { ok: false, error_code: "patch_failed" }, 0);
   const rejected = ledger.observe(identity, { ok: false, error_code: "patch_failed" }, 1);
   assert.equal(rejected?.retry, false);
-  assert.equal(rejected?.reason, "not_retryable");
+  assert.equal(rejected.reason, "not_retryable");
   const summary = ledger.summary();
   assert.ok(summary.rejected >= 1 && summary.byReason.not_retryable === 1);
 });

@@ -626,12 +626,16 @@ Deno.test("GitHub quota lookup failures do not fall back to relay passkey cookie
   try {
     const initial = await authenticateClient(await request());
     assert.equal(initial.ok, true);
-    if (initial.ok) assert.equal(initial.method.kind, "github_token");
+    {
+      assert.equal(initial.method.kind, "github_token");
+    }
 
     kv.failKernelQuotaReads = true;
     const unavailable = await authenticateClient(await request());
     assert.equal(unavailable.ok, false);
-    if (!unavailable.ok) assert.equal(unavailable.response.status, 503);
+    {
+      assert.equal(unavailable.response.status, 503);
+    }
   } finally {
     kv.failKernelQuotaReads = false;
     globalThis.fetch = originalFetch;
@@ -685,18 +689,24 @@ Deno.test("GitHub HTTP verification failures do not fall back to relay passkey c
 
     const rejected = await authenticateClient(await request("rejected"));
     assert.equal(rejected.ok, true);
-    if (rejected.ok) assert.equal(rejected.method.kind, "passkey_session");
+    {
+      assert.equal(rejected.method.kind, "passkey_session");
+    }
 
     const adminRejected = await authenticateAdmin(await request("admin_rejected"));
     assert.equal(adminRejected.ok, true);
-    if (adminRejected.ok) assert.equal(adminRejected.method.kind, "passkey_session");
+    {
+      assert.equal(adminRejected.method.kind, "passkey_session");
+    }
 
     githubResponse = new Response(null, { status: 200 });
     kv.resetCounts();
     const adminValidRequest = await request("admin_valid");
     const adminValid = await authenticateAdmin(adminValidRequest);
     assert.equal(adminValid.ok, false);
-    if (!adminValid.ok) assert.equal(adminValid.response.status, 401);
+    {
+      assert.equal(adminValid.response.status, 401);
+    }
     assert.equal(
       kv.readKeys.some((key) => key[0] === "uos_ai" && key[1] === "kernel_quota" && key[2] === "v2"),
       false,
@@ -711,7 +721,9 @@ Deno.test("GitHub HTTP verification failures do not fall back to relay passkey c
     githubResponse = new Response(null, { status: 503 });
     const uncachedClient = await authenticateClient(await request("admin_valid"));
     assert.equal(uncachedClient.ok, false);
-    if (!uncachedClient.ok) assert.equal(uncachedClient.response.status, 502);
+    {
+      assert.equal(uncachedClient.response.status, 502);
+    }
 
     const unavailableResponses = [
       new Response(null, { status: 408 }),
@@ -729,11 +741,13 @@ Deno.test("GitHub HTTP verification failures do not fall back to relay passkey c
       githubResponse = response;
       const unavailable = await authenticateClient(await request(`unavailable_${index}`));
       assert.equal(unavailable.ok, false, `GitHub status ${response.status}`);
-      if (!unavailable.ok) assert.equal(unavailable.response.status, 502, `GitHub status ${response.status}`);
+      {
+        assert.equal(unavailable.response.status, 502, `GitHub status ${response.status}`);
+      }
 
       const adminUnavailable = await authenticateAdmin(await request(`admin_unavailable_${index}`));
       assert.equal(adminUnavailable.ok, false, `Admin GitHub status ${response.status}`);
-      if (!adminUnavailable.ok) {
+      {
         assert.equal(adminUnavailable.response.status, 502, `Admin GitHub status ${response.status}`);
       }
     }
@@ -855,7 +869,7 @@ Deno.test("V3 reservations release validation failures before any provider dispa
     const released = [...kv.values.entries()].find(([key]) => key.includes(JSON.stringify(API_KEY_USAGE_V3_REQUEST_PREFIX).slice(1, -1)))?.[1] as
       { state?: string; release_reason?: string } | undefined;
     assert.equal(released?.state, "released");
-    assert.equal(released?.release_reason, "route_completed_without_provider_dispatch");
+    assert.equal(released.release_reason, "route_completed_without_provider_dispatch");
 
     assert.equal((await handler(request(token))).status, 200);
     assert.equal(fetchCalls, 1);
@@ -872,7 +886,6 @@ Deno.test("V3 dispatch is idempotent across retries and remains consumed after p
     kv: kv as unknown as Deno.Kv,
   });
   assert.equal(admission.ok, true);
-  if (!admission.ok) return;
 
   await admission.reservation.beforeProviderDispatch("chatgpt_codex");
   await admission.reservation.beforeProviderDispatch("metered");
@@ -886,8 +899,8 @@ Deno.test("V3 dispatch is idempotent across retries and remains consumed after p
   const requestRecord = kv.values.get(encodeKey(apiKeyUsageV3RequestKey(policy, "request-dispatch-once"))) as
     { state?: string; provider?: string; dispatched_at_ms?: number | null } | undefined;
   assert.equal(requestRecord?.state, "dispatched");
-  assert.equal(requestRecord?.provider, "chatgpt_codex");
-  assert.equal(typeof requestRecord?.dispatched_at_ms, "number");
+  assert.equal(requestRecord.provider, "chatgpt_codex");
+  assert.equal(typeof requestRecord.dispatched_at_ms, "number");
 });
 
 Deno.test("V3 cancellation during the Codex dispatch commit releases quota before fetch", async () => {
@@ -972,10 +985,10 @@ Deno.test("V3 admission reclaims expired reservations and preserves dispatch ide
     nowMs,
   });
   assert.equal(admission.ok, true);
-  if (!admission.ok) return;
+
   const expired = kv.values.get(encodeKey(apiKeyUsageV3RequestKey(policy, expiredRequestId))) as { state?: string; release_reason?: string } | undefined;
   assert.equal(expired?.state, "released");
-  assert.equal(expired?.release_reason, "lease_expired");
+  assert.equal(expired.release_reason, "lease_expired");
   assert.equal(usageWindow(policy).reserved_requests, 1);
 
   await admission.reservation.release();
@@ -1391,7 +1404,7 @@ Deno.test("provider dispatch commits API-key V3 while kernel completion writes o
         }
       | undefined;
     assert.equal(reservedKernelWindow?.usage_requests, 0);
-    assert.equal(reservedKernelWindow?.reserved_requests, 1);
+    assert.equal(reservedKernelWindow.reserved_requests, 1);
 
     const body = response.text();
     const upstreamController = upstream.controller;
@@ -1409,7 +1422,7 @@ Deno.test("provider dispatch commits API-key V3 while kernel completion writes o
         }
       | undefined;
     assert.equal(kernelWindow?.usage_requests, 1);
-    assert.equal(kernelWindow?.reserved_requests, 0);
+    assert.equal(kernelWindow.reserved_requests, 0);
 
     let imageFetches = 0;
     globalThis.fetch = () => {
@@ -1465,7 +1478,7 @@ Deno.test("provider dispatch commits API-key V3 while kernel completion writes o
         }
       | undefined;
     assert.equal(kernelWindowAfterImage?.usage_requests, 2);
-    assert.equal(kernelWindowAfterImage?.reserved_requests, 0);
+    assert.equal(kernelWindowAfterImage.reserved_requests, 0);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1542,7 +1555,7 @@ Deno.test("Kernel quota reconstructs reservations after an older writer erases t
     kv: kv as unknown as Deno.Kv,
   });
   assert.equal(first.ok, true);
-  if (!first.ok) return;
+
   const windowKey = kernelOrgWindowKey(owner);
   const reservedWindow = kv.values.get(encodeKey(windowKey)) as Record<string, unknown>;
   assert.equal(reservedWindow.reserved_requests, 1);
@@ -1562,7 +1575,9 @@ Deno.test("Kernel quota reconstructs reservations after an older writer erases t
     kv: kv as unknown as Deno.Kv,
   });
   assert.equal(blocked.ok, false);
-  if (!blocked.ok) assert.equal(blocked.response.status, 429);
+  {
+    assert.equal(blocked.response.status, 429);
+  }
 
   await first.reservation.release("mixed_revision_test_complete");
   const repairedWindow = kv.values.get(encodeKey(windowKey)) as {
@@ -1737,7 +1752,7 @@ Deno.test("Kernel quota reservation fails closed when KV is unavailable", async 
     kv: null,
   });
   assert.equal(decision.ok, false);
-  if (decision.ok) return;
+
   assert.equal(decision.response.status, 503);
 });
 
@@ -1758,7 +1773,7 @@ Deno.test("Kernel quota rejects malformed effective-scope policy records", async
     kv: kv as unknown as Deno.Kv,
   });
   assert.equal(decision.ok, false);
-  if (decision.ok) return;
+
   assert.equal(decision.response.status, 503);
   assert.equal(kv.values.has(encodeKey(kernelOrgWindowKey(owner))), false);
 });
@@ -1787,7 +1802,7 @@ Deno.test("Kernel quota CAS-checks repo-policy absence before org admission", as
     kv: kv as unknown as Deno.Kv,
   });
   assert.equal(decision.ok, false);
-  if (decision.ok) return;
+
   assert.equal(decision.response.status, 503);
   assert.equal(kv.values.has(encodeKey(kernelOrgWindowKey(owner))), false);
 });
@@ -1804,7 +1819,7 @@ Deno.test("Kernel quota CAS-checks default policy entries before admission", asy
     kv: kv as unknown as Deno.Kv,
   });
   assert.equal(decision.ok, false);
-  if (decision.ok) return;
+
   assert.equal(decision.response.status, 429);
   assert.equal(kv.values.has(encodeKey(kernelOrgWindowKey(owner))), false);
 });
@@ -1822,7 +1837,7 @@ Deno.test("Kernel quota renews an active reservation and aborts if renewal canno
     renewalIntervalMs: 5,
   });
   assert.equal(decision.ok, true);
-  if (!decision.ok) return;
+
   const window = kv.values.get(encodeKey(kernelOrgWindowKey(owner))) as { created_at_ms: number };
   const reservationKey = kernelOrgReservationKey(owner, window.created_at_ms, requestId);
   const initialLease = (kv.values.get(encodeKey(reservationKey)) as { lease_expires_at_ms: number }).lease_expires_at_ms;
@@ -1842,7 +1857,7 @@ Deno.test("Kernel quota renews an active reservation and aborts if renewal canno
     renewalIntervalMs: 5,
   });
   assert.equal(failingDecision.ok, true);
-  if (!failingDecision.ok) return;
+
   kv.failKernelQuotaReads = true;
   await waitFor(() => failingDecision.reservation.signal.aborted, "Kernel lease renewal fail-closed abort");
   kv.failKernelQuotaReads = false;
@@ -1859,7 +1874,7 @@ Deno.test("Kernel quota lease expiry aborts independently while a renewal read h
     renewalIntervalMs: 5,
   });
   assert.equal(decision.ok, true);
-  if (!decision.ok) return;
+
   let unblockRead!: () => void;
   let readUnblocked = false;
   kv.kernelQuotaReadGate = new Promise<void>((resolve) => {
@@ -1886,7 +1901,7 @@ Deno.test("Kernel quota retries failed settlement and rejects terminal-state cha
     nowMs: Date.now() - KERNEL_QUOTA_RESERVATION_LEASE_MS + 80,
   });
   assert.equal(decision.ok, true);
-  if (!decision.ok) return;
+
   const window = kv.values.get(encodeKey(kernelOrgWindowKey(owner))) as {
     created_at_ms: number;
     usage_requests?: number;
@@ -1935,7 +1950,7 @@ Deno.test("Kernel quota blocks reset and deletion while a reservation is active"
     kv: kv as unknown as Deno.Kv,
   });
   assert.equal(decision.ok, true);
-  if (!decision.ok) return;
+
   assert.equal(await setKernelOrgUsageLimit(owner, 5, { resetUsage: true }), null);
   assert.equal(await deleteKernelOrgUsageLimit(owner), "conflict");
   await decision.reservation.release("test_cleanup");
@@ -1953,7 +1968,7 @@ Deno.test("Kernel quota blocks repo override creation while its effective org re
     kv: kv as unknown as Deno.Kv,
   });
   assert.equal(decision.ok, true);
-  if (!decision.ok) return;
+
   assert.equal(await setKernelUsageLimit(owner, repo, 1), null);
   assert.equal(kv.values.has(encodeKey(kernelRepoPolicyKey(owner, repo))), false);
   await decision.reservation.release("test_cleanup");
@@ -1968,7 +1983,7 @@ Deno.test("Kernel default-window cutover blocks active default-backed reservatio
     kv: kv as unknown as Deno.Kv,
   });
   assert.equal(decision.ok, true);
-  if (!decision.ok) return;
+
   const updateDefaults = () =>
     handleAdminDefaults(
       new Request("https://ai.ubq.fi/admin/defaults", {
@@ -1996,7 +2011,7 @@ Deno.test("Kernel quota preserves the requested terminal state after natural win
     kv: kv as unknown as Deno.Kv,
   });
   assert.equal(decision.ok, true);
-  if (!decision.ok) return;
+
   const originalWindow = kv.values.get(encodeKey(kernelOrgWindowKey(owner))) as Record<string, unknown> & {
     created_at_ms: number;
   };
@@ -2742,12 +2757,12 @@ Deno.test("paid fallback releases its dispatch intent when metered quota admissi
         }
       | undefined;
     assert.equal(stored?.dispatch_state, "not_dispatched");
-    assert.equal(stored?.terminal_state, "cancelled");
-    assert.equal(stored?.billing_state, "not_billed");
+    assert.equal(stored.terminal_state, "cancelled");
+    assert.equal(stored.billing_state, "not_billed");
     const window = [...kv.values.entries()].find(([key]) => key.includes(`"paid_fallback","v3","window","${keyId}"`))?.[1] as
       { reserved_microcredits?: number; pending_count?: number } | undefined;
     assert.equal(window?.reserved_microcredits, 0);
-    assert.equal(window?.pending_count, 0);
+    assert.equal(window.pending_count, 0);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");

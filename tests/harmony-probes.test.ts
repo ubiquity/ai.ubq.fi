@@ -142,8 +142,8 @@ Deno.test("reasoning effort probe runs deterministically through the fake transp
   assert.equal(result.outcome, "ok");
   assert.equal(result.turns.length, 1);
   assert.equal(result.turns[0].response?.reasoningPresent, true);
-  assert.equal(result.turns[0].response?.reasoningChars, 18); // "Simple arithmetic."
-  assert.equal(result.turns[0].response?.contentPreview, "4");
+  assert.equal(result.turns[0].response.reasoningChars, 18); // "Simple arithmetic."
+  assert.equal(result.turns[0].response.contentPreview, "4");
   assert.deepEqual(result.turns[0].request?.roles, ["user"]);
   assert.equal(result.durationMs, 0);
 });
@@ -157,8 +157,8 @@ Deno.test("generic tool sequence reproduces call/result shape and replays the re
   assert.equal(result.outcome, "ok");
   const [first, second] = result.turns;
   assert.equal(first.response?.toolCalls.length, 1);
-  assert.equal(first.response?.toolCalls[0].name, "get_weather");
-  assert.equal(first.response?.toolCalls[0].argumentsJsonValid, true);
+  assert.equal(first.response.toolCalls[0].name, "get_weather");
+  assert.equal(first.response.toolCalls[0].argumentsJsonValid, true);
   assert.equal(second.response?.contentPresent, true);
   // The second request replays assistant tool_calls plus a tool result, never reasoning.
   const secondMessages = bodies[1].messages as Record<string, unknown>[];
@@ -243,7 +243,7 @@ Deno.test("probe results are sanitized: no prompts, reasoning, keys or observati
     for (const turn of result.turns) {
       assert.ok((turn.response?.contentPreview?.length ?? 0) <= 120);
       assert.equal(turn.request?.model, "gpt-oss-120b");
-      if (turn.request !== null && turn.request.style === "classifier") {
+      if (turn.request.style === "classifier") {
         assert.equal(turn.request.tools, null);
         assert.equal(turn.request.responseFormat, "none");
         assert.equal(turn.request.maxCompletionTokens, 128);

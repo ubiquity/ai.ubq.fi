@@ -44,10 +44,10 @@ Deno.test("recent model context resolves provider aliases by model class", () =>
   for (const [model, modelClass, contextWindow, autoCompact] of cases) {
     const resolved = recentModelContextFor(model);
     assert.equal(resolved?.model_class, modelClass, model);
-    assert.equal(resolved?.context_window_tokens, contextWindow, model);
-    assert.equal(resolved?.max_context_window_tokens, contextWindow, model);
-    assert.equal(resolved?.auto_compact_token_limit_tokens, autoCompact, model);
-    assert.equal(resolved?.effective_context_window_percent, CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT, model);
+    assert.equal(resolved.context_window_tokens, contextWindow, model);
+    assert.equal(resolved.max_context_window_tokens, contextWindow, model);
+    assert.equal(resolved.auto_compact_token_limit_tokens, autoCompact, model);
+    assert.equal(resolved.effective_context_window_percent, CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT, model);
   }
 });
 
@@ -73,9 +73,9 @@ Deno.test("native context metadata takes precedence over class fallbacks", () =>
     effective_context_window_percent: 95,
   });
   assert.equal(resolved?.context_window_tokens, 272_000);
-  assert.equal(resolved?.max_context_window_tokens, 1_000_000);
-  assert.equal(resolved?.auto_compact_token_limit_tokens, 222_000);
-  assert.equal(resolved?.effective_context_window_percent, 95);
+  assert.equal(resolved.max_context_window_tokens, 1_000_000);
+  assert.equal(resolved.auto_compact_token_limit_tokens, 222_000);
+  assert.equal(resolved.effective_context_window_percent, 95);
 });
 
 Deno.test("native auto-compaction thresholds stay within the active window", () => {

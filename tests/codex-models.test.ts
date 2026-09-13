@@ -84,12 +84,12 @@ Deno.test("extractCodexModelsFromText parses slugs and reasoning levels", () => 
     'codex_cli_rs/0.99.0 {"slug":"gpt-5.2-codex","context_window":272000,"max_context_window":1000000,"auto_compact_token_limit":null,"supported_reasoning_levels":[{"effort":null},{"effort":"low"},{"effort":"high"},{"effort":"ultra"}]}';
   const extracted = extractCodexModelsFromText(text);
   assert.ok(extracted);
-  assert.equal(extracted?.clientVersion, "0.99.0");
-  assert.equal(extracted?.models[0]?.slug, "gpt-5.2-codex");
-  assert.equal(extracted?.models[0]?.context_window, 272000);
-  assert.equal(extracted?.models[0]?.max_context_window, 1000000);
-  assert.equal(extracted?.models[0]?.auto_compact_token_limit, null);
-  assert.deepEqual(extracted?.models[0]?.supported_reasoning_levels, ["none", "low", "high", "ultra"]);
+  assert.equal(extracted.clientVersion, "0.99.0");
+  assert.equal(extracted.models[0]?.slug, "gpt-5.2-codex");
+  assert.equal(extracted.models[0]?.context_window, 272000);
+  assert.equal(extracted.models[0]?.max_context_window, 1000000);
+  assert.equal(extracted.models[0]?.auto_compact_token_limit, null);
+  assert.deepEqual(extracted.models[0]?.supported_reasoning_levels, ["none", "low", "high", "ultra"]);
 });
 
 Deno.test("extractCodexModelsFromText trims large fields", () => {
@@ -113,7 +113,7 @@ Deno.test("extractCodexModelsFromText preserves API-supported hidden review mode
   const extracted = extractCodexModelsFromText(text);
   assert.ok(extracted);
   assert.deepEqual(
-    extracted?.models.map((model) => model.slug),
+    extracted.models.map((model) => model.slug),
     ["codex-auto-review", "gpt-5.5"]
   );
 });

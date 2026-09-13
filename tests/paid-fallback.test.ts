@@ -437,8 +437,8 @@ Deno.test("concurrent paid fallback ledger patches retry without losing either u
   assert.equal(memoryKv.atomicCommitFailures, 1);
   const stored = await memoryKv.get<Record<string, unknown>>(apiKeyRequestLogKey(keyId, createdAtMs, requestId));
   assert.equal(stored.value?.provider_request_id, "provider-concurrent");
-  assert.equal(stored.value?.status_code, 200);
-  assert.equal(stored.value?.completed_at_ms, createdAtMs + 50);
+  assert.equal(stored.value.status_code, 200);
+  assert.equal(stored.value.completed_at_ms, createdAtMs + 50);
 });
 
 Deno.test("V3 admits concurrent bounded requests without a single reservation slot", async () => {
@@ -471,7 +471,7 @@ Deno.test("V3 admits concurrent bounded requests without a single reservation sl
   );
   const window = await memoryKv.get<Record<string, unknown>>(paidFallbackWindowV3Key(keyId, resetAtMs));
   assert.equal(window.value?.reserved_microcredits, 1_000_000);
-  assert.equal(window.value?.pending_count, 100);
+  assert.equal(window.value.pending_count, 100);
   const rows = await Promise.all(Array.from({ length: 100 }, (_, index) => memoryKv.get(paidFallbackRequestV3Key(keyId, `request-${index}`))));
   assert.equal(rows.filter((entry) => entry.value !== null).length, 100);
   const pending = await memoryKv.get<Record<string, unknown>>(paidFallbackPendingV3Key(keyId, "request-0"));
@@ -531,7 +531,7 @@ Deno.test("V3 reconciliation gate arms at dispatch boundaries and clears after s
         })
       );
       assert.equal(admission.kind, "reserved");
-      if (admission.kind !== "reserved") throw new Error("expected reservation");
+
       const armed = await memoryKv.get<Record<string, unknown>>(paidFallbackReconciliationGateV3Key());
       assert.equal(typeof armed.value?.next_due_at_ms, "number");
 
@@ -550,7 +550,7 @@ Deno.test("V3 reconciliation gate arms at dispatch boundaries and clears after s
         })
       );
       assert.equal(transition.kind, "reserved");
-      if (transition.kind !== "reserved") throw new Error("expected reservation");
+
       assert.deepEqual((await memoryKv.get<Record<string, unknown>>(paidFallbackReconciliationGateV3Key())).value, { next_due_at_ms: null });
       await updatePaidFallbackRequestV3(transition.reservation, {
         provider_request_id: providerRequestId,
@@ -718,7 +718,7 @@ Deno.test("V3 terminal reconciliation settles a pending request exactly once wit
         reasoning: "high",
       });
       assert.equal(decision.kind, "reserved");
-      if (decision.kind !== "reserved") throw new Error("expected reservation");
+
       await updatePaidFallbackRequestV3(decision.reservation, {
         provider_request_id: providerRequestId,
         dispatch_state: "dispatched",
@@ -729,18 +729,18 @@ Deno.test("V3 terminal reconciliation settles a pending request exactly once wit
 
       const request = await memoryKv.get<Record<string, unknown>>(paidFallbackRequestV3Key(keyId, requestId));
       assert.equal(request.value?.billing_state, "settled");
-      assert.equal(request.value?.terminal_state, "completed");
-      assert.equal(request.value?.spend_microcredits, 246_912);
-      assert.equal(request.value?.provider_quota, 123_456);
-      assert.equal(request.value?.input_tokens, 40);
-      assert.equal(request.value?.output_tokens, 60);
-      assert.equal(typeof request.value?.dispatched_at_ms, "number");
-      assert.equal(typeof request.value?.terminal_at_ms, "number");
-      assert.equal(typeof request.value?.settled_at_ms, "number");
+      assert.equal(request.value.terminal_state, "completed");
+      assert.equal(request.value.spend_microcredits, 246_912);
+      assert.equal(request.value.provider_quota, 123_456);
+      assert.equal(request.value.input_tokens, 40);
+      assert.equal(request.value.output_tokens, 60);
+      assert.equal(typeof request.value.dispatched_at_ms, "number");
+      assert.equal(typeof request.value.terminal_at_ms, "number");
+      assert.equal(typeof request.value.settled_at_ms, "number");
       const window = await memoryKv.get<Record<string, unknown>>(paidFallbackWindowV3Key(keyId, resetAtMs));
       assert.equal(window.value?.reserved_microcredits, 0);
-      assert.equal(window.value?.settled_microcredits, 246_912);
-      assert.equal(window.value?.pending_count, 0);
+      assert.equal(window.value.settled_microcredits, 246_912);
+      assert.equal(window.value.pending_count, 0);
       assert.equal((await memoryKv.get(paidFallbackPendingV3Key(keyId, requestId))).value, null);
     });
   } finally {
@@ -788,7 +788,7 @@ Deno.test("V3 reconciliation records billing facts without manufacturing a termi
     await withMeteredApiKey(async () => {
       const decision = await admitPaidFallbackV3(v3AdmissionInput(keyId, requestId));
       assert.equal(decision.kind, "reserved");
-      if (decision.kind !== "reserved") throw new Error("expected reservation");
+
       await updatePaidFallbackRequestV3(decision.reservation, {
         provider_request_id: providerRequestId,
         dispatch_state: "dispatched",
@@ -797,18 +797,18 @@ Deno.test("V3 reconciliation records billing facts without manufacturing a termi
       assert.equal(await reconcilePaidFallbackV3(keyId, Date.now() + 100, kv), 1);
       const settledBeforeTerminal = await memoryKv.get<Record<string, unknown>>(requestKey);
       assert.equal(settledBeforeTerminal.value?.billing_state, "settled");
-      assert.equal(settledBeforeTerminal.value?.terminal_state, "pending");
-      assert.equal(settledBeforeTerminal.value?.provider_quota, 50_000);
-      assert.equal(settledBeforeTerminal.value?.input_tokens, 12);
-      assert.equal(settledBeforeTerminal.value?.output_tokens, 34);
-      assert.equal(settledBeforeTerminal.value?.spend_microcredits, 100_000);
+      assert.equal(settledBeforeTerminal.value.terminal_state, "pending");
+      assert.equal(settledBeforeTerminal.value.provider_quota, 50_000);
+      assert.equal(settledBeforeTerminal.value.input_tokens, 12);
+      assert.equal(settledBeforeTerminal.value.output_tokens, 34);
+      assert.equal(settledBeforeTerminal.value.spend_microcredits, 100_000);
       assert.equal(memoryKv.atomicCommitFailures, 1);
 
       assert.equal(await recordPaidFallbackTerminalV3(decision.reservation, "ambiguous"), 0);
       const afterTerminal = await memoryKv.get<Record<string, unknown>>(requestKey);
       assert.equal(afterTerminal.value?.terminal_state, "ambiguous");
-      assert.equal(typeof afterTerminal.value?.terminal_at_ms, "number");
-      assert.equal(afterTerminal.value?.spend_microcredits, 100_000);
+      assert.equal(typeof afterTerminal.value.terminal_at_ms, "number");
+      assert.equal(afterTerminal.value.spend_microcredits, 100_000);
       assert.equal(await reconcilePaidFallbackV3(keyId, Date.now() + 200, kv), 0);
     });
   } finally {
@@ -845,7 +845,7 @@ Deno.test("V3 terminal delivery expedites a request deferred before provider bil
     await withMeteredApiKey(async () => {
       const decision = await admitPaidFallbackV3(v3AdmissionInput(keyId, requestId));
       assert.equal(decision.kind, "reserved");
-      if (decision.kind !== "reserved") throw new Error("expected reservation");
+
       await updatePaidFallbackRequestV3(decision.reservation, {
         provider_request_id: providerRequestId,
         dispatch_state: "dispatched",
@@ -862,9 +862,9 @@ Deno.test("V3 terminal delivery expedites a request deferred before provider bil
       assert.equal(await reconcilePaidFallbackV3(keyId, Date.now(), kv), 1);
       const settled = await memoryKv.get<Record<string, unknown>>(paidFallbackRequestV3Key(keyId, requestId));
       assert.equal(settled.value?.billing_state, "settled");
-      assert.equal(settled.value?.terminal_state, "completed");
-      assert.equal(settled.value?.spend_microcredits, 50_000);
-      assert.equal(settled.value?.reconciliation_attempts, 2);
+      assert.equal(settled.value.terminal_state, "completed");
+      assert.equal(settled.value.spend_microcredits, 50_000);
+      assert.equal(settled.value.reconciliation_attempts, 2);
     });
   } finally {
     globalThis.fetch = originalFetch;
@@ -877,7 +877,6 @@ Deno.test("V3 expedite versions an already-due gate against stale recomputation"
   const requestId = "expedite-gate-version";
   const decision = await admitPaidFallbackV3(v3AdmissionInput(keyId, requestId));
   assert.equal(decision.kind, "reserved");
-  if (decision.kind !== "reserved") throw new Error("expected reservation");
 
   const gateKey = paidFallbackReconciliationGateV3Key();
   const pendingKey = paidFallbackPendingV3Key(keyId, requestId);
@@ -909,7 +908,7 @@ Deno.test("V3 bounded policy edits preserve exposure, admit concurrently, and re
     })
   );
   assert.equal(first.kind, "reserved");
-  if (first.kind !== "reserved") throw new Error("expected first reservation");
+
   assert.equal(first.reservation.quota_used_percent, 0);
 
   const concurrent = await Promise.all(
@@ -942,8 +941,8 @@ Deno.test("V3 bounded policy edits preserve exposure, admit concurrently, and re
   assert.deepEqual(lowered, { kind: "blocked", reason: "limit_exceeded" });
   const transitioned = await memoryKv.get<Record<string, unknown>>(paidFallbackWindowV3Key(keyId, resetAtMs));
   assert.equal(transitioned.value?.policy_version, "policy-v3");
-  assert.equal(transitioned.value?.limit_microcredits, 500_000);
-  assert.equal(transitioned.value?.reserved_microcredits, 600_000);
+  assert.equal(transitioned.value.limit_microcredits, 500_000);
+  assert.equal(transitioned.value.reserved_microcredits, 600_000);
 
   const providerIds = new Map([
     [first.reservation.request_id, "provider-policy-first"],
@@ -994,8 +993,8 @@ Deno.test("V3 bounded policy edits preserve exposure, admit concurrently, and re
 
   const overshot = await memoryKv.get<Record<string, unknown>>(paidFallbackWindowV3Key(keyId, resetAtMs));
   assert.equal(overshot.value?.settled_microcredits, 700_000);
-  assert.equal(overshot.value?.reserved_microcredits, 0);
-  assert.equal(overshot.value?.pending_count, 0);
+  assert.equal(overshot.value.reserved_microcredits, 0);
+  assert.equal(overshot.value.pending_count, 0);
   assert.deepEqual(
     await admitPaidFallbackV3(
       v3AdmissionInput(keyId, "policy-after-overshoot", {
@@ -1014,7 +1013,7 @@ Deno.test("V3 bounded policy edits preserve exposure, admit concurrently, and re
     settled_microcredits: 700_000,
     reserved_microcredits: 0,
     pending_count: 0,
-    updated_at_ms: overshot.value?.updated_at_ms,
+    updated_at_ms: overshot.value.updated_at_ms,
   });
 });
 
@@ -1032,7 +1031,7 @@ Deno.test("V3 due scanning honors leases and backoff while retaining unresolved 
     })
   );
   assert.equal(decision.kind, "reserved");
-  if (decision.kind !== "reserved") throw new Error("expected reservation");
+
   const firstAttemptAtMs = Date.now() + 100;
   await memoryKv.set(paidFallbackReconciliationLeaseV3Key(keyId), { token: "held-lease", expires_at_ms: firstAttemptAtMs + 60_000 }, { expireIn: 60_000 });
   assert.equal(await reconcileDuePaidFallbacksV3(firstAttemptAtMs, kv), 0);
@@ -1056,12 +1055,12 @@ Deno.test("V3 due scanning honors leases and backoff while retaining unresolved 
   assert.equal(await reconcileDuePaidFallbacksV3(unresolvedAtMs, kv), 0);
   request = await memoryKv.get<Record<string, unknown>>(paidFallbackRequestV3Key(keyId, requestId));
   assert.equal(request.value?.billing_state, "unresolved");
-  assert.equal(request.value?.terminal_state, "pending");
-  assert.equal(request.value?.reconciliation_attempts, 3);
+  assert.equal(request.value.terminal_state, "pending");
+  assert.equal(request.value.reconciliation_attempts, 3);
   assert.equal((await memoryKv.get<Record<string, unknown>>(paidFallbackPendingV3Key(keyId, requestId))).value !== null, true);
   const window = await memoryKv.get<Record<string, unknown>>(paidFallbackWindowV3Key(keyId, resetAtMs));
   assert.equal(window.value?.reserved_microcredits, 300_000);
-  assert.equal(window.value?.pending_count, 1);
+  assert.equal(window.value.pending_count, 1);
   assert.deepEqual(await getPaidFallbackOutstandingV3(keyId, kv), {
     pending_requests: 0,
     unresolved_requests: 1,
@@ -1096,7 +1095,7 @@ Deno.test("V3 unlimited projection and newest-first history support safe settled
   );
   assert.equal(older.kind, "reserved");
   assert.equal(newer.kind, "reserved");
-  if (older.kind !== "reserved" || newer.kind !== "reserved") throw new Error("expected reservations");
+
   await Promise.all([
     updatePaidFallbackRequestV3(older.reservation, {
       provider_request_id: "provider-unlimited-older",
@@ -1215,7 +1214,7 @@ Deno.test("V3 window rollover isolates prior exposure from new admissions", asyn
   );
   assert.equal(first.kind, "reserved");
   assert.equal(second.kind, "reserved");
-  if (first.kind !== "reserved" || second.kind !== "reserved") throw new Error("expected reservations");
+
   assert.equal(first.reservation.reserved_microcredits, 100_000);
   assert.equal(first.reservation.quota_used_percent, 90);
   assert.equal(second.reservation.reserved_microcredits, 250_000);
@@ -1223,9 +1222,9 @@ Deno.test("V3 window rollover isolates prior exposure from new admissions", asyn
   const firstWindow = await memoryKv.get<Record<string, unknown>>(paidFallbackWindowV3Key(keyId, firstResetAtMs));
   const secondWindow = await memoryKv.get<Record<string, unknown>>(paidFallbackWindowV3Key(keyId, secondResetAtMs));
   assert.equal(firstWindow.value?.settled_microcredits, 900_000);
-  assert.equal(firstWindow.value?.reserved_microcredits, 100_000);
+  assert.equal(firstWindow.value.reserved_microcredits, 100_000);
   assert.equal(secondWindow.value?.settled_microcredits, 0);
-  assert.equal(secondWindow.value?.reserved_microcredits, 250_000);
+  assert.equal(secondWindow.value.reserved_microcredits, 250_000);
 });
 
 Deno.test("V3 deletion guard linearizes against an in-flight admission", async () => {
@@ -1252,24 +1251,24 @@ Deno.test("V3 undispatched release is idempotent and cannot erase dispatched exp
   await memoryKv.set(paidFallbackReconciliationGateV3Key(), { next_due_at_ms: Date.now() + 60_000 });
   const released = await admitPaidFallbackV3(v3AdmissionInput(keyId, "release-before-dispatch", { windowResetAtMs: resetAtMs }));
   assert.equal(released.kind, "reserved");
-  if (released.kind !== "reserved") throw new Error("expected reservation");
+
   await releaseUndispatchedPaidFallbackV3(released.reservation);
   await releaseUndispatchedPaidFallbackV3(released.reservation);
   const releasedRequest = await memoryKv.get<Record<string, unknown>>(paidFallbackRequestV3Key(keyId, released.reservation.request_id));
   assert.equal(releasedRequest.value?.billing_state, "not_billed");
-  assert.equal(releasedRequest.value?.dispatch_state, "not_dispatched");
-  assert.equal(releasedRequest.value?.terminal_state, "cancelled");
-  assert.equal(typeof releasedRequest.value?.terminal_at_ms, "number");
+  assert.equal(releasedRequest.value.dispatch_state, "not_dispatched");
+  assert.equal(releasedRequest.value.terminal_state, "cancelled");
+  assert.equal(typeof releasedRequest.value.terminal_at_ms, "number");
   assert.equal(Number((await memoryKv.get<Record<string, unknown>>(paidFallbackReconciliationGateV3Key())).value?.next_due_at_ms) <= Date.now(), true);
 
   const dispatched = await admitPaidFallbackV3(v3AdmissionInput(keyId, "release-after-dispatch", { windowResetAtMs: resetAtMs }));
   assert.equal(dispatched.kind, "reserved");
-  if (dispatched.kind !== "reserved") throw new Error("expected reservation");
+
   await updatePaidFallbackRequestV3(dispatched.reservation, { dispatch_state: "dispatched" });
   await releaseUndispatchedPaidFallbackV3(dispatched.reservation);
   const dispatchedRequest = await memoryKv.get<Record<string, unknown>>(paidFallbackRequestV3Key(keyId, dispatched.reservation.request_id));
   assert.equal(dispatchedRequest.value?.billing_state, "pending");
-  assert.equal(dispatchedRequest.value?.dispatch_state, "dispatched");
+  assert.equal(dispatchedRequest.value.dispatch_state, "dispatched");
   assert.equal((await memoryKv.get<Record<string, unknown>>(paidFallbackPendingV3Key(keyId, dispatched.reservation.request_id))).value !== null, true);
 
   const prefetch = await admitPaidFallbackV3(
@@ -1279,15 +1278,15 @@ Deno.test("V3 undispatched release is idempotent and cannot erase dispatched exp
     })
   );
   assert.equal(prefetch.kind, "reserved");
-  if (prefetch.kind !== "reserved") throw new Error("expected reservation");
+
   const dispatchIntent = await memoryKv.get<Record<string, unknown>>(paidFallbackRequestV3Key(keyId, prefetch.reservation.request_id));
   assert.equal(dispatchIntent.value?.dispatch_state, "dispatched");
-  assert.equal(typeof dispatchIntent.value?.dispatched_at_ms, "number");
+  assert.equal(typeof dispatchIntent.value.dispatched_at_ms, "number");
   await releasePaidFallbackBeforeProviderFetchV3(prefetch.reservation);
   const prefetchRequest = await memoryKv.get<Record<string, unknown>>(paidFallbackRequestV3Key(keyId, prefetch.reservation.request_id));
   assert.equal(prefetchRequest.value?.billing_state, "not_billed");
-  assert.equal(prefetchRequest.value?.dispatch_state, "not_dispatched");
-  assert.equal(prefetchRequest.value?.terminal_state, "cancelled");
+  assert.equal(prefetchRequest.value.dispatch_state, "not_dispatched");
+  assert.equal(prefetchRequest.value.terminal_state, "cancelled");
 });
 
 Deno.test("V3 queue delivery coalesces due rows by key and duplicate delivery is idempotent", async () => {
@@ -1299,7 +1298,7 @@ Deno.test("V3 queue delivery coalesces due rows by key and duplicate delivery is
   const second = await admitPaidFallbackV3(v3AdmissionInput(keyId, "queue-second", { windowResetAtMs: resetAtMs }));
   assert.equal(first.kind, "reserved");
   assert.equal(second.kind, "reserved");
-  if (first.kind !== "reserved" || second.kind !== "reserved") throw new Error("expected reservations");
+
   assert.deepEqual(memoryKv.queueMessages, []);
   await updatePaidFallbackRequestV3(first.reservation, {
     provider_request_id: "provider-queue-first",
@@ -1343,7 +1342,7 @@ Deno.test("V3 queue delivery coalesces due rows by key and duplicate delivery is
   const secondRequest = await memoryKv.get<Record<string, unknown>>(paidFallbackRequestV3Key(keyId, "queue-second"));
   assert.equal(firstRequest.value?.billing_state, "settled");
   assert.equal(secondRequest.value?.billing_state, "pending");
-  assert.equal(secondRequest.value?.reconciliation_attempts, 1);
+  assert.equal(secondRequest.value.reconciliation_attempts, 1);
 });
 
 Deno.test("V3 queue enqueue failure does not roll back durable reconciliation backoff", async () => {
@@ -1353,7 +1352,7 @@ Deno.test("V3 queue enqueue failure does not roll back durable reconciliation ba
   const requestId = "queue-failure-request";
   const decision = await admitPaidFallbackV3(v3AdmissionInput(keyId, requestId));
   assert.equal(decision.kind, "reserved");
-  if (decision.kind !== "reserved") throw new Error("expected reservation");
+
   await updatePaidFallbackRequestV3(decision.reservation, {
     provider_request_id: "provider-queue-failure",
     dispatch_state: "dispatched",
@@ -1370,7 +1369,7 @@ Deno.test("V3 queue enqueue failure does not roll back durable reconciliation ba
   const request = await memoryKv.get<Record<string, unknown>>(paidFallbackRequestV3Key(keyId, requestId));
   const pending = await memoryKv.get<Record<string, unknown>>(paidFallbackPendingV3Key(keyId, requestId));
   assert.equal(request.value?.reconciliation_attempts, 1);
-  assert.equal(pending.value?.next_reconciliation_at_ms, Number(request.value?.last_reconciliation_at_ms) + 5_000);
+  assert.equal(pending.value?.next_reconciliation_at_ms, Number(request.value.last_reconciliation_at_ms) + 5_000);
 });
 
 Deno.test("V3 unresolved rows remain queue-reconcilable when late provider billing appears", async () => {
@@ -1381,7 +1380,7 @@ Deno.test("V3 unresolved rows remain queue-reconcilable when late provider billi
   const providerRequestId = "provider-unresolved-late";
   const decision = await admitPaidFallbackV3(v3AdmissionInput(keyId, requestId, { createdAtMs: Date.now() - 24 * 60 * 60_000 - 1 }));
   assert.equal(decision.kind, "reserved");
-  if (decision.kind !== "reserved") throw new Error("expected reservation");
+
   await updatePaidFallbackRequestV3(decision.reservation, {
     provider_request_id: providerRequestId,
     dispatch_state: "dispatched",
@@ -1443,7 +1442,7 @@ Deno.test("disabled paid fallback does not rewrite an expired usage window", asy
   assert.deepEqual(await reservePaidFallback(reservationInput(String(record.id), "request-disabled")), { kind: "skip", reason: "disabled" });
   const stored = await memoryKv.get<Record<string, unknown>>(apiKeyIdKey(String(record.id)));
   assert.equal(stored.value?.usage_reset_at_ms, expiredResetAtMs);
-  assert.equal(stored.value?.paid_fallback_reservation_request_id, null);
+  assert.equal(stored.value.paid_fallback_reservation_request_id, null);
 });
 
 (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = originalOpenKv;

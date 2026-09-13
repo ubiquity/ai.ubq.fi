@@ -87,8 +87,8 @@ Deno.test("initializeMeteredPricing intersects the current Codex catalog and ret
   );
   for (const call of calls) {
     assert.equal(call.init?.method, "GET");
-    assert.equal(new Headers(call.init?.headers).get("Accept"), "application/json");
-    assert.equal(new Headers(call.init?.headers).has("Authorization"), false);
+    assert.equal(new Headers(call.init.headers).get("Accept"), "application/json");
+    assert.equal(new Headers(call.init.headers).has("Authorization"), false);
   }
 });
 
@@ -164,14 +164,14 @@ Deno.test("fetchMeteredResponses applies Metered Sol reasoning suffixes and forw
   assert.equal(calls[0].init?.method, "POST");
   // The request signal also carries the provider header deadline, so it is a
   // composed signal rather than the caller's signal by reference.
-  assert.ok(calls[0].init?.signal);
-  assert.equal(calls[0].init?.signal.aborted, false);
-  assert.deepEqual(JSON.parse(requestBodyText(calls[0].init?.body)), {
+  assert.ok(calls[0].init.signal);
+  assert.equal(calls[0].init.signal.aborted, false);
+  assert.deepEqual(JSON.parse(requestBodyText(calls[0].init.body)), {
     model: "gpt-5.6-sol-high",
     input: canonicalBody.input,
     stream: true,
   });
-  const headers = new Headers(calls[0].init?.headers);
+  const headers = new Headers(calls[0].init.headers);
   assert.equal(headers.get("Authorization"), "Bearer test-metered-key");
   assert.equal(headers.get("Accept"), "text/event-stream");
   assert.equal(headers.get("Content-Type"), "application/json");
@@ -329,7 +329,7 @@ Deno.test("fetchMeteredTokenLogs returns only strict allowlisted billing fields"
   assert.equal(captured.searchParams.get("page"), "1");
   assert.equal(captured.searchParams.get("page_size"), "100");
   assert.equal(capturedInit?.method, "GET");
-  const headers = new Headers(capturedInit?.headers);
+  const headers = new Headers(capturedInit.headers);
   assert.equal(headers.get("Authorization"), null);
   assert.equal(headers.get("Accept"), "application/json");
   assert.deepEqual(logs, [

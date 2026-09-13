@@ -102,7 +102,7 @@ Deno.test("upstream reset adapter parses inventory and sends the selected credit
   );
   assert.equal(calls[0].init?.body, undefined);
   assert.equal(calls[1].init?.body, '{"redeem_request_id":"redeem-request-id-123","credit_id":"credit-available"}');
-  const headers = new Headers(calls[1].init?.headers);
+  const headers = new Headers(calls[1].init.headers);
   assert.equal(headers.get("Authorization"), "Bearer test-access-token");
   assert.equal(headers.get("ChatGPT-Account-ID"), "account-one");
   assert.equal(headers.get("User-Agent"), "codex-banked-reset-provider-test/1.0");
@@ -194,9 +194,10 @@ Deno.test("display reset counts use only inventory GET and preserve zero and una
         accessToken: "test-token",
         userAgent: "test-agent",
         fetch: (url, init) => {
-          assert.equal(String(url), "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits");
+          const requestedUrl = typeof url === "string" ? url : url instanceof URL ? url.href : url.url;
+          assert.equal(requestedUrl, "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits");
           assert.equal(init?.method, "GET");
-          assert.equal(new Headers(init?.headers).get("ChatGPT-Account-ID"), "account-one");
+          assert.equal(new Headers(init.headers).get("ChatGPT-Account-ID"), "account-one");
           return Promise.resolve(Response.json({ available_count: count }));
         },
       },

@@ -166,15 +166,15 @@ Deno.test("Codex cache qualification comes from existing catalog capability meta
   const explicitOptionsOnly = inventory.targets.find((target) => target.model === "explicit-options-only");
 
   assert.equal(qualified?.codex_cache_qualification, "qualified");
-  assert.deepEqual(qualified?.probeability, { status: "probeable", adapter: "codex_two_slot" });
+  assert.deepEqual(qualified.probeability, { status: "probeable", adapter: "codex_two_slot" });
   assert.equal(unqualified?.codex_cache_qualification, "unqualified");
-  assert.deepEqual(unqualified?.probeability, { status: "unprobeable", reason: "codex_cache_unqualified" });
+  assert.deepEqual(unqualified.probeability, { status: "unprobeable", reason: "codex_cache_unqualified" });
   assert.equal(implicitDisabled?.codex_cache_qualification, "unqualified");
-  assert.deepEqual(implicitDisabled?.probeability, { status: "unprobeable", reason: "codex_cache_unqualified" });
+  assert.deepEqual(implicitDisabled.probeability, { status: "unprobeable", reason: "codex_cache_unqualified" });
   // The scope runner omits prompt_cache_options, so a list that only accepts
   // explicit options does not constrain its plain-key request shape.
   assert.equal(explicitOptionsOnly?.codex_cache_qualification, "qualified");
-  assert.deepEqual(explicitOptionsOnly?.probeability, { status: "probeable", adapter: "codex_two_slot" });
+  assert.deepEqual(explicitOptionsOnly.probeability, { status: "probeable", adapter: "codex_two_slot" });
 });
 
 Deno.test("an authoritative metered roster creates only catalog intersections and reports the rest", async () => {

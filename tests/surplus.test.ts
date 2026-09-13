@@ -79,16 +79,16 @@ Deno.test("fetchSurplusModels preserves exact IDs and exposes text-capable route
     snapshot?.models.map((model) => model.id),
     ["gpt-5.6-sol", "claude-opus-5"]
   );
-  assert.equal(snapshot?.models[0].owned_by, "openai");
-  assert.equal(snapshot?.models[0].input_price_per_token, 0.000001);
-  assert.equal(snapshot?.models[0].cache_read_price_per_token, 0.0000001);
-  assert.equal(snapshot?.models[0].cache_write_price_per_token, 0.000002);
-  assert.equal(snapshot?.models[0].supports_tools, true);
-  assert.equal(snapshot?.models[0].supports_parallel_tool_calls, true);
-  assert.deepEqual(snapshot?.models[0].supported_endpoint_types, ["openai", "openai-response"]);
-  assert.equal(snapshot?.models[1].description, "test model");
-  assert.equal(snapshot?.models[1].supports_tools, undefined);
-  assert.equal(snapshot?.models[1].supports_parallel_tool_calls, undefined);
+  assert.equal(snapshot.models[0].owned_by, "openai");
+  assert.equal(snapshot.models[0].input_price_per_token, 0.000001);
+  assert.equal(snapshot.models[0].cache_read_price_per_token, 0.0000001);
+  assert.equal(snapshot.models[0].cache_write_price_per_token, 0.000002);
+  assert.equal(snapshot.models[0].supports_tools, true);
+  assert.equal(snapshot.models[0].supports_parallel_tool_calls, true);
+  assert.deepEqual(snapshot.models[0].supported_endpoint_types, ["openai", "openai-response"]);
+  assert.equal(snapshot.models[1].description, "test model");
+  assert.equal(snapshot.models[1].supports_tools, undefined);
+  assert.equal(snapshot.models[1].supports_parallel_tool_calls, undefined);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, "https://api.surplusintelligence.ai/v1/models");
   assert.equal(new Headers(calls[0].init?.headers).get("Accept"), "application/json");
@@ -122,12 +122,12 @@ Deno.test("fetchSurplusResponses omits unsupported parallel-tool control and ret
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, "https://api.surplusintelligence.ai/v1/responses");
   assert.equal(calls[0].init?.method, "POST");
-  assert.deepEqual(JSON.parse(bodyText(calls[0].init?.body)), {
+  assert.deepEqual(JSON.parse(bodyText(calls[0].init.body)), {
     model: "claude-opus-5",
     input: [{ role: "user", content: [{ type: "input_text", text: "hello" }] }],
     stream: true,
   });
-  const headers = new Headers(calls[0].init?.headers);
+  const headers = new Headers(calls[0].init.headers);
   assert.equal(headers.get("Authorization"), "Bearer inf_test");
   assert.equal(headers.get("Accept"), "text/event-stream");
   assert.equal(headers.get("Content-Type"), "application/json");

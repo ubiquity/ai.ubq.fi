@@ -236,10 +236,10 @@ Deno.test("runHarmonyTurn surfaces upstream validation errors as sanitized finge
   const conversation = createConversation([{ role: "user", content: "Weather?" }]);
   const result = await runHarmonyTurn({ style: "generic", turns: conversation.turns, tools: [WEATHER_TOOL, NOTE_TOOL] }, transport);
   assert.equal(result.ok, false);
-  if (result.ok) throw new Error("expected failure");
+
   assert.equal(result.status, 400);
   assert.equal(result.upstreamError?.code, "invalid_request_error");
-  assert.match(result.upstreamError?.message ?? "", /mixed values/);
+  assert.match(result.upstreamError.message ?? "", /mixed values/);
 });
 
 Deno.test("runHarmonyTurn completes a tool call then a final answer through the real transport", async () => {
@@ -284,7 +284,7 @@ Deno.test("runHarmonyTurn completes a tool call then a final answer through the 
   const conversation = createConversation([{ role: "user", content: "Weather?" }]);
   const first = await runHarmonyTurn({ style: "generic", turns: conversation.turns, tools: [WEATHER_TOOL], reasoningEffort: "low" }, transport);
   assert.equal(first.ok, true);
-  if (!first.ok) throw new Error("expected ok");
+
   assert.deepEqual(
     first.normalized.toolCalls.map((call) => call.name),
     ["get_weather"]
@@ -294,7 +294,7 @@ Deno.test("runHarmonyTurn completes a tool call then a final answer through the 
   const withResult = appendToolResult(afterCall, "call_a", "get_weather", '{"sunny": true}');
   const second = await runHarmonyTurn({ style: "generic", turns: withResult.turns, tools: [WEATHER_TOOL], reasoningEffort: "low" }, transport);
   assert.equal(second.ok, true);
-  if (!second.ok) throw new Error("expected ok");
+
   assert.equal(second.normalized.content, "It is sunny in San Francisco.");
   assert.equal(second.normalized.analysis.length, 0);
 
@@ -345,6 +345,6 @@ Deno.test("consecutive generic turns keep the conversation consistent", async ()
   conversation = appendUser(conversation, "Follow-up.");
   const second = await runHarmonyTurn({ style: "generic", turns: conversation.turns, reasoningEffort: "low" }, transport);
   assert.equal(second.ok, true);
-  if (!second.ok) throw new Error("expected ok");
+
   assert.equal(second.normalized.analysis.length, 1);
 });

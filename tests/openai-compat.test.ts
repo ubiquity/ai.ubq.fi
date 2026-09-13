@@ -872,7 +872,7 @@ Deno.test("openai: legacy timeout circuits do not short-circuit later requests",
       const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
       const selected = await selectCodexRoutingAccounts(authPool, authPool.accounts, Date.now());
       assert.equal(selected.kind, "eligible");
-      if (selected.kind !== "eligible") throw new Error("expected an eligible timeout fixture account");
+
       await markCodexUpstreamTimeout(selected.accounts[0]);
       return await handleResponses(
         new Request("https://ai.ubq.fi/v1/responses", {
@@ -1584,9 +1584,9 @@ Deno.test("openai: expired Codex auth returns a 503 re-auth warning through Resp
     assert.equal(response.status, 503);
     assert.equal(response.headers.get("x-uos-warning"), CODEX_AUTH_REAUTH_WARNING);
     assert.equal(payload.error?.code, "codex_auth_invalid");
-    assert.equal(payload.error?.type, "server_error");
-    assert.ok(payload.error?.message?.includes(CODEX_AUTH_REAUTH_MESSAGE));
-    assert.match(payload.error?.message ?? "", /upload a fresh auth\.json/i);
+    assert.equal(payload.error.type, "server_error");
+    assert.ok(payload.error.message?.includes(CODEX_AUTH_REAUTH_MESSAGE));
+    assert.match(payload.error.message ?? "", /upload a fresh auth\.json/i);
     assert.equal(refreshCalls, 1);
   } finally {
     if (previousAuth === undefined) kvStore.delete(authKey);
@@ -1769,7 +1769,7 @@ Deno.test("openai: default model requires configured model or stored snapshot", 
     assert.equal(response.status, 503);
     const payload = (await response.json()) as { error?: { message?: string; code?: string } };
     assert.equal(payload.error?.code, "server_error");
-    assert.match(payload.error?.message ?? "", /no configured default model or Codex model snapshot/);
+    assert.match(payload.error.message ?? "", /no configured default model or Codex model snapshot/);
   } finally {
     if (previousSnapshot === undefined) kvStore.delete(snapshotKey);
     else kvStore.set(snapshotKey, previousSnapshot);
@@ -2428,8 +2428,8 @@ Deno.test("openai: unsupported snapshot model is rejected before upstream fetch"
   assert.equal(response.status, 404);
   const payload = (await response.json()) as { error?: { message?: string; code?: string; param?: string | null } };
   assert.equal(payload.error?.code, "model_not_found");
-  assert.equal(payload.error?.param, "model");
-  assert.match(payload.error?.message ?? "", /Use \/v1\/models/);
+  assert.equal(payload.error.param, "model");
+  assert.match(payload.error.message ?? "", /Use \/v1\/models/);
 });
 
 Deno.test("openai: unlisted reasoning tiers pass through for upstream validation", async () => {
@@ -2985,7 +2985,7 @@ Deno.test("openai: request abort after Codex headers releases its half-open prob
         assert.equal(kvStore.get(upstreamErrorHealthKey), undefined);
         const cancellationHealth = kvStore.get(healthKey) as { event?: unknown; provider_request_id?: unknown } | undefined;
         assert.equal(cancellationHealth?.event, "reachable");
-        assert.equal(cancellationHealth?.provider_request_id, "cancel-barrier");
+        assert.equal(cancellationHealth.provider_request_id, "cancel-barrier");
 
         const retry = await handleResponses(
           new Request("https://ai.ubq.fi/v1/responses", {
@@ -3157,7 +3157,7 @@ Deno.test("openai: gateway first-event deadlines return 504 on both streaming ro
           assert.equal(response.status, 504, route);
           assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex", route);
           assert.equal(payload.error?.type, "server_error", route);
-          assert.equal(payload.error?.code, "gateway_timeout", route);
+          assert.equal(payload.error.code, "gateway_timeout", route);
           assert.equal(getResponseTelemetry(response)?.streamTerminalType, "deadline", route);
         }
       );
@@ -3795,10 +3795,10 @@ Deno.test("openai: cancelling a reasoning-released Codex stream stays cancelled 
 
         const telemetry = getResponseTelemetry(response);
         assert.equal(telemetry?.provider, "chatgpt_codex");
-        assert.equal(telemetry?.fallbackReason, null);
-        assert.equal(telemetry?.streamTerminalType, "cancelled");
-        assert.equal(telemetry?.completed, false);
-        assert.notEqual(telemetry?.semanticOutputObserved, true);
+        assert.equal(telemetry.fallbackReason, null);
+        assert.equal(telemetry.streamTerminalType, "cancelled");
+        assert.equal(telemetry.completed, false);
+        assert.notEqual(telemetry.semanticOutputObserved, true);
         assert.deepEqual(observedTerminalUsages, []);
         assert.equal(upstreamCancellations, 1);
         assert.equal(codexCalls, 1);
@@ -3923,7 +3923,7 @@ Deno.test("openai: Codex pre-header gateway deadlines use server_error on both s
           const payload = (await response.json()) as { error?: { type?: unknown; code?: unknown } };
           assert.equal(response.status, 504, route);
           assert.equal(payload.error?.type, "server_error", route);
-          assert.equal(payload.error?.code, "gateway_timeout", route);
+          assert.equal(payload.error.code, "gateway_timeout", route);
         }
       );
     }
@@ -4358,7 +4358,7 @@ Deno.test("openai: an all-blocked Codex response continues through paid Metered 
         resetCodexAuthCacheForTest();
         const selection = await selectCodexRoutingAccounts(authPool, authPool.accounts, now);
         assert.equal(selection.kind, "eligible");
-        if (selection.kind !== "eligible") return;
+
         for (const account of selection.accounts) {
           const blocked = await markCodexQuotaBlocked(
             account,
@@ -4539,14 +4539,14 @@ Deno.test("openai: temporary free GLM cut uses only Surplus without paid fallbac
         assert.ok(!parseWarnings(response.headers.get("x-uos-warning")).includes("response_format_ignored"));
         const telemetry = getResponseTelemetry(response);
         assert.equal(telemetry?.provider, "surplus");
-        assert.equal(telemetry?.fallbackReason, null);
-        assert.equal(telemetry?.reasoning, routeCase.reasoningEffort);
-        assert.equal(telemetry?.providerRequestId, routeCase.requestId + "-provider");
-        assert.deepEqual(telemetry?.attemptedProviders, ["surplus"]);
-        assert.equal(telemetry?.firstCodexDispatchMs, null);
-        assert.equal(telemetry?.firstCodexHeadersMs, null);
-        assert.equal(typeof telemetry?.firstProviderDispatchMs, "number");
-        assert.equal(typeof telemetry?.firstProviderHeadersMs, "number");
+        assert.equal(telemetry.fallbackReason, null);
+        assert.equal(telemetry.reasoning, routeCase.reasoningEffort);
+        assert.equal(telemetry.providerRequestId, routeCase.requestId + "-provider");
+        assert.deepEqual(telemetry.attemptedProviders, ["surplus"]);
+        assert.equal(telemetry.firstCodexDispatchMs, null);
+        assert.equal(telemetry.firstCodexHeadersMs, null);
+        assert.equal(typeof telemetry.firstProviderDispatchMs, "number");
+        assert.equal(typeof telemetry.firstProviderHeadersMs, "number");
         assert.equal(getStoredPaidFallbackRequest("key-" + routeCase.requestId, routeCase.requestId), null);
         const health = await waitForSurplusHealth("success");
         assert.equal(health.status, 200);
@@ -4657,7 +4657,7 @@ Deno.test("openai: temporary free GLM cut uses only Surplus without paid fallbac
           error?: { code?: string; param?: string };
         };
         assert.equal(payload.error?.code, "unsupported_model_capability", route);
-        assert.equal(payload.error?.param, "tools", route);
+        assert.equal(payload.error.param, "tools", route);
         assert.equal(fetchCalls, 0, route);
         assert.deepEqual(dispatchedProviders, [], route);
         assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, [], route);
@@ -5348,7 +5348,7 @@ Deno.test("openai: dynamic tool requests reject unverified Surplus capability be
     assert.equal(response.status, 400);
     const payload = (await response.json()) as { error?: { code?: string; param?: string } };
     assert.equal(payload.error?.code, "model_tool_calling_unsupported");
-    assert.equal(payload.error?.param, "tools");
+    assert.equal(payload.error.param, "tools");
     assert.equal(upstreamCalls, 0);
     assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, []);
     assert.equal(getResponseTelemetry(response)?.fallbackReason, "dynamic_paid_model");
@@ -5571,7 +5571,7 @@ Deno.test("openai: Codex model-unsupported responses never enter paid fallback",
         assert.equal(meteredCalls, 0);
         const payload = (await response.json()) as { error?: Record<string, unknown> };
         assert.equal(payload.error?.code, "upstream_error");
-        assert.equal(payload.error?.message, "The 'gpt-5-fixture-default' model is not supported when using Codex with a ChatGPT account.");
+        assert.equal(payload.error.message, "The 'gpt-5-fixture-default' model is not supported when using Codex with a ChatGPT account.");
         assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null);
         const keyRecord = kvStore.get(keyToString(["ubq_ai", "api_keys", "id", keyId])) as {
           usage_reset_at_ms: number;
@@ -5682,7 +5682,7 @@ Deno.test("openai: inter-provider abort and quota rejection retain the respondin
     assert.equal(abortMeteredCalls, 0);
     const abortedTelemetry = getResponseTelemetry(abortedResponse);
     assert.equal(abortedTelemetry?.provider, "surplus");
-    assert.equal(abortedTelemetry?.providerRequestId, "provider-1-abort-id");
+    assert.equal(abortedTelemetry.providerRequestId, "provider-1-abort-id");
     assert.equal(abortedResponse.headers.get("x-uos-upstream"), "surplus");
     const aborted = await waitForPaidFallbackTerminal(abortKeyId, abortRequestId, "ambiguous");
     assert.equal(aborted.dispatch_state, "dispatched");
@@ -5730,7 +5730,7 @@ Deno.test("openai: inter-provider abort and quota rejection retain the respondin
     assert.equal(quotaMeteredCalls, 0);
     const quotaTelemetry = getResponseTelemetry(quotaResponse);
     assert.equal(quotaTelemetry?.provider, "surplus");
-    assert.equal(quotaTelemetry?.providerRequestId, "provider-1-quota-id");
+    assert.equal(quotaTelemetry.providerRequestId, "provider-1-quota-id");
     assert.equal(quotaResponse.headers.get("x-uos-upstream"), "surplus");
     const quotaRejected = await waitForPaidFallbackTerminal(quotaKeyId, quotaRequestId, "ambiguous");
     assert.equal(quotaRejected.dispatch_state, "dispatched");
@@ -5844,7 +5844,7 @@ const runValidatedTerminalCancellationCase = async (testCase: {
     );
     const telemetry = getResponseTelemetry(response);
     assert.equal(telemetry?.streamTerminalType, terminalType, suffix);
-    assert.equal(telemetry?.completed, terminalType === "response.completed", suffix);
+    assert.equal(telemetry.completed, terminalType === "response.completed", suffix);
     assert.deepEqual(
       observedTerminalUsages,
       [
@@ -5893,7 +5893,7 @@ const runValidatedTerminalCancellationCase = async (testCase: {
       assert.equal(terminalHealthWrites.length, 1, `${suffix} terminal health transition`);
       const health = terminalHealthWrites[0]?.value as { status?: unknown; provider_request_id?: unknown } | undefined;
       assert.equal(health?.status, expectedHealthStatus, suffix);
-      assert.equal(health?.provider_request_id, `provider-${suffix}`, suffix);
+      assert.equal(health.provider_request_id, `provider-${suffix}`, suffix);
     }
   } finally {
     atomicCommitObservation.observer = previousAtomicObserver;
@@ -6136,7 +6136,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
           const authPool = kvStore.get(keyToString(["ubq_ai", "codex_auth"])) as CodexAuthPoolState;
           const selected = await selectCodexRoutingAccounts(authPool, authPool.accounts, Date.now());
           assert.equal(selected.kind, "eligible");
-          if (selected.kind !== "eligible") throw new Error("expected an eligible timeout fixture account");
+
           await markCodexUpstreamTimeout(selected.accounts[0]);
           return await handleResponses(
             new Request("https://ai.ubq.fi/v1/responses", {
@@ -6212,8 +6212,8 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
       assert.equal(response.status, 499);
       const cancellation = (await response.json()) as { error?: { type?: unknown; code?: unknown; param?: unknown } };
       assert.equal(cancellation.error?.type, "server_error");
-      assert.equal(cancellation.error?.code, "request_cancelled");
-      assert.equal(cancellation.error?.param, null);
+      assert.equal(cancellation.error.code, "request_cancelled");
+      assert.equal(cancellation.error.param, null);
       assert.equal(codexCalls, 1);
       assert.equal(meteredCalls, 0);
       assert.equal(getResponseTelemetry(response)?.provider, "chatgpt_codex");
@@ -6672,7 +6672,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
               error?: { type?: unknown; code?: unknown };
             };
             assert.equal(payload.error?.type, "server_error", suffix);
-            assert.equal(payload.error?.code, "metered_upstream_unreachable", suffix);
+            assert.equal(payload.error.code, "metered_upstream_unreachable", suffix);
             const stored = await waitForPaidFallbackTerminal(keyId, requestId, "ambiguous");
             assert.equal(stored.dispatch_state, "dispatched", suffix);
             assert.equal(stored.provider_request_id, null, suffix);
@@ -7126,7 +7126,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
               error?: { type?: unknown; code?: unknown };
             };
             assert.equal(payload.error?.type, "server_error", suffix);
-            assert.equal(payload.error?.code, "gateway_timeout", suffix);
+            assert.equal(payload.error.code, "gateway_timeout", suffix);
             const stored = await waitForPaidFallbackTerminal(keyId, requestId, "ambiguous");
             assert.equal(stored.dispatch_state, "dispatched", suffix);
             assert.equal(stored.provider_request_id, null, suffix);
@@ -7622,7 +7622,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
 
                   const telemetry = getResponseTelemetry(response);
                   assert.equal(telemetry?.streamTerminalType, terminalType, suffix);
-                  assert.equal(telemetry?.completed, terminalType === "response.completed", suffix);
+                  assert.equal(telemetry.completed, terminalType === "response.completed", suffix);
                   assert.deepEqual(
                     observedTerminalUsages,
                     [
@@ -7646,8 +7646,8 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                     assert.equal(terminalHealthWrites.length, 1, `${suffix} health transition`);
                     const health = terminalHealthWrites[0]?.value as { event?: unknown; status?: unknown; provider_request_id?: unknown } | undefined;
                     assert.equal(health?.event, "success", suffix);
-                    assert.equal(health?.status, 200, suffix);
-                    assert.equal(health?.provider_request_id, providerRequestId, suffix);
+                    assert.equal(health.status, 200, suffix);
+                    assert.equal(health.provider_request_id, providerRequestId, suffix);
                   } else {
                     assert.equal(terminalHealthWrites.length, 0, `${suffix} has no false health failure`);
                   }
@@ -8664,7 +8664,7 @@ Deno.test("openai: responses preserve image detail on normalized input images", 
   assert.ok(Array.isArray(content));
   const image = (content as Record<string, unknown>[]).find((part) => part.type === "input_image");
   assert.equal(image?.image_url, "data:image/jpeg;base64,/9j/4AAQ");
-  assert.equal(image?.detail, "high");
+  assert.equal(image.detail, "high");
 });
 
 Deno.test("openai: Chat tool conversations retain tool-call order and opaque arguments", async () => {
@@ -9246,8 +9246,8 @@ Deno.test("openai: buffered Chat preserves final-only text alongside function ca
     choices?: { message?: { content?: unknown; tool_calls?: unknown }; finish_reason?: string }[];
   };
   assert.equal(payload.choices?.[0]?.finish_reason, "tool_calls");
-  assert.equal(payload.choices?.[0]?.message?.content, "I will look that up.");
-  assert.deepEqual(payload.choices?.[0]?.message?.tool_calls, [{ id: "call_final_text", type: "function", function: { name: "lookup", arguments: "{}" } }]);
+  assert.equal(payload.choices[0]?.message?.content, "I will look that up.");
+  assert.deepEqual(payload.choices[0]?.message?.tool_calls, [{ id: "call_final_text", type: "function", function: { name: "lookup", arguments: "{}" } }]);
 });
 
 Deno.test("openai: buffered Chat preserves final text from response.output", async () => {
@@ -9333,14 +9333,14 @@ Deno.test("openai: contentless response.completed fails Chat without success fra
 
       const telemetry = getResponseTelemetry(response);
       assert.equal(telemetry?.completed, false);
-      assert.equal(telemetry?.semanticOutputObserved, false);
-      assert.equal(telemetry?.outputTokenAllowance, 2048);
-      assert.deepEqual(telemetry?.upstreamEventKinds, ["response.completed"]);
-      assert.equal(telemetry?.streamTerminalType, "error");
-      assert.equal(telemetry?.failureKind, "empty_upstream_completion");
-      assert.equal(telemetry?.inputTokens, 1642);
-      assert.equal(telemetry?.outputTokens, 2048);
-      assert.equal(telemetry?.totalTokens, 3690);
+      assert.equal(telemetry.semanticOutputObserved, false);
+      assert.equal(telemetry.outputTokenAllowance, 2048);
+      assert.deepEqual(telemetry.upstreamEventKinds, ["response.completed"]);
+      assert.equal(telemetry.streamTerminalType, "error");
+      assert.equal(telemetry.failureKind, "empty_upstream_completion");
+      assert.equal(telemetry.inputTokens, 1642);
+      assert.equal(telemetry.outputTokens, 2048);
+      assert.equal(telemetry.totalTokens, 3690);
       assert.deepEqual(observedTerminalUsages, [{ completed: false, inputTokens: 1642 }]);
     });
   }
@@ -9618,8 +9618,8 @@ Deno.test("openai: Chat refusal output remains semantic in buffered and streamed
             choices?: { message?: { content?: unknown; refusal?: unknown }; finish_reason?: unknown }[];
           };
           assert.equal(payload.choices?.[0]?.message?.content, null);
-          assert.equal(payload.choices?.[0]?.message?.refusal, refusalText);
-          assert.equal(payload.choices?.[0]?.finish_reason, "stop");
+          assert.equal(payload.choices[0]?.message?.refusal, refusalText);
+          assert.equal(payload.choices[0]?.finish_reason, "stop");
         } else {
           const serialized = await response.text();
           const chunks = [...serialized.matchAll(/^data: (.+)$/gm)]
@@ -9921,16 +9921,16 @@ Deno.test("openai: contentless native Responses and reasoning-only completions f
             assert.doesNotMatch(response.headers.get("Content-Type") ?? "", /text\/event-stream/i);
             const payload = (await response.json()) as { error?: { code?: string; type?: string; param?: unknown } };
             assert.equal(payload.error?.code, "empty_upstream_completion");
-            assert.equal(payload.error?.type, "server_error");
-            assert.equal(payload.error?.param, null);
+            assert.equal(payload.error.type, "server_error");
+            assert.equal(payload.error.param, null);
           }
           const telemetry = getResponseTelemetry(response);
           assert.equal(telemetry?.completed, false);
-          assert.equal(telemetry?.failureKind, "empty_upstream_completion");
-          assert.equal(telemetry?.semanticOutputObserved, false);
-          assert.equal(telemetry?.inputTokens, 3);
-          assert.equal(telemetry?.outputTokens, 4);
-          assert.equal(telemetry?.totalTokens, 7);
+          assert.equal(telemetry.failureKind, "empty_upstream_completion");
+          assert.equal(telemetry.semanticOutputObserved, false);
+          assert.equal(telemetry.inputTokens, 3);
+          assert.equal(telemetry.outputTokens, 4);
+          assert.equal(telemetry.totalTokens, 7);
           assert.deepEqual(observations, [false]);
           assert.deepEqual(observedInputTokens, [3]);
           assert.equal(fetches, 1);
@@ -11338,8 +11338,8 @@ Deno.test("openai: known-unsupported prompt caching rejects controls and breakpo
         assert.equal(dispatches, 0);
         const payload = (await response.json()) as { error?: { message?: string; type?: string; param?: string } };
         assert.equal(payload.error?.message, `Prompt caching is not supported for model '${DEFAULT_TEST_MODEL}'.`);
-        assert.equal(payload.error?.type, "invalid_request_error");
-        assert.equal(payload.error?.param, testCase.param);
+        assert.equal(payload.error.type, "invalid_request_error");
+        assert.equal(payload.error.param, testCase.param);
       });
     }
 
@@ -11566,8 +11566,8 @@ Deno.test("openai: active provider cache capabilities reject only known unsuppor
         assert.equal(dispatches, 0);
         const payload = (await response.json()) as { error?: { message?: string; type?: string; param?: string } };
         assert.equal(payload.error?.message, `Prompt cache control '${testCase.param}' is not supported for model '${DEFAULT_TEST_MODEL}'.`);
-        assert.equal(payload.error?.type, "invalid_request_error");
-        assert.equal(payload.error?.param, testCase.param);
+        assert.equal(payload.error.type, "invalid_request_error");
+        assert.equal(payload.error.param, testCase.param);
       });
     }
 
@@ -11853,7 +11853,7 @@ Deno.test("openai: rejects lossy Chat cache breakpoint content before dispatch",
       assert.equal(dispatches, 0);
       const payload = (await response.json()) as { error?: { param?: string; type?: string } };
       assert.equal(payload.error?.type, "invalid_request_error");
-      assert.equal(payload.error?.param, testCase.param);
+      assert.equal(payload.error.param, testCase.param);
     });
   }
 });
@@ -12628,15 +12628,15 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
         assert.deepEqual(payload.usage, { prompt_tokens: 13, completion_tokens: 7, total_tokens: 20 });
         const telemetry = getResponseTelemetry(response);
         assert.equal(telemetry?.provider, "cerebras");
-        assert.equal(telemetry?.providerRequestId, "cerebras-header-request-1");
-        assert.equal(telemetry?.inputTokens, 13);
-        assert.equal(telemetry?.outputTokens, 7);
-        assert.equal(telemetry?.completed, true);
-        assert.equal(telemetry?.stream, false);
-        assert.deepEqual(telemetry?.attemptedProviders, ["cerebras"]);
-        assert.equal(telemetry?.failureKind, null);
-        assert.equal(typeof telemetry?.firstProviderDispatchMs, "number");
-        assert.equal(typeof telemetry?.firstProviderHeadersMs, "number");
+        assert.equal(telemetry.providerRequestId, "cerebras-header-request-1");
+        assert.equal(telemetry.inputTokens, 13);
+        assert.equal(telemetry.outputTokens, 7);
+        assert.equal(telemetry.completed, true);
+        assert.equal(telemetry.stream, false);
+        assert.deepEqual(telemetry.attemptedProviders, ["cerebras"]);
+        assert.equal(telemetry.failureKind, null);
+        assert.equal(typeof telemetry.firstProviderDispatchMs, "number");
+        assert.equal(typeof telemetry.firstProviderHeadersMs, "number");
         const logText = JSON.stringify(logs);
         assert.doesNotMatch(logText, /cerebras-test-key/);
         assert.doesNotMatch(logText, /provider-body-must-not-be-logged-or-relayed/);
@@ -12666,8 +12666,8 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
         choices?: { message?: Record<string, unknown> }[];
       };
       assert.equal(payload.choices?.[0]?.message?.role, "assistant");
-      assert.equal(payload.choices?.[0]?.message?.content, "pong");
-      assert.equal(payload.choices?.[0]?.message?.reasoning, "the model considered the ping before answering pong.");
+      assert.equal(payload.choices[0]?.message?.content, "pong");
+      assert.equal(payload.choices[0]?.message?.reasoning, "the model considered the ping before answering pong.");
     });
 
     await t.step("preserves upstream reasoning 1:1 in downgraded Chat streams", async () => {
@@ -12696,7 +12696,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       // Native mirror: reasoning rides the leading delta (content stays in
       // the same chunk when present; here the fixture has content: null).
       assert.equal(firstEvent.choices?.[0]?.delta?.role, "assistant");
-      assert.equal(firstEvent.choices?.[0]?.delta?.reasoning, "streamed reasoning trace.");
+      assert.equal(firstEvent.choices[0]?.delta?.reasoning, "streamed reasoning trace.");
       assert.match(streamText, /data: \[DONE\]/);
     });
 
@@ -12732,8 +12732,8 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
         }
       ).error;
       assert.equal(error?.message, "Tools with mixed values for 'strict' are not allowed. Please set all tools to 'strict: true' or 'strict: false'");
-      assert.equal(error?.code, "wrong_api_format");
-      assert.equal(error?.type, "invalid_request_error");
+      assert.equal(error.code, "wrong_api_format");
+      assert.equal(error.type, "invalid_request_error");
     });
 
     await t.step("keeps the generic error when the upstream body is not JSON", async () => {
@@ -12753,7 +12753,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
         }
       ).error;
       assert.equal(error?.message, "Cerebras upstream returned an error.");
-      assert.equal(error?.code, "cerebras_upstream_error");
+      assert.equal(error.code, "cerebras_upstream_error");
     });
 
     await t.step("preserves provider-native refusals in buffered Chat responses", async () => {
@@ -12861,7 +12861,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       });
       const telemetry = getResponseTelemetry(response);
       assert.equal(telemetry?.semanticOutputObserved, true);
-      assert.equal(telemetry?.completed, true);
+      assert.equal(telemetry.completed, true);
     });
 
     await t.step("keeps reading a valid buffered body past the error-body deadline", async () => {
@@ -12933,9 +12933,9 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
         error?: { code?: string; message?: string; param?: string; type?: string };
       };
       assert.equal(payload.error?.type, "invalid_request_error");
-      assert.equal(payload.error?.code, "invalid_request_error");
-      assert.equal(payload.error?.param, "reasoning_effort");
-      assert.match(payload.error?.message ?? "", /none.*low.*medium.*high/i);
+      assert.equal(payload.error.code, "invalid_request_error");
+      assert.equal(payload.error.param, "reasoning_effort");
+      assert.match(payload.error.message ?? "", /none.*low.*medium.*high/i);
       assert.equal(cerebrasCalls, 0);
       assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, []);
     });
@@ -13151,12 +13151,12 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
           };
           assert.equal(payload.error?.type, testCase.expectedType);
           // D2 (2026-08-29): bounded standard upstream fields ARE forwarded 1:1.
-          assert.equal(payload.error?.code, "fixture_failure");
-          assert.equal(payload.error?.message, "provider-body-must-not-be-logged-or-relayed");
+          assert.equal(payload.error.code, "fixture_failure");
+          assert.equal(payload.error.message, "provider-body-must-not-be-logged-or-relayed");
           // The body-reflection safety property still holds: unknown provider
           // fields never reach the client.
-          assert.equal(payload.error?.provider_debug_marker, undefined);
-          assert.equal(payload.error?.trace_id, undefined);
+          assert.equal(payload.error.provider_debug_marker, undefined);
+          assert.equal(payload.error.trace_id, undefined);
           assert.equal(getResponseTelemetry(response)?.failureKind, "upstream_http_error");
           const logText = JSON.stringify(logs);
           assert.doesNotMatch(logText, /provider-body-must-not-be-logged-or-relayed/);
@@ -13206,7 +13206,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
       const payload = (await response.json()) as { error?: { code?: string; message?: string } };
       assert.equal(payload.error?.code, "cerebras_upstream_invalid_response");
       assert.equal(getResponseTelemetry(response)?.failureKind, "invalid_completion_schema");
-      assert.doesNotMatch(payload.error?.message ?? "", /provider-body-must-not-be-relayed/);
+      assert.doesNotMatch(payload.error.message ?? "", /provider-body-must-not-be-relayed/);
     });
 
     await t.step("rejects missing or rewritten native tool-call fields", async () => {
