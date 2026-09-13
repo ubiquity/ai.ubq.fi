@@ -4,12 +4,12 @@
   "private": true,
   "description": "Dev-only lint tooling for the ai.ubq.fi Deno gateway. Single source of truth for lint/format tool versions, consumed by the scripts/ wrappers and the deno.json tasks.",
   "scripts": {
-    "format": "sh scripts/format.sh",
-    "format:check": "sh scripts/format.sh --check",
-    "knip": "sh scripts/knip.sh",
-    "lint": "sh scripts/lint.sh",
-    "lint:fix": "sh scripts/lint.sh --fix",
-    "verify": "sh scripts/verify.sh"
+    "format": "sh ../../scripts/format.sh",
+    "format:check": "sh ../../scripts/format.sh --check",
+    "knip": "sh ../../scripts/knip.sh",
+    "lint": "sh ../../scripts/lint.sh",
+    "lint:fix": "sh ../../scripts/lint.sh --fix",
+    "verify": "sh ../../scripts/verify.sh"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
