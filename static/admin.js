@@ -1049,14 +1049,21 @@ const renderCodexCapacitySource = (source, provider = null) => {
   const label = document.createElement("label");
   label.dataset.check = "";
   const copy = document.createElement("span");
+  const count = setting?.available_count;
   copy.textContent = "Use banked resets";
+  const countLabel = document.createElement("small");
+  countLabel.textContent = Number.isSafeInteger(count) && count >= 0 ? count + " available" : "Count unavailable";
+  countLabel.setAttribute(
+    "aria-label",
+    Number.isSafeInteger(count) && count >= 0 ? count + " banked resets available" : "Banked reset count unavailable",
+  );
   const input = document.createElement("input");
   input.type = "checkbox";
   input.setAttribute("role", "switch");
   input.setAttribute("aria-label", "Use banked resets for " + title.textContent);
   input.checked = setting?.enabled === true;
   input.disabled = !setting || codexResetSaving.has(setting.account_id_hash);
-  label.append(copy, input);
+  label.append(copy, input, countLabel);
   header.append(label);
   input.addEventListener("change", async () => {
     if (!setting) return;

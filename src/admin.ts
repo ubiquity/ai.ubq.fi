@@ -1,3 +1,5 @@
+import { config } from "./config.ts";
+import { readCodexResetAvailableCount } from "./codex_banked_reset_provider.ts";
 import { codexResetUsageKey, readCodexResetUsage } from "./codex_reset_settings.ts";
 import {
   cacheCodexAuthPool,
@@ -2343,9 +2345,19 @@ export const handleAdminCodexResetSettings = async (request: Request): Promise<R
     await kv.set(codexResetUsageKey(raw.account_id_hash), { enabled: raw.enabled });
     return json(200, { account_id_hash: raw.account_id_hash, enabled: raw.enabled }, { "Cache-Control": "no-store" });
   }
-  const data = await Promise.all(identities.map(async (account) => ({
-    ...account,
-    enabled: (await readCodexResetUsage(kv, account.account_id_hash)).allowed,
-  })));
+  const data = await Promise.all(identities.map(async (account, index) => {
+    const enabled = (await readCodexResetUsage(kv, account.account_id_hash)).allowed;
+    let availableCount: number | null = null;
+    try {
+      const credentials = accounts[index]!;
+      availableCount = await readCodexResetAvailableCount({
+        codexBaseUrl: config.codexBaseUrl,
+        accountId: credentials.account_id,
+        accessToken: credentials.access_token,
+        userAgent: "codex_cli_rs/0.100.0 (ai.ubq.fi)",
+      }, AbortSignal.any([request.signal, AbortSignal.timeout(5000)]));
+    } catch { /* An unavailable count must not appear as zero or block the switch. */ }
+    return { ...account, enabled, available_count: availableCount };
+  }));
   return json(200, { data }, { "Cache-Control": "no-store" });
 };
