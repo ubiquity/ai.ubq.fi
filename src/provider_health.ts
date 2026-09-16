@@ -32,7 +32,7 @@ export type ProviderHealthView = Readonly<{
   last_refresh_succeeded: boolean | null;
 }>;
 
-type RecordProvider = "cerebras" | "codex" | "metered" | "surplus";
+type RecordProvider = "cerebras" | "codex" | "deepseek" | "metered" | "surplus";
 
 const PROVIDER_RECORDS = ["current", "success", "reachable", "auth_invalid", "quota_exhausted", "upstream_error", "refresh"] as const;
 
@@ -227,6 +227,13 @@ export const recordCerebrasProviderHealth = (
   providerRequestId: string | null = null
 ): Promise<void> => recordProviderHealth("cerebras", "default", event, status, now, providerRequestId);
 
+export const recordDeepSeekProviderHealth = (
+  event: ProviderHealthEvent,
+  status: number | null = null,
+  now: () => number = Date.now,
+  providerRequestId: string | null = null
+): Promise<void> => recordProviderHealth("deepseek", "default", event, status, now, providerRequestId);
+
 const unknownView = (): ProviderHealthView => ({
   state: "unknown",
   stale: null,
@@ -306,6 +313,8 @@ export const getMeteredProviderHealth = (now: () => number = Date.now): Promise<
 export const getSurplusProviderHealth = (now: () => number = Date.now): Promise<ProviderHealthView> => readProviderHealth("surplus", "default", now);
 
 export const getCerebrasProviderHealth = (now: () => number = Date.now): Promise<ProviderHealthView> => readProviderHealth("cerebras", "default", now);
+
+export const getDeepSeekProviderHealth = (now: () => number = Date.now): Promise<ProviderHealthView> => readProviderHealth("deepseek", "default", now);
 
 export const resetProviderHealthThrottleForTest = (): void => {
   lastHeartbeatWriteAtMs.clear();

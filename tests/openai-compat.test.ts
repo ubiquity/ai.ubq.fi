@@ -163,6 +163,8 @@ const {
   selectCodexRoutingAccounts,
 } = await import("../src/codex_account_routing.ts");
 const { projectCerebrasToolSchema, setCerebrasFetchTimeoutMsForTest } = await import("../src/cerebras.ts");
+const { DEEPSEEK_CHAT_COMPLETIONS_URL, DEEPSEEK_FLASH_MODEL, DEEPSEEK_V4_FLASH_MODEL, projectDeepSeekRequest, setDeepSeekFetchTimeoutMsForTest } =
+  await import("../src/deepseek.ts");
 const { recordCodexProviderHealth, resetProviderHealthThrottleForTest } = await import("../src/provider_health.ts");
 
 const TEXT_ENCODER = new TextEncoder();
@@ -244,6 +246,19 @@ const responsesRequest = (body: Record<string, unknown> = {}, signal?: AbortSign
 
 const parseResponsesSseValues = (value: string): Record<string, unknown>[] =>
   [...value.matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]) as Record<string, unknown>);
+
+/**
+ * Chat Completions request for a model-addressed special provider. The
+ * deliberately contradictory `x-uos-upstream` header proves model-driven
+ * routing wins: the gateway never reads that header from a request.
+ */
+const specialProviderChatRequest = (body: Record<string, unknown>, signal?: AbortSignal): Request =>
+  new Request("https://ai.ubq.fi/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-uos-upstream": "chatgpt_codex" },
+    body: JSON.stringify(body),
+    signal,
+  });
 
 /** A `void` promise gate: the resolution itself carries no payload. */
 type VoidGate = { promise: Promise<void>; resolve: () => void };
@@ -2357,10 +2372,12 @@ Deno.test("openai: prompt-cache capability records are UOS-only and keep provide
 Deno.test("openai: models returns an empty list when no snapshot is stored", async () => {
   const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
   const previousSnapshot = kvStore.get(snapshotKey);
-  const envKey = "CEREBRAS_API_KEY";
-  const originalApiKey = Deno.env.get(envKey);
+  // Provider-backed entries are injected independently of the Codex snapshot,
+  // so both optional provider credentials must be absent for an empty list.
+  const providerEnvKeys = ["CEREBRAS_API_KEY", "DEEPSEEK_API_KEY"] as const;
+  const originalApiKeys = providerEnvKeys.map((key) => [key, Deno.env.get(key)] as const);
   kvStore.delete(snapshotKey);
-  Deno.env.delete(envKey);
+  for (const key of providerEnvKeys) Deno.env.delete(key);
 
   try {
     const response = await withFetchMock(
@@ -2377,8 +2394,10 @@ Deno.test("openai: models returns an empty list when no snapshot is stored", asy
   } finally {
     if (previousSnapshot === undefined) kvStore.delete(snapshotKey);
     else kvStore.set(snapshotKey, previousSnapshot);
-    if (originalApiKey === undefined) Deno.env.delete(envKey);
-    else Deno.env.set(envKey, originalApiKey);
+    for (const [key, originalApiKey] of originalApiKeys) {
+      if (originalApiKey === undefined) Deno.env.delete(key);
+      else Deno.env.set(key, originalApiKey);
+    }
   }
 });
 
@@ -2422,6 +2441,107 @@ Deno.test("openai: configured Cerebras GPT-OSS is discoverable without altering 
     if (originalApiKey === undefined) Deno.env.delete(envKey);
     else Deno.env.set(envKey, originalApiKey);
   }
+});
+
+Deno.test("openai: configured DeepSeek official models are discoverable and replace a paid-fallback catalog row", async () => {
+  const envKey = "DEEPSEEK_API_KEY";
+  const originalApiKey = Deno.env.get(envKey);
+  const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
+  const previousSnapshot = kvStore.get(snapshotKey) as { models: unknown[] } | undefined;
+  Deno.env.set(envKey, "deepseek-test-key");
+  // A paid-fallback discovery source may already advertise the legacy alias.
+  // The official row must replace it rather than duplicate or defer to it.
+  kvStore.set(snapshotKey, {
+    ...(previousSnapshot as Record<string, unknown>),
+    models: [...(previousSnapshot?.models ?? []), { slug: DEEPSEEK_V4_FLASH_MODEL, display_name: "DeepSeek V4 Flash" }],
+  });
+  try {
+    const models = await handleModels();
+    assert.equal(models.status, 200);
+    const modelList = (await models.json()) as { data?: Record<string, unknown>[] };
+    for (const id of [DEEPSEEK_FLASH_MODEL, DEEPSEEK_V4_FLASH_MODEL]) {
+      assert.deepEqual(
+        modelList.data?.filter((entry) => entry.id === id),
+        [{ id, object: "model", created: 0, owned_by: "deepseek" }],
+        id
+      );
+    }
+
+    const capabilities = await handleModelCapabilities();
+    assert.equal(capabilities.status, 200);
+    const capabilityList = (await capabilities.json()) as { data?: Record<string, unknown>[] };
+    for (const id of [DEEPSEEK_FLASH_MODEL, DEEPSEEK_V4_FLASH_MODEL]) {
+      const entries = capabilityList.data?.filter((entry) => entry.id === id) ?? [];
+      assert.equal(entries.length, 1, id);
+      assert.deepEqual(entries[0], {
+        id,
+        object: "uos.model_capabilities",
+        owned_by: "deepseek",
+        display_name: id === DEEPSEEK_FLASH_MODEL ? "DeepSeek Flash" : "DeepSeek Flash (legacy id)",
+        upstream_provider: "deepseek",
+        supported_endpoints: ["/v1/chat/completions"],
+        supported_reasoning_levels: ["none", "low", "high", "max"],
+        default_reasoning_effort: "high",
+        reasoning_effort_wire_map: { ultra: "max" },
+        context_window_tokens: 1_000_000,
+        max_context_window_tokens: 1_000_000,
+        auto_compact_token_limit_tokens: 850_000,
+        model_class: "deepseek-v4",
+        effective_context_window_percent: 95,
+      });
+    }
+  } finally {
+    if (previousSnapshot === undefined) kvStore.delete(snapshotKey);
+    else kvStore.set(snapshotKey, previousSnapshot);
+    if (originalApiKey === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, originalApiKey);
+  }
+});
+
+Deno.test("openai: DeepSeek official ids are hidden when no credential is configured", async () => {
+  const envKey = "DEEPSEEK_API_KEY";
+  const originalApiKey = Deno.env.get(envKey);
+  Deno.env.delete(envKey);
+  try {
+    const models = await handleModels();
+    assert.equal(models.status, 200);
+    const modelList = (await models.json()) as { data?: Record<string, unknown>[] };
+    for (const id of [DEEPSEEK_FLASH_MODEL, DEEPSEEK_V4_FLASH_MODEL]) {
+      assert.equal(
+        modelList.data?.some((entry) => entry.id === id),
+        false,
+        id
+      );
+    }
+  } finally {
+    if (originalApiKey !== undefined) Deno.env.set(envKey, originalApiKey);
+  }
+});
+
+Deno.test("openai: DeepSeek request projection translates the documented wire contract", () => {
+  assert.deepEqual(
+    projectDeepSeekRequest(
+      {
+        model: DEEPSEEK_V4_FLASH_MODEL,
+        messages: [{ role: "user", content: "ping" }],
+        max_completion_tokens: 2048,
+        reasoning_effort: "ultra",
+        temperature: 0,
+      },
+      DEEPSEEK_V4_FLASH_MODEL
+    ),
+    {
+      model: DEEPSEEK_FLASH_MODEL,
+      messages: [{ role: "user", content: "ping" }],
+      max_tokens: 2048,
+      reasoning_effort: "max",
+      temperature: 0,
+    }
+  );
+  // Documented compatibility aliases pass through unchanged; the official API
+  // performs their tier mapping.
+  assert.equal(projectDeepSeekRequest({ model: DEEPSEEK_FLASH_MODEL, reasoning_effort: "medium" }, DEEPSEEK_FLASH_MODEL).reasoning_effort, "medium");
+  assert.throws(() => projectDeepSeekRequest({ model: DEEPSEEK_FLASH_MODEL }, "deepseek-v4-pro"), /not configured/);
 });
 
 Deno.test("openai: unsupported snapshot model is rejected before upstream fetch", async () => {
@@ -12360,13 +12480,7 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
     if (originalApiKey === undefined) Deno.env.delete(envKey);
     else Deno.env.set(envKey, originalApiKey);
   };
-  const request = (body: Record<string, unknown>, signal?: AbortSignal): Request =>
-    new Request("https://ai.ubq.fi/v1/chat/completions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-uos-upstream": "chatgpt_codex" },
-      body: JSON.stringify(body),
-      signal,
-    });
+  const request = specialProviderChatRequest;
   const canonicalBody = {
     model: "gpt-oss-120b",
     messages: [
@@ -13444,6 +13558,489 @@ Deno.test("openai: Cerebras GPT-OSS Chat Completions adapter is native, bounded,
   } finally {
     restoreApiKey();
     setCerebrasFetchTimeoutMsForTest(null);
+  }
+});
+
+Deno.test("openai: DeepSeek official Chat Completions adapter streams natively and stays content-safe", async (t) => {
+  const envKey = "DEEPSEEK_API_KEY";
+  const fakeApiKey = "deepseek-test-key";
+  const originalApiKey = Deno.env.get(envKey);
+  const restoreApiKey = (): void => {
+    if (originalApiKey === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, originalApiKey);
+  };
+  const request = specialProviderChatRequest;
+  const messages = [
+    { role: "developer", content: "Answer in one short sentence." },
+    { role: "user", content: "Summarize the deployment status." },
+  ];
+  const tools = [
+    {
+      type: "function",
+      function: {
+        name: "assistant_message",
+        description: "Return the assistant response envelope.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: { message: { type: "string" } },
+          required: ["message"],
+        },
+      },
+    },
+  ];
+  const canonicalBody = {
+    model: DEEPSEEK_V4_FLASH_MODEL,
+    messages,
+    tools,
+    tool_choice: "auto",
+    parallel_tool_calls: false,
+    reasoning_effort: "high",
+    temperature: 0,
+    max_completion_tokens: 2048,
+    stream: false,
+  };
+  const completion = (id: string, message: Record<string, unknown>): Record<string, unknown> => ({
+    id,
+    object: "chat.completion",
+    created: 1_780_000_000,
+    model: DEEPSEEK_FLASH_MODEL,
+    choices: [{ index: 0, message, finish_reason: "stop" }],
+    // Provider-only cache and fingerprint fields must never reach the client.
+    system_fingerprint: "fp_deepseek_provider_only",
+    usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18, prompt_cache_hit_tokens: 0, prompt_cache_miss_tokens: 11 },
+  });
+  const streamChunk = (delta: Record<string, unknown>, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id: "deepseek-stream-1",
+    object: "chat.completion.chunk",
+    created: 1_780_000_001,
+    model: DEEPSEEK_FLASH_MODEL,
+    choices: [{ index: 0, delta, finish_reason: null, ...extra }],
+  });
+  const dataFrames = (text: string): Record<string, unknown>[] =>
+    text
+      .split("\n\n")
+      .filter((frame) => frame.startsWith("data: ") && frame !== "data: [DONE]")
+      .map((frame) => JSON.parse(frame.slice(6)) as Record<string, unknown>);
+  const usageContext = (requestId: string) => ({
+    keyId: null,
+    kernelRepo: null,
+    kernelOrg: null,
+    requestId,
+    startedAtMs: Date.now(),
+    startedAtMonotonicMs: performance.now(),
+  });
+
+  Deno.env.set(envKey, fakeApiKey);
+  try {
+    await t.step("routes the interchangeable alias to the official endpoint and projects the documented wire contract", async () => {
+      const upstreamCalls: { url: string; body: Record<string, unknown>; headers: Headers }[] = [];
+      const response = await withFetchMock(
+        (url, bodyText, init) => {
+          upstreamCalls.push({ url, body: JSON.parse(String(bodyText)) as Record<string, unknown>, headers: new Headers(init?.headers) });
+          return Response.json(
+            completion("deepseek-completion-1", {
+              role: "assistant",
+              content: "Deployment is green.",
+              reasoning_content: "Checked the release identity first.",
+              tool_calls: [{ id: "call_1", type: "function", function: { name: "assistant_message", arguments: '{"message":"ok"}' } }],
+            }),
+            { headers: { "Content-Type": "application/json", "X-Request-Id": "deepseek-header-request-1" } }
+          );
+        },
+        () => handleChatCompletions(request(canonicalBody), usageContext("deepseek-buffered-success"))
+      );
+      assert.equal(response.status, 200);
+      assert.equal(upstreamCalls.length, 1);
+      assert.equal(upstreamCalls[0].url, DEEPSEEK_CHAT_COMPLETIONS_URL);
+      assert.equal(upstreamCalls[0].headers.get("authorization"), `Bearer ${fakeApiKey}`);
+      // The legacy alias reaches the API as the model it actually serves, and
+      // the OpenAI output cap becomes DeepSeek's documented `max_tokens`.
+      assert.deepEqual(upstreamCalls[0].body, {
+        model: DEEPSEEK_FLASH_MODEL,
+        messages,
+        tools,
+        tool_choice: "auto",
+        parallel_tool_calls: false,
+        reasoning_effort: "high",
+        temperature: 0,
+        max_tokens: 2048,
+        stream: false,
+      });
+
+      assert.equal(response.headers.get("x-uos-upstream"), "deepseek");
+      assert.equal(response.headers.get("x-uos-provider-request-id"), "deepseek-header-request-1");
+      assert.equal(response.headers.get("x-uos-warning"), null);
+      assert.deepEqual(await response.json(), {
+        id: "deepseek-completion-1",
+        object: "chat.completion",
+        created: 1_780_000_000,
+        model: DEEPSEEK_FLASH_MODEL,
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: "assistant",
+              content: "Deployment is green.",
+              reasoning_content: "Checked the release identity first.",
+              tool_calls: [{ id: "call_1", type: "function", function: { name: "assistant_message", arguments: '{"message":"ok"}' } }],
+            },
+            finish_reason: "stop",
+          },
+        ],
+        usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
+      });
+
+      const telemetry = getResponseTelemetry(response);
+      assert.equal(telemetry?.provider, "deepseek");
+      assert.equal(telemetry.providerRequestId, "deepseek-header-request-1");
+      assert.equal(telemetry.reasoning, "high");
+      assert.equal(telemetry.inputTokens, 11);
+      assert.equal(telemetry.outputTokens, 7);
+      assert.equal(telemetry.completed, true);
+      assert.equal(telemetry.stream, false);
+      assert.deepEqual(telemetry.attemptedProviders, ["deepseek"]);
+      assert.equal(telemetry.failureKind, null);
+      assert.equal(typeof telemetry.firstProviderDispatchMs, "number");
+      assert.equal(typeof telemetry.firstProviderHeadersMs, "number");
+    });
+
+    await t.step("defaults omitted reasoning to the documented official default without inventing other fields", async () => {
+      let forwarded: Record<string, unknown> | null = null;
+      const response = await withFetchMock(
+        (_url, bodyText) => {
+          forwarded = JSON.parse(String(bodyText)) as Record<string, unknown>;
+          return Response.json(completion("deepseek-completion-2", { role: "assistant", content: "ok" }));
+        },
+        () => handleChatCompletions(request({ model: DEEPSEEK_FLASH_MODEL, messages, stream: false }))
+      );
+      assert.equal(response.status, 200);
+      assert.deepEqual(forwarded, { model: DEEPSEEK_FLASH_MODEL, messages, stream: false, reasoning_effort: "high" });
+      assert.equal(getResponseTelemetry(response)?.reasoning, "high");
+    });
+
+    await t.step("relays upstream SSE chunks, keep-alive comments and [DONE] without downgrading the stream", async () => {
+      const upstreamCalls: { url: string; body: Record<string, unknown> }[] = [];
+      const upstreamFrames = [
+        ": keep-alive\n\n",
+        `data: ${JSON.stringify(streamChunk({ role: "assistant", reasoning_content: "Considering" }))}\n\n`,
+        `data: ${JSON.stringify(streamChunk({ content: "Green" }))}\n\n`,
+        `data: ${JSON.stringify({
+          ...streamChunk({}, { finish_reason: "stop" }),
+          // DeepSeek rides usage on the final content chunk rather than a
+          // separate usage-only frame.
+          usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18, prompt_cache_hit_tokens: 0 },
+        })}\n\n`,
+        "data: [DONE]\n\n",
+      ];
+      const response = await withFetchMock(
+        (url, bodyText) => {
+          upstreamCalls.push({ url, body: JSON.parse(String(bodyText)) as Record<string, unknown> });
+          return sseResponse(upstreamFrames);
+        },
+        () =>
+          handleChatCompletions(request({ model: DEEPSEEK_V4_FLASH_MODEL, messages, reasoning_effort: "high", stream: true }), usageContext("deepseek-stream"))
+      );
+
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("Content-Type"), "text/event-stream");
+      assert.equal(response.headers.get("x-uos-upstream"), "deepseek");
+      // Native streaming is not a downgrade: no buffered-replay warning.
+      assert.equal(response.headers.get("x-uos-warning"), null);
+      assert.deepEqual(upstreamCalls, [
+        {
+          url: DEEPSEEK_CHAT_COMPLETIONS_URL,
+          body: { model: DEEPSEEK_FLASH_MODEL, messages, reasoning_effort: "high", stream: true, stream_options: { include_usage: true } },
+        },
+      ]);
+
+      const text = await response.text();
+      const frames = text.split("\n\n").filter((frame) => frame.length > 0);
+      assert.equal(frames[0], ": keep-alive");
+      assert.equal(frames.at(-1), "data: [DONE]");
+      assert.deepEqual(dataFrames(text), [
+        {
+          id: "deepseek-stream-1",
+          object: "chat.completion.chunk",
+          created: 1_780_000_001,
+          model: DEEPSEEK_FLASH_MODEL,
+          choices: [{ index: 0, delta: { role: "assistant", reasoning_content: "Considering" }, finish_reason: null }],
+        },
+        {
+          id: "deepseek-stream-1",
+          object: "chat.completion.chunk",
+          created: 1_780_000_001,
+          model: DEEPSEEK_FLASH_MODEL,
+          choices: [{ index: 0, delta: { content: "Green" }, finish_reason: null }],
+        },
+        {
+          id: "deepseek-stream-1",
+          object: "chat.completion.chunk",
+          created: 1_780_000_001,
+          model: DEEPSEEK_FLASH_MODEL,
+          choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+          usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
+        },
+      ]);
+
+      const telemetry = getResponseTelemetry(response);
+      assert.equal(telemetry?.provider, "deepseek");
+      assert.equal(telemetry.stream, true);
+      assert.equal(typeof telemetry.firstUpstreamSseEventMs, "number");
+      assert.equal(typeof telemetry.firstSemanticCommitmentMs, "number");
+      assert.equal(telemetry.semanticOutputObserved, true);
+      assert.equal(telemetry.streamTerminalType, "response.completed");
+      assert.equal(telemetry.inputTokens, 11);
+      assert.equal(telemetry.outputTokens, 7);
+      assert.equal(telemetry.completed, true);
+    });
+
+    await t.step("delivers the first client-visible frame before the upstream stream ends", async () => {
+      let releaseUpstream = (): void => {};
+      const gate = new Promise<void>((resolve) => {
+        releaseUpstream = resolve;
+      });
+      const firstFrame = `data: ${JSON.stringify(streamChunk({ role: "assistant", content: "Ready" }))}\n\n`;
+      const upstream = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          controller.enqueue(TEXT_ENCODER.encode(firstFrame));
+          await gate;
+          controller.enqueue(TEXT_ENCODER.encode("data: [DONE]\n\n"));
+          controller.close();
+        },
+      });
+
+      const observed = await withFetchMock(
+        () => new Response(upstream, { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+        async () => {
+          const response = await handleChatCompletions(request({ model: DEEPSEEK_FLASH_MODEL, messages, stream: true }));
+          const reader = response.body?.getReader();
+          assert.ok(reader);
+          const first = await reader.read();
+          const firstText = first.value ? new TextDecoder().decode(first.value) : "";
+          releaseUpstream();
+          let rest = "";
+          for (;;) {
+            const next = await reader.read();
+            if (next.done) break;
+            rest += new TextDecoder().decode(next.value);
+          }
+          return { status: response.status, firstText, rest };
+        }
+      );
+
+      assert.equal(observed.status, 200);
+      // The first frame is readable while the upstream response is still open.
+      assert.equal(observed.firstText, firstFrame);
+      assert.equal(observed.rest, "data: [DONE]\n\n");
+    });
+
+    await t.step("forwards the bounded upstream error without relaying unlisted provider headers", async () => {
+      const response = await withFetchMock(
+        () =>
+          Response.json(
+            { error: { message: "Rate limit reached for requests", code: "rate_limit_reached", provider_debug_marker: "must-not-be-relayed" } },
+            {
+              status: 429,
+              headers: {
+                "Content-Type": "application/json",
+                "Retry-After": "17",
+                "X-Request-Id": "deepseek-error-request-1",
+                // DeepSeek documents no capacity headers; a passthrough would
+                // be inventing a contract the provider does not publish.
+                "x-ratelimit-limit-requests-minute": "2500",
+              },
+            }
+          ),
+        () => handleChatCompletions(request(canonicalBody))
+      );
+
+      assert.equal(response.status, 429);
+      assert.equal(response.headers.get("x-uos-upstream"), "deepseek");
+      assert.equal(response.headers.get("x-uos-provider-request-id"), "deepseek-error-request-1");
+      assert.equal(response.headers.get("Retry-After"), "17");
+      assert.equal(response.headers.get("x-ratelimit-limit-requests-minute"), null);
+      const payload = (await response.json()) as { error?: { message?: string; type?: string; code?: string } };
+      assert.equal(payload.error?.code, "rate_limit_reached");
+      assert.equal(payload.error.message, "Rate limit reached for requests");
+      assert.equal(payload.error.type, "rate_limit_error");
+      assert.doesNotMatch(JSON.stringify(payload), /provider_debug_marker/);
+      const telemetry = getResponseTelemetry(response);
+      assert.equal(telemetry?.failureKind, "upstream_http_error");
+      assert.deepEqual(telemetry.attemptedProviders, ["deepseek"]);
+    });
+
+    await t.step("keeps the generic error when the upstream failure body is not JSON", async () => {
+      const response = await withFetchMock(
+        () => new Response("<html>provider-only-body</html>", { status: 502, headers: { "Content-Type": "text/html" } }),
+        () => handleChatCompletions(request(canonicalBody))
+      );
+      assert.equal(response.status, 502);
+      assert.equal(response.headers.get("x-uos-upstream"), "deepseek");
+      const payload = (await response.json()) as { error?: { message?: string; code?: string } };
+      assert.equal(payload.error?.code, "deepseek_upstream_error");
+      assert.equal(payload.error.message, "DeepSeek upstream returned an error.");
+      assert.doesNotMatch(JSON.stringify(payload), /provider-only-body/);
+    });
+
+    await t.step("rejects a missing server credential without provider dispatch", async () => {
+      Deno.env.delete(envKey);
+      try {
+        let dispatchCalls = 0;
+        const response = await withFetchMock(
+          () => {
+            dispatchCalls += 1;
+            throw new Error("a missing DeepSeek credential must not dispatch");
+          },
+          () => handleChatCompletions(request(canonicalBody))
+        );
+        assert.equal(dispatchCalls, 0);
+        assert.equal(response.status, 503);
+        assert.equal(response.headers.get("x-uos-upstream"), "deepseek");
+        assert.equal(((await response.json()) as { error?: { code?: string } }).error?.code, "deepseek_api_key_missing");
+        assert.equal(getResponseTelemetry(response)?.failureKind, "deepseek_api_key_missing");
+        assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, []);
+      } finally {
+        Deno.env.set(envKey, fakeApiKey);
+      }
+    });
+
+    await t.step("does not route non-flash DeepSeek ids to the official provider", async () => {
+      let deepseekCalls = 0;
+      const response = await withFetchMock(
+        (url) => {
+          if (url === DEEPSEEK_CHAT_COMPLETIONS_URL) deepseekCalls += 1;
+          throw new Error(`unexpected upstream request for a non-flash DeepSeek id: ${url}`);
+        },
+        () => handleChatCompletions(request({ model: "deepseek-v4-pro", messages, stream: false }))
+      );
+      assert.notEqual(response.status, 200);
+      assert.equal(deepseekCalls, 0);
+      assert.deepEqual(getResponseTelemetry(response)?.attemptedProviders, []);
+    });
+
+    await t.step("classifies malformed, truncated, and invalid buffered payloads without reflecting provider content", async () => {
+      const truncated = await withFetchMock(
+        () => sseResponse([`data: ${JSON.stringify(streamChunk({ content: "partial" }))}\n\n`, 'data: {"id":"deepseek-broken"\n\n']),
+        () => handleChatCompletions(request({ model: DEEPSEEK_FLASH_MODEL, messages, stream: true }))
+      );
+      assert.equal(truncated.status, 200);
+      const truncatedText = await truncated.text();
+      assert.match(truncatedText, /"code":"deepseek_upstream_stream_error"/);
+      assert.doesNotMatch(truncatedText, /deepseek-broken/);
+      assert.equal(getResponseTelemetry(truncated)?.streamTerminalType, "error");
+      assert.equal(getResponseTelemetry(truncated)?.failureKind, "invalid_json");
+
+      const prematureEof = await withFetchMock(
+        () => sseResponse([`data: ${JSON.stringify(streamChunk({ content: "partial" }))}\n\n`]),
+        () => handleChatCompletions(request({ model: DEEPSEEK_FLASH_MODEL, messages, stream: true }))
+      );
+      assert.equal(prematureEof.status, 200);
+      await prematureEof.text();
+      assert.equal(getResponseTelemetry(prematureEof)?.failureKind, "incomplete_response");
+      assert.equal(getResponseTelemetry(prematureEof)?.streamTerminalType, "eof");
+
+      const invalidBuffered = await withFetchMock(
+        () => new Response("{not json", { status: 200, headers: { "Content-Type": "application/json" } }),
+        () => handleChatCompletions(request(canonicalBody))
+      );
+      assert.equal(invalidBuffered.status, 502);
+      assert.equal(invalidBuffered.headers.get("x-uos-upstream"), "deepseek");
+      assert.equal(((await invalidBuffered.json()) as { error?: { code?: string } }).error?.code, "deepseek_upstream_invalid_response");
+      assert.equal(getResponseTelemetry(invalidBuffered)?.failureKind, "invalid_json");
+    });
+
+    await t.step("rejects an invalid upstream chunk schema without reflecting provider content", async () => {
+      const response = await withFetchMock(
+        () =>
+          sseResponse([
+            `data: ${JSON.stringify({ id: "deepseek-invalid-chunk", object: "chat.completion.chunk", created: 1, model: DEEPSEEK_FLASH_MODEL, choices: [{ index: 0, delta: { content: 5 } }] })}\n\n`,
+          ]),
+        () => handleChatCompletions(request({ model: DEEPSEEK_FLASH_MODEL, messages, stream: true }))
+      );
+      assert.equal(response.status, 200);
+      const text = await response.text();
+      assert.deepEqual(dataFrames(text), [
+        { error: { message: "Upstream Chat Completions stream failed.", type: "server_error", code: "deepseek_upstream_stream_error", param: null } },
+      ]);
+      assert.doesNotMatch(text, /deepseek-invalid-chunk/);
+      assert.equal(getResponseTelemetry(response)?.failureKind, "invalid_stream_chunk");
+    });
+
+    await t.step("bounds a pre-header timeout and forwards downstream cancellation", async () => {
+      setDeepSeekFetchTimeoutMsForTest(10);
+      try {
+        let timeoutCalls = 0;
+        const timeoutResponse = await withFetchMock(
+          (url, _body, init) => {
+            timeoutCalls += 1;
+            assert.equal(url, DEEPSEEK_CHAT_COMPLETIONS_URL);
+            const signal = init?.signal;
+            if (!signal) return Promise.reject(new Error("DeepSeek request did not receive a cancellation signal"));
+            return rejectOnAbort(signal);
+          },
+          () => handleChatCompletions(request(canonicalBody))
+        );
+        assert.equal(timeoutCalls, 1);
+        assert.equal(timeoutResponse.status, 504);
+        assert.equal(timeoutResponse.headers.get("x-uos-upstream"), "deepseek");
+        assert.equal(((await timeoutResponse.json()) as { error?: { code?: string } }).error?.code, "gateway_timeout");
+        assert.equal(getResponseTelemetry(timeoutResponse)?.streamTerminalType, "deadline");
+        assert.equal(getResponseTelemetry(timeoutResponse)?.failureKind, "deadline");
+      } finally {
+        setDeepSeekFetchTimeoutMsForTest(null);
+      }
+
+      const controller = new AbortController();
+      let downstreamAbortObserved = false;
+      let cancellationCalls = 0;
+      const cancelledResponse = await withFetchMock(
+        (url, _body, init) => {
+          cancellationCalls += 1;
+          assert.equal(url, DEEPSEEK_CHAT_COMPLETIONS_URL);
+          const signal = init?.signal;
+          if (!signal) return Promise.reject(new Error("DeepSeek request did not receive a cancellation signal"));
+          const pending = rejectOnAbort(signal, () => {
+            downstreamAbortObserved = true;
+          });
+          controller.abort(new DOMException("client disconnected", "AbortError"));
+          return pending;
+        },
+        () => handleChatCompletions(request(canonicalBody, controller.signal))
+      );
+      assert.equal(cancellationCalls, 1);
+      assert.equal(downstreamAbortObserved, true);
+      assert.equal(cancelledResponse.status, 499);
+      assert.equal(cancelledResponse.headers.get("x-uos-upstream"), "deepseek");
+      assert.equal(getResponseTelemetry(cancelledResponse)?.streamTerminalType, "cancelled");
+      assert.equal(getResponseTelemetry(cancelledResponse)?.failureKind, "cancellation");
+    });
+
+    await t.step("never logs the provider credential or the upstream body", async () => {
+      const originalConsoleError = console.error;
+      const logs: unknown[] = [];
+      console.error = (...args: unknown[]) => {
+        logs.push(args);
+      };
+      try {
+        await withFetchMock(
+          () => Response.json(completion("deepseek-log-proof", { role: "assistant", content: "provider-body-must-not-be-logged" })),
+          () => handleChatCompletions(request(canonicalBody))
+        );
+        await withFetchMock(
+          () => new Response("provider-body-must-not-be-logged", { status: 503, headers: { "Content-Type": "text/plain" } }),
+          () => handleChatCompletions(request(canonicalBody))
+        );
+      } finally {
+        console.error = originalConsoleError;
+      }
+      const logText = JSON.stringify(logs);
+      assert.doesNotMatch(logText, new RegExp(fakeApiKey));
+      assert.doesNotMatch(logText, /provider-body-must-not-be-logged/);
+    });
+  } finally {
+    restoreApiKey();
+    setDeepSeekFetchTimeoutMsForTest(null);
   }
 });
 

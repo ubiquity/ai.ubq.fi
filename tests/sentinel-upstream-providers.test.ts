@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { apiKeyHashKey, apiKeyIdKey } from "../src/api_keys.ts";
 import { ApiKeyQuotaDispatchError } from "../src/api_key_policy.ts";
 import { CEREBRAS_CHAT_COMPLETIONS_URL, fetchCerebrasChatCompletions } from "../src/cerebras.ts";
+import { DEEPSEEK_CHAT_COMPLETIONS_URL, fetchDeepSeekChatCompletions } from "../src/deepseek.ts";
 import {
   CODEX_AUTH_POOL_KV_KEY,
   fetchCodexResponses,
@@ -56,6 +57,7 @@ const REPLAY_ROUTES: Readonly<Record<SentinelUpstreamProvider, string>> = Object
   surplus: `${SURPLUS_BASE_URL}/v1/responses`,
   metered: `${METERED_BASE_URL}/v1/responses`,
   cerebras: CEREBRAS_CHAT_COMPLETIONS_URL,
+  deepseek: DEEPSEEK_CHAT_COMPLETIONS_URL,
 });
 
 const decodeChunks = (trace: ReturnType<ReturnType<typeof createSentinelUpstreamRecorder>["snapshotAndSeal"]>): string =>
@@ -329,6 +331,49 @@ Deno.test("actual Cerebras dispatch returns the exact upstream body and records 
       }
     ),
     (error: unknown) => error instanceof Error && error.name === "CerebrasError"
+  );
+  assert.equal(noHeaderRecorder.snapshotAndSeal().attempts[0]?.terminal, "fetch_error");
+  noHeaderRecorder.dispose();
+});
+
+Deno.test("actual DeepSeek dispatch returns the exact upstream body and records the attempt", async () => {
+  const recorder = createSentinelUpstreamRecorder();
+  const rawJson = JSON.stringify({ id: "deepseek-1", object: "chat.completion", choices: [{ index: 0 }] });
+  let dispatchedBody: Record<string, unknown> | null = null;
+  const fetcher = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    let requestUrl: string;
+    if (typeof input === "string") requestUrl = input;
+    else if (input instanceof URL) requestUrl = input.href;
+    else requestUrl = input.url;
+    assert.equal(requestUrl, DEEPSEEK_CHAT_COMPLETIONS_URL);
+    if (typeof init?.body !== "string") throw new Error("DeepSeek sentinel fixture expected a string request body");
+    dispatchedBody = JSON.parse(init.body) as Record<string, unknown>;
+    return Promise.resolve(new Response(rawJson, { status: 200, headers: { "Content-Type": "application/json" } }));
+  };
+  const response = await fetchDeepSeekChatCompletions(
+    { model: "deepseek-v4-flash", messages: [{ role: "user", content: "hello" }], max_completion_tokens: 512 },
+    "deepseek-v4-flash",
+    { apiKey: "deepseek-fixture-key", fetcher, sentinelUpstreamRecorder: recorder }
+  );
+  assert.equal(response.status, 200);
+  assert.equal(await response.text(), rawJson);
+  assert.deepEqual(dispatchedBody, { model: "deepseek-flash", messages: [{ role: "user", content: "hello" }], max_tokens: 512 });
+  const attempt = recorder.snapshotAndSeal().attempts[0];
+  assert.ok(attempt, "a dispatched provider must record its attempt");
+  assert.equal(attempt.provider, "deepseek");
+  assert.equal(attempt.status, 200);
+  assert.equal(attempt.content_type, "application/json");
+  assert.equal(attempt.terminal, "eof");
+  recorder.dispose();
+
+  const noHeaderRecorder = createSentinelUpstreamRecorder();
+  await assert.rejects(
+    fetchDeepSeekChatCompletions({ model: "deepseek-flash", messages: [{ role: "user", content: "hello" }] }, "deepseek-flash", {
+      apiKey: "deepseek-fixture-key",
+      fetcher: () => Promise.reject(new TypeError("deepseek socket closed")),
+      sentinelUpstreamRecorder: noHeaderRecorder,
+    }),
+    (error: unknown) => error instanceof Error && error.name === "DeepSeekError"
   );
   assert.equal(noHeaderRecorder.snapshotAndSeal().attempts[0]?.terminal, "fetch_error");
   noHeaderRecorder.dispose();

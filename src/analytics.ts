@@ -24,7 +24,7 @@ export type ApiKeyRequestLogInput = Readonly<{
   model?: string | null;
   reasoning?: string | null;
   created_at_ms: number;
-  provider?: "cerebras" | "chatgpt_codex" | "voyage" | PaidFallbackProvider;
+  provider?: "cerebras" | "chatgpt_codex" | "deepseek" | "voyage" | PaidFallbackProvider;
   fallback_reason?: string | null;
   provider_request_id?: string | null;
   completed_at_ms?: number | null;
@@ -64,6 +64,7 @@ const text = (value: unknown, max = 120, fallback = ""): string => {
  */
 const CATALOG_PROVIDERS = new Map<string, ApiKeyRequestLogRecord["provider"]>([
   ["cerebras", "cerebras"],
+  ["deepseek", "deepseek"],
   ["voyage", "voyage"],
   ["surplus", "surplus"],
   ["metered", "metered"],

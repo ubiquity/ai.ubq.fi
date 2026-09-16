@@ -29,7 +29,7 @@ export type RecordedUpstreamReplay = Readonly<{
   snapshot: () => { attemptsDispatched: number; attemptsCompleted: number; failed: boolean };
 }>;
 
-const PROVIDERS: readonly SentinelUpstreamProvider[] = ["chatgpt_codex", "surplus", "metered", "cerebras"];
+const PROVIDERS: readonly SentinelUpstreamProvider[] = ["chatgpt_codex", "surplus", "metered", "cerebras", "deepseek"];
 
 const ROUTE_INVALID = "Sentinel recorded upstream route is not an exact HTTPS endpoint";
 const ROUTE_AMBIGUOUS = "Sentinel recorded upstream routes are not unique across providers";

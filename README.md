@@ -1,6 +1,13 @@
 # ai.ubq.fi
 
-OpenAI API-compatible gateway for the ubq.fi ecosystem, hosted on the VPS.
+OpenAI API-compatible gateway for the ubq.fi ecosystem, running as separate Mac and VPS instances.
+
+The project was originally designed for Deno Deploy hosting. Excessive hosting costs led us to retire Deno Deploy and
+run the service on the local Mac and the VPS instead. The application still uses the Deno runtime.
+
+There are two instances: the local Mac gateway at `http://127.0.0.1:8000` and the VPS gateway at `https://ai.ubq.fi`.
+Each instance has its own database and runtime state. Always identify the target instance before changing credentials,
+configuration, or deployment; a change or successful check on one instance does not establish the state of the other.
 
 See [VPS operations](ops/README.md) for service management, deployment, data, and TLS.
 
@@ -381,6 +388,9 @@ ubq-ai admin keys list | jq
 - `CODEX_BASE_URL` (optional): Defaults to `https://chatgpt.com/backend-api/codex`.
 - `CEREBRAS_API_KEY` (optional): Server-side credential for explicit non-streaming Chat Completions requests to Cerebras
   `gpt-oss-120b`. It is never accepted from clients or exposed by health responses.
+- `DEEPSEEK_API_KEY` (optional): Server-side credential for Chat Completions requests to DeepSeek's official API
+  (`https://api.deepseek.com`) for the `deepseek-flash` model and its interchangeable `deepseek-v4-flash` alias. It is
+  never accepted from clients or exposed by health responses.
 - `VOYAGEAI_API_KEY` (optional): Voyage API key used for embeddings. If unset, the gateway will look for a key stored in
   Deno KV at `["uos_ai","voyage_api_key"]`.
 - `METERED_API_KEY` (optional): OpenLux business API key used only by the server for paid fallback and the non-billable
@@ -402,6 +412,7 @@ positive-integer output caps, not quota or health indicators. Their transport be
 | Chat Completions to Codex                     | `max_completion_tokens` is translated to the Codex Responses field `max_output_tokens`.                                                                   |
 | Responses to Codex                            | `max_output_tokens` is forwarded as `max_output_tokens`.                                                                                                  |
 | Chat Completions to Cerebras (`gpt-oss-120b`) | `max_completion_tokens` is forwarded unchanged to Cerebras.                                                                                               |
+| Chat Completions to DeepSeek official         | `max_completion_tokens` is translated to DeepSeek's documented `max_tokens`.                                                                              |
 | Paid fallback (Metered or Surplus)            | The provider uses its Responses API, so Chat `max_completion_tokens` arrives as `max_output_tokens`, and Responses `max_output_tokens` remains unchanged. |
 
 Do not swap these fields between endpoints: Chat Completions accepts `max_completion_tokens`, while Responses accepts
@@ -425,7 +436,28 @@ support-correlation value only, never a credential or provider response body.
 
 On a Cerebras `429`, the gateway also forwards Cerebras' documented `x-ratelimit-*` capacity headers. These values
 describe the shared server-side `CEREBRAS_API_KEY` capacity, not a per-user UOS quota, and are not forwarded for other
-upstream statuses.
+upstream statuses. DeepSeek publishes no equivalent capacity headers (its limits are concurrency based and surface as
+HTTP `429`), so the gateway forwards none for that provider.
+
+### DeepSeek official (Chat Completions only)
+
+`deepseek-flash` and its interchangeable legacy id `deepseek-v4-flash` are both sent to DeepSeek's official API at
+`https://api.deepseek.com/chat/completions` using the server-side `DEEPSEEK_API_KEY`. Both ids are advertised in
+`/v1/models` and `/uos/models/capabilities`, and both reach the API as the canonical `deepseek-flash` model; the
+response echoes that canonical id. Other DeepSeek-named catalog models (for example `deepseek-v4-pro`) keep their
+existing catalog-proven provider.
+
+This route is scoped to `/v1/chat/completions`. `/v1/responses` continues to serve those ids through the catalog
+provider waterfall, because the gateway has no Responses adapter for the official API.
+
+Reasoning follows the official contract: thinking mode is enabled by default at `high`, `reasoning_effort` accepts
+`none` (which disables thinking), `low`, `high` and `max`, and the Codex `ultra` preset is sent upstream as `max`. The
+chain of thought is relayed 1:1 as `reasoning_content` in both buffered responses and stream deltas.
+
+Streaming is native rather than downgraded. A `stream: true` request relays the official SSE chunks as they arrive, so
+no `x-uos-warning` is returned; DeepSeek's documented `: keep-alive` comment frames are relayed verbatim, and usage
+rides the final content chunk exactly as the provider sends it. A missing `DEEPSEEK_API_KEY` fails with
+`503 deepseek_api_key_missing` before any provider dispatch.
 
 ## Admin: upload/validate Codex auth.json
 

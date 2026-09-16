@@ -1,11 +1,13 @@
 import { config, runtimeDeploymentId, runtimeGitSha } from "./config.ts";
 import { readCerebrasApiKey } from "./cerebras.ts";
 import { CODEX_AUTH_POOL_KV_KEY, fetchCodexModels, getJwtExpMs, parseCodexAuthFromAuthJson, parseCodexAuthPool } from "./codex.ts";
+import { readDeepSeekApiKey } from "./deepseek.ts";
 import { json } from "./http.ts";
 import { getKv } from "./kv.ts";
 import {
   getCerebrasProviderHealth,
   getCodexProviderHealth,
+  getDeepSeekProviderHealth,
   getMeteredProviderHealth,
   getSurplusProviderHealth,
   PROVIDER_HEALTH_STALE_AFTER_MS,
@@ -222,9 +224,10 @@ const quotaView = (snapshot: MeteredQuotaSnapshot | null) => {
 export const getPassiveProviderHealthSnapshot = async (options: Readonly<{ includeQuota?: boolean }> = {}): Promise<Record<string, unknown>> => {
   const context = await getCodexAuthContext();
   const auth = enrichAuthMeta(context.meta);
-  const [cerebrasHealth, codexHealth, meteredHealth, surplusHealth, meteredQuota] = await Promise.all([
+  const [cerebrasHealth, codexHealth, deepseekHealth, meteredHealth, surplusHealth, meteredQuota] = await Promise.all([
     getCerebrasProviderHealth(),
     Promise.all(context.account_ids.map((accountId) => getCodexProviderHealth(accountId))),
+    getDeepSeekProviderHealth(),
     getMeteredProviderHealth(),
     getSurplusProviderHealth(),
     getCachedConfiguredMeteredQuotaSnapshot(),
@@ -248,6 +251,10 @@ export const getPassiveProviderHealthSnapshot = async (options: Readonly<{ inclu
     cerebras: {
       configured: readCerebrasApiKey() !== null,
       health: cerebrasHealth,
+    },
+    deepseek: {
+      configured: readDeepSeekApiKey() !== null,
+      health: deepseekHealth,
     },
     metered: {
       configured: readMeteredApiKey() !== null,

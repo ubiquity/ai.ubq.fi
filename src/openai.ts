@@ -28,6 +28,24 @@ import {
   readCerebrasApiKey,
 } from "./cerebras.ts";
 import { CEREBRAS_RATE_LIMIT_HEADERS } from "./cerebras_rate_limits.ts";
+import {
+  DEEPSEEK_CONTEXT_WINDOW_TOKENS,
+  DEEPSEEK_DEFAULT_REASONING_EFFORT,
+  DEEPSEEK_FLASH_MODEL,
+  DEEPSEEK_OFFICIAL_MODEL_IDS,
+  DEEPSEEK_REASONING_LEVELS,
+  DEEPSEEK_V4_FLASH_MODEL,
+  DeepSeekError,
+  DeepSeekStreamError,
+  deepSeekChunkHasSemanticOutput,
+  deepSeekUpstreamModelFor,
+  fetchDeepSeekChatCompletions,
+  getDeepSeekProviderRequestId,
+  iterateDeepSeekChatCompletionStream,
+  normalizeDeepSeekChatCompletion,
+  normalizeDeepSeekProviderRequestId,
+  readDeepSeekApiKey,
+} from "./deepseek.ts";
 import { getCatalogClientVersion, handleCodexCatalogModels } from "./codex_catalog.ts";
 import { CODEX_CHATGPT_PROMPT_CACHE_PROVIDER, normalizePromptCacheCapabilities, type PromptCacheControls } from "./codex_models.ts";
 import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError, type ApiKeyUsageReservation } from "./api_key_policy.ts";
@@ -97,7 +115,7 @@ import {
   reservePaidFallback,
   type SurplusBillingPricing,
 } from "./paid_fallback.ts";
-import { recordCerebrasProviderHealth, recordMeteredProviderHealth, recordSurplusProviderHealth } from "./provider_health.ts";
+import { recordCerebrasProviderHealth, recordDeepSeekProviderHealth, recordMeteredProviderHealth, recordSurplusProviderHealth } from "./provider_health.ts";
 import { getString, isRecord, sha256Hex } from "./utils.ts";
 import type { ChatCompletionRequest, MessageContentItem, PromptCacheBreakpoint, ResponseInputItem, ResponseMessageItem, ResponsesRequest } from "./types.ts";
 import { fetchMeteredModels, fetchMeteredResponses, METERED_MODELS_CACHE_TTL_MS, MeteredError, readMeteredApiKey } from "./metered.ts";
@@ -164,7 +182,7 @@ type UsageContext = Readonly<{
   onTerminalUsage?: (usage: UsageTokens | null, completed: boolean) => void;
 }>;
 
-type UpstreamProvider = "cerebras" | "chatgpt_codex" | "removed_provider" | "metered" | "surplus";
+type UpstreamProvider = "cerebras" | "chatgpt_codex" | "deepseek" | "removed_provider" | "metered" | "surplus";
 const supportsReasoningProgressRelease = (provider: UpstreamProvider): boolean =>
   provider === "chatgpt_codex" || provider === "surplus" || provider === "metered";
 export type InferenceFallbackReason = "primary_quota_blocked" | "dynamic_paid_model";
@@ -2203,14 +2221,14 @@ const cancelResponseBody = (response: Response): void => {
   }
 };
 
-// Cerebras responses can contain provider-specific diagnostics. Preserve the
-// HTTP semantics clients need and forward ONLY the standard OpenAI error
-// fields (message/code, bounded + whitelisted) so 1:1 behavior is
+// Special-provider error responses can contain provider-specific diagnostics.
+// Preserve the HTTP semantics clients need and forward ONLY the standard
+// OpenAI error fields (message/code, bounded + whitelisted) so 1:1 behavior is
 // debuggable (compliance D2) — never reflect the arbitrary upstream body.
-const CEREBRAS_UPSTREAM_ERROR_MESSAGE_MAX = 1_000;
-const CEREBRAS_UPSTREAM_ERROR_CODE_MAX = 200;
+const UPSTREAM_ERROR_MESSAGE_MAX = 1_000;
+const UPSTREAM_ERROR_CODE_MAX = 200;
 
-const parseCerebrasUpstreamErrorDetail = (body: unknown): { message?: string; code?: string } => {
+const parseUpstreamErrorDetail = (body: unknown): { message?: string; code?: string } => {
   if (!isRecord(body) || Array.isArray(body)) return {};
   const error = isRecord(body.error) && !Array.isArray(body.error) ? body.error : null;
   const pickString = (value: unknown, max: number): string | undefined => {
@@ -2219,8 +2237,8 @@ const parseCerebrasUpstreamErrorDetail = (body: unknown): { message?: string; co
     return trimmed ? trimmed : undefined;
   };
   return {
-    message: pickString(error?.message ?? body.message, CEREBRAS_UPSTREAM_ERROR_MESSAGE_MAX),
-    code: pickString(error?.code ?? body.code, CEREBRAS_UPSTREAM_ERROR_CODE_MAX),
+    message: pickString(error?.message ?? body.message, UPSTREAM_ERROR_MESSAGE_MAX),
+    code: pickString(error?.code ?? body.code, UPSTREAM_ERROR_CODE_MAX),
   };
 };
 
@@ -2238,7 +2256,7 @@ const toCerebrasUpstreamErrorResponse = async (upstream: Response, signal?: Abor
     });
     if (captured.complete && captured.bytes.length > 0) {
       try {
-        detail = parseCerebrasUpstreamErrorDetail(JSON.parse(new TextDecoder().decode(captured.bytes)) as unknown);
+        detail = parseUpstreamErrorDetail(JSON.parse(new TextDecoder().decode(captured.bytes)) as unknown);
       } catch {
         // Non-JSON error body: keep the generic message (never reflect it).
       }
@@ -2258,6 +2276,74 @@ const toCerebrasUpstreamErrorResponse = async (upstream: Response, signal?: Abor
     }
   }
   return openaiError(upstream.status, detail.message ?? "Cerebras upstream returned an error.", detail.code ?? "cerebras_upstream_error", {
+    type: upstream.status === 408 ? "server_error" : upstreamStatusToErrorType(upstream.status),
+    headers,
+  });
+};
+
+const toDeepSeekErrorResponse = (error: unknown): Response => {
+  let response: Response;
+  if (error instanceof ApiKeyQuotaDispatchError) {
+    response = openaiError(error.status, error.message, error.code, {
+      type: error.errorType,
+      headers: error.headers,
+    });
+  } else if (error instanceof DeepSeekError) {
+    response = openaiError(error.status, error.message, error.code, {
+      type: error.status >= 500 ? "server_error" : "invalid_request_error",
+    });
+  } else if (error instanceof Error && error.name === "TimeoutError") {
+    response = openaiError(504, "Upstream request exceeded the gateway deadline.", "gateway_timeout", {
+      type: "server_error",
+    });
+  } else if (error instanceof Error && error.name === "AbortError") {
+    response = openaiError(499, "Request was cancelled.", "request_cancelled", { type: "server_error" });
+  } else {
+    // The adapter deliberately converts provider transport errors to a safe
+    // DeepSeekError. Keep this fallback content-free as a final guard.
+    response = openaiError(502, "Upstream request could not be completed.", "deepseek_upstream_unreachable", {
+      type: "server_error",
+    });
+  }
+  return withUpstreamProviderHeader(response, "deepseek");
+};
+
+const deepseekResponseHeaders = (providerRequestId: string | null): Record<string, string> => ({
+  "x-uos-upstream": "deepseek",
+  ...(providerRequestId ? { "x-uos-provider-request-id": providerRequestId } : {}),
+});
+
+// DeepSeek documents no `x-ratelimit-*` response headers: its capacity model is
+// concurrency based and surfaces as HTTP 429, so unlike Cerebras there is no
+// provider capacity header list to forward.
+const toDeepSeekUpstreamErrorResponse = async (upstream: Response, signal?: AbortSignal): Promise<Response> => {
+  // Read the error body under the shared bounded ceiling (64 KiB / 1 s) so a
+  // stalled upstream cannot extend the gateway request; only message/code are
+  // ever forwarded.
+  let detail: { message?: string; code?: string } = {};
+  try {
+    const captured = await readBoundedResponseBody(upstream, {
+      signal,
+      maxBytes: BOUNDED_RESPONSE_BODY_MAX_BYTES,
+      timeoutMs: BOUNDED_RESPONSE_BODY_TIMEOUT_MS,
+      cancellationReason: "DeepSeek upstream error body",
+    });
+    if (captured.complete && captured.bytes.length > 0) {
+      try {
+        detail = parseUpstreamErrorDetail(JSON.parse(new TextDecoder().decode(captured.bytes)) as unknown);
+      } catch {
+        // Non-JSON error body: keep the generic message (never reflect it).
+      }
+    }
+  } catch {
+    // Bounded read failure must not change the error semantics.
+  } finally {
+    cancelResponseBody(upstream);
+  }
+  const headers = deepseekResponseHeaders(getDeepSeekProviderRequestId(upstream));
+  const retryAfter = upstream.headers.get("Retry-After");
+  if (retryAfter) headers["Retry-After"] = retryAfter;
+  return openaiError(upstream.status, detail.message ?? "DeepSeek upstream returned an error.", detail.code ?? "deepseek_upstream_error", {
     type: upstream.status === 408 ? "server_error" : upstreamStatusToErrorType(upstream.status),
     headers,
   });
@@ -5635,6 +5721,71 @@ const withConfiguredCerebrasModel = (models: readonly Record<string, unknown>[])
   return [...models, cerebras];
 };
 
+/**
+ * The official DeepSeek ids are interchangeable aliases of one served model,
+ * so both are advertised. Unlike the Cerebras entry, an id discovered from
+ * another provider is REPLACED rather than skipped: once a request for that id
+ * is dispatched to DeepSeek, a catalog row still naming the paid-fallback
+ * provider (and its `["none"]` reasoning tiers) would misdescribe the route.
+ */
+const DEEPSEEK_DISPLAY_NAMES: Readonly<Record<string, string>> = {
+  [DEEPSEEK_FLASH_MODEL]: "DeepSeek Flash",
+  [DEEPSEEK_V4_FLASH_MODEL]: "DeepSeek Flash (legacy id)",
+};
+
+const configuredDeepSeekModels = (): Record<string, unknown>[] =>
+  readDeepSeekApiKey()
+    ? DEEPSEEK_OFFICIAL_MODEL_IDS.map((id) => ({
+        id,
+        object: "model",
+        created: 0,
+        owned_by: "deepseek",
+      }))
+    : [];
+
+const configuredDeepSeekModelCapabilities = (): Record<string, unknown>[] => {
+  if (!readDeepSeekApiKey()) return [];
+  return DEEPSEEK_OFFICIAL_MODEL_IDS.map((id) => {
+    const context = recentModelContextFor(id);
+    return {
+      id,
+      object: "uos.model_capabilities",
+      owned_by: "deepseek",
+      display_name: DEEPSEEK_DISPLAY_NAMES[id] ?? id,
+      upstream_provider: "deepseek",
+      supported_endpoints: ["/v1/chat/completions"],
+      supported_reasoning_levels: [...DEEPSEEK_REASONING_LEVELS],
+      default_reasoning_effort: DEEPSEEK_DEFAULT_REASONING_EFFORT,
+      // `ultra` is the Codex CLI preset for maximum effort; DeepSeek documents
+      // `max` as its wire tier for exactly that request.
+      reasoning_effort_wire_map: { ultra: "max" },
+      context_window_tokens: context?.context_window_tokens ?? DEEPSEEK_CONTEXT_WINDOW_TOKENS,
+      max_context_window_tokens: context?.max_context_window_tokens ?? DEEPSEEK_CONTEXT_WINDOW_TOKENS,
+      auto_compact_token_limit_tokens: context?.auto_compact_token_limit_tokens ?? null,
+      ...(context
+        ? {
+            model_class: context.model_class,
+            effective_context_window_percent: context.effective_context_window_percent,
+          }
+        : {}),
+    };
+  });
+};
+
+const withConfiguredDeepSeekModels = (models: readonly Record<string, unknown>[]): Record<string, unknown>[] => {
+  const configured = configuredDeepSeekModels();
+  if (!configured.length) return [...models];
+  const ids = new Set(configured.map((model) => model.id));
+  return [...models.filter((model) => !ids.has(getString(model.id) ?? "")), ...configured];
+};
+
+const withConfiguredDeepSeekCapabilities = (data: readonly Record<string, unknown>[]): Record<string, unknown>[] => {
+  const configured = configuredDeepSeekModelCapabilities();
+  if (!configured.length) return [...data];
+  const ids = new Set(configured.map((model) => model.id));
+  return [...data.filter((model) => !ids.has(getString(model.id) ?? "")), ...configured];
+};
+
 const normalizeModelCapabilitiesEntry = (value: unknown): Record<string, unknown> | null => {
   if (!isRecord(value)) return null;
   const id = modelIdFromSnapshotRecord(value);
@@ -7388,7 +7539,7 @@ export const handleModels = async (req?: Request): Promise<Response> => {
   }
   const snapshot = await loadCodexModelsSnapshot();
   const normalized = snapshot && Array.isArray(snapshot.models) && snapshot.models.length > 0 ? normalizeModelList(snapshot) : null;
-  const data = withConfiguredCerebrasModel(normalized?.data ?? []);
+  const data = withConfiguredDeepSeekModels(withConfiguredCerebrasModel(normalized?.data ?? []));
   const [metered, surplus] = await Promise.all([fetchMeteredModels(), fetchSurplusModels()]);
   const merged = [...data];
   for (const model of [...(metered?.models ?? []), ...(surplus?.models ?? [])]) {
@@ -7555,7 +7706,7 @@ const discoveredModelCapabilitiesEntry = (
 
 export const handleModelCapabilities = async (): Promise<Response> => {
   const snapshot = await loadFullCodexModelsSnapshot();
-  const data =
+  let data =
     snapshot && Array.isArray(snapshot.models) && snapshot.models.length > 0
       ? (snapshot.models.map(normalizeModelCapabilitiesEntry).filter(Boolean) as Record<string, unknown>[])
       : [];
@@ -7573,6 +7724,9 @@ export const handleModelCapabilities = async (): Promise<Response> => {
       data.push(discoveredModelCapabilitiesEntry(model, provider));
     }
   }
+  // Applied last so a DeepSeek-official id discovered above from the paid
+  // fallback is replaced by the capabilities of the route it actually uses.
+  data = withConfiguredDeepSeekCapabilities(data);
 
   return json(
     200,
@@ -8551,6 +8705,92 @@ export const handleEmbeddingsJobGet = async (req: Request, authToken: string | n
     withVoyageUpstreamHeader(await handleEmbeddingsJobGetInternal(req, authToken, jobId, context))
   );
 
+const recordDeepSeekResponseHealth = (status: number, providerRequestId: string | null): void => {
+  if (status === 401 || status === 403) {
+    void recordDeepSeekProviderHealth("auth_invalid", status, Date.now, providerRequestId);
+    return;
+  }
+  if (status === 429) {
+    void recordDeepSeekProviderHealth("quota_exhausted", status, Date.now, providerRequestId);
+    return;
+  }
+  if (status >= 500) {
+    void recordDeepSeekProviderHealth("upstream_error", status, Date.now, providerRequestId);
+    return;
+  }
+  if (status >= 400) {
+    void recordDeepSeekProviderHealth("reachable", status, Date.now, providerRequestId);
+    return;
+  }
+  void recordDeepSeekProviderHealth("success", status, Date.now, providerRequestId);
+};
+
+const deepSeekTerminalTypeForError = (error: unknown, downstreamSignal: AbortSignal): ResponseStreamTerminalType => {
+  if (downstreamSignal.aborted) return "cancelled";
+  if (error instanceof DeepSeekStreamError) {
+    if (error.kind === "inactivity_timeout") return "deadline";
+    if (error.kind === "premature_eof") return "eof";
+    return "error";
+  }
+  if (error instanceof DeepSeekError && error.status === 504) return "deadline";
+  if (error instanceof Error && error.name === "TimeoutError") return "deadline";
+  if (error instanceof Error && error.name === "AbortError") return "cancelled";
+  return "error";
+};
+
+type DeepSeekFailureKind =
+  | "upstream_http_error"
+  | "upstream_unreachable"
+  | "incomplete_response"
+  | "invalid_json"
+  | "invalid_completion_schema"
+  | "invalid_stream_chunk"
+  | "deadline"
+  | "cancellation"
+  | "api_key_quota_reservation_unavailable"
+  | "deepseek_api_key_missing"
+  | "deepseek_request_invalid";
+
+const recordDeepSeekFailureKind = (context: UsageContext | undefined, failureKind: DeepSeekFailureKind): void => {
+  if (context?.responseTelemetry) context.responseTelemetry.failureKind = failureKind;
+};
+
+const deepSeekTransportFailureKind = (error: unknown, terminalType: ResponseStreamTerminalType): DeepSeekFailureKind => {
+  if (terminalType === "cancelled") return "cancellation";
+  if (terminalType === "deadline") return "deadline";
+  if (terminalType === "eof") return "incomplete_response";
+  if (error instanceof ApiKeyQuotaDispatchError) return "api_key_quota_reservation_unavailable";
+  if (error instanceof DeepSeekStreamError) {
+    switch (error.kind) {
+      case "malformed_event":
+        return "invalid_json";
+      case "invalid_chunk":
+        return "invalid_stream_chunk";
+      case "premature_eof":
+        return "incomplete_response";
+      case "inactivity_timeout":
+        return "deadline";
+      default:
+        break;
+    }
+  }
+  if (error instanceof DeepSeekError) {
+    switch (error.code) {
+      case "deepseek_api_key_missing":
+        return "deepseek_api_key_missing";
+      case "deepseek_request_invalid":
+        return "deepseek_request_invalid";
+      case "deepseek_upstream_unreachable":
+        return "upstream_unreachable";
+      case "gateway_timeout":
+        return "deadline";
+      default:
+        break;
+    }
+  }
+  return "upstream_unreachable";
+};
+
 const recordCerebrasResponseHealth = (status: number, providerRequestId: string | null): void => {
   if (status === 401 || status === 403) {
     void recordCerebrasProviderHealth("auth_invalid", status, Date.now, providerRequestId);
@@ -8845,6 +9085,359 @@ const handleCerebrasChatCompletions = async (
     return streamCerebrasChatCompletion(completion.value, includeUsage, responseHeaders);
   }
   return json(200, completion.value, responseHeaders);
+};
+
+/**
+ * The DeepSeek route is deliberately separate from the Codex Responses bridge.
+ * It forwards the official Chat Completions body to the official DeepSeek API,
+ * relays native SSE chunks as they arrive instead of buffering a streamed
+ * reply, and never races or falls back to another provider.
+ */
+const DEEPSEEK_BUFFERED_BODY_MAX_BYTES = 8 * 1024 * 1024;
+
+const validateDeepSeekChatRequestFields = (
+  rawRecord: Record<string, unknown>
+): { ok: true; value: { reasoning: string; clientWantsStream: boolean } } | { ok: false; response: Response } => {
+  const messages = rawRecord.messages;
+  if (!Array.isArray(messages)) return { ok: false, response: openaiError(400, "messages must be an array", "invalid_request_error") };
+  if (messages.length === 0) {
+    return { ok: false, response: openaiError(400, "messages must be a non-empty array", "invalid_request_error") };
+  }
+  if (messages.some((message) => !isRecord(message) || Array.isArray(message))) {
+    return { ok: false, response: openaiError(400, "messages must contain objects", "invalid_request_error", { param: "messages" }) };
+  }
+  // Unlike Cerebras, DeepSeek documents every tier the gateway can carry,
+  // including `none` (which disables thinking mode), so no tier is rejected
+  // locally here.
+  const reasoningEffort = parseReasoningEffortField(rawRecord.reasoning_effort, "reasoning_effort");
+  if (!reasoningEffort.ok) {
+    return { ok: false, response: openaiError(400, reasoningEffort.message, "invalid_request_error", { param: "reasoning_effort" }) };
+  }
+  const parsedStream = parseStreamField(rawRecord.stream);
+  if (!parsedStream.ok) {
+    return { ok: false, response: openaiError(400, parsedStream.message, "invalid_request_error", { param: "stream" }) };
+  }
+  const streamOptions = parseChatStreamOptions(rawRecord.stream_options);
+  if (!streamOptions.ok) {
+    return { ok: false, response: openaiError(400, streamOptions.message, "invalid_request_error", { param: "stream_options" }) };
+  }
+  return {
+    ok: true,
+    value: {
+      // DeepSeek's documented default is thinking mode enabled at effort
+      // `high`. Sending it explicitly keeps the wire and the gateway's
+      // reasoning telemetry in agreement without changing provider behavior.
+      reasoning: reasoningEffort.value ?? DEEPSEEK_DEFAULT_REASONING_EFFORT,
+      clientWantsStream: parsedStream.value,
+    },
+  };
+};
+
+const deepseekChatCompletionHasSemanticOutput = (completion: Record<string, unknown>): boolean =>
+  Array.isArray(completion.choices) &&
+  completion.choices.some((choice) => {
+    if (!isRecord(choice) || Array.isArray(choice) || !isRecord(choice.message) || Array.isArray(choice.message)) {
+      return false;
+    }
+    const message = choice.message;
+    return (
+      (typeof message.content === "string" && message.content.length > 0) ||
+      (typeof message.reasoning_content === "string" && message.reasoning_content.length > 0) ||
+      (Array.isArray(message.tool_calls) && message.tool_calls.length > 0)
+    );
+  });
+
+const respondDeepSeekChatInvalidCompletion = async (
+  failureKind: "invalid_json" | "invalid_completion_schema",
+  upstreamStatus: number,
+  providerRequestId: string | null,
+  usageContext: UsageContext | undefined
+): Promise<Response> => {
+  recordStreamTerminalType(usageContext, "error");
+  recordDeepSeekFailureKind(usageContext, failureKind);
+  void recordDeepSeekProviderHealth("upstream_error", upstreamStatus, Date.now, providerRequestId);
+  await recordErrorUsage(usageContext);
+  return openaiError(502, "Upstream returned an invalid Chat Completions response.", "deepseek_upstream_invalid_response", {
+    type: "server_error",
+    headers: deepseekResponseHeaders(providerRequestId),
+  });
+};
+
+const readDeepSeekChatCompletion = async (
+  bytes: Uint8Array,
+  upstreamStatus: number,
+  providerRequestId: string | null,
+  usageContext: UsageContext | undefined
+): Promise<{ ok: true; value: Record<string, unknown> } | { ok: false; response: Response }> => {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    return { ok: false, response: await respondDeepSeekChatInvalidCompletion("invalid_json", upstreamStatus, providerRequestId, usageContext) };
+  }
+  const normalized = normalizeDeepSeekChatCompletion(payload, DEEPSEEK_FLASH_MODEL);
+  if (!normalized.ok) {
+    return { ok: false, response: await respondDeepSeekChatInvalidCompletion("invalid_completion_schema", upstreamStatus, providerRequestId, usageContext) };
+  }
+  return { ok: true, value: normalized.value };
+};
+
+const respondDeepSeekChatDispatchFailure = async (error: unknown, downstreamSignal: AbortSignal, usageContext: UsageContext | undefined): Promise<Response> => {
+  const terminalType = deepSeekTerminalTypeForError(error, downstreamSignal);
+  recordDeepSeekFailureKind(usageContext, deepSeekTransportFailureKind(error, terminalType));
+  recordStreamTerminalType(usageContext, terminalType);
+  if (terminalType !== "cancelled") {
+    void recordDeepSeekProviderHealth("upstream_error", null, Date.now, null);
+  }
+  await recordErrorUsage(usageContext);
+  return toDeepSeekErrorResponse(error);
+};
+
+const respondDeepSeekChatUpstreamHttpFailure = async (
+  upstream: Response,
+  requestSignal: AbortSignal,
+  providerRequestId: string | null,
+  usageContext: UsageContext | undefined
+): Promise<Response> => {
+  recordDeepSeekResponseHealth(upstream.status, providerRequestId);
+  recordDeepSeekFailureKind(usageContext, "upstream_http_error");
+  recordStreamTerminalType(usageContext, "response.failed");
+  await recordErrorUsage(usageContext);
+  return await toDeepSeekUpstreamErrorResponse(upstream, requestSignal);
+};
+
+const respondDeepSeekChatIncompleteCapture = async (
+  usageContext: UsageContext | undefined,
+  downstreamSignal: AbortSignal,
+  requestSignal: AbortSignal,
+  providerRequestId: string | null
+): Promise<Response> => {
+  let terminalType: ResponseStreamTerminalType = "error";
+  let failureKind: DeepSeekFailureKind = "incomplete_response";
+  if (downstreamSignal.aborted) {
+    terminalType = "cancelled";
+    failureKind = "cancellation";
+  } else if (requestSignal.aborted) {
+    terminalType = "deadline";
+    failureKind = "deadline";
+  }
+  recordDeepSeekFailureKind(usageContext, failureKind);
+  recordStreamTerminalType(usageContext, terminalType);
+  if (terminalType !== "cancelled") {
+    void recordDeepSeekProviderHealth("upstream_error", null, Date.now, providerRequestId);
+  }
+  await recordErrorUsage(usageContext);
+  if (terminalType === "cancelled") {
+    return openaiError(499, "Request was cancelled.", "request_cancelled", { type: "server_error", headers: deepseekResponseHeaders(providerRequestId) });
+  }
+  return openaiError(
+    terminalType === "deadline" ? 504 : 502,
+    terminalType === "deadline" ? "Upstream request exceeded the gateway deadline." : "Upstream returned an incomplete response.",
+    terminalType === "deadline" ? "gateway_timeout" : "deepseek_upstream_invalid_response",
+    { type: "server_error", headers: deepseekResponseHeaders(providerRequestId) }
+  );
+};
+
+const deepseekStreamErrorValue = (code: string): Record<string, unknown> => ({
+  error: {
+    message: "Upstream Chat Completions stream failed.",
+    type: "server_error",
+    code,
+    param: null,
+  },
+});
+
+/**
+ * Relays the upstream Chat Completions SSE stream as it arrives. Chunk frames
+ * are validated by the transport before they reach this writer, so the client
+ * sees the same incremental tokens DeepSeek produced rather than a buffered
+ * replay.
+ */
+const streamDeepSeekChatCompletion = (
+  upstream: Response,
+  providerRequestId: string | null,
+  usageContext: UsageContext | undefined,
+  downstreamSignal: AbortSignal,
+  requestSignal: AbortSignal
+): Response => {
+  const encoder = new TextEncoder();
+  const headers = new Headers(deepseekResponseHeaders(providerRequestId));
+  headers.set("Content-Type", "text/event-stream");
+  headers.set("Cache-Control", "no-cache");
+
+  const iterator = iterateDeepSeekChatCompletionStream(upstream, DEEPSEEK_FLASH_MODEL, { signal: requestSignal });
+  let closed = false;
+  let terminalSettled = false;
+  let semantic = false;
+  let usage: UsageTokens | null = null;
+
+  const settleTerminal = (terminalType: ResponseStreamTerminalType): void => {
+    if (terminalSettled) return;
+    terminalSettled = true;
+    recordStreamTerminalType(usageContext, terminalType);
+  };
+  const finishStream = async (controller: ReadableStreamDefaultController<Uint8Array>): Promise<void> => {
+    if (closed) return;
+    closed = true;
+    await recordCompletionUsage(usageContext, usage);
+    settleTerminal("response.completed");
+    recordStreamTerminal(usageContext);
+    recordDeepSeekResponseHealth(upstream.status, providerRequestId);
+    controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+    controller.close();
+  };
+  const failStream = async (controller: ReadableStreamDefaultController<Uint8Array>, error: unknown): Promise<void> => {
+    if (closed) return;
+    closed = true;
+    const terminalType = deepSeekTerminalTypeForError(error, downstreamSignal);
+    settleTerminal(terminalType);
+    recordDeepSeekFailureKind(usageContext, deepSeekTransportFailureKind(error, terminalType));
+    if (terminalType !== "cancelled") {
+      void recordDeepSeekProviderHealth("upstream_error", null, Date.now, providerRequestId);
+      await recordErrorUsage(usageContext);
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(deepseekStreamErrorValue("deepseek_upstream_stream_error"))}\n\n`));
+    }
+    controller.close();
+  };
+
+  // Pull-driven so the upstream stream is read only as fast as the client
+  // consumes it; an eager writer would buffer an unbounded reply in memory.
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (closed) return;
+      try {
+        const next = await iterator.next();
+        if (next.done) {
+          await finishStream(controller);
+          return;
+        }
+        const frame = next.value;
+        if (frame.kind === "comment") {
+          // DeepSeek's documented `: keep-alive` comment frame is what keeps a
+          // long thinking turn from looking idle to an edge proxy. SSE comments
+          // are inert for clients, so relay it verbatim.
+          controller.enqueue(encoder.encode(`${frame.text}\n\n`));
+          return;
+        }
+        if (frame.kind === "done") {
+          await finishStream(controller);
+          return;
+        }
+        recordFirstUpstreamSseEvent(usageContext);
+        if (!semantic && deepSeekChunkHasSemanticOutput(frame.value)) {
+          semantic = true;
+          markChatSemanticOutput(usageContext);
+          recordFirstSemanticCommitment(usageContext);
+        }
+        usage = extractChatUsageTokens(frame.value.usage) ?? usage;
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(frame.value)}\n\n`));
+      } catch (error) {
+        await failStream(controller, error);
+      }
+    },
+    async cancel() {
+      if (closed) return;
+      closed = true;
+      settleTerminal("cancelled");
+      recordDeepSeekFailureKind(usageContext, "cancellation");
+      await iterator.return();
+    },
+  });
+  return new Response(body, { status: 200, headers });
+};
+
+const handleDeepSeekChatCompletions = async (
+  req: Request,
+  rawRecord: Record<string, unknown>,
+  modelRaw: string,
+  usageContext?: UsageContext
+): Promise<Response> => {
+  const parsedRequest = validateDeepSeekChatRequestFields(rawRecord);
+  if (!parsedRequest.ok) return parsedRequest.response;
+  const { reasoning, clientWantsStream } = parsedRequest.value;
+
+  // Preserve the official nested Chat tools/tool_choice contract. In
+  // particular, do not run the Codex-specific flattening that follows this
+  // early branch in handleChatCompletionsInternal.
+  const deepseekBody: Record<string, unknown> = {
+    ...rawRecord,
+    reasoning_effort: reasoning,
+    stream: clientWantsStream,
+  };
+  if (clientWantsStream) {
+    // DeepSeek requires stream_options to be requested alongside a stream, and
+    // reports usage on the final content chunk rather than a separate frame.
+    if (!isRecord(deepseekBody.stream_options)) deepseekBody.stream_options = { include_usage: true };
+  } else {
+    // DeepSeek answers 400 when stream_options is present without stream:true.
+    delete deepseekBody.stream_options;
+  }
+  if (usageContext?.responseTelemetry) {
+    usageContext.responseTelemetry.provider = "deepseek";
+    usageContext.responseTelemetry.reasoning = reasoning;
+  }
+  await recordRequestUsage(usageContext, {
+    model: modelRaw,
+    route: "chat.completions",
+    stream: clientWantsStream,
+    reasoning,
+  });
+
+  const downstreamSignal = downstreamSignalFor(req, usageContext);
+  const requestSignal = inferenceSignal(req, usageContext);
+  let upstream: Response;
+  try {
+    upstream = await fetchDeepSeekChatCompletions(deepseekBody, modelRaw, {
+      signal: requestSignal,
+      beforeDispatch: () => usageContext?.beforeProviderDispatch?.("deepseek") ?? Promise.resolve(undefined),
+      onDispatch: () => {
+        recordAttemptedProvider(usageContext, "deepseek");
+        recordFirstProviderDispatch(usageContext);
+      },
+      onHeaders: () => {
+        recordFirstProviderHeaders(usageContext);
+      },
+      sentinelUpstreamRecorder: usageContext?.sentinelUpstreamRecorder,
+    });
+  } catch (error) {
+    return await respondDeepSeekChatDispatchFailure(error, downstreamSignal, usageContext);
+  }
+
+  let providerRequestId = getDeepSeekProviderRequestId(upstream);
+  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.providerRequestId = providerRequestId;
+
+  if (!upstream.ok) {
+    return await respondDeepSeekChatUpstreamHttpFailure(upstream, requestSignal, providerRequestId, usageContext);
+  }
+
+  if (clientWantsStream) {
+    return streamDeepSeekChatCompletion(upstream, providerRequestId, usageContext, downstreamSignal, requestSignal);
+  }
+
+  const captured = await readBoundedResponseBody(upstream, {
+    signal: requestSignal,
+    maxBytes: DEEPSEEK_BUFFERED_BODY_MAX_BYTES,
+    // Successful buffered inference uses the request-level edge deadline, not
+    // the one-second error-body default. `requestSignal` still caps the whole
+    // request from dispatch through body completion.
+    timeoutMs: BUFFERED_INFERENCE_DEADLINE_MS,
+    cancellationReason: "DeepSeek Chat Completions response was incomplete",
+  });
+  if (!captured.complete) {
+    return await respondDeepSeekChatIncompleteCapture(usageContext, downstreamSignal, requestSignal, providerRequestId);
+  }
+
+  const completion = await readDeepSeekChatCompletion(captured.bytes, upstream.status, providerRequestId, usageContext);
+  if (!completion.ok) return completion.response;
+
+  if (deepseekChatCompletionHasSemanticOutput(completion.value)) markChatSemanticOutput(usageContext);
+  providerRequestId ??= normalizeDeepSeekProviderRequestId(completion.value.id);
+  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.providerRequestId = providerRequestId;
+  const usage = extractChatUsageTokens(completion.value.usage);
+  await recordCompletionUsage(usageContext, usage);
+  recordStreamTerminalType(usageContext, "response.completed");
+  recordDeepSeekResponseHealth(upstream.status, providerRequestId);
+  return json(200, completion.value, deepseekResponseHeaders(providerRequestId));
 };
 
 const parseChatCompletionsEnvelope = async (
@@ -9317,6 +9910,9 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
   if (model.toLowerCase() === CEREBRAS_GPT_OSS_120B_MODEL) {
     return await handleCerebrasChatCompletions(req, rawRecord, modelRaw, usageContext);
   }
+  if (deepSeekUpstreamModelFor(model)) {
+    return await handleDeepSeekChatCompletions(req, rawRecord, modelRaw, usageContext);
+  }
 
   const options = await validateChatCompletionsOptions(model, modelRaw, rawRecord, body);
   if (!options.ok) return options.response;
@@ -9553,6 +10149,12 @@ const resolveResponsesModel = async (
       response: openaiError(400, "gpt-oss-120b is available only on /v1/chat/completions.", "unsupported_model", { param: "model" }),
     };
   }
+  // The DeepSeek official route is deliberately scoped to /v1/chat/completions.
+  // Unlike the Cerebras model, the interchangeable DeepSeek ids are already
+  // catalog models that /v1/responses serves through the provider waterfall,
+  // and this gateway has no Responses adapter for the official API. Leave that
+  // route untouched so existing Responses clients keep working; only the Chat
+  // Completions route is redirected to the official provider.
   const modelMetadata = await getCodexModelMetadata(model, "responses");
   const modelAvailabilityError = validateCodexModelAvailable(modelRaw, "responses", modelMetadata);
   if (modelAvailabilityError) return { ok: false, response: modelAvailabilityError };

@@ -433,11 +433,27 @@ positive-integer output caps, not quota or health indicators. Their transport be
 | Chat Completions to Codex                     | `max_completion_tokens` is translated to the Codex Responses field `max_output_tokens`.                                                                   |
 | Responses to Codex                            | `max_output_tokens` is forwarded as `max_output_tokens`.                                                                                                  |
 | Chat Completions to Cerebras (`gpt-oss-120b`) | `max_completion_tokens` is forwarded unchanged to Cerebras.                                                                                               |
+| Chat Completions to DeepSeek official         | `max_completion_tokens` is translated to DeepSeek's documented `max_tokens`.                                                                              |
 | Paid fallback (Metered or Surplus)            | The provider uses its Responses API, so Chat `max_completion_tokens` arrives as `max_output_tokens`, and Responses `max_output_tokens` remains unchanged. |
 
 Do not swap these fields between endpoints: Chat Completions accepts `max_completion_tokens`, while Responses accepts
 `max_output_tokens`. The paid-fallback cap limits generated output; it does not report the provider's remaining paid
 capacity.
+
+### DeepSeek official (Chat Completions only)
+
+`deepseek-flash` and its interchangeable legacy id `deepseek-v4-flash` both route to DeepSeek's official API at
+`https://api.deepseek.com/chat/completions` using the server-side `DEEPSEEK_API_KEY`, and both reach the API as the
+canonical `deepseek-flash` model, which is also the id echoed in responses. Their catalog rows report
+`upstream_provider: "deepseek"`, tiers `none`/`low`/`high`/`max`, and a `high` default. Other DeepSeek-named catalog
+models (for example `deepseek-v4-pro`) keep their existing catalog-proven provider, and `/v1/responses` continues to
+serve these ids through the waterfall because the gateway has no Responses adapter for the official API.
+
+Streaming is native rather than downgraded: `stream: true` relays the official SSE chunks as they arrive with no
+`x-uos-warning`, `: keep-alive` comment frames pass through verbatim, and usage rides the final content chunk exactly as
+the provider sends it. `reasoning_content` is relayed 1:1, `none` disables thinking, and the Codex `ultra` preset is
+sent upstream as `max`. A missing `DEEPSEEK_API_KEY` fails with `503 deepseek_api_key_missing` before any provider
+dispatch.
 
 ## Ignored parameters and warnings
 

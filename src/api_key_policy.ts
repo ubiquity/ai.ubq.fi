@@ -15,7 +15,7 @@ export const API_KEY_USAGE_V3_RESERVATION_LEASE_MS = 5 * 60_000;
 export const API_KEY_USAGE_V3_RETENTION_MS = 7 * 24 * 60 * 60_000;
 const MAX_KV_RETRIES = 5;
 
-export type ApiKeyUsageProvider = "cerebras" | "chatgpt_codex" | "removed_provider" | "metered" | "surplus" | "voyage";
+export type ApiKeyUsageProvider = "cerebras" | "chatgpt_codex" | "deepseek" | "removed_provider" | "metered" | "surplus" | "voyage";
 
 export type ApiKeyProviderDispatch = Readonly<{
   markTransportStarted: () => void;
@@ -190,6 +190,7 @@ export const normalizeApiKeyUsageRequestV3 = (value: unknown): ApiKeyUsageReques
       value.provider === null ||
       value.provider === "cerebras" ||
       value.provider === "chatgpt_codex" ||
+      value.provider === "deepseek" ||
       value.provider === "removed_provider" ||
       value.provider === "metered" ||
       value.provider === "surplus" ||

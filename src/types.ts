@@ -140,7 +140,7 @@ export type ApiKeyUsageRequestV3 = Readonly<{
   state: "reserved" | "dispatched" | "released";
   reserved_at_ms: number;
   lease_expires_at_ms: number;
-  provider: "cerebras" | "chatgpt_codex" | "removed_provider" | "metered" | "surplus" | "voyage" | null;
+  provider: "cerebras" | "chatgpt_codex" | "deepseek" | "removed_provider" | "metered" | "surplus" | "voyage" | null;
   dispatched_at_ms: number | null;
   released_at_ms: number | null;
   release_reason: string | null;
@@ -167,7 +167,7 @@ export type ApiKeyRequestLogRecord = Readonly<{
   model: string | null;
   reasoning: string | null;
   created_at_ms: number;
-  provider: "cerebras" | "chatgpt_codex" | "voyage" | PaidFallbackProvider;
+  provider: "cerebras" | "chatgpt_codex" | "deepseek" | "voyage" | PaidFallbackProvider;
   fallback_reason: string | null;
   provider_request_id: string | null;
   completed_at_ms: number | null;

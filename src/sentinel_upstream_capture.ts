@@ -20,7 +20,7 @@ export const SENTINEL_UPSTREAM_MAX_ATTEMPTS = 8;
 export const SENTINEL_UPSTREAM_MAX_CHUNKS = 256;
 export const SENTINEL_UPSTREAM_MAX_BYTES = 131_072;
 
-export type SentinelUpstreamProvider = "chatgpt_codex" | "surplus" | "metered" | "cerebras";
+export type SentinelUpstreamProvider = "chatgpt_codex" | "surplus" | "metered" | "cerebras" | "deepseek";
 
 export type SentinelUpstreamTerminal = "pending" | "fetch_error" | "eof" | "read_error" | "cancelled";
 
@@ -58,7 +58,7 @@ export type SentinelUpstreamRecorder = Readonly<{
   dispose: () => void;
 }>;
 
-const PROVIDER_SET = new Set<string>(["chatgpt_codex", "surplus", "metered", "cerebras"]);
+const PROVIDER_SET = new Set<string>(["chatgpt_codex", "surplus", "metered", "cerebras", "deepseek"]);
 const TERMINAL_SET = new Set<string>(["pending", "fetch_error", "eof", "read_error", "cancelled"]);
 const CONTENT_TYPE_SET = new Set<string>(["text/event-stream", "application/json", "other"]);
 

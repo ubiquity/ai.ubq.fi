@@ -14,6 +14,7 @@ const cases: readonly ContextCase[] = [
   ["openlux/gpt-5.6-sol-pro", "gpt-5.4-5.6", 1_050_000, 892_500],
   ["claude-opus-4-7-fast", "claude-4.6-4.8", 1_000_000, 850_000],
   ["claude-sonnet-5", "claude-5", 1_000_000, 850_000],
+  ["deepseek-flash", "deepseek-v4", 1_000_000, 850_000],
   ["deepseek-v4-flash-0731", "deepseek-v4", 1_000_000, 850_000],
   ["glm-5.1-non-thinking:web", "glm-5-5.1", 200_000, 150_000],
   ["glm-5v-turbo", "glm-5-5.1", 200_000, 150_000],

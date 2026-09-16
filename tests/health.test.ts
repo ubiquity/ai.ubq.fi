@@ -60,8 +60,10 @@ const { getJwtExpMs, resetCodexAuthCacheForTest } = await import("../src/codex.t
 const {
   getCerebrasProviderHealth,
   getCodexProviderHealth,
+  getDeepSeekProviderHealth,
   recordCerebrasProviderHealth,
   recordCodexProviderHealth,
+  recordDeepSeekProviderHealth,
   recordMeteredProviderHealth,
   recordSurplusProviderHealth,
   resetProviderHealthThrottleForTest,
@@ -184,6 +186,51 @@ Deno.test("passive provider health reports configured Cerebras without probing i
     globalThis.fetch = originalFetch;
     if (originalApiKey === undefined) Deno.env.delete(envKey);
     else Deno.env.set(envKey, originalApiKey);
+  }
+});
+
+Deno.test("passive provider health reports configured DeepSeek official without probing it", async () => {
+  const envKey = "DEEPSEEK_API_KEY";
+  const originalApiKey = Deno.env.get(envKey);
+  Deno.env.set(envKey, "deepseek-test-key");
+  kvStore.clear();
+  resetProviderHealthThrottleForTest();
+  await recordDeepSeekProviderHealth("success", 200, () => 5_000);
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = () => {
+    throw new Error("passive DeepSeek health must not probe an upstream");
+  };
+  try {
+    const response = await handleHealthProviders();
+    const payload = (await response.json()) as {
+      deepseek?: { configured?: boolean; health?: { state?: string; last_status?: number | null } };
+    };
+    assert.equal(response.status, 200);
+    assert.equal(payload.deepseek?.configured, true);
+    assert.equal(payload.deepseek.health?.state, "healthy");
+    assert.equal(payload.deepseek.health.last_status, 200);
+    assert.equal((await getDeepSeekProviderHealth(() => 5_001)).state, "healthy");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalApiKey === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, originalApiKey);
+  }
+});
+
+Deno.test("passive provider health reports DeepSeek as unconfigured without the official credential", async () => {
+  const envKey = "DEEPSEEK_API_KEY";
+  const originalApiKey = Deno.env.get(envKey);
+  Deno.env.delete(envKey);
+  kvStore.clear();
+  resetProviderHealthThrottleForTest();
+  try {
+    const response = await handleHealthProviders();
+    const payload = (await response.json()) as { deepseek?: { configured?: boolean; health?: { state?: string } } };
+    assert.equal(response.status, 200);
+    assert.equal(payload.deepseek?.configured, false);
+    assert.equal(payload.deepseek.health?.state, "unknown");
+  } finally {
+    if (originalApiKey !== undefined) Deno.env.set(envKey, originalApiKey);
   }
 });
 

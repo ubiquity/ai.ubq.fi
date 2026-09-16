@@ -92,7 +92,7 @@ const DEFAULT_IDS = ["alpha", "beta", "gamma"] as const;
 
 const markers = (ids: readonly string[]): string => ids.map((id) => `${TEST_MARKER_PREFIX}${id}\n`).join("");
 
-type FixtureProvider = "chatgpt_codex" | "surplus" | "metered" | "cerebras";
+type FixtureProvider = "chatgpt_codex" | "surplus" | "metered" | "cerebras" | "deepseek";
 type FixtureTerminal = "pending" | "fetch_error" | "eof" | "read_error" | "cancelled";
 type FixtureAttempt = Readonly<{
   provider: FixtureProvider;

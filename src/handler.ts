@@ -217,6 +217,7 @@ const withProviderRequestId = (response: Response, providerRequestId: string | n
   headers.delete("x-api-request-id");
   headers.delete("x-oneapi-request-id");
   headers.delete("x-cerebras-request-id");
+  headers.delete("x-deepseek-request-id");
   headers.delete("x-uos-provider-request-id");
   if (requestId) headers.set("x-uos-provider-request-id", requestId);
   return new Response(response.body, {

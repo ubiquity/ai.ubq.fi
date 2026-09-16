@@ -85,13 +85,14 @@ const UPSTREAM_ENDED_CODE = "server_error";
  * network I/O: it only matches the exact dispatch URL of the next recorded
  * attempt. Paid routes must equal the endpoints the exported paid fetch
  * functions request; the codex route mirrors the real gateway endpoint and the
- * unused cerebras route stays synthetic.
+ * unused cerebras and deepseek routes stay synthetic.
  */
 const PROVIDER_ROUTES: Readonly<Record<SentinelUpstreamProvider, string>> = Object.freeze({
   chatgpt_codex: `${config.codexBaseUrl}/responses`,
   surplus: `${SURPLUS_BASE_URL}/v1/responses`,
   metered: `${METERED_BASE_URL}/v1/responses`,
   cerebras: "https://sentinel-replay.invalid/cerebras/v1/chat/completions",
+  deepseek: "https://sentinel-replay.invalid/deepseek/chat/completions",
 });
 
 type SupportedProvider = "chatgpt_codex" | "surplus" | "metered";

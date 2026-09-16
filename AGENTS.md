@@ -1,5 +1,23 @@
 # Project Guidance
 
+## Local Credential Recovery Safety
+
+- A request to repair one invalid local provider account does not authorize invalidating, revoking, rotating, or
+  replacing other accounts' credentials or API keys. Never perform a bulk credential reset for a single-account repair.
+- Before attempting OAuth refresh, login, or credential upload, identify the exact account and inspect the existing
+  credential sources without exposing secrets. Check the access token's expiry, not the ID token's expiry or file
+  timestamp. Do not try stale refresh tokens while a valid credential for that account may already exist.
+- Treat OAuth refresh as a credential mutation: shared or synchronized refresh tokens can affect other clients and
+  hosts. Do not refresh or replace shared credentials without first establishing their ownership and the effect on
+  existing sessions. Preserve the user's synchronized auth files and all unrelated API keys.
+- Do not use `POST /admin/codex/auth` as a harmless validation probe. It can refresh upstream credentials and replace
+  the local account pool entry, model catalog, and runtime configuration. Before using it, establish those effects and
+  preserve the affected local state so unintended local changes can be recovered. A local backup cannot undo upstream
+  token revocation or rotation.
+- Verify recovery through the requested localhost inference endpoint and confirm that existing clients still work. An
+  upload HTTP 200, a valid model catalog, or a healthy server response alone is not recovery proof. If a repair breaks
+  existing access, stop credential mutations, inspect the exact failure, and recover only the affected state.
+
 - Keep OpenAI-compatible endpoints and request bodies aligned with the official OpenAI API schema. Do not add
   gateway-only aliases, sentinel values, or alternate wire formats.
 - Keep `GET /v1/models` without query parameters strictly OpenAI-compatible. Treat `GET /v1/models?client_version=X.Y.Z`
