@@ -748,3 +748,23 @@ Deno.test("admin passkey sign-in uses discoverable credentials instead of a save
   assert.doesNotMatch(loginCall[1], /handle:|useHandle:/);
   assert.match(loginCall[1], /baseUrl: getPasskeyBaseUrl\(\)/);
 });
+
+Deno.test("admin paid-provider wallet display never claims a balance the token endpoint cannot prove", () => {
+  // OpenLux's only balance surface answers `unlimited_quota: true` for every
+  // token and its granted/available/used totals do not track the real wallet
+  // (a confirmed top-up moved them the wrong way), and inference responses carry
+  // no balance header. The UI must therefore never render those figures, and
+  // must never present the token-scope flag as an unlimited balance.
+  assert.doesNotMatch(adminScript, /Unlimited quota/);
+  assert.doesNotMatch(adminHtml, /Unlimited quota/);
+  assert.doesNotMatch(adminScript, /formatQuotaTokens/);
+  assert.doesNotMatch(adminScript, /"Available tokens"|"Granted tokens"|"Used tokens"/);
+  assert.doesNotMatch(adminHtml, /Available tokens|Granted tokens|Used tokens/);
+  assert.doesNotMatch(adminScript, /meteredQuotaGranted|meteredQuotaTokenUsage/);
+  assert.match(adminHtml, /<dt>Balance<\/dt>/);
+  assert.match(adminScript, /"Not reported by provider"/);
+  assert.match(adminScript, /"Balance not reported — no exhaustion estimate"/);
+  // The real, event-derived provider signal and its timestamp survive.
+  assert.match(adminScript, /appendProviderFact\(facts, "Inference", status\.health \? providerStateLabel\(status\.health\) : "Not observed"\)/);
+  assert.match(adminScript, /appendProviderFact\(facts, "Last response", formatDate\(status\.health\?\.last_observed_at_ms\)\)/);
+});

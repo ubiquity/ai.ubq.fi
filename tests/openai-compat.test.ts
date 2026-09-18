@@ -10,7 +10,7 @@ import type { CodexBankedResetConfig } from "../src/codex_banked_reset.ts";
 import type { CodexUsageResetProvider } from "../src/codex_banked_reset_provider.ts";
 import type { CodexAuthPoolState } from "../src/types.ts";
 import { DEFAULT_MODEL_KEY, DEFAULT_REASONING_EFFORT_KEY } from "../src/defaults.ts";
-import { setStreamFirstEventDeadlineMsForTest } from "../src/inference_deadline.ts";
+import { setPaidProviderFirstHeadersDeadlineMsForTest, setStreamFirstEventDeadlineMsForTest } from "../src/inference_deadline.ts";
 import { RELEASE_GIT_SHA } from "../src/release.ts";
 import { MAX_RESPONSES_SSE_EVENT_BYTES } from "../src/responses_stream.ts";
 import { sha256Base64Url, sha256Hex } from "../src/utils.ts";
@@ -172,7 +172,8 @@ const {
 const { projectCerebrasToolSchema, setCerebrasFetchTimeoutMsForTest } = await import("../src/cerebras.ts");
 const { DEEPSEEK_CHAT_COMPLETIONS_URL, DEEPSEEK_FLASH_MODEL, DEEPSEEK_V4_FLASH_MODEL, projectDeepSeekRequest, setDeepSeekFetchTimeoutMsForTest } =
   await import("../src/deepseek.ts");
-const { recordCodexProviderHealth, resetProviderHealthThrottleForTest } = await import("../src/provider_health.ts");
+const { recordCodexProviderHealth, resetProviderHealthThrottleForTest, getMeteredProviderHealth, getSurplusProviderHealth } =
+  await import("../src/provider_health.ts");
 
 const TEXT_ENCODER = new TextEncoder();
 const utf8ByteLength = (value: string): number => TEXT_ENCODER.encode(value).byteLength;
@@ -6945,7 +6946,7 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
       }
     });
 
-    await t.step("Surplus network ambiguity retains its provider-specific 502 contract", async () => {
+    await t.step("Surplus network ambiguity falls through to OpenLux delivery", async () => {
       const previousMeteredApiKey = Deno.env.get("METERED_API_KEY");
       const previousSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
       try {
@@ -7044,10 +7045,12 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
                       }),
                       { keyId, kernelRepo: null, kernelOrg: null, requestId, startedAtMs: Date.now() }
                     );
-              assert.equal(response.status, 502, suffix);
-              assert.equal(response.headers.get("x-uos-upstream"), "surplus", suffix);
+              // A Surplus transport failure is transient: the request falls
+              // through to OpenLux instead of surfacing a Surplus-shaped 502.
+              assert.equal(response.status, 200, suffix);
+              assert.equal(response.headers.get("x-uos-upstream"), "metered", suffix);
               assert.equal(surplusAttempts, 1, suffix);
-              assert.equal(meteredAttempts, 0, suffix);
+              assert.equal(meteredAttempts, 1, suffix);
               assert.ok(codexRequestHeaders.length > 0, suffix);
               for (const headers of codexRequestHeaders) {
                 const sessionIdentity = headers.get("conversation_id");
@@ -7064,21 +7067,10 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
               for (const header of codexSessionHeaders) {
                 assert.equal(paidRequest.headers.has(header), false, `${suffix}:${header}`);
               }
-              assert.deepEqual(
-                await response.json(),
-                {
-                  error: {
-                    message: "Surplus upstream request failed: Surplus Responses request could not reach the upstream service.",
-                    type: "server_error",
-                    code: "surplus_upstream_unreachable",
-                    param: null,
-                  },
-                },
-                suffix
-              );
-              const stored = await waitForPaidFallbackTerminal(keyId, requestId, "ambiguous");
-              assert.equal(stored.provider, "surplus", suffix);
-              assert.equal(stored.billing_state, "pending", suffix);
+              await response.text();
+              const stored = await waitForPaidFallbackTerminal(keyId, requestId, "completed");
+              assert.equal(stored.provider, "metered", suffix);
+              assert.equal(stored.dispatch_state, "dispatched", suffix);
             }
           );
         }
@@ -14705,6 +14697,370 @@ Deno.test("openai: an empty provider selection keeps Codex as the primary provid
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
     await response.text();
+  }
+});
+
+const clearMeteredAndSurplusProviderHealth = (): void => {
+  for (const encoded of [...kvStore.keys()]) {
+    const key = JSON.parse(encoded) as unknown[];
+    if (key[0] === "uos_ai" && key[1] === "provider_health" && key[2] === "v1" && (key[3] === "metered" || key[3] === "surplus")) {
+      kvStore.delete(encoded);
+    }
+  }
+};
+
+/** Seeds both paid catalogs for the model the fallthrough fixtures route. */
+const seedPaidFallthroughProviders = async (): Promise<void> => {
+  resetMeteredModelsCacheForTest();
+  resetSurplusModelsCacheForTest();
+  await fetchMeteredModels({
+    force: true,
+    fetcher: () =>
+      Promise.resolve(
+        Response.json({
+          data: [{ id: DEFAULT_TEST_MODEL, supported_endpoint_types: ["openai-response"] }],
+        })
+      ),
+  });
+  await fetchSurplusModels({
+    apiKey: "surplus-fallthrough-test-key",
+    force: true,
+    fetcher: () =>
+      Promise.resolve(
+        Response.json({
+          data: [
+            {
+              id: DEFAULT_TEST_MODEL,
+              pricing: { prompt: 0.000001, completion: 0.000003 },
+            },
+          ],
+        })
+      ),
+  });
+};
+
+Deno.test("openai: transient first-tier paid failures fall through to OpenLux", async (t) => {
+  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
+  const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
+  const previousAtomicObserver = atomicCommitObservation.observer;
+  const atomicCommits: OpenAiAtomicOp[][] = [];
+  const keyIds: string[] = [];
+  atomicCommitObservation.observer = (operations) => atomicCommits.push([...operations]);
+  const paidRequestKeyFor = (keyId: string, requestId: string) => ["uos_ai", "paid_fallback", "v3", "request", keyId, requestId] as const;
+
+  try {
+    Deno.env.set("METERED_API_KEY", "metered-fallthrough-test-key");
+    Deno.env.set("SURPLUS_API_KEY", "surplus-fallthrough-test-key");
+    resetProviderHealthThrottleForTest();
+    clearMeteredAndSurplusProviderHealth();
+    await seedPaidFallthroughProviders();
+
+    const runPaidAttempt = async (
+      name: string,
+      surplusResponse: (signal: AbortSignal | undefined) => Response | Promise<Response>
+    ): Promise<
+      Readonly<{
+        keyId: string;
+        requestId: string;
+        status: number;
+        upstream: string | null;
+        body: string;
+        surplusCalls: number;
+        meteredCalls: number;
+      }>
+    > => {
+      const keyId = `fallthrough-${name}`;
+      const requestId = `request-${keyId}`;
+      keyIds.push(keyId);
+      seedPaidFallbackKey(keyId);
+      let surplusCalls = 0;
+      let meteredCalls = 0;
+      const response = await withFetchMock(
+        (url, _bodyText, init) => {
+          if (url === "https://api.surplusintelligence.ai/v1/responses") {
+            surplusCalls += 1;
+            return surplusResponse(init?.signal ?? undefined);
+          }
+          if (url === "https://api.openlux.ai/v1/responses") {
+            meteredCalls += 1;
+            return sseResponse(baseSseChunks());
+          }
+          return authoritativeCodexQuotaResponse();
+        },
+        () =>
+          handleResponses(responsesRequest({ stream: false }), {
+            keyId,
+            kernelRepo: null,
+            kernelOrg: null,
+            requestId,
+            startedAtMs: Date.now(),
+          })
+      );
+      const body = await response.text();
+      return {
+        keyId,
+        requestId,
+        status: response.status,
+        upstream: response.headers.get("x-uos-upstream"),
+        body,
+        surplusCalls,
+        meteredCalls,
+      };
+    };
+
+    await t.step("a Surplus transport failure hands the request to OpenLux", async () => {
+      const result = await runPaidAttempt("transport-failure", () => {
+        throw new TypeError("network connection reset before response headers");
+      });
+      assert.equal(result.status, 200);
+      assert.equal(result.upstream, "metered");
+      assert.equal(result.surplusCalls, 1);
+      assert.equal(result.meteredCalls, 1);
+      const stored = await waitForPaidFallbackTerminal(result.keyId, result.requestId, "completed");
+      assert.equal(stored.provider, "metered");
+    });
+
+    await t.step("a Surplus 5xx hands the request to OpenLux", async () => {
+      const result = await runPaidAttempt(
+        "upstream-5xx",
+        () =>
+          new Response(JSON.stringify({ error: { message: "surplus exploded", code: "surplus_server_error" } }), {
+            status: 503,
+            headers: { "Content-Type": "application/json" },
+          })
+      );
+      assert.equal(result.status, 200);
+      assert.equal(result.upstream, "metered");
+      assert.equal(result.surplusCalls, 1);
+      assert.equal(result.meteredCalls, 1);
+      const stored = await waitForPaidFallbackTerminal(result.keyId, result.requestId, "completed");
+      assert.equal(stored.provider, "metered");
+    });
+
+    await t.step("a stalled first tier releases the request at the bounded first-headers deadline", async () => {
+      setPaidProviderFirstHeadersDeadlineMsForTest(30);
+      try {
+        const result = await runPaidAttempt("stalled-headers", (signal) => rejectOnAbort(signal ?? new AbortController().signal));
+        assert.equal(result.status, 200);
+        assert.equal(result.upstream, "metered");
+        assert.equal(result.surplusCalls, 1);
+        assert.equal(result.meteredCalls, 1);
+        const stored = await waitForPaidFallbackTerminal(result.keyId, result.requestId, "completed");
+        assert.equal(stored.provider, "metered");
+      } finally {
+        setPaidProviderFirstHeadersDeadlineMsForTest(null);
+      }
+    });
+
+    await t.step("a definitive Surplus 400 stays delivered and never tries OpenLux", async () => {
+      const result = await runPaidAttempt(
+        "definitive-400",
+        () =>
+          new Response(JSON.stringify({ error: { message: "surplus rejected the request body", code: "surplus_bad_request" } }), {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          })
+      );
+      assert.equal(result.status, 400);
+      assert.equal(result.upstream, "surplus");
+      assert.equal(result.surplusCalls, 1);
+      assert.equal(result.meteredCalls, 0);
+      const payload = JSON.parse(result.body) as { error?: { type?: unknown; code?: unknown } };
+      const error = payload.error ?? {};
+      assert.equal(error.type, "invalid_request_error");
+      assert.equal(error.code, "surplus_bad_request");
+      const stored = await waitForPaidFallbackTerminal(result.keyId, result.requestId, "failed");
+      assert.equal(stored.provider, "surplus");
+    });
+
+    await t.step("every fallthrough reservation records exactly one terminal provider pair", () => {
+      for (const keyId of keyIds) {
+        const terminalWrites = atomicWritesForKey(atomicCommits, paidRequestKeyFor(keyId, `request-${keyId}`)).filter((operation) => {
+          const value = operation.value;
+          if (typeof value !== "object" || value === null) return false;
+          const state = (value as { terminal_state?: unknown }).terminal_state;
+          return typeof state === "string" && state !== "pending";
+        });
+        assert.equal(terminalWrites.length, 1, `${keyId} terminal provider/request-id pair`);
+      }
+    });
+  } finally {
+    atomicCommitObservation.observer = previousAtomicObserver;
+    setPaidProviderFirstHeadersDeadlineMsForTest(null);
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    resetProviderHealthThrottleForTest();
+    clearMeteredAndSurplusProviderHealth();
+    for (const keyId of keyIds) {
+      kvStore.delete(keyToString(["ubq_ai", "api_keys", "id", keyId]));
+      kvStore.delete(keyToString(["ubq_ai", "api_keys", "hash", `hash-${keyId}`]));
+    }
+    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
+    if (originalSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
+    else Deno.env.set("SURPLUS_API_KEY", originalSurplusApiKey);
+  }
+});
+
+Deno.test("openai: paid-provider health classification follows the provider body, not the status alone", async (t) => {
+  const originalMeteredApiKey = Deno.env.get("METERED_API_KEY");
+  const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
+  const previousAtomicObserver = atomicCommitObservation.observer;
+  const atomicCommits: OpenAiAtomicOp[][] = [];
+  const keyIds: string[] = [];
+  const meteredHealthCurrentKey = ["uos_ai", "provider_health", "v1", "metered", "default", "current"] as const;
+  atomicCommitObservation.observer = (operations) => atomicCommits.push([...operations]);
+
+  const runRequest = async (keyId: string, handler: (url: string, signal: AbortSignal | undefined) => Response): Promise<Response> => {
+    keyIds.push(keyId);
+    seedPaidFallbackKey(keyId);
+    return await withFetchMock(
+      (url, _bodyText, init) => {
+        if (url === "https://api.surplusintelligence.ai/v1/responses" || url === "https://api.openlux.ai/v1/responses") {
+          return handler(url, init?.signal ?? undefined);
+        }
+        return authoritativeCodexQuotaResponse();
+      },
+      () =>
+        handleResponses(responsesRequest({ stream: false }), {
+          keyId,
+          kernelRepo: null,
+          kernelOrg: null,
+          requestId: `request-${keyId}`,
+          startedAtMs: Date.now(),
+        })
+    );
+  };
+
+  try {
+    Deno.env.set("METERED_API_KEY", "metered-classification-test-key");
+    Deno.env.delete("SURPLUS_API_KEY");
+    resetProviderHealthThrottleForTest();
+    clearMeteredAndSurplusProviderHealth();
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    await fetchMeteredModels({
+      force: true,
+      fetcher: () =>
+        Promise.resolve(
+          Response.json({
+            data: [{ id: DEFAULT_TEST_MODEL, supported_endpoint_types: ["openai-response"] }],
+          })
+        ),
+    });
+
+    const forbiddenBody = (body: Record<string, unknown>, providerRequestId: string): Response =>
+      new Response(JSON.stringify(body), {
+        status: 403,
+        headers: { "Content-Type": "application/json", "X-Oneapi-Request-Id": providerRequestId },
+      });
+
+    await t.step("an OpenLux 403 with local:insufficient_quota records quota exhaustion", async () => {
+      clearMeteredAndSurplusProviderHealth();
+      resetProviderHealthThrottleForTest();
+      const response = await runRequest("openlux-quota-code-403", (url) => {
+        assert.equal(url, "https://api.openlux.ai/v1/responses");
+        return forbiddenBody({ error: { message: "user quota is not enough, please top up", code: "local:insufficient_quota" } }, "openlux-403-code");
+      });
+      assert.equal(response.status, 403);
+      assert.equal(response.headers.get("x-uos-upstream"), "metered");
+      await response.text();
+      const health = await getMeteredProviderHealth();
+      assert.equal(health.state, "exhausted");
+      assert.equal(health.last_event, "quota_exhausted");
+      assert.equal(health.last_status, 403);
+      assert.equal(health.last_provider_request_id, "openlux-403-code");
+      const stored = await waitForPaidFallbackTerminal("openlux-quota-code-403", "request-openlux-quota-code-403", "failed");
+      assert.equal(stored.provider, "metered");
+      // The terminal transport record must not downgrade the body-proven
+      // classification to a generic upstream error.
+      await delayBy(20);
+      const upstreamErrorWrites = atomicWritesForKey(atomicCommits, meteredHealthCurrentKey).filter(
+        (operation) => typeof operation.value === "object" && operation.value !== null && (operation.value as { event?: unknown }).event === "upstream_error"
+      );
+      assert.deepEqual(upstreamErrorWrites, [], "quota exhaustion is not overwritten by upstream_error");
+      const current = kvStore.get(keyToString(meteredHealthCurrentKey)) as { event?: unknown; status?: unknown } | undefined;
+      assert.ok(current);
+      assert.equal(current.event, "quota_exhausted");
+      assert.equal(current.status, 403);
+    });
+
+    await t.step("an OpenLux 403 with a message-only quota signal records quota exhaustion", async () => {
+      clearMeteredAndSurplusProviderHealth();
+      resetProviderHealthThrottleForTest();
+      const response = await runRequest("openlux-quota-message-403", (url) => {
+        assert.equal(url, "https://api.openlux.ai/v1/responses");
+        return forbiddenBody({ error: { message: "Insufficient balance: user quota is not enough for this request" } }, "openlux-403-message");
+      });
+      assert.equal(response.status, 403);
+      await response.text();
+      const health = await getMeteredProviderHealth();
+      assert.equal(health.state, "exhausted");
+      assert.equal(health.last_event, "quota_exhausted");
+      assert.equal(health.last_status, 403);
+      assert.equal(health.last_provider_request_id, "openlux-403-message");
+    });
+
+    await t.step("an OpenLux 403 without a quota signal stays an auth fault", async () => {
+      clearMeteredAndSurplusProviderHealth();
+      resetProviderHealthThrottleForTest();
+      const response = await runRequest("openlux-auth-403", (url) => {
+        assert.equal(url, "https://api.openlux.ai/v1/responses");
+        return forbiddenBody({ error: { message: "invalid access token", code: "invalid_token" } }, "openlux-403-auth");
+      });
+      assert.equal(response.status, 403);
+      await response.text();
+      const health = await getMeteredProviderHealth();
+      assert.equal(health.state, "invalid");
+      assert.equal(health.last_event, "auth_invalid");
+      assert.equal(health.last_status, 403);
+      assert.equal(health.last_provider_request_id, "openlux-403-auth");
+    });
+
+    await t.step("a transient Surplus 402 still falls through and is not recorded as exhaustion", async () => {
+      Deno.env.set("SURPLUS_API_KEY", "surplus-classification-test-key");
+      clearMeteredAndSurplusProviderHealth();
+      resetProviderHealthThrottleForTest();
+      await seedPaidFallthroughProviders();
+      let surplusCalls = 0;
+      let meteredCalls = 0;
+      const response = await runRequest("surplus-402-health", (url) => {
+        if (url === "https://api.surplusintelligence.ai/v1/responses") {
+          surplusCalls += 1;
+          return new Response(JSON.stringify({ error: { message: "no capacity", code: "no_capacity" } }), {
+            status: 402,
+            headers: { "Content-Type": "application/json", "X-Oneapi-Request-Id": "surplus-402-request" },
+          });
+        }
+        assert.equal(url, "https://api.openlux.ai/v1/responses");
+        meteredCalls += 1;
+        return sseResponse(baseSseChunks());
+      });
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("x-uos-upstream"), "metered");
+      assert.equal(surplusCalls, 1);
+      assert.equal(meteredCalls, 1);
+      await response.text();
+      const surplusHealth = await getSurplusProviderHealth();
+      assert.equal(surplusHealth.last_event, "upstream_error");
+      assert.equal(surplusHealth.last_status, 402);
+      assert.equal(surplusHealth.last_provider_request_id, "surplus-402-request");
+      assert.notEqual(surplusHealth.state, "exhausted");
+    });
+  } finally {
+    atomicCommitObservation.observer = previousAtomicObserver;
+    resetMeteredModelsCacheForTest();
+    resetSurplusModelsCacheForTest();
+    resetProviderHealthThrottleForTest();
+    clearMeteredAndSurplusProviderHealth();
+    for (const keyId of keyIds) {
+      kvStore.delete(keyToString(["ubq_ai", "api_keys", "id", keyId]));
+      kvStore.delete(keyToString(["ubq_ai", "api_keys", "hash", `hash-${keyId}`]));
+    }
+    if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
+    else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
+    if (originalSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
+    else Deno.env.set("SURPLUS_API_KEY", originalSurplusApiKey);
   }
 });
 

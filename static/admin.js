@@ -328,8 +328,6 @@ const meteredQuotaBadge = mustGet("metered-quota-badge");
 const meteredQuotaRemaining = mustGet("metered-quota-remaining");
 const meteredQuotaProgress = mustGet("metered-quota-progress");
 const meteredQuotaBalance = mustGet("metered-quota-balance");
-const meteredQuotaGranted = mustGet("metered-quota-granted");
-const meteredQuotaTokenUsage = mustGet("metered-quota-token-usage");
 const meteredQuotaBaseline = mustGet("metered-quota-baseline");
 const meteredQuotaLatestRefill = mustGet("metered-quota-latest-refill");
 const meteredQuotaInferredCredit = mustGet("metered-quota-inferred-credit");
@@ -1168,40 +1166,25 @@ const renderMeteredCapacitySource = (source, provider = null) => {
   const facts = document.createElement("dl");
   facts.dataset.capacityFacts = "";
   const wallet = source.wallet ?? {};
-  appendProviderFact(
-    facts,
-    "Available tokens",
-    typeof wallet.total_available === "number" && Number.isFinite(wallet.total_available)
-      ? numberFormatter.format(wallet.total_available)
-      : "Not reported",
-  );
-  appendProviderFact(
-    facts,
-    "Granted tokens",
-    typeof wallet.total_granted === "number" && Number.isFinite(wallet.total_granted)
-      ? numberFormatter.format(wallet.total_granted)
-      : "Not reported",
-  );
+  // The OpenLux token endpoint is not a wallet: `unlimited_quota` is a
+  // token-scope flag and its granted/available/used totals do not track the
+  // real balance, so none of them are displayed as a balance. The actionable
+  // signal is the provider's last outcome from real inference traffic, which is
+  // shown first.
+  appendProviderFact(facts, "Inference", status.health ? providerStateLabel(status.health) : "Not observed");
+  appendProviderFact(facts, "Last response", formatDate(status.health?.last_observed_at_ms));
+  appendProviderFact(facts, "Balance", "Not reported by provider");
   appendProviderFact(
     facts,
     "Refill remaining",
-    wallet.unlimited_quota === true ? "Not applicable" : formatCapacityPercent(wallet.refill_cycle_remaining_percent),
+    formatCapacityPercent(wallet.refill_cycle_remaining_percent),
   );
   appendProviderFact(
     facts,
     "Refill baseline",
-    wallet.unlimited_quota === true
-      ? "Not applicable"
-      : wallet.baseline_credits === null
+    wallet.baseline_credits === null || wallet.baseline_credits === undefined
       ? "Not available"
       : formatCredits(wallet.baseline_credits),
-  );
-  appendProviderFact(
-    facts,
-    "Used tokens",
-    typeof wallet.total_used === "number" && Number.isFinite(wallet.total_used)
-      ? numberFormatter.format(wallet.total_used)
-      : "Not reported",
   );
   appendProviderFact(facts, "Confidence", wallet.confidence ?? "Not available");
   appendProviderFact(facts, "Cycle started", formatCapacityTimestamp(wallet.cycle_started_at_ms));
@@ -1280,10 +1263,6 @@ const unavailableCapacitySource = (source, slot = null) =>
         baseline_credits: null,
         refill_cycle_remaining_percent: null,
         refill_cycle_used_percent: null,
-        unlimited_quota: null,
-        total_available: null,
-        total_granted: null,
-        total_used: null,
         cycle_started_at_ms: null,
         last_credit_at_ms: null,
         confidence: null,
@@ -2885,7 +2864,10 @@ const renderQuotaProjectionRows = (payload, historyUnavailable) => {
     if (!estimate) {
       projection.textContent = "No exhaustion estimate — quota is not monitored for this provider";
     } else if (estimate?.unlimited === true) {
-      projection.textContent = "Unlimited quota — no exhaustion estimate";
+      // `unlimited` mirrors the token report's unlimited_quota flag, which is a
+      // token-scope flag rather than a funded wallet; it is never presented as
+      // an unlimited balance.
+      projection.textContent = "Balance not reported — no exhaustion estimate";
     } else if (estimate?.requests_remaining === null || estimate?.requests_remaining === undefined) {
       projection.textContent = "Exhaustion estimate unknown (no quota balance or usage rate)";
     } else {
@@ -2922,31 +2904,26 @@ const renderQuotaProjection = (payload) => {
     summary.textContent =
       "Metered quota monitoring is not configured or has no snapshot. Per-model consumption history is still reported below.";
     quotaRunwaySummary.appendChild(summary);
-  } else if (quota.unlimited_quota === true) {
-    setBadge(quotaRunwayBadge, "ok", "Unlimited quota");
+  } else if (typeof quota.balance_credits !== "number") {
+    // The token endpoint is the only OpenLux balance surface, it only publishes
+    // an unlimited token-scope flag and totals that do not track the wallet,
+    // and inference responses carry no balance. No balance-based estimate can
+    // be honest here, so none is shown.
+    setBadge(quotaRunwayBadge, "unknown", "Balance not reported");
     quotaRunwayUpdated.textContent = "No exhaustion estimate";
     const summary = document.createElement("p");
     summary.dataset.muted = "";
     summary.textContent =
-      "The Metered report is unlimited or only publishes totals; balance-based run-time estimates are unavailable.";
+      "OpenLux publishes no wallet balance: the token report's unlimited flag is a token-scope flag and its granted, available, and used totals do not track the real balance. Balance-based run-time estimates are unavailable.";
     quotaRunwaySummary.appendChild(summary);
   } else {
     const balanceCredits = quota.balance_credits;
     const baselineCredits = quota.baseline_credits;
     const remainingPercent = quota.remaining_percent;
-    const balanceText = typeof balanceCredits === "number"
-      ? `Balance ${formatNumber(balanceCredits)} credits`
-      : typeof quota.total_available === "number"
-      ? `Available ${formatNumber(quota.total_available)} tokens`
-      : "Balance unavailable";
-    const healthyBalance = typeof balanceCredits === "number"
-      ? balanceCredits > 0
-      : typeof quota.total_available === "number"
-      ? quota.total_available > 0
-      : false;
+    const balanceText = `Balance ${formatNumber(balanceCredits)} credits`;
     setBadge(
       quotaRunwayBadge,
-      healthyBalance ? "ok" : "bad",
+      balanceCredits > 0 ? "ok" : "bad",
       balanceText,
     );
     const updatedParts = [];
@@ -7795,8 +7772,6 @@ const clearMeteredQuotaDiagnostics = () => {
   meteredQuotaProgress.value = 0;
   meteredQuotaProgress.removeAttribute("aria-valuetext");
   meteredQuotaBalance.textContent = "—";
-  meteredQuotaGranted.textContent = "—";
-  meteredQuotaTokenUsage.textContent = "—";
   meteredQuotaBaseline.textContent = "—";
   meteredQuotaLatestRefill.textContent = "—";
   meteredQuotaLatestRefill.removeAttribute("title");
@@ -7809,9 +7784,6 @@ const clearMeteredQuotaDiagnostics = () => {
 
 const formatQuotaCredits = (value) =>
   typeof value === "number" && Number.isFinite(value) ? `${creditFormatter.format(value)} credits` : "—";
-
-const formatQuotaTokens = (value) =>
-  typeof value === "number" && Number.isFinite(value) ? numberFormatter.format(value) : "—";
 
 const formatQuotaLabel = (value) => {
   if (typeof value !== "string" || !value) return "—";
@@ -7833,6 +7805,13 @@ const renderMeteredQuotaDiagnostics = (diagnostics) => {
     return;
   }
 
+  // This account's only balance surface is the token endpoint. It always
+  // reports `unlimited_quota`, which is a token-scope flag rather than a funded
+  // wallet, and its granted/available/used totals do not track the real
+  // balance (a confirmed top-up moved them the wrong way). Inference responses
+  // carry no balance header. There is no honest live balance, so no token
+  // figure is displayed; the provider's real, event-derived outcome is shown in
+  // the capacity panel.
   const tokenUsage = typeof diagnostics.total_available === "number" ||
     typeof diagnostics.total_granted === "number" ||
     typeof diagnostics.total_used === "number";
@@ -7846,30 +7825,19 @@ const renderMeteredQuotaDiagnostics = (diagnostics) => {
     meteredQuotaProgress.value = remaining;
     meteredQuotaProgress.hidden = false;
     meteredQuotaProgress.setAttribute("aria-valuetext", `${formatted}% remaining`);
+  } else {
+    meteredQuotaRemaining.textContent = "Not reported";
   }
 
-  const unlimited = diagnostics.unlimited_quota === true;
   if (tokenUsage) {
-    meteredQuotaRemaining.textContent = unlimited ? "Unlimited quota" : "Reported quota";
-    meteredQuotaBalance.textContent = formatQuotaTokens(diagnostics.total_available);
-    meteredQuotaGranted.textContent = formatQuotaTokens(diagnostics.total_granted);
-    meteredQuotaBaseline.textContent = "Not applicable";
-    meteredQuotaInferredCredit.textContent = "Not applicable";
-  } else if (unlimited) {
-    meteredQuotaRemaining.textContent = "Unlimited quota";
-    meteredQuotaBalance.textContent = "—";
-    meteredQuotaGranted.textContent = "—";
+    meteredQuotaBalance.textContent = "Not reported";
     meteredQuotaBaseline.textContent = "Not applicable";
     meteredQuotaInferredCredit.textContent = "Not applicable";
   } else {
     meteredQuotaBalance.textContent = formatQuotaCredits(diagnostics.balance_credits);
-    meteredQuotaGranted.textContent = "—";
     meteredQuotaBaseline.textContent = formatQuotaCredits(diagnostics.baseline_credits);
     meteredQuotaInferredCredit.textContent = formatQuotaCredits(diagnostics.last_inferred_credit_credits);
   }
-  meteredQuotaTokenUsage.textContent = diagnostics.total_used === null || diagnostics.total_used === undefined
-    ? "—"
-    : formatQuotaTokens(diagnostics.total_used);
   meteredQuotaCache.textContent = formatQuotaLabel(diagnostics.cache_state);
   meteredQuotaConfidence.textContent = formatQuotaLabel(diagnostics.confidence);
   meteredQuotaObserved.textContent = typeof diagnostics.observed_at_ms === "number"
@@ -7891,7 +7859,7 @@ const renderMeteredQuotaDiagnostics = (diagnostics) => {
   }
 
   const stale = diagnostics.cache_state === "stale";
-  setMeteredQuotaBadge(stale ? "unknown" : "ok", stale ? "Stale cache" : unlimited ? "Unlimited" : "Available");
+  setMeteredQuotaBadge(stale ? "unknown" : "ok", stale ? "Stale cache" : "Observed");
 };
 
 const applyDefaultsSnapshot = (snapshot, defaults, options = {}) => {
