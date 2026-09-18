@@ -23,7 +23,7 @@ const kv = await Deno.openKv(database.pathname);
 initializeKv(kv);
 
 const { default: handler } = (await import(new URL("serve.ts", release).href)) as typeof import("../serve.ts");
-const server = Deno.serve({ hostname: "127.0.0.1", port: 8001, onListen: handler.onListen }, handler.fetch);
+const server = Deno.serve({ hostname: "127.0.0.1", port: 7999, onListen: handler.onListen }, handler.fetch);
 let stopping = false;
 const shutdown = () => {
   if (stopping) return;

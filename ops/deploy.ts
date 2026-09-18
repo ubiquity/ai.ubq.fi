@@ -42,7 +42,7 @@ try {
 
   for (let attempt = 0; attempt < 30; attempt++) {
     try {
-      const response = await fetch("http://127.0.0.1:8001/health", { signal: AbortSignal.timeout(2000) });
+      const response = await fetch("http://127.0.0.1:7999/health", { signal: AbortSignal.timeout(2000) });
       const health = await response.json();
       if (
         response.status === 200 &&

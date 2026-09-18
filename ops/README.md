@@ -4,7 +4,7 @@ Production runs as `ai-ubq-fi.service` on `codex@vps.pavlovcik.com` (129.158.58.
 to `/home/codex/repos/ubiquity/ai.ubq.fi`.
 
 - `ops/ai-ubq-fi.service`: enabled systemd service; starts at boot and restarts after exit.
-- `scripts/serve-vps.ts`: authenticated listener on `127.0.0.1:8001`, with graceful shutdown.
+- `scripts/serve-vps.ts`: authenticated listener on `127.0.0.1:7999`, with graceful shutdown.
 - `.env`: existing production credentials, mode 0600. `DENO_DEPLOY_TOKEN` remains the application's admin-token name.
 - `.data/kv.sqlite3`: persistent local KV. Never replace it during a code deployment.
 - `.data/releases/<full-git-sha>`: immutable code and assets; `.data/current` selects the release.
@@ -23,7 +23,7 @@ From the VPS repository root:
 sudo systemctl status ai-ubq-fi.service
 sudo journalctl -u ai-ubq-fi.service -n 100 --no-pager
 sudo systemctl restart ai-ubq-fi.service
-curl --fail http://127.0.0.1:8001/health
+curl --fail http://127.0.0.1:7999/health
 ```
 
 Systemd loads the repository-root `.env` through Deno's dotenv parser. Keep `DENO_TIMELINE=production` in the service
