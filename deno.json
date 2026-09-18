@@ -49,7 +49,7 @@
     "knip": "sh scripts/knip.sh",
     "types": "deno types > .deno-types.d.ts",
     "verify": "sh scripts/verify.sh",
-    "deploy:vps": "deno run --allow-read --allow-write --allow-run=git,tar,sudo --allow-net=127.0.0.1:8001 ops/deploy.ts",
+    "deploy:vps": "deno run --allow-read --allow-write --allow-run=git,tar,sudo --allow-net=127.0.0.1:7999 ops/deploy.ts",
     "deploy:mac": "deno run --allow-read --allow-write --allow-run=git,tar,id,launchctl,ps --allow-net=127.0.0.1:8000 ops/deploy-mac.ts"
   },
   "nodeModulesDir": "none",
