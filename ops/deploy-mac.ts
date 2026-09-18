@@ -65,7 +65,7 @@ try {
   await command("launchctl", ["bootstrap", domain, link]);
   for (let attempt = 0; attempt < 30; attempt++) {
     try {
-      const response = await fetch("http://127.0.0.1:8000/health", { signal: AbortSignal.timeout(2000) });
+      const response = await fetch("http://127.0.0.1:7999/health", { signal: AbortSignal.timeout(2000) });
       const body = await response.json();
       if (
         response.status === 200 &&

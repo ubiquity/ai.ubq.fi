@@ -82,7 +82,8 @@ const { API_KEY_NO_EXPIRATION_MS, API_KEY_NO_USAGE_LIMIT, PAID_FALLBACK_NO_LIMIT
 const { apiKeyUsageV3WindowKey } = await import("../src/api_key_policy.ts");
 const { hasStrictPaidFallbackKeyPolicy } = await import("../src/paid_fallback.ts");
 const { LOCAL_DEVELOPMENT_KEY_ID, ensureLocalDevelopmentApiKey, resolveLocalDevelopmentApiKeyPolicy } = await import("../src/local_development_key.ts");
-const { configureAdminAuthForListener, configureAdminAuthPeerForRequest } = await import("../src/local_admin_auth.ts");
+const { configureAdminAuthForListener, configureAdminAuthPeerForRequest, configureMacLocalAdminAuthBypassForListener } =
+  await import("../src/local_admin_auth.ts");
 const { authenticateClient } = await import("../src/auth.ts");
 const { getKv } = await import("../src/kv.ts");
 const kvEntry = await getKv();
@@ -194,6 +195,33 @@ Deno.test("the loopback bypass authenticates as the unlimited local development 
       configureAdminAuthPeerForRequest({ transport: "tcp", hostname: "192.0.2.10", port: 8000 });
       const remoteAuth = await authenticateClient(localRequest());
       assert.equal(remoteAuth.ok, false);
+    } finally {
+      configureAdminAuthForListener(disabledOptions, loopbackAddress);
+      configureAdminAuthPeerForRequest(null);
+    }
+  });
+});
+
+Deno.test("the Mac LAN listener grants the local principal to an actual loopback peer only", async () => {
+  await withPaidProviderKey(async () => {
+    // Both requests use a loopback URL; only the bound peer decides, so a LAN
+    // client that forges a loopback Host is still authenticated.
+    const localRequest = new Request("http://127.42.9.3/v1/chat/completions", { method: "POST" });
+    const lanRequest = new Request("http://127.42.9.3/v1/chat/completions", { method: "POST" });
+    configureMacLocalAdminAuthBypassForListener({ transport: "tcp", hostname: "0.0.0.0", port: 7999 });
+    try {
+      configureAdminAuthPeerForRequest({ transport: "tcp", hostname: "127.0.0.1", port: 7999 }, localRequest);
+      configureAdminAuthPeerForRequest({ transport: "tcp", hostname: "192.0.2.10", port: 7999 }, lanRequest);
+
+      const lanAuth = await authenticateClient(lanRequest);
+      if (lanAuth.ok) throw new Error("A LAN peer must stay authenticated");
+      assert.equal(lanAuth.response.status, 401);
+
+      const localAuth = await authenticateClient(localRequest);
+      if (!localAuth.ok) throw new Error("Loopback requests authenticate without a credential");
+      // The revocation case above may degrade the principal to the policy-free
+      // `disabled` method; the local development key path is asserted there.
+      assert.ok(localAuth.method.kind === "kv_api_key" || localAuth.method.kind === "disabled");
     } finally {
       configureAdminAuthForListener(disabledOptions, loopbackAddress);
       configureAdminAuthPeerForRequest(null);

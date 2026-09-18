@@ -17,9 +17,10 @@ const kv = await Deno.openKv(new URL(".data/kv.sqlite3", root).pathname);
 const { initializeKv } = await import(new URL("src/kv.ts", release).href);
 initializeKv(kv);
 const { default: handler } = (await import(new URL("serve.ts", release).href)) as typeof import("../serve.ts");
-const { configureAdminAuthForListener, configureAdminAuthPeerForRequest } = await import(new URL("src/local_admin_auth.ts", release).href);
-// The Mac service is the loopback development server, so it provisions the
-// unlimited local development key that loopback inference authenticates as.
+const { configureAdminAuthPeerForRequest, configureMacLocalAdminAuthBypassForListener } = await import(new URL("src/local_admin_auth.ts", release).href);
+// The Mac service answers LAN clients, so it provisions the unlimited local
+// development key that loopback inference authenticates as; LAN clients keep
+// authenticating with their own credentials.
 const { ensureLocalDevelopmentApiKey } = await import(new URL("src/local_development_key.ts", release).href);
 try {
   const status = await ensureLocalDevelopmentApiKey(kv);
@@ -30,14 +31,16 @@ try {
 }
 const server = Deno.serve(
   {
-    hostname: "127.0.0.1",
-    port: 8000,
+    hostname: "0.0.0.0",
+    port: 7999,
     onListen(address) {
-      configureAdminAuthForListener({ disableAdminAuth: true }, address);
+      // LAN-facing service: only an actual loopback peer receives the
+      // passwordless local development bypass; LAN clients stay authenticated.
+      configureMacLocalAdminAuthBypassForListener(address);
     },
   },
   (request, info) => {
-    configureAdminAuthPeerForRequest(info.remoteAddr);
+    configureAdminAuthPeerForRequest(info.remoteAddr, request);
     return handler.fetch(request, info);
   }
 );
