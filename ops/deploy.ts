@@ -29,7 +29,7 @@ async function ensureCaddyIngressReady(): Promise<void> {
   }
   // Validate inside Caddy's own unit namespace so the bind mount and the
   // unprivileged user are both exercised, exactly as the service start is.
-  const mainPid = await command("systemctl", ["show", "caddy", "-p", "MainPID", "--value"]);
+  const mainPid = await command("sudo", ["-n", "systemctl", "show", "caddy", "-p", "MainPID", "--value"]);
   if (!/^\d+$/.test(mainPid) || mainPid === "0") throw new Error("Caddy is not running; start it before deploying");
   await command("sudo", [
     "-n",
