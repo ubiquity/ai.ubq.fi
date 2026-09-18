@@ -70,6 +70,7 @@ import { json, openaiError, STANDARD_RATE_LIMIT_HEADERS } from "./http.ts";
 import {
   BUFFERED_INFERENCE_DEADLINE_MS,
   createInferenceSignal,
+  createPaidProviderAttemptDeadline,
   createStreamFirstEventDeadline,
   createStreamSemanticDeadline,
   STREAM_FAILOVER_RESERVE_MS,
@@ -750,6 +751,11 @@ type RoutedResponsesUpstream = Readonly<{
   paidFallbackBilling?: SurplusBillingPricing | null;
   /** Trustworthy opaque identifier supplied by the selected upstream. */
   paidFallbackProviderRequestId?: string | null;
+  /**
+   * Health classification of a delivered non-2xx paid response, so the terminal
+   * transport record preserves the provider-specific signal.
+   */
+  paidFallbackErrorHealth?: PaidProviderHealthClassification;
   gatewayResponse: boolean;
   fallbackReason: InferenceFallbackReason | null;
   /** Local admission decisions are terminal and must not enter legacy recovery. */
@@ -1539,7 +1545,8 @@ const fetchAndPreparePrimaryResponses = async (
     routed.paidFallbackProviderRequestId ?? null,
     routed.paidFallbackBilling ?? null,
     options.model,
-    routed.providerHealthOnly === true
+    routed.providerHealthOnly === true,
+    routed.paidFallbackErrorHealth ?? null
   );
   if (routed.gatewayResponse) {
     preparationDeadline.clear();
@@ -2477,19 +2484,69 @@ const bestEffortPaidFallbackBookkeeping = async (operation: string, run: () => P
 
 const paidProviderErrorStatus = (error: unknown): number | null => (error instanceof MeteredError || error instanceof SurplusError ? error.status : null);
 
+type PaidProviderHealthEvent = "auth_invalid" | "quota_exhausted" | "upstream_error" | "reachable";
+
+/**
+ * Provider-specific health classification for the paid tiers. Both providers
+ * misuse status codes, so the recorded event must not be derived from the raw
+ * status alone:
+ * - OpenLux reports an exhausted wallet as 403 with `local:insufficient_quota`
+ *   in the body, which is quota exhaustion and not an auth fault.
+ * - Surplus rejects transiently saturated requests with a fast 402 that is not
+ *   a balance signal, so it is recorded as an upstream error.
+ * This is local to the paid-provider path; Codex account health is untouched.
+ */
+const paidProviderHealthEvent = (provider: "metered" | "surplus", status: number | null, meteredQuotaExhausted: boolean): PaidProviderHealthEvent | null => {
+  if (status === 401 || status === 403) return provider === "metered" && meteredQuotaExhausted ? "quota_exhausted" : "auth_invalid";
+  if (status === 402 || status === 429) return provider === "surplus" && status === 402 ? "upstream_error" : "quota_exhausted";
+  if (status === null || status >= 500) return "upstream_error";
+  if (status >= 100) return "reachable";
+  return null;
+};
+
+type PaidProviderHealthClassification = Readonly<{ event: PaidProviderHealthEvent; status: number | null }>;
+
+const paidProviderHealthClassification = (
+  provider: "metered" | "surplus",
+  status: number | null,
+  meteredQuotaExhausted: boolean
+): PaidProviderHealthClassification | null => {
+  const event = paidProviderHealthEvent(provider, status, meteredQuotaExhausted);
+  return event ? { event, status } : null;
+};
+
+/**
+ * OpenLux hides a real balance exhaustion behind HTTP 403, and its inference
+ * response body is the only discriminator. A clone keeps the delivered bytes
+ * intact while the shared bounded reader caps the inspection.
+ */
+const meteredForbiddenIndicatesQuotaExhaustion = async (response: Response, signal: AbortSignal | undefined): Promise<boolean> => {
+  if (response.status !== 403) return false;
+  const { bytes, complete } = await readBoundedResponseBody(response.clone(), { signal, cancellationReason: "Metered 403 classification read" });
+  if (!complete) return false;
+  try {
+    const payload = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+    if (!isRecord(payload)) return false;
+    const error = isRecord(payload.error) ? payload.error : null;
+    const code = typeof error?.code === "string" ? error.code.trim().toLowerCase() : "";
+    const message = typeof error?.message === "string" ? error.message.toLowerCase() : "";
+    return code === "local:insufficient_quota" || message.includes("quota is not enough");
+  } catch {
+    return false;
+  }
+};
+
 const recordPaidProviderResponseHealth = async (
   provider: "metered" | "surplus",
   status: number | null,
-  providerRequestId: string | null = null
+  providerRequestId: string | null = null,
+  meteredQuotaExhausted = false
 ): Promise<void> => {
   try {
+    const classification = paidProviderHealthClassification(provider, status, meteredQuotaExhausted);
+    if (!classification) return;
     const record = provider === "surplus" ? recordSurplusProviderHealth : recordMeteredProviderHealth;
-    if (status === 401 || status === 403) await record("auth_invalid", status, Date.now, providerRequestId);
-    else if (status === 402 || status === 429) {
-      await record("quota_exhausted", status, Date.now, providerRequestId);
-    } else if (status === null || status >= 500) {
-      await record("upstream_error", status, Date.now, providerRequestId);
-    } else if (status >= 100) await record("reachable", status, Date.now, providerRequestId);
+    await record(classification.event, status, Date.now, providerRequestId);
   } catch {
     // Provider-health persistence must not change routing or response delivery.
   }
@@ -2512,7 +2569,7 @@ const paidLedgerProviderLabel = (provider: UpstreamProvider): "metered" | "surpl
 
 const recordProviderHealthForProvider = (
   provider: UpstreamProvider,
-  event: "success" | "upstream_error",
+  event: PaidProviderHealthEvent | "success",
   status: number | null,
   providerRequestId: string | null
 ): Promise<void> =>
@@ -2527,7 +2584,8 @@ const reconcileMeteredTransportTerminal = async (
   providerRequestId: string | null,
   surplusBilling: SurplusBillingPricing | null,
   model: string | null,
-  usage: UsageTokens | null
+  usage: UsageTokens | null,
+  deliveredHealth: PaidProviderHealthClassification | null
 ): Promise<void> => {
   const terminal = recordMeteredTerminal(reservation, terminalState, paidLedgerProviderLabel(provider));
   const surplusSettlement =
@@ -2548,19 +2606,23 @@ const reconcileMeteredTransportTerminal = async (
           );
         }
       : () => terminal;
-  const healthEvent = terminalState === "completed" ? "success" : "upstream_error";
-  const healthStatus = terminalState === "completed" ? 200 : null;
+  // A delivered non-2xx paid response already carries a provider-specific
+  // classification (for example OpenLux's body-proven quota exhaustion). Keep
+  // that signal instead of downgrading it to a generic upstream error.
+  const healthEvent = terminalState === "completed" ? "success" : (deliveredHealth?.event ?? "upstream_error");
+  const healthStatus = terminalState === "completed" ? 200 : (deliveredHealth?.status ?? null);
   await Promise.all([surplusSettlement(), recordProviderHealthForProvider(provider, healthEvent, healthStatus, providerRequestId)]);
 };
 
 const recordMeteredTransportAmbiguity = async (
   reservation: PaidFallbackReservation,
   provider: UpstreamProvider,
-  providerRequestId: string | null
+  providerRequestId: string | null,
+  deliveredHealth: PaidProviderHealthClassification | null = null
 ): Promise<void> => {
   await Promise.all([
     recordMeteredAmbiguousFailure(reservation, paidLedgerProviderLabel(provider), providerRequestId),
-    recordProviderHealthForProvider(provider, "upstream_error", null, providerRequestId),
+    recordProviderHealthForProvider(provider, deliveredHealth?.event ?? "upstream_error", deliveredHealth?.status ?? null, providerRequestId),
   ]);
 };
 
@@ -2570,7 +2632,8 @@ const createMeteredTransportLifecycle = (
   providerRequestId: string | null = null,
   surplusBilling: SurplusBillingPricing | null = null,
   model: string | null = null,
-  providerHealthOnly = false
+  providerHealthOnly = false,
+  deliveredHealth: PaidProviderHealthClassification | null = null
 ): MeteredTransportLifecycle => {
   let recorded = false;
   const schedule = (operation: string, run: (reservation: PaidFallbackReservation) => Promise<void>): void => {
@@ -2596,7 +2659,7 @@ const createMeteredTransportLifecycle = (
         return;
       }
       schedule("terminal reconciliation", (activeReservation) =>
-        reconcileMeteredTransportTerminal(activeReservation, terminalState, provider, providerRequestId, surplusBilling, model, usage)
+        reconcileMeteredTransportTerminal(activeReservation, terminalState, provider, providerRequestId, surplusBilling, model, usage, deliveredHealth)
       );
     },
     ambiguous: () => {
@@ -2604,7 +2667,9 @@ const createMeteredTransportLifecycle = (
         scheduleProviderHealthOnly("upstream_error", null);
         return;
       }
-      schedule("ambiguous failure recording", (activeReservation) => recordMeteredTransportAmbiguity(activeReservation, provider, providerRequestId));
+      schedule("ambiguous failure recording", (activeReservation) =>
+        recordMeteredTransportAmbiguity(activeReservation, provider, providerRequestId, deliveredHealth)
+      );
     },
     cancelled: () => {
       if (!reservation && providerHealthOnly) {
@@ -2716,6 +2781,21 @@ const resolvePaidRoutingState = (
 };
 
 const isAuthoritativeCapacityStatus = (status: number | null): boolean => status === 402 || status === 429;
+
+/**
+ * A paid-tier attempt may only fall through to the next enabled paid tier when
+ * it produced no usable answer for the client:
+ * - 402 and 429 are the authoritative capacity signals.
+ * - A missing status is a transport failure or this attempt's own first-headers
+ *   deadline, and any 5xx is an upstream fault; both are transient and must not
+ *   consume the request while a cheaper tier is still available.
+ * Every other status, including a definitive 400, is the provider's answer and
+ * stays delivered as the final response.
+ */
+const isTransientPaidProviderStatus = (status: number | null): boolean => isAuthoritativeCapacityStatus(status) || status === null || status >= 500;
+
+const isIntermediatePaidProviderAttempt = (providerIndex: number, providerCount: number, status: number | null): boolean =>
+  providerIndex < providerCount - 1 && isTransientPaidProviderStatus(status);
 
 const paidFallbackAbortReason = (fallbackSignal: AbortSignal | undefined): Error =>
   fallbackSignal?.reason instanceof Error ? fallbackSignal.reason : new DOMException("The request was aborted.", "AbortError");
@@ -3211,9 +3291,6 @@ const retainRespondingProviderTelemetry = (
   telemetry.providerRequestId = responding.requestId;
 };
 
-const isIntermediatePaidProviderAttempt = (providerIndex: number, providerCount: number, status: number | null): boolean =>
-  providerIndex < providerCount - 1 && isAuthoritativeCapacityStatus(status);
-
 const abortInterProviderAttempts = async (
   fallbackSignal: AbortSignal,
   reservation: PaidFallbackReservation,
@@ -3238,7 +3315,13 @@ const resolvePaidProviderAttemptFailure = async (
   reservation: PaidFallbackReservation,
   fallbackSignal: AbortSignal | undefined,
   telemetry: ResponseTelemetryState | undefined
-): Promise<Readonly<{ retry: boolean; providerError: unknown }>> => {
+): Promise<
+  Readonly<{
+    retry: boolean;
+    providerError: unknown;
+    responding: Readonly<{ provider: "metered" | "surplus"; requestId: string | null }> | null;
+  }>
+> => {
   if (error instanceof ApiKeyQuotaDispatchError) {
     // Paid fallback writes a durable dispatch intent before provider
     // transport. A quota CAS rejection proves this provider was not
@@ -3265,11 +3348,18 @@ const resolvePaidProviderAttemptFailure = async (
   }
   const status = paidProviderErrorStatus(error);
   await recordPaidProviderResponseHealth(provider, status);
-  if (dispatchState.transportStarted) {
-    await bestEffortPaidFallbackBookkeeping("transport failure ambiguity recording", () => recordMeteredAmbiguousFailure(reservation, provider));
-    throw error;
-  }
-  return { retry: isIntermediatePaidProviderAttempt(providerIndex, paidProviders.length, status), providerError: error };
+  // A failed attempt never settles the shared reservation on its own: the
+  // ledger keeps exactly one terminal provider/request-id pair, written for the
+  // delivered provider (or for the last responder when every tier fails). An
+  // attempt that already reached transport may still be billable, so it is
+  // retained as the responder instead of being marked terminal here; a failure
+  // before transport keeps the previously retained responder.
+  const attempted = dispatchState.transportStarted ? ({ provider, requestId: null } as const) : null;
+  return {
+    retry: isIntermediatePaidProviderAttempt(providerIndex, paidProviders.length, status),
+    providerError: error,
+    responding: attempted ?? responding,
+  };
 };
 
 const failedPaidProviderAttempts = async (
@@ -3319,6 +3409,65 @@ const fetchPaidProviderResponses = async (
   });
 };
 
+type PaidProviderAttemptResult = Readonly<{
+  candidate: Awaited<ReturnType<typeof fetchMeteredResponses>> | Awaited<ReturnType<typeof fetchSurplusResponses>>;
+  classification: PaidProviderHealthClassification | null;
+}>;
+
+/**
+ * Runs one paid-tier transport under its own bounded first-headers deadline and
+ * classifies the outcome. The deadline releases a stalled tier to the next one
+ * instead of holding the shared 30-minute stream deadline, and its timer is
+ * cleared as soon as the attempt settles so a delivered response body is never
+ * tied to it.
+ */
+const runSinglePaidProviderAttempt = async (
+  body: Record<string, unknown>,
+  options: Readonly<{ model: string; usageContext?: UsageContext }>,
+  fallbackSignal: AbortSignal | undefined,
+  provider: "metered" | "surplus",
+  surplusCatalog: Awaited<ReturnType<typeof fetchSurplusModels>>,
+  dispatchState: { transportStarted: boolean }
+): Promise<PaidProviderAttemptResult> => {
+  const attemptDeadline = createPaidProviderAttemptDeadline(fallbackSignal);
+  try {
+    const candidate = await fetchPaidProviderResponses(body, options, attemptDeadline.signal, provider, surplusCatalog, dispatchState);
+    recordFirstProviderHeaders(options.usageContext);
+    const meteredQuotaExhausted = provider === "metered" ? await meteredForbiddenIndicatesQuotaExhaustion(candidate.response, fallbackSignal) : false;
+    const classification = paidProviderHealthClassification(provider, candidate.response.status, meteredQuotaExhausted);
+    await recordPaidProviderResponseHealth(provider, candidate.response.status, candidate.request_id, meteredQuotaExhausted);
+    return { candidate, classification };
+  } finally {
+    attemptDeadline.clear();
+  }
+};
+
+/**
+ * Preserves a delivered provider-specific error signal (quota exhaustion, auth
+ * invalidity, upstream fault) across the terminal transport record. A bare
+ * "reachable" classification stays out of it: a failed request must not be
+ * reported as a reachability observation.
+ */
+const deliveredPaidProviderErrorHealth = (
+  candidate: PaidProviderAttemptResult["candidate"],
+  classification: PaidProviderHealthClassification | null
+): PaidProviderHealthClassification | null => {
+  if (candidate.response.ok || !classification) return null;
+  return classification.event === "reachable" ? null : classification;
+};
+
+const selectPaidProviderAttemptTelemetry = (
+  provider: "metered" | "surplus",
+  telemetry: ResponseTelemetryState | undefined,
+  usageContext: UsageContext | undefined
+): void => {
+  if (telemetry) {
+    telemetry.provider = provider;
+    telemetry.providerRequestId = null;
+  }
+  recordAttemptedProvider(usageContext, provider);
+};
+
 const runPaidProviderAttempts = async (
   body: Record<string, unknown>,
   options: Readonly<{ model: string; usageContext?: UsageContext }>,
@@ -3332,6 +3481,7 @@ const runPaidProviderAttempts = async (
       kind: "delivered";
       result: Awaited<ReturnType<typeof fetchMeteredResponses>> | Awaited<ReturnType<typeof fetchSurplusResponses>>;
       selectedProvider: "metered" | "surplus";
+      errorHealth: PaidProviderHealthClassification | null;
     }>
   | Readonly<{ kind: "failed"; providerError: unknown; selectedProvider: "metered" | "surplus" }>
 > => {
@@ -3339,32 +3489,30 @@ const runPaidProviderAttempts = async (
   let selectedProvider: "metered" | "surplus" = paidProviders[0];
   let providerError: unknown = null;
   let responding: Readonly<{ provider: "metered" | "surplus"; requestId: string | null }> | null = null;
+  let deliveredErrorHealth: PaidProviderHealthClassification | null = null;
   for (const [providerIndex, provider] of paidProviders.entries()) {
     if (fallbackSignal?.aborted) {
       await abortInterProviderAttempts(fallbackSignal, reservation, responding, telemetry);
     }
     selectedProvider = provider;
-    if (telemetry) {
-      telemetry.provider = provider;
-      telemetry.providerRequestId = null;
-    }
-    recordAttemptedProvider(options.usageContext, provider);
+    selectPaidProviderAttemptTelemetry(provider, telemetry, options.usageContext);
     const dispatchState = { transportStarted: false };
     try {
-      const candidate = await fetchPaidProviderResponses(body, options, fallbackSignal, provider, surplusCatalog, dispatchState);
-      recordFirstProviderHeaders(options.usageContext);
-      await recordPaidProviderResponseHealth(provider, candidate.response.status, candidate.request_id);
-      if (isIntermediatePaidProviderAttempt(providerIndex, paidProviders.length, candidate.response.status)) {
+      const attempt = await runSinglePaidProviderAttempt(body, options, fallbackSignal, provider, surplusCatalog, dispatchState);
+      if (isIntermediatePaidProviderAttempt(providerIndex, paidProviders.length, attempt.candidate.response.status)) {
         // Keep the reservation uncommitted until the provider that will be
         // delivered to the client is known. The paid-fallback ledger has one
         // terminal provider/request-id pair; recording this intermediate
         // attempt would pin reconciliation to the failed provider and leave a
-        // later successful provider unbillable.
-        responding = { provider, requestId: normalizeProviderRequestId(candidate.request_id) };
-        cancelResponseBody(candidate.response);
+        // later successful provider unbillable. A transient failure after
+        // transport is still retained as the responder so a request that ends
+        // in failure settles as exactly one ambiguous terminal pair.
+        responding = { provider, requestId: normalizeProviderRequestId(attempt.candidate.request_id) };
+        cancelResponseBody(attempt.candidate.response);
         continue;
       }
-      result = candidate;
+      result = attempt.candidate;
+      deliveredErrorHealth = deliveredPaidProviderErrorHealth(attempt.candidate, attempt.classification);
       break;
     } catch (error) {
       const failure = await resolvePaidProviderAttemptFailure(
@@ -3379,11 +3527,12 @@ const runPaidProviderAttempts = async (
         telemetry
       );
       providerError = failure.providerError;
+      responding = failure.responding;
       if (!failure.retry) break;
     }
   }
   if (!result) return await failedPaidProviderAttempts(providerError, selectedProvider, reservation, responding);
-  return { kind: "delivered", result, selectedProvider };
+  return { kind: "delivered", result, selectedProvider, errorHealth: deliveredErrorHealth };
 };
 
 const paidProviderFailureResponse = (
@@ -3438,6 +3587,7 @@ const deliverPaidProviderResponse = async (
   attempts: Readonly<{
     result: Awaited<ReturnType<typeof fetchMeteredResponses>> | Awaited<ReturnType<typeof fetchSurplusResponses>>;
     selectedProvider: "metered" | "surplus";
+    errorHealth: PaidProviderHealthClassification | null;
   }>,
   reservation: PaidFallbackReservation,
   telemetry: ResponseTelemetryState | undefined,
@@ -3455,6 +3605,7 @@ const deliverPaidProviderResponse = async (
     paidFallback: reservation,
     paidFallbackBilling: attempts.selectedProvider === "surplus" ? surplusBilling : null,
     paidFallbackProviderRequestId: providerRequestId,
+    ...(attempts.errorHealth ? { paidFallbackErrorHealth: attempts.errorHealth } : {}),
     gatewayResponse: false,
     fallbackReason,
   };
