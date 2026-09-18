@@ -11,6 +11,46 @@ async function command(program: string, args: string[]): Promise<string> {
   return new TextDecoder().decode(result.stdout).trim();
 }
 
+/**
+ * The repository `ops/` directory is bind-mounted read-only into Caddy, which
+ * runs as the unprivileged `caddy` user. If the proxy configuration is
+ * unreadable to that user, Caddy's own `ExecStartPre` validation fails and a
+ * reload silently keeps the previous configuration serving while the gateway
+ * has already moved. Prove the composed proxy config is valid as Caddy before
+ * the service is restarted, and fail closed otherwise; never repair the
+ * checkout mode, which would hide the real permission fault.
+ */
+async function ensureCaddyIngressReady(): Promise<void> {
+  const mode = (await Deno.stat("ops/Caddyfile")).mode ?? 0;
+  // Caddy shares no group with this checkout, so only other-read exposes the
+  // bind-mounted file to it.
+  if ((mode & 0o004) === 0) {
+    throw new Error("ops/Caddyfile is not readable by the caddy user; run `chmod 644 ops/Caddyfile` and redeploy");
+  }
+  // Validate inside Caddy's own unit namespace so the bind mount and the
+  // unprivileged user are both exercised, exactly as the service start is.
+  const mainPid = await command("systemctl", ["show", "caddy", "-p", "MainPID", "--value"]);
+  if (!/^\d+$/.test(mainPid) || mainPid === "0") throw new Error("Caddy is not running; start it before deploying");
+  await command("sudo", [
+    "-n",
+    "nsenter",
+    "-t",
+    mainPid,
+    "-m",
+    "--",
+    "sudo",
+    "-u",
+    "caddy",
+    "caddy",
+    "validate",
+    "--config",
+    "/etc/caddy/Caddyfile",
+    "--adapter",
+    "caddyfile",
+  ]);
+  console.log(JSON.stringify({ ingress_preflight: "caddy_config_valid", caddy_pid: mainPid }));
+}
+
 try {
   if (await command("git", ["status", "--porcelain", "--untracked-files=no"])) {
     throw new Error("Commit or preserve tracked changes before deployment");
@@ -38,6 +78,7 @@ try {
   const next = `.data/current-${crypto.randomUUID()}`;
   await Deno.symlink(`releases/${sha}`, next);
   await Deno.rename(next, ".data/current");
+  await ensureCaddyIngressReady();
   await command("sudo", ["-n", "systemctl", "restart", "ai-ubq-fi.service"]);
 
   for (let attempt = 0; attempt < 30; attempt++) {
