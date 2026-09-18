@@ -4,6 +4,7 @@ import { authenticateAdmin, authenticateClient, handleV1Auth, requireSuperAdminA
 import {
   configureAdminAuthForListener,
   configureAdminAuthPeerForRequest,
+  configureMacLocalAdminAuthBypassForListener,
   isAdminAuthDisabledForRequest,
   isLoopbackHostname,
   parseServeRuntimeOptions,
@@ -159,5 +160,96 @@ Deno.test("guarded runtime bypass grants local super-admin access only to loopba
   assert.equal(otherLoopbackClient.ok, false);
   {
     assert.equal(otherLoopbackClient.response.status, 401);
+  }
+});
+
+const macListenerAddress: Deno.NetAddr = { transport: "tcp", hostname: "0.0.0.0", port: 7999 };
+
+Deno.test("the Mac LAN listener configurator accepts the wildcard TCP listener only", () => {
+  assert.equal(configureMacLocalAdminAuthBypassForListener(macListenerAddress), true);
+  try {
+    assert.throws(() => configureMacLocalAdminAuthBypassForListener(tcpAddress("127.0.0.1")), /requires the 0\.0\.0\.0 TCP listener/);
+    assert.throws(
+      () =>
+        configureMacLocalAdminAuthBypassForListener({
+          transport: "unix",
+          // A socket path fixture, not a temporary file: nothing is created at it.
+          path: "/run/ai-ubq-fi.sock",
+        }),
+      /requires the 0\.0\.0\.0 TCP listener/
+    );
+    // The Mac entry point never relaxes the generic guard: the same
+    // non-loopback listener still fails for `--disable-admin-auth` callers.
+    assert.throws(() => shouldDisableAdminAuthForListener(enabledOptions, macListenerAddress), /requires a loopback TCP listener/);
+  } finally {
+    configureAdminAuthForListener(disabledOptions, tcpAddress("127.0.0.1"));
+  }
+  assert.equal(isAdminAuthDisabledForRequest(new Request("http://127.0.0.1/v1/models")), false);
+});
+
+Deno.test("the Mac LAN listener bypasses authentication for loopback peers only", async () => {
+  const localRequest = new Request("http://127.0.0.1/v1/models");
+  const forgedLoopbackHost = new Request("http://127.0.0.1/v1/models");
+  const unboundRequest = new Request("http://127.0.0.1/v1/models");
+
+  assert.equal(configureMacLocalAdminAuthBypassForListener(macListenerAddress), true);
+  try {
+    // Fail closed until a loopback peer is observed for that exact request.
+    assert.equal(isAdminAuthDisabledForRequest(localRequest), false);
+    assert.equal((await authenticateAdmin(localRequest)).ok, false);
+
+    configureAdminAuthPeerForRequest(tcpAddress("127.0.0.1"), localRequest);
+    // A LAN peer that forges a loopback Host header keeps its own peer.
+    configureAdminAuthPeerForRequest(tcpAddress("192.0.2.10"), forgedLoopbackHost);
+    assert.equal(isAdminAuthDisabledForRequest(localRequest), true);
+    assert.equal(isAdminAuthDisabledForRequest(forgedLoopbackHost), false);
+    assert.equal(isAdminAuthDisabledForRequest(unboundRequest), false);
+
+    const localAuth = await authenticateAdmin(localRequest);
+    assert.equal(localAuth.ok, true);
+    {
+      assert.equal(localAuth.is_super_admin, true);
+      assert.equal(localAuth.method.kind, "disabled");
+    }
+
+    const forgedAuth = await authenticateAdmin(forgedLoopbackHost);
+    assert.equal(forgedAuth.ok, false);
+    {
+      assert.equal(forgedAuth.response.status, 401);
+    }
+
+    const unboundAuth = await authenticateAdmin(unboundRequest);
+    assert.equal(unboundAuth.ok, false);
+    {
+      assert.equal(unboundAuth.response.status, 401);
+    }
+  } finally {
+    configureAdminAuthForListener(disabledOptions, tcpAddress("127.0.0.1"));
+  }
+});
+
+Deno.test("a concurrent LAN request cannot inherit a loopback peer", async () => {
+  // Routing awaits several times before it authenticates, so the two requests
+  // below really do overlap in production. A process-wide peer slot would let
+  // the LAN request read the local request's loopback peer; each request keeps
+  // its own peer instead. 127.42.9.3 is loopback but outside the legacy
+  // dev-host list, so only the peer can decide here.
+  const localRequest = new Request("http://127.42.9.3/v1/models");
+  const lanRequest = new Request("http://127.42.9.3/v1/models");
+
+  assert.equal(configureMacLocalAdminAuthBypassForListener(macListenerAddress), true);
+  try {
+    configureAdminAuthPeerForRequest(tcpAddress("127.0.0.1"), localRequest);
+    // The LAN request arrives (and is bound to its own peer) before the local
+    // request reaches its authentication check.
+    configureAdminAuthPeerForRequest(tcpAddress("192.0.2.10"), lanRequest);
+    await Promise.resolve();
+
+    assert.equal(isAdminAuthDisabledForRequest(lanRequest), false);
+    assert.equal((await authenticateClient(lanRequest)).ok, false);
+    assert.equal(isAdminAuthDisabledForRequest(localRequest), true);
+    assert.equal((await authenticateClient(localRequest)).ok, true);
+  } finally {
+    configureAdminAuthForListener(disabledOptions, tcpAddress("127.0.0.1"));
   }
 });

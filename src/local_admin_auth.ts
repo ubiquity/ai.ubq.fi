@@ -66,6 +66,14 @@ export const shouldDisableAdminAuthForListener = (options: ServeRuntimeOptions, 
 
 let adminAuthDisabled = false;
 let adminAuthPeer: Deno.Addr | null = null;
+/**
+ * Request-scoped peers for a LAN-facing listener. Routing awaits before it
+ * authenticates, so a single process-wide slot can be overwritten by a
+ * concurrent request: a LAN request could then observe a loopback peer that
+ * belongs to someone else's connection. A peer bound to the request object
+ * itself cannot be moved to another request.
+ */
+const adminAuthRequestPeers = new WeakMap<Request, Deno.Addr>();
 
 export const configureAdminAuthForListener = (options: ServeRuntimeOptions, address: Deno.Addr): boolean => {
   const disabled = shouldDisableAdminAuthForListener(options, address);
@@ -74,9 +82,38 @@ export const configureAdminAuthForListener = (options: ServeRuntimeOptions, addr
   return disabled;
 };
 
-/** Records the TCP peer of the request currently being handled by the server. */
-export const configureAdminAuthPeerForRequest = (peer: Deno.Addr | null): void => {
+/**
+ * Records the TCP peer of a request being handled by the server. The optional
+ * `request` binds the peer to that exact request object (used by the LAN-facing
+ * Mac listener); without it the peer is the process-wide binding the loopback
+ * development server has always used.
+ */
+export const configureAdminAuthPeerForRequest = (peer: Deno.Addr | null, request?: Request): void => {
+  if (request) {
+    if (peer === null) adminAuthRequestPeers.delete(request);
+    else adminAuthRequestPeers.set(request, peer);
+    return;
+  }
   adminAuthPeer = peer;
+};
+
+/**
+ * The only non-loopback listener that may enable the loopback-peer-gated local
+ * bypass: the Mac companion's LAN-facing wildcard TCP listener. This stays a
+ * separate, narrowly named entry point so the generic `--disable-admin-auth`
+ * path keeps rejecting a non-loopback listener for every other caller, and it
+ * never weakens `isAdminAuthDisabledForRequest`, which still requires an actual
+ * numeric loopback TCP peer plus a loopback request URL and same-origin checks.
+ */
+const MAC_LAN_LISTENER_HOSTNAME = "0.0.0.0";
+
+export const configureMacLocalAdminAuthBypassForListener = (address: Deno.Addr): boolean => {
+  if (address.transport !== "tcp" || address.hostname !== MAC_LAN_LISTENER_HOSTNAME) {
+    throw new Error(`[ai.ubq.fi] the Mac local admin bypass requires the ${MAC_LAN_LISTENER_HOSTNAME} TCP listener; got ${formatListenerAddress(address)}.`);
+  }
+  adminAuthDisabled = true;
+  adminAuthPeer = null;
+  return true;
 };
 
 const isLoopbackPeer = (peer: Deno.Addr): boolean => peer.transport === "tcp" && isNumericLoopbackHostname(peer.hostname);
@@ -87,7 +124,7 @@ export const isAdminAuthDisabledForRequest = (request: Request): boolean => {
   // forwarded, tunneled, or port-forwarded request whose URL hostname is
   // client-controlled. Fail closed when the peer is unknown (for example a
   // request constructed outside a Deno serve listener).
-  const peer = adminAuthPeer;
+  const peer = adminAuthRequestPeers.get(request) ?? adminAuthPeer;
   if (!peer || !isLoopbackPeer(peer)) return false;
   try {
     const url = new URL(request.url);

@@ -112,3 +112,40 @@ responses.
 
 The publication state above supersedes only the earlier implementation-status snapshot. The decision and removal scope
 remain unchanged.
+
+## 2026-09-18 — Mac local no-auth on a LAN-facing listener, VPS stays authenticated
+
+### Status
+
+- Decision: accepted by the service owner ("mac is no auth and vps has auth i guess cause vps is public").
+- Implementation: complete on local `codex/mac-local-auth-20260918`.
+- Validation: pending the registered focused suites and repository `verify` gate; no live acceptance yet.
+- Commit: none yet.
+- Push: not performed.
+- Deployment: not performed or authorized. The running Mac daemon keeps its current build until an accepted deploy.
+- Live acceptance: not performed; one bounded real Mac request remains a separate user acceptance step.
+
+### Decision
+
+The Mac companion keeps its LAN-facing `0.0.0.0:7999` listener, and authentication is decided per request by the actual
+TCP peer:
+
+- An actual numeric loopback peer (`127.0.0.0/8`, `::1`) is passwordless. It authenticates as the existing
+  boot-provisioned local development principal (`src/local_development_key.ts`), so local Codex inference and the admin
+  dashboard work without a credential.
+- Every other peer — LAN clients, and any request that only presents a loopback URL through a forward, tunnel, or forged
+  `Host` header — stays authenticated with the existing gateway credentials, for both the client and admin surfaces.
+- The public VPS gateway is unchanged: it stays authenticated because it is public (Caddy to `127.0.0.1:7999`), and
+  `scripts/serve-vps.ts` never enables a bypass.
+
+### Implementation notes
+
+- `src/local_admin_auth.ts` keeps `shouldDisableAdminAuthForListener` rejecting a non-loopback listener for the generic
+  `--disable-admin-auth` path. The Mac entry point uses the narrowly named internal
+  `configureMacLocalAdminAuthBypassForListener`, which accepts only the wildcard TCP listener and still requires the
+  existing numeric-loopback-peer, loopback-URL, and same-origin checks in `isAdminAuthDisabledForRequest`.
+- The bypass state is process-wide, but the peer is bound to the request object
+  (`configureAdminAuthPeerForRequest(peer, request)`), because routing awaits before it authenticates: a single
+  process-wide peer slot could otherwise be overwritten by a concurrent request, letting a LAN request inherit a
+  loopback peer.
+- No new CLI flag, environment variable, secret, route, or public response field was added.
