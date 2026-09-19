@@ -902,20 +902,31 @@ const countExplicitPromptCacheBreakpoints = (input: readonly ResponseInputItem[]
 const promptCacheKeyPresent = (rawRecord: Record<string, unknown>): boolean =>
   typeof rawRecord.prompt_cache_key === "string" && rawRecord.prompt_cache_key.trim().length > 0;
 
+/**
+ * Cache-read telemetry for the special upstreams that answer with Chat
+ * Completions usage. Their transports publish the provider's cache counter
+ * under the official `prompt_tokens_details.cached_tokens` field, and the
+ * Responses parser owns the interpretation of that field so the two routes
+ * cannot report cache reads through divergent rules.
+ *
+ * An upstream that reports no counter leaves `input_tokens_details` absent,
+ * which the parser reports as `partial`: unmeasured is never published as a
+ * measured zero.
+ */
 const extractChatUsageTokens = (value: unknown): UsageTokens | null => {
   if (!isRecord(value) || Array.isArray(value)) return null;
   const inputTokens = normalizeTokenCount(value.prompt_tokens);
   const outputTokens = normalizeTokenCount(value.completion_tokens);
   const totalTokens = normalizeTokenCount(value.total_tokens);
   if (inputTokens === null || outputTokens === null || totalTokens === null) return null;
-  return {
-    inputTokens,
-    cachedInputTokens: 0,
-    cacheWriteInputTokens: null,
-    outputTokens,
-    totalTokens,
-    status: "reported",
-  };
+  const details = isRecord(value.prompt_tokens_details) && !Array.isArray(value.prompt_tokens_details) ? value.prompt_tokens_details : null;
+  const cachedInputTokens = normalizeTokenCount(details?.cached_tokens);
+  return extractUsageTokens({
+    input_tokens: inputTokens,
+    output_tokens: outputTokens,
+    total_tokens: totalTokens,
+    ...(cachedInputTokens === null ? {} : { input_tokens_details: { cached_tokens: cachedInputTokens } }),
+  });
 };
 
 const recordRequestUsage = (

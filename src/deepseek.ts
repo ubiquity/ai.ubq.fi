@@ -395,11 +395,33 @@ const normalizeToolCalls = (
 };
 
 /**
- * Reduces a DeepSeek usage object to the OpenAI Chat Completions usage shape
- * the Assistant consumes. DeepSeek's extra cache/reasoning breakdowns are not
- * part of that contract and are not relayed.
+ * Cache-read tokens as the upstream reports them. DeepSeek publishes
+ * `prompt_cache_hit_tokens`; an OpenAI-shaped `prompt_tokens_details.
+ * cached_tokens` is accepted as well so one reader serves either spelling.
+ *
+ * The provider documents this counter as part of the request input, so a value
+ * larger than `promptTokens` describes no readable measurement: the field is
+ * dropped and the caller reports the cache read as unknown instead of
+ * publishing a number the gateway cannot stand behind.
  */
-const normalizeUsage = (value: unknown): NormalizationResult<Record<string, number> | null> => {
+export const deepSeekCachedPromptTokens = (value: Record<string, unknown>, promptTokens: number): number | null => {
+  const details = isRecord(value.prompt_tokens_details) && !Array.isArray(value.prompt_tokens_details) ? value.prompt_tokens_details : null;
+  const cached = nonNegativeInteger(value.prompt_cache_hit_tokens) ?? nonNegativeInteger(details?.cached_tokens);
+  if (cached === null || cached > promptTokens) return null;
+  return cached;
+};
+
+/**
+ * Reduces a DeepSeek usage object to the OpenAI Chat Completions usage shape
+ * the Assistant consumes. DeepSeek's provider-named cache counter is the only
+ * cache signal the provider publishes, so it is relayed under the official
+ * `prompt_tokens_details.cached_tokens` field rather than its provider-only
+ * name; `prompt_cache_miss_tokens` needs no slot because the miss count is
+ * already `prompt_tokens - cached_tokens`. When the upstream reports no cache
+ * counter the detail object stays absent, so no reader downstream can mistake a
+ * missing measurement for a measured zero.
+ */
+const normalizeUsage = (value: unknown): NormalizationResult<Record<string, unknown> | null> => {
   if (value === undefined || value === null) return { ok: true, value: null };
   if (!isRecord(value) || Array.isArray(value)) return { ok: false, message: "Upstream usage is not an object." };
   const promptTokens = nonNegativeInteger(value.prompt_tokens);
@@ -408,7 +430,16 @@ const normalizeUsage = (value: unknown): NormalizationResult<Record<string, numb
   if (promptTokens === null || completionTokens === null || totalTokens === null) {
     return { ok: false, message: "Upstream usage is incomplete." };
   }
-  return { ok: true, value: { prompt_tokens: promptTokens, completion_tokens: completionTokens, total_tokens: totalTokens } };
+  const cachedTokens = deepSeekCachedPromptTokens(value, promptTokens);
+  return {
+    ok: true,
+    value: {
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      total_tokens: totalTokens,
+      ...(cachedTokens === null ? {} : { prompt_tokens_details: { cached_tokens: cachedTokens } }),
+    },
+  };
 };
 
 const choiceHasNoPayload = (content: unknown, reasoning: unknown, toolCalls: readonly unknown[] | undefined): boolean =>

@@ -13790,7 +13790,7 @@ Deno.test("openai: DeepSeek official Chat Completions adapter streams natively a
             finish_reason: "stop",
           },
         ],
-        usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
+        usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18, prompt_tokens_details: { cached_tokens: 0 } },
       });
 
       const telemetry = getResponseTelemetry(response);
@@ -13798,6 +13798,11 @@ Deno.test("openai: DeepSeek official Chat Completions adapter streams natively a
       assert.equal(telemetry.providerRequestId, "deepseek-header-request-1");
       assert.equal(telemetry.reasoning, "high");
       assert.equal(telemetry.inputTokens, 11);
+      // The provider's cache counter reaches gateway telemetry as a cache read,
+      // not as a zero: the reported field is the measurement, and an explicit
+      // provider zero stays a reported zero.
+      assert.equal(telemetry.cachedInputTokens, 0);
+      assert.equal(telemetry.usageTelemetryStatus, "reported");
       assert.equal(telemetry.outputTokens, 7);
       assert.equal(telemetry.completed, true);
       assert.equal(telemetry.stream, false);
@@ -13805,6 +13810,68 @@ Deno.test("openai: DeepSeek official Chat Completions adapter streams natively a
       assert.equal(telemetry.failureKind, null);
       assert.equal(typeof telemetry.firstProviderDispatchMs, "number");
       assert.equal(typeof telemetry.firstProviderHeadersMs, "number");
+    });
+
+    await t.step("publishes the provider cache-read counter instead of dropping it", async () => {
+      const cachedCompletion = (usage: Record<string, unknown>): Record<string, unknown> => ({
+        id: "deepseek-completion-cache",
+        object: "chat.completion",
+        created: 1_780_000_002,
+        model: DEEPSEEK_FLASH_MODEL,
+        choices: [{ index: 0, message: { role: "assistant", content: "cached" }, finish_reason: "stop" }],
+        usage,
+      });
+      const response = await withFetchMock(
+        () =>
+          Response.json(
+            cachedCompletion({
+              prompt_tokens: 100,
+              completion_tokens: 5,
+              total_tokens: 105,
+              prompt_cache_hit_tokens: 90,
+              prompt_cache_miss_tokens: 10,
+            })
+          ),
+        () => handleChatCompletions(request({ model: DEEPSEEK_FLASH_MODEL, messages, stream: false }), usageContext("deepseek-cache-read"))
+      );
+      assert.equal(response.status, 200);
+      // The provider-only name never reaches the client; the measurement does,
+      // under the official Chat Completions cache-read field.
+      assert.deepEqual(((await response.json()) as Record<string, unknown>).usage, {
+        prompt_tokens: 100,
+        completion_tokens: 5,
+        total_tokens: 105,
+        prompt_tokens_details: { cached_tokens: 90 },
+      });
+      const telemetry = getResponseTelemetry(response);
+      assert.equal(telemetry?.inputTokens, 100);
+      assert.equal(telemetry.cachedInputTokens, 90);
+      assert.equal(telemetry.usageTelemetryStatus, "reported");
+    });
+
+    await t.step("reports an absent provider cache counter as unknown instead of as a measured zero", async () => {
+      const response = await withFetchMock(
+        () =>
+          Response.json({
+            id: "deepseek-completion-no-cache",
+            object: "chat.completion",
+            created: 1_780_000_003,
+            model: DEEPSEEK_FLASH_MODEL,
+            choices: [{ index: 0, message: { role: "assistant", content: "uncounted" }, finish_reason: "stop" }],
+            usage: { prompt_tokens: 100, completion_tokens: 5, total_tokens: 105 },
+          }),
+        () => handleChatCompletions(request({ model: DEEPSEEK_FLASH_MODEL, messages, stream: false }), usageContext("deepseek-cache-absent"))
+      );
+      assert.equal(response.status, 200);
+      assert.deepEqual(((await response.json()) as Record<string, unknown>).usage, {
+        prompt_tokens: 100,
+        completion_tokens: 5,
+        total_tokens: 105,
+      });
+      const telemetry = getResponseTelemetry(response);
+      assert.ok(telemetry);
+      assert.equal(telemetry.cachedInputTokens, null);
+      assert.equal(telemetry.usageTelemetryStatus, "partial");
     });
 
     await t.step("defaults omitted reasoning to the documented official default without inventing other fields", async () => {
@@ -13881,7 +13948,7 @@ Deno.test("openai: DeepSeek official Chat Completions adapter streams natively a
           created: 1_780_000_001,
           model: DEEPSEEK_FLASH_MODEL,
           choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
-          usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
+          usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18, prompt_tokens_details: { cached_tokens: 0 } },
         },
       ]);
 
@@ -14262,6 +14329,9 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
       const telemetry = getResponseTelemetry(response);
       assert.equal(telemetry?.provider, "deepseek");
       assert.equal(telemetry.reasoning, "max");
+      // The Responses route reports the same cache measurement the client sees.
+      assert.equal(telemetry.cachedInputTokens, 0);
+      assert.equal(telemetry.usageTelemetryStatus, "reported");
       assert.deepEqual(telemetry.attemptedProviders, ["deepseek"]);
     });
 
@@ -14286,7 +14356,7 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
               created: 1_780_000_101,
               model: DEEPSEEK_FLASH_MODEL,
               choices: [],
-              usage: { prompt_tokens: 9, completion_tokens: 5, total_tokens: 14 },
+              usage: { prompt_tokens: 9, completion_tokens: 5, total_tokens: 14, prompt_cache_hit_tokens: 0 },
             })}\n\n`,
             "data: [DONE]\n\n",
           ]),
