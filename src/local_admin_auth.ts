@@ -118,6 +118,14 @@ export const configureMacLocalAdminAuthBypassForListener = (address: Deno.Addr):
 
 const isLoopbackPeer = (peer: Deno.Addr): boolean => peer.transport === "tcp" && isNumericLoopbackHostname(peer.hostname);
 
+// A local reverse proxy or tunnel can make the socket peer appear to be
+// loopback while forwarding an external request.  The Mac keyless path is
+// intentionally direct-only: any forwarding metadata is a fail-closed signal
+// rather than something we try to interpret or trust.
+const FORWARDING_HEADERS = ["forwarded", "via", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto"] as const;
+
+const hasForwardingMetadata = (request: Request): boolean => FORWARDING_HEADERS.some((name) => request.headers.has(name));
+
 export const isAdminAuthDisabledForRequest = (request: Request): boolean => {
   if (!adminAuthDisabled) return false;
   // The bypass must be granted only to an actual loopback peer, never to a
@@ -126,6 +134,7 @@ export const isAdminAuthDisabledForRequest = (request: Request): boolean => {
   // request constructed outside a Deno serve listener).
   const peer = adminAuthRequestPeers.get(request) ?? adminAuthPeer;
   if (!peer || !isLoopbackPeer(peer)) return false;
+  if (hasForwardingMetadata(request)) return false;
   try {
     const url = new URL(request.url);
     const origin = request.headers.get("origin");

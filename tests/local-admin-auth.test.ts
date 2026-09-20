@@ -205,6 +205,16 @@ Deno.test("the Mac LAN listener bypasses authentication for loopback peers only"
     assert.equal(isAdminAuthDisabledForRequest(forgedLoopbackHost), false);
     assert.equal(isAdminAuthDisabledForRequest(unboundRequest), false);
 
+    // A local reverse proxy or tunnel must not be able to turn an external
+    // request into the passwordless path merely by forwarding it over
+    // loopback. Reject every standard forwarding marker conservatively.
+    for (const header of ["forwarded", "via", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto"]) {
+      const proxiedRequest = new Request(localRequest, { headers: { [header]: "198.51.100.7" } });
+      configureAdminAuthPeerForRequest(tcpAddress("127.0.0.1"), proxiedRequest);
+      assert.equal(isAdminAuthDisabledForRequest(proxiedRequest), false, header);
+      assert.equal((await authenticateAdmin(proxiedRequest)).ok, false, header);
+    }
+
     const localAuth = await authenticateAdmin(localRequest);
     assert.equal(localAuth.ok, true);
     {

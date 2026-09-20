@@ -4,6 +4,28 @@ The Mac companion listens on `http://0.0.0.0:7999` (LAN address, for example `ht
 `com.ubiquity.ai.local` is a per-user launchd agent: it starts at login and restarts after exit. It does not run before
 the user logs in or keep a sleeping Mac awake.
 
+## Ingress boundary
+
+The repository-managed Mac ingress is a direct launchd process listening on TCP `0.0.0.0:7999`; it does not provision
+Caddy, cloudflared, Tailscale Funnel, SSH forwarding, or another reverse proxy/tunnel. The VPS has a separate Caddy
+configuration and uses `scripts/serve-vps.ts`, which binds only to `127.0.0.1`.
+
+The passwordless path is therefore permitted only for a direct request whose socket peer is numeric loopback. Requests
+carrying `Forwarded`, `Via`, `X-Forwarded-For`, `X-Forwarded-Host`, or `X-Forwarded-Proto` are rejected from that path,
+even when the immediate peer is loopback. Do not put the Mac listener behind a proxy or tunnel unless it supplies a
+separate authenticated boundary and the bypass is disabled for that deployment.
+
+Before enabling or changing a Mac deployment, record the actual host-level ingress with:
+
+```sh
+launchctl print gui/$(id -u)/com.ubiquity.ai.local
+lsof -nP -iTCP:7999 -sTCP:LISTEN
+pgrep -alf 'cloudflared|tailscale|ssh.*7999|caddy|nginx|haproxy'
+```
+
+The first two commands should show only the launchd service and its direct listener. Any proxy/tunnel result is a
+deployment change that must be reviewed before enabling keyless local access.
+
 Configuration lives in `ops/com.ubiquity.ai.local.plist`, linked from `~/Library/LaunchAgents/`. The repository-root
 `.env` contains the existing upstream credentials. Requests from an actual numeric loopback peer are passwordless: they
 authenticate as the provisioned local development principal (`src/local_development_key.ts`). Every other client — LAN
