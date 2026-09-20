@@ -283,6 +283,11 @@ let quotaProjectionLoadId = 0;
 let latestProviderCapacityChartState = null;
 let capacityChartResizeFrame = 0;
 let capacityChartScrollState = null;
+// The chart follows the newest edge until the visible window moves away from it.
+// The DOM position cannot carry that intent on its own: a render that runs while
+// the Analytics view is hidden measures a zero-width container, and a remembered
+// zero would park the graph at the beginning of the retained history.
+let capacityChartFollowsLatest = true;
 let latestProviderHealth = null;
 let errorsLoading = false;
 let errorsLoadId = 0;
@@ -2067,17 +2072,19 @@ const rememberCapacityChartScroll = () => {
   const current = providerCapacityChart.querySelector("[data-capacity-chart-scroll]");
   const svg = current?.querySelector("[data-capacity-chart-svg]");
   if (!current || !svg) return;
+  // A hidden view measures as zero width; recording that would drop the newest-edge intent.
+  if (current.clientWidth <= 0) return;
   const maximum = capacityChartScrollMaximum(current);
   const scrollLeft = Number.isFinite(current.scrollLeft) ? current.scrollLeft : 0;
-  const clientWidth = Number.isFinite(current.clientWidth) ? current.clientWidth : 0;
+  const clientWidth = current.clientWidth;
   const startAtMs = Number(svg.dataset.capacityChartStartAtMs);
   const durationMs = Number(svg.dataset.capacityChartDurationMs);
   const plotLeft = Number(svg.dataset.capacityChartPlotLeft);
   const plotWidth = Number(svg.dataset.capacityChartPlotWidth);
-  const atEnd = maximum <= 1 || maximum - scrollLeft <= 2;
+  const atNewestEdge = maximum <= 1 || maximum - scrollLeft <= 2;
   capacityChartScrollState = {
-    atEnd,
-    anchorAtMs: !atEnd && clientWidth > 0 && Number.isFinite(startAtMs) && Number.isFinite(durationMs) &&
+    atNewestEdge,
+    anchorAtMs: !atNewestEdge && clientWidth > 0 && Number.isFinite(startAtMs) && Number.isFinite(durationMs) &&
         durationMs > 0 && Number.isFinite(plotLeft) && Number.isFinite(plotWidth) && plotWidth > 0
       ? startAtMs + ((scrollLeft + clientWidth / 2 - plotLeft) / plotWidth) * durationMs
       : null,
@@ -2085,10 +2092,13 @@ const rememberCapacityChartScroll = () => {
 };
 
 const restoreCapacityChartScroll = (scroll, displayWindow, plot) => {
+  // The hidden view cannot be measured or scrolled; leaving the intent untouched
+  // lets the next visible render place the chart on the newest edge.
+  if (scroll.clientWidth <= 0) return;
   const maximum = capacityChartScrollMaximum(scroll);
   const state = capacityChartScrollState;
   let nextScrollLeft = maximum;
-  if (!state?.atEnd && typeof state?.anchorAtMs === "number" && Number.isFinite(state.anchorAtMs)) {
+  if (!capacityChartFollowsLatest && typeof state?.anchorAtMs === "number" && Number.isFinite(state.anchorAtMs)) {
     const markerX = capacityChartMarkerX(state.anchorAtMs, displayWindow, plot);
     nextScrollLeft = markerX - scroll.clientWidth / 2;
   }
@@ -2556,6 +2566,8 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
   chartScrollControls.append(olderButton, newerButton);
 
   const syncCapacityChartScroll = () => {
+    capacityChartFollowsLatest = capacityChartScrollMaximum(chartScroll) <= 1 ||
+      capacityChartScrollMaximum(chartScroll) - chartScroll.scrollLeft <= 2;
     rememberCapacityChartScroll();
     updateCapacityChartScrollControls(chartScroll, olderButton, newerButton);
   };
@@ -7260,6 +7272,9 @@ const loadAdminView = (view) => {
     void loadModelsWhitelist();
   }
   if (view === "analytics") {
+    // The view can be revealed after a render that ran while it was hidden, which
+    // could neither measure the chart nor place it on the newest edge.
+    scheduleProviderCapacityChartResize();
     void loadProviders();
     if (!providerCapacityLoadedForOpen) {
       providerCapacityLoadedForOpen = true;

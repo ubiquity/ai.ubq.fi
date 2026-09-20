@@ -463,7 +463,7 @@ body[data-page="admin"] [data-capacity-legend-item="rate-limit-reset"] [data-cap
 
 body[data-page="admin"] [data-capacity-chart-body] {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(180px, 220px);
+  grid-template-columns: minmax(0, 1fr);
   align-items: stretch;
   gap: 12px;
   min-width: 0;
@@ -846,10 +846,6 @@ body[data-page="admin"] [data-capacity-meta] {
 @media (max-width: 900px) {
   body[data-page="admin"] [data-capacity-chart] {
     padding: 10px;
-  }
-
-  body[data-page="admin"] [data-capacity-chart-body] {
-    grid-template-columns: 1fr;
   }
 
   body[data-page="admin"] [data-capacity-list] {
@@ -1732,7 +1728,6 @@ body[data-page="admin"] [data-chart-help] {
 }
 
 body[data-page="admin"] [data-capacity-chart-body] {
-  grid-template-columns: minmax(0, 1fr) minmax(210px, 240px);
   gap: 14px;
 }
 
@@ -1852,10 +1847,6 @@ body[data-page="admin"] [data-auth-item] {
 }
 
 @media (max-width: 900px) {
-  body[data-page="admin"] [data-capacity-chart-body] {
-    grid-template-columns: 1fr;
-  }
-
   body[data-page="admin"] [data-capacity-chart-header],
   body[data-page="admin"] [data-capacity-event-header] {
     align-items: start;
@@ -1987,10 +1978,6 @@ body[data-page="admin"] [data-auth-item] {
   body[data-page="admin"] [data-view="kernel"] summary[data-kernel-repos-title]::after {
     transition: none;
   }
-}
-
-body[data-page="admin"] #view-providers [data-capacity-chart-body] {
-  grid-template-columns: minmax(0, 1fr);
 }
 
 body[data-page="admin"] #view-providers [data-capacity-chart] {

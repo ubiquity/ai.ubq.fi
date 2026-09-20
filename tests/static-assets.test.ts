@@ -335,8 +335,8 @@ Deno.test("admin analytics view places capacity history before current providers
   assert.match(adminHtml, /id="card-provider-capacity">Provider analytics/);
   assert.match(adminHtml, /id="view-tab-analytics"[\s\S]*?>\s*Analytics\s*</);
   assert.doesNotMatch(adminHtml, /Fifteen-minute capacity, cached-input, and cache-write history/);
-  assert.match(adminHtml, /admin\.css\?v=20260917-subscription-picker-v1/);
-  assert.match(adminHtml, /admin\.js\?v=20260917-subscription-picker-v1/);
+  assert.match(adminHtml, /admin\.css\?v=20260920-analytics-chart-latest-v1/);
+  assert.match(adminHtml, /admin\.js\?v=20260920-analytics-chart-latest-v1/);
   assert.doesNotMatch(adminHtml, /removed_provider-failover|debug-routing/);
   assert.doesNotMatch(adminScript, /RemovedProviderFailover|refresh=live/);
   assert.match(adminScript, /fetch\(apiUrl\("\/admin\/providers\/capacity"\)/);
@@ -446,6 +446,15 @@ Deno.test("provider analytics graph preserves its SVG text aspect ratio", () => 
   assert.match(adminScript, /viewBox: `0 0 \$\{width\} \$\{height\}`,[\s\S]*?width,[\s\S]*?height,/);
   assert.match(adminCss, /\[data-capacity-chart-svg\]\s*\{[\s\S]*?height:\s*var\(--capacity-chart-height-px, 180px\)/);
   assert.doesNotMatch(adminCss, /\[data-capacity-chart-svg\]\s*\{[^}]*height:\s*clamp\(/);
+});
+
+Deno.test("provider analytics chart fills its column and follows the newest edge", () => {
+  assert.match(adminCss, /\[data-capacity-chart-body\]\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/);
+  assert.doesNotMatch(adminCss, /\[data-capacity-chart-body\][^}]*minmax\((180|210)px/);
+  assert.match(adminScript, /let capacityChartFollowsLatest = true;/);
+  assert.match(adminScript, /if \(scroll\.clientWidth <= 0\) return;/);
+  assert.match(adminScript, /!capacityChartFollowsLatest && typeof state\?\.anchorAtMs === "number"/);
+  assert.match(adminScript, /view === "analytics"[\s\S]*?scheduleProviderCapacityChartResize\(\);/);
 });
 
 Deno.test("static assets register autonomous agent discovery documents", () => {
