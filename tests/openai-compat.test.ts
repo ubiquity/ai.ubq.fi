@@ -14244,7 +14244,7 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
     created: 1_780_000_100,
     model: DEEPSEEK_FLASH_MODEL,
     choices: [{ index: 0, message, finish_reason: "stop" }],
-    usage: { prompt_tokens: 9, completion_tokens: 5, total_tokens: 14, prompt_cache_hit_tokens: 0 },
+    usage: { prompt_tokens: 9, completion_tokens: 5, total_tokens: 14, prompt_cache_hit_tokens: 0, completion_tokens_details: { reasoning_tokens: 3 } },
   });
   const responsesEvents = (text: string): Record<string, unknown>[] =>
     text
@@ -14323,7 +14323,7 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
         input_tokens: 9,
         input_tokens_details: { cached_tokens: 0 },
         output_tokens: 5,
-        output_tokens_details: { reasoning_tokens: 0 },
+        output_tokens_details: { reasoning_tokens: 3 },
         total_tokens: 14,
       });
       const telemetry = getResponseTelemetry(response);
@@ -14356,7 +14356,13 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
               created: 1_780_000_101,
               model: DEEPSEEK_FLASH_MODEL,
               choices: [],
-              usage: { prompt_tokens: 9, completion_tokens: 5, total_tokens: 14, prompt_cache_hit_tokens: 0 },
+              usage: {
+                prompt_tokens: 9,
+                completion_tokens: 5,
+                total_tokens: 14,
+                prompt_cache_hit_tokens: 0,
+                completion_tokens_details: { reasoning_tokens: 3 },
+              },
             })}\n\n`,
             "data: [DONE]\n\n",
           ]),
@@ -14396,7 +14402,7 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
         input_tokens: 9,
         input_tokens_details: { cached_tokens: 0 },
         output_tokens: 5,
-        output_tokens_details: { reasoning_tokens: 0 },
+        output_tokens_details: { reasoning_tokens: 3 },
         total_tokens: 14,
       });
       const telemetry = getResponseTelemetry(response);

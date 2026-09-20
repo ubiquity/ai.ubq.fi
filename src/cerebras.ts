@@ -444,7 +444,26 @@ const normalizeChoice = (value: unknown, index: number): NormalizationResult<Rec
   };
 };
 
-const normalizeUsage = (value: unknown): NormalizationResult<Record<string, number> | null> => {
+/**
+ * One documented nested usage counter, validated against the total it is
+ * defined as a subset of. An absent or impossible value stays absent, so no
+ * reader downstream can mistake a missing measurement for a measured zero.
+ */
+const usageDetailCounter = (container: unknown, key: string, ceiling: number): number | null => {
+  if (!isRecord(container) || Array.isArray(container)) return null;
+  const counter = nonNegativeInteger(container[key]);
+  if (counter === null || counter > ceiling) return null;
+  return counter;
+};
+
+/**
+ * Reduces a Cerebras usage object to the OpenAI Chat Completions usage shape
+ * the Assistant consumes. The provider reports cache reads and reasoning tokens
+ * as the documented nested details, so those counters are relayed under their
+ * official names rather than dropped; an upstream that reports neither leaves
+ * the corresponding detail object absent.
+ */
+const normalizeUsage = (value: unknown): NormalizationResult<Record<string, unknown> | null> => {
   if (value === undefined || value === null) return { ok: true, value: null };
   if (!isRecord(value) || Array.isArray(value)) return { ok: false, message: "Upstream usage is not an object." };
   const promptTokens = nonNegativeInteger(value.prompt_tokens);
@@ -453,12 +472,16 @@ const normalizeUsage = (value: unknown): NormalizationResult<Record<string, numb
   if (promptTokens === null || completionTokens === null || totalTokens === null) {
     return { ok: false, message: "Upstream usage is incomplete." };
   }
+  const cachedTokens = usageDetailCounter(value.prompt_tokens_details, "cached_tokens", promptTokens);
+  const reasoningTokens = usageDetailCounter(value.completion_tokens_details, "reasoning_tokens", completionTokens);
   return {
     ok: true,
     value: {
       prompt_tokens: promptTokens,
       completion_tokens: completionTokens,
       total_tokens: totalTokens,
+      ...(cachedTokens === null ? {} : { prompt_tokens_details: { cached_tokens: cachedTokens } }),
+      ...(reasoningTokens === null ? {} : { completion_tokens_details: { reasoning_tokens: reasoningTokens } }),
     },
   };
 };

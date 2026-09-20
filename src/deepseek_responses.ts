@@ -1,4 +1,4 @@
-import { deepSeekCachedPromptTokens, deepSeekUpstreamModelFor, projectDeepSeekReasoningEffort } from "./deepseek.ts";
+import { deepSeekCachedPromptTokens, deepSeekReasoningTokens, deepSeekUpstreamModelFor, projectDeepSeekReasoningEffort } from "./deepseek.ts";
 import { getString, isRecord } from "./utils.ts";
 
 /**
@@ -486,11 +486,13 @@ const freeformInputFromArguments = (args: string): string => {
 /**
  * Maps one Chat Completions usage object onto the Responses usage shape.
  *
- * Cache reads are the reason this is not a field-by-field copy: Codex reads
- * `input_tokens_details.cached_tokens`, and DeepSeek publishes the equivalent
- * measurement as `prompt_cache_hit_tokens`. When the upstream reports no cache
- * counter, the detail object is omitted so the client and the gateway telemetry
- * both read an unknown cache read instead of a measured zero.
+ * The counters are the reason this is not a field-by-field copy: Codex reads
+ * `input_tokens_details.cached_tokens` and `output_tokens_details.
+ * reasoning_tokens`, and DeepSeek publishes those measurements as
+ * `prompt_cache_hit_tokens` and `completion_tokens_details.reasoning_tokens`.
+ * A counter the upstream did not report leaves its detail object absent, so the
+ * client and the gateway telemetry both read an unknown value instead of a
+ * measured zero.
  */
 export const toResponsesUsage = (value: unknown): Record<string, unknown> | null => {
   if (!isRecord(value) || Array.isArray(value)) return null;
@@ -499,11 +501,12 @@ export const toResponsesUsage = (value: unknown): Record<string, unknown> | null
   if (inputTokens === null || outputTokens === null) return null;
   const totalTokens = typeof value.total_tokens === "number" ? value.total_tokens : inputTokens + outputTokens;
   const cachedTokens = deepSeekCachedPromptTokens(value, inputTokens);
+  const reasoningTokens = deepSeekReasoningTokens(value, outputTokens);
   return {
     input_tokens: inputTokens,
     ...(cachedTokens === null ? {} : { input_tokens_details: { cached_tokens: cachedTokens } }),
     output_tokens: outputTokens,
-    output_tokens_details: { reasoning_tokens: 0 },
+    ...(reasoningTokens === null ? {} : { output_tokens_details: { reasoning_tokens: reasoningTokens } }),
     total_tokens: totalTokens,
   };
 };

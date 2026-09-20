@@ -412,14 +412,28 @@ export const deepSeekCachedPromptTokens = (value: Record<string, unknown>, promp
 };
 
 /**
+ * Reasoning tokens as the upstream reports them. Thinking mode publishes
+ * `completion_tokens_details.reasoning_tokens`, which the provider defines as
+ * part of the completion output, so a value larger than `completionTokens`
+ * describes no readable measurement and is dropped rather than published.
+ */
+export const deepSeekReasoningTokens = (value: Record<string, unknown>, completionTokens: number): number | null => {
+  const details = isRecord(value.completion_tokens_details) && !Array.isArray(value.completion_tokens_details) ? value.completion_tokens_details : null;
+  const reasoning = nonNegativeInteger(details?.reasoning_tokens);
+  if (reasoning === null || reasoning > completionTokens) return null;
+  return reasoning;
+};
+
+/**
  * Reduces a DeepSeek usage object to the OpenAI Chat Completions usage shape
  * the Assistant consumes. DeepSeek's provider-named cache counter is the only
  * cache signal the provider publishes, so it is relayed under the official
  * `prompt_tokens_details.cached_tokens` field rather than its provider-only
  * name; `prompt_cache_miss_tokens` needs no slot because the miss count is
- * already `prompt_tokens - cached_tokens`. When the upstream reports no cache
- * counter the detail object stays absent, so no reader downstream can mistake a
- * missing measurement for a measured zero.
+ * already `prompt_tokens - cached_tokens`. Thinking mode's reasoning count is
+ * relayed the same way under `completion_tokens_details.reasoning_tokens`. When
+ * the upstream reports neither counter the matching detail object stays absent,
+ * so no reader downstream can mistake a missing measurement for a measured zero.
  */
 const normalizeUsage = (value: unknown): NormalizationResult<Record<string, unknown> | null> => {
   if (value === undefined || value === null) return { ok: true, value: null };
@@ -431,6 +445,7 @@ const normalizeUsage = (value: unknown): NormalizationResult<Record<string, unkn
     return { ok: false, message: "Upstream usage is incomplete." };
   }
   const cachedTokens = deepSeekCachedPromptTokens(value, promptTokens);
+  const reasoningTokens = deepSeekReasoningTokens(value, completionTokens);
   return {
     ok: true,
     value: {
@@ -438,6 +453,7 @@ const normalizeUsage = (value: unknown): NormalizationResult<Record<string, unkn
       completion_tokens: completionTokens,
       total_tokens: totalTokens,
       ...(cachedTokens === null ? {} : { prompt_tokens_details: { cached_tokens: cachedTokens } }),
+      ...(reasoningTokens === null ? {} : { completion_tokens_details: { reasoning_tokens: reasoningTokens } }),
     },
   };
 };
