@@ -121,6 +121,7 @@ import { recordRemovedProviderTelemetry } from "./removed_provider_telemetry.ts"
 import {
   appendResponsesPrecommitEvent,
   createOwnedResponsesStream,
+  isGatewayFailoverWarningItem,
   isSyntheticResponsesFailureEvent,
   type OwnedResponsesStreamFailureDetails,
   type PreparedResponsesStream,
@@ -10999,6 +11000,10 @@ const appendResponsesPassthroughEntry = (
 const appendResponsesInputEntry = (msg: unknown, param: string, accumulator: ResponsesInputAccumulator): Response | null => {
   const messageType = isRecord(msg) && !Array.isArray(msg) ? getString(msg.type) : null;
   if (messageType === "message" || (messageType === null && isRecord(msg) && "role" in msg)) {
+    // A turn replayed from a failover response carries this gateway's own
+    // notice. Sending it upstream would feed the provider text the model never
+    // wrote and the user never typed.
+    if (isGatewayFailoverWarningItem(msg)) return null;
     return appendResponsesMessageEntry(msg, param, accumulator);
   }
 
