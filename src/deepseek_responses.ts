@@ -1,4 +1,4 @@
-import { deepSeekUpstreamModelFor, projectDeepSeekReasoningEffort } from "./deepseek.ts";
+import { deepSeekCachedPromptTokens, deepSeekUpstreamModelFor, projectDeepSeekReasoningEffort } from "./deepseek.ts";
 import { getString, isRecord } from "./utils.ts";
 
 /**
@@ -483,16 +483,25 @@ const freeformInputFromArguments = (args: string): string => {
   return args;
 };
 
-/** Maps one Chat Completions usage object onto the Responses usage shape. */
+/**
+ * Maps one Chat Completions usage object onto the Responses usage shape.
+ *
+ * Cache reads are the reason this is not a field-by-field copy: Codex reads
+ * `input_tokens_details.cached_tokens`, and DeepSeek publishes the equivalent
+ * measurement as `prompt_cache_hit_tokens`. When the upstream reports no cache
+ * counter, the detail object is omitted so the client and the gateway telemetry
+ * both read an unknown cache read instead of a measured zero.
+ */
 export const toResponsesUsage = (value: unknown): Record<string, unknown> | null => {
   if (!isRecord(value) || Array.isArray(value)) return null;
   const inputTokens = typeof value.prompt_tokens === "number" ? value.prompt_tokens : null;
   const outputTokens = typeof value.completion_tokens === "number" ? value.completion_tokens : null;
   if (inputTokens === null || outputTokens === null) return null;
   const totalTokens = typeof value.total_tokens === "number" ? value.total_tokens : inputTokens + outputTokens;
+  const cachedTokens = deepSeekCachedPromptTokens(value, inputTokens);
   return {
     input_tokens: inputTokens,
-    input_tokens_details: { cached_tokens: 0 },
+    ...(cachedTokens === null ? {} : { input_tokens_details: { cached_tokens: cachedTokens } }),
     output_tokens: outputTokens,
     output_tokens_details: { reasoning_tokens: 0 },
     total_tokens: totalTokens,
