@@ -1619,6 +1619,124 @@ Deno.test("openai: Responses byte baseline keeps request and stream directions s
   assert.equal(downstreamStreamBody, upstreamStreamBody);
 });
 
+Deno.test("openai: the codex_503 debug scenario forces a Codex outage response without contacting Codex", async () => {
+  // The debug routing set covered 401, 403, and 429 - all auth or rate-limit
+  // shapes. A provider outage is the remaining case: the upstream is
+  // unreachable or degraded, which operators hit in production and cannot
+  // otherwise reproduce on demand.
+  const debugKey = keyToString(DEBUG_ROUTING_KEY);
+  const previousDebugRouting = kvStore.get(debugKey);
+  kvStore.set(debugKey, {
+    scenario: "codex_503",
+    expires_at_ms: Date.now() + 60_000,
+    updated_at_ms: Date.now(),
+  });
+  resetDebugRoutingCacheForTest();
+
+  let codexContacted = false;
+  try {
+    const response = await withFetchMock(
+      (url) => {
+        if (url.includes("chatgpt.com")) {
+          codexContacted = true;
+          throw new Error(`Codex must not be contacted while the outage is forced: ${url}`);
+        }
+        throw new Error(`no other provider is configured for this fixture: ${url}`);
+      },
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping" }),
+          })
+        )
+    );
+
+    // The scenario short-circuits before any Codex dispatch and surfaces a 503
+    // that carries the Codex upstream identity.
+    assert.equal(codexContacted, false, "the forced scenario must short-circuit before any Codex dispatch");
+    assert.equal(response.status, 503);
+    assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
+    const payload = (await response.json()) as { error?: { code?: string; message?: string } };
+    assert.equal(payload.error?.code, "debug_forced_codex");
+    assert.match(payload.error?.message ?? "", /forced Codex 503/);
+  } finally {
+    if (previousDebugRouting === undefined) kvStore.delete(debugKey);
+    else kvStore.set(debugKey, previousDebugRouting);
+    resetDebugRoutingCacheForTest();
+  }
+});
+
+Deno.test("openai: every codex debug scenario short-circuits without contacting Codex", async () => {
+  // A table test so a future scenario cannot be added to the union and silently
+  // fall through to a real upstream dispatch.
+  const debugKey = keyToString(DEBUG_ROUTING_KEY);
+  const previousDebugRouting = kvStore.get(debugKey);
+  const scenarios = ["codex_401", "codex_403", "codex_429", "codex_503"] as const;
+  const expected: Record<(typeof scenarios)[number], number> = {
+    codex_401: 401,
+    codex_403: 403,
+    codex_429: 429,
+    codex_503: 503,
+  };
+
+  try {
+    for (const scenario of scenarios) {
+      kvStore.set(debugKey, { scenario, expires_at_ms: Date.now() + 60_000, updated_at_ms: Date.now() });
+      resetDebugRoutingCacheForTest();
+      let contacted = false;
+      const response = await withFetchMock(
+        (url) => {
+          if (url.includes("chatgpt.com")) {
+            contacted = true;
+            throw new Error(`Codex must not be contacted for ${scenario}`);
+          }
+          throw new Error(`unexpected upstream for ${scenario}: ${url}`);
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping" }),
+            })
+          )
+      );
+      assert.equal(contacted, false, `${scenario} must short-circuit before dispatch`);
+      assert.equal(response.status, expected[scenario], `${scenario} must surface its own status`);
+    }
+  } finally {
+    if (previousDebugRouting === undefined) kvStore.delete(debugKey);
+    else kvStore.set(debugKey, previousDebugRouting);
+    resetDebugRoutingCacheForTest();
+  }
+});
+
+Deno.test("openai: the admin debug routing endpoint accepts the codex_503 scenario", async () => {
+  // The operator surface is the point of the feature: a scenario that the
+  // endpoint rejects is not usable. setDebugRoutingConfig validates against the
+  // SCENARIOS set, so this also proves the new member reached that set.
+  const { handleAdminDebugRouting } = await import("../src/admin.ts");
+  const debugKey = keyToString(DEBUG_ROUTING_KEY);
+  try {
+    const response = await handleAdminDebugRouting(
+      new Request("https://ai.ubq.fi/admin/debug/routing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scenario: "codex_503", duration_ms: 60_000 }),
+      })
+    );
+    assert.equal(response.status, 200);
+    const payload = (await response.json()) as { routing?: { scenario?: string; expires_at_ms?: number | null } };
+    assert.equal(payload.routing?.scenario, "codex_503");
+    assert.ok(typeof payload.routing?.expires_at_ms === "number", "a non-normal scenario must carry an expiry");
+  } finally {
+    kvStore.delete(debugKey);
+    resetDebugRoutingCacheForTest();
+  }
+});
+
 Deno.test("openai: expired Codex auth returns a 503 re-auth warning through Responses", async () => {
   const authKey = keyToString(["ubq_ai", "codex_auth"]);
   const previousAuth = kvStore.get(authKey);
