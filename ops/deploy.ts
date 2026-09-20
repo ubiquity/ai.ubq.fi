@@ -79,6 +79,11 @@ try {
   await Deno.symlink(`releases/${sha}`, next);
   await Deno.rename(next, ".data/current");
   await ensureCaddyIngressReady();
+  // The linked unit file may have changed with this release. Reload systemd's
+  // unit cache before restarting so the new ExecStart, environment, and
+  // sandbox settings are active before the health check.
+  await command("sudo", ["-n", "systemctl", "daemon-reload"]);
+  console.log(JSON.stringify({ systemd_daemon_reloaded: true }));
   await command("sudo", ["-n", "systemctl", "restart", "ai-ubq-fi.service"]);
 
   for (let attempt = 0; attempt < 30; attempt++) {
