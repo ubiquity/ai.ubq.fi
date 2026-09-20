@@ -424,20 +424,18 @@ Deno.test("deepseek responses: builds a completed Responses object from a Chat c
   assert.deepEqual(payload.usage, {
     input_tokens: 10,
     output_tokens: 4,
-    output_tokens_details: { reasoning_tokens: 0 },
     total_tokens: 14,
   });
 });
 
-Deno.test("deepseek responses: usage translation rejects incomplete provider usage and never invents a cache read", () => {
+Deno.test("deepseek responses: usage translation reports measured counters and never invents an unmeasured one", () => {
   assert.equal(toResponsesUsage({ prompt_tokens: 1 }), null);
   assert.equal(toResponsesUsage(null), null);
-  // An upstream that reports no cache counter leaves the detail object absent:
-  // a missing measurement must not be published as a measured zero.
+  // An upstream that reports no counter leaves the detail object absent: a
+  // missing measurement must not be published as a measured zero.
   assert.deepEqual(toResponsesUsage({ prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 }), {
     input_tokens: 1,
     output_tokens: 2,
-    output_tokens_details: { reasoning_tokens: 0 },
     total_tokens: 3,
   });
   // The provider's own spelling and the official nested spelling both map onto
@@ -446,22 +444,42 @@ Deno.test("deepseek responses: usage translation rejects incomplete provider usa
     input_tokens: 100,
     input_tokens_details: { cached_tokens: 96 },
     output_tokens: 2,
-    output_tokens_details: { reasoning_tokens: 0 },
     total_tokens: 102,
   });
   assert.deepEqual(toResponsesUsage({ prompt_tokens: 100, completion_tokens: 2, total_tokens: 102, prompt_tokens_details: { cached_tokens: 96 } }), {
     input_tokens: 100,
     input_tokens_details: { cached_tokens: 96 },
     output_tokens: 2,
-    output_tokens_details: { reasoning_tokens: 0 },
     total_tokens: 102,
   });
-  // A cache read cannot exceed the input it is a subset of, so an impossible
-  // value is reported as unknown rather than relayed.
+  // Thinking mode's reasoning count is a second measured counter on the same
+  // response, so both details travel together when the provider reports both.
+  assert.deepEqual(
+    toResponsesUsage({
+      prompt_tokens: 100,
+      completion_tokens: 40,
+      total_tokens: 140,
+      prompt_cache_hit_tokens: 96,
+      completion_tokens_details: { reasoning_tokens: 31 },
+    }),
+    {
+      input_tokens: 100,
+      input_tokens_details: { cached_tokens: 96 },
+      output_tokens: 40,
+      output_tokens_details: { reasoning_tokens: 31 },
+      total_tokens: 140,
+    }
+  );
+  // A counter cannot exceed the total it is a subset of, so an impossible value
+  // is reported as unknown rather than relayed.
   assert.deepEqual(toResponsesUsage({ prompt_tokens: 10, completion_tokens: 2, total_tokens: 12, prompt_cache_hit_tokens: 11 }), {
     input_tokens: 10,
     output_tokens: 2,
-    output_tokens_details: { reasoning_tokens: 0 },
+    total_tokens: 12,
+  });
+  assert.deepEqual(toResponsesUsage({ prompt_tokens: 10, completion_tokens: 2, total_tokens: 12, completion_tokens_details: { reasoning_tokens: 3 } }), {
+    input_tokens: 10,
+    output_tokens: 2,
     total_tokens: 12,
   });
 });
@@ -472,7 +490,18 @@ Deno.test("deepseek responses: stream translator emits the Responses event seque
   events.push(...translator.push(chatChunk({ role: "assistant", reasoning_content: "think " })));
   events.push(...translator.push(chatChunk({ content: "Hel" })));
   events.push(...translator.push(chatChunk({ content: "lo" }, { finish_reason: "stop" })));
-  events.push(...translator.push({ ...chatChunk({}), usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10, prompt_cache_hit_tokens: 6 } }));
+  events.push(
+    ...translator.push({
+      ...chatChunk({}),
+      usage: {
+        prompt_tokens: 7,
+        completion_tokens: 3,
+        total_tokens: 10,
+        prompt_cache_hit_tokens: 6,
+        completion_tokens_details: { reasoning_tokens: 2 },
+      },
+    })
+  );
   events.push(...translator.finish());
 
   assert.deepEqual(eventTypes(events), [
@@ -493,7 +522,7 @@ Deno.test("deepseek responses: stream translator emits the Responses event seque
     input_tokens: 7,
     input_tokens_details: { cached_tokens: 6 },
     output_tokens: 3,
-    output_tokens_details: { reasoning_tokens: 0 },
+    output_tokens_details: { reasoning_tokens: 2 },
     total_tokens: 10,
   });
   const output = completed.response.output as Record<string, unknown>[];
