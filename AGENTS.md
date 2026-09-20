@@ -39,6 +39,18 @@
 - Cloudflare must retain the proxied `ai.ubq.fi` A record and the hostname-specific Worker exclusion route; the wildcard
   Worker otherwise sends requests to retired Deno hosting.
 
+## Upstream Provider Constraints
+
+- Cerebras does not support streaming for `gpt-oss-120b`. Treat that model as non-streaming whatever the request asks
+  for: never depend on progressive output, never add streaming-only behavior or tests for it, and do not "fix" the
+  gateway into assuming incremental delivery. The upstream still answers `stream: true` with SSE frames (a 2026-09-20
+  probe received multiplexed deltas), but the gateway buffers this route and replays the finished completion in a burst,
+  so a client-visible `text/event-stream` here is not incremental generation.
+- A Cerebras response that stops at the token budget can carry reasoning only, with `content: null` and
+  `finish_reason: "length"`. The gateway fails that closed as `cerebras_upstream_invalid_response` (502) rather than
+  returning an unusable empty completion, so expect that status when `max_completion_tokens` is too small for a
+  reasoning model instead of treating it as a transport fault.
+
 ## Sentinel Retirement
 
 - Sentinel automation has moved to the separate `ubiquity/sentinel` repository. Do not restore embedded Sentinel
