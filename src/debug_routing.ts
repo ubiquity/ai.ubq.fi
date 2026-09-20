@@ -4,7 +4,7 @@ import { getString, isRecord } from "./utils.ts";
 export const DEBUG_ROUTING_KEY = ["uos_ai", "debug_routing", "v1"] as const;
 export const DEBUG_ROUTING_MAX_DURATION_MS = 60 * 60_000;
 
-export type DebugRoutingScenario = "normal" | "metered_first" | "removed_provider_first" | "codex_401" | "codex_403" | "codex_429";
+export type DebugRoutingScenario = "normal" | "metered_first" | "removed_provider_first" | "codex_401" | "codex_403" | "codex_429" | "codex_503";
 
 export type DebugRoutingConfig = Readonly<{
   scenario: DebugRoutingScenario;
@@ -12,7 +12,7 @@ export type DebugRoutingConfig = Readonly<{
   updated_at_ms: number;
 }>;
 
-const SCENARIOS = new Set<DebugRoutingScenario>(["normal", "metered_first", "removed_provider_first", "codex_401", "codex_403", "codex_429"]);
+const SCENARIOS = new Set<DebugRoutingScenario>(["normal", "metered_first", "removed_provider_first", "codex_401", "codex_403", "codex_429", "codex_503"]);
 
 const normalize = (value: unknown): DebugRoutingConfig | null => {
   if (!isRecord(value)) return null;

@@ -3055,6 +3055,7 @@ const forcedDebugCodexStatus = (debugScenario: string): number | null => {
   if (debugScenario === "metered_first" || debugScenario === "codex_429") return 429;
   if (debugScenario === "codex_403") return 403;
   if (debugScenario === "codex_401") return 401;
+  if (debugScenario === "codex_503") return 503;
   return null;
 };
 
