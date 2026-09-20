@@ -3579,6 +3579,30 @@ Deno.test("a stale admission cannot dispatch after a concurrent active switch", 
   }
 });
 
+Deno.test("a stale admission cannot dispatch after concurrent credential invalidation", async () => {
+  const kv = new RoutingKv();
+  setKvForTest(kv as unknown as Deno.Kv);
+  resetCodexAccountRoutingForTest();
+  try {
+    const now = Date.now();
+    const authPool: CodexAuthPoolState = { accounts: pool.accounts.map((account) => ({ ...account, updated_at_ms: now })), updated_at_ms: now };
+    await kv.set(CODEX_AUTH_POOL_KV_KEY, authPool);
+    const initial = await selectCodexRoutingAccountsStrong(authPool, authPool.accounts, now);
+    assert.equal(initial.kind, "eligible");
+    const admitted = initial.accounts[0];
+    assert.equal(admitted.auth.account_id, "one");
+
+    // Another concurrent request marks this credential invalid before final transport
+    await markCodexCredentialInvalid(admitted);
+
+    // Final admission fence MUST reject this quarantined credential
+    assert.equal(await refreshCodexActiveAccountAdmission(admitted), false);
+  } finally {
+    setKvForTest(null);
+    resetCodexAccountRoutingForTest();
+  }
+});
+
 Deno.test("concurrent cold admission converges on one durable active generation", async () => {
   const kv = new RoutingKv();
   setKvForTest(kv as unknown as Deno.Kv);
