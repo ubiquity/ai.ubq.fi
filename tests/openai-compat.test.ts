@@ -1713,6 +1713,47 @@ Deno.test("openai: every codex debug scenario short-circuits without contacting 
   }
 });
 
+Deno.test("openai: a forced debug scenario survives a non-2xx upstream to reach the client", async () => {
+  // `toOpenAiUpstreamErrorResponse` rebuilds the header set from scratch for a
+  // non-2xx upstream. It carries x-uos-upstream, x-uos-warning, and Retry-After
+  // explicitly, so any other header the gateway set is dropped unless it is
+  // named there too. The scenario name is useless if operators cannot read it
+  // back, so this pins it.
+  const debugKey = keyToString(DEBUG_ROUTING_KEY);
+  const previousDebugRouting = kvStore.get(debugKey);
+  kvStore.set(debugKey, {
+    scenario: "codex_503",
+    expires_at_ms: Date.now() + 60_000,
+    updated_at_ms: Date.now(),
+  });
+  resetDebugRoutingCacheForTest();
+  try {
+    const response = await withFetchMock(
+      () => {
+        throw new Error("the forced scenario must short-circuit before any upstream call");
+      },
+      () =>
+        handleResponses(
+          new Request("https://ai.ubq.fi/v1/responses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "ping" }),
+          })
+        )
+    );
+    assert.equal(response.status, 503);
+    assert.equal(
+      response.headers.get("x-uos-debug-scenario"),
+      "codex_503",
+      "the operator must be able to read back which debug scenario produced this response"
+    );
+  } finally {
+    if (previousDebugRouting === undefined) kvStore.delete(debugKey);
+    else kvStore.set(debugKey, previousDebugRouting);
+    resetDebugRoutingCacheForTest();
+  }
+});
+
 Deno.test("openai: the admin debug routing endpoint accepts the codex_503 scenario", async () => {
   // The operator surface is the point of the feature: a scenario that the
   // endpoint rejects is not usable. setDebugRoutingConfig validates against the
