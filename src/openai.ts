@@ -2236,6 +2236,12 @@ const toOpenAiUpstreamErrorResponse = async (upstream: Response, provider: Upstr
     ? parseUpstreamErrorDetails(captured.text, upstream.statusText)
     : { message: "Upstream returned an oversized or incomplete error response." };
   const headers: Record<string, string> = { "x-uos-upstream": provider };
+  // A debug scenario sets its own header so an operator can confirm which
+  // forced path produced a response. This function rebuilds the header set
+  // from scratch for a non-2xx upstream, so it has to carry that field
+  // explicitly or the scenario name is silently lost before the client sees it.
+  const debugScenario = upstream.headers.get("x-uos-debug-scenario");
+  if (debugScenario) headers["x-uos-debug-scenario"] = debugScenario;
   const warning = upstream.headers.get("x-uos-warning");
   const hasAuthWarning =
     warning
