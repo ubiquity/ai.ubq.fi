@@ -327,13 +327,39 @@ export const rewriteResponsesEventForWarning = (
 export const rewriteResponsesEventSequence = (event: ResponsesStreamEvent, sequenceNumber: number): ResponsesStreamEvent =>
   responseEventFromValue({ ...event.value, sequence_number: sequenceNumber });
 
+/** The single source of truth for the warning text this gateway injects. */
+export const failoverWarningText = (actualModel: string): string =>
+  `⚠ Failover active: this response is from \`removed_provider:${actualModel}\` because the Codex upstream was unavailable.`;
+
+const FAILOVER_WARNING_ID_PREFIX = "msg_failover_";
+const FAILOVER_WARNING_PREFIX = "⚠ Failover active: this response is from `removed_provider:";
+const FAILOVER_WARNING_SUFFIX = "` because the Codex upstream was unavailable.";
+
+/**
+ * Identifies an assistant item this gateway injected as a failover notice, so a
+ * replayed conversation does not send the notice back upstream as if the user
+ * or the model had written it. The id prefix alone is not enough: it is
+ * attacker-controllable input, so the shape and the exact text are checked too.
+ */
+export const isGatewayFailoverWarningItem = (value: unknown): boolean => {
+  if (!isRecord(value) || Array.isArray(value) || value.type !== "message" || value.role !== "assistant") return false;
+  const id = getString(value.id);
+  if (!id?.startsWith(FAILOVER_WARNING_ID_PREFIX)) return false;
+  if (!Array.isArray(value.content) || value.content.length !== 1) return false;
+  const content = value.content[0];
+  if (!isRecord(content) || Array.isArray(content) || content.type !== "output_text") return false;
+  const text = getString(content.text);
+  return !!text && text.startsWith(FAILOVER_WARNING_PREFIX) && text.endsWith(FAILOVER_WARNING_SUFFIX) &&
+    text.length > FAILOVER_WARNING_PREFIX.length + FAILOVER_WARNING_SUFFIX.length;
+};
+
 export const buildFailoverWarningEvents = (
   actualModel: string,
   responseId: string,
   startingSequenceNumber = 0
 ): Readonly<{ item: Record<string, unknown>; events: ResponsesStreamEvent[] }> => {
   const itemId = `msg_failover_${crypto.randomUUID().replace(/-/g, "")}`;
-  const text = `⚠ Failover active: this response is from \`removed_provider:${actualModel}\` because the Codex upstream was unavailable.`;
+  const text = failoverWarningText(actualModel);
   const content = { type: "output_text", text, annotations: [] };
   const item: Record<string, unknown> = {
     id: itemId,

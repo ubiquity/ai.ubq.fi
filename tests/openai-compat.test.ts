@@ -155,6 +155,7 @@ const { ApiKeyQuotaDispatchError } = await import("../src/api_key_policy.ts");
 const { withCors } = await import("../src/http.ts");
 const { default: gatewayHandler, withTerminalRequestLog } = await import("../src/handler.ts");
 const { resetRuntimeConfigCacheForTest } = await import("../src/runtime_config.ts");
+const { buildFailoverWarningEvents } = await import("../src/responses_failover_stream.ts");
 const { DEBUG_ROUTING_KEY, resetDebugRoutingCacheForTest } = await import("../src/debug_routing.ts");
 const { setRemovedProviderApiKeyForTest, setRemovedProviderTestAdapterForTest } = await import("../src/removed_provider.ts");
 const { CODEX_AUTH_REAUTH_MESSAGE, CODEX_AUTH_REAUTH_WARNING, resetCodexAuthCacheForTest } = await import("../src/codex.ts");
@@ -995,6 +996,46 @@ Deno.test("openai: a post-reset 429 is returned once without a successful stream
       });
     }
   }
+});
+
+Deno.test("openai: a replayed failover warning never reaches the upstream request", async () => {
+  // PR #92 (2026-08-14) guarded this and its merge never landed, so the notice
+  // this gateway injects could be replayed back upstream as ordinary input.
+  const warningItem = buildFailoverWarningEvents("removed/model", "resp_replayed").item;
+  let upstreamBody: Record<string, unknown> | null = null;
+
+  await withFetchMock(
+    (_url, bodyText) => {
+      upstreamBody = bodyText ? (JSON.parse(bodyText) as Record<string, unknown>) : null;
+      return sseResponse([
+        `data: ${JSON.stringify({ type: "response.created", response: { id: "resp_ok", created_at: 0 } })}\n\n`,
+        `data: ${JSON.stringify({
+          type: "response.completed",
+          response: { model: DEFAULT_TEST_MODEL, output: [], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } },
+        })}\n\n`,
+      ]);
+    },
+    async () => {
+      await handleResponses(
+        new Request("https://ai.ubq.fi/v1/responses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: DEFAULT_TEST_MODEL,
+            input: [warningItem, { type: "message", role: "user", content: "continue" }],
+          }),
+        })
+      );
+    }
+  );
+
+  assert.ok(upstreamBody, "the gateway must have contacted the upstream");
+  const serialized = JSON.stringify(upstreamBody);
+  assert.ok(
+    !serialized.includes("removed_provider:"),
+    "the gateway's own failover notice must not be sent upstream as input"
+  );
+  assert.ok(serialized.includes("continue"), "the real user turn must still reach the upstream");
 });
 
 Deno.test("openai: public handlers wait for verified banked redemption before one retry and delivery", async (t) => {
