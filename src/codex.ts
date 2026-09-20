@@ -2677,11 +2677,11 @@ const fetchPreparedCodexResponses = async (
         retryCandidate.auth,
         retryCandidate.routing,
         "post_banked_reset",
-        () => ensurePostResetRetryAuthCurrent(retryCandidate),
-        true
+        () => ensurePostResetRetryAuthCurrent(retryCandidate)
       );
     } catch (error) {
-      if (error instanceof CodexBankedResetRetryFenceError) return normalResponse;
+      if (error instanceof CodexBankedResetRetryFenceError || error instanceof CodexActiveAccountFenceError) return normalResponse;
+
       logBankedResetEvent("codex_reset_inference_retry_result", {
         request_id: options.requestId ?? null,
         account_id_hash: reset.accountIdHash,
