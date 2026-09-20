@@ -1,7 +1,8 @@
 # ai.ubq.fi Decisions
 
-Read before changing model routing, VPS acceptance, lint configuration, or Deno app inventory. These are scoped
-decisions, not general policy; they narrow global defaults only for this repository and never weaken higher authority.
+Read before changing model routing, cache-read telemetry, VPS acceptance, lint configuration, or Deno app inventory.
+These are scoped decisions, not general policy; they narrow global defaults only for this repository and never weaken
+higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
@@ -29,18 +30,9 @@ gateway cannot stand behind.
 
 ## Serial subscription routing - 2026-09-14
 
-Exhaust one Codex subscription before moving ordinary requests to the next; do not spread them across both.
-
-Reason: each subscription is a separate prompt-cache and account-health identity. Spreading ordinary requests across
-both keeps neither cache warm, so latency and cost rise, and load lands on two accounts instead of one, which obscures
-which subscription is degrading. The provider order Codex -> Surplus -> OpenLux is the intentional fallback chain.
-
-Reversal risk: routing requests to a second subscription while the first still has capacity, or reordering the provider
-chain, undoes this and reintroduces the cache and account-health problem. Do not "balance" load across subscriptions or
-make the order dynamic without a new dated decision.
-
-Implementation, not new verification: PR #307, deployed 2026-09-15 as 8bf9daad53a22abf8db4488ef1db2ac2d25c9d34, with
-three accepted authenticated VPS-origin inference requests. Concurrent-admission follow-ups remain issues #308/#309.
+Summary only: `docs/provider-decision-journal.md` owns this provider-routing decision (entry dated 2026-09-14, "Serial
+subscription routing"). Exhaust one Codex subscription before advancing the provider chain; never spread ordinary
+requests across subscriptions while the active one still has capacity.
 
 ## Serial-depletion VPS acceptance - 2026-09-15
 

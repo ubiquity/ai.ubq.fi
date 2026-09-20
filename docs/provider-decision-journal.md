@@ -149,3 +149,36 @@ TCP peer:
   process-wide peer slot could otherwise be overwritten by a concurrent request, letting a LAN request inherit a
   loopback peer.
 - No new CLI flag, environment variable, secret, route, or public response field was added.
+
+## 2026-09-14 — Serial subscription routing: exhaust one Codex subscription before advancing
+
+### Status
+
+- Decision: accepted by the service owner; implementation merged and deployed.
+- Implementation: complete on `codex/serial-subscription-routing`, merged as PR
+  [#307](https://github.com/ubiquity/ai.ubq.fi/pull/307), merge commit `8bf9daad53a22abf8db4488ef1db2ac2d25c9d34`
+  (ancestor of `development`).
+- Validation: repository gates passed on the merged SHA; the durable active-subscription behavior is covered by the
+  focused suites.
+- Deployment: complete 2026-09-15 as `8bf9daad53a22abf8db4488ef1db2ac2d25c9d34`.
+- Live acceptance: accepted; three authenticated VPS-origin inference requests succeeded.
+- Open follow-ups: issues [#308](https://github.com/ubiquity/ai.ubq.fi/issues/308) and
+  [#309](https://github.com/ubiquity/ai.ubq.fi/issues/309) (concurrent-admission edge cases).
+
+### Decision
+
+Route ordinary Codex inference through one durable global active subscription shared by every principal, key, and model.
+Bootstrap the first eligible configured account and keep it despite headroom, idle time, restarts, old per-key
+affinities, reorder, or a successful same-identity credential refresh. Move it only for authoritative model-applicable
+quota or capacity exhaustion, a classified current-credential invalidity, or removal/replacement of the account in the
+auth pool.
+
+Each subscription is a separate prompt-cache and account-health identity, so spreading ordinary requests across
+subscriptions keeps neither cache warm and obscures which subscription is degrading. The provider fallback chain Codex
+-> Surplus -> OpenLux is intentional and ordered by cost; advance it only after authoritative exhaustion.
+
+### Reversal risk
+
+Restoring a retired per-key affinity override, load-balancing across subscriptions while the active one still has
+capacity, or reordering the provider chain all reintroduce the cache and account-health problem this decision removed.
+Do not make the order dynamic without a new dated entry.
