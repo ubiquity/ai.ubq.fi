@@ -6,6 +6,22 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Reserve Codex model id with its own quota class - 2026-09-20
+
+`gpt-reserve` is luna served under a second Codex model id the owner authorized on 2026-09-20 as a distinct model with
+its own quota limit, so it is not a gateway-only alias: the requested id is passed upstream verbatim and is never
+renamed to `gpt-5.6-luna`. It owns the `reserve` quota class in `src/codex_account_routing.ts`, so exhausting the
+reserve class must not block the standard class on the same account, and standard-class exhaustion must not block
+reserve. The gateway accepts the id as a known Codex model while the upstream discovery catalog still omits it, without
+inventing a catalog entry.
+
+Reason: the upstream serves the id today but its discovery catalog may lag, and whether the upstream meters reserve
+separately is unproven. Keeping the id verbatim and giving it its own durable bucket leaves the distinction observable
+instead of folding a possibly separate limit into the standard class.
+
+Reversal risk: renaming the id upstream, folding `reserve` back into `standard`, or widening the trusted accepted-id
+list beyond the owner-authorized id each removes the distinction this authorization depends on.
+
 ## Cache-read telemetry is reported, never defaulted - 2026-09-19
 
 Relay the upstream cache-read counter when the provider publishes one; report an absent counter as unknown

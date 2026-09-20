@@ -34,7 +34,7 @@ const ROUTING_CACHE_REVALIDATE_MS = 5_000;
 
 export type CodexQuotaBlockSource = "body_resets_at" | "header_retry_after";
 export type CodexProbeCircuit = "quota" | "upstream_timeout";
-export type CodexQuotaClass = "spark" | "gpt_oss_120b" | "standard" | "unknown";
+export type CodexQuotaClass = "spark" | "gpt_oss_120b" | "reserve" | "standard" | "unknown";
 export type CodexActiveAccountTransitionReason = "quota_exhausted" | "credential_invalid" | "account_removed_or_replaced";
 
 /**
@@ -269,6 +269,8 @@ const quotaClassBlockFieldsMatch = (left: Record<string, unknown>, right: Record
 const hasUnmarkedSyntheticLegacyUnknown = (rawClassBlocks: Record<string, unknown>): boolean => {
   const unknown = rawClassBlocks.unknown;
   if (!isRecord(unknown) || "legacy_fallback" in unknown) return false;
+  // This detects the shape one historical release wrote, so it stays the four
+  // entries of that release; `reserve` did not exist then.
   const knownClassKeys = ["spark", "gpt_oss_120b", "standard"] as const;
   if (
     !knownClassKeys.every((key) => {
@@ -297,7 +299,7 @@ const parseProbeLeaseCircuit = (lease: unknown): CodexProbeCircuit | null => {
 };
 
 const parseProbeQuotaClass = (value: unknown): CodexQuotaClass | null =>
-  value === "spark" || value === "gpt_oss_120b" || value === "standard" || value === "unknown" ? value : null;
+  value === "spark" || value === "gpt_oss_120b" || value === "reserve" || value === "standard" || value === "unknown" ? value : null;
 
 const parseProbeLease = (lease: unknown, leaseCircuit: CodexProbeCircuit | null): CodexRoutingSlot["probe_lease"] => {
   if (lease === null || !isRecord(lease)) return null;
@@ -382,7 +384,7 @@ const parseQuotaBlocksByClass = (
   slotFields: CodexSlotClassBlockFields
 ): Partial<Record<CodexQuotaClass, CodexQuotaClassBlock>> => {
   const quotaBlocksByClass: Partial<Record<CodexQuotaClass, CodexQuotaClassBlock>> = {};
-  for (const quotaClassKey of ["spark", "gpt_oss_120b", "standard", "unknown"] as const) {
+  for (const quotaClassKey of ["spark", "gpt_oss_120b", "reserve", "standard", "unknown"] as const) {
     const block = rawClassBlocks[quotaClassKey];
     if (!isRecord(block)) continue;
     const parsedBlock = parseSlotClassBlock(block, quotaClassKey, unmarkedSyntheticLegacyUnknown, slotFields);
@@ -1018,6 +1020,10 @@ const quotaClass = (model: string | null | undefined): CodexQuotaClass => {
   const normalized = typeof model === "string" ? model.trim().toLowerCase() : "";
   if (normalized === "gpt-5.3-codex-spark") return "spark";
   if (normalized === "gpt-oss-120b") return "gpt_oss_120b";
+  // `gpt-reserve` is the owner-authorized second id for luna. It keeps its own
+  // bucket so exhausting reserve can never fence the standard class, and the
+  // compact form matches however the id is spelled at the call site.
+  if (normalizeQuotaLabel(normalized) === "gptreserve") return "reserve";
   return normalized ? "standard" : "unknown";
 };
 
@@ -1050,7 +1056,7 @@ const quotaBlockForClass = (slot: CodexRoutingSlot, quotaClassKey: CodexQuotaCla
     .reduce<CodexQuotaClassBlock | null>((latest, block) => (!latest || block.blocked_until_ms > latest.blocked_until_ms ? block : latest), null);
 };
 
-const quotaClassKeys = ["spark", "gpt_oss_120b", "standard", "unknown"] as const;
+const quotaClassKeys = ["spark", "gpt_oss_120b", "reserve", "standard", "unknown"] as const;
 
 const isQuotaClassKey = (value: string): value is CodexQuotaClass => (quotaClassKeys as readonly string[]).includes(value);
 

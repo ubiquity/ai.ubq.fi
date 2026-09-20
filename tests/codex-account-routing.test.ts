@@ -260,6 +260,44 @@ Deno.test("quota circuits isolate Spark, GPT-OSS, and standard model pools", asy
   }
 });
 
+Deno.test("reserve-class quota circuits do not fence the standard class on the same account", async () => {
+  const kv = new RoutingKv();
+  setKvForTest(kv as unknown as Deno.Kv);
+  resetCodexAccountRoutingForTest();
+  try {
+    const now = 1_700_000_000_000;
+    const standardDeadline = now + 60_000;
+    const reserveDeadline = standardDeadline + 60_000;
+
+    const standard = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now, "gpt-5.6-luna");
+    assert.equal(standard.kind, "eligible");
+    await markCodexQuotaBlocked(standard.accounts[0], httpDateQuotaResponse(standardDeadline), now);
+
+    // The standard bucket exhaustion of luna fences no reserve-class model.
+    assert.equal((await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 1, "gpt-reserve")).kind, "eligible");
+    assert.equal((await selectCodexRoutingAccounts(singlePool, singlePool.accounts, now + 1, "gpt-5.6-terra")).kind, "quota_blocked");
+
+    // Once standard recovers, exhausting reserve fences only the reserve class.
+    assert.equal((await selectCodexRoutingAccounts(singlePool, singlePool.accounts, standardDeadline + 1, "gpt-5.6-luna")).kind, "eligible");
+    const reserve = await selectCodexRoutingAccounts(singlePool, singlePool.accounts, standardDeadline + 1, "gpt-reserve");
+    assert.equal(reserve.kind, "eligible");
+    await markCodexQuotaBlocked(reserve.accounts[0], httpDateQuotaResponse(reserveDeadline), standardDeadline + 1);
+
+    assert.equal((await selectCodexRoutingAccounts(singlePool, singlePool.accounts, standardDeadline + 2, "gpt-reserve")).kind, "quota_blocked");
+    assert.equal((await selectCodexRoutingAccounts(singlePool, singlePool.accounts, standardDeadline + 2, "gpt-5.6-luna")).kind, "eligible");
+    assert.equal((await selectCodexRoutingAccounts(singlePool, singlePool.accounts, standardDeadline + 2, "gpt-5.6-terra")).kind, "eligible");
+
+    // Both buckets persist independently through the KV round trip.
+    const state = parseCodexAccountRoutingState(kv.values.get(key(CODEX_ACCOUNT_ROUTING_KV_KEY)));
+    assert.equal(state?.slots[0]?.quota_blocks_by_class?.standard?.blocked_until_ms, standardDeadline);
+    assert.ok(state);
+    assert.equal(state.slots[0]?.quota_blocks_by_class?.reserve?.blocked_until_ms, reserveDeadline);
+  } finally {
+    setKvForTest(null);
+    resetCodexAccountRoutingForTest();
+  }
+});
+
 Deno.test("an unrelated class 429 is recorded while another class owns a probe lease", async () => {
   const kv = new RoutingKv();
   setKvForTest(kv as unknown as Deno.Kv);

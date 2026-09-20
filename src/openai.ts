@@ -155,6 +155,17 @@ const TEMPORARY_FREE_SURPLUS_MODEL = "glm-5.2";
 
 const isTemporaryFreeSurplusModel = (model: string): boolean => model === TEMPORARY_FREE_SURPLUS_MODEL;
 
+/**
+ * Codex ids the owner authorized as servable before the upstream discovery
+ * catalog advertises them. This is deliberately a closed list of exact ids, not
+ * a recognition pattern, and it fabricates no catalog entry: the requested id is
+ * forwarded to the Codex transport verbatim. `gpt-reserve` is the second,
+ * separately metered id for luna, so it also owns its own quota class.
+ */
+const ADDITIONAL_TRUSTED_CODEX_MODEL_IDS: readonly string[] = ["gpt-reserve"];
+
+const isAdditionalTrustedCodexModel = (model: string): boolean => ADDITIONAL_TRUSTED_CODEX_MODEL_IDS.includes(model.trim());
+
 const temporaryFreeSurplusCapabilityError = (model: string, body: Record<string, unknown>): Response | null =>
   isTemporaryFreeSurplusModel(model) && Array.isArray(body.tools) && body.tools.length > 0
     ? openaiError(400, `The model '${model}' does not support tools through this gateway.`, "unsupported_model_capability", { param: "tools" })
@@ -2917,6 +2928,7 @@ const loadPaidResponsesCatalogs = async (
 > => {
   const codexCatalog = await loadCodexModelsSnapshot();
   const codexModelKnown =
+    isAdditionalTrustedCodexModel(options.model) ||
     codexCatalog?.models.some((model) => {
       const record = model as Record<string, unknown>;
       return (getString(record.slug) ?? getString(record.id) ?? getString(record.model) ?? getString(record.name)) === options.model;
@@ -3872,6 +3884,10 @@ const validateCodexModelAvailable = (model: string, route: "chat.completions" | 
   // even though the declared type always presents it.
   const snapshotModels = metadata.snapshot?.models;
   if (!snapshotModels?.length || metadata.record) return null;
+  // An owner-authorized id stays servable while the published catalog lags; it
+  // is dispatched to the Codex transport under the requested id, and no catalog
+  // record is invented for it.
+  if (isAdditionalTrustedCodexModel(model)) return null;
   return openaiError(
     404,
     `The model '${model}' does not exist or is not available through this gateway. Use /v1/models for supported models.`,

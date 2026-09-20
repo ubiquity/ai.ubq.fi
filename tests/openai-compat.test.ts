@@ -1031,10 +1031,7 @@ Deno.test("openai: a replayed failover warning never reaches the upstream reques
 
   assert.ok(upstreamBody, "the gateway must have contacted the upstream");
   const serialized = JSON.stringify(upstreamBody);
-  assert.ok(
-    !serialized.includes("removed_provider:"),
-    "the gateway's own failover notice must not be sent upstream as input"
-  );
+  assert.ok(!serialized.includes("removed_provider:"), "the gateway's own failover notice must not be sent upstream as input");
   assert.ok(serialized.includes("continue"), "the real user turn must still reach the upstream");
 });
 
@@ -2878,6 +2875,35 @@ Deno.test("openai: unsupported snapshot model is rejected before upstream fetch"
   assert.equal(payload.error?.code, "model_not_found");
   assert.equal(payload.error.param, "model");
   assert.match(payload.error.message ?? "", /Use \/v1\/models/);
+});
+
+Deno.test("openai: gpt-reserve is servable and reaches the Codex upstream under its own id", async () => {
+  const codexUrls: string[] = [];
+  let recordedBody: Record<string, unknown> | null = null;
+  const response = await withFetchMock(
+    (url, bodyText) => {
+      if (url !== "https://chatgpt.com/backend-api/codex/responses") {
+        // Paid catalog discovery for an id the Codex tier already serves; it is
+        // not this test's subject and must not select a paid provider.
+        return Response.json({ data: [] });
+      }
+      codexUrls.push(url);
+      recordedBody = bodyText ? (JSON.parse(bodyText) as Record<string, unknown>) : null;
+      return sseResponse(baseSseChunks());
+    },
+    () => handleResponses(responsesRequest({ model: "gpt-reserve", input: "reserve ping" }))
+  );
+
+  // The owner-authorized id is served by the Codex subscription tier even
+  // though the model snapshot does not list it yet, and it is never renamed on
+  // the wire: the upstream sees `gpt-reserve` verbatim, so reserve stays
+  // distinguishable from the standard luna id.
+  assert.deepEqual(codexUrls, ["https://chatgpt.com/backend-api/codex/responses"]);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
+  assert.ok(recordedBody);
+  assert.equal((recordedBody as Record<string, unknown>).model, "gpt-reserve");
+  assert.match(await response.text(), /pong/);
 });
 
 Deno.test("openai: unlisted reasoning tiers pass through for upstream validation", async () => {
