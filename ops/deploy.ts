@@ -55,8 +55,12 @@ try {
   if (await command("git", ["status", "--porcelain", "--untracked-files=no"])) {
     throw new Error("Commit or preserve tracked changes before deployment");
   }
+  const branch = await command("git", ["branch", "--show-current"]);
+  if (branch !== "development") throw new Error("Production deployment is allowed only from the development branch");
   const sha = await command("git", ["rev-parse", "HEAD"]);
   if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error("A full Git revision is required");
+  const remoteDevelopmentSha = await command("git", ["rev-parse", "origin/development"]);
+  if (remoteDevelopmentSha !== sha) throw new Error("Checkout must exactly match origin/development before deployment");
   const release = `.data/releases/${sha}`;
   try {
     await Deno.stat(release);
