@@ -66,7 +66,63 @@ mapping on the assumption that it leaks across routes; it does not.
 Residual gap: Surplus and OpenLux were not probed, so their truncation-stop behaviour remains unverified. Codex's
 handling of the terminal is proven; which upstreams ever emit it is not.
 
+## CORRECTION: the narration trigger is not context size - 2026-09-21
+
+The entry below reports that context size gates narration-without-action. **That is falsified.** It is retained for
+history, but the trigger section and the onset threshold must not be relied on. The reason is an external-validity
+failure in the experiment: every payload used to derive the curve repeated one identical filler block in every tool
+output, so "long context" and "degenerate repetitive context" were confounded and could not be separated.
+
+**The disconfirming measurement.** A second payload family was built with genuinely distinct tool outputs (20 rotating
+result shapes plus per-index text, every output unique) and matched to the original on byte size and item count. Both
+were run against `deepseek-flash` at matched effort:
+
+| Payload               | Actual input tokens |      n | Narrated |   Rate |
+| --------------------- | ------------------: | -----: | -------: | -----: |
+| repetitive (original) |              66,533 |     28 |        8 |    29% |
+| **varied (matched)**  |          **71,295** | **18** |    **0** | **0%** |
+
+The varied payload is _larger_ than the repetitive one and narrates _never_. Length alone therefore cannot be the
+trigger, which falsifies both "context size is the trigger" and the recorded onset of "between roughly 1k and 4k".
+
+**A controlled interleaved run, and its non-result.** To separate condition from time drift, the three conditions
+(repetitive ~66k, varied ~71k, small ~1k) were cycled round-robin inside a single time window, eight rounds:
+
+| Condition       | Narrated in the interleaved window |
+| --------------- | ---------------------------------: |
+| repetitive ~66k |                          2/8 (25%) |
+| varied ~71k     |                           0/8 (0%) |
+| small ~1k       |                           0/8 (0%) |
+
+Neither contrast is significant in this design (`p = 0.47` each). Pooling all batches raises the repetitive-vs-varied
+contrast to `p = 0.016`, but that pool mixes runs from different time windows and the original effect did not replicate
+across batches on its own payload (5/10, then 1/10, `p = 0.14`).
+
+**What survives, and what does not.**
+
+- **Does not survive:** context size as the trigger; the onset threshold; the implication that long real sessions
+  narrate _because_ they are long. Real sessions are also full of varied content, so the synthetic confound may explain
+  the original 154-of-292 observation as easily as the model does.
+- **Weakly survives:** that _some_ conditions produce narration at a low rate. The pooled repetitive cells total 8/28,
+  which is not zero. Its true trigger is unidentified; repetitive content is a candidate, not an established cause.
+- **Survives:** that `gpt-reserve` never narrated on any payload at any size tested - 0 of 30 pooled across every cell
+  run in this investigation, spanning 61k to 176k input tokens and both payload families. The model contrast is weaker
+  than first reported, because the DeepSeek rate it is measured against fell, but it has not been contradicted.
+
+Reason for recording at this length: the previous entry states a specific causal trigger with statistics behind it, and
+this repository treats that as load-bearing. Leaving a falsified trigger in place would be worse than the correction
+itself — a future reader would tune context budgets or payload shapes against a confound.
+
+Reversal risk: acting on the size trigger, quoting the onset threshold, or treating repetitive context as a confirmed
+cause. Any of those propagates an experiment artifact.
+
+Method note for the next attempt: vary payload content independently of length, and interleave conditions inside one
+time window. Both were missing here, and both are what caught it.
+
 ## Narration-without-action is model-specific and context-gated - 2026-09-21
+
+> **Partially superseded.** The context-size trigger and the onset threshold recorded in this entry are falsified; see
+> the correction immediately above. The model contrast and the effort findings below still stand.
 
 The investigation that produced the terminal-truthfulness work began with a model believing its turn completed mid-task:
 it narrates the next action in text and terminates without emitting the tool call it described. Earlier measurement
