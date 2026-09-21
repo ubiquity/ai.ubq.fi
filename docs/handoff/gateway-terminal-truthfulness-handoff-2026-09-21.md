@@ -27,6 +27,19 @@ Success means:
 Out of scope for this document: prompt engineering, client-side loop behavior, and any change to which provider serves a
 request.
 
+> **Correction (2026-09-21, after this document was merged): the diagnosed condition below is an artifact.** The
+> frequency figures in the table that follows - 154 of 292 turns, and 24 of 67 - are not reproducible from the sessions
+> they cite. No unit (turns, messages, response items) yields those numbers, and the forward-looking-phrase test used to
+> label a turn "promise-narration" fires on 76% of all assistant messages, including ordinary mid-task narration that is
+> immediately followed by a tool call. Reading the turns to their end shows the model closing with substantive 4,000+
+> and 6,000+ character summaries after hundreds of tool calls: honest completions, not early exits. See the
+> measurement-artifact correction in `docs/DECISIONS.md` for the reconciled counts.
+>
+> The gateway defect this document identifies is **unaffected and still stands**: the terminal event could not
+> distinguish a truncated upstream response from a completed one, which was independently reproduced. What does not
+> stand is the claim that the narration symptom is frequent, and any model-versus-gateway contrast drawn from those
+> rates. Read the rest of this document for the terminal-truthfulness program, not for the narration diagnosis.
+
 ## Diagnosed condition
 
 A long-running agent on the responses path frequently believes its turn completed mid-task. The measured shape is that
