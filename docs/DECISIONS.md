@@ -114,8 +114,32 @@ behaviour to the transport layer.
 10 of 10 tool calls, 0% narration at the same 61,005 input tokens, identical to its `medium` result. So the model
 difference survives effort being held constant, and reasoning effort is ruled out as the cause.
 
-Residual limits: the DeepSeek curve is single-effort, so effort is not swept on that side. Rates are point estimates
-from 10 runs per cell, so the band boundaries are approximate rather than measured thresholds.
+**Effort does not show a detectable effect on the DeepSeek side either.** The curve was swept at the ~66k band across
+`max`, `high`, `low` and `none` (10 runs each): 50%, 20%, 30%, 60% narrated. Those point estimates look like a trend and
+are not one — every pairwise Fisher exact comparison among the four levels is non-significant (`p` from 0.17 to 1.00):
+
+| Comparison       | Narrated     |     p |
+| ---------------- | ------------ | ----: |
+| `max` vs `high`  | 5/10 vs 2/10 | 0.350 |
+| `max` vs `low`   | 5/10 vs 3/10 | 0.650 |
+| `max` vs `none`  | 5/10 vs 6/10 | 1.000 |
+| `high` vs `low`  | 2/10 vs 3/10 | 1.000 |
+| `high` vs `none` | 2/10 vs 6/10 | 0.170 |
+| `low` vs `none`  | 3/10 vs 6/10 | 0.370 |
+
+The **model** difference, by contrast, is solid on the same data: DeepSeek pooled across effort narrated 16 of 40 (40%)
+against `gpt-reserve` 0 of 20 (0%), Fisher exact `p = 0.0005`; restricted to the directly matched `max`-vs-`max` cells,
+5/10 against 0/10, `p = 0.033`.
+
+Reason for recording the non-result: the four DeepSeek point estimates could easily be read as "lower effort helps" or
+"higher effort hurts", and neither is supported. n = 10 per cell does not resolve differences of this size, so a future
+reader should not tune reasoning effort on the strength of those numbers.
+
+Reversal risk: selecting or advertising a reasoning tier as a narration mitigation, or dismissing the model difference
+because a single-effort cell happened to look clean, would each act on noise rather than on the measured effect.
+
+Residual limits: rates are point estimates from 10 runs per cell, so the band boundaries are approximate rather than
+measured thresholds, and the effort sweep is underpowered to exclude a small effort effect.
 
 ## Per-upstream truncation coverage for the terminal mapping - 2026-09-21
 
