@@ -34,6 +34,38 @@ Reversal risk: emitting `max_tokens`, inventing a context-specific reason, or re
 either a clean completion or an incomplete response would each restate a fact the specification does not support, and
 would silently change what clients and operators read from a terminal event.
 
+## Codex honors response.incomplete, measured end to end - 2026-09-21
+
+The generalized mapping emits `response.incomplete` with `incomplete_details.reason` for a truncated generation. Whether
+that is a safe change depends on how the actual Codex client reacts, which no amount of reading the gateway can settle.
+It was therefore measured directly with a controlled A/B: two byte-identical Responses SSE streams that differ only in
+their terminal event, served to `codex-cli 0.155.1` as a configured Responses provider.
+
+| Terminal served                                   | Codex output                                                                                                             | Exit | `task_complete.error` |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ---- | --------------------- |
+| `response.incomplete`, reason `max_output_tokens` | the streamed text, then `stream disconnected before completion: Incomplete response returned, reason: max_output_tokens` | 1    | that message          |
+| `response.completed`, same text                   | the streamed text, no error                                                                                              | 0    | none                  |
+
+Each run made exactly one HTTP request to the scripted upstream, so an incomplete terminal causes neither a silent
+acceptance nor a retry loop.
+
+Two consequences are recorded here so they are not re-derived:
+
+- **The mapping is safe to keep.** Codex parses the incomplete terminal natively, surfaces the reason string verbatim,
+  and fails the turn. A truncated generation therefore moves from "accepted as success with exit 0" to "reported with
+  the reason and exit 1", which is the intended trade rather than a regression.
+- **The mapping is already opt-in per provider, so no filter is needed.** `deepSeekFinishDisposition` is the only
+  constructor of `response.incomplete` in the repository, and it is consumed only by the DeepSeek Responses translator.
+  Surplus, OpenLux, and the Codex upstream route through their own paths and cannot inherit it. Adding a provider
+  inherits nothing; a provider that should use it needs its own deliberate mapping.
+
+Reversal risk: removing the mapping restores the silent truncation, and reading a non-completed terminal as a transport
+failure would discard a partial answer the client can still use. Do not add a per-provider allow/deny list for this
+mapping on the assumption that it leaks across routes; it does not.
+
+Residual gap: Surplus and OpenLux were not probed, so their truncation-stop behaviour remains unverified. Codex's
+handling of the terminal is proven; which upstreams ever emit it is not.
+
 ## DeepSeek adapter deliberately diverges from the vendor client - 2026-09-21
 
 Four DeepSeek interpretations were compared against the provider's own first-party client
