@@ -9305,6 +9305,29 @@ const recordDeepSeekResponseHealth = (status: number, providerRequestId: string 
   void recordDeepSeekProviderHealth("success", status, Date.now, providerRequestId);
 };
 
+/**
+ * Records a buffered DeepSeek Responses terminal. The payload carries the
+ * provider's own terminal, so telemetry reports the terminal the client
+ * receives instead of assuming success, and the non-completed classification
+ * matches the streamed path.
+ */
+const recordBufferedDeepSeekResponsesTerminal = (
+  usageContext: UsageContext | undefined,
+  payload: Record<string, unknown>,
+  upstreamStatus: number,
+  providerRequestId: string | null
+): void => {
+  const terminalType = deepSeekTerminalTypeForPayload(payload.status);
+  recordStreamTerminalType(usageContext, terminalType);
+  if (terminalType === "response.completed") {
+    recordStreamTerminal(usageContext);
+  } else {
+    recordDeepSeekFailureKind(usageContext, terminalType === "response.incomplete" ? "incomplete_response" : "upstream_error");
+    void recordDeepSeekProviderHealth("upstream_error", upstreamStatus, Date.now, providerRequestId);
+  }
+  recordDeepSeekResponseHealth(upstreamStatus, providerRequestId);
+};
+
 /** The gateway terminal a buffered DeepSeek Responses payload's status implies. */
 const deepSeekTerminalTypeForPayload = (status: unknown): ResponseStreamTerminalType => {
   if (status === "incomplete") return "response.incomplete";
@@ -10180,17 +10203,7 @@ const handleDeepSeekResponses = async (req: Request, rawRecord: Record<string, u
   const payload = toDeepSeekResponsesPayload(completion.value, modelRaw, responseId, echo, toolNames, customToolNames);
   const usage = extractChatUsageTokens(completion.value.usage);
   await recordCompletionUsage(usageContext, usage);
-  // The buffered payload carries the provider's own terminal too, so telemetry
-  // records the same terminal the client receives instead of assuming success.
-  const bufferedTerminalType = deepSeekTerminalTypeForPayload(payload.status);
-  recordStreamTerminalType(usageContext, bufferedTerminalType);
-  if (bufferedTerminalType === "response.completed") {
-    recordStreamTerminal(usageContext);
-  } else {
-    recordDeepSeekFailureKind(usageContext, bufferedTerminalType === "response.incomplete" ? "incomplete_response" : "upstream_error");
-    void recordDeepSeekProviderHealth("upstream_error", upstream.status, Date.now, providerRequestId);
-  }
-  recordDeepSeekResponseHealth(upstream.status, providerRequestId);
+  recordBufferedDeepSeekResponsesTerminal(usageContext, payload, upstream.status, providerRequestId);
   return json(200, payload, deepseekResponseHeaders(providerRequestId));
 };
 
@@ -10247,6 +10260,25 @@ const streamDeepSeekResponses = (
   });
   // The controller closes in a `finally`: a throw while emitting the terminal
   // events must still end the client-visible stream instead of hanging it.
+  /**
+   * Emits the fail-closed terminal for a completion the provider reported as
+   * successful but that carries nothing a client can act on. Returns true when
+   * it handled the terminal.
+   */
+  const emitEmptyCompletionFailure = (controller: ReadableStreamDefaultController<Uint8Array>): boolean => {
+    if (translator.terminalKind() !== "completed" || isAnswerBearingCompletion(translator.answerBearingOutput())) return false;
+    if (usageContext?.responseTelemetry) {
+      usageContext.responseTelemetry.failureKind = "empty_upstream_completion";
+      usageContext.responseTelemetry.semanticOutputObserved = false;
+    }
+    recordTerminalUsage(usageContext, state.usage, false);
+    settleTerminal("response.failed");
+    recordStreamTerminal(usageContext);
+    emit(controller, [...translator.open(), emptyCompletionFailure()]);
+    recordDeepSeekResponseHealth(upstream.status, providerRequestId);
+    return true;
+  };
+
   const finishStream = async (controller: ReadableStreamDefaultController<Uint8Array>): Promise<void> => {
     if (state.settled) return;
     try {
@@ -10254,19 +10286,8 @@ const streamDeepSeekResponses = (
       // vocabulary), and the provider-agnostic completion-validity predicate
       // (Goal A's G3) decides whether a would-be completion carries anything a
       // client can act on. An explicit non-completed signal wins over validity.
+      if (emitEmptyCompletionFailure(controller)) return;
       const terminalKind = translator.terminalKind();
-      if (terminalKind === "completed" && !isAnswerBearingCompletion(translator.answerBearingOutput())) {
-        if (usageContext?.responseTelemetry) {
-          usageContext.responseTelemetry.failureKind = "empty_upstream_completion";
-          usageContext.responseTelemetry.semanticOutputObserved = false;
-        }
-        recordTerminalUsage(usageContext, state.usage, false);
-        settleTerminal("response.failed");
-        recordStreamTerminal(usageContext);
-        emit(controller, [...translator.open(), emptyCompletionFailure()]);
-        recordDeepSeekResponseHealth(upstream.status, providerRequestId);
-        return;
-      }
       emit(controller, translator.finish());
       if (terminalKind === "completed") {
         await recordCompletionUsage(usageContext, state.usage);
@@ -10277,10 +10298,11 @@ const streamDeepSeekResponses = (
         recordTerminalUsage(usageContext, state.usage, false);
         if (terminalKind === "incomplete") {
           recordDeepSeekFailureKind(usageContext, "incomplete_response");
-        } else if (terminalKind === "failed") {
+        } else {
+          // The only remaining non-completed kind is "failed".
           recordDeepSeekFailureKind(usageContext, deepSeekFinishReasonFailureKind(translator.upstreamFinishReason()));
+          void recordDeepSeekProviderHealth("upstream_error", upstream.status, Date.now, providerRequestId);
         }
-        if (terminalKind === "failed") void recordDeepSeekProviderHealth("upstream_error", upstream.status, Date.now, providerRequestId);
         settleTerminal(terminalKind === "incomplete" ? "response.incomplete" : "response.failed");
       }
       recordStreamTerminal(usageContext);
