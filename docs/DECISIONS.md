@@ -6,6 +6,34 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Terminal truthfulness questions are settled - 2026-09-21
+
+The generalized terminal-truthfulness program asked two specification questions before any stop-reason mapping could be
+written. Both are answered from primary OpenAI specification sources, and the merged mapping depends on the answers, so
+they are recorded here rather than left open in the handoff.
+
+**Q1 - the incomplete reason vocabulary.** The current Responses schema defines `incomplete_details.reason` as exactly
+`max_output_tokens`, `max_messages`, `content_filter`, `steered`, and the response `status` enum as
+`completed | failed | in_progress | cancelled | queued | incomplete`. The reasoning guide states that reaching either
+the context-window limit or `max_output_tokens` yields `status: "incomplete"` with
+`incomplete_details.reason: "max_output_tokens"`. Therefore output-budget exhaustion and context-window exhaustion share
+`max_output_tokens`; no separate context reason is invented, and the mis-spelled `max_tokens` found in one
+streaming-reference example is never emitted.
+
+**Q2 - reasoning-only output with stop reason `stop`.** This is not a specified incompletion, so no incomplete reason
+may be fabricated for it. Under this gateway's own declared route contract, a stream that accumulated no tool call, no
+non-empty assistant text and no refusal is an unusable completion, and it is classified with the existing
+`empty_upstream_completion` failure kind rather than as `response.incomplete`. An explicit upstream truncation or
+filtering signal is an incompletion and wins over that classification.
+
+Reason: without a recorded answer, the next provider adapter would re-derive the rule, and the two plausible readings
+differ in exactly the case (reasoning-only `stop`) that the gateway now classifies. The reason spelling is a wire
+contract, so `max_output_tokens` is not a stylistic choice.
+
+Reversal risk: emitting `max_tokens`, inventing a context-specific reason, or reporting a reasoning-only `stop` as
+either a clean completion or an incomplete response would each restate a fact the specification does not support, and
+would silently change what clients and operators read from a terminal event.
+
 ## DeepSeek adapter deliberately diverges from the vendor client - 2026-09-21
 
 Four DeepSeek interpretations were compared against the provider's own first-party client
