@@ -349,8 +349,12 @@ export const isGatewayFailoverWarningItem = (value: unknown): boolean => {
   const content = value.content[0];
   if (!isRecord(content) || Array.isArray(content) || content.type !== "output_text") return false;
   const text = getString(content.text);
-  return !!text && text.startsWith(FAILOVER_WARNING_PREFIX) && text.endsWith(FAILOVER_WARNING_SUFFIX) &&
-    text.length > FAILOVER_WARNING_PREFIX.length + FAILOVER_WARNING_SUFFIX.length;
+  return (
+    !!text &&
+    text.startsWith(FAILOVER_WARNING_PREFIX) &&
+    text.endsWith(FAILOVER_WARNING_SUFFIX) &&
+    text.length > FAILOVER_WARNING_PREFIX.length + FAILOVER_WARNING_SUFFIX.length
+  );
 };
 
 export const buildFailoverWarningEvents = (

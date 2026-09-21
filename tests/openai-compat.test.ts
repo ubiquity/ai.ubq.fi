@@ -1692,7 +1692,7 @@ Deno.test("openai: the codex_503 debug scenario forces a Codex outage response w
     assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
     const payload = (await response.json()) as { error?: { code?: string; message?: string } };
     assert.equal(payload.error?.code, "debug_forced_codex");
-    assert.match(payload.error?.message ?? "", /forced Codex 503/);
+    assert.match(payload.error.message ?? "", /forced Codex 503/);
   } finally {
     if (previousDebugRouting === undefined) kvStore.delete(debugKey);
     else kvStore.set(debugKey, previousDebugRouting);
@@ -1803,7 +1803,7 @@ Deno.test("openai: the admin debug routing endpoint accepts the codex_503 scenar
     assert.equal(response.status, 200);
     const payload = (await response.json()) as { routing?: { scenario?: string; expires_at_ms?: number | null } };
     assert.equal(payload.routing?.scenario, "codex_503");
-    assert.ok(typeof payload.routing?.expires_at_ms === "number", "a non-normal scenario must carry an expiry");
+    assert.ok(typeof payload.routing.expires_at_ms === "number", "a non-normal scenario must carry an expiry");
   } finally {
     kvStore.delete(debugKey);
     resetDebugRoutingCacheForTest();
