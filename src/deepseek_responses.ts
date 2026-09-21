@@ -608,6 +608,21 @@ export const toDeepSeekResponsesPayload = (
 
 type StreamToolCall = { id: string; callId: string; name: string; arguments: string; announced: boolean; outputIndex: number };
 
+/**
+ * The accumulated translated output facts a terminal-validity decision needs.
+ *
+ * Only the caller decides whether a completion is usable; this is the view it
+ * decides on. Reasoning is deliberately absent: it is streaming progress, not
+ * an answer a client can act on, so a stream whose only output is reasoning
+ * still reports empty text and no tool calls here.
+ */
+export type DeepSeekResponsesAnswerBearingOutput = Readonly<{
+  /** Assistant text accumulated from `delta.content`. */
+  text: string;
+  /** How many tool calls accumulated with a name the client can execute. */
+  toolCallCount: number;
+}>;
+
 type StreamState = {
   started: boolean;
   completed: boolean;
@@ -620,6 +635,8 @@ type StreamState = {
   nextOutputIndex: number;
   output: Record<string, unknown>[];
   usage: Record<string, unknown> | null;
+  /** Last `finish_reason` string the upstream sent, or null while absent. */
+  finishReason: string | null;
 };
 
 const newStreamState = (): StreamState => ({
@@ -634,7 +651,26 @@ const newStreamState = (): StreamState => ({
   nextOutputIndex: 0,
   output: [],
   usage: null,
+  finishReason: null,
 });
+
+/**
+ * The gateway terminal a Chat `finish_reason` maps onto, decided once here.
+ *
+ * `stop`, `tool_calls` and an absent reason are normal completions. `length`
+ * means the provider stopped at an output or context boundary, which the
+ * Responses schema reports as `incomplete` with the single reason
+ * `max_output_tokens` (the schema spells it that way; it is not `max_tokens`).
+ * Any other value must not be laundered into a normal stop: it becomes a
+ * failed terminal, and the route records the raw value in telemetry.
+ */
+export type DeepSeekResponsesTerminalKind = "completed" | "incomplete" | "failed";
+
+export const deepSeekResponsesTerminalKind = (finishReason: string | null): DeepSeekResponsesTerminalKind => {
+  if (finishReason === null || finishReason === "stop" || finishReason === "tool_calls") return "completed";
+  if (finishReason === "length") return "incomplete";
+  return "failed";
+};
 
 /** Merges one tool-call delta into the accumulated call for its index. */
 const mergeToolCallDelta = (state: StreamState, responseId: string, raw: Record<string, unknown>, position: number): StreamToolCall => {
@@ -806,6 +842,19 @@ export const createDeepSeekResponsesStreamTranslator = (
   return {
     /** Emits `response.created` / `response.in_progress` before any content. */
     open: startEvents,
+    /**
+     * The accumulated output a client could act on. A tool call only counts
+     * once it has a name, because that is the condition under which
+     * `closeToolCalls` emits an item for it.
+     */
+    answerBearingOutput: (): DeepSeekResponsesAnswerBearingOutput => ({
+      text: state.text,
+      toolCallCount: [...state.toolCalls.values()].filter((call) => call.name).length,
+    }),
+    /** The terminal the recorded upstream reason maps onto. */
+    terminalKind: (): DeepSeekResponsesTerminalKind => deepSeekResponsesTerminalKind(state.finishReason),
+    /** The raw recorded reason, for telemetry when the terminal is a failure. */
+    upstreamFinishReason: (): string | null => state.finishReason,
     /** Translates one normalized Chat chunk into zero or more Responses events. */
     push: (chunk: Record<string, unknown>): Record<string, unknown>[] => {
       const events = startEvents();
@@ -813,21 +862,47 @@ export const createDeepSeekResponsesStreamTranslator = (
       if (usage) state.usage = usage;
       const choices = Array.isArray(chunk.choices) ? chunk.choices : [];
       for (const choice of choices) {
-        if (!isRecord(choice) || Array.isArray(choice) || !isRecord(choice.delta) || Array.isArray(choice.delta)) continue;
+        if (!isRecord(choice) || Array.isArray(choice)) continue;
+        // The terminal reason can arrive on a choice that carries no delta, and
+        // a later string replaces an earlier one: the last reason before the
+        // stream's end sentinel is the one the terminal decision must use.
+        if (typeof choice.finish_reason === "string") state.finishReason = choice.finish_reason;
+        if (!isRecord(choice.delta) || Array.isArray(choice.delta)) continue;
         events.push(...applyTextDelta(choice.delta), ...applyToolCallDeltas(choice.delta));
       }
       return events;
     },
-    /** Emits the remaining item events plus the terminal `response.completed`. */
+    /** Emits the remaining item events plus the terminal event. */
     finish: (): Record<string, unknown>[] => {
       if (state.completed) return [];
       state.completed = true;
       const events = [...startEvents(), ...closeMessage(), ...closeToolCalls()];
       if (state.reasoning) state.output.unshift(reasoningItem(`${responseId}_rs_0`, state.reasoning));
-      const completed = responsesEnvelope(responseId, requestedModel, createdAtSeconds, "completed", echo);
-      completed.output = state.output;
-      completed.usage = state.usage;
-      events.push({ type: "response.completed", response: completed });
+      const kind = deepSeekResponsesTerminalKind(state.finishReason);
+      if (kind === "failed") {
+        events.push({
+          type: "response.failed",
+          response: {
+            id: responseId,
+            object: "response",
+            status: "failed",
+            error: {
+              code: "deepseek_upstream_finish_reason",
+              message: "Upstream stopped without a recognized finish reason.",
+            },
+          },
+        });
+        return events;
+      }
+      const response = responsesEnvelope(responseId, requestedModel, createdAtSeconds, kind === "incomplete" ? "incomplete" : "completed", echo);
+      response.output = state.output;
+      response.usage = state.usage;
+      if (kind === "incomplete") {
+        response.incomplete_details = { reason: "max_output_tokens" };
+        events.push({ type: "response.incomplete", response });
+        return events;
+      }
+      events.push({ type: "response.completed", response });
       return events;
     },
   };

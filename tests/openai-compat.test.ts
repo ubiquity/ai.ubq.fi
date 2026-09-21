@@ -147,6 +147,7 @@ const {
   handlePublicModelCatalog,
   handleModels,
   handleResponses,
+  isAnswerBearingCompletion,
   setCodexBankedResetOptionsForTest,
 } = await import("../src/openai.ts");
 const { fetchMeteredModels, METERED_MODELS_CACHE_TTL_MS, resetMeteredModelsCacheForTest, setMeteredModelsFetchForTest } = await import("../src/metered.ts");
@@ -255,6 +256,31 @@ const responsesRequest = (body: Record<string, unknown> = {}, signal?: AbortSign
 
 const parseResponsesSseValues = (value: string): Record<string, unknown>[] =>
   [...value.matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]) as Record<string, unknown>);
+
+/** A `POST /v1/responses` request for the DeepSeek adapter fixtures. */
+const deepSeekResponsesRequest = (body: Record<string, unknown>): Request =>
+  new Request("https://ai.ubq.fi/v1/responses", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+/** Parses the named `event:` frames of a Responses SSE body back into values. */
+const parseResponsesSseEvents = (text: string): Record<string, unknown>[] =>
+  text
+    .split("\n\n")
+    .filter((frame) => frame.startsWith("event: "))
+    .map((frame) => JSON.parse(frame.split("\ndata: ")[1]) as Record<string, unknown>);
+
+/** One normalized DeepSeek Chat SSE chunk frame, as the adapter would receive it. */
+const deepSeekStreamChunk = (delta: Record<string, unknown>, extra: Record<string, unknown> = {}, id = "deepseek-responses-stream"): string =>
+  `data: ${JSON.stringify({
+    id,
+    object: "chat.completion.chunk",
+    created: 1_780_000_101,
+    model: DEEPSEEK_FLASH_MODEL,
+    choices: [{ index: 0, delta, finish_reason: null, ...extra }],
+  })}\n\n`;
 
 /**
  * Chat Completions request for a model-addressed special provider. The
@@ -14458,12 +14484,7 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
   const envKey = "DEEPSEEK_API_KEY";
   const fakeApiKey = "deepseek-test-key";
   const originalApiKey = Deno.env.get(envKey);
-  const responsesBody = (body: Record<string, unknown>): Request =>
-    new Request("https://ai.ubq.fi/v1/responses", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+  const responsesBody = deepSeekResponsesRequest;
   const chatCompletion = (message: Record<string, unknown>): Record<string, unknown> => ({
     id: "deepseek-responses-1",
     object: "chat.completion",
@@ -14472,11 +14493,7 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
     choices: [{ index: 0, message, finish_reason: "stop" }],
     usage: { prompt_tokens: 9, completion_tokens: 5, total_tokens: 14, prompt_cache_hit_tokens: 0, completion_tokens_details: { reasoning_tokens: 3 } },
   });
-  const responsesEvents = (text: string): Record<string, unknown>[] =>
-    text
-      .split("\n\n")
-      .filter((frame) => frame.startsWith("event: "))
-      .map((frame) => JSON.parse(frame.split("\ndata: ")[1]) as Record<string, unknown>);
+  const responsesEvents = parseResponsesSseEvents;
 
   Deno.env.set(envKey, fakeApiKey);
   try {
@@ -14562,14 +14579,7 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
     });
 
     await t.step("streams the Responses event sequence from Chat chunks", async () => {
-      const chunk = (delta: Record<string, unknown>, extra: Record<string, unknown> = {}): string =>
-        `data: ${JSON.stringify({
-          id: "deepseek-responses-stream",
-          object: "chat.completion.chunk",
-          created: 1_780_000_101,
-          model: DEEPSEEK_FLASH_MODEL,
-          choices: [{ index: 0, delta, finish_reason: null, ...extra }],
-        })}\n\n`;
+      const chunk = deepSeekStreamChunk;
       const response = await withFetchMock(
         () =>
           sseResponse([
@@ -14653,6 +14663,414 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
   } finally {
     if (originalApiKey === undefined) Deno.env.delete(envKey);
     else Deno.env.set(envKey, originalApiKey);
+  }
+});
+
+Deno.test("openai: DeepSeek routes report the effective output allowance without inventing one", async (t) => {
+  const envKey = "DEEPSEEK_API_KEY";
+  const originalApiKey = Deno.env.get(envKey);
+  Deno.env.set(envKey, "deepseek-test-key");
+  const streamChunk = deepSeekStreamChunk;
+  const bufferedCompletion = (): Record<string, unknown> => ({
+    id: "deepseek-allowance-buffered",
+    object: "chat.completion",
+    created: 1_780_000_201,
+    model: DEEPSEEK_FLASH_MODEL,
+    choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+    usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
+  });
+  const upstreamBodies: Record<string, unknown>[] = [];
+  try {
+    await t.step("reports the client's Responses cap in the terminal telemetry and sends exactly that cap", async () => {
+      const logs: unknown[][] = [];
+      const originalInfo = console.info;
+      console.info = (...args: unknown[]) => logs.push(args);
+      try {
+        upstreamBodies.length = 0;
+        const response = await withFetchMock(
+          (_url, bodyText) => {
+            upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
+            return sseResponse([streamChunk({ role: "assistant", content: "ok" }, { finish_reason: "stop" }), "data: [DONE]\n\n"]);
+          },
+          () => handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: true, max_output_tokens: 512 }))
+        );
+        const logged = await withTerminalRequestLog(response, {
+          route: "responses",
+          telemetryResponse: response,
+          startedAtMonotonicMs: performance.now(),
+          requestId: "deepseek-allowance-cap",
+        });
+        await logged.text();
+        assert.equal(upstreamBodies.length, 1);
+        assert.equal(upstreamBodies[0].max_tokens, 512);
+        assert.equal(getResponseTelemetry(response)?.outputTokenAllowance, 512);
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+          if (logs.some((entry) => entry[0] === "[ai.ubq.fi] request_terminal")) break;
+          await new Promise<void>((resolve) => setTimeout(resolve, 1));
+        }
+        const terminal = logs
+          .filter((entry) => entry[0] === "[ai.ubq.fi] request_terminal")
+          .map((entry) => JSON.parse(String(entry[1])) as Record<string, unknown>);
+        assert.equal(terminal.length, 1);
+        assert.equal(terminal[0].output_token_allowance, 512);
+      } finally {
+        console.info = originalInfo;
+      }
+    });
+
+    await t.step("reports the allowance on the buffered Responses branch too", async () => {
+      upstreamBodies.length = 0;
+      const response = await withFetchMock(
+        (_url, bodyText) => {
+          upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
+          return Response.json(bufferedCompletion());
+        },
+        () => handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: false, max_output_tokens: 256 }))
+      );
+      await response.json();
+      assert.equal(upstreamBodies[0].max_tokens, 256);
+      assert.equal(getResponseTelemetry(response)?.outputTokenAllowance, 256);
+    });
+
+    await t.step("keeps an omitted cap unknown at a tier whose provider default was never measured", async () => {
+      upstreamBodies.length = 0;
+      const response = await withFetchMock(
+        (_url, bodyText) => {
+          upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
+          return sseResponse([streamChunk({ role: "assistant", content: "ok" }, { finish_reason: "stop" }), "data: [DONE]\n\n"]);
+        },
+        // No `reasoning` at all is the provider's `high` default, and omitting
+        // the cap must not be reported as a gateway-invented allowance.
+        () => handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: true }))
+      );
+      await response.text();
+      assert.equal(upstreamBodies.length, 1);
+      assert.equal("max_tokens" in upstreamBodies[0], false, "the gateway must not invent a cap on the wire");
+      assert.equal(getResponseTelemetry(response)?.reasoning, "high");
+      assert.equal(getResponseTelemetry(response)?.outputTokenAllowance, null);
+    });
+
+    await t.step("reports the provider's measured default for the tier that has one", async () => {
+      upstreamBodies.length = 0;
+      const response = await withFetchMock(
+        (_url, bodyText) => {
+          upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
+          return sseResponse([streamChunk({ role: "assistant", content: "ok" }, { finish_reason: "stop" }), "data: [DONE]\n\n"]);
+        },
+        () => handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: true, reasoning: { effort: "none" } }))
+      );
+      await response.text();
+      assert.equal(upstreamBodies[0].reasoning_effort, "none");
+      assert.equal("max_tokens" in upstreamBodies[0], false);
+      // 8,192 is the measured `none`-tier default (handoff 2026-09-21, Delta 3).
+      assert.equal(getResponseTelemetry(response)?.outputTokenAllowance, 8192);
+    });
+
+    await t.step("reports the Chat route's cap and keeps an omitted one unknown", async () => {
+      const withCap = await withFetchMock(
+        () => Response.json(bufferedCompletion()),
+        () =>
+          handleChatCompletions(
+            specialProviderChatRequest({ model: DEEPSEEK_FLASH_MODEL, messages: [{ role: "user", content: "hi" }], max_completion_tokens: 321 })
+          )
+      );
+      await withCap.json();
+      assert.equal(getResponseTelemetry(withCap)?.outputTokenAllowance, 321);
+
+      const withoutCap = await withFetchMock(
+        () => Response.json(bufferedCompletion()),
+        () => handleChatCompletions(specialProviderChatRequest({ model: DEEPSEEK_FLASH_MODEL, messages: [{ role: "user", content: "hi" }] }))
+      );
+      await withoutCap.json();
+      assert.equal(getResponseTelemetry(withoutCap)?.reasoning, "high");
+      assert.equal(getResponseTelemetry(withoutCap)?.outputTokenAllowance, null);
+    });
+  } finally {
+    if (originalApiKey === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, originalApiKey);
+  }
+});
+
+Deno.test("openai: a reasoning-only DeepSeek Responses stream fails closed instead of completing", async (t) => {
+  const envKey = "DEEPSEEK_API_KEY";
+  const originalApiKey = Deno.env.get(envKey);
+  Deno.env.set(envKey, "deepseek-test-key");
+  const responsesBody = deepSeekResponsesRequest;
+  const chunk = deepSeekStreamChunk;
+  const responsesEvents = parseResponsesSseEvents;
+  const request = (): Promise<Response> => handleResponses(responsesBody({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: true }));
+  try {
+    await t.step("a stream whose only output is reasoning is empty_upstream_completion", async () => {
+      const response = await withFetchMock(
+        () =>
+          sseResponse([
+            chunk({ role: "assistant", reasoning_content: "The whole budget went into thinking." }),
+            chunk({}, { finish_reason: "stop" }),
+            "data: [DONE]\n\n",
+          ]),
+        request
+      );
+      assert.equal(response.status, 200);
+      const events = responsesEvents(await response.text());
+      assert.deepEqual(
+        events.map((event) => event.type),
+        ["response.created", "response.in_progress", "response.failed"]
+      );
+      const failed = events.at(-1) as { response: Record<string, unknown> };
+      assert.equal(failed.response.status, "failed");
+      assert.deepEqual(failed.response.error, {
+        code: "empty_upstream_completion",
+        message: "Upstream response completed with no translated semantic output.",
+      });
+      assert.deepEqual(failed.response.output ?? [], []);
+      const telemetry = getResponseTelemetry(response);
+      assert.ok(telemetry);
+      assert.equal(telemetry.streamTerminalType, "response.failed");
+      assert.equal(telemetry.failureKind, "empty_upstream_completion");
+      assert.equal(telemetry.completed, false);
+      assert.equal(telemetry.semanticOutputObserved, false);
+    });
+
+    await t.step("a normal text completion is untouched", async () => {
+      const response = await withFetchMock(
+        () => sseResponse([chunk({ role: "assistant", content: "pong" }, { finish_reason: "stop" }), "data: [DONE]\n\n"]),
+        request
+      );
+      const events = responsesEvents(await response.text());
+      const completed = events.at(-1) as { type: string; response: Record<string, unknown> };
+      assert.equal(completed.type, "response.completed");
+      assert.equal(completed.response.status, "completed");
+      assert.deepEqual(
+        (completed.response.output as Record<string, unknown>[]).map((item) => item.type),
+        ["message"]
+      );
+      assert.equal(getResponseTelemetry(response)?.streamTerminalType, "response.completed");
+      assert.equal(getResponseTelemetry(response)?.completed, true);
+      assert.equal(getResponseTelemetry(response)?.failureKind, null);
+    });
+
+    await t.step("a normal tool-call completion is untouched", async () => {
+      const response = await withFetchMock(
+        () =>
+          sseResponse([
+            chunk(
+              {
+                role: "assistant",
+                tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "clock_now", arguments: "{}" } }],
+              },
+              { finish_reason: "tool_calls" }
+            ),
+            "data: [DONE]\n\n",
+          ]),
+        request
+      );
+      const events = responsesEvents(await response.text());
+      const completed = events.at(-1) as { type: string; response: Record<string, unknown> };
+      assert.equal(completed.type, "response.completed");
+      assert.deepEqual(
+        (completed.response.output as Record<string, unknown>[]).map((item) => item.type),
+        ["function_call"]
+      );
+      assert.equal(getResponseTelemetry(response)?.streamTerminalType, "response.completed");
+      assert.equal(getResponseTelemetry(response)?.completed, true);
+    });
+  } finally {
+    if (originalApiKey === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, originalApiKey);
+  }
+});
+
+Deno.test("openai: a truncated DeepSeek Responses stream reports response.incomplete", async (t) => {
+  const envKey = "DEEPSEEK_API_KEY";
+  const originalApiKey = Deno.env.get(envKey);
+  Deno.env.set(envKey, "deepseek-test-key");
+  const responsesBody = deepSeekResponsesRequest;
+  const chunk = deepSeekStreamChunk;
+  const responsesEvents = parseResponsesSseEvents;
+  const request = (): Promise<Response> => handleResponses(responsesBody({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: true, max_output_tokens: 16 }));
+  try {
+    await t.step("length becomes response.incomplete with max_output_tokens", async () => {
+      const response = await withFetchMock(
+        () =>
+          sseResponse([chunk({ role: "assistant", content: "the visible start of an answer" }), chunk({}, { finish_reason: "length" }), "data: [DONE]\n\n"]),
+        request
+      );
+      const events = responsesEvents(await response.text());
+      const terminal = events.at(-1) as { type: string; response: Record<string, unknown> };
+      assert.equal(terminal.type, "response.incomplete");
+      assert.equal(terminal.response.status, "incomplete");
+      assert.deepEqual(terminal.response.incomplete_details, { reason: "max_output_tokens" });
+      assert.equal(terminal.response.error, null);
+      assert.deepEqual(
+        (terminal.response.output as Record<string, unknown>[]).map((item) => item.type),
+        ["message"]
+      );
+      const telemetry = getResponseTelemetry(response);
+      assert.ok(telemetry);
+      assert.equal(telemetry.streamTerminalType, "response.incomplete");
+      assert.equal(telemetry.completed, false);
+      assert.equal(telemetry.outputTokenAllowance, 16);
+      assert.equal(telemetry.failureKind, null);
+    });
+
+    await t.step("an empty length completion is incomplete, not a fail-closed empty completion", async () => {
+      // G1 wins over G3: the upstream said why it stopped.
+      const response = await withFetchMock(
+        () =>
+          sseResponse([
+            chunk({ role: "assistant", reasoning_content: "thinking used the whole budget" }),
+            chunk({}, { finish_reason: "length" }),
+            "data: [DONE]\n\n",
+          ]),
+        request
+      );
+      const events = responsesEvents(await response.text());
+      const terminal = events.at(-1) as { type: string; response: Record<string, unknown> };
+      assert.equal(terminal.type, "response.incomplete");
+      assert.deepEqual(terminal.response.incomplete_details, { reason: "max_output_tokens" });
+      const telemetry = getResponseTelemetry(response);
+      assert.ok(telemetry);
+      assert.equal(telemetry.streamTerminalType, "response.incomplete");
+      assert.equal(telemetry.failureKind, null);
+      assert.equal(telemetry.completed, false);
+    });
+
+    await t.step("stop and tool_calls still complete", async () => {
+      const stopped = await withFetchMock(
+        () => sseResponse([chunk({ role: "assistant", content: "pong" }, { finish_reason: "stop" }), "data: [DONE]\n\n"]),
+        request
+      );
+      const stoppedEvents = responsesEvents(await stopped.text());
+      assert.equal((stoppedEvents.at(-1) as { type: string }).type, "response.completed");
+      assert.equal(getResponseTelemetry(stopped)?.completed, true);
+
+      const toolCalls = await withFetchMock(
+        () =>
+          sseResponse([
+            chunk(
+              {
+                role: "assistant",
+                tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "clock_now", arguments: "{}" } }],
+              },
+              { finish_reason: "tool_calls" }
+            ),
+            "data: [DONE]\n\n",
+          ]),
+        request
+      );
+      const toolEvents = responsesEvents(await toolCalls.text());
+      assert.equal((toolEvents.at(-1) as { type: string }).type, "response.completed");
+      assert.equal(getResponseTelemetry(toolCalls)?.completed, true);
+    });
+
+    await t.step("an unrecognized reason fails visibly instead of completing", async () => {
+      const response = await withFetchMock(
+        () => sseResponse([chunk({ role: "assistant", content: "partial" }, { finish_reason: "insufficient_system_resource" }), "data: [DONE]\n\n"]),
+        request
+      );
+      const events = responsesEvents(await response.text());
+      assert.equal((events.at(-1) as { type: string }).type, "response.failed");
+      const telemetry = getResponseTelemetry(response);
+      assert.ok(telemetry);
+      assert.equal(telemetry.streamTerminalType, "response.failed");
+      assert.equal(telemetry.completed, false);
+      assert.equal(telemetry.failureKind, "deepseek_finish_reason:insufficient_system_resource");
+    });
+  } finally {
+    if (originalApiKey === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, originalApiKey);
+  }
+});
+
+Deno.test("openai: one shared completion-validity rule governs the DeepSeek and Cerebras routes", async (t) => {
+  // The rule itself. A reasoning-only completion reaches the predicate with
+  // empty text and no tool calls: the provider's reasoning field (`reasoning`
+  // on Cerebras, `reasoning_content` on DeepSeek) is not part of the view.
+  assert.equal(isAnswerBearingCompletion({ text: "", toolCallCount: 0 }), false);
+  assert.equal(isAnswerBearingCompletion({ text: "", refusal: "", toolCallCount: 0 }), false);
+  assert.equal(isAnswerBearingCompletion({ text: "pong", toolCallCount: 0 }), true);
+  assert.equal(isAnswerBearingCompletion({ text: "", refusal: "I cannot comply.", toolCallCount: 0 }), true);
+  assert.equal(isAnswerBearingCompletion({ text: "", toolCallCount: 1 }), true);
+
+  const originalDeepSeekKey = Deno.env.get("DEEPSEEK_API_KEY");
+  const originalCerebrasKey = Deno.env.get("CEREBRAS_API_KEY");
+  Deno.env.set("DEEPSEEK_API_KEY", "deepseek-test-key");
+  Deno.env.set("CEREBRAS_API_KEY", "cerebras-test-key");
+  const chatCompletion = (model: string, message: Record<string, unknown>): Record<string, unknown> => ({
+    id: "shared-validity-rule",
+    object: "chat.completion",
+    created: 1_780_000_500,
+    model,
+    choices: [{ index: 0, message, finish_reason: "stop" }],
+    usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
+  });
+  const messages = [{ role: "user", content: "hi" }];
+  try {
+    await t.step("Cerebras: reasoning-only is not answer-bearing and fails closed", async () => {
+      const response = await withFetchMock(
+        // `content` is absent, so the completion carries reasoning only.
+        () => Response.json(chatCompletion("gpt-oss-120b", { role: "assistant", reasoning: "thinking only" })),
+        () => handleChatCompletions(specialProviderChatRequest({ model: "gpt-oss-120b", messages, reasoning_effort: "medium" }))
+      );
+      assert.equal(response.status, 502);
+      assert.equal(((await response.json()) as { error?: { code?: string } }).error?.code, "cerebras_upstream_invalid_response");
+      assert.equal(getResponseTelemetry(response)?.failureKind, "invalid_completion_schema");
+    });
+
+    await t.step("DeepSeek Chat: reasoning-only is not answer-bearing, an answer is", async () => {
+      const reasoningOnly = await withFetchMock(
+        () => Response.json(chatCompletion(DEEPSEEK_FLASH_MODEL, { role: "assistant", reasoning_content: "thinking only" })),
+        () => handleChatCompletions(specialProviderChatRequest({ model: DEEPSEEK_FLASH_MODEL, messages }))
+      );
+      await reasoningOnly.json();
+      assert.equal(reasoningOnly.status, 200);
+      assert.notEqual(getResponseTelemetry(reasoningOnly)?.semanticOutputObserved, true);
+
+      const answered = await withFetchMock(
+        () => Response.json(chatCompletion(DEEPSEEK_FLASH_MODEL, { role: "assistant", content: "pong" })),
+        () => handleChatCompletions(specialProviderChatRequest({ model: DEEPSEEK_FLASH_MODEL, messages }))
+      );
+      await answered.json();
+      assert.equal(getResponseTelemetry(answered)?.semanticOutputObserved, true);
+    });
+
+    await t.step("DeepSeek Responses: reasoning-only fails closed, an answer completes", async () => {
+      const chunk = (delta: Record<string, unknown>, extra: Record<string, unknown> = {}): string =>
+        `data: ${JSON.stringify({
+          id: "shared-validity-stream",
+          object: "chat.completion.chunk",
+          created: 1_780_000_501,
+          model: DEEPSEEK_FLASH_MODEL,
+          choices: [{ index: 0, delta, finish_reason: null, ...extra }],
+        })}\n\n`;
+      const responsesRequest = (): Request =>
+        new Request("https://ai.ubq.fi/v1/responses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: true }),
+        });
+      const reasoningOnly = await withFetchMock(
+        () => sseResponse([chunk({ role: "assistant", reasoning_content: "thinking only" }), chunk({}, { finish_reason: "stop" }), "data: [DONE]\n\n"]),
+        () => handleResponses(responsesRequest())
+      );
+      const reasoningText = await reasoningOnly.text();
+      assert.match(reasoningText, /"type":"response\.failed"/);
+      assert.match(reasoningText, /"code":"empty_upstream_completion"/);
+      assert.equal(getResponseTelemetry(reasoningOnly)?.completed, false);
+
+      const answered = await withFetchMock(
+        () => sseResponse([chunk({ role: "assistant", content: "pong" }, { finish_reason: "stop" }), "data: [DONE]\n\n"]),
+        () => handleResponses(responsesRequest())
+      );
+      const answeredText = await answered.text();
+      assert.match(answeredText, /"type":"response\.completed"/);
+      assert.equal(getResponseTelemetry(answered)?.completed, true);
+    });
+  } finally {
+    if (originalDeepSeekKey === undefined) Deno.env.delete("DEEPSEEK_API_KEY");
+    else Deno.env.set("DEEPSEEK_API_KEY", originalDeepSeekKey);
+    if (originalCerebrasKey === undefined) Deno.env.delete("CEREBRAS_API_KEY");
+    else Deno.env.set("CEREBRAS_API_KEY", originalCerebrasKey);
   }
 });
 

@@ -4,6 +4,7 @@ import {
   createDeepSeekResponsesStreamTranslator,
   encodeResponsesEvent,
   type DeepSeekResponsesEcho,
+  deepSeekResponsesTerminalKind,
   toDeepSeekChatMessages,
   toDeepSeekResponsesChatBody,
   toDeepSeekResponsesPayload,
@@ -567,6 +568,81 @@ Deno.test("deepseek responses: stream translator is idempotent at the terminal",
   const translator = createDeepSeekResponsesStreamTranslator("deepseek-flash", "resp_once", echo, 1_780_000_000);
   assert.deepEqual(eventTypes(translator.finish()), ["response.created", "response.in_progress", "response.completed"]);
   assert.deepEqual(translator.finish(), []);
+});
+
+Deno.test("deepseek responses: maps the upstream stop reason onto the terminal vocabulary", () => {
+  // Only `length` is mapped in this change. The other non-stop values are
+  // deliberately not laundered into a completion and not given an invented
+  // incomplete reason; they fail visibly.
+  assert.equal(deepSeekResponsesTerminalKind(null), "completed");
+  assert.equal(deepSeekResponsesTerminalKind("stop"), "completed");
+  assert.equal(deepSeekResponsesTerminalKind("tool_calls"), "completed");
+  assert.equal(deepSeekResponsesTerminalKind("length"), "incomplete");
+  assert.equal(deepSeekResponsesTerminalKind("content_filter"), "failed");
+  assert.equal(deepSeekResponsesTerminalKind("insufficient_system_resource"), "failed");
+  assert.equal(deepSeekResponsesTerminalKind("aborted"), "failed");
+});
+
+Deno.test("deepseek responses: a length stop becomes response.incomplete with max_output_tokens", () => {
+  // The real terminal chunk carries the reason on a choice with no delta, so
+  // the reason must survive independently of `choice.delta`.
+  const translator = createDeepSeekResponsesStreamTranslator("deepseek-flash", "resp_length", echo, 1_780_000_000);
+  translator.push(chatChunk({ role: "assistant", content: "cut off here" }));
+  translator.push({ ...chatChunk({}), choices: [{ index: 0, finish_reason: "length" }] });
+  const events = translator.finish();
+
+  const terminal = events.at(-1) as { type: string; response: Record<string, unknown> };
+  assert.equal(terminal.type, "response.incomplete");
+  assert.equal(terminal.response.status, "incomplete");
+  assert.equal(terminal.response.error, null);
+  assert.deepEqual(terminal.response.incomplete_details, { reason: "max_output_tokens" });
+  assert.deepEqual(
+    (terminal.response.output as Record<string, unknown>[]).map((item) => item.type),
+    ["message"]
+  );
+  const done = events.find((event) => event.type === "response.output_item.done") as { item: Record<string, unknown> };
+  assert.equal(done.item.status, "completed");
+});
+
+Deno.test("deepseek responses: stop, tool_calls and an absent reason keep response.completed", () => {
+  const terminalFor = (chunks: readonly Record<string, unknown>[]): Record<string, unknown> => {
+    const translator = createDeepSeekResponsesStreamTranslator("deepseek-flash", "resp_completed", echo, 1_780_000_000);
+    for (const chunk of chunks) translator.push(chunk);
+    const terminal = translator.finish().at(-1);
+    assert.ok(terminal);
+    return terminal;
+  };
+
+  const stopped = terminalFor([chatChunk({ role: "assistant", content: "pong" }, { finish_reason: "stop" })]);
+  assert.equal(stopped.type, "response.completed");
+  assert.equal((stopped.response as Record<string, unknown>).status, "completed");
+  assert.equal((stopped.response as Record<string, unknown>).incomplete_details, null);
+
+  const toolCalls = terminalFor([
+    chatChunk(
+      { role: "assistant", tool_calls: [{ index: 0, id: "call_1", type: "function", function: { name: "shell", arguments: "{}" } }] },
+      { finish_reason: "tool_calls" }
+    ),
+  ]);
+  assert.equal(toolCalls.type, "response.completed");
+
+  // A provider that ends its stream without a reason is not treated as a
+  // truncation, and it is not treated as a failure either.
+  const absent = terminalFor([chatChunk({ role: "assistant", content: "pong" })]);
+  assert.equal(absent.type, "response.completed");
+  assert.equal((absent.response as Record<string, unknown>).incomplete_details, null);
+});
+
+Deno.test("deepseek responses: an unrecognized stop reason is not reported as a success", () => {
+  const translator = createDeepSeekResponsesStreamTranslator("deepseek-flash", "resp_unrecognized", echo, 1_780_000_000);
+  translator.push(chatChunk({ role: "assistant", content: "partial" }, { finish_reason: "insufficient_system_resource" }));
+  const terminal = translator.finish().at(-1) as { type: string; response: Record<string, unknown> };
+  assert.equal(terminal.type, "response.failed");
+  assert.equal(terminal.response.status, "failed");
+  assert.deepEqual(terminal.response.error, {
+    code: "deepseek_upstream_finish_reason",
+    message: "Upstream stopped without a recognized finish reason.",
+  });
 });
 
 Deno.test("deepseek responses: encodes named SSE frames", () => {
