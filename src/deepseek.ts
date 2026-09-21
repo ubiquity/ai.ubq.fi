@@ -63,6 +63,114 @@ export const DEEPSEEK_REASONING_LEVELS = ["none", "low", "high", "max"] as const
 /** Documented default when a request omits `reasoning_effort` (thinking mode on, effort high). */
 export const DEEPSEEK_DEFAULT_REASONING_EFFORT = "high";
 
+/**
+ * Thinking-mode gate for the request parameters DeepSeek refuses while
+ * thinking is active. `reasoning_effort` `none` disables thinking mode, and
+ * `thinking: { type: "disabled" }` does too; every other documented tier
+ * (`low`, `high`, `max`) enables it. An omitted effort leaves the documented
+ * default (`high`) in force, so it counts as thinking.
+ *
+ * Probed 2026-09-21 against `https://api.deepseek.com/chat/completions` with
+ * tools advertised: `tool_choice` `required` and the named-function form both
+ * answer HTTP 400 `Thinking mode does not support this tool_choice` at
+ * `low`, `high`, and the omitted default, and are accepted once thinking is
+ * disabled. `none` and `auto` are accepted in every mode.
+ */
+export const deepSeekThinkingModeActive = (reasoningEffort: unknown, thinking: unknown): boolean => {
+  if (isRecord(thinking) && !Array.isArray(thinking)) {
+    const type = getString(thinking.type)?.trim().toLowerCase();
+    if (type === "disabled") return false;
+    if (type === "enabled") return true;
+  }
+  const effort = typeof reasoningEffort === "string" ? reasoningEffort.trim().toLowerCase() : "";
+  return effort !== "none";
+};
+
+/**
+ * The `tool_choice` values DeepSeek's thinking mode refuses, or null when the
+ * value is one the provider accepts in every mode. Only `required` and the
+ * named-function form are restricted; `none` and `auto` are always valid.
+ *
+ * The rule is expressed once here and consumed by every DeepSeek request seam
+ * (the Chat route and the Responses translation), so the two cannot drift.
+ */
+export const deepSeekThinkingModeForbiddenToolChoice = (toolChoice: unknown): string | null => {
+  if (toolChoice === "required") return "required";
+  if (isRecord(toolChoice) && !Array.isArray(toolChoice)) {
+    const name = getString(toolChoice.name) ?? (isRecord(toolChoice.function) ? getString(toolChoice.function.name) : null);
+    if (name) return `function:${name}`;
+  }
+  return null;
+};
+
+/**
+ * The terminal a DeepSeek `finish_reason` implies, before output validity
+ * applies. The provider's documented vocabulary is `[ stop, length,
+ * content_filter, tool_calls, insufficient_system_resource, aborted ]`, read
+ * from the official Chat Completions reference
+ * (https://api-docs.deepseek.com/api/create-chat-completion, 2026-09-21).
+ */
+export type DeepSeekFinishDisposition =
+  | Readonly<{ kind: "completed" }>
+  | Readonly<{ kind: "incomplete"; reason: "max_output_tokens" | "content_filter" }>
+  | Readonly<{ kind: "failed"; code: string }>
+  | Readonly<{ kind: "unknown"; value: string }>;
+
+/**
+ * The single expression of the thinking-mode `tool_choice` restriction: returns
+ * the conflicting `tool_choice` value, or null when the request is servable.
+ *
+ * Both DeepSeek request seams call this so the Chat route and the Responses
+ * translation cannot drift, and the returned value feeds one message builder so
+ * a client sees the same contract on either route.
+ */
+export const deepSeekThinkingToolChoiceConflict = (reasoningEffort: unknown, thinking: unknown, toolChoice: unknown): string | null => {
+  const forbidden = deepSeekThinkingModeForbiddenToolChoice(toolChoice);
+  if (!forbidden) return null;
+  return deepSeekThinkingModeActive(reasoningEffort, thinking) ? forbidden : null;
+};
+
+/**
+ * The message a client sees when it asked for a `tool_choice` value that only
+ * works with thinking mode disabled. It names both conflicting fields in the
+ * vocabulary of the request it was sent on, so the caller can act on it without
+ * reading provider documentation.
+ */
+export const deepSeekToolChoiceThinkingConflictMessage = (toolChoice: string, effortField: string): string =>
+  `tool_choice '${toolChoice}' is not supported while ${effortField} keeps DeepSeek thinking mode active; set ${effortField} to 'none' or use tool_choice 'auto'`;
+
+/**
+ * Maps a DeepSeek `finish_reason` onto the Responses terminal vocabulary.
+ *
+ * `length` covers output-budget exhaustion *and* context-window exhaustion, so
+ * it maps to `max_output_tokens` — the only reason string the official OpenAI
+ * response schema defines for that case. An unrecognized value is reported as
+ * unknown rather than being silently treated as a normal stop, which is what
+ * the provider's own client does (`mapFinishReason` fail-closes with the
+ * uppercased value as its code).
+ */
+export const deepSeekFinishDisposition = (reason: unknown): DeepSeekFinishDisposition => {
+  switch (typeof reason === "string" ? reason.trim() : "") {
+    // An absent reason means the frame carried none, not that generation was
+    // cut off. The provider's own client defaults `pendingFinish ?? "stop"` at
+    // its end sentinel, and this mapping only runs after that sentinel.
+    case "":
+    case "stop":
+    case "tool_calls":
+      return { kind: "completed" };
+    case "length":
+      return { kind: "incomplete", reason: "max_output_tokens" };
+    case "content_filter":
+      return { kind: "incomplete", reason: "content_filter" };
+    case "insufficient_system_resource":
+      return { kind: "failed", code: "insufficient_system_resource" };
+    case "aborted":
+      return { kind: "failed", code: "aborted" };
+    default:
+      return { kind: "unknown", value: typeof reason === "string" ? reason : "" };
+  }
+};
+
 const DEEPSEEK_API_KEY_ENV = "DEEPSEEK_API_KEY";
 const MAX_DEEPSEEK_PROVIDER_REQUEST_ID_LENGTH = 256;
 /** One SSE frame is a single generated chunk; bound it so a peer cannot pin memory. */

@@ -38,6 +38,8 @@ import {
   DeepSeekError,
   DeepSeekStreamError,
   deepSeekChunkHasSemanticOutput,
+  deepSeekThinkingToolChoiceConflict,
+  deepSeekToolChoiceThinkingConflictMessage,
   deepSeekUpstreamModelFor,
   fetchDeepSeekChatCompletions,
   getDeepSeekProviderRequestId,
@@ -9258,6 +9260,13 @@ const recordDeepSeekResponseHealth = (status: number, providerRequestId: string 
   void recordDeepSeekProviderHealth("success", status, Date.now, providerRequestId);
 };
 
+/** The gateway terminal a buffered DeepSeek Responses payload's status implies. */
+const deepSeekTerminalTypeForPayload = (status: unknown): ResponseStreamTerminalType => {
+  if (status === "incomplete") return "response.incomplete";
+  if (status === "failed") return "response.failed";
+  return "response.completed";
+};
+
 const deepSeekTerminalTypeForError = (error: unknown, downstreamSignal: AbortSignal): ResponseStreamTerminalType => {
   if (downstreamSignal.aborted) return "cancelled";
   if (error instanceof DeepSeekStreamError) {
@@ -9272,6 +9281,7 @@ const deepSeekTerminalTypeForError = (error: unknown, downstreamSignal: AbortSig
 };
 
 type DeepSeekFailureKind =
+  | "upstream_error"
   | "upstream_http_error"
   | "upstream_unreachable"
   | "incomplete_response"
@@ -9944,6 +9954,17 @@ const handleDeepSeekChatCompletions = async (
   const parsedRequest = validateDeepSeekChatRequestFields(rawRecord);
   if (!parsedRequest.ok) return parsedRequest.response;
   const { reasoning, clientWantsStream } = parsedRequest.value;
+  // DeepSeek refuses `tool_choice` `required` and the named-function form while
+  // thinking mode is active (upstream 400 "Thinking mode does not support this
+  // tool_choice"). Reject the combination at the boundary with a gateway-shaped
+  // error naming both fields rather than relaying the provider's message about
+  // a parameter this route otherwise advertises.
+  const toolChoiceConflict = deepSeekThinkingToolChoiceConflict(reasoning, rawRecord.thinking, rawRecord.tool_choice);
+  if (toolChoiceConflict) {
+    return openaiError(400, deepSeekToolChoiceThinkingConflictMessage(toolChoiceConflict, "reasoning_effort"), "invalid_request_error", {
+      param: "tool_choice",
+    });
+  }
   // The canonical id the provider serves for this request; the buffered and
   // streamed readers echo it, so an alias never reports a mismatched model.
   const upstreamModel = deepSeekUpstreamModelFor(modelRaw) ?? DEEPSEEK_FLASH_MODEL;
@@ -10013,11 +10034,21 @@ const handleDeepSeekChatCompletions = async (
 /**
  * Responses adapter for the DeepSeek official route.
  *
- * The Codex client speaks only the Responses API, and the official DeepSeek API
- * speaks only Chat Completions, so this route translates the request, the
- * buffered payload and the stream in `src/deepseek_responses.ts`. Every
- * provider-level concern (dispatch admission, deadlines, health, telemetry,
- * error reflection) is shared with the Chat route.
+ * The Codex client speaks only the Responses API, so this route translates the
+ * request, the buffered payload and the stream through
+ * `src/deepseek_responses.ts`. Every provider-level concern (dispatch
+ * admission, deadlines, health, telemetry, error reflection) is shared with the
+ * Chat route.
+ *
+ * The translation is no longer forced by a provider gap: DeepSeek now serves a
+ * native Responses endpoint (`POST /responses` and `/v1/responses`, probed
+ * 2026-09-21). Two reasons the translator is still the right seam, not a
+ * legacy shim: the provider's native endpoint is documented as stateless with
+ * several control parameters ignored, and this adapter's filler for
+ * `reasoning_content` on the tool-bearing tail is a measured provider
+ * requirement a native response would have to reproduce. Migrating would be a
+ * separate, evidence-driven evaluation against representative histories, not
+ * an assumed cure.
  */
 const handleDeepSeekResponses = async (req: Request, rawRecord: Record<string, unknown>, modelRaw: string, usageContext?: UsageContext): Promise<Response> => {
   const parsedStream = parseStreamField(rawRecord.stream);
@@ -10088,7 +10119,16 @@ const handleDeepSeekResponses = async (req: Request, rawRecord: Record<string, u
   const payload = toDeepSeekResponsesPayload(completion.value, modelRaw, responseId, echo, toolNames, customToolNames);
   const usage = extractChatUsageTokens(completion.value.usage);
   await recordCompletionUsage(usageContext, usage);
-  recordStreamTerminalType(usageContext, "response.completed");
+  // The buffered payload carries the provider's own terminal too, so telemetry
+  // records the same terminal the client receives instead of assuming success.
+  const bufferedTerminalType = deepSeekTerminalTypeForPayload(payload.status);
+  recordStreamTerminalType(usageContext, bufferedTerminalType);
+  if (bufferedTerminalType === "response.completed") {
+    recordStreamTerminal(usageContext);
+  } else {
+    recordDeepSeekFailureKind(usageContext, bufferedTerminalType === "response.incomplete" ? "incomplete_response" : "upstream_error");
+    void recordDeepSeekProviderHealth("upstream_error", upstream.status, Date.now, providerRequestId);
+  }
   recordDeepSeekResponseHealth(upstream.status, providerRequestId);
   return json(200, payload, deepseekResponseHeaders(providerRequestId));
 };
@@ -10134,9 +10174,17 @@ const streamDeepSeekResponses = (
   const finishStream = async (controller: ReadableStreamDefaultController<Uint8Array>): Promise<void> => {
     if (state.settled) return;
     try {
+      // The provider's own stop reason decides the terminal, so a truncated,
+      // interrupted, or answer-less generation is never relayed as a clean
+      // completion. Telemetry reads the same decision the client receives.
+      const terminalType = translator.terminalType();
       emit(controller, translator.finish());
       await recordCompletionUsage(usageContext, state.usage);
-      settleTerminal("response.completed");
+      settleTerminal(terminalType);
+      if (terminalType !== "response.completed") {
+        recordDeepSeekFailureKind(usageContext, terminalType === "response.incomplete" ? "incomplete_response" : "upstream_error");
+        void recordDeepSeekProviderHealth("upstream_error", upstream.status, Date.now, providerRequestId);
+      }
       recordStreamTerminal(usageContext);
       recordDeepSeekResponseHealth(upstream.status, providerRequestId);
     } finally {

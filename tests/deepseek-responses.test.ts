@@ -9,6 +9,7 @@ import {
   toDeepSeekResponsesPayload,
   toResponsesUsage,
 } from "../src/deepseek_responses.ts";
+import { deepSeekFinishDisposition, deepSeekThinkingToolChoiceConflict } from "../src/deepseek.ts";
 
 const echo: DeepSeekResponsesEcho = { tools: undefined, tool_choice: undefined, parallel_tool_calls: true, instructions: null };
 
@@ -76,11 +77,14 @@ Deno.test("deepseek responses: rejects input shapes it cannot translate", () => 
 });
 
 Deno.test("deepseek responses: flattens namespaced tools and drops what the API cannot serve", () => {
+  // `reasoning.effort: "none"` disables thinking mode. A named tool_choice is
+  // rejected while thinking mode is active (see the thinking-mode test below),
+  // so this capability check disables thinking first.
   const result = toDeepSeekResponsesChatBody(
     {
       input: "hi",
       max_output_tokens: 256,
-      reasoning: { effort: "ultra" },
+      reasoning: { effort: "none" },
       text: { format: { type: "json_object" } },
       tool_choice: { type: "function", name: "now" },
       parallel_tool_calls: false,
@@ -104,8 +108,7 @@ Deno.test("deepseek responses: flattens namespaced tools and drops what the API 
   const { body, toolNames } = result.value;
   assert.equal(body.model, "deepseek-flash");
   assert.equal(body.max_tokens, 256);
-  // The Codex `ultra` preset is the documented `max` tier upstream.
-  assert.equal(body.reasoning_effort, "max");
+  assert.equal(body.reasoning_effort, "none");
   assert.deepEqual(body.response_format, { type: "json_object" });
   assert.equal(body.parallel_tool_calls, false);
   assert.deepEqual(body.messages, [{ role: "user", content: "hi" }]);
@@ -574,4 +577,166 @@ Deno.test("deepseek responses: encodes named SSE frames", () => {
     encodeResponsesEvent({ type: "response.completed", response: { id: "resp_1" } }),
     'event: response.completed\ndata: {"type":"response.completed","response":{"id":"resp_1"}}\n\n'
   );
+});
+
+const toolsForChoice = [{ type: "function", name: "exec", description: "Run.", parameters: { type: "object" } }];
+
+Deno.test("deepseek responses: rejects tool_choice 'required' while thinking mode is active", () => {
+  // The provider answers HTTP 400 "Thinking mode does not support this
+  // tool_choice" for both of these (probed 2026-09-21 on the Chat endpoint and
+  // on the provider's native Responses endpoint). Rejecting the combination
+  // here means a client that sent a request our own contract advertises gets an
+  // error naming both fields instead of the provider's message about a
+  // parameter it believes it supports.
+  for (const effort of ["low", "high", "max", "ultra", undefined]) {
+    const required = toDeepSeekResponsesChatBody(
+      { input: "hi", tools: toolsForChoice, tool_choice: "required", ...(effort ? { reasoning: { effort } } : {}) },
+      "deepseek-flash",
+      false
+    );
+    assert.equal(required.ok, false);
+    assert.equal(required.param, "tool_choice");
+    assert.match(required.message, /tool_choice 'required'/);
+    assert.match(required.message, /reasoning\.effort/);
+
+    const named = toDeepSeekResponsesChatBody(
+      { input: "hi", tools: toolsForChoice, tool_choice: { type: "function", name: "exec" }, ...(effort ? { reasoning: { effort } } : {}) },
+      "deepseek-flash",
+      false
+    );
+    assert.equal(named.ok, false);
+    assert.equal(named.param, "tool_choice");
+    assert.match(named.message, /tool_choice 'function:exec'/);
+  }
+});
+
+Deno.test("deepseek responses: accepts required tool_choice once thinking mode is disabled", () => {
+  const disabledByEffort = toDeepSeekResponsesChatBody(
+    { input: "hi", tools: toolsForChoice, tool_choice: "required", reasoning: { effort: "none" } },
+    "deepseek-flash",
+    false
+  );
+  assert.equal(disabledByEffort.ok, true);
+  assert.equal(disabledByEffort.value.body.tool_choice, "required");
+  assert.equal(disabledByEffort.value.body.reasoning_effort, "none");
+
+  const disabledByThinking = toDeepSeekResponsesChatBody(
+    { input: "hi", tools: toolsForChoice, tool_choice: { type: "function", name: "exec" }, thinking: { type: "disabled" } },
+    "deepseek-flash",
+    false
+  );
+  assert.equal(disabledByThinking.ok, true);
+  assert.deepEqual(disabledByThinking.value.body.tool_choice, { type: "function", function: { name: "exec" } });
+
+  // `none` and `auto` are valid in every mode.
+  for (const value of ["none", "auto"] as const) {
+    const accepted = toDeepSeekResponsesChatBody(
+      { input: "hi", tools: toolsForChoice, tool_choice: value, reasoning: { effort: "max" } },
+      "deepseek-flash",
+      false
+    );
+    assert.equal(accepted.ok, true);
+    assert.equal(accepted.value.body.tool_choice, value);
+  }
+});
+
+Deno.test("deepseek responses: the thinking-mode tool_choice rule has one shared expression", () => {
+  // The rule is consumed by both DeepSeek request seams, so it is asserted at
+  // its own seam as well as through the Responses translation.
+  assert.equal(deepSeekThinkingToolChoiceConflict("high", undefined, "required"), "required");
+  assert.equal(deepSeekThinkingToolChoiceConflict(undefined, undefined, { type: "function", name: "exec" }), "function:exec");
+  assert.equal(deepSeekThinkingToolChoiceConflict("none", undefined, "required"), null);
+  assert.equal(deepSeekThinkingToolChoiceConflict("max", { type: "disabled" }, "required"), null);
+  assert.equal(deepSeekThinkingToolChoiceConflict("max", undefined, "auto"), null);
+  assert.equal(deepSeekThinkingToolChoiceConflict("max", undefined, undefined), null);
+});
+
+Deno.test("deepseek responses: maps every documented finish_reason to a truthful terminal", () => {
+  // The vocabulary is the provider's own: the Chat Completions reference lists
+  // "stop, length, content_filter, tool_calls, insufficient_system_resource,
+  // aborted" (read 2026-09-21).
+  assert.deepEqual(deepSeekFinishDisposition("stop"), { kind: "completed" });
+  assert.deepEqual(deepSeekFinishDisposition("tool_calls"), { kind: "completed" });
+  assert.deepEqual(deepSeekFinishDisposition("length"), { kind: "incomplete", reason: "max_output_tokens" });
+  assert.deepEqual(deepSeekFinishDisposition("content_filter"), { kind: "incomplete", reason: "content_filter" });
+  assert.deepEqual(deepSeekFinishDisposition("insufficient_system_resource"), { kind: "failed", code: "insufficient_system_resource" });
+  assert.deepEqual(deepSeekFinishDisposition("aborted"), { kind: "failed", code: "aborted" });
+  // An absent reason defaults to a normal stop, matching the provider's own
+  // client (`pendingFinish ?? { kind: "stop" }`), while an unrecognized value is
+  // never silently treated as a normal stop.
+  assert.deepEqual(deepSeekFinishDisposition(undefined), { kind: "completed" });
+  assert.deepEqual(deepSeekFinishDisposition("something_new"), { kind: "unknown", value: "something_new" });
+});
+
+Deno.test("deepseek responses: a truncated stream reports response.incomplete instead of completed", () => {
+  const translator = createDeepSeekResponsesStreamTranslator("deepseek-flash", "resp_len", echo, 1_780_000_000);
+  const events: Record<string, unknown>[] = [];
+  events.push(...translator.push(chatChunk({ role: "assistant", reasoning_content: "thinking about it" })));
+  events.push(...translator.push(chatChunk({ content: "partial answer" }, { finish_reason: "length" })));
+  assert.equal(translator.terminalType(), "response.incomplete");
+  events.push(...translator.finish());
+
+  const terminal = events.at(-1) as { type: string; response: Record<string, unknown> };
+  assert.equal(terminal.type, "response.incomplete");
+  assert.equal(terminal.response.status, "incomplete");
+  assert.deepEqual(terminal.response.incomplete_details, { reason: "max_output_tokens" });
+  assert.equal(
+    events.some((event) => event.type === "response.completed"),
+    false
+  );
+});
+
+Deno.test("deepseek responses: a provider interruption is a failed terminal, not a completion", () => {
+  for (const [reason, code] of [
+    ["insufficient_system_resource", "insufficient_system_resource"],
+    ["aborted", "aborted"],
+    ["unrecognized_reason", "unrecognized_finish_reason:unrecognized_reason"],
+  ] as const) {
+    const translator = createDeepSeekResponsesStreamTranslator("deepseek-flash", "resp_fail", echo, 1_780_000_000);
+    const events: Record<string, unknown>[] = [];
+    events.push(...translator.push(chatChunk({ content: "partial" })));
+    events.push(...translator.push(chatChunk({}, { finish_reason: reason })));
+    assert.equal(translator.terminalType(), "response.failed");
+    events.push(...translator.finish());
+
+    const terminal = events.at(-1) as { type: string; response: Record<string, unknown> };
+    assert.equal(terminal.type, "response.failed");
+    assert.equal(terminal.response.status, "failed");
+    assert.equal((terminal.response.error as { code: string }).code, code);
+    assert.equal(
+      events.some((event) => event.type === "response.completed"),
+      false
+    );
+  }
+});
+
+Deno.test("deepseek responses: a truncated buffered completion is not reported as completed", () => {
+  const payload = toDeepSeekResponsesPayload(
+    {
+      id: "chatcmpl-len",
+      object: "chat.completion",
+      created: 1_780_000_000,
+      model: "deepseek-flash",
+      choices: [{ index: 0, message: { role: "assistant", content: "cut off" }, finish_reason: "length" }],
+      usage: { prompt_tokens: 5, completion_tokens: 8192, total_tokens: 8197 },
+    },
+    "deepseek-flash",
+    "resp_buf",
+    echo
+  );
+  assert.equal(payload.status, "incomplete");
+  assert.deepEqual(payload.incomplete_details, { reason: "max_output_tokens" });
+});
+
+Deno.test("deepseek responses: a normal stream is still reported as completed", () => {
+  const translator = createDeepSeekResponsesStreamTranslator("deepseek-flash", "resp_ok", echo, 1_780_000_000);
+  const events: Record<string, unknown>[] = [];
+  events.push(...translator.push(chatChunk({ content: "hi" }, { finish_reason: "stop" })));
+  assert.equal(translator.terminalType(), "response.completed");
+  events.push(...translator.finish());
+  const terminal = events.at(-1) as { type: string; response: Record<string, unknown> };
+  assert.equal(terminal.type, "response.completed");
+  assert.equal(terminal.response.status, "completed");
+  assert.equal(terminal.response.incomplete_details, null);
+  assert.equal(terminal.response.error, null);
 });
