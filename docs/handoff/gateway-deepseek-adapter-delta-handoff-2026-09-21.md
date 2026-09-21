@@ -149,12 +149,12 @@ yield {
 `EMPTY_RESPONSE` is the **first entry** in the harness default retryable set (`dsh-llm/lib/index.js:360–366`):
 `[EMPTY_RESPONSE, "RATE_LIMIT", "SERVER", "TIMEOUT", "TRANSPORT"]`, default `maxRetries: 5`.
 
-**Our behavior.** `src/openai.ts:10118` `finishStream` in `streamDeepSeekResponses` records
+**Our behavior.** `src/openai.ts:10134` `finishStream` in `streamDeepSeekResponses` records
 `settleTerminal("response.completed")` with no check on whether any output item exists. `src/deepseek_responses.ts:827`
 builds the terminal envelope with the literal status `"completed"`. The gateway does have exactly this guard elsewhere —
-`src/openai.ts:1259` `responsesStreamTerminalFailure`, `src/openai.ts:10432` `chatCompletionPreflightIsEmpty`,
-`src/openai.ts:10446` `rejectEmptyChatCompletion` — but the DeepSeek routes are dispatched before that machinery
-(`src/openai.ts:11822` for responses, `:10688` for chat) and never reach it.
+`src/openai.ts:1270` `responsesStreamTerminalFailure`, `src/openai.ts:10448` `chatCompletionPreflightIsEmpty`,
+`src/openai.ts:10462` `rejectEmptyChatCompletion` — but the DeepSeek routes are dispatched before that machinery
+(`src/openai.ts:11838` for responses, `:10688` for chat) and never reach it.
 
 **Delta.** The vendor treats a zero-block completion as a classified, retryable failure. We treat it as success. This is
 generalized **G3**, and the vendor's existence proof strengthens it: this is not a hypothetical defensive guard, it is
@@ -331,7 +331,7 @@ Recorded so a future audit does not re-derive them as suspected defects.
 | Field               | Vendor client                                                                                                | Our gateway                                                                                                                                                                         | Assessment                                                                                                                        |
 | ------------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | `stream`            | Always `true`; the adapter is streaming-only (`lib/index.js:226`, `stream: true` at `:239`).                 | Client-controlled; supports buffered and streaming (`src/openai.ts:10007` parses the client's `stream`, `src/deepseek_responses.ts:412` writes it into the upstream body).          | Our gateway must serve both; not a delta to close.                                                                                |
-| `stream_options`    | Always `{ include_usage: true }` (`lib/index.js:240`).                                                       | Set when streaming (`src/deepseek_responses.ts:421`), deleted when not (`src/openai.ts:9949`), because the provider answers 400 for `stream_options` without `stream: true`.        | Equivalent where it matters; ours additionally encodes a provider 400 avoidance the vendor avoids by never sending non-streaming. |
+| `stream_options`    | Always `{ include_usage: true }` (`lib/index.js:240`).                                                       | Set when streaming (`src/deepseek_responses.ts:421`), deleted when not (`src/openai.ts:9965`), because the provider answers 400 for `stream_options` without `stream: true`.        | Equivalent where it matters; ours additionally encodes a provider 400 avoidance the vendor avoids by never sending non-streaming. |
 | `tool_choice`       | Not mapped. Vendor README lists this under "Known Limitations": "not part of the core vocabulary (MVP cut)". | Mapped (`toChatToolChoice`, `src/deepseek_responses.ts:333`, written at `:393`).                                                                                                    | We do more than the vendor — and that is exactly how Delta 8 was introduced.                                                      |
 | Parallel tool calls | Not defended against; `delta?.tool_calls ?? []` iterates all entries.                                        | Verified: upstream sends the tool-call `name` in an earlier chunk than `arguments`, so our announcement gate (`src/deepseek_responses.ts:751`) does not drop a call.                | No defect found on either side.                                                                                                   |
 | Timeout model       | `streamIdleTimeoutMs`, default 300000, bounding each outstanding provider read and re-armed by SSE comments. | `STREAM_INACTIVITY_DEADLINE_MS` / `STREAM_FIRST_EVENT_DEADLINE_MS` in `src/deepseek.ts`, with the same keep-alive-comment rationale documented at `src/deepseek.ts:693` and `:839`. | Same design; no delta.                                                                                                            |
@@ -397,7 +397,7 @@ Both returned a native Responses envelope (`"object": "response"`, `"status": "c
 
 **Why this is recorded here.** The entire premise of this gateway's DeepSeek path is that "the Codex client speaks only
 the Responses API, and the official DeepSeek API speaks only Chat Completions" (quoted from the comment block at
-`src/openai.ts:10002`). That premise is now **out of date**. The translation layer is no longer required solely because
+`src/openai.ts:10016`). That premise is now **out of date**. The translation layer is no longer required solely because
 the provider lacks Responses.
 
 **This is context, not a recommendation.** Research is explicit that native Responses is not a verified drop-in
@@ -472,12 +472,32 @@ expensive to re-derive.
    only item here that currently returns a confusing error to a well-formed client request. Resolve Q9 first if the fix
    is to reject rather than to route.
 6. Record Deltas 4, 5, 6, and 9 as deliberate divergences or corrected premises with their probe methods.
-7. Correct the stale "DeepSeek speaks only Chat Completions" comment at `src/openai.ts:10002` (Delta 9).
+7. Correct the stale "DeepSeek speaks only Chat Completions" comment at `src/openai.ts:10016` (Delta 9).
 
 Deltas 4, 5, 6, and 9 require no behavioral code change. They require documentation, because the failure mode this
 handoff exists to prevent is a future reader "fixing" our gateway toward the vendor client in a case where the vendor's
 choice serves a different goal — or, for Delta 9, continuing to justify the translation layer with a premise that is no
 longer true.
+
+## Reference freshness
+
+Every `src/...` line number in this document was re-verified semantically at working state
+`48eed83fd8241f7eab0bf72037cd968bb0bff45d` — each citation was checked to still name the intended symbol, not merely to
+fall inside the file.
+
+Line numbers had already drifted once during this handoff. The documents were first written against
+`2ed95f47de7205ffbc07f5dabc684f74e577a59e`; a single unrelated merge (`922c33392d`, "serve gpt-reserve under its own
+quota class", +16 lines in `src/openai.ts` across three hunks at +11/+12/+16) invalidated 26 citations. Two survived a
+naive bounds check while pointing at the wrong line, which is why the correction pass verifies the symbol and not the
+position.
+
+Consequences for a future reader:
+
+- Treat every line number here as a claim about a specific revision, not a stable address. Re-resolve by symbol (grep
+  for the function or constant name) before acting on a citation.
+- Prefer the named symbol over the number when quoting this document in a new one.
+- If HEAD has moved, re-run the semantic check rather than applying an arithmetic offset, because the drift is not
+  uniform across hunks.
 
 ## Evidence provenance
 
@@ -492,7 +512,7 @@ longer true.
   rejection in thinking mode, and the native Responses endpoint.
 - Gateway probes: `POST http://127.0.0.1:7999/v1/responses` for the truncation-laundering reproduction and the
   `tool_choice` pass-through capture.
-- Our gateway references: `HEAD` `2ed95f47de7205ffbc07f5dabc684f74e577a59e`. Re-verify after any rebase.
+- Our gateway references were verified at `48eed83fd8241f7eab0bf72037cd968bb0bff45d` (see Reference freshness above).
 - Enrichment: GPT Pro job `8c4a76a4-4ed9-49f0-9cde-98187297c9f7`, model `gpt-6-pro`, submitted 2026-09-21T14:02:01Z.
   Answer archived at `.data/agent-work/gpt-pro-answer-2026-09-21.md`; query at
   `.data/agent-work/gpt-pro-query-2026-09-21.md`. One claim from that research was contradicted by direct probe and is

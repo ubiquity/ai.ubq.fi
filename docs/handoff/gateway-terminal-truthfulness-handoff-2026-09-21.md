@@ -74,10 +74,10 @@ Recheck all of these before implementing; they drift.
 
 The gateway declares a terminal type union that includes `response.incomplete`:
 
-- `src/openai.ts:264` —
+- `src/openai.ts:275` —
   `export type ResponseStreamTerminalType = "response.completed" | "response.failed" | "response.incomplete" | "error" | "eof" | "cancelled" | "deadline";`
 
-`response.incomplete` is parsed when it arrives from an upstream: `src/openai.ts:681`, `:708`, `:2582`. It is never
+`response.incomplete` is parsed when it arrives from an upstream: `src/openai.ts:692`, `:708`, `:2582`. It is never
 _constructed_ by any provider route. The only construction site in the repository is
 `src/sentinel_replay_capture.ts:345`, which is an evidence-recording path, not a response path.
 
@@ -120,8 +120,8 @@ and they do not agree:
 
 | Predicate                                 | Location              | Counts `content` | Counts reasoning              | Counts tool calls           |
 | ----------------------------------------- | --------------------- | ---------------- | ----------------------------- | --------------------------- |
-| `cerebrasChatCompletionHasSemanticOutput` | `src/openai.ts:2083`  | yes              | **no**                        | yes (also counts `refusal`) |
-| `deepseekChatCompletionHasSemanticOutput` | `src/openai.ts:9653`  | yes              | **yes** (`reasoning_content`) | yes                         |
+| `cerebrasChatCompletionHasSemanticOutput` | `src/openai.ts:2094`  | yes              | **no**                        | yes (also counts `refusal`) |
+| `deepseekChatCompletionHasSemanticOutput` | `src/openai.ts:9669`  | yes              | **yes** (`reasoning_content`) | yes                         |
 | `deepSeekChunkHasSemanticOutput`          | `src/deepseek.ts:651` | yes              | **yes** (`reasoning_content`) | yes                         |
 
 This is the most useful generalized finding in the audit, because it removes the need to argue about which answer is
@@ -141,7 +141,7 @@ naming_ (`reasoning` vs `reasoning_content` vs `refusal`) and of _which reasons 
 answer.
 
 Note also that the two DeepSeek predicates are not equivalent to each other. `src/deepseek.ts:651` is the streaming
-predicate; `src/openai.ts:9653` is the buffered-completion predicate. A fix applied to only one of them leaves the other
+predicate; `src/openai.ts:9669` is the buffered-completion predicate. A fix applied to only one of them leaves the other
 route shape wrong, so both must move together.
 
 ### The DeepSeek routes bypass the gateway's own fail-closed machinery
@@ -149,21 +149,21 @@ route shape wrong, so both must move together.
 The gateway already has a fail-closed path for empty upstream completions, but the DeepSeek routes do not pass through
 it.
 
-- `src/openai.ts:1259` `responsesStreamTerminalFailure` returns `{ trigger: "empty_upstream_completion" }` when a
+- `src/openai.ts:1270` `responsesStreamTerminalFailure` returns `{ trigger: "empty_upstream_completion" }` when a
   prepared stream reached `response.completed` with `prepared.semantic === null`.
-- `src/openai.ts:10432` `chatCompletionPreflightIsEmpty` and `src/openai.ts:10446` `rejectEmptyChatCompletion` implement
-  the same idea for the chat route, returning a 502 `empty_upstream_completion` (`src/openai.ts:10458`).
-- Those call sites are at `src/openai.ts:1389` and `src/openai.ts:10647`, both on the ordinary Codex/paid waterfall.
-- `src/openai.ts:11822` dispatches an explicit DeepSeek model id to `handleDeepSeekResponses` **before** the catalog
+- `src/openai.ts:10448` `chatCompletionPreflightIsEmpty` and `src/openai.ts:10462` `rejectEmptyChatCompletion` implement
+  the same idea for the chat route, returning a 502 `empty_upstream_completion` (`src/openai.ts:10474`).
+- Those call sites are at `src/openai.ts:1400` and `src/openai.ts:10663`, both on the ordinary Codex/paid waterfall.
+- `src/openai.ts:11838` dispatches an explicit DeepSeek model id to `handleDeepSeekResponses` **before** the catalog
   lookup, so the request never reaches `prepareResponsesRequest`, `runResponsesFailover`, or
   `responsesStreamTerminalFailure`.
-- `src/openai.ts:10687`–`:10688` does the same for the chat route: `handleDeepSeekChatCompletions` is dispatched before
+- `src/openai.ts:10703`–`:10688` does the same for the chat route: `handleDeepSeekChatCompletions` is dispatched before
   `validateChatCompletionsOptions` and the preflight.
 
 The DeepSeek routes therefore own their own terminal behavior, and their `finishStream` settles `response.completed`
 unconditionally:
 
-- `src/openai.ts:10118` `finishStream` records `settleTerminal("response.completed")` with no check on whether any
+- `src/openai.ts:10134` `finishStream` records `settleTerminal("response.completed")` with no check on whether any
   output item exists.
 - `src/deepseek_responses.ts:827` builds the terminal envelope with the literal status `"completed"`.
 
@@ -307,7 +307,7 @@ Decision rule for the terminal event, evaluated in order:
 Signal that triggers it: the presence and kind of terminal output items together with the stop reason from G1.
 
 Implementation constraint: express the rule once, not per route. The audit found the same question already answered
-differently in `src/openai.ts:2083` (Cerebras: reasoning is not output), `src/openai.ts:9653` and `src/deepseek.ts:651`
+differently in `src/openai.ts:2094` (Cerebras: reasoning is not output), `src/openai.ts:9669` and `src/deepseek.ts:651`
 (DeepSeek: reasoning is output). Pick one answer, share it, and let providers contribute only field names and their own
 reason vocabulary.
 
@@ -323,8 +323,8 @@ Change: reuse the gateway's existing `empty_upstream_completion` failure classif
 rather than inventing a second mechanism.
 
 The gateway already fails closed when a stream reached a completed terminal with no translated semantic output
-(`src/openai.ts:1259`, `:10432`, `:10446`). The DeepSeek routes bypass that machinery by dispatch order
-(`src/openai.ts:11822`, `:10688`). The generalized fix is to give every translation route an equivalent pre-terminal
+(`src/openai.ts:1270`, `:10432`, `:10446`). The DeepSeek routes bypass that machinery by dispatch order
+(`src/openai.ts:11838`, `:10688`). The generalized fix is to give every translation route an equivalent pre-terminal
 validity check at its own terminal seam, and to classify the outcome with the same failure kind the rest of the gateway
 already uses, so telemetry stays comparable across providers.
 
@@ -430,6 +430,26 @@ code.
 Each step is independently reversible and independently verifiable. None of them is a prerequisite for diagnosing the
 narration-without-action symptom, which is why the sequencing starts with truthfulness rather than with that symptom.
 
+## Reference freshness
+
+Every `src/...` line number in this document was re-verified semantically at working state
+`48eed83fd8241f7eab0bf72037cd968bb0bff45d` — each citation was checked to still name the intended symbol, not merely to
+fall inside the file.
+
+Line numbers had already drifted once during this handoff. The documents were first written against
+`2ed95f47de7205ffbc07f5dabc684f74e577a59e`; a single unrelated merge (`922c33392d`, "serve gpt-reserve under its own
+quota class", +16 lines in `src/openai.ts` across three hunks at +11/+12/+16) invalidated 26 citations. Two survived a
+naive bounds check while pointing at the wrong line, which is why the correction pass verifies the symbol and not the
+position.
+
+Consequences for a future reader:
+
+- Treat every line number here as a claim about a specific revision, not a stable address. Re-resolve by symbol (grep
+  for the function or constant name) before acting on a citation.
+- Prefer the named symbol over the number when quoting this document in a new one.
+- If HEAD has moved, re-run the semantic check rather than applying an arithmetic offset, because the drift is not
+  uniform across hunks.
+
 ## Evidence provenance
 
 - Session transcripts:
@@ -440,4 +460,4 @@ narration-without-action symptom, which is why the sequencing starts with truthf
 - Error index: `GET http://127.0.0.1:7999/admin/errors?limit=500`
 - Controlled reproduction: gateway responses route and direct upstream Chat Completions calls, both executed 2026-09-21
   during the audit window
-- Source references are to `HEAD` `2ed95f47de7205ffbc07f5dabc684f74e577a59e` and must be re-verified after any rebase
+- Source references were verified at `48eed83fd8241f7eab0bf72037cd968bb0bff45d` (see Reference freshness above)
