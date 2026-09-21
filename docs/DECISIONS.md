@@ -80,7 +80,11 @@ effort. Ten runs per cell, work outstanding, classification by whether a `functi
 | Model                           | Actual input tokens |  n | Emitted tool call | Narrated and stopped |    Rate |
 | ------------------------------- | ------------------: | -: | ----------------: | -------------------: | ------: |
 | `deepseek-flash` (effort `max`) |                 951 | 10 |                10 |                    0 |      0% |
+| `deepseek-flash` (effort `max`) |               4,400 | 10 |                 7 |                    3 |     30% |
+| `deepseek-flash` (effort `max`) |               9,003 | 10 |                 6 |                    4 |     40% |
+| `deepseek-flash` (effort `max`) |              14,186 | 10 |                 9 |                    1 |     10% |
 | `deepseek-flash` (effort `max`) |              18,787 | 10 |                 5 |                    5 | **50%** |
+| `deepseek-flash` (effort `max`) |              28,558 | 10 |                 6 |                    4 |     40% |
 | `deepseek-flash` (effort `max`) |              66,533 | 10 |                 5 |                    5 | **50%** |
 | `gpt-reserve` (effort `medium`) |              61,005 | 10 |                10 |                    0 |      0% |
 | `gpt-reserve` (effort `max`)    |              61,005 | 10 |                10 |                    0 |      0% |
@@ -99,8 +103,8 @@ Two conclusions follow, and they are the reason this entry exists:
   Fisher exact test of the tiny band against everything above it gives `p = 0.025`. It is a step change, not a gradual
   degradation, and the earlier clean result was a correctly executed experiment at the wrong scale.
 
-The real symptomatic sessions ran at a median of about 485k input tokens, well past the band where the rate saturates,
-which is consistent with 154 of 292 turns ending in narration there.
+The real symptomatic sessions ran at a median of about 485k input tokens, far above the onset, which is consistent with
+154 of 292 turns ending in narration there.
 
 Reason: the honest scope of the merged fix depends on this distinction. The terminal work makes the outcome _truthful_
 (`response.completed` carrying no tool call is reported accurately instead of being laundered), but no gateway change
