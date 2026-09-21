@@ -10267,16 +10267,20 @@ const streamDeepSeekResponses = (
         recordDeepSeekResponseHealth(upstream.status, providerRequestId);
         return;
       }
-      if (terminalKind === "failed") {
-        recordDeepSeekFailureKind(usageContext, deepSeekFinishReasonFailureKind(translator.upstreamFinishReason()));
-        void recordDeepSeekProviderHealth("upstream_error", upstream.status, Date.now, providerRequestId);
-      }
       emit(controller, translator.finish());
       if (terminalKind === "completed") {
         await recordCompletionUsage(usageContext, state.usage);
         settleTerminal("response.completed");
       } else {
+        // A non-completed terminal is classified the same way on the streamed
+        // and buffered paths, so telemetry reads the same on both.
         recordTerminalUsage(usageContext, state.usage, false);
+        if (terminalKind === "incomplete") {
+          recordDeepSeekFailureKind(usageContext, "incomplete_response");
+        } else if (terminalKind === "failed") {
+          recordDeepSeekFailureKind(usageContext, deepSeekFinishReasonFailureKind(translator.upstreamFinishReason()));
+        }
+        if (terminalKind === "failed") void recordDeepSeekProviderHealth("upstream_error", upstream.status, Date.now, providerRequestId);
         settleTerminal(terminalKind === "incomplete" ? "response.incomplete" : "response.failed");
       }
       recordStreamTerminal(usageContext);
