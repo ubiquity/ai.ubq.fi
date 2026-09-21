@@ -295,6 +295,22 @@ export const deepSeekUpstreamModelFor = (model: string): string | null => {
 export const projectDeepSeekReasoningEffort = (effort: string): string => DEEPSEEK_WIRE_EFFORT_MAP[effort.trim().toLowerCase()] ?? effort;
 
 /**
+ * The provider's own effective output allowance when the request omits
+ * `max_tokens`, for the reasoning tier being requested.
+ *
+ * This is observability only: the value is never written into the upstream
+ * body, so omitting a cap still sends no cap. Measured directly against the
+ * provider (gateway terminal-truthfulness handoff, 2026-09-21, Delta 3): at
+ * `reasoning_effort: "none"` an exhaustively long demand stopped at exactly
+ * 8191-8192 completion tokens on 3 of 3 runs, so 8,192 is that tier's default.
+ * `high` and `max` were only established as lower bounds (>= 65,536 and
+ * >= 131,072) and no probe reached them, so those tiers (and any tier the
+ * gateway cannot name) report no known allowance rather than a guess.
+ */
+export const deepSeekDefaultOutputAllowance = (reasoningEffort: string): number | null =>
+  projectDeepSeekReasoningEffort(reasoningEffort) === "none" ? 8_192 : null;
+
+/**
  * Projects the official Chat Completions body onto DeepSeek's documented wire
  * contract. Only two provider necessities are applied — everything else is
  * forwarded unchanged:
@@ -753,22 +769,6 @@ export const normalizeDeepSeekChatCompletionChunk = (value: unknown, requestedMo
       ...(usage.value ? { usage: usage.value } : {}),
     },
   };
-};
-
-/** True when a normalized chunk carries output a client can display. */
-export const deepSeekChunkHasSemanticOutput = (chunk: Record<string, unknown>): boolean => {
-  const choices = chunk.choices;
-  if (!Array.isArray(choices)) return false;
-  for (const choice of choices) {
-    if (!isRecord(choice) || Array.isArray(choice) || !isRecord(choice.delta) || Array.isArray(choice.delta)) continue;
-    const delta = choice.delta;
-    if (typeof delta.content === "string" && delta.content.length > 0) return true;
-    // Reasoning is streamed to the client as it is generated, so it is real
-    // semantic output even when the final answer has not started yet.
-    if (typeof delta.reasoning_content === "string" && delta.reasoning_content.length > 0) return true;
-    if (Array.isArray(delta.tool_calls) && delta.tool_calls.length > 0) return true;
-  }
-  return false;
 };
 
 export type DeepSeekStreamFailureKind = "malformed_event" | "invalid_chunk" | "frame_too_large" | "premature_eof" | "read_error" | "inactivity_timeout";

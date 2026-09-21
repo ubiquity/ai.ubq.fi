@@ -685,6 +685,21 @@ export const toDeepSeekResponsesPayload = (
 
 type StreamToolCall = { id: string; callId: string; name: string; arguments: string; announced: boolean; outputIndex: number };
 
+/**
+ * The accumulated translated output facts a terminal-validity decision needs.
+ *
+ * Only the caller decides whether a completion is usable; this is the view it
+ * decides on. Reasoning is deliberately absent: it is streaming progress, not
+ * an answer a client can act on, so a stream whose only output is reasoning
+ * still reports empty text and no tool calls here.
+ */
+export type DeepSeekResponsesAnswerBearingOutput = Readonly<{
+  /** Assistant text accumulated from `delta.content`. */
+  text: string;
+  /** How many tool calls accumulated with a name the client can execute. */
+  toolCallCount: number;
+}>;
+
 type StreamState = {
   started: boolean;
   completed: boolean;
@@ -720,6 +735,25 @@ const newStreamState = (): StreamState => ({
   usage: null,
   finishReason: undefined,
 });
+
+/**
+ * The gateway terminal a Chat `finish_reason` maps onto, decided once here.
+ *
+ * `stop`, `tool_calls` and an absent reason are normal completions. `length`
+ * means the provider stopped at an output or context boundary, which the
+ * Responses schema reports as `incomplete` with the single reason
+ * `max_output_tokens` (the schema spells it that way; it is not `max_tokens`).
+ * Any other value must not be laundered into a normal stop: it becomes a
+ * failed terminal, and the route records the raw value in telemetry.
+ */
+export type DeepSeekResponsesTerminalKind = "completed" | "incomplete" | "failed";
+
+export const deepSeekResponsesTerminalKind = (finishReason: unknown): DeepSeekResponsesTerminalKind => {
+  const disposition = deepSeekFinishDisposition(finishReason);
+  if (disposition.kind === "completed") return "completed";
+  if (disposition.kind === "incomplete") return "incomplete";
+  return "failed";
+};
 
 /** Merges one tool-call delta into the accumulated call for its index. */
 const mergeToolCallDelta = (state: StreamState, responseId: string, raw: Record<string, unknown>, position: number): StreamToolCall => {
@@ -789,22 +823,14 @@ export const createDeepSeekResponsesStreamTranslator = (
   };
 
   /**
-   * The one place the stream's terminal is decided from the provider's own stop
-   * reason. `finish` emits it and `terminalType` reports it for telemetry, so a
-   * client-visible terminal and its recorded classification cannot disagree.
+   * The terminal object for this stream, plus the terminal kind telemetry and
+   * the caller report. Both come from the one shared DeepSeek reason mapping,
+   * so the emitted event and its recorded classification cannot disagree.
    *
-   * Scope note: this maps the provider's reason vocabulary only. Whether an
+   * Scope note: this maps the provider's own reason vocabulary only. Whether an
    * answer-less completion is a valid completion is the provider-agnostic
-   * completion-validity question owned by the generalized terminal-truthfulness
-   * program; the shared predicate plugs in here when it lands, rather than
-   * being reimplemented per route.
-   */
-  const terminalDecision = (): DeepSeekResponsesTerminalType => deepSeekTerminalTypeForDisposition(deepSeekFinishDisposition(state.finishReason));
-
-  /**
-   * The terminal object for this stream. Built once per call from
-   * `terminalDecision`, so the emitted event and its type come from one
-   * decision.
+   * completion-validity question, answered once by
+   * `isAnswerBearingCompletion` and applied by the route caller.
    */
   const terminalEnvelope = () => deepSeekTerminalEnvelope(responseId, requestedModel, createdAtSeconds, "completed", echo, state.finishReason);
 
@@ -920,8 +946,10 @@ export const createDeepSeekResponsesStreamTranslator = (
       for (const choice of choices) {
         if (!isRecord(choice) || Array.isArray(choice)) continue;
         // `finish_reason` rides the final content chunk, which also carries the
-        // usage statistics. Capture it before the delta handling, which ignores
-        // the field.
+        // usage statistics, and can arrive on a choice with no delta. Capture it
+        // before the delta handling, which ignores the field; a later value
+        // replaces an earlier one, so the last reason before the end sentinel
+        // decides the terminal.
         if (typeof choice.finish_reason === "string") state.finishReason = choice.finish_reason;
         if (!isRecord(choice.delta) || Array.isArray(choice.delta)) continue;
         events.push(...applyTextDelta(choice.delta), ...applyToolCallDeltas(choice.delta));
@@ -929,10 +957,24 @@ export const createDeepSeekResponsesStreamTranslator = (
       return events;
     },
     /**
-     * The terminal this stream will settle on, available before `finish` emits
-     * it so telemetry records the same terminal the client receives.
+     * The accumulated output a client could act on: assistant text plus tool
+     * calls that carry a name. Reasoning is deliberately absent — it is
+     * streaming progress, not an answer. This is the view the provider-agnostic
+     * completion-validity predicate decides on.
      */
-    terminalType: terminalDecision,
+    answerBearingOutput: (): DeepSeekResponsesAnswerBearingOutput => ({
+      text: state.text,
+      toolCallCount: [...state.toolCalls.values()].filter((call) => call.name).length,
+    }),
+    /**
+     * The terminal this stream will settle on, available before `finish` emits
+     * it so telemetry records the same terminal the client receives. Derived
+     * from the shared DeepSeek vocabulary mapping, so it cannot drift from the
+     * event `finish` emits.
+     */
+    terminalKind: (): DeepSeekResponsesTerminalKind => deepSeekResponsesTerminalKind(state.finishReason),
+    /** The raw recorded reason, for telemetry when the terminal is a failure. */
+    upstreamFinishReason: (): string | null => (typeof state.finishReason === "string" ? state.finishReason : null),
     /**
      * Emits the remaining item events plus the terminal event the provider's
      * own stop reason implies. The terminal is derived at the one decision

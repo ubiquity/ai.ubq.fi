@@ -37,7 +37,7 @@ import {
   DEEPSEEK_REASONING_LEVELS,
   DeepSeekError,
   DeepSeekStreamError,
-  deepSeekChunkHasSemanticOutput,
+  deepSeekDefaultOutputAllowance,
   deepSeekThinkingToolChoiceConflict,
   deepSeekToolChoiceThinkingConflictMessage,
   deepSeekUpstreamModelFor,
@@ -2093,19 +2093,64 @@ const cerebrasResponseHeaders = (providerRequestId: string | null, warning?: str
 
 const GPT_OSS_STREAM_DOWNGRADED_WARNING = "gpt_oss_stream_downgraded";
 
-const cerebrasChatCompletionHasSemanticOutput = (completion: Record<string, unknown>): boolean =>
-  Array.isArray(completion.choices) &&
-  completion.choices.some((choice) => {
-    if (!isRecord(choice) || Array.isArray(choice) || !isRecord(choice.message) || Array.isArray(choice.message)) {
-      return false;
-    }
-    const message = choice.message;
-    return (
-      (typeof message.content === "string" && message.content.length > 0) ||
-      (typeof message.refusal === "string" && message.refusal.length > 0) ||
-      (Array.isArray(message.tool_calls) && message.tool_calls.length > 0)
-    );
-  });
+/**
+ * The gateway's terminal-validity question, answered once for every
+ * translation route: does this accumulated output contain something a client
+ * can act on?
+ *
+ * Assistant text, a refusal, or a tool call is answer-bearing. Reasoning is
+ * not: it is streaming progress (`reasoning` on Cerebras, `reasoning_content`
+ * on DeepSeek), and a completion whose only output is reasoning hands the
+ * client nothing to act on. Providers contribute only the field names their
+ * wire shape uses, through the adapters below; they do not re-answer the
+ * question, and a route-local copy of this rule must not come back.
+ */
+export type CompletionAnswerBearingOutput = Readonly<{
+  /** Assistant text, in the provider's text field. */
+  text: string;
+  /** Refusal text, when the provider's shape carries one. */
+  refusal?: string;
+  /** How many tool calls the output carries. */
+  toolCallCount: number;
+}>;
+
+export const isAnswerBearingCompletion = (output: CompletionAnswerBearingOutput): boolean =>
+  output.text.length > 0 || (output.refusal?.length ?? 0) > 0 || output.toolCallCount > 0;
+
+/**
+ * Reads the answer-bearing view out of one Chat Completions `message` or
+ * `delta` object. Both wire shapes spell the fields the same way, and the
+ * provider-specific reasoning fields are deliberately absent from this view:
+ * `reasoning` (Cerebras) and `reasoning_content` (DeepSeek) are streaming
+ * progress, and reading either one here is exactly the bug this rule removes.
+ */
+const answerBearingOutputFromChatFields = (fields: Record<string, unknown>): CompletionAnswerBearingOutput => ({
+  text: typeof fields.content === "string" ? fields.content : "",
+  refusal: typeof fields.refusal === "string" ? fields.refusal : "",
+  toolCallCount: Array.isArray(fields.tool_calls) ? fields.tool_calls.length : 0,
+});
+
+const anyAnswerBearingCompletion = (outputs: readonly CompletionAnswerBearingOutput[]): boolean => outputs.some(isAnswerBearingCompletion);
+
+/** Buffered Chat completion: every choice's `message`. */
+const chatCompletionHasAnswerBearingOutput = (completion: Record<string, unknown>): boolean =>
+  anyAnswerBearingCompletion(
+    (Array.isArray(completion.choices) ? completion.choices : []).flatMap((choice) =>
+      isRecord(choice) && !Array.isArray(choice) && isRecord(choice.message) && !Array.isArray(choice.message)
+        ? [answerBearingOutputFromChatFields(choice.message)]
+        : []
+    )
+  );
+
+/** Streamed Chat chunk: every choice's `delta`. */
+const chatChunkHasAnswerBearingOutput = (chunk: Record<string, unknown>): boolean =>
+  anyAnswerBearingCompletion(
+    (Array.isArray(chunk.choices) ? chunk.choices : []).flatMap((choice) =>
+      isRecord(choice) && !Array.isArray(choice) && isRecord(choice.delta) && !Array.isArray(choice.delta)
+        ? [answerBearingOutputFromChatFields(choice.delta)]
+        : []
+    )
+  );
 
 const cerebrasChatToolCallDeltas = (toolCalls: readonly unknown[]): Record<string, unknown>[] =>
   toolCalls.flatMap((toolCall, toolCallIndex) => {
@@ -9292,11 +9337,21 @@ type DeepSeekFailureKind =
   | "cancellation"
   | "api_key_quota_reservation_unavailable"
   | "deepseek_api_key_missing"
-  | "deepseek_request_invalid";
+  | "deepseek_request_invalid"
+  /** A stop reason the gateway cannot place in its terminal vocabulary. */
+  | `deepseek_finish_reason:${string}`;
 
 const recordDeepSeekFailureKind = (context: UsageContext | undefined, failureKind: DeepSeekFailureKind): void => {
   if (context?.responseTelemetry) context.responseTelemetry.failureKind = failureKind;
 };
+
+/**
+ * The telemetry classification for an upstream stop reason the gateway cannot
+ * place. The value is bounded and carried so an operator can see exactly what
+ * the provider said instead of reading a normal completion.
+ */
+const deepSeekFinishReasonFailureKind = (finishReason: string | null): DeepSeekFailureKind =>
+  `deepseek_finish_reason:${finishReason !== null && /^[A-Za-z0-9_.:-]{1,64}$/.test(finishReason) ? finishReason : "unrecognized"}`;
 
 const deepSeekTransportFailureKind = (error: unknown, terminalType: ResponseStreamTerminalType): DeepSeekFailureKind => {
   if (terminalType === "cancelled") return "cancellation";
@@ -9614,7 +9669,7 @@ const handleCerebrasChatCompletions = async (
   const completion = await readCerebrasChatCompletion(captured.bytes, upstream.status, providerRequestId, usageContext);
   if (!completion.ok) return completion.response;
 
-  if (cerebrasChatCompletionHasSemanticOutput(completion.value)) markChatSemanticOutput(usageContext);
+  if (chatCompletionHasAnswerBearingOutput(completion.value)) markChatSemanticOutput(usageContext);
   providerRequestId ??= normalizeCerebrasProviderRequestId(completion.value.id);
   if (usageContext?.responseTelemetry) usageContext.responseTelemetry.providerRequestId = providerRequestId;
   const usage = extractChatUsageTokens(completion.value.usage);
@@ -9676,19 +9731,17 @@ const validateDeepSeekChatRequestFields = (
   };
 };
 
-const deepseekChatCompletionHasSemanticOutput = (completion: Record<string, unknown>): boolean =>
-  Array.isArray(completion.choices) &&
-  completion.choices.some((choice) => {
-    if (!isRecord(choice) || Array.isArray(choice) || !isRecord(choice.message) || Array.isArray(choice.message)) {
-      return false;
-    }
-    const message = choice.message;
-    return (
-      (typeof message.content === "string" && message.content.length > 0) ||
-      (typeof message.reasoning_content === "string" && message.reasoning_content.length > 0) ||
-      (Array.isArray(message.tool_calls) && message.tool_calls.length > 0)
-    );
-  });
+/** The output cap the client supplied on the DeepSeek Chat contract, if any. */
+const deepSeekChatClientOutputAllowance = (rawRecord: Record<string, unknown>): number | null => {
+  // `max_completion_tokens` is the documented OpenAI field and the one
+  // `projectDeepSeekRequest` maps onto the provider's `max_tokens`; a literal
+  // `max_tokens` in the record is forwarded unchanged, so both are real caps.
+  const completionTokens = parseMaxCompletionTokensField(rawRecord.max_completion_tokens);
+  if (!completionTokens.ok) return null;
+  if (completionTokens.value !== undefined) return completionTokens.value;
+  const maxTokens = parseMaxCompletionTokensField(rawRecord.max_tokens);
+  return maxTokens.ok ? (maxTokens.value ?? null) : null;
+};
 
 const respondDeepSeekChatInvalidCompletion = async (
   failureKind: "invalid_json" | "invalid_completion_schema",
@@ -9879,7 +9932,7 @@ const streamDeepSeekChatCompletion = (
           return;
         }
         recordFirstUpstreamSseEvent(usageContext);
-        if (!semantic && deepSeekChunkHasSemanticOutput(frame.value)) {
+        if (!semantic && chatChunkHasAnswerBearingOutput(frame.value)) {
           semantic = true;
           markChatSemanticOutput(usageContext);
           recordFirstSemanticCommitment(usageContext);
@@ -9988,6 +10041,10 @@ const handleDeepSeekChatCompletions = async (
   if (usageContext?.responseTelemetry) {
     usageContext.responseTelemetry.provider = "deepseek";
     usageContext.responseTelemetry.reasoning = reasoning;
+    // The client's cap when it sent one, else the provider's own default for
+    // the requested tier, else unknown. The gateway never supplies a cap here,
+    // so an omitted field stays omitted on the wire.
+    usageContext.responseTelemetry.outputTokenAllowance = deepSeekChatClientOutputAllowance(rawRecord) ?? deepSeekDefaultOutputAllowance(reasoning);
   }
   await recordRequestUsage(usageContext, {
     model: modelRaw,
@@ -10021,7 +10078,7 @@ const handleDeepSeekChatCompletions = async (
   const completion = await readDeepSeekChatCompletion(captured.bytes, upstream.status, providerRequestId, usageContext, upstreamModel);
   if (!completion.ok) return completion.response;
 
-  if (deepseekChatCompletionHasSemanticOutput(completion.value)) markChatSemanticOutput(usageContext);
+  if (chatCompletionHasAnswerBearingOutput(completion.value)) markChatSemanticOutput(usageContext);
   providerRequestId ??= normalizeDeepSeekProviderRequestId(completion.value.id);
   if (usageContext?.responseTelemetry) usageContext.responseTelemetry.providerRequestId = providerRequestId;
   const usage = extractChatUsageTokens(completion.value.usage);
@@ -10070,6 +10127,10 @@ const handleDeepSeekResponses = async (req: Request, rawRecord: Record<string, u
   if (usageContext?.responseTelemetry) {
     usageContext.responseTelemetry.provider = "deepseek";
     usageContext.responseTelemetry.reasoning = reasoningLabel;
+    // `applyOutputLimit` put the client's `max_output_tokens` on the wire as
+    // `max_tokens`; when it was absent the provider's own tier default applies.
+    usageContext.responseTelemetry.outputTokenAllowance =
+      (typeof chatBody.max_tokens === "number" ? chatBody.max_tokens : null) ?? deepSeekDefaultOutputAllowance(reasoningLabel);
   }
   await recordRequestUsage(usageContext, {
     model: modelRaw,
@@ -10169,21 +10230,54 @@ const streamDeepSeekResponses = (
   const emit = (controller: ReadableStreamDefaultController<Uint8Array>, events: readonly Record<string, unknown>[]): void => {
     for (const event of events) controller.enqueue(encoder.encode(encodeResponsesEvent(event)));
   };
+  /**
+   * The client-visible shape of the gateway's existing degenerate-completion
+   * classification. Response headers were sent when the stream opened, so the
+   * truth travels on the terminal event instead of as a 502 status; the
+   * failure kind and message are the ones the ordinary routes already use.
+   */
+  const emptyCompletionFailure = (): Record<string, unknown> => ({
+    type: "response.failed",
+    response: {
+      id: responseId,
+      object: "response",
+      status: "failed",
+      error: { code: "empty_upstream_completion", message: EMPTY_UPSTREAM_COMPLETION_MESSAGE },
+    },
+  });
   // The controller closes in a `finally`: a throw while emitting the terminal
   // events must still end the client-visible stream instead of hanging it.
   const finishStream = async (controller: ReadableStreamDefaultController<Uint8Array>): Promise<void> => {
     if (state.settled) return;
     try {
-      // The provider's own stop reason decides the terminal, so a truncated,
-      // interrupted, or answer-less generation is never relayed as a clean
-      // completion. Telemetry reads the same decision the client receives.
-      const terminalType = translator.terminalType();
-      emit(controller, translator.finish());
-      await recordCompletionUsage(usageContext, state.usage);
-      settleTerminal(terminalType);
-      if (terminalType !== "response.completed") {
-        recordDeepSeekFailureKind(usageContext, terminalType === "response.incomplete" ? "incomplete_response" : "upstream_error");
+      // The provider's own stop reason decides the terminal (Goal B's Delta 1
+      // vocabulary), and the provider-agnostic completion-validity predicate
+      // (Goal A's G3) decides whether a would-be completion carries anything a
+      // client can act on. An explicit non-completed signal wins over validity.
+      const terminalKind = translator.terminalKind();
+      if (terminalKind === "completed" && !isAnswerBearingCompletion(translator.answerBearingOutput())) {
+        if (usageContext?.responseTelemetry) {
+          usageContext.responseTelemetry.failureKind = "empty_upstream_completion";
+          usageContext.responseTelemetry.semanticOutputObserved = false;
+        }
+        recordTerminalUsage(usageContext, state.usage, false);
+        settleTerminal("response.failed");
+        recordStreamTerminal(usageContext);
+        emit(controller, [...translator.open(), emptyCompletionFailure()]);
+        recordDeepSeekResponseHealth(upstream.status, providerRequestId);
+        return;
+      }
+      if (terminalKind === "failed") {
+        recordDeepSeekFailureKind(usageContext, deepSeekFinishReasonFailureKind(translator.upstreamFinishReason()));
         void recordDeepSeekProviderHealth("upstream_error", upstream.status, Date.now, providerRequestId);
+      }
+      emit(controller, translator.finish());
+      if (terminalKind === "completed") {
+        await recordCompletionUsage(usageContext, state.usage);
+        settleTerminal("response.completed");
+      } else {
+        recordTerminalUsage(usageContext, state.usage, false);
+        settleTerminal(terminalKind === "incomplete" ? "response.incomplete" : "response.failed");
       }
       recordStreamTerminal(usageContext);
       recordDeepSeekResponseHealth(upstream.status, providerRequestId);
@@ -10226,7 +10320,7 @@ const streamDeepSeekResponses = (
   const handleChunk = (chunk: Record<string, unknown>): Record<string, unknown>[] => {
     const chunkUsage = extractChatUsageTokens(chunk.usage);
     if (chunkUsage) state.usage = chunkUsage;
-    if (!state.semantic && deepSeekChunkHasSemanticOutput(chunk)) {
+    if (!state.semantic && chatChunkHasAnswerBearingOutput(chunk)) {
       state.semantic = true;
       markChatSemanticOutput(usageContext);
       recordFirstSemanticCommitment(usageContext);
