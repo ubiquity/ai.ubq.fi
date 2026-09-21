@@ -10081,6 +10081,49 @@ const handleDeepSeekChatCompletions = async (
 };
 
 /**
+ * Records the requested reasoning tier and the *effective* output allowance for
+ * a DeepSeek Responses request.
+ *
+ * `applyOutputLimit` puts the client's `max_output_tokens` on the wire as
+ * `max_tokens`; when the client sent none the provider's own default for the
+ * requested tier applies. Observability only: the gateway never writes a cap
+ * into the upstream body, so an omitted field stays omitted.
+ */
+const recordDeepSeekResponsesRequestTelemetry = (usageContext: UsageContext | undefined, chatBody: Record<string, unknown>, reasoningLabel: string): void => {
+  const telemetry = usageContext?.responseTelemetry;
+  if (!telemetry) return;
+  telemetry.provider = "deepseek";
+  telemetry.reasoning = reasoningLabel;
+  telemetry.outputTokenAllowance = (typeof chatBody.max_tokens === "number" ? chatBody.max_tokens : null) ?? deepSeekDefaultOutputAllowance(reasoningLabel);
+};
+
+/**
+ * Records a buffered DeepSeek Responses terminal truthfully. The payload
+ * carries the provider's own terminal, so telemetry reports the terminal the
+ * client receives rather than assuming success.
+ */
+const recordBufferedDeepSeekResponsesTerminal = async (
+  usageContext: UsageContext | undefined,
+  payload: Record<string, unknown>,
+  usage: UsageTokens | null,
+  upstream: Response,
+  providerRequestId: string | null
+): Promise<void> => {
+  const terminalType = deepSeekTerminalTypeForPayload(payload.status);
+  if (terminalType === "response.completed") {
+    await recordCompletionUsage(usageContext, usage);
+    recordStreamTerminalType(usageContext, terminalType);
+    recordStreamTerminal(usageContext);
+  } else {
+    recordTerminalUsage(usageContext, usage, false);
+    recordStreamTerminalType(usageContext, terminalType);
+    recordDeepSeekFailureKind(usageContext, terminalType === "response.incomplete" ? "incomplete_response" : "upstream_error");
+    void recordDeepSeekProviderHealth("upstream_error", upstream.status, Date.now, providerRequestId);
+  }
+  recordDeepSeekResponseHealth(upstream.status, providerRequestId);
+};
+
+/**
  * Responses adapter for the DeepSeek official route.
  *
  * The Codex client speaks only the Responses API, so this route translates the
@@ -10116,14 +10159,7 @@ const handleDeepSeekResponses = async (req: Request, rawRecord: Record<string, u
     instructions: typeof rawRecord.instructions === "string" && rawRecord.instructions.trim() ? rawRecord.instructions : null,
   };
   const reasoningLabel = typeof chatBody.reasoning_effort === "string" ? chatBody.reasoning_effort : DEEPSEEK_DEFAULT_REASONING_EFFORT;
-  if (usageContext?.responseTelemetry) {
-    usageContext.responseTelemetry.provider = "deepseek";
-    usageContext.responseTelemetry.reasoning = reasoningLabel;
-    // `applyOutputLimit` put the client's `max_output_tokens` on the wire as
-    // `max_tokens`; when it was absent the provider's own tier default applies.
-    usageContext.responseTelemetry.outputTokenAllowance =
-      (typeof chatBody.max_tokens === "number" ? chatBody.max_tokens : null) ?? deepSeekDefaultOutputAllowance(reasoningLabel);
-  }
+  recordDeepSeekResponsesRequestTelemetry(usageContext, chatBody, reasoningLabel);
   await recordRequestUsage(usageContext, {
     model: modelRaw,
     route: "responses",
@@ -10171,18 +10207,7 @@ const handleDeepSeekResponses = async (req: Request, rawRecord: Record<string, u
   if (usageContext?.responseTelemetry) usageContext.responseTelemetry.providerRequestId = providerRequestId;
   const payload = toDeepSeekResponsesPayload(completion.value, modelRaw, responseId, echo, toolNames, customToolNames);
   const usage = extractChatUsageTokens(completion.value.usage);
-  await recordCompletionUsage(usageContext, usage);
-  // The buffered payload carries the provider's own terminal too, so telemetry
-  // records the same terminal the client receives instead of assuming success.
-  const bufferedTerminalType = deepSeekTerminalTypeForPayload(payload.status);
-  recordStreamTerminalType(usageContext, bufferedTerminalType);
-  if (bufferedTerminalType === "response.completed") {
-    recordStreamTerminal(usageContext);
-  } else {
-    recordDeepSeekFailureKind(usageContext, bufferedTerminalType === "response.incomplete" ? "incomplete_response" : "upstream_error");
-    void recordDeepSeekProviderHealth("upstream_error", upstream.status, Date.now, providerRequestId);
-  }
-  recordDeepSeekResponseHealth(upstream.status, providerRequestId);
+  await recordBufferedDeepSeekResponsesTerminal(usageContext, payload, usage, upstream, providerRequestId);
   return json(200, payload, deepseekResponseHeaders(providerRequestId));
 };
 
@@ -10237,6 +10262,43 @@ const streamDeepSeekResponses = (
       error: { code: "empty_upstream_completion", message: EMPTY_UPSTREAM_COMPLETION_MESSAGE },
     },
   });
+  /**
+   * G3: a stop with no tool call, no non-empty assistant text and no refusal
+   * is a syntactically valid but unusable completion, not a success. Reasoning
+   * does not change that. An explicit upstream signal is an incompletion and
+   * never reaches here, because that terminal type is already non-completed.
+   */
+  const isDegenerateCompletion = (): boolean => !isAnswerBearingCompletion(translator.answerBearingOutput());
+
+  const emitEmptyCompletionFailure = (controller: ReadableStreamDefaultController<Uint8Array>): void => {
+    if (usageContext?.responseTelemetry) {
+      usageContext.responseTelemetry.failureKind = "empty_upstream_completion";
+      usageContext.responseTelemetry.semanticOutputObserved = false;
+    }
+    recordTerminalUsage(usageContext, state.usage, false);
+    settleTerminal("response.failed");
+    recordStreamTerminal(usageContext);
+    emit(controller, [...translator.open(), emptyCompletionFailure()]);
+    recordDeepSeekResponseHealth(upstream.status, providerRequestId);
+  };
+
+  /**
+   * Records a settled terminal truthfully. A non-completed terminal must not be
+   * recorded as a completed one: `completed` feeds the `request_terminal` log
+   * and the persisted telemetry, so laundering it here would restate the very
+   * defect this program removes.
+   */
+  const recordSettledTerminal = async (terminalType: ResponseStreamTerminalType): Promise<void> => {
+    settleTerminal(terminalType);
+    if (terminalType === "response.completed") {
+      await recordCompletionUsage(usageContext, state.usage);
+      return;
+    }
+    recordTerminalUsage(usageContext, state.usage, false);
+    recordDeepSeekFailureKind(usageContext, terminalType === "response.incomplete" ? "incomplete_response" : "upstream_error");
+    void recordDeepSeekProviderHealth("upstream_error", upstream.status, Date.now, providerRequestId);
+  };
+
   // The controller closes in a `finally`: a throw while emitting the terminal
   // events must still end the client-visible stream instead of hanging it.
   const finishStream = async (controller: ReadableStreamDefaultController<Uint8Array>): Promise<void> => {
@@ -10246,36 +10308,12 @@ const streamDeepSeekResponses = (
       // interrupted, or answer-less generation is never relayed as a clean
       // completion. Telemetry reads the same decision the client receives.
       const terminalType = translator.terminalType();
-      if (terminalType === "response.completed" && !isAnswerBearingCompletion(translator.answerBearingOutput())) {
-        // G3: a stop with no tool call, no non-empty assistant text and no
-        // refusal is a syntactically valid but unusable completion, not a
-        // success. Reasoning does not change that. An explicit upstream
-        // signal (G1) is an incompletion, not a degenerate completion, so it
-        // is handled by the branch below instead.
-        if (usageContext?.responseTelemetry) {
-          usageContext.responseTelemetry.failureKind = "empty_upstream_completion";
-          usageContext.responseTelemetry.semanticOutputObserved = false;
-        }
-        recordTerminalUsage(usageContext, state.usage, false);
-        settleTerminal("response.failed");
-        recordStreamTerminal(usageContext);
-        emit(controller, [...translator.open(), emptyCompletionFailure()]);
-        recordDeepSeekResponseHealth(upstream.status, providerRequestId);
+      if (terminalType === "response.completed" && isDegenerateCompletion()) {
+        emitEmptyCompletionFailure(controller);
         return;
       }
       emit(controller, translator.finish());
-      settleTerminal(terminalType);
-      if (terminalType === "response.completed") {
-        await recordCompletionUsage(usageContext, state.usage);
-      } else {
-        // A non-completed terminal must not be recorded as a completed one:
-        // `completed` feeds the request_terminal log and the persisted
-        // telemetry, so laundering it here would restate the very defect this
-        // program removes.
-        recordTerminalUsage(usageContext, state.usage, false);
-        recordDeepSeekFailureKind(usageContext, terminalType === "response.incomplete" ? "incomplete_response" : "upstream_error");
-        void recordDeepSeekProviderHealth("upstream_error", upstream.status, Date.now, providerRequestId);
-      }
+      await recordSettledTerminal(terminalType);
       recordStreamTerminal(usageContext);
       recordDeepSeekResponseHealth(upstream.status, providerRequestId);
     } finally {
