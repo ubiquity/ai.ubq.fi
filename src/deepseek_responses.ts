@@ -32,8 +32,6 @@ import { getString, isRecord } from "./utils.ts";
 
 export type DeepSeekResponsesFailure = Readonly<{ ok: false; message: string; param: string }>;
 
-/** The terminals a DeepSeek stream can settle on. */
-export type DeepSeekResponsesTerminalType = "response.completed" | "response.incomplete" | "response.failed";
 export type DeepSeekResponsesResult<T> = Readonly<{ ok: true; value: T }> | DeepSeekResponsesFailure;
 
 const failure = (param: string, message: string): DeepSeekResponsesFailure => ({ ok: false, message, param });
