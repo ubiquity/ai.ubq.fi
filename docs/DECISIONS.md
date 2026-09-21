@@ -66,6 +66,46 @@ mapping on the assumption that it leaks across routes; it does not.
 Residual gap: Surplus and OpenLux were not probed, so their truncation-stop behaviour remains unverified. Codex's
 handling of the terminal is proven; which upstreams ever emit it is not.
 
+## Deployment status of the terminal-truthfulness work - 2026-09-21
+
+The measurement-artifact correction above retracts the premise that motivated this work. It therefore matters which
+parts are actually running, and whether any deployed behaviour change was justified by the retracted claim.
+
+**None of it is deployed.** The two running releases predate every commit in the program:
+
+| Deployment                   | Release      | Terminal-truthfulness commits |
+| ---------------------------- | ------------ | ----------------------------- |
+| VPS (production)             | `922c33392d` | none                          |
+| Mac local (`localhost:7999`) | `4176e992f5` | none                          |
+| `development`                | `884051eba9` | all eight                     |
+
+So no production inference behaviour changed, and no retraction is needed on a live system. The work is merged to
+`development` and stops there.
+
+**Only one of the three changes depends on the retracted premise, and partially.**
+
+- **G5 (report the effective output allowance)** - independent. It is telemetry only, changes no generation behaviour,
+  and was justified by the provider's tier-dependent default (8,192 at `none`), measured directly.
+- **G1 (`length` to `response.incomplete`)** - independent. It was reproduced end to end: an upstream
+  `finish_reason: "length"` reached the client as a clean `response.completed` with `incomplete_details: null` while the
+  gateway's own telemetry recorded `output_tokens: 8192`. That demonstration does not involve narration at all.
+- **G3 (fail closed on a degenerate completion)** - **partially dependent.** Its stated trigger is a stream about to
+  complete "with no tool call, no non-empty assistant text and no refusal". The no-tool-call clause was written for the
+  narration symptom that has now been retracted. The reasoning-only clause stands on its own: a completion whose only
+  output is reasoning hands the client nothing, which the Cerebras route already failed closed for independently of any
+  narration claim.
+
+Reason for recording this: the correction above removes the motivation for one clause of one change, and a future reader
+deciding whether to deploy needs to know that the other two changes and most of the third rest on reproductions that
+survived the retraction.
+
+Reversal risk: deploying on the belief that the narration symptom is real, or reverting the whole program because its
+original motivation was retracted. The first is unfounded; the second discards two independently reproduced fixes.
+
+Next action if the program is to be deployed: re-derive G3's trigger from the surviving evidence alone - keep the
+reasoning-only and empty-output clauses, and justify or drop the no-tool-call clause on its own merits rather than on
+the retracted frequency claim.
+
 ## CORRECTION: the narration symptom was itself a measurement artifact - 2026-09-21
 
 The entry below and the terminal-truthfulness handoff both rest on an observed condition: a long-running agent
