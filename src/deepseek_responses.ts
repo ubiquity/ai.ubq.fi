@@ -13,11 +13,18 @@ import { getString, isRecord } from "./utils.ts";
 /**
  * Responses <-> DeepSeek Chat Completions adapter.
  *
- * The official DeepSeek API speaks Chat Completions. The Codex CLI speaks only
- * the Responses API (`wire_api = "chat"` was removed from the client), so this
- * module translates a Responses request into a Chat Completions body, a Chat
- * completion back into a Responses object, and a Chat SSE stream into the
- * Responses event sequence the client consumes.
+ * The Codex CLI speaks only the Responses API (`wire_api = "chat"` was removed
+ * from the client), so this module translates a Responses request into a Chat
+ * Completions body, a Chat completion back into a Responses object, and a Chat
+ * SSE stream into the Responses event sequence the client consumes.
+ *
+ * The translation is not required by a provider gap: DeepSeek now serves a
+ * native Responses endpoint (`POST /responses` and `/v1/responses`, probed
+ * 2026-09-21). It stays the right seam because the provider's native endpoint is
+ * documented as stateless with several control parameters ignored, and because
+ * the `reasoning_content` fill this adapter applies to tool-bearing tails is a
+ * measured provider requirement a native response would have to reproduce. A
+ * migration is a separate evidence-driven evaluation, not an assumed cure.
  *
  * Only the gateway-known subset is translated. Anything else fails closed with
  * an `invalid_request_error` rather than being forwarded as an approximation.
