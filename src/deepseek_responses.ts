@@ -1,4 +1,13 @@
-import { deepSeekCachedPromptTokens, deepSeekReasoningTokens, deepSeekUpstreamModelFor, projectDeepSeekReasoningEffort } from "./deepseek.ts";
+import {
+  deepSeekCachedPromptTokens,
+  type DeepSeekFinishDisposition,
+  deepSeekFinishDisposition,
+  deepSeekReasoningTokens,
+  deepSeekThinkingToolChoiceConflict,
+  deepSeekToolChoiceThinkingConflictMessage,
+  deepSeekUpstreamModelFor,
+  projectDeepSeekReasoningEffort,
+} from "./deepseek.ts";
 import { getString, isRecord } from "./utils.ts";
 
 /**
@@ -15,6 +24,9 @@ import { getString, isRecord } from "./utils.ts";
  */
 
 export type DeepSeekResponsesFailure = Readonly<{ ok: false; message: string; param: string }>;
+
+/** The terminals a DeepSeek stream can settle on. */
+export type DeepSeekResponsesTerminalType = "response.completed" | "response.incomplete" | "response.failed";
 export type DeepSeekResponsesResult<T> = Readonly<{ ok: true; value: T }> | DeepSeekResponsesFailure;
 
 const failure = (param: string, message: string): DeepSeekResponsesFailure => ({ ok: false, message, param });
@@ -390,7 +402,18 @@ const applyTools = (
   }
   const toolChoice = toChatToolChoice(rawRecord.tool_choice, toolNames);
   if (!toolChoice.ok) return toolChoice;
-  if (toolChoice.value !== undefined) body.tool_choice = toolChoice.value;
+  if (toolChoice.value !== undefined) {
+    // Thinking mode rejects `required` and the named-function form with an
+    // upstream 400 (`Thinking mode does not support this tool_choice`). Reject
+    // the incompatible combination here so the client gets a gateway-shaped
+    // error naming both fields instead of the provider's message about a
+    // parameter it believes it supports, and so the request never leaves the
+    // gateway only to fail upstream. Probed 2026-09-21 on the Chat endpoint and
+    // on the provider's native Responses endpoint; both reject it.
+    const conflict = deepSeekThinkingToolChoiceConflict(body.reasoning_effort, rawRecord.thinking, toolChoice.value);
+    if (conflict) return failure("tool_choice", deepSeekToolChoiceThinkingConflictMessage(conflict, "reasoning.effort"));
+    body.tool_choice = toolChoice.value;
+  }
   if (typeof rawRecord.parallel_tool_calls === "boolean") body.parallel_tool_calls = rawRecord.parallel_tool_calls;
   const responseFormat = toChatResponseFormat(rawRecord.text);
   if (!responseFormat.ok) return responseFormat;
@@ -549,6 +572,55 @@ const responsesEnvelope = (
   usage: null,
 });
 
+/**
+ * The terminal event and status a DeepSeek `finish_reason` implies.
+ *
+ * The provider reports one vocabulary for both the Chat endpoint and its native
+ * Responses endpoint; the official Responses schema defines only
+ * `max_output_tokens`, `max_messages`, `content_filter` and `steered` as
+ * `incomplete_details.reason` values, so the two incomplete-capable reasons map
+ * onto the schema's own names. A resource interruption and an interruption of
+ * unspecified cause are reported as a failed terminal rather than a clean
+ * completion, because neither leaves a usable answer.
+ */
+export const deepSeekTerminalTypeForDisposition = (
+  disposition: DeepSeekFinishDisposition
+): "response.completed" | "response.incomplete" | "response.failed" => {
+  if (disposition.kind === "completed") return "response.completed";
+  if (disposition.kind === "incomplete") return "response.incomplete";
+  return "response.failed";
+};
+
+/**
+ * Builds the terminal Responses object for one DeepSeek finish disposition.
+ * Only a completed disposition reports `completed`; an incomplete disposition
+ * carries `incomplete_details.reason`, and every other disposition names the
+ * provider's own reason as the error code so the cause stays visible.
+ */
+export const deepSeekTerminalEnvelope = (
+  responseId: string,
+  requestedModel: string,
+  createdAtSeconds: number,
+  status: string,
+  echo: DeepSeekResponsesEcho,
+  finishReason: unknown
+): Readonly<{ type: "response.completed" | "response.incomplete" | "response.failed"; response: Record<string, unknown> }> => {
+  const disposition = deepSeekFinishDisposition(finishReason);
+  const terminalType = deepSeekTerminalTypeForDisposition(disposition);
+  if (disposition.kind === "completed") {
+    return { type: terminalType as "response.completed", response: responsesEnvelope(responseId, requestedModel, createdAtSeconds, status, echo) };
+  }
+  if (disposition.kind === "incomplete") {
+    const response = responsesEnvelope(responseId, requestedModel, createdAtSeconds, "incomplete", echo);
+    response.incomplete_details = { reason: disposition.reason };
+    return { type: "response.incomplete", response };
+  }
+  const code = disposition.kind === "failed" ? disposition.code : `unrecognized_finish_reason:${disposition.value}`;
+  const response = responsesEnvelope(responseId, requestedModel, createdAtSeconds, "failed", echo);
+  response.error = { code, message: `DeepSeek stopped generating: ${code}` };
+  return { type: "response.failed", response };
+};
+
 /** Output items for one Chat choice: reasoning, message, then any tool calls. */
 const outputItemsForChoice = (
   message: Record<string, unknown>,
@@ -594,8 +666,13 @@ export const toDeepSeekResponsesPayload = (
   customToolNames: ReadonlySet<string> = new Set()
 ): Record<string, unknown> => {
   const created = typeof completion.created === "number" ? completion.created : Math.floor(Date.now() / 1000);
-  const payload = responsesEnvelope(responseId, requestedModel, created, "completed", echo);
   const choices = Array.isArray(completion.choices) ? completion.choices : [];
+  // A buffered completion still carries `finish_reason`, so the same mapping
+  // applies: a single-choice truncation must not be returned as a completed
+  // response just because the transport delivered the whole body.
+  const firstChoice = choices.find((choice) => isRecord(choice) && !Array.isArray(choice));
+  const finishReason = isRecord(firstChoice) && !Array.isArray(firstChoice) ? firstChoice.finish_reason : undefined;
+  const payload = deepSeekTerminalEnvelope(responseId, requestedModel, created, "completed", echo, finishReason).response;
   const output: Record<string, unknown>[] = [];
   for (const [index, choice] of choices.entries()) {
     if (!isRecord(choice) || Array.isArray(choice) || !isRecord(choice.message) || Array.isArray(choice.message)) continue;
@@ -635,8 +712,13 @@ type StreamState = {
   nextOutputIndex: number;
   output: Record<string, unknown>[];
   usage: Record<string, unknown> | null;
-  /** Last `finish_reason` string the upstream sent, or null while absent. */
-  finishReason: string | null;
+  /**
+   * The provider's own stop reason, captured rather than discarded. The
+   * provider's client defers the mapped reason to its terminal sentinel so no
+   * chunk follows it and usage always precedes it; this translator's `finish`
+   * runs on the same sentinel, so the last non-null value wins.
+   */
+  finishReason: unknown;
 };
 
 const newStreamState = (): StreamState => ({
@@ -651,26 +733,8 @@ const newStreamState = (): StreamState => ({
   nextOutputIndex: 0,
   output: [],
   usage: null,
-  finishReason: null,
+  finishReason: undefined,
 });
-
-/**
- * The gateway terminal a Chat `finish_reason` maps onto, decided once here.
- *
- * `stop`, `tool_calls` and an absent reason are normal completions. `length`
- * means the provider stopped at an output or context boundary, which the
- * Responses schema reports as `incomplete` with the single reason
- * `max_output_tokens` (the schema spells it that way; it is not `max_tokens`).
- * Any other value must not be laundered into a normal stop: it becomes a
- * failed terminal, and the route records the raw value in telemetry.
- */
-export type DeepSeekResponsesTerminalKind = "completed" | "incomplete" | "failed";
-
-export const deepSeekResponsesTerminalKind = (finishReason: string | null): DeepSeekResponsesTerminalKind => {
-  if (finishReason === null || finishReason === "stop" || finishReason === "tool_calls") return "completed";
-  if (finishReason === "length") return "incomplete";
-  return "failed";
-};
 
 /** Merges one tool-call delta into the accumulated call for its index. */
 const mergeToolCallDelta = (state: StreamState, responseId: string, raw: Record<string, unknown>, position: number): StreamToolCall => {
@@ -738,6 +802,26 @@ export const createDeepSeekResponsesStreamTranslator = (
       },
     ];
   };
+
+  /**
+   * The one place the stream's terminal is decided from the provider's own stop
+   * reason. `finish` emits it and `terminalType` reports it for telemetry, so a
+   * client-visible terminal and its recorded classification cannot disagree.
+   *
+   * Scope note: this maps the provider's reason vocabulary only. Whether an
+   * answer-less completion is a valid completion is the provider-agnostic
+   * completion-validity question owned by the generalized terminal-truthfulness
+   * program; the shared predicate plugs in here when it lands, rather than
+   * being reimplemented per route.
+   */
+  const terminalDecision = (): DeepSeekResponsesTerminalType => deepSeekTerminalTypeForDisposition(deepSeekFinishDisposition(state.finishReason));
+
+  /**
+   * The terminal object for this stream. Built once per call from
+   * `terminalDecision`, so the emitted event and its type come from one
+   * decision.
+   */
+  const terminalEnvelope = () => deepSeekTerminalEnvelope(responseId, requestedModel, createdAtSeconds, "completed", echo, state.finishReason);
 
   const isCustomCall = (call: StreamToolCall): boolean => customToolNames.has(call.name);
 
@@ -851,10 +935,6 @@ export const createDeepSeekResponsesStreamTranslator = (
       text: state.text,
       toolCallCount: [...state.toolCalls.values()].filter((call) => call.name).length,
     }),
-    /** The terminal the recorded upstream reason maps onto. */
-    terminalKind: (): DeepSeekResponsesTerminalKind => deepSeekResponsesTerminalKind(state.finishReason),
-    /** The raw recorded reason, for telemetry when the terminal is a failure. */
-    upstreamFinishReason: (): string | null => state.finishReason,
     /** Translates one normalized Chat chunk into zero or more Responses events. */
     push: (chunk: Record<string, unknown>): Record<string, unknown>[] => {
       const events = startEvents();
@@ -863,46 +943,35 @@ export const createDeepSeekResponsesStreamTranslator = (
       const choices = Array.isArray(chunk.choices) ? chunk.choices : [];
       for (const choice of choices) {
         if (!isRecord(choice) || Array.isArray(choice)) continue;
-        // The terminal reason can arrive on a choice that carries no delta, and
-        // a later string replaces an earlier one: the last reason before the
-        // stream's end sentinel is the one the terminal decision must use.
+        // `finish_reason` rides the final content chunk, which also carries the
+        // usage statistics. Capture it before the delta handling, which ignores
+        // the field.
         if (typeof choice.finish_reason === "string") state.finishReason = choice.finish_reason;
         if (!isRecord(choice.delta) || Array.isArray(choice.delta)) continue;
         events.push(...applyTextDelta(choice.delta), ...applyToolCallDeltas(choice.delta));
       }
       return events;
     },
-    /** Emits the remaining item events plus the terminal event. */
+    /**
+     * The terminal this stream will settle on, available before `finish` emits
+     * it so telemetry records the same terminal the client receives.
+     */
+    terminalType: terminalDecision,
+    /**
+     * Emits the remaining item events plus the terminal event the provider's
+     * own stop reason implies. The terminal is derived at the one decision
+     * point, so a truncated or interrupted generation cannot be reported as a
+     * clean completion.
+     */
     finish: (): Record<string, unknown>[] => {
       if (state.completed) return [];
       state.completed = true;
       const events = [...startEvents(), ...closeMessage(), ...closeToolCalls()];
       if (state.reasoning) state.output.unshift(reasoningItem(`${responseId}_rs_0`, state.reasoning));
-      const kind = deepSeekResponsesTerminalKind(state.finishReason);
-      if (kind === "failed") {
-        events.push({
-          type: "response.failed",
-          response: {
-            id: responseId,
-            object: "response",
-            status: "failed",
-            error: {
-              code: "deepseek_upstream_finish_reason",
-              message: "Upstream stopped without a recognized finish reason.",
-            },
-          },
-        });
-        return events;
-      }
-      const response = responsesEnvelope(responseId, requestedModel, createdAtSeconds, kind === "incomplete" ? "incomplete" : "completed", echo);
-      response.output = state.output;
-      response.usage = state.usage;
-      if (kind === "incomplete") {
-        response.incomplete_details = { reason: "max_output_tokens" };
-        events.push({ type: "response.incomplete", response });
-        return events;
-      }
-      events.push({ type: "response.completed", response });
+      const terminal = terminalEnvelope();
+      terminal.response.output = state.output;
+      terminal.response.usage = state.usage;
+      events.push({ type: terminal.type, response: terminal.response });
       return events;
     },
   };

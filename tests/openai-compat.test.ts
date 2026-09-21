@@ -295,6 +295,15 @@ const specialProviderChatRequest = (body: Record<string, unknown>, signal?: Abor
     signal,
   });
 
+/** The Responses-route twin of `specialProviderChatRequest`. */
+const specialProviderResponsesRequest = (body: Record<string, unknown>, signal?: AbortSignal): Request =>
+  new Request("https://ai.ubq.fi/v1/responses", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-uos-upstream": "chatgpt_codex" },
+    body: JSON.stringify(body),
+    signal,
+  });
+
 /** A `void` promise gate: the resolution itself carries no payload. */
 type VoidGate = { promise: Promise<void>; resolve: () => void };
 
@@ -14140,6 +14149,92 @@ Deno.test("openai: DeepSeek official Chat Completions adapter streams natively a
       assert.equal(getResponseTelemetry(response)?.reasoning, "high");
     });
 
+    await t.step("records a truncated buffered completion as an incomplete terminal", async () => {
+      // The provider's `finish_reason: "length"` reaches the client as
+      // `status: "incomplete"` with the official reason, and telemetry records
+      // the same terminal rather than assuming success.
+      const response = await withFetchMock(
+        () =>
+          Response.json({
+            id: "deepseek-truncated-1",
+            object: "chat.completion",
+            created: 1_780_000_000,
+            model: DEEPSEEK_FLASH_MODEL,
+            choices: [{ index: 0, message: { role: "assistant", content: "cut off mid-sentence" }, finish_reason: "length" }],
+            usage: { prompt_tokens: 11, completion_tokens: 8192, total_tokens: 8203 },
+          }),
+        () =>
+          handleResponses(
+            specialProviderResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: "write forever", stream: false }),
+            usageContext("deepseek-truncated-buffered")
+          )
+      );
+      assert.equal(response.status, 200);
+      const payload = (await response.json()) as Record<string, unknown>;
+      assert.equal(payload.status, "incomplete");
+      assert.deepEqual(payload.incomplete_details, { reason: "max_output_tokens" });
+      const telemetry = getResponseTelemetry(response);
+      assert.ok(telemetry);
+      assert.equal(telemetry.streamTerminalType, "response.incomplete");
+      assert.equal(telemetry.failureKind, "incomplete_response");
+      assert.equal(telemetry.outputTokens, 8192);
+    });
+
+    await t.step("rejects a thinking-mode tool_choice at the boundary without dispatching upstream", async () => {
+      // The provider answers HTTP 400 "Thinking mode does not support this
+      // tool_choice" for `required` and the named-function form while thinking
+      // is active. The request is refused here, so no upstream call is made and
+      // the client sees an error naming both conflicting fields.
+      let upstreamCalls = 0;
+      const required = await withFetchMock(
+        () => {
+          upstreamCalls += 1;
+          return Response.json(completion("deepseek-should-not-be-called", { role: "assistant", content: "ok" }));
+        },
+        () => handleChatCompletions(request({ model: DEEPSEEK_FLASH_MODEL, messages, tools, tool_choice: "required", reasoning_effort: "high", stream: false }))
+      );
+      assert.equal(required.status, 400);
+      const requiredError = ((await required.json()) as { error: { message: string; param: string; type: string } }).error;
+      assert.equal(requiredError.type, "invalid_request_error");
+      assert.equal(requiredError.param, "tool_choice");
+      assert.match(requiredError.message, /tool_choice 'required'/);
+      assert.match(requiredError.message, /reasoning_effort/);
+
+      const named = await withFetchMock(
+        () => {
+          upstreamCalls += 1;
+          return Response.json(completion("deepseek-should-not-be-called", { role: "assistant", content: "ok" }));
+        },
+        () =>
+          handleChatCompletions(
+            request({ model: DEEPSEEK_FLASH_MODEL, messages, tools, tool_choice: { type: "function", function: { name: "assistant_message" } }, stream: false })
+          )
+      );
+      assert.equal(named.status, 400);
+      const namedError = ((await named.json()) as { error: { message: string; param: string } }).error;
+      assert.equal(namedError.param, "tool_choice");
+      assert.match(namedError.message, /tool_choice 'function:assistant_message'/);
+      // The rejected requests never reached the provider.
+      assert.equal(upstreamCalls, 0);
+    });
+
+    await t.step("serves required tool_choice when thinking mode is disabled", async () => {
+      // `reasoning_effort: "none"` disables thinking mode, so the same request
+      // is dispatched normally and the provider's own answer is relayed.
+      const upstreamCalls: Record<string, unknown>[] = [];
+      const response = await withFetchMock(
+        (_url, bodyText) => {
+          upstreamCalls.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
+          return Response.json(completion("deepseek-thinking-off", { role: "assistant", content: "ok" }));
+        },
+        () => handleChatCompletions(request({ model: DEEPSEEK_FLASH_MODEL, messages, tools, tool_choice: "required", reasoning_effort: "none", stream: false }))
+      );
+      assert.equal(response.status, 200);
+      assert.equal(upstreamCalls.length, 1);
+      assert.equal(upstreamCalls[0].tool_choice, "required");
+      assert.equal(upstreamCalls[0].reasoning_effort, "none");
+    });
+
     await t.step("relays upstream SSE chunks, keep-alive comments and [DONE] without downgrading the stream", async () => {
       const upstreamCalls: { url: string; body: Record<string, unknown> }[] = [];
       const upstreamFrames = [
@@ -14910,7 +15005,9 @@ Deno.test("openai: a truncated DeepSeek Responses stream reports response.incomp
       assert.equal(telemetry.streamTerminalType, "response.incomplete");
       assert.equal(telemetry.completed, false);
       assert.equal(telemetry.outputTokenAllowance, 16);
-      assert.equal(telemetry.failureKind, null);
+      // The route names its own incompletion classification; the requirement
+      // this program owns is that the terminal and `completed` are truthful.
+      assert.equal(telemetry.failureKind, "incomplete_response");
     });
 
     await t.step("an empty length completion is incomplete, not a fail-closed empty completion", async () => {
@@ -14931,7 +15028,7 @@ Deno.test("openai: a truncated DeepSeek Responses stream reports response.incomp
       const telemetry = getResponseTelemetry(response);
       assert.ok(telemetry);
       assert.equal(telemetry.streamTerminalType, "response.incomplete");
-      assert.equal(telemetry.failureKind, null);
+      assert.equal(telemetry.failureKind, "incomplete_response");
       assert.equal(telemetry.completed, false);
     });
 
@@ -14974,7 +15071,11 @@ Deno.test("openai: a truncated DeepSeek Responses stream reports response.incomp
       assert.ok(telemetry);
       assert.equal(telemetry.streamTerminalType, "response.failed");
       assert.equal(telemetry.completed, false);
-      assert.equal(telemetry.failureKind, "deepseek_finish_reason:insufficient_system_resource");
+      assert.equal(telemetry.failureKind, "upstream_error");
+      // The provider's own value stays visible: the terminal error code names
+      // it rather than collapsing every interruption into one opaque failure.
+      const failure = events.at(-1) as { response: { error: { code: string } } };
+      assert.equal(failure.response.error.code, "insufficient_system_resource");
     });
   } finally {
     if (originalApiKey === undefined) Deno.env.delete(envKey);
