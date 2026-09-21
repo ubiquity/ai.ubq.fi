@@ -15005,7 +15005,9 @@ Deno.test("openai: a truncated DeepSeek Responses stream reports response.incomp
       assert.equal(telemetry.streamTerminalType, "response.incomplete");
       assert.equal(telemetry.completed, false);
       assert.equal(telemetry.outputTokenAllowance, 16);
-      assert.equal(telemetry.failureKind, null);
+      // A truncation is classified, not left indistinguishable from a clean
+      // completion; the classification matches the buffered path.
+      assert.equal(telemetry.failureKind, "incomplete_response");
     });
 
     await t.step("an empty length completion is incomplete, not a fail-closed empty completion", async () => {
@@ -15026,7 +15028,7 @@ Deno.test("openai: a truncated DeepSeek Responses stream reports response.incomp
       const telemetry = getResponseTelemetry(response);
       assert.ok(telemetry);
       assert.equal(telemetry.streamTerminalType, "response.incomplete");
-      assert.equal(telemetry.failureKind, null);
+      assert.equal(telemetry.failureKind, "incomplete_response");
       assert.equal(telemetry.completed, false);
     });
 
