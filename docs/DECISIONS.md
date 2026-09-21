@@ -83,6 +83,7 @@ effort. Ten runs per cell, work outstanding, classification by whether a `functi
 | `deepseek-flash` (effort `max`) |              18,787 | 10 |                 5 |                    5 | **50%** |
 | `deepseek-flash` (effort `max`) |              66,533 | 10 |                 5 |                    5 | **50%** |
 | `gpt-reserve` (effort `medium`) |              61,005 | 10 |                10 |                    0 |      0% |
+| `gpt-reserve` (effort `max`)    |              61,005 | 10 |                10 |                    0 |      0% |
 | `gpt-reserve` (effort `medium`) |             175,888 | 10 |                10 |                    0 |      0% |
 
 Every run in every cell terminated `response.completed`; the difference is only whether a tool call accompanied it.
@@ -109,9 +110,12 @@ Reversal risk: treating this as a gateway defect and adding gateway-side tool-ca
 would fire on legitimate completions that end with forward-looking wording, and would misattribute an upstream model
 behaviour to the transport layer.
 
-Residual limits: the `gpt-reserve` control ran at effort `medium` while DeepSeek ran at `max`, so effort is not held
-constant across models; the DeepSeek curve is single-effort. Rates are point estimates from 10 runs per cell, so the
-band boundaries are approximate rather than measured thresholds.
+**Effort is not the variable.** The control was re-run at effort `max`, matching DeepSeek exactly on the same payload:
+10 of 10 tool calls, 0% narration at the same 61,005 input tokens, identical to its `medium` result. So the model
+difference survives effort being held constant, and reasoning effort is ruled out as the cause.
+
+Residual limits: the DeepSeek curve is single-effort, so effort is not swept on that side. Rates are point estimates
+from 10 runs per cell, so the band boundaries are approximate rather than measured thresholds.
 
 ## Per-upstream truncation coverage for the terminal mapping - 2026-09-21
 
