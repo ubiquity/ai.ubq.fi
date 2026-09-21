@@ -93,9 +93,11 @@ Two conclusions follow, and they are the reason this entry exists:
 - **It is a model behaviour, not a gateway defect.** At the same ~66k context with the same payload, DeepSeek drops the
   tool call half the time and `gpt-reserve` never does — including at 175k, nearly three times the DeepSeek band. A
   translation or transport defect in this gateway would not spare one provider and hit the other on an identical body.
-- **Context size is the trigger, and it saturates early.** The rate goes from 0% at ~1k tokens to ~50% by ~19k and stays
-  there through ~67k. It is not a gradual degradation, and the earlier clean result was a correctly executed experiment
-  at the wrong scale.
+- **Context size is the trigger, and the onset is between roughly 1k and 4k input tokens.** Fine-grained bands place it
+  lower than first recorded: 0% at 951 tokens, then 30% already at 4,400. Above that onset the rate is flat and noisy
+  across 4k-67k (30 / 40 / 10 / 50 / 40 / 50%) with no monotone trend, pooling to 38% across all bands above 1k. A
+  Fisher exact test of the tiny band against everything above it gives `p = 0.025`. It is a step change, not a gradual
+  degradation, and the earlier clean result was a correctly executed experiment at the wrong scale.
 
 The real symptomatic sessions ran at a median of about 485k input tokens, well past the band where the rate saturates,
 which is consistent with 154 of 292 turns ending in narration there.
@@ -138,8 +140,9 @@ reader should not tune reasoning effort on the strength of those numbers.
 Reversal risk: selecting or advertising a reasoning tier as a narration mitigation, or dismissing the model difference
 because a single-effort cell happened to look clean, would each act on noise rather than on the measured effect.
 
-Residual limits: rates are point estimates from 10 runs per cell, so the band boundaries are approximate rather than
-measured thresholds, and the effort sweep is underpowered to exclude a small effort effect.
+Residual limits: rates are point estimates from 10 runs per cell, and the intermediate bands are individually noisy
+enough that only the onset (between ~1k and ~4k) is established rather than a precise threshold. The effort sweep is
+underpowered to exclude a small effort effect.
 
 ## Per-upstream truncation coverage for the terminal mapping - 2026-09-21
 
