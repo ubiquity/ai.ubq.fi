@@ -9310,14 +9310,20 @@ const recordDeepSeekResponseHealth = (status: number, providerRequestId: string 
  * provider's own terminal, so telemetry reports the terminal the client
  * receives instead of assuming success, and the non-completed classification
  * matches the streamed path.
+ *
+ * `completed` is derived from that same terminal: recording the usage counters
+ * as a completion before reading the payload's status would persist a
+ * truncated reply as a completed one.
  */
 const recordBufferedDeepSeekResponsesTerminal = (
   usageContext: UsageContext | undefined,
   payload: Record<string, unknown>,
+  usage: UsageTokens | null,
   upstreamStatus: number,
   providerRequestId: string | null
 ): void => {
   const terminalType = deepSeekTerminalTypeForPayload(payload.status);
+  recordTerminalUsage(usageContext, usage, terminalType === "response.completed");
   recordStreamTerminalType(usageContext, terminalType);
   if (terminalType === "response.completed") {
     recordStreamTerminal(usageContext);
@@ -10202,8 +10208,7 @@ const handleDeepSeekResponses = async (req: Request, rawRecord: Record<string, u
   if (usageContext?.responseTelemetry) usageContext.responseTelemetry.providerRequestId = providerRequestId;
   const payload = toDeepSeekResponsesPayload(completion.value, modelRaw, responseId, echo, toolNames, customToolNames);
   const usage = extractChatUsageTokens(completion.value.usage);
-  await recordCompletionUsage(usageContext, usage);
-  recordBufferedDeepSeekResponsesTerminal(usageContext, payload, upstream.status, providerRequestId);
+  recordBufferedDeepSeekResponsesTerminal(usageContext, payload, usage, upstream.status, providerRequestId);
   return json(200, payload, deepseekResponseHeaders(providerRequestId));
 };
 

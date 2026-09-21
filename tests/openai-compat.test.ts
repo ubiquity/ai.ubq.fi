@@ -14827,6 +14827,32 @@ Deno.test("openai: DeepSeek routes report the effective output allowance without
       assert.equal(getResponseTelemetry(response)?.outputTokenAllowance, 256);
     });
 
+    await t.step("a truncated buffered completion is not recorded as completed", async () => {
+      // The buffered path must report the terminal the client receives. Before
+      // this, `recordCompletionUsage` ran before the payload's own status was
+      // read, so a truncated buffered reply was persisted as `completed: true`.
+      upstreamBodies.length = 0;
+      const truncated = {
+        ...bufferedCompletion(),
+        choices: [{ index: 0, message: { role: "assistant", content: "cut off" }, finish_reason: "length" }],
+      };
+      const response = await withFetchMock(
+        (_url, bodyText) => {
+          upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
+          return Response.json(truncated);
+        },
+        () => handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: false }))
+      );
+      const payload = (await response.json()) as Record<string, unknown>;
+      assert.equal(payload.status, "incomplete");
+      assert.deepEqual(payload.incomplete_details, { reason: "max_output_tokens" });
+      const telemetry = getResponseTelemetry(response);
+      assert.ok(telemetry);
+      assert.equal(telemetry.streamTerminalType, "response.incomplete");
+      assert.equal(telemetry.completed, false);
+      assert.equal(telemetry.failureKind, "incomplete_response");
+    });
+
     await t.step("keeps an omitted cap unknown at a tier whose provider default was never measured", async () => {
       upstreamBodies.length = 0;
       const response = await withFetchMock(
