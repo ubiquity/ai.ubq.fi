@@ -66,6 +66,43 @@ mapping on the assumption that it leaks across routes; it does not.
 Residual gap: Surplus and OpenLux were not probed, so their truncation-stop behaviour remains unverified. Codex's
 handling of the terminal is proven; which upstreams ever emit it is not.
 
+## Per-upstream truncation coverage for the terminal mapping - 2026-09-21
+
+The terminal-truthfulness work changes what a truncated generation reports. Whether that is safe per provider was
+checked provider by provider rather than assumed from one implementation, because the mapping lives inside a route.
+
+**Only one construction site exists.** `response.incomplete` is built at exactly one place, `src/deepseek_responses.ts`
+(the DeepSeek translator), and is reachable only from `handleDeepSeekChatCompletions` and `handleDeepSeekResponses`. No
+other provider route can emit it. A per-provider allow/deny filter would therefore be solving a leak that does not
+exist; a provider that should use the mapping needs its own deliberate implementation.
+
+| Provider | Reachable | Truncation behaviour                                                                         |
+| -------- | --------- | -------------------------------------------------------------------------------------------- |
+| DeepSeek | yes       | `length` maps to `response.incomplete` with `incomplete_details.reason: "max_output_tokens"` |
+| Cerebras | yes       | Reasoning-only truncation fails closed as `cerebras_upstream_invalid_response` (502)         |
+| Surplus  | no        | HTTP 402 `insufficient_credit`: "Insufficient balance to fund this request from prepaid"     |
+| OpenLux  | no        | `local:insufficient_quota`: "user quota is not enough"                                       |
+
+**The Cerebras path was reproduced, not inferred.** A direct probe with `max_completion_tokens: 16` returned
+`finish_reason: "length"` with the `content` key absent entirely and only `reasoning` populated (53 characters), on two
+consecutive runs. That trips `choiceHasNoPayload` (`src/cerebras.ts:376`, applied at `:403`), which rejects a choice
+carrying neither content, nor a tool call, nor a refusal. Through the gateway the same request returns HTTP 502
+`cerebras_upstream_invalid_response`, recorded in the error ledger as
+`chat.completions 502 cerebras_upstream_invalid_response model=gpt-oss-120b`. Note that reasoning alone is deliberately
+not sufficient payload: it is preserved for clients as `message.reasoning`, but it is not content.
+
+Reason: this is the contrast the whole program turns on. Cerebras already refused to call a reasoning-only truncation a
+success while the DeepSeek route reported the equivalent outcome as a clean completion. Recording the reproduced
+mechanism keeps that contrast as evidence instead of as an argument.
+
+Reversal risk: treating reasoning as payload, or reporting a reasoning-only truncation as a completed generation, would
+restore the silent truncation on both routes.
+
+**Residual gap, stated rather than closed.** Surplus and OpenLux are blocked on external account state, so their
+truncation behaviour is unverified. The gap is narrower than "unknown": neither can currently emit the incompletion at
+all, so the untested surface is empty until either is deliberately wired in. Probe both before trusting either, and
+recheck the blockers before treating them as permanent.
+
 ## DeepSeek adapter deliberately diverges from the vendor client - 2026-09-21
 
 Four DeepSeek interpretations were compared against the provider's own first-party client
