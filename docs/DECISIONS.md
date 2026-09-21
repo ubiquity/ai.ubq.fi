@@ -66,6 +66,53 @@ mapping on the assumption that it leaks across routes; it does not.
 Residual gap: Surplus and OpenLux were not probed, so their truncation-stop behaviour remains unverified. Codex's
 handling of the terminal is proven; which upstreams ever emit it is not.
 
+## Narration-without-action is model-specific and context-gated - 2026-09-21
+
+The investigation that produced the terminal-truthfulness work began with a model believing its turn completed mid-task:
+it narrates the next action in text and terminates without emitting the tool call it described. Earlier measurement
+could not reproduce that shape and reported the gateway as faithful (a tool call in 19 of 20 requests). That measurement
+was taken at a context size far below the real sessions, which is why it came back clean.
+
+**Measured with a context-size sweep.** One payload family, identical tool schemas and identical conversation, varying
+only the amount of prior tool history; nothing else differs between the two models except the id and the reasoning
+effort. Ten runs per cell, work outstanding, classification by whether a `function_call` item was emitted:
+
+| Model                           | Actual input tokens |  n | Emitted tool call | Narrated and stopped |    Rate |
+| ------------------------------- | ------------------: | -: | ----------------: | -------------------: | ------: |
+| `deepseek-flash` (effort `max`) |                 951 | 10 |                10 |                    0 |      0% |
+| `deepseek-flash` (effort `max`) |              18,787 | 10 |                 5 |                    5 | **50%** |
+| `deepseek-flash` (effort `max`) |              66,533 | 10 |                 5 |                    5 | **50%** |
+| `gpt-reserve` (effort `medium`) |              61,005 | 10 |                10 |                    0 |      0% |
+| `gpt-reserve` (effort `medium`) |             175,888 | 10 |                10 |                    0 |      0% |
+
+Every run in every cell terminated `response.completed`; the difference is only whether a tool call accompanied it.
+
+Two conclusions follow, and they are the reason this entry exists:
+
+- **It is a model behaviour, not a gateway defect.** At the same ~66k context with the same payload, DeepSeek drops the
+  tool call half the time and `gpt-reserve` never does — including at 175k, nearly three times the DeepSeek band. A
+  translation or transport defect in this gateway would not spare one provider and hit the other on an identical body.
+- **Context size is the trigger, and it saturates early.** The rate goes from 0% at ~1k tokens to ~50% by ~19k and stays
+  there through ~67k. It is not a gradual degradation, and the earlier clean result was a correctly executed experiment
+  at the wrong scale.
+
+The real symptomatic sessions ran at a median of about 485k input tokens, well past the band where the rate saturates,
+which is consistent with 154 of 292 turns ending in narration there.
+
+Reason: the honest scope of the merged fix depends on this distinction. The terminal work makes the outcome _truthful_
+(`response.completed` carrying no tool call is reported accurately instead of being laundered), but no gateway change
+can make the model emit the call it decided to describe and skip. Recording the model-versus-gateway separation, with
+the control that establishes it, prevents a future reader from either re-deriving it or "fixing" the gateway for a
+behaviour it does not cause.
+
+Reversal risk: treating this as a gateway defect and adding gateway-side tool-call requirements or prose heuristics
+would fire on legitimate completions that end with forward-looking wording, and would misattribute an upstream model
+behaviour to the transport layer.
+
+Residual limits: the `gpt-reserve` control ran at effort `medium` while DeepSeek ran at `max`, so effort is not held
+constant across models; the DeepSeek curve is single-effort. Rates are point estimates from 10 runs per cell, so the
+band boundaries are approximate rather than measured thresholds.
+
 ## Per-upstream truncation coverage for the terminal mapping - 2026-09-21
 
 The terminal-truthfulness work changes what a truncated generation reports. Whether that is safe per provider was
