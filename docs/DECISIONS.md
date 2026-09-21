@@ -66,6 +66,47 @@ mapping on the assumption that it leaks across routes; it does not.
 Residual gap: Surplus and OpenLux were not probed, so their truncation-stop behaviour remains unverified. Codex's
 handling of the terminal is proven; which upstreams ever emit it is not.
 
+## CORRECTION: the narration symptom was itself a measurement artifact - 2026-09-21
+
+The entry below and the terminal-truthfulness handoff both rest on an observed condition: a long-running agent
+"frequently believes its turn completed mid-task", quantified as 154 of 292 turns in one session and 24 of 67 in
+another. **That condition is not reproducible from the recorded sessions.** It appears to be an artifact of how the
+original count was taken, and the entries that depend on it should not be cited as evidence that the behaviour is
+common.
+
+**The numbers do not reconcile.** For the two sessions the handoff names, counting every plausible unit:
+
+| Session                | `task_started` | `task_complete` | assistant text messages | matching a forward-looking phrase |
+| ---------------------- | -------------: | --------------: | ----------------------: | --------------------------------: |
+| `sentinel`             |            423 |             414 |                   1,053 |                               805 |
+| `oracle-free-arch-vps` |            145 |             143 |                     497 |                               269 |
+
+The handoff reports 292 turns / 154 narrated for `sentinel` and 67 / 24 for `oracle`. **No column matches either
+figure**, so the original measurement cannot be reconstructed from the sessions it cites.
+
+**The forward-looking-phrase test does not identify premature endings.** Inspecting the messages it matches shows they
+are ordinary mid-task narration that is _followed by a tool call_ — "Let me load the required harness policy and verify
+key facts in parallel", "Let me answer the ai.ubq.fi question definitively". The phrase appears in 76% of all assistant
+messages (805 of 1,053), which is why the test is unusable as a discriminator: it fires on normal working text, not on a
+malfunction.
+
+**What the turns actually look like.** Reading turns to their end shows the model doing hundreds of tool calls and then
+closing with a substantive summary. The 4211- and 6380-character closers on `task_complete` are honest completions of
+long investigation work, not a model believing it finished early. Turns cluster at a median of 7 response items, with
+only 3 of 13 in one sampled window exceeding 10 items.
+
+Reason for recording this: two merged documents and six merged corrections treat this symptom as established and build
+on it. A future reader must know that the premise is unsupported, or the chain of reasoning above this entry inherits an
+artifact. The gateway trustworthiness findings in the handoff stand on their own evidence and are unaffected; only the
+claim that the symptom is frequent, and the model-versus-gateway contrast drawn from it, depend on this.
+
+Reversal risk: quoting 154-of-292, treating forward-looking phrasing as a malfunction signal, or building any detector
+on that regex. Each propagates the artifact.
+
+Method note: the original count was never reproduced, so the defect is most likely in the counting procedure rather than
+in the sessions. Any replacement measurement must state its unit (turn, message, or item), its window, and how it
+decides a turn was premature, and must show that the classifier does not fire on ordinary mid-task narration.
+
 ## CORRECTION: the narration trigger is not context size - 2026-09-21
 
 The entry below reports that context size gates narration-without-action. **That is falsified.** It is retained for
@@ -121,8 +162,10 @@ time window. Both were missing here, and both are what caught it.
 
 ## Narration-without-action is model-specific and context-gated - 2026-09-21
 
-> **Partially superseded.** The context-size trigger and the onset threshold recorded in this entry are falsified; see
-> the correction immediately above. The model contrast and the effort findings below still stand.
+> **Superseded.** The condition this entry measures - a model frequently believing its turn completed mid-task - is not
+> reproducible from the sessions it cites; see the measurement-artifact correction above. The context-size trigger and
+> onset threshold are separately falsified. Treat every rate here as an artifact. The gateway trustworthiness findings
+> in the handoff are unaffected, since they rest on their own evidence.
 
 The investigation that produced the terminal-truthfulness work began with a model believing its turn completed mid-task:
 it narrates the next action in text and terminates without emitting the tool call it described. Earlier measurement
