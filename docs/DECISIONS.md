@@ -71,16 +71,30 @@ handling of the terminal is proven; which upstreams ever emit it is not.
 The measurement-artifact correction above retracts the premise that motivated this work. It therefore matters which
 parts are actually running, and whether any deployed behaviour change was justified by the retracted claim.
 
-**None of it is deployed.** The two running releases predate every commit in the program:
+**Status update, same day: both deployments now run the program.** At the time this entry was first written none of it
+was deployed, and the two running releases predated every commit in it. The program was then deployed to both surfaces
+at `2207a757fb6f8c362e18cbf890d59ee191d53e26`, after CI passed on that exact SHA and `verify: OK` on the same revision:
 
-| Deployment                   | Release      | Terminal-truthfulness commits |
-| ---------------------------- | ------------ | ----------------------------- |
-| VPS (production)             | `922c33392d` | none                          |
-| Mac local (`localhost:7999`) | `4176e992f5` | none                          |
-| `development`                | `884051eba9` | all eight                     |
+| Deployment                                                 | Release      | Identity                                       |
+| ---------------------------------------------------------- | ------------ | ---------------------------------------------- |
+| VPS (production, and the public `https://ai.ubq.fi` route) | `2207a757fb` | `vps-2207a757fb6f8c362e18cbf890d59ee191d53e26` |
+| Mac local (`localhost:7999`)                               | `2207a757fb` | `mac-2207a757fb6f8c362e18cbf890d59ee191d53e26` |
 
-So no production inference behaviour changed, and no retraction is needed on a live system. The work is merged to
-`development` and stops there.
+Acceptance ran against the deployed releases, not the branch:
+
+- the truncation reproduction returns `response.incomplete` with `incomplete_details.reason: "max_output_tokens"` and
+  `output_tokens: 8192` on both hosts, where it previously returned `response.completed` with
+  `incomplete_details: null`;
+- three normal completions still return `status: completed` with `incomplete_details: null`, so it does not over-fire;
+- authenticated inference through the public route succeeds, and `gpt-reserve` serves on both hosts.
+
+The retracted premise is now moot in one direction: the deployed G3 is narration-independent by construction - it fires
+only when a would-be completion carries no assistant text, no refusal and no tool call, so it cannot act on the
+retracted symptom. Worth revisiting before any future change: the changelog wording that described it as a "no tool
+call" guard, which reads as narration-targeted although the code does not test for that alone.
+
+Prior state, retained: the two then-running releases (`922c33392d` on the VPS, `4176e992f5` on the Mac) preceded every
+commit in the program, so at that time no production inference behaviour had changed.
 
 **Only one of the three changes depends on the retracted premise, and partially.**
 
