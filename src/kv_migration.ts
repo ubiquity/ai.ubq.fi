@@ -53,6 +53,7 @@ import {
   recomputePaidFallbackReconciliationGateV3,
   requestRowExpireIn,
 } from "./paid_fallback_ledger.ts";
+import { CODEX_RESET_USAGE_PREFIX } from "./codex_reset_settings.ts";
 import { isRecord } from "./utils.ts";
 
 export type KvMigrationProfile = "local" | "prod";
@@ -117,6 +118,7 @@ export type KvMigrationValidationResult = {
     embeddings_v2_at_most_10000: number;
     legacy_model_key_configs: number;
     legacy_model_key_health: number;
+    codex_reset_usage: number;
   };
   settings_present: {
     codex_auth: boolean;
@@ -187,6 +189,7 @@ const DURABLE_PREFIXES: { group: string; prefix: Deno.KvKey }[] = [
   { group: "voyage_api_key", prefix: ["uos_ai", "voyage_api_key"] },
   { group: "codex_prompts", prefix: ["uos_ai", "codex_instructions"] },
   { group: "codex_prompts_chunks", prefix: ["uos_ai", "codex_instructions_chunk"] },
+  { group: "codex_reset_usage", prefix: CODEX_RESET_USAGE_PREFIX },
   { group: "kernel_policy_queue", prefix: ["uos_ai", "kernel_policy_queue"] },
   { group: "migrations", prefix: ["uos_ai", "migrations"] },
   {
@@ -2226,6 +2229,7 @@ type KvMigrationTargetCounts = Readonly<{
   embeddingCache: number;
   legacyModelKeyConfigs: number;
   legacyModelKeyHealth: number;
+  codexResetUsage: number;
 }>;
 
 /** Counts every durable row group the migration validation reports on. */
@@ -2251,6 +2255,7 @@ const countKvMigrationTargetRows = async (kv: Deno.Kv): Promise<KvMigrationTarge
     embeddingCache,
     legacyModelKeyConfigs,
     legacyModelKeyHealth,
+    codexResetUsage,
   ] = await Promise.all([
     listKvMigrationCount(kv, ["ubq_ai", "api_keys", "id"]),
     listKvMigrationCount(kv, ["ubq_ai", "api_keys", "hash"]),
@@ -2272,6 +2277,7 @@ const countKvMigrationTargetRows = async (kv: Deno.Kv): Promise<KvMigrationTarge
     listKvMigrationCount(kv, ["embeddings", "v2"], 10_000),
     listKvMigrationCount(kv, ["key", "config"]),
     listKvMigrationCount(kv, ["key", "health"]),
+    listKvMigrationCount(kv, CODEX_RESET_USAGE_PREFIX),
   ]);
   return {
     apiIds,
@@ -2294,6 +2300,7 @@ const countKvMigrationTargetRows = async (kv: Deno.Kv): Promise<KvMigrationTarge
     embeddingCache,
     legacyModelKeyConfigs,
     legacyModelKeyHealth,
+    codexResetUsage,
   };
 };
 
@@ -2363,6 +2370,29 @@ const auditCodexModelSnapshot = async (kv: Deno.Kv, errors: string[]): Promise<v
   }
 };
 
+/** Reports reset usage rows whose key or explicit boolean setting is malformed. */
+const auditCodexResetUsage = async (kv: Deno.Kv, errors: string[]): Promise<void> => {
+  for await (const entry of kv.list({ prefix: CODEX_RESET_USAGE_PREFIX })) {
+    const key = entry.key;
+    const accountHash = key[4];
+    const validKey =
+      key.length === 5 &&
+      key[0] === CODEX_RESET_USAGE_PREFIX[0] &&
+      key[1] === CODEX_RESET_USAGE_PREFIX[1] &&
+      key[2] === "account" &&
+      key[3] === "v1" &&
+      typeof accountHash === "string" &&
+      accountHash.length > 0;
+    if (!validKey) {
+      errors.push(`codex reset usage key is malformed: ${JSON.stringify(key)}`);
+      continue;
+    }
+    if (!isRecord(entry.value) || typeof entry.value.enabled !== "boolean") {
+      errors.push(`codex reset usage record is malformed: ${JSON.stringify(key)}`);
+    }
+  }
+};
+
 /** Reads every settings key the validation reports presence for. */
 const readKvMigrationSettings = async (kv: Deno.Kv): Promise<Deno.KvEntryMaybe<unknown>[]> => {
   return await Promise.all([
@@ -2406,6 +2436,7 @@ export const validateKvMigrationTarget = async (kv: Deno.Kv): Promise<KvMigratio
     await auditApiKeyPolicy(kv, pair, validationNowMs, errors);
   }
   await auditCodexModelSnapshot(kv, errors);
+  await auditCodexResetUsage(kv, errors);
 
   const knownSettings = await readKvMigrationSettings(kv);
   if (normalizeRuntimeConfig(knownSettings[8].value) === null) {
@@ -2441,6 +2472,7 @@ export const validateKvMigrationTarget = async (kv: Deno.Kv): Promise<KvMigratio
       embeddings_v2_at_most_10000: counts.embeddingCache,
       legacy_model_key_configs: counts.legacyModelKeyConfigs,
       legacy_model_key_health: counts.legacyModelKeyHealth,
+      codex_reset_usage: counts.codexResetUsage,
     },
     settings_present: {
       codex_auth: knownSettings[0].value !== null,
