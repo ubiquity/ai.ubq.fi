@@ -22,7 +22,7 @@ import {
 import { createAdminSnapshotCache } from "./admin-cache.js?v=admin-indexeddb-cache-20260830-v7";
 import { bindForegroundRefresh } from "./foreground-refresh.js";
 import { setReasoningPlaceholder, updateReasoningSelectForModel } from "./reasoning-select.js";
-import { toast } from "./toast.js?v=20260903-toast-v1";
+import { toast } from "./toast.js?v=passport-design-20260922";
 import { createSupervisorView } from "./admin-supervisor.js";
 
 const STORAGE_KEYS = {
@@ -1068,7 +1068,8 @@ let codexResetSettingsTarget = "";
 let codexResetSettingsToken = "";
 
 const renderCodexCapacitySource = (source, provider = null) => {
-  const row = document.createElement("article");
+  // The capacity list is a role="list" container, and aria-allowed-role rejects listitem on article.
+  const row = document.createElement("div");
   row.dataset.capacitySource = "codex";
   row.dataset.state = source.state;
   row.setAttribute("role", "listitem");
@@ -1095,10 +1096,6 @@ const renderCodexCapacitySource = (source, provider = null) => {
   copy.textContent = "Use banked resets";
   const countLabel = document.createElement("small");
   countLabel.textContent = Number.isSafeInteger(count) && count >= 0 ? count + " available" : "Count unavailable";
-  countLabel.setAttribute(
-    "aria-label",
-    Number.isSafeInteger(count) && count >= 0 ? count + " banked resets available" : "Banked reset count unavailable",
-  );
   const input = document.createElement("input");
   input.type = "checkbox";
   input.setAttribute("role", "switch");
@@ -1157,7 +1154,7 @@ const renderCodexCapacitySource = (source, provider = null) => {
 };
 
 const renderMeteredCapacitySource = (source, provider = null) => {
-  const row = document.createElement("article");
+  const row = document.createElement("div");
   row.dataset.capacitySource = "metered";
   row.dataset.state = source.state;
   row.setAttribute("role", "listitem");
@@ -1208,7 +1205,7 @@ const renderMeteredCapacitySource = (source, provider = null) => {
 };
 
 const renderSurplusProviderHealthSource = (provider = null) => {
-  const row = document.createElement("article");
+  const row = document.createElement("div");
   row.dataset.capacitySource = "surplus";
   row.dataset.state = provider?.configured === false ? "unavailable" : provider?.health?.state ?? "unknown";
   row.setAttribute("role", "listitem");
@@ -2238,10 +2235,10 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
   const downtimeStripe = capacityChartSvgElement("path", {
     d: "M-3 -3L15 15 M-3 9L3 15 M9 -3L15 3",
     fill: "none",
-    stroke: "#ff5f56",
     "stroke-opacity": 0.3,
     "stroke-width": 1.25,
   });
+  downtimeStripe.dataset.capacityDowntimeStripe = "";
   downtimePattern.appendChild(downtimeStripe);
   const resetPattern = capacityChartSvgElement("pattern", {
     id: "capacity-chart-rate-limit-reset-stripes",
@@ -2252,10 +2249,10 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
   const resetStripe = capacityChartSvgElement("path", {
     d: "M-2 10L10 -2 M3 12L12 3",
     fill: "none",
-    stroke: "#55d98a",
     "stroke-opacity": 0.72,
     "stroke-width": 1.5,
   });
+  resetStripe.dataset.capacityResetStripe = "";
   resetPattern.appendChild(resetStripe);
   defs.append(downtimePattern, resetPattern);
   svg.appendChild(defs);
@@ -2310,10 +2307,10 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
       y: plot.top,
       width: band.width,
       height: plot.height,
-      fill: "#ff5f56",
       "fill-opacity": 0.055,
     });
     background.dataset.capacityDowntimeBand = "openai";
+    background.style.fill = "var(--danger)";
     background.setAttribute("aria-hidden", "true");
     const stripes = capacityChartSvgElement("rect", {
       x: band.x,
@@ -2343,9 +2340,9 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
       y: plot.top,
       width: markerWidth,
       height: plot.height,
-      fill: "#55d98a",
       "fill-opacity": 0.16,
     });
+    background.style.fill = "var(--success)";
     const stripes = capacityChartSvgElement("rect", {
       x: markerLeft,
       y: plot.top,
@@ -2358,7 +2355,6 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
       y1: plot.top,
       x2: markerX,
       y2: plot.top + plot.height,
-      stroke: "#55d98a",
       "stroke-opacity": 0.96,
       "stroke-width": 2,
     });
@@ -2395,7 +2391,6 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
       y1: plot.top - 4,
       x2: markerX,
       y2: plot.top + plot.height,
-      stroke: "#ff625f",
       "stroke-opacity": 0.72,
       "stroke-dasharray": "2 5",
       "stroke-width": 1.5,
@@ -2405,8 +2400,6 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
       d: `M ${markerX} ${markerY - 5} L ${markerX + 5} ${markerY} L ${markerX} ${markerY + 5} L ${
         markerX - 5
       } ${markerY} Z`,
-      fill: "#ff625f",
-      stroke: "#fff4f3",
       "stroke-width": 1,
     });
     const tooltip = capacityChartSvgElement("title");
@@ -2479,6 +2472,7 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
       y2: coordinates.end.y,
     });
     optimalSpendTrend.dataset.capacityTrend = "optimal-spend";
+    optimalSpendTrend.setAttribute("role", "img");
     optimalSpendTrend.setAttribute("aria-label", `Optimal token spend for weekly reset ${index + 1}`);
     svg.appendChild(optimalSpendTrend);
   }
@@ -2492,6 +2486,7 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
     y2: plot.top + plot.height,
   });
   reticule.dataset.capacityReticule = "current-time";
+  reticule.setAttribute("role", "img");
   reticule.setAttribute("aria-label", "Current time in usage period");
   svg.appendChild(reticule);
 
@@ -2522,6 +2517,7 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
     });
     path.style.fill = "none";
     path.dataset.capacitySeries = series.key;
+    path.setAttribute("role", "img");
     path.setAttribute("aria-label", series.label);
     svg.appendChild(path);
 
@@ -2541,6 +2537,7 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
       });
       downtimePath.style.fill = "none";
       downtimePath.dataset.capacityDowntime = "openai";
+      downtimePath.setAttribute("role", "img");
       downtimePath.setAttribute("aria-label", "OpenAI downtime between observed capacity samples");
       svg.appendChild(downtimePath);
     }
@@ -2557,6 +2554,7 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
 
   const chartScrollControls = document.createElement("div");
   chartScrollControls.dataset.capacityChartScrollControls = "";
+  chartScrollControls.setAttribute("role", "group");
   chartScrollControls.setAttribute("aria-label", "History navigation");
   const olderButton = document.createElement("button");
   olderButton.type = "button";
@@ -3750,7 +3748,7 @@ const renderKernelPolicyQueue = (records) => {
     if (!owner || !repo) return;
     const lastRoute = typeof record.last_route === "string" ? record.last_route : "";
 
-    const row = document.createElement("article");
+    const row = document.createElement("div");
     row.dataset.key = "kernel-queue";
     row.dataset.state = "warning";
     row.style.setProperty("--i", index);
@@ -4257,7 +4255,7 @@ const buildKernelPolicyPlaceholder = (record, options = {}) => {
   const showDetails = options.showDetails ?? options.isSubtile === true;
   const canAdd = policyAvailable && owner && owner !== "unknown" && (scope === "org" || repo);
 
-  const row = document.createElement("article");
+  const row = document.createElement("div");
   row.dataset.key = "kernel-policy";
   row.dataset.state = "warning";
   if (options.isSubtile) row.dataset.subtile = "true";
@@ -4325,7 +4323,7 @@ const buildKernelPolicyTile = (record, options = {}) => {
   const titleText = options.titleText || (repo ? repo : owner || "unknown");
   const confirmLabel = repo ? `${owner}/${repo}` : owner || titleText;
 
-  const row = document.createElement("article");
+  const row = document.createElement("div");
   row.dataset.key = "kernel-policy";
   if (options.isSubtile) row.dataset.subtile = "true";
   if (typeof options.index === "number") row.style.setProperty("--i", options.index);
@@ -5230,12 +5228,12 @@ const buildUsageSparkline = (usage, options = {}) => {
 
   const stopStart = document.createElementNS("http://www.w3.org/2000/svg", "stop");
   stopStart.setAttribute("offset", "0%");
-  stopStart.setAttribute("stop-color", "#ffffff");
+  stopStart.style.setProperty("stop-color", "var(--accent)");
   stopStart.setAttribute("stop-opacity", "0");
 
   const stopEnd = document.createElementNS("http://www.w3.org/2000/svg", "stop");
   stopEnd.setAttribute("offset", "100%");
-  stopEnd.setAttribute("stop-color", "#ffffff");
+  stopEnd.style.setProperty("stop-color", "var(--accent)");
   stopEnd.setAttribute("stop-opacity", "0.9");
 
   gradient.appendChild(stopStart);
@@ -5250,12 +5248,12 @@ const buildUsageSparkline = (usage, options = {}) => {
 
   const areaStart = document.createElementNS("http://www.w3.org/2000/svg", "stop");
   areaStart.setAttribute("offset", "0%");
-  areaStart.setAttribute("stop-color", "#ffffff");
+  areaStart.style.setProperty("stop-color", "var(--accent)");
   areaStart.setAttribute("stop-opacity", "0.24");
 
   const areaEnd = document.createElementNS("http://www.w3.org/2000/svg", "stop");
   areaEnd.setAttribute("offset", "100%");
-  areaEnd.setAttribute("stop-color", "#ffffff");
+  areaEnd.style.setProperty("stop-color", "var(--accent)");
   areaEnd.setAttribute("stop-opacity", "0");
 
   areaGradient.appendChild(areaStart);
@@ -5297,7 +5295,7 @@ const buildUsageSparkline = (usage, options = {}) => {
   const avgPathEl = document.createElementNS("http://www.w3.org/2000/svg", "path");
   avgPathEl.setAttribute("d", avgPath);
   avgPathEl.setAttribute("fill", "none");
-  avgPathEl.setAttribute("stroke", "rgba(255, 255, 255, 0.4)");
+  avgPathEl.style.stroke = "var(--muted-2)";
   avgPathEl.setAttribute("stroke-width", "1.6");
   avgPathEl.setAttribute("stroke-linecap", "round");
   avgPathEl.setAttribute("stroke-linejoin", "round");
@@ -5957,7 +5955,7 @@ const renderKeys = (keys, view = "all") => {
   }
 
   filteredKeys.forEach((key, index) => {
-    const row = document.createElement("article");
+    const row = document.createElement("div");
     row.dataset.key = "row";
     row.dataset.state = key.revoked_at_ms ? "revoked" : "active";
     row.style.setProperty("--i", index);
@@ -6724,7 +6722,7 @@ const renderPasskeyUsers = (users) => {
   }
 
   users.forEach((user, index) => {
-    const row = document.createElement("article");
+    const row = document.createElement("div");
     row.dataset.key = "passkey-user";
     row.dataset.state = user.is_admin ? "active" : "warning";
     row.style.setProperty("--i", index);
@@ -7061,7 +7059,7 @@ const renderAdminErrors = (records) => {
     return;
   }
   records.forEach((record) => {
-    const row = document.createElement("article");
+    const row = document.createElement("div");
     row.dataset.key = "gateway-error";
     row.setAttribute("role", "listitem");
     const header = document.createElement("header");

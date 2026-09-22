@@ -32,7 +32,7 @@ import {
   splitChatSseEvents,
 } from "./chat-stats.js?v=20260827-response-stats-v4";
 import { bindForegroundRefresh } from "./foreground-refresh.js";
-import { toast } from "./toast.js?v=20260903-toast-v1";
+import { toast } from "./toast.js?v=passport-design-20260922";
 
 const STORAGE_KEYS = {
   rememberToken: AUTH_STORAGE_KEYS.rememberToken,

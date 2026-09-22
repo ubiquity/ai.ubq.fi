@@ -6,6 +6,84 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Codex premature turn endings: real reproduction, and the continuation-guidance contract - 2026-09-22
+
+The case that Codex can end a turn with an outstanding requested action is recorded here as reproduced, not inferred
+from the invalid frequencies corrected below. The contract this repository now carries is: on the DeepSeek Responses
+translation seam, a tool-bearing request whose mapped executable tools exist and whose `tool_choice` is not `none` gets
+one short neutral continuation instruction appended to the caller's own instructions, or carried as the system message
+when the caller sent none. It never forces a tool call, forbids a legitimate final answer, or claims a tool action
+happened.
+
+The reproduced pair, one real `codex-cli 0.155.1` run per variant against a task-owned loopback bridge serving the
+Responses wire API, same fixed cwd, same provider id, same captured native catalog, same model `deepseek-flash` at
+effort `max`, and the same 16-step read-only chain prompt (receipt
+`591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5/509ce225-f066-4bf6-af9c-fcd85739173f`):
+
+| Variant                           | Reads                    | Terminal state                                                                                                                                                                                                                                     | Exit | Checksum |
+| --------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | -------- |
+| baseline (`a4d0b470`)             | 11 of 16 files, in order | one `turn.completed`, final text `Step 12 of 16, reading nodes/2c/rotate-4571.snippet`; last upstream call HTTP 200, `finish_reason` `stop`, zero tool calls, 20 completion tokens of an 8192 allowance, `[DONE]` present, no error, no truncation | 0    | absent   |
+| candidate (continuation guidance) | 16 of 16 files, in order | one `turn.completed`, one marker per successful tool result, no human confirmation and no goal auto-continuation                                                                                                                                   | 0    | 3961     |
+
+The probe's own `incomplete-chain` classification wins its check order, and its `earlyTextOnlyStopObserved: false` is a
+consequence of that ordering; neither refutes the captured upstream facts above.
+
+Scope and limits, so the claim is not overstated: this is one paired long run, so it establishes that the behaviour
+occurs and that in this pair the baseline stopped while the candidate completed; that supports the reminder as a
+mitigation, not a rate, a probability, a universal cure, or a causal claim from n = 1. The mechanism that makes the
+model stop mid-chain is still not identified. A frozen historical replay did not reproduce the stop, and a real-Codex
+phase-only A/B ended after one request for both `commentary` and `final_answer`, so changing output phase alone did not
+make Codex continue. This change does not modify phase, and that phase-only test says nothing about upstream
+history-phase effects. Related but non-causal measurements: the served native catalog's `deepseek-flash` entry has empty
+`base_instructions` and the native client sends `instructions: ""` with the developer/system input text still present;
+that catalog fact alone is not claimed as the cause. The vendor `thinking` field is now accepted on DeepSeek and
+projected to `reasoning_effort` (PR #391, the base revision for this measurement), and that compatibility change did not
+fix these premature stops.
+
+Reversal risk: the guidance is appended to every DeepSeek tool-bearing request that permits tool use, so removing it
+restores the measured baseline, while widening or rewording it can make the model prefer tool calls over a legitimate
+final answer or pad otherwise ordinary agent traffic. The truthfulness, `tool_choice: none`, non-agent and
+legitimate-final cases in `tests/deepseek-responses.test.ts` preserve the request and terminal contracts; they do not
+detect a model's semantic preference, and the real-client controls are what check that a legitimate final answer is not
+displaced.
+
+Residual obligation: the visible behaviour above was measured against a task-owned loopback. Loopback evidence and
+served-release acceptance are distinct: the exact served identities, and the actual client outcomes against them, must
+be recorded in the release handoff, using the served-client probe beside this entry's evidence directory.
+
+## App-wide visual language follows the deno-universal-auth reference - 2026-09-22
+
+The app-wide design is the shared token system in `static/style.css`, ported from the `deno-universal-auth` reference
+contract: OS-driven light and dark, system-UI type at 14px body and 20px headings, 10px control and 14px panel radii,
+44px controls, quiet shadows, and blue reserved for actions and selection.
+
+- Palette, light: `--bg` `#f7f9fc`, `--surface` `#ffffff`, `--surface-2` `#f1f5f9`, `--surface-3` `#e2e8f0`, `--text`
+  `#111827`, `--muted` `#5f6b7a`, `--muted-2` `#55606e`.
+- Palette, dark: `--bg` `#09090b`, `--surface` `#141418`, `--surface-2` `#1d1d22`, `--surface-3` `#29292f`, `--text`
+  `#f5f5f7`, `--muted` `#a1a1aa`, `--muted-2` `#8e8e99`.
+- Light is the base block and `@media (prefers-color-scheme: dark)` overrides only the palette; `color-scheme` stays
+  native (`light dark`) and no page declares a theme class, toggle, or stored preference.
+- Actions use `--accent` `#0063d1`, `--accent-hover` `#006fe6`, and white `--accent-ink`; dark uses `#0a6ae0` and
+  `#0f70e0` with the same white label, while the brighter `--link` `#4da3ff` and translucent `--selection` carry dark
+  link, focus, and selected states.
+- The contrast repairs are deliberate: the reference's `#007aff`-on-white action, `#0a84ff`-with-white dark label, and
+  1.3:1 `#d5dee9` input border are replaced, so quiet text clears 4.5:1 and `--input-border`, `--border-strong`, and
+  `--focus-ring` clear 3:1.
+- Page styles consume `--radius-sm` for controls, `--radius-lg` for panels, and `--control-height` instead of
+  redeclaring a palette; no page adds a second alias token system.
+- Motion uses `--duration-fast` at 140ms for press and hover feedback and `--duration-med` at 220ms for occasional
+  surface changes; hover motion is gated by `(hover: hover) and (pointer: fine)`, keyboard actions stay immediate, and
+  reduced motion keeps short fades while dropping transforms.
+
+Reason: the app was dark-only, with hardcoded `rgba(255,255,255,...)` surfaces through the shared sheet, a pinned
+`color-scheme: dark`, and a visual contract that lived only in `tests/static-assets.test.ts`. Recording the tokens, the
+light and dark ownership, and the contrast repairs here keeps the next page-local restyle from re-deriving a divergent
+palette.
+
+Reversal risk: a page-local `:root` palette, a pinned `color-scheme: dark`, or a light-only literal re-splits the app
+and restores the measured contrast failures, and deleting the token assertions in `tests/static-assets.test.ts` removes
+the only automated guard because no browser or screenshot check exists in the repository.
+
 ## Terminal truthfulness questions are settled - 2026-09-21
 
 The generalized terminal-truthfulness program asked two specification questions before any stop-reason mapping could be
@@ -118,14 +196,18 @@ original motivation was retracted. The first is unfounded; the second discards t
 
 Next action if the program is to be deployed: re-derive G3's trigger from the surviving evidence alone - keep the
 reasoning-only and empty-output clauses, and justify or drop the no-tool-call clause on its own merits rather than on
-the retracted frequency claim.
+the invalidated frequency claim.
 
 ## CORRECTION: the narration symptom was itself a measurement artifact - 2026-09-21
 
+> **Superseded in part on 2026-09-22.** The reported counts remain unreproducible and cannot be quoted as a rate. A
+> paired real-client reproduction did observe one premature stop with outstanding work, so these invalid counts are not
+> evidence that the behaviour is absent either. See the entry at the top of this file.
+
 The entry below and the terminal-truthfulness handoff both rest on an observed condition: a long-running agent
 "frequently believes its turn completed mid-task", quantified as 154 of 292 turns in one session and 24 of 67 in
-another. **That condition is not reproducible from the recorded sessions.** It appears to be an artifact of how the
-original count was taken, and the entries that depend on it should not be cited as evidence that the behaviour is
+another. **Those reported counts are not reproducible from the recorded sessions.** It appears to be an artifact of how
+the original count was taken, and the entries that depend on it should not be cited as evidence that the behaviour is
 common.
 
 **The numbers do not reconcile.** For the two sessions the handoff names, counting every plausible unit:
@@ -408,12 +490,12 @@ narrow and one-directional: _degenerate completions_ (`stop` with nothing usable
 **A wire boundary worth knowing before repointing any harness route at this gateway.** Capture of the pi-ai
 `openai-completions` request shows the operator's `ubiquity` route sends `model`, `messages`, `stream`, `stream_options`
 and `store` - and no `thinking` and no `reasoning_effort`, because the configured model entries declare no reasoning
-capability. That traffic is accepted. The vendored `dsh-llm-deepseek` adapter is a different story: for any non-`off`
-effort it sends `thinking: { "type": "enabled" }`, and this gateway answers that field with HTTP 400
-`Unrecognized request argument supplied: thinking` (probed live 2026-09-22); `reasoning_effort` alone is accepted. So
-pointing a harness route that uses `dsh-llm-deepseek` at this gateway fails, while the `pi-ai` route in use works. The
-gateway keeps the OpenAI-shaped field deliberately (see the Delta 5 entry below), so this is a client-side seam to
-respect, not a gateway defect to fix.
+capability. That traffic is accepted. The vendored `dsh-llm-deepseek` adapter sends `thinking: { "type": "enabled" }`
+for any non-`off` effort. **Correction 2026-09-22: that field is no longer rejected.** PR #391 (base revision
+`a4d0b470`) accepts the vendor's own `thinking` field on the DeepSeek route and projects it to `reasoning_effort`; it
+remains outside the official OpenAI schema everywhere else, so the earlier HTTP 400
+`Unrecognized request argument supplied: thinking` no longer describes this route's behaviour. That compatibility change
+did not fix the Codex premature turn endings recorded at the top of this file, which remain a separate mechanism.
 
 **The program added no new 5xx responses.** Counting every `openaiError(<n>, ...)` and `streamErrorResponse(<n>, ...)`
 call in `src/openai.ts` between the pre-program revision `922c33392d` and the merged terminal-truthfulness revision: 31
