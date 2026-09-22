@@ -3342,7 +3342,12 @@ const resolveAdmissionRefreshGeneration = async (account: RoutingAccount, pool: 
   const normalized = routing === null ? null : await normalizeRoutingState(routing, pool, Date.now(), true);
   const currentSlot = normalized?.slots.at(account.slot) ?? null;
   if (normalized !== null && currentSlot === null) return null;
-  if (currentSlot !== null && (currentSlot.account_id_hash !== account.accountIdHash || currentSlot.credential_version !== account.credentialVersion))
+  if (
+    currentSlot !== null &&
+    (currentSlot.account_id_hash !== account.accountIdHash ||
+      currentSlot.credential_version !== account.credentialVersion ||
+      currentSlot.invalid_credential_version === account.credentialVersion)
+  )
     return null;
   return currentSlot?.generation ?? 0;
 };

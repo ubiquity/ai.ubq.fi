@@ -2885,6 +2885,79 @@ Deno.test("an auth rotation inside the final dispatch hook fences off a post-res
   }
 });
 
+Deno.test("a global active-account transition inside the final dispatch hook fences off a post-reset retry", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  let inferenceCalls = 0;
+  let beforeDispatchCalls = 0;
+  const startedDispatchGenerations: number[] = [];
+  const cancelledDispatchGenerations: number[] = [];
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(auth("one"));
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  resetCodexAccountRoutingForTest();
+  const reset = scriptedResetProvider();
+  globalThis.fetch = () => {
+    inferenceCalls += 1;
+    return Promise.resolve(
+      new Response(JSON.stringify({ error: { type: "usage_limit_reached" } }), {
+        status: 429,
+        headers: { "Content-Type": "application/json", "Retry-After": stableBankedResetRetryAfter },
+      })
+    );
+  };
+
+  try {
+    const response = await fetchCodexResponses(
+      { input: "banked-reset-active-account-fence" },
+      {
+        beforeDispatch: async () => {
+          beforeDispatchCalls += 1;
+          const dispatchGeneration = beforeDispatchCalls;
+          if (beforeDispatchCalls === 2) {
+            // Another request advances the global active selection while the
+            // post-reset retry is paused in providerDispatch.claim().
+            const active = parseCodexActiveAccountSelection(kv.extra.get(JSON.stringify(CODEX_ACTIVE_ACCOUNT_SELECTION_KV_KEY))?.value);
+            if (!active) throw new Error("expected a durable active selection");
+            await kv.set(CODEX_ACTIVE_ACCOUNT_SELECTION_KV_KEY, { ...active, generation: active.generation + 1, updated_at_ms: fixedStartMs });
+          }
+          return Promise.resolve({
+            markTransportStarted: () => {
+              startedDispatchGenerations.push(dispatchGeneration);
+            },
+            cancelBeforeTransport: () => {
+              cancelledDispatchGenerations.push(dispatchGeneration);
+              return Promise.resolve();
+            },
+          });
+        },
+        bankedReset: {
+          config: liveBankedResetConfig(),
+          provider: reset.provider,
+          kv: kv as unknown as Deno.Kv,
+          now: () => fixedStartMs,
+          newOwnerToken: () => "owner-active-fence",
+        },
+      }
+    );
+    assert.equal(response.status, 429);
+    assert.equal(beforeDispatchCalls, 2);
+    assert.equal(inferenceCalls, 1, "the stale active selection on the second attempt must not reach upstream transport");
+    assert.deepEqual(startedDispatchGenerations, [1]);
+    assert.deepEqual(cancelledDispatchGenerations, [2]);
+    assert.deepEqual(reset.calls, ["inventory", "redeem", "verify"]);
+  } finally {
+    resetCodexAuthCacheForTest();
+    resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
 Deno.test("an auth-pool slot reorder during a claimed reset fences submission before redemption", async () => {
   const originalFetch = globalThis.fetch;
   const originalNow = Date.now;
