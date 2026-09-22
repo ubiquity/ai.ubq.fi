@@ -79,6 +79,13 @@ try {
   await Deno.symlink(`releases/${sha}`, next);
   await Deno.rename(next, ".data/current");
   await ensureCaddyIngressReady();
+  // Repository-owned unit files are linked from `/etc/systemd/system`, so the
+  // checkout update above changes their content, but systemd keeps the
+  // previously loaded definition until `daemon-reload`. Reload before the
+  // restart so changes to `ExecStart`, environment, or sandbox settings are
+  // active for the run the health check validates.
+  await command("sudo", ["-n", "systemctl", "daemon-reload"]);
+  console.log(JSON.stringify({ systemd_daemon_reload: "before-restart", service: "ai-ubq-fi.service" }));
   await command("sudo", ["-n", "systemctl", "restart", "ai-ubq-fi.service"]);
 
   for (let attempt = 0; attempt < 30; attempt++) {
