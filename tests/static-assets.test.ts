@@ -273,7 +273,7 @@ Deno.test("admin console every rendered tab declares an access requirement", () 
 Deno.test("admin console tabs follow the approved operator order", () => {
   // The strip renders in DOM order and arrow-key traversal follows it, so this pins the approved operator order.
   const tabs = [...adminHtml.matchAll(/id="view-tab-([a-z-]+)"/g)].map((match) => match[1]);
-  assert.deepEqual(tabs, ["analytics", "providers", "models", "defaults", "errors", "keys", "users", "kernel", "pubkeys"]);
+  assert.deepEqual(tabs, ["analytics", "providers", "models", "defaults", "errors", "keys", "users", "kernel", "pubkeys", "supervisor"]);
 });
 
 Deno.test("models page labels provider counts as catalog entries, not inference availability", () => {

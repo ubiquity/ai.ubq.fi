@@ -20,7 +20,8 @@
   "ignoreDependencies": [
     "@std/yaml",
     "@deno/kv-utils",
-    "@simplewebauthn/server"
+    "@simplewebauthn/server",
+    "ws"
   ],
   "ignoreIssues": {
     "serve.ts": [
