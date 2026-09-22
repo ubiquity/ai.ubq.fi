@@ -11,7 +11,9 @@ const DURATION_BY_TYPE = {
   error: 6000,
 };
 const MAX_VISIBLE = 3;
-const EXIT_MS = 260;
+// The shared exit fade is `--duration-fast` (140ms in static/style.css); removal waits one
+// frame longer so the fade is never cut short or left as an invisible node in the stack.
+const EXIT_MS = 160;
 
 let toaster = null;
 let nextToastId = 1;
@@ -34,6 +36,28 @@ const dismissToastEl = (toastEl, onDismiss) => {
   toastEl.dataset.exiting = "";
   globalThis.setTimeout(() => removeToastEl(toastEl), EXIT_MS);
   onDismiss?.();
+};
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+// Inline currentColor glyph in the shared 1.7 stroke family. The close button keeps its
+// aria-label, so the icon stays decorative for assistive technology.
+const closeGlyph = () => {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", "14");
+  svg.setAttribute("height", "14");
+  svg.setAttribute("fill", "none");
+  svg.setAttribute("stroke", "currentColor");
+  svg.setAttribute("stroke-width", "1.7");
+  svg.setAttribute("stroke-linecap", "round");
+  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  const path = document.createElementNS(SVG_NS, "path");
+  path.setAttribute("d", "M6 6 18 18M18 6 6 18");
+  svg.append(path);
+  return svg;
 };
 
 const showToast = (options = {}) => {
@@ -63,7 +87,7 @@ const showToast = (options = {}) => {
   closeEl.type = "button";
   closeEl.setAttribute("data-toast-close", "");
   closeEl.setAttribute("aria-label", "Dismiss notification");
-  closeEl.textContent = "×";
+  closeEl.append(closeGlyph());
   closeEl.addEventListener("click", () => dismissToastEl(toastEl, options.onDismiss));
   toastEl.appendChild(closeEl);
 
