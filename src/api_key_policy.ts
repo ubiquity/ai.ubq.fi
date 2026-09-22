@@ -636,6 +636,14 @@ const existingRequestReservation = (
   if (request.key_id !== policy.key_id || request.request_id !== requestId || request.route !== route) {
     return quotaUnavailable("API key quota request identity conflicts");
   }
+  // Only a live, unconsumed row may be reused by a duplicate admission. A row
+  // that already dispatched owns this request id's one charge, and a released
+  // row is a settled identity whose slot was already returned, so reusing
+  // either admits work that is never charged (dispatched) or is refused only
+  // after admission, inside provider dispatch (released).
+  if (request.state !== "reserved") {
+    return quotaUnavailable("API key quota request identity is already consumed");
+  }
   return { ok: true, reservation: reservationContext(kv, policy, requestId, route) };
 };
 
