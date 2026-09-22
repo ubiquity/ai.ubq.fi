@@ -213,6 +213,11 @@ Tasks:
 **Acceptance:** an operator can identify a rising egress or KV trend before an overage, and all estimates state their
 sampling window and units.
 
+**Paid-fallback status (2026-09-22):** the paid-fallback ledger now writes daily settled-row/rollup byte counters and
+per-window admin projection read units (`uos_ai/paid_fallback/v3/ledger_stats/<utc-day>`), exposed as `ledger_growth` on
+`GET /admin/providers/quota-projection` with a storage alert at 80% of the 5 GiB Pro allowance. See
+docs/log-retention-and-quota-runway-2026-08-25.md for the measured fixture baseline and the field list.
+
 ## Integration order
 
 1. Measurement fixtures and read-only ledger map.

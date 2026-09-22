@@ -12,6 +12,7 @@ import {
   paidFallbackUsageRollupKey,
   paidFallbackUsageRollupShard,
 } from "./paid_fallback_rollups.ts";
+import { estimatePaidFallbackRecordBytes, recordPaidFallbackLedgerSettlementStats } from "./paid_fallback_ledger_stats.ts";
 
 const PREFIX = ["uos_ai", "paid_fallback", "v3"] as const;
 const MAX_CAS_ATTEMPTS = 128;
@@ -1130,11 +1131,12 @@ const settlePaidFallbackRequestV3 = async (
     const windowEntry = await kv.get<PaidFallbackWindowV3>(windowKey, { consistency: "strong" });
     const dispatchedAtMs = request.dispatched_at_ms ?? Math.max(request.created_at_ms, providerLog.created_at * 1_000);
     const rollup = await prepareSettlementRollupV3(kv, request, providerLog, spend, correlation, now);
+    const settledRow = buildSettledRequestRowV3(request, providerLog, spend, dispatchedAtMs, rollup.foldIntoRollup, now);
     let atomic = kv
       .atomic()
       .check(requestEntry)
       .check(pendingEntry)
-      .set(requestKey, buildSettledRequestRowV3(request, providerLog, spend, dispatchedAtMs, rollup.foldIntoRollup, now), {
+      .set(requestKey, settledRow, {
         expireIn: requestRowExpireIn(request, now),
       })
       .delete(pendingKey);
@@ -1146,7 +1148,16 @@ const settlePaidFallbackRequestV3 = async (
     // concurrent recompute cannot resurrect this marker's stale future time.
     atomic = atomic.set(gateKey, paidFallbackReconciliationGateDueNow(gateEntry, now));
     atomic = applySettlementWindowUpdateV3(atomic, windowEntry, windowKey, request, spend, now);
-    if ((await atomic.commit()).ok) return { settled: true, retry_delay_ms: null };
+    if ((await atomic.commit()).ok) {
+      // Best-effort growth instrumentation: the daily counters must never fail
+      // a settlement that already committed.
+      await recordPaidFallbackLedgerSettlementStats(kv, {
+        settledRowBytes: estimatePaidFallbackRecordBytes(settledRow),
+        rollupBytes: rollup.foldIntoRollup ? estimatePaidFallbackRecordBytes(rollup.nextRollup) : null,
+        nowMs: now,
+      });
+      return { settled: true, retry_delay_ms: null };
+    }
   }
   throw new Error("Paid fallback settlement changed concurrently.");
 };

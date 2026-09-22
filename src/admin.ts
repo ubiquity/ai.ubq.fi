@@ -70,10 +70,12 @@ import {
   deletePaidFallbackStateV3,
   getPaidFallbackProviderUsageV3,
   getPaidFallbackWindowProjectionV3,
+  PAID_FALLBACK_REQUEST_LOG_RETENTION_MS,
   reconcileDuePaidFallbacksV3,
   listPaidFallbackRequestsV3,
   paidFallbackDeletionGuardV3Key,
 } from "./paid_fallback_ledger.ts";
+import { readPaidFallbackLedgerGrowth, recordPaidFallbackLedgerProjectionStats } from "./paid_fallback_ledger_stats.ts";
 import {
   deleteKernelOrgUsageLimit,
   deleteKernelUsageLimit,
@@ -2697,7 +2699,9 @@ const QUOTA_PROJECTION_MAX_BALANCE_SAMPLES = 365;
  * exhaustion estimates against the current Metered balance. Reads only the
  * compact stores; never scans raw request rows. The `window_days` parameter
  * bounds the rollup scan (default 30): the UI poll is cheap and does not pull
- * the full 90-day rollup history on every refresh.
+ * the full 90-day rollup history on every refresh. The same response carries
+ * `ledger_growth`, the measured daily settled-row/rollup size counters and the
+ * per-window read units this view cost, and records one projection sample.
  */
 export const handleAdminProvidersQuotaProjection = async (
   request: Request = new Request("https://ai.ubq.fi/admin/providers/quota-projection")
@@ -2723,7 +2727,7 @@ export const handleAdminProvidersQuotaProjection = async (
     Math.ceil((balanceWindowDays * 24) / (QUOTA_PROJECTION_MAX_BALANCE_SAMPLES - 1)) * METERED_QUOTA_BALANCE_HISTORY_BUCKET_MS
   );
   const accountFingerprint = await meterQuotaAccountFingerprint(readMeteredAccountCredentials()).catch(() => null);
-  const [snapshot, rollups, sourceBalanceHistory] = await Promise.all([
+  const [snapshot, rollups, sourceBalanceHistory, ledgerGrowth] = await Promise.all([
     getConfiguredMeteredQuotaSnapshot({ kv }).catch(() => null),
     kv ? listPaidFallbackUsageRollups(kv, { sinceMs: nowMs - windowMs, nowMs }).catch(() => null) : Promise.resolve(null),
     kv
@@ -2733,7 +2737,22 @@ export const handleAdminProvidersQuotaProjection = async (
           accountFingerprint,
         }).catch(() => null)
       : Promise.resolve(null),
+    readPaidFallbackLedgerGrowth(kv, { nowMs, retentionMs: PAID_FALLBACK_REQUEST_LOG_RETENTION_MS }),
   ]);
+  // Measure this view's own KV cost: one read unit per operation plus one per
+  // returned entry, including the retention-stats scan and the counter
+  // read-modify-write that records this view. Small rows stay far below a 4 KiB
+  // read unit, so this over-counts rather than under-counts, and a failed scan
+  // still counted its list call.
+  const rollupRows = rollups?.length ?? 0;
+  const balanceSamples = sourceBalanceHistory?.length ?? 0;
+  const projectionReadUnits = (kv ? 2 : 0) + (kv ? 1 + rollupRows : 0) + (kv ? 1 + balanceSamples : 0) + ledgerGrowth.read_units;
+  await recordPaidFallbackLedgerProjectionStats(kv, {
+    windowDays,
+    readUnits: projectionReadUnits,
+    rollupRows,
+    nowMs,
+  });
   const quota = meteredQuotaRunwayView(snapshot);
   const balanceHistory =
     sourceBalanceHistory === null
@@ -2767,6 +2786,10 @@ export const handleAdminProvidersQuotaProjection = async (
       rollup_scan: rollups === null ? "unavailable" : "ok",
       balance_history_scan: balanceHistory === null ? "unavailable" : "ok",
       balance_history: balanceHistory ?? [],
+      // Measured growth of the paid-fallback raw-row store and rollups, plus
+      // the read units admin projection views consume per window. Returns the
+      // counters as of before this view was itself recorded.
+      ledger_growth: ledgerGrowth,
     },
     { "Cache-Control": "no-store" }
   );

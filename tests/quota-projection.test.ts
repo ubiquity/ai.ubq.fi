@@ -193,6 +193,16 @@ const {
 } = await import("../src/metered_quota.ts");
 const { groupPaidFallbackUsageRollups, meteredQuotaRunwayView, projectPaidFallbackRunway, summarizePaidFallbackUsage } =
   await import("../src/quota_projection.ts");
+const {
+  estimatePaidFallbackRecordBytes,
+  isPaidFallbackLedgerDailyStats,
+  PAID_FALLBACK_RAW_STORE_ALERT_RATIO,
+  PAID_FALLBACK_RAW_STORE_BUDGET_BYTES,
+  paidFallbackLedgerStatsDayKey,
+  paidFallbackLedgerStatsDayStart,
+  readPaidFallbackLedgerGrowth,
+  recordPaidFallbackLedgerProjectionStats,
+} = await import("../src/paid_fallback_ledger_stats.ts");
 const { getKv } = await import("../src/kv.ts");
 await getKv();
 
@@ -202,6 +212,7 @@ type ApiKeyRecord = import("../src/types.ts").ApiKeyRecord;
 type PaidFallbackRequestV3 = import("../src/types.ts").PaidFallbackRequestV3;
 type PaidFallbackWindowV3 = import("../src/types.ts").PaidFallbackWindowV3;
 type MeteredQuotaSnapshot = import("../src/metered_quota.ts").MeteredQuotaSnapshot;
+type PaidFallbackLedgerDailyStats = import("../src/paid_fallback_ledger_stats.ts").PaidFallbackLedgerDailyStats;
 
 const keyId = "quota-projection-key";
 const keyHash = "quota-projection-hash";
@@ -881,4 +892,140 @@ Deno.test("backfill retries a row whose shard CAS failed instead of advancing pa
     rollups.reduce((sum, rollup) => sum + rollup.quota_sum, 0),
     60
   );
+});
+
+Deno.test("settlement records measured ledger bytes in the daily growth counters", async () => {
+  await withMeteredEnv(async () => {
+    seedKeyRecord();
+    const now = Date.now();
+    const dayKey = paidFallbackLedgerStatsDayKey(paidFallbackLedgerStatsDayStart(now));
+    const before = (await memoryKv.get<PaidFallbackLedgerDailyStats>(dayKey)).value;
+    const reservation = await reserve("qp-growth-settled", now);
+    await settleSurplus(reservation);
+
+    const after = (await memoryKv.get<PaidFallbackLedgerDailyStats>(dayKey)).value;
+    assert.ok(after, "settlement must write the daily growth counters");
+    assert.equal(isPaidFallbackLedgerDailyStats(after), true);
+    const settledRows = after.settled_rows - (before?.settled_rows ?? 0);
+    const settledBytes = after.settled_row_bytes - (before?.settled_row_bytes ?? 0);
+    const rollupWrites = after.rollup_writes - (before?.rollup_writes ?? 0);
+    const rollupBytes = after.rollup_bytes - (before?.rollup_bytes ?? 0);
+    assert.equal(settledRows, 1);
+    assert.equal(rollupWrites, 1);
+    assert.ok(settledBytes > 400 && settledBytes < 2000, `measured settled row size ${settledBytes} should be near the ~800 B estimate`);
+    assert.ok(rollupBytes > 0, "the merged rollup record size must be measured");
+
+    const row = (await memoryKv.get<PaidFallbackRequestV3>(paidFallbackRequestV3Key(keyId, reservation.request_id))).value;
+    assert.ok(row, "the settled row must exist");
+    assert.equal(settledBytes, estimatePaidFallbackRecordBytes(row));
+
+    // A replay never re-commits, so it must not inflate the daily counters.
+    await settleSurplus(reservation);
+    const replayed = (await memoryKv.get<PaidFallbackLedgerDailyStats>(dayKey)).value;
+    assert.ok(replayed);
+    assert.equal(replayed.settled_rows, after.settled_rows);
+    assert.equal(replayed.settled_row_bytes, after.settled_row_bytes);
+  });
+});
+
+Deno.test("ledger growth view derives bytes-per-row and the storage alert threshold", async () => {
+  const now = Date.now();
+  const threshold = Math.floor(PAID_FALLBACK_RAW_STORE_BUDGET_BYTES * PAID_FALLBACK_RAW_STORE_ALERT_RATIO);
+  const isolated = new MemoryKv() as unknown as Deno.Kv;
+  const dayStart = paidFallbackLedgerStatsDayStart(now);
+  await isolated.set(paidFallbackLedgerStatsDayKey(dayStart), {
+    v: 1,
+    day_start_at_ms: dayStart,
+    settled_rows: 1_000_000,
+    settled_row_bytes: threshold,
+    rollup_writes: 48,
+    rollup_bytes: 50_000,
+    projection_7d: { views: 1, read_units: 2, rollup_rows: 3 },
+    projection_30d: { views: 2, read_units: 100, rollup_rows: 500 },
+    projection_90d: { views: 4, read_units: 1_600, rollup_rows: 8_000 },
+    updated_at_ms: now,
+  });
+  const growth = await readPaidFallbackLedgerGrowth(isolated, { nowMs: now, retentionMs: PAID_FALLBACK_REQUEST_LOG_RETENTION_MS });
+  assert.equal(growth.scan, "ok");
+  assert.equal(growth.alert, true);
+  assert.equal(growth.alert_threshold_bytes, threshold);
+  assert.equal(growth.budget_bytes, PAID_FALLBACK_RAW_STORE_BUDGET_BYTES);
+  assert.equal(growth.estimated_retained_rows, 1_000_000);
+  assert.equal(growth.estimated_retained_raw_bytes, threshold);
+  assert.equal(growth.avg_row_bytes, Math.round(threshold / 1_000_000));
+  assert.equal(growth.active_days, 1);
+  assert.equal(growth.read_units, 2);
+  const p90 = growth.projections.find((entry) => entry.window_days === 90);
+  assert.equal(p90?.avg_read_units_per_view, 400);
+  assert.equal(p90?.avg_rollup_rows_per_view, 2_000);
+  assert.equal(growth.leaderboard.length, 1);
+  assert.equal(growth.leaderboard[0]?.projection_views, 7);
+
+  const quiet = await readPaidFallbackLedgerGrowth(new MemoryKv() as unknown as Deno.Kv, {
+    nowMs: now,
+    retentionMs: PAID_FALLBACK_REQUEST_LOG_RETENTION_MS,
+  });
+  assert.equal(quiet.scan, "ok");
+  assert.equal(quiet.alert, false);
+  assert.equal(quiet.avg_row_bytes, null);
+  assert.equal(quiet.read_units, 1);
+  assert.equal(
+    quiet.projections.every((entry) => entry.avg_read_units_per_view === null && entry.avg_rollup_rows_per_view === null),
+    true
+  );
+});
+
+Deno.test("projection views record KV read units per 7/30/90-day window", async () => {
+  const now = Date.now();
+  const isolated = new MemoryKv() as unknown as Deno.Kv;
+  await recordPaidFallbackLedgerProjectionStats(isolated, { windowDays: 30, readUnits: 120, rollupRows: 100, nowMs: now });
+  await recordPaidFallbackLedgerProjectionStats(isolated, { windowDays: 30, readUnits: 80, rollupRows: 60, nowMs: now });
+  await recordPaidFallbackLedgerProjectionStats(isolated, { windowDays: 90, readUnits: 400, rollupRows: 380, nowMs: now });
+
+  const stored = (await isolated.get<PaidFallbackLedgerDailyStats>(paidFallbackLedgerStatsDayKey(paidFallbackLedgerStatsDayStart(now)))).value;
+  assert.ok(stored, "projection recording must write the daily counters");
+  assert.equal(isPaidFallbackLedgerDailyStats(stored), true);
+  assert.deepEqual(stored.projection_30d, { views: 2, read_units: 200, rollup_rows: 160 });
+
+  const growth = await readPaidFallbackLedgerGrowth(isolated, { nowMs: now, retentionMs: PAID_FALLBACK_REQUEST_LOG_RETENTION_MS });
+  const byWindow = new Map(growth.projections.map((entry) => [entry.window_days, entry]));
+  assert.equal(byWindow.get(30)?.views, 2);
+  assert.equal(byWindow.get(30)?.avg_read_units_per_view, 100);
+  assert.equal(byWindow.get(30)?.avg_rollup_rows_per_view, 80);
+  assert.equal(byWindow.get(90)?.views, 1);
+  assert.equal(byWindow.get(90)?.avg_read_units_per_view, 400);
+  assert.equal(byWindow.get(7)?.views, 0);
+  assert.equal(byWindow.get(7)?.avg_read_units_per_view, null);
+  assert.equal(growth.leaderboard.length, 1);
+});
+
+Deno.test("admin quota projection records and exposes the measured ledger growth", async () => {
+  await withMeteredEnv(async () => {
+    seedKeyRecord();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = () => Promise.reject(new Error("offline projection test"));
+    try {
+      const { handleAdminProvidersQuotaProjection } = await import("../src/admin.ts");
+      const dayKey = paidFallbackLedgerStatsDayKey(paidFallbackLedgerStatsDayStart(Date.now()));
+      const before = (await memoryKv.get<PaidFallbackLedgerDailyStats>(dayKey)).value;
+      const response = await handleAdminProvidersQuotaProjection(new Request("https://ai.ubq.fi/admin/providers/quota-projection?window_days=30"));
+      assert.equal(response.status, 200);
+      const payload = (await response.json()) as {
+        ledger_growth?: { scan?: string; read_units?: number; projections?: { window_days: number; views: number; read_units: number }[] };
+      };
+      assert.equal(payload.ledger_growth?.scan, "ok");
+      assert.deepEqual(payload.ledger_growth?.projections?.map((entry) => entry.window_days), [7, 30, 90]);
+
+      // The view measures itself for the next reader: the 30-day counters grew
+      // by exactly one view whose read units cover the three scans plus entries.
+      const after = (await memoryKv.get<PaidFallbackLedgerDailyStats>(dayKey)).value;
+      assert.ok(after, "the admin view must record its projection counters");
+      assert.equal(after.projection_30d.views - (before?.projection_30d.views ?? 0), 1);
+      assert.ok(after.projection_30d.read_units - (before?.projection_30d.read_units ?? 0) >= 4);
+      assert.equal(after.projection_7d.views, before?.projection_7d.views ?? 0);
+      assert.equal(after.projection_90d.views, before?.projection_90d.views ?? 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

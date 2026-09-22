@@ -84,10 +84,41 @@ no exhaustion estimate rather than a fake one.
 The admin providers view renders this in a "Quota runway" card below the capacity chart (static/admin.html,
 static/admin.js, static/admin.css).
 
+## Measured growth and the storage alert
+
+The estimates above are instrumented instead of assumed. Every settlement appends one small daily counter row
+(`uos_ai/paid_fallback/v3/ledger_stats/<utc-day>`, registered as a durable migration prefix) with:
+
+- `settled_rows` / `settled_row_bytes`: settled raw rows written and their JSON-serialized size, measured with the same
+  serializer the admin payload size checks use.
+- `rollup_writes` / `rollup_bytes`: merged hourly rollup records written and their serialized size. This is rollup write
+  volume, not retained rollup size.
+- `projection_7d` / `projection_30d` / `projection_90d`: admin quota-projection views and the KV read units they
+  consumed (one per KV operation plus one per returned entry), so the real cost of a 7/30/90-day view is measurable.
+
+Counter writes are best-effort CAS merges: a lost sample never fails a settlement or an admin view, so the alert is a
+lower bound on actual writes.
+
+`GET /admin/providers/quota-projection` returns the bounded view as `ledger_growth`, scanned over the 365-day row
+retention window with a daily leaderboard bounded to 30 entries, and the admin Quota forecast card renders it:
+
+| Field                                    | Meaning                                                               |
+| ---------------------------------------- | --------------------------------------------------------------------- |
+| `estimated_retained_raw_bytes` / `_rows` | Settled writes inside the retention window, as the raw-store estimate |
+| `avg_row_bytes`                          | Measured bytes per settled row (the earlier ~800 B estimate)          |
+| `projections[].avg_read_units_per_view`  | Measured admin view cost per requested window                         |
+| `budget_bytes` / `alert_threshold_bytes` | 5 GiB Pro storage allowance and its 80% alert threshold               |
+| `alert`                                  | True once the estimated retained store reaches the threshold          |
+
+A 2026-09-22 fixture measurement confirms the row estimate: one settled V3 row with the standard fields serializes to
+787 bytes, so 1M rows is ~0.73 GiB. Production rows-per-day, rollup sizes and projection read units come from the admin
+card (or the `ledger_growth` payload) and should be recorded here as a representative week accumulates.
+
 ## Follow-ups
 
-- Byte/count baseline: measure actual settled-row and rollup sizes in production (see
-  docs/deno-usage-optimization-plan-2026-08-09.md) before choosing a raw-row horizon; one year is the current default.
+- Byte/count baseline: instrumented as of 2026-09-22 (`ledger_stats` counters exposed as `ledger_growth`); read the
+  production rows-per-day, bytes-per-row, rollup and projection-read numbers from the admin providers view and record
+  them here before re-tuning the raw-row horizon.
 - Oldest-first hard cap: not implemented. TTL gives a bounded horizon; a true byte budget would need timestamp-ordered
   keys or a global age index — note the legacy analytics key shape `[keyId, createdAtMs, requestId]` as a precedent if
   that becomes necessary.

@@ -259,6 +259,7 @@ const quotaRunwayUpdated = mustGet("quota-runway-updated");
 const quotaRunwaySummary = mustGet("quota-runway-summary");
 const quotaRunwayList = mustGet("quota-runway-list");
 const quotaRunwayNote = mustGet("quota-runway-note");
+const quotaRunwayLedger = mustGet("quota-runway-ledger");
 
 let currentKeyView = "active";
 let currentAdminView = "loading";
@@ -2823,6 +2824,18 @@ const loadProviderCapacity = async () => {
 const quotaProjectionProviderLabel = (provider) =>
   provider === "surplus" ? "Surplus" : provider === "metered" ? "Metered" : String(provider ?? "unknown");
 
+const formatByteSize = (value) => {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "0 B";
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let size = value;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  return `${unit === 0 ? formatNumber(Math.round(size)) : size.toFixed(size >= 100 ? 0 : 1)} ${units[unit]}`;
+};
+
 const quotaProjectionDuration = (ms) => {
   if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "unknown";
   const minutes = Math.max(0, Math.trunc(ms / 60_000));
@@ -2909,6 +2922,7 @@ const renderQuotaProjection = (payload) => {
   const balanceHistory = Array.isArray(payload?.balance_history) ? payload.balance_history : [];
   quotaRunwaySummary.replaceChildren();
   quotaRunwayNote.textContent = "";
+  quotaRunwayLedger.textContent = "";
   if (!quota.available) {
     setBadge(quotaRunwayBadge, "bad", "Quota not monitored");
     quotaRunwayUpdated.textContent = "Consumption history only";
@@ -2994,6 +3008,34 @@ const renderQuotaProjection = (payload) => {
   } else {
     quotaRunwayNote.textContent =
       `Estimates use the ${windowLabel} consumption window · raw request rows retain one year; hourly model rollups are retained indefinitely.`;
+  }
+  const ledgerGrowth = payload?.ledger_growth;
+  if (ledgerGrowth && typeof ledgerGrowth === "object" && ledgerGrowth.scan === "ok") {
+    const parts = [];
+    if (typeof ledgerGrowth.estimated_retained_raw_bytes === "number") {
+      parts.push(
+        `raw-row store ~${formatByteSize(ledgerGrowth.estimated_retained_raw_bytes)} over ${
+          formatNumber(ledgerGrowth.retention_days ?? 365)
+        } days`,
+      );
+    }
+    if (typeof ledgerGrowth.avg_row_bytes === "number") {
+      parts.push(`~${formatNumber(Math.round(ledgerGrowth.avg_row_bytes))} B per settled row`);
+    }
+    const projection = Array.isArray(ledgerGrowth.projections)
+      ? ledgerGrowth.projections.find((entry) => entry?.window_days === windowDays) ?? ledgerGrowth.projections.at(-1)
+      : null;
+    if (projection && typeof projection.avg_read_units_per_view === "number") {
+      parts.push(`${formatNumber(projection.avg_read_units_per_view)} KV read units per ${windowDays}-day admin view`);
+    }
+    if (!parts.length) parts.push("no settled rows measured yet");
+    const threshold = formatByteSize(
+      typeof ledgerGrowth.alert_threshold_bytes === "number" ? ledgerGrowth.alert_threshold_bytes : 0,
+    );
+    parts.push(ledgerGrowth.alert === true ? `storage alert ≥ ${threshold}` : `alert at ${threshold}`);
+    quotaRunwayLedger.textContent = `Ledger: ${parts.join(" · ")}.`;
+  } else if (ledgerGrowth && typeof ledgerGrowth === "object") {
+    quotaRunwayLedger.textContent = "Ledger growth counters could not be read from KV.";
   }
   renderQuotaProjectionRows(payload, historyUnavailable);
 };
@@ -9711,6 +9753,7 @@ tokenInput.addEventListener("input", () => {
   quotaRunwaySummary.replaceChildren();
   quotaRunwayList.replaceChildren();
   quotaRunwayNote.textContent = "";
+  quotaRunwayLedger.textContent = "";
   latestProviderCapacityChartState = null;
   latestProviderHealth = null;
   providerCapacityChart.replaceChildren();
@@ -9924,6 +9967,7 @@ baseSelect.addEventListener("change", () => {
   quotaRunwaySummary.replaceChildren();
   quotaRunwayList.replaceChildren();
   quotaRunwayNote.textContent = "";
+  quotaRunwayLedger.textContent = "";
   latestProviderCapacityChartState = null;
   latestProviderHealth = null;
   providerCapacityChart.replaceChildren();
