@@ -1,3 +1,9 @@
+// Explicit module status. As a script, this file's top-level `command` CLI
+// argument is a global declaration, and the ops/*.ts deploy scripts (also
+// scripts, in the same ESLint type program) declare `async function command`
+// in that shared scope, which made the type-aware rules read it as a function.
+export {};
+
 const parseArgs = (args: string[]): Record<string, string | boolean> => {
   const out: Record<string, string | boolean> = {};
   for (let i = 0; i < args.length; i++) {
