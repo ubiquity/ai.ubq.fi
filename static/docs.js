@@ -4,6 +4,22 @@ const contentEl = document.querySelector("[data-docs-content]");
 const tocEl = document.querySelector("[data-docs-toc]");
 const source = contentEl?.dataset.docsSource;
 
+const copyIcon =
+  `<svg data-copy-icon viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">` +
+  `<rect x="9" y="9" width="11" height="11" rx="2.5" />` +
+  `<path d="M5.5 15H4.5A1.5 1.5 0 0 1 3 13.5v-8A1.5 1.5 0 0 1 4.5 4h8A1.5 1.5 0 0 1 14 5.5v1" />` +
+  `</svg>`;
+const checkIcon =
+  `<svg data-check-icon viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">` +
+  `<path d="m5 12.5 4.5 4.5L19 7" />` +
+  `</svg>`;
+const errorIcon =
+  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">` +
+  `<circle cx="12" cy="12" r="9" />` +
+  `<path d="M12 7.5V12" />` +
+  `<path d="M12 16h.01" />` +
+  `</svg>`;
+
 const escapeHtml = (value) =>
   value
     .replaceAll("&", "&amp;")
@@ -49,6 +65,40 @@ const renderInline = (text) => {
     .join("");
 };
 
+const splitTableRow = (line) =>
+  line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim());
+
+const isTableRow = (line) => /^\s*\|.*\|\s*$/.test(line);
+
+const isTableSeparator = (line) => {
+  if (!isTableRow(line)) return false;
+  const cells = splitTableRow(line);
+  return cells.length > 1 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+};
+
+const renderTable = (headerCells, rows) => {
+  const head = headerCells.map((cell) => `<th scope="col">${renderInline(cell)}</th>`).join("");
+  const body = rows
+    .map((row) => `<tr>${row.map((cell) => `<td>${renderInline(cell)}</td>`).join("")}</tr>`)
+    .join("");
+  return `<div data-table-scroll tabindex="0"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+};
+
+const renderCodeBlock = (language, code) => {
+  const languageClass = language ? ` class="language-${escapeAttr(language)}"` : "";
+  return (
+    `<div data-code-block>` +
+    `<pre data-code tabindex="0"><code${languageClass}>${escapeHtml(code)}</code></pre>` +
+    `<button type="button" data-copy-code aria-label="Copy code" data-tooltip="Copy">${copyIcon}${checkIcon}</button>` +
+    `</div>`
+  );
+};
+
 const slugify = (text, counts) => {
   const base = text
     .toLowerCase()
@@ -86,12 +136,12 @@ const parseMarkdown = (markdown) => {
     listType = null;
   };
 
-  for (const rawLine of lines) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const rawLine = lines[index];
     const line = rawLine.replace(/\s+$/g, "");
     if (inCode) {
       if (line.startsWith("```")) {
-        const languageClass = codeLang ? ` class="language-${escapeAttr(codeLang)}"` : "";
-        html.push(`<pre data-code><code${languageClass}>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+        html.push(renderCodeBlock(codeLang, codeLines.join("\n")));
         inCode = false;
         codeLang = "";
         codeLines = [];
@@ -146,6 +196,21 @@ const parseMarkdown = (markdown) => {
       continue;
     }
 
+    if (isTableRow(line) && isTableSeparator(lines[index + 1] ?? "")) {
+      flushParagraph();
+      closeList();
+      const headerCells = splitTableRow(line);
+      const rows = [];
+      index += 2;
+      while (index < lines.length && isTableRow(lines[index])) {
+        rows.push(splitTableRow(lines[index]));
+        index += 1;
+      }
+      index -= 1;
+      html.push(renderTable(headerCells, rows));
+      continue;
+    }
+
     paragraph.push(line.trim());
   }
 
@@ -153,7 +218,7 @@ const parseMarkdown = (markdown) => {
   closeList();
 
   if (inCode) {
-    html.push(`<pre data-code><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+    html.push(renderCodeBlock(codeLang, codeLines.join("\n")));
   }
 
   return { html: html.join("\n"), toc };
@@ -175,27 +240,87 @@ const renderToc = (toc) => {
     .join("\n");
 };
 
+const setDocsState = (state) => {
+  if (!contentEl) return;
+  if (state === "ready") {
+    delete contentEl.dataset.docsState;
+    contentEl.removeAttribute("aria-busy");
+    return;
+  }
+  contentEl.dataset.docsState = state;
+  if (state === "loading") {
+    contentEl.setAttribute("aria-busy", "true");
+  } else {
+    contentEl.removeAttribute("aria-busy");
+  }
+};
+
+const renderDocsError = (message) => {
+  if (!contentEl) return;
+  contentEl.innerHTML = `<p data-docs-error>${errorIcon}<span>${escapeHtml(message)}</span></p>`;
+  setDocsState("error");
+};
+
 const loadDocs = async () => {
   if (!contentEl) return;
   if (!source) {
-    contentEl.innerHTML = "<p>Missing docs source.</p>";
+    renderDocsError("Missing docs source.");
     return;
   }
   try {
     const res = await fetch(source, { cache: "no-store" });
     if (!res.ok) {
-      contentEl.innerHTML = `<p>Failed to load docs (${res.status}).</p>`;
+      renderDocsError(`Failed to load docs (${res.status}).`);
       return;
     }
     const text = await res.text();
     const { html, toc } = parseMarkdown(text);
     contentEl.innerHTML = html;
     contentEl.querySelector("h1")?.remove();
+    setDocsState("ready");
     renderToc(toc);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    contentEl.innerHTML = `<p>Failed to load docs (${escapeHtml(message)}).</p>`;
+    renderDocsError(`Failed to load docs (${message}).`);
   }
 };
+
+const COPY_FEEDBACK_MS = 1400;
+const copyResetTimers = new WeakMap();
+
+const resetCopyFeedback = (button) => {
+  delete button.dataset.copied;
+  delete button.dataset.copyError;
+  button.dataset.tooltip = "Copy";
+};
+
+const showCopyFeedback = (button, copied, label) => {
+  globalThis.clearTimeout(copyResetTimers.get(button));
+  delete button.dataset.copied;
+  delete button.dataset.copyError;
+  if (copied) {
+    button.dataset.copied = "";
+  } else {
+    button.dataset.copyError = "";
+  }
+  button.dataset.tooltip = label;
+  copyResetTimers.set(button, globalThis.setTimeout(() => resetCopyFeedback(button), COPY_FEEDBACK_MS));
+};
+
+const copyCodeBlock = async (button) => {
+  const code = button.closest("[data-code-block]")?.querySelector("pre[data-code] code")?.textContent ?? "";
+  if (!code) return;
+  try {
+    await navigator.clipboard.writeText(code);
+    showCopyFeedback(button, true, "Copied");
+  } catch {
+    showCopyFeedback(button, false, "Copy failed");
+  }
+};
+
+contentEl?.addEventListener("click", (event) => {
+  const button = event.target instanceof Element ? event.target.closest("[data-copy-code]") : null;
+  if (button instanceof HTMLButtonElement) void copyCodeBlock(button);
+});
 
 loadDocs();
