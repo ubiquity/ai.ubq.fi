@@ -1,45 +1,26 @@
+/*
+ * Home surface. Consumes the shared foundation tokens from style.css, so this file declares no
+ * palette, radius, shadow, or duration of its own and the home page cannot drift from the system.
+ */
 body[data-page="home"] [data-shell] {
-  width: 100%;
-  max-width: 1600px;
-}
-
-body[data-page="home"] h1 {
-  font-size: clamp(28px, 3vw, 38px);
-}
-
-body[data-page="home"] [data-lead] {
-  font-size: clamp(14px, 1.8vw, 16px);
-  max-width: 60ch;
-}
-
-body[data-page="home"] [data-hero] h1,
-body[data-page="home"] [data-hero] [data-lead],
-body[data-page="home"] [data-hero] [data-layout="row"] {
-  animation: rise 450ms var(--ease-out) both;
-}
-
-body[data-page="home"] [data-hero] [data-lead] {
-  animation-delay: 60ms;
-}
-
-body[data-page="home"] [data-hero] [data-layout="row"] {
-  animation-delay: 120ms;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  body[data-page="home"] [data-hero] h1,
-  body[data-page="home"] [data-hero] [data-lead],
-  body[data-page="home"] [data-hero] [data-layout="row"] {
-    animation: none;
-  }
+  max-width: 1120px;
 }
 
 body[data-page="home"] main {
-  width: 100%;
-  max-width: 1040px;
-  margin-inline: auto;
   align-content: start;
-  gap: 32px;
+  gap: 24px;
+}
+
+/*
+ * One entrance for the whole hero, starting immediately: the headline, lead, and actions rise
+ * together on the first paint instead of each waiting behind a decorative delay.
+ */
+body[data-page="home"] [data-hero] {
+  animation: rise var(--duration-med) var(--ease-out) both;
+}
+
+body[data-page="home"] [data-card] pre[data-code] {
+  max-width: 100%;
 }
 
 body[data-page="home"] [data-home-footer],
@@ -48,11 +29,48 @@ body[data-page="home"] [data-home-status] {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 12px 20px;
+  gap: 8px 18px;
 }
 
 body[data-page="home"] [data-home-footer] {
   justify-content: space-between;
+  padding-top: 4px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 0.8125rem;
+}
+
+/* The health target is a control-sized link so the badge keeps a comfortable press area. */
+body[data-page="home"] [data-home-status] {
+  min-height: var(--control-height);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+}
+
+/* The dot repeats the badge state color, so health reads as one semantic unit, not color alone. */
+body[data-page="home"] [data-home-status] [data-badge]::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: currentcolor;
+}
+
+body[data-page="home"] a[data-button] svg {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+}
+
+@media (max-width: 560px) {
+  body[data-page="home"] [data-home-footer] {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body[data-page="home"] [data-hero] {
+    animation: none;
+  }
 }
