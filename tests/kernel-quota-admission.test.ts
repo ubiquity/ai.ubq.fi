@@ -68,7 +68,9 @@ const resolveAfter = (): Readonly<{ promise: Promise<void>; resolve: () => void 
 const withTimeout = async <T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> => {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), timeoutMs);
+    timer = setTimeout(() => {
+      reject(new Error(`Timed out waiting for ${label}`));
+    }, timeoutMs);
   });
   try {
     return await Promise.race([promise, timeout]);
@@ -257,7 +259,10 @@ Deno.test({
     resetApiKeyPolicyCacheForTest();
     const dispatches: string[] = [];
     globalThis.fetch = (input: RequestInfo | URL): Promise<Response> => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      let url: string;
+      if (typeof input === "string") url = input;
+      else if (input instanceof URL) url = input.toString();
+      else url = input.url;
       dispatches.push(url);
       if (url === DEEPSEEK_CHAT_COMPLETIONS_URL) return Promise.resolve(bufferedChatResponse());
       return Promise.resolve(new Response(JSON.stringify({ error: { message: "unexpected upstream" } }), { status: 502 }));
@@ -286,10 +291,10 @@ Deno.test({
       assert.ok(apiKeyRequestId, "the 499 must carry the gateway request id");
       const apiKeyRow = (await kv.get<ApiKeyUsageRequestV3>(apiKeyUsageV3RequestKey(policy, apiKeyRequestId))).value;
       assert.equal(apiKeyRow?.state, "released", "a pre-dispatch abort must release the API-key reservation");
-      assert.equal(apiKeyRow?.release_reason, ABORT_REASON);
+      assert.equal(apiKeyRow.release_reason, ABORT_REASON);
       const apiKeyWindow = (await kv.get<ApiKeyUsageWindowV3>(apiKeyUsageV3WindowKey(policy))).value;
       assert.equal(apiKeyWindow?.reserved_requests, 0, "the released reservation must return its window slot");
-      assert.equal(apiKeyWindow?.committed_requests, 0, "work that never started must not be charged");
+      assert.equal(apiKeyWindow.committed_requests, 0, "work that never started must not be charged");
       assert.equal(kernelReservationRows(kv).length, 0, "an abort before kernel admission must not create a kernel reservation");
       assert.equal(dispatches.length, 0, "no provider dispatch for a request that never started");
       assert.equal(controller.snapshot().active, 0, "the process permit returns through the rejection terminal log");
@@ -321,14 +326,14 @@ Deno.test({
       assert.ok(kernelRequestId, "the kernel-scoped 499 must carry the gateway request id");
       const kernelKeyRow = (await kv.get<ApiKeyUsageRequestV3>(apiKeyUsageV3RequestKey(policy, kernelRequestId))).value;
       assert.equal(kernelKeyRow?.state, "released", "the API-key reservation acquired before the kernel step must be released");
-      assert.equal(kernelKeyRow?.release_reason, ABORT_REASON);
+      assert.equal(kernelKeyRow.release_reason, ABORT_REASON);
       const kernelReservations = kernelReservationRows(kv);
       assert.equal(kernelReservations.length, 1, "the fixture must have acquired exactly one kernel reservation");
       assert.equal(kernelReservations[0]?.state, "released", "an acquired kernel reservation must settle as released, not keep renewing");
       assert.equal(kernelReservations[0]?.release_reason, ABORT_REASON);
       const kernelWindow = (await kv.get<KernelQuotaWindowV2>(kernelOrgWindowKey(KERNEL_OWNER))).value;
       assert.equal(kernelWindow?.reserved_requests, 0, "the released kernel reservation must return its slot");
-      assert.equal(kernelWindow?.usage_requests, 0, "work that never started must not consume kernel usage");
+      assert.equal(kernelWindow.usage_requests, 0, "work that never started must not consume kernel usage");
       assert.equal(dispatches.length, 0, "neither aborted request may reach a provider");
       assert.equal(controller.snapshot().active, 0, "every aborted request returns its permit exactly once");
 
