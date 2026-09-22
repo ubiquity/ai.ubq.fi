@@ -6,7 +6,14 @@ body[data-page="home"] [data-shell] {
   max-width: 1120px;
 }
 
+/*
+ * One explicit, compressible column. Home's sections stack, but the shared `[data-card]` rule
+ * asks for a twelve-column span, so without a template here main auto-creates twelve implicit
+ * columns: the card lands in row 1 and the hero and footer fall into column 1, which collapses
+ * to a sliver beside the code's intrinsic width at narrow viewports.
+ */
 body[data-page="home"] main {
+  grid-template-columns: minmax(0, 1fr);
   align-content: start;
   gap: 24px;
 }
@@ -17,6 +24,23 @@ body[data-page="home"] main {
  */
 body[data-page="home"] [data-hero] {
   animation: rise var(--duration-med) var(--ease-out) both;
+}
+
+/*
+ * The quickstart code line is wider than a 320px screen. The card nests auto-sized grids, so
+ * without an explicit minimum the code's intrinsic width becomes the card's minimum, then main's,
+ * then the shell's, and the page overflows instead of letting the code scroll inside the card.
+ * The card takes the single column directly instead of the shared twelve-column span, so that
+ * column, not the code, sets the width and the code scrolls inside the card.
+ */
+body[data-page="home"] main > [data-card] {
+  grid-column: 1;
+}
+
+body[data-page="home"] [data-card-body],
+body[data-page="home"] [data-card],
+body[data-page="home"] [data-card] pre[data-code] {
+  min-width: 0;
 }
 
 body[data-page="home"] [data-card] pre[data-code] {
