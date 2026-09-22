@@ -1,4 +1,5 @@
 import { getKv } from "./kv.ts";
+import { createOptionalTelemetryQueue, measureJsonPayloadBytes, type OptionalTelemetryQueue, type OptionalTelemetryQueueSnapshot } from "./optional_telemetry_queue.ts";
 import { PROMPT_CACHE_TELEMETRY_PROVIDERS, PROMPT_CACHE_TELEMETRY_ROUTES } from "./prompt_cache_telemetry_gate.ts";
 import { RELEASE_GIT_SHA } from "./release.ts";
 import { sha256Hex } from "./utils.ts";
@@ -89,7 +90,7 @@ export type PromptCacheAnalyticsReadOptions = Pick<PromptCacheAnalyticsOptions, 
   }>;
 
 export type PromptCacheAnalyticsRecordResult = Readonly<{
-  status: "recorded" | "ignored" | "unavailable";
+  status: "recorded" | "ignored" | "unavailable" | "queued" | "dropped";
   reason:
     | "recorded"
     | "recorded_without_usage"
@@ -99,7 +100,11 @@ export type PromptCacheAnalyticsRecordResult = Readonly<{
     | "not_completed_2xx"
     | "unsupported_provider"
     | "unsupported_route"
-    | "kv_unavailable";
+    | "kv_unavailable"
+    | "queued"
+    | "dropped_capacity"
+    | "dropped_bytes"
+    | "dropped_closed";
   bucket_start_at_ms: number | null;
 }>;
 
@@ -436,15 +441,11 @@ const admitCohort = async (admission: CohortAdmission): Promise<PromptCacheAnaly
   return recordedResult(bucketStartAtMs, usage);
 };
 
-/**
- * Adds one completed inference outcome to aggregate and bounded cohort
- * counters. The model is hashed before it reaches a durable KV key. A full
- * bucket never admits more than the fixed number of cohort combinations.
- */
-export const recordPromptCacheAnalytics = async (
+/** The optional-write gate shared by the direct and the queued entry points. */
+const promptCacheAnalyticsTarget = (
   event: PromptCacheAnalyticsEvent,
-  options: PromptCacheAnalyticsOptions = {}
-): Promise<PromptCacheAnalyticsRecordResult> => {
+  options: PromptCacheAnalyticsOptions
+): Readonly<{ provider: PromptCacheAnalyticsProvider; route: PromptCacheAnalyticsRoute }> | PromptCacheAnalyticsRecordResult => {
   const release = options.release ?? RELEASE_GIT_SHA;
   if (!knownRelease(release)) return recordResult("ignored", "unknown_release");
   if (!event.completed || !Number.isInteger(event.status) || event.status < 200 || event.status >= 300) return recordResult("ignored", "not_completed_2xx");
@@ -452,30 +453,31 @@ export const recordPromptCacheAnalytics = async (
   if (!provider) return recordResult("ignored", "unsupported_provider");
   const route = asRoute(event.route);
   if (!route) return recordResult("ignored", "unsupported_route");
+  return { provider, route };
+};
 
-  const nowMs = safeNow(options.now ?? Date.now);
-  const bucketStartAtMs = alignedBucketStart(nowMs);
-  const kv = await resolveKv(options);
-  if (!kv) return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
-
-  let cohort: PromptCacheAnalyticsCohort;
-  try {
-    cohort = await resolveCohort(provider, route, event);
-  } catch {
-    return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
-  }
+/**
+ * One bounded admission sequence for an already-validated cohort.
+ *
+ * Each failed admission CAS means this cohort was admitted concurrently or
+ * another cohort advanced the shared cardinality row. One extra read after the
+ * maximum number of conflicts must therefore observe this marker or cap.
+ */
+const commitCohortOutcome = async (
+  kv: Deno.Kv,
+  bucketStartAtMs: number,
+  cohort: PromptCacheAnalyticsCohort,
+  usage: PromptCacheAnalyticsUsage,
+  nowMs: number
+): Promise<PromptCacheAnalyticsRecordResult> => {
   const admission: CohortAdmission = {
     kv,
     bucketStartAtMs,
     cohort,
-    usage: recordUsage(event),
+    usage,
     markerKey: dimensionMarkerKey(bucketStartAtMs, cohort),
     bucketCardinalityKey: cardinalityKey(bucketStartAtMs),
   };
-
-  // Each failed admission CAS means this cohort was admitted concurrently or
-  // another cohort advanced the shared cardinality row. One extra read after
-  // the maximum number of conflicts must therefore observe this marker or cap.
   try {
     for (let attempt = 0; attempt <= PROMPT_CACHE_ANALYTICS_MAX_COHORTS_PER_BUCKET; attempt += 1) {
       const outcome = await admitCohort(admission);
@@ -487,9 +489,198 @@ export const recordPromptCacheAnalytics = async (
   } catch {
     return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
   }
-
   return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
 };
+
+/**
+ * Adds one completed inference outcome to aggregate and bounded cohort
+ * counters. The model is hashed before it reaches a durable KV key. A full
+ * bucket never admits more than the fixed number of cohort combinations.
+ */
+export const recordPromptCacheAnalytics = async (
+  event: PromptCacheAnalyticsEvent,
+  options: PromptCacheAnalyticsOptions = {}
+): Promise<PromptCacheAnalyticsRecordResult> => {
+  const target = promptCacheAnalyticsTarget(event, options);
+  if (!("provider" in target)) return target;
+
+  const nowMs = safeNow(options.now ?? Date.now);
+  const bucketStartAtMs = alignedBucketStart(nowMs);
+  const kv = await resolveKv(options);
+  if (!kv) return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
+
+  let cohort: PromptCacheAnalyticsCohort;
+  try {
+    cohort = await resolveCohort(target.provider, target.route, event);
+  } catch {
+    return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
+  }
+  return await commitCohortOutcome(kv, bucketStartAtMs, cohort, recordUsage(event), nowMs);
+};
+
+/**
+ * The bounded, sanitized record retained by the optional telemetry queue. It
+ * carries an opaque model digest instead of model text, the fixed public
+ * dimensions, aggregate counter deltas and a delivery handle. Prompts,
+ * messages, request bodies, credentials and raw usage strings never enter it.
+ */
+export type PromptCacheAnalyticsQueueEntry = Readonly<{
+  bucket_start_at_ms: number;
+  provider: PromptCacheAnalyticsProvider;
+  model_hash: string;
+  route: PromptCacheAnalyticsRoute;
+  prompt_cache_key_present: boolean;
+  mode: PromptCacheAnalyticsMode;
+  fallback: PromptCacheAnalyticsFallback;
+  usage_kind: PromptCacheAnalyticsUsage["kind"];
+  /** Absent counters stay absent, so a missing cache count is never defaulted. */
+  deltas: Readonly<Partial<Record<Counter, number>>>;
+  /**
+   * Process-level delivery reference only: an explicitly injected database
+   * handle, or undefined in production so the sink resolves the environment KV
+   * with `getKv()` at delivery time. Request, response and prompt data never
+   * enter this field.
+   */
+  kv?: Deno.Kv | null;
+}>;
+
+const MODEL_HASH_PATTERN = /^(?:unknown|[a-f0-9]{64})$/;
+
+const queueEntryDeltas = (deltas: CounterDeltas): Readonly<Partial<Record<Counter, number>>> => {
+  const bounded: Partial<Record<Counter, number>> = {};
+  for (const counter of COUNTERS) {
+    const amount = deltas[counter];
+    if (amount === undefined || amount < 0n || amount > BigInt(Number.MAX_SAFE_INTEGER)) continue;
+    bounded[counter] = Number(amount);
+  }
+  return bounded;
+};
+
+const cohortFromQueueEntry = (entry: PromptCacheAnalyticsQueueEntry): PromptCacheAnalyticsCohort | null => {
+  const provider = asProvider(entry.provider);
+  const route = asRoute(entry.route);
+  if (!provider || !route || typeof entry.model_hash !== "string" || !MODEL_HASH_PATTERN.test(entry.model_hash)) return null;
+  return {
+    provider,
+    modelHash: entry.model_hash,
+    route,
+    promptCacheKeyPresent: entry.prompt_cache_key_present === true,
+    mode: asMode(entry.mode),
+    fallback: asFallback(entry.fallback),
+  };
+};
+
+/** Rebuilds the bounded counter deltas; a malformed retained entry is dropped, never partially written. */
+const usageFromQueueEntry = (entry: PromptCacheAnalyticsQueueEntry): PromptCacheAnalyticsUsage | null => {
+  const deltas: CounterDeltas = {};
+  for (const counter of COUNTERS) {
+    const amount = entry.deltas[counter];
+    if (amount === undefined) continue;
+    if (!safeCounter(amount)) return null;
+    deltas[counter] = BigInt(amount);
+  }
+  if (deltas.sample_count === undefined) return null;
+  return { kind: entry.usage_kind, deltas };
+};
+
+/**
+ * The durable sink for one queued entry. It applies exactly the counters a
+ * direct write would have applied; it exists so the queued path cannot drift
+ * from the direct path.
+ */
+export const writePromptCacheAnalyticsQueueEntry = async (entry: PromptCacheAnalyticsQueueEntry): Promise<boolean> => {
+  const cohort = cohortFromQueueEntry(entry);
+  const usage = usageFromQueueEntry(entry);
+  if (!cohort || !usage || !safeCounter(entry.bucket_start_at_ms)) return false;
+  const kv = entry.kv === undefined ? await resolveKv({}) : entry.kv;
+  if (!kv) return false;
+  try {
+    const outcome = await commitCohortOutcome(kv, entry.bucket_start_at_ms, cohort, usage, entry.bucket_start_at_ms);
+    return outcome.status === "recorded";
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Measures only the retained metadata, in the same UTF-8 byte accounting the
+ * queue's default uses. A process-local KV delivery handle adds no payload
+ * bytes, and an unserializable payload fails closed as `NaN`.
+ */
+const measureQueueEntry = (entry: PromptCacheAnalyticsQueueEntry): number => measureJsonPayloadBytes({ ...entry, kv: undefined });
+
+let optionalPromptCacheAnalyticsQueue: OptionalTelemetryQueue<PromptCacheAnalyticsQueueEntry> | null = null;
+
+const promptCacheAnalyticsTelemetryQueue = (): OptionalTelemetryQueue<PromptCacheAnalyticsQueueEntry> =>
+  (optionalPromptCacheAnalyticsQueue ??= createOptionalTelemetryQueue({
+    write: writePromptCacheAnalyticsQueueEntry,
+    measure: measureQueueEntry,
+  }));
+
+export type PromptCacheAnalyticsEnqueueOptions = PromptCacheAnalyticsOptions &
+  Readonly<{
+    /** Test and integration seam: the bounded queue instance that owns optional writes. */
+    queue?: OptionalTelemetryQueue<PromptCacheAnalyticsQueueEntry>;
+  }>;
+
+/**
+ * Queues one completed inference outcome onto the bounded optional-telemetry
+ * queue and returns before any durable write starts.
+ *
+ * This is the drop-in replacement for `recordPromptCacheAnalytics` on the
+ * request path: it shares the same gate and the same counters, but a slow or
+ * unavailable analytics sink can no longer extend client-visible latency. The
+ * return value reports the queue outcome, and the queue snapshot reports
+ * retained, delivered, failed, dropped and drain state.
+ */
+export const enqueuePromptCacheAnalytics = async (
+  event: PromptCacheAnalyticsEvent,
+  options: PromptCacheAnalyticsEnqueueOptions = {}
+): Promise<PromptCacheAnalyticsRecordResult> => {
+  const target = promptCacheAnalyticsTarget(event, options);
+  if (!("provider" in target)) return target;
+
+  const nowMs = safeNow(options.now ?? Date.now);
+  const bucketStartAtMs = alignedBucketStart(nowMs);
+  let cohort: PromptCacheAnalyticsCohort;
+  try {
+    cohort = await resolveCohort(target.provider, target.route, event);
+  } catch {
+    return recordResult("unavailable", "kv_unavailable", bucketStartAtMs);
+  }
+
+  const usage = recordUsage(event);
+  const outcome = (options.queue ?? promptCacheAnalyticsTelemetryQueue()).enqueue({
+    bucket_start_at_ms: bucketStartAtMs,
+    provider: cohort.provider,
+    model_hash: cohort.modelHash,
+    route: cohort.route,
+    prompt_cache_key_present: cohort.promptCacheKeyPresent,
+    mode: cohort.mode,
+    fallback: cohort.fallback,
+    usage_kind: usage.kind,
+    deltas: queueEntryDeltas(usage.deltas),
+    kv: options.kv,
+  });
+  if (outcome === "enqueued") return recordResult("queued", "queued", bucketStartAtMs);
+  if (outcome === "dropped_capacity") return recordResult("dropped", "dropped_capacity", bucketStartAtMs);
+  if (outcome === "dropped_bytes") return recordResult("dropped", "dropped_bytes", bucketStartAtMs);
+  return recordResult("dropped", "dropped_closed", bucketStartAtMs);
+};
+
+/**
+ * Drains every retained optional sample. Shutdown calls this before the process
+ * exits. It always settles: a write that stops making progress bounds the wait,
+ * and the snapshot then reports `drain_timeouts`/`dispatch_stalled` with the
+ * retained and in-flight state instead of hanging the shutdown.
+ */
+export const flushOptionalPromptCacheAnalytics = (): Promise<void> => optionalPromptCacheAnalyticsQueue?.flush() ?? Promise.resolve();
+
+/** Stops accepting optional samples, then drains the retained ones under the same bounded wait. */
+export const closeOptionalPromptCacheAnalytics = (): Promise<void> => optionalPromptCacheAnalyticsQueue?.close() ?? Promise.resolve();
+
+/** Observable queue state: retained, delivered, failed, dropped, timeout and drain evidence. */
+export const optionalPromptCacheAnalyticsSnapshot = (): OptionalTelemetryQueueSnapshot | null => optionalPromptCacheAnalyticsQueue?.snapshot() ?? null;
 
 const storageBucketStart = (key: Deno.KvKey): number | null => {
   const namespace = key[PROMPT_CACHE_ANALYTICS_KV_PREFIX.length];
