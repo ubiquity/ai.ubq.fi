@@ -156,19 +156,25 @@ export const openSupervisorConnection = async (socketPath: string, signal?: Abor
     failPending("app-server connection failed");
   });
 
-  await new Promise<void>((resolve, reject) => {
-    let opened = false;
-    socket.once("open", () => {
-      if (opened) return;
-      opened = true;
-      resolve();
-    });
-    socket.once("error", () => {
-      if (opened) return;
-      opened = true;
-      reject(new Error("app-server socket unavailable"));
-    });
-  });
+  const terminateSocket = async (reason: string): Promise<void> => {
+    if (closed) return;
+    closed = true;
+    failPending("app-server connection closed");
+    if (socket.readyState === WS_READY_STATE_CLOSED) return;
+    try {
+      socket.close(1000, reason);
+    } catch {
+      // The close frame is best effort; the grace period below is the guarantee.
+    }
+    await sleep(CLOSE_GRACE_MS);
+    try {
+      // `terminate()` is a no-op on an already closed socket, so no second
+      // readyState read is needed after the grace period.
+      socket.terminate();
+    } catch {
+      // A socket that cannot be terminated is already unusable.
+    }
+  };
 
   const send = (method: string, params: Record<string, unknown>, callSignal?: AbortSignal): Promise<unknown> => {
     if (socket.readyState !== WS_READY_STATE_OPEN) return Promise.reject(new Error("app-server connection unavailable"));
@@ -193,11 +199,42 @@ export const openSupervisorConnection = async (socketPath: string, signal?: Abor
     });
   };
 
-  await send("initialize", {
-    clientInfo: { name: "uos_supervisor", version: "1" },
-    capabilities: { experimentalApi: true },
-  });
-  socket.send(JSON.stringify({ method: "initialized" }));
+  try {
+    await new Promise<void>((resolve, reject) => {
+      let opened = false;
+      const onAbort = (): void => {
+        if (opened) return;
+        opened = true;
+        reject(new Error("app-server connection aborted"));
+      };
+      if (signal?.aborted) {
+        reject(new Error("app-server connection aborted"));
+        return;
+      }
+      signal?.addEventListener("abort", onAbort, { once: true });
+      socket.once("open", () => {
+        if (opened) return;
+        opened = true;
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      });
+      socket.once("error", () => {
+        if (opened) return;
+        opened = true;
+        signal?.removeEventListener("abort", onAbort);
+        reject(new Error("app-server socket unavailable"));
+      });
+    });
+
+    await send("initialize", {
+      clientInfo: { name: "uos_supervisor", version: "1" },
+      capabilities: { experimentalApi: true },
+    }, signal);
+    socket.send(JSON.stringify({ method: "initialized" }));
+  } catch (error) {
+    await terminateSocket("supervisor initialization failed");
+    throw error;
+  }
 
   return {
     call: async (method, params = {}, callSignal) => {
@@ -205,23 +242,7 @@ export const openSupervisorConnection = async (socketPath: string, signal?: Abor
       return await send(method, params, callSignal);
     },
     close: async () => {
-      if (closed) return;
-      closed = true;
-      failPending("app-server connection closed");
-      if (socket.readyState === WS_READY_STATE_CLOSED) return;
-      try {
-        socket.close(1000, "supervisor sample complete");
-      } catch {
-        // The close frame is best effort; the grace period below is the guarantee.
-      }
-      await sleep(CLOSE_GRACE_MS);
-      try {
-        // `terminate()` is a no-op on an already closed socket, so no second
-        // readyState read is needed after the grace period.
-        socket.terminate();
-      } catch {
-        // A socket that cannot be terminated is already unusable.
-      }
+      await terminateSocket("supervisor sample complete");
     },
   };
 };
