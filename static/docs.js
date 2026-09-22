@@ -211,6 +211,9 @@ const parseMarkdown = (markdown) => {
       continue;
     }
 
+    // A list item ends at the first line that is not an item, so close the open list before this
+    // paragraph accumulates; otherwise the emitted `<p>` lands inside the `<ul>`/`<ol>`.
+    closeList();
     paragraph.push(line.trim());
   }
 

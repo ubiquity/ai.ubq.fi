@@ -180,13 +180,6 @@ body[data-page="admin"][data-auth-widget="expanded"] #auth-widget-toggle {
   color: var(--link);
 }
 
-body[data-page="admin"] #auth-widget-toggle svg {
-  width: 20px;
-  height: 20px;
-  fill: currentcolor;
-  stroke: none;
-}
-
 body[data-page="admin"] #auth-widget-toggle[data-tooltip]::after {
   right: calc(100% + 12px);
   left: auto;
