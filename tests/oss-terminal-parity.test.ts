@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 
 import { iterateDeepSeekChatCompletionStream, normalizeDeepSeekChatCompletion } from "../src/deepseek.ts";
-import { createDeepSeekResponsesStreamTranslator, type DeepSeekResponsesEcho, toDeepSeekResponsesPayload } from "../src/deepseek_responses.ts";
+import {
+  createDeepSeekResponsesStreamTranslator,
+  type DeepSeekResponsesEcho,
+  toDeepSeekResponsesChatBody,
+  toDeepSeekResponsesPayload,
+} from "../src/deepseek_responses.ts";
 import { createPaidProviderAttemptDeadline, createStreamFirstEventDeadline, createStreamSemanticDeadline } from "../src/inference_deadline.ts";
 import { isAnswerBearingCompletion } from "../src/openai.ts";
 
@@ -384,7 +389,10 @@ Deno.test("m04 parity: reasoning that arrives after text is announced at its own
   // same Chat message; both transports carry the same two items.
   const buffered = bufferedPayload({ role: "assistant", content: "answer first", reasoning_content: "reconsidered" });
   assert.deepEqual(outputTypes(buffered), ["reasoning", "message"]);
-  assert.deepEqual(accumulated.map((item) => item.type).sort(), outputTypes(buffered).sort());
+  assert.deepEqual(
+    accumulated.map((item) => item.type).sort((left, right) => String(left).localeCompare(String(right))),
+    outputTypes(buffered).sort((left, right) => String(left).localeCompare(String(right)))
+  );
 });
 
 Deno.test("m04 parity: a refusal after reasoning keeps every SDK event on its own item", () => {
@@ -491,6 +499,61 @@ Deno.test("m04 Codex: late reasoning is delivered as one closed item after the a
     ["message", "reasoning"]
   );
   assert.equal(((accumulated[1].summary as Record<string, unknown>[])[0] as Record<string, unknown>).text, "reconsidered");
+});
+
+Deno.test("m04 Codex: deferred reasoning stays ahead of the tool call it belongs to for history replay", () => {
+  // content -> reasoning_content -> tool_calls. The deferred reasoning must be
+  // flushed before the tool item, or the delivered output is
+  // [message, function_call, reasoning] and replaying it with the tool result
+  // drops the reasoning (it is only consumed by a following assistant item).
+  // The first tool delta already carries the name, so only the deferral holds
+  // its lifecycle back; the rest of the fragmented arguments keep merging.
+  const events = streamedEvents([
+    chatChunk({ role: "assistant", content: "Weather: " }),
+    chatChunk({ reasoning_content: "checking the city" }),
+    chatChunk({ tool_calls: [{ index: 0, id: "call_a", type: "function", function: { name: "lookup", arguments: '{"city":' } }] }),
+    chatChunk({ tool_calls: [{ index: 0, function: { arguments: '"Oslo"}' } }] }, { finish_reason: "tool_calls" }),
+  ]);
+  assertCodexItemLifecycle(events);
+  const accumulated = sdkAccumulateOutput(events);
+  const terminal = events.at(-1) as { type: string; response: Record<string, unknown> };
+  assert.equal(terminal.type, "response.completed");
+  const output = terminal.response.output as Record<string, unknown>[];
+  assert.deepEqual(
+    output.map((item) => item.type),
+    ["message", "reasoning", "function_call"]
+  );
+  assert.deepEqual(accumulated, output);
+  assert.deepEqual(
+    events.filter((event) => event.type === "response.output_item.added").map((event) => [event.output_index, (event.item as Record<string, unknown>).type]),
+    [
+      [0, "message"],
+      [1, "reasoning"],
+      [2, "function_call"],
+    ]
+  );
+  // The tool item keeps the fully buffered fragmented arguments.
+  assert.equal(output[2].arguments, '{"city":"Oslo"}');
+  assert.equal(((output[1].summary as Record<string, unknown>[])[0] as Record<string, unknown>).text, "checking the city");
+
+  // Replaying the delivered output with its matching tool result attaches the
+  // exact reasoning text to the assistant turn that carries the tool call.
+  const replay = toDeepSeekResponsesChatBody(
+    { input: [...output, { type: "function_call_output", call_id: "call_a", output: "Oslo" }] },
+    "deepseek-flash",
+    false
+  );
+  assert.equal(replay.ok, true);
+  assert.deepEqual(replay.value.body.messages, [
+    { role: "assistant", content: "Weather: " },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [{ id: "call_a", type: "function", function: { name: "lookup", arguments: '{"city":"Oslo"}' } }],
+      reasoning_content: "checking the city",
+    },
+    { role: "tool", tool_call_id: "call_a", content: "Oslo" },
+  ]);
 });
 
 Deno.test("m04 parity: a refusal is answer-bearing payload on both transports", () => {

@@ -1332,7 +1332,11 @@ export const createDeepSeekResponsesStreamTranslator = (
     for (const [position, entry] of raw.entries()) {
       if (!isRecord(entry) || Array.isArray(entry)) continue;
       const call = mergeToolCallDelta(state, responseId, entry, position);
-      if (!call.announced && call.name) events.push(...announceToolCall(call));
+      // A deferred reasoning segment must be flushed before the tool item it
+      // precedes, or replaying this output attaches the reasoning to the wrong
+      // (or no) assistant turn. The call keeps merging its fragmented name and
+      // arguments here and is announced with them at the terminal.
+      if (!call.announced && call.name && !state.reasoningPending) events.push(...announceToolCall(call));
       const fn = isRecord(entry.function) && !Array.isArray(entry.function) ? entry.function : null;
       // A freeform call streams its input at the terminal item instead: the
       // provider sends JSON arguments, and the client wants the raw text.
@@ -1502,12 +1506,14 @@ export const createDeepSeekResponsesStreamTranslator = (
       // Items are stored at the position they were assigned an `output_index`
       // for, so `response.output[output_index]` is the item the client
       // accumulated at that index even when fragmented tool calls announced
-      // their names out of call order. The answer items close first, then any
-      // reasoning segment that had to wait for them, then a reasoning item that
-      // is still open (it can only be the last announced item), so no two
-      // Codex-visible items are ever open at once and every terminal item is the
-      // completed form of the item the client accumulated.
-      const events = [...startEvents(), ...closeMessage(), ...closeToolCalls(), ...flushPendingReasoning(), ...closeReasoning()];
+      // their names out of call order. The message closes first, then a deferred
+      // reasoning segment is flushed, then the tool items close and any
+      // reasoning item still open (it can only be the last announced item)
+      // closes. Flushing before the tool items keeps the reasoning item ahead of
+      // the tool call it belongs to in the delivered output, so history replay
+      // attaches it to that assistant tool-call turn, and no two Codex-visible
+      // items are ever open at once.
+      const events = [...startEvents(), ...closeMessage(), ...flushPendingReasoning(), ...closeToolCalls(), ...closeReasoning()];
       const terminal = terminalEnvelope();
       terminal.response.output = state.output;
       terminal.response.usage = state.usage;
