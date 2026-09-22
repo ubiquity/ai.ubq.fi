@@ -15,9 +15,20 @@ from the immutable release selected by `.data/current`, including that release's
 Provider quota is sampled at startup and every fifteen minutes into local KV so the Providers dashboard has current
 capacity and accumulates its own history.
 
-The daemon can read the existing synced `~/.codex/auth.json` through the gateway's normal local credential loader. Keep
-the existing sign-in and cross-machine sync. This uses the gateway's existing KV credential-pool behavior after initial
-loading; it does not change the synced auth file. Production scheduled billing remains on the VPS. Local capped paid
+The daemon reads the existing synced `~/.codex/auth.json` through the gateway's normal local credential loader. Keep the
+existing sign-in and cross-machine sync. Codex refresh tokens rotate on every use, so after the first seed the local KV
+pool is the owner of the rotating lineage and the synced file is a mirror of it:
+
+- when the gateway rotates a credential, it writes the replacement tokens back into `~/.codex/auth.json` atomically with
+  owner-only permissions, preserving unrelated fields, but only when the file still holds the credential the rotation
+  replaced (or a provably older copy), so a concurrent sign-in or another writer's newer lineage is never overwritten;
+- when the file holds a provably newer credential for the same account (the CLI rotated first), the gateway adopts it
+  into KV instead of refreshing a consumed token;
+- if upstream answers `refresh_token_reused`, the gateway re-reads the file, adopts its credential once, retries, and
+  otherwise surfaces the existing re-authentication warning unchanged.
+
+The launch agent therefore also allows writes under `~/.codex` so the gateway can keep only the synced `auth.json`
+current. Deploy hosts never read or write this file. Production scheduled billing remains on the VPS. Local capped paid
 billing maintenance is tracked in [#266](https://github.com/ubiquity/ai.ubq.fi/issues/266).
 
 From the clean Mac repository root, `deno task deploy:mac` installs the committed release and loads the launch agent.

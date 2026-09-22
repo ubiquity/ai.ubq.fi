@@ -4,6 +4,7 @@ import { PROVIDER_CAPACITY_SNAPSHOT_KEY } from "../src/provider_capacity_contrac
 import { setKvForTest } from "../src/kv.ts";
 import type { CodexUsageResetProvider } from "../src/codex_banked_reset_provider.ts";
 import type { CodexAuthPoolState, CodexAuthState } from "../src/types.ts";
+import type { SyncedCodexAuthJsonAccess } from "../src/codex.ts";
 
 const AUTH_KEY = ["ubq_ai", "codex_auth"] as const;
 
@@ -234,6 +235,7 @@ const {
   orderCodexAuthAccounts,
   releaseCodexResponseProbe,
   resetCodexAuthCacheForTest,
+  setSyncedCodexAuthJsonAccessForTest,
 } = await import("../src/codex.ts");
 const {
   claimCodexRoutingProbe,
@@ -4566,6 +4568,289 @@ Deno.test("a concurrent active switch during a verified reset prevents stale rec
   } finally {
     resetCodexAuthCacheForTest();
     resetCodexAccountRoutingForTest();
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+/**
+ * The Mac gateway shares the synced CLI `auth.json` after its first seed, so
+ * the coordination tests below drive an in-memory stand-in for that file and
+ * assert which writer owns each rotating credential.
+ */
+const syncedAuthJsonFixture = (initial: Record<string, unknown>) => {
+  let text = JSON.stringify(initial, null, 2);
+  const writes: string[] = [];
+  const access: SyncedCodexAuthJsonAccess = {
+    resolvePath: () => "/fixture/.codex/auth.json",
+    readText: (path) => (path === "/fixture/.codex/auth.json" ? text : null),
+    writeTextAtomic: (path, next) => {
+      assert.equal(path, "/fixture/.codex/auth.json");
+      writes.push(next);
+      text = next;
+    },
+  };
+  return {
+    access,
+    writes,
+    document: (): Record<string, unknown> => JSON.parse(text) as Record<string, unknown>,
+  };
+};
+
+const syncedAuthJsonDocument = (credential: CodexAuthState, extras: Record<string, unknown> = {}): Record<string, unknown> => ({
+  OPENAI_API_KEY: "unrelated-provider-key",
+  tokens: {
+    id_token: "id-original",
+    access_token: credential.access_token,
+    refresh_token: credential.refresh_token,
+    account_id: credential.account_id,
+  },
+  ...extras,
+});
+
+const syncedTokens = (document: Record<string, unknown>): Record<string, unknown> => document.tokens as Record<string, unknown>;
+
+const accessTokenWithExpiry = (label: string, expiresAtMs: number): string =>
+  `${encodeBase64Url({ alg: "none" })}.${encodeBase64Url({ exp: expiresAtMs / 1000 })}.${label}`;
+
+const oauthRefreshToken = (body: unknown): string => {
+  const parsed = JSON.parse(String(body ?? "{}")) as { refresh_token?: string };
+  return parsed.refresh_token ?? "";
+};
+
+Deno.test("a gateway rotation mirrors the replacement credential into the synced auth.json", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const consumed = staleAuth("shared");
+  const rotatedAccess = accessTokenWithExpiry("rotated-shared", fixedStartMs + 2 * 60 * 60_000);
+  const fixture = syncedAuthJsonFixture(syncedAuthJsonDocument(consumed));
+  const oauthTokens: string[] = [];
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = false;
+  kv.auth = pool(consumed);
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  setSyncedCodexAuthJsonAccessForTest(fixture.access);
+  globalThis.fetch = (input, init) => {
+    if (requestUrl(input).includes("auth.openai.com/oauth/token")) {
+      oauthTokens.push(oauthRefreshToken(init?.body));
+      return Promise.resolve(
+        new Response(JSON.stringify({ access_token: rotatedAccess, refresh_token: "refresh-shared-rotated", id_token: "id-rotated" }), { status: 200 })
+      );
+    }
+    return Promise.resolve(new Response("{}", { status: 200 }));
+  };
+
+  try {
+    const response = await fetchCodexResponses({ input: "mirror-rotation" });
+    assert.equal(response.status, 200);
+    assert.deepEqual(oauthTokens, ["refresh-shared"]);
+    assert.equal(kv.auth.accounts[0]?.refresh_token, "refresh-shared-rotated");
+    const document = fixture.document();
+    const tokens = syncedTokens(document);
+    assert.equal(tokens.refresh_token, "refresh-shared-rotated", "the CLI must read the rotated refresh token");
+    assert.equal(tokens.access_token, rotatedAccess);
+    assert.equal(tokens.id_token, "id-rotated");
+    assert.equal(tokens.account_id, "account-shared");
+    assert.equal(document.OPENAI_API_KEY, "unrelated-provider-key");
+    assert.equal(typeof document.last_refresh, "string");
+    assert.equal(fixture.writes.length, 1);
+    // Both consumers stay usable: the next request reuses the rotated access
+    // token and the CLI's file copy now carries the live refresh lineage.
+    const followUp = await fetchCodexResponses({ input: "mirror-rotation-follow-up" });
+    assert.equal(followUp.status, 200);
+    assert.deepEqual(oauthTokens, ["refresh-shared"], "the rotated credential must not be exchanged again");
+  } finally {
+    resetCodexAuthCacheForTest();
+    setSyncedCodexAuthJsonAccessForTest(null);
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("the gateway adopts a newer synced credential instead of refreshing a consumed token", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const consumed = staleAuth("shared");
+  const cliRotatedAccess = accessTokenWithExpiry("cli-rotated", fixedStartMs + 60 * 60_000);
+  const cliRotated: CodexAuthState = {
+    access_token: cliRotatedAccess,
+    refresh_token: "refresh-shared-cli",
+    account_id: consumed.account_id,
+    updated_at_ms: fixedStartMs,
+  };
+  const fixture = syncedAuthJsonFixture(syncedAuthJsonDocument(cliRotated));
+  const oauthCalls: string[] = [];
+  const authorizations: string[] = [];
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = false;
+  kv.auth = pool(consumed);
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  setSyncedCodexAuthJsonAccessForTest(fixture.access);
+  globalThis.fetch = (input, init) => {
+    if (requestUrl(input).includes("auth.openai.com/oauth/token")) {
+      oauthCalls.push(oauthRefreshToken(init?.body));
+      return Promise.resolve(new Response(JSON.stringify({ access_token: cliRotatedAccess, refresh_token: "refresh-shared-cli" }), { status: 200 }));
+    }
+    authorizations.push(new Headers(init?.headers).get("authorization") ?? "");
+    return Promise.resolve(new Response("{}", { status: 200 }));
+  };
+
+  try {
+    const response = await fetchCodexResponses({ input: "adopt-newer-synced" });
+    assert.equal(response.status, 200);
+    assert.deepEqual(oauthCalls, [], "a provably newer synced credential must not be rotated again");
+    assert.equal(authorizations.at(-1), `Bearer ${cliRotatedAccess}`);
+    assert.equal(kv.auth.accounts[0]?.refresh_token, "refresh-shared-cli", "the adopted credential becomes pool authority");
+    assert.deepEqual(fixture.writes, [], "adoption must not rewrite the file");
+  } finally {
+    resetCodexAuthCacheForTest();
+    setSyncedCodexAuthJsonAccessForTest(null);
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("a stale synced credential cannot overwrite the gateway's current pool", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const current = staleAuth("shared");
+  const staleFileCredential: CodexAuthState = {
+    access_token: accessTokenWithExpiry("stale-lineage", fixedStartMs + 10_000),
+    refresh_token: "refresh-shared-stale",
+    account_id: current.account_id,
+    updated_at_ms: fixedStartMs,
+  };
+  const rotatedAccess = accessTokenWithExpiry("rotated-current", fixedStartMs + 2 * 60 * 60_000);
+  const fixture = syncedAuthJsonFixture(syncedAuthJsonDocument(staleFileCredential));
+  const oauthTokens: string[] = [];
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = false;
+  kv.auth = pool(current);
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  setSyncedCodexAuthJsonAccessForTest(fixture.access);
+  globalThis.fetch = (input, init) => {
+    if (requestUrl(input).includes("auth.openai.com/oauth/token")) {
+      oauthTokens.push(oauthRefreshToken(init?.body));
+      return Promise.resolve(new Response(JSON.stringify({ access_token: rotatedAccess, refresh_token: "refresh-shared-rotated" }), { status: 200 }));
+    }
+    return Promise.resolve(new Response("{}", { status: 200 }));
+  };
+
+  try {
+    const response = await fetchCodexResponses({ input: "stale-file-fenced" });
+    assert.equal(response.status, 200);
+    assert.deepEqual(oauthTokens, ["refresh-shared"], "the pool's credential stays authoritative over a stale file");
+    assert.equal(kv.auth.accounts[0]?.refresh_token, "refresh-shared-rotated");
+    assert.equal(syncedTokens(fixture.document()).refresh_token, "refresh-shared-rotated", "a provably older mirror is repaired");
+  } finally {
+    resetCodexAuthCacheForTest();
+    setSyncedCodexAuthJsonAccessForTest(null);
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("a refresh_token_reused rejection recovers from the synced auth.json", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const consumed = staleAuth("shared");
+  // Same access-token expiry as the pool copy: the reuse rejection, not the
+  // ordering evidence, is what authorizes adopting the diverged file.
+  const fileCredential: CodexAuthState = {
+    access_token: accessTokenWithExpiry("cli-same-second", fixedStartMs + 30_000),
+    refresh_token: "refresh-shared-cli",
+    account_id: consumed.account_id,
+    updated_at_ms: fixedStartMs,
+  };
+  const recoveredAccess = accessTokenWithExpiry("recovered", fixedStartMs + 2 * 60 * 60_000);
+  const fixture = syncedAuthJsonFixture(syncedAuthJsonDocument(fileCredential));
+  const oauthTokens: string[] = [];
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = false;
+  kv.auth = pool(consumed);
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  setSyncedCodexAuthJsonAccessForTest(fixture.access);
+  globalThis.fetch = (input, init) => {
+    if (requestUrl(input).includes("auth.openai.com/oauth/token")) {
+      oauthTokens.push(oauthRefreshToken(init?.body));
+      if (oauthTokens.length === 1) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ error: { code: "refresh_token_reused" } }), { status: 400, headers: { "Content-Type": "application/json" } })
+        );
+      }
+      return Promise.resolve(new Response(JSON.stringify({ access_token: recoveredAccess, refresh_token: "refresh-shared-recovered" }), { status: 200 }));
+    }
+    return Promise.resolve(new Response("{}", { status: 200 }));
+  };
+
+  try {
+    const response = await fetchCodexResponses({ input: "reuse-recovery" });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-uos-warning"), null, "a recovered refresh must not raise the re-authentication warning");
+    assert.deepEqual(oauthTokens, ["refresh-shared", "refresh-shared-cli"], "the synced credential is retried exactly once");
+    assert.equal(kv.auth.accounts[0]?.refresh_token, "refresh-shared-recovered");
+    assert.equal(syncedTokens(fixture.document()).refresh_token, "refresh-shared-recovered");
+  } finally {
+    resetCodexAuthCacheForTest();
+    setSyncedCodexAuthJsonAccessForTest(null);
+    globalThis.fetch = originalFetch;
+    Date.now = originalNow;
+    (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+  }
+});
+
+Deno.test("deploy hosts never read or write the synced credential file", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  const originalDeployFlag = config.isDeploy;
+  const consumed = staleAuth("shared");
+  const rotatedAccess = accessTokenWithExpiry("rotated-vps", fixedStartMs + 2 * 60 * 60_000);
+  let syncedFileAccesses = 0;
+  const access: SyncedCodexAuthJsonAccess = {
+    resolvePath: () => {
+      syncedFileAccesses += 1;
+      return "/fixture/.codex/auth.json";
+    },
+    readText: () => {
+      syncedFileAccesses += 1;
+      return null;
+    },
+    writeTextAtomic: () => {
+      syncedFileAccesses += 1;
+    },
+  };
+  Date.now = () => fixedStartMs;
+  (config as { isDeploy: boolean }).isDeploy = true;
+  kv.auth = pool(consumed);
+  kv.extra.clear();
+  resetCodexAuthCacheForTest();
+  setSyncedCodexAuthJsonAccessForTest(access);
+  globalThis.fetch = (input) => {
+    if (requestUrl(input).includes("auth.openai.com/oauth/token")) {
+      return Promise.resolve(new Response(JSON.stringify({ access_token: rotatedAccess, refresh_token: "refresh-shared-rotated" }), { status: 200 }));
+    }
+    return Promise.resolve(new Response("{}", { status: 200 }));
+  };
+
+  try {
+    const response = await fetchCodexResponses({ input: "deploy-isolation" });
+    assert.equal(response.status, 200);
+    assert.equal(syncedFileAccesses, 0, "VPS deploys must stay isolated from the synced CLI file");
+  } finally {
+    resetCodexAuthCacheForTest();
+    setSyncedCodexAuthJsonAccessForTest(null);
     globalThis.fetch = originalFetch;
     Date.now = originalNow;
     (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;

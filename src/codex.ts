@@ -291,6 +291,7 @@ let cachedAuthPool: CodexAuthPoolState | null = null;
 let cachedAuthPoolExpiresAtMs = 0;
 let authCacheGeneration = 0;
 let authPoolEntryInFlight: Promise<CodexAuthPoolEntry> | null = null;
+let syncedCodexAuthJsonAccessForTest: SyncedCodexAuthJsonAccess | null = null;
 const refreshesInFlight = new Map<string, Promise<CodexAuthState>>();
 const codexProbeByResponse = new WeakMap<Response, RoutingAccount>();
 const codexSlotByResponse = new WeakMap<Response, number>();
@@ -448,6 +449,7 @@ export const resetCodexAuthCacheForTest = (): void => {
   cachedAuthPool = null;
   cachedAuthPoolExpiresAtMs = 0;
   authPoolEntryInFlight = null;
+  syncedCodexAuthJsonAccessForTest = null;
   refreshesInFlight.clear();
   codexProbeTransitionsInFlight.clear();
   resetCodexAccountRoutingForTest();
@@ -489,7 +491,7 @@ const loadAuthSeedFromEnv = (): CodexAuthState => {
 
 const loadAuthSeedFromDisk = (): CodexAuthState => {
   if (!config.isDeploy) {
-    const home = (Deno as unknown as { homeDir?: () => string | null }).homeDir?.() ?? Deno.env.get("HOME");
+    const home = resolveCodexHomeDir();
     if (!home) {
       throw new CodexError("Could not resolve home directory for ~/.codex/auth.json.", "codex_auth_invalid", 503);
     }
@@ -529,6 +531,168 @@ const poolFromSeed = (auth: CodexAuthState): CodexAuthPoolState => ({
   accounts: [auth],
   updated_at_ms: auth.updated_at_ms,
 });
+
+/**
+ * Ownership and coordination for the shared, synced Codex CLI `auth.json`.
+ *
+ * The local gateway deliberately bootstraps from the actively synced CLI file,
+ * and its persistent KV pool becomes authoritative after that first seed.
+ * Codex refresh tokens rotate on every use, so without coordination the two
+ * consumers can strand each other: a rotation persisted only in KV leaves the
+ * CLI holding a consumed token, and a CLI rotation leaves the gateway holding
+ * one. This host therefore treats its KV pool as the owner of the rotating
+ * lineage and the synced file as a mirror of it:
+ *
+ * - after this host rotates, the replacement tokens are written back into the
+ *   synced file so the CLI never refreshes a consumed token;
+ * - when the file holds a provably newer credential for the same account (the
+ *   CLI rotated first), the gateway adopts it into KV instead of rotating a
+ *   stale copy;
+ * - a `refresh_token_reused` rejection proves the KV token is dead, and the
+ *   file is then the only remaining candidate, so it is adopted once before
+ *   the existing actionable error is surfaced.
+ *
+ * Deploy hosts never read or write this file.
+ */
+type SyncedCodexAuthJsonFile = Readonly<{
+  path: string;
+  document: Record<string, unknown>;
+  auth: CodexAuthState;
+}>;
+
+/** Injectable file access so tests can exercise the coordination without a home directory. */
+export type SyncedCodexAuthJsonAccess = Readonly<{
+  resolvePath: () => string | null;
+  readText: (path: string) => string | null;
+  writeTextAtomic: (path: string, text: string) => void;
+}>;
+
+const resolveCodexHomeDir = (): string | null => {
+  try {
+    return (Deno as unknown as { homeDir?: () => string | null }).homeDir?.() ?? Deno.env.get("HOME") ?? null;
+  } catch {
+    return null;
+  }
+};
+
+const defaultSyncedCodexAuthJsonAccess: SyncedCodexAuthJsonAccess = {
+  resolvePath: () => {
+    const home = resolveCodexHomeDir();
+    return home ? `${home}/.codex/auth.json` : null;
+  },
+  readText: (path) => {
+    try {
+      return Deno.readTextFileSync(path);
+    } catch {
+      return null;
+    }
+  },
+  writeTextAtomic: (path, text) => {
+    const temporaryPath = `${path}.${crypto.randomUUID()}.tmp`;
+    try {
+      Deno.writeTextFileSync(temporaryPath, text, { mode: 0o600 });
+      Deno.renameSync(temporaryPath, path);
+    } catch (error) {
+      try {
+        Deno.removeSync(temporaryPath);
+      } catch {
+        // The temporary file may not exist; the original write error stands.
+      }
+      throw error;
+    }
+  },
+};
+
+const syncedCodexAuthJsonAccess = (): SyncedCodexAuthJsonAccess => syncedCodexAuthJsonAccessForTest ?? defaultSyncedCodexAuthJsonAccess;
+
+/** Test seam: replace the synced auth.json filesystem with an in-memory double. */
+export const setSyncedCodexAuthJsonAccessForTest = (access: SyncedCodexAuthJsonAccess | null): void => {
+  syncedCodexAuthJsonAccessForTest = access;
+};
+
+const readSyncedCodexAuthJson = (): SyncedCodexAuthJsonFile | null => {
+  if (config.isDeploy) return null;
+  try {
+    const access = syncedCodexAuthJsonAccess();
+    const path = access.resolvePath();
+    if (!path) return null;
+    const text = access.readText(path);
+    if (text === null) return null;
+    const parsed: unknown = JSON.parse(text);
+    if (!isRecord(parsed)) return null;
+    const auth = parseCodexAuthFromAuthJson(parsed);
+    if (!auth) return null;
+    return { path, document: parsed, auth: { ...auth, updated_at_ms: Date.now() } };
+  } catch {
+    // A missing, unreadable or malformed file is not a coordination signal.
+    return null;
+  }
+};
+
+/**
+ * Orders two credentials by their access token's issuance claim. A refresh
+ * always issues a later access token, so a later `iat` (or, when absent, a
+ * later `exp`) is the evidence that one lineage superseded the other.
+ */
+const codexCredentialIssuedAtMs = (auth: CodexAuthState): number | null => {
+  const issuedAt = jwtPayload(auth.access_token)?.iat;
+  if (typeof issuedAt === "number" && Number.isFinite(issuedAt)) return issuedAt * 1000;
+  return getJwtExpMs(auth.access_token);
+};
+
+const syncedCodexCredentialIsNewer = (candidate: CodexAuthState, current: CodexAuthState): boolean => {
+  const candidateIssuedAt = codexCredentialIssuedAtMs(candidate);
+  const currentIssuedAt = codexCredentialIssuedAtMs(current);
+  return candidateIssuedAt !== null && currentIssuedAt !== null && candidateIssuedAt > currentIssuedAt;
+};
+
+/**
+ * Adopt a credential observed in the synced file into the authoritative pool.
+ * `allowProvenDead` is set only after upstream rejected this host's token with
+ * `refresh_token_reused`, which is the proof that lets a diverged file win.
+ */
+const adoptSyncedCodexAuthCredential = async (current: CodexAuthAccountEntry, allowProvenDead: boolean): Promise<CodexAuthState | null> => {
+  const file = readSyncedCodexAuthJson();
+  if (!file) return null;
+  if (file.auth.account_id !== current.auth.account_id) return null;
+  if (sameCodexCredentials(file.auth, current.auth)) return null;
+  if (!allowProvenDead && !syncedCodexCredentialIsNewer(file.auth, current.auth)) return null;
+  if (current.kv) return await persistRefreshedAuthAccount(current, file.auth, current.kv);
+  const basePool = cachedAuthPool ?? current.pool;
+  const accounts = basePool.accounts.map((candidate) => (candidate.account_id === current.auth.account_id ? file.auth : candidate));
+  cacheCodexAuthPool({ accounts, updated_at_ms: Date.now() });
+  return file.auth;
+};
+
+/**
+ * Keep the synced CLI file on this host's lineage after a rotation. Unrelated
+ * document fields survive, and the replacement is written atomically with
+ * owner-only permissions. A file that holds an unrelated credential is left
+ * untouched unless it is provably older than the credential this rotation
+ * replaced, so a concurrent sign-in or another writer's newer lineage can
+ * never be overwritten by a stale writer.
+ */
+const mirrorRotatedCodexAuthToSyncedFile = (previous: CodexAuthState, next: CodexAuthState, idToken: string | null): void => {
+  if (config.isDeploy) return;
+  try {
+    const file = readSyncedCodexAuthJson();
+    if (!file || file.auth.account_id !== next.account_id) return;
+    const fileHoldsRotatedLineage = file.auth.refresh_token === previous.refresh_token || file.auth.refresh_token === next.refresh_token;
+    if (!fileHoldsRotatedLineage && !syncedCodexCredentialIsNewer(previous, file.auth)) return;
+    const tokens = isRecord(file.document.tokens) ? { ...file.document.tokens } : {};
+    tokens.access_token = next.access_token;
+    tokens.refresh_token = next.refresh_token;
+    tokens.account_id = next.account_id;
+    if (idToken) tokens.id_token = idToken;
+    const document: Record<string, unknown> = { ...file.document, tokens, last_refresh: new Date().toISOString() };
+    syncedCodexAuthJsonAccess().writeTextAtomic(file.path, `${JSON.stringify(document, null, 2)}\n`);
+    logCodexRouting("codex_auth_sync", { outcome: "mirrored" });
+  } catch {
+    // The mirror is best effort: a refused write must never fail inference or
+    // the rotation that already succeeded upstream.
+    logCodexRouting("codex_auth_sync", { outcome: "write_failed" });
+  }
+};
 
 const loadedAuthPoolEntry = (
   pool: CodexAuthPoolState,
@@ -1020,8 +1184,10 @@ const persistRefreshedAuthAccount = async (current: CodexAuthAccountEntry, next:
   throw new CodexError("Codex auth refresh could not persist after concurrent updates.", "codex_auth_refresh_failed", 503);
 };
 
-const refreshAuth = async (current: CodexAuthAccountEntry): Promise<CodexAuthState> => {
-  const generationAtStart = authCacheGeneration;
+type CodexRotatedAuth = Readonly<{ auth: CodexAuthState; idToken: string | null }>;
+
+/** One OAuth rotation; the replacement is published to the synced file immediately. */
+const fetchRotatedCodexAuth = async (auth: CodexAuthState): Promise<CodexRotatedAuth> => {
   let response: Response;
   try {
     response = await fetch(CODEX_REFRESH_TOKEN_URL, {
@@ -1033,7 +1199,7 @@ const refreshAuth = async (current: CodexAuthAccountEntry): Promise<CodexAuthSta
       body: JSON.stringify({
         client_id: CODEX_REFRESH_CLIENT_ID,
         grant_type: "refresh_token",
-        refresh_token: current.auth.refresh_token,
+        refresh_token: auth.refresh_token,
         scope: "openid profile email",
       }),
       signal: AbortSignal.timeout(10_000),
@@ -1050,17 +1216,48 @@ const refreshAuth = async (current: CodexAuthAccountEntry): Promise<CodexAuthSta
   const parsed = (await response.json().catch(() => null)) as null | Record<string, unknown>;
   const accessToken = parsed && getString(parsed.access_token);
   const refreshToken = parsed && getString(parsed.refresh_token);
+  const idToken = parsed && getString(parsed.id_token);
   if (!accessToken) {
     throw new CodexError("Codex auth refresh failed: upstream response missing access_token.", "codex_auth_refresh_failed", 503);
   }
 
   const next: CodexAuthState = {
     access_token: accessToken,
-    refresh_token: refreshToken ?? current.auth.refresh_token,
-    account_id: current.auth.account_id,
+    refresh_token: refreshToken ?? auth.refresh_token,
+    account_id: auth.account_id,
     updated_at_ms: Date.now(),
   };
+  // The rotation is already live upstream, so publish it to the synced file
+  // before any other consumer can act on the consumed predecessor.
+  mirrorRotatedCodexAuthToSyncedFile(auth, next, idToken);
+  return { auth: next, idToken };
+};
 
+const refreshAuth = async (current: CodexAuthAccountEntry, recoveredFromReusedToken = false): Promise<CodexAuthState> => {
+  // The CLI may have rotated the shared lineage first. Adopt its credential
+  // rather than refreshing a token this host no longer owns.
+  const syncedAhead = await adoptSyncedCodexAuthCredential(current, false);
+  if (syncedAhead) return syncedAhead;
+
+  const generationAtStart = authCacheGeneration;
+  let rotated: CodexRotatedAuth;
+  try {
+    rotated = await fetchRotatedCodexAuth(current.auth);
+  } catch (error) {
+    if (!recoveredFromReusedToken && error instanceof CodexError && error.code === "refresh_token_reused") {
+      // A reuse rejection proves this host's token is dead; the diverged file
+      // is then the only remaining candidate for the account.
+      const revived = await adoptSyncedCodexAuthCredential(current, true);
+      if (revived) {
+        const retryEntry = (await getCurrentAccountEntry(current.auth.account_id, true).catch(() => null)) ?? { ...current, auth: revived };
+        const retried = await refreshAuth(retryEntry, true).catch(() => null);
+        if (retried) return retried;
+      }
+    }
+    throw error;
+  }
+
+  const next = rotated.auth;
   const adopted = adoptConcurrentRefreshedAuth(current.auth, generationAtStart);
   if (adopted) return adopted;
 
@@ -1269,46 +1466,7 @@ const awaitWithoutCancellingSharedWork = async <T>(promise: Promise<T>, signal?:
   ]);
 };
 
-const refreshAuthStateless = async (auth: CodexAuthState): Promise<CodexAuthState> => {
-  let response: Response;
-  try {
-    response = await fetch(CODEX_REFRESH_TOKEN_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify({
-        client_id: CODEX_REFRESH_CLIENT_ID,
-        grant_type: "refresh_token",
-        refresh_token: auth.refresh_token,
-        scope: "openid profile email",
-      }),
-      signal: AbortSignal.timeout(10_000),
-    });
-  } catch (error) {
-    throw new CodexError("Codex auth refresh failed: auth server unreachable.", "codex_auth_refresh_unreachable", 502, error);
-  }
-
-  if (!response.ok) {
-    const failure = await classifyCodexRefreshFailure(response);
-    throw new CodexError(failure.message, failure.code, failure.status);
-  }
-
-  const parsed = (await response.json().catch(() => null)) as null | Record<string, unknown>;
-  const accessToken = parsed && getString(parsed.access_token);
-  const refreshToken = parsed && getString(parsed.refresh_token);
-  if (!accessToken) {
-    throw new CodexError("Codex auth refresh failed: upstream response missing access_token.", "codex_auth_refresh_failed", 503);
-  }
-
-  return {
-    access_token: accessToken,
-    refresh_token: refreshToken ?? auth.refresh_token,
-    account_id: auth.account_id,
-    updated_at_ms: Date.now(),
-  };
-};
+const refreshAuthStateless = async (auth: CodexAuthState): Promise<CodexAuthState> => (await fetchRotatedCodexAuth(auth)).auth;
 
 const getValidAuth = async (current: CodexAuthAccountEntry): Promise<CodexAuthState> => {
   if (!needsRefresh(current.auth)) return current.auth;
@@ -1773,7 +1931,7 @@ const dispatchFailureAsError = (error: unknown, fallback: () => Error): Error =>
 };
 
 const logCodexRouting = (
-  event: "codex_attempt" | "codex_banked_reset_preflight" | "codex_quota_classification" | "codex_token_refresh" | "codex_two_second_retry",
+  event: "codex_attempt" | "codex_auth_sync" | "codex_banked_reset_preflight" | "codex_quota_classification" | "codex_token_refresh" | "codex_two_second_retry",
   fields: Readonly<Record<string, string | number | null>>
 ): void => {
   try {
