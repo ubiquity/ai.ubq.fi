@@ -338,6 +338,94 @@ truncation behaviour is unverified. The gap is narrower than "unknown": neither 
 all, so the untested surface is empty until either is deliberately wired in. Probe both before trusting either, and
 recheck the blockers before treating them as permanent.
 
+## Client behaviour on a degenerate completion, and the terminal-truthfulness 502 surface - 2026-09-22
+
+Two questions were left open when the terminal-truthfulness program was recorded: which clients actually fail closed on
+the terminals the gateway now emits, and exactly where the program added 5xx responses. Both are answered here from
+direct measurement on the merged revision, not from reading the code alone.
+
+**Codex was already measured** (the 2026-09-21 A/B above): `response.incomplete` fails the turn with exit 1 and the
+reason string verbatim. **DeepSeek Harness is now measured too**, because the operator uses both and the harness reaches
+the gateway over a different wire.
+
+The harness path is `@deepseek-ai/dsh-llm-pi-ai` -> `@earendil-works/pi-ai` `openai-completions`, and the operator's
+`ubiquity` provider in `~/.dsh/settings.yaml` is configured with `api: openai-completions` against
+`https://ai.ubq.fi/v1/`. Driving that real adapter stack against a scripted upstream (not a reimplementation of it)
+gives:
+
+| Wire result the gateway emits                        | Harness outcome                                                                   |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `finish_reason: "stop"` with reasoning and no answer | `stop` with a `thinking`-only message; **no error, no empty-content guard fires** |
+| `finish_reason: "stop"` with `content: ""`           | `stop` with an empty message; **no error**                                        |
+| `finish_reason: "length"`                            | `{ kind: "max-tokens" }`, a first-class turn-end reason with its own UI notice    |
+
+So the harness is **not** a backstop for the gateway's completion-validity rule: it maps the wire faithfully and accepts
+a degenerate `stop` as a success. Codex is the stricter client of the two. That is the reason the gateway owns G3 rather
+than delegating it to the client, and it is why the Chat Completions route keeps its current shape: a client-side
+backstop does not exist to lean on.
+
+**The truncated-generation path itself is unchanged for the harness.** `length` maps to `max-tokens` on both the pi-ai
+adapter and the vendored `dsh-llm-deepseek` adapter, so a truncation the gateway reports stays reported. The gap is
+narrow and one-directional: _degenerate completions_ (`stop` with nothing usable) are invisible to the harness.
+
+**A wire boundary worth knowing before repointing any harness route at this gateway.** Capture of the pi-ai
+`openai-completions` request shows the operator's `ubiquity` route sends `model`, `messages`, `stream`, `stream_options`
+and `store` - and no `thinking` and no `reasoning_effort`, because the configured model entries declare no reasoning
+capability. That traffic is accepted. The vendored `dsh-llm-deepseek` adapter is a different story: for any non-`off`
+effort it sends `thinking: { "type": "enabled" }`, and this gateway answers that field with HTTP 400
+`Unrecognized request argument supplied: thinking` (probed live 2026-09-22); `reasoning_effort` alone is accepted. So
+pointing a harness route that uses `dsh-llm-deepseek` at this gateway fails, while the `pi-ai` route in use works. The
+gateway keeps the OpenAI-shaped field deliberately (see the Delta 5 entry below), so this is a client-side seam to
+respect, not a gateway defect to fix.
+
+**The program added no new 5xx responses.** Counting every `openaiError(<n>, ...)` and `streamErrorResponse(<n>, ...)`
+call in `src/openai.ts` between the pre-program revision `922c33392d` and the merged terminal-truthfulness revision: 31
+five-hundred-and-two calls before, 32 after. The one addition was made on 2026-09-22 by the follow-up below, not by the
+program. The only status code the original program itself added anywhere in `src/` was a single `openaiError(400, ...)`
+for the DeepSeek thinking-mode `tool_choice` conflict.
+
+Before that follow-up, the three `empty_upstream_completion` 502s were unchanged from their pre-program locations, and
+all three were on routes that already had them:
+
+| Site                  | Function                    | Reachable from                                     |
+| --------------------- | --------------------------- | -------------------------------------------------- |
+| `src/openai.ts:1132`  | `safeFailedAttemptResponse` | Codex Responses attempts (pre-commit)              |
+| `src/openai.ts:7901`  | `completeChatCompletions`   | the ordinary Chat Completions path                 |
+| `src/openai.ts:10683` | `rejectEmptyChatCompletion` | the shared Chat preflight, not the DeepSeek branch |
+
+The DeepSeek routes bypass `rejectEmptyChatCompletion` by dispatch order: both DeepSeek handlers return before the
+shared preflight runs. That is why the original G3 landed as a route-local guard rather than as a reuse of that
+function, and it is why the buffered branch below needed its own guard rather than inheriting one.
+
+### The buffered DeepSeek Responses branch was missing G3
+
+Found while answering the two questions above, fixed by PR #387 (`d7472165`), and worth recording because it is the one
+place the program was not applied consistently.
+
+The streamed DeepSeek Responses path fails a degenerate completion closed. The **buffered branch of the same route did
+not**: a `stop` carrying only reasoning, or only empty content, returned HTTP 200 `status: "completed"` with
+`error: null`. The same logical outcome was a failure on one transport and a success on the other.
+
+Reproduced against the real handler with a mocked upstream, before the fix:
+
+    RESPONSES streamed  -> HTTP 200 | terminal: event: response.failed
+    RESPONSES buffered  -> HTTP 200 | status: completed | error: null
+
+After the fix the buffered branch returns the ordinary gateway 502 with the existing `empty_upstream_completion` code
+and message. Order is preserved: the provider's own reason is read first, so a `length` truncation still returns
+`response.incomplete` with `incomplete_details.reason: "max_output_tokens"` and is never converted into the
+empty-completion failure. Only a would-be completion is measured for answer-bearing output, through the same one shared
+predicate the streamed path and the Chat route consume.
+
+Two facts about why it survived: no test exercised the non-streaming DeepSeek `/v1/responses` path, and the branch is
+reachable in production - 10 non-streaming `/v1/responses` requests were served on the deployed revision `2207a757fb`.
+The lesson generalises: "the route is covered" is not the same claim as "every branch of the route is covered", and a
+single-transport test does not establish a single-route behaviour.
+
+Reversal risk: removing the buffered guard restores the transport-dependent success/failure split; converting an
+explicit truncation into the empty-completion failure would break the precedence G1 requires. Both are covered by the
+five-step regression test beside the existing streamed G3 test.
+
 ## DeepSeek adapter deliberately diverges from the vendor client - 2026-09-21
 
 Four DeepSeek interpretations were compared against the provider's own first-party client
