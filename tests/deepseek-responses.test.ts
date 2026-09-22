@@ -85,6 +85,90 @@ Deno.test("deepseek responses: rejects input shapes it cannot translate", () => 
   assert.equal(badContent.ok, false);
 });
 
+Deno.test("deepseek responses: emitted refusal output replays as assistant history", () => {
+  // Both transports emit an assistant message whose content carries
+  // `{ type: "refusal", refusal }`. A client that sends that output back as the
+  // next request's `input` must be able to continue the conversation: before
+  // this translation the adapter rejected its own emitted part with
+  // `input.content type 'refusal' is not supported` (HTTP 400).
+  const refusal = "I cannot help with that.";
+
+  // The buffered transport's output object, replayed verbatim as history.
+  const buffered = toDeepSeekResponsesPayload(chatCompletion({ role: "assistant", content: null, refusal }), "deepseek-flash", "resp_refusal_replay", echo);
+  const bufferedReplay = toDeepSeekResponsesChatBody({ input: buffered.output }, "deepseek-flash", false);
+  assert.equal(bufferedReplay.ok, true);
+  assert.deepEqual(bufferedReplay.value.body.messages, [{ role: "assistant", content: refusal }]);
+
+  // The streamed terminal response's output, replayed the same way.
+  const translator = createDeepSeekResponsesStreamTranslator("deepseek-flash", "resp_refusal_stream", echo, 1_780_000_000);
+  translator.push(chatChunk({ role: "assistant", refusal }));
+  translator.push(chatChunk({}, { finish_reason: "stop" }));
+  const terminal = translator.finish().at(-1) as { response: Record<string, unknown> };
+  const streamedReplay = toDeepSeekResponsesChatBody({ input: terminal.response.output }, "deepseek-flash", false);
+  assert.equal(streamedReplay.ok, true);
+  assert.deepEqual(streamedReplay.value.body.messages, [{ role: "assistant", content: refusal }]);
+
+  // One assistant message carrying both an answer and a refusal keeps both
+  // payloads in the single Chat content string the established shape supports;
+  // no top-level `refusal` alias is invented on the request.
+  const mixed = toDeepSeekResponsesChatBody(
+    {
+      input: [
+        {
+          type: "message",
+          role: "assistant",
+          content: [
+            { type: "output_text", text: "Answer. " },
+            { type: "refusal", refusal: "Not that part." },
+          ],
+        },
+      ],
+    },
+    "deepseek-flash",
+    false
+  );
+  assert.equal(mixed.ok, true);
+  assert.deepEqual(mixed.value.body.messages, [{ role: "assistant", content: "Answer. Not that part." }]);
+  assert.equal("refusal" in (mixed.value.body.messages as Record<string, unknown>[])[0], false);
+});
+
+Deno.test("deepseek responses: a malformed refusal part is rejected instead of translated", () => {
+  const missing = toDeepSeekResponsesChatBody({ input: [{ type: "message", role: "assistant", content: [{ type: "refusal" }] }] }, "deepseek-flash", false);
+  assert.equal(missing.ok, false);
+  assert.equal(missing.param, "input.content.refusal");
+  assert.match(missing.message, /refusal must be a string/);
+
+  for (const refusal of [42, null, { text: "no" }, ["no"]]) {
+    const malformed = toDeepSeekResponsesChatBody(
+      { input: [{ type: "message", role: "assistant", content: [{ type: "refusal", refusal }] }] },
+      "deepseek-flash",
+      false
+    );
+    assert.equal(malformed.ok, false);
+    assert.equal(malformed.param, "input.content.refusal");
+  }
+
+  // An unsupported content type is still rejected by name, not approximated.
+  const unknown = toDeepSeekResponsesChatBody(
+    { input: [{ type: "message", role: "assistant", content: [{ type: "output_audio" }] }] },
+    "deepseek-flash",
+    false
+  );
+  assert.equal(unknown.ok, false);
+  assert.equal(unknown.param, "input.content.type");
+
+  // A refusal part is assistant history only. Another role keeps the existing
+  // unsupported-type rejection instead of silently becoming user text.
+  const wrongRole = toDeepSeekResponsesChatBody(
+    { input: [{ type: "message", role: "user", content: [{ type: "refusal", refusal: "not mine" }] }] },
+    "deepseek-flash",
+    false
+  );
+  assert.equal(wrongRole.ok, false);
+  assert.equal(wrongRole.param, "input.content.type");
+  assert.match(wrongRole.message, /type 'refusal' is not supported/);
+});
+
 Deno.test("deepseek responses: flattens namespaced tools and drops what the API cannot serve", () => {
   // `reasoning.effort: "none"` disables thinking mode. A named tool_choice is
   // rejected while thinking mode is active (see the thinking-mode test below),
@@ -582,9 +666,15 @@ Deno.test("deepseek responses: stream translator emits the Responses event seque
     "response.created",
     "response.in_progress",
     "response.output_item.added",
+    "response.reasoning_summary_part.added",
+    "response.reasoning_summary_text.delta",
+    "response.output_item.added",
     "response.content_part.added",
     "response.output_text.delta",
     "response.output_text.delta",
+    "response.reasoning_summary_text.done",
+    "response.reasoning_summary_part.done",
+    "response.output_item.done",
     "response.output_text.done",
     "response.content_part.done",
     "response.output_item.done",
@@ -604,6 +694,73 @@ Deno.test("deepseek responses: stream translator emits the Responses event seque
     output.map((item) => item.type),
     ["reasoning", "message"]
   );
+});
+
+Deno.test("deepseek responses: the reasoning item announces the index it answers for", () => {
+  // The official client accumulates `response.output_item.added` in arrival
+  // order and reads every later event's `output_index` out of that accumulated
+  // output. Reserving a reasoning slot without announcing it made the following
+  // message the client's first accumulated item while its content events still
+  // named index 1, so the whole stream failed with `missing output at index 1`.
+  // The item lifecycle must therefore exist before any later item advances the
+  // index, and every reasoning event must name that item's own index and id.
+  const responseId = "resp_reason_life";
+  const reasoningId = `${responseId}_rs_0`;
+  const translator = createDeepSeekResponsesStreamTranslator("deepseek-flash", responseId, echo, 1_780_000_000);
+  const events: Record<string, unknown>[] = [];
+  events.push(...translator.push(chatChunk({ role: "assistant", reasoning_content: "first " })));
+  events.push(...translator.push(chatChunk({ reasoning_content: "second" })));
+  events.push(...translator.push(chatChunk({ content: "answer" }, { finish_reason: "stop" })));
+  events.push(...translator.finish());
+
+  const added = events.filter((event) => event.type === "response.output_item.added");
+  assert.deepEqual(
+    added.map((event) => [event.output_index, (event.item as Record<string, unknown>).type]),
+    [
+      [0, "reasoning"],
+      [1, "message"],
+    ]
+  );
+  assert.deepEqual(added[0].item, { id: reasoningId, type: "reasoning", status: "in_progress", summary: [] });
+
+  const partAdded = events.find((event) => event.type === "response.reasoning_summary_part.added");
+  assert.deepEqual(partAdded, {
+    type: "response.reasoning_summary_part.added",
+    item_id: reasoningId,
+    output_index: 0,
+    summary_index: 0,
+    part: { type: "summary_text", text: "" },
+  });
+
+  const deltas = events.filter((event) => event.type === "response.reasoning_summary_text.delta");
+  assert.deepEqual(
+    deltas.map((event) => event.delta),
+    ["first ", "second"]
+  );
+  for (const event of deltas) {
+    assert.equal(event.item_id, reasoningId);
+    assert.equal(event.output_index, 0);
+    assert.equal(event.summary_index, 0);
+  }
+
+  const textDone = events.find((event) => event.type === "response.reasoning_summary_text.done");
+  assert.equal(textDone?.text, "first second");
+  const partDone = events.find((event) => event.type === "response.reasoning_summary_part.done");
+  assert.deepEqual(partDone?.part, { type: "summary_text", text: "first second" });
+
+  // The terminal item is the completed form of the item the client accumulated
+  // at index 0, and it sits at that index in the terminal output.
+  const reasoningDone = events.find((event) => event.type === "response.output_item.done" && (event.item as Record<string, unknown>).type === "reasoning");
+  assert.deepEqual(reasoningDone?.item, {
+    id: reasoningId,
+    type: "reasoning",
+    status: "completed",
+    summary: [{ type: "summary_text", text: "first second" }],
+  });
+  const completed = events.at(-1) as { response: Record<string, unknown> };
+  const output = completed.response.output as Record<string, unknown>[];
+  assert.deepEqual(output[0], reasoningDone?.item);
+  assert.equal(output[1].type, "message");
 });
 
 Deno.test("deepseek responses: stream translator accumulates fragmented tool calls", () => {
