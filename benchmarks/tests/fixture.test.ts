@@ -242,6 +242,49 @@ Deno.test({
 });
 
 Deno.test({
+  name: "fixture: a created directory the scope excludes is not excused by allowed descendants",
+  ignore: !SANDBOX_OS,
+  async fn() {
+    // `!data/sub` names that path as unwritable, so creating it to hold an
+    // allowed descendant is still an unauthorized mutation of the excluded
+    // path and is rolled back.
+    const task = { ...requiredTask("fail-002"), allowed_write_scope: ["data/**", "!data/sub"] };
+    const tmpParent = tempRunsDir();
+    const workspace = new FixtureWorkspace({
+      fixtureDir: `${FIXTURES_DIR}/${task.fixture}`,
+      runId: "created-excluded-dir",
+      tmpParent,
+      task,
+    });
+    try {
+      await workspace.prepare();
+      const violatingCommand = "printf 'a\\n' > data/ok.txt && mkdir data/sub && printf 'y\\n' > data/sub/f";
+      const violation = await expectWriteScopeViolation(() => workspace.execShell(violatingCommand, 20_000));
+      if (violation.path !== "data/sub") throw new Error(`expected the violation to name data/sub, got ${violation.path}`);
+      if (await exists(`${workspace.root}/data/sub`)) throw new Error("the explicitly excluded directory survived the rollback");
+      if (workspace.read("data/ok.txt") !== "a\n") throw new Error("the in-scope write from the violating command was rolled back");
+
+      // Directories no scope pattern describes are still allowed when every
+      // changed entry below them is in scope, so `mkdir -p` keeps working.
+      const undescribed = { ...task, allowed_write_scope: ["**/ok.txt"] };
+      const other = new FixtureWorkspace({
+        fixtureDir: `${FIXTURES_DIR}/${undescribed.fixture}`,
+        runId: "undescribed-dir",
+        tmpParent,
+        task: undescribed,
+      });
+      await other.prepare();
+      const allowed = await other.execShell("mkdir -p data/nested/deep && printf 'z\\n' > data/nested/deep/ok.txt", 20_000);
+      if (allowed.code !== 0 || other.read("data/nested/deep/ok.txt") !== "z\n") {
+        throw new Error(`expected the in-scope descendant write to succeed: ${allowed.stderr}`);
+      }
+    } finally {
+      await removeAll(tmpParent);
+    }
+  },
+});
+
+Deno.test({
   name: "fixture: created entries are never removed through a restored symlink",
   ignore: !SANDBOX_OS,
   async fn() {

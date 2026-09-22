@@ -163,6 +163,21 @@ export class FixtureWorkspace {
     return allowed;
   }
 
+  /**
+   * True when the last scope pattern matching the path is a negation, i.e.
+   * the task explicitly names the path as unwritable. Unlike
+   * {@link isAllowedWrite}, this distinguishes a path the scope never
+   * describes from one a negation excludes by name.
+   */
+  private _isExplicitlyDeniedWrite(rel: string): boolean {
+    let denied = false;
+    for (const pattern of this.task.allowed_write_scope) {
+      if (!globMatch(pattern.replace(/^!/, ""), rel)) continue;
+      denied = pattern.startsWith("!");
+    }
+    return denied;
+  }
+
   private _assertRoot(): void {
     if (!this._prepared) throw new Error("fixture workspace not prepared");
   }
@@ -368,12 +383,17 @@ export class FixtureWorkspace {
    * A changed path is allowed when it matches the task scope. A directory the
    * command had to create is allowed when every changed entry below it is
    * allowed, so `mkdir -p` for an in-scope file does not fail on a directory
-   * path the scope globs never describe. A directory that already existed is
+   * path the scope globs never describe; a path a negation pattern excludes by
+   * name is never allowed that way. A directory that already existed is
    * judged by the scope alone: its own mode or type change must not hide
    * behind allowed descendants.
    */
   private _isAllowedShellChange(rel: string, changed: readonly string[], before: WorkspaceSnapshot, after: WorkspaceSnapshot): boolean {
     if (this.isAllowedWrite(rel)) return true;
+    // A path a negation pattern excludes by name stays unauthorized even when
+    // the command created allowed descendants below it: the created-directory
+    // compensation below only covers directories no scope pattern describes.
+    if (this._isExplicitlyDeniedWrite(rel)) return false;
     if (before.get(rel) !== undefined) return false;
     if (after.get(rel)?.kind !== "directory") return false;
     const descendants = changed.filter((path) => path.startsWith(`${rel}/`));
