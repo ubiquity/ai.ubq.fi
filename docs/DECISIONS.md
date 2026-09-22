@@ -82,6 +82,33 @@ Residual obligation: the visible behaviour above was measured against a task-own
 served-release acceptance are distinct: the exact served identities, and the actual client outcomes against them, must
 be recorded in the release handoff, using the served-client probe beside this entry's evidence directory.
 
+### Follow-up: the reminder alone is insufficient, and the semantic recheck - 2026-09-22
+
+The PR #395 reminder was merged and deployed as `e04f67ff`. The VPS real 16-step run passed, but on the Mac the real
+client stopped at 10 of 16 with final text `step 11 of 16, reading nodes/7b/tally.sql`, exit 0, one completed turn, and
+receipt `591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5/cb7c10e7-08d5-41b3-8e0b-e421cdaa969a`. That
+outcome establishes that the reminder alone is insufficient. The original paired reproduction stays recorded as
+historical evidence of the baseline stop, and it must not be recast as proof that the reminder never works.
+
+The replacement contract is one semantic recheck on a successful, text-only stop where mapped executable tools exist,
+`tool_choice` is automatic, the stop carries no refusal, usage is known, and positive output remains. It runs the same
+model with the same tools and effort, adds no wire fields or settings, buffers the recheck, keeps the first stream
+progressive and keeps the original response identity; accepted returned tools are delivered before the terminal event
+and no duplicate recheck text is emitted. The original answer is preserved on a legitimate final answer, on no tools,
+and on advisory failure. The guard skips the recheck for `none`, `required`, or named tool choice, truncation, empty
+output, a refusal, no tools, and unknown or exhausted budget. Cancellation aborts the extra call, and there is no second
+admission or reservation.
+
+One extra provider request is the cost for an eligible text-only final: input cost and latency rise, and the output cap
+is `min(remaining original allowance, 8192)`. Actual usage from both requests is summed; missing fields stay partial and
+no cache zeros are invented. Refusal metadata is preserved through provider normalization so the guard can observe it;
+on this route a refusal is also rendered as an answer-bearing content part, and the guard skips the recheck for it.
+
+This is a bounded mitigation, not a guarantee against the model's choice after both passes, and runtime acceptance of
+the new recheck is still pending, so it must not be described as deployed or passed. The regression tests cover
+protocol, usage, budget, and cancellation behaviour; the real 16-step checks are the model-behaviour evidence, not the
+reverse.
+
 ## App-wide visual language follows the deno-universal-auth reference - 2026-09-22
 
 The app-wide design is the shared token system in `static/style.css`, ported from the `deno-universal-auth` reference

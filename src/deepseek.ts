@@ -616,12 +616,16 @@ const normalizeChoiceMessage = (
   if (!isAbsentOrString(message.reasoning_content)) {
     return { ok: false, message: `Upstream choice ${index} has invalid reasoning content.` };
   }
+  // A malformed non-string refusal invalidates the message; an absent or null
+  // one stays absent.
   const refusal = normalizeRefusal(message.refusal, `Upstream choice ${index}`);
   if (!refusal.ok) return refusal;
   const toolCallsResult = normalizeToolCalls(message.tool_calls, `Upstream choice ${index}`, normalizeToolCall);
   if (!toolCallsResult.ok) return toolCallsResult;
   const toolCalls = toolCallsResult.value;
   const reasoning = typeof message.reasoning_content === "string" ? message.reasoning_content : null;
+  // A refusal-only message is an answer, not an empty one: the continuation
+  // eligibility guard reads the same normalized value.
   if (choiceHasNoPayload(message.content, message.reasoning_content, refusal.value, toolCalls)) {
     return { ok: false, message: `Upstream choice ${index} has neither content nor a tool call.` };
   }
@@ -650,7 +654,9 @@ const normalizeChoice = (value: unknown, index: number): NormalizationResult<Rec
   // Relay it 1:1 rather than dropping or logging it.
   if (reasoning !== null) normalizedMessage.reasoning_content = reasoning;
   // A refusal is answer-bearing output on this route's own Chat contract, so it
-  // travels beside `content` exactly as the upstream sent it.
+  // travels beside `content` exactly as the upstream sent it. Preserving it is
+  // also what keeps the continuation decision from reading an explicit refusal
+  // as an ordinary progress stop.
   if (refusal !== null) normalizedMessage.refusal = refusal;
   if (toolCalls?.length) normalizedMessage.tool_calls = toolCalls;
   return {
@@ -715,7 +721,7 @@ const normalizeChunkDelta = (value: unknown, label: string): NormalizationResult
   const role = optionalField(value.role, (input) => (typeof input === "string" ? input : null), `${label} has an invalid delta role.`);
   if (!role.ok) return role;
   if (role.value !== undefined) normalizedDelta.role = role.value;
-  for (const field of ["content", "reasoning_content"] as const) {
+  for (const field of ["content", "reasoning_content", "refusal"] as const) {
     const text = optionalField(value[field], (input) => (typeof input === "string" ? input : null), `${label} has invalid ${field}.`);
     if (!text.ok) return text;
     if (text.value !== undefined) normalizedDelta[field] = text.value;

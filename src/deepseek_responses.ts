@@ -572,6 +572,202 @@ export const toResponsesUsage = (value: unknown): Record<string, unknown> | null
   };
 };
 
+/**
+ * The neutral instruction appended after the first-leg assistant draft when this
+ * route performs its one bounded continuation recheck. It asks the same model
+ * the same task a second time with the draft in context; it never forces a tool
+ * call, forbids a legitimate final answer, or invents work.
+ */
+export const DEEPSEEK_RECHECK_INSTRUCTION =
+  "The assistant response above is a draft for this same task. If actionable required work remains, emit the next appropriate tool call now. If the requested work is complete, blocked, or needs user input, return the existing answer without tool calls. Do not repeat completed actions or invent new work.";
+
+/**
+ * The most output one recheck may add. The caller's own remaining allowance is
+ * the tighter bound whenever the first leg used fewer than this many tokens, so
+ * the two legs together never exceed the allowance the caller asked for.
+ */
+export const DEEPSEEK_RECHECK_MAX_TOKENS = 8_192;
+
+/** Why one first-leg completion did not earn the bounded recheck. */
+export type DeepSeekRecheckSkipReason =
+  "finish_reason" | "refusal" | "empty_text" | "tool_calls" | "no_executable_tools" | "tool_choice" | "usage_unknown" | "budget_unknown" | "budget_exhausted";
+
+export type DeepSeekRecheckEligibility =
+  Readonly<{ eligible: true; remainingBudget: number; maxTokens: number }> | Readonly<{ eligible: false; reason: DeepSeekRecheckSkipReason }>;
+
+/**
+ * Decides whether a first-leg completion earns the one bounded recheck.
+ *
+ * Only a clean `stop` that produced assistant text with no tool call and no
+ * refusal is reconsidered, and only when the request advertises mapped
+ * executable tools while leaving `tool_choice` absent or `auto`. The provider
+ * must have reported the first leg's completion use, and the request must have a
+ * known positive remaining output allowance, because a recheck with no measured
+ * budget could double the caller's bill without a bound. A truncation, a
+ * refusal, an empty answer, and a request that never permitted a tool stay
+ * untouched.
+ */
+export const deepSeekRecheckEligibility = (
+  input: Readonly<{
+    finishReason: unknown;
+    text: string;
+    refusal: unknown;
+    toolCallCount: number;
+    executableToolCount: number;
+    toolChoice: unknown;
+    firstCompletionTokens: number | null;
+    allowance: number | null;
+  }>
+): DeepSeekRecheckEligibility => {
+  if (input.finishReason !== "stop") return { eligible: false, reason: "finish_reason" };
+  if (typeof input.refusal === "string" && input.refusal.length > 0) return { eligible: false, reason: "refusal" };
+  if (input.text.length === 0) return { eligible: false, reason: "empty_text" };
+  if (input.toolCallCount > 0) return { eligible: false, reason: "tool_calls" };
+  if (input.executableToolCount <= 0) return { eligible: false, reason: "no_executable_tools" };
+  if (input.toolChoice !== undefined && input.toolChoice !== "auto") return { eligible: false, reason: "tool_choice" };
+  if (input.firstCompletionTokens === null || !Number.isFinite(input.firstCompletionTokens)) {
+    return { eligible: false, reason: "usage_unknown" };
+  }
+  if (input.allowance === null || !Number.isFinite(input.allowance)) return { eligible: false, reason: "budget_unknown" };
+  const remainingBudget = input.allowance - input.firstCompletionTokens;
+  if (remainingBudget <= 0) return { eligible: false, reason: "budget_exhausted" };
+  return { eligible: true, remainingBudget, maxTokens: Math.min(remainingBudget, DEEPSEEK_RECHECK_MAX_TOKENS) };
+};
+
+/**
+ * Builds the one buffered recheck request from the first-leg Chat body. It keeps
+ * the same model, effort and original tool schemas, appends the first assistant
+ * draft (including its reasoning, which the provider requires on a tool-bearing
+ * tail) plus the neutral user instruction, and never adds a tool, an alias, a
+ * schema field, or a forced `tool_choice`.
+ */
+export const toDeepSeekRecheckChatBody = (
+  chatBody: Record<string, unknown>,
+  draft: Readonly<{ content: string; reasoning: string }>,
+  maxTokens: number
+): Record<string, unknown> => {
+  const messages = Array.isArray(chatBody.messages) ? [...chatBody.messages] : [];
+  messages.push({ role: "assistant", content: draft.content, reasoning_content: draft.reasoning });
+  messages.push({ role: "user", content: DEEPSEEK_RECHECK_INSTRUCTION });
+  const recheck: Record<string, unknown> = { ...chatBody, messages, stream: false, max_tokens: maxTokens };
+  // DeepSeek answers 400 when stream_options is present without stream:true.
+  delete recheck.stream_options;
+  return recheck;
+};
+
+/**
+ * The executable tool calls one recheck returned, or null when it carries none.
+ * Every call must name a tool this request advertised: a call the client never
+ * offered is rejected as a batch rather than translated into a hidden tool or
+ * alias the client cannot execute.
+ */
+export const deepSeekRecheckToolCalls = (message: Record<string, unknown>, executableNames: ReadonlySet<string>): Record<string, unknown>[] | null => {
+  const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+  if (!toolCalls.length) return null;
+  const calls: Record<string, unknown>[] = [];
+  for (const call of toolCalls) {
+    if (!isRecord(call) || Array.isArray(call)) return null;
+    const fn = isRecord(call.function) && !Array.isArray(call.function) ? call.function : null;
+    const name = fn ? getString(fn.name) : null;
+    if (!name || !executableNames.has(name)) return null;
+    calls.push(call);
+  }
+  return calls;
+};
+
+/** A measured token counter, or null when the leg did not report a usable amount. */
+const validTokenCount = (value: unknown): number | null => {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) return null;
+  return value;
+};
+
+/**
+ * One aggregate base counter. Both legs' amounts are summed when both were
+ * measured; otherwise the one measured amount is kept, because a leg that did
+ * report tokens remains billable even when the other leg did not. `summed` is
+ * false in that case so the caller never presents a two-request total.
+ */
+const mergedTokenCount = (firstValue: unknown, secondValue: unknown): Readonly<{ value: number | null; summed: boolean }> => {
+  const first = validTokenCount(firstValue);
+  const second = validTokenCount(secondValue);
+  if (first !== null && second !== null) return { value: first + second, summed: true };
+  if (first !== null) return { value: first, summed: false };
+  if (second !== null) return { value: second, summed: false };
+  return { value: null, summed: false };
+};
+
+const cachedTokensOf = (usage: Record<string, unknown>): unknown => {
+  const details = isRecord(usage.prompt_tokens_details) && !Array.isArray(usage.prompt_tokens_details) ? usage.prompt_tokens_details : null;
+  return usage.prompt_cache_hit_tokens ?? details?.cached_tokens;
+};
+
+const reasoningTokensOf = (usage: Record<string, unknown>): unknown => {
+  const details = isRecord(usage.completion_tokens_details) && !Array.isArray(usage.completion_tokens_details) ? usage.completion_tokens_details : null;
+  return details?.reasoning_tokens;
+};
+
+/**
+ * The second leg's raw usage object when at least one base counter is
+ * measurable, else null. Output validity is a separate question: a completion
+ * the provider billed for keeps its measured counters even when its output is
+ * rejected, while a payload with no measurable counter is not invented into one.
+ */
+export const measurableDeepSeekRecheckUsage = (value: unknown): Record<string, unknown> | null => {
+  if (!isRecord(value) || Array.isArray(value)) return null;
+  const measurable =
+    validTokenCount(value.prompt_tokens) !== null || validTokenCount(value.completion_tokens) !== null || validTokenCount(value.total_tokens) !== null;
+  return measurable ? value : null;
+};
+
+export type DeepSeekRecheckUsage = Readonly<{ usage: Record<string, unknown> | null; complete: boolean }>;
+
+/**
+ * The two-request total, held at or above the input and output counters both
+ * legs independently observed: a second leg that reported only some counters
+ * must not publish an internally inconsistent total. A total-only second
+ * measurement is kept as reported even when it exceeds those partial components.
+ */
+const recheckReportedTotal = (total: number | null, observedComponentSum: number | null): number | null =>
+  total !== null && observedComponentSum !== null && total < observedComponentSum ? observedComponentSum : total;
+
+/**
+ * Merges the usage of the two provider requests this route actually made.
+ *
+ * Every base counter keeps the amounts each leg independently measured: both
+ * observed amounts are summed, and a counter only one leg reported keeps that
+ * leg's measured value instead of being dropped or invented. The reported total
+ * is never allowed below the input and output counters that were independently
+ * observed, because a second leg that reported only some counters would
+ * otherwise publish an internally inconsistent total; a total-only second
+ * measurement is kept as reported even when it exceeds those partial components.
+ * `complete` is true only when both legs measured every base counter and the
+ * total is exactly their sum. Cache-read and reasoning details describe the
+ * aggregate only when both legs measured them; otherwise they are omitted, so an
+ * unknown detail is never published as a measured zero and a one-leg detail is
+ * never presented as the two-request aggregate. A wholly unobserved second leg
+ * keeps the first leg's base counters and adds no detail.
+ */
+export const mergeDeepSeekRecheckUsage = (first: unknown, second: unknown): DeepSeekRecheckUsage => {
+  if (!isRecord(first) || Array.isArray(first)) return { usage: null, complete: false };
+  const secondUsage = isRecord(second) && !Array.isArray(second) ? second : null;
+  const promptTokens = mergedTokenCount(first.prompt_tokens, secondUsage?.prompt_tokens);
+  const completionTokens = mergedTokenCount(first.completion_tokens, secondUsage?.completion_tokens);
+  const totalTokens = mergedTokenCount(first.total_tokens, secondUsage?.total_tokens);
+  const observedComponentSum = promptTokens.value !== null && completionTokens.value !== null ? promptTokens.value + completionTokens.value : null;
+  const reportedTotal = recheckReportedTotal(totalTokens.value, observedComponentSum);
+  const usage: Record<string, unknown> = {};
+  if (promptTokens.value !== null) usage.prompt_tokens = promptTokens.value;
+  if (completionTokens.value !== null) usage.completion_tokens = completionTokens.value;
+  if (reportedTotal !== null) usage.total_tokens = reportedTotal;
+  if (secondUsage) {
+    const cachedTokens = mergedTokenCount(cachedTokensOf(first), cachedTokensOf(secondUsage));
+    if (cachedTokens.summed) usage.prompt_tokens_details = { cached_tokens: cachedTokens.value };
+    const reasoningTokens = mergedTokenCount(reasoningTokensOf(first), reasoningTokensOf(secondUsage));
+    if (reasoningTokens.summed) usage.completion_tokens_details = { reasoning_tokens: reasoningTokens.value };
+  }
+  return { usage, complete: promptTokens.summed && completionTokens.summed && totalTokens.summed && reportedTotal === totalTokens.value };
+};
+
 export type DeepSeekResponsesEcho = Readonly<{
   tools: unknown;
   tool_choice: unknown;
@@ -1089,6 +1285,19 @@ export const createDeepSeekResponsesStreamTranslator = (
       refusal: state.refusal,
       toolCallCount: [...state.toolCalls.values()].filter((call) => call.name).length,
     }),
+    /**
+     * How many tool-call deltas the stream observed at all, named or not. The
+     * recheck contract is no tool call whatsoever, so eligibility reads this
+     * count: an argument-only partial delta occupies a map slot a second
+     * generation would otherwise concatenate onto.
+     */
+    observedToolCallCount: (): number => state.toolCalls.size,
+    /**
+     * The first-leg assistant draft the bounded recheck appends to the
+     * conversation. Only the accumulated answer text and its reasoning are
+     * exposed; the recheck's own text is never streamed back to the client.
+     */
+    draftAssistantMessage: (): Readonly<{ content: string; reasoning: string }> => ({ content: state.text, reasoning: state.reasoning }),
     /**
      * The terminal this stream will settle on, available before `finish` emits
      * it so telemetry records the same terminal the client receives. Derived
