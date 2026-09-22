@@ -1353,6 +1353,8 @@ const handleTerminalRoute = async (
    * treating it as its initial `null` here.
    */
   const currentUsageReservation = (): ApiKeyUsageReservation | null => usageReservation;
+  /** Same closure-reader reason as `currentUsageReservation`, for the queue wait. */
+  const currentAdmissionWaitMs = (): number | null => admissionWaitMs;
   const kernelRepo = await releaseOnThrow(() => resolveKernelRepo(req, authResult));
   const kernelOrg = kernelRepo ? { owner: kernelRepo.owner } : null;
   let kernelReservation: KernelQuotaReservation | null = null;
@@ -1407,7 +1409,7 @@ const handleTerminalRoute = async (
       JSON.stringify({
         request_id: requestId,
         route: terminalRoute,
-        queue_wait_ms: admissionWaitMs ?? 0,
+        queue_wait_ms: currentAdmissionWaitMs() ?? 0,
         git_sha: runtimeGitSha(),
         deno_revision: runtimeDeploymentId(),
       })

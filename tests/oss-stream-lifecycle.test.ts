@@ -349,7 +349,9 @@ Deno.test("Responses precommit buffer refuses an unbounded eager producer and re
       released = true;
       return Promise.resolve<IteratorResult<ResponsesStreamEvent, unknown>>({ done: true, value: undefined });
     },
-    throw: (error: unknown) => Promise.reject(error),
+    // A thrown Error is preserved; a non-Error fixture reason is normalized so
+    // the rejection reason is always an Error.
+    throw: (error: unknown) => Promise.reject(error instanceof Error ? error : new Error("The eager producer was thrown a non-Error reason.")),
     [Symbol.asyncIterator]() {
       return this;
     },

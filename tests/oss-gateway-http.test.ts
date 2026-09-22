@@ -228,7 +228,9 @@ const startHarness = async (): Promise<Harness> => {
       const advisoryGate = new Promise<void>((resolve) => {
         releaseAdvisory = resolve;
       });
-      holdReleases.push(() => releaseAdvisory());
+      holdReleases.push(() => {
+        releaseAdvisory();
+      });
       const advisoryStream = new ReadableStream<Uint8Array>({
         async start(controller) {
           await advisoryGate;

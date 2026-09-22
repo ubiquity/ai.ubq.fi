@@ -281,6 +281,9 @@ export const createOptionalTelemetryQueue = <TEntry>(options: OptionalTelemetryQ
     writeOne(item);
   };
 
+  /** True while a queued entry can be dispatched inside the writer bound. */
+  const hasDispatchCapacity = (): boolean => queued.length > 0 && inFlight.size < bounds.maxConcurrentWrites;
+
   const drainPending = async (): Promise<void> => {
     if (drainIsIncomplete()) return;
     const deadlineAtMs = timestamp() + bounds.maxDrainWaitMs;
@@ -288,7 +291,7 @@ export const createOptionalTelemetryQueue = <TEntry>(options: OptionalTelemetryQ
       dropExpiredQueued();
       if (drainIsIncomplete()) return;
       if (stalled && inFlight.size > 0) return;
-      while (queued.length > 0 && inFlight.size < bounds.maxConcurrentWrites) dispatchNextQueued();
+      while (hasDispatchCapacity()) dispatchNextQueued();
       if (queued.length === 0 && inFlight.size === 0) return;
       const remainingMs = deadlineAtMs - timestamp();
       if (remainingMs > 0 && (await waitForProgress(remainingMs))) continue;
