@@ -38,6 +38,7 @@ import {
   DeepSeekError,
   DeepSeekStreamError,
   deepSeekDefaultOutputAllowance,
+  deepSeekThinkingModeActive,
   deepSeekThinkingToolChoiceConflict,
   deepSeekToolChoiceThinkingConflictMessage,
   deepSeekUpstreamModelFor,
@@ -4333,6 +4334,14 @@ const parseMaxCompletionTokensField = (value: unknown): { ok: true; value: numbe
 const CHAT_COMPLETIONS_ALLOWED_KEYS = new Set(CHAT_COMPLETIONS_REQUEST_KEYS);
 const RESPONSES_ALLOWED_KEYS = new Set(RESPONSES_REQUEST_KEYS);
 const CODEX_RESPONSES_EXTENSION_KEYS = new Set(["client_metadata"]);
+/**
+ * Fields a first-party DeepSeek client sends on the provider's own Chat
+ * contract that the official OpenAI Chat schema does not define. Kept separate
+ * from the OpenAI allowlist so the compatibility surface stays explicit and
+ * cannot silently widen the OpenAI-compatible routes; see AGENTS.md's Codex CLI
+ * compatibility rule for the same pattern.
+ */
+const DEEPSEEK_CHAT_EXTENSION_KEYS = new Set(["thinking"]);
 
 const findUnknownKey = (record: Record<string, unknown>, allowed: ReadonlySet<string>, extensions?: ReadonlySet<string>): string | null => {
   for (const key of Object.keys(record)) {
@@ -9783,7 +9792,18 @@ const validateDeepSeekChatRequestFields = (
       // DeepSeek's documented default is thinking mode enabled at effort
       // `high`. Sending it explicitly keeps the wire and the gateway's
       // reasoning telemetry in agreement without changing provider behavior.
-      reasoning: reasoningEffort.value ?? DEEPSEEK_DEFAULT_REASONING_EFFORT,
+      //
+      // A first-party client may instead send the provider's own
+      // `thinking: { type }` switch. That field is authoritative for whether
+      // thinking is on, so it resolves the effort here rather than being
+      // forwarded beside a contradictory default: `disabled` becomes `none`
+      // (the documented equivalent this gateway already sends, see the Delta 5
+      // entry in docs/DECISIONS.md) and an explicit `reasoning_effort` still
+      // wins when thinking is enabled.
+      reasoning:
+        reasoningEffort.value === undefined && !deepSeekThinkingModeActive(undefined, rawRecord.thinking)
+          ? "none"
+          : (reasoningEffort.value ?? DEEPSEEK_DEFAULT_REASONING_EFFORT),
       clientWantsStream: parsedStream.value,
     },
   };
@@ -10088,6 +10108,10 @@ const handleDeepSeekChatCompletions = async (
     reasoning_effort: reasoning,
     stream: clientWantsStream,
   };
+  // `thinking` is an input to the effort resolution above, not a wire field for
+  // this route: the gateway sends one representation (`reasoning_effort`) so
+  // the two can never disagree on the wire.
+  delete deepseekBody.thinking;
   if (clientWantsStream) {
     // DeepSeek requires stream_options to be requested alongside a stream, and
     // reports usage on the final content chunk rather than a separate frame.
@@ -10454,7 +10478,14 @@ const parseChatCompletionsEnvelope = async (
   if (!body || !isRecord(body)) return { ok: false, response: openaiError(400, "Invalid JSON body", "invalid_request_error") };
 
   const rawRecord = body as Record<string, unknown>;
-  const unknownKey = findUnknownKey(rawRecord, CHAT_COMPLETIONS_ALLOWED_KEYS);
+  // The DeepSeek route dispatches before the Codex/paid path and speaks the
+  // provider's own documented Chat contract, which includes `thinking`. Accept
+  // that one field there so a first-party DeepSeek client can reach this route
+  // at all; every other route keeps the strict OpenAI allowlist. The field is
+  // read for its documented semantics (it selects thinking mode) and is not
+  // forwarded verbatim: `projectDeepSeekRequest` owns the wire translation.
+  const isDeepSeekRoute = deepSeekUpstreamModelFor(getString(rawRecord.model)?.trim() ?? "") !== null;
+  const unknownKey = findUnknownKey(rawRecord, CHAT_COMPLETIONS_ALLOWED_KEYS, isDeepSeekRoute ? DEEPSEEK_CHAT_EXTENSION_KEYS : undefined);
   if (unknownKey) {
     return { ok: false, response: openaiError(400, `Unrecognized request argument supplied: ${unknownKey}`, "invalid_request_error") };
   }
