@@ -582,8 +582,20 @@ const normalizeUsage = (value: unknown): NormalizationResult<Record<string, unkn
   };
 };
 
-const choiceHasNoPayload = (content: unknown, reasoning: unknown, toolCalls: readonly unknown[] | undefined): boolean =>
-  content === undefined && reasoning === undefined && !toolCalls?.length;
+/**
+ * The official Chat chunk/message schema types `refusal` as an optional string
+ * or `null`. A string is payload this gateway must carry (a refusal is
+ * answer-bearing output); `null` is absence; any other type is malformed input
+ * and is rejected rather than silently dropped.
+ */
+const normalizeRefusal = (value: unknown, label: string): NormalizationResult<string | null> => {
+  if (value === undefined || value === null) return { ok: true, value: null };
+  if (typeof value === "string") return { ok: true, value };
+  return { ok: false, message: `${label} has an invalid refusal.` };
+};
+
+const choiceHasNoPayload = (content: unknown, reasoning: unknown, refusal: string | null, toolCalls: readonly unknown[] | undefined): boolean =>
+  content === undefined && reasoning === undefined && !refusal && !toolCalls?.length;
 
 /** Mirrors the upstream `content` field: absent content becomes explicit JSON `null` only when another payload exists. */
 const choiceContent = (content: unknown, toolCalls: readonly unknown[] | undefined): unknown => {
@@ -594,7 +606,7 @@ const choiceContent = (content: unknown, toolCalls: readonly unknown[] | undefin
 const normalizeChoiceMessage = (
   message: Record<string, unknown>,
   index: number
-): NormalizationResult<Readonly<{ content: unknown; reasoning: string | null; toolCalls: Record<string, unknown>[] | undefined }>> => {
+): NormalizationResult<Readonly<{ content: unknown; reasoning: string | null; refusal: string | null; toolCalls: Record<string, unknown>[] | undefined }>> => {
   if (message.role !== "assistant") {
     return { ok: false, message: `Upstream choice ${index} does not contain an assistant message.` };
   }
@@ -604,14 +616,16 @@ const normalizeChoiceMessage = (
   if (!isAbsentOrString(message.reasoning_content)) {
     return { ok: false, message: `Upstream choice ${index} has invalid reasoning content.` };
   }
+  const refusal = normalizeRefusal(message.refusal, `Upstream choice ${index}`);
+  if (!refusal.ok) return refusal;
   const toolCallsResult = normalizeToolCalls(message.tool_calls, `Upstream choice ${index}`, normalizeToolCall);
   if (!toolCallsResult.ok) return toolCallsResult;
   const toolCalls = toolCallsResult.value;
   const reasoning = typeof message.reasoning_content === "string" ? message.reasoning_content : null;
-  if (choiceHasNoPayload(message.content, message.reasoning_content, toolCalls)) {
+  if (choiceHasNoPayload(message.content, message.reasoning_content, refusal.value, toolCalls)) {
     return { ok: false, message: `Upstream choice ${index} has neither content nor a tool call.` };
   }
-  return { ok: true, value: { content: message.content, reasoning, toolCalls } };
+  return { ok: true, value: { content: message.content, reasoning, refusal: refusal.value, toolCalls } };
 };
 
 const normalizeChoice = (value: unknown, index: number): NormalizationResult<Record<string, unknown>> => {
@@ -625,7 +639,7 @@ const normalizeChoice = (value: unknown, index: number): NormalizationResult<Rec
   }
   const normalizedMessagePart = normalizeChoiceMessage(value.message, index);
   if (!normalizedMessagePart.ok) return normalizedMessagePart;
-  const { content, reasoning, toolCalls } = normalizedMessagePart.value;
+  const { content, reasoning, refusal, toolCalls } = normalizedMessagePart.value;
 
   const finishReason = value.finish_reason;
   if (!isAbsentOrString(finishReason)) {
@@ -635,6 +649,9 @@ const normalizeChoice = (value: unknown, index: number): NormalizationResult<Rec
   // DeepSeek thinking mode returns the chain of thought beside `content`.
   // Relay it 1:1 rather than dropping or logging it.
   if (reasoning !== null) normalizedMessage.reasoning_content = reasoning;
+  // A refusal is answer-bearing output on this route's own Chat contract, so it
+  // travels beside `content` exactly as the upstream sent it.
+  if (refusal !== null) normalizedMessage.refusal = refusal;
   if (toolCalls?.length) normalizedMessage.tool_calls = toolCalls;
   return {
     ok: true,
@@ -703,6 +720,9 @@ const normalizeChunkDelta = (value: unknown, label: string): NormalizationResult
     if (!text.ok) return text;
     if (text.value !== undefined) normalizedDelta[field] = text.value;
   }
+  const refusal = normalizeRefusal(value.refusal, label);
+  if (!refusal.ok) return refusal;
+  if (refusal.value !== null) normalizedDelta.refusal = refusal.value;
   const toolCalls = normalizeToolCalls(value.tool_calls, label, normalizeToolCallDelta);
   if (!toolCalls.ok) return toolCalls;
   if (toolCalls.value?.length) normalizedDelta.tool_calls = toolCalls.value;

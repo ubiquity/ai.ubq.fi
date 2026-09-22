@@ -480,12 +480,23 @@ export const toDeepSeekResponsesChatBody = (
   return { ok: true, value: { body, toolNames: toolNames.value.toolNames, customToolNames: toolNames.value.customToolNames } };
 };
 
-const responseMessageItem = (id: string, text: string): Record<string, unknown> => ({
+/**
+ * Message content parts in Responses order: the answer text, then a refusal.
+ * A refusal is answer-bearing payload on this route's own Chat contract
+ * (`CompletionAnswerBearingOutput.refusal`), so it is carried as the schema's
+ * `refusal` part instead of being dropped.
+ */
+const responseMessageContent = (text: string, refusal: string): Record<string, unknown>[] => [
+  ...(text ? [{ type: "output_text", text, annotations: [] }] : []),
+  ...(refusal ? [{ type: "refusal", refusal }] : []),
+];
+
+const responseMessageItem = (id: string, text: string, refusal = ""): Record<string, unknown> => ({
   id,
   type: "message",
   status: "completed",
   role: "assistant",
-  content: [{ type: "output_text", text, annotations: [] }],
+  content: responseMessageContent(text, refusal),
 });
 
 const reasoningItem = (id: string, text: string): Record<string, unknown> => ({
@@ -660,9 +671,9 @@ const outputItemsForChoice = (
   if (typeof message.reasoning_content === "string" && message.reasoning_content) {
     items.push(reasoningItem(`${responseId}_rs_${choiceIndex}`, message.reasoning_content));
   }
-  if (typeof message.content === "string" && message.content) {
-    items.push(responseMessageItem(`${responseId}_msg_${choiceIndex}`, message.content));
-  }
+  const text = typeof message.content === "string" ? message.content : "";
+  const refusal = typeof message.refusal === "string" ? message.refusal : "";
+  if (text || refusal) items.push(responseMessageItem(`${responseId}_msg_${choiceIndex}`, text, refusal));
   const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
   for (const [callIndex, call] of toolCalls.entries()) {
     if (!isRecord(call) || Array.isArray(call) || !isRecord(call.function) || Array.isArray(call.function)) continue;
@@ -723,6 +734,8 @@ type StreamToolCall = { id: string; callId: string; name: string; arguments: str
 export type DeepSeekResponsesAnswerBearingOutput = Readonly<{
   /** Assistant text accumulated from `delta.content`. */
   text: string;
+  /** Refusal text accumulated from `delta.refusal`. */
+  refusal: string;
   /** How many tool calls accumulated with a name the client can execute. */
   toolCallCount: number;
 }>;
@@ -732,9 +745,20 @@ type StreamState = {
   completed: boolean;
   text: string;
   reasoning: string;
+  refusal: string;
   messageIndex: number;
   messageOpen: boolean;
-  textDone: boolean;
+  messageDone: boolean;
+  textPartIndex: number;
+  refusalPartIndex: number;
+  /**
+   * The output slot reserved for the reasoning item. The streamed transport
+   * never emits reasoning item events, so the slot is reserved at the first
+   * reasoning delta and filled at the terminal. Without it the item would be
+   * unshifted into position 0 and displace every item that does carry an
+   * `output_index`.
+   */
+  reasoningIndex: number;
   toolCalls: Map<number, StreamToolCall>;
   nextOutputIndex: number;
   output: Record<string, unknown>[];
@@ -753,9 +777,13 @@ const newStreamState = (): StreamState => ({
   completed: false,
   text: "",
   reasoning: "",
+  refusal: "",
   messageIndex: -1,
   messageOpen: false,
-  textDone: false,
+  messageDone: false,
+  textPartIndex: -1,
+  refusalPartIndex: -1,
+  reasoningIndex: -1,
   toolCalls: new Map(),
   nextOutputIndex: 0,
   output: [],
@@ -829,7 +857,7 @@ export const createDeepSeekResponsesStreamTranslator = (
     ];
   };
 
-  const announceMessage = (): Record<string, unknown>[] => {
+  const ensureMessageItem = (): Record<string, unknown>[] => {
     if (state.messageOpen) return [];
     state.messageOpen = true;
     state.messageIndex = state.nextOutputIndex++;
@@ -839,15 +867,23 @@ export const createDeepSeekResponsesStreamTranslator = (
         output_index: state.messageIndex,
         item: { id: messageId, type: "message", status: "in_progress", role: "assistant", content: [] },
       },
-      {
-        type: "response.content_part.added",
-        item_id: messageId,
-        output_index: state.messageIndex,
-        content_index: 0,
-        part: { type: "output_text", text: "", annotations: [] },
-      },
     ];
   };
+
+  /** Content parts are appended in arrival order, so their index is their position. */
+  const nextContentIndex = (): number => (state.textPartIndex >= 0 ? 1 : 0) + (state.refusalPartIndex >= 0 ? 1 : 0);
+
+  const addContentPart = (part: Record<string, unknown>, kind: "text" | "refusal"): Record<string, unknown>[] => {
+    const contentIndex = nextContentIndex();
+    if (kind === "text") state.textPartIndex = contentIndex;
+    else state.refusalPartIndex = contentIndex;
+    return [{ type: "response.content_part.added", item_id: messageId, output_index: state.messageIndex, content_index: contentIndex, part }];
+  };
+
+  const announceTextPart = (): Record<string, unknown>[] => [
+    ...ensureMessageItem(),
+    ...(state.textPartIndex >= 0 ? [] : addContentPart({ type: "output_text", text: "", annotations: [] }, "text")),
+  ];
 
   /**
    * The terminal object for this stream, plus the terminal kind telemetry and
@@ -884,18 +920,43 @@ export const createDeepSeekResponsesStreamTranslator = (
   };
 
   const applyTextDelta = (delta: Record<string, unknown>): Record<string, unknown>[] => {
-    if (typeof delta.reasoning_content === "string" && delta.reasoning_content) state.reasoning += delta.reasoning_content;
+    if (typeof delta.reasoning_content === "string" && delta.reasoning_content) {
+      if (state.reasoningIndex < 0) state.reasoningIndex = state.nextOutputIndex++;
+      state.reasoning += delta.reasoning_content;
+    }
     if (typeof delta.content !== "string" || !delta.content) return [];
     state.text += delta.content;
     return [
-      ...announceMessage(),
+      ...announceTextPart(),
       {
         type: "response.output_text.delta",
         item_id: messageId,
         output_index: state.messageIndex,
-        content_index: 0,
+        content_index: state.textPartIndex,
         delta: delta.content,
         logprobs: [],
+      },
+    ];
+  };
+
+  /**
+   * A refusal delta is answer-bearing payload, so it gets its own content part.
+   * The event carries the fields this translator emits on every other streamed
+   * event; `sequence_number` is a route-level concern (see the module handback),
+   * not something only this event is missing.
+   */
+  const applyRefusalDelta = (delta: Record<string, unknown>): Record<string, unknown>[] => {
+    if (typeof delta.refusal !== "string" || !delta.refusal) return [];
+    state.refusal += delta.refusal;
+    return [
+      ...ensureMessageItem(),
+      ...(state.refusalPartIndex >= 0 ? [] : addContentPart({ type: "refusal", refusal: "" }, "refusal")),
+      {
+        type: "response.refusal.delta",
+        item_id: messageId,
+        output_index: state.messageIndex,
+        content_index: state.refusalPartIndex,
+        delta: delta.refusal,
       },
     ];
   };
@@ -918,21 +979,53 @@ export const createDeepSeekResponsesStreamTranslator = (
   };
 
   const closeMessage = (): Record<string, unknown>[] => {
-    if (!state.messageOpen || state.textDone) return [];
-    state.textDone = true;
-    const item = responseMessageItem(messageId, state.text);
-    state.output.push(item);
-    return [
-      { type: "response.output_text.done", item_id: messageId, output_index: state.messageIndex, content_index: 0, text: state.text, logprobs: [] },
-      {
-        type: "response.content_part.done",
-        item_id: messageId,
-        output_index: state.messageIndex,
-        content_index: 0,
-        part: { type: "output_text", text: state.text, annotations: [] },
-      },
-      { type: "response.output_item.done", output_index: state.messageIndex, item },
-    ];
+    if (!state.messageOpen || state.messageDone) return [];
+    state.messageDone = true;
+    const events: Record<string, unknown>[] = [];
+    if (state.textPartIndex >= 0) {
+      events.push(
+        {
+          type: "response.output_text.done",
+          item_id: messageId,
+          output_index: state.messageIndex,
+          content_index: state.textPartIndex,
+          text: state.text,
+          logprobs: [],
+        },
+        {
+          type: "response.content_part.done",
+          item_id: messageId,
+          output_index: state.messageIndex,
+          content_index: state.textPartIndex,
+          part: { type: "output_text", text: state.text, annotations: [] },
+        }
+      );
+    }
+    if (state.refusalPartIndex >= 0) {
+      events.push(
+        {
+          type: "response.refusal.done",
+          item_id: messageId,
+          output_index: state.messageIndex,
+          content_index: state.refusalPartIndex,
+          refusal: state.refusal,
+        },
+        {
+          type: "response.content_part.done",
+          item_id: messageId,
+          output_index: state.messageIndex,
+          content_index: state.refusalPartIndex,
+          part: { type: "refusal", refusal: state.refusal },
+        }
+      );
+    }
+    const content: Record<string, unknown>[] = [];
+    if (state.textPartIndex >= 0) content[state.textPartIndex] = { type: "output_text", text: state.text, annotations: [] };
+    if (state.refusalPartIndex >= 0) content[state.refusalPartIndex] = { type: "refusal", refusal: state.refusal };
+    const item: Record<string, unknown> = { id: messageId, type: "message", status: "completed", role: "assistant", content };
+    state.output[state.messageIndex] = item;
+    events.push({ type: "response.output_item.done", output_index: state.messageIndex, item });
+    return events;
   };
 
   const closeToolCalls = (): Record<string, unknown>[] => {
@@ -949,13 +1042,13 @@ export const createDeepSeekResponsesStreamTranslator = (
         if (input) {
           events.push({ type: "response.custom_tool_call_input.delta", item_id: call.id, output_index: call.outputIndex, call_id: call.callId, delta: input });
         }
-        state.output.push(item);
+        state.output[call.outputIndex] = item;
         events.push({ type: "response.output_item.done", output_index: call.outputIndex, item });
         continue;
       }
       events.push({ type: "response.function_call_arguments.done", item_id: call.id, output_index: call.outputIndex, arguments: call.arguments });
       const item = functionCallItem(call.id, call.callId, originalToolName(call.name, toolNames), call.arguments);
-      state.output.push(item);
+      state.output[call.outputIndex] = item;
       events.push({ type: "response.output_item.done", output_index: call.outputIndex, item });
     }
     return events;
@@ -979,18 +1072,21 @@ export const createDeepSeekResponsesStreamTranslator = (
         // decides the terminal.
         if (typeof choice.finish_reason === "string") state.finishReason = choice.finish_reason;
         if (!isRecord(choice.delta) || Array.isArray(choice.delta)) continue;
-        events.push(...applyTextDelta(choice.delta), ...applyToolCallDeltas(choice.delta));
+        events.push(...applyTextDelta(choice.delta), ...applyRefusalDelta(choice.delta), ...applyToolCallDeltas(choice.delta));
       }
       return events;
     },
     /**
-     * The accumulated output a client could act on: assistant text plus tool
-     * calls that carry a name. Reasoning is deliberately absent — it is
+     * The accumulated output a client could act on: assistant text, a refusal,
+     * or tool calls that carry a name. Reasoning is deliberately absent — it is
      * streaming progress, not an answer. This is the view the provider-agnostic
-     * completion-validity predicate decides on.
+     * completion-validity predicate decides on, so a refusal is reported here
+     * exactly as the Chat wire carries it and never fails closed as an empty
+     * completion.
      */
     answerBearingOutput: (): DeepSeekResponsesAnswerBearingOutput => ({
       text: state.text,
+      refusal: state.refusal,
       toolCallCount: [...state.toolCalls.values()].filter((call) => call.name).length,
     }),
     /**
@@ -1011,8 +1107,12 @@ export const createDeepSeekResponsesStreamTranslator = (
     finish: (): Record<string, unknown>[] => {
       if (state.completed) return [];
       state.completed = true;
+      // Items are stored at the position they were assigned an `output_index`
+      // for, so `response.output[output_index]` is the item the client
+      // accumulated at that index even when fragmented tool calls announced
+      // their names out of call order.
       const events = [...startEvents(), ...closeMessage(), ...closeToolCalls()];
-      if (state.reasoning) state.output.unshift(reasoningItem(`${responseId}_rs_0`, state.reasoning));
+      if (state.reasoning) state.output[state.reasoningIndex] = reasoningItem(`${responseId}_rs_0`, state.reasoning);
       const terminal = terminalEnvelope();
       terminal.response.output = state.output;
       terminal.response.usage = state.usage;
