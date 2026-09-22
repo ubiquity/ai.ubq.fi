@@ -57,6 +57,29 @@ const baseAttempt = (): Record<string, unknown> => ({
   terminal: "eof",
 });
 
+/** A minimal valid version-2 attempt: one canonical chunk, timing and headers. */
+const v2Attempt = (): Record<string, unknown> => ({
+  provider: "chatgpt_codex",
+  status: 200,
+  content_type: "application/json",
+  chunks_base64: ["YQ=="],
+  terminal: "eof",
+  headers: { "content-type": "application/json" },
+  headers_truncated: false,
+  chunk_times_ms: [0],
+  started_at_ms: 1_700_000_000_000,
+  headers_at_ms: 1_700_000_000_001,
+  ended_at_ms: 1_700_000_000_002,
+});
+
+const v2Trace = (attempt: Record<string, unknown>): Record<string, unknown> => ({
+  version: 2,
+  attempts: [attempt],
+  attempts_truncated: false,
+  bytes_truncated: false,
+  chunks_truncated: false,
+});
+
 Deno.test("frozen trace relationship: status and content_type are null together", () => {
   assert.throws(() => parseSentinelUpstreamTrace(invalidTrace({ ...baseAttempt(), status: null, content_type: "application/json" })), /content type/);
   assert.throws(() => parseSentinelUpstreamTrace(invalidTrace({ ...baseAttempt(), status: 204, content_type: null })), /content type/);
@@ -156,7 +179,18 @@ Deno.test("frozen trace relationship: fetch_error and header-bearing terminals",
 Deno.test("strict parser rejects provider enum, keys, version, canonical base64, and attempt bounds", () => {
   assert.throws(() => parseSentinelUpstreamTrace(invalidTrace({ ...baseAttempt(), provider: "codex" })), /provider/);
   assert.throws(() => parseSentinelUpstreamTrace(invalidTrace({ ...baseAttempt(), content_type: "text/plain" })), /content type/);
-  assert.throws(() => parseSentinelUpstreamTrace({ ...invalidTrace(baseAttempt()), version: 2 }), /version/);
+  // A version-2 trace must carry the version-2 attempt key set; a version-1
+  // attempt inside it is a key-set violation, and an unknown version is rejected.
+  assert.throws(() => parseSentinelUpstreamTrace({ ...invalidTrace(baseAttempt()), version: 2 }), /keys are invalid/);
+  assert.throws(() => parseSentinelUpstreamTrace({ ...invalidTrace(baseAttempt()), version: 3 }), /version/);
+  assert.throws(() => parseSentinelUpstreamTrace(v2Trace({ ...v2Attempt(), headers: { authorization: "Bearer secret" } })), /not allowlisted/);
+  assert.throws(() => parseSentinelUpstreamTrace(v2Trace({ ...v2Attempt(), headers: { "content-type": "x".repeat(513) } })), /header value is invalid/);
+  assert.throws(() => parseSentinelUpstreamTrace(v2Trace({ ...v2Attempt(), chunk_times_ms: [] })), /chunk timing does not match/);
+  assert.throws(() => parseSentinelUpstreamTrace(v2Trace({ ...v2Attempt(), chunk_times_ms: [5] })), /timing exceeds its bounds/);
+  assert.throws(() => parseSentinelUpstreamTrace(v2Trace({ ...v2Attempt(), ended_at_ms: null })), /end time disagrees/);
+  const parsedV2 = parseSentinelUpstreamTrace(v2Trace(v2Attempt()));
+  assert.equal(parsedV2.version, 2);
+  assert.deepEqual(firstAttempt(parsedV2).chunk_times_ms, [0]);
   assert.throws(() => parseSentinelUpstreamTrace({ ...invalidTrace(baseAttempt()), extra: true }), /keys are invalid/);
   // Non-canonical padded base64: YR== decodes to the same byte as YQ== but
   // leaves non-zero trailing bits, so it must be rejected.
@@ -339,7 +373,10 @@ Deno.test("recorder bounds: attempts, chunks, and bytes with permanent truncatio
   recorder.dispose();
 
   const byteRecorder = createSentinelUpstreamRecorder();
-  const bigChunks = [new Uint8Array(70_000).fill(0x61), new Uint8Array(70_000).fill(0x62)];
+  // Two chunks whose total exceeds the byte bound by exactly one byte, so the
+  // retained prefix is the bound and the omission is reported.
+  const halfBound = Math.ceil(SENTINEL_UPSTREAM_MAX_BYTES / 2);
+  const bigChunks = [new Uint8Array(halfBound).fill(0x61), new Uint8Array(SENTINEL_UPSTREAM_MAX_BYTES - halfBound + 1).fill(0x62)];
   const bigSource = new ReadableStream<Uint8Array>(
     {
       pull(controller) {
@@ -399,7 +436,10 @@ Deno.test("recorder bounds: simultaneous chunk and byte exhaustion discloses bot
   const source = new ReadableStream<Uint8Array>(
     {
       pull(controller) {
-        if (chunkIndex < SENTINEL_UPSTREAM_MAX_CHUNKS) controller.enqueue(new Uint8Array(512).fill(0x41));
+        // An exact even split: MAX_CHUNKS retained chunks exhaust the byte
+        // bound exactly, so the next omitted chunk trips both permanent flags.
+        const chunkBytes = SENTINEL_UPSTREAM_MAX_BYTES / SENTINEL_UPSTREAM_MAX_CHUNKS;
+        if (chunkIndex < SENTINEL_UPSTREAM_MAX_CHUNKS) controller.enqueue(new Uint8Array(chunkBytes).fill(0x41));
         else if (chunkIndex === SENTINEL_UPSTREAM_MAX_CHUNKS) controller.enqueue(new Uint8Array([0x42]));
         else controller.close();
         chunkIndex += 1;
@@ -463,10 +503,15 @@ Deno.test("canonical upstream JSON is deterministic and matches the v2 frame enc
   const trace = recorder.snapshotAndSeal();
   const canonical = canonicalSentinelUpstreamJson(trace);
   assert.equal(canonicalSentinelUpstreamJson(trace), canonical);
-  assert.equal(
-    canonical,
-    '{"attempts":[{"chunks_base64":["YQ=="],"content_type":"application/json","provider":"chatgpt_codex","status":200,"terminal":"eof"}],"attempts_truncated":false,"bytes_truncated":false,"chunks_truncated":false,"version":1}'
-  );
+  // The recorder now seals a version-2 attempt: the frozen keys keep their
+  // exact frame encoding and the new timing/header evidence follows the same
+  // recursive key ordering.
+  const frozenV1 =
+    '{"attempts":[{"chunks_base64":["YQ=="],"content_type":"application/json","provider":"chatgpt_codex","status":200,"terminal":"eof"}],"attempts_truncated":false,"bytes_truncated":false,"chunks_truncated":false,"version":1}';
+  assert.equal(canonicalSentinelUpstreamJson(parseSentinelUpstreamTrace(JSON.parse(frozenV1))), frozenV1);
+  assert.equal(canonical.startsWith('{"attempts":[{"chunk_times_ms":['), true);
+  assert.equal(canonical.includes('"headers":{"content-type":"application/json"}'), true);
+  assert.equal(canonical.endsWith('"version":2}'), true);
   // A different partial trace canonicalizes differently.
   const partial = createSentinelUpstreamRecorder();
   partial.startAttempt("chatgpt_codex").wrap(new Response("ab", { status: 200, headers: { "Content-Type": "application/json" } }));
@@ -574,7 +619,12 @@ Deno.test({
         "case-group identity must remain the request-only v1 HMAC"
       );
       const completePlaintext = await decryptExportedSentinelReplay(await exportRoundTrip(storedComplete, kv), keyBytes);
-      assert.equal(completePlaintext.version, 2);
+      assert.equal(completePlaintext.version, 3);
+      // This synthetic observation carries no observed downstream body, so the
+      // capture reports that omission instead of claiming full coverage.
+      assert.equal(completePlaintext.capture_status, "incomplete");
+      assert.equal(completePlaintext.replay_coverage, "partial");
+      assert.equal(completePlaintext.unavailable?.includes("downstream_terminal_body_unavailable"), true);
       assert.deepEqual(completePlaintext.upstream, complete);
       const partialPlaintext = await decryptExportedSentinelReplay(await exportRoundTrip(storedPartial, kv), keyBytes);
       assert.deepEqual(partialPlaintext.upstream, partial);

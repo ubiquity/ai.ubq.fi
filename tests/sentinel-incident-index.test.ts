@@ -98,6 +98,10 @@ const clientObservationFor = (status: number) => ({
   failure_kind: "upstream_timeout",
   framing_valid: true,
   provider_route: "test-provider",
+  error_code: null,
+  error_param: null,
+  terminal_body_base64: null,
+  terminal_body_truncated: false,
 });
 
 const seedAuthenticatedKey = async (kv: Deno.Kv, token: string): Promise<void> => {

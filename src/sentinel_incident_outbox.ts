@@ -269,6 +269,20 @@ export type SentinelIncidentIndexEvidenceRef = Readonly<{
   digest: string | null;
 }>;
 
+/** Bounded classification of the most recent observation in one incident group. */
+export type SentinelIncidentIndexLatest = Readonly<{
+  observed_at_ms: number;
+  revision: string | null;
+  provider: string | null;
+  route: string;
+  model: string | null;
+  reasoning: string | null;
+  failure_kind: string | null;
+  terminal: SentinelIncidentTerminalCategory;
+  status: number;
+  stream: boolean;
+}>;
+
 export type SentinelIncidentIndexRow = Readonly<{
   version: 1;
   incident_id: string;
@@ -283,6 +297,7 @@ export type SentinelIncidentIndexRow = Readonly<{
   provenance: Readonly<{ endpoint: string; captured_at_ms: number; captured_by: null }>;
   evidence_ref: SentinelIncidentIndexEvidenceRef | null;
   evidence_expires_at_ms: number | null;
+  latest?: SentinelIncidentIndexLatest;
 }>;
 
 export const isSentinelIncidentIndexEvidenceRef = (value: unknown): value is SentinelIncidentIndexEvidenceRef =>
@@ -293,6 +308,27 @@ export const isSentinelIncidentIndexEvidenceRef = (value: unknown): value is Sen
 
 export const isSentinelIncidentIndexEndpoint = (value: unknown): value is string =>
   typeof value === "string" && (INDEX_ENDPOINTS.includes(value) || value === "other");
+
+const INDEX_SLUG = /^[A-Za-z0-9_.:-]{1,128}$/;
+const INDEX_REASONING = /^[A-Za-z0-9_.:-]{1,32}$/;
+
+const boundedIndexText = (value: unknown, pattern: RegExp): string | null => (typeof value === "string" && pattern.test(value) ? value : null);
+
+const isSentinelIncidentIndexLatest = (value: unknown): value is SentinelIncidentIndexLatest =>
+  isRecord(value) &&
+  positiveInteger(value.observed_at_ms) &&
+  (value.revision === null || (typeof value.revision === "string" && FULL_SHA.test(value.revision))) &&
+  (value.provider === null || boundedIndexText(value.provider, INDEX_SLUG) !== null) &&
+  isSentinelIncidentIndexEndpoint(value.route) &&
+  (value.model === null || boundedIndexText(value.model, INDEX_SLUG) !== null) &&
+  (value.reasoning === null || boundedIndexText(value.reasoning, INDEX_REASONING) !== null) &&
+  (value.failure_kind === null || boundedIndexText(value.failure_kind, INDEX_SLUG) !== null) &&
+  isSentinelIncidentTerminalCategory(value.terminal) &&
+  typeof value.status === "number" &&
+  Number.isSafeInteger(value.status) &&
+  value.status >= 0 &&
+  value.status <= 599 &&
+  typeof value.stream === "boolean";
 
 export const isSentinelIncidentIndexRow = (value: unknown): value is SentinelIncidentIndexRow => {
   if (!isRecord(value)) return false;
@@ -319,7 +355,8 @@ export const isSentinelIncidentIndexRow = (value: unknown): value is SentinelInc
     value.provenance.captured_by === null &&
     (value.evidence_ref === null || isSentinelIncidentIndexEvidenceRef(value.evidence_ref)) &&
     (value.evidence_expires_at_ms === null || positiveInteger(value.evidence_expires_at_ms)) &&
-    (value.evidence_ref === null) === (value.evidence_expires_at_ms === null)
+    (value.evidence_ref === null) === (value.evidence_expires_at_ms === null) &&
+    (value.latest === undefined || isSentinelIncidentIndexLatest(value.latest))
   );
 };
 
@@ -372,6 +409,44 @@ export const sentinelIncidentFingerprint = (input: { endpoint: string; method: s
 
 const indexRowKey = (fingerprint: string): Deno.KvKey => [...SENTINEL_INCIDENT_INDEX_PREFIX, fingerprint];
 
+/** Bounded latest-observation classification accepted by the index writer. */
+export type SentinelIncidentIndexClassification = Readonly<{
+  provider: string | null;
+  model: string | null;
+  reasoning: string | null;
+  failure_kind: string | null;
+}>;
+
+/**
+ * The bounded latest classification of one observation. Every field is
+ * sanitized against its own pattern; a value that does not fit is recorded as
+ * absent rather than copied, and no body, header, request id or error text is
+ * ever part of it.
+ */
+const latestObservation = (
+  input: Readonly<{
+    observedAtMs: number;
+    gitSha: string;
+    endpoint: string;
+    observation: SentinelIncidentIndexObservation;
+    classification: SentinelIncidentIndexClassification | undefined;
+  }>
+): SentinelIncidentIndexLatest => {
+  const classification = input.classification;
+  return {
+    observed_at_ms: input.observedAtMs,
+    revision: FULL_SHA.test(input.gitSha) ? input.gitSha : null,
+    provider: boundedIndexText(classification?.provider, INDEX_SLUG),
+    route: normalizeSentinelIncidentEndpoint(input.endpoint),
+    model: boundedIndexText(classification?.model, INDEX_SLUG),
+    reasoning: boundedIndexText(classification?.reasoning, INDEX_REASONING),
+    failure_kind: boundedIndexText(classification?.failure_kind, INDEX_SLUG),
+    terminal: classifySentinelIncidentTerminal(input.observation),
+    status: input.observation.status,
+    stream: input.observation.stream,
+  };
+};
+
 const newIndexRow = (
   input: Readonly<{
     fingerprint: string;
@@ -381,6 +456,7 @@ const newIndexRow = (
     endpoint: string;
     method: string;
     observation: SentinelIncidentIndexObservation;
+    classification?: SentinelIncidentIndexClassification;
   }>
 ): SentinelIncidentIndexRow => ({
   version: 1,
@@ -400,7 +476,51 @@ const newIndexRow = (
   },
   evidence_ref: null,
   evidence_expires_at_ms: null,
+  latest: latestObservation({
+    observedAtMs: input.observedAtMs,
+    gitSha: input.gitSha,
+    endpoint: input.endpoint,
+    observation: input.observation,
+    classification: input.classification,
+  }),
 });
+
+/**
+ * The next index row for one observation: create a new group, or merge into the
+ * existing one. First-seen identity stays; only the newest observation refreshes
+ * the latest classification.
+ */
+const nextSentinelIncidentIndexRow = (
+  entry: Deno.KvEntryMaybe<SentinelIncidentIndexRow>,
+  input: Readonly<{
+    endpoint: string;
+    method: string;
+    gitSha: string;
+    observedAtMs: number;
+    observation: SentinelIncidentIndexObservation;
+    classification?: SentinelIncidentIndexClassification;
+  }>,
+  fingerprint: string,
+  latest: SentinelIncidentIndexLatest,
+  randomUuid: () => string
+): Readonly<{ next: SentinelIncidentIndexRow; checkVersionstamp: string | null }> => {
+  if (entry.value === null) {
+    const incidentId = `provider-${randomUuid().toLowerCase()}`;
+    if (!isSentinelIncidentId(incidentId)) throw new Error("Sentinel incident UUID is invalid");
+    return { next: newIndexRow({ ...input, fingerprint, incidentId }), checkVersionstamp: null };
+  }
+  if (!isSentinelIncidentIndexRow(entry.value)) throw new Error("Sentinel incident index record is invalid");
+  return {
+    next: {
+      ...entry.value,
+      first_seen_at_ms: Math.min(entry.value.first_seen_at_ms, input.observedAtMs),
+      last_seen_at_ms: Math.max(entry.value.last_seen_at_ms, input.observedAtMs),
+      count: entry.value.count + 1,
+      latest: entry.value.last_seen_at_ms > input.observedAtMs ? entry.value.latest : latest,
+    },
+    checkVersionstamp: entry.versionstamp,
+  };
+};
 
 /**
  * Record one actual observation for the stable failure group. Bounded
@@ -416,31 +536,23 @@ export const recordSentinelIncidentIndexObservation = async (
     gitSha: string;
     observedAtMs: number;
     observation: SentinelIncidentIndexObservation;
+    classification?: SentinelIncidentIndexClassification;
   }>,
   dependencies: Pick<SentinelIncidentDependencies, "randomUuid"> = {}
 ): Promise<Deno.KvEntry<SentinelIncidentIndexRow>> => {
   if (!positiveInteger(input.observedAtMs)) throw new Error("Sentinel incident timestamp is invalid");
   const fingerprint = await sentinelIncidentFingerprint(input);
   const key = indexRowKey(fingerprint);
+  const latest = latestObservation({
+    observedAtMs: input.observedAtMs,
+    gitSha: input.gitSha,
+    endpoint: input.endpoint,
+    observation: input.observation,
+    classification: input.classification,
+  });
   for (let attempt = 0; attempt < SENTINEL_INCIDENT_INDEX_MAX_CAS_ATTEMPTS; attempt += 1) {
     const entry = await kv.get<SentinelIncidentIndexRow>(key);
-    let next: SentinelIncidentIndexRow;
-    let checkVersionstamp: string | null;
-    if (entry.value === null) {
-      const incidentId = `provider-${(dependencies.randomUuid ?? defaultRandomUuid)().toLowerCase()}`;
-      if (!isSentinelIncidentId(incidentId)) throw new Error("Sentinel incident UUID is invalid");
-      next = newIndexRow({ ...input, fingerprint, incidentId });
-      checkVersionstamp = null;
-    } else {
-      if (!isSentinelIncidentIndexRow(entry.value)) throw new Error("Sentinel incident index record is invalid");
-      next = {
-        ...entry.value,
-        first_seen_at_ms: Math.min(entry.value.first_seen_at_ms, input.observedAtMs),
-        last_seen_at_ms: Math.max(entry.value.last_seen_at_ms, input.observedAtMs),
-        count: entry.value.count + 1,
-      };
-      checkVersionstamp = entry.versionstamp;
-    }
+    const { next, checkVersionstamp } = nextSentinelIncidentIndexRow(entry, input, fingerprint, latest, dependencies.randomUuid ?? defaultRandomUuid);
     if (!isSentinelIncidentIndexRow(next)) throw new Error("Sentinel incident index record is invalid");
     const committed = await kv.atomic().check({ key, versionstamp: checkVersionstamp }).set(key, next).commit();
     if (committed.ok) return { key, value: next, versionstamp: committed.versionstamp };
