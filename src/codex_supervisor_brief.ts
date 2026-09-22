@@ -430,7 +430,10 @@ export const collectBriefTranscript = async (
   const meta = await readBriefThreadMeta(connection, threadId, signal);
   const first = await fetchBriefTurns(connection, threadId, "asc", 1, "summary", signal);
   const recent = await fetchBriefTurns(connection, threadId, "desc", BRIEF_RECENT_TURNS, "summary", signal);
-  const projected = await enrichBriefTurns(connection, threadId, dedupeBriefTurns([...first, ...recent]), signal);
+  // The recent page arrives newest-first; restore chronological order so the
+  // prompt never presents older progress as the current status.
+  const recentChronological = [...recent].reverse();
+  const projected = await enrichBriefTurns(connection, threadId, dedupeBriefTurns([...first, ...recentChronological]), signal);
   // A local source can read the last 256 KiB of its own rollout when the
   // projected history lags the still-growing log; remote sources cannot.
   const events = await readSupervisorRolloutTail({ codexHome: source.codexHome, threadId, rolloutPath: meta.rolloutPath });
