@@ -244,14 +244,36 @@ Deno.test("private assistant analysis never becomes a transcript event", () => {
     message({ type: "message", role: "assistant", phase: "reasoning" }, "private reasoning text", 1),
     message({ type: "message", role: "assistant", phase: "commentary" }, "visible commentary", 2),
     message({ type: "message", role: "assistant", channel: "final" }, "visible final", 3),
-    message({ type: "message", role: "assistant" }, "legacy visible message", 4),
-    message({ type: "message", role: "user" }, "visible user request", 5),
+    message({ type: "message", role: "assistant", phase: "final_answer" }, "visible final answer", 4),
+    message({ type: "message", role: "assistant" }, "legacy visible message", 5),
+    message({ type: "message", role: "user" }, "visible user request", 6),
   ].join("\n");
   const events = parseSupervisorRolloutTail(jsonl);
   assert.deepEqual(
     events.map((event) => event.text),
-    ["visible commentary", "visible final", "legacy visible message", "visible user request"]
+    ["visible commentary", "visible final", "visible final answer", "legacy visible message", "visible user request"]
   );
+});
+
+Deno.test("a final-answer rollout item reaches the brief tail when projected history lags", () => {
+  const threadId = "01a0c9b9-c1b4-7871-8c3b-76d1fceb28a4";
+  const jsonl = JSON.stringify({
+    timestamp: "2026-09-22T08:00:00.000Z",
+    type: "response_item",
+    payload: {
+      type: "message",
+      role: "assistant",
+      phase: "final_answer",
+      content: [{ type: "output_text", text: "final result: shipped" }],
+    },
+  });
+  const events = parseSupervisorRolloutTail(jsonl);
+  assert.deepEqual(events.map((event) => event.text), ["final result: shipped"]);
+  const turns = appendRolloutTailTurn([], { threadId, state: "active", events });
+  const [tail] = turns;
+  assert.ok(tail);
+  assert.equal(tail.freshTail, true, "the lagging projection is covered by the rollout tail");
+  assert.deepEqual(tail.items.map((item) => item.text), ["final result: shipped"]);
 });
 
 Deno.test("rollout parsing and tail merging retain the newest bounded entries", () => {

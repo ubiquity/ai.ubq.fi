@@ -477,7 +477,8 @@ export const createSupervisorView = ({ section, isSuperAdmin, getToken, apiUrl }
     if (followLog) followLog.textContent = "";
     if (followTitle) followTitle.textContent = `${session.machine} · ${text(session.title) ?? session.id}`;
     setFollowStatus("Connecting to recorded output…", "ok");
-    followController = new AbortController();
+    const request = new AbortController();
+    followController = request;
     const params = new URLSearchParams({ source: session.sourceId, id: session.id });
     const token = typeof getToken === "function" ? getToken() : "";
     try {
@@ -485,8 +486,12 @@ export const createSupervisorView = ({ section, isSuperAdmin, getToken, apiUrl }
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         credentials: "include",
         cache: "no-store",
-        signal: followController.signal,
+        signal: request.signal,
       });
+      // Every effect below is fenced to this request. Switching sessions aborts
+      // this controller and installs another one, so a late response, frame, or
+      // rejection must never report against or clear the new session's follow.
+      if (followController !== request) return;
       if (!response.ok || !response.body) {
         setFollowStatus(`Follow unavailable: HTTP ${response.status}.`, "warning");
         return;
@@ -497,17 +502,20 @@ export const createSupervisorView = ({ section, isSuperAdmin, getToken, apiUrl }
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        if (followController !== request) return;
         buffer += decoder.decode(value, { stream: true });
         const frames = buffer.split("\n\n");
         buffer = frames.pop() ?? "";
         for (const frame of frames) handleFrame(frame);
       }
+      if (followController !== request) return;
       followKey = null;
       followController = null;
       render();
       setFollowStatus("Follow stream closed. Select the session again to resume recorded output.", "warning");
     } catch (error) {
-      if (followController && !followController.signal.aborted) {
+      if (followController !== request) return;
+      if (!request.signal.aborted) {
         setFollowStatus(`Follow stopped: ${error instanceof Error ? error.message : "connection failed"}`, "warning");
       }
       followController = null;
