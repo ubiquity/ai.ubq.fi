@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { keyToJSON } from "@deno/kv-utils/json";
 import { appendBooleanParam } from "../scripts/kv-migrate.ts";
 import { API_KEY_USAGE_V3_RETENTION_MS } from "../src/api_key_policy.ts";
+import { codexResetUsageKey, readCodexResetUsage } from "../src/codex_reset_settings.ts";
 import {
   classifyKvMigrationKey,
   importKvMigrationLines,
@@ -177,6 +178,8 @@ Deno.test("KV migration classifies v2 incident state and skips the transient cir
     "kernel_quota_v2_org_reservation"
   );
   assert.equal(classifyKvMigrationKey(["uos_ai", "runtime_config", "v2"], options).action, "import");
+  assert.equal(classifyKvMigrationKey(codexResetUsageKey("account-hash"), options).action, "import");
+  assert.equal(classifyKvMigrationKey(codexResetUsageKey("account-hash"), options).group, "codex_reset_usage");
   assert.equal(classifyKvMigrationKey(["uos_ai", "codex_rate_limit"], options).group, "unknown");
 });
 
@@ -1044,4 +1047,63 @@ Deno.test("KV incident validation retains historical revoked V3 windows", async 
   assert.equal(v3WindowExpireIn, API_KEY_USAGE_V3_RETENTION_MS);
   const validation = await validateKvMigrationTarget(makeKvStub(store));
   assert.deepEqual(validation.errors, []);
+});
+
+Deno.test("KV migration preserves Codex reset usage fences and agrees with validation counts", async () => {
+  const store = new Map<string, unknown>();
+  const disabledHash = "reset-disabled-account-hash";
+  const enabledHash = "reset-enabled-account-hash";
+  const disabledKey = codexResetUsageKey(disabledHash);
+  const enabledKey = codexResetUsageKey(enabledHash);
+  const adjacentPrefixKey = ["uos_ai", "codex_instructions", "prompt-a"] as const;
+  const transientKey = ["uos_ai", "auth", "sessions", "session-a"] as const;
+
+  seedUnlimitedIncidentApiKey(store, { sharedOverrides: { paid_fallback_reservation_request_id: null } });
+  await migrateKvReadIncidentV2(makeKvStub(store));
+
+  const result = await importKvMigrationLines(
+    makeKvStub(store),
+    [
+      entryLine(disabledKey, { enabled: false }),
+      entryLine(enabledKey, { enabled: true }),
+      entryLine(adjacentPrefixKey, { prompt: "keep" }),
+      entryLine(transientKey, { token: "skip" }),
+    ],
+    { profile: "prod", includeCache: false, includeLegacy: false, overwrite: true, dryRun: false }
+  );
+
+  assert.equal(result.total, 4);
+  assert.equal(result.imported, 3);
+  assert.equal(result.skipped, 1);
+  assert.equal(result.groups.codex_reset_usage, 2);
+  assert.equal(result.groups.codex_prompts, 1);
+  assert.equal(result.groups.passkey_sessions, 1);
+
+  // The explicit disable is a spend fence: it survives the migration path with its exact key and value.
+  assert.deepEqual(store.get(keyToString(disabledKey)), { enabled: false });
+  assert.deepEqual(store.get(keyToString(enabledKey)), { enabled: true });
+  assert.deepEqual(store.get(keyToString(adjacentPrefixKey)), { prompt: "keep" });
+  assert.equal(store.has(keyToString(transientKey)), false);
+
+  assert.equal((await readCodexResetUsage(makeKvStub(store), disabledHash)).allowed, false);
+  assert.equal((await readCodexResetUsage(makeKvStub(store), enabledHash)).allowed, true);
+
+  const validation = await validateKvMigrationTarget(makeKvStub(store));
+  assert.deepEqual(validation.errors, []);
+  assert.equal(validation.counts.codex_reset_usage, 2);
+});
+
+Deno.test("KV migration validation rejects malformed Codex reset usage rows", async () => {
+  const store = new Map<string, unknown>();
+  store.set(keyToString(["uos_ai", "codex_reset_usage", "bad_key"]), { enabled: false });
+  store.set(keyToString(["uos_ai", "codex_reset_usage", "account", "v1", "bad_value"]), { enabled: "not_a_boolean" });
+  store.set(keyToString(["uos_ai", "codex_reset_usage", "account", "v1", "valid_value"]), { enabled: true });
+
+  const result = await validateKvMigrationTarget(makeKvStub(store));
+  const resetErrors = result.errors.filter((error) => error.startsWith("codex reset usage"));
+
+  assert.equal(result.counts.codex_reset_usage, 3);
+  assert.equal(resetErrors.length, 2);
+  assert.match(resetErrors.join("\n"), /codex reset usage key is malformed/);
+  assert.match(resetErrors.join("\n"), /codex reset usage record is malformed/);
 });
