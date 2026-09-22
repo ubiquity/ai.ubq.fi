@@ -338,6 +338,15 @@ truncation behaviour is unverified. The gap is narrower than "unknown": neither 
 all, so the untested surface is empty until either is deliberately wired in. Probe both before trusting either, and
 recheck the blockers before treating them as permanent.
 
+**Recheck 2026-09-22, both blockers still hold.** Surplus answers a probe on a Surplus-routed id with HTTP 402
+`Insufficient USDC balance: need ~$1.0000, have $0.9895` (request id `01M33CFBC7AHTBXM365KNCM28D`), and the terminal
+ledger records `provider: "surplus"`, `status: 402`, `failure_kind: "read_error"`. OpenLux is still not reached at all:
+`gpt-5.6-luna` and `gpt-6-astra` both answer `provider: "chatgpt_codex"` with `fallback_reason: null`, because the Codex
+subscription tier serves them first, so the paid tier is never exercised through those ids. The gap therefore remains
+open in the same shape, and no truncation evidence was obtained for either provider. Note also that `deepseek-v4-pro` is
+served by `provider: "deepseek"`, not Surplus, despite the id appearing in the paid catalogue - so probing that id does
+not test Surplus truncation.
+
 ## Buffered-terminal fix deployed to both surfaces - 2026-09-22
 
 The buffered DeepSeek Responses fix from PR #387 is live on both surfaces at `3661bcfd13a9c1b9056fe5dc1786bb49b18ad594`,
