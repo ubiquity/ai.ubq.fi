@@ -17,8 +17,39 @@
  */
 
 export const SENTINEL_UPSTREAM_MAX_ATTEMPTS = 8;
-export const SENTINEL_UPSTREAM_MAX_CHUNKS = 256;
-export const SENTINEL_UPSTREAM_MAX_BYTES = 131_072;
+/**
+ * Long local streams (a 35-second reasoning generation, an interrupted
+ * Codex turn) routinely exceeded the original 128 KiB/256-chunk ceiling, so a
+ * capture could be exported but not replayed. These bounds keep capture
+ * finite while covering ordinary long local requests; exceeding either sets
+ * the matching permanent truncation flag and can never be reported as full
+ * replay coverage.
+ */
+export const SENTINEL_UPSTREAM_MAX_CHUNKS = 4_096;
+export const SENTINEL_UPSTREAM_MAX_BYTES = 4 * 1_024 * 1_024;
+/** A trace may not claim more than seven days of elapsed timing. */
+export const SENTINEL_UPSTREAM_MAX_TIMING_MS = 7 * 24 * 60 * 60 * 1_000;
+export const SENTINEL_UPSTREAM_MAX_HEADER_VALUE_CHARS = 512;
+
+/**
+ * Fixed safe upstream response header allowlist. Authentication material,
+ * cookies, provider account identifiers and request IDs are excluded by
+ * construction; only bounded wire-shape and rate-limit metadata is retained.
+ */
+export const SENTINEL_UPSTREAM_SAFE_RESPONSE_HEADER_NAMES = [
+  "cache-control",
+  "content-length",
+  "content-type",
+  "openai-processing-ms",
+  "retry-after",
+  "x-ratelimit-limit-requests",
+  "x-ratelimit-limit-tokens",
+  "x-ratelimit-remaining-requests",
+  "x-ratelimit-remaining-tokens",
+  "x-ratelimit-reset-requests",
+  "x-ratelimit-reset-tokens",
+] as const;
+const SAFE_RESPONSE_HEADER_NAME_SET = new Set<string>(SENTINEL_UPSTREAM_SAFE_RESPONSE_HEADER_NAMES);
 
 export type SentinelUpstreamProvider = "chatgpt_codex" | "surplus" | "metered" | "cerebras" | "deepseek";
 
@@ -26,16 +57,30 @@ export type SentinelUpstreamTerminal = "pending" | "fetch_error" | "eof" | "read
 
 export type SentinelUpstreamContentType = "text/event-stream" | "application/json" | "other";
 
+export type SentinelUpstreamSafeHeaders = Readonly<Record<string, string>>;
+
+/**
+ * One recorded upstream attempt. Version-1 traces carry exactly the first five
+ * fields; version-2 traces additionally carry the observed response headers
+ * and attempt/chunk timing. Absent (undefined) timing fields mean the attempt
+ * predates timing capture and must be reported as unavailable, never guessed.
+ */
 export type SentinelUpstreamAttempt = Readonly<{
   provider: SentinelUpstreamProvider;
   status: number | null;
   content_type: SentinelUpstreamContentType | null;
   chunks_base64: readonly string[];
   terminal: SentinelUpstreamTerminal;
+  headers?: SentinelUpstreamSafeHeaders;
+  headers_truncated?: boolean;
+  chunk_times_ms?: readonly number[];
+  started_at_ms?: number;
+  headers_at_ms?: number | null;
+  ended_at_ms?: number | null;
 }>;
 
 export type SentinelUpstreamTrace = Readonly<{
-  version: 1;
+  version: 1 | 2;
   attempts: readonly SentinelUpstreamAttempt[];
   attempts_truncated: boolean;
   bytes_truncated: boolean;
@@ -64,21 +109,29 @@ const CONTENT_TYPE_SET = new Set<string>(["text/event-stream", "application/json
 
 const STANDARD_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
-const freezeTrace = (value: SentinelUpstreamTrace): SentinelUpstreamTrace => {
-  const attempts = Object.freeze(
-    value.attempts.map((attempt) =>
-      Object.freeze({
-        ...attempt,
-        chunks_base64: Object.freeze([...attempt.chunks_base64]),
-      })
-    )
-  );
-  return Object.freeze({ ...value, attempts });
+const freezeAttempt = (attempt: SentinelUpstreamAttempt): SentinelUpstreamAttempt => {
+  const frozen: Record<string, unknown> = {
+    provider: attempt.provider,
+    status: attempt.status,
+    content_type: attempt.content_type,
+    chunks_base64: Object.freeze([...attempt.chunks_base64]),
+    terminal: attempt.terminal,
+  };
+  if (attempt.headers !== undefined) frozen.headers = Object.freeze({ ...attempt.headers });
+  if (attempt.headers_truncated !== undefined) frozen.headers_truncated = attempt.headers_truncated;
+  if (attempt.chunk_times_ms !== undefined) frozen.chunk_times_ms = Object.freeze([...attempt.chunk_times_ms]);
+  if (attempt.started_at_ms !== undefined) frozen.started_at_ms = attempt.started_at_ms;
+  if (attempt.headers_at_ms !== undefined) frozen.headers_at_ms = attempt.headers_at_ms;
+  if (attempt.ended_at_ms !== undefined) frozen.ended_at_ms = attempt.ended_at_ms;
+  return Object.freeze(frozen) as SentinelUpstreamAttempt;
 };
+
+const freezeTrace = (value: SentinelUpstreamTrace): SentinelUpstreamTrace =>
+  Object.freeze({ ...value, attempts: Object.freeze(value.attempts.map(freezeAttempt)) });
 
 export const emptySentinelUpstreamTrace = (): SentinelUpstreamTrace =>
   Object.freeze({
-    version: 1,
+    version: 2,
     attempts: [] as readonly SentinelUpstreamAttempt[],
     attempts_truncated: false,
     bytes_truncated: false,
@@ -139,12 +192,26 @@ type SentinelTraceAccumulator = {
   totalChunks: number;
 };
 
-const SENTINEL_ATTEMPT_KEYS = ["provider", "status", "content_type", "chunks_base64", "terminal"];
+const SENTINEL_ATTEMPT_V1_KEYS = ["provider", "status", "content_type", "chunks_base64", "terminal"];
+const SENTINEL_ATTEMPT_V2_KEYS = [
+  "provider",
+  "status",
+  "content_type",
+  "chunks_base64",
+  "terminal",
+  "headers",
+  "headers_truncated",
+  "chunk_times_ms",
+  "started_at_ms",
+  "headers_at_ms",
+  "ended_at_ms",
+];
 
-/** Validate one attempt's exact key set and return it as a raw record. */
-const sentinelAttemptRecord = (attempt: unknown, index: number): Record<string, unknown> => {
+/** Validate one attempt's exact key set for its trace version and return it as a raw record. */
+const sentinelAttemptRecord = (attempt: unknown, index: number, version: 1 | 2): Record<string, unknown> => {
+  const expected = version === 2 ? SENTINEL_ATTEMPT_V2_KEYS : SENTINEL_ATTEMPT_V1_KEYS;
   const keys = attempt === null || typeof attempt !== "object" || Array.isArray(attempt) ? [] : Object.keys(attempt);
-  if (keys.length !== SENTINEL_ATTEMPT_KEYS.length || keys.some((key) => !SENTINEL_ATTEMPT_KEYS.includes(key))) {
+  if (keys.length !== expected.length || keys.some((key) => !expected.includes(key))) {
     cloneIndex(attempt, index, "Sentinel upstream attempt keys are invalid");
   }
   return attempt as Record<string, unknown>;
@@ -188,6 +255,54 @@ const sentinelAttemptChunks = (value: unknown, index: number): unknown[] => {
   return chunks;
 };
 
+const sentinelAttemptHeaders = (value: unknown, index: number): SentinelUpstreamSafeHeaders => {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    cloneIndex(value, index, "Sentinel upstream attempt headers are invalid");
+  }
+  const headers: Record<string, string> = {};
+  for (const [name, headerValue] of Object.entries(value as Record<string, unknown>)) {
+    if (!SAFE_RESPONSE_HEADER_NAME_SET.has(name)) {
+      cloneIndex(name, index, "Sentinel upstream attempt header name is not allowlisted");
+    }
+    if (typeof headerValue !== "string" || headerValue.length === 0 || headerValue.length > SENTINEL_UPSTREAM_MAX_HEADER_VALUE_CHARS) {
+      cloneIndex(name, index, "Sentinel upstream attempt header value is invalid");
+    }
+    const text = headerValue as string;
+    if (text.trim() !== text) cloneIndex(name, index, "Sentinel upstream attempt header value is not canonical");
+    headers[name] = text;
+  }
+  return headers;
+};
+
+const sentinelAttemptChunkTimes = (value: unknown, index: number, chunkCount: number): number[] => {
+  if (!Array.isArray(value) || value.length !== chunkCount) {
+    cloneIndex(value, index, "Sentinel upstream attempt chunk timing does not match its chunks");
+  }
+  const times: number[] = [];
+  let previous = 0;
+  for (const candidate of value as unknown[]) {
+    if (
+      typeof candidate !== "number" ||
+      !Number.isSafeInteger(candidate) ||
+      candidate < 0 ||
+      candidate > SENTINEL_UPSTREAM_MAX_TIMING_MS ||
+      candidate < previous
+    ) {
+      cloneIndex(candidate, index, "Sentinel upstream attempt chunk timing is invalid");
+    }
+    previous = candidate as number;
+    times.push(previous);
+  }
+  return times;
+};
+
+const sentinelAttemptClock = (value: unknown, index: number, label: string): number => {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0 || value > Number.MAX_SAFE_INTEGER) {
+    cloneIndex(value, index, `Sentinel upstream attempt ${label} is invalid`);
+  }
+  return value as number;
+};
+
 const assertSentinelAttemptHeaderConsistency = (
   status: number | null,
   contentType: SentinelUpstreamContentType | null,
@@ -220,14 +335,8 @@ const assertSentinelAttemptTerminalConsistency = (
   }
 };
 
-/** Validate one attempt, decode its retained chunks, and append it to the trace under construction. */
-const appendSentinelAttempt = (raw: unknown, index: number, state: SentinelTraceAccumulator): void => {
-  const wire = sentinelAttemptRecord(raw, index);
-  const provider = sentinelAttemptProvider(wire.provider, index);
-  const status = sentinelAttemptStatus(wire.status, index);
-  const contentType = sentinelAttemptContentType(wire.content_type, index);
-  const terminal = sentinelAttemptTerminal(wire.terminal, index);
-  const encodedChunks = sentinelAttemptChunks(wire.chunks_base64, index);
+/** Retain one attempt's chunks under the aggregate trace bounds, in wire order. */
+const retainSentinelChunks = (encodedChunks: readonly unknown[], index: number, state: SentinelTraceAccumulator): string[] => {
   if (state.totalChunks + encodedChunks.length > SENTINEL_UPSTREAM_MAX_CHUNKS) {
     throw new Error("Sentinel upstream trace has too many chunks");
   }
@@ -243,15 +352,93 @@ const appendSentinelAttempt = (raw: unknown, index: number, state: SentinelTrace
     }
     chunks.push(text);
   }
+  return chunks;
+};
+
+/** One version-2 attempt's validated header and timing metadata. */
+type SentinelAttemptMetadata = Readonly<{
+  headers: SentinelUpstreamSafeHeaders;
+  headersTruncated: boolean;
+  chunkTimes: readonly number[];
+  startedAtMs: number;
+  headersAtMs: number | null;
+  endedAtMs: number | null;
+}>;
+
+/** Reject an attempt whose recorded timing disagrees with its status or terminal. */
+const assertSentinelAttemptTiming = (
+  status: number | null,
+  terminal: SentinelUpstreamTerminal,
+  metadata: Pick<SentinelAttemptMetadata, "startedAtMs" | "headersAtMs" | "endedAtMs" | "chunkTimes">,
+  index: number
+): void => {
+  const { startedAtMs, headersAtMs, endedAtMs, chunkTimes } = metadata;
+  if (status !== null && headersAtMs === null) {
+    cloneIndex(status, index, "Sentinel upstream header-bearing attempt requires a header time");
+  }
+  if (status === null && headersAtMs !== null) {
+    cloneIndex(status, index, "Sentinel upstream pre-header attempt cannot carry a header time");
+  }
+  if (headersAtMs !== null && headersAtMs < startedAtMs) {
+    cloneIndex(headersAtMs, index, "Sentinel upstream attempt header time predates its start");
+  }
+  if (endedAtMs !== null && endedAtMs < (headersAtMs ?? startedAtMs)) {
+    cloneIndex(endedAtMs, index, "Sentinel upstream attempt end time predates its headers");
+  }
+  if ((terminal === "pending") !== (endedAtMs === null)) {
+    cloneIndex(terminal, index, "Sentinel upstream attempt end time disagrees with its terminal");
+  }
+  if (endedAtMs === null) return;
+  const elapsed = endedAtMs - startedAtMs;
+  if (elapsed > SENTINEL_UPSTREAM_MAX_TIMING_MS || chunkTimes.some((time) => time > elapsed)) {
+    cloneIndex(endedAtMs, index, "Sentinel upstream attempt timing exceeds its bounds");
+  }
+};
+
+/** Validate and normalize one version-2 attempt's headers and timing metadata. */
+const sentinelAttemptV2Metadata = (
+  wire: Record<string, unknown>,
+  status: number | null,
+  terminal: SentinelUpstreamTerminal,
+  chunksLength: number,
+  index: number
+): SentinelAttemptMetadata => {
+  const headers = sentinelAttemptHeaders(wire.headers, index);
+  // A local primitive keeps the validated boolean type explicit: the wire value
+  // stays rejected when it is not a boolean, and no assertion is needed.
+  const headersTruncated = wire.headers_truncated;
+  if (typeof headersTruncated !== "boolean") {
+    return cloneIndex(headersTruncated, index, "Sentinel upstream attempt header truncation flag is invalid");
+  }
+  const chunkTimes = sentinelAttemptChunkTimes(wire.chunk_times_ms, index, chunksLength);
+  const startedAtMs = sentinelAttemptClock(wire.started_at_ms, index, "start time");
+  const headersAtMs = wire.headers_at_ms === null ? null : sentinelAttemptClock(wire.headers_at_ms, index, "header time");
+  const endedAtMs = wire.ended_at_ms === null ? null : sentinelAttemptClock(wire.ended_at_ms, index, "end time");
+  assertSentinelAttemptTiming(status, terminal, { startedAtMs, headersAtMs, endedAtMs, chunkTimes }, index);
+  return { headers, headersTruncated, chunkTimes, startedAtMs, headersAtMs, endedAtMs };
+};
+
+/** Validate one attempt, decode its retained chunks, and append it to the trace under construction. */
+const appendSentinelAttempt = (raw: unknown, index: number, state: SentinelTraceAccumulator, version: 1 | 2): void => {
+  const wire = sentinelAttemptRecord(raw, index, version);
+  const provider = sentinelAttemptProvider(wire.provider, index);
+  const status = sentinelAttemptStatus(wire.status, index);
+  const contentType = sentinelAttemptContentType(wire.content_type, index);
+  const terminal = sentinelAttemptTerminal(wire.terminal, index);
+  const chunks = retainSentinelChunks(sentinelAttemptChunks(wire.chunks_base64, index), index, state);
   assertSentinelAttemptHeaderConsistency(status, contentType, chunks.length, index);
   assertSentinelAttemptTerminalConsistency(status, contentType, terminal, chunks.length, index);
-  state.attempts.push({
-    provider,
-    status,
-    content_type: contentType,
-    chunks_base64: chunks,
-    terminal,
-  });
+  const attempt: Record<string, unknown> = { provider, status, content_type: contentType, chunks_base64: chunks, terminal };
+  if (version === 2) {
+    const metadata = sentinelAttemptV2Metadata(wire, status, terminal, chunks.length, index);
+    attempt.headers = metadata.headers;
+    attempt.headers_truncated = metadata.headersTruncated;
+    attempt.chunk_times_ms = metadata.chunkTimes;
+    attempt.started_at_ms = metadata.startedAtMs;
+    attempt.headers_at_ms = metadata.headersAtMs;
+    attempt.ended_at_ms = metadata.endedAtMs;
+  }
+  state.attempts.push(attempt as SentinelUpstreamAttempt);
 };
 
 /**
@@ -270,7 +457,8 @@ export const parseSentinelUpstreamTrace = (value: unknown): SentinelUpstreamTrac
   if (actualKeys.length !== expectedKeys.length || actualKeys.some((key) => !expectedKeys.includes(key))) {
     throw new Error("Sentinel upstream trace keys are invalid");
   }
-  if (record.version !== 1) throw new Error("Sentinel upstream trace version is invalid");
+  if (record.version !== 1 && record.version !== 2) throw new Error("Sentinel upstream trace version is invalid");
+  const version: 1 | 2 = record.version;
   if (typeof record.attempts_truncated !== "boolean" || typeof record.bytes_truncated !== "boolean" || typeof record.chunks_truncated !== "boolean") {
     throw new Error("Sentinel upstream trace truncation flags are invalid");
   }
@@ -281,10 +469,10 @@ export const parseSentinelUpstreamTrace = (value: unknown): SentinelUpstreamTrac
   const state: SentinelTraceAccumulator = { attempts: [], decodedChunks: [], totalBytes: 0, totalChunks: 0 };
   try {
     for (let index = 0; index < record.attempts.length; index += 1) {
-      appendSentinelAttempt(record.attempts[index], index, state);
+      appendSentinelAttempt(record.attempts[index], index, state, version);
     }
     return freezeTrace({
-      version: 1,
+      version,
       attempts: state.attempts,
       attempts_truncated: record.attempts_truncated as boolean,
       bytes_truncated: record.bytes_truncated as boolean,
@@ -302,6 +490,26 @@ export const isSentinelUpstreamTrace = (value: unknown): value is SentinelUpstre
   } catch {
     return false;
   }
+};
+
+/**
+ * Normalize upstream response headers to the fixed safe allowlist. A value that
+ * is too long to retain is dropped and reported through `truncated` rather than
+ * silently shortened.
+ */
+export const normalizeSentinelUpstreamSafeHeaders = (headers: Headers): Readonly<{ headers: SentinelUpstreamSafeHeaders; truncated: boolean }> => {
+  const retained: Record<string, string> = {};
+  let truncated = false;
+  for (const name of SENTINEL_UPSTREAM_SAFE_RESPONSE_HEADER_NAMES) {
+    const value = headers.get(name)?.trim();
+    if (!value) continue;
+    if (value.length > SENTINEL_UPSTREAM_MAX_HEADER_VALUE_CHARS) {
+      truncated = true;
+      continue;
+    }
+    retained[name] = value;
+  }
+  return { headers: retained, truncated };
 };
 
 /** Code-unit ordering, exactly the default `Array.prototype.sort` comparison. */
@@ -341,6 +549,12 @@ type MutableAttempt = {
   chunks: Uint8Array<ArrayBuffer>[];
   terminal: SentinelUpstreamTerminal;
   bookkeepingFailed: boolean;
+  headers: SentinelUpstreamSafeHeaders;
+  headersTruncated: boolean;
+  chunkTimesMs: number[];
+  startedAtMs: number;
+  headersAtMs: number | null;
+  endedAtMs: number | null;
 };
 
 const noopHandle = (): SentinelUpstreamAttemptHandle =>
@@ -348,6 +562,9 @@ const noopHandle = (): SentinelUpstreamAttemptHandle =>
     wrap: (response: Response) => response,
     recordFetchError: () => {},
   });
+
+/** Monotonic, bounded elapsed milliseconds measured from one attempt's start. */
+const elapsedMs = (startedAtMs: number, nowMs: number): number => Math.min(SENTINEL_UPSTREAM_MAX_TIMING_MS, Math.max(0, Math.trunc(nowMs - startedAtMs)));
 
 export const createSentinelUpstreamRecorder = (): SentinelUpstreamRecorder => {
   const attempts: MutableAttempt[] = [];
@@ -360,14 +577,15 @@ export const createSentinelUpstreamRecorder = (): SentinelUpstreamRecorder => {
   let disposed = false;
   let sealedTrace: SentinelUpstreamTrace | null = null;
 
-  const finishAttempt = (attempt: MutableAttempt, terminal: SentinelUpstreamTerminal): void => {
+  const finishAttempt = (attempt: MutableAttempt, terminal: SentinelUpstreamTerminal, nowMs: number): void => {
     if (attempt.terminal !== "pending" || attempt.bookkeepingFailed) return;
     // A bodyless response records EOF with zero bytes; a header-bearing
     // read/cancel terminal requires its status which is set at wrap time.
     attempt.terminal = terminal;
+    attempt.endedAtMs = Math.max(attempt.headersAtMs ?? attempt.startedAtMs, attempt.startedAtMs, nowMs);
   };
 
-  const retainChunk = (attempt: MutableAttempt, chunk: Uint8Array): void => {
+  const retainChunk = (attempt: MutableAttempt, chunk: Uint8Array, nowMs: number): void => {
     if (sealed || disposed || attempt.bookkeepingFailed || attempt.terminal !== "pending" || chunk.byteLength === 0) {
       return;
     }
@@ -387,6 +605,8 @@ export const createSentinelUpstreamRecorder = (): SentinelUpstreamRecorder => {
     const copy = new Uint8Array(keep);
     copy.set(chunk.subarray(0, keep));
     attempt.chunks.push(copy);
+    const previous = attempt.chunkTimesMs.at(-1) ?? 0;
+    attempt.chunkTimesMs.push(Math.max(previous, elapsedMs(attempt.startedAtMs, nowMs)));
     totalChunks += 1;
     totalBytes += keep;
     if (keep < chunk.byteLength) bytesTruncated = true;
@@ -394,7 +614,7 @@ export const createSentinelUpstreamRecorder = (): SentinelUpstreamRecorder => {
 
   const wrapStream = (attempt: MutableAttempt, response: Response): Response => {
     if (response.body === null) {
-      finishAttempt(attempt, "eof");
+      finishAttempt(attempt, "eof", Date.now());
       return response;
     }
     const reader = response.body.getReader();
@@ -405,7 +625,7 @@ export const createSentinelUpstreamRecorder = (): SentinelUpstreamRecorder => {
           try {
             result = await reader.read();
           } catch (error) {
-            finishAttempt(attempt, "read_error");
+            finishAttempt(attempt, "read_error", Date.now());
             try {
               controller.error(error);
             } catch {
@@ -415,7 +635,7 @@ export const createSentinelUpstreamRecorder = (): SentinelUpstreamRecorder => {
           }
           if (attempt.terminal === "cancelled") return;
           if (result.done) {
-            finishAttempt(attempt, "eof");
+            finishAttempt(attempt, "eof", Date.now());
             try {
               controller.close();
             } catch {
@@ -424,7 +644,7 @@ export const createSentinelUpstreamRecorder = (): SentinelUpstreamRecorder => {
             return;
           }
           try {
-            retainChunk(attempt, result.value);
+            retainChunk(attempt, result.value, Date.now());
           } catch {
             // Recorder-side bookkeeping failure must never replace a valid
             // original chunk: disable further retention for this attempt and
@@ -440,7 +660,7 @@ export const createSentinelUpstreamRecorder = (): SentinelUpstreamRecorder => {
           }
         },
         cancel(reason) {
-          finishAttempt(attempt, "cancelled");
+          finishAttempt(attempt, "cancelled", Date.now());
           return reader.cancel(reason);
         },
       },
@@ -460,6 +680,10 @@ export const createSentinelUpstreamRecorder = (): SentinelUpstreamRecorder => {
     // exists before headers.
     attempt.contentType = normalizeSentinelUpstreamContentType(response.headers.get("content-type")) ?? "other";
     try {
+      const normalized = normalizeSentinelUpstreamSafeHeaders(response.headers);
+      attempt.headers = normalized.headers;
+      attempt.headersTruncated = normalized.truncated;
+      attempt.headersAtMs = Date.now();
       return wrapStream(attempt, response);
     } catch {
       return response;
@@ -480,6 +704,12 @@ export const createSentinelUpstreamRecorder = (): SentinelUpstreamRecorder => {
         chunks: [],
         terminal: "pending",
         bookkeepingFailed: false,
+        headers: {},
+        headersTruncated: false,
+        chunkTimesMs: [],
+        startedAtMs: Date.now(),
+        headersAtMs: null,
+        endedAtMs: null,
       };
       attempts.push(attempt);
       return Object.freeze({
@@ -487,6 +717,7 @@ export const createSentinelUpstreamRecorder = (): SentinelUpstreamRecorder => {
         recordFetchError: () => {
           if (sealed || disposed || attempt.terminal !== "pending" || attempt.status !== null) return;
           attempt.terminal = "fetch_error";
+          attempt.endedAtMs = Math.max(attempt.startedAtMs, Date.now());
         },
       });
     },
@@ -495,12 +726,18 @@ export const createSentinelUpstreamRecorder = (): SentinelUpstreamRecorder => {
       if (sealed && sealedSnapshot !== null) return sealedSnapshot;
       sealed = true;
       sealedTrace = freezeTrace({
-        version: 1,
+        version: 2,
         attempts: attempts.map((attempt) => ({
           provider: attempt.provider,
           status: attempt.status,
           content_type: attempt.contentType,
           chunks_base64: attempt.chunks.map(encodeBase64),
+          headers: { ...attempt.headers },
+          headers_truncated: attempt.headersTruncated,
+          chunk_times_ms: [...attempt.chunkTimesMs],
+          started_at_ms: attempt.startedAtMs,
+          headers_at_ms: attempt.headersAtMs,
+          ended_at_ms: attempt.endedAtMs,
           terminal: attempt.terminal,
         })),
         attempts_truncated: attemptsTruncated,
@@ -514,6 +751,8 @@ export const createSentinelUpstreamRecorder = (): SentinelUpstreamRecorder => {
       for (const attempt of attempts) {
         for (const chunk of attempt.chunks) chunk.fill(0);
         attempt.chunks = [];
+        attempt.chunkTimesMs = [];
+        attempt.headers = {};
       }
       totalBytes = 0;
       totalChunks = 0;

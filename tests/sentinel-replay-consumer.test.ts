@@ -205,10 +205,17 @@ const replayCase = (options: {
   testIds?: readonly string[];
   requestBody?: Record<string, unknown>;
   extraEnvelope?: Record<string, unknown>;
+  report?: boolean;
 }): readonly CaseFile[] => [
   {
     path: ".sentinel-replay-input.json",
-    content: metadata("fixtures/request.json", "fixtures/upstream.json", options.testIds ?? DEFAULT_IDS),
+    content: JSON.stringify({
+      version: "v1",
+      requestPath: "fixtures/request.json",
+      upstreamPath: "fixtures/upstream.json",
+      testIds: options.testIds ?? DEFAULT_IDS,
+      ...(options.report ? { report: "structured-v1" } : {}),
+    }),
   },
   {
     path: "fixtures/request.json",
@@ -222,6 +229,216 @@ const assertUnavailable = (result: ChildResult, label: string): void => {
   assert.equal(result.stdout, UNAVAILABLE_LINE, `${label}: exactly one fixed static unavailable line`);
   assert.equal(result.stderr, "", `${label}: stderr must stay empty`);
 };
+
+/** The same frozen verdict, with the additive opt-in report line before it. */
+const assertUnavailableWithReport = (result: ChildResult, label: string): void => {
+  assert.equal(result.code, 2, `${label}: expected the static unavailable exit`);
+  const lines = result.stdout.split("\n");
+  const reportIndex = lines.findIndex((line) => line.startsWith(REPORT_PREFIX));
+  assert.ok(reportIndex >= 0, `${label}: the opt-in report line must be present`);
+  assert.equal(lines.slice(reportIndex + 1).join("\n"), UNAVAILABLE_LINE, `${label}: exactly one fixed static unavailable line after the report`);
+  assert.equal(result.stderr, "", `${label}: stderr must stay empty`);
+};
+
+const REPORT_PREFIX = "sentinel-replay-report:";
+
+/** Parse the additive structured report line; absent unless the metadata opts in. */
+const replayReport = (result: ChildResult): Record<string, unknown> => {
+  const line = result.stdout.split("\n").find((candidate) => candidate.startsWith(REPORT_PREFIX));
+  assert.ok(line, "the structured report line must be present when requested");
+  const parsed: unknown = JSON.parse(line.slice(REPORT_PREFIX.length));
+  assert.ok(parsed !== null && typeof parsed === "object" && !Array.isArray(parsed));
+  return parsed as Record<string, unknown>;
+};
+
+const chatBody = (stream: boolean, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+  model: "deepseek-flash",
+  stream,
+  messages: [{ role: "user", content: "hello" }],
+  ...extra,
+});
+
+const chatChunk = (deltaValue: Record<string, unknown>, finishReason: string | null = null): string =>
+  `data: ${JSON.stringify({
+    id: "chatcmpl-fixture",
+    object: "chat.completion.chunk",
+    created: 1_700_000_000,
+    model: "deepseek-flash",
+    choices: [{ index: 0, delta: deltaValue, finish_reason: finishReason }],
+  })}\n\n`;
+
+const chatCompletion = (message: Record<string, unknown>, finishReason: string): string =>
+  JSON.stringify({
+    id: "chatcmpl-fixture",
+    object: "chat.completion",
+    created: 1_700_000_000,
+    model: "deepseek-flash",
+    choices: [{ index: 0, message, finish_reason: finishReason }],
+    usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 },
+  });
+
+/** A DeepSeek replay case: chat-completions request body plus a recorded chain. */
+const chatReplayCase = (options: { trace: FixtureTrace; stream: boolean; requestBody?: Record<string, unknown>; report?: boolean }): readonly CaseFile[] =>
+  replayCase({
+    trace: options.trace,
+    stream: options.stream,
+    requestBody: options.requestBody ?? chatBody(options.stream),
+    report: options.report,
+  });
+
+Deno.test("a recorded DeepSeek chat stream is replayed through the real DeepSeek parser and validity rule", async () => {
+  const chunks = [chatChunk({ role: "assistant", content: "" }), chatChunk({ content: "hello" }), chatChunk({}, "stop"), "data: [DONE]\n\n"];
+  await withCase(chatReplayCase({ trace: trace([attempt("deepseek", chunks, "eof")]), stream: true, report: true }), async (dir) => {
+    const result = await runFixedConsumer(dir);
+    assert.equal(result.code, 0, "a complete recorded DeepSeek stream must replay");
+    assert.equal(result.stdout.endsWith(markers(DEFAULT_IDS)), true, "the trusted markers close the output after any report line");
+    const report = replayReport(result);
+    assert.equal(report.provider, "deepseek");
+    assert.equal(report.request_wire, "chat.completions");
+    assert.equal(report.classification, "converted_completed");
+    assert.equal(report.outcome, "completed");
+    assert.equal(report.provider_error_mapping, "not_applicable");
+  });
+});
+
+Deno.test("a recorded DeepSeek empty completion is not replayed as a success", async () => {
+  // A tool-call-free, refusal-free, reasoning-only stop is exactly the
+  // degenerate completion the gateway's own validity rule refuses.
+  const chunks = [chatChunk({ role: "assistant", reasoning_content: "thinking only" }), chatChunk({}, "stop"), "data: [DONE]\n\n"];
+  await withCase(chatReplayCase({ trace: trace([attempt("deepseek", chunks, "eof")]), stream: true, report: true }), async (dir) => {
+    const result = await runFixedConsumer(dir);
+    assertUnavailableWithReport(result, "reasoning-only DeepSeek stop");
+    const report = replayReport(result);
+    assert.equal(report.classification, "empty_completion");
+    assert.equal(report.outcome, "unavailable");
+    assert.equal(report.unavailable_reason, "gateway_empty_completion_rule_not_exported");
+  });
+});
+
+Deno.test("an interrupted DeepSeek stream replays the real parser's premature EOF as the causal failure", async () => {
+  const chunks = [chatChunk({ role: "assistant" }), chatChunk({ content: "partial" })];
+  await withCase(chatReplayCase({ trace: trace([attempt("deepseek", chunks, "eof")]), stream: true, report: true }), async (dir) => {
+    const result = await runFixedConsumer(dir);
+    assert.equal(result.code, 1, "an unterminated recorded stream is the causal failure");
+    assert.equal(result.stdout.endsWith(`${markers(DEFAULT_IDS)}${CAUSAL_FAILURE_LINE}`), true);
+    const report = replayReport(result);
+    assert.equal(report.classification, "recorded_premature_eof");
+    assert.equal(report.outcome, "causal");
+  });
+});
+
+Deno.test("a recorded DeepSeek HTTP error is replayed through the real transport and its mapping is not claimed", async () => {
+  const body = JSON.stringify({ error: { message: "rate limited", type: "rate_limit_error", code: "rate_limit_exceeded" } });
+  await withCase(
+    chatReplayCase({
+      trace: trace([attempt("deepseek", [body], "eof", { status: 429, content_type: "application/json" })]),
+      stream: false,
+      report: true,
+    }),
+    async (dir) => {
+      const result = await runFixedConsumer(dir);
+      assertUnavailableWithReport(result, "DeepSeek HTTP error");
+      const report = replayReport(result);
+      assert.equal(report.classification, "provider_http_error_replayed");
+      assert.deepEqual(report.attempt_statuses, [429]);
+      assert.equal(report.provider_error_mapping, "not_exercised");
+      assert.equal(report.unavailable_reason, "gateway_error_mapping_not_exported");
+    }
+  );
+});
+
+Deno.test("a buffered DeepSeek completion is normalized and validated by the real gateway functions", async () => {
+  await withCase(
+    chatReplayCase({
+      trace: trace([attempt("deepseek", [chatCompletion({ role: "assistant", content: "hello" }, "stop")], "eof", { content_type: "application/json" })]),
+      stream: false,
+    }),
+    async (dir) => {
+      const result = await runFixedConsumer(dir);
+      assert.equal(result.code, 0, "a valid buffered completion must replay");
+      assert.equal(result.stdout, markers(DEFAULT_IDS));
+    }
+  );
+  // An upstream that contradicts the requested model is rejected by the real
+  // normalizer rather than accepted as a completion.
+  const mismatched = JSON.parse(chatCompletion({ role: "assistant", content: "hello" }, "stop")) as Record<string, unknown>;
+  mismatched.model = "some-other-model";
+  await withCase(
+    chatReplayCase({
+      trace: trace([attempt("deepseek", [JSON.stringify(mismatched)], "eof", { content_type: "application/json" })]),
+      stream: false,
+      report: true,
+    }),
+    async (dir) => {
+      const result = await runFixedConsumer(dir);
+      assertUnavailableWithReport(result, "mismatched buffered model");
+      assert.equal(replayReport(result).classification, "invalid_completion");
+    }
+  );
+});
+
+Deno.test("a multi-attempt recorded chain is replayed in order through the real transports", async () => {
+  const chunks = [created("resp_fixture"), delta("resp_fixture", "hello"), itemDone("resp_fixture", "hello"), completed("resp_fixture", "hello")];
+  await withCase(
+    replayCase({
+      trace: trace([
+        attempt("chatgpt_codex", ['{"error":{"code":"upstream_http_5xx"}}'], "eof", { status: 500, content_type: "application/json" }),
+        attempt("chatgpt_codex", chunks, "eof"),
+      ]),
+      stream: true,
+      report: true,
+    }),
+    async (dir) => {
+      const result = await runFixedConsumer(dir);
+      assert.equal(result.code, 0, "the retried chain's final attempt must replay");
+      const report = replayReport(result);
+      assert.equal(report.attempts, 2);
+      assert.deepEqual(report.attempt_statuses, [500, 200]);
+      assert.deepEqual(report.attempt_terminals, ["eof", "eof"]);
+      assert.equal(report.replay_coverage, "partial", "a multi-attempt chain is never full single-attempt coverage");
+      assert.equal(report.retry_policy, "not_replayed");
+    }
+  );
+});
+
+Deno.test("a recorded read failure is the causal failure only when the real parser observed it", async () => {
+  const chunks = [created("resp_fixture"), delta("resp_fixture", "partial")];
+  await withCase(replayCase({ trace: trace([attempt("chatgpt_codex", chunks, "read_error")]), stream: true }), async (dir) => {
+    const result = await runFixedConsumer(dir);
+    assert.equal(result.code, 1, "a recorded upstream read failure is the causal failure");
+    assert.equal(result.stdout, `${markers(DEFAULT_IDS)}${CAUSAL_FAILURE_LINE}`);
+  });
+});
+
+Deno.test("the structured report line is additive and never appears without the opt-in", async () => {
+  const chunks = [created("resp_fixture"), delta("resp_fixture", "hello"), itemDone("resp_fixture", "hello"), completed("resp_fixture", "hello")];
+  await withCase(replayCase({ trace: trace([attempt("chatgpt_codex", chunks, "cancelled")]), stream: true }), async (dir) => {
+    const result = await runFixedConsumer(dir);
+    assert.equal(result.code, 0);
+    assert.equal(result.stdout.includes(REPORT_PREFIX), false, "the frozen output shape must stay unchanged without the opt-in");
+    assert.equal(result.stdout, markers(DEFAULT_IDS));
+  });
+  // An unknown report value is a malformed metadata document, not a new feature.
+  await withCase(
+    [
+      {
+        path: ".sentinel-replay-input.json",
+        content: JSON.stringify({
+          version: "v1",
+          requestPath: "fixtures/request.json",
+          upstreamPath: "fixtures/upstream.json",
+          testIds: DEFAULT_IDS,
+          report: "yaml",
+        }),
+      },
+      { path: "fixtures/request.json", content: requestEnvelope(responsesBody(true)) },
+      { path: "fixtures/upstream.json", content: JSON.stringify(trace([])) },
+    ],
+    async (dir) => {
+      assertUnavailable(await runFixedConsumer(dir), "unknown report mode");
+    }
+  );
+});
 
 Deno.test("fixed consumer replays a complete recorded codex stream through the owned response stream", async () => {
   const chunks = [created("resp_fixture"), delta("resp_fixture", "hello"), itemDone("resp_fixture", "hello"), completed("resp_fixture", "hello")];
@@ -452,7 +669,6 @@ Deno.test("truncated, empty, multi-attempt and unsupported attempts are unavaila
     ["cerebras provider", trace([attempt("cerebras", chunks, "cancelled")])],
     ["non-200 status", trace([attempt("chatgpt_codex", chunks, "cancelled", { status: 500 })])],
     ["non-SSE content type", trace([attempt("chatgpt_codex", chunks, "cancelled", { content_type: "application/json" })])],
-    ["read_error terminal", trace([attempt("chatgpt_codex", chunks, "read_error")])],
     ["pending terminal", trace([attempt("chatgpt_codex", chunks, "pending")])],
   ];
   for (const [label, fixture] of cases) {

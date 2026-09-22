@@ -605,7 +605,7 @@ Deno.test({
       assert.equal(exported.data.length, 1);
       const capture = exported.data[0];
       const plaintext = await decryptExportedSentinelReplay(capture, keyBytes);
-      assert.equal(plaintext.version, 2);
+      assert.equal(plaintext.version, 3);
       assert.equal(plaintext.endpoint, "/v1/responses");
       assert.equal(plaintext.method, "POST");
       assert.deepEqual([...plaintext.body], [...CAPTURE_BODY]);
@@ -657,7 +657,7 @@ Deno.test("recorded upstream replay preserves exact chunk order and boundaries a
   }
   assert.deepEqual(chunks, ["abc", "def", "ghi"], "each original chunk must be a separate exact boundary");
   replay.assertComplete();
-  assert.deepEqual(replay.snapshot(), { attemptsDispatched: 1, attemptsCompleted: 1, failed: false });
+  assert.deepEqual(replay.snapshot(), { attemptsDispatched: 1, attemptsCompleted: 1, chunksConsumed: 3, chunksTotal: 3, failed: false });
   assert.equal(JSON.stringify(inputTrace), inputBefore, "the input trace must stay unchanged");
   assert.equal(globalThis.fetch, originalFetch, "the helper must never replace or invoke global fetch");
 });
@@ -673,14 +673,14 @@ Deno.test("recorded upstream read_error delivers the prefix then errors on the n
   assert.equal(new TextDecoder().decode(first.value), "x");
   await assert.rejects(reader.read(), (error: unknown) => error instanceof TypeError);
   replay.assertComplete();
-  assert.deepEqual(replay.snapshot(), { attemptsDispatched: 1, attemptsCompleted: 1, failed: false });
+  assert.deepEqual(replay.snapshot(), { attemptsDispatched: 1, attemptsCompleted: 1, chunksConsumed: 1, chunksTotal: 1, failed: false });
 });
 
 Deno.test("recorded upstream fetch_error rejects with no headers or chunks and completes the attempt", async () => {
   const replay = createRecordedUpstreamReplay(replayTrace([replayAttempt("cerebras", null, null, "fetch_error")]), REPLAY_ROUTES);
   await assert.rejects(replay.fetch(REPLAY_ROUTES.cerebras), (error: unknown) => error instanceof TypeError);
   replay.assertComplete();
-  assert.deepEqual(replay.snapshot(), { attemptsDispatched: 1, attemptsCompleted: 1, failed: false });
+  assert.deepEqual(replay.snapshot(), { attemptsDispatched: 1, attemptsCompleted: 1, chunksConsumed: 0, chunksTotal: 0, failed: false });
 });
 
 Deno.test("recorded upstream cancelled completes only when the consumer cancels after the full prefix", async () => {
@@ -690,10 +690,10 @@ Deno.test("recorded upstream cancelled completes only when the consumer cancels 
   assert.ok(reader, "the recorded replay must expose a body stream");
   assert.equal(new TextDecoder().decode((await reader.read()).value), "data:");
   assert.equal(new TextDecoder().decode((await reader.read()).value), "x\n");
-  assert.deepEqual(replay.snapshot(), { attemptsDispatched: 1, attemptsCompleted: 0, failed: false });
+  assert.deepEqual(replay.snapshot(), { attemptsDispatched: 1, attemptsCompleted: 0, chunksConsumed: 2, chunksTotal: 2, failed: false });
   await reader.cancel();
   replay.assertComplete();
-  assert.deepEqual(replay.snapshot(), { attemptsDispatched: 1, attemptsCompleted: 1, failed: false });
+  assert.deepEqual(replay.snapshot(), { attemptsDispatched: 1, attemptsCompleted: 1, chunksConsumed: 2, chunksTotal: 2, failed: false });
 });
 
 Deno.test("recorded upstream cancelled prefix rejects when read beyond it, never inventing EOF", async () => {
@@ -706,7 +706,7 @@ Deno.test("recorded upstream cancelled prefix rejects when read beyond it, never
   assert.throws(() => {
     replay.assertComplete();
   }, /replay failed/);
-  assert.deepEqual(replay.snapshot(), { attemptsDispatched: 1, attemptsCompleted: 0, failed: true });
+  assert.deepEqual(replay.snapshot(), { attemptsDispatched: 1, attemptsCompleted: 0, chunksConsumed: 1, chunksTotal: 1, failed: true });
   await assert.rejects(replay.fetch(REPLAY_ROUTES.surplus), (error: unknown) => error instanceof TypeError);
 });
 
@@ -720,10 +720,11 @@ Deno.test("recorded upstream cancelled prefix refuses early consumer cancellatio
   assert.throws(() => {
     replay.assertComplete();
   }, /replay failed/);
-  assert.deepEqual(replay.snapshot(), { attemptsDispatched: 1, attemptsCompleted: 0, failed: true });
+  assert.deepEqual(replay.snapshot(), { attemptsDispatched: 1, attemptsCompleted: 0, chunksConsumed: 1, chunksTotal: 2, failed: true });
 });
 
 Deno.test("recorded upstream enforces exact ordered provider routes and permanent failure", async () => {
+  // Two attempts, each recording exactly one chunk: every total below is two.
   const twoAttempts = replayTrace([
     replayAttempt("chatgpt_codex", 200, "application/json", "eof", ["{}"]),
     replayAttempt("surplus", 200, "text/event-stream", "eof", ["{}"]),
@@ -734,11 +735,11 @@ Deno.test("recorded upstream enforces exact ordered provider routes and permanen
   assert.throws(() => {
     unexpected.assertComplete();
   }, /replay failed/);
-  assert.deepEqual(unexpected.snapshot(), { attemptsDispatched: 0, attemptsCompleted: 0, failed: true });
+  assert.deepEqual(unexpected.snapshot(), { attemptsDispatched: 0, attemptsCompleted: 0, chunksConsumed: 0, chunksTotal: 2, failed: true });
   // Wrong provider route while codex is the next recorded attempt.
   const wrongProvider = createRecordedUpstreamReplay(twoAttempts, REPLAY_ROUTES);
   await assert.rejects(wrongProvider.fetch(REPLAY_ROUTES.surplus), TypeError);
-  assert.deepEqual(wrongProvider.snapshot(), { attemptsDispatched: 0, attemptsCompleted: 0, failed: true });
+  assert.deepEqual(wrongProvider.snapshot(), { attemptsDispatched: 0, attemptsCompleted: 0, chunksConsumed: 0, chunksTotal: 2, failed: true });
   // Order mismatch: the second codex call cannot satisfy the surplus attempt.
   const wrongOrder = createRecordedUpstreamReplay(twoAttempts, REPLAY_ROUTES);
   const first = await wrongOrder.fetch(REPLAY_ROUTES.chatgpt_codex);
@@ -747,12 +748,12 @@ Deno.test("recorded upstream enforces exact ordered provider routes and permanen
   await firstReader.read();
   await firstReader.read();
   await assert.rejects(wrongOrder.fetch(REPLAY_ROUTES.chatgpt_codex), TypeError);
-  assert.deepEqual(wrongOrder.snapshot(), { attemptsDispatched: 1, attemptsCompleted: 1, failed: true });
+  assert.deepEqual(wrongOrder.snapshot(), { attemptsDispatched: 1, attemptsCompleted: 1, chunksConsumed: 1, chunksTotal: 2, failed: true });
   // Dispatched but unconsumed bodies are not completion.
   const unconsumed = createRecordedUpstreamReplay(twoAttempts, REPLAY_ROUTES);
   await unconsumed.fetch(REPLAY_ROUTES.chatgpt_codex);
   await unconsumed.fetch(REPLAY_ROUTES.surplus);
-  assert.deepEqual(unconsumed.snapshot(), { attemptsDispatched: 2, attemptsCompleted: 0, failed: false });
+  assert.deepEqual(unconsumed.snapshot(), { attemptsDispatched: 2, attemptsCompleted: 0, chunksConsumed: 0, chunksTotal: 2, failed: false });
   assert.throws(() => {
     unconsumed.assertComplete();
   }, /replay is incomplete/);
@@ -765,7 +766,7 @@ Deno.test("recorded upstream enforces exact ordered provider routes and permanen
   assert.throws(() => {
     extra.assertComplete();
   }, /replay failed/);
-  assert.deepEqual(extra.snapshot(), { attemptsDispatched: 2, attemptsCompleted: 2, failed: true });
+  assert.deepEqual(extra.snapshot(), { attemptsDispatched: 2, attemptsCompleted: 2, chunksConsumed: 2, chunksTotal: 2, failed: true });
 });
 
 Deno.test("recorded upstream refuses unavailable or non-reproducible replay evidence at creation", () => {
@@ -798,7 +799,14 @@ Deno.test("recorded upstream bodyless 204/205/304 replay as null body completed 
     assert.equal(response.status, status);
     assert.equal(response.body, null);
     replay.assertComplete();
-    assert.deepEqual(replay.snapshot(), { attemptsDispatched: 1, attemptsCompleted: 1, failed: false });
+    assert.deepEqual(replay.snapshot(), {
+      attemptsDispatched: 1,
+      attemptsCompleted: 1,
+      // The bodyless fixture records no chunks: nothing is pulled or stored.
+      chunksConsumed: 0,
+      chunksTotal: 0,
+      failed: false,
+    });
   }
 });
 
@@ -940,7 +948,15 @@ Deno.test({
       );
       assert.equal(replayedDispatches, 1, "exactly one replayed upstream attempt must dispatch");
       replay.assertComplete();
-      assert.deepEqual(replay.snapshot(), { attemptsDispatched: 1, attemptsCompleted: 1, failed: false });
+      assert.deepEqual(replay.snapshot(), {
+        attemptsDispatched: 1,
+        attemptsCompleted: 1,
+        // The recorded 500 JSON body is delivered as one chunk and replayed to
+        // its recorded EOF, so one chunk is pulled out of one stored chunk.
+        chunksConsumed: 1,
+        chunksTotal: 1,
+        failed: false,
+      });
       assert.equal(JSON.stringify(plaintext.upstream), upstreamBefore, "decrypted input trace must stay unchanged");
 
       const rePage = await handler(
@@ -1233,12 +1249,26 @@ Deno.test("historical framing fixture replays through the real Surplus fetch wit
   // terminal event was observed, so nothing is invented, but the unterminated
   // suffix makes the framing invalid.
   const rawObservation = inspectSentinelSse(new TextEncoder().encode(rawText));
-  assert.deepEqual(rawObservation, {
+  // The observed terminal event's own bytes are retained (bounded) so the
+  // client-visible outcome survives with the capture; the rest of the shape is
+  // unchanged.
+  const { terminal_body_base64: observedTerminalBody, ...rawShape } = rawObservation;
+  assert.equal(typeof observedTerminalBody, "string");
+  assert.equal(
+    Buffer.from(observedTerminalBody ?? "", "base64")
+      .toString("utf8")
+      .includes("response.completed"),
+    true
+  );
+  assert.deepEqual(rawShape, {
     stream: true,
     completed: true,
     terminal_type: "response.completed",
     failure_kind: "invalid_sse_framing",
     framing_valid: false,
+    error_code: null,
+    error_param: null,
+    terminal_body_truncated: false,
   });
   // The derived client failure observation must remain persistable for replay
   // capture even though the upstream terminal itself reported success.
@@ -1274,7 +1304,16 @@ Deno.test("historical framing fixture replays through the real Surplus fetch wit
   // recorded transport never reaches its stored EOF: the honest attempt
   // outcome is dispatched-but-not-completed. No assertComplete claim and no
   // invented EOF here.
-  assert.deepEqual(replay.snapshot(), { attemptsDispatched: 1, attemptsCompleted: 0, failed: false });
+  assert.deepEqual(replay.snapshot(), {
+    attemptsDispatched: 1,
+    attemptsCompleted: 0,
+    // The fixture stores four chunks; the parser cancels after the terminal
+    // event completes inside the fourth, so all four are pulled but the stored
+    // EOF is never reached and no completion is invented.
+    chunksConsumed: 4,
+    chunksTotal: 4,
+    failed: false,
+  });
 
   // Fixture-level causal cells, always verified without any subprocess: the
   // recorded raw upstream bytes keep their exact committed identity, they

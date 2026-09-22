@@ -29,13 +29,24 @@ import {
 import { base64UrlDecode, base64UrlEncode, encodeHex, isRecord } from "./utils.ts";
 
 export const SENTINEL_REPLAY_TTL_MS = 48 * 60 * 60 * 1_000;
+/**
+ * Status rows are bounded non-sensitive metadata (request id, status, reason,
+ * fingerprint, expiry). They outlive their payload by one additional replay TTL
+ * so a request whose encrypted evidence has expired can still be reported as
+ * `expired` instead of decaying into `unknown` at exactly the same instant.
+ */
+export const SENTINEL_REPLAY_STATUS_TTL_MS = 2 * SENTINEL_REPLAY_TTL_MS;
 export const SENTINEL_REPLAY_CHUNK_BYTES = 48 * 1_024;
 export const SENTINEL_REPLAY_MAX_BODY_BYTES = MAX_ACCEPTED_JSON_BODY_BYTES;
 export const SENTINEL_REPLAY_MAX_BUFFERED_OBSERVATION_BYTES = 1 * 1_024 * 1_024;
+/** Bounded observed downstream terminal/error body retained with a failure. */
+export const SENTINEL_REPLAY_MAX_DOWNSTREAM_BODY_BYTES = 64 * 1_024;
 export const SENTINEL_REPLAY_EXPORT_PAGE_LIMIT = 1;
 export const SENTINEL_REPLAY_MANIFEST_PREFIX = ["uos_ai", "sentinel_replay", "v1", "manifest"] as const;
 export const SENTINEL_REPLAY_DEDUPE_PREFIX = ["uos_ai", "sentinel_replay", "v1", "dedupe"] as const;
 export const SENTINEL_REPLAY_CHUNK_PREFIX = ["uos_ai", "sentinel_replay", "v1", "chunk"] as const;
+/** Per-request capture status/correlation row, written with the capture. */
+export const SENTINEL_REPLAY_REQUEST_PREFIX = ["uos_ai", "sentinel_replay", "v1", "request"] as const;
 
 const TEXT_ENCODER = new TextEncoder();
 const TEXT_DECODER = new TextDecoder();
@@ -43,7 +54,9 @@ const AES_GCM_IV_BYTES = 12;
 const REPLAY_KEY_BYTES = 32;
 const ENVELOPE_VERSION = 1;
 /** Private plaintext metadata cut over to version 2 with required upstream evidence. */
-const REPLAY_PLAINTEXT_VERSION = 2;
+const REPLAY_PLAINTEXT_VERSION_V2 = 2;
+/** Current private plaintext: adds request settings, coverage and downstream outcome. */
+const REPLAY_PLAINTEXT_VERSION = 3;
 /** v2 fingerprint frame namespace; the outer crypto transport stays v1. */
 const FINGERPRINT_NAMESPACE_V2 = "uos-sentinel-replay-v2:fingerprint";
 const CASE_GROUP_NAMESPACE_V1 = "uos-sentinel-replay-v1:case-group";
@@ -96,6 +109,14 @@ export type SentinelClientFailureObservation = Readonly<{
   failure_kind: string | null;
   framing_valid: boolean;
   provider_route: string;
+  /** Client-visible error code when the observed downstream body carried one. */
+  error_code: string | null;
+  /** Validation discriminator (`param`) when the observed body carried one. */
+  error_param: string | null;
+  /** Bounded base64 of the observed downstream terminal/error body, or null. */
+  terminal_body_base64: string | null;
+  /** Whether that retained body was cut at the fixed bound. */
+  terminal_body_truncated: boolean;
 }>;
 
 export type SentinelClientBodyObservation = Readonly<{
@@ -104,6 +125,10 @@ export type SentinelClientBodyObservation = Readonly<{
   terminal_type: string | null;
   failure_kind: string | null;
   framing_valid: boolean;
+  error_code?: string | null;
+  error_param?: string | null;
+  terminal_body_base64?: string | null;
+  terminal_body_truncated?: boolean;
 }>;
 
 export type AcceptedSentinelReplayInput = Readonly<{
@@ -130,10 +155,68 @@ export type SentinelReplayCaptureCandidate = {
   readonly request_id: string;
   readonly git_sha: string;
   readonly deno_revision: string;
+  /** Why no accepted body was captured, when that happened. */
+  body_omitted_reason: SentinelReplayBodyOmissionReason | null;
 };
 
+/** Why a body the gateway accepted was not carried into a capture. */
+export type SentinelReplayBodyOmissionReason = "body_over_limit" | "body_unavailable" | "non_post";
+
+/**
+ * Why a request produced no encrypted payload at all. In addition to the body
+ * omissions, an authenticated request rejected before capture setup (quota
+ * admission) still publishes an explicit status row rather than looking like a
+ * request that never happened.
+ */
+export type SentinelReplayCaptureOmissionReason = SentinelReplayBodyOmissionReason | "rejected_before_capture";
+
+/** Why a stored capture cannot be replayed in full. */
+export type SentinelReplayUnavailableReason =
+  | "request_body_omitted"
+  | "upstream_trace_empty"
+  | "upstream_trace_truncated"
+  | "upstream_attempt_pending"
+  | "upstream_timing_unavailable"
+  | "upstream_response_headers_unavailable"
+  | "downstream_terminal_body_unavailable"
+  | "observed_serving_model_unavailable"
+  | "provider_state_not_reproducible";
+
+export const SENTINEL_REPLAY_UNAVAILABLE_REASONS: readonly SentinelReplayUnavailableReason[] = Object.freeze([
+  "request_body_omitted",
+  "upstream_trace_empty",
+  "upstream_trace_truncated",
+  "upstream_attempt_pending",
+  "upstream_timing_unavailable",
+  "upstream_response_headers_unavailable",
+  "downstream_terminal_body_unavailable",
+  "observed_serving_model_unavailable",
+  "provider_state_not_reproducible",
+]);
+
+/** Request-declared settings read back from the recorded request bytes. */
+export type SentinelReplaySettings = Readonly<{
+  source: "recorded_request_body" | "unavailable";
+  provider_route: string;
+  model_requested: string | null;
+  reasoning_requested: string | null;
+  stream_requested: boolean | null;
+  stream_observed: boolean | null;
+}>;
+
+/** Observed downstream terminal/error outcome carried with the capture. */
+export type SentinelReplayDownstream = Readonly<{
+  terminal_type: string | null;
+  failure_kind: string | null;
+  error_code: string | null;
+  error_param: string | null;
+  body_base64: string | null;
+  body_truncated: boolean;
+}>;
+
 export type SentinelReplayPlaintext = Readonly<{
-  version: 2;
+  /** 2 = request/upstream only; 3 = adds settings, coverage and downstream outcome. */
+  version: 2 | 3;
   captured_at_ms: number;
   endpoint: string;
   method: string;
@@ -146,6 +229,14 @@ export type SentinelReplayPlaintext = Readonly<{
   git_sha: string;
   deno_revision: string;
   upstream: SentinelUpstreamTrace;
+  /** Version-3 additions; absent on a version-2 capture. */
+  settings?: SentinelReplaySettings;
+  capture_status?: "ready" | "incomplete";
+  replay_coverage?: "full" | "partial" | "unavailable";
+  unavailable?: readonly SentinelReplayUnavailableReason[];
+  body_sha256?: string;
+  body_bytes?: number;
+  downstream?: SentinelReplayDownstream;
   body: Uint8Array<ArrayBuffer>;
 }>;
 
@@ -167,6 +258,52 @@ export type ExportedSentinelReplayCapture = Readonly<{
   manifest: SentinelReplayManifest;
   chunks: readonly string[];
 }>;
+
+/**
+ * Per-request capture status. It exists so a failure is discoverable by its
+ * request id even when nothing was stored: a missing replay key or a failed
+ * persist must never look like an empty replay history.
+ */
+export type SentinelReplayCaptureStatus = "ready" | "incomplete" | "disabled" | "failed" | "expired" | "unknown";
+
+export type SentinelReplayCaptureStatusRow = Readonly<{
+  version: 1;
+  request_id: string;
+  status: SentinelReplayCaptureStatus;
+  reason: string | null;
+  captured_at_ms: number;
+  manifest_key: Deno.KvKey | null;
+  fingerprint: string | null;
+  expires_at_ms: number | null;
+}>;
+
+const REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
+const STORED_CAPTURE_STATUSES = new Set<SentinelReplayCaptureStatus>(["ready", "incomplete", "disabled", "failed"]);
+const STATUS_REASON = /^[A-Za-z0-9_.:-]{1,128}$/;
+
+export const isSentinelReplayRequestId = (value: unknown): value is string => typeof value === "string" && REQUEST_ID.test(value);
+
+export const isSentinelReplayCaptureStatusRow = (value: unknown): value is SentinelReplayCaptureStatusRow => {
+  if (
+    !isRecord(value) ||
+    value.version !== 1 ||
+    !isSentinelReplayRequestId(value.request_id) ||
+    typeof value.status !== "string" ||
+    !STORED_CAPTURE_STATUSES.has(value.status as SentinelReplayCaptureStatus) ||
+    (value.reason !== null && (typeof value.reason !== "string" || !STATUS_REASON.test(value.reason))) ||
+    typeof value.captured_at_ms !== "number" ||
+    !Number.isSafeInteger(value.captured_at_ms) ||
+    value.captured_at_ms < 0 ||
+    (value.manifest_key !== null && (!Array.isArray(value.manifest_key) || value.manifest_key.length !== 7)) ||
+    (value.fingerprint !== null && (typeof value.fingerprint !== "string" || !HEX_DIGEST.test(value.fingerprint))) ||
+    (value.expires_at_ms !== null && (typeof value.expires_at_ms !== "number" || !Number.isSafeInteger(value.expires_at_ms)))
+  )
+    return false;
+  if (value.status === "ready" || value.status === "incomplete") {
+    return value.manifest_key !== null && value.fingerprint !== null && value.expires_at_ms !== null;
+  }
+  return value.manifest_key === null && value.expires_at_ms === null;
+};
 
 export type SentinelReplayPersistResult =
   | Readonly<{ status: "stored"; manifest: SentinelReplayManifest; manifest_key?: Deno.KvKey }>
@@ -228,15 +365,30 @@ export const captureAcceptedSentinelReplayInput = (req: Request, requestId: stri
     request_id: requestId,
     git_sha: runtimeGitSha(),
     deno_revision: runtimeDeploymentId(),
+    body_omitted_reason: null,
   };
-  observeRawBodyOnce(req, (bytes) => {
-    candidate.body = bytes;
-  });
+  observeRawBodyOnce(
+    req,
+    (bytes) => {
+      candidate.body = bytes;
+    },
+    (reason) => {
+      candidate.body_omitted_reason = reason;
+    }
+  );
   return candidate;
 };
 
+/**
+ * Materialize the accepted body. A declined body is never silent: the
+ * candidate keeps a bounded omission reason so a caller can publish a capture
+ * status instead of an empty replay history.
+ */
 export const materializeSentinelReplayInput = (candidate: SentinelReplayCaptureCandidate | null): AcceptedSentinelReplayInput | null => {
-  if (!candidate?.body) return null;
+  if (!candidate?.body) {
+    if (candidate) candidate.body_omitted_reason ??= "body_unavailable";
+    return null;
+  }
   const body = candidate.body;
   candidate.body = null;
   return {
@@ -302,10 +454,24 @@ export const sentinelFailureSignature = (observation: SentinelClientFailureObser
 
 const boundedFailureKind = (value: unknown): string | null => (typeof value === "string" && /^[A-Za-z0-9_.:-]{1,128}$/.test(value) ? value : null);
 
+/** A client-visible validation discriminator: bounded, printable, non-secret. */
+const boundedErrorParam = (value: unknown): string | null => (typeof value === "string" && /^[A-Za-z0-9_.:[\]-]{1,128}$/.test(value) ? value : null);
+
+/** Bounded base64 of an observed downstream terminal body, with its truncation state. */
+const boundedTerminalBody = (bytes: Uint8Array | null): Readonly<{ base64: string | null; truncated: boolean }> => {
+  if (!bytes || bytes.byteLength === 0) return { base64: null, truncated: false };
+  const bounded = bytes.subarray(0, SENTINEL_REPLAY_MAX_DOWNSTREAM_BODY_BYTES);
+  let binary = "";
+  for (const byte of bounded) binary += String.fromCharCode(byte);
+  return { base64: btoa(binary), truncated: bounded.byteLength < bytes.byteLength };
+};
+
 const errorKind = (value: unknown): string | null => {
   if (!isRecord(value)) return null;
   return boundedFailureKind(value.code) ?? boundedFailureKind(value.type);
 };
+
+const errorParam = (value: unknown): string | null => (isRecord(value) ? boundedErrorParam(value.param) : null);
 
 /** Semantic terminal of an embeddings-job payload, or null for other statuses. */
 const embeddingsJobObservation = (
@@ -336,7 +502,7 @@ const responseSemanticObservation = (
     if (job !== null) return job;
   }
   if (semanticStatus === "failed") {
-    return { completed: false, terminal_type: "response.failed", failure_kind: nestedError ?? "response_failed" };
+    return { completed: false, terminal_type: "response.failed", failure_kind: nestedError ?? "response_failed", error_code: nestedError };
   }
   if (semanticStatus === "incomplete") {
     const details = isRecord(parsed.incomplete_details) ? parsed.incomplete_details : null;
@@ -350,7 +516,13 @@ const responseSemanticObservation = (
     return { completed: true, terminal_type: "response.completed", failure_kind: null };
   }
   if (isRecord(parsed.error)) {
-    return { completed: false, terminal_type: "http.error", failure_kind: nestedError };
+    return {
+      completed: false,
+      terminal_type: "http.error",
+      failure_kind: nestedError,
+      error_code: nestedError,
+      error_param: errorParam(parsed.error),
+    };
   }
   if (status === 202) return { completed: false, terminal_type: "http.accepted", failure_kind: null };
   return null;
@@ -361,20 +533,43 @@ export const inspectSentinelBufferedResponse = (status: number, contentType: str
   if (contentType.toLowerCase().includes("json")) {
     try {
       const parsed: unknown = JSON.parse(TEXT_DECODER.decode(bytes));
-      if (isRecord(parsed) && !Array.isArray(parsed)) semantic = responseSemanticObservation(status, parsed);
+      if (isRecord(parsed) && !Array.isArray(parsed)) {
+        semantic = responseSemanticObservation(status, parsed);
+        // A non-2xx JSON body the semantic reader did not classify is still an
+        // HTTP error: its own `error.code`/`error.param` are the client-visible
+        // cause and must survive instead of being dropped as a bare status.
+        if (semantic === null && status >= 400 && isRecord(parsed.error)) {
+          semantic = {
+            completed: false,
+            terminal_type: "http.error",
+            failure_kind: errorKind(parsed.error),
+            error_code: errorKind(parsed.error),
+            error_param: errorParam(parsed.error),
+          };
+        }
+      }
     } catch {
       // HTTP status remains authoritative when a buffered body is not valid JSON.
     }
   }
-  if (semantic) return { stream: false, framing_valid: true, ...semantic };
+  const withBody = (observation: SentinelClientBodyObservation): SentinelClientBodyObservation =>
+    observation.completed
+      ? observation
+      : (() => {
+          const body = boundedTerminalBody(bytes);
+          return { ...observation, terminal_body_base64: body.base64, terminal_body_truncated: body.truncated };
+        })();
+  if (semantic) return withBody({ stream: false, framing_valid: true, ...semantic });
   if (status >= 400) {
-    return {
+    return withBody({
       stream: false,
       completed: false,
       terminal_type: "http.error",
       failure_kind: null,
       framing_valid: true,
-    };
+      error_code: null,
+      error_param: null,
+    });
   }
   if (status === 202) {
     return {
@@ -475,7 +670,57 @@ const parseSseEventFields = (rawEvent: string): SseEventFields => {
   return { eventName, data, hasUnknownField };
 };
 
-const sseEventObservation = (rawEvent: string): Omit<SentinelClientBodyObservation, "stream" | "framing_valid"> | null => {
+/** The observed semantic fields of one SSE event, before stream/framing context. */
+type SseEventSemantic = Omit<SentinelClientBodyObservation, "stream" | "framing_valid">;
+
+/** The terminal observation for a failed Responses terminal event. */
+const failedEventObservation = (type: string, response: Record<string, unknown> | null, topLevelError: string | null): SseEventSemantic => ({
+  completed: false,
+  terminal_type: type,
+  failure_kind: errorKind(response?.error) ?? topLevelError ?? "response_failed",
+  error_code: errorKind(response?.error) ?? topLevelError,
+  error_param: errorParam(response?.error),
+});
+
+/** The terminal observation for an incomplete Responses terminal event. */
+const incompleteEventObservation = (type: string, response: Record<string, unknown> | null, topLevelError: string | null): SseEventSemantic => {
+  const details = response && isRecord(response.incomplete_details) ? response.incomplete_details : null;
+  return {
+    completed: false,
+    terminal_type: type,
+    failure_kind: boundedFailureKind(details?.reason) ?? errorKind(response?.error) ?? topLevelError,
+    error_code: errorKind(response?.error) ?? topLevelError,
+    error_param: errorParam(response?.error),
+  };
+};
+
+/** The terminal observation for an error event or a top-level error payload. */
+const errorEventObservation = (parsed: Record<string, unknown>, topLevelError: string | null): SseEventSemantic => {
+  const nested = isRecord(parsed.error) ? parsed.error : parsed;
+  return {
+    completed: false,
+    terminal_type: "error",
+    failure_kind: topLevelError ?? "error",
+    error_code: topLevelError ?? "error",
+    error_param: errorParam(nested),
+  };
+};
+
+/** The terminal observation one parsed SSE event carries, or null when it is not terminal. */
+const sseTerminalObservation = (
+  type: string | null,
+  parsed: Record<string, unknown>,
+  response: Record<string, unknown> | null,
+  topLevelError: string | null
+): SseEventSemantic | null => {
+  if (type === "response.failed") return failedEventObservation(type, response, topLevelError);
+  if (type === "response.incomplete") return incompleteEventObservation(type, response, topLevelError);
+  if (type === "error" || isRecord(parsed.error)) return errorEventObservation(parsed, topLevelError);
+  if (type === "response.completed") return { completed: true, terminal_type: type, failure_kind: null };
+  return null;
+};
+
+const sseEventObservation = (rawEvent: string): SseEventSemantic | null => {
   const { eventName, data } = parseSseEventFields(rawEvent);
   if (!data.length) return null;
   const joined = data.join("\n");
@@ -490,28 +735,7 @@ const sseEventObservation = (rawEvent: string): Omit<SentinelClientBodyObservati
   const type = typeof parsed.type === "string" ? parsed.type : eventName;
   const response = isRecord(parsed.response) && !Array.isArray(parsed.response) ? parsed.response : null;
   const topLevelError = errorKind(parsed.error) ?? (type === "error" ? boundedFailureKind(parsed.code) : null);
-  if (type === "response.failed") {
-    return {
-      completed: false,
-      terminal_type: type,
-      failure_kind: errorKind(response?.error) ?? topLevelError ?? "response_failed",
-    };
-  }
-  if (type === "response.incomplete") {
-    const details = response && isRecord(response.incomplete_details) ? response.incomplete_details : null;
-    return {
-      completed: false,
-      terminal_type: type,
-      failure_kind: boundedFailureKind(details?.reason) ?? errorKind(response?.error) ?? topLevelError,
-    };
-  }
-  if (type === "error" || isRecord(parsed.error)) {
-    return { completed: false, terminal_type: "error", failure_kind: topLevelError ?? "error" };
-  }
-  if (type === "response.completed") {
-    return { completed: true, terminal_type: type, failure_kind: null };
-  }
-  return null;
+  return sseTerminalObservation(type, parsed, response, topLevelError);
 };
 
 /** Failure kind used when no terminal SSE frame was observed. */
@@ -534,6 +758,8 @@ export const createSentinelSseInspector = (): SentinelSseInspector => {
   let observedFrame = false;
   let framingValid = true;
   let terminal: Omit<SentinelClientBodyObservation, "stream" | "framing_valid"> | null = null;
+  let terminalBody: string | null = null;
+  let terminalBodyTruncated = false;
 
   const observeEvent = (rawEvent: string): void => {
     const { data, hasUnknownField } = parseSseEventFields(rawEvent);
@@ -548,7 +774,14 @@ export const createSentinelSseInspector = (): SentinelSseInspector => {
     }
     const observation = sseEventObservation(rawEvent);
     if (!observation) return;
-    if (terminalRank(observation.terminal_type) > terminalRank(terminal?.terminal_type ?? null)) terminal = observation;
+    if (terminalRank(observation.terminal_type) > terminalRank(terminal?.terminal_type ?? null)) {
+      terminal = observation;
+      // Only a terminal event's own bytes are retained, bounded, so the
+      // observed downstream terminal is replayable without keeping the trace.
+      const retained = boundedTerminalBody(TEXT_ENCODER.encode(rawEvent));
+      terminalBody = retained.base64;
+      terminalBodyTruncated = retained.truncated;
+    }
   };
   const process = (): void => {
     for (;;) {
@@ -597,6 +830,10 @@ export const createSentinelSseInspector = (): SentinelSseInspector => {
         terminal_type: terminal?.terminal_type ?? null,
         failure_kind: terminal?.failure_kind ?? missingTerminalFailureKind(framingValid, terminalMissing, termination),
         framing_valid: framingValid,
+        error_code: terminal?.error_code ?? null,
+        error_param: terminal?.error_param ?? null,
+        terminal_body_base64: terminalBody,
+        terminal_body_truncated: terminalBodyTruncated,
       };
     },
   };
@@ -624,6 +861,50 @@ const fallbackTerminalType = (internal: SentinelFailureObservation, cancelled: b
   return internal.terminal_type;
 };
 
+/**
+ * The client-visible generic literal. It is a real observed value, but it is
+ * never allowed to replace a trigger-specific transport cause (`read_error`,
+ * `premature_eof`, `inactivity_timeout`, `malformed_event`, ...) in the
+ * diagnostic `failure_kind` slot.
+ */
+const GENERIC_CLIENT_FAILURE_KINDS = new Set(["server_error", "error", "internal_error", "api_error"]);
+
+const isGenericClientFailureKind = (value: string | null): boolean => value === null || GENERIC_CLIENT_FAILURE_KINDS.has(value);
+
+/** Keep the more specific of the observed and internal causes; never the literal over a cause. */
+const preferDiagnosticFailureKind = (observed: string | null, internal: string | null): string | null => {
+  if (observed !== null && !isGenericClientFailureKind(observed)) return observed;
+  if (internal !== null && !isGenericClientFailureKind(internal)) return internal;
+  return observed ?? internal;
+};
+
+/**
+ * A synthetic post-commit terminal is reported to the client as `server_error`,
+ * but the transport cause that produced it must stay in the diagnostic slot.
+ * The generic literal remains the fallback only when no more specific cause
+ * exists at all.
+ */
+const diagnosticFailureKind = (
+  cancelled: boolean,
+  observedKind: string | null,
+  internalKind: string | null,
+  syntheticTerminal: string | null
+): string | null => {
+  if (cancelled) return null;
+  const preferred = preferDiagnosticFailureKind(observedKind, internalKind);
+  if (preferred !== null) return preferred;
+  if (syntheticTerminal) return "server_error";
+  return internalKind;
+};
+
+/** The client-visible error code, or the synthetic terminal literal when the client saw one. */
+const clientErrorCode = (cancelled: boolean, body: SentinelClientBodyObservation | null | undefined, syntheticTerminal: string | null): string | null => {
+  if (cancelled) return null;
+  const observed = body?.error_code ?? null;
+  if (observed !== null) return observed;
+  return syntheticTerminal ? "server_error" : null;
+};
+
 export const resolveSentinelClientFailureObservation = (
   internal: SentinelFailureObservation,
   body?: SentinelClientBodyObservation | null
@@ -631,18 +912,21 @@ export const resolveSentinelClientFailureObservation = (
   const cancelled = internal.terminal_type === "cancelled";
   const syntheticTerminal = cancelled ? null : internal.synthetic_terminal_type;
   const fallbackTerminal = syntheticTerminal ?? fallbackTerminalType(internal, cancelled);
-  const syntheticFailureKind = syntheticTerminal ? "server_error" : internal.failure_kind;
-  const fallbackFailureKind = cancelled ? null : syntheticFailureKind;
+  const internalKind = cancelled ? null : internal.failure_kind;
+  const observedKind = cancelled ? null : (body?.failure_kind ?? null);
   const bodyTerminalType = body ? body.terminal_type : fallbackTerminal;
-  const bodyFailureKind = body ? body.failure_kind : fallbackFailureKind;
   return {
     status: internal.status,
     stream: body ? body.stream : (internal.stream ?? false),
     completed: body ? body.completed : internal.completed,
     terminal_type: cancelled ? fallbackTerminal : bodyTerminalType,
-    failure_kind: cancelled ? fallbackFailureKind : bodyFailureKind,
+    failure_kind: diagnosticFailureKind(cancelled, observedKind, internalKind, syntheticTerminal),
     framing_valid: body?.framing_valid ?? internal.stream !== true,
     provider_route: internal.provider_route,
+    error_code: clientErrorCode(cancelled, body, syntheticTerminal),
+    error_param: cancelled ? null : (body?.error_param ?? null),
+    terminal_body_base64: cancelled ? null : (body?.terminal_body_base64 ?? null),
+    terminal_body_truncated: cancelled ? false : (body?.terminal_body_truncated ?? false),
   };
 };
 
@@ -807,7 +1091,7 @@ const isFailureObservation = (value: unknown): value is SentinelFailureObservati
   (value.synthetic_terminal_type === null || typeof value.synthetic_terminal_type === "string") &&
   typeof value.provider_route === "string";
 
-const isClientFailureObservation = (value: unknown): value is SentinelClientFailureObservation =>
+const isClientFailureObservation = (value: unknown, requireRich: boolean): value is SentinelClientFailureObservation =>
   isRecord(value) &&
   typeof value.status === "number" &&
   Number.isSafeInteger(value.status) &&
@@ -816,9 +1100,37 @@ const isClientFailureObservation = (value: unknown): value is SentinelClientFail
   (value.terminal_type === null || typeof value.terminal_type === "string") &&
   (value.failure_kind === null || typeof value.failure_kind === "string") &&
   typeof value.framing_valid === "boolean" &&
-  typeof value.provider_route === "string";
+  typeof value.provider_route === "string" &&
+  (!requireRich ||
+    ((value.error_code === null || boundedFailureKind(value.error_code) !== null) &&
+      (value.error_param === null || boundedErrorParam(value.error_param) !== null) &&
+      (value.terminal_body_base64 === null || typeof value.terminal_body_base64 === "string") &&
+      typeof value.terminal_body_truncated === "boolean"));
 
-const REPLAY_METADATA_KEYS = [
+const isReplaySettings = (value: unknown): value is SentinelReplaySettings =>
+  isRecord(value) &&
+  (value.source === "recorded_request_body" || value.source === "unavailable") &&
+  typeof value.provider_route === "string" &&
+  (value.model_requested === null || boundedFailureKind(value.model_requested) !== null) &&
+  (value.reasoning_requested === null || boundedFailureKind(value.reasoning_requested) !== null) &&
+  (value.stream_requested === null || typeof value.stream_requested === "boolean") &&
+  (value.stream_observed === null || typeof value.stream_observed === "boolean");
+
+const isReplayDownstream = (value: unknown): value is SentinelReplayDownstream =>
+  isRecord(value) &&
+  (value.terminal_type === null || typeof value.terminal_type === "string") &&
+  (value.failure_kind === null || typeof value.failure_kind === "string") &&
+  (value.error_code === null || boundedFailureKind(value.error_code) !== null) &&
+  (value.error_param === null || boundedErrorParam(value.error_param) !== null) &&
+  (value.body_base64 === null || typeof value.body_base64 === "string") &&
+  typeof value.body_truncated === "boolean";
+
+const isUnavailableReasons = (value: unknown): value is readonly SentinelReplayUnavailableReason[] =>
+  Array.isArray(value) &&
+  value.length <= SENTINEL_REPLAY_UNAVAILABLE_REASONS.length &&
+  value.every((item) => typeof item === "string" && (SENTINEL_REPLAY_UNAVAILABLE_REASONS as readonly string[]).includes(item));
+
+const REPLAY_METADATA_V2_KEYS = [
   "version",
   "captured_at_ms",
   "endpoint",
@@ -834,34 +1146,154 @@ const REPLAY_METADATA_KEYS = [
   "upstream",
 ] as const;
 
-const isReplayMetadata = (value: unknown): value is ReplayMetadata => {
-  if (!isRecord(value) || value.version !== REPLAY_PLAINTEXT_VERSION) return false;
-  const actualKeys = Object.keys(value);
-  if (
-    actualKeys.length !== REPLAY_METADATA_KEYS.length ||
-    actualKeys.some((key) => !REPLAY_METADATA_KEYS.includes(key as (typeof REPLAY_METADATA_KEYS)[number]))
-  ) {
-    return false;
-  }
+const REPLAY_METADATA_V3_KEYS = [
+  ...REPLAY_METADATA_V2_KEYS,
+  "settings",
+  "capture_status",
+  "replay_coverage",
+  "unavailable",
+  "body_sha256",
+  "body_bytes",
+  "downstream",
+] as const;
+
+const REPLAY_CAPTURE_STATUS_VALUES: readonly string[] = ["ready", "incomplete"];
+const REPLAY_COVERAGE_VALUES: readonly string[] = ["full", "partial", "unavailable"];
+
+const isReplayPlaintextVersion = (value: unknown): value is 2 | 3 => value === REPLAY_PLAINTEXT_VERSION_V2 || value === REPLAY_PLAINTEXT_VERSION;
+
+const isOneOfLiterals = (value: unknown, allowed: readonly string[]): boolean => typeof value === "string" && allowed.includes(value);
+
+/** The version-3 additions: settings, coverage and the downstream outcome. */
+const isReplayMetadataV3 = (value: Record<string, unknown>): boolean => {
+  if (!isReplaySettings(value.settings) || !isReplayDownstream(value.downstream)) return false;
+  if (!isOneOfLiterals(value.capture_status, REPLAY_CAPTURE_STATUS_VALUES)) return false;
+  if (!isOneOfLiterals(value.replay_coverage, REPLAY_COVERAGE_VALUES)) return false;
+  if (!isUnavailableReasons(value.unavailable)) return false;
+  if (typeof value.body_sha256 !== "string" || !HEX_DIGEST.test(value.body_sha256)) return false;
+  if (typeof value.body_bytes !== "number" || !Number.isSafeInteger(value.body_bytes) || value.body_bytes < 0) return false;
+  return true;
+};
+
+/** The metadata fields every plaintext version shares. */
+const isReplayMetadataCommon = (value: Record<string, unknown>, version: 2 | 3): boolean => {
   if (!Number.isSafeInteger(value.captured_at_ms) || (value.captured_at_ms as number) < 0) return false;
   if (typeof value.endpoint !== "string" || typeof value.method !== "string") return false;
   if (value.content_type !== null && typeof value.content_type !== "string") return false;
   if (!isCompatibilityHeaders(value.compatibility_headers)) return false;
   if (typeof value.failure_signature !== "string") return false;
-  if (!isFailureObservation(value.observation) || !isClientFailureObservation(value.client_observation)) {
+  if (!isFailureObservation(value.observation) || !isClientFailureObservation(value.client_observation, version === REPLAY_PLAINTEXT_VERSION)) {
     return false;
   }
   if (typeof value.request_id !== "string" || typeof value.git_sha !== "string") return false;
   if (typeof value.deno_revision !== "string") return false;
+  return true;
+};
+
+/** The envelope key set must match the declared plaintext version exactly. */
+const hasExactReplayMetadataKeys = (value: Record<string, unknown>, version: 2 | 3): boolean => {
+  const expectedKeys: readonly string[] = version === REPLAY_PLAINTEXT_VERSION ? REPLAY_METADATA_V3_KEYS : REPLAY_METADATA_V2_KEYS;
+  const actualKeys = Object.keys(value);
+  return actualKeys.length === expectedKeys.length && actualKeys.every((key) => expectedKeys.includes(key));
+};
+
+const isReplayMetadata = (value: unknown): value is SentinelReplayPlaintext => {
+  if (!isRecord(value)) return false;
+  const version = value.version;
+  if (!isReplayPlaintextVersion(version)) return false;
+  if (!hasExactReplayMetadataKeys(value, version)) return false;
+  if (!isReplayMetadataCommon(value, version)) return false;
   try {
     parseSentinelUpstreamTrace(value.upstream);
   } catch {
     return false;
   }
+  if (version === REPLAY_PLAINTEXT_VERSION && !isReplayMetadataV3(value)) return false;
   return true;
 };
 
 const randomBytes = (length: number): Uint8Array<ArrayBuffer> => crypto.getRandomValues(new Uint8Array(length));
+
+/**
+ * Request-declared settings read back from the exact recorded request bytes.
+ * This never invents a serving decision: `provider_route` and
+ * `stream_observed` are observations, and the model/reasoning/stream values are
+ * labelled as the recorded request's own declared settings.
+ */
+const requestSettingsFromBody = (body: Uint8Array<ArrayBuffer>, providerRoute: string, streamObserved: boolean | null): SentinelReplaySettings => {
+  const observed: SentinelReplaySettings = {
+    source: "unavailable",
+    provider_route: providerRoute,
+    model_requested: null,
+    reasoning_requested: null,
+    stream_requested: null,
+    stream_observed: streamObserved,
+  };
+  try {
+    const parsed: unknown = JSON.parse(TEXT_DECODER.decode(body));
+    if (!isRecord(parsed) || Array.isArray(parsed)) return observed;
+    const reasoning = isRecord(parsed.reasoning) ? boundedFailureKind(parsed.reasoning.effort) : null;
+    return {
+      source: "recorded_request_body",
+      provider_route: providerRoute,
+      model_requested: boundedFailureKind(parsed.model),
+      reasoning_requested: reasoning ?? boundedFailureKind(parsed.reasoning_effort),
+      stream_requested: typeof parsed.stream === "boolean" ? parsed.stream : null,
+      stream_observed: streamObserved,
+    };
+  } catch {
+    return observed;
+  }
+};
+
+const downstreamObservation = (observation: SentinelClientFailureObservation): SentinelReplayDownstream => ({
+  terminal_type: observation.terminal_type,
+  failure_kind: observation.failure_kind,
+  error_code: observation.error_code,
+  error_param: observation.error_param,
+  body_base64: observation.terminal_body_base64,
+  body_truncated: observation.terminal_body_truncated,
+});
+
+/**
+ * A 4xx rejection the gateway produced without dispatching a provider is
+ * decided by the recorded request bytes and the gateway's own validation, so
+ * its empty attempt list is correct evidence rather than a missing attempt.
+ */
+const isGatewayReproducibleRejection = (clientObservation: SentinelClientFailureObservation): boolean =>
+  clientObservation.status >= 400 && clientObservation.status < 500;
+
+/** Every reason this capture is not a complete, fully replayable record. */
+const replayUnavailableReasons = (upstream: SentinelUpstreamTrace, clientObservation: SentinelClientFailureObservation): SentinelReplayUnavailableReason[] => {
+  const reasons: SentinelReplayUnavailableReason[] = [];
+  if (upstream.attempts.length === 0 && !isGatewayReproducibleRejection(clientObservation)) reasons.push("upstream_trace_empty");
+  if (upstream.attempts_truncated || upstream.bytes_truncated || upstream.chunks_truncated) reasons.push("upstream_trace_truncated");
+  if (upstream.attempts.some((attempt) => attempt.terminal === "pending")) reasons.push("upstream_attempt_pending");
+  if (upstream.attempts.some((attempt) => attempt.started_at_ms === undefined)) reasons.push("upstream_timing_unavailable");
+  if (upstream.attempts.some((attempt) => attempt.headers === undefined)) reasons.push("upstream_response_headers_unavailable");
+  if (upstream.attempts.some((attempt) => attempt.headers_truncated === true)) reasons.push("upstream_response_headers_unavailable");
+  if (clientObservation.terminal_body_base64 === null) reasons.push("downstream_terminal_body_unavailable");
+  // An unreported serving-model label is optional diagnostic metadata. It is
+  // never evidence the capture is missing: the recorded provider response bytes
+  // are what replay consumes, so an unknown label must not make byte-complete
+  // evidence permanently partial.
+  return reasons;
+};
+
+const replayCoverageFor = (
+  upstream: SentinelUpstreamTrace,
+  clientObservation: SentinelClientFailureObservation,
+  unavailable: readonly SentinelReplayUnavailableReason[]
+): "full" | "partial" | "unavailable" => {
+  if (unavailable.includes("upstream_trace_truncated") || unavailable.includes("upstream_attempt_pending")) return "partial";
+  if (upstream.attempts.length === 0) {
+    // No provider was dispatched. Only a deterministic gateway-side rejection
+    // can be reproduced without provider state.
+    const status = clientObservation.status;
+    return status >= 400 && status < 500 ? "full" : "unavailable";
+  }
+  return unavailable.length === 0 ? "full" : "partial";
+};
 
 const encryptionAdditionalData = (fingerprint: string): Uint8Array<ArrayBuffer> => TEXT_ENCODER.encode(`uos-sentinel-replay-v1\0${fingerprint}`);
 
@@ -991,7 +1423,16 @@ const resolveIndexFingerprint = async (input: AcceptedSentinelReplayInput, clien
  */
 const completeDuplicateCapture = async (
   dependencies: PersistDependencies,
-  duplicate: Readonly<{ fingerprint: string; manifestKey: Deno.KvKey; indexKey: Deno.KvKey | null; indexFingerprint: string | null }>,
+  duplicate: Readonly<{
+    fingerprint: string;
+    manifestKey: Deno.KvKey;
+    indexKey: Deno.KvKey | null;
+    indexFingerprint: string | null;
+    requestId: string;
+    captureStatus: "ready" | "incomplete";
+    capturedAtMs: number;
+    expiresAtMs: number;
+  }>,
   now: number
 ): Promise<SentinelReplayPersistResult> => {
   if (duplicate.indexKey !== null && duplicate.indexFingerprint !== null) {
@@ -1008,6 +1449,20 @@ const completeDuplicateCapture = async (
     fingerprint: duplicate.fingerprint,
     manifestKey: duplicate.manifestKey,
   });
+  // The request still resolves to real evidence: keep its status row pointing
+  // at the winning capture rather than leaving the request unaccounted for.
+  await writeSentinelReplayCaptureStatus(
+    dependencies.kv,
+    captureStatusRow({
+      requestId: duplicate.requestId,
+      status: duplicate.captureStatus,
+      reason: null,
+      capturedAtMs: duplicate.capturedAtMs,
+      manifestKey: duplicate.manifestKey,
+      fingerprint: duplicate.fingerprint,
+      expiresAtMs: duplicate.expiresAtMs,
+    })
+  ).catch(() => {});
   return { status: "duplicate", fingerprint: duplicate.fingerprint, manifest_key: duplicate.manifestKey };
 };
 
@@ -1039,6 +1494,73 @@ const encryptReplayPlaintext = async (
   }
 };
 
+const requestStatusKey = (requestId: string): Deno.KvKey => [...SENTINEL_REPLAY_REQUEST_PREFIX, requestId];
+
+const captureStatusRow = (
+  input: Readonly<{
+    requestId: string;
+    status: SentinelReplayCaptureStatus;
+    reason: string | null;
+    capturedAtMs: number;
+    manifestKey: Deno.KvKey | null;
+    fingerprint: string | null;
+    expiresAtMs: number | null;
+  }>
+): SentinelReplayCaptureStatusRow => {
+  const row: SentinelReplayCaptureStatusRow = {
+    version: 1,
+    request_id: input.requestId,
+    status: input.status,
+    reason: input.reason,
+    captured_at_ms: input.capturedAtMs,
+    manifest_key: input.manifestKey === null ? null : [...input.manifestKey],
+    fingerprint: input.fingerprint,
+    expires_at_ms: input.expiresAtMs,
+  };
+  if (!isSentinelReplayCaptureStatusRow(row)) throw new Error("Sentinel replay capture status is invalid");
+  return row;
+};
+
+/** Best-effort per-request status write; never replaces the caller's outcome. */
+export const writeSentinelReplayCaptureStatus = async (kv: Deno.Kv, row: SentinelReplayCaptureStatusRow): Promise<void> => {
+  if (!isSentinelReplayCaptureStatusRow(row)) throw new Error("Sentinel replay capture status is invalid");
+  // The row outlives its payload so `expired` stays reportable; this is bounded
+  // non-sensitive status metadata, never captured request or response content.
+  await kv.set(requestStatusKey(row.request_id), row, { expireIn: SENTINEL_REPLAY_STATUS_TTL_MS });
+};
+
+/**
+ * Publish the explicit per-request status for a request that produced no
+ * encrypted payload: an accepted body the fixed cap could not carry, or an
+ * authenticated request rejected before capture setup. Best effort by design —
+ * the caller's response or exception is never replaced by a status failure.
+ */
+export const recordSentinelReplayOmissionFromEnvironment = async (
+  requestId: string,
+  reason: SentinelReplayCaptureOmissionReason,
+  nowMs: number = Date.now()
+): Promise<void> => {
+  if (!isSentinelReplayRequestId(requestId)) return;
+  try {
+    const kv = await getKv();
+    if (!kv) return;
+    await writeSentinelReplayCaptureStatus(
+      kv,
+      captureStatusRow({
+        requestId,
+        status: "disabled",
+        reason,
+        capturedAtMs: nowMs,
+        manifestKey: null,
+        fingerprint: null,
+        expiresAtMs: null,
+      })
+    );
+  } catch {
+    // Diagnostic only: a status row can never replace the real outcome.
+  }
+};
+
 /** The dedupe/manifest/incident-event writes every store attempt starts from. */
 const replayStoreOperation = (
   dependencies: PersistDependencies,
@@ -1046,13 +1568,27 @@ const replayStoreOperation = (
   manifestKey: Deno.KvKey,
   manifest: SentinelReplayManifest,
   fingerprint: string,
-  now: number
+  now: number,
+  status: Readonly<{ requestId: string; captureStatus: "ready" | "incomplete" }>
 ): Deno.AtomicOperation => {
   let operation = dependencies.kv
     .atomic()
     .check({ key: dedupeKey, versionstamp: null })
     .set(dedupeKey, { manifest_key: manifestKey }, { expireIn: SENTINEL_REPLAY_TTL_MS })
-    .set(manifestKey, manifest, { expireIn: SENTINEL_REPLAY_TTL_MS });
+    .set(manifestKey, manifest, { expireIn: SENTINEL_REPLAY_TTL_MS })
+    .set(
+      requestStatusKey(status.requestId),
+      captureStatusRow({
+        requestId: status.requestId,
+        status: status.captureStatus,
+        reason: null,
+        capturedAtMs: manifest.captured_at_ms,
+        manifestKey,
+        fingerprint,
+        expiresAtMs: manifest.expires_at_ms,
+      }),
+      { expireIn: SENTINEL_REPLAY_STATUS_TTL_MS }
+    );
   if (dependencies.incidentEvent) {
     const readyEvent = readySentinelIncidentFailureEvent(dependencies.incidentEvent, now, {
       status: "stored",
@@ -1124,6 +1660,8 @@ const storeReplayEnvelope = async (
     evidenceDigest: string;
     now: number;
     expiresAtMs: number;
+    requestId: string;
+    captureStatus: "ready" | "incomplete";
   }>
 ): Promise<SentinelReplayPersistResult> => {
   const { dependencies, chunks, dedupeKey, manifestKey, manifest, indexKey, indexFingerprint, captureId, evidenceDigest, now, expiresAtMs } = context;
@@ -1142,7 +1680,10 @@ const storeReplayEnvelope = async (
     let committed: Deno.KvCommitResult | Deno.KvCommitError | null = null;
     for (let attempt = 0; attempt < SENTINEL_INCIDENT_INDEX_MAX_CAS_ATTEMPTS; attempt += 1) {
       const indexRow = await readIncidentIndexEntry(dependencies.kv, indexKey);
-      let operation = replayStoreOperation(dependencies, dedupeKey, manifestKey, manifest, fingerprint, now);
+      let operation = replayStoreOperation(dependencies, dedupeKey, manifestKey, manifest, fingerprint, now, {
+        requestId: context.requestId,
+        captureStatus: context.captureStatus,
+      });
       if (indexRow !== null) {
         operation = withIncidentIndexEvidence(operation, indexRow, {
           gitSha: context.gitSha,
@@ -1162,7 +1703,20 @@ const storeReplayEnvelope = async (
     const winningDedupe = await dependencies.kv.get(dedupeKey);
     const winningManifestKey = dedupeManifestKey(winningDedupe.value);
     if (!winningManifestKey) throw new Error("Sentinel replay dedupe winner is unavailable");
-    return await completeDuplicateCapture(dependencies, { fingerprint, manifestKey: winningManifestKey, indexKey, indexFingerprint }, now);
+    return await completeDuplicateCapture(
+      dependencies,
+      {
+        fingerprint,
+        manifestKey: winningManifestKey,
+        indexKey,
+        indexFingerprint,
+        requestId: context.requestId,
+        captureStatus: context.captureStatus,
+        capturedAtMs: manifest.captured_at_ms,
+        expiresAtMs,
+      },
+      now
+    );
   } catch (error) {
     await cleanupChunks().catch(() => {});
     throw error;
@@ -1196,6 +1750,7 @@ export const persistEncryptedSentinelReplay = async (
     const failureSignature = sentinelFailureSignature(clientObservation);
     const fingerprint = await hmacHex(dependencies.keyBytes, "fingerprint", fingerprintParts(snapshotInput, failureSignature, "fingerprint", upstreamTrace));
     const caseGroupDigest = await hmacHex(dependencies.keyBytes, "case-group", fingerprintParts(snapshotInput, failureSignature, "case-group"));
+    const unavailable = replayUnavailableReasons(upstreamTrace, clientObservation);
     const dedupeKey = [...SENTINEL_REPLAY_DEDUPE_PREFIX, fingerprint] as const;
     const indexFingerprint = await resolveIndexFingerprint(input, clientObservation);
     const indexKey: Deno.KvKey | null = indexFingerprint === null ? null : [...SENTINEL_INCIDENT_INDEX_PREFIX, indexFingerprint];
@@ -1203,7 +1758,20 @@ export const persistEncryptedSentinelReplay = async (
     if (existingDedupe.value !== null) {
       const manifestKey = dedupeManifestKey(existingDedupe.value);
       if (!manifestKey) throw new Error("Sentinel replay dedupe record is invalid");
-      return await completeDuplicateCapture(dependencies, { fingerprint, manifestKey, indexKey, indexFingerprint }, now);
+      return await completeDuplicateCapture(
+        dependencies,
+        {
+          fingerprint,
+          manifestKey,
+          indexKey,
+          indexFingerprint,
+          requestId: input.request_id,
+          captureStatus: unavailable.length === 0 ? "ready" : "incomplete",
+          capturedAtMs: now,
+          expiresAtMs: now + SENTINEL_REPLAY_TTL_MS,
+        },
+        now
+      );
     }
 
     const captureId = dependencies.randomUuid?.() ?? crypto.randomUUID();
@@ -1223,6 +1791,13 @@ export const persistEncryptedSentinelReplay = async (
       git_sha: input.git_sha,
       deno_revision: input.deno_revision,
       upstream: upstreamTrace,
+      settings: requestSettingsFromBody(bodySnapshot, observation.provider_route, observation.stream),
+      capture_status: unavailable.length === 0 ? "ready" : "incomplete",
+      replay_coverage: replayCoverageFor(upstreamTrace, clientObservation, unavailable),
+      unavailable,
+      body_sha256: await ciphertextDigest(bodySnapshot),
+      body_bytes: bodySnapshot.byteLength,
+      downstream: downstreamObservation(clientObservation),
     };
     const encrypted = await encryptReplayPlaintext(metadata, bodySnapshot, iv, dependencies.keyBytes, fingerprint);
     try {
@@ -1258,6 +1833,8 @@ export const persistEncryptedSentinelReplay = async (
           evidenceDigest,
           now,
           expiresAtMs,
+          requestId: input.request_id,
+          captureStatus: unavailable.length === 0 ? "ready" : "incomplete",
         });
       } finally {
         for (const chunk of chunks) chunk.fill(0);
@@ -1289,6 +1866,26 @@ export const persistSentinelReplayFromEnvironment = async (
   let incidentEvent: Deno.KvEntry<SentinelIncidentFailureEvent> | undefined;
   const resolvedClientObservation = clientObservation ?? resolveSentinelClientFailureObservation(observation);
   const now = Date.now();
+  const recordStatus = async (status: "disabled" | "failed", reason: string, capturedAtMs: number): Promise<void> => {
+    if (!kv || !isSentinelReplayRequestId(input.request_id)) return;
+    try {
+      await writeSentinelReplayCaptureStatus(
+        kv,
+        captureStatusRow({
+          requestId: input.request_id,
+          status,
+          reason,
+          capturedAtMs,
+          manifestKey: null,
+          fingerprint: null,
+          expiresAtMs: null,
+        })
+      );
+    } catch {
+      // A status row is diagnostic: its own failure must never replace the real
+      // persist outcome the caller already has.
+    }
+  };
   try {
     if (!shouldPersistSentinelReplay(observation, resolvedClientObservation)) {
       throw new Error("A successful request cannot be persisted as a sentinel replay");
@@ -1308,6 +1905,12 @@ export const persistSentinelReplayFromEnvironment = async (
           gitSha: input.git_sha,
           observedAtMs: now,
           observation: resolvedClientObservation,
+          classification: {
+            provider: resolvedClientObservation.provider_route,
+            model: null,
+            reasoning: null,
+            failure_kind: resolvedClientObservation.failure_kind,
+          },
         });
       } catch {
         console.warn("[ai.ubq.fi] sentinel_incident", JSON.stringify({ status: "deferred", reason: "index_write_failed" }));
@@ -1325,6 +1928,9 @@ export const persistSentinelReplayFromEnvironment = async (
       } catch {
         console.warn("[ai.ubq.fi] sentinel_incident", JSON.stringify({ status: "deferred", reason: "capture_completion_failed" }));
       }
+      // A missing key must be visible on its request, never a silently empty
+      // replay history.
+      await recordStatus("disabled", "key_missing", now);
       return { status: "disabled", reason: "key_missing" };
     }
     try {
@@ -1335,6 +1941,7 @@ export const persistSentinelReplayFromEnvironment = async (
       } catch {
         console.warn("[ai.ubq.fi] sentinel_incident", JSON.stringify({ status: "deferred", reason: "capture_completion_failed" }));
       }
+      await recordStatus("failed", "persist_failed", now);
       throw error;
     }
   } finally {
@@ -1529,6 +2136,53 @@ export const listEncryptedSentinelIncidentReplays = async (
     break;
   }
   return { captures, cursor: iterator.cursor };
+};
+
+/**
+ * Read the capture status for one request id. `expired` is derived at read
+ * time from the stored expiry; a request with no row is `unknown`, never a
+ * silent empty history.
+ */
+export const readSentinelReplayCaptureStatus = async (kv: Deno.Kv, requestId: string, nowMs: number = Date.now()): Promise<SentinelReplayCaptureStatusRow> => {
+  if (!isSentinelReplayRequestId(requestId)) throw new Error("Sentinel replay request ID is invalid");
+  const entry = await kv.get<SentinelReplayCaptureStatusRow>(requestStatusKey(requestId));
+  if (entry.value === null) {
+    return {
+      version: 1,
+      request_id: requestId,
+      status: "unknown",
+      reason: "no_capture_record",
+      captured_at_ms: nowMs,
+      manifest_key: null,
+      fingerprint: null,
+      expires_at_ms: null,
+    };
+  }
+  if (!isSentinelReplayCaptureStatusRow(entry.value)) throw new Error("Sentinel replay capture status record is invalid");
+  if (entry.value.expires_at_ms !== null && entry.value.expires_at_ms <= nowMs) {
+    return { ...entry.value, status: "expired" };
+  }
+  return entry.value;
+};
+
+/** Export the capture a request id points at, if its manifest is still present. */
+export const listEncryptedSentinelReplaysByRequestId = async (
+  kv: Deno.Kv,
+  requestId: string
+): Promise<Readonly<{ captures: ExportedSentinelReplayCapture[]; status: SentinelReplayCaptureStatusRow }>> => {
+  const status = await readSentinelReplayCaptureStatus(kv, requestId);
+  if (status.manifest_key === null || status.fingerprint === null) return { captures: [], status };
+  const manifestEntry = await kv.get<SentinelReplayManifest>(status.manifest_key);
+  if (
+    !manifestEntry.value ||
+    !isSentinelReplayManifest(manifestEntry.value) ||
+    manifestEntry.value.fingerprint !== status.fingerprint ||
+    !manifestMatchesKey(status.manifest_key, manifestEntry.value)
+  ) {
+    return { captures: [], status: { ...status, status: "expired", reason: "manifest_unavailable" } };
+  }
+  const chunks = await getChunks(kv, manifestEntry.value);
+  return { captures: [{ manifest: manifestEntry.value, chunks: chunks.map(base64UrlEncode) }], status };
 };
 
 export const decryptExportedSentinelReplay = async (
