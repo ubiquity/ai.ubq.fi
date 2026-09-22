@@ -858,14 +858,21 @@ const kernelQuotaRouteForRequest = (method: string, path: string): string | null
 /**
  * Routes that hold process resources - an upstream transport, its retained
  * response buffer and the downstream body - for as long as the request lives.
- * Catalog and job reads (`/v1/models`, `embeddings.jobs.get`) are deliberately
- * absent: they never dispatch provider inference, so they must not consume a
- * permit. The finite guard is the merged internal controller, not caller-lane
- * admission: it holds no per-caller lease and caps no principal.
+ * Catalog reads (`/v1/models`) are deliberately absent: they never dispatch
+ * provider inference and retain no provider response, so they must not consume
+ * a permit. `embeddings.jobs.get` is present even though it also serves
+ * completed-job reads, because a queued job poll calls
+ * `runEmbeddingsJobAttempt`, which can dispatch `fetchVoyageEmbeddings`;
+ * separating that work from an ordinary read would require job-state inspection
+ * shared into the embeddings module, so every job poll is admitted instead of
+ * letting a work-producing poll bypass the bound. The finite guard is the
+ * merged internal controller, not caller-lane admission: it holds no per-caller
+ * lease and caps no principal.
  */
 const ADMISSION_ROUTES: ReadonlySet<string> = new Set([
   "embeddings",
   "embeddings.jobs.create",
+  "embeddings.jobs.get",
   "chat.completions",
   "responses",
   "images.generations",
@@ -1583,11 +1590,25 @@ const handleTerminalRoute = async (
   };
   /**
    * Refuses a request whose caller left while admission waited or quota/setup
-   * ran. The permit returns through the terminal wrapper, and a provider that
-   * never dispatched is not charged.
+   * ran. The permit returns through the terminal wrapper, an acquired API-key
+   * reservation is released, and an acquired kernel reservation is settled as
+   * released so it stops renewing; a request that never dispatched is not
+   * charged.
    */
   const refuseAbortedBeforeDispatch = async (): Promise<Response | null> => {
     if (processPermit === null || !callerSignal.aborted) return null;
+    // No provider dispatch happened, so settle exactly the pre-dispatch
+    // resources `executeInference` settles: releasing the API-key reservation
+    // is idempotent (a deferred reservation releases nothing), and releasing an
+    // acquired kernel reservation is the existing no-dispatch settlement that
+    // stops its lease renewal. A settlement fault cannot replace the 499.
+    const abortReason = "caller_aborted_before_dispatch";
+    try {
+      await usageReservation?.release(abortReason);
+    } catch (error) {
+      warnQuotaAccountingFailure({ route: terminalRoute ?? "inference", requestId }, error);
+    }
+    await bestEffortSettleKernelQuota("incomplete", abortReason);
     const refusal = openaiError(499, "Request was cancelled.", "request_cancelled", { type: "server_error", param: null });
     const response = withCors(withRequestId(refusal, requestId));
     return await withRejectionTerminalLog(response, terminalRoute, {
