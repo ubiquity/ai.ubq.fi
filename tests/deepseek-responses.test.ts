@@ -2,10 +2,18 @@ import assert from "node:assert/strict";
 
 import {
   createDeepSeekResponsesStreamTranslator,
-  encodeResponsesEvent,
+  DEEPSEEK_RECHECK_INSTRUCTION,
+  DEEPSEEK_RECHECK_MAX_TOKENS,
+  type DeepSeekRecheckSkipReason,
   type DeepSeekResponsesEcho,
+  deepSeekRecheckEligibility,
+  deepSeekRecheckToolCalls,
   deepSeekResponsesTerminalKind,
+  encodeResponsesEvent,
+  measurableDeepSeekRecheckUsage,
+  mergeDeepSeekRecheckUsage,
   toDeepSeekChatMessages,
+  toDeepSeekRecheckChatBody,
   toDeepSeekResponsesChatBody,
   toDeepSeekResponsesPayload,
   toResponsesUsage,
@@ -629,6 +637,16 @@ Deno.test("deepseek responses: stream translator accumulates fragmented tool cal
   });
 });
 
+Deno.test("deepseek responses: an argument-only tool-call delta is observed but not answer-bearing", () => {
+  const translator = createDeepSeekResponsesStreamTranslator("deepseek-flash", "resp_partial_call", echo, 1_780_000_000);
+  translator.push(chatChunk({ content: "Step 11 of 16 complete." }));
+  translator.push(chatChunk({ tool_calls: [{ index: 0, function: { arguments: '{"path":' } }] }, { finish_reason: "stop" }));
+  // The two predicates are distinct: the nameless partial delta owns a tool-call
+  // slot but answers nothing, so only the observed count refuses the recheck.
+  assert.equal(translator.observedToolCallCount(), 1);
+  assert.deepEqual(translator.answerBearingOutput(), { text: "Step 11 of 16 complete.", toolCallCount: 0 });
+});
+
 Deno.test("deepseek responses: stream translator is idempotent at the terminal", () => {
   const translator = createDeepSeekResponsesStreamTranslator("deepseek-flash", "resp_once", echo, 1_780_000_000);
   assert.deepEqual(eventTypes(translator.finish()), ["response.created", "response.in_progress", "response.completed"]);
@@ -884,4 +902,191 @@ Deno.test("deepseek responses: a normal stream is still reported as completed", 
   assert.equal(terminal.response.status, "completed");
   assert.equal(terminal.response.incomplete_details, null);
   assert.equal(terminal.response.error, null);
+});
+
+Deno.test("deepseek responses: the bounded recheck runs only for a measured tool-bearing progress stop", () => {
+  const firstLeg: {
+    finishReason: string;
+    text: string;
+    refusal: string;
+    toolCallCount: number;
+    executableToolCount: number;
+    toolChoice: unknown;
+    firstCompletionTokens: number | null;
+    allowance: number | null;
+  } = {
+    finishReason: "stop",
+    text: "Step 11 of 16 complete.",
+    refusal: "",
+    toolCallCount: 0,
+    executableToolCount: 2,
+    toolChoice: "auto",
+    firstCompletionTokens: 10,
+    allowance: 512,
+  };
+  const eligible = deepSeekRecheckEligibility(firstLeg);
+  assert.equal(eligible.eligible, true);
+  assert.equal(eligible.remainingBudget, 502);
+  assert.equal(eligible.maxTokens, 502);
+  // The recheck may add at most 8,192 tokens; a known allowance that is larger
+  // still bounds the two legs together, so the cap never widens the caller's ask.
+  const capped = deepSeekRecheckEligibility({ ...firstLeg, firstCompletionTokens: 100, allowance: 20_000 });
+  assert.equal(capped.eligible, true);
+  assert.equal(capped.remainingBudget, 19_900);
+  assert.equal(capped.maxTokens, DEEPSEEK_RECHECK_MAX_TOKENS);
+  const skipped: { name: string; facts: typeof firstLeg; reason: DeepSeekRecheckSkipReason }[] = [
+    { name: "a truncation", facts: { ...firstLeg, finishReason: "length" }, reason: "finish_reason" },
+    { name: "an interruption", facts: { ...firstLeg, finishReason: "insufficient_system_resource" }, reason: "finish_reason" },
+    { name: "a refusal", facts: { ...firstLeg, refusal: "I cannot help with that." }, reason: "refusal" },
+    { name: "an empty answer", facts: { ...firstLeg, text: "" }, reason: "empty_text" },
+    { name: "a first-leg tool call", facts: { ...firstLeg, toolCallCount: 1 }, reason: "tool_calls" },
+    { name: "no executable tools", facts: { ...firstLeg, executableToolCount: 0 }, reason: "no_executable_tools" },
+    { name: "tool_choice none", facts: { ...firstLeg, toolChoice: "none" }, reason: "tool_choice" },
+    { name: "tool_choice required", facts: { ...firstLeg, toolChoice: "required" }, reason: "tool_choice" },
+    {
+      name: "a named tool_choice",
+      facts: { ...firstLeg, toolChoice: { type: "function", function: { name: "read_file" } } },
+      reason: "tool_choice",
+    },
+    { name: "an unobserved first usage", facts: { ...firstLeg, firstCompletionTokens: null }, reason: "usage_unknown" },
+    { name: "an unknown allowance", facts: { ...firstLeg, allowance: null }, reason: "budget_unknown" },
+    { name: "no remaining budget", facts: { ...firstLeg, firstCompletionTokens: 512 }, reason: "budget_exhausted" },
+    { name: "an exhausted budget", facts: { ...firstLeg, firstCompletionTokens: 600 }, reason: "budget_exhausted" },
+  ];
+  for (const testCase of skipped) {
+    const result = deepSeekRecheckEligibility(testCase.facts);
+    assert.equal(result.eligible, false, testCase.name);
+    assert.equal(result.reason, testCase.reason, testCase.name);
+  }
+});
+
+Deno.test("deepseek responses: the recheck request appends the draft and never forces a tool", () => {
+  const firstLeg = toDeepSeekResponsesChatBody(
+    {
+      instructions: "Be terse.",
+      input: "read all 16 files",
+      max_output_tokens: 512,
+      reasoning: { effort: "max" },
+      tools: [{ type: "function", name: "read_file", parameters: { type: "object" } }],
+      tool_choice: "auto",
+    },
+    "deepseek-v4-flash",
+    true
+  );
+  assert.equal(firstLeg.ok, true);
+  const first = firstLeg.value.body;
+  const recheck = toDeepSeekRecheckChatBody(first, { content: "Step 11 of 16 complete.", reasoning: "I read ten files." }, 502);
+  // Only the recheck is buffered; the first generation stayed progressive.
+  assert.equal(recheck.stream, false);
+  assert.equal("stream_options" in recheck, false);
+  assert.equal(recheck.max_tokens, 502);
+  assert.equal(recheck.model, first.model);
+  assert.equal(recheck.reasoning_effort, first.reasoning_effort);
+  assert.equal(recheck.tool_choice, "auto");
+  assert.deepEqual(recheck.tools, first.tools);
+  const messages = recheck.messages as Record<string, unknown>[];
+  assert.deepEqual(messages.slice(0, -2), first.messages);
+  assert.deepEqual(messages.slice(-2), [
+    { role: "assistant", content: "Step 11 of 16 complete.", reasoning_content: "I read ten files." },
+    { role: "user", content: DEEPSEEK_RECHECK_INSTRUCTION },
+  ]);
+});
+
+Deno.test("deepseek responses: a recheck tool call must name an advertised executable tool", () => {
+  const executableNames = new Set(["read_file", "clock_now"]);
+  const call = { id: "call_1", type: "function", function: { name: "read_file", arguments: '{"path":"a"}' } };
+  assert.deepEqual(deepSeekRecheckToolCalls({ tool_calls: [call] }, executableNames), [call]);
+  assert.equal(deepSeekRecheckToolCalls({ tool_calls: [] }, executableNames), null);
+  assert.equal(deepSeekRecheckToolCalls({}, executableNames), null);
+  // A hidden or aliased tool the client never offered is rejected as a batch.
+  assert.equal(
+    deepSeekRecheckToolCalls({ tool_calls: [{ id: "call_2", type: "function", function: { name: "hidden_tool", arguments: "{}" } }] }, executableNames),
+    null
+  );
+  assert.equal(
+    deepSeekRecheckToolCalls({ tool_calls: [call, { id: "call_2", type: "function", function: { name: "hidden_tool", arguments: "{}" } }] }, executableNames),
+    null
+  );
+});
+
+Deno.test("deepseek responses: recheck usage sums both legs and never invents a missing one", () => {
+  const first = {
+    prompt_tokens: 100,
+    completion_tokens: 10,
+    total_tokens: 110,
+    prompt_tokens_details: { cached_tokens: 40 },
+    completion_tokens_details: { reasoning_tokens: 4 },
+  };
+  const second = {
+    prompt_tokens: 120,
+    completion_tokens: 6,
+    total_tokens: 126,
+    prompt_tokens_details: { cached_tokens: 50 },
+    completion_tokens_details: { reasoning_tokens: 1 },
+  };
+  assert.deepEqual(mergeDeepSeekRecheckUsage(first, second), {
+    usage: {
+      prompt_tokens: 220,
+      completion_tokens: 16,
+      total_tokens: 236,
+      prompt_tokens_details: { cached_tokens: 90 },
+      completion_tokens_details: { reasoning_tokens: 5 },
+    },
+    complete: true,
+  });
+  // A wholly unobserved second leg keeps the first leg's measured base counters
+  // and adds no aggregate detail, because the second leg never measured one.
+  assert.deepEqual(mergeDeepSeekRecheckUsage(first, null), {
+    usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 },
+    complete: false,
+  });
+  assert.deepEqual(mergeDeepSeekRecheckUsage(first, "not usage"), {
+    usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 },
+    complete: false,
+  });
+  // A partial second leg keeps every counter either leg measured: the measured
+  // first-leg input survives the missing second-leg one, the completion counter
+  // is the sum of both measured amounts, and the reported total is raised to the
+  // consistent lower bound, the sum of those observed components.
+  assert.deepEqual(mergeDeepSeekRecheckUsage(first, { completion_tokens: 5 }), {
+    usage: { prompt_tokens: 100, completion_tokens: 15, total_tokens: 115 },
+    complete: false,
+  });
+  // A total-only second measurement is kept as reported even when it exceeds the
+  // partial input and output components, which are never dropped or reduced.
+  assert.deepEqual(mergeDeepSeekRecheckUsage({ prompt_tokens: 100, completion_tokens: 10 }, { total_tokens: 500 }), {
+    usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 500 },
+    complete: false,
+  });
+  // A base counter only the second leg measured still counts, and a reported
+  // total below the observed components is raised to cover them.
+  assert.deepEqual(mergeDeepSeekRecheckUsage({ completion_tokens: 10 }, { prompt_tokens: 120, total_tokens: 126 }), {
+    usage: { prompt_tokens: 120, completion_tokens: 10, total_tokens: 130 },
+    complete: false,
+  });
+  // A detail one leg never measured stays absent: unmeasured is never zero, and
+  // the base counters still sum.
+  assert.deepEqual(mergeDeepSeekRecheckUsage(first, { prompt_tokens: 120, completion_tokens: 6, total_tokens: 126 }), {
+    usage: { prompt_tokens: 220, completion_tokens: 16, total_tokens: 236 },
+    complete: true,
+  });
+  assert.deepEqual(
+    mergeDeepSeekRecheckUsage(first, { prompt_tokens: 120, completion_tokens: 6, total_tokens: 126, prompt_tokens_details: { cached_tokens: 50 } }),
+    { usage: { prompt_tokens: 220, completion_tokens: 16, total_tokens: 236, prompt_tokens_details: { cached_tokens: 90 } }, complete: true }
+  );
+  assert.deepEqual(mergeDeepSeekRecheckUsage(null, second), { usage: null, complete: false });
+  // A rejected second completion keeps a usage object with a measurable counter
+  // and never invents one out of nothing.
+  const partialSecondUsage = { completion_tokens: 5 };
+  assert.equal(measurableDeepSeekRecheckUsage(partialSecondUsage), partialSecondUsage);
+  assert.equal(measurableDeepSeekRecheckUsage({}), null);
+  assert.equal(measurableDeepSeekRecheckUsage({ prompt_tokens: -1 }), null);
+  assert.equal(measurableDeepSeekRecheckUsage(null), null);
+});
+
+Deno.test("deepseek responses: the translator exposes the first-leg draft the recheck appends", () => {
+  const translator = createDeepSeekResponsesStreamTranslator("deepseek-flash", "resp_draft", echo, 1_780_000_000);
+  translator.push(chatChunk({ role: "assistant", reasoning_content: "I read ten files." }));
+  translator.push(chatChunk({ content: "Step 11 of 16 complete." }, { finish_reason: "stop" }));
+  assert.deepEqual(translator.draftAssistantMessage(), { content: "Step 11 of 16 complete.", reasoning: "I read ten files." });
 });
