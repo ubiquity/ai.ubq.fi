@@ -1853,7 +1853,7 @@ body[data-page="admin"] [data-provider-filters] button {
   gap: 7px;
   min-height: 40px;
   padding: 5px 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--input-border);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
   color: var(--muted);

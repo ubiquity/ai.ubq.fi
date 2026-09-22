@@ -1065,7 +1065,8 @@ let codexResetSettingsTarget = "";
 let codexResetSettingsToken = "";
 
 const renderCodexCapacitySource = (source, provider = null) => {
-  const row = document.createElement("article");
+  // The capacity list is a role="list" container, and aria-allowed-role rejects listitem on article.
+  const row = document.createElement("div");
   row.dataset.capacitySource = "codex";
   row.dataset.state = source.state;
   row.setAttribute("role", "listitem");
@@ -1092,10 +1093,6 @@ const renderCodexCapacitySource = (source, provider = null) => {
   copy.textContent = "Use banked resets";
   const countLabel = document.createElement("small");
   countLabel.textContent = Number.isSafeInteger(count) && count >= 0 ? count + " available" : "Count unavailable";
-  countLabel.setAttribute(
-    "aria-label",
-    Number.isSafeInteger(count) && count >= 0 ? count + " banked resets available" : "Banked reset count unavailable",
-  );
   const input = document.createElement("input");
   input.type = "checkbox";
   input.setAttribute("role", "switch");
@@ -1154,7 +1151,7 @@ const renderCodexCapacitySource = (source, provider = null) => {
 };
 
 const renderMeteredCapacitySource = (source, provider = null) => {
-  const row = document.createElement("article");
+  const row = document.createElement("div");
   row.dataset.capacitySource = "metered";
   row.dataset.state = source.state;
   row.setAttribute("role", "listitem");
@@ -1205,7 +1202,7 @@ const renderMeteredCapacitySource = (source, provider = null) => {
 };
 
 const renderSurplusProviderHealthSource = (provider = null) => {
-  const row = document.createElement("article");
+  const row = document.createElement("div");
   row.dataset.capacitySource = "surplus";
   row.dataset.state = provider?.configured === false ? "unavailable" : provider?.health?.state ?? "unknown";
   row.setAttribute("role", "listitem");
@@ -2472,6 +2469,7 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
       y2: coordinates.end.y,
     });
     optimalSpendTrend.dataset.capacityTrend = "optimal-spend";
+    optimalSpendTrend.setAttribute("role", "img");
     optimalSpendTrend.setAttribute("aria-label", `Optimal token spend for weekly reset ${index + 1}`);
     svg.appendChild(optimalSpendTrend);
   }
@@ -2485,6 +2483,7 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
     y2: plot.top + plot.height,
   });
   reticule.dataset.capacityReticule = "current-time";
+  reticule.setAttribute("role", "img");
   reticule.setAttribute("aria-label", "Current time in usage period");
   svg.appendChild(reticule);
 
@@ -2515,6 +2514,7 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
     });
     path.style.fill = "none";
     path.dataset.capacitySeries = series.key;
+    path.setAttribute("role", "img");
     path.setAttribute("aria-label", series.label);
     svg.appendChild(path);
 
@@ -2534,6 +2534,7 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
       });
       downtimePath.style.fill = "none";
       downtimePath.dataset.capacityDowntime = "openai";
+      downtimePath.setAttribute("role", "img");
       downtimePath.setAttribute("aria-label", "OpenAI downtime between observed capacity samples");
       svg.appendChild(downtimePath);
     }
@@ -2550,6 +2551,7 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
 
   const chartScrollControls = document.createElement("div");
   chartScrollControls.dataset.capacityChartScrollControls = "";
+  chartScrollControls.setAttribute("role", "group");
   chartScrollControls.setAttribute("aria-label", "History navigation");
   const olderButton = document.createElement("button");
   olderButton.type = "button";
@@ -3743,7 +3745,7 @@ const renderKernelPolicyQueue = (records) => {
     if (!owner || !repo) return;
     const lastRoute = typeof record.last_route === "string" ? record.last_route : "";
 
-    const row = document.createElement("article");
+    const row = document.createElement("div");
     row.dataset.key = "kernel-queue";
     row.dataset.state = "warning";
     row.style.setProperty("--i", index);
@@ -4250,7 +4252,7 @@ const buildKernelPolicyPlaceholder = (record, options = {}) => {
   const showDetails = options.showDetails ?? options.isSubtile === true;
   const canAdd = policyAvailable && owner && owner !== "unknown" && (scope === "org" || repo);
 
-  const row = document.createElement("article");
+  const row = document.createElement("div");
   row.dataset.key = "kernel-policy";
   row.dataset.state = "warning";
   if (options.isSubtile) row.dataset.subtile = "true";
@@ -4318,7 +4320,7 @@ const buildKernelPolicyTile = (record, options = {}) => {
   const titleText = options.titleText || (repo ? repo : owner || "unknown");
   const confirmLabel = repo ? `${owner}/${repo}` : owner || titleText;
 
-  const row = document.createElement("article");
+  const row = document.createElement("div");
   row.dataset.key = "kernel-policy";
   if (options.isSubtile) row.dataset.subtile = "true";
   if (typeof options.index === "number") row.style.setProperty("--i", options.index);
@@ -5950,7 +5952,7 @@ const renderKeys = (keys, view = "all") => {
   }
 
   filteredKeys.forEach((key, index) => {
-    const row = document.createElement("article");
+    const row = document.createElement("div");
     row.dataset.key = "row";
     row.dataset.state = key.revoked_at_ms ? "revoked" : "active";
     row.style.setProperty("--i", index);
@@ -6717,7 +6719,7 @@ const renderPasskeyUsers = (users) => {
   }
 
   users.forEach((user, index) => {
-    const row = document.createElement("article");
+    const row = document.createElement("div");
     row.dataset.key = "passkey-user";
     row.dataset.state = user.is_admin ? "active" : "warning";
     row.style.setProperty("--i", index);
@@ -7041,7 +7043,7 @@ const renderAdminErrors = (records) => {
     return;
   }
   records.forEach((record) => {
-    const row = document.createElement("article");
+    const row = document.createElement("div");
     row.dataset.key = "gateway-error";
     row.setAttribute("role", "listitem");
     const header = document.createElement("header");
