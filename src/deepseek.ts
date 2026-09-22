@@ -594,7 +594,7 @@ const choiceContent = (content: unknown, toolCalls: readonly unknown[] | undefin
 const normalizeChoiceMessage = (
   message: Record<string, unknown>,
   index: number
-): NormalizationResult<Readonly<{ content: unknown; reasoning: string | null; toolCalls: Record<string, unknown>[] | undefined }>> => {
+): NormalizationResult<Readonly<{ content: unknown; reasoning: string | null; refusal: string | null; toolCalls: Record<string, unknown>[] | undefined }>> => {
   if (message.role !== "assistant") {
     return { ok: false, message: `Upstream choice ${index} does not contain an assistant message.` };
   }
@@ -604,14 +604,18 @@ const normalizeChoiceMessage = (
   if (!isAbsentOrString(message.reasoning_content)) {
     return { ok: false, message: `Upstream choice ${index} has invalid reasoning content.` };
   }
+  if (!isAbsentOrString(message.refusal)) {
+    return { ok: false, message: `Upstream choice ${index} has an invalid refusal.` };
+  }
   const toolCallsResult = normalizeToolCalls(message.tool_calls, `Upstream choice ${index}`, normalizeToolCall);
   if (!toolCallsResult.ok) return toolCallsResult;
   const toolCalls = toolCallsResult.value;
   const reasoning = typeof message.reasoning_content === "string" ? message.reasoning_content : null;
+  const refusal = typeof message.refusal === "string" ? message.refusal : null;
   if (choiceHasNoPayload(message.content, message.reasoning_content, toolCalls)) {
     return { ok: false, message: `Upstream choice ${index} has neither content nor a tool call.` };
   }
-  return { ok: true, value: { content: message.content, reasoning, toolCalls } };
+  return { ok: true, value: { content: message.content, reasoning, refusal, toolCalls } };
 };
 
 const normalizeChoice = (value: unknown, index: number): NormalizationResult<Record<string, unknown>> => {
@@ -625,7 +629,7 @@ const normalizeChoice = (value: unknown, index: number): NormalizationResult<Rec
   }
   const normalizedMessagePart = normalizeChoiceMessage(value.message, index);
   if (!normalizedMessagePart.ok) return normalizedMessagePart;
-  const { content, reasoning, toolCalls } = normalizedMessagePart.value;
+  const { content, reasoning, refusal, toolCalls } = normalizedMessagePart.value;
 
   const finishReason = value.finish_reason;
   if (!isAbsentOrString(finishReason)) {
@@ -635,6 +639,10 @@ const normalizeChoice = (value: unknown, index: number): NormalizationResult<Rec
   // DeepSeek thinking mode returns the chain of thought beside `content`.
   // Relay it 1:1 rather than dropping or logging it.
   if (reasoning !== null) normalizedMessage.reasoning_content = reasoning;
+  // The official refusal string is answer-bearing metadata: preserving it keeps
+  // the route's continuation decision from treating an explicit refusal as an
+  // ordinary progress stop.
+  if (refusal !== null) normalizedMessage.refusal = refusal;
   if (toolCalls?.length) normalizedMessage.tool_calls = toolCalls;
   return {
     ok: true,
@@ -698,7 +706,7 @@ const normalizeChunkDelta = (value: unknown, label: string): NormalizationResult
   const role = optionalField(value.role, (input) => (typeof input === "string" ? input : null), `${label} has an invalid delta role.`);
   if (!role.ok) return role;
   if (role.value !== undefined) normalizedDelta.role = role.value;
-  for (const field of ["content", "reasoning_content"] as const) {
+  for (const field of ["content", "reasoning_content", "refusal"] as const) {
     const text = optionalField(value[field], (input) => (typeof input === "string" ? input : null), `${label} has invalid ${field}.`);
     if (!text.ok) return text;
     if (text.value !== undefined) normalizedDelta[field] = text.value;
