@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import handler from "../src/handler.ts";
 import type { SupervisorSource } from "../src/codex_supervisor.ts";
 import {
+  appendRolloutTailTurn,
+  assembleBriefContext,
   buildSupervisorBriefPrompt,
   buildSupervisorBriefRequestBody,
   collectBriefTranscript,
@@ -10,6 +12,7 @@ import {
   redactBriefText,
   type SupervisorBriefContext,
 } from "../src/codex_supervisor_brief.ts";
+import { parseSupervisorRolloutTail, resolveSupervisorRolloutPath } from "../src/codex_supervisor_log.ts";
 import type { SupervisorConnection } from "../src/codex_supervisor_transport.ts";
 
 const SOURCE: SupervisorSource = {
@@ -106,6 +109,205 @@ Deno.test("brief transcript keeps visible progress, bounds the context, and omit
   assert.equal(prompt.includes("[redacted]"), true);
   assert.match(prompt, /deno task test/);
   assert.ok(new TextEncoder().encode(prompt).length <= 48 * 1024);
+});
+
+Deno.test("a long ongoing turn keeps its opening request and its latest progress", async () => {
+  const turnId = "turn-long";
+  const openingItems = [
+    { type: "userMessage", id: "u0", content: [{ type: "text", text: "Please implement the catch-me-up brief" }] },
+    ...Array.from({ length: 20 }, (_value, index) => ({ type: "agentMessage", id: `early-${index}`, text: `early progress ${index}` })),
+  ];
+  const tailItems = [
+    ...Array.from({ length: 20 }, (_value, index) => ({ type: "agentMessage", id: `late-${index}`, text: `late progress ${index}` })),
+    { type: "agentMessage", id: "latest", text: "latest progress: the panel renders again" },
+  ];
+  const context = await collectWith({
+    read: threadRead,
+    first: [{ id: turnId, status: "inProgress", items: openingItems }],
+    recent: [{ id: turnId, status: "inProgress", items: tailItems }],
+  });
+  const [turn] = context.turns;
+  assert.ok(turn, "the repeated turn must survive collection once");
+  assert.equal(context.turns.length, 1);
+  assert.equal(turn.items.length, 12);
+  const prompt = buildSupervisorBriefPrompt(context);
+  assert.match(prompt, /Please implement the catch-me-up brief/, "the opening request must survive for the About answer");
+  assert.match(prompt, /latest progress: the panel renders again/, "the most recent progress must survive for Current status");
+  assert.equal(context.truncated, true, "item limits that discard records must be reported as truncation");
+});
+
+Deno.test("a stale projected history is extended by the fresh local rollout tail", () => {
+  const threadId = "01a0c796-caac-7dc0-9446-bf13098203e7";
+  const stale = [
+    {
+      id: "turn-1",
+      status: "inProgress",
+      startedAtMs: 1_790_000_000_000,
+      completedAtMs: null,
+      items: [{ type: "assistant", text: "opening answer" }],
+      droppedItems: 0,
+    },
+  ];
+  const jsonl = [
+    JSON.stringify({
+      timestamp: "2026-09-22T07:49:40.465Z",
+      type: "response_item",
+      payload: { type: "message", role: "developer", content: [{ type: "input_text", text: "developer reminder only" }] },
+    }),
+    JSON.stringify({ timestamp: "2026-09-22T07:51:28.925Z", type: "response_item", payload: { type: "reasoning", summary: ["private chain of thought"] } }),
+    JSON.stringify({
+      timestamp: "2026-09-22T08:03:40.435Z",
+      type: "response_item",
+      payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: `latest progress: Authorization: Bearer ${"a".repeat(40)}` }] },
+    }),
+    JSON.stringify({
+      timestamp: "2026-09-22T08:04:14.341Z",
+      type: "response_item",
+      payload: { type: "custom_tool_call", name: "exec", status: "completed", input: "deno task test" },
+    }),
+  ].join("\n");
+  const turns = appendRolloutTailTurn(stale, { threadId, state: "active", events: parseSupervisorRolloutTail(jsonl) });
+  const assembly = assembleBriefContext(turns);
+  const context: SupervisorBriefContext = {
+    sourceId: "local",
+    machine: "m1.local",
+    threadId,
+    title: "Add Codex supervisor panel",
+    cwd: null,
+    model: null,
+    provider: null,
+    effort: null,
+    state: "active",
+    activeFlags: [],
+    updatedAtMs: 1_790_064_256_550,
+    rolloutPath: null,
+    ...assembly,
+    rolloutTailEvents: 2,
+    projectedHistoryBehindMs: 1,
+  };
+  const prompt = buildSupervisorBriefPrompt(context);
+  assert.equal(context.turns.length, 2);
+  assert.equal(context.truncated, false);
+  assert.match(prompt, /latest progress:/, "the fresh tail must reach the model");
+  assert.match(prompt, /latest recorded activity from the local rollout tail/);
+  assert.match(prompt, /tool: exec completed/);
+  assert.match(prompt, /runtime_state=active/);
+  assert.equal(prompt.includes("a".repeat(40)), false, "the tail secret must be redacted");
+  assert.equal(prompt.includes("developer reminder only"), false, "developer payloads are never collected");
+  assert.equal(prompt.includes("private chain of thought"), false, "reasoning payloads are never collected");
+  assert.equal(prompt.includes("deno task test"), false, "tool call inputs are never collected");
+});
+
+Deno.test("rollout tail reads stay inside the Codex home and inside the event size bound", () => {
+  const home = "/Users/example/.codex";
+  const threadId = "01a0c796-caac-7dc0-9446-bf13098203e7";
+  assert.equal(
+    resolveSupervisorRolloutPath(home, threadId, `${home}/sessions/2026/09/22/rollout-x-${threadId}.jsonl`),
+    `${home}/sessions/2026/09/22/rollout-x-${threadId}.jsonl`
+  );
+  assert.equal(
+    resolveSupervisorRolloutPath(home, threadId, `${home}/archived_sessions/rollout-x-${threadId}.jsonl.zst`),
+    `${home}/archived_sessions/rollout-x-${threadId}.jsonl.zst`
+  );
+  assert.equal(resolveSupervisorRolloutPath(home, threadId, "/Users/example/other/sessions/x.jsonl"), null);
+  assert.equal(resolveSupervisorRolloutPath(home, threadId, `${home}/sessions/../secrets/x-${threadId}.jsonl`), null);
+  assert.equal(resolveSupervisorRolloutPath(home, threadId, `${home}/sessions/rollout-other-session.jsonl`), null);
+  const events = parseSupervisorRolloutTail(
+    JSON.stringify({
+      timestamp: "2026-09-22T08:03:40.435Z",
+      type: "response_item",
+      payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "x".repeat(50_000) }] },
+    })
+  );
+  const [event] = events;
+  assert.ok(event);
+  assert.equal(events.length, 1, "the parser keeps raw events; redaction and the final field cap happen later");
+  const turns = appendRolloutTailTurn([], { threadId, state: "active", events });
+  const assembly = assembleBriefContext(turns);
+  const [turn] = assembly.turns;
+  assert.ok(turn);
+  const [item] = turn.items;
+  assert.ok(item);
+  assert.ok(item.text.length <= 1_200, "the final sanitized model field stays inside its 1,200-character cap");
+  assert.ok(assembly.contextBytes <= 32 * 1024, "the model context stays inside its 32 KiB bound");
+});
+
+Deno.test("private assistant analysis never becomes a transcript event", () => {
+  const message = (payload: Record<string, unknown>, text: string, second: number) =>
+    JSON.stringify({
+      timestamp: `2026-09-22T08:00:0${second}.000Z`,
+      type: "response_item",
+      payload: { ...payload, content: [{ type: "output_text", text }] },
+    });
+  const jsonl = [
+    message({ type: "message", role: "assistant", channel: "analysis" }, "private analysis text", 0),
+    message({ type: "message", role: "assistant", phase: "reasoning" }, "private reasoning text", 1),
+    message({ type: "message", role: "assistant", phase: "commentary" }, "visible commentary", 2),
+    message({ type: "message", role: "assistant", channel: "final" }, "visible final", 3),
+    message({ type: "message", role: "assistant" }, "legacy visible message", 4),
+    message({ type: "message", role: "user" }, "visible user request", 5),
+  ].join("\n");
+  const events = parseSupervisorRolloutTail(jsonl);
+  assert.deepEqual(
+    events.map((event) => event.text),
+    ["visible commentary", "visible final", "legacy visible message", "visible user request"]
+  );
+});
+
+Deno.test("rollout parsing and tail merging retain the newest bounded entries", () => {
+  const lines = Array.from({ length: 250 }, (_value, index) =>
+    JSON.stringify({
+      timestamp: new Date(1_790_000_000_000 + index * 1_000).toISOString(),
+      type: "response_item",
+      payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: `event ${index}` }] },
+    })
+  );
+  const events = parseSupervisorRolloutTail(lines.join("\n"));
+  assert.equal(events.length, 200);
+  assert.equal(events[0].text, "event 50");
+  assert.equal(events[199].text, "event 249");
+  const turns = appendRolloutTailTurn([], { threadId: "thread-newest", state: "active", events });
+  const [turn] = turns;
+  assert.ok(turn);
+  assert.equal(turn.items.length, 12);
+  assert.equal(turn.items[0].text, "event 238");
+  assert.equal(turn.items[11].text, "event 249");
+});
+
+Deno.test("a secret crossing the old 4,000-character clip never reaches the prompt", () => {
+  // The secret starts inside the old clip window: a premature clip left
+  // "Bearer " plus 10 token characters, short of the 12-character redaction
+  // pattern, so a partial secret could survive into the prompt.
+  const text = `${"A".repeat(3_968)}Authorization: Bearer ${"a".repeat(40)}${"Z".repeat(200)}`;
+  const jsonl = JSON.stringify({
+    timestamp: "2026-09-22T08:00:00.000Z",
+    type: "response_item",
+    payload: { type: "message", role: "assistant", channel: "final", content: [{ type: "output_text", text }] },
+  });
+  const turns = appendRolloutTailTurn([], { threadId: "thread-secret", state: "active", events: parseSupervisorRolloutTail(jsonl) });
+  const assembly = assembleBriefContext(turns);
+  const context: SupervisorBriefContext = {
+    sourceId: "local",
+    machine: "m1.local",
+    threadId: "thread-secret",
+    title: "secret boundary",
+    cwd: null,
+    model: null,
+    provider: null,
+    effort: null,
+    state: "active",
+    activeFlags: [],
+    updatedAtMs: null,
+    rolloutPath: null,
+    ...assembly,
+    rolloutTailEvents: 1,
+    projectedHistoryBehindMs: null,
+  };
+  const prompt = buildSupervisorBriefPrompt(context);
+  assert.equal(prompt.includes("a".repeat(10)), false, "no partial bearer token may survive the field cap");
+  assert.equal(prompt.includes("a".repeat(40)), false);
+  assert.equal(prompt.includes("Authorization: Bearer"), false);
+  assert.equal(prompt.includes("Z".repeat(50)), false);
 });
 
 Deno.test("brief transcript reports a missing transcript instead of inventing progress", async () => {

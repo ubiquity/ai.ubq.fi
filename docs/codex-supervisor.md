@@ -147,6 +147,13 @@ The data flow is:
 5. A partial or missing transcript is stated plainly in the brief instead of being guessed at; when no recorded turn was
    available at all, the route answers from the live thread metadata without calling the model. The brief line shows the
    inventory snapshot timestamp, the generation timestamp, truncation, and redaction counts.
+6. When the projected turn history lags a still-active local session, the route additionally reads at most the last 256
+   KiB of that selected session's own rollout file, after validating the path belongs to the configured `codexHome`
+   `sessions`/`archived_sessions` tree and to that thread id. A partial leading JSONL line is discarded; only visible
+   user/assistant messages and safe tool progress are normalized (reasoning, system, and developer payloads are never
+   collected), each text is redacted before it is bounded, and the fresh events fill the same 32 KiB model context with
+   budget priority over older records. This is read-only: no Codex file, database, or session is written. Remote sources
+   have no local rollout to read, so their brief says the recorded history may lag the live session instead.
 
 ## Known limitations
 
