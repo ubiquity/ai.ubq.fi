@@ -23,6 +23,7 @@ import { createAdminSnapshotCache } from "./admin-cache.js?v=admin-indexeddb-cac
 import { bindForegroundRefresh } from "./foreground-refresh.js";
 import { setReasoningPlaceholder, updateReasoningSelectForModel } from "./reasoning-select.js";
 import { toast } from "./toast.js?v=passport-design-20260922";
+import { createSupervisorView } from "./admin-supervisor.js";
 
 const STORAGE_KEYS = {
   rememberToken: AUTH_STORAGE_KEYS.rememberToken,
@@ -198,6 +199,7 @@ const viewTabAnalytics = mustGet("view-tab-analytics");
 const viewTabProviders = mustGet("view-tab-providers");
 const viewTabErrors = mustGet("view-tab-errors");
 const viewTabModels = mustGet("view-tab-models");
+const viewTabSupervisor = mustGet("view-tab-supervisor");
 
 const viewLoading = mustGet("view-loading");
 const viewKeys = mustGet("view-keys");
@@ -209,6 +211,7 @@ const viewAnalytics = mustGet("view-analytics");
 const viewProviders = mustGet("view-providers");
 const viewErrors = mustGet("view-errors");
 const viewModels = mustGet("view-models");
+const viewSupervisor = mustGet("view-supervisor");
 const errorsBadge = mustGet("errors-badge");
 const errorsUpdated = mustGet("errors-updated");
 const errorsList = mustGet("errors-list");
@@ -6895,6 +6898,7 @@ const VIEW_HASHES = {
   analytics: "analytics",
   providers: "providers",
   errors: "errors",
+  supervisor: "supervisor",
 };
 const VIEW_REQUIREMENTS = {
   keys: "admin",
@@ -6906,6 +6910,7 @@ const VIEW_REQUIREMENTS = {
   analytics: "admin",
   providers: "admin",
   errors: "admin",
+  supervisor: "super-admin",
 };
 const VIEW_HASH_ALIASES = new Map([
   ["loading", "loading"],
@@ -6934,6 +6939,8 @@ const VIEW_HASH_ALIASES = new Map([
   ["view-models", "models"],
   ["errors", "errors"],
   ["view-errors", "errors"],
+  ["supervisor", "supervisor"],
+  ["view-supervisor", "supervisor"],
   ["auth", "session"],
   ["session", "session"],
   ["view-session", "session"],
@@ -7004,6 +7011,7 @@ const viewTabs = {
   models: viewTabModels,
   defaults: viewTabDefaults,
   errors: viewTabErrors,
+  supervisor: viewTabSupervisor,
 };
 
 const viewSections = {
@@ -7017,7 +7025,15 @@ const viewSections = {
   analytics: viewAnalytics,
   providers: viewProviders,
   errors: viewErrors,
+  supervisor: viewSupervisor,
 };
+
+const supervisorView = createSupervisorView({
+  section: viewSupervisor,
+  isSuperAdmin: () => adminAccessState.isSuperAdmin === true,
+  getToken: getAdminToken,
+  apiUrl,
+});
 
 const setErrorsMessage = (message) => {
   errorsList.textContent = "";
@@ -7249,6 +7265,7 @@ const syncVisibleAdminView = () => {
 
 const loadAdminView = (view) => {
   if (!canAccessView(view)) return;
+  supervisorView.setActive(view === "supervisor");
   if (view === "keys") {
     void ensureKeysLoaded();
   }
@@ -9961,6 +9978,7 @@ viewTabModels.addEventListener("click", () => setAdminView("models", { hashMode:
 viewTabAnalytics.addEventListener("click", () => setAdminView("analytics", { hashMode: "push", focusAuth: true }));
 viewTabProviders.addEventListener("click", () => setAdminView("providers", { hashMode: "push", focusAuth: true }));
 viewTabErrors.addEventListener("click", () => setAdminView("errors", { hashMode: "push", focusAuth: true }));
+viewTabSupervisor.addEventListener("click", () => setAdminView("supervisor", { hashMode: "push", focusAuth: true }));
 bindTablistKeyboard(viewTabKeys.closest('[role="tablist"]'));
 bindTablistKeyboard(keysTabActive.closest('[role="tablist"]'));
 

@@ -1,0 +1,289 @@
+/* Codex supervisor panel. Scoped to the admin page; reuses the admin theme tokens. */
+
+body[data-page="admin"]:not([data-auth-scope="super-admin"]) #view-tab-supervisor {
+  display: none;
+}
+
+body[data-page="admin"] #view-supervisor [data-supervisor-controls] {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+body[data-page="admin"] #view-supervisor [data-supervisor-controls] input,
+body[data-page="admin"] #view-supervisor [data-supervisor-controls] select {
+  width: 100%;
+}
+
+body[data-page="admin"] #supervisor-summary {
+  margin: 0;
+}
+
+body[data-page="admin"] #supervisor-notice {
+  display: grid;
+  gap: 6px;
+}
+
+body[data-page="admin"] #supervisor-notice [data-tone="warning"] {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(245, 181, 71, 0.09);
+  color: #f7d596;
+  font-size: 13px;
+}
+
+body[data-page="admin"] #supervisor-quota {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+body[data-page="admin"] #supervisor-quota [data-quota-scope] {
+  margin: 0;
+  color: #b5bdc8;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+body[data-page="admin"] #supervisor-quota [data-quota-list] {
+  display: grid;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--muted-2);
+}
+
+body[data-page="admin"] #supervisor-quota [data-quota-list] p {
+  margin: 0;
+}
+
+body[data-page="admin"] #supervisor-list {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+body[data-page="admin"] #supervisor-list [data-key="supervisor-session"] {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+body[data-page="admin"] #supervisor-list [data-key="supervisor-session"] > header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+body[data-page="admin"] #supervisor-list [data-role="supervisor-title"] {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body[data-page="admin"] #supervisor-list [data-role="supervisor-machine"] {
+  flex: 0 0 auto;
+  font-size: 12px;
+}
+
+body[data-page="admin"] #supervisor-list [data-meta="usage"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  font-size: 12px;
+  color: var(--muted-2);
+}
+
+body[data-page="admin"] #supervisor-list [data-role="supervisor-id"] {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+body[data-page="admin"] #supervisor-list [data-layout="row"] {
+  align-items: center;
+  gap: 8px;
+}
+
+body[data-page="admin"] #supervisor-list [data-role="supervisor-state"][data-state="active"] {
+  color: var(--success);
+}
+
+body[data-page="admin"] #supervisor-list [data-role="supervisor-state"][data-state="active"][data-waiting="true"] {
+  color: #f7d596;
+}
+
+body[data-page="admin"] #supervisor-list [data-role="supervisor-state"][data-state="stale"] {
+  color: #f7d596;
+}
+
+body[data-page="admin"] #supervisor-list [data-role="supervisor-state"][data-state="system_error"] {
+  color: var(--danger);
+}
+
+body[data-page="admin"] #supervisor-list [data-role="supervisor-state"][data-state="unknown"] {
+  color: var(--muted-2);
+}
+
+body[data-page="admin"] #supervisor-list [data-key="supervisor-session"][data-state="stale"],
+body[data-page="admin"] #supervisor-list [data-key="supervisor-session"][data-state="unknown"] {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+body[data-page="admin"] #view-supervisor button {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background var(--duration-fast) ease, transform var(--duration-fast) ease-out;
+}
+
+body[data-page="admin"] #view-supervisor button:active {
+  transform: scale(0.97);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  body[data-page="admin"] #view-supervisor button:hover {
+    background: var(--surface-3);
+  }
+}
+
+body[data-page="admin"] #view-supervisor button[data-action="follow"][aria-pressed="true"] {
+  background: rgba(169, 239, 195, 0.14);
+  color: var(--success);
+}
+
+body[data-page="admin"] #supervisor-follow {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+body[data-page="admin"] #supervisor-follow-status {
+  margin: 0;
+}
+
+body[data-page="admin"] #supervisor-follow-status[data-state="warning"] {
+  color: #f7d596;
+}
+
+body[data-page="admin"] #supervisor-follow-log {
+  display: grid;
+  gap: 10px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+body[data-page="admin"] #supervisor-follow-log [data-follow-entry] {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+body[data-page="admin"] #supervisor-follow-log [data-follow-entry] p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+body[data-page="admin"] #supervisor-follow-log [data-follow-entry] code {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+body[data-page="admin"] #supervisor-follow-log [data-follow-entry] pre {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
+body[data-page="admin"] #supervisor-follow-log [data-follow-entry] span {
+  font-size: 11px;
+}
+
+body[data-page="admin"] #supervisor-brief {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+body[data-page="admin"] #supervisor-brief-status {
+  margin: 0;
+}
+
+body[data-page="admin"] #supervisor-brief-status[data-state="warning"] {
+  color: #f7d596;
+}
+
+body[data-page="admin"] #supervisor-brief-body {
+  display: grid;
+  gap: 10px;
+}
+
+body[data-page="admin"] #supervisor-brief [data-brief-section] {
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+body[data-page="admin"] #supervisor-brief [data-brief-section] h3 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #b5bdc8;
+}
+
+body[data-page="admin"] #supervisor-brief [data-brief-section] p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px) {
+  body[data-page="admin"] #view-supervisor [data-supervisor-controls] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body[data-page="admin"] #view-supervisor button {
+    transition: background var(--duration-fast) ease;
+  }
+
+  body[data-page="admin"] #view-supervisor button:active {
+    transform: none;
+  }
+}

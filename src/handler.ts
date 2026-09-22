@@ -48,6 +48,8 @@ import {
   reserveApiKeyUsageV3,
 } from "./api_key_policy.ts";
 import { runtimeDeploymentId, runtimeGitSha } from "./config.ts";
+import { handleAdminCodexSupervisorOutput, handleAdminCodexSupervisorSessions } from "./codex_supervisor.ts";
+import { handleAdminCodexSupervisorBrief } from "./codex_supervisor_brief.ts";
 import { handleHealth, handleHealthProviders, handleHealthUpstream } from "./health.ts";
 import { corsHeaders, notFound, openaiError, withCors as withCorsHeaders, withoutBody } from "./http.ts";
 import { type KernelQuotaReservation, reserveEffectiveKernelUsageLimit } from "./kernel_usage.ts";
@@ -880,6 +882,9 @@ const ADMIN_ROUTES: readonly AdminRouteEntry[] = [
   { methods: ["GET"], path: "/admin/kv-migration/validate", superAdmin: true, run: () => handleAdminKvMigrationValidate() },
   { methods: ["GET"], path: "/admin/sentinel/replay-captures", superAdmin: true, run: (req) => handleAdminSentinelReplayCaptures(req) },
   { methods: ["GET"], path: "/admin/sentinel/incidents", superAdmin: true, run: (req) => handleAdminSentinelIncidents(req) },
+  { methods: ["GET"], path: "/admin/codex/supervisor/sessions", superAdmin: true, run: () => handleAdminCodexSupervisorSessions() },
+  { methods: ["GET"], path: "/admin/codex/supervisor/output", superAdmin: true, run: (req) => handleAdminCodexSupervisorOutput(req) },
+  { methods: ["POST"], path: "/admin/codex/supervisor/brief", superAdmin: true, run: (req) => handleAdminCodexSupervisorBrief(req) },
   { methods: ["GET"], path: "/admin/errors", run: (req) => handleAdminErrors(req) },
   { methods: ["GET", "POST"], path: "/admin/defaults", run: (req) => handleAdminDefaults(req) },
   { methods: ["GET", "POST", "DELETE"], path: "/admin/debug/routing", run: (req) => handleAdminDebugRouting(req) },

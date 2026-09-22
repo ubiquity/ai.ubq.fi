@@ -75,6 +75,7 @@
     "npm:superjson@^2.2.6": "2.2.6",
     "npm:temporal-polyfill@0.3": "0.3.2",
     "npm:temporal-polyfill@~0.3.2": "0.3.2",
+    "npm:ws@8.18.3": "8.18.3",
     "npm:ws@^8.18.3": "8.20.0",
     "npm:zod@^4.1.5": "4.3.6"
   },
@@ -734,6 +735,9 @@
     "undici-types@7.19.2": {
       "integrity": "sha512-qYVnV5OEm2AW8cJMCpdV20CDyaN3g0AjDlOGf1OW4iaDEx8MwdtChUp4zu4H0VP3nDRF/8RKWH+IPp9uW0YGZg=="
     },
+    "ws@8.18.3": {
+      "integrity": "sha512-PEIGCY5tSlUt50cqyMXfCzX+oOPqN0vuGqWzbcJ2xvnkzkq46oOpz7dQaTDBdfICb4N14+GARUDw2XV2N4tvzg=="
+    },
     "ws@8.20.0": {
       "integrity": "sha512-sAt8BhgNbzCtgGbt2OxmpuryO63ZoDk/sqaB/znQm94T4fCEsy/yV+7CdC1kJhOU9lboAEU7R3kquuycDoibVA=="
     },
@@ -751,7 +755,8 @@
     "dependencies": [
       "jsr:@deno/kv-utils@0.1.4",
       "jsr:@simplewebauthn/server@13.2.2",
-      "jsr:@std/yaml@1.0.9"
+      "jsr:@std/yaml@1.0.9",
+      "npm:ws@8.18.3"
     ]
   }
 }
