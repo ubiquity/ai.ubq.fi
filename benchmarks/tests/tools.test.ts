@@ -24,6 +24,12 @@ function nav001(): TaskManifest {
   return task;
 }
 
+function fail002(): TaskManifest {
+  const task = loadTasks(TASKS_DIR).find((t) => t.id === "fail-002");
+  if (task === undefined) throw new Error(`missing fail-002 task fixture in ${TASKS_DIR}`);
+  return task;
+}
+
 Deno.test("tools: canonical browser fakes resolve inside the reference adapter", async () => {
   const opts = freshOptions();
   try {
@@ -100,6 +106,45 @@ Deno.test("tools: canonical boundaries and error codes flow through the adapter"
     }
     if (toolResults[3].error_code !== undefined || !toolResults[3].ok) {
       throw new Error("expected the final patch to be a clean success");
+    }
+  } finally {
+    Deno.removeSync(opts.runsRoot, { recursive: true });
+  }
+});
+
+Deno.test("tools: shell.exec write-scope violations surface as write_scope failures and are rolled back", async () => {
+  const opts = freshOptions();
+  try {
+    const task: TaskManifest = {
+      ...fail002(),
+      scripted_trail: [
+        {
+          tool: "shell.exec",
+          // The first write is in scope for fail-002 and must survive the
+          // second, out-of-scope write's rollback.
+          args: { command: "printf 'changed\\n' > data/target.txt; printf 'TAMPERED\\n' > protected/keep.txt" },
+          expect: { ok: false, error_contains: "write scope violation: protected/keep.txt" },
+        },
+        { tool: "shell.exec", args: { command: "sh tests/run.sh" }, expect: { ok: true } },
+        {
+          tool: "filesystem.read",
+          args: { path: "protected/keep.txt" },
+          expect: { ok: true, output_contains: ["ORIGINAL"] },
+        },
+      ],
+    };
+    const { result, events } = await runOne(task, referenceAdapter, opts);
+    if (!result.success || result.failure_class !== null) {
+      throw new Error(`expected success, got ${result.failure_class}: ${result.failure_detail}`);
+    }
+    const toolResults = events.filter((e): e is ToolResultEvent => e.type === "tool_result");
+    if (toolResults.length !== 3) throw new Error(`expected 3 tool results, got ${toolResults.length}`);
+    if (toolResults[0].ok || toolResults[0].error_code !== "write_scope") {
+      throw new Error(`expected a write_scope failure, got ok=${toolResults[0].ok} code=${toolResults[0].error_code}`);
+    }
+    if (!toolResults[1].ok) throw new Error("expected the verification command to pass after the rollback");
+    if (!toolResults[2].ok || !(toolResults[2].output ?? "").includes("ORIGINAL")) {
+      throw new Error("expected the protected file to be restored for the follow-up read");
     }
   } finally {
     Deno.removeSync(opts.runsRoot, { recursive: true });
