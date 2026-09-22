@@ -427,6 +427,23 @@ const applyTools = (
 };
 
 /**
+ * Codex can end a turn after a progress-only assistant message while the
+ * requested action is still outstanding. This reminder keeps the client's
+ * executable tools in play: it extends the caller's instructions (or becomes
+ * the system message when the caller sent none) only for tool-bearing requests
+ * that permit tool use. It never forces a tool call, forbids a legitimate final
+ * answer, or claims any tool action was performed.
+ */
+const CONTINUATION_INSTRUCTION =
+  "When tools are available, a progress update does not complete a requested action. If required work remains and you can perform it, continue with the next appropriate tool call instead of ending with a status message. Provide a final answer when the requested work is complete, or when you need user input or are blocked. Never claim a tool action has been done unless its result is in the conversation.";
+
+const appendContinuationInstruction = (messages: Record<string, unknown>[]): void => {
+  const system = messages.find((message) => message.role === "system" && typeof message.content === "string");
+  if (system) system.content = `${String(system.content)}\n\n${CONTINUATION_INSTRUCTION}`;
+  else messages.unshift({ role: "system", content: CONTINUATION_INSTRUCTION });
+};
+
+/**
  * Builds the Chat Completions body for a Responses request. Translation
  * failures are returned so the caller can answer with a precise
  * `invalid_request_error` instead of dispatching an approximation.
@@ -454,7 +471,12 @@ export const toDeepSeekResponsesChatBody = (
   const toolNames = applyTools(body, rawRecord);
   if (!toolNames.ok) return toolNames;
   // Only a tool-bearing request makes the provider require replayed reasoning.
-  if (Array.isArray(body.tools) && body.tools.length) ensureTrailingAssistantReasoning(messages.value);
+  if (Array.isArray(body.tools) && body.tools.length) {
+    // `tool_choice: "none"` stays a hard no-tools request, and a request without
+    // mapped executable tools (ordinary non-agent traffic) is untouched.
+    if (rawRecord.tool_choice !== "none") appendContinuationInstruction(messages.value);
+    ensureTrailingAssistantReasoning(messages.value);
+  }
   return { ok: true, value: { body, toolNames: toolNames.value.toolNames, customToolNames: toolNames.value.customToolNames } };
 };
 
