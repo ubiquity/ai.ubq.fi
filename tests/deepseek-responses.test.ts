@@ -759,7 +759,9 @@ Deno.test("deepseek responses: the reasoning item announces the index it answers
   });
   const completed = events.at(-1) as { response: Record<string, unknown> };
   const output = completed.response.output as Record<string, unknown>[];
-  assert.deepEqual(output[0], reasoningDone?.item);
+  // The first assertion narrowed `reasoningDone`, so this access needs no
+  // optional chain; an absent item would already have failed there.
+  assert.deepEqual(output[0], reasoningDone.item);
   assert.equal(output[1].type, "message");
 });
 
