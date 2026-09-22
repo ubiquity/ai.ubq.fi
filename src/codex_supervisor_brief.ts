@@ -268,18 +268,37 @@ const enrichBriefTurns = async (
   turns: BriefTranscriptTurn[],
   signal: AbortSignal
 ): Promise<BriefTranscriptTurn[]> => {
+  if (!turns.some((turn) => turn.items.length === 0)) return turns;
+  // An empty summary turn can only come from the oldest summary turn or the
+  // newest summary page, so the oldest full turn and one bounded page of the
+  // newest full turns together contain every turn that can be enriched.
+  // Matching by id ties each read to the requested turn instead of the newest
+  // turn; a turn whose full page holds no items keeps its summary and does not
+  // consume one of the two enrichment slots.
+  const fullById = new Map<string, BriefTranscriptTurn>();
+  for (const page of [
+    await fetchBriefTurns(connection, threadId, "asc", 1, "full", signal),
+    await fetchBriefTurns(connection, threadId, "desc", BRIEF_RECENT_TURNS, "full", signal),
+  ]) {
+    for (const turn of page) {
+      const existing = fullById.get(turn.id);
+      fullById.set(turn.id, existing ? mergeBriefTurns(existing, turn) : turn);
+    }
+  }
   let enriched = 0;
   const result: BriefTranscriptTurn[] = [];
   for (const turn of turns) {
-    const needsFull = turn.items.length === 0 && enriched < BRIEF_MAX_ENRICHED_TURNS;
-    if (!needsFull) {
+    if (turn.items.length > 0 || enriched >= BRIEF_MAX_ENRICHED_TURNS) {
+      result.push(turn);
+      continue;
+    }
+    const match = fullById.get(turn.id);
+    if (!match || match.items.length === 0) {
       result.push(turn);
       continue;
     }
     enriched += 1;
-    const full = await fetchBriefTurns(connection, threadId, "desc", 1, "full", signal);
-    const match = full.find((candidate) => candidate.id === turn.id);
-    result.push(match && match.items.length > 0 ? { ...match, droppedItems: turn.droppedItems + match.droppedItems } : turn);
+    result.push({ ...match, droppedItems: turn.droppedItems + match.droppedItems });
   }
   return result;
 };
