@@ -20,7 +20,7 @@ deno task benchmark:summary                                    # aggregate bench
 deno task benchmark:summary -- --runs=some-other-root --json
 deno task benchmark:fixture-revision                           # prove declared fixture revisions
 deno task benchmark:test                                       # focused hermetic test suite
-deno run --allow-read --allow-write=benchmark-runs --allow-run=sh,git \
+deno run --allow-read --allow-write --allow-run=sh,git \
   benchmarks/compare.ts                                        # m05 context evidence (no inference)
 ```
 
@@ -41,9 +41,12 @@ benchmark-runs/
 ```
 
 The runner accepts `--` task separators exactly as `deno task` forwards them; plain
-`deno run --allow-read --allow-write=benchmark-runs --allow-run=sh,git
-benchmarks/runner.ts --configs=reference` works
-identically. No environment variables are read and no secrets are involved.
+`deno run --allow-read --allow-write --allow-run=sh,git
+benchmarks/runner.ts --configs=reference` works identically.
+`benchmark:run` and `benchmark:test` carry the trusted runner's own unscoped `--allow-write` because Deno refuses
+symlink creation under path-scoped grants; the spawned shell commands stay confined to the disposable workspace by the
+platform sandbox, and their file changes are checked against `allowed_write_scope`. No environment variables are read
+and no secrets are involved.
 
 ## Layout
 
@@ -169,7 +172,10 @@ decides failure-classes and reliability semantics; the runner only classifies te
 - Writes never leave the repository: the runner copies `benchmarks/fixtures/<id>` into `benchmark-runs/tmp/<run_id>` (a
   disposable directory; removed after the run) and the adapter may write only there.
 - `allowed_write_scope` globs are enforced by the canonical tool layer (`write_scope` error code); paths are resolved
-  inside the workspace root. `shell.exec` runs unsandboxed inside the disposable workspace by design.
+  inside the workspace root. `shell.exec` runs inside the supported platform sandbox (bubblewrap on Linux, Seatbelt on
+  macOS), and the filesystem changes it makes are checked against the same scope afterwards: unauthorized creations,
+  edits and deletions are rolled back inside the disposable workspace and rejected with a deterministic `write_scope`
+  failure. A missing or failing sandbox is a command failure, never an unsandboxed fallback.
 - `fixture_revision` is a SHA-256 over sorted relative paths + contents (prefix `fixture-v1`).
   `benchmark:fixture-revision` proves all declared revisions match the snapshots; the runner fails a run on mismatch
   before the adapter executes.
