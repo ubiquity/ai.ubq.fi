@@ -13,6 +13,9 @@ export const initializeKv = (kv: Deno.Kv): void => {
   openedKv = kv;
 };
 
+/** Reports whether a launcher installed the persistent database before import. */
+export const isKvInitialized = (): boolean => openedKv !== null;
+
 /**
  * Uniform value in `[0, 1)` with the same 53-bit resolution as `Math.random`.
  * The reconnect jitter below is the only consumer: it spreads the retries of

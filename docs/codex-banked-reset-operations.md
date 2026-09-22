@@ -83,6 +83,13 @@ a key, and `PATCH` accepts it alongside the key's `id`. Edits save automatically
 restarts. New and existing keys default to enabled until explicitly changed. The former gateway-wide admin control is
 removed.
 
+The removed gateway-wide control is migrated once when the service starts. When the old
+`uos_ai/codex_banked_reset_usage/v1` value was `false` or malformed, every subscription present at that moment receives
+a disabled override unless the operator had already set one. Until the conversion records its completion marker under
+`uos_ai/migrations/codex_banked_reset_usage_v1`, a subscription without an explicit override fails closed instead of
+being treated as enabled. The marker retires the old value permanently, so the conversion cannot act as a gateway-wide
+parent gate; subscriptions added after the migration default to enabled.
+
 This is permission for a key's requests to redeem a reset, not separate provider quota: restored Codex capacity remains
 shared. Disabling one key does not change another key. The key record is read strongly at selection and atomically
 checked before recording an inventory decision or authorizing submission. Existing environment mode and caps below still

@@ -1,11 +1,14 @@
 /// <reference lib="deno.ns" />
 
+import { getCodexCapacityAccounts } from "./src/codex.ts";
+import { migrateLegacyCodexBankedResetUsage } from "./src/codex_reset_settings.ts";
 import { config } from "./src/config.ts";
-import { getKv } from "./src/kv.ts";
+import { getKv, isKvInitialized } from "./src/kv.ts";
 import { configureAdminAuthForListener, configureAdminAuthPeerForRequest, parseServeRuntimeOptions } from "./src/local_admin_auth.ts";
 import { ensureLocalDevelopmentApiKey } from "./src/local_development_key.ts";
 import { closeOptionalPromptCacheAnalytics, optionalPromptCacheAnalyticsSnapshot } from "./src/prompt_cache_analytics.ts";
 import { createServeHandler } from "./src/serve_handler.ts";
+import { sha256Hex } from "./src/utils.ts";
 
 /**
  * Bounded optional-telemetry shutdown for both launchers.
@@ -79,6 +82,32 @@ export const shutdownOptionalTelemetry = async (): Promise<void> => {
 const serveHandler = createServeHandler();
 
 const runtimeOptions = parseServeRuntimeOptions(Deno.args, { isDeploy: config.isDeploy });
+
+// The launchers install the persistent database before importing this module,
+// so a legacy opt-out is converted before the server accepts a request that
+// might spend a saved reset. Entry points that open KV lazily (local
+// development, retired Deno Deploy) have no persisted opt-out to convert.
+if (isKvInitialized()) {
+  try {
+    const kv = await getKv();
+    if (kv) {
+      const accounts = await getCodexCapacityAccounts();
+      const accountIdHashes = await Promise.all(accounts.map((account) => sha256Hex(account.account_id)));
+      const migration = await migrateLegacyCodexBankedResetUsage(kv, accountIdHashes);
+      if (migration.kind === "migrated") {
+        console.log(`[ai.ubq.fi] Migrated the removed gateway-wide banked-reset setting for ${migration.disabledAccounts} subscription(s).`);
+      }
+    }
+  } catch (error) {
+    // Leaving the legacy key unconsumed keeps the migration pending: the reset
+    // gate stays fail-closed until a later start converts it, so a saved
+    // opt-out is never silently enabled by a failed migration.
+    console.warn(
+      "[ai.ubq.fi] Banked-reset setting migration failed and will be retried on the next start:",
+      error instanceof Error ? error.message : String(error)
+    );
+  }
+}
 
 // `--disable-admin-auth` is loopback-only (a non-loopback listener fails at
 // startup), so provisioning here can never reach a hosted deployment. The local

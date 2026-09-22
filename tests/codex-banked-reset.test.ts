@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import { codexResetUsageKey } from "../src/codex_reset_settings.ts";
+import {
+  CODEX_BANKED_RESET_USAGE_MIGRATION_KEY,
+  codexResetUsageKey,
+  LEGACY_CODEX_BANKED_RESET_USAGE_KEY,
+  migrateLegacyCodexBankedResetUsage,
+  readCodexResetUsage,
+} from "../src/codex_reset_settings.ts";
 import {
   attemptCodexBankedReset,
   CODEX_BANKED_RESET_INVENTORY_MAX_AGE_MS,
@@ -927,6 +933,93 @@ Deno.test("the persistent usage toggle blocks resets and re-enabling preserves n
   const result = await attemptCodexBankedReset(reset, { ...dependencies(kv, provider, clock) });
   assert.equal(result.kind, "verified");
   assert.equal(provider.redeemInputs.length, 1);
+});
+
+Deno.test("an existing gateway-wide opt-out stays disabled after upgrade without gating later subscriptions", async () => {
+  const kv = new MemoryKv();
+  const provider = new FakeCodexUsageResetProvider();
+  const clock = new TestClock();
+  const reset = candidate();
+  await seedFences(kv, reset);
+  const accountIdHash = await testHash(reset.accountId);
+  const laterAccountIdHash = await testHash("subscription-added-after-upgrade");
+
+  await kv.set(LEGACY_CODEX_BANKED_RESET_USAGE_KEY, false);
+  // Until the one-way migration completes, the retired opt-out fails closed for
+  // every subscription instead of being lost to "missing means enabled".
+  assert.equal((await readCodexResetUsage(kv as unknown as Deno.Kv, accountIdHash)).allowed, false);
+  assert.equal((await readCodexResetUsage(kv as unknown as Deno.Kv, laterAccountIdHash)).allowed, false);
+  const pending = await attemptCodexBankedReset(reset, { ...dependencies(kv, provider, clock) });
+  assert.equal(pending.kind, "skipped");
+  assert.equal(pending.reason, "usage_disabled");
+  assert.equal(provider.inventoryInputs.length, 0);
+  assert.equal(provider.redeemInputs.length, 0);
+
+  const migration = await migrateLegacyCodexBankedResetUsage(kv as unknown as Deno.Kv, [accountIdHash, accountIdHash], clock.nowMs);
+  assert.ok(migration.kind === "migrated", "an explicit legacy false must run the migration");
+  assert.equal(migration.legacyEnabled, false);
+  assert.equal(migration.disabledAccounts, 1, "duplicate account hashes are disabled once");
+  assert.deepEqual(kv.entries.get(encodeKey(codexResetUsageKey(accountIdHash)))?.value, { enabled: false });
+  assert.equal(
+    (await readCodexResetUsage(kv as unknown as Deno.Kv, laterAccountIdHash)).allowed,
+    true,
+    "the retired gateway-wide setting must not gate a subscription added after the migration"
+  );
+
+  const blocked = await attemptCodexBankedReset(reset, { ...dependencies(kv, provider, clock) });
+  assert.equal(blocked.kind, "skipped");
+  assert.equal(blocked.reason, "usage_disabled");
+  assert.equal(provider.inventoryInputs.length, 0);
+  assert.equal(provider.redeemInputs.length, 0);
+
+  // The retirement marker keeps the migration one-way: an operator re-enable is
+  // not overwritten, and a rerun is a no-op even when the old key reappears.
+  await kv.set(codexResetUsageKey(accountIdHash), { enabled: true });
+  await kv.set(LEGACY_CODEX_BANKED_RESET_USAGE_KEY, false);
+  const rerun = await migrateLegacyCodexBankedResetUsage(kv as unknown as Deno.Kv, [accountIdHash], clock.nowMs);
+  assert.equal(rerun.kind, "already_migrated");
+  assert.deepEqual(kv.entries.get(encodeKey(codexResetUsageKey(accountIdHash)))?.value, { enabled: true });
+  const allowed = await attemptCodexBankedReset(reset, { ...dependencies(kv, provider, clock) });
+  assert.equal(allowed.kind, "verified");
+  assert.equal(provider.redeemInputs.length, 1);
+});
+
+Deno.test("the gateway-wide migration preserves explicit choices and needs an enabled legacy value to skip work", async () => {
+  const explicitHash = await testHash("explicit-account");
+  const explicitKv = new MemoryKv();
+  await explicitKv.set(codexResetUsageKey(explicitHash), { enabled: true });
+  await explicitKv.set(LEGACY_CODEX_BANKED_RESET_USAGE_KEY, false);
+  const explicit = await migrateLegacyCodexBankedResetUsage(explicitKv as unknown as Deno.Kv, [explicitHash], 0);
+  assert.equal(explicit.kind, "migrated");
+  assert.equal(explicit.disabledAccounts, 0);
+  assert.deepEqual(explicitKv.entries.get(encodeKey(codexResetUsageKey(explicitHash)))?.value, { enabled: true });
+
+  const enabledHash = await testHash("enabled-legacy-account");
+  const enabledKv = new MemoryKv();
+  await enabledKv.set(LEGACY_CODEX_BANKED_RESET_USAGE_KEY, true);
+  assert.equal((await readCodexResetUsage(enabledKv as unknown as Deno.Kv, enabledHash)).allowed, true);
+  const enabled = await migrateLegacyCodexBankedResetUsage(enabledKv as unknown as Deno.Kv, [enabledHash], 0);
+  assert.ok(enabled.kind === "migrated");
+  assert.equal(enabled.legacyEnabled, true);
+  assert.equal(enabled.disabledAccounts, 0);
+  assert.equal(enabledKv.entries.has(encodeKey(codexResetUsageKey(enabledHash))), false);
+  assert.equal((await readCodexResetUsage(enabledKv as unknown as Deno.Kv, enabledHash)).allowed, true);
+
+  const malformedHash = await testHash("malformed-legacy-account");
+  const malformedKv = new MemoryKv();
+  await malformedKv.set(LEGACY_CODEX_BANKED_RESET_USAGE_KEY, "false");
+  assert.equal((await readCodexResetUsage(malformedKv as unknown as Deno.Kv, malformedHash)).allowed, false);
+  const malformed = await migrateLegacyCodexBankedResetUsage(malformedKv as unknown as Deno.Kv, [malformedHash], 0);
+  assert.ok(malformed.kind === "migrated");
+  assert.equal(malformed.legacyEnabled, false);
+  assert.deepEqual(malformedKv.entries.get(encodeKey(codexResetUsageKey(malformedHash)))?.value, { enabled: false });
+
+  const absentHash = await testHash("absent-legacy-account");
+  const absentKv = new MemoryKv();
+  const absent = await migrateLegacyCodexBankedResetUsage(absentKv as unknown as Deno.Kv, [absentHash], 0);
+  assert.equal(absent.kind, "no_legacy_setting");
+  assert.equal(absentKv.entries.has(encodeKey(CODEX_BANKED_RESET_USAGE_MIGRATION_KEY)), false);
+  assert.equal((await readCodexResetUsage(absentKv as unknown as Deno.Kv, absentHash)).allowed, true);
 });
 
 Deno.test("a saved disable races with either submission transaction without spending a credit", async () => {

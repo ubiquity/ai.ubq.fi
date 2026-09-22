@@ -190,6 +190,9 @@ const DURABLE_PREFIXES: { group: string; prefix: Deno.KvKey }[] = [
   { group: "codex_prompts", prefix: ["uos_ai", "codex_instructions"] },
   { group: "codex_prompts_chunks", prefix: ["uos_ai", "codex_instructions_chunk"] },
   { group: "codex_reset_usage", prefix: CODEX_RESET_USAGE_PREFIX },
+  // The removed gateway-wide switch must survive a KV move so the one-way
+  // migration can convert it instead of silently dropping the operator opt-out.
+  { group: "codex_banked_reset_usage_legacy", prefix: ["uos_ai", "codex_banked_reset_usage"] },
   { group: "kernel_policy_queue", prefix: ["uos_ai", "kernel_policy_queue"] },
   { group: "migrations", prefix: ["uos_ai", "migrations"] },
   {

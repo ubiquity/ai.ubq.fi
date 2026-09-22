@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { keyToJSON } from "@deno/kv-utils/json";
 import { appendBooleanParam } from "../scripts/kv-migrate.ts";
 import { API_KEY_USAGE_V3_RETENTION_MS } from "../src/api_key_policy.ts";
-import { codexResetUsageKey, readCodexResetUsage } from "../src/codex_reset_settings.ts";
+import { codexResetUsageKey, LEGACY_CODEX_BANKED_RESET_USAGE_KEY, readCodexResetUsage } from "../src/codex_reset_settings.ts";
 import {
   classifyKvMigrationKey,
   importKvMigrationLines,
@@ -180,6 +180,7 @@ Deno.test("KV migration classifies v2 incident state and skips the transient cir
   assert.equal(classifyKvMigrationKey(["uos_ai", "runtime_config", "v2"], options).action, "import");
   assert.equal(classifyKvMigrationKey(codexResetUsageKey("account-hash"), options).action, "import");
   assert.equal(classifyKvMigrationKey(codexResetUsageKey("account-hash"), options).group, "codex_reset_usage");
+  assert.equal(classifyKvMigrationKey(LEGACY_CODEX_BANKED_RESET_USAGE_KEY, options).group, "codex_banked_reset_usage_legacy");
   assert.equal(classifyKvMigrationKey(["uos_ai", "codex_rate_limit"], options).group, "unknown");
 });
 
