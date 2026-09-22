@@ -108,6 +108,70 @@ const sdkAccumulateOutput = (events: readonly Record<string, unknown>[]): Record
 
 const sse = (value: Record<string, unknown>): string => `data: ${JSON.stringify(value)}\n\n`;
 
+/**
+ * The pinned Codex client's single-active-item lifecycle, reduced to the facts
+ * this adapter can violate. In `lib/codex/codex-rs/core/src/session/turn.rs`
+ * only message and reasoning `response.output_item.added` events take the one
+ * `active_item` slot (`handle_non_tool_response_item` returns `None` for tool
+ * calls), every `response.output_item.done` clears that slot - tool items
+ * included - and `stream_events_utils.rs::handle_output_item_done` emits a
+ * second `ItemStarted` when a completed item finds no active item. A stream
+ * that announces the next item before the current one completes therefore
+ * closes the wrong item's slot and duplicates a start in the app-server.
+ */
+const codexItemLifecycle = (
+  events: readonly Record<string, unknown>[]
+): Readonly<{ started: string[]; completed: string[]; duplicateStarts: string[]; crossItemDones: string[]; activeId: string | null }> => {
+  const occupiesActiveItem = (item: Record<string, unknown>): boolean => item.type === "message" || item.type === "reasoning";
+  const started: string[] = [];
+  const completed: string[] = [];
+  const duplicateStarts: string[] = [];
+  const crossItemDones: string[] = [];
+  let activeId: string | null = null;
+  for (const event of events) {
+    const type = String(event.type);
+    if (type === "response.output_item.added") {
+      const item = event.item as Record<string, unknown>;
+      if (!occupiesActiveItem(item)) continue;
+      activeId = String(item.id);
+      started.push(activeId);
+      continue;
+    }
+    if (type !== "response.output_item.done") continue;
+    const item = event.item as Record<string, unknown>;
+    const id = String(item.id);
+    const previousId = activeId;
+    // `turn.rs` takes the active item on every done, tool items included.
+    activeId = null;
+    if (!occupiesActiveItem(item)) continue;
+    if (previousId === null) {
+      // The consumer synthesizes a start before completing a done with no active item.
+      duplicateStarts.push(id);
+      started.push(id);
+    } else if (previousId !== id) {
+      crossItemDones.push(id);
+    }
+    completed.push(id);
+  }
+  return { started, completed, duplicateStarts, crossItemDones, activeId };
+};
+
+/** No Codex-visible item may overlap the next one or start twice. */
+const assertCodexItemLifecycle = (events: readonly Record<string, unknown>[]): void => {
+  const lifecycle = codexItemLifecycle(events);
+  assert.deepEqual(lifecycle.duplicateStarts, [], "a done must find its own active item, not synthesize a second start");
+  assert.deepEqual(lifecycle.crossItemDones, [], "a done must close the item it names, not another item's active slot");
+  assert.equal(lifecycle.activeId, null, "every started item must be completed");
+  assert.deepEqual(lifecycle.completed, lifecycle.started, "each item starts once and completes in the same order");
+};
+
+/** The position of the first output-item event for one item type, or -1. */
+const itemEventIndex = (
+  events: readonly Record<string, unknown>[],
+  type: "response.output_item.added" | "response.output_item.done",
+  itemType: string
+): number => events.findIndex((event) => event.type === type && (event.item as Record<string, unknown> | undefined)?.type === itemType);
+
 /** Drives one raw SSE body through the transport the route consumes. */
 const readChatStream = async (body: string): Promise<Record<string, unknown>[]> => {
   const response = new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
@@ -358,6 +422,75 @@ Deno.test("m04 parity: a reasoning-only stop accumulates its single indexed item
 
   const buffered = bufferedPayload({ role: "assistant", content: null, reasoning_content: "thinking only" });
   assert.deepEqual(outputTypes(buffered), ["reasoning"]);
+});
+
+Deno.test("m04 Codex: reasoning then text completes reasoning before the message starts", () => {
+  const events = streamedEvents([
+    chatChunk({ role: "assistant", reasoning_content: "consider " }),
+    chatChunk({ reasoning_content: "the answer" }),
+    chatChunk({ content: "pong" }, { finish_reason: "stop" }),
+  ]);
+  // The pinned consumer must never see the reasoning item open while the message
+  // is active; before this correction its done event cleared the message slot
+  // and the message's done re-emitted a second ItemStarted.
+  assertCodexItemLifecycle(events);
+  const reasoningDone = itemEventIndex(events, "response.output_item.done", "reasoning");
+  const messageAdded = itemEventIndex(events, "response.output_item.added", "message");
+  assert.ok(reasoningDone >= 0 && messageAdded > reasoningDone, "reasoning must close before the message is announced");
+  // The SDK still accumulates both items at the indexes their added events named.
+  const accumulated = sdkAccumulateOutput(events);
+  const terminal = events.at(-1) as { response: Record<string, unknown> };
+  assert.deepEqual(accumulated, terminal.response.output);
+  assert.deepEqual(
+    accumulated.map((item) => item.type),
+    ["reasoning", "message"]
+  );
+  assert.equal(((accumulated[0].summary as Record<string, unknown>[])[0] as Record<string, unknown>).text, "consider the answer");
+  assert.equal(((accumulated[1].content as Record<string, unknown>[])[0] as Record<string, unknown>).text, "pong");
+});
+
+Deno.test("m04 Codex: reasoning then a tool call completes reasoning before the call is announced", () => {
+  const events = streamedEvents([
+    chatChunk({ role: "assistant", reasoning_content: "the city needs a lookup" }),
+    chatChunk(
+      { tool_calls: [{ index: 0, id: "call_a", type: "function", function: { name: "lookup", arguments: '{"city":"Oslo"}' } }] },
+      { finish_reason: "tool_calls" }
+    ),
+  ]);
+  assertCodexItemLifecycle(events);
+  const reasoningDone = itemEventIndex(events, "response.output_item.done", "reasoning");
+  const toolAdded = itemEventIndex(events, "response.output_item.added", "function_call");
+  assert.ok(reasoningDone >= 0 && toolAdded > reasoningDone, "reasoning must close before the tool call is announced");
+  const accumulated = sdkAccumulateOutput(events);
+  const terminal = events.at(-1) as { response: Record<string, unknown> };
+  assert.deepEqual(accumulated, terminal.response.output);
+  assert.deepEqual(
+    accumulated.map((item) => item.type),
+    ["reasoning", "function_call"]
+  );
+});
+
+Deno.test("m04 Codex: late reasoning is delivered as one closed item after the answer", () => {
+  // The provider's normal order is reasoning first; this is the supported
+  // robustness case where reasoning follows text. It cannot be announced while
+  // the message is active, so it is delivered as one closed lifecycle after the
+  // message completes and never targets an already-completed item.
+  const events = streamedEvents([
+    chatChunk({ role: "assistant", content: "answer first" }),
+    chatChunk({ reasoning_content: "reconsidered" }, { finish_reason: "stop" }),
+  ]);
+  assertCodexItemLifecycle(events);
+  const messageDone = itemEventIndex(events, "response.output_item.done", "message");
+  const reasoningAdded = itemEventIndex(events, "response.output_item.added", "reasoning");
+  assert.ok(messageDone >= 0 && reasoningAdded > messageDone, "late reasoning must be announced after the message completes");
+  const accumulated = sdkAccumulateOutput(events);
+  const terminal = events.at(-1) as { response: Record<string, unknown> };
+  assert.deepEqual(accumulated, terminal.response.output);
+  assert.deepEqual(
+    accumulated.map((item) => item.type),
+    ["message", "reasoning"]
+  );
+  assert.equal(((accumulated[1].summary as Record<string, unknown>[])[0] as Record<string, unknown>).text, "reconsidered");
 });
 
 Deno.test("m04 parity: a refusal is answer-bearing payload on both transports", () => {
