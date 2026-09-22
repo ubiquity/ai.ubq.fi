@@ -999,9 +999,19 @@ body[data-page="admin"] [data-capacity-source] {
 
 body[data-page="admin"] [data-capacity-source] > header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+/* The account identity owns a full row, so the status badge and the
+   banked-reset control wrap onto the rows below instead of shrinking the
+   name to a sliver (h3 allows overflow-wrap: anywhere, which otherwise lets
+   it absorb nearly all of the header's flex shrink). */
+body[data-page="admin"] [data-capacity-source] > header h3 {
+  flex: 1 1 100%;
+  min-width: 0;
 }
 
 body[data-page="admin"] [data-capacity-source] h3,
