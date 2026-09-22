@@ -6,6 +6,37 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Gateway reliability program: finite admission, terminal parity, deadlines, optional analytics - 2026-09-22
+
+A finite process-resource guard now bounds terminal inference routes at 64 active requests and 128 waiting requests with
+a 5-second queue bound, fair rotation across authenticated principals, and idempotent release; a permit is held from
+before provider dispatch until the response body and delivery settle, and the overload refusal is a local 503
+`local_inference_overload` with `Retry-After`, distinct from the 499 a cancelled caller receives. The narrow
+supersession of the 2026-08-25 admission ban, and why process-resource occupancy is not upstream quota and never
+advances paid tiers, is recorded in `docs/provider-decision-journal.md`.
+
+Terminal truthfulness fixes carried by the same program: streamed DeepSeek Responses events now stamp a monotonic
+`sequence_number` at the single encoder seam while keeping every `output_index`/`content_index` stable, refusal
+delta/done remain answer-bearing parts, truncated streams and buffered truncations stay truthful `response.incomplete`
+results, and the stream deadline factories now release their timers when an attempt is aborted or cleared instead of
+holding a budget handle to the deadline.
+
+Optional analytics durability boundary: only the aggregate prompt-cache analytics write is enqueued on a bounded
+best-effort queue (256 entries, 256 KiB, 60-second age, 4 concurrent writes, absolute 5-second drain deadline). The
+prompt-cache telemetry gate counters, admin error evidence, Sentinel replay capture and degradation, and
+quota/accounting settlement stay awaited and lossless, and a stalled optional sink cannot extend or hang the terminal
+handoff. Bounded shutdown is exported from `serve.ts` and awaited by both the Mac and VPS launchers after server work
+settles and before the KV handle closes; one sanitized counter snapshot is logged when the queue existed.
+
+Status: implemented and locally verified. On the frozen candidate at HEAD `d71cf726eb3004264501671ed665692313ed72f5`
+plus the resolved merge and worktree changes, the registered real HTTP capture passed all three cases (repository key
+`591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5`, receipt `348beddd-498c-4eac-a8ad-1bb7bc9a180b`,
+13411ms) and the registered integrated capture passed together with all five module suites (receipt
+`64b8b95b-3e9b-41bf-b93e-188a3d6092d0`, 23915ms). The `deno task test` command runs `tests/oss-gateway-http.test.ts` as
+its own isolated `deno test --unstable-kv` process, because that suite uses a real in-memory Deno KV while the ordinary
+suite keeps its established monkeypatched KV tests unchanged. Full `sh scripts/verify.sh` is still pending and none of
+this is deployed.
+
 ## Codex premature turn endings: real reproduction, and the continuation-guidance contract - 2026-09-22
 
 The case that Codex can end a turn with an outstanding requested action is recorded here as reproduced, not inferred
@@ -76,8 +107,8 @@ or reservation.
 
 One extra provider request is the cost for an eligible text-only final: input cost and latency rise, and the output cap
 is `min(remaining original allowance, 8192)`. Actual usage from both requests is summed; missing fields stay partial and
-no cache zeros are invented. Refusal metadata is preserved through provider normalization solely so the guard can
-observe it, with no new refusal rendering behaviour.
+no cache zeros are invented. Refusal metadata is preserved through provider normalization so the guard can observe it;
+on this route a refusal is also rendered as an answer-bearing content part, and the guard skips the recheck for it.
 
 This is a bounded mitigation, not a guarantee against the model's choice after both passes, and runtime acceptance of
 the new recheck is still pending, so it must not be described as deployed or passed. The regression tests cover

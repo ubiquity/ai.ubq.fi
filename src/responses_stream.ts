@@ -377,6 +377,12 @@ type ProxyResponsesStreamOptions = Readonly<{
   onEvent?: (event: ResponsesStreamEvent) => void | Promise<void>;
   onFailure?: (error: unknown) => void | Promise<void>;
   onCancel?: (reason: unknown) => void | Promise<void>;
+  /**
+   * Releases the upstream read when the downstream consumer cancels.  An
+   * abandoned consumer cannot await an iterator parked on a pending upstream
+   * read, so cancellation has to reach the source directly.
+   */
+  abortUpstream?: (reason?: unknown) => void;
 }>;
 
 export const proxyResponsesStreamIterator = (
@@ -433,6 +439,7 @@ export const proxyResponsesStreamIterator = (
       closed = true;
       invoke(() => options.onCancel?.(reason));
       localAbort.abort(reason);
+      options.abortUpstream?.(reason);
       void iterator.return(reason).catch(() => {});
     },
   });
@@ -488,6 +495,9 @@ export const withSseKeepalive = (source: ReadableStream<Uint8Array>, options: Re
             ? await Promise.race([pendingRead.then((result) => ({ kind: "read" as const, result })), heartbeat().then((kind) => ({ kind }))])
             : { kind: "read" as const, result: await pendingRead };
         if (outcome.kind === "heartbeat") {
+          // Cancellation resolves the pending heartbeat, so a cancelled
+          // consumer must not receive one more frame from that race.
+          if (isClosed()) return;
           controller.enqueue(SSE_KEEPALIVE_FRAME.slice());
           return;
         }
@@ -517,5 +527,17 @@ export const withSseKeepalive = (source: ReadableStream<Uint8Array>, options: Re
   });
 };
 
-export const proxyResponsesStream = (upstream: ReadableStream<Uint8Array>, options: ProxyResponsesStreamOptions = {}): ReadableStream<Uint8Array> =>
-  proxyResponsesStreamIterator(readResponsesStream(upstream, options.signal), options);
+export const proxyResponsesStream = (upstream: ReadableStream<Uint8Array>, options: ProxyResponsesStreamOptions = {}): ReadableStream<Uint8Array> => {
+  const cancellation = new AbortController();
+  const signal = options.signal ? AbortSignal.any([options.signal, cancellation.signal]) : cancellation.signal;
+  return proxyResponsesStreamIterator(readResponsesStream(upstream, signal), {
+    ...options,
+    abortUpstream: (reason) => {
+      if (!cancellation.signal.aborted) cancellation.abort(reason);
+      // A consumer can cancel before the iterator's first read, so the session
+      // never owns the reader; release the untouched source here instead.
+      if (!upstream.locked) void upstream.cancel(reason).catch(() => {});
+      options.abortUpstream?.(reason);
+    },
+  });
+};

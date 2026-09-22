@@ -644,7 +644,9 @@ Deno.test("deepseek responses: an argument-only tool-call delta is observed but 
   // The two predicates are distinct: the nameless partial delta owns a tool-call
   // slot but answers nothing, so only the observed count refuses the recheck.
   assert.equal(translator.observedToolCallCount(), 1);
-  assert.deepEqual(translator.answerBearingOutput(), { text: "Step 11 of 16 complete.", toolCallCount: 0 });
+  // The refusal field is part of the answer-bearing contract; an unrefused
+  // answer reports it as the empty string.
+  assert.deepEqual(translator.answerBearingOutput(), { text: "Step 11 of 16 complete.", refusal: "", toolCallCount: 0 });
 });
 
 Deno.test("deepseek responses: stream translator is idempotent at the terminal", () => {

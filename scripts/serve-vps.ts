@@ -22,7 +22,7 @@ if (!(await Deno.stat(database)).isFile) {
 const kv = await Deno.openKv(database.pathname);
 initializeKv(kv);
 
-const { default: handler } = (await import(new URL("serve.ts", release).href)) as typeof import("../serve.ts");
+const { default: handler, shutdownOptionalTelemetry } = (await import(new URL("serve.ts", release).href)) as typeof import("../serve.ts");
 const server = Deno.serve({ hostname: "127.0.0.1", port: 7999, onListen: handler.onListen }, handler.fetch);
 let stopping = false;
 const shutdown = () => {
@@ -35,5 +35,8 @@ Deno.addSignalListener("SIGTERM", shutdown);
 Deno.addSignalListener("SIGINT", shutdown);
 console.log(`[ai.ubq.fi] VPS serving Git revision ${gitSha}`);
 await server.finished;
+// The bounded optional-analytics drain runs after in-flight work settles and
+// before the KV handle closes, so a stalled optional write cannot outlive it.
+await shutdownOptionalTelemetry();
 kv.close();
 Deno.exit(0);

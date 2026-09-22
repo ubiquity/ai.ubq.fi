@@ -9958,7 +9958,13 @@ const streamDeepSeekChatCompletion = (
   headers.set("Content-Type", "text/event-stream");
   headers.set("Cache-Control", "no-cache");
 
-  const iterator = iterateDeepSeekChatCompletionStream(upstream, upstreamModel, { signal: requestSignal });
+  // One stream-owned interrupt composed with the caller's request signal. The
+  // external downstream signal is driven by Deno delivery completion, which
+  // itself waits on this teardown, so a queued `iterator.return()` alone can
+  // never interrupt a generator parked in an upstream read.
+  const cancellation = new AbortController();
+  const readSignal = AbortSignal.any([requestSignal, cancellation.signal]);
+  const iterator = iterateDeepSeekChatCompletionStream(upstream, upstreamModel, { signal: readSignal });
   let closed = false;
   let terminalSettled = false;
   let semantic = false;
@@ -10028,12 +10034,24 @@ const streamDeepSeekChatCompletion = (
         await failStream(controller, error);
       }
     },
-    async cancel() {
+    cancel(reason) {
       if (closed) return;
       closed = true;
       settleTerminal("cancelled");
       recordDeepSeekFailureKind(usageContext, "cancellation");
-      await iterator.return();
+      // Usage observed before the disconnect is real evidence: record it with
+      // completed=false so the terminal reports the counters without claiming a
+      // completion. Missing usage stays unknown rather than invented.
+      if (usage) recordTerminalUsage(usageContext, usage, false);
+      // Abort the local read first: the pending upstream read then rejects, the
+      // iterator's own `finally` cancels the physical provider body, and no
+      // uninterruptible `return()` can block teardown. A consumer can cancel
+      // before the first read, so an untouched source is cancelled directly.
+      if (!cancellation.signal.aborted) cancellation.abort(reason);
+      const upstreamBody = upstream.body;
+      if (upstreamBody && !upstreamBody.locked) void upstreamBody.cancel(reason).catch(() => {});
+      // Cleanup is best effort and never surfaces as a provider error.
+      void iterator.return().catch(() => {});
     },
   });
   return new Response(body, { status: 200, headers });
@@ -10263,6 +10281,13 @@ const runDeepSeekRecheck = async (
     downstreamSignal: AbortSignal;
     recheckAbort: AbortController;
     usageContext?: UsageContext;
+    /**
+     * Runs at the real second-request dispatch boundary, after eligibility and
+     * the pre-dispatch abort check. A caller that must later reason about an
+     * unresolved advisory usage marks it here, so a skipped check cannot be
+     * mistaken for dispatched work.
+     */
+    onDispatch?: () => void;
   }>
 ): Promise<DeepSeekRecheckOutcome> => {
   const eligibility = deepSeekRecheckEligibility({
@@ -10282,6 +10307,7 @@ const runDeepSeekRecheck = async (
   if (!eligibility.eligible) return { status: "skipped" };
   if (options.requestSignal.aborted || options.downstreamSignal.aborted || options.recheckAbort.signal.aborted) return { status: "skipped" };
   const signal = AbortSignal.any([options.requestSignal, options.downstreamSignal, options.recheckAbort.signal]);
+  options.onDispatch?.();
   let upstream: Response;
   try {
     upstream = await fetchDeepSeekChatCompletions(toDeepSeekRecheckChatBody(options.chatBody, options.draft, eligibility.maxTokens), options.requestedModel, {
@@ -10645,7 +10671,13 @@ const streamDeepSeekResponses = (
   headers.set("Content-Type", "text/event-stream");
   headers.set("Cache-Control", "no-cache");
 
-  const iterator = iterateDeepSeekChatCompletionStream(upstream, recheck.upstreamModel, { signal: requestSignal });
+  // One stream-owned interrupt for both the parked original read and any active
+  // advisory recheck call. The external request signal alone is driven by Deno
+  // delivery completion, which itself waits on this teardown, so a queued
+  // `iterator.return()` could never reach either read.
+  const cancellation = new AbortController();
+  const readSignal = AbortSignal.any([requestSignal, cancellation.signal]);
+  const iterator = iterateDeepSeekChatCompletionStream(upstream, recheck.upstreamModel, { signal: readSignal });
   const translator = createDeepSeekResponsesStreamTranslator(requestedModel, responseId, echo, createdAtSeconds, toolNames, customToolNames);
   const state = {
     settled: false,
@@ -10658,10 +10690,18 @@ const streamDeepSeekResponses = (
     refusal: null as string | null,
     /** One check per original response; never recursive. */
     recheckStarted: false,
+    /**
+     * True only after the advisory request actually reached the wire and until
+     * its usage was folded into the aggregate. A skipped or ineligible check
+     * never sets it, so cancellation cannot downgrade an already-complete
+     * first-leg measurement.
+     */
+    recheckUsagePending: false,
   };
-  // Owns the advisory recheck's abort so a downstream cancellation stops it
-  // without touching the request-level deadline signal.
-  const recheckAbort = new AbortController();
+  // The same stream-owned interrupt, named for the advisory call it also ends.
+  const recheckAbort = cancellation;
+  /** The next `sequence_number` this response's SSE stream will emit. */
+  let sequenceNumber = 0;
 
   const settleTerminal = (terminalType: ResponseStreamTerminalType): void => {
     if (state.settled) return;
@@ -10669,7 +10709,15 @@ const streamDeepSeekResponses = (
     recordStreamTerminalType(usageContext, terminalType);
   };
   const emit = (controller: ReadableStreamDefaultController<Uint8Array>, events: readonly Record<string, unknown>[]): void => {
-    for (const event of events) controller.enqueue(encoder.encode(encodeResponsesEvent(event)));
+    for (const event of events) {
+      // Official Responses events carry a monotonic per-response
+      // `sequence_number`. The translator's own `output_index`/`content_index`
+      // values are copied through untouched, so this is the only field the wire
+      // gains and every event - including refusals, item and terminal events -
+      // is stamped by this one encoder seam.
+      controller.enqueue(encoder.encode(encodeResponsesEvent({ ...event, sequence_number: sequenceNumber })));
+      sequenceNumber += 1;
+    }
   };
   /**
    * The client-visible shape of the gateway's existing degenerate-completion
@@ -10749,6 +10797,9 @@ const streamDeepSeekResponses = (
       downstreamSignal,
       recheckAbort,
       usageContext,
+      onDispatch: () => {
+        state.recheckUsagePending = true;
+      },
     });
     // A cancellation that arrived while the advisory check was pending owns the
     // settlement: nothing else is enqueued and no success is reported.
@@ -10757,6 +10808,8 @@ const streamDeepSeekResponses = (
     const merged = mergeDeepSeekRecheckUsage(state.rawUsage, outcome.status === "observed" ? outcome.usage : null);
     state.usage = aggregateDeepSeekUsageTokens(merged.usage, merged.complete);
     state.rawUsage = merged.usage;
+    // The aggregate now carries the second leg's outcome, measured or not.
+    state.recheckUsagePending = false;
     if (outcome.status === "observed" && outcome.toolCalls?.length) {
       // One synthetic Chat chunk, fed to the same translator: no second
       // text or reasoning is pushed, the first leg had no tool calls so
@@ -10896,7 +10949,7 @@ const streamDeepSeekResponses = (
         await failStream(controller, error);
       }
     },
-    async cancel() {
+    cancel(reason) {
       if (state.cancelled) return;
       state.cancelled = true;
       // A pending advisory recheck must not outlive the cancellation that
@@ -10904,7 +10957,23 @@ const streamDeepSeekResponses = (
       recheckAbort.abort(new DOMException("Client cancelled during the DeepSeek continuation recheck.", "AbortError"));
       settleTerminal("cancelled");
       recordDeepSeekFailureKind(usageContext, "cancellation");
-      await iterator.return();
+      // Usage observed before the disconnect is real evidence: record it with
+      // completed=false so the terminal reports the counters without claiming a
+      // completion. Missing usage stays unknown rather than invented. When an
+      // advisory request was dispatched and its usage never arrived, the
+      // two-leg aggregate is unresolved, so the measured first-leg counters are
+      // kept and the status is the aggregate helper's partial.
+      const cancelledUsage = state.recheckUsagePending ? aggregateDeepSeekUsageTokens(state.rawUsage, false) : state.usage;
+      if (cancelledUsage) recordTerminalUsage(usageContext, cancelledUsage, false);
+      // Abort the local read first: the pending upstream read then rejects, the
+      // iterator's own `finally` cancels the physical provider body, and no
+      // uninterruptible `return()` can block teardown. A consumer can cancel
+      // before the first read, so an untouched source is cancelled directly.
+      if (!cancellation.signal.aborted) cancellation.abort(reason);
+      const upstreamBody = upstream.body;
+      if (upstreamBody && !upstreamBody.locked) void upstreamBody.cancel(reason).catch(() => {});
+      // Cleanup is best effort and never surfaces as a provider error.
+      void iterator.return().catch(() => {});
     },
   });
   return new Response(body, { status: 200, headers });

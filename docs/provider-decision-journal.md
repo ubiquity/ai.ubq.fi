@@ -6,6 +6,55 @@ entries when a decision changes; add a new entry that supersedes the earlier one
 
 Each entry must distinguish the decision from its implementation, validation, deployment, and live acceptance state.
 
+## 2026-09-22 — Reinstate a finite process-resource guard, narrowly superseding the 2026-08-25 admission ban
+
+### Decision
+
+The owner-authorized reliability program adds one finite process-resource guard to the terminal inference routes, and
+this entry supersedes the 2026-08-25 entry "Remove Codex admission control" **only** for that guard; every other
+prohibition in that entry stands.
+
+The guard is one process-wide controller with 64 active permits, 128 waiting requests, and a 5-second maximum queue
+wait. Waiting turns rotate fairly across authenticated principals (a principal keeps arrival order inside its own
+queue), a permit releases idempotently, and there is no per-principal active cap, no caller-lane lease, no lane
+derivation from thread/session/prompt identity, and no `codex_admission_busy` response.
+
+A permit is acquired after authentication and before any provider dispatch or quota reservation, and it is held until
+the request's response body and delivery settle - drain, client cancellation, or teardown - because the guarded resource
+is the gateway's own process resources: an open upstream transport, its retained response buffer, and the in-flight
+response wrapper. A permit that is never released because an event-loop timer has not run is not acceptable, so the
+grant path re-checks the elapsed queue wait and expires an overdue waiter instead of admitting it past the advertised
+bound.
+
+### Why resource occupancy differs from upstream quota
+
+The guard measures how much work this process is currently holding, not how much capacity any provider or account has
+left. Its refusal is a local `503` with a dedicated `local_inference_overload` code and a bounded `Retry-After`; it is
+never provider quota, capacity, or a transport outcome. Saturation therefore never advances the provider waterfall and
+never reaches the paid-fallback ledger, and a transient upstream timeout, stall, 5xx, or network error still cannot move
+the waterfall either.
+
+One durable global active Codex subscription still serves concurrent requests; this guard never caps a principal's
+active permits and never balances accounts or restores per-key affinity. It also does not replace or restore the removed
+caller-lane admission system: an unrelated caller can still reach dispatch concurrently, and the only global bound is
+the finite process-resource limit above.
+
+### Status
+
+Implementation is local and uncommitted on the reliability branch: `src/inference_admission.ts` plus the
+`src/handler.ts` wiring (authenticated stable principal, overload refusal, permit lifetime through response settlement,
+cancellation before transport, and queue-wait telemetry).
+
+Validation so far: the focused admission fixture (`tests/oss-inference-admission.test.ts`) covers the active bound, the
+waiting bound, finite queue wait, cancellation-safe removal, fair rotation, and idempotent release; it was captured
+locally. On the frozen candidate at HEAD `d71cf726eb3004264501671ed665692313ed72f5` plus the resolved merge and worktree
+changes, the registered real HTTP capture passed all three cases - admission overload, queued abort without dispatch,
+still-open Chat and Responses disconnect interruption with observed-usage preservation, and bounded optional-analytics
+shutdown (repository key `591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5`, receipt
+`348beddd-498c-4eac-a8ad-1bb7bc9a180b`, 13411ms) - and the registered integrated capture passed together with all five
+module suites (receipt `64b8b95b-3e9b-41bf-b93e-188a3d6092d0`, 23915ms). Full `sh scripts/verify.sh` is still pending.
+This guard is **not deployed**, and no production provider status is claimed.
+
 ## 2026-08-25 — Remove Codex admission control
 
 ### Status
