@@ -15197,6 +15197,79 @@ Deno.test("openai: the buffered DeepSeek Responses path fails a degenerate compl
   }
 });
 
+Deno.test("openai: the DeepSeek route accepts the provider's own `thinking` field", async (t) => {
+  const envKey = "DEEPSEEK_API_KEY";
+  const original = Deno.env.get(envKey);
+  Deno.env.set(envKey, "deepseek-test-key");
+  const { handleChatCompletions } = await import("../src/openai.ts");
+  const seen: Record<string, unknown>[] = [];
+  const withFetchMock = async <T>(handler: () => Response | Promise<Response>, fn: () => Promise<T>): Promise<T> => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = ((_u: unknown, init?: RequestInit) => {
+      seen.push(JSON.parse(typeof init?.body === "string" ? init.body : "{}"));
+      return Promise.resolve(handler());
+    }) as typeof fetch;
+    try {
+      return await fn();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  };
+  const ok = (): Response =>
+    Response.json({
+      id: "c",
+      object: "chat.completion",
+      created: 1780000000,
+      model: "deepseek-flash",
+      choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 },
+    });
+  const post = (extra: Record<string, unknown>): Promise<Response> =>
+    handleChatCompletions(
+      new Request("https://ai.ubq.fi/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "deepseek-flash", messages: [{ role: "user", content: "hi" }], stream: false, ...extra }),
+      })
+    );
+  try {
+    await t.step("thinking {type:disabled} is accepted and does not reach the wire", async () => {
+      seen.length = 0;
+      const res = await withFetchMock(ok, () => post({ thinking: { type: "disabled" } }));
+      console.log("  thinking disabled -> HTTP", res.status);
+      await res.json();
+      console.log("  wire reasoning_effort:", seen[0]?.reasoning_effort, "| thinking present:", "thinking" in (seen[0] ?? {}));
+      assert.equal(res.status, 200);
+      assert.equal(seen[0]?.reasoning_effort, "none");
+      assert.equal("thinking" in (seen[0] ?? {}), false);
+    });
+    await t.step("thinking {type:enabled} keeps thinking on", async () => {
+      seen.length = 0;
+      const res = await withFetchMock(ok, () => post({ thinking: { type: "enabled" } }));
+      await res.json();
+      console.log("  thinking enabled -> HTTP", res.status, "| wire reasoning_effort:", seen[0]?.reasoning_effort);
+      assert.equal(res.status, 200);
+      assert.equal(seen[0]?.reasoning_effort, "high");
+    });
+    await t.step("a non-DeepSeek route still rejects `thinking`", async () => {
+      const res = await withFetchMock(ok, () =>
+        handleChatCompletions(
+          new Request("https://ai.ubq.fi/v1/chat/completions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: "gpt-5.6-luna", messages: [{ role: "user", content: "hi" }], thinking: { type: "enabled" } }),
+          })
+        )
+      );
+      console.log("  non-deepseek model with thinking -> HTTP", res.status);
+      assert.equal(res.status, 400);
+    });
+  } finally {
+    if (original === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, original);
+  }
+});
+
 Deno.test("openai: one shared completion-validity rule governs the DeepSeek and Cerebras routes", async (t) => {
   // The rule itself. A reasoning-only completion reaches the predicate with
   // empty text and no tool calls: the provider's reasoning field (`reasoning`
