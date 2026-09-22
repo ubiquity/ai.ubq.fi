@@ -38,13 +38,25 @@ const failure = (param: string, message: string): DeepSeekResponsesFailure => ({
 
 type ChatContentPart = Record<string, unknown>;
 
-/** One Responses content part mapped onto the Chat content union. */
-const chatContentPart = (part: unknown): DeepSeekResponsesResult<Readonly<{ text?: string; image?: ChatContentPart }>> => {
+/** One Responses content part mapped onto the Chat content union for one message role. */
+const chatContentPart = (part: unknown, role: string): DeepSeekResponsesResult<Readonly<{ text?: string; image?: ChatContentPart }>> => {
   if (!isRecord(part) || Array.isArray(part)) return failure("input.content", "input.content items must be objects");
   const type = getString(part.type);
   if (type === "input_text" || type === "output_text" || type === "text") {
     if (typeof part.text !== "string") return failure("input.content.text", "input.content text must be a string");
     return { ok: true, value: { text: part.text } };
+  }
+  // The refusal part this adapter emits (`responseMessageContent`) is assistant
+  // output replayed as history; it carries its payload in `refusal`. Chat
+  // Completions has no refusal content part, so the text replays as the
+  // assistant message it is, matching the repository's own Chat-side replay rule
+  // for a refusal part. Without this translation a refusal the gateway just
+  // returned made the next request fail with HTTP 400 `input.content type
+  // 'refusal' is not supported`. Every other role keeps that rejection, because
+  // only assistant output produces a refusal part.
+  if (type === "refusal" && role === "assistant") {
+    if (typeof part.refusal !== "string") return failure("input.content.refusal", "input.content refusal must be a string");
+    return { ok: true, value: { text: part.refusal } };
   }
   if (type !== "input_image") return failure("input.content.type", `input.content type '${type ?? "unknown"}' is not supported`);
   const url = getString(part.image_url) ?? getString(part.file_url);
@@ -54,13 +66,13 @@ const chatContentPart = (part: unknown): DeepSeekResponsesResult<Readonly<{ text
 };
 
 /** Chat Completions content parts are strings or image parts; Responses nests text. */
-const chatContentFromResponseParts = (value: unknown): DeepSeekResponsesResult<string | ChatContentPart[]> => {
+const chatContentFromResponseParts = (value: unknown, role: string): DeepSeekResponsesResult<string | ChatContentPart[]> => {
   if (typeof value === "string") return { ok: true, value };
   if (!Array.isArray(value)) return failure("input.content", "input.content must be a string or an array");
   const images: ChatContentPart[] = [];
   const texts: string[] = [];
   for (const raw of value) {
-    const part = chatContentPart(raw);
+    const part = chatContentPart(raw, role);
     if (!part.ok) return part;
     if (part.value.text !== undefined) texts.push(part.value.text);
     if (part.value.image) images.push(part.value.image);
@@ -136,7 +148,7 @@ const appendMessageItem = (
 ): DeepSeekResponsesResult<void> => {
   const role = getString(item.role) ?? "user";
   if (role !== "user" && role !== "assistant" && role !== "developer") return failure("input.role", `input role '${role}' is not supported`);
-  const content = chatContentFromResponseParts(item.content);
+  const content = chatContentFromResponseParts(item.content, role);
   if (!content.ok) return content;
   const message: Record<string, unknown> = { role: role === "developer" ? "system" : role, content: content.value };
   if (role === "assistant" && pending.reasoning) {
@@ -963,13 +975,33 @@ type StreamState = {
   textPartIndex: number;
   refusalPartIndex: number;
   /**
-   * The output slot reserved for the reasoning item. The streamed transport
-   * never emits reasoning item events, so the slot is reserved at the first
-   * reasoning delta and filled at the terminal. Without it the item would be
-   * unshifted into position 0 and displace every item that does carry an
-   * `output_index`.
+   * The output slot the most recently announced reasoning item owns. The
+   * provider's normal order opens it at the first reasoning delta, before any
+   * later item advances the index; the item id is derived from that slot
+   * (`${responseId}_rs_${reasoningIndex}`), matching the buffered transport's
+   * first-choice name.
    */
   reasoningIndex: number;
+  /**
+   * True while an announced reasoning item is still awaiting its done events.
+   * The pinned Codex consumer holds a single active item
+   * (`lib/codex/codex-rs/core/src/session/turn.rs`), so this item is closed
+   * before the next output item is announced.
+   */
+  reasoningOpen: boolean;
+  /**
+   * The text accumulated for the reasoning item that is currently open or
+   * waiting for its terminal announcement. `reasoning` keeps the whole stream's
+   * text for the first-leg draft.
+   */
+  reasoningSegment: string;
+  /**
+   * True when the current reasoning segment arrived after another output item
+   * was already announced. Announcing it there would overlap that item for the
+   * single-active-item consumer, so it is held and delivered as one closed
+   * lifecycle at the terminal instead.
+   */
+  reasoningPending: boolean;
   toolCalls: Map<number, StreamToolCall>;
   nextOutputIndex: number;
   output: Record<string, unknown>[];
@@ -995,6 +1027,9 @@ const newStreamState = (): StreamState => ({
   textPartIndex: -1,
   refusalPartIndex: -1,
   reasoningIndex: -1,
+  reasoningOpen: false,
+  reasoningSegment: "",
+  reasoningPending: false,
   toolCalls: new Map(),
   nextOutputIndex: 0,
   output: [],
@@ -1057,6 +1092,44 @@ export const createDeepSeekResponsesStreamTranslator = (
 ) => {
   const state = newStreamState();
   const messageId = `${responseId}_msg_0`;
+  // The buffered transport names its first-choice reasoning item the same way
+  // (`${responseId}_rs_${choiceIndex}` with choice index 0).
+  const reasoningItemId = (): string => `${responseId}_rs_${state.reasoningIndex}`;
+
+  /**
+   * Closes the open reasoning item at the index it was announced at, using the
+   * text accumulated for that item alone. It is called before the next output
+   * item is announced and again at the terminal, so the pinned Codex consumer's
+   * single `active_item` is always the item a done event closes. The terminal
+   * item is stored at its own `output_index` and carries the same single
+   * `summary_text` part the buffered transport publishes.
+   */
+  const closeReasoning = (): Record<string, unknown>[] => {
+    if (!state.reasoningOpen) return [];
+    state.reasoningOpen = false;
+    const text = state.reasoningSegment;
+    state.reasoningSegment = "";
+    const itemId = reasoningItemId();
+    const item = reasoningItem(itemId, text);
+    state.output[state.reasoningIndex] = item;
+    return [
+      {
+        type: "response.reasoning_summary_text.done",
+        item_id: itemId,
+        output_index: state.reasoningIndex,
+        summary_index: 0,
+        text,
+      },
+      {
+        type: "response.reasoning_summary_part.done",
+        item_id: itemId,
+        output_index: state.reasoningIndex,
+        summary_index: 0,
+        part: { type: "summary_text", text },
+      },
+      { type: "response.output_item.done", output_index: state.reasoningIndex, item },
+    ];
+  };
 
   const startEvents = (): Record<string, unknown>[] => {
     if (state.started) return [];
@@ -1070,15 +1143,91 @@ export const createDeepSeekResponsesStreamTranslator = (
 
   const ensureMessageItem = (): Record<string, unknown>[] => {
     if (state.messageOpen) return [];
+    // The message is the next Codex-visible item, so the reasoning item must
+    // finish first: the consumer clears its single active item on every done and
+    // re-emits `ItemStarted` for a done that finds none.
+    const events = closeReasoning();
     state.messageOpen = true;
     state.messageIndex = state.nextOutputIndex++;
     return [
+      ...events,
       {
         type: "response.output_item.added",
         output_index: state.messageIndex,
         item: { id: messageId, type: "message", status: "in_progress", role: "assistant", content: [] },
       },
     ];
+  };
+
+  /**
+   * Announces the reasoning item and its single summary part at the index the
+   * item owns, before any later item can advance `nextOutputIndex`.
+   *
+   * The announcement is the contract the official client accumulates on:
+   * `response.output_item.added` appends its item to the client's ordered output
+   * and every later event reads that output at the `output_index` it names. A
+   * slot reserved without this event (the previous behavior) made the next item
+   * the client's first accumulated item while its content events still named a
+   * later index, so the client failed the whole stream with
+   * `missing output at index <n>`. The item carries the official reasoning shape
+   * the buffered transport already publishes: one `summary_text` part whose text
+   * is the provider's own `reasoning_content`.
+   */
+  const ensureReasoningItem = (): Record<string, unknown>[] => {
+    if (state.reasoningOpen) return [];
+    state.reasoningOpen = true;
+    state.reasoningPending = false;
+    state.reasoningIndex = state.nextOutputIndex++;
+    return [
+      {
+        type: "response.output_item.added",
+        output_index: state.reasoningIndex,
+        item: { id: reasoningItemId(), type: "reasoning", status: "in_progress", summary: [] },
+      },
+      {
+        type: "response.reasoning_summary_part.added",
+        item_id: reasoningItemId(),
+        output_index: state.reasoningIndex,
+        summary_index: 0,
+        part: { type: "summary_text", text: "" },
+      },
+    ];
+  };
+
+  /** One summary-text delta for the reasoning item that is currently open. */
+  const reasoningDeltaEvent = (text: string): Record<string, unknown> => ({
+    type: "response.reasoning_summary_text.delta",
+    item_id: reasoningItemId(),
+    output_index: state.reasoningIndex,
+    summary_index: 0,
+    delta: text,
+  });
+
+  /**
+   * Accumulates one provider reasoning delta.
+   *
+   * The provider's normal order is reasoning before any answer item, and that
+   * first item is streamed as it arrives. Once another output item has been
+   * announced, a new reasoning segment cannot be announced without overlapping
+   * that item for the single-active-item Codex consumer, so it is held and
+   * delivered as one closed lifecycle at the terminal. No event ever targets a
+   * reasoning item after it closes; a later segment becomes its own item.
+   */
+  const applyReasoningDelta = (text: string): Record<string, unknown>[] => {
+    state.reasoning += text;
+    if (state.reasoningOpen) {
+      state.reasoningSegment += text;
+      return [reasoningDeltaEvent(text)];
+    }
+    if (state.nextOutputIndex === 0) {
+      const events = ensureReasoningItem();
+      state.reasoningSegment += text;
+      events.push(reasoningDeltaEvent(text));
+      return events;
+    }
+    state.reasoningPending = true;
+    state.reasoningSegment += text;
+    return [];
   };
 
   /** Content parts are appended in arrival order, so their index is their position. */
@@ -1111,10 +1260,14 @@ export const createDeepSeekResponsesStreamTranslator = (
   const isCustomCall = (call: StreamToolCall): boolean => customToolNames.has(call.name);
 
   const announceToolCall = (call: StreamToolCall): Record<string, unknown>[] => {
+    // Same single-active-item rule as the message: close the open reasoning item
+    // before this tool call takes an index of its own.
+    const events = closeReasoning();
     call.announced = true;
     call.outputIndex = state.nextOutputIndex++;
     const custom = isCustomCall(call);
     return [
+      ...events,
       {
         type: "response.output_item.added",
         output_index: call.outputIndex,
@@ -1131,13 +1284,14 @@ export const createDeepSeekResponsesStreamTranslator = (
   };
 
   const applyTextDelta = (delta: Record<string, unknown>): Record<string, unknown>[] => {
+    const events: Record<string, unknown>[] = [];
     if (typeof delta.reasoning_content === "string" && delta.reasoning_content) {
-      if (state.reasoningIndex < 0) state.reasoningIndex = state.nextOutputIndex++;
-      state.reasoning += delta.reasoning_content;
+      events.push(...applyReasoningDelta(delta.reasoning_content));
     }
-    if (typeof delta.content !== "string" || !delta.content) return [];
+    if (typeof delta.content !== "string" || !delta.content) return events;
     state.text += delta.content;
     return [
+      ...events,
       ...announceTextPart(),
       {
         type: "response.output_text.delta",
@@ -1178,7 +1332,11 @@ export const createDeepSeekResponsesStreamTranslator = (
     for (const [position, entry] of raw.entries()) {
       if (!isRecord(entry) || Array.isArray(entry)) continue;
       const call = mergeToolCallDelta(state, responseId, entry, position);
-      if (!call.announced && call.name) events.push(...announceToolCall(call));
+      // A deferred reasoning segment must be flushed before the tool item it
+      // precedes, or replaying this output attaches the reasoning to the wrong
+      // (or no) assistant turn. The call keeps merging its fragmented name and
+      // arguments here and is announced with them at the terminal.
+      if (!call.announced && call.name && !state.reasoningPending) events.push(...announceToolCall(call));
       const fn = isRecord(entry.function) && !Array.isArray(entry.function) ? entry.function : null;
       // A freeform call streams its input at the terminal item instead: the
       // provider sends JSON arguments, and the client wants the raw text.
@@ -1237,6 +1395,20 @@ export const createDeepSeekResponsesStreamTranslator = (
     state.output[state.messageIndex] = item;
     events.push({ type: "response.output_item.done", output_index: state.messageIndex, item });
     return events;
+  };
+
+  /**
+   * Delivers a reasoning segment that could not be announced when it arrived
+   * (it followed another output item). The item is opened, filled with one
+   * summary-text delta, and closed in one batch after the answer items, so the
+   * single-active-item consumer never sees it overlap another item and no event
+   * targets an item that already completed.
+   */
+  const flushPendingReasoning = (): Record<string, unknown>[] => {
+    if (state.reasoningOpen || !state.reasoningPending) return [];
+    const events = ensureReasoningItem();
+    events.push(reasoningDeltaEvent(state.reasoningSegment));
+    return [...events, ...closeReasoning()];
   };
 
   const closeToolCalls = (): Record<string, unknown>[] => {
@@ -1334,9 +1506,14 @@ export const createDeepSeekResponsesStreamTranslator = (
       // Items are stored at the position they were assigned an `output_index`
       // for, so `response.output[output_index]` is the item the client
       // accumulated at that index even when fragmented tool calls announced
-      // their names out of call order.
-      const events = [...startEvents(), ...closeMessage(), ...closeToolCalls()];
-      if (state.reasoning) state.output[state.reasoningIndex] = reasoningItem(`${responseId}_rs_0`, state.reasoning);
+      // their names out of call order. The message closes first, then a deferred
+      // reasoning segment is flushed, then the tool items close and any
+      // reasoning item still open (it can only be the last announced item)
+      // closes. Flushing before the tool items keeps the reasoning item ahead of
+      // the tool call it belongs to in the delivered output, so history replay
+      // attaches it to that assistant tool-call turn, and no two Codex-visible
+      // items are ever open at once.
+      const events = [...startEvents(), ...closeMessage(), ...flushPendingReasoning(), ...closeToolCalls(), ...closeReasoning()];
       const terminal = terminalEnvelope();
       terminal.response.output = state.output;
       terminal.response.usage = state.usage;

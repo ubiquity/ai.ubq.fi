@@ -14886,6 +14886,12 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
           "response.created",
           "response.in_progress",
           "response.output_item.added",
+          "response.reasoning_summary_part.added",
+          "response.reasoning_summary_text.delta",
+          "response.reasoning_summary_text.done",
+          "response.reasoning_summary_part.done",
+          "response.output_item.done",
+          "response.output_item.added",
           "response.content_part.added",
           "response.output_text.delta",
           "response.output_text.delta",
@@ -16022,7 +16028,14 @@ Deno.test("openai: a reasoning-only DeepSeek Responses stream fails closed inste
       const events = responsesEvents(await response.text());
       assert.deepEqual(
         events.map((event) => event.type),
-        ["response.created", "response.in_progress", "response.failed"]
+        [
+          "response.created",
+          "response.in_progress",
+          "response.output_item.added",
+          "response.reasoning_summary_part.added",
+          "response.reasoning_summary_text.delta",
+          "response.failed",
+        ]
       );
       const failed = events.at(-1) as { response: Record<string, unknown> };
       assert.equal(failed.response.status, "failed");
@@ -16277,6 +16290,86 @@ Deno.test("openai: the buffered DeepSeek Responses path fails a degenerate compl
         (payload.output as Record<string, unknown>[]).map((item) => item.type),
         ["function_call"]
       );
+    });
+  } finally {
+    if (originalApiKey === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, originalApiKey);
+  }
+});
+
+Deno.test("openai: a DeepSeek Responses refusal output replays as assistant history", async (t) => {
+  // The refusal content part this adapter emits was rejected by its own request
+  // translator: a client that sent the response output back as `input` got
+  // HTTP 400 `input.content type 'refusal' is not supported`, so a single
+  // refusal ended the conversation. Both transports' output must replay as the
+  // assistant text the established Chat message shape carries.
+  const envKey = "DEEPSEEK_API_KEY";
+  const originalApiKey = Deno.env.get(envKey);
+  Deno.env.set(envKey, "deepseek-test-key");
+  const refusal = "I cannot help with that request.";
+  const completion = (message: Record<string, unknown>): Response =>
+    Response.json({
+      id: "deepseek-refusal-replay",
+      object: "chat.completion",
+      created: 1_780_000_700,
+      model: DEEPSEEK_FLASH_MODEL,
+      choices: [{ index: 0, message, finish_reason: "stop" }],
+      usage: { prompt_tokens: 9, completion_tokens: 5, total_tokens: 14 },
+    });
+  const continuationInput = (output: Record<string, unknown>[]): Record<string, unknown>[] => [
+    ...output,
+    { type: "message", role: "user", content: [{ type: "input_text", text: "continue" }] },
+  ];
+
+  try {
+    await t.step("buffered refusal output replays without a 400", async () => {
+      const upstreamBodies: Record<string, unknown>[] = [];
+      const result = await withFetchMock(
+        (_url, bodyText) => {
+          upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
+          return upstreamBodies.length === 1
+            ? completion({ role: "assistant", content: null, refusal })
+            : completion({ role: "assistant", content: "Continuing." });
+        },
+        async () => {
+          const first = await handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: false }));
+          assert.equal(first.status, 200);
+          const payload = (await first.json()) as Record<string, unknown>;
+          const output = payload.output as Record<string, unknown>[];
+          assert.deepEqual(output[0].content, [{ type: "refusal", refusal }]);
+          return handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: continuationInput(output), stream: false }));
+        }
+      );
+      assert.equal(result.status, 200);
+      const messages = upstreamBodies[1].messages as Record<string, unknown>[];
+      assert.deepEqual(messages.at(-2), { role: "assistant", content: refusal });
+      assert.deepEqual(messages.at(-1), { role: "user", content: "continue" });
+    });
+
+    await t.step("streamed terminal refusal output replays without a 400", async () => {
+      const upstreamBodies: Record<string, unknown>[] = [];
+      const result = await withFetchMock(
+        (_url, bodyText) => {
+          upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
+          if (upstreamBodies.length === 1) {
+            return sseResponse([deepSeekStreamChunk({ role: "assistant", refusal }), deepSeekStreamChunk({}, { finish_reason: "stop" }), "data: [DONE]\n\n"]);
+          }
+          return completion({ role: "assistant", content: "Continuing." });
+        },
+        async () => {
+          const first = await handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: true }));
+          assert.equal(first.status, 200);
+          const events = parseResponsesSseEvents(await first.text());
+          const terminal = events.at(-1) as { type: string; response: Record<string, unknown> };
+          assert.equal(terminal.type, "response.completed");
+          const output = terminal.response.output as Record<string, unknown>[];
+          assert.deepEqual(output[0].content, [{ type: "refusal", refusal }]);
+          return handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: continuationInput(output), stream: false }));
+        }
+      );
+      assert.equal(result.status, 200);
+      const messages = upstreamBodies[1].messages as Record<string, unknown>[];
+      assert.deepEqual(messages.at(-2), { role: "assistant", content: refusal });
     });
   } finally {
     if (originalApiKey === undefined) Deno.env.delete(envKey);
