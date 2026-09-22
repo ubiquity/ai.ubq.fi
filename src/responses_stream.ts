@@ -11,7 +11,15 @@ export type ResponsesStreamEvent = Readonly<{
 }>;
 
 export type ResponsesStreamFailureKind =
-  "malformed_event" | "premature_eof" | "read_error" | "inactivity_timeout" | "event_too_large" | "upstream_http_5xx" | "empty_upstream_completion";
+  | "malformed_event"
+  | "premature_eof"
+  | "read_error"
+  | "inactivity_timeout"
+  | "event_too_large"
+  | "upstream_http_4xx"
+  | "upstream_http_5xx"
+  | "upstream_http_error"
+  | "empty_upstream_completion";
 
 export const MAX_RESPONSES_SSE_EVENT_BYTES = 16 * 1024 * 1024;
 

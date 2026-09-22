@@ -1063,7 +1063,9 @@ const streamPreflightFailureResponse = (terminalType: ResponseStreamTerminalType
 };
 
 type ResponsesAttemptTrigger =
+  | "http_4xx"
   | "http_5xx"
+  | "http_error"
   | "missing_body"
   | "malformed_event"
   | "event_too_large"
@@ -1099,6 +1101,17 @@ type ResponsesAttemptResult = { kind: "ready"; attempt: PreparedResponsesAttempt
 
 const isEligibleResponsesAttemptStatus = (response: Response): boolean => response.status >= 500;
 
+/**
+ * Classifies a non-2xx upstream response: a client 4xx is an HTTP failure, not
+ * a stream read fault, and every other non-5xx status is a generic HTTP error.
+ * `primaryResponsesAttemptTrigger` keeps the separate 504 semantic timeout.
+ */
+const responsesHttpErrorTrigger = (status: number): "http_4xx" | "http_5xx" | "http_error" => {
+  if (status >= 500) return "http_5xx";
+  if (status >= 400) return "http_4xx";
+  return "http_error";
+};
+
 const triggerForResponsesError = (error: unknown, signal: AbortSignal): ResponsesAttemptTrigger => {
   if (signal.aborted && signal.reason instanceof Error && signal.reason.name === "TimeoutError") {
     return "semantic_timeout";
@@ -1114,8 +1127,12 @@ const triggerForResponsesError = (error: unknown, signal: AbortSignal): Response
 
 const failureKindForResponsesAttemptTrigger = (trigger: ResponsesAttemptTrigger): ResponsesStreamFailureKind | null => {
   switch (trigger) {
+    case "http_4xx":
+      return "upstream_http_4xx";
     case "http_5xx":
       return "upstream_http_5xx";
+    case "http_error":
+      return "upstream_http_error";
     case "premature_eof":
       return "premature_eof";
     case "malformed_event":
@@ -1385,7 +1402,7 @@ const prepareResponsesAttempt = async (
     };
   };
   if (!response.ok) {
-    const trigger = isEligibleResponsesAttemptStatus(response) ? "http_5xx" : "read_error";
+    const trigger = responsesHttpErrorTrigger(response.status);
     const normalized = await toOpenAiUpstreamErrorResponse(response, provider, deadline.signal);
     deadline.clear();
     return fail(trigger, normalized);
@@ -1466,8 +1483,7 @@ const isRetryablePrimaryFetchFailure = (error: unknown): error is CodexError =>
 
 const primaryResponsesAttemptTrigger = (status: number): ResponsesAttemptTrigger => {
   if (status === 504) return "semantic_timeout";
-  if (status >= 500) return "http_5xx";
-  return "read_error";
+  return responsesHttpErrorTrigger(status);
 };
 
 const failedPrimaryResponsesFetchOutcome = (error: CodexError, deadline: StreamDeadline): { kind: "failed"; value: ResponsesRouteFailure } => {
@@ -12050,7 +12066,10 @@ const settleCodexPrimaryFailure = async (state: ResponsesHandlerState, failure: 
   if (routed.gatewayResponse && !isEligibleResponsesAttemptStatus(failed.response)) {
     return releaseResponsesProbeAndReturn(state.probe, failed.response);
   }
-  if (!isEligibleResponsesAttemptStatus(failed.response) && failed.trigger === "read_error") {
+  if (
+    !isEligibleResponsesAttemptStatus(failed.response) &&
+    (failed.trigger === "http_4xx" || failed.trigger === "http_error" || failed.trigger === "read_error")
+  ) {
     releaseResponsesProbeIfSet(state.probe);
     lifecycle.terminal("response.failed");
     return failed.response;
