@@ -2348,9 +2348,12 @@ const existingShadowDecisionOutcome = async (
   if (!sameShadowFences(existing.fences, fences)) return null;
   const selected = complete.find(({ context }) => context.account.accountIdHash === existing.selected_account_id_hash) ?? null;
   // A subscription disabled after its decision was persisted must not report a
-  // duplicate would-spend, let alone arm a live spend.
-  if (selected && !(await readBankedResetUsage(kv, selected.context.account.accountIdHash)).allowed) {
-    return poolOutcome("skipped", "usage_disabled");
+  // duplicate would-spend, let alone arm a live spend. An unreadable record
+  // fails this duplicate path closed through the same structured outcome the
+  // rest of the evaluator returns, instead of rejecting out of it.
+  if (selected) {
+    const gate = await readUsageGate(kv, selected.context.account.accountIdHash);
+    if (gate.kind === "failure") return poolOutcome("skipped", gate.code);
   }
   const telemetry = dependencies.telemetry ?? defaultTelemetry;
   const telemetryCandidate = selected ?? firstResolvedPoolCandidate(complete);

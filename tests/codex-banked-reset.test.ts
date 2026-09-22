@@ -2731,6 +2731,83 @@ Deno.test("sequential shadow duplicates skip inventory only after current strong
   assert.equal(secondProvider.inventoryInputs.length, 1);
 });
 
+Deno.test("an unreadable settings record on the shadow duplicate path returns configuration_unavailable", async () => {
+  const clock = new TestClock();
+  const kv = new MemoryKv();
+  const reset = candidate({ accountId: "test-account-a", routingGeneration: 7 });
+  await seedFences(kv, reset);
+  const provider = new FakeCodexUsageResetProvider();
+  provider.inventory = inventory("credit-a", clock.nowMs + 40_000);
+  const shadow = config({ mode: "shadow", maxGlobalPerDay: 1 });
+  const pool = [{ slot: 0, candidate: reset, provider }];
+  const deps = dependencies(kv, provider, clock, shadow);
+
+  const initial = await evaluateCodexBankedResetPool(pool, deps);
+  assert.equal(initial.reason, "shadow_selected");
+  assert.equal(provider.inventoryInputs.length, 1);
+
+  // Fail only the duplicate path's settings read: the episode preparation read
+  // that precedes it in the same evaluation still succeeds.
+  const settingsKey = encodeKey(codexResetUsageKey(await testHash(reset.accountId)));
+  let settingsReads = 0;
+  kv.beforeGet = (key) => {
+    if (encodeKey(key) !== settingsKey) return null;
+    settingsReads += 1;
+    if (settingsReads > 1) throw new Error("settings read failed");
+    return null;
+  };
+
+  const duplicate = await evaluateCodexBankedResetPool(pool, deps);
+  assert.equal(duplicate.kind, "skipped");
+  assert.equal(duplicate.reason, "configuration_unavailable");
+  assert.equal(duplicate.selected, null);
+  assert.equal(duplicate.reset, null);
+  assert.equal(settingsReads, 2);
+  assert.equal(provider.inventoryInputs.length, 1);
+  assert.equal(provider.redeemInputs.length, 0);
+  assert.equal(provider.commitCount, 0);
+  // The persisted decision and its fences survive the failed read untouched.
+  assert.equal(shadowDecisionFrom(kv).selected_account_id_hash, await testHash(reset.accountId));
+});
+
+Deno.test("a subscription disabled after its shadow decision stays fenced on the duplicate path", async () => {
+  const clock = new TestClock();
+  const kv = new MemoryKv();
+  const reset = candidate({ accountId: "test-account-a", routingGeneration: 7 });
+  await seedFences(kv, reset);
+  const provider = new FakeCodexUsageResetProvider();
+  provider.inventory = inventory("credit-a", clock.nowMs + 40_000);
+  const shadow = config({ mode: "shadow", maxGlobalPerDay: 1 });
+  const pool = [{ slot: 0, candidate: reset, provider }];
+  const deps = dependencies(kv, provider, clock, shadow);
+
+  const initial = await evaluateCodexBankedResetPool(pool, deps);
+  assert.equal(initial.reason, "shadow_selected");
+  assert.equal(provider.inventoryInputs.length, 1);
+
+  // Disable the subscription between this episode's own settings read and the
+  // duplicate decision's fence read, so only the duplicate path observes it.
+  const settingsKey = codexResetUsageKey(await testHash(reset.accountId));
+  const encodedSettingsKey = encodeKey(settingsKey);
+  let settingsReads = 0;
+  kv.beforeGet = async (key) => {
+    if (encodeKey(key) !== encodedSettingsKey) return;
+    settingsReads += 1;
+    if (settingsReads > 1) await kv.set(settingsKey, { enabled: false });
+  };
+
+  const duplicate = await evaluateCodexBankedResetPool(pool, deps);
+  assert.equal(duplicate.kind, "skipped");
+  assert.equal(duplicate.reason, "usage_disabled");
+  assert.equal(duplicate.selected, null);
+  assert.equal(duplicate.reset, null);
+  assert.equal(settingsReads, 2);
+  assert.equal(provider.inventoryInputs.length, 1);
+  assert.equal(provider.redeemInputs.length, 0);
+  assert.equal(provider.commitCount, 0);
+  assert.equal(shadowDecisionFrom(kv).selected_account_id_hash, await testHash(reset.accountId));
+});
+
 Deno.test("concurrent shadow observations deduplicate one episode, and live consumes only the matching audited account credit", async () => {
   const clock = new TestClock();
   const kv = new MemoryKv();
