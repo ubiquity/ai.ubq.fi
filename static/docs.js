@@ -1,7 +1,7 @@
 import "./network.js";
 
-const contentEl = document.querySelector("[data-docs-content]");
-const tocEl = document.querySelector("[data-docs-toc]");
+const contentEl = globalThis.document?.querySelector("[data-docs-content]");
+const tocEl = globalThis.document?.querySelector("[data-docs-toc]");
 const source = contentEl?.dataset.docsSource;
 
 const copyIcon =
@@ -122,6 +122,7 @@ const parseMarkdown = (markdown) => {
   let codeLines = [];
   let paragraph = [];
   let listType = null;
+  let currentListItem = [];
 
   const flushParagraph = () => {
     if (!paragraph.length) return;
@@ -130,7 +131,15 @@ const parseMarkdown = (markdown) => {
     paragraph = [];
   };
 
+  const flushListItem = () => {
+    if (!currentListItem.length) return;
+    const text = currentListItem.join(" ").trim();
+    html.push(`<li>${renderInline(text)}</li>`);
+    currentListItem = [];
+  };
+
   const closeList = () => {
+    flushListItem();
     if (!listType) return;
     html.push(`</${listType}>`);
     listType = null;
@@ -138,7 +147,7 @@ const parseMarkdown = (markdown) => {
 
   for (let index = 0; index < lines.length; index += 1) {
     const rawLine = lines[index];
-    const line = rawLine.replace(/\s+$/g, "");
+    const line = rawLine.replace(/\s+$/, "");
     if (inCode) {
       if (line.startsWith("```")) {
         html.push(renderCodeBlock(codeLang, codeLines.join("\n")));
@@ -186,13 +195,15 @@ const parseMarkdown = (markdown) => {
       const type = listMatch[1] ? "ul" : "ol";
       if (listType && listType !== type) {
         closeList();
+      } else {
+        flushListItem();
       }
       if (!listType) {
         listType = type;
         html.push(`<${listType}>`);
       }
       const itemText = listMatch[3] ?? "";
-      html.push(`<li>${renderInline(itemText.trim())}</li>`);
+      currentListItem.push(itemText.trim());
       continue;
     }
 
@@ -211,9 +222,11 @@ const parseMarkdown = (markdown) => {
       continue;
     }
 
-    // A list item ends at the first line that is not an item, so close the open list before this
-    // paragraph accumulates; otherwise the emitted `<p>` lands inside the `<ul>`/`<ol>`.
-    closeList();
+    if (listType) {
+      currentListItem.push(line.trim());
+      continue;
+    }
+
     paragraph.push(line.trim());
   }
 
@@ -326,4 +339,8 @@ contentEl?.addEventListener("click", (event) => {
   if (button instanceof HTMLButtonElement) void copyCodeBlock(button);
 });
 
-loadDocs();
+if (globalThis.document) {
+  loadDocs();
+}
+
+export { parseMarkdown };
