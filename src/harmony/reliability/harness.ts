@@ -245,6 +245,34 @@ const emitHarnessEvent = (run: HarnessRun, opts: HarnessOptions, event: HarnessE
 /** Deterministic backoff sleep (a zero delay resolves without a timer). */
 const sleepMs = (ms: number): Promise<void> => (ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve());
 
+/** Sentinel returned by {@link awaitWithRunCancellation} when the run signal fired first. */
+const RUN_CANCELLED = Symbol("run-cancelled");
+
+/**
+ * Awaits one provider promise, or the whole-run cancellation signal when it
+ * fires first.  The harness owns the task deadline: a stalled transport that
+ * never observes its signal (or that stalls on the response body) must not
+ * keep the run alive past the deadline.  The race keeps the abandoned promise
+ * observed, so a late rejection cannot surface as an unhandled rejection.
+ */
+const awaitWithRunCancellation = async <T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T | typeof RUN_CANCELLED> => {
+  if (signal === undefined) return await promise;
+  if (signal.aborted) return RUN_CANCELLED;
+  let removeAbortListener = (): void => {};
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<typeof RUN_CANCELLED>((resolve) => {
+        const onAbort = (): void => resolve(RUN_CANCELLED);
+        signal.addEventListener("abort", onAbort, { once: true });
+        removeAbortListener = () => signal.removeEventListener("abort", onAbort);
+      }),
+    ]);
+  } finally {
+    removeAbortListener();
+  }
+};
+
 /** Advisory reliability classification of the state reached so far. */
 const classifyRun = (run: HarnessRun, abortedReason: string | null): ReliabilityClassification =>
   classifyReliability({
@@ -323,11 +351,17 @@ const attemptModelTransport = async (run: HarnessRun, opts: HarnessOptions, buil
   emitHarnessEvent(run, opts, { type: "model_request", id: requestId, mode: run.mode, built, estimatedTokens: estimateRequestTokens(built.body) });
   let response: Response;
   try {
-    response = await opts.transport(built.body, { signal: opts.signal });
+    const dispatched = await awaitWithRunCancellation(opts.transport(built.body, { signal: opts.signal }), opts.signal);
+    if (dispatched === RUN_CANCELLED) return { kind: "aborted" };
+    response = dispatched;
   } catch {
     if (opts.signal?.aborted) return { kind: "aborted" };
     await sleepMs(run.retryPolicy.backoffMs);
     return { kind: "retry" };
+  }
+  if (opts.signal?.aborted) {
+    await response.body?.cancel().catch(() => undefined);
+    return { kind: "aborted" };
   }
   if (!response.ok) {
     await response.body?.cancel().catch(() => undefined);
@@ -335,7 +369,8 @@ const attemptModelTransport = async (run: HarnessRun, opts: HarnessOptions, buil
     await sleepMs(run.retryPolicy.backoffMs);
     return { kind: "retry" };
   }
-  const body = await response.json().catch(() => null);
+  const body = await awaitWithRunCancellation(response.json().catch(() => null), opts.signal);
+  if (body === RUN_CANCELLED) return { kind: "aborted" };
   if (body === null) {
     await sleepMs(run.retryPolicy.backoffMs);
     return { kind: "retry" };
