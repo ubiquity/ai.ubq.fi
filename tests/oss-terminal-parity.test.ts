@@ -78,7 +78,13 @@ const awaitAbort = (signal: AbortSignal): Promise<void> =>
       resolve();
       return;
     }
-    signal.addEventListener("abort", () => resolve(), { once: true });
+    signal.addEventListener(
+      "abort",
+      () => {
+        resolve();
+      },
+      { once: true }
+    );
   });
 
 /** The kind a rejected DeepSeek transport error carries. */

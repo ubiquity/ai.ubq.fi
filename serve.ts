@@ -18,7 +18,7 @@ import { createServeHandler } from "./src/serve_handler.ts";
  * instead of being orphaned or retried. One sanitized snapshot then makes
  * drops, failures, retained capacity and an incomplete drain operationally
  * observable. Required durable evidence - quota/accounting, admin errors and
- * Sentinel capture - is never routed through this queue.
+ * authenticated failure capture - is never routed through this queue.
  */
 export const shutdownOptionalTelemetry = async (): Promise<void> => {
   try {

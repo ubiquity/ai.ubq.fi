@@ -34,7 +34,9 @@ const sleep = (ms: number): Promise<void> =>
 const settlesWithin = async (settled: Promise<unknown>, timeoutMs: number): Promise<boolean> => {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<boolean>((resolve) => {
-    timer = setTimeout(() => resolve(false), timeoutMs);
+    timer = setTimeout(() => {
+      resolve(false);
+    }, timeoutMs);
   });
   try {
     return await Promise.race([settled.then(() => true), timeout]);
@@ -220,7 +222,9 @@ Deno.test("Owned Responses stream stops an eager upstream producer while its con
 });
 
 Deno.test("Responses proxy forwards one terminal, cancels once, and never replays its upstream", async () => {
-  const frames = [deltaFrame("committed"), completedFrame(), deltaFrame("post-terminal")];
+  // Typed with the gap the pull index can land on, so the sentinel check below
+  // stays an honest runtime guard rather than a comparison the types disprove.
+  const frames: (string | undefined)[] = [deltaFrame("committed"), completedFrame(), deltaFrame("post-terminal")];
   const probe = probeUpstream((pullIndex) => {
     const frame: string | undefined = frames[pullIndex - 1];
     return frame === undefined ? null : bytes(frame);
@@ -278,7 +282,9 @@ Deno.test("Owned Responses stream aborts a parked upstream read when its consume
     initial: [],
     iterator: readResponsesStream(probe.stream, upstreamAbort.signal),
     responseId: "resp_lifecycle",
-    abortUpstream: (reason) => upstreamAbort.abort(reason),
+    abortUpstream: (reason) => {
+      upstreamAbort.abort(reason);
+    },
   });
   const reader = body.getReader();
   const parked = reader.read();
@@ -327,16 +333,33 @@ Deno.test("SSE keepalive forwards cancellation and keeps one pending upstream re
 Deno.test("Responses precommit buffer refuses an unbounded eager producer and releases its iterator", async () => {
   let produced = 0;
   let released = false;
-  const eager = (async function* (): ResponsesStreamIterator {
-    try {
-      for (;;) {
-        produced += 1;
-        yield responseEventFromValue({ type: "response.in_progress", sequence_number: produced });
-      }
-    } finally {
+  // A producing iterator with no asynchronous work of its own: an
+  // `async function*` would need an await it genuinely does not have, so the
+  // async iterator protocol is written out directly. `return` records the
+  // release the precommit buffer must perform.
+  const eager: ResponsesStreamIterator = {
+    next: () => {
+      produced += 1;
+      return Promise.resolve<IteratorResult<ResponsesStreamEvent, unknown>>({
+        done: false,
+        value: responseEventFromValue({ type: "response.in_progress", sequence_number: produced }),
+      });
+    },
+    return: () => {
       released = true;
-    }
-  })();
+      return Promise.resolve<IteratorResult<ResponsesStreamEvent, unknown>>({ done: true, value: undefined });
+    },
+    throw: (error: unknown) => Promise.reject(error),
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+    // Deno's AsyncGenerator also requires the explicit resource-management
+    // member. It delegates to the same return path, so disposal performs the
+    // real cleanup and no counts change unless the consumer disposes.
+    async [Symbol.asyncDispose](): Promise<void> {
+      await this.return(undefined);
+    },
+  };
   try {
     const error = await rejectionOf(prepareResponsesStreamForCommit(eager));
     assert.ok(error instanceof ResponsesStreamError);

@@ -128,18 +128,23 @@ const UTF8_ENCODER = new TextEncoder();
  */
 export const measureJsonPayloadBytes = (value: unknown): number => {
   try {
-    const serialized = JSON.stringify(value, (_key, item: unknown) => {
+    // `JSON.stringify` is typed as returning `string`, but it returns
+    // `undefined` at runtime for values it cannot serialize (for example a
+    // bare `undefined` or a function). Read it through an unknown boundary so
+    // the fail-closed check below stays honest instead of being narrowed away.
+    const serialized: unknown = JSON.stringify(value, (_key, item: unknown) => {
       if (typeof item === "number" && !Number.isFinite(item)) throw new TypeError("non-finite number");
       if (typeof item === "bigint") throw new TypeError("bigint");
       return item;
     });
-    return serialized === undefined ? Number.NaN : UTF8_ENCODER.encode(serialized).length;
+    if (typeof serialized !== "string") return Number.NaN;
+    return UTF8_ENCODER.encode(serialized).length;
   } catch {
     return Number.NaN;
   }
 };
 
-const defaultMeasure = <TEntry>(entry: TEntry): number => measureJsonPayloadBytes(entry);
+const defaultMeasure = (entry: unknown): number => measureJsonPayloadBytes(entry);
 
 export const createOptionalTelemetryQueue = <TEntry>(options: OptionalTelemetryQueueOptions<TEntry>): OptionalTelemetryQueue<TEntry> => {
   const bounds: OptionalTelemetryQueueBounds = Object.freeze({
@@ -174,6 +179,13 @@ export const createOptionalTelemetryQueue = <TEntry>(options: OptionalTelemetryQ
   let stalled = false;
   let shutdownIncomplete = false;
   let lastErrorClass: string | null = null;
+
+  /**
+   * Reads the shutdown flag through a call. A drain started earlier can set it
+   * while a later drain call is being set up, so reading the binding directly
+   * would let control-flow analysis narrow it to its initial `false`.
+   */
+  const drainIsIncomplete = (): boolean => shutdownIncomplete;
 
   const timestamp = (): number => {
     const value = Math.trunc(now());
@@ -235,7 +247,9 @@ export const createOptionalTelemetryQueue = <TEntry>(options: OptionalTelemetryQ
       return await Promise.race([
         Promise.race([...inFlight.keys()]).then(() => true),
         new Promise<boolean>((resolve) => {
-          const timer = setTimeout(() => resolve(false), timeoutMs);
+          const timer = setTimeout(() => {
+            resolve(false);
+          }, timeoutMs);
           cancelTimeout = () => {
             clearTimeout(timer);
           };
@@ -256,26 +270,28 @@ export const createOptionalTelemetryQueue = <TEntry>(options: OptionalTelemetryQ
    * `drain_timeouts` and `dispatch_stalled` set; the unresolved writes keep
    * their charge and no further dispatch happens until full capacity is free.
    */
+  const dispatchNextQueued = (): void => {
+    const item = queued.shift();
+    if (!item) return;
+    if (isExpired(item)) {
+      releaseCharge(item);
+      counters.dropped_by_age += 1;
+      return;
+    }
+    writeOne(item);
+  };
+
   const drainPending = async (): Promise<void> => {
-    if (shutdownIncomplete) return;
+    if (drainIsIncomplete()) return;
     const deadlineAtMs = timestamp() + bounds.maxDrainWaitMs;
     for (;;) {
       dropExpiredQueued();
-      if (shutdownIncomplete) return;
+      if (drainIsIncomplete()) return;
       if (stalled && inFlight.size > 0) return;
-      while (queued.length > 0 && inFlight.size < bounds.maxConcurrentWrites) {
-        const item = queued.shift() as PendingEntry;
-        if (isExpired(item)) {
-          releaseCharge(item);
-          counters.dropped_by_age += 1;
-          continue;
-        }
-        writeOne(item);
-      }
+      while (queued.length > 0 && inFlight.size < bounds.maxConcurrentWrites) dispatchNextQueued();
       if (queued.length === 0 && inFlight.size === 0) return;
       const remainingMs = deadlineAtMs - timestamp();
-      if (remainingMs <= 0) break;
-      if (await waitForProgress(remainingMs)) continue;
+      if (remainingMs > 0 && (await waitForProgress(remainingMs))) continue;
       break;
     }
     counters.drain_timeouts += 1;

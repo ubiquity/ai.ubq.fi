@@ -32,9 +32,10 @@ Status: implemented and locally verified. On the frozen candidate at HEAD `d71cf
 plus the resolved merge and worktree changes, the registered real HTTP capture passed all three cases (repository key
 `591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5`, receipt `348beddd-498c-4eac-a8ad-1bb7bc9a180b`,
 13411ms) and the registered integrated capture passed together with all five module suites (receipt
-`64b8b95b-3e9b-41bf-b93e-188a3d6092d0`, 23915ms). The `deno task test` command now enables the existing documented Deno
-`--unstable-kv` option because the HTTP suite uses a real in-memory Deno KV. Full `sh scripts/verify.sh` is still
-pending and none of this is deployed.
+`64b8b95b-3e9b-41bf-b93e-188a3d6092d0`, 23915ms). The `deno task test` command runs `tests/oss-gateway-http.test.ts` as
+its own isolated `deno test --unstable-kv` process, because that suite uses a real in-memory Deno KV while the ordinary
+suite keeps its established monkeypatched KV tests unchanged. Full `sh scripts/verify.sh` is still pending and none of
+this is deployed.
 
 ## Codex premature turn endings: real reproduction, and the continuation-guidance contract - 2026-09-22
 

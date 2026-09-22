@@ -535,13 +535,15 @@ Deno.test("optional telemetry shutdown drains and closes the module queue", asyn
 
     await closeOptionalPromptCacheAnalytics();
     const settled = optionalPromptCacheAnalyticsSnapshot();
+    // The first assertion narrows `settled`: it already fails on a null snapshot,
+    // so the fields below are read without a redundant chain or guard.
     assert.equal(settled?.closed, true);
-    assert.equal(settled?.failed, 0, "the module queue sink must not report a failed write");
-    assert.equal(settled?.drain_timeouts, 0);
-    assert.equal(settled?.retained_entries, 0);
-    assert.equal(settled?.shutdown_incomplete, false);
-    assert.equal(settled?.drain_in_progress, false);
-    assert.equal(settled?.delivered, 1, "the shutdown drain delivers the retained sample to the environment KV sink");
+    assert.equal(settled.failed, 0, "the module queue sink must not report a failed write");
+    assert.equal(settled.drain_timeouts, 0);
+    assert.equal(settled.retained_entries, 0);
+    assert.equal(settled.shutdown_incomplete, false);
+    assert.equal(settled.drain_in_progress, false);
+    assert.equal(settled.delivered, 1, "the shutdown drain delivers the retained sample to the environment KV sink");
     assert.ok(kv.entries.size > 0, "the drain writes the same durable counters the direct path writes");
     assert.equal((await enqueuePromptCacheAnalytics(event(), { release: RELEASE, now: () => NOW_MS })).reason, "dropped_closed");
   } finally {

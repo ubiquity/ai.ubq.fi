@@ -162,8 +162,7 @@ Deno.test("concurrent cancellation and dispatch settlement agree on one outcome"
   const accounting = accountingFor(kv, policy, "race-request");
   assertLedgerConsistent(kv, policy, "race-request", 1);
   if (accounting.state === "dispatched") {
-    assert.equal(dispatchOutcome.status, "fulfilled", "the winning dispatch must return a transport context");
-    if (dispatchOutcome.status !== "fulfilled") throw new Error("unreachable");
+    assert.ok(dispatchOutcome.status === "fulfilled", "the winning dispatch must return a transport context");
     assert.ok(dispatchOutcome.value, "a committed dispatch must be compensatable by its caller");
   } else {
     assert.equal(accounting.state, "released", `the race must end in a settled row: ${JSON.stringify(accounting)}`);
@@ -252,8 +251,7 @@ Deno.test("a request id reused on another route cannot share the first route's c
   const first = admitted(await reserve(kv, policy, "cross-route-id", undefined, "chat.completions"));
 
   const otherRoute = await reserve(kv, policy, "cross-route-id", undefined, "embeddings");
-  assert.equal(otherRoute.ok, false, "one request id must not span two routes");
-  if (otherRoute.ok) throw new Error("unreachable");
+  assert.ok(!otherRoute.ok, "one request id must not span two routes");
   assert.equal(otherRoute.response.status, 503);
   assert.deepEqual(accountingFor(kv, policy, "cross-route-id"), { committed: 0, reserved: 1, state: "reserved", reason: null });
 

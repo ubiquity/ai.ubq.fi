@@ -569,7 +569,7 @@ const cohortFromQueueEntry = (entry: PromptCacheAnalyticsQueueEntry): PromptCach
     provider,
     modelHash: entry.model_hash,
     route,
-    promptCacheKeyPresent: entry.prompt_cache_key_present === true,
+    promptCacheKeyPresent: entry.prompt_cache_key_present,
     mode: asMode(entry.mode),
     fallback: asFallback(entry.fallback),
   };

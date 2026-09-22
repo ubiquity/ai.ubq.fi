@@ -124,7 +124,7 @@ export const createInferenceAdmissionController = (limits: Partial<InferenceAdmi
   // owns a queue and a turn only while it has waiting requests, so a burst that
   // drains leaves no per-principal state behind.
   const waitingByPrincipal = new Map<string | null, Waiter[]>();
-  const turnOrder: Array<string | null> = [];
+  const turnOrder: (string | null)[] = [];
 
   const detachWaiter = (waiter: Waiter): void => {
     if (waiter.waitSignal && waiter.onWaitAbort) waiter.waitSignal.removeEventListener("abort", waiter.onWaitAbort);
@@ -168,6 +168,16 @@ export const createInferenceAdmissionController = (limits: Partial<InferenceAdmi
     };
   };
 
+  /**
+   * Settles a waiter that cannot be admitted now. The principal keeps the turn
+   * it was just rotated out of, so its next waiting request is considered
+   * immediately instead of losing its place to an unrelated principal.
+   */
+  const refuseWaiter = (waiter: Waiter, principal: string | null, result: InferenceAdmissionResult): void => {
+    settleWaiter(waiter, result);
+    if (waitingByPrincipal.has(principal)) turnOrder.unshift(principal);
+  };
+
   const admitWaiting = (): void => {
     while (active < maxActive && waitingCount > 0) {
       const principal = turnOrder.shift();
@@ -176,19 +186,15 @@ export const createInferenceAdmissionController = (limits: Partial<InferenceAdmi
       if (!waiter) continue;
       const waitedMs = elapsedMs(waiter.queuedAtMs);
       if (waiter.callerSignal?.aborted) {
-        // The caller's own abort always wins, even over an expired queue wait,
-        // and it does not consume the turn owed to the principal it belonged to.
-        settleWaiter(waiter, { ok: false, kind: "caller_aborted", waitedMs });
-        if (waitingByPrincipal.has(principal)) turnOrder.unshift(principal);
+        // The caller's own abort always wins, even over an expired queue wait.
+        refuseWaiter(waiter, principal, { ok: false, kind: "caller_aborted", waitedMs });
         continue;
       }
       if (waitedMs >= maxQueueWaitMs) {
         // A blocked event loop delays the queue-wait timer callback, so the
         // grant rechecks the elapsed wait and expires an overdue waiter instead
-        // of admitting it past the advertised bound.  The turn stays with the
-        // principal, whose next waiter is considered immediately.
-        settleWaiter(waiter, { ok: false, kind: "local_overload", cause: "queue_wait_timeout", waitedMs });
-        if (waitingByPrincipal.has(principal)) turnOrder.unshift(principal);
+        // of admitting it past the advertised bound.
+        refuseWaiter(waiter, principal, { ok: false, kind: "local_overload", cause: "queue_wait_timeout", waitedMs });
         continue;
       }
       settleWaiter(waiter, admit(waitedMs));

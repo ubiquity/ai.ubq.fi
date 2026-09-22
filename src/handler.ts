@@ -1277,24 +1277,32 @@ const handleTerminalRoute = async (
     }
   };
   const admissionRoute = terminalRoute !== null && ADMISSION_ROUTES.has(terminalRoute) ? terminalRoute : null;
-  if (admissionRoute) {
+  /**
+   * Acquires the process-resource permit for an admitted route, or returns the
+   * refusal response. A granted permit stays owned until the response settles.
+   */
+  const acquireProcessPermit = async (): Promise<Response | null> => {
+    if (admissionRoute === null) return null;
     // Acquired after authentication and before any quota reservation, so a
     // queued request never holds an expiring API-key or kernel lease. The
     // caller's own signal and the guard's five-second bound conclude the wait.
     const admitted = await admissionController().acquire({ signal: callerSignal, principal: idempotencyPrincipal });
-    if (!admitted.ok) {
-      // A queued caller that aborted never dispatches; a full queue or an
-      // expired wait is this gateway's own bounded overload decision.
-      const refusal =
-        admitted.kind === "caller_aborted"
-          ? openaiError(499, "Request was cancelled.", "request_cancelled", { type: "server_error", param: null })
-          : localOverloadResponse(admitted.cause);
-      const response = withCors(withRequestId(refusal, requestId));
-      return await withRejectionTerminalLog(response, admissionRoute, { requestId, startedAtMonotonicMs: requestStartedAtMonotonicMs, delivery });
+    if (admitted.ok) {
+      processPermit = admitted;
+      admissionWaitMs = admitted.waitedMs;
+      return null;
     }
-    processPermit = admitted;
-    admissionWaitMs = admitted.waitedMs;
-  }
+    // A queued caller that aborted never dispatches; a full queue or an
+    // expired wait is this gateway's own bounded overload decision.
+    const refusal =
+      admitted.kind === "caller_aborted"
+        ? openaiError(499, "Request was cancelled.", "request_cancelled", { type: "server_error", param: null })
+        : localOverloadResponse(admitted.cause);
+    const response = withCors(withRequestId(refusal, requestId));
+    return await withRejectionTerminalLog(response, admissionRoute, { requestId, startedAtMonotonicMs: requestStartedAtMonotonicMs, delivery });
+  };
+  const admissionRefusal = await acquireProcessPermit();
+  if (admissionRefusal) return admissionRefusal;
   let usagePolicy = apiKeyPolicyFrom(authResult);
   let usageReservation: ApiKeyUsageReservation | null = null;
   // The request candidate is created as soon as the caller is authenticated,
@@ -1317,7 +1325,9 @@ const handleTerminalRoute = async (
     // never extend the client-visible rejection latency.
     if (!scheduleSentinelBackgroundTask(omissionTask, undefined)) await omissionTask;
   };
-  if (usagePolicy && terminalRoute) {
+  /** Reserves API-key usage for a policied terminal route, or returns the refusal. */
+  const reserveUsageForRequest = async (): Promise<Response | null> => {
+    if (usagePolicy === null || terminalRoute === null) return null;
     // Copied out of the mutable bindings so the narrowed policy and route
     // survive into the release-on-throw closure.
     const policy = usagePolicy;
@@ -1333,12 +1343,23 @@ const handleTerminalRoute = async (
     // Admission re-reads the strict hash policy, so downstream quota headers
     // and paid fallback use the policy that actually reserved this request.
     usagePolicy = admission.reservation.policy;
-  }
+    return null;
+  };
+  const usageRefusal = await reserveUsageForRequest();
+  if (usageRefusal) return usageRefusal;
+  /**
+   * Reads the reservation through a call. `reserveUsageForRequest` assigns it,
+   * and reading the binding directly would let control-flow analysis keep
+   * treating it as its initial `null` here.
+   */
+  const currentUsageReservation = (): ApiKeyUsageReservation | null => usageReservation;
   const kernelRepo = await releaseOnThrow(() => resolveKernelRepo(req, authResult));
   const kernelOrg = kernelRepo ? { owner: kernelRepo.owner } : null;
   let kernelReservation: KernelQuotaReservation | null = null;
   const kernelQuotaRoute = kernelQuotaRouteForRequest(req.method, path);
-  if (kernelRepo && kernelQuotaRoute) {
+  /** Reserves repository kernel quota for a scoped route, or returns the refusal. */
+  const reserveKernelForRequest = async (): Promise<Response | null> => {
+    if (kernelRepo === null || kernelQuotaRoute === null) return null;
     const admission = await releaseOnThrow(() =>
       reserveKernelAdmission({
         req,
@@ -1357,7 +1378,12 @@ const handleTerminalRoute = async (
       return admission.rejection;
     }
     kernelReservation = admission.reservation;
-  }
+    return null;
+  };
+  const kernelRefusal = await reserveKernelForRequest();
+  if (kernelRefusal) return kernelRefusal;
+  /** Same closure-reader reason as `currentUsageReservation`. */
+  const currentKernelReservation = (): KernelQuotaReservation | null => kernelReservation;
   // One request-owned passive upstream recorder for accepted terminal
   // inference requests. It is created only after quota admission, is never
   // global, and is sealed/disposed at the application-terminal handoff.
@@ -1371,8 +1397,8 @@ const handleTerminalRoute = async (
     requestId,
     startedAtMs: requestStartedAtMs,
     startedAtMonotonicMs: requestStartedAtMonotonicMs,
-    downstreamSignal: downstreamSignalFor(req, delivery, kernelReservation),
-    beforeProviderDispatch: usageReservation?.beforeProviderDispatch,
+    downstreamSignal: downstreamSignalFor(req, delivery, currentKernelReservation()),
+    beforeProviderDispatch: currentUsageReservation()?.beforeProviderDispatch,
     ...(sentinelUpstreamRecorder ? { sentinelUpstreamRecorder } : {}),
   };
   if (terminalRoute) {
@@ -1553,10 +1579,13 @@ const handleTerminalRoute = async (
     const response = openaiError(404, "Not found", "not_found");
     return withCors(req.method === "HEAD" ? withoutBody(response) : response);
   };
-  if (processPermit !== null && callerSignal.aborted) {
-    // The caller left while admission waited or quota/setup ran, so no provider
-    // transport starts. The permit returns through the terminal wrapper, and a
-    // provider that was never dispatched is not charged.
+  /**
+   * Refuses a request whose caller left while admission waited or quota/setup
+   * ran. The permit returns through the terminal wrapper, and a provider that
+   * never dispatched is not charged.
+   */
+  const refuseAbortedBeforeDispatch = async (): Promise<Response | null> => {
+    if (processPermit === null || !callerSignal.aborted) return null;
     const refusal = openaiError(499, "Request was cancelled.", "request_cancelled", { type: "server_error", param: null });
     const response = withCors(withRequestId(refusal, requestId));
     return await withRejectionTerminalLog(response, terminalRoute, {
@@ -1566,7 +1595,9 @@ const handleTerminalRoute = async (
       onSettled: releaseProcessPermit,
       admissionWaitMs,
     });
-  }
+  };
+  const abortedRefusal = await refuseAbortedBeforeDispatch();
+  if (abortedRefusal) return abortedRefusal;
   return await releaseOnThrow(dispatchTerminalRoute);
 };
 

@@ -210,7 +210,9 @@ const startHarness = async (): Promise<Harness> => {
       const gate = new Promise<void>((resolve) => {
         release = resolve;
       });
-      holdReleases.push(() => release());
+      holdReleases.push(() => {
+        release();
+      });
       const stream = new ReadableStream<Uint8Array>({
         async start(controller) {
           // The first frame is a bare chunk without the `[DONE]` sentinel: an
@@ -268,8 +270,13 @@ const startHarness = async (): Promise<Harness> => {
 
   const providerOrigin = `http://127.0.0.1:${(upstream.addr as Deno.NetAddr).port}`;
   const originalFetch = globalThis.fetch;
+  const fetchInputUrl = (input: RequestInfo | URL): string => {
+    if (typeof input === "string") return input;
+    if (input instanceof URL) return input.toString();
+    return input.url;
+  };
   globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url = fetchInputUrl(input);
     if (url === DEEPSEEK_CHAT_COMPLETIONS_URL) return originalFetch(`${providerOrigin}/chat/completions`, init);
     return originalFetch(input, init);
   };
@@ -438,7 +445,7 @@ Deno.test({
         const firstId = first.headers.get("x-uos-request-id");
         const secondId = second.headers.get("x-uos-request-id");
         assert.ok(firstId && secondId && firstId !== secondId, "the gateway must generate a distinct request id per request");
-        assert.match(firstId ?? "", /^[0-9a-f-]{36}$/);
+        assert.match(firstId, /^[0-9a-f-]{36}$/);
         await first.body?.cancel().catch(() => {});
         await second.body?.cancel().catch(() => {});
       } finally {
@@ -673,7 +680,7 @@ Deno.test({
         let adminError: Record<string, unknown> | null = null;
         for (let attempt = 0; attempt < 100 && adminError === null; attempt += 1) {
           for await (const entry of harness.kv.list<Record<string, unknown>>({ prefix: [...ADMIN_ERROR_LOG_PREFIX] }, { consistency: "strong" })) {
-            if (entry.value?.request_id === faultedId) {
+            if (entry.value.request_id === faultedId) {
               adminError = entry.value;
               break;
             }
@@ -740,7 +747,7 @@ Deno.test({
         assert.ok(Number(snapshot.writes_in_flight) >= 1, "the unresolved write stays retained as bounded capacity");
         assert.ok(Number(snapshot.retained_entries) >= 1, "charged entries must include the unresolved in-flight write");
         assert.deepEqual(
-          Object.keys(snapshot).sort(),
+          Object.keys(snapshot).sort((a, b) => a.localeCompare(b)),
           [
             "delivered",
             "drain_timeouts",
