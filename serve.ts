@@ -4,7 +4,56 @@ import { config } from "./src/config.ts";
 import { getKv } from "./src/kv.ts";
 import { configureAdminAuthForListener, configureAdminAuthPeerForRequest, parseServeRuntimeOptions } from "./src/local_admin_auth.ts";
 import { ensureLocalDevelopmentApiKey } from "./src/local_development_key.ts";
+import { closeOptionalPromptCacheAnalytics, optionalPromptCacheAnalyticsSnapshot } from "./src/prompt_cache_analytics.ts";
 import { createServeHandler } from "./src/serve_handler.ts";
+
+/**
+ * Bounded optional-telemetry shutdown for both launchers.
+ *
+ * Optional aggregate analytics is the only lossy terminal write, and it is
+ * drained after the server's in-flight work settles and before the KV handle
+ * closes. The queue's absolute drain deadline ends the wait even when an
+ * optional write never progresses, so a stalled sink cannot hang shutdown; the
+ * unresolved entry stays retained as bounded capacity until process exit
+ * instead of being orphaned or retried. One sanitized snapshot then makes
+ * drops, failures, retained capacity and an incomplete drain operationally
+ * observable. Required durable evidence - quota/accounting, admin errors and
+ * authenticated failure capture - is never routed through this queue.
+ */
+export const shutdownOptionalTelemetry = async (): Promise<void> => {
+  try {
+    await closeOptionalPromptCacheAnalytics();
+  } catch {
+    // The queue's close settles by contract; a fault still must not block exit.
+  }
+  const snapshot = optionalPromptCacheAnalyticsSnapshot();
+  if (!snapshot) return;
+  try {
+    console.info(
+      "[ai.ubq.fi] optional_telemetry_shutdown",
+      JSON.stringify({
+        enqueued: snapshot.enqueued,
+        delivered: snapshot.delivered,
+        failed: snapshot.failed,
+        dropped_by_entries: snapshot.dropped_by_entries,
+        dropped_by_bytes: snapshot.dropped_by_bytes,
+        dropped_by_age: snapshot.dropped_by_age,
+        dropped_after_closed: snapshot.dropped_after_closed,
+        drain_timeouts: snapshot.drain_timeouts,
+        // Charged entries and bytes include unresolved in-flight writes, so a
+        // stalled sink is visible as retained capacity instead of a gap.
+        retained_entries: snapshot.retained_entries,
+        retained_bytes: snapshot.retained_bytes,
+        queued_entries: snapshot.queued_entries,
+        writes_in_flight: snapshot.writes_in_flight,
+        last_error_class: snapshot.last_error_class,
+        shutdown_incomplete: snapshot.shutdown_incomplete,
+      })
+    );
+  } catch {
+    // Shutdown telemetry is best effort and cannot block process exit.
+  }
+};
 
 /**
  * No scheduled work runs in this process. Everything the deploy crons used to do

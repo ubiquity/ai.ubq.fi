@@ -52,6 +52,14 @@ import { handleAdminCodexSupervisorOutput, handleAdminCodexSupervisorSessions } 
 import { handleAdminCodexSupervisorBrief } from "./codex_supervisor_brief.ts";
 import { handleHealth, handleHealthProviders, handleHealthUpstream } from "./health.ts";
 import { corsHeaders, notFound, openaiError, withCors as withCorsHeaders, withoutBody } from "./http.ts";
+import {
+  acquireInferenceAdmission,
+  DEFAULT_INFERENCE_ADMISSION_LIMITS,
+  type InferenceAdmissionController,
+  type InferenceAdmissionLocalOverloadCause,
+  type InferenceAdmissionResult,
+  inferenceAdmissionSnapshot,
+} from "./inference_admission.ts";
 import { type KernelQuotaReservation, reserveEffectiveKernelUsageLimit } from "./kernel_usage.ts";
 import {
   getResponseAccountCohortId,
@@ -67,7 +75,7 @@ import {
   handleUosEmbeddings,
   type ResponseTelemetry,
 } from "./openai.ts";
-import { recordPromptCacheAnalytics } from "./prompt_cache_analytics.ts";
+import { enqueuePromptCacheAnalytics, recordPromptCacheAnalytics } from "./prompt_cache_analytics.ts";
 import { recordPromptCacheTelemetry } from "./prompt_cache_telemetry_gate.ts";
 import {
   handlePasskeyLoginFinish,
@@ -272,6 +280,8 @@ const logTerminalRequest = async (
     recordAdminError?: typeof recordAdminError;
     streamReadFailure?: boolean;
     suppressSentinelReplay?: boolean;
+    /** Time this request spent waiting for a process-resource permit, if it queued. */
+    admissionWaitMs?: number | null;
     resolveClientBodyObservation?: () => SentinelClientBodyObservation | null | Promise<SentinelClientBodyObservation | null>;
   }>
 ): Promise<void> => {
@@ -291,6 +301,7 @@ const logTerminalRequest = async (
     status: input.response.status,
     provider: telemetry?.provider ?? input.response.headers.get("x-uos-upstream") ?? "gateway",
     latency_ms: latencyMs,
+    admission_wait_ms: input.admissionWaitMs ?? null,
     first_provider_dispatch_ms: telemetry?.firstProviderDispatchMs ?? null,
     first_provider_headers_ms: telemetry?.firstProviderHeadersMs ?? null,
     first_codex_dispatch_ms: telemetry?.firstCodexDispatchMs ?? null,
@@ -348,7 +359,12 @@ const logTerminalRequest = async (
     usageTelemetryStatus: terminal.usage_telemetry_status,
     cacheWriteTokensPresent: terminal.cache_write_input_tokens !== null,
   });
-  const cacheAnalyticsWrite = (input.recordCacheAnalytics ?? recordPromptCacheAnalytics)({
+  // Optional aggregate analytics is enqueued on the bounded best-effort queue
+  // by default, so a slow analytics sink cannot extend the terminal handoff.
+  // The explicit test seam still injects the direct writer. Every other write
+  // in this batch stays awaited: the durable gate counters, admin error
+  // evidence, Sentinel replay/degradation and quota accounting are reliable.
+  const cacheAnalyticsEvent = {
     provider: terminal.provider,
     model: terminal.model,
     route: terminal.route,
@@ -361,7 +377,8 @@ const logTerminalRequest = async (
     promptCacheKeyPresent: terminal.prompt_cache_key_present,
     promptCacheMode: terminal.prompt_cache_mode,
     fallbackReason: terminal.fallback_reason,
-  });
+  };
+  const cacheAnalyticsWrite = input.recordCacheAnalytics ? input.recordCacheAnalytics(cacheAnalyticsEvent) : enqueuePromptCacheAnalytics(cacheAnalyticsEvent);
   const replayObservation: SentinelFailureObservation = {
     status: terminal.status,
     stream: terminal.stream,
@@ -453,8 +470,17 @@ export const withTerminalRequestLog = (
     startedAtMonotonicMs: number;
     requestId: string;
     onTerminal?: (outcome: "completed" | "incomplete", reason?: string) => Promise<void>;
+    /**
+     * Runs exactly once, when the wrapped response's body and delivery have
+     * settled (or the application terminal has been observed for a buffered
+     * response). It owns the process-resource permit release, so it must never
+     * await accounting or replace the response.
+     */
+    onSettled?: () => void;
     deliveryCompleted?: Promise<void>;
     deliverySignal?: AbortSignal;
+    /** Time this request spent waiting for a process-resource permit, if it queued. */
+    admissionWaitMs?: number | null;
     /** Test seam for proving aggregate cache analytics remains best effort. */
     recordCacheAnalytics?: typeof recordPromptCacheAnalytics;
     /** Test seam for proving terminal telemetry remains best effort. */
@@ -571,6 +597,15 @@ export const withTerminalRequestLog = (
     suppressSentinelReplay = false
   ): Promise<void> => {
     if (terminalLog) return terminalLog;
+    // The response body and its delivery are settled here, so the process
+    // resources behind this request are released before the durable terminal
+    // writes start. Accounting has already been scheduled by the wrapper and is
+    // never cancelled, refunded or duplicated by this release.
+    try {
+      input.onSettled?.();
+    } catch {
+      // A release fault cannot replace a response that is already delivered.
+    }
     terminalLog = logTerminalRequest({
       ...input,
       // Replay persistence owns cleanup after it has taken its snapshot. Do
@@ -820,6 +855,63 @@ const kernelQuotaRouteForRequest = (method: string, path: string): string | null
   return null;
 };
 
+/**
+ * Routes that hold process resources - an upstream transport, its retained
+ * response buffer and the downstream body - for as long as the request lives.
+ * Catalog and job reads (`/v1/models`, `embeddings.jobs.get`) are deliberately
+ * absent: they never dispatch provider inference, so they must not consume a
+ * permit. The finite guard is the merged internal controller, not caller-lane
+ * admission: it holds no per-caller lease and caps no principal.
+ */
+const ADMISSION_ROUTES: ReadonlySet<string> = new Set([
+  "embeddings",
+  "embeddings.jobs.create",
+  "chat.completions",
+  "responses",
+  "images.generations",
+  "images.edits",
+]);
+
+/** The explicit local-overload error code; never a provider quota or fallback signal. */
+export const LOCAL_INFERENCE_OVERLOAD_CODE = "local_inference_overload";
+
+const sharedAdmissionController: InferenceAdmissionController = {
+  acquire: acquireInferenceAdmission,
+  snapshot: inferenceAdmissionSnapshot,
+};
+
+let admissionControllerForTest: InferenceAdmissionController | null = null;
+
+/**
+ * Internal test seam: install a small deterministic guard so an HTTP fixture
+ * can reach the active and waiting bounds without 192 live requests. It is not
+ * a runtime configuration surface, and null restores the shared controller.
+ */
+export const setInferenceAdmissionControllerForTest = (controller: InferenceAdmissionController | null): void => {
+  admissionControllerForTest = controller;
+};
+
+const admissionController = (): InferenceAdmissionController => admissionControllerForTest ?? sharedAdmissionController;
+
+/**
+ * The local finite-overload refusal. It is a gateway decision, so it carries a
+ * dedicated error code and a bounded Retry-After instead of borrowing provider
+ * quota, capacity or paid-fallback vocabulary. The queue wait stays internal
+ * telemetry rather than a response header.
+ */
+const localOverloadResponse = (cause: InferenceAdmissionLocalOverloadCause): Response => {
+  const retryAfterSeconds = Math.max(1, Math.ceil(DEFAULT_INFERENCE_ADMISSION_LIMITS.maxQueueWaitMs / 1_000));
+  const message =
+    cause === "queue_limit"
+      ? "The gateway is at its concurrent inference limit and its waiting queue is full."
+      : `The gateway could not admit this request within ${DEFAULT_INFERENCE_ADMISSION_LIMITS.maxQueueWaitMs}ms.`;
+  return openaiError(503, message, LOCAL_INFERENCE_OVERLOAD_CODE, {
+    type: "server_error",
+    param: null,
+    headers: { "Retry-After": String(retryAfterSeconds) },
+  });
+};
+
 // ---------------------------------------------------------------------------
 // Request routing groups.  Each group returns the response it owns without CORS
 // decoration, or null when the request belongs to a later group; the default
@@ -1022,15 +1114,26 @@ const isTerminalInferencePath = (path: string): boolean =>
 const withRejectionTerminalLog = (
   response: Response,
   route: string | null,
-  input: Readonly<{ requestId: string; startedAtMonotonicMs: number; delivery?: RequestDeliveryInfo }>
+  input: Readonly<{
+    requestId: string;
+    startedAtMonotonicMs: number;
+    delivery?: RequestDeliveryInfo;
+    onSettled?: () => void;
+    admissionWaitMs?: number | null;
+  }>
 ): Promise<Response> => {
-  if (!route) return Promise.resolve(response);
+  if (!route) {
+    input.onSettled?.();
+    return Promise.resolve(response);
+  }
   return withTerminalRequestLog(response, {
     route,
     startedAtMonotonicMs: input.startedAtMonotonicMs,
     requestId: input.requestId,
     deliveryCompleted: input.delivery?.completed,
     deliverySignal: input.delivery?.downstreamSignal,
+    onSettled: input.onSettled,
+    admissionWaitMs: input.admissionWaitMs,
   });
 };
 
@@ -1060,12 +1163,14 @@ const reserveUsageAdmission = async (
   requestId: string,
   route: string,
   startedAtMonotonicMs: number,
-  delivery: RequestDeliveryInfo | undefined
+  delivery: RequestDeliveryInfo | undefined,
+  onSettled?: () => void,
+  admissionWaitMs?: number | null
 ): Promise<Readonly<{ reservation: ApiKeyUsageReservation } | { rejection: Response }>> => {
   const admission = await reserveApiKeyUsageV3(policy, requestId, route, { deferWhenFull: true });
   if (admission.ok) return { reservation: admission.reservation };
   const response = withCorsHeaders(withRequestId(admission.response, requestId), req);
-  return { rejection: await withRejectionTerminalLog(response, route, { requestId, startedAtMonotonicMs, delivery }) };
+  return { rejection: await withRejectionTerminalLog(response, route, { requestId, startedAtMonotonicMs, delivery, onSettled, admissionWaitMs }) };
 };
 
 /** Reserves kernel usage for a repository-scoped route; a refusal is returned as a response. */
@@ -1078,6 +1183,8 @@ const reserveKernelAdmission = async (
     startedAtMonotonicMs: number;
     delivery?: RequestDeliveryInfo;
     usageReservation: ApiKeyUsageReservation | null;
+    onSettled?: () => void;
+    admissionWaitMs?: number | null;
   }>
 ): Promise<Readonly<{ reservation: KernelQuotaReservation } | { rejection: Response }>> => {
   const admission = await reserveEffectiveKernelUsageLimit(input.repo.owner, input.repo.repo, input.requestId, input.route);
@@ -1092,6 +1199,8 @@ const reserveKernelAdmission = async (
     requestId: input.requestId,
     startedAtMonotonicMs: input.startedAtMonotonicMs,
     delivery: input.delivery,
+    onSettled: input.onSettled,
+    admissionWaitMs: input.admissionWaitMs,
   });
   return { rejection };
 };
@@ -1146,14 +1255,63 @@ const handleTerminalRoute = async (
     const response = withCors(withRequestId(authResult.response, requestId));
     return await withRejectionTerminalLog(response, terminalRoute, { requestId, startedAtMonotonicMs: requestStartedAtMonotonicMs, delivery });
   }
+  // Authenticated state, not a client header or session id: a caller cannot
+  // rename itself to escape the waiting turn its principal was served in.
+  const idempotencyPrincipal = await resolveIdempotencyPrincipal(authResult);
+  const callerSignal = delivery?.downstreamSignal ?? req.signal;
+  let processPermit: Extract<InferenceAdmissionResult, { ok: true }> | null = null;
+  let admissionWaitMs: number | null = null;
+  /** Idempotent: the guard hands out one permit, and this clears it once. */
+  const releaseProcessPermit = (): void => {
+    const permit = processPermit;
+    processPermit = null;
+    permit?.release();
+  };
+  /** Releases the permit when a step after acquisition throws before dispatch. */
+  const releaseOnThrow = async <T>(step: () => T | Promise<T>): Promise<T> => {
+    try {
+      return await step();
+    } catch (error) {
+      releaseProcessPermit();
+      throw error;
+    }
+  };
+  const admissionRoute = terminalRoute !== null && ADMISSION_ROUTES.has(terminalRoute) ? terminalRoute : null;
+  /**
+   * Acquires the process-resource permit for an admitted route, or returns the
+   * refusal response. A granted permit stays owned until the response settles.
+   */
+  const acquireProcessPermit = async (): Promise<Response | null> => {
+    if (admissionRoute === null) return null;
+    // Acquired after authentication and before any quota reservation, so a
+    // queued request never holds an expiring API-key or kernel lease. The
+    // caller's own signal and the guard's five-second bound conclude the wait.
+    const admitted = await admissionController().acquire({ signal: callerSignal, principal: idempotencyPrincipal });
+    if (admitted.ok) {
+      processPermit = admitted;
+      admissionWaitMs = admitted.waitedMs;
+      return null;
+    }
+    // A queued caller that aborted never dispatches; a full queue or an
+    // expired wait is this gateway's own bounded overload decision.
+    const refusal =
+      admitted.kind === "caller_aborted"
+        ? openaiError(499, "Request was cancelled.", "request_cancelled", { type: "server_error", param: null })
+        : localOverloadResponse(admitted.cause);
+    const response = withCors(withRequestId(refusal, requestId));
+    return await withRejectionTerminalLog(response, admissionRoute, { requestId, startedAtMonotonicMs: requestStartedAtMonotonicMs, delivery });
+  };
+  const admissionRefusal = await acquireProcessPermit();
+  if (admissionRefusal) return admissionRefusal;
   let usagePolicy = apiKeyPolicyFrom(authResult);
   let usageReservation: ApiKeyUsageReservation | null = null;
   // The request candidate is created as soon as the caller is authenticated,
   // before quota admission, so every authenticated return path can publish an
   // explicit capture status. An unauthenticated rejection creates nothing, so
   // its zero-KV behavior is preserved. Candidate creation is passive: it only
-  // registers the one accepted-body observer, it never touches KV.
-  const sentinelReplayCandidate = terminalRoute ? captureAcceptedSentinelReplayInput(req, requestId) : null;
+  // registers the one accepted-body observer, it never touches KV. A capture
+  // that throws still returns this request's process permit before dispatch.
+  const sentinelReplayCandidate = await releaseOnThrow(() => (terminalRoute ? captureAcceptedSentinelReplayInput(req, requestId) : null));
   let sentinelReplayOmission: SentinelReplayCaptureOmissionReason | null = null;
   /**
    * Publishes the explicit status for an authenticated request rejected before
@@ -1167,8 +1325,16 @@ const handleTerminalRoute = async (
     // never extend the client-visible rejection latency.
     if (!scheduleSentinelBackgroundTask(omissionTask, undefined)) await omissionTask;
   };
-  if (usagePolicy && terminalRoute) {
-    const admission = await reserveUsageAdmission(req, usagePolicy, requestId, terminalRoute, requestStartedAtMonotonicMs, delivery);
+  /** Reserves API-key usage for a policied terminal route, or returns the refusal. */
+  const reserveUsageForRequest = async (): Promise<Response | null> => {
+    if (usagePolicy === null || terminalRoute === null) return null;
+    // Copied out of the mutable bindings so the narrowed policy and route
+    // survive into the release-on-throw closure.
+    const policy = usagePolicy;
+    const route = terminalRoute;
+    const admission = await releaseOnThrow(() =>
+      reserveUsageAdmission(req, policy, requestId, route, requestStartedAtMonotonicMs, delivery, releaseProcessPermit, admissionWaitMs)
+    );
     if ("rejection" in admission) {
       await recordPreCaptureRejection();
       return admission.rejection;
@@ -1177,28 +1343,49 @@ const handleTerminalRoute = async (
     // Admission re-reads the strict hash policy, so downstream quota headers
     // and paid fallback use the policy that actually reserved this request.
     usagePolicy = admission.reservation.policy;
-  }
-  const idempotencyPrincipal = await resolveIdempotencyPrincipal(authResult);
-  const kernelRepo = await resolveKernelRepo(req, authResult);
+    return null;
+  };
+  const usageRefusal = await reserveUsageForRequest();
+  if (usageRefusal) return usageRefusal;
+  /**
+   * Reads the reservation through a call. `reserveUsageForRequest` assigns it,
+   * and reading the binding directly would let control-flow analysis keep
+   * treating it as its initial `null` here.
+   */
+  const currentUsageReservation = (): ApiKeyUsageReservation | null => usageReservation;
+  /** Same closure-reader reason as `currentUsageReservation`, for the queue wait. */
+  const currentAdmissionWaitMs = (): number | null => admissionWaitMs;
+  const kernelRepo = await releaseOnThrow(() => resolveKernelRepo(req, authResult));
   const kernelOrg = kernelRepo ? { owner: kernelRepo.owner } : null;
   let kernelReservation: KernelQuotaReservation | null = null;
   const kernelQuotaRoute = kernelQuotaRouteForRequest(req.method, path);
-  if (kernelRepo && kernelQuotaRoute) {
-    const admission = await reserveKernelAdmission({
-      req,
-      repo: kernelRepo,
-      route: kernelQuotaRoute,
-      requestId,
-      startedAtMonotonicMs: requestStartedAtMonotonicMs,
-      delivery,
-      usageReservation,
-    });
+  /** Reserves repository kernel quota for a scoped route, or returns the refusal. */
+  const reserveKernelForRequest = async (): Promise<Response | null> => {
+    if (kernelRepo === null || kernelQuotaRoute === null) return null;
+    const admission = await releaseOnThrow(() =>
+      reserveKernelAdmission({
+        req,
+        repo: kernelRepo,
+        route: kernelQuotaRoute,
+        requestId,
+        startedAtMonotonicMs: requestStartedAtMonotonicMs,
+        delivery,
+        usageReservation,
+        onSettled: releaseProcessPermit,
+        admissionWaitMs,
+      })
+    );
     if ("rejection" in admission) {
       await recordPreCaptureRejection();
       return admission.rejection;
     }
     kernelReservation = admission.reservation;
-  }
+    return null;
+  };
+  const kernelRefusal = await reserveKernelForRequest();
+  if (kernelRefusal) return kernelRefusal;
+  /** Same closure-reader reason as `currentUsageReservation`. */
+  const currentKernelReservation = (): KernelQuotaReservation | null => kernelReservation;
   // One request-owned passive upstream recorder for accepted terminal
   // inference requests. It is created only after quota admission, is never
   // global, and is sealed/disposed at the application-terminal handoff.
@@ -1212,8 +1399,8 @@ const handleTerminalRoute = async (
     requestId,
     startedAtMs: requestStartedAtMs,
     startedAtMonotonicMs: requestStartedAtMonotonicMs,
-    downstreamSignal: downstreamSignalFor(req, delivery, kernelReservation),
-    beforeProviderDispatch: usageReservation?.beforeProviderDispatch,
+    downstreamSignal: downstreamSignalFor(req, delivery, currentKernelReservation()),
+    beforeProviderDispatch: currentUsageReservation()?.beforeProviderDispatch,
     ...(sentinelUpstreamRecorder ? { sentinelUpstreamRecorder } : {}),
   };
   if (terminalRoute) {
@@ -1222,6 +1409,7 @@ const handleTerminalRoute = async (
       JSON.stringify({
         request_id: requestId,
         route: terminalRoute,
+        queue_wait_ms: currentAdmissionWaitMs() ?? 0,
         git_sha: runtimeGitSha(),
         deno_revision: runtimeDeploymentId(),
       })
@@ -1265,14 +1453,17 @@ const handleTerminalRoute = async (
         startedAtMonotonicMs: requestStartedAtMonotonicMs,
         requestId,
         onTerminal: trackKernelTerminal ? settleKernelQuota : undefined,
+        onSettled: releaseProcessPermit,
         deliveryCompleted: delivery?.completed,
         deliverySignal: delivery?.downstreamSignal,
         sentinelReplayInput,
+        admissionWaitMs,
         sentinelReplayOmission,
       });
     } catch (error) {
       zeroSentinelReplayInput(sentinelReplayInput);
       disposeSentinelUpstreamRecorder(sentinelReplayInput);
+      releaseProcessPermit();
       await bestEffortSettleKernelQuota("incomplete", "terminal_wrapper_error");
       throw error;
     }
@@ -1390,7 +1581,26 @@ const handleTerminalRoute = async (
     const response = openaiError(404, "Not found", "not_found");
     return withCors(req.method === "HEAD" ? withoutBody(response) : response);
   };
-  return await dispatchTerminalRoute();
+  /**
+   * Refuses a request whose caller left while admission waited or quota/setup
+   * ran. The permit returns through the terminal wrapper, and a provider that
+   * never dispatched is not charged.
+   */
+  const refuseAbortedBeforeDispatch = async (): Promise<Response | null> => {
+    if (processPermit === null || !callerSignal.aborted) return null;
+    const refusal = openaiError(499, "Request was cancelled.", "request_cancelled", { type: "server_error", param: null });
+    const response = withCors(withRequestId(refusal, requestId));
+    return await withRejectionTerminalLog(response, terminalRoute, {
+      requestId,
+      startedAtMonotonicMs: requestStartedAtMonotonicMs,
+      delivery,
+      onSettled: releaseProcessPermit,
+      admissionWaitMs,
+    });
+  };
+  const abortedRefusal = await refuseAbortedBeforeDispatch();
+  if (abortedRefusal) return abortedRefusal;
+  return await releaseOnThrow(dispatchTerminalRoute);
 };
 
 export default async function handler(req: Request, delivery?: RequestDeliveryInfo): Promise<Response> {

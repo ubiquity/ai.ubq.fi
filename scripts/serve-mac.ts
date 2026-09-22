@@ -16,7 +16,7 @@ Deno.chdir(root);
 const kv = await Deno.openKv(new URL(".data/kv.sqlite3", root).pathname);
 const { initializeKv } = await import(new URL("src/kv.ts", release).href);
 initializeKv(kv);
-const { default: handler } = (await import(new URL("serve.ts", release).href)) as typeof import("../serve.ts");
+const { default: handler, shutdownOptionalTelemetry } = (await import(new URL("serve.ts", release).href)) as typeof import("../serve.ts");
 const { configureAdminAuthPeerForRequest, configureMacLocalAdminAuthBypassForListener } = await import(new URL("src/local_admin_auth.ts", release).href);
 // The Mac service answers LAN clients, so it provisions the unlimited local
 // development key that loopback inference authenticates as; LAN clients keep
@@ -55,5 +55,8 @@ Deno.addSignalListener("SIGTERM", shutdown);
 Deno.addSignalListener("SIGINT", shutdown);
 console.log(`[ai.ubq.fi] Mac serving Git revision ${gitSha}`);
 await server.finished;
+// The bounded optional-analytics drain runs after in-flight work settles and
+// before the KV handle closes, so a stalled optional write cannot outlive it.
+await shutdownOptionalTelemetry();
 kv.close();
 Deno.exit(0);

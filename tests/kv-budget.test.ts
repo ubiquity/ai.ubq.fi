@@ -2159,6 +2159,7 @@ Deno.test("terminal inference telemetry includes resolved defaults and response 
       first_semantic_commitment_ms: terminalPayload.first_semantic_commitment_ms,
       stream_terminal_ms: terminalPayload.stream_terminal_ms,
       downstream_drain_ms: null,
+      admission_wait_ms: 0,
       delivery_outcome: "unobserved",
       model: MODEL,
       reasoning: "medium",
