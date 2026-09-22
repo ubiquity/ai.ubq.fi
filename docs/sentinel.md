@@ -213,6 +213,78 @@ update these pins deliberately; do not replace them with moving major-version ta
 Sentinel primes one run-scoped `DENO_DIR`, then starts the orchestrator with locked, frozen, cached-only dependency
 resolution.
 
+## Local failure capture export and offline replay
+
+Every accepted terminal inference failure can be found by its gateway request id on the Mac. After the local
+`SENTINEL_REPLAY_KEY` is provisioned, a super-admin bearer token reads one capture without any time window:
+
+```sh
+curl -sS -H "Authorization: Bearer $DENO_DEPLOY_TOKEN" \
+  "http://localhost:7999/admin/sentinel/replay-captures?request_id=<x-uos-request-id>"
+```
+
+Live public or VPS deployment is out of scope and has not happened.
+
+The response is `{ data, cursor: null, capture_status }`. `after_ms` and `before_ms` are not required for a request-id
+lookup and are ignored there. Time-window listing still requires a valid `after_ms`/`before_ms` interval, `limit=1` and
+a valid cursor, and `incident_id` listing is unchanged. `request_id` and `incident_id` are mutually exclusive, and a
+malformed request id is rejected with 400.
+
+`capture_status.status` is one of `ready`, `incomplete`, `disabled`, `failed`, `expired`, or `unknown`. `ready` and
+`incomplete` carry the manifest key, fingerprint and expiry; `incomplete` means at least one evidence gap is listed in
+the decrypted `unavailable` reasons. `disabled` records `key_missing` or a body omission such as `body_over_limit`;
+`failed` records `persist_failed`; `rejected_before_capture` marks an authenticated request refused before capture
+setup. `expired` is derived from the stored expiry, while `unknown` with reason `no_capture_record` means no row exists.
+An unavailable store cannot record its own failure: when KV is unavailable the admin export returns a storage error and
+cannot promise a persisted per-request row. Request status rows are retained for 96 hours while encrypted payloads
+expire after 48 hours. Unauthenticated rejections write nothing.
+
+The current private plaintext is version 3. It carries the exact accepted request bytes (up to 32 MiB), method and
+endpoint, content type, the fixed compatibility-header allowlist, the recorded request's own model/reasoning/stream
+settings, the client-visible terminal (`terminal_type`, `failure_kind`, `error_code`, `error_param`) with a bounded 64
+KiB terminal body, the internal failure observation, the build identity and request id, the body length and SHA-256, and
+`capture_status`/`replay_coverage`/`unavailable`. The upstream trace is version 2 and holds each dispatched attempt in
+order: provider, status, content type, the response chunks exactly as the network delivered them (bounded in aggregate,
+with no fixed network chunk size), safe response headers, per-chunk timing, start/header/end times and terminal (`eof`,
+`read_error`, `fetch_error`, `cancelled`). Aggregate bounds are 8 attempts, 4,096 chunks and 4 MiB of recorded upstream
+bytes; the 48 KiB unit is the encrypted KV storage chunk, not a network framing size. Authorization, cookie and API-key
+headers and host credentials are excluded, but original request bodies and tool content are retained byte-for-byte and
+are not generally redacted; captures stay encrypted at rest and admin-only on export. The private plaintext v3 and trace
+v2 belong to this gateway source: an older external decoder does not automatically understand a newly versioned payload,
+and the fixed consumer is part of the matching gateway source. Older version-2 plaintext and version-1 traces still
+decode here, and the default time-window and `incident_id` export contracts are unchanged.
+
+Export returns the encrypted manifest and chunks. After decryption, the plaintext `body` bytes are the request bytes and
+`upstream` is the recorded trace. The fixed consumer runs from a disposable checkout of `src/`, `scripts/replay.ts` and
+`tests/helpers/` with the trusted dispatch metadata in `.sentinel-replay-input.json`:
+
+```json
+{
+  "version": "v1",
+  "requestPath": "fixtures/request.json",
+  "upstreamPath": "fixtures/upstream.json",
+  "testIds": ["replay-roundtrip"],
+  "report": "structured-v1"
+}
+```
+
+`fixtures/request.json` is the existing envelope
+`{ "version": 1, "endpoint", "method", "request_id", "body": "<request JSON text>" }` and `fixtures/upstream.json` is
+the decrypted `upstream` trace. The consumer replays through the real gateway parsers and provider transports with
+`tests/helpers/sentinel-recorded-upstream.ts`; it never contacts a provider or reads credentials. The command is fixed:
+
+```sh
+deno run --no-prompt --no-config --no-remote --allow-read=. scripts/replay.ts
+```
+
+Exit 0 means a complete replay, exit 1 is the fixed causal-failure line, and exit 2 is unavailable. The optional
+`report: "structured-v1"` adds one diagnostic report line; without it the trusted marker output is unchanged.
+
+Current consumer limits: provider HTTP-error mapping, empty-completion mapping and gateway validation mapping are not
+exercised by the offline consumer, and multi-attempt replay reproduces the recorded attempt sequence without replaying
+routing or retry policy. A byte-complete capture is not a claim that every consumer mapping is supported. macOS
+activation and `SENTINEL_REPLAY_KEY` provisioning remain separate operator steps.
+
 ## Deployment identity and workflow dispatch
 
 The default workflow token does not create another push workflow run for its own repository changes. After a matrix

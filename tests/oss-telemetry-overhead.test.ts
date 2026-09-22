@@ -58,14 +58,14 @@ const event = (overrides: Partial<Parameters<typeof recordPromptCacheAnalytics>[
 const options = (kv: CountingKv) => ({ kv: kv as unknown as Deno.Kv, release: RELEASE, now: () => NOW_MS });
 
 /** Fails like an optional telemetry sink whose storage is unavailable. */
-const failingSink = (attempts: { count: number }): typeof recordPromptCacheAnalytics =>
+const failingSink =
+  (attempts: { count: number }): typeof recordPromptCacheAnalytics =>
   () => {
     attempts.count += 1;
     return Promise.reject(new Error("optional cache analytics sink unavailable"));
   };
 
-const jsonResponse = (body: string, status = 200): Response =>
-  new Response(body, { status, headers: { "Content-Type": "application/json" } });
+const jsonResponse = (body: string, status = 200): Response => new Response(body, { status, headers: { "Content-Type": "application/json" } });
 
 /**
  * A terminal response labelled by a supported telemetry provider, so the
@@ -100,9 +100,7 @@ const handlerTerminalEvent = () =>
   });
 
 const durableCounters = (kv: CountingKv): readonly (readonly [string, bigint])[] =>
-  [...kv.entries.entries()]
-    .map(([key, entry]) => [key, (entry.value as Deno.KvU64).value] as const)
-    .sort((left, right) => left[0].localeCompare(right[0]));
+  [...kv.entries.entries()].map(([key, entry]) => [key, (entry.value as Deno.KvU64).value] as const).sort((left, right) => left[0].localeCompare(right[0]));
 
 Deno.test("prompt-cache analytics sink fixture records on the counting KV", async () => {
   const kv = new CountingKv();
@@ -138,10 +136,7 @@ Deno.test("optional cache analytics: an inline delayed sink decides non-stream r
   assert.equal(sinkResults.length, 1, "the optional sink is invoked exactly once");
   assert.equal(sinkResults[0].status, "recorded", `the inline sink disposition must be recorded, observed ${sinkResults[0].status}/${sinkResults[0].reason}`);
   assert.equal(sinkResults[0].reason, "recorded");
-  assert.ok(
-    kv.entries.size > 0,
-    "the delayed sink commits its counters, so the request body is retained until the analytics write settles"
-  );
+  assert.ok(kv.entries.size > 0, "the delayed sink commits its counters, so the request body is retained until the analytics write settles");
   assert.ok(
     elapsedMs >= SINK_DELAY_MS - 25,
     `expected the optional analytics write to hold the response for about ${SINK_DELAY_MS}ms, observed ${Math.round(elapsedMs)}ms`
@@ -196,10 +191,7 @@ Deno.test("queued optional analytics leaves the non-stream response off the sink
   assert.equal(queuedResults[0].status, "queued", `the fixture sample must be accepted, observed ${queuedResults[0].status}/${queuedResults[0].reason}`);
   assert.equal(queuedResults[0].reason, "queued");
   assert.equal(queue.snapshot().enqueued, 1, "the completed sample is retained by the bounded queue");
-  assert.ok(
-    elapsedMs < SINK_DELAY_MS / 2,
-    `a ${SINK_DELAY_MS}ms optional sink must not extend the response, observed ${Math.round(elapsedMs)}ms`
-  );
+  assert.ok(elapsedMs < SINK_DELAY_MS / 2, `a ${SINK_DELAY_MS}ms optional sink must not extend the response, observed ${Math.round(elapsedMs)}ms`);
 
   await queue.close();
   const snapshot = queue.snapshot();
@@ -242,7 +234,10 @@ Deno.test("optional telemetry queue charges entries and UTF-8 bytes until each w
     bounds: { maxEntries: 8, maxBytes: 300, maxAgeMs: 60_000, maxConcurrentWrites: 1 },
     measure: () => 200,
   });
-  assert.deepEqual([0, 1, 2].map((value) => bytesQueue.enqueue(value)), ["enqueued", "dropped_bytes", "dropped_bytes"]);
+  assert.deepEqual(
+    [0, 1, 2].map((value) => bytesQueue.enqueue(value)),
+    ["enqueued", "dropped_bytes", "dropped_bytes"]
+  );
   const bytesSnapshot = bytesQueue.snapshot();
   assert.equal(bytesSnapshot.retained_bytes, 200, "the unresolved in-flight write still holds its byte charge");
   assert.equal(bytesSnapshot.retained_entries, 1);

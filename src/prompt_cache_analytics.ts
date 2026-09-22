@@ -1,5 +1,10 @@
 import { getKv } from "./kv.ts";
-import { createOptionalTelemetryQueue, measureJsonPayloadBytes, type OptionalTelemetryQueue, type OptionalTelemetryQueueSnapshot } from "./optional_telemetry_queue.ts";
+import {
+  createOptionalTelemetryQueue,
+  measureJsonPayloadBytes,
+  type OptionalTelemetryQueue,
+  type OptionalTelemetryQueueSnapshot,
+} from "./optional_telemetry_queue.ts";
 import { PROMPT_CACHE_TELEMETRY_PROVIDERS, PROMPT_CACHE_TELEMETRY_ROUTES } from "./prompt_cache_telemetry_gate.ts";
 import { RELEASE_GIT_SHA } from "./release.ts";
 import { sha256Hex } from "./utils.ts";

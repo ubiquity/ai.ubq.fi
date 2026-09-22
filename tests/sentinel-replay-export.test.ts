@@ -370,6 +370,71 @@ Deno.test({
   },
 });
 
+Deno.test({
+  name: "replay-captures export resolves a request id without any time parameters",
+  ignore: !kvAvailable,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const kv = await Deno.openKv(":memory:");
+    setKvForTest(kv);
+    const adminTokens = config.adminTokens as Set<string>;
+    adminTokens.add(SUPER_ADMIN_TOKEN);
+    try {
+      const keyBytes = crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
+      const nowMs = Date.now();
+      const bytes: Uint8Array<ArrayBuffer> = encoder.encode(JSON.stringify({ model: "gpt-5.6-sol", content: "request-id-only synthetic capture" }));
+      const stored = expectStored(
+        await persistEncryptedSentinelReplay(syntheticInput(bytes, "synthetic-request-id-only"), failureObservation(), {
+          kv,
+          keyBytes,
+          now: () => nowMs,
+          randomUuid: () => "synthetic-request-id-capture",
+          randomBytes: twelveByteIv,
+        })
+      );
+
+      // Exactly the request id, no after_ms/before_ms: the point lookup must
+      // still resolve the capture and report its status.
+      const response = await handler(new Request(exportUrl({ request_id: "synthetic-request-id-only" }), { headers: superAdminHeaders }));
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("Cache-Control"), "no-store");
+      const body = (await response.json()) as {
+        data: ExportedSentinelReplayCapture[];
+        cursor: string | null;
+        capture_status: { status: string; reason: string | null };
+      };
+      assert.equal(body.cursor, null);
+      // This fixture is request-only (`syntheticInput` carries no recorded
+      // upstream attempt) on a 502 provider failure, so the capture is
+      // truthfully incomplete: the missing upstream evidence is asserted
+      // through the decrypted `unavailable` reason below, while the status row
+      // itself only classifies the capture.
+      assert.equal(body.capture_status.status, "incomplete");
+      assert.equal(body.capture_status.reason, null);
+      assert.equal(body.data.length, 1);
+      assert.equal(body.data[0]?.manifest.fingerprint, stored.manifest.fingerprint);
+      const plaintext = await decryptExportedSentinelReplay(firstCapture(body), keyBytes);
+      assert.equal(plaintext.request_id, "synthetic-request-id-only");
+      assert.deepEqual([...plaintext.body], [...bytes]);
+      assert.equal(plaintext.unavailable?.includes("upstream_trace_empty"), true);
+
+      // Related fail-closed boundaries stay intact: a malformed request id is
+      // still refused, and the lookup modes remain mutually exclusive.
+      const malformed = await handler(new Request(exportUrl({ request_id: "not a request id" }), { headers: superAdminHeaders }));
+      assert.equal(malformed.status, 400);
+      const bothModes = await handler(
+        new Request(exportUrl({ request_id: "synthetic-request-id-only", incident_id: INCIDENT_ID }), { headers: superAdminHeaders })
+      );
+      assert.equal(bothModes.status, 400);
+    } finally {
+      adminTokens.delete(SUPER_ADMIN_TOKEN);
+      kv.close();
+      setKvForTest(null);
+    }
+  },
+});
+
 Deno.test("replay-captures export rejects malformed interval, limit, cursor, and incident parameters", async () => {
   await runWithoutKv(async () => {
     const adminTokens = config.adminTokens as Set<string>;

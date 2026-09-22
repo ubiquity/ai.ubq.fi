@@ -263,7 +263,10 @@ Deno.test("Responses preflight propagates caller cancellation into a pending fir
     assert.equal(await becomesTrue(() => !probe.stream.locked, 500), true);
   } finally {
     controller.abort(new DOMException("test cleanup", "AbortError"));
-    await settlesWithin(preflight.catch(() => undefined), 500);
+    await settlesWithin(
+      preflight.catch(() => undefined),
+      500
+    );
     await releaseProbe(probe);
   }
 });
@@ -341,7 +344,10 @@ Deno.test("Responses precommit buffer refuses an unbounded eager producer and re
     assert.equal(produced, MAX_RESPONSES_PRECOMMIT_EVENTS + 1, "the buffer must refuse the event past its cap");
     assert.equal(released, true, "an overflowing precommit buffer must release its upstream iterator");
   } finally {
-    await settlesWithin(eager.return(undefined).catch(() => undefined), 250);
+    await settlesWithin(
+      eager.return(undefined).catch(() => undefined),
+      250
+    );
   }
 });
 

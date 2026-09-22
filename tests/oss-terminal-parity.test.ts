@@ -1,16 +1,8 @@
 import assert from "node:assert/strict";
 
 import { iterateDeepSeekChatCompletionStream, normalizeDeepSeekChatCompletion } from "../src/deepseek.ts";
-import {
-  createDeepSeekResponsesStreamTranslator,
-  type DeepSeekResponsesEcho,
-  toDeepSeekResponsesPayload,
-} from "../src/deepseek_responses.ts";
-import {
-  createPaidProviderAttemptDeadline,
-  createStreamFirstEventDeadline,
-  createStreamSemanticDeadline,
-} from "../src/inference_deadline.ts";
+import { createDeepSeekResponsesStreamTranslator, type DeepSeekResponsesEcho, toDeepSeekResponsesPayload } from "../src/deepseek_responses.ts";
+import { createPaidProviderAttemptDeadline, createStreamFirstEventDeadline, createStreamSemanticDeadline } from "../src/inference_deadline.ts";
 import { isAnswerBearingCompletion } from "../src/openai.ts";
 
 /**
@@ -231,11 +223,7 @@ Deno.test("m04 parity: a refusal is answer-bearing payload on both transports", 
 Deno.test("m04 parity: a normalized refusal delta reaches the streamed translator", async () => {
   const refusal = "I will not do that.";
   const chunks = await readChatStream(
-    [
-      sse(chatChunk({ role: "assistant", refusal })),
-      sse({ ...chatChunk({}), choices: [{ index: 0, finish_reason: "stop" }] }),
-      "data: [DONE]\n\n",
-    ].join("")
+    [sse(chatChunk({ role: "assistant", refusal })), sse({ ...chatChunk({}), choices: [{ index: 0, finish_reason: "stop" }] }), "data: [DONE]\n\n"].join("")
   );
   const delta = (chunks[0].choices as Record<string, unknown>[])[0].delta as Record<string, unknown>;
   assert.equal(delta.refusal, refusal);
@@ -274,10 +262,7 @@ Deno.test("m04 parity: a normalized refusal-only completion is carried by the bu
 });
 
 Deno.test("m04 parity: a non-string refusal is rejected by the transport, not dropped", async () => {
-  await assert.rejects(
-    readChatStream(`${sse(chatChunk({ role: "assistant", refusal: 42 }))}data: [DONE]\n\n`),
-    (error) => kindOf(error) === "invalid_chunk"
-  );
+  await assert.rejects(readChatStream(`${sse(chatChunk({ role: "assistant", refusal: 42 }))}data: [DONE]\n\n`), (error) => kindOf(error) === "invalid_chunk");
 
   const buffered = normalizeDeepSeekChatCompletion(chatCompletion({ role: "assistant", content: "hi", refusal: 42 }), "deepseek-flash");
   assert.equal(buffered.ok, false);
@@ -305,10 +290,7 @@ Deno.test("m04 parity: a null refusal is absence, not a malformed chunk", async 
 });
 
 Deno.test("m04 parity: a reasoning-only nominal stop is a completion nothing can act on", () => {
-  const streamed = streamedTerminal([
-    chatChunk({ role: "assistant", reasoning_content: "thinking only" }),
-    chatChunk({}, { finish_reason: "stop" }),
-  ]);
+  const streamed = streamedTerminal([chatChunk({ role: "assistant", reasoning_content: "thinking only" }), chatChunk({}, { finish_reason: "stop" })]);
   assert.equal(streamed.type, "response.completed");
   assert.deepEqual(outputTypes(streamed.response), ["reasoning"]);
   // The route fails this closed as `empty_upstream_completion` on both

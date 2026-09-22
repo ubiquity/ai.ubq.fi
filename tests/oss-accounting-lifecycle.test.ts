@@ -88,23 +88,14 @@ const accountingFor = (kv: CountingKv, policy: ApiKeyPolicy, requestId: string) 
 const assertLedgerConsistent = (kv: CountingKv, policy: ApiKeyPolicy, requestId: string, limit: number): void => {
   const accounting = accountingFor(kv, policy, requestId);
   assert.ok(accounting.reserved >= 0, `reserved_requests must never underflow: ${JSON.stringify(accounting)}`);
-  assert.ok(
-    accounting.committed + accounting.reserved <= limit,
-    `committed + reserved must never exceed the window limit: ${JSON.stringify(accounting)}`
-  );
+  assert.ok(accounting.committed + accounting.reserved <= limit, `committed + reserved must never exceed the window limit: ${JSON.stringify(accounting)}`);
   if (accounting.state === "reserved") assert.equal(accounting.committed, 0, `a reserved row owns no committed request: ${JSON.stringify(accounting)}`);
   if (accounting.state === "dispatched")
     assert.equal(accounting.committed, 1, `a dispatched row owns exactly one committed request: ${JSON.stringify(accounting)}`);
   if (accounting.state === "released") assert.equal(accounting.committed, 0, `a released row owns no committed request: ${JSON.stringify(accounting)}`);
 };
 
-const reserve = async (
-  kv: CountingKv,
-  policy: ApiKeyPolicy,
-  requestId: string,
-  nowMs?: number,
-  route = ROUTE
-): Promise<ApiKeyUsageReservationDecision> =>
+const reserve = async (kv: CountingKv, policy: ApiKeyPolicy, requestId: string, nowMs?: number, route = ROUTE): Promise<ApiKeyUsageReservationDecision> =>
   await reserveApiKeyUsageV3(policy, requestId, route, nowMs === undefined ? { kv: kvFor(kv) } : { kv: kvFor(kv), nowMs });
 
 const admitted = (decision: ApiKeyUsageReservationDecision) => {
@@ -159,21 +150,14 @@ Deno.test("a dispatched request identity is never re-admitted without its own ch
     }
   }
   const transportsWithoutOwnCharge = readmission.ok && secondContext === undefined && refusal === null;
-  assert.equal(
-    transportsWithoutOwnCharge,
-    false,
-    "a re-presented consumed identity must be refused or must commit its own charge before provider transport"
-  );
+  assert.equal(transportsWithoutOwnCharge, false, "a re-presented consumed identity must be refused or must commit its own charge before provider transport");
   assertLedgerConsistent(kv, policy, "shared-request", 2);
 });
 
 Deno.test("concurrent cancellation and dispatch settlement agree on one outcome", async () => {
   const { kv, policy } = setupPolicy("cancel-settlement-race", 1);
   const reservation = admitted(await reserve(kv, policy, "race-request"));
-  const [dispatchOutcome, releaseOutcome] = await Promise.allSettled([
-    reservation.beforeProviderDispatch("deepseek"),
-    reservation.release("client_cancelled"),
-  ]);
+  const [dispatchOutcome, releaseOutcome] = await Promise.allSettled([reservation.beforeProviderDispatch("deepseek"), reservation.release("client_cancelled")]);
   assert.equal(releaseOutcome.status, "fulfilled", "completion must settle without error");
   const accounting = accountingFor(kv, policy, "race-request");
   assertLedgerConsistent(kv, policy, "race-request", 1);
@@ -238,11 +222,7 @@ Deno.test("a reclaimed expired lease returns its slot once and never rides free 
     { state: "released", reason: "lease_expired", committed: 0 },
     "the reclaimed identity's own row must be released without charging it"
   );
-  assert.equal(
-    windowFor(kv, policy).reserved_requests,
-    1,
-    "exactly one live reservation remains, and it is the replacement's, not the reclaimed identity's"
-  );
+  assert.equal(windowFor(kv, policy).reserved_requests, 1, "exactly one live reservation remains, and it is the replacement's, not the reclaimed identity's");
 
   let lateDispatch: ApiKeyProviderDispatch | undefined;
   let lateRefusal: unknown = null;
@@ -400,11 +380,7 @@ Deno.test("a not-billed paid-fallback identity is not re-admitted as unrecorded 
     if (first.kind !== "reserved") throw new Error(`the first paid admission must reserve: ${JSON.stringify(first)}`);
 
     await releaseUndispatchedPaidFallbackV3(first.reservation);
-    assert.equal(
-      paidLedgerRow(kv, "paid-not-billed-request")?.billing_state,
-      "not_billed",
-      "an undispatched release must record the identity as unbilled"
-    );
+    assert.equal(paidLedgerRow(kv, "paid-not-billed-request")?.billing_state, "not_billed", "an undispatched release must record the identity as unbilled");
 
     const replayed = await readmitAndSettle("paid-not-billed-request", nowMs + 60 * 60_000);
     assert.equal(

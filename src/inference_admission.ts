@@ -246,8 +246,7 @@ export const createInferenceAdmissionController = (limits: Partial<InferenceAdmi
 const sharedInferenceAdmission = createInferenceAdmissionController();
 
 /** Acquire one permit from the shared process-wide admission guard. */
-export const acquireInferenceAdmission = (request?: InferenceAdmissionRequest): Promise<InferenceAdmissionResult> =>
-  sharedInferenceAdmission.acquire(request);
+export const acquireInferenceAdmission = (request?: InferenceAdmissionRequest): Promise<InferenceAdmissionResult> => sharedInferenceAdmission.acquire(request);
 
 /** Current shared-guard occupancy, for integration telemetry and tests. */
 export const inferenceAdmissionSnapshot = (): InferenceAdmissionSnapshot => sharedInferenceAdmission.snapshot();

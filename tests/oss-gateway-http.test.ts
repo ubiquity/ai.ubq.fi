@@ -1,10 +1,18 @@
 import assert from "node:assert/strict";
+import { ADMIN_ERROR_LOG_PREFIX } from "../src/admin_error_log.ts";
 import { PAID_FALLBACK_NO_LIMIT } from "../src/api_keys.ts";
-import { type ApiKeyPolicy, apiKeyUsageV3RequestKey, apiKeyUsageV3WindowKey, apiKeyPolicyFromHashRecord, resetApiKeyPolicyCacheForTest } from "../src/api_key_policy.ts";
+import {
+  type ApiKeyPolicy,
+  apiKeyUsageV3RequestKey,
+  apiKeyUsageV3WindowKey,
+  apiKeyPolicyFromHashRecord,
+  resetApiKeyPolicyCacheForTest,
+} from "../src/api_key_policy.ts";
 import { DEEPSEEK_CHAT_COMPLETIONS_URL } from "../src/deepseek.ts";
 import { setInferenceAdmissionControllerForTest } from "../src/handler.ts";
 import { createInferenceAdmissionController } from "../src/inference_admission.ts";
 import { setKvForTest } from "../src/kv.ts";
+import { enqueuePromptCacheAnalytics, optionalPromptCacheAnalyticsSnapshot } from "../src/prompt_cache_analytics.ts";
 import type { ApiKeyHashRecord, ApiKeyRecord, ApiKeyUsageRequestV3, ApiKeyUsageWindowV3 } from "../src/types.ts";
 import { sha256Base64Url } from "../src/utils.ts";
 
@@ -50,16 +58,14 @@ const sseHeaders = (requestId: string): HeadersInit => ({
 });
 
 const chatChunk = (delta: Record<string, unknown>, finishReason: string | null, usage?: Record<string, unknown>): string =>
-  `data: ${
-    JSON.stringify({
-      id: "chatcmpl-oss-http",
-      object: "chat.completion.chunk",
-      created: 1_780_000_001,
-      model: "deepseek-flash",
-      choices: [{ index: 0, delta, finish_reason: finishReason }],
-      ...(usage ? { usage } : {}),
-    })
-  }\n\n`;
+  `data: ${JSON.stringify({
+    id: "chatcmpl-oss-http",
+    object: "chat.completion.chunk",
+    created: 1_780_000_001,
+    model: "deepseek-flash",
+    choices: [{ index: 0, delta, finish_reason: finishReason }],
+    ...(usage ? { usage } : {}),
+  })}\n\n`;
 
 const sseBody = (frames: readonly string[]): string => `${frames.join("")}data: [DONE]\n\n`;
 
@@ -138,6 +144,8 @@ type Harness = Readonly<{
   kv: Deno.Kv;
   controller: ReturnType<typeof createInferenceAdmissionController>;
   calls: RecordedCall[];
+  /** Bounded chronology evidence: producer cancellation and client/terminal markers. */
+  events: string[];
   setMode: (mode: UpstreamMode) => void;
   releaseHold: () => void;
   stop: () => Promise<void>;
@@ -186,6 +194,8 @@ const startHarness = async (): Promise<Harness> => {
 
   const calls: RecordedCall[] = [];
   const holdReleases: (() => void)[] = [];
+  /** Bounded chronology evidence: producer cancellation and client/terminal markers. */
+  const events: string[] = [];
   let mode: UpstreamMode = "chat-stream-answer";
   const upstream = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, async (request) => {
     const body = await request.text();
@@ -203,7 +213,14 @@ const startHarness = async (): Promise<Harness> => {
       holdReleases.push(() => release());
       const stream = new ReadableStream<Uint8Array>({
         async start(controller) {
-          controller.enqueue(encoder.encode(sseBody([chatChunk({ content: "held" }, null)])));
+          // The first frame is a bare chunk without the `[DONE]` sentinel: an
+          // `sseBody` here would terminate the stream on the first enqueue, so
+          // the gateway would legitimately finish and release the permit before
+          // the test can observe downstream retention. `[DONE]` follows the
+          // gate, which is what keeps this upstream genuinely open. The first
+          // frame carries the usage counters too, so a disconnecting client has
+          // already received answer and usage while the source stays open.
+          controller.enqueue(encoder.encode(chatChunk({ content: "held" }, null, { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 })));
           await gate;
           // A cancelled holder must not enqueue on a closed controller.
           if (cancelled) return;
@@ -213,6 +230,7 @@ const startHarness = async (): Promise<Harness> => {
         },
         cancel() {
           cancelled = true;
+          events.push("producer_cancelled");
           release();
         },
       });
@@ -220,7 +238,10 @@ const startHarness = async (): Promise<Harness> => {
     }
     if (mode === "responses-stream-refusal") {
       return new Response(
-        sseBody([chatChunk({ refusal: "I cannot" }, null), chatChunk({ refusal: " do that" }, "stop", { prompt_tokens: 4, completion_tokens: 3, total_tokens: 7 })]),
+        sseBody([
+          chatChunk({ refusal: "I cannot" }, null),
+          chatChunk({ refusal: " do that" }, "stop", { prompt_tokens: 4, completion_tokens: 3, total_tokens: 7 }),
+        ]),
         { headers: sseHeaders(`ds-refusal-${callNumber}`) }
       );
     }
@@ -272,6 +293,7 @@ const startHarness = async (): Promise<Harness> => {
     kv,
     controller,
     calls,
+    events,
     setMode: (next) => {
       mode = next;
     },
@@ -289,7 +311,13 @@ const startHarness = async (): Promise<Harness> => {
   };
 };
 
-const postJson = (harness: Harness, path: string, body: Record<string, unknown>, extraHeaders: Record<string, string> = {}, signal?: AbortSignal): Promise<Response> =>
+const postJson = (
+  harness: Harness,
+  path: string,
+  body: Record<string, unknown>,
+  extraHeaders: Record<string, string> = {},
+  signal?: AbortSignal
+): Promise<Response> =>
   fetch(`${harness.gatewayUrl}${path}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${harness.token}`, "Content-Type": "application/json", ...extraHeaders },
@@ -399,8 +427,14 @@ Deno.test({
 
         // 7. The gateway owns the accounting identity: a caller-supplied id cannot collide.
         harness.setMode("chat-buffered-answer");
-        const first = await postJson(harness, "/v1/chat/completions", chatBody({ stream: false }), { "x-uos-request-id": "client-chosen-1", "Idempotency-Key": "client-chosen-1" });
-        const second = await postJson(harness, "/v1/chat/completions", chatBody({ stream: false }), { "x-uos-request-id": "client-chosen-1", "Idempotency-Key": "client-chosen-1" });
+        const first = await postJson(harness, "/v1/chat/completions", chatBody({ stream: false }), {
+          "x-uos-request-id": "client-chosen-1",
+          "Idempotency-Key": "client-chosen-1",
+        });
+        const second = await postJson(harness, "/v1/chat/completions", chatBody({ stream: false }), {
+          "x-uos-request-id": "client-chosen-1",
+          "Idempotency-Key": "client-chosen-1",
+        });
         const firstId = first.headers.get("x-uos-request-id");
         const secondId = second.headers.get("x-uos-request-id");
         assert.ok(firstId && secondId && firstId !== secondId, "the gateway must generate a distinct request id per request");
@@ -499,15 +533,28 @@ Deno.test({
         await waitFor(() => harness.controller.snapshot().active === 0, "the recovered permit to be released");
 
         // A disconnect mid-stream keeps the dispatched accounting and returns the permit once.
-        const committedBeforeDisconnect = (await harness.kv.get<ApiKeyUsageWindowV3>(apiKeyUsageV3WindowKey(harness.policy), { consistency: "strong" })).value
-          ?.committed_requests ?? 0;
-        harness.setMode("chat-stream-answer");
-        const disconnect = await postJson(harness, "/v1/chat/completions", chatBody({ stream: true }));
+        const committedBeforeDisconnect =
+          (await harness.kv.get<ApiKeyUsageWindowV3>(apiKeyUsageV3WindowKey(harness.policy), { consistency: "strong" })).value?.committed_requests ?? 0;
+        // The source is held open behind an explicit gate: a small finite body
+        // can be fully sent before the client cancels, and that is a delivered
+        // response, not an interruption. The gate resolves only from the
+        // producer's own cancel, so the client abort below is what ends a
+        // demonstrably still-open upstream.
+        // The chronology is per-scenario: the holder above already cancelled its
+        // own source, so this window starts empty for the disconnect evidence.
+        harness.events.length = 0;
+        harness.setMode("stream-hold");
+        const disconnectAbort = new AbortController();
+        const disconnect = await postJson(harness, "/v1/chat/completions", chatBody({ stream: true }), {}, disconnectAbort.signal);
         const disconnectId = disconnect.headers.get("x-uos-request-id");
         assert.ok(disconnectId, "the disconnect response must carry the gateway request id");
-        const partial = await readSseUntil(disconnect, (text) => text.includes("streamed "));
-        assert.ok(partial.reached, "the disconnecting client must see provider output first");
-        await partial.reader.cancel("acceptance: disconnect after output").catch(() => {});
+        const partial = await readSseUntil(disconnect, (text) => text.includes("held"));
+        assert.ok(partial.reached, "the disconnecting client must receive answer and usage while the source is open");
+        assert.equal(harness.events.includes("producer_cancelled"), false, "the controlled source must still be open at disconnect time");
+        harness.events.push("client_aborted");
+        disconnectAbort.abort(new DOMException("client disconnected after output", "AbortError"));
+        await partial.reader.cancel(disconnectAbort.signal.reason).catch(() => {});
+        await waitFor(() => harness.events.includes("producer_cancelled"), "the gateway to cancel the still-open upstream");
         await waitFor(() => terminals.some((entry) => entry.request_id === disconnectId), "the disconnect terminal log");
         await waitFor(() => harness.controller.snapshot().active === 0, "the disconnect permit to be released");
         await delay(50);
@@ -515,21 +562,203 @@ Deno.test({
         const disconnectTerminal = terminals.filter((entry) => entry.request_id === disconnectId);
         assert.equal(disconnectTerminal.length, 1, "one request must produce exactly one terminal record");
         assert.equal(disconnectTerminal[0].delivery_outcome, "interrupted");
-
-        // The API-key reservation stayed dispatched: the accepted work was not refunded.
-        const requestRow = await harness.kv.get<ApiKeyUsageRequestV3>(apiKeyUsageV3RequestKey(harness.policy, disconnectId), { consistency: "strong" });
-        assert.equal(requestRow.value?.state, "dispatched", "a disconnect must not refund a dispatched reservation");
-        const windowRow = await harness.kv.get<ApiKeyUsageWindowV3>(apiKeyUsageV3WindowKey(harness.policy), { consistency: "strong" });
-        assert.equal(
-          windowRow.value?.committed_requests,
-          committedBeforeDisconnect + 1,
-          "the disconnect request must be charged exactly once and never twice"
+        assert.ok(
+          harness.events.indexOf("client_aborted") < harness.events.indexOf("producer_cancelled"),
+          `client abort must precede producer cancellation, observed ${JSON.stringify(harness.events)}`
         );
+        // The chat request stays dispatched and charged exactly once, and the
+        // usage the provider already sent survives the interruption.
+        const chatRequestRow = await harness.kv.get<ApiKeyUsageRequestV3>(apiKeyUsageV3RequestKey(harness.policy, disconnectId), { consistency: "strong" });
+        assert.equal(chatRequestRow.value?.state, "dispatched", "a disconnect must not refund a dispatched reservation");
+        const chatWindowRow = await harness.kv.get<ApiKeyUsageWindowV3>(apiKeyUsageV3WindowKey(harness.policy), { consistency: "strong" });
+        assert.equal(chatWindowRow.value?.committed_requests, committedBeforeDisconnect + 1, "the chat disconnect must add exactly one charge");
+        assert.equal(disconnectTerminal[0].usage_observed, true, "chat usage observed before the disconnect must be reported");
+        assert.equal(disconnectTerminal[0].input_tokens, 3, "the observed chat input tokens must survive the interruption");
+        assert.equal(disconnectTerminal[0].output_tokens, 1, "the observed chat output tokens must survive the interruption");
+        assert.equal(disconnectTerminal[0].total_tokens, 4, "the observed chat total tokens must survive the interruption");
+        assert.equal(disconnectTerminal[0].cached_input_tokens, null, "cache usage the provider never sent stays unknown");
+        assert.equal(disconnectTerminal[0].usage_telemetry_status, "partial", "core counters with an unsent cache read stay partial, never completed");
+
+        // The Responses adapter owns the same local cancellation, so the same
+        // held-open source and real abort must interrupt it as well.
+        const committedBeforeResponses =
+          (await harness.kv.get<ApiKeyUsageWindowV3>(apiKeyUsageV3WindowKey(harness.policy), { consistency: "strong" })).value?.committed_requests ?? 0;
+        harness.events.length = 0;
+        harness.setMode("stream-hold");
+        const responsesAbort = new AbortController();
+        const responsesDisconnect = await postJson(harness, "/v1/responses", responsesBody({ stream: true }), {}, responsesAbort.signal);
+        const responsesId = responsesDisconnect.headers.get("x-uos-request-id");
+        assert.ok(responsesId, "the Responses disconnect response must carry the gateway request id");
+        const responsesPartial = await readSseUntil(responsesDisconnect, (text) => text.includes("held"));
+        assert.ok(responsesPartial.reached, "the Responses client must receive output while the source is open");
+        assert.equal(harness.events.includes("producer_cancelled"), false, "the Responses source must still be open at disconnect time");
+        harness.events.push("client_aborted");
+        responsesAbort.abort(new DOMException("client disconnected after output", "AbortError"));
+        await responsesPartial.reader.cancel(responsesAbort.signal.reason).catch(() => {});
+        await waitFor(() => harness.events.includes("producer_cancelled"), "the gateway to cancel the still-open Responses upstream");
+        await waitFor(() => terminals.some((entry) => entry.request_id === responsesId), "the Responses disconnect terminal log");
+        await waitFor(() => harness.controller.snapshot().active === 0, "the Responses disconnect permit to be released");
+        const responsesTerminals = terminals.filter((entry) => entry.request_id === responsesId);
+        assert.equal(responsesTerminals.length, 1, "the Responses disconnect must produce exactly one terminal record");
+        assert.equal(responsesTerminals[0].delivery_outcome, "interrupted");
+        const responsesRequestRow = await harness.kv.get<ApiKeyUsageRequestV3>(apiKeyUsageV3RequestKey(harness.policy, responsesId), { consistency: "strong" });
+        assert.equal(responsesRequestRow.value?.state, "dispatched", "the Responses disconnect must not refund a dispatched reservation");
+        const responsesWindowRow = await harness.kv.get<ApiKeyUsageWindowV3>(apiKeyUsageV3WindowKey(harness.policy), { consistency: "strong" });
+        assert.equal(responsesWindowRow.value?.committed_requests, committedBeforeResponses + 1, "the Responses disconnect must add exactly one charge");
+        assert.equal(responsesTerminals[0].usage_observed, true, "Responses usage observed before the disconnect must be reported");
+        assert.equal(responsesTerminals[0].input_tokens, 3, "the observed Responses input tokens must survive the interruption");
+        assert.equal(responsesTerminals[0].output_tokens, 1, "the observed Responses output tokens must survive the interruption");
+        assert.equal(responsesTerminals[0].total_tokens, 4, "the observed Responses total tokens must survive the interruption");
+        assert.equal(responsesTerminals[0].cached_input_tokens, null, "cache usage the provider never sent stays unknown");
 
         // Queue waiting is reported separately from provider latency.
         const acceptedWithWait = accepted.find((entry) => entry.request_id === holderId);
         assert.ok(acceptedWithWait, "the holder must publish its accepted record");
         assert.equal(typeof acceptedWithWait.queue_wait_ms, "number");
+      } finally {
+        console.info = originalInfo;
+        (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+      }
+    } finally {
+      harness.releaseHold();
+      await stop();
+      if (originalDeepSeekKey === undefined) env.delete("DEEPSEEK_API_KEY");
+      else env.set("DEEPSEEK_API_KEY", originalDeepSeekKey);
+      if (originalSurplusKey === undefined) env.delete("SURPLUS_API_KEY");
+      else env.set("SURPLUS_API_KEY", originalSurplusKey);
+      if (originalMeteredKey === undefined) env.delete("METERED_API_KEY");
+      else env.set("METERED_API_KEY", originalMeteredKey);
+    }
+  },
+});
+
+Deno.test({
+  name: "oss gateway real HTTP: durable failure evidence survives a stalled optional-analytics shutdown",
+  ignore: loopbackPermission.state !== "granted" || typeof Deno.openKv !== "function",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const originalInfo = console.info;
+    const originalDeepSeekKey = Deno.env.get("DEEPSEEK_API_KEY");
+    const originalSurplusKey = Deno.env.get("SURPLUS_API_KEY");
+    const originalMeteredKey = Deno.env.get("METERED_API_KEY");
+    const env = Deno.env;
+    const terminalLogs: Record<string, unknown>[] = [];
+    const info: unknown[][] = [];
+    const harness = await startHarness();
+    const stop = harness.stop;
+    try {
+      assert.equal(originalSurplusKey, undefined, "no paid Surplus credential may be present");
+      assert.equal(originalMeteredKey, undefined, "no paid Metered credential may be present");
+      env.delete("SURPLUS_API_KEY");
+      env.delete("METERED_API_KEY");
+      env.set("DEEPSEEK_API_KEY", "oss-http-dummy-deepseek-key");
+      const { config } = await import("../src/config.ts");
+      const originalDeployFlag = config.isDeploy;
+      (config as { isDeploy: boolean }).isDeploy = true;
+      console.info = (...args: unknown[]) => {
+        info.push(args);
+        const [label, payload] = args.map(String);
+        if (label === "[ai.ubq.fi] request_terminal" && payload) terminalLogs.push(JSON.parse(payload) as Record<string, unknown>);
+      };
+
+      try {
+        // A controlled transport fault produces a durable admin-error record.
+        harness.setMode("upstream-500");
+        const faulted = await postJson(harness, "/v1/responses", responsesBody({ stream: true }));
+        const faultedId = faulted.headers.get("x-uos-request-id");
+        assert.ok(faultedId, "the failed response must carry the gateway request id");
+        assert.ok(faulted.status >= 500);
+        await faulted.body?.cancel().catch(() => {});
+        let adminError: Record<string, unknown> | null = null;
+        for (let attempt = 0; attempt < 100 && adminError === null; attempt += 1) {
+          for await (const entry of harness.kv.list<Record<string, unknown>>({ prefix: [...ADMIN_ERROR_LOG_PREFIX] }, { consistency: "strong" })) {
+            if (entry.value?.request_id === faultedId) {
+              adminError = entry.value;
+              break;
+            }
+          }
+          if (adminError === null) await delay(10);
+        }
+        assert.ok(adminError, "the durable admin error evidence must be written for a failed request");
+        assert.equal(typeof adminError.failure_kind, "string", "the durable record must name the failure kind");
+        assert.ok(
+          terminalLogs.some((entry) => entry.request_id === faultedId),
+          "the terminal record must be published"
+        );
+
+        // The optional analytics path is optional: the local artifact's unknown
+        // release gate keeps it inactive, and the response/durable evidence above
+        // never depended on it.
+        assert.equal(optionalPromptCacheAnalyticsSnapshot(), null, "no optional sample is required to serve a request");
+
+        // The real module queue is exercised through its existing seam with a
+        // sink that never progresses. The exported bounded shutdown must settle
+        // under its own absolute deadline, retain the in-flight entry and report
+        // that incompleteness with sanitized counters only.
+        const RELEASE = "0123456789abcdef0123456789abcdef01234567";
+        // Every terminal write through this handle parks forever: the cohort
+        // admission awaits `getMany` and the counter commit awaits `commit`, so
+        // the optional writer can neither settle nor throw. Nothing here touches
+        // the real KV, so durable evidence above stays provably independent.
+        const neverSettles = (): Promise<never> => new Promise<never>(() => {});
+        const stalledOperation = new Proxy({} as Record<string, unknown>, {
+          get: (_target, property) => (property === "commit" ? neverSettles : () => stalledOperation),
+        });
+        const stalledKv = new Proxy({} as Deno.Kv, {
+          get: (_target, property) => (property === "atomic" ? () => stalledOperation : neverSettles),
+        });
+        const queued = await enqueuePromptCacheAnalytics(
+          {
+            provider: "chatgpt_codex",
+            model: "oss-http-optional-analytics",
+            route: "responses",
+            status: 200,
+            completed: true,
+            usageTelemetryStatus: "reported",
+            inputTokens: 120,
+            cachedInputTokens: 40,
+            cacheWriteInputTokens: 0,
+            promptCacheKeyPresent: true,
+            promptCacheMode: "explicit",
+            fallbackReason: null,
+          },
+          { release: RELEASE, kv: stalledKv, now: () => Date.now() }
+        );
+        assert.equal(queued.status, "queued", "the optional sample must enter the bounded queue");
+        const { shutdownOptionalTelemetry } = await import("../serve.ts");
+        const shutdownStartedAt = performance.now();
+        await shutdownOptionalTelemetry();
+        const shutdownMs = performance.now() - shutdownStartedAt;
+        assert.ok(shutdownMs < 8_000, `bounded shutdown must settle near its own deadline, observed ${Math.round(shutdownMs)}ms`);
+
+        const shutdownLines = info.filter((args) => String(args[0]) === "[ai.ubq.fi] optional_telemetry_shutdown");
+        assert.equal(shutdownLines.length, 1, "shutdown must publish exactly one sanitized snapshot");
+        const snapshot = JSON.parse(String(shutdownLines[0][1])) as Record<string, unknown>;
+        assert.equal(snapshot.shutdown_incomplete, true, "a stalled optional write must be reported as an incomplete drain");
+        assert.ok(Number(snapshot.drain_timeouts) >= 1);
+        assert.ok(Number(snapshot.writes_in_flight) >= 1, "the unresolved write stays retained as bounded capacity");
+        assert.ok(Number(snapshot.retained_entries) >= 1, "charged entries must include the unresolved in-flight write");
+        assert.deepEqual(
+          Object.keys(snapshot).sort(),
+          [
+            "delivered",
+            "drain_timeouts",
+            "dropped_after_closed",
+            "dropped_by_age",
+            "dropped_by_bytes",
+            "dropped_by_entries",
+            "enqueued",
+            "failed",
+            "last_error_class",
+            "queued_entries",
+            "retained_bytes",
+            "retained_entries",
+            "shutdown_incomplete",
+            "writes_in_flight",
+          ],
+          "the shutdown snapshot carries counters only, never model text, prompts or keys"
+        );
       } finally {
         console.info = originalInfo;
         (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;

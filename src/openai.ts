@@ -9951,7 +9951,13 @@ const streamDeepSeekChatCompletion = (
   headers.set("Content-Type", "text/event-stream");
   headers.set("Cache-Control", "no-cache");
 
-  const iterator = iterateDeepSeekChatCompletionStream(upstream, upstreamModel, { signal: requestSignal });
+  // One stream-owned interrupt composed with the caller's request signal. The
+  // external downstream signal is driven by Deno delivery completion, which
+  // itself waits on this teardown, so a queued `iterator.return()` alone can
+  // never interrupt a generator parked in an upstream read.
+  const cancellation = new AbortController();
+  const readSignal = AbortSignal.any([requestSignal, cancellation.signal]);
+  const iterator = iterateDeepSeekChatCompletionStream(upstream, upstreamModel, { signal: readSignal });
   let closed = false;
   let terminalSettled = false;
   let semantic = false;
@@ -10021,12 +10027,24 @@ const streamDeepSeekChatCompletion = (
         await failStream(controller, error);
       }
     },
-    async cancel() {
+    cancel(reason) {
       if (closed) return;
       closed = true;
       settleTerminal("cancelled");
       recordDeepSeekFailureKind(usageContext, "cancellation");
-      await iterator.return();
+      // Usage observed before the disconnect is real evidence: record it with
+      // completed=false so the terminal reports the counters without claiming a
+      // completion. Missing usage stays unknown rather than invented.
+      if (usage) recordTerminalUsage(usageContext, usage, false);
+      // Abort the local read first: the pending upstream read then rejects, the
+      // iterator's own `finally` cancels the physical provider body, and no
+      // uninterruptible `return()` can block teardown. A consumer can cancel
+      // before the first read, so an untouched source is cancelled directly.
+      if (!cancellation.signal.aborted) cancellation.abort(reason);
+      const upstreamBody = upstream.body;
+      if (upstreamBody && !upstreamBody.locked) void upstreamBody.cancel(reason).catch(() => {});
+      // Cleanup is best effort and never surfaces as a provider error.
+      void iterator.return().catch(() => {});
     },
   });
   return new Response(body, { status: 200, headers });
@@ -10296,7 +10314,12 @@ const streamDeepSeekResponses = (
   headers.set("Content-Type", "text/event-stream");
   headers.set("Cache-Control", "no-cache");
 
-  const iterator = iterateDeepSeekChatCompletionStream(upstream, deepSeekUpstreamModelFor(requestedModel) ?? DEEPSEEK_FLASH_MODEL, { signal: requestSignal });
+  // Same local cancellation ownership as the Chat adapter: the request signal
+  // still bounds the attempt, while a downstream cancel interrupts the pending
+  // read instead of queueing a return on a parked generator.
+  const cancellation = new AbortController();
+  const readSignal = AbortSignal.any([requestSignal, cancellation.signal]);
+  const iterator = iterateDeepSeekChatCompletionStream(upstream, deepSeekUpstreamModelFor(requestedModel) ?? DEEPSEEK_FLASH_MODEL, { signal: readSignal });
   const translator = createDeepSeekResponsesStreamTranslator(requestedModel, responseId, echo, createdAtSeconds, toolNames, customToolNames);
   const state = { settled: false, cancelled: false, semantic: false, usage: null as UsageTokens | null };
   /** The next `sequence_number` this response's SSE stream will emit. */
@@ -10459,12 +10482,24 @@ const streamDeepSeekResponses = (
         await failStream(controller, error);
       }
     },
-    async cancel() {
+    cancel(reason) {
       if (state.cancelled) return;
       state.cancelled = true;
       settleTerminal("cancelled");
       recordDeepSeekFailureKind(usageContext, "cancellation");
-      await iterator.return();
+      // Usage observed before the disconnect is real evidence: record it with
+      // completed=false so the terminal reports the counters without claiming a
+      // completion. Missing usage stays unknown rather than invented.
+      if (state.usage) recordTerminalUsage(usageContext, state.usage, false);
+      // Abort the local read first: the pending upstream read then rejects, the
+      // iterator's own `finally` cancels the physical provider body, and no
+      // uninterruptible `return()` can block teardown. A consumer can cancel
+      // before the first read, so an untouched source is cancelled directly.
+      if (!cancellation.signal.aborted) cancellation.abort(reason);
+      const upstreamBody = upstream.body;
+      if (upstreamBody && !upstreamBody.locked) void upstreamBody.cancel(reason).catch(() => {});
+      // Cleanup is best effort and never surfaces as a provider error.
+      void iterator.return().catch(() => {});
     },
   });
   return new Response(body, { status: 200, headers });

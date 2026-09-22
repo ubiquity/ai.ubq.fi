@@ -9,6 +9,7 @@ import {
   decryptExportedSentinelReplay,
   type ExportedSentinelReplayCapture,
   SENTINEL_REPLAY_MANIFEST_PREFIX,
+  type SentinelReplayCaptureOmissionReason,
 } from "../src/sentinel_replay_capture.ts";
 import { base64UrlDecode, base64UrlEncode, encodeHex, sha256Base64Url } from "../src/utils.ts";
 
@@ -308,4 +309,51 @@ Deno.test("successful terminal responses are never persisted and release capture
   } finally {
     input.body.fill(0);
   }
+});
+
+Deno.test("a persistable failure with no carried body publishes its explicit omission status", async () => {
+  const recorded: { requestId: string; reason: SentinelReplayCaptureOmissionReason; nowMs: number | undefined }[] = [];
+  const response = await withTerminalRequestLog(
+    new Response(JSON.stringify({ error: { message: "request body is too large", type: "invalid_request_error", code: "request_too_large" } }), {
+      status: 413,
+      headers: { "Content-Type": "application/json" },
+    }),
+    {
+      route: "responses",
+      startedAtMonotonicMs: performance.now(),
+      requestId: "request-capture-omitted-body",
+      sentinelReplayInput: null,
+      sentinelReplayOmission: "body_over_limit",
+      recordSentinelReplayOmission: (requestId, reason, nowMs) => {
+        recorded.push({ requestId, reason, nowMs });
+        return Promise.resolve();
+      },
+      ...ignoredTerminalServices,
+    }
+  );
+  assert.equal(response.status, 413);
+  await response.arrayBuffer();
+  assert.equal(recorded.length, 1, "a body-less failure must publish exactly one omission status");
+  assert.equal(recorded[0]?.requestId, "request-capture-omitted-body");
+  assert.equal(recorded[0]?.reason, "body_over_limit");
+  assert.equal(typeof recorded[0]?.nowMs, "number");
+});
+
+Deno.test("a successful response never publishes an omission status", async () => {
+  let recorded = 0;
+  const response = await withTerminalRequestLog(successResponse(), {
+    route: "responses",
+    startedAtMonotonicMs: performance.now(),
+    requestId: "request-capture-omitted-success",
+    sentinelReplayInput: null,
+    sentinelReplayOmission: "body_over_limit",
+    recordSentinelReplayOmission: () => {
+      recorded += 1;
+      return Promise.resolve();
+    },
+    ...ignoredTerminalServices,
+  });
+  assert.equal(response.status, 200);
+  await response.arrayBuffer();
+  assert.equal(recorded, 0, "successful traffic must never publish capture status");
 });
