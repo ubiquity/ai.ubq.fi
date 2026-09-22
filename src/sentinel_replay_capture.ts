@@ -1451,16 +1451,31 @@ const completeDuplicateCapture = async (
   });
   // The request still resolves to real evidence: keep its status row pointing
   // at the winning capture rather than leaving the request unaccounted for.
+  // The row must carry the winning manifest's own timestamps: `now + TTL`
+  // would claim a fresh lifetime the referenced evidence never had, so a
+  // duplicate near the end of the winner's 48 hours would report `ready` long
+  // after the manifest expired and then abruptly flip to `expired`.
+  const winnerEntry = await dependencies.kv.get<SentinelReplayManifest>(duplicate.manifestKey).catch(() => null);
+  const winner =
+    winnerEntry !== null &&
+    winnerEntry.value !== null &&
+    isSentinelReplayManifest(winnerEntry.value) &&
+    winnerEntry.value.fingerprint === duplicate.fingerprint &&
+    manifestMatchesKey(duplicate.manifestKey, winnerEntry.value)
+      ? winnerEntry.value
+      : null;
   await writeSentinelReplayCaptureStatus(
     dependencies.kv,
     captureStatusRow({
       requestId: duplicate.requestId,
       status: duplicate.captureStatus,
-      reason: null,
-      capturedAtMs: duplicate.capturedAtMs,
+      reason: winner === null ? "manifest_unavailable" : null,
+      capturedAtMs: winner?.captured_at_ms ?? duplicate.capturedAtMs,
       manifestKey: duplicate.manifestKey,
       fingerprint: duplicate.fingerprint,
-      expiresAtMs: duplicate.expiresAtMs,
+      // With the winner already unavailable only `now` is truthful; the read
+      // path then derives `expired` instead of promising missing evidence.
+      expiresAtMs: winner?.expires_at_ms ?? now,
     })
   ).catch(() => {});
   return { status: "duplicate", fingerprint: duplicate.fingerprint, manifest_key: duplicate.manifestKey };
