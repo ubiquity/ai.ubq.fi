@@ -338,6 +338,34 @@ truncation behaviour is unverified. The gap is narrower than "unknown": neither 
 all, so the untested surface is empty until either is deliberately wired in. Probe both before trusting either, and
 recheck the blockers before treating them as permanent.
 
+## Buffered-terminal fix deployed to both surfaces - 2026-09-22
+
+The buffered DeepSeek Responses fix from PR #387 is live on both surfaces at `3661bcfd13a9c1b9056fe5dc1786bb49b18ad594`,
+deployed through `deno task deploy:vps` and `deno task deploy:mac` off CI-green `development`.
+
+| Deployment                                                 | Release      | Identity                                       |
+| ---------------------------------------------------------- | ------------ | ---------------------------------------------- |
+| VPS (production, and the public `https://ai.ubq.fi` route) | `3661bcfd13` | `vps-3661bcfd13a9c1b9056fe5dc1786bb49b18ad594` |
+| Mac local (`localhost:7999`)                               | `3661bcfd13` | `mac-3661bcfd13a9c1b9056fe5dc1786bb49b18ad594` |
+
+Acceptance ran against the deployed releases, not the branch, and covered every DeepSeek wire shape plus the
+subscription path:
+
+- buffered `/v1/responses` truncation still reports `response.incomplete` with
+  `incomplete_details.reason: "max_output_tokens"` and `output_tokens: 8192` on both hosts;
+- three normal buffered completions per host still report `status: "completed"` with `incomplete_details: null`, so the
+  new guard does not over-fire;
+- the streamed `/v1/responses` path still reaches `response.completed` on both hosts;
+- `/v1/chat/completions` (the DeepSeek Harness wire) still answers `finish_reason: "stop"` with content on both hosts;
+- `gpt-reserve` still serves on both hosts through the Codex subscription capacity path.
+
+The error ledgers after deployment show no `empty_upstream_completion` fires on either host - the guard has not fired in
+production in either direction. The only rows on the new revision are this acceptance run's own truncation
+(`max_output_tokens`) and two deliberate 400s from a malformed probe.
+
+`sh scripts/verify.sh` reported `verify: OK` on the merged revision before deployment. Root checkout is clean on
+`development`, matching `origin/development`, with the task branches removed.
+
 ## Client behaviour on a degenerate completion, and the terminal-truthfulness 502 surface - 2026-09-22
 
 Two questions were left open when the terminal-truthfulness program was recorded: which clients actually fail closed on
