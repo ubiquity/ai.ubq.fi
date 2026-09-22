@@ -63,6 +63,7 @@ import {
 } from "../src/responses_stream.ts";
 import {
   parseSentinelUpstreamTrace,
+  SENTINEL_UPSTREAM_MAX_ATTEMPTS,
   SENTINEL_UPSTREAM_MAX_BYTES,
   SENTINEL_UPSTREAM_MAX_CHUNKS,
   type SentinelUpstreamAttempt,
@@ -77,10 +78,20 @@ import { createRecordedUpstreamReplay, type RecordedUpstreamReplay } from "../te
 const METADATA_FILE = ".sentinel-replay-input.json";
 const METADATA_MAX_BYTES = 16 * 1024;
 /**
- * Base64 of the parser's decoded byte bound plus JSON framing for up to
- * SENTINEL_UPSTREAM_MAX_CHUNKS chunk strings.
+ * Worst-case JSON size of one parser-accepted trace. Separately base64-encoded
+ * chunks cannot share padding: each chunk adds at most three encoded characters
+ * over the contiguous encoding, its two quotes and comma, and a version-2
+ * timing entry of at most nine digits plus a separator. Each attempt adds its
+ * fixed keys and clocks plus allowlisted header values of at most 512
+ * characters. The parser still enforces the decoded byte, chunk and attempt
+ * bounds, so this file guard only rejects input no valid trace can reach.
  */
-const UPSTREAM_FILE_MAX_BYTES = Math.ceil(SENTINEL_UPSTREAM_MAX_BYTES / 3) * 4 + Math.ceil(SENTINEL_UPSTREAM_MAX_CHUNKS / 8) + 16 * 1024;
+const UPSTREAM_CHUNK_JSON_OVERHEAD_BYTES = 16;
+const UPSTREAM_ATTEMPT_JSON_OVERHEAD_BYTES = 8 * 1024;
+const UPSTREAM_FILE_MAX_BYTES =
+  Math.ceil(SENTINEL_UPSTREAM_MAX_BYTES / 3) * 4 +
+  SENTINEL_UPSTREAM_MAX_CHUNKS * UPSTREAM_CHUNK_JSON_OVERHEAD_BYTES +
+  SENTINEL_UPSTREAM_MAX_ATTEMPTS * UPSTREAM_ATTEMPT_JSON_OVERHEAD_BYTES;
 const MAX_TEST_IDS = 64;
 const TEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,64}$/;
 const SYNTHETIC_PAID_API_KEY = "sentinel-replay-synthetic-key";
