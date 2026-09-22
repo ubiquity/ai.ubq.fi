@@ -13,9 +13,20 @@ import {
   providerCapacityRateLimitResetEventKey,
   type ProviderCapacityResetEvent,
 } from "./provider_capacity_events.ts";
+import {
+  isProviderCapacityRollupPoint,
+  listProviderCapacityRollups,
+  mergeProviderCapacityRollup,
+  PROVIDER_CAPACITY_ROLLUP_BUCKET_MS,
+  providerCapacityRollupBucketStartAtMs,
+  providerCapacityRollupKey,
+  type ProviderCapacityRollupInput,
+  type ProviderCapacityRollupSlotInput,
+} from "./provider_capacity_rollups.ts";
 import { readPromptCacheAnalytics } from "./prompt_cache_analytics.ts";
 import { PROVIDER_CAPACITY_HISTORY_BUCKET_MS, PROVIDER_CAPACITY_SNAPSHOT_KEY } from "./provider_capacity_contract.ts";
 export { PROVIDER_CAPACITY_HISTORY_BUCKET_MS } from "./provider_capacity_contract.ts";
+export { PROVIDER_CAPACITY_ROLLUP_BUCKET_MS } from "./provider_capacity_rollups.ts";
 import { getConfiguredMeteredQuotaSnapshot, METERED_QUOTA_FRESH_MS, type MeteredQuotaSnapshot } from "./metered_quota.ts";
 import { isRecord, sha256Hex } from "./utils.ts";
 
@@ -31,6 +42,11 @@ export const PROVIDER_CAPACITY_COLD_WAIT_MS = 2_000;
 export const PROVIDER_CAPACITY_SOURCE_STALE_MS = 30 * 60_000;
 export const PROVIDER_CAPACITY_CODEX_TIMEOUT_MS = 8_000;
 export const PROVIDER_CAPACITY_RATE_LIMIT_RESET_MIN_GAIN_PERCENTAGE_POINTS = 25;
+
+// The admin chart keeps its seven-day raw history; long-run research reads
+// the separate hourly rollup store through a bounded query window instead.
+export const PROVIDER_CAPACITY_RESEARCH_DEFAULT_WINDOW_DAYS = 90;
+export const PROVIDER_CAPACITY_RESEARCH_MAX_WINDOW_DAYS = 365;
 
 const ADDITIONAL_WINDOW_UNANCHORED_TOLERANCE_MS = 60_000;
 const CODEX_SPARK_LIMIT_NAME = "GPT-5.3-Codex-Spark";
@@ -753,6 +769,23 @@ const historyPointForSnapshot = (snapshot: ProviderCapacitySnapshot): ProviderCa
   };
 };
 
+const capacityRollupInputForHistoryPoint = (history: ProviderCapacityHistoryPoint): ProviderCapacityRollupInput => {
+  const slotInput = (slot: 1 | 2): ProviderCapacityRollupSlotInput => {
+    const source = history.sources.find((candidate): candidate is ProviderCapacityCodexSource => candidate.source === "codex" && candidate.slot === slot);
+    return {
+      slot,
+      state: source?.state ?? "unavailable",
+      primary: source?.windows.primary ?? null,
+      secondary: source?.windows.secondary ?? null,
+    };
+  };
+  return {
+    bucket_start_at_ms: providerCapacityRollupBucketStartAtMs(history.bucket_start_at_ms),
+    sampled_at_ms: history.sampled_at_ms,
+    slots: [slotInput(1), slotInput(2)],
+  };
+};
+
 const mergeHistoryPoints = (points: readonly ProviderCapacityHistoryPoint[], addition: ProviderCapacityHistoryPoint): ProviderCapacityHistoryPoint[] => {
   const bySample = new Map<string, ProviderCapacityHistoryPoint>();
   for (const point of points) bySample.set(`${point.bucket_start_at_ms}:${point.sampled_at_ms}`, point);
@@ -1131,19 +1164,26 @@ const lastAvailableCapacityEntries = (snapshot: ProviderCapacitySnapshot): reado
 
 const persistCapacitySnapshot = async (kv: Deno.Kv, leaseEntry: Deno.KvEntryMaybe<CapacityLease>, snapshot: ProviderCapacitySnapshot): Promise<boolean> => {
   const history = historyPointForSnapshot(snapshot);
+  const rollupInput = capacityRollupInputForHistoryPoint(history);
+  const rollupKey = providerCapacityRollupKey(rollupInput.bucket_start_at_ms);
   const comparisonReads = await Promise.allSettled([
     kv.get(PROVIDER_CAPACITY_SNAPSHOT_KEY, { consistency: "strong" }),
     kv.get(providerCapacityHistoryKey(history.bucket_start_at_ms), { consistency: "strong" }),
     ...([1, 2] as const).map((slot) => kv.get(providerCapacityLastAvailableKey(slot), { consistency: "strong" })),
+    kv.get(rollupKey, { consistency: "strong" }),
   ]);
   const storedEntries: Deno.KvEntryMaybe<unknown>[] = [];
-  for (const result of comparisonReads) {
+  for (const result of comparisonReads.slice(0, 4)) {
     if (result.status === "rejected") return false;
     storedEntries.push(result.value);
   }
+  // The rollup is long-run research telemetry: a failed rollup read must not
+  // block the operational snapshot and history write.
+  const rollupRead = comparisonReads[4];
+  const rollupEntry = rollupRead?.status === "fulfilled" ? rollupRead.value : undefined;
   const previousSnapshot = readStoredSnapshot(storedEntries[0]?.value);
   const previousHistory = readStoredHistoryPoint(storedEntries[1]?.value);
-  const lastAvailableObservations = storedEntries.slice(2).flatMap((entry) => {
+  const lastAvailableObservations = storedEntries.slice(2, 4).flatMap((entry) => {
     const observation = readStoredRateLimitObservation(entry.value);
     return observation ? [observation] : [];
   });
@@ -1160,6 +1200,10 @@ const persistCapacitySnapshot = async (kv: Deno.Kv, leaseEntry: Deno.KvEntryMayb
   }
   for (const entry of lastAvailableCapacityEntries(snapshot)) {
     operation = operation.set(providerCapacityLastAvailableKey(entry.slot), entry.value, { expireIn: PROVIDER_CAPACITY_RESET_EVENT_RETENTION_MS });
+  }
+  if (rollupEntry !== undefined) {
+    const existingRollup = isProviderCapacityRollupPoint(rollupEntry.value) ? rollupEntry.value : null;
+    operation = operation.check(rollupEntry).set(rollupKey, mergeProviderCapacityRollup(existingRollup, rollupInput));
   }
   if (preserveTransition && previousHistory) {
     operation = operation.set(providerCapacityHistoryTransitionKey(history.bucket_start_at_ms, previousHistory.sampled_at_ms), previousHistory, {
@@ -1310,6 +1354,44 @@ export const sampleProviderCapacityOnEvent = async (options: ProviderCapacitySna
     // interrupted persistence needs the conservative owner-checked release.
     if (!persisted) await releaseCapacityLease(kv, owner);
   }
+};
+
+const providerCapacityResearchWindowDays = (raw: string | null): number => {
+  const parsed = Number.parseInt(raw ?? "", 10);
+  if (!Number.isInteger(parsed) || parsed < 1) return PROVIDER_CAPACITY_RESEARCH_DEFAULT_WINDOW_DAYS;
+  return Math.min(parsed, PROVIDER_CAPACITY_RESEARCH_MAX_WINDOW_DAYS);
+};
+
+/**
+ * Long-run research read over the forever-kept hourly capacity rollups. This is
+ * deliberately separate from the operational capacity view: the chart keeps its
+ * bounded seven-day raw history, while `window_days` (default 90, capped at
+ * 365) bounds only this rollup query.
+ */
+export const handleProviderCapacityRollups = async (
+  request: Request = new Request("https://ai.ubq.fi/admin/providers/capacity/rollups"),
+  options: Pick<ProviderCapacitySnapshotOptions, "kv" | "now"> = {}
+): Promise<Response> => {
+  const nowMs = safeNow(options.now ?? Date.now);
+  const kv = options.kv === undefined ? await getKv() : options.kv;
+  const windowDays = providerCapacityResearchWindowDays(new URL(request.url).searchParams.get("window_days"));
+  const windowMs = windowDays * 24 * 60 * 60_000;
+  const rollups = kv ? await listProviderCapacityRollups(kv, { sinceMs: Math.max(0, nowMs - windowMs), nowMs }).catch(() => null) : null;
+  return json(
+    200,
+    {
+      snapshot_at_ms: nowMs,
+      window_days: windowDays,
+      retention: {
+        rollup_bucket_ms: PROVIDER_CAPACITY_ROLLUP_BUCKET_MS,
+        rollup_window_ms: windowMs,
+      },
+      // A failed scan must not masquerade as an empty curve.
+      rollup_scan: rollups === null ? "unavailable" : "ok",
+      rollups: rollups ?? [],
+    },
+    { "Cache-Control": "no-store" }
+  );
 };
 
 export const handleProviderCapacity = async (

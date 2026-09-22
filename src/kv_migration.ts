@@ -154,6 +154,10 @@ const DURABLE_PREFIXES: { group: string; prefix: Deno.KvKey }[] = [
     group: "metered_quota_balance_history",
     prefix: ["uos_ai", "metered_quota", "v1", "balance_history"],
   },
+  {
+    group: "provider_capacity_rollups",
+    prefix: ["uos_ai", "provider_capacity", "v1", "rollup"],
+  },
   { group: "paid_fallback_v3_pending", prefix: ["uos_ai", "paid_fallback", "v3", "pending"] },
   {
     group: "paid_fallback_v3_reconciliation_leases",

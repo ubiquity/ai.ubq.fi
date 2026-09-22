@@ -8,7 +8,7 @@ long a run (for example `gpt-5.6-sol` or `gpt-5.6-luna`) can last before the pai
 ## Retention decision
 
 Paid-fallback request rows used to be retained indefinitely in Deno KV. That is now bounded at one year, and
-research-grade history lives in two compact stores:
+research-grade history lives in these compact stores:
 
 | Store                         | Key prefix                                                       | Retention                     | Contents                                                                            |
 | ----------------------------- | ---------------------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------------- |
@@ -16,6 +16,7 @@ research-grade history lives in two compact stores:
 | Paid-fallback usage rollups   | `uos_ai/paid_fallback/v3/usage_rollup/<hour>/<model>/<provider>` | Indefinite                    | Per-hour per-model per-provider sums: requests, quota, tokens, spend                |
 | Metered quota balance history | `uos_ai/metered_quota/v1/balance_history/<hour>`                 | Indefinite                    | Hourly wallet balance / baseline / remaining percent (+ totals in token-usage mode) |
 | Provider capacity history     | `uos_ai/provider_capacity/v1/history/...`                        | 7 days (unchanged)            | 15-minute Codex/Metered capacity snapshot used by the admin chart                   |
+| Provider capacity rollups     | `uos_ai/provider_capacity/v1/rollup/<hour>`                      | Indefinite                    | Hourly per-slot Codex capacity summary: min/max/last window usage                   |
 | Admin error log               | `uos_ai/admin_error_log/v1/...`                                  | 7 days (unchanged)            | Failed inference terminals                                                          |
 | Prompt-cache analytics        | `uos_ai/prompt-cache-analytics/...`                              | 8 days (unchanged)            | Cache-token buckets                                                                 |
 
@@ -91,4 +92,7 @@ static/admin.js, static/admin.css).
 - Oldest-first hard cap: not implemented. TTL gives a bounded horizon; a true byte budget would need timestamp-ordered
   keys or a global age index — note the legacy analytics key shape `[keyId, createdAtMs, requestId]` as a precedent if
   that becomes necessary.
-- The provider-capacity chart view stays at seven days on purpose; the balance history store is the long-term curve.
+- The provider-capacity chart view stays at seven days on purpose. Long-run capacity research reads the separate
+  forever-kept hourly rollups through `GET /admin/providers/capacity/rollups?window_days=N` (default 90, capped at 365):
+  every persisted capacity sample folds its per-slot window summaries into the same atomic as the 15-minute history
+  point, and that read never feeds the chart payload.

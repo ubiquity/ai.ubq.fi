@@ -90,7 +90,7 @@ import {
 import { withCodexQuotaHeaders } from "./codex_quota.ts";
 import { handleRoot, handleStaticAsset } from "./static.ts";
 import { sha256Hex } from "./utils.ts";
-import { handleProviderCapacity } from "./provider_capacity.ts";
+import { handleProviderCapacity, handleProviderCapacityRollups } from "./provider_capacity.ts";
 import {
   type AcceptedSentinelReplayInput,
   captureAcceptedSentinelReplayInput,
@@ -991,6 +991,7 @@ const ADMIN_ROUTES: readonly AdminRouteEntry[] = [
   { methods: ["GET"], path: "/admin/providers/selection", run: () => handleAdminProviderSelectionGet() },
   { methods: ["POST"], path: "/admin/providers/selection", run: (req) => handleAdminProviderSelectionSet(req) },
   { methods: ["GET"], path: "/admin/providers/capacity", run: (req) => handleProviderCapacity(req) },
+  { methods: ["GET"], path: "/admin/providers/capacity/rollups", run: (req) => handleProviderCapacityRollups(req) },
   { methods: ["GET"], path: "/admin/providers/quota-projection", run: (req) => handleAdminProvidersQuotaProjection(req) },
   { methods: ["POST"], path: "/admin/providers/quota-projection/backfill", run: (req) => handleAdminProvidersQuotaProjectionBackfill(req) },
   { methods: ["GET"], path: "/admin/prompt-cache-analytics", run: (req) => handleAdminPromptCacheAnalytics(req) },

@@ -7,11 +7,15 @@ import { CODEX_AUTH_POOL_KV_KEY, resetCodexAuthCacheForTest } from "../src/codex
 import {
   getPersistedProviderCapacityView,
   handleProviderCapacity,
+  handleProviderCapacityRollups,
   PROVIDER_CAPACITY_HISTORY_BUCKET_MS,
   PROVIDER_CAPACITY_HISTORY_KEY_PREFIX,
   PROVIDER_CAPACITY_HISTORY_RETENTION_MS,
   PROVIDER_CAPACITY_LEASE_KEY,
   PROVIDER_CAPACITY_RATE_LIMIT_RESET_MIN_GAIN_PERCENTAGE_POINTS,
+  PROVIDER_CAPACITY_RESEARCH_DEFAULT_WINDOW_DAYS,
+  PROVIDER_CAPACITY_RESEARCH_MAX_WINDOW_DAYS,
+  PROVIDER_CAPACITY_ROLLUP_BUCKET_MS,
   PROVIDER_CAPACITY_SNAPSHOT_KEY,
   PROVIDER_CAPACITY_SOURCE_STALE_MS,
   type ProviderCapacityCodexSource,
@@ -19,6 +23,12 @@ import {
   refreshProviderCapacity,
   sampleProviderCapacityOnEvent,
 } from "../src/provider_capacity.ts";
+import {
+  listProviderCapacityRollups,
+  mergeProviderCapacityRollup,
+  providerCapacityRollupBucketStartAtMs,
+  providerCapacityRollupKey,
+} from "../src/provider_capacity_rollups.ts";
 import { PROMPT_CACHE_ANALYTICS_BUCKET_MS, promptCacheAnalyticsCounterKey } from "../src/prompt_cache_analytics.ts";
 import {
   listProviderCapacityDowntimeEvents,
@@ -960,6 +970,114 @@ Deno.test("legacy history without account cohorts remains readable but cannot in
   assert.deepEqual(view.rate_limit_reset_events, []);
 });
 
+const rollupTestInput = (bucketStartAtMs: number, sampledAtMs: number, primaryUsedPercent: number, state: "available" | "unavailable" = "available") => ({
+  bucket_start_at_ms: bucketStartAtMs,
+  sampled_at_ms: sampledAtMs,
+  slots: [
+    {
+      slot: 1 as const,
+      state,
+      primary: state === "available" ? { limit_window_seconds: 10_800, used_percent: primaryUsedPercent, reset_at_ms: sampledAtMs + 10_800_000 } : null,
+      secondary: null,
+    },
+    { slot: 2 as const, state: "unavailable" as const, primary: null, secondary: null },
+  ] as const,
+});
+
+Deno.test("sampling folds an hourly capacity rollup into the persisted history atomic", async () => {
+  seed();
+  await refreshProviderCapacity({ kv: kvStub, fetcher: createFetcher([]), now: () => nowMs });
+  const bucketStartAtMs = providerCapacityRollupBucketStartAtMs(nowMs);
+  const stored = kvStore.get(keyToString(providerCapacityRollupKey(bucketStartAtMs)))?.value;
+  assert.notEqual(stored, undefined);
+
+  const first = await listProviderCapacityRollups(kvStub, { sinceMs: nowMs - PROVIDER_CAPACITY_ROLLUP_BUCKET_MS, nowMs });
+  assert.equal(first.length, 1);
+  const point = first[0];
+  assert.ok(point);
+  assert.equal(point.bucket_start_at_ms, bucketStartAtMs);
+  assert.equal(point.sample_count, 1);
+  assert.equal(point.slots[0].slot, 1);
+  assert.equal(point.slots[0].last_state, "available");
+  assert.equal(point.slots[0].primary.last_used_percent, 12.5);
+  assert.equal(point.slots[0].primary.min_used_percent, 12.5);
+  assert.equal(point.slots[0].secondary.last_used_percent, 38);
+  assert.equal(point.slots[1].primary.last_used_percent, 67);
+
+  // A later sample in the same hour merges into the existing rollup record.
+  await refreshProviderCapacity({
+    kv: kvStub,
+    fetcher: createFetcher([], null, {}, (account) => (account === "account-one" ? [20.5, 30] : [10, 90])),
+    now: () => nowMs + 60_000,
+  });
+  const merged = await listProviderCapacityRollups(kvStub, { sinceMs: nowMs - PROVIDER_CAPACITY_ROLLUP_BUCKET_MS, nowMs: nowMs + 60_000 });
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0]?.sample_count, 2);
+  assert.equal(merged[0]?.slots[0].primary.min_used_percent, 12.5);
+  assert.equal(merged[0]?.slots[0].primary.max_used_percent, 20.5);
+  assert.equal(merged[0]?.slots[0].primary.last_used_percent, 20.5);
+  assert.equal(merged[0]?.slots[1].primary.min_used_percent, 10);
+  assert.equal(merged[0]?.slots[1].primary.max_used_percent, 67);
+});
+
+Deno.test("research rollups keep hourly capacity summaries beyond the seven-day raw history window", async () => {
+  seed();
+  const researchNowMs = nowMs + 30 * 24 * 60 * 60_000;
+  const oldBucketStartAtMs = providerCapacityRollupBucketStartAtMs(nowMs - 30 * 24 * 60 * 60_000);
+  const oldPoint = mergeProviderCapacityRollup(null, rollupTestInput(oldBucketStartAtMs, oldBucketStartAtMs + 1_000, 42));
+  kvStore.put(providerCapacityRollupKey(oldBucketStartAtMs), oldPoint);
+  const nowBucketStartAtMs = providerCapacityRollupBucketStartAtMs(researchNowMs);
+  kvStore.put(
+    providerCapacityRollupKey(nowBucketStartAtMs),
+    mergeProviderCapacityRollup(null, rollupTestInput(nowBucketStartAtMs, nowBucketStartAtMs + 1_000, 7, "unavailable"))
+  );
+
+  const long = await listProviderCapacityRollups(kvStub, { sinceMs: researchNowMs - 90 * 24 * 60 * 60_000, nowMs: researchNowMs });
+  assert.deepEqual(long.map((entry) => entry.bucket_start_at_ms), [oldBucketStartAtMs, nowBucketStartAtMs]);
+  assert.equal(long[0]?.slots[0].primary.max_used_percent, 42);
+  assert.equal(long[1]?.slots[0].last_state, "unavailable");
+
+  const recent = await listProviderCapacityRollups(kvStub, { sinceMs: researchNowMs - 7 * 24 * 60 * 60_000, nowMs: researchNowMs });
+  assert.deepEqual(recent.map((entry) => entry.bucket_start_at_ms), [nowBucketStartAtMs]);
+});
+
+Deno.test("capacity rollups research route returns the requested window", async () => {
+  seed();
+  const bucketStartAtMs = providerCapacityRollupBucketStartAtMs(nowMs);
+  kvStore.put(providerCapacityRollupKey(bucketStartAtMs), mergeProviderCapacityRollup(null, rollupTestInput(bucketStartAtMs, nowMs, 33)));
+
+  const response = await handleProviderCapacityRollups(new Request("https://ai.ubq.fi/admin/providers/capacity/rollups?window_days=365"), {
+    kv: kvStub,
+    now: () => nowMs,
+  });
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as {
+    window_days?: number;
+    rollup_scan?: string;
+    retention?: { rollup_bucket_ms?: number; rollup_window_ms?: number };
+    rollups?: { bucket_start_at_ms?: number; slots?: { primary?: { last_used_percent?: number } }[] }[];
+  };
+  assert.equal(body.window_days, 365);
+  assert.equal(body.rollup_scan, "ok");
+  assert.equal(body.retention?.rollup_bucket_ms, PROVIDER_CAPACITY_ROLLUP_BUCKET_MS);
+  assert.equal(body.retention?.rollup_window_ms, 365 * 24 * 60 * 60_000);
+  assert.equal(body.rollups?.length, 1);
+  assert.equal(body.rollups?.[0]?.bucket_start_at_ms, bucketStartAtMs);
+  assert.equal(body.rollups?.[0]?.slots?.[0]?.primary?.last_used_percent, 33);
+
+  const defaults = await handleProviderCapacityRollups(new Request("https://ai.ubq.fi/admin/providers/capacity/rollups?window_days=nope"), {
+    kv: kvStub,
+    now: () => nowMs,
+  });
+  assert.equal(((await defaults.json()) as { window_days?: number }).window_days, PROVIDER_CAPACITY_RESEARCH_DEFAULT_WINDOW_DAYS);
+
+  const capped = await handleProviderCapacityRollups(new Request("https://ai.ubq.fi/admin/providers/capacity/rollups?window_days=100000"), {
+    kv: kvStub,
+    now: () => nowMs,
+  });
+  assert.equal(((await capped.json()) as { window_days?: number }).window_days, PROVIDER_CAPACITY_RESEARCH_MAX_WINDOW_DAYS);
+});
+
 Deno.test("capacity view backfills recent verified reset events from the redacted redemption ledger", async () => {
   seed();
   const accountIdHash = "account-hash-one";
@@ -1203,10 +1321,12 @@ Deno.test("persisted Codex data becomes stale after the missed-run allowance", a
   assert.equal(stale.history[0]?.sources[0]?.state, "available");
 });
 
-Deno.test("capacity route requires admin authentication", async () => {
+Deno.test("capacity routes require admin authentication", async () => {
   const { default: handler } = await import("../src/handler.ts");
   const response = await handler(new Request("https://ai.ubq.fi/admin/providers/capacity"));
   assert.equal(response.status, 401);
+  const rollups = await handler(new Request("https://ai.ubq.fi/admin/providers/capacity/rollups"));
+  assert.equal(rollups.status, 401);
 });
 
 const seedCountingCapacityKv = (kv: CountingKv): void => {
@@ -1276,8 +1396,9 @@ Deno.test("event sampler persists capacity without building the discarded admin 
       "the event sampler must not enumerate history or reset-event projection prefixes"
     );
     // The quota refresh inside a sample also appends at most one hourly
-    // balance-history read plus one upsert, hence the 22-command ceiling.
-    assert.ok(samplerBudget.commands <= 22, `event sampler budget unexpectedly grew to ${samplerBudget.commands} KV commands`);
+    // balance-history read plus one upsert, and folding the hourly capacity
+    // rollup adds exactly one read, hence the 23-command ceiling.
+    assert.ok(samplerBudget.commands <= 23, `event sampler budget unexpectedly grew to ${samplerBudget.commands} KV commands`);
     assert.notEqual((await samplerKv.get(PROVIDER_CAPACITY_SNAPSHOT_KEY)).value, null);
     assert.notEqual((await samplerKv.get(providerCapacityHistoryKey(nowMs))).value, null);
     assert.notEqual((await samplerKv.get(CODEX_CAPACITY_ROUTING_OBSERVATION_KV_KEY)).value, null);
