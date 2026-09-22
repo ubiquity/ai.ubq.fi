@@ -22,6 +22,13 @@ import { sha256Base64Url } from "../src/utils.ts";
  * `createServeHandler(handler)`, real KV-backed authentication and quota
  * accounting, and no paid provider, credential or external network.
  *
+ * The normal launcher (`deno task test`) starts this file in its own isolated
+ * `deno test --unstable-kv` process with `SURPLUS_API_KEY` and `METERED_API_KEY`
+ * removed and without dotenv discovery, so an ordinarily configured checkout
+ * still proves the fixture starts credential-free. Every test asserts that
+ * absence before installing its dummy values, so a direct run needs the same
+ * isolation.
+ *
  * Every scenario uses a real Deno KV (`:memory:`) and a real HTTP client, so the
  * assertions exercise the production seams: admission, quota reservation and
  * dispatch, upstream translation, downstream delivery, cancellation and the
@@ -398,8 +405,8 @@ Deno.test({
     try {
       // Credential presence is verified before any dummy value replaces it, and
       // the paid tiers are removed for the duration so a fault cannot advance.
-      assert.equal(originalSurplusKey, undefined, "no paid Surplus credential may be present");
-      assert.equal(originalMeteredKey, undefined, "no paid Metered credential may be present");
+      assert.equal(originalSurplusKey, undefined, "no paid Surplus credential may be present; `deno task test` removes it and skips .env");
+      assert.equal(originalMeteredKey, undefined, "no paid Metered credential may be present; `deno task test` removes it and skips .env");
       env.delete("SURPLUS_API_KEY");
       env.delete("METERED_API_KEY");
       env.set("DEEPSEEK_API_KEY", "oss-http-dummy-deepseek-key");
@@ -523,8 +530,8 @@ Deno.test({
     const harness = await startHarness();
     const stop = harness.stop;
     try {
-      assert.equal(originalSurplusKey, undefined, "no paid Surplus credential may be present");
-      assert.equal(originalMeteredKey, undefined, "no paid Metered credential may be present");
+      assert.equal(originalSurplusKey, undefined, "no paid Surplus credential may be present; `deno task test` removes it and skips .env");
+      assert.equal(originalMeteredKey, undefined, "no paid Metered credential may be present; `deno task test` removes it and skips .env");
       env.delete("SURPLUS_API_KEY");
       env.delete("METERED_API_KEY");
       env.set("DEEPSEEK_API_KEY", "oss-http-dummy-deepseek-key");
@@ -697,8 +704,8 @@ Deno.test({
     const harness = await startHarness();
     const stop = harness.stop;
     try {
-      assert.equal(originalSurplusKey, undefined, "no paid Surplus credential may be present");
-      assert.equal(originalMeteredKey, undefined, "no paid Metered credential may be present");
+      assert.equal(originalSurplusKey, undefined, "no paid Surplus credential may be present; `deno task test` removes it and skips .env");
+      assert.equal(originalMeteredKey, undefined, "no paid Metered credential may be present; `deno task test` removes it and skips .env");
       env.delete("SURPLUS_API_KEY");
       env.delete("METERED_API_KEY");
       env.set("DEEPSEEK_API_KEY", "oss-http-dummy-deepseek-key");
@@ -840,8 +847,8 @@ Deno.test({
     const harness = await startHarness();
     const stop = harness.stop;
     try {
-      assert.equal(originalSurplusKey, undefined, "no paid Surplus credential may be present");
-      assert.equal(originalMeteredKey, undefined, "no paid Metered credential may be present");
+      assert.equal(originalSurplusKey, undefined, "no paid Surplus credential may be present; `deno task test` removes it and skips .env");
+      assert.equal(originalMeteredKey, undefined, "no paid Metered credential may be present; `deno task test` removes it and skips .env");
       env.delete("SURPLUS_API_KEY");
       env.delete("METERED_API_KEY");
       env.set("DEEPSEEK_API_KEY", "oss-http-dummy-deepseek-key");
