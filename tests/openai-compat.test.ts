@@ -15105,6 +15105,98 @@ Deno.test("openai: a truncated DeepSeek Responses stream reports response.incomp
   }
 });
 
+Deno.test("openai: the buffered DeepSeek Responses path fails a degenerate completion closed too", async (t) => {
+  // The streamed path (previous test) already fails closed. The buffered path
+  // is a different branch of the same route, and before this test it reported
+  // the same degenerate completion as `completed` with `error: null` - one
+  // request shape must not report success on one transport and failure on the
+  // other.
+  const envKey = "DEEPSEEK_API_KEY";
+  const originalApiKey = Deno.env.get(envKey);
+  Deno.env.set(envKey, "deepseek-test-key");
+  const buffered = (choices: readonly Record<string, unknown>[]): Promise<Response> =>
+    withFetchMock(
+      () =>
+        Response.json({
+          id: "deepseek-buffered-terminal",
+          object: "chat.completion",
+          created: 1_780_000_600,
+          model: DEEPSEEK_FLASH_MODEL,
+          choices,
+          usage: { prompt_tokens: 5, completion_tokens: 30, total_tokens: 35 },
+        }),
+      () => handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: false }))
+    );
+  try {
+    await t.step("a buffered reasoning-only completion is empty_upstream_completion", async () => {
+      const response = await buffered([
+        { index: 0, message: { role: "assistant", reasoning_content: "The whole budget went into thinking." }, finish_reason: "stop" },
+      ]);
+      assert.equal(response.status, 502);
+      const payload = (await response.json()) as { error?: Record<string, unknown> };
+      const error = payload.error;
+      assert.ok(error);
+      // Same code and message the ordinary routes already return for this
+      // classification, so a caller cannot tell the transports apart.
+      assert.equal(error.code, "empty_upstream_completion");
+      assert.equal(error.message, "Upstream response completed with no translated semantic output.");
+      assert.equal(error.type, "server_error");
+      const telemetry = getResponseTelemetry(response);
+      assert.ok(telemetry);
+      assert.equal(telemetry.completed, false);
+      assert.equal(telemetry.failureKind, "empty_upstream_completion");
+      assert.equal(telemetry.semanticOutputObserved, false);
+    });
+
+    await t.step("a buffered empty completion is also empty_upstream_completion", async () => {
+      const response = await buffered([{ index: 0, message: { role: "assistant", content: "" }, finish_reason: "stop" }]);
+      assert.equal(response.status, 502);
+      const payload = (await response.json()) as { error?: Record<string, unknown> };
+      const error = payload.error;
+      assert.ok(error);
+      assert.equal(error.code, "empty_upstream_completion");
+    });
+
+    await t.step("an explicit truncation still wins over the empty-completion guard", async () => {
+      const response = await buffered([{ index: 0, message: { role: "assistant", reasoning_content: "thinking" }, finish_reason: "length" }]);
+      assert.equal(response.status, 200);
+      const payload = (await response.json()) as Record<string, unknown>;
+      assert.equal(payload.status, "incomplete");
+      assert.deepEqual(payload.incomplete_details, { reason: "max_output_tokens" });
+      assert.equal(getResponseTelemetry(response)?.failureKind, "incomplete_response");
+    });
+
+    await t.step("a buffered text completion is untouched", async () => {
+      const response = await buffered([{ index: 0, message: { role: "assistant", content: "pong" }, finish_reason: "stop" }]);
+      assert.equal(response.status, 200);
+      const payload = (await response.json()) as Record<string, unknown>;
+      assert.equal(payload.status, "completed");
+      assert.equal(getResponseTelemetry(response)?.completed, true);
+      assert.equal(getResponseTelemetry(response)?.failureKind, null);
+    });
+
+    await t.step("a buffered tool-call completion is untouched", async () => {
+      const response = await buffered([
+        {
+          index: 0,
+          message: { role: "assistant", content: "", tool_calls: [{ id: "call_1", type: "function", function: { name: "clock_now", arguments: "{}" } }] },
+          finish_reason: "tool_calls",
+        },
+      ]);
+      assert.equal(response.status, 200);
+      const payload = (await response.json()) as Record<string, unknown>;
+      assert.equal(payload.status, "completed");
+      assert.deepEqual(
+        (payload.output as Record<string, unknown>[]).map((item) => item.type),
+        ["function_call"]
+      );
+    });
+  } finally {
+    if (originalApiKey === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, originalApiKey);
+  }
+});
+
 Deno.test("openai: one shared completion-validity rule governs the DeepSeek and Cerebras routes", async (t) => {
   // The rule itself. A reasoning-only completion reaches the predicate with
   // empty text and no tool calls: the provider's reasoning field (`reasoning`
