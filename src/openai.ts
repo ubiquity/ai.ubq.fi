@@ -10217,6 +10217,39 @@ type DeepSeekRecheckFirstLeg = Readonly<{
   completionTokens: number | null;
 }>;
 
+/**
+ * Validates the recheck payload's own completion into the advisory outcome
+ * through the existing provider validator, but without the primary route's
+ * failure telemetry: a bad advisory response must not overwrite the first leg's
+ * success classification.
+ *
+ * The second leg's billable counters are read before validity — a completion the
+ * provider billed for keeps its measured usage even when its output fails
+ * validation, while a payload with no measurable counter is not invented into
+ * one — and tools are accepted only from a completed, non-refusing disposition.
+ */
+const observedDeepSeekRecheckCompletion = (
+  payload: unknown,
+  upstreamModel: string,
+  executableToolNames: ReadonlySet<string>,
+  observedUsage: Record<string, unknown> | null
+): DeepSeekRecheckOutcome => {
+  const completion = normalizeDeepSeekChatCompletion(payload, upstreamModel);
+  if (!completion.ok) return observedUsage ? { status: "observed", usage: observedUsage, toolCalls: null } : { status: "unavailable" };
+  const choices = Array.isArray(completion.value.choices) ? completion.value.choices : [];
+  const choice = choices.find((entry) => isRecord(entry) && !Array.isArray(entry));
+  const message = isRecord(choice) && isRecord(choice.message) && !Array.isArray(choice.message) ? choice.message : null;
+  const usage = isRecord(completion.value.usage) ? completion.value.usage : observedUsage;
+  // Tools are accepted only from a completed disposition: a truncated or
+  // interrupted second answer keeps the first answer instead.
+  const disposition = deepSeekFinishDisposition(isRecord(choice) ? choice.finish_reason : undefined);
+  // An explicit refusal is a nonanswer: whatever the provider also emitted
+  // beside it, the advisory check contributes no tool call.
+  const refused = message !== null && typeof message.refusal === "string" && message.refusal.length > 0;
+  const toolCalls = message && !refused && disposition.kind === "completed" ? deepSeekRecheckToolCalls(message, executableToolNames) : null;
+  return { status: "observed", usage, toolCalls };
+};
+
 const runDeepSeekRecheck = async (
   options: Readonly<{
     chatBody: Record<string, unknown>;
@@ -10279,23 +10312,193 @@ const runDeepSeekRecheck = async (
   // payload before the completion itself: a response the provider billed for
   // keeps its measured tokens even when its output fails validation.
   const observedUsage = measurableDeepSeekRecheckUsage(isRecord(payload) && !Array.isArray(payload) ? payload.usage : undefined);
-  // The existing provider validator, read without the primary route's failure
-  // telemetry: a bad advisory response must not overwrite the first leg's
-  // success classification.
-  const completion = normalizeDeepSeekChatCompletion(payload, options.upstreamModel);
-  if (!completion.ok) return observedUsage ? { status: "observed", usage: observedUsage, toolCalls: null } : { status: "unavailable" };
-  const choices = Array.isArray(completion.value.choices) ? completion.value.choices : [];
-  const choice = choices.find((entry) => isRecord(entry) && !Array.isArray(entry));
-  const message = isRecord(choice) && isRecord(choice.message) && !Array.isArray(choice.message) ? choice.message : null;
-  const usage = isRecord(completion.value.usage) ? completion.value.usage : observedUsage;
-  // Tools are accepted only from a completed disposition: a truncated or
-  // interrupted second answer keeps the first answer instead.
-  const disposition = deepSeekFinishDisposition(isRecord(choice) ? choice.finish_reason : undefined);
-  // An explicit refusal is a nonanswer: whatever the provider also emitted
-  // beside it, the advisory check contributes no tool call.
-  const refused = message !== null && typeof message.refusal === "string" && message.refusal.length > 0;
-  const toolCalls = message && !refused && disposition.kind === "completed" ? deepSeekRecheckToolCalls(message, options.executableToolNames) : null;
-  return { status: "observed", usage, toolCalls };
+  return observedDeepSeekRecheckCompletion(payload, options.upstreamModel, options.executableToolNames, observedUsage);
+};
+
+/**
+ * The advisory recheck's view of the first buffered leg: the draft the answer
+ * narrated plus the facts eligibility reads. Kept separate so the buffered
+ * finalizer stays a sequence of decisions instead of one long expression.
+ */
+const deepSeekBufferedRecheckInput = (
+  firstChoice: unknown,
+  firstMessage: Record<string, unknown> | null,
+  chatBody: Record<string, unknown>,
+  executableToolCount: number,
+  completionTokens: number | null
+): Readonly<{ draft: Readonly<{ content: string; reasoning: string }>; firstLeg: DeepSeekRecheckFirstLeg }> => ({
+  draft: {
+    content: typeof firstMessage?.content === "string" ? firstMessage.content : "",
+    reasoning: typeof firstMessage?.reasoning_content === "string" ? firstMessage.reasoning_content : "",
+  },
+  firstLeg: {
+    finishReason: isRecord(firstChoice) ? firstChoice.finish_reason : undefined,
+    refusal: firstMessage?.refusal,
+    toolCallCount: firstMessage && Array.isArray(firstMessage.tool_calls) ? firstMessage.tool_calls.length : 0,
+    executableToolCount,
+    toolChoice: chatBody.tool_choice,
+    completionTokens,
+  },
+});
+
+/**
+ * Folds the advisory recheck's outcome into the buffered response's final
+ * payload and accounting.
+ *
+ * A failed or unusable second leg is merged as a null measurement rather than
+ * left unmerged: two requests were made, so an aggregate detail only the first
+ * leg measured must not be published as if it covered both. An accepted tool
+ * call is translated once onto the first answer together with the merged usage,
+ * while a tool-less outcome keeps the first payload and changes only its totals.
+ */
+const applyBufferedDeepSeekRecheck = (
+  payload: Record<string, unknown>,
+  firstCompletion: Record<string, unknown>,
+  firstChoice: unknown,
+  firstMessage: Record<string, unknown> | null,
+  firstUsage: Record<string, unknown> | null,
+  usage: UsageTokens | null,
+  recheck: DeepSeekRecheckOutcome,
+  modelRaw: string,
+  responseId: string,
+  echo: DeepSeekResponsesEcho,
+  toolNames: ReadonlyMap<string, string>,
+  customToolNames: ReadonlySet<string>
+): Readonly<{ payload: Record<string, unknown>; usage: UsageTokens | null }> => {
+  const recheckUsage = recheck.status === "observed" ? recheck.usage : null;
+  const merged = recheck.status === "skipped" ? null : mergeDeepSeekRecheckUsage(firstUsage, recheckUsage);
+  const aggregateUsage = recheck.status === "skipped" ? usage : aggregateDeepSeekUsageTokens(merged?.usage ?? firstUsage, merged?.complete ?? false);
+  if (recheck.status === "observed" && recheck.toolCalls?.length) {
+    // One translation of a merged completion: the first answer keeps its text
+    // and reasoning, the accepted tools ride before the original terminal, and
+    // the envelope reports both requests' usage. The response id stays the one
+    // minted for this request.
+    return {
+      payload: toDeepSeekResponsesPayload(
+        {
+          ...firstCompletion,
+          choices: [
+            {
+              ...(isRecord(firstChoice) ? firstChoice : { index: 0 }),
+              message: { ...(firstMessage ?? {}), tool_calls: recheck.toolCalls },
+              finish_reason: "tool_calls",
+            },
+          ],
+          ...(merged?.usage ? { usage: merged.usage } : {}),
+        },
+        modelRaw,
+        responseId,
+        echo,
+        toolNames,
+        customToolNames
+      ),
+      usage: aggregateUsage,
+    };
+  }
+  if (recheck.status !== "skipped" && merged?.usage) {
+    // Keeping the first answer preserves its payload; only the usage totals
+    // change, so the second request's measured tokens are not silently lost.
+    return { payload: { ...payload, usage: toResponsesUsage(merged.usage) }, usage: aggregateUsage };
+  }
+  return { payload, usage: aggregateUsage };
+};
+
+/**
+ * Finalizes the buffered DeepSeek Responses branch: reads the captured body,
+ * applies the provider terminal's classification first, may run the one bounded
+ * advisory recheck, and returns this request's single response.
+ *
+ * Admission, the request record, the response identity and the echo all belong
+ * to the caller; this helper only reuses the already-dispatched upstream, so no
+ * second admission, request record or terminal is created.
+ */
+const finalizeBufferedDeepSeekResponses = async (
+  options: Readonly<{
+    upstream: Response;
+    modelRaw: string;
+    responseId: string;
+    echo: DeepSeekResponsesEcho;
+    toolNames: ReadonlyMap<string, string>;
+    customToolNames: ReadonlySet<string>;
+    chatBody: Record<string, unknown>;
+    executableToolNames: ReadonlySet<string>;
+    outputAllowance: number | null;
+    upstreamModel: string;
+    providerRequestId: string | null;
+    requestSignal: AbortSignal;
+    downstreamSignal: AbortSignal;
+    usageContext?: UsageContext;
+  }>
+): Promise<Response> => {
+  const captured = await readBoundedResponseBody(options.upstream, {
+    signal: options.requestSignal,
+    maxBytes: DEEPSEEK_BUFFERED_BODY_MAX_BYTES,
+    timeoutMs: BUFFERED_INFERENCE_DEADLINE_MS,
+    cancellationReason: "DeepSeek Responses adapter body was incomplete",
+  });
+  if (!captured.complete) {
+    return await respondDeepSeekChatIncompleteCapture(options.usageContext, options.downstreamSignal, options.requestSignal, options.providerRequestId);
+  }
+
+  const completion = await readDeepSeekChatCompletion(
+    captured.bytes,
+    options.upstream.status,
+    options.providerRequestId,
+    options.usageContext,
+    options.upstreamModel
+  );
+  if (!completion.ok) return completion.response;
+
+  let providerRequestId = options.providerRequestId;
+  providerRequestId ??= normalizeDeepSeekProviderRequestId(completion.value.id);
+  if (options.usageContext?.responseTelemetry) options.usageContext.responseTelemetry.providerRequestId = providerRequestId;
+  const firstCompletion = completion.value;
+  const firstChoice = (Array.isArray(firstCompletion.choices) ? firstCompletion.choices : []).find((entry) => isRecord(entry) && !Array.isArray(entry));
+  const firstMessage = isRecord(firstChoice) && isRecord(firstChoice.message) && !Array.isArray(firstChoice.message) ? firstChoice.message : null;
+  const firstUsage = isRecord(firstCompletion.usage) ? firstCompletion.usage : null;
+  const payload = toDeepSeekResponsesPayload(firstCompletion, options.modelRaw, options.responseId, options.echo, options.toolNames, options.customToolNames);
+  const usage = extractChatUsageTokens(firstCompletion.usage);
+  // The provider's own reason decides the terminal first: an explicit
+  // truncation is `response.incomplete` and is reported as such. Only a
+  // would-be completion is then measured for answer-bearing output, which is
+  // the same order the streamed path applies.
+  if (deepSeekTerminalTypeForPayload(payload.status) === "response.completed" && !chatCompletionHasAnswerBearingOutput(firstCompletion)) {
+    return respondDeepSeekEmptyBufferedCompletion(options.usageContext, usage, options.upstream.status, providerRequestId);
+  }
+  // Past the truncation and empty guards, one bounded recheck may recover a
+  // tool call the first answer narrated instead of making. It is advisory: a
+  // failed or tool-less check keeps the first answer, and the extra request is
+  // accounted for even when its own usage was not observed.
+  const recheckInput = deepSeekBufferedRecheckInput(firstChoice, firstMessage, options.chatBody, options.executableToolNames.size, usage?.outputTokens ?? null);
+  const recheck = await runDeepSeekRecheck({
+    chatBody: options.chatBody,
+    draft: recheckInput.draft,
+    firstLeg: recheckInput.firstLeg,
+    allowance: options.outputAllowance,
+    requestedModel: options.modelRaw,
+    upstreamModel: options.upstreamModel,
+    executableToolNames: options.executableToolNames,
+    requestSignal: options.requestSignal,
+    downstreamSignal: options.downstreamSignal,
+    recheckAbort: new AbortController(),
+    usageContext: options.usageContext,
+  });
+  const finalized = applyBufferedDeepSeekRecheck(
+    payload,
+    firstCompletion,
+    firstChoice,
+    firstMessage,
+    firstUsage,
+    usage,
+    recheck,
+    options.modelRaw,
+    options.responseId,
+    options.echo,
+    options.toolNames,
+    options.customToolNames
+  );
+  recordBufferedDeepSeekResponsesTerminal(options.usageContext, finalized.payload, finalized.usage, options.upstream.status, providerRequestId);
+  return json(200, finalized.payload, deepseekResponseHeaders(providerRequestId));
 };
 
 /**
@@ -10362,7 +10565,7 @@ const handleDeepSeekResponses = async (req: Request, rawRecord: Record<string, u
   const dispatched = await dispatchDeepSeekUpstream(req, chatBody, modelRaw, usageContext);
   if (!dispatched.ok) return dispatched.response;
   const { upstream, requestSignal, downstreamSignal } = dispatched;
-  let providerRequestId = dispatched.providerRequestId;
+  const providerRequestId = dispatched.providerRequestId;
   const responseId = `resp_${(providerRequestId ?? crypto.randomUUID()).replace(/[^A-Za-z0-9]/g, "").slice(0, 40)}`;
   const createdAtSeconds = Math.floor(Date.now() / 1000);
 
@@ -10383,97 +10586,37 @@ const handleDeepSeekResponses = async (req: Request, rawRecord: Record<string, u
     );
   }
 
-  const captured = await readBoundedResponseBody(upstream, {
-    signal: requestSignal,
-    maxBytes: DEEPSEEK_BUFFERED_BODY_MAX_BYTES,
-    timeoutMs: BUFFERED_INFERENCE_DEADLINE_MS,
-    cancellationReason: "DeepSeek Responses adapter body was incomplete",
-  });
-  if (!captured.complete) {
-    return await respondDeepSeekChatIncompleteCapture(usageContext, downstreamSignal, requestSignal, providerRequestId);
-  }
-
-  const completion = await readDeepSeekChatCompletion(captured.bytes, upstream.status, providerRequestId, usageContext, upstreamModel);
-  if (!completion.ok) return completion.response;
-
-  providerRequestId ??= normalizeDeepSeekProviderRequestId(completion.value.id);
-  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.providerRequestId = providerRequestId;
-  const firstCompletion = completion.value;
-  const firstChoice = (Array.isArray(firstCompletion.choices) ? firstCompletion.choices : []).find((entry) => isRecord(entry) && !Array.isArray(entry));
-  const firstMessage = isRecord(firstChoice) && isRecord(firstChoice.message) && !Array.isArray(firstChoice.message) ? firstChoice.message : null;
-  const firstUsage = isRecord(firstCompletion.usage) ? firstCompletion.usage : null;
-  const payload = toDeepSeekResponsesPayload(firstCompletion, modelRaw, responseId, echo, toolNames, customToolNames);
-  const usage = extractChatUsageTokens(firstCompletion.usage);
-  // The provider's own reason decides the terminal first: an explicit
-  // truncation is `response.incomplete` and is reported as such. Only a
-  // would-be completion is then measured for answer-bearing output, which is
-  // the same order the streamed path applies.
-  if (deepSeekTerminalTypeForPayload(payload.status) === "response.completed" && !chatCompletionHasAnswerBearingOutput(firstCompletion)) {
-    return respondDeepSeekEmptyBufferedCompletion(usageContext, usage, upstream.status, providerRequestId);
-  }
-  // Past the truncation and empty guards, one bounded recheck may recover a
-  // tool call the first answer narrated instead of making. It is advisory: a
-  // failed or tool-less check keeps the first answer, and the extra request is
-  // accounted for even when its own usage was not observed.
-  const recheck = await runDeepSeekRecheck({
+  return finalizeBufferedDeepSeekResponses({
+    upstream,
+    modelRaw,
+    responseId,
+    echo,
+    toolNames,
+    customToolNames,
     chatBody,
-    draft: {
-      content: typeof firstMessage?.content === "string" ? firstMessage.content : "",
-      reasoning: typeof firstMessage?.reasoning_content === "string" ? firstMessage.reasoning_content : "",
-    },
-    firstLeg: {
-      finishReason: isRecord(firstChoice) ? firstChoice.finish_reason : undefined,
-      refusal: firstMessage?.refusal,
-      toolCallCount: firstMessage && Array.isArray(firstMessage.tool_calls) ? firstMessage.tool_calls.length : 0,
-      executableToolCount: executableToolNames.size,
-      toolChoice: chatBody.tool_choice,
-      completionTokens: usage?.outputTokens ?? null,
-    },
-    allowance: outputAllowance,
-    requestedModel: modelRaw,
-    upstreamModel,
     executableToolNames,
+    outputAllowance,
+    upstreamModel,
+    providerRequestId,
     requestSignal,
     downstreamSignal,
-    recheckAbort: new AbortController(),
     usageContext,
   });
-  // A failed or unusable second leg is merged as a null measurement rather than
-  // left unmerged: two requests were made, so an aggregate detail only the first
-  // leg measured must not be published as if it covered both.
-  const merged = recheck.status === "skipped" ? null : mergeDeepSeekRecheckUsage(firstUsage, recheck.status === "observed" ? recheck.usage : null);
-  const aggregateUsage = recheck.status === "skipped" ? usage : aggregateDeepSeekUsageTokens(merged?.usage ?? firstUsage, merged?.complete ?? false);
-  let finalPayload = payload;
-  if (recheck.status === "observed" && recheck.toolCalls?.length) {
-    // One translation of a merged completion: the first answer keeps its text
-    // and reasoning, the accepted tools ride before the original terminal, and
-    // the envelope reports both requests' usage. The response id stays the one
-    // minted for this request.
-    finalPayload = toDeepSeekResponsesPayload(
-      {
-        ...firstCompletion,
-        choices: [
-          {
-            ...(isRecord(firstChoice) ? firstChoice : { index: 0 }),
-            message: { ...(firstMessage ?? {}), tool_calls: recheck.toolCalls },
-            finish_reason: "tool_calls",
-          },
-        ],
-        ...(merged?.usage ? { usage: merged.usage } : {}),
-      },
-      modelRaw,
-      responseId,
-      echo,
-      toolNames,
-      customToolNames
-    );
-  } else if (recheck.status !== "skipped" && merged?.usage) {
-    // Keeping the first answer preserves its payload; only the usage totals
-    // change, so the second request's measured tokens are not silently lost.
-    finalPayload = { ...payload, usage: toResponsesUsage(merged.usage) };
+};
+
+/**
+ * The first nonempty refusal the provider streamed in this chunk, or null. A
+ * refusal is a nonanswer, so it is tracked from the chunk seam and later
+ * declines the advisory recheck the same way a buffered refusal does.
+ */
+const firstStreamedRefusal = (chunk: Record<string, unknown>): string | null => {
+  for (const choice of Array.isArray(chunk.choices) ? chunk.choices : []) {
+    if (!isRecord(choice) || Array.isArray(choice)) continue;
+    const delta = isRecord(choice.delta) && !Array.isArray(choice.delta) ? choice.delta : null;
+    const refusal = delta && typeof delta.refusal === "string" ? delta.refusal : "";
+    if (refusal.length > 0) return refusal;
   }
-  recordBufferedDeepSeekResponsesTerminal(usageContext, finalPayload, aggregateUsage, upstream.status, providerRequestId);
-  return json(200, finalPayload, deepseekResponseHeaders(providerRequestId));
+  return null;
 };
 
 /**
@@ -10563,68 +10706,85 @@ const streamDeepSeekResponses = (
     return true;
   };
 
+  /**
+   * Whether a cancellation that arrived while an awaited step was pending has
+   * already settled this stream. Read through a call because `cancel()` mutates
+   * the state asynchronously, so a narrowing taken before the await would treat
+   * the property as permanently unset.
+   */
+  const streamSettledOrCancelled = (): boolean => state.settled || state.cancelled;
+
+  /**
+   * Runs the one bounded advisory recheck after the first leg's stream ended and
+   * folds its accepted tool call or extra measured usage into the pending
+   * terminal. Returns true when a concurrent cancellation already owns the
+   * settlement, so the caller must not emit a terminal.
+   */
+  const runStreamedRecheck = async (controller: ReadableStreamDefaultController<Uint8Array>): Promise<boolean> => {
+    if (state.recheckStarted) return false;
+    state.recheckStarted = true;
+    const outcome = await runDeepSeekRecheck({
+      chatBody: recheck.chatBody,
+      draft: translator.draftAssistantMessage(),
+      firstLeg: {
+        finishReason: translator.upstreamFinishReason(),
+        // A refusal the provider streamed in any delta is tracked from the
+        // chunk seam, so eligibility declines the recheck for it the same
+        // way it does for a buffered refusal.
+        refusal: state.refusal ?? undefined,
+        toolCallCount: translator.answerBearingOutput().toolCallCount,
+        executableToolCount: recheck.executableToolNames.size,
+        toolChoice: recheck.chatBody.tool_choice,
+        completionTokens: state.usage?.outputTokens ?? null,
+      },
+      allowance: recheck.allowance,
+      requestedModel,
+      upstreamModel: recheck.upstreamModel,
+      executableToolNames: recheck.executableToolNames,
+      requestSignal,
+      downstreamSignal,
+      recheckAbort,
+      usageContext,
+    });
+    // A cancellation that arrived while the advisory check was pending owns the
+    // settlement: nothing else is enqueued and no success is reported.
+    if (streamSettledOrCancelled()) return true;
+    if (outcome.status === "skipped") return false;
+    const merged = mergeDeepSeekRecheckUsage(state.rawUsage, outcome.status === "observed" ? outcome.usage : null);
+    state.usage = aggregateDeepSeekUsageTokens(merged.usage, merged.complete);
+    state.rawUsage = merged.usage;
+    if (outcome.status === "observed" && outcome.toolCalls?.length) {
+      // One synthetic Chat chunk, fed to the same translator: no second
+      // text or reasoning is pushed, the first leg had no tool calls so
+      // the indices cannot collide, and the aggregated usage rides along.
+      const chunk: Record<string, unknown> = {
+        choices: [
+          {
+            index: 0,
+            delta: {
+              tool_calls: outcome.toolCalls.map((call, index) => ({ index, id: call.id, type: "function", function: call.function })),
+            },
+            finish_reason: "tool_calls",
+          },
+        ],
+      };
+      if (merged.usage) chunk.usage = merged.usage;
+      emit(controller, translator.push(chunk));
+    } else if (merged.usage) {
+      // Usage-only chunk: the original stop reason and text are kept.
+      emit(controller, translator.push({ usage: merged.usage }));
+    }
+    return false;
+  };
+
   const finishStream = async (controller: ReadableStreamDefaultController<Uint8Array>): Promise<void> => {
     if (state.settled) return;
     try {
       // The first leg stays progressive; the one bounded recheck runs after its
       // `[DONE]`/EOF and before the translator settles, and its result is either
-      // an added tool call or extra measured usage on the original answer.
-      if (!state.recheckStarted) {
-        state.recheckStarted = true;
-        const draft = translator.draftAssistantMessage();
-        const outcome = await runDeepSeekRecheck({
-          chatBody: recheck.chatBody,
-          draft,
-          firstLeg: {
-            finishReason: translator.upstreamFinishReason(),
-            // A refusal the provider streamed in any delta is tracked from the
-            // chunk seam, so eligibility declines the recheck for it the same
-            // way it does for a buffered refusal.
-            refusal: state.refusal ?? undefined,
-            toolCallCount: translator.answerBearingOutput().toolCallCount,
-            executableToolCount: recheck.executableToolNames.size,
-            toolChoice: recheck.chatBody.tool_choice,
-            completionTokens: state.usage?.outputTokens ?? null,
-          },
-          allowance: recheck.allowance,
-          requestedModel,
-          upstreamModel: recheck.upstreamModel,
-          executableToolNames: recheck.executableToolNames,
-          requestSignal,
-          downstreamSignal,
-          recheckAbort,
-          usageContext,
-        });
-        // A cancellation that arrived while the advisory check was pending owns
-        // the settlement: nothing else is enqueued and no success is reported.
-        if (state.settled || state.cancelled) return;
-        if (outcome.status !== "skipped") {
-          const merged = mergeDeepSeekRecheckUsage(state.rawUsage, outcome.status === "observed" ? outcome.usage : null);
-          state.usage = aggregateDeepSeekUsageTokens(merged.usage, merged.complete);
-          state.rawUsage = merged.usage;
-          if (outcome.status === "observed" && outcome.toolCalls?.length) {
-            // One synthetic Chat chunk, fed to the same translator: no second
-            // text or reasoning is pushed, the first leg had no tool calls so
-            // the indices cannot collide, and the aggregated usage rides along.
-            const chunk: Record<string, unknown> = {
-              choices: [
-                {
-                  index: 0,
-                  delta: {
-                    tool_calls: outcome.toolCalls.map((call, index) => ({ index, id: call.id, type: "function", function: call.function })),
-                  },
-                  finish_reason: "tool_calls",
-                },
-              ],
-            };
-            if (merged.usage) chunk.usage = merged.usage;
-            emit(controller, translator.push(chunk));
-          } else if (merged.usage) {
-            // Usage-only chunk: the original stop reason and text are kept.
-            emit(controller, translator.push({ usage: merged.usage }));
-          }
-        }
-      }
+      // an added tool call or extra measured usage on the original answer. A
+      // cancellation that lands while the check is pending owns the settlement.
+      if (await runStreamedRecheck(controller)) return;
       // The provider's own stop reason decides the terminal (Goal B's Delta 1
       // vocabulary), and the provider-agnostic completion-validity predicate
       // (Goal A's G3) decides whether a would-be completion carries anything a
@@ -10691,15 +10851,8 @@ const streamDeepSeekResponses = (
     if (chunkUsage) state.usage = chunkUsage;
     if (isRecord(chunk.usage) && !Array.isArray(chunk.usage)) state.rawUsage = chunk.usage;
     if (state.refusal === null) {
-      for (const choice of Array.isArray(chunk.choices) ? chunk.choices : []) {
-        if (!isRecord(choice) || Array.isArray(choice)) continue;
-        const delta = isRecord(choice.delta) && !Array.isArray(choice.delta) ? choice.delta : null;
-        const refusal = delta && typeof delta.refusal === "string" ? delta.refusal : "";
-        if (refusal.length > 0) {
-          state.refusal = refusal;
-          break;
-        }
-      }
+      const refusal = firstStreamedRefusal(chunk);
+      if (refusal !== null) state.refusal = refusal;
     }
     if (!state.semantic && chatChunkHasAnswerBearingOutput(chunk)) {
       state.semantic = true;

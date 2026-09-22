@@ -916,18 +916,14 @@ Deno.test("deepseek responses: the bounded recheck runs only for a measured tool
   };
   const eligible = deepSeekRecheckEligibility(firstLeg);
   assert.equal(eligible.eligible, true);
-  if (eligible.eligible) {
-    assert.equal(eligible.remainingBudget, 502);
-    assert.equal(eligible.maxTokens, 502);
-  }
+  assert.equal(eligible.remainingBudget, 502);
+  assert.equal(eligible.maxTokens, 502);
   // The recheck may add at most 8,192 tokens; a known allowance that is larger
   // still bounds the two legs together, so the cap never widens the caller's ask.
   const capped = deepSeekRecheckEligibility({ ...firstLeg, firstCompletionTokens: 100, allowance: 20_000 });
   assert.equal(capped.eligible, true);
-  if (capped.eligible) {
-    assert.equal(capped.remainingBudget, 19_900);
-    assert.equal(capped.maxTokens, DEEPSEEK_RECHECK_MAX_TOKENS);
-  }
+  assert.equal(capped.remainingBudget, 19_900);
+  assert.equal(capped.maxTokens, DEEPSEEK_RECHECK_MAX_TOKENS);
   const skipped: { name: string; facts: typeof firstLeg; reason: DeepSeekRecheckSkipReason }[] = [
     { name: "a truncation", facts: { ...firstLeg, finishReason: "length" }, reason: "finish_reason" },
     { name: "an interruption", facts: { ...firstLeg, finishReason: "insufficient_system_resource" }, reason: "finish_reason" },
@@ -950,7 +946,7 @@ Deno.test("deepseek responses: the bounded recheck runs only for a measured tool
   for (const testCase of skipped) {
     const result = deepSeekRecheckEligibility(testCase.facts);
     assert.equal(result.eligible, false, testCase.name);
-    if (!result.eligible) assert.equal(result.reason, testCase.reason, testCase.name);
+    assert.equal(result.reason, testCase.reason, testCase.name);
   }
 });
 

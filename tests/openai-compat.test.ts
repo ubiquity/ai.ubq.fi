@@ -326,7 +326,9 @@ const settlesWithin = async (promise: Promise<unknown>, milliseconds: number): P
     return await Promise.race([
       promise.then(() => true),
       new Promise<boolean>((resolve) => {
-        timer = setTimeout(() => resolve(false), milliseconds);
+        timer = setTimeout(() => {
+          resolve(false);
+        }, milliseconds);
       }),
     ]);
   } finally {
@@ -14868,7 +14870,8 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
         output.map((item) => item.type),
         ["reasoning", "message", "function_call"]
       );
-      const call = output.at(-1) as Record<string, unknown>;
+      const call = output.at(-1);
+      assert.ok(call);
       assert.equal(call.call_id, "call_next");
       assert.equal(call.name, "read_file");
       assert.equal(call.arguments, '{"path":"a"}');
@@ -14887,10 +14890,10 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
       });
       const telemetry = getResponseTelemetry(response);
       assert.equal(telemetry?.completed, true);
-      assert.equal(telemetry?.usageTelemetryStatus, "reported");
-      assert.equal(telemetry?.inputTokens, 220);
-      assert.equal(telemetry?.outputTokens, 16);
-      assert.equal(telemetry?.cachedInputTokens, 90);
+      assert.equal(telemetry.usageTelemetryStatus, "reported");
+      assert.equal(telemetry.inputTokens, 220);
+      assert.equal(telemetry.outputTokens, 16);
+      assert.equal(telemetry.cachedInputTokens, 90);
     });
 
     await t.step("the buffered branch performs the same bounded recheck and keeps one identity", async () => {
@@ -14962,8 +14965,8 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
       });
       const telemetry = getResponseTelemetry(response);
       assert.equal(telemetry?.completed, true);
-      assert.equal(telemetry?.usageTelemetryStatus, "reported");
-      assert.equal(telemetry?.inputTokens, 220);
+      assert.equal(telemetry.usageTelemetryStatus, "reported");
+      assert.equal(telemetry.inputTokens, 220);
     });
 
     await t.step("a legitimate final recheck keeps the original text and both requests' usage", async () => {
@@ -15014,8 +15017,8 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
       });
       const telemetry = getResponseTelemetry(response);
       assert.equal(telemetry?.completed, true);
-      assert.equal(telemetry?.usageTelemetryStatus, "reported");
-      assert.equal(telemetry?.outputTokens, 16);
+      assert.equal(telemetry.usageTelemetryStatus, "reported");
+      assert.equal(telemetry.outputTokens, 16);
     });
 
     await t.step("a failed recheck keeps the first success and marks the accounting partial", async () => {
@@ -15067,8 +15070,8 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
         assert.deepEqual(payload.usage, { input_tokens: 100, output_tokens: 10, total_tokens: 110 }, testCase.name);
         const telemetry = getResponseTelemetry(response);
         assert.equal(telemetry?.completed, true, testCase.name);
-        assert.equal(telemetry?.usageTelemetryStatus, "partial", testCase.name);
-        assert.equal(telemetry?.cachedInputTokens, null, testCase.name);
+        assert.equal(telemetry.usageTelemetryStatus, "partial", testCase.name);
+        assert.equal(telemetry.cachedInputTokens, null, testCase.name);
       }
     });
 
@@ -15167,9 +15170,9 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
         );
         const telemetry = getResponseTelemetry(response);
         assert.equal(telemetry?.completed, true, testCase.name);
-        assert.equal(telemetry?.usageTelemetryStatus, "reported", testCase.name);
-        assert.equal(telemetry?.inputTokens, 220, testCase.name);
-        assert.equal(telemetry?.outputTokens, 16, testCase.name);
+        assert.equal(telemetry.usageTelemetryStatus, "reported", testCase.name);
+        assert.equal(telemetry.inputTokens, 220, testCase.name);
+        assert.equal(telemetry.outputTokens, 16, testCase.name);
       }
     });
 
@@ -15294,12 +15297,12 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
       assert.deepEqual(payload.usage, { input_tokens: 100, output_tokens: 15, total_tokens: 115 });
       const telemetry = getResponseTelemetry(response);
       assert.equal(telemetry?.completed, true);
-      assert.equal(telemetry?.usageTelemetryStatus, "partial");
-      assert.equal(telemetry?.inputTokens, 100);
-      assert.equal(telemetry?.outputTokens, 15);
-      assert.equal(telemetry?.totalTokens, 115);
+      assert.equal(telemetry.usageTelemetryStatus, "partial");
+      assert.equal(telemetry.inputTokens, 100);
+      assert.equal(telemetry.outputTokens, 15);
+      assert.equal(telemetry.totalTokens, 115);
       // The second leg never measured a cache read, so the aggregate has none.
-      assert.equal(telemetry?.cachedInputTokens, null);
+      assert.equal(telemetry.cachedInputTokens, null);
     });
 
     await t.step("a streamed refusal with text is not reconsidered and keeps its answer", async () => {
@@ -15344,8 +15347,8 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
       assert.equal(output[0]?.content[0]?.text, "Step 11 of 16 complete.");
       const telemetry = getResponseTelemetry(response);
       assert.equal(telemetry?.completed, true);
-      assert.equal(telemetry?.usageTelemetryStatus, "reported");
-      assert.equal(telemetry?.inputTokens, 100);
+      assert.equal(telemetry.usageTelemetryStatus, "reported");
+      assert.equal(telemetry.inputTokens, 100);
     });
 
     await t.step("a refusing recheck contributes no tool call", async () => {
@@ -15452,7 +15455,7 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
       // A cancelled stream never reports the first answer as completed.
       const telemetry = getResponseTelemetry(response);
       assert.equal(telemetry?.streamTerminalType, "cancelled");
-      assert.equal(telemetry?.completed, false);
+      assert.equal(telemetry.completed, false);
       assert.equal(text.includes('"type":"response.completed"'), false);
     });
 

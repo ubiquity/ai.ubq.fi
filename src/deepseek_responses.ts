@@ -619,7 +619,7 @@ export const deepSeekRecheckEligibility = (
   }
   if (input.allowance === null || !Number.isFinite(input.allowance)) return { eligible: false, reason: "budget_unknown" };
   const remainingBudget = input.allowance - input.firstCompletionTokens;
-  if (!(remainingBudget > 0)) return { eligible: false, reason: "budget_exhausted" };
+  if (remainingBudget <= 0) return { eligible: false, reason: "budget_exhausted" };
   return { eligible: true, remainingBudget, maxTokens: Math.min(remainingBudget, DEEPSEEK_RECHECK_MAX_TOKENS) };
 };
 
@@ -711,6 +711,15 @@ export const measurableDeepSeekRecheckUsage = (value: unknown): Record<string, u
 export type DeepSeekRecheckUsage = Readonly<{ usage: Record<string, unknown> | null; complete: boolean }>;
 
 /**
+ * The two-request total, held at or above the input and output counters both
+ * legs independently observed: a second leg that reported only some counters
+ * must not publish an internally inconsistent total. A total-only second
+ * measurement is kept as reported even when it exceeds those partial components.
+ */
+const recheckReportedTotal = (total: number | null, observedComponentSum: number | null): number | null =>
+  total !== null && observedComponentSum !== null && total < observedComponentSum ? observedComponentSum : total;
+
+/**
  * Merges the usage of the two provider requests this route actually made.
  *
  * Every base counter keeps the amounts each leg independently measured: both
@@ -734,8 +743,7 @@ export const mergeDeepSeekRecheckUsage = (first: unknown, second: unknown): Deep
   const completionTokens = mergedTokenCount(first.completion_tokens, secondUsage?.completion_tokens);
   const totalTokens = mergedTokenCount(first.total_tokens, secondUsage?.total_tokens);
   const observedComponentSum = promptTokens.value !== null && completionTokens.value !== null ? promptTokens.value + completionTokens.value : null;
-  const reportedTotal =
-    totalTokens.value !== null && observedComponentSum !== null && totalTokens.value < observedComponentSum ? observedComponentSum : totalTokens.value;
+  const reportedTotal = recheckReportedTotal(totalTokens.value, observedComponentSum);
   const usage: Record<string, unknown> = {};
   if (promptTokens.value !== null) usage.prompt_tokens = promptTokens.value;
   if (completionTokens.value !== null) usage.completion_tokens = completionTokens.value;
