@@ -637,6 +637,16 @@ Deno.test("deepseek responses: stream translator accumulates fragmented tool cal
   });
 });
 
+Deno.test("deepseek responses: an argument-only tool-call delta is observed but not answer-bearing", () => {
+  const translator = createDeepSeekResponsesStreamTranslator("deepseek-flash", "resp_partial_call", echo, 1_780_000_000);
+  translator.push(chatChunk({ content: "Step 11 of 16 complete." }));
+  translator.push(chatChunk({ tool_calls: [{ index: 0, function: { arguments: '{"path":' } }] }, { finish_reason: "stop" }));
+  // The two predicates are distinct: the nameless partial delta owns a tool-call
+  // slot but answers nothing, so only the observed count refuses the recheck.
+  assert.equal(translator.observedToolCallCount(), 1);
+  assert.deepEqual(translator.answerBearingOutput(), { text: "Step 11 of 16 complete.", toolCallCount: 0 });
+});
+
 Deno.test("deepseek responses: stream translator is idempotent at the terminal", () => {
   const translator = createDeepSeekResponsesStreamTranslator("deepseek-flash", "resp_once", echo, 1_780_000_000);
   assert.deepEqual(eventTypes(translator.finish()), ["response.created", "response.in_progress", "response.completed"]);

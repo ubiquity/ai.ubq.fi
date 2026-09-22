@@ -1190,6 +1190,13 @@ export const createDeepSeekResponsesStreamTranslator = (
       toolCallCount: [...state.toolCalls.values()].filter((call) => call.name).length,
     }),
     /**
+     * How many tool-call deltas the stream observed at all, named or not. The
+     * recheck contract is no tool call whatsoever, so eligibility reads this
+     * count: an argument-only partial delta occupies a map slot a second
+     * generation would otherwise concatenate onto.
+     */
+    observedToolCallCount: (): number => state.toolCalls.size,
+    /**
      * The first-leg assistant draft the bounded recheck appends to the
      * conversation. Only the accumulated answer text and its reasoning are
      * exposed; the recheck's own text is never streamed back to the client.

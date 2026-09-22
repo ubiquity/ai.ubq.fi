@@ -14896,6 +14896,63 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
       assert.equal(telemetry.cachedInputTokens, 90);
     });
 
+    await t.step("an argument-only first-leg delta refuses the recheck instead of concatenating onto its slot", async () => {
+      const upstreamBodies: Record<string, unknown>[] = [];
+      const { text } = await withFetchMock(
+        (_url, bodyText) => {
+          upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
+          // A nameless index-0 argument fragment occupies the tool-call map
+          // slot while answering nothing; the recheck contract allows no tool
+          // call at all, so this first leg must not earn a second generation.
+          return sseResponse([
+            deepSeekStreamChunk({ role: "assistant", content: "Step 11 of 16 complete." }),
+            deepSeekStreamChunk({ tool_calls: [{ index: 0, function: { arguments: '{"path":' } }] }),
+            deepSeekStreamChunk({}, { finish_reason: "stop" }),
+            `data: ${JSON.stringify({
+              id: "deepseek-partial-call",
+              object: "chat.completion.chunk",
+              created: 1_780_000_150,
+              model: DEEPSEEK_FLASH_MODEL,
+              choices: [],
+              usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 },
+            })}\n\n`,
+            "data: [DONE]\n\n",
+          ]);
+        },
+        async () => {
+          const response = await handleResponses(
+            responsesBody({
+              model: DEEPSEEK_FLASH_MODEL,
+              input: "read all 16 files",
+              stream: true,
+              max_output_tokens: 512,
+              tools: recheckTools,
+            })
+          );
+          // The handler dispatches the advisory recheck while the first leg's
+          // body is consumed, so it is drained before the mock is restored.
+          return { response, text: await response.text() };
+        }
+      );
+
+      assert.equal(upstreamBodies.length, 1);
+      const events = responsesEvents(text);
+      const completed = events.at(-1) as { type: string; response: Record<string, unknown> };
+      assert.equal(completed.type, "response.completed");
+      assert.equal(completed.response.status, "completed");
+      const output = completed.response.output as Record<string, unknown>[];
+      // The original text survives and no named tool call is introduced.
+      assert.deepEqual(
+        output.map((item) => item.type),
+        ["message"]
+      );
+      assert.deepEqual(output[0].content, [{ type: "output_text", text: "Step 11 of 16 complete.", annotations: [] }]);
+      assert.equal(
+        events.some((event) => event.type === "response.function_call_arguments.delta"),
+        false
+      );
+    });
+
     await t.step("the buffered branch performs the same bounded recheck and keeps one identity", async () => {
       const upstreamBodies: Record<string, unknown>[] = [];
       const response = await withFetchMock(

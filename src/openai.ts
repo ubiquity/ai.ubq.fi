@@ -10732,7 +10732,10 @@ const streamDeepSeekResponses = (
         // chunk seam, so eligibility declines the recheck for it the same
         // way it does for a buffered refusal.
         refusal: state.refusal ?? undefined,
-        toolCallCount: translator.answerBearingOutput().toolCallCount,
+        // The recheck needs no tool call at all, so it reads the observed
+        // count: a nameless argument-only delta still owns its map slot, and
+        // a second generation's call would concatenate onto it.
+        toolCallCount: translator.observedToolCallCount(),
         executableToolCount: recheck.executableToolNames.size,
         toolChoice: recheck.chatBody.tool_choice,
         completionTokens: state.usage?.outputTokens ?? null,
