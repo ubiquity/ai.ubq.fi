@@ -936,6 +936,14 @@ Deno.test("deepseek responses: the bounded recheck runs only for a measured tool
   assert.equal(capped.eligible, true);
   assert.equal(capped.remainingBudget, 19_900);
   assert.equal(capped.maxTokens, DEEPSEEK_RECHECK_MAX_TOKENS);
+  // Real Codex `high`/`max` traffic omits `max_output_tokens`, so the gateway
+  // knows no original cap. That is not a zero budget: the one advisory recheck
+  // is still allowed, bounded only by the recheck's own 8,192-token ceiling,
+  // and no aggregate remaining allowance is claimed.
+  const uncapped = deepSeekRecheckEligibility({ ...firstLeg, allowance: null });
+  assert.equal(uncapped.eligible, true);
+  assert.equal(uncapped.remainingBudget, null);
+  assert.equal(uncapped.maxTokens, DEEPSEEK_RECHECK_MAX_TOKENS);
   const skipped: { name: string; facts: typeof firstLeg; reason: DeepSeekRecheckSkipReason }[] = [
     { name: "a truncation", facts: { ...firstLeg, finishReason: "length" }, reason: "finish_reason" },
     { name: "an interruption", facts: { ...firstLeg, finishReason: "insufficient_system_resource" }, reason: "finish_reason" },
@@ -951,7 +959,7 @@ Deno.test("deepseek responses: the bounded recheck runs only for a measured tool
       reason: "tool_choice",
     },
     { name: "an unobserved first usage", facts: { ...firstLeg, firstCompletionTokens: null }, reason: "usage_unknown" },
-    { name: "an unknown allowance", facts: { ...firstLeg, allowance: null }, reason: "budget_unknown" },
+    { name: "a non-finite allowance", facts: { ...firstLeg, allowance: Number.POSITIVE_INFINITY }, reason: "budget_unknown" },
     { name: "no remaining budget", facts: { ...firstLeg, firstCompletionTokens: 512 }, reason: "budget_exhausted" },
     { name: "an exhausted budget", facts: { ...firstLeg, firstCompletionTokens: 600 }, reason: "budget_exhausted" },
   ];

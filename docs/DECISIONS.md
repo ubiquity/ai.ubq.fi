@@ -96,8 +96,14 @@ model with the same tools and effort, adds no wire fields or settings, buffers t
 progressive and keeps the original response identity; accepted returned tools are delivered before the terminal event
 and no duplicate recheck text is emitted. The original answer is preserved on a legitimate final answer, on no tools,
 and on advisory failure. The guard skips the recheck for `none`, `required`, or named tool choice, truncation, empty
-output, a refusal, no tools, and unknown or exhausted budget. Cancellation aborts the extra call, and there is no second
-admission or reservation.
+output, a refusal, no tools, an unmeasured first-leg usage, a non-finite numeric allowance, and an exhausted known
+budget. A null allowance is neither a skip nor a zero budget: real Codex `high`/`max` traffic omits `max_output_tokens`,
+so no finite original cap was requested and no provider default for those tiers has been measured, which is why
+telemetry keeps that allowance unknown instead of back-filling a fabricated default while the one advisory call still
+proceeds, bounded at 8,192 tokens and reporting no aggregate remaining budget because none is known. When a numeric
+allowance does exist — an explicit caller cap or the measured `none`-tier default — the recheck keeps subtracting the
+first leg's use and takes `min(remaining, 8192)`. Cancellation aborts the extra call, and there is no second admission
+or reservation.
 
 One extra provider request is the cost for an eligible text-only final: input cost and latency rise, and the output cap
 is `min(remaining original allowance, 8192)`. Actual usage from both requests is summed; missing fields stay partial and

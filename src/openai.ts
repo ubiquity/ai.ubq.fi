@@ -10564,8 +10564,9 @@ const handleDeepSeekResponses = async (req: Request, rawRecord: Record<string, u
   };
   const reasoningLabel = typeof chatBody.reasoning_effort === "string" ? chatBody.reasoning_effort : DEEPSEEK_DEFAULT_REASONING_EFFORT;
   // The client's cap when it sent one, else the provider's own measured default
-  // for the requested tier, else unknown. The same value bounds the one
-  // continuation recheck so both legs together never exceed it.
+  // for the requested tier, else null. A known finite allowance bounds both legs
+  // together; when it is unknown, telemetry stays null and only the one advisory
+  // continuation recheck gets its own 8192-token cap.
   const outputAllowance = (typeof chatBody.max_tokens === "number" ? chatBody.max_tokens : null) ?? deepSeekDefaultOutputAllowance(reasoningLabel);
   // The chat names of the tools this request actually advertised; a recheck can
   // only return a call the client can execute.
