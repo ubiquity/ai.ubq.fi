@@ -2671,6 +2671,140 @@ Deno.test("handler: idempotency preserves account scopes", async () => {
   );
 });
 
+/** Bounded wait for the admission guard's asynchronous bookkeeping. */
+const waitForAdmission = async (predicate: () => boolean, label: string, timeoutMs = 2_000): Promise<void> => {
+  const deadline = performance.now() + timeoutMs;
+  while (!predicate()) {
+    if (performance.now() >= deadline) throw new Error(`Timed out waiting for ${label}`);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+};
+
+Deno.test("handler: saturated admission refuses a queued embedding-job poll before Voyage", async () => {
+  const { handleAdminApiKeysCreate } = await import("../src/admin.ts");
+  const { default: handler, setInferenceAdmissionControllerForTest } = await import("../src/handler.ts");
+  const { createInferenceAdmissionController } = await import("../src/inference_admission.ts");
+  const token = `u_${crypto.randomUUID().replace(/-/g, "").padEnd(64, "c")}`;
+  const created = await handleAdminApiKeysCreate(
+    new Request("https://ai.ubq.fi/admin/api-keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: "admitted embedding-job polls",
+        token,
+        usage_limit_requests: 5,
+        paid_fallback_enabled: false,
+      }),
+    })
+  );
+  assert.equal(created.status, 200);
+  const createdPayload = (await created.json()) as { id?: unknown };
+  assert.equal(typeof createdPayload.id, "string");
+  const keyId = createdPayload.id as string;
+
+  // A queued job keeps its encrypted inputs: polling it is the work-producing
+  // read the review found outside the process bound, because the poll calls
+  // runEmbeddingsJobAttempt and can dispatch Voyage for the queued job.
+  resetVoyageRateLimit();
+  kvStore.set(keyToString(VOYAGE_RATE_LIMIT_KEY), { window_start_ms: Date.now(), requests: 3, tokens: 0 });
+  const jobInput = `admitted-job-poll-${crypto.randomUUID()}`;
+  const queuedJob = await withFetchMock(
+    () => {
+      throw new Error("a saturated Voyage budget must queue the job before any upstream call");
+    },
+    () =>
+      handleEmbeddingsJobCreate(
+        new Request("https://ai.ubq.fi/uos/embedding-jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: "voyage-4-large", input: jobInput, input_type: "document" }),
+        }),
+        token,
+        { keyId, kernelRepo: null, kernelOrg: null }
+      )
+  );
+  assert.equal(queuedJob.status, 202);
+  const queuedPayload = (await queuedJob.json()) as { id?: unknown; status?: unknown };
+  assert.equal(queuedPayload.status, "queued");
+  assert.equal(typeof queuedPayload.id, "string");
+  const jobId = queuedPayload.id as string;
+  kvStore.delete(keyToString(VOYAGE_RATE_LIMIT_KEY));
+
+  const controller = createInferenceAdmissionController({ maxActive: 1, maxWaiting: 1, maxQueueWaitMs: 5_000 });
+  setInferenceAdmissionControllerForTest(controller);
+  const held = await controller.acquire();
+  if (!held.ok) throw new Error("the fixture must hold the only admission permit");
+  let voyageCalls = 0;
+  try {
+    await withFetchMock(
+      () => {
+        voyageCalls += 1;
+        return voyageOkResponse(1);
+      },
+      async () => {
+        const jobPoll = (signal?: AbortSignal): Promise<Response> =>
+          handler(
+            new Request(`https://ai.ubq.fi/uos/embedding-jobs/${jobId}`, {
+              headers: { Authorization: `Bearer ${token}` },
+              ...(signal ? { signal } : {}),
+            })
+          );
+
+        // A queued poll whose caller leaves while it waits for a permit never
+        // claims the job and never reaches the provider.
+        const queuedAbort = new AbortController();
+        const waitingPoll = jobPoll(queuedAbort.signal);
+        await waitForAdmission(() => controller.snapshot().waiting === 1, "the queued job poll to wait for a permit");
+        assert.equal(voyageCalls, 0, "a job poll waiting for a permit must not dispatch Voyage");
+        queuedAbort.abort(new DOMException("client disconnected while the job poll waited", "AbortError"));
+        const cancelled = await waitingPoll;
+        assert.equal(cancelled.status, 499, "an aborted queued job poll is a cancellation, not work");
+        await cancelled.body?.cancel().catch(() => {});
+        assert.equal(voyageCalls, 0, "an aborted queued job poll must never reach Voyage");
+
+        // The replacement fills the one waiting slot, so the next poll is
+        // refused locally even though it would have dispatched the queued job.
+        const queuedPoll = jobPoll();
+        await waitForAdmission(() => controller.snapshot().waiting === 1, "the replacement job poll to wait for a permit");
+        const overloaded = await jobPoll();
+        assert.equal(overloaded.status, 503, "a saturated job poll must be refused locally");
+        const overloadPayload = (await overloaded.json()) as { error?: { code?: string } };
+        assert.equal(overloadPayload.error?.code, "local_inference_overload");
+        assert.ok(overloaded.headers.get("retry-after"), "a local overload carries Retry-After");
+        assert.equal(voyageCalls, 0, "a refused job poll must not reach Voyage");
+
+        // Neither refused poll claimed the job: it is still exactly as queued.
+        const jobTokenHash = await sha256Hex(`uos_api_key_id:${keyId}`);
+        const jobLookup = kvStore.get(keyToString(embeddingsJobLookupKey(jobTokenHash, jobId))) as { cache_profile_key?: unknown } | undefined;
+        const cacheProfileKey = jobLookup?.cache_profile_key;
+        assert.equal(typeof cacheProfileKey, "string");
+        const queuedRecord = kvStore.get(keyToString(embeddingsJobKey(jobTokenHash, cacheProfileKey as string, jobId))) as { status?: unknown };
+        assert.equal(queuedRecord.status, "queued", "a refused job poll must leave the queued job unclaimed");
+
+        // Releasing the permit admits the queued poll, which performs the job's
+        // single provider dispatch and completes it for later reads.
+        held.release();
+        const admitted = await queuedPoll;
+        assert.equal(admitted.status, 200);
+        const admittedPayload = (await admitted.json()) as { status?: unknown };
+        assert.equal(admittedPayload.status, "succeeded");
+        assert.equal(voyageCalls, 1, "the admitted job poll dispatches Voyage exactly once");
+        await waitForAdmission(() => controller.snapshot().active === 0, "the admitted job poll to release its permit");
+
+        // A completed-job read is still served without another provider call.
+        const completed = await jobPoll();
+        assert.equal(completed.status, 200);
+        assert.equal(((await completed.json()) as { status?: unknown }).status, "succeeded");
+        assert.equal(voyageCalls, 1, "a completed-job read must not dispatch Voyage");
+      }
+    );
+  } finally {
+    held.release();
+    setInferenceAdmissionControllerForTest(null);
+    resetVoyageRateLimit();
+  }
+});
+
 addEventListener("unload", () => {
   (Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = originalOpenKv;
   if (originalVoyageApiKey === undefined) Deno.env.delete("VOYAGEAI_API_KEY");

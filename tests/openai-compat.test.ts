@@ -319,23 +319,6 @@ const neverSettlingPromise = (): Promise<void> => new Promise<void>(() => {});
 /** Waits `milliseconds` without nesting a promise executor deeper into a stream callback. */
 const delayBy = (milliseconds: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-/** Waits up to `milliseconds` for `promise`; the losing timeout is cleared so no timer outlives the wait. */
-const settlesWithin = async (promise: Promise<unknown>, milliseconds: number): Promise<boolean> => {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise.then(() => true),
-      new Promise<boolean>((resolve) => {
-        timer = setTimeout(() => {
-          resolve(false);
-        }, milliseconds);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
-};
-
 /** Normalizes an abort reason into the Error every fixture rejection must carry. */
 const abortReason = (signal: AbortSignal): Error => {
   const reason: unknown = signal.reason;
@@ -14886,6 +14869,12 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
           "response.created",
           "response.in_progress",
           "response.output_item.added",
+          "response.reasoning_summary_part.added",
+          "response.reasoning_summary_text.delta",
+          "response.reasoning_summary_text.done",
+          "response.reasoning_summary_part.done",
+          "response.output_item.done",
+          "response.output_item.added",
           "response.content_part.added",
           "response.output_text.delta",
           "response.output_text.delta",
@@ -14910,61 +14899,58 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
       assert.equal(typeof telemetry.firstSemanticCommitmentMs, "number");
     });
 
-    const recheckTools = [{ type: "function", name: "read_file", parameters: { type: "object", properties: { path: { type: "string" } } } }];
-    const progressStopChunks = (usage: Record<string, unknown>): Response =>
+    const progressTools = [{ type: "function", name: "read_file", parameters: { type: "object", properties: { path: { type: "string" } } } }];
+    const progressUsage = {
+      prompt_tokens: 100,
+      completion_tokens: 10,
+      total_tokens: 110,
+      prompt_cache_hit_tokens: 40,
+      completion_tokens_details: { reasoning_tokens: 4 },
+    };
+    const progressResponsesUsage = {
+      input_tokens: 100,
+      input_tokens_details: { cached_tokens: 40 },
+      output_tokens: 10,
+      output_tokens_details: { reasoning_tokens: 4 },
+      total_tokens: 110,
+    };
+    const progressCompletion = (): Response =>
+      Response.json({
+        id: "deepseek-progress-stop",
+        object: "chat.completion",
+        created: 1_780_000_102,
+        model: DEEPSEEK_FLASH_MODEL,
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content: "Step 11 of 16 complete.", reasoning_content: "I read ten files." },
+            finish_reason: "stop",
+          },
+        ],
+        usage: progressUsage,
+      });
+    const progressStopChunks = (): Response =>
       sseResponse([
         deepSeekStreamChunk({ role: "assistant", reasoning_content: "I read ten files." }),
         deepSeekStreamChunk({ content: "Step 11 of 16 complete." }),
         deepSeekStreamChunk({}, { finish_reason: "stop" }),
         `data: ${JSON.stringify({
-          id: "deepseek-recheck-stream",
+          id: "deepseek-progress-stop",
           object: "chat.completion.chunk",
           created: 1_780_000_102,
           model: DEEPSEEK_FLASH_MODEL,
           choices: [],
-          usage,
+          usage: progressUsage,
         })}\n\n`,
         "data: [DONE]\n\n",
       ]);
 
-    await t.step("rechecks a progress-only stop once and returns the pending tool call before the terminal", async () => {
+    await t.step("a streamed progress-like stop completes once with the first text and its measured usage", async () => {
       const upstreamBodies: Record<string, unknown>[] = [];
       const { response, text } = await withFetchMock(
         (_url, bodyText) => {
           upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
-          if (upstreamBodies.length === 1) {
-            return progressStopChunks({
-              prompt_tokens: 100,
-              completion_tokens: 10,
-              total_tokens: 110,
-              prompt_cache_hit_tokens: 40,
-              completion_tokens_details: { reasoning_tokens: 4 },
-            });
-          }
-          return Response.json({
-            id: "deepseek-recheck-2",
-            object: "chat.completion",
-            created: 1_780_000_103,
-            model: DEEPSEEK_FLASH_MODEL,
-            choices: [
-              {
-                index: 0,
-                message: {
-                  role: "assistant",
-                  content: "",
-                  tool_calls: [{ id: "call_next", type: "function", function: { name: "read_file", arguments: '{"path":"a"}' } }],
-                },
-                finish_reason: "tool_calls",
-              },
-            ],
-            usage: {
-              prompt_tokens: 120,
-              completion_tokens: 6,
-              total_tokens: 126,
-              prompt_cache_hit_tokens: 50,
-              completion_tokens_details: { reasoning_tokens: 1 },
-            },
-          });
+          return progressStopChunks();
         },
         async () => {
           const response = await handleResponses(
@@ -14973,179 +14959,145 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
               input: "read all 16 files",
               stream: true,
               max_output_tokens: 512,
-              tools: recheckTools,
+              tools: progressTools,
             })
           );
-          // The streamed handler dispatches the advisory recheck only while the
-          // first leg's body is consumed, so the body is drained before the
-          // fetch mock is restored and both requests land on this fixture.
+          // The handler dispatches nothing else while the first body is consumed,
+          // so the body is drained before the fetch mock is restored.
           return { response, text: await response.text() };
         }
       );
 
-      // Both provider requests were dispatched while the first body was consumed.
-      assert.equal(upstreamBodies.length, 2);
-      const advisory = upstreamBodies[1];
-      // Only the advisory recheck is buffered, inside the caller's remaining budget.
-      assert.equal(advisory.stream, false);
-      assert.equal("stream_options" in advisory, false);
-      assert.equal(advisory.max_tokens, 502);
-      assert.equal(advisory.model, DEEPSEEK_FLASH_MODEL);
-      assert.equal(advisory.reasoning_effort, upstreamBodies[0].reasoning_effort);
-      // The original tool schemas are reused and nothing forces a tool call.
-      assert.deepEqual(advisory.tools, upstreamBodies[0].tools);
-      assert.equal("tool_choice" in advisory, false);
+      // Exactly one provider request, with the caller's cap and automatic tool
+      // choice: the progress-like text is the provider's answer, not a draft.
+      assert.equal(upstreamBodies.length, 1);
+      assert.equal(upstreamBodies[0].max_tokens, 512);
       assert.equal("tool_choice" in upstreamBodies[0], false);
-      const advisoryMessages = advisory.messages as Record<string, unknown>[];
-      assert.deepEqual(advisoryMessages.slice(-2), [
-        { role: "assistant", content: "Step 11 of 16 complete.", reasoning_content: "I read ten files." },
-        {
-          role: "user",
-          content:
-            "The assistant response above is a draft for this same task. If actionable required work remains, emit the next appropriate tool call now. If the requested work is complete, blocked, or needs user input, return the existing answer without tool calls. Do not repeat completed actions or invent new work.",
-        },
-      ]);
-
+      const forwardedTools = upstreamBodies[0].tools as { function?: { name?: string } }[];
+      assert.equal(forwardedTools.length, 1);
+      assert.equal(forwardedTools[0]?.function?.name, "read_file");
       const events = responsesEvents(text);
-      // One original response identity: the recheck never mints another.
       assert.equal(events.filter((event) => event.type === "response.created").length, 1);
+      assert.equal(events.filter((event) => event.type === "response.completed").length, 1);
       const completed = events.at(-1) as { type: string; response: Record<string, unknown> };
       assert.equal(completed.type, "response.completed");
       assert.equal(completed.response.status, "completed");
-      const output = completed.response.output as Record<string, unknown>[];
+      const output = completed.response.output as { type: string; content?: { text?: string }[] }[];
+      // The original first response is the terminal one; no extra text or tool.
       assert.deepEqual(
         output.map((item) => item.type),
-        ["reasoning", "message", "function_call"]
+        ["reasoning", "message"]
       );
-      const call = output.at(-1);
-      assert.ok(call);
-      assert.equal(call.call_id, "call_next");
-      assert.equal(call.name, "read_file");
-      assert.equal(call.arguments, '{"path":"a"}');
-      // The tool item closes before the terminal event that reports it.
-      const toolDoneIndex = events.findIndex(
-        (event) => event.type === "response.output_item.done" && (event.item as { type?: string } | undefined)?.type === "function_call"
-      );
-      assert.ok(toolDoneIndex >= 0 && toolDoneIndex < events.length - 1);
-      // Both provider requests are accounted for in the one response envelope.
-      assert.deepEqual(completed.response.usage, {
-        input_tokens: 220,
-        input_tokens_details: { cached_tokens: 90 },
-        output_tokens: 16,
-        output_tokens_details: { reasoning_tokens: 5 },
-        total_tokens: 236,
-      });
+      assert.equal(output[1]?.content?.[0]?.text, "Step 11 of 16 complete.");
+      // The envelope reports the first call's own measured usage, never a sum.
+      assert.deepEqual(completed.response.usage, progressResponsesUsage);
       const telemetry = getResponseTelemetry(response);
       assert.equal(telemetry?.completed, true);
       assert.equal(telemetry.usageTelemetryStatus, "reported");
-      assert.equal(telemetry.inputTokens, 220);
-      assert.equal(telemetry.outputTokens, 16);
-      assert.equal(telemetry.cachedInputTokens, 90);
+      assert.equal(telemetry.inputTokens, 100);
+      assert.equal(telemetry.outputTokens, 10);
+      assert.equal(telemetry.cachedInputTokens, 40);
+      assert.equal(telemetry.outputTokenAllowance, 512);
     });
 
-    await t.step("an uncapped max-effort streamed progress stop still earns the one bounded recheck", async () => {
+    await t.step("a buffered progress-like stop completes once with the first text and its measured usage", async () => {
+      const upstreamBodies: Record<string, unknown>[] = [];
+      const response = await withFetchMock(
+        (_url, bodyText) => {
+          upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
+          return progressCompletion();
+        },
+        () =>
+          handleResponses(
+            responsesBody({ model: DEEPSEEK_FLASH_MODEL, input: "read all 16 files", stream: false, max_output_tokens: 512, tools: progressTools })
+          )
+      );
+
+      assert.equal(upstreamBodies.length, 1);
+      assert.equal(upstreamBodies[0].max_tokens, 512);
+      assert.equal("tool_choice" in upstreamBodies[0], false);
+      const payload = (await response.json()) as Record<string, unknown>;
+      assert.equal(payload.status, "completed");
+      const output = payload.output as { type: string; content?: { text?: string }[] }[];
+      assert.deepEqual(
+        output.map((item) => item.type),
+        ["reasoning", "message"]
+      );
+      assert.equal(output[1]?.content?.[0]?.text, "Step 11 of 16 complete.");
+      assert.deepEqual(payload.usage, progressResponsesUsage);
+      const telemetry = getResponseTelemetry(response);
+      assert.equal(telemetry?.completed, true);
+      assert.equal(telemetry.usageTelemetryStatus, "reported");
+      assert.equal(telemetry.inputTokens, 100);
+      assert.equal(telemetry.outputTokens, 10);
+      assert.equal(telemetry.cachedInputTokens, 40);
+      assert.equal(telemetry.outputTokenAllowance, 512);
+    });
+
+    await t.step("an omitted output cap still completes once on the streamed branch", async () => {
       const upstreamBodies: Record<string, unknown>[] = [];
       const { response, text } = await withFetchMock(
         (_url, bodyText) => {
           upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
-          if (upstreamBodies.length === 1) {
-            return progressStopChunks({
-              prompt_tokens: 100,
-              completion_tokens: 10,
-              total_tokens: 110,
-              prompt_cache_hit_tokens: 40,
-              completion_tokens_details: { reasoning_tokens: 4 },
-            });
-          }
-          return Response.json({
-            id: "deepseek-uncapped-recheck-2",
-            object: "chat.completion",
-            created: 1_780_000_310,
-            model: DEEPSEEK_FLASH_MODEL,
-            choices: [
-              {
-                index: 0,
-                message: {
-                  role: "assistant",
-                  content: "",
-                  tool_calls: [{ id: "call_next", type: "function", function: { name: "read_file", arguments: '{"path":"a"}' } }],
-                },
-                finish_reason: "tool_calls",
-              },
-            ],
-            usage: {
-              prompt_tokens: 120,
-              completion_tokens: 6,
-              total_tokens: 126,
-              prompt_cache_hit_tokens: 50,
-              completion_tokens_details: { reasoning_tokens: 1 },
-            },
-          });
+          return progressStopChunks();
         },
         async () => {
           const response = await handleResponses(
             // Real Codex `max` traffic omits `max_output_tokens` entirely, so the
             // gateway knows no original cap and no measured provider default.
-            responsesBody({ model: DEEPSEEK_FLASH_MODEL, input: "read all 16 files", stream: true, reasoning: { effort: "max" }, tools: recheckTools })
+            responsesBody({ model: DEEPSEEK_FLASH_MODEL, input: "read all 16 files", stream: true, reasoning: { effort: "max" }, tools: progressTools })
           );
-          // The streamed handler dispatches the advisory recheck only while the
-          // first leg's body is consumed, so the body is drained before the
-          // fetch mock is restored and both requests land on this fixture.
           return { response, text: await response.text() };
         }
       );
 
-      assert.equal(upstreamBodies.length, 2);
-      // The original request is uncapped on the wire, exactly as Codex sends it.
+      assert.equal(upstreamBodies.length, 1);
+      // The original request stays uncapped on the wire, exactly as Codex sends it.
       assert.equal("max_tokens" in upstreamBodies[0], false);
       assert.equal(upstreamBodies[0].reasoning_effort, "max");
-      // With no caller aggregate cap to stay under, the one advisory call is
-      // bounded by the recheck ceiling alone: DEEPSEEK_RECHECK_MAX_TOKENS.
-      assert.equal(upstreamBodies[1].max_tokens, 8_192);
       const events = responsesEvents(text);
-      // One original response identity: the recheck never mints another.
-      assert.equal(events.filter((event) => event.type === "response.created").length, 1);
-      const created = events.find((event) => event.type === "response.created") as { response: { id: string } };
       const completed = events.at(-1) as { type: string; response: Record<string, unknown> };
       assert.equal(completed.type, "response.completed");
-      assert.equal(completed.response.id, created.response.id);
-      const output = completed.response.output as Record<string, unknown>[];
-      assert.deepEqual(
-        output.map((item) => item.type),
-        ["reasoning", "message", "function_call"]
-      );
-      const call = output.at(-1);
-      assert.equal(call?.name, "read_file");
-      // The tool item closes before the terminal event that reports it.
-      const toolDoneIndex = events.findIndex(
-        (event) => event.type === "response.output_item.done" && (event.item as { type?: string } | undefined)?.type === "function_call"
-      );
-      assert.ok(toolDoneIndex >= 0 && toolDoneIndex < events.length - 1);
-      // Both provider requests are accounted for in the one response envelope.
-      assert.deepEqual(completed.response.usage, {
-        input_tokens: 220,
-        input_tokens_details: { cached_tokens: 90 },
-        output_tokens: 16,
-        output_tokens_details: { reasoning_tokens: 5 },
-        total_tokens: 236,
-      });
+      assert.deepEqual(completed.response.usage, progressResponsesUsage);
       const telemetry = getResponseTelemetry(response);
       assert.equal(telemetry?.completed, true);
-      assert.equal(telemetry.usageTelemetryStatus, "reported");
-      assert.equal(telemetry.outputTokens, 16);
-      // The omitted cap stays unknown; the recheck ceiling is not reported as
-      // the original allowance.
+      assert.equal(telemetry.outputTokens, 10);
+      // The omitted cap stays unknown; nothing was back-filled for it.
       assert.equal(telemetry.outputTokenAllowance, null);
     });
 
-    await t.step("an argument-only first-leg delta refuses the recheck instead of concatenating onto its slot", async () => {
+    await t.step("an omitted output cap still completes once on the buffered branch", async () => {
+      const upstreamBodies: Record<string, unknown>[] = [];
+      const response = await withFetchMock(
+        (_url, bodyText) => {
+          upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
+          return progressCompletion();
+        },
+        () =>
+          handleResponses(
+            responsesBody({ model: DEEPSEEK_FLASH_MODEL, input: "read all 16 files", stream: false, reasoning: { effort: "max" }, tools: progressTools })
+          )
+      );
+
+      assert.equal(upstreamBodies.length, 1);
+      assert.equal("max_tokens" in upstreamBodies[0], false);
+      assert.equal(upstreamBodies[0].reasoning_effort, "max");
+      const payload = (await response.json()) as Record<string, unknown>;
+      assert.equal(payload.status, "completed");
+      assert.deepEqual(payload.usage, progressResponsesUsage);
+      const telemetry = getResponseTelemetry(response);
+      assert.equal(telemetry?.completed, true);
+      assert.equal(telemetry.outputTokens, 10);
+      assert.equal(telemetry.outputTokenAllowance, null);
+    });
+
+    await t.step("an argument-only first-leg delta is not reported as a tool call", async () => {
       const upstreamBodies: Record<string, unknown>[] = [];
       const { text } = await withFetchMock(
         (_url, bodyText) => {
           upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
-          // A nameless index-0 argument fragment occupies the tool-call map
-          // slot while answering nothing; the recheck contract allows no tool
-          // call at all, so this first leg must not earn a second generation.
+          // A nameless index-0 argument fragment occupies a tool-call map slot
+          // while answering nothing; it must never become client-visible output.
           return sseResponse([
             deepSeekStreamChunk({ role: "assistant", content: "Step 11 of 16 complete." }),
             deepSeekStreamChunk({ tool_calls: [{ index: 0, function: { arguments: '{"path":' } }] }),
@@ -15163,16 +15115,8 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
         },
         async () => {
           const response = await handleResponses(
-            responsesBody({
-              model: DEEPSEEK_FLASH_MODEL,
-              input: "read all 16 files",
-              stream: true,
-              max_output_tokens: 512,
-              tools: recheckTools,
-            })
+            responsesBody({ model: DEEPSEEK_FLASH_MODEL, input: "read all 16 files", stream: true, max_output_tokens: 512, tools: progressTools })
           );
-          // The handler dispatches the advisory recheck while the first leg's
-          // body is consumed, so it is drained before the mock is restored.
           return { response, text: await response.text() };
         }
       );
@@ -15195,404 +15139,85 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
       );
     });
 
-    await t.step("the buffered branch performs the same bounded recheck and keeps one identity", async () => {
-      const upstreamBodies: Record<string, unknown>[] = [];
-      const response = await withFetchMock(
-        (_url, bodyText) => {
-          upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
-          if (upstreamBodies.length === 1) {
-            return Response.json(
-              {
-                id: "deepseek-buffered-recheck-1",
-                object: "chat.completion",
-                created: 1_780_000_200,
-                model: DEEPSEEK_FLASH_MODEL,
-                choices: [{ index: 0, message: { role: "assistant", content: "Step 11 of 16 complete." }, finish_reason: "stop" }],
-                usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110, prompt_tokens_details: { cached_tokens: 40 } },
-              },
-              { headers: { "X-Request-Id": "deepseek-buffered-recheck-1" } }
-            );
-          }
-          return Response.json({
-            id: "deepseek-buffered-recheck-2",
-            object: "chat.completion",
-            created: 1_780_000_201,
-            model: DEEPSEEK_FLASH_MODEL,
-            choices: [
-              {
-                index: 0,
-                message: {
-                  role: "assistant",
-                  content: "still working",
-                  tool_calls: [{ id: "call_next", type: "function", function: { name: "read_file", arguments: "{}" } }],
-                },
-                finish_reason: "stop",
-              },
-            ],
-            usage: { prompt_tokens: 120, completion_tokens: 6, total_tokens: 126, prompt_tokens_details: { cached_tokens: 50 } },
-          });
-        },
-        () =>
-          handleResponses(
-            responsesBody({
-              model: DEEPSEEK_FLASH_MODEL,
-              input: "read all 16 files",
-              stream: false,
-              max_output_tokens: 512,
-              tools: recheckTools,
-            })
-          )
-      );
-
-      assert.equal(upstreamBodies.length, 2);
-      assert.equal(upstreamBodies[1].max_tokens, 502);
-      const payload = (await response.json()) as Record<string, unknown>;
-      assert.equal(payload.status, "completed");
-      // The id minted from the first leg's provider request id is the only one.
-      assert.equal(payload.id, "resp_deepseekbufferedrecheck1");
-      const output = payload.output as { type: string; content?: { text?: string }[] }[];
-      assert.deepEqual(
-        output.map((item) => item.type),
-        ["message", "function_call"]
-      );
-      assert.equal(output[0]?.content?.[0]?.text, "Step 11 of 16 complete.");
-      assert.deepEqual(payload.usage, {
-        input_tokens: 220,
-        input_tokens_details: { cached_tokens: 90 },
-        output_tokens: 16,
-        total_tokens: 236,
-      });
-      const telemetry = getResponseTelemetry(response);
-      assert.equal(telemetry?.completed, true);
-      assert.equal(telemetry.usageTelemetryStatus, "reported");
-      assert.equal(telemetry.inputTokens, 220);
-    });
-
-    await t.step("an uncapped max-effort buffered progress stop still earns the one bounded recheck", async () => {
-      const upstreamBodies: Record<string, unknown>[] = [];
-      const response = await withFetchMock(
-        (_url, bodyText) => {
-          upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
-          if (upstreamBodies.length === 1) {
-            return Response.json(
-              {
-                id: "deepseek-uncapped-buffered-1",
-                object: "chat.completion",
-                created: 1_780_000_320,
-                model: DEEPSEEK_FLASH_MODEL,
-                choices: [{ index: 0, message: { role: "assistant", content: "Step 11 of 16 complete." }, finish_reason: "stop" }],
-                usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110, prompt_tokens_details: { cached_tokens: 40 } },
-              },
-              { headers: { "X-Request-Id": "deepseek-uncapped-buffered-1" } }
-            );
-          }
-          return Response.json({
-            id: "deepseek-uncapped-buffered-2",
-            object: "chat.completion",
-            created: 1_780_000_321,
-            model: DEEPSEEK_FLASH_MODEL,
-            choices: [
-              {
-                index: 0,
-                message: {
-                  role: "assistant",
-                  content: "still working",
-                  tool_calls: [{ id: "call_next", type: "function", function: { name: "read_file", arguments: "{}" } }],
-                },
-                finish_reason: "stop",
-              },
-            ],
-            usage: { prompt_tokens: 120, completion_tokens: 6, total_tokens: 126, prompt_tokens_details: { cached_tokens: 50 } },
-          });
-        },
-        () =>
-          handleResponses(
-            // The real Codex shape again: `max` effort and no `max_output_tokens`.
-            responsesBody({ model: DEEPSEEK_FLASH_MODEL, input: "read all 16 files", stream: false, reasoning: { effort: "max" }, tools: recheckTools })
-          )
-      );
-
-      assert.equal(upstreamBodies.length, 2);
-      assert.equal("max_tokens" in upstreamBodies[0], false);
-      assert.equal(upstreamBodies[0].reasoning_effort, "max");
-      assert.equal(upstreamBodies[1].max_tokens, 8_192);
-      const payload = (await response.json()) as Record<string, unknown>;
-      assert.equal(payload.status, "completed");
-      // The id minted from the first leg's provider request id is the only one.
-      assert.equal(payload.id, "resp_deepseekuncappedbuffered1");
-      const output = payload.output as { type: string; content?: { text?: string }[] }[];
-      assert.deepEqual(
-        output.map((item) => item.type),
-        ["message", "function_call"]
-      );
-      assert.equal(output[0]?.content?.[0]?.text, "Step 11 of 16 complete.");
-      // Both provider requests are accounted for in the one response envelope.
-      assert.deepEqual(payload.usage, {
-        input_tokens: 220,
-        input_tokens_details: { cached_tokens: 90 },
-        output_tokens: 16,
-        total_tokens: 236,
-      });
-      const telemetry = getResponseTelemetry(response);
-      assert.equal(telemetry?.completed, true);
-      assert.equal(telemetry.outputTokens, 16);
-      assert.equal(telemetry.outputTokenAllowance, null);
-    });
-
-    await t.step("a legitimate final recheck keeps the original text and both requests' usage", async () => {
-      const upstreamBodies: Record<string, unknown>[] = [];
-      const { response, text } = await withFetchMock(
-        (_url, bodyText) => {
-          upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
-          if (upstreamBodies.length === 1) {
-            return progressStopChunks({ prompt_tokens: 100, completion_tokens: 10, total_tokens: 110, prompt_cache_hit_tokens: 40 });
-          }
-          return Response.json({
-            id: "deepseek-recheck-final",
-            object: "chat.completion",
-            created: 1_780_000_104,
-            model: DEEPSEEK_FLASH_MODEL,
-            choices: [{ index: 0, message: { role: "assistant", content: "The requested work is complete." }, finish_reason: "stop" }],
-            usage: { prompt_tokens: 120, completion_tokens: 6, total_tokens: 126, prompt_cache_hit_tokens: 50 },
-          });
-        },
-        async () => {
-          const response = await handleResponses(
-            responsesBody({ model: DEEPSEEK_FLASH_MODEL, input: "read all 16 files", stream: true, max_output_tokens: 512, tools: recheckTools })
-          );
-          // Drain the first leg before the mock is restored so its advisory
-          // recheck is dispatched to this fixture.
-          return { response, text: await response.text() };
-        }
-      );
-
-      assert.equal(upstreamBodies.length, 2);
-      // The recheck's duplicate prose is discarded, not appended.
-      assert.equal(text.includes("The requested work is complete."), false);
-      const events = responsesEvents(text);
-      const completed = events.at(-1) as { type: string; response: Record<string, unknown> };
-      assert.equal(completed.type, "response.completed");
-      const output = completed.response.output as { type: string; content: { text: string }[] }[];
-      assert.deepEqual(
-        output.map((item) => item.type),
-        ["reasoning", "message"]
-      );
-      assert.equal(output[1]?.content[0]?.text, "Step 11 of 16 complete.");
-      // The usage-only chunk carries the summed counters of both requests.
-      assert.deepEqual(completed.response.usage, {
-        input_tokens: 220,
-        input_tokens_details: { cached_tokens: 90 },
-        output_tokens: 16,
-        total_tokens: 236,
-      });
-      const telemetry = getResponseTelemetry(response);
-      assert.equal(telemetry?.completed, true);
-      assert.equal(telemetry.usageTelemetryStatus, "reported");
-      assert.equal(telemetry.outputTokens, 16);
-    });
-
-    await t.step("a failed recheck keeps the first success and marks the accounting partial", async () => {
-      const cases: { name: string; reply: () => Response }[] = [
-        { name: "an upstream status failure", reply: () => new Response("upstream down", { status: 502 }) },
-        {
-          name: "a network failure",
-          reply: () => {
-            throw new Error("network down");
-          },
-        },
-        { name: "an invalid completion", reply: () => Response.json({ id: "not-a-completion" }) },
-      ];
-      for (const testCase of cases) {
-        const upstreamBodies: Record<string, unknown>[] = [];
-        const response = await withFetchMock(
-          (_url, bodyText) => {
-            upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
-            if (upstreamBodies.length === 1) {
-              return Response.json({
-                id: "deepseek-recheck-failure-1",
-                object: "chat.completion",
-                created: 1_780_000_300,
-                model: DEEPSEEK_FLASH_MODEL,
-                choices: [{ index: 0, message: { role: "assistant", content: "Step 11 of 16 complete." }, finish_reason: "stop" }],
-                usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110, prompt_tokens_details: { cached_tokens: 40 } },
-              });
-            }
-            return testCase.reply();
-          },
-          () =>
-            handleResponses(
-              responsesBody({ model: DEEPSEEK_FLASH_MODEL, input: "read all 16 files", stream: false, max_output_tokens: 512, tools: recheckTools })
-            )
-        );
-
-        assert.equal(response.status, 200, testCase.name);
-        const payload = (await response.json()) as Record<string, unknown>;
-        assert.equal(upstreamBodies.length, 2, testCase.name);
-        assert.equal(payload.status, "completed", testCase.name);
-        assert.deepEqual(
-          (payload.output as { type: string }[]).map((item) => item.type),
-          ["message"],
-          testCase.name
-        );
-        // The first answer's measured base counts survive; the unobserved leg is
-        // not invented, and a detail only the first leg measured is not
-        // published as the aggregate.
-        assert.deepEqual(payload.usage, { input_tokens: 100, output_tokens: 10, total_tokens: 110 }, testCase.name);
-        const telemetry = getResponseTelemetry(response);
-        assert.equal(telemetry?.completed, true, testCase.name);
-        assert.equal(telemetry.usageTelemetryStatus, "partial", testCase.name);
-        assert.equal(telemetry.cachedInputTokens, null, testCase.name);
-      }
-    });
-
-    await t.step("an unusable recheck answer keeps the first answer and both legs' measured usage", async () => {
-      const cases: { name: string; second: Record<string, unknown> }[] = [
-        {
-          // A reasoning-only truncation normalizes, but carries no answer-bearing
-          // output, so only its measured counters may be kept.
-          name: "a reasoning-only truncated answer",
-          second: {
-            id: "deepseek-recheck-unusable-1",
-            object: "chat.completion",
-            created: 1_780_000_500,
-            model: DEEPSEEK_FLASH_MODEL,
-            choices: [{ index: 0, message: { role: "assistant", content: null, reasoning_content: "still thinking" }, finish_reason: "length" }],
-            usage: {
-              prompt_tokens: 120,
-              completion_tokens: 6,
-              total_tokens: 126,
-              prompt_cache_hit_tokens: 50,
-              completion_tokens_details: { reasoning_tokens: 1 },
-            },
-          },
-        },
-        {
-          // An output the provider validator rejects keeps its billable counters
-          // and never leaks malformed output into the response.
-          name: "a completion the validator rejects",
-          second: {
-            id: "deepseek-recheck-unusable-2",
-            object: "chat.completion",
-            created: 1_780_000_501,
-            model: DEEPSEEK_FLASH_MODEL,
-            choices: [{ index: 0, message: { role: "assistant", content: 5 }, finish_reason: "stop" }],
-            usage: {
-              prompt_tokens: 120,
-              completion_tokens: 6,
-              total_tokens: 126,
-              prompt_cache_hit_tokens: 50,
-              completion_tokens_details: { reasoning_tokens: 1 },
-            },
-          },
-        },
-      ];
-      for (const testCase of cases) {
-        const upstreamBodies: Record<string, unknown>[] = [];
-        const response = await withFetchMock(
-          (_url, bodyText) => {
-            upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
-            if (upstreamBodies.length === 1) {
-              return Response.json({
-                id: "deepseek-recheck-unusable-first",
-                object: "chat.completion",
-                created: 1_780_000_499,
-                model: DEEPSEEK_FLASH_MODEL,
-                choices: [{ index: 0, message: { role: "assistant", content: "Step 11 of 16 complete." }, finish_reason: "stop" }],
-                usage: {
-                  prompt_tokens: 100,
-                  completion_tokens: 10,
-                  total_tokens: 110,
-                  prompt_tokens_details: { cached_tokens: 40 },
-                  completion_tokens_details: { reasoning_tokens: 4 },
-                },
-              });
-            }
-            return Response.json(testCase.second);
-          },
-          () =>
-            handleResponses(
-              responsesBody({ model: DEEPSEEK_FLASH_MODEL, input: "read all 16 files", stream: false, max_output_tokens: 512, tools: recheckTools })
-            )
-        );
-
-        assert.equal(upstreamBodies.length, 2, testCase.name);
-        const payload = (await response.json()) as Record<string, unknown>;
-        assert.equal(payload.status, "completed", testCase.name);
-        const output = payload.output as { type: string; content?: { text?: string }[] }[];
-        // The first valid answer is preserved and no malformed output leaks.
-        assert.deepEqual(
-          output.map((item) => item.type),
-          ["message"],
-          testCase.name
-        );
-        assert.equal(output[0]?.content?.[0]?.text, "Step 11 of 16 complete.", testCase.name);
-        // The billable second leg's measured tokens are summed, not dropped.
-        assert.deepEqual(
-          payload.usage,
-          {
-            input_tokens: 220,
-            input_tokens_details: { cached_tokens: 90 },
-            output_tokens: 16,
-            output_tokens_details: { reasoning_tokens: 5 },
-            total_tokens: 236,
-          },
-          testCase.name
-        );
-        const telemetry = getResponseTelemetry(response);
-        assert.equal(telemetry?.completed, true, testCase.name);
-        assert.equal(telemetry.usageTelemetryStatus, "reported", testCase.name);
-        assert.equal(telemetry.inputTokens, 220, testCase.name);
-        assert.equal(telemetry.outputTokens, 16, testCase.name);
-      }
-    });
-
-    await t.step("the recheck is skipped whenever the first leg does not allow it", async () => {
+    await t.step("every non-answer first leg still makes exactly one provider request", async () => {
       const usage = { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 };
       const completion = (finishReason: string, message: Record<string, unknown>, completionUsage?: Record<string, unknown>) => ({
-        id: `deepseek-skip-${finishReason}`,
+        id: `deepseek-shape-${finishReason}`,
         object: "chat.completion",
         created: 1_780_000_400,
         model: DEEPSEEK_FLASH_MODEL,
         choices: [{ index: 0, message, finish_reason: finishReason }],
         ...(completionUsage ? { usage: completionUsage } : {}),
       });
-      const cases: { name: string; request: Record<string, unknown>; first: Record<string, unknown> }[] = [
+      const cases: {
+        name: string;
+        request: Record<string, unknown>;
+        first: Record<string, unknown>;
+        responseStatus: number;
+        payloadStatus?: string;
+        errorCode?: string;
+      }[] = [
         {
-          name: "no executable tools",
+          name: "no mapped executable tools",
           request: { tools: [{ type: "web_search" }] },
           first: completion("stop", { role: "assistant", content: "progress" }, usage),
+          responseStatus: 200,
+          payloadStatus: "completed",
         },
         {
           name: "tool_choice none",
-          request: { tools: recheckTools, tool_choice: "none" },
+          request: { tools: progressTools, tool_choice: "none" },
           first: completion("stop", { role: "assistant", content: "progress" }, usage),
+          responseStatus: 200,
+          payloadStatus: "completed",
         },
-        { name: "a truncated first leg", request: { tools: recheckTools }, first: completion("length", { role: "assistant", content: "progress" }, usage) },
-        { name: "an empty first leg", request: { tools: recheckTools }, first: completion("stop", { role: "assistant", content: "" }, usage) },
-        { name: "an unobserved first usage", request: { tools: recheckTools }, first: completion("stop", { role: "assistant", content: "progress" }) },
-        { name: "no remaining budget", request: { tools: recheckTools }, first: completion("stop", { role: "assistant", content: "progress" }, usage) },
         {
-          // The official refusal metadata must reach the eligibility guard: an
-          // explicit refusal is never reconsidered, even beside answer text.
-          name: "a first-leg refusal with text",
-          request: { tools: recheckTools },
+          // A truncated first leg is reported as an incomplete provider terminal,
+          // never promoted to a completion or extended by hidden work.
+          name: "a truncated first leg",
+          request: { tools: progressTools },
+          first: completion("length", { role: "assistant", content: "progress" }, usage),
+          responseStatus: 200,
+          payloadStatus: "incomplete",
+        },
+        {
+          // A would-be completion with nothing a client can act on fails closed.
+          name: "an empty first leg",
+          request: { tools: progressTools },
+          first: completion("stop", { role: "assistant", content: "" }, usage),
+          responseStatus: 502,
+          errorCode: "empty_upstream_completion",
+        },
+        {
+          name: "an unobserved first usage",
+          request: { tools: progressTools },
+          first: completion("stop", { role: "assistant", content: "progress" }),
+          responseStatus: 200,
+          payloadStatus: "completed",
+        },
+        {
+          // The official refusal metadata is preserved beside the answer text and
+          // never triggers additional work.
+          name: "a refusal with text",
+          request: { tools: progressTools },
           first: completion("stop", { role: "assistant", content: "progress", refusal: "I cannot read the remaining files." }, usage),
+          responseStatus: 200,
+          payloadStatus: "completed",
         },
         {
           name: "a first-leg tool call",
-          request: { tools: recheckTools },
+          request: { tools: progressTools },
           first: completion(
             "stop",
             { role: "assistant", content: "progress", tool_calls: [{ id: "call_1", type: "function", function: { name: "read_file", arguments: "{}" } }] },
             usage
           ),
+          responseStatus: 200,
+          payloadStatus: "completed",
         },
       ];
       for (const testCase of cases) {
         let upstreamCalls = 0;
-        // `max_output_tokens: 10` with 10 completion tokens leaves no budget;
-        // every other case carries a 512-token cap that would allow a recheck.
-        const maxOutputTokens = testCase.name === "no remaining budget" ? 10 : 512;
         const response = await withFetchMock(
           () => {
             upstreamCalls += 1;
@@ -15600,15 +15225,17 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
           },
           () =>
             handleResponses(
-              responsesBody({ model: DEEPSEEK_FLASH_MODEL, input: "read all 16 files", stream: false, max_output_tokens: maxOutputTokens, ...testCase.request })
+              responsesBody({ model: DEEPSEEK_FLASH_MODEL, input: "read all 16 files", stream: false, max_output_tokens: 512, ...testCase.request })
             )
         );
         const payload = (await response.json()) as Record<string, unknown>;
         assert.equal(upstreamCalls, 1, testCase.name);
-        if (testCase.name === "a first-leg refusal with text") {
-          // The refusal is metadata, not a replacement for the answer the
-          // provider also returned, and the route still makes exactly one call.
-          assert.equal(payload.status, "completed", testCase.name);
+        assert.equal(response.status, testCase.responseStatus, testCase.name);
+        if (testCase.payloadStatus) assert.equal(payload.status, testCase.payloadStatus, testCase.name);
+        if (testCase.errorCode) assert.equal((payload.error as { code?: string } | undefined)?.code, testCase.errorCode, testCase.name);
+        if (testCase.name === "a refusal with text") {
+          // The refusal is metadata, not a replacement for the answer the provider
+          // also returned, and the route still makes exactly one call.
           const output = payload.output as { type: string; content?: { text?: string }[] }[];
           assert.deepEqual(
             output.map((item) => item.type),
@@ -15620,62 +15247,7 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
       }
     });
 
-    await t.step("a buffered partial second usage raises the total and reports partial accounting", async () => {
-      const upstreamBodies: Record<string, unknown>[] = [];
-      const response = await withFetchMock(
-        (_url, bodyText) => {
-          upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
-          if (upstreamBodies.length === 1) {
-            return Response.json({
-              id: "deepseek-recheck-partial-1",
-              object: "chat.completion",
-              created: 1_780_000_600,
-              model: DEEPSEEK_FLASH_MODEL,
-              choices: [{ index: 0, message: { role: "assistant", content: "Step 11 of 16 complete." }, finish_reason: "stop" }],
-              usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110, prompt_tokens_details: { cached_tokens: 40 } },
-            });
-          }
-          return Response.json({
-            id: "deepseek-recheck-partial-2",
-            object: "chat.completion",
-            created: 1_780_000_601,
-            model: DEEPSEEK_FLASH_MODEL,
-            choices: [{ index: 0, message: { role: "assistant", content: "The requested work is complete." }, finish_reason: "stop" }],
-            // Only the output counter was measured; input and total are absent.
-            usage: { completion_tokens: 5 },
-          });
-        },
-        () =>
-          handleResponses(
-            responsesBody({ model: DEEPSEEK_FLASH_MODEL, input: "read all 16 files", stream: false, max_output_tokens: 512, tools: recheckTools })
-          )
-      );
-
-      assert.equal(upstreamBodies.length, 2);
-      const payload = (await response.json()) as Record<string, unknown>;
-      assert.equal(payload.status, "completed");
-      const output = payload.output as { type: string; content?: { text?: string }[] }[];
-      // The first answer is preserved; the recheck's own text is not appended.
-      assert.deepEqual(
-        output.map((item) => item.type),
-        ["message"]
-      );
-      assert.equal(output[0]?.content?.[0]?.text, "Step 11 of 16 complete.");
-      // The known counters stay consistent: input 100 survives, output is the
-      // sum 15 of both measured amounts, and the total covers both components
-      // instead of repeating the first leg's now-too-small 110.
-      assert.deepEqual(payload.usage, { input_tokens: 100, output_tokens: 15, total_tokens: 115 });
-      const telemetry = getResponseTelemetry(response);
-      assert.equal(telemetry?.completed, true);
-      assert.equal(telemetry.usageTelemetryStatus, "partial");
-      assert.equal(telemetry.inputTokens, 100);
-      assert.equal(telemetry.outputTokens, 15);
-      assert.equal(telemetry.totalTokens, 115);
-      // The second leg never measured a cache read, so the aggregate has none.
-      assert.equal(telemetry.cachedInputTokens, null);
-    });
-
-    await t.step("a streamed refusal with text is not reconsidered and keeps its answer", async () => {
+    await t.step("a streamed refusal with text keeps its answer and makes one provider request", async () => {
       let upstreamCalls = 0;
       const streamUsage = {
         id: "deepseek-refusal-stream",
@@ -15698,13 +15270,12 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
         },
         async () => {
           const response = await handleResponses(
-            responsesBody({ model: DEEPSEEK_FLASH_MODEL, input: "read all 16 files", stream: true, max_output_tokens: 512, tools: recheckTools })
+            responsesBody({ model: DEEPSEEK_FLASH_MODEL, input: "read all 16 files", stream: true, max_output_tokens: 512, tools: progressTools })
           );
           return { response, text: await response.text() };
         }
       );
 
-      // The streamed refusal reached the guard: no second provider request.
       assert.equal(upstreamCalls, 1);
       const events = responsesEvents(text);
       const completed = events.at(-1) as { type: string; response: Record<string, unknown> };
@@ -15721,112 +15292,46 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
       assert.equal(telemetry.inputTokens, 100);
     });
 
-    await t.step("a refusing recheck contributes no tool call", async () => {
+    await t.step("cancelling a streamed progress stop never dispatches a second provider request", async () => {
+      const firstFrame = new Deferred<void>();
       let upstreamCalls = 0;
-      const response = await withFetchMock(
+      const { response } = await withFetchMock(
         () => {
           upstreamCalls += 1;
-          if (upstreamCalls === 1) {
-            return Response.json({
-              id: "deepseek-recheck-refusal-1",
-              object: "chat.completion",
-              created: 1_780_000_800,
-              model: DEEPSEEK_FLASH_MODEL,
-              choices: [{ index: 0, message: { role: "assistant", content: "Step 11 of 16 complete." }, finish_reason: "stop" }],
-              usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 },
-            });
-          }
-          return Response.json({
-            id: "deepseek-recheck-refusal-2",
-            object: "chat.completion",
-            created: 1_780_000_801,
-            model: DEEPSEEK_FLASH_MODEL,
-            choices: [
-              {
-                index: 0,
-                message: {
-                  role: "assistant",
-                  content: "I cannot continue.",
-                  refusal: "I cannot continue.",
-                  tool_calls: [{ id: "call_refused", type: "function", function: { name: "read_file", arguments: "{}" } }],
-                },
-                finish_reason: "stop",
-              },
-            ],
-            usage: { prompt_tokens: 120, completion_tokens: 6, total_tokens: 126 },
+          // One progress frame, then a source that stays open until the gateway
+          // cancels it: the client's own cancellation ends this stream.
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(TEXT_ENCODER.encode(deepSeekStreamChunk({ role: "assistant", content: "Step 11 of 16 complete." })));
+              firstFrame.resolve();
+            },
           });
-        },
-        () =>
-          handleResponses(
-            responsesBody({ model: DEEPSEEK_FLASH_MODEL, input: "read all 16 files", stream: false, max_output_tokens: 512, tools: recheckTools })
-          )
-      );
-
-      assert.equal(upstreamCalls, 2);
-      const payload = (await response.json()) as Record<string, unknown>;
-      assert.equal(payload.status, "completed");
-      const output = payload.output as { type: string; content?: { text?: string }[] }[];
-      // The explicit refusal blocks the tool call the same message also carried,
-      // the first answer is preserved, and the second leg is still accounted.
-      assert.deepEqual(
-        output.map((item) => item.type),
-        ["message"]
-      );
-      assert.equal(output[0]?.content?.[0]?.text, "Step 11 of 16 complete.");
-      assert.deepEqual(payload.usage, { input_tokens: 220, output_tokens: 16, total_tokens: 236 });
-    });
-
-    await t.step("cancelling during the pending recheck aborts it and settles cancellation", async () => {
-      const recheckStarted = new Deferred<void>();
-      let recheckAborted = false;
-      let upstreamCalls = 0;
-      // The stream is read and cancelled while the fetch mock is still
-      // installed: the advisory recheck is dispatched from the pending pull that
-      // drains the first leg, so the mock must outlive the cancellation.
-      const { response, text } = await withFetchMock(
-        (_url, _bodyText, init) => {
-          upstreamCalls += 1;
-          if (upstreamCalls === 1) {
-            return progressStopChunks({ prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 });
-          }
-          recheckStarted.resolve();
-          return rejectOnAbort(init?.signal ?? new AbortController().signal, () => {
-            recheckAborted = true;
-          });
+          return new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream" } });
         },
         async () => {
           const response = await handleResponses(
-            responsesBody({ model: DEEPSEEK_FLASH_MODEL, input: "read all 16 files", stream: true, max_output_tokens: 512, tools: recheckTools })
+            responsesBody({ model: DEEPSEEK_FLASH_MODEL, input: "read all 16 files", stream: true, max_output_tokens: 512, tools: progressTools })
           );
           assert.ok(response.body);
           const reader = response.body.getReader();
-          const decoder = new TextDecoder();
-          let text = "";
-          // A background pump keeps demand on the stream: the read after the
-          // first leg's last event is the pull that dispatches the recheck and
-          // stays pending until the cancellation aborts it.
           const pump = (async () => {
             for (;;) {
               const next = await reader.read();
               if (next.done) return;
-              text += decoder.decode(next.value);
             }
-          })();
-          const started = await settlesWithin(recheckStarted.promise, 2_000);
-          assert.equal(started, true, "the advisory recheck must start before the cancellation");
-          await reader.cancel("client cancelled during the recheck");
-          await pump.catch(() => {});
-          return { response, text };
+          })().catch(() => {});
+          await firstFrame.promise;
+          await reader.cancel("client cancelled the progress stop");
+          await pump;
+          return { response };
         }
       );
 
-      assert.equal(upstreamCalls, 2, "the advisory recheck must start before the cancellation");
-      assert.equal(recheckAborted, true);
-      // A cancelled stream never reports the first answer as completed.
+      // A cancelled first request is never followed by hidden extra work.
+      assert.equal(upstreamCalls, 1, "cancellation must never dispatch a second provider request");
       const telemetry = getResponseTelemetry(response);
       assert.equal(telemetry?.streamTerminalType, "cancelled");
       assert.equal(telemetry.completed, false);
-      assert.equal(text.includes('"type":"response.completed"'), false);
     });
 
     await t.step("rejects an untranslatable Responses field before provider dispatch", async () => {
@@ -16022,7 +15527,14 @@ Deno.test("openai: a reasoning-only DeepSeek Responses stream fails closed inste
       const events = responsesEvents(await response.text());
       assert.deepEqual(
         events.map((event) => event.type),
-        ["response.created", "response.in_progress", "response.failed"]
+        [
+          "response.created",
+          "response.in_progress",
+          "response.output_item.added",
+          "response.reasoning_summary_part.added",
+          "response.reasoning_summary_text.delta",
+          "response.failed",
+        ]
       );
       const failed = events.at(-1) as { response: Record<string, unknown> };
       assert.equal(failed.response.status, "failed");
@@ -16277,6 +15789,86 @@ Deno.test("openai: the buffered DeepSeek Responses path fails a degenerate compl
         (payload.output as Record<string, unknown>[]).map((item) => item.type),
         ["function_call"]
       );
+    });
+  } finally {
+    if (originalApiKey === undefined) Deno.env.delete(envKey);
+    else Deno.env.set(envKey, originalApiKey);
+  }
+});
+
+Deno.test("openai: a DeepSeek Responses refusal output replays as assistant history", async (t) => {
+  // The refusal content part this adapter emits was rejected by its own request
+  // translator: a client that sent the response output back as `input` got
+  // HTTP 400 `input.content type 'refusal' is not supported`, so a single
+  // refusal ended the conversation. Both transports' output must replay as the
+  // assistant text the established Chat message shape carries.
+  const envKey = "DEEPSEEK_API_KEY";
+  const originalApiKey = Deno.env.get(envKey);
+  Deno.env.set(envKey, "deepseek-test-key");
+  const refusal = "I cannot help with that request.";
+  const completion = (message: Record<string, unknown>): Response =>
+    Response.json({
+      id: "deepseek-refusal-replay",
+      object: "chat.completion",
+      created: 1_780_000_700,
+      model: DEEPSEEK_FLASH_MODEL,
+      choices: [{ index: 0, message, finish_reason: "stop" }],
+      usage: { prompt_tokens: 9, completion_tokens: 5, total_tokens: 14 },
+    });
+  const continuationInput = (output: Record<string, unknown>[]): Record<string, unknown>[] => [
+    ...output,
+    { type: "message", role: "user", content: [{ type: "input_text", text: "continue" }] },
+  ];
+
+  try {
+    await t.step("buffered refusal output replays without a 400", async () => {
+      const upstreamBodies: Record<string, unknown>[] = [];
+      const result = await withFetchMock(
+        (_url, bodyText) => {
+          upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
+          return upstreamBodies.length === 1
+            ? completion({ role: "assistant", content: null, refusal })
+            : completion({ role: "assistant", content: "Continuing." });
+        },
+        async () => {
+          const first = await handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: false }));
+          assert.equal(first.status, 200);
+          const payload = (await first.json()) as Record<string, unknown>;
+          const output = payload.output as Record<string, unknown>[];
+          assert.deepEqual(output[0].content, [{ type: "refusal", refusal }]);
+          return handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: continuationInput(output), stream: false }));
+        }
+      );
+      assert.equal(result.status, 200);
+      const messages = upstreamBodies[1].messages as Record<string, unknown>[];
+      assert.deepEqual(messages.at(-2), { role: "assistant", content: refusal });
+      assert.deepEqual(messages.at(-1), { role: "user", content: "continue" });
+    });
+
+    await t.step("streamed terminal refusal output replays without a 400", async () => {
+      const upstreamBodies: Record<string, unknown>[] = [];
+      const result = await withFetchMock(
+        (_url, bodyText) => {
+          upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
+          if (upstreamBodies.length === 1) {
+            return sseResponse([deepSeekStreamChunk({ role: "assistant", refusal }), deepSeekStreamChunk({}, { finish_reason: "stop" }), "data: [DONE]\n\n"]);
+          }
+          return completion({ role: "assistant", content: "Continuing." });
+        },
+        async () => {
+          const first = await handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: "hi", stream: true }));
+          assert.equal(first.status, 200);
+          const events = parseResponsesSseEvents(await first.text());
+          const terminal = events.at(-1) as { type: string; response: Record<string, unknown> };
+          assert.equal(terminal.type, "response.completed");
+          const output = terminal.response.output as Record<string, unknown>[];
+          assert.deepEqual(output[0].content, [{ type: "refusal", refusal }]);
+          return handleResponses(deepSeekResponsesRequest({ model: DEEPSEEK_FLASH_MODEL, input: continuationInput(output), stream: false }));
+        }
+      );
+      assert.equal(result.status, 200);
+      const messages = upstreamBodies[1].messages as Record<string, unknown>[];
+      assert.deepEqual(messages.at(-2), { role: "assistant", content: refusal });
     });
   } finally {
     if (originalApiKey === undefined) Deno.env.delete(envKey);

@@ -38,13 +38,25 @@ const failure = (param: string, message: string): DeepSeekResponsesFailure => ({
 
 type ChatContentPart = Record<string, unknown>;
 
-/** One Responses content part mapped onto the Chat content union. */
-const chatContentPart = (part: unknown): DeepSeekResponsesResult<Readonly<{ text?: string; image?: ChatContentPart }>> => {
+/** One Responses content part mapped onto the Chat content union for one message role. */
+const chatContentPart = (part: unknown, role: string): DeepSeekResponsesResult<Readonly<{ text?: string; image?: ChatContentPart }>> => {
   if (!isRecord(part) || Array.isArray(part)) return failure("input.content", "input.content items must be objects");
   const type = getString(part.type);
   if (type === "input_text" || type === "output_text" || type === "text") {
     if (typeof part.text !== "string") return failure("input.content.text", "input.content text must be a string");
     return { ok: true, value: { text: part.text } };
+  }
+  // The refusal part this adapter emits (`responseMessageContent`) is assistant
+  // output replayed as history; it carries its payload in `refusal`. Chat
+  // Completions has no refusal content part, so the text replays as the
+  // assistant message it is, matching the repository's own Chat-side replay rule
+  // for a refusal part. Without this translation a refusal the gateway just
+  // returned made the next request fail with HTTP 400 `input.content type
+  // 'refusal' is not supported`. Every other role keeps that rejection, because
+  // only assistant output produces a refusal part.
+  if (type === "refusal" && role === "assistant") {
+    if (typeof part.refusal !== "string") return failure("input.content.refusal", "input.content refusal must be a string");
+    return { ok: true, value: { text: part.refusal } };
   }
   if (type !== "input_image") return failure("input.content.type", `input.content type '${type ?? "unknown"}' is not supported`);
   const url = getString(part.image_url) ?? getString(part.file_url);
@@ -54,13 +66,13 @@ const chatContentPart = (part: unknown): DeepSeekResponsesResult<Readonly<{ text
 };
 
 /** Chat Completions content parts are strings or image parts; Responses nests text. */
-const chatContentFromResponseParts = (value: unknown): DeepSeekResponsesResult<string | ChatContentPart[]> => {
+const chatContentFromResponseParts = (value: unknown, role: string): DeepSeekResponsesResult<string | ChatContentPart[]> => {
   if (typeof value === "string") return { ok: true, value };
   if (!Array.isArray(value)) return failure("input.content", "input.content must be a string or an array");
   const images: ChatContentPart[] = [];
   const texts: string[] = [];
   for (const raw of value) {
-    const part = chatContentPart(raw);
+    const part = chatContentPart(raw, role);
     if (!part.ok) return part;
     if (part.value.text !== undefined) texts.push(part.value.text);
     if (part.value.image) images.push(part.value.image);
@@ -136,7 +148,7 @@ const appendMessageItem = (
 ): DeepSeekResponsesResult<void> => {
   const role = getString(item.role) ?? "user";
   if (role !== "user" && role !== "assistant" && role !== "developer") return failure("input.role", `input role '${role}' is not supported`);
-  const content = chatContentFromResponseParts(item.content);
+  const content = chatContentFromResponseParts(item.content, role);
   if (!content.ok) return content;
   const message: Record<string, unknown> = { role: role === "developer" ? "system" : role, content: content.value };
   if (role === "assistant" && pending.reasoning) {
@@ -572,217 +584,6 @@ export const toResponsesUsage = (value: unknown): Record<string, unknown> | null
   };
 };
 
-/**
- * The neutral instruction appended after the first-leg assistant draft when this
- * route performs its one bounded continuation recheck. It asks the same model
- * the same task a second time with the draft in context; it never forces a tool
- * call, forbids a legitimate final answer, or invents work.
- */
-export const DEEPSEEK_RECHECK_INSTRUCTION =
-  "The assistant response above is a draft for this same task. If actionable required work remains, emit the next appropriate tool call now. If the requested work is complete, blocked, or needs user input, return the existing answer without tool calls. Do not repeat completed actions or invent new work.";
-
-/**
- * The most output one recheck may add. When the caller set a numeric allowance,
- * its remainder is the tighter bound whenever the first leg used fewer than this
- * many tokens, so the two legs together never exceed the allowance the caller
- * asked for. When the caller set no cap at all, this value alone bounds the one
- * advisory call; it is a bound on the recheck, not a claim about the original
- * request's uncapped allowance.
- */
-export const DEEPSEEK_RECHECK_MAX_TOKENS = 8_192;
-
-/** Why one first-leg completion did not earn the bounded recheck. */
-export type DeepSeekRecheckSkipReason =
-  "finish_reason" | "refusal" | "empty_text" | "tool_calls" | "no_executable_tools" | "tool_choice" | "usage_unknown" | "budget_unknown" | "budget_exhausted";
-
-export type DeepSeekRecheckEligibility =
-  Readonly<{ eligible: true; remainingBudget: number | null; maxTokens: number }> | Readonly<{ eligible: false; reason: DeepSeekRecheckSkipReason }>;
-
-/**
- * Decides whether a first-leg completion earns the one bounded recheck.
- *
- * Only a clean `stop` that produced assistant text with no tool call and no
- * refusal is reconsidered, and only when the request advertises mapped
- * executable tools while leaving `tool_choice` absent or `auto`. The provider
- * must have reported the first leg's completion use. A known numeric allowance
- * bounds both legs together: the recheck gets the smaller of its remainder and
- * `DEEPSEEK_RECHECK_MAX_TOKENS`, and an exhausted one refuses. A null allowance
- * means no finite cap was requested and the provider's own default for the tier
- * is unmeasured — the real Codex `high`/`max` shape, which omits
- * `max_output_tokens` — so `remainingBudget` stays null and the one advisory
- * recheck is bounded at `DEEPSEEK_RECHECK_MAX_TOKENS` rather than claiming that
- * value was the original cap. A truncation, a refusal, an empty answer, a
- * request that never permitted a tool, and an unmeasured first-leg usage stay
- * untouched.
- */
-export const deepSeekRecheckEligibility = (
-  input: Readonly<{
-    finishReason: unknown;
-    text: string;
-    refusal: unknown;
-    toolCallCount: number;
-    executableToolCount: number;
-    toolChoice: unknown;
-    firstCompletionTokens: number | null;
-    allowance: number | null;
-  }>
-): DeepSeekRecheckEligibility => {
-  if (input.finishReason !== "stop") return { eligible: false, reason: "finish_reason" };
-  if (typeof input.refusal === "string" && input.refusal.length > 0) return { eligible: false, reason: "refusal" };
-  if (input.text.length === 0) return { eligible: false, reason: "empty_text" };
-  if (input.toolCallCount > 0) return { eligible: false, reason: "tool_calls" };
-  if (input.executableToolCount <= 0) return { eligible: false, reason: "no_executable_tools" };
-  if (input.toolChoice !== undefined && input.toolChoice !== "auto") return { eligible: false, reason: "tool_choice" };
-  if (input.firstCompletionTokens === null || !Number.isFinite(input.firstCompletionTokens)) {
-    return { eligible: false, reason: "usage_unknown" };
-  }
-  if (input.allowance === null) {
-    // No finite cap was requested and no provider default is known for this
-    // tier. That is not zero remaining budget: the caller imposed no aggregate
-    // limit, so only the recheck itself is capped, and `remainingBudget` reports
-    // that no aggregate remainder is known rather than inventing one.
-    return { eligible: true, remainingBudget: null, maxTokens: DEEPSEEK_RECHECK_MAX_TOKENS };
-  }
-  if (!Number.isFinite(input.allowance)) return { eligible: false, reason: "budget_unknown" };
-  const remainingBudget = input.allowance - input.firstCompletionTokens;
-  if (remainingBudget <= 0) return { eligible: false, reason: "budget_exhausted" };
-  return { eligible: true, remainingBudget, maxTokens: Math.min(remainingBudget, DEEPSEEK_RECHECK_MAX_TOKENS) };
-};
-
-/**
- * Builds the one buffered recheck request from the first-leg Chat body. It keeps
- * the same model, effort and original tool schemas, appends the first assistant
- * draft (including its reasoning, which the provider requires on a tool-bearing
- * tail) plus the neutral user instruction, and never adds a tool, an alias, a
- * schema field, or a forced `tool_choice`.
- */
-export const toDeepSeekRecheckChatBody = (
-  chatBody: Record<string, unknown>,
-  draft: Readonly<{ content: string; reasoning: string }>,
-  maxTokens: number
-): Record<string, unknown> => {
-  const messages = Array.isArray(chatBody.messages) ? [...chatBody.messages] : [];
-  messages.push({ role: "assistant", content: draft.content, reasoning_content: draft.reasoning });
-  messages.push({ role: "user", content: DEEPSEEK_RECHECK_INSTRUCTION });
-  const recheck: Record<string, unknown> = { ...chatBody, messages, stream: false, max_tokens: maxTokens };
-  // DeepSeek answers 400 when stream_options is present without stream:true.
-  delete recheck.stream_options;
-  return recheck;
-};
-
-/**
- * The executable tool calls one recheck returned, or null when it carries none.
- * Every call must name a tool this request advertised: a call the client never
- * offered is rejected as a batch rather than translated into a hidden tool or
- * alias the client cannot execute.
- */
-export const deepSeekRecheckToolCalls = (message: Record<string, unknown>, executableNames: ReadonlySet<string>): Record<string, unknown>[] | null => {
-  const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
-  if (!toolCalls.length) return null;
-  const calls: Record<string, unknown>[] = [];
-  for (const call of toolCalls) {
-    if (!isRecord(call) || Array.isArray(call)) return null;
-    const fn = isRecord(call.function) && !Array.isArray(call.function) ? call.function : null;
-    const name = fn ? getString(fn.name) : null;
-    if (!name || !executableNames.has(name)) return null;
-    calls.push(call);
-  }
-  return calls;
-};
-
-/** A measured token counter, or null when the leg did not report a usable amount. */
-const validTokenCount = (value: unknown): number | null => {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) return null;
-  return value;
-};
-
-/**
- * One aggregate base counter. Both legs' amounts are summed when both were
- * measured; otherwise the one measured amount is kept, because a leg that did
- * report tokens remains billable even when the other leg did not. `summed` is
- * false in that case so the caller never presents a two-request total.
- */
-const mergedTokenCount = (firstValue: unknown, secondValue: unknown): Readonly<{ value: number | null; summed: boolean }> => {
-  const first = validTokenCount(firstValue);
-  const second = validTokenCount(secondValue);
-  if (first !== null && second !== null) return { value: first + second, summed: true };
-  if (first !== null) return { value: first, summed: false };
-  if (second !== null) return { value: second, summed: false };
-  return { value: null, summed: false };
-};
-
-const cachedTokensOf = (usage: Record<string, unknown>): unknown => {
-  const details = isRecord(usage.prompt_tokens_details) && !Array.isArray(usage.prompt_tokens_details) ? usage.prompt_tokens_details : null;
-  return usage.prompt_cache_hit_tokens ?? details?.cached_tokens;
-};
-
-const reasoningTokensOf = (usage: Record<string, unknown>): unknown => {
-  const details = isRecord(usage.completion_tokens_details) && !Array.isArray(usage.completion_tokens_details) ? usage.completion_tokens_details : null;
-  return details?.reasoning_tokens;
-};
-
-/**
- * The second leg's raw usage object when at least one base counter is
- * measurable, else null. Output validity is a separate question: a completion
- * the provider billed for keeps its measured counters even when its output is
- * rejected, while a payload with no measurable counter is not invented into one.
- */
-export const measurableDeepSeekRecheckUsage = (value: unknown): Record<string, unknown> | null => {
-  if (!isRecord(value) || Array.isArray(value)) return null;
-  const measurable =
-    validTokenCount(value.prompt_tokens) !== null || validTokenCount(value.completion_tokens) !== null || validTokenCount(value.total_tokens) !== null;
-  return measurable ? value : null;
-};
-
-export type DeepSeekRecheckUsage = Readonly<{ usage: Record<string, unknown> | null; complete: boolean }>;
-
-/**
- * The two-request total, held at or above the input and output counters both
- * legs independently observed: a second leg that reported only some counters
- * must not publish an internally inconsistent total. A total-only second
- * measurement is kept as reported even when it exceeds those partial components.
- */
-const recheckReportedTotal = (total: number | null, observedComponentSum: number | null): number | null =>
-  total !== null && observedComponentSum !== null && total < observedComponentSum ? observedComponentSum : total;
-
-/**
- * Merges the usage of the two provider requests this route actually made.
- *
- * Every base counter keeps the amounts each leg independently measured: both
- * observed amounts are summed, and a counter only one leg reported keeps that
- * leg's measured value instead of being dropped or invented. The reported total
- * is never allowed below the input and output counters that were independently
- * observed, because a second leg that reported only some counters would
- * otherwise publish an internally inconsistent total; a total-only second
- * measurement is kept as reported even when it exceeds those partial components.
- * `complete` is true only when both legs measured every base counter and the
- * total is exactly their sum. Cache-read and reasoning details describe the
- * aggregate only when both legs measured them; otherwise they are omitted, so an
- * unknown detail is never published as a measured zero and a one-leg detail is
- * never presented as the two-request aggregate. A wholly unobserved second leg
- * keeps the first leg's base counters and adds no detail.
- */
-export const mergeDeepSeekRecheckUsage = (first: unknown, second: unknown): DeepSeekRecheckUsage => {
-  if (!isRecord(first) || Array.isArray(first)) return { usage: null, complete: false };
-  const secondUsage = isRecord(second) && !Array.isArray(second) ? second : null;
-  const promptTokens = mergedTokenCount(first.prompt_tokens, secondUsage?.prompt_tokens);
-  const completionTokens = mergedTokenCount(first.completion_tokens, secondUsage?.completion_tokens);
-  const totalTokens = mergedTokenCount(first.total_tokens, secondUsage?.total_tokens);
-  const observedComponentSum = promptTokens.value !== null && completionTokens.value !== null ? promptTokens.value + completionTokens.value : null;
-  const reportedTotal = recheckReportedTotal(totalTokens.value, observedComponentSum);
-  const usage: Record<string, unknown> = {};
-  if (promptTokens.value !== null) usage.prompt_tokens = promptTokens.value;
-  if (completionTokens.value !== null) usage.completion_tokens = completionTokens.value;
-  if (reportedTotal !== null) usage.total_tokens = reportedTotal;
-  if (secondUsage) {
-    const cachedTokens = mergedTokenCount(cachedTokensOf(first), cachedTokensOf(secondUsage));
-    if (cachedTokens.summed) usage.prompt_tokens_details = { cached_tokens: cachedTokens.value };
-    const reasoningTokens = mergedTokenCount(reasoningTokensOf(first), reasoningTokensOf(secondUsage));
-    if (reasoningTokens.summed) usage.completion_tokens_details = { reasoning_tokens: reasoningTokens.value };
-  }
-  return { usage, complete: promptTokens.summed && completionTokens.summed && totalTokens.summed && reportedTotal === totalTokens.value };
-};
-
 export type DeepSeekResponsesEcho = Readonly<{
   tools: unknown;
   tool_choice: unknown;
@@ -963,13 +764,33 @@ type StreamState = {
   textPartIndex: number;
   refusalPartIndex: number;
   /**
-   * The output slot reserved for the reasoning item. The streamed transport
-   * never emits reasoning item events, so the slot is reserved at the first
-   * reasoning delta and filled at the terminal. Without it the item would be
-   * unshifted into position 0 and displace every item that does carry an
-   * `output_index`.
+   * The output slot the most recently announced reasoning item owns. The
+   * provider's normal order opens it at the first reasoning delta, before any
+   * later item advances the index; the item id is derived from that slot
+   * (`${responseId}_rs_${reasoningIndex}`), matching the buffered transport's
+   * first-choice name.
    */
   reasoningIndex: number;
+  /**
+   * True while an announced reasoning item is still awaiting its done events.
+   * The pinned Codex consumer holds a single active item
+   * (`lib/codex/codex-rs/core/src/session/turn.rs`), so this item is closed
+   * before the next output item is announced.
+   */
+  reasoningOpen: boolean;
+  /**
+   * The text accumulated for the reasoning item that is currently open or
+   * waiting for its terminal announcement. `reasoning` keeps the whole stream's
+   * text for the first-leg draft.
+   */
+  reasoningSegment: string;
+  /**
+   * True when the current reasoning segment arrived after another output item
+   * was already announced. Announcing it there would overlap that item for the
+   * single-active-item consumer, so it is held and delivered as one closed
+   * lifecycle at the terminal instead.
+   */
+  reasoningPending: boolean;
   toolCalls: Map<number, StreamToolCall>;
   nextOutputIndex: number;
   output: Record<string, unknown>[];
@@ -995,6 +816,9 @@ const newStreamState = (): StreamState => ({
   textPartIndex: -1,
   refusalPartIndex: -1,
   reasoningIndex: -1,
+  reasoningOpen: false,
+  reasoningSegment: "",
+  reasoningPending: false,
   toolCalls: new Map(),
   nextOutputIndex: 0,
   output: [],
@@ -1057,6 +881,44 @@ export const createDeepSeekResponsesStreamTranslator = (
 ) => {
   const state = newStreamState();
   const messageId = `${responseId}_msg_0`;
+  // The buffered transport names its first-choice reasoning item the same way
+  // (`${responseId}_rs_${choiceIndex}` with choice index 0).
+  const reasoningItemId = (): string => `${responseId}_rs_${state.reasoningIndex}`;
+
+  /**
+   * Closes the open reasoning item at the index it was announced at, using the
+   * text accumulated for that item alone. It is called before the next output
+   * item is announced and again at the terminal, so the pinned Codex consumer's
+   * single `active_item` is always the item a done event closes. The terminal
+   * item is stored at its own `output_index` and carries the same single
+   * `summary_text` part the buffered transport publishes.
+   */
+  const closeReasoning = (): Record<string, unknown>[] => {
+    if (!state.reasoningOpen) return [];
+    state.reasoningOpen = false;
+    const text = state.reasoningSegment;
+    state.reasoningSegment = "";
+    const itemId = reasoningItemId();
+    const item = reasoningItem(itemId, text);
+    state.output[state.reasoningIndex] = item;
+    return [
+      {
+        type: "response.reasoning_summary_text.done",
+        item_id: itemId,
+        output_index: state.reasoningIndex,
+        summary_index: 0,
+        text,
+      },
+      {
+        type: "response.reasoning_summary_part.done",
+        item_id: itemId,
+        output_index: state.reasoningIndex,
+        summary_index: 0,
+        part: { type: "summary_text", text },
+      },
+      { type: "response.output_item.done", output_index: state.reasoningIndex, item },
+    ];
+  };
 
   const startEvents = (): Record<string, unknown>[] => {
     if (state.started) return [];
@@ -1070,15 +932,91 @@ export const createDeepSeekResponsesStreamTranslator = (
 
   const ensureMessageItem = (): Record<string, unknown>[] => {
     if (state.messageOpen) return [];
+    // The message is the next Codex-visible item, so the reasoning item must
+    // finish first: the consumer clears its single active item on every done and
+    // re-emits `ItemStarted` for a done that finds none.
+    const events = closeReasoning();
     state.messageOpen = true;
     state.messageIndex = state.nextOutputIndex++;
     return [
+      ...events,
       {
         type: "response.output_item.added",
         output_index: state.messageIndex,
         item: { id: messageId, type: "message", status: "in_progress", role: "assistant", content: [] },
       },
     ];
+  };
+
+  /**
+   * Announces the reasoning item and its single summary part at the index the
+   * item owns, before any later item can advance `nextOutputIndex`.
+   *
+   * The announcement is the contract the official client accumulates on:
+   * `response.output_item.added` appends its item to the client's ordered output
+   * and every later event reads that output at the `output_index` it names. A
+   * slot reserved without this event (the previous behavior) made the next item
+   * the client's first accumulated item while its content events still named a
+   * later index, so the client failed the whole stream with
+   * `missing output at index <n>`. The item carries the official reasoning shape
+   * the buffered transport already publishes: one `summary_text` part whose text
+   * is the provider's own `reasoning_content`.
+   */
+  const ensureReasoningItem = (): Record<string, unknown>[] => {
+    if (state.reasoningOpen) return [];
+    state.reasoningOpen = true;
+    state.reasoningPending = false;
+    state.reasoningIndex = state.nextOutputIndex++;
+    return [
+      {
+        type: "response.output_item.added",
+        output_index: state.reasoningIndex,
+        item: { id: reasoningItemId(), type: "reasoning", status: "in_progress", summary: [] },
+      },
+      {
+        type: "response.reasoning_summary_part.added",
+        item_id: reasoningItemId(),
+        output_index: state.reasoningIndex,
+        summary_index: 0,
+        part: { type: "summary_text", text: "" },
+      },
+    ];
+  };
+
+  /** One summary-text delta for the reasoning item that is currently open. */
+  const reasoningDeltaEvent = (text: string): Record<string, unknown> => ({
+    type: "response.reasoning_summary_text.delta",
+    item_id: reasoningItemId(),
+    output_index: state.reasoningIndex,
+    summary_index: 0,
+    delta: text,
+  });
+
+  /**
+   * Accumulates one provider reasoning delta.
+   *
+   * The provider's normal order is reasoning before any answer item, and that
+   * first item is streamed as it arrives. Once another output item has been
+   * announced, a new reasoning segment cannot be announced without overlapping
+   * that item for the single-active-item Codex consumer, so it is held and
+   * delivered as one closed lifecycle at the terminal. No event ever targets a
+   * reasoning item after it closes; a later segment becomes its own item.
+   */
+  const applyReasoningDelta = (text: string): Record<string, unknown>[] => {
+    state.reasoning += text;
+    if (state.reasoningOpen) {
+      state.reasoningSegment += text;
+      return [reasoningDeltaEvent(text)];
+    }
+    if (state.nextOutputIndex === 0) {
+      const events = ensureReasoningItem();
+      state.reasoningSegment += text;
+      events.push(reasoningDeltaEvent(text));
+      return events;
+    }
+    state.reasoningPending = true;
+    state.reasoningSegment += text;
+    return [];
   };
 
   /** Content parts are appended in arrival order, so their index is their position. */
@@ -1111,10 +1049,14 @@ export const createDeepSeekResponsesStreamTranslator = (
   const isCustomCall = (call: StreamToolCall): boolean => customToolNames.has(call.name);
 
   const announceToolCall = (call: StreamToolCall): Record<string, unknown>[] => {
+    // Same single-active-item rule as the message: close the open reasoning item
+    // before this tool call takes an index of its own.
+    const events = closeReasoning();
     call.announced = true;
     call.outputIndex = state.nextOutputIndex++;
     const custom = isCustomCall(call);
     return [
+      ...events,
       {
         type: "response.output_item.added",
         output_index: call.outputIndex,
@@ -1131,13 +1073,14 @@ export const createDeepSeekResponsesStreamTranslator = (
   };
 
   const applyTextDelta = (delta: Record<string, unknown>): Record<string, unknown>[] => {
+    const events: Record<string, unknown>[] = [];
     if (typeof delta.reasoning_content === "string" && delta.reasoning_content) {
-      if (state.reasoningIndex < 0) state.reasoningIndex = state.nextOutputIndex++;
-      state.reasoning += delta.reasoning_content;
+      events.push(...applyReasoningDelta(delta.reasoning_content));
     }
-    if (typeof delta.content !== "string" || !delta.content) return [];
+    if (typeof delta.content !== "string" || !delta.content) return events;
     state.text += delta.content;
     return [
+      ...events,
       ...announceTextPart(),
       {
         type: "response.output_text.delta",
@@ -1178,7 +1121,11 @@ export const createDeepSeekResponsesStreamTranslator = (
     for (const [position, entry] of raw.entries()) {
       if (!isRecord(entry) || Array.isArray(entry)) continue;
       const call = mergeToolCallDelta(state, responseId, entry, position);
-      if (!call.announced && call.name) events.push(...announceToolCall(call));
+      // A deferred reasoning segment must be flushed before the tool item it
+      // precedes, or replaying this output attaches the reasoning to the wrong
+      // (or no) assistant turn. The call keeps merging its fragmented name and
+      // arguments here and is announced with them at the terminal.
+      if (!call.announced && call.name && !state.reasoningPending) events.push(...announceToolCall(call));
       const fn = isRecord(entry.function) && !Array.isArray(entry.function) ? entry.function : null;
       // A freeform call streams its input at the terminal item instead: the
       // provider sends JSON arguments, and the client wants the raw text.
@@ -1237,6 +1184,20 @@ export const createDeepSeekResponsesStreamTranslator = (
     state.output[state.messageIndex] = item;
     events.push({ type: "response.output_item.done", output_index: state.messageIndex, item });
     return events;
+  };
+
+  /**
+   * Delivers a reasoning segment that could not be announced when it arrived
+   * (it followed another output item). The item is opened, filled with one
+   * summary-text delta, and closed in one batch after the answer items, so the
+   * single-active-item consumer never sees it overlap another item and no event
+   * targets an item that already completed.
+   */
+  const flushPendingReasoning = (): Record<string, unknown>[] => {
+    if (state.reasoningOpen || !state.reasoningPending) return [];
+    const events = ensureReasoningItem();
+    events.push(reasoningDeltaEvent(state.reasoningSegment));
+    return [...events, ...closeReasoning()];
   };
 
   const closeToolCalls = (): Record<string, unknown>[] => {
@@ -1301,19 +1262,6 @@ export const createDeepSeekResponsesStreamTranslator = (
       toolCallCount: [...state.toolCalls.values()].filter((call) => call.name).length,
     }),
     /**
-     * How many tool-call deltas the stream observed at all, named or not. The
-     * recheck contract is no tool call whatsoever, so eligibility reads this
-     * count: an argument-only partial delta occupies a map slot a second
-     * generation would otherwise concatenate onto.
-     */
-    observedToolCallCount: (): number => state.toolCalls.size,
-    /**
-     * The first-leg assistant draft the bounded recheck appends to the
-     * conversation. Only the accumulated answer text and its reasoning are
-     * exposed; the recheck's own text is never streamed back to the client.
-     */
-    draftAssistantMessage: (): Readonly<{ content: string; reasoning: string }> => ({ content: state.text, reasoning: state.reasoning }),
-    /**
      * The terminal this stream will settle on, available before `finish` emits
      * it so telemetry records the same terminal the client receives. Derived
      * from the shared DeepSeek vocabulary mapping, so it cannot drift from the
@@ -1334,9 +1282,14 @@ export const createDeepSeekResponsesStreamTranslator = (
       // Items are stored at the position they were assigned an `output_index`
       // for, so `response.output[output_index]` is the item the client
       // accumulated at that index even when fragmented tool calls announced
-      // their names out of call order.
-      const events = [...startEvents(), ...closeMessage(), ...closeToolCalls()];
-      if (state.reasoning) state.output[state.reasoningIndex] = reasoningItem(`${responseId}_rs_0`, state.reasoning);
+      // their names out of call order. The message closes first, then a deferred
+      // reasoning segment is flushed, then the tool items close and any
+      // reasoning item still open (it can only be the last announced item)
+      // closes. Flushing before the tool items keeps the reasoning item ahead of
+      // the tool call it belongs to in the delivered output, so history replay
+      // attaches it to that assistant tool-call turn, and no two Codex-visible
+      // items are ever open at once.
+      const events = [...startEvents(), ...closeMessage(), ...flushPendingReasoning(), ...closeToolCalls(), ...closeReasoning()];
       const terminal = terminalEnvelope();
       terminal.response.output = state.output;
       terminal.response.usage = state.usage;

@@ -22,6 +22,13 @@ import { sha256Base64Url } from "../src/utils.ts";
  * `createServeHandler(handler)`, real KV-backed authentication and quota
  * accounting, and no paid provider, credential or external network.
  *
+ * The normal launcher (`deno task test`) starts this file in its own isolated
+ * `deno test --unstable-kv` process with `SURPLUS_API_KEY` and `METERED_API_KEY`
+ * removed and without dotenv discovery, so an ordinarily configured checkout
+ * still proves the fixture starts credential-free. Every test asserts that
+ * absence before installing its dummy values, so a direct run needs the same
+ * isolation.
+ *
  * Every scenario uses a real Deno KV (`:memory:`) and a real HTTP client, so the
  * assertions exercise the production seams: admission, quota reservation and
  * dispatch, upstream translation, downstream delivery, cancellation and the
@@ -47,7 +54,7 @@ type UpstreamMode =
   | "responses-stream-truncated"
   | "responses-buffered-truncated"
   | "stream-hold"
-  | "responses-recheck-hold"
+  | "responses-progress-stop"
   | "upstream-500";
 
 type RecordedCall = Readonly<{ url: string; body: string }>;
@@ -197,8 +204,6 @@ const startHarness = async (): Promise<Harness> => {
   const holdReleases: (() => void)[] = [];
   /** Bounded chronology evidence: producer cancellation and client/terminal markers. */
   const events: string[] = [];
-  /** Calls seen in the two-leg advisory mode: 1 is the first leg, 2+ is the recheck. */
-  let recheckCalls = 0;
   let mode: UpstreamMode = "chat-stream-answer";
   const upstream = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, async (request) => {
     const body = await request.text();
@@ -207,44 +212,17 @@ const startHarness = async (): Promise<Harness> => {
     if (mode === "upstream-500") {
       return Response.json({ error: { message: "controlled upstream fault", type: "server_error" } }, { status: 500 });
     }
-    if (mode === "responses-recheck-hold") {
-      recheckCalls += 1;
-      if (recheckCalls === 1) {
-        // An eligible first leg: assistant text, a clean stop, measured usage
-        // with cache reads, and no tool call. The request supplies an executable
-        // auto tool, so the one advisory recheck is dispatched.
-        return new Response(
-          sseBody([
-            chatChunk({ role: "assistant", content: "Step 11 of 16 complete." }, null),
-            chatChunk({}, "stop", { prompt_tokens: 120, completion_tokens: 20, total_tokens: 140, prompt_tokens_details: { cached_tokens: 64 } }),
-          ]),
-          { headers: sseHeaders(`ds-recheck-first-${callNumber}`) }
-        );
-      }
-      // The advisory leg stays open before any usage frame arrives. Its cancel
-      // callback is the physical-cancellation evidence the test waits on.
-      let releaseAdvisory: () => void = () => {};
-      let advisoryCancelled = false;
-      const advisoryGate = new Promise<void>((resolve) => {
-        releaseAdvisory = resolve;
-      });
-      holdReleases.push(() => {
-        releaseAdvisory();
-      });
-      const advisoryStream = new ReadableStream<Uint8Array>({
-        async start(controller) {
-          await advisoryGate;
-          if (advisoryCancelled) return;
-          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-          controller.close();
-        },
-        cancel() {
-          advisoryCancelled = true;
-          events.push("advisory_cancelled");
-          releaseAdvisory();
-        },
-      });
-      return new Response(advisoryStream, { headers: sseHeaders(`ds-recheck-second-${callNumber}`) });
+    if (mode === "responses-progress-stop") {
+      // A completed text-only progress stop: assistant text, a clean stop, and
+      // measured usage with cache reads. One provider request serves this
+      // client request, and the gateway completes with the provider's output.
+      return new Response(
+        sseBody([
+          chatChunk({ role: "assistant", content: "Step 11 of 16 complete." }, null),
+          chatChunk({}, "stop", { prompt_tokens: 120, completion_tokens: 20, total_tokens: 140, prompt_tokens_details: { cached_tokens: 64 } }),
+        ]),
+        { headers: sseHeaders(`ds-progress-stop-${callNumber}`) }
+      );
     }
     if (mode === "stream-hold") {
       let release: () => void = () => {};
@@ -398,8 +376,8 @@ Deno.test({
     try {
       // Credential presence is verified before any dummy value replaces it, and
       // the paid tiers are removed for the duration so a fault cannot advance.
-      assert.equal(originalSurplusKey, undefined, "no paid Surplus credential may be present");
-      assert.equal(originalMeteredKey, undefined, "no paid Metered credential may be present");
+      assert.equal(originalSurplusKey, undefined, "no paid Surplus credential may be present; `deno task test` removes it and skips .env");
+      assert.equal(originalMeteredKey, undefined, "no paid Metered credential may be present; `deno task test` removes it and skips .env");
       env.delete("SURPLUS_API_KEY");
       env.delete("METERED_API_KEY");
       env.set("DEEPSEEK_API_KEY", "oss-http-dummy-deepseek-key");
@@ -523,8 +501,8 @@ Deno.test({
     const harness = await startHarness();
     const stop = harness.stop;
     try {
-      assert.equal(originalSurplusKey, undefined, "no paid Surplus credential may be present");
-      assert.equal(originalMeteredKey, undefined, "no paid Metered credential may be present");
+      assert.equal(originalSurplusKey, undefined, "no paid Surplus credential may be present; `deno task test` removes it and skips .env");
+      assert.equal(originalMeteredKey, undefined, "no paid Metered credential may be present; `deno task test` removes it and skips .env");
       env.delete("SURPLUS_API_KEY");
       env.delete("METERED_API_KEY");
       env.set("DEEPSEEK_API_KEY", "oss-http-dummy-deepseek-key");
@@ -697,8 +675,8 @@ Deno.test({
     const harness = await startHarness();
     const stop = harness.stop;
     try {
-      assert.equal(originalSurplusKey, undefined, "no paid Surplus credential may be present");
-      assert.equal(originalMeteredKey, undefined, "no paid Metered credential may be present");
+      assert.equal(originalSurplusKey, undefined, "no paid Surplus credential may be present; `deno task test` removes it and skips .env");
+      assert.equal(originalMeteredKey, undefined, "no paid Metered credential may be present; `deno task test` removes it and skips .env");
       env.delete("SURPLUS_API_KEY");
       env.delete("METERED_API_KEY");
       env.set("DEEPSEEK_API_KEY", "oss-http-dummy-deepseek-key");
@@ -826,7 +804,7 @@ Deno.test({
 });
 
 Deno.test({
-  name: "oss gateway real HTTP: a cancelled advisory recheck keeps the measured first leg and reports partial usage",
+  name: "oss gateway real HTTP: a completed text-only progress stop makes exactly one provider dispatch",
   ignore: loopbackPermission.state !== "granted" || typeof Deno.openKv !== "function",
   sanitizeResources: false,
   sanitizeOps: false,
@@ -840,8 +818,8 @@ Deno.test({
     const harness = await startHarness();
     const stop = harness.stop;
     try {
-      assert.equal(originalSurplusKey, undefined, "no paid Surplus credential may be present");
-      assert.equal(originalMeteredKey, undefined, "no paid Metered credential may be present");
+      assert.equal(originalSurplusKey, undefined, "no paid Surplus credential may be present; `deno task test` removes it and skips .env");
+      assert.equal(originalMeteredKey, undefined, "no paid Metered credential may be present; `deno task test` removes it and skips .env");
       env.delete("SURPLUS_API_KEY");
       env.delete("METERED_API_KEY");
       env.set("DEEPSEEK_API_KEY", "oss-http-dummy-deepseek-key");
@@ -857,84 +835,58 @@ Deno.test({
         const committedBefore =
           (await harness.kv.get<ApiKeyUsageWindowV3>(apiKeyUsageV3WindowKey(harness.policy), { consistency: "strong" })).value?.committed_requests ?? 0;
         harness.events.length = 0;
-        harness.setMode("responses-recheck-hold");
-        const abort = new AbortController();
+        harness.setMode("responses-progress-stop");
         const response = await postJson(
           harness,
           "/v1/responses",
           responsesBody({
             stream: true,
-            // An explicit measured output allowance is an eligibility
-            // prerequisite: the first leg reports 20 completion tokens, leaving
-            // 44 for the bounded advisory request. Without it the route has no
-            // known budget and the guard correctly skips the recheck.
             max_output_tokens: 64,
             tool_choice: "auto",
             tools: [{ type: "function", name: "lookup", parameters: { type: "object", properties: {} } }],
-          }),
-          {},
-          abort.signal
+          })
         );
         assert.equal(response.status, 200);
         assert.equal(response.headers.get("x-uos-upstream"), "deepseek");
+        const requestId = response.headers.get("x-uos-request-id");
+        assert.ok(requestId, "the client request must carry the gateway request id");
+
+        // The first leg streams progressively and is drained to its terminal.
+        const received = await response.text();
+        assert.ok(received.includes("Step 11 of 16 complete."), "the provider's own text must reach the client");
+        assert.equal(received.split('"type":"response.completed"').length - 1, 1, "one client response must produce exactly one completed terminal");
+        assert.equal(received.includes("function_call"), false, "a text-only answer must not carry a tool call");
+
+        // Exactly one provider dispatch, carrying the caller's cap and tool.
+        assert.equal(harness.calls.length, 1, "a completed text-only progress stop must make exactly one provider request");
         const firstLegBody = JSON.parse(harness.calls[0].body) as Record<string, unknown>;
         assert.equal(firstLegBody.max_tokens, 64, "the first leg must send the caller's measured allowance");
-        const requestId = response.headers.get("x-uos-request-id");
-        assert.ok(requestId, "the combined request must carry the gateway request id");
+        assert.equal(firstLegBody.tool_choice, "auto", "the caller's automatic tool choice must reach the provider");
+        assert.equal(Array.isArray(firstLegBody.tools) ? firstLegBody.tools.length : 0, 1, "the advertised tool must reach the provider");
 
-        // The original leg stays progressive while the advisory call is pending.
-        // The reader keeps pulling: the gateway reaches the first leg's sentinel
-        // and dispatches the advisory request only as the client consumes it.
-        assert.ok(response.body, "the combined response must carry a body");
-        const reader = response.body.getReader();
-        let received = "";
-        const pump = (async () => {
-          for (;;) {
-            const next = await reader.read();
-            if (next.done) return;
-            received += decoder.decode(next.value, { stream: true });
-          }
-        })().catch(() => undefined);
-        await waitFor(() => received.includes("Step 11 of 16 complete."), "the progressive first leg");
-        await waitFor(() => harness.calls.length === 2, "the advisory second provider dispatch");
-        const dispatchesBeforeCancel = harness.calls.length;
-        // The second call is the bounded advisory recheck, not a repeated first
-        // leg: buffered, capped at the remaining measured allowance, with the
-        // same advertised tool.
-        const advisoryBody = JSON.parse(harness.calls[1].body) as Record<string, unknown>;
-        assert.equal(advisoryBody.stream, false, "the advisory recheck must be buffered");
-        assert.equal(advisoryBody.max_tokens, 44, "the advisory cap is the remaining measured allowance");
-        assert.equal(Array.isArray(advisoryBody.tools) ? advisoryBody.tools.length : 0, 1, "the advisory call keeps the advertised tool");
-        assert.equal(harness.events.includes("advisory_cancelled"), false, "the advisory call must still be open when the client aborts");
-
-        abort.abort(new DOMException("client disconnected while the advisory call was open", "AbortError"));
-        await reader.cancel(abort.signal.reason).catch(() => {});
-        await pump;
-        await waitFor(() => harness.events.includes("advisory_cancelled"), "the physical cancellation of the advisory call");
-        await waitFor(() => terminalLogs.some((entry) => entry.request_id === requestId), "the cancelled terminal record");
+        await waitFor(() => terminalLogs.some((entry) => entry.request_id === requestId), "the completed terminal record");
         await waitFor(() => harness.controller.snapshot().active === 0, "the single permit release");
         await delay(50);
         assert.equal(harness.controller.snapshot().active, 0, "the permit must not be released twice");
+        // No dispatch may be issued after the response completed.
+        assert.equal(harness.calls.length, 1, "the completed response must never dispatch a second provider request");
 
         const terminals = terminalLogs.filter((entry) => entry.request_id === requestId);
-        assert.equal(terminals.length, 1, "one combined request must produce exactly one terminal record");
-        assert.equal(terminals[0].delivery_outcome, "interrupted");
-        // The measured first leg survives, with cache reads, and the aggregate
-        // that includes an unresolved advisory request is reported partial.
+        assert.equal(terminals.length, 1, "one client request must produce exactly one terminal record");
+        assert.equal(terminals[0].delivery_outcome, "delivered");
+        // The one measured first call's usage and cache details are reported as-is.
         assert.equal(terminals[0].usage_observed, true);
         assert.equal(terminals[0].input_tokens, 120);
         assert.equal(terminals[0].output_tokens, 20);
         assert.equal(terminals[0].total_tokens, 140);
-        assert.equal(terminals[0].cached_input_tokens, 64, "measured first-leg cache reads must be preserved");
-        assert.equal(terminals[0].usage_telemetry_status, "partial", "unresolved advisory usage must not read as a complete total");
-        // No speculative tool output, no extra provider call, no paid fallback.
-        assert.equal(received.includes("function_call"), false, "a cancelled advisory check must not emit tool output");
-        assert.equal(harness.calls.length, dispatchesBeforeCancel, "cancellation must not dispatch another provider call");
-        // One flat client-request charge despite two upstream dispatches.
+        assert.equal(terminals[0].cached_input_tokens, 64, "measured cache reads must be preserved");
+        assert.equal(terminals[0].usage_telemetry_status, "reported", "one measured call is a complete total");
+
+        // One flat client-request charge with no paid fallback.
         const requestRow = await harness.kv.get<ApiKeyUsageRequestV3>(apiKeyUsageV3RequestKey(harness.policy, requestId), { consistency: "strong" });
         assert.equal(requestRow.value?.state, "dispatched", "the client request stays charged");
         const windowRow = await harness.kv.get<ApiKeyUsageWindowV3>(apiKeyUsageV3WindowKey(harness.policy), { consistency: "strong" });
-        assert.equal(windowRow.value?.committed_requests, committedBefore + 1, "two upstream dispatches stay one client-request charge");
+        assert.equal(windowRow.value?.committed_requests, committedBefore + 1, "one provider dispatch is exactly one client-request charge");
       } finally {
         console.info = originalInfo;
         (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
