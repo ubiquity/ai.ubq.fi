@@ -14896,6 +14896,101 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
       assert.equal(telemetry.cachedInputTokens, 90);
     });
 
+    await t.step("an uncapped max-effort streamed progress stop still earns the one bounded recheck", async () => {
+      const upstreamBodies: Record<string, unknown>[] = [];
+      const { response, text } = await withFetchMock(
+        (_url, bodyText) => {
+          upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
+          if (upstreamBodies.length === 1) {
+            return progressStopChunks({
+              prompt_tokens: 100,
+              completion_tokens: 10,
+              total_tokens: 110,
+              prompt_cache_hit_tokens: 40,
+              completion_tokens_details: { reasoning_tokens: 4 },
+            });
+          }
+          return Response.json({
+            id: "deepseek-uncapped-recheck-2",
+            object: "chat.completion",
+            created: 1_780_000_310,
+            model: DEEPSEEK_FLASH_MODEL,
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: "assistant",
+                  content: "",
+                  tool_calls: [{ id: "call_next", type: "function", function: { name: "read_file", arguments: '{"path":"a"}' } }],
+                },
+                finish_reason: "tool_calls",
+              },
+            ],
+            usage: {
+              prompt_tokens: 120,
+              completion_tokens: 6,
+              total_tokens: 126,
+              prompt_cache_hit_tokens: 50,
+              completion_tokens_details: { reasoning_tokens: 1 },
+            },
+          });
+        },
+        async () => {
+          const response = await handleResponses(
+            // Real Codex `max` traffic omits `max_output_tokens` entirely, so the
+            // gateway knows no original cap and no measured provider default.
+            responsesBody({ model: DEEPSEEK_FLASH_MODEL, input: "read all 16 files", stream: true, reasoning: { effort: "max" }, tools: recheckTools })
+          );
+          // The streamed handler dispatches the advisory recheck only while the
+          // first leg's body is consumed, so the body is drained before the
+          // fetch mock is restored and both requests land on this fixture.
+          return { response, text: await response.text() };
+        }
+      );
+
+      assert.equal(upstreamBodies.length, 2);
+      // The original request is uncapped on the wire, exactly as Codex sends it.
+      assert.equal("max_tokens" in upstreamBodies[0], false);
+      assert.equal(upstreamBodies[0].reasoning_effort, "max");
+      // With no caller aggregate cap to stay under, the one advisory call is
+      // bounded by the recheck ceiling alone: DEEPSEEK_RECHECK_MAX_TOKENS.
+      assert.equal(upstreamBodies[1].max_tokens, 8_192);
+      const events = responsesEvents(text);
+      // One original response identity: the recheck never mints another.
+      assert.equal(events.filter((event) => event.type === "response.created").length, 1);
+      const created = events.find((event) => event.type === "response.created") as { response: { id: string } };
+      const completed = events.at(-1) as { type: string; response: Record<string, unknown> };
+      assert.equal(completed.type, "response.completed");
+      assert.equal(completed.response.id, created.response.id);
+      const output = completed.response.output as Record<string, unknown>[];
+      assert.deepEqual(
+        output.map((item) => item.type),
+        ["reasoning", "message", "function_call"]
+      );
+      const call = output.at(-1);
+      assert.equal(call?.name, "read_file");
+      // The tool item closes before the terminal event that reports it.
+      const toolDoneIndex = events.findIndex(
+        (event) => event.type === "response.output_item.done" && (event.item as { type?: string } | undefined)?.type === "function_call"
+      );
+      assert.ok(toolDoneIndex >= 0 && toolDoneIndex < events.length - 1);
+      // Both provider requests are accounted for in the one response envelope.
+      assert.deepEqual(completed.response.usage, {
+        input_tokens: 220,
+        input_tokens_details: { cached_tokens: 90 },
+        output_tokens: 16,
+        output_tokens_details: { reasoning_tokens: 5 },
+        total_tokens: 236,
+      });
+      const telemetry = getResponseTelemetry(response);
+      assert.equal(telemetry?.completed, true);
+      assert.equal(telemetry.usageTelemetryStatus, "reported");
+      assert.equal(telemetry.outputTokens, 16);
+      // The omitted cap stays unknown; the recheck ceiling is not reported as
+      // the original allowance.
+      assert.equal(telemetry.outputTokenAllowance, null);
+    });
+
     await t.step("an argument-only first-leg delta refuses the recheck instead of concatenating onto its slot", async () => {
       const upstreamBodies: Record<string, unknown>[] = [];
       const { text } = await withFetchMock(
@@ -15024,6 +15119,77 @@ Deno.test("openai: DeepSeek official Responses adapter serves the Codex wire pro
       assert.equal(telemetry?.completed, true);
       assert.equal(telemetry.usageTelemetryStatus, "reported");
       assert.equal(telemetry.inputTokens, 220);
+    });
+
+    await t.step("an uncapped max-effort buffered progress stop still earns the one bounded recheck", async () => {
+      const upstreamBodies: Record<string, unknown>[] = [];
+      const response = await withFetchMock(
+        (_url, bodyText) => {
+          upstreamBodies.push(JSON.parse(String(bodyText)) as Record<string, unknown>);
+          if (upstreamBodies.length === 1) {
+            return Response.json(
+              {
+                id: "deepseek-uncapped-buffered-1",
+                object: "chat.completion",
+                created: 1_780_000_320,
+                model: DEEPSEEK_FLASH_MODEL,
+                choices: [{ index: 0, message: { role: "assistant", content: "Step 11 of 16 complete." }, finish_reason: "stop" }],
+                usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110, prompt_tokens_details: { cached_tokens: 40 } },
+              },
+              { headers: { "X-Request-Id": "deepseek-uncapped-buffered-1" } }
+            );
+          }
+          return Response.json({
+            id: "deepseek-uncapped-buffered-2",
+            object: "chat.completion",
+            created: 1_780_000_321,
+            model: DEEPSEEK_FLASH_MODEL,
+            choices: [
+              {
+                index: 0,
+                message: {
+                  role: "assistant",
+                  content: "still working",
+                  tool_calls: [{ id: "call_next", type: "function", function: { name: "read_file", arguments: "{}" } }],
+                },
+                finish_reason: "stop",
+              },
+            ],
+            usage: { prompt_tokens: 120, completion_tokens: 6, total_tokens: 126, prompt_tokens_details: { cached_tokens: 50 } },
+          });
+        },
+        () =>
+          handleResponses(
+            // The real Codex shape again: `max` effort and no `max_output_tokens`.
+            responsesBody({ model: DEEPSEEK_FLASH_MODEL, input: "read all 16 files", stream: false, reasoning: { effort: "max" }, tools: recheckTools })
+          )
+      );
+
+      assert.equal(upstreamBodies.length, 2);
+      assert.equal("max_tokens" in upstreamBodies[0], false);
+      assert.equal(upstreamBodies[0].reasoning_effort, "max");
+      assert.equal(upstreamBodies[1].max_tokens, 8_192);
+      const payload = (await response.json()) as Record<string, unknown>;
+      assert.equal(payload.status, "completed");
+      // The id minted from the first leg's provider request id is the only one.
+      assert.equal(payload.id, "resp_deepseekuncappedbuffered1");
+      const output = payload.output as { type: string; content?: { text?: string }[] }[];
+      assert.deepEqual(
+        output.map((item) => item.type),
+        ["message", "function_call"]
+      );
+      assert.equal(output[0]?.content?.[0]?.text, "Step 11 of 16 complete.");
+      // Both provider requests are accounted for in the one response envelope.
+      assert.deepEqual(payload.usage, {
+        input_tokens: 220,
+        input_tokens_details: { cached_tokens: 90 },
+        output_tokens: 16,
+        total_tokens: 236,
+      });
+      const telemetry = getResponseTelemetry(response);
+      assert.equal(telemetry?.completed, true);
+      assert.equal(telemetry.outputTokens, 16);
+      assert.equal(telemetry.outputTokenAllowance, null);
     });
 
     await t.step("a legitimate final recheck keeps the original text and both requests' usage", async () => {

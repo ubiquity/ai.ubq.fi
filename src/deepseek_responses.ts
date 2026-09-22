@@ -571,9 +571,12 @@ export const DEEPSEEK_RECHECK_INSTRUCTION =
   "The assistant response above is a draft for this same task. If actionable required work remains, emit the next appropriate tool call now. If the requested work is complete, blocked, or needs user input, return the existing answer without tool calls. Do not repeat completed actions or invent new work.";
 
 /**
- * The most output one recheck may add. The caller's own remaining allowance is
- * the tighter bound whenever the first leg used fewer than this many tokens, so
- * the two legs together never exceed the allowance the caller asked for.
+ * The most output one recheck may add. When the caller set a numeric allowance,
+ * its remainder is the tighter bound whenever the first leg used fewer than this
+ * many tokens, so the two legs together never exceed the allowance the caller
+ * asked for. When the caller set no cap at all, this value alone bounds the one
+ * advisory call; it is a bound on the recheck, not a claim about the original
+ * request's uncapped allowance.
  */
 export const DEEPSEEK_RECHECK_MAX_TOKENS = 8_192;
 
@@ -582,7 +585,7 @@ export type DeepSeekRecheckSkipReason =
   "finish_reason" | "refusal" | "empty_text" | "tool_calls" | "no_executable_tools" | "tool_choice" | "usage_unknown" | "budget_unknown" | "budget_exhausted";
 
 export type DeepSeekRecheckEligibility =
-  Readonly<{ eligible: true; remainingBudget: number; maxTokens: number }> | Readonly<{ eligible: false; reason: DeepSeekRecheckSkipReason }>;
+  Readonly<{ eligible: true; remainingBudget: number | null; maxTokens: number }> | Readonly<{ eligible: false; reason: DeepSeekRecheckSkipReason }>;
 
 /**
  * Decides whether a first-leg completion earns the one bounded recheck.
@@ -590,10 +593,15 @@ export type DeepSeekRecheckEligibility =
  * Only a clean `stop` that produced assistant text with no tool call and no
  * refusal is reconsidered, and only when the request advertises mapped
  * executable tools while leaving `tool_choice` absent or `auto`. The provider
- * must have reported the first leg's completion use, and the request must have a
- * known positive remaining output allowance, because a recheck with no measured
- * budget could double the caller's bill without a bound. A truncation, a
- * refusal, an empty answer, and a request that never permitted a tool stay
+ * must have reported the first leg's completion use. A known numeric allowance
+ * bounds both legs together: the recheck gets the smaller of its remainder and
+ * `DEEPSEEK_RECHECK_MAX_TOKENS`, and an exhausted one refuses. A null allowance
+ * means no finite cap was requested and the provider's own default for the tier
+ * is unmeasured — the real Codex `high`/`max` shape, which omits
+ * `max_output_tokens` — so `remainingBudget` stays null and the one advisory
+ * recheck is bounded at `DEEPSEEK_RECHECK_MAX_TOKENS` rather than claiming that
+ * value was the original cap. A truncation, a refusal, an empty answer, a
+ * request that never permitted a tool, and an unmeasured first-leg usage stay
  * untouched.
  */
 export const deepSeekRecheckEligibility = (
@@ -617,7 +625,14 @@ export const deepSeekRecheckEligibility = (
   if (input.firstCompletionTokens === null || !Number.isFinite(input.firstCompletionTokens)) {
     return { eligible: false, reason: "usage_unknown" };
   }
-  if (input.allowance === null || !Number.isFinite(input.allowance)) return { eligible: false, reason: "budget_unknown" };
+  if (input.allowance === null) {
+    // No finite cap was requested and no provider default is known for this
+    // tier. That is not zero remaining budget: the caller imposed no aggregate
+    // limit, so only the recheck itself is capped, and `remainingBudget` reports
+    // that no aggregate remainder is known rather than inventing one.
+    return { eligible: true, remainingBudget: null, maxTokens: DEEPSEEK_RECHECK_MAX_TOKENS };
+  }
+  if (!Number.isFinite(input.allowance)) return { eligible: false, reason: "budget_unknown" };
   const remainingBudget = input.allowance - input.firstCompletionTokens;
   if (remainingBudget <= 0) return { eligible: false, reason: "budget_exhausted" };
   return { eligible: true, remainingBudget, maxTokens: Math.min(remainingBudget, DEEPSEEK_RECHECK_MAX_TOKENS) };
