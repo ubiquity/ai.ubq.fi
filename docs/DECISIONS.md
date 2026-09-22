@@ -51,6 +51,39 @@ Residual obligation: the visible behaviour above was measured against a task-own
 served-release acceptance are distinct: the exact served identities, and the actual client outcomes against them, must
 be recorded in the release handoff, using the served-client probe beside this entry's evidence directory.
 
+## App-wide visual language follows the deno-universal-auth reference - 2026-09-22
+
+The app-wide design is the shared token system in `static/style.css`, ported from the `deno-universal-auth` reference
+contract: OS-driven light and dark, system-UI type at 14px body and 20px headings, 10px control and 14px panel radii,
+44px controls, quiet shadows, and blue reserved for actions and selection.
+
+- Palette, light: `--bg` `#f7f9fc`, `--surface` `#ffffff`, `--surface-2` `#f1f5f9`, `--surface-3` `#e2e8f0`, `--text`
+  `#111827`, `--muted` `#5f6b7a`, `--muted-2` `#55606e`.
+- Palette, dark: `--bg` `#09090b`, `--surface` `#141418`, `--surface-2` `#1d1d22`, `--surface-3` `#29292f`, `--text`
+  `#f5f5f7`, `--muted` `#a1a1aa`, `--muted-2` `#8e8e99`.
+- Light is the base block and `@media (prefers-color-scheme: dark)` overrides only the palette; `color-scheme` stays
+  native (`light dark`) and no page declares a theme class, toggle, or stored preference.
+- Actions use `--accent` `#0063d1`, `--accent-hover` `#006fe6`, and white `--accent-ink`; dark uses `#0a6ae0` and
+  `#0f70e0` with the same white label, while the brighter `--link` `#4da3ff` and translucent `--selection` carry dark
+  link, focus, and selected states.
+- The contrast repairs are deliberate: the reference's `#007aff`-on-white action, `#0a84ff`-with-white dark label, and
+  1.3:1 `#d5dee9` input border are replaced, so quiet text clears 4.5:1 and `--input-border`, `--border-strong`, and
+  `--focus-ring` clear 3:1.
+- Page styles consume `--radius-sm` for controls, `--radius-lg` for panels, and `--control-height` instead of
+  redeclaring a palette; no page adds a second alias token system.
+- Motion uses `--duration-fast` at 140ms for press and hover feedback and `--duration-med` at 220ms for occasional
+  surface changes; hover motion is gated by `(hover: hover) and (pointer: fine)`, keyboard actions stay immediate, and
+  reduced motion keeps short fades while dropping transforms.
+
+Reason: the app was dark-only, with hardcoded `rgba(255,255,255,...)` surfaces through the shared sheet, a pinned
+`color-scheme: dark`, and a visual contract that lived only in `tests/static-assets.test.ts`. Recording the tokens, the
+light and dark ownership, and the contrast repairs here keeps the next page-local restyle from re-deriving a divergent
+palette.
+
+Reversal risk: a page-local `:root` palette, a pinned `color-scheme: dark`, or a light-only literal re-splits the app
+and restores the measured contrast failures, and deleting the token assertions in `tests/static-assets.test.ts` removes
+the only automated guard because no browser or screenshot check exists in the repository.
+
 ## Terminal truthfulness questions are settled - 2026-09-21
 
 The generalized terminal-truthfulness program asked two specification questions before any stop-reason mapping could be
