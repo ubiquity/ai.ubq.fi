@@ -3159,6 +3159,19 @@ Deno.test("openai: Codex HTTP errors use OpenAI envelopes without changing routi
         code: "upstream_error",
       },
     },
+    {
+      name: "responses classifies an upstream 400 separately from stream reads",
+      route: "responses",
+      status: 400,
+      statusText: "Codex Invalid Request",
+      body: "Codex rejected the request body.",
+      retryAfter: null,
+      expectedError: {
+        message: "Codex rejected the request body.",
+        type: "invalid_request_error",
+        code: "upstream_error",
+      },
+    },
   ] as const;
 
   for (const testCase of cases) {
@@ -3206,10 +3219,10 @@ Deno.test("openai: Codex HTTP errors use OpenAI envelopes without changing routi
       assert.equal(response.headers.get("Retry-After"), testCase.retryAfter);
       assert.equal(response.headers.get("X-Codex-Diagnostic"), null);
       assert.deepEqual(await response.json(), { error: testCase.expectedError });
-      if (testCase.route === "responses" && testCase.status >= 500) {
+      if (testCase.route === "responses") {
         const telemetry = getResponseTelemetry(response);
         assert.ok(telemetry);
-        assert.equal(telemetry.failureKind, "upstream_http_5xx");
+        assert.equal(telemetry.failureKind, testCase.status >= 500 ? "upstream_http_5xx" : "upstream_http_4xx");
         assert.equal(telemetry.streamTerminalType, "error");
         assert.equal(telemetry.responseCreatedObserved, false);
         assert.equal(telemetry.fallbackReason, null);
@@ -5243,6 +5256,69 @@ Deno.test("openai: temporary free GLM cut uses only Surplus without paid fallbac
       const health = await waitForSurplusHealth("quota_exhausted");
       assert.equal(health.status, 429);
       assert.equal(health.provider_request_id, "free-glm-provider-429");
+    });
+
+    await t.step("Surplus upstream 400 stays an HTTP failure without paid advancement", async () => {
+      clearSurplusHealth();
+      const keyId = "free-glm-http-400-key";
+      const requestId = "free-glm-http-400-request";
+      let surplusCalls = 0;
+      let meteredCalls = 0;
+      const response = await withFetchMock(
+        (url) => {
+          if (url === "https://api.surplusintelligence.ai/v1/responses") {
+            surplusCalls += 1;
+            return new Response(JSON.stringify({ error: { message: "invalid request" } }), {
+              status: 400,
+              headers: {
+                "Content-Type": "application/json",
+                "X-Oneapi-Request-Id": "free-glm-http-400-provider",
+              },
+            });
+          }
+          if (url === "https://api.openlux.ai/v1/responses") {
+            meteredCalls += 1;
+            throw new Error("Metered must not follow a Surplus HTTP 400");
+          }
+          throw new Error("Unexpected upstream URL: " + url);
+        },
+        () =>
+          handleResponses(
+            new Request("https://ai.ubq.fi/v1/responses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                model: TEMPORARY_FREE_SURPLUS_TEST_MODEL,
+                input: "ping",
+              }),
+            }),
+            {
+              keyId,
+              kernelRepo: null,
+              kernelOrg: null,
+              paidFallbackEnabled: true,
+              requestId,
+              startedAtMs: Date.now(),
+              startedAtMonotonicMs: performance.now(),
+            }
+          )
+      );
+      assert.equal(response.status, 400);
+      assert.equal(response.headers.get("x-uos-upstream"), "surplus");
+      const telemetry = getResponseTelemetry(response);
+      assert.ok(telemetry);
+      assert.equal(telemetry.failureKind, "upstream_http_4xx");
+      assert.equal(telemetry.streamTerminalType, "error");
+      assert.equal(telemetry.responseCreatedObserved, false);
+      assert.equal(telemetry.fallbackReason, null);
+      assert.deepEqual(telemetry.attemptedProviders, ["surplus"]);
+      assert.equal(surplusCalls, 1);
+      assert.equal(meteredCalls, 0);
+      assert.equal(getStoredPaidFallbackRequest(keyId, requestId), null);
+      const health = await waitForSurplusHealth("reachable");
+      assert.equal(health.status, 400);
+      assert.notEqual(health.event, "quota_exhausted");
+      assert.equal(health.provider_request_id, "free-glm-http-400-provider");
     });
 
     await t.step("failed Surplus terminal marks provider health without a paid ledger row", async () => {
@@ -7419,6 +7495,77 @@ Deno.test("openai: Metered paid fallback routing matrix", async (t) => {
         assert.equal(typeof terminal.account_cohort_id, "string");
       } finally {
         console.info = originalInfo;
+        setRemovedProviderTestAdapterForTest(null);
+        setRemovedProviderApiKeyForTest(undefined);
+        if (previousDebugRouting === undefined) kvStore.delete(debugKey);
+        else kvStore.set(debugKey, previousDebugRouting);
+        resetDebugRoutingCacheForTest();
+      }
+    });
+
+    await t.step("Codex primary 400 never advances to RemovedProvider or paid transport", async () => {
+      const debugKey = keyToString(DEBUG_ROUTING_KEY);
+      const previousDebugRouting = kvStore.get(debugKey);
+      const codexResponsesUrl = "https://chatgpt.com/backend-api/codex/responses";
+      const recognizedCatalogUrls = ["https://api.openlux.ai/v1/models", "https://api.surplusintelligence.ai/v1/models"];
+      let codexInferenceCalls = 0;
+      const unexpectedTransports: string[] = [];
+      let removedProviderCalls = 0;
+      setRemovedProviderApiKeyForTest("removed-provider-test-key");
+      setRemovedProviderTestAdapterForTest({
+        fetchResponses: () => {
+          removedProviderCalls += 1;
+          throw new Error("RemovedProvider must not follow a Codex HTTP 400");
+        },
+        modelFromEvent: () => null,
+        isEligibleModel: (model) => model === DEFAULT_TEST_MODEL,
+      });
+      kvStore.set(debugKey, {
+        scenario: "normal",
+        expires_at_ms: Date.now() + 60_000,
+        updated_at_ms: Date.now(),
+      });
+      resetDebugRoutingCacheForTest();
+      try {
+        const response = await withFetchMock(
+          (url) => {
+            if (url === codexResponsesUrl) {
+              codexInferenceCalls += 1;
+              return new Response(JSON.stringify({ error: { message: "Codex rejected the request body." } }), {
+                status: 400,
+                headers: {
+                  "Content-Type": "application/json",
+                  "X-Request-Id": "codex-http-400-request-id",
+                },
+              });
+            }
+            if (recognizedCatalogUrls.includes(url)) return Response.json({ data: [] });
+            unexpectedTransports.push(url);
+            return new Response(`unexpected paid or unrecognized transport ${url}`, { status: 500 });
+          },
+          () =>
+            handleResponses(
+              new Request("https://ai.ubq.fi/v1/responses", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ model: DEFAULT_TEST_MODEL, input: "reject the request body" }),
+              })
+            )
+        );
+        assert.equal(response.status, 400);
+        assert.equal(response.headers.get("x-uos-upstream"), "chatgpt_codex");
+        await response.json();
+        assert.equal(codexInferenceCalls, 1);
+        assert.deepEqual(unexpectedTransports, []);
+        assert.equal(removedProviderCalls, 0);
+        const telemetry = getResponseTelemetry(response);
+        assert.ok(telemetry);
+        assert.equal(telemetry.failureKind, "upstream_http_4xx");
+        assert.equal(telemetry.streamTerminalType, "error");
+        assert.deepEqual(telemetry.attemptedProviders, ["chatgpt_codex"]);
+        assert.equal(telemetry.fallbackReason, null);
+        assert.equal(telemetry.removedProviderTriggerClass, null);
+      } finally {
         setRemovedProviderTestAdapterForTest(null);
         setRemovedProviderApiKeyForTest(undefined);
         if (previousDebugRouting === undefined) kvStore.delete(debugKey);
