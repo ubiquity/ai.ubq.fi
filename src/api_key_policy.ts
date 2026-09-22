@@ -1,4 +1,4 @@
-import { API_KEY_NO_EXPIRATION_MS, API_KEY_NO_USAGE_LIMIT, apiKeyHashKey, normalizeApiKeyWindowMs } from "./api_keys.ts";
+import { API_KEY_NO_EXPIRATION_MS, API_KEY_NO_USAGE_LIMIT, apiKeyHashKey, coerceApiKeyExpiresAtMs, normalizeApiKeyWindowMs } from "./api_keys.ts";
 import { openaiError, STANDARD_RATE_LIMIT_HEADERS } from "./http.ts";
 import { getKv } from "./kv.ts";
 import { hasStrictPaidFallbackPolicy } from "./paid_fallback.ts";
@@ -106,7 +106,9 @@ export const apiKeyPolicyFromHashRecord = (tokenHash: string, record: ApiKeyHash
   return {
     token_hash: tokenHash,
     key_id: record.id,
-    expires_at_ms: Number.isFinite(record.expires_at_ms) ? Math.trunc(record.expires_at_ms) : API_KEY_NO_EXPIRATION_MS,
+    // Authentication must apply the same legacy-expiry semantics as /uos/auth and the admin paths: an absent,
+    // non-finite, or historical negative sentinel means non-expiring rather than genuinely expired.
+    expires_at_ms: coerceApiKeyExpiresAtMs(record),
     usage_limit_requests: record.usage_limit_requests,
     window_ms: windowMs,
     window_start_ms: window.start,
@@ -619,7 +621,8 @@ type ApiKeyUsageReservationAttempt =
  * The record is KV data, so its expiry field is still re-checked at runtime.
  */
 const unavailablePolicyResponse = (record: unknown, nowMs: number): ApiKeyUsageReservationDecision => {
-  if (!isRecord(record) || record.revoked_at_ms !== null || (typeof record.expires_at_ms === "number" && record.expires_at_ms <= nowMs)) {
+  const expiresAtMs = coerceApiKeyExpiresAtMs(record);
+  if (!isRecord(record) || record.revoked_at_ms !== null || (expiresAtMs !== API_KEY_NO_EXPIRATION_MS && expiresAtMs <= nowMs)) {
     return expiredPolicyResponse();
   }
   return quotaUnavailable("API key quota policy is incomplete");

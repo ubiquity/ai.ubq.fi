@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { apiKeyHashKey } from "../src/api_keys.ts";
+import { API_KEY_NO_EXPIRATION_MS, apiKeyHashKey, coerceApiKeyExpiresAtMs } from "../src/api_keys.ts";
 import {
   API_KEY_USAGE_V3_RESERVATION_LEASE_MS,
   type ApiKeyPolicy,
@@ -8,9 +8,12 @@ import {
   type ApiKeyUsageReservation,
   apiKeyUsageV3RequestKey,
   apiKeyUsageV3WindowKey,
+  authenticateApiKeyToken,
   reserveApiKeyUsageV3,
+  resetApiKeyPolicyCacheForTest,
 } from "../src/api_key_policy.ts";
 import type { ApiKeyHashRecord, ApiKeyUsageRequestV3, ApiKeyUsageWindowV3 } from "../src/types.ts";
+import { sha256Base64Url } from "../src/utils.ts";
 import { CountingKv } from "./helpers/counting_kv.ts";
 
 const storedValue = (kv: CountingKv, key: Deno.KvKey): unknown => kv.entries.get(JSON.stringify(key))?.value ?? null;
@@ -255,4 +258,46 @@ Deno.test("bounded API-key quota responses publish standard rate-limit headers",
   assert.match(decision.response.headers.get("Retry-After") ?? "", /^\d+$/);
   assert.equal((await decision.response.json()).error.code, "rate_limit_exceeded");
   assert.deepEqual(apiKeyRateLimitPolicyHeaders(policy), { "RateLimit-Policy": '"api-key";q=1;w=3600' });
+});
+
+Deno.test("legacy API key expiry records use the established non-expiring semantics while genuine expiry and revocation stay ineligible", async () => {
+  const nowMs = 1_700_000_000_000;
+  const baseRecord: Omit<ApiKeyHashRecord, "expires_at_ms"> = {
+    id: "legacy-expiry",
+    revoked_at_ms: null,
+    usage_limit_requests: 2,
+    usage_requests: 0,
+    usage_reset_at_ms: nowMs + 60_000,
+    window_ms: 60_000,
+    usage_quota_version: 3,
+    paid_fallback_enabled: false,
+    paid_fallback_limit_microcredits: 0,
+    paid_fallback_spent_microcredits: 0,
+    paid_fallback_reserved_microcredits: 0,
+    paid_fallback_reservation_request_id: null,
+  };
+  const cases: readonly Readonly<{ label: string; expiresAtMs?: number; revokedAtMs?: number; eligible: boolean }>[] = [
+    { label: "absent", eligible: true },
+    { label: "canonical sentinel", expiresAtMs: API_KEY_NO_EXPIRATION_MS, eligible: true },
+    { label: "historical negative sentinel", expiresAtMs: -86_400_000, eligible: true },
+    { label: "future", expiresAtMs: nowMs + 60_000, eligible: true },
+    { label: "expired", expiresAtMs: nowMs - 1, eligible: false },
+    { label: "expired at the boundary", expiresAtMs: nowMs, eligible: false },
+    { label: "revoked", expiresAtMs: nowMs + 60_000, revokedAtMs: nowMs - 1, eligible: false },
+  ];
+  for (const [index, testCase] of cases.entries()) {
+    const token = `u_${index.toString(16).padStart(64, "0")}`;
+    const tokenHash = await sha256Base64Url(token);
+    const record: Record<string, unknown> = { ...baseRecord, revoked_at_ms: testCase.revokedAtMs ?? null };
+    if (testCase.expiresAtMs !== undefined) record.expires_at_ms = testCase.expiresAtMs;
+    const kv = new CountingKv();
+    kv.seed(apiKeyHashKey(tokenHash), record);
+    resetApiKeyPolicyCacheForTest();
+    const decision = await authenticateApiKeyToken(token, { kv: kv as unknown as Deno.Kv, nowMs });
+    assert.equal(decision.ok, testCase.eligible, `${testCase.label}: authentication eligibility`);
+    if (!testCase.eligible) continue;
+    const policy = apiKeyPolicyFromHashRecord(tokenHash, record as unknown as ApiKeyHashRecord, nowMs);
+    assert.ok(policy, `${testCase.label}: policy must resolve`);
+    assert.equal(policy.expires_at_ms, coerceApiKeyExpiresAtMs(record), `${testCase.label}: authentication must report the established expiration semantics`);
+  }
 });
