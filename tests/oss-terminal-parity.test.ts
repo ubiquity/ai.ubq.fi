@@ -60,6 +60,52 @@ const bufferedPayload = (message: Record<string, unknown>, finishReason = "stop"
 
 const outputTypes = (payload: Record<string, unknown>): unknown[] => (payload.output as Record<string, unknown>[]).map((item) => item.type);
 
+/** Runs one Chat trace through the streamed transport and returns every event, terminal included. */
+const streamedEvents = (chunks: readonly Record<string, unknown>[], responseId = "resp_sdk"): Record<string, unknown>[] => {
+  const translator = createDeepSeekResponsesStreamTranslator("deepseek-flash", responseId, echo, 1_780_000_000);
+  const events: Record<string, unknown>[] = [];
+  for (const chunk of chunks) events.push(...translator.push(chunk));
+  events.push(...translator.finish());
+  return events;
+};
+
+/**
+ * The accumulation contract of the official JavaScript SDK's `ResponseStream`,
+ * reduced to the facts this adapter can violate: `response.output_item.added`
+ * appends its item to an ordered output array at the position the event
+ * declares, and every later event that names an `output_index` reads, and when
+ * it carries a completed item replaces, that array entry. An item announced at
+ * an index the client never accumulated fails the entire stream with the SDK's
+ * `missing output at index N` error, which is exactly what a reasoning index
+ * reserved without an announcement produced: the next item became the client's
+ * first accumulated item while its content events still named the later index.
+ */
+const sdkAccumulateOutput = (events: readonly Record<string, unknown>[]): Record<string, unknown>[] => {
+  const output: Record<string, unknown>[] = [];
+  for (const event of events) {
+    const type = String(event.type);
+    if (type === "response.output_item.added") {
+      assert.equal(event.output_index, output.length, `${type} must be accumulated at the output_index it declares`);
+      output.push(event.item as Record<string, unknown>);
+      continue;
+    }
+    if (typeof event.output_index !== "number") continue;
+    const index = event.output_index;
+    const item = output[index];
+    assert.ok(item, `missing output at index ${index} for ${type}`);
+    if (typeof event.item_id === "string") {
+      assert.equal(event.item_id, item.id, `${type} must target the item accumulated at index ${index}`);
+    }
+    const replacement = event.item;
+    if (replacement !== null && typeof replacement === "object" && !Array.isArray(replacement)) {
+      const replaced = replacement as Record<string, unknown>;
+      assert.equal(replaced.id, item.id, `${type} must close the item accumulated at index ${index}`);
+      output[index] = replaced;
+    }
+  }
+  return output;
+};
+
 const sse = (value: Record<string, unknown>): string => `data: ${JSON.stringify(value)}\n\n`;
 
 /** Drives one raw SSE body through the transport the route consumes. */
@@ -196,6 +242,122 @@ Deno.test("m04 parity: a reasoning item does not displace indexed items in the t
   const added = events.find((event) => event.type === "response.output_item.added" && (event.item as Record<string, unknown>).type === "message");
   assert.ok(added);
   assert.equal(output[Number(added.output_index)].type, "message");
+});
+
+Deno.test("m04 parity: reasoning-first streams accumulate in the SDK's ordered output", () => {
+  const events = streamedEvents([
+    chatChunk({ role: "assistant", reasoning_content: "checking the weather " }),
+    chatChunk({ reasoning_content: "for Oslo" }),
+    chatChunk({ content: "Weather: " }),
+    chatChunk(
+      { tool_calls: [{ index: 0, id: "call_a", type: "function", function: { name: "lookup", arguments: '{"city":"Oslo"}' } }] },
+      { finish_reason: "tool_calls" }
+    ),
+  ]);
+  const accumulated = sdkAccumulateOutput(events);
+  const terminal = events.at(-1) as { type: string; response: Record<string, unknown> };
+  assert.equal(terminal.type, "response.completed");
+  assert.deepEqual(
+    accumulated.map((item) => item.type),
+    ["reasoning", "message", "function_call"]
+  );
+  // The terminal response describes exactly what the client accumulated, at the
+  // same positions, so no item is displaced or announced only in the terminal.
+  assert.deepEqual(accumulated, terminal.response.output);
+  const added = events.filter((event) => event.type === "response.output_item.added");
+  assert.deepEqual(
+    added.map((event) => [event.output_index, (event.item as Record<string, unknown>).type]),
+    [
+      [0, "reasoning"],
+      [1, "message"],
+      [2, "function_call"],
+    ]
+  );
+  // The buffered transport reaches the same items in the same order.
+  const buffered = bufferedPayload(
+    {
+      role: "assistant",
+      reasoning_content: "checking the weather for Oslo",
+      content: "Weather: ",
+      tool_calls: [{ id: "call_a", type: "function", function: { name: "lookup", arguments: '{"city":"Oslo"}' } }],
+    },
+    "tool_calls"
+  );
+  assert.deepEqual(outputTypes(terminal.response), outputTypes(buffered));
+});
+
+Deno.test("m04 parity: reasoning that arrives after text is announced at its own later index", () => {
+  // The provider sends reasoning before content, but the lifecycle must stay
+  // coherent whatever order the deltas arrive in: a late reasoning item is
+  // announced at the index it actually owns instead of displacing the answer.
+  const events = streamedEvents([
+    chatChunk({ role: "assistant", content: "answer first" }),
+    chatChunk({ reasoning_content: "reconsidered" }, { finish_reason: "stop" }),
+  ]);
+  const accumulated = sdkAccumulateOutput(events);
+  const terminal = events.at(-1) as { type: string; response: Record<string, unknown> };
+  assert.deepEqual(
+    accumulated.map((item) => item.type),
+    ["message", "reasoning"]
+  );
+  assert.deepEqual(accumulated, terminal.response.output);
+  const added = events.filter((event) => event.type === "response.output_item.added");
+  assert.deepEqual(
+    added.map((event) => [event.output_index, (event.item as Record<string, unknown>).type]),
+    [
+      [0, "message"],
+      [1, "reasoning"],
+    ]
+  );
+  // Every event that describes the reasoning names index 1, the slot its own
+  // announcement claimed.
+  const reasoningEvents = events.filter(
+    (event) => String(event.type).includes("reasoning") || (event.item as Record<string, unknown> | undefined)?.type === "reasoning"
+  );
+  assert.ok(reasoningEvents.length >= 4);
+  for (const event of reasoningEvents) assert.equal(event.output_index, 1);
+  // The buffered transport keeps its established reasoning-first order for the
+  // same Chat message; both transports carry the same two items.
+  const buffered = bufferedPayload({ role: "assistant", content: "answer first", reasoning_content: "reconsidered" });
+  assert.deepEqual(outputTypes(buffered), ["reasoning", "message"]);
+  assert.deepEqual(accumulated.map((item) => item.type).sort(), outputTypes(buffered).sort());
+});
+
+Deno.test("m04 parity: a refusal after reasoning keeps every SDK event on its own item", () => {
+  const refusal = "I cannot help with that.";
+  const events = streamedEvents([
+    chatChunk({ role: "assistant", reasoning_content: "checking the request" }),
+    chatChunk({ refusal }),
+    chatChunk({}, { finish_reason: "stop" }),
+  ]);
+  const accumulated = sdkAccumulateOutput(events);
+  const terminal = events.at(-1) as { type: string; response: Record<string, unknown> };
+  assert.deepEqual(
+    accumulated.map((item) => item.type),
+    ["reasoning", "message"]
+  );
+  assert.deepEqual(accumulated, terminal.response.output);
+  assert.deepEqual((accumulated[1].content as Record<string, unknown>[])[0], { type: "refusal", refusal });
+  assert.ok(events.some((event) => event.type === "response.refusal.done"));
+
+  const buffered = bufferedPayload({ role: "assistant", content: null, refusal, reasoning_content: "checking the request" });
+  assert.deepEqual(outputTypes(buffered), ["reasoning", "message"]);
+  assert.deepEqual((buffered.output as Record<string, unknown>[])[1].content, [{ type: "refusal", refusal }]);
+});
+
+Deno.test("m04 parity: a reasoning-only stop accumulates its single indexed item on both transports", () => {
+  const events = streamedEvents([chatChunk({ role: "assistant", reasoning_content: "thinking only" }), chatChunk({}, { finish_reason: "stop" })]);
+  const accumulated = sdkAccumulateOutput(events);
+  const terminal = events.at(-1) as { type: string; response: Record<string, unknown> };
+  assert.equal(terminal.type, "response.completed");
+  assert.deepEqual(
+    accumulated.map((item) => item.type),
+    ["reasoning"]
+  );
+  assert.deepEqual(accumulated, terminal.response.output);
+
+  const buffered = bufferedPayload({ role: "assistant", content: null, reasoning_content: "thinking only" });
+  assert.deepEqual(outputTypes(buffered), ["reasoning"]);
 });
 
 Deno.test("m04 parity: a refusal is answer-bearing payload on both transports", () => {
