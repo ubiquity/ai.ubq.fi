@@ -156,19 +156,41 @@ export const openSupervisorConnection = async (socketPath: string, signal?: Abor
     failPending("app-server connection failed");
   });
 
-  await new Promise<void>((resolve, reject) => {
-    let opened = false;
-    socket.once("open", () => {
-      if (opened) return;
-      opened = true;
-      resolve();
+  /**
+   * Abandons a socket whose handshake never produced a usable connection, so
+   * a stalled or rejected `initialize` cannot leak the socket or its pending
+   * callbacks; the next sampling round opens a fresh connection.
+   */
+  const abandonSocket = (message: string): void => {
+    closed = true;
+    failPending(message);
+    try {
+      // `terminate()` is a no-op on an already closed socket, so it is safe
+      // even when the socket failed before or during the close handshake.
+      socket.terminate();
+    } catch {
+      // A socket that cannot be terminated is already unusable.
+    }
+  };
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      let opened = false;
+      socket.once("open", () => {
+        if (opened) return;
+        opened = true;
+        resolve();
+      });
+      socket.once("error", () => {
+        if (opened) return;
+        opened = true;
+        reject(new Error("app-server socket unavailable"));
+      });
     });
-    socket.once("error", () => {
-      if (opened) return;
-      opened = true;
-      reject(new Error("app-server socket unavailable"));
-    });
-  });
+  } catch (error) {
+    abandonSocket("app-server socket unavailable");
+    throw error;
+  }
 
   const send = (method: string, params: Record<string, unknown>, callSignal?: AbortSignal): Promise<unknown> => {
     if (socket.readyState !== WS_READY_STATE_OPEN) return Promise.reject(new Error("app-server connection unavailable"));
@@ -193,11 +215,16 @@ export const openSupervisorConnection = async (socketPath: string, signal?: Abor
     });
   };
 
-  await send("initialize", {
-    clientInfo: { name: "uos_supervisor", version: "1" },
-    capabilities: { experimentalApi: true },
-  });
-  socket.send(JSON.stringify({ method: "initialized" }));
+  try {
+    await send("initialize", {
+      clientInfo: { name: "uos_supervisor", version: "1" },
+      capabilities: { experimentalApi: true },
+    });
+    socket.send(JSON.stringify({ method: "initialized" }));
+  } catch (error) {
+    abandonSocket("app-server initialization failed");
+    throw error;
+  }
 
   return {
     call: async (method, params = {}, callSignal) => {
