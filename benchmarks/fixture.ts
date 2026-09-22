@@ -554,26 +554,39 @@ function snapshotWorkspace(root: string): WorkspaceSnapshot {
     for (const entry of [...Deno.readDirSync(dir)].sort((a, b) => a.name.localeCompare(b.name))) {
       const rel = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
       const abs = `${dir}/${entry.name}`;
-      const info = lstatIfExists(abs);
-      if (info === null) continue; // the entry vanished while the snapshot was taken
-      if (info.isSymlink) {
-        const target = snapshotSymlinkTarget(abs);
-        if (target === null) continue; // the link vanished while the snapshot was taken
-        snapshot.set(rel, { kind: "symlink", target });
-      } else if (info.isDirectory) {
-        snapshot.set(rel, { kind: "directory", mode: snapshotMode(info) });
+      recordSnapshotEntry(snapshot, rel, abs, () => {
         walk(abs, rel);
-      } else if (info.isFile) {
-        const content = snapshotFileContent(abs);
-        if (content === null) continue; // the file vanished while the snapshot was taken
-        snapshot.set(rel, { kind: "file", content, mode: snapshotMode(info) });
-      } else {
-        snapshot.set(rel, { kind: "other", mode: snapshotMode(info) });
-      }
+      });
     }
   };
   walk(root, "");
   return snapshot;
+}
+
+/**
+ * Records one entry, walking below it when it is a directory. An entry that
+ * disappeared between `readDir` and its own read is skipped rather than
+ * reported as a change.
+ */
+function recordSnapshotEntry(snapshot: WorkspaceSnapshot, rel: string, abs: string, walkBelow: () => void): void {
+  const info = lstatIfExists(abs);
+  if (info === null) return; // the entry vanished while the snapshot was taken
+  if (info.isSymlink) {
+    const target = snapshotSymlinkTarget(abs);
+    if (target !== null) snapshot.set(rel, { kind: "symlink", target });
+    return;
+  }
+  if (info.isDirectory) {
+    snapshot.set(rel, { kind: "directory", mode: snapshotMode(info) });
+    walkBelow();
+    return;
+  }
+  if (info.isFile) {
+    const content = snapshotFileContent(abs);
+    if (content !== null) snapshot.set(rel, { kind: "file", content, mode: snapshotMode(info) });
+    return;
+  }
+  snapshot.set(rel, { kind: "other", mode: snapshotMode(info) });
 }
 
 function changedWorkspacePaths(before: WorkspaceSnapshot, after: WorkspaceSnapshot): string[] {
@@ -582,7 +595,8 @@ function changedWorkspacePaths(before: WorkspaceSnapshot, after: WorkspaceSnapsh
 }
 
 function snapshotEntriesEqual(before: WorkspaceSnapshotEntry | undefined, after: WorkspaceSnapshotEntry | undefined): boolean {
-  if (before === undefined || after === undefined || before.kind !== after.kind) return before === after;
+  if (before === undefined || after === undefined) return before === after;
+  if (before.kind !== after.kind) return false;
   if (before.kind === "symlink") return after.kind === "symlink" && before.target === after.target;
   if (before.kind === "file") return after.kind === "file" && before.mode === after.mode && bytesEqual(before.content, after.content);
   if (before.kind === "directory") return after.kind === "directory" && before.mode === after.mode;

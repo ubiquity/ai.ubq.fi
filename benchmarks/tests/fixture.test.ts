@@ -225,11 +225,13 @@ Deno.test({
     });
     try {
       await workspace.prepare();
-      // A known starting mode different from the attempted one, so the chmod
-      // is a real change regardless of the process umask.
-      await Deno.chmod(`${workspace.root}/data`, 0o755);
+      // Owner-only starting mode, different from the attempted one, so the
+      // chmod is a real change regardless of the process umask.
+      await Deno.chmod(`${workspace.root}/data`, 0o700);
       const originalMode = Deno.lstatSync(`${workspace.root}/data`).mode;
-      const violation = await expectWriteScopeViolation(() => workspace.execShell("chmod 700 data && printf 'y\\n' > data/child.txt", 20_000));
+      // The allowed child is created before the directory is made read-only,
+      // because no descendant write is possible after chmod 0500.
+      const violation = await expectWriteScopeViolation(() => workspace.execShell("printf 'y\\n' > data/child.txt && chmod 500 data", 20_000));
       if (violation.path !== "data") throw new Error(`expected the violation to name the changed directory, got ${violation.path}`);
       if (Deno.lstatSync(`${workspace.root}/data`).mode !== originalMode) throw new Error("the pre-existing directory mode was not restored");
       if (workspace.read("data/child.txt") !== "y\n") throw new Error("the allowed descendant write from the violating command was rolled back");

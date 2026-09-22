@@ -42,11 +42,11 @@ benchmark-runs/
 
 The runner accepts `--` task separators exactly as `deno task` forwards them; plain
 `deno run --allow-read --allow-write --allow-run=sh,git
-benchmarks/runner.ts --configs=reference` works
-identically. `benchmark:run` and `benchmark:test` carry the trusted runner's own unscoped `--allow-write` because Deno
-refuses symlink creation under path-scoped grants; the spawned shell commands stay confined to the disposable workspace
-by the platform sandbox, and their file changes are checked against `allowed_write_scope`. No environment variables are
-read and no secrets are involved.
+benchmarks/runner.ts --configs=reference` works identically.
+`benchmark:run` and `benchmark:test` carry the trusted runner's own unscoped `--allow-write` because Deno refuses
+symlink creation under path-scoped grants; the spawned shell commands stay confined to the disposable workspace by the
+platform sandbox, and their file changes are checked against `allowed_write_scope`. No environment variables are read
+and no secrets are involved.
 
 ## Layout
 
