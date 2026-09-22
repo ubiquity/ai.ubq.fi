@@ -60,6 +60,7 @@ import {
   type InferenceAdmissionResult,
   inferenceAdmissionSnapshot,
 } from "./inference_admission.ts";
+import { handleJevResponsesCompaction, isJevCompactionRequest } from "./jev_compaction/compaction.ts";
 import { type KernelQuotaReservation, reserveEffectiveKernelUsageLimit } from "./kernel_usage.ts";
 import {
   getResponseAccountCohortId,
@@ -1560,6 +1561,15 @@ const handleTerminalRoute = async (
     return await finishTerminalResponse(response, "chat.completions", true, true);
   };
   const runResponsesRoute = async (): Promise<Response> => {
+    // Header-marked Codex compaction is answered locally by Jev; the body is
+    // read only for a recognized request. A failure is a non-success response,
+    // never a fallback to the main model, so Codex keeps its existing history.
+    // The normal terminal wrapper keeps cancellation, settlement and terminal
+    // logging ownership exactly as the ordinary route does.
+    if (isJevCompactionRequest(req)) {
+      const response = await executeInference(() => handleJevResponsesCompaction(req, { signal: callerSignal }));
+      return await finishTerminalResponse(response, "responses", true, true);
+    }
     const response = await executeInference(() => handleResponses(req, usageContext));
     return await finishTerminalResponse(response, "responses", true, true);
   };

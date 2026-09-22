@@ -6,6 +6,48 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Gateway Jev compaction for marked Codex requests - 2026-09-22
+
+`POST /v1/responses` answers an explicitly marked Codex compaction locally instead of dispatching a main model. The
+predicate is header-only: `x-codex-turn-metadata` must parse as JSON with `request_kind: "compaction"` and
+`compaction.implementation: "responses"` (the one enum variant verified against official Codex rust-v0.155.1). Absent,
+malformed, unknown and `responses_compaction_v2` markers keep the existing route; prompt text is never inspected. The
+seam is inside `runResponsesRoute` after `authenticateClient` and admission, so the route keeps `executeInference`
+ownership and its terminal wrapper, and an ordinary request's body, abort signal and provider routing are untouched.
+
+The handler reuses the finished selection and rendering core of `0x4007/fast-jev-compaction` (MIT) at
+`c1eab5fdbd6bde7d67f2da070116496558836884`, pinned with its license and a file map in `lib/jev_compaction/`; the gateway
+adapter is `src/jev_compaction/compaction.ts`. Only the library and Codex item mapping were ported; the upstream HTTP
+proxy, CLI and server are not part of this gateway. One handled compaction may make several bounded Jev batches (state
+ceiling 25,000 tokens, request ceiling 30,000 tokens, 30-second per-call transport bound, caller abort forwarded), and
+local code renders retained text verbatim under the existing 400,000-character summary cap.
+
+Failure is closed and local: malformed or empty input, no unpinned candidates, no measured reduction, Jev error or
+timeout, partial decisions, empty or oversized summary, and cancellation each return a non-success response before any
+completion is emitted, so Codex keeps its existing history. There is no main-model fallback, no account rotation, no
+invented usage, and no `encrypted_content`. `TYPESAFE_API_KEY` is read lazily with `Deno.env` only when a recognized
+compaction is handled; a missing or denied value is an explicit 503, never a startup failure. A successful local answer
+carries explicit completion telemetry (`setResponseCompletionTelemetry`: completed, semantic output observed, a
+`response.completed` stream terminal, and usage counters left null), so the normal terminal wrapper's own completion
+decision commits the repository reservation after delivery instead of releasing it as a stream that ended without a
+completion; a failed or cancelled answer stays unmarked and releases through the same wrapper. No main-model token,
+allowance, model or cost counter is fabricated either way.
+
+Reason: the official client decides when to compact and must keep its normal history and routing; only the summary text
+for an explicitly marked local compaction is gateway-owned. The alternative client-side fork would need per-client
+maintenance and was rejected by the user.
+
+Status: implemented and accepted as a prototype on 2026-09-22. The focused tests and credential-free HTTP fixture
+exercise the real handler over loopback HTTP with an injected asker. Separately, the stock Mac Codex client 0.155.1
+against the hash-verified candidate completed one manual and one automatic compaction with real Jev, each path making
+one Jev API request. The next requests carried the adopted summaries, and normal turns made zero Jev calls. The live
+receipt is `591bceabb6cc0ae63ee09ee9914b02c17ad0b9b53f9be3f4389670cde15755a5/9baf75f6-b2e7-4a74-9962-e61ceb3ad0df`.
+Repository verification and PR/CI delivery remain pending, and nothing here is deployed.
+
+Reversal risk: removing the predicate restores main-model compaction dispatch, and widening it to prompt matching or to
+unverified metadata variants would claim requests the gateway cannot answer. Treating a Jev failure as success, or
+truncating kept content to force a summary, would silently replace the client's history.
+
 ## Gateway reliability program: finite admission, terminal parity, deadlines, optional analytics - 2026-09-22
 
 A finite process-resource guard now bounds terminal inference routes at 64 active requests and 128 waiting requests with

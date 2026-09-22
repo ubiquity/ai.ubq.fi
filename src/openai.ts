@@ -410,6 +410,27 @@ const attachResponseTelemetry = (response: Response, state: ResponseTelemetrySta
   return response;
 };
 
+/**
+ * Attaches completed, answer-bearing telemetry to a gateway-produced Responses
+ * result that did not come from a provider dispatch (the local Jev compaction
+ * answer). The terminal wrapper's normal completion decision reads this state,
+ * so the request settles as completed through the existing handoff instead of
+ * being classified as a stream that ended without a completion. No token,
+ * allowance, model-cost or provider-usage counter is invented: those fields stay
+ * null/missing because no main-model call measured them, and the provider label
+ * remains the honest gateway default. Timing fields stay unknown too: there is
+ * no provider-relative stream or semantic-commitment instant here, and a
+ * wall-clock stamp would be misread as request-relative latency.
+ */
+export const setResponseCompletionTelemetry = (response: Response, stream: boolean): Response => {
+  const state = createResponseTelemetryState();
+  state.completed = true;
+  state.semanticOutputObserved = true;
+  state.stream = stream;
+  state.streamTerminalType = "response.completed";
+  return attachResponseTelemetry(response, state);
+};
+
 const sumTelemetryCounts = (
   states: readonly ResponseTelemetryState[],
   key: "inputTokens" | "cachedInputTokens" | "cacheWriteInputTokens" | "outputTokens" | "totalTokens",
