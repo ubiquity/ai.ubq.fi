@@ -2235,10 +2235,10 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
   const downtimeStripe = capacityChartSvgElement("path", {
     d: "M-3 -3L15 15 M-3 9L3 15 M9 -3L15 3",
     fill: "none",
-    stroke: "#ff5f56",
     "stroke-opacity": 0.3,
     "stroke-width": 1.25,
   });
+  downtimeStripe.dataset.capacityDowntimeStripe = "";
   downtimePattern.appendChild(downtimeStripe);
   const resetPattern = capacityChartSvgElement("pattern", {
     id: "capacity-chart-rate-limit-reset-stripes",
@@ -2249,10 +2249,10 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
   const resetStripe = capacityChartSvgElement("path", {
     d: "M-2 10L10 -2 M3 12L12 3",
     fill: "none",
-    stroke: "#55d98a",
     "stroke-opacity": 0.72,
     "stroke-width": 1.5,
   });
+  resetStripe.dataset.capacityResetStripe = "";
   resetPattern.appendChild(resetStripe);
   defs.append(downtimePattern, resetPattern);
   svg.appendChild(defs);
@@ -2307,10 +2307,10 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
       y: plot.top,
       width: band.width,
       height: plot.height,
-      fill: "#ff5f56",
       "fill-opacity": 0.055,
     });
     background.dataset.capacityDowntimeBand = "openai";
+    background.style.fill = "var(--danger)";
     background.setAttribute("aria-hidden", "true");
     const stripes = capacityChartSvgElement("rect", {
       x: band.x,
@@ -2340,9 +2340,9 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
       y: plot.top,
       width: markerWidth,
       height: plot.height,
-      fill: "#55d98a",
       "fill-opacity": 0.16,
     });
+    background.style.fill = "var(--success)";
     const stripes = capacityChartSvgElement("rect", {
       x: markerLeft,
       y: plot.top,
@@ -2355,7 +2355,6 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
       y1: plot.top,
       x2: markerX,
       y2: plot.top + plot.height,
-      stroke: "#55d98a",
       "stroke-opacity": 0.96,
       "stroke-width": 2,
     });
@@ -2392,7 +2391,6 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
       y1: plot.top - 4,
       x2: markerX,
       y2: plot.top + plot.height,
-      stroke: "#ff625f",
       "stroke-opacity": 0.72,
       "stroke-dasharray": "2 5",
       "stroke-width": 1.5,
@@ -2402,8 +2400,6 @@ const renderProviderCapacityChart = (snapshot, sources, fiveXxBuckets = []) => {
       d: `M ${markerX} ${markerY - 5} L ${markerX + 5} ${markerY} L ${markerX} ${markerY + 5} L ${
         markerX - 5
       } ${markerY} Z`,
-      fill: "#ff625f",
-      stroke: "#fff4f3",
       "stroke-width": 1,
     });
     const tooltip = capacityChartSvgElement("title");
@@ -5227,12 +5223,12 @@ const buildUsageSparkline = (usage, options = {}) => {
 
   const stopStart = document.createElementNS("http://www.w3.org/2000/svg", "stop");
   stopStart.setAttribute("offset", "0%");
-  stopStart.setAttribute("stop-color", "#ffffff");
+  stopStart.style.setProperty("stop-color", "var(--accent)");
   stopStart.setAttribute("stop-opacity", "0");
 
   const stopEnd = document.createElementNS("http://www.w3.org/2000/svg", "stop");
   stopEnd.setAttribute("offset", "100%");
-  stopEnd.setAttribute("stop-color", "#ffffff");
+  stopEnd.style.setProperty("stop-color", "var(--accent)");
   stopEnd.setAttribute("stop-opacity", "0.9");
 
   gradient.appendChild(stopStart);
@@ -5247,12 +5243,12 @@ const buildUsageSparkline = (usage, options = {}) => {
 
   const areaStart = document.createElementNS("http://www.w3.org/2000/svg", "stop");
   areaStart.setAttribute("offset", "0%");
-  areaStart.setAttribute("stop-color", "#ffffff");
+  areaStart.style.setProperty("stop-color", "var(--accent)");
   areaStart.setAttribute("stop-opacity", "0.24");
 
   const areaEnd = document.createElementNS("http://www.w3.org/2000/svg", "stop");
   areaEnd.setAttribute("offset", "100%");
-  areaEnd.setAttribute("stop-color", "#ffffff");
+  areaEnd.style.setProperty("stop-color", "var(--accent)");
   areaEnd.setAttribute("stop-opacity", "0");
 
   areaGradient.appendChild(areaStart);
@@ -5294,7 +5290,7 @@ const buildUsageSparkline = (usage, options = {}) => {
   const avgPathEl = document.createElementNS("http://www.w3.org/2000/svg", "path");
   avgPathEl.setAttribute("d", avgPath);
   avgPathEl.setAttribute("fill", "none");
-  avgPathEl.setAttribute("stroke", "rgba(255, 255, 255, 0.4)");
+  avgPathEl.style.stroke = "var(--muted-2)";
   avgPathEl.setAttribute("stroke-width", "1.6");
   avgPathEl.setAttribute("stroke-linecap", "round");
   avgPathEl.setAttribute("stroke-linejoin", "round");
