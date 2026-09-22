@@ -105,7 +105,7 @@ Deno.test("public models page is registered", () => {
 });
 
 Deno.test("public console pages share versioned styles, canonical navigation, and accurate active states", () => {
-  const assetVersion = "app-minimal-20260917";
+  const sharedAssetVersion = "passport-design-20260922";
   const canonicalLinks = [
     { href: "/models", label: "Models" },
     { href: "/developers", label: "Developers" },
@@ -126,10 +126,12 @@ Deno.test("public console pages share versioned styles, canonical navigation, an
 
   for (const page of pages) {
     const stylesheetHrefs = [...page.html.matchAll(/<link\b(?=[^>]*\brel="stylesheet")[^>]*\bhref="([^"]+)"[^>]*>/g)].map((match) => match[1]);
-    assert.deepEqual(
-      stylesheetHrefs,
-      [`/style.css?v=${assetVersion}`, `/${page.pageCss}?v=${assetVersion}`],
-      `${page.name} should load only the release-matched shared and page styles`
+    assert.equal(stylesheetHrefs.length, 2, `${page.name} should load only the shared and page styles`);
+    assert.equal(stylesheetHrefs[0], `/style.css?v=${sharedAssetVersion}`, `${page.name} should load the shared design foundation at the current version`);
+    assert.match(
+      stylesheetHrefs[1] ?? "",
+      new RegExp(`^/${page.pageCss.replace(/\./g, "\\.")}\\?v=[\\w.-]+$`),
+      `${page.name} should load its page styles with a cache-busting version`
     );
     for (const href of stylesheetHrefs) {
       assert.equal(hasStaticAsset(new URL(href, "https://ai.ubq.fi").pathname), true, `${href} should be registered`);
@@ -171,7 +173,7 @@ Deno.test("public console pages share versioned styles, canonical navigation, an
     );
   }
 
-  assert.match(adminHtml, new RegExp(`/style\\.css\\?v=${assetVersion}`));
+  assert.match(adminHtml, new RegExp(`/style\\.css\\?v=${sharedAssetVersion}`));
   assert.match(
     adminHtml,
     /<nav data-actions aria-label="Primary">[\s\S]*href="\/models">Models<\/a>[\s\S]*href="\/developers">Developers<\/a>[\s\S]*href="\/docs">Docs<\/a>[\s\S]*href="\/chat">Chat<\/a>[\s\S]*href="\/admin">Admin<\/a>[\s\S]*<\/nav>/,
@@ -179,7 +181,7 @@ Deno.test("public console pages share versioned styles, canonical navigation, an
   );
 });
 
-Deno.test("public console styles retain the bordered neutral admin surface without decorative Models blue", () => {
+Deno.test("public console styles share the light and dark design tokens without decorative Models blue", () => {
   const ruleBodies = (css: string, selector: string): string[] => {
     const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return [...css.matchAll(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`, "g"))].map((match) => match[1]);
@@ -189,22 +191,56 @@ Deno.test("public console styles retain the bordered neutral admin surface witho
     assert.ok(body, `${selector} should have a CSS rule containing ${declaration}`);
     return body;
   };
+  const tokenValue = (block: string, name: string): string => new RegExp(`--${name}:\\s*([^;]+);`).exec(block)?.[1]?.trim() ?? "";
 
-  const headerRule = ruleBodyContaining(styleCss, "header[data-shared-header]", "backdrop-filter");
-  assert.match(headerRule, /border:\s*1px solid rgba\(255,\s*255,\s*255,\s*0\.07\)/);
-  assert.match(headerRule, /background:\s*rgba\(15,\s*18,\s*22,\s*0\.82\)/);
-  assert.match(headerRule, /backdrop-filter:\s*blur\(18px\)/);
+  const headerRule = ruleBodyContaining(styleCss, "header[data-shared-header]", "border-radius");
+  assert.match(headerRule, /border:\s*1px solid var\(--border\)/);
+  assert.match(headerRule, /background:\s*var\(--surface\)/);
+  assert.match(headerRule, /border-radius:\s*var\(--radius-lg\)/);
 
   const navControlRule = ruleBodyContaining(styleCss, "[data-actions] a[data-button]", "min-height");
-  assert.match(navControlRule, /min-height:\s*32px/);
-  assert.match(navControlRule, /padding:\s*5px 10px/);
-  assert.match(navControlRule, /border-radius:\s*7px/);
+  assert.match(navControlRule, /min-height:\s*var\(--control-height\)/);
+  assert.match(navControlRule, /border-radius:\s*var\(--radius-sm\)/);
   assert.match(navControlRule, /background:\s*transparent/);
   assert.match(navControlRule, /color:\s*var\(--muted\)/);
 
   const activeNavRule = ruleBodyContaining(styleCss, '[data-actions] a[aria-current="page"]', "background");
-  assert.match(activeNavRule, /background:\s*rgba\(255,\s*255,\s*255,\s*0\.1\)/);
-  assert.match(activeNavRule, /color:\s*var\(--text\)/);
+  assert.match(activeNavRule, /background:\s*var\(--selection\)/);
+  assert.match(activeNavRule, /color:\s*var\(--link\)/);
+
+  // The OS picks the scheme; the light block is the base and dark overrides only the palette.
+  const lightTokens = ruleBodies(styleCss, ":root")[0] ?? "";
+  const darkTokens = /@media \(prefers-color-scheme: dark\)\s*\{\s*:root\s*\{([\s\S]*?)\}\s*\}/.exec(styleCss)?.[1] ?? "";
+  assert.match(lightTokens, /color-scheme:\s*light dark;/);
+  assert.match(darkTokens, /color-scheme:\s*dark;/);
+  assert.equal(tokenValue(lightTokens, "bg"), "#f7f9fc");
+  assert.equal(tokenValue(lightTokens, "surface"), "#ffffff");
+  assert.equal(tokenValue(lightTokens, "surface-2"), "#f1f5f9");
+  assert.equal(tokenValue(lightTokens, "text"), "#111827");
+  assert.equal(tokenValue(lightTokens, "muted"), "#5f6b7a");
+  assert.equal(tokenValue(lightTokens, "accent"), "#0063d1");
+  assert.equal(tokenValue(lightTokens, "accent-ink"), "#ffffff");
+  assert.equal(tokenValue(lightTokens, "control-height"), "44px");
+  assert.equal(tokenValue(lightTokens, "radius-sm"), "10px");
+  assert.equal(tokenValue(lightTokens, "radius-lg"), "14px");
+  assert.equal(tokenValue(darkTokens, "bg"), "#09090b");
+  assert.equal(tokenValue(darkTokens, "surface"), "#141418");
+  assert.equal(tokenValue(darkTokens, "surface-2"), "#1d1d22");
+  assert.equal(tokenValue(darkTokens, "text"), "#f5f5f7");
+  assert.equal(tokenValue(darkTokens, "muted"), "#a1a1aa");
+  assert.equal(tokenValue(darkTokens, "accent-ink"), "#ffffff");
+  assert.match(styleCss, /--font-family:\s*ui-sans-serif/);
+  assert.match(styleCss, /body\s*\{[^}]*font-size:\s*14px/);
+
+  const inputBlocks = [...styleCss.matchAll(/(?:^|\n)input,\n\s*textarea,\n\s*select\s*\{([^}]*)\}/g)].map((match) => match[1] ?? "");
+  const controlBlock = inputBlocks.find((block) => block.includes("min-height")) ?? "";
+  assert.notEqual(controlBlock, "", "text controls must share one base rule");
+  assert.doesNotMatch(controlBlock, /color-scheme/, "controls must inherit the OS scheme instead of pinning one");
+
+  assert.match(styleCss, /@media \(hover: hover\) and \(pointer: fine\)/);
+  const reducedMotion = /@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n\}/.exec(styleCss)?.[1] ?? "";
+  assert.notEqual(reducedMotion, "", "the shared styles must respect prefers-reduced-motion");
+  assert.doesNotMatch(reducedMotion, /transition:\s*none/, "reduced motion keeps short helpful fades");
 
   const cssColorLiterals = modelsCss.match(/#[\da-f]{3,8}\b|rgba?\([^)]*\)/gi) ?? [];
   const colorChannels = (literal: string): [number, number, number] | null => {
