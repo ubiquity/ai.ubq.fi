@@ -1,3 +1,9 @@
+/*
+ * Models catalog. Data panels stay neutral (surface plus border) and take every value from the
+ * shared tokens in style.css, so the catalog follows both color schemes without a page palette.
+ * Blue stays reserved for selection and action states, which the foundation owns.
+ */
+
 body[data-page="models"] [data-shell] {
   max-width: 1600px;
 }
@@ -6,229 +12,204 @@ body[data-page="models"] main {
   width: 100%;
   max-width: 1440px;
   margin-inline: auto;
+  display: grid;
+  gap: 14px;
 }
 
-body[data-page="models"] main,
 body[data-page="models"] [data-models-hero] {
   display: grid;
-  gap: 12px;
-}
-
-body[data-page="models"] [data-eyebrow] {
-  margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-body[data-page="models"] h1 {
-  margin: 0;
-  font-size: clamp(28px, 3vw, 38px);
+  gap: 6px;
 }
 
 body[data-page="models"] [data-lead],
 body[data-page="models"] [data-model-count] {
-  margin: 0;
   color: var(--muted);
 }
+
+/* Result count: one line with the field label, stacked beneath it on narrow screens. */
+body[data-page="models"] [data-model-count] {
+  justify-self: end;
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* Catalog sources */
 
 body[data-page="models"] [data-source-summary] {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
-  margin-top: 28px;
-}
-
-body[data-page="models"] [data-source-summary] article,
-body[data-page="models"] [data-model-list] article {
-  border: 1px solid rgba(255, 255, 255, 0.075);
-  background: var(--surface);
-  box-shadow: var(--shadow-soft);
+  gap: 10px;
 }
 
 body[data-page="models"] [data-source-summary] article {
   display: grid;
-  gap: 3px;
-  padding: 18px;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 4px 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
+  background: var(--surface);
 }
 
-body[data-page="models"] [data-source-summary] h2,
-body[data-page="models"] [data-model-list] h2 {
-  margin: 0;
+body[data-page="models"] [data-source-summary] h2 {
+  color: var(--muted-2);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 body[data-page="models"] [data-source-summary] strong {
-  font-size: 32px;
+  color: var(--text);
+  font-size: 1rem;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
-}
-
-body[data-page="models"] [data-source-summary] article {
-  animation: rise 0.5s var(--ease-out) both;
-  animation-delay: calc(var(--i, 0) * 80ms);
-}
-
-body[data-page="models"] [data-source-summary] article:nth-child(1) {
-  --i: 0;
-}
-
-body[data-page="models"] [data-source-summary] article:nth-child(2) {
-  --i: 1;
-}
-
-body[data-page="models"] [data-source-summary] article:nth-child(3) {
-  --i: 2;
-}
-
-body[data-page="models"] [data-source-summary] article:nth-child(4) {
-  --i: 3;
-}
-
-body[data-page="models"] [data-source-summary] article:nth-child(5) {
-  --i: 4;
-}
-
-body[data-page="models"] [data-model-list] {
-  animation: rise 0.4s var(--ease-out) both;
-  animation-delay: 240ms;
 }
 
 body[data-page="models"] [data-source-summary] span {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 0.75rem;
 }
 
+/* Only a served source reads as a positive state; everything else stays neutral text. */
+body[data-page="models"] [data-source-summary] article[data-state="available"] span {
+  color: var(--success);
+}
+
+/* Search and filtering */
+
 body[data-page="models"] [data-catalog-controls] {
-  display: flex;
-  align-items: end;
-  justify-content: space-between;
-  gap: 16px;
-  margin-top: 28px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 6px 16px;
 }
 
 body[data-page="models"] [data-catalog-controls] label {
   display: grid;
-  flex: 1;
-  gap: 7px;
-  color: var(--muted);
-  font-size: 12px;
+  gap: 6px;
+  max-width: 480px;
+  min-width: 0;
 }
 
-body[data-page="models"] [data-model-search] {
-  width: min(100%, 520px);
-  padding: 12px 14px;
-  border: 1px solid rgba(255, 255, 255, 0.075);
-  border-radius: 10px;
-  color: var(--text);
-  background: rgba(255, 255, 255, 0.055);
-}
-
-body[data-page="models"] [data-model-search]:focus {
-  outline: none;
-  border-color: rgba(255, 255, 255, 0.55);
-  background: rgba(255, 255, 255, 0.075);
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.12);
-}
+/* Model cards */
 
 body[data-page="models"] [data-model-list] {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 10px;
-  margin-top: 16px;
+  align-content: start;
 }
 
-body[data-page="models"] [data-model-list] article {
+body[data-page="models"] [data-model-list] > article {
   display: grid;
-  gap: 14px;
-  min-height: 116px;
-  padding: 16px;
-  border-radius: var(--radius-sm);
+  align-content: start;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
   content-visibility: auto;
-  contain-intrinsic-size: 116px;
+  contain-intrinsic-size: 140px;
 }
 
 body[data-page="models"] [data-model-list] h2 {
-  overflow-wrap: anywhere;
   font-family: var(--mono);
-  font-size: 14px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
 }
 
 body[data-page="models"] [data-providers] {
   display: flex;
   flex-wrap: wrap;
-  align-items: end;
   gap: 6px;
 }
 
 body[data-page="models"] [data-provider] {
-  padding: 4px 8px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
   color: var(--muted);
-  background: rgba(255, 255, 255, 0.055);
   font-size: 11px;
-}
-
-body[data-page="models"] [data-reasoning-levels],
-body[data-page="models"] [data-context-window],
-body[data-page="models"] [data-auto-compact] {
-  color: var(--muted-2);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+  white-space: nowrap;
 }
 
 body[data-page="models"] [data-metadata-source] {
   color: var(--muted-2);
-  font-size: 11px;
-  letter-spacing: 0.02em;
+  font-size: 0.75rem;
+  line-height: 1.45;
 }
 
-body[data-page="models"] [data-metadata-source="unknown"] {
-  opacity: 0.65;
+body[data-page="models"] [data-context-window],
+body[data-page="models"] [data-auto-compact],
+body[data-page="models"] [data-reasoning-levels] {
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  body[data-page="models"] [data-source-summary] article,
-  body[data-page="models"] [data-model-list] {
-    animation: none;
+body[data-page="models"] [data-model-list] details[data-disclosure] {
+  margin-top: 2px;
+  padding-inline: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+body[data-page="models"] [data-model-list] details[data-disclosure] > summary {
+  transition: color var(--duration-fast) ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  body[data-page="models"] [data-model-list] details[data-disclosure] > summary:hover {
+    color: var(--text);
   }
+}
+
+/* The loading state is the live status line in [data-model-count]; the list panel appears
+ * only once a result set is known to be empty or to have failed. */
+
+body[data-page="models"] [data-model-list][data-state="empty"] {
+  display: block;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+body[data-page="models"] [data-model-list][data-state="error"] {
+  border-color: var(--danger);
+  background: var(--danger-fill);
+  color: var(--danger);
 }
 
 @media (max-width: 680px) {
   body[data-page="models"] [data-source-summary] {
     grid-template-columns: 1fr;
   }
+}
 
+@media (max-width: 560px) {
   body[data-page="models"] [data-catalog-controls] {
-    align-items: start;
-    flex-direction: column;
+    grid-template-columns: minmax(0, 1fr);
   }
-}
 
-body[data-page="models"] [data-source-summary] {
-  margin-top: 0;
-}
-
-body[data-page="models"] [data-source-summary] article {
-  grid-template-columns: auto auto 1fr;
-  align-items: baseline;
-  gap: 8px;
-  padding: 12px;
-}
-
-body[data-page="models"] [data-source-summary] h2,
-body[data-page="models"] [data-source-summary] strong {
-  font-size: 14px;
-}
-
-body[data-page="models"] [data-catalog-controls] {
-  margin-top: 8px;
-}
-
-body[data-page="models"] [data-model-list] article {
-  align-content: start;
-  gap: 10px;
-  box-shadow: none;
+  body[data-page="models"] [data-model-count] {
+    justify-self: start;
+    text-align: left;
+  }
 }
