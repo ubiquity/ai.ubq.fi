@@ -2821,7 +2821,13 @@ const loadProviderCapacity = async () => {
 };
 
 const quotaProjectionProviderLabel = (provider) =>
-  provider === "surplus" ? "Surplus" : provider === "metered" ? "Metered" : String(provider ?? "unknown");
+  provider === "surplus"
+    ? "Surplus"
+    : provider === "metered"
+    ? "Metered"
+    : provider === "chatgpt_codex"
+    ? "Codex subscription"
+    : String(provider ?? "unknown");
 
 const quotaProjectionDuration = (ms) => {
   if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "unknown";
@@ -2847,8 +2853,8 @@ const renderQuotaProjectionRows = (payload, historyUnavailable) => {
     const empty = document.createElement("p");
     empty.dataset.empty = "quota-runway";
     empty.textContent = historyUnavailable
-      ? "Paid-fallback usage history could not be read — check KV availability."
-      : "No settled paid-fallback usage in the retained window yet. Rows appear after requests settle.";
+      ? "Model usage history could not be read — check KV availability."
+      : "No recorded model usage in the retained window yet. Rows appear after requests complete.";
     quotaRunwayList.appendChild(empty);
     return;
   }
@@ -2868,11 +2874,16 @@ const renderQuotaProjectionRows = (payload, historyUnavailable) => {
     details.dataset.quotaRunwayDetails = "";
     const history = document.createElement("p");
     history.dataset.muted = "";
+    const observabilityRow = entry.usage_source === "observability";
     history.textContent = usage?.request_count
-      ? `30d: ${formatNumber(usage.request_count)} requests · ${
-        formatDecimal(usage.avg_quota_per_request)
-      } quota avg/request`
-      : "No settled usage in the trailing 30 days";
+      ? observabilityRow
+        ? `30d: ${formatNumber(usage.request_count)} requests · ${formatNumber(usage.input_tokens)} in / ${
+          formatNumber(usage.output_tokens)
+        } out tokens`
+        : `30d: ${formatNumber(usage.request_count)} requests · ${
+          formatDecimal(usage.avg_quota_per_request)
+        } quota avg/request`
+      : "No recorded usage in the trailing 30 days";
     const projection = document.createElement("p");
     if (!estimate) {
       projection.textContent = "No exhaustion estimate — quota is not monitored for this provider";
@@ -2983,7 +2994,7 @@ const renderQuotaProjection = (payload) => {
   const balanceUnavailable = payload?.balance_history_scan !== "ok";
   if (historyUnavailable) {
     quotaRunwayNote.textContent =
-      "Paid-fallback usage history could not be read — totals and exhaustion estimates are unavailable until KV reads recover.";
+      "Model usage history could not be read — totals and exhaustion estimates are unavailable until KV reads recover.";
   } else if (balanceUnavailable) {
     quotaRunwayNote.textContent =
       "Balance history could not be read — the run-down curve is unavailable until KV reads recover.";
