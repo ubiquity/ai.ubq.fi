@@ -5,6 +5,7 @@ import {
   canonicalSentinelUpstreamJson,
   emptySentinelUpstreamTrace,
   parseSentinelUpstreamTrace,
+  SENTINEL_UPSTREAM_MAX_BYTES,
   type SentinelUpstreamRecorder,
   type SentinelUpstreamTrace,
 } from "./sentinel_upstream_capture.ts";
@@ -60,7 +61,15 @@ const REPLAY_PLAINTEXT_VERSION = 3;
 /** v2 fingerprint frame namespace; the outer crypto transport stays v1. */
 const FINGERPRINT_NAMESPACE_V2 = "uos-sentinel-replay-v2:fingerprint";
 const CASE_GROUP_NAMESPACE_V1 = "uos-sentinel-replay-v1:case-group";
-const MAX_REPLAY_METADATA_BYTES = 256 * 1_024;
+/**
+ * The sealed upstream trace is embedded in the private metadata as base64
+ * chunk strings (4 bytes per 3 raw bytes) plus JSON framing and bounded
+ * timing/header fields, so this bound must cover the recorder's full
+ * advertised trace limit: a byte-complete trace that exceeds the metadata
+ * bound fails persistence with no truncation flag. Twice the raw bound leaves
+ * clear headroom over the ~4/3 encoding cost of the largest sealable trace.
+ */
+const MAX_REPLAY_METADATA_BYTES = SENTINEL_UPSTREAM_MAX_BYTES * 2;
 const MAX_REPLAY_PLAINTEXT_BYTES = SENTINEL_REPLAY_MAX_BODY_BYTES + MAX_REPLAY_METADATA_BYTES + 4;
 const MAX_REPLAY_CIPHERTEXT_BYTES = MAX_REPLAY_PLAINTEXT_BYTES + 1_024 * 1_024 + 16;
 const MAX_REPLAY_CHUNKS = Math.ceil(MAX_REPLAY_CIPHERTEXT_BYTES / SENTINEL_REPLAY_CHUNK_BYTES);

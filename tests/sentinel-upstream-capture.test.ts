@@ -636,6 +636,118 @@ Deno.test({
 });
 
 Deno.test({
+  name: "a complete upstream trace at the advertised byte bound persists, exports, and replays",
+  ignore: !kvAvailable,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const kv = await Deno.openKv(":memory:");
+    setKvForTest(kv);
+    try {
+      const keyBytes = crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
+      // One upstream stream that consumes the whole advertised capture bound in
+      // wire-sized reads without setting a truncation flag: its base64 metadata
+      // is far larger than the request body, so persistence must be sized for
+      // the trace rather than for the request.
+      const recorder = createSentinelUpstreamRecorder();
+      const payload = new Uint8Array(SENTINEL_UPSTREAM_MAX_BYTES).fill(0x61);
+      const readBytes = 64 * 1_024;
+      let offset = 0;
+      const source = new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            if (offset >= payload.byteLength) {
+              controller.close();
+              return;
+            }
+            const end = Math.min(offset + readBytes, payload.byteLength);
+            controller.enqueue(payload.subarray(offset, end));
+            offset = end;
+          },
+        },
+        { highWaterMark: 0 }
+      );
+      const wrapped = recorder.startAttempt("chatgpt_codex").wrap(new Response(source, { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+      const reader = responseBody(wrapped).getReader();
+      for (;;) {
+        const { done } = await reader.read();
+        if (done) break;
+      }
+      const trace = recorder.snapshotAndSeal();
+      assert.equal(firstAttempt(trace).terminal, "eof");
+      assert.equal(trace.bytes_truncated, false);
+      assert.equal(trace.chunks_truncated, false);
+      assert.equal(firstAttempt(trace).chunks_base64.length, SENTINEL_UPSTREAM_MAX_BYTES / readBytes);
+      assert.equal(
+        firstAttempt(trace).chunks_base64.reduce((sum, chunk) => sum + chunk.length, 0),
+        (SENTINEL_UPSTREAM_MAX_BYTES / readBytes) * Math.ceil(readBytes / 3) * 4
+      );
+
+      const input = syntheticInput(encoder.encode('{"model":"gpt-5.6-sol","stream":false,"input":"trace-sizing"}'), "trace-sizing-request");
+      const stored = await persistEncryptedSentinelReplay({ ...input, upstream: trace }, failureObservation(), {
+        kv,
+        keyBytes,
+        now: () => 1_700_000_000_000,
+        randomUuid: () => "capture-trace-sizing",
+      });
+      assert.equal(stored.status, "stored", "a complete trace at the bound must persist rather than fail on metadata size");
+      const plaintext = await decryptExportedSentinelReplay(await exportRoundTrip(stored, kv), keyBytes);
+      assert.deepEqual(plaintext.upstream, trace);
+      assert.equal(plaintext.unavailable?.includes("upstream_trace_truncated"), false, "the retained trace must not be reported as truncated");
+      assert.notEqual(plaintext.replay_coverage, "unavailable");
+
+      // One extra byte beyond the bound must stay explicitly incomplete: the
+      // recorder's truncation flag survives persistence, export and replay.
+      const overRecorder = createSentinelUpstreamRecorder();
+      let overOffset = 0;
+      const overSource = new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            if (overOffset < payload.byteLength) {
+              const end = Math.min(overOffset + readBytes, payload.byteLength);
+              controller.enqueue(payload.subarray(overOffset, end));
+              overOffset = end;
+              return;
+            }
+            if (overOffset === payload.byteLength) {
+              controller.enqueue(new Uint8Array([0x62]));
+              overOffset += 1;
+              return;
+            }
+            controller.close();
+          },
+        },
+        { highWaterMark: 0 }
+      );
+      const overWrapped = overRecorder.startAttempt("chatgpt_codex").wrap(new Response(overSource, { status: 200, headers: { "Content-Type": "text/event-stream" } }));
+      const overReader = responseBody(overWrapped).getReader();
+      for (;;) {
+        const { done } = await overReader.read();
+        if (done) break;
+      }
+      const overTrace = overRecorder.snapshotAndSeal();
+      assert.equal(overTrace.bytes_truncated, true);
+      assert.equal(overTrace.chunks_truncated, false);
+      const overStored = await persistEncryptedSentinelReplay({ ...input, upstream: overTrace, request_id: "trace-sizing-over-limit" }, failureObservation(), {
+        kv,
+        keyBytes,
+        now: () => 1_700_000_000_001,
+        randomUuid: () => "capture-trace-over-limit",
+      });
+      assert.equal(overStored.status, "stored");
+      const overPlaintext = await decryptExportedSentinelReplay(await exportRoundTrip(overStored, kv), keyBytes);
+      assert.equal(overPlaintext.upstream?.bytes_truncated, true);
+      assert.equal(overPlaintext.unavailable?.includes("upstream_trace_truncated"), true);
+      assert.equal(overPlaintext.replay_coverage, "partial");
+      assert.equal(overPlaintext.capture_status, "incomplete");
+    } finally {
+      kv.close();
+      setKvForTest(null);
+    }
+  },
+});
+
+Deno.test({
   name: "strict v2 metadata: invalid upstream traces are rejected and tampered ciphertext fails closed",
   ignore: !kvAvailable,
   sanitizeResources: false,
