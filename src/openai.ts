@@ -10299,6 +10299,8 @@ const streamDeepSeekResponses = (
   const iterator = iterateDeepSeekChatCompletionStream(upstream, deepSeekUpstreamModelFor(requestedModel) ?? DEEPSEEK_FLASH_MODEL, { signal: requestSignal });
   const translator = createDeepSeekResponsesStreamTranslator(requestedModel, responseId, echo, createdAtSeconds, toolNames, customToolNames);
   const state = { settled: false, cancelled: false, semantic: false, usage: null as UsageTokens | null };
+  /** The next `sequence_number` this response's SSE stream will emit. */
+  let sequenceNumber = 0;
 
   const settleTerminal = (terminalType: ResponseStreamTerminalType): void => {
     if (state.settled) return;
@@ -10306,7 +10308,15 @@ const streamDeepSeekResponses = (
     recordStreamTerminalType(usageContext, terminalType);
   };
   const emit = (controller: ReadableStreamDefaultController<Uint8Array>, events: readonly Record<string, unknown>[]): void => {
-    for (const event of events) controller.enqueue(encoder.encode(encodeResponsesEvent(event)));
+    for (const event of events) {
+      // Official Responses events carry a monotonic per-response
+      // `sequence_number`. The translator's own `output_index`/`content_index`
+      // values are copied through untouched, so this is the only field the wire
+      // gains and every event - including refusals, item and terminal events -
+      // is stamped by this one encoder seam.
+      controller.enqueue(encoder.encode(encodeResponsesEvent({ ...event, sequence_number: sequenceNumber })));
+      sequenceNumber += 1;
+    }
   };
   /**
    * The client-visible shape of the gateway's existing degenerate-completion

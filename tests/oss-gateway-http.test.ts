@@ -1,0 +1,548 @@
+import assert from "node:assert/strict";
+import { PAID_FALLBACK_NO_LIMIT } from "../src/api_keys.ts";
+import { type ApiKeyPolicy, apiKeyUsageV3RequestKey, apiKeyUsageV3WindowKey, apiKeyPolicyFromHashRecord, resetApiKeyPolicyCacheForTest } from "../src/api_key_policy.ts";
+import { DEEPSEEK_CHAT_COMPLETIONS_URL } from "../src/deepseek.ts";
+import { setInferenceAdmissionControllerForTest } from "../src/handler.ts";
+import { createInferenceAdmissionController } from "../src/inference_admission.ts";
+import { setKvForTest } from "../src/kv.ts";
+import type { ApiKeyHashRecord, ApiKeyRecord, ApiKeyUsageRequestV3, ApiKeyUsageWindowV3 } from "../src/types.ts";
+import { sha256Base64Url } from "../src/utils.ts";
+
+/**
+ * Real HTTP acceptance for the canonical gateway: one task-owned loopback
+ * upstream (controlled DeepSeek frames), one loopback server running the actual
+ * `createServeHandler(handler)`, real KV-backed authentication and quota
+ * accounting, and no paid provider, credential or external network.
+ *
+ * Every scenario uses a real Deno KV (`:memory:`) and a real HTTP client, so the
+ * assertions exercise the production seams: admission, quota reservation and
+ * dispatch, upstream translation, downstream delivery, cancellation and the
+ * terminal accounting handoff.
+ *
+ * Both tests disable the op/resource sanitizers deliberately and say so: the SSE
+ * reader races short 25ms tick timers, and the gateway creates per-read stream
+ * watchdogs. Neither server, reader, hold nor KV handle is left behind - the
+ * harness shuts both servers down, cancels every reader, releases the hold gate
+ * and closes KV in `finally` - so the disabled sanitizers are not hiding leaked
+ * work.
+ */
+
+const loopbackPermission = await Deno.permissions.query({ name: "net", host: "127.0.0.1" });
+
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
+type UpstreamMode =
+  | "chat-stream-answer"
+  | "chat-buffered-answer"
+  | "responses-stream-refusal"
+  | "responses-stream-truncated"
+  | "responses-buffered-truncated"
+  | "stream-hold"
+  | "upstream-500";
+
+type RecordedCall = Readonly<{ url: string; body: string }>;
+
+const sseHeaders = (requestId: string): HeadersInit => ({
+  "Content-Type": "text/event-stream",
+  "Cache-Control": "no-cache",
+  "x-request-id": requestId,
+});
+
+const chatChunk = (delta: Record<string, unknown>, finishReason: string | null, usage?: Record<string, unknown>): string =>
+  `data: ${
+    JSON.stringify({
+      id: "chatcmpl-oss-http",
+      object: "chat.completion.chunk",
+      created: 1_780_000_001,
+      model: "deepseek-flash",
+      choices: [{ index: 0, delta, finish_reason: finishReason }],
+      ...(usage ? { usage } : {}),
+    })
+  }\n\n`;
+
+const sseBody = (frames: readonly string[]): string => `${frames.join("")}data: [DONE]\n\n`;
+
+const jsonChatCompletion = (content: string | null, finishReason: string, refusal?: string): Response =>
+  Response.json({
+    id: "chatcmpl-oss-buffered",
+    object: "chat.completion",
+    created: 1_780_000_002,
+    model: "deepseek-flash",
+    choices: [
+      {
+        index: 0,
+        message: { role: "assistant", content, ...(refusal ? { refusal } : {}) },
+        finish_reason: finishReason,
+      },
+    ],
+    usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5, prompt_cache_hit_tokens: 1 },
+  });
+
+const delay = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+const waitFor = async (predicate: () => boolean, label: string, timeoutMs = 4_000): Promise<void> => {
+  const deadline = performance.now() + timeoutMs;
+  while (!predicate()) {
+    if (performance.now() >= deadline) throw new Error(`Timed out waiting for ${label}`);
+    await delay(5);
+  }
+};
+
+/** One SSE response body read frame by frame, so a test can stop mid-stream. */
+const readSseUntil = async (
+  response: Response,
+  predicate: (text: string) => boolean,
+  options: Readonly<{ timeoutMs?: number }> = {}
+): Promise<{ text: string; reader: ReadableStreamDefaultReader<Uint8Array>; reached: boolean }> => {
+  assert.ok(response.body, "the gateway SSE response must carry a body");
+  const reader = response.body.getReader();
+  const deadline = performance.now() + (options.timeoutMs ?? 4_000);
+  let text = "";
+  // One pending read is kept across ticks: racing a fresh read each tick would
+  // leave the loser's chunk stranded and silently drop stream bytes.
+  let pending: Promise<ReadableStreamReadResult<Uint8Array>> | null = null;
+  for (;;) {
+    if (predicate(text)) return { text, reader, reached: true };
+    pending ??= reader.read();
+    const next = await Promise.race([pending, delay(25).then(() => "tick" as const)]);
+    if (next === "tick") {
+      if (performance.now() >= deadline) return { text, reader, reached: predicate(text) };
+      continue;
+    }
+    pending = null;
+    if (next.done) return { text, reader, reached: predicate(text) };
+    text += decoder.decode(next.value, { stream: true });
+  }
+};
+
+const dataPayloads = (text: string): Record<string, unknown>[] =>
+  text
+    .split("\n")
+    .filter((line) => line.startsWith("data: "))
+    .map((line) => line.slice("data: ".length))
+    .filter((payload) => payload !== "[DONE]")
+    .flatMap((payload) => {
+      try {
+        const parsed = JSON.parse(payload) as unknown;
+        return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? [parsed as Record<string, unknown>] : [];
+      } catch {
+        return [];
+      }
+    });
+
+type Harness = Readonly<{
+  gatewayUrl: string;
+  token: string;
+  policy: ApiKeyPolicy;
+  kv: Deno.Kv;
+  controller: ReturnType<typeof createInferenceAdmissionController>;
+  calls: RecordedCall[];
+  setMode: (mode: UpstreamMode) => void;
+  releaseHold: () => void;
+  stop: () => Promise<void>;
+}>;
+
+const startHarness = async (): Promise<Harness> => {
+  const kv = await Deno.openKv(":memory:");
+  const keyId = "oss-gateway-http-key";
+  const token = `u_${"b".repeat(64)}`;
+  const tokenHash = await sha256Base64Url(token);
+  const now = Date.now();
+  const windowMs = 60 * 60_000;
+  const windowResetAtMs = now + windowMs;
+  const commonPolicy = {
+    expires_at_ms: -1,
+    revoked_at_ms: null,
+    usage_limit_requests: 500,
+    usage_requests: 0,
+    usage_reset_at_ms: windowResetAtMs,
+    window_ms: windowMs,
+    usage_quota_version: 3,
+    paid_fallback_enabled: false,
+    paid_fallback_limit_microcredits: PAID_FALLBACK_NO_LIMIT,
+    paid_fallback_spent_microcredits: 0,
+    paid_fallback_reserved_microcredits: 0,
+    paid_fallback_reservation_request_id: null,
+  } satisfies Omit<ApiKeyHashRecord, "id">;
+  const keyRecord: ApiKeyRecord = {
+    id: keyId,
+    name: "OSS gateway HTTP acceptance key",
+    prefix: token.slice(0, 10),
+    hash: tokenHash,
+    created_at_ms: now,
+    ...commonPolicy,
+    paid_fallback_model_ids: [],
+    paid_fallback_quota_per_credit: 0,
+    paid_fallback_max_exposure_microcredits: {},
+    paid_fallback_pricing_checked_at_ms: now,
+  };
+  const hashRecord: ApiKeyHashRecord = { id: keyId, ...commonPolicy };
+  await kv.set(["ubq_ai", "api_keys", "id", keyId], keyRecord);
+  await kv.set(["ubq_ai", "api_keys", "hash", tokenHash], hashRecord);
+  const resolvedPolicy = apiKeyPolicyFromHashRecord(tokenHash, hashRecord, now);
+  assert.ok(resolvedPolicy, "the seeded API key hash record must produce a live policy");
+  const policy: ApiKeyPolicy = resolvedPolicy;
+
+  const calls: RecordedCall[] = [];
+  const holdReleases: (() => void)[] = [];
+  let mode: UpstreamMode = "chat-stream-answer";
+  const upstream = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, async (request) => {
+    const body = await request.text();
+    calls.push({ url: request.url, body });
+    const callNumber = calls.length;
+    if (mode === "upstream-500") {
+      return Response.json({ error: { message: "controlled upstream fault", type: "server_error" } }, { status: 500 });
+    }
+    if (mode === "stream-hold") {
+      let release: () => void = () => {};
+      let cancelled = false;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      holdReleases.push(() => release());
+      const stream = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          controller.enqueue(encoder.encode(sseBody([chatChunk({ content: "held" }, null)])));
+          await gate;
+          // A cancelled holder must not enqueue on a closed controller.
+          if (cancelled) return;
+          controller.enqueue(encoder.encode(chatChunk({}, "stop", { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 })));
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          controller.close();
+        },
+        cancel() {
+          cancelled = true;
+          release();
+        },
+      });
+      return new Response(stream, { headers: sseHeaders(`ds-hold-${callNumber}`) });
+    }
+    if (mode === "responses-stream-refusal") {
+      return new Response(
+        sseBody([chatChunk({ refusal: "I cannot" }, null), chatChunk({ refusal: " do that" }, "stop", { prompt_tokens: 4, completion_tokens: 3, total_tokens: 7 })]),
+        { headers: sseHeaders(`ds-refusal-${callNumber}`) }
+      );
+    }
+    if (mode === "responses-stream-truncated") {
+      return new Response(sseBody([chatChunk({ content: "partial answer" }, "length", { prompt_tokens: 4, completion_tokens: 9, total_tokens: 13 })]), {
+        headers: sseHeaders(`ds-truncated-${callNumber}`),
+      });
+    }
+    if (mode === "responses-buffered-truncated") {
+      return jsonChatCompletion("partial answer", "length");
+    }
+    if (mode === "chat-buffered-answer") {
+      return jsonChatCompletion("buffered answer", "stop");
+    }
+    return new Response(
+      sseBody([
+        chatChunk({ role: "assistant", content: "streamed " }, null),
+        chatChunk({ content: "answer" }, null),
+        chatChunk({}, "stop", { prompt_tokens: 5, completion_tokens: 4, total_tokens: 9, prompt_cache_hit_tokens: 2 }),
+      ]),
+      { headers: sseHeaders(`ds-answer-${callNumber}`) }
+    );
+  });
+
+  const providerOrigin = `http://127.0.0.1:${(upstream.addr as Deno.NetAddr).port}`;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    if (url === DEEPSEEK_CHAT_COMPLETIONS_URL) return originalFetch(`${providerOrigin}/chat/completions`, init);
+    return originalFetch(input, init);
+  };
+
+  const controller = createInferenceAdmissionController({ maxActive: 1, maxWaiting: 1, maxQueueWaitMs: 150 });
+  setInferenceAdmissionControllerForTest(controller);
+  // The gateway reads its KV through `getKv()`. Without this the process would
+  // open Deno's default KV, find no seeded hash record and answer every request
+  // 401 `invalid_or_limited` before provider dispatch.
+  setKvForTest(kv);
+  // A cached policy from an earlier test would outlive this test's fresh KV.
+  resetApiKeyPolicyCacheForTest();
+  const { default: handler } = await import("../src/handler.ts");
+  const { createServeHandler } = await import("../src/serve_handler.ts");
+  const gateway = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, createServeHandler(handler));
+
+  return {
+    gatewayUrl: `http://127.0.0.1:${(gateway.addr as Deno.NetAddr).port}`,
+    token,
+    policy,
+    kv,
+    controller,
+    calls,
+    setMode: (next) => {
+      mode = next;
+    },
+    releaseHold: () => {
+      for (const release of holdReleases.splice(0)) release();
+    },
+    stop: async () => {
+      globalThis.fetch = originalFetch;
+      setInferenceAdmissionControllerForTest(null);
+      setKvForTest(null);
+      await gateway.shutdown();
+      await upstream.shutdown();
+      kv.close();
+    },
+  };
+};
+
+const postJson = (harness: Harness, path: string, body: Record<string, unknown>, extraHeaders: Record<string, string> = {}, signal?: AbortSignal): Promise<Response> =>
+  fetch(`${harness.gatewayUrl}${path}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${harness.token}`, "Content-Type": "application/json", ...extraHeaders },
+    body: JSON.stringify(body),
+    ...(signal ? { signal } : {}),
+  });
+
+const responsesBody = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({ model: "deepseek-flash", input: "hello", ...overrides });
+const chatBody = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+  model: "deepseek-flash",
+  messages: [{ role: "user", content: "hello" }],
+  ...overrides,
+});
+
+Deno.test({
+  name: "oss gateway real HTTP: terminal delivery, refusal sequence numbers, truncation and single dispatch",
+  ignore: loopbackPermission.state !== "granted" || typeof Deno.openKv !== "function",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const originalInfo = console.info;
+    const originalDeepSeekKey = Deno.env.get("DEEPSEEK_API_KEY");
+    const originalSurplusKey = Deno.env.get("SURPLUS_API_KEY");
+    const originalMeteredKey = Deno.env.get("METERED_API_KEY");
+    const env = Deno.env;
+    const logs: string[] = [];
+    const harness = await startHarness();
+    const stop = harness.stop;
+    try {
+      // Credential presence is verified before any dummy value replaces it, and
+      // the paid tiers are removed for the duration so a fault cannot advance.
+      assert.equal(originalSurplusKey, undefined, "no paid Surplus credential may be present");
+      assert.equal(originalMeteredKey, undefined, "no paid Metered credential may be present");
+      env.delete("SURPLUS_API_KEY");
+      env.delete("METERED_API_KEY");
+      env.set("DEEPSEEK_API_KEY", "oss-http-dummy-deepseek-key");
+      const { config } = await import("../src/config.ts");
+      const originalDeployFlag = config.isDeploy;
+      (config as { isDeploy: boolean }).isDeploy = true;
+      console.info = (...args: unknown[]) => logs.push(args.map(String).join(" "));
+
+      try {
+        // 1. A normal streamed Chat completion delivers and completes.
+        harness.setMode("chat-stream-answer");
+        const chatStream = await postJson(harness, "/v1/chat/completions", chatBody({ stream: true }));
+        assert.equal(chatStream.status, 200);
+        const chatText = await chatStream.text();
+        assert.match(chatText, /streamed /);
+        assert.match(chatText, /answer/);
+        assert.equal(chatStream.headers.get("x-uos-upstream"), "deepseek");
+        assert.ok(chatStream.headers.get("x-uos-request-id"));
+
+        // 2. A buffered Chat completion delivers the provider's own JSON.
+        harness.setMode("chat-buffered-answer");
+        const chatBuffered = await postJson(harness, "/v1/chat/completions", chatBody({ stream: false }));
+        assert.equal(chatBuffered.status, 200);
+        const chatPayload = (await chatBuffered.json()) as Record<string, unknown>;
+        assert.equal((chatPayload.choices as { message: { content: string } }[])[0].message.content, "buffered answer");
+
+        // 3. A refusal-only Responses stream is answer-bearing, ordered and sequenced.
+        harness.setMode("responses-stream-refusal");
+        const refusal = await postJson(harness, "/v1/responses", responsesBody({ stream: true }));
+        assert.equal(refusal.status, 200);
+        const refusalEvents = dataPayloads(await refusal.text());
+        assert.ok(refusalEvents.length > 0, "the refusal stream must emit events");
+        for (const [index, event] of refusalEvents.entries()) {
+          assert.equal(event.sequence_number, index, `event ${index} must carry contiguous sequence_number ${index}`);
+        }
+        const refusalDelta = refusalEvents.find((event) => event.type === "response.refusal.delta");
+        const refusalDone = refusalEvents.find((event) => event.type === "response.refusal.done");
+        assert.ok(refusalDelta && refusalDone, "a refusal payload must emit both delta and done events");
+        assert.equal(refusalDelta.output_index, refusalDone.output_index, "the refusal item index must not move");
+        assert.equal(refusalDelta.content_index, refusalDone.content_index, "the refusal content index must not move");
+        assert.equal(refusalDone.refusal, "I cannot do that");
+
+        // 4. A truncated stream is a truthful incomplete terminal, not a completion.
+        harness.setMode("responses-stream-truncated");
+        const truncatedStream = await postJson(harness, "/v1/responses", responsesBody({ stream: true }));
+        assert.equal(truncatedStream.status, 200);
+        const truncatedEvents = dataPayloads(await truncatedStream.text());
+        const terminal = truncatedEvents.at(-1);
+        assert.ok(terminal, "the truncated stream must emit a terminal event");
+        assert.equal(terminal.type, "response.incomplete");
+        assert.deepEqual((terminal.response as Record<string, unknown>).incomplete_details, { reason: "max_output_tokens" });
+        assert.ok(
+          truncatedEvents.every((event, index) => event.sequence_number === index),
+          "every truncated-stream event must keep a contiguous sequence_number"
+        );
+
+        // 5. A buffered truncation reports the same truthful contract as JSON.
+        harness.setMode("responses-buffered-truncated");
+        const truncatedBuffered = await postJson(harness, "/v1/responses", responsesBody({ stream: false }));
+        assert.equal(truncatedBuffered.status, 200);
+        const truncatedPayload = (await truncatedBuffered.json()) as Record<string, unknown>;
+        assert.equal(truncatedPayload.status, "incomplete");
+        assert.deepEqual(truncatedPayload.incomplete_details, { reason: "max_output_tokens" });
+
+        // 6. A controlled upstream fault dispatches exactly once and advances nothing.
+        harness.setMode("upstream-500");
+        const dispatchesBeforeFault = harness.calls.length;
+        const faulted = await postJson(harness, "/v1/responses", responsesBody({ stream: true }));
+        assert.ok(faulted.status >= 500, `an upstream fault must fail closed, received ${faulted.status}`);
+        await faulted.body?.cancel().catch(() => {});
+        assert.equal(harness.calls.length, dispatchesBeforeFault + 1, "one request must produce exactly one provider dispatch");
+        assert.notEqual(faulted.headers.get("x-uos-upstream"), "surplus");
+        assert.notEqual(faulted.headers.get("x-uos-upstream"), "metered");
+
+        // 7. The gateway owns the accounting identity: a caller-supplied id cannot collide.
+        harness.setMode("chat-buffered-answer");
+        const first = await postJson(harness, "/v1/chat/completions", chatBody({ stream: false }), { "x-uos-request-id": "client-chosen-1", "Idempotency-Key": "client-chosen-1" });
+        const second = await postJson(harness, "/v1/chat/completions", chatBody({ stream: false }), { "x-uos-request-id": "client-chosen-1", "Idempotency-Key": "client-chosen-1" });
+        const firstId = first.headers.get("x-uos-request-id");
+        const secondId = second.headers.get("x-uos-request-id");
+        assert.ok(firstId && secondId && firstId !== secondId, "the gateway must generate a distinct request id per request");
+        assert.match(firstId ?? "", /^[0-9a-f-]{36}$/);
+        await first.body?.cancel().catch(() => {});
+        await second.body?.cancel().catch(() => {});
+      } finally {
+        console.info = originalInfo;
+        (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+      }
+    } finally {
+      await stop();
+      if (originalDeepSeekKey === undefined) env.delete("DEEPSEEK_API_KEY");
+      else env.set("DEEPSEEK_API_KEY", originalDeepSeekKey);
+      if (originalSurplusKey === undefined) env.delete("SURPLUS_API_KEY");
+      else env.set("SURPLUS_API_KEY", originalSurplusKey);
+      if (originalMeteredKey === undefined) env.delete("METERED_API_KEY");
+      else env.set("METERED_API_KEY", originalMeteredKey);
+      assert.ok(logs.every((line) => typeof line === "string"));
+    }
+  },
+});
+
+Deno.test({
+  name: "oss gateway real HTTP: admission bounds, waiting abort, disconnect release and dispatched accounting",
+  ignore: loopbackPermission.state !== "granted" || typeof Deno.openKv !== "function",
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const originalInfo = console.info;
+    const originalDeepSeekKey = Deno.env.get("DEEPSEEK_API_KEY");
+    const originalSurplusKey = Deno.env.get("SURPLUS_API_KEY");
+    const originalMeteredKey = Deno.env.get("METERED_API_KEY");
+    const env = Deno.env;
+    const terminals: Record<string, unknown>[] = [];
+    const accepted: Record<string, unknown>[] = [];
+    const harness = await startHarness();
+    const stop = harness.stop;
+    try {
+      assert.equal(originalSurplusKey, undefined, "no paid Surplus credential may be present");
+      assert.equal(originalMeteredKey, undefined, "no paid Metered credential may be present");
+      env.delete("SURPLUS_API_KEY");
+      env.delete("METERED_API_KEY");
+      env.set("DEEPSEEK_API_KEY", "oss-http-dummy-deepseek-key");
+      const { config } = await import("../src/config.ts");
+      const originalDeployFlag = config.isDeploy;
+      (config as { isDeploy: boolean }).isDeploy = true;
+      console.info = (...args: unknown[]) => {
+        const [label, payload] = args.map(String);
+        if (label === "[ai.ubq.fi] request_terminal" && payload) terminals.push(JSON.parse(payload) as Record<string, unknown>);
+        if (label === "[ai.ubq.fi] request_accepted" && payload) accepted.push(JSON.parse(payload) as Record<string, unknown>);
+      };
+
+      try {
+        // One request holds the only permit while its client retains the body.
+        harness.setMode("stream-hold");
+        const holder = await postJson(harness, "/v1/responses", responsesBody({ stream: true }));
+        assert.equal(holder.status, 200);
+        const holderId = holder.headers.get("x-uos-request-id");
+        assert.ok(holderId, "the holder response must carry the gateway request id");
+        const held = await readSseUntil(holder, (text) => text.includes("data: "));
+        assert.ok(held.reached, "the holder must receive its first event");
+        assert.equal(harness.controller.snapshot().active, 1, "the holder owns the single permit");
+
+        // A second request waits inside the five-second queue bound.
+        const waitingAbort = new AbortController();
+        const waiting = postJson(harness, "/v1/responses", responsesBody({ stream: true }), {}, waitingAbort.signal);
+        await waitFor(() => harness.controller.snapshot().waiting === 1, "the second request to queue");
+
+        // A third request finds the queue full and is refused locally.
+        const overloaded = await postJson(harness, "/v1/responses", responsesBody({ stream: true }));
+        assert.equal(overloaded.status, 503);
+        const overloadPayload = (await overloaded.json()) as { error: { code: string; message: string } };
+        assert.equal(overloadPayload.error.code, "local_inference_overload");
+        assert.ok(overloaded.headers.get("retry-after"), "a local overload must carry Retry-After");
+        assert.equal(harness.calls.length, 1, "a refused request must never dispatch upstream");
+
+        // A queued caller that aborts never dispatches, and never holds a permit.
+        waitingAbort.abort(new DOMException("client disconnected while queued", "AbortError"));
+        const waitingSettled = await waiting.catch(() => null);
+        if (waitingSettled) {
+          assert.equal(waitingSettled.status, 499, "an aborted waiter must be refused as a cancellation, never dispatched");
+          await waitingSettled.body?.cancel().catch(() => {});
+        }
+        await waitFor(() => harness.controller.snapshot().waiting === 0, "the aborted waiter to leave the queue");
+        assert.equal(harness.calls.length, 1, "an aborted waiter must not reach the provider");
+
+        // Releasing the holder frees the permit, and a later request recovers.
+        await held.reader.cancel("acceptance: release the holder").catch(() => {});
+        await waitFor(() => harness.controller.snapshot().active === 0, "the holder permit to be released");
+        harness.releaseHold();
+        harness.setMode("chat-stream-answer");
+        const recovered = await postJson(harness, "/v1/chat/completions", chatBody({ stream: true }));
+        assert.equal(recovered.status, 200);
+        assert.match(await recovered.text(), /streamed /);
+        await waitFor(() => harness.controller.snapshot().active === 0, "the recovered permit to be released");
+
+        // A disconnect mid-stream keeps the dispatched accounting and returns the permit once.
+        const committedBeforeDisconnect = (await harness.kv.get<ApiKeyUsageWindowV3>(apiKeyUsageV3WindowKey(harness.policy), { consistency: "strong" })).value
+          ?.committed_requests ?? 0;
+        harness.setMode("chat-stream-answer");
+        const disconnect = await postJson(harness, "/v1/chat/completions", chatBody({ stream: true }));
+        const disconnectId = disconnect.headers.get("x-uos-request-id");
+        assert.ok(disconnectId, "the disconnect response must carry the gateway request id");
+        const partial = await readSseUntil(disconnect, (text) => text.includes("streamed "));
+        assert.ok(partial.reached, "the disconnecting client must see provider output first");
+        await partial.reader.cancel("acceptance: disconnect after output").catch(() => {});
+        await waitFor(() => terminals.some((entry) => entry.request_id === disconnectId), "the disconnect terminal log");
+        await waitFor(() => harness.controller.snapshot().active === 0, "the disconnect permit to be released");
+        await delay(50);
+        assert.equal(harness.controller.snapshot().active, 0, "a settled request must not release its permit twice");
+        const disconnectTerminal = terminals.filter((entry) => entry.request_id === disconnectId);
+        assert.equal(disconnectTerminal.length, 1, "one request must produce exactly one terminal record");
+        assert.equal(disconnectTerminal[0].delivery_outcome, "interrupted");
+
+        // The API-key reservation stayed dispatched: the accepted work was not refunded.
+        const requestRow = await harness.kv.get<ApiKeyUsageRequestV3>(apiKeyUsageV3RequestKey(harness.policy, disconnectId), { consistency: "strong" });
+        assert.equal(requestRow.value?.state, "dispatched", "a disconnect must not refund a dispatched reservation");
+        const windowRow = await harness.kv.get<ApiKeyUsageWindowV3>(apiKeyUsageV3WindowKey(harness.policy), { consistency: "strong" });
+        assert.equal(
+          windowRow.value?.committed_requests,
+          committedBeforeDisconnect + 1,
+          "the disconnect request must be charged exactly once and never twice"
+        );
+
+        // Queue waiting is reported separately from provider latency.
+        const acceptedWithWait = accepted.find((entry) => entry.request_id === holderId);
+        assert.ok(acceptedWithWait, "the holder must publish its accepted record");
+        assert.equal(typeof acceptedWithWait.queue_wait_ms, "number");
+      } finally {
+        console.info = originalInfo;
+        (config as { isDeploy: boolean }).isDeploy = originalDeployFlag;
+      }
+    } finally {
+      harness.releaseHold();
+      await stop();
+      if (originalDeepSeekKey === undefined) env.delete("DEEPSEEK_API_KEY");
+      else env.set("DEEPSEEK_API_KEY", originalDeepSeekKey);
+      if (originalSurplusKey === undefined) env.delete("SURPLUS_API_KEY");
+      else env.set("SURPLUS_API_KEY", originalSurplusKey);
+      if (originalMeteredKey === undefined) env.delete("METERED_API_KEY");
+      else env.set("METERED_API_KEY", originalMeteredKey);
+    }
+  },
+});
