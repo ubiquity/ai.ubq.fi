@@ -9306,6 +9306,35 @@ const recordDeepSeekResponseHealth = (status: number, providerRequestId: string 
 };
 
 /**
+ * Fails a buffered DeepSeek Responses completion closed when the provider
+ * reported success but the translated output carries nothing a client can act
+ * on. This is the buffered counterpart of the streamed G3 guard: one request
+ * shape must not report success on one transport and failure on the other.
+ *
+ * Response headers are still unsent on this branch, so the client gets the
+ * ordinary `empty_upstream_completion` 502 the non-DeepSeek routes already
+ * return rather than a synthetic terminal event.
+ */
+const respondDeepSeekEmptyBufferedCompletion = (
+  usageContext: UsageContext | undefined,
+  usage: UsageTokens | null,
+  upstreamStatus: number,
+  providerRequestId: string | null
+): Response => {
+  if (usageContext?.responseTelemetry) {
+    usageContext.responseTelemetry.failureKind = "empty_upstream_completion";
+    usageContext.responseTelemetry.semanticOutputObserved = false;
+  }
+  recordTerminalUsage(usageContext, usage, false);
+  recordStreamTerminalType(usageContext, "response.failed");
+  recordDeepSeekResponseHealth(upstreamStatus, providerRequestId);
+  return openaiError(502, EMPTY_UPSTREAM_COMPLETION_MESSAGE, "empty_upstream_completion", {
+    type: "server_error",
+    headers: deepseekResponseHeaders(providerRequestId),
+  });
+};
+
+/**
  * Records a buffered DeepSeek Responses terminal. The payload carries the
  * provider's own terminal, so telemetry reports the terminal the client
  * receives instead of assuming success, and the non-completed classification
@@ -10208,6 +10237,13 @@ const handleDeepSeekResponses = async (req: Request, rawRecord: Record<string, u
   if (usageContext?.responseTelemetry) usageContext.responseTelemetry.providerRequestId = providerRequestId;
   const payload = toDeepSeekResponsesPayload(completion.value, modelRaw, responseId, echo, toolNames, customToolNames);
   const usage = extractChatUsageTokens(completion.value.usage);
+  // The provider's own reason decides the terminal first: an explicit
+  // truncation is `response.incomplete` and is reported as such. Only a
+  // would-be completion is then measured for answer-bearing output, which is
+  // the same order the streamed path applies.
+  if (deepSeekTerminalTypeForPayload(payload.status) === "response.completed" && !chatCompletionHasAnswerBearingOutput(completion.value)) {
+    return respondDeepSeekEmptyBufferedCompletion(usageContext, usage, upstream.status, providerRequestId);
+  }
   recordBufferedDeepSeekResponsesTerminal(usageContext, payload, usage, upstream.status, providerRequestId);
   return json(200, payload, deepseekResponseHeaders(providerRequestId));
 };
