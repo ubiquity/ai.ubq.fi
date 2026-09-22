@@ -549,7 +549,16 @@ const decidePaidFallbackAdmissionV3 = async (
   ]);
   if (deletionGuardEntry.value) return { kind: "blocked", reason: "invalid_policy" };
   const existing = requestEntry.value;
-  if (existing) return { kind: "reserved", reservation: existingReservationV3(input, existing) };
+  if (existing) {
+    // A request row may only be reused while its billing contract still allows
+    // settlement. `settled` and `not_billed` are the ledger's unbillable states
+    // (the negation of `isBillableRequestV3`), so re-admitting one would
+    // dispatch new paid work that settlement must then refuse to record.
+    if (existing.billing_state === "settled" || existing.billing_state === "not_billed") {
+      return { kind: "blocked", reason: "invalid_policy" };
+    }
+    return { kind: "reserved", reservation: existingReservationV3(input, existing) };
+  }
   const current: PaidFallbackWindowV3 = windowEntry.value ?? defaultPaidFallbackWindowV3(input);
   const now = Date.now();
   const policyChanged = !unlimited && (current.policy_version !== input.policyVersion || current.limit_microcredits !== input.limitMicrocredits);
