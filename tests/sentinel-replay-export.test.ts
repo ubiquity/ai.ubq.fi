@@ -9,6 +9,7 @@ import {
   type SentinelFailureObservation,
 } from "../src/sentinel_replay_capture.ts";
 import { handleAdminSentinelReplayCaptures } from "../src/sentinel_replay_admin.ts";
+import { createSentinelUpstreamRecorder, SENTINEL_UPSTREAM_MAX_CHUNKS, type SentinelUpstreamTrace } from "../src/sentinel_upstream_capture.ts";
 import { PASSKEY_RELAY_COOKIE_NAME, passkeyHandleKey, passkeySessionKey, passkeyUserKey } from "../src/passkeys.ts";
 import { linkSentinelReplayToIncident } from "../src/sentinel_incident_outbox.ts";
 
@@ -42,6 +43,27 @@ const syntheticInput = (bytes: Uint8Array<ArrayBuffer>, requestId: string): Acce
 });
 
 const twelveByteIv = (): Uint8Array<ArrayBuffer> => new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+
+/** Records upstream bytes through the real recorder and seals the trace. */
+const recordUpstreamTrace = async (bytes: Uint8Array<ArrayBuffer>, chunkBytes: number): Promise<SentinelUpstreamTrace> => {
+  const recorder = createSentinelUpstreamRecorder();
+  const source = new ReadableStream<Uint8Array>(
+    {
+      start(controller) {
+        for (let offset = 0; offset < bytes.byteLength; offset += chunkBytes) {
+          controller.enqueue(bytes.subarray(offset, Math.min(offset + chunkBytes, bytes.byteLength)));
+        }
+        controller.close();
+      },
+    },
+    { highWaterMark: 0 }
+  );
+  const wrapped = recorder.startAttempt("cerebras").wrap(new Response(source, { status: 200, headers: { "content-type": "text/event-stream" } }));
+  await wrapped.arrayBuffer();
+  const trace = recorder.snapshotAndSeal();
+  recorder.dispose();
+  return trace;
+};
 
 const expectStored = (result: Awaited<ReturnType<typeof persistEncryptedSentinelReplay>>) => {
   assert.equal(result.status, "stored");
@@ -204,6 +226,121 @@ Deno.test({
       assert.equal(plaintext.deno_revision, input.deno_revision);
       assert.deepEqual([...plaintext.body], [...exactBytes]);
       assert.equal(new TextDecoder().decode(plaintext.body), new TextDecoder().decode(exactBytes));
+    } finally {
+      adminTokens.delete(SUPER_ADMIN_TOKEN);
+      kv.close();
+      setKvForTest(null);
+    }
+  },
+});
+
+Deno.test({
+  name: "replay capture exports an upstream capture past the legacy fixed metadata bound",
+  ignore: !kvAvailable,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const kv = await Deno.openKv(":memory:");
+    setKvForTest(kv);
+    const adminTokens = config.adminTokens as Set<string>;
+    adminTokens.add(SUPER_ADMIN_TOKEN);
+    try {
+      const keyBytes = crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
+      const nowMs = 1_400_000_000_000;
+      // 256 KiB + 1 byte in four full 64 KiB chunks plus a one-byte tail: well
+      // past the ~192 KiB of upstream bytes the legacy fixed metadata bound
+      // could carry once base64-encoded, and shaped so per-chunk base64 padding
+      // is part of the envelope size.
+      const upstreamBytes = new Uint8Array(256 * 1_024 + 1);
+      for (let index = 0; index < upstreamBytes.byteLength; index += 1) upstreamBytes[index] = index % 251;
+      const trace = await recordUpstreamTrace(upstreamBytes, 64 * 1_024);
+      assert.equal(trace.attempts[0]?.chunks_base64.length, 5);
+      assert.equal(trace.bytes_truncated, false);
+      assert.equal(trace.chunks_truncated, false);
+
+      const requestId = "synthetic-envelope-request";
+      const input: AcceptedSentinelReplayInput = {
+        ...syntheticInput(encoder.encode(JSON.stringify({ model: "gpt-5.6-sol", stream: false })), requestId),
+        upstream: trace,
+      };
+      const stored = expectStored(
+        await persistEncryptedSentinelReplay(input, failureObservation(), {
+          kv,
+          keyBytes,
+          now: () => nowMs,
+          randomUuid: () => "synthetic-envelope-capture",
+          randomBytes: twelveByteIv,
+        })
+      );
+
+      const response = await handler(new Request(exportUrl({ request_id: requestId }), { headers: superAdminHeaders }));
+      assert.equal(response.status, 200);
+      const body = (await response.json()) as { data: ExportedSentinelReplayCapture[] };
+      assert.equal(body.data.length, 1);
+      assert.equal(body.data[0]?.manifest.fingerprint, stored.manifest.fingerprint);
+      const plaintext = await decryptExportedSentinelReplay(firstCapture(body), keyBytes);
+      // The whole permitted capture survives the envelope byte for byte,
+      // including every per-chunk base64 string.
+      assert.deepEqual(plaintext.upstream, trace);
+      assert.deepEqual([...plaintext.body], [...input.body]);
+    } finally {
+      adminTokens.delete(SUPER_ADMIN_TOKEN);
+      kv.close();
+      setKvForTest(null);
+    }
+  },
+});
+
+Deno.test({
+  name: "replay capture still rejects an upstream trace beyond the bounded capture contract",
+  ignore: !kvAvailable,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  async fn() {
+    const kv = await Deno.openKv(":memory:");
+    setKvForTest(kv);
+    const adminTokens = config.adminTokens as Set<string>;
+    adminTokens.add(SUPER_ADMIN_TOKEN);
+    try {
+      const keyBytes = crypto.getRandomValues(new Uint8Array(32)).slice() as Uint8Array<ArrayBuffer>;
+      const requestId = "synthetic-out-of-contract-request";
+      // One chunk over the frozen capture chunk bound: the derived envelope
+      // bound must not widen the evidence contract the recorder enforces.
+      const oversizedTrace: SentinelUpstreamTrace = {
+        version: 1,
+        attempts: [
+          {
+            provider: "cerebras",
+            status: 200,
+            content_type: "application/json",
+            chunks_base64: Array.from({ length: SENTINEL_UPSTREAM_MAX_CHUNKS + 1 }, () => "AA=="),
+            terminal: "eof",
+          },
+        ],
+        attempts_truncated: false,
+        bytes_truncated: false,
+        chunks_truncated: false,
+      };
+      const input: AcceptedSentinelReplayInput = {
+        ...syntheticInput(encoder.encode(JSON.stringify({ model: "gpt-5.6-sol" })), requestId),
+        upstream: oversizedTrace,
+      };
+      await assert.rejects(
+        persistEncryptedSentinelReplay(input, failureObservation(), {
+          kv,
+          keyBytes,
+          now: () => 1_450_000_000_000,
+          randomUuid: () => "synthetic-out-of-contract-capture",
+          randomBytes: twelveByteIv,
+        }),
+        /Sentinel upstream trace has too many chunks/
+      );
+
+      // The rejected trace persisted nothing and stayed fail-closed.
+      const response = await handler(new Request(exportUrl({ request_id: requestId }), { headers: superAdminHeaders }));
+      assert.equal(response.status, 200);
+      const body = (await response.json()) as { data: unknown[] };
+      assert.deepEqual(body.data, []);
     } finally {
       adminTokens.delete(SUPER_ADMIN_TOKEN);
       kv.close();
