@@ -58,6 +58,10 @@ export const createStreamFirstEventDeadline = (requestSignal: AbortSignal, timeo
   return {
     signal: AbortSignal.any([requestSignal, deadline.signal]),
     abort: (reason) => {
+      // Releasing the timer keeps an abandoned attempt from holding its budget
+      // handle for the rest of the deadline. There is deliberately no
+      // active-state guard, so abort-after-clear still aborts the signal.
+      clearTimeout(timer);
       deadline.abort(reason);
     },
     clear: () => {
@@ -91,6 +95,10 @@ export const createStreamSemanticDeadline = (requestSignal: AbortSignal, timeout
   return {
     signal: AbortSignal.any([requestSignal, deadline.signal]),
     abort: (reason) => {
+      // Releasing the timer keeps an abandoned attempt from holding its budget
+      // handle for the rest of the deadline. There is deliberately no
+      // active-state guard, so abort-after-clear still aborts the signal.
+      clearTimeout(timer);
       deadline.abort(reason);
     },
     clear: () => {
@@ -120,6 +128,10 @@ export const createPaidProviderAttemptDeadline = (requestSignal?: AbortSignal): 
   return {
     signal: requestSignal ? AbortSignal.any([requestSignal, deadline.signal]) : deadline.signal,
     abort: (reason) => {
+      // Releasing the timer keeps an abandoned attempt from holding its budget
+      // handle for the rest of the deadline. There is deliberately no
+      // active-state guard, so abort-after-clear still aborts the signal.
+      clearTimeout(timer);
       deadline.abort(reason);
     },
     clear: () => {
