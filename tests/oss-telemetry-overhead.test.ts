@@ -11,6 +11,7 @@ import {
   type PromptCacheAnalyticsQueueEntry,
   type PromptCacheAnalyticsRecordResult,
   recordPromptCacheAnalytics,
+  resetOptionalPromptCacheAnalyticsForTest,
   writePromptCacheAnalyticsQueueEntry,
 } from "../src/prompt_cache_analytics.ts";
 import { CountingKv } from "./helpers/counting_kv.ts";
@@ -333,6 +334,37 @@ Deno.test("optional telemetry queue bounds writer concurrency and coalesces conc
   assert.equal(peakInFlight, 2);
 });
 
+Deno.test("optional telemetry queue dispatches an entry accepted while a completed drain retires", async () => {
+  const written: number[] = [];
+  const queue = createOptionalTelemetryQueue<number>({
+    write: (entry) => {
+      written.push(entry);
+      return Promise.resolve(true);
+    },
+  });
+
+  // The empty flush's loop has already returned, but its retirement microtask
+  // has not run yet, so `drain` is still published when the entry is accepted.
+  // Coalescing that enqueue onto the completed drain would strand the entry.
+  const retiringFlush = queue.flush();
+  assert.equal(queue.snapshot().drain_in_progress, true, "the completed drain stays published until its cleanup microtask runs");
+  assert.equal(queue.enqueue(7), "enqueued");
+
+  await retiringFlush;
+  assert.deepEqual(written, [7], "an entry accepted during drain retirement must reach the sink without another enqueue or flush");
+
+  await queue.flush();
+  const snapshot = queue.snapshot();
+  assert.equal(snapshot.enqueued, 1);
+  assert.equal(snapshot.delivered, 1);
+  assert.equal(snapshot.failed, 0);
+  assert.equal(snapshot.retained_entries, 0);
+  assert.equal(snapshot.retained_bytes, 0);
+  assert.equal(snapshot.queued_entries, 0);
+  assert.equal(snapshot.drain_timeouts, 0);
+  assert.equal(snapshot.drain_in_progress, false);
+});
+
 Deno.test("optional telemetry queue reports a failing sink without throwing or stalling the drain", async () => {
   const attempts = { count: 0 };
   const queue = createOptionalTelemetryQueue<number>({
@@ -548,5 +580,46 @@ Deno.test("optional telemetry shutdown drains and closes the module queue", asyn
     assert.equal((await enqueuePromptCacheAnalytics(event(), { release: RELEASE, now: () => NOW_MS })).reason, "dropped_closed");
   } finally {
     setKvForTest(null);
+  }
+});
+
+Deno.test("optional telemetry close before lazy initialization is terminal", async () => {
+  const kv = new CountingKv();
+  resetOptionalPromptCacheAnalyticsForTest();
+  setKvForTest(kv as unknown as Deno.Kv);
+  try {
+    assert.equal(optionalPromptCacheAnalyticsSnapshot(), null, "no optional sample has created the module queue");
+
+    await closeOptionalPromptCacheAnalytics();
+    assert.equal(optionalPromptCacheAnalyticsSnapshot(), null, "a close before the first sample must not create the module queue");
+
+    const refused = await enqueuePromptCacheAnalytics(event(), { release: RELEASE, now: () => NOW_MS });
+    assert.equal(refused.status, "dropped", "an eligible sample after close must be refused, not queued");
+    assert.equal(refused.reason, "dropped_closed");
+
+    await flushOptionalPromptCacheAnalytics();
+    assert.equal(optionalPromptCacheAnalyticsSnapshot(), null, "a refused sample never creates or opens the module queue");
+    assert.equal(kv.entries.size, 0, "a refused sample must not write durable counters");
+  } finally {
+    resetOptionalPromptCacheAnalyticsForTest();
+    setKvForTest(null);
+  }
+});
+
+Deno.test("optional telemetry close refuses a sample already resolving when close arrives", async () => {
+  resetOptionalPromptCacheAnalyticsForTest();
+  try {
+    // The sample suspends while it resolves its cohort hash, so the close lands
+    // before it reaches the queue: it must be refused there, never create the
+    // queue, and never restart the writing the close promised to stop.
+    const pending = enqueuePromptCacheAnalytics(event(), { release: RELEASE, now: () => NOW_MS });
+    await closeOptionalPromptCacheAnalytics();
+    const refused = await pending;
+
+    assert.equal(refused.status, "dropped");
+    assert.equal(refused.reason, "dropped_closed");
+    assert.equal(optionalPromptCacheAnalyticsSnapshot(), null, "an in-flight sample must not create the module queue after close");
+  } finally {
+    resetOptionalPromptCacheAnalyticsForTest();
   }
 });

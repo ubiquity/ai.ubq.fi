@@ -615,6 +615,12 @@ export const writePromptCacheAnalyticsQueueEntry = async (entry: PromptCacheAnal
 const measureQueueEntry = (entry: PromptCacheAnalyticsQueueEntry): number => measureJsonPayloadBytes({ ...entry, kv: undefined });
 
 let optionalPromptCacheAnalyticsQueue: OptionalTelemetryQueue<PromptCacheAnalyticsQueueEntry> | null = null;
+/**
+ * Terminal once close is requested. It is checked before the lazy queue is
+ * created, so a close that arrives before the first eligible sample cannot be
+ * undone by a later enqueue creating a fresh open queue.
+ */
+let optionalPromptCacheAnalyticsClosed = false;
 
 const promptCacheAnalyticsTelemetryQueue = (): OptionalTelemetryQueue<PromptCacheAnalyticsQueueEntry> =>
   (optionalPromptCacheAnalyticsQueue ??= createOptionalTelemetryQueue({
@@ -624,7 +630,11 @@ const promptCacheAnalyticsTelemetryQueue = (): OptionalTelemetryQueue<PromptCach
 
 export type PromptCacheAnalyticsEnqueueOptions = PromptCacheAnalyticsOptions &
   Readonly<{
-    /** Test and integration seam: the bounded queue instance that owns optional writes. */
+    /**
+     * Test and integration seam: the bounded queue instance that owns optional
+     * writes. It stays caller-owned, so the module's terminal close does not
+     * gate it.
+     */
     queue?: OptionalTelemetryQueue<PromptCacheAnalyticsQueueEntry>;
   }>;
 
@@ -655,6 +665,14 @@ export const enqueuePromptCacheAnalytics = async (
   }
 
   const usage = recordUsage(event);
+  // Terminal module close, checked where the queue would be created: once close
+  // ran without a queue, an eligible sample must not create one, even if it was
+  // already resolving its cohort when the close arrived. A queue that already
+  // exists was closed by that same call and reports the refusal itself; an
+  // explicitly injected queue stays caller-owned.
+  if (options.queue === undefined && optionalPromptCacheAnalyticsClosed && optionalPromptCacheAnalyticsQueue === null) {
+    return recordResult("dropped", "dropped_closed", bucketStartAtMs);
+  }
   const outcome = (options.queue ?? promptCacheAnalyticsTelemetryQueue()).enqueue({
     bucket_start_at_ms: bucketStartAtMs,
     provider: cohort.provider,
@@ -681,11 +699,25 @@ export const enqueuePromptCacheAnalytics = async (
  */
 export const flushOptionalPromptCacheAnalytics = (): Promise<void> => optionalPromptCacheAnalyticsQueue?.flush() ?? Promise.resolve();
 
-/** Stops accepting optional samples, then drains the retained ones under the same bounded wait. */
-export const closeOptionalPromptCacheAnalytics = (): Promise<void> => optionalPromptCacheAnalyticsQueue?.close() ?? Promise.resolve();
+/**
+ * Stops accepting optional samples, then drains the retained ones under the same
+ * bounded wait. Terminal before the lazy queue exists too: a close that arrives
+ * first is remembered, so a later eligible sample is refused instead of creating
+ * an open queue.
+ */
+export const closeOptionalPromptCacheAnalytics = async (): Promise<void> => {
+  optionalPromptCacheAnalyticsClosed = true;
+  await optionalPromptCacheAnalyticsQueue?.close();
+};
 
 /** Observable queue state: retained, delivered, failed, dropped, timeout and drain evidence. */
 export const optionalPromptCacheAnalyticsSnapshot = (): OptionalTelemetryQueueSnapshot | null => optionalPromptCacheAnalyticsQueue?.snapshot() ?? null;
+
+/** Test seam: clears the lazy queue and its terminal close state so a suite can re-exercise first use. */
+export const resetOptionalPromptCacheAnalyticsForTest = (): void => {
+  optionalPromptCacheAnalyticsClosed = false;
+  optionalPromptCacheAnalyticsQueue = null;
+};
 
 const storageBucketStart = (key: Deno.KvKey): number | null => {
   const namespace = key[PROMPT_CACHE_ANALYTICS_KV_PREFIX.length];

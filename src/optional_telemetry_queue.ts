@@ -175,6 +175,13 @@ export const createOptionalTelemetryQueue = <TEntry>(options: OptionalTelemetryQ
   let retainedEntries = 0;
   let retainedBytes = 0;
   let drain: Promise<void> | null = null;
+  /**
+   * True while the published drain's loop can still dispatch. The loop clears it
+   * synchronously as it returns - before the retirement microtask clears `drain`
+   * - so a call in that window starts a fresh drain instead of coalescing onto
+   * one that can no longer dispatch the entry it just accepted.
+   */
+  let drainLoopActive = false;
   let closed = false;
   let stalled = false;
   let shutdownIncomplete = false;
@@ -285,25 +292,36 @@ export const createOptionalTelemetryQueue = <TEntry>(options: OptionalTelemetryQ
   const hasDispatchCapacity = (): boolean => queued.length > 0 && inFlight.size < bounds.maxConcurrentWrites;
 
   const drainPending = async (): Promise<void> => {
-    if (drainIsIncomplete()) return;
-    const deadlineAtMs = timestamp() + bounds.maxDrainWaitMs;
-    for (;;) {
-      dropExpiredQueued();
+    drainLoopActive = true;
+    try {
       if (drainIsIncomplete()) return;
-      if (stalled && inFlight.size > 0) return;
-      while (hasDispatchCapacity()) dispatchNextQueued();
-      if (queued.length === 0 && inFlight.size === 0) return;
-      const remainingMs = deadlineAtMs - timestamp();
-      if (remainingMs > 0 && (await waitForProgress(remainingMs))) continue;
-      break;
+      const deadlineAtMs = timestamp() + bounds.maxDrainWaitMs;
+      for (;;) {
+        dropExpiredQueued();
+        if (drainIsIncomplete()) return;
+        if (stalled && inFlight.size > 0) return;
+        while (hasDispatchCapacity()) dispatchNextQueued();
+        if (queued.length === 0 && inFlight.size === 0) return;
+        const remainingMs = deadlineAtMs - timestamp();
+        if (remainingMs > 0 && (await waitForProgress(remainingMs))) continue;
+        break;
+      }
+      counters.drain_timeouts += 1;
+      stalled = true;
+    } finally {
+      // Cleared as the loop returns, so the retirement window below cannot
+      // swallow an entry accepted after the loop's final empty check.
+      drainLoopActive = false;
     }
-    counters.drain_timeouts += 1;
-    stalled = true;
   };
 
   const startDrain = (): Promise<void> => {
     const running = drain;
-    if (running) {
+    // A drain whose loop already returned cannot dispatch newly accepted work,
+    // even though its retirement microtask has not cleared `drain` yet.
+    // Coalescing onto it would leave that accepted entry without a dispatch, so
+    // start a fresh bounded drain; the retiring one still settles its awaiters.
+    if (running && drainLoopActive) {
       counters.coalesced_flushes += 1;
       return running;
     }
