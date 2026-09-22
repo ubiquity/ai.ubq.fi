@@ -55,6 +55,11 @@ provider inference. The startup message, health body, and response headers ident
 To roll back code, atomically point `.data/current` to a previously accepted release and restart `ai-ubq-fi.service`.
 Preserve `.env` and `.data/kv.sqlite3`.
 
+After any repository change that touches `ops/ai-ubq-fi.service`, run `sudo systemctl daemon-reload` before the next
+restart: systemd keeps the previously loaded unit until it reloads. Releases created before the release-root launcher
+change are not rollback targets, because they execute the checkout's launcher and Deno configuration instead of their
+own. Keep a release created after this change as the rollback baseline.
+
 ## Data migration and recovery
 
 The 2026-09-10 migration retained the complete Deno export privately in `.kv-migration/production-20260910.ndjson`. The
