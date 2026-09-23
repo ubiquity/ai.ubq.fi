@@ -72,6 +72,9 @@ const catalogFixture = () => ({
     surplus: { status: "available" as const, count: 1, updated_at_ms: 2 },
     deepseek: { status: "available" as const, count: 1, updated_at_ms: null, configured: true },
     cerebras: { status: "unavailable" as const, count: 0, updated_at_ms: null, configured: false },
+    // The catalog source id union gained the LithosAI provider; this fixture is
+    // typed as a whole snapshot, so it must name every source id.
+    lithos: { status: "unavailable" as const, count: 0, updated_at_ms: null, configured: false },
     openrouter: { status: "unavailable" as const, count: 0, updated_at_ms: null },
   },
 });

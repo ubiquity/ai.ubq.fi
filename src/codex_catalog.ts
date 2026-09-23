@@ -24,6 +24,15 @@ import { getKv } from "./kv.ts";
 import { buildRuntimeConfig, cacheRuntimeConfig, normalizeRuntimeConfig, RUNTIME_CONFIG_V2_KEY, type RuntimeConfigV2 } from "./runtime_config.ts";
 import { getString, isRecord, sha256Hex } from "./utils.ts";
 import { DEEPSEEK_CONTEXT_WINDOW_TOKENS, DEEPSEEK_DISPLAY_NAMES, DEEPSEEK_OFFICIAL_MODEL_IDS, readDeepSeekApiKey } from "./deepseek.ts";
+import {
+  LITHOS_CONTEXT_WINDOW_TOKENS,
+  LITHOS_DEFAULT_REASONING_EFFORT,
+  LITHOS_DISPLAY_NAMES,
+  LITHOS_EFFECTIVE_CONTEXT_WINDOW_PERCENT,
+  LITHOS_MODEL_IDS,
+  LITHOS_REASONING_LEVELS,
+  readLithosApiKey,
+} from "./lithos.ts";
 import { fetchMeteredModels, METERED_MODELS_CACHE_TTL_MS } from "./metered.ts";
 import type { recordSentinelProviderDegradationFromEnvironment } from "./sentinel_incident_outbox.ts";
 import { fetchSurplusModels, SURPLUS_MODELS_CACHE_TTL_MS } from "./surplus.ts";
@@ -849,6 +858,74 @@ const withDeepSeekOfficialModels = (models: readonly Record<string, unknown>[]):
   return [...models, ...configured.filter((model) => !present.has(String(model.slug)))];
 };
 
+/**
+ * Codex catalog records for the LithosAI route.
+ *
+ * The vendor serves Chat Completions only, but the shared Responses adapter
+ * (`src/deepseek_responses.ts`, under `LITHOS_RESPONSES_PROFILE`) serves
+ * `/v1/responses`, so every id is advertised as Responses-capable. All eight
+ * ids are listed: the `-fast`, `-ultra` and `-ultra-chat` variants are the same
+ * weights at higher per-token rates, but they are separately callable ids, so
+ * the picker must show each one. The advertised tiers are exactly the seven the
+ * provider accepted on 2026-09-23 — no Codex `ultra` preset, which this vendor
+ * refuses, is advertised.
+ */
+const lithosCodexModels = (): Record<string, unknown>[] => {
+  if (!readLithosApiKey()) return [];
+  return LITHOS_MODEL_IDS.map((id) => {
+    const resolved = resolveModelMetadata(id, {
+      provider: {
+        context_window_tokens: LITHOS_CONTEXT_WINDOW_TOKENS,
+        max_context_window_tokens: LITHOS_CONTEXT_WINDOW_TOKENS,
+        effective_context_window_percent: LITHOS_EFFECTIVE_CONTEXT_WINDOW_PERCENT,
+      },
+    });
+    return {
+      slug: id,
+      display_name: LITHOS_DISPLAY_NAMES[id] ?? id,
+      description: "LithosAI API (Chat Completions) served by this gateway.",
+      owned_by: "lithos",
+      supported_endpoint_types: ["openai-response", "openai-chat"],
+      supported_reasoning_levels: LITHOS_REASONING_LEVELS.map((effort) => ({ effort, description: codexReasoningEffortDescription(effort) })),
+      default_reasoning_level: LITHOS_DEFAULT_REASONING_EFFORT,
+      ...(resolved.context_window_tokens === null
+        ? {}
+        : {
+            context_window: resolved.context_window_tokens,
+            max_context_window: resolved.max_context_window_tokens,
+            ...(resolved.auto_compact_token_limit_tokens === null ? {} : { auto_compact_token_limit: resolved.auto_compact_token_limit_tokens }),
+            ...(resolved.effective_context_window_percent === null ? {} : { effective_context_window_percent: resolved.effective_context_window_percent }),
+          }),
+      shell_type: "shell_command",
+      visibility: "list",
+      supported_in_api: true,
+      priority: 1,
+      availability_nux: null,
+      upgrade: null,
+      base_instructions: "",
+      support_verbosity: false,
+      default_verbosity: null,
+      apply_patch_tool_type: null,
+      web_search_tool_type: "text",
+      truncation_policy: { mode: "tokens", limit: 10000 },
+      supports_parallel_tool_calls: false,
+      experimental_supported_tools: [],
+    };
+  });
+};
+
+/**
+ * Appends the LithosAI ids the stored catalog does not already advertise. Every
+ * one of the eight ids is appended under its own slug, so a client can select
+ * any speed tier the provider publishes.
+ */
+const withLithosModels = (models: readonly Record<string, unknown>[]): Record<string, unknown>[] => {
+  const configured = lithosCodexModels();
+  if (!configured.length) return [...models];
+  const present = new Set(models.map((model) => getString(model.slug) ?? getString(model.id) ?? ""));
+  return [...models, ...configured.filter((model) => !present.has(String(model.slug)))];
+};
+
 /** Trimmed model slugs advertised by a catalog body, in their stored order. */
 const catalogModelIds = (models: readonly unknown[]): Set<string> => {
   const ids = models
@@ -912,6 +989,7 @@ const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheS
   const selection = await loadProviderSelectionCached();
   const codexEnabled = isProviderEnabled("codex", selection);
   const deepSeekEnabled = isProviderEnabled("deepseek", selection);
+  const lithosEnabled = isProviderEnabled("lithos", selection);
   const [metered, surplus] = await enabledPaidCatalogSources(selection);
   const nowMs = Date.now();
   if (metered) refreshExpiredModelList(nowMs, metered.updated_at_ms, METERED_MODELS_CACHE_TTL_MS, fetchMeteredModels);
@@ -919,7 +997,7 @@ const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheS
   const paidModels = uniqueResponsesModels([...(metered?.models ?? []), ...(surplus?.models ?? [])]);
   // The stored catalog body is Codex's own, so it can only answer for a Codex
   // provider that is still switched on.
-  if (!paidModels.length && !deepSeekEnabled && codexEnabled) return catalogOnlyResponse(catalog, req, headers);
+  if (!paidModels.length && !deepSeekEnabled && !lithosEnabled && codexEnabled) return catalogOnlyResponse(catalog, req, headers);
   const parsed = {
     ...catalog.parsed,
     models: codexEnabled && Array.isArray(catalog.parsed.models) ? [...catalog.parsed.models] : [],
@@ -934,6 +1012,7 @@ const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheS
   // The official ids are appended first so an operator whitelist still has the
   // final say over every advertised model, this route included.
   parsed.models = deepSeekEnabled ? withDeepSeekOfficialModels(parsed.models) : parsed.models;
+  parsed.models = lithosEnabled ? withLithosModels(parsed.models) : parsed.models;
   const catalogKv = await getKv();
   const catalogWhitelist = catalogKv ? await loadCodexModelsWhitelist(catalogKv) : null;
   parsed.models = filterWhitelistedCatalogModels(parsed.models, catalogWhitelist);
@@ -949,14 +1028,17 @@ const catalogResponse = async (catalog: LoadedCodexCatalog, req: Request, cacheS
 const meteredCatalogResponse = async (selection: ProviderSelection | null): Promise<Response | null> => {
   const [metered, surplus] = await enabledPaidCatalogSources(selection, { force: true });
   const paidModels = uniqueResponsesModels([...(metered?.models ?? []), ...(surplus?.models ?? [])]);
-  const configured = isProviderEnabled("deepseek", selection) ? deepSeekOfficialCodexModels() : [];
+  const configured = [
+    ...(isProviderEnabled("deepseek", selection) ? deepSeekOfficialCodexModels() : []),
+    ...(isProviderEnabled("lithos", selection) ? lithosCodexModels() : []),
+  ];
   if (!paidModels.length && !configured.length) return null;
   // This path answers without a stored catalog, so the Codex snapshot is the only
   // place a Codex-served id's real window can come from.
   const codexRecords = codexSnapshotRecords(await loadFullCodexModelsSnapshot());
   return new Response(
     JSON.stringify({
-      models: withDeepSeekOfficialModels(paidModels.map((model) => meteredCodexModelRecord(model, codexRecords.get(model.id) ?? null))),
+      models: withLithosModels(withDeepSeekOfficialModels(paidModels.map((model) => meteredCodexModelRecord(model, codexRecords.get(model.id) ?? null)))),
     }),
     {
       status: 200,

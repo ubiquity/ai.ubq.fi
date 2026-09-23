@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { handleAdminProviderSelectionGet, handleAdminProviderSelectionSet } from "../src/admin.ts";
 import { CODEX_AUTH_POOL_KV_KEY, CODEX_MODELS_KV_KEY, type CodexModelsSnapshot, resetCodexAuthCacheForTest } from "../src/codex.ts";
 import { DEEPSEEK_OFFICIAL_MODEL_IDS } from "../src/deepseek.ts";
+import { LITHOS_MODEL_IDS } from "../src/lithos.ts";
 import { CODEX_MODELS_WHITELIST_KV_KEY } from "../src/codex_models_whitelist.ts";
 import handler from "../src/handler.ts";
 import { setKvForTest } from "../src/kv.ts";
@@ -239,6 +240,9 @@ const catalogFixture = () => ({
     surplus: { status: "available" as const, count: 2, updated_at_ms: 2 },
     deepseek: { status: "available" as const, count: 1, updated_at_ms: null, configured: true },
     cerebras: { status: "unavailable" as const, count: 0, updated_at_ms: null, configured: false },
+    // The catalog source id union gained the LithosAI provider; this fixture is
+    // typed as a whole snapshot, so it must name every source id.
+    lithos: { status: "unavailable" as const, count: 0, updated_at_ms: null, configured: false },
     openrouter: { status: "available" as const, count: 2, updated_at_ms: 3 },
   },
 });
@@ -407,11 +411,19 @@ Deno.test("the provider picker routes are registered and stay behind admin auth"
 Deno.test("/v1/models hides the models of a switched-off provider", async () => {
   Deno.env.set("DEEPSEEK_API_KEY", "fixture-deepseek-key");
   Deno.env.set("CEREBRAS_API_KEY", "fixture-cerebras-key");
+  // This test owns every credential-gated provider, so it configures the
+  // LithosAI key itself instead of leaving the row set to the ambient
+  // environment.
+  Deno.env.set("LITHOSAI_API_KEY", "fixture-lithos-key");
   const kv = new SelectionKv();
   seedCodexSnapshot(kv, ["gpt-5.6-sol"]);
   try {
     await withKv(kv, async () => {
-      assert.deepEqual(await listModelIds(), ["gpt-5.6-sol", "gpt-oss-120b", ...DEEPSEEK_OFFICIAL_MODEL_IDS], "no filter lists every provider");
+      assert.deepEqual(
+        await listModelIds(),
+        ["gpt-5.6-sol", "gpt-oss-120b", ...DEEPSEEK_OFFICIAL_MODEL_IDS, ...LITHOS_MODEL_IDS],
+        "no filter lists every provider"
+      );
 
       kv.seedSelection(["deepseek", "cerebras"]);
       resetProviderSelectionCacheForTest();
@@ -424,6 +436,7 @@ Deno.test("/v1/models hides the models of a switched-off provider", async () => 
   } finally {
     Deno.env.delete("DEEPSEEK_API_KEY");
     Deno.env.delete("CEREBRAS_API_KEY");
+    Deno.env.delete("LITHOSAI_API_KEY");
     resetRuntimeConfigCacheForTest();
   }
 });
