@@ -1,4 +1,3 @@
-import { config } from "./config.ts";
 import { type CodexCapacityAccount, getCodexCapacityAccounts } from "./codex.ts";
 import { json } from "./http.ts";
 import { getKv } from "./kv.ts";
@@ -14,324 +13,88 @@ import {
   type ProviderCapacityResetEvent,
 } from "./provider_capacity_events.ts";
 import { readPromptCacheAnalytics } from "./prompt_cache_analytics.ts";
-import { PROVIDER_CAPACITY_HISTORY_BUCKET_MS, PROVIDER_CAPACITY_SNAPSHOT_KEY } from "./provider_capacity_contract.ts";
-export { PROVIDER_CAPACITY_HISTORY_BUCKET_MS } from "./provider_capacity_contract.ts";
 import { getConfiguredMeteredQuotaSnapshot, METERED_QUOTA_FRESH_MS, type MeteredQuotaSnapshot } from "./metered_quota.ts";
-import { isRecord, sha256Hex } from "./utils.ts";
+import { sha256Hex } from "./utils.ts";
+import {
+  PROVIDER_CAPACITY_CODEX_TIMEOUT_MS,
+  PROVIDER_CAPACITY_COLD_WAIT_MS,
+  PROVIDER_CAPACITY_HISTORY_RETENTION_MS,
+  PROVIDER_CAPACITY_LEASE_KEY,
+  PROVIDER_CAPACITY_LEASE_MS,
+  PROVIDER_CAPACITY_SNAPSHOT_KEY,
+  PROVIDER_CAPACITY_SOURCE_STALE_MS,
+} from "./provider_capacity_contract.ts";
+import type {
+  CapacityLease,
+  ProviderCapacityCodexSource,
+  ProviderCapacityFetch,
+  ProviderCapacityHistoryPoint,
+  ProviderCapacitySnapshot,
+  ProviderCapacitySnapshotOptions,
+  ProviderCapacitySource,
+  ProviderCapacityView,
+  ProviderCapacityViewState,
+} from "./provider_capacity_contract.ts";
+import {
+  additionalRateLimitsForRouting,
+  codexAccountLabel,
+  codexUsageUrl,
+  fillMissingCodexSparkLimitForAdmin,
+  parseCodexUsage,
+  providerCapacityLastAvailableKey,
+  readCapacitySnapshot,
+  readStoredHistoryPoint,
+  readStoredSnapshot,
+  safeNow,
+  unavailableCodexSource,
+  unavailableMeteredSource,
+} from "./provider_capacity_parse.ts";
+import {
+  codexAvailabilityTransitionObserved,
+  codexResetTransitionObserved,
+  historyPointForSnapshot,
+  lastAvailableCapacityEntries,
+  mergeHistoricalRateLimitResetEvents,
+  mergeHistoryPoints,
+  observedRateLimitResetEvents,
+  providerCapacityHistoryKey,
+  providerCapacityHistoryTransitionKey,
+  readCapacityHistory,
+  readStoredRateLimitObservation,
+  recoverRateLimitObservations,
+  recoverySlotsForSnapshot,
+} from "./provider_capacity_history.ts";
 
-export { PROVIDER_CAPACITY_SNAPSHOT_KEY } from "./provider_capacity_contract.ts";
-export const PROVIDER_CAPACITY_LEASE_KEY = ["uos_ai", "provider_capacity", "v1", "lease"] as const;
-export const PROVIDER_CAPACITY_HISTORY_KEY_PREFIX = ["uos_ai", "provider_capacity", "v1", "history"] as const;
-const PROVIDER_CAPACITY_LAST_AVAILABLE_KEY_PREFIX = ["uos_ai", "provider_capacity", "v1", "last_available"] as const;
-export const PROVIDER_CAPACITY_HISTORY_RETENTION_MS = 7 * 24 * 60 * 60_000;
-// Keep this name for callers that used the old snapshot retention constant.
 export const PROVIDER_CAPACITY_SNAPSHOT_RETENTION_MS = PROVIDER_CAPACITY_HISTORY_RETENTION_MS;
-export const PROVIDER_CAPACITY_LEASE_MS = 10_000;
-export const PROVIDER_CAPACITY_COLD_WAIT_MS = 2_000;
-export const PROVIDER_CAPACITY_SOURCE_STALE_MS = 30 * 60_000;
-export const PROVIDER_CAPACITY_CODEX_TIMEOUT_MS = 8_000;
-export const PROVIDER_CAPACITY_RATE_LIMIT_RESET_MIN_GAIN_PERCENTAGE_POINTS = 25;
 
-const ADDITIONAL_WINDOW_UNANCHORED_TOLERANCE_MS = 60_000;
-const CODEX_SPARK_LIMIT_NAME = "GPT-5.3-Codex-Spark";
-const SHA256_HEX = /^[a-f0-9]{64}$/;
-
-/** The one label rule for a configured subscription, shared by every admin surface. */
-export const codexAccountLabel = (slot: number, email: string | null = null): string => {
-  const trimmedEmail = email?.trim() ?? "";
-  // A blank label would hide the account, so an empty or whitespace-only email
-  // still falls back to the slot label.
-  if (trimmedEmail) return trimmedEmail;
-  return `Codex account ${slot}`;
-};
-
-type CapacityState = "available" | "stale" | "unavailable";
-export type ProviderCapacityViewState = "live" | "persisted" | "stale" | "unavailable";
-export type ProviderCapacityFailureKind = "not_configured" | "http_error" | "upstream_error" | "unreachable" | "invalid_response";
-
-export type ProviderCapacityWindow = Readonly<{
-  limit_window_seconds: number | null;
-  used_percent: number | null;
-  reset_at_ms: number | null;
-}>;
-
-export type ProviderCapacityAdditionalRateLimit = Readonly<{
-  limit_name: string;
-  metered_feature: string | null;
-  windows: Readonly<{
-    primary: ProviderCapacityWindow | null;
-    secondary: ProviderCapacityWindow | null;
-  }>;
-}>;
-
-export type ProviderCapacitySource =
-  | Readonly<{
-      source: "codex";
-      label: string;
-      slot: 1 | 2;
-      account_cohort_id: string | null;
-      state: CapacityState;
-      source_observed_at_ms: number | null;
-      snapshot_at_ms: number;
-      failure_kind: ProviderCapacityFailureKind | null;
-      failure_status: number | null;
-      windows: Readonly<{
-        primary: ProviderCapacityWindow | null;
-        secondary: ProviderCapacityWindow | null;
-      }>;
-      additional_rate_limits: readonly ProviderCapacityAdditionalRateLimit[];
-    }>
-  | Readonly<{
-      source: "metered";
-      label: "Metered fallback";
-      state: CapacityState;
-      source_observed_at_ms: number | null;
-      snapshot_at_ms: number;
-      wallet: Readonly<{
-        balance_credits: number | null;
-        baseline_credits: number | null;
-        refill_cycle_remaining_percent: number | null;
-        refill_cycle_used_percent: number | null;
-        unlimited_quota: boolean | null;
-        total_available: number | null;
-        total_granted: number | null;
-        total_used: number | null;
-        cycle_started_at_ms: number | null;
-        last_credit_at_ms: number | null;
-        confidence: MeteredQuotaSnapshot["state"]["confidence"] | null;
-        cache_state: MeteredQuotaSnapshot["cache_state"] | null;
-        reset_at_ms: null;
-      }>;
-    }>;
-
-export type ProviderCapacityCodexSource = Extract<ProviderCapacitySource, { source: "codex" }>;
-export type ProviderCapacityMeteredSource = Extract<ProviderCapacitySource, { source: "metered" }>;
-
-export type ProviderCapacitySnapshot = Readonly<{
-  snapshot_at_ms: number;
-  stale_after_ms: number;
-  sources: readonly [ProviderCapacitySource, ProviderCapacitySource, ProviderCapacitySource];
-}>;
-
-export type ProviderCapacityHistoryPoint = Readonly<{
-  bucket_start_at_ms: number;
-  sampled_at_ms: number;
-  sources: readonly [ProviderCapacityCodexSource, ProviderCapacityCodexSource, ProviderCapacityMeteredSource];
-}>;
-
-export type ProviderCapacityView = Readonly<
-  ProviderCapacitySnapshot & {
-    cache_state: ProviderCapacityViewState;
-    history: readonly ProviderCapacityHistoryPoint[];
-    reset_events: readonly ProviderCapacityResetEvent[];
-    rate_limit_reset_events: readonly ProviderCapacityRateLimitResetEvent[];
-    downtime_events: readonly ProviderCapacityDowntimeEvent[];
-  }
->;
-
-export type ProviderCapacityFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
-
-export type ProviderCapacitySnapshotOptions = Readonly<{
-  kv?: Deno.Kv | null;
-  fetcher?: ProviderCapacityFetch;
-  now?: () => number;
-  signal?: AbortSignal;
-  createLeaseOwner?: () => string;
-}>;
-
-type CapacityLease = Readonly<{
-  owner: string;
-  lease_until_ms: number;
-}>;
-
-type StoredRateLimitObservation = Readonly<{
-  sampled_at_ms: number;
-  source: ProviderCapacityCodexSource;
-}>;
-
-const providerCapacityLastAvailableKey = (slot: 1 | 2): Deno.KvKey => [...PROVIDER_CAPACITY_LAST_AVAILABLE_KEY_PREFIX, slot];
-
-const capacityState = (value: unknown): CapacityState | null => (value === "available" || value === "stale" || value === "unavailable" ? value : null);
-
-const safeNow = (now: () => number): number => {
-  const value = Math.trunc(now());
-  return Number.isSafeInteger(value) && value >= 0 ? value : Date.now();
-};
-
-const isSafeTimestamp = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-
-const optionalStoredNumber = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) ? value : null);
-
-const optionalStoredTimestamp = (value: unknown): number | null => (isSafeTimestamp(value) ? value : null);
-
-const optionalStoredBoolean = (value: unknown): boolean | null => (typeof value === "boolean" ? value : null);
-
-const codexUsageUrl = (): string => new URL("/backend-api/wham/usage", config.codexBaseUrl).toString();
-
-const parsePercent = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100 ? value : null);
-
-const parseWindowSeconds = (value: unknown): number | null => (typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null);
-
-const parseResetAtMs = (value: unknown): number | null => {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) return null;
-  const milliseconds = value * 1_000;
-  return Number.isSafeInteger(milliseconds) ? milliseconds : null;
-};
-
-const parseCodexWindow = (value: unknown): ProviderCapacityWindow | null => {
-  if (!isRecord(value)) return null;
-  const limitWindowSeconds = parseWindowSeconds(value.limit_window_seconds);
-  const usedPercent = parsePercent(value.used_percent);
-  const resetAtMs = parseResetAtMs(value.reset_at);
-  if (limitWindowSeconds === null && usedPercent === null && resetAtMs === null) return null;
-  return {
-    limit_window_seconds: limitWindowSeconds,
-    used_percent: usedPercent,
-    reset_at_ms: resetAtMs,
-  };
-};
-
-const isUnanchoredAdditionalWindow = (window: ProviderCapacityWindow | null, snapshotAtMs: number): boolean => {
-  if (window?.used_percent !== 0 || window.limit_window_seconds === null || window.reset_at_ms === null) return false;
-  const fullWindowMs = window.limit_window_seconds * 1_000;
-  if (!Number.isSafeInteger(fullWindowMs)) return false;
-  const expectedResetAtMs = snapshotAtMs + fullWindowMs;
-  return Number.isSafeInteger(expectedResetAtMs) && Math.abs(window.reset_at_ms - expectedResetAtMs) <= ADDITIONAL_WINDOW_UNANCHORED_TOLERANCE_MS;
-};
-
-const parseCodexAdditionalRateLimit = (value: unknown): ProviderCapacityAdditionalRateLimit | null => {
-  if (!isRecord(value)) return null;
-  const limitName = typeof value.limit_name === "string" ? value.limit_name.trim() : "";
-  if (!limitName) return null;
-  const meteredFeature = typeof value.metered_feature === "string" ? value.metered_feature.trim() || null : null;
-  const rateLimit = isRecord(value.rate_limit) ? value.rate_limit : null;
-  const parsedPrimary = parseCodexWindow(rateLimit?.primary_window);
-  const parsedSecondary = parseCodexWindow(rateLimit?.secondary_window);
-  if (!parsedPrimary && !parsedSecondary) return null;
-  return {
-    limit_name: limitName,
-    metered_feature: meteredFeature,
-    windows: {
-      // Keep OpenAI's unused model window for the admin card. Routing filters
-      // this unanchored value separately because its reset is not evidence of
-      // a shared quota cycle.
-      primary: parsedPrimary,
-      secondary: parsedSecondary,
-    },
-  };
-};
-
-const additionalRateLimitsForRouting = (
-  limits: readonly ProviderCapacityAdditionalRateLimit[],
-  snapshotAtMs: number
-): readonly ProviderCapacityAdditionalRateLimit[] =>
-  limits.flatMap((limit) => {
-    const primary = isUnanchoredAdditionalWindow(limit.windows.primary, snapshotAtMs) ? null : limit.windows.primary;
-    const secondary = isUnanchoredAdditionalWindow(limit.windows.secondary, snapshotAtMs) ? null : limit.windows.secondary;
-    if (!primary && !secondary) return [];
-    return [
-      {
-        ...limit,
-        windows: { primary, secondary },
-      },
-    ];
-  });
-
-const isCodexSparkLimit = (limit: ProviderCapacityAdditionalRateLimit): boolean =>
-  limit.limit_name.trim().toLowerCase() === CODEX_SPARK_LIMIT_NAME.toLowerCase();
-
-/**
- * OpenAI can omit the named Spark window from one account in a pool even when
- * a reachable sibling reports it. Keep the admin snapshot's model rows
- * aligned for the account pool. Routing continues to use only the account's
- * own upstream observation, so this display projection cannot change model
- * selection or quota admission.
- */
-const fillMissingCodexSparkLimitForAdmin = (sources: readonly ProviderCapacityCodexSource[]): readonly ProviderCapacityCodexSource[] => {
-  const sharedSparkLimit = sources
-    .filter((source) => source.state !== "unavailable")
-    .flatMap((source) => source.additional_rate_limits)
-    .find(isCodexSparkLimit);
-  if (!sharedSparkLimit) return sources;
-  return sources.map((source) => {
-    if (source.state === "unavailable" || source.additional_rate_limits.some(isCodexSparkLimit)) return source;
-    return {
-      ...source,
-      additional_rate_limits: [...source.additional_rate_limits, sharedSparkLimit],
-    };
-  });
-};
-
-const parseCodexUsage = (
-  value: unknown
-): Readonly<{
-  primary: ProviderCapacityWindow | null;
-  secondary: ProviderCapacityWindow | null;
-  additional_rate_limits: readonly ProviderCapacityAdditionalRateLimit[];
-}> | null => {
-  if (!isRecord(value) || !isRecord(value.rate_limit)) return null;
-  const additionalRateLimits = Array.isArray(value.additional_rate_limits)
-    ? value.additional_rate_limits.flatMap((candidate) => {
-        const parsed = parseCodexAdditionalRateLimit(candidate);
-        return parsed ? [parsed] : [];
-      })
-    : [];
-  return {
-    primary: parseCodexWindow(value.rate_limit.primary_window),
-    secondary: parseCodexWindow(value.rate_limit.secondary_window),
-    additional_rate_limits: additionalRateLimits,
-  };
-};
-
-const emptyWindows = (): Readonly<{
-  primary: null;
-  secondary: null;
-}> => ({ primary: null, secondary: null });
-
-const unavailableCodexSource = (
-  slot: 1 | 2,
-  snapshotAtMs: number,
-  failureKind: ProviderCapacityFailureKind = "not_configured",
-  failureStatus: number | null = null,
-  observed = false,
-  label = codexAccountLabel(slot),
-  accountCohortId: string | null = null
-): ProviderCapacityCodexSource => ({
-  source: "codex",
-  label,
-  slot,
-  account_cohort_id: accountCohortId,
-  state: "unavailable",
-  source_observed_at_ms: observed ? snapshotAtMs : null,
-  snapshot_at_ms: snapshotAtMs,
-  failure_kind: failureKind,
-  failure_status: failureStatus,
-  windows: emptyWindows(),
-  additional_rate_limits: [],
-});
-
-const unavailableMeteredSource = (snapshotAtMs: number): ProviderCapacityMeteredSource => ({
-  source: "metered",
-  label: "Metered fallback",
-  state: "unavailable",
-  source_observed_at_ms: null,
-  snapshot_at_ms: snapshotAtMs,
-  wallet: {
-    balance_credits: null,
-    baseline_credits: null,
-    refill_cycle_remaining_percent: null,
-    refill_cycle_used_percent: null,
-    unlimited_quota: null,
-    total_available: null,
-    total_granted: null,
-    total_used: null,
-    cycle_started_at_ms: null,
-    last_credit_at_ms: null,
-    confidence: null,
-    cache_state: null,
-    reset_at_ms: null,
-  },
-});
+export {
+  PROVIDER_CAPACITY_CODEX_TIMEOUT_MS,
+  PROVIDER_CAPACITY_COLD_WAIT_MS,
+  PROVIDER_CAPACITY_HISTORY_BUCKET_MS,
+  PROVIDER_CAPACITY_HISTORY_KEY_PREFIX,
+  PROVIDER_CAPACITY_HISTORY_RETENTION_MS,
+  PROVIDER_CAPACITY_LEASE_KEY,
+  PROVIDER_CAPACITY_LEASE_MS,
+  PROVIDER_CAPACITY_RATE_LIMIT_RESET_MIN_GAIN_PERCENTAGE_POINTS,
+  PROVIDER_CAPACITY_SNAPSHOT_KEY,
+  PROVIDER_CAPACITY_SOURCE_STALE_MS,
+} from "./provider_capacity_contract.ts";
+export type {
+  ProviderCapacityAdditionalRateLimit,
+  ProviderCapacityCodexSource,
+  ProviderCapacityFailureKind,
+  ProviderCapacityFetch,
+  ProviderCapacityHistoryPoint,
+  ProviderCapacityMeteredSource,
+  ProviderCapacitySnapshot,
+  ProviderCapacitySnapshotOptions,
+  ProviderCapacitySource,
+  ProviderCapacityView,
+  ProviderCapacityViewState,
+  ProviderCapacityWindow,
+} from "./provider_capacity_contract.ts";
+export { codexAccountLabel } from "./provider_capacity_parse.ts";
+export { providerCapacityHistoryKey } from "./provider_capacity_history.ts";
 
 const cancelResponseBody = (response: Response): void => {
   try {
@@ -521,245 +284,6 @@ const captureProviderCapacitySnapshot = async (
   };
 };
 
-const isStoredWindow = (value: unknown): value is ProviderCapacityWindow => {
-  if (!isRecord(value)) return false;
-  return (
-    (value.limit_window_seconds === null || parseWindowSeconds(value.limit_window_seconds) !== null) &&
-    (value.used_percent === null || parsePercent(value.used_percent) !== null) &&
-    (value.reset_at_ms === null || isSafeTimestamp(value.reset_at_ms))
-  );
-};
-
-const readStoredWindow = (value: unknown): ProviderCapacityWindow | null =>
-  isStoredWindow(value)
-    ? {
-        limit_window_seconds: value.limit_window_seconds,
-        used_percent: value.used_percent,
-        reset_at_ms: value.reset_at_ms,
-      }
-    : null;
-
-const readStoredAdditionalRateLimit = (value: unknown): ProviderCapacityAdditionalRateLimit | null => {
-  if (!isRecord(value) || typeof value.limit_name !== "string" || !value.limit_name.trim()) return null;
-  const windows = isRecord(value.windows) ? value.windows : null;
-  if (!windows) return null;
-  const meteredFeature = value.metered_feature;
-  if (meteredFeature !== null && typeof meteredFeature !== "string") return null;
-  return {
-    limit_name: value.limit_name.trim(),
-    metered_feature: typeof meteredFeature === "string" ? meteredFeature.trim() || null : null,
-    windows: {
-      primary: readStoredWindow(windows.primary),
-      secondary: readStoredWindow(windows.secondary),
-    },
-  };
-};
-
-const readStoredAdditionalRateLimits = (value: unknown): readonly ProviderCapacityAdditionalRateLimit[] =>
-  Array.isArray(value)
-    ? value.flatMap((candidate) => {
-        const parsed = readStoredAdditionalRateLimit(candidate);
-        return parsed ? [parsed] : [];
-      })
-    : [];
-
-const isProviderCapacityFailureKind = (value: unknown): value is ProviderCapacityFailureKind =>
-  value === "not_configured" || value === "http_error" || value === "upstream_error" || value === "unreachable" || value === "invalid_response";
-
-const readStoredFailureStatus = (value: unknown): number | null =>
-  typeof value === "number" && Number.isSafeInteger(value) && value >= 100 && value <= 599 ? value : null;
-
-// A stored record may omit its failure fields. An unavailable source then means
-// "not configured", while an available source must not claim any failure at all;
-// a present-but-unknown kind invalidates the whole record.
-const readStoredCodexFailure = (
-  source: Record<string, unknown>,
-  state: CapacityState
-): Readonly<{ failure_kind: ProviderCapacityFailureKind | null; failure_status: number | null }> | null => {
-  const storedKind = source.failure_kind;
-  if (storedKind !== null && storedKind !== undefined && !isProviderCapacityFailureKind(storedKind)) return null;
-  const defaultFailureKind: ProviderCapacityFailureKind | null = state === "unavailable" ? "not_configured" : null;
-  const failureKind = isProviderCapacityFailureKind(storedKind) ? storedKind : defaultFailureKind;
-  const failureStatus = readStoredFailureStatus(source.failure_status);
-  if (state === "available" && (failureKind !== null || failureStatus !== null)) return null;
-  return { failure_kind: failureKind, failure_status: failureStatus };
-};
-
-const readStoredCodexSource = (value: unknown, fallbackSnapshotAtMs: number): ProviderCapacityCodexSource | null => {
-  if (!isRecord(value) || value.source !== "codex" || (value.slot !== 1 && value.slot !== 2)) return null;
-  const state = capacityState(value.state);
-  const observed = value.source_observed_at_ms;
-  const snapshotAtMs = value.snapshot_at_ms === undefined ? fallbackSnapshotAtMs : value.snapshot_at_ms;
-  if (!state || !(observed === null || isSafeTimestamp(observed)) || !isSafeTimestamp(snapshotAtMs)) return null;
-  const failure = readStoredCodexFailure(value, state);
-  if (!failure) return null;
-  const windows = isRecord(value.windows) ? value.windows : null;
-  if (!windows) return null;
-  return {
-    source: "codex",
-    label: typeof value.label === "string" && value.label.trim() ? value.label.trim() : codexAccountLabel(value.slot),
-    slot: value.slot,
-    account_cohort_id: typeof value.account_cohort_id === "string" && SHA256_HEX.test(value.account_cohort_id) ? value.account_cohort_id : null,
-    state,
-    source_observed_at_ms: observed,
-    snapshot_at_ms: snapshotAtMs,
-    failure_kind: state === "available" ? null : failure.failure_kind,
-    failure_status: state === "available" ? null : failure.failure_status,
-    windows: {
-      primary: readStoredWindow(windows.primary),
-      secondary: readStoredWindow(windows.secondary),
-    },
-    additional_rate_limits: readStoredAdditionalRateLimits(value.additional_rate_limits),
-  };
-};
-
-const readStoredMeteredSource = (value: unknown, snapshotAtMs: number): ProviderCapacityMeteredSource | null => {
-  if (!isRecord(value) || value.source !== "metered") return null;
-  const state = capacityState(value.state);
-  const observed = value.source_observed_at_ms;
-  const wallet = isRecord(value.wallet) ? value.wallet : null;
-  if (!state || !wallet || !(observed === null || isSafeTimestamp(observed))) return null;
-  const confidence =
-    wallet.confidence === null || wallet.confidence === "provisional" || wallet.confidence === "refill_observed" || wallet.confidence === "inferred_adjustment"
-      ? wallet.confidence
-      : null;
-  const cacheState =
-    wallet.cache_state === null ||
-    wallet.cache_state === "fresh" ||
-    wallet.cache_state === "refreshed" ||
-    wallet.cache_state === "stale" ||
-    wallet.cache_state === "wait"
-      ? wallet.cache_state
-      : null;
-  return {
-    source: "metered",
-    label: "Metered fallback",
-    state,
-    source_observed_at_ms: observed,
-    snapshot_at_ms: snapshotAtMs,
-    wallet: {
-      balance_credits: optionalStoredNumber(wallet.balance_credits),
-      baseline_credits: optionalStoredNumber(wallet.baseline_credits),
-      refill_cycle_remaining_percent: optionalStoredNumber(wallet.refill_cycle_remaining_percent),
-      refill_cycle_used_percent: optionalStoredNumber(wallet.refill_cycle_used_percent),
-      unlimited_quota: optionalStoredBoolean(wallet.unlimited_quota),
-      total_available: optionalStoredNumber(wallet.total_available),
-      total_granted: optionalStoredNumber(wallet.total_granted),
-      total_used: optionalStoredNumber(wallet.total_used),
-      cycle_started_at_ms: optionalStoredTimestamp(wallet.cycle_started_at_ms),
-      last_credit_at_ms: optionalStoredTimestamp(wallet.last_credit_at_ms),
-      confidence,
-      cache_state: cacheState,
-      reset_at_ms: null,
-    },
-  };
-};
-
-const readStoredSnapshot = (value: unknown): ProviderCapacitySnapshot | null => {
-  if (!isRecord(value) || !isSafeTimestamp(value.snapshot_at_ms) || !Array.isArray(value.sources)) return null;
-  const snapshotAtMs = value.snapshot_at_ms;
-  const codexOne = value.sources.find((source) => isRecord(source) && source.source === "codex" && source.slot === 1);
-  const codexTwo = value.sources.find((source) => isRecord(source) && source.source === "codex" && source.slot === 2);
-  const metered = value.sources.find((source) => isRecord(source) && source.source === "metered");
-  const sources = [
-    readStoredCodexSource(codexOne, snapshotAtMs),
-    readStoredCodexSource(codexTwo, snapshotAtMs),
-    readStoredMeteredSource(metered, snapshotAtMs),
-  ];
-  if (!sources[0] || !sources[1] || !sources[2]) return null;
-  return {
-    snapshot_at_ms: snapshotAtMs,
-    // Old records used a shorter value. All records now follow the sampler
-    // freshness boundary so a missed 15-minute run is tolerated once.
-    stale_after_ms: PROVIDER_CAPACITY_SOURCE_STALE_MS,
-    sources: [sources[0], sources[1], sources[2]],
-  };
-};
-
-const readCapacitySnapshot = async (kv: Deno.Kv): Promise<ProviderCapacitySnapshot | null> => {
-  try {
-    return readStoredSnapshot((await kv.get(PROVIDER_CAPACITY_SNAPSHOT_KEY)).value);
-  } catch {
-    return null;
-  }
-};
-
-const readStoredHistoryPoint = (value: unknown): ProviderCapacityHistoryPoint | null => {
-  if (!isRecord(value) || !isSafeTimestamp(value.bucket_start_at_ms) || !isSafeTimestamp(value.sampled_at_ms)) {
-    return null;
-  }
-  if (!Array.isArray(value.sources)) return null;
-  const sourceOne = value.sources.find((source) => isRecord(source) && source.source === "codex" && source.slot === 1);
-  const sourceTwo = value.sources.find((source) => isRecord(source) && source.source === "codex" && source.slot === 2);
-  const sourceMetered = value.sources.find((source) => isRecord(source) && source.source === "metered");
-  const codexSourceOne = readStoredCodexSource(sourceOne, value.sampled_at_ms);
-  const codexSourceTwo = readStoredCodexSource(sourceTwo, value.sampled_at_ms);
-  if (!codexSourceOne || !codexSourceTwo) return null;
-  const meteredSource = readStoredMeteredSource(sourceMetered, value.sampled_at_ms) ?? unavailableMeteredSource(value.sampled_at_ms);
-  return {
-    bucket_start_at_ms: value.bucket_start_at_ms,
-    sampled_at_ms: value.sampled_at_ms,
-    sources: [codexSourceOne, codexSourceTwo, meteredSource],
-  };
-};
-
-export const providerCapacityHistoryKey = (bucketStartAtMs: number): Deno.KvKey => [...PROVIDER_CAPACITY_HISTORY_KEY_PREFIX, bucketStartAtMs];
-
-// A live refresh can observe a banked reset inside the same 15-minute bucket
-// as the exhausted sample. Keep that earlier point under a sibling key so the
-// chart can show the zero-to-refill transition without turning every refresh
-// into an unbounded history stream.
-const providerCapacityHistoryTransitionKey = (bucketStartAtMs: number, previousSampledAtMs: number): Deno.KvKey => [
-  ...PROVIDER_CAPACITY_HISTORY_KEY_PREFIX,
-  bucketStartAtMs,
-  "transition",
-  previousSampledAtMs,
-];
-
-const readCapacityHistory = async (kv: Deno.Kv, nowMs: number): Promise<ProviderCapacityHistoryPoint[]> => {
-  const cutoffMs = Math.max(0, nowMs - PROVIDER_CAPACITY_HISTORY_RETENTION_MS);
-  const newestBucketMs = Math.floor(nowMs / PROVIDER_CAPACITY_HISTORY_BUCKET_MS) * PROVIDER_CAPACITY_HISTORY_BUCKET_MS;
-  const points: ProviderCapacityHistoryPoint[] = [];
-  try {
-    for await (const entry of kv.list({ prefix: PROVIDER_CAPACITY_HISTORY_KEY_PREFIX })) {
-      const keyBucket = entry.key[PROVIDER_CAPACITY_HISTORY_KEY_PREFIX.length];
-      if (typeof keyBucket !== "number" || keyBucket < cutoffMs || keyBucket > newestBucketMs) continue;
-      const point = readStoredHistoryPoint(entry.value);
-      if (point?.bucket_start_at_ms !== keyBucket) continue;
-      points.push(point);
-    }
-  } catch {
-    return [];
-  }
-  return points.sort((left, right) => left.bucket_start_at_ms - right.bucket_start_at_ms || left.sampled_at_ms - right.sampled_at_ms);
-};
-
-const historyBucketStartAtMs = (snapshotAtMs: number): number =>
-  Math.floor(snapshotAtMs / PROVIDER_CAPACITY_HISTORY_BUCKET_MS) * PROVIDER_CAPACITY_HISTORY_BUCKET_MS;
-
-const historyPointForSnapshot = (snapshot: ProviderCapacitySnapshot): ProviderCapacityHistoryPoint => {
-  const sourceForSlot = (slot: 1 | 2): ProviderCapacityCodexSource => {
-    const source = snapshot.sources.find((candidate) => candidate.source === "codex" && candidate.slot === slot);
-    return source?.source === "codex" ? source : unavailableCodexSource(slot, snapshot.snapshot_at_ms);
-  };
-  const sourceForMetered = (): ProviderCapacityMeteredSource => {
-    const source = snapshot.sources.find((candidate) => candidate.source === "metered");
-    return source?.source === "metered" ? source : unavailableMeteredSource(snapshot.snapshot_at_ms);
-  };
-  return {
-    bucket_start_at_ms: historyBucketStartAtMs(snapshot.snapshot_at_ms),
-    sampled_at_ms: snapshot.snapshot_at_ms,
-    sources: [sourceForSlot(1), sourceForSlot(2), sourceForMetered()],
-  };
-};
-
-const mergeHistoryPoints = (points: readonly ProviderCapacityHistoryPoint[], addition: ProviderCapacityHistoryPoint): ProviderCapacityHistoryPoint[] => {
-  const bySample = new Map<string, ProviderCapacityHistoryPoint>();
-  for (const point of points) bySample.set(`${point.bucket_start_at_ms}:${point.sampled_at_ms}`, point);
-  bySample.set(`${addition.bucket_start_at_ms}:${addition.sampled_at_ms}`, addition);
-  return [...bySample.values()].sort((left, right) => left.bucket_start_at_ms - right.bucket_start_at_ms || left.sampled_at_ms - right.sampled_at_ms);
-};
-
 const staleProviderCapacitySource = (source: ProviderCapacitySource, snapshot: ProviderCapacitySnapshot, nowMs: number): ProviderCapacitySource => {
   if (source.state !== "available") return source;
   if (source.source === "codex") {
@@ -856,278 +380,6 @@ const releaseCapacityLease = async (kv: Deno.Kv, owner: string): Promise<void> =
     // A short-lived lease can expire without affecting the redacted snapshot.
   }
 };
-
-const sameCodexAccountCohort = (left: ProviderCapacityCodexSource, right: ProviderCapacityCodexSource): boolean =>
-  left.account_cohort_id !== null && left.account_cohort_id === right.account_cohort_id;
-
-const codexResetTransitionObserved = (previous: ProviderCapacityHistoryPoint | null, current: ProviderCapacityHistoryPoint): boolean => {
-  if (!previous || previous.sampled_at_ms >= current.sampled_at_ms) return false;
-  for (const slot of [1, 2] as const) {
-    const previousSource = previous.sources.find((source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === slot);
-    const currentSource = current.sources.find((source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === slot);
-    if (
-      !previousSource ||
-      !currentSource ||
-      previousSource.state === "unavailable" ||
-      currentSource.state === "unavailable" ||
-      !sameCodexAccountCohort(previousSource, currentSource)
-    ) {
-      continue;
-    }
-    for (const windowKey of ["primary", "secondary"] as const) {
-      const previousWindow = previousSource.windows[windowKey];
-      const currentWindow = currentSource.windows[windowKey];
-      if (
-        previousWindow?.used_percent !== null &&
-        currentWindow?.used_percent !== null &&
-        typeof previousWindow?.used_percent === "number" &&
-        typeof currentWindow?.used_percent === "number" &&
-        previousWindow.used_percent >= 90 &&
-        currentWindow.used_percent <= 20 &&
-        previousWindow.reset_at_ms === currentWindow.reset_at_ms
-      )
-        return true;
-    }
-  }
-  return false;
-};
-
-const codexAvailabilityTransitionObserved = (previous: ProviderCapacityHistoryPoint | null, current: ProviderCapacityHistoryPoint): boolean => {
-  if (!previous || previous.sampled_at_ms >= current.sampled_at_ms) return false;
-  for (const slot of [1, 2] as const) {
-    const previousSource = previous.sources.find((source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === slot);
-    const currentSource = current.sources.find((source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === slot);
-    if (
-      previousSource &&
-      currentSource &&
-      sameCodexAccountCohort(previousSource, currentSource) &&
-      (previousSource.state === "unavailable") !== (currentSource.state === "unavailable")
-    )
-      return true;
-  }
-  return false;
-};
-
-const readStoredRateLimitObservation = (value: unknown): StoredRateLimitObservation | null => {
-  if (!isRecord(value) || !isSafeTimestamp(value.sampled_at_ms)) return null;
-  const source = readStoredCodexSource(value.source, value.sampled_at_ms);
-  return source?.state === "available" ? { sampled_at_ms: value.sampled_at_ms, source } : null;
-};
-
-const latestAvailableRateLimitObservation = (
-  history: readonly ProviderCapacityHistoryPoint[],
-  slot: 1 | 2,
-  accountCohortId: string,
-  beforeSampledAtMs: number
-): StoredRateLimitObservation | null => {
-  const observations = history.flatMap((point) => {
-    if (point.sampled_at_ms >= beforeSampledAtMs) return [];
-    const source = point.sources.find(
-      (candidate): candidate is ProviderCapacityCodexSource =>
-        candidate.source === "codex" && candidate.slot === slot && candidate.state !== "unavailable" && candidate.account_cohort_id === accountCohortId
-    );
-    return source ? [{ sampled_at_ms: point.sampled_at_ms, source }] : [];
-  });
-  observations.sort((left, right) => right.sampled_at_ms - left.sampled_at_ms);
-  return observations[0] ?? null;
-};
-
-/**
- * Build one OpenAI rate-limit reset event for a single window. A reset only
- * counts when both samples carry the window fields and a later reset boundary
- * comes with a real capacity gain.
- */
-const rateLimitResetEventForWindow = (input: {
-  slot: 1 | 2;
-  window: "primary" | "secondary";
-  previousSampledAtMs: number;
-  previousWindow: ProviderCapacityWindow | null;
-  currentSampledAtMs: number;
-  currentWindow: ProviderCapacityWindow | null;
-}): ProviderCapacityRateLimitResetEvent | null => {
-  const { previousWindow, currentWindow } = input;
-  if (
-    typeof previousWindow?.used_percent !== "number" ||
-    typeof currentWindow?.used_percent !== "number" ||
-    typeof previousWindow.reset_at_ms !== "number" ||
-    typeof currentWindow.reset_at_ms !== "number" ||
-    currentWindow.reset_at_ms <= previousWindow.reset_at_ms
-  )
-    return null;
-  const capacityGain = previousWindow.used_percent - currentWindow.used_percent;
-  if (capacityGain < PROVIDER_CAPACITY_RATE_LIMIT_RESET_MIN_GAIN_PERCENTAGE_POINTS) return null;
-  return {
-    v: 1,
-    event_id: `openai-${input.slot}-${input.window}-${input.previousSampledAtMs}-${input.currentSampledAtMs}`,
-    provider: "openai",
-    slot: input.slot,
-    window: input.window,
-    observed_at_ms: input.currentSampledAtMs,
-    previous_sampled_at_ms: input.previousSampledAtMs,
-    previous_reset_at_ms: previousWindow.reset_at_ms,
-    reset_at_ms: currentWindow.reset_at_ms,
-    previous_used_percent: previousWindow.used_percent,
-    current_used_percent: currentWindow.used_percent,
-    capacity_gain_percentage_points: capacityGain,
-  };
-};
-
-const observedRateLimitResetEvents = (
-  previous: ProviderCapacitySnapshot | null,
-  current: ProviderCapacitySnapshot,
-  lastAvailableObservations: readonly StoredRateLimitObservation[] = []
-): ProviderCapacityRateLimitResetEvent[] => {
-  if (previous && previous.snapshot_at_ms >= current.snapshot_at_ms) return [];
-  const events: ProviderCapacityRateLimitResetEvent[] = [];
-  for (const slot of [1, 2] as const) {
-    const currentSource = current.sources.find((source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === slot);
-    if (!currentSource || currentSource.state === "unavailable") continue;
-    const previousSource = previous?.sources.find((source): source is ProviderCapacityCodexSource => source.source === "codex" && source.slot === slot);
-    const previousObservation =
-      previous && previousSource && previousSource.state !== "unavailable" && sameCodexAccountCohort(previousSource, currentSource)
-        ? { sampled_at_ms: previous.snapshot_at_ms, source: previousSource }
-        : (lastAvailableObservations.find(
-            (observation) =>
-              observation.source.slot === slot &&
-              observation.sampled_at_ms < current.snapshot_at_ms &&
-              sameCodexAccountCohort(observation.source, currentSource)
-          ) ?? null);
-    if (!previousObservation) continue;
-    for (const window of ["primary", "secondary"] as const) {
-      const event = rateLimitResetEventForWindow({
-        slot,
-        window,
-        previousSampledAtMs: previousObservation.sampled_at_ms,
-        previousWindow: previousObservation.source.windows[window],
-        currentSampledAtMs: current.snapshot_at_ms,
-        currentWindow: currentSource.windows[window],
-      });
-      if (event) events.push(event);
-    }
-  }
-  return events;
-};
-
-// An unavailable sample either keeps tracking an outage for the same account
-// cohort, or clears the tracked window.
-const trackHistoricalOutage = (
-  previousAvailable: StoredRateLimitObservation | null,
-  source: ProviderCapacityCodexSource | undefined
-): Readonly<{ previousAvailable: StoredRateLimitObservation | null; outageObserved: boolean }> =>
-  previousAvailable && source && sameCodexAccountCohort(previousAvailable.source, source)
-    ? { previousAvailable, outageObserved: true }
-    : { previousAvailable: null, outageObserved: false };
-
-const pushHistoricalRateLimitResetEvents = (
-  slot: 1 | 2,
-  point: ProviderCapacityHistoryPoint,
-  previousAvailable: StoredRateLimitObservation,
-  source: ProviderCapacityCodexSource,
-  events: ProviderCapacityRateLimitResetEvent[]
-): void => {
-  for (const window of ["primary", "secondary"] as const) {
-    const event = rateLimitResetEventForWindow({
-      slot,
-      window,
-      previousSampledAtMs: previousAvailable.sampled_at_ms,
-      previousWindow: previousAvailable.source.windows[window],
-      currentSampledAtMs: point.sampled_at_ms,
-      currentWindow: source.windows[window],
-    });
-    if (event) events.push(event);
-  }
-};
-
-const observeHistoricalSlotRateLimitResets = (
-  slot: 1 | 2,
-  sortedHistory: readonly ProviderCapacityHistoryPoint[],
-  events: ProviderCapacityRateLimitResetEvent[]
-): void => {
-  let previousAvailable: StoredRateLimitObservation | null = null;
-  let outageObserved = false;
-  for (const point of sortedHistory) {
-    const source = point.sources.find((candidate): candidate is ProviderCapacityCodexSource => candidate.source === "codex" && candidate.slot === slot);
-    if (!source || source.state === "unavailable") {
-      const outage = trackHistoricalOutage(previousAvailable, source);
-      previousAvailable = outage.previousAvailable;
-      outageObserved = outage.outageObserved;
-      continue;
-    }
-    if (previousAvailable && outageObserved && sameCodexAccountCohort(previousAvailable.source, source)) {
-      pushHistoricalRateLimitResetEvents(slot, point, previousAvailable, source, events);
-    }
-    previousAvailable = source.state === "available" ? { sampled_at_ms: point.sampled_at_ms, source } : previousAvailable;
-    outageObserved = false;
-  }
-};
-
-const observedHistoricalRateLimitResetEvents = (history: readonly ProviderCapacityHistoryPoint[]): ProviderCapacityRateLimitResetEvent[] => {
-  const events: ProviderCapacityRateLimitResetEvent[] = [];
-  const sortedHistory = [...history].sort((left, right) => left.sampled_at_ms - right.sampled_at_ms);
-  for (const slot of [1, 2] as const) observeHistoricalSlotRateLimitResets(slot, sortedHistory, events);
-  return events;
-};
-
-const mergeHistoricalRateLimitResetEvents = async (
-  kv: Deno.Kv,
-  history: readonly ProviderCapacityHistoryPoint[],
-  events: readonly ProviderCapacityRateLimitResetEvent[]
-): Promise<readonly ProviderCapacityRateLimitResetEvent[]> => {
-  const merged = new Map(events.map((event) => [event.event_id, event]));
-  for (const event of observedHistoricalRateLimitResetEvents(history)) {
-    if (merged.has(event.event_id)) continue;
-    try {
-      await kv.set(providerCapacityRateLimitResetEventKey(event.event_id), event, {
-        expireIn: PROVIDER_CAPACITY_RESET_EVENT_RETENTION_MS,
-      });
-    } catch {
-      // The view can still show a validated inference if a best-effort marker write fails.
-    }
-    merged.set(event.event_id, event);
-  }
-  return [...merged.values()].sort((left, right) => left.observed_at_ms - right.observed_at_ms || left.event_id.localeCompare(right.event_id));
-};
-
-// A codex source that comes back after an outage is a recovery candidate when the
-// account cohort matches and no last-available observation covers it yet.
-const recoverySlotsForSnapshot = (
-  snapshot: ProviderCapacitySnapshot,
-  previousSnapshot: ProviderCapacitySnapshot | null,
-  lastAvailableObservations: readonly StoredRateLimitObservation[]
-): (1 | 2)[] =>
-  snapshot.sources.flatMap((source) => {
-    if (source.source !== "codex" || source.state === "unavailable") return [];
-    const previousSource = previousSnapshot?.sources.find(
-      (candidate): candidate is ProviderCapacityCodexSource => candidate.source === "codex" && candidate.slot === source.slot
-    );
-    return previousSource?.state === "unavailable" &&
-      sameCodexAccountCohort(previousSource, source) &&
-      !lastAvailableObservations.some((observation) => observation.source.slot === source.slot && sameCodexAccountCohort(observation.source, source))
-      ? [source.slot]
-      : [];
-  });
-
-const recoverRateLimitObservations = async (
-  kv: Deno.Kv,
-  snapshot: ProviderCapacitySnapshot,
-  recoverySlots: readonly (1 | 2)[]
-): Promise<StoredRateLimitObservation[]> => {
-  if (recoverySlots.length === 0) return [];
-  const retainedHistory = await readCapacityHistory(kv, snapshot.snapshot_at_ms).catch(() => []);
-  const recovered: StoredRateLimitObservation[] = [];
-  for (const slot of recoverySlots) {
-    const source = snapshot.sources.find((candidate): candidate is ProviderCapacityCodexSource => candidate.source === "codex" && candidate.slot === slot);
-    if (!source?.account_cohort_id) continue;
-    const observation = latestAvailableRateLimitObservation(retainedHistory, slot, source.account_cohort_id, snapshot.snapshot_at_ms);
-    if (observation) recovered.push(observation);
-  }
-  return recovered;
-};
-
-const lastAvailableCapacityEntries = (snapshot: ProviderCapacitySnapshot): readonly Readonly<{ slot: 1 | 2; value: StoredRateLimitObservation }>[] =>
-  snapshot.sources.flatMap((source) =>
-    source.source === "codex" && source.state === "available" ? [{ slot: source.slot, value: { sampled_at_ms: snapshot.snapshot_at_ms, source } }] : []
-  );
 
 const persistCapacitySnapshot = async (kv: Deno.Kv, leaseEntry: Deno.KvEntryMaybe<CapacityLease>, snapshot: ProviderCapacitySnapshot): Promise<boolean> => {
   const history = historyPointForSnapshot(snapshot);

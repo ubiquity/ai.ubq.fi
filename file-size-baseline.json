@@ -10,6 +10,5 @@
   "src/kv_migration.ts": 2490,
   "src/prompt_cache_analytics.ts": 1167,
   "src/prompt_cache_scope_experiment.ts": 1721,
-  "src/provider_capacity.ts": 1327,
   "src/sentinel_replay_capture.ts": 2268
 }
