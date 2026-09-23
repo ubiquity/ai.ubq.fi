@@ -1,4 +1,5 @@
 // Run from the VPS repository root after the candidate's required CI has passed.
+import { pruneReleases } from "./release_retention.ts";
 const canonicalRoot = "/home/codex/repos/ubiquity/ai.ubq.fi";
 
 async function command(program: string, args: string[]): Promise<string> {
@@ -131,7 +132,15 @@ try {
         response.headers.get("x-uos-git-sha") === sha &&
         response.headers.get("x-uos-deployment-id") === `vps-${sha}`
       ) {
-        console.log(JSON.stringify({ git_sha: sha, deployment_id: `vps-${sha}`, release, health_verified: true }));
+        // Retention runs only after the health check proves the release is live, so a
+        // pruning fault cannot turn a verified deployment into a failed one.
+        let releasesPruned: number | "failed" = "failed";
+        try {
+          releasesPruned = (await pruneReleases()).removed.length;
+        } catch (error) {
+          console.error(`[deploy] Release retention was not applied: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        console.log(JSON.stringify({ git_sha: sha, deployment_id: `vps-${sha}`, release, health_verified: true, releases_pruned: releasesPruned }));
         Deno.exit(0);
       }
     } catch {

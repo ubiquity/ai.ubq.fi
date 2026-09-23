@@ -33,6 +33,7 @@ run "deno test (vps deploy guards)" deno test --frozen --allow-run=deno,git \
   --allow-read=ops,.cleanup-evidence/vps-deploy-guards-fixtures \
   --allow-write=.cleanup-evidence/vps-deploy-guards-fixtures \
   --allow-env=PATH tests/vps-deploy-guards.test.ts
+run "deno test (immutable release retention)" deno task test:vps
 run "deno test" deno task test
 # Mirrors CI's remaining gate, so a green verify cannot still fail the pipeline.
 run "deno test (sentinel local)" deno task sentinel:test-local

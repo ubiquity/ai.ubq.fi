@@ -6,6 +6,29 @@ higher authority.
 
 Provider routing decisions are maintained separately in `docs/provider-decision-journal.md`.
 
+## Immutable releases are pruned after a verified deploy: the newest five plus the running one - 2026-09-23
+
+Both deploy paths unpack a full `git archive` of the released revision into `.data/releases/<sha>`, so a repeatedly
+deployed checkout carried one complete copy of `src`, `tests`, `docs` and `static` per revision: 47 directories and 391
+MB on the Mac, roughly 12,000 duplicate TypeScript files that every recursive search and editor walk pays for. Retention
+is now enforced by the deploy itself rather than left to an operator. `ops/release_retention.ts` keeps the five newest
+releases by mtime plus whatever `.data/current` resolves to, and `ops/deploy-mac.ts` and `ops/deploy.ts` call it only
+after the health check proves the new release is live, so a pruning fault is reported in the JSON receipt
+(`releases_pruned`) instead of failing a verified deployment.
+
+Guardrails: only a directory whose name is a full 40-character Git revision is a candidate; a candidate is skipped when
+it resolves outside the store, so a planted symlink cannot redirect the delete; `.staging-*` directories and plain files
+are never touched; the running release survives even when it is the oldest directory present. `deno task prune:releases`
+applies the same policy by hand for a checkout that predates retention, and `deno task test:vps` carries the retention
+tests inside the verify gate.
+
+Retention is a policy constant (`RELEASE_RETENTION_KEEP = 5`), not a per-invocation flag: rollback only needs recent
+releases, and an operator-facing knob would be tuned ad hoc. The Mac was pruned once under the new policy (47
+releases/391 MB to 5 releases/47 MB) with `.data/current` and the live `git sha` health identity unchanged; the VPS
+prunes on its next `deno task deploy:vps`. The separate duplication in `.codex-worktrees` (about 90,000 TypeScript
+files, mostly `tools/node_modules` materialized per worktree by `scripts/_bootstrap.sh`) is acknowledged and remains
+unaddressed by this decision.
+
 ## Gateway reliability program: finite admission, terminal parity, deadlines, optional analytics - 2026-09-22
 
 A finite process-resource guard now bounds terminal inference routes at 64 active requests and 128 waiting requests with
