@@ -20,6 +20,5 @@
   "src/provider_capacity.ts": 1327,
   "src/sentinel_replay_capture.ts": 2268,
   "tests/admin-auth.test.ts": 1823,
-  "tests/passkeys.test.ts": 1691,
-  "tests/prompt-cache-scope-experiment.test.ts": 1936
+  "tests/passkeys.test.ts": 1691
 }
