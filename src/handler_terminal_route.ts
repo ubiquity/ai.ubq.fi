@@ -14,7 +14,8 @@ import {
 } from "./handler_http.ts";
 import { warnQuotaAccountingFailure, withRejectionTerminalLog, withTerminalRequestLog } from "./handler_terminal_log.ts";
 
-import { authenticateClient, getKernelAttestationContext } from "./auth.ts";
+import { authenticateClient } from "./auth.ts";
+import { getKernelAttestationContext } from "./kernel_attestation.ts";
 import { type ApiKeyPolicy, ApiKeyQuotaDispatchError, type ApiKeyUsageReservation, reserveApiKeyUsageV3 } from "./api_key_policy.ts";
 import { runtimeDeploymentId, runtimeGitSha } from "./config.ts";
 import { openaiError, withCors as withCorsHeaders, withoutBody } from "./http.ts";

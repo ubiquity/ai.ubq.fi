@@ -3,7 +3,6 @@
   "scripts/stage0-cache-telemetry-gate.ts": 1276,
   "scripts/ubq-ai.ts": 1554,
   "src/admin.ts": 2859,
-  "src/auth.ts": 1225,
   "src/codex_account_routing.ts": 1597,
   "src/codex_banked_reset.ts": 2669,
   "src/codex_catalog.ts": 1296,

@@ -62,7 +62,7 @@ import {
   reclaimApiKeyUsageReservationsForKeyV3,
 } from "./api_key_policy.ts";
 import { apiKeyRequestLogPrefix, apiKeyUsageDailyKey, apiKeyUsageKey, legacyApiKeyRequestLogPrefix } from "./analytics.ts";
-import { reloadKernelPublicKeys } from "./auth.ts";
+import { reloadKernelPublicKeys } from "./kernel_attestation.ts";
 import { defaultPaidFallbackPolicy, hasStrictPaidFallbackKeyPolicy, initializePaidFallbackPolicy, paidFallbackHashFields } from "./paid_fallback.ts";
 import { deletePaidFallbackStateV3 } from "./paid_fallback_ledger_admission.ts";
 import { backfillPaidFallbackUsageRollups, backfillPaidFallbackWindowTtls, reconcileDuePaidFallbacksV3 } from "./paid_fallback_ledger_backfill.ts";

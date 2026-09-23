@@ -944,7 +944,7 @@ Deno.test("auth: kernel attestation tokens are reusable within TTL", async () =>
   const signature = new Uint8Array(await crypto.subtle.sign("RSASSA-PKCS1-v1_5", keyPair.privateKey, TEXT_ENCODER.encode(signingInput)));
   const kernelToken = `${signingInput}.${encodeBase64Url(signature)}`;
 
-  const { getKernelAttestationContext } = await import("../src/auth.ts");
+  const { getKernelAttestationContext } = await import("../src/kernel_attestation.ts");
 
   const req = new Request("https://ai.ubq.fi/v1/responses", {
     method: "POST",
