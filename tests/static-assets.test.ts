@@ -17,6 +17,7 @@ import companyLogoSvg from "../static/company-logo.svg" with { type: "text" };
 import contactHtml from "../static/contact.html" with { type: "text" };
 import developersHtml from "../static/developers.html" with { type: "text" };
 import docsHtml from "../static/docs.html" with { type: "text" };
+import docsScript from "../static/docs.js" with { type: "text" };
 import indexHtml from "../static/index.html" with { type: "text" };
 import llmsText from "../static/llms.txt" with { type: "text" };
 import llmsFullText from "../static/docs/llms-agents.md" with { type: "text" };
@@ -88,6 +89,31 @@ Deno.test("chat response stats use one conversation bar below the composer", () 
   assert.match(chatCss, /\[data-chat-stats\]\s*\{[^}]*overflow-wrap:\s*anywhere;[^}]*white-space:\s*normal;/s);
   assert.doesNotMatch(chatCss, /\[data-chat-stats\]\s*\{[^}]*(?:overflow:\s*hidden|white-space:\s*nowrap)/s);
   assert.doesNotMatch(chatCss, /\[data-message-stats\]/);
+});
+
+Deno.test("docs markdown renderer accepts pipe tables without outer delimiters", () => {
+  const fnBody = docsScript.slice(
+    docsScript.indexOf("const escapeHtml ="),
+    docsScript.indexOf("const renderToc =")
+  );
+  const parse = new Function(fnBody + "\nreturn parseMarkdown;");
+  const parseMarkdown = parse() as (markdown: string) => { html: string; toc: unknown[] };
+
+  const noOuterPipes = "Header A | Header B\n--- | ---\nVal 1 | Val 2";
+  const { html: html1 } = parseMarkdown(noOuterPipes);
+  assert.ok(html1.includes("<table>"));
+  assert.ok(html1.includes('<th scope="col">Header A</th>'));
+  assert.ok(html1.includes("<td>Val 1</td>"));
+
+  const withOuterPipes = "| Header A | Header B |\n| --- | --- |\n| Val 1 | Val 2 |";
+  const { html: html2 } = parseMarkdown(withOuterPipes);
+  assert.ok(html2.includes("<table>"));
+  assert.ok(html2.includes('<th scope="col">Header A</th>'));
+
+  const proseWithPipe = "This is regular text (option1|option2) without table syntax.";
+  const { html: html3 } = parseMarkdown(proseWithPipe);
+  assert.ok(!html3.includes("<table>"));
+  assert.ok(html3.includes("<p>This is regular text"));
 });
 
 Deno.test("chat falls back to the loopback development principal without a token", () => {
