@@ -1,131 +1,16 @@
+// Suite part: tests moved out of the original file.
+
 import assert from "node:assert/strict";
-
-// Removes every trailing `=`, equivalent to `value.replace(/=+$/g, "")` with an
-// explicit linear scan (same idiom as tests/codex-account-email.test.ts and
-// `normalizePath` in src/handler.ts:169).
-const stripBase64Padding = (value: string): string => {
-  let end = value.length;
-  while (end > 0 && value[end - 1] === "=") end -= 1;
-  return value.slice(0, end);
-};
-
-// Base64url encoding of `value`.
-const encodeBase64Url = (value: string): string => stripBase64Padding(btoa(value)).replace(/\+/g, "-").replace(/\//g, "_");
-
-const keyToString = (key: Deno.KvKey): string => JSON.stringify(key);
-// `String(input)` cannot render every accepted `RequestInfo` shape as a request URL:
-// a `Request` stringifies to "[object Request]". The fetch stubs below assert on
-// exact request URLs, so each accepted form is normalised to its URL string.
-const requestUrl = (input: RequestInfo | URL): string => {
-  if (typeof input === "string") return input;
-  if (input instanceof URL) return input.href;
-  return input.url;
-};
-// `AbortSignal.reason` is untyped, so a caller can abort with an arbitrary value. A
-// promise rejection must carry an `Error`: when the reason already is one it is
-// passed through unchanged, otherwise it is preserved as the abort error's `cause`
-// instead of being rejected verbatim.
-const abortError = (reason: unknown): Error => {
-  if (reason instanceof Error) return reason;
-  const error = new Error("Aborted", { cause: reason });
-  error.name = "AbortError";
-  return error;
-};
-const kvVersions = new Map<string, number>();
-let beforeAtomicCommit: (() => void) | null = null;
-let kvGetDelayMs = 0;
-
-class KvTestStore extends Map<string, unknown> {
-  override set(key: string, value: unknown): this {
-    kvVersions.set(key, (kvVersions.get(key) ?? 0) + 1);
-    return super.set(key, value);
-  }
-
-  override clear(): void {
-    beforeAtomicCommit = null;
-    kvGetDelayMs = 0;
-    kvVersions.clear();
-    super.clear();
-  }
-}
-
-const kvStore = new KvTestStore();
-const versionstampFor = (rawKey: string): string | null => (kvStore.has(rawKey) ? String(kvVersions.get(rawKey) ?? 0).padStart(20, "0") : null);
-
-const kvStub = {
-  get: async (key: Deno.KvKey) => {
-    if (kvGetDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, kvGetDelayMs));
-    const rawKey = keyToString(key);
-    return {
-      key,
-      value: kvStore.has(rawKey) ? kvStore.get(rawKey) : null,
-      versionstamp: versionstampFor(rawKey),
-    } as Deno.KvEntryMaybe<unknown>;
-  },
-  set: (key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }) => {
-    kvStore.set(keyToString(key), value);
-    return Promise.resolve({ ok: true } as const);
-  },
-  delete: (key: Deno.KvKey) => {
-    kvStore.delete(keyToString(key));
-    return Promise.resolve();
-  },
-  list: function* (selector: Deno.KvListSelector, options?: Deno.KvListOptions) {
-    const prefix = "prefix" in selector ? selector.prefix : [];
-    let yielded = 0;
-    const limit = typeof options?.limit === "number" ? options.limit : Infinity;
-    for (const [rawKey, value] of kvStore.entries()) {
-      const key = JSON.parse(rawKey) as Deno.KvKey;
-      const matchesPrefix = prefix.every((part, index) => key[index] === part);
-      if (!matchesPrefix) continue;
-      yield { key, value, versionstamp: "00000000000000010000" } as Deno.KvEntry<unknown>;
-      yielded += 1;
-      if (yielded >= limit) break;
-    }
-  },
-  atomic: () => {
-    const ops: { type: "set" | "delete"; key: Deno.KvKey; value?: unknown }[] = [];
-    const checks: { key: Deno.KvKey; versionstamp: string | null }[] = [];
-    const chain = {
-      check: (check: { key: Deno.KvKey; versionstamp: string | null }) => {
-        checks.push(check);
-        return chain;
-      },
-      set: (key: Deno.KvKey, value: unknown, _options?: { expireIn?: number }) => {
-        ops.push({ type: "set", key, value });
-        return chain;
-      },
-      delete: (key: Deno.KvKey) => {
-        ops.push({ type: "delete", key });
-        return chain;
-      },
-      commit: () => {
-        beforeAtomicCommit?.();
-        beforeAtomicCommit = null;
-        for (const check of checks) {
-          if (versionstampFor(keyToString(check.key)) !== check.versionstamp) {
-            return Promise.resolve({ ok: false } as const);
-          }
-        }
-        for (const op of ops) {
-          if (op.type === "set") kvStore.set(keyToString(op.key), op.value);
-          else kvStore.delete(keyToString(op.key));
-        }
-        return Promise.resolve({ ok: true } as const);
-      },
-    };
-    return chain;
-  },
-  close: () => {},
-} as unknown as Deno.Kv;
-
-(Deno as unknown as { openKv?: () => Promise<Deno.Kv> }).openKv = () => Promise.resolve(kvStub);
-
-const {
+import {
+  METERED_QUOTA_FRESH_MS,
+  METERED_QUOTA_STATE_KEY,
   PASSKEY_MAX_REQUEST_BODY_BYTES,
   PASSKEY_RELAY_COOKIE_NAME,
-  PASSKEY_SESSION_TTL_MS,
+  abortError,
+  authenticateAdmin,
+  authenticateClient,
   buildPasskeyHandle,
+  encodeBase64Url,
   getPasskeyRequestMeta,
   getPasskeySessionForRequest,
   handlePasskeyLoginFinish,
@@ -136,54 +21,26 @@ const {
   handlePasskeySession,
   handlePasskeyUsersList,
   handlePasskeyUsersUpdate,
+  handleV1Auth,
   hasPasskeyUsers,
+  keyToString,
+  kvStore,
+  kvStub,
   normalizePasskeyHandle,
   passkeyChallengeKey,
   passkeyCredentialKey,
   passkeyHandleKey,
   passkeySessionKey,
   passkeyUserKey,
+  requestUrl,
+  requireAdminAuth,
   saveVerifiedPasskeyRegistration,
+  seedPasskeySession,
+  setBeforeAtomicCommit,
+  setKvGetDelayMs,
   updatePasskeyCredentialSignCount,
-} = await import("../src/passkeys.ts");
-const { authenticateAdmin, authenticateClient, handleV1Auth, requireAdminAuth } = await import("../src/auth.ts");
-const { config } = await import("../src/config.ts");
-const { METERED_QUOTA_FRESH_MS, METERED_QUOTA_STATE_KEY } = await import("../src/metered_quota.ts");
-
-const withEnv = async (updates: Record<string, string | null>, fn: () => Promise<void>): Promise<void> => {
-  const originalGet = Deno.env.get.bind(Deno.env);
-  Deno.env.get = (key: string): string | undefined => {
-    if (Object.prototype.hasOwnProperty.call(updates, key)) return updates[key] ?? undefined;
-    return originalGet.call(Deno.env, key);
-  };
-  try {
-    await fn();
-  } finally {
-    Deno.env.get = originalGet;
-  }
-};
-
-const seedPasskeySession = (token = "uos_ai_session_test", { isAdmin = true, audienceOrigin = "" }: { isAdmin?: boolean; audienceOrigin?: string } = {}) => {
-  const now = Date.now();
-  const user = {
-    id: "user-test",
-    handle: "uos-passkey-test",
-    is_admin: isAdmin,
-    credential_ids: ["credential-test"],
-    created_at_ms: now,
-    updated_at_ms: now,
-  };
-  kvStore.set(keyToString(passkeyUserKey(user.id)), user);
-  kvStore.set(keyToString(passkeyHandleKey(user.handle)), user.id);
-  kvStore.set(keyToString(passkeySessionKey(token)), {
-    token,
-    user_id: user.id,
-    created_at_ms: now,
-    expires_at_ms: now + PASSKEY_SESSION_TTL_MS,
-    ...(audienceOrigin ? { audience_origin: audienceOrigin } : {}),
-  });
-  return { token, user };
-};
+  withEnv,
+} from "./helpers/passkeys-harness.ts";
 
 Deno.test("inference handler omits synthetic quota headers for passkey sessions", async () => {
   kvStore.clear();
@@ -253,7 +110,7 @@ Deno.test("passkey inference does not read a retained Metered snapshot", async (
 
   await withEnv({ METERED_API_KEY: "metered-api-key" }, async () => {
     const { default: handler } = await import("../src/handler.ts");
-    kvGetDelayMs = 10;
+    setKvGetDelayMs(10);
     const response = await handler(
       new Request("https://ai.ubq.fi/v1/responses", {
         method: "POST",
@@ -1253,9 +1110,9 @@ Deno.test("passkey registration deletes stale handle mapping when a user handle 
 
 Deno.test("passkey registration rejects concurrent handle claims", async () => {
   kvStore.clear();
-  beforeAtomicCommit = () => {
+  setBeforeAtomicCommit(() => {
     kvStore.set(keyToString(passkeyHandleKey("race-name")), "user-other");
-  };
+  });
 
   const saved = await saveVerifiedPasskeyRegistration(kvStub, {
     userId: "user-race",
@@ -1294,9 +1151,9 @@ Deno.test("passkey credential sign count update rejects concurrent writes", asyn
     created_at_ms: number;
   }>;
   if (!entry.value || !entry.versionstamp) throw new Error("missing seeded credential");
-  beforeAtomicCommit = () => {
+  setBeforeAtomicCommit(() => {
     kvStore.set(keyToString(credentialKey), { ...entry.value, sign_count: 6 });
-  };
+  });
 
   const updated = await updatePasskeyCredentialSignCount(
     kvStub,
@@ -1522,170 +1379,4 @@ Deno.test("relay passkey cookie fallback accepts raw forbidden Request methods",
     abort.abort();
     await server.finished.catch(() => {});
   }
-});
-
-Deno.test("allowlisted GitHub client bearers keep precedence over passkey cookies", async () => {
-  kvStore.clear();
-  const { token: passkeyToken } = seedPasskeySession("uos_ai_session_client_cookie");
-  const githubToken = "ghp_allowlisted_client_token_1234567890abcdefghijklmnopqrstuvwxyz";
-  const authTokens = config.authTokens as Set<string>;
-  authTokens.add(githubToken);
-  try {
-    const response = await handleV1Auth(
-      new Request("https://ai.ubq.fi/uos/auth", {
-        headers: {
-          Authorization: `Bearer ${githubToken}`,
-          Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(passkeyToken)}`,
-        },
-      })
-    );
-    assert.equal(response.status, 200);
-    const body = await response.json();
-    assert.equal(body.auth.method.kind, "auth_tokens_allowlist");
-    assert.equal(body.auth.token.shape, "github_prefix");
-  } finally {
-    authTokens.delete(githubToken);
-  }
-});
-
-Deno.test("allowlisted GitHub admin bearers keep precedence over passkey cookies on /uos/auth", async () => {
-  kvStore.clear();
-  const { token: passkeyToken } = seedPasskeySession("uos_ai_session_non_admin_cookie", { isAdmin: false });
-  const githubToken = "ghp_allowlisted_admin_token_1234567890abcdefghijklmnopqrstuvwxyz";
-  const adminTokens = config.adminTokens as Set<string>;
-  adminTokens.add(githubToken);
-  try {
-    const response = await handleV1Auth(
-      new Request("https://ai.ubq.fi/uos/auth", {
-        headers: {
-          Authorization: `Bearer ${githubToken}`,
-          Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(passkeyToken)}`,
-        },
-      })
-    );
-    assert.equal(response.status, 200);
-    const body = await response.json();
-    assert.equal(body.auth.method.kind, "admin_allowlist");
-    assert.equal(body.auth.is_admin, true);
-    assert.equal(body.auth.is_super_admin, true);
-    assert.equal(body.auth.token.shape, "github_prefix");
-  } finally {
-    adminTokens.delete(githubToken);
-  }
-});
-
-Deno.test("passkey lifecycle handlers prefer a relay cookie over a stale GitHub bearer", async () => {
-  kvStore.clear();
-  const audienceOrigin = "https://agent-worker-4d2p9cx7m1ab.ubiquity-os.deno.net";
-  const { token, user } = seedPasskeySession("uos_ai_session_lifecycle_cookie", { audienceOrigin });
-  const githubToken = "ghp_stale_lifecycle_token_1234567890abcdefghijklmnopqrstuvwxyz";
-  const { default: handler } = await import("../src/handler.ts");
-  const headers = {
-    Authorization: `Bearer ${githubToken}`,
-    Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(token)}`,
-    Origin: audienceOrigin,
-  };
-
-  const sessionResponse = await handler(new Request("https://ai.ubq.fi/api/auth/session", { headers }));
-  assert.equal(sessionResponse.status, 200);
-  const sessionBody = await sessionResponse.json();
-  assert.equal(sessionBody.user.id, user.id);
-
-  const registerResponse = await handler(
-    new Request("https://ai.ubq.fi/api/auth/register/start", {
-      method: "POST",
-      headers: { ...headers, "Content-Type": "application/json" },
-      body: JSON.stringify({ handle: user.handle }),
-    })
-  );
-  assert.equal(registerResponse.status, 200);
-  const registerBody = await registerResponse.json();
-  const encodedUserId = encodeBase64Url(user.id);
-  assert.equal(registerBody.publicKey.user.id, encodedUserId);
-  assert.equal(registerBody.publicKey.user.name, user.handle);
-
-  const logoutResponse = await handler(new Request("https://ai.ubq.fi/api/auth/logout", { method: "POST", headers }));
-  assert.equal(logoutResponse.status, 204);
-  assert.equal((await kvStub.get(passkeySessionKey(token))).value, null);
-});
-
-Deno.test("passkey lifecycle handlers preserve configured bearer precedence", async () => {
-  for (const configuredKind of ["client", "admin"] as const) {
-    kvStore.clear();
-    const audienceOrigin = "https://agent-worker-4d2p9cx7m1ab.ubiquity-os.deno.net";
-    const { token: passkeyToken } = seedPasskeySession(`uos_ai_session_${configuredKind}_lifecycle_cookie`, {
-      audienceOrigin,
-    });
-    const configuredToken = `ghp_configured_${configuredKind}_lifecycle_1234567890abcdefghijklmnopqrstuvwxyz`;
-    const configuredTokens = configuredKind === "client" ? (config.authTokens as Set<string>) : (config.adminTokens as Set<string>);
-    configuredTokens.add(configuredToken);
-    try {
-      const { default: handler } = await import("../src/handler.ts");
-      const headers = {
-        Authorization: `Bearer ${configuredToken}`,
-        Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(passkeyToken)}`,
-        Origin: audienceOrigin,
-      };
-      const registrationHandle = `configured-${configuredKind}-registration`;
-      const registerResponse = await handler(
-        new Request("https://ai.ubq.fi/api/auth/register/start", {
-          method: "POST",
-          headers: { ...headers, "Content-Type": "application/json" },
-          body: JSON.stringify({ handle: registrationHandle }),
-        })
-      );
-      assert.equal(registerResponse.status, configuredKind === "client" ? 401 : 200, configuredKind);
-      if (configuredKind === "admin") {
-        const registerBody = await registerResponse.json();
-        assert.equal(registerBody.publicKey.user.name, registrationHandle);
-      }
-
-      const sessionResponse = await handler(new Request("https://ai.ubq.fi/api/auth/session", { headers }));
-      assert.equal(sessionResponse.status, 401, configuredKind);
-
-      const logoutResponse = await handler(new Request("https://ai.ubq.fi/api/auth/logout", { method: "POST", headers }));
-      assert.equal(logoutResponse.status, 204, configuredKind);
-      assert.notEqual((await kvStub.get(passkeySessionKey(passkeyToken))).value, null, configuredKind);
-    } finally {
-      configuredTokens.delete(configuredToken);
-    }
-  }
-});
-
-Deno.test("passkey logout preserves valid bearer precedence over a relay cookie", async () => {
-  kvStore.clear();
-  const audienceOrigin = "https://agent-worker-4d2p9cx7m1ab.ubiquity-os.deno.net";
-  const { token: bearerToken } = seedPasskeySession("uos_ai_session_bearer_precedence");
-  const { token: cookieToken } = seedPasskeySession("uos_ai_session_cookie_secondary", { audienceOrigin });
-  const { default: handler } = await import("../src/handler.ts");
-  const response = await handler(
-    new Request("https://ai.ubq.fi/api/auth/logout", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${bearerToken}`,
-        Cookie: `${PASSKEY_RELAY_COOKIE_NAME}=${encodeURIComponent(cookieToken)}`,
-        Origin: audienceOrigin,
-      },
-    })
-  );
-
-  assert.equal(response.status, 204);
-  assert.equal((await kvStub.get(passkeySessionKey(bearerToken))).value, null);
-  assert.notEqual((await kvStub.get(passkeySessionKey(cookieToken))).value, null);
-});
-
-Deno.test("authenticated passkey token overrides remain bound to their relay audience", async () => {
-  kvStore.clear();
-  const audienceOrigin = "https://agent-worker-4d2p9cx7m1ab.ubiquity-os.deno.net";
-  const { token } = seedPasskeySession("uos_ai_session_override_audience", { audienceOrigin });
-  const response = await handlePasskeyRegisterStart(
-    new Request("https://ai.ubq.fi/api/auth/register/start", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Origin: "https://evil.example" },
-      body: "{}",
-    }),
-    { authenticatedPasskeyToken: token }
-  );
-
-  assert.equal(response.status, 401);
 });
