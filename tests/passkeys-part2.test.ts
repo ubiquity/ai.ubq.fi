@@ -40,7 +40,7 @@ Deno.test("allowlisted GitHub client bearers keep precedence over passkey cookie
 Deno.test("allowlisted GitHub admin bearers keep precedence over passkey cookies on /uos/auth", async () => {
   kvStore.clear();
   const { token: passkeyToken } = seedPasskeySession("uos_ai_session_non_admin_cookie", { isAdmin: false });
-  const githubToken = "ghp_allowlisted_admin_token_1234567890abcdefghijklmnopqrstuvwxyz";
+  const githubToken = "ghp_allowlisted_admin_fixture";
   const adminTokens = config.adminTokens as Set<string>;
   adminTokens.add(githubToken);
   try {
@@ -67,7 +67,7 @@ Deno.test("passkey lifecycle handlers prefer a relay cookie over a stale GitHub 
   kvStore.clear();
   const audienceOrigin = "https://agent-worker-4d2p9cx7m1ab.ubiquity-os.deno.net";
   const { token, user } = seedPasskeySession("uos_ai_session_lifecycle_cookie", { audienceOrigin });
-  const githubToken = "ghp_stale_lifecycle_token_1234567890abcdefghijklmnopqrstuvwxyz";
+  const githubToken = "ghp_stale_lifecycle_fixture";
   const { default: handler } = await import("../src/handler.ts");
   const headers = {
     Authorization: `Bearer ${githubToken}`,
