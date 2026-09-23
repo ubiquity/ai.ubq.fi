@@ -67,7 +67,6 @@ import {
   handleChatCompletions,
   handleEmbeddingsJobCreate,
   handleEmbeddingsJobGet,
-  handleImages,
   handleModelCapabilities,
   handleModels,
   handlePublicModelCatalog,
@@ -75,6 +74,7 @@ import {
   handleUosEmbeddings,
   type ResponseTelemetry,
 } from "./openai.ts";
+import { handleImages } from "./images.ts";
 import { enqueuePromptCacheAnalytics, recordPromptCacheAnalytics } from "./prompt_cache_analytics.ts";
 import { recordPromptCacheTelemetry } from "./prompt_cache_telemetry_gate.ts";
 import {

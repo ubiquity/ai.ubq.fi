@@ -305,7 +305,7 @@ const { default: handler } = await import("../src/handler.ts");
 const { authenticateAdmin, authenticateClient } = await import("../src/auth.ts");
 const { PASSKEY_RELAY_COOKIE_NAME, passkeySessionKey, passkeyUserKey } = await import("../src/passkeys.ts");
 const { createRequestDeliveryLifecycle } = await import("../src/serve_handler.ts");
-const { handleResponses, setImageBaseModelForTest } = await import("../src/openai.ts");
+const { handleResponses } = await import("../src/openai.ts");
 const {
   API_KEY_USAGE_V3_REQUEST_PREFIX,
   ApiKeyQuotaDispatchError,
@@ -2675,7 +2675,7 @@ Deno.test("Images preserve Codex quota responses without hidden-model paid fallb
   const originalSurplusApiKey = Deno.env.get("SURPLUS_API_KEY");
   let codexCalls = 0;
   let meteredCalls = 0;
-  setImageBaseModelForTest(MODEL);
+  (await import("../src/images.ts")).setImageBaseModelForTest(MODEL);
   Deno.env.set("METERED_API_KEY", "metered-image-gate-test-key");
   Deno.env.delete("SURPLUS_API_KEY");
   await fetchMeteredModels({
@@ -2727,7 +2727,7 @@ Deno.test("Images preserve Codex quota responses without hidden-model paid fallb
     globalThis.fetch = originalFetch;
     resetMeteredModelsCacheForTest();
     resetSurplusModelsCacheForTest();
-    setImageBaseModelForTest(null);
+    (await import("../src/images.ts")).setImageBaseModelForTest(null);
     if (originalMeteredApiKey === undefined) Deno.env.delete("METERED_API_KEY");
     else Deno.env.set("METERED_API_KEY", originalMeteredApiKey);
     if (originalSurplusApiKey === undefined) Deno.env.delete("SURPLUS_API_KEY");
