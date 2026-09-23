@@ -35,7 +35,7 @@ export type RecordedUpstreamReplay = Readonly<{
   };
 }>;
 
-const PROVIDERS: readonly SentinelUpstreamProvider[] = ["chatgpt_codex", "surplus", "metered", "cerebras", "deepseek"];
+const PROVIDERS: readonly SentinelUpstreamProvider[] = ["chatgpt_codex", "surplus", "metered", "cerebras", "deepseek", "lithos"];
 
 const ROUTE_INVALID = "Sentinel recorded upstream route is not an exact HTTPS endpoint";
 const ROUTE_AMBIGUOUS = "Sentinel recorded upstream routes are not unique across providers";
@@ -73,7 +73,7 @@ const decodeStandardBase64 = (encoded: string): Uint8Array<ArrayBuffer> => {
 /**
  * Build the replayed upstream transport for one parsed trace. The trace is
  * cloned and re-validated with the real exported parser; the caller's input
- * objects and buffers are never mutated. `routes` must map the four recorded
+ * objects and buffers are never mutated. `routes` must map the recorded
  * provider enums to distinct exact HTTPS endpoint strings (there must be no
  * ambiguity where one endpoint could belong to two providers).
  *

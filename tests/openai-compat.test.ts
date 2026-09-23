@@ -2713,8 +2713,8 @@ Deno.test("openai: models returns an empty list when no snapshot is stored", asy
   const snapshotKey = keyToString(TEST_CODEX_MODELS_KEY);
   const previousSnapshot = kvStore.get(snapshotKey);
   // Provider-backed entries are injected independently of the Codex snapshot,
-  // so both optional provider credentials must be absent for an empty list.
-  const providerEnvKeys = ["CEREBRAS_API_KEY", "DEEPSEEK_API_KEY"] as const;
+  // so every optional provider credential must be absent for an empty list.
+  const providerEnvKeys = ["CEREBRAS_API_KEY", "DEEPSEEK_API_KEY", "LITHOSAI_API_KEY"] as const;
   const originalApiKeys = providerEnvKeys.map((key) => [key, Deno.env.get(key)] as const);
   kvStore.delete(snapshotKey);
   for (const key of providerEnvKeys) Deno.env.delete(key);

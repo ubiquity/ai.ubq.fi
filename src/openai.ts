@@ -36,6 +36,7 @@ import {
   DEEPSEEK_OFFICIAL_MODEL_IDS,
   DEEPSEEK_REASONING_LEVELS,
   DeepSeekError,
+  type DeepSeekStreamFrame,
   DeepSeekStreamError,
   deepSeekDefaultOutputAllowance,
   deepSeekThinkingModeActive,
@@ -51,11 +52,30 @@ import {
 } from "./deepseek.ts";
 import {
   createDeepSeekResponsesStreamTranslator,
+  type ChatOnlyResponsesProfile,
+  DEEPSEEK_RESPONSES_PROFILE,
   type DeepSeekResponsesEcho,
   encodeResponsesEvent,
+  LITHOS_RESPONSES_PROFILE,
   toDeepSeekResponsesChatBody,
   toDeepSeekResponsesPayload,
 } from "./deepseek_responses.ts";
+import {
+  fetchLithosChatCompletions,
+  getLithosProviderRequestId,
+  iterateLithosChatCompletionStream,
+  LITHOS_CONTEXT_WINDOW_TOKENS,
+  LITHOS_DEFAULT_REASONING_EFFORT,
+  LITHOS_DISPLAY_NAMES,
+  LITHOS_EFFECTIVE_CONTEXT_WINDOW_PERCENT,
+  LITHOS_MODEL_IDS,
+  LITHOS_RATE_LIMIT_HEADERS,
+  LITHOS_REASONING_LEVELS,
+  LithosError,
+  lithosUpstreamModelFor,
+  normalizeLithosChatCompletion,
+  readLithosApiKey,
+} from "./lithos.ts";
 import { getCatalogClientVersion, handleCodexCatalogModels } from "./codex_catalog.ts";
 import { CODEX_CHATGPT_PROMPT_CACHE_PROVIDER, normalizePromptCacheCapabilities, type PromptCacheControls } from "./codex_models.ts";
 import { loadCodexModelsWhitelist, filterWhitelistedModelList, filterWhitelistedModelMap } from "./codex_models_whitelist.ts";
@@ -143,7 +163,13 @@ import {
   reservePaidFallback,
   type SurplusBillingPricing,
 } from "./paid_fallback.ts";
-import { recordCerebrasProviderHealth, recordDeepSeekProviderHealth, recordMeteredProviderHealth, recordSurplusProviderHealth } from "./provider_health.ts";
+import {
+  recordCerebrasProviderHealth,
+  recordDeepSeekProviderHealth,
+  recordLithosProviderHealth,
+  recordMeteredProviderHealth,
+  recordSurplusProviderHealth,
+} from "./provider_health.ts";
 import { getString, isRecord, sha256Hex } from "./utils.ts";
 import type { ChatCompletionRequest, MessageContentItem, PromptCacheBreakpoint, ResponseInputItem, ResponseMessageItem, ResponsesRequest } from "./types.ts";
 import { fetchMeteredModels, fetchMeteredResponses, METERED_MODELS_CACHE_TTL_MS, MeteredError, readMeteredApiKey } from "./metered.ts";
@@ -221,7 +247,7 @@ type UsageContext = Readonly<{
   onTerminalUsage?: (usage: UsageTokens | null, completed: boolean) => void;
 }>;
 
-type UpstreamProvider = "cerebras" | "chatgpt_codex" | "deepseek" | "removed_provider" | "metered" | "surplus";
+type UpstreamProvider = "cerebras" | "chatgpt_codex" | "deepseek" | "lithos" | "removed_provider" | "metered" | "surplus";
 const supportsReasoningProgressRelease = (provider: UpstreamProvider): boolean =>
   provider === "chatgpt_codex" || provider === "surplus" || provider === "metered";
 export type InferenceFallbackReason = "primary_quota_blocked" | "dynamic_paid_model";
@@ -2439,6 +2465,190 @@ const deepseekResponseHeaders = (providerRequestId: string | null): Record<strin
 // DeepSeek documents no `x-ratelimit-*` response headers: its capacity model is
 // concurrency based and surfaces as HTTP 429, so unlike Cerebras there is no
 // provider capacity header list to forward.
+
+/**
+ * The LithosAI route's response headers. This provider publishes NO request-id
+ * header at all, so the correlation field is normally absent; the seam exists so
+ * the day a vendor sends one it has exactly one place to land.
+ */
+const lithosResponseHeaders = (providerRequestId: string | null): Record<string, string> => ({
+  "x-uos-upstream": "lithos",
+  ...(providerRequestId ? { "x-uos-provider-request-id": providerRequestId } : {}),
+});
+
+const toLithosErrorResponse = (error: unknown): Response => {
+  let response: Response;
+  if (error instanceof ApiKeyQuotaDispatchError) {
+    response = openaiError(error.status, error.message, error.code, {
+      type: error.errorType,
+      headers: error.headers,
+    });
+  } else if (error instanceof LithosError) {
+    response = openaiError(error.status, error.message, error.code, {
+      type: error.status >= 500 ? "server_error" : "invalid_request_error",
+    });
+  } else if (error instanceof Error && error.name === "TimeoutError") {
+    response = openaiError(504, "Upstream request exceeded the gateway deadline.", "gateway_timeout", {
+      type: "server_error",
+    });
+  } else if (error instanceof Error && error.name === "AbortError") {
+    response = openaiError(499, "Request was cancelled.", "request_cancelled", { type: "server_error" });
+  } else {
+    // The adapter deliberately converts provider transport errors to a safe
+    // LithosError. Keep this fallback content-free as a final guard.
+    response = openaiError(502, "Upstream request could not be completed.", "lithos_upstream_unreachable", {
+      type: "server_error",
+    });
+  }
+  return withUpstreamProviderHeader(response, "lithos");
+};
+
+/**
+ * The provider's documented final 4xx statuses. This route never retries a
+ * dispatch (there is no failover, race, or backoff loop on it), and the
+ * `x-should-retry: false` header states the same contract to a downstream
+ * client so a caller does not turn "out of credit" or "unknown model" into a
+ * retry storm.
+ */
+const LITHOS_TERMINAL_UPSTREAM_STATUSES: ReadonlySet<number> = new Set([400, 401, 402, 404]);
+
+/** The three per-minute budgets whose name rides `error.type` on a 429. */
+const LITHOS_RATE_LIMIT_BUDGET_TYPES: ReadonlySet<string> = new Set(["requests", "input_tokens", "output_tokens"]);
+
+const LITHOS_PROVIDER_OVERLOADED_TYPE = "provider_overloaded";
+
+type LithosUpstreamErrorDetail = Readonly<{ message: string | null; type: string | null; code: string | null }>;
+
+/**
+ * One bounded, trimmed text field. The engine-parameter envelope carries an
+ * INTEGER `code`, so a safe integer is accepted and rendered as its own digits
+ * rather than being dropped; anything else is not a code this route can state.
+ */
+const lithosErrorTextField = (value: unknown, maxChars: number): string | null => {
+  if (typeof value === "string") {
+    const trimmed = value.slice(0, maxChars).trim();
+    return trimmed === "" ? null : trimmed;
+  }
+  if (typeof value === "number" && Number.isSafeInteger(value)) return String(value);
+  return null;
+};
+
+/**
+ * Reads either error envelope this provider is documented to send:
+ *
+ * 1. `{"error":{"message":…,"type":…,"code":…}}` for auth, validation and
+ *    model failures.
+ * 2. `{"object":"error","message":…,"type":"BadRequestError","code":400}` with
+ *    an INTEGER `code` for engine parameter violations.
+ *
+ * A non-JSON body is tolerated instead of throwing: the error path may not
+ * itself fail, and nothing from the body is reflected as a code unless it is
+ * already a string or a safe integer.
+ */
+const parseLithosUpstreamErrorDetail = (text: string): LithosUpstreamErrorDetail => {
+  try {
+    const parsed: unknown = JSON.parse(text) as unknown;
+    if (!isRecord(parsed) || Array.isArray(parsed)) return { message: null, type: null, code: null };
+    const error = isRecord(parsed.error) && !Array.isArray(parsed.error) ? parsed.error : null;
+    return {
+      message: lithosErrorTextField(error?.message ?? parsed.message, UPSTREAM_ERROR_MESSAGE_MAX),
+      type: lithosErrorTextField(error?.type ?? parsed.type, UPSTREAM_ERROR_CODE_MAX),
+      code: lithosErrorTextField(error?.code ?? parsed.code, UPSTREAM_ERROR_CODE_MAX),
+    };
+  } catch {
+    return { message: null, type: null, code: null };
+  }
+};
+
+/**
+ * The client-visible code for one upstream refusal. The vendor semantics are
+ * kept distinct rather than collapsed into one generic upstream error:
+ *
+ * - `402` is out of credit; the vendor's own code is carried when present.
+ * - `404` is an unknown model.
+ * - `429` is split by `error.type`: a per-minute budget (`requests`,
+ *   `input_tokens`, `output_tokens`) becomes `rate_limit_exceeded`, while a
+ *   model at capacity becomes `provider_overloaded`. A 429 whose body names
+ *   neither is reported as the more common budget case.
+ * - Everything else keeps the vendor's code, falling back to the route's own.
+ */
+const lithosUpstreamErrorCode = (status: number, detail: LithosUpstreamErrorDetail): string => {
+  if (status === 429) {
+    return detail.type === LITHOS_PROVIDER_OVERLOADED_TYPE || detail.code === LITHOS_PROVIDER_OVERLOADED_TYPE
+      ? LITHOS_PROVIDER_OVERLOADED_TYPE
+      : "rate_limit_exceeded";
+  }
+  if (status === 402) return detail.code ?? "insufficient_quota";
+  if (status === 401 || status === 403) return detail.code ?? "auth_invalid";
+  if (status === 404) return detail.code ?? "model_not_found";
+  // `error.type` names the refusing budget when the vendor sends only that, so
+  // it is a legitimate code source when `code` itself is absent.
+  if (detail.code) return detail.code;
+  if (detail.type && LITHOS_RATE_LIMIT_BUDGET_TYPES.has(detail.type)) return "rate_limit_exceeded";
+  return "lithos_upstream_error";
+};
+
+/** One provider's refusal type. `402` and `429` are distinct on this wire. */
+const lithosUpstreamErrorType = (status: number): string => {
+  if (status === 402) return "insufficient_quota";
+  if (status === 429) return "rate_limit_error";
+  if (status >= 500) return "server_error";
+  return "invalid_request_error";
+};
+
+const toLithosUpstreamErrorResponse = async (upstream: Response, signal?: AbortSignal, bodyDiagnostic?: Record<string, unknown>): Promise<Response> => {
+  // Read the error body under the shared bounded ceiling (64 KiB / 1 s) so a
+  // stalled upstream cannot extend the gateway request; only message and code
+  // are ever forwarded.
+  let detail: LithosUpstreamErrorDetail = { message: null, type: null, code: null };
+  try {
+    const captured = await readBoundedResponseBody(upstream, {
+      signal,
+      maxBytes: BOUNDED_RESPONSE_BODY_MAX_BYTES,
+      timeoutMs: BOUNDED_RESPONSE_BODY_TIMEOUT_MS,
+      cancellationReason: "LithosAI upstream error body",
+    });
+    if (captured.complete && captured.bytes.length > 0) {
+      detail = parseLithosUpstreamErrorDetail(new TextDecoder().decode(captured.bytes));
+    }
+  } catch {
+    // Bounded read failure must not change the error semantics.
+  } finally {
+    cancelResponseBody(upstream);
+  }
+  const headers = lithosResponseHeaders(getLithosProviderRequestId(upstream));
+  // Every admitted response and every refusal carries the capacity headers, so
+  // a 429 forwards them the way the Cerebras branch forwards its own list. The
+  // two retry hints keep the vendor's spelling and precedence: `retry-after-ms`
+  // first, then `retry-after`.
+  if (upstream.status === 429) {
+    for (const header of LITHOS_RATE_LIMIT_HEADERS) {
+      const value = upstream.headers.get(header);
+      if (value !== null) headers[header] = value;
+    }
+    const retryAfterMs = upstream.headers.get("retry-after-ms");
+    if (retryAfterMs !== null) headers["retry-after-ms"] = retryAfterMs;
+  }
+  const retryAfter = upstream.headers.get("Retry-After");
+  if (retryAfter) headers["Retry-After"] = retryAfter;
+  // A vendor instruction always wins; otherwise the documented terminal
+  // statuses are marked non-retryable explicitly, and 402 is the one that
+  // matters most: out of credit is never a transient condition.
+  const upstreamShouldRetry = upstream.headers.get("x-should-retry");
+  if (upstreamShouldRetry !== null) headers["x-should-retry"] = upstreamShouldRetry;
+  else if (LITHOS_TERMINAL_UPSTREAM_STATUSES.has(upstream.status)) headers["x-should-retry"] = "false";
+  const code = lithosUpstreamErrorCode(upstream.status, detail);
+  // Bounded provider diagnostics: the gateway forwards this message to the
+  // client, so it must also appear in the server log to be debuggable.
+  console.warn(
+    "[ai.ubq.fi] lithos_upstream_error",
+    JSON.stringify({ status: upstream.status, code, message: detail.message ?? null, request: bodyDiagnostic ?? null })
+  );
+  return openaiError(upstream.status, detail.message ?? "LithosAI upstream returned an error.", code, {
+    type: lithosUpstreamErrorType(upstream.status),
+    headers,
+  });
+};
 const diagnosticReasoningLabel = (value: unknown): string => {
   if (typeof value !== "string") return "absent";
   return value ? "present" : "empty";
@@ -6181,6 +6391,63 @@ const withConfiguredDeepSeekCapabilities = (data: readonly Record<string, unknow
   return [...data.filter((model) => !ids.has(getString(model.id) ?? "")), ...configured];
 };
 
+/**
+ * The eight LithosAI ids. Unlike the DeepSeek aliases these are eight distinct
+ * selectable ids, so each id is advertised in its own right; a row another
+ * provider published for one of them is REPLACED, because once a request for
+ * that id dispatches to LithosAI a row still naming the other provider would
+ * misdescribe the route it now takes.
+ */
+const configuredLithosModels = (): Record<string, unknown>[] =>
+  readLithosApiKey()
+    ? LITHOS_MODEL_IDS.map((id) => ({
+        id,
+        object: "model",
+        created: 0,
+        owned_by: "lithos",
+      }))
+    : [];
+
+const configuredLithosModelCapabilities = (): Record<string, unknown>[] => {
+  if (!readLithosApiKey()) return [];
+  return LITHOS_MODEL_IDS.map((id) => {
+    const resolved = resolveModelMetadata(id, { provider: LITHOS_PROVIDER_HINT });
+    return {
+      id,
+      object: "uos.model_capabilities",
+      owned_by: "lithos",
+      display_name: LITHOS_DISPLAY_NAMES[id] ?? id,
+      upstream_provider: "lithos",
+      supported_endpoints: ["/v1/chat/completions", "/v1/responses"],
+      supported_reasoning_levels: [...LITHOS_REASONING_LEVELS],
+      default_reasoning_effort: LITHOS_DEFAULT_REASONING_EFFORT,
+      // This provider accepted all seven tiers verbatim on 2026-09-23 and
+      // refused `ultra`, so no Codex preset is translated here and the map is
+      // deliberately empty.
+      reasoning_effort_wire_map: {},
+      context_window_tokens: resolved.context_window_tokens,
+      max_context_window_tokens: resolved.max_context_window_tokens,
+      auto_compact_token_limit_tokens: resolved.auto_compact_token_limit_tokens,
+      ...(resolved.effective_context_window_percent === null ? {} : { effective_context_window_percent: resolved.effective_context_window_percent }),
+      context_source: resolved.context_source,
+    };
+  });
+};
+
+const withConfiguredLithosModels = (models: readonly Record<string, unknown>[], enabled: boolean): Record<string, unknown>[] => {
+  const configured = enabled ? configuredLithosModels() : [];
+  if (!configured.length) return [...models];
+  const ids = new Set(configured.map((model) => model.id));
+  return [...models.filter((model) => !ids.has(getString(model.id) ?? "")), ...configured];
+};
+
+const withConfiguredLithosCapabilities = (data: readonly Record<string, unknown>[], enabled: boolean): Record<string, unknown>[] => {
+  const configured = enabled ? configuredLithosModelCapabilities() : [];
+  if (!configured.length) return [...data];
+  const ids = new Set(configured.map((model) => model.id));
+  return [...data.filter((model) => !ids.has(getString(model.id) ?? "")), ...configured];
+};
+
 const normalizeModelCapabilitiesEntry = (value: unknown): Record<string, unknown> | null => {
   if (!isRecord(value)) return null;
   const id = modelIdFromSnapshotRecord(value);
@@ -7947,9 +8214,9 @@ export const handleModels = async (req?: Request): Promise<Response> => {
   const snapshot = await loadCodexModelsSnapshot();
   const normalized = snapshot && Array.isArray(snapshot.models) && snapshot.models.length > 0 ? normalizeModelList(snapshot) : null;
   const codexModels = isProviderEnabled("codex", selection) ? (normalized?.data ?? []) : [];
-  const data = withConfiguredDeepSeekModels(
-    withConfiguredCerebrasModel(codexModels, isProviderEnabled("cerebras", selection)),
-    isProviderEnabled("deepseek", selection)
+  const data = withConfiguredLithosModels(
+    withConfiguredDeepSeekModels(withConfiguredCerebrasModel(codexModels, isProviderEnabled("cerebras", selection)), isProviderEnabled("deepseek", selection)),
+    isProviderEnabled("lithos", selection)
   );
   const [metered, surplus] = await Promise.all([
     isProviderEnabled("openlux", selection) ? fetchMeteredModels() : Promise.resolve(null),
@@ -7975,7 +8242,7 @@ export const handleModels = async (req?: Request): Promise<Response> => {
 };
 
 type PublicModelProvider = Readonly<{
-  id: "codex" | "openlux" | "surplus" | "deepseek" | "cerebras";
+  id: "codex" | "openlux" | "surplus" | "deepseek" | "cerebras" | "lithos";
   owned_by: string;
   supported_endpoints: readonly string[];
 }>;
@@ -8015,6 +8282,21 @@ const DEEPSEEK_PROVIDER_HINT: ModelMetadataHint = {
 const CEREBRAS_PROVIDER_HINT: ModelMetadataHint = {
   supported_reasoning_levels: ["low", "medium", "high"],
   default_reasoning_effort: "medium",
+};
+
+/**
+ * What the LithosAI route declares about its own models. All eight ids serve
+ * one 1,048,576-token window (verified 2026-09-23), and `reasoning_effort` is
+ * accepted verbatim for the seven tiers the route advertises, so the hint
+ * carries the window, the effective percentage and the tiers together rather
+ * than restating them at each call site.
+ */
+const LITHOS_PROVIDER_HINT: ModelMetadataHint = {
+  context_window_tokens: LITHOS_CONTEXT_WINDOW_TOKENS,
+  max_context_window_tokens: LITHOS_CONTEXT_WINDOW_TOKENS,
+  effective_context_window_percent: LITHOS_EFFECTIVE_CONTEXT_WINDOW_PERCENT,
+  supported_reasoning_levels: [...LITHOS_REASONING_LEVELS],
+  default_reasoning_effort: LITHOS_DEFAULT_REASONING_EFFORT,
 };
 
 const providerSupportedEndpointPaths = (supportedEndpointTypes: readonly string[]): string[] => [
@@ -8078,7 +8360,7 @@ const collectCodexSnapshotRecords = (snapshot: CodexModelsSnapshot | null): Map<
   return records;
 };
 
-export type ModelCatalogSourceId = "codex" | "openlux" | "surplus" | "deepseek" | "cerebras" | "openrouter";
+export type ModelCatalogSourceId = "codex" | "openlux" | "surplus" | "deepseek" | "cerebras" | "lithos" | "openrouter";
 
 export type ModelCatalogSource = Readonly<{
   status: "available" | "unavailable";
@@ -8113,7 +8395,7 @@ const credentialGatedCatalogSource = (configured: boolean, count: number): Model
  * whitelist selection is the only thing that decides what the gateway
  * advertises, so an id this route can serve must stay selectable.
  */
-const addCredentialGatedCatalogProviders = (models: Map<string, PublicModelCatalogEntry>): { deepseek: number; cerebras: number } => {
+const addCredentialGatedCatalogProviders = (models: Map<string, PublicModelCatalogEntry>): { deepseek: number; cerebras: number; lithos: number } => {
   let deepseek = 0;
   if (readDeepSeekApiKey()) {
     const provider: PublicModelProvider = {
@@ -8140,7 +8422,28 @@ const addCredentialGatedCatalogProviders = (models: Map<string, PublicModelCatal
     );
     cerebras = 1;
   }
-  return { deepseek, cerebras };
+  let lithos = 0;
+  if (readLithosApiKey()) {
+    // Eight ids, each individually addressable: the three per-model speed tiers
+    // (`-fast`, `-ultra`, `-ultra-chat`) are the same weights at higher per-token
+    // rates, so they are commercial tiers of one model rather than one model
+    // behind an alias. The catalog and capabilities schemas have no speed-tier
+    // field, and collapsing the ids would make a client-requestable model
+    // unselectable, so the tier stays in the id and the display name.
+    const provider: PublicModelProvider = {
+      id: "lithos",
+      owned_by: "lithos",
+      // Chat Completions is the vendor's own endpoint; `/v1/responses` is served
+      // by this gateway's translation, exactly as the DeepSeek adapter's rows
+      // declare it.
+      supported_endpoints: ["/v1/chat/completions", "/v1/responses"],
+    };
+    for (const id of LITHOS_MODEL_IDS) {
+      addPublicModelCatalogEntry(models, id, provider, null, { provider: LITHOS_PROVIDER_HINT });
+      lithos += 1;
+    }
+  }
+  return { deepseek, cerebras, lithos };
 };
 
 /**
@@ -8230,6 +8533,7 @@ export const buildModelCatalogSnapshot = async (): Promise<ModelCatalogSnapshot>
       },
       deepseek: credentialGatedCatalogSource(readDeepSeekApiKey() !== null, credentialGated.deepseek),
       cerebras: credentialGatedCatalogSource(readCerebrasApiKey() !== null, credentialGated.cerebras),
+      lithos: credentialGatedCatalogSource(readLithosApiKey() !== null, credentialGated.lithos),
       // Enrichment is listed as a source so the page can show how much of THIS
       // catalog it fills, counted the same way as every other source: rows it
       // supplied, not the size of the upstream catalog.
@@ -8242,17 +8546,25 @@ export const buildModelCatalogSnapshot = async (): Promise<ModelCatalogSnapshot>
   };
 };
 
+/** `sources` carries exactly one key per catalog source id, so a key it owns is one of them. */
+const isModelCatalogSourceId = (sources: ModelCatalogSnapshot["sources"], id: string): id is ModelCatalogSourceId => Object.hasOwn(sources, id);
+
 /**
  * Public catalog sources for one provider selection. A switched-off provider
  * contributes nothing and is marked `disabled`, which the models page reads as
  * "not served at all" rather than as a failed discovery. The admin picker keeps
  * using the unfiltered snapshot so every provider stays visible and switchable.
+ *
+ * The selectable roster can name a provider this snapshot has no source for: a
+ * provider is wired into the routing vocabulary before its catalog source is
+ * published, so only ids this snapshot actually reports are marked disabled.
  */
 const selectedCatalogSources = (sources: ModelCatalogSnapshot["sources"], selection: ProviderSelection | null): ModelCatalogSnapshot["sources"] => {
   if (!selection || selection.provider_ids.length === 0) return sources;
   const adjusted = { ...sources };
   for (const id of SELECTABLE_PROVIDER_IDS) {
     if (isProviderEnabled(id, selection)) continue;
+    if (!isModelCatalogSourceId(adjusted, id)) continue;
     adjusted[id] = { status: "unavailable", count: 0, updated_at_ms: null, configured: false, disabled: true };
   }
   return adjusted;
@@ -8328,6 +8640,7 @@ export const handleModelCapabilities = async (): Promise<Response> => {
   // Applied last so a DeepSeek-official id discovered above from the paid
   // fallback is replaced by the capabilities of the route it actually uses.
   data = withConfiguredDeepSeekCapabilities(data, isProviderEnabled("deepseek", selection));
+  data = withConfiguredLithosCapabilities(data, isProviderEnabled("lithos", selection));
 
   const capabilitiesKv = await getKv();
   const capabilitiesWhitelist = capabilitiesKv ? await loadCodexModelsWhitelist(capabilitiesKv) : null;
@@ -9331,6 +9644,41 @@ const recordDeepSeekResponseHealth = (status: number, providerRequestId: string 
 };
 
 /**
+ * Provider health for the LithosAI route.
+ *
+ * `402 insufficient_quota` gets its own explicit branch instead of falling into
+ * the generic failure bucket. It is still a quota event (`quota_exhausted`), but
+ * the recorded status keeps "out of credit" distinguishable from "rate
+ * limited", and unlike a 429 it is terminal for the account rather than a
+ * transient per-minute budget. The comparison statuses are the vendor's own:
+ * `401`/`403` are auth, `>=500` is an upstream fault, any other `4xx` is a
+ * reachable provider answering a client-shaped error.
+ */
+const recordLithosResponseHealth = (status: number, providerRequestId: string | null): void => {
+  if (status === 401 || status === 403) {
+    void recordLithosProviderHealth("auth_invalid", status, Date.now, providerRequestId);
+    return;
+  }
+  if (status === 402) {
+    void recordLithosProviderHealth("quota_exhausted", status, Date.now, providerRequestId);
+    return;
+  }
+  if (status === 429) {
+    void recordLithosProviderHealth("quota_exhausted", status, Date.now, providerRequestId);
+    return;
+  }
+  if (status >= 500) {
+    void recordLithosProviderHealth("upstream_error", status, Date.now, providerRequestId);
+    return;
+  }
+  if (status >= 400) {
+    void recordLithosProviderHealth("reachable", status, Date.now, providerRequestId);
+    return;
+  }
+  void recordLithosProviderHealth("success", status, Date.now, providerRequestId);
+};
+
+/**
  * Fails a buffered DeepSeek Responses completion closed when the provider
  * reported success but the translated output carries nothing a client can act
  * on. This is the buffered counterpart of the streamed G3 guard: one request
@@ -9930,7 +10278,46 @@ const respondDeepSeekChatIncompleteCapture = async (
   );
 };
 
-const deepseekStreamErrorValue = (code: string): Record<string, unknown> => ({
+/**
+ * The frame union both provider transports are normalized to. DeepSeek's
+ * iterator yields these frames directly; the LithosAI normalizer maps the
+ * chunks its transport validates onto the same shape.
+ */
+type ProviderStreamFrame = DeepSeekStreamFrame;
+
+/**
+ * The provider-specific seams the shared stream writers need, one adapter per
+ * provider. Every other part of both route shapes - framing, teardown,
+ * telemetry, semantic-output detection, failure classification order - is
+ * written once.
+ */
+type ProviderStreamAdapter = Readonly<{
+  /** This provider's response headers, including its provider-request-id echo. */
+  responseHeaders: (providerRequestId: string | null) => Record<string, string>;
+  /** This provider's upstream SSE frames, normalized to the shared union. */
+  frames: (upstream: Response, upstreamModel: string, options: Readonly<{ signal: AbortSignal }>) => AsyncGenerator<ProviderStreamFrame, void, unknown>;
+  /** Records the upstream response against this provider's health counters. */
+  recordResponseHealth: (status: number, providerRequestId: string | null) => void;
+  /** Records a provider fault against this provider's health counters. */
+  recordProviderError: (status: number | null, providerRequestId: string | null) => void;
+  /** Records the cancellation failure kind in this provider's vocabulary. */
+  recordCancellation: (usageContext: UsageContext | undefined) => void;
+  /** Records an incomplete upstream response in this provider's vocabulary. */
+  recordIncompleteResponse: (usageContext: UsageContext | undefined) => void;
+  /** Records the failure kind for an unmapped upstream finish reason. */
+  recordFinishFailureKind: (usageContext: UsageContext | undefined, finishReason: string | null) => void;
+  /** Records a transport error's failure kind in this provider's vocabulary. */
+  recordTransportFailure: (usageContext: UsageContext | undefined, error: unknown, terminalType: ResponseStreamTerminalType) => void;
+  /** Maps a transport error onto the shared terminal vocabulary. */
+  terminalTypeForError: (error: unknown, downstreamSignal: AbortSignal) => ResponseStreamTerminalType;
+  /** The code this provider stamps on its streamed Chat error payloads. */
+  streamErrorCode: string;
+  /** The provider profile the shared Responses translator runs under. */
+  responsesProfile: ChatOnlyResponsesProfile;
+}>;
+
+/** The OpenAI-shaped SSE error body a relay emits when the upstream stream itself failed. */
+const chatStreamErrorValue = (code: string): Record<string, unknown> => ({
   error: {
     message: "Upstream Chat Completions stream failed.",
     type: "server_error",
@@ -9949,12 +10336,13 @@ const closeController = (controller: ReadableStreamDefaultController<Uint8Array>
 };
 
 /**
- * Relays the upstream Chat Completions SSE stream as it arrives. Chunk frames
- * are validated by the transport before they reach this writer, so the client
- * sees the same incremental tokens DeepSeek produced rather than a buffered
- * replay.
+ * Relays one provider's Chat Completions SSE stream as it arrives. Chunk frames
+ * are validated by the provider transport before they reach this writer, so the
+ * client sees the same incremental tokens the provider produced rather than a
+ * buffered replay.
  */
-const streamDeepSeekChatCompletion = (
+const relayChatCompletionStream = (
+  adapter: ProviderStreamAdapter,
   upstream: Response,
   providerRequestId: string | null,
   usageContext: UsageContext | undefined,
@@ -9963,7 +10351,7 @@ const streamDeepSeekChatCompletion = (
   upstreamModel: string
 ): Response => {
   const encoder = new TextEncoder();
-  const headers = new Headers(deepseekResponseHeaders(providerRequestId));
+  const headers = new Headers(adapter.responseHeaders(providerRequestId));
   headers.set("Content-Type", "text/event-stream");
   headers.set("Cache-Control", "no-cache");
 
@@ -9973,7 +10361,7 @@ const streamDeepSeekChatCompletion = (
   // never interrupt a generator parked in an upstream read.
   const cancellation = new AbortController();
   const readSignal = AbortSignal.any([requestSignal, cancellation.signal]);
-  const iterator = iterateDeepSeekChatCompletionStream(upstream, upstreamModel, { signal: readSignal });
+  const iterator = adapter.frames(upstream, upstreamModel, { signal: readSignal });
   let closed = false;
   let terminalSettled = false;
   let semantic = false;
@@ -9990,20 +10378,20 @@ const streamDeepSeekChatCompletion = (
     await recordCompletionUsage(usageContext, usage);
     settleTerminal("response.completed");
     recordStreamTerminal(usageContext);
-    recordDeepSeekResponseHealth(upstream.status, providerRequestId);
+    adapter.recordResponseHealth(upstream.status, providerRequestId);
     controller.enqueue(encoder.encode("data: [DONE]\n\n"));
     controller.close();
   };
   const failStream = async (controller: ReadableStreamDefaultController<Uint8Array>, error: unknown): Promise<void> => {
     if (closed) return;
     closed = true;
-    const terminalType = deepSeekTerminalTypeForError(error, downstreamSignal);
+    const terminalType = adapter.terminalTypeForError(error, downstreamSignal);
     settleTerminal(terminalType);
-    recordDeepSeekFailureKind(usageContext, deepSeekTransportFailureKind(error, terminalType));
+    adapter.recordTransportFailure(usageContext, error, terminalType);
     if (terminalType !== "cancelled") {
-      void recordDeepSeekProviderHealth("upstream_error", null, Date.now, providerRequestId);
+      adapter.recordProviderError(null, providerRequestId);
       await recordErrorUsage(usageContext);
-      controller.enqueue(encoder.encode(`data: ${JSON.stringify(deepseekStreamErrorValue("deepseek_upstream_stream_error"))}\n\n`));
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(chatStreamErrorValue(adapter.streamErrorCode))}\n\n`));
     }
     controller.close();
   };
@@ -10022,8 +10410,9 @@ const streamDeepSeekChatCompletion = (
         const frame = next.value;
         if (frame.kind === "comment") {
           // DeepSeek's documented `: keep-alive` comment frame is what keeps a
-          // long thinking turn from looking idle to an edge proxy. SSE comments
-          // are inert for clients, so relay it verbatim.
+          // long thinking turn from looking idle to an edge proxy, and SSE
+          // comments are inert for clients, so it is relayed verbatim. A
+          // transport that carries no comment frames never yields this branch.
           controller.enqueue(encoder.encode(`${frame.text}\n\n`));
           return;
         }
@@ -10047,7 +10436,7 @@ const streamDeepSeekChatCompletion = (
       if (closed) return;
       closed = true;
       settleTerminal("cancelled");
-      recordDeepSeekFailureKind(usageContext, "cancellation");
+      adapter.recordCancellation(usageContext);
       // Usage observed before the disconnect is real evidence: record it with
       // completed=false so the terminal reports the counters without claiming a
       // completion. Missing usage stays unknown rather than invented.
@@ -10065,6 +10454,287 @@ const streamDeepSeekChatCompletion = (
   });
   return new Response(body, { status: 200, headers });
 };
+
+/**
+ * Relays one provider's translated Responses event sequence as it arrives. The
+ * Chat chunks are validated by the provider transport before they reach the
+ * translator, so the client sees incremental `response.*` events rather than a
+ * buffered replay.
+ */
+const relayResponsesStream = (
+  adapter: ProviderStreamAdapter,
+  options: Readonly<{
+    upstream: Response;
+    requestedModel: string;
+    responseId: string;
+    createdAtSeconds: number;
+    echo: DeepSeekResponsesEcho;
+    toolNames: ReadonlyMap<string, string>;
+    customToolNames: ReadonlySet<string>;
+    providerRequestId: string | null;
+    usageContext: UsageContext | undefined;
+    downstreamSignal: AbortSignal;
+    requestSignal: AbortSignal;
+    upstreamModel: string;
+  }>
+): Response => {
+  const {
+    upstream,
+    requestedModel,
+    responseId,
+    createdAtSeconds,
+    echo,
+    toolNames,
+    customToolNames,
+    providerRequestId,
+    usageContext,
+    downstreamSignal,
+    requestSignal,
+    upstreamModel,
+  } = options;
+  const encoder = new TextEncoder();
+  const headers = new Headers(adapter.responseHeaders(providerRequestId));
+  headers.set("Content-Type", "text/event-stream");
+  headers.set("Cache-Control", "no-cache");
+
+  // One stream-owned interrupt for the parked original read. The external
+  // request signal alone is driven by Deno delivery completion, which itself
+  // waits on this teardown, so a queued `iterator.return()` could never reach
+  // the read.
+  const cancellation = new AbortController();
+  const readSignal = AbortSignal.any([requestSignal, cancellation.signal]);
+  const iterator = adapter.frames(upstream, upstreamModel, { signal: readSignal });
+  const translator = createDeepSeekResponsesStreamTranslator(
+    requestedModel,
+    responseId,
+    echo,
+    createdAtSeconds,
+    toolNames,
+    customToolNames,
+    adapter.responsesProfile
+  );
+  const state = {
+    settled: false,
+    cancelled: false,
+    semantic: false,
+    usage: null as UsageTokens | null,
+  };
+  /** The next `sequence_number` this response's SSE stream will emit. */
+  let sequenceNumber = 0;
+
+  const settleTerminal = (terminalType: ResponseStreamTerminalType): void => {
+    if (state.settled) return;
+    state.settled = true;
+    recordStreamTerminalType(usageContext, terminalType);
+  };
+  const emit = (controller: ReadableStreamDefaultController<Uint8Array>, events: readonly Record<string, unknown>[]): void => {
+    for (const event of events) {
+      // Official Responses events carry a monotonic per-response
+      // `sequence_number`. The translator's own `output_index`/`content_index`
+      // values are copied through untouched, so this is the only field the wire
+      // gains and every event - including refusals, item and terminal events -
+      // is stamped by this one encoder seam.
+      controller.enqueue(encoder.encode(encodeResponsesEvent({ ...event, sequence_number: sequenceNumber })));
+      sequenceNumber += 1;
+    }
+  };
+  /**
+   * The client-visible shape of the gateway's existing degenerate-completion
+   * classification. Response headers were sent when the stream opened, so the
+   * truth travels on the terminal event instead of as a 502 status; the
+   * failure kind and message are the ones the ordinary routes already use.
+   */
+  const emptyCompletionFailure = (): Record<string, unknown> => ({
+    type: "response.failed",
+    response: {
+      id: responseId,
+      object: "response",
+      status: "failed",
+      error: { code: "empty_upstream_completion", message: EMPTY_UPSTREAM_COMPLETION_MESSAGE },
+    },
+  });
+  /**
+   * Emits the fail-closed terminal for a completion the provider reported as
+   * successful but that carries nothing a client can act on. Returns true when
+   * it handled the terminal.
+   */
+  const emitEmptyCompletionFailure = (controller: ReadableStreamDefaultController<Uint8Array>): boolean => {
+    if (translator.terminalKind() !== "completed" || isAnswerBearingCompletion(translator.answerBearingOutput())) return false;
+    if (usageContext?.responseTelemetry) {
+      usageContext.responseTelemetry.failureKind = "empty_upstream_completion";
+      usageContext.responseTelemetry.semanticOutputObserved = false;
+    }
+    recordTerminalUsage(usageContext, state.usage, false);
+    settleTerminal("response.failed");
+    recordStreamTerminal(usageContext);
+    emit(controller, [...translator.open(), emptyCompletionFailure()]);
+    adapter.recordResponseHealth(upstream.status, providerRequestId);
+    return true;
+  };
+
+  const finishStream = async (controller: ReadableStreamDefaultController<Uint8Array>): Promise<void> => {
+    if (state.settled) return;
+    try {
+      // The provider's own stop reason decides the terminal (Goal B's Delta 1
+      // vocabulary), and the provider-agnostic completion-validity predicate
+      // (Goal A's G3) decides whether a would-be completion carries anything a
+      // client can act on. An explicit non-completed signal wins over validity.
+      if (emitEmptyCompletionFailure(controller)) return;
+      const terminalKind = translator.terminalKind();
+      emit(controller, translator.finish());
+      if (terminalKind === "completed") {
+        await recordCompletionUsage(usageContext, state.usage);
+        settleTerminal("response.completed");
+      } else {
+        // A non-completed terminal is classified the same way on the streamed
+        // and buffered paths, so telemetry reads the same on both.
+        recordTerminalUsage(usageContext, state.usage, false);
+        if (terminalKind === "incomplete") {
+          adapter.recordIncompleteResponse(usageContext);
+        } else {
+          // The only remaining non-completed kind is "failed".
+          adapter.recordFinishFailureKind(usageContext, translator.upstreamFinishReason());
+          adapter.recordProviderError(upstream.status, providerRequestId);
+        }
+        settleTerminal(terminalKind === "incomplete" ? "response.incomplete" : "response.failed");
+      }
+      recordStreamTerminal(usageContext);
+      adapter.recordResponseHealth(upstream.status, providerRequestId);
+    } finally {
+      closeController(controller);
+    }
+  };
+  const failStream = async (controller: ReadableStreamDefaultController<Uint8Array>, error: unknown): Promise<void> => {
+    if (state.settled) {
+      closeController(controller);
+      return;
+    }
+    const terminalType = adapter.terminalTypeForError(error, downstreamSignal);
+    settleTerminal(terminalType);
+    adapter.recordTransportFailure(usageContext, error, terminalType);
+    try {
+      if (terminalType !== "cancelled") {
+        adapter.recordProviderError(null, providerRequestId);
+        await recordErrorUsage(usageContext);
+        emit(controller, [
+          {
+            type: "response.failed",
+            response: {
+              id: responseId,
+              object: "response",
+              status: "failed",
+              error: { code: adapter.streamErrorCode, message: "Upstream Chat Completions stream failed." },
+            },
+          },
+        ]);
+      }
+    } finally {
+      closeController(controller);
+    }
+  };
+
+  /** Records the chunk's telemetry and returns the events it translates to. */
+  const handleChunk = (chunk: Record<string, unknown>): Record<string, unknown>[] => {
+    const chunkUsage = extractChatUsageTokens(chunk.usage);
+    if (chunkUsage) state.usage = chunkUsage;
+    if (!state.semantic && chatChunkHasAnswerBearingOutput(chunk)) {
+      state.semantic = true;
+      markChatSemanticOutput(usageContext);
+      recordFirstSemanticCommitment(usageContext);
+    }
+    recordFirstUpstreamSseEvent(usageContext);
+    return translator.push(chunk);
+  };
+
+  // Pull-driven so the upstream stream is read only as fast as the client
+  // consumes it. A pull that enqueues nothing does not reliably schedule the
+  // next pull, so this loop keeps reading until it has at least one event to
+  // hand over or the upstream ends. Keep-alive comments and usage-only chunks
+  // enqueue nothing by design, and returning early on either used to stall the
+  // stream.
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (state.settled) return;
+      try {
+        for (;;) {
+          const next = await iterator.next();
+          if (next.done) {
+            await finishStream(controller);
+            return;
+          }
+          const frame = next.value;
+          if (frame.kind === "done") {
+            await finishStream(controller);
+            return;
+          }
+          if (frame.kind === "comment") continue;
+          const events = handleChunk(frame.value);
+          if (!events.length) continue;
+          emit(controller, events);
+          return;
+        }
+      } catch (error) {
+        await failStream(controller, error);
+      }
+    },
+    cancel(reason) {
+      if (state.cancelled) return;
+      state.cancelled = true;
+      settleTerminal("cancelled");
+      adapter.recordCancellation(usageContext);
+      // Usage observed before the disconnect is real evidence: record it with
+      // completed=false so the terminal reports the counters without claiming a
+      // completion. Missing usage stays unknown rather than invented.
+      if (state.usage) recordTerminalUsage(usageContext, state.usage, false);
+      // Abort the local read first: the pending upstream read then rejects, the
+      // iterator's own `finally` cancels the physical provider body, and no
+      // uninterruptible `return()` can block teardown. A consumer can cancel
+      // before the first read, so an untouched source is cancelled directly.
+      if (!cancellation.signal.aborted) cancellation.abort(reason);
+      const upstreamBody = upstream.body;
+      if (upstreamBody && !upstreamBody.locked) void upstreamBody.cancel(reason).catch(() => {});
+      // Cleanup is best effort and never surfaces as a provider error.
+      void iterator.return().catch(() => {});
+    },
+  });
+  return new Response(body, { status: 200, headers });
+};
+
+/** The DeepSeek seams for the shared stream writers. */
+const deepseekStreamAdapter: ProviderStreamAdapter = {
+  responseHeaders: deepseekResponseHeaders,
+  frames: iterateDeepSeekChatCompletionStream,
+  recordResponseHealth: recordDeepSeekResponseHealth,
+  recordProviderError: (status, providerRequestId) => void recordDeepSeekProviderHealth("upstream_error", status, Date.now, providerRequestId),
+  recordCancellation: (usageContext) => {
+    recordDeepSeekFailureKind(usageContext, "cancellation");
+  },
+  recordIncompleteResponse: (usageContext) => {
+    recordDeepSeekFailureKind(usageContext, "incomplete_response");
+  },
+  recordFinishFailureKind: (usageContext, finishReason) => {
+    recordDeepSeekFailureKind(usageContext, deepSeekFinishReasonFailureKind(finishReason));
+  },
+  recordTransportFailure: (usageContext, error, terminalType) => {
+    recordDeepSeekFailureKind(usageContext, deepSeekTransportFailureKind(error, terminalType));
+  },
+  terminalTypeForError: deepSeekTerminalTypeForError,
+  streamErrorCode: "deepseek_upstream_stream_error",
+  responsesProfile: DEEPSEEK_RESPONSES_PROFILE,
+};
+
+/**
+ * Relays the DeepSeek Chat Completions SSE stream through the shared writer,
+ * keeping DeepSeek's documented `: keep-alive` comment frames relayed verbatim.
+ */
+const streamDeepSeekChatCompletion = (
+  upstream: Response,
+  providerRequestId: string | null,
+  usageContext: UsageContext | undefined,
+  downstreamSignal: AbortSignal,
+  requestSignal: AbortSignal,
+  upstreamModel: string
+): Response => relayChatCompletionStream(deepseekStreamAdapter, upstream, providerRequestId, usageContext, downstreamSignal, requestSignal, upstreamModel);
 
 type DeepSeekDispatchResult =
   | Readonly<{ ok: true; upstream: Response; providerRequestId: string | null; requestSignal: AbortSignal; downstreamSignal: AbortSignal }>
@@ -10358,10 +11028,9 @@ const handleDeepSeekResponses = async (req: Request, rawRecord: Record<string, u
 };
 
 /**
- * Relays the translated Responses event sequence as it arrives. The Chat
- * chunks are validated by the transport before they reach the translator, so
- * the client sees incremental `response.*` events rather than a buffered
- * replay.
+ * Relays the DeepSeek translated Responses event sequence through the shared
+ * writer; this shape skips comment frames and lets the translator decide the
+ * terminal under DeepSeek's own profile.
  */
 const streamDeepSeekResponses = (
   upstream: Response,
@@ -10376,207 +11045,671 @@ const streamDeepSeekResponses = (
   downstreamSignal: AbortSignal,
   requestSignal: AbortSignal,
   upstreamModel: string
+): Response =>
+  relayResponsesStream(deepseekStreamAdapter, {
+    upstream,
+    requestedModel,
+    responseId,
+    createdAtSeconds,
+    echo,
+    toolNames,
+    customToolNames,
+    providerRequestId,
+    usageContext,
+    downstreamSignal,
+    requestSignal,
+    upstreamModel,
+  });
+
+/**
+ * LithosAI route support.
+ *
+ * The vendor serves OpenAI Chat Completions only — `POST /v1/responses` answers
+ * 404 (probed 2026-09-23) — while the gateway's shared Responses adapter
+ * (`src/deepseek_responses.ts`) translates a Responses request into a Chat
+ * Completions body under a provider profile. Both gateway routes are therefore
+ * served natively, and everything provider-level (dispatch admission,
+ * deadlines, health, telemetry, error reflection) is shared between them here;
+ * the two adapters differ only in how they translate the payload.
+ */
+const LITHOS_BUFFERED_BODY_MAX_BYTES = 8 * 1024 * 1024;
+
+/** The seven tiers the provider accepted verbatim on 2026-09-23, as a membership set. */
+const LITHOS_REASONING_LEVEL_SET: ReadonlySet<string> = new Set(LITHOS_REASONING_LEVELS);
+
+/** The canonical wire spelling for an accepted tier, or null when the provider refuses it. */
+const lithosReasoningLevel = (value: string): string | null => {
+  const level = value.trim().toLowerCase();
+  return LITHOS_REASONING_LEVEL_SET.has(level) ? level : null;
+};
+
+/**
+ * Validates the Chat Completions fields this route owns before any dispatch.
+ *
+ * `messages` is checked exactly as the DeepSeek branch checks it. The reasoning
+ * tier is the one provider-specific rule: the vendor accepted exactly the seven
+ * lowercase tiers verbatim and refused everything else with a 400, so a tier
+ * outside that set (notably the Codex `ultra` preset, which this wire has no
+ * mapping for) fails closed here instead of leaving the gateway only to be
+ * refused upstream.
+ */
+const validateLithosChatRequestFields = (
+  rawRecord: Record<string, unknown>
+): { ok: true; value: { reasoning: string; clientWantsStream: boolean } } | { ok: false; response: Response } => {
+  const messages = rawRecord.messages;
+  if (!Array.isArray(messages)) return { ok: false, response: openaiError(400, "messages must be an array", "invalid_request_error") };
+  if (messages.length === 0) {
+    return { ok: false, response: openaiError(400, "messages must be a non-empty array", "invalid_request_error") };
+  }
+  if (messages.some((message) => !isRecord(message) || Array.isArray(message))) {
+    return { ok: false, response: openaiError(400, "messages must contain objects", "invalid_request_error", { param: "messages" }) };
+  }
+  const reasoningEffort = parseReasoningEffortField(rawRecord.reasoning_effort, "reasoning_effort");
+  if (!reasoningEffort.ok) {
+    return { ok: false, response: openaiError(400, reasoningEffort.message, "invalid_request_error", { param: "reasoning_effort" }) };
+  }
+  // The provider's default for an omitted effort was not probed, so the
+  // gateway's declared default (the middle verified tier) is sent explicitly
+  // and the wire agrees with the capabilities endpoint.
+  const reasoning = reasoningEffort.value === undefined ? LITHOS_DEFAULT_REASONING_EFFORT : lithosReasoningLevel(reasoningEffort.value);
+  if (reasoning === null) {
+    return {
+      ok: false,
+      response: openaiError(
+        400,
+        `reasoning_effort '${reasoningEffort.value}' is not supported by LithosAI. Use none, minimal, low, medium, high, xhigh, or max.`,
+        "invalid_request_error",
+        { param: "reasoning_effort" }
+      ),
+    };
+  }
+  const parsedStream = parseStreamField(rawRecord.stream);
+  if (!parsedStream.ok) {
+    return { ok: false, response: openaiError(400, parsedStream.message, "invalid_request_error", { param: "stream" }) };
+  }
+  const streamOptions = parseChatStreamOptions(rawRecord.stream_options);
+  if (!streamOptions.ok) {
+    return { ok: false, response: openaiError(400, streamOptions.message, "invalid_request_error", { param: "stream_options" }) };
+  }
+  return { ok: true, value: { reasoning, clientWantsStream: parsedStream.value } };
+};
+
+/**
+ * The output cap the client supplied, if any. The cap fields are the official
+ * Chat contract's (`max_completion_tokens`, then a literal `max_tokens`), not
+ * provider-specific, so the shared reader serves this route too.
+ */
+const lithosChatClientOutputAllowance = (rawRecord: Record<string, unknown>): number | null => deepSeekChatClientOutputAllowance(rawRecord);
+
+type LithosFailureKind =
+  | "upstream_error"
+  | "upstream_http_error"
+  | "upstream_unreachable"
+  | "incomplete_response"
+  | "invalid_json"
+  | "invalid_completion_schema"
+  | "lithos_upstream_invalid_response"
+  | "deadline"
+  | "cancellation"
+  | "api_key_quota_reservation_unavailable"
+  | "lithos_api_key_missing"
+  | "lithos_request_invalid"
+  /** A stop reason the gateway cannot place in its terminal vocabulary. */
+  | `lithos_finish_reason:${string}`;
+
+const recordLithosFailureKind = (context: UsageContext | undefined, failureKind: LithosFailureKind): void => {
+  if (context?.responseTelemetry) context.responseTelemetry.failureKind = failureKind;
+};
+
+/**
+ * The telemetry classification for an upstream stop reason the gateway cannot
+ * place. The value is bounded and carried so an operator can see exactly what
+ * the provider said instead of reading a normal completion.
+ */
+const lithosFinishReasonFailureKind = (finishReason: string | null): LithosFailureKind =>
+  `lithos_finish_reason:${finishReason !== null && /^[A-Za-z0-9_.:-]{1,64}$/.test(finishReason) ? finishReason : "unrecognized"}`;
+
+const lithosTerminalTypeForError = (error: unknown, downstreamSignal: AbortSignal): ResponseStreamTerminalType => {
+  if (downstreamSignal.aborted) return "cancelled";
+  if (error instanceof LithosError && error.code === "gateway_timeout") return "deadline";
+  if (error instanceof Error && error.name === "TimeoutError") return "deadline";
+  if (error instanceof Error && error.name === "AbortError") return "cancelled";
+  return "error";
+};
+
+const lithosTransportFailureKind = (error: unknown, terminalType: ResponseStreamTerminalType): LithosFailureKind => {
+  if (terminalType === "cancelled") return "cancellation";
+  if (terminalType === "deadline") return "deadline";
+  if (error instanceof ApiKeyQuotaDispatchError) return "api_key_quota_reservation_unavailable";
+  if (error instanceof LithosError) {
+    switch (error.code) {
+      case "lithos_api_key_missing":
+        return "lithos_api_key_missing";
+      case "lithos_request_invalid":
+        return "lithos_request_invalid";
+      case "lithos_upstream_unreachable":
+        return "upstream_unreachable";
+      case "lithos_upstream_invalid_response":
+        return "lithos_upstream_invalid_response";
+      default:
+        break;
+    }
+  }
+  return "upstream_error";
+};
+
+const respondLithosChatInvalidCompletion = async (
+  failureKind: "invalid_json" | "invalid_completion_schema",
+  upstreamStatus: number,
+  providerRequestId: string | null,
+  usageContext: UsageContext | undefined
+): Promise<Response> => {
+  recordStreamTerminalType(usageContext, "error");
+  recordLithosFailureKind(usageContext, failureKind);
+  void recordLithosProviderHealth("upstream_error", upstreamStatus, Date.now, providerRequestId);
+  await recordErrorUsage(usageContext);
+  return openaiError(502, "Upstream returned an invalid Chat Completions response.", "lithos_upstream_invalid_response", {
+    type: "server_error",
+    headers: lithosResponseHeaders(providerRequestId),
+  });
+};
+
+const readLithosChatCompletion = async (
+  bytes: Uint8Array,
+  upstreamStatus: number,
+  providerRequestId: string | null,
+  usageContext: UsageContext | undefined,
+  upstreamModel: string
+): Promise<{ ok: true; value: Record<string, unknown> } | { ok: false; response: Response }> => {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+  } catch {
+    return { ok: false, response: await respondLithosChatInvalidCompletion("invalid_json", upstreamStatus, providerRequestId, usageContext) };
+  }
+  const normalized = normalizeLithosChatCompletion(payload, upstreamModel);
+  if (!normalized.ok) {
+    return { ok: false, response: await respondLithosChatInvalidCompletion("invalid_completion_schema", upstreamStatus, providerRequestId, usageContext) };
+  }
+  return { ok: true, value: normalized.value };
+};
+
+const respondLithosChatDispatchFailure = async (error: unknown, downstreamSignal: AbortSignal, usageContext: UsageContext | undefined): Promise<Response> => {
+  const terminalType = lithosTerminalTypeForError(error, downstreamSignal);
+  recordLithosFailureKind(usageContext, lithosTransportFailureKind(error, terminalType));
+  recordStreamTerminalType(usageContext, terminalType);
+  if (terminalType !== "cancelled") {
+    void recordLithosProviderHealth("upstream_error", null, Date.now, null);
+  }
+  await recordErrorUsage(usageContext);
+  return toLithosErrorResponse(error);
+};
+
+const respondLithosChatUpstreamHttpFailure = async (
+  upstream: Response,
+  requestSignal: AbortSignal,
+  providerRequestId: string | null,
+  usageContext: UsageContext | undefined,
+  body: Record<string, unknown>
+): Promise<Response> => {
+  recordLithosResponseHealth(upstream.status, providerRequestId);
+  recordLithosFailureKind(usageContext, "upstream_http_error");
+  recordStreamTerminalType(usageContext, "response.failed");
+  await recordErrorUsage(usageContext);
+  // The digest is shape-only (no prompt text, tool names, or ids), so the
+  // existing Chat-body reader is provider-agnostic and serves this route too.
+  return await toLithosUpstreamErrorResponse(upstream, requestSignal, deepSeekChatBodyDiagnostic(body));
+};
+
+const respondLithosChatIncompleteCapture = async (
+  usageContext: UsageContext | undefined,
+  downstreamSignal: AbortSignal,
+  requestSignal: AbortSignal,
+  providerRequestId: string | null
+): Promise<Response> => {
+  let terminalType: ResponseStreamTerminalType = "error";
+  let failureKind: LithosFailureKind = "incomplete_response";
+  if (downstreamSignal.aborted) {
+    terminalType = "cancelled";
+    failureKind = "cancellation";
+  } else if (requestSignal.aborted) {
+    terminalType = "deadline";
+    failureKind = "deadline";
+  }
+  recordLithosFailureKind(usageContext, failureKind);
+  recordStreamTerminalType(usageContext, terminalType);
+  if (terminalType !== "cancelled") {
+    void recordLithosProviderHealth("upstream_error", null, Date.now, providerRequestId);
+  }
+  await recordErrorUsage(usageContext);
+  if (terminalType === "cancelled") {
+    return openaiError(499, "Request was cancelled.", "request_cancelled", { type: "server_error", headers: lithosResponseHeaders(providerRequestId) });
+  }
+  return openaiError(
+    terminalType === "deadline" ? 504 : 502,
+    terminalType === "deadline" ? "Upstream request exceeded the gateway deadline." : "Upstream returned an incomplete response.",
+    terminalType === "deadline" ? "gateway_timeout" : "lithos_upstream_invalid_response",
+    { type: "server_error", headers: lithosResponseHeaders(providerRequestId) }
+  );
+};
+
+/**
+ * Maps the LithosAI transport's validated chunks onto the shared frame union.
+ * This vendor's wire carries no SSE comment frames and its iterator ends at
+ * `[DONE]`, which the shared loops read as an exhausted iterator; this provider
+ * therefore claims no keep-alive relay it does not have.
+ */
+async function* lithosChatStreamFrames(
+  upstream: Response,
+  upstreamModel: string,
+  options: Readonly<{ signal: AbortSignal }>
+): AsyncGenerator<ProviderStreamFrame, void, unknown> {
+  for await (const chunk of iterateLithosChatCompletionStream(upstream, upstreamModel, options)) {
+    yield { kind: "chunk", value: chunk };
+  }
+}
+
+/** The LithosAI seams for the shared stream writers. */
+const lithosStreamAdapter: ProviderStreamAdapter = {
+  responseHeaders: lithosResponseHeaders,
+  frames: lithosChatStreamFrames,
+  recordResponseHealth: recordLithosResponseHealth,
+  recordProviderError: (status, providerRequestId) => void recordLithosProviderHealth("upstream_error", status, Date.now, providerRequestId),
+  recordCancellation: (usageContext) => {
+    recordLithosFailureKind(usageContext, "cancellation");
+  },
+  recordIncompleteResponse: (usageContext) => {
+    recordLithosFailureKind(usageContext, "incomplete_response");
+  },
+  recordFinishFailureKind: (usageContext, finishReason) => {
+    recordLithosFailureKind(usageContext, lithosFinishReasonFailureKind(finishReason));
+  },
+  recordTransportFailure: (usageContext, error, terminalType) => {
+    recordLithosFailureKind(usageContext, lithosTransportFailureKind(error, terminalType));
+  },
+  terminalTypeForError: lithosTerminalTypeForError,
+  streamErrorCode: "lithos_upstream_stream_error",
+  responsesProfile: LITHOS_RESPONSES_PROFILE,
+};
+
+/**
+ * Relays the LithosAI Chat Completions SSE stream through the shared writer.
+ * The provider reports usage unconditionally - including on the trailing frame
+ * whose `choices` is empty - so nothing here gates accounting on
+ * `stream_options.include_usage`.
+ */
+const streamLithosChatCompletion = (
+  upstream: Response,
+  providerRequestId: string | null,
+  usageContext: UsageContext | undefined,
+  downstreamSignal: AbortSignal,
+  requestSignal: AbortSignal,
+  upstreamModel: string
+): Response => relayChatCompletionStream(lithosStreamAdapter, upstream, providerRequestId, usageContext, downstreamSignal, requestSignal, upstreamModel);
+
+type LithosDispatchResult =
+  | Readonly<{ ok: true; upstream: Response; providerRequestId: string | null; requestSignal: AbortSignal; downstreamSignal: AbortSignal }>
+  | Readonly<{ ok: false; response: Response }>;
+
+/**
+ * Shared LithosAI dispatch for both gateway routes. It owns the provider
+ * request-id capture, the dispatch/headers telemetry, and the failure
+ * responders, so the Chat and Responses adapters differ only in how they
+ * translate the payload.
+ */
+const dispatchLithosUpstream = async (
+  req: Request,
+  body: Record<string, unknown>,
+  modelRaw: string,
+  usageContext: UsageContext | undefined
+): Promise<LithosDispatchResult> => {
+  const downstreamSignal = downstreamSignalFor(req, usageContext);
+  const requestSignal = inferenceSignal(req, usageContext);
+  let upstream: Response;
+  try {
+    upstream = await fetchLithosChatCompletions(body, modelRaw, {
+      signal: requestSignal,
+      beforeDispatch: () => usageContext?.beforeProviderDispatch?.("lithos") ?? Promise.resolve(undefined),
+      onDispatch: () => {
+        recordAttemptedProvider(usageContext, "lithos");
+        recordFirstProviderDispatch(usageContext);
+      },
+      onHeaders: () => {
+        recordFirstProviderHeaders(usageContext);
+      },
+      sentinelUpstreamRecorder: usageContext?.sentinelUpstreamRecorder,
+    });
+  } catch (error) {
+    return { ok: false, response: await respondLithosChatDispatchFailure(error, downstreamSignal, usageContext) };
+  }
+
+  const providerRequestId = getLithosProviderRequestId(upstream);
+  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.providerRequestId = providerRequestId;
+  if (!upstream.ok) {
+    return { ok: false, response: await respondLithosChatUpstreamHttpFailure(upstream, requestSignal, providerRequestId, usageContext, body) };
+  }
+  return { ok: true, upstream, providerRequestId, requestSignal, downstreamSignal };
+};
+
+/**
+ * The LithosAI Chat Completions route.
+ *
+ * The official nested Chat tools/`tool_choice` contract is preserved: this
+ * branch dispatches before the Codex-specific flattening that follows it in
+ * `handleChatCompletionsInternal`. Streaming is relayed rather than buffered,
+ * because the vendor streams normally and reports usage on every frame
+ * regardless of `stream_options`.
+ */
+const handleLithosChatCompletions = async (
+  req: Request,
+  rawRecord: Record<string, unknown>,
+  modelRaw: string,
+  usageContext?: UsageContext
+): Promise<Response> => {
+  const parsedRequest = validateLithosChatRequestFields(rawRecord);
+  if (!parsedRequest.ok) return parsedRequest.response;
+  const { reasoning, clientWantsStream } = parsedRequest.value;
+  // The canonical id the provider serves for this request; the buffered and
+  // streamed readers echo it, so a differently-cased request never reports a
+  // mismatched model.
+  const upstreamModel = lithosUpstreamModelFor(modelRaw);
+  if (!upstreamModel) {
+    return openaiError(400, "The requested model is not configured.", "lithos_request_invalid", { param: "model" });
+  }
+
+  // Preserve the official nested Chat tools/tool_choice contract. In
+  // particular, do not run the Codex-specific flattening that follows this
+  // early branch in handleChatCompletionsInternal.
+  const lithosBody: Record<string, unknown> = {
+    ...rawRecord,
+    reasoning_effort: reasoning,
+    stream: clientWantsStream,
+  };
+  if (!clientWantsStream) {
+    // OpenAI's own contract refuses stream_options without stream:true, and this
+    // provider needs nothing from it: usage arrives unconditionally.
+    delete lithosBody.stream_options;
+  }
+  if (usageContext?.responseTelemetry) {
+    usageContext.responseTelemetry.provider = "lithos";
+    usageContext.responseTelemetry.reasoning = reasoning;
+    // The client's cap when it sent one, else unknown: this vendor publishes no
+    // per-tier default allowance to stand in for it.
+    usageContext.responseTelemetry.outputTokenAllowance = lithosChatClientOutputAllowance(rawRecord);
+  }
+  await recordRequestUsage(usageContext, {
+    model: modelRaw,
+    route: "chat.completions",
+    stream: clientWantsStream,
+    reasoning,
+  });
+
+  const dispatched = await dispatchLithosUpstream(req, lithosBody, modelRaw, usageContext);
+  if (!dispatched.ok) return dispatched.response;
+  const { upstream, requestSignal, downstreamSignal } = dispatched;
+  const providerRequestId = dispatched.providerRequestId;
+
+  if (clientWantsStream) {
+    return streamLithosChatCompletion(upstream, providerRequestId, usageContext, downstreamSignal, requestSignal, upstreamModel);
+  }
+
+  const captured = await readBoundedResponseBody(upstream, {
+    signal: requestSignal,
+    maxBytes: LITHOS_BUFFERED_BODY_MAX_BYTES,
+    // Successful buffered inference uses the request-level edge deadline, not
+    // the one-second error-body default. `requestSignal` still caps the whole
+    // request from dispatch through body completion.
+    timeoutMs: BUFFERED_INFERENCE_DEADLINE_MS,
+    cancellationReason: "LithosAI Chat Completions response was incomplete",
+  });
+  if (!captured.complete) {
+    return await respondLithosChatIncompleteCapture(usageContext, downstreamSignal, requestSignal, providerRequestId);
+  }
+
+  const completion = await readLithosChatCompletion(captured.bytes, upstream.status, providerRequestId, usageContext, upstreamModel);
+  if (!completion.ok) return completion.response;
+
+  if (chatCompletionHasAnswerBearingOutput(completion.value)) markChatSemanticOutput(usageContext);
+  if (usageContext?.responseTelemetry) usageContext.responseTelemetry.providerRequestId = providerRequestId;
+  const usage = extractChatUsageTokens(completion.value.usage);
+  await recordCompletionUsage(usageContext, usage);
+  recordStreamTerminalType(usageContext, "response.completed");
+  recordLithosResponseHealth(upstream.status, providerRequestId);
+  return json(200, completion.value, lithosResponseHeaders(providerRequestId));
+};
+
+/**
+ * Fails a buffered LithosAI Responses completion closed when the provider
+ * reported success but the translated output carries nothing a client can act
+ * on, matching the streamed path's guard.
+ */
+const respondLithosEmptyBufferedCompletion = (
+  usageContext: UsageContext | undefined,
+  usage: UsageTokens | null,
+  upstreamStatus: number,
+  providerRequestId: string | null
 ): Response => {
-  const encoder = new TextEncoder();
-  const headers = new Headers(deepseekResponseHeaders(providerRequestId));
-  headers.set("Content-Type", "text/event-stream");
-  headers.set("Cache-Control", "no-cache");
-
-  // One stream-owned interrupt for the parked original read. The external
-  // request signal alone is driven by Deno delivery completion, which itself
-  // waits on this teardown, so a queued `iterator.return()` could never reach
-  // the read.
-  const cancellation = new AbortController();
-  const readSignal = AbortSignal.any([requestSignal, cancellation.signal]);
-  const iterator = iterateDeepSeekChatCompletionStream(upstream, upstreamModel, { signal: readSignal });
-  const translator = createDeepSeekResponsesStreamTranslator(requestedModel, responseId, echo, createdAtSeconds, toolNames, customToolNames);
-  const state = {
-    settled: false,
-    cancelled: false,
-    semantic: false,
-    usage: null as UsageTokens | null,
-  };
-  /** The next `sequence_number` this response's SSE stream will emit. */
-  let sequenceNumber = 0;
-
-  const settleTerminal = (terminalType: ResponseStreamTerminalType): void => {
-    if (state.settled) return;
-    state.settled = true;
-    recordStreamTerminalType(usageContext, terminalType);
-  };
-  const emit = (controller: ReadableStreamDefaultController<Uint8Array>, events: readonly Record<string, unknown>[]): void => {
-    for (const event of events) {
-      // Official Responses events carry a monotonic per-response
-      // `sequence_number`. The translator's own `output_index`/`content_index`
-      // values are copied through untouched, so this is the only field the wire
-      // gains and every event - including refusals, item and terminal events -
-      // is stamped by this one encoder seam.
-      controller.enqueue(encoder.encode(encodeResponsesEvent({ ...event, sequence_number: sequenceNumber })));
-      sequenceNumber += 1;
-    }
-  };
-  /**
-   * The client-visible shape of the gateway's existing degenerate-completion
-   * classification. Response headers were sent when the stream opened, so the
-   * truth travels on the terminal event instead of as a 502 status; the
-   * failure kind and message are the ones the ordinary routes already use.
-   */
-  const emptyCompletionFailure = (): Record<string, unknown> => ({
-    type: "response.failed",
-    response: {
-      id: responseId,
-      object: "response",
-      status: "failed",
-      error: { code: "empty_upstream_completion", message: EMPTY_UPSTREAM_COMPLETION_MESSAGE },
-    },
+  if (usageContext?.responseTelemetry) {
+    usageContext.responseTelemetry.failureKind = "empty_upstream_completion";
+    usageContext.responseTelemetry.semanticOutputObserved = false;
+  }
+  recordTerminalUsage(usageContext, usage, false);
+  recordStreamTerminalType(usageContext, "response.failed");
+  recordLithosResponseHealth(upstreamStatus, providerRequestId);
+  return openaiError(502, EMPTY_UPSTREAM_COMPLETION_MESSAGE, "empty_upstream_completion", {
+    type: "server_error",
+    headers: lithosResponseHeaders(providerRequestId),
   });
-  // The controller closes in a `finally`: a throw while emitting the terminal
-  // events must still end the client-visible stream instead of hanging it.
-  /**
-   * Emits the fail-closed terminal for a completion the provider reported as
-   * successful but that carries nothing a client can act on. Returns true when
-   * it handled the terminal.
-   */
-  const emitEmptyCompletionFailure = (controller: ReadableStreamDefaultController<Uint8Array>): boolean => {
-    if (translator.terminalKind() !== "completed" || isAnswerBearingCompletion(translator.answerBearingOutput())) return false;
-    if (usageContext?.responseTelemetry) {
-      usageContext.responseTelemetry.failureKind = "empty_upstream_completion";
-      usageContext.responseTelemetry.semanticOutputObserved = false;
-    }
-    recordTerminalUsage(usageContext, state.usage, false);
-    settleTerminal("response.failed");
+};
+
+/**
+ * Records a buffered LithosAI Responses terminal. The payload carries the
+ * provider's own terminal, so telemetry reports the terminal the client
+ * receives instead of assuming success, and the non-completed classification
+ * matches the streamed path.
+ */
+const recordBufferedLithosResponsesTerminal = (
+  usageContext: UsageContext | undefined,
+  payload: Record<string, unknown>,
+  usage: UsageTokens | null,
+  upstreamStatus: number,
+  providerRequestId: string | null
+): void => {
+  const terminalType = deepSeekTerminalTypeForPayload(payload.status);
+  recordTerminalUsage(usageContext, usage, terminalType === "response.completed");
+  recordStreamTerminalType(usageContext, terminalType);
+  if (terminalType === "response.completed") {
     recordStreamTerminal(usageContext);
-    emit(controller, [...translator.open(), emptyCompletionFailure()]);
-    recordDeepSeekResponseHealth(upstream.status, providerRequestId);
-    return true;
-  };
+  } else {
+    recordLithosFailureKind(usageContext, terminalType === "response.incomplete" ? "incomplete_response" : "upstream_error");
+    void recordLithosProviderHealth("upstream_error", upstreamStatus, Date.now, providerRequestId);
+  }
+  recordLithosResponseHealth(upstreamStatus, providerRequestId);
+};
 
-  const finishStream = async (controller: ReadableStreamDefaultController<Uint8Array>): Promise<void> => {
-    if (state.settled) return;
-    try {
-      // The provider's own stop reason decides the terminal (Goal B's Delta 1
-      // vocabulary), and the provider-agnostic completion-validity predicate
-      // (Goal A's G3) decides whether a would-be completion carries anything a
-      // client can act on. An explicit non-completed signal wins over validity.
-      if (emitEmptyCompletionFailure(controller)) return;
-      const terminalKind = translator.terminalKind();
-      emit(controller, translator.finish());
-      if (terminalKind === "completed") {
-        await recordCompletionUsage(usageContext, state.usage);
-        settleTerminal("response.completed");
-      } else {
-        // A non-completed terminal is classified the same way on the streamed
-        // and buffered paths, so telemetry reads the same on both.
-        recordTerminalUsage(usageContext, state.usage, false);
-        if (terminalKind === "incomplete") {
-          recordDeepSeekFailureKind(usageContext, "incomplete_response");
-        } else {
-          // The only remaining non-completed kind is "failed".
-          recordDeepSeekFailureKind(usageContext, deepSeekFinishReasonFailureKind(translator.upstreamFinishReason()));
-          void recordDeepSeekProviderHealth("upstream_error", upstream.status, Date.now, providerRequestId);
-        }
-        settleTerminal(terminalKind === "incomplete" ? "response.incomplete" : "response.failed");
-      }
-      recordStreamTerminal(usageContext);
-      recordDeepSeekResponseHealth(upstream.status, providerRequestId);
-    } finally {
-      closeController(controller);
-    }
-  };
-  const failStream = async (controller: ReadableStreamDefaultController<Uint8Array>, error: unknown): Promise<void> => {
-    if (state.settled) {
-      closeController(controller);
-      return;
-    }
-    const terminalType = deepSeekTerminalTypeForError(error, downstreamSignal);
-    settleTerminal(terminalType);
-    recordDeepSeekFailureKind(usageContext, deepSeekTransportFailureKind(error, terminalType));
-    try {
-      if (terminalType !== "cancelled") {
-        void recordDeepSeekProviderHealth("upstream_error", null, Date.now, providerRequestId);
-        await recordErrorUsage(usageContext);
-        emit(controller, [
-          {
-            type: "response.failed",
-            response: {
-              id: responseId,
-              object: "response",
-              status: "failed",
-              error: { code: "deepseek_upstream_stream_error", message: "Upstream Chat Completions stream failed." },
-            },
-          },
-        ]);
-      }
-    } finally {
-      closeController(controller);
-    }
-  };
-
-  // Pull-driven so the upstream stream is read only as fast as the client
-  // consumes it; an eager writer would buffer an unbounded reply in memory.
-  /** Records the chunk's telemetry and returns the events it translates to. */
-  const handleChunk = (chunk: Record<string, unknown>): Record<string, unknown>[] => {
-    const chunkUsage = extractChatUsageTokens(chunk.usage);
-    if (chunkUsage) state.usage = chunkUsage;
-    if (!state.semantic && chatChunkHasAnswerBearingOutput(chunk)) {
-      state.semantic = true;
-      markChatSemanticOutput(usageContext);
-      recordFirstSemanticCommitment(usageContext);
-    }
-    recordFirstUpstreamSseEvent(usageContext);
-    return translator.push(chunk);
-  };
-
-  const body = new ReadableStream<Uint8Array>({
-    // A pull that enqueues nothing does not reliably schedule the next pull, so
-    // this loop keeps reading until it has at least one event to hand over or
-    // the upstream ends. Keep-alive comments and usage-only chunks enqueue
-    // nothing by design, and returning early on either used to stall the stream.
-    async pull(controller) {
-      if (state.settled) return;
-      try {
-        for (;;) {
-          const next = await iterator.next();
-          if (next.done) {
-            await finishStream(controller);
-            return;
-          }
-          const frame = next.value;
-          if (frame.kind === "done") {
-            await finishStream(controller);
-            return;
-          }
-          if (frame.kind === "comment") continue;
-          const events = handleChunk(frame.value);
-          if (!events.length) continue;
-          emit(controller, events);
-          return;
-        }
-      } catch (error) {
-        await failStream(controller, error);
-      }
-    },
-    cancel(reason) {
-      if (state.cancelled) return;
-      state.cancelled = true;
-      settleTerminal("cancelled");
-      recordDeepSeekFailureKind(usageContext, "cancellation");
-      // Usage observed before the disconnect is real evidence: record it with
-      // completed=false so the terminal reports the counters without claiming a
-      // completion. Missing usage stays unknown rather than invented.
-      if (state.usage) recordTerminalUsage(usageContext, state.usage, false);
-      // Abort the local read first: the pending upstream read then rejects, the
-      // iterator's own `finally` cancels the physical provider body, and no
-      // uninterruptible `return()` can block teardown. A consumer can cancel
-      // before the first read, so an untouched source is cancelled directly.
-      if (!cancellation.signal.aborted) cancellation.abort(reason);
-      const upstreamBody = upstream.body;
-      if (upstreamBody && !upstreamBody.locked) void upstreamBody.cancel(reason).catch(() => {});
-      // Cleanup is best effort and never surfaces as a provider error.
-      void iterator.return().catch(() => {});
-    },
+/**
+ * Finalizes the buffered LithosAI Responses branch: reads the captured body,
+ * applies the provider terminal's classification, and returns this request's
+ * single response. Admission, the request record, the response identity and the
+ * echo all belong to the caller, so no second terminal is created here.
+ */
+const finalizeBufferedLithosResponses = async (
+  options: Readonly<{
+    upstream: Response;
+    modelRaw: string;
+    responseId: string;
+    echo: DeepSeekResponsesEcho;
+    toolNames: ReadonlyMap<string, string>;
+    customToolNames: ReadonlySet<string>;
+    upstreamModel: string;
+    providerRequestId: string | null;
+    requestSignal: AbortSignal;
+    downstreamSignal: AbortSignal;
+    usageContext?: UsageContext;
+  }>
+): Promise<Response> => {
+  const captured = await readBoundedResponseBody(options.upstream, {
+    signal: options.requestSignal,
+    maxBytes: LITHOS_BUFFERED_BODY_MAX_BYTES,
+    timeoutMs: BUFFERED_INFERENCE_DEADLINE_MS,
+    cancellationReason: "LithosAI Responses adapter body was incomplete",
   });
-  return new Response(body, { status: 200, headers });
+  if (!captured.complete) {
+    return await respondLithosChatIncompleteCapture(options.usageContext, options.downstreamSignal, options.requestSignal, options.providerRequestId);
+  }
+
+  const completion = await readLithosChatCompletion(
+    captured.bytes,
+    options.upstream.status,
+    options.providerRequestId,
+    options.usageContext,
+    options.upstreamModel
+  );
+  if (!completion.ok) return completion.response;
+
+  const providerRequestId = options.providerRequestId;
+  if (options.usageContext?.responseTelemetry) options.usageContext.responseTelemetry.providerRequestId = providerRequestId;
+  const firstCompletion = completion.value;
+  const payload = toDeepSeekResponsesPayload(
+    firstCompletion,
+    options.modelRaw,
+    options.responseId,
+    options.echo,
+    options.toolNames,
+    options.customToolNames,
+    LITHOS_RESPONSES_PROFILE
+  );
+  const usage = extractChatUsageTokens(firstCompletion.usage);
+  // The provider's own reason decides the terminal first: an explicit
+  // truncation is `response.incomplete` and is reported as such. Only a
+  // would-be completion is then measured for answer-bearing output, which is
+  // the same order the streamed path applies.
+  if (deepSeekTerminalTypeForPayload(payload.status) === "response.completed" && !chatCompletionHasAnswerBearingOutput(firstCompletion)) {
+    return respondLithosEmptyBufferedCompletion(options.usageContext, usage, options.upstream.status, providerRequestId);
+  }
+  recordBufferedLithosResponsesTerminal(options.usageContext, payload, usage, options.upstream.status, providerRequestId);
+  return json(200, payload, lithosResponseHeaders(providerRequestId));
+};
+
+/**
+ * Relays the LithosAI translated Responses event sequence through the shared
+ * writer under this provider's own profile; the shared shape skips comment
+ * frames and lets the translator decide the terminal.
+ */
+const streamLithosResponses = (
+  upstream: Response,
+  requestedModel: string,
+  responseId: string,
+  createdAtSeconds: number,
+  echo: DeepSeekResponsesEcho,
+  toolNames: ReadonlyMap<string, string>,
+  customToolNames: ReadonlySet<string>,
+  providerRequestId: string | null,
+  usageContext: UsageContext | undefined,
+  downstreamSignal: AbortSignal,
+  requestSignal: AbortSignal,
+  upstreamModel: string
+): Response =>
+  relayResponsesStream(lithosStreamAdapter, {
+    upstream,
+    requestedModel,
+    responseId,
+    createdAtSeconds,
+    echo,
+    toolNames,
+    customToolNames,
+    providerRequestId,
+    usageContext,
+    downstreamSignal,
+    requestSignal,
+    upstreamModel,
+  });
+
+/**
+ * Responses adapter for the LithosAI route.
+ *
+ * The vendor has no `/v1/responses` endpoint (probed: 404), so the shared
+ * translation in `src/deepseek_responses.ts` runs under
+ * `LITHOS_RESPONSES_PROFILE`: the profile owns this provider's model table,
+ * reasoning-tier acceptance, usage counters and streaming-usage policy, and the
+ * translation itself is the same one the DeepSeek route uses. Everything
+ * provider-level (dispatch admission, deadlines, health, telemetry, error
+ * reflection) is shared with the Chat route above.
+ */
+const handleLithosResponses = async (req: Request, rawRecord: Record<string, unknown>, modelRaw: string, usageContext?: UsageContext): Promise<Response> => {
+  const parsedStream = parseStreamField(rawRecord.stream);
+  if (!parsedStream.ok) return openaiError(400, parsedStream.message, "invalid_request_error", { param: "stream" });
+  const clientWantsStream = parsedStream.value;
+  // The route only dispatches here for a LithosAI id, so this guard covers the
+  // handler's own contract rather than a reachable client path.
+  const upstreamModel = lithosUpstreamModelFor(modelRaw);
+  if (!upstreamModel) return openaiError(400, `model '${modelRaw}' is not a LithosAI official model`, "invalid_request_error", { param: "model" });
+
+  const translated = toDeepSeekResponsesChatBody(rawRecord, modelRaw, clientWantsStream, LITHOS_RESPONSES_PROFILE);
+  if (!translated.ok) return openaiError(400, translated.message, "invalid_request_error", { param: translated.param });
+  const { body: chatBody, toolNames, customToolNames } = translated.value;
+
+  const echo: DeepSeekResponsesEcho = {
+    tools: rawRecord.tools,
+    tool_choice: rawRecord.tool_choice,
+    parallel_tool_calls: rawRecord.parallel_tool_calls,
+    instructions: typeof rawRecord.instructions === "string" && rawRecord.instructions.trim() ? rawRecord.instructions : null,
+  };
+  const reasoningLabel = typeof chatBody.reasoning_effort === "string" ? chatBody.reasoning_effort : LITHOS_DEFAULT_REASONING_EFFORT;
+  // The client's cap when it sent one, else unknown: this vendor publishes no
+  // per-tier default allowance to stand in for it.
+  const outputAllowance = typeof chatBody.max_tokens === "number" ? chatBody.max_tokens : null;
+  if (usageContext?.responseTelemetry) {
+    usageContext.responseTelemetry.provider = "lithos";
+    usageContext.responseTelemetry.reasoning = reasoningLabel;
+    // `applyOutputLimit` put the client's `max_output_tokens` on the wire as
+    // `max_tokens`; an absent cap stays unknown rather than being invented.
+    usageContext.responseTelemetry.outputTokenAllowance = outputAllowance;
+  }
+  await recordRequestUsage(usageContext, {
+    model: modelRaw,
+    route: "responses",
+    stream: clientWantsStream,
+    reasoning: reasoningLabel,
+  });
+
+  const dispatched = await dispatchLithosUpstream(req, chatBody, modelRaw, usageContext);
+  if (!dispatched.ok) return dispatched.response;
+  const { upstream, requestSignal, downstreamSignal } = dispatched;
+  const providerRequestId = dispatched.providerRequestId;
+  const responseId = `resp_${(providerRequestId ?? crypto.randomUUID()).replace(/[^A-Za-z0-9]/g, "").slice(0, 40)}`;
+  const createdAtSeconds = Math.floor(Date.now() / 1000);
+
+  if (clientWantsStream) {
+    return streamLithosResponses(
+      upstream,
+      modelRaw,
+      responseId,
+      createdAtSeconds,
+      echo,
+      toolNames,
+      customToolNames,
+      providerRequestId,
+      usageContext,
+      downstreamSignal,
+      requestSignal,
+      upstreamModel
+    );
+  }
+
+  return finalizeBufferedLithosResponses({
+    upstream,
+    modelRaw,
+    responseId,
+    echo,
+    toolNames,
+    customToolNames,
+    upstreamModel,
+    providerRequestId,
+    requestSignal,
+    downstreamSignal,
+    usageContext,
+  });
 };
 
 const parseChatCompletionsEnvelope = async (
@@ -11061,6 +12194,9 @@ const handleChatCompletionsInternal = async (req: Request, usageContext?: UsageC
   }
   if (isProviderEnabled("deepseek", selection) && deepSeekUpstreamModelFor(model)) {
     return await handleDeepSeekChatCompletions(req, rawRecord, modelRaw, usageContext);
+  }
+  if (isProviderEnabled("lithos", selection) && lithosUpstreamModelFor(model)) {
+    return await handleLithosChatCompletions(req, rawRecord, modelRaw, usageContext);
   }
 
   const options = await validateChatCompletionsOptions(model, modelRaw, rawRecord, body);
@@ -12198,6 +13334,13 @@ const handleResponsesInternal = async (req: Request, usageContext?: UsageContext
   const requestedModel = getString(rawRecord.model)?.trim();
   if (requestedModel && deepSeekUpstreamModelFor(requestedModel)) {
     return await handleDeepSeekResponses(req, rawRecord, requestedModel, usageContext);
+  }
+  // LithosAI has no Responses endpoint of its own, so this route is served by
+  // the shared translation under the LithosAI profile rather than by a
+  // provider-side endpoint. Only an explicit LithosAI id takes this branch, so
+  // the Cerebras `unsupported_model` refusal below stays untouched.
+  if (requestedModel && lithosUpstreamModelFor(requestedModel)) {
+    return await handleLithosResponses(req, rawRecord, requestedModel, usageContext);
   }
   const prepared = await prepareResponsesRequest(req, rawRecord, rawBody, usageContext);
   if (!prepared.ok) return prepared.response;

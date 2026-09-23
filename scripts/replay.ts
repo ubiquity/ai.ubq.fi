@@ -43,6 +43,7 @@ import {
   iterateDeepSeekChatCompletionStream,
   normalizeDeepSeekChatCompletion,
 } from "../src/deepseek.ts";
+import { LITHOS_CHAT_COMPLETIONS_URL } from "../src/lithos.ts";
 import { fetchMeteredResponses, METERED_BASE_URL } from "../src/metered.ts";
 import { collectBufferedResponses, isAnswerBearingCompletion } from "../src/openai.ts";
 import { MAX_ACCEPTED_JSON_BODY_BYTES } from "../src/request.ts";
@@ -116,6 +117,10 @@ const PROVIDER_ROUTES: Readonly<Record<SentinelUpstreamProvider, string>> = Obje
   // The real DeepSeek endpoint: the recorded transport only answers the exact
   // URL the exported gateway transport dispatches to.
   deepseek: DEEPSEEK_CHAT_COMPLETIONS_URL,
+  // The real LithosAI endpoint, for the same reason. Replay coverage for this
+  // provider is not claimed here: the route is registered so the recorded
+  // transport's provider list matches the routes it is asked to validate.
+  lithos: LITHOS_CHAT_COMPLETIONS_URL,
 });
 
 type SupportedProvider = "chatgpt_codex" | "surplus" | "metered" | "deepseek";

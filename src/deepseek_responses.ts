@@ -1,4 +1,5 @@
 import {
+  DeepSeekError,
   deepSeekCachedPromptTokens,
   type DeepSeekFinishDisposition,
   deepSeekFinishDisposition,
@@ -7,7 +8,9 @@ import {
   deepSeekToolChoiceThinkingConflictMessage,
   deepSeekUpstreamModelFor,
   projectDeepSeekReasoningEffort,
+  readDeepSeekApiKey,
 } from "./deepseek.ts";
+import { LITHOS_REASONING_LEVELS, lithosCachedPromptTokens, lithosReasoningTokens, lithosUpstreamModelFor, requireLithosApiKey } from "./lithos.ts";
 import { getString, isRecord } from "./utils.ts";
 
 /**
@@ -28,6 +31,14 @@ import { getString, isRecord } from "./utils.ts";
  *
  * Only the gateway-known subset is translated. Anything else fails closed with
  * an `invalid_request_error` rather than being forwarded as an approximation.
+ *
+ * Provider-specific behavior is not hard-coded here: one `ChatOnlyResponsesProfile`
+ * per upstream carries the model table, the reasoning projection, the finish
+ * vocabulary, the usage counters and the capability checks, and the exported
+ * translations take the profile they serve. DeepSeek and LithosAI therefore
+ * share this one translation instead of a second copy drifting from it. Every
+ * entry point defaults to the DeepSeek profile, so the route that shipped
+ * against this module is unchanged.
  */
 
 export type DeepSeekResponsesFailure = Readonly<{ ok: false; message: string; param: string }>;
@@ -35,6 +46,110 @@ export type DeepSeekResponsesFailure = Readonly<{ ok: false; message: string; pa
 export type DeepSeekResponsesResult<T> = Readonly<{ ok: true; value: T }> | DeepSeekResponsesFailure;
 
 const failure = (param: string, message: string): DeepSeekResponsesFailure => ({ ok: false, message, param });
+
+/**
+ * One provider's answers to the questions this translation asks. A provider
+ * difference belongs in its profile; the translation itself stays shared.
+ *
+ * `projectReasoningEffort` returns null when the provider does not accept the
+ * requested tier, and the request then fails closed with an
+ * `invalid_request_error` rather than sending a value the provider refuses.
+ */
+export type ChatOnlyResponsesProfile = Readonly<{
+  id: "deepseek" | "lithos";
+  /** Human name used in client-facing error text. */
+  label: string;
+  /** Canonical upstream model for a client-facing id, or null when the id is not this provider's. */
+  upstreamModelFor: (model: string) => string | null;
+  projectReasoningEffort: (effort: string) => string | null;
+  /** The existing finish vocabulary, reused: both providers report the same reasons this adapter maps. */
+  finishDisposition: (reason: unknown) => DeepSeekFinishDisposition;
+  thinkingToolChoiceConflict: (reasoningEffort: unknown, thinking: unknown, toolChoice: unknown) => string | null;
+  toolChoiceThinkingConflictMessage: (conflict: string, field: string) => string;
+  cachedPromptTokens: (value: Record<string, unknown>, promptTokens: number) => number | null;
+  reasoningTokens: (value: Record<string, unknown>, completionTokens: number) => number | null;
+  /** Throws the provider's own not-configured error when its API key is absent. */
+  requireApiKey: () => void;
+  /** True when the provider reports stream usage only behind `stream_options.include_usage`. */
+  requiresStreamUsageOption: boolean;
+}>;
+
+/** The provider's own key check, mirroring `requireDeepSeekApiKey` in `./deepseek.ts`. */
+const requireDeepSeekResponsesApiKey = (): void => {
+  if (!readDeepSeekApiKey()) throw new DeepSeekError("The requested model is not configured.", "deepseek_api_key_missing", 503);
+};
+
+export const DEEPSEEK_RESPONSES_PROFILE: ChatOnlyResponsesProfile = {
+  id: "deepseek",
+  label: "DeepSeek",
+  upstreamModelFor: deepSeekUpstreamModelFor,
+  projectReasoningEffort: (effort: string) => projectDeepSeekReasoningEffort(effort),
+  finishDisposition: deepSeekFinishDisposition,
+  thinkingToolChoiceConflict: deepSeekThinkingToolChoiceConflict,
+  toolChoiceThinkingConflictMessage: deepSeekToolChoiceThinkingConflictMessage,
+  cachedPromptTokens: deepSeekCachedPromptTokens,
+  reasoningTokens: deepSeekReasoningTokens,
+  requireApiKey: requireDeepSeekResponsesApiKey,
+  // DeepSeek reports usage on its final content chunk only when the request
+  // asks for it, so the streaming body carries `stream_options.include_usage`.
+  requiresStreamUsageOption: true,
+};
+
+/** The seven tiers this provider accepted on 2026-09-23, as a membership set. */
+const LITHOS_REASONING_LEVEL_SET: ReadonlySet<string> = new Set(LITHOS_REASONING_LEVELS);
+
+/**
+ * Projects a requested reasoning tier onto the LithosAI wire value, or null
+ * when the provider does not accept it.
+ *
+ * The tier is sent verbatim: unlike DeepSeek there is no advanced Codex preset
+ * to translate, and `ultra` is NOT mapped to `max` because this provider
+ * refuses `ultra`. The provider accepted exactly these seven lowercase names,
+ * so a case-insensitive match forwards the canonical spelling and everything
+ * else fails closed instead of being sent.
+ */
+const projectLithosReasoningEffort = (effort: string): string | null => {
+  const level = effort.trim().toLowerCase();
+  return LITHOS_REASONING_LEVEL_SET.has(level) ? level : null;
+};
+
+/**
+ * No thinking-mode `tool_choice` restriction was observed or documented on this
+ * provider, so this profile reports no conflict rather than importing DeepSeek's
+ * measured restriction. The message builder completes the profile contract; it
+ * is unreachable while this function returns null.
+ */
+const lithosThinkingToolChoiceConflict = (_reasoningEffort: unknown, _thinking: unknown, _toolChoice: unknown): string | null => null;
+
+const lithosToolChoiceThinkingConflictMessage = (conflict: string, field: string): string =>
+  `tool_choice '${conflict}' is not supported while ${field} keeps LithosAI thinking mode active; set ${field} to 'none' or use tool_choice 'auto'`;
+
+/**
+ * The LithosAI profile.
+ *
+ * The usage counters are the transport's own exported guards
+ * (`lithosCachedPromptTokens`, `lithosReasoningTokens`), so the transport and
+ * this adapter cannot drift on what a readable measurement is. Only the tier
+ * predicate stays local, because it is this adapter's request-side decision:
+ * `src/lithos.ts` forwards whatever tier it is given and never judges one.
+ */
+export const LITHOS_RESPONSES_PROFILE: ChatOnlyResponsesProfile = {
+  id: "lithos",
+  label: "LithosAI",
+  upstreamModelFor: lithosUpstreamModelFor,
+  projectReasoningEffort: projectLithosReasoningEffort,
+  // `length` means the same output-budget truncation DeepSeek reports, so the
+  // one shared mapping is reused rather than a second vocabulary invented.
+  finishDisposition: deepSeekFinishDisposition,
+  thinkingToolChoiceConflict: lithosThinkingToolChoiceConflict,
+  toolChoiceThinkingConflictMessage: lithosToolChoiceThinkingConflictMessage,
+  cachedPromptTokens: lithosCachedPromptTokens,
+  reasoningTokens: lithosReasoningTokens,
+  requireApiKey: requireLithosApiKey,
+  // Usage arrives unconditionally on every streaming call and is never gated
+  // on `stream_options.include_usage`, which this provider's wire does not use.
+  requiresStreamUsageOption: false,
+};
 
 type ChatContentPart = Record<string, unknown>;
 
@@ -395,18 +510,26 @@ const applyOutputLimit = (body: Record<string, unknown>, rawRecord: Record<strin
   return { ok: true, value: undefined };
 };
 
-const applyReasoning = (body: Record<string, unknown>, rawRecord: Record<string, unknown>): DeepSeekResponsesResult<void> => {
+const applyReasoning = (
+  body: Record<string, unknown>,
+  rawRecord: Record<string, unknown>,
+  profile: ChatOnlyResponsesProfile
+): DeepSeekResponsesResult<void> => {
   const raw = rawRecord.reasoning;
   if (raw === undefined || raw === null) return { ok: true, value: undefined };
   if (!isRecord(raw) || Array.isArray(raw)) return failure("reasoning", "reasoning must be an object");
   const effort = getString(raw.effort);
-  if (effort) body.reasoning_effort = projectDeepSeekReasoningEffort(effort);
+  if (!effort) return { ok: true, value: undefined };
+  const wireEffort = profile.projectReasoningEffort(effort);
+  if (wireEffort === null) return failure("reasoning.effort", `reasoning.effort '${effort}' is not supported by ${profile.label}`);
+  body.reasoning_effort = wireEffort;
   return { ok: true, value: undefined };
 };
 
 const applyTools = (
   body: Record<string, unknown>,
-  rawRecord: Record<string, unknown>
+  rawRecord: Record<string, unknown>,
+  profile: ChatOnlyResponsesProfile
 ): DeepSeekResponsesResult<Readonly<{ toolNames: ReadonlyMap<string, string>; customToolNames: ReadonlySet<string> }>> => {
   const toolNames = new Map<string, string>();
   let customToolNames: ReadonlySet<string> = new Set();
@@ -427,8 +550,8 @@ const applyTools = (
     // parameter it believes it supports, and so the request never leaves the
     // gateway only to fail upstream. Probed 2026-09-21 on the Chat endpoint and
     // on the provider's native Responses endpoint; both reject it.
-    const conflict = deepSeekThinkingToolChoiceConflict(body.reasoning_effort, rawRecord.thinking, toolChoice.value);
-    if (conflict) return failure("tool_choice", deepSeekToolChoiceThinkingConflictMessage(conflict, "reasoning.effort"));
+    const conflict = profile.thinkingToolChoiceConflict(body.reasoning_effort, rawRecord.thinking, toolChoice.value);
+    if (conflict) return failure("tool_choice", profile.toolChoiceThinkingConflictMessage(conflict, "reasoning.effort"));
     body.tool_choice = toolChoice.value;
   }
   if (typeof rawRecord.parallel_tool_calls === "boolean") body.parallel_tool_calls = rawRecord.parallel_tool_calls;
@@ -456,31 +579,32 @@ const appendContinuationInstruction = (messages: Record<string, unknown>[]): voi
 };
 
 /**
- * Builds the Chat Completions body for a Responses request. Translation
- * failures are returned so the caller can answer with a precise
- * `invalid_request_error` instead of dispatching an approximation.
+ * Builds the Chat Completions body for a Responses request under one provider
+ * profile. Translation failures are returned so the caller can answer with a
+ * precise `invalid_request_error` instead of dispatching an approximation.
  */
 export const toDeepSeekResponsesChatBody = (
   rawRecord: Record<string, unknown>,
   requestedModel: string,
-  clientWantsStream: boolean
+  clientWantsStream: boolean,
+  profile: ChatOnlyResponsesProfile = DEEPSEEK_RESPONSES_PROFILE
 ): DeepSeekResponsesResult<Readonly<{ body: Record<string, unknown>; toolNames: ReadonlyMap<string, string>; customToolNames: ReadonlySet<string> }>> => {
-  const canonical = deepSeekUpstreamModelFor(requestedModel);
-  if (!canonical) return failure("model", `model '${requestedModel}' is not a DeepSeek official model`);
+  const canonical = profile.upstreamModelFor(requestedModel);
+  if (!canonical) return failure("model", `model '${requestedModel}' is not a ${profile.label} official model`);
   const instructions = typeof rawRecord.instructions === "string" && rawRecord.instructions.trim() ? rawRecord.instructions : null;
   const messages = toDeepSeekChatMessages(rawRecord.input, instructions);
   if (!messages.ok) return messages;
   if (!messages.value.length) return failure("input", "input must contain at least one message");
 
   const body: Record<string, unknown> = { model: canonical, messages: messages.value, stream: clientWantsStream };
-  // DeepSeek requires stream_options alongside a stream and reports usage on its
-  // final content chunk rather than a separate frame.
-  if (clientWantsStream) body.stream_options = { include_usage: true };
+  // A provider that reports streaming usage only when asked requires the option
+  // beside `stream`; one that reports it unconditionally must not be sent it.
+  if (clientWantsStream && profile.requiresStreamUsageOption) body.stream_options = { include_usage: true };
   const outputLimit = applyOutputLimit(body, rawRecord);
   if (!outputLimit.ok) return outputLimit;
-  const reasoning = applyReasoning(body, rawRecord);
+  const reasoning = applyReasoning(body, rawRecord, profile);
   if (!reasoning.ok) return reasoning;
-  const toolNames = applyTools(body, rawRecord);
+  const toolNames = applyTools(body, rawRecord, profile);
   if (!toolNames.ok) return toolNames;
   // Only a tool-bearing request makes the provider require replayed reasoning.
   if (Array.isArray(body.tools) && body.tools.length) {
@@ -561,20 +685,22 @@ const freeformInputFromArguments = (args: string): string => {
  *
  * The counters are the reason this is not a field-by-field copy: Codex reads
  * `input_tokens_details.cached_tokens` and `output_tokens_details.
- * reasoning_tokens`, and DeepSeek publishes those measurements as
- * `prompt_cache_hit_tokens` and `completion_tokens_details.reasoning_tokens`.
- * A counter the upstream did not report leaves its detail object absent, so the
- * client and the gateway telemetry both read an unknown value instead of a
- * measured zero.
+ * reasoning_tokens`, and each provider publishes those measurements under its
+ * own names (DeepSeek `prompt_cache_hit_tokens` / `completion_tokens_details.
+ * reasoning_tokens`; LithosAI `prompt_tokens_details.cached_tokens` /
+ * `completion_tokens_details.reasoning_tokens`), so the profile's counters are
+ * the ones consulted. A counter the upstream did not report leaves its detail
+ * object absent, so the client and the gateway telemetry both read an unknown
+ * value instead of a measured zero.
  */
-export const toResponsesUsage = (value: unknown): Record<string, unknown> | null => {
+export const toResponsesUsage = (value: unknown, profile: ChatOnlyResponsesProfile = DEEPSEEK_RESPONSES_PROFILE): Record<string, unknown> | null => {
   if (!isRecord(value) || Array.isArray(value)) return null;
   const inputTokens = typeof value.prompt_tokens === "number" ? value.prompt_tokens : null;
   const outputTokens = typeof value.completion_tokens === "number" ? value.completion_tokens : null;
   if (inputTokens === null || outputTokens === null) return null;
   const totalTokens = typeof value.total_tokens === "number" ? value.total_tokens : inputTokens + outputTokens;
-  const cachedTokens = deepSeekCachedPromptTokens(value, inputTokens);
-  const reasoningTokens = deepSeekReasoningTokens(value, outputTokens);
+  const cachedTokens = profile.cachedPromptTokens(value, inputTokens);
+  const reasoningTokens = profile.reasoningTokens(value, outputTokens);
   return {
     input_tokens: inputTokens,
     ...(cachedTokens === null ? {} : { input_tokens_details: { cached_tokens: cachedTokens } }),
@@ -653,9 +779,10 @@ export const deepSeekTerminalEnvelope = (
   createdAtSeconds: number,
   status: string,
   echo: DeepSeekResponsesEcho,
-  finishReason: unknown
+  finishReason: unknown,
+  profile: ChatOnlyResponsesProfile = DEEPSEEK_RESPONSES_PROFILE
 ): Readonly<{ type: "response.completed" | "response.incomplete" | "response.failed"; response: Record<string, unknown> }> => {
-  const disposition = deepSeekFinishDisposition(finishReason);
+  const disposition = profile.finishDisposition(finishReason);
   const terminalType = deepSeekTerminalTypeForDisposition(disposition);
   if (disposition.kind === "completed") {
     return { type: terminalType as "response.completed", response: responsesEnvelope(responseId, requestedModel, createdAtSeconds, status, echo) };
@@ -667,7 +794,7 @@ export const deepSeekTerminalEnvelope = (
   }
   const code = disposition.kind === "failed" ? disposition.code : `unrecognized_finish_reason:${disposition.value}`;
   const response = responsesEnvelope(responseId, requestedModel, createdAtSeconds, "failed", echo);
-  response.error = { code, message: `DeepSeek stopped generating: ${code}` };
+  response.error = { code, message: `${profile.label} stopped generating: ${code}` };
   return { type: "response.failed", response };
 };
 
@@ -703,9 +830,10 @@ const outputItemsForChoice = (
 };
 
 /**
- * Builds the buffered Responses object for a completed Chat completion. Chat
- * tool calls become `function_call` output items, and DeepSeek's
- * `reasoning_content` becomes a `reasoning` item so nothing is silently lost.
+ * Builds the buffered Responses object for a completed Chat completion under
+ * one provider profile. Chat tool calls become `function_call` output items,
+ * and the provider's `reasoning_content` becomes a `reasoning` item so nothing
+ * is silently lost.
  */
 export const toDeepSeekResponsesPayload = (
   completion: Record<string, unknown>,
@@ -713,7 +841,8 @@ export const toDeepSeekResponsesPayload = (
   responseId: string,
   echo: DeepSeekResponsesEcho,
   toolNames: ReadonlyMap<string, string> = new Map(),
-  customToolNames: ReadonlySet<string> = new Set()
+  customToolNames: ReadonlySet<string> = new Set(),
+  profile: ChatOnlyResponsesProfile = DEEPSEEK_RESPONSES_PROFILE
 ): Record<string, unknown> => {
   const created = typeof completion.created === "number" ? completion.created : Math.floor(Date.now() / 1000);
   const choices = Array.isArray(completion.choices) ? completion.choices : [];
@@ -722,14 +851,14 @@ export const toDeepSeekResponsesPayload = (
   // response just because the transport delivered the whole body.
   const firstChoice = choices.find((choice) => isRecord(choice) && !Array.isArray(choice));
   const finishReason = isRecord(firstChoice) && !Array.isArray(firstChoice) ? firstChoice.finish_reason : undefined;
-  const payload = deepSeekTerminalEnvelope(responseId, requestedModel, created, "completed", echo, finishReason).response;
+  const payload = deepSeekTerminalEnvelope(responseId, requestedModel, created, "completed", echo, finishReason, profile).response;
   const output: Record<string, unknown>[] = [];
   for (const [index, choice] of choices.entries()) {
     if (!isRecord(choice) || Array.isArray(choice) || !isRecord(choice.message) || Array.isArray(choice.message)) continue;
     output.push(...outputItemsForChoice(choice.message, index, responseId, toolNames, customToolNames));
   }
   payload.output = output;
-  payload.usage = toResponsesUsage(completion.usage);
+  payload.usage = toResponsesUsage(completion.usage, profile);
   return payload;
 };
 
@@ -838,8 +967,11 @@ const newStreamState = (): StreamState => ({
  */
 export type DeepSeekResponsesTerminalKind = "completed" | "incomplete" | "failed";
 
-export const deepSeekResponsesTerminalKind = (finishReason: unknown): DeepSeekResponsesTerminalKind => {
-  const disposition = deepSeekFinishDisposition(finishReason);
+export const deepSeekResponsesTerminalKind = (
+  finishReason: unknown,
+  profile: ChatOnlyResponsesProfile = DEEPSEEK_RESPONSES_PROFILE
+): DeepSeekResponsesTerminalKind => {
+  const disposition = profile.finishDisposition(finishReason);
   if (disposition.kind === "completed") return "completed";
   if (disposition.kind === "incomplete") return "incomplete";
   return "failed";
@@ -868,8 +1000,8 @@ const mergeToolCallDelta = (state: StreamState, responseId: string, raw: Record<
 
 /**
  * Accumulates one Chat Completions SSE stream and emits the Responses event
- * sequence. The message item is announced lazily so a tool-only reply never
- * emits an empty text part.
+ * sequence under one provider profile. The message item is announced lazily so
+ * a tool-only reply never emits an empty text part.
  */
 export const createDeepSeekResponsesStreamTranslator = (
   requestedModel: string,
@@ -877,7 +1009,8 @@ export const createDeepSeekResponsesStreamTranslator = (
   echo: DeepSeekResponsesEcho,
   createdAtSeconds: number,
   toolNames: ReadonlyMap<string, string> = new Map(),
-  customToolNames: ReadonlySet<string> = new Set()
+  customToolNames: ReadonlySet<string> = new Set(),
+  profile: ChatOnlyResponsesProfile = DEEPSEEK_RESPONSES_PROFILE
 ) => {
   const state = newStreamState();
   const messageId = `${responseId}_msg_0`;
@@ -1044,7 +1177,7 @@ export const createDeepSeekResponsesStreamTranslator = (
    * completion-validity question, answered once by
    * `isAnswerBearingCompletion` and applied by the route caller.
    */
-  const terminalEnvelope = () => deepSeekTerminalEnvelope(responseId, requestedModel, createdAtSeconds, "completed", echo, state.finishReason);
+  const terminalEnvelope = () => deepSeekTerminalEnvelope(responseId, requestedModel, createdAtSeconds, "completed", echo, state.finishReason, profile);
 
   const isCustomCall = (call: StreamToolCall): boolean => customToolNames.has(call.name);
 
@@ -1232,8 +1365,13 @@ export const createDeepSeekResponsesStreamTranslator = (
     /** Translates one normalized Chat chunk into zero or more Responses events. */
     push: (chunk: Record<string, unknown>): Record<string, unknown>[] => {
       const events = startEvents();
-      const usage = toResponsesUsage(chunk.usage);
+      const usage = toResponsesUsage(chunk.usage, profile);
       if (usage) state.usage = usage;
+      // An empty `choices` array is a valid frame, not a malformed one: on the
+      // LithosAI wire the authoritative usage totals ride a trailing chunk with
+      // no choices. The loop simply contributes no content events while the
+      // usage above is still captured, and no `stream_options.include_usage`
+      // request flag is required for this profile to receive it.
       const choices = Array.isArray(chunk.choices) ? chunk.choices : [];
       for (const choice of choices) {
         if (!isRecord(choice) || Array.isArray(choice)) continue;
@@ -1267,7 +1405,7 @@ export const createDeepSeekResponsesStreamTranslator = (
      * from the shared DeepSeek vocabulary mapping, so it cannot drift from the
      * event `finish` emits.
      */
-    terminalKind: (): DeepSeekResponsesTerminalKind => deepSeekResponsesTerminalKind(state.finishReason),
+    terminalKind: (): DeepSeekResponsesTerminalKind => deepSeekResponsesTerminalKind(state.finishReason, profile),
     /** The raw recorded reason, for telemetry when the terminal is a failure. */
     upstreamFinishReason: (): string | null => (typeof state.finishReason === "string" ? state.finishReason : null),
     /**
