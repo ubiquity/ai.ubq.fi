@@ -15,7 +15,6 @@
   "src/harmony/probes.ts": 1160,
   "src/kernel_quota_v2.ts": 1735,
   "src/kv_migration.ts": 2490,
-  "src/openai.ts": 1289,
   "src/paid_fallback_ledger.ts": 1982,
   "src/prompt_cache_analytics.ts": 1167,
   "src/prompt_cache_scope_experiment.ts": 1721,

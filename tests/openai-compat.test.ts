@@ -141,7 +141,8 @@ setKvForTest(kvStub);
 
 const { extractUsageTokens, getResponseTelemetry } = await import("../src/openai_telemetry.ts");
 const { isAnswerBearingCompletion } = await import("../src/upstream_wire.ts");
-const { handleResponses, setCodexBankedResetOptionsForTest } = await import("../src/openai.ts");
+const { setCodexBankedResetOptionsForTest } = await import("../src/openai.ts");
+const { handleResponses } = await import("../src/responses_handler.ts");
 const { handleChatCompletions } = await import("../src/chat_completions_envelope.ts");
 const { handleModelCapabilities, handleModels, handlePublicModelCatalog } = await import("../src/model_catalog.ts");
 const { fetchMeteredModels, METERED_MODELS_CACHE_TTL_MS, resetMeteredModelsCacheForTest, setMeteredModelsFetchForTest } = await import("../src/metered.ts");
@@ -208,7 +209,6 @@ const toPublicKeyPem = (spki: Uint8Array): string => {
   const lines = b64.match(/.{1,64}/g) ?? [];
   return `-----BEGIN PUBLIC KEY-----\n${lines.join("\n")}\n-----END PUBLIC KEY-----`;
 };
-
 const sseResponse = (chunks: string[]): Response => {
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {

@@ -305,7 +305,7 @@ const { default: handler } = await import("../src/handler.ts");
 const { authenticateAdmin, authenticateClient } = await import("../src/auth.ts");
 const { PASSKEY_RELAY_COOKIE_NAME, passkeySessionKey, passkeyUserKey } = await import("../src/passkeys.ts");
 const { createRequestDeliveryLifecycle } = await import("../src/serve_handler.ts");
-const { handleResponses } = await import("../src/openai.ts");
+const { handleResponses } = await import("../src/responses_handler.ts");
 const {
   API_KEY_USAGE_V3_REQUEST_PREFIX,
   ApiKeyQuotaDispatchError,
