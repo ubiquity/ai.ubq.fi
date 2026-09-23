@@ -141,7 +141,8 @@ setKvForTest(kvStub);
 
 const { extractUsageTokens, getResponseTelemetry } = await import("../src/openai_telemetry.ts");
 const { isAnswerBearingCompletion } = await import("../src/upstream_wire.ts");
-const { handleChatCompletions, handleResponses, setCodexBankedResetOptionsForTest } = await import("../src/openai.ts");
+const { handleResponses, setCodexBankedResetOptionsForTest } = await import("../src/openai.ts");
+const { handleChatCompletions } = await import("../src/chat_completions_envelope.ts");
 const { handleModelCapabilities, handleModels, handlePublicModelCatalog } = await import("../src/model_catalog.ts");
 const { fetchMeteredModels, METERED_MODELS_CACHE_TTL_MS, resetMeteredModelsCacheForTest, setMeteredModelsFetchForTest } = await import("../src/metered.ts");
 const { fetchSurplusModels, resetSurplusModelsCacheForTest, SURPLUS_MODELS_CACHE_TTL_MS } = await import("../src/surplus.ts");
@@ -176,7 +177,6 @@ const utf8ByteLength = (value: string): number => TEXT_ENCODER.encode(value).byt
 class Deferred<T> {
   readonly promise: Promise<T>;
   #resolve!: (value: T | PromiseLike<T>) => void;
-
   constructor() {
     this.promise = new Promise<T>((resolve) => {
       this.#resolve = resolve;
@@ -15873,7 +15873,7 @@ Deno.test("openai: the DeepSeek route accepts the provider's own `thinking` fiel
   const envKey = "DEEPSEEK_API_KEY";
   const original = Deno.env.get(envKey);
   Deno.env.set(envKey, "deepseek-test-key");
-  const { handleChatCompletions } = await import("../src/openai.ts");
+  const { handleChatCompletions } = await import("../src/chat_completions_envelope.ts");
   const seen: Record<string, unknown>[] = [];
   const withFetchMock = async <T>(handler: () => Response | Promise<Response>, fn: () => Promise<T>): Promise<T> => {
     const originalFetch = globalThis.fetch;
