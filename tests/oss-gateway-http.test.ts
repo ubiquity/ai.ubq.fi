@@ -9,7 +9,7 @@ import {
   resetApiKeyPolicyCacheForTest,
 } from "../src/api_key_policy.ts";
 import { DEEPSEEK_CHAT_COMPLETIONS_URL } from "../src/deepseek.ts";
-import { setInferenceAdmissionControllerForTest } from "../src/handler.ts";
+import { setInferenceAdmissionControllerForTest } from "../src/handler_admission.ts";
 import { createInferenceAdmissionController } from "../src/inference_admission.ts";
 import { setKvForTest } from "../src/kv.ts";
 import { enqueuePromptCacheAnalytics, optionalPromptCacheAnalyticsSnapshot } from "../src/prompt_cache_analytics.ts";

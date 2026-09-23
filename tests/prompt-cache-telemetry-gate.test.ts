@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { warnQuotaAccountingFailure, withTerminalRequestLog } from "../src/handler.ts";
+import { warnQuotaAccountingFailure, withTerminalRequestLog } from "../src/handler_terminal_log.ts";
 import { recordPromptCacheAnalytics } from "../src/prompt_cache_analytics.ts";
 import {
   PROMPT_CACHE_TELEMETRY_MIN_COMPLETED,

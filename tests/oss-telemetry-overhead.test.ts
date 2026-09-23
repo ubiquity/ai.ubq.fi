@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { withTerminalRequestLog } from "../src/handler.ts";
+import { withTerminalRequestLog } from "../src/handler_terminal_log.ts";
 import { setKvForTest } from "../src/kv.ts";
 import { createOptionalTelemetryQueue } from "../src/optional_telemetry_queue.ts";
 import {

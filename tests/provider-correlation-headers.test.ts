@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { PROVIDER_NATIVE_CORRELATION_HEADERS, scrubProviderNativeCorrelationHeaders } from "../src/handler.ts";
+import { PROVIDER_NATIVE_CORRELATION_HEADERS, scrubProviderNativeCorrelationHeaders } from "../src/handler_http.ts";
 
 /**
  * Every spelling a provider reader accepts must be scrubbed, or that
