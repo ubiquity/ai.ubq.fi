@@ -4,19 +4,8 @@ import { type ApiKeyProviderDispatch } from "./api_key_policy.ts";
 import { readBoundedResponseBody } from "./bounded_response_body.ts";
 import { json, openaiError, STANDARD_RATE_LIMIT_HEADERS } from "./http.ts";
 import { BUFFERED_INFERENCE_DEADLINE_MS } from "./inference_deadline.ts";
-import {
-  aggregateResponseTelemetry,
-  bytesToBase64,
-  findUnknownKey,
-  getDefaultModel,
-  responseTelemetry,
-  responseWarnings,
-  runResponsesHandler,
-  type ResponseTelemetryState,
-  UOS_WARNING_HEADER,
-  type UsageContext,
-  type UsageTokens,
-} from "./openai.ts";
+import { aggregateResponseTelemetry, responseTelemetry, type ResponseTelemetryState, type UsageContext, type UsageTokens } from "./openai_telemetry.ts";
+import { bytesToBase64, findUnknownKey, getDefaultModel, responseWarnings, runResponsesHandler, UOS_WARNING_HEADER } from "./openai.ts";
 import { captureRawBodyOnce, discardRawBodyObserverOnce, readJsonBody } from "./request.ts";
 
 /**

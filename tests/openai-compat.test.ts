@@ -139,9 +139,8 @@ const kvStub = {
 
 setKvForTest(kvStub);
 
+const { extractUsageTokens, getResponseTelemetry } = await import("../src/openai_telemetry.ts");
 const {
-  extractUsageTokens,
-  getResponseTelemetry,
   handleChatCompletions,
   handleModelCapabilities,
   handlePublicModelCatalog,
