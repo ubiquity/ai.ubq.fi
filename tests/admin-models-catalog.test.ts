@@ -339,12 +339,14 @@ Deno.test("the Models tab renders checkbox tools instead of a free-text whitelis
     assert.match(adminHtml, new RegExp(`id="${id}"`), `${id} must be rendered`);
     assert.match(adminScript, new RegExp(`mustGet\\("${id}"\\)`), `${id} must be wired`);
   }
-  for (const provider of ["all", "codex", "openlux", "surplus", "deepseek", "cerebras"]) {
-    assert.match(adminHtml, new RegExp(`data-model-provider="${provider}"`), `${provider} needs a filter chip`);
-  }
-  for (const provider of ["codex", "openlux", "surplus", "deepseek", "cerebras"]) {
-    assert.match(adminScript, new RegExp(`\\b${provider}: "`), `${provider} needs a display label`);
-  }
+  // The chips are rendered from the roster the API returns, so the markup holds
+  // the container only and the panel keeps no provider list of its own.
+  assert.match(adminHtml, /<div data-model-filters role="group" aria-label="Filter by provider"><\/div>/);
+  assert.doesNotMatch(adminHtml, /data-model-provider=/);
+  assert.doesNotMatch(adminScript, /MODEL_PROVIDER_(LABELS|IDS)/);
+  assert.match(adminScript, /const renderModelProviderFilters = \(\) => \{/);
+  assert.match(adminScript, /modelsProviderFilters\.addEventListener\("click"/);
+  assert.match(adminScript, /providerLabelFor\(provider\.id\)/);
 
   assert.match(adminScript, /checkbox\.type = "checkbox"/);
   assert.match(adminScript, /dataset\.modelToggle/);
@@ -402,12 +404,14 @@ Deno.test("the Providers tab renders a provider picker next to the Analytics tab
     assert.match(adminHtml, new RegExp(`id="${id}"`), `${id} must be rendered`);
     assert.match(adminScript, new RegExp(`mustGet\\("${id}"\\)`), `${id} must be wired`);
   }
-  for (const tier of ["all", "subscription", "paid", "direct"]) {
-    assert.match(adminHtml, new RegExp(`data-provider-tier="${tier}"`), `${tier} needs a filter chip`);
-  }
-  for (const provider of ["codex", "openlux", "surplus", "deepseek", "cerebras"]) {
-    assert.match(adminScript, new RegExp(`id: "${provider}"`), `${provider} needs a roster entry`);
-  }
+  // Tier chips and provider rows come from the payload: the panel adds no tier
+  // or provider of its own, and health is read through the row's health key.
+  assert.match(adminHtml, /<div data-provider-filters role="group" aria-label="Filter by tier"><\/div>/);
+  assert.doesNotMatch(adminHtml, /data-provider-tier=/);
+  assert.doesNotMatch(adminScript, /PROVIDER_(ROSTER|TIER_IDS|TIER_LABELS|HEALTH_KEYS|ALL_IDS)/);
+  assert.match(adminScript, /const renderProviderTierFilters = \(\) => \{/);
+  assert.match(adminScript, /providersTierFilters\.addEventListener\("click"/);
+  assert.match(adminScript, /providerHealthFor\(entry\)/);
 
   assert.match(adminScript, /fetch\(apiUrl\("\/admin\/providers\/selection"\), \{/);
   assert.match(adminScript, /method: "POST"/);

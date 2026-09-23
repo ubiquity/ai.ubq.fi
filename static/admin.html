@@ -692,23 +692,7 @@
                     <option value="id">Provider A–Z</option>
                   </select>
                 </label>
-                <div data-provider-filters role="group" aria-label="Filter by tier">
-                  <button id="providers-selection-tier-all" type="button" data-provider-tier="all" aria-pressed="true">
-                    All <span data-provider-filter-count>0</span>
-                  </button>
-                  <button id="providers-selection-tier-subscription" type="button" data-provider-tier="subscription"
-                    aria-pressed="false">
-                    Subscription <span data-provider-filter-count>0</span>
-                  </button>
-                  <button id="providers-selection-tier-paid" type="button" data-provider-tier="paid"
-                    aria-pressed="false">
-                    Paid fallback <span data-provider-filter-count>0</span>
-                  </button>
-                  <button id="providers-selection-tier-direct" type="button" data-provider-tier="direct"
-                    aria-pressed="false">
-                    Direct <span data-provider-filter-count>0</span>
-                  </button>
-                </div>
+                <div data-provider-filters role="group" aria-label="Filter by tier"></div>
                 <label data-check="only-active">
                   <input id="providers-selection-only-active" type="checkbox" />
                   <span>Only active</span>
@@ -800,32 +784,7 @@
                     <option value="created">Newest first</option>
                   </select>
                 </label>
-                <div data-model-filters role="group" aria-label="Filter by provider">
-                  <button id="models-whitelist-provider-all" type="button" data-model-provider="all"
-                    aria-pressed="true">
-                    All <span data-model-filter-count>0</span>
-                  </button>
-                  <button id="models-whitelist-provider-codex" type="button" data-model-provider="codex"
-                    aria-pressed="false">
-                    Codex <span data-model-filter-count>0</span>
-                  </button>
-                  <button id="models-whitelist-provider-openlux" type="button" data-model-provider="openlux"
-                    aria-pressed="false">
-                    Metered 2 <span data-model-filter-count>0</span>
-                  </button>
-                  <button id="models-whitelist-provider-surplus" type="button" data-model-provider="surplus"
-                    aria-pressed="false">
-                    Metered 1 <span data-model-filter-count>0</span>
-                  </button>
-                  <button id="models-whitelist-provider-deepseek" type="button" data-model-provider="deepseek"
-                    aria-pressed="false">
-                    DeepSeek <span data-model-filter-count>0</span>
-                  </button>
-                  <button id="models-whitelist-provider-cerebras" type="button" data-model-provider="cerebras"
-                    aria-pressed="false">
-                    Cerebras <span data-model-filter-count>0</span>
-                  </button>
-                </div>
+                <div data-model-filters role="group" aria-label="Filter by provider"></div>
                 <label data-check="only-selected">
                   <input id="models-whitelist-only-selected" type="checkbox" />
                   <span>Only checked</span>
@@ -1071,6 +1030,6 @@
         </button>
       </section>
     </div>
-    <script type="module" src="/admin.js?v=passport-design-20260922"></script>
+    <script type="module" src="/admin.js?v=provider-roster-dynamic-20260923"></script>
   </body>
 </html>

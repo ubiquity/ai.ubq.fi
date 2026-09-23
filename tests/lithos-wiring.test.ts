@@ -619,7 +619,7 @@ Deno.test("lithos wiring: the catalog advertises eight addressable ids only whil
       // `/v1/responses` is served by the gateway's translation.
       assert.equal(row.context_window_tokens, 1_048_576, `${row.id} context window`);
       assert.equal(row.max_context_window_tokens, 1_048_576, `${row.id} max context window`);
-      assert.equal(row.effective_context_window_percent, 95, `${row.id} effective percent`);
+      assert.equal(row.effective_context_window_percent, 100, `${row.id} effective percent`);
       assert.deepEqual(row.providers[0]?.supported_endpoints, ["/v1/chat/completions", "/v1/responses"]);
       assert.deepEqual(row.supported_reasoning_levels, ["none", "minimal", "low", "medium", "high", "xhigh", "max"]);
       assert.equal(row.default_reasoning_effort, "medium");

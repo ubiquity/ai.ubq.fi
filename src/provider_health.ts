@@ -32,7 +32,14 @@ export type ProviderHealthView = Readonly<{
   last_refresh_succeeded: boolean | null;
 }>;
 
-type RecordProvider = "cerebras" | "codex" | "deepseek" | "lithos" | "metered" | "surplus";
+/**
+ * The providers the passive health view (`/health/providers`) publishes a
+ * top-level key for, named after the route each one reports on: OpenLux
+ * reports through `metered`.
+ */
+export const RECORD_PROVIDER_IDS = ["cerebras", "codex", "deepseek", "lithos", "metered", "surplus"] as const;
+
+export type RecordProvider = (typeof RECORD_PROVIDER_IDS)[number];
 
 const PROVIDER_RECORDS = ["current", "success", "reachable", "auth_invalid", "quota_exhausted", "upstream_error", "refresh"] as const;
 
