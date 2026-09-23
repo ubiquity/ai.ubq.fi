@@ -10,7 +10,7 @@ import {
   projectDeepSeekReasoningEffort,
   readDeepSeekApiKey,
 } from "./deepseek.ts";
-import { LITHOS_REASONING_LEVELS, lithosUpstreamModelFor, requireLithosApiKey } from "./lithos.ts";
+import { LITHOS_REASONING_LEVELS, lithosCachedPromptTokens, lithosReasoningTokens, lithosUpstreamModelFor, requireLithosApiKey } from "./lithos.ts";
 import { getString, isRecord } from "./utils.ts";
 
 /**
@@ -113,37 +113,6 @@ const projectLithosReasoningEffort = (effort: string): string | null => {
   return LITHOS_REASONING_LEVEL_SET.has(level) ? level : null;
 };
 
-/** One non-negative integer counter, or null when the field is absent or impossible. */
-const nonNegativeInteger = (value: unknown): number | null => {
-  if (typeof value !== "number" || !Number.isFinite(value)) return null;
-  const normalized = Math.trunc(value);
-  return normalized >= 0 ? normalized : null;
-};
-
-/**
- * LithosAI's cache-read counter. The provider publishes
- * `prompt_tokens_details.cached_tokens`, or an explicit `null` when it measured
- * nothing. The count is a subset of the request input, so a value above
- * `promptTokens` describes no readable measurement and is dropped.
- */
-const lithosCachedPromptTokens = (value: Record<string, unknown>, promptTokens: number): number | null => {
-  const details = isRecord(value.prompt_tokens_details) && !Array.isArray(value.prompt_tokens_details) ? value.prompt_tokens_details : null;
-  const cached = nonNegativeInteger(details?.cached_tokens);
-  return cached === null || cached > promptTokens ? null : cached;
-};
-
-/**
- * LithosAI's reasoning counter, published as
- * `completion_tokens_details.reasoning_tokens`. It is defined as part of the
- * completion output, so a value above `completionTokens` describes no readable
- * measurement and is dropped rather than published.
- */
-const lithosReasoningTokens = (value: Record<string, unknown>, completionTokens: number): number | null => {
-  const details = isRecord(value.completion_tokens_details) && !Array.isArray(value.completion_tokens_details) ? value.completion_tokens_details : null;
-  const reasoning = nonNegativeInteger(details?.reasoning_tokens);
-  return reasoning === null || reasoning > completionTokens ? null : reasoning;
-};
-
 /**
  * No thinking-mode `tool_choice` restriction was observed or documented on this
  * provider, so this profile reports no conflict rather than importing DeepSeek's
@@ -158,15 +127,11 @@ const lithosToolChoiceThinkingConflictMessage = (conflict: string, field: string
 /**
  * The LithosAI profile.
  *
- * INTEGRATION DELTA — the only wiring the primary may want to swap: this file
- * imports `lithosUpstreamModelFor`, `LITHOS_REASONING_LEVELS` and
- * `requireLithosApiKey` from `./lithos.ts`, all of which exist today. The
- * usage-counter pair (`lithosCachedPromptTokens`, `lithosReasoningTokens`) and
- * the tier predicate (`projectLithosReasoningEffort`) are local to this file
- * because `src/lithos.ts` exports no equivalents yet; when it exports
- * `lithosCachedPromptTokens`, `lithosReasoningTokens` and a projected-tier
- * helper, delete the local copies and wire those names here. Nothing else in
- * this profile needs to change for integration.
+ * The usage counters are the transport's own exported guards
+ * (`lithosCachedPromptTokens`, `lithosReasoningTokens`), so the transport and
+ * this adapter cannot drift on what a readable measurement is. Only the tier
+ * predicate stays local, because it is this adapter's request-side decision:
+ * `src/lithos.ts` forwards whatever tier it is given and never judges one.
  */
 export const LITHOS_RESPONSES_PROFILE: ChatOnlyResponsesProfile = {
   id: "lithos",
