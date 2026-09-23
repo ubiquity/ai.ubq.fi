@@ -1055,3 +1055,106 @@ Deno.test("deepseek responses: a normal stream is still reported as completed", 
   assert.equal(terminal.response.incomplete_details, null);
   assert.equal(terminal.response.error, null);
 });
+
+// ---------------------------------------------------------------------------
+// Replayed Codex item shapes.
+//
+// A Codex thread replays its stored history on every request, so an item shape
+// the adapter refuses cannot be cleared by repairing one thread. Both fixtures
+// below are reductions of records captured on this host.
+// ---------------------------------------------------------------------------
+
+const replayedAgentMessage = (content: readonly Record<string, unknown>[]) => ({
+  type: "agent_message",
+  id: "amsg_01a0c77c-9203-7930-b68b-5fe2221a7393",
+  author: "/root",
+  recipient: "/root/deepseek_delivery_diagnostic",
+  content,
+  internal_chat_message_metadata_passthrough: { turn_id: "turn_1" },
+});
+
+const agentMessageEnvelope = "Message Type: NEW_TASK\nTask name: /root/deepseek_delivery_diagnostic\nSender: /root\nPayload:\n";
+
+const codexTuiToolOutput = {
+  type: "function_call_output",
+  name: "send_message_to_thread",
+  namespace: "codex_tui",
+  output: "<codex_delegation>\n  <input>Continue the task</input>\n</codex_delegation>",
+};
+
+Deno.test("deepseek responses: a replayed agent_message translates instead of failing", () => {
+  const translated = toDeepSeekResponsesChatBody(
+    {
+      input: [
+        { type: "message", role: "user", content: "keep going" },
+        replayedAgentMessage([
+          { type: "input_text", text: agentMessageEnvelope },
+          { type: "encrypted_content", encrypted_content: "gAAAAABqsg" },
+        ]),
+      ],
+    },
+    "deepseek-flash",
+    false
+  );
+
+  assert.equal(translated.ok, true);
+  // The readable envelope replays as a user turn; the opaque encrypted_content
+  // part has no Chat field and is not forwarded.
+  assert.deepEqual(translated.value.body.messages, [
+    { role: "user", content: "keep going" },
+    { role: "user", content: agentMessageEnvelope },
+  ]);
+});
+
+Deno.test("deepseek responses: an agent_message with no readable text is skipped", () => {
+  const translated = toDeepSeekResponsesChatBody(
+    {
+      input: [{ type: "message", role: "user", content: "keep going" }, replayedAgentMessage([{ type: "encrypted_content", encrypted_content: "gAAAAABqsg" }])],
+    },
+    "deepseek-flash",
+    false
+  );
+  assert.equal(translated.ok, true);
+  assert.deepEqual(translated.value.body.messages, [{ role: "user", content: "keep going" }]);
+});
+
+Deno.test("deepseek responses: a named unpaired function_call_output is skipped, not fatal", () => {
+  const translated = toDeepSeekResponsesChatBody(
+    { input: [{ type: "message", role: "user", content: "deliver it" }, codexTuiToolOutput] },
+    "deepseek-flash",
+    false
+  );
+  assert.equal(translated.ok, true);
+  // Chat has no unpaired tool-result channel: the output is dropped rather than
+  // answered to a call id it never had.
+  assert.deepEqual(translated.value.body.messages, [{ role: "user", content: "deliver it" }]);
+  // A freeform output shares the branch and the same rule.
+  const customOutput = toDeepSeekResponsesChatBody(
+    {
+      input: [
+        { type: "message", role: "user", content: "deliver it" },
+        { type: "custom_tool_call_output", output: "freeform" },
+      ],
+    },
+    "deepseek-flash",
+    false
+  );
+  assert.equal(customOutput.ok, true);
+  assert.deepEqual(customOutput.value.body.messages, [{ role: "user", content: "deliver it" }]);
+  // With nothing representable left to send, the request still fails, but for
+  // the honest reason: there is no message, not a rejected item shape.
+  const toolOutputOnly = toDeepSeekResponsesChatBody({ input: [codexTuiToolOutput] }, "deepseek-flash", false);
+  assert.equal(toolOutputOnly.ok, false);
+  assert.equal(toolOutputOnly.message, "input must contain at least one message");
+});
+
+Deno.test("deepseek responses: malformed items that should fail still fail", () => {
+  // A function_call without its call_id/name pair is still a protocol violation.
+  const callWithoutId = toDeepSeekResponsesChatBody({ input: [{ type: "function_call", name: "lookup" }] }, "deepseek-flash", false);
+  assert.equal(callWithoutId.ok, false);
+  assert.equal(callWithoutId.message, "function_call items require call_id and name");
+  // An unknown item type is still refused instead of being approximated.
+  const unknownItem = toDeepSeekResponsesChatBody({ input: [{ type: "computer_call", call_id: "c" }] }, "deepseek-flash", false);
+  assert.equal(unknownItem.ok, false);
+  assert.equal(unknownItem.param, "input.type");
+});

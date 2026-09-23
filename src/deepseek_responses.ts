@@ -28,6 +28,11 @@ import { getString, isRecord } from "./utils.ts";
  *
  * Only the gateway-known subset is translated. Anything else fails closed with
  * an `invalid_request_error` rather than being forwarded as an approximation.
+ * Two replayed Codex shapes are the exception, because a stored thread keeps
+ * sending them and Chat Completions has no exact equivalent for either: a
+ * `function_call_output` with no `call_id` (the named unpaired output Codex
+ * emits for client-run tools) is skipped, and an `agent_message` replays as a
+ * user turn, skipped only when nothing readable remains. See `appendInputItem`.
  */
 
 export type DeepSeekResponsesFailure = Readonly<{ ok: false; message: string; param: string }>;
@@ -91,11 +96,42 @@ const chatToolCallItem = (item: Record<string, unknown>): DeepSeekResponsesResul
   return { ok: true, value: { id: callId, type: "function", function: { name, arguments: args } } };
 };
 
-const chatToolResultItem = (item: Record<string, unknown>): DeepSeekResponsesResult<Record<string, unknown>> => {
+/**
+ * A replayed `agent_message`, which a Codex multi-agent thread sends from its
+ * stored history: `author`/`recipient` plus `input_text` parts and, for a
+ * payload the first-party service encrypts, an opaque `encrypted_content` part.
+ * Chat Completions has no agent-message role and no field for that ciphertext,
+ * so the item becomes one user turn carrying its readable text verbatim, joined
+ * the way the Codex protocol joins its parts. A part type this adapter does not
+ * know is dropped for the same reason the ciphertext is: Chat cannot carry it
+ * and the request must still reach the model. Nothing readable means no turn at
+ * all rather than an empty one, and no placeholder text is invented.
+ */
+const chatAgentMessageItems = (item: Record<string, unknown>): Record<string, unknown>[] => {
+  const parts = Array.isArray(item.content) ? item.content : [];
+  const text = parts
+    .map((part) => (isRecord(part) && getString(part.type) === "input_text" ? getString(part.text) : null))
+    .filter((value): value is string => Boolean(value))
+    .join("\n");
+  return text.trim() ? [{ role: "user", content: text }] : [];
+};
+
+/**
+ * A replayed tool result. Codex also sends a named unpaired output
+ * (`name`/`namespace`, no `call_id`) for tools its own client ran, for example
+ * an app-server `toolOutput` turn; `protocol/src/models.rs` accepts that item on
+ * the wire. Chat Completions can only express a result as the `tool_call_id`
+ * answer to a preceding `tool_calls` entry, so an unpaired output has no
+ * destination and contributes no message instead of failing the whole request.
+ * Re-attaching it to an earlier call of the same name is not safe: two calls of
+ * one tool in a turn are indistinguishable here, and a wrong pairing would
+ * silently corrupt the replayed conversation.
+ */
+const chatToolResultItems = (item: Record<string, unknown>): Record<string, unknown>[] => {
   const callId = getString(item.call_id);
-  if (!callId) return failure("input", "function_call_output items require call_id");
+  if (!callId) return [];
   const content = typeof item.output === "string" ? item.output : JSON.stringify(item.output ?? "");
-  return { ok: true, value: { role: "tool", tool_call_id: callId, content } };
+  return [{ role: "tool", tool_call_id: callId, content }];
 };
 
 /**
@@ -165,7 +201,9 @@ const appendMessageItem = (
  * `function_call` item and its matching `function_call_output` become an
  * assistant turn carrying `tool_calls` followed by the tool result, which is
  * the only shape the Chat contract accepts. A `reasoning` item is carried onto
- * the assistant turn that follows it as `reasoning_content`.
+ * the assistant turn that follows it as `reasoning_content`. A replayed
+ * `agent_message` becomes a user turn, and a `function_call_output` with no
+ * `call_id` is skipped because Chat cannot carry an unpaired tool result.
  */
 const appendInputItem = (messages: Record<string, unknown>[], rawItem: unknown, pending: { reasoning: string }): DeepSeekResponsesResult<void> => {
   if (typeof rawItem === "string") {
@@ -188,9 +226,16 @@ const appendInputItem = (messages: Record<string, unknown>[], rawItem: unknown, 
     return { ok: true, value: undefined };
   }
   if (type === "function_call_output" || type === "custom_tool_call_output") {
-    const result = chatToolResultItem(rawItem);
-    if (!result.ok) return result;
-    messages.push(result.value);
+    messages.push(...chatToolResultItems(rawItem));
+    return { ok: true, value: undefined };
+  }
+  // An inter-agent communication replayed from a multi-agent thread. Codex
+  // classifies an `agent_message` as a user-turn boundary in its own history
+  // (`core/src/context_manager/history.rs`), so its readable text replays as an
+  // inbound user turn; an item with nothing readable left is skipped rather
+  // than pushed as an empty turn.
+  if (type === "agent_message") {
+    messages.push(...chatAgentMessageItems(rawItem));
     return { ok: true, value: undefined };
   }
   if (type !== "message") return failure("input.type", `input item type '${type}' is not supported`);
