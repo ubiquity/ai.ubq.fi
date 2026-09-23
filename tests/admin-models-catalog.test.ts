@@ -17,8 +17,8 @@ import handler from "../src/handler.ts";
 import handlerSource from "../src/handler.ts" with { type: "text" };
 import type { OpenRouterModelsSnapshot } from "../src/openrouter_models.ts";
 import { setKvForTest } from "../src/kv.ts";
-import { buildModelCatalogSnapshot } from "../src/openai.ts";
-import openaiSource from "../src/openai.ts" with { type: "text" };
+import { buildModelCatalogSnapshot } from "../src/model_catalog.ts";
+import openaiSource from "../src/model_catalog.ts" with { type: "text" };
 
 // The catalog builder reads discovery credentials from the environment. Clearing
 // them keeps these tests on the credential-gated providers they own, and keeps

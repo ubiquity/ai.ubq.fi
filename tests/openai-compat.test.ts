@@ -141,8 +141,8 @@ setKvForTest(kvStub);
 
 const { extractUsageTokens, getResponseTelemetry } = await import("../src/openai_telemetry.ts");
 const { isAnswerBearingCompletion } = await import("../src/upstream_wire.ts");
-const { handleChatCompletions, handleModelCapabilities, handlePublicModelCatalog, handleModels, handleResponses, setCodexBankedResetOptionsForTest } =
-  await import("../src/openai.ts");
+const { handleChatCompletions, handleResponses, setCodexBankedResetOptionsForTest } = await import("../src/openai.ts");
+const { handleModelCapabilities, handleModels, handlePublicModelCatalog } = await import("../src/model_catalog.ts");
 const { fetchMeteredModels, METERED_MODELS_CACHE_TTL_MS, resetMeteredModelsCacheForTest, setMeteredModelsFetchForTest } = await import("../src/metered.ts");
 const { fetchSurplusModels, resetSurplusModelsCacheForTest, SURPLUS_MODELS_CACHE_TTL_MS } = await import("../src/surplus.ts");
 const { ApiKeyQuotaDispatchError } = await import("../src/api_key_policy.ts");

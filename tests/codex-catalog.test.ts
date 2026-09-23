@@ -104,7 +104,7 @@ const {
   storeCodexCatalog,
 } = await import("../src/codex_catalog.ts");
 const { resetCodexAuthCacheForTest } = await import("../src/codex.ts");
-const { handleModels } = await import("../src/openai.ts");
+const { handleModels } = await import("../src/model_catalog.ts");
 const { config } = await import("../src/config.ts");
 const { fetchMeteredModels, METERED_MODELS_CACHE_TTL_MS, resetMeteredModelsCacheForTest, setMeteredModelsFetchForTest } = await import("../src/metered.ts");
 const { fetchSurplusModels, resetSurplusModelsCacheForTest, SURPLUS_MODELS_CACHE_TTL_MS } = await import("../src/surplus.ts");

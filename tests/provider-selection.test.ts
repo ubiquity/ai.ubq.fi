@@ -8,7 +8,7 @@ import { LITHOS_MODEL_IDS } from "../src/lithos.ts";
 import { CODEX_MODELS_WHITELIST_KV_KEY } from "../src/codex_models_whitelist.ts";
 import handler from "../src/handler.ts";
 import { setKvForTest } from "../src/kv.ts";
-import { handleModels } from "../src/openai.ts";
+import { handleModels } from "../src/model_catalog.ts";
 import { RECORD_PROVIDER_IDS } from "../src/provider_health.ts";
 import { PROVIDER_PRESENTATION, PROVIDER_TIERS, providerPresentation } from "../src/provider_presentation.ts";
 import {
