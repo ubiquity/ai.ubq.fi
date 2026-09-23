@@ -22,13 +22,12 @@ import { relayResponsesStream } from "./provider_stream_relay.ts";
 import { downstreamSignalFor, inferenceSignal } from "./openai.ts";
 import {
   DeepSeekError,
-  DeepSeekStreamError,
   deepSeekThinkingModeActive,
   fetchDeepSeekChatCompletions,
   getDeepSeekProviderRequestId,
-  iterateDeepSeekChatCompletionStream,
   normalizeDeepSeekChatCompletion,
 } from "./deepseek.ts";
+import { DeepSeekStreamError, iterateDeepSeekChatCompletionStream } from "./deepseek_stream.ts";
 import { DEEPSEEK_RESPONSES_PROFILE } from "./deepseek_responses.ts";
 import { ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
 import { recordDeepSeekProviderHealth } from "./provider_health.ts";
