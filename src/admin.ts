@@ -105,7 +105,7 @@ import {
   storeProviderSelection,
 } from "./provider_selection.ts";
 import { PROVIDER_TIERS, providerPresentation } from "./provider_presentation.ts";
-import { buildModelCatalogSnapshot, type ModelCatalogSource } from "./openai.ts";
+import { buildModelCatalogSnapshot, type ModelCatalogSource } from "./model_catalog.ts";
 import { listCodexResetShadowDecisions } from "./codex_banked_reset.ts";
 import {
   assertPromptCacheScopeExperimentTelemetryBaseline,

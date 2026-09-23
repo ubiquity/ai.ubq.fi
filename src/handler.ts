@@ -61,18 +61,10 @@ import {
   inferenceAdmissionSnapshot,
 } from "./inference_admission.ts";
 import { type KernelQuotaReservation, reserveEffectiveKernelUsageLimit } from "./kernel_usage.ts";
-import {
-  handleChatCompletions,
-  handleEmbeddingsJobCreate,
-  handleEmbeddingsJobGet,
-  handleModelCapabilities,
-  handleModels,
-  handlePublicModelCatalog,
-  handleResponses,
-  handleUosEmbeddings,
-} from "./openai.ts";
+import { handleChatCompletions, handleEmbeddingsJobCreate, handleEmbeddingsJobGet, handleResponses, handleUosEmbeddings } from "./openai.ts";
 import { getResponseAccountCohortId, getResponseTelemetry, type ResponseTelemetry } from "./openai_telemetry.ts";
 import { handleImages } from "./images.ts";
+import { handleModelCapabilities, handleModels, handlePublicModelCatalog } from "./model_catalog.ts";
 import { enqueuePromptCacheAnalytics, recordPromptCacheAnalytics } from "./prompt_cache_analytics.ts";
 import { recordPromptCacheTelemetry } from "./prompt_cache_telemetry_gate.ts";
 import {
