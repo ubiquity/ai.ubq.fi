@@ -1,5 +1,11 @@
 // Response usage, provider and stream telemetry, extracted from src/openai.ts.
 
+export type MeteredTransportLifecycle = Readonly<{
+  terminal: (eventType: string, usage?: UsageTokens | null) => void;
+  ambiguous: () => void;
+  cancelled: () => void;
+}>;
+
 export type PaidProviderHealthEvent = "auth_invalid" | "quota_exhausted" | "upstream_error" | "reachable";
 
 export type PaidProviderHealthClassification = Readonly<{ event: PaidProviderHealthEvent; status: number | null }>;
