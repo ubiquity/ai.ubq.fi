@@ -1,3 +1,6 @@
+import { type ApiKeyProviderDispatch, ApiKeyQuotaDispatchError } from "./api_key_policy.ts";
+import { STREAM_FIRST_EVENT_DEADLINE_MS } from "./inference_deadline.ts";
+import type { SentinelUpstreamRecorder } from "./sentinel_upstream_capture.ts";
 import { getString, isRecord } from "./utils.ts";
 
 /**
@@ -111,7 +114,8 @@ export const LITHOS_RATE_LIMIT_HEADERS = [
   "x-ratelimit-reset-tokens",
 ] as const;
 
-export type LithosErrorCode = "lithos_api_key_missing" | "lithos_request_invalid" | "lithos_upstream_unreachable" | "gateway_timeout";
+export type LithosErrorCode =
+  "lithos_api_key_missing" | "lithos_request_invalid" | "lithos_upstream_unreachable" | "lithos_upstream_invalid_response" | "gateway_timeout";
 
 export class LithosError extends Error {
   readonly code: LithosErrorCode;
@@ -125,6 +129,31 @@ export class LithosError extends Error {
   }
 }
 
+export type LithosFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
+export type LithosChatCompletionsOptions = Readonly<{
+  apiKey?: string | null;
+  fetcher?: LithosFetch;
+  signal?: AbortSignal;
+  /**
+   * Resolves the API-key dispatch admission for this attempt. Both the
+   * "claimed a dispatch" and the "nothing to claim" shapes are accepted, which
+   * is why this is a union of function types rather than a union that puts
+   * `void` inside `Promise<...>`.
+   */
+  beforeDispatch?: (() => Promise<ApiKeyProviderDispatch>) | (() => void);
+  onDispatch?: () => void;
+  onHeaders?: () => void;
+  /** Request-owned passive recorder; best effort, never required. */
+  sentinelUpstreamRecorder?: SentinelUpstreamRecorder;
+}>;
+
+let lithosFetchTimeoutMs = STREAM_FIRST_EVENT_DEADLINE_MS;
+
+export const setLithosFetchTimeoutMsForTest = (timeoutMs: number | null): void => {
+  lithosFetchTimeoutMs = timeoutMs ?? STREAM_FIRST_EVENT_DEADLINE_MS;
+};
+
 type NormalizationResult<T> = Readonly<{ ok: true; value: T }> | Readonly<{ ok: false; message: string }>;
 
 const nonEmptyString = (value: unknown): string | null => {
@@ -137,6 +166,29 @@ const exactNonEmptyString = (value: unknown): string | null => {
   if (typeof value !== "string" || value.length === 0 || value.trim() !== value) return null;
   return value;
 };
+
+/**
+ * Provider request IDs are opaque support-correlation values. Keep only a
+ * bounded, header-safe value so an upstream cannot make the gateway reflect
+ * arbitrary metadata. This mirrors the DeepSeek normalizer even though the
+ * LithosAI wire currently has nothing to normalize.
+ */
+const MAX_LITHOS_PROVIDER_REQUEST_ID_LENGTH = 256;
+
+export const normalizeLithosProviderRequestId = (value: unknown): string | null => {
+  const requestId = exactNonEmptyString(value);
+  if (!requestId || requestId.length > MAX_LITHOS_PROVIDER_REQUEST_ID_LENGTH) return null;
+  return /^[\x21-\x7e]+$/.test(requestId) ? requestId : null;
+};
+
+/**
+ * The provider publishes NO request-id header at all: an admitted response and
+ * a refusal were both inspected on 2026-09-23 and neither carried one, so this
+ * seam has nothing documented to read. It deliberately reads no header name, so
+ * the only honest answer for any response is null. Do not guess a header here;
+ * re-probe the vendor first.
+ */
+export const getLithosProviderRequestId = (_response: Response): string | null => null;
 
 const nonNegativeInteger = (value: unknown): number | null => {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
@@ -205,6 +257,132 @@ const LITHOS_UPSTREAM_MODEL_BY_LOWERCASE_ID = new Map<string, string>(
  * the gateway's model normalization elsewhere.
  */
 export const lithosUpstreamModelFor = (model: string): string | null => LITHOS_UPSTREAM_MODEL_BY_LOWERCASE_ID.get(model.trim().toLowerCase()) ?? null;
+
+/**
+ * Projects the OpenAI Chat Completions body onto LithosAI's wire contract. One
+ * provider necessity is applied — everything else is forwarded unchanged:
+ *
+ * 1. `model` becomes the canonical id from the same table the lookup reads.
+ * 2. `max_completion_tokens` becomes this vendor's documented `max_tokens`. The
+ *    gateway's Chat contract only accepts the OpenAI field name, and LithosAI
+ *    documents no `max_completion_tokens`, so leaving it in place would both
+ *    lose the cap and send an unrecognized parameter.
+ *
+ * `reasoning_effort` is deliberately NOT rewritten: this provider accepted
+ * exactly none/minimal/low/medium/high/xhigh/max verbatim on 2026-09-23 and
+ * refused anything else with a 400, so DeepSeek's `ultra`→`max` map must not
+ * run here. An unknown id is a client error, not an upstream one.
+ */
+export const projectLithosRequest = (body: Record<string, unknown>, requestedModel: string): Record<string, unknown> => {
+  const upstreamModel = lithosUpstreamModelFor(requestedModel);
+  if (!upstreamModel) throw new LithosError("The requested model is not configured.", "lithos_request_invalid", 400);
+  const projected: Record<string, unknown> = { ...body, model: upstreamModel };
+  if (projected.max_completion_tokens !== undefined && projected.max_completion_tokens !== null) {
+    projected.max_tokens = projected.max_completion_tokens;
+  }
+  delete projected.max_completion_tokens;
+  return projected;
+};
+
+const timeoutError = (): LithosError => new LithosError("Upstream request exceeded the gateway deadline.", "gateway_timeout", 504);
+
+const abortError = (signal: AbortSignal): Error =>
+  signal.reason instanceof Error ? signal.reason : new DOMException("The request was aborted.", "AbortError");
+
+const isTimeoutError = (error: unknown): boolean => error instanceof Error && error.name === "TimeoutError";
+
+/**
+ * Classifies one aborted dispatch, before any upstream response exists. The
+ * request signal decides first because its reason carries the caller's own
+ * abort/timeout identity.
+ */
+const abortedTransportError = (signal: AbortSignal, requestSignal: AbortSignal | undefined, deadlineSignal: AbortSignal): Error => {
+  if (requestSignal && isTimeoutError(abortError(requestSignal))) return timeoutError();
+  if (deadlineSignal.aborted) return timeoutError();
+  return abortError(signal);
+};
+
+/**
+ * Classifies a failed attempt: an aborted request signal keeps its own
+ * identity, a deadline or timeout failure becomes the gateway timeout, and
+ * everything else is an unreachable upstream.
+ */
+const transportFailureError = (error: unknown, requestSignal: AbortSignal | undefined, deadlineSignal: AbortSignal): Error => {
+  if (requestSignal?.aborted) return isTimeoutError(abortError(requestSignal)) ? timeoutError() : abortError(requestSignal);
+  if (deadlineSignal.aborted || isTimeoutError(error)) return timeoutError();
+  return new LithosError("Upstream request could not be completed.", "lithos_upstream_unreachable", 502);
+};
+
+/**
+ * Sends only canonical OpenAI Chat Completions JSON to the LithosAI API. The
+ * caller owns model selection and streaming policy; this transport never
+ * chooses or falls back to another provider, and it never rewrites the caller's
+ * `stream` flag.
+ *
+ * This provider is chat-completions-only: `POST /v1/responses` answers 404
+ * (probed 2026-09-23), so there is deliberately no Responses route here.
+ *
+ * The deadline covers response headers only. Once headers arrive the caller
+ * owns the stream's inactivity deadline, so a long thinking turn is not killed
+ * by the buffered-inference budget.
+ */
+export const fetchLithosChatCompletions = async (
+  body: Record<string, unknown>,
+  requestedModel: string,
+  options: LithosChatCompletionsOptions = {}
+): Promise<Response> => {
+  let encodedBody: string;
+  try {
+    encodedBody = JSON.stringify(projectLithosRequest(body, requestedModel));
+  } catch (error) {
+    if (error instanceof LithosError) throw error;
+    throw new LithosError("Chat Completions requests must use a JSON-serializable body.", "lithos_request_invalid", 400);
+  }
+  if (typeof encodedBody !== "string") {
+    throw new LithosError("Chat Completions requests must use a JSON-serializable body.", "lithos_request_invalid", 400);
+  }
+
+  const apiKey = requireLithosApiKey(options.apiKey);
+  const headers = new Headers({
+    Accept: "application/json",
+    Authorization: `Bearer ${apiKey}`,
+    "Content-Type": "application/json",
+  });
+  const deadline = new AbortController();
+  const timer = setTimeout(() => {
+    deadline.abort(new DOMException("LithosAI response headers timed out.", "TimeoutError"));
+  }, lithosFetchTimeoutMs);
+  const signal = options.signal ? AbortSignal.any([options.signal, deadline.signal]) : deadline.signal;
+
+  let upstreamAttempt: ReturnType<SentinelUpstreamRecorder["startAttempt"]> | null = null;
+  try {
+    // Keep this as the final awaited operation before provider transport so
+    // API-key admission cannot be committed after a cancelled request.
+    const dispatch = options.beforeDispatch ? await options.beforeDispatch() : undefined;
+    if (signal.aborted) {
+      await dispatch?.cancelBeforeTransport();
+      throw abortedTransportError(signal, options.signal, deadline.signal);
+    }
+    dispatch?.markTransportStarted();
+    options.onDispatch?.();
+    upstreamAttempt = options.sentinelUpstreamRecorder?.startAttempt("lithos") ?? null;
+    const response = await (options.fetcher ?? fetch)(LITHOS_CHAT_COMPLETIONS_URL, {
+      method: "POST",
+      headers,
+      body: encodedBody,
+      redirect: "manual",
+      signal,
+    });
+    options.onHeaders?.();
+    return upstreamAttempt ? upstreamAttempt.wrap(response) : response;
+  } catch (error) {
+    upstreamAttempt?.recordFetchError();
+    if (error instanceof ApiKeyQuotaDispatchError || error instanceof LithosError) throw error;
+    throw transportFailureError(error, options.signal, deadline.signal);
+  } finally {
+    clearTimeout(timer);
+  }
+};
 
 /**
  * The upstream echoes the model it served. "Normalizing" an echo means trimming
@@ -356,6 +534,23 @@ const usageDetailCounter = (container: unknown, key: string, ceiling: number): n
 };
 
 /**
+ * `prompt_tokens_details.cached_tokens`, or null when the provider measured no
+ * cache hit (its ordinary wire shape is an explicit `null` details object) or
+ * reported an impossible count. Exported so the provider adapter can reuse the
+ * exact guards `normalizeUsage` applies instead of restating them.
+ */
+export const lithosCachedPromptTokens = (value: Record<string, unknown>, promptTokens: number): number | null =>
+  usageDetailCounter(value.prompt_tokens_details, "cached_tokens", promptTokens);
+
+/**
+ * `completion_tokens_details.reasoning_tokens`, or null when the provider
+ * reported no reasoning measurement or an impossible count. Exported beside
+ * the cache guard so both detail counters have one definition.
+ */
+export const lithosReasoningTokens = (value: Record<string, unknown>, completionTokens: number): number | null =>
+  usageDetailCounter(value.completion_tokens_details, "reasoning_tokens", completionTokens);
+
+/**
  * Reduces a LithosAI usage object to the OpenAI Chat Completions usage shape
  * the Assistant consumes.
  *
@@ -374,8 +569,8 @@ const normalizeUsage = (value: unknown): NormalizationResult<Record<string, unkn
   if (promptTokens === null || completionTokens === null || totalTokens === null) {
     return { ok: false, message: "Upstream usage is incomplete." };
   }
-  const cachedTokens = usageDetailCounter(value.prompt_tokens_details, "cached_tokens", promptTokens);
-  const reasoningTokens = usageDetailCounter(value.completion_tokens_details, "reasoning_tokens", completionTokens);
+  const cachedTokens = lithosCachedPromptTokens(value, promptTokens);
+  const reasoningTokens = lithosReasoningTokens(value, completionTokens);
   return {
     ok: true,
     value: {
@@ -590,3 +785,174 @@ export const normalizeLithosChatCompletionChunk = (value: unknown, requestedMode
     },
   };
 };
+
+/** One SSE frame is a single generated chunk; bound it so a peer cannot pin memory. */
+const MAX_LITHOS_SSE_FRAME_BYTES = 4 * 1024 * 1024;
+const LITHOS_SSE_FRAME_BOUNDARY = /\r\n\r\n|\n\n|\r\r/;
+const LITHOS_SSE_LINE_BOUNDARY = /\r\n|\r|\n/;
+
+const invalidResponseError = (message: string): LithosError => new LithosError(message, "lithos_upstream_invalid_response", 502);
+
+type LithosStreamFrame = Readonly<{ kind: "chunk"; value: Record<string, unknown> }> | Readonly<{ kind: "done" }>;
+
+/**
+ * Parses one complete SSE event block. `data:` payloads are the OpenAI Chat
+ * Completions stream contract and are normalized before they leave this module.
+ *
+ * Comments (this provider's keep-alives) and any other SSE field (`event:`,
+ * `id:`, `retry:`) carry no Chat Completions payload, so a block with no
+ * `data:` line is skipped rather than relayed. A malformed payload is a
+ * fail-closed upstream fault: it is never skipped, because silently dropping a
+ * frame would truncate the answer the client is assembling.
+ */
+const parseLithosSseEventBlock = (raw: string, requestedModel: string): LithosStreamFrame | null => {
+  const data: string[] = [];
+  for (const line of raw.split(LITHOS_SSE_LINE_BOUNDARY)) {
+    if (!line) continue;
+    if (line === "data") data.push("");
+    else if (line.startsWith("data:")) data.push(line.slice(5).replace(/^ /, ""));
+  }
+  if (!data.length) return null;
+  const payload = data.join("\n");
+  if (payload.trim() === "[DONE]") return { kind: "done" };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(payload);
+  } catch {
+    throw invalidResponseError("Upstream emitted malformed Chat Completions SSE JSON.");
+  }
+  const normalized = normalizeLithosChatCompletionChunk(parsed, requestedModel);
+  if (!normalized.ok) {
+    throw invalidResponseError(`Upstream emitted an invalid Chat Completions chunk: ${normalized.message}`);
+  }
+  return { kind: "chunk", value: normalized.value };
+};
+
+/**
+ * Splits an incremental SSE byte stream into relayable frames, retaining the
+ * unterminated tail between reads. Frames that carry no `data:` payload are
+ * skipped, and the byte bound is enforced on the retained tail.
+ */
+const createLithosFrameReader = (requestedModel: string): Readonly<{ push: (incoming: Uint8Array | null) => void; shift: () => LithosStreamFrame | null }> => {
+  const decoder = new TextDecoder();
+  const buffered = { text: "" };
+  const push = (incoming: Uint8Array | null): void => {
+    buffered.text += incoming === null ? decoder.decode() : decoder.decode(incoming, { stream: true });
+    if (buffered.text.length > MAX_LITHOS_SSE_FRAME_BYTES) {
+      throw invalidResponseError("Upstream SSE frame exceeded the gateway bound.");
+    }
+  };
+  const shift = (): LithosStreamFrame | null => {
+    for (;;) {
+      const match = LITHOS_SSE_FRAME_BOUNDARY.exec(buffered.text);
+      if (!match) return null;
+      const raw = buffered.text.slice(0, match.index);
+      buffered.text = buffered.text.slice(match.index + match[0].length);
+      const frame = parseLithosSseEventBlock(raw, requestedModel);
+      if (frame) return frame;
+    }
+  };
+  return { push, shift };
+};
+
+/** Races one upstream read against caller cancellation. */
+const raceLithosReaderRead = async (
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal: AbortSignal | undefined
+): Promise<ReadableStreamReadResult<Uint8Array>> => {
+  if (!signal) return await reader.read();
+  let onAbort = (): void => {};
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => {
+      reject(signal.reason instanceof Error ? signal.reason : new DOMException("The stream was aborted.", "AbortError"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+  });
+  try {
+    return await Promise.race([reader.read(), aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+};
+
+/**
+ * Owns one upstream SSE read loop: the reader lock, the decoded frame queue,
+ * and the terminal release. Kept outside the generator so each concern is
+ * independently readable.
+ */
+const createLithosStreamSession = (
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  requestedModel: string,
+  signal: AbortSignal | undefined
+): Readonly<{ next: () => Promise<LithosStreamFrame | null>; finish: () => void }> => {
+  const frames = createLithosFrameReader(requestedModel);
+  const state = { eof: false, released: false };
+  const releaseReaderLock = (): void => {
+    try {
+      reader.releaseLock();
+    } catch {
+      // The reader may already be released by a failing upstream stream.
+    }
+  };
+  const finish = (): void => {
+    if (state.released) return;
+    state.released = true;
+    try {
+      const cancellation = reader.cancel("LithosAI Chat Completions stream finished");
+      releaseReaderLock();
+      void cancellation.catch(() => {});
+    } catch {
+      releaseReaderLock();
+    }
+  };
+  const next = async (): Promise<LithosStreamFrame | null> => {
+    for (;;) {
+      const frame = frames.shift();
+      if (frame) return frame;
+      if (state.eof) return null;
+      const result = await raceLithosReaderRead(reader, signal);
+      state.eof = result.done;
+      frames.push(result.done ? null : result.value);
+    }
+  };
+  return { next, finish };
+};
+
+/**
+ * Reads the upstream Chat Completions SSE body and yields validated
+ * `chat.completion.chunk` objects, so the caller relays them without
+ * re-checking the wire shape.
+ *
+ * Usage is NOT gated here: this provider reports it unconditionally, including
+ * on the trailing chunk whose `choices` is an empty array, which
+ * `normalizeLithosChatCompletionChunk` accepts. There is deliberately no
+ * `stream_options.include_usage` condition.
+ */
+export async function* iterateLithosChatCompletionStream(
+  response: Response,
+  requestedModel: string,
+  options: Readonly<{ signal?: AbortSignal }> = {}
+): AsyncGenerator<Record<string, unknown>, void, void> {
+  const reader = response.body?.getReader();
+  if (!reader) throw invalidResponseError("Upstream returned no Chat Completions stream body.");
+
+  const session = createLithosStreamSession(reader, requestedModel, options.signal);
+  try {
+    for (;;) {
+      let frame: LithosStreamFrame | null;
+      try {
+        frame = await session.next();
+      } catch (error) {
+        if (error instanceof LithosError) throw error;
+        if (options.signal?.aborted) throw abortError(options.signal);
+        throw invalidResponseError("LithosAI Chat Completions stream failed.");
+      }
+      if (!frame) throw invalidResponseError("Upstream Chat Completions stream ended before [DONE].");
+      if (frame.kind === "done") return;
+      yield frame.value;
+    }
+  } finally {
+    session.finish();
+  }
+}
